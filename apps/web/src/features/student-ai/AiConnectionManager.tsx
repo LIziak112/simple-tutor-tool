@@ -7,16 +7,8 @@ import type {
   AiImageCapability,
 } from "@tutor/contract";
 import { AI_SHARE_MAX_VALID_HOURS } from "@tutor/contract";
-import {
-  Bot,
-  CircleAlert,
-  Link2,
-  Loader2,
-  Terminal,
-  Trash2,
-  TriangleAlert,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { CircleAlert, Loader2, TriangleAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
+import { AiConnectionCard } from "./AiConnectionCard";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import {
   studentAiConnectionDraftKey,
@@ -38,7 +31,6 @@ import {
   useTestStudentAiConnection,
 } from "./ai-connection-queries";
 import { InappConnectionFields } from "./InappConnectionFields";
-import { McpConnectionDetails } from "./McpConnectionDetails";
 
 /** 学生连接管理：凭据、通道与编辑草稿各自保持明确状态，设置页不自动发送求助。 */
 
@@ -76,28 +68,6 @@ const EMPTY_DRAFT: ConnectionDraft = {
 interface Notice {
   readonly tone: "error" | "ok" | "info";
   readonly text: string;
-}
-
-/** verifyStatus 徽章文案:已配置 / 验证成功 / 暂不可用分开显示 */
-function verifyBadgeOf(connection: AiConnectionPublic): {
-  text: string;
-  tone: "ok" | "warn" | "muted";
-} {
-  // mcp/link 无测试语义(SAI-16:verifyStatus 恒 unverified),只如实说明
-  // 配置已保存——在线判断归后续领取链路,不显示「已连接」
-  if (connection.channel !== "inapp") {
-    return { text: "配置已保存", tone: "muted" };
-  }
-  switch (connection.verifyStatus) {
-    case "verified":
-      return { text: "验证成功", tone: "ok" };
-    case "failed":
-      return { text: "测试未通过,暂不可用", tone: "warn" };
-    case "needs_rekey":
-      return { text: "需重新填写 Key", tone: "warn" };
-    default:
-      return { text: "已保存,未测试", tone: "muted" };
-  }
 }
 
 /** ApiError 之外的异常收敛为通用网络文案(不透传堆栈) */
@@ -142,6 +112,18 @@ export function AiConnectionManager() {
       queryClient.getQueryData<ConnectionDraft>(studentAiConnectionDraftKey) ??
       EMPTY_DRAFT,
   );
+  const [view, setView] = useState<"overview" | "form" | "detail">(() =>
+    draft.touched || draft.editingId !== null ? "form" : "overview",
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const viewHeading = useRef<HTMLHeadingElement>(null);
+  const previousView = useRef(view);
+  useEffect(() => {
+    if (previousView.current !== view) {
+      viewHeading.current?.focus();
+      previousView.current = view;
+    }
+  }, [view]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [resetTokenConnection, setResetTokenConnection] =
@@ -154,7 +136,14 @@ export function AiConnectionManager() {
     (item) => item.id === draft.editingId,
   );
   const hasConnection = connections.length > 0;
-  const defaultConnection = connections.find((item) => item.isDefault);
+  const editingMissing =
+    draft.editingId !== null &&
+    connectionsQuery.isSuccess &&
+    editingConnection === undefined;
+  const selectedConnection = connections.find((item) => item.id === selectedId);
+  const availableChannels = (Object.keys(CHANNEL_LABEL) as AiChannel[]).filter(
+    (channel) => !connections.some((item) => item.channel === channel),
+  );
   /** 知情门槛:已有连接(已知情)或本次已勾选确认 */
   const consentOk = hasConnection || draft.consentAcknowledged;
 
@@ -262,18 +251,44 @@ export function AiConnectionManager() {
     }));
   }
 
+  function leaveForm(): void {
+    if (saving) return;
+    if (draft.touched && !window.confirm("连接设置尚未保存，放弃更改？"))
+      return;
+    resetDraft();
+    setNotice(null);
+    setView("overview");
+  }
+
+  function startCreate(): void {
+    const channel = availableChannels[0];
+    if (!channel) return;
+    resetDraft();
+    setDraft((prev) => ({ ...prev, channel, isDefault: false }));
+    setNotice(null);
+    setView("form");
+  }
+
   function handleSave(): void {
     setNotice(null);
     const editing =
       draft.editingId === null
         ? null
         : (connections.find((item) => item.id === draft.editingId) ?? null);
+    if (draft.editingId !== null && editing === null) {
+      setNotice({
+        tone: "error",
+        text: "此连接已不存在，请取消修改并返回总览重新加载。输入仍保留。",
+      });
+      return;
+    }
     if (draft.editingId !== null && editing !== null) {
       patchMutation.mutate(
         { id: draft.editingId, request: buildPatchRequest(editing) },
         {
           onSuccess: () => {
             resetDraft();
+            setView("overview");
             setNotice({ tone: "ok", text: "连接已更新。" });
             if (from !== null) setSavedFrom(true);
           },
@@ -289,6 +304,7 @@ export function AiConnectionManager() {
     createMutation.mutate(buildCreateRequest(), {
       onSuccess: () => {
         resetDraft();
+        setView("overview");
         setNotice({ tone: "ok", text: "连接已保存。" });
         if (from !== null) setSavedFrom(true);
       },
@@ -302,6 +318,7 @@ export function AiConnectionManager() {
 
   /** 进入编辑态:行值载入草稿(Key 恒空 = 不改;不回显旧明文) */
   function startEdit(connection: AiConnectionPublic): void {
+    setView("form");
     setNotice(null);
     setDraft({
       editingId: connection.id,
@@ -414,22 +431,77 @@ export function AiConnectionManager() {
     </details>
   );
 
+  function renderConnection(connection: AiConnectionPublic, detail = false) {
+    return (
+      <AiConnectionCard
+        connection={connection}
+        detail={detail}
+        busy={saving || testMutation.isPending || deleteMutation.isPending}
+        onView={() => {
+          setSelectedId(connection.id);
+          setNotice(null);
+          setView("detail");
+        }}
+        onEdit={() => startEdit(connection)}
+        onTest={() => handleTest(connection)}
+        onResetToken={() => setResetTokenConnection(connection)}
+        onDelete={() => setConfirmDeleteId(connection.id)}
+        onDefault={() => {
+          setNotice(null);
+          patchMutation.mutate(
+            {
+              id: connection.id,
+              request: { channel: connection.channel, isDefault: true },
+            },
+            {
+              onSuccess: () =>
+                setNotice({ tone: "ok", text: "默认连接已更新。" }),
+              onError: (error) =>
+                setNotice({
+                  tone: "error",
+                  text: `设置默认连接失败：${errorTextOf(error, "网络异常")}，请重试。`,
+                }),
+            },
+          );
+        }}
+      />
+    );
+  }
+
   const connectionList = (
     <section
-      key="connections"
       aria-labelledby="ai-connection-list-title"
-      className="min-w-0 space-y-4"
+      className="min-w-0 space-y-5"
     >
-      <h2 id="ai-connection-list-title" className="font-semibold">
-        我的连接
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1">
+          <h2
+            ref={viewHeading}
+            tabIndex={-1}
+            id="ai-connection-list-title"
+            className="text-lg font-semibold focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            我的连接
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            管理已保存的连接，选择求助时优先使用的方式。
+          </p>
+        </div>
+        {connectionsQuery.isSuccess && availableChannels.length > 0 && (
+          <Button className="min-h-11" onClick={startCreate}>
+            新增连接
+          </Button>
+        )}
+      </div>
       {connectionsQuery.isPending && (
-        <p className="text-sm text-muted-foreground">正在加载连接…</p>
+        <p role="status" className="py-8 text-sm text-muted-foreground">
+          正在加载连接…
+        </p>
       )}
       {connectionsQuery.isError && (
-        <div>
+        <div className="rounded-xl border border-border bg-card p-5">
           <p role="alert" className="text-sm text-destructive">
-            无法加载连接,请重试。
+            无法加载连接，请重试。
           </p>
           <Button
             variant="outline"
@@ -440,174 +512,26 @@ export function AiConnectionManager() {
           </Button>
         </div>
       )}
-      {connectionsQuery.isSuccess && connections.length === 0 && (
-        <p className="rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-muted-foreground">
-          尚未配置 AI 连接。填写上方设置并保存后，即可在题目旁选择使用。
-        </p>
+      {connectionsQuery.isSuccess && !hasConnection && (
+        <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center">
+          <p className="font-medium">尚未配置 AI 连接</p>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+            添加一种使用方式，即可在题目旁主动求助。已有 AI 客户端可选
+            MCP，也可以使用 API 在本站提问。
+          </p>
+        </div>
       )}
-      {connections.length > 0 && (
-        <ul className="flex flex-col gap-3">
-          {connections.map((connection) => {
-            const badge = verifyBadgeOf(connection);
-            return (
-              <li
-                key={connection.id}
-                className="flex min-w-0 flex-col gap-5 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6"
-              >
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    {connection.channel === "inapp" && (
-                      <Bot aria-hidden className="size-4 text-primary" />
-                    )}
-                    {connection.channel === "mcp" && (
-                      <Terminal aria-hidden className="size-4 text-primary" />
-                    )}
-                    {connection.channel === "link" && (
-                      <Link2 aria-hidden className="size-4 text-primary" />
-                    )}
-                    {CHANNEL_LABEL[connection.channel]}
-                  </span>
-                  <span
-                    className={
-                      badge.tone === "ok"
-                        ? "rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary"
-                        : badge.tone === "warn"
-                          ? "rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive"
-                          : "rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                    }
-                  >
-                    {badge.text}
-                  </span>
-                  {connection.isDefault && (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      默认通道
-                    </span>
-                  )}
-                  {connection.channel === "link" && (
-                    <span className="text-xs text-muted-foreground">
-                      复制本题链接，在外部 AI 中继续提问
-                    </span>
-                  )}
-                </div>
-                {connection.channel === "inapp" && (
-                  <dl className="grid min-w-0 gap-3 rounded-lg bg-muted/40 p-4 text-sm sm:grid-cols-2">
-                    <div className="min-w-0 sm:col-span-2">
-                      <dt className="mb-1 text-xs text-muted-foreground">
-                        接口地址
-                      </dt>
-                      <dd className="break-all font-mono text-xs leading-relaxed">
-                        {connection.baseUrl}
-                      </dd>
-                    </div>
-                    <div className="min-w-0">
-                      <dt className="mb-1 text-xs text-muted-foreground">
-                        使用模型
-                      </dt>
-                      <dd className="break-all">{connection.model}</dd>
-                    </div>
-                    <div>
-                      <dt className="mb-1 text-xs text-muted-foreground">
-                        密钥状态
-                      </dt>
-                      <dd className="text-xs">
-                        已保存 · 指纹 {connection.keyFingerprint}
-                      </dd>
-                    </div>
-                  </dl>
-                )}
-                {connection.channel !== "inapp" && (
-                  <p className="break-all text-sm text-muted-foreground">
-                    {connection.channel === "mcp" &&
-                      "在题目里加入求助队列，由外部 AI 客户端领取并写回；未写回前保持等待。"}
-                    {connection.channel === "link" &&
-                      `新链接默认有效期 ${connection.defaultValidHours} 小时`}
-                  </p>
-                )}
-                {connection.channel === "mcp" && (
-                  <McpConnectionDetails token={connection.token ?? null} />
-                )}
-                <div className="flex flex-wrap items-center gap-3">
-                  {connection.channel === "inapp" && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={testMutation.isPending}
-                      onClick={() => handleTest(connection)}
-                    >
-                      {testMutation.isPending && (
-                        <Loader2
-                          aria-hidden
-                          className="motion-safe:animate-spin"
-                        />
-                      )}
-                      测试连接
-                    </Button>
-                  )}
-                  {connection.channel === "mcp" && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={patchMutation.isPending}
-                      onClick={() => setResetTokenConnection(connection)}
-                    >
-                      重置 Token
-                    </Button>
-                  )}
-                  {
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      onClick={() => startEdit(connection)}
-                    >
-                      修改配置
-                    </Button>
-                  }
-                  {!connection.isDefault && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={patchMutation.isPending}
-                      onClick={() => {
-                        setNotice(null);
-                        patchMutation.mutate(
-                          {
-                            id: connection.id,
-                            request: {
-                              channel: connection.channel,
-                              isDefault: true,
-                            },
-                          },
-                          {
-                            onError: (error) =>
-                              setNotice({
-                                tone: "error",
-                                text: `设置默认通道失败:${errorTextOf(error, "网络异常")}`,
-                              }),
-                          },
-                        );
-                      }}
-                    >
-                      设为默认
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    aria-label="删除连接"
-                    className="ml-auto size-11 p-0 text-destructive hover:text-destructive"
-                    onClick={() => setConfirmDeleteId(connection.id)}
-                  >
-                    <Trash2 aria-hidden className="size-4" />
-                  </Button>
-                </div>
-              </li>
-            );
-          })}
+      {hasConnection && (
+        <ul className="space-y-3">
+          {connections.map((connection) => (
+            <li key={connection.id}>{renderConnection(connection)}</li>
+          ))}
         </ul>
+      )}
+      {connectionsQuery.isSuccess && availableChannels.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          三种使用方式均已添加，可在对应连接中查看或修改配置。
+        </p>
       )}
     </section>
   );
@@ -641,240 +565,275 @@ export function AiConnectionManager() {
         </p>
       )}
 
-      {/* —— 已配置连接列表 —— */}
-      {hasConnection && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-primary/5 p-5">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">默认连接</p>
-            <p className="font-semibold">
-              {defaultConnection
-                ? CHANNEL_LABEL[defaultConnection.channel]
-                : "尚未选择"}
-            </p>
+      {view === "overview" && connectionList}
+      {view === "detail" && (
+        <section
+          className="min-w-0 space-y-5"
+          aria-labelledby="ai-detail-title"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2
+              ref={viewHeading}
+              tabIndex={-1}
+              id="ai-detail-title"
+              className="text-lg font-semibold focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              {selectedConnection
+                ? `${CHANNEL_LABEL[selectedConnection.channel]} 配置`
+                : "连接已移除"}
+            </h2>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => {
+                setNotice(null);
+                setView("overview");
+              }}
+            >
+              返回我的连接
+            </Button>
           </div>
-          <p className="text-sm text-muted-foreground">
-            在题目旁主动求助时使用，可随时切换。
+          {selectedConnection ? (
+            renderConnection(selectedConnection, true)
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              此连接已不存在，请返回查看其他连接。
+            </p>
+          )}
+        </section>
+      )}
+      {savedFrom && from !== null && !draft.touched && view === "overview" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-sm">
+          <p className="text-muted-foreground">
+            连接已保存，回到原题即可主动发起求助。
           </p>
+          <Link
+            to={from}
+            onClick={guardNavigate}
+            className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 font-medium text-primary-foreground"
+          >
+            返回原题
+          </Link>
         </div>
       )}
-      <div className="min-w-0 space-y-8">
-        {hasConnection && connectionList}
-        {/* —— 新建 / 编辑表单 —— */}
-        <section
-          aria-labelledby="ai-connection-form-title"
-          className="min-w-0 space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6"
-        >
-          <h2 id="ai-connection-form-title" className="font-semibold">
-            {draft.editingId === null ? "新增连接" : "修改连接"}
-          </h2>
-          <fieldset className="space-y-2">
-            <legend className="mb-2 text-sm font-medium">选择使用方式</legend>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {(Object.keys(CHANNEL_LABEL) as AiChannel[]).map((channel) => (
-                <label
-                  key={channel}
-                  className={`flex min-h-24 cursor-pointer items-start gap-3 rounded-xl border p-4 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${draft.channel === channel ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"}`}
-                >
-                  <input
-                    type="radio"
-                    disabled={draft.editingId !== null}
-                    name="ai-connection-channel"
-                    aria-label={CHANNEL_LABEL[channel]}
-                    className="mt-0.5 size-4 shrink-0 accent-primary"
-                    checked={draft.channel === channel}
-                    onChange={() => {
-                      setNotice(null);
-                      const existing = connections.find(
-                        (item) => item.channel === channel,
-                      );
-                      if (existing) startEdit(existing);
-                      else updateDraft({ channel });
-                    }}
-                  />
-                  <span className="space-y-1">
-                    <span className="block font-medium">
-                      {CHANNEL_LABEL[channel]}
-                    </span>
-                    <span className="block text-xs leading-relaxed text-muted-foreground">
-                      {channel === "inapp"
-                        ? "在题目旁提问，回复直接显示在本站"
-                        : channel === "mcp"
-                          ? "让支持 MCP 的 AI 客户端领取题目并回传回复"
-                          : "把本题链接发给能够打开网页的 AI"}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {draft.channel === "inapp"
-                ? "在题目旁直接提问和查看回复，支持 OpenAI 兼容接口。"
-                : draft.channel === "mcp"
-                  ? "连接你常用的 AI 客户端，领取求助并将回复带回题目。"
-                  : "复制本题上下文链接，交给外部 AI 读取；回复在外部查看。"}
-            </p>
-            {draft.editingId !== null && (
-              <p className="text-xs text-muted-foreground">
-                正在修改已有连接。要新增其他使用方式，请先选择「取消修改」。
+      {view === "form" && (
+        <div className="min-w-0 space-y-6">
+          {/* —— 新建 / 编辑表单 —— */}
+          <section
+            aria-labelledby="ai-connection-form-title"
+            className="min-w-0 space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6"
+          >
+            <h2
+              ref={viewHeading}
+              tabIndex={-1}
+              id="ai-connection-form-title"
+              className="text-lg font-semibold focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              {draft.editingId === null ? "新增连接" : "修改连接"}
+            </h2>
+            {editingMissing && (
+              <p role="alert" className="text-sm text-destructive">
+                此连接已不存在，请取消修改并返回总览重新加载。输入仍保留。
               </p>
             )}
-          </fieldset>
-
-          {draft.channel === "inapp" && (
-            <InappConnectionFields
-              key={draft.editingId ?? "new"}
-              values={{
-                baseUrl: draft.baseUrl,
-                model: draft.model,
-                apiKey: draft.apiKey,
-                imageCapability: draft.imageCapability ?? "unknown",
-              }}
-              connectionId={draft.editingId}
-              savedBaseUrl={
-                editingConnection?.channel === "inapp"
-                  ? editingConnection.baseUrl
-                  : null
-              }
-              onChange={updateDraft}
-            />
-          )}
-
-          {draft.channel === "mcp" && (
-            <div className="flex flex-col gap-1.5 text-sm leading-relaxed text-muted-foreground">
-              <p className="flex items-start gap-2">
-                <CircleAlert
-                  aria-hidden
-                  className="mt-0.5 size-4 shrink-0 text-primary"
-                />
-                MCP Token 由系统生成，保存后可随时查看和复制。
-              </p>
-              <p>
-                外部客户端须支持 Bearer Token 认证与 Streamable HTTP
-                传输;不能附加 Bearer Token 或仅支持 OAuth
-                发现的客户端当前不兼容(不提供把密钥拼进链接的替代方式)。
-                保存后即可复制已代入 Token 的完整配置，直接粘贴到客户端。
-              </p>
-            </div>
-          )}
-
-          {draft.channel === "link" && (
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="space-y-4 text-sm leading-relaxed">
-                <h3 className="font-medium">把一道题交给外部 AI</h3>
-                <ol className="list-decimal space-y-2 pl-5 text-muted-foreground">
-                  <li>保存此方式后，在题目旁选择「上下文链接」并生成。</li>
-                  <li>复制带读取说明的内容，粘贴到支持联网读网页的 AI。</li>
-                  <li>先让 AI 确认本次读取的题号，再继续提问。</li>
-                </ol>
-                <p className="rounded-lg bg-muted/60 p-3 text-muted-foreground">
-                  每条链接只含一道题。可生成多条独立链接；同时发送时，请要求 AI
-                  逐条打开并核对，不能默认它已读完全部题目。
+            {draft.editingId === null ? (
+              <fieldset className="space-y-2">
+                <legend className="mb-2 text-sm font-medium">
+                  选择使用方式
+                </legend>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {(Object.keys(CHANNEL_LABEL) as AiChannel[]).map(
+                    (channel) => (
+                      <label
+                        key={channel}
+                        className={`flex min-h-24 cursor-pointer items-start gap-3 rounded-xl border p-4 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${draft.channel === channel ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"}`}
+                      >
+                        <input
+                          type="radio"
+                          disabled={connections.some(
+                            (item) => item.channel === channel,
+                          )}
+                          name="ai-connection-channel"
+                          aria-label={CHANNEL_LABEL[channel]}
+                          className="mt-0.5 size-4 shrink-0 accent-primary"
+                          checked={draft.channel === channel}
+                          onChange={() => {
+                            setNotice(null);
+                            updateDraft({ channel });
+                          }}
+                        />
+                        <span className="space-y-1">
+                          <span className="block font-medium">
+                            {CHANNEL_LABEL[channel]}
+                            {connections.some(
+                              (item) => item.channel === channel,
+                            ) && (
+                              <span className="ms-2 text-xs text-muted-foreground">
+                                已添加
+                              </span>
+                            )}
+                          </span>
+                          <span className="block text-xs leading-relaxed text-muted-foreground">
+                            {channel === "inapp"
+                              ? "在题目旁提问，回复直接显示在本站"
+                              : channel === "mcp"
+                                ? "让支持 MCP 的 AI 客户端领取题目并回传回复"
+                                : "把本题链接发给能够打开网页的 AI"}
+                          </span>
+                        </span>
+                      </label>
+                    ),
+                  )}
+                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {draft.channel === "inapp"
+                    ? "在题目旁直接提问和查看回复，支持 OpenAI 兼容接口。"
+                    : draft.channel === "mcp"
+                      ? "连接你常用的 AI 客户端，领取求助并将回复带回题目。"
+                      : "复制本题上下文链接，交给外部 AI 读取；回复在外部查看。"}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  每次读取都会重新检查有效期和访问权限，本站不缓存分享响应。链接保存的是生成时的题目快照；修改作答后需更新求助内容并重新生成。第三方
-                  AI
-                  可能无法联网或沿用自己的缓存，无法读取时请使用「复制文字与下载材料」。
+              </fieldset>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                正在修改{CHANNEL_LABEL[draft.channel]}
+                。保存后生效，其他连接不受影响。
+              </p>
+            )}
+
+            {draft.channel === "inapp" && (
+              <InappConnectionFields
+                key={draft.editingId ?? "new"}
+                values={{
+                  baseUrl: draft.baseUrl,
+                  model: draft.model,
+                  apiKey: draft.apiKey,
+                  imageCapability: draft.imageCapability ?? "unknown",
+                }}
+                connectionId={draft.editingId}
+                savedBaseUrl={
+                  editingConnection?.channel === "inapp"
+                    ? editingConnection.baseUrl
+                    : null
+                }
+                onChange={updateDraft}
+              />
+            )}
+
+            {draft.channel === "mcp" && (
+              <div className="flex flex-col gap-1.5 text-sm leading-relaxed text-muted-foreground">
+                <p className="flex items-start gap-2">
+                  <CircleAlert
+                    aria-hidden
+                    className="mt-0.5 size-4 shrink-0 text-primary"
+                  />
+                  MCP Token 由系统生成，保存后可随时查看和复制。
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  外部 AI
-                  需要能访问本站地址。若本站只在本机或局域网开放，请改用复制文字，或在本站使用页内
-                  AI。
+                <p>
+                  保存后复制完整配置并粘贴到 AI 客户端。客户端需要支持 Bearer
+                  Token 认证与 Streamable HTTP 传输。
                 </p>
               </div>
-              <label className="flex flex-col gap-1.5 self-start rounded-xl bg-muted/50 p-5 text-sm">
-                <span>新链接默认有效期(小时,1–{AI_SHARE_MAX_VALID_HOURS})</span>
-                <input
-                  type="number"
-                  aria-label="新链接默认有效期(小时)"
-                  min={1}
-                  max={AI_SHARE_MAX_VALID_HOURS}
-                  className="w-full min-h-11 max-w-48 rounded-lg border border-input bg-background px-3 py-2 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                  value={draft.defaultValidHours}
-                  onChange={(event) =>
-                    updateDraft({
-                      defaultValidHours: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-                <span className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  过期后外部 AI
-                  无法再打开。获得链接的人也能读取本题资料，请只发给你信任的
-                  AI；可在题目旁撤销链接。
-                </span>
-              </label>
-            </div>
-          )}
+            )}
 
-          {consentPanel}
+            {draft.channel === "link" && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="space-y-4 text-sm leading-relaxed">
+                  <h3 className="font-medium">把一道题交给外部 AI</h3>
+                  <ol className="list-decimal space-y-2 pl-5 text-muted-foreground">
+                    <li>保存此方式后，在题目旁选择「上下文链接」并生成。</li>
+                    <li>复制带读取说明的内容，粘贴到支持联网读网页的 AI。</li>
+                    <li>先让 AI 确认本次读取的题号，再继续提问。</li>
+                  </ol>
+                  <p className="rounded-lg bg-muted/60 p-3 text-muted-foreground">
+                    每条链接只含一道题。可生成多条独立链接；同时发送时，请要求
+                    AI 逐条打开并核对，不能默认它已读完全部题目。
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    每次读取都会重新检查有效期和访问权限，本站不缓存分享响应。链接保存的是生成时的题目快照；修改作答后需更新求助内容并重新生成。第三方
+                    AI
+                    可能无法联网或沿用自己的缓存，无法读取时请使用「复制文字与下载材料」。
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    外部 AI
+                    需要能访问本站地址。若本站只在本机或局域网开放，请改用复制文字，或在本站使用页内
+                    AI。
+                  </p>
+                </div>
+                <label className="flex flex-col gap-1.5 self-start rounded-xl bg-muted/50 p-5 text-sm">
+                  <span>
+                    新链接默认有效期(小时,1–{AI_SHARE_MAX_VALID_HOURS})
+                  </span>
+                  <input
+                    type="number"
+                    aria-label="新链接默认有效期(小时)"
+                    min={1}
+                    max={AI_SHARE_MAX_VALID_HOURS}
+                    className="w-full min-h-11 max-w-48 rounded-lg border border-input bg-background px-3 py-2 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    value={draft.defaultValidHours}
+                    onChange={(event) =>
+                      updateDraft({
+                        defaultValidHours: Number(event.target.value) || 1,
+                      })
+                    }
+                  />
+                  <span className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    过期后外部 AI
+                    无法再打开。获得链接的人也能读取本题资料，请只发给你信任的
+                    AI；可在题目旁撤销链接。
+                  </span>
+                </label>
+              </div>
+            )}
 
-          <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              aria-label="设为默认连接"
-              className="size-4 accent-primary"
-              checked={draft.isDefault}
-              onChange={(event) =>
-                updateDraft({ isDefault: event.target.checked })
-              }
-            />
-            设为默认连接(求助时优先使用;同时间只有一条默认)
-          </label>
+            {consentPanel}
 
-          {!consentOk && (
-            <p className="text-sm text-muted-foreground">
-              请先勾选上方「我已了解数据外发说明」再保存连接。
-            </p>
-          )}
+            <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label="设为默认连接"
+                className="size-4 accent-primary"
+                checked={draft.isDefault}
+                onChange={(event) =>
+                  updateDraft({ isDefault: event.target.checked })
+                }
+              />
+              设为默认连接(求助时优先使用;同时间只有一条默认)
+            </label>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              className="min-h-11 px-5"
-              disabled={!consentOk || !formValid || saving}
-              onClick={handleSave}
-            >
-              {saving && (
-                <Loader2 aria-hidden className="motion-safe:animate-spin" />
-              )}
-              保存连接
-            </Button>
-            {draft.editingId !== null && (
+            {!consentOk && (
+              <p className="text-sm text-muted-foreground">
+                请先勾选上方「我已了解数据外发说明」再保存连接。
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                className="min-h-11 px-5"
+                disabled={!consentOk || !formValid || saving || editingMissing}
+                onClick={handleSave}
+              >
+                {saving && (
+                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
+                )}
+                保存连接
+              </Button>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
-                onClick={() => {
-                  resetDraft();
-                  setNotice(null);
-                }}
+                disabled={saving}
+                onClick={leaveForm}
               >
-                取消修改
+                {draft.editingId === null ? "取消新增" : "取消修改"}
               </Button>
-            )}
-            <p role="status" className="text-xs text-muted-foreground">
-              {draft.touched ? "有未保存的更改" : "表单无未保存更改"}
-            </p>
-          </div>
-
-          {/* 保存成功且带来源题:提供回跳入口(返回后由学生再次主动发) */}
-          {savedFrom && from !== null && !draft.touched && (
-            <div className="flex flex-col gap-2 rounded-lg bg-muted p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-muted-foreground">
-                连接已保存。回到原题后,发送仍需你再次主动确认。
+              <p role="status" className="text-xs text-muted-foreground">
+                {draft.touched ? "有未保存的更改" : "表单无未保存更改"}
               </p>
-              <Link
-                to={from}
-                onClick={guardNavigate}
-                className="flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                返回原题
-              </Link>
             </div>
-          )}
-        </section>
-
-        {!hasConnection && connectionList}
-      </div>
+          </section>
+        </div>
+      )}
 
       {/* 删除确认:软删停发该通道 created 任务,列明后果 */}
       <Dialog
@@ -954,6 +913,7 @@ export function AiConnectionManager() {
                   onSuccess: () => {
                     setConfirmDeleteId(null);
                     setNotice({ tone: "ok", text: "连接已删除。" });
+                    setView("overview");
                     if (draft.editingId === confirmDeleteId) resetDraft();
                   },
                   onError: (error) =>

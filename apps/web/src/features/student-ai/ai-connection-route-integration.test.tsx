@@ -194,6 +194,7 @@ describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, (
     renderManager(newClient());
     // get:新账号默认未连接(真实 GET,零任务行)
     expect(await screen.findByText(/尚未配置 AI 连接/u)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "新增连接" }));
     // 创建:知情确认 + 填表 → 真实 POST 落库
     fireEvent.click(
       screen.getByRole("checkbox", { name: "我已了解数据外发说明" }),
@@ -213,6 +214,7 @@ describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, (
     );
     // 列表回显:baseUrl + 指纹,永不回显明文 Key
     expect(await screen.findByText(/api\.example\.com/u)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看配置" }));
     expect(screen.getByText(/已保存 · 指纹/u)).toBeInTheDocument();
     expect(
       screen.queryByText(/sk-route-secret-plain/u),
@@ -252,9 +254,10 @@ describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, (
     });
     expect(created.status).toBe(201);
     renderManager(newClient());
-    expect(await screen.findByText(/默认通道/u)).toBeInTheDocument();
+    expect(await screen.findByText(/默认连接/u)).toBeInTheDocument();
     // 新建 link 并设默认 → 服务端先清后设,inapp 行 isDefault 翻 false
     // (已有连接即已知情,知情确认不再渲染)
+    fireEvent.click(screen.getByRole("button", { name: "新增连接" }));
     fireEvent.click(screen.getByRole("radio", { name: "上下文链接" }));
     fireEvent.click(screen.getByLabelText("设为默认连接"));
     fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
@@ -292,6 +295,7 @@ describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, (
     expect(
       await screen.findByText(/ai-unreachable\.invalid/u),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看配置" }));
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     // 真实探针出站失败:200 + verifyStatus=failed(连接仍保留)
     await waitFor(
@@ -328,6 +332,7 @@ describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, (
     installFetchStub(env.app, cookie);
     const from = "/s/assignments/route-assignment?question=q-route";
     renderManager(newClient(), `?from=${encodeURIComponent(from)}`);
+    fireEvent.click(await screen.findByRole("button", { name: "新增连接" }));
     fireEvent.click(
       screen.getByRole("checkbox", { name: "我已了解数据外发说明" }),
     );

@@ -20,7 +20,7 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
 }, testInfo) => {
   test.setTimeout(120_000);
   // 预备验证时只让第一题题面可见，避免测量另一题的后台生成次数。
-  await page.setViewportSize({ width: 1300, height: 400 });
+  await page.setViewportSize({ width: 1300, height: 350 });
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `原位课程${suffix}`;
