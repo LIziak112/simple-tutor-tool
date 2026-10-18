@@ -105,6 +105,7 @@ function ConversationMessages({
   }, [updatedAt, taskId, queryClient]);
   // 正文成功取得并挂入可见工作区后才记交付；失败不清未读。
   const hasVisibleReply =
+    query.isSuccess &&
     !query.isFetching &&
     query.data?.messages.some((message) => message.role === "assistant") ===
       true;

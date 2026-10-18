@@ -209,7 +209,10 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing)
         return;
       // 题下展开不抢焦点；入口仍持有焦点时，Esc也能原路收起。
-      if (document.activeElement === triggerRef.current) {
+      if (
+        document.activeElement === triggerRef.current ||
+        document.activeElement === document.body
+      ) {
         event.preventDefault();
         void closeRef.current();
       }
@@ -285,7 +288,11 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
         status={
           <AiCompanionStatusPanel send={send} settingsHref={settingsHref} />
         }
-        settingsAttention={send.needsSetup || send.statusError}
+        settingsAttention={
+          send.needsSetup ||
+          send.statusError ||
+          send.status?.resolution.usable === false
+        }
         quickButtons={null}
         conversation={
           <AiConversationPanel

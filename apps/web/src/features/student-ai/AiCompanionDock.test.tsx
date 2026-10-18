@@ -12,8 +12,10 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentAiTaskApi,
+  fetchStudentAiStatusApi,
   fetchStudentAiTaskApi,
   followupStudentAiTaskApi,
+  listStudentAiTasksApi,
   openStudentAiReplyApi,
 } from "@/lib/api";
 import { stubElementWidth } from "@/test/stub-element-width";
@@ -133,6 +135,67 @@ const capturedClient: { current: QueryClient | null } = { current: null };
 beforeEach(() => vi.clearAllMocks());
 
 describe("题下助教共享会话", () => {
+  it("缓存有旧正文但本次读取失败时不清未读", async () => {
+    const unread = { ...task, replyDeliveredAt: null };
+    vi.mocked(listStudentAiTasksApi).mockResolvedValueOnce({
+      tasks: [unread],
+      nextCursor: null,
+    });
+    vi.mocked(fetchStudentAiTaskApi).mockRejectedValueOnce(
+      new Error("本次读取失败"),
+    );
+    render(<Harness />);
+    capturedClient.current?.setQueryData(
+      ["student", "ai-task-detail", task.id],
+      {
+        task: unread,
+        messages: [
+          {
+            id: "cached",
+            taskId: task.id,
+            role: "assistant",
+            contentMd: "旧缓存正文",
+            createdAt: task.updatedAt,
+          },
+        ],
+        facts: [],
+      },
+    );
+    await open("q1");
+    fireEvent.click(await screen.findByRole("button", { name: "查看回信" }));
+    await screen.findByText("对话读取失败");
+    expect(openStudentAiReplyApi).not.toHaveBeenCalled();
+  });
+  it("焦点因发送移回页面后Esc也能收起并返回本题入口", async () => {
+    render(<Harness />);
+    await open("q1");
+    const input = await screen.findByRole("textbox", { name: "继续追问本题" });
+    input.focus();
+    input.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "第 1 题的 AI 助教" }),
+      ).toBeNull(),
+    );
+    expect(
+      within(screen.getByRole("article", { name: "q1" })).getByRole("button", {
+        name: "AI 助教",
+      }),
+    ).toHaveFocus();
+  });
+
+  it("教师限制时打开即显示原因，无需再找设置入口", async () => {
+    vi.mocked(fetchStudentAiStatusApi).mockResolvedValueOnce(
+      connectedAiStatus({
+        resolution: { usable: false, reason: "teacher_default_closed" },
+      }),
+    );
+    render(<Harness />);
+    await open("q2");
+    expect(await screen.findByText(/当前模式为完成后可用/)).toBeVisible();
+  });
   it("固定对照来回切换保留输入和题卡；保存失败禁止收起或切题", async () => {
     const width = stubElementWidth(1440);
     try {
