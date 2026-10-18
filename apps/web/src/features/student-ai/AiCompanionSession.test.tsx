@@ -180,6 +180,36 @@ beforeEach(() => {
 });
 
 describe("AiCompanionSession 接线组件（SAI-20）", () => {
+  it("快捷问法替换自写草稿后可还原，且选择与还原均不发送", async () => {
+    render(<SessionHarness />);
+    await openBound();
+    fireEvent.change(screen.getByLabelText("补充问题"), {
+      target: { value: "我算到第二步，为什么符号变了？" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "查当前步骤" }));
+    expect(screen.getByLabelText("补充问题")).toHaveValue(
+      "请检查我当前书写的步骤",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "还原原问题" }));
+    expect(screen.getByLabelText("补充问题")).toHaveValue(
+      "我算到第二步，为什么符号变了？",
+    );
+    expect(mockedCreate).not.toHaveBeenCalled();
+  });
+
+  it("快捷问法读取失败时可就地重试并继续输入", async () => {
+    mockedQuickButtons.mockRejectedValueOnce(new Error("网络中断"));
+    render(<SessionHarness />);
+    await openBound();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "重新加载问法" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "查当前步骤" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("补充问题")).toBeEnabled();
+    expect(mockedCreate).not.toHaveBeenCalled();
+  });
   it("状态区如实呈现模式与默认通道；仅打开查看不产生任何任务调用", async () => {
     render(<SessionHarness />);
     await openBound();

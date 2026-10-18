@@ -133,11 +133,11 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   );
   const triggerForQuestion = (questionId: string) => (
     <AiCompanionTrigger
-      ref={triggerRef}
       controller={controller}
       label="AI 助教"
       expanded={controller.open && send.boundQuestionId === questionId}
-      onPress={() => {
+      onPress={(trigger) => {
+        triggerRef.current = trigger;
         if (controller.open && send.boundQuestionId === questionId) {
           controller.closePanel();
           return;

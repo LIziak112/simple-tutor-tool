@@ -43,7 +43,7 @@ const AI_TASKS_POLL_ERROR_INTERVAL_MS = 30_000;
 
 /** 追问上下文说明：不悄悄附新笔迹，新稿走新任务 */
 const FOLLOWUP_HINT =
-  "追问基于原发送材料，不会附带此后的新笔迹；想让 AI 参考新稿，请到上方输入区新建一次求助并勾选材料。";
+  "追问基于原发送材料，不会附带此后的新笔迹；想让 AI 参考新稿，请新建求助并选择材料。";
 
 /** 处理状态事实文案（处理状态与查看状态分开，见 aiTaskPublicSchema） */
 function taskFactText(task: AiTaskPublic): string | null {
@@ -286,8 +286,9 @@ function AiTaskCard({
               <p className="text-xs text-muted-foreground">{FOLLOWUP_HINT}</p>
               <textarea
                 data-testid="followup-input"
+                aria-label="继续追问本题"
                 rows={2}
-                className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 placeholder="继续追问本题"
                 value={followupDraft}
                 disabled={followupSending}

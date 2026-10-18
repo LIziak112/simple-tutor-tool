@@ -289,6 +289,9 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
     ).toBeInTheDocument();
     // 打开即视为已读（本地即时，不等下一轮轮询）
     expect(screen.getByText("已查看回复")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "继续追问本题" }),
+    ).toBeInTheDocument();
 
     // 收起再展开不重复记 opened（SAI-14 幂等口径的客户端侧）
     fireEvent.click(screen.getByRole("button", { name: "收起对话" }));

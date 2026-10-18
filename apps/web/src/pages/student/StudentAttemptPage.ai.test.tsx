@@ -291,6 +291,23 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     },
   );
 
+  it("两题共存时关闭第一题助教仍返回第一题入口", async () => {
+    const draft = draftOf(SOURCES[0]);
+    const first = draft.units[0]?.questions[0];
+    if (!first || !draft.units[0]) throw new Error("缺少测试题目");
+    draft.units[0].questions.push({ ...first, id: "练习四-2" });
+    mockedFetch.mockResolvedValue(draft);
+    renderPage();
+    await readyAndScroll();
+    const firstTrigger = within(
+      screen.getByRole("article", { name: "第 1 题" }),
+    ).getByRole("button", { name: "AI 助教" });
+    fireEvent.click(firstTrigger);
+    const close = await screen.findByRole("button", { name: "关闭 AI 助教" });
+    fireEvent.click(close);
+    await waitFor(() => expect(firstTrigger).toHaveFocus());
+  });
+
   it("尚未滚动定位时，题卡 AI 入口直接绑定本题并查询状态", async () => {
     mockedFetch.mockResolvedValue(draftOf(SOURCES[0]));
     renderPage();

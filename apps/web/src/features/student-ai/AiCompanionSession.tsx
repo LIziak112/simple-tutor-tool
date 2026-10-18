@@ -1,4 +1,5 @@
 import type { AiChannel } from "@tutor/contract";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AiLinkShareBox } from "./AiLinkShareBox";
 import { CHANNEL_LABEL } from "./ai-channel-label";
@@ -138,11 +139,13 @@ export function AiCompanionStatusPanel({
 }
 
 /**
- * 快捷按钮区：仅渲染启用项（停用项不出现），点击即发——用按钮自己的
- * prompt 与附件偏好，不回写本题的草稿选择（单次语义）。
+ * 快捷问法只填入，支持还原自写草稿；不在选择阶段发送。
  */
 export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
   const query = useStudentQuickButtons();
+  const [previousTexts, setPreviousTexts] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
   if (query.isPending)
     return (
       <p className="text-xs text-muted-foreground" aria-live="polite">
@@ -150,7 +153,21 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
       </p>
     );
   if (query.isError)
-    return <p className="text-xs text-muted-foreground">快捷按钮读取失败</p>;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-muted-foreground">
+          快捷问法读取失败，也可以直接输入问题。
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => void query.refetch()}
+        >
+          重新加载问法
+        </Button>
+      </div>
+    );
   const buttons = (query.data?.buttons ?? []).filter(
     (button) => button.enabled,
   );
@@ -174,6 +191,15 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
           title={button.prompt}
           disabled={disabled}
           onClick={() => {
+            const questionId = send.boundQuestionId;
+            if (questionId !== null) {
+              const text = send.draftOf(questionId).text;
+              setPreviousTexts((previous) =>
+                previous.has(questionId)
+                  ? previous
+                  : new Map(previous).set(questionId, text),
+              );
+            }
             send.selectPreset(button.id);
             send.setText(button.prompt);
           }}
@@ -181,6 +207,26 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
           {button.name}
         </Button>
       ))}
+      {send.boundQuestionId !== null &&
+        previousTexts.has(send.boundQuestionId) && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            onClick={() => {
+              const questionId = send.boundQuestionId;
+              if (questionId === null) return;
+              send.setText(previousTexts.get(questionId) ?? "");
+              setPreviousTexts((previous) => {
+                const next = new Map(previous);
+                next.delete(questionId);
+                return next;
+              });
+            }}
+          >
+            还原原问题
+          </Button>
+        )}
     </div>
   );
 }
@@ -227,7 +273,7 @@ export function AiCompanionComposer({
           <span className="sr-only">补充问题</span>
           <textarea
             rows={2}
-            className="max-h-40 min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="max-h-40 min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             placeholder="写下你想问的问题"
             value={draft.text}
             disabled={!bound || sending}

@@ -40,7 +40,7 @@ export const AiCompanionTrigger = forwardRef<
     label?: string | undefined;
     /** 题卡入口的局部选中态；未传时跟随共享面板状态 */
     expanded?: boolean | undefined;
-    onPress?: (() => void) | undefined;
+    onPress?: ((trigger: HTMLButtonElement) => void) | undefined;
   }
 >(function AiCompanionTrigger(
   { controller, label = "AI 助教", expanded, onPress },
@@ -59,9 +59,9 @@ export const AiCompanionTrigger = forwardRef<
       aria-pressed={isExpanded}
       data-ai-selected={isExpanded ? "true" : "false"}
       aria-controls={controller.panelId}
-      onClick={() => {
+      onClick={(event) => {
         if (onPress !== undefined) {
-          onPress();
+          onPress(event.currentTarget);
           return;
         }
         if (isExpanded) controller.closePanel();
@@ -333,7 +333,7 @@ export function AiCompanionRail({
           className="flex w-full flex-col gap-0 p-0 sm:max-w-[min(100vw,26rem)]"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            triggerRef?.current?.focus();
+            triggerRef?.current?.focus({ preventScroll: true });
           }}
         >
           {/* 可见标题由面板头承担；这里只保留 Radix 需要的无障碍标题 */}
@@ -400,7 +400,7 @@ function DockPanel({
           return;
         event.preventDefault();
         controller.closePanel();
-        triggerRef?.current?.focus();
+        triggerRef?.current?.focus({ preventScroll: true });
       }}
     >
       <AiCompanionPanelBody
@@ -409,7 +409,7 @@ function DockPanel({
         dockCloseRef={closeRef}
         onDockClose={() => {
           controller.closePanel();
-          triggerRef?.current?.focus();
+          triggerRef?.current?.focus({ preventScroll: true });
         }}
         status={status}
         settingsAttention={settingsAttention}
