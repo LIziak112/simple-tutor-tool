@@ -1,12 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
+import type {
+  AiTaskDetailData,
+  AiTaskPublic,
+  AttemptQuestionPublic,
+} from "@tutor/contract";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,6 +103,7 @@ function Body() {
     currentQuestionId: "q1",
     editor: null,
   });
+  capturedDock.current = dock;
   return dock.rail(
     questions.map((q) => (
       <article key={q.id} aria-label={q.id}>
@@ -132,9 +138,56 @@ async function open(id: string) {
   });
 }
 const capturedClient: { current: QueryClient | null } = { current: null };
+const capturedDock: { current: ReturnType<typeof useAiCompanionDock> | null } =
+  { current: null };
 beforeEach(() => vi.clearAllMocks());
 
 describe("题下助教共享会话", () => {
+  it("固定对照离屏后才返回的正文不能算作已查看", async () => {
+    const width = stubElementWidth(1440);
+    try {
+      const unread = { ...task, replyDeliveredAt: null };
+      vi.mocked(listStudentAiTasksApi).mockResolvedValueOnce({
+        tasks: [unread],
+        nextCursor: null,
+      });
+      let deliver: ((value: AiTaskDetailData) => void) | undefined;
+      vi.mocked(fetchStudentAiTaskApi).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            deliver = resolve;
+          }),
+      );
+      render(<Harness />);
+      await open("q1");
+      fireEvent.click(screen.getByRole("button", { name: "固定对照" }));
+      await screen.findByRole("complementary", { name: "AI 对照" });
+      fireEvent.click(await screen.findByRole("button", { name: "查看回信" }));
+      await waitFor(() => expect(fetchStudentAiTaskApi).toHaveBeenCalled());
+      act(() => capturedDock.current?.setQuestionVisible("q1", false));
+      await act(async () => {
+        deliver?.({
+          task: unread,
+          messages: [
+            {
+              id: "late",
+              taskId: task.id,
+              role: "assistant",
+              contentMd: "迟到正文",
+              createdAt: task.updatedAt,
+            },
+          ],
+          facts: [],
+        });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(openStudentAiReplyApi).not.toHaveBeenCalled();
+    } finally {
+      width.restore();
+    }
+  });
   it("缓存有旧正文但本次读取失败时不清未读", async () => {
     const unread = { ...task, replyDeliveredAt: null };
     vi.mocked(listStudentAiTasksApi).mockResolvedValueOnce({

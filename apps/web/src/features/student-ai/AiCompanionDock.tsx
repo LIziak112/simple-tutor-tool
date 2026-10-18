@@ -146,6 +146,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
           };
         }
         bind(questionId);
+        controller.setVisible(true);
         setPresentationError(null);
       }
       return opened;
@@ -349,10 +350,9 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
         {fixedActive && controller.open && (
           <aside
             aria-label="AI 对照"
-            style={controller.suspended ? { visibility: "hidden" } : undefined}
             className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] w-[26rem] shrink-0 overflow-y-auto overscroll-contain"
           >
-            {workspace}
+            {!controller.suspended && workspace}
           </aside>
         )}
       </div>
