@@ -71,7 +71,12 @@ test("快速填空交卷：等待被延迟的答案PUT成功，失败返回重�
     accepted = true;
     await route.fulfill({ response });
   });
-  await page.getByLabel("第1空").fill("6");
+  const blank = page
+    .getByRole("article", { name: "第 1 题", exact: true })
+    .getByLabel("第1空");
+  // 先点击真实作答区，按学生操作等待材料恢复保护解除。
+  await blank.click();
+  await blank.fill("6");
   await page.getByRole("button", { name: "交卷", exact: true }).click();
   await page.getByRole("button", { name: "确认交卷", exact: true }).click();
   await expect.poll(() => releases.length).toBeGreaterThan(0);
