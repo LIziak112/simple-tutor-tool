@@ -472,6 +472,10 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   await drawStrokeWithPointerEvents(canvas);
   await page.getByRole("button", { name: "作答", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-input-enabled", "false");
+  // 首次落笔的本机/云端持久化属于准备阶段，不能计入后续热打开耗时。
+  await expect(page.getByTestId("draft-status")).toHaveText("全部已保存", {
+    timeout: 30_000,
+  });
   const warmMs: number[] = [];
   const listenerCount = () =>
     page.evaluate(() =>

@@ -104,6 +104,7 @@
 - 分段计时显示慢开的 `annotation:surface-ready` 为 260ms/677ms，与后台 `annotation:rasterize` 的 390ms/764ms 重叠；底图预备在关闭后约 291ms 启动，用户随即显式打开圈画，`html-to-image` 栅格化阻塞主线程，造成第三次预热离群。
 - 修复：`schedule-question-base-prewarm.ts` 在可见后先计 750ms 空闲再请求 `requestIdleCallback`；任意指针按下、点击或键盘操作立即取消在途预备，点击后重新计时空闲。显式打开仍走原有云端核对、内容/布局/字体校验与本机落盘路径。
 - 交互打断只停止仍在栅格化的预备，已完成的 30 秒内存候选继续保留给显式打开复用；否则打开时会丢弃候选并重复生成，原位标画用例会看到第二次 `annotation:rasterize`。
+- 全量负载下另发现第三次打开 `annotation:prepare` 耗时 377ms：首次落笔的本机/云端标画持久化尚未结束，被算进了热打开。130 题用例在开始五次预热前等待 `draft-status` 为“全部已保存”，把首次落盘留在准备阶段，150ms 门槛不变。
 - 先失败回归：新增“交互停止后才空闲预备、任意按下取消在途任务”，并调整原有空闲/忙碌用例的计时断言；实现前 3 项失败。
 - 学情页 e2e 同时收口既有竞态：先点击真实填空区，等待携带 `answer.kind=fill`、值 `6` 的答案 PUT 成功后再交卷，避免错题列表读到“学生答案：未作答”。
 - 修复后定向验证：调度器/预备单测 11/11；`question-inline-annotation` 与 `insights-pages` 两浏览器通过；`pnpm e2e e2e/student-workspace.spec.ts --grep '130题长作业：' --workers=1` 两浏览器 2/2 通过，Chromium `warmMs` 44.2–47.4ms、WebKit 84.1–93.6ms，150ms 门槛保持原值。
