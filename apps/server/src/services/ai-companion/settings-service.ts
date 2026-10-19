@@ -121,7 +121,10 @@ export function updateTeacherAiSettings(
   if (row === undefined && stillAllDefault) {
     return getTeacherAiSettings(db, teacherId);
   }
-  const updatedAt = new Date().toISOString();
+  // 编辑版本严格递增，同毫秒保存与系统校时均产生新版本。
+  const updatedAt = new Date(
+    Math.max(Date.now(), Date.parse(currentUpdatedAt) + 1),
+  ).toISOString();
   db.insert(aiTeacherSettings)
     .values({ teacherId, ...next, updatedAt })
     .onConflictDoUpdate({

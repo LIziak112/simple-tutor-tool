@@ -82,10 +82,11 @@ These highlights cover **October 10–19, 2026**, grouped by feature. Dates show
 - **AI connections in one place**: start from My Connections, then add, view, or edit a connection. MCP details provide the complete configuration, token, and endpoint for copying.
 - **Settings grouped by purpose**: personal information, learning preferences, and AI help preferences share one settings page. Collapsing an editor preserves the current input.
 
-### Tutor workspace and everyday details · October 12–17
+### Tutor workspace and everyday details · October 12–19
 
 - **OwnClass styling**: tutor and admin pages share the brand and indigo theme. Navigation groups teaching, analytics, and system tools, with a drawer on smaller screens.
 - **Settings by category**: teaching, backup, and account settings have separate sections, with reminders when leaving edited settings.
+- **Safer consecutive saves**: each save advances the settings version. An older page receives a refresh prompt while the latest saved settings stay in place.
 - **Fresh course choices**: creating or changing a course refreshes the import page's course selector.
 - **Smoother account changes**: tutor and student sessions can coexist in one browser; switching accounts refreshes the relevant page data.
 - **More complete formula display**: improvements cover formula checking, annotation fonts, and formulas in exported images.
