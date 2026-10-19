@@ -60,13 +60,13 @@ it("没有空闲回调时延后预备，离开可见区域会取消定时任务"
   );
   try {
     visible(true);
-    await vi.advanceTimersByTimeAsync(499);
+    await vi.advanceTimersByTimeAsync(749);
     expect(prewarmQuestionBase).not.toHaveBeenCalled();
     visible(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(prewarmQuestionBase).not.toHaveBeenCalled();
     visible(true);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(750);
     expect(prewarmQuestionBase).toHaveBeenCalledOnce();
   } finally {
     stop();
@@ -92,6 +92,11 @@ function idle() {
   idleCallback({ didTimeout: false, timeRemaining: () => 20 });
 }
 it("仅可见、非编辑题面在空闲时预备；离开可见区域取消", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) => {
+    idleCallback = callback;
+    return 1;
+  });
   const stop = scheduleQuestionBasePrewarm(
     session,
     scope,
@@ -104,6 +109,9 @@ it("仅可见、非编辑题面在空闲时预备；离开可见区域取消", a
     expect(prewarmQuestionBase).not.toHaveBeenCalled();
     visible(true);
     expect(prewarmQuestionBase).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(749);
+    expect(prewarmQuestionBase).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     idle();
     await Promise.resolve();
     expect(prewarmQuestionBase).toHaveBeenCalledOnce();
@@ -131,4 +139,34 @@ it("在途候选忙于编辑或已卸载不启动预备", () => {
   stop();
   idle();
   expect(prewarmQuestionBase).not.toHaveBeenCalled();
+});
+it("交互停止后才空闲预备，任意按下会取消在途任务", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) => {
+    idleCallback = callback;
+    return 1;
+  });
+  const stop = scheduleQuestionBasePrewarm(
+    session,
+    scope,
+    question,
+    surface,
+    () => false,
+  );
+  try {
+    visible(true);
+    await vi.advanceTimersByTimeAsync(749);
+    expect(prewarmQuestionBase).not.toHaveBeenCalled();
+    document.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    document.dispatchEvent(new Event("click", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(750);
+    idle();
+    await Promise.resolve();
+    expect(prewarmQuestionBase).toHaveBeenCalledOnce();
+    vi.mocked(cancelQuestionBasePrewarm).mockClear();
+    document.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(cancelQuestionBasePrewarm).toHaveBeenCalled();
+  } finally {
+    stop();
+  }
 });
