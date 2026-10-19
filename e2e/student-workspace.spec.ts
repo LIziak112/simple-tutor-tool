@@ -454,6 +454,10 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
           else readyFrames = 0;
           if (readyFrames >= 2) {
             clearTimeout(timeout);
+            performance.measure("ownclass:e2e-annotation-open", {
+              start,
+              duration: performance.now() - start,
+            });
             resolve(performance.now() - start);
             return;
           }
@@ -495,8 +499,17 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
     const canvas = element as HTMLCanvasElement;
     const rect = canvas.getBoundingClientRect();
     let unrelatedMutations = 0;
+    const mutationKinds = new Map<string, number>();
     const observer = new MutationObserver((records) => {
       unrelatedMutations += records.length;
+      for (const record of records) {
+        const element =
+          record.target instanceof Element
+            ? record.target
+            : record.target.parentElement;
+        const kind = `${record.type}:${element?.tagName}:${record.attributeName ?? ""}:${element?.getAttribute("data-slot") ?? ""}`;
+        mutationKinds.set(kind, (mutationKinds.get(kind) ?? 0) + 1);
+      }
     });
     document
       .querySelectorAll('article:not([aria-label="第 130 题"])')
@@ -541,13 +554,13 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
     send("pointerup", 120);
     return {
       unrelatedMutations,
+      mutationKinds: Object.fromEntries(mutationKinds),
       frameP95: intervals.sort((a, b) => a - b)[
         Math.floor(intervals.length * 0.95)
       ],
       moveCount: 60,
     };
   });
-  expect(moveMetrics.unrelatedMutations).toBe(0);
   await page.getByRole("button", { name: "作答", exact: true }).click();
   const metrics = {
     browser: testInfo.project.name,
@@ -557,6 +570,13 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
     warmMs,
     listenerCount: beforeListeners,
     rasterUploads: rasterCalls.length,
+    stages: await page.evaluate(() =>
+      performance.getEntriesByType("measure").map((entry) => ({
+        name: entry.name,
+        start: entry.startTime,
+        duration: entry.duration,
+      })),
+    ),
     ...moveMetrics,
   };
   const metricsPath = testInfo.outputPath("workspace-performance.json");
@@ -565,7 +585,9 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
     path: metricsPath,
     contentType: "application/json",
   });
-  console.log("工作区实测", JSON.stringify(metrics));
+  const { stages: _stages, ...summary } = metrics;
+  console.log("工作区实测", JSON.stringify(summary));
+  expect(moveMetrics.unrelatedMutations).toBe(0);
   expect(Math.max(...warmMs)).toBeLessThanOrEqual(150);
   // 手机端顶栏精简（2026-10-15 决策）：保存详情入口在「更多 → 练习信息」
   // 弹层里，与首个用例同款路径；当前视口 390px。

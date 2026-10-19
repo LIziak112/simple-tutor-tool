@@ -56,7 +56,10 @@ vi.mock("./question-annotation-base", () => ({
 }));
 
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
-import { questionSurfaceMatchesLayout } from "./question-base-image";
+import {
+  awaitQuestionSurfaceReady,
+  questionSurfaceMatchesLayout,
+} from "./question-base-image";
 
 const session = { origin: "https://tutor.test", studentId: "student" };
 const scope = {
@@ -166,7 +169,9 @@ it("绘制时锁表单，退出留痕且不重建历史引擎", async () => {
   expect(
     document.querySelector('[data-slot="question-surface"]'),
   ).toHaveAttribute("inert");
-  expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true);
+  await waitFor(() =>
+    expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
+  );
   const overlay = document.querySelector(
     '[data-slot="question-annotation-overlay"]',
   );
@@ -183,6 +188,66 @@ it("绘制时锁表单，退出留痕且不重建历史引擎", async () => {
   fireEvent.click(screen.getByText("标画"));
   await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
   expect(engine.mount).toHaveBeenCalledTimes(mounts);
+});
+it("同一题面开合复用几何观察，重新打开只等待显式资源核对", async () => {
+  render(<Harness />);
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
+  fireEvent.click(screen.getByRole("button", { name: "作答" }));
+  await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
+  // 等待首次几何核对结束，再记录本次打开带来的资源等待。
+  await act(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+  });
+  const checks = vi.mocked(awaitQuestionSurfaceReady).mock.calls.length;
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
+  await act(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+  });
+  expect(awaitQuestionSurfaceReady).toHaveBeenCalledTimes(checks + 1);
+  expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true);
+});
+it("题面变化时先收笔，核对期间切工具继续保持输入保护", async () => {
+  render(<Harness />);
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() =>
+    expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
+  );
+  let release = () => {};
+  vi.mocked(awaitQuestionSurfaceReady).mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { cssWidth: 300, cssHeight: 200, blocks: [], fonts: [] };
+  });
+  const finishes = engine.finish.mock.calls.length;
+  const surface = document.querySelector<HTMLElement>(
+    '[data-slot="question-surface"]',
+  );
+  if (!surface) throw new Error("题面应已挂载");
+  await act(async () => {
+    surface.style.fontSize = "18px";
+  });
+  await waitFor(() =>
+    expect(engine.finish.mock.calls.length).toBeGreaterThan(finishes),
+  );
+  expect(engine.setInputEnabled).toHaveBeenLastCalledWith(false);
+  fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+  expect(engine.setInputEnabled).toHaveBeenLastCalledWith(false);
+  await act(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    release();
+  });
+  await waitFor(() =>
+    expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
+  );
 });
 it("布局不匹配保留可作答的原生题面，不显示图片或独立答案兜底", async () => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);

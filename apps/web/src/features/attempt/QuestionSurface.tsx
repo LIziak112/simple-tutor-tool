@@ -2,7 +2,7 @@ import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
-import { useId } from "react";
+import { memo, useId } from "react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { letterOf, withBlankValue } from "./answer-format";
@@ -171,7 +171,7 @@ function MultiControls({
 }
 
 /** 正常作答与底图共用题面；导出保持布局但清除个人填答与选中态。 */
-export function QuestionSurface({
+export const QuestionSurface = memo(function QuestionSurface({
   question,
   answer: suppliedAnswer,
   onAnswer: suppliedOnAnswer,
@@ -261,4 +261,4 @@ export function QuestionSurface({
       )}
     </div>
   );
-}
+});

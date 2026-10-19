@@ -1,4 +1,4 @@
-import type { HintOpenedEntry } from "@tutor/contract";
+import type { HintOpenedEntry, StudentAnswer } from "@tutor/contract";
 import {
   type ComponentProps,
   memo,
@@ -57,6 +57,11 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
     },
     [events, cardElements, question.id],
   );
+  const handleAnswer = useCallback(
+    (value: StudentAnswer, defer?: boolean) =>
+      onAnswer(question.id, value, defer ?? false),
+    [onAnswer, question.id],
+  );
   return (
     <li ref={register}>
       <AttemptQuestionCard
@@ -64,9 +69,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
         aiTrigger={props.aiTrigger}
         question={question}
         hints={props.hints ?? emptyHints}
-        onAnswer={(answer, defer) =>
-          onAnswer(question.id, answer, defer ?? false)
-        }
+        onAnswer={handleAnswer}
         onToggleFlag={() => onToggleFlag(question.id)}
         onHintUnlocked={(entry) => onHintUnlocked(question.id, entry)}
         onInkStroke={(strokes) => {

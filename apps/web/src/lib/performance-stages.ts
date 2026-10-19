@@ -8,6 +8,8 @@ type PerformanceStage =
   | "annotation:png-check"
   | "annotation:local-save"
   | "annotation:base-state"
+  | "annotation:prepare"
+  | "annotation:surface-ready"
   | "annotation:layout-match";
 
 export async function measureStage<T>(

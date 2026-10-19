@@ -46,4 +46,28 @@ it("仅顶栏保存状态更新时不重渲染题面；答案或待检查变化�
     />,
   );
   expect(vi.mocked(AttemptQuestionCard).mock.calls.length).toBe(before + 2);
+  const previous = vi.mocked(AttemptQuestionCard).mock.lastCall?.[0].onAnswer;
+  rerender(
+    <AttemptQuestionRow
+      {...props}
+      aiTrigger={<button type="button">AI 助教</button>}
+      aiContent={<p>当前回复</p>}
+      flagged
+      answer={{ kind: "judge", value: false }}
+    />,
+  );
+  expect(vi.mocked(AttemptQuestionCard).mock.lastCall?.[0].onAnswer).toBe(
+    previous,
+  );
+  const onAnswer = vi.fn();
+  rerender(<AttemptQuestionRow {...props} onAnswer={onAnswer} />);
+  vi.mocked(AttemptQuestionCard).mock.lastCall?.[0].onAnswer(
+    { kind: "judge", value: true },
+    true,
+  );
+  expect(onAnswer).toHaveBeenCalledWith(
+    question.id,
+    { kind: "judge", value: true },
+    true,
+  );
 });

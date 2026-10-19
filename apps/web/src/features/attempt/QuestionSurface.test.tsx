@@ -14,6 +14,27 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it("相同作答属性重渲染时保持原生选择控件静止，更新回调后使用最新操作", () => {
+    const onAnswer = vi.fn();
+    const judge = { ...question, type: "judge" as const };
+    const { container, rerender } = render(
+      <QuestionSurface question={judge} onAnswer={onAnswer} />,
+    );
+    const observer = new MutationObserver(() => {});
+    observer.observe(container, { attributes: true, subtree: true });
+    rerender(<QuestionSurface question={judge} onAnswer={onAnswer} />);
+    const updates = observer.takeRecords();
+    observer.disconnect();
+    expect(updates).toHaveLength(0);
+    const current = vi.fn();
+    rerender(<QuestionSurface question={judge} onAnswer={current} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^对$/ }));
+    expect(current).toHaveBeenCalledWith(
+      { kind: "judge", value: true },
+      undefined,
+    );
+    expect(onAnswer).toHaveBeenCalledTimes(0);
+  });
   it("题面宽度由所在列决定，不另设固定最大宽度", () => {
     const { container } = render(<QuestionSurface question={question} />);
     const surface = container.querySelector<HTMLElement>(

@@ -64,13 +64,14 @@ These highlights cover **October 10–19, 2026**, grouped by feature. Dates show
 - **Clearer course entries**: each integrated lesson appears as one course item, with its embedded questions inside. Import previews present it as one lesson too.
 - **Learning records follow the work**: question progress, answers, and handwriting originals stay available for later review and another practice attempt.
 
-### Scratchpads, annotations, and handwriting together · October 10–17
+### Scratchpads, annotations, and handwriting together · October 10–19
 
 - **Use annotations and a scratchpad together**: circle a condition while calculating; choose side-by-side, stacked, or full-screen working.
 - **Scale the question and ink together**: saved annotations retain the question layout for proportional display during review and across devices.
 - **Clearer saving and device changes**: answers, scratchpads, written answers, and annotations each have saving status. Returning on another device checks existing materials, with a version choice when the same material has competing edits.
 - **Export a question and its working**: include the question, existing annotations, and handwritten materials. Long work spans pages with a repeated question, with download and per-page copy options.
 - **Save a preferred writing feel**: name configurations and choose one for the current device. Scratchpads, written answers, and corrections share that device choice.
+- **Smoother writing in long assignments**: reopening annotations is faster, and other questions stay steady while saving and AI status updates arrive.
 - **Smoother opening and review**: improvements cover material loading, annotation preparation, and repeated layout work. Original annotations load as the question comes into view.
 
 ### Assignments, review, and personal settings · October 10–19

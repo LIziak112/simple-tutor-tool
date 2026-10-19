@@ -102,6 +102,9 @@ export const QuestionAnnotationOverlay = forwardRef<
   const selected =
     editor?.active?.questionId === question.id &&
     editor.active.kind === "annotation";
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const layoutChecking = useRef(false);
   const active = selected && !hidden && compatible === true;
   const visible = compatible === true && !hidden;
   const [mountedOnce, setMountedOnce] = useState(false);
@@ -229,23 +232,27 @@ export const QuestionAnnotationOverlay = forwardRef<
               '[data-slot="question-surface"]',
             );
             if (!element) throw new Error("题面尚未就绪，请重试");
-            const prepared = await prepareQuestionAnnotationBase(
-              session,
-              scope,
-              question,
-              element,
-              signal,
+            const prepared = await measureStage("annotation:prepare", () =>
+              prepareQuestionAnnotationBase(
+                session,
+                scope,
+                question,
+                element,
+                signal,
+              ),
             );
             if (signal.aborted) return false;
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
-            await withTimeout(
-              awaitQuestionSurfaceReady(element, () => {
-                if (signal.aborted)
-                  throw new DOMException("标画已取消", "AbortError");
-              }),
-              15_000,
-              "题面资源加载超时，请重试",
+            await measureStage("annotation:surface-ready", () =>
+              withTimeout(
+                awaitQuestionSurfaceReady(element, () => {
+                  if (signal.aborted)
+                    throw new DOMException("标画已取消", "AbortError");
+                }),
+                15_000,
+                "题面资源加载超时，请重试",
+              ),
             );
             if (signal.aborted) return false;
             const matches = await measureStage("annotation:layout-match", () =>
@@ -285,14 +292,15 @@ export const QuestionAnnotationOverlay = forwardRef<
     let alive = true;
     let frame = 0;
     const check = () => {
+      const current = ++generation;
+      layoutChecking.current = true;
       // 布局尚在核对时先结束当前笔，不能向已重排的题面继续写入。
-      if (selected) {
+      if (selectedRef.current) {
         surface.current?.finish();
         surface.current?.setInputEnabled(false);
       }
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const current = ++generation;
         void withTimeout(
           awaitQuestionSurfaceReady(element, () => {
             if (!alive || current !== generation)
@@ -304,15 +312,18 @@ export const QuestionAnnotationOverlay = forwardRef<
           .then(() => questionSurfaceMatchesLayout(question, element, layout))
           .then((matches) => {
             if (!alive || current !== generation) return;
+            layoutChecking.current = false;
             setCompatible(matches);
-            if (matches && selected && !hidden)
+            if (matches && selectedRef.current && !hidden)
               surface.current?.setInputEnabled(true);
-            if (!matches && selected) surface.current?.setInputEnabled(false);
+            if (!matches && selectedRef.current)
+              surface.current?.setInputEnabled(false);
           })
           .catch(() => {
             if (!alive || current !== generation) return;
+            layoutChecking.current = false;
             setCompatible(false);
-            if (selected) surface.current?.setInputEnabled(false);
+            if (selectedRef.current) surface.current?.setInputEnabled(false);
           });
       });
     };
@@ -336,7 +347,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, selected, rejectedLayout, hidden, scale]);
+  }, [layout, question, rejectedLayout, hidden, scale]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -444,7 +455,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   useEffect(() => {
     if (!mountedOnce) return;
     surface.current?.setInputMode(inputPreference);
-    surface.current?.setInputEnabled(active);
+    surface.current?.setInputEnabled(active && !layoutChecking.current);
     surface.current?.setTool(
       tool === "pen" ? { type: "pen", color, size } : { type: "eraser" },
     );
