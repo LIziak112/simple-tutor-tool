@@ -19,6 +19,7 @@ import {
 import {
   cancelQuestionBasePrewarm,
   clearPrewarmedQuestionBases,
+  interruptQuestionBasePrewarm,
   prewarmQuestionBase,
   takePrewarmedQuestionBase,
 } from "./question-base-prewarm";
@@ -119,6 +120,43 @@ it("取消在途预备不保留结果；失败之后可以重新生成", async (
   expect(
     await takePrewarmedQuestionBase(session, scope, question, surface),
   ).toBe(rendered);
+});
+it("交互打断在途预备，但保留已完成候选", async () => {
+  await prewarmQuestionBase(session, scope, question, surface, () => false);
+  interruptQuestionBasePrewarm(session, scope);
+  expect(
+    await takePrewarmedQuestionBase(session, scope, question, surface),
+  ).toBe(rendered);
+
+  const inflightScope = { ...scope, questionId: "inflight" };
+  const inflightQuestion = { ...question, id: "inflight" };
+  const gate = Promise.withResolvers<typeof rendered>();
+  vi.mocked(renderQuestionBaseImage).mockReturnValueOnce(gate.promise);
+  const warm = prewarmQuestionBase(
+    session,
+    inflightScope,
+    inflightQuestion,
+    surface,
+    () => false,
+  );
+  const failure = expect(warm).rejects.toThrow("预备已取消");
+  try {
+    await vi.waitFor(() =>
+      expect(renderQuestionBaseImage).toHaveBeenCalledTimes(2),
+    );
+    interruptQuestionBasePrewarm(session, inflightScope);
+  } finally {
+    gate.resolve(rendered);
+    await failure;
+  }
+  expect(
+    await takePrewarmedQuestionBase(
+      session,
+      inflightScope,
+      inflightQuestion,
+      surface,
+    ),
+  ).toBeNull();
 });
 afterEach(() => {
   clearPrewarmedQuestionBases();

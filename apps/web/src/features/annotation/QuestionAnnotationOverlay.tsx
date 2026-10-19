@@ -105,6 +105,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const layoutChecking = useRef(false);
+  const opening = useRef(false);
   const active = selected && !hidden && compatible === true;
   const visible = compatible === true && !hidden;
   const [mountedOnce, setMountedOnce] = useState(false);
@@ -186,7 +187,10 @@ export const QuestionAnnotationOverlay = forwardRef<
       { attemptId, questionId: question.id, phase: "scratch" },
       question,
       element,
-      () => getActiveEditor() !== null || getPaperEditor() !== null,
+      () =>
+        opening.current ||
+        getActiveEditor() !== null ||
+        getPaperEditor() !== null,
     );
   }, [
     session,
@@ -216,6 +220,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       }
       if (!editor || !session || loading) return;
       if (rejectedLayout) setCompatible(null);
+      opening.current = true;
       setLoading(true);
       setError(null);
       try {
@@ -276,6 +281,7 @@ export const QuestionAnnotationOverlay = forwardRef<
           cause instanceof Error ? cause.message : "标画准备失败，请重试",
         );
       } finally {
+        opening.current = false;
         setLoading(false);
       }
     },

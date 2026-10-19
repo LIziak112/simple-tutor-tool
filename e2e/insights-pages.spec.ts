@@ -129,7 +129,23 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
 
       // 第 1 题填空：答 6（判错 → 错题列表与高频错误答案数据）
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
-      await q1.getByLabel("第1空").fill("6");
+      const blank = q1.getByLabel("第1空");
+      const fillSaved = studentPage.waitForResponse(async (response) => {
+        if (
+          response.request().method() !== "PUT" ||
+          !/\/answers\//.test(response.url()) ||
+          !response.ok()
+        )
+          return false;
+        const body = response.request().postDataJSON() as {
+          answer?: { kind?: string; values?: unknown[] };
+        } | null;
+        return body?.answer?.kind === "fill" && body.answer.values?.[0] === "6";
+      });
+      // 先点击真实作答区，等待材料恢复保护解除后再填写。
+      await blank.click();
+      await blank.fill("6");
+      await fillSaved;
       // 第 2 题判断：答「对」（判对）
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
       await q2

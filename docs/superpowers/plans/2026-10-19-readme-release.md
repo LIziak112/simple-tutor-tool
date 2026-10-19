@@ -103,6 +103,8 @@
 - 最终提交 `d8d046e5` 的 GitHub Actions `e2e` 作业失败：Chromium 130 题用例 `warmMs` 为 `[69.5, 91.4, 720.4, 72.6, 74.8]`，重试为 `[77.1, 69.4, 664.9, 81.7, 99.9]`，第三次预热超过 150ms；WebKit 为 `[90.2, 87.6, 83.2, 92.7, 98.4]`，全部通过。另有 WebKit 学情页错题文本用例首次超时、重试通过，记为 flaky，不是本次失败项。
 - 分段计时显示慢开的 `annotation:surface-ready` 为 260ms/677ms，与后台 `annotation:rasterize` 的 390ms/764ms 重叠；底图预备在关闭后约 291ms 启动，用户随即显式打开圈画，`html-to-image` 栅格化阻塞主线程，造成第三次预热离群。
 - 修复：`schedule-question-base-prewarm.ts` 在可见后先计 750ms 空闲再请求 `requestIdleCallback`；任意指针按下、点击或键盘操作立即取消在途预备，点击后重新计时空闲。显式打开仍走原有云端核对、内容/布局/字体校验与本机落盘路径。
+- 交互打断只停止仍在栅格化的预备，已完成的 30 秒内存候选继续保留给显式打开复用；否则打开时会丢弃候选并重复生成，原位标画用例会看到第二次 `annotation:rasterize`。
 - 先失败回归：新增“交互停止后才空闲预备、任意按下取消在途任务”，并调整原有空闲/忙碌用例的计时断言；实现前 3 项失败。
-- 修复后定向验证：调度器单测 4/4 通过；`pnpm e2e e2e/student-workspace.spec.ts --grep '130题长作业：' --workers=1` 两浏览器 2/2 通过，Chromium `warmMs` 44.2–47.4ms、WebKit 84.1–93.6ms，150ms 门槛保持原值。
+- 学情页 e2e 同时收口既有竞态：先点击真实填空区，等待携带 `answer.kind=fill`、值 `6` 的答案 PUT 成功后再交卷，避免错题列表读到“学生答案：未作答”。
+- 修复后定向验证：调度器/预备单测 11/11；`question-inline-annotation` 与 `insights-pages` 两浏览器通过；`pnpm e2e e2e/student-workspace.spec.ts --grep '130题长作业：' --workers=1` 两浏览器 2/2 通过，Chromium `warmMs` 44.2–47.4ms、WebKit 84.1–93.6ms，150ms 门槛保持原值。
 - 剩余验证：提交后在最终提交上重跑全量单测、lint、类型、构建与 212 项双浏览器回归，并等待新的 GitHub Actions `e2e` 作业通过后再发布 `v2` 与 `main`。

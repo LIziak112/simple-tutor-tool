@@ -17,6 +17,7 @@ interface Entry {
   expiresAt: number;
   controller: AbortController;
   claimed: boolean;
+  ready: boolean;
   bytes: number;
   expiryTimer: ReturnType<typeof setTimeout> | null;
   promise: Promise<PreparedBase> | null;
@@ -67,6 +68,17 @@ export function cancelQuestionBasePrewarm(
     remove(key, entry);
   }
 }
+/** 交互打断只停止在途栅格化；已完成的候选保留给显式打开复用。 */
+export function interruptQuestionBasePrewarm(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+) {
+  const key = annotationKeyOf(session, scope);
+  const entry = entries.get(key);
+  if (entry && !entry.claimed && !entry.ready) {
+    remove(key, entry);
+  }
+}
 /** 前台请求优先，其他题的预备在下一检查处让出队列。 */
 export function cancelOtherQuestionBasePrewarm(
   session: AnnotationSessionRef,
@@ -102,6 +114,7 @@ export async function prewarmQuestionBase(
     expiresAt: Date.now() + 30_000,
     controller,
     claimed: false,
+    ready: false,
     bytes: 0,
     expiryTimer: null,
     promise: null,
@@ -119,6 +132,7 @@ export async function prewarmQuestionBase(
       if (controller.signal.aborted || session !== currentAnnotationSession())
         throw new Error("预备已取消");
       entry.bytes = result.blob.size;
+      entry.ready = true;
       if (entries.get(key) === entry) limitMemory();
       return result;
     })

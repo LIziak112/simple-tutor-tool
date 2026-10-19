@@ -2,6 +2,7 @@ import type { AttemptQuestionPublic } from "@tutor/contract";
 import type { AnnotationScope, AnnotationSessionRef } from "./annotation-store";
 import {
   cancelQuestionBasePrewarm,
+  interruptQuestionBasePrewarm,
   prewarmQuestionBase,
 } from "./question-base-prewarm";
 
@@ -21,12 +22,19 @@ export function scheduleQuestionBasePrewarm(
   let visible = false;
   let idle: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const cancel = () => {
+  const clearScheduled = () => {
     if (idle !== null) window.cancelIdleCallback(idle);
     if (timer !== null) clearTimeout(timer);
     idle = null;
     timer = null;
+  };
+  const cancel = () => {
+    clearScheduled();
     cancelQuestionBasePrewarm(session, scope);
+  };
+  const interrupt = () => {
+    clearScheduled();
+    interruptQuestionBasePrewarm(session, scope);
   };
   const run = () => {
     idle = null;
@@ -71,7 +79,7 @@ export function scheduleQuestionBasePrewarm(
       else cancel();
     }
   });
-  const onInteraction = () => cancel();
+  const onInteraction = () => interrupt();
   const onVisibility = () => {
     if (document.hidden) cancel();
     else schedule();

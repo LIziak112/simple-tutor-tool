@@ -2,6 +2,7 @@ import type { AttemptQuestionPublic } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   cancelQuestionBasePrewarm,
+  interruptQuestionBasePrewarm,
   prewarmQuestionBase,
 } from "./question-base-prewarm";
 import { scheduleQuestionBasePrewarm } from "./schedule-question-base-prewarm";
@@ -9,6 +10,7 @@ import { scheduleQuestionBasePrewarm } from "./schedule-question-base-prewarm";
 vi.mock("./question-base-prewarm", () => ({
   prewarmQuestionBase: vi.fn(async () => {}),
   cancelQuestionBasePrewarm: vi.fn(),
+  interruptQuestionBasePrewarm: vi.fn(),
 }));
 const session = { origin: "https://warm.test", studentId: "s" };
 const scope = { attemptId: "a", questionId: "q", phase: "scratch" as const };
@@ -163,9 +165,9 @@ it("交互停止后才空闲预备，任意按下会取消在途任务", async (
     idle();
     await Promise.resolve();
     expect(prewarmQuestionBase).toHaveBeenCalledOnce();
-    vi.mocked(cancelQuestionBasePrewarm).mockClear();
+    vi.mocked(interruptQuestionBasePrewarm).mockClear();
     document.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    expect(cancelQuestionBasePrewarm).toHaveBeenCalled();
+    expect(interruptQuestionBasePrewarm).toHaveBeenCalled();
   } finally {
     stop();
   }
