@@ -118,10 +118,10 @@ test("混合题型外框共享父列边缘，草稿偏好与助教开合后保�
   for (const card of [second, first, second]) {
     await card.getByRole("button", { name: "AI 助教", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "关闭 AI 助教", exact: true }),
+      page.getByRole("button", { name: "收起 AI 助教", exact: true }),
     ).toBeVisible();
     await page
-      .getByRole("button", { name: "关闭 AI 助教", exact: true })
+      .getByRole("button", { name: "收起 AI 助教", exact: true })
       .click();
     await aligned();
   }

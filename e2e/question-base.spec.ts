@@ -69,8 +69,26 @@ async function expectFormulaInBase(page: Page) {
 }
 
 async function generateBase(page: Page) {
+  const image = page.getByAltText("题面底图");
+  const previousUrl = (await image.count())
+    ? await image.getAttribute("src")
+    : null;
   await page.getByRole("button", { name: "生成底图", exact: true }).click();
-  await expect(page.getByAltText("题面底图")).toBeVisible();
+  // 等待本轮生成结束，再读取本轮结果与图片。
+  await expect(
+    page.getByRole("button", { name: "生成底图", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByTestId("layout-result")).toBeVisible();
+  await expect(image).toBeVisible();
+  if (previousUrl) await expect(image).not.toHaveAttribute("src", previousUrl);
+  await expect
+    .poll(() =>
+      image.evaluate(
+        (element: HTMLImageElement) =>
+          element.complete && element.naturalWidth > 0,
+      ),
+    )
+    .toBe(true);
   await expect(page.locator('[data-slot="question-base-host"]')).toHaveCount(0);
 }
 

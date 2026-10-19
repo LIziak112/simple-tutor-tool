@@ -129,7 +129,11 @@ test("两设备按题合并、同题裁决、离开设置后从云端恢复草�
     await a1.getByRole("button", { name: /圈画题干/ }).click();
     const annotation = a1.locator('canvas[data-slot="annotation-canvas"]');
     await expect(annotation).toBeVisible();
+    await expect(annotation).toHaveAttribute("data-input-enabled", "true");
     await drawStrokeWithPointerEvents(annotation);
+    await expect(
+      a1.getByRole("button", { name: /圈画题干.*已有 1 笔/ }),
+    ).toBeVisible();
     await a.getByRole("button", { name: "作答", exact: true }).click();
     await expect(a.getByTestId("draft-status")).toHaveText("全部已保存", {
       timeout: 30_000,
