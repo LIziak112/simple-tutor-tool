@@ -62,6 +62,7 @@ function useInvalidateConnections() {
       },
     );
     void queryClient.invalidateQueries({ queryKey: studentAiConnectionsKey });
+    void queryClient.invalidateQueries({ queryKey: ["student", "ai-status"] });
   };
 }
 
@@ -93,6 +94,9 @@ export function useDeleteStudentAiConnection() {
       deleteStudentAiConnectionApi(connectionId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: studentAiConnectionsKey });
+      void queryClient.invalidateQueries({
+        queryKey: ["student", "ai-status"],
+      });
     },
   });
 }

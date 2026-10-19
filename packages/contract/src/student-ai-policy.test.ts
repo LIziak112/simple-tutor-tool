@@ -243,6 +243,14 @@ it("默认提示词模板三键齐全，恢复默认（显式 null）合法", ()
   ).toBe(true);
 });
 
+it("默认回答帮助学生回到解题，并使用前端支持的数学格式", () => {
+  for (const body of Object.values(DEFAULT_AI_PROMPT_TEMPLATES)) {
+    expect(body).toContain("下一步");
+    expect(body).toContain("数学公式");
+    expect(body).toContain("不虚构");
+  }
+});
+
 it("暂存提交带可选 baseUpdatedAt 版本锚点，非字符串拒绝", () => {
   expect(
     studentQuickButtonsPutRequestSchema.safeParse({

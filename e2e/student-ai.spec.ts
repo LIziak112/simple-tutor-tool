@@ -185,6 +185,17 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       await expect(page.getByRole("textbox")).toHaveCount(1);
       const draft = page.getByRole("textbox", { name: "补充问题" });
       await draft.fill("保留这份提问草稿");
+      await page.getByRole("button", { name: "AI 设置" }).click();
+      await page.getByRole("link", { name: "管理 AI 连接" }).click();
+      await page.waitForURL("**/s/settings/ai**");
+      await page.getByRole("link", { name: "返回原题" }).click();
+      await expect(workspace).toBeVisible();
+      await expect(draft).toHaveValue("保留这份提问草稿");
+      expect(await control.requests()).toHaveLength(0);
+      // 路由往返后重新标记；后续布局切换必须保持这份新挂载题面。
+      await q1.evaluate((element) =>
+        element.setAttribute("data-learning-marker", "original"),
+      );
       for (const viewport of [
         { width: 768, height: 1024 },
         { width: 320, height: 740 },
@@ -218,7 +229,18 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       await page
         .getByRole("button", { name: "查看回信" })
         .click({ timeout: 30_000 });
-      await expect(page.getByRole("textbox")).toHaveCount(1);
+      await expect(page.getByRole("textbox")).toHaveCount(0);
+      await page.getByRole("button", { name: "专注阅读" }).click();
+      await expect(
+        page.getByRole("dialog", { name: "本题 AI 回复" }),
+      ).toBeVisible();
+      await expect(page.getByRole("textbox")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(workspace).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "专注阅读" }),
+      ).toBeFocused();
+      await page.getByRole("button", { name: "这一步没懂" }).click();
       const followup = page.getByRole("textbox", { name: "继续追问本题" });
       await followup.fill("为什么这样判断？");
       await page.keyboard.press("Escape");
@@ -231,9 +253,66 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       await expect(
         page.getByRole("textbox", { name: "补充问题" }),
       ).toBeVisible();
+      const firstTaskCount = (await control.requests()).length;
+      await expect(page.getByText(/问法：请检查我新写的步骤/)).toBeVisible();
+      expect(firstTaskCount).toBe(1);
+      const updatedReply =
+        "## 核对新步骤\n\n这里先比较左右两边。\n\n\\[x+2=5 \\quad \\text{或} \\quad x+2=-5\\]\n\n## 再试一次\n\n回题检查符号。" +
+        `\n\n| 步骤 | 说明 |\n| --- | --- |\n| ${"long-step".repeat(40)} | 长表格可单独横向查看 |`;
+      await control.script({ body: chatCompletionJson(updatedReply) });
+      await draft.fill("我新写的步骤：先比较左右两边，再判断符号。");
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+      await page
+        .getByRole("button", { name: "查看回信" })
+        .click({ timeout: 30_000 });
+      await expect(
+        page.getByRole("heading", { name: "核对新步骤", exact: true }),
+      ).toBeVisible();
+      await expect(page.locator(".ai-reply-markdown .katex")).toHaveCount(1);
+      await page.setViewportSize({ width: 320, height: 740 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth + 1,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `e2e/.artifacts/ai-workspace-narrow-${test.info().project.name}.png`,
+        fullPage: true,
+      });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.getByRole("button", { name: "回题试一试" }).click();
+      await expect(workspace).toHaveCount(0);
+      await expect(q1).toBeInViewport();
+      const sameUrl = page.url();
+      await page.getByRole("button", { name: /助教队列：/ }).click();
+      await page
+        .getByRole("list", { name: "助教任务列表" })
+        .getByRole("button", { name: "查看回复", exact: true })
+        .first()
+        .click();
+      await expect(workspace).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "核对新步骤", exact: true }),
+      ).toBeVisible();
+      expect(page.url()).toBe(sameUrl);
+      await expect(q1).toHaveAttribute("data-learning-marker", "original");
       await page.screenshot({
         path: `e2e/.artifacts/ai-learning-flow-${test.info().project.name}.png`,
       });
+      await page.goto("/s/records");
+      await page.getByRole("button", { name: /助教队列：/ }).click();
+      await page
+        .getByRole("list", { name: "助教任务列表" })
+        .getByRole("button", { name: "查看回复", exact: true })
+        .first()
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "核对新步骤", exact: true }),
+      ).toBeVisible();
+      expect(new URL(page.url()).pathname).toMatch(/^\/s\/attempts\//);
+      await expect
+        .poll(() => new URL(page.url()).searchParams.has("aiTask"))
+        .toBe(false);
     } finally {
       await seed.context.close();
     }
@@ -335,12 +414,16 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         if (el === null) throw new Error("第 1 题卡不存在");
         (el as HTMLElement & { __sai33Marker?: boolean }).__sai33Marker = true;
       });
-      await page
-        .getByRole("article", { name: "第 1 题", exact: true })
-        .getByRole("button", { name: "AI 助教", exact: true })
-        .click();
-      // 状态与通道收在「AI 设置」抽屉：展开后断言，随后收起保持对话区高度
-      await page.getByRole("button", { name: "AI 设置" }).click();
+      await expect(
+        page.getByRole("region", { name: "第 1 题的 AI 助教" }),
+      ).toBeVisible();
+      // 从连接设置返回已恢复工作区，无需再次点题旁入口。
+      await expect(
+        page.getByRole("button", { name: "发送", exact: true }),
+      ).toBeEnabled();
+      const settingsToggle = page.getByRole("button", { name: "AI 设置" });
+      if ((await settingsToggle.getAttribute("aria-expanded")) !== "true")
+        await settingsToggle.click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
@@ -352,7 +435,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       const reply1 = "页内回信：1 大于 0，是正数，判断为正确。";
       await control.script({ body: chatCompletionJson(reply1) });
       const question1 = "这道判断题怎么做？";
-      await page.getByPlaceholder("写下你想问的问题").fill(question1);
+      await page.getByPlaceholder("补充卡住的地方（可不填）").fill(question1);
       await page.getByRole("button", { name: "发送", exact: true }).click();
 
       const outbound1 = await control.waitForRequest((r) =>
@@ -390,6 +473,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       // —— ⑥ 追问：新一轮出站（沿用原任务），第二条脚本回信 ——
       const reply2 = "追问回信：注意题目问的是符号判断。";
       await control.script({ body: chatCompletionJson(reply2) });
+      await page.getByRole("button", { name: "这一步没懂" }).click();
       await page.getByTestId("followup-input").fill("能再具体一点吗？");
       await page.getByRole("button", { name: "追问", exact: true }).click();
       const outbound2 = await control.waitForRequest((r) =>
@@ -433,6 +517,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       for (let i = 0; i < 2 && (await viewButtons.count()) > 0; i++) {
         await viewButtons.first().click();
       }
+      await expect(
+        page.getByRole("region", { name: "本题对话记录" }).getByText(reply2),
+      ).toBeVisible();
+      await page.getByText("之前的回复", { exact: true }).click();
       await expect(
         page.getByRole("region", { name: "本题对话记录" }).getByText(reply1),
       ).toBeVisible({ timeout: 15_000 });
@@ -599,7 +687,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
-      const composer = page.getByPlaceholder("写下你想问的问题");
+      const composer = page.getByPlaceholder("补充卡住的地方（可不填）");
       await composer.waitFor({ state: "visible" });
       await composer.fill("断网场景求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -645,7 +733,9 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       // 通道选择在「AI 设置」抽屉里
       await page.getByRole("button", { name: "AI 设置" }).click();
       await page.getByRole("button", { name: "上下文链接" }).click();
-      await page.getByPlaceholder("写下你想问的问题").fill("链接通道求助");
+      await page
+        .getByPlaceholder("补充卡住的地方（可不填）")
+        .fill("链接通道求助");
       await page.getByRole("button", { name: "复制 AI 链接" }).click();
 
       // 链接以文本呈现（不依赖剪贴板；复制按钮的权限差异归真机/组件测试）

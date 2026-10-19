@@ -288,7 +288,8 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
       ),
     ).toBeInTheDocument();
     // 打开即视为已读（本地即时，不等下一轮轮询）
-    expect(screen.getByText("已查看回复")).toBeInTheDocument();
+    expect(screen.queryByText("收到新回复（未读）")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "这一步没懂" }));
     expect(
       screen.getByRole("textbox", { name: "继续追问本题" }),
     ).toBeInTheDocument();
@@ -363,21 +364,28 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
     });
 
     // 展开旧任务追问：明确基于原发送材料（不悄悄附新笔迹）
+    fireEvent.click(screen.getByText("之前的求助（1）"));
     const olderCard = screen.getByTestId("ai-task-card-task-old");
     fireEvent.click(
       within(olderCard).getByRole("button", { name: "查看对话" }),
     );
+    const selectedOldCard = screen.getByTestId("ai-task-card-task-old");
+    fireEvent.click(
+      within(selectedOldCard).getByRole("button", { name: "这一步没懂" }),
+    );
     expect(
-      within(olderCard).getByText(/追问基于原发送材料/),
+      within(selectedOldCard).getByText(/追问基于原发送材料/),
     ).toBeInTheDocument();
 
     vi.mocked(mockedFollowup).mockResolvedValue({
       task: makeTask({ id: "task-old", status: "created", hasReply: true }),
       messages: [],
     });
-    const input = within(olderCard).getByTestId("followup-input");
+    const input = within(selectedOldCard).getByTestId("followup-input");
     fireEvent.change(input, { target: { value: "第二步为什么消项？" } });
-    fireEvent.click(within(olderCard).getByRole("button", { name: "追问" }));
+    fireEvent.click(
+      within(selectedOldCard).getByRole("button", { name: "追问" }),
+    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -606,6 +614,7 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
     expect(screen.getByText("先从定义出发。")).toBeInTheDocument();
 
     // 追问（同题对话；携带 mutationId）
+    fireEvent.click(screen.getByRole("button", { name: "这一步没懂" }));
     const input = screen.getByTestId("followup-input");
     fireEvent.change(input, { target: { value: "那第二问呢？" } });
     fireEvent.click(screen.getByRole("button", { name: "追问" }));
@@ -689,7 +698,7 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(mockedOpened).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("已查看回复")).toBeInTheDocument();
+    expect(screen.queryByText("收到新回复（未读）")).toBeNull();
   });
 
   it("轮询错误退避：失败后按 30s（3 倍）间隔重试，退避窗口内不风暴", async () => {

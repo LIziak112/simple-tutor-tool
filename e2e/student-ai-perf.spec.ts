@@ -266,7 +266,7 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
         delayMs: 9000,
       });
       const question = `性能采样求助-${suffix}`;
-      await page.getByPlaceholder("写下你想问的问题").fill(question);
+      await page.getByPlaceholder("补充卡住的地方（可不填）").fill(question);
       await page.getByRole("button", { name: "发送", exact: true }).click();
       // 面板开合以「已发问题文本」可见性为准（在途任务不保证占位符形态）
       const sentText = page.getByText(question).first();

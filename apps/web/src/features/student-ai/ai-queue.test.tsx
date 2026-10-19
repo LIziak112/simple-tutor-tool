@@ -132,12 +132,16 @@ function LocationProbe() {
   );
 }
 
-function renderPanel(client = makeClient(), initialEntry = "/s/records") {
+function renderPanel(
+  client = makeClient(),
+  initialEntry = "/s/records",
+  props: import("./AiQueuePanel").AiQueueNavigationProps = {},
+) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route path="/s/records" element={<AiQueuePanel />} />
+          <Route path="/s/records" element={<AiQueuePanel {...props} />} />
           <Route path="*" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
@@ -165,6 +169,37 @@ beforeEach(() => {
   mockedOpened.mockResolvedValue(
     queueTask({ replyDeliveredAt: "2026-10-16T02:02:00.000Z" }),
   );
+});
+
+it("本卷队列原地打开任务，保存失败留在列表且不提前记已读", async () => {
+  const task = queueTask();
+  mockedList.mockResolvedValue({
+    tasks: [
+      task,
+      queueTask({
+        id: "other",
+        attemptId: OLD_ATTEMPT_ID,
+        question: "其他练习的问题",
+      }),
+    ],
+    nextCursor: null,
+    origins: { [task.id]: originOf() },
+  });
+  const openTask = vi.fn(async () => false);
+  renderPanel(makeClient(), "/s/records", {
+    currentAttemptId: ATTEMPT_ID,
+    onOpenTask: openTask,
+  });
+  const view = await screen.findByRole("button", { name: "查看回复" });
+  expect(screen.queryByText("其他练习的问题")).toBeNull();
+  fireEvent.click(view);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "材料恢复或重试保存",
+  );
+  expect(openTask).toHaveBeenCalledWith(task);
+  expect(screen.queryByTestId("location")).toBeNull();
+  expect(mockedDetail).not.toHaveBeenCalled();
+  expect(mockedOpened).not.toHaveBeenCalled();
 });
 
 // ---------- 组1：列表形态 ----------
@@ -244,7 +279,7 @@ describe("SAI-23 队列列表形态", () => {
     expect(button.className).toContain("shrink-0");
     const label = button.querySelector("span.hidden.sm\\:inline");
     expect(label).not.toBeNull();
-    expect(label?.textContent).toContain("队列");
+    expect(label?.textContent).toContain("求助记录");
   });
 });
 
@@ -436,14 +471,13 @@ describe("SAI-23 队列导航", () => {
     });
     renderPanel(makeClient(), "/s/records?status=pending&page=2");
     fireEvent.click(await screen.findByRole("button", { name: "查看回复" }));
-    expect(await screen.findByText("这是回信正文")).toBeInTheDocument();
-    expect(mockedOpened).toHaveBeenCalledWith(expect.any(String));
-    fireEvent.click(await screen.findByRole("button", { name: "回到本题" }));
+    expect(mockedDetail).not.toHaveBeenCalled();
+    expect(mockedOpened).not.toHaveBeenCalled();
     const probe = await screen.findByTestId("location");
     expect(probe.textContent).toBe(
       `/s/attempts/${ATTEMPT_ID}?aiFrom=${encodeURIComponent(
         "/s/records?status=pending&page=2",
-      )}`,
+      )}&aiQuestion=q-1&aiTask=9f0f6d5e-1111-4111-8111-9f0f6d5e0001`,
     );
   });
 

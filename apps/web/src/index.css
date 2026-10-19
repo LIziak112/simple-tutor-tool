@@ -283,8 +283,18 @@
 }
 
 /* 题下正文使用阅读字号，限宽仅作用于回复，不改变题卡外框。 */
-.ai-companion-inline .ai-reply-markdown {
-  @apply max-w-[70ch] text-base leading-[1.75];
+.ai-reply-markdown {
+  @apply mx-auto w-full max-w-[40em] text-base leading-[1.75];
+}
+.ai-reply-markdown :is(.katex-display, pre, table) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.ai-reply-markdown table {
+  display: block;
+}
+[data-slot="ai-companion-panel"] {
+  scroll-margin-top: calc(var(--attempt-header-height, 64px) + 12px);
 }
 
 /* 教师工作台语义色独立作用于页面与显式标记的弹层，不改学生主题。 */

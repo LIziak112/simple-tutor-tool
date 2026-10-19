@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
 import {
@@ -17,6 +17,21 @@ import {
  */
 
 describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
+  it("模型的LaTeX定界符能排版，兼容后仍受公式预算限制", () => {
+    const view = render(
+      <AiReplyMarkdown
+        source={String.raw`\[x+2=5 \quad \text{或} \quad x+2=-5\]`}
+      />,
+    );
+    expect(view.container.querySelector(".katex")).not.toBeNull();
+    view.rerender(<AiReplyMarkdown source={`\\[${"a".repeat(1100)}\\]`} />);
+    expect(view.container.querySelector(".katex")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "查看安全纯文本" }));
+    expect(
+      screen.getByRole("region", { name: "回复纯文本" }).textContent,
+    ).toContain("a".repeat(1100));
+    expect(view.container.querySelector("script")).toBeNull();
+  });
   it("正常 Markdown（列表/粗体/行内与块级公式）照常渲染，公式走 KaTeX", () => {
     const { container } = render(
       <AiReplyMarkdown

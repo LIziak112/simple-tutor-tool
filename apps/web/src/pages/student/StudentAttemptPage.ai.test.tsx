@@ -366,7 +366,9 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       openAiSettings();
       expect(await screen.findByText(`当前：${label}`)).toBeInTheDocument();
       // 发送（无材料勾选）→ 任务按 attempt+question 创建
-      const textarea = await screen.findByPlaceholderText("写下你想问的问题");
+      const textarea = await screen.findByPlaceholderText(
+        "补充卡住的地方（可不填）",
+      );
       fireEvent.change(textarea, { target: { value: "这道题的思路是什么" } });
       fireEvent.click(screen.getByRole("button", { name: "发送" }));
       await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
@@ -392,7 +394,9 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
     );
-    const textarea = await screen.findByPlaceholderText("写下你想问的问题");
+    const textarea = await screen.findByPlaceholderText(
+      "补充卡住的地方（可不填）",
+    );
     fireEvent.change(textarea, { target: { value: "帮我看看" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() =>

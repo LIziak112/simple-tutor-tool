@@ -11,6 +11,7 @@ import type {
   StudentQuickButtonsData,
 } from "@tutor/contract";
 import { useState } from "react";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentAiShareTicketApi,
@@ -116,7 +117,9 @@ function SessionHarness({ paperLabel = "草稿" }: { paperLabel?: string }) {
   );
   return (
     <QueryClientProvider client={client}>
-      <BoundHarness paperLabel={paperLabel} />
+      <MemoryRouter>
+        <BoundHarness paperLabel={paperLabel} />
+      </MemoryRouter>
     </QueryClientProvider>
   );
 }
@@ -180,7 +183,7 @@ beforeEach(() => {
 });
 
 describe("AiCompanionSession 接线组件（SAI-20）", () => {
-  it("快捷问法替换自写草稿后可还原，且选择与还原均不发送", async () => {
+  it("选择问法保留自写问题，且选择不发送", async () => {
     render(<SessionHarness />);
     await openBound();
     fireEvent.change(screen.getByLabelText("补充问题"), {
@@ -188,13 +191,23 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     });
     fireEvent.click(await screen.findByRole("button", { name: "查当前步骤" }));
     expect(screen.getByLabelText("补充问题")).toHaveValue(
-      "请检查我当前书写的步骤",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "还原原问题" }));
-    expect(screen.getByLabelText("补充问题")).toHaveValue(
       "我算到第二步，为什么符号变了？",
     );
     expect(mockedCreate).not.toHaveBeenCalled();
+  });
+
+  it("不必输入文字就能发送默认提示，发送前明确材料范围", async () => {
+    render(<SessionHarness />);
+    await openBound();
+    expect(screen.getByText(/本次会发送：题目与当前作答/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0].question).toContain("提示");
+    expect(mockedCreate.mock.calls[0]?.[0].materials).toEqual({
+      annotation: false,
+      draft: false,
+      formalInk: false,
+    });
   });
 
   it("快捷问法读取失败时可就地重试并继续输入", async () => {
@@ -235,7 +248,7 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 
-  it("快捷按钮只填入提问框，发送仍由主按钮触发", async () => {
+  it("快捷按钮选择意图，发送仍由主按钮触发", async () => {
     render(<SessionHarness />);
     await openBound();
     expect(
@@ -247,9 +260,8 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "查当前步骤" }));
     });
-    expect(screen.getByLabelText("补充问题")).toHaveValue(
-      "请检查我当前书写的步骤",
-    );
+    expect(screen.getByLabelText("补充问题")).toHaveValue("");
+    expect(screen.getByText("问法：请检查我当前书写的步骤")).toBeVisible();
     expect(mockedCreate).not.toHaveBeenCalled();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -281,29 +293,15 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     expect(mockedCreate).not.toHaveBeenCalled();
   });
 
-  it("输入并发送走草稿正文；空正文被拦给提示", async () => {
+  it("补充问题不丢失，发送使用学生的具体问题", async () => {
     render(<SessionHarness />);
     await openBound();
-    const sendButton = await screen.findByRole("button", { name: "发送" });
-    await act(async () => {
-      fireEvent.click(sendButton);
+    fireEvent.change(screen.getByLabelText("补充问题"), {
+      target: { value: "帮我讲解思路" },
     });
-    expect(
-      await screen.findByText("先写一下你的问题，再点发送"),
-    ).toBeInTheDocument();
-    expect(mockedCreate).not.toHaveBeenCalled();
-    await act(async () => {
-      fireEvent.change(screen.getByLabelText("补充问题"), {
-        target: { value: "帮我讲解思路" },
-      });
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(mockedCreate).mock.calls[0]?.[0].question).toBe(
-      "帮我讲解思路",
-    );
+    expect(mockedCreate.mock.calls[0]?.[0].question).toBe("帮我讲解思路");
   });
 
   it("link 成功后主按钮「复制 AI 链接」再点击是真复制：不空正文报错、不新建任务", async () => {

@@ -624,7 +624,12 @@ function LessonAnswerInner({
               <span aria-live="polite">{session.saveStatus}</span>
             </>
           }
-          actions={<AiQueueButton />}
+          actions={
+            <AiQueueButton
+              currentAttemptId={aiCompanion.send.attemptId}
+              onOpenTask={aiCompanion.openTask}
+            />
+          }
         />
 
         {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
@@ -761,7 +766,10 @@ function LessonCompletedView({
           }
           actions={
             <>
-              <AiQueueButton />
+              <AiQueueButton
+                currentAttemptId={aiCompanion.send.attemptId}
+                onOpenTask={aiCompanion.openTask}
+              />
               <Button asChild variant="outline" className="min-h-11">
                 <Link to={`/s/attempts/${attemptId}`}>查看结果</Link>
               </Button>

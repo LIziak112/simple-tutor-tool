@@ -669,7 +669,10 @@ export function AttemptResultView({
             }))}
             released={released}
           />
-          <AiQueueButton />
+          <AiQueueButton
+            currentAttemptId={aiCompanion.send.attemptId}
+            onOpenTask={aiCompanion.openTask}
+          />
         </>
       }
       rootRef={rootRef}

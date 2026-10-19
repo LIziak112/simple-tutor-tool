@@ -1,5 +1,5 @@
 import type { AiChannel, StudentQuickButton } from "@tutor/contract";
-import { useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { AiLinkShareBox } from "./AiLinkShareBox";
 import { CHANNEL_LABEL } from "./ai-channel-label";
@@ -25,6 +25,8 @@ import {
  * 输入隔离、幂等重试、在途守卫与迟到回执守卫都在 useAiSendController；
  * 本文件只做呈现与转发，路由往返见 route-integration。
  */
+
+export const DEFAULT_HELP_PROMPT = "请给我一点提示，帮助我自己试出下一步。";
 
 /** 手写题的纸面材料名（正式手写）；其余题型的纸面材料为「草稿」 */
 export const FORMAL_INK_PAPER_LABEL = "正式手写";
@@ -75,7 +77,7 @@ export function AiCompanionStatusPanel({
             type="button"
             variant="ghost"
             size="sm"
-            className="min-h-9 self-start px-2"
+            className="min-h-11 self-start px-2"
             onClick={() => send.refreshStatus()}
           >
             重试读取
@@ -97,12 +99,12 @@ export function AiCompanionStatusPanel({
           </p>
           {send.needsSetup ? (
             // 无可用连接/需首次知情：给设置入口，主动作由输入区如实禁用
-            <a
-              href={settingsHref}
+            <Link
+              to={settingsHref}
               className="min-h-11 self-start text-xs font-medium text-primary underline-offset-4 hover:underline"
             >
               去设置连接
-            </a>
+            </Link>
           ) : (
             // 通道为本地会话选择：换通道零出站，在途任务保持创建时通道
             <fieldset aria-label="选择通道" className="flex flex-wrap gap-1">
@@ -112,7 +114,7 @@ export function AiCompanionStatusPanel({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-9 px-2"
+                  className="min-h-11 px-2"
                   aria-pressed={send.effectiveChannel === channel}
                   onClick={() => send.setChannelOverride(channel)}
                 >
@@ -120,6 +122,14 @@ export function AiCompanionStatusPanel({
                 </Button>
               ))}
             </fieldset>
+          )}
+          {!send.needsSetup && (
+            <Link
+              to={settingsHref}
+              className="flex min-h-11 self-start items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              管理 AI 连接
+            </Link>
           )}
           {status.taskSummary.total > 0 && (
             <p className="text-xs text-muted-foreground">
@@ -139,13 +149,10 @@ export function AiCompanionStatusPanel({
 }
 
 /**
- * 快捷问法只填入，支持还原自写草稿；不在选择阶段发送。
+ * 快捷问法作为意图独立保存，保留学生自写问题；选择阶段不发送。
  */
 export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
   const query = useStudentQuickButtons();
-  const [previousTexts, setPreviousTexts] = useState<
-    ReadonlyMap<string, string>
-  >(() => new Map());
   if (query.isPending)
     return (
       <p className="text-xs text-muted-foreground" aria-live="polite">
@@ -174,7 +181,7 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
   if (buttons.length === 0)
     return (
       <p className="text-xs text-muted-foreground">
-        暂无启用的快捷按钮，可在设置中添加
+        默认给一点提示，也可以直接补充问题。
       </p>
     );
   const disabled =
@@ -190,21 +197,9 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
       disabled={disabled}
       aria-pressed={
         send.boundQuestionId !== null &&
-        send.draftOf(send.boundQuestionId).text === button.prompt
+        send.draftOf(send.boundQuestionId).presetId === button.id
       }
-      onClick={() => {
-        const questionId = send.boundQuestionId;
-        if (questionId !== null) {
-          const text = send.draftOf(questionId).text;
-          setPreviousTexts((previous) =>
-            previous.has(questionId)
-              ? previous
-              : new Map(previous).set(questionId, text),
-          );
-        }
-        send.selectPreset(button.id);
-        send.setText(button.prompt);
-      }}
+      onClick={() => send.selectPreset(button.id, button.prompt)}
     >
       {button.name}
     </Button>
@@ -222,35 +217,6 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
           </div>
         </details>
       )}
-      {send.boundQuestionId !== null &&
-        previousTexts.has(send.boundQuestionId) && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="min-h-11"
-            onClick={() => {
-              const questionId = send.boundQuestionId;
-              if (questionId === null) return;
-              send.setText(previousTexts.get(questionId) ?? "");
-              setPreviousTexts((previous) => {
-                const next = new Map(previous);
-                next.delete(questionId);
-                return next;
-              });
-            }}
-          >
-            还原原问题
-          </Button>
-        )}
-      {send.boundQuestionId !== null &&
-        buttons.some(
-          (button) =>
-            send.draftOf(send.boundQuestionId ?? "").text === button.prompt,
-        ) && (
-          <p role="status" className="basis-full text-xs text-muted-foreground">
-            已填入问法，可修改后发送
-          </p>
-        )}
     </div>
   );
 }
@@ -292,13 +258,20 @@ export function AiCompanionComposer({
       : null;
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-end gap-2">
-        <label className="min-w-0 flex-1">
+      <p className="text-sm text-muted-foreground">
+        本次会发送：题目与当前作答{draft.selection.annotation ? " · 圈画" : ""}
+        {draft.selection[paperKind] ? ` · ${paperLabel}（发送时核对）` : ""}
+      </p>
+      <p className="text-sm font-medium">
+        问法：{draft.intentPrompt ?? DEFAULT_HELP_PROMPT}
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-[min(100%,12rem)] flex-1">
           <span className="sr-only">补充问题</span>
           <textarea
             rows={2}
             className="max-h-40 min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            placeholder="写下你想问的问题"
+            placeholder="补充卡住的地方（可不填）"
             value={draft.text}
             disabled={!bound || sending}
             onChange={(event) => send.setText(event.target.value)}
@@ -321,7 +294,13 @@ export function AiCompanionComposer({
               void send.retryCopyLink();
               return;
             }
-            void send.send();
+            const prompt = draft.intentPrompt;
+            void send.send({
+              requireSteps: draft.presetId === "check-current",
+              questionText: prompt
+                ? `${prompt}${draft.text.trim() ? `\n\n我的问题：${draft.text.trim()}` : ""}`
+                : draft.text.trim() || DEFAULT_HELP_PROMPT,
+            });
           }}
         >
           {sending ? "发送中…" : mainActionLabel(send.effectiveChannel)}
@@ -333,7 +312,7 @@ export function AiCompanionComposer({
           className="flex flex-wrap items-center gap-x-4 gap-y-1"
         >
           {materials.annotation && (
-            <label className="flex min-h-11 items-center gap-1.5 text-xs">
+            <label className="flex min-h-11 items-center gap-1.5 text-sm">
               <input
                 type="checkbox"
                 className="size-4"
@@ -345,7 +324,7 @@ export function AiCompanionComposer({
             </label>
           )}
           {materials.paper && (
-            <label className="flex min-h-11 items-center gap-1.5 text-xs">
+            <label className="flex min-h-11 items-center gap-1.5 text-sm">
               <input
                 type="checkbox"
                 className="size-4"

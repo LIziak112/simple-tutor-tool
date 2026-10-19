@@ -40,16 +40,18 @@ export const AiCompanionTrigger = forwardRef<
     label?: string | undefined;
     /** 题卡入口的局部选中态；未传时跟随共享面板状态 */
     expanded?: boolean | undefined;
+    questionId?: string | undefined;
     onPress?: ((trigger: HTMLButtonElement) => void) | undefined;
   }
 >(function AiCompanionTrigger(
-  { controller, label = "AI 助教", expanded, onPress },
+  { controller, label = "AI 助教", expanded, onPress, questionId },
   ref,
 ) {
   const isExpanded = expanded ?? controller.open;
   return (
     <Button
       ref={ref}
+      data-ai-trigger-question={questionId}
       type="button"
       variant="ghost"
       className={`size-11 shrink-0 p-0 ${isExpanded ? "bg-primary/10 text-primary" : ""}`}
@@ -128,6 +130,7 @@ interface PanelBodyProps {
   onDockClose?: () => void;
   /** 会话状态区（SAI-20 真实注入；未注入时保留合成的诚实回退） */
   status?: ReactNode;
+  compactStatus?: ReactNode;
   /** 需要立刻让用户看见的设置问题（未连接/状态读取失败）——抽屉自动展开 */
   settingsAttention?: boolean | undefined;
   /** 合成子内容（空间测试注入；生产留空显示占位） */
@@ -147,6 +150,7 @@ export function AiCompanionPanelBody({
   dockCloseRef,
   onDockClose,
   status,
+  compactStatus,
   settingsAttention = false,
   quickButtons,
   composer,
@@ -208,6 +212,7 @@ export function AiCompanionPanelBody({
           </Button>
         )}
       </div>
+      {!settingsOpen && !settingsAttention && compactStatus}
       {settingsOpen && (
         <div
           id={settingsId}

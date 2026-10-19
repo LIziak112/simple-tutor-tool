@@ -178,7 +178,7 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
-      const composer = page.getByPlaceholder("写下你想问的问题");
+      const composer = page.getByPlaceholder("补充卡住的地方（可不填）");
       await composer.waitFor({ state: "visible" });
       await composer.fill("提交失败场景求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -544,7 +544,9 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
-      await page.getByPlaceholder("写下你想问的问题").fill("作废前场景求助");
+      await page
+        .getByPlaceholder("补充卡住的地方（可不填）")
+        .fill("作废前场景求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const createdRes = await taskCreated;
       const oldTaskId = ((await createdRes.json()) as { data: { id: string } })
@@ -598,7 +600,7 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
       await expect(
-        page.getByText("本题还没有求助记录"),
+        page.getByText("卡住了也没关系。先拿一点提示，再自己试一步。"),
         "新卷不得携带旧卷任务",
       ).toBeVisible();
     } finally {

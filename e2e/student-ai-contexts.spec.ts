@@ -209,7 +209,9 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .click();
       await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
-      await page.getByPlaceholder("写下你想问的问题").fill("课程练习求助");
+      await page
+        .getByPlaceholder("补充卡住的地方（可不填）")
+        .fill("课程练习求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const outbound = await control.waitForRequest((r) =>
         r.body.includes("课程练习求助"),
@@ -270,7 +272,9 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .click();
       await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
-      await page.getByPlaceholder("写下你想问的问题").fill("错题重练求助");
+      await page
+        .getByPlaceholder("补充卡住的地方（可不填）")
+        .fill("错题重练求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const reOutbound = await control.waitForRequest((r) =>
         r.body.includes("错题重练求助"),
@@ -353,7 +357,9 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .click();
       await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
-      await page.getByPlaceholder("写下你想问的问题").fill("讲练页求助");
+      await page
+        .getByPlaceholder("补充卡住的地方（可不填）")
+        .fill("讲练页求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const outbound = await control.waitForRequest((r) =>
         r.body.includes("讲练页求助"),

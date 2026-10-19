@@ -284,6 +284,10 @@ function AnswerView({
         ? `第 ${questionIndexById.get(questionId)} 题`
         : null,
     currentQuestionId,
+    ready:
+      materialRecovery.state === "ready" ||
+      (materialRecovery.state === "failed" &&
+        materialRecovery.verified === true),
     editor,
   });
   const navigatorCollapsed = aiCompanion.controller.navigatorCollapsed;
@@ -610,7 +614,12 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
-          actions={<AiQueueButton />}
+          actions={
+            <AiQueueButton
+              currentAttemptId={aiCompanion.send.attemptId}
+              onOpenTask={aiCompanion.openTask}
+            />
+          }
           status={(closeDetails) => (
             <div className="flex min-w-0 items-center gap-2">
               <p

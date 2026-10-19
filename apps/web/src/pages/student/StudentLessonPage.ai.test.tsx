@@ -339,7 +339,9 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "lesson-q1"),
     );
     // 发送：任务按 attempt+question 创建（题级 completed 由服务端裁决）
-    const textarea = await screen.findByPlaceholderText("写下你想问的问题");
+    const textarea = await screen.findByPlaceholderText(
+      "补充卡住的地方（可不填）",
+    );
     fireEvent.change(textarea, { target: { value: "这题的解析没看懂" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
@@ -366,7 +368,9 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "lesson-q1"),
     );
-    const textarea = await screen.findByPlaceholderText("写下你想问的问题");
+    const textarea = await screen.findByPlaceholderText(
+      "补充卡住的地方（可不填）",
+    );
     fireEvent.change(textarea, { target: { value: "帮我看看这题" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     // 状态区与发送失败提示共用单源文案（studentModeReasonText）——至少呈现

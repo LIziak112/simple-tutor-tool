@@ -602,10 +602,12 @@ export function AiConnectionManager() {
           )}
         </section>
       )}
-      {savedFrom && from !== null && !draft.touched && view === "overview" && (
+      {from !== null && !draft.touched && view === "overview" && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-sm">
           <p className="text-muted-foreground">
-            连接已保存，回到原题即可主动发起求助。
+            {savedFrom
+              ? "连接已保存，回到原题即可主动发起求助。"
+              : "回到原题继续学习，尚未发送的问题会保留。"}
           </p>
           <Link
             to={from}

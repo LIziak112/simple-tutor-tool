@@ -7,7 +7,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { AiQueuePanel } from "@/features/student-ai/AiQueuePanel";
+import {
+  type AiQueueNavigationProps,
+  AiQueuePanel,
+} from "@/features/student-ai/AiQueuePanel";
 import {
   aiQueueBadgeOf,
   useStudentAiQueueSummary,
@@ -49,7 +52,7 @@ function QueueBadge({
 }
 
 /** 队列入口按钮 + 抽屉（顶栏/作答页头部动作位共用） */
-export function AiQueueButton() {
+export function AiQueueButton(props: AiQueueNavigationProps) {
   const [open, setOpen] = useState(false);
   const summaryQuery = useStudentAiQueueSummary();
   const summary = summaryQuery.data;
@@ -73,7 +76,7 @@ export function AiQueueButton() {
         ) : (
           <ListTodo aria-hidden className="size-5" />
         )}
-        <span className="hidden text-sm sm:inline">队列</span>
+        <span className="hidden text-sm sm:inline">求助记录</span>
         {(badge?.pendingCount ?? 0) > 0 ||
         (badge?.unreadReplyCount ?? 0) > 0 ? (
           <span className="flex items-center gap-1" aria-hidden>
@@ -96,10 +99,10 @@ export function AiQueueButton() {
           className="flex w-full flex-col gap-0 sm:max-w-md"
         >
           <SheetHeader className="border-b border-border">
-            <SheetTitle className="text-left">助教队列</SheetTitle>
+            <SheetTitle className="text-left">求助记录</SheetTitle>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <AiQueuePanel onNavigated={() => setOpen(false)} />
+            <AiQueuePanel {...props} onNavigated={() => setOpen(false)} />
           </div>
         </SheetContent>
       </Sheet>

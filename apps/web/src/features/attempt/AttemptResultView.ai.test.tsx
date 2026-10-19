@@ -240,7 +240,9 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     );
     // 复盘态无材料勾选（结果页无作答会话，不提供圈画/草稿/手写材料）
     expect(screen.queryByRole("group", { name: "随信材料" })).toBeNull();
-    const textarea = await screen.findByPlaceholderText("写下你想问的问题");
+    const textarea = await screen.findByPlaceholderText(
+      "补充卡住的地方（可不填）",
+    );
     fireEvent.change(textarea, { target: { value: "这道题为什么错？" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));

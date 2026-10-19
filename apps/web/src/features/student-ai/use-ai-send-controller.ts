@@ -8,6 +8,7 @@ import type {
   AttemptQuestionPublic,
   StudentQuickButton,
 } from "@tutor/contract";
+import { AI_QUESTION_MAX_CHARS } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AiCaptureSnapshot,
@@ -26,6 +27,7 @@ import { randomUuid } from "@/lib/uuid";
 import { buildAiLinkPrompt } from "./ai-link-prompt";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { errorMessageOf } from "./error-text";
+import { useAiDraftMap } from "./use-ai-draft-map";
 
 /**
  * SAI-20 单题发送控制器（B11）：伴学栏的会话输入与幂等发送编排。
@@ -69,6 +71,7 @@ export interface AiQuestionDraft {
   readonly text: string;
   readonly selection: AiMaterialSelection;
   readonly presetId: string | null;
+  readonly intentPrompt?: string;
 }
 
 export type AiSendPhase = "idle" | "sending" | "sent" | "failed";
@@ -206,8 +209,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
   const { attemptId, questions, active } = config;
   const queryClient = useQueryClient();
   const [boundQuestionId, setBoundQuestionId] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<ReadonlyMap<string, AiQuestionDraft>>(
-    new Map(),
+  const [drafts, setDrafts] = useAiDraftMap<AiQuestionDraft>(
+    "question",
+    attemptId,
   );
   const [channelOverride, setChannelOverride] = useState<AiChannel | null>(
     null,
@@ -235,7 +239,6 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     epochRef.current += 1;
     pendingRef.current = null;
     setBoundQuestionId(null);
-    setDrafts(new Map());
     setChannelOverride(null);
     setSendState(IDLE_STATE);
     // 链接不跨账号会话：旧账号票据/任务 id 一并作废
@@ -260,6 +263,8 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     queryKey: statusKey ?? ["student", "ai-status", "none"],
     queryFn: () => fetchStudentAiStatusApi(attemptId, boundQuestionId ?? ""),
     enabled: statusKey !== null && active,
+    // 打开是一次新的可用性核对，不能沿用设置页保存前的「未配置」缓存。
+    staleTime: 0,
     refetchOnWindowFocus: false,
   });
   const historyQuery = useQuery({
@@ -325,7 +330,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
         return new Map(previous).set(questionId, patch(current));
       });
     },
-    [],
+    [setDrafts],
   );
 
   const setText = useCallback(
@@ -353,9 +358,17 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     [boundQuestionId, config, patchDraft],
   );
   const selectPreset = useCallback(
-    (presetId: string | null) => {
-      if (boundQuestionId !== null)
-        patchDraft(boundQuestionId, (draft) => ({ ...draft, presetId }));
+    (
+      presetId: string | null,
+      intentPrompt?: string,
+      questionId = boundQuestionId,
+    ) => {
+      if (questionId !== null)
+        patchDraft(questionId, (draft) => ({
+          ...draft,
+          presetId,
+          ...(intentPrompt !== undefined ? { intentPrompt } : {}),
+        }));
     },
     [boundQuestionId, patchDraft],
   );
@@ -364,7 +377,13 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     channelOverride ?? status?.channelDefault ?? null;
 
   const send = useCallback(
-    async (input: { quick?: StudentQuickButton } = {}) => {
+    async (
+      input: {
+        quick?: StudentQuickButton;
+        questionText?: string;
+        requireSteps?: boolean;
+      } = {},
+    ) => {
       const questionId = boundQuestionId;
       if (questionId === null) return;
       const question = questions.find((item) => item.id === questionId);
@@ -372,7 +391,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
       if (sendingRef.current) return; // 在途重复点击：一次动作（ref 同步可见）
       const draft = draftOf(questionId);
       const quick = input.quick;
-      const text = quick ? quick.prompt : draft.text.trim();
+      const text = quick
+        ? quick.prompt
+        : (input.questionText ?? draft.text).trim();
       // 材料可选面过滤（SAI-22）：来源页面不可采集的种类一律为关——快捷按钮
       // 的附件偏好同样被过滤（结果页复盘恒空材料；讲练不采集圈画）
       const availability = config.materials ?? DEFAULT_AI_MATERIALS;
@@ -383,6 +404,26 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
         formalInk: wanted.formalInk && availability.paper,
       };
       const quickButtonId = quick?.id ?? null;
+      if (
+        input.requireSteps &&
+        !Object.values(selection).some(Boolean) &&
+        draft.text.trim() === ""
+      ) {
+        setSendState({
+          phase: "failed",
+          message: "请勾选要检查的草稿或圈画，也可以在输入框写出你的步骤",
+          questionId,
+        });
+        return;
+      }
+      if (text.length > AI_QUESTION_MAX_CHARS) {
+        setSendState({
+          phase: "failed",
+          message: `问题与问法合计最多 ${AI_QUESTION_MAX_CHARS} 字，请精简后重新发送`,
+          questionId,
+        });
+        return;
+      }
       if (!quick && text === "") {
         setSendState({
           phase: "failed",
@@ -744,6 +785,18 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     setText,
     toggleMaterial,
     selectPreset,
+    /** 主动换稿与失败重试不同：保留输入选择，退出旧票据并放弃旧冻结动作。 */
+    prepareNew: (questionId = boundQuestionId) => {
+      if (questionId === null || sendingRef.current) return;
+      if (pendingRef.current?.questionId === questionId)
+        pendingRef.current = null;
+      setLinkShare((previous) =>
+        previous?.questionId === questionId ? null : previous,
+      );
+      setSendState((previous) =>
+        previous.questionId === questionId ? IDLE_STATE : previous,
+      );
+    },
     channelOverride,
     setChannelOverride,
     effectiveChannel,

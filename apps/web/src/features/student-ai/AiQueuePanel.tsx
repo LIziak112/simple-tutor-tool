@@ -1,4 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
 import type { AiTaskOriginSummary, AiTaskPublic } from "@tutor/contract";
 import { Loader2, MessageSquareReply, RefreshCw } from "lucide-react";
 import { useState } from "react";
@@ -12,8 +11,6 @@ import {
   useStudentAiQueueSummary,
 } from "@/features/student-ai/ai-queue-queries";
 import { errorMessageOf } from "@/features/student-ai/error-text";
-import { fetchStudentAiTaskApi, openStudentAiReplyApi } from "@/lib/api";
-import { AiReplyMarkdown } from "./AiReplyMarkdown";
 
 /**
  * SAI-23 助教队列面板（B12；需求 §7.1/§8）。列表载荷只含展示与导航定位
@@ -106,8 +103,6 @@ function AiQueueItem({
   onNavigate,
   onAction,
   actionPending,
-  expanded,
-  onToggleReply,
 }: {
   task: AiTaskPublic;
   origin: AiTaskOriginSummary | undefined;
@@ -117,8 +112,6 @@ function AiQueueItem({
   ) => void;
   onAction: (taskId: string, action: AiQueueAction) => void;
   actionPending: boolean;
-  expanded: boolean;
-  onToggleReply: (task: AiTaskPublic) => void;
 }) {
   const metaParts: string[] = [
     origin?.questionNo !== null && origin?.questionNo !== undefined
@@ -145,11 +138,8 @@ function AiQueueItem({
         <button
           type="button"
           className="flex min-h-11 min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg px-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-          onClick={() =>
-            task.status === "replied"
-              ? onToggleReply(task)
-              : onNavigate(task, origin)
-          }
+          disabled={target === null}
+          onClick={() => onNavigate(task, origin)}
         >
           <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
             <span
@@ -186,7 +176,7 @@ function AiQueueItem({
             <Button
               type="button"
               variant="secondary"
-              className="min-h-9 px-3 text-xs"
+              className="min-h-11 px-3 text-sm"
               onClick={() => onNavigate(task, origin)}
             >
               回到本题
@@ -195,10 +185,10 @@ function AiQueueItem({
               <Button
                 type="button"
                 variant="ghost"
-                className="min-h-9 px-3 text-xs"
-                onClick={() => onToggleReply(task)}
+                className="min-h-11 px-3 text-sm"
+                onClick={() => onNavigate(task, origin)}
               >
-                {expanded ? "收起回复" : "查看回复"}
+                查看回复
               </Button>
             )}
           </>
@@ -212,7 +202,7 @@ function AiQueueItem({
             key={action}
             type="button"
             variant="ghost"
-            className="min-h-9 px-3 text-xs"
+            className="min-h-11 px-3 text-sm"
             disabled={actionPending}
             onClick={() => onAction(task.id, action)}
           >
@@ -220,56 +210,26 @@ function AiQueueItem({
           </Button>
         ))}
       </div>
-      {expanded && task.status === "replied" && <AiQueueReply task={task} />}
     </li>
   );
 }
 
-function AiQueueReply({ task }: { task: AiTaskPublic }) {
-  const query = useQuery({
-    queryKey: ["student", "ai-task-detail", task.id],
-    queryFn: () => fetchStudentAiTaskApi(task.id),
-  });
-  if (query.isPending)
-    return (
-      <p className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
-        正在载入回信…
-      </p>
-    );
-  if (query.isError)
-    return (
-      <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
-        <p className="text-xs text-destructive">回信读取失败</p>
-        <Button
-          type="button"
-          variant="ghost"
-          className="min-h-9 self-start px-2 text-xs"
-          onClick={() => void query.refetch()}
-        >
-          重试读取
-        </Button>
-      </div>
-    );
-  const reply = query.data?.messages.find(
-    (message) => message.role === "assistant",
-  );
-  return (
-    <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
-      {reply ? (
-        <AiReplyMarkdown source={reply.contentMd} />
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          已收到回信，当前暂不能查看正文
-        </p>
-      )}
-    </div>
-  );
-}
-
 /** 队列面板主体（放抽屉/独立视图共用；分组 = 归档三态的 exclude/only 两面） */
-export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
+export interface AiQueueNavigationProps {
+  currentAttemptId?: string | undefined;
+  onOpenTask?: ((task: AiTaskPublic) => Promise<boolean>) | undefined;
+}
+export function AiQueuePanel({
+  onNavigated,
+  currentAttemptId,
+  onOpenTask,
+}: AiQueueNavigationProps & { onNavigated?: () => void }) {
   const [group, setGroup] = useState<"active" | "archived">("active");
-  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [scope, setScope] = useState<"current" | "all">(
+    currentAttemptId ? "current" : "all",
+  );
+  const [opening, setOpening] = useState(false);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
   const archived = group === "active" ? "exclude" : "only";
   const summaryQuery = useStudentAiQueueSummary();
   const listQuery = useStudentAiQueue(archived);
@@ -280,25 +240,47 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
   const summary = summaryQuery.data;
   const badge = summary !== undefined ? aiQueueBadgeOf(summary) : null;
   const pages = listQuery.data?.pages ?? [];
-  const tasks = pages.flatMap((page) => page.tasks);
+  const tasks = pages
+    .flatMap((page) => page.tasks)
+    .filter((task) => scope === "all" || task.attemptId === currentAttemptId);
 
-  const handleNavigate = (
+  const handleNavigate = async (
     task: AiTaskPublic,
     origin: AiTaskOriginSummary | undefined,
   ) => {
+    if (opening) return;
     const target = aiQueueTargetOf(task, origin);
     if (target === null) return;
+    if (task.attemptId === currentAttemptId && onOpenTask) {
+      setOpening(true);
+      try {
+        if (await onOpenTask(task)) onNavigated?.();
+        else
+          setNavigationError(
+            "暂时无法打开本题，请先完成材料恢复或重试保存，再点这条记录。",
+          );
+      } catch {
+        setNavigationError("打开失败，请检查本机材料保存状态后重试。");
+      } finally {
+        setOpening(false);
+      }
+      return;
+    }
     // 返回来源位置：携带当前完整位置（含筛选 query），目标页返回时回这里
     const source = new URL(
       location.pathname + location.search,
       "https://student.invalid",
     );
-    source.searchParams.delete("aiFrom");
+    for (const key of ["aiFrom", "aiTask", "aiQuestion"])
+      source.searchParams.delete(key);
     const from = source.pathname + source.search;
     onNavigated?.();
-    void navigate(
-      `${target}${target.includes("?") ? "&" : "?"}aiFrom=${encodeURIComponent(from)}`,
-    );
+    const targetParams = new URLSearchParams({
+      aiFrom: from,
+      aiQuestion: task.questionId,
+      aiTask: task.id,
+    });
+    void navigate(`${target}?${targetParams}`);
   };
 
   const handleAction = (taskId: string, action: AiQueueAction) => {
@@ -327,7 +309,7 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
             <Button
               type="button"
               variant="ghost"
-              className="ml-1 min-h-9 px-2 text-xs"
+              className="ml-1 min-h-11 px-2 text-xs"
               onClick={() => void summaryQuery.refetch()}
             >
               重试
@@ -335,6 +317,38 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
           </span>
         )}
       </div>
+      {currentAttemptId && (
+        <fieldset className="flex flex-wrap gap-2" aria-label="求助记录范围">
+          <Button
+            type="button"
+            variant={scope === "current" ? "secondary" : "ghost"}
+            aria-pressed={scope === "current"}
+            className="min-h-11"
+            onClick={() => setScope("current")}
+          >
+            本次练习
+          </Button>
+          <Button
+            type="button"
+            variant={scope === "all" ? "secondary" : "ghost"}
+            aria-pressed={scope === "all"}
+            className="min-h-11"
+            onClick={() => setScope("all")}
+          >
+            全部来源
+          </Button>
+        </fieldset>
+      )}
+      {navigationError && (
+        <p role="alert" className="text-sm text-destructive">
+          {navigationError}
+        </p>
+      )}
+      {opening && (
+        <p role="status" className="text-sm">
+          正在保存并打开本题…
+        </p>
+      )}
       <div
         role="tablist"
         aria-label="队列分组"
@@ -342,7 +356,7 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
       >
         {(
           [
-            ["active", "进行中"],
+            ["active", "未归档"],
             ["archived", "已归档"],
           ] as const
         ).map(([key, label]) => (
@@ -393,53 +407,45 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
       ) : tasks.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           {group === "active"
-            ? "队列为空——在题目旁的「AI 助教」发起求助后，任务会出现在这里"
+            ? scope === "current"
+              ? "当前已加载记录中没有本次练习的求助，可加载更多或切换全部来源。"
+              : "队列为空——在题目旁的「AI 助教」发起求助后，任务会出现在这里"
             : "还没有已归档的任务"}
         </p>
       ) : (
-        <>
-          <ul className="flex flex-col gap-2" aria-label="助教任务列表">
-            {tasks.map((task) => (
-              <AiQueueItem
-                key={task.id}
-                task={task}
-                origin={
-                  pages.find((page) => page.origins?.[task.id] !== undefined)
-                    ?.origins?.[task.id]
-                }
-                onNavigate={handleNavigate}
-                onAction={handleAction}
-                actionPending={actionMutation.isPending}
-                expanded={expandedTaskId === task.id}
-                onToggleReply={(next) => {
-                  setExpandedTaskId((previous) =>
-                    previous === next.id ? null : next.id,
-                  );
-                  if (next.replyDeliveredAt === null)
-                    void openStudentAiReplyApi(next.id);
-                }}
-              />
-            ))}
-          </ul>
-          {listQuery.hasNextPage && (
-            <Button
-              type="button"
-              variant="secondary"
-              className="min-h-11"
-              disabled={!listQuery.hasNextPage || listQuery.isFetchingNextPage}
-              onClick={() => void listQuery.fetchNextPage()}
-            >
-              {listQuery.isFetchingNextPage ? (
-                <>
-                  <Loader2 aria-hidden className="size-4 animate-spin" />
-                  正在载入更多…
-                </>
-              ) : (
-                "加载更多"
-              )}
-            </Button>
+        <ul className="flex flex-col gap-2" aria-label="助教任务列表">
+          {tasks.map((task) => (
+            <AiQueueItem
+              key={task.id}
+              task={task}
+              origin={
+                pages.find((page) => page.origins?.[task.id] !== undefined)
+                  ?.origins?.[task.id]
+              }
+              onNavigate={handleNavigate}
+              onAction={handleAction}
+              actionPending={actionMutation.isPending}
+            />
+          ))}
+        </ul>
+      )}
+      {listQuery.hasNextPage && (
+        <Button
+          type="button"
+          variant="secondary"
+          className="min-h-11"
+          disabled={!listQuery.hasNextPage || listQuery.isFetchingNextPage}
+          onClick={() => void listQuery.fetchNextPage()}
+        >
+          {listQuery.isFetchingNextPage ? (
+            <>
+              <Loader2 aria-hidden className="size-4 animate-spin" />
+              正在载入更多…
+            </>
+          ) : (
+            "加载更多"
           )}
-        </>
+        </Button>
       )}
     </div>
   );

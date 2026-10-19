@@ -1,14 +1,16 @@
 import "katex/dist/katex.min.css";
 
 import { cn } from "cn";
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { Button } from "@/components/ui/button";
 import { rehypeMathFallback } from "@/features/markdown/rehype-math-fallback";
+import { normalizeAiReplyMath, replyTextPage } from "./ai-reply-format";
 import {
   aiReplySanitizeSchema,
   inspectAiReplySafety,
@@ -57,19 +59,71 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
   source,
   className,
 }: AiReplyMarkdownProps) {
-  const safety = inspectAiReplySafety(source);
+  const [textOpen, setTextOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  // 先检查原始字节，再规范化并重新核对公式与节点预算。
+  const initial = inspectAiReplySafety(source);
+  const normalized = initial.ok ? normalizeAiReplyMath(source) : source;
+  const safety = initial.ok ? inspectAiReplySafety(normalized) : initial;
   if (!safety.ok) {
+    const plain = replyTextPage(source, page);
     return (
-      <p
-        role="alert"
-        className="rounded-lg border border-border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground"
-      >
-        {safety.message}
-      </p>
+      <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
+        <p role="alert">{safety.message}</p>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => setTextOpen(!textOpen)}
+        >
+          {textOpen ? "收起原文" : "查看安全纯文本"}
+        </Button>
+        {textOpen && (
+          <>
+            <p className="text-muted-foreground">
+              原文仅按文字展示，不执行公式、图片或链接。
+            </p>
+            <section
+              className="whitespace-pre-wrap break-words font-sans text-base leading-7"
+              aria-label="回复纯文本"
+            >
+              {plain.text}
+            </section>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={plain.page === 0}
+                onClick={() => setPage(plain.page - 1)}
+              >
+                上一段
+              </Button>
+              <span role="status">
+                第 {plain.page + 1} / {plain.count} 段
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={plain.page + 1 === plain.count}
+                onClick={() => setPage(plain.page + 1)}
+              >
+                下一段
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     );
   }
   return (
-    <div className={cn("rich-markdown text-sm ai-reply-markdown", className)}>
+    <div
+      className={cn(
+        "rich-markdown text-base leading-7 ai-reply-markdown",
+        className,
+      )}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[
@@ -79,7 +133,7 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
         ]}
         components={aiReplyComponents}
       >
-        {stripReplyImages(source)}
+        {stripReplyImages(normalized)}
       </ReactMarkdown>
     </div>
   );

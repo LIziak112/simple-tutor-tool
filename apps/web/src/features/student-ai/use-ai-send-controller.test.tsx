@@ -221,6 +221,80 @@ afterEach(() => {
 });
 
 describe("useAiSendController（SAI-20 先测 6 条）", () => {
+  it("主动准备新稿会退出旧链接结果，不撤销旧票据也不自动发送", async () => {
+    stubClipboard(async () => {});
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+      view.result.current.setText("旧稿的问题");
+    });
+    await act(async () => view.result.current.send());
+    expect(view.result.current.linkShare).not.toBeNull();
+    act(() => view.result.current.prepareNew(QUESTION_A.id));
+    expect(view.result.current.linkShare).toBeNull();
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedRevokeShare).not.toHaveBeenCalled();
+  });
+  it("失败后的普通重试沿用原稿，主动换新稿即使问题相同也重新采集", async () => {
+    const view = renderController();
+    await openOnA(view);
+    act(() => {
+      view.result.current.setText("检查我的步骤");
+      view.result.current.toggleMaterial("annotation");
+    });
+    mockedUpload.mockRejectedValueOnce(new Error("上传失败"));
+    await act(async () => view.result.current.send());
+    expect(view.result.current.sendState.phase).toBe("failed");
+    act(() => view.result.current.prepareNew(QUESTION_A.id));
+    await act(async () => view.result.current.send());
+    expect(mockedCapture).toHaveBeenCalledTimes(2);
+    expect(mockedCreate.mock.calls[0]?.[0].mutationId).not.toBe(
+      mockedCreate.mock.calls[1]?.[0].mutationId,
+    );
+  });
+  it("打开时重新确认连接，不能沿用新鲜但已过时的未配置缓存", async () => {
+    const view = renderController();
+    const key = ["student", "ai-status", "attempt-1", QUESTION_A.id];
+    view.client.setQueryDefaults(key, { staleTime: 60_000 });
+    view.client.setQueryData(
+      key,
+      connectedAiStatus({
+        channelDefault: null,
+        connectionReady: false,
+        firstUseRequired: true,
+      }),
+    );
+    await act(async () => view.result.current.bind(QUESTION_A.id));
+    await waitFor(() => expect(mockedStatus).toHaveBeenCalled());
+    await waitFor(() => expect(view.result.current.needsSetup).toBe(false));
+  });
+  it("检查新步骤必须提供材料或文字步骤，准备问法零出站", async () => {
+    const view = renderController();
+    await openOnA(view);
+    await act(async () =>
+      view.result.current.selectPreset("check-current", "检查我的新步骤"),
+    );
+    expect(mockedCreate).not.toHaveBeenCalled();
+    await act(async () =>
+      view.result.current.send({
+        questionText: "检查我的新步骤",
+        requireSteps: true,
+      }),
+    );
+    expect(mockedCreate).not.toHaveBeenCalled();
+    expect(view.result.current.sendState.message).toContain("勾选");
+    await act(async () => view.result.current.setText("第一步：先移项"));
+    await act(async () =>
+      view.result.current.send({
+        questionText: "检查我的新步骤：第一步先移项",
+        requireSteps: true,
+      }),
+    );
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedCreate.mock.calls[0]?.[0].question).toContain("第一步先移项");
+    expect(mockedCapture).not.toHaveBeenCalled();
+  });
   it("先测①：只打开、看历史、换通道没有 create 与采集调用", async () => {
     const view = renderController();
     await openOnA(view);

@@ -1,6 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiTaskPublic } from "@tutor/contract";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   fetchStudentAiTaskApi,
@@ -9,8 +15,15 @@ import {
   openStudentAiReplyApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
+import { AiReadingWorkspace } from "./AiReadingWorkspace";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
+import {
+  studentAiQueueKey,
+  studentAiQueueSummaryKey,
+  useStudentAiQueueAction,
+} from "./ai-queue-queries";
 import { errorMessageOf } from "./error-text";
+import { useAiDraftMap } from "./use-ai-draft-map";
 import { AI_MODE_LABEL, type AiSendController } from "./use-ai-send-controller";
 
 /**
@@ -43,13 +56,15 @@ const AI_TASKS_POLL_ERROR_INTERVAL_MS = 30_000;
 
 /** 追问上下文说明：不悄悄附新笔迹，新稿走新任务 */
 const FOLLOWUP_HINT =
-  "追问基于原发送材料，不会附带此后的新笔迹；想让 AI 参考新稿，请新建求助并选择材料。";
+  "追问基于原发送材料，不会附带新笔迹；检查新步骤时请使用新稿。";
 
 /** 处理状态事实文案（处理状态与查看状态分开，见 aiTaskPublicSchema） */
 function taskFactText(task: AiTaskPublic): string | null {
   switch (task.status) {
     case "created":
-      return "已发送，等待处理";
+      return task.channel === "mcp"
+        ? "已加入队列，等待外部 AI 领取"
+        : "已发送，等待处理";
     case "dispatching":
       return "正在发送给 AI…";
     case "uncertain":
@@ -116,7 +131,7 @@ function ConversationMessages({
     if (deliveryVersion !== null) onVisibleRef.current();
   }, [deliveryVersion]);
 
-  if (query.isPending)
+  if (query.isPending || query.isFetching)
     return (
       <p className="text-xs text-muted-foreground" aria-live="polite">
         正在载入对话…
@@ -130,7 +145,7 @@ function ConversationMessages({
           type="button"
           variant="ghost"
           size="sm"
-          className="min-h-9 self-start px-2"
+          className="min-h-11 self-start px-2"
           onClick={() => void query.refetch()}
         >
           重试读取
@@ -139,24 +154,48 @@ function ConversationMessages({
     );
   const messages = query.data?.messages ?? [];
   const hasAssistant = messages.some((message) => message.role === "assistant");
+  const latestAssistant = messages.findLastIndex(
+    (message) => message.role === "assistant",
+  );
+  const orderedMessages = messages.map((message, index) => ({
+    message,
+    index,
+  }));
+  if (latestAssistant >= 0) {
+    const [latest] = orderedMessages.splice(latestAssistant, 1);
+    if (latest) orderedMessages.unshift(latest);
+  }
   return (
     <div className="flex flex-col gap-3">
-      {messages.map((message) =>
-        message.role === "student" ? (
-          <div key={message.id} className="flex justify-end">
-            <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words">
-              <span className="sr-only">你：</span>
-              {message.contentMd}
-            </p>
+      {orderedMessages.map(({ message, index }) => {
+        if (message.role === "student")
+          return (
+            <details key={message.id} className="text-sm text-muted-foreground">
+              <summary className="min-h-11 cursor-pointer py-3 focus-visible:outline-2 focus-visible:outline-ring">
+                你问：
+                {index === messages.length - 2 ? "本次提问" : "之前的提问"}
+              </summary>
+              <p className="whitespace-pre-wrap break-words">
+                {message.contentMd}
+              </p>
+            </details>
+          );
+        const reply = (
+          <AiReplyMarkdown key={message.id} source={message.contentMd} />
+        );
+        return index === latestAssistant ? (
+          <div key={message.id} className="min-w-0">
+            {reply}
           </div>
         ) : (
-          <div key={message.id} className="flex min-w-0 gap-2">
-            <div className="min-w-0 flex-1">
-              <AiReplyMarkdown source={message.contentMd} />
-            </div>
-          </div>
-        ),
-      )}
+          <details key={message.id} className="min-w-0">
+            <summary className="min-h-11 cursor-pointer py-3 text-sm focus-visible:outline-2 focus-visible:outline-ring">
+              之前的回复
+            </summary>
+            {reply}
+          </details>
+        );
+      })}
       {/* 服务端门禁：禁用期详情不带 assistant 正文，只保留已收信事实 */}
       {!hasAssistant && (
         <p className="text-xs text-muted-foreground">
@@ -164,47 +203,6 @@ function ConversationMessages({
         </p>
       )}
     </div>
-  );
-}
-
-/** 任务进度三段（失败/取消不显示进度，只给事实文案） */
-const TASK_STEPS = ["已发送", "处理中", "已回复"] as const;
-const TASK_STEP_INDEX: Partial<Record<AiTaskPublic["status"], number>> = {
-  created: 0,
-  dispatching: 0,
-  uncertain: 0,
-  paused: 0,
-  claimed: 1,
-  replied: 2,
-};
-
-function TaskProgress({
-  status,
-  channel,
-}: {
-  status: AiTaskPublic["status"];
-  channel: AiTaskPublic["channel"];
-}) {
-  // 外部链接通道没有平台回信事实，不画平台进度（避免读成「已回复」）
-  if (channel === "link") return null;
-  const active = TASK_STEP_INDEX[status];
-  if (active === undefined) return null;
-  return (
-    <ol className="flex items-center gap-1 text-[0.6875rem]">
-      {TASK_STEPS.map((label, index) => (
-        <li
-          key={label}
-          aria-current={index === active ? "step" : undefined}
-          className={
-            index === active
-              ? "rounded-full bg-primary/10 px-1.5 py-0.5 font-medium text-primary"
-              : "px-1.5 py-0.5 text-muted-foreground"
-          }
-        >
-          {label}
-        </li>
-      ))}
-    </ol>
   );
 }
 
@@ -222,6 +220,11 @@ interface AiTaskCardProps {
   onFollowup: () => void;
   onNewRequest: () => void;
   onVisible: () => void;
+  onReturnToWork?: (() => void) | undefined;
+  editing: boolean;
+  onClarify: (quote: string) => void;
+  actionPending: boolean;
+  onAction: (action: "retry" | "resume") => void;
 }
 
 function AiTaskCard({
@@ -238,7 +241,24 @@ function AiTaskCard({
   onFollowup,
   onNewRequest,
   onVisible,
+  onReturnToWork,
+  editing,
+  onClarify,
+  actionPending,
+  onAction,
 }: AiTaskCardProps) {
+  const followupInputRef = useRef<HTMLTextAreaElement>(null);
+  const previousEditingRef = useRef(editing);
+  useLayoutEffect(() => {
+    if (editing && !previousEditingRef.current) {
+      followupInputRef.current?.focus({ preventScroll: true });
+      followupInputRef.current?.scrollIntoView?.({
+        block: "nearest",
+        behavior: "instant",
+      });
+    }
+    previousEditingRef.current = editing;
+  }, [editing]);
   const unread = task.hasReply && !read;
   const hasNewVersion =
     expanded &&
@@ -251,14 +271,37 @@ function AiTaskCard({
   return (
     <article
       data-testid={`ai-task-card-${task.id}`}
-      className="flex flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2.5 shadow-sm"
+      className="flex min-w-0 flex-col gap-3 py-2"
     >
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <TaskProgress status={task.status} channel={task.channel} />
-        <span className="text-xs text-muted-foreground">
-          材料 {formatSnapshotTime(task.snapshotAt)} ·{" "}
-          {AI_MODE_LABEL[task.modeAtSend]}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+        <span>依据：{formatSnapshotTime(task.snapshotAt)} 的题目与作答</span>
+        <details>
+          <summary className="flex min-h-11 cursor-pointer items-center text-primary focus-visible:outline-2 focus-visible:outline-ring">
+            查看材料
+          </summary>
+          <p>
+            发送时：{AI_MODE_LABEL[task.modeAtSend]}。这份材料不会随新笔迹改变。
+          </p>
+          {task.materials.length === 0 ? (
+            <p>本次没有附加手写图片。</p>
+          ) : (
+            <ul>
+              {task.materials.map((material) => (
+                <li key={material.id}>
+                  {material.kind === "annotation"
+                    ? "圈画"
+                    : material.kind === "draft"
+                      ? "草稿"
+                      : "正式手写"}{" "}
+                  · 第 {material.pageIndex + 1} 页 ·{" "}
+                  {material.state === "ready"
+                    ? "已上传"
+                    : (material.missingReason ?? "尚未就绪")}
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
       </div>
       {!expanded && <p className="line-clamp-2 text-sm">{task.question}</p>}
       {externalUnknown ? (
@@ -277,12 +320,12 @@ function AiTaskCard({
             收到新回复
           </p>
         </div>
-      ) : unread ? (
+      ) : unread && !expanded ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             size="sm"
-            className="min-h-10 px-3"
+            className="min-h-11 px-3"
             onClick={onToggle}
           >
             {expanded
@@ -295,77 +338,157 @@ function AiTaskCard({
             收到新回复（未读）
           </p>
         </div>
-      ) : task.hasReply ? (
+      ) : task.hasReply && !expanded ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             variant={expanded ? "ghost" : "outline"}
             size="sm"
-            className="min-h-9 self-start px-2"
+            className="min-h-11 self-start px-2"
             onClick={onToggle}
           >
             {expanded ? "收起对话" : "查看对话"}
           </Button>
-          <span className="text-xs text-muted-foreground">已查看回复</span>
+          {!expanded && (
+            <span className="text-xs text-muted-foreground">已查看回复</span>
+          )}
         </div>
       ) : fact !== null ? (
         <p className="text-xs text-muted-foreground">{fact}</p>
       ) : null}
+      {(["retry", "resume"] as const)
+        .filter((action) => task.allowedActions.includes(action))
+        .map((action) => (
+          <Button
+            key={action}
+            type="button"
+            variant="outline"
+            className="min-h-11 self-start"
+            disabled={actionPending}
+            onClick={() => onAction(action)}
+          >
+            {action === "retry" ? "重试这次求助" : "继续这次求助"}
+          </Button>
+        ))}
+      {expanded && unread && !hasNewVersion && (
+        <p role="status" className="text-sm text-muted-foreground">
+          收到新回复（未读）
+        </p>
+      )}
       {expanded && !externalUnknown && (
-        <div className="mt-1 flex flex-col gap-2 border-t border-border pt-2">
-          <ConversationMessages
-            taskId={task.id}
-            updatedAt={viewedVersion}
-            onVisible={onVisible}
-          />
-          {task.hasReply && (
-            <div className="flex flex-col gap-1">
-              <p className="text-xs text-muted-foreground">{FOLLOWUP_HINT}</p>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">
-                  继续问这份稿 · 材料 {formatSnapshotTime(task.snapshotAt)}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11"
-                  onClick={onNewRequest}
-                >
-                  带新稿另问
-                </Button>
+        <AiReadingWorkspace>
+          <div
+            data-task-reading={task.id}
+            className="flex min-w-0 flex-col gap-4"
+          >
+            <ConversationMessages
+              taskId={task.id}
+              updatedAt={viewedVersion}
+              onVisible={onVisible}
+            />
+            {task.hasReply && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {onReturnToWork && (
+                    <Button
+                      type="button"
+                      className="min-h-11"
+                      onClick={onReturnToWork}
+                    >
+                      回题试一试
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={!followupAllowed}
+                    onClick={() => {
+                      const selection = window.getSelection();
+                      const ownerOf = (node: Node | null | undefined) =>
+                        (node instanceof Element ? node : node?.parentElement)
+                          ?.closest("[data-task-reading]")
+                          ?.getAttribute("data-task-reading");
+                      const sameTask =
+                        ownerOf(selection?.anchorNode) === task.id &&
+                        ownerOf(selection?.focusNode) === task.id;
+                      onClarify(
+                        sameTask
+                          ? (selection?.toString().trim().slice(0, 600) ?? "")
+                          : "",
+                      );
+                      followupInputRef.current?.focus({ preventScroll: true });
+                    }}
+                  >
+                    这一步没懂
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11"
+                    onClick={onToggle}
+                  >
+                    收起对话
+                  </Button>
+                </div>
+                {editing && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      {FOLLOWUP_HINT}
+                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        继续问这份稿 · 材料{" "}
+                        {formatSnapshotTime(task.snapshotAt)}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-11"
+                        onClick={onNewRequest}
+                      >
+                        带新稿另问
+                      </Button>
+                    </div>
+                    <textarea
+                      ref={followupInputRef}
+                      data-testid="followup-input"
+                      aria-label="继续追问本题"
+                      rows={2}
+                      className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                      placeholder="继续追问本题"
+                      value={followupDraft}
+                      disabled={followupSending || !followupAllowed}
+                      onChange={(event) => onFollowupText(event.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="min-h-11 self-start px-3"
+                      disabled={followupSending || !followupAllowed}
+                      onClick={onFollowup}
+                    >
+                      {followupSending ? "追问中…" : "追问"}
+                    </Button>
+                    {!followupAllowed && (
+                      <p
+                        role="status"
+                        className="text-xs text-muted-foreground"
+                      >
+                        {fact ?? "当前不可追问，请查看 AI 设置"}
+                      </p>
+                    )}
+                    {followupError !== null && (
+                      <p role="alert" className="text-sm text-destructive">
+                        {followupError}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
-              <textarea
-                data-testid="followup-input"
-                aria-label="继续追问本题"
-                rows={2}
-                className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                placeholder="继续追问本题"
-                value={followupDraft}
-                disabled={followupSending || !followupAllowed}
-                onChange={(event) => onFollowupText(event.target.value)}
-              />
-              <Button
-                type="button"
-                size="sm"
-                className="min-h-9 self-start px-3"
-                disabled={followupSending || !followupAllowed}
-                onClick={onFollowup}
-              >
-                {followupSending ? "追问中…" : "追问"}
-              </Button>
-              {!followupAllowed && (
-                <p role="status" className="text-xs text-muted-foreground">
-                  {fact ?? "当前不可追问，请查看 AI 设置"}
-                </p>
-              )}
-              {followupError !== null && (
-                <p role="alert" className="text-xs text-muted-foreground">
-                  {followupError}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </AiReadingWorkspace>
       )}
     </article>
   );
@@ -377,6 +500,7 @@ export function useAiConversationController(
   active = true,
 ) {
   const queryClient = useQueryClient();
+  const taskAction = useStudentAiQueueAction();
   const attemptId = send.attemptId;
   const boundQuestionId = send.boundQuestionId;
 
@@ -434,8 +558,7 @@ export function useAiConversationController(
   };
   /** 用户是否亲手操作过展开（亲手收起后不再自动展开） */
   const expandedTouchedRef = useRef(new Set<string>());
-  // 已看过的回信直接展开（再打开面板不必多点一次）；未读保持折叠，
-  // 符合需求规格 §7.2「新回信不自动展开长回复」。
+  // 只在首次取得本题历史时恢复已读回信；后续其他设备的已读变更也不能抢走输入。
   const latestTask = send.history?.tasks[0];
   const latestReadId =
     latestTask?.hasReply === true && latestTask.replyDeliveredAt !== null
@@ -444,8 +567,10 @@ export function useAiConversationController(
   useEffect(() => {
     if (
       boundQuestionId === null ||
+      send.history === undefined ||
+      expandedByQuestion.has(boundQuestionId) ||
       expandedTouchedRef.current.has(boundQuestionId) ||
-      latestReadId === null
+      send.historyLoading
     )
       return;
     setExpandedByQuestion((previous) =>
@@ -453,12 +578,18 @@ export function useAiConversationController(
         ? previous
         : new Map(previous).set(boundQuestionId, latestReadId),
     );
-    setViewedVersions((previous) =>
-      previous.has(latestReadId) || latestTask === undefined
-        ? previous
-        : new Map(previous).set(latestReadId, latestTask.updatedAt),
-    );
-  }, [latestReadId, boundQuestionId, latestTask]);
+    if (latestReadId !== null && latestTask !== undefined)
+      setViewedVersions((previous) =>
+        new Map(previous).set(latestReadId, latestTask.updatedAt),
+      );
+  }, [
+    latestReadId,
+    boundQuestionId,
+    latestTask,
+    expandedByQuestion,
+    send.history,
+    send.historyLoading,
+  ]);
   /** 本会话已打开过回信的任务（与服务端 replyDeliveredAt 合判已读） */
   const [openedIds, setOpenedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -466,9 +597,27 @@ export function useAiConversationController(
   /** 同步守卫：连点/收起再展开不重复发 opened（幂等的客户端侧） */
   const openedRef = useRef<Set<string>>(new Set());
   /** 追问草稿按任务隔离（切任务互不覆盖） */
-  const [followupDrafts, setFollowupDrafts] = useState<
-    ReadonlyMap<string, string>
-  >(new Map());
+  const [followupDrafts, setFollowupDrafts] = useAiDraftMap<string>(
+    "followup",
+    attemptId,
+  );
+  const [editingTasks, setEditingTasks] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [preparingQuestions, setPreparingQuestions] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  useEffect(() => {
+    if (send.sendState.phase !== "sent" || send.sendState.questionId === null)
+      return;
+    const questionId = send.sendState.questionId;
+    setPreparingQuestions((previous) => {
+      if (!previous.has(questionId)) return previous;
+      const next = new Set(previous);
+      next.delete(questionId);
+      return next;
+    });
+  }, [send.sendState]);
   const [followupSending, setFollowupSending] = useState(false);
   const followupSendingRef = useRef(false);
   /** 在途/待重试的追问动作（同文重试复用同一幂等键，不重复计费出站） */
@@ -515,6 +664,10 @@ export function useAiConversationController(
           nextSet.add(deliveryKey);
           return nextSet;
         });
+        void queryClient.invalidateQueries({
+          queryKey: studentAiQueueSummaryKey,
+        });
+        void queryClient.invalidateQueries({ queryKey: studentAiQueueKey });
       })
       .catch(() => {
         openedRef.current.delete(deliveryKey);
@@ -567,13 +720,40 @@ export function useAiConversationController(
     }
   };
 
-  const startNew = () => {
-    if (boundQuestionId !== null)
-      expandedTouchedRef.current.add(boundQuestionId);
-    setExpandedId(null);
+  const startNew = (questionId = boundQuestionId) => {
+    if (questionId !== null) {
+      send.prepareNew(questionId);
+      expandedTouchedRef.current.add(questionId);
+      setPreparingQuestions((previous) => new Set(previous).add(questionId));
+      setExpandedByQuestion((previous) =>
+        new Map(previous).set(questionId, null),
+      );
+    }
   };
   return {
     expandedId,
+    taskAction,
+    preparingQuestions,
+    editingTasks,
+    clarify: (taskId: string, quote: string) => {
+      setEditingTasks((previous) => new Set(previous).add(taskId));
+      setFollowupDrafts((previous) => {
+        if ((previous.get(taskId) ?? "").trim()) return previous;
+        return new Map(previous).set(
+          taskId,
+          `${quote ? `关于这一步：“${quote}”\n` : ""}请换一种方式解释这一步。`,
+        );
+      });
+    },
+    openTask: (task: AiTaskPublic) => {
+      expandedTouchedRef.current.add(task.questionId);
+      setExpandedByQuestion((previous) =>
+        new Map(previous).set(task.questionId, task.id),
+      );
+      setViewedVersions((previous) =>
+        new Map(previous).set(task.id, task.updatedAt),
+      );
+    },
     viewedVersions,
     openedIds,
     followupDrafts,
@@ -598,6 +778,8 @@ interface ConversationProps {
   controller?: ConversationController;
   composer?: ReactNode;
   quickButtons?: ReactNode;
+  onReturnToWork?: (() => void) | undefined;
+  onCheckNewSteps?: (() => void) | undefined;
 }
 
 export function AiConversationPanel(props: ConversationProps) {
@@ -616,6 +798,8 @@ function AiConversationView({
   controller,
   composer,
   quickButtons,
+  onReturnToWork,
+  onCheckNewSteps,
 }: ConversationProps & { controller: ConversationController }) {
   const {
     expandedId,
@@ -651,7 +835,7 @@ function AiConversationView({
           type="button"
           variant="ghost"
           size="sm"
-          className="min-h-9 self-start px-2"
+          className="min-h-11 self-start px-2"
           onClick={() => {
             controller.retryHistory();
           }}
@@ -664,44 +848,125 @@ function AiConversationView({
     );
   const tasks = send.history?.tasks ?? [];
   const selectedTask = tasks.find((task) => task.id === expandedId);
-  const showComposer = selectedTask === undefined;
+  const failedHere =
+    send.sendState.phase === "failed" &&
+    send.sendState.questionId === boundQuestionId;
+  const sentHere =
+    send.sendState.phase === "sent" &&
+    send.sendState.questionId === boundQuestionId;
+  const showComposer =
+    selectedTask === undefined &&
+    (failedHere ||
+      !sentHere ||
+      controller.preparingQuestions.has(boundQuestionId) ||
+      send.linkShare?.questionId === boundQuestionId);
+  const renderTask = (task: AiTaskPublic) => (
+    <AiTaskCard
+      key={task.id}
+      task={task}
+      viewedVersion={viewedVersions.get(task.id) ?? task.updatedAt}
+      read={
+        task.replyDeliveredAt !== null ||
+        openedIds.has(`${task.id}:${task.updatedAt}`)
+      }
+      expanded={expandedId === task.id}
+      followupDraft={followupDrafts.get(task.id) ?? ""}
+      followupAllowed={task.allowedActions.includes("followup")}
+      followupSending={followupSending}
+      followupError={
+        followupError !== null && followupError.taskId === task.id
+          ? followupError.message
+          : null
+      }
+      onToggle={() => toggle(task)}
+      onFollowupText={(text) => controller.setFollowupText(task.id, text)}
+      onFollowup={() => void submitFollowup(task)}
+      editing={controller.editingTasks.has(task.id)}
+      onClarify={(quote) => controller.clarify(task.id, quote)}
+      onReturnToWork={onReturnToWork}
+      onNewRequest={onCheckNewSteps ?? (() => controller.startNew())}
+      onVisible={() => markOpened(task)}
+      actionPending={controller.taskAction.isPending}
+      onAction={(action) =>
+        controller.taskAction.mutate({ taskId: task.id, action })
+      }
+    />
+  );
   return (
     <div className="flex flex-col gap-3">
-      {tasks.length === 0 && (
-        <p className="text-xs text-muted-foreground">
-          本题还没有求助记录，可以写下问题或选择一种问法。
+      {controller.taskAction.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          操作未生效：
+          {errorMessageOf(controller.taskAction.error, "请检查网络后重试")}
         </p>
       )}
-      {tasks.map((task) => (
-        <AiTaskCard
-          key={task.id}
-          task={task}
-          viewedVersion={viewedVersions.get(task.id) ?? task.updatedAt}
-          read={
-            task.replyDeliveredAt !== null ||
-            openedIds.has(`${task.id}:${task.updatedAt}`)
-          }
-          expanded={expandedId === task.id}
-          followupDraft={followupDrafts.get(task.id) ?? ""}
-          followupAllowed={task.allowedActions.includes("followup")}
-          followupSending={followupSending}
-          followupError={
-            followupError !== null && followupError.taskId === task.id
-              ? followupError.message
-              : null
-          }
-          onToggle={() => toggle(task)}
-          onFollowupText={(text) => controller.setFollowupText(task.id, text)}
-          onFollowup={() => void submitFollowup(task)}
-          onNewRequest={controller.startNew}
-          onVisible={() => markOpened(task)}
-        />
-      ))}
+      {tasks.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          卡住了也没关系。先拿一点提示，再自己试一步。
+        </p>
+      )}
+
+      {tasks
+        .filter(
+          (task) =>
+            task.id !== (selectedTask ?? tasks[0])?.id &&
+            task.hasReply &&
+            task.replyDeliveredAt === null &&
+            !openedIds.has(`${task.id}:${task.updatedAt}`),
+        )
+        .map((task) => (
+          <div
+            key={task.id}
+            role="status"
+            className="flex flex-wrap items-center gap-2 text-sm"
+          >
+            <span>本题还有一条新回复</span>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => controller.openTask(task)}
+            >
+              查看这条回复
+            </Button>
+          </div>
+        ))}
+      {tasks[0] && renderTask(selectedTask ?? tasks[0])}
+      {tasks.length > 1 && (
+        <details>
+          <summary className="min-h-11 cursor-pointer py-3 text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">
+            之前的求助（{tasks.length - 1}）
+          </summary>
+          {tasks
+            .filter((task) => task.id !== (selectedTask ?? tasks[0])?.id)
+            .map(renderTask)}
+        </details>
+      )}
+      {onReturnToWork && tasks[0] && !tasks[0].hasReply && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          onClick={onReturnToWork}
+        >
+          继续做题，稍后查看回复
+        </Button>
+      )}
       {showComposer && (
         <>
           {quickButtons}
           {composer}
         </>
+      )}
+      {!showComposer && selectedTask === undefined && (
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-11 self-start"
+          onClick={() => controller.startNew()}
+        >
+          准备新的求助
+        </Button>
       )}
     </div>
   );

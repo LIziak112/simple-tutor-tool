@@ -1,4 +1,4 @@
-import type { AttemptQuestionPublic } from "@tutor/contract";
+import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
 import {
   type ReactNode,
   useCallback,
@@ -6,7 +6,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
+import { Button } from "@/components/ui/button";
 import {
   AiCompanionPanelBody,
   AiCompanionTrigger,
@@ -28,8 +29,11 @@ import {
   type AiMaterialAvailability,
   type AiSendController,
   DEFAULT_AI_MATERIALS,
+  studentModeReasonText,
   useAiSendController,
 } from "@/features/student-ai/use-ai-send-controller";
+import { fetchStudentAiTaskApi } from "@/lib/api";
+import { CHANNEL_LABEL } from "./ai-channel-label";
 
 /**
  * SAI-22 伴学栏共享装配（B12 执行步骤 1）：布局控制器 + 发送控制器 + 会话
@@ -77,11 +81,14 @@ export interface UseAiCompanionDockHost {
   readonly materials?: AiMaterialAvailability | undefined;
   /** 入口名（作答态「AI 助教」缺省；结果页完成后按 §7.5 传「AI 复盘」） */
   readonly triggerLabel?: string | undefined;
+  /** 作答材料恢复成功后才消费跨页定位；结果页无编辑材料时缺省为就绪。 */
+  readonly ready?: boolean | undefined;
 }
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const { attemptId, questions, currentQuestionId, editor, labelOf } = host;
   const location = useLocation();
+  const navigate = useNavigate();
   const railRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const returnAnchorRef = useRef<{
@@ -89,6 +96,9 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     top: number;
   } | null>(null);
   const [fixed, setFixed] = useState(false);
+  const [workingQuestions, setWorkingQuestions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [presentationError, setPresentationError] = useState<string | null>(
     null,
   );
@@ -99,9 +109,6 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     currentQuestionId,
     dockEnabled: fixed,
   });
-  const settingsHref = `/s/settings/ai?from=${encodeURIComponent(
-    location.pathname + location.search,
-  )}`;
   const send = useAiSendController({
     attemptId,
     questions,
@@ -115,10 +122,20 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
 
   // 只在显式打开成功后绑定；不再用阅读位置效应覆盖刚选中的题目。
   const bind = send.bind;
+  const entryOf = (questionId: string) =>
+    Array.from(
+      railRef.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-ai-trigger-question]",
+      ) ?? [],
+    ).find((element) => element.dataset.aiTriggerQuestion === questionId);
   const openForQuestion = async (
     questionId: string,
     trigger?: HTMLButtonElement,
   ) => {
+    if (host.ready === false) {
+      setPresentationError("作答材料尚未恢复，请完成恢复后重新打开助教");
+      return false;
+    }
     if (transitionRef.current) return false;
     transitionRef.current = true;
     try {
@@ -133,6 +150,14 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
           await host.flush(questionId);
         } catch {
           setPresentationError("当前稿件未保存，请重试保存后再切换题目");
+          return false;
+        }
+      }
+      if (!controller.open) {
+        try {
+          await host.flush(questionId);
+        } catch {
+          setPresentationError("当前稿件未保存，请重试保存后再打开助教");
           return false;
         }
       }
@@ -164,9 +189,99 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
 
   const materials = host.materials ?? DEFAULT_AI_MATERIALS;
   const conversation = useAiConversationController(send, controller.open);
+  const returnParams = new URLSearchParams(location.search);
+  for (const key of ["aiTask", "aiQuestion", "aiCompose"])
+    returnParams.delete(key);
+  if (boundQuestionId !== null) {
+    if (conversation.expandedId !== null) {
+      returnParams.set("aiTask", conversation.expandedId);
+      returnParams.set("aiQuestion", boundQuestionId);
+    } else returnParams.set("aiCompose", boundQuestionId);
+  }
+  const settingsHref = `/s/settings/ai?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}`;
+  const openComposeRef = useRef(async (_questionId: string) => false);
+  openComposeRef.current = async (questionId: string) => {
+    if (!questions.some((question) => question.id === questionId))
+      throw new Error("这道题已不在当前练习中，请重新选择题目");
+    if (!(await openForQuestion(questionId, entryOf(questionId)))) return false;
+    conversation.startNew(questionId);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(controller.panelId)
+        ?.scrollIntoView?.({ block: "start", behavior: "instant" }),
+    );
+    return true;
+  };
+  const openTask = async (task: AiTaskPublic) => {
+    if (task.attemptId !== attemptId) return false;
+    if (!questions.some((question) => question.id === task.questionId)) {
+      setPresentationError(
+        "这条求助对应的题目已不在当前练习中，请从求助记录选择其他题目",
+      );
+      return false;
+    }
+    if (host.ready === false) {
+      setPresentationError("正在恢复作答材料，请完成恢复后重新打开这条回复");
+      return false;
+    }
+    const entry = entryOf(task.questionId);
+    if (!(await openForQuestion(task.questionId, entry))) return false;
+    conversation.openTask(task);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(controller.panelId)
+        ?.scrollIntoView?.({ block: "start", behavior: "instant" }),
+    );
+    return true;
+  };
+  const openTaskRef = useRef(openTask);
+  openTaskRef.current = openTask;
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const taskId = params.get("aiTask");
+    const questionId = params.get("aiQuestion");
+    const composeQuestionId = params.get("aiCompose");
+    if (host.ready === false || (!(taskId && questionId) && !composeQuestionId))
+      return;
+    let cancelled = false;
+    const action =
+      taskId && questionId
+        ? fetchStudentAiTaskApi(taskId).then(async ({ task }) => {
+            if (cancelled) return;
+            if (task.attemptId !== attemptId || task.questionId !== questionId)
+              throw new Error("求助定位与当前练习不一致，请重新选择记录");
+            await openTaskRef.current(task);
+          })
+        : Promise.resolve().then(async () => {
+            if (!cancelled && composeQuestionId)
+              await openComposeRef.current(composeQuestionId);
+          });
+    void action
+      .catch((cause: unknown) => {
+        if (!cancelled)
+          setPresentationError(
+            cause instanceof Error
+              ? cause.message
+              : "回复定位失败，请从求助记录重试",
+          );
+      })
+      .finally(() => {
+        if (cancelled) return;
+        params.delete("aiTask");
+        params.delete("aiQuestion");
+        params.delete("aiCompose");
+        void navigate(
+          { pathname: location.pathname, search: params.toString() },
+          { replace: true, preventScrollReset: true },
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attemptId, host.ready, location.pathname, location.search, navigate]);
   const fixedActive = fixed && controller.canDock;
   const close = async () => {
-    if (transitionRef.current) return;
+    if (transitionRef.current) return false;
     transitionRef.current = true;
     try {
       if (boundQuestionId !== null) await host.flush(boundQuestionId);
@@ -183,11 +298,28 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
           if (Math.abs(difference) > 1)
             window.scrollBy({ top: difference, behavior: "instant" });
         });
+      return true;
     } catch {
       setPresentationError("当前稿件未保存，请重试保存后再收起助教");
+      return false;
     } finally {
       transitionRef.current = false;
     }
+  };
+  const returnToWork = async () => {
+    const questionId = boundQuestionId;
+    if (questionId !== null && (await close())) {
+      setWorkingQuestions((previous) => new Set(previous).add(questionId));
+    }
+  };
+  const checkNewSteps = async (questionId: string) => {
+    if (!(await openForQuestion(questionId, entryOf(questionId)))) return;
+    conversation.startNew(questionId);
+    send.selectPreset(
+      "check-current",
+      "请检查我新写的步骤，指出需要修改的地方，并给我一个可以自己尝试的下一步。",
+      questionId,
+    );
   };
   const changePresentation = async () => {
     if (transitionRef.current || boundQuestionId === null) return;
@@ -237,6 +369,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   );
   const triggerForQuestion = (questionId: string) => (
     <AiCompanionTrigger
+      questionId={questionId}
       controller={controller}
       label="AI 助教"
       expanded={controller.open && send.boundQuestionId === questionId}
@@ -289,6 +422,16 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
         status={
           <AiCompanionStatusPanel send={send} settingsHref={settingsHref} />
         }
+        compactStatus={
+          send.status && (
+            <p className="px-3 pt-3 text-sm text-muted-foreground sm:px-5">
+              {send.effectiveChannel
+                ? CHANNEL_LABEL[send.effectiveChannel]
+                : "尚未连接"}{" "}
+              · {studentModeReasonText(send.status)}
+            </p>
+          )
+        }
         settingsAttention={
           send.needsSetup ||
           send.statusError ||
@@ -299,6 +442,10 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
           <AiConversationPanel
             send={send}
             controller={conversation}
+            onReturnToWork={() => void returnToWork()}
+            onCheckNewSteps={() =>
+              boundQuestionId !== null && void checkNewSteps(boundQuestionId)
+            }
             quickButtons={<AiCompanionQuickButtons send={send} />}
             composer={
               <AiCompanionComposer
@@ -315,6 +462,35 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   );
   const inlineForQuestion = (questionId: string) => (
     <div data-ai-question={questionId} className="min-w-0 [&:not(:empty)]:mt-3">
+      {workingQuestions.has(questionId) &&
+        (!controller.open || send.boundQuestionId !== questionId) && (
+          <fieldset
+            className="flex flex-wrap items-center gap-2 rounded-lg bg-primary/5 px-3 py-2"
+            aria-label="继续本题学习"
+          >
+            <span className="mr-auto text-sm text-muted-foreground">
+              先试一步，需要时再看看提示。
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11"
+              onClick={() =>
+                void openForQuestion(questionId, entryOf(questionId))
+              }
+            >
+              再看回复
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => void checkNewSteps(questionId)}
+            >
+              检查新步骤
+            </Button>
+          </fieldset>
+        )}
       {send.boundQuestionId === questionId && controller.open && !fixedActive
         ? workspace
         : null}
@@ -362,6 +538,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   return {
     /** 布局控制器（navigatorCollapsed / open / closePanel 等） */
     controller,
+    openTask,
     /** 发送控制器（bind 可用于页面显式切绑） */
     send,
     /** 头部动作位的 AI 助教按钮 */
