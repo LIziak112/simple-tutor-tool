@@ -15,6 +15,7 @@ import { expectHttpError } from "../test/expect-http-error.ts";
 import {
   getStudentCourseDetail,
   getStudentLecture,
+  getStudentUnitLanding,
   listStudentCourses,
   listStudentLectures,
 } from "./student-course-service.ts";
@@ -446,6 +447,19 @@ describe("getStudentCourseDetail（课程可见目录，D22 矩阵）", () => {
     );
     // 配套练习（lectureId 指向普通讲义 L1）不受影响
     expect(detail.items.some((item) => item.title === "有理数小练")).toBe(true);
+    // 按 URL 直达嵌入单元同样不可见（listVisibleItems 统一过滤，D22 不暴露存在性）
+    expectHttpError(
+      captureError(() =>
+        getStudentUnitLanding(
+          db,
+          ctx.memberId,
+          ctx.courseAId,
+          "u-lesson-embedded",
+        ),
+      ),
+      404,
+      "NOT_FOUND",
+    );
   });
 
   it("成员：只含可见条目（隐藏/未到发布零信息），单元带未删题数", () => {

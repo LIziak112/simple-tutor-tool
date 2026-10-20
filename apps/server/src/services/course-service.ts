@@ -747,7 +747,7 @@ export function listVisibleItems(
   const studentArchived = false; // 上方已拦截归档学生
 
   // 资源侧数据一次读全（教师端量级：一对一辅导，内存分组足够；域内读，T2B.4）
-  const { lectureById, unitById, liveQuestionCountByUnit } =
+  const { lectureById, unitById, liveQuestionCountByUnit, embeddedUnitIds } =
     loadResourceContext(db, course.teacherId);
 
   const items = db
@@ -773,6 +773,8 @@ export function listVisibleItems(
       resourceDeleted = lecture.deletedAt !== null;
       unitLiveQuestionCount = null;
     } else {
+      // 讲练页嵌入单元不进学生可见目录（讲练页一件事；也堵住按 URL 直达单元）
+      if (embeddedUnitIds.has(item.refId ?? "")) continue;
       const unit = unitById.get(item.refId ?? "");
       if (unit === undefined) continue;
       title = unit.title;
@@ -1334,11 +1336,9 @@ export function getCourseProgress(
       archived: row.studentArchivedAt !== null,
     }));
 
-  // 列：可见单元（D5 资源侧口径）
-  const { unitById, liveQuestionCountByUnit } = loadResourceContext(
-    db,
-    teacherId,
-  );
+  // 列：可见单元（D5 资源侧口径；讲练嵌入单元不单列）
+  const { unitById, liveQuestionCountByUnit, embeddedUnitIds } =
+    loadResourceContext(db, teacherId);
   const unitItems = db
     .select({
       refId: courseItems.refId,
@@ -1353,6 +1353,7 @@ export function getCourseProgress(
   const units: CourseProgressUnit[] = [];
   for (const item of unitItems) {
     if (item.refId === null) continue;
+    if (embeddedUnitIds.has(item.refId)) continue;
     const unit = unitById.get(item.refId);
     if (unit === undefined || unit.deletedAt !== null) continue;
     if (!item.visible) continue;

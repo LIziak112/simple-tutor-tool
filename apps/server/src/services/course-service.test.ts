@@ -25,6 +25,7 @@ import {
   courseHasAttempts,
   deleteCourseItem,
   getCourseDetail,
+  getCourseProgress,
   listCoursesForTeacher,
   listVisibleItems,
   removeCourseMembers,
@@ -1032,5 +1033,43 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
     }).find((row) => row.id === courseId);
     expect(summary?.itemCount).toBe(1);
     expect(summary?.visibleItemCount).toBe(1);
+  });
+
+  it("进度矩阵不把讲练页嵌入单元列为单元列（2026-10-20）", () => {
+    const db = createTestDb();
+    const { courseId, unitId } = seed(db);
+    // 嵌入单元带存活题：否则会被「零题单元不计列」规则掩盖，测不到嵌入过滤
+    const { unitId: embeddedUnitId } = seedLessonWithEmbeddedUnit(db, {
+      lectureOrder: 2,
+      unitOrder: 3,
+    });
+    db.insert(questions)
+      .values({
+        id: "q-embedded",
+        teacherId: TEST_TEACHER_ID,
+        unitId: embeddedUnitId,
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "s",
+        hintsJson: "[]",
+        sourceMd: "x",
+        version: 1,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "unit", refId: unitId },
+      { kind: "unit", refId: embeddedUnitId },
+    ]);
+
+    const progress = getCourseProgress(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      new Date(NOW),
+    );
+    expect(progress.units.map((unit) => unit.unitId)).toEqual([unitId]);
   });
 });

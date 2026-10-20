@@ -23,10 +23,6 @@ import {
 import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
-import {
-  isEmbeddedUnitItem,
-  lessonEmbeddedUnitIds,
-} from "./lesson-embedded.ts";
 import { pendingMarkCounts } from "./pending-mark.ts";
 
 /**
@@ -246,13 +242,8 @@ export function listStudentCourses(
   const courseSummaries: StudentCourseSummary[] = visibleCourses.map(
     (course) => {
       const items = listVisibleItems(db, studentId, course.id, now);
-      const unitItemsAll = items.filter((item) => item.kind === "unit");
-      // 讲练页嵌入单元不计入课程单元数（讲练页一件事——2026-10-16）
-      const embeddedUnitIds = lessonEmbeddedUnitIds(db, course.teacherId ?? "");
-      const unitItems = unitItemsAll.filter(
-        (item) =>
-          item.refId === null || !embeddedUnitIds.has(item.refId as string),
-      );
+      // 讲练页嵌入单元已由 listVisibleItems 过滤（讲练页一件事——2026-10-16）
+      const unitItems = items.filter((item) => item.kind === "unit");
       const summaries = courseUnitAttemptSummaries(db, studentId, course.id);
       return {
         id: course.id,
@@ -334,11 +325,7 @@ export function getStudentCourseDetail(
   const unitIds = items
     .filter((item) => item.kind === "unit")
     .map((item) => item.refId as string);
-  // 讲练页嵌入单元不进学生目录（讲练页一件事，防重复入口——2026-10-16）
-  const embeddedUnitIds = lessonEmbeddedUnitIds(db, course.teacherId);
-  const shownItems = items.filter(
-    (item) => !isEmbeddedUnitItem(item, embeddedUnitIds),
-  );
+  // 讲练页嵌入单元已由 listVisibleItems 过滤（讲练页一件事，防重复入口——2026-10-16）
   const counts = liveQuestionCounts(db, course.teacherId, unitIds);
   const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
   // 讲义条目的文档形态（2026-10 讲练一体）：lesson 行前端显「讲练」徽标并直达
@@ -360,7 +347,7 @@ export function getStudentCourseDetail(
     id: course.id,
     name: course.title,
     description: course.description,
-    items: shownItems.map((item) => ({
+    items: items.map((item) => ({
       id: item.id,
       kind: item.kind,
       docKind:

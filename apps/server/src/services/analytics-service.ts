@@ -571,10 +571,8 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
             ),
           )
           .all();
-  const { unitById, liveQuestionCountByUnit } = loadResourceContext(
-    db,
-    ctx.teacherId,
-  );
+  const { unitById, liveQuestionCountByUnit, embeddedUnitIds } =
+    loadResourceContext(db, ctx.teacherId);
   const unitColumns: AnalyticsUnitColumn[] = [];
   for (const course of scopedCourses) {
     const items = db
@@ -592,6 +590,8 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
       .all();
     for (const item of items) {
       if (item.refId === null) continue;
+      // 讲练页嵌入单元不单列（讲练页一件事）
+      if (embeddedUnitIds.has(item.refId)) continue;
       const unit = unitById.get(item.refId);
       if (unit === undefined || unit.deletedAt !== null) continue;
       if (!item.visible) continue;
