@@ -12,7 +12,11 @@ import {
   students,
   units,
 } from "../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import type { HttpError } from "../lib/http-error.ts";
 import {
   createFolder,
@@ -186,32 +190,11 @@ describe("LibraryService：文件夹 CRUD", () => {
     // seedBase：普通讲义 + 其配套单元（unit-a）
     const { folderId } = seedBase(db);
     // 讲练页：kind=lesson 讲义 + 嵌入单元（lectureId 指回自己，同一文件夹）
-    const lessonLectureId = crypto.randomUUID();
-    db.insert(lectures)
-      .values({
-        id: lessonLectureId,
-        teacherId: TEST_TEACHER_ID,
-        courseId: null,
-        folderId,
-        title: "讲练 数轴热身",
-        markdown: "# 讲练 数轴热身",
-        kind: "lesson",
-        order: 1,
-        updatedAt: T0,
-      })
-      .run();
-    db.insert(units)
-      .values({
-        id: "u-lesson-embedded",
-        teacherId: TEST_TEACHER_ID,
-        courseId: null,
-        folderId,
-        lectureId: lessonLectureId,
-        title: "随堂讲练",
-        order: 1,
-        updatedAt: T0,
-      })
-      .run();
+    seedLessonWithEmbeddedUnit(db, {
+      folderId,
+      lectureOrder: 1,
+      unitOrder: 1,
+    });
 
     // 讲义 2 篇；单元只计普通配套 1 个（嵌入单元随讲练页隐藏）
     expect(listFolders(db, TEST_TEACHER_ID)[0]).toMatchObject({

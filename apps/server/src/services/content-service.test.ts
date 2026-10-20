@@ -21,6 +21,7 @@ import {
 import {
   createTestDb,
   createTestDir,
+  seedLessonWithEmbeddedUnit,
   TEST_TEACHER_ID,
   V1_LEGACY_MD,
 } from "../db/test-utils.ts";
@@ -1554,55 +1555,36 @@ describe("getContentTree：讲练页嵌入单元不单列（2026-10-20）", () =
       })
       .run();
     const normalLectureId = crypto.randomUUID();
-    const lessonLectureId = crypto.randomUUID();
     db.insert(lectures)
-      .values([
-        {
-          id: normalLectureId,
-          teacherId: TEST_TEACHER_ID,
-          courseId: null,
-          folderId: null,
-          title: "普通讲义",
-          markdown: "# 普通讲义",
-          order: 0,
-          updatedAt: T0,
-        },
-        {
-          id: lessonLectureId,
-          teacherId: TEST_TEACHER_ID,
-          courseId: null,
-          folderId: null,
-          title: "讲练页",
-          markdown: "# 讲练页",
-          kind: "lesson",
-          order: 1,
-          updatedAt: T0,
-        },
-      ])
+      .values({
+        id: normalLectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "普通讲义",
+        markdown: "# 普通讲义",
+        order: 0,
+        updatedAt: T0,
+      })
       .run();
+    const { lectureId: lessonLectureId, unitId: embeddedUnitId } =
+      seedLessonWithEmbeddedUnit(db, {
+        lectureOrder: 1,
+        unitOrder: 1,
+        unitId: "u-embedded",
+        unitTitle: "随堂讲练",
+      });
     db.insert(units)
-      .values([
-        {
-          id: "u-normal",
-          teacherId: TEST_TEACHER_ID,
-          courseId: null,
-          folderId: null,
-          lectureId: normalLectureId,
-          title: "普通配套练习",
-          order: 0,
-          updatedAt: T0,
-        },
-        {
-          id: "u-embedded",
-          teacherId: TEST_TEACHER_ID,
-          courseId: null,
-          folderId: null,
-          lectureId: lessonLectureId,
-          title: "随堂讲练",
-          order: 1,
-          updatedAt: T0,
-        },
-      ])
+      .values({
+        id: "u-normal",
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        lectureId: normalLectureId,
+        title: "普通配套练习",
+        order: 0,
+        updatedAt: T0,
+      })
       .run();
     db.insert(courseItems)
       .values([
@@ -1644,7 +1626,7 @@ describe("getContentTree：讲练页嵌入单元不单列（2026-10-20）", () =
           id: crypto.randomUUID(),
           courseId,
           kind: "unit",
-          refId: "u-embedded",
+          refId: embeddedUnitId,
           title: null,
           order: 3,
           visible: true,

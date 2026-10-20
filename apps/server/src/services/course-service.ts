@@ -26,7 +26,11 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { lessonEmbeddedUnitIds } from "./lesson-embedded.ts";
+import {
+  embeddedUnitIdsFrom,
+  isEmbeddedUnitItem,
+  lessonEmbeddedUnitIds,
+} from "./lesson-embedded.ts";
 import { pendingMarkCounts } from "./pending-mark.ts";
 import { canStudentSeeItem } from "./visibility.ts";
 
@@ -876,13 +880,25 @@ export function requireVisibleCourseUnit(
 interface ResourceContext {
   readonly lectureById: Map<
     string,
-    { title: string; deletedAt: string | null; updatedAt: string }
+    {
+      title: string;
+      kind: "lecture" | "lesson";
+      deletedAt: string | null;
+      updatedAt: string;
+    }
   >;
   readonly unitById: Map<
     string,
-    { title: string; deletedAt: string | null; updatedAt: string }
+    {
+      title: string;
+      lectureId: string | null;
+      deletedAt: string | null;
+      updatedAt: string;
+    }
   >;
   readonly liveQuestionCountByUnit: Map<string, number>;
+  /** 讲练嵌入单元 id 集（由上方两份 Map 派生，供课程目录/计数统一过滤） */
+  readonly embeddedUnitIds: Set<string>;
 }
 
 /**
@@ -899,6 +915,7 @@ export function loadResourceContext(
       .select({
         id: lectures.id,
         title: lectures.title,
+        kind: lectures.kind,
         deletedAt: lectures.deletedAt,
         updatedAt: lectures.updatedAt,
       })
@@ -912,6 +929,7 @@ export function loadResourceContext(
       .select({
         id: units.id,
         title: units.title,
+        lectureId: units.lectureId,
         deletedAt: units.deletedAt,
         updatedAt: units.updatedAt,
       })
@@ -931,7 +949,16 @@ export function loadResourceContext(
       (liveQuestionCountByUnit.get(row.unitId) ?? 0) + 1,
     );
   }
-  return { lectureById, unitById, liveQuestionCountByUnit };
+  const lessonLectureIdSet = new Set(
+    [...lectureById.values()]
+      .filter((row) => row.kind === "lesson")
+      .map((row) => row.id),
+  );
+  const embeddedUnitIds = embeddedUnitIdsFrom(
+    unitById.values(),
+    lessonLectureIdSet,
+  );
+  return { lectureById, unitById, liveQuestionCountByUnit, embeddedUnitIds };
 }
 
 /**
@@ -1004,7 +1031,10 @@ export function listCoursesForTeacher(
     );
   if (rows.length === 0) return [];
 
-  const { lectureById, unitById } = loadResourceContext(db, teacherId);
+  const { lectureById, unitById, embeddedUnitIds } = loadResourceContext(
+    db,
+    teacherId,
+  );
   const itemsByCourse = new Map<string, CourseItem[]>();
   for (const row of db
     .select()
@@ -1031,12 +1061,11 @@ export function listCoursesForTeacher(
   // D4 口径（T2A.7）：attempts.courseId 或 assignments.courseId 命中即有关联
   const attempted = attemptedCourseIds(db);
   const assigned = assignedCourseIds(db);
-  // 讲练页嵌入单元的历史条目不计入目录条目数（与详情同一隐藏口径）
-  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
 
   return rows.map((course) => {
+    // 讲练页嵌入单元的历史条目不计入目录条目数（与详情同一隐藏口径）
     const items = (itemsByCourse.get(course.id) ?? []).filter(
-      (item) => item.kind !== "unit" || !embeddedUnitIds.has(item.refId ?? ""),
+      (item) => !isEmbeddedUnitItem(item, embeddedUnitIds),
     );
     // 可见条目数（courseSummarySchema 注释口径）：visible=true 且资源未软删
     const visibleItemCount = items.filter((item) => {
@@ -1099,7 +1128,7 @@ export function getCourseDetail(
   now: Date = new Date(),
 ): CourseDetailData {
   const course = requireCourseRow(db, teacherId, id);
-  const { lectureById, unitById, liveQuestionCountByUnit } =
+  const { lectureById, unitById, liveQuestionCountByUnit, embeddedUnitIds } =
     loadResourceContext(db, teacherId);
   const items = db
     .select()
@@ -1109,9 +1138,8 @@ export function getCourseDetail(
     .all();
   // 讲练页嵌入单元的条目按「讲练页一件事」隐藏（修复前的 D8 展开可能已写入
   // 历史脏行；讲练页条目本身仍在）
-  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   const visibleItems = items.filter(
-    (item) => item.kind !== "unit" || !embeddedUnitIds.has(item.refId ?? ""),
+    (item) => !isEmbeddedUnitItem(item, embeddedUnitIds),
   );
   const detailItems: CourseDetailItem[] = visibleItems.map((item) => {
     if (item.kind === "section") {

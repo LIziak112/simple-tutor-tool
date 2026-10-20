@@ -12,7 +12,11 @@ import {
   students,
   units,
 } from "../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   addCourseItems,
@@ -771,32 +775,10 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
     // 讲练页：kind=lesson 讲义 + 嵌入单元（数据地基，不是可独立布置的配套练习）
-    const lessonLectureId = crypto.randomUUID();
-    db.insert(lectures)
-      .values({
-        id: lessonLectureId,
-        teacherId: TEST_TEACHER_ID,
-        courseId: null,
-        folderId: null,
-        title: "讲练 数轴热身",
-        markdown: "# 讲练 数轴热身",
-        kind: "lesson",
-        order: 2,
-        updatedAt: T0,
-      })
-      .run();
-    db.insert(units)
-      .values({
-        id: "u-lesson-embedded",
-        teacherId: TEST_TEACHER_ID,
-        courseId: null,
-        folderId: null,
-        lectureId: lessonLectureId,
-        title: "随堂讲练",
-        order: 3,
-        updatedAt: T0,
-      })
-      .run();
+    const { lectureId: lessonLectureId } = seedLessonWithEmbeddedUnit(db, {
+      lectureOrder: 2,
+      unitOrder: 3,
+    });
 
     const result = appendCourseItems(
       db,
@@ -1028,34 +1010,9 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
   it("讲练页嵌入单元的历史课程条目不进教师详情与列表计数（2026-10-20）", () => {
     const db = createTestDb();
     const { courseId } = seed(db);
-    const lessonLectureId = crypto.randomUUID();
-    db.insert(lectures)
-      .values({
-        id: lessonLectureId,
-        teacherId: TEST_TEACHER_ID,
-        courseId: null,
-        folderId: null,
-        title: "讲练 数轴热身",
-        markdown: "# 讲练 数轴热身",
-        kind: "lesson",
-        order: 2,
-        updatedAt: T0,
-      })
-      .run();
-    const embeddedUnitId = "u-lesson-embedded";
-    db.insert(units)
-      .values({
-        id: embeddedUnitId,
-        teacherId: TEST_TEACHER_ID,
-        courseId: null,
-        folderId: null,
-        lectureId: lessonLectureId,
-        title: "随堂讲练",
-        order: 3,
-        updatedAt: T0,
-      })
-      .run();
     // 模拟修复前的脏条目：讲练讲义 + 被 D8 展开写入的嵌入单元
+    const { lectureId: lessonLectureId, unitId: embeddedUnitId } =
+      seedLessonWithEmbeddedUnit(db, { lectureOrder: 2, unitOrder: 3 });
     addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "lecture", refId: lessonLectureId },
       { kind: "unit", refId: embeddedUnitId },

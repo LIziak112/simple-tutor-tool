@@ -8,6 +8,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  notInArray,
   sql,
 } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -107,17 +108,7 @@ export function listFolders(db: Db, teacherId: string): LibraryFolderData[] {
       lectureCounts.set(row.folderId, Number(row.count));
     }
   }
-  const unitCounts = new Map<string, number>();
-  // 讲练嵌入单元不参与文件夹计数（与题库列表同一「讲练页一件事」口径）
-  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
-  for (const row of db
-    .select({ id: units.id, folderId: units.folderId })
-    .from(units)
-    .where(and(eq(units.teacherId, teacherId), isNull(units.deletedAt)))
-    .all()) {
-    if (row.folderId === null || embeddedUnitIds.has(row.id)) continue;
-    unitCounts.set(row.folderId, (unitCounts.get(row.folderId) ?? 0) + 1);
-  }
+  const unitCounts = countLiveUnitsByFolder(db, teacherId);
   return rows.map((row) => ({
     ...row,
     lectureCount: lectureCounts.get(row.id) ?? 0,
@@ -212,6 +203,38 @@ export function renameFolder(
   return { ...row, name, lectureCount, unitCount };
 }
 
+/** 各文件夹未删除单元数（排除讲练嵌入单元；listFolders 与 rename 回包共用同一口径） */
+function countLiveUnitsByFolder(
+  db: Db,
+  teacherId: string,
+): Map<string, number> {
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
+  const counts = new Map<string, number>();
+  const rows = db
+    .select({
+      folderId: units.folderId,
+      count: sql<number>`count(*)`,
+    })
+    .from(units)
+    .where(
+      and(
+        eq(units.teacherId, teacherId),
+        isNull(units.deletedAt),
+        embeddedUnitIds.size === 0
+          ? undefined
+          : notInArray(units.id, [...embeddedUnitIds]),
+      ),
+    )
+    .groupBy(units.folderId)
+    .all();
+  for (const row of rows) {
+    if (row.folderId !== null) {
+      counts.set(row.folderId, Number(row.count));
+    }
+  }
+  return counts;
+}
+
 /** 文件夹内未删除讲义/单元计数（rename 返回值用；「未归类」不在调用范围；嵌入单元不计） */
 function countFolderResources(
   db: Db,
@@ -229,19 +252,7 @@ function countFolderResources(
       ),
     )
     .all().length;
-  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
-  const unitCount = db
-    .select({ id: units.id })
-    .from(units)
-    .where(
-      and(
-        eq(units.teacherId, teacherId),
-        eq(units.folderId, id),
-        isNull(units.deletedAt),
-      ),
-    )
-    .all()
-    .filter((row) => !embeddedUnitIds.has(row.id)).length;
+  const unitCount = countLiveUnitsByFolder(db, teacherId).get(id) ?? 0;
   return [lectureCount, unitCount];
 }
 

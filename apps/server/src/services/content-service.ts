@@ -1044,9 +1044,11 @@ export function getContentTree(db: Db, teacherId: string): ContentTree {
           row !== undefined,
       );
     const unitNodes = items
-      .filter((item) => item.kind === "unit")
-      // 讲练页嵌入单元不单列（讲练页一件事；历史 D8 脏条目同样过滤）
-      .filter((item) => !embeddedUnitIds.has(item.refId ?? ""))
+      // 讲练页嵌入单元不单列（历史 D8 脏条目同样过滤）
+      .filter(
+        (item) =>
+          item.kind === "unit" && !embeddedUnitIds.has(item.refId ?? ""),
+      )
       .map((item) =>
         item.refId === null ? undefined : unitById.get(item.refId),
       )

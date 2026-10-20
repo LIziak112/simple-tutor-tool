@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { runBackfills } from "./backfill";
 import { createDb, type Db } from "./client";
 import { resolveMigrationsFolder, runMigrations } from "./migrate";
-import { teachers } from "./schema";
+import { lectures, teachers, units } from "./schema";
 
 /**
  * createTestDb 种入的教师行（T2B.1）：固定 id/createdAt，loginName='teacher'、
@@ -50,6 +50,55 @@ export function createTestDb(): Db {
 /** 测试用临时数据目录（T2.8 起笔迹文件落 DATA_DIR/blobs/ink/…；mkdtemp 每次全新） */
 export function createTestDir(): string {
   return mkdtempSync(join(tmpdir(), "tutor-ink-test-"));
+}
+
+/**
+ * 种一篇讲练页（kind='lesson' 讲义 + 其嵌入单元），返回两个 id。
+ * 「讲练页一件事」相关用例共用：嵌入单元随讲练页隐藏/不计数的判定散布在资源库、
+ * 课程目录与计数、学生端目录，各测试不必各写一份造数。
+ */
+export function seedLessonWithEmbeddedUnit(
+  db: Db,
+  options: {
+    teacherId?: string | undefined;
+    folderId?: string | null | undefined;
+    lectureOrder?: number | undefined;
+    unitOrder?: number | undefined;
+    lectureTitle?: string | undefined;
+    unitTitle?: string | undefined;
+    unitId?: string | undefined;
+  } = {},
+): { lectureId: string; unitId: string } {
+  const lectureId = crypto.randomUUID();
+  const unitId = options.unitId ?? crypto.randomUUID();
+  const lectureTitle = options.lectureTitle ?? "讲练 数轴热身";
+  const updatedAt = new Date().toISOString();
+  db.insert(lectures)
+    .values({
+      id: lectureId,
+      teacherId: options.teacherId ?? TEST_TEACHER_ID,
+      courseId: null,
+      folderId: options.folderId ?? null,
+      title: lectureTitle,
+      markdown: `# ${lectureTitle}`,
+      kind: "lesson",
+      order: options.lectureOrder ?? 0,
+      updatedAt,
+    })
+    .run();
+  db.insert(units)
+    .values({
+      id: unitId,
+      teacherId: options.teacherId ?? TEST_TEACHER_ID,
+      courseId: null,
+      folderId: options.folderId ?? null,
+      lectureId,
+      title: options.unitTitle ?? "随堂讲练",
+      order: options.unitOrder ?? 0,
+      updatedAt,
+    })
+    .run();
+  return { lectureId, unitId };
 }
 
 /**

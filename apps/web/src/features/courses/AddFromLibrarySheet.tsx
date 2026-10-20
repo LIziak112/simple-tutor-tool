@@ -153,10 +153,7 @@ export function AddFromLibrarySheet({
     if (items.length === 0) return;
     // 只有确有可见配套练习时才请求展开：讲练页的嵌入单元已被题库查询隐藏，
     // 继续发送 withCompanionUnits 会让服务端悄悄多加一项（2026-10-20）
-    const expandCompanions =
-      (tab === "lectures" || selectedLectureIds.size > 0) &&
-      withCompanions &&
-      companionUnits.length > 0;
+    const expandCompanions = withCompanions && companionUnits.length > 0;
     addMutation.mutate(
       {
         items,
