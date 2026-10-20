@@ -29,6 +29,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { addCourseItems } from "./course-service.ts";
+import { lessonEmbeddedUnitIds } from "./lesson-embedded.ts";
 
 /**
  * LibraryService（T2A.1 服务层 + T2A.2 资源库页面业务）——文件夹 CRUD、讲义/单元
@@ -107,18 +108,15 @@ export function listFolders(db: Db, teacherId: string): LibraryFolderData[] {
     }
   }
   const unitCounts = new Map<string, number>();
+  // 讲练嵌入单元不参与文件夹计数（与题库列表同一「讲练页一件事」口径）
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   for (const row of db
-    .select({
-      folderId: units.folderId,
-      count: sql<number>`count(*)`,
-    })
+    .select({ id: units.id, folderId: units.folderId })
     .from(units)
     .where(and(eq(units.teacherId, teacherId), isNull(units.deletedAt)))
-    .groupBy(units.folderId)
     .all()) {
-    if (row.folderId !== null) {
-      unitCounts.set(row.folderId, Number(row.count));
-    }
+    if (row.folderId === null || embeddedUnitIds.has(row.id)) continue;
+    unitCounts.set(row.folderId, (unitCounts.get(row.folderId) ?? 0) + 1);
   }
   return rows.map((row) => ({
     ...row,
@@ -214,7 +212,7 @@ export function renameFolder(
   return { ...row, name, lectureCount, unitCount };
 }
 
-/** 文件夹内未删除讲义/单元计数（rename 返回值用；「未归类」不在调用范围） */
+/** 文件夹内未删除讲义/单元计数（rename 返回值用；「未归类」不在调用范围；嵌入单元不计） */
 function countFolderResources(
   db: Db,
   teacherId: string,
@@ -231,6 +229,7 @@ function countFolderResources(
       ),
     )
     .all().length;
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   const unitCount = db
     .select({ id: units.id })
     .from(units)
@@ -241,7 +240,8 @@ function countFolderResources(
         isNull(units.deletedAt),
       ),
     )
-    .all().length;
+    .all()
+    .filter((row) => !embeddedUnitIds.has(row.id)).length;
   return [lectureCount, unitCount];
 }
 
@@ -705,16 +705,7 @@ export function listLibraryUnits(
   // 课堂门面是讲练页，单元只是讲练页与作答体系的数据地基（2026-10-15 决策；
   // 课程添加面板走同一查询故一并隐藏；mixed/practice 的配套单元不受影响，
   // 回收站视图不过滤——删除恢复路径仍需可见）
-  const lessonLectureIds = new Set(
-    db
-      .select({ id: lectures.id })
-      .from(lectures)
-      .where(
-        and(eq(lectures.teacherId, teacherId), eq(lectures.kind, "lesson")),
-      )
-      .all()
-      .map((row) => row.id),
-  );
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   // 使用各单元的未删除作业数（T2A.7 起走 assignment_units 关联；复合主键保证
   // 同一作业对同一单元只贡献 1；只数本教师的作业，D13 域内）
   const assignmentCounts = new Map<string, number>();
@@ -803,12 +794,8 @@ export function listLibraryUnits(
     .filter((row) =>
       filter.deleted ? row.deletedAt !== null : row.deletedAt === null,
     )
-    // 讲练嵌入单元只在回收站视图出现（见上方 lessonLectureIds 注释）
-    .filter(
-      (row) =>
-        filter.deleted ||
-        !(row.lectureId !== null && lessonLectureIds.has(row.lectureId)),
-    )
+    // 讲练嵌入单元只在回收站视图出现（见上方 embeddedUnitIds 注释）
+    .filter((row) => filter.deleted || !embeddedUnitIds.has(row.id))
     .map((row) => {
       const unitQuestions = questionsByUnit.get(row.id) ?? [];
       const typeDistribution: Record<string, number> = {};

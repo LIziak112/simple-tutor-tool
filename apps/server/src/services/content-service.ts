@@ -59,6 +59,7 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
+import { lessonEmbeddedUnitIds } from "./lesson-embedded";
 import { softDeleteLecture } from "./library-service";
 import { missingMediaImageSrcs } from "./media-service";
 import {
@@ -1024,6 +1025,8 @@ export function getContentTree(db: Db, teacherId: string): ContentTree {
       .map((row) => [row.id, row] as const),
   );
 
+  // 讲练页嵌入单元不单列（讲练页一件事；历史 D8 脏条目同样过滤）
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   const treeCourses: ContentTreeCourse[] = allCourses.map((course) => {
     const items = db
       .select({ kind: courseItems.kind, refId: courseItems.refId })
@@ -1042,6 +1045,8 @@ export function getContentTree(db: Db, teacherId: string): ContentTree {
       );
     const unitNodes = items
       .filter((item) => item.kind === "unit")
+      // 讲练页嵌入单元不单列（讲练页一件事；历史 D8 脏条目同样过滤）
+      .filter((item) => !embeddedUnitIds.has(item.refId ?? ""))
       .map((item) =>
         item.refId === null ? undefined : unitById.get(item.refId),
       )

@@ -29,6 +29,7 @@ import { createAssignment } from "./assignment-service.ts";
 import {
   commitImport,
   createCourse,
+  getContentTree,
   previewImport,
   previewImportBatch,
   updateLecture,
@@ -1535,5 +1536,131 @@ describe("导入图片存在性核对（IMAGE_SRC_NOT_FOUND，媒体管线第四
     // warning 不置 hasError（只有 error 级/跨文件冲突才标红）
     expect(batch.files.map((f) => f.hasError)).toEqual([false, false]);
     db.$client.close();
+  });
+});
+
+describe("getContentTree：讲练页嵌入单元不单列（2026-10-20）", () => {
+  it("课程的嵌入单元节点被过滤，普通配套单元照常输出", () => {
+    const db = createTestDb();
+    const T0 = "2026-09-01T00:00:00.000Z";
+    const courseId = crypto.randomUUID();
+    db.insert(courses)
+      .values({
+        id: courseId,
+        teacherId: TEST_TEACHER_ID,
+        title: "初一上",
+        order: 0,
+        createdAt: T0,
+      })
+      .run();
+    const normalLectureId = crypto.randomUUID();
+    const lessonLectureId = crypto.randomUUID();
+    db.insert(lectures)
+      .values([
+        {
+          id: normalLectureId,
+          teacherId: TEST_TEACHER_ID,
+          courseId: null,
+          folderId: null,
+          title: "普通讲义",
+          markdown: "# 普通讲义",
+          order: 0,
+          updatedAt: T0,
+        },
+        {
+          id: lessonLectureId,
+          teacherId: TEST_TEACHER_ID,
+          courseId: null,
+          folderId: null,
+          title: "讲练页",
+          markdown: "# 讲练页",
+          kind: "lesson",
+          order: 1,
+          updatedAt: T0,
+        },
+      ])
+      .run();
+    db.insert(units)
+      .values([
+        {
+          id: "u-normal",
+          teacherId: TEST_TEACHER_ID,
+          courseId: null,
+          folderId: null,
+          lectureId: normalLectureId,
+          title: "普通配套练习",
+          order: 0,
+          updatedAt: T0,
+        },
+        {
+          id: "u-embedded",
+          teacherId: TEST_TEACHER_ID,
+          courseId: null,
+          folderId: null,
+          lectureId: lessonLectureId,
+          title: "随堂讲练",
+          order: 1,
+          updatedAt: T0,
+        },
+      ])
+      .run();
+    db.insert(courseItems)
+      .values([
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: normalLectureId,
+          title: null,
+          order: 0,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: "u-normal",
+          title: null,
+          order: 1,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: lessonLectureId,
+          title: null,
+          order: 2,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        // 模拟修复前的脏条目
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: "u-embedded",
+          title: null,
+          order: 3,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+      ])
+      .run();
+
+    const course = getContentTree(db, TEST_TEACHER_ID).courses.find(
+      (row) => row.id === courseId,
+    );
+    expect(course?.lectures.map((row) => row.id)).toEqual([
+      normalLectureId,
+      lessonLectureId,
+    ]);
+    expect(course?.units.map((row) => row.id)).toEqual(["u-normal"]);
   });
 });

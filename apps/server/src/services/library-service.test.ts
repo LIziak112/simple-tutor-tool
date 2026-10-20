@@ -181,6 +181,49 @@ describe("LibraryService：文件夹 CRUD", () => {
     void unitId;
   });
 
+  it("讲练页嵌入单元不参与文件夹计数（2026-10-20）：一篇讲练页只计 1；普通配套单元照常计", () => {
+    const db = createTestDb();
+    // seedBase：普通讲义 + 其配套单元（unit-a）
+    const { folderId } = seedBase(db);
+    // 讲练页：kind=lesson 讲义 + 嵌入单元（lectureId 指回自己，同一文件夹）
+    const lessonLectureId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: lessonLectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId,
+        title: "讲练 数轴热身",
+        markdown: "# 讲练 数轴热身",
+        kind: "lesson",
+        order: 1,
+        updatedAt: T0,
+      })
+      .run();
+    db.insert(units)
+      .values({
+        id: "u-lesson-embedded",
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId,
+        lectureId: lessonLectureId,
+        title: "随堂讲练",
+        order: 1,
+        updatedAt: T0,
+      })
+      .run();
+
+    // 讲义 2 篇；单元只计普通配套 1 个（嵌入单元随讲练页隐藏）
+    expect(listFolders(db, TEST_TEACHER_ID)[0]).toMatchObject({
+      lectureCount: 2,
+      unitCount: 1,
+    });
+    // rename 回包走同一计数口径
+    expect(
+      renameFolder(db, TEST_TEACHER_ID, folderId, { name: "有理数2" }),
+    ).toMatchObject({ lectureCount: 2, unitCount: 1 });
+  });
+
   it("deleteFolder：内容移入未归类（folderId 置 NULL）并返回移动数量；行删除", () => {
     const db = createTestDb();
     const { folderId, lectureId, unitId } = seedBase(db);

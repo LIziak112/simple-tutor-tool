@@ -767,6 +767,56 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
     expect(result.added.map((item) => item.order)).toEqual([0, 1]);
   });
 
+  it("withCompanionUnits 不为讲练页展开嵌入单元（2026-10-20）：普通配套照常展开", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId } = seed(db);
+    // 讲练页：kind=lesson 讲义 + 嵌入单元（数据地基，不是可独立布置的配套练习）
+    const lessonLectureId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: lessonLectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "讲练 数轴热身",
+        markdown: "# 讲练 数轴热身",
+        kind: "lesson",
+        order: 2,
+        updatedAt: T0,
+      })
+      .run();
+    db.insert(units)
+      .values({
+        id: "u-lesson-embedded",
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        lectureId: lessonLectureId,
+        title: "随堂讲练",
+        order: 3,
+        updatedAt: T0,
+      })
+      .run();
+
+    const result = appendCourseItems(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      [
+        { kind: "lecture", refId: lectureId },
+        { kind: "lecture", refId: lessonLectureId },
+      ],
+      { withCompanionUnits: true },
+    );
+    expect(
+      result.added.map((item) => [item.kind, item.refId, item.companion]),
+    ).toEqual([
+      ["lecture", lectureId, false],
+      ["unit", unitId, true],
+      ["lecture", lessonLectureId, false],
+    ]);
+  });
+
   it("已在课程的资源跳过并返回清单；被跳过的讲义不展开配套", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
@@ -973,5 +1023,57 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
         (row) => row.id === courseId,
       )?.archived,
     ).toBe(true);
+  });
+
+  it("讲练页嵌入单元的历史课程条目不进教师详情与列表计数（2026-10-20）", () => {
+    const db = createTestDb();
+    const { courseId } = seed(db);
+    const lessonLectureId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: lessonLectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "讲练 数轴热身",
+        markdown: "# 讲练 数轴热身",
+        kind: "lesson",
+        order: 2,
+        updatedAt: T0,
+      })
+      .run();
+    const embeddedUnitId = "u-lesson-embedded";
+    db.insert(units)
+      .values({
+        id: embeddedUnitId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        lectureId: lessonLectureId,
+        title: "随堂讲练",
+        order: 3,
+        updatedAt: T0,
+      })
+      .run();
+    // 模拟修复前的脏条目：讲练讲义 + 被 D8 展开写入的嵌入单元
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "lecture", refId: lessonLectureId },
+      { kind: "unit", refId: embeddedUnitId },
+    ]);
+
+    const detail = getCourseDetail(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      new Date(NOW),
+    );
+    expect(detail.items.map((item) => [item.kind, item.refId])).toEqual([
+      ["lecture", lessonLectureId],
+    ]);
+    const summary = listCoursesForTeacher(db, TEST_TEACHER_ID, {
+      archived: false,
+    }).find((row) => row.id === courseId);
+    expect(summary?.itemCount).toBe(1);
+    expect(summary?.visibleItemCount).toBe(1);
   });
 });

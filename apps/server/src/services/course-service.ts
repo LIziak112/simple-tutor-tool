@@ -26,6 +26,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { lessonEmbeddedUnitIds } from "./lesson-embedded.ts";
 import { pendingMarkCounts } from "./pending-mark.ts";
 import { canStudentSeeItem } from "./visibility.ts";
 
@@ -337,6 +338,9 @@ export function appendCourseItems(
       .filter((item) => item.kind === "lecture")
       .map((item) => item.refId as string);
     if (addedLectureIds.length > 0) {
+      // 讲练页（kind='lesson'）的嵌入单元不是可独立布置的配套练习，不展开
+      // （2026-10-20：与导入 addToCourse、资源库列表同一「讲练页一件事」口径）
+      const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
       const companionUnits = db
         .select({ id: units.id, lectureId: units.lectureId })
         .from(units)
@@ -351,7 +355,7 @@ export function appendCourseItems(
         .all();
       const companionsByLecture = new Map<string, string[]>();
       for (const row of companionUnits) {
-        if (row.lectureId === null) continue;
+        if (row.lectureId === null || embeddedUnitIds.has(row.id)) continue;
         const list = companionsByLecture.get(row.lectureId);
         if (list === undefined) {
           companionsByLecture.set(row.lectureId, [row.id]);
@@ -1027,9 +1031,13 @@ export function listCoursesForTeacher(
   // D4 口径（T2A.7）：attempts.courseId 或 assignments.courseId 命中即有关联
   const attempted = attemptedCourseIds(db);
   const assigned = assignedCourseIds(db);
+  // 讲练页嵌入单元的历史条目不计入目录条目数（与详情同一隐藏口径）
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
 
   return rows.map((course) => {
-    const items = itemsByCourse.get(course.id) ?? [];
+    const items = (itemsByCourse.get(course.id) ?? []).filter(
+      (item) => item.kind !== "unit" || !embeddedUnitIds.has(item.refId ?? ""),
+    );
     // 可见条目数（courseSummarySchema 注释口径）：visible=true 且资源未软删
     const visibleItemCount = items.filter((item) => {
       if (!item.visible) return false;
@@ -1099,7 +1107,13 @@ export function getCourseDetail(
     .where(eq(courseItems.courseId, id))
     .orderBy(asc(courseItems.order), asc(courseItems.id))
     .all();
-  const detailItems: CourseDetailItem[] = items.map((item) => {
+  // 讲练页嵌入单元的条目按「讲练页一件事」隐藏（修复前的 D8 展开可能已写入
+  // 历史脏行；讲练页条目本身仍在）
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
+  const visibleItems = items.filter(
+    (item) => item.kind !== "unit" || !embeddedUnitIds.has(item.refId ?? ""),
+  );
+  const detailItems: CourseDetailItem[] = visibleItems.map((item) => {
     if (item.kind === "section") {
       return {
         id: item.id,
