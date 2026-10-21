@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { ChevronDown, List, Maximize2 } from "lucide-react";
+import { type ReactNode, useCallback, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,98 +9,131 @@ import {
 } from "@/components/ui/dialog";
 
 /** 专注阅读复用唯一正文与输入。题目和纸面始终留在原树内，草稿由上层持有。 */
-export function AiReadingWorkspace({ children }: { children: ReactNode }) {
+export function AiReadingWorkspace({
+  children,
+  context,
+}: {
+  children: ReactNode;
+  context?: ReactNode;
+}) {
   const [focused, setFocused] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const [headings, setHeadings] = useState<
     readonly { id: string; text: string }[]
   >([]);
-  const rootRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLButtonElement>(null);
   const readingTopRef = useRef(0);
   const prefix = useId();
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    root.dataset.readingPresentation = focused ? "focused" : "inline";
-    const update = () => {
-      const next = Array.from(
-        root.querySelectorAll<HTMLElement>(
-          ".ai-reply-markdown h1, .ai-reply-markdown h2, .ai-reply-markdown h3",
-        ),
-      )
-        .slice(0, 30)
-        .map((heading, index) => {
-          heading.id = `${prefix}-heading-${index}`;
-          heading.style.scrollMarginTop = "6rem";
-          return { id: heading.id, text: heading.textContent ?? "" };
-        });
-      setHeadings((previous) =>
-        JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
-      );
-    };
-    update();
-    const observer = new MutationObserver(update);
-    observer.observe(root, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    return () => observer.disconnect();
-  }, [focused, prefix]);
-  const outline =
+  // 弹层挂载晚于外层 effect；用节点回调在真实阅读容器就绪后建立目录。
+  const readingRef = useCallback(
+    (root: HTMLDivElement | null) => {
+      if (!root) return;
+      root.dataset.readingPresentation = focused ? "focused" : "inline";
+      const update = () => {
+        const next = Array.from(
+          root.querySelectorAll<HTMLElement>(
+            ".ai-reply-markdown h1, .ai-reply-markdown h2, .ai-reply-markdown h3",
+          ),
+        )
+          .slice(0, 30)
+          .map((heading, index) => {
+            heading.id = `${prefix}-heading-${index}`;
+            heading.style.scrollMarginTop = focused
+              ? "1rem"
+              : "calc(var(--attempt-header-height, 64px) + 16px)";
+            return { id: heading.id, text: heading.textContent ?? "" };
+          });
+        setHeadings((previous) =>
+          JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
+        );
+      };
+      update();
+      const observer = new MutationObserver(update);
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      return () => observer.disconnect();
+    },
+    [focused, prefix],
+  );
+  const outlineId = `${prefix}-outline`;
+  const outlineToggle =
     headings.length > 1 ? (
-      <details className="min-w-0 text-sm">
-        <summary className="flex min-h-11 cursor-pointer items-center text-primary focus-visible:outline-2 focus-visible:outline-ring">
-          按段落阅读（{headings.length}）
-        </summary>
-        <nav aria-label="回复目录" className="flex flex-col items-start">
-          {headings.map((heading) => (
-            <button
-              key={heading.id}
-              type="button"
-              className="min-h-11 max-w-full rounded px-2 text-left break-words text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-              onClick={() => {
-                const node = document.getElementById(heading.id);
-                node?.scrollIntoView?.({
-                  block: "start",
-                  behavior: "instant",
-                });
-                if (node) {
-                  node.tabIndex = -1;
-                  node.focus({ preventScroll: true });
-                }
-              }}
-            >
-              {heading.text}
-            </button>
-          ))}
-        </nav>
-      </details>
+      <Button
+        type="button"
+        variant="ghost"
+        className="min-h-11 gap-2 px-2 text-muted-foreground"
+        aria-expanded={outlineOpen}
+        aria-controls={outlineId}
+        onClick={() => setOutlineOpen((previous) => !previous)}
+      >
+        <List aria-hidden className="size-4" />
+        回复目录 · {headings.length} 节
+        <ChevronDown
+          aria-hidden
+          className={`size-3.5 ${outlineOpen ? "rotate-180" : ""}`}
+        />
+      </Button>
+    ) : null;
+  const outline =
+    headings.length > 1 && outlineOpen ? (
+      <nav
+        id={outlineId}
+        aria-label="回复目录"
+        className="mb-4 grid min-w-0 gap-1 rounded-lg bg-muted/40 p-2 text-sm"
+      >
+        {headings.map((heading) => (
+          <button
+            key={heading.id}
+            type="button"
+            className="min-h-11 max-w-full rounded px-3 py-2 text-start break-words text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={() => {
+              const node = document.getElementById(heading.id);
+              node?.scrollIntoView?.({
+                block: "start",
+                behavior: "instant",
+              });
+              if (node) {
+                node.tabIndex = -1;
+                node.focus({ preventScroll: true });
+              }
+            }}
+          >
+            {heading.text}
+          </button>
+        ))}
+      </nav>
     ) : null;
   const content = (
     <>
-      {focused && outline}
-      <div ref={rootRef} className="min-w-0">
+      {outline}
+      <div ref={readingRef} className="min-w-0">
         {children}
       </div>
     </>
   );
   return (
     <>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        {!focused && outline}
-        <Button
-          ref={entryRef}
-          type="button"
-          variant="ghost"
-          className="min-h-11 self-end"
-          onClick={() => {
-            readingTopRef.current = window.scrollY;
-            setFocused(true);
-          }}
-        >
-          专注阅读
-        </Button>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {context}
+        <div className="ms-auto flex flex-wrap items-center gap-1">
+          {!focused && outlineToggle}
+          <Button
+            ref={entryRef}
+            type="button"
+            variant="ghost"
+            className="min-h-11 gap-2 px-2 text-muted-foreground"
+            onClick={() => {
+              readingTopRef.current = window.scrollY;
+              setFocused(true);
+            }}
+          >
+            <Maximize2 aria-hidden className="size-4" />
+            专注阅读
+          </Button>
+        </div>
       </div>
       {focused ? (
         <Dialog open onOpenChange={setFocused}>
@@ -121,7 +155,10 @@ export function AiReadingWorkspace({ children }: { children: ReactNode }) {
               读完后关闭阅读，回到原题继续尝试。
             </DialogDescription>
             <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
-              {content}
+              <div className="mx-auto w-full max-w-[40rem]">
+                {outlineToggle}
+                {content}
+              </div>
             </div>
           </DialogContent>
         </Dialog>
