@@ -16,6 +16,7 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useDynamicOverscroll } from "@/lib/use-dynamic-overscroll";
 import { AiWorkspaceInputContext } from "./AiWorkspaceInput";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import type { AiCompanionLayoutController } from "./ai-companion-layout";
@@ -166,6 +167,7 @@ export function AiCompanionPanelBody({
   const [settingsOpen, setSettingsOpen] = useState(settingsAttention);
   const [inputHost, setInputHost] = useState<HTMLDivElement | null>(null);
   const settingsId = useId();
+  const replyOverscroll = useDynamicOverscroll<HTMLElement>({ enabled: !flow });
   // 未连接/状态读取失败时把设置展开一次，不让问题藏在抽屉里
   useEffect(() => {
     if (settingsAttention) setSettingsOpen(true);
@@ -180,11 +182,10 @@ export function AiCompanionPanelBody({
           onDockClose ? "pr-2" : "pr-11"
         }`}
       >
-        {heading ?? (
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
-            AI 助教
-          </h2>
-        )}
+        <div className="min-w-0 flex-1 py-2">
+          {heading ?? <h2 className="text-sm font-semibold">AI 助教</h2>}
+          {!settingsOpen && !settingsAttention && compactStatus}
+        </div>
         {!heading && (
           <span className="shrink-0 text-xs text-muted-foreground">
             {questionLabel ?? "未绑定题目"}
@@ -226,7 +227,6 @@ export function AiCompanionPanelBody({
         )}
       </div>
       {headerNote}
-      {!settingsOpen && !settingsAttention && compactStatus}
       {settingsOpen && (
         <div
           id={settingsId}
@@ -249,13 +249,14 @@ export function AiCompanionPanelBody({
       )}
       <AiWorkspaceInputContext value={flow ? null : inputHost}>
         <section
+          ref={replyOverscroll.ref}
           aria-label="本题对话记录"
           data-ai-scroll={flow ? undefined : "true"}
           data-slot="ai-reply-workspace"
           className={
             flow
-              ? "min-w-0 px-3 py-3 sm:px-5"
-              : "min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
+              ? "mx-auto w-full min-w-0 max-w-[43rem] px-4 py-3 sm:px-6"
+              : `min-h-0 flex-1 overflow-y-auto ${replyOverscroll.overscrollClass} bg-muted/20 px-3 py-3`
           }
         >
           {conversation ?? (

@@ -1,8 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { formatDueTime } from "@/lib/time";
 import { SubmitConfirmDialog } from "./SubmitConfirmDialog";
 
 /** 交卷确认弹层测试（T2.6）：未答数量提示与确认/继续作答回调。 */
+
+/** 相对当前时刻的未来截止（避免硬编码日期随时间推移翻转成已过截止） */
+function futureDueIso(): string {
+  return new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+}
 
 describe("SubmitConfirmDialog", () => {
   it("待传标画提示仅交答案、本机保留且不能冒称交卷原稿", () => {
@@ -41,6 +47,82 @@ describe("SubmitConfirmDialog", () => {
     expect(
       screen.getByText("还有 3 题没有作答，交卷后不能再修改答案。"),
     ).toBeInTheDocument();
+  });
+
+  it("截止后公布模式下，全部作答展示截止时间前置预期", () => {
+    const dueAt = futureDueIso();
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        answerRelease="after_due"
+        dueAt={dueAt}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        `全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(dueAt)}）统一公布。确认交卷吗？`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("截止后公布模式下，有未答题展示具体未答题数与截止时间前置预期", () => {
+    const dueAt = futureDueIso();
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={2}
+        submitting={false}
+        answerRelease="after_due"
+        dueAt={dueAt}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        `还有 2 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(dueAt)}）统一公布。确认交卷吗？`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("on_submit 即使设了未来截止也不展示「截止后公布」预期（交卷即出分，防误导）", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        answerRelease="on_submit"
+        dueAt={futureDueIso()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("全部题目已作答，交卷后立即判分且不能再修改答案。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/截止后公布/)).toBeNull();
+  });
+
+  it("after_due 但截止已过：交卷即完整公布，回到立即判分文案", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={1}
+        submitting={false}
+        answerRelease="after_due"
+        dueAt={new Date(Date.now() - 3600 * 1000).toISOString()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("还有 1 题没有作答，交卷后不能再修改答案。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/截止后公布/)).toBeNull();
   });
 
   it("全部作答时提示全部已作答；确认与继续作答按钮各自触发回调", () => {

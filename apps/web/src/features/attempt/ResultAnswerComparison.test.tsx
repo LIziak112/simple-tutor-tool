@@ -30,7 +30,7 @@ it("填空按空号对照，缺项明确未填，本人和参考公式都可读"
   );
 });
 
-it("公布前不读取参考答案空数或内容", () => {
+it("公布前不读取参考答案空数或内容，温和展示截止后公布提示", () => {
   render(
     <ResultAnswerComparison
       question={{
@@ -43,4 +43,7 @@ it("公布前不读取参考答案空数或内容", () => {
   expect(screen.queryByRole("list", { name: "参考填空答案" })).toBeNull();
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
   expect(screen.queryByText(/secret/)).toBeNull();
+  expect(
+    screen.getByText("参考答案与详解将在截止后公布 🔒"),
+  ).toBeInTheDocument();
 });

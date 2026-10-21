@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiTaskPublic } from "@tutor/contract";
+import { ChevronDown, FileText } from "lucide-react";
 import {
   type ReactNode,
   useEffect,
@@ -273,44 +274,50 @@ function AiTaskCard({
   // 链接通道回信在外部：平台没有回信就如实说外部未知，不伪造完成
   const externalUnknown = task.channel === "link" && !task.hasReply;
   const fact = taskFactText(task);
+  const materialContext = (
+    <details className="group min-w-0 text-xs text-muted-foreground">
+      <summary className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 focus-visible:outline-2 focus-visible:outline-ring">
+        <FileText aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 break-words">
+          材料：{formatSnapshotTime(task.snapshotAt)} 的题目与作答
+        </span>
+        <ChevronDown
+          aria-hidden
+          className="size-3.5 shrink-0 group-open:rotate-180"
+        />
+      </summary>
+      <div className="space-y-2 rounded-md bg-muted/40 p-3 text-sm">
+        <p>
+          发送时：{AI_MODE_LABEL[task.modeAtSend]}。这份材料不会随新笔迹改变。
+        </p>
+        {task.materials.length === 0 ? (
+          <p>本次没有附加手写图片。</p>
+        ) : (
+          <ul>
+            {task.materials.map((material) => (
+              <li key={material.id}>
+                {material.kind === "annotation"
+                  ? "圈画"
+                  : material.kind === "draft"
+                    ? "草稿"
+                    : "正式手写"}{" "}
+                · 第 {material.pageIndex + 1} 页 ·{" "}
+                {material.state === "ready"
+                  ? "已上传"
+                  : (material.missingReason ?? "尚未就绪")}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </details>
+  );
   return (
     <article
       data-testid={`ai-task-card-${task.id}`}
       className="flex min-w-0 flex-col gap-3 py-2"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-        <span className="min-w-0 text-xs">
-          材料：{formatSnapshotTime(task.snapshotAt)}
-        </span>
-        <details>
-          <summary className="flex min-h-11 cursor-pointer items-center text-primary focus-visible:outline-2 focus-visible:outline-ring">
-            查看材料
-          </summary>
-          <p>
-            题目与作答 · 发送时：{AI_MODE_LABEL[task.modeAtSend]}
-            。这份材料不会随新笔迹改变。
-          </p>
-          {task.materials.length === 0 ? (
-            <p>本次没有附加手写图片。</p>
-          ) : (
-            <ul>
-              {task.materials.map((material) => (
-                <li key={material.id}>
-                  {material.kind === "annotation"
-                    ? "圈画"
-                    : material.kind === "draft"
-                      ? "草稿"
-                      : "正式手写"}{" "}
-                  · 第 {material.pageIndex + 1} 页 ·{" "}
-                  {material.state === "ready"
-                    ? "已上传"
-                    : (material.missingReason ?? "尚未就绪")}
-                </li>
-              ))}
-            </ul>
-          )}
-        </details>
-      </div>
+      {materialContext}
       {!expanded && <p className="line-clamp-2 text-sm">{task.question}</p>}
       {externalUnknown ? (
         <div className="flex flex-col gap-1">

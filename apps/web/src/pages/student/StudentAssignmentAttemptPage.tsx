@@ -90,6 +90,7 @@ export default function StudentAssignmentAttemptPage() {
       exitLabel={
         returnTo ? "返回我的作业" : queueTarget ? "返回原页面" : undefined
       }
+      onRefresh={() => void detailQuery.refetch()}
     />
   );
 }

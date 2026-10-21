@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
+  assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
   questionAnswersSchema,
   questionPublicSchema,
@@ -335,6 +336,14 @@ export const attemptDraftDataSchema = z.object({
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null，练习不限截止） */
   dueAt: assignmentDueAtSchema.nullable(),
+  /**
+   * 公布时机（2026-10-21 交卷前置预期）：assignment 来源 = 作业的 answerRelease
+   * 原值；course/wrong 恒 'on_submit'（D11 交卷即公布）；lesson 的 attempt 级
+   * 公布不适用（当题释放恒题级粒度），同样投影 'on_submit'。作答页据此在交卷
+   * 确认弹窗告知「截止后统一公布」的前置预期——只描述策略，不携带任何答案；
+   * 结果视图的权威 gate 仍是 answersReleased（读时判定，两者独立）。
+   */
+  answerRelease: assignmentAnswerReleaseSchema,
   /** 公开题目分组（与试卷同形态：按单元分节，题号全卷连续） */
   units: z.array(attemptDraftUnitSchema),
   /**

@@ -549,7 +549,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
         }
         compactStatus={
           send.status && (
-            <p className="px-3 pt-2 text-xs text-muted-foreground sm:px-5">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               {send.effectiveChannel
                 ? CHANNEL_LABEL[send.effectiveChannel]
                 : "尚未连接"}{" "}

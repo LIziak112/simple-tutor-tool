@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { studentPaperQuestionSchema } from "./attempt.ts";
-import { assignmentDueAtSchema } from "./content.ts";
+import {
+  assignmentAnswerReleaseSchema,
+  assignmentDueAtSchema,
+} from "./content.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
@@ -62,15 +65,9 @@ export const assignmentTitleSchema = z
 // attempt.ts 视图与本文件共用同一份，attempt ↔ assignment 不可互导），
 // 本文件经顶部 import 使用；包级导出经 index.ts 的 content.ts 星号导出不变。
 
-/**
- * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，现状语义）；
- * after_due=截止后公布——**必须设置截止时间**：create 选 after_due 而 dueAt 缺失、
- * 或 PATCH 把 dueAt 置 null / 去掉截止时当前为 after_due，均 400 VALIDATION_ERROR
- * （防死锁态：永不公布）。截止前学生结果视图只下发「已交卷」与本人答案，
- * 截止后（now ≥ dueAt）读时自动恢复完整结果（无定时任务）。
- * course 来源作答恒为交卷即公布（D11），不适用本字段。
- */
-export const assignmentAnswerReleaseSchema = z.enum(["on_submit", "after_due"]);
+// 答案公布时机 assignmentAnswerReleaseSchema：同法下移 content.ts
+// （2026-10-21——attempt.ts 草稿视图的 answerRelease 字段与本文件共用同一份），
+// 本文件经顶部 import 使用；包级导出经 index.ts 的 content.ts 星号导出不变。
 
 /** 学生 id（crypto.randomUUID；studentIds 由服务端逐个校验存在性） */
 const studentIdSchema = z.uuid("studentId 必须是 UUID 格式");

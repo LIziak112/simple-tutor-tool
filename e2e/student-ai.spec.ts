@@ -44,6 +44,7 @@ const FULL_CHAIN_TIMEOUT = 300_000;
 async function makeWorld(
   request: import("@playwright/test").APIRequestContext,
   suffix: string,
+  assignmentTitle = `SAI全链作业${suffix}`,
 ): Promise<{
   assignmentId: string;
   loginName: string;
@@ -76,7 +77,7 @@ async function makeWorld(
     data: {
       unitIds: [unitId],
       studentIds: [student.id],
-      title: `SAI全链作业${suffix}`,
+      title: assignmentTitle,
       courseId,
     },
   });
@@ -240,6 +241,7 @@ test("三种助教布局设置往返、侧边回退、分节展开和原稿保�
     ).toBe(true);
     await page.screenshot({
       path: testInfo.outputPath("display-dialog-320.png"),
+      animations: "disabled",
     });
     await page.getByRole("button", { name: "这一步没懂" }).click();
     await page.getByRole("textbox", { name: "继续追问本题" }).fill("保留追问");
@@ -268,7 +270,8 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
   }) => {
     test.setTimeout(FULL_CHAIN_TIMEOUT);
     const suffix = uniqueSuffix();
-    const world = await makeWorld(request, suffix);
+    const assignmentTitle = `${"有理数专题巩固练习与错因分析，阅读提示后回题尝试。".repeat(3)}${suffix}`;
+    const world = await makeWorld(request, suffix, assignmentTitle);
     const student = await getStudentViaApi(request, world.loginName);
     const seed = await loginStudent(browser, student.linkToken);
     const page = seed.page;
@@ -288,7 +291,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         ).ok(),
       ).toBe(true);
       await page.setViewportSize({ width: 1024, height: 768 });
-      await openAssignmentAttempt(page, `SAI全链作业${suffix}`);
+      await openAssignmentAttempt(page, assignmentTitle);
       const q1 = page.getByRole("article", { name: "第 1 题", exact: true });
       const trigger = q1.getByRole("button", { name: "AI 助教", exact: true });
       await q1.evaluate((element) =>
@@ -381,6 +384,48 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         page.getByRole("heading", { name: "核对新步骤", exact: true }),
       ).toBeVisible();
       await expect(page.locator(".ai-reply-markdown .katex")).toHaveCount(1);
+      const reply = workspace.locator(".ai-reply-markdown");
+      const materialSummary = workspace
+        .getByRole("article")
+        .filter({ has: page.locator(".ai-reply-markdown") })
+        .locator("summary", { hasText: "材料：" });
+      for (const viewport of [
+        { width: 1440, height: 1000 },
+        { width: 768, height: 1024 },
+        { width: 320, height: 740 },
+      ]) {
+        await page.setViewportSize(viewport);
+        const replyBox = await reply.boundingBox();
+        const summaryBox = await materialSummary.boundingBox();
+        if (!replyBox || !summaryBox) throw new Error("阅读区域尚未呈现");
+        expect(Math.abs(replyBox.x - summaryBox.x)).toBeLessThanOrEqual(1);
+        const section = workspace.locator("details[data-ai-section]", {
+          has: page.getByRole("heading", { name: "再试一次", exact: true }),
+        });
+        await section.locator("summary").click();
+        await expect(section).toHaveAttribute("open", "");
+        await section.locator("summary").click();
+        await expect(section).not.toHaveAttribute("open", "");
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth + 1,
+          ),
+        ).toBe(true);
+        await workspace.evaluate((element) =>
+          element.scrollIntoView({ block: "start" }),
+        );
+        await page.screenshot({
+          path: `e2e/.artifacts/ai-reading-${viewport.width}-${test.info().project.name}.png`,
+        });
+      }
+      await workspace.getByRole("button", { name: "放大阅读" }).click();
+      const readingDialog = page.getByRole("dialog", { name: /AI 助教/ });
+      const dialogSection = readingDialog.locator("details[data-ai-section]", {
+        has: page.getByRole("heading", { name: "再试一次", exact: true }),
+      });
+      await dialogSection.locator("summary").click();
+      await expect(dialogSection).toHaveAttribute("open", "");
+      await readingDialog.getByRole("button", { name: "还原阅读" }).click();
       await page.setViewportSize({ width: 320, height: 740 });
       expect(
         await page.evaluate(

@@ -93,6 +93,7 @@ const COURSE_DRAFT: AttemptDraftData = {
   drafts: {},
   hintsOpened: {},
   legacyUnverified: false,
+  answerRelease: "on_submit",
   enabledCapabilities: ["steps", "ink"],
 };
 
