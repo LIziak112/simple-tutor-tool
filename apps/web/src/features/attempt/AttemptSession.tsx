@@ -838,6 +838,12 @@ function AnswerView({
           noteProblems={evidenceProblemViewsOf(notePrep, questionIndexById)}
           choiceMode={notePrep.kind === "choice"}
           notePrepError={notePrep.kind === "error" ? notePrep.message : null}
+          dueAt={data.dueAt}
+          isAfterDue={Boolean(
+            data.dueAt &&
+              data.dueAt !== null &&
+              Date.parse(data.dueAt) > Date.now(),
+          )}
           onConfirm={() => void confirmSubmit()}
           onConfirmMissing={confirmMissingSubmit}
           onCancel={closeSubmitDialog}

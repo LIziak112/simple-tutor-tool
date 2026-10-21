@@ -43,6 +43,44 @@ describe("SubmitConfirmDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("截止后公布模式下，全部作答展示截止时间前置预期", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        isAfterDue
+        dueAt="2026-10-25T12:00:00.000Z"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（10月25日 20:00）统一公布。确认交卷吗？",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("截止后公布模式下，有未答题展示具体未答题数与截止时间前置预期", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={2}
+        submitting={false}
+        isAfterDue
+        dueAt="2026-10-25T12:00:00.000Z"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "还有 2 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（10月25日 20:00）统一公布。确认交卷吗？",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("全部作答时提示全部已作答；确认与继续作答按钮各自触发回调", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();

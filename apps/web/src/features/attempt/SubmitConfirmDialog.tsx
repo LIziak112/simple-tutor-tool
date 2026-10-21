@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { formatDueTime } from "@/lib/time";
 
 /**
  * 交卷确认弹层（T2.6；T6R.10 扩展草稿证据）：
@@ -105,6 +106,8 @@ export function SubmitConfirmDialog({
   onCancel,
   incompleteQuestions = [],
   onGoToQuestion,
+  dueAt = null,
+  isAfterDue = false,
 }: {
   open: boolean;
   /** 未作答题数（0 时也确认一次，防止误触） */
@@ -126,6 +129,10 @@ export function SubmitConfirmDialog({
   onCancel: () => void;
   incompleteQuestions?: readonly { id: string; index: number; label: string }[];
   onGoToQuestion?: (id: string) => void;
+  /** 截止时间（UTC ISO），用于截止后公布时展示预期 */
+  dueAt?: string | null;
+  /** 是否为截止后公布（after_due 且未到截止） */
+  isAfterDue?: boolean;
 }) {
   const busy = submitting || preparing;
   const annotationProblem =
@@ -146,9 +153,13 @@ export function SubmitConfirmDialog({
             id="submit-confirm-desc"
             className="text-sm leading-6"
           >
-            {unansweredCount > 0
-              ? `还有 ${unansweredCount} 题没有作答，交卷后不能再修改答案。`
-              : "全部题目已作答，交卷后立即判分且不能再修改答案。"}
+            {isAfterDue && dueAt
+              ? unansweredCount > 0
+                ? `还有 ${unansweredCount} 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(dueAt)}）统一公布。确认交卷吗？`
+                : `全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(dueAt)}）统一公布。确认交卷吗？`
+              : unansweredCount > 0
+                ? `还有 ${unansweredCount} 题没有作答，交卷后不能再修改答案。`
+                : "全部题目已作答，交卷后立即判分且不能再修改答案。"}
           </DialogDescription>
         </DialogHeader>
 
