@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { NotebookRound } from "@tutor/contract";
+import { displayStemMd } from "@tutor/md-dsl";
 import {
   ArrowLeft,
   BookOpen,
@@ -10,6 +11,12 @@ import {
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { SolutionFold } from "@/features/attempt/AttemptResultView";
+import {
+  formatReferenceAnswers,
+  letterOf,
+} from "@/features/attempt/answer-format";
+import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
   ReflectionColumns,
   sealedCorrectionsOf,
@@ -207,7 +214,8 @@ function NotebookRounds({
         </Button>
       </nav>
 
-      <RoundCard round={round} questionId={questionId} />
+      {/* key 按轮隔离实例：SolutionFold 展开态等轮内 UI 状态不跨轮残留 */}
+      <RoundCard key={round.attemptId} round={round} questionId={questionId} />
     </div>
   );
 }
@@ -253,6 +261,75 @@ function RoundCard({
           查看这一轮
         </Link>
       </header>
+
+      {/* 题目区（冻结快照脱敏投影；快照缺失占位引导回完整结果页） */}
+      <section aria-label="题目" className="flex flex-col gap-2">
+        <p className="text-sm font-medium">题目</p>
+        {round.question === null ? (
+          <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
+            这一轮的历史题目快照缺失，可点击右上角「查看这一轮」进入完整结果页查看。
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:p-4">
+            {/* 题干（服务端已脱敏，displayStemMd 兜底剥内嵌选项列表） */}
+            <RichMarkdown
+              source={displayStemMd(round.question)}
+              className="text-base"
+            />
+            {/* 选项纯文本列表：不依据答案做任何高亮（公布状态由解析区承载） */}
+            {round.question.options && round.question.options.length > 0 && (
+              <ol className="flex flex-col gap-1.5" aria-label="选项">
+                {round.question.options.map((option, idx) => (
+                  <li
+                    key={option}
+                    className="flex min-h-11 items-start gap-2 rounded-lg border border-transparent px-3 py-1.5 text-sm"
+                  >
+                    <span className="mt-0.5 w-5 shrink-0 font-semibold text-muted-foreground">
+                      {letterOf(idx)}.
+                    </span>
+                    <RichMarkdown
+                      source={option}
+                      className="min-w-0 flex-1 text-sm [&_p]:my-0"
+                    />
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* 解析区（按来源公布 gate 受控下发；未公布 fail-closed 占位。快照缺失
+          轮的解析永远无从下发，整区不渲染，避免「还未公布」的误导） */}
+      {round.question !== null && (
+        <section aria-label="解析" className="flex flex-col gap-2">
+          <p className="text-sm font-medium">参考答案与解析</p>
+          {round.release === null ? (
+            <div className="rounded-lg border border-border bg-muted/30 px-3.5 py-2.5 text-xs text-muted-foreground">
+              这一轮的答案还未公布，公布后可在此直接查看参考答案与详解。
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:p-4">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-2 text-sm">
+                <span className="shrink-0 font-medium text-muted-foreground">
+                  正确答案：
+                </span>
+                {round.release.answers === null ? (
+                  <span className="text-muted-foreground">
+                    本题无标准参考答案（主观题由老师批改）
+                  </span>
+                ) : (
+                  <RichMarkdown
+                    source={formatReferenceAnswers(round.release.answers)}
+                    className="min-w-0 font-medium [&_p]:my-0"
+                  />
+                )}
+              </div>
+              <SolutionFold solutionMd={round.release.solutionMd} />
+            </div>
+          )}
+        </section>
+      )}
 
       {/* 原稿区（按证据行定位该轮原稿；软删题历史可读） */}
       <section aria-label="原稿" className="flex flex-col gap-2">

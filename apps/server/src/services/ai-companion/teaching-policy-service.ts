@@ -9,7 +9,11 @@ import type { Db } from "../../db/client.ts";
 import type { Attempt, ResponseRow } from "../../db/schema.ts";
 import { responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
-import { attemptTeacherId, requireUsableAttempt } from "../attempt-service.ts";
+import {
+  attemptTeacherId,
+  lessonQuestionSubmitted,
+  requireUsableAttempt,
+} from "../attempt-service.ts";
 
 /**
  * SAI-04 统一教学策略裁决（B02）：唯一 AI 权限口径，创建、领取、回信交付、
@@ -163,7 +167,7 @@ function requireAttemptResponse(
  */
 function phaseOfRows(attempt: Attempt, response: ResponseRow): AiQuestionPhase {
   if (attempt.sourceType === "lesson") {
-    return response.submittedAt !== null ? "completed" : "answering";
+    return lessonQuestionSubmitted(response) ? "completed" : "answering";
   }
   return attempt.status === "submitted" || attempt.status === "graded"
     ? "completed"

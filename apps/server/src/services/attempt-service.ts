@@ -83,7 +83,7 @@ import {
 } from "./hint-service";
 import { pendingMarkCount } from "./pending-mark";
 import type { Tx } from "./question-sync";
-import { jsonOf, snapshotOfRow } from "./snapshot";
+import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
 /**
  * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10；T6R.3 全来源建卷冻结）
@@ -432,6 +432,46 @@ export function answersReleased(
   if (assignment.dueAt === null) return false;
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
   return Date.parse(assignment.dueAt) <= nowMs;
+}
+
+/**
+ * 批量预取作业的公布口径（题目笔记本 2026-10 起，与 student-records 的
+ * 作业记录列表同型收敛）：id 去重交调用方负责 → 单条 inArray 只取
+ * answerRelease/dueAt → Map。含已软删行（作答记录不随作业软删消失，
+ * requireAssignmentRow 同口径）；行异常缺失（Map 无键）的兜底方向由
+ * 消费方自定——notebook 按 fail-closed 未公布（防泄露取严），student-
+ * records 沿重构前既有语义 fail-open 视为已公布（记录列表不因异常行遮蔽）。
+ */
+export function assignmentReleaseByIds(
+  db: Db,
+  ids: readonly string[],
+): Map<string, Pick<Assignment, "answerRelease" | "dueAt">> {
+  if (ids.length === 0) return new Map();
+  return new Map(
+    db
+      .select({
+        id: assignments.id,
+        answerRelease: assignments.answerRelease,
+        dueAt: assignments.dueAt,
+      })
+      .from(assignments)
+      .where(inArray(assignments.id, [...ids]))
+      .all()
+      .map((row) => [row.id, row] as const),
+  );
+}
+
+/**
+ * lesson 题级「已单题提交」领域谓词（2026-10 三消费方同口径收敛）：
+ * 口径按题级行值（responses.submittedAt 非空），不回看 attempt 级状态——
+ * 整卷收尾对剩余行写交卷时刻，正常非 draft 卷恒非空；判定方向恒取严
+ * （null = 未提交 = 不放行）。消费方：lesson-service released、note-service
+ * 笔记本解析 gate、teaching-policy-service「本题完成」判定。
+ */
+export function lessonQuestionSubmitted(
+  row: Pick<ResponseRow, "submittedAt">,
+): boolean {
+  return row.submittedAt !== null;
 }
 
 /**
@@ -2441,8 +2481,7 @@ export function resultQuestionOf(
         : {}),
       hintCount: snapshot.hints.length,
     },
-    answers: snapshot.answers ?? null,
-    solutionMd: snapshot.solutionMd ?? null,
+    ...releaseOfSnapshot(snapshot),
     answer: answerOf(row.answerJson),
     autoCorrect: row.autoCorrect,
     // D9：教师批注与最终判定（D3 持久化口径；公布 gate 在 releaseAwareQuestion 投影）

@@ -35,7 +35,7 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
-import { snapshotOfRow } from "./snapshot";
+import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -423,12 +423,7 @@ function detailItemOf(
     hintsUsed: row.hintsUsed,
     changeCount: row.changeCount,
     ink: opts.ink,
-    ...(isDraft
-      ? {}
-      : {
-          answers: snapshot.answers ?? null,
-          solutionMd: snapshot.solutionMd ?? null,
-        }),
+    ...(isDraft ? {} : releaseOfSnapshot(snapshot)),
   };
 }
 

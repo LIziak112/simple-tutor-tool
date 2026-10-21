@@ -3,7 +3,7 @@ import type {
   StudentRecordsData,
   StudentRecordsQuery,
 } from "@tutor/contract";
-import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Assignment,
@@ -12,7 +12,7 @@ import {
   assignments,
   attempts,
 } from "../db/schema";
-import { answersReleased } from "./attempt-service";
+import { answersReleased, assignmentReleaseByIds } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark";
 import { studentTeacherIdOf } from "./student-course-service";
@@ -202,20 +202,7 @@ export function listStudentRecords(
         .map((row) => row.assignmentId as string),
     ),
   ];
-  const assignmentById = new Map(
-    assignmentIds.length > 0
-      ? db
-          .select({
-            id: assignments.id,
-            answerRelease: assignments.answerRelease,
-            dueAt: assignments.dueAt,
-          })
-          .from(assignments)
-          .where(inArray(assignments.id, assignmentIds))
-          .all()
-          .map((row) => [row.id, row] as const)
-      : [],
-  );
+  const assignmentById = assignmentReleaseByIds(db, assignmentIds);
 
   const records: StudentRecordRow[] = rows.map((attempt: Attempt) => {
     // 公布 gate（T2A.8/D10）：只有 assignment 来源的已交卷记录可能受限；
