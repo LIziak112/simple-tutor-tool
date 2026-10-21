@@ -1,3 +1,4 @@
+import type { AssignmentAnswerRelease } from "@tutor/contract";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,7 +108,7 @@ export function SubmitConfirmDialog({
   incompleteQuestions = [],
   onGoToQuestion,
   dueAt = null,
-  isAfterDue = false,
+  answerRelease = "on_submit",
 }: {
   open: boolean;
   /** 未作答题数（0 时也确认一次，防止误触） */
@@ -131,12 +132,22 @@ export function SubmitConfirmDialog({
   onGoToQuestion?: (id: string) => void;
   /** 截止时间（UTC ISO），用于截止后公布时展示预期 */
   dueAt?: string | null;
-  /** 是否为截止后公布（after_due 且未到截止） */
-  isAfterDue?: boolean;
+  /** 公布时机（草稿视图契约字段；与 dueAt 组合判定「截止后公布」预期文案） */
+  answerRelease?: AssignmentAnswerRelease;
 }) {
   const busy = submitting || preparing;
   const annotationProblem =
     noteProblems?.some((problem) => problem.domain === "annotation") ?? false;
+  // 「截止后公布」前置预期 = 策略为 after_due 且此刻未到截止（到点后交卷即
+  // 完整公布，与 on_submit 同文案）。dueAt 缺失/已过/不可解析都不展示该预期。
+  const afterDueDueAt =
+    answerRelease === "after_due" &&
+    dueAt !== null &&
+    dueAt !== undefined &&
+    !Number.isNaN(Date.parse(dueAt)) &&
+    Date.parse(dueAt) > Date.now()
+      ? dueAt
+      : null;
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
       <DialogContent
@@ -153,10 +164,10 @@ export function SubmitConfirmDialog({
             id="submit-confirm-desc"
             className="text-sm leading-6"
           >
-            {isAfterDue && dueAt
+            {afterDueDueAt !== null
               ? unansweredCount > 0
-                ? `还有 ${unansweredCount} 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(dueAt)}）统一公布。确认交卷吗？`
-                : `全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(dueAt)}）统一公布。确认交卷吗？`
+                ? `还有 ${unansweredCount} 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(afterDueDueAt)}）统一公布。确认交卷吗？`
+                : `全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(afterDueDueAt)}）统一公布。确认交卷吗？`
               : unansweredCount > 0
                 ? `还有 ${unansweredCount} 题没有作答，交卷后不能再修改答案。`
                 : "全部题目已作答，交卷后立即判分且不能再修改答案。"}
