@@ -61,6 +61,10 @@ import {
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
 import {
+  answersReleased,
+  assignmentReleaseByIds,
+  lessonQuestionSubmitted,
+  publicOfSnapshot,
   requireAttemptQuestion,
   requireAttemptQuestionRow,
   requireAttemptQuestions,
@@ -68,6 +72,7 @@ import {
 } from "./attempt-service";
 import { collectBackupReferencedPaths } from "./backup-service";
 import { gcInkFiles } from "./ink-gc";
+import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import {
   findTeacherAttempt,
@@ -1287,8 +1292,13 @@ export function sealCorrection(
  *   version 数字；契约注记口径为「冻结快照里的题目 version」——快照 JSON
  *   本身不含 version 字段，冻结版本号在 responses 行列上）。0（升级遗留
  *   未冻结语义）→ null，**绝不回填当前题库**；
+ * - 题面与解析（公布 gate 矩阵）：question/release 均从该轮冻结快照投影
+ *   （唯一解析出口 snapshotOfRow，坏快照 null 留痕，绝不回填 live 题）；
+ *   release 按来源 gate 受控放行——assignment 依 answersReleased（作业行
+ *   含已软删，异常缺失 fail-closed）、course/wrong 恒交卷即公布（D11）、
+ *   lesson 按题级 submittedAt（与 lesson-service released 同判定）；
  * - evidence/corrections/supplements：noteCollectionsOf 单点投影（与头投影
- *   同口径；该载荷零答案零题干，AGENTS 第 3 条——题目侧只有版本号数字）；
+ *   同口径）；
  * - 无轮次 → rounds=[]（不探测题目存在性——空数组即「没有历史」）。
  */
 export function getStudentQuestionNotebook(
@@ -1299,7 +1309,16 @@ export function getStudentQuestionNotebook(
   const rows = db
     .select({
       attempt: attempts,
-      questionVersion: responses.questionVersion,
+      // 窄列 select：快照解析/投影/版本/题级提交判定所需的六列（answerJson/
+      // teacherComment 等大列不进聚合读路径）
+      response: {
+        id: responses.id,
+        attemptId: responses.attemptId,
+        questionId: responses.questionId,
+        questionVersion: responses.questionVersion,
+        submittedAt: responses.submittedAt,
+        questionSnapshotJson: responses.questionSnapshotJson,
+      },
     })
     .from(attempts)
     .innerJoin(
@@ -1318,8 +1337,41 @@ export function getStudentQuestionNotebook(
   // 来源上下文的教师域（sourceOf 需域内查标题；D9 异常行 null → 空串域
   // 查询，与 student-records 同兜底口径）
   const teacherId = studentTeacherIdOf(db, studentId);
+  // assignment 公布口径批量预取（sourceOf 只投影标题，不含 answerRelease/
+  // dueAt）；经 attempt-service 共享预取（含已软删行；Map 无键 = 行异常
+  // 缺失，消费侧 fail-closed 按未公布）
+  const assignmentRelease = assignmentReleaseByIds(db, [
+    ...new Set(
+      rows
+        .map((row) => row.attempt.assignmentId)
+        .filter((id): id is string => id !== null),
+    ),
+  ]);
   const rounds: NotebookRound[] = rows.map((row, index) => {
     const source = sourceOf(db, row.attempt, teacherId ?? "");
+    // 公布 gate（模块头安全口径；answersReleased 读时比较，无定时任务）：
+    // - assignment：按作业配置（on_submit 交卷即公布 / after_due 到截止；
+    //   行异常缺失 fail-closed 按未公布）
+    // - course / wrong：D11 恒交卷即公布（不适用 answerRelease）
+    // - lesson：题级 submittedAt（整卷收尾对剩余行写交卷时刻，正常非 draft
+    //   卷恒非空；口径按题级行值锁定，与 lesson-service released 同判定）
+    const assignment =
+      row.attempt.assignmentId !== null
+        ? assignmentRelease.get(row.attempt.assignmentId)
+        : undefined;
+    const isReleased =
+      source.sourceType === "assignment"
+        ? assignment !== undefined && answersReleased(assignment)
+        : source.sourceType === "lesson"
+          ? lessonQuestionSubmitted(row.response)
+          : true;
+    // 快照投影（题面与解析同源）：question 走 publicOfSnapshot 脱敏白名单，
+    // release 经 releaseOfSnapshot 单一投影（gate 放行且快照可用才构造）
+    const snapshot = snapshotOfRow(row.response);
+    const question =
+      snapshot !== null ? publicOfSnapshot(snapshot, row.response.id) : null;
+    const release =
+      isReleased && snapshot !== null ? releaseOfSnapshot(snapshot) : null;
     const { evidence, corrections, supplements } = noteCollectionsOf(
       db,
       row.attempt.id,
@@ -1332,7 +1384,10 @@ export function getStudentQuestionNotebook(
       // 非 draft 行 submittedAt 恒非空；防御回退 startedAt（契约 min(1)）
       submittedAt: row.attempt.submittedAt ?? row.attempt.startedAt,
       roundOrdinal: index + 1,
-      questionVersion: row.questionVersion >= 1 ? row.questionVersion : null,
+      questionVersion:
+        row.response.questionVersion >= 1 ? row.response.questionVersion : null,
+      question,
+      release,
       evidence,
       corrections,
       supplements,

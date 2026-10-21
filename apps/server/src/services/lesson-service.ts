@@ -23,6 +23,7 @@ import {
   freezeInputsOfAttempt,
   insertFrozenResponses,
   lessonLiveSummaryOf,
+  lessonQuestionSubmitted,
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
@@ -205,7 +206,9 @@ function buildLessonStartData(
     if (answer !== null) drafts[row.questionId] = answer;
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
-    if (row.submittedAt === null) continue; // 未单题提交：不进 released、不计对错
+    if (!lessonQuestionSubmitted(row)) {
+      continue;
+    } // 未单题提交：不进 released、不计对错
     // 已单题提交 → 当题释放（读当前行值：进行中卷教师可能已批 teacherMark）；
     // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
     // 含 [[答案]] 标记的原文不下发）

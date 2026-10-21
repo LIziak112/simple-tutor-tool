@@ -18,7 +18,7 @@ import {
 } from "../db/schema";
 import { answerOf } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
-import { snapshotOfRow } from "./snapshot";
+import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
 
@@ -392,8 +392,7 @@ export function listWrongQuestions(
       ...(snapshot.options !== undefined
         ? { options: snapshot.options.map((option) => option.text) }
         : {}),
-      answers: snapshot.answers ?? null,
-      solutionMd: snapshot.solutionMd ?? null,
+      ...releaseOfSnapshot(snapshot),
       answerText: serializeStudentAnswer(answerOf(lastResponse.answerJson)),
       firstCorrect: first.finalCorrect === true,
       resolved: last.finalCorrect === true,

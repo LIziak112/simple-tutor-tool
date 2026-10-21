@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
-import { noteHeadDataSchema, studentNotebookOkSchema } from "@tutor/contract";
+import {
+  noteHeadDataSchema,
+  type StudentNotebookData,
+  studentNotebookOkSchema,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -10,7 +14,10 @@ import { createApp } from "../app.ts";
 import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
 import {
+  assignments as assignmentsTable,
+  attempts as attemptsTable,
   notes as notesTable,
+  responses as responsesTable,
   submissionEvidence as submissionEvidenceTable,
   teachers as teachersTable,
 } from "../db/schema.ts";
@@ -116,6 +123,24 @@ beforeAll(async () => {
   teacherBCookie = `tutor_session=${
     createTeacherSession(db, TEACHER_B_ID).token
   }`;
+
+  // 直插轮次夹具用的真实快照（取一次真实交卷轮，与解析器形态一致）
+  const snapAttempt = await freshAttempt();
+  await submitWithFrozen(snapAttempt, Q.solve);
+  const snapRow = db
+    .select({ snapshot: responsesTable.questionSnapshotJson })
+    .from(responsesTable)
+    .where(
+      and(
+        eq(responsesTable.attemptId, snapAttempt),
+        eq(responsesTable.questionId, Q.solve),
+      ),
+    )
+    .get();
+  if (snapRow?.snapshot == null) {
+    throw new Error("取真实快照失败（测试世界已坏）");
+  }
+  solveSnapshotJson = snapRow.snapshot;
 });
 
 /** 每测试取新 attempt（张三的新作业卷，笔记数据按 attempt 天然隔离） */
@@ -235,6 +260,107 @@ async function submitWithFrozen(
   );
   if (submit.status !== 200) throw new Error(`前置交卷失败：${submit.status}`);
   return { versionId };
+}
+
+// ---------- 题面/解析扩展的专用夹具（公布 gate 矩阵） ----------
+
+/** p4-q7 的真实快照 JSON（beforeAll 取自真实交卷轮，与解析器形态一致） */
+let solveSnapshotJson = "";
+
+/**
+ * 布置带公布口径的作业并交卷，返回 attemptId（after_due 矩阵专用——真实走
+ * 「布置 → 开卷 → 证据交卷」，答案口径经作业 API 的组合校验）。
+ */
+async function freshSubmittedWithRelease(
+  answerRelease: "on_submit" | "after_due",
+  dueAt: string,
+): Promise<{ attemptId: string; assignmentId: string }> {
+  const createRes = await app.request("/api/teacher/assignments", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: teacherCookie },
+    body: JSON.stringify({
+      unitIds: [unitId],
+      studentIds: [aId],
+      answerRelease,
+      dueAt,
+    }),
+  });
+  if (createRes.status !== 201) {
+    throw new Error(`布置作业失败：${createRes.status}`);
+  }
+  const assignmentId = (
+    (await createRes.json()) as { data: { assignments: { id: string }[] } }
+  ).data.assignments[0]?.id;
+  if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
+  const attemptRes = await app.request(
+    `/api/student/assignments/${assignmentId}/attempt`,
+    { method: "POST", headers: { cookie: aCookie } },
+  );
+  if (attemptRes.status !== 200) {
+    throw new Error(`开卷失败：${attemptRes.status}`);
+  }
+  const attemptId = ((await attemptRes.json()) as { data: { id: string } }).data
+    .id;
+  const submit = await submitAttemptRequestWithEvidence(
+    app,
+    aCookie,
+    db,
+    attemptId,
+  );
+  if (submit.status !== 200) throw new Error(`交卷失败：${submit.status}`);
+  return { attemptId, assignmentId };
+}
+
+/**
+ * 直插一卷已交卷的 course/lesson 轮（response 快照复用真实解析形态）。
+ * lesson 的行级 submittedAt 可控——「整卷交卷但当题未提交」正常流程不可达
+ * （整卷收尾对剩余行写交卷时刻），防御分支照 teaching-policy-service.test
+ * 的直插先例构造。
+ */
+async function insertSubmittedRound(
+  sourceType: "course" | "lesson",
+  opts: {
+    /** course 轮传真实单元 id（来源标签可读）；lesson 恒 null（兜底链） */
+    unitId?: string;
+    /** 缺省 = 已提交（整卷收尾口径）；显式 null 构造防御分支 */
+    responseSubmittedAt?: string | null;
+  } = {},
+): Promise<string> {
+  const now = new Date().toISOString();
+  const attemptId = randomUUID();
+  db.insert(attemptsTable)
+    .values({
+      id: attemptId,
+      studentId: aId,
+      sourceType,
+      assignmentId: null,
+      courseId: null,
+      unitId: opts.unitId ?? null,
+      lectureId: null,
+      attemptNo: 1,
+      status: "submitted",
+      startedAt: now,
+      submittedAt: now,
+      frozenAt: now,
+      legacyUnverified: false,
+      abandonedAt: null,
+    })
+    .run();
+  db.insert(responsesTable)
+    .values({
+      id: randomUUID(),
+      attemptId,
+      questionId: Q.solve,
+      unitId: null,
+      questionVersion: 1,
+      questionSnapshotJson: solveSnapshotJson,
+      answerJson: null,
+      // 显式 null 必须落 null（?? 会把防御分支的 null 吞成缺省 now）
+      submittedAt:
+        "responseSubmittedAt" in opts ? opts.responseSubmittedAt : now,
+    })
+    .run();
+  return attemptId;
 }
 
 /** 该 attempt 该题的全部 correction 行（路由测试的库侧断言用） */
@@ -757,6 +883,13 @@ describe("找回稿不能升级成原稿", () => {
 // ---------- 笔记本聚合与泄露（矩阵 7/9） ----------
 
 describe("题目笔记本 GET /notebook/questions/:qid", () => {
+  /** released 场景的泄露断言选项：allow 与结果视图 released 场景同口径；
+   * forbid 补回原「questions」守卫（assertNoLeak 默认集无该键，聚合响应
+   * 若回归出整卷题面数组须报警） */
+  const RELEASED_LEAK_OPTS = {
+    allow: ["answers", "answer", "solutionMd"],
+    forbid: ["questions"],
+  } as const;
   it("两轮跨来源聚合 + 契约 schema + 零题干答案深检查", async () => {
     // 轮 1：作业卷（assignment 来源，真实作业标题）
     const attempt1 = await freshAttempt();
@@ -775,18 +908,12 @@ describe("题目笔记本 GET /notebook/questions/:qid", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown };
     expect(studentNotebookOkSchema.safeParse(body).success).toBe(true);
-    assertNoLeak(body, { forbid: ["stemMd", "questions"] });
-    const data = body.data as {
-      rounds: {
-        attemptId: string;
-        roundOrdinal: number;
-        sourceType: string;
-        sourceLabel: string;
-        corrections: unknown[];
-        supplements: unknown[];
-        evidence: { versionId: string | null } | null;
-      }[];
-    };
+    // released 轮次（on_submit 作业）合法携带 release——answers/answer/solutionMd
+    // 键名级放行（与结果视图 released 场景同一口径；allow 是平键名，任何层级
+    // 的同名键不再报警：顶层形状锁定由契约测试承担，fail-closed 场景在下方
+    // 用例以不带 allow 把关）
+    assertNoLeak(body, RELEASED_LEAK_OPTS);
+    const data = body.data as StudentNotebookData;
     // 共享世界里前序用例已为同题交过卷（freshAttempt 各自独立）——这里断言
     // 两轮均在列、roundOrdinal 全表从 1 连续递增、逐轮材料正确；跨轮次的
     // submittedAt 排序与轮次号语义在服务层测试用显式时间锁定（路由层两次
@@ -795,20 +922,23 @@ describe("题目笔记本 GET /notebook/questions/:qid", () => {
     expect(data.rounds.map((r) => r.roundOrdinal)).toEqual(
       data.rounds.map((_, i) => i + 1),
     );
-    const round1 = data.rounds.find((r) => r.attemptId === attempt1);
-    const round2 = data.rounds.find((r) => r.attemptId === attempt2);
-    expect(round1).toBeDefined();
-    expect(round2).toBeDefined();
+    const round1 = roundOf(data, attempt1);
+    const round2 = roundOf(data, attempt2);
     expect(round1?.sourceType).toBe("assignment");
     expect(typeof round1?.sourceLabel).toBe("string");
     expect(round1?.sourceLabel.length).toBeGreaterThan(0);
     expect(round1?.corrections).toHaveLength(1);
     expect(round1?.supplements).toEqual([]);
     expect(round2?.supplements).toHaveLength(1);
-    // 深检查：响应串里没有任何题目侧内容（题干文本/答案/详解/提示关键词）
-    const raw = JSON.stringify(body);
-    for (const forbidden of ["题干占位", "solution", "answer", "hint"]) {
-      expect(raw).not.toContain(forbidden);
+    // 题面与解析（on_submit 交卷即公布）：快照投影的脱敏题干 + 真实答案/详解
+    for (const round of [round1, round2]) {
+      expect(round?.question).not.toBeNull();
+      expect(round?.question?.stemMd).toContain("计算");
+      // 题干脱敏口径：详解文本不得混入题面投影（stemMd 与 release 解耦）
+      expect(round?.question?.stemMd).not.toContain("先算乘方");
+      expect(round?.release).not.toBeNull();
+      expect(round?.release?.answers).not.toBeNull();
+      expect(round?.release?.solutionMd).toContain("先算乘方");
     }
   });
 
@@ -818,6 +948,117 @@ describe("题目笔记本 GET /notebook/questions/:qid", () => {
     expect(
       ((await res.json()) as { data: { rounds: unknown[] } }).data.rounds,
     ).toEqual([]);
+  });
+
+  /** 按轮次 attemptId 从响应中取该轮（新用例共用） */
+  function roundOf(data: StudentNotebookData, attemptId: string) {
+    const round = data.rounds.find((r) => r.attemptId === attemptId);
+    expect(round, `轮次 ${attemptId} 应在列`).toBeDefined();
+    return round;
+  }
+
+  it("after_due 截止前：题面照常下发，release null（fail-closed 严格断言）", async () => {
+    const { attemptId } = await freshSubmittedWithRelease(
+      "after_due",
+      new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    );
+    const res = await notebookReq(Q.solve);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: StudentNotebookData };
+    expect(studentNotebookOkSchema.safeParse(body).success).toBe(true);
+    const round = roundOf(body.data, attemptId);
+    // 题面不受公布 gate 约束（已交卷内容，脱敏投影）
+    expect(round?.question).not.toBeNull();
+    expect(round?.question?.stemMd).toContain("计算");
+    // fail-closed：解析整体缺席
+    expect(round?.release).toBeNull();
+    // 严格断言按本轮圈定（聚合响应含共享世界其他已公布轮次，不能对全 body
+    // 严格）：不带 allow——answers/solutionMd 键在本轮任何层级不得出现
+    assertNoLeak(round);
+    // 内容级哨兵：详解文本在本轮零出现（题干投影不含解析）
+    expect(JSON.stringify(round)).not.toContain("先算乘方");
+  });
+
+  it("after_due 截止后：release 非空（读时比较，无定时任务）", async () => {
+    const { attemptId, assignmentId } = await freshSubmittedWithRelease(
+      "after_due",
+      new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    );
+    // 直改 dueAt 到过去（作业行由 API 创建；直接到点的下一次请求自然恢复）
+    db.update(assignmentsTable)
+      .set({ dueAt: new Date(Date.now() - 60 * 1000).toISOString() })
+      .where(eq(assignmentsTable.id, assignmentId))
+      .run();
+    const res = await notebookReq(Q.solve);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: StudentNotebookData };
+    const round = roundOf(body.data, attemptId);
+    expect(round?.release).not.toBeNull();
+    expect(round?.release?.answers).not.toBeNull();
+    expect(round?.release?.solutionMd).toContain("先算乘方");
+    assertNoLeak(body, RELEASED_LEAK_OPTS);
+  });
+
+  it("course 轮恒交卷即公布；lesson 轮按题级 submittedAt（防御分支直插）", async () => {
+    const courseAttempt = await insertSubmittedRound("course", { unitId });
+    const lessonDone = await insertSubmittedRound("lesson");
+    const lessonDefensive = await insertSubmittedRound("lesson", {
+      // 防御分支（正常流程不可达）：整卷收尾必对剩余行写 submittedAt，
+      // 此处直插行级 null 锁「口径按题级行值，不回看 attempt 级状态」
+      responseSubmittedAt: null,
+    });
+    const res = await notebookReq(Q.solve);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: StudentNotebookData };
+    // course：D11 恒交卷即公布
+    expect(roundOf(body.data, courseAttempt)?.release).not.toBeNull();
+    // lesson：题级行值已提交 → 当题公布
+    expect(roundOf(body.data, lessonDone)?.release).not.toBeNull();
+    // lesson 防御分支：行级 null → 未公布
+    expect(roundOf(body.data, lessonDefensive)?.release).toBeNull();
+    assertNoLeak(body, RELEASED_LEAK_OPTS);
+  });
+
+  it("快照缺失 → question null 且 release null，接口 200（不回填 live 题）", async () => {
+    const attemptId = await freshAttempt();
+    await submitWithFrozen(attemptId, Q.solve);
+    db.update(responsesTable)
+      .set({ questionSnapshotJson: null })
+      .where(
+        and(
+          eq(responsesTable.attemptId, attemptId),
+          eq(responsesTable.questionId, Q.solve),
+        ),
+      )
+      .run();
+    const res = await notebookReq(Q.solve);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: StudentNotebookData };
+    const round = roundOf(body.data, attemptId);
+    expect(round?.question).toBeNull();
+    // 解析从快照投影：快照缺失时即便已公布也无从下发（fail closed）
+    expect(round?.release).toBeNull();
+    // 严格断言按本轮圈定（同上：聚合响应含其他已公布轮次）
+    assertNoLeak(round);
+  });
+
+  it("作业软删后 release 照常公布（作答记录不随作业软删消失）", async () => {
+    const { attemptId, assignmentId } = await freshSubmittedWithRelease(
+      "on_submit",
+      new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    );
+    db.update(assignmentsTable)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(assignmentsTable.id, assignmentId))
+      .run();
+    const res = await notebookReq(Q.solve);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: StudentNotebookData };
+    const round = roundOf(body.data, attemptId);
+    expect(round?.question).not.toBeNull();
+    expect(round?.release).not.toBeNull();
+    expect(round?.release?.solutionMd).toContain("先算乘方");
+    assertNoLeak(body, RELEASED_LEAK_OPTS);
   });
 });
 
