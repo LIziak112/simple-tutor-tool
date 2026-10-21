@@ -170,6 +170,7 @@ function draftOf(source: (typeof SOURCES)[number]): AttemptDraftData {
     drafts: {},
     hintsOpened: {},
     legacyUnverified: false,
+    answerRelease: "on_submit",
     enabledCapabilities: ["steps", "ink"],
   };
 }

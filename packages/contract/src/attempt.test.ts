@@ -305,12 +305,15 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
 });
 
 describe("attemptDraftDataSchema（草稿视图）", () => {
-  it("接受合法草稿视图：单元分组题目带 questionRevisionId + drafts 答案表 + hintsOpened 已解锁提示 + legacyUnverified", () => {
+  it("接受合法草稿视图：单元分组题目带 questionRevisionId + drafts 答案表 + hintsOpened 已解锁提示 + legacyUnverified + answerRelease", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
       courseName: null,
       dueAt: null,
+      // 2026-10-21 交卷前置预期：草稿视图携带公布时机（assignment 原值；
+      // course/wrong/lesson 恒 on_submit），交卷弹窗据此告知「截止后统一公布」
+      answerRelease: "on_submit",
       // T2A.7：题目按单元分组下发（题号全卷连续由 units 顺序保证）；
       // T6R.3：每题携带不透明 questionRevisionId（= responses 行 id）
       units: [
@@ -355,18 +358,20 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       enabledCapabilities: ["steps", "ink"],
     });
     expect(parsed.drafts["练习四-1"]).toEqual({ kind: "judge", value: true });
+    expect(parsed.answerRelease).toBe("on_submit");
     expect(parsed.hintsOpened["练习四-4"]?.[0]?.index).toBe(0);
     expect(parsed.units[0]?.questions[0]?.questionRevisionId).toBe(
       "11111111-1111-4111-8111-111111111111",
     );
   });
 
-  it("草稿视图缺 questionRevisionId 或 legacyUnverified → 整体拒绝（必填，防漏发）", () => {
+  it("草稿视图缺 questionRevisionId、legacyUnverified 或 answerRelease → 整体拒绝（必填，防漏发）", () => {
     const base = {
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
       courseName: null,
       dueAt: null,
+      answerRelease: "on_submit",
       drafts: {},
       hintsOpened: {},
       legacyUnverified: false,
@@ -401,6 +406,38 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
         units: [{ id: UNIT_ID, title: "练习四", questions: [question] }],
       }).success,
     ).toBe(false);
+    const { answerRelease: _omitRelease, ...withoutRelease } = base;
+    void _omitRelease;
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...withoutRelease,
+        units: [{ id: UNIT_ID, title: "练习四", questions: [question] }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("草稿视图 answerRelease 接受 after_due（截止后公布作业的交卷前置预期）；非法值拒绝", () => {
+    const base = {
+      attempt: SUMMARY_DRAFT,
+      title: "周末加练",
+      courseName: null,
+      dueAt: "2026-10-25T12:00:00.000Z",
+      drafts: {},
+      hintsOpened: {},
+      legacyUnverified: false,
+      enabledCapabilities: ["steps", "ink"],
+      units: [] as const,
+    };
+    expect(
+      attemptDraftDataSchema.parse({ ...base, answerRelease: "after_due" })
+        .answerRelease,
+    ).toBe("after_due");
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...base,
+        answerRelease: "immediately",
+      }).success,
+    ).toBe(false);
   });
 
   it("草稿视图里的题目携带教师侧字段会被剥离（strip 语义，与 QuestionPublic 一致）", () => {
@@ -409,6 +446,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       title: "周末加练",
       courseName: null,
       dueAt: null,
+      answerRelease: "on_submit",
       units: [
         {
           id: UNIT_ID,
@@ -1210,6 +1248,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         title: "周末加练",
         courseName: null,
         dueAt: null,
+        answerRelease: "on_submit",
         units: [],
         drafts: {},
         hintsOpened: {},

@@ -225,6 +225,7 @@ const DRAFT_DATA: AttemptDraftData = {
   drafts: {},
   hintsOpened: {},
   legacyUnverified: false,
+  answerRelease: "on_submit",
   enabledCapabilities: ["steps", "ink"],
 };
 
@@ -527,6 +528,7 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
   drafts: {},
   hintsOpened: {},
   legacyUnverified: false,
+  answerRelease: "on_submit",
   enabledCapabilities: ["steps", "ink"],
 };
 

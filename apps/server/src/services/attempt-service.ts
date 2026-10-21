@@ -877,11 +877,18 @@ function attemptPublicUnitGroups(
   }));
 }
 
-/** 答题页顶部展示的来源信息（assignment=作业标题+截止；course=单元标题+课程名） */
+/** 答题页顶部展示的来源信息（assignment=作业标题+截止+公布时机；course=单元标题+课程名） */
 interface AttemptSourceMeta {
   title: string;
   courseName: string | null;
   dueAt: string | null;
+  /**
+   * 公布时机（2026-10-21 交卷前置预期）：assignment = 作业行原值；course/wrong
+   * 恒 'on_submit'（D11 交卷即公布）；lesson attempt 级不适用（当题释放恒题级
+   * 粒度）同样投影 'on_submit'。草稿视图据此下发，交卷弹窗展示「截止后统一
+   * 公布」预期；结果视图权威 gate 仍是 answersReleased（读时判定）。
+   */
+  answerRelease: Assignment["answerRelease"];
 }
 
 /**
@@ -934,7 +941,12 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   if (attempt.sourceType === "wrong") {
     // 错题重练（2026-10）：标题固定「错题重练」，无课程/截止
     //（「错题重练 · 第 n 次」的来源行由前端从 attemptNo 拼）
-    return { title: WRONG_PRACTICE_TITLE, courseName: null, dueAt: null };
+    return {
+      title: WRONG_PRACTICE_TITLE,
+      courseName: null,
+      dueAt: null,
+      answerRelease: "on_submit",
+    };
   }
   if (attempt.sourceType === "lesson") {
     // 讲练页（2026-10）：标题 = 讲练页讲义当前标题（D1 引用语义），不限截止
@@ -946,7 +958,7 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
       attempt,
       attemptTeacherId(db, attempt),
     );
-    return { title, courseName, dueAt: null };
+    return { title, courseName, dueAt: null, answerRelease: "on_submit" };
   }
   if (attempt.sourceType === "course") {
     // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）。
@@ -974,6 +986,7 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
       title: unit?.title ?? "课程练习",
       courseName: course?.title ?? null,
       dueAt: null,
+      answerRelease: "on_submit",
     };
   }
   const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
@@ -990,6 +1003,7 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
     title: assignment.title,
     courseName: course?.title ?? null,
     dueAt: assignment.dueAt,
+    answerRelease: assignment.answerRelease,
   };
 }
 
@@ -2391,6 +2405,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     title: meta.title,
     courseName: meta.courseName,
     dueAt: meta.dueAt,
+    answerRelease: meta.answerRelease,
     units,
     drafts,
     draftRevisions,

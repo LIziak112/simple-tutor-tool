@@ -34,6 +34,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { PendingReleaseBanner } from "./PendingReleaseBanner";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
@@ -354,9 +355,11 @@ function ResultQuestionCard({
 }) {
   // 手写题型判定走共享 HANDWRITTEN_TYPES（与答题卡/教师卡单一事实来源）
   const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
+  // 复算一次共享：verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源
+  const reviewState = reviewQuestionState(question, released);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
-  const verdict = reviewQuestionState(question, released).verdict;
+  const verdict = reviewState.verdict;
   const renderTools = (
     explanationTrigger?: ReactNode,
     explanationContent?: ReactNode,
@@ -435,7 +438,9 @@ function ResultQuestionCard({
         "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
         !released
-          ? "before:bg-muted"
+          ? reviewState.unanswered
+            ? "before:bg-muted"
+            : "before:bg-sky-400"
           : verdict === true
             ? "before:bg-emerald-500"
             : verdict === false
@@ -445,8 +450,22 @@ function ResultQuestionCard({
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {/* T2A.8：未公布时不显示对错判定（finalCorrect/autoCorrect 已置 null） */}
-        {released && <VerdictBadge verdict={verdict} />}
+        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
+        {released ? (
+          <VerdictBadge verdict={verdict} />
+        ) : reviewState.unanswered ? (
+          <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+            未作答
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-sky-700 dark:text-sky-300">
+            <CheckCircle2
+              aria-hidden
+              className="size-4 shrink-0 text-sky-500"
+            />
+            答案已保存 · 待公布
+          </span>
+        )}
         <h3
           data-review-heading
           tabIndex={-1}
@@ -538,6 +557,7 @@ export function AttemptResultView({
   onSolutionToggle,
   annotationSealWarning = false,
   wrongPractice,
+  onRefresh,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
@@ -568,6 +588,8 @@ export function AttemptResultView({
    * （交卷已成事实），服务端读路径懒补封兜底最终一致。
    */
   annotationSealWarning?: boolean;
+  /** 到期自动刷新回调（由 PendingReleaseBanner 在截止到达时触发） */
+  onRefresh?: (() => void) | undefined;
 }) {
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
@@ -782,18 +804,12 @@ export function AttemptResultView({
                 )}
               </div>
             ) : (
-              <div className="flex flex-col gap-2 border-l-2 border-amber-400 pl-3 text-sm">
-                <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
-                  <Clock aria-hidden className="size-4 shrink-0" />
-                  已交卷，答案将在截止后公布
-                  {data.dueAt !== null &&
-                    `（截止时间：${formatCnTime(data.dueAt)}）`}
-                </p>
-                <p className="text-amber-800 dark:text-amber-300">
-                  截止前只显示你的作答内容；截止后将自动公布对错、参考答案与详解
-                  （已作答 {summary.answered} 题 / 共 {summary.total} 题）。
-                </p>
-              </div>
+              <PendingReleaseBanner
+                dueAt={data.dueAt}
+                submittedAt={attempt.submittedAt}
+                summary={summary}
+                onRefresh={onRefresh}
+              />
             )}
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">

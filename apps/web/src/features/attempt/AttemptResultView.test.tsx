@@ -496,9 +496,9 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
         : [{ ...baseUnit, questions: restrictedQuestions }],
   };
 
-  it("汇总卡替换为「已交卷，答案将在截止后公布」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
+  it("汇总卡替换为「PendingReleaseBanner」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
     render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
-    expect(screen.getByText(/已交卷，答案将在截止后公布/)).toBeInTheDocument();
+    expect(screen.getByText("🎉 作业已成功交卷！")).toBeInTheDocument();
     expect(screen.getByText(/截止时间：/)).toBeInTheDocument();
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     expect(screen.queryByText("60")).toBeNull();
@@ -506,7 +506,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(bodyText).not.toContain("答对");
     expect(bodyText).not.toContain("答错");
     expect(bodyText).not.toContain("待批");
-    expect(bodyText).toContain("已作答 3 题 / 共 4 题");
+    expect(bodyText).toContain("3 / 4 题");
     expect(
       screen.getByRole("heading", { name: "周末加练", level: 1 }),
     ).toBeInTheDocument();
@@ -515,12 +515,16 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     ).toBeInTheDocument();
   });
 
-  it("逐题卡只渲染本人作答内容：无对错图标、无参考答案、无详解；本人答案与已解锁提示保留", () => {
+  it("逐题卡只渲染本人作答内容：无对错图标、无详解、参考答案显示待公布提示；题头展示保存状态；本人答案与已解锁提示保留", () => {
     render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
     expect(screen.queryAllByLabelText("答对").length).toBe(0);
     expect(screen.queryAllByLabelText("答错").length).toBe(0);
     expect(screen.queryAllByLabelText("待批改").length).toBe(0);
-    expect(screen.queryAllByText("参考答案：").length).toBe(0);
+    expect(screen.getAllByText("答案已保存 · 待公布").length).toBe(3);
+    expect(screen.getAllByText("未作答").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("参考答案与详解将在截止后公布 🔒").length).toBe(
+      4,
+    );
     expect(screen.queryAllByRole("button", { name: /查看详解/ }).length).toBe(
       0,
     );

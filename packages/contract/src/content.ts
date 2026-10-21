@@ -210,6 +210,19 @@ export const questionPublicSchema = z.object({
  */
 export const assignmentDueAtSchema = z.iso.datetime({ offset: false });
 
+/**
+ * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，现状语义）；
+ * after_due=截止后公布——**必须设置截止时间**：create 选 after_due 而 dueAt 缺失、
+ * 或 PATCH 把 dueAt 置 null / 去掉截止时当前为 after_due，均 400 VALIDATION_ERROR
+ * （防死锁态：永不公布）。截止前学生结果视图只下发「已交卷」与本人答案，
+ * 截止后（now ≥ dueAt）读时自动恢复完整结果（无定时任务）。
+ * course 来源作答恒为交卷即公布（D11），不适用本字段。
+ * 原定义在 assignment.ts；2026-10-21 下移本文件——attempt.ts 草稿视图的
+ * answerRelease 字段与 assignment.ts 的创建/PATCH 共用同一份，且
+ * attempt ↔ assignment 不可互相导入（避免环，同 assignmentDueAtSchema 先例）。
+ */
+export const assignmentAnswerReleaseSchema = z.enum(["on_submit", "after_due"]);
+
 /** 练习单元（练习集）。id 来自 DSL（标题 slug，题目缺省 id `单元slug-序号` 中的"单元slug"即它）；数据库层的 courseId/order/updatedAt 与解析无关 */
 export const unitSchema = z.object({
   id: z.string().min(1),

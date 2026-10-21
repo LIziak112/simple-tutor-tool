@@ -117,11 +117,14 @@ export function AttemptSession({
   data,
   onExit,
   exitLabel,
+  onRefresh,
 }: {
   data: AttemptDetailData;
   /** 退出（返回首页/课程等；结果视图按钮与空试卷兜底用） */
   onExit: () => void;
   exitLabel?: string | undefined;
+  /** 刷新数据回调（截止倒计时到期时自动重查结果） */
+  onRefresh?: (() => void) | undefined;
 }) {
   /**
    * T6R.20 审查修复 2：交卷后的标注封存警示（seal 挪到交卷成功回调内
@@ -141,6 +144,7 @@ export function AttemptSession({
           onBackHome={onExit}
           backLabel={exitLabel}
           annotationSealWarning={annotationSealWarning}
+          onRefresh={onRefresh}
         />
       ) : (
         <AttemptEditorProvider key={data.attempt.id}>
@@ -838,6 +842,8 @@ function AnswerView({
           noteProblems={evidenceProblemViewsOf(notePrep, questionIndexById)}
           choiceMode={notePrep.kind === "choice"}
           notePrepError={notePrep.kind === "error" ? notePrep.message : null}
+          dueAt={data.dueAt}
+          answerRelease={data.answerRelease}
           onConfirm={() => void confirmSubmit()}
           onConfirmMissing={confirmMissingSubmit}
           onCancel={closeSubmitDialog}
