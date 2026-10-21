@@ -16,6 +16,7 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useDynamicOverscroll } from "@/lib/use-dynamic-overscroll";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import type { AiCompanionLayoutController } from "./ai-companion-layout";
 import { useStudentAiConnections } from "./ai-connection-queries";
@@ -158,6 +159,11 @@ export function AiCompanionPanelBody({
 }: PanelBodyProps) {
   const [settingsOpen, setSettingsOpen] = useState(settingsAttention);
   const settingsId = useId();
+  // 对话记录区按需挂载 overscroll-contain：未溢出时滚轮透传外层页面滚动。
+  // flow 布局下该区不滚动、类名不被消费，关闭观察避免与外层容器重复观察
+  const replyOverscroll = useDynamicOverscroll<HTMLElement>({
+    enabled: !flow,
+  });
   // 未连接/状态读取失败时把设置展开一次，不让问题藏在抽屉里
   useEffect(() => {
     if (settingsAttention) setSettingsOpen(true);
@@ -224,12 +230,13 @@ export function AiCompanionPanelBody({
         </div>
       )}
       <section
+        ref={replyOverscroll.ref}
         aria-label="本题对话记录"
         data-slot="ai-reply-workspace"
         className={
           flow
             ? "min-w-0 px-3 py-3 sm:px-5"
-            : "min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
+            : `min-h-0 flex-1 overflow-y-auto ${replyOverscroll.overscrollClass} bg-muted/20 px-3 py-3`
         }
       >
         {conversation ?? (

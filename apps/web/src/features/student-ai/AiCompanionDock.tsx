@@ -27,6 +27,7 @@ import {
   useAiSendController,
 } from "@/features/student-ai/use-ai-send-controller";
 import { fetchStudentAiTaskApi } from "@/lib/api";
+import { useDynamicOverscroll } from "@/lib/use-dynamic-overscroll";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 
 /**
@@ -113,6 +114,8 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     active: controller.open,
     ...(host.materials !== undefined ? { materials: host.materials } : {}),
   });
+  // 固定对照栏按需挂载 overscroll-contain：未溢出时滚轮透传外层页面滚动
+  const dockOverscroll = useDynamicOverscroll<HTMLElement>();
 
   // 只在显式打开成功后绑定；不再用阅读位置效应覆盖刚选中的题目。
   const bind = send.bind;
@@ -507,8 +510,9 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
         </section>
         {fixedActive && controller.open && (
           <aside
+            ref={dockOverscroll.ref}
             aria-label="AI 对照"
-            className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] w-[26rem] shrink-0 overflow-y-auto overscroll-contain"
+            className={`sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] w-[26rem] shrink-0 overflow-y-auto ${dockOverscroll.overscrollClass}`}
           >
             {workspace}
           </aside>
