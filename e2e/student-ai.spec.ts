@@ -233,6 +233,29 @@ test("三种助教布局设置往返、侧边回退、分节展开和原稿保�
       page.getByRole("dialog").locator("details[data-ai-section][open]"),
     ).toHaveCount(2);
     await expect(page.locator(".ai-reply-markdown .katex")).toHaveCount(1);
+    // 正文使用弹窗内容区全宽，不能再叠加固定阅读列限宽。
+    await expect
+      .poll(() =>
+        page
+          .getByRole("dialog")
+          .locator(".ai-reply-markdown")
+          .evaluate((reply) => {
+            const host = reply.closest<HTMLElement>("[data-ai-scroll]");
+            if (!host) return Number.POSITIVE_INFINITY;
+            const style = getComputedStyle(host);
+            return (
+              host.clientWidth -
+              Number.parseFloat(style.paddingLeft) -
+              Number.parseFloat(style.paddingRight) -
+              (reply as HTMLElement).offsetWidth
+            );
+          }),
+      )
+      .toBeLessThanOrEqual(2);
+    await page.screenshot({
+      path: testInfo.outputPath("display-dialog-wide.png"),
+      animations: "disabled",
+    });
     await page.setViewportSize({ width: 320, height: 740 });
     expect(
       await page.evaluate(
