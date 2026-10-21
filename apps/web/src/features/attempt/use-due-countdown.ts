@@ -77,8 +77,9 @@ function calculateCountdown(
 
 /**
  * 截止倒计时 Hook
- * - 每秒动态递减；
- * - 倒计时归零时触发 onExpire（仅触发一次）；
+ * - 每秒动态递减（按 Date.now() 重算，后台节流后自校正）；
+ * - 倒计时归零时触发 onExpire（每个 targetMs 至多一次；进入时就已过期不触发——
+ *   只有「运行中归零」才算到期事件）；
  * - 优雅处理 dueAt === null 或已过期。
  */
 export function useDueCountdown(
@@ -100,23 +101,8 @@ export function useDueCountdown(
   const onExpireRef = useRef(options?.onExpire);
   onExpireRef.current = options?.onExpire;
 
-  // 记录是否已经触发过到期回调；如果 targetMs 改变则重置
+  // 是否已对当前 targetMs 触发过到期回调（targetMs 变化时随 effect 一并重置）
   const hasTriggeredRef = useRef(false);
-  const lastTargetMsRef = useRef(targetMs);
-  if (lastTargetMsRef.current !== targetMs) {
-    lastTargetMsRef.current = targetMs;
-    // 如果之前就是已过期（比如一进页面就已经过期），初始不触发；
-    // 只有在运行中倒计时归零时触发。
-    const initial = calculateCountdown(targetMs, Date.now());
-    hasTriggeredRef.current = initial.isExpired;
-  }
-
-  // 首次渲染若已过期，标记已触发防误报
-  useEffect(() => {
-    if (targetMs === null || Date.now() >= targetMs) {
-      hasTriggeredRef.current = true;
-    }
-  }, [targetMs]);
 
   useEffect(() => {
     if (targetMs === null) {
@@ -126,6 +112,8 @@ export function useDueCountdown(
 
     const initial = calculateCountdown(targetMs, Date.now());
     setCountdown(initial);
+    // 进入时（或 targetMs 变化后重挂）就已过期：不触发到期事件
+    hasTriggeredRef.current = initial.isExpired;
 
     if (initial.isExpired) {
       return;

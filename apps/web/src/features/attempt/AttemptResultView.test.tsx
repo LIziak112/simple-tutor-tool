@@ -505,7 +505,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     const bodyText = document.body.textContent ?? "";
     expect(bodyText).not.toContain("答对");
     expect(bodyText).not.toContain("答错");
-    expect(bodyText).not.toContain("待批改");
+    expect(bodyText).not.toContain("待批");
     expect(bodyText).toContain("3 / 4 题");
     expect(
       screen.getByRole("heading", { name: "周末加练", level: 1 }),
