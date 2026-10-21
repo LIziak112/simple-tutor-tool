@@ -143,9 +143,12 @@ describe("useDynamicOverscroll", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(observed.has(placeholder)).toBe(false);
-    expect(observed.has(content)).toBe(true);
-    el.remove();
+    try {
+      expect(observed.has(placeholder)).toBe(false);
+      expect(observed.has(content)).toBe(true);
+    } finally {
+      el.remove();
+    }
   });
 
   afterEach(() => {
