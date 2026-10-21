@@ -293,6 +293,17 @@
 .ai-reply-markdown table {
   display: block;
 }
+.ai-reply-markdown .ai-reply-section > summary > :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+.ai-reply-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+.ai-reply-section > div {
+  padding-bottom: 1rem;
+}
 [data-slot="ai-companion-panel"] {
   scroll-margin-top: calc(var(--attempt-header-height, 64px) + 12px);
 }

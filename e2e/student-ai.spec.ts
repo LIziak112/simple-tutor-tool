@@ -143,6 +143,123 @@ async function ensureAttemptId(
   return id;
 }
 
+test("三种助教布局设置往返、侧边回退、分节展开和原稿保留", async ({
+  browser,
+  request,
+}, testInfo) => {
+  test.setTimeout(FULL_CHAIN_TIMEOUT);
+  const suffix = uniqueSuffix();
+  const world = await makeWorld(request, suffix);
+  const student = await getStudentViaApi(request, world.loginName);
+  const seed = await loginStudent(browser, student.linkToken);
+  const page = seed.page;
+  try {
+    expect(
+      (
+        await seed.context.request.post("/api/student/ai/connections", {
+          data: {
+            channel: "inapp",
+            baseUrl: FAKE_AI_BASE_URL,
+            model: FAKE_AI_MODEL,
+            apiKey: fakeAiApiKey(),
+            isDefault: true,
+          },
+        })
+      ).ok(),
+    ).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await openAssignmentAttempt(page, `SAI全链作业${suffix}`);
+    const q1 = page.getByRole("article", { name: "第 1 题", exact: true });
+    const trigger = q1.getByRole("button", { name: "AI 助教", exact: true });
+    const workspace = page.getByRole("region", { name: "第 1 题的 AI 助教" });
+    await trigger.click();
+    await page
+      .getByRole("textbox", { name: "补充问题" })
+      .fill("保留布局切换前的问题");
+    for (const layout of ["侧边对照", "独立弹窗", "题下阅读"]) {
+      await workspace.getByRole("button", { name: "AI 设置" }).click();
+      await page.getByRole("button", { name: "显示方式设置" }).click();
+      await expect(page).toHaveURL(/\/s\/settings\?.*#ai-display$/);
+      await page.getByRole("radio", { name: new RegExp(layout) }).check();
+      await page.getByRole("button", { name: "保存显示方式" }).click();
+      await expect(page.getByRole("status")).toHaveText(/显示方式已保存/);
+      await page.screenshot({
+        path: testInfo.outputPath(`display-${layout}.png`),
+        fullPage: true,
+      });
+      await page.getByRole("link", { name: "返回本题" }).click();
+      await expect(workspace).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "补充问题" })).toHaveValue(
+        "保留布局切换前的问题",
+      );
+      if (layout === "侧边对照") {
+        await expect(
+          page.getByRole("complementary", { name: "AI 对照" }),
+        ).toBeVisible();
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect(
+          page.getByRole("dialog", { name: /AI 助教/ }),
+        ).toBeVisible();
+        await expect(page.getByText(/当前空间不足/)).toBeVisible();
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await expect(page.getByRole("dialog")).toBeVisible();
+      } else if (layout === "独立弹窗")
+        await expect(page.getByRole("dialog")).toBeVisible();
+      else await expect(page.getByRole("dialog")).toHaveCount(0);
+    }
+    const control = fakeAiControl(request);
+    await control.script({
+      body: chatCompletionJson(
+        "# 一起看这道题\n\n先看条件。\n\n## 观察\n先试一个例子。\n\n## 计算\n然后计算 $1+1=2$。\n\n## 检查\n回题检查新步骤。",
+      ),
+    });
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await page
+      .getByRole("button", { name: "查看回信" })
+      .click({ timeout: 30_000 });
+    const sections = workspace.locator("details[data-ai-section]");
+    await expect(sections).toHaveCount(3);
+    await expect(sections.nth(1)).not.toHaveAttribute("open");
+    const title = sections.nth(1).locator("summary");
+    await title.scrollIntoViewIfNeeded();
+    const before = await page.evaluate(() => window.scrollY);
+    await title.click();
+    await expect(sections.nth(1)).toHaveAttribute("open");
+    expect(
+      Math.abs((await page.evaluate(() => window.scrollY)) - before),
+    ).toBeLessThan(24);
+    await page.getByRole("button", { name: "放大阅读" }).click();
+    await expect(
+      page.getByRole("dialog").locator("details[data-ai-section][open]"),
+    ).toHaveCount(2);
+    await expect(page.locator(".ai-reply-markdown .katex")).toHaveCount(1);
+    await page.setViewportSize({ width: 320, height: 740 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("display-dialog-320.png"),
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: "这一步没懂" }).click();
+    await page.getByRole("textbox", { name: "继续追问本题" }).fill("保留追问");
+    await expect(
+      page.locator("[data-ai-input]").getByRole("textbox"),
+    ).toHaveCount(1);
+    await page.getByRole("button", { name: "还原阅读" }).click();
+    await expect(
+      page.getByRole("textbox", { name: "继续追问本题" }),
+    ).toHaveValue("保留追问");
+    await expect(
+      sections.filter({ has: page.locator("summary") }).locator(":scope[open]"),
+    ).toHaveCount(2);
+  } finally {
+    await seed.context.close();
+  }
+});
+
 test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
   // 组内顺序运行；跨文件和浏览器的剧本、捕获、重置按用例凭据隔离。
   test.describe.configure({ mode: "serial" });
@@ -211,12 +328,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
           ),
         ).toBe(true);
       }
-      await page.getByRole("button", { name: "固定对照" }).click();
-      await expect(
-        page.getByRole("complementary", { name: "AI 对照" }),
-      ).toBeVisible();
+      await page.getByRole("button", { name: "放大阅读" }).click();
+      await expect(page.getByRole("dialog", { name: /AI 助教/ })).toBeVisible();
       await expect(draft).toHaveValue("保留这份提问草稿");
-      await page.getByRole("button", { name: "回到题下" }).click();
+      await page.getByRole("button", { name: "还原阅读" }).click();
       await expect(q1).toHaveAttribute("data-learning-marker", "original");
       await page.getByRole("button", { name: "收起 AI 助教" }).click();
       await expect(trigger).toBeFocused();
@@ -232,15 +347,13 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         .getByRole("button", { name: "查看回信" })
         .click({ timeout: 30_000 });
       await expect(page.getByRole("textbox")).toHaveCount(0);
-      await page.getByRole("button", { name: "专注阅读" }).click();
-      await expect(
-        page.getByRole("dialog", { name: "本题 AI 回复" }),
-      ).toBeVisible();
+      await page.getByRole("button", { name: "放大阅读" }).click();
+      await expect(page.getByRole("dialog", { name: /AI 助教/ })).toBeVisible();
       await expect(page.getByRole("textbox")).toHaveCount(0);
-      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "还原阅读" }).click();
       await expect(workspace).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "专注阅读" }),
+        page.getByRole("button", { name: "放大阅读" }),
       ).toBeFocused();
       await page.getByRole("button", { name: "这一步没懂" }).click();
       const followup = page.getByRole("textbox", { name: "继续追问本题" });
@@ -286,23 +399,13 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         const summaryBox = await materialSummary.boundingBox();
         if (!replyBox || !summaryBox) throw new Error("阅读区域尚未呈现");
         expect(Math.abs(replyBox.x - summaryBox.x)).toBeLessThanOrEqual(1);
-        const outlineToggle = workspace.getByRole("button", {
-          name: "回复目录 · 2 节",
+        const section = workspace.locator("details[data-ai-section]", {
+          has: page.getByRole("heading", { name: "再试一次", exact: true }),
         });
-        await outlineToggle.click();
-        await workspace
-          .getByRole("navigation", { name: "回复目录" })
-          .getByRole("button", { name: "再试一次" })
-          .click();
-        const target = await workspace
-          .getByRole("heading", { name: "再试一次", exact: true })
-          .boundingBox();
-        const header = await page
-          .locator('[data-slot="attempt-header"]')
-          .boundingBox();
-        if (!target || !header) throw new Error("目录目标或作答顶栏尚未呈现");
-        expect(target.y).toBeGreaterThanOrEqual(header.y + header.height + 8);
-        await outlineToggle.click();
+        await section.locator("summary").click();
+        await expect(section).toHaveAttribute("open", "");
+        await section.locator("summary").click();
+        await expect(section).not.toHaveAttribute("open", "");
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -315,19 +418,14 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
           path: `e2e/.artifacts/ai-reading-${viewport.width}-${test.info().project.name}.png`,
         });
       }
-      await workspace.getByRole("button", { name: "专注阅读" }).click();
-      const readingDialog = page.getByRole("dialog", { name: "本题 AI 回复" });
-      await readingDialog
-        .getByRole("button", { name: "回复目录 · 2 节" })
-        .click();
-      await readingDialog
-        .getByRole("navigation", { name: "回复目录" })
-        .getByRole("button", { name: "再试一次" })
-        .click();
-      await expect(
-        readingDialog.getByRole("heading", { name: "再试一次", exact: true }),
-      ).toBeInViewport();
-      await page.keyboard.press("Escape");
+      await workspace.getByRole("button", { name: "放大阅读" }).click();
+      const readingDialog = page.getByRole("dialog", { name: /AI 助教/ });
+      const dialogSection = readingDialog.locator("details[data-ai-section]", {
+        has: page.getByRole("heading", { name: "再试一次", exact: true }),
+      });
+      await dialogSection.locator("summary").click();
+      await expect(dialogSection).toHaveAttribute("open", "");
+      await readingDialog.getByRole("button", { name: "还原阅读" }).click();
       await page.setViewportSize({ width: 320, height: 740 });
       expect(
         await page.evaluate(

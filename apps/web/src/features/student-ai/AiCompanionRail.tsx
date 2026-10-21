@@ -17,6 +17,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useDynamicOverscroll } from "@/lib/use-dynamic-overscroll";
+import { AiWorkspaceInputContext } from "./AiWorkspaceInput";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import type { AiCompanionLayoutController } from "./ai-companion-layout";
 import { useStudentAiConnections } from "./ai-connection-queries";
@@ -123,12 +124,15 @@ interface PanelBodyProps {
   flow?: boolean;
   onFix?: (() => void) | undefined;
   fixed?: boolean;
+  onDisplaySettings?: (() => void) | undefined;
+  heading?: ReactNode;
+  headerNote?: ReactNode;
   closeLabel?: string;
   questionLabel: string | null;
   settingsHref: string;
   /** dock 模式的关闭按钮（panel 模式由 Sheet 内建关闭提供） */
   dockCloseRef?: RefObject<HTMLButtonElement | null>;
-  onDockClose?: () => void;
+  onDockClose?: (() => void) | undefined;
   /** 会话状态区（SAI-20 真实注入；未注入时保留合成的诚实回退） */
   status?: ReactNode;
   compactStatus?: ReactNode;
@@ -145,6 +149,9 @@ export function AiCompanionPanelBody({
   flow = false,
   onFix,
   fixed = false,
+  onDisplaySettings,
+  heading,
+  headerNote,
   closeLabel = "关闭 AI 助教",
   questionLabel,
   settingsHref,
@@ -158,12 +165,9 @@ export function AiCompanionPanelBody({
   conversation,
 }: PanelBodyProps) {
   const [settingsOpen, setSettingsOpen] = useState(settingsAttention);
+  const [inputHost, setInputHost] = useState<HTMLDivElement | null>(null);
   const settingsId = useId();
-  // 对话记录区按需挂载 overscroll-contain：未溢出时滚轮透传外层页面滚动。
-  // flow 布局下该区不滚动、类名不被消费，关闭观察避免与外层容器重复观察
-  const replyOverscroll = useDynamicOverscroll<HTMLElement>({
-    enabled: !flow,
-  });
+  const replyOverscroll = useDynamicOverscroll<HTMLElement>({ enabled: !flow });
   // 未连接/状态读取失败时把设置展开一次，不让问题藏在抽屉里
   useEffect(() => {
     if (settingsAttention) setSettingsOpen(true);
@@ -179,20 +183,23 @@ export function AiCompanionPanelBody({
         }`}
       >
         <div className="min-w-0 flex-1 py-2">
-          <h2 className="text-sm font-semibold">AI 助教</h2>
+          {heading ?? <h2 className="text-sm font-semibold">AI 助教</h2>}
           {!settingsOpen && !settingsAttention && compactStatus}
         </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {questionLabel ?? "未绑定题目"}
-        </span>
+        {!heading && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {questionLabel ?? "未绑定题目"}
+          </span>
+        )}
         {onFix && (
           <Button
             type="button"
             variant="ghost"
             className="min-h-11 shrink-0 px-2"
+            data-ai-enlarge
             onClick={onFix}
           >
-            {fixed ? "回到题下" : "固定对照"}
+            {fixed ? "还原阅读" : "放大阅读"}
           </Button>
         )}
         <Button
@@ -219,6 +226,7 @@ export function AiCompanionPanelBody({
           </Button>
         )}
       </div>
+      {headerNote}
       {settingsOpen && (
         <div
           id={settingsId}
@@ -226,25 +234,45 @@ export function AiCompanionPanelBody({
         >
           <section aria-label="通道与模式" className="flex flex-col gap-1">
             {status ?? <AiCompanionChannelStatus settingsHref={settingsHref} />}
+            {onDisplaySettings && (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 self-start"
+                onClick={onDisplaySettings}
+              >
+                显示方式设置
+              </Button>
+            )}
           </section>
         </div>
       )}
-      <section
-        ref={replyOverscroll.ref}
-        aria-label="本题对话记录"
-        data-slot="ai-reply-workspace"
-        className={
-          flow
-            ? "mx-auto w-full min-w-0 max-w-[43rem] px-4 py-3 sm:px-6"
-            : `min-h-0 flex-1 overflow-y-auto ${replyOverscroll.overscrollClass} bg-muted/20 px-3 py-3`
-        }
-      >
-        {conversation ?? (
-          <p className="text-sm text-muted-foreground">
-            还没有对话记录。发送一次求助后，回复会显示在这里。
-          </p>
+      <AiWorkspaceInputContext value={flow ? null : inputHost}>
+        <section
+          ref={replyOverscroll.ref}
+          aria-label="本题对话记录"
+          data-ai-scroll={flow ? undefined : "true"}
+          data-slot="ai-reply-workspace"
+          className={
+            flow
+              ? "mx-auto w-full min-w-0 max-w-[43rem] px-4 py-3 sm:px-6"
+              : `min-h-0 flex-1 overflow-y-auto ${replyOverscroll.overscrollClass} bg-muted/20 px-3 py-3`
+          }
+        >
+          {conversation ?? (
+            <p className="text-sm text-muted-foreground">
+              还没有对话记录。发送一次求助后，回复会显示在这里。
+            </p>
+          )}
+        </section>
+        {!flow && (
+          <div
+            ref={setInputHost}
+            data-ai-input
+            className="max-h-[45%] shrink-0 overflow-y-auto overscroll-contain border-t border-border bg-card px-3 py-3 empty:hidden"
+          />
         )}
-      </section>
+      </AiWorkspaceInputContext>
       {quickButtons !== null && (
         <nav
           aria-label="快捷按钮"

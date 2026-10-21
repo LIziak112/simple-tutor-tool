@@ -9,6 +9,7 @@ import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
+import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
 import {
   fetchStudentAssignmentsApi,
   fetchStudentCoursesApi,
@@ -47,6 +48,7 @@ function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return async (student: StudentMeData) => {
     await clearAccountQueries(queryClient, "student");
+    bindAiDisplayAccount(student.id);
     bindDraftSession({ origin: window.location.origin, studentId: student.id });
     // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
     // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
@@ -106,6 +108,7 @@ export function useLogoutStudent() {
     mutationFn: logoutStudentApi,
     onSuccess: async () => {
       bindDraftSession(null);
+      bindAiDisplayAccount(null);
       resetNoteSession();
       resetAnnotationSession();
       await clearAccountQueries(queryClient, "student");

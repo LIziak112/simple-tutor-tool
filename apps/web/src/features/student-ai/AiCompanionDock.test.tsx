@@ -21,6 +21,10 @@ import {
 } from "@/lib/api";
 import { stubElementWidth } from "@/test/stub-element-width";
 import { useAiCompanionDock } from "./AiCompanionDock";
+import {
+  bindAiDisplayAccount,
+  saveAiDisplayPreference,
+} from "./ai-display-preference-store";
 import { connectedAiStatus } from "./student-ai-test-utils";
 
 const flush = vi.fn(async (_questionId: string) => {});
@@ -154,9 +158,64 @@ async function open(id: string) {
 const capturedClient: { current: QueryClient | null } = { current: null };
 const capturedDock: { current: ReturnType<typeof useAiCompanionDock> | null } =
   { current: null };
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  bindAiDisplayAccount(null);
+  bindAiDisplayAccount("display-student");
+});
 
 describe("题下助教共享会话", () => {
+  it("保存弹窗偏好后默认打开弹窗，只有一份输入并保持纸面挂载", async () => {
+    saveAiDisplayPreference("dialog");
+    render(<Harness />);
+    const original = screen.getByRole("article", { name: "q1" });
+    await open("q1");
+    const dialog = await screen.findByRole("dialog", { name: /AI 助教/ });
+    expect(original.isConnected).toBe(true);
+    await within(dialog).findByText("先列出条件，再代入特殊值。");
+    expect(
+      screen.getAllByText("先列出条件，再代入特殊值。", { exact: true }),
+    ).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "这一步没懂" }));
+    expect(screen.getAllByRole("textbox", { hidden: true })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "专注阅读" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭弹层" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(original).toBe(screen.getByRole("article", { name: "q1" }));
+  });
+  it("侧边在窄屏退为弹窗，本次阅读不随宽度恢复来回跳动", async () => {
+    const width = stubElementWidth(800);
+    try {
+      saveAiDisplayPreference("side");
+      render(<Harness />);
+      await open("q1");
+      await screen.findByRole("dialog", { name: /AI 助教/ });
+      expect(screen.getByText(/当前空间不足/)).toBeVisible();
+      act(() => width.setWidth(1440));
+      expect(screen.getByRole("dialog")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "关闭弹层" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await open("q1");
+      await screen.findByRole("complementary", { name: "AI 对照" });
+    } finally {
+      width.restore();
+    }
+  });
+  it("阅读中修改保存偏好不搬动当前正文，下次打开生效", async () => {
+    render(<Harness />);
+    await open("q1");
+    act(() => saveAiDisplayPreference("dialog"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "收起 AI 助教" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "第 1 题的 AI 助教" }),
+      ).toBeNull(),
+    );
+    await open("q1");
+    await screen.findByRole("dialog", { name: /AI 助教/ });
+  });
   it("别的设备读过回信也不会打断当前输入并自动展开", async () => {
     const unread = { ...task, replyDeliveredAt: null };
     vi.mocked(listStudentAiTasksApi).mockResolvedValueOnce({
@@ -317,7 +376,7 @@ describe("题下助教共享会话", () => {
     await open("q2");
     expect(await screen.findByText(/当前模式为完成后可用/)).toBeVisible();
   });
-  it("固定对照来回切换保留输入和题卡；保存失败禁止收起或切题", async () => {
+  it("放大还原保留输入和题卡；保存失败禁止收起或切题", async () => {
     const width = stubElementWidth(1440);
     try {
       render(<Harness />);
@@ -330,17 +389,13 @@ describe("题下助教共享会话", () => {
         await screen.findByRole("textbox", { name: "继续追问本题" }),
         { target: { value: "边写边读" } },
       );
-      fireEvent.click(screen.getByRole("button", { name: "固定对照" }));
-      await screen.findByRole("complementary", { name: "AI 对照" });
+      fireEvent.click(screen.getByRole("button", { name: "放大阅读" }));
+      await screen.findByRole("dialog", { name: /AI 助教/ });
       expect(screen.getByRole("textbox", { name: "继续追问本题" })).toHaveValue(
         "边写边读",
       );
-      fireEvent.click(screen.getByRole("button", { name: "回到题下" }));
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("complementary", { name: "AI 对照" }),
-        ).toBeNull(),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "还原阅读" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(screen.getByRole("article", { name: "q1" })).toBe(question);
       flush.mockRejectedValueOnce(new Error("磁盘满"));
       fireEvent.click(screen.getByRole("button", { name: "收起 AI 助教" }));

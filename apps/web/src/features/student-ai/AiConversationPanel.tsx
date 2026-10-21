@@ -18,6 +18,7 @@ import {
 import { randomUuid } from "@/lib/uuid";
 import { AiReadingWorkspace } from "./AiReadingWorkspace";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
+import { AiWorkspaceInput } from "./AiWorkspaceInput";
 import {
   studentAiQueueKey,
   studentAiQueueSummaryKey,
@@ -182,7 +183,11 @@ function ConversationMessages({
             </details>
           );
         const reply = (
-          <AiReplyMarkdown key={message.id} source={message.contentMd} />
+          <AiReplyMarkdown
+            key={message.id}
+            source={message.contentMd}
+            readingKey={`${taskId}:${message.id}:${updatedAt}`}
+          />
         );
         return index === latestAssistant ? (
           <div key={message.id} className="min-w-0">
@@ -312,7 +317,7 @@ function AiTaskCard({
       data-testid={`ai-task-card-${task.id}`}
       className="flex min-w-0 flex-col gap-3 py-2"
     >
-      {(!expanded || externalUnknown) && materialContext}
+      {materialContext}
       {!expanded && <p className="line-clamp-2 text-sm">{task.question}</p>}
       {externalUnknown ? (
         <div className="flex flex-col gap-1">
@@ -386,7 +391,7 @@ function AiTaskCard({
         </p>
       )}
       {expanded && !externalUnknown && (
-        <AiReadingWorkspace context={materialContext}>
+        <AiReadingWorkspace readingKey={`${task.id}:${viewedVersion}`}>
           <div
             data-task-reading={task.id}
             className="flex min-w-0 flex-col gap-4"
@@ -442,58 +447,60 @@ function AiTaskCard({
                   </Button>
                 </div>
                 {editing && (
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {FOLLOWUP_HINT}
-                    </p>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        继续问这份稿 · 材料{" "}
-                        {formatSnapshotTime(task.snapshotAt)}
-                      </span>
+                  <AiWorkspaceInput>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        {FOLLOWUP_HINT}
+                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          继续问这份稿 · 材料{" "}
+                          {formatSnapshotTime(task.snapshotAt)}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="min-h-11"
+                          onClick={onNewRequest}
+                        >
+                          带新稿另问
+                        </Button>
+                      </div>
+                      <textarea
+                        ref={followupInputRef}
+                        data-testid="followup-input"
+                        aria-label="继续追问本题"
+                        rows={2}
+                        className="max-h-40 min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                        placeholder="继续追问本题"
+                        value={followupDraft}
+                        disabled={followupSending || !followupAllowed}
+                        onChange={(event) => onFollowupText(event.target.value)}
+                      />
                       <Button
                         type="button"
-                        variant="ghost"
-                        className="min-h-11"
-                        onClick={onNewRequest}
+                        size="sm"
+                        className="min-h-11 self-start px-3"
+                        disabled={followupSending || !followupAllowed}
+                        onClick={onFollowup}
                       >
-                        带新稿另问
+                        {followupSending ? "追问中…" : "追问"}
                       </Button>
+                      {!followupAllowed && (
+                        <p
+                          role="status"
+                          className="text-xs text-muted-foreground"
+                        >
+                          {fact ?? "当前不可追问，请查看 AI 设置"}
+                        </p>
+                      )}
+                      {followupError !== null && (
+                        <p role="alert" className="text-sm text-destructive">
+                          {followupError}
+                        </p>
+                      )}
                     </div>
-                    <textarea
-                      ref={followupInputRef}
-                      data-testid="followup-input"
-                      aria-label="继续追问本题"
-                      rows={2}
-                      className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                      placeholder="继续追问本题"
-                      value={followupDraft}
-                      disabled={followupSending || !followupAllowed}
-                      onChange={(event) => onFollowupText(event.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="min-h-11 self-start px-3"
-                      disabled={followupSending || !followupAllowed}
-                      onClick={onFollowup}
-                    >
-                      {followupSending ? "追问中…" : "追问"}
-                    </Button>
-                    {!followupAllowed && (
-                      <p
-                        role="status"
-                        className="text-xs text-muted-foreground"
-                      >
-                        {fact ?? "当前不可追问，请查看 AI 设置"}
-                      </p>
-                    )}
-                    {followupError !== null && (
-                      <p role="alert" className="text-sm text-destructive">
-                        {followupError}
-                      </p>
-                    )}
-                  </div>
+                  </AiWorkspaceInput>
                 )}
               </div>
             )}
@@ -853,7 +860,7 @@ function AiConversationView({
           重试读取
         </Button>
         {quickButtons}
-        {composer}
+        <AiWorkspaceInput>{composer}</AiWorkspaceInput>
       </div>
     );
   const tasks = send.history?.tasks ?? [];
@@ -965,7 +972,7 @@ function AiConversationView({
       {showComposer && (
         <>
           {quickButtons}
-          {composer}
+          <AiWorkspaceInput>{composer}</AiWorkspaceInput>
         </>
       )}
       {!showComposer && selectedTask === undefined && (
