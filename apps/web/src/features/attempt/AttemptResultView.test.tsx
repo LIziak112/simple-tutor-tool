@@ -522,9 +522,9 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(screen.queryAllByLabelText("待批改").length).toBe(0);
     expect(screen.getAllByText("答案已保存 · 待公布").length).toBe(3);
     expect(screen.getAllByText("未作答").length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText("参考答案与详解将在截止后公布 🔒").length,
-    ).toBe(4);
+    expect(screen.getAllByText("参考答案与详解将在截止后公布 🔒").length).toBe(
+      4,
+    );
     expect(screen.queryAllByRole("button", { name: /查看详解/ }).length).toBe(
       0,
     );

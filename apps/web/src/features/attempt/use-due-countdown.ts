@@ -23,8 +23,11 @@ export interface DueCountdown {
 /**
  * 计算剩余时间的纯函数
  */
-function calculateCountdown(targetMs: number | null, nowMs: number): DueCountdown {
-  if (targetMs === null || isNaN(targetMs)) {
+function calculateCountdown(
+  targetMs: number | null,
+  nowMs: number,
+): DueCountdown {
+  if (targetMs === null || Number.isNaN(targetMs)) {
     return {
       days: 0,
       hours: 0,
@@ -81,13 +84,13 @@ function calculateCountdown(targetMs: number | null, nowMs: number): DueCountdow
 export function useDueCountdown(
   dueAt: string | null,
   options?: {
-    onExpire?: () => void;
+    onExpire?: (() => void) | undefined;
   },
 ): DueCountdown {
   const targetMs = useMemo(() => {
     if (!dueAt) return null;
     const parsed = Date.parse(dueAt);
-    return isNaN(parsed) ? null : parsed;
+    return Number.isNaN(parsed) ? null : parsed;
   }, [dueAt]);
 
   const [countdown, setCountdown] = useState<DueCountdown>(() =>

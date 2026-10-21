@@ -7,13 +7,13 @@ export interface PendingReleaseBannerProps {
   /** 截止时间（UTC ISO），可为 null */
   dueAt: string | null;
   /** 交卷时间（UTC ISO），可为 null */
-  submittedAt?: string | null;
+  submittedAt?: string | null | undefined;
   /** 作答统计摘要 */
   summary: Pick<AttemptScoreSummary, "answered" | "total">;
   /** 倒计时到期回调 */
-  onExpire?: () => void;
+  onExpire?: (() => void) | undefined;
   /** 手写原稿状态文案，默认 "已归档保存" */
-  handwritingStatus?: string;
+  handwritingStatus?: string | undefined;
 }
 
 /**
@@ -33,8 +33,7 @@ export function PendingReleaseBanner({
   const countdown = useDueCountdown(dueAt, { onExpire });
 
   return (
-    <div
-      role="region"
+    <section
       aria-label="交卷成功与待公布提示"
       className="flex flex-col gap-5 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 text-foreground sm:p-6 dark:border-emerald-500/30 dark:bg-emerald-950/15"
     >
@@ -76,10 +75,7 @@ export function PendingReleaseBanner({
             <span>截止时间已到，正在加载批改结果…</span>
           </div>
         ) : (
-          <div
-            aria-label={`倒计时：${countdown.formatted}`}
-            className="grid grid-cols-4 gap-2 sm:max-w-md"
-          >
+          <div className="grid grid-cols-4 gap-2 sm:max-w-md">
             {[
               { label: "天", val: countdown.days },
               { label: "时", val: countdown.hours },
@@ -119,7 +115,10 @@ export function PendingReleaseBanner({
         <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3">
           <span className="text-xs text-muted-foreground">手写原稿状态</span>
           <span className="flex items-center gap-1 font-medium text-foreground">
-            <ShieldCheck aria-hidden className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            <ShieldCheck
+              aria-hidden
+              className="size-3.5 text-emerald-600 dark:text-emerald-400"
+            />
             {handwritingStatus}
           </span>
         </div>
@@ -133,7 +132,10 @@ export function PendingReleaseBanner({
 
       {/* 防疑惑科普小贴士 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-amber-200/60 bg-amber-50/70 p-3.5 text-xs leading-relaxed text-amber-900 sm:text-sm dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">
-        <Lightbulb aria-hidden className="size-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+        <Lightbulb
+          aria-hidden
+          className="size-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5"
+        />
         <div className="flex flex-col gap-1">
           <p className="font-semibold text-amber-950 dark:text-amber-100">
             为什么不在交卷后立即出分？
@@ -143,6 +145,6 @@ export function PendingReleaseBanner({
           </p>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

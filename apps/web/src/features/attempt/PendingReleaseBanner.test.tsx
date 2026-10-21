@@ -87,9 +87,7 @@ describe("PendingReleaseBanner", () => {
       />,
     );
 
-    expect(
-      screen.getByText("为什么不在交卷后立即出分？"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("为什么不在交卷后立即出分？")).toBeInTheDocument();
     expect(
       screen.getByText(/为保障全班同学独立思考和练习公平/i),
     ).toBeInTheDocument();

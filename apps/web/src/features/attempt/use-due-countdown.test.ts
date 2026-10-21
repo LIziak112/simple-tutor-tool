@@ -29,9 +29,7 @@ describe("useDueCountdown", () => {
   it("dueAt 已经是过去的时间时，直接判定为过期，不重复触发 onExpire", () => {
     const onExpire = vi.fn();
     const pastDue = new Date(Date.now() - 10000).toISOString();
-    const { result } = renderHook(() =>
-      useDueCountdown(pastDue, { onExpire }),
-    );
+    const { result } = renderHook(() => useDueCountdown(pastDue, { onExpire }));
 
     expect(result.current.isExpired).toBe(true);
     expect(result.current.remainingMs).toBe(0);
@@ -44,8 +42,7 @@ describe("useDueCountdown", () => {
     const now = new Date("2026-10-21T10:00:00.000Z");
     vi.setSystemTime(now);
 
-    const ms =
-      ((2 * 24 + 3) * 60 + 4) * 60 * 1000 + 5 * 1000;
+    const ms = ((2 * 24 + 3) * 60 + 4) * 60 * 1000 + 5 * 1000;
     const futureDue = new Date(now.getTime() + ms).toISOString();
 
     const { result } = renderHook(() => useDueCountdown(futureDue));
