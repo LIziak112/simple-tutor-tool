@@ -290,21 +290,13 @@ export function AiCompanionRail({
   conversation?: ReactNode;
   children: ReactNode;
 }) {
-  const dockActive =
-    controller.open && !controller.suspended && controller.mode === "dock";
-  const panelActive =
-    controller.open && !controller.suspended && controller.mode === "panel";
+  const dockActive = controller.open && controller.mode === "dock";
+  const panelActive = controller.open && controller.mode === "panel";
   return (
     <div
       ref={containerRef}
       data-slot="ai-companion-rail"
-      data-ai-state={
-        controller.suspended
-          ? "suspended"
-          : controller.open
-            ? controller.mode
-            : "closed"
-      }
+      data-ai-state={controller.open ? controller.mode : "closed"}
       className={
         dockActive
           ? "flex w-full min-w-0 items-start gap-4 flex-row"

@@ -7,11 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type {
-  AiTaskDetailData,
-  AiTaskPublic,
-  AttemptQuestionPublic,
-} from "@tutor/contract";
+import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
 import { useState } from "react";
 import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -258,51 +254,6 @@ describe("题下助教共享会话", () => {
     expect(screen.getByRole("article", { name: "q1" })).toBe(question);
     expect(createStudentAiTaskApi).not.toHaveBeenCalled();
     expect(followupStudentAiTaskApi).not.toHaveBeenCalled();
-  });
-  it("固定对照离屏后才返回的正文不能算作已查看", async () => {
-    const width = stubElementWidth(1440);
-    try {
-      const unread = { ...task, replyDeliveredAt: null };
-      vi.mocked(listStudentAiTasksApi).mockResolvedValueOnce({
-        tasks: [unread],
-        nextCursor: null,
-      });
-      let deliver: ((value: AiTaskDetailData) => void) | undefined;
-      vi.mocked(fetchStudentAiTaskApi).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            deliver = resolve;
-          }),
-      );
-      render(<Harness />);
-      await open("q1");
-      fireEvent.click(screen.getByRole("button", { name: "固定对照" }));
-      await screen.findByRole("complementary", { name: "AI 对照" });
-      fireEvent.click(await screen.findByRole("button", { name: "查看回信" }));
-      await waitFor(() => expect(fetchStudentAiTaskApi).toHaveBeenCalled());
-      act(() => capturedDock.current?.setQuestionVisible("q1", false));
-      await act(async () => {
-        deliver?.({
-          task: unread,
-          messages: [
-            {
-              id: "late",
-              taskId: task.id,
-              role: "assistant",
-              contentMd: "迟到正文",
-              createdAt: task.updatedAt,
-            },
-          ],
-          facts: [],
-        });
-      });
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
-      expect(openStudentAiReplyApi).not.toHaveBeenCalled();
-    } finally {
-      width.restore();
-    }
   });
   it("缓存有旧正文但本次读取失败时不清未读", async () => {
     const unread = { ...task, replyDeliveredAt: null };

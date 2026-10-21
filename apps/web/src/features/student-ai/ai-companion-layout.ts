@@ -41,8 +41,6 @@ export interface AiCompanionLayoutController {
   open: boolean;
   /** 打开时的呈现模式：宽屏 dock / 窄屏独立面板（关闭时无意义） */
   mode: "dock" | "panel";
-  /** 题卡暂时离开可见作答区时隐藏栏，但保留会话状态 */
-  suspended: boolean;
   /** 现有答题卡折叠按钮应呈现的实效状态（用户选择 ∨ AI 覆盖） */
   navigatorCollapsed: boolean;
   /** 打开失败（本机落盘失败）时的如实提示；成功打开后清除 */
@@ -57,8 +55,6 @@ export interface AiCompanionLayoutController {
   closePanel(): void;
   /** 用户手动切换答题卡折叠（覆盖期间操作＝另行操作，取消恢复承诺） */
   toggleNavigator(): void;
-  /** 由题卡可见性观察器调用；不改变打开/绑定状态 */
-  setVisible(visible: boolean): void;
 }
 
 export function useAiCompanionLayout({
@@ -74,7 +70,6 @@ export function useAiCompanionLayout({
   dockEnabled?: boolean;
 }): AiCompanionLayoutController {
   const [open, setOpen] = useState(false);
-  const [visible, setVisibleState] = useState(true);
   const [width, setWidth] = useState<number | null>(null);
   const [userCollapsed, setUserCollapsed] = useState(false);
   /**
@@ -127,7 +122,6 @@ export function useAiCompanionLayout({
     width === null || width < AI_COMPANION_DOCK_MIN_WIDTH || yieldDock
       ? "panel"
       : "dock";
-  const suspended = open && !visible;
   const navFitsAlongDock =
     width !== null && width >= AI_COMPANION_NAV_EXPAND_MIN_WIDTH;
 
@@ -163,7 +157,6 @@ export function useAiCompanionLayout({
         }
       }
       setError(null);
-      setVisibleState(true);
       setOpen(true);
       return true;
     },
@@ -172,15 +165,10 @@ export function useAiCompanionLayout({
 
   const closePanel = useCallback(() => {
     setOpen(false);
-    setVisibleState(true);
     // 仅在用户未另行操作时恢复答题卡原状态（toggleNavigator 已取消覆盖）
     if (navOverride) setNavOverride(false);
     setYieldDock(false);
   }, [navOverride]);
-
-  const setVisible = useCallback((next: boolean) => {
-    setVisibleState(next);
-  }, []);
 
   const toggleNavigator = useCallback(() => {
     if (navOverride) {
@@ -203,7 +191,6 @@ export function useAiCompanionLayout({
   return {
     open,
     mode,
-    suspended,
     navigatorCollapsed: userCollapsed || navOverride,
     error,
     panelId,
@@ -211,6 +198,5 @@ export function useAiCompanionLayout({
     openPanel,
     closePanel,
     toggleNavigator,
-    setVisible,
   };
 }

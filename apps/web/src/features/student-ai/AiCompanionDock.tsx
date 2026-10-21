@@ -1,11 +1,5 @@
 import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -171,7 +165,6 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
           };
         }
         bind(questionId);
-        controller.setVisible(true);
         setPresentationError(null);
       }
       return opened;
@@ -383,17 +376,6 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       }}
     />
   );
-  // setVisible 本身是稳定引用（布局控制器内 useCallback([])）；若依赖整个
-  // controller（每次渲染都是新对象），消费方的「绑定题可见性」效应会每次
-  // 重跑并立即测量，而面板开合又会重排题卡 → 面板反复卸载/挂载闪动。
-  const setVisible = controller.setVisible;
-  const setQuestionVisible = useCallback(
-    (questionId: string, visible: boolean) => {
-      if (fixedActive && send.boundQuestionId === questionId)
-        setVisible(visible);
-    },
-    [setVisible, send.boundQuestionId, fixedActive],
-  );
   const workspace = (
     <section
       id={controller.panelId}
@@ -528,7 +510,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
             aria-label="AI 对照"
             className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] w-[26rem] shrink-0 overflow-y-auto overscroll-contain"
           >
-            {!controller.suspended && workspace}
+            {workspace}
           </aside>
         )}
       </div>
@@ -545,7 +527,6 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     trigger,
     triggerForQuestion,
     inlineForQuestion,
-    setQuestionVisible,
     /** 主区包裹（传入页面主内容） */
     rail,
     /** 绑定题显示名（null = 未绑定） */

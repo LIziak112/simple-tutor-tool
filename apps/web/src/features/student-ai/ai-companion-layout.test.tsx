@@ -57,11 +57,7 @@ function Harness({
   return (
     <div ref={ref}>
       <span data-testid="ai-state">
-        {controller.suspended
-          ? "suspended"
-          : controller.open
-            ? controller.mode
-            : "closed"}
+        {controller.open ? controller.mode : "closed"}
       </span>
       <span data-testid="nav-state">
         {controller.navigatorCollapsed ? "collapsed" : "open"}
@@ -244,23 +240,5 @@ describe("SAI-19 伴学栏布局控制器", () => {
     await openPanel();
     order.push("opened");
     expect(order).toEqual(["flush", "opened"]);
-  });
-
-  it("题卡离屏时暂时收起，回到可见区域恢复；手动关闭后不再自动打开", async () => {
-    const editor = { flush: vi.fn(async () => {}) };
-    render(<Harness editor={editor} />);
-    expect(await openPanel()).toBe(true);
-    expect(stateOf().ai).toBe("dock");
-
-    act(() => captured.controller?.setVisible(false));
-    expect(stateOf().ai).toBe("suspended");
-    expect(captured.controller?.open).toBe(true);
-
-    act(() => captured.controller?.setVisible(true));
-    expect(stateOf().ai).toBe("dock");
-
-    closePanel();
-    act(() => captured.controller?.setVisible(true));
-    expect(stateOf().ai).toBe("closed");
   });
 });
