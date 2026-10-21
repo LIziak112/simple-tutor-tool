@@ -111,7 +111,7 @@ pnpm dev / pnpm test / pnpm e2e（真实Playwright：Chromium/WebKit，隔离临
 
 - 学习工作区（2026-10-19）：默认提示允许不填补充文字；选择问法不覆盖自写问题，只有最终发送才出站；初问/追问草稿使用学生角色内存缓存，切连接设置后恢复同题编辑，退出或换账号清理，不另建浏览器持久化副本。发送前展示题目、当前作答与已选材料，页数未经核对不虚报。阅读结尾可回原位置尝试，再检查新步骤；检查须有选定材料或文字步骤，新稿仍新建任务、旧稿追问不重采。当前回复优先、历史按需展开；专注阅读只保留一份活动正文与输入，退出恢复阅读位置。求助记录在本卷原地打开对应题和任务，跨卷按任务所属attempt定位并核对归属，保存失败保留现场。数学定界符兼容只作用于AI回复且重新检查预算；超限可按段读纯文本，不放宽图片、HTML或链接清洗。
 
-- 面板滚动透传（2026-10-21）：AI 面板滚动容器（固定对照栏、Sheet/Dock 对话记录区）统一经 `useDynamicOverscroll`（student-ai）按溢出状态挂载 `overscroll-contain`——内容溢出时内部滚到边界不连锁带动页面，未溢出时滚轮透传外层页面。现代浏览器对未溢出滚动容器的 `contain` 同样拦截链式滚动，滚动类名不得写死；回调 ref 必须在元素挂载时接线观察器与首查，不能依赖宿主首挂载时机。模态（Sheet/Dialog）语境由 Radix 滚动锁兜底，不在透传范围。
+- 浮动滚动区 overscroll-contain 不得写死（2026-10-21）：现代浏览器对声明 contain 的滚动容器即使内容未溢出也拦截链式滚动——内容不足的浮动滚动区会锁死外层页面滚轮。统一经 `useDynamicOverscroll`（apps/web/src/lib，按溢出状态切换 contain/auto；scroll-state 容器查询三引擎全量可用前的过渡实现）接入：溢出时内部滚到边界不连锁页面，未溢出时滚轮透传。首批已迁移学生端 AI 固定对照栏与对话记录区；AttemptSession/ResultWorkspace 的 sticky 侧栏、PaperPresentation 与 lesson/lecture 悬浮面板同病待迁移。Radix 模态（Sheet/Dialog）内由滚动锁兜底，不在迁移范围。
 
 - 授权例外仅此一处：需求规格 §2.3 已明确授权「允许求助时向选定 AI 发送本题已有答案解析，启发模式也携带」，不需要再逐次确认。例外只覆盖 AI 伴学的三个受控出口——页内出站载荷、上下文链接票据读端点、学生 MCP 领取视图；普通取卷/结果/错题本/导出等学生接口的防泄露投影（`publicOfSnapshot`、`studentStemMd`、`assertNoLeak` 测试族）零放宽，不因 AI 功能统一开放答案。
 - 三教学模式 `open_study`（默认）| `guided_only` | `post_submit_only` 只裁决 AI 可用性与回答尺度，与 `answersReleased`（普通答案公布）相互独立；「本题完成」（assignment/course/wrong：attempt 已提交；lesson：该题 submittedAt）后一律按 open_study 复盘尺度。「仅启发」是提示词输出约束、不是保密模式，需要作答期不接触答案的教师必须选 `post_submit_only`。

@@ -92,4 +92,19 @@ describe("useDynamicOverscroll", () => {
       });
     }).not.toThrow();
   });
+
+  it("enabled=false 时无操作：溢出也不翻转（布局模式无滚动类名消费）", () => {
+    const { result } = renderHook(() =>
+      useDynamicOverscroll<HTMLElement>({ enabled: false }),
+    );
+    const el = makeElement(800, 300);
+    act(() => {
+      result.current.ref(el);
+    });
+    expect(result.current.overscrollClass).toBe("overscroll-auto");
+    act(() => {
+      result.current.checkOverflow();
+    });
+    expect(result.current.overscrollClass).toBe("overscroll-auto");
+  });
 });
