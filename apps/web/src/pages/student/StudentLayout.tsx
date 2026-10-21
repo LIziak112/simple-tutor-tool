@@ -8,7 +8,7 @@ import {
   School,
   Settings2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
@@ -17,6 +17,7 @@ import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
 
@@ -49,6 +50,10 @@ export function StudentLayout() {
   const [workspace, setWorkspace] = useState(false);
   useStudentTheme();
   const meQuery = useStudentMe();
+  useEffect(() => {
+    bindAiDisplayAccount(meQuery.data?.id ?? null);
+    return () => bindAiDisplayAccount(null);
+  }, [meQuery.data?.id]);
   useBindInkProfiles("student", meQuery.data?.id);
   const logoutMutation = useLogoutStudent();
   const navigate = useNavigate();

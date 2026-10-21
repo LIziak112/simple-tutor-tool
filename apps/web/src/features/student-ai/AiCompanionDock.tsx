@@ -1,7 +1,17 @@
-import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
+import type {
+  AiTaskPublic,
+  AttemptQuestionPublic,
+  StudentAiDisplayLayout,
+} from "@tutor/contract";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   AiCompanionPanelBody,
   AiCompanionTrigger,
@@ -18,7 +28,10 @@ import {
   useAiConversationController,
 } from "@/features/student-ai/AiConversationPanel";
 import type { AiCompanionLayoutController } from "@/features/student-ai/ai-companion-layout";
-import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
+import {
+  hasAiCompareSpace,
+  useAiCompanionLayout,
+} from "@/features/student-ai/ai-companion-layout";
 import {
   type AiMaterialAvailability,
   type AiSendController,
@@ -27,7 +40,12 @@ import {
   useAiSendController,
 } from "@/features/student-ai/use-ai-send-controller";
 import { fetchStudentAiTaskApi } from "@/lib/api";
+import {
+  AiReadingMemoryContext,
+  useAiReadingMemory,
+} from "./AiReadingWorkspace";
 import { CHANNEL_LABEL } from "./ai-channel-label";
+import { useAiDisplayPreference } from "./ai-display-preference-store";
 
 /**
  * SAI-22 伴学栏共享装配（B12 执行步骤 1）：布局控制器 + 发送控制器 + 会话
@@ -89,7 +107,16 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     element: HTMLButtonElement;
     top: number;
   } | null>(null);
-  const [fixed, setFixed] = useState(false);
+  const preference = useAiDisplayPreference();
+  const readingMemory = useAiReadingMemory(attemptId);
+  const [sessionLayout, setSessionLayout] =
+    useState<StudentAiDisplayLayout>("inline");
+  const [presentation, setPresentation] =
+    useState<StudentAiDisplayLayout>("inline");
+  const [enlarged, setEnlarged] = useState(false);
+  const dialogTitleRef = useRef<HTMLHeadingElement>(null);
+  const dialogContentRef = useRef<HTMLDivElement>(null);
+  const restoringPresentationRef = useRef(false);
   const [workingQuestions, setWorkingQuestions] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -101,7 +128,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     containerRef: railRef,
     editor,
     currentQuestionId,
-    dockEnabled: fixed,
+    dockEnabled: presentation === "side",
   });
   const send = useAiSendController({
     attemptId,
@@ -157,6 +184,15 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       }
       const opened = await controller.openPanel(questionId);
       if (opened) {
+        if (!controller.open) {
+          setSessionLayout(preference.layout);
+          setPresentation(
+            preference.layout === "side" && !hasAiCompareSpace(railRef.current)
+              ? "dialog"
+              : preference.layout,
+          );
+          setEnlarged(false);
+        }
         if (trigger) {
           triggerRef.current = trigger;
           returnAnchorRef.current = {
@@ -272,7 +308,64 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       cancelled = true;
     };
   }, [attemptId, host.ready, location.pathname, location.search, navigate]);
-  const fixedActive = fixed && controller.canDock;
+  const fixedActive = presentation === "side";
+  const dialogActive = controller.open && presentation === "dialog";
+  useEffect(() => {
+    if (!dialogActive) return;
+    const viewport = window.visualViewport;
+    const resize = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      const narrow = window.innerWidth < 640;
+      const content = dialogContentRef.current;
+      if (!content) return;
+      content.style.height = `${narrow ? height : height * 0.9}px`;
+      content.style.maxHeight = `${height}px`;
+      content.style.top = `${(viewport?.offsetTop ?? 0) + height / 2}px`;
+    };
+    resize();
+    viewport?.addEventListener("resize", resize);
+    viewport?.addEventListener("scroll", resize);
+    window.addEventListener("resize", resize);
+    return () => {
+      viewport?.removeEventListener("resize", resize);
+      viewport?.removeEventListener("scroll", resize);
+      window.removeEventListener("resize", resize);
+    };
+  }, [dialogActive]);
+  // 已打开的侧栏只单向退让；回补空间留到下一次打开，避免键盘与分屏反复搬动正文。
+  useEffect(() => {
+    if (
+      !controller.open ||
+      presentation !== "side" ||
+      (hasAiCompareSpace(railRef.current) &&
+        (!controller.canDock || controller.mode === "dock")) ||
+      boundQuestionId === null
+    )
+      return;
+    let cancelled = false;
+    void host
+      .flush(boundQuestionId)
+      .then(() => {
+        if (!cancelled) {
+          setPresentation("dialog");
+          setPresentationError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled)
+          setPresentationError("当前稿件未保存，请重试保存后再调整助教布局");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    controller.open,
+    controller.canDock,
+    controller.mode,
+    presentation,
+    boundQuestionId,
+    host.flush,
+  ]);
   const close = async () => {
     if (transitionRef.current) return false;
     transitionRef.current = true;
@@ -319,7 +412,18 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     transitionRef.current = true;
     try {
       await host.flush(boundQuestionId);
-      setFixed((previous) => !previous);
+      if (enlarged) {
+        const next =
+          sessionLayout === "side" && !hasAiCompareSpace(railRef.current)
+            ? "dialog"
+            : sessionLayout;
+        restoringPresentationRef.current = next !== "dialog";
+        setPresentation(next);
+        setEnlarged(false);
+      } else {
+        setPresentation("dialog");
+        setEnlarged(true);
+      }
       setPresentationError(null);
     } catch {
       setPresentationError("当前稿件未保存，请重试保存后再调整助教布局");
@@ -394,19 +498,58 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       }}
     >
       <AiCompanionPanelBody
-        flow
+        flow={presentation === "inline"}
         questionLabel={boundLabel}
         settingsHref={settingsHref}
-        onDockClose={() => void close()}
+        onDockClose={dialogActive ? undefined : () => void close()}
+        heading={
+          dialogActive ? (
+            <DialogTitle
+              ref={dialogTitleRef}
+              tabIndex={-1}
+              className="min-w-0 flex-1 truncate text-sm leading-6 outline-none"
+            >
+              {boundLabel ?? "本题"} · AI 助教
+            </DialogTitle>
+          ) : undefined
+        }
+        headerNote={
+          dialogActive && sessionLayout === "side" && !enlarged ? (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              当前空间不足，已用弹窗打开；你的侧边偏好仍保留。
+            </p>
+          ) : undefined
+        }
         closeLabel="收起 AI 助教"
-        onFix={controller.canDock ? () => void changePresentation() : undefined}
-        fixed={fixedActive}
+        onFix={
+          presentation !== "dialog" || enlarged
+            ? () => void changePresentation()
+            : undefined
+        }
+        fixed={enlarged}
+        onDisplaySettings={() => {
+          if (boundQuestionId === null || transitionRef.current) return;
+          transitionRef.current = true;
+          void host
+            .flush(boundQuestionId)
+            .then(() => {
+              void navigate(
+                `/s/settings?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}#ai-display`,
+              );
+            })
+            .catch(() =>
+              setPresentationError("当前稿件未保存，请重试保存后再进入设置"),
+            )
+            .finally(() => {
+              transitionRef.current = false;
+            });
+        }}
         status={
           <AiCompanionStatusPanel send={send} settingsHref={settingsHref} />
         }
         compactStatus={
           send.status && (
-            <p className="px-3 pt-3 text-sm text-muted-foreground sm:px-5">
+            <p className="px-3 pt-2 text-xs text-muted-foreground sm:px-5">
               {send.effectiveChannel
                 ? CHANNEL_LABEL[send.effectiveChannel]
                 : "尚未连接"}{" "}
@@ -473,48 +616,100 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
             </Button>
           </fieldset>
         )}
-      {send.boundQuestionId === questionId && controller.open && !fixedActive
+      {send.boundQuestionId === questionId &&
+      controller.open &&
+      presentation === "inline"
         ? workspace
         : null}
     </div>
   );
   const rail = (children: ReactNode) => (
-    <div
-      ref={railRef}
-      data-slot="ai-companion-rail"
-      data-ai-state={
-        controller.open ? (fixedActive ? "dock" : "inline") : "closed"
-      }
-      className="w-full min-w-0"
-    >
-      {(controller.error || presentationError) && (
-        <p
-          role="alert"
-          className="mb-3 rounded-lg border border-destructive p-3 text-sm text-destructive"
-        >
-          {presentationError ?? controller.error}
-        </p>
-      )}
+    <AiReadingMemoryContext value={readingMemory}>
       <div
-        className={
-          fixedActive && controller.open
-            ? "flex min-w-0 items-start gap-4"
-            : "min-w-0"
+        ref={railRef}
+        data-slot="ai-companion-rail"
+        data-ai-state={
+          controller.open ? (fixedActive ? "dock" : presentation) : "closed"
         }
+        className="w-full min-w-0"
       >
-        <section aria-label="作答区" className="min-w-0 flex-1">
-          {children}
-        </section>
-        {fixedActive && controller.open && (
-          <aside
-            aria-label="AI 对照"
-            className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] w-[26rem] shrink-0 overflow-y-auto overscroll-contain"
+        {(controller.error || presentationError) && (
+          <p
+            role="alert"
+            className="mb-3 rounded-lg border border-destructive p-3 text-sm text-destructive"
           >
-            {workspace}
-          </aside>
+            {presentationError ?? controller.error}
+          </p>
+        )}
+        <div
+          className={
+            fixedActive && controller.open
+              ? "flex min-w-0 items-start gap-4"
+              : "min-w-0"
+          }
+        >
+          <section aria-label="作答区" className="min-w-0 flex-1">
+            {children}
+          </section>
+          {fixedActive && controller.open && (
+            <aside
+              aria-label="AI 对照"
+              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] flex h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] min-h-0 w-[26rem] max-w-full shrink-0 flex-col overflow-hidden [&>[data-slot=ai-companion-panel]]:min-h-0 [&>[data-slot=ai-companion-panel]]:flex-1"
+            >
+              {workspace}
+            </aside>
+          )}
+        </div>
+        {dialogActive && (
+          <Dialog
+            open
+            onOpenChange={(open) => {
+              if (!open) void close();
+            }}
+          >
+            <DialogContent
+              ref={dialogContentRef}
+              className="flex h-dvh max-h-dvh w-full max-w-full flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[90dvh] sm:max-h-[90dvh] sm:w-[calc(100%-3rem)] sm:max-w-[60rem] sm:rounded-xl"
+              onOpenAutoFocus={(event) => {
+                event.preventDefault();
+                dialogTitleRef.current?.focus({ preventScroll: true });
+              }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                if (restoringPresentationRef.current) {
+                  restoringPresentationRef.current = false;
+                  document
+                    .getElementById(controller.panelId)
+                    ?.querySelector<HTMLButtonElement>("[data-ai-enlarge]")
+                    ?.focus({ preventScroll: true });
+                } else triggerRef.current?.focus({ preventScroll: true });
+              }}
+              onPointerDownOutside={(event) => event.preventDefault()}
+              onEscapeKeyDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void close();
+              }}
+            >
+              <DialogDescription className="sr-only">
+                阅读和追问本题，关闭后回到原题继续作答。
+              </DialogDescription>
+              <div className="flex min-h-0 flex-1 flex-col [&>[data-slot=ai-companion-panel]]:min-h-0 [&>[data-slot=ai-companion-panel]]:flex-1 [&>[data-slot=ai-companion-panel]]:rounded-none [&>[data-slot=ai-companion-panel]]:border-0">
+                {presentationError && (
+                  <p
+                    role="alert"
+                    className="px-5 py-2 text-sm text-destructive"
+                  >
+                    {presentationError}
+                  </p>
+                )}
+                {workspace}
+              </div>
+            </DialogContent>
+          </Dialog>
         )}
       </div>
-    </div>
+    </AiReadingMemoryContext>
   );
 
   return {

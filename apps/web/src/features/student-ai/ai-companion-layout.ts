@@ -28,6 +28,17 @@ export const AI_COMPANION_NAV_EXPAND_MIN_WIDTH = 1280;
 /** 416px 对照栏 + 16px间距 + 44px折叠导航 + 24px间距 + 560px题列。 */
 export const AI_COMPANION_COMPARE_MIN_WIDTH = 1060;
 
+/** 打开时同步读取当前容器，避免路由首帧测量尚未发布而误判为空间不足。 */
+export function hasAiCompareSpace(element: HTMLElement | null): boolean {
+  if (!element) return false;
+  const rect = element.getBoundingClientRect();
+  const scale =
+    element.offsetWidth > 0 && rect.width > 0
+      ? rect.width / element.offsetWidth
+      : 1;
+  return rect.width / scale >= AI_COMPANION_COMPARE_MIN_WIDTH;
+}
+
 /** 布局控制器对编辑器上下文的最小结构性依赖（AttemptEditorContext 满足） */
 export interface AiCompanionLayoutEditor {
   flush(
