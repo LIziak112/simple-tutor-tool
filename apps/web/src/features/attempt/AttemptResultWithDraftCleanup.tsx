@@ -22,12 +22,15 @@ export default function AttemptResultWithDraftCleanup({
   onBackHome,
   backLabel,
   annotationSealWarning = false,
+  onRefresh,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
   backLabel?: string | undefined;
   /** 交卷后标注 seal 失败的警示（AttemptSession 顶态；服务端懒补封兜底） */
   annotationSealWarning?: boolean;
+  /** 到期自动刷新回调 */
+  onRefresh?: (() => void) | undefined;
 }) {
   const attemptId = data.attempt.id;
   const navigate = useNavigate();
@@ -77,6 +80,7 @@ export default function AttemptResultWithDraftCleanup({
       backLabel={backLabel}
       onSolutionToggle={onSolutionToggle}
       annotationSealWarning={annotationSealWarning}
+      onRefresh={onRefresh}
       wrongPractice={{
         loading: practice.isPending,
         error: practiceErrorText,

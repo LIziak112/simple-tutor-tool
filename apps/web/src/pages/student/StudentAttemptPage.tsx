@@ -91,6 +91,7 @@ export default function StudentAttemptPage() {
         recordsTarget ? "返回我的记录" : queueTarget ? "返回原页面" : undefined
       }
       onExit={() => void navigate(recordsTarget ?? queueTarget ?? exitTarget)}
+      onRefresh={() => void detailQuery.refetch()}
     />
   );
 }
