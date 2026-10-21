@@ -178,9 +178,10 @@ export function AiCompanionPanelBody({
           onDockClose ? "pr-2" : "pr-11"
         }`}
       >
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
-          AI 助教
-        </h2>
+        <div className="min-w-0 flex-1 py-2">
+          <h2 className="text-sm font-semibold">AI 助教</h2>
+          {!settingsOpen && !settingsAttention && compactStatus}
+        </div>
         <span className="shrink-0 text-xs text-muted-foreground">
           {questionLabel ?? "未绑定题目"}
         </span>
@@ -218,7 +219,6 @@ export function AiCompanionPanelBody({
           </Button>
         )}
       </div>
-      {!settingsOpen && !settingsAttention && compactStatus}
       {settingsOpen && (
         <div
           id={settingsId}
@@ -235,7 +235,7 @@ export function AiCompanionPanelBody({
         data-slot="ai-reply-workspace"
         className={
           flow
-            ? "min-w-0 px-3 py-3 sm:px-5"
+            ? "mx-auto w-full min-w-0 max-w-[43rem] px-4 py-3 sm:px-6"
             : `min-h-0 flex-1 overflow-y-auto ${replyOverscroll.overscrollClass} bg-muted/20 px-3 py-3`
         }
       >
