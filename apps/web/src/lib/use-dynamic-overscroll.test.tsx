@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDynamicOverscroll } from "./use-dynamic-overscroll";
 
 /** jsdom 无布局：手工定义元素读数来模拟溢出状态 */
@@ -106,5 +106,49 @@ describe("useDynamicOverscroll", () => {
       result.current.checkOverflow();
     });
     expect(result.current.overscrollClass).toBe("overscroll-auto");
+  });
+
+  it("首子元素被替换后重新对账 RO 观察目标（占位 ↔ 内容互换不丢检测）", async () => {
+    const observed = new Set<Element>();
+    class RecordingRO {
+      observe(target: Element) {
+        observed.add(target);
+      }
+      unobserve(target: Element) {
+        observed.delete(target);
+      }
+      disconnect() {
+        observed.clear();
+      }
+    }
+    vi.stubGlobal("ResizeObserver", RecordingRO);
+    const { result } = renderHook(() => useDynamicOverscroll<HTMLElement>());
+    const el = makeElement(300, 500);
+    // 对账按 isConnected 清理脱离文档的目标：容器须真实挂载（同生产）
+    document.body.appendChild(el);
+    const placeholder = document.createElement("p");
+    el.appendChild(placeholder);
+    act(() => {
+      result.current.ref(el);
+    });
+    expect(observed.has(el)).toBe(true);
+    expect(observed.has(placeholder)).toBe(true);
+
+    // 占位被会话内容根节点替换（真实路径：conversation ?? <p>占位）
+    const content = document.createElement("div");
+    act(() => {
+      el.replaceChildren(content);
+    });
+    // MutationObserver 回调经微任务送达，等对账跑完
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(observed.has(placeholder)).toBe(false);
+    expect(observed.has(content)).toBe(true);
+    el.remove();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 });
