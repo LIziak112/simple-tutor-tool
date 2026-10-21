@@ -1021,6 +1021,8 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     assertNoLeak(body);
     assertNoStemLeak(body);
     const draft = (body as { data: AttemptDraftData }).data;
+    // 2026-10-21 交卷前置预期：默认作业（on_submit）草稿视图携带公布时机
+    expect(draft.answerRelease).toBe("on_submit");
     // T7.7：草稿视图随卷下发有效启用集（教师未配置 → 全启用）
     expect(draft.enabledCapabilities).toEqual([...ALL_ENABLED_CAPABILITIES]);
     // T2A.7：分组结构（样例单单元 → units 恰 1 组，组内 8 题按题序）
@@ -1206,6 +1208,18 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
 
     const attemptId = (await startAttemptOk(app, cookie, assignmentId))
       .id as string;
+
+    // ⓪ 交卷前置预期：after_due 作业的草稿视图携带公布时机原值
+    //（交卷弹窗据此告知「截止后统一公布」；on_submit 作业见草稿视图测试）
+    const beforeSubmit = await getAttempt(app, cookie, attemptId);
+    expect(beforeSubmit.res.status).toBe(200);
+    expect(attemptDraftOkSchema.safeParse(beforeSubmit.body).success).toBe(
+      true,
+    );
+    expect(
+      (beforeSubmit.body as { data: AttemptDraftData }).data.answerRelease,
+    ).toBe("after_due");
+
     await putAnswer(app, cookie, attemptId, Q.judge, {
       kind: "judge",
       value: true,
