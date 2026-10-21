@@ -355,9 +355,11 @@ function ResultQuestionCard({
 }) {
   // 手写题型判定走共享 HANDWRITTEN_TYPES（与答题卡/教师卡单一事实来源）
   const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
+  // 复算一次共享：verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源
+  const reviewState = reviewQuestionState(question, released);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
-  const verdict = reviewQuestionState(question, released).verdict;
+  const verdict = reviewState.verdict;
   const renderTools = (
     explanationTrigger?: ReactNode,
     explanationContent?: ReactNode,
@@ -436,7 +438,7 @@ function ResultQuestionCard({
         "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
         !released
-          ? reviewQuestionState(question, released).unanswered
+          ? reviewState.unanswered
             ? "before:bg-muted"
             : "before:bg-sky-400"
           : verdict === true
@@ -451,7 +453,7 @@ function ResultQuestionCard({
         {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
         {released ? (
           <VerdictBadge verdict={verdict} />
-        ) : reviewQuestionState(question, released).unanswered ? (
+        ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
             未作答
           </span>
@@ -806,7 +808,7 @@ export function AttemptResultView({
                 dueAt={data.dueAt}
                 submittedAt={attempt.submittedAt}
                 summary={summary}
-                onExpire={onRefresh}
+                onRefresh={onRefresh}
               />
             )}
             <div className="flex flex-col gap-2">

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PendingReleaseBanner } from "./PendingReleaseBanner";
@@ -44,11 +44,11 @@ describe("PendingReleaseBanner", () => {
     expect(screen.getByText("待公布 🔒（截止后自动判分）")).toBeInTheDocument();
   });
 
-  it("渲染倒计时胶囊卡片并在倒计时到达时显示加载状态和触发 onExpire", () => {
+  it("渲染倒计时胶囊卡片并在倒计时到达时显示加载状态和触发 onRefresh", () => {
     const now = new Date("2026-10-21T10:00:00.000Z");
     vi.setSystemTime(now);
 
-    const onExpire = vi.fn();
+    const onRefresh = vi.fn();
     // 2 秒后截止
     const dueAt = new Date(now.getTime() + 2000).toISOString();
 
@@ -57,7 +57,7 @@ describe("PendingReleaseBanner", () => {
         dueAt={dueAt}
         submittedAt="2026-10-21T08:30:00.000Z"
         summary={{ answered: 6, total: 6 }}
-        onExpire={onExpire}
+        onRefresh={onRefresh}
       />,
     );
 
@@ -72,10 +72,54 @@ describe("PendingReleaseBanner", () => {
       vi.advanceTimersByTime(2000);
     });
 
-    expect(onExpire).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(
       screen.getByText("截止时间已到，正在加载批改结果…"),
     ).toBeInTheDocument();
+  });
+
+  it("到期态提供「立即刷新」手动重试（自动刷新后仍未公布时不卡死）", () => {
+    const now = new Date("2026-10-21T10:00:00.000Z");
+    vi.setSystemTime(now);
+
+    const onRefresh = vi.fn();
+    const dueAt = new Date(now.getTime() + 1000).toISOString();
+
+    render(
+      <PendingReleaseBanner
+        dueAt={dueAt}
+        submittedAt="2026-10-21T08:30:00.000Z"
+        summary={{ answered: 6, total: 6 }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // 到期自动触发一次
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // 自动刷新后服务端仍未公布（时钟偏差等）→ 学生可手动重试
+    fireEvent.click(screen.getByRole("button", { name: "立即刷新" }));
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("dueAt 缺失的防御分支：不谎称正在加载，展示中性待公布文案", () => {
+    render(
+      <PendingReleaseBanner
+        dueAt={null}
+        submittedAt="2026-10-21T08:30:00.000Z"
+        summary={{ answered: 6, total: 6 }}
+      />,
+    );
+
+    expect(
+      screen.getByText("老师公布后将在这里显示成绩、参考答案与详解。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/正在加载批改结果/)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("渲染防疑惑科普小贴士", () => {

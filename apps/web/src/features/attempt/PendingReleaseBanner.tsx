@@ -1,17 +1,24 @@
 import type { AttemptScoreSummary } from "@tutor/contract";
-import { CheckCircle2, Clock, Lightbulb, ShieldCheck } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  Lightbulb,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { formatCnTime } from "@/lib/time";
 import { useDueCountdown } from "./use-due-countdown";
 
 export interface PendingReleaseBannerProps {
-  /** 截止时间（UTC ISO），可为 null */
+  /** 截止时间（UTC ISO），可为 null（防御：受限形态服务端恒有值） */
   dueAt: string | null;
   /** 交卷时间（UTC ISO），可为 null */
   submittedAt?: string | null | undefined;
   /** 作答统计摘要 */
   summary: Pick<AttemptScoreSummary, "answered" | "total">;
-  /** 倒计时到期回调 */
-  onExpire?: (() => void) | undefined;
+  /** 刷新回调：倒计时到期自动触发一次；到期态的「立即刷新」按钮同走此口 */
+  onRefresh?: (() => void) | undefined;
   /** 手写原稿状态文案，默认 "已归档保存" */
   handwritingStatus?: string | undefined;
 }
@@ -19,7 +26,8 @@ export interface PendingReleaseBannerProps {
 /**
  * 结果页“截止后公布（after_due）”未公布态横幅
  * - 绿色高辨识度成功 Hero 确认区（🎉 作业已成功交卷！）；
- * - 动态倒计时胶囊：显眼的 [天] [时] [分] [秒] 胶囊卡片；到期时提示正在加载；
+ * - 动态倒计时胶囊：显眼的 [天] [时] [分] [秒] 胶囊卡片；到期时提示正在加载
+ *   并提供「立即刷新」（到期自动刷新后仍未公布/刷新失败时不至于卡死在加载态）；
  * - 作答凭证摘要行：交卷时间、已作答题数、手写原稿状态、待公布锁定状态；
  * - 防疑惑科普小贴士（说明为何统一公布、如何查看）。
  */
@@ -27,10 +35,10 @@ export function PendingReleaseBanner({
   dueAt,
   submittedAt,
   summary,
-  onExpire,
+  onRefresh,
   handwritingStatus = "已归档保存",
 }: PendingReleaseBannerProps) {
-  const countdown = useDueCountdown(dueAt, { onExpire });
+  const countdown = useDueCountdown(dueAt, { onExpire: onRefresh });
 
   return (
     <section
@@ -66,13 +74,33 @@ export function PendingReleaseBanner({
           )}
         </div>
 
-        {countdown.isExpired ? (
-          <div
-            role="status"
-            className="flex items-center gap-2 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-300"
-          >
-            <Clock aria-hidden className="size-4 animate-spin" />
-            <span>截止时间已到，正在加载批改结果…</span>
+        {dueAt === null ? (
+          // 防御分支：受限形态服务端恒有 dueAt；缺失时不谎称「正在加载」
+          <p className="py-2 text-sm text-muted-foreground">
+            老师公布后将在这里显示成绩、参考答案与详解。
+          </p>
+        ) : countdown.isExpired ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <div
+              role="status"
+              className="flex items-center gap-2 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-300"
+            >
+              <Clock aria-hidden className="size-4 animate-spin" />
+              <span>截止时间已到，正在加载批改结果…</span>
+            </div>
+            {/* 到期自动刷新后仍未公布（时钟偏差/网络失败）时的手动重试口 */}
+            {onRefresh && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11"
+                onClick={onRefresh}
+              >
+                <RefreshCw aria-hidden className="size-3.5" />
+                立即刷新
+              </Button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-4 gap-2 sm:max-w-md">
