@@ -53,6 +53,7 @@ it("未公布不暴露判定；空定位范围有退出入口", () => {
   expect(
     screen.getByRole("button", { name: "第 1 题，未作答" }),
   ).toBeInTheDocument();
+  expect(screen.getByText("— 未作答 · ✓ 答案已记录")).toBeInTheDocument();
   rerender(
     <ResultQuestionNavigator
       questions={[question]}

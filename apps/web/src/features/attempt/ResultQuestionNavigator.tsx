@@ -26,7 +26,7 @@ export function ResultQuestionNavigator({
       <p className="mb-3 text-xs text-muted-foreground">
         {released
           ? "✓ 答对 · × 判错 · ◷ 待批 · — 未作答"
-          : "— 未作答 · ● 已作答"}
+          : "— 未作答 · ✓ 答案已记录"}
       </p>
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">此范围没有题目</p>
@@ -65,7 +65,7 @@ export function ResultQuestionNavigator({
                     {state.unanswered
                       ? "—"
                       : !released
-                        ? "●"
+                        ? "✓"
                         : state.verdict === true
                           ? "✓"
                           : state.verdict === false
