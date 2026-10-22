@@ -941,9 +941,11 @@ export const responses = sqliteTable(
     /** 最近一次有版本保存标识；建立新协议后拒绝无版本旧客户端覆盖。 */
     answerMutationId: text("answer_mutation_id"),
     /**
-     * 单题提交时刻（讲练一体 2026-10，lesson 逐题提交专用，后续任务实装）：
-     * UTC ISO；单题提交 = 该题提交时刻，整卷收尾对剩余行 = 交卷时刻；
-     * NULL = 未提交。既有整卷作答链路（assignment/course/wrong）不写本列。
+     * 单题提交时刻（讲练一体 2026-10 起写入；M2 新协议普通卷同写）：
+     * UTC ISO；单题提交 = 该题提交时刻，整卷收尾对剩余行 = 交卷时刻
+     * （lesson 独立适配 + M2 v1 普通卷，判定走 practiceProtocolOf 单一谓词）；
+     * NULL = 未提交。历史旧协议卷（无工作流版本的 assignment/course/wrong）
+     * 整卷链路不写本列，恒 null。
      */
     submittedAt: text("submitted_at"),
     /** 自动判分结果：true/false；NULL = 不能自动判定（D1 后不含未作答客观题） */

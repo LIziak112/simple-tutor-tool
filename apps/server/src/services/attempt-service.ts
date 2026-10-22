@@ -472,11 +472,13 @@ export function assignmentReleaseByIds(
 }
 
 /**
- * lesson 题级「已单题提交」领域谓词（2026-10 三消费方同口径收敛）：
- * 口径按题级行值（responses.submittedAt 非空），不回看 attempt 级状态——
- * 整卷收尾对剩余行写交卷时刻，正常非 draft 卷恒非空；判定方向恒取严
- * （null = 未提交 = 不放行）。消费方：lesson-service released、note-service
- * 笔记本解析 gate、teaching-policy-service「本题完成」判定。
+ * 题级「已单题提交」领域谓词（2026-10 讲练三消费方收敛；M2 起普通 v1 卷
+ * 同写本列，谓词按行值判定、来源无关）：口径按题级行值
+ * （responses.submittedAt 非空），不回看 attempt 级状态——正常非 draft 卷
+ * （lesson 与 v1）整卷收尾对剩余行写交卷时刻、恒非空，历史旧协议卷恒
+ * null；判定方向恒取严（null = 未提交 = 不放行）。消费方：lesson-service
+ * released、note-service 笔记本解析 gate、teaching-policy-service
+ * 「本题完成」判定。
  */
 export function lessonQuestionSubmitted(
   row: Pick<ResponseRow, "submittedAt">,
@@ -1088,11 +1090,11 @@ export function requireAttemptQuestion(
 }
 
 /**
- * 单题提交后的**行级锁定守卫**（2026-10 讲练一体）：该题已单题提交
- * （responses.submittedAt 非空）→ 409 QUESTION_ALREADY_SUBMITTED——判定已按
- * 提交时的答案落定，答案与笔迹此后不可再改（saveDraftAnswer / saveInk 调用，
- * 都在 requireAttemptQuestion 之后）。非 lesson 行的 submittedAt 恒 null，
- * 两接口对既有来源的行为零变化。
+ * 单题提交后的**行级锁定守卫**（2026-10 讲练一体；M2 起普通 v1 卷已提交行
+ * 同守卫）：该题已单题提交（responses.submittedAt 非空）→ 409
+ * QUESTION_ALREADY_SUBMITTED——判定已按提交时的答案落定，答案与笔迹此后
+ * 不可再改（saveDraftAnswer / saveInk 调用，都在 requireAttemptQuestion
+ * 之后）。历史旧协议行的 submittedAt 恒 null，既有来源行为零变化。
  */
 export function assertRowNotSubmitted(
   db: Db,
@@ -2013,10 +2015,10 @@ export function submitAttempt(
   // 经 unitGroupedRows 重建）
   const ownRows = attemptResponseRows(db, attemptId);
   // 逐题提交语义的卷（2026-10 lesson 独立适配 + M2 新协议普通卷）：已单题提交
-  // 的行不重判（见函数头注释）；历史卷行的 submittedAt 恒 null → 全量判分，
-  // 行为零变化
-  const perQuestionAttempt =
-    attempt.sourceType === "lesson" || attempt.practiceWorkflowVersion === 1;
+  // 的行不重判（见函数头注释）；判定走 practiceProtocolOf 单一谓词（异常行
+  // version=1 而 feedbackMode 缺失时也按历史卷全量判分，与四个逐题消费点
+  // 口径一致）；历史卷行的 submittedAt 恒 null → 全量判分，行为零变化
+  const perQuestionAttempt = practiceProtocolOf(attempt) !== "legacy";
 
   // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
   const timeline = attemptTimeline(db, attemptId);
