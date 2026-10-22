@@ -80,23 +80,33 @@ export function VerdictBadge({
   verdict,
   pendingLabel = "待批改",
   toned = false,
+  correctLabel = "答对",
+  wrongLabel = "答错",
 }: {
   verdict: boolean | null;
   /** 待批（null）文案覆盖——讲练页用「待老师批改」 */
   pendingLabel?: string;
   /** 文字是否套判定配色（讲练页题卡带色；结果视图沿用默认前景色） */
   toned?: boolean;
+  /** 判对（true）文案覆盖——逐题反馈用「回答正确」（M3-D2；缺省不变） */
+  correctLabel?: string;
+  /** 判错（false）文案覆盖——逐题反馈用「回答有误」（M3-D2；缺省不变） */
+  wrongLabel?: string;
 }) {
   const label =
-    verdict === true ? "答对" : verdict === false ? "答错" : pendingLabel;
+    verdict === true
+      ? correctLabel
+      : verdict === false
+        ? wrongLabel
+        : pendingLabel;
   const icon =
     verdict === true ? (
       <CheckCircle2
-        aria-label="答对"
+        aria-label={correctLabel}
         className="size-5 shrink-0 text-emerald-600"
       />
     ) : verdict === false ? (
-      <XCircle aria-label="答错" className="size-5 shrink-0 text-red-600" />
+      <XCircle aria-label={wrongLabel} className="size-5 shrink-0 text-red-600" />
     ) : (
       <Clock
         aria-label={pendingLabel}

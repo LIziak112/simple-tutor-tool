@@ -1,6 +1,7 @@
 import type {
   AttemptSource,
   PracticeQuestionProgress,
+  PracticeRestrictionReason,
   PracticeWorkflow,
 } from "@tutor/contract";
 
@@ -55,6 +56,40 @@ export function practiceRestrictionCopy(
     default:
       return null;
   }
+}
+
+/** 统一公布节奏下已提交行的反馈文案（§10.4 pending_attempt 投影同义） */
+export const PENDING_ATTEMPT_FEEDBACK_COPY = "已提交，交卷后统一公布";
+
+/**
+ * 题级反馈受限文案（§10.4 restricted 三原因，M3-D2）：与 practiceRestrictionCopy
+ * 同源口径，但覆盖三枚举全量（含 legacy_attempt——历史卷不可逐题反馈）；
+ * QuestionFeedback 的 restricted 态与不可读行的本地呈现共用。
+ */
+export function practiceFeedbackRestrictedCopy(
+  reason: PracticeRestrictionReason,
+): string {
+  switch (reason) {
+    case "teacher_after_attempt":
+      return "老师要求交卷后公布";
+    case "teacher_after_due":
+      return "老师要求截止后公布";
+    case "legacy_attempt":
+      return "本练习不支持逐题反馈";
+  }
+}
+
+/**
+ * 已提交但反馈不可读行的本地文案（不发题级反馈请求时的呈现依据）：
+ * 教师受限按原因；否则按统一公布节奏（§10.4——不可读行零题目秘密，
+ * 服务端裁决经专用端点，本文案只描述节奏事实）。
+ */
+export function practiceUnreadableFeedbackCopy(
+  workflow: PracticeWorkflow,
+): string {
+  return !workflow.canSubmitQuestion && workflow.restrictionReason !== null
+    ? practiceFeedbackRestrictedCopy(workflow.restrictionReason)
+    : PENDING_ATTEMPT_FEEDBACK_COPY;
 }
 
 /**
