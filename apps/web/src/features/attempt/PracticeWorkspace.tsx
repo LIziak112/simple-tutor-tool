@@ -2,7 +2,10 @@ import type { PracticeLayout, PracticeWorkflow } from "@tutor/contract";
 import { Check, ChevronDown, Clock } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu";
 import {
   practiceLayoutLabel,
   practiceRestrictionCopy,
@@ -176,20 +179,17 @@ export function PracticeLayoutMenuItems({
   onChange: (layout: PracticeLayout) => void;
 }): ReactNode {
   return (
-    <>
-      <DropdownMenuRadioItem
-        checked={layout === "list"}
-        onSelect={() => onChange("list")}
-      >
-        做题方式：列表
-      </DropdownMenuRadioItem>
-      <DropdownMenuRadioItem
-        checked={layout === "single"}
-        onSelect={() => onChange("single")}
-      >
+    <DropdownMenuRadioGroup
+      value={layout}
+      onValueChange={(value) => {
+        onChange(value === "single" ? "single" : "list");
+      }}
+    >
+      <DropdownMenuRadioItem value="list">做题方式：列表</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="single">
         做题方式：单题
       </DropdownMenuRadioItem>
-    </>
+    </DropdownMenuRadioGroup>
   );
 }
 

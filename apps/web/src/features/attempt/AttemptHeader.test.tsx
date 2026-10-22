@@ -67,7 +67,11 @@ it("menuItems 槽渲染在练习信息之前（做题方式切换挂点）", () 
       title="练习"
       status={() => <p>全部已保存</p>}
       onBack={() => undefined}
-      menuItems={<div role="menuitem">做题方式：列表</div>}
+      menuItems={
+        <div role="menuitem" tabIndex={0}>
+          做题方式：列表
+        </div>
+      }
     >
       课程信息
     </AttemptHeader>,

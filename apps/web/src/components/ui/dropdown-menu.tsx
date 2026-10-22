@@ -61,7 +61,10 @@ const DropdownMenuSeparator = ({
   />
 );
 
-/** 单选菜单项（M3-D1 做题方式切换）：role=menuitemradio + 选中指示 */
+/** 单选分组（M3-D1 做题方式切换）：value/onValueChange 控制，组内 RadioItem 由上下文标记选中 */
+const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
+
+/** 单选菜单项（M3-D1）：role=menuitemradio；须挂在 RadioGroup 内（选中态来自组 value） */
 const DropdownMenuRadioItem = ({
   className,
   ...props
@@ -99,6 +102,7 @@ export {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,

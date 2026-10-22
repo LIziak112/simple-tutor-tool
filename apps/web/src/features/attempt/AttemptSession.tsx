@@ -474,15 +474,13 @@ function AnswerView({
     });
   };
   // 单题跳题（M3-D1）：与列表跳题同一收笔/滚动/聚焦链，另更新单题态与
-  // 当前题标记（AI 伴学/导航跟随显式选择，§11 纪律 1 不重建题卡）
-  const goSingleQuestion = useCallback(
-    async (id: string) => {
-      setSingleQuestionId(id);
-      setCurrentQuestionId(id);
-      await jumpToQuestion(id);
-    },
-    [jumpToQuestion],
-  );
+  // 当前题标记（AI 伴学/导航跟随显式选择，§11 纪律 1 不重建题卡）。
+  // jumpToQuestion 本身非 memo（每渲染重建），此处同法不包 useCallback
+  const goSingleQuestion = async (id: string) => {
+    setSingleQuestionId(id);
+    setCurrentQuestionId(id);
+    await jumpToQuestion(id);
+  };
   const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
