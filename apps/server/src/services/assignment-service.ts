@@ -1130,9 +1130,11 @@ export function listStudentAssignments(
       const unitList = unitLists.get(row.id) ?? [];
       // M4-D3：进行中的 v1 新协议卷携带行级已提交数（N 复用 questionCount）；
       // legacy / lesson 卷缺省 = 前端回落既有呈现
-      const progress = progressByAssignment.get(
-        v1DraftByAssignment.get(row.id)?.id ?? "",
-      );
+      const draftAttemptId = v1DraftByAssignment.get(row.id)?.id;
+      const progress =
+        draftAttemptId !== undefined
+          ? progressByAssignment.get(draftAttemptId)
+          : undefined;
       return {
         id: row.id,
         title: row.title,

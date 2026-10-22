@@ -106,6 +106,19 @@ export interface UseAiCompanionDockHost {
     | undefined;
 }
 
+/**
+ * 单题专注模式切题守卫（M4-D2 §12.1）：宿主注入 goToQuestion 时先经统一
+ * 切题入口（含收笔/落盘/AI 收起保护）；未注入（列表等场景）视为已就位。
+ * 返回是否已在目标题上可继续操作。
+ */
+const ensureAtQuestion = async (
+  host: UseAiCompanionDockHost,
+  questionId: string,
+): Promise<boolean> => {
+  if (host.goToQuestion === undefined) return true;
+  return host.goToQuestion(questionId);
+};
+
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const { attemptId, questions, currentQuestionId, editor, labelOf } = host;
   const location = useLocation();
@@ -246,10 +259,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       throw new Error("这道题已不在当前练习中，请重新选择题目");
     // 单题专注模式：目标非当前题时先经统一切题入口（含 AI 收起保护），
     // 失败抛错保留现场；列表等场景未注入则视为已就位。
-    if (
-      host.goToQuestion !== undefined &&
-      !(await host.goToQuestion(questionId))
-    )
+    if (!(await ensureAtQuestion(host, questionId)))
       throw new Error("暂时无法切到本题，请检查材料保存状态后重试");
     if (!(await openForQuestion(questionId, entryOf(questionId)))) return false;
     conversation.startNew(questionId);
@@ -274,11 +284,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     }
     // 单题专注模式：先统一切题到任务所属题（收笔/落盘/AI 收起同链），
     // 失败保留现场不展开回复。
-    if (
-      host.goToQuestion !== undefined &&
-      !(await host.goToQuestion(task.questionId))
-    )
-      return false;
+    if (!(await ensureAtQuestion(host, task.questionId))) return false;
     const entry = entryOf(task.questionId);
     if (!(await openForQuestion(task.questionId, entry))) return false;
     conversation.openTask(task);
@@ -298,11 +304,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     }
     if (host.ready === false || transitionRef.current) return false;
     // 单题专注模式：回题定位同样先统一切题，失败保留当前列表与阅读状态。
-    if (
-      host.goToQuestion !== undefined &&
-      !(await host.goToQuestion(questionId))
-    )
-      return false;
+    if (!(await ensureAtQuestion(host, questionId))) return false;
     const entry = entryOf(questionId);
     const card = entry?.closest("article");
     if (!entry || !card) {

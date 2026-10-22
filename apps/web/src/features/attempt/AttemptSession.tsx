@@ -631,19 +631,16 @@ function AnswerView({
     // 时已切走，错误横幅与键盘守门会指向看不见的旧题——与列表模式同序）
     if (editor && !(await editor.request(null))) return false;
     const from = resolvedSingleQuestionId;
-    if (from !== null && from !== id && !(await flushQuestionLocal(from))) {
-      setSingleSwitchBlocked(id);
-      return false;
+    if (from !== null && from !== id) {
+      if (!(await flushQuestionLocal(from))) {
+        setSingleSwitchBlocked(id);
+        return false;
+      }
+      // 切题先收起 AI 阅读（M4-D2 §12.1）：在本机落盘保护之后、真正切换
+      // 之前，复用 dock 既有收起链（落盘失败不切题）；收起失败时 dock 已
+      // 就地提示重试，不再叠加切题保护横幅，保留现场不切换。
+      if (!(await aiCompanion.collapseForNavigation())) return false;
     }
-    // 切题先收起 AI 阅读（M4-D2 §12.1）：在本机落盘保护之后、真正切换之前，
-    // 复用 dock 既有收起链（落盘失败不切题）；收起失败时 dock 已就地提示
-    // 重试，不再叠加切题保护横幅，保留现场不切换。
-    if (
-      from !== null &&
-      from !== id &&
-      !(await aiCompanion.collapseForNavigation())
-    )
-      return false;
     setSingleSwitchBlocked(null);
     setSingleQuestionId(id);
     setCurrentQuestionId(id);

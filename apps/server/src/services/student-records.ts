@@ -218,6 +218,7 @@ export function listStudentRecords(
         : undefined;
     const released =
       assignmentRow === undefined || answersReleased(assignmentRow, now);
+    const progress = progressByAttempt.get(attempt.id);
     return {
       ...sourceOf(db, attempt, teacherId ?? ""),
       attemptId: attempt.id,
@@ -234,11 +235,10 @@ export function listStudentRecords(
       submittedAt: attempt.submittedAt,
       // M4-D3 进行中进度（§13）：仅 v1 新协议卷携带（draft 行级 n/N；已收尾
       // 卷整卷口径 n=N）；白名单纯公开进度计数，不含对错/得分/答案
-      ...(progressByAttempt.has(attempt.id)
+      ...(progress !== undefined
         ? {
-            practiceSubmittedCount:
-              progressByAttempt.get(attempt.id)?.submitted ?? 0,
-            practiceQuestionCount: progressByAttempt.get(attempt.id)?.total,
+            practiceSubmittedCount: progress.submitted,
+            practiceQuestionCount: progress.total,
           }
         : {}),
     };
