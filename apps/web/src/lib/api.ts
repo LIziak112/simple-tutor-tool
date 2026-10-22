@@ -133,6 +133,7 @@ import {
   type NoteUploadMetaInput,
   type NoteVersionReceipt,
   type PendingMarkListData,
+  type PracticeWorkflowStartOptions,
   type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
@@ -836,13 +837,17 @@ export function fetchStudentLectureApi(
 /**
  * 创建或取回进行中的 attempt（幂等：一个作业一人一份进行中）。
  * 已交卷时返回已交的那份（status=submitted/graded，前端直接进结果视图）。
+ * M3-D1.5：options 缺省不发 body（旧协议）；携带 workflowVersion=1 时服务端
+ * 按新协议建卷（教师约束由服务端裁决，客户端只传学生偏好）。
  */
 export function startAttemptApi(
   assignmentId: string,
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.assignments[":id"].attempt.$post({
       param: { id: assignmentId },
+      ...(options !== undefined ? { json: { ...options } } : {}),
     }),
   );
 }
@@ -865,14 +870,18 @@ export function fetchStudentUnitLandingApi(
  * 课程练习入口（D10）：存在未交卷作答返回它（继续作答）；否则新建
  * attemptNo+1（再做一次，从空白开始）。每次调用服务端都校验 D5 可见性——
  * 移出成员 403 COURSE_ACCESS_DENIED / 条目不可见 404 NOT_FOUND。
+ * M3-D1.5：options 缺省不发 body（旧协议）；携带 workflowVersion=1 时服务端
+ * 按新协议建卷（教师约束由服务端裁决，客户端只传学生偏好）。
  */
 export function startCourseAttemptApi(
   courseId: string,
   unitId: string,
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.courses[":id"].units[":unitId"].attempts.$post({
       param: { id: courseId, unitId },
+      ...(options !== undefined ? { json: { ...options } } : {}),
     }),
   );
 }
@@ -884,11 +893,15 @@ export function startCourseAttemptApi(
  * tab + 分组圈定（顺序即组卷题序）。服务端校验「∈ 错题本聚合且快照可用」，
  * 不在聚合内的题静默剔除；全部被剔 → 400 WRONG_PRACTICE_EMPTY（提示刷新）。
  * 返回新 wrong 来源 attempt 摘要（跳 /s/attempts/:id 走既有答题会话）。
+ * M3-D1.5：options 与 questionIds 同体下发；缺省维持旧协议。
  */
 export function startWrongPracticeApi(
   questionIds: string[],
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
-  const args = { json: { questionIds } };
+  const args = {
+    json: { questionIds, ...(options !== undefined ? { ...options } : {}) },
+  };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
 }
 

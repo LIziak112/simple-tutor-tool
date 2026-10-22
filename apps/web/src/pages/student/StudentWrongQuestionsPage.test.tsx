@@ -15,6 +15,10 @@ import type {
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  bindPracticePreferenceAccount,
+  getPracticePreference,
+} from "@/features/attempt/practice-preference-store";
+import {
   filterWrongQuestionsByCourse,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
@@ -775,15 +779,53 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     renderPageWithAttemptRoute();
     await screen.findByRole("button", { name: "重练全部（2 题）" });
     fireEvent.click(screen.getByRole("button", { name: "重练全部（2 题）" }));
-    // 顺序 = 当前 tab 列表序（q-fill-2 在前、q-judge-1 在后）
+    // 顺序 = 当前 tab 列表序（q-fill-2 在前、q-judge-1 在后）；M3-D1.5 建卷
+    // 请求显式携带 workflowVersion=1 与当前偏好反馈节奏
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"]);
+      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
+        workflowVersion: 1,
+        feedbackMode: "per_question",
+      });
     });
     await waitFor(() => {
       expect(screen.getByTestId("location-probe")).toHaveTextContent(
         `/s/attempts/${NEW_ATTEMPT_ID}`,
       );
     });
+  });
+
+  it("M3-D1.5：偏好为 after_attempt 时，重练请求按点击时刻的偏好携带", async () => {
+    // 预置该账号持久化偏好为「交卷后公布」（D1 无 feedback UI，直接写契约
+    // 完整形态后重绑读取），重练请求应按点击时刻的偏好携带
+    const key = `ownclass:practice-pref:${JSON.stringify([location.origin, "student", "wrong-pref-user"])}`;
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        layout: "list",
+        feedback: "after_attempt",
+        keyboardShortcuts: true,
+      }),
+    );
+    bindPracticePreferenceAccount(null);
+    bindPracticePreferenceAccount("wrong-pref-user");
+    expect(getPracticePreference().feedback).toBe("after_attempt");
+    mockedWrong.mockResolvedValue(ALL_DATA);
+    mockedPractice.mockResolvedValue({
+      ...PRACTICE_SUMMARY,
+      id: NEW_ATTEMPT_ID,
+    });
+    renderPageWithAttemptRoute();
+    await screen.findByRole("button", { name: "重练全部（2 题）" });
+    fireEvent.click(screen.getByRole("button", { name: "重练全部（2 题）" }));
+    await waitFor(() => {
+      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
+        workflowVersion: 1,
+        feedbackMode: "after_attempt",
+      });
+    });
+    // 模块级 store 跨用例残留：解绑回默认，避免影响同文件其他用例
+    bindPracticePreferenceAccount(null);
   });
 
   it("点击「重练本组」只提交该组题目；组卷失败显示错误横幅，重试成功后照常跳转", async () => {
@@ -802,7 +844,10 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     expect(groupButtons).toHaveLength(2);
     fireEvent.click(groupButtons[0] as HTMLElement);
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2"]);
+      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2"], {
+        workflowVersion: 1,
+        feedbackMode: "per_question",
+      });
     });
     // 失败：错误横幅出现（含服务端信息），页面仍留在错题本
     expect(await screen.findByRole("alert")).toHaveTextContent("重练组卷失败");

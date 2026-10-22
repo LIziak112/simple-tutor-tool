@@ -384,7 +384,11 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
     renderPage();
 
     expect(await screen.findByText("周末加练")).toBeInTheDocument();
-    expect(mockedStart).toHaveBeenCalledWith(ASSIGNMENT_ID);
+    // M3-D1.5：建卷显式进入新协议并携带偏好反馈节奏（默认 per_question）
+    expect(mockedStart).toHaveBeenCalledWith(ASSIGNMENT_ID, {
+      workflowVersion: 1,
+      feedbackMode: "per_question",
+    });
     expect(mockedFetch).toHaveBeenCalledWith(ATTEMPT_ID);
     expect(screen.getByText("第 1 题")).toBeInTheDocument();
     expect(screen.getByText("第 2 题")).toBeInTheDocument();

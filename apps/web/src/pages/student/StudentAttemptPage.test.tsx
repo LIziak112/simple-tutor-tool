@@ -399,7 +399,10 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
       await screen.findByRole("button", { name: "练习本卷错题（1 题）" }),
     );
     await waitFor(() =>
-      expect(mockedPractice).toHaveBeenCalledWith(["练习四-1"]),
+      expect(mockedPractice).toHaveBeenCalledWith(["练习四-1"], {
+        workflowVersion: 1,
+        feedbackMode: "per_question",
+      }),
     );
     // 跳转 /s/attempts/:新id（同路由重挂载）→ 按新 attemptId 重新拉详情
     await waitFor(() =>
@@ -417,7 +420,10 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
       await screen.findByRole("button", { name: "练习本卷错题（1 题）" }),
     );
     await waitFor(() =>
-      expect(mockedPractice).toHaveBeenCalledWith(["练习四-1"]),
+      expect(mockedPractice).toHaveBeenCalledWith(["练习四-1"], {
+        workflowVersion: 1,
+        feedbackMode: "per_question",
+      }),
     );
     // role=alert 按 ARIA 不能从内容取名（name 查询恒空），断言用文本内容
     const alert = await screen.findByRole("alert");

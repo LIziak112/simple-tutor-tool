@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
+import { getPracticePreference } from "./practice-preference-store";
 
 /**
  * 学生端作答数据层（T2.6；T2A.6 扩展课程练习）：attempt 创建（作业/课程两种
@@ -59,10 +60,21 @@ export function useStudentUnitLanding(courseId: string, unitId: string) {
   });
 }
 
+/**
+ * 建卷工作流选项（M3-D1.5）：执行时同步读本机偏好——只传学生偏好，
+ * 教师约束由服务端 resolver 裁决，客户端不预判；显式携带
+ * workflowVersion=1 进入新协议，feedbackMode 随当前偏好。
+ */
+const workflowStartOptions = () => ({
+  workflowVersion: 1 as const,
+  feedbackMode: getPracticePreference().feedback,
+});
+
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {
   return useMutation({
-    mutationFn: () => startAttemptApi(assignmentId),
+    // mutationFn 执行时才读偏好（点击时刻），不在模块顶层求值
+    mutationFn: () => startAttemptApi(assignmentId, workflowStartOptions()),
   });
 }
 
@@ -73,7 +85,8 @@ export function useStartAttempt(assignmentId: string) {
 export function useStartCourseAttempt(courseId: string, unitId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => startCourseAttemptApi(courseId, unitId),
+    mutationFn: () =>
+      startCourseAttemptApi(courseId, unitId, workflowStartOptions()),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentUnitLandingKey(courseId, unitId),
