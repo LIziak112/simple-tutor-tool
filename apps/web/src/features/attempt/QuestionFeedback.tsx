@@ -1,14 +1,14 @@
 import type { PracticeQuestionFeedback } from "@tutor/contract";
-import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
   ResultOptions,
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
-import { ResultAnswerComparison } from "./ResultAnswerComparison";
+import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
   PENDING_ATTEMPT_FEEDBACK_COPY,
   practiceFeedbackRestrictedCopy,
 } from "./practice-protocol";
+import { ResultAnswerComparison } from "./ResultAnswerComparison";
 
 /**
  * 题级反馈区（M3-D2，§10.4 授权投影四态呈现）：提交回执/题级反馈读取共用
@@ -28,7 +28,10 @@ export function QuestionFeedback({
   feedback: PracticeQuestionFeedback;
 }) {
   if (feedback.status === "not_submitted") return null;
-  if (feedback.status === "pending_attempt" || feedback.status === "restricted") {
+  if (
+    feedback.status === "pending_attempt" ||
+    feedback.status === "restricted"
+  ) {
     const copy =
       feedback.status === "pending_attempt"
         ? PENDING_ATTEMPT_FEEDBACK_COPY
@@ -68,7 +71,10 @@ export function QuestionFeedback({
         <div className="flex flex-col gap-2">
           <p className="text-sm font-medium">解析</p>
           <div className="border-s-2 border-border ps-3">
-            <RichMarkdown source={question.solutionMd} className="text-sm leading-6" />
+            <RichMarkdown
+              source={question.solutionMd}
+              className="text-sm leading-6"
+            />
           </div>
         </div>
       ) : (

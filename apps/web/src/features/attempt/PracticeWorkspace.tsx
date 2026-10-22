@@ -126,17 +126,25 @@ export function SingleQuestionProgressRow({
 }
 
 /**
- * 单题占位主操作条（§7.2）：上一题 / 主操作位 / 下一题。主操作位 D1 仅渲染
- * 占位容器，「提交本题 → 查看反馈 → 下一题」三态由 D2 接线，不得提前伪造。
+ * 单题主操作条（§7.2）：上一题 / 主操作位 / 下一题。D1 主操作位为占位容器；
+ * D2 起由 middle 注入三态交互（提交本题 → 查看反馈 → 下一题/查看本次结果）。
+ * busy（本题提交在途）时上一题/下一题禁用——单题模式提交中禁切题（§7.2）；
+ * 导航跳题由页面层 locked 同步禁用。
  */
 export function SingleQuestionActionBar({
   hasPrev,
   hasNext,
+  busy = false,
+  middle,
   onPrev,
   onNext,
 }: {
   hasPrev: boolean;
   hasNext: boolean;
+  /** 本题提交在途：禁用切题（提交中不得离开当前题） */
+  busy?: boolean;
+  /** 主操作位内容（PracticeSingleActions）；缺省保持 D1 占位容器 */
+  middle?: ReactNode;
   onPrev: () => void;
   onNext: () => void;
 }) {
@@ -148,20 +156,24 @@ export function SingleQuestionActionBar({
       <Button
         variant="outline"
         className="min-h-11 shrink-0"
-        disabled={!hasPrev}
+        disabled={!hasPrev || busy}
         onClick={onPrev}
       >
         上一题
       </Button>
       <div
         data-slot="practice-action-placeholder"
-        aria-hidden
-        className="h-11 min-w-0 flex-1"
-      />
+        aria-hidden={middle === undefined ? true : undefined}
+        className={
+          middle === undefined ? "h-11 min-w-0 flex-1" : "min-w-0 flex-1"
+        }
+      >
+        {middle}
+      </div>
       <Button
         variant="outline"
         className="min-h-11 shrink-0"
-        disabled={!hasNext}
+        disabled={!hasNext || busy}
         onClick={onNext}
       >
         下一题

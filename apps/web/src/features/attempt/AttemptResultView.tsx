@@ -106,7 +106,10 @@ export function VerdictBadge({
         className="size-5 shrink-0 text-emerald-600"
       />
     ) : verdict === false ? (
-      <XCircle aria-label={wrongLabel} className="size-5 shrink-0 text-red-600" />
+      <XCircle
+        aria-label={wrongLabel}
+        className="size-5 shrink-0 text-red-600"
+      />
     ) : (
       <Clock
         aria-label={pendingLabel}

@@ -42,10 +42,13 @@ function JudgeControls({
   question,
   answer,
   onAnswer,
+  disabled = false,
 }: {
   question: QuestionPublic;
   answer: StudentAnswer | undefined;
   onAnswer: (answer: StudentAnswer) => void;
+  /** 已提交只读（§11-2 原位只读）：隐藏输入同样携带 disabled 语义 */
+  disabled?: boolean;
 }) {
   const picked =
     answer?.kind === "judge" && typeof answer.value === "boolean"
@@ -67,6 +70,7 @@ function JudgeControls({
           name={groupName}
           aria-label="对"
           checked={picked === true}
+          disabled={disabled}
           onChange={() => onAnswer({ kind: "judge", value: true })}
           className="sr-only"
         />
@@ -84,6 +88,7 @@ function JudgeControls({
           name={groupName}
           aria-label="错"
           checked={picked === false}
+          disabled={disabled}
           onChange={() => onAnswer({ kind: "judge", value: false })}
           className="sr-only"
         />
@@ -104,10 +109,13 @@ function ChoiceControls({
   question,
   answer,
   onAnswer,
+  disabled = false,
 }: {
   question: QuestionPublic;
   answer: StudentAnswer | undefined;
   onAnswer: (answer: StudentAnswer) => void;
+  /** 已提交只读（§11-2 原位只读）：隐藏输入同样携带 disabled 语义 */
+  disabled?: boolean;
 }) {
   const picked = answer?.kind === "choice" ? answer.index : undefined;
   const groupName = `choice-${question.id}-${useId()}`;
@@ -119,6 +127,7 @@ function ChoiceControls({
             type="radio"
             name={groupName}
             checked={picked === index}
+            disabled={disabled}
             onChange={() => onAnswer({ kind: "choice", index })}
             className="sr-only"
           />
@@ -134,10 +143,13 @@ function MultiControls({
   question,
   answer,
   onAnswer,
+  disabled = false,
 }: {
   question: QuestionPublic;
   answer: StudentAnswer | undefined;
   onAnswer: (answer: StudentAnswer) => void;
+  /** 已提交只读（§11-2 原位只读）：隐藏输入同样携带 disabled 语义 */
+  disabled?: boolean;
 }) {
   const pickedIndexes =
     answer?.kind === "multi" ? answer.indexes : ([] as readonly number[]);
@@ -160,6 +172,7 @@ function MultiControls({
           <input
             type="checkbox"
             checked={pickedIndexes.includes(index)}
+            disabled={disabled}
             onChange={() => toggle(index)}
             className="sr-only"
           />
@@ -176,15 +189,18 @@ export const QuestionSurface = memo(function QuestionSurface({
   answer: suppliedAnswer,
   onAnswer: suppliedOnAnswer,
   mode = "answer",
+  readOnly = false,
 }: {
   question: QuestionPublic;
   answer?: StudentAnswer | undefined;
   onAnswer?: ((answer: StudentAnswer, defer?: boolean) => void) | undefined;
   mode?: "answer" | "export";
+  /** 已提交原位只读（§11-2）：同宿主同位置呈现，输入改为只读而非换卡 */
+  readOnly?: boolean;
 }) {
   const answer = mode === "export" ? undefined : suppliedAnswer;
   const onAnswer = (next: StudentAnswer, defer?: boolean) => {
-    if (mode === "answer") suppliedOnAnswer?.(next, defer);
+    if (mode === "answer" && !readOnly) suppliedOnAnswer?.(next, defer);
   };
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
   return (
@@ -215,7 +231,7 @@ export const QuestionSurface = memo(function QuestionSurface({
                 },
                 true,
               ),
-            disabled: false,
+            disabled: readOnly,
           }}
         >
           <RichMarkdown
@@ -243,6 +259,7 @@ export const QuestionSurface = memo(function QuestionSurface({
           question={question}
           answer={answer}
           onAnswer={plainAnswer}
+          disabled={readOnly}
         />
       )}
       {question.type === "choice" && (
@@ -250,6 +267,7 @@ export const QuestionSurface = memo(function QuestionSurface({
           question={question}
           answer={answer}
           onAnswer={plainAnswer}
+          disabled={readOnly}
         />
       )}
       {question.type === "multi" && (
@@ -257,6 +275,7 @@ export const QuestionSurface = memo(function QuestionSurface({
           question={question}
           answer={answer}
           onAnswer={plainAnswer}
+          disabled={readOnly}
         />
       )}
     </div>

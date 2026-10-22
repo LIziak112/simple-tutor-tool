@@ -133,6 +133,9 @@ import {
   type NoteUploadMetaInput,
   type NoteVersionReceipt,
   type PendingMarkListData,
+  type PracticeQuestionFeedbackData,
+  type PracticeQuestionSubmitData,
+  type PracticeQuestionSubmitRequest,
   type PracticeWorkflowStartOptions,
   type PublicConfigData,
   type QuestionDetail,
@@ -1065,6 +1068,43 @@ export function submitLessonQuestionApi(
   const args = { param: { id: attemptId, questionId }, json: request };
   return callApi(() =>
     api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
+}
+
+/**
+ * 新协议逐题提交（M2，POST /attempts/:id/questions/:questionId/submit 同一
+ * URL 按 workflowVersion 字段分流）：请求体为 practiceQuestionSubmitRequest
+ * strict 契约（协议门禁 workflowVersion=1 + workflowRevision CAS + 题目版本
+ * 引用 + 答案版本 CAS + 幂等键 + 必填证据声明）；回执四键白名单（本题反馈
+ * 投影 + 全卷题级进度 + 最新 attempt 摘要 + 工作流裁决投影），响应
+ * private,no-store。json 以独立变量传入的原因同 updateQuestion
+ * （parseJsonBody 服务端校验）。
+ */
+export function submitPracticeQuestionApi(
+  attemptId: string,
+  questionId: string,
+  request: PracticeQuestionSubmitRequest,
+): Promise<PracticeQuestionSubmitData> {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
+}
+
+/**
+ * 题级反馈读取（M2，GET /attempts/:id/questions/:questionId/feedback）：
+ * data 单键承载共用授权投影（与提交回执 feedback 同一 schema 对象）；按
+ * 读取时刻裁决四态，未授权形态零题目秘密。调用方须先按 questionProgress
+ * 的 submittedAt+feedbackReadable 确认可读（不为未提交/不可读题发请求）。
+ */
+export function fetchPracticeQuestionFeedbackApi(
+  attemptId: string,
+  questionId: string,
+): Promise<PracticeQuestionFeedbackData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].feedback.$get({
+      param: { id: attemptId, questionId },
+    }),
   );
 }
 

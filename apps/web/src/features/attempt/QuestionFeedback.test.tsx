@@ -1,12 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
-import type { AttemptResultQuestion } from "@tutor/contract";
+import type { AttemptResultQuestion, PracticeWorkflow } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { QuestionFeedback } from "./QuestionFeedback";
 import {
   practiceFeedbackRestrictedCopy,
   practiceUnreadableFeedbackCopy,
 } from "./practice-protocol";
-import type { PracticeWorkflow } from "@tutor/contract";
+import { QuestionFeedback } from "./QuestionFeedback";
 
 /**
  * 题级反馈区（M3-D2，§10.4 授权投影四态）：released 简短结论 + 本人/参考
@@ -48,13 +47,9 @@ describe("QuestionFeedback", () => {
     expect(within(area).getByText("你的答案：")).toBeInTheDocument();
     expect(within(area).getByText("参考答案：")).toBeInTheDocument();
     expect(within(area).getByText("解析")).toBeInTheDocument();
-    expect(
-      within(area).getByText(/0 不是正数也不是负数/),
-    ).toBeInTheDocument();
+    expect(within(area).getByText(/0 不是正数也不是负数/)).toBeInTheDocument();
     // 解析默认展开：不提供「查看详解」折叠入口
-    expect(
-      screen.queryByRole("button", { name: /查看详解/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /查看详解/ })).toBeNull();
   });
 
   it("released 错误题：结论为回答有误", () => {
@@ -97,16 +92,14 @@ describe("QuestionFeedback", () => {
 
   it("pending_attempt：交卷后统一公布文案，无任何题目内容", () => {
     render(<QuestionFeedback feedback={{ status: "pending_attempt" }} />);
-    expect(
-      screen.getByText("已提交，交卷后统一公布"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("已提交，交卷后统一公布")).toBeInTheDocument();
     expect(screen.queryByText(/你的答案|参考答案|解析/)).toBeNull();
   });
 
   it("restricted 三原因文案（practice-protocol 单源）", () => {
-    expect(
-      practiceFeedbackRestrictedCopy("teacher_after_attempt"),
-    ).toBe("老师要求交卷后公布");
+    expect(practiceFeedbackRestrictedCopy("teacher_after_attempt")).toBe(
+      "老师要求交卷后公布",
+    );
     expect(practiceFeedbackRestrictedCopy("teacher_after_due")).toBe(
       "老师要求截止后公布",
     );
@@ -128,8 +121,9 @@ describe("QuestionFeedback", () => {
     const { container } = render(
       <QuestionFeedback feedback={{ status: "not_submitted" }} />,
     );
-    expect(container.querySelector('[data-slot="practice-question-feedback"]'))
-      .toBeNull();
+    expect(
+      container.querySelector('[data-slot="practice-question-feedback"]'),
+    ).toBeNull();
     expect(screen.queryByRole("region", { name: "本题反馈" })).toBeNull();
   });
 
@@ -147,11 +141,16 @@ describe("QuestionFeedback", () => {
     });
     expect(
       practiceUnreadableFeedbackCopy(
-        workflow({ canSubmitQuestion: false, restrictionReason: "teacher_after_attempt" }),
+        workflow({
+          canSubmitQuestion: false,
+          restrictionReason: "teacher_after_attempt",
+        }),
       ),
     ).toBe("老师要求交卷后公布");
     expect(
-      practiceUnreadableFeedbackCopy(workflow({ feedbackMode: "after_attempt" })),
+      practiceUnreadableFeedbackCopy(
+        workflow({ feedbackMode: "after_attempt" }),
+      ),
     ).toBe("已提交，交卷后统一公布");
   });
 });

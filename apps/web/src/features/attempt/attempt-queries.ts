@@ -37,6 +37,25 @@ export const studentAttemptKey = (attemptId: string) =>
 export const studentUnitLandingKey = (courseId: string, unitId: string) =>
   ["student", "course", courseId, "unit", unitId] as const;
 
+/**
+ * 详情轮询暂停集（M3-D2）：新协议卷最后一题提交触发服务端自动收尾后，客户端
+ * 数据仍是 draft——不暂停的话 10s 轮询会重发详情查询并把刚显示的题级反馈视图
+ * 翻成整卷结果（§10.3 学生显式点「查看本次结果」才收敛）。按 attemptId 记录，
+ * 只影响新协议收尾后的那一段窗口；点查看/离开页面后停留无副作用（非 draft
+ * 恒不轮询）。
+ */
+const detailPollingPaused = new Set<string>();
+
+/** 最后一题自动收尾后调用：停掉该卷的 draft 轮询，等学生显式查看结果 */
+export function pauseAttemptDetailPolling(attemptId: string): void {
+  detailPollingPaused.add(attemptId);
+}
+
+/** 学生显式查看结果（或重新进入作答）时解除暂停 */
+export function resumeAttemptDetailPolling(attemptId: string): void {
+  detailPollingPaused.delete(attemptId);
+}
+
 /** attempt 详情（draft→草稿视图、submitted/graded→结果视图；按 attempt.status 分支） */
 export function useAttemptDetail(attemptId: string | undefined) {
   return useQuery({
@@ -47,7 +66,10 @@ export function useAttemptDetail(attemptId: string | undefined) {
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
     refetchInterval: (query) =>
-      query.state.data?.attempt.status === "draft" ? 10_000 : false,
+      query.state.data?.attempt.status === "draft" &&
+      (attemptId === undefined || !detailPollingPaused.has(attemptId))
+        ? 10_000
+        : false,
   });
 }
 

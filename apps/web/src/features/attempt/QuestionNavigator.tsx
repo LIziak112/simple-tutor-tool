@@ -50,10 +50,13 @@ export function QuestionNavigator({
   items,
   currentId,
   onJump,
+  locked = false,
 }: {
   items: readonly QuestionNavigationItem[];
   currentId: string | null;
   onJump: (id: string) => void;
+  /** 单题模式提交在途：跳题整体禁用（§7.2 busy 禁切题；列表模式不限滚动） */
+  locked?: boolean;
 }) {
   const currentIndex = items.findIndex((item) => item.id === currentId);
   // 从当前位置之后查找，卷尾回到前面；部分填写仍属于待补全；
@@ -71,7 +74,7 @@ export function QuestionNavigator({
         type="button"
         variant="outline"
         className="mb-4 min-h-11 w-full justify-between px-3"
-        disabled={!next}
+        disabled={locked || !next}
         onClick={() => next && onJump(next.id)}
       >
         {next ? "下一道未答" : items.length === 0 ? "暂无题目" : "全部已填写"}
@@ -106,6 +109,7 @@ export function QuestionNavigator({
               type="button"
               aria-label={itemLabel(item)}
               aria-current={item.id === currentId ? "location" : undefined}
+              disabled={locked}
               onClick={() => onJump(item.id)}
               className={itemClass(item, item.id === currentId)}
             >

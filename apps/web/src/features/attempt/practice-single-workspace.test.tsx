@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type { AttemptDraftData, PracticeWorkflow } from "@tutor/contract";
 import {
@@ -278,7 +279,23 @@ it("列表↔单题互切题卡不重建，切回列表恢复全部题可见", a
 
 it("单题模式上一题/下一题切换题目并 replace 更新 q", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
-  renderPage();
+  const { container } = renderPage();
+  // D2 起当前题为已提交时主操作位追加「下一题」（同在操作条容器内）；
+  // 本用例只考操作条的切题钮（outline 变体）
+  const bar = () => {
+    const element = container.querySelector<HTMLElement>(
+      '[data-slot="practice-action-bar"]',
+    );
+    if (element === null) throw new Error("操作条未渲染");
+    return element;
+  };
+  const barNext = () => {
+    const button = within(bar())
+      .getAllByRole("button", { name: "下一题" })
+      .find((item) => item.dataset.variant === "outline");
+    if (button === undefined) throw new Error("操作条下一题未渲染");
+    return button;
+  };
   await screen.findByText(/做题方式：列表 · 每题提交后查看/);
   await openPracticeMenu();
   fireEvent.click(
@@ -292,15 +309,15 @@ it("单题模式上一题/下一题切换题目并 replace 更新 q", async () =
   );
   await waitFor(() => expect(locationRef.search).toContain("q=q1"));
   expect(screen.getByRole("button", { name: "上一题" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "下一题" }));
+  fireEvent.click(barNext());
   await waitFor(() =>
     expect(screen.getByText("第 2 / 3 题 · 已提交 1 题")).toBeInTheDocument(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "下一题" }));
+  fireEvent.click(barNext());
   await waitFor(() =>
     expect(screen.getByText("第 3 / 3 题 · 已提交 1 题")).toBeInTheDocument(),
   );
-  expect(screen.getByRole("button", { name: "下一题" })).toBeDisabled();
+  expect(barNext()).toBeDisabled();
   await waitFor(() => expect(locationRef.search).toContain("q=q3"));
 });
 

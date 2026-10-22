@@ -20,7 +20,10 @@ export function AttemptBottomBar({
   saveFailed,
   inkFlushError,
   submitError,
+  practiceSubmittedCount,
+  viewResult = false,
   onOpenSubmit,
+  onViewResult,
   onOpenNavigator,
 }: {
   answered: number;
@@ -35,8 +38,13 @@ export function AttemptBottomBar({
   inkFlushError: boolean;
   /** 交卷请求失败的错误文案（null=无错误） */
   submitError: string | null;
+  /** 逐题提交已提交数（v1 新协议卷；undefined = 旧卷不显示该行） */
+  practiceSubmittedCount?: number | undefined;
+  /** 逐题提交全部收尾：主按钮换「查看本次结果」（列表模式入口） */
+  viewResult?: boolean | undefined;
   onOpenSubmit: () => void;
-  onOpenNavigator?: () => void;
+  onViewResult?: (() => void) | undefined;
+  onOpenNavigator?: (() => void) | undefined;
 }) {
   const editor = useAttemptEditor();
   if (editor?.active?.kind === "annotation") return null;
@@ -62,6 +70,11 @@ export function AttemptBottomBar({
             <span className="tabular-nums">
               已填写 <b className="text-primary">{answered}</b> / {total} 题
             </span>
+            {practiceSubmittedCount !== undefined && (
+              <span className="tabular-nums">
+                已提交 {practiceSubmittedCount} / {total} 题
+              </span>
+            )}
             {offline && (
               <span className="flex items-center gap-1 text-xs text-amber-600">
                 <WifiOff aria-hidden className="size-4" />
@@ -109,13 +122,22 @@ export function AttemptBottomBar({
             />
           </div>
         </div>
-        <Button
-          className="h-11 min-w-[88px] shrink-0 px-4 text-base"
-          disabled={total === 0 || offline || denied}
-          onClick={onOpenSubmit}
-        >
-          交卷
-        </Button>
+        {viewResult ? (
+          <Button
+            className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+            onClick={onViewResult}
+          >
+            查看本次结果
+          </Button>
+        ) : (
+          <Button
+            className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+            disabled={total === 0 || offline || denied}
+            onClick={onOpenSubmit}
+          >
+            交卷
+          </Button>
+        )}
       </div>
     </div>
   );
