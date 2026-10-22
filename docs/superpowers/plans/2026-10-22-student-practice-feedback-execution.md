@@ -174,3 +174,10 @@
 - /security-review（聚焦学生端防泄露边界，独立子代理）：无高置信度发现——四态非 released 零题目内容（strict 白名单 + 路由 .parse 再校验）、未提交题无 released 旁路、幂等重放零写入按读取时刻重投影（教师收紧后重试返回 restricted 非缓存正文）、课程失权校验先于幂等重放、digest \u0000/\u0001 分隔注入不可构造、全程 drizzle 参数化、两端点 Cache-Control private,no-store、跨学生 POST 404 / GET 403 不暴露存在性。
 - 遗留待用户拍板：§5.4 教师收紧后已提交行 feedbackReadable 语义——现按「当前 gate」实现（收紧后已提交行重取受限、已下发内容不宣称撤回，已提交事实与成绩保留），M2 验收以此口径为准；如需「提交时刻快照语义」须改契约并另行批次。
 - 台账更正（约定角发现）：M2 表格行与「M2 服务层」绿测数字原停在 afb7ebd2 时点（21 用例/5443），本节为最终口径（23 用例/5464）；「M2 契约层」workflowVersion-only 设计决定补翻案记录（f31b3f08）。
+
+### M3 编排开工（2026-10-23，分支 codex/practice-single-workspace，Claude 会话编排）
+
+- 用户指令：继续编排执行直到 M6 全部完成；§5.4 按「当前 gate」口径定案（教师收紧后已提交行重取受限、不宣称撤回已下发内容，已提交事实与成绩保留）——M3/M4 UI 按此口径消费 questionProgress/feedbackReadable 与四态反馈，不再另问。
+- 分支自 origin/v2@25a3a7f7（含结果页 AI 入口按题召唤与批量复盘图标化）。
+- 派单拆层：D1 骨架与偏好（PracticeWorkspace 呈现层/偏好存储/设置与开始区入口/题目导航/URL questionId）→ D2 逐题提交交互闭环（主操作状态机/QuestionFeedback 反馈区/最后一题留反馈）→ D3 快捷键与按题 flush（键盘方案与保护规则/切题本机落盘）。串行同分支，每层 TDD 红灯先行；编排者验收统一三闸门+全量回归（M2 模式）。
+- 范围边界：M3 工作区只覆盖 AttemptSession 驱动的普通三来源（course/assignment/wrong）v1 新协议卷；lesson 页与 legacy 卷保持既有形态零回归（lesson 适配是否纳入 M4 视计划再定）。
