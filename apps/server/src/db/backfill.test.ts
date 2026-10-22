@@ -708,6 +708,20 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.answer_revision;
         delete row.answer_mutation_id;
       }
+      // 0038（M1b）新增列：assignments 逐题反馈授权默认 0；新列语义见
+      // practice-workflow 相关测试，此处只保真原有业务字段。
+      if (table === "assignments") delete row.allow_per_question_feedback;
+      // 0038（M1b）attempts 三列：旧协议卷 version NULL / mode NULL / revision 0
+      if (table === "attempts") {
+        delete row.practice_workflow_version;
+        delete row.feedback_mode;
+        delete row.workflow_revision;
+      }
+      // 0038（M1b）responses 两列：普通作答无逐题提交标记
+      if (table === "responses") {
+        delete row.practice_mutation_id;
+        delete row.practice_request_digest;
+      }
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());
@@ -813,6 +827,7 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
         passwordHash: "scrypt$模拟哈希",
         apiToken: null,
         capabilityProfileJson: null,
+        practiceFeedbackPolicy: null,
         createdAt: "2026-01-10T08:00:00.000Z",
       },
     ]);

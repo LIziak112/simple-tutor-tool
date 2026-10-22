@@ -5,9 +5,11 @@ import type { Db } from "../db/client";
 import { attempts, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  type AttemptWorkflowStartOptions,
   attemptSummaryOf,
   insertFrozenResponse,
   newDraftAttempt,
+  workflowStartColumns,
 } from "./attempt-service";
 import { snapshotOfRow } from "./snapshot";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
@@ -45,6 +47,7 @@ export function startWrongPractice(
   db: Db,
   studentId: string,
   questionIds: readonly string[],
+  options: AttemptWorkflowStartOptions = {},
 ): AttemptStartData {
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
@@ -94,6 +97,8 @@ export function startWrongPractice(
       unitId: null,
       attemptNo,
       startedAt: new Date().toISOString(),
+      // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议
+      ...workflowStartColumns(db, "wrong", studentId, null, options),
     });
     const id = attempt.id;
     tx.insert(attempts).values(attempt).run();

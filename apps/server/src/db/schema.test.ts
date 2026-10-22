@@ -191,6 +191,7 @@ describe("teachers / sessions 表读写", () => {
       disabledAt: null,
       passwordHash: "scrypt$模拟哈希",
       apiToken: null,
+      practiceFeedbackPolicy: null,
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(t1).run();
@@ -222,6 +223,7 @@ describe("teachers / sessions 表读写", () => {
       id: randomUUID(),
       passwordHash: "scrypt$模拟哈希",
       apiToken: null,
+      practiceFeedbackPolicy: null,
       createdAt,
     };
     db.insert(teachers).values(teacher).run();
@@ -258,6 +260,7 @@ describe("teachers / sessions 表读写", () => {
       id: randomUUID(),
       passwordHash: null,
       apiToken: null,
+      practiceFeedbackPolicy: null,
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(row).run();
@@ -446,6 +449,9 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
       // legacyUnverified=false，见迁移测试）
       frozenAt: now,
       legacyUnverified: false,
+      practiceWorkflowVersion: null,
+      feedbackMode: null,
+      workflowRevision: 0,
     };
     db.insert(attempts).values(attempt).run();
     expect(
@@ -607,6 +613,9 @@ describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectu
       scoreFinal: null,
       frozenAt: now,
       legacyUnverified: false,
+      practiceWorkflowVersion: null,
+      feedbackMode: null,
+      workflowRevision: 0,
     };
     db.insert(attempts).values(attempt).run();
     expect(
@@ -1012,6 +1021,9 @@ function seedAiRefs(db: ReturnType<typeof createTestDb>): {
       startedAt: new Date().toISOString(),
       frozenAt: new Date().toISOString(),
       legacyUnverified: false,
+      practiceWorkflowVersion: null,
+      feedbackMode: null,
+      workflowRevision: 0,
     })
     .run();
   return { studentId: student.id, attemptId };
@@ -1311,6 +1323,7 @@ describe("ai_tasks / ai_task_materials 表（SAI-05 任务与材料）", () => {
       disabledAt: null,
       passwordHash: null,
       apiToken: null,
+      practiceFeedbackPolicy: null,
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(teacherB).run();

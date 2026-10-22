@@ -426,6 +426,8 @@ function toTeacherAssignment(
     title: row.title,
     dueAt: row.dueAt,
     answerRelease: row.answerRelease,
+    // M1b：服务端恒显式输出 bool（旧行迁移后已有默认 false，客户端不需猜测）
+    allowPerQuestionFeedback: row.allowPerQuestionFeedback,
     units: unitsOf,
     totalQuestionCount: unitsOf.reduce(
       (sum, unit) => sum + unit.questionCount,
@@ -483,6 +485,20 @@ function teacherAssignmentOf(
  *   第一份），且不依赖 SQLite 同毫秒并列时的未定义排序；
  * - 全部校验发生在事务开始前，任一失败零写入（无半成品）。
  */
+/** after_due + 逐题授权组合拒绝（M1b；create 合并后与 update 合并后共用） */
+function assertNoAfterDuePerQuestion(
+  answerRelease: "on_submit" | "after_due",
+  allowPerQuestionFeedback: boolean,
+): void {
+  if (answerRelease === "after_due" && allowPerQuestionFeedback) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "截止后公布（after_due）不能同时开启逐题反馈（allowPerQuestionFeedback）",
+    );
+  }
+}
+
 export function createAssignment(
   db: Db,
   teacherId: string,
@@ -511,6 +527,13 @@ export function createAssignment(
       "答案公布时机为「截止后公布」时，必须同时设置截止时间",
     );
   }
+
+  // M1b（计划 §5.2）：create 缺省 false（旧客户端不放宽；契约层已拒绝
+  // 请求内 after_due+true，此处按合并结果再守一道——直接调 service 的
+  // 调用方同样不能落出冲突组合）
+  const allowPerQuestion = request.allowPerQuestionFeedback ?? false;
+  const effectiveRelease = request.answerRelease ?? "on_submit";
+  assertNoAfterDuePerQuestion(effectiveRelease, allowPerQuestion);
 
   // 组合方式：separate = 每个单元一份；缺省/merged = 合并一份（现状行为不变）
   const grouping = request.unitGrouping ?? "merged";
@@ -550,7 +573,8 @@ export function createAssignment(
           courseId: request.courseId ?? null,
           title: batch.title,
           dueAt: request.dueAt ?? null,
-          answerRelease: request.answerRelease ?? "on_submit",
+          answerRelease: effectiveRelease,
+          allowPerQuestionFeedback: allowPerQuestion,
           deletedAt: null,
           createdAt: stamp,
         })
@@ -643,6 +667,24 @@ export function updateAssignment(
     );
   }
 
+  // M1b（计划 §5.2）：allow 与 release 两字段同事务成对更新——
+  // - 完全不碰公布字段（两者都未传）→ 保留当前 allow，不写；
+  // - 旧客户端仅改 answerRelease（未传 allow）→ 恒写 false（不保留隐藏 true
+  //   意外放宽新规则）；
+  // - 显式传 allow → 按请求值（与合并后 release 冲突在此拒绝，不能只看请求内
+  //   两字段——契约层只拦同请求显式冲突）。
+  let nextAllowPerQuestion: boolean | undefined;
+  if (
+    request.answerRelease !== undefined ||
+    request.allowPerQuestionFeedback !== undefined
+  ) {
+    nextAllowPerQuestion =
+      request.allowPerQuestionFeedback !== undefined
+        ? request.allowPerQuestionFeedback
+        : false;
+    assertNoAfterDuePerQuestion(nextAnswerRelease, nextAllowPerQuestion);
+  }
+
   // 单元替换：先判内容锁定（D14），再校验并替换
   let unitList: { id: string; title: string }[] | undefined;
   if (request.unitIds !== undefined) {
@@ -723,6 +765,10 @@ export function updateAssignment(
     if (request.dueAt !== undefined) patch.dueAt = request.dueAt;
     if (request.answerRelease !== undefined) {
       patch.answerRelease = request.answerRelease;
+    }
+    // M1b：与 answerRelease 同 patch（同事务）成对写入；见上文合并校验
+    if (nextAllowPerQuestion !== undefined) {
+      patch.allowPerQuestionFeedback = nextAllowPerQuestion;
     }
     if (Object.keys(patch).length > 0) {
       tx.update(assignments).set(patch).where(eq(assignments.id, id)).run();

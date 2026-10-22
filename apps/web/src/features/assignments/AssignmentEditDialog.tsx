@@ -82,8 +82,20 @@ export function AssignmentEditDialog({
   const [dueLocal, setDueLocal] = useState(
     assignment.dueAt !== null ? utcIsoToLocalInput(assignment.dueAt) : "",
   );
-  /** 答案公布时机（T2A.8）：与标题/截止同一「暂存编辑、保存提交」表单 */
-  const [answerRelease, setAnswerRelease] = useState(assignment.answerRelease);
+  /**
+   * 反馈公布策略三选项（M1b，2026-10-22 计划 §5.1）：编辑按行内事实兼容呈现——
+   * 旧作业 allow 缺省按 false（打开编辑不自动放宽）；改选时 answerRelease 与
+   * allowPerQuestionFeedback 成对提交（服务端同事务更新）。
+   */
+  const initialChoice =
+    assignment.answerRelease === "after_due"
+      ? "after_due"
+      : (assignment.allowPerQuestionFeedback ?? false)
+        ? "student_choice"
+        : "after_submit";
+  const [feedbackChoice, setFeedbackChoice] = useState<
+    "student_choice" | "after_submit" | "after_due"
+  >(initialChoice);
   /** 名单中勾选待移出的学生（多选批量，§4-2） */
   const [selectedRemove, setSelectedRemove] = useState<ReadonlySet<string>>(
     new Set(),
@@ -108,14 +120,15 @@ export function AssignmentEditDialog({
     title !== assignment.title ||
     dueLocal !==
       (assignment.dueAt !== null ? utcIsoToLocalInput(assignment.dueAt) : "") ||
-    answerRelease !== assignment.answerRelease;
+    feedbackChoice !== initialChoice;
 
   /**
    * T2A.8：「截止后公布」必须有截止时间。改后状态的截止 = 表单值非空则新值，
    * 清空则取消截止（null）——即 dueLocal 为空时改后恒无截止，此时选 after_due
    * 即时提示并阻止保存（服务端同口径 400，双保险）。
    */
-  const releaseBlocked = answerRelease === "after_due" && dueLocal.length === 0;
+  const releaseBlocked =
+    feedbackChoice === "after_due" && dueLocal.length === 0;
 
   function requestClose(): void {
     if (updateMutation.isPending) return;
@@ -142,7 +155,16 @@ export function AssignmentEditDialog({
       ...(nextDue !== undefined && nextDue !== assignment.dueAt
         ? { dueAt: nextDue }
         : {}),
-      ...(answerRelease !== assignment.answerRelease ? { answerRelease } : {}),
+      // M1b：改选时两字段成对提交（服务端同事务；缺 allow 会被按 false 处理）
+      ...(feedbackChoice !== initialChoice
+        ? {
+            answerRelease:
+              feedbackChoice === "after_due"
+                ? ("after_due" as const)
+                : ("on_submit" as const),
+            allowPerQuestionFeedback: feedbackChoice === "student_choice",
+          }
+        : {}),
     };
   }
 
@@ -334,23 +356,27 @@ export function AssignmentEditDialog({
                 </label>
                 <select
                   id="edit-release"
-                  value={answerRelease}
+                  value={feedbackChoice}
                   onChange={(e) =>
-                    // 选项值受下方两个 option 约束，收窄安全
-                    setAnswerRelease(
-                      e.target.value as "on_submit" | "after_due",
+                    // 选项值受下方三个 option 约束，收窄安全
+                    setFeedbackChoice(
+                      e.target.value as
+                        | "student_choice"
+                        | "after_submit"
+                        | "after_due",
                     )
                   }
                   className="flex h-11 w-full rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 >
-                  <option value="on_submit">交卷即公布（默认）</option>
+                  <option value="student_choice">由学生选择</option>
+                  <option value="after_submit">交卷后公布</option>
                   <option value="after_due">
                     截止后公布（须保留截止时间）
                   </option>
                 </select>
                 {releaseBlocked && (
                   <p role="alert" className="text-xs text-destructive">
-                    「截止后公布」需要截止时间：请先填写截止时间，或改回「交卷即公布」。
+                    「截止后公布」需要截止时间：请先填写截止时间，或改回其他公布方式。
                   </p>
                 )}
               </div>

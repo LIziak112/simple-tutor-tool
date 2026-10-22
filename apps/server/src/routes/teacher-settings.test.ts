@@ -146,3 +146,60 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
     });
   });
 });
+
+describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
+  const PATH = "/api/teacher/settings/practice-feedback";
+
+  it("未登录 → 401（读与写）", async () => {
+    const { app } = await makeEnv();
+    expect((await app.request(PATH)).status).toBe(401);
+    expect(
+      (
+        await app.request(PATH, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ practiceFeedbackPolicy: "after_attempt" }),
+        })
+      ).status,
+    ).toBe(401);
+  });
+
+  it("GET 未配置 → null；PUT 写入读回；两教师互不影响", async () => {
+    const { app, cookieA, cookieB } = await makeEnv();
+    const before = await app.request(PATH, { headers: { cookie: cookieA } });
+    expect(((await before.json()) as { data: unknown }).data).toEqual({
+      practiceFeedbackPolicy: null,
+    });
+    const put = await app.request(PATH, {
+      method: "PUT",
+      headers: { cookie: cookieA, "content-type": "application/json" },
+      body: JSON.stringify({ practiceFeedbackPolicy: "after_attempt" }),
+    });
+    expect(put.status).toBe(200);
+    const after = await app.request(PATH, { headers: { cookie: cookieA } });
+    expect(((await after.json()) as { data: unknown }).data).toEqual({
+      practiceFeedbackPolicy: "after_attempt",
+    });
+    const b = await app.request(PATH, { headers: { cookie: cookieB } });
+    expect(((await b.json()) as { data: unknown }).data).toEqual({
+      practiceFeedbackPolicy: null,
+    });
+  });
+
+  it("非法入参 → 400（未知枚举 / 缺字段 / null / 未知键）", async () => {
+    const { app, cookieA } = await makeEnv();
+    for (const body of [
+      { practiceFeedbackPolicy: "on_submit" },
+      {},
+      { practiceFeedbackPolicy: null },
+      { practiceFeedbackPolicy: "after_attempt", steps: true },
+    ]) {
+      const res = await app.request(PATH, {
+        method: "PUT",
+        headers: { cookie: cookieA, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+});

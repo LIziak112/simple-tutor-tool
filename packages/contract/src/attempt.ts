@@ -8,6 +8,12 @@ import {
 } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
 import {
+  practiceQuestionProgressSchema,
+  practiceWorkflowSchema,
+  practiceWorkflowStartOptionsFields,
+  rejectFeedbackModeWithoutVersion,
+} from "./practice-workflow.ts";
+import {
   studentUnitAttemptRecordSchema,
   studentUnitAttemptSummarySchema,
 } from "./student-course-api.ts";
@@ -252,11 +258,15 @@ export const attemptStartDataSchema = attemptSummarySchema;
  *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
  *   WRONG_PRACTICE_EMPTY（附中文说明）。
  */
-export const wrongPracticeRequestSchema = z.object({
-  questionIds: z
-    .array(z.string().min(1, "题目 id 不能为空"))
-    .min(1, "至少选择一道错题"),
-});
+export const wrongPracticeRequestSchema = z
+  .object({
+    questionIds: z
+      .array(z.string().min(1, "题目 id 不能为空"))
+      .min(1, "至少选择一道错题"),
+    /** 建卷可选工作流选项（M1b）：不带字段维持旧协议 */
+    ...practiceWorkflowStartOptionsFields,
+  })
+  .superRefine(rejectFeedbackModeWithoutVersion);
 
 /** POST /api/student/wrong-practice 响应（新建 wrong 来源 attempt；201） */
 export const wrongPracticeOkSchema = apiOkExtend(attemptStartDataSchema);
@@ -373,6 +383,17 @@ export const attemptDraftDataSchema = z.object({
    * 与提交规则，也不是安全边界（投影与泄露守卫独立保证）。
    */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
+  /**
+   * 做题工作流裁决投影（M1a，2026-10-22 计划 §6.1，可选）：仅新协议卷携带，
+   * 旧响应缺失按整卷旧协议处理，不能默认授权。授权结论由服务端 resolver
+   * 产出；题面/答案仍走各自既有投影，本字段不混入题目秘密。
+   */
+  practiceWorkflow: practiceWorkflowSchema.optional(),
+  /**
+   * 题级公开进度（M1a，可选，白名单）：questionId / submittedAt / 反馈可读
+   * 标记——不含得分、对错、参考答案或教师批注；反馈本体经专用端点读取。
+   */
+  questionProgress: z.array(practiceQuestionProgressSchema).optional(),
 });
 
 /**
@@ -923,6 +944,9 @@ export const attemptErrorCodeSchema = z.enum([
   "NOT_FOUND",
   "UNAUTHORIZED",
   "VALIDATION_ERROR",
+  "WORKFLOW_LEGACY",
+  "WORKFLOW_REVISION_STALE",
+  "WORKFLOW_MODE_NOT_ALLOWED",
 ]);
 
 // ---------- 具体化的成功壳 ----------

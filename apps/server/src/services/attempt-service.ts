@@ -22,6 +22,8 @@ import {
   type LessonQuestionSubmitRequest,
   type NoteSubmissionEvidenceState,
   optionSchema,
+  type PracticeFeedbackMode,
+  type PracticeWorkflowStartOptions,
   type Question,
   type QuestionAnswers,
   type QuestionOption,
@@ -82,6 +84,10 @@ import {
   resultHintsOpenedOf,
 } from "./hint-service";
 import { pendingMarkCount } from "./pending-mark";
+import {
+  attemptWorkflowView,
+  resolveNewAttemptWorkflow,
+} from "./practice-workflow-wiring";
 import type { Tx } from "./question-sync";
 import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
@@ -1271,6 +1277,35 @@ export function answerOf(answerJson: string | null): StudentAnswer | null {
 // 快照解析统一走 services/snapshot.ts 的 snapshotOfRow（全服务端唯一实现，
 // 含坏数据 warn 留痕）——本文件经顶部 import 使用，不再留平行 safeParse。
 
+/** 建卷请求的可选工作流选项（M1b；契约 attemptStartOptionsRequestSchema 解析产物） */
+export type AttemptWorkflowStartOptions = PracticeWorkflowStartOptions;
+
+/** options → attempts 工作流三列（旧协议返回空对象，由 newDraftAttempt 缺省兜底；wrong-practice 复用） */
+export function workflowStartColumns(
+  db: Db,
+  sourceType: "assignment" | "course" | "wrong",
+  studentId: string,
+  assignmentId: string | null,
+  options: AttemptWorkflowStartOptions,
+): {
+  practiceWorkflowVersion?: 1;
+  feedbackMode?: PracticeFeedbackMode;
+  workflowRevision?: number;
+} {
+  if (options.workflowVersion !== 1) return {};
+  const resolved = resolveNewAttemptWorkflow(db, {
+    sourceType,
+    studentId,
+    assignmentId,
+    studentChoice: options.feedbackMode ?? null,
+  });
+  return {
+    practiceWorkflowVersion: resolved.practiceWorkflowVersion,
+    feedbackMode: resolved.feedbackMode,
+    workflowRevision: resolved.workflowRevision,
+  };
+}
+
 /**
  * 新建 draft attempt 的行字面量（四来源建卷共用；T6R.3 建卷即冻结——
  * frozenAt=startedAt、legacyUnverified=false，快照行随建卷事务预插）。
@@ -1288,6 +1323,14 @@ export function newDraftAttempt(config: {
   lectureId?: string | null;
   attemptNo: number;
   startedAt: string;
+  /**
+   * 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式
+   * workflowVersion=1 请求时由服务端按教师规则裁决后传入；缺省 = 旧协议
+   * （version/mode 为 NULL，revision 0），lesson 恒缺省（独立适配路径）。
+   */
+  practiceWorkflowVersion?: 1 | null;
+  feedbackMode?: "per_question" | "after_attempt" | null;
+  workflowRevision?: number;
 }): Attempt {
   return {
     id: config.id,
@@ -1311,6 +1354,10 @@ export function newDraftAttempt(config: {
     // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，讲练重开时才由
     // restartLessonAttempt 写入
     abandonedAt: null,
+    // M1b 工作流列：缺省旧协议（NULL/NULL/0），新协议卷由建卷路径显式传入
+    practiceWorkflowVersion: config.practiceWorkflowVersion ?? null,
+    feedbackMode: config.feedbackMode ?? null,
+    workflowRevision: config.workflowRevision ?? 0,
   };
 }
 
@@ -1330,6 +1377,7 @@ export function startAttempt(
   db: Db,
   studentId: string,
   assignmentId: string,
+  options: AttemptWorkflowStartOptions = {},
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
 
@@ -1361,6 +1409,9 @@ export function startAttempt(
     unitId: null,
     attemptNo: 1,
     startedAt: new Date().toISOString(),
+    // M1b：仅显式 workflowVersion=1 走新协议（服务端按作业授权裁决）；
+    // 省略维持旧协议（version/mode NULL），已有 draft 走上文 create-or-return
+    ...workflowStartColumns(db, "assignment", studentId, assignmentId, options),
   });
   // T6R.3：建卷冻结——题目集合/题序/完整快照/单元归属逐题预插 responses 行
   //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷。
@@ -1390,6 +1441,7 @@ export function startCourseAttempt(
   studentId: string,
   courseId: string,
   unitId: string,
+  options: AttemptWorkflowStartOptions = {},
 ): AttemptStartData {
   requireVisibleCourseUnit(db, studentId, courseId, unitId);
 
@@ -1422,6 +1474,8 @@ export function startCourseAttempt(
       unitId,
       attemptNo: maxAttemptNo + 1,
       startedAt: new Date().toISOString(),
+      // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议
+      ...workflowStartColumns(db, "course", studentId, null, options),
     });
     // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入的读走
     // 外层 db（better-sqlite3 同连接同步执行，事务内读取与写入口径一致），
@@ -2440,6 +2494,9 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     title: group.title,
     questions: group.items,
   }));
+  // M1b：新协议卷附带工作流裁决投影与题级进度白名单（缺失 = 整卷旧协议；
+  // 服务端按当前教师/作业规则重算，不改写已选模式；无答案秘密）
+  const workflowView = attemptWorkflowView(db, attempt);
   return {
     attempt: attemptSummaryOf(attempt),
     title: meta.title,
@@ -2453,6 +2510,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
     enabledCapabilities,
+    ...(workflowView ?? {}),
   };
 }
 

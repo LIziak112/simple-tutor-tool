@@ -16,6 +16,7 @@ import {
 import { TeacherAiSettingsSection } from "@/features/student-ai/TeacherAiSettingsSection";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
+import { PracticeFeedbackSection } from "@/features/teacher-settings/PracticeFeedbackSection";
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
@@ -51,6 +52,9 @@ export function SettingsPage() {
           queryClient.removeQueries({
             queryKey: ["teacher", "ai-settings-draft"],
           });
+          queryClient.removeQueries({
+            queryKey: ["teacher", "practice-feedback-draft"],
+          });
           void queryClient.invalidateQueries({ queryKey: teacherMeKey });
           navigate("/t/login", { replace: true });
         },
@@ -85,6 +89,10 @@ export function SettingsPage() {
       </nav>
       <div hidden={activeSection !== "teaching"}>
         <CapabilityProfileSection
+          key={meQuery.data.id}
+          teacherId={meQuery.data.id}
+        />
+        <PracticeFeedbackSection
           key={meQuery.data.id}
           teacherId={meQuery.data.id}
         />

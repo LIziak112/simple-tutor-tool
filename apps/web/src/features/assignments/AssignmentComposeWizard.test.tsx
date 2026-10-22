@@ -564,6 +564,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       unitIds: [UNIT_A_ID, UNIT_B_ID],
       studentIds: [STUDENT_A_ID, STUDENT_C_ID],
       courseId: COURSE_ID,
+      allowPerQuestionFeedback: true,
       answerRelease: "on_submit",
       unitGrouping: "separate",
     });
@@ -610,20 +611,21 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       courseId: COURSE_ID,
       title: "国庆专项",
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
+      allowPerQuestionFeedback: true,
       answerRelease: "on_submit",
       unitGrouping: "merged",
     });
   });
 
-  it("T2A.8 公布时机：默认交卷即公布；选「截止后公布」未填截止 → 即时提示且提交禁用；填截止后请求体带 answerRelease", async () => {
+  it("M1b 反馈公布三选项：默认由学生选择（逐题授权 true）；「截止后公布」未填截止 → 即时提示且提交禁用；填截止后请求体带 after_due + false", async () => {
     await openStep2();
     clickCourseUnit(UNIT_TITLES.A);
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     await screen.findByText("③ 确认");
 
-    // 默认选中「交卷即公布」，无阻断提示
+    // 新教师 UI 默认「由学生选择」，无阻断提示
     expect(
-      screen.getByRole("radio", { name: /交卷即公布（默认）/ }),
+      screen.getByRole("radio", { name: /由学生选择（默认）/ }),
     ).toBeChecked();
     expect(
       screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
@@ -648,6 +650,33 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
       answerRelease: "after_due",
+      allowPerQuestionFeedback: false,
+    });
+  });
+
+  it("M1b 默认「由学生选择」提交携带 on_submit + allowPerQuestionFeedback=true；旧「交卷后公布」选项携带 false", async () => {
+    await openStep2();
+    clickCourseUnit(UNIT_TITLES.A);
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("③ 确认");
+    fireEvent.click(
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
+    );
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
+      answerRelease: "on_submit",
+      allowPerQuestionFeedback: true,
+    });
+    mockedCreate.mockClear();
+    // 切「交卷后公布」（非截止）→ false
+    fireEvent.click(screen.getByRole("radio", { name: /^交卷后公布/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
+    );
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
+      answerRelease: "on_submit",
+      allowPerQuestionFeedback: false,
     });
   });
 
@@ -713,6 +742,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
       unitIds: [UNIT_A_ID],
       studentIds: [STUDENT_B_ID],
+      allowPerQuestionFeedback: true,
       answerRelease: "on_submit",
       unitGrouping: "merged",
     });

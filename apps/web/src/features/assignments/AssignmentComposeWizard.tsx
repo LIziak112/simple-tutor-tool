@@ -136,10 +136,19 @@ export function AssignmentComposeWizard({
   const [unitGrouping, setUnitGrouping] = useState<"separate" | "merged">(
     "separate",
   );
-  /** 答案公布时机（T2A.8，D11）：默认交卷即公布；截止后公布须先填截止时间 */
-  const [answerRelease, setAnswerRelease] = useState<"on_submit" | "after_due">(
-    "on_submit",
-  );
+  /**
+   * 反馈公布策略（M1b 三选项，2026-10-22 计划 §5.1）：
+   * - student_choice：由学生选择（on_submit + allowPerQuestionFeedback=true，
+   *   新教师 UI 默认）；
+   * - after_submit：交卷后公布（on_submit + false）；
+   * - after_due：截止后公布（after_due + false，须先填截止时间）。
+   */
+  const [feedbackChoice, setFeedbackChoice] = useState<
+    "student_choice" | "after_submit" | "after_due"
+  >("student_choice");
+  const answerRelease =
+    feedbackChoice === "after_due" ? "after_due" : "on_submit";
+  const allowPerQuestionFeedback = feedbackChoice === "student_choice";
   const [tab, setTab] = useState<"course" | "library">("course");
   const [folderId, setFolderId] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -237,7 +246,7 @@ export function AssignmentComposeWizard({
     selectedUnitIds.length > 0 ||
     title.trim().length > 0 ||
     dueLocal.length > 0 ||
-    answerRelease !== "on_submit" ||
+    feedbackChoice !== "student_choice" ||
     unitGrouping !== "separate";
 
   /** 关闭守卫（§4-5）：有已选内容 / 已填字段先确认；提交中不允许关闭 */
@@ -296,6 +305,7 @@ export function AssignmentComposeWizard({
         ...(title.trim().length > 0 ? { title: title.trim() } : {}),
         ...(dueLocal.length > 0 ? { dueAt: localInputToUtcIso(dueLocal) } : {}),
         answerRelease,
+        allowPerQuestionFeedback,
         unitGrouping,
       },
       { onSuccess: onClose },
@@ -402,7 +412,7 @@ export function AssignmentComposeWizard({
             title={title}
             dueLocal={dueLocal}
             unitGrouping={unitGrouping}
-            answerRelease={answerRelease}
+            feedbackChoice={feedbackChoice}
             checkPending={checkMutation.isPending}
             checkError={
               checkMutation.isError
@@ -417,7 +427,7 @@ export function AssignmentComposeWizard({
             onTitleChange={setTitle}
             onDueChange={setDueLocal}
             onUnitGroupingChange={setUnitGrouping}
-            onAnswerReleaseChange={setAnswerRelease}
+            onFeedbackChoiceChange={setFeedbackChoice}
             onSubmit={handleSubmit}
           />
         )}
@@ -1001,7 +1011,7 @@ function StepConfirm({
   title,
   dueLocal,
   unitGrouping,
-  answerRelease,
+  feedbackChoice,
   checkPending,
   checkError,
   checkHints,
@@ -1010,7 +1020,7 @@ function StepConfirm({
   onTitleChange,
   onDueChange,
   onUnitGroupingChange,
-  onAnswerReleaseChange,
+  onFeedbackChoiceChange,
   onSubmit,
 }: {
   courseName: string | null;
@@ -1020,7 +1030,7 @@ function StepConfirm({
   title: string;
   dueLocal: string;
   unitGrouping: "separate" | "merged";
-  answerRelease: "on_submit" | "after_due";
+  feedbackChoice: "student_choice" | "after_submit" | "after_due";
   checkPending: boolean;
   checkError: string | null;
   checkHints: AssignmentCheckHint[];
@@ -1029,7 +1039,9 @@ function StepConfirm({
   onTitleChange: (title: string) => void;
   onDueChange: (dueLocal: string) => void;
   onUnitGroupingChange: (grouping: "separate" | "merged") => void;
-  onAnswerReleaseChange: (release: "on_submit" | "after_due") => void;
+  onFeedbackChoiceChange: (
+    choice: "student_choice" | "after_submit" | "after_due",
+  ) => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
   const dueHint = dueRelativeHint(dueLocal);
@@ -1037,7 +1049,8 @@ function StepConfirm({
     selectedUnits.map((unit) => unit.title),
   );
   /** T2A.8：「截止后公布」必须先有截止时间——即时提示并阻止提交 */
-  const releaseBlocked = answerRelease === "after_due" && dueLocal.length === 0;
+  const releaseBlocked =
+    feedbackChoice === "after_due" && dueLocal.length === 0;
   /** 单选行的样式（选中态与添加名单弹层同一视觉语言；公布时机/组合方式共用） */
   const optionClass = (selected: boolean): string =>
     `flex min-h-11 flex-1 cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm outline-none select-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${
@@ -1157,28 +1170,43 @@ function StepConfirm({
         <fieldset className="flex flex-col gap-1.5">
           <legend className="text-sm">答案公布时机</legend>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <label className={optionClass(answerRelease === "on_submit")}>
+            <label className={optionClass(feedbackChoice === "student_choice")}>
               <input
                 type="radio"
                 name="wizard-answer-release"
                 className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
-                checked={answerRelease === "on_submit"}
-                onChange={() => onAnswerReleaseChange("on_submit")}
+                checked={feedbackChoice === "student_choice"}
+                onChange={() => onFeedbackChoiceChange("student_choice")}
               />
               <span className="flex flex-col gap-0.5">
-                <span className="font-medium">交卷即公布（默认）</span>
+                <span className="font-medium">由学生选择（默认）</span>
+                <span className="text-xs text-muted-foreground">
+                  学生可自选「每题提交后查看」或「交卷后统一查看」
+                </span>
+              </span>
+            </label>
+            <label className={optionClass(feedbackChoice === "after_submit")}>
+              <input
+                type="radio"
+                name="wizard-answer-release"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={feedbackChoice === "after_submit"}
+                onChange={() => onFeedbackChoiceChange("after_submit")}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">交卷后公布</span>
                 <span className="text-xs text-muted-foreground">
                   学生交卷后立刻看到对错、参考答案与详解
                 </span>
               </span>
             </label>
-            <label className={optionClass(answerRelease === "after_due")}>
+            <label className={optionClass(feedbackChoice === "after_due")}>
               <input
                 type="radio"
                 name="wizard-answer-release"
                 className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
-                checked={answerRelease === "after_due"}
-                onChange={() => onAnswerReleaseChange("after_due")}
+                checked={feedbackChoice === "after_due"}
+                onChange={() => onFeedbackChoiceChange("after_due")}
               />
               <span className="flex flex-col gap-0.5">
                 <span className="font-medium">截止后公布</span>
