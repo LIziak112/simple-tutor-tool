@@ -218,3 +218,16 @@
 - 测试方法论沉淀（闸门修复过程实证）：TanStack Query v5 焦点重取监听 window visibilitychange 而非 focus（jsdom 测试须派发前者）；structuralSharing 使深度相等响应保持同引用（重取无变化=缓存不动是合法行为，测试要制造真实变化才触发效应）。
 - 全量回归（编排者自跑，哨兵日志 /tmp/m3-final-{full,tsc,lint,build}.log）：pnpm test 471 文件 5565/5565 exit 0（M2 基线 5464，+101）；typecheck exit 0；lint exit 0；build exit 0。
 - 合并：v2merge 工作树 git merge --no-ff codex/practice-single-workspace（直系后代零冲突）→ 快验 test/typecheck → 推送 origin/v2。
+
+### M4 编排开工（2026-10-23，分支 codex/practice-feedback-integration，基于 v2@73c875e3，Claude 会话编排）
+
+- 摸底（只读子代理）结论：§13 大半已被 M2 机制覆盖（待批按行级收录 pending-mark.ts:49-55 含 draft 卷行级 submittedAt、markResponse draft 卷不重算整卷、整卷混跑护改判、错题本/趋势按完成卷纳入）；真正落差＝① phaseOfRows 对 v1 逐题卷仍按 attempt 级（teaching-policy-service.ts:168-175，且 :699-710 防御用例方向相反）；② 单题模式切题不收起 AI 阅读、openTask 不切题卡；③ 「已提交 n/N 题」未出作答页（记录页/矩阵/作业列表均无）；④ 三处 stale 注释（pending-mark.ts:18、mark-response.ts:224-226、student-records.ts:222-223）与「pendingCount=0⇔graded 全站成立」推理（pending-mark.ts:21-24）；⑤ 整卷结果缺「逐题反馈/交卷后反馈」摘要（§13.8；数据面已就绪——attemptWorkflowView 对任意状态 v1 卷产出 practiceWorkflow+questionProgress，attempt-service.ts:2798 已并入投影）。
+- 派单拆层：D1 服务端 AI 完成态按题化 → D2 前端 AI 单题整合 → D3 统计/摘要/注释裁决。串行同分支，一层一单，TDD 红灯先行，编排者验收统一三闸门+全量回归。
+- 裁决预告（D3 依据总计划定案，子代理不得另议）：§13.4 第一版口径——AI 批量复盘 draft 拒绝、学习包/CSV 只收非 draft、review-pack draft⇒「未交卷」**维持现状**（§13.7「不盲目统一放宽导出权限」）；教师题级待批可提前查看已由 pendingMarkCounts 覆盖；只改 stale 注释与新增进行中 n/N 呈现、结果摘要。M3 安全观察①（已提交卡提示解锁）维持既有语义不入 M4；PATCH 节奏切换 UI 归 M5。
+
+### M4-D1 服务端 AI 完成态按题化（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交：5b6dc30d（6 文件 +406/-17：phaseOfRows 单源分支 + wiring 谓词 isPerQuestionV1Attempt + AGENTS.md 不变量行同步 + teaching-policy 测试改写/新增 + 矩阵 D1-18/19/20 fake provider 双断言）。
+- 落地：phaseOfRows 分支改为 practiceProtocolOf(attempt)==="lesson" || isPerQuestionV1Attempt(attempt) → 行级 submittedAt（与 lesson 同语义）；v1 after_attempt 卷与历史卷维持 attempt 级（行级残留值不改整卷语义，翻转后的防御用例收窄锁定）。isPerQuestionV1Attempt 落 practice-workflow-wiring.ts 紧邻 practiceProtocolOf 单一出处（类型 Pick 三字段），AI 侧不另写协议判别；完成态仍单源 questionPhaseOf→resolveAttemptQuestionAiPolicy（摸底核对全部通道无旁路）。矩阵用例：D1-18 guided×本题已提交→open_study 复盘携带参考+解析、邻题仍启发尺度；D1-19 post×未提交创建 403 零任务行→提交后本题复盘、邻题 403；普通取卷出口不因行级提交解锁（assertNoLeak+哨兵全零）；D1-20 教师中途切 post：已完成题出站照常复盘（不可被关闭重锁）、未提交邻题出站前拦截转 paused。
+- 派单纠偏（子代理正确拒绝编排者 brief 错误，记档）：brief 曾写「guided_only 未提交出站不携带答案解析」——与 AGENTS.md 定案相反（「仅启发」是提示词输出约束非保密模式，需求规格 §2.3 授权启发模式携带）；子代理维持既有 D1-02/D1-12 携带口径（断言启发硬约束在场），「不携带」禁止场景正确落在 post_submit_only 未提交。**后续派单引用教学模式语义一律以 AGENTS.md 该行为准。**
+- 编排者独立验收（2026-10-23）：全量 diff 通读；practiceProtocolOf 等价性核对（:173 lesson 分支恒先于版本判定，与旧 sourceType==="lesson" 判定等价）；红灯日志核验（/tmp/m4-d1-red.log：7 failed|44 passed EXIT=1）；编排者自跑 /tmp/m4-d1-accept-{full,tsc,lint}.log 与复跑 full2：TSC=0、LINT=0、全量 5572/5572（首跑 5571/5572，唯一失败 backup-gc.test.ts 备份恢复全链 5s 超时抖动——11s 实跑 vs 5s 预算，与 D1 改动面零交集，隔离复跑 5/5、全量复跑全绿；该测试超时预算偏低已记观察）。
