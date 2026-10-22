@@ -21,7 +21,6 @@ import {
   type AssignmentFeedbackGrant,
   type PracticeWorkflowSource,
   resolvePracticeWorkflow,
-  type StoredPracticeWorkflow,
 } from "./practice-workflow-service";
 
 /**
@@ -157,22 +156,6 @@ export interface AttemptWorkflowView {
   questionProgress: PracticeQuestionProgress[];
 }
 
-/** 已存卷的工作流事实（responses 聚合在调用方查询后传入，减少重复查询） */
-function storedOf(
-  attempt: Attempt,
-  hasSubmittedQuestion: boolean,
-): StoredPracticeWorkflow | null {
-  if (attempt.practiceWorkflowVersion !== 1 || attempt.feedbackMode === null) {
-    return null;
-  }
-  return {
-    feedbackMode: attempt.feedbackMode,
-    revision: attempt.workflowRevision,
-    hasSubmittedQuestion,
-    attemptSubmitted: attempt.submittedAt !== null,
-  };
-}
-
 /**
  * 读侧投影（草稿视图 / PATCH 回执共用）：服务端按**当前**教师规则/作业授权
  * 重算可提交状态；已选 feedbackMode 不因收紧/放宽改写（resolver 语义）。
@@ -183,6 +166,16 @@ export function attemptWorkflowView(
   attempt: Attempt,
 ): AttemptWorkflowView | null {
   if (attempt.sourceType === "lesson") return null;
+  // 旧协议卷先于 responses 聚合早退（历史卷不付无用查询；升级期线上绝大多数取卷命此）
+  if (attempt.practiceWorkflowVersion !== 1 || attempt.feedbackMode === null) {
+    return null;
+  }
+  const inputs = resolverInputsOf(db, attempt);
+  // 作业授权行缺失（FK 正常时不可达；手工改库/异常恢复兜底）：按「缺失 =
+  // 旧协议」降级——读侧 fail closed 不给逐题授权，不把接口打成 500
+  if (attempt.sourceType === "assignment" && inputs.assignment === null) {
+    return null;
+  }
   const rows = db
     .select({
       questionId: responses.questionId,
@@ -192,13 +185,16 @@ export function attemptWorkflowView(
     .where(eq(responses.attemptId, attempt.id))
     .all();
   const hasSubmittedQuestion = rows.some((row) => row.submittedAt !== null);
-  const stored = storedOf(attempt, hasSubmittedQuestion);
-  if (stored === null) return null;
   const workflow = resolvePracticeWorkflow({
     sourceType: attempt.sourceType,
     lifecycle: "existing",
-    stored,
-    ...resolverInputsOf(db, attempt),
+    stored: {
+      feedbackMode: attempt.feedbackMode,
+      revision: attempt.workflowRevision,
+      hasSubmittedQuestion,
+      attemptSubmitted: attempt.submittedAt !== null,
+    },
+    ...inputs,
   });
   // 教师收紧后已提交题重取也按当前 gate 返回受限（计划 §5.4：已下发内容
   // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）
@@ -287,7 +283,13 @@ export function updateAttemptWorkflow(
     }
     const view = attemptWorkflowView(db, attempt);
     if (view === null) {
-      throw new HttpError(500, "INTERNAL", "工作流投影缺失（不应发生）");
+      // 早前 legacy 检查后仍缺失＝授权事实异常（如作业行悬挂）：按旧协议降级
+      // 拒绝，不把异常数据打成 500
+      throw new HttpError(
+        409,
+        "WORKFLOW_LEGACY",
+        "这份作答的工作流数据异常，按旧协议处理",
+      );
     }
     // 陈旧 revision 优先于模式校验：客户端凭 409 刷新投影，若按旧规则报
     // 400 会让基于刷新值的 CAS 重试死循环

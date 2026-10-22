@@ -746,3 +746,108 @@ describe("teacherPolicyOfStudent：异常数据 fail closed", () => {
     );
   });
 });
+
+describe("v2 合并验收补充：异常数据降级与课程失权（2026-10-22）", () => {
+  it("课程失权后 PATCH workflow 403 COURSE_ACCESS_DENIED（requireVisibleCourseUnit 分态校验）", async () => {
+    const env = await makeEnv();
+    const course = await env.app.request("/api/teacher/courses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ title: "工作流课程" }),
+    });
+    expect(course.status).toBe(201);
+    const courseId = ((await course.json()) as { data: { id: string } }).data
+      .id;
+    const imported = await env.app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({
+        markdown: PRACTICE_MD,
+        filename: "课程练习.md",
+        courseId,
+      }),
+    });
+    expect(imported.status).toBe(200);
+    const courseUnitId = (
+      (await imported.json()) as { data: { units: { id: string }[] } }
+    ).data.units[0]?.id;
+    if (!courseUnitId) throw new Error("课程导入未产出单元");
+    const detail = await env.app.request(`/api/teacher/courses/${courseId}`, {
+      headers: { cookie: env.teacherCookie },
+    });
+    const item = (
+      (await detail.json()) as {
+        data: { items: { id: string; refId: string | null }[] };
+      }
+    ).data.items.find((entry) => entry.refId === courseUnitId);
+    if (!item) throw new Error("课程目录缺单元条目");
+    const visible = await env.app.request(
+      `/api/teacher/course-items/${item.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ visible: true }),
+      },
+    );
+    expect(visible.status).toBe(200);
+    const zhangId = await studentIdOfLogin(env.app, env.teacherCookie, "张三");
+    const added = await env.app.request(
+      `/api/teacher/courses/${courseId}/members`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ studentIds: [zhangId] }),
+      },
+    );
+    expect(added.status).toBe(200);
+    const start = await env.app.request(
+      `/api/student/courses/${courseId}/units/${courseUnitId}/attempts`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify({
+          workflowVersion: 1,
+          feedbackMode: "per_question",
+        }),
+      },
+    );
+    expect(start.status).toBe(201);
+    const attemptId = ((await start.json()) as { data: { id: string } }).data
+      .id;
+
+    // 移出成员 → PATCH 与取卷同口径 403，不得仍可改节奏
+    await env.app.request(`/api/teacher/courses/${courseId}/members`, {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ studentIds: [zhangId] }),
+    });
+    const patch = await env.app.request(
+      `/api/student/attempts/${attemptId}/workflow`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify({
+          feedbackMode: "after_attempt",
+          workflowRevision: 0,
+        }),
+      },
+    );
+    expect(patch.status).toBe(403);
+    expect(((await patch.json()) as ApiErr).error).toBe("COURSE_ACCESS_DENIED");
+  });
+});
