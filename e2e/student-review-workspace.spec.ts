@@ -524,8 +524,10 @@ test("未公布回看：网络无秘密，已选中性且没有判定范围", as
     expect(question.finalCorrect).toBeNull();
     expect(question.teacherComment).toBeNull();
   }
+  // 横幅 2026-10-21 改版为「交卷成功与待公布提示」卡（含倒计时），
+  // 以区域名锚定未公布态横幅，题级中性由后续断言覆盖
   await expect(
-    page.getByText("已交卷，答案将在截止后公布", { exact: false }),
+    page.getByRole("region", { name: "交卷成功与待公布提示" }),
   ).toBeVisible();
   const card = page.getByRole("article", { name: "第 2 题", exact: true });
   const picked = card.getByRole("listitem").filter({ hasText: "你的选择" });

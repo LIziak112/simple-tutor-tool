@@ -565,6 +565,7 @@ function AnswerView({
             <AiQueueButton
               currentAttemptId={aiCompanion.send.attemptId}
               onOpenTask={aiCompanion.openTask}
+              onOpenQuestion={aiCompanion.openQuestion}
             />
           }
           status={(closeDetails) => (

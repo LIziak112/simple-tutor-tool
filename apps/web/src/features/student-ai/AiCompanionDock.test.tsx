@@ -166,6 +166,99 @@ beforeEach(() => {
 });
 
 describe("题下助教共享会话", () => {
+  it("助教绑定题与当前编辑题不同时，回题等待两题落盘", async () => {
+    render(<Harness />);
+    await open("q2");
+    flush.mockClear();
+    await act(async () => {
+      await capturedDock.current?.openQuestion(task);
+    });
+    expect(flush).toHaveBeenCalledWith("q1");
+    expect(flush).toHaveBeenCalledWith("q2");
+  });
+  it.each(["inline", "side", "dialog"] as const)(
+    "%s 阅读中回到另一题收起回复并定位，保留题卡",
+    async (layout) => {
+      saveAiDisplayPreference(layout);
+      render(<Harness />);
+      const card = screen.getByRole("article", { name: "q2" });
+      const scroll = vi.fn();
+      card.scrollIntoView = scroll;
+      await open("q1");
+      await screen.findByText("先列出条件，再代入特殊值。");
+      vi.mocked(fetchStudentAiTaskApi).mockClear();
+      vi.mocked(openStudentAiReplyApi).mockClear();
+      await act(async () => {
+        expect(
+          await capturedDock.current?.openQuestion({
+            ...task,
+            questionId: "q2",
+          }),
+        ).toBe(true);
+      });
+      await waitFor(() => expect(scroll).toHaveBeenCalled());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("region", { name: /的 AI 助教/ })).toBeNull();
+      expect(card.isConnected).toBe(true);
+      expect(fetchStudentAiTaskApi).not.toHaveBeenCalled();
+      expect(openStudentAiReplyApi).not.toHaveBeenCalled();
+    },
+  );
+  it("回题保存失败不滚动、不收起现有阅读，其他卷与缺失题目不能定位", async () => {
+    render(<Harness />);
+    await open("q1");
+    await screen.findByText("先列出条件，再代入特殊值。");
+    const scroll = vi.fn();
+    screen.getByRole("article", { name: "q2" }).scrollIntoView = scroll;
+    flush.mockRejectedValueOnce(new Error("落盘失败"));
+    await act(async () => {
+      expect(
+        await capturedDock.current?.openQuestion({ ...task, questionId: "q2" }),
+      ).toBe(false);
+    });
+    expect(scroll).not.toHaveBeenCalled();
+    expect(screen.getByText("先列出条件，再代入特殊值。")).toBeVisible();
+    await act(async () => {
+      expect(
+        await capturedDock.current?.openQuestion({
+          ...task,
+          attemptId: "other",
+        }),
+      ).toBe(false);
+      expect(
+        await capturedDock.current?.openQuestion({
+          ...task,
+          questionId: "missing",
+        }),
+      ).toBe(false);
+    });
+    expect(scroll).not.toHaveBeenCalled();
+  });
+  it.each(["inline", "side", "dialog"] as const)(
+    "%s 偏好下跨页回题只定位题卡，不读取或展开回复",
+    async (layout) => {
+      saveAiDisplayPreference(layout);
+      const view = render(
+        <Harness
+          entry="/s/attempts/attempt?aiQuestion=q2&aiFrom=%2Fs%2Frecords"
+          ready={false}
+        />,
+      );
+      const card = screen.getByRole("article", { name: "q2" });
+      const scroll = vi.fn();
+      card.scrollIntoView = scroll;
+      expect(scroll).not.toHaveBeenCalled();
+      view.rerender(<Harness ready />);
+      await waitFor(() => expect(scroll).toHaveBeenCalled());
+      expect(screen.getByTestId("dock-location")).toHaveTextContent(
+        "/s/attempts/attempt?aiFrom=%2Fs%2Frecords",
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("region", { name: /的 AI 助教/ })).toBeNull();
+      expect(fetchStudentAiTaskApi).not.toHaveBeenCalled();
+      expect(openStudentAiReplyApi).not.toHaveBeenCalled();
+    },
+  );
   it("保存弹窗偏好后默认打开弹窗，只有一份输入并保持纸面挂载", async () => {
     saveAiDisplayPreference("dialog");
     render(<Harness />);
