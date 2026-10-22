@@ -317,13 +317,14 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
         feedbackMode: "per_question",
       }).success,
     ).toBe(false);
+    // 旧 schema 非 strict：未知字段沿用既有宽松语义（strip），不为本任务改变
     expect(
-      wrongPracticeRequestSchema.safeParse({
+      wrongPracticeRequestSchema.parse({
         questionIds: ["练习四-1"],
         workflowVersion: 1,
         layout: "single",
-      }).success,
-    ).toBe(false);
+      }),
+    ).toEqual({ questionIds: ["练习四-1"], workflowVersion: 1 });
   });
 });
 
