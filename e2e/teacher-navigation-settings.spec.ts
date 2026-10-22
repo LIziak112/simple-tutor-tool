@@ -86,7 +86,12 @@ test("教师主页面统一布局，设置首屏与完整导航在标准桌面�
   ]) {
     await page.setViewportSize(size);
     await page.goto("/t/settings");
-    const save = page.getByRole("button", { name: "保存更改" });
+    // 「学生作答方式」分类下多个区块各有保存按钮，锚定「辅助作答」区块的那颗
+    const save = page
+      .locator(".teacher-config-section", {
+        has: page.getByRole("heading", { name: "辅助作答", exact: true }),
+      })
+      .getByRole("button", { name: "保存更改" });
     await expect(save).toBeVisible();
     if (size.width >= 1024) {
       await expect(save).toBeInViewport();
@@ -414,7 +419,12 @@ test("浅深色文字与键盘焦点使用足够对比度", async ({ page }, tes
       );
     expect(contrast.length).toBeGreaterThanOrEqual(4);
     for (const ratio of contrast) expect(ratio).toBeGreaterThanOrEqual(4.5);
-    const save = page.getByRole("button", { name: "保存更改", exact: true });
+    // 同上：页面存在多颗「保存更改」，聚焦「辅助作答」区块那颗验焦点环
+    const save = page
+      .locator(".teacher-config-section", {
+        has: page.getByRole("heading", { name: "辅助作答", exact: true }),
+      })
+      .getByRole("button", { name: "保存更改", exact: true });
     await save.focus();
     const focus = await save.evaluate((element) => {
       const style = getComputedStyle(element);
