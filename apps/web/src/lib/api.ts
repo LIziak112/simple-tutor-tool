@@ -175,6 +175,8 @@ import {
   type TeacherAttemptListData,
   type TeacherInfo,
   type TeacherLoginRequest,
+  type TeacherPracticeFeedbackSettings,
+  type TeacherPracticeFeedbackSettingsUpdateRequest,
   type TeacherRegisterRequest,
   type TeacherSetupRequest,
   type TeacherStatusData,
@@ -2525,6 +2527,25 @@ export function saveCapabilityProfile(
 ): Promise<CapabilityProfile> {
   return callApi(() =>
     api.api.teacher.settings["capability-profile"].$put({ json: profile }),
+  );
+}
+
+// ---------- 教师练习反馈默认策略（M1b 设置页「教学」区） ----------
+
+/**
+ * 读取当前教师的练习反馈默认策略（null = 未配置——仅对新课程自由练习/错题
+ * 重练按「由学生选择」缺省生效；设置页据此展示有效默认值）。
+ */
+export function fetchPracticeFeedbackSettings(): Promise<TeacherPracticeFeedbackSettings> {
+  return callApi(() => api.api.teacher.settings["practice-feedback"].$get());
+}
+
+/** 覆盖写入策略（二选一；服务端按教师会话定位，域隔离） */
+export function savePracticeFeedbackSettings(
+  request: TeacherPracticeFeedbackSettingsUpdateRequest,
+): Promise<TeacherPracticeFeedbackSettings> {
+  return callApi(() =>
+    api.api.teacher.settings["practice-feedback"].$put({ json: request }),
   );
 }
 
