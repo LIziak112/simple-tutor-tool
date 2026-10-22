@@ -40,7 +40,7 @@
 | --- | --- | --- |
 | M0 设计确认与交互基线 | 执行追踪、基线核对、离线交互线框稿；不改领域逻辑 | 文档与浏览器基线已核对；真机待验收 |
 | M1 契约与教师裁决 | 失败测试先行：策略组合、历史缺省、非法组合、CAS、旧客户端；契约 + 迁移 + resolver + 教师默认与作业三选项 | M1a+M1b 已完成：契约/迁移 0038/裁决器/教师设置与作业授权/建卷读侧接线/PATCH workflow CAS/教师 UI；三项审查修复完毕、全量绿（见验收记录）；M2 起未动 |
-| M2 通用逐题服务 | 失败测试先行：提交版本、幂等、邻题泄露、教师收紧、并发收尾；抽取 submitAttemptQuestion；事务内判分 | 服务层与路由已完成（2026-10-22：契约层 f31b3f08 + 服务层 afb7ebd2，全量 461 文件 5443/5443 绿；学生端 UI 属 M3）；实际命令与结果见「M2 契约层」「M2 服务层」小节 |
+| M2 通用逐题服务 | 失败测试先行：提交版本、幂等、邻题泄露、教师收紧、并发收尾；抽取 submitAttemptQuestion；事务内判分 | 服务层与路由已完成并通过编排者三闸门验收（2026-10-22：契约层 6ee218e5+f31b3f08、服务层 afb7ebd2、验收修复 832444c5..9bac38bb，全量 461 文件 5464/5464 绿；学生端 UI 属 M3）；详见「M2 契约层」「M2 服务层」「M2 编排者验收」小节 |
 | M3 单题工作区及输入 | 失败测试先行：当前题恢复、原位只读、四组合、按题 flush、快捷键保护、最后一题留反馈 | 未开始 |
 | M4 AI、证据及统计整合 | 失败测试先行：本题 AI 完成态、旧回复不串题、三布局回退、待批/改判/统计与导出 | 未开始 |
 | M5 偏好、DSL 与往返 | 失败测试先行：账号隔离、来源返回、推荐优先级、mixed、重导/导出与历史 samples | 未开始 |
@@ -119,7 +119,7 @@
 - TDD 顺序：先写 packages/contract/src/practice-question-submit.test.ts（18 用例）→ 红灯 exit 1（模块未实现、导入失败；派单明示契约层此顺序合规）→ 实现 practice-question-submit.ts → 绿灯 18/18。中途两处测试自身笔误（M1 schema 导入源、包装 schema 少包一层 feedback）修正后一次通过，非实现返工。
 - 落地内容：practiceQuestionSubmitRequestSchema（workflowVersion=1 字面量、questionRevisionId、expectedAnswerRevision 非负整数、submissionMutationId uuid、必填 evidence 复用整卷 submitEvidenceDeclarationSchema 三态语义；strict、未知字段拒绝、缺省拒绝）；practiceQuestionFeedbackSchema 共用授权投影（判别二态 released/not_submitted/pending_attempt/restricted；released 复用 attemptResultQuestionSchema，restricted 复用 M1 practiceRestrictionReasonSchema）；practiceQuestionSubmitDataSchema 四键白名单（feedback/questionProgress/attempt/practiceWorkflow）；practiceQuestionFeedbackDataSchema 单键 feedback——两 data 的 feedback 字段与投影 schema 对象同一（identity 断言防漂移）；成功壳 practiceQuestionSubmitOkSchema / practiceQuestionFeedbackOkSchema。
 - 设计决定（供编排者复核）：
-  - 请求体未含 workflowRevision：派单字段清单（workflowVersion/questionRevisionId/expectedAnswerRevision/submissionMutationId/evidence）为准；计划 §10.2「workflowVersion/revision」措辞按 workflowVersion-only 落地，提交 vs 改节奏竞态由服务端事务内按当前 gate 重裁（M2 服务实现若需 409 WORKFLOW_REVISION_STALE 可诊断分码，契约可后续小步扩展）。
+  - 请求体未含 workflowRevision：派单字段清单（workflowVersion/questionRevisionId/expectedAnswerRevision/submissionMutationId/evidence）为准；计划 §10.2「workflowVersion/revision」措辞按 workflowVersion-only 落地，提交 vs 改节奏竞态由服务端事务内按当前 gate 重裁（M2 服务实现若需 409 WORKFLOW_REVISION_STALE 可诊断分码，契约可后续小步扩展）。【翻案记录】后续提交 f31b3f08 已把 workflowRevision（非负整数）补进请求契约并随服务层 WORKFLOW_REVISION_STALE 三键 CAS 消费——本条 workflowVersion-only 取舍作废，以 HEAD 契约为准。
   - 「待公布」独立为 pending_attempt 态（本题已提交、本卷节奏 after_attempt 待整卷公布）；教师规则/历史协议受限为 restricted（M1 三原因）；两态分离避免把学生自选 after_attempt 误报成 teacher_after_attempt。
   - 回执不夹带整卷 summary/score（邻题对错不可反推，§6.1 白名单纪律）；released 态与 questionProgress 之间不加跨字段 refine（最后一题自动收尾后 canSubmitQuestion=false 会与 released 并存，语义合法）。
 - 真实命令与退出码（工作树内）：
@@ -135,7 +135,7 @@
 
 提交：afb7ebd2（服务层 + 路由 + 测试）+ 本台账提交。
 
-- TDD 红灯（真实运行、行为断言失败）：先写 `apps/server/src/routes/student-practice-question-submit.test.ts`（21 用例：端到端闭环 5、协议分流与守卫 5、版本核对 4、教师收紧 2、after_attempt/after_due 2、整卷混跑 1、泄露矩阵 2）→ `pnpm test apps/server/src/routes/student-practice-question-submit.test.ts` exit 1，21/21 失败（新协议请求被既有 lesson 协议路径按非 lesson 来源 404——行为失败非导入失败）。
+- TDD 红灯（真实运行、行为断言失败）：先写 `apps/server/src/routes/student-practice-question-submit.test.ts`（21 用例：端到端闭环 5、协议分流与守卫 5、版本核对 4、教师收紧 2、after_attempt/after_due 2、整卷混跑 1、泄露矩阵 2）→ `pnpm test apps/server/src/routes/student-practice-question-submit.test.ts` exit 1，21/21 失败（新协议请求被既有 lesson 协议路径按非 lesson 来源 404——行为失败非导入失败）。（该文件用例数随验收期增补：832444c5 +1、验收修复 +1，HEAD 共 23。）
 - 绿灯：同命令 exit 0，21/21。中途四处**测试自身**口径修正（重试用例先存答案再断判对、未知题用例显式 questionRevisionId、feedback GET 跨学生按取卷口径断 403 FORBIDDEN、course 夹具需 PATCH course-items visible=true 且单元改名避免与库单元同名合并），非实现返工。
 - 落地内容：
   - **submitPracticeQuestion**（attempt-service，M2 新协议普通卷通用逐题提交）：单事务按 §10.2 顺序——归属（and(id,studentId) 404 不暴露差异，同 PATCH workflow 口径）→ 作废 409 → 课程失权（requireVisibleCourseUnit 分态）→ 协议形态（lesson→409 WORKFLOW_PROTOCOL_MISMATCH、历史卷→409 WORKFLOW_LEGACY）→ **幂等与已提交裁决**（同 mutationId 同摘要→重放按当前规则投影返回同一提交事实，不重判不重复事件；同 id 异摘要→409 WORKFLOW_MUTATION_CONFLICT；异 mutationId 含整卷已收尾→409 QUESTION_ALREADY_SUBMITTED）→ resolver 当前裁决（canSubmitQuestion=false→409 WORKFLOW_RESTRICTED；重放分支先于它，教师收紧后重试不再被拒）→ workflowRevision CAS（409 WORKFLOW_REVISION_STALE）→ questionRevisionId（409 与整卷/lesson 同口径）→ **expectedAnswerRevision 与事务内实际读取的学生答案版本比对**（409 ANSWER_REVISION_CONFLICT 附 _current，复用既有答案冲突协议）→ 证据声明（buildSingleQuestionEvidence 与 lesson 同一实现：questionId 一致、有稿 none 拒、frozen 精确比对落行、missing 如实记录）→ **事务内**读冻结快照与答案判分（M0 风险 1「事务前读答案」窗口关闭）→ 行级真实 CAS（UPDATE WHERE submittedAt IS NULL，幂等凭据 practice_mutation_id/practice_request_digest 同事务写入）→ 最后一题共同收尾。成功记 question_submit 事件（重放不重复）；回执四键在事务后 fresh 读 + 读取时刻投影组装。
@@ -157,3 +157,20 @@
   - `pnpm lint` → 首跑 exit 1（2 格式错），`biome check --write` 4 文件后 exit 0（余 2 warning + 1 info 均旧代码）。
   - `pnpm build` → exit 0。
 - 未做（M3+ 范围，不宣称）：学生端单题工作区与按题 flush（M3）、AI 完成态/统计/导出整合（M4）、e2e spec（M6）、gen:spec/schema:export（契约未动，无需重跑）。
+
+### M2 编排者验收（2026-10-22，同分支，Claude 会话编排执行）
+
+验收序列：D2 交付全量独立核验（diff 全读 + 1440 行测试文件全读 + 与 origin/v2 合并冲突面预计算）→ 64e33922 合并 origin/v2（零冲突）→ /simplify 四角度（23 发现收敛 9 项修复）→ /code-review max（10 角度 + 补漏扫描；15 发现：14 修复 / 1 记档接受）→ 修复六笔 → /security-review（无发现）→ 全量回归。
+
+- 修复提交（质量闸门产物，均小步绿）：
+  - 832444c5 / c5531e7f（/simplify）：四态裁决统一纯函数 resolvePracticeQuestionFeedbackState、requireOwnActiveAttempt/practiceProtocolOf 共享件、作业授权行悬挂 409 WORKFLOW_LEGACY 降级（M1 d7c84b89 语义接线）+ PRAGMA 回归。
+  - b46422d6（契约）：M2 三错误码（WORKFLOW_PROTOCOL_MISMATCH/MUTATION_CONFLICT/RESTRICTED）注册进 attemptErrorCodeSchema + M1/M2 六码 doc 补齐 + gen:spec 重跑（补漏扫描发现：契约/实现漂移，锁测试加用例）。
+  - 6ba615c5（公布 gate 收敛，三角交叉命中）：新纯函数 attemptAnswersPublished（practice-workflow-service）——作业行悬挂时已收尾卷 GET 反馈从裸 404 ASSIGNMENT_NOT_FOUND 收敛 pending_attempt（fail-closed 家族统一，assignmentReleaseByIds 含软删取数）；已收尾判别键统一 status !== "draft"（wiring 两处 submittedAt 代理取齐）；now 穿透 attemptWorkflowView（dueAt 边界同一时钟）；谓词早退收敛（isV1ProtocolAttempt 委托式类型守卫恢复字面量窄化）。矩阵单测 4 + PRAGMA 收尾悬挂回归 1。
+  - 0e9fb96d（协议谓词）：submitAttempt perQuestionAttempt 改 practiceProtocolOf(attempt) !== "legacy"（异常行 version=1 而 feedbackMode 缺失时与四个逐题消费点口径一致）；schema.ts submittedAt 列注释与 lessonQuestionSubmitted/assertRowNotSubmitted 谓词 doc 随 M2 语义扩散更正。
+  - 124f2c8f（热路径）：question_submit 事件挪入主事务（省一次独立 autocommit fsync、消除「提交已持久事件丢失」窗口；lesson 事件仍事务外属既有模式）；released 快照单次解析随事务产物带出（重放路径维持惰性）；事务后 view-null 409 注释修准——该发现（同 mutationId 回执在异常数据修复前不可取）记档接受：触发需多进程并发破坏授权行、届时全卷读取面同步降级、契约 practiceWorkflow 必填无法产出合法降级体。
+  - 5daf75d5（清理批）：questionNotFound 工厂五处收敛、课程失权守卫 assertDraftCourseVisible 三处共用（wiring 导出）、hasSnapshot .mapWith(Boolean)（better-sqlite3 返回 0/1 整数的潜伏严格比较陷阱归零）、测试换 note-world 会话三件套、契约测试删 no-op 断言、删迁移孤注释。
+  - 9bac38bb（lint 债）：v2 合并带入的 b20 演练脚本三处 biome 诊断修复——根 `biome check .` 全仓 1183 文件归零（b260681c 自称 lint 0 实为范围检查；v2 存量债随本分支合回治愈）。
+- 最终验证（日志 /tmp/m2-verify3.log）：pnpm test 461 文件 5464/5464 exit 0（较服务层交付时 +21：验收语义修复与新增矩阵/回归/契约锁用例）；typecheck / lint / build 全 exit 0。
+- /security-review（聚焦学生端防泄露边界，独立子代理）：无高置信度发现——四态非 released 零题目内容（strict 白名单 + 路由 .parse 再校验）、未提交题无 released 旁路、幂等重放零写入按读取时刻重投影（教师收紧后重试返回 restricted 非缓存正文）、课程失权校验先于幂等重放、digest \u0000/\u0001 分隔注入不可构造、全程 drizzle 参数化、两端点 Cache-Control private,no-store、跨学生 POST 404 / GET 403 不暴露存在性。
+- 遗留待用户拍板：§5.4 教师收紧后已提交行 feedbackReadable 语义——现按「当前 gate」实现（收紧后已提交行重取受限、已下发内容不宣称撤回，已提交事实与成绩保留），M2 验收以此口径为准；如需「提交时刻快照语义」须改契约并另行批次。
+- 台账更正（约定角发现）：M2 表格行与「M2 服务层」绿测数字原停在 afb7ebd2 时点（21 用例/5443），本节为最终口径（23 用例/5464）；「M2 契约层」workflowVersion-only 设计决定补翻案记录（f31b3f08）。
