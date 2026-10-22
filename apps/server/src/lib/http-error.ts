@@ -119,6 +119,20 @@ function parseJsonText<T>(
 }
 
 /**
+ * 读出 JSON 请求体而不做 schema 校验（M2 单题提交协议分流）：非 JSON 抛 400
+ * VALIDATION_ERROR（与 parseJsonBody 同口径）；分流后的 schema 校验由调用方
+ * 执行（safeParse + firstIssueMessage 组装同款 400）。body 只读一次。
+ */
+export async function readJsonBody(c: Context): Promise<unknown> {
+  const text = await c.req.text();
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new HttpError(400, "VALIDATION_ERROR", "请求体不是合法的 JSON");
+  }
+}
+
+/**
  * 校验失败的第一条 issue 消息（缺省「格式不正确」）：契约 schema 的中文
  * message 直接透出给 400 响应——路由层手工过 schema（multipart 字段/查询
  * 参数）时统一用它，不各自手写 issues[0] 取值（复审⑫）。
