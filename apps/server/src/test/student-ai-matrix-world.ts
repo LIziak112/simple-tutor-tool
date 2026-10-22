@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { createApp } from "../app.ts";
 import { createStudentSession } from "../auth/session.ts";
@@ -101,6 +101,8 @@ export interface MatrixWorld {
   clearOverride(subjectType: "student" | "assignment", subjectId: string): void;
   /** 服务端确认交卷（assignment 源整卷；revisions 用两题冻结 responseId） */
   submitAttempt1(): void;
+  /** 服务端确认单题提交（M2 行级事实：responses.submittedAt 落值；attempt 保持 draft） */
+  submitQuestion1(questionId: string): void;
   /** 页内连接（真实密文装配；出站由 dispatchInapp 的记录型 transport 截获） */
   addInappConnection(studentId?: string): void;
   /** MCP 通道真实 token（经创建路由一次性返回；缺省学生 1） */
@@ -117,6 +119,10 @@ export interface MatrixWorldOptions {
   /** 作业答案公布策略（缺省 on_submit；D1-13 用 after_due + 未来截止） */
   readonly answerRelease?: "on_submit" | "after_due";
   readonly dueAt?: string | null;
+  /** 把 attempt1 建成新协议 v1 卷（M4-D1；缺省 undefined = 历史旧协议卷，既有用例不变） */
+  readonly workflow?: {
+    readonly feedbackMode: "per_question" | "after_attempt";
+  };
   /** 注入外建库（缺省 :memory:；D5-08 备份恢复用文件库句柄的 Proxy db） */
   readonly db?: Db;
   /** 注入数据目录（缺省临时目录；与 db 同源注入时必须一起给） */
@@ -157,6 +163,17 @@ export function createMatrixWorld(
     })
     .run();
   const attempt1 = insertAttempt(db, { studentId: student1, assignmentId });
+  // M4-D1：新协议卷三列建卷即写（与 resolveNewAttemptWorkflow 写入形态一致）
+  if (options.workflow !== undefined) {
+    db.update(attempts)
+      .set({
+        practiceWorkflowVersion: 1,
+        feedbackMode: options.workflow.feedbackMode,
+        workflowRevision: 0,
+      })
+      .where(eq(attempts.id, attempt1))
+      .run();
+  }
 
   const tag = randomUUID().slice(0, 8);
   const sentinel = {
@@ -286,6 +303,17 @@ export function createMatrixWorld(
       .where(eq(attempts.id, attempt1))
       .run();
   };
+  const submitQuestion1: MatrixWorld["submitQuestion1"] = (questionId) => {
+    db.update(responses)
+      .set({ submittedAt: "2026-06-01T00:00:00.000Z" })
+      .where(
+        and(
+          eq(responses.attemptId, attempt1),
+          eq(responses.questionId, questionId),
+        ),
+      )
+      .run();
+  };
 
   return {
     db,
@@ -313,6 +341,7 @@ export function createMatrixWorld(
     setOverride,
     clearOverride,
     submitAttempt1,
+    submitQuestion1,
     addInappConnection: (studentId = student1) => {
       createStudentAiConnection(db, {
         studentId,

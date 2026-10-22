@@ -191,6 +191,24 @@ function isV1ProtocolAttempt(attempt: Attempt): attempt is Attempt & {
 }
 
 /**
+ * v1 逐题卷谓词（M4-D1，总计划 §12.2）：新协议卷且反馈节奏为 per_question。
+ * 「本题完成」按行级 submittedAt 判定的唯一入口条件——协议形态仍走
+ * practiceProtocolOf 单一出处，本谓词只在同一处叠加节奏维度；消费方
+ * （teaching-policy-service phaseOfRows）不得另写 sourceType/协议分支。
+ */
+export function isPerQuestionV1Attempt(
+  attempt: Pick<
+    Attempt,
+    "sourceType" | "practiceWorkflowVersion" | "feedbackMode"
+  >,
+): boolean {
+  return (
+    practiceProtocolOf(attempt) === "v1" &&
+    attempt.feedbackMode === "per_question"
+  );
+}
+
+/**
  * 写路径共用前导（PATCH workflow 与 M2 逐题提交同一实现，消除逐字重复与
  * 404 文案漂移）：按 (id, 学生) 取行——不存在/跨学生统一 404 不暴露存在性
  * 差异；作废卷 409。课程失权校验留在调用方（两路径检查时机不同）。

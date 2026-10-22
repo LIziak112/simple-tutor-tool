@@ -8,7 +8,7 @@ import {
   aiPolicyResolutionSchema,
   DEFAULT_AI_TEACHER_MODE,
 } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../../db/client.ts";
 import {
@@ -41,8 +41,9 @@ import {
  * - 纯函数 48 组合参数化全覆盖（教师 3 × 学生 4 × 作业 4，作答中）；
  *   明确关闭不可被另一开放覆盖（关闭优先级：学生 > 作业 > 教师默认继承）；
  * - 完成态恒 open_study 复盘（含全部明确关闭组合——作答中不可用完成后自动开放）；
- * - 四来源完成判定：assignment/course/wrong 按 attempt.status、lesson 按题级
- *   submittedAt；过截止不算完成；wrong/重开新卷不继承以前完成；
+ * - 四来源完成判定：assignment/course/wrong 按 attempt.status（M4-D1 起 v1
+ *   逐题卷例外，按行级 submittedAt）、lesson 按题级 submittedAt；
+ *   过截止不算完成；wrong/重开新卷不继承以前完成；
  * - 统一入口：归属/越权/作废/课程失权沿用 requireUsableAttempt 口径，
  *   双教师同 questionId 与跨学生按 (attemptId, questionId) 冻结行隔离；
  * - AI 复盘与 answersReleased 相互独立（已交卷未到公布时间仍可复盘，
@@ -68,6 +69,9 @@ function insertAttempt(
     unitId?: string | null;
     lectureId?: string | null;
     abandonedAt?: string | null;
+    /** M4-D1：新协议卷工作流列（缺省不写 = 历史旧协议卷，两列恒 null） */
+    practiceWorkflowVersion?: 1;
+    feedbackMode?: "per_question" | "after_attempt";
   },
 ): string {
   const id = randomUUID();
@@ -86,9 +90,30 @@ function insertAttempt(
       frozenAt: FROZEN_AT,
       legacyUnverified: false,
       abandonedAt: row.abandonedAt ?? null,
+      ...(row.practiceWorkflowVersion !== undefined && {
+        practiceWorkflowVersion: row.practiceWorkflowVersion,
+      }),
+      ...(row.feedbackMode !== undefined && { feedbackMode: row.feedbackMode }),
     })
     .run();
   return id;
+}
+
+/** M2 单题提交的行级事实（responses.submittedAt 落值；attempt 保持 draft） */
+function markResponseSubmitted(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): void {
+  db.update(responses)
+    .set({ submittedAt: NOW })
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .run();
 }
 
 function insertResponse(
@@ -696,16 +721,99 @@ describe("questionPhaseOf 四来源完成判定（技术方案 §2.3）", () => 
     db.$client.close();
   });
 
-  it("非 lesson 来源不读行级 submittedAt：draft 卷即使行带值也按整卷状态判定", () => {
+  it("v1 after_attempt 卷与历史卷不读行级 submittedAt：draft 卷即使行带值也按整卷状态判定", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    // 防御口径：既有整卷链路（assignment/course/wrong）不写 responses.submittedAt
-    //（讲练专用列），完成判定只看 attempt.status——行级残留值不改变整卷语义
-    const attemptId = insertAttempt(db, { studentId, status: "draft" });
-    insertResponse(db, attemptId, "q1", { submittedAt: NOW });
-    expect(questionPhaseOf(db, attemptRow(db, attemptId), "q1")).toBe(
+    // M4-D1 改写（原防御用例「非 lesson 来源不读行级」随协议演进收窄）：行级
+    // submittedAt 口径只升 v1 逐题卷；v1 after_attempt 卷与历史旧协议卷
+    //（整卷链路）仍只看 attempt.status——行级残留值不改变整卷语义
+    const afterAttempt = insertAttempt(db, {
+      studentId,
+      practiceWorkflowVersion: 1,
+      feedbackMode: "after_attempt",
+      status: "draft",
+    });
+    insertResponse(db, afterAttempt, "q1", { submittedAt: NOW });
+    expect(questionPhaseOf(db, attemptRow(db, afterAttempt), "q1")).toBe(
       "answering",
     );
+    const legacy = insertAttempt(db, { studentId, status: "draft" });
+    insertResponse(db, legacy, "q2", { submittedAt: NOW });
+    expect(questionPhaseOf(db, attemptRow(db, legacy), "q2")).toBe("answering");
+    db.$client.close();
+  });
+
+  it("v1 逐题卷按行级 submittedAt 判完成：本题提交即完成，邻题提交不解锁本题", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const attemptId = insertAttempt(db, {
+      studentId,
+      practiceWorkflowVersion: 1,
+      feedbackMode: "per_question",
+      status: "draft",
+    });
+    insertResponse(db, attemptId, "q1", { submittedAt: NOW });
+    insertResponse(db, attemptId, "q2");
+    // 已单题提交的本题 → 完成（与 lesson 同语义）
+    expect(questionPhaseOf(db, attemptRow(db, attemptId), "q1")).toBe(
+      "completed",
+    );
+    // 邻题未提交 → 未完成（一题提交不开放整卷；已选选项/切题不写行值）
+    expect(questionPhaseOf(db, attemptRow(db, attemptId), "q2")).toBe(
+      "answering",
+    );
+    db.$client.close();
+  });
+
+  it("v1 逐题卷行级为唯一口径（防御：整卷收尾必写行，此处锁口径）", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    // 构造防御性行：status=submitted 但该行 submittedAt 为 null（正常不可达
+    // ——整卷收尾对剩余行写交卷时刻；口径与 lesson 一致，按题级行值锁定）
+    const attemptId = insertAttempt(db, {
+      studentId,
+      practiceWorkflowVersion: 1,
+      feedbackMode: "per_question",
+      status: "submitted",
+    });
+    insertResponse(db, attemptId, "q-late");
+    expect(questionPhaseOf(db, attemptRow(db, attemptId), "q-late")).toBe(
+      "answering",
+    );
+    // 对照：行带值的题 → 完成
+    insertResponse(db, attemptId, "q-done", { submittedAt: NOW });
+    expect(questionPhaseOf(db, attemptRow(db, attemptId), "q-done")).toBe(
+      "completed",
+    );
+    db.$client.close();
+  });
+
+  it("v1 逐题卷三来源（assignment/course/wrong）行级判定统一生效", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const courseId = insertCourse(db);
+    for (const sourceType of ["assignment", "course", "wrong"] as const) {
+      const attemptId = insertAttempt(db, {
+        studentId,
+        sourceType,
+        assignmentId: sourceType === "assignment" ? insertAssignment(db) : null,
+        courseId: sourceType === "course" ? courseId : null,
+        unitId: sourceType === "course" ? "unit-1" : null,
+        practiceWorkflowVersion: 1,
+        feedbackMode: "per_question",
+        status: "draft",
+      });
+      insertResponse(db, attemptId, "q1", { submittedAt: NOW });
+      insertResponse(db, attemptId, "q2");
+      expect(
+        questionPhaseOf(db, attemptRow(db, attemptId), "q1"),
+        sourceType,
+      ).toBe("completed");
+      expect(
+        questionPhaseOf(db, attemptRow(db, attemptId), "q2"),
+        sourceType,
+      ).toBe("answering");
+    }
     db.$client.close();
   });
 
@@ -1189,6 +1297,91 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
     expect(result.resolution).toEqual({
       usable: true,
       mode: "open_study",
+      reason: "teacher_default",
+    });
+    db.$client.close();
+  });
+
+  it("v1 逐题卷：post_submit_only 下本题提交即复盘、邻题仍关闭；教师中途切模式即时重校验", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const attemptId = insertAttempt(db, {
+      studentId,
+      practiceWorkflowVersion: 1,
+      feedbackMode: "per_question",
+    });
+    insertResponse(db, attemptId, "q-main");
+    insertResponse(db, attemptId, "q-neighbor");
+    const config = new FakeConfigSource();
+    config.teacherDefaults.set(TEST_TEACHER_ID, "post_submit_only");
+    // 未提交：post_submit_only 作答中关闭（同一任务的创建/领取均不得出站）
+    const before = resolveAttemptQuestionAiPolicy(
+      db,
+      studentId,
+      attemptId,
+      "q-main",
+      config,
+    );
+    expect(before.completed).toBe(false);
+    expect(before.resolution).toEqual({
+      usable: false,
+      reason: "teacher_default_closed",
+    });
+    // 服务端单题提交落库（M2 行级事实）后：本题复盘开放，邻题仍关闭
+    markResponseSubmitted(db, attemptId, "q-main");
+    const mainAfter = resolveAttemptQuestionAiPolicy(
+      db,
+      studentId,
+      attemptId,
+      "q-main",
+      config,
+    );
+    expect(mainAfter.completed).toBe(true);
+    expect(mainAfter.resolution).toEqual({
+      usable: true,
+      mode: "open_study",
+      reason: "completed",
+    });
+    const neighborAfter = resolveAttemptQuestionAiPolicy(
+      db,
+      studentId,
+      attemptId,
+      "q-neighbor",
+      config,
+    );
+    expect(neighborAfter.completed).toBe(false);
+    expect(neighborAfter.resolution).toEqual({
+      usable: false,
+      reason: "teacher_default_closed",
+    });
+    // 教师中途切换教学模式（post → guided）：同一任务的下次裁决按新模式 +
+    // 新完成态——已完成题恒 open_study 复盘（关闭不能重锁），未提交邻题改按
+    // guided 作答中尺度可用（每次调用即重校验，通道不得缓存旧结论）
+    config.teacherDefaults.set(TEST_TEACHER_ID, "guided_only");
+    const mainRecheck = resolveAttemptQuestionAiPolicy(
+      db,
+      studentId,
+      attemptId,
+      "q-main",
+      config,
+    );
+    expect(mainRecheck.completed).toBe(true);
+    expect(mainRecheck.resolution).toEqual({
+      usable: true,
+      mode: "open_study",
+      reason: "completed",
+    });
+    const neighborRecheck = resolveAttemptQuestionAiPolicy(
+      db,
+      studentId,
+      attemptId,
+      "q-neighbor",
+      config,
+    );
+    expect(neighborRecheck.completed).toBe(false);
+    expect(neighborRecheck.resolution).toEqual({
+      usable: true,
+      mode: "guided_only",
       reason: "teacher_default",
     });
     db.$client.close();
