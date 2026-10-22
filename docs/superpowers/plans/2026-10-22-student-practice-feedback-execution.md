@@ -40,7 +40,7 @@
 | --- | --- | --- |
 | M0 设计确认与交互基线 | 执行追踪、基线核对、离线交互线框稿；不改领域逻辑 | 文档与浏览器基线已核对；真机待验收 |
 | M1 契约与教师裁决 | 失败测试先行：策略组合、历史缺省、非法组合、CAS、旧客户端；契约 + 迁移 + resolver + 教师默认与作业三选项 | M1a+M1b 已完成：契约/迁移 0038/裁决器/教师设置与作业授权/建卷读侧接线/PATCH workflow CAS/教师 UI；三项审查修复完毕、全量绿（见验收记录）；M2 起未动 |
-| M2 通用逐题服务 | 失败测试先行：提交版本、幂等、邻题泄露、教师收紧、并发收尾；抽取 submitAttemptQuestion；事务内判分 | 进行中（2026-10-22 起分支 codex/practice-question-submit、基于 M1 收尾 44ecb4a3；由 Claude 会话编排执行，本会话先行 M2 契约层，实际命令与结果见「M2 契约层」小节） |
+| M2 通用逐题服务 | 失败测试先行：提交版本、幂等、邻题泄露、教师收紧、并发收尾；抽取 submitAttemptQuestion；事务内判分 | 服务层与路由已完成（2026-10-22：契约层 f31b3f08 + 服务层 afb7ebd2，全量 461 文件 5443/5443 绿；学生端 UI 属 M3）；实际命令与结果见「M2 契约层」「M2 服务层」小节 |
 | M3 单题工作区及输入 | 失败测试先行：当前题恢复、原位只读、四组合、按题 flush、快捷键保护、最后一题留反馈 | 未开始 |
 | M4 AI、证据及统计整合 | 失败测试先行：本题 AI 完成态、旧回复不串题、三布局回退、待批/改判/统计与导出 | 未开始 |
 | M5 偏好、DSL 与往返 | 失败测试先行：账号隔离、来源返回、推荐优先级、mixed、重导/导出与历史 samples | 未开始 |
@@ -130,3 +130,30 @@
   - `pnpm schema:export` → exit 0；二跑零 diff（content.json 不含本契约，幂等）。
   - `pnpm gen:spec` → exit 0；dsl-kit/tutor-lint.mjs 因契约变更重打包（114 行标识符漂移，esbuild 重打包正常现象）；二跑 sha1 一致（52f6089b…），幂等；已随 6ee218e5 提交。
 - 未做（M2 后续批次范围，不宣称）：submitAttemptQuestion 服务抽取与路由分流、幂等/并发/邻题泄露泄露测试（服务端 assertNoLeak）、expectedAnswerRevision 事务内比对实现、错误码接线、学生端 UI。
+
+### M2 服务层（2026-10-22，分支 codex/practice-question-submit，Claude 会话执行）
+
+提交：afb7ebd2（服务层 + 路由 + 测试）+ 本台账提交。
+
+- TDD 红灯（真实运行、行为断言失败）：先写 `apps/server/src/routes/student-practice-question-submit.test.ts`（21 用例：端到端闭环 5、协议分流与守卫 5、版本核对 4、教师收紧 2、after_attempt/after_due 2、整卷混跑 1、泄露矩阵 2）→ `pnpm test apps/server/src/routes/student-practice-question-submit.test.ts` exit 1，21/21 失败（新协议请求被既有 lesson 协议路径按非 lesson 来源 404——行为失败非导入失败）。
+- 绿灯：同命令 exit 0，21/21。中途四处**测试自身**口径修正（重试用例先存答案再断判对、未知题用例显式 questionRevisionId、feedback GET 跨学生按取卷口径断 403 FORBIDDEN、course 夹具需 PATCH course-items visible=true 且单元改名避免与库单元同名合并），非实现返工。
+- 落地内容：
+  - **submitPracticeQuestion**（attempt-service，M2 新协议普通卷通用逐题提交）：单事务按 §10.2 顺序——归属（and(id,studentId) 404 不暴露差异，同 PATCH workflow 口径）→ 作废 409 → 课程失权（requireVisibleCourseUnit 分态）→ 协议形态（lesson→409 WORKFLOW_PROTOCOL_MISMATCH、历史卷→409 WORKFLOW_LEGACY）→ **幂等与已提交裁决**（同 mutationId 同摘要→重放按当前规则投影返回同一提交事实，不重判不重复事件；同 id 异摘要→409 WORKFLOW_MUTATION_CONFLICT；异 mutationId 含整卷已收尾→409 QUESTION_ALREADY_SUBMITTED）→ resolver 当前裁决（canSubmitQuestion=false→409 WORKFLOW_RESTRICTED；重放分支先于它，教师收紧后重试不再被拒）→ workflowRevision CAS（409 WORKFLOW_REVISION_STALE）→ questionRevisionId（409 与整卷/lesson 同口径）→ **expectedAnswerRevision 与事务内实际读取的学生答案版本比对**（409 ANSWER_REVISION_CONFLICT 附 _current，复用既有答案冲突协议）→ 证据声明（buildSingleQuestionEvidence 与 lesson 同一实现：questionId 一致、有稿 none 拒、frozen 精确比对落行、missing 如实记录）→ **事务内**读冻结快照与答案判分（M0 风险 1「事务前读答案」窗口关闭）→ 行级真实 CAS（UPDATE WHERE submittedAt IS NULL，幂等凭据 practice_mutation_id/practice_request_digest 同事务写入）→ 最后一题共同收尾。成功记 question_submit 事件（重放不重复）；回执四键在事务后 fresh 读 + 读取时刻投影组装。
+  - **共享收尾 autoFinishPerQuestionAttempt**：从 submitLessonQuestion 收尾块抽取（瘦行集重读 + finalScoreOf/scoreAutoOf 与整卷同口径 + WHERE status='draft' 真实 CAS——逐题与整卷并发收尾只成功一次），lesson 与 M2 同源；lesson 行为零变化（student-lesson.test.ts 既有用例全绿为回归证据）。
+  - **题级反馈 GET /attempts/:id/questions/:questionId/feedback**（新增路由）：getPracticeQuestionFeedback（归属/作废/课程失权/协议形态/冻结集守卫，lesson 与历史卷 409 WORKFLOW_LEGACY——不当题复制 lesson 释放或整卷结果视图）+ **共用授权投影 practiceQuestionFeedbackOf**（提交回执的 feedback 字段与 GET 的 data.feedback 是同一函数，单一实现防漂移）。四态按读取时刻裁决：not_submitted；pending_attempt（本题已提交但公布条件未满足——进行中卷 after_attempt 节奏，或已收尾卷 after_due 截止前，公布 gate 与结果视图 answersReleased 同口径读时比较）；restricted（教师收紧，原因复用 M1 practiceRestrictionReasonSchema 三值）；released（question 为 attemptResultQuestion 同构，stemMd 一律经 studentFacingResultOf/studentStemMd 与 lesson 同一出口；**attempt 未交卷期间 teacherMark/teacherComment/finalCorrect 恒 null 投影**，收尾公布后随行）。响应 Cache-Control: private, no-store。
+  - **协议分流路由**：POST 单题提交按请求形态分流——携带 workflowVersion 字段走新协议 strict 契约（回执经 practiceQuestionSubmitDataSchema.parse 白名单校验 + private,no-store），否则 lesson 旧协议形态沿用既有契约与行为（400 消息格式不变）；lib/http-error 增 readJsonBody（非 JSON 400 与 parseJsonBody 同口径）。
+  - **整卷混跑**（§10.1 末行）：submitAttempt 的逐题语义条件从 isLesson 扩为 `lesson || practiceWorkflowVersion===1`——已单题提交行不重判、不覆盖材料（教师课中批改 teacherMark/finalCorrect/submittedAt/幂等凭据保留），剩余行判分并把 submittedAt 记为交卷时刻，证据声明范围只覆盖剩余题；历史卷（无版本）行为零变化。submitLessonQuestion 增协议守卫：新协议卷收到旧协议形态→409 WORKFLOW_PROTOCOL_MISMATCH 提示刷新（§5.3 不退回无版本写入），历史卷维持 404。
+- 设计决定（供编排者复核）：
+  - **共享抽取方式**：证据验证（evidenceRowOfDeclaration/buildSingleQuestionEvidence）、判分原语（grade/snapshotOfRow/answerOf）、收尾（autoFinishPerQuestionAttempt）、拒绝工厂（questionAlreadySubmitted/revisionStale）为两协议共享件；lesson 与 practice 的**编排**保持独立——lesson 无工作流 CAS、答案版本比对与幂等键，两套事务必要顺序不同，强行参数化统一会增加抽象层级而不减少语义（lesson 零变化有全量回归证据）。
+  - **请求摘要**：sha256(版本标签 v1 + attemptId + questionId + workflowRevision + questionRevisionId + expectedAnswerRevision + 证据 state/versionId/revision/questionId 字段拼接)；submissionMutationId 是配对键本身不进摘要。任一提交后节奏冻结（PATCH 被 QUESTION_ALREADY_SUBMITTED 阻断），workflowRevision 进摘要不会误伤合法重试。
+  - **新错误码**（全部服务层 HttpError，ApiErr UPPER_SNAKE 通用壳，无契约改动）：WORKFLOW_RESTRICTED（409，教师收紧/节奏不允许逐题提交——学生按「继续完成剩余题目并交卷」收敛）；WORKFLOW_MUTATION_CONFLICT（409，同 id 异摘要）；WORKFLOW_PROTOCOL_MISMATCH（409，两方向协议错配：新协议请求打 lesson 卷 / 旧协议形态打新协议卷，均提示刷新）。
+  - 教师域字段口径：released 在 attempt 未交卷期间 teacherMark/teacherComment/finalCorrect 恒 null（派单明示）；收尾公布后随行（与结果视图 answersReleased 同 gate，attemptResultQuestion「公布 gate 截止前置 null」注释的题级实例化）。
+- 泄露矩阵结果（§10.4）：未授权形态（not_submitted/pending_attempt/restricted 的 feedback GET 与重放回执）完整 assertNoLeak + assertNoStemLeak；released 正断言（judge 详解与参考答案确实在）+ 负断言（邻题未提交答案/未解锁提示、教师私注哨兵〔draft 期间〕、题块原文、`- [x]` 与 `[[…]]` 标记绝不出现）；逐题提交后普通取卷/草稿视图仍全绿（questionProgress 白名单只有 submittedAt/feedbackReadable，无对错得分）。
+- 真实命令与退出码（工作树内）：
+  - `pnpm test apps/server/src/routes/student-practice-question-submit.test.ts` → 红灯 exit 1（21 failed）；绿灯 exit 0（21 passed）。
+  - 定向回归 `pnpm test apps/server/src/routes/student-lesson.test.ts student-practice-workflow.test.ts student-attempts.test.ts attempt-freeze.test.ts student-course-attempts.test.ts` → exit 0，5 文件 113/113。
+  - `pnpm test -- --maxWorkers=4` → exit 0，461 文件 5443/5443。
+  - `pnpm -r run typecheck` → exit 0（修测试文件三处类型：判别联合换宽松形态接口 SubmitBody、两处未用变量）。
+  - `pnpm lint` → 首跑 exit 1（2 格式错），`biome check --write` 4 文件后 exit 0（余 2 warning + 1 info 均旧代码）。
+  - `pnpm build` → exit 0。
+- 未做（M3+ 范围，不宣称）：学生端单题工作区与按题 flush（M3）、AI 完成态/统计/导出整合（M4）、e2e spec（M6）、gen:spec/schema:export（契约未动，无需重跑）。
