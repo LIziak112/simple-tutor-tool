@@ -3,7 +3,7 @@ import {
   practiceQuestionFeedbackOkSchema,
   practiceQuestionSubmitOkSchema,
 } from "@tutor/contract";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -657,6 +657,25 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
     // 收尾后 released 仍可读（on_submit 公布；canSubmitQuestion=false 与 released 并存合法）
     expect(last.data.feedback.status).toBe("released");
     expect(last.data.practiceWorkflow.canSubmitQuestion).toBe(false);
+    // 题级进度可读性与反馈四态同一裁决：收尾公布后已提交行 readable=true
+    //（修复前 wiring 自写谓词在此恒 false，与 released 反馈自相矛盾）
+    expect(last.data.questionProgress).toEqual([
+      {
+        questionId: Q.choice,
+        submittedAt: expect.any(String),
+        feedbackReadable: true,
+      },
+      {
+        questionId: Q.judge,
+        submittedAt: expect.any(String),
+        feedbackReadable: true,
+      },
+      {
+        questionId: Q.fill,
+        submittedAt: expect.any(String),
+        feedbackReadable: true,
+      },
+    ]);
 
     // 已收尾卷：同 mutationId 重试确认提交事实（§10.3「已完成整卷也能确认」）
     const replay = await practiceSubmit(env, draft, attemptId, Q.fill, {
@@ -1266,6 +1285,50 @@ describe("M2 after_attempt 节奏与公布 gate", () => {
     };
     expect(releasedBody.data.feedback.status).toBe("released");
     expect(releasedBody.data.feedback.question?.answers).not.toBeNull();
+  });
+});
+
+describe("M2 异常数据降级（作业授权行悬挂——v2 加固 d7c84b89 语义接线）", () => {
+  it("读侧工作流投影缺失：新协议提交降级 409 WORKFLOW_LEGACY 不打 500；已提交题 feedback restricted(legacy_attempt)", async () => {
+    const env = await makeEnv();
+    const attemptId = await startPracticeAttempt(env);
+    await saveAnswer(env, attemptId, Q.choice, { kind: "choice", index: 1 });
+    await saveAnswer(env, attemptId, Q.judge, { kind: "judge", value: false });
+    // 悬挂前取全版本引用（悬挂后取卷/草稿自身会按 ASSIGNMENT_NOT_FOUND 拒绝）
+    const draft = await fetchDraft(env, attemptId);
+    const first = await practiceSubmitOk(env, draft, attemptId, Q.choice);
+    expect(first.data.feedback.status).toBe("released");
+
+    // 手工改库模拟异常数据：临时关 FK 硬删作业行（正常链路软删且 FK 约束；
+    // 加固语义针对的正是这种库内一致性被外力破坏的形态）
+    const asgId = env.db
+      .select({ id: attempts.assignmentId })
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get()?.id;
+    if (!asgId) throw new Error("夹具缺少作业行");
+    env.db.run(sql`PRAGMA foreign_keys = OFF`);
+    try {
+      env.db.delete(assignments).where(eq(assignments.id, asgId)).run();
+    } finally {
+      env.db.run(sql`PRAGMA foreign_keys = ON`);
+    }
+
+    // 后续提交：读侧投影缺失（作业授权行悬挂按「缺失=旧协议」降级）→ 409 非 500
+    const blocked = await practiceSubmit(env, draft, attemptId, Q.judge);
+    await expectErr(blocked, 409, "WORKFLOW_LEGACY");
+    expect(questionSubmitEventsOf(env.db, attemptId)).toBe(1);
+
+    // 已提交题重取：按当前（降级）gate 收敛 restricted(legacy_attempt)，零题目秘密
+    const body = (await getFeedbackOk(env, attemptId, Q.choice)) as {
+      data: { feedback: { status: string; restrictionReason?: string } };
+    };
+    expect(body.data.feedback).toEqual({
+      status: "restricted",
+      restrictionReason: "legacy_attempt",
+    });
+    assertNoLeak(body);
+    assertNoStemLeak(body);
   });
 });
 

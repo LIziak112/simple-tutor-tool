@@ -19,7 +19,9 @@ import { requireVisibleCourseUnit } from "./course-service";
 import { policyOfColumn } from "./practice-feedback-settings-service";
 import {
   type AssignmentFeedbackGrant,
+  answersReleased,
   type PracticeWorkflowSource,
+  resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
 } from "./practice-workflow-service";
 
@@ -171,9 +173,10 @@ export function attemptWorkflowView(
     return null;
   }
   const inputs = resolverInputsOf(db, attempt);
+  const grant = attempt.sourceType === "assignment" ? inputs.assignment : null;
   // 作业授权行缺失（FK 正常时不可达；手工改库/异常恢复兜底）：按「缺失 =
   // 旧协议」降级——读侧 fail closed 不给逐题授权，不把接口打成 500
-  if (attempt.sourceType === "assignment" && inputs.assignment === null) {
+  if (attempt.sourceType === "assignment" && grant === null) {
     return null;
   }
   const rows = db
@@ -197,15 +200,31 @@ export function attemptWorkflowView(
     ...inputs,
   });
   // 教师收紧后已提交题重取也按当前 gate 返回受限（计划 §5.4：已下发内容
-  // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）
-  const perQuestionReadable =
-    workflow.canSubmitQuestion && workflow.feedbackMode === "per_question";
+  // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）。
+  // feedbackReadable 与题级反馈四态共用同一纯裁决（M2 收敛：此前 wiring 自写
+  // 谓词在已收尾卷上恒 false，与最后一题收尾回执的 released 反馈自相矛盾）；
+  // 已收尾卷按公布 gate（assignment after_due 截止前不可读，读时比较）
+  const published =
+    attempt.submittedAt === null
+      ? true
+      : grant !== null
+        ? answersReleased({
+            answerRelease: grant.answerRelease,
+            dueAt: inputs.dueAt,
+          })
+        : true;
   return {
     practiceWorkflow: workflow,
     questionProgress: rows.map((row) => ({
       questionId: row.questionId,
       submittedAt: row.submittedAt,
-      feedbackReadable: row.submittedAt !== null && perQuestionReadable,
+      feedbackReadable:
+        resolvePracticeQuestionFeedbackState({
+          submitted: row.submittedAt !== null,
+          attemptSubmitted: attempt.submittedAt !== null,
+          published,
+          workflow,
+        }).status === "released",
     })),
   };
 }

@@ -1,6 +1,7 @@
-import { practiceWorkflowSchema } from "@tutor/contract";
+import { type PracticeWorkflow, practiceWorkflowSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
+  resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
   type StoredPracticeWorkflow,
 } from "./practice-workflow-service.ts";
@@ -322,5 +323,107 @@ describe("resolvePracticeWorkflow：lifecycle 判别（新卷/已存卷显式区
         lifecycle: "new",
       } as never),
     ).toThrow();
+  });
+});
+
+describe("resolvePracticeQuestionFeedbackState：题级反馈四态纯裁决（M2 §10.1/§10.4）", () => {
+  /** 合法工作流基底（经契约 schema 收口，防手写字段漂移） */
+  const workflowOf = (over: Partial<PracticeWorkflow> = {}): PracticeWorkflow =>
+    practiceWorkflowSchema.parse({
+      version: 1,
+      feedbackMode: "per_question",
+      revision: 0,
+      canChangeFeedback: true,
+      allowedFeedbackModes: ["per_question", "after_attempt"],
+      canSubmitQuestion: true,
+      restrictionReason: null,
+      releaseAt: null,
+      ...over,
+    });
+
+  it("未提交行恒 not_submitted（卷态/规则/published 均不参与）", () => {
+    expect(
+      resolvePracticeQuestionFeedbackState({
+        submitted: false,
+        attemptSubmitted: false,
+        published: false,
+        workflow: null,
+      }),
+    ).toEqual({ status: "not_submitted" });
+    expect(
+      resolvePracticeQuestionFeedbackState({
+        submitted: false,
+        attemptSubmitted: true,
+        published: false,
+        workflow: workflowOf(),
+      }),
+    ).toEqual({ status: "not_submitted" });
+  });
+
+  it("已收尾卷只看公布 gate：published→released、未公布→pending_attempt（workflow 不参与）", () => {
+    const input = {
+      submitted: true,
+      attemptSubmitted: true,
+      workflow: null,
+    } as const;
+    expect(
+      resolvePracticeQuestionFeedbackState({ ...input, published: true }),
+    ).toEqual({ status: "released" });
+    expect(
+      resolvePracticeQuestionFeedbackState({ ...input, published: false }),
+    ).toEqual({ status: "pending_attempt" });
+  });
+
+  it("进行中卷：canSubmitQuestion→released；after_attempt 节奏→pending_attempt；教师收紧→restricted", () => {
+    expect(
+      resolvePracticeQuestionFeedbackState({
+        submitted: true,
+        attemptSubmitted: false,
+        published: true,
+        workflow: workflowOf(),
+      }),
+    ).toEqual({ status: "released" });
+    // 学生自选/教师限定交卷后公布（节奏本体，非收紧）
+    expect(
+      resolvePracticeQuestionFeedbackState({
+        submitted: true,
+        attemptSubmitted: false,
+        published: true,
+        workflow: workflowOf({
+          feedbackMode: "after_attempt",
+          canChangeFeedback: true,
+          allowedFeedbackModes: ["per_question", "after_attempt"],
+          canSubmitQuestion: false,
+        }),
+      }),
+    ).toEqual({ status: "pending_attempt" });
+    // 教师收紧（已选 per_question 但当前规则不再允许逐题）
+    expect(
+      resolvePracticeQuestionFeedbackState({
+        submitted: true,
+        attemptSubmitted: false,
+        published: true,
+        workflow: workflowOf({
+          canChangeFeedback: false,
+          allowedFeedbackModes: ["after_attempt"],
+          canSubmitQuestion: false,
+          restrictionReason: "teacher_after_attempt",
+        }),
+      }),
+    ).toEqual({
+      status: "restricted",
+      restrictionReason: "teacher_after_attempt",
+    });
+  });
+
+  it("读侧工作流投影缺失（异常数据降级）→ restricted(legacy_attempt) fail closed", () => {
+    expect(
+      resolvePracticeQuestionFeedbackState({
+        submitted: true,
+        attemptSubmitted: false,
+        published: true,
+        workflow: null,
+      }),
+    ).toEqual({ status: "restricted", restrictionReason: "legacy_attempt" });
   });
 });

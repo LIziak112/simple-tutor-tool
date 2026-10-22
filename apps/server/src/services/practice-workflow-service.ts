@@ -102,6 +102,94 @@ function perQuestionAllowed(input: ResolvePracticeWorkflowInput): boolean {
   return (input.teacherPolicy ?? "student_choice") === "student_choice";
 }
 
+// ---------- 答案公布 gate（T2A.8 判定纯函数，2026-10-22 起随工作流裁决同居） ----------
+
+/**
+ * 答案是否已公布（T2A.8，D11 的判定纯函数，服务测试单测覆盖）：
+ * - on_submit（默认）恒已公布；course 来源不适用本函数（D11 恒交卷即公布）；
+ * - after_due：now ≥ dueAt 才公布（**读时比较，无定时任务**——截止后下一次
+ *   请求自然恢复完整结果视图）；
+ * - after_due 而 dueAt 缺失：按未公布处理（fail closed）。该状态被
+ *   assignment-service 的 create/PATCH 组合校验 400 拦截，正常不可达，
+ *   防御性口径取不泄露的一侧。
+ * 原定义在 attempt-service，M2 起题级反馈四态裁决（下方）与 wiring 的题级
+ * 进度可读性都要消费它，移到纯裁决器层避免反向依赖；attempt-service
+ * re-export 保持既有导入路径不变。
+ */
+export function answersReleased(
+  assignment: {
+    answerRelease: AssignmentAnswerRelease;
+    dueAt: string | null;
+  },
+  now: Date | string = new Date(),
+): boolean {
+  if (assignment.answerRelease !== "after_due") return true;
+  if (assignment.dueAt === null) return false;
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  return Date.parse(assignment.dueAt) <= nowMs;
+}
+
+// ---------- M2 题级反馈四态纯裁决（2026-10-22 计划 §10.1/§10.4） ----------
+
+/** 题级反馈授权四态（判别键与契约 practiceQuestionFeedbackSchema 同构；
+ * released 态的题目投影由调用方组装——本裁决只出状态，不碰题目内容） */
+export type PracticeQuestionFeedbackState =
+  | { status: "not_submitted" }
+  | { status: "pending_attempt" }
+  | { status: "restricted"; restrictionReason: PracticeRestrictionReason }
+  | { status: "released" };
+
+/**
+ * 单题反馈授权的纯裁决器（M2 收敛点：提交回执的 feedback、feedback GET、
+ * 题级进度 feedbackReadable 三处共用同一实现——此前 wiring 自写谓词与
+ * attempt-service 内联分支是两套公式，最后一题收尾回执会出现 released
+ * 与 feedbackReadable=false 自相矛盾）：
+ * - not_submitted：行未提交（无任何题目秘密，提交事实以 submittedAt 为准）；
+ * - 已收尾卷（attemptSubmitted）：published（公布 gate，与结果视图
+ *   answersReleased 同口径读时比较）决定 released / pending_attempt；
+ * - 进行中卷：canSubmitQuestion（resolver 语义 = 教师允许逐题 × 本卷节奏
+ *   per_question）→ released；节奏 after_attempt（学生自选或教师限定）→
+ *   pending_attempt；其余（教师收紧，§5.4）→ restricted；
+ * - workflow 为 null（读侧异常降级——如作业授权行悬挂按「缺失=旧协议」）→
+ *   restricted(legacy_attempt) fail closed，不把异常数据打成 500。
+ */
+export function resolvePracticeQuestionFeedbackState(input: {
+  /** 本题 responses 行是否已提交 */
+  submitted: boolean;
+  /** 本卷是否已整卷收尾（attempts.status ≠ draft） */
+  attemptSubmitted: boolean;
+  /** 已收尾卷的公布 gate（assignment answersRelease / course·wrong 恒 true）；
+   * 进行中卷忽略本入参 */
+  published: boolean;
+  /** 读侧工作流投影（进行中卷裁决用；已收尾卷不用，可传 null） */
+  workflow: PracticeWorkflow | null;
+}): PracticeQuestionFeedbackState {
+  if (!input.submitted) {
+    return { status: "not_submitted" };
+  }
+  if (input.attemptSubmitted) {
+    return input.published
+      ? { status: "released" }
+      : { status: "pending_attempt" };
+  }
+  const workflow = input.workflow;
+  if (workflow === null) {
+    return { status: "restricted", restrictionReason: "legacy_attempt" };
+  }
+  if (workflow.canSubmitQuestion) {
+    return { status: "released" };
+  }
+  if (workflow.feedbackMode === "after_attempt") {
+    return { status: "pending_attempt" };
+  }
+  return {
+    status: "restricted",
+    // resolver 语义下本分支 restrictionReason 恒非空（allowPerQuestion=false
+    // 必携带原因）；兜底取保守枚举值
+    restrictionReason: workflow.restrictionReason ?? "teacher_after_attempt",
+  };
+}
+
 export function resolvePracticeWorkflow(
   input: ResolvePracticeWorkflowInput,
 ): PracticeWorkflow {
