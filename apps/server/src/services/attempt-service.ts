@@ -1288,6 +1288,14 @@ export function newDraftAttempt(config: {
   lectureId?: string | null;
   attemptNo: number;
   startedAt: string;
+  /**
+   * 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式
+   * workflowVersion=1 请求时由服务端按教师规则裁决后传入；缺省 = 旧协议
+   * （version/mode 为 NULL，revision 0），lesson 恒缺省（独立适配路径）。
+   */
+  practiceWorkflowVersion?: 1 | null;
+  feedbackMode?: "per_question" | "after_attempt" | null;
+  workflowRevision?: number;
 }): Attempt {
   return {
     id: config.id,
@@ -1311,6 +1319,10 @@ export function newDraftAttempt(config: {
     // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，讲练重开时才由
     // restartLessonAttempt 写入
     abandonedAt: null,
+    // M1b 工作流列：缺省旧协议（NULL/NULL/0），新协议卷由建卷路径显式传入
+    practiceWorkflowVersion: config.practiceWorkflowVersion ?? null,
+    feedbackMode: config.feedbackMode ?? null,
+    workflowRevision: config.workflowRevision ?? 0,
   };
 }
 

@@ -302,6 +302,29 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toBe(false);
     expect(wrongPracticeRequestSchema.safeParse({}).success).toBe(false);
   });
+
+  it("错题组卷请求携带建卷工作流选项（M1b）：旧请求合法；feedbackMode 必须伴随 workflowVersion=1", () => {
+    expect(
+      wrongPracticeRequestSchema.parse({
+        questionIds: ["练习四-1"],
+        workflowVersion: 1,
+        feedbackMode: "per_question",
+      }),
+    ).toMatchObject({ workflowVersion: 1, feedbackMode: "per_question" });
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["练习四-1"],
+        feedbackMode: "per_question",
+      }).success,
+    ).toBe(false);
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["练习四-1"],
+        workflowVersion: 1,
+        layout: "single",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("attemptDraftDataSchema（草稿视图）", () => {

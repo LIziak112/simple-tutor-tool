@@ -122,6 +122,65 @@ export const practiceWorkflowUpdateRequestSchema = z
   })
   .strict();
 
+/**
+ * GET /api/teacher/settings/practice-feedback 响应 data（strict，M1b）：
+ * practiceFeedbackPolicy 为 null 表示教师尚未配置——仅对新普通自由练习按
+ * student_choice 缺省处理，客户端展示有效默认值，不改历史 attempt。
+ */
+export const teacherPracticeFeedbackSettingsSchema = z
+  .object({
+    practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema.nullable(),
+  })
+  .strict();
+
+/**
+ * PUT /api/teacher/settings/practice-feedback 请求体（strict，M1b）：
+ * policy 必填枚举——不允许清空回未配置态（保守起见只能二选一）。
+ */
+export const teacherPracticeFeedbackSettingsUpdateRequestSchema = z
+  .object({
+    practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema,
+  })
+  .strict();
+
+/**
+ * 建卷可选工作流选项（M1b，2026-10-22 计划 §10.1）：新协议客户端显式携带
+ * workflowVersion=1；旧请求不带任何字段维持旧协议，不能默认升级。
+ * feedbackMode 有值必须伴随 workflowVersion=1（见下方 refine），否则拒绝。
+ */
+export const practiceWorkflowStartOptionsFields = {
+  workflowVersion: z.literal(1).optional(),
+  feedbackMode: practiceFeedbackModeSchema.optional(),
+} as const;
+
+/** feedbackMode 无 workflowVersion=1 拒绝（不得暗中按新协议授权） */
+export const rejectFeedbackModeWithoutVersion = (
+  req: {
+    workflowVersion?: 1 | undefined;
+    feedbackMode?: PracticeFeedbackMode | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void => {
+  if (req.feedbackMode !== undefined && req.workflowVersion !== 1) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["feedbackMode"],
+      message:
+        "feedbackMode 只能随 workflowVersion=1（新协议）携带；旧协议请求不带该字段",
+    });
+  }
+};
+
+/**
+ * POST /api/student/assignments/:id/attempt 与
+ * POST /api/student/courses/:cid/units/:uid/attempts 的可选请求体（M1b）：
+ * 空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode。
+ */
+export const attemptStartOptionsRequestSchema = z
+  .object(practiceWorkflowStartOptionsFields)
+  .strict()
+  .superRefine(rejectFeedbackModeWithoutVersion);
+
 // ---------- 推断类型导出 ----------
 
 export type PracticeLayout = z.infer<typeof practiceLayoutSchema>;
@@ -141,4 +200,13 @@ export type PracticeQuestionProgress = z.infer<
 >;
 export type PracticeWorkflowUpdateRequest = z.infer<
   typeof practiceWorkflowUpdateRequestSchema
+>;
+export type TeacherPracticeFeedbackSettings = z.infer<
+  typeof teacherPracticeFeedbackSettingsSchema
+>;
+export type TeacherPracticeFeedbackSettingsUpdateRequest = z.infer<
+  typeof teacherPracticeFeedbackSettingsUpdateRequestSchema
+>;
+export type AttemptStartOptionsRequest = z.infer<
+  typeof attemptStartOptionsRequestSchema
 >;

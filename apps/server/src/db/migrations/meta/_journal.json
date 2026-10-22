@@ -267,6 +267,13 @@
       "when": 1792124690963,
       "tag": "0037_outstanding_young_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1792658035719,
+      "tag": "0038_youthful_harrier",
+      "breakpoints": true
     }
   ]
 }

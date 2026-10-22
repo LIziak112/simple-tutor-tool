@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attemptStartOptionsRequestSchema,
   practiceFeedbackModeSchema,
   practiceLayoutSchema,
   practiceQuestionProgressSchema,
@@ -7,6 +8,8 @@ import {
   practiceWorkflowUpdateRequestSchema,
   studentPracticePreferenceSchema,
   teacherPracticeFeedbackPolicySchema,
+  teacherPracticeFeedbackSettingsSchema,
+  teacherPracticeFeedbackSettingsUpdateRequestSchema,
 } from "./practice-workflow.ts";
 
 /** 合法 workflow 投影样例（各 schema 行为断言的公共基底） */
@@ -257,6 +260,87 @@ describe("practiceWorkflowUpdateRequestSchema", () => {
         feedbackMode: "per_question",
         workflowRevision: 0,
         answerRelease: "on_submit",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("teacherPracticeFeedbackSettingsSchema（M1b）", () => {
+  it("读取：policy 可空（null=未配置），strict 拒绝未知字段", () => {
+    expect(
+      teacherPracticeFeedbackSettingsSchema.parse({
+        practiceFeedbackPolicy: "after_attempt",
+      }),
+    ).toEqual({ practiceFeedbackPolicy: "after_attempt" });
+    expect(
+      teacherPracticeFeedbackSettingsSchema.parse({
+        practiceFeedbackPolicy: null,
+      }),
+    ).toEqual({ practiceFeedbackPolicy: null });
+    expect(() =>
+      teacherPracticeFeedbackSettingsSchema.parse({
+        practiceFeedbackPolicy: "on_submit",
+      }),
+    ).toThrow();
+    expect(() =>
+      teacherPracticeFeedbackSettingsSchema.parse({
+        practiceFeedbackPolicy: null,
+        steps: true,
+      }),
+    ).toThrow();
+  });
+
+  it("写入：policy 必填枚举，缺省/未知拒绝", () => {
+    expect(
+      teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({
+        practiceFeedbackPolicy: "student_choice",
+      }),
+    ).toEqual({ practiceFeedbackPolicy: "student_choice" });
+    expect(() =>
+      teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({}),
+    ).toThrow();
+    expect(() =>
+      teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({
+        practiceFeedbackPolicy: null,
+      }),
+    ).toThrow();
+  });
+});
+
+describe("建卷可选工作流选项（M1b）", () => {
+  it("attemptStartOptionsRequestSchema：空对象合法（旧协议）", () => {
+    expect(attemptStartOptionsRequestSchema.parse({})).toEqual({});
+  });
+
+  it("携带 workflowVersion=1 合法；非 1 拒绝", () => {
+    expect(
+      attemptStartOptionsRequestSchema.parse({ workflowVersion: 1 }),
+    ).toEqual({ workflowVersion: 1 });
+    expect(() =>
+      attemptStartOptionsRequestSchema.parse({ workflowVersion: 2 }),
+    ).toThrow();
+  });
+
+  it("feedbackMode 有值但无 workflowVersion=1 拒绝（不得暗中升级协议）", () => {
+    expect(
+      attemptStartOptionsRequestSchema.parse({
+        workflowVersion: 1,
+        feedbackMode: "after_attempt",
+      }),
+    ).toEqual({ workflowVersion: 1, feedbackMode: "after_attempt" });
+    for (const body of [
+      { feedbackMode: "per_question" },
+      { feedbackMode: "per_question", workflowVersion: 2 },
+    ]) {
+      expect(() => attemptStartOptionsRequestSchema.parse(body)).toThrow();
+    }
+  });
+
+  it("strict 拒绝未知字段", () => {
+    expect(() =>
+      attemptStartOptionsRequestSchema.parse({
+        workflowVersion: 1,
+        layout: "single",
       }),
     ).toThrow();
   });

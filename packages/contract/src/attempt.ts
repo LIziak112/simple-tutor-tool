@@ -10,6 +10,8 @@ import { studentAnswerSchema } from "./grading.ts";
 import {
   practiceQuestionProgressSchema,
   practiceWorkflowSchema,
+  practiceWorkflowStartOptionsFields,
+  rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
 import {
   studentUnitAttemptRecordSchema,
@@ -256,11 +258,15 @@ export const attemptStartDataSchema = attemptSummarySchema;
  *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
  *   WRONG_PRACTICE_EMPTY（附中文说明）。
  */
-export const wrongPracticeRequestSchema = z.object({
-  questionIds: z
-    .array(z.string().min(1, "题目 id 不能为空"))
-    .min(1, "至少选择一道错题"),
-});
+export const wrongPracticeRequestSchema = z
+  .object({
+    questionIds: z
+      .array(z.string().min(1, "题目 id 不能为空"))
+      .min(1, "至少选择一道错题"),
+    /** 建卷可选工作流选项（M1b）：不带字段维持旧协议 */
+    ...practiceWorkflowStartOptionsFields,
+  })
+  .superRefine(rejectFeedbackModeWithoutVersion);
 
 /** POST /api/student/wrong-practice 响应（新建 wrong 来源 attempt；201） */
 export const wrongPracticeOkSchema = apiOkExtend(attemptStartDataSchema);

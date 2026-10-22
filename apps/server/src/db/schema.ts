@@ -17,7 +17,9 @@ import type {
   NoteImageState,
   NotePhase,
   NoteSubmissionEvidenceState,
+  PracticeFeedbackMode,
   QuestionType,
+  TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
 import { sql } from "drizzle-orm";
 import {
@@ -110,6 +112,15 @@ export const teachers = sqliteTable(
      * 安全边界。
      */
     capabilityProfileJson: text("capability_profile_json"),
+    /**
+     * 练习反馈默认策略（M1b，2026-10-22 计划 §5.2）：student_choice | after_attempt。
+     * NULL = 未配置，仅对新普通自由练习（course/wrong 建卷）按 student_choice
+     * 缺省处理；不混入 capabilityProfileJson（那是 steps/ink 辅助能力开关）。
+     * 异常持久化值读侧按保守的 after_attempt 处理（fail closed，不意外授权）。
+     */
+    practiceFeedbackPolicy: text(
+      "practice_feedback_policy",
+    ).$type<TeacherPracticeFeedbackPolicy>(),
     /** 创建时间：UTC ISO 字符串 */
     createdAt: text("created_at").notNull(),
   },
@@ -655,6 +666,17 @@ export const assignments = sqliteTable(
       .$type<"on_submit" | "after_due">()
       .notNull()
       .default("on_submit"),
+    /**
+     * 逐题反馈授权（M1b，2026-10-22 计划 §5.2）：false 兼容默认（历史作业回填
+     * false，旧 on_submit 不自动解释成学生任选）；true 仅允许与 answerRelease
+     * ='on_submit' 组合（写入侧拒绝 after_due+true，读侧异常组合 fail closed
+     * 禁逐题）。两字段同事务更新；旧客户端仅改 answerRelease 时服务端恒写 false。
+     */
+    allowPerQuestionFeedback: integer("allow_per_question_feedback", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
     deletedAt: text("deleted_at"),
     /** 创建时间：UTC ISO 字符串 */
@@ -815,6 +837,23 @@ export const attempts = sqliteTable(
      * 事件/笔记）保留审计，不物理删除。
      */
     abandonedAt: text("abandoned_at"),
+    /**
+     * 做题工作流协议版本（M1b，2026-10-22 计划 §6.2）：1 = 新协议卷（建卷时
+     * 显式写入）；NULL = 升级前历史卷——恒整卷旧协议（resolver 恒 after_attempt /
+     * legacy_attempt），不回填不升级。lesson 来源不经本列（独立适配路径）。
+     */
+    practiceWorkflowVersion: integer("practice_workflow_version"),
+    /**
+     * 本卷反馈节奏（M1b）：per_question | after_attempt。仅新协议卷在建卷时
+     * 按教师规则 + 学生选择裁决写入；教师后续收紧不改写本值（读侧按当前规则
+     * 冻结 canSubmitQuestion），历史卷 NULL。
+     */
+    feedbackMode: text("feedback_mode").$type<PracticeFeedbackMode>(),
+    /**
+     * 工作流 CAS 版本（M1b）：新协议卷建卷写 0，反馈节奏修改（PATCH workflow）
+     * 与逐题提交（M2）事务内自增比对；历史卷恒 0 且不可变更。
+     */
+    workflowRevision: integer("workflow_revision").notNull().default(0),
   },
   (table) => [
     // 「一个作业一人一份进行中」的查询索引；唯一性由服务层保证（先查后插，
@@ -929,6 +968,16 @@ export const responses = sqliteTable(
     changeCount: integer("change_count").notNull().default(0),
     /** 手写笔迹记录 id（ink 表，T2.8 启用）；无笔迹为 NULL */
     inkId: text("ink_id"),
+    /**
+     * 普通逐题提交幂等键（M1b 建列、M2 实装）：同 mutationId 同请求摘要重试
+     * 返回同一提交事实，不重复判分；未逐题提交为 NULL。
+     */
+    practiceMutationId: text("practice_mutation_id"),
+    /**
+     * 逐题提交请求摘要（M1b 建列、M2 实装）：与 practiceMutationId 配对校验，
+     * 同 id 不同摘要 → 409；未逐题提交为 NULL。
+     */
+    practiceRequestDigest: text("practice_request_digest"),
   },
   (table) => [
     // 草稿 upsert 与交卷整行重写的定位键
