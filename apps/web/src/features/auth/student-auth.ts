@@ -5,6 +5,7 @@ import {
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
 import { bindDraftSession } from "@/features/attempt/draft-store";
+import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
 import {
   currentNoteSession,
   resetNoteSession,
@@ -49,6 +50,7 @@ function useApplyStudentAuthed() {
   return async (student: StudentMeData) => {
     await clearAccountQueries(queryClient, "student");
     bindAiDisplayAccount(student.id);
+    bindPracticePreferenceAccount(student.id);
     bindDraftSession({ origin: window.location.origin, studentId: student.id });
     // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
     // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
@@ -109,6 +111,7 @@ export function useLogoutStudent() {
     onSuccess: async () => {
       bindDraftSession(null);
       bindAiDisplayAccount(null);
+      bindPracticePreferenceAccount(null);
       resetNoteSession();
       resetAnnotationSession();
       await clearAccountQueries(queryClient, "student");
