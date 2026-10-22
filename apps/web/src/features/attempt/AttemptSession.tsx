@@ -3,6 +3,7 @@ import type {
   AttemptDraftData,
   AttemptResultData,
   HintOpenedEntry,
+  PracticeLayout,
 } from "@tutor/contract";
 import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
@@ -15,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -66,6 +68,18 @@ import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
 import { useSubmitAttempt } from "./attempt-queries";
 import { focusWhenReachable } from "./focus-when-reachable";
+import {
+  PracticeLayoutMenuItems,
+  PracticeModeSummary,
+  SingleQuestionActionBar,
+  SingleQuestionProgressRow,
+} from "./PracticeWorkspace";
+import { getPracticePreference } from "./practice-preference-store";
+import {
+  countSubmittedQuestions,
+  firstUnsubmittedQuestionId,
+  practiceProtocolOfDraft,
+} from "./practice-protocol";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
@@ -327,6 +341,84 @@ function AnswerView({
   );
   const cardElements = useRef(new Map<string, HTMLLIElement>());
   useReadingPosition(attemptId, cardElements, setCurrentQuestionId);
+
+  // ---------- 做题方式（M3-D1）：v1 新协议卷的列表/单题呈现 ----------
+  // 协议形态只信服务端投影：legacy/lesson（无 practiceWorkflow）恒列表，
+  // 现有行为零变化（计划 §6.1、§11 纪律 1 与退化边界）。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const practiceProtocol = practiceProtocolOfDraft(data);
+  const practiceWorkflow =
+    practiceProtocol === "v1" ? data.practiceWorkflow : undefined;
+  const questionProgress =
+    practiceProtocol === "v1" ? (data.questionProgress ?? []) : [];
+  const submittedPracticeCount = countSubmittedQuestions(questionProgress);
+  // 布局本次作答内自决：进入时取默认偏好一次，之后只随显式切换变化，
+  // 不被偏好变更或后台重取中途拉扯；不写回默认偏好（§7.1）
+  const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() =>
+    practiceProtocol === "v1" ? getPracticePreference().layout : "list",
+  );
+  const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
+  // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
+  const [singleQuestionId, setSingleQuestionId] = useState<string | null>(null);
+  const resolvedSingleQuestionId = useMemo(() => {
+    if (!singleMode) return null;
+    if (singleQuestionId !== null && questionIds.includes(singleQuestionId))
+      return singleQuestionId;
+    const urlQ = searchParams.get("q");
+    if (urlQ !== null && questionIds.includes(urlQ)) return urlQ;
+    if (currentQuestionId !== null && questionIds.includes(currentQuestionId))
+      return currentQuestionId;
+    return (
+      firstUnsubmittedQuestionId(questionIds, questionProgress) ??
+      questionIds[0] ??
+      null
+    );
+  }, [
+    singleMode,
+    singleQuestionId,
+    questionIds,
+    searchParams,
+    currentQuestionId,
+    questionProgress,
+  ]);
+  const singleIndex =
+    resolvedSingleQuestionId === null
+      ? -1
+      : questionIds.indexOf(resolvedSingleQuestionId);
+  // §11 纪律 7：单题切题 replace 更新 q、回列表清除 q——不加历史条目；
+  // 其他查询参数（returnTo/aiFrom）原样保留
+  useEffect(() => {
+    if (practiceProtocol !== "v1") return;
+    const q = searchParams.get("q");
+    if (singleMode && resolvedSingleQuestionId !== null) {
+      if (q !== resolvedSingleQuestionId) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("q", resolvedSingleQuestionId);
+            return next;
+          },
+          { replace: true },
+        );
+      }
+    } else if (!singleMode && q !== null) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("q");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [
+    practiceProtocol,
+    singleMode,
+    resolvedSingleQuestionId,
+    searchParams,
+    setSearchParams,
+  ]);
+
   const navigationItems = flatQuestions.map((question, index) => ({
     id: question.id,
     index,
@@ -336,6 +428,20 @@ function AnswerView({
       formalInkPresence.get(question.id),
     ),
     flagged: flaggedQuestions.has(question.id),
+    // v1 卷四态口径（§9.1）：progress 缺行按未提交处理；统一公布模式下
+    // feedbackReadable=false 的已提交行在导航里只报提交事实，不显示对错
+    ...(practiceProtocol === "v1"
+      ? {
+          practice: {
+            submitted:
+              (questionProgress.find((row) => row.questionId === question.id)
+                ?.submittedAt ?? null) !== null,
+            feedbackReadable:
+              questionProgress.find((row) => row.questionId === question.id)
+                ?.feedbackReadable ?? false,
+          },
+        }
+      : {}),
   }));
   const answered = navigationItems.filter(
     (item) => item.completion.state === "filled",
@@ -367,6 +473,17 @@ function AnswerView({
       );
     });
   };
+  // 单题跳题（M3-D1）：与列表跳题同一收笔/滚动/聚焦链，另更新单题态与
+  // 当前题标记（AI 伴学/导航跟随显式选择，§11 纪律 1 不重建题卡）
+  const goSingleQuestion = useCallback(
+    async (id: string) => {
+      setSingleQuestionId(id);
+      setCurrentQuestionId(id);
+      await jumpToQuestion(id);
+    },
+    [jumpToQuestion],
+  );
+  const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
   const submitRevisions = useMemo(
@@ -561,6 +678,14 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
+          menuItems={
+            practiceWorkflow !== undefined ? (
+              <PracticeLayoutMenuItems
+                layout={practiceLayout}
+                onChange={setPracticeLayout}
+              />
+            ) : undefined
+          }
           actions={
             <AiQueueButton
               currentAttemptId={aiCompanion.send.attemptId}
@@ -723,80 +848,135 @@ function AnswerView({
                 <QuestionNavigator
                   items={navigationItems}
                   currentId={currentQuestionId}
-                  onJump={jumpToQuestion}
+                  onJump={jumpForMode}
                 />
               </div>
             </aside>
 
-            {/* 空试卷：单元没有可作答的题目 */}
-            {total === 0 && (
-              <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-center">
-                <p className="text-sm font-medium">这份练习还没有题目</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  可能老师正在整理内容，请联系老师确认后再来。
-                </p>
-                <Button
-                  variant="outline"
-                  className="mt-4 min-h-11"
-                  onClick={onBackHome}
-                >
-                  返回
-                </Button>
-              </div>
-            )}
-
-            {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
-            T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续 */}
-            <ol
+            {/* 主内容列（M3-D1）：做题方式摘要 + 单题紧凑行 + 题卡列表 +
+                单题占位操作条。作答保护（材料核对）沿用原 ol 的 inert 语义，
+                现上移到本列容器——保护期间新增的呈现件同样不可交互 */}
+            <div
+              className="flex min-w-0 flex-col gap-4"
               inert={
                 !attemptMaterialsEditable(materialRecovery) || answers === null
               }
-              className={total === 0 ? "hidden" : "flex flex-col gap-4"}
             >
-              {data.units.map((unit) => (
-                <li key={unit.id} className="flex flex-col gap-4">
-                  {showUnitHeaders && (
-                    <h2
-                      data-slot="attempt-unit-heading"
-                      className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                    >
-                      {unit.title}
-                    </h2>
-                  )}
-                  <ol className="flex flex-col gap-4">
-                    {unit.questions.map((question) => {
-                      const index = flatQuestions.indexOf(question);
-                      return (
-                        <AttemptQuestionRow
-                          key={question.id}
-                          cardElements={cardElements}
-                          events={attemptEvents}
-                          index={index}
-                          question={question}
-                          assignmentTitle={data.title}
-                          answer={answers?.[question.id]}
-                          onAnswer={setAnswer}
-                          attemptId={attemptId}
-                          flagged={flaggedQuestions.has(question.id)}
-                          onToggleFlag={toggleFlag}
-                          formalInkPresence={
-                            formalInkPresence.get(question.id) ?? false
-                          }
-                          onInkPresenceChange={onInkPresenceChange}
-                          registerInkController={registerInkController}
-                          hints={hintsOpened[question.id]}
-                          onHintUnlocked={unlockHint}
-                          aiTrigger={aiCompanion.triggerForQuestion(
-                            question.id,
-                          )}
-                          aiContent={aiCompanion.inlineForQuestion(question.id)}
-                        />
-                      );
-                    })}
-                  </ol>
-                </li>
-              ))}
-            </ol>
+              {/* 空试卷：单元没有可作答的题目 */}
+              {total === 0 && (
+                <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-center">
+                  <p className="text-sm font-medium">这份练习还没有题目</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    可能老师正在整理内容，请联系老师确认后再来。
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="mt-4 min-h-11"
+                    onClick={onBackHome}
+                  >
+                    返回
+                  </Button>
+                </div>
+              )}
+
+              {/* 做题方式摘要行（§7.1）：v1 卷才有；legacy/lesson 不渲染 */}
+              {practiceWorkflow !== undefined && total > 0 && (
+                <PracticeModeSummary
+                  workflow={practiceWorkflow}
+                  layout={practiceLayout}
+                  onLayoutChange={setPracticeLayout}
+                />
+              )}
+              {singleMode && resolvedSingleQuestionId !== null && (
+                <SingleQuestionProgressRow
+                  current={singleIndex + 1}
+                  total={total}
+                  submittedCount={submittedPracticeCount}
+                  onOpenNavigator={() => setNavigatorOpen(true)}
+                />
+              )}
+
+              {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
+              T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续。
+              M3-D1 单题专注：同一 keyed 序列仅隐藏非当前题（不卸载不搬卡），
+              单元节头在单题态不显示（紧凑结构，§7.2） */}
+              <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
+                {data.units.map((unit) => (
+                  <li
+                    key={unit.id}
+                    hidden={
+                      singleMode &&
+                      !unit.questions.some(
+                        (question) => question.id === resolvedSingleQuestionId,
+                      )
+                    }
+                    className="flex flex-col gap-4"
+                  >
+                    {showUnitHeaders && !singleMode && (
+                      <h2
+                        data-slot="attempt-unit-heading"
+                        className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                      >
+                        {unit.title}
+                      </h2>
+                    )}
+                    <ol className="flex flex-col gap-4">
+                      {unit.questions.map((question) => {
+                        const index = flatQuestions.indexOf(question);
+                        return (
+                          <AttemptQuestionRow
+                            key={question.id}
+                            cardElements={cardElements}
+                            events={attemptEvents}
+                            index={index}
+                            question={question}
+                            assignmentTitle={data.title}
+                            answer={answers?.[question.id]}
+                            onAnswer={setAnswer}
+                            attemptId={attemptId}
+                            flagged={flaggedQuestions.has(question.id)}
+                            onToggleFlag={toggleFlag}
+                            formalInkPresence={
+                              formalInkPresence.get(question.id) ?? false
+                            }
+                            onInkPresenceChange={onInkPresenceChange}
+                            registerInkController={registerInkController}
+                            hints={hintsOpened[question.id]}
+                            onHintUnlocked={unlockHint}
+                            aiTrigger={aiCompanion.triggerForQuestion(
+                              question.id,
+                            )}
+                            aiContent={aiCompanion.inlineForQuestion(
+                              question.id,
+                            )}
+                            hidden={
+                              singleMode &&
+                              question.id !== resolvedSingleQuestionId
+                            }
+                          />
+                        );
+                      })}
+                    </ol>
+                  </li>
+                ))}
+              </ol>
+
+              {/* 单题占位主操作条（§7.2）：主操作三态由 D2 接线，D1 仅占位 */}
+              {singleMode && resolvedSingleQuestionId !== null && (
+                <SingleQuestionActionBar
+                  hasPrev={singleIndex > 0}
+                  hasNext={singleIndex < total - 1}
+                  onPrev={() => {
+                    const prev = questionIds[singleIndex - 1];
+                    if (prev !== undefined) void goSingleQuestion(prev);
+                  }}
+                  onNext={() => {
+                    const next = questionIds[singleIndex + 1];
+                    if (next !== undefined) void goSingleQuestion(next);
+                  }}
+                />
+              )}
+            </div>
           </div>,
         )}
 
@@ -815,7 +995,7 @@ function AnswerView({
               <QuestionNavigator
                 items={navigationItems}
                 currentId={currentQuestionId}
-                onJump={jumpToQuestion}
+                onJump={jumpForMode}
               />
             </div>
           </DialogContent>

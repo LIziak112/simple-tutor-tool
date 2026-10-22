@@ -27,6 +27,11 @@ type RowProps = Omit<
   onToggleFlag(id: string): void;
   onHintUnlocked(id: string, entry: HintOpenedEntry): void;
   cardElements: RefObject<Map<string, HTMLElement>>;
+  /**
+   * 单题专注模式隐藏非当前题（M3-D1，§11 纪律 1）：仅改呈现（display:none，
+   * 离开可访问树且不可聚焦），不卸载题卡、不动 key——切回列表原 DOM 复用。
+   */
+  hidden?: boolean | undefined;
   events: Pick<
     ReturnType<typeof useAttemptEvents>,
     | "registerCard"
@@ -47,6 +52,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   cardElements,
   events,
   aiContent,
+  hidden = false,
   ...props
 }: RowProps) {
   const register = useCallback(
@@ -63,7 +69,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
     [onAnswer, question.id],
   );
   return (
-    <li ref={register}>
+    <li ref={register} hidden={hidden}>
       <AttemptQuestionCard
         {...props}
         aiTrigger={props.aiTrigger}
