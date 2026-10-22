@@ -944,6 +944,9 @@ export const attemptErrorCodeSchema = z.enum([
   "NOT_FOUND",
   "UNAUTHORIZED",
   "VALIDATION_ERROR",
+  "WORKFLOW_LEGACY",
+  "WORKFLOW_REVISION_STALE",
+  "WORKFLOW_MODE_NOT_ALLOWED",
 ]);
 
 // ---------- 具体化的成功壳 ----------

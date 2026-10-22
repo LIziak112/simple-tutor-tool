@@ -152,6 +152,11 @@ export const practiceWorkflowStartOptionsFields = {
   workflowVersion: z.literal(1).optional(),
   feedbackMode: practiceFeedbackModeSchema.optional(),
 } as const;
+/** 解析产物可能显式携带 undefined（exactOptionalPropertyTypes 调用方友好） */
+export interface PracticeWorkflowStartOptions {
+  workflowVersion?: 1 | undefined;
+  feedbackMode?: PracticeFeedbackMode | undefined;
+}
 
 /** feedbackMode 无 workflowVersion=1 拒绝（不得暗中按新协议授权） */
 export const rejectFeedbackModeWithoutVersion = (
@@ -181,6 +186,18 @@ export const attemptStartOptionsRequestSchema = z
   .strict()
   .superRefine(rejectFeedbackModeWithoutVersion);
 
+/**
+ * PATCH /api/student/attempts/:id/workflow 响应 data（M1b，strict）：
+ * 返回更新后的裁决投影与题级进度白名单（与草稿视图同口径，无答案秘密）；
+ * 响应须带 Cache-Control: private, no-store。
+ */
+export const attemptWorkflowUpdateDataSchema = z
+  .object({
+    practiceWorkflow: practiceWorkflowSchema,
+    questionProgress: z.array(practiceQuestionProgressSchema),
+  })
+  .strict();
+
 // ---------- 推断类型导出 ----------
 
 export type PracticeLayout = z.infer<typeof practiceLayoutSchema>;
@@ -209,4 +226,7 @@ export type TeacherPracticeFeedbackSettingsUpdateRequest = z.infer<
 >;
 export type AttemptStartOptionsRequest = z.infer<
   typeof attemptStartOptionsRequestSchema
+>;
+export type AttemptWorkflowUpdateData = z.infer<
+  typeof attemptWorkflowUpdateDataSchema
 >;
