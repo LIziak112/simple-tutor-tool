@@ -5,6 +5,7 @@ import { useNavigate } from "react-router";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { AttemptResultView } from "./AttemptResultView";
+import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
 
 /**
@@ -63,7 +64,9 @@ export default function AttemptResultWithDraftCleanup({
   ).current;
   // 练习本卷错题（2026-10）：组新重练卷 → 跳作答；失败留告警可重试
   const practice = useMutation({
-    mutationFn: (questionIds: string[]) => startWrongPracticeApi(questionIds),
+    // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
+    mutationFn: (questionIds: string[]) =>
+      startWrongPracticeApi(questionIds, workflowStartOptions()),
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
     },

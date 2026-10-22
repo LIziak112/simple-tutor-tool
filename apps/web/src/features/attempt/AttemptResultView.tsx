@@ -4,12 +4,10 @@ import { cn } from "cn";
 import {
   CheckCircle2,
   ChevronDown,
-  Clock,
   Lightbulb,
   PenLine,
   RotateCcw,
   TriangleAlert,
-  XCircle,
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -26,14 +24,19 @@ import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
+import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 import {
   attemptRoundLabel,
   attemptSourceLabel,
   HANDWRITTEN_TYPES,
-  letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+
+// 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
+// 把本重模块拖进作答页）；此处对外再导出，既有调用方不受影响。
+export { ResultOptions, VerdictBadge } from "./AttemptResultParts";
+
 import { PendingReleaseBanner } from "./PendingReleaseBanner";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
@@ -69,56 +72,6 @@ import { useResultReviewLocation } from "./use-result-review-location";
  */
 
 /**
- * 判定徽章组合（图标 + 文案 + 配色单一出处）：true=绿勾「答对」、false=
- * 红叉「答错」（D1 后含未作答客观题；D9 后最终判定 finalCorrect 优先——
- * 教师批注改判以批注为准）、null=琥珀时钟待批（文案可经 pendingLabel 覆盖，
- * 讲练页题卡用「待老师批改」）。toned=true 时文字套判定配色（讲练页题卡
- * 形态）；默认继承前景色（结果视图既有形态）。
- * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
- */
-export function VerdictBadge({
-  verdict,
-  pendingLabel = "待批改",
-  toned = false,
-}: {
-  verdict: boolean | null;
-  /** 待批（null）文案覆盖——讲练页用「待老师批改」 */
-  pendingLabel?: string;
-  /** 文字是否套判定配色（讲练页题卡带色；结果视图沿用默认前景色） */
-  toned?: boolean;
-}) {
-  const label =
-    verdict === true ? "答对" : verdict === false ? "答错" : pendingLabel;
-  const icon =
-    verdict === true ? (
-      <CheckCircle2
-        aria-label="答对"
-        className="size-5 shrink-0 text-emerald-600"
-      />
-    ) : verdict === false ? (
-      <XCircle aria-label="答错" className="size-5 shrink-0 text-red-600" />
-    ) : (
-      <Clock
-        aria-label={pendingLabel}
-        className="size-5 shrink-0 text-amber-500"
-      />
-    );
-  return (
-    <span
-      className={cn(
-        "flex items-center gap-1.5 text-sm font-semibold",
-        toned && verdict === true && "text-emerald-700 dark:text-emerald-300",
-        toned && verdict === false && "text-red-600 dark:text-red-400",
-        toned && verdict === null && "text-amber-700 dark:text-amber-300",
-      )}
-    >
-      {icon}
-      {label}
-    </span>
-  );
-}
-
-/**
  * 老师批改块（D9，显著展示）：有 teacherMark / teacherComment 任一时渲染。
  * teacherMark=null 且只有评语（清除判定保留评语）时标题显示「已评语」。
  * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
@@ -147,79 +100,6 @@ export function TeacherMarkBlock({
         </p>
       )}
     </div>
-  );
-}
-
-/** 选项行（含正确项与学生所选标记；仅 choice/multi）。2026-10 讲练页题卡
- *  结果态复用（导出；仍单一出处）。 */
-export function ResultOptions({
-  question,
-  released,
-}: {
-  question: AttemptResultQuestion;
-  released: boolean;
-}) {
-  const options = question.snapshot.options;
-  if (options === undefined) return null;
-  const picked =
-    question.answer?.kind === "choice"
-      ? [question.answer.index]
-      : question.answer?.kind === "multi"
-        ? question.answer.indexes
-        : [];
-  const correct =
-    question.answers?.kind === "choice"
-      ? [question.answers.index]
-      : question.answers?.kind === "multi"
-        ? question.answers.indexes
-        : [];
-  return (
-    <ol className="flex flex-col gap-1.5" aria-label="选项">
-      {options.map((option, index) => {
-        const isPicked = picked.includes(index);
-        const isCorrect = released && correct.includes(index);
-        return (
-          <li
-            key={option}
-            className={cn(
-              "flex min-h-11 flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-sm",
-              isCorrect
-                ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10"
-                : isPicked && released
-                  ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
-                  : isPicked
-                    ? "border-primary bg-primary/5"
-                    : "border-transparent",
-            )}
-          >
-            <span className="mt-0.5 w-5 shrink-0 font-semibold">
-              {letterOf(index)}
-            </span>
-            <RichMarkdown
-              source={option}
-              className="min-w-0 flex-1 text-base [&_p]:my-0"
-            />
-            {isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                {isPicked ? "正确项 · 你的选择" : "正确项"}
-              </span>
-            )}
-            {isPicked && !isCorrect && (
-              <span
-                className={cn(
-                  "shrink-0 text-xs font-medium",
-                  released
-                    ? "text-red-700 dark:text-red-300"
-                    : "text-foreground",
-                )}
-              >
-                你的选择
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 

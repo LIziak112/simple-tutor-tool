@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
+import { StudentPracticePreferenceSection } from "@/features/attempt/StudentPracticePreferenceSection";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
 import { aiDisplayReturnTo } from "@/features/student-ai/ai-display-return";
@@ -102,6 +103,11 @@ export default function StudentSettingsPage() {
               className="size-4 shrink-0 text-muted-foreground"
             />
           </Link>
+
+          {/* M3-D1：做题方式默认偏好（布局 + 快捷键开关，暂存-保存） */}
+          <div className="p-5 sm:p-6">
+            <StudentPracticePreferenceSection key={student?.id} />
+          </div>
 
           <Link
             to="/s/settings/ai"

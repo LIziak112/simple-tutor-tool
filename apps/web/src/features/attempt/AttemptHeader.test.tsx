@@ -59,3 +59,31 @@ it("actions 槽渲染在更多按钮左侧（SAI-19 AI 助教入口位）", () =
   const buttons = within(header).getAllByRole("button");
   expect(buttons.indexOf(aiSlot)).toBeLessThan(buttons.indexOf(more));
 });
+
+// M3-D1：menuItems 槽插在「练习信息」前；不传时菜单维持原样
+it("menuItems 槽渲染在练习信息之前（做题方式切换挂点）", () => {
+  render(
+    <AttemptHeader
+      title="练习"
+      status={() => <p>全部已保存</p>}
+      onBack={() => undefined}
+      menuItems={
+        <div role="menuitem" tabIndex={0}>
+          做题方式：列表
+        </div>
+      }
+    >
+      课程信息
+    </AttemptHeader>,
+  );
+  fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  const menu = screen.getByRole("menu");
+  const items = within(menu).getAllByRole("menuitem");
+  expect(items.map((item) => item.textContent)).toEqual([
+    "做题方式：列表",
+    "练习信息",
+  ]);
+});

@@ -174,3 +174,47 @@
 - /security-review（聚焦学生端防泄露边界，独立子代理）：无高置信度发现——四态非 released 零题目内容（strict 白名单 + 路由 .parse 再校验）、未提交题无 released 旁路、幂等重放零写入按读取时刻重投影（教师收紧后重试返回 restricted 非缓存正文）、课程失权校验先于幂等重放、digest \u0000/\u0001 分隔注入不可构造、全程 drizzle 参数化、两端点 Cache-Control private,no-store、跨学生 POST 404 / GET 403 不暴露存在性。
 - 遗留待用户拍板：§5.4 教师收紧后已提交行 feedbackReadable 语义——现按「当前 gate」实现（收紧后已提交行重取受限、已下发内容不宣称撤回，已提交事实与成绩保留），M2 验收以此口径为准；如需「提交时刻快照语义」须改契约并另行批次。
 - 台账更正（约定角发现）：M2 表格行与「M2 服务层」绿测数字原停在 afb7ebd2 时点（21 用例/5443），本节为最终口径（23 用例/5464）；「M2 契约层」workflowVersion-only 设计决定补翻案记录（f31b3f08）。
+
+### M3 编排开工（2026-10-23，分支 codex/practice-single-workspace，Claude 会话编排）
+
+- 用户指令：继续编排执行直到 M6 全部完成；§5.4 按「当前 gate」口径定案（教师收紧后已提交行重取受限、不宣称撤回已下发内容，已提交事实与成绩保留）——M3/M4 UI 按此口径消费 questionProgress/feedbackReadable 与四态反馈，不再另问。
+- 分支自 origin/v2@25a3a7f7（含结果页 AI 入口按题召唤与批量复盘图标化）。
+- 派单拆层：D1 骨架与偏好（PracticeWorkspace 呈现层/偏好存储/设置与开始区入口/题目导航/URL questionId）→ D2 逐题提交交互闭环（主操作状态机/QuestionFeedback 反馈区/最后一题留反馈）→ D3 快捷键与按题 flush（键盘方案与保护规则/切题本机落盘）。串行同分支，每层 TDD 红灯先行；编排者验收统一三闸门+全量回归（M2 模式）。
+- 范围边界：M3 工作区只覆盖 AttemptSession 驱动的普通三来源（course/assignment/wrong）v1 新协议卷；lesson 页与 legacy 卷保持既有形态零回归（lesson 适配是否纳入 M4 视计划再定）。
+
+### M3-D1 骨架与偏好（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交链（分支 codex/practice-single-workspace）：134da248（偏好存储）→ 9325f8cd（设置区配置行）→ f017d569（摘要行+导航四态+紧凑行/占位条）→ 180a5cae（作答页双呈现集成）→ 88e18fd2（RadioGroup 修正）。
+- 落地：practice-preference-store（契约 strict v1 形态、部署/角色/账号隔离、跨标签同步、损坏回默认不阻断）；/s/settings「做题方式」配置行（暂存-保存）；PracticeWorkspace 呈现件（摘要行/紧凑进度行/占位操作条/菜单切换项/提交标记）；practice-protocol 纯裁决（协议判别只信服务端投影、受限文案、首道未提交定位）；AttemptSession 同一 keyed `<ol>` + `hidden` 切换列表/单题（§11-1 不重建，测试有 DOM 同一性断言 `toBe(q2Input)`）；URL `?q=` replace 导航+属本卷校验；导航四态（已提交/待公布中性色不泄对错，「未答」排除已提交行）；AttemptHeader menuItems 槽；dropdown-menu 补 RadioGroup/RadioItem（此版 Radix RadioItem 无 checked prop，选中态来自组 value）。
+- 关键取舍（沿用桌面会话裁决）：摘要行落作答会话顶部（三来源汇聚 AttemptSession，作业无预开始 UI）；互切不重建靠同一 keyed `<ol>`+hidden；legacy/lesson 恒列表零变化（practiceProtocolOfDraft 判别，测试断言）。
+- 编排者独立验收（2026-10-23）：全量 diff 通读（19 文件 +1992/-73）；pnpm test 465 文件 5498/5498 exit 0（/tmp/m3-d1-accept-*.log）；typecheck/lint/build 全 exit 0。发现一项遗留：布局初值在账号绑定 effect 之前读取，硬刷新直达作答页会错过已保存默认「单题」——已随 D1.5 修复（1fa1735a）。
+
+### M3-D1.5 建卷 opt-in（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 缺口核实（编排者 grep 实证）：契约 attemptStartOptionsRequestSchema 与服务端三入口（assignment/course/wrong-practice，student.ts:302/:953/:1061）M1b 已就绪且省略按旧协议；唯 web 从未携带 workflowVersion（grep 为空）→ 生产新建卷恒旧协议。D1.5 实为纯 web 小单。
+- 提交：d7224f07（三 start 封装可选 options；useStartAttempt/useStartCourseAttempt/两处错题重练 mutationFn 执行时读 getPracticePreference().feedback 构造 {workflowVersion:1, feedbackMode}；api 层 mock fetch 请求体测试）+ 1fa1735a（D1 遗留修复：绑定时刻对齐已保存默认布局，显式切换标志防拉扯，补两条集成测试）。
+- 编排者独立验收：两笔 diff 通读；代理哨兵日志核验（红→绿、全量 466 文件 5506/5506、TSC/LINT/BUILD 全 0）；编排者自跑全量复核 /tmp/m3-d15-accept-full.log。自此生产新建普通卷（course/assignment/wrong）默认进入 v1 新协议（学生偏好 per_question，教师约束服务端裁决），M3 单题 UI 可达。
+- 未做（后续批次）：PATCH workflow 节奏切换 UI（计划 §6.1 canChangeFeedback 呈现，M5 偏好批次或 M4 视工作量定）。
+
+### M3-D2 逐题提交交互闭环（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交链：4b0f8d1b（QuestionFeedback 四态呈现 + 受限文案单源 + VerdictBadge 结论文案可选）→ f43bf67e（usePracticeQuestionSubmit 编排 + 回执 overlay + 原位只读 + 主操作三态）→ 330e3037（AttemptResultParts 拆分，草稿渲染不静态加载结果回看模块，保住 T6R.15 F 惰性纪律）→ fc40eda7（缺稿明确选择弹层接入提交编排 + 反馈惰性 GET + 错误分诊 + 查看本次结果收敛测试）。
+- 落地：五字段 POST 编排（submissionMutationId {id,payloadKey} 同载荷重试固定复用、WORKFLOW_MUTATION_CONFLICT 换新 id 自动重试一次）；回执 overlay（questionProgress/attempt/workflow，data 刷新整体重置——服务端权威）；已提交行原位只读（readOnly 链：输入 disabled/readOnly、隐藏标画/草稿/手写编辑入口，§11-2 原位不换卡）；列表 footer/单题主操作位三态（提交本题→正在提交→下一题/查看本次结果/继续未提交题目）；最后一题自动收尾停轮询留反馈视图，「查看本次结果」显式收敛；题级反馈按需 GET（单题当前题 effect、列表 IntersectionObserver rootMargin 160px、失败可重试不缓存失败）；错误分诊（ALREADY_SUBMITTED 静默 refetch、STALE 家族提示刷新、ANSWER_REVISION_CONFLICT 复用既有冲突裁决 UI、WORKFLOW_RESTRICTED refetch 受限呈现）。
+- 编排者独立验收（2026-10-23）：四笔全量 diff 通读（18 文件 +2392/-175）；编排者自跑 /tmp/m3-d2-accept-{full,tsc,lint,build}.log：5532/5532、TSC/LINT/BUILD 全 0；子代理红灯日志核验。发现并确认子代理自修一处：330e3037 修复提交 2 静态引入结果回看模块破坏惰性加载（全量测试当场暴露）。
+- 记档接受：部分填空未填满时主提交按钮禁用（isAnswered 判定），「不会」次按钮覆盖提交路径（与整卷语义一致，P1 打磨候选）；单题模式反馈按 data 加载缓存一次（refetch 重置，与 overlay 同生命周期）；已提交手写题卸载纸面编辑入口（笔迹提交前已封存上传，编辑入口随 readOnly 移除与既有先例一致）；缺稿弹层为组件级测试+接线走查（problems 全链 jsdom 集成未做，成本高）。
+
+### M3-D3 快捷键与按题 flush（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交链：6adfb080（useAttemptAnswers 按题 flush：flushQuestionLocal 本机落盘 / flushQuestion 单题服务端确认，inFlight 按题 Map 索引，全局 flush 零变化）→ 609d6410（提交流接入 flushQuestion + 切题前本机落盘保护/重试入口）→ 4236cdbf（单题键盘方案 Enter/←→/1-9 + 快捷键帮助）。
+- 落地：按题 flush（§11-4 提交第 8 题不等第 19 题在途；§11-5 切题只要求本机落盘成功，离线可切题）；切题保护统一入口 goSingleQuestion（本机写失败不切题，「本机稿未保存，仍停留本题」+ 重试成功再切，不清空原稿不跳页）；键盘方案仅 v1+单题模式挂载（legacy/lesson 零变化），三类键统一受 keyboardShortcuts 偏好门禁——Enter 主动作（未提交=提交本题含空答「不会」链、已提交=下一题/继续未提交、查看本次结果永不入键）、←→仅工作区容器焦点域、1-9 复用选项控件链（option.click() 后焦点回容器）；保护链：composedPath 文本编辑区判定（含 MATH-FIELD/shadow DOM 宿主）、按钮/链接保留自身 Enter、isComposing/repeat/keyCode 229/修饰键/defaultPrevented 抑制、任一弹层打开（role=dialog data-state=open）不推进、提交中/书写中/纸面展开/答案冲突/切题保护拦截、键盘提交持 practiceKeyActionRef 同步锁堵收笔 await 微任务窗口；「更多 → 快捷键」帮助弹层（粗指针提示需实体键盘，弹层状态在菜单子树外持有）；单题工作区容器 tabIndex=-1 聚焦域，切题后焦点落容器（不弹软键盘）。
+- 编排者独立验收（2026-10-23）：三笔全量 diff 通读（10 文件 +1438/-22）；红灯日志核验（red1 7 failed|3 passed）；隔离断言实测有效（q19 挂起不阻塞 q8 flushQuestion、全局 flush 仍等全部）；编排者自跑 /tmp/m3-d3-accept-{full,tsc,lint,build}.log：5562/5562、TSC/LINT/BUILD 全 0。
+- 记档接受：焦点落点为单题工作区容器（键盘域锚点）而非题干元素本身——满足「不弹软键盘+键盘域锚定」功能意图；jsdom 未实现 composedPath/isContentEditable 且 shadow 事件 target 重定向，practice-keyboard 以 composedPath 优先+target/深焦点链回退（真实浏览器走标准路径），MathLive 让位列真机抽验归 M6 用户清单；flushQuestion 的 denied（无权限保存）路径提示为通用网络文案（原全局 flush 有专属文案；该路径 attempt 已不可编辑，详情轮询自然收敛，罕见不阻断）。
+
+### M3 三闸门与合并验收（2026-10-23，分支 codex/practice-single-workspace，Claude 会话编排执行）
+
+- /simplify（独立子代理，四角度：复用/简化/抽象层级/死代码）：12 发现 → 10 项修复于 2855bf5f（+104/-167：受限文案单源 practiceRestrictionCopy 委托 teacher_* 落 practiceFeedbackRestrictedCopy、进度按题查表 progressById Map 替换 5 处 practiceProgress.find、提交错误路径 failWith 收敛、建卷选项 workflowStartOptions 单一出处三处复用、FeedbackNoticeBox+PENDING_ATTEMPT_FEEDBACK_COPY 复用、四测试文件 workflowOf 夹具收敛 practice-test-fixtures.ts、dropdown RadioItem 内联 SVG 换 lucide Check）；2 项记档：单双模式按钮对结构保留差异（两模式操作语义不同，强行统一引入配置复杂度不偿）、设置区状态机抽象（savePracticePreference 调用面小，M5 偏好批次扩展时再议）。
+- /code-review（独立子代理，max 力度）：3 应修 + 2 建议 + 1 存疑 → 4 项修复于 489c64d0（格式漂移 biome 修后 amend 为 c43ffc68）：① 焦点重取尊重收尾暂停——refetchOnWindowFocus 补轮询暂停谓词（此前仅 refetchInterval 尊重，切窗再切回会绕过暂停把反馈视图翻成整卷结果，违背 §10.3 显式查看才收敛）；② 反馈缓存重置后当前题补取——data 刷新重置 feedbacks 后单题模式当前已提交题悬在等待态，effect 改依赖 feedbacks 状态按行达标补取；③ 单题切题先收笔——goSingleQuestion 先 editor.request(null) 收笔再动状态；④ 保存详情定位与切题入口统一（单题模式走 jumpForMode 同一入口，URL/状态同源）；+3 回归测试（visibilitychange 焦点重取抑制、反馈补取、保存详情定位）。2 项记档：detailPollingPaused 集合条目不清（无行为副作用，会话级内存小）、flushQuestionLocal 保存态窗口（pagehide 兜底既有）；1 存疑（MathLive 键盘让位）归 M6 真机清单。
+- /security-review（独立子代理，六焦点：未提交题答案泄露面/呈现层只读与服务端边界/凭据与身份/请求构造/注入面/偏好与指纹）：高/中/低发现 0。核对要点：feedback 缓存仅两写入口（回执 result.feedback + ensureFeedback GET 双守卫）、四态投影零题目内容（released 才挂结论文案/答案比对/详解）、readOnly 链完整（输入 disabled/编辑工具隐藏/键盘 1-9 查 option.disabled）、偏好键部署+角色+账号隔离无指纹、五字段 POST 白名单、静态文案无注入面。4 观察项记档：① 已提交只读卡保留分步提示解锁（提示不属 §10.4 答案边界，M3 前既有语义，若按题级反馈重划提示边界需服务端 hint 端点配合——M4 视计划定）；② aiTrigger 已提交卡保留（attempt 口径重校验既有机制，M4 按题完成态适配时一并核对）；③ URL q 参数携 questionId（学生可见 DOM 标识非秘密）；④ readable 未入视口 FeedbackPending 持续转圈（呈现瑕疵非安全，守卫保证不发未授权请求——M6 真机清单）。
+- 测试方法论沉淀（闸门修复过程实证）：TanStack Query v5 焦点重取监听 window visibilitychange 而非 focus（jsdom 测试须派发前者）；structuralSharing 使深度相等响应保持同引用（重取无变化=缓存不动是合法行为，测试要制造真实变化才触发效应）。
+- 全量回归（编排者自跑，哨兵日志 /tmp/m3-final-{full,tsc,lint,build}.log）：pnpm test 471 文件 5565/5565 exit 0（M2 基线 5464，+101）；typecheck exit 0；lint exit 0；build exit 0。
+- 合并：v2merge 工作树 git merge --no-ff codex/practice-single-workspace（直系后代零冲突）→ 快验 test/typecheck → 推送 origin/v2。

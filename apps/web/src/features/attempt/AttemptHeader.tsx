@@ -20,6 +20,7 @@ export function AttemptHeader({
   status,
   onBack,
   actions,
+  menuItems,
   children,
 }: {
   title: string;
@@ -27,6 +28,11 @@ export function AttemptHeader({
   onBack: () => void;
   /** 标题右侧的扩展动作位（SAI-19 AI 助教入口；无动作时不占格） */
   actions?: ReactNode;
+  /**
+   * 「练习更多」菜单的扩展项（M3-D1 做题方式切换等），插在「练习信息」前；
+   * 不传时菜单维持原样（legacy/lesson 卷零变化）。
+   */
+  menuItems?: ReactNode;
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -73,6 +79,7 @@ export function AttemptHeader({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-w-[calc(100vw-24px)]">
+            {menuItems}
             <DropdownMenuItem onSelect={() => setDetailsOpen(true)}>
               练习信息
             </DropdownMenuItem>

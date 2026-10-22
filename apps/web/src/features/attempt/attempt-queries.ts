@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
+import { getPracticePreference } from "./practice-preference-store";
 
 /**
  * 学生端作答数据层（T2.6；T2A.6 扩展课程练习）：attempt 创建（作业/课程两种
@@ -36,6 +37,25 @@ export const studentAttemptKey = (attemptId: string) =>
 export const studentUnitLandingKey = (courseId: string, unitId: string) =>
   ["student", "course", courseId, "unit", unitId] as const;
 
+/**
+ * 详情轮询暂停集（M3-D2）：新协议卷最后一题提交触发服务端自动收尾后，客户端
+ * 数据仍是 draft——不暂停的话 10s 轮询会重发详情查询并把刚显示的题级反馈视图
+ * 翻成整卷结果（§10.3 学生显式点「查看本次结果」才收敛）。按 attemptId 记录，
+ * 只影响新协议收尾后的那一段窗口；点查看/离开页面后停留无副作用（非 draft
+ * 恒不轮询）。
+ */
+const detailPollingPaused = new Set<string>();
+
+/** 最后一题自动收尾后调用：停掉该卷的 draft 轮询，等学生显式查看结果 */
+export function pauseAttemptDetailPolling(attemptId: string): void {
+  detailPollingPaused.add(attemptId);
+}
+
+/** 学生显式查看结果（或重新进入作答）时解除暂停 */
+export function resumeAttemptDetailPolling(attemptId: string): void {
+  detailPollingPaused.delete(attemptId);
+}
+
 /** attempt 详情（draft→草稿视图、submitted/graded→结果视图；按 attempt.status 分支） */
 export function useAttemptDetail(attemptId: string | undefined) {
   return useQuery({
@@ -44,9 +64,15 @@ export function useAttemptDetail(attemptId: string | undefined) {
     enabled: attemptId !== undefined,
     staleTime: 0,
     refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    // 窗口焦点重取同样尊重收尾暂停（闸门修复）：否则最后一题自动收尾后
+    // 切窗再切回会绕过暂停把反馈视图翻成整卷结果，违背「显式查看才收敛」
+    refetchOnWindowFocus: () =>
+      attemptId === undefined || !detailPollingPaused.has(attemptId),
     refetchInterval: (query) =>
-      query.state.data?.attempt.status === "draft" ? 10_000 : false,
+      query.state.data?.attempt.status === "draft" &&
+      (attemptId === undefined || !detailPollingPaused.has(attemptId))
+        ? 10_000
+        : false,
   });
 }
 
@@ -59,10 +85,21 @@ export function useStudentUnitLanding(courseId: string, unitId: string) {
   });
 }
 
+/**
+ * 建卷工作流选项（M3-D1.5）：执行时同步读本机偏好——只传学生偏好，
+ * 教师约束由服务端 resolver 裁决，客户端不预判；显式携带
+ * workflowVersion=1 进入新协议，feedbackMode 随当前偏好。
+ */
+export const workflowStartOptions = () => ({
+  workflowVersion: 1 as const,
+  feedbackMode: getPracticePreference().feedback,
+});
+
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {
   return useMutation({
-    mutationFn: () => startAttemptApi(assignmentId),
+    // mutationFn 执行时才读偏好（点击时刻），不在模块顶层求值
+    mutationFn: () => startAttemptApi(assignmentId, workflowStartOptions()),
   });
 }
 
@@ -73,7 +110,8 @@ export function useStartAttempt(assignmentId: string) {
 export function useStartCourseAttempt(courseId: string, unitId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => startCourseAttemptApi(courseId, unitId),
+    mutationFn: () =>
+      startCourseAttemptApi(courseId, unitId, workflowStartOptions()),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentUnitLandingKey(courseId, unitId),

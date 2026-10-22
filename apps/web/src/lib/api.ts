@@ -133,6 +133,10 @@ import {
   type NoteUploadMetaInput,
   type NoteVersionReceipt,
   type PendingMarkListData,
+  type PracticeQuestionFeedbackData,
+  type PracticeQuestionSubmitData,
+  type PracticeQuestionSubmitRequest,
+  type PracticeWorkflowStartOptions,
   type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
@@ -836,13 +840,17 @@ export function fetchStudentLectureApi(
 /**
  * 创建或取回进行中的 attempt（幂等：一个作业一人一份进行中）。
  * 已交卷时返回已交的那份（status=submitted/graded，前端直接进结果视图）。
+ * M3-D1.5：options 缺省不发 body（旧协议）；携带 workflowVersion=1 时服务端
+ * 按新协议建卷（教师约束由服务端裁决，客户端只传学生偏好）。
  */
 export function startAttemptApi(
   assignmentId: string,
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.assignments[":id"].attempt.$post({
       param: { id: assignmentId },
+      ...(options !== undefined ? { json: { ...options } } : {}),
     }),
   );
 }
@@ -865,14 +873,18 @@ export function fetchStudentUnitLandingApi(
  * 课程练习入口（D10）：存在未交卷作答返回它（继续作答）；否则新建
  * attemptNo+1（再做一次，从空白开始）。每次调用服务端都校验 D5 可见性——
  * 移出成员 403 COURSE_ACCESS_DENIED / 条目不可见 404 NOT_FOUND。
+ * M3-D1.5：options 缺省不发 body（旧协议）；携带 workflowVersion=1 时服务端
+ * 按新协议建卷（教师约束由服务端裁决，客户端只传学生偏好）。
  */
 export function startCourseAttemptApi(
   courseId: string,
   unitId: string,
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.courses[":id"].units[":unitId"].attempts.$post({
       param: { id: courseId, unitId },
+      ...(options !== undefined ? { json: { ...options } } : {}),
     }),
   );
 }
@@ -884,11 +896,15 @@ export function startCourseAttemptApi(
  * tab + 分组圈定（顺序即组卷题序）。服务端校验「∈ 错题本聚合且快照可用」，
  * 不在聚合内的题静默剔除；全部被剔 → 400 WRONG_PRACTICE_EMPTY（提示刷新）。
  * 返回新 wrong 来源 attempt 摘要（跳 /s/attempts/:id 走既有答题会话）。
+ * M3-D1.5：options 与 questionIds 同体下发；缺省维持旧协议。
  */
 export function startWrongPracticeApi(
   questionIds: string[],
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
-  const args = { json: { questionIds } };
+  const args = {
+    json: { questionIds, ...(options !== undefined ? { ...options } : {}) },
+  };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
 }
 
@@ -1052,6 +1068,43 @@ export function submitLessonQuestionApi(
   const args = { param: { id: attemptId, questionId }, json: request };
   return callApi(() =>
     api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
+}
+
+/**
+ * 新协议逐题提交（M2，POST /attempts/:id/questions/:questionId/submit 同一
+ * URL 按 workflowVersion 字段分流）：请求体为 practiceQuestionSubmitRequest
+ * strict 契约（协议门禁 workflowVersion=1 + workflowRevision CAS + 题目版本
+ * 引用 + 答案版本 CAS + 幂等键 + 必填证据声明）；回执四键白名单（本题反馈
+ * 投影 + 全卷题级进度 + 最新 attempt 摘要 + 工作流裁决投影），响应
+ * private,no-store。json 以独立变量传入的原因同 updateQuestion
+ * （parseJsonBody 服务端校验）。
+ */
+export function submitPracticeQuestionApi(
+  attemptId: string,
+  questionId: string,
+  request: PracticeQuestionSubmitRequest,
+): Promise<PracticeQuestionSubmitData> {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
+}
+
+/**
+ * 题级反馈读取（M2，GET /attempts/:id/questions/:questionId/feedback）：
+ * data 单键承载共用授权投影（与提交回执 feedback 同一 schema 对象）；按
+ * 读取时刻裁决四态，未授权形态零题目秘密。调用方须先按 questionProgress
+ * 的 submittedAt+feedbackReadable 确认可读（不为未提交/不可读题发请求）。
+ */
+export function fetchPracticeQuestionFeedbackApi(
+  attemptId: string,
+  questionId: string,
+): Promise<PracticeQuestionFeedbackData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].feedback.$get({
+      param: { id: attemptId, questionId },
+    }),
   );
 }
 

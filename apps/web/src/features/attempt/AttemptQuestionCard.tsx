@@ -102,6 +102,8 @@ function QuestionMeta({
     annotationOpen: boolean;
     paperOpen: boolean;
     paperEnabled: boolean;
+    /** 已提交只读：圈画与草稿/手写编辑入口一并隐藏（更多菜单保留） */
+    editLocked?: boolean;
     annotationCount: number;
     paperCount: number;
     annotationProblem: boolean;
@@ -164,7 +166,7 @@ function QuestionMeta({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {tools && (
+        {tools && !tools.editLocked && (
           <Button
             type="button"
             variant="ghost"
@@ -190,7 +192,7 @@ function QuestionMeta({
             )}
           </Button>
         )}
-        {tools?.paperEnabled && (
+        {tools?.paperEnabled && !tools.editLocked && (
           <Button
             type="button"
             variant="ghost"
@@ -293,6 +295,7 @@ export function AttemptQuestionCard({
   assignmentTitle = "练习",
   footer,
   aiTrigger,
+  readOnly = false,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -324,6 +327,8 @@ export function AttemptQuestionCard({
   footer?: ReactNode;
   /** 本题 AI 助教入口；由作答会话按题绑定。 */
   aiTrigger?: ReactNode;
+  /** 已提交原位只读（M3-D2 §11-2）：同宿主同题干位置，隐藏编辑入口、输入只读 */
+  readOnly?: boolean;
 }) {
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
@@ -392,6 +397,7 @@ export function AttemptQuestionCard({
   const noteLayer =
     inkEnabled &&
     attemptId !== undefined &&
+    !readOnly &&
     !HANDWRITTEN_TYPES.has(question.type) ? (
       <NoteLayer
         attemptId={attemptId}
@@ -420,6 +426,7 @@ export function AttemptQuestionCard({
             question={question}
             answer={answer}
             onAnswer={onAnswer}
+            readOnly={readOnly}
           />
         </QuestionAnnotationOverlay>
       ) : (
@@ -427,27 +434,30 @@ export function AttemptQuestionCard({
           question={question}
           answer={answer}
           onAnswer={onAnswer}
+          readOnly={readOnly}
         />
       )}
 
-      {HANDWRITTEN_TYPES.has(question.type) && attemptId !== undefined && (
-        <HandwrittenControls
-          ariaPrefix={`第 ${index + 1} 题`}
-          attemptId={attemptId}
-          questionId={question.id}
-          stemMd={question.stemMd}
-          answer={answer}
-          onAnswer={onAnswer}
-          registerController={registerInkController}
-          onInkStroke={onInkStroke}
-          onInkEdit={onInkEdit}
-          onInkFullscreen={onInkFullscreen}
-          onInkPresenceChange={onInkPresenceChange}
-          expanded={noteOpen}
-          onExpandedChange={setNoteOpen}
-          showExpandTrigger={false}
-        />
-      )}
+      {HANDWRITTEN_TYPES.has(question.type) &&
+        attemptId !== undefined &&
+        !readOnly && (
+          <HandwrittenControls
+            ariaPrefix={`第 ${index + 1} 题`}
+            attemptId={attemptId}
+            questionId={question.id}
+            stemMd={question.stemMd}
+            answer={answer}
+            onAnswer={onAnswer}
+            registerController={registerInkController}
+            onInkStroke={onInkStroke}
+            onInkEdit={onInkEdit}
+            onInkFullscreen={onInkFullscreen}
+            onInkPresenceChange={onInkPresenceChange}
+            expanded={noteOpen}
+            onExpandedChange={setNoteOpen}
+            showExpandTrigger={false}
+          />
+        )}
 
       {/* 分步提示（T2.11）：hintCount>0 且提供解锁回调（页面持有已解锁状态） */}
       {question.hintCount > 0 &&
@@ -465,6 +475,7 @@ export function AttemptQuestionCard({
       {/* T6R.20 题干标注（圈画题干）：所有题型的附加折叠区——标注模式外
           保留原作答控件（方案 §10）；base ready 才挂画布（层内 gate） */}
       {attemptId !== undefined &&
+        !readOnly &&
         (inlineQuestion === null || annotationOpen) && (
           <AnnotationLayer
             attemptId={attemptId}
@@ -529,6 +540,7 @@ export function AttemptQuestionCard({
                 annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,
+                editLocked: readOnly,
                 annotationCount: annotationRecord?.doc?.strokes.length ?? 0,
                 paperCount: noteRecord?.doc?.ink.strokes.length ?? 0,
                 annotationProblem:
