@@ -1,11 +1,20 @@
 import type { PracticeLayout, PracticeWorkflow } from "@tutor/contract";
-import { Check, ChevronDown, Clock } from "lucide-react";
+import { Check, ChevronDown, Clock, Keyboard } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
+import { hasCoarsePointer } from "./practice-keyboard";
 import {
   practiceLayoutLabel,
   practiceRestrictionCopy,
@@ -202,6 +211,82 @@ export function PracticeLayoutMenuItems({
         做题方式：单题
       </DropdownMenuRadioItem>
     </DropdownMenuRadioGroup>
+  );
+}
+
+/** 快捷键帮助的键位行（小弹层紧凑排版） */
+function HelpKeyRow({ keys, action }: { keys: string; action: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt className="shrink-0 font-medium">{keys}</dt>
+      <dd className="text-right text-muted-foreground">{action}</dd>
+    </div>
+  );
+}
+
+/**
+ * 「更多」菜单快捷键帮助项（M3-D3 §9.2）：只渲染菜单项并回调 onOpen——
+ * 菜单内容在选中后整树卸载，弹层状态须由调用方持有（弹层在菜单子树外渲染）。
+ */
+export function PracticeKeyboardHelpMenuItem({
+  onOpen,
+}: {
+  onOpen: () => void;
+}): ReactNode {
+  return (
+    <DropdownMenuItem
+      onSelect={() => {
+        onOpen();
+      }}
+    >
+      <Keyboard aria-hidden className="size-4" />
+      快捷键
+    </DropdownMenuItem>
+  );
+}
+
+/**
+ * 快捷键帮助小弹层：v1 卷单题专注键位一览；粗指针（触屏）设备提示需要
+ * 实体键盘。仅 v1 卷挂菜单入口（调用方控制）。
+ */
+export function PracticeKeyboardHelpDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}): ReactNode {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md rounded-lg">
+        <DialogHeader>
+          <DialogTitle>键盘快捷键</DialogTitle>
+          <DialogDescription>
+            单题专注作答时可用；列表作答不响应这些按键。
+          </DialogDescription>
+        </DialogHeader>
+        <dl className="space-y-2 text-sm">
+          <HelpKeyRow
+            keys="Enter"
+            action="未提交时提交本题；已提交时切下一题（不打扰查看结果）"
+          />
+          <HelpKeyRow keys="← / →" action="工作区获得焦点时切上一题 / 下一题" />
+          <HelpKeyRow
+            keys="1–9"
+            action="选择对应可见选项：判断 1 对 2 错；单选第 n 项；多选切换第 n 项"
+          />
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          输入答案、书写纸面和弹层打开时快捷键自动让位；Esc 与 Tab 保持系统
+          行为。
+        </p>
+        {hasCoarsePointer() && (
+          <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+            需要实体键盘才能使用快捷键。
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

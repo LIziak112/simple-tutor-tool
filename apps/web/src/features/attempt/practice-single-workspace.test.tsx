@@ -18,10 +18,7 @@ import {
 import { beforeEach, expect, it, vi } from "vitest";
 import { fetchAttemptApi } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
-import {
-  installDraftBackend,
-  type KVBackend,
-} from "./draft-store";
+import { installDraftBackend, type KVBackend } from "./draft-store";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,
@@ -493,15 +490,13 @@ it("单题切题保护：本机写失败不切题并提示，重试成功后再�
   failRef.current = false;
   fireEvent.click(screen.getByRole("button", { name: "重试保存并切换" }));
   await waitFor(() =>
-    expect(
-      screen.getByText("第 1 / 3 题 · 已提交 1 题"),
-    ).toBeInTheDocument(),
+    expect(screen.getByText("第 1 / 3 题 · 已提交 1 题")).toBeInTheDocument(),
   );
   await waitFor(() => expect(locationRef.search).toContain("q=q1"));
   expect(screen.queryByText("本机稿未保存，仍停留本题")).toBeNull();
 });
 
-it("单题切题成功后焦点落题干容器，URL q 同步 replace", async () => {
+it("单题切题成功后焦点落单题工作区容器（←→ 键盘域），URL q 同步 replace", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
   await screen.findByText(/做题方式：列表 · 每题提交后查看/);
@@ -514,10 +509,11 @@ it("单题切题成功后焦点落题干容器，URL q 同步 replace", async ()
   await waitFor(() =>
     expect(screen.getByText("第 3 / 3 题 · 已提交 1 题")).toBeInTheDocument(),
   );
-  await waitFor(() =>
-    expect(document.activeElement?.getAttribute("data-question-id")).toBe(
-      "q3",
-    ),
-  );
+  await waitFor(() => {
+    const container = document.querySelector<HTMLElement>(
+      '[data-slot="practice-single-workspace"]',
+    );
+    expect(document.activeElement).toBe(container);
+  });
   await waitFor(() => expect(locationRef.search).toContain("q=q3"));
 });

@@ -5,8 +5,8 @@ import {
   draftStore,
   getDraftPersistenceState,
   installDraftBackend,
-  memoryBackend,
   type KVBackend,
+  memoryBackend,
 } from "./draft-store";
 import { useAttemptAnswers } from "./use-attempt-answers";
 
@@ -166,19 +166,16 @@ it("flushQuestionLocal本机写失败返回false（IndexedDB 异常不放行切�
 
 it("flushQuestion等待该题在途请求并确认服务端同步，不等其他题在途", async () => {
   let releaseQ19: (() => void) | undefined;
-  save.mockImplementation(
-    async (_attemptId: string, questionId: string) => {
-      if (questionId === "q19") {
-        return new Promise<Awaited<ReturnType<typeof saveDraftAnswer>>>(
-          (resolve) => {
-            releaseQ19 = () =>
-              resolve({ questionId, changeCount: 1 });
-          },
-        );
-      }
-      return { questionId, changeCount: 1 };
-    },
-  );
+  save.mockImplementation(async (_attemptId: string, questionId: string) => {
+    if (questionId === "q19") {
+      return new Promise<Awaited<ReturnType<typeof saveDraftAnswer>>>(
+        (resolve) => {
+          releaseQ19 = () => resolve({ questionId, changeCount: 1 });
+        },
+      );
+    }
+    return { questionId, changeCount: 1 };
+  });
   const { result } = renderHook(() => useAttemptAnswers("per-q", drafts));
   act(() => result.current.setAnswer("q19", { kind: "fill", values: ["19"] }));
   act(() =>

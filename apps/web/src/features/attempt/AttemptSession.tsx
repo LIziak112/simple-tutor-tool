@@ -8,6 +8,7 @@ import type {
 import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useId,
@@ -75,11 +76,19 @@ import {
   PracticeSubmitProblemDialog,
 } from "./PracticeQuestionSubmit";
 import {
+  PracticeKeyboardHelpDialog,
+  PracticeKeyboardHelpMenuItem,
   PracticeLayoutMenuItems,
   PracticeModeSummary,
   SingleQuestionActionBar,
   SingleQuestionProgressRow,
 } from "./PracticeWorkspace";
+import {
+  isActivatingTarget,
+  isOverlayOpen,
+  isSuppressedKeyEvent,
+  isTextEditingEvent,
+} from "./practice-keyboard";
 import {
   getPracticePreference,
   usePracticePreference,
@@ -278,6 +287,9 @@ function AnswerView({
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
+  // 内容整树卸载，弹层不能寄居其中
+  const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false);
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
@@ -380,7 +392,8 @@ function AnswerView({
     explicitLayoutRef.current = true;
     setPracticeLayout(layout);
   }, []);
-  const { accountId: boundAccountId } = usePracticePreference();
+  const { accountId: boundAccountId, keyboardShortcuts } =
+    usePracticePreference();
   const prevBoundAccountRef = useRef(boundAccountId);
   useEffect(() => {
     const previous = prevBoundAccountRef.current;
@@ -418,6 +431,15 @@ function AnswerView({
     resolvedSingleQuestionId === null
       ? -1
       : questionIds.indexOf(resolvedSingleQuestionId);
+  // 单题专注工作区容器（M3-D3 §9.2）：tabIndex=-1 可聚焦，←/→ 的判定域。
+  const singleWorkspaceRef = useRef<HTMLDivElement | null>(null);
+  // §11-5 焦点纪律：进入单题（含菜单切换）与每次切题后焦点落回容器——
+  // 方向键域与连续键盘导航的锚点；focusWhenReachable 代数守卫下与
+  // jumpToQuestion 落焦链后到者胜（goSingleQuestion 显式传容器，目标一致）。
+  useEffect(() => {
+    if (!singleMode || resolvedSingleQuestionId === null) return;
+    focusWhenReachable(singleWorkspaceRef.current);
+  }, [singleMode, resolvedSingleQuestionId]);
 
   // ---------- 逐题提交编排（M3-D2 §10.2/§10.3）：五字段 POST + 回执 overlay +
   // 题级反馈惰性 GET。收笔（编辑器让位确认）→ 该题笔迹 flush → 草稿追平 →
@@ -551,7 +573,11 @@ function AnswerView({
     (item) => item.completion.state === "filled",
   ).length;
   const unanswered = total - answered;
-  const jumpToQuestion = async (id: string, focusAnswer = false) => {
+  const jumpToQuestion = async (
+    id: string,
+    focusAnswer = false,
+    focusElement?: HTMLElement | null,
+  ) => {
     if (editor && !(await editor.request(null))) return;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
@@ -572,8 +598,12 @@ function AnswerView({
       );
       // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
       // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
+      // focusElement：调用方指定的落焦点（单题模式=工作区容器），优先于题卡。
       focusWhenReachable(
-        target ?? (focusAnswer ? answerControl : null) ?? article,
+        target ??
+          (focusAnswer ? answerControl : null) ??
+          focusElement ??
+          article,
       );
     });
   };
@@ -595,7 +625,8 @@ function AnswerView({
     setSingleSwitchBlocked(null);
     setSingleQuestionId(id);
     setCurrentQuestionId(id);
-    await jumpToQuestion(id);
+    // 单题切题落焦工作区容器（§9.2 ←/→ 判定域；不落题面避免软键盘）
+    await jumpToQuestion(id, false, singleWorkspaceRef.current);
   };
 
   /** 切题保护的重试入口：本机落盘成功后继续被拦下的那次切题 */
@@ -612,6 +643,91 @@ function AnswerView({
     }
   };
   const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
+
+  // ---------- 单题专注键盘（M3-D3 §9.2）：Enter 主动作 / ←→ 切题 / 1-9 选项 ----------
+  // 仅 v1 新协议 + 单题模式挂载（legacy/lesson 零变化）；偏好开关关闭全失效。
+  // 守门链：默认抑制态（合成/repeat/修饰键/已被处理）→ 任一弹层打开 → busy →
+  // 书写中/纸面展开 → 答案冲突 → 切题保护拦截。一次 keydown 至多一个动作；
+  // 键盘发起的提交持同步锁（submit 串行守卫在收笔 await 之后才置位，微任务
+  // 窗口内的第二次 Enter 靠此锁挡住）。文本编辑区判定走 composedPath（含
+  // MathLive/AI 输入宿主），按钮/链接保留自身 Enter，查看结果永不入键。
+  const practiceKeyActionRef = useRef(false);
+  const onWorkspaceKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!singleMode || !keyboardShortcuts) return;
+    const native = event.nativeEvent;
+    if (isSuppressedKeyEvent(native) || isOverlayOpen()) return;
+    const currentId = resolvedSingleQuestionId;
+    if (currentId === null) return;
+    if (
+      practiceSubmit.submittingId !== null ||
+      singleSwitchBlocked !== null ||
+      (editor !== null &&
+        (editor.getActive() !== null || editor.getPaper() !== null)) ||
+      draftStore.peekAnswerConflicts(attemptId)[currentId] !== undefined
+    ) {
+      return;
+    }
+    const currentIndex = questionIds.indexOf(currentId);
+    const submitted =
+      (practiceProgress.find((row) => row.questionId === currentId)
+        ?.submittedAt ?? null) !== null;
+    if (event.key === "Enter") {
+      if (isTextEditingEvent(native) || isActivatingTarget(native)) return;
+      event.preventDefault();
+      if (practiceKeyActionRef.current) return;
+      practiceKeyActionRef.current = true;
+      void (async () => {
+        try {
+          if (!submitted) {
+            // 与主操作按钮同链：未提交（含空答「不会」）= 提交本题
+            await runPracticeSubmit(currentId);
+            return;
+          }
+          // 已提交只导航：查看本次结果永不入键（§9.2）
+          if (practiceSubmit.finished) return;
+          const next = questionIds[currentIndex + 1];
+          if (next !== undefined) {
+            await goSingleQuestion(next);
+            return;
+          }
+          const resume = practiceSubmit.firstUnsubmittedId;
+          if (resume !== null && resume !== currentId) {
+            await goSingleQuestion(resume);
+          }
+        } finally {
+          practiceKeyActionRef.current = false;
+        }
+      })();
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      // 仅工作区容器自身持有焦点时切题；题面/输入/按钮内的方向键保持原生
+      if (document.activeElement !== event.currentTarget) return;
+      event.preventDefault();
+      const next =
+        event.key === "ArrowRight"
+          ? questionIds[currentIndex + 1]
+          : questionIds[currentIndex - 1];
+      if (next !== undefined) void goSingleQuestion(next);
+      return;
+    }
+    if (/^[1-9]$/.test(event.key)) {
+      // 已提交只读题不响应；文本编辑区内数字保持输入语义
+      if (submitted || isTextEditingEvent(native)) return;
+      const card = cardElements.current.get(currentId);
+      const options = card?.querySelectorAll<HTMLInputElement>(
+        '[data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"]',
+      );
+      const option = options?.[Number(event.key) - 1];
+      if (option === undefined || option.disabled) return;
+      event.preventDefault();
+      // 复用既有选项控件链（React onChange → setAnswer → 草稿防丢），不另写
+      // 一套答案拼装；原生 click 会把焦点移到选项上，连续键盘导航要求焦点
+      // 留在工作区容器
+      option.click();
+      singleWorkspaceRef.current?.focus();
+    }
+  };
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
   const submitRevisions = useMemo(
@@ -808,10 +924,15 @@ function AnswerView({
           title={data.title}
           menuItems={
             practiceWorkflow !== undefined ? (
-              <PracticeLayoutMenuItems
-                layout={practiceLayout}
-                onChange={setPracticeLayoutExplicit}
-              />
+              <>
+                <PracticeLayoutMenuItems
+                  layout={practiceLayout}
+                  onChange={setPracticeLayoutExplicit}
+                />
+                <PracticeKeyboardHelpMenuItem
+                  onOpen={() => setKeyboardHelpOpen(true)}
+                />
+              </>
             ) : undefined
           }
           actions={
@@ -984,8 +1105,15 @@ function AnswerView({
 
             {/* 主内容列（M3-D1）：做题方式摘要 + 单题紧凑行 + 题卡列表 +
                 单题占位操作条。作答保护（材料核对）沿用原 ol 的 inert 语义，
-                现上移到本列容器——保护期间新增的呈现件同样不可交互 */}
+                现上移到本列容器——保护期间新增的呈现件同样不可交互。
+                M3-D3：单题模式下为键盘工作区（tabIndex=-1 可聚焦，§9.2
+                ←/→ 判定域；列表模式不挂 tabIndex 与键盘监听，零变化） */}
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: 布局容器兼单题键盘域（tabIndex=-1），非控件不引入 role 污染无障碍树 */}
             <div
+              ref={singleWorkspaceRef}
+              data-slot="practice-single-workspace"
+              tabIndex={singleMode ? -1 : undefined}
+              onKeyDown={singleMode ? onWorkspaceKeyDown : undefined}
               className="flex min-w-0 flex-col gap-4"
               inert={
                 !attemptMaterialsEditable(materialRecovery) || answers === null
@@ -1242,6 +1370,14 @@ function AnswerView({
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外 */}
+        {practiceWorkflow !== undefined && (
+          <PracticeKeyboardHelpDialog
+            open={keyboardHelpOpen}
+            onOpenChange={setKeyboardHelpOpen}
+          />
+        )}
 
         {/* 吸底操作条：已答进度 + 保存状态 + 离线/无权限/错误提示 + 交卷（禁用态见组件）。
             v1 卷追加已提交进度；全部收尾后主按钮换「查看本次结果」（列表模式入口，
