@@ -18,8 +18,8 @@ import { HttpError } from "../lib/http-error";
 import { requireVisibleCourseUnit } from "./course-service";
 import { policyOfColumn } from "./practice-feedback-settings-service";
 import {
-  attemptAnswersPublished,
   type AssignmentFeedbackGrant,
+  attemptAnswersPublished,
   type PracticeWorkflowSource,
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
@@ -182,9 +182,7 @@ export function practiceProtocolOf(
  * 本函数只把 v1 蕴含的字面量事实（非 lesson 来源、节奏列非空、版本列 =1）
  * 交给类型系统沿用——替代此前早退手写条件顺带完成的窄化，无断言无重复条件。
  */
-function isV1ProtocolAttempt(
-  attempt: Attempt,
-): attempt is Attempt & {
+function isV1ProtocolAttempt(attempt: Attempt): attempt is Attempt & {
   sourceType: PracticeWorkflowSource;
   practiceWorkflowVersion: 1;
   feedbackMode: PracticeFeedbackMode;
@@ -214,6 +212,27 @@ export function requireOwnActiveAttempt(
     throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废");
   }
   return attempt;
+}
+
+/**
+ * 课程来源**草稿卷**的失权分态校验（403/404，requireVisibleCourseUnit 与取卷
+ * 同口径）：requireUsableAttempt 门口、M2 逐题提交事务内、PATCH workflow 三处
+ * 共用（提交路径在事务内经外层 db 读——同步单连接口径一致）。非 course 来源
+ * 或已收尾卷直接放行。
+ */
+export function assertDraftCourseVisible(
+  db: Db,
+  studentId: string,
+  attempt: Pick<Attempt, "sourceType" | "status" | "courseId" | "unitId">,
+): void {
+  if (attempt.sourceType === "course" && attempt.status === "draft") {
+    requireVisibleCourseUnit(
+      db,
+      studentId,
+      attempt.courseId ?? "",
+      attempt.unitId ?? "",
+    );
+  }
 }
 
 /**
@@ -323,13 +342,9 @@ export function updateAttemptWorkflow(
       );
     }
     if (attempt.sourceType === "course") {
-      // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
-      requireVisibleCourseUnit(
-        db,
-        studentId,
-        attempt.courseId ?? "",
-        attempt.unitId ?? "",
-      );
+      // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致；
+      // status 已在前文保证 draft，helper 内复查恒过）
+      assertDraftCourseVisible(db, studentId, attempt);
     }
     const submittedCount = tx
       .select({ n: sql<number>`count(*)` })

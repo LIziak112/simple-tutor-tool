@@ -22,7 +22,11 @@ import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 import { putNoteReceipt } from "../test/note-fixtures.ts";
-import { extractSessionToken } from "../test/note-world.ts";
+import {
+  createStudent,
+  extractSessionToken,
+  loginStudent,
+} from "../test/note-world.ts";
 import { submitAttemptRequest } from "../test/submit-revisions.ts";
 
 /**
@@ -139,30 +143,16 @@ interface Env {
   unitId: string;
 }
 
-// extractSessionToken 复用 ../test/note-world.ts 共享导出（会话三件套之一）
+// 会话三件套复用（../test/note-world.ts）：建学生 + 登录拼 cookie；密码与
+// 共享件默认值一致，仍显式传 STUDENT_PASSWORD 保持单源
 
 async function createStudentAndLogin(
   app: App,
   teacherCookie: string,
   name: string,
 ): Promise<string> {
-  const res = await app.request("/api/teacher/students", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({
-      displayName: name,
-      loginName: name,
-      password: STUDENT_PASSWORD,
-    }),
-  });
-  expect(res.status).toBe(201);
-  const login = await app.request("/api/public/student/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginName: name, password: STUDENT_PASSWORD }),
-  });
-  expect(login.status).toBe(200);
-  return `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`;
+  await createStudent(app, teacherCookie, name, STUDENT_PASSWORD);
+  return loginStudent(app, name, STUDENT_PASSWORD);
 }
 
 /** 基础环境：教师 + 导入三题练习单元 + 张三/李四 */

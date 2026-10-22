@@ -95,6 +95,7 @@ import {
 } from "./practice-workflow-service";
 import {
   type AttemptWorkflowView,
+  assertDraftCourseVisible,
   attemptWorkflowView,
   practiceProtocolOf,
   requireOwnActiveAttempt,
@@ -439,12 +440,6 @@ function requireAssignmentRow(db: Db, id: string): Assignment {
 }
 
 /**
- * 答案是否已公布（T2A.8，D11 的判定纯函数，服务测试单测覆盖）：**实现已迁至
- * practice-workflow-service**（M2 起题级反馈四态与 wiring 题级进度可读性共用，
- * 避免反向依赖；本文件 re-export 保持既有导入路径不变）。
- */
-
-/**
  * 批量预取作业的公布口径（题目笔记本 2026-10 起，与 student-records 的
  * 作业记录列表同型收敛）：id 去重交调用方负责 → 单条 inArray 只取
  * answerRelease/dueAt → Map。含已软删行（作答记录不随作业软删消失，
@@ -539,14 +534,7 @@ export function requireUsableAttempt(
       "这份作答已作废（讲练已重新开始），请回到讲练页继续最新一次",
     );
   }
-  if (attempt.sourceType === "course" && attempt.status === "draft") {
-    requireVisibleCourseUnit(
-      db,
-      studentId,
-      attempt.courseId ?? "",
-      attempt.unitId ?? "",
-    );
-  }
+  assertDraftCourseVisible(db, studentId, attempt);
   return ensureAttemptFrozen(db, attempt);
 }
 
@@ -1080,11 +1068,7 @@ export function requireAttemptQuestion(
     .where(buildAttemptQuestionWhere(attempt.id, questionId))
     .get();
   if (hit === undefined) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
+    throw questionNotFound();
   }
   return hit;
 }
@@ -1158,11 +1142,7 @@ export function requireAttemptQuestions(
   );
   for (const questionId of questionIds) {
     if (!hitIds.has(questionId)) {
-      throw new HttpError(
-        404,
-        "QUESTION_NOT_FOUND",
-        "题目不存在或不属于这次练习",
-      );
+      throw questionNotFound();
     }
   }
 }
@@ -1193,11 +1173,7 @@ export function requireAttemptQuestionRow(
     )
     .get();
   if (hit === undefined) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
+    throw questionNotFound();
   }
   return hit;
 }
@@ -2267,7 +2243,12 @@ function autoFinishPerQuestionAttempt(
   const rowsAfter = tx
     .select({
       // 快照原文不搬运（每题数 KB，收尾判定只需要存在性）
-      hasSnapshot: sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`,
+      // mapWith(Boolean)：better-sqlite3 对该表达式返回 0/1 整数，归一为真
+      // 布尔——严格比较（仓库布尔列惯例）与真值判断都安全
+      hasSnapshot:
+        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
+          Boolean,
+        ),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -2371,11 +2352,7 @@ export function submitLessonQuestion(
     .where(buildAttemptQuestionWhere(attemptId, questionId))
     .get();
   if (row === undefined) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
+    throw questionNotFound();
   }
   if (row.id !== req.questionRevisionId) {
     throw revisionStale();
@@ -2386,11 +2363,7 @@ export function submitLessonQuestion(
   const snapshot = snapshotOfRow(row);
   if (snapshot === null) {
     // 理论不可达（严格口径已保证快照非空）；防御性兜底不静默
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
+    throw questionNotFound();
   }
   // 草稿答案已在行内（无 = 未作答提交，grade 按 D1 客观题判 false）
   const answer = answerOf(row.answerJson) ?? undefined;
@@ -2559,15 +2532,8 @@ export function submitPracticeQuestion(
     // 归属（不存在/跨学生统一 404）+ 作废 409：写路径共用前导（与 PATCH
     // workflow 同一实现）
     const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
-    if (attempt.sourceType === "course" && attempt.status === "draft") {
-      // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
-      requireVisibleCourseUnit(
-        db,
-        studentId,
-        attempt.courseId ?? "",
-        attempt.unitId ?? "",
-      );
-    }
+    // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
+    assertDraftCourseVisible(db, studentId, attempt);
     // 新协议路径仅普通来源的新协议卷：lesson 独立适配（旧协议形态）→ 协议
     // 不匹配；历史卷（无工作流版本）不可升级 → legacy（§5.3）
     const protocol = practiceProtocolOf(attempt);
@@ -2830,7 +2796,7 @@ export function practiceQuestionFeedbackOf(
     workflow: finalized
       ? null
       : ((view ?? attemptWorkflowView(db, attempt, now))?.practiceWorkflow ??
-          null),
+        null),
   });
   if (state.status !== "released") {
     return state;

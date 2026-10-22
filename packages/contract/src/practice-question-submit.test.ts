@@ -448,9 +448,6 @@ describe("practiceQuestionSubmitDataSchema（逐题提交回执）", () => {
 
 describe("回执与反馈读取共用同一投影（防漂移）", () => {
   it("两个 data schema 的 feedback 字段引用同一 schema 对象", () => {
-    expect(
-      (practiceQuestionSubmitDataSchema as { shape: unknown }).shape,
-    ).toBeDefined();
     const submitShape = (
       practiceQuestionSubmitDataSchema as unknown as {
         shape: { feedback: unknown };
