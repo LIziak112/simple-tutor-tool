@@ -1,9 +1,8 @@
 import type { PracticeQuestionFeedback } from "@tutor/contract";
-import {
-  ResultOptions,
-  VerdictBadge,
-} from "@/features/attempt/AttemptResultView";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+// 轻量呈现件走 AttemptResultParts：本组件挂在草稿视图题卡上，不得静态
+// 引入懒加载的结果回看重模块（T6R.15 F「草稿入口不提前加载结果回看模块」）
+import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 import {
   PENDING_ATTEMPT_FEEDBACK_COPY,
   practiceFeedbackRestrictedCopy,
