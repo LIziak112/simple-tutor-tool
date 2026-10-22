@@ -26,3 +26,6 @@ note/
 # Playwright E2E 产物（T2.13）：诊断输出与 html 报告
 e2e/.artifacts/
 playwright-report/
+
+# 本地 MCP 客户端配置（含会话 Bearer 凭据），严禁入库
+mcp_config.json

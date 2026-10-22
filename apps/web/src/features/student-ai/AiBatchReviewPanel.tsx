@@ -4,6 +4,7 @@ import {
   type AiBatchCreateItemResult,
   type AiChannel,
 } from "@tutor/contract";
+import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -473,8 +474,16 @@ export function AiBatchReviewEntry(props: {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        批量复盘
+      <Button
+        type="button"
+        variant="ghost"
+        className="relative flex h-11 min-w-11 shrink-0 items-center gap-1.5 px-2"
+        aria-label="批量复盘"
+        title="批量复盘"
+        onClick={() => setOpen(true)}
+      >
+        <Sparkles aria-hidden className="size-5" />
+        <span className="hidden text-sm sm:inline">批量复盘</span>
       </Button>
       {open && (
         <AiBatchReviewPanel
