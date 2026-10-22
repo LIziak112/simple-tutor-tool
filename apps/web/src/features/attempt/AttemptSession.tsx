@@ -225,6 +225,8 @@ function AnswerView({
     setAnswer,
     saveFailed,
     flush: flushAnswers,
+    flushQuestion,
+    flushQuestionLocal,
   } = useAttemptAnswers(attemptId, draftSync.recoveredDrafts, draftSync, {
     // 保存生效点：聚焦切到该题 + answer_change 事件（from=上次上报值）
     onAnswerCommitted: (questionId, answer) => {
@@ -428,7 +430,7 @@ function AnswerView({
     singleQuestionId: singleMode ? resolvedSingleQuestionId : null,
     singleMode,
     syncNow: draftSync.syncNow,
-    flushAnswers,
+    flushQuestion,
     inkControllers,
     beforeSubmit: async () => (editor === null ? true : editor.request(null)),
   });
@@ -448,6 +450,12 @@ function AnswerView({
     questionId: string;
     phase: PracticeProblemPhase;
   } | null>(null);
+  // 单题切题保护（M3-D3 §11-5）：本机落盘失败时记下被拦下的目标题（仍停留
+  // 本题），就地提示 + 重试；成功切题即清除
+  const [singleSwitchBlocked, setSingleSwitchBlocked] = useState<string | null>(
+    null,
+  );
+  const [localSaveRetrying, setLocalSaveRetrying] = useState(false);
   const runPracticeSubmit = useCallback(
     async (
       questionId: string,
@@ -571,13 +579,37 @@ function AnswerView({
   };
   // 单题跳题（M3-D1）：与列表跳题同一收笔/滚动/聚焦链，另更新单题态与
   // 当前题标记（AI 伴学/导航跟随显式选择，§11 纪律 1 不重建题卡）。
+  // M3-D3 切题纪律（§11-5）：切题前只要求当前题**本机**落盘成功（不要求
+  // 服务器确认，离线可继续已核对题面）；失败不切题，就地提示与重试，不清
+  // 空原稿、不跳页。列表模式自由浏览不设保护；上一题/下一题/导航跳题/键盘
+  // 切题统一走本入口。
   // jumpToQuestion 本身非 memo（每渲染重建），此处同法不包 useCallback
   const goSingleQuestion = async (id: string) => {
     // 提交在途禁切题（§7.2 busy）：上一题/下一题/导航均已禁用，此处兜底直调
     if (practiceSubmit.submittingId !== null) return;
+    const from = resolvedSingleQuestionId;
+    if (from !== null && from !== id && !(await flushQuestionLocal(from))) {
+      setSingleSwitchBlocked(id);
+      return;
+    }
+    setSingleSwitchBlocked(null);
     setSingleQuestionId(id);
     setCurrentQuestionId(id);
     await jumpToQuestion(id);
+  };
+
+  /** 切题保护的重试入口：本机落盘成功后继续被拦下的那次切题 */
+  const retryBlockedSwitch = async (): Promise<void> => {
+    const target = singleSwitchBlocked;
+    if (target === null || localSaveRetrying) return;
+    setLocalSaveRetrying(true);
+    try {
+      const from = resolvedSingleQuestionId;
+      if (from === null || (await flushQuestionLocal(from)))
+        await goSingleQuestion(target);
+    } finally {
+      setLocalSaveRetrying(false);
+    }
   };
   const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
@@ -1108,6 +1140,27 @@ function AnswerView({
                   </li>
                 ))}
               </ol>
+
+              {/* 切题保护提示（M3-D3 §11-5）：本机落盘失败停留本题，重试成功继续切题 */}
+              {singleMode && singleSwitchBlocked !== null && (
+                <div
+                  role="alert"
+                  data-slot="practice-local-save-alert"
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 flex-1 font-medium text-destructive">
+                    本机稿未保存，仍停留本题
+                  </span>
+                  <Button
+                    variant="outline"
+                    className="min-h-11 shrink-0"
+                    disabled={localSaveRetrying}
+                    onClick={() => void retryBlockedSwitch()}
+                  >
+                    重试保存并切换
+                  </Button>
+                </div>
+              )}
 
               {/* 单题主操作条（§7.2）：三态接线——提交本题（含「不会」空答
                   案提交）→ 正在提交…（busy 禁切题）→ 已提交行下一题/查看本次

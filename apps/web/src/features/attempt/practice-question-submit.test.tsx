@@ -664,6 +664,48 @@ it("QUESTION_REVISION_STALE：就地提示刷新，可直接重试收敛", async
   expect(screen.queryByText("页面内容已过期，请刷新后重试")).toBeNull();
 });
 
+// ---------- M3-D3：提交流接入按题 flush（§11-4 提交第 8 题不等第 19 题在途） ----------
+
+it("提交本题只确认本题答案同步，其他题保存失败不拦本题提交", async () => {
+  savePracticePreference({ layout: "list", keyboardShortcuts: true });
+  // q3 保存恒失败（模拟第 19 题网络重试中），q1 正常回执
+  vi.mocked(saveAttemptAnswerApi).mockImplementation(
+    async (_attemptId, questionId) => {
+      if (questionId === "q3") throw new Error("q3 网络失败");
+      return { questionId, changeCount: 1 };
+    },
+  );
+  mockedFetch.mockResolvedValue(baseDraft());
+  renderPage();
+  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  const wrongRadios = screen.getAllByRole("radio", { name: "错" });
+  const q3Wrong = wrongRadios[1];
+  if (q3Wrong === undefined) throw new Error("q3 判断选项未渲染");
+  fireEvent.click(q3Wrong);
+  const trueRadios = screen.getAllByRole("radio", { name: "对" });
+  const q1True = trueRadios[0];
+  if (q1True === undefined) throw new Error("q1 判断选项未渲染");
+  fireEvent.click(q1True);
+  const [q1Submit] = screen.getAllByRole("button", { name: "提交本题" });
+  if (q1Submit === undefined) throw new Error("q1 提交按钮未渲染");
+  fireEvent.click(q1Submit);
+  // 旧全局 flush 会因 q3 未同步抛「答案尚未保存」拦下提交；按题 flush 只
+  // 确认 q1 → POST 正常发出（§11-4 提交第 8 题不等第 19 题网络重试）
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  expect(mockedSubmit.mock.calls[0]?.[1]).toBe("q1");
+});
+
+it("本题答案同步失败：就地提示且不发提交请求", async () => {
+  vi.mocked(saveAttemptAnswerApi).mockRejectedValue(new Error("断网"));
+  await renderSingle(baseDraft());
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  expect(
+    await screen.findByText("本题答案尚未保存完成，请检查网络后重试"),
+  ).toBeInTheDocument();
+  expect(mockedSubmit).not.toHaveBeenCalled();
+});
+
 // ---------- 收尾后的收敛入口（§10.3）：查看本次结果 ----------
 
 it("查看本次结果：显式点击才重发详情并切换结果视图", async () => {

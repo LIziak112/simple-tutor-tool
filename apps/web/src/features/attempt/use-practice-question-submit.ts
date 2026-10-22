@@ -30,7 +30,8 @@ import { firstUnsubmittedQuestionId } from "./practice-protocol";
 
 /**
  * 新协议逐题提交编排（M3-D2，计划 §10.2/§10.3，lesson useLessonAttempt.submit
- * 为蓝本）：收笔确认 → 该题笔迹 flush → 草稿追平 → 单题证据组装 → 五字段
+ * 为蓝本）：收笔确认 → 该题笔迹 flush → 该题答案按题追平（M3-D3 §11-4，
+ * 不等其他题在途）→ 单题证据组装 → 五字段
  * POST → 回执 overlay（反馈按题 + 全卷进度 + attempt 摘要 + 工作流 revision
  * 基线）。与 lesson 的差异：
  * - 请求带新协议五字段；submissionMutationId 结果未知重试且请求内容未变时
@@ -103,7 +104,11 @@ export function usePracticeQuestionSubmit(input: {
   singleQuestionId: string | null;
   singleMode: boolean;
   syncNow: () => Promise<unknown>;
-  flushAnswers: () => Promise<void>;
+  /**
+   * 该题答案服务端同步确认（M3-D3 §11-4 按题 flush）：只等本题在途与重试，
+   * 不等其他题；false=本题未追平（就地提示，不发提交请求）。
+   */
+  flushQuestion: (questionId: string) => Promise<boolean>;
   inkControllers: RefObject<Map<string, InkUploadController>>;
   /** 提交前收笔（编辑器让位）；返回 false = 用户选择继续书写，中止提交 */
   beforeSubmit: () => Promise<boolean>;
@@ -150,8 +155,8 @@ export function usePracticeQuestionSubmit(input: {
   beforeSubmitRef.current = input.beforeSubmit;
   const syncNowRef = useRef(input.syncNow);
   syncNowRef.current = input.syncNow;
-  const flushAnswersRef = useRef(input.flushAnswers);
-  flushAnswersRef.current = input.flushAnswers;
+  const flushQuestionRef = useRef(input.flushQuestion);
+  flushQuestionRef.current = input.flushQuestion;
   const dataRef = useRef(input.data);
   dataRef.current = input.data;
 
@@ -201,7 +206,13 @@ export function usePracticeQuestionSubmit(input: {
           };
         }
         await syncNowRef.current();
-        await flushAnswersRef.current();
+        // 按题 flush（M3-D3 §11-4）：只确认本题答案同步，不等其他题在途重试；
+        // 未追平不发提交请求，就地提示可重试（与其他错误路径同走 lastError）
+        if (!(await flushQuestionRef.current(questionId))) {
+          const message = "本题答案尚未保存完成，请检查网络后重试";
+          setLastError({ questionId, message });
+          return { kind: "error", message };
+        }
         const prep = await prepareSubmitEvidence({
           attemptId,
           questionIds: [questionId],
