@@ -222,8 +222,8 @@ export function listPendingMarks(
     isNull(attempts.abandonedAt),
     // 共享谓词（pending-mark.ts 同口径，D4 2026-10 扩展）：题已「交」
     // （attempt 非 draft **或该行已单题提交**——lesson 进行中卷已提交的
-    // 手写/无答案题即时进队，课堂当场批改；只有 lesson 单题提交会写
-    // responses.submittedAt，非 lesson 行为零变化）+ finalCorrect IS NULL
+    // 手写/无答案题即时进队课堂当场批改，M2 起 v1 新协议逐题提交的行同样
+    // 即时进队；写 responses.submittedAt 的就这两处）+ finalCorrect IS NULL
     // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
     or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
     isNull(responses.finalCorrect),

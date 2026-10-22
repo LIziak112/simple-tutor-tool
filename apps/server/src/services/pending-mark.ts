@@ -13,15 +13,16 @@ import { type Attempt, responses } from "../db/schema";
 /**
  * 共享待批谓词（D4，T3.2a）——全站唯一口径：
  * **待批题 ≡ 「已交」的题中 `responses.finalCorrect IS NULL` 的题**。
- * 「已交」= attempt 非 draft **或该行已单题提交**（responses.submittedAt 非空，
- * 2026-10 讲练一体扩：lesson 进行中卷已提交的手写/无答案题即时进教师待批，
- * 课堂当场批改；只有 lesson 单题提交会写该列，非 lesson 行为零变化）。
+ * 「已交」= attempt 非 draft **或该行已单题提交**（responses.submittedAt 非空；
+ * 写该列的有两处：2026-10 讲练一体的 lesson 单题提交——进行中卷已提交的
+ * 手写/无答案题即时进教师待批、课堂当场批改；M2 起练习反馈升级的 v1 新协议
+ * 逐题提交——per_question 卷当题提交即落行级 submittedAt）。
  *
  * 设计依据：
  * - D3 持久化口径（交卷同时写 finalCorrect = teacherMark ?? autoCorrect）下与
- *   「autoCorrect 为 null 且教师未批」严格等价；由此「待批数 = 0 ⇔ status =
- *   graded」（D2 状态机）在全站成立（lesson 卷在离开 draft 前教师批改的行
- *   finalCorrect 已定，同样不计数）；
+ *   「autoCorrect 为 null 且教师未批」严格等价；「待批数 = 0 ⇔ status =
+ *   graded」（D2 状态机）只对**已收尾卷**（非 draft）成立——lesson / v1 进行中
+ *   卷可有行级待批（状态仍是 draft），消费方按状态先分流；
  * - **不得叠加 `answerJson 非空` 条件**（T3.2a 前的旧口径）：只写笔迹、未填
  *   最终答案的手写题 answerJson 为 null，却正是最需要批改的题——旧条件会漏掉
  *   它们并让该 attempt 永远到不了 graded；
@@ -41,10 +42,10 @@ export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
 /**
  * D4 待批行的共享条件（不含 attempt 归属筛选——单卷 eq / 批量 inArray 各自给）：
  * finalCorrect IS NULL + 快照非空（排幽灵行）+ draft 批次叠加行级已提交
- * （2026-10 讲练一体扩：lesson 进行中卷只数已单题提交的行，课堂当场批改；
- * 非 lesson 的 draft 恒 0。非 draft 批次整卷恒「已交」，保持既有口径不加
- * 条件——设计依据详见模块头注释）。两函数（单卷/批量）共用本构造器，
- * 口径永不漂移。
+ * （lesson 单题提交与 v1 新协议逐题提交都会写行级 submittedAt——进行中卷只数
+ * 已单题提交的行；无行级提交事实的 legacy draft 恒 0。非 draft 批次整卷恒
+ * 「已交」，保持既有口径不加条件——设计依据详见模块头注释）。两函数（单卷/
+ * 批量）共用本构造器，口径永不漂移。
  */
 function pendingMarkConditions(draft: boolean): (SQL | undefined)[] {
   return [
@@ -55,8 +56,8 @@ function pendingMarkConditions(draft: boolean): (SQL | undefined)[] {
 }
 
 /**
- * 单个 attempt 的待批题数。draft 卷只有 lesson 单题提交会命中
- * （非 lesson 的 draft 恒 0）；非 draft 按整卷既有口径。
+ * 单个 attempt 的待批题数。draft 卷只有行级提交事实（lesson 单题提交 /
+ * v1 新协议逐题提交）会命中（legacy draft 恒 0）；非 draft 按整卷既有口径。
  */
 export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
   return (
@@ -76,7 +77,8 @@ export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
 /**
  * 批量待批数：attemptId → 该 attempt 的待批题数（分组查询，500 id 一块）。
  * 结果 Map 只含有命中的 attempt（调用方按 `map.get(id) ?? 0` 取值）——
- * 非 lesson 的 draft 恒 0 不出现；lesson 进行中卷有已提交待批行时出现。
+ * 无行级提交事实的 legacy draft 恒 0 不出现；lesson / v1 进行中卷有已提交
+ * 待批行时出现。
  */
 export function pendingMarkCounts(
   db: Db,
@@ -108,6 +110,49 @@ export function pendingMarkCounts(
         .all()) {
         map.set(row.attemptId, row.n);
       }
+    }
+  }
+  return map;
+}
+
+/**
+ * v1 逐题卷「进行中进度」批量计数（M4-D3 §13）：attemptId → 行级已提交数 /
+ * 本卷总行数（分组查询，500 id 一块，与 pendingMarkCounts 同款模式）。
+ * - 调用方传**已按协议过滤的 v1 行**（协议判定统一走 practiceProtocolOf 单一
+ *   谓词，本函数不重复协议分支）；传 legacy/lesson 行则按行级事实如实计数，
+ *   不会报错（语义兜底：非 draft 收敛整卷口径）。
+ * - 已收尾卷收敛为整卷口径（status ≠ draft ⇒ submitted = total）：整卷交卷
+ *   路径不写行级 submittedAt（M2 §10.1 跳过已交/未交分野），按行数读会得到
+ *   偏小的 n——「整卷已交」时 n/N 应同为 N。
+ * - 白名单纯公开进度计数：只读 submittedAt 与行数，绝不含对错/得分/答案列。
+ * 结果 Map 只含有行命中的 attempt；零行卷（异常空卷）不出现，调用方按需回落。
+ */
+export function practiceSubmittedCounts(
+  db: Db,
+  attempts: readonly PendingMarkAttempt[],
+): Map<string, { submitted: number; total: number }> {
+  const byId = new Map(attempts.map((attempt) => [attempt.id, attempt]));
+  const map = new Map<string, { submitted: number; total: number }>();
+  const ids = [...byId.keys()];
+  for (let start = 0; start < ids.length; start += 500) {
+    const chunk = ids.slice(start, start + 500);
+    for (const row of db
+      .select({
+        attemptId: responses.attemptId,
+        total: sql<number>`count(*)`,
+        submitted: sql<number>`sum(case when ${responses.submittedAt} is not null then 1 else 0 end)`,
+      })
+      .from(responses)
+      .where(inArray(responses.attemptId, chunk))
+      .groupBy(responses.attemptId)
+      .all()) {
+      const attempt = byId.get(row.attemptId);
+      if (attempt === undefined) continue;
+      const total = Number(row.total);
+      map.set(row.attemptId, {
+        submitted: attempt.status === "draft" ? Number(row.submitted) : total,
+        total,
+      });
     }
   }
   return map;
