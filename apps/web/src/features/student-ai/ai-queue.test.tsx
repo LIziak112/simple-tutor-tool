@@ -203,6 +203,29 @@ it("本卷队列原地打开任务，保存失败留在列表且不提前记已�
 });
 
 // ---------- 组1：列表形态 ----------
+it("本卷回题使用独立定位回调，保存失败保留记录且不打开回复", async () => {
+  const task = queueTask();
+  mockedList.mockResolvedValue({
+    tasks: [task],
+    nextCursor: null,
+    origins: { [task.id]: originOf() },
+  });
+  const openTask = vi.fn(async () => true);
+  const openQuestion = vi.fn(async () => false);
+  renderPanel(makeClient(), "/s/records", {
+    currentAttemptId: ATTEMPT_ID,
+    onOpenTask: openTask,
+    onOpenQuestion: openQuestion,
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "回到本题" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "材料恢复或重试保存",
+  );
+  expect(openQuestion).toHaveBeenCalledWith(task);
+  expect(openTask).not.toHaveBeenCalled();
+  expect(mockedOpened).not.toHaveBeenCalled();
+  expect(screen.queryByTestId("location")).toBeNull();
+});
 
 describe("SAI-23 队列列表形态", () => {
   it("零条：不显示数字角标（不把未知呈现成 0），面板呈现空态说明", async () => {
@@ -501,9 +524,11 @@ describe("SAI-23 队列导航", () => {
       screen.getByRole("button", { name: "回到本题" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "回到本题" }));
-    expect(await screen.findByTestId("location")).toHaveTextContent(
-      `/s/attempts/${ATTEMPT_ID}?aiFrom=${encodeURIComponent("/s/records")}`,
+    expect((await screen.findByTestId("location")).textContent).toBe(
+      `/s/attempts/${ATTEMPT_ID}?aiFrom=${encodeURIComponent("/s/records")}&aiQuestion=q-1`,
     );
+    expect(mockedDetail).not.toHaveBeenCalled();
+    expect(mockedOpened).not.toHaveBeenCalled();
   });
 
   it("原练习不可访问：缺导航键呈现说明而不是坏链接", async () => {

@@ -612,6 +612,7 @@ function LessonAnswerInner({
             <AiQueueButton
               currentAttemptId={aiCompanion.send.attemptId}
               onOpenTask={aiCompanion.openTask}
+              onOpenQuestion={aiCompanion.openQuestion}
             />
           }
         />
@@ -753,6 +754,7 @@ function LessonCompletedView({
               <AiQueueButton
                 currentAttemptId={aiCompanion.send.attemptId}
                 onOpenTask={aiCompanion.openTask}
+                onOpenQuestion={aiCompanion.openQuestion}
               />
               <Button asChild variant="outline" className="min-h-11">
                 <Link to={`/s/attempts/${attemptId}`}>查看结果</Link>
