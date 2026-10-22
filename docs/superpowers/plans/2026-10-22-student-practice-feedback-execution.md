@@ -111,3 +111,22 @@
 - 真实修正 bug：教师未配置（NULL）曾被误判 after_attempt——改为 NULL→resolver 缺省 student_choice，after_attempt 仅留给异常值/缺行（wrong-practice 默认测试暴露）。
 - 未做（M2/M3 范围，不宣称）：逐题提交/答案出口端点与判分、学生单题工作区 UI、AI/证据/统计整合、偏好与 DSL、全链压测与真机。M2 前需拍板：feedbackReadable 对已提交行在教师收紧后的语义快照（当前按当前 gate 近似）。
 - 手动验证步骤（Codex 验收用）：教师 /t/settings 教学区改默认策略→保存→刷新回显；建作业选三选项各建一卷；学生开新练习可选节奏/改节奏（PATCH 生效、他端改后本端 409 提示刷新）；旧作业（0038 前建的 attempt）打开无 practiceWorkflow 字段且不可改节奏。
+
+### M2 契约层（2026-10-22，分支 codex/practice-question-submit，Claude 会话执行）
+
+提交：d721b86e（台账 M2 行修正）→ 6ee218e5（契约 + 测试 + index 导出 + gen:spec 产物）。
+
+- TDD 顺序：先写 packages/contract/src/practice-question-submit.test.ts（18 用例）→ 红灯 exit 1（模块未实现、导入失败；派单明示契约层此顺序合规）→ 实现 practice-question-submit.ts → 绿灯 18/18。中途两处测试自身笔误（M1 schema 导入源、包装 schema 少包一层 feedback）修正后一次通过，非实现返工。
+- 落地内容：practiceQuestionSubmitRequestSchema（workflowVersion=1 字面量、questionRevisionId、expectedAnswerRevision 非负整数、submissionMutationId uuid、必填 evidence 复用整卷 submitEvidenceDeclarationSchema 三态语义；strict、未知字段拒绝、缺省拒绝）；practiceQuestionFeedbackSchema 共用授权投影（判别二态 released/not_submitted/pending_attempt/restricted；released 复用 attemptResultQuestionSchema，restricted 复用 M1 practiceRestrictionReasonSchema）；practiceQuestionSubmitDataSchema 四键白名单（feedback/questionProgress/attempt/practiceWorkflow）；practiceQuestionFeedbackDataSchema 单键 feedback——两 data 的 feedback 字段与投影 schema 对象同一（identity 断言防漂移）；成功壳 practiceQuestionSubmitOkSchema / practiceQuestionFeedbackOkSchema。
+- 设计决定（供编排者复核）：
+  - 请求体未含 workflowRevision：派单字段清单（workflowVersion/questionRevisionId/expectedAnswerRevision/submissionMutationId/evidence）为准；计划 §10.2「workflowVersion/revision」措辞按 workflowVersion-only 落地，提交 vs 改节奏竞态由服务端事务内按当前 gate 重裁（M2 服务实现若需 409 WORKFLOW_REVISION_STALE 可诊断分码，契约可后续小步扩展）。
+  - 「待公布」独立为 pending_attempt 态（本题已提交、本卷节奏 after_attempt 待整卷公布）；教师规则/历史协议受限为 restricted（M1 三原因）；两态分离避免把学生自选 after_attempt 误报成 teacher_after_attempt。
+  - 回执不夹带整卷 summary/score（邻题对错不可反推，§6.1 白名单纪律）；released 态与 questionProgress 之间不加跨字段 refine（最后一题自动收尾后 canSubmitQuestion=false 会与 released 并存，语义合法）。
+- 真实命令与退出码（工作树内）：
+  - `pnpm test packages/contract/src/practice-question-submit.test.ts` → 红灯 exit 1；绿灯 exit 0，18/18。
+  - `pnpm test packages/contract` → exit 0，42 文件 677/677。
+  - `pnpm exec biome check packages/contract` → 首跑 2 错（导入排序+格式），`--write` 修复后 exit 0（84 文件）。
+  - `pnpm -C packages/contract typecheck` → exit 0；`pnpm -r typecheck` → exit 0（全部包）。
+  - `pnpm schema:export` → exit 0；二跑零 diff（content.json 不含本契约，幂等）。
+  - `pnpm gen:spec` → exit 0；dsl-kit/tutor-lint.mjs 因契约变更重打包（114 行标识符漂移，esbuild 重打包正常现象）；二跑 sha1 一致（52f6089b…），幂等；已随 6ee218e5 提交。
+- 未做（M2 后续批次范围，不宣称）：submitAttemptQuestion 服务抽取与路由分流、幂等/并发/邻题泄露泄露测试（服务端 assertNoLeak）、expectedAnswerRevision 事务内比对实现、错误码接线、学生端 UI。
