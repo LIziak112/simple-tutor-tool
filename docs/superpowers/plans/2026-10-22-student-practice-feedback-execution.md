@@ -195,3 +195,17 @@
 - 提交：d7224f07（三 start 封装可选 options；useStartAttempt/useStartCourseAttempt/两处错题重练 mutationFn 执行时读 getPracticePreference().feedback 构造 {workflowVersion:1, feedbackMode}；api 层 mock fetch 请求体测试）+ 1fa1735a（D1 遗留修复：绑定时刻对齐已保存默认布局，显式切换标志防拉扯，补两条集成测试）。
 - 编排者独立验收：两笔 diff 通读；代理哨兵日志核验（红→绿、全量 466 文件 5506/5506、TSC/LINT/BUILD 全 0）；编排者自跑全量复核 /tmp/m3-d15-accept-full.log。自此生产新建普通卷（course/assignment/wrong）默认进入 v1 新协议（学生偏好 per_question，教师约束服务端裁决），M3 单题 UI 可达。
 - 未做（后续批次）：PATCH workflow 节奏切换 UI（计划 §6.1 canChangeFeedback 呈现，M5 偏好批次或 M4 视工作量定）。
+
+### M3-D2 逐题提交交互闭环（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交链：4b0f8d1b（QuestionFeedback 四态呈现 + 受限文案单源 + VerdictBadge 结论文案可选）→ f43bf67e（usePracticeQuestionSubmit 编排 + 回执 overlay + 原位只读 + 主操作三态）→ 330e3037（AttemptResultParts 拆分，草稿渲染不静态加载结果回看模块，保住 T6R.15 F 惰性纪律）→ fc40eda7（缺稿明确选择弹层接入提交编排 + 反馈惰性 GET + 错误分诊 + 查看本次结果收敛测试）。
+- 落地：五字段 POST 编排（submissionMutationId {id,payloadKey} 同载荷重试固定复用、WORKFLOW_MUTATION_CONFLICT 换新 id 自动重试一次）；回执 overlay（questionProgress/attempt/workflow，data 刷新整体重置——服务端权威）；已提交行原位只读（readOnly 链：输入 disabled/readOnly、隐藏标画/草稿/手写编辑入口，§11-2 原位不换卡）；列表 footer/单题主操作位三态（提交本题→正在提交→下一题/查看本次结果/继续未提交题目）；最后一题自动收尾停轮询留反馈视图，「查看本次结果」显式收敛；题级反馈按需 GET（单题当前题 effect、列表 IntersectionObserver rootMargin 160px、失败可重试不缓存失败）；错误分诊（ALREADY_SUBMITTED 静默 refetch、STALE 家族提示刷新、ANSWER_REVISION_CONFLICT 复用既有冲突裁决 UI、WORKFLOW_RESTRICTED refetch 受限呈现）。
+- 编排者独立验收（2026-10-23）：四笔全量 diff 通读（18 文件 +2392/-175）；编排者自跑 /tmp/m3-d2-accept-{full,tsc,lint,build}.log：5532/5532、TSC/LINT/BUILD 全 0；子代理红灯日志核验。发现并确认子代理自修一处：330e3037 修复提交 2 静态引入结果回看模块破坏惰性加载（全量测试当场暴露）。
+- 记档接受：部分填空未填满时主提交按钮禁用（isAnswered 判定），「不会」次按钮覆盖提交路径（与整卷语义一致，P1 打磨候选）；单题模式反馈按 data 加载缓存一次（refetch 重置，与 overlay 同生命周期）；已提交手写题卸载纸面编辑入口（笔迹提交前已封存上传，编辑入口随 readOnly 移除与既有先例一致）；缺稿弹层为组件级测试+接线走查（problems 全链 jsdom 集成未做，成本高）。
+
+### M3-D3 快捷键与按题 flush（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交链：6adfb080（useAttemptAnswers 按题 flush：flushQuestionLocal 本机落盘 / flushQuestion 单题服务端确认，inFlight 按题 Map 索引，全局 flush 零变化）→ 609d6410（提交流接入 flushQuestion + 切题前本机落盘保护/重试入口）→ 4236cdbf（单题键盘方案 Enter/←→/1-9 + 快捷键帮助）。
+- 落地：按题 flush（§11-4 提交第 8 题不等第 19 题在途；§11-5 切题只要求本机落盘成功，离线可切题）；切题保护统一入口 goSingleQuestion（本机写失败不切题，「本机稿未保存，仍停留本题」+ 重试成功再切，不清空原稿不跳页）；键盘方案仅 v1+单题模式挂载（legacy/lesson 零变化），三类键统一受 keyboardShortcuts 偏好门禁——Enter 主动作（未提交=提交本题含空答「不会」链、已提交=下一题/继续未提交、查看本次结果永不入键）、←→仅工作区容器焦点域、1-9 复用选项控件链（option.click() 后焦点回容器）；保护链：composedPath 文本编辑区判定（含 MATH-FIELD/shadow DOM 宿主）、按钮/链接保留自身 Enter、isComposing/repeat/keyCode 229/修饰键/defaultPrevented 抑制、任一弹层打开（role=dialog data-state=open）不推进、提交中/书写中/纸面展开/答案冲突/切题保护拦截、键盘提交持 practiceKeyActionRef 同步锁堵收笔 await 微任务窗口；「更多 → 快捷键」帮助弹层（粗指针提示需实体键盘，弹层状态在菜单子树外持有）；单题工作区容器 tabIndex=-1 聚焦域，切题后焦点落容器（不弹软键盘）。
+- 编排者独立验收（2026-10-23）：三笔全量 diff 通读（10 文件 +1438/-22）；红灯日志核验（red1 7 failed|3 passed）；隔离断言实测有效（q19 挂起不阻塞 q8 flushQuestion、全局 flush 仍等全部）；编排者自跑 /tmp/m3-d3-accept-{full,tsc,lint,build}.log：5562/5562、TSC/LINT/BUILD 全 0。
+- 记档接受：焦点落点为单题工作区容器（键盘域锚点）而非题干元素本身——满足「不弹软键盘+键盘域锚定」功能意图；jsdom 未实现 composedPath/isContentEditable 且 shadow 事件 target 重定向，practice-keyboard 以 composedPath 优先+target/深焦点链回退（真实浏览器走标准路径），MathLive 让位列真机抽验归 M6 用户清单；flushQuestion 的 denied（无权限保存）路径提示为通用网络文案（原全局 flush 有专属文案；该路径 attempt 已不可编辑，详情轮询自然收敛，罕见不阻断）。
