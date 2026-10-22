@@ -676,7 +676,6 @@ export function AttemptResultView({
       }
       actions={
         <>
-          {aiCompanion.trigger}
           {/* SAI-31 批量复盘入口：勾选只进面板，创建走一次确认（B16） */}
           <AiBatchReviewEntry
             attemptId={attempt.id}
