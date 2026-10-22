@@ -359,6 +359,8 @@ describe("studentAssignmentSchema（学生端无泄露约束，T2A.7 多单元�
       "dueAt",
       "createdAt",
       "status",
+      // M4-D3：进行中 v1 卷的行级已提交数（可选；纯公开进度计数）
+      "practiceSubmittedCount",
     ]);
     for (const forbidden of [
       "answers",
@@ -609,5 +611,44 @@ describe("allowPerQuestionFeedback（M1a 作业粒度授权）", () => {
         allowPerQuestionFeedback: true,
       }).allowPerQuestionFeedback,
     ).toBe(true);
+  });
+});
+
+describe("studentAssignmentSchema（M4-D3：v1 卷进行中进度计数）", () => {
+  /** 合法的学生端作业条目样例（in_progress；N 复用既有 questionCount） */
+  function assignmentFixture(): Record<string, unknown> {
+    return {
+      id: ASSIGNMENT_ID,
+      title: "周末加练",
+      units: [],
+      unitCount: 0,
+      questionCount: 3,
+      dueAt: null,
+      createdAt: "2026-09-30T08:00:00.000Z",
+      status: "in_progress",
+    };
+  }
+
+  it("practiceSubmittedCount 可选：缺省合法（legacy/lesson 卷）；携带非负整数合法", () => {
+    const legacy = studentAssignmentSchema.parse(assignmentFixture());
+    expect(legacy.practiceSubmittedCount).toBeUndefined();
+    const parsed = studentAssignmentSchema.parse({
+      ...assignmentFixture(),
+      practiceSubmittedCount: 1,
+    });
+    expect(parsed.practiceSubmittedCount).toBe(1);
+  });
+
+  it("practiceSubmittedCount 必须为非负整数：负数 / 小数 / 字符串拒绝", () => {
+    for (const bad of [
+      { ...assignmentFixture(), practiceSubmittedCount: -1 },
+      { ...assignmentFixture(), practiceSubmittedCount: 0.5 },
+      { ...assignmentFixture(), practiceSubmittedCount: "1" },
+    ] as const) {
+      expect(
+        studentAssignmentSchema.safeParse(bad).success,
+        JSON.stringify(bad),
+      ).toBe(false);
+    }
   });
 });

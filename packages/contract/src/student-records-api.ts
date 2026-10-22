@@ -94,6 +94,15 @@ export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
   startedAt: z.string().min(1),
   /** 交卷时间：UTC ISO；未交为 null（进行中条目「继续作答」） */
   submittedAt: z.string().nullable(),
+  /**
+   * 逐题已提交行数（M4-D3，v1 新协议卷 only；白名单纯公开进度计数，绝不含
+   * 对错/得分/答案）：draft 卷按 responses.submittedAt 行级计数（与题级进度
+   * questionProgress 同源），已收尾卷收敛为整卷口径（= practiceQuestionCount）；
+   * legacy / lesson 卷缺省 = 前端回落既有呈现。
+   */
+  practiceSubmittedCount: z.number().int().min(0).optional(),
+  /** 本卷题数（M4-D3，与 practiceSubmittedCount 成对出现；N=冻结行数） */
+  practiceQuestionCount: z.number().int().min(0).optional(),
 });
 
 /** GET /api/student/records 响应 data（按最近活动时间倒序；total 为筛选后总条数） */

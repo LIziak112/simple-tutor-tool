@@ -384,6 +384,12 @@ export const studentAssignmentSchema = z.object({
   createdAt: z.string().min(1),
   /** 完成状态（服务端由该学生的 attempts 推导：graded > submitted > in_progress > not_started） */
   status: assignmentStatusSchema,
+  /**
+   * 逐题已提交行数（M4-D3，仅进行中的 v1 新协议卷携带；白名单纯公开进度
+   * 计数，绝不含对错/得分/答案，N 复用既有 questionCount）：draft 卷按
+   * responses.submittedAt 行级计数；legacy / lesson 卷缺省 = 前端回落既有呈现。
+   */
+  practiceSubmittedCount: z.number().int().min(0).optional(),
 });
 
 /** GET /api/student/assignments 响应 data（按布置时间倒序） */
