@@ -2717,25 +2717,29 @@ export function submitPracticeQuestion(
     // 收尾 RETURNING 带回顾卷新行；no-op（他方已收尾）时回落事务内已读行
     //（同步单连接下与事务后重读恒等）
     const finished = autoFinishPerQuestionAttempt(tx, attemptId, nowIso);
+    // 有效提交在事务内记事件（重放分支不会到这——§10.3 不重复写；与提交
+    // 原子落库，省一次独立 autocommit 的 fsync，不留「提交已持久、事件丢失」
+    // 崩溃窗口。lesson 路径的事件仍在事务外属既有模式）
+    recordQuestionSubmitEvent(tx, studentId, attemptId, questionId);
     return {
       replayed: false as const,
       row: written,
       attempt: finished.attempt ?? attempt,
+      snapshot,
     };
   });
 
-  // 有效提交才记事件（重放不重复记，§10.3「不重复写 question_submit 事件」）
-  if (!outcome.replayed) {
-    recordQuestionSubmitEvent(db, studentId, attemptId, questionId);
-  }
-
   // 响应组装：读取时刻投影（§10.3 不重放旧正文）。行与 attempt 直接用事务
   // 产物（同步单连接：事务后重读与事务内已读恒等，省两次整行 SELECT——
-  // 含每题数 KB 快照原文的行）；快照惰性解析，仅 released 反馈才付出整份
-  // 快照的解析校验
+  // 含每题数 KB 快照原文的行）；快照只解析一次——非重放路径复用事务内判分
+  // 已解析对象（UPDATE 不触快照列，字节恒等），重放路径才惰性解析（仅
+  // released 反馈需要整份快照的解析校验）
   const view = attemptWorkflowView(db, outcome.attempt, now);
   if (view === null) {
-    // 与事务内 gate 同款降级（异常数据不打 500；提交事实已在库，重试走幂等）
+    // 与事务内 gate 同款降级（异常数据不打 500；提交事实已在库）。注：并发
+    // 破坏授权事实触发本 409 时，同 mutationId 重试（重放分支）同样在本段
+    // 被拒——该 mutation 的回执需异常数据修复后才能取回；届时整卷读取面已
+    // 同步降级 legacy（全库一致口径，非本端点孤例）
     throw new HttpError(
       409,
       "WORKFLOW_LEGACY",
@@ -2747,7 +2751,8 @@ export function submitPracticeQuestion(
       db,
       outcome.attempt,
       outcome.row,
-      () => snapshotOfRow(outcome.row),
+      () =>
+        "snapshot" in outcome ? outcome.snapshot : snapshotOfRow(outcome.row),
       now,
       view,
     ),
