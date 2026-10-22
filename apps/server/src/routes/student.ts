@@ -56,6 +56,7 @@ import {
   HttpError,
   parseJsonBody,
   parseJsonBodyOrEmpty,
+  parseJsonValue,
   readJsonBody,
 } from "../lib/http-error";
 import {
@@ -364,14 +365,10 @@ export function createStudentRoutes(
           raw !== null &&
           "workflowVersion" in raw
         ) {
-          const parsed = practiceQuestionSubmitRequestSchema.safeParse(raw);
-          if (!parsed.success) {
-            throw new HttpError(
-              400,
-              "VALIDATION_ERROR",
-              `请求参数不合法：${firstIssueMessage(parsed.error)}`,
-            );
-          }
+          const parsed = parseJsonValue(
+            raw,
+            practiceQuestionSubmitRequestSchema,
+          );
           return c.json(
             {
               ok: true,
@@ -381,7 +378,7 @@ export function createStudentRoutes(
                   c.var.student.id,
                   c.req.param("id"),
                   c.req.param("questionId"),
-                  parsed.data,
+                  parsed,
                 ),
               ),
             },
@@ -389,14 +386,7 @@ export function createStudentRoutes(
             { "Cache-Control": "private, no-store" },
           );
         }
-        const legacy = lessonQuestionSubmitRequestSchema.safeParse(raw);
-        if (!legacy.success) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            `请求参数不合法：${firstIssueMessage(legacy.error)}`,
-          );
-        }
+        const legacy = parseJsonValue(raw, lessonQuestionSubmitRequestSchema);
         return c.json({
           ok: true,
           data: submitLessonQuestion(
@@ -404,7 +394,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("questionId"),
-            legacy.data,
+            legacy,
           ),
         });
       })

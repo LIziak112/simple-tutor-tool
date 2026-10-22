@@ -22,6 +22,7 @@ import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 import { putNoteReceipt } from "../test/note-fixtures.ts";
+import { extractSessionToken } from "../test/note-world.ts";
 import { submitAttemptRequest } from "../test/submit-revisions.ts";
 
 /**
@@ -138,13 +139,7 @@ interface Env {
   unitId: string;
 }
 
-function extractSessionToken(res: Response, cookie = "tutor_session"): string {
-  const line = res.headers
-    .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
-  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
-  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
-}
+// extractSessionToken 复用 ../test/note-world.ts 共享导出（会话三件套之一）
 
 async function createStudentAndLogin(
   app: App,
@@ -578,20 +573,14 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
       Q.choice,
     ).submittedAt;
 
-    // 模拟「结果未知可恢复」：同 mutationId 原样重试
-    const retryRes = await practiceSubmit(env, draft, attemptId, Q.choice, {
+    // 模拟「结果未知可恢复」：同 mutationId 原样重试（practiceSubmitOk 内含
+    // 200 与契约壳校验，与其他用例同一断言强度）
+    const retry = await practiceSubmitOk(env, draft, attemptId, Q.choice, {
       mutationId,
     });
-    expect(retryRes.status).toBe(200);
-    const retryBody = (await retryRes.json()) as {
-      data: SubmitBody["data"];
-    };
-    expect(practiceQuestionSubmitOkSchema.safeParse(retryBody).success).toBe(
-      true,
-    );
-    expect(retryBody.data.feedback.status).toBe("released");
-    expect(retryBody.data.feedback.question.autoCorrect).toBe(true);
-    expect(retryBody.data.questionProgress[0]).toMatchObject({
+    expect(retry.data.feedback.status).toBe("released");
+    expect(retry.data.feedback.question.autoCorrect).toBe(true);
+    expect(retry.data.questionProgress[0]).toMatchObject({
       questionId: Q.choice,
       feedbackReadable: true,
     });
@@ -1034,23 +1023,13 @@ describe("M2 版本核对（§10.2 事务内顺序）", () => {
 describe("M2 教师收紧矩阵（§5.4）", () => {
   it("作业撤授权（allow=false）：后续逐题提交 409 WORKFLOW_RESTRICTED、已提交行保留、feedback 按当前 gate restricted、重试不重放旧正文、剩余题整卷提交收尾、收尾后 released", async () => {
     const env = await makeEnv();
-    const asgId = await createAssignment(
-      env.app,
-      env.teacherCookie,
-      env.unitId,
-      "张三",
-      { allowPerQuestionFeedback: true },
-    );
-    const startRes = await env.app.request(
-      `/api/student/assignments/${asgId}/attempt`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie: env.aCookie },
-        body: JSON.stringify({ workflowVersion: 1 }),
-      },
-    );
-    const attemptId = ((await startRes.json()) as { data: { id: string } }).data
-      .id;
+    const attemptId = await startPracticeAttempt(env);
+    const asgId = env.db
+      .select({ id: attempts.assignmentId })
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get()?.id;
+    if (!asgId) throw new Error("夹具缺少作业行");
 
     let draft = await fetchDraft(env, attemptId);
     await saveAnswer(env, attemptId, Q.choice, { kind: "choice", index: 1 });

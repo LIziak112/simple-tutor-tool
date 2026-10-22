@@ -232,7 +232,18 @@ function buildLessonStartData(
     draftRevisions,
     hintsOpened,
     released,
-    summary: lessonLiveSummaryOf(rows, attempt),
+    summary: lessonLiveSummaryOf(
+      // 开卷本就装载完整行（题目投影需要快照原文）；喂汇总前映射为存在性
+      // 布尔形态（LessonSummaryRow，不重复搬运快照列语义）
+      rows.map((row) => ({
+        hasSnapshot: row.questionSnapshotJson !== null,
+        answerJson: row.answerJson,
+        submittedAt: row.submittedAt,
+        autoCorrect: row.autoCorrect,
+        finalCorrect: row.finalCorrect,
+      })),
+      attempt,
+    ),
     enabledCapabilities: attemptEnabledCapabilities(db, attempt),
   };
 }

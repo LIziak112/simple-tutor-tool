@@ -24,6 +24,7 @@ import {
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
 } from "./practice-workflow-service";
+import type { Tx } from "./question-sync";
 
 /**
  * M1b 工作流接线层：把纯裁决器接到数据库事实上（建卷写入列 + 读侧投影 +
@@ -159,6 +160,48 @@ export interface AttemptWorkflowView {
 }
 
 /**
+ * 协议形态判别（M2 起单一谓词——此前 PATCH/提交/反馈读取/lesson 分流各从
+ * 裸列推导同一条件，已有文案与防御性检查的漂移）：lesson 独立适配旧协议；
+ * 无工作流版本列（或节奏列缺失）= 历史旧协议卷，不可升级；其余为新协议 v1。
+ */
+export function practiceProtocolOf(
+  attempt: Pick<
+    Attempt,
+    "sourceType" | "practiceWorkflowVersion" | "feedbackMode"
+  >,
+): "lesson" | "legacy" | "v1" {
+  if (attempt.sourceType === "lesson") return "lesson";
+  if (attempt.practiceWorkflowVersion !== 1 || attempt.feedbackMode === null) {
+    return "legacy";
+  }
+  return "v1";
+}
+
+/**
+ * 写路径共用前导（PATCH workflow 与 M2 逐题提交同一实现，消除逐字重复与
+ * 404 文案漂移）：按 (id, 学生) 取行——不存在/跨学生统一 404 不暴露存在性
+ * 差异；作废卷 409。课程失权校验留在调用方（两路径检查时机不同）。
+ */
+export function requireOwnActiveAttempt(
+  tx: Tx,
+  studentId: string,
+  attemptId: string,
+): Attempt {
+  const attempt = tx
+    .select()
+    .from(attempts)
+    .where(and(eq(attempts.id, attemptId), eq(attempts.studentId, studentId)))
+    .get();
+  if (attempt === undefined) {
+    throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答不存在");
+  }
+  if (attempt.abandonedAt !== null) {
+    throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废");
+  }
+  return attempt;
+}
+
+/**
  * 读侧投影（草稿视图 / PATCH 回执共用）：服务端按**当前**教师规则/作业授权
  * 重算可提交状态；已选 feedbackMode 不因收紧/放宽改写（resolver 语义）。
  * lesson 或历史卷（无工作流版本）→ null，响应缺失两字段 = 整卷旧协议。
@@ -244,23 +287,9 @@ export function updateAttemptWorkflow(
   request: { feedbackMode: PracticeFeedbackMode; workflowRevision: number },
 ): AttemptWorkflowView {
   return db.transaction((tx) => {
-    const attempt = tx
-      .select()
-      .from(attempts)
-      .where(and(eq(attempts.id, attemptId), eq(attempts.studentId, studentId)))
-      .get();
-    if (attempt === undefined) {
-      throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答不存在");
-    }
-    if (attempt.abandonedAt !== null) {
-      throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废");
-    }
+    const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
     // lesson 走独立适配路径；历史卷（无工作流版本）不可变更——都不暴露存在性差异
-    if (
-      attempt.sourceType === "lesson" ||
-      attempt.practiceWorkflowVersion !== 1 ||
-      attempt.feedbackMode === null
-    ) {
+    if (practiceProtocolOf(attempt) !== "v1") {
       throw new HttpError(
         409,
         "WORKFLOW_LEGACY",

@@ -90,22 +90,29 @@ export async function parseJsonBodyWithCode<T>(
   return parseJsonText(await c.req.text(), schema, codeOf);
 }
 
-/** parseJsonBody 变体们的共享段：文本 → JSON.parse → schema 校验（400 口径一致） */
-function parseJsonText<T>(
-  text: string,
+/** JSON.parse 失败 → 400（parseJsonText 与 readJsonBody 共用同一口径） */
+function jsonParseOr400(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new HttpError(400, "VALIDATION_ERROR", "请求体不是合法的 JSON");
+  }
+}
+
+/**
+ * 已解码值过 schema，失败 → 400（与 parseJsonBody 同一口径）：协议分流路由
+ * 拿到裸 JSON 后的校验段在此单一实现，各分支不手抄 safeParse +
+ * firstIssueMessage 组装（M2 前该段只存在于 parseJsonText 私有实现）。
+ */
+export function parseJsonValue<T>(
+  value: unknown,
   schema: ZodType<T>,
   codeOf: (
     firstIssuePath: string,
     firstIssue?: { code?: string },
   ) => string = () => "VALIDATION_ERROR",
 ): T {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch {
-    throw new HttpError(400, "VALIDATION_ERROR", "请求体不是合法的 JSON");
-  }
-  const parsed = schema.safeParse(raw);
+  const parsed = schema.safeParse(value);
   if (!parsed.success) {
     const firstIssue = parsed.error.issues[0];
     const firstPath = String(firstIssue?.path[0] ?? "");
@@ -118,18 +125,25 @@ function parseJsonText<T>(
   return parsed.data;
 }
 
+/** parseJsonBody 变体们的共享段：文本 → JSON.parse → schema 校验（400 口径一致） */
+function parseJsonText<T>(
+  text: string,
+  schema: ZodType<T>,
+  codeOf: (
+    firstIssuePath: string,
+    firstIssue?: { code?: string },
+  ) => string = () => "VALIDATION_ERROR",
+): T {
+  return parseJsonValue(jsonParseOr400(text), schema, codeOf);
+}
+
 /**
  * 读出 JSON 请求体而不做 schema 校验（M2 单题提交协议分流）：非 JSON 抛 400
- * VALIDATION_ERROR（与 parseJsonBody 同口径）；分流后的 schema 校验由调用方
- * 执行（safeParse + firstIssueMessage 组装同款 400）。body 只读一次。
+ * VALIDATION_ERROR（jsonParseOr400 与 parseJsonBody 同口径）；分流后的 schema
+ * 校验由调用方执行（parseJsonValue）。body 只读一次。
  */
 export async function readJsonBody(c: Context): Promise<unknown> {
-  const text = await c.req.text();
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new HttpError(400, "VALIDATION_ERROR", "请求体不是合法的 JSON");
-  }
+  return jsonParseOr400(await c.req.text());
 }
 
 /**

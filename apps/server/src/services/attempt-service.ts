@@ -95,6 +95,8 @@ import {
 import {
   type AttemptWorkflowView,
   attemptWorkflowView,
+  practiceProtocolOf,
+  requireOwnActiveAttempt,
   resolveNewAttemptWorkflow,
 } from "./practice-workflow-wiring";
 
@@ -2185,16 +2187,16 @@ export function submitAttempt(
  *   正常链路无此类行）。
  */
 
-/** lessonLiveSummaryOf 的判定输入行裁剪（瘦列，不含每题数 KB 的快照原文）：
- * 单题提交传事务闭包带出的行集（即此形态），开卷链路传完整行结构兼容 */
-type LessonSummaryRow = Pick<
-  ResponseRow,
-  | "questionSnapshotJson"
-  | "answerJson"
-  | "submittedAt"
-  | "autoCorrect"
-  | "finalCorrect"
->;
+/** lessonLiveSummaryOf 的判定输入行（M2 起快照列降为存在性布尔——汇总
+ *  判定只需要「快照非空」与对错计数，不再搬运每题数 KB 的快照原文；单题
+ *  提交事务带出的行集即此形态，开卷链路用完整行按此映射） */
+interface LessonSummaryRow {
+  hasSnapshot: boolean;
+  answerJson: string | null;
+  submittedAt: string | null;
+  autoCorrect: boolean | null;
+  finalCorrect: boolean | null;
+}
 
 export function lessonLiveSummaryOf(
   rows: readonly LessonSummaryRow[],
@@ -2207,7 +2209,7 @@ export function lessonLiveSummaryOf(
   let pending = 0;
   let pendingCount = 0;
   for (const row of rows) {
-    if (row.questionSnapshotJson === null) continue;
+    if (!row.hasSnapshot) continue;
     total += 1;
     if (row.submittedAt === null) continue;
     if (answerOf(row.answerJson) !== null) answered += 1;
@@ -2261,7 +2263,8 @@ function autoFinishPerQuestionAttempt(
 ): { rows: LessonSummaryRow[]; attempt: Attempt | null } {
   const rowsAfter = tx
     .select({
-      questionSnapshotJson: responses.questionSnapshotJson,
+      // 快照原文不搬运（每题数 KB，收尾判定只需要存在性）
+      hasSnapshot: sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`,
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -2270,7 +2273,7 @@ function autoFinishPerQuestionAttempt(
     .from(responses)
     .where(eq(responses.attemptId, attemptId))
     .all();
-  const gradable = rowsAfter.filter((r) => r.questionSnapshotJson !== null);
+  const gradable = rowsAfter.filter((r) => r.hasSnapshot);
   if (gradable.every((r) => r.submittedAt !== null)) {
     const { status, scoreFinal } = finalScoreOf(
       gradable.map((r) => r.finalCorrect),
@@ -2341,7 +2344,7 @@ export function submitLessonQuestion(
     // M2 协议分流（2026-10-22 计划 §5.3/§10.1）：新协议普通卷收到旧协议形态
     // → 拒绝并提示刷新，不退回整卷无版本写入；历史卷维持 404（讲练专属入口，
     // 不暴露差异）
-    if (attempt.practiceWorkflowVersion === 1) {
+    if (practiceProtocolOf(attempt) === "v1") {
       throw new HttpError(
         409,
         "WORKFLOW_PROTOCOL_MISMATCH",
@@ -2550,18 +2553,9 @@ export function submitPracticeQuestion(
   const nowIso = new Date(now).toISOString();
   const digest = practiceRequestDigestOf(attemptId, questionId, req);
   const outcome = db.transaction((tx) => {
-    // 归属：不存在/跨学生统一 404（与 PATCH workflow 同口径，不暴露存在性）
-    const attempt = tx
-      .select()
-      .from(attempts)
-      .where(and(eq(attempts.id, attemptId), eq(attempts.studentId, studentId)))
-      .get();
-    if (attempt === undefined) {
-      throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
-    }
-    if (attempt.abandonedAt !== null) {
-      throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废");
-    }
+    // 归属（不存在/跨学生统一 404）+ 作废 409：写路径共用前导（与 PATCH
+    // workflow 同一实现）
+    const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
     if (attempt.sourceType === "course" && attempt.status === "draft") {
       // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
       requireVisibleCourseUnit(
@@ -2573,17 +2567,15 @@ export function submitPracticeQuestion(
     }
     // 新协议路径仅普通来源的新协议卷：lesson 独立适配（旧协议形态）→ 协议
     // 不匹配；历史卷（无工作流版本）不可升级 → legacy（§5.3）
-    if (attempt.sourceType === "lesson") {
+    const protocol = practiceProtocolOf(attempt);
+    if (protocol === "lesson") {
       throw new HttpError(
         409,
         "WORKFLOW_PROTOCOL_MISMATCH",
         "这份作答是讲练练习，请刷新页面后按讲练流程提交",
       );
     }
-    if (
-      attempt.practiceWorkflowVersion !== 1 ||
-      attempt.feedbackMode === null
-    ) {
+    if (protocol === "legacy") {
       throw new HttpError(
         409,
         "WORKFLOW_LEGACY",
@@ -2856,11 +2848,7 @@ export function getPracticeQuestionFeedback(
   now: Date | string = new Date(),
 ): PracticeQuestionFeedbackData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  if (
-    attempt.sourceType === "lesson" ||
-    attempt.practiceWorkflowVersion !== 1 ||
-    attempt.feedbackMode === null
-  ) {
+  if (practiceProtocolOf(attempt) !== "v1") {
     throw new HttpError(
       409,
       "WORKFLOW_LEGACY",
