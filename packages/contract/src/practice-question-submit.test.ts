@@ -31,6 +31,7 @@ const SUBMITTED_AT = "2026-10-22T08:00:00.000Z";
 /** 合法逐题提交请求（frozen 证据形态；其余三态见证据专项用例） */
 const VALID_REQUEST = {
   workflowVersion: 1,
+  workflowRevision: 0,
   questionRevisionId: REVISION_ID,
   expectedAnswerRevision: 3,
   submissionMutationId: MUTATION_ID,
@@ -120,11 +121,12 @@ const VALID_SUBMIT_DATA = {
 } as const;
 
 describe("practiceQuestionSubmitRequestSchema（M2 新协议逐题提交请求）", () => {
-  it("接受合法请求（frozen 证据），字段全集恰为五键", () => {
+  it("接受合法请求（frozen 证据），字段全集恰为六键", () => {
     const parsed = practiceQuestionSubmitRequestSchema.parse(VALID_REQUEST);
     expect(Object.keys(parsed).sort()).toEqual(
       [
         "workflowVersion",
+        "workflowRevision",
         "questionRevisionId",
         "expectedAnswerRevision",
         "submissionMutationId",
@@ -178,7 +180,6 @@ describe("practiceQuestionSubmitRequestSchema（M2 新协议逐题提交请求�
     for (const extra of [
       { answerRelease: "on_submit" },
       { feedbackMode: "per_question" },
-      { workflowRevision: 0 },
       { answer: { kind: "choice", index: 1 } },
     ]) {
       expect(
@@ -193,6 +194,7 @@ describe("practiceQuestionSubmitRequestSchema（M2 新协议逐题提交请求�
   it("缺省拒绝：任一字段缺失整体拒绝（新协议无旧客户端兼容分支）", () => {
     for (const key of [
       "workflowVersion",
+      "workflowRevision",
       "questionRevisionId",
       "expectedAnswerRevision",
       "submissionMutationId",
@@ -206,11 +208,23 @@ describe("practiceQuestionSubmitRequestSchema（M2 新协议逐题提交请求�
     }
   });
 
-  it("非法值拒绝：workflowVersion 仅 1、revision 非负整数、mutationId 须 uuid、版本引用非空", () => {
+  it("非法值拒绝：workflowVersion 仅 1、两 revision 非负整数、mutationId 须 uuid、版本引用非空", () => {
     expect(
       practiceQuestionSubmitRequestSchema.safeParse({
         ...VALID_REQUEST,
         workflowVersion: 2,
+      }).success,
+    ).toBe(false);
+    expect(
+      practiceQuestionSubmitRequestSchema.safeParse({
+        ...VALID_REQUEST,
+        workflowRevision: -1,
+      }).success,
+    ).toBe(false);
+    expect(
+      practiceQuestionSubmitRequestSchema.safeParse({
+        ...VALID_REQUEST,
+        workflowRevision: 1.5,
       }).success,
     ).toBe(false);
     expect(

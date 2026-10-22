@@ -69,6 +69,10 @@ export const practiceQuestionFeedbackSchema = z.discriminatedUnion("status", [
  * 兼容分支：缺 workflowVersion 的请求被服务端拒绝并提示刷新，不退回整卷
  * 无版本写入，§5.3）：
  * - workflowVersion：协议门禁，恒 1（zod literal，升级时整体失效）；
+ * - workflowRevision：客户端所见 practiceWorkflow.revision（草稿视图/上次回执），
+ *   服务端在提交事务内与 attempts.workflowRevision 比对，陈旧 409
+ *   WORKFLOW_REVISION_STALE——工作流改动与首题提交的竞态凭它拒绝陈旧请求
+ *   （§10.2 第 4 步、§10.3 末条；任一提交后节奏冻结，比对恒命中）；
  * - questionRevisionId：建卷下发的该题版本引用（responses 行 id），错版 409
  *   QUESTION_REVISION_STALE（与整卷/lesson 同口径）；
  * - expectedAnswerRevision：**学生答案**的预期服务器版本（草稿视图
@@ -84,6 +88,7 @@ export const practiceQuestionFeedbackSchema = z.discriminatedUnion("status", [
 export const practiceQuestionSubmitRequestSchema = z
   .object({
     workflowVersion: z.literal(1),
+    workflowRevision: z.number().int().nonnegative(),
     questionRevisionId: questionRevisionIdSchema,
     expectedAnswerRevision: z.number().int().nonnegative(),
     submissionMutationId: z.uuid(),
