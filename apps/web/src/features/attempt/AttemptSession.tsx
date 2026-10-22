@@ -74,7 +74,10 @@ import {
   SingleQuestionActionBar,
   SingleQuestionProgressRow,
 } from "./PracticeWorkspace";
-import { getPracticePreference } from "./practice-preference-store";
+import {
+  getPracticePreference,
+  usePracticePreference,
+} from "./practice-preference-store";
 import {
   countSubmittedQuestions,
   firstUnsubmittedQuestionId,
@@ -357,6 +360,25 @@ function AnswerView({
   const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() =>
     practiceProtocol === "v1" ? getPracticePreference().layout : "list",
   );
+  // M3-D1.5：硬刷新直达作答页时，布局层的账号绑定 effect 晚于本组件首渲染，
+  // 已保存默认布局会在初值时被错过——store 从未绑定变已绑定的那一刻按已
+  // 保存默认布局对齐一次；用户显式切换过布局之后，绑定变化与跨标签偏好
+  // 变更都不得再拉扯当前选择（§7.1「进入时取一次」语义的补全）
+  const explicitLayoutRef = useRef(false);
+  const setPracticeLayoutExplicit = useCallback((layout: PracticeLayout) => {
+    explicitLayoutRef.current = true;
+    setPracticeLayout(layout);
+  }, []);
+  const { accountId: boundAccountId } = usePracticePreference();
+  const prevBoundAccountRef = useRef(boundAccountId);
+  useEffect(() => {
+    const previous = prevBoundAccountRef.current;
+    prevBoundAccountRef.current = boundAccountId;
+    if (practiceProtocol !== "v1" || explicitLayoutRef.current) return;
+    // 只在「未绑定 → 已绑定」迁移时对齐一次；换绑与解绑不拉扯
+    if (previous !== null || boundAccountId === null) return;
+    setPracticeLayout(getPracticePreference().layout);
+  }, [boundAccountId, practiceProtocol]);
   const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
   // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
   const [singleQuestionId, setSingleQuestionId] = useState<string | null>(null);
@@ -680,7 +702,7 @@ function AnswerView({
             practiceWorkflow !== undefined ? (
               <PracticeLayoutMenuItems
                 layout={practiceLayout}
-                onChange={setPracticeLayout}
+                onChange={setPracticeLayoutExplicit}
               />
             ) : undefined
           }
@@ -882,7 +904,7 @@ function AnswerView({
                 <PracticeModeSummary
                   workflow={practiceWorkflow}
                   layout={practiceLayout}
-                  onLayoutChange={setPracticeLayout}
+                  onLayoutChange={setPracticeLayoutExplicit}
                 />
               )}
               {singleMode && resolvedSingleQuestionId !== null && (

@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { AttemptDraftData, PracticeWorkflow } from "@tutor/contract";
 import {
   MemoryRouter,
@@ -357,5 +363,69 @@ it("v1 卷导航区四态可见且已提交待公布行无对错泄露", async (
   expect(submitted.textContent).not.toMatch(/对|错|正确|得分/);
   expect(
     screen.getByRole("button", { name: /第 2 题，未填写/ }),
+  ).toBeInTheDocument();
+});
+
+// ---------- M3-D1.5：硬刷新直达作答页时绑定晚于首渲染的默认布局对齐 ----------
+
+/** 预置账号 x 的持久化默认「单题」，随后回到未绑定（模拟硬刷新时序） */
+function presetSingleAccountThenUnbind() {
+  bindPracticePreferenceAccount(null);
+  bindPracticePreferenceAccount("x");
+  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  bindPracticePreferenceAccount(null);
+}
+
+it("未绑定先渲染回落列表：账号绑定时按已保存单题对齐一次", async () => {
+  presetSingleAccountThenUnbind();
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage();
+  // 布局层账号绑定 effect 晚于本组件首渲染：初始只回落列表
+  expect(
+    await screen.findByText(/做题方式：列表 · 每题提交后查看/),
+  ).toBeInTheDocument();
+  // 布局层绑定该账号：呈现按已保存默认布局切为单题（一次性对齐）
+  act(() => {
+    bindPracticePreferenceAccount("x");
+  });
+  expect(
+    await screen.findByText(/做题方式：单题 · 每题提交后查看/),
+  ).toBeInTheDocument();
+  expect(screen.getByText("第 2 / 3 题 · 已提交 1 题")).toBeInTheDocument();
+});
+
+it("显式切换过布局后，账号绑定与跨标签变更不拉扯当前选择", async () => {
+  presetSingleAccountThenUnbind();
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage();
+  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  // 用户显式切到单题再切回列表：本次作答内自决
+  await openPracticeMenu();
+  fireEvent.click(
+    screen.getByRole("menuitemradio", { name: /做题方式：单题/ }),
+  );
+  await screen.findByText(/做题方式：单题 · 每题提交后查看/);
+  await openPracticeMenu();
+  fireEvent.click(
+    screen.getByRole("menuitemradio", { name: /做题方式：列表/ }),
+  );
+  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  // 此刻才绑定「默认单题」账号：不得覆盖用户显式选择
+  act(() => {
+    bindPracticePreferenceAccount("x");
+  });
+  // 跨标签再改默认偏好同样不拉扯（store 订阅只对齐绑定时刻，不跟随变更）
+  act(() => {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: `ownclass:practice-pref:${JSON.stringify([location.origin, "student", "x"])}`,
+        newValue:
+          '{"version":1,"layout":"single","feedback":"per_question","keyboardShortcuts":true}',
+        storageArea: localStorage,
+      }),
+    );
+  });
+  expect(
+    screen.getByText(/做题方式：列表 · 每题提交后查看/),
   ).toBeInTheDocument();
 });
