@@ -184,6 +184,8 @@ export function usePracticeQuestionSubmit(input: {
       if (submittingRef.current !== null) {
         return { kind: "error", message: "正在提交上一题，请稍候" };
       }
+      // 每次提交重置换新重试预算：上一题的自动重试失败不得占用本题额度
+      mutationRetriedRef.current = false;
       const currentData = dataRef.current;
       const currentWorkflow = currentData.practiceWorkflow;
       if (currentWorkflow === undefined) {
@@ -378,11 +380,27 @@ export function usePracticeQuestionSubmit(input: {
     [attemptId],
   );
 
-  // 单题模式：当前题为已提交可读时读取（切题即取，§10.1 no-store 每次权威）
+  // 单题模式：当前题为已提交可读时读取（切题即取，§10.1 no-store 每次权威；
+  // 依赖 progress 与 feedbacks——后台轮询重取会整体清空反馈缓存（reset effect
+  // 的 setState 在本 effect 跑时尚未反映到 refs），当前题须在此自动补取，
+  // 否则已提交反馈卡悬在「正在读取」且无重试入口）
   useEffect(() => {
     if (!isV1 || !singleMode || input.singleQuestionId === null) return;
+    if (feedbacks[input.singleQuestionId] !== undefined) return;
+    const row = progress.find(
+      (item) => item.questionId === input.singleQuestionId,
+    );
+    if (row === undefined || row.submittedAt === null || !row.feedbackReadable)
+      return;
     void ensureFeedback(input.singleQuestionId);
-  }, [ensureFeedback, input.singleQuestionId, isV1, singleMode]);
+  }, [
+    ensureFeedback,
+    feedbacks,
+    input.singleQuestionId,
+    isV1,
+    progress,
+    singleMode,
+  ]);
 
   // 列表模式：已提交可读卡的反馈按视口惰性获取（不预取全部）
   useEffect(() => {

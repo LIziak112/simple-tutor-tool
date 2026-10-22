@@ -614,9 +614,12 @@ function AnswerView({
   // 空原稿、不跳页。列表模式自由浏览不设保护；上一题/下一题/导航跳题/键盘
   // 切题统一走本入口。
   // jumpToQuestion 本身非 memo（每渲染重建），此处同法不包 useCallback
-  const goSingleQuestion = async (id: string) => {
+  const goSingleQuestion = async (id: string, focusAnswer = false) => {
     // 提交在途禁切题（§7.2 busy）：上一题/下一题/导航均已禁用，此处兜底直调
     if (practiceSubmit.submittingId !== null) return;
+    // 先收笔再切题（闸门修复：原序先切态后收笔，收笔失败=用户选择继续书写
+    // 时已切走，错误横幅与键盘守门会指向看不见的旧题——与列表模式同序）
+    if (editor && !(await editor.request(null))) return;
     const from = resolvedSingleQuestionId;
     if (from !== null && from !== id && !(await flushQuestionLocal(from))) {
       setSingleSwitchBlocked(id);
@@ -625,8 +628,9 @@ function AnswerView({
     setSingleSwitchBlocked(null);
     setSingleQuestionId(id);
     setCurrentQuestionId(id);
-    // 单题切题落焦工作区容器（§9.2 ←/→ 判定域；不落题面避免软键盘）
-    await jumpToQuestion(id, false, singleWorkspaceRef.current);
+    // 单题切题落焦工作区容器（§9.2 ←/→ 判定域；不落题面避免软键盘）；
+    // focusAnswer（交卷确认「去补全」）：显式补答意图优先落答案控件
+    await jumpToQuestion(id, focusAnswer, singleWorkspaceRef.current);
   };
 
   /** 切题保护的重试入口：本机落盘成功后继续被拦下的那次切题 */
@@ -956,7 +960,9 @@ function AnswerView({
                 controllers={inkControllers}
                 onJump={async (questionId) => {
                   closeDetails();
-                  await jumpToQuestion(questionId);
+                  // 单题模式必须走 goSingleQuestion：直连 jumpToQuestion 不更新
+                  // 单题态，跳转对隐藏卡无效（闸门修复）
+                  await jumpForMode(questionId);
                 }}
                 onRetry={async () => {
                   await recoverAttemptMaterials(attemptId, questionIds);
@@ -1436,7 +1442,7 @@ function AnswerView({
             }))}
           onGoToQuestion={(id) => {
             closeSubmitDialog();
-            jumpToQuestion(id, true);
+            void jumpForMode(id, true);
           }}
         />
       </AttemptWorkspace>

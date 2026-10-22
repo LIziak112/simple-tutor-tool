@@ -64,7 +64,10 @@ export function useAttemptDetail(attemptId: string | undefined) {
     enabled: attemptId !== undefined,
     staleTime: 0,
     refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    // 窗口焦点重取同样尊重收尾暂停（闸门修复）：否则最后一题自动收尾后
+    // 切窗再切回会绕过暂停把反馈视图翻成整卷结果，违背「显式查看才收敛」
+    refetchOnWindowFocus: () =>
+      attemptId === undefined || !detailPollingPaused.has(attemptId),
     refetchInterval: (query) =>
       query.state.data?.attempt.status === "draft" &&
       (attemptId === undefined || !detailPollingPaused.has(attemptId))

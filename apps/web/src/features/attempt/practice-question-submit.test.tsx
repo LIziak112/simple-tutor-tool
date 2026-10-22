@@ -729,3 +729,83 @@ it("查看本次结果：显式点击才重发详情并切换结果视图", asyn
     expect(screen.queryByRole("button", { name: "查看本次结果" })).toBeNull(),
   );
 });
+
+it("收尾暂停期间窗口焦点重取被抑制，查看本次结果后恢复（闸门修复）", async () => {
+  mockedSubmit.mockResolvedValue(
+    submitReceipt({
+      attemptStatus: "submitted",
+      questionId: "q3",
+      questionProgress: progressOf([
+        { id: "q1", submitted: true },
+        { id: "q2", submitted: true },
+        { id: "q3", submitted: true, readable: true },
+      ]),
+    }),
+  );
+  await renderSingle(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true },
+        { id: "q2", submitted: true },
+        { id: "q3" },
+      ]),
+    }),
+  );
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await screen.findByText("回答正确");
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+  // 切窗再切回（visibilitychange 触发 focus 重取）：暂停集内不得绕过
+  // 「显式查看才收敛」（refetchOnWindowFocus 谓词同受暂停集约束）
+  window.dispatchEvent(new Event("visibilitychange"));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+  // 显式查看本次结果：解除暂停并重发详情（第二响应为结果视图）
+  mockedFetch.mockResolvedValueOnce(resultDataOf());
+  fireEvent.click(screen.getByRole("button", { name: "查看本次结果" }));
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+});
+
+it("后台重取清空反馈缓存后当前题自动补取，不悬在等待态（闸门修复）", async () => {
+  const released = {
+    feedback: {
+      status: "released" as const,
+      question: releasedQuestionOf("q1"),
+    },
+  };
+  mockedFeedbackGet.mockResolvedValue(released);
+  await renderSingle(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true, readable: true },
+        { id: "q2" },
+        { id: "q3" },
+      ]),
+    }),
+    "?q=q1",
+  );
+  await screen.findByText("回答正确");
+  expect(mockedFeedbackGet).toHaveBeenCalledTimes(1);
+  // focus 重取草稿视图且服务端有真实变化（他端提交了 q3——structural sharing
+  // 下深相等响应保留旧引用不触发重置，属「无变化缓存继续有效」的正常路径）
+  // → 缓存整体重置 → 当前已提交可读题须自动补取（否则停在「正在读取本题反馈…」）
+  mockedFetch.mockResolvedValue(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true, readable: true },
+        { id: "q2" },
+        { id: "q3", submitted: true, readable: true },
+      ]),
+    }),
+  );
+  window.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(mockedFeedbackGet).toHaveBeenCalledTimes(2));
+  // 当前题（q1）反馈区收敛回已读态：不悬在「正在读取本题反馈…」
+  // （隐藏卡 q3 的等待态属正常——切到该题才按需读取）
+  const stem = await screen.findByText(/既不是正数，也不是负数/);
+  const q1Card = stem.closest("li");
+  expect(q1Card?.textContent).toContain("回答正确");
+  expect(q1Card?.textContent).not.toContain("正在读取本题反馈");
+});

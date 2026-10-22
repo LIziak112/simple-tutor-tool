@@ -504,3 +504,29 @@ it("单题切题成功后焦点落单题工作区容器（←→ 键盘域），
   });
   await waitFor(() => expect(locationRef.search).toContain("q=q3"));
 });
+
+it("保存详情定位在单题模式走统一切题入口：更新单题态与 URL（闸门修复）", async () => {
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage();
+  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await openPracticeMenu();
+  fireEvent.click(
+    screen.getByRole("menuitemradio", { name: /做题方式：单题/ }),
+  );
+  await screen.findByText("第 2 / 3 题 · 已提交 1 题");
+  // q2 作答产生本机保存行；切到 q3 再作答，制造可回跳的保存详情行
+  fireEvent.change(screen.getByRole("textbox", { name: "第1空" }), {
+    target: { value: "4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "下一题" }));
+  await screen.findByText("第 3 / 3 题 · 已提交 1 题");
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  await openPracticeMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: "练习信息" }));
+  fireEvent.click(await screen.findByRole("button", { name: "保存详情" }));
+  // 从保存详情回跳 q2：单题态与 URL 必须随切（直连 jumpToQuestion 时对隐藏卡无效）
+  fireEvent.click(await screen.findByRole("button", { name: "定位第 2 题" }));
+  await screen.findByText("第 2 / 3 题 · 已提交 1 题");
+  await waitFor(() => expect(locationRef.search).toContain("q=q2"));
+  expect(locationRef.action).toBe("REPLACE");
+});
