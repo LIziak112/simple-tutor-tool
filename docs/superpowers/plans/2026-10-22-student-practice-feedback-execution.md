@@ -181,3 +181,17 @@
 - 分支自 origin/v2@25a3a7f7（含结果页 AI 入口按题召唤与批量复盘图标化）。
 - 派单拆层：D1 骨架与偏好（PracticeWorkspace 呈现层/偏好存储/设置与开始区入口/题目导航/URL questionId）→ D2 逐题提交交互闭环（主操作状态机/QuestionFeedback 反馈区/最后一题留反馈）→ D3 快捷键与按题 flush（键盘方案与保护规则/切题本机落盘）。串行同分支，每层 TDD 红灯先行；编排者验收统一三闸门+全量回归（M2 模式）。
 - 范围边界：M3 工作区只覆盖 AttemptSession 驱动的普通三来源（course/assignment/wrong）v1 新协议卷；lesson 页与 legacy 卷保持既有形态零回归（lesson 适配是否纳入 M4 视计划再定）。
+
+### M3-D1 骨架与偏好（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 提交链（分支 codex/practice-single-workspace）：134da248（偏好存储）→ 9325f8cd（设置区配置行）→ f017d569（摘要行+导航四态+紧凑行/占位条）→ 180a5cae（作答页双呈现集成）→ 88e18fd2（RadioGroup 修正）。
+- 落地：practice-preference-store（契约 strict v1 形态、部署/角色/账号隔离、跨标签同步、损坏回默认不阻断）；/s/settings「做题方式」配置行（暂存-保存）；PracticeWorkspace 呈现件（摘要行/紧凑进度行/占位操作条/菜单切换项/提交标记）；practice-protocol 纯裁决（协议判别只信服务端投影、受限文案、首道未提交定位）；AttemptSession 同一 keyed `<ol>` + `hidden` 切换列表/单题（§11-1 不重建，测试有 DOM 同一性断言 `toBe(q2Input)`）；URL `?q=` replace 导航+属本卷校验；导航四态（已提交/待公布中性色不泄对错，「未答」排除已提交行）；AttemptHeader menuItems 槽；dropdown-menu 补 RadioGroup/RadioItem（此版 Radix RadioItem 无 checked prop，选中态来自组 value）。
+- 关键取舍（沿用桌面会话裁决）：摘要行落作答会话顶部（三来源汇聚 AttemptSession，作业无预开始 UI）；互切不重建靠同一 keyed `<ol>`+hidden；legacy/lesson 恒列表零变化（practiceProtocolOfDraft 判别，测试断言）。
+- 编排者独立验收（2026-10-23）：全量 diff 通读（19 文件 +1992/-73）；pnpm test 465 文件 5498/5498 exit 0（/tmp/m3-d1-accept-*.log）；typecheck/lint/build 全 exit 0。发现一项遗留：布局初值在账号绑定 effect 之前读取，硬刷新直达作答页会错过已保存默认「单题」——已随 D1.5 修复（1fa1735a）。
+
+### M3-D1.5 建卷 opt-in（2026-10-23，子代理实现，编排者独立验收通过）
+
+- 缺口核实（编排者 grep 实证）：契约 attemptStartOptionsRequestSchema 与服务端三入口（assignment/course/wrong-practice，student.ts:302/:953/:1061）M1b 已就绪且省略按旧协议；唯 web 从未携带 workflowVersion（grep 为空）→ 生产新建卷恒旧协议。D1.5 实为纯 web 小单。
+- 提交：d7224f07（三 start 封装可选 options；useStartAttempt/useStartCourseAttempt/两处错题重练 mutationFn 执行时读 getPracticePreference().feedback 构造 {workflowVersion:1, feedbackMode}；api 层 mock fetch 请求体测试）+ 1fa1735a（D1 遗留修复：绑定时刻对齐已保存默认布局，显式切换标志防拉扯，补两条集成测试）。
+- 编排者独立验收：两笔 diff 通读；代理哨兵日志核验（红→绿、全量 466 文件 5506/5506、TSC/LINT/BUILD 全 0）；编排者自跑全量复核 /tmp/m3-d15-accept-full.log。自此生产新建普通卷（course/assignment/wrong）默认进入 v1 新协议（学生偏好 per_question，教师约束服务端裁决），M3 单题 UI 可达。
+- 未做（后续批次）：PATCH workflow 节奏切换 UI（计划 §6.1 canChangeFeedback 呈现，M5 偏好批次或 M4 视工作量定）。
