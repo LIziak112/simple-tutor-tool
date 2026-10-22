@@ -61,10 +61,45 @@ const DropdownMenuSeparator = ({
   />
 );
 
+/** 单选菜单项（M3-D1 做题方式切换）：role=menuitemradio + 选中指示 */
+const DropdownMenuRadioItem = ({
+  className,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) => (
+  <DropdownMenuPrimitive.RadioItem
+    data-slot="dropdown-menu-radio-item"
+    className={cn(
+      "relative flex min-h-11 cursor-default items-center gap-2 rounded-md py-2 pr-2 pl-8 text-sm outline-none select-none focus:bg-muted focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+      className,
+    )}
+    {...props}
+  >
+    <span className="pointer-events-none absolute left-2 flex size-4 items-center justify-center">
+      <DropdownMenuPrimitive.ItemIndicator>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="size-4"
+          aria-hidden
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+      </DropdownMenuPrimitive.ItemIndicator>
+    </span>
+    {props.children}
+  </DropdownMenuPrimitive.RadioItem>
+);
+
 export {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 };
