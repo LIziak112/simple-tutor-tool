@@ -265,13 +265,53 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   };
   const openTaskRef = useRef(openTask);
   openTaskRef.current = openTask;
+  const locateQuestion = async (questionId: string) => {
+    if (!questions.some((question) => question.id === questionId)) {
+      setPresentationError("这道题已不在当前练习中，请重新选择题目");
+      return false;
+    }
+    if (host.ready === false || transitionRef.current) return false;
+    const entry = entryOf(questionId);
+    const card = entry?.closest("article");
+    if (!entry || !card) {
+      setPresentationError("暂时无法定位本题，请重新加载后重试");
+      return false;
+    }
+    transitionRef.current = true;
+    try {
+      // 回题同样先确认当前稿件落盘，失败保留列表与现有阅读状态。
+      for (const editingQuestionId of new Set([
+        currentQuestionId,
+        boundQuestionId,
+      ])) {
+        if (editingQuestionId !== null) await host.flush(editingQuestionId);
+      }
+      controller.closePanel();
+      setPresentationError(null);
+      triggerRef.current = entry;
+      returnAnchorRef.current = null;
+      requestAnimationFrame(() => {
+        card.scrollIntoView?.({ block: "start", behavior: "instant" });
+        entry.focus({ preventScroll: true });
+      });
+      return true;
+    } catch {
+      setPresentationError("当前稿件未保存，请重试保存后再回到本题");
+      return false;
+    } finally {
+      transitionRef.current = false;
+    }
+  };
+  const locateQuestionRef = useRef(locateQuestion);
+  locateQuestionRef.current = locateQuestion;
+  const openQuestion = async (task: AiTaskPublic) =>
+    task.attemptId === attemptId && locateQuestion(task.questionId);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const taskId = params.get("aiTask");
     const questionId = params.get("aiQuestion");
     const composeQuestionId = params.get("aiCompose");
-    if (host.ready === false || (!(taskId && questionId) && !composeQuestionId))
-      return;
+    if (host.ready === false || (!questionId && !composeQuestionId)) return;
     let cancelled = false;
     const action =
       taskId && questionId
@@ -279,11 +319,18 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
             if (cancelled) return;
             if (task.attemptId !== attemptId || task.questionId !== questionId)
               throw new Error("求助定位与当前练习不一致，请重新选择记录");
-            await openTaskRef.current(task);
+            if (!(await openTaskRef.current(task)))
+              throw new Error("暂时无法打开回复，请检查材料保存状态后重试");
           })
         : Promise.resolve().then(async () => {
-            if (!cancelled && composeQuestionId)
-              await openComposeRef.current(composeQuestionId);
+            if (cancelled) return;
+            const opened = questionId
+              ? await locateQuestionRef.current(questionId)
+              : composeQuestionId
+                ? await openComposeRef.current(composeQuestionId)
+                : false;
+            if (!opened)
+              throw new Error("暂时无法打开本题，请检查材料保存状态后重试");
           });
     void action
       .catch((cause: unknown) => {
@@ -716,6 +763,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     /** 布局控制器（navigatorCollapsed / open / closePanel 等） */
     controller,
     openTask,
+    openQuestion,
     /** 发送控制器（bind 可用于页面显式切绑） */
     send,
     /** 头部动作位的 AI 助教按钮 */

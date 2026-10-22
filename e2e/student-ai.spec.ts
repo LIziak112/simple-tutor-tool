@@ -283,6 +283,96 @@ test("三种助教布局设置往返、侧边回退、分节展开和原稿保�
   }
 });
 
+test("求助记录回题只定位，查看回复遵循三种显示偏好", async ({
+  browser,
+  request,
+}) => {
+  test.setTimeout(FULL_CHAIN_TIMEOUT);
+  const suffix = uniqueSuffix();
+  const world = await makeWorld(request, suffix);
+  const student = await getStudentViaApi(request, world.loginName);
+  const { page, context } = await loginStudent(browser, student.linkToken);
+  try {
+    expect(
+      (
+        await context.request.post("/api/student/ai/connections", {
+          data: {
+            channel: "inapp",
+            baseUrl: FAKE_AI_BASE_URL,
+            model: FAKE_AI_MODEL,
+            apiKey: fakeAiApiKey(),
+            isDefault: true,
+          },
+        })
+      ).ok(),
+    ).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 700 });
+    await openAssignmentAttempt(page, `SAI全链作业${suffix}`);
+    const attemptUrl = page.url();
+    const q1 = page.getByRole("article", { name: "第 1 题", exact: true });
+    const workspace = page.getByRole("region", { name: "第 1 题的 AI 助教" });
+    await q1.getByRole("button", { name: "AI 助教", exact: true }).click();
+    await fakeAiControl(request).script({
+      body: chatCompletionJson("这是按钮语义回归的回复。"),
+    });
+    await page.getByRole("textbox", { name: "补充问题" }).fill("帮我理解本题");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await page
+      .getByRole("button", { name: "查看回信" })
+      .click({ timeout: 30_000 });
+
+    for (const layout of ["侧边对照", "独立弹窗", "题下阅读"]) {
+      await workspace.getByRole("button", { name: "AI 设置" }).click();
+      await page.getByRole("button", { name: "显示方式设置" }).click();
+      await page.getByRole("radio", { name: new RegExp(layout) }).check();
+      await page.getByRole("button", { name: "保存显示方式" }).click();
+      await expect(page.getByRole("status")).toHaveText(/显示方式已保存/);
+      await page.getByRole("link", { name: "返回本题" }).click();
+      await expect(workspace).toBeVisible();
+      await page
+        .getByRole("button", {
+          name: layout === "独立弹窗" ? "关闭弹层" : "收起 AI 助教",
+        })
+        .click();
+
+      // 同卷直接回题与从记录页跨页回题都不应打开 AI 正文。
+      for (const crossPage of [false, true]) {
+        if (crossPage) await page.goto("/s/records");
+        await page.getByRole("button", { name: /^助教队列/ }).click();
+        const queue = page.getByRole("dialog", { name: "求助记录" });
+        await queue
+          .getByRole("button", { name: "回到本题", exact: true })
+          .click();
+        await expect(queue).toHaveCount(0);
+        await expect(workspace).toHaveCount(0);
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        await expect(q1).toBeInViewport();
+        await expect(page).not.toHaveURL(/aiQuestion|aiTask/);
+      }
+      await page.getByRole("button", { name: /^助教队列/ }).click();
+      await page
+        .getByRole("dialog", { name: "求助记录" })
+        .getByRole("button", { name: "查看回复", exact: true })
+        .click();
+      await expect(
+        page.getByText("这是按钮语义回归的回复。", { exact: true }),
+      ).toBeVisible();
+      if (layout === "独立弹窗")
+        await expect(
+          page.getByRole("dialog", { name: /AI 助教/ }),
+        ).toBeVisible();
+      else if (layout === "侧边对照")
+        await expect(
+          page.getByRole("complementary", { name: "AI 对照" }),
+        ).toBeVisible();
+      else await expect(q1.locator("..", { has: workspace })).toBeVisible();
+    }
+    expect(attemptUrl).toContain("/s/assignments/");
+  } finally {
+    await context.close();
+  }
+});
+
 test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
   // 组内顺序运行；跨文件和浏览器的剧本、捕获、重置按用例凭据隔离。
   test.describe.configure({ mode: "serial" });
