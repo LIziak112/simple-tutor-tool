@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AttemptDraftData,
+  AttemptResultData,
   AttemptResultQuestion,
   PracticeQuestionSubmitData,
   PracticeWorkflow,
@@ -9,6 +10,7 @@ import type {
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
+  ApiError,
   fetchAttemptApi,
   fetchPracticeQuestionFeedbackApi,
   fetchStudentNoteHeadsApi,
@@ -196,6 +198,33 @@ const submitReceipt = (overrides: {
   practiceWorkflow: workflowOf(),
 });
 
+/** 结果视图详情（查看本次结果收敛用；通过 attemptDetailDataSchema 结果分支） */
+const resultDataOf = (): AttemptResultData => ({
+  attempt: {
+    ...attemptOf(),
+    status: "submitted",
+    submittedAt: "2026-10-23T02:20:00.000Z",
+    scoreAuto: 100,
+  },
+  title: "有理数小练",
+  courseName: "初一上",
+  dueAt: null,
+  answersReleased: true,
+  summary: {
+    total: 3,
+    answered: 3,
+    correct: 3,
+    wrong: 0,
+    pending: 0,
+    unanswered: 0,
+    autoGradable: 3,
+    scoreFinal: 100,
+    pendingCount: 0,
+  },
+  units: [],
+  enabledCapabilities: ["steps", "ink"],
+});
+
 function renderPage(search = "") {
   return render(
     <QueryClientProvider
@@ -216,10 +245,10 @@ function renderPage(search = "") {
   );
 }
 
-async function renderSingle(draft: AttemptDraftData) {
+async function renderSingle(draft: AttemptDraftData, search = "") {
   savePracticePreference({ layout: "single", keyboardShortcuts: true });
   mockedFetch.mockResolvedValue(draft);
-  const view = renderPage();
+  const view = renderPage(search);
   await view.findByText(/做题方式：单题 · 每题提交后查看/);
   return view;
 }
@@ -496,4 +525,179 @@ it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公�
   expect(
     screen.getByRole("button", { name: "第 1 题，已提交，反馈待公布" }),
   ).toBeInTheDocument();
+});
+
+// ---------- 题级反馈按需 GET（§10.1）：不为未提交/不可读题发请求 ----------
+
+it("反馈按需 GET：进入页面只为已提交可读的当前题取反馈", async () => {
+  mockedFeedbackGet.mockResolvedValue({
+    feedback: { status: "released", question: releasedQuestionOf("q1") },
+  });
+  // 无 q 参数时单题模式定位首道未提交题（q2）——直达已提交的 q1 需显式 q
+  await renderSingle(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true, readable: true },
+        { id: "q2" },
+        { id: "q3", submitted: true }, // 已提交但统一公布：不可读
+      ]),
+    }),
+    "?q=q1",
+  );
+  await screen.findByText("回答正确");
+  expect(mockedFeedbackGet).toHaveBeenCalledTimes(1);
+  expect(mockedFeedbackGet).toHaveBeenCalledWith(ATTEMPT_ID, "q1");
+  expect(mockedFeedbackGet).not.toHaveBeenCalledWith(ATTEMPT_ID, "q2");
+  expect(mockedFeedbackGet).not.toHaveBeenCalledWith(ATTEMPT_ID, "q3");
+});
+
+it("反馈读取失败可重试：重试入口再取一次并收敛", async () => {
+  mockedFeedbackGet
+    .mockRejectedValueOnce(new Error("网络异常"))
+    .mockResolvedValueOnce({
+      feedback: { status: "released", question: releasedQuestionOf("q1") },
+    });
+  await renderSingle(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true, readable: true },
+        { id: "q2" },
+        { id: "q3" },
+      ]),
+    }),
+    "?q=q1",
+  );
+  expect(await screen.findByText("本题反馈暂时没有读取到")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await screen.findByText("回答正确");
+  expect(mockedFeedbackGet).toHaveBeenCalledTimes(2);
+});
+
+it("列表模式：可读卡进入视口才惰性取反馈，未提交题不发请求", async () => {
+  // jsdom 无 IntersectionObserver：桩实现 observe 即报告相交（真实浏览器的
+  // 视口语义由 hook 的 rootMargin/阈值参数承担，此处只验证取数纪律）
+  class MockIntersectionObserver {
+    callback: (
+      entries: Array<{ target: Element; isIntersecting: boolean }>,
+    ) => void;
+    constructor(
+      callback: (
+        entries: Array<{ target: Element; isIntersecting: boolean }>,
+      ) => void,
+    ) {
+      this.callback = callback;
+    }
+    observe(target: Element) {
+      this.callback([{ target, isIntersecting: true }]);
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+  try {
+    savePracticePreference({ layout: "list", keyboardShortcuts: true });
+    mockedFeedbackGet.mockResolvedValue({
+      feedback: { status: "released", question: releasedQuestionOf("q1") },
+    });
+    mockedFetch.mockResolvedValue(
+      baseDraft({
+        questionProgress: progressOf([
+          { id: "q1", submitted: true, readable: true },
+          { id: "q2", submitted: true, readable: true },
+          { id: "q3" }, // 未提交：永不取
+        ]),
+      }),
+    );
+    const { container } = renderPage();
+    await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+    await waitFor(() => expect(mockedFeedbackGet).toHaveBeenCalledTimes(2));
+    expect(mockedFeedbackGet).toHaveBeenCalledWith(ATTEMPT_ID, "q1");
+    expect(mockedFeedbackGet).toHaveBeenCalledWith(ATTEMPT_ID, "q2");
+    expect(mockedFeedbackGet).not.toHaveBeenCalledWith(ATTEMPT_ID, "q3");
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-slot="practice-question-feedback"]'),
+      ).toHaveLength(2),
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+// ---------- 错误分诊（§10.3）：静默收敛 / 就地刷新提示 ----------
+
+it("QUESTION_ALREADY_SUBMITTED：不弹错，静默 refetch 详情收敛", async () => {
+  await renderSingle(baseDraft());
+  mockedSubmit.mockRejectedValueOnce(
+    new ApiError("QUESTION_ALREADY_SUBMITTED", "这道题已经提交过", 409),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("WORKFLOW_RESTRICTED：不弹错误，refetch 草稿视图按受限呈现", async () => {
+  await renderSingle(baseDraft());
+  mockedSubmit.mockRejectedValueOnce(
+    new ApiError("WORKFLOW_RESTRICTED", "老师已调整反馈方式", 409),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("QUESTION_REVISION_STALE：就地提示刷新，可直接重试收敛", async () => {
+  await renderSingle(baseDraft());
+  mockedSubmit.mockRejectedValueOnce(
+    new ApiError("QUESTION_REVISION_STALE", "题目版本已变化", 409),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  expect(
+    await screen.findByText("页面内容已过期，请刷新后重试"),
+  ).toBeInTheDocument();
+  mockedSubmit.mockResolvedValueOnce(submitReceipt({}));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await screen.findByText("回答正确");
+  expect(screen.queryByText("页面内容已过期，请刷新后重试")).toBeNull();
+});
+
+// ---------- 收尾后的收敛入口（§10.3）：查看本次结果 ----------
+
+it("查看本次结果：显式点击才重发详情并切换结果视图", async () => {
+  mockedSubmit.mockResolvedValue(
+    submitReceipt({
+      attemptStatus: "submitted",
+      questionId: "q3",
+      questionProgress: progressOf([
+        { id: "q1", submitted: true },
+        { id: "q2", submitted: true },
+        { id: "q3", submitted: true, readable: true },
+      ]),
+    }),
+  );
+  await renderSingle(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true },
+        { id: "q2", submitted: true },
+        { id: "q3" },
+      ]),
+    }),
+  );
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await screen.findByText("回答正确");
+  // 回执已收尾：不自动 refetch
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+  // 显式点击才重发详情：第二响应为结果视图数据 → 作答视图切换为结果视图
+  mockedFetch.mockResolvedValueOnce(resultDataOf());
+  fireEvent.click(screen.getByRole("button", { name: "查看本次结果" }));
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "查看本次结果" })).toBeNull(),
+  );
 });

@@ -69,8 +69,10 @@ import { attemptSourceLabel } from "./answer-format";
 import { useSubmitAttempt } from "./attempt-queries";
 import { focusWhenReachable } from "./focus-when-reachable";
 import {
+  type PracticeProblemPhase,
   PracticeQuestionFooter,
   PracticeSingleActions,
+  PracticeSubmitProblemDialog,
 } from "./PracticeQuestionSubmit";
 import {
   PracticeLayoutMenuItems,
@@ -439,6 +441,45 @@ function AnswerView({
       : practiceProgress.find(
           (row) => row.questionId === resolvedSingleQuestionId,
         );
+  // 缺稿明确选择弹层（§10.3）：证据组装发现未追平草稿时不静默放行——
+  // choice（用户裁决）→ busy（确认后带 allowMissing 重提）→ error（重提失败留弹层）；
+  // 其余 outcome（提交成功/受限/stale/取消）一律收起弹层（就地提示由 hook 承担）
+  const [practiceProblem, setPracticeProblem] = useState<{
+    questionId: string;
+    phase: PracticeProblemPhase;
+  } | null>(null);
+  const runPracticeSubmit = useCallback(
+    async (
+      questionId: string,
+      opts?: { allowMissing?: boolean },
+    ): Promise<void> => {
+      const outcome = await practiceSubmit.submit(questionId, opts);
+      if (outcome.kind === "problems") {
+        setPracticeProblem({
+          questionId,
+          phase: {
+            kind: "choice",
+            reason: outcome.problems[0]?.reason ?? "草稿尚未保存完整",
+          },
+        });
+        return;
+      }
+      if (outcome.kind === "error") {
+        // 弹层进行中（缺稿重提失败）→ 错误相留在弹层；否则 hook 已就地提示
+        setPracticeProblem((prev) =>
+          prev !== null
+            ? {
+                questionId,
+                phase: { kind: "error", message: outcome.message },
+              }
+            : null,
+        );
+        return;
+      }
+      setPracticeProblem(null);
+    },
+    [practiceSubmit.submit],
+  );
   // §11 纪律 7：单题切题 replace 更新 q、回列表清除 q——不加历史条目；
   // 其他查询参数（returnTo/aiFrom）原样保留
   useEffect(() => {
@@ -1052,10 +1093,7 @@ function AnswerView({
                                       : null
                                   }
                                   onSubmit={(opts) =>
-                                    void practiceSubmit.submit(
-                                      question.id,
-                                      opts,
-                                    )
+                                    void runPracticeSubmit(question.id, opts)
                                   }
                                   onRetryFeedback={() =>
                                     practiceSubmit.retryFeedback(question.id)
@@ -1106,7 +1144,7 @@ function AnswerView({
                       }
                       onSubmit={() => {
                         if (resolvedSingleQuestionId !== null)
-                          void practiceSubmit.submit(resolvedSingleQuestionId);
+                          void runPracticeSubmit(resolvedSingleQuestionId);
                       }}
                       onNext={() => {
                         const next = questionIds[singleIndex + 1];
@@ -1172,6 +1210,21 @@ function AnswerView({
           onViewResult={() => practiceSubmit.viewResult()}
           onOpenSubmit={openSubmitDialog}
           onOpenNavigator={() => setNavigatorOpen(true)}
+        />
+
+        {/* 逐题提交缺稿明确选择弹层：choice→busy→error 相在 runPracticeSubmit 内迁移 */}
+        <PracticeSubmitProblemDialog
+          open={practiceProblem !== null}
+          phase={practiceProblem?.phase ?? { kind: "choice", reason: "" }}
+          onCancel={() => setPracticeProblem(null)}
+          onConfirm={() => {
+            const target = practiceProblem?.questionId;
+            if (target === undefined) return;
+            setPracticeProblem((prev) =>
+              prev !== null ? { ...prev, phase: { kind: "busy" } } : prev,
+            );
+            void runPracticeSubmit(target, { allowMissing: true });
+          }}
         />
 
         <SubmitConfirmDialog
