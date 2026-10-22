@@ -913,6 +913,16 @@ describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () =>
       attemptErrorCodeSchema.safeParse("NOTE_EVIDENCE_MISMATCH").success,
     ).toBe(true);
   });
+
+  it("错误码集合包含 M2 逐题提交三码（均 409：协议不符/幂等键冲突/当前规则受限）", () => {
+    for (const code of [
+      "WORKFLOW_PROTOCOL_MISMATCH",
+      "WORKFLOW_MUTATION_CONFLICT",
+      "WORKFLOW_RESTRICTED",
+    ] as const) {
+      expect(attemptErrorCodeSchema.safeParse(code).success).toBe(true);
+    }
+  });
 });
 
 describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿）", () => {

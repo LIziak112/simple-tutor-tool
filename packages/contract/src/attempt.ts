@@ -926,7 +926,16 @@ export const attemptDetailDataSchema = z
  *   D7+D22；403）——前端草稿同步与事件上报收到它（或 404）必须按终态停止重试；
  * - NOT_FOUND：课程来源作答的单元条目已隐藏/未到发布/资源删除（D22 的不暴露
  *   存在性口径，404）；
- * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
+ * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）；
+ * - WORKFLOW_LEGACY / WORKFLOW_REVISION_STALE / WORKFLOW_MODE_NOT_ALLOWED：
+ *   反馈节奏工作流 409 家族（M1 PATCH 更改节奏：旧协议/讲练卷不可变更、
+ *   revision 陈旧需刷新、当前规则不允许该模式）；
+ * - WORKFLOW_PROTOCOL_MISMATCH：提交请求的协议形态与该卷不符（M2 逐题提交：
+ *   新协议请求打到旧协议/讲练卷，或反之；409，前端提示刷新后按对应入口重试）；
+ * - WORKFLOW_MUTATION_CONFLICT：同一 submissionMutationId 的两次请求内容不一致
+ *   （幂等键复用冲突，M2；409，前端换新 mutationId 重试）；
+ * - WORKFLOW_RESTRICTED：当前教师规则不允许逐题提交（教师收紧立即生效，
+ *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）。
  */
 export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
@@ -947,6 +956,9 @@ export const attemptErrorCodeSchema = z.enum([
   "WORKFLOW_LEGACY",
   "WORKFLOW_REVISION_STALE",
   "WORKFLOW_MODE_NOT_ALLOWED",
+  "WORKFLOW_PROTOCOL_MISMATCH",
+  "WORKFLOW_MUTATION_CONFLICT",
+  "WORKFLOW_RESTRICTED",
 ]);
 
 // ---------- 具体化的成功壳 ----------
