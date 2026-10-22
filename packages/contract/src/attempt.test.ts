@@ -1346,3 +1346,79 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     );
   });
 });
+
+describe("attemptDraftDataSchema（M1a 可选工作流与题级进度）", () => {
+  /** 草稿视图最小合法基底（不含新可选字段——旧响应缺省必须仍合法） */
+  const base = {
+    attempt: SUMMARY_DRAFT,
+    title: "周末加练",
+    courseName: null,
+    dueAt: null,
+    answerRelease: "on_submit",
+    units: [
+      {
+        id: UNIT_ID,
+        title: "练习四",
+        questions: [
+          {
+            id: "练习四-1",
+            type: "judge",
+            difficulty: 1,
+            knowledge: [],
+            stemMd: "[[]]",
+            hintCount: 0,
+            questionRevisionId: "11111111-1111-4111-8111-111111111111",
+          },
+        ],
+      },
+    ],
+    drafts: {},
+    hintsOpened: {},
+    legacyUnverified: false,
+    enabledCapabilities: ["steps", "ink"],
+  };
+
+  it("缺省不带 practiceWorkflow / questionProgress（旧响应兼容，不默认授权）", () => {
+    const parsed = attemptDraftDataSchema.parse(base);
+    expect(parsed.practiceWorkflow).toBeUndefined();
+    expect(parsed.questionProgress).toBeUndefined();
+  });
+
+  it("携带合法 practiceWorkflow + questionProgress 时透传", () => {
+    const workflow = {
+      version: 1,
+      feedbackMode: "per_question",
+      revision: 0,
+      canChangeFeedback: true,
+      allowedFeedbackModes: ["per_question", "after_attempt"],
+      canSubmitQuestion: true,
+      restrictionReason: null,
+      releaseAt: null,
+    };
+    const parsed = attemptDraftDataSchema.parse({
+      ...base,
+      practiceWorkflow: workflow,
+      questionProgress: [
+        { questionId: "练习四-1", submittedAt: null, feedbackReadable: false },
+      ],
+    });
+    expect(parsed.practiceWorkflow?.feedbackMode).toBe("per_question");
+    expect(parsed.questionProgress?.[0]?.questionId).toBe("练习四-1");
+  });
+
+  it("夹带答案字段的题级进度 → 整体拒绝（白名单，防答案混入题面）", () => {
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...base,
+        questionProgress: [
+          {
+            questionId: "练习四-1",
+            submittedAt: null,
+            feedbackReadable: false,
+            autoCorrect: true,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+});

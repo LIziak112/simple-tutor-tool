@@ -330,6 +330,8 @@ describe("teacherAssignmentSchema（T2A.7 列表行字段集合）", () => {
       "title",
       "dueAt",
       "answerRelease",
+      // M1a：逐题反馈授权（可选；M1b 起服务端恒显式返回）
+      "allowPerQuestionFeedback",
       "units",
       "totalQuestionCount",
       "containsDeletedUnit",
@@ -492,5 +494,120 @@ describe("assignmentErrorCodeSchema（T2A.7 追加 4 个错误码）", () => {
     expect(assignmentErrorCodeSchema.safeParse("NOT_ASSIGNED").success).toBe(
       false,
     );
+  });
+});
+
+describe("allowPerQuestionFeedback（M1a 作业粒度授权）", () => {
+  it("create：可选布尔，缺省保持 undefined（服务端识别旧调用按 false 处理，schema 不得默认 true）", () => {
+    const base = {
+      unitIds: ["练习四"],
+      studentIds: ["33333333-3333-4333-8333-333333333333"],
+    };
+    const omitted = assignmentCreateRequestSchema.parse(base);
+    expect("allowPerQuestionFeedback" in omitted).toBe(false);
+    expect(
+      assignmentCreateRequestSchema.parse({
+        ...base,
+        allowPerQuestionFeedback: true,
+      }).allowPerQuestionFeedback,
+    ).toBe(true);
+    expect(
+      assignmentCreateRequestSchema.parse({
+        ...base,
+        allowPerQuestionFeedback: false,
+      }).allowPerQuestionFeedback,
+    ).toBe(false);
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        ...base,
+        allowPerQuestionFeedback: "yes",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("create：显式 answerRelease=after_due + allowPerQuestionFeedback=true → schema 拒绝", () => {
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        unitIds: ["练习四"],
+        studentIds: ["33333333-3333-4333-8333-333333333333"],
+        dueAt: "2026-11-01T00:00:00.000Z",
+        answerRelease: "after_due",
+        allowPerQuestionFeedback: true,
+      }).success,
+    ).toBe(false);
+    // after_due + false 合法；on_submit + true 合法
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        unitIds: ["练习四"],
+        studentIds: ["33333333-3333-4333-8333-333333333333"],
+        dueAt: "2026-11-01T00:00:00.000Z",
+        answerRelease: "after_due",
+        allowPerQuestionFeedback: false,
+      }).success,
+    ).toBe(true);
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        unitIds: ["练习四"],
+        studentIds: ["33333333-3333-4333-8333-333333333333"],
+        answerRelease: "on_submit",
+        allowPerQuestionFeedback: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("update：partial PATCH 只给 true 合法（answerRelease 未随请求给出，跨字段合并留服务端）", () => {
+    expect(
+      assignmentUpdateRequestSchema.safeParse({
+        allowPerQuestionFeedback: true,
+      }).success,
+    ).toBe(true);
+    // 请求内同时显式 after_due + true 才拒绝
+    expect(
+      assignmentUpdateRequestSchema.safeParse({
+        answerRelease: "after_due",
+        allowPerQuestionFeedback: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      assignmentUpdateRequestSchema.safeParse({
+        answerRelease: "after_due",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("teacherAssignment 输出：allowPerQuestionFeedback 可选（现有 fixtures 缺省仍合法）", () => {
+    const base = {
+      id: "44444444-4444-4444-8444-444444444444",
+      courseId: null,
+      courseName: null,
+      title: "周末加练",
+      dueAt: null,
+      answerRelease: "on_submit",
+      units: [
+        { unitId: "练习四", title: "练习四", questionCount: 2, deleted: false },
+      ],
+      totalQuestionCount: 2,
+      containsDeletedUnit: false,
+      locked: false,
+      studentCount: 1,
+      rosterStats: {
+        notStarted: 1,
+        inProgress: 0,
+        submitted: 0,
+        graded: 0,
+      },
+      deleted: false,
+      deletedAt: null,
+      createdAt: "2026-09-27T00:00:00.000Z",
+    };
+    expect(teacherAssignmentSchema.parse(base).allowPerQuestionFeedback).toBe(
+      undefined,
+    );
+    expect(
+      teacherAssignmentSchema.parse({
+        ...base,
+        allowPerQuestionFeedback: true,
+      }).allowPerQuestionFeedback,
+    ).toBe(true);
   });
 });

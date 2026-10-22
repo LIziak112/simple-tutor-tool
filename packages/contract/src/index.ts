@@ -49,6 +49,10 @@ export * from "./media-api.ts";
 /** 题目草稿契约（T6R.2 起为权威定义，依据 Phase6 方案 §5/§6.2/§7）：NoteDoc v1、
  *  四类正交状态、上传协议（CAS+幂等回执）、笔记/版本/图片/证据元信息、限额常量与错误码 */
 export * from "./note.ts";
+/** 学生端做题方式与反馈节奏契约（M1a 起为权威定义，2026-10-22 计划 §6.1）：
+ *  布局/反馈枚举、strict v1 本设备偏好、practiceWorkflow 裁决投影、题级公开
+ *  进度白名单、教师反馈策略与节奏修改（CAS）请求——授权结论只能来自服务端 */
+export * from "./practice-workflow.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
