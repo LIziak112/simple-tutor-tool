@@ -5,8 +5,8 @@ import { useNavigate } from "react-router";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { AttemptResultView } from "./AttemptResultView";
+import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
-import { getPracticePreference } from "./practice-preference-store";
 
 /**
  * 结果视图外壳（T2.9）：进入即清本地草稿——覆盖「在别的设备交卷后，本机残留
@@ -66,10 +66,7 @@ export default function AttemptResultWithDraftCleanup({
   const practice = useMutation({
     // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
     mutationFn: (questionIds: string[]) =>
-      startWrongPracticeApi(questionIds, {
-        workflowVersion: 1,
-        feedbackMode: getPracticePreference().feedback,
-      }),
+      startWrongPracticeApi(questionIds, workflowStartOptions()),
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
     },

@@ -87,7 +87,7 @@ export function useStudentUnitLanding(courseId: string, unitId: string) {
  * 教师约束由服务端 resolver 裁决，客户端不预判；显式携带
  * workflowVersion=1 进入新协议，feedbackMode 随当前偏好。
  */
-const workflowStartOptions = () => ({
+export const workflowStartOptions = () => ({
   workflowVersion: 1 as const,
   feedbackMode: getPracticePreference().feedback,
 });

@@ -21,6 +21,19 @@ import { ResultAnswerComparison } from "./ResultAnswerComparison";
  * - not_submitted：不渲染反馈区（调用方也不应在未提交行挂本组件）。
  * 服务端按读取时刻裁决状态；本组件只呈现投影，不本地推断授权。
  */
+/** 不可读反馈的提示盒：QuestionFeedback 的 pending/restricted 态与题卡 footer 的不可读行共用（同 data-slot 同样式） */
+export function FeedbackNoticeBox({ children }: { children: string }) {
+  return (
+    <section
+      data-slot="practice-question-feedback"
+      aria-label="本题反馈"
+      className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+    >
+      {children}
+    </section>
+  );
+}
+
 export function QuestionFeedback({
   feedback,
 }: {
@@ -35,15 +48,7 @@ export function QuestionFeedback({
       feedback.status === "pending_attempt"
         ? PENDING_ATTEMPT_FEEDBACK_COPY
         : practiceFeedbackRestrictedCopy(feedback.restrictionReason);
-    return (
-      <section
-        data-slot="practice-question-feedback"
-        aria-label="本题反馈"
-        className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-      >
-        {copy}
-      </section>
-    );
+    return <FeedbackNoticeBox>{copy}</FeedbackNoticeBox>;
   }
   const question = feedback.question;
   return (

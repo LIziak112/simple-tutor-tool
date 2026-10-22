@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { AttemptDraftData, PracticeWorkflow } from "@tutor/contract";
+import type { AttemptDraftData } from "@tutor/contract";
 import {
   MemoryRouter,
   Route,
@@ -23,6 +23,7 @@ import {
   bindPracticePreferenceAccount,
   savePracticePreference,
 } from "./practice-preference-store";
+import { workflowOf } from "./practice-test-fixtures";
 
 /**
  * PracticeWorkspace 集成（M3-D1，§11 纪律 1/7）：v1 新协议卷在作答页引入
@@ -53,20 +54,6 @@ const mockedFetch = vi.mocked(fetchAttemptApi);
 
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
 const COURSE_ID = "12121212-1212-4121-8121-121212121212";
-
-const workflowOf = (
-  overrides: Partial<PracticeWorkflow> = {},
-): PracticeWorkflow => ({
-  version: 1,
-  feedbackMode: "per_question",
-  revision: 0,
-  canChangeFeedback: true,
-  allowedFeedbackModes: ["per_question", "after_attempt"],
-  canSubmitQuestion: true,
-  restrictionReason: null,
-  releaseAt: null,
-  ...overrides,
-});
 
 /** 三题课程草稿：q1 已提交（反馈可读），q2/q3 未提交；首道未提交 = q2 */
 const baseDraft = (): AttemptDraftData => ({

@@ -48,14 +48,13 @@ export function practiceRestrictionCopy(
   workflow: PracticeWorkflow,
 ): string | null {
   if (workflow.canSubmitQuestion) return null;
-  switch (workflow.restrictionReason) {
-    case "teacher_after_attempt":
-      return "老师要求交卷后公布";
-    case "teacher_after_due":
-      return "老师要求截止后公布";
-    default:
-      return null;
+  const reason = workflow.restrictionReason;
+  // teacher_* 文案与题级反馈受限同源（单一出处）；legacy_attempt 对摘要行
+  // 无对应场景（v1 卷才显示摘要行），维持 null 不臆造
+  if (reason === "teacher_after_attempt" || reason === "teacher_after_due") {
+    return practiceFeedbackRestrictedCopy(reason);
   }
+  return null;
 }
 
 /** 统一公布节奏下已提交行的反馈文案（§10.4 pending_attempt 投影同义） */

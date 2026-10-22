@@ -234,11 +234,7 @@ export function PracticeKeyboardHelpMenuItem({
   onOpen: () => void;
 }): ReactNode {
   return (
-    <DropdownMenuItem
-      onSelect={() => {
-        onOpen();
-      }}
-    >
+    <DropdownMenuItem onSelect={onOpen}>
       <Keyboard aria-hidden className="size-4" />
       快捷键
     </DropdownMenuItem>

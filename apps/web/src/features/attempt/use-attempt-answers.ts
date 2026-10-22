@@ -248,22 +248,19 @@ export function useAttemptAnswers(
       const record = await draftStore.loadDraft(scope);
       // 待裁决冲突不是「未同步」：需用户先选保留版本，不自动重传内容
       if (record?.answerConflicts?.[questionId] !== undefined) return false;
-      const stillUnsynced =
-        record !== null &&
-        unsyncedAnswerIds(record).includes(questionId) &&
-        record.answers[questionId] !== undefined;
-      if (!stillUnsynced) return true;
-      // 该题上次请求失败：补重试一次再判定（§11-4 不让单题卡死提交流）
-      const answer = record.answers[questionId];
+      // 该题有本机答案但仍未同步（无本机答案不算未同步）
+      const unsyncedIn = (row: typeof record): boolean =>
+        row !== null &&
+        unsyncedAnswerIds(row).includes(questionId) &&
+        row.answers[questionId] !== undefined;
+      if (!unsyncedIn(record)) return true;
+      // 该题上次请求失败：补重试一次再判定（§11-4 不让单题卡死提交流；
+      // unsyncedIn 为真时 record 必非空，但谓词函数不参与窄化，取值走可选链）
+      const answer = record?.answers[questionId];
       if (answer !== undefined) save(questionId, answer);
       await waitOwnInflight();
       if (attemptIdRef.current !== scope) return false;
-      const retried = await draftStore.loadDraft(scope);
-      return !(
-        retried !== null &&
-        unsyncedAnswerIds(retried).includes(questionId) &&
-        retried.answers[questionId] !== undefined
-      );
+      return !unsyncedIn(await draftStore.loadDraft(scope));
     },
     [flushPendingNow, save],
   );

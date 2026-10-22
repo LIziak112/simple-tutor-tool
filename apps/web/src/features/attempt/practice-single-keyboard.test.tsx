@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AttemptDraftData,
   PracticeQuestionSubmitData,
-  PracticeWorkflow,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -20,6 +19,7 @@ import {
   bindPracticePreferenceAccount,
   savePracticePreference,
 } from "./practice-preference-store";
+import { workflowOf } from "./practice-test-fixtures";
 
 /**
  * 单题专注键盘方案（M3-D3，计划 §9.2）：Enter 主动作 / ←→ 切题 / 1-9 选项。
@@ -54,20 +54,6 @@ const mockedSubmit = vi.mocked(submitPracticeQuestionApi);
 const mockedFeedbackGet = vi.mocked(fetchPracticeQuestionFeedbackApi);
 
 const ATTEMPT_ID = "77777777-7777-4777-8777-777777777777";
-
-const workflowOf = (
-  overrides: Partial<PracticeWorkflow> = {},
-): PracticeWorkflow => ({
-  version: 1,
-  feedbackMode: "per_question",
-  revision: 0,
-  canChangeFeedback: true,
-  allowedFeedbackModes: ["per_question", "after_attempt"],
-  canSubmitQuestion: true,
-  restrictionReason: null,
-  releaseAt: null,
-  ...overrides,
-});
 
 /** 四题草稿：q1 判断、q2 填空、q3 单选（3 项）、q4 多选（4 项），全部未提交 */
 const kbDraft = (): AttemptDraftData => ({

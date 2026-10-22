@@ -12,8 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { practiceUnreadableFeedbackCopy } from "./practice-protocol";
-import { QuestionFeedback } from "./QuestionFeedback";
+import {
+  PENDING_ATTEMPT_FEEDBACK_COPY,
+  practiceUnreadableFeedbackCopy,
+} from "./practice-protocol";
+import { FeedbackNoticeBox, QuestionFeedback } from "./QuestionFeedback";
 import { busyCloseGuard, DraftProblemAlert } from "./SubmitConfirmDialog";
 
 /**
@@ -141,14 +144,11 @@ export function PracticeQuestionFooter({
       ) : readable ? (
         <FeedbackPending failed={feedbackFailed} onRetry={onRetryFeedback} />
       ) : (
-        <p
-          data-slot="practice-question-feedback"
-          className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-        >
+        <FeedbackNoticeBox>
           {workflow === undefined
-            ? "已提交，交卷后统一公布"
+            ? PENDING_ATTEMPT_FEEDBACK_COPY
             : practiceUnreadableFeedbackCopy(workflow)}
-        </p>
+        </FeedbackNoticeBox>
       )}
       {mode === "list" && error !== null && <InlineError message={error} />}
     </div>

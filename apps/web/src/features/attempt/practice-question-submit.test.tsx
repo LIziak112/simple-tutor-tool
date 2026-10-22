@@ -5,7 +5,6 @@ import type {
   AttemptResultData,
   AttemptResultQuestion,
   PracticeQuestionSubmitData,
-  PracticeWorkflow,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -23,6 +22,7 @@ import {
   bindPracticePreferenceAccount,
   savePracticePreference,
 } from "./practice-preference-store";
+import { workflowOf } from "./practice-test-fixtures";
 
 /**
  * 逐题提交交互闭环（M3-D2，§7.2/§8/§9.1/§11）：v1 新协议卷的主操作状态机——
@@ -58,20 +58,6 @@ const mockedFeedbackGet = vi.mocked(fetchPracticeQuestionFeedbackApi);
 const ATTEMPT_ID = "66666666-6666-4666-8666-666666666666";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-const workflowOf = (
-  overrides: Partial<PracticeWorkflow> = {},
-): PracticeWorkflow => ({
-  version: 1,
-  feedbackMode: "per_question",
-  revision: 0,
-  canChangeFeedback: true,
-  allowedFeedbackModes: ["per_question", "after_attempt"],
-  canSubmitQuestion: true,
-  restrictionReason: null,
-  releaseAt: null,
-  ...overrides,
-});
 
 const attemptOf = (): AttemptDraftData["attempt"] => ({
   id: ATTEMPT_ID,

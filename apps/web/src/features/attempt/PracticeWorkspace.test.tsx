@@ -1,9 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import type {
-  PracticeLayout,
-  PracticeQuestionProgress,
-  PracticeWorkflow,
-} from "@tutor/contract";
+import type { PracticeLayout, PracticeQuestionProgress } from "@tutor/contract";
 import { expect, it, vi } from "vitest";
 import {
   DropdownMenu,
@@ -20,6 +16,7 @@ import {
   firstUnsubmittedQuestionId,
   practiceProtocolOfDraft,
 } from "./practice-protocol";
+import { workflowOf } from "./practice-test-fixtures";
 import type { QuestionNavigationItem } from "./QuestionNavigator";
 import { QuestionNavigator } from "./QuestionNavigator";
 
@@ -28,20 +25,6 @@ import { QuestionNavigator } from "./QuestionNavigator";
  * 单题紧凑进度行、占位主操作条、「更多」菜单切换项与题目导航四态标记；
  * 统一公布模式下已提交行不得出现红绿对错或正确率暗示（计划 §7.1/§9.1）。
  */
-
-const workflowOf = (
-  overrides: Partial<PracticeWorkflow> = {},
-): PracticeWorkflow => ({
-  version: 1,
-  feedbackMode: "per_question",
-  revision: 0,
-  canChangeFeedback: true,
-  allowedFeedbackModes: ["per_question", "after_attempt"],
-  canSubmitQuestion: true,
-  restrictionReason: null,
-  releaseAt: null,
-  ...overrides,
-});
 
 // ---------- 纯 helper：协议判别与定位 ----------
 

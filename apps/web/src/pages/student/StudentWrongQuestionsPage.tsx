@@ -10,7 +10,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { getPracticePreference } from "@/features/attempt/practice-preference-store";
+import { workflowStartOptions } from "@/features/attempt/attempt-queries";
 import { useStudentCourses } from "@/features/student/student-queries";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
@@ -246,10 +246,7 @@ export default function StudentWrongQuestionsPage() {
     mutationFn: (input: { scope: string; ids: string[] }) => {
       lastPracticeRef.current = input;
       // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
-      return startWrongPracticeApi(input.ids, {
-        workflowVersion: 1,
-        feedbackMode: getPracticePreference().feedback,
-      });
+      return startWrongPracticeApi(input.ids, workflowStartOptions());
     },
     onMutate: (input) => {
       setPracticeScope(input.scope);

@@ -34,8 +34,11 @@ function itemLabel(item: QuestionNavigationItem): string {
 function itemClass(item: QuestionNavigationItem, current: boolean): string {
   const base =
     "relative flex size-11 items-center justify-center rounded-md border text-sm font-medium tabular-nums outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+  const currentRing = current
+    ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+    : "";
   if (item.practice?.submitted) {
-    return `${base} ${item.practice.feedbackReadable ? "border-foreground/40 bg-foreground/10 text-foreground" : "border-foreground/25 bg-muted text-muted-foreground"} ${current ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`;
+    return `${base} ${item.practice.feedbackReadable ? "border-foreground/40 bg-foreground/10 text-foreground" : "border-foreground/25 bg-muted text-muted-foreground"} ${currentRing}`;
   }
   const completion =
     item.completion.state === "filled"
@@ -43,7 +46,7 @@ function itemClass(item: QuestionNavigationItem, current: boolean): string {
       : item.completion.state === "partial"
         ? "border-primary bg-primary/10 text-primary"
         : "border-border bg-card text-foreground";
-  return `${base} ${completion} ${current ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`;
+  return `${base} ${completion} ${currentRing}`;
 }
 
 export function QuestionNavigator({

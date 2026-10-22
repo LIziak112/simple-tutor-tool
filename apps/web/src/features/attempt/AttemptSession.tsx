@@ -458,13 +458,15 @@ function AnswerView({
   });
   const practiceProgress =
     practiceProtocol === "v1" ? practiceSubmit.progress : [];
+  // 按题查表：导航项/键盘裁决/题卡渲染多处取行，避免逐题线性 find
+  const progressById = new Map(
+    practiceProgress.map((row) => [row.questionId, row] as const),
+  );
   const submittedPracticeCount = countSubmittedQuestions(practiceProgress);
   const singleProgressRow =
     resolvedSingleQuestionId === null
       ? undefined
-      : practiceProgress.find(
-          (row) => row.questionId === resolvedSingleQuestionId,
-        );
+      : progressById.get(resolvedSingleQuestionId);
   // 缺稿明确选择弹层（§10.3）：证据组装发现未追平草稿时不静默放行——
   // choice（用户裁决）→ busy（确认后带 allowMissing 重提）→ error（重提失败留弹层）；
   // 其余 outcome（提交成功/受限/stale/取消）一律收起弹层（就地提示由 hook 承担）
@@ -560,11 +562,9 @@ function AnswerView({
       ? {
           practice: {
             submitted:
-              (practiceProgress.find((row) => row.questionId === question.id)
-                ?.submittedAt ?? null) !== null,
+              (progressById.get(question.id)?.submittedAt ?? null) !== null,
             feedbackReadable:
-              practiceProgress.find((row) => row.questionId === question.id)
-                ?.feedbackReadable ?? false,
+              progressById.get(question.id)?.feedbackReadable ?? false,
           },
         }
       : {}),
@@ -669,8 +669,7 @@ function AnswerView({
     }
     const currentIndex = questionIds.indexOf(currentId);
     const submitted =
-      (practiceProgress.find((row) => row.questionId === currentId)
-        ?.submittedAt ?? null) !== null;
+      (progressById.get(currentId)?.submittedAt ?? null) !== null;
     if (event.key === "Enter") {
       if (isTextEditingEvent(native) || isActivatingTarget(native)) return;
       event.preventDefault();
@@ -1184,9 +1183,7 @@ function AnswerView({
                         // 并在 footer 槽追加反馈区；legacy/lesson 完全不挂
                         const practiceRow =
                           practiceProtocol === "v1"
-                            ? practiceProgress.find(
-                                (row) => row.questionId === question.id,
-                              )
+                            ? progressById.get(question.id)
                             : undefined;
                         const practiceSubmitted =
                           (practiceRow?.submittedAt ?? null) !== null;

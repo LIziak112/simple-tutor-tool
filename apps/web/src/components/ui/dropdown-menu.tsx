@@ -1,4 +1,5 @@
 import { cn } from "cn";
+import { Check } from "lucide-react";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import type * as React from "react";
 
@@ -79,19 +80,7 @@ const DropdownMenuRadioItem = ({
   >
     <span className="pointer-events-none absolute left-2 flex size-4 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="size-4"
-          aria-hidden
-        >
-          <path d="M20 6 9 17l-5-5" />
-        </svg>
+        <Check aria-hidden className="size-4" />
       </DropdownMenuPrimitive.ItemIndicator>
     </span>
     {props.children}

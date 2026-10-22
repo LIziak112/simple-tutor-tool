@@ -74,6 +74,9 @@ function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
+/** 页面内容过期（题目/工作流/协议版本不一致）的统一提示 */
+const STALE_MESSAGE = "页面内容已过期，请刷新后重试";
+
 /** 幂等收敛错误码（已提交过：不弹错，refetch 收敛到最新状态） */
 function isAlreadySubmittedError(err: unknown): boolean {
   return (
@@ -184,7 +187,7 @@ export function usePracticeQuestionSubmit(input: {
       const currentData = dataRef.current;
       const currentWorkflow = currentData.practiceWorkflow;
       if (currentWorkflow === undefined) {
-        return { kind: "stale", message: "页面内容已过期，请刷新后重试" };
+        return { kind: "stale", message: STALE_MESSAGE };
       }
       const question = currentData.units
         .flatMap((unit) => unit.questions)
@@ -196,6 +199,11 @@ export function usePracticeQuestionSubmit(input: {
       submittingRef.current = questionId;
       setSubmittingId(questionId);
       setLastError(null);
+      // 错误路径收敛：就地提示与 outcome 同 message（§10.3），单一出处
+      const failWith = (message: string): PracticeSubmitOutcome => {
+        setLastError({ questionId, message });
+        return { kind: "error", message };
+      };
       try {
         // 手写题笔迹先行（同整卷/lesson「提交前该题笔迹已上传」口径）
         const controller = input.inkControllers.current.get(questionId);
@@ -209,9 +217,7 @@ export function usePracticeQuestionSubmit(input: {
         // 按题 flush（M3-D3 §11-4）：只确认本题答案同步，不等其他题在途重试；
         // 未追平不发提交请求，就地提示可重试（与其他错误路径同走 lastError）
         if (!(await flushQuestionRef.current(questionId))) {
-          const message = "本题答案尚未保存完成，请检查网络后重试";
-          setLastError({ questionId, message });
-          return { kind: "error", message };
+          return failWith("本题答案尚未保存完成，请检查网络后重试");
         }
         const prep = await prepareSubmitEvidence({
           attemptId,
@@ -298,14 +304,8 @@ export function usePracticeQuestionSubmit(input: {
           return { kind: "submitted" };
         }
         if (isStaleError(err)) {
-          setLastError({
-            questionId,
-            message: "页面内容已过期，请刷新后重试",
-          });
-          return {
-            kind: "stale",
-            message: "页面内容已过期，请刷新后重试",
-          };
+          setLastError({ questionId, message: STALE_MESSAGE });
+          return { kind: "stale", message: STALE_MESSAGE };
         }
         if (
           err instanceof ApiError &&
@@ -318,23 +318,16 @@ export function usePracticeQuestionSubmit(input: {
           if (current.success) {
             draftStore.setAnswerConflict(attemptId, questionId, current.data);
           }
-          setLastError({
-            questionId,
-            message: "本题答案在其他设备有修改，请先选择保留哪一份，再重新提交",
-          });
-          return {
-            kind: "error",
-            message: "本题答案在其他设备有修改，请先选择保留哪一份，再重新提交",
-          };
+          return failWith(
+            "本题答案在其他设备有修改，请先选择保留哪一份，再重新提交",
+          );
         }
         if (err instanceof ApiError && err.code === "WORKFLOW_RESTRICTED") {
           // 教师收紧（§5.4 当前 gate 口径）：refetch 草稿视图按受限呈现，不弹错误
           refetchDetail();
           return { kind: "restricted" };
         }
-        const message = messageOf(err, "提交失败，请稍后重试");
-        setLastError({ questionId, message });
-        return { kind: "error", message };
+        return failWith(messageOf(err, "提交失败，请稍后重试"));
       } finally {
         submittingRef.current = null;
         setSubmittingId(null);
