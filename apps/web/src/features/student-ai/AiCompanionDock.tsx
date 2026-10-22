@@ -29,6 +29,7 @@ import {
 } from "@/features/student-ai/AiConversationPanel";
 import type { AiCompanionLayoutController } from "@/features/student-ai/ai-companion-layout";
 import {
+  AiCompareActiveContext,
   hasAiCompareSpace,
   useAiCompanionLayout,
 } from "@/features/student-ai/ai-companion-layout";
@@ -95,12 +96,23 @@ export interface UseAiCompanionDockHost {
   readonly triggerLabel?: string | undefined;
   /** 作答材料恢复成功后才消费跨页定位；结果页无编辑材料时缺省为就绪。 */
   readonly ready?: boolean | undefined;
+  /**
+   * 统一切题入口（M4-D2 §12.1：旧任务定位先切题再展开）。单题专注模式
+   * 由页面注入 goSingleQuestion（含收笔/落盘/AI 收起保护）；失败返回
+   * false，定位流程保留现场不切换。未注入时视为已就位（列表等场景）。
+   */
+  readonly goToQuestion?:
+    | ((questionId: string) => Promise<boolean>)
+    | undefined;
 }
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const { attemptId, questions, currentQuestionId, editor, labelOf } = host;
   const location = useLocation();
   const navigate = useNavigate();
+  // 异步定位回写地址时按最新 search 重算（统一切题可能已改写 q）
+  const locationRef = useRef(location);
+  locationRef.current = location;
   const railRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const returnAnchorRef = useRef<{
@@ -232,6 +244,13 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   openComposeRef.current = async (questionId: string) => {
     if (!questions.some((question) => question.id === questionId))
       throw new Error("这道题已不在当前练习中，请重新选择题目");
+    // 单题专注模式：目标非当前题时先经统一切题入口（含 AI 收起保护），
+    // 失败抛错保留现场；列表等场景未注入则视为已就位。
+    if (
+      host.goToQuestion !== undefined &&
+      !(await host.goToQuestion(questionId))
+    )
+      throw new Error("暂时无法切到本题，请检查材料保存状态后重试");
     if (!(await openForQuestion(questionId, entryOf(questionId)))) return false;
     conversation.startNew(questionId);
     requestAnimationFrame(() =>
@@ -253,6 +272,13 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       setPresentationError("正在恢复作答材料，请完成恢复后重新打开这条回复");
       return false;
     }
+    // 单题专注模式：先统一切题到任务所属题（收笔/落盘/AI 收起同链），
+    // 失败保留现场不展开回复。
+    if (
+      host.goToQuestion !== undefined &&
+      !(await host.goToQuestion(task.questionId))
+    )
+      return false;
     const entry = entryOf(task.questionId);
     if (!(await openForQuestion(task.questionId, entry))) return false;
     conversation.openTask(task);
@@ -271,6 +297,12 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       return false;
     }
     if (host.ready === false || transitionRef.current) return false;
+    // 单题专注模式：回题定位同样先统一切题，失败保留当前列表与阅读状态。
+    if (
+      host.goToQuestion !== undefined &&
+      !(await host.goToQuestion(questionId))
+    )
+      return false;
     const entry = entryOf(questionId);
     const card = entry?.closest("article");
     if (!entry || !card) {
@@ -343,11 +375,14 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       })
       .finally(() => {
         if (cancelled) return;
-        params.delete("aiTask");
-        params.delete("aiQuestion");
-        params.delete("aiCompose");
+        // 消费 ai 参数时按最新地址重算：统一切题入口可能已改写 q，不得
+        // 用过期 search 回写把切换 undone。
+        const latest = new URLSearchParams(locationRef.current.search);
+        latest.delete("aiTask");
+        latest.delete("aiQuestion");
+        latest.delete("aiCompose");
         void navigate(
-          { pathname: location.pathname, search: params.toString() },
+          { pathname: location.pathname, search: latest.toString() },
           { replace: true, preventScrollReset: true },
         );
       });
@@ -439,12 +474,22 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       transitionRef.current = false;
     }
   };
-  const returnToWork = async () => {
+  /**
+   * 切题导航先收起 AI 阅读（M4-D2 §12.1）：复用既有收起链（flush →
+   * closePanel → 焦点/锚点还原），不开第二套收起。未打开时直接放行；
+   * 落盘失败返回 false，调用方保留现场不切题。收起后绑定仍在本题并记
+   * 入工作集——返回原题时以「再看回复」折叠入口续读（阅读锚点语义）。
+   */
+  const collapseForNavigation = async () => {
+    if (!controller.open) return true;
     const questionId = boundQuestionId;
-    if (questionId !== null && (await close())) {
+    if (!(await close())) return false;
+    if (questionId !== null)
       setWorkingQuestions((previous) => new Set(previous).add(questionId));
-    }
+    return true;
   };
+  /** 回到作答＝同一收起语义（面板内「回到作答」动作复用） */
+  const returnToWork = collapseForNavigation;
   const checkNewSteps = async (questionId: string) => {
     if (!(await openForQuestion(questionId, entryOf(questionId)))) return;
     conversation.startNew(questionId);
@@ -672,90 +717,92 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   );
   const rail = (children: ReactNode) => (
     <AiReadingMemoryContext value={readingMemory}>
-      <div
-        ref={railRef}
-        data-slot="ai-companion-rail"
-        data-ai-state={
-          controller.open ? (fixedActive ? "dock" : presentation) : "closed"
-        }
-        className="w-full min-w-0"
-      >
-        {(controller.error || presentationError) && (
-          <p
-            role="alert"
-            className="mb-3 rounded-lg border border-destructive p-3 text-sm text-destructive"
-          >
-            {presentationError ?? controller.error}
-          </p>
-        )}
+      <AiCompareActiveContext.Provider value={fixedActive && controller.open}>
         <div
-          className={
-            fixedActive && controller.open
-              ? "flex min-w-0 items-start gap-4"
-              : "min-w-0"
+          ref={railRef}
+          data-slot="ai-companion-rail"
+          data-ai-state={
+            controller.open ? (fixedActive ? "dock" : presentation) : "closed"
           }
+          className="w-full min-w-0"
         >
-          <section aria-label="作答区" className="min-w-0 flex-1">
-            {children}
-          </section>
-          {fixedActive && controller.open && (
-            <aside
-              aria-label="AI 对照"
-              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] flex h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] min-h-0 w-[26rem] max-w-full shrink-0 flex-col overflow-hidden [&>[data-slot=ai-companion-panel]]:min-h-0 [&>[data-slot=ai-companion-panel]]:flex-1"
+          {(controller.error || presentationError) && (
+            <p
+              role="alert"
+              className="mb-3 rounded-lg border border-destructive p-3 text-sm text-destructive"
             >
-              {workspace}
-            </aside>
+              {presentationError ?? controller.error}
+            </p>
+          )}
+          <div
+            className={
+              fixedActive && controller.open
+                ? "flex min-w-0 items-start gap-4"
+                : "min-w-0"
+            }
+          >
+            <section aria-label="作答区" className="min-w-0 flex-1">
+              {children}
+            </section>
+            {fixedActive && controller.open && (
+              <aside
+                aria-label="AI 对照"
+                className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] flex h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] min-h-0 w-[26rem] max-w-full shrink-0 flex-col overflow-hidden [&>[data-slot=ai-companion-panel]]:min-h-0 [&>[data-slot=ai-companion-panel]]:flex-1"
+              >
+                {workspace}
+              </aside>
+            )}
+          </div>
+          {dialogActive && (
+            <Dialog
+              open
+              onOpenChange={(open) => {
+                if (!open) void close();
+              }}
+            >
+              <DialogContent
+                ref={dialogContentRef}
+                className="flex h-dvh max-h-dvh w-full max-w-full flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[90dvh] sm:max-h-[90dvh] sm:w-[calc(100%-3rem)] sm:max-w-[60rem] sm:rounded-xl"
+                onOpenAutoFocus={(event) => {
+                  event.preventDefault();
+                  dialogTitleRef.current?.focus({ preventScroll: true });
+                }}
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault();
+                  if (restoringPresentationRef.current) {
+                    restoringPresentationRef.current = false;
+                    document
+                      .getElementById(controller.panelId)
+                      ?.querySelector<HTMLButtonElement>("[data-ai-enlarge]")
+                      ?.focus({ preventScroll: true });
+                  } else triggerRef.current?.focus({ preventScroll: true });
+                }}
+                onPointerDownOutside={(event) => event.preventDefault()}
+                onEscapeKeyDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void close();
+                }}
+              >
+                <DialogDescription className="sr-only">
+                  阅读和追问本题，关闭后回到原题继续作答。
+                </DialogDescription>
+                <div className="flex min-h-0 flex-1 flex-col [&>[data-slot=ai-companion-panel]]:min-h-0 [&>[data-slot=ai-companion-panel]]:flex-1 [&>[data-slot=ai-companion-panel]]:rounded-none [&>[data-slot=ai-companion-panel]]:border-0">
+                  {presentationError && (
+                    <p
+                      role="alert"
+                      className="px-5 py-2 text-sm text-destructive"
+                    >
+                      {presentationError}
+                    </p>
+                  )}
+                  {workspace}
+                </div>
+              </DialogContent>
+            </Dialog>
           )}
         </div>
-        {dialogActive && (
-          <Dialog
-            open
-            onOpenChange={(open) => {
-              if (!open) void close();
-            }}
-          >
-            <DialogContent
-              ref={dialogContentRef}
-              className="flex h-dvh max-h-dvh w-full max-w-full flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[90dvh] sm:max-h-[90dvh] sm:w-[calc(100%-3rem)] sm:max-w-[60rem] sm:rounded-xl"
-              onOpenAutoFocus={(event) => {
-                event.preventDefault();
-                dialogTitleRef.current?.focus({ preventScroll: true });
-              }}
-              onCloseAutoFocus={(event) => {
-                event.preventDefault();
-                if (restoringPresentationRef.current) {
-                  restoringPresentationRef.current = false;
-                  document
-                    .getElementById(controller.panelId)
-                    ?.querySelector<HTMLButtonElement>("[data-ai-enlarge]")
-                    ?.focus({ preventScroll: true });
-                } else triggerRef.current?.focus({ preventScroll: true });
-              }}
-              onPointerDownOutside={(event) => event.preventDefault()}
-              onEscapeKeyDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void close();
-              }}
-            >
-              <DialogDescription className="sr-only">
-                阅读和追问本题，关闭后回到原题继续作答。
-              </DialogDescription>
-              <div className="flex min-h-0 flex-1 flex-col [&>[data-slot=ai-companion-panel]]:min-h-0 [&>[data-slot=ai-companion-panel]]:flex-1 [&>[data-slot=ai-companion-panel]]:rounded-none [&>[data-slot=ai-companion-panel]]:border-0">
-                {presentationError && (
-                  <p
-                    role="alert"
-                    className="px-5 py-2 text-sm text-destructive"
-                  >
-                    {presentationError}
-                  </p>
-                )}
-                {workspace}
-              </div>
-            </DialogContent>
-          </Dialog>
-        )}
-      </div>
+      </AiCompareActiveContext.Provider>
     </AiReadingMemoryContext>
   );
 
@@ -775,6 +822,11 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     /** 绑定题显示名（null = 未绑定） */
     boundLabel,
     triggerRef,
+    /**
+     * 切题导航先收起 AI 阅读（M4-D2 §12.1）：统一切题入口在切题前调用，
+     * 返回 false 时保留现场不切换。
+     */
+    collapseForNavigation,
   } as const;
 }
 

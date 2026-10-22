@@ -304,6 +304,11 @@ function AnswerView({
   );
   // SAI-22：AI 伴学装配收进共享 dock（布局 + 发送 + 面板 + 打开绑定），
   // 本页只传身份（attempt/题集）与阶段（当前题/编辑器/材料面）。
+  // M4-D2 §12.1：dock 的旧任务定位经 goSingleQuestion 统一切题（装配在
+  // goSingleQuestion 定义之前，用 ref 晚绑定打断互引）。
+  const goToQuestionRef = useRef<(questionId: string) => Promise<boolean>>(
+    async () => true,
+  );
   const aiCompanion = useAiCompanionDock({
     attemptId,
     questions: flatQuestions,
@@ -331,6 +336,7 @@ function AnswerView({
       (materialRecovery.state === "failed" &&
         materialRecovery.verified === true),
     editor,
+    goToQuestion: (questionId) => goToQuestionRef.current(questionId),
   });
   const navigatorCollapsed = aiCompanion.controller.navigatorCollapsed;
   const navigationId = useId();
@@ -613,24 +619,44 @@ function AnswerView({
   // 服务器确认，离线可继续已核对题面）；失败不切题，就地提示与重试，不清
   // 空原稿、不跳页。列表模式自由浏览不设保护；上一题/下一题/导航跳题/键盘
   // 切题统一走本入口。
-  // jumpToQuestion 本身非 memo（每渲染重建），此处同法不包 useCallback
-  const goSingleQuestion = async (id: string, focusAnswer = false) => {
+  // jumpToQuestion 本身非 memo（每渲染重建），此处同法不包 useCallback。
+  // M4-D2 §12.1：返回是否切题成功，供 AI 旧任务定位判断是否保留现场。
+  const goSingleQuestion = async (
+    id: string,
+    focusAnswer = false,
+  ): Promise<boolean> => {
     // 提交在途禁切题（§7.2 busy）：上一题/下一题/导航均已禁用，此处兜底直调
-    if (practiceSubmit.submittingId !== null) return;
+    if (practiceSubmit.submittingId !== null) return false;
     // 先收笔再切题（闸门修复：原序先切态后收笔，收笔失败=用户选择继续书写
     // 时已切走，错误横幅与键盘守门会指向看不见的旧题——与列表模式同序）
-    if (editor && !(await editor.request(null))) return;
+    if (editor && !(await editor.request(null))) return false;
     const from = resolvedSingleQuestionId;
     if (from !== null && from !== id && !(await flushQuestionLocal(from))) {
       setSingleSwitchBlocked(id);
-      return;
+      return false;
     }
+    // 切题先收起 AI 阅读（M4-D2 §12.1）：在本机落盘保护之后、真正切换之前，
+    // 复用 dock 既有收起链（落盘失败不切题）；收起失败时 dock 已就地提示
+    // 重试，不再叠加切题保护横幅，保留现场不切换。
+    if (
+      from !== null &&
+      from !== id &&
+      !(await aiCompanion.collapseForNavigation())
+    )
+      return false;
     setSingleSwitchBlocked(null);
     setSingleQuestionId(id);
     setCurrentQuestionId(id);
     // 单题切题落焦工作区容器（§9.2 ←/→ 判定域；不落题面避免软键盘）；
     // focusAnswer（交卷确认「去补全」）：显式补答意图优先落答案控件
     await jumpToQuestion(id, focusAnswer, singleWorkspaceRef.current);
+    return true;
+  };
+  // AI 旧任务定位的统一切题入口（M4-D2 §12.1）：单题模式且目标非当前题才
+  // 走切题链（列表模式与就地展开直接放行，不触发收笔/收起）。
+  goToQuestionRef.current = async (questionId: string) => {
+    if (!singleMode || questionId === resolvedSingleQuestionId) return true;
+    return goSingleQuestion(questionId);
   };
 
   /** 切题保护的重试入口：本机落盘成功后继续被拦下的那次切题 */
