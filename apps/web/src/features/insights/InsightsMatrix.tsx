@@ -223,6 +223,15 @@ export function InsightsMatrix({
                               ? "—"
                               : `${cell.firstScore} 分`}
                           </p>
+                          {/* M4-D3 进行中进度（§13）：服务端仅对 in-progress 的
+                          v1 新协议草稿卷携带 n/N（白名单纯进度计数）；legacy
+                          格子缺省不渲染，回落既有呈现 */}
+                          {cell.practiceSubmittedCount !== undefined &&
+                            cell.practiceQuestionCount !== undefined && (
+                              <p className="text-xs whitespace-nowrap text-sky-700 dark:text-sky-300">
+                                {`已提交 ${cell.practiceSubmittedCount}/${cell.practiceQuestionCount} 题`}
+                              </p>
+                            )}
                           {(cell.redoCount > 0 || cell.pendingCount > 0) && (
                             <p className="flex gap-1.5 text-xs whitespace-nowrap">
                               {cell.redoCount > 0 && (

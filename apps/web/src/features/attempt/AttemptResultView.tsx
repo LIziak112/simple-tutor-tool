@@ -607,6 +607,22 @@ export function AttemptResultView({
                 </p>
               )}
             </div>
+            {/* M4-D3 §13.8 反馈节奏摘要：v1 新协议卷按 feedbackMode 呈现；
+            legacy/lesson 卷缺省不渲染（数据侧同样缺省）。纯呈现——反馈可见性
+            仍由 answersReleased gate 决定，本行不透露任何对错/答案 */}
+            {data.practiceWorkflow !== undefined && (
+              <p
+                data-slot="practice-rhythm"
+                className="text-sm leading-relaxed text-muted-foreground"
+              >
+                {`反馈节奏：${
+                  data.practiceWorkflow.feedbackMode === "per_question"
+                    ? "作答时逐题反馈，每题提交后即可查看该题反馈"
+                    : "交卷后反馈，交卷后统一查看"
+                }`}
+                {!released && "；参考答案与对错按教师公布时间公布"}
+              </p>
+            )}
             {released ? (
               <div className="grid min-w-0 gap-4 lg:grid-cols-[140px_minmax(0,1fr)] lg:items-start">
                 <div className="flex flex-col gap-1">

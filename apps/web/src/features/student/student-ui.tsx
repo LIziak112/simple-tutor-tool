@@ -163,6 +163,15 @@ export function StudentAssignmentCard({
             <span>单元：{unitNames[0] ?? "（内容整理中）"}</span>
           )}
           <span>共 {assignment.questionCount} 题</span>
+          {/* M4-D3 进行中进度（§13）：进行中的 v1 新协议卷显示行级 n/N（服务端
+          白名单纯进度计数，N 复用 questionCount）；legacy 卷缺省不渲染 */}
+          {assignment.status === "in_progress" &&
+            assignment.practiceSubmittedCount !== undefined &&
+            assignment.questionCount > 0 && (
+              <span className="tabular-nums text-sky-700 dark:text-sky-300">
+                {`已提交 ${assignment.practiceSubmittedCount}/${assignment.questionCount} 题`}
+              </span>
+            )}
         </p>
         {showCreatedAt && (
           <p className="text-sm text-muted-foreground">

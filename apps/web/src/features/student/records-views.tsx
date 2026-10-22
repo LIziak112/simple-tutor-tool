@@ -123,6 +123,15 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
         </p>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <RecordScore row={row} />
+          {/* M4-D3 进行中进度（§13）：v1 新协议 draft 卷携带行级 n/N（服务端
+          白名单纯进度计数）；legacy/lesson 卷缺省不渲染，已收尾行以状态为准 */}
+          {isDraft &&
+            row.practiceSubmittedCount !== undefined &&
+            row.practiceQuestionCount !== undefined && (
+              <span className="text-xs tabular-nums text-sky-700 dark:text-sky-300">
+                {`已提交 ${row.practiceSubmittedCount}/${row.practiceQuestionCount} 题`}
+              </span>
+            )}
           {/* 待批徽章（D4 口径；未公布时服务端置 null，不显示） */}
           {row.answersReleased &&
             row.pendingCount !== null &&
