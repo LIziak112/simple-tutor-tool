@@ -39,7 +39,7 @@
 | 批次 | 内容 | 状态 |
 | --- | --- | --- |
 | M0 设计确认与交互基线 | 执行追踪、基线核对、离线交互线框稿；不改领域逻辑 | 文档与浏览器基线已核对；真机待验收 |
-| M1 契约与教师裁决 | 失败测试先行：策略组合、历史缺省、非法组合、CAS、旧客户端；契约 + 迁移 + resolver + 教师默认与作业三选项 | M1a 契约与纯裁决器已实现，编排审查中；迁移和接线尚未完成 |
+| M1 契约与教师裁决 | 失败测试先行：策略组合、历史缺省、非法组合、CAS、旧客户端；契约 + 迁移 + resolver + 教师默认与作业三选项 | M1a+M1b 已完成：契约/迁移 0038/裁决器/教师设置与作业授权/建卷读侧接线/PATCH workflow CAS/教师 UI；三项审查修复完毕、全量绿（见验收记录）；M2 起未动 |
 | M2 通用逐题服务 | 失败测试先行：提交版本、幂等、邻题泄露、教师收紧、并发收尾；抽取 submitAttemptQuestion；事务内判分 | 未开始 |
 | M3 单题工作区及输入 | 失败测试先行：当前题恢复、原位只读、四组合、按题 flush、快捷键保护、最后一题留反馈 | 未开始 |
 | M4 AI、证据及统计整合 | 失败测试先行：本题 AI 完成态、旧回复不串题、三布局回退、待批/改判/统计与导出 | 未开始 |
@@ -90,3 +90,24 @@
 4. releaseAt/submittedAt 收紧为 z.iso.datetime({offset:false}).nullable()：拒绝非法字符串/无时区/+08:00 偏移；未从 content.ts 导入 assignmentDueAtSchema（M5 content 将反向引用 practice 推荐字段，避免循环依赖）。
 - 不采纳 code-review 建议（记录理由）：教师收紧后不自动把已选 per_question 改写为 after_attempt、不自动改写已提交卷节奏——计划 §5.4 要求保留原选择事实，收紧表现为 canSubmitQuestion=false + allowedFeedbackModes 单一 after_attempt + 原因 teacher_after_attempt，学生经普通保存 + 整卷交卷出口完成，不是死锁，业务规则不可改。亦不以 answersReleased 替代逐题授权；after_due 即使已过截止仍不允许逐题（读侧 fail closed 保持）。
 - 更正：simplify/code-review/security-review 是 CLI 内置命令，不是缺失技能；M0 Edge 与 WebKit 原型检查各 31 项通过，是浏览器视口检查，不是真机。M1a 仍不宣称 M1 完成。
+
+
+### M1b 契约落库、教师裁决接线与学生端工作流 API（2026-10-22，同分支 codex/practice-workflow-contract）
+
+提交序列（小步、每步保持绿）：11cd80ae（契约扩展+迁移 0038）→ 49f25db0（wrongPractice 契约非 strict 语义对齐测试）→ bc725716（教师反馈设置路由+作业逐题授权落库）→ 1bdab3cc（建卷/草稿读取接线+PATCH workflow 事务 CAS）→ ef50a1c0（教师 UI：设置页反馈策略区+作业三选项）+ 本轮审查修复收尾提交。
+
+- 契约：attemptStartOptionsRequestSchema（strict，workflowVersion=1 字面量门禁+feedbackMode 联带拒绝）；assignment/课程/错题 start 请求接入；practiceWorkflowUpdateRequestSchema 与响应 attemptWorkflowUpdateDataSchema；错误码 WORKFLOW_LEGACY / WORKFLOW_REVISION_STALE / WORKFLOW_MODE_NOT_ALLOWED。wrongPractice 维持非 strict（旧 schema 语义），未知字段被剥离（测试固化）。
+- 迁移 0038（drizzle-kit 生成，无手写 SQL）：teachers.practice_feedback_policy 可空、assignments.allow_per_question_feedback 默认 0、attempts.practice_workflow_version/feedback_mode/workflow_revision(默认0)、responses.practice_mutation_id/practice_request_digest。边界夹具测试（0037 边界原生 SQL 种入）验证保守缺省+幂等；backup roundtrip 测试验证不放宽。
+- 教师：GET/PUT /api/teacher/settings/practice-feedback（未配置=NULL；异常持久化值读侧保守 after_attempt）。assignment-service：create/update 落 allowPerQuestionFeedback，after_due+true 请求内显式冲突拒绝；partial PATCH 仅在请求内组合冲突拒绝；输出显式 allowPerQuestionFeedback。
+- 学生接线：workflowStartColumns（省略 workflowVersion=旧协议恒定）；assignment create-or-return 不升级不覆盖；wrong/course 同口径；draft 读取白名单投影 practiceWorkflow+questionProgress（assertNoLeak，无答案秘密），lesson/legacy 缺失两字段。PATCH /api/student/attempts/:id/workflow：单事务真实 CAS（UPDATE WHERE workflowRevision … RETURNING），陈旧 revision 409、模式不允许 400、已交/题级已交/跨学生/legacy/lesson 各自拒绝，响应 private,no-store。
+- 教师策略裁决：teacherPolicyOfStudent——未配置(NULL)=resolver 缺省 student_choice；学生不存在/无教师域/教师行悬挂 join 未命中→after_attempt fail closed（regression 测试覆盖悬挂 teacherId）。
+- UI：设置页「教学」区练习反馈默认策略（radio 二选一，未配置默认标注、显式保存、失败保留草稿、教师隔离草稿，抽 useSettingsSectionDraft 骨架）；建卷向导与编辑弹窗三选项（由学生选择/交卷后/截止后；after_due 需先设截止时间；编辑配对发送 answerRelease+allowPerQuestionFeedback）。
+- 三项审查（当场修复）：
+  - simplify：已采纳——删 checkWorkflowCas 死代码、合并 assignment 两查询为 assignmentFactsOf/resolverInputsOf、单次 CAS UPDATE…RETURNING 全行、assertNoAfterDuePerQuestion 抽取、useSettingsSectionDraft 抽取（#7）。拒绝——移除 resolver 运行时 lifecycle/stored 守卫（#2）：M1a 编排确认加固成果+回归测试，不得丢弃。未做——#9/#10 记录为可选清理。
+  - code-review：修复 #1（leftJoin 未命中教师行误判「未配置」→ 保守 after_attempt，加悬挂 teacherId regression）；修复 #2（陈旧 revision 409 优先于模式 400，加陈旧+不允许组合 regression）；#3 教师收紧后已提交题重取按当前 gate 受限=计划 §5.4 设计（注释固化，不采纳改写）。
+  - security-review：无可利用项；PATCH 路由注释错位已修。
+- 验证（日志同目录 m1b-final-*.log）：pnpm test --maxWorkers=4 → 459 文件 5404/5404 通过 exit 0；pnpm typecheck exit 0（修一处 exactOptionalPropertyTypes 报错：checked ?? 兜底仅类型完备）；pnpm lint exit 0（仅旧代码 2 warning + 1 info）；pnpm build exit 0；pnpm gen:spec + pnpm schema:export 二次生成 sha1 一致（幂等）。
+- 既有测试最小修改：schema.test/migrate.test/backfill.test 行形状断言补 0038 新列缺省；migrate.test 旧库种子对 teachers/assignments/attempts/responses 改原生 SQL（Drizzle 当前表模型会带上 0038 新列导致旧库插入失败，与 units/attempts 既有惯例一致）；backfill 快照 helper 剔除 0038 新增列（保真断言针对原有业务字段）。
+- 真实修正 bug：教师未配置（NULL）曾被误判 after_attempt——改为 NULL→resolver 缺省 student_choice，after_attempt 仅留给异常值/缺行（wrong-practice 默认测试暴露）。
+- 未做（M2/M3 范围，不宣称）：逐题提交/答案出口端点与判分、学生单题工作区 UI、AI/证据/统计整合、偏好与 DSL、全链压测与真机。M2 前需拍板：feedbackReadable 对已提交行在教师收紧后的语义快照（当前按当前 gate 近似）。
+- 手动验证步骤（Codex 验收用）：教师 /t/settings 教学区改默认策略→保存→刷新回显；建作业选三选项各建一卷；学生开新练习可选节奏/改节奏（PATCH 生效、他端改后本端 409 提示刷新）；旧作业（0038 前建的 attempt）打开无 practiceWorkflow 字段且不可改节奏。

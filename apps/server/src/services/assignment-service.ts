@@ -485,6 +485,20 @@ function teacherAssignmentOf(
  *   第一份），且不依赖 SQLite 同毫秒并列时的未定义排序；
  * - 全部校验发生在事务开始前，任一失败零写入（无半成品）。
  */
+/** after_due + 逐题授权组合拒绝（M1b；create 合并后与 update 合并后共用） */
+function assertNoAfterDuePerQuestion(
+  answerRelease: "on_submit" | "after_due",
+  allowPerQuestionFeedback: boolean,
+): void {
+  if (answerRelease === "after_due" && allowPerQuestionFeedback) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "截止后公布（after_due）不能同时开启逐题反馈（allowPerQuestionFeedback）",
+    );
+  }
+}
+
 export function createAssignment(
   db: Db,
   teacherId: string,
@@ -519,13 +533,7 @@ export function createAssignment(
   // 调用方同样不能落出冲突组合）
   const allowPerQuestion = request.allowPerQuestionFeedback ?? false;
   const effectiveRelease = request.answerRelease ?? "on_submit";
-  if (effectiveRelease === "after_due" && allowPerQuestion) {
-    throw new HttpError(
-      400,
-      "VALIDATION_ERROR",
-      "截止后公布（after_due）不能同时开启逐题反馈（allowPerQuestionFeedback）",
-    );
-  }
+  assertNoAfterDuePerQuestion(effectiveRelease, allowPerQuestion);
 
   // 组合方式：separate = 每个单元一份；缺省/merged = 合并一份（现状行为不变）
   const grouping = request.unitGrouping ?? "merged";
@@ -674,13 +682,7 @@ export function updateAssignment(
       request.allowPerQuestionFeedback !== undefined
         ? request.allowPerQuestionFeedback
         : false;
-    if (nextAnswerRelease === "after_due" && nextAllowPerQuestion) {
-      throw new HttpError(
-        400,
-        "VALIDATION_ERROR",
-        "截止后公布（after_due）不能同时开启逐题反馈（allowPerQuestionFeedback）",
-      );
-    }
+    assertNoAfterDuePerQuestion(nextAnswerRelease, nextAllowPerQuestion);
   }
 
   // 单元替换：先判内容锁定（D14），再校验并替换

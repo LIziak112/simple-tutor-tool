@@ -5,8 +5,15 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { assignments, attempts, responses, teachers } from "../db/schema.ts";
+import {
+  assignments,
+  attempts,
+  responses,
+  students,
+  teachers,
+} from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { teacherPolicyOfStudent } from "../services/practice-workflow-wiring.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { submitAttemptRequest } from "../test/submit-revisions.ts";
 
@@ -642,6 +649,41 @@ describe("M1b PATCH /attempts/:id/workflow：成功与 CAS", () => {
     );
   });
 
+  it("陈旧 revision 且模式也不被允许 → 409 WORKFLOW_REVISION_STALE 优先（客户端凭 409 刷新，避免 CAS 重试死循环）", async () => {
+    const env = await makeEnv();
+    const { attemptId, asgId } = await makeFreshAttempt(env);
+    // 先合法切换一次（revision 0→1）
+    await env.app.request(`/api/student/attempts/${attemptId}/workflow`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie: env.aCookie },
+      body: JSON.stringify({
+        feedbackMode: "after_attempt",
+        workflowRevision: 0,
+      }),
+    });
+    // 教师收紧 + revision 陈旧：应报 409 而非 400
+    env.db
+      .update(assignments)
+      .set({ allowPerQuestionFeedback: false })
+      .where(eq(assignments.id, asgId))
+      .run();
+    const res = await env.app.request(
+      `/api/student/attempts/${attemptId}/workflow`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify({
+          feedbackMode: "per_question",
+          workflowRevision: 0,
+        }),
+      },
+    );
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as ApiErr).error).toBe(
+      "WORKFLOW_REVISION_STALE",
+    );
+  });
+
   it("任一题已提交（模拟 M2 题级提交事实）→ 409 QUESTION_ALREADY_SUBMITTED", async () => {
     const env = await makeEnv();
     const { attemptId } = await makeFreshAttempt(env);
@@ -664,6 +706,43 @@ describe("M1b PATCH /attempts/:id/workflow：成功与 CAS", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as ApiErr).error).toBe(
       "QUESTION_ALREADY_SUBMITTED",
+    );
+  });
+});
+
+describe("teacherPolicyOfStudent：异常数据 fail closed", () => {
+  it("教师行缺失（teacherId 悬挂）→ after_attempt，不得按未配置缺省放行 student_choice；正常未配置 → null", async () => {
+    const env = await makeEnv();
+    const teacherRow = env.db.select().from(teachers).get();
+    if (!teacherRow) throw new Error("夹具缺教师行");
+    const [normalId] = env.db
+      .select({ id: students.id })
+      .from(students)
+      .limit(1)
+      .all()
+      .map((row) => row.id);
+    if (!normalId) throw new Error("夹具缺学生行");
+    // 正常教师行存在且未配置 → null（resolver 缺省 student_choice）
+    expect(teacherPolicyOfStudent(env.db, normalId)).toBeNull();
+
+    // 悬挂 teacherId（教师行不存在）：不得把 join 未命中的 null 误判为「未配置」
+    const ghostId = crypto.randomUUID();
+    env.db
+      .insert(students)
+      .values({
+        id: ghostId,
+        teacherId: "missing-teacher-id",
+        displayName: "孤儿",
+        loginName: `ghost-${ghostId}`,
+        linkToken: `ghost-${ghostId}`,
+        linkEnabled: false,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    expect(teacherPolicyOfStudent(env.db, ghostId)).toBe("after_attempt");
+    // 学生不存在 → after_attempt
+    expect(teacherPolicyOfStudent(env.db, "no-such-student")).toBe(
+      "after_attempt",
     );
   });
 });

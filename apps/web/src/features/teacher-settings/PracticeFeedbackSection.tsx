@@ -1,16 +1,13 @@
-import { useQueryClient } from "@tanstack/react-query";
 import type { TeacherPracticeFeedbackPolicy } from "@tutor/contract";
 import { Info, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   usePracticeFeedbackSettings,
   useSavePracticeFeedbackSettings,
 } from "./practice-feedback-queries";
-import { useSettingsNavigation } from "./settings-navigation";
+import { useSettingsSectionDraft } from "./use-settings-section-draft";
 
 const DRAFT_KEY = ["teacher", "practice-feedback-draft"] as const;
-type PracticeFeedbackDraft = TeacherPracticeFeedbackPolicy;
 
 const OPTIONS = [
   {
@@ -39,48 +36,18 @@ export function PracticeFeedbackSection({
 }) {
   const settingsQuery = usePracticeFeedbackSettings();
   const saveMutation = useSavePracticeFeedbackSettings();
-  const queryClient = useQueryClient();
-  const navigation = useSettingsNavigation();
-  const draftKey = useMemo(
-    () => [...DRAFT_KEY, teacherId] as const,
-    [teacherId],
-  );
-  const [draft, setDraft] = useState<PracticeFeedbackDraft | null>(
-    () => queryClient.getQueryData<PracticeFeedbackDraft>(draftKey) ?? null,
-  );
   const loaded = settingsQuery.data?.practiceFeedbackPolicy;
   // 未配置（null）的有效默认：由学生选择（仅对新普通自由练习生效）
-  const baseline: PracticeFeedbackDraft = loaded ?? "student_choice";
-  const checked = draft ?? baseline;
-  const dirty = loaded !== undefined && checked !== baseline;
-  const setNavigationDraft = navigation?.setDraft;
-  useEffect(() => {
-    queryClient.setQueryDefaults(draftKey, { gcTime: Infinity });
-    queryClient.setQueryData(draftKey, draft);
-  }, [queryClient, draft, draftKey]);
-  useEffect(() => {
-    setNavigationDraft?.("practice-feedback", {
-      dirty,
-      discard: () => {
-        setDraft(null);
-        queryClient.removeQueries({ queryKey: draftKey });
-      },
-    });
-    return () =>
-      setNavigationDraft?.("practice-feedback", {
-        dirty: false,
-        discard: () => {},
-      });
-  }, [dirty, queryClient, setNavigationDraft, draftKey]);
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  const { setDraft, checked, dirty } =
+    useSettingsSectionDraft<TeacherPracticeFeedbackPolicy>(
+      DRAFT_KEY,
+      teacherId,
+      loaded === undefined ? undefined : (loaded ?? "student_choice"),
+      (a, b) => a === b,
+      "practice-feedback",
+    );
+  // loaded 就绪后 checked 恒有值；?? 兜底仅为类型完备（加载中该区块不渲染）
+  const checkedPolicy = checked ?? "student_choice";
   return (
     <div className="teacher-config-section">
       <div>
@@ -174,7 +141,7 @@ export function PracticeFeedbackSection({
               disabled={saveMutation.isPending}
               onClick={() =>
                 saveMutation.mutate(
-                  { practiceFeedbackPolicy: checked },
+                  { practiceFeedbackPolicy: checkedPolicy },
                   { onSuccess: () => setDraft(null) },
                 )
               }

@@ -1,7 +1,6 @@
 import { practiceWorkflowSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
-  checkWorkflowCas,
   resolvePracticeWorkflow,
   type StoredPracticeWorkflow,
 } from "./practice-workflow-service.ts";
@@ -323,12 +322,5 @@ describe("resolvePracticeWorkflow：lifecycle 判别（新卷/已存卷显式区
         lifecycle: "new",
       } as never),
     ).toThrow();
-  });
-});
-
-describe("checkWorkflowCas", () => {
-  it("一致返回 true，不一致 false", () => {
-    expect(checkWorkflowCas(3, 3)).toBe(true);
-    expect(checkWorkflowCas(3, 2)).toBe(false);
   });
 });

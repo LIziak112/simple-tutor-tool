@@ -35,35 +35,38 @@ import {
  * 仅对新普通自由练习生效）；异常持久化值兜底 after_attempt（保守不授权）；
  * 学生不存在/无教师域/教师行缺失 → after_attempt（fail closed，不给缺省授权）。
  */
-function teacherPolicyOfStudent(
+export function teacherPolicyOfStudent(
   db: Db,
   studentId: string,
 ): TeacherPracticeFeedbackPolicy | null {
   const row = db
     .select({
       teacherId: students.teacherId,
+      // join 命中标记：better-sqlite3 未命中列为 null（不是 undefined），
+      // 靠 tid 区分「教师行存在且未配置」与「teacherId 指向缺失行」
+      tid: teachers.id,
       policy: teachers.practiceFeedbackPolicy,
     })
     .from(students)
     .leftJoin(teachers, eq(teachers.id, students.teacherId))
     .where(eq(students.id, studentId))
     .get();
-  if (row === undefined || row.teacherId === null) {
-    return "after_attempt";
-  }
-  if (row.policy === undefined) {
-    // leftJoin 未命中教师行（异常数据）：保守收紧
+  if (row === undefined || row.teacherId === null || row.tid === null) {
+    // 学生不存在/无教师域/教师行缺失（异常数据）：保守收紧
     return "after_attempt";
   }
   return policyOfColumn(row.policy);
 }
 
-/** 作业授权事实（行缺失 → null：assignment 来源交给 resolver fail closed 抛错） */
-function assignmentGrantOf(
+/**
+ * 作业授权事实 + 截止时间（一次查询；行缺失 → grant null：assignment 来源
+ * 交给 resolver fail closed 抛错；dueAt 仅复制到 releaseAt，不携带答案）
+ */
+function assignmentFactsOf(
   db: Db,
   assignmentId: string | null,
-): AssignmentFeedbackGrant | null {
-  if (assignmentId === null) return null;
+): { grant: AssignmentFeedbackGrant | null; dueAt: string | null } {
+  if (assignmentId === null) return { grant: null, dueAt: null };
   const row = db
     .select({
       answerRelease: assignments.answerRelease,
@@ -73,23 +76,38 @@ function assignmentGrantOf(
     .from(assignments)
     .where(eq(assignments.id, assignmentId))
     .get();
-  if (row === undefined) return null;
+  if (row === undefined) return { grant: null, dueAt: null };
   return {
-    answerRelease: row.answerRelease,
-    allowPerQuestionFeedback: row.allow,
+    grant: {
+      answerRelease: row.answerRelease,
+      allowPerQuestionFeedback: row.allow,
+    },
+    dueAt: row.dueAt,
   };
 }
 
-/** 作业截止时间（仅复制到 releaseAt；行缺失 null） */
-function assignmentDueOf(db: Db, assignmentId: string | null): string | null {
-  if (assignmentId === null) return null;
-  return (
-    db
-      .select({ dueAt: assignments.dueAt })
-      .from(assignments)
-      .where(eq(assignments.id, assignmentId))
-      .get()?.dueAt ?? null
-  );
+/** 读侧 resolver 公共输入（assignment 卷查授权+截止，course/wrong 卷查教师策略） */
+function resolverInputsOf(
+  db: Db,
+  attempt: Attempt,
+): {
+  assignment: AssignmentFeedbackGrant | null;
+  teacherPolicy: TeacherPracticeFeedbackPolicy | null;
+  dueAt: string | null;
+} {
+  if (attempt.sourceType === "assignment") {
+    const facts = assignmentFactsOf(db, attempt.assignmentId);
+    return {
+      assignment: facts.grant,
+      teacherPolicy: null,
+      dueAt: facts.dueAt,
+    };
+  }
+  return {
+    assignment: null,
+    teacherPolicy: teacherPolicyOfStudent(db, attempt.studentId),
+    dueAt: null,
+  };
 }
 
 /** 建卷时写入 attempts 的工作流三列（新协议；调用方已确认请求显式 v1） */
@@ -114,20 +132,17 @@ export function resolveNewAttemptWorkflow(
     studentChoice: PracticeFeedbackMode | null;
   },
 ): NewAttemptWorkflowColumns {
-  const grant =
-    input.sourceType === "assignment"
-      ? assignmentGrantOf(db, input.assignmentId)
-      : null;
+  const facts = assignmentFactsOf(db, input.assignmentId);
   const workflow = resolvePracticeWorkflow({
     sourceType: input.sourceType,
     lifecycle: "new",
     studentChoice: input.studentChoice,
-    assignment: grant,
+    assignment: input.sourceType === "assignment" ? facts.grant : null,
     teacherPolicy:
       input.sourceType === "assignment"
         ? null
         : teacherPolicyOfStudent(db, input.studentId),
-    dueAt: assignmentDueOf(db, input.assignmentId),
+    dueAt: facts.dueAt,
   });
   return {
     practiceWorkflowVersion: 1,
@@ -183,16 +198,10 @@ export function attemptWorkflowView(
     sourceType: attempt.sourceType,
     lifecycle: "existing",
     stored,
-    assignment:
-      attempt.sourceType === "assignment"
-        ? assignmentGrantOf(db, attempt.assignmentId)
-        : null,
-    teacherPolicy:
-      attempt.sourceType === "assignment"
-        ? null
-        : teacherPolicyOfStudent(db, attempt.studentId),
-    dueAt: assignmentDueOf(db, attempt.assignmentId),
+    ...resolverInputsOf(db, attempt),
   });
+  // 教师收紧后已提交题重取也按当前 gate 返回受限（计划 §5.4：已下发内容
+  // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）
   const perQuestionReadable =
     workflow.canSubmitQuestion && workflow.feedbackMode === "per_question";
   return {
@@ -280,6 +289,15 @@ export function updateAttemptWorkflow(
     if (view === null) {
       throw new HttpError(500, "INTERNAL", "工作流投影缺失（不应发生）");
     }
+    // 陈旧 revision 优先于模式校验：客户端凭 409 刷新投影，若按旧规则报
+    // 400 会让基于刷新值的 CAS 重试死循环
+    if (attempt.workflowRevision !== request.workflowRevision) {
+      throw new HttpError(
+        409,
+        "WORKFLOW_REVISION_STALE",
+        "反馈节奏已在其他设备修改，请刷新后重试",
+      );
+    }
     if (
       !view.practiceWorkflow.allowedFeedbackModes.includes(request.feedbackMode)
     ) {
@@ -289,14 +307,9 @@ export function updateAttemptWorkflow(
         "当前规则不允许该反馈节奏",
       );
     }
-    if (attempt.workflowRevision !== request.workflowRevision) {
-      throw new HttpError(
-        409,
-        "WORKFLOW_REVISION_STALE",
-        "反馈节奏已在其他设备修改，请刷新后重试",
-      );
-    }
-    const updated = tx
+    // 真实事务 CAS：UPDATE 带 WHERE workflowRevision 命中才算成功（并发下
+    // 第二个同 revision 请求必然 miss → 409），不依赖前置 === 比对
+    const fresh = tx
       .update(attempts)
       .set({
         feedbackMode: request.feedbackMode,
@@ -308,22 +321,14 @@ export function updateAttemptWorkflow(
           eq(attempts.workflowRevision, request.workflowRevision),
         ),
       )
-      .returning({ id: attempts.id })
+      .returning()
       .get();
-    if (updated === undefined) {
+    if (fresh === undefined) {
       throw new HttpError(
         409,
         "WORKFLOW_REVISION_STALE",
         "反馈节奏已在其他设备修改，请刷新后重试",
       );
-    }
-    const fresh = tx
-      .select()
-      .from(attempts)
-      .where(eq(attempts.id, attemptId))
-      .get();
-    if (fresh === undefined) {
-      throw new HttpError(500, "INTERNAL", "工作流更新后读取失败");
     }
     const freshView = attemptWorkflowView(db, fresh);
     if (freshView === null) {

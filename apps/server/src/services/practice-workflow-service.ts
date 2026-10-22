@@ -187,11 +187,3 @@ export function resolvePracticeWorkflow(
     releaseAt: input.dueAt ?? null,
   });
 }
-
-/** 纯 CAS 校验：请求 revision 与已存 revision 是否一致（真实事务 CAS 留 M1b/M2） */
-export function checkWorkflowCas(
-  storedRevision: number,
-  requestRevision: number,
-): boolean {
-  return storedRevision === requestRevision;
-}
