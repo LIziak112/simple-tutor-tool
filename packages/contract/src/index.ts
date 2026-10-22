@@ -49,6 +49,11 @@ export * from "./media-api.ts";
 /** 题目草稿契约（T6R.2 起为权威定义，依据 Phase6 方案 §5/§6.2/§7）：NoteDoc v1、
  *  四类正交状态、上传协议（CAS+幂等回执）、笔记/版本/图片/证据元信息、限额常量与错误码 */
 export * from "./note.ts";
+/** 学生端做题反馈 M2 逐题提交与题级反馈契约（2026-10-22 计划 §10.1–§10.4）：
+ *  新协议单题提交请求（strict、缺省拒绝）、提交回执与反馈读取共用的单题
+ *  授权投影（released/not_submitted/pending_attempt/restricted 判别二态）、
+ *  回执 data 与成功响应壳——无秘密态不携带答案/详解/判定 */
+export * from "./practice-question-submit.ts";
 /** 学生端做题方式与反馈节奏契约（M1a 起为权威定义，2026-10-22 计划 §6.1）：
  *  布局/反馈枚举、strict v1 本设备偏好、practiceWorkflow 裁决投影、题级公开
  *  进度白名单、教师反馈策略与节奏修改（CAS）请求——授权结论只能来自服务端 */
