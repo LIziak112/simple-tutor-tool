@@ -90,6 +90,7 @@ import {
 import { pendingMarkCount } from "./pending-mark";
 import {
   answersReleased,
+  attemptAnswersPublished,
   resolvePracticeQuestionFeedbackState,
 } from "./practice-workflow-service";
 import {
@@ -2617,7 +2618,7 @@ export function submitPracticeQuestion(
 
     // 当前 resolver 裁决：教师收紧立即生效（§5.4），收紧后拒绝进一步逐题提交
     //（学生按「继续完成剩余题目并交卷」收敛；已提交行与成绩保留）
-    const view = attemptWorkflowView(db, attempt);
+    const view = attemptWorkflowView(db, attempt, now);
     if (view === null) {
       // M1 加固语义（v2 d7c84b89）：读侧视图缺失＝授权事实异常（如作业授权
       // 行悬挂按「缺失=旧协议」降级）——按旧协议 409 拒绝，不把异常数据打成 500
@@ -2730,7 +2731,7 @@ export function submitPracticeQuestion(
   // 产物（同步单连接：事务后重读与事务内已读恒等，省两次整行 SELECT——
   // 含每题数 KB 快照原文的行）；快照惰性解析，仅 released 反馈才付出整份
   // 快照的解析校验
-  const view = attemptWorkflowView(db, outcome.attempt);
+  const view = attemptWorkflowView(db, outcome.attempt, now);
   if (view === null) {
     // 与事务内 gate 同款降级（异常数据不打 500；提交事实已在库，重试走幂等）
     throw new HttpError(
@@ -2801,20 +2802,28 @@ export function practiceQuestionFeedbackOf(
   now: Date | string = new Date(),
   view?: AttemptWorkflowView | null,
 ): PracticeQuestionFeedback {
+  const finalized = attempt.status !== "draft";
+  // 已收尾作业卷的公布事实：assignmentReleaseByIds 含软删（作答记录不随作业
+  // 软删消失）；行悬挂（异常数据）Map 无键 → null → 单一公式 fail closed 未
+  // 公布，不把读取裸抛成 404（与草稿态 restricted(legacy_attempt)、回执态
+  // 409 WORKFLOW_LEGACY 同一降级家族）
+  const release =
+    finalized && attempt.sourceType === "assignment"
+      ? (assignmentReleaseByIds(db, [attempt.assignmentId ?? ""]).get(
+          attempt.assignmentId ?? "",
+        ) ?? null)
+      : null;
   const state = resolvePracticeQuestionFeedbackState({
     submitted: row.submittedAt !== null,
-    attemptSubmitted: attempt.status !== "draft",
-    published:
-      attempt.status !== "draft" && attempt.sourceType === "assignment"
-        ? answersReleased(
-            requireAssignmentRow(db, attempt.assignmentId ?? ""),
-            now,
-          )
-        : true,
-    workflow:
-      attempt.status === "draft"
-        ? ((view ?? attemptWorkflowView(db, attempt))?.practiceWorkflow ?? null)
-        : null,
+    attemptSubmitted: finalized,
+    published: attemptAnswersPublished(
+      { attemptSubmitted: finalized, sourceType: attempt.sourceType, release },
+      now,
+    ),
+    workflow: finalized
+      ? null
+      : ((view ?? attemptWorkflowView(db, attempt, now))?.practiceWorkflow ??
+          null),
   });
   if (state.status !== "released") {
     return state;

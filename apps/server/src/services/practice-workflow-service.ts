@@ -129,6 +129,37 @@ export function answersReleased(
   return Date.parse(assignment.dueAt) <= nowMs;
 }
 
+/**
+ * 已收尾卷的答案公布 gate 单一公式（M2 收敛：题级反馈四态的 published 与
+ * wiring 题级进度 feedbackReadable 共用——此前两处 status/submittedAt 双判别
+ * 键、requireAssignmentRow 整行/授权投影双取数源，异常行上同一端点会给出
+ * 矛盾结论）：
+ * - 进行中卷（未收尾）无公布 gate——题级状态由 workflow 裁决
+ *   （canSubmitQuestion ⟹ per_question），恒 true；
+ * - 非作业来源已收尾：交卷即公布（D11，与结果视图同口径）；
+ * - 作业来源已收尾：answersReleased 读时比较（after_due 截止后下一次读取
+ *   自动恢复）；
+ * - 作业公布事实缺失（授权行悬挂等异常数据，FK 正常不可达）：fail closed
+ *   未公布（题目笔记本同口径取严）——不把读取打成 404/500。
+ * now 由调用方穿透（同一请求内 feedback 状态与题级进度可读性必须同一时钟）。
+ */
+export function attemptAnswersPublished(
+  input: {
+    /** 已收尾（attempts.status !== "draft"，单一判别键——勿再用 submittedAt 代理） */
+    attemptSubmitted: boolean;
+    sourceType: AttemptSource;
+    /** 作业公布事实；非作业来源传 null（已收尾缺失才 fail closed） */
+    release: {
+      answerRelease: AssignmentAnswerRelease;
+      dueAt: string | null;
+    } | null;
+  },
+  now: Date | string = new Date(),
+): boolean {
+  if (!input.attemptSubmitted || input.sourceType !== "assignment") return true;
+  return input.release !== null && answersReleased(input.release, now);
+}
+
 // ---------- M2 题级反馈四态纯裁决（2026-10-22 计划 §10.1/§10.4） ----------
 
 /** 题级反馈授权四态（判别键与契约 practiceQuestionFeedbackSchema 同构；

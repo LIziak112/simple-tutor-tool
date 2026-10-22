@@ -1309,6 +1309,42 @@ describe("M2 异常数据降级（作业授权行悬挂——v2 加固 d7c84b89 
     assertNoLeak(body);
     assertNoStemLeak(body);
   });
+
+  it("已收尾卷作业行悬挂：公布 gate fail-closed 收敛 pending_attempt，不裸抛 404", async () => {
+    const env = await makeEnv();
+    const attemptId = await startPracticeAttempt(env);
+    // 三题全逐题提交：最后一题在事务内收尾（on_submit 作业，行在 → released）
+    for (const questionId of [Q.judge, Q.choice, Q.fill]) {
+      const draft = await fetchDraft(env, attemptId);
+      await practiceSubmitOk(env, draft, attemptId, questionId);
+    }
+    const before = (await getFeedbackOk(env, attemptId, Q.judge)) as {
+      data: { feedback: { status: string } };
+    };
+    expect(before.data.feedback.status).toBe("released");
+
+    const asgId = env.db
+      .select({ id: attempts.assignmentId })
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get()?.id;
+    if (!asgId) throw new Error("夹具缺少作业行");
+    env.db.run(sql`PRAGMA foreign_keys = OFF`);
+    try {
+      env.db.delete(assignments).where(eq(assignments.id, asgId)).run();
+    } finally {
+      env.db.run(sql`PRAGMA foreign_keys = ON`);
+    }
+
+    // fail closed：行缺失按「未公布」收敛 pending_attempt（题目笔记本同口径
+    // 取严），不把题级反馈读取裸抛成 404 ASSIGNMENT_NOT_FOUND
+    const body = (await getFeedbackOk(env, attemptId, Q.judge)) as {
+      data: { feedback: { status: string } };
+    };
+    expect(body.data.feedback).toEqual({ status: "pending_attempt" });
+    assertNoLeak(body);
+    assertNoStemLeak(body);
+  });
 });
 
 describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余行）", () => {

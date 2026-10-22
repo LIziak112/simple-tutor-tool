@@ -18,8 +18,8 @@ import { HttpError } from "../lib/http-error";
 import { requireVisibleCourseUnit } from "./course-service";
 import { policyOfColumn } from "./practice-feedback-settings-service";
 import {
+  attemptAnswersPublished,
   type AssignmentFeedbackGrant,
-  answersReleased,
   type PracticeWorkflowSource,
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
@@ -178,6 +178,21 @@ export function practiceProtocolOf(
 }
 
 /**
+ * v1 卷的类型收窄守卫：行为判定完全委托 practiceProtocolOf（单一出处），
+ * 本函数只把 v1 蕴含的字面量事实（非 lesson 来源、节奏列非空、版本列 =1）
+ * 交给类型系统沿用——替代此前早退手写条件顺带完成的窄化，无断言无重复条件。
+ */
+function isV1ProtocolAttempt(
+  attempt: Attempt,
+): attempt is Attempt & {
+  sourceType: PracticeWorkflowSource;
+  practiceWorkflowVersion: 1;
+  feedbackMode: PracticeFeedbackMode;
+} {
+  return practiceProtocolOf(attempt) === "v1";
+}
+
+/**
  * 写路径共用前导（PATCH workflow 与 M2 逐题提交同一实现，消除逐字重复与
  * 404 文案漂移）：按 (id, 学生) 取行——不存在/跨学生统一 404 不暴露存在性
  * 差异；作废卷 409。课程失权校验留在调用方（两路径检查时机不同）。
@@ -209,12 +224,13 @@ export function requireOwnActiveAttempt(
 export function attemptWorkflowView(
   db: Db,
   attempt: Attempt,
+  now: Date | string = new Date(),
 ): AttemptWorkflowView | null {
-  if (attempt.sourceType === "lesson") return null;
-  // 旧协议卷先于 responses 聚合早退（历史卷不付无用查询；升级期线上绝大多数取卷命此）
-  if (attempt.practiceWorkflowVersion !== 1 || attempt.feedbackMode === null) {
-    return null;
-  }
+  // lesson 独立适配 + 历史旧协议卷：先于授权查询与 responses 聚合早退（历史卷
+  // 不付无用查询；升级期线上绝大多数取卷命此）——协议形态统一走单一谓词，
+  // 防读侧投影与写侧门禁对同一卷判定漂移；守卫同时把 v1 的字面量事实交给
+  // 类型系统沿用
+  if (!isV1ProtocolAttempt(attempt)) return null;
   const inputs = resolverInputsOf(db, attempt);
   const grant = attempt.sourceType === "assignment" ? inputs.assignment : null;
   // 作业授权行缺失（FK 正常时不可达；手工改库/异常恢复兜底）：按「缺失 =
@@ -238,7 +254,7 @@ export function attemptWorkflowView(
       feedbackMode: attempt.feedbackMode,
       revision: attempt.workflowRevision,
       hasSubmittedQuestion,
-      attemptSubmitted: attempt.submittedAt !== null,
+      attemptSubmitted: attempt.status !== "draft",
     },
     ...inputs,
   });
@@ -246,16 +262,19 @@ export function attemptWorkflowView(
   // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）。
   // feedbackReadable 与题级反馈四态共用同一纯裁决（M2 收敛：此前 wiring 自写
   // 谓词在已收尾卷上恒 false，与最后一题收尾回执的 released 反馈自相矛盾）；
-  // 已收尾卷按公布 gate（assignment after_due 截止前不可读，读时比较）
-  const published =
-    attempt.submittedAt === null
-      ? true
-      : grant !== null
-        ? answersReleased({
-            answerRelease: grant.answerRelease,
-            dueAt: inputs.dueAt,
-          })
-        : true;
+  // 已收尾卷按公布 gate 单一公式（now 穿透——与提交回执的 feedback 状态同一
+  // 时钟，after_due 边界不出现同一响应内两种结论）
+  const published = attemptAnswersPublished(
+    {
+      attemptSubmitted: attempt.status !== "draft",
+      sourceType: attempt.sourceType,
+      release:
+        grant !== null
+          ? { answerRelease: grant.answerRelease, dueAt: inputs.dueAt }
+          : null,
+    },
+    now,
+  );
   return {
     practiceWorkflow: workflow,
     questionProgress: rows.map((row) => ({
@@ -264,7 +283,7 @@ export function attemptWorkflowView(
       feedbackReadable:
         resolvePracticeQuestionFeedbackState({
           submitted: row.submittedAt !== null,
-          attemptSubmitted: attempt.submittedAt !== null,
+          attemptSubmitted: attempt.status !== "draft",
           published,
           workflow,
         }).status === "released",

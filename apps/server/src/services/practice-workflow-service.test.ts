@@ -1,6 +1,7 @@
 import { type PracticeWorkflow, practiceWorkflowSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
+  attemptAnswersPublished,
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
   type StoredPracticeWorkflow,
@@ -425,5 +426,76 @@ describe("resolvePracticeQuestionFeedbackState：题级反馈四态纯裁决（M
         workflow: null,
       }),
     ).toEqual({ status: "restricted", restrictionReason: "legacy_attempt" });
+  });
+});
+
+describe("attemptAnswersPublished：已收尾卷公布 gate 单一公式（M2 收敛）", () => {
+  const release = (
+    answerRelease: "on_submit" | "after_due",
+    dueAt: string | null,
+  ) => ({ answerRelease, dueAt });
+
+  it("未收尾（进行中卷）无公布 gate 恒 true——题级状态由 workflow 裁决", () => {
+    expect(
+      attemptAnswersPublished({
+        attemptSubmitted: false,
+        sourceType: "assignment",
+        release: release("after_due", DUE_FUTURE),
+      }),
+    ).toBe(true);
+  });
+
+  it("非作业来源（course/wrong/lesson）已收尾恒 true——交卷即公布（D11）", () => {
+    for (const sourceType of ["course", "wrong", "lesson"] as const) {
+      expect(
+        attemptAnswersPublished({
+          attemptSubmitted: true,
+          sourceType,
+          release: null,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("作业来源已收尾按 answersReleased 语义读时比较（now 可注入）", () => {
+    expect(
+      attemptAnswersPublished({
+        attemptSubmitted: true,
+        sourceType: "assignment",
+        release: release("on_submit", null),
+      }),
+    ).toBe(true);
+    // after_due 未到截止（注入 now 早于 dueAt）→ 未公布
+    expect(
+      attemptAnswersPublished(
+        {
+          attemptSubmitted: true,
+          sourceType: "assignment",
+          release: release("after_due", DUE_FUTURE),
+        },
+        new Date("2050-06-01T00:00:00.000Z"),
+      ),
+    ).toBe(false);
+    // 截止已过（注入 now 晚于 dueAt）→ 公布
+    expect(
+      attemptAnswersPublished(
+        {
+          attemptSubmitted: true,
+          sourceType: "assignment",
+          release: release("after_due", DUE_FUTURE),
+        },
+        new Date("2100-01-01T00:00:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("作业来源已收尾但公布事实缺失（授权行悬挂异常数据）→ fail closed 未公布", () => {
+    expect(
+      attemptAnswersPublished({
+        attemptSubmitted: true,
+        sourceType: "assignment",
+        release: null,
+      }),
+    ).toBe(false);
   });
 });
