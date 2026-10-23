@@ -500,6 +500,49 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
     expect(question && "answers" in question).toBe(false);
     expect(question && "solutionMd" in question).toBe(false);
   });
+
+  it("题目组上下文 groupOrdinal（TT-05a 域④ §5.2.3/§5.8.1）：在组内题开卷冻结携带、非 1 起正整数拒绝；组实体与材料投影随 QM-03/QM-08 接线", () => {
+    const draftWith = (groupOrdinal: number) =>
+      attemptDraftDataSchema.safeParse({
+        attempt: SUMMARY_DRAFT,
+        title: "周末加练",
+        courseName: null,
+        dueAt: null,
+        answerRelease: "on_submit",
+        units: [
+          {
+            id: UNIT_ID,
+            title: "练习四",
+            questions: [
+              {
+                id: "练习四-1",
+                type: "judge",
+                difficulty: 1,
+                knowledge: [],
+                stemMd: "[[]]",
+                hintCount: 0,
+                questionRevisionId: "11111111-1111-4111-8111-111111111111",
+                groupOrdinal,
+              },
+            ],
+          },
+        ],
+        drafts: {},
+        hintsOpened: {},
+        legacyUnverified: false,
+        enabledCapabilities: ["steps", "ink"],
+      });
+    // 在组内的题：开卷冻结写入组内序号（§5.2.3 展示派生：不进主键，仅公开投影）
+    const inGroup = draftWith(3);
+    expect(inGroup.success).toBe(true);
+    if (inGroup.success) {
+      expect(inGroup.data.units[0]?.questions[0]?.groupOrdinal).toBe(3);
+    }
+    // 0/负数/非整数不是合法组内序（1 起）
+    expect(draftWith(0).success).toBe(false);
+    expect(draftWith(-1).success).toBe(false);
+    expect(draftWith(1.5).success).toBe(false);
+  });
 });
 
 describe("attemptResultDataSchema（结果视图）", () => {
@@ -593,6 +636,40 @@ describe("attemptResultDataSchema（结果视图）", () => {
       kind: "fill",
       blanks: [["4"], ["-7"], ["0.5", "1/2"]],
     });
+  });
+
+  it("结果快照组上下文 groupOrdinal（TT-05a 域④ §5.2.3/§5.8.1/§5.8.3）：旧快照缺省=独立题不拒绝、在组内题携带、非 1 起正整数拒绝", () => {
+    // 旧快照（RESULT 固件无 groupOrdinal）→ 按「不在组内的独立题」处理（§5.8.3）
+    const legacy = attemptResultDataSchema.parse(RESULT);
+    expect(legacy.units[0]?.questions[0]?.snapshot.groupOrdinal).toBeUndefined();
+    const withOrdinal = (groupOrdinal: number) =>
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        units: [
+          {
+            ...RESULT.units[0],
+            questions: [
+              {
+                ...RESULT.units[0].questions[0],
+                snapshot: {
+                  ...RESULT.units[0].questions[0].snapshot,
+                  groupOrdinal,
+                },
+              },
+              RESULT.units[0].questions[1],
+            ],
+          },
+        ],
+      });
+    const inGroup = withOrdinal(1);
+    expect(inGroup.success).toBe(true);
+    if (inGroup.success) {
+      expect(inGroup.data.units[0]?.questions[0]?.snapshot.groupOrdinal).toBe(
+        1,
+      );
+    }
+    expect(withOrdinal(0).success).toBe(false);
+    expect(withOrdinal(2.5).success).toBe(false);
   });
 
   it("practiceWorkflow 裁决投影可选（M4-D3 §13.8 结果页节奏摘要）：缺省（legacy/lesson 卷）合法、携带合法、形态错误拒绝", () => {

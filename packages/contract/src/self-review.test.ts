@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import type { QuestionType } from "./content.ts";
+import { contentErrorCodeSchema } from "./content-api.ts";
 import {
   effectiveVerdictOf,
   finalCorrectOf,
+  gradingPolicyOf,
   isTeacherPendingState,
+  resolveRowGradingSemantics,
   resolveSelfReviewState,
+  type SelfReviewRecord,
   selfReviewDataSchema,
   selfReviewRecordSchema,
   selfReviewRequestSchema,
-  type SelfReviewRecord,
   verdictSourceSchema,
 } from "./self-review.ts";
 
@@ -78,8 +81,10 @@ describe("来源枚举与请求/记录 schema（§5.5.1）", () => {
       true,
     );
     expect(
-      selfReviewRecordSchema.safeParse({ ...selfReviewCorrect, verdict: "undecided" })
-        .success,
+      selfReviewRecordSchema.safeParse({
+        ...selfReviewCorrect,
+        verdict: "undecided",
+      }).success,
     ).toBe(false);
   });
 
@@ -133,7 +138,10 @@ describe("三源分立与有效判定（§5.5.2/§5.5.4 组合全表，✱=教�
       value: true,
     });
     expect(
-      effectiveVerdictOf(null, null, { ...selfReviewCorrect, verdict: "wrong" }),
+      effectiveVerdictOf(null, null, {
+        ...selfReviewCorrect,
+        verdict: "wrong",
+      }),
     ).toEqual({ source: "self", value: false });
     // 行 4：三源全无 → 未判断
     expect(effectiveVerdictOf(null, null, null)).toBeNull();
@@ -158,12 +166,12 @@ describe("单题三态推导（§5.5.3 状态机，TT-09 服务端 resolveSelfRe
   } as const;
 
   it("行未提交 → not_submitted；已提交未公布 → pending_release（无自评入口、不显示答案）", () => {
-    expect(
-      resolveSelfReviewState({ ...base, submitted: false }),
-    ).toBe("not_submitted");
-    expect(
-      resolveSelfReviewState({ ...base, released: false }),
-    ).toBe("pending_release");
+    expect(resolveSelfReviewState({ ...base, submitted: false })).toBe(
+      "not_submitted",
+    );
+    expect(resolveSelfReviewState({ ...base, released: false })).toBe(
+      "pending_release",
+    );
   });
 
   it("已提交已公布：teacher 判定优先于 auto（教师权威线）", () => {
@@ -174,9 +182,9 @@ describe("单题三态推导（§5.5.3 状态机，TT-09 服务端 resolveSelfRe
         autoCorrect: false,
       }),
     ).toBe("teacher_judged");
-    expect(
-      resolveSelfReviewState({ ...base, autoCorrect: true }),
-    ).toBe("auto_judged");
+    expect(resolveSelfReviewState({ ...base, autoCorrect: true })).toBe(
+      "auto_judged",
+    );
   });
 
   it("有参考答案：未自评=self_pending（不入教师必批队列）；已自评=self_reviewed", () => {
@@ -187,9 +195,9 @@ describe("单题三态推导（§5.5.3 状态机，TT-09 服务端 resolveSelfRe
   });
 
   it("无参考答案（manual_only）：教师待处理=唯一判定出口在教师，进必批队列", () => {
-    expect(
-      resolveSelfReviewState({ ...base, hasReference: false }),
-    ).toBe("teacher_pending");
+    expect(resolveSelfReviewState({ ...base, hasReference: false })).toBe(
+      "teacher_pending",
+    );
     expect(
       resolveSelfReviewState({
         ...base,
@@ -201,9 +209,9 @@ describe("单题三态推导（§5.5.3 状态机，TT-09 服务端 resolveSelfRe
 
   it("教师清除回落：无参考行清除后回到 teacher_pending（行 5/6 的状态面）", () => {
     // 教师已判后清除 → teacherMark=null、无参考、无自评 → 回必批队列
-    expect(
-      resolveSelfReviewState({ ...base, hasReference: false }),
-    ).toBe("teacher_pending");
+    expect(resolveSelfReviewState({ ...base, hasReference: false })).toBe(
+      "teacher_pending",
+    );
     // 有参考行清除后 → self_pending（自评若在则 self_reviewed）
     expect(
       resolveSelfReviewState({
@@ -225,5 +233,88 @@ describe("单题三态推导（§5.5.3 状态机，TT-09 服务端 resolveSelfRe
     ] as const) {
       expect(isTeacherPendingState(state)).toBe(false);
     }
+  });
+});
+
+describe("新作答策略冻结（§5.6：开卷按题目快照逐行写入，D11）", () => {
+  const q = (type: QuestionType, answers: unknown) => ({
+    type,
+    answers: answers as never,
+  });
+
+  it("冻结表：旧客观恒 auto；主观型有参考=reference_self、无参考=manual_only", () => {
+    expect(gradingPolicyOf(q("judge", { kind: "judge", value: true }))).toBe(
+      "auto",
+    );
+    expect(gradingPolicyOf(q("choice", { kind: "choice", index: 0 }))).toBe(
+      "auto",
+    );
+    expect(gradingPolicyOf(q("multi", { kind: "multi", indexes: [0] }))).toBe(
+      "auto",
+    );
+    expect(gradingPolicyOf(q("fill", { kind: "fill", blanks: [["1"]] }))).toBe(
+      "reference_self",
+    );
+    expect(gradingPolicyOf(q("fill", undefined))).toBe("manual_only");
+    expect(gradingPolicyOf(q("solve", { kind: "final", answer: "x" }))).toBe(
+      "reference_self",
+    );
+    expect(gradingPolicyOf(q("apply", undefined))).toBe("manual_only");
+    expect(gradingPolicyOf(q("find-error", undefined))).toBe("manual_only");
+    expect(
+      gradingPolicyOf(q("response", { kind: "response", referenceMd: "参考" })),
+    ).toBe("reference_self");
+    expect(gradingPolicyOf(q("matching", undefined))).toBe("manual_only");
+    expect(
+      gradingPolicyOf(
+        q("ordering", { kind: "ordering", sequence: ["item-1"] }),
+      ),
+    ).toBe("reference_self");
+    expect(gradingPolicyOf(q("response", undefined))).toBe("manual_only");
+  });
+});
+
+describe("旧行读取规则（§5.6：gradingPolicy NULL 按题型能力表旧语义解释，历史不重解释）", () => {
+  it("旧行（NULL）：客观=auto；fill=恒 null 进待批；solve/apply/find-error=final 等价比较（现状）", () => {
+    expect(resolveRowGradingSemantics(null, "judge")).toEqual({
+      kind: "auto",
+    });
+    expect(resolveRowGradingSemantics(null, "choice")).toEqual({
+      kind: "auto",
+    });
+    expect(resolveRowGradingSemantics(null, "multi")).toEqual({ kind: "auto" });
+    expect(resolveRowGradingSemantics(null, "fill")).toEqual({
+      kind: "legacy_fill_manual",
+    });
+    expect(resolveRowGradingSemantics(null, "solve")).toEqual({
+      kind: "legacy_final_equivalence",
+    });
+    expect(resolveRowGradingSemantics(null, "apply")).toEqual({
+      kind: "legacy_final_equivalence",
+    });
+    expect(resolveRowGradingSemantics(null, "find-error")).toEqual({
+      kind: "legacy_final_equivalence",
+    });
+  });
+
+  it("新行按冻结值直读；新题型行 NULL（异常数据）兜底 manual_only（判定来源枯竭，唯一出口教师）", () => {
+    expect(resolveRowGradingSemantics("auto", "judge")).toEqual({
+      kind: "auto",
+    });
+    expect(resolveRowGradingSemantics("reference_self", "response")).toEqual({
+      kind: "reference_self",
+    });
+    expect(resolveRowGradingSemantics("manual_only", "matching")).toEqual({
+      kind: "manual_only",
+    });
+    expect(resolveRowGradingSemantics(null, "response")).toEqual({
+      kind: "manual_only",
+    });
+  });
+});
+
+describe("发布开关契约面（§5.8.4：NEW_CONTENT_ENABLED 缺省 false，服务端 env 落地 QM-05+）", () => {
+  it("导入错误码含 NEW_CONTENT_DISABLED（403：开关关闭时文档含新指令/新属性）", () => {
+    expect(contentErrorCodeSchema.options).toContain("NEW_CONTENT_DISABLED");
   });
 });

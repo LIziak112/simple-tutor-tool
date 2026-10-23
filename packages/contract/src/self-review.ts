@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import {
   attemptScoreSummarySchema,
-  teacherMarkSchema,
   type TeacherMark,
 } from "./attempt.ts";
+import type { Question, QuestionType } from "./content.ts";
 
 /**
  * 自评与判定状态契约（TT-05a 域③，决策记录 §5.5 定稿，QM-01 落地）。
@@ -30,7 +30,11 @@ export type VerdictSource = z.infer<typeof verdictSourceSchema>;
  * 「暂不判断」不是一次写入——undecided 是清除自评记录的幂等写（revision
  * 递增）；从未自评的行天然处于暂不判断。
  */
-export const selfReviewVerdictSchema = z.enum(["correct", "wrong", "undecided"]);
+export const selfReviewVerdictSchema = z.enum([
+  "correct",
+  "wrong",
+  "undecided",
+]);
 export type SelfReviewVerdict = z.infer<typeof selfReviewVerdictSchema>;
 
 /** 自评记录（只存实际判断，correct/wrong；at 为 UTC ISO） */
@@ -106,8 +110,7 @@ export function effectiveVerdictOf(
 ): EffectiveVerdict | null {
   if (teacherMark === "correct") return { source: "teacher", value: true };
   if (teacherMark === "wrong") return { source: "teacher", value: false };
-  if (selfReview?.verdict === "correct")
-    return { source: "self", value: true };
+  if (selfReview?.verdict === "correct") return { source: "self", value: true };
   if (selfReview?.verdict === "wrong") return { source: "self", value: false };
   if (autoCorrect !== null) return { source: "auto", value: autoCorrect };
   return null;
@@ -163,8 +166,83 @@ export function resolveSelfReviewState(
 }
 
 /** 教师待处理谓词（§5.5.3：必批队列的唯一定义） */
-export function isTeacherPendingState(
-  state: SelfReviewQuestionState,
-): boolean {
+export function isTeacherPendingState(state: SelfReviewQuestionState): boolean {
   return state === "teacher_pending";
+}
+
+// ---------- 新作答策略冻结（§5.6，D11：判分策略按 response 行冻结，不全局改 grade） ----------
+
+/** 行级判分策略（responses.gradingPolicy，可空列；NULL=旧行旧语义） */
+export const gradingPolicySchema = z.enum([
+  "auto",
+  "reference_self",
+  "manual_only",
+]);
+export type GradingPolicy = z.infer<typeof gradingPolicySchema>;
+
+/**
+ * 开卷冻结规则（§5.6 表）：新建 attempt 每一行按**题目快照内容**写入策略——
+ * 旧客观题恒 auto；主观题型按「有参考答案」二分（有=reference_self：grade 恒
+ * null 不进 autoCorrect，公布后开放自评；无=manual_only：grade 恒 null，教师
+ * 待处理）。判分策略迁移与发布开关解耦（迁移加列可空，旧行 NULL 不依赖开关；
+ * 新策略写入只发生在开关开启后导入的题目开卷时）。服务端写入在 QM-06（TT-07
+ * 冻结闭包）接线；本函数是单一出处。
+ */
+export function gradingPolicyOf(
+  question: Pick<Question, "type" | "answers">,
+): GradingPolicy {
+  switch (question.type) {
+    case "judge":
+    case "choice":
+    case "multi":
+      return "auto";
+    case "fill":
+    case "solve":
+    case "apply":
+    case "find-error":
+    case "response":
+    case "matching":
+    case "ordering":
+      return question.answers === undefined ? "manual_only" : "reference_self";
+  }
+}
+
+/**
+ * 行级判分语义读取规则（单一出处，TT-09/QM-10 消费）：
+ * - 新行按冻结值直读（gradingPolicy 非 null）；
+ * - 旧行 NULL 按**题型能力表旧语义**解释——历史不重算、不重释（禁止全局改
+ *   grade 后意外重释历史）：judge/choice/multi 走既有自动判定；fill 恒 null
+ *   进待批（2026-10-02 决策）；solve/apply/find-error 走 final 等价比较
+ *   （新开卷行自本契约起冻结为 reference_self，此后不再自动比较）；
+ * - 新题型行 NULL 只可能是异常数据（开卷即冻结）：兜底 manual_only——
+ *   判定来源枯竭，唯一出口是教师，不伪造自动判定。
+ */
+export type RowGradingSemantics =
+  | { readonly kind: "auto" }
+  | { readonly kind: "reference_self" }
+  | { readonly kind: "manual_only" }
+  | { readonly kind: "legacy_fill_manual" }
+  | { readonly kind: "legacy_final_equivalence" };
+
+export function resolveRowGradingSemantics(
+  gradingPolicy: GradingPolicy | null,
+  snapshotType: QuestionType,
+): RowGradingSemantics {
+  if (gradingPolicy !== null) return { kind: gradingPolicy };
+  switch (snapshotType) {
+    case "judge":
+    case "choice":
+    case "multi":
+      return { kind: "auto" };
+    case "fill":
+      return { kind: "legacy_fill_manual" };
+    case "solve":
+    case "apply":
+    case "find-error":
+      return { kind: "legacy_final_equivalence" };
+    case "response":
+    case "matching":
+    case "ordering":
+      return { kind: "manual_only" };
+  }
 }

@@ -244,6 +244,14 @@ export const contentErrorCodeSchema = z.enum([
   "COURSE_HAS_ATTEMPTS",
   "FOLDER_NOT_FOUND",
   "IMPORT_TOO_LARGE",
+  /**
+   * 发布开关关闭（TT-05a 域④，决策记录 §5.8.4/D15）：导入含新指令/新属性
+   * （material/group/seg/ref/options/option/item/variant/{{slot}}/word-min 等）
+   * 的文档 → 403，明确提示所需开关与版本；旧七型文档导入不受影响。开关为
+   * 部署级环境变量 NEW_CONTENT_ENABLED（缺省 false），服务端 env 读取在
+   * QM-05 落地，契约层先定码。
+   */
+  "NEW_CONTENT_DISABLED",
 ]);
 
 /**

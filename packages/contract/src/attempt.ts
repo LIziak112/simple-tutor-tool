@@ -96,6 +96,7 @@ export const attemptSourceSchema = z.enum([
  * 全站仍只有这一份定义（AGENTS 第 1 条）。
  */
 export const teacherMarkSchema = z.enum(["correct", "wrong"]);
+export type TeacherMark = z.infer<typeof teacherMarkSchema>;
 
 /**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
@@ -306,6 +307,13 @@ export const questionRevisionIdSchema = z
  */
 export const attemptQuestionPublicSchema = questionPublicSchema.extend({
   questionRevisionId: questionRevisionIdSchema,
+  /**
+   * 组内序号（TT-05a 域④ §5.2.3/§5.8.1）：开卷冻结时按组的子题引用顺序写入
+   * attempt 上下文快照的公开投影；**不在组内的题不携带**（旧快照缺省 = 独立
+   * 题，§5.8.3 缺省兼容）。显示编号是展示派生，不进主键。组实体与材料正文
+   * 的草稿视图投影随 QM-03/QM-08 接线定稿（材料公开投影见 material.ts）。
+   */
+  groupOrdinal: z.number().int().min(1).optional(),
 });
 
 /**
@@ -425,6 +433,8 @@ export const attemptResultQuestionSchema = z.object({
     options: z.array(z.string()).optional(),
     /** 提示数量（未解锁的提示内容不在此下发） */
     hintCount: z.number().int().min(0),
+    /** 组内序号（TT-05a 域④：开卷冻结写入；不在组内的题不携带，旧快照缺省=独立题） */
+    groupOrdinal: z.number().int().min(1).optional(),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),
