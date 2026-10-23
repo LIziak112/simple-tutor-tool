@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptSubmitRevision,
+  PracticeWorkflowStartOptions,
   PracticeWorkflowUpdateRequest,
   StudentAnswer,
   SubmitEvidenceDeclaration,
@@ -153,12 +154,20 @@ export function useUpdateAttemptWorkflow(attemptId: string) {
 /**
  * 课程练习入口（T2A.6，D10）：开始/继续/再做一次。
  * 成功后失效落地页与课程列表（目录状态徽章、首页进度联动）。
+ * M5-D3（裁决⑨）：options 由调用方组装传入——未显式触碰节奏时传 undefined，
+ * mutationFn 执行时才读偏好（点击时刻，维持 D2 链：偏好已设置才携带
+ * feedbackMode，未设置由服务端按 单元推荐/教师约束 裁决）；开始页显式触碰
+ * 节奏时传 {...workflowStartOptions(), feedbackMode: 所选}（显式选择恒最高）。
  */
 export function useStartCourseAttempt(courseId: string, unitId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      startCourseAttemptApi(courseId, unitId, workflowStartOptions()),
+    mutationFn: (options: PracticeWorkflowStartOptions | undefined) =>
+      startCourseAttemptApi(
+        courseId,
+        unitId,
+        options ?? workflowStartOptions(),
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentUnitLandingKey(courseId, unitId),

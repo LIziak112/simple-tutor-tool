@@ -68,6 +68,7 @@ import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
 import { useSubmitAttempt, useUpdateAttemptWorkflow } from "./attempt-queries";
+import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
 import {
   type PracticeProblemPhase,
@@ -386,12 +387,15 @@ function AnswerView({
   // 导航四态、进度行与题卡只读的即时更新。
   const questionProgress =
     practiceProtocol === "v1" ? (data.questionProgress ?? []) : [];
-  // 布局本次作答内自决：进入时取默认偏好一次（M5-D3 起开始页可经一次性
-  // transient 预选，见 start-intent），之后只随显式切换变化，不被偏好变更
-  // 或后台重取中途拉扯；不写回默认偏好（§7.1）
-  const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() =>
-    practiceProtocol === "v1" ? currentLayout() : "list",
-  );
+  // 布局本次作答内自决：进入时按「开始页一次性 transient 预选 → 默认偏好」
+  // 取一次（M5-D3 裁决⑨：预选不经服务端，消费即清除；legacy/lesson 也消费
+  // 防同会话残留），之后只随显式切换变化，不被偏好变更或后台重取中途拉扯；
+  // 不写回默认偏好（§7.1）
+  const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() => {
+    const startIntent = consumeAttemptStartLayoutIntent();
+    if (practiceProtocol !== "v1") return "list";
+    return startIntent ?? currentLayout();
+  });
   // M3-D1.5：硬刷新直达作答页时，布局层的账号绑定 effect 晚于本组件首渲染，
   // 已保存默认布局会在初值时被错过——store 从未绑定变已绑定的那一刻按已
   // 保存默认布局对齐一次；用户显式切换过布局之后，绑定变化与跨标签偏好
