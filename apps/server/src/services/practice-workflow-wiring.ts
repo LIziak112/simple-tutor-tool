@@ -4,7 +4,6 @@ import type {
   PracticeWorkflow,
   TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
-import { practiceRecommendationSchema } from "@tutor/contract";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -24,6 +23,7 @@ import {
   type AssignmentFeedbackGrant,
   attemptAnswersPublished,
   type PracticeWorkflowSource,
+  practiceDefaultsOf,
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
 } from "./practice-workflow-service";
@@ -107,8 +107,8 @@ function assignmentFactsOf(
  * 文档推荐档（M5-D2）：units.practiceDefaultsJson 的 feedback 值聚合——
  * - wrong 恒 null（预裁决②：错题重练无单元语义）；
  * - course 直取该单元推荐；assignment 取作业全部单元（assignment_units）；
- * - 坏 JSON/契约失败 → 该单元按无推荐 + console.warn（与 practiceYamlLineOf
- *   同口径，单行脏数据不打挂建卷）；
+ * - 列值解析统一走 practiceDefaultsOf（坏 JSON/契约失败 → 该单元按无推荐 +
+ *   warn，单行脏数据不打挂建卷）；
  * - 全部非空值一致（且至少一个）才采纳；无推荐值的单元不参与；冲突 →
  *   null 回学生偏好/缺省（预裁决⑥：不拼多节奏）。
  * 域内读（T2B.5）：assignment 按作业所属教师，course 按学生归属教师
@@ -150,26 +150,11 @@ function unitFeedbackRecommendationOf(
       ),
     )
     .all()) {
-    if (row.col === null) continue; // 无推荐单元不参与
-    let data: unknown;
-    try {
-      data = JSON.parse(row.col);
-    } catch (err) {
-      console.warn(
-        "unitFeedbackRecommendationOf: practiceDefaultsJson 不是合法 JSON，按无推荐处理",
-        err,
-      );
-      continue;
+    // 无推荐单元（null）与坏数据单元（practiceDefaultsOf 返 null）都不参与
+    const recommendation = practiceDefaultsOf(row.col);
+    if (recommendation?.feedback !== undefined) {
+      values.add(recommendation.feedback);
     }
-    const parsed = practiceRecommendationSchema.safeParse(data);
-    if (!parsed.success) {
-      console.warn(
-        "unitFeedbackRecommendationOf: practiceDefaultsJson 不合契约，按无推荐处理",
-        parsed.error.issues[0]?.message,
-      );
-      continue;
-    }
-    if (parsed.data.feedback !== undefined) values.add(parsed.data.feedback);
   }
   if (values.size !== 1) return null;
   return values.values().next().value ?? null;
@@ -224,16 +209,19 @@ export function resolveNewAttemptWorkflow(
   },
 ): NewAttemptWorkflowColumns {
   const facts = assignmentFactsOf(db, input.assignmentId);
-  // 推荐列的单元域（T2B.5）：作业按其所属教师；course/wrong 按学生归属教师
-  // （course 可见门已保证成员课程与学生同域；wrong 不读推荐，域仅防御）
+  // 推荐列的单元域（T2B.5）：作业按其所属教师；course 按学生归属教师
+  // （可见门已保证成员课程与学生同域）；wrong 不读推荐（推荐侧恒 null 短路），
+  // 不查 students——错题重练是高频路径，不为永不消费的域白付一次查询
   const domainTeacherId =
     input.sourceType === "assignment"
       ? facts.teacherId
-      : (db
-          .select({ teacherId: students.teacherId })
-          .from(students)
-          .where(eq(students.id, input.studentId))
-          .get()?.teacherId ?? null);
+      : input.sourceType === "course"
+        ? (db
+            .select({ teacherId: students.teacherId })
+            .from(students)
+            .where(eq(students.id, input.studentId))
+            .get()?.teacherId ?? null)
+        : null;
   const workflow = resolvePracticeWorkflow({
     sourceType: input.sourceType,
     lifecycle: "new",

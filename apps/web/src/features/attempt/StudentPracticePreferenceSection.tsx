@@ -6,6 +6,7 @@ import {
   savePracticePreference,
   usePracticePreference,
 } from "./practice-preference-store";
+import { practiceRhythmLabel } from "./practice-protocol";
 
 /**
  * 学生设置「学习偏好 → 做题方式」配置行（M3-D1，计划 §7.1；M5-D3 反馈节奏）：
@@ -33,7 +34,11 @@ const layoutOptions = [
   },
 ];
 
-/** 反馈节奏三选（M5-D3）：null = 未设置（跟随单元推荐，storage 键缺省） */
+/**
+ * 反馈节奏三选（M5-D3）：null = 未设置（跟随单元推荐，storage 键缺省）；
+ * 两枚已设值标题复用 practiceRhythmLabel 单一出处（M5 simplify B4——作答页
+ * 摘要卡与开始页选择器同文案，避免无主漂移）。
+ */
 const feedbackOptions: {
   value: PracticeFeedbackMode | null;
   title: string;
@@ -46,12 +51,12 @@ const feedbackOptions: {
   },
   {
     value: "per_question",
-    title: "每题提交后查看",
+    title: practiceRhythmLabel("per_question"),
     description: "每题提交后即可查看本题对错与参考详解。",
   },
   {
     value: "after_attempt",
-    title: "交卷后统一查看",
+    title: practiceRhythmLabel("after_attempt"),
     description: "作答期间不看对错，交卷后统一公布全部反馈。",
   },
 ];

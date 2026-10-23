@@ -43,19 +43,27 @@ const store = createExternalPrefStore({
 const storageKey = (id: string) =>
   `ownclass:practice-pref:${JSON.stringify([location.origin, "student", id])}`;
 
-function read(raw: string | null) {
+/**
+ * 唯一 schema 解析入口（M5 simplify 收敛）：读值统一在此归一为已设置态
+ * （undefined → null），调用方不再各自补 `?? null`；version 仅契约对齐用，
+ * 不外发（read 失败回默认全未设置）。
+ */
+function read(raw: string | null): Omit<PracticePreferenceState, "accountId"> {
   try {
-    return studentPracticePreferenceSchema.parse(raw ? JSON.parse(raw) : {});
+    const parsed = studentPracticePreferenceSchema.parse(
+      raw ? JSON.parse(raw) : {},
+    );
+    return {
+      layout: parsed.layout ?? null,
+      keyboardShortcuts: parsed.keyboardShortcuts,
+      feedback: parsed.feedback ?? null,
+    };
   } catch {
-    return { version: 1, ...defaultPreference };
+    return { ...defaultPreference };
   }
 }
 
-function publish(value: {
-  layout: PracticeLayout | null;
-  keyboardShortcuts: boolean;
-  feedback: PracticeFeedbackMode | null;
-}) {
+function publish(value: Omit<PracticePreferenceState, "accountId">) {
   const current = store.get();
   if (
     current.layout === value.layout &&
@@ -72,12 +80,7 @@ export function bindPracticePreferenceAccount(accountId: string | null) {
   let value = { ...defaultPreference };
   try {
     if (accountId) {
-      const parsed = read(localStorage.getItem(storageKey(accountId)));
-      value = {
-        layout: parsed.layout ?? null,
-        keyboardShortcuts: parsed.keyboardShortcuts,
-        feedback: parsed.feedback ?? null,
-      };
+      value = read(localStorage.getItem(storageKey(accountId)));
     }
   } catch {
     /* 存储不可读时沿用默认偏好，不阻断作答 */
@@ -133,12 +136,7 @@ window.addEventListener("storage", (event) => {
   const { accountId } = store.get();
   if (accountId === null || event.storageArea !== localStorage) return;
   if (event.key === storageKey(accountId)) {
-    const parsed = read(event.newValue);
-    publish({
-      layout: parsed.layout ?? null,
-      keyboardShortcuts: parsed.keyboardShortcuts,
-      feedback: parsed.feedback ?? null,
-    });
+    publish(read(event.newValue));
   } else if (event.key === null) {
     publish({ ...defaultPreference });
   }

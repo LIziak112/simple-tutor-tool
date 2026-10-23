@@ -233,8 +233,8 @@ describe("resolvePracticeWorkflow：文档推荐档（M5-D2，studentChoice > un
   });
 
   it("续作不读推荐：stored.feedbackMode 保持，unitRecommendation 不参与", () => {
-    // existing 类型上不带 unitRecommendation 键；整对象 as never 绕过字面量
-    // 检查验证「运行时传入也被 stored 短路忽略」（同 existing+studentChoice 先例）
+    // existing 类型上 unitRecommendation 为 never（误传编译期拦截）；整对象
+    // as never 绕过验证「运行时传入也被 stored 短路忽略」（同 studentChoice 先例）
     const wf = resolve({
       sourceType: "course",
       lifecycle: "existing",

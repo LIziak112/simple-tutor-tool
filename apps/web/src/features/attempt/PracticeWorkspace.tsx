@@ -21,6 +21,7 @@ import {
 import { hasCoarsePointer } from "./practice-keyboard";
 import {
   practiceLayoutLabel,
+  practiceLayoutOptions,
   practiceRestrictionCopy,
   practiceRhythmLabel,
 } from "./practice-protocol";
@@ -89,12 +90,7 @@ export function PracticeModeSummary({
         <div className="space-y-2 border-t border-border p-3">
           <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2">
             <legend className="sr-only">选择本次做题布局</legend>
-            {(
-              [
-                { value: "list", title: "列表作答" },
-                { value: "single", title: "单题专注" },
-              ] as const
-            ).map(({ value, title }) => (
+            {practiceLayoutOptions.map(({ value, title }) => (
               <label
                 key={value}
                 className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${

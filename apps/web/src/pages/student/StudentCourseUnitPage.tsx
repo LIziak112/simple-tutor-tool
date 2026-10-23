@@ -19,6 +19,7 @@ import { setAttemptStartLayoutIntent } from "@/features/attempt/attempt-start-in
 import { getPracticePreference } from "@/features/attempt/practice-preference-store";
 import {
   practiceLayoutLabel,
+  practiceLayoutOptions,
   practiceRhythmLabel,
 } from "@/features/attempt/practice-protocol";
 import {
@@ -167,12 +168,6 @@ export default function StudentCourseUnitPage() {
     />
   );
 }
-
-/** 做题方式两枚布局选项（标签与作答页摘要卡同口径） */
-const layoutOptions = [
-  { value: "list", title: "列表作答" },
-  { value: "single", title: "单题专注" },
-] as const;
 
 /** 做题方式反馈节奏两枚选项（标签复用 practiceRhythmLabel 单一出处） */
 const rhythmOptions = ["per_question", "after_attempt"] as const;
@@ -338,7 +333,7 @@ function UnitLandingView({
           </p>
           <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2">
             <legend className="sr-only">选择做题布局</legend>
-            {layoutOptions.map(({ value, title }) => (
+            {practiceLayoutOptions.map(({ value, title }) => (
               <label
                 key={value}
                 className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${

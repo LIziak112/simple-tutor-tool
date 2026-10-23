@@ -2,8 +2,10 @@ import {
   type AssignmentAnswerRelease,
   type AttemptSource,
   type PracticeFeedbackMode,
+  type PracticeRecommendation,
   type PracticeRestrictionReason,
   type PracticeWorkflow,
+  practiceRecommendationSchema,
   practiceWorkflowSchema,
   type TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
@@ -79,7 +81,7 @@ export interface ResolveNewPracticeWorkflowInput
 
 /**
  * 已存卷（续作或历史）：必须显式给 stored 对象或 null（缺省/非法抛错）；
- * 不接受 studentChoice——不得改写既存事实。
+ * 不接受 studentChoice / unitRecommendation——不得改写既存事实，续作不读推荐。
  * 调用样例（续作）：{ sourceType: "course", lifecycle: "existing", stored: { feedbackMode: "per_question", revision: 0, hasSubmittedQuestion: false, attemptSubmitted: false } }
  * 调用样例（legacy）：{ sourceType: "assignment", lifecycle: "existing", stored: null, assignment: {...} }
  */
@@ -88,11 +90,44 @@ export interface ResolveExistingPracticeWorkflowInput
   lifecycle: "existing";
   stored: StoredPracticeWorkflow | null;
   studentChoice?: never;
+  unitRecommendation?: never;
 }
 
 export type ResolvePracticeWorkflowInput =
   | ResolveNewPracticeWorkflowInput
   | ResolveExistingPracticeWorkflowInput;
+
+/**
+ * units.practiceDefaultsJson 列值 → 契约推荐（全服务端唯一实现，M5 simplify
+ * 闸门收敛——此前 wiring 聚合/landing 下发/导出回写三处平行 safeParse，口径
+ * 靠注释维系必然漂移）：坏 JSON/契约失败 → null + console.warn 留痕不抛
+ * （单行脏数据不打挂建卷/落地/导出，也不把原文下发学生端）。写侧恒过契约，
+ * 走到 warn 说明数据被外力破坏。
+ */
+export function practiceDefaultsOf(
+  column: string | null,
+): PracticeRecommendation | null {
+  if (column === null) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(column);
+  } catch (err) {
+    console.warn(
+      "practiceDefaultsOf: practiceDefaultsJson 不是合法 JSON，按无推荐处理",
+      err,
+    );
+    return null;
+  }
+  const parsed = practiceRecommendationSchema.safeParse(data);
+  if (!parsed.success) {
+    console.warn(
+      "practiceDefaultsOf: practiceDefaultsJson 不合契约，按无推荐处理",
+      parsed.error.issues[0]?.message,
+    );
+    return null;
+  }
+  return parsed.data;
+}
 
 /** 是否允许逐题反馈（教师规则维度，与学生已选节奏无关） */
 function perQuestionAllowed(input: ResolvePracticeWorkflowInput): boolean {
@@ -295,12 +330,10 @@ export function resolvePracticeWorkflow(
   const frozen = stored
     ? stored.hasSubmittedQuestion || stored.attemptSubmitted
     : false;
-  // existing 分支的 unitRecommendation 不在类型上（续作不读推荐）；运行时
-  // 传入也被 stored 短路忽略（见下方 effectiveMode）
+  // unitRecommendation 与 studentChoice 同款 never 声明（existing 误传编译期
+  // 拦截）；preferred 只在新建分支被消费（stored 短路见下方 effectiveMode）
   const preferred =
-    input.studentChoice ??
-    (input as ResolveNewPracticeWorkflowInput).unitRecommendation ??
-    "per_question";
+    input.studentChoice ?? input.unitRecommendation ?? "per_question";
   const effectiveMode: PracticeFeedbackMode = stored
     ? stored.feedbackMode
     : allowedFeedbackModes.includes(preferred)

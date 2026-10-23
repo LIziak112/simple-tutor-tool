@@ -1,5 +1,6 @@
 import type {
   AttemptSource,
+  PracticeLayout,
   PracticeQuestionProgress,
   PracticeRestrictionReason,
   PracticeWorkflow,
@@ -36,9 +37,21 @@ export function practiceRhythmLabel(
 }
 
 /** 布局摘要文案：列表 / 单题 */
-export function practiceLayoutLabel(layout: "list" | "single"): string {
+export function practiceLayoutLabel(layout: PracticeLayout): string {
   return layout === "single" ? "单题" : "列表";
 }
+
+/**
+ * 布局选项数据对（M5 simplify 收敛）：作答页「更多」菜单与开始页选择器共用
+ * 单一出处（完整标题）；短摘要文案另走 practiceLayoutLabel。
+ */
+export const practiceLayoutOptions: readonly {
+  value: PracticeLayout;
+  title: string;
+}[] = [
+  { value: "list", title: "列表作答" },
+  { value: "single", title: "单题专注" },
+];
 
 /**
  * 受限文案（§7.1，紧邻被限制项展示）：canSubmitQuestion=false 时按

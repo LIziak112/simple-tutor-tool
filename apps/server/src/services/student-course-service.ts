@@ -1,14 +1,12 @@
-import {
-  type PracticeRecommendation,
-  practiceRecommendationSchema,
-  type StudentCourseDetailData,
-  type StudentCourseSummary,
-  type StudentLectureCourseGroup,
-  type StudentLectureDetail,
-  type StudentLectureListData,
-  type StudentLectureSummary,
-  type StudentUnitAttemptSummary,
-  type StudentUnitLandingData,
+import type {
+  StudentCourseDetailData,
+  StudentCourseSummary,
+  StudentLectureCourseGroup,
+  StudentLectureDetail,
+  StudentLectureListData,
+  StudentLectureSummary,
+  StudentUnitAttemptSummary,
+  StudentUnitLandingData,
 } from "@tutor/contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -26,6 +24,7 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
+import { practiceDefaultsOf } from "./practice-workflow-service";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -373,41 +372,13 @@ export function getStudentCourseDetail(
 // ---------- 单元落地页（GET /api/student/courses/:id/units/:unitId，T2A.6） ----------
 
 /**
- * practiceDefaultsJson → 契约推荐（M5-D2；坏 JSON/契约失败 → null + warn，
- * 与 M5-D1 practiceYamlLineOf 同口径——单行脏数据不打挂落地页，也不把原始
- * JSON 下发学生端）。
- */
-function practiceRecommendationOf(
-  column: string | null,
-): PracticeRecommendation | null {
-  if (column === null) return null;
-  let data: unknown;
-  try {
-    data = JSON.parse(column);
-  } catch (err) {
-    console.warn(
-      "practiceRecommendationOf: practiceDefaultsJson 不是合法 JSON，按无推荐处理",
-      err,
-    );
-    return null;
-  }
-  const parsed = practiceRecommendationSchema.safeParse(data);
-  if (!parsed.success) {
-    console.warn(
-      "practiceRecommendationOf: practiceDefaultsJson 不合契约，按无推荐处理",
-      parsed.error.issues[0]?.message,
-    );
-    return null;
-  }
-  return parsed.data;
-}
-
-/**
  * 单元落地信息（D10）：题数、题型分布、历次作答列表（attemptNo、状态、得分、
  * 交卷时间）、首次/最近/最高分、是否存在未交卷作答。
  * 访问权：requireVisibleCourseUnit（D5 + D22——非成员/归档 403、不可见 404）。
  * 安全：只读 questions 的 type 列做分布统计，不触碰任何内容列。
  * T2B.5：单元标题/题数/题型分布按课程根行 teacherId 域内读（D10，对外行为不变）。
+ * 推荐列解析统一走 practiceDefaultsOf（M5 simplify 收敛，坏数据不打挂落地页，
+ * 也不把原始 JSON 下发学生端）。
  */
 export function getStudentUnitLanding(
   db: Db,
@@ -488,7 +459,7 @@ export function getStudentUnitLanding(
     questionCount,
     typeDistribution,
     // practice 展示推荐（M5-D2）：只推荐非权限，坏数据按无推荐处理
-    practiceRecommendation: practiceRecommendationOf(unit.practiceDefaultsJson),
+    practiceRecommendation: practiceDefaultsOf(unit.practiceDefaultsJson),
     attempts: attemptRows.map((row) => ({
       attemptId: row.id,
       attemptNo: row.attemptNo,
