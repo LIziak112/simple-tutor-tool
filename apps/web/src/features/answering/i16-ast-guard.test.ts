@@ -259,7 +259,7 @@ function scanProductionSources(): readonly Hit[] {
   const root = repoRoot();
   const files: string[] = [];
   for (const app of ["apps/web/src", "apps/server/src"]) {
-    collectSourceFiles(root, join(root, app.replaceAll("/", "\\")), files);
+    collectSourceFiles(root, join(root, app), files);
   }
   const hits: Hit[] = [];
   for (const file of files) {
