@@ -1,5 +1,3 @@
-<!-- 验证结构点：ordering 题型、:::item 项声明（fixed=true 固定项 + distractor=true 干扰项）、answer 行式每行一个 itemId 按正确顺序（固定项也列出）、无材料独立题、中文语序衔接 -->
-
 ---
 kind: practice
 unit: 语句排序专项
@@ -7,8 +5,10 @@ unit: 语句排序专项
 
 # 语句排序专项
 
+<!-- 验证结构点：ordering 题型、:::item 项声明（fixed=true 固定项 + distractor=true 干扰项）、answer 行式每行一个 itemId 按正确顺序（固定项也列出）、无材料独立题、中文语序衔接 -->
+
 ::::question{id=px-1 type=ordering difficulty=3 knowledge="语句排序"}
-将下列段落排成一段语意连贯的文字。其中第 ○ 段位置已固定（已标注），有一段不属于本段文字，请勿选用。
+将下列段落排成一段语意连贯的文字。其中有一段位置已固定（已标注），另有一段不属于本段文字，请勿选用。
 
 :::item{id=it-1}
 也就是说，批评的锋芒最终要指向作品本身，而不是借作品浇自己胸中的块垒。

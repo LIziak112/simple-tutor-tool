@@ -1,11 +1,11 @@
-<!-- 验证结构点：matching 题型 + 题内 ::ref{material slots=区间} 槽位集合声明、::::options 选项池与 :::option 选项、7 项含 2 干扰项、answer 行式 slotId = optionId 参考映射、allow-repeat 缺省 false -->
-
 ---
 kind: practice
 unit: 七选五专项
 ---
 
 # 七选五专项
+
+<!-- 验证结构点：matching 题型 + 题内 ::ref{material slots=区间} 槽位集合声明、::::options 选项池与 :::option 选项、7 项含 2 干扰项、answer 行式 slotId = optionId 参考映射、allow-repeat 缺省 false -->
 
 ::::material{id=mat-1 title="Why We Sleep — Excerpt"}
 Sleep is not the absence of activity but a distinct biological state with its own architecture. Each night the brain cycles through stages, consolidating memories and clearing metabolic waste. {{slot-1}} That cleaning cycle, visible only in the last decade of research, may explain why chronic short sleep correlates with dementia risk.

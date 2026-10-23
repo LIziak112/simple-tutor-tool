@@ -1,11 +1,11 @@
-<!-- 验证结构点：英文长材料（多段、无 seg）、组共享材料、5 道英文 choice 子题（含 1 道 multi）、英文选项换行渲染 -->
-
 ---
 kind: practice
 unit: Reading Comprehension
 ---
 
 # Reading Comprehension — Passage 3
+
+<!-- 验证结构点：英文长材料（多段、无 seg）、组共享材料、5 道英文 choice 子题（含 1 道 multi）、英文选项换行渲染 -->
 
 ::::material{id=mat-1 title="The Quiet Revolution in Urban Farming"}
 For most of the twentieth century, food traveled one way: from rural fields to city tables. That assumption is now being quietly reversed. In warehouses on the outskirts of Singapore, lettuce grows under LED lights stacked twelve metres high; on rooftops in Brooklyn, beekeepers harvest honey metres above rush-hour traffic. Urban farming, long dismissed as a hobby for enthusiasts, has become a serious industry.

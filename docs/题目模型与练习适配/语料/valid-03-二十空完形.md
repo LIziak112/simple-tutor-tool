@@ -1,11 +1,11 @@
-<!-- 验证结构点：材料内 20 个 {{slot}} 行内 choice 槽位标记、组引用材料、20 道 choice 子题逐题 ::ref{slot=} 绑定（增删空位不串答）、槽位散布于多段正文与句中 -->
-
 ---
 kind: practice
 unit: 完形填空专项
 ---
 
 # 完形填空专项
+
+<!-- 验证结构点：材料内 20 个 {{slot}} 行内 choice 槽位标记、组引用材料、20 道 choice 子题逐题 ::ref{slot=} 绑定（增删空位不串答）、槽位散布于多段正文与句中 -->
 
 ::::material{id=mat-1 title="The Art of Beginning"}
 Every skill begins with the {{slot-1}} decision to start badly. Children learn to walk by falling; adults often forget this and {{slot-2}} to begin anything at which they cannot immediately succeed. The painter's first canvas, the writer's first page and the cook's first soup are rarely {{slot-3}} — and this is precisely their value.

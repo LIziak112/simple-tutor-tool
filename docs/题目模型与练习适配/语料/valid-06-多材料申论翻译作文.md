@@ -1,11 +1,11 @@
-<!-- 验证结构点：response 题型、一题多材料 ::ref 引用（mat-1 segs 区间 + mat-2 全文）、seg 片段引用翻译源文、:::variant 多种参考表达、word-min/word-max 字数提示、参考答案为 Markdown（含列表与格式） -->
-
 ---
 kind: practice
 unit: 申论与写作专项
 ---
 
 # 申论与写作专项
+
+<!-- 验证结构点：response 题型、一题多材料 ::ref 引用（mat-1 segs 区间 + mat-2 全文）、seg 片段引用翻译源文、:::variant 多种参考表达、word-min/word-max 字数提示、参考答案为 Markdown（含列表与格式） -->
 
 ::::material{id=mat-1 title="给定资料一"}
 :::seg{id=seg-1}

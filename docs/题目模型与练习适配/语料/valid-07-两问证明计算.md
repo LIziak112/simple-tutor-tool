@@ -1,11 +1,11 @@
-<!-- 验证结构点：题组承载共同条件（组说明含 KaTeX 公式）、(1) 证明用 response（参考答案为含公式的 Markdown、带正式手写并存）、(2) 计算沿用旧题型 solve 且【无参考答案】（manual_only 演示）、旧题型进组作子题 -->
-
 ---
 kind: practice
 unit: 数学解答专项
 ---
 
 # 数学解答专项
+
+<!-- 验证结构点：题组承载共同条件（组说明含 KaTeX 公式）、(1) 证明用 response（参考答案为含公式的 Markdown、带正式手写并存）、(2) 计算沿用旧题型 solve 且【无参考答案】（manual_only 演示）、旧题型进组作子题 -->
 
 ::::group{id=grp-1 title="已知数列 $\{a_n\}$ 满足 $a_1=1$，$a_{n+1}=2a_n+1$（$n\in\mathbb{N}^*$）。回答下列两问。" label="1–2"}
 ::ref{question=zm-1}
