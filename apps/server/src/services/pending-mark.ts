@@ -121,9 +121,11 @@ export function pendingMarkCounts(
  * - 调用方传**已按协议过滤的 v1 行**（协议判定统一走 practiceProtocolOf 单一
  *   谓词，本函数不重复协议分支）；传 legacy/lesson 行则按行级事实如实计数，
  *   不会报错（语义兜底：非 draft 收敛整卷口径）。
- * - 已收尾卷收敛为整卷口径（status ≠ draft ⇒ submitted = total）：整卷交卷
- *   路径不写行级 submittedAt（M2 §10.1 跳过已交/未交分野），按行数读会得到
- *   偏小的 n——「整卷已交」时 n/N 应同为 N。
+ * - 已收尾卷收敛为整卷口径（status ≠ draft ⇒ submitted = total）：正常
+ *   整卷收尾本就对逐题语义卷的全部判分行写行级 submittedAt=交卷时刻
+ *   （attempt-service 整卷收尾的 rowSubmittedAtPatch，lesson 与 v1 同款），
+ *   行值已齐全；此处收敛是**防御性口径**——语义上「已收尾 = n/N 同为 N」
+ *   恒成立，不依赖整卷收尾的写入事实，勿据「行值本就齐全」删掉收敛分支。
  * - 白名单纯公开进度计数：只读 submittedAt 与行数，绝不含对错/得分/答案列。
  * 结果 Map 只含有行命中的 attempt；零行卷（异常空卷）不出现，调用方按需回落。
  */

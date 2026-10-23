@@ -166,8 +166,10 @@ function requireAttemptResponse(
  *   口径按题级行值锁定，不回看 attempt 级状态）；
  * - v1 逐题卷（M4-D1，总计划 §12.2）：与 lesson 同语义，行级 submittedAt
  *   ≠ null 即完成——本题真正单题提交（落库）才进入复盘；邻题提交、已选
- *   选项、切题、网络提交未知都不算完成。post_submit_only 下提交后本题开放
- *   复盘、邻题仍按作答中裁决；guided_only 完成后同样按 open_study 复盘尺度；
+ *   选项、切题、网络提交未知都不算完成；整卷收尾同样对剩余行写交卷时刻
+ *   （同 lesson，见 attempt-service rowSubmittedAtPatch）。post_submit_only
+ *   下提交后本题开放复盘、邻题仍按作答中裁决；guided_only 完成后同样按
+ *   open_study 复盘尺度；
  * - v1 after_attempt 卷与历史旧协议卷：attempt.status ∈ {submitted, graded}
  *   即完成——填完/交卷失败/收起纸面/到截止（draft 恒未完成）、以前做过同题
  *   （wrong 新卷按本次状态）均不算；行级残留值不改变整卷语义。

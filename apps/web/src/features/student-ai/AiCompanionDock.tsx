@@ -492,6 +492,10 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   };
   /** 回到作答＝同一收起语义（面板内「回到作答」动作复用） */
   const returnToWork = collapseForNavigation;
+  // 不经 ensureAtQuestion 的隐含前提（M4 闸门钉注）：两个入口（阅读结尾
+  // 「再检查新步骤」、工作集「再看回复」折叠条）只在目标题为当前题时可见
+  // 可点——单题模式非当前题卡是 hidden 不可点，不构成切题路径。若日后单题
+  // 模式改为真卸载非当前卡、或折叠入口移到常驻栏，须补 ensureAtQuestion 守卫。
   const checkNewSteps = async (questionId: string) => {
     if (!(await openForQuestion(questionId, entryOf(questionId)))) return;
     conversation.startNew(questionId);
