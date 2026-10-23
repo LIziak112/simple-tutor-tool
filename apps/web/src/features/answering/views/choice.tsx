@@ -1,4 +1,8 @@
-import type { PublicOption } from "@tutor/contract";
+import type {
+  PublicOption,
+  QuestionAnswers,
+  StudentAnswer,
+} from "@tutor/contract";
 import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
@@ -268,6 +272,32 @@ function optionRowClass(
   return state.isCorrect
     ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10"
     : "border-transparent";
+}
+
+// ---------- 选项对照的集合提取（三宿主共用单源） ----------
+
+/** 本人答案 → 选中项集合（choice 取单选、multi 取多选；其余 kind 空集） */
+export function optionPickedOf(
+  answer: StudentAnswer | null | undefined,
+): readonly number[] {
+  if (answer === null || answer === undefined) return [];
+  return answer.kind === "choice"
+    ? [answer.index]
+    : answer.kind === "multi"
+      ? answer.indexes
+      : [];
+}
+
+/** 参考答案 → 正确项集合（choice/multi；其余 kind 空集） */
+export function optionCorrectOf(
+  answers: QuestionAnswers | null,
+): readonly number[] {
+  if (answers === null) return [];
+  return answers.kind === "choice"
+    ? [answers.index]
+    : answers.kind === "multi"
+      ? answers.indexes
+      : [];
 }
 
 // ---------- 登记表视图（choice / multi 两键） ----------
