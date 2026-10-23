@@ -778,8 +778,11 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
 
-      // —— ⑧ 结果页复盘：完成后入口变「AI 复盘」，既有对话仍可见 ——
-      await page.getByRole("button", { name: "AI 复盘" }).click();
+      // —— ⑧ 结果页复盘：完成后按题召唤「AI 助教」（结果页无全局按钮），既有对话仍可见 ——
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       // 结果页首次查看回信可能折叠为「查看对话/查看回信」：宽容点开再断言
       const viewButtons = page.getByRole("button", {
         name: /查看(回信|对话)/,
