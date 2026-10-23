@@ -49,7 +49,11 @@ export function PracticeModeSummary({
   onFeedbackModeChange,
   feedbackBusy = false,
   feedbackError = null,
+  open: controlledOpen,
+  onOpenChange,
 }: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   workflow: PracticeWorkflow;
   layout: PracticeLayout;
   onLayoutChange: (layout: PracticeLayout) => void;
@@ -60,7 +64,9 @@ export function PracticeModeSummary({
   /** 就地错误提示（stale「已刷新请重试」或服务端 message） */
   feedbackError?: string | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
   const restriction = practiceRestrictionCopy(workflow);
   return (
     <div
@@ -72,7 +78,7 @@ export function PracticeModeSummary({
         aria-label="调整做题方式"
         aria-expanded={open}
         className="flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left outline-none hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => setOpen(!open)}
       >
         <span className="min-w-0 flex-1 break-words">
           做题方式：{practiceLayoutLabel(layout)} ·{" "}
@@ -152,6 +158,11 @@ export function PracticeModeSummary({
           {!workflow.canChangeFeedback && restriction !== null && (
             <p className="text-xs text-muted-foreground">{restriction}</p>
           )}
+          {!workflow.canChangeFeedback && restriction === null && (
+            <p className="text-xs text-muted-foreground">
+              本卷已有题目提交，反馈节奏已固定；仍可切换布局。
+            </p>
+          )}
           {feedbackError !== null && (
             <p role="alert" className="text-xs text-destructive">
               {feedbackError}
@@ -176,7 +187,7 @@ export function SingleQuestionProgressRow({
   current: number;
   total: number;
   submittedCount: number;
-  onOpenNavigator: () => void;
+  onOpenNavigator?: () => void;
 }) {
   return (
     <div
@@ -186,13 +197,15 @@ export function SingleQuestionProgressRow({
       <p aria-live="polite" className="min-w-0 break-words tabular-nums">
         第 {current} / {total} 题 · 已提交 {submittedCount} 题
       </p>
-      <Button
-        variant="outline"
-        className="min-h-9 shrink-0 px-3"
-        onClick={onOpenNavigator}
-      >
-        题目导航
-      </Button>
+      {onOpenNavigator && (
+        <Button
+          variant="outline"
+          className="min-h-11 shrink-0 px-3"
+          onClick={onOpenNavigator}
+        >
+          题目导航
+        </Button>
+      )}
     </div>
   );
 }
@@ -204,6 +217,7 @@ export function SingleQuestionProgressRow({
  * 导航跳题由页面层 locked 同步禁用。
  */
 export function SingleQuestionActionBar({
+  showNext,
   hasPrev,
   hasNext,
   busy = false,
@@ -211,6 +225,7 @@ export function SingleQuestionActionBar({
   onPrev,
   onNext,
 }: {
+  showNext?: boolean;
   hasPrev: boolean;
   hasNext: boolean;
   /** 本题提交在途：禁用切题（提交中不得离开当前题） */
@@ -242,14 +257,16 @@ export function SingleQuestionActionBar({
       >
         {middle}
       </div>
-      <Button
-        variant="outline"
-        className="min-h-11 shrink-0"
-        disabled={!hasNext || busy}
-        onClick={onNext}
-      >
-        下一题
-      </Button>
+      {(showNext ?? middle === undefined) && (
+        <Button
+          variant="outline"
+          className="min-h-11 shrink-0"
+          disabled={!hasNext || busy}
+          onClick={onNext}
+        >
+          下一题
+        </Button>
+      )}
     </div>
   );
 }

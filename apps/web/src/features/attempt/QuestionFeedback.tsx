@@ -2,7 +2,7 @@ import type { PracticeQuestionFeedback } from "@tutor/contract";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 // 轻量呈现件走 AttemptResultParts：本组件挂在草稿视图题卡上，不得静态
 // 引入懒加载的结果回看重模块（T6R.15 F「草稿入口不提前加载结果回看模块」）
-import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
+import { VerdictBadge } from "./AttemptResultParts";
 import {
   PENDING_ATTEMPT_FEEDBACK_COPY,
   practiceFeedbackRestrictedCopy,
@@ -13,8 +13,8 @@ import { ResultAnswerComparison } from "./ResultAnswerComparison";
  * 题级反馈区（M3-D2，§10.4 授权投影四态呈现）：提交回执/题级反馈读取共用
  * 同一 schema（practiceQuestionFeedbackSchema），本组件是其唯一呈现出口：
  * - released：简短结论（VerdictBadge 复用，finalCorrect 优先）+ 本人答案与
- *   参考答案对照（ResultAnswerComparison / ResultOptions，与整卷结果视图
- *   同构同源）+ 解析默认展开（教师演示口径；null 明确「本题暂无解析」，
+ *   参考答案对照（ResultAnswerComparison，与整卷结果视图同源；完整选项
+ *   沿用题面，不重复呈现）+ 解析默认展开（null 明确「本题暂无解析」，
  *   不造空白折叠卡）；
  * - pending_attempt：已提交、交卷后统一公布（零题目内容）；
  * - restricted：按 restrictionReason 文案（practice-protocol 单源）；
@@ -59,7 +59,7 @@ export function QuestionFeedback({
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <VerdictBadge
-          verdict={question.finalCorrect}
+          verdict={question.finalCorrect ?? question.autoCorrect}
           pendingLabel="已提交，待老师批改"
           toned
           correctLabel="回答正确"
@@ -69,7 +69,6 @@ export function QuestionFeedback({
           反馈按老师当前设置公布，如与讲解不一致以老师为准。
         </span>
       </div>
-      <ResultOptions question={question} released />
       <ResultAnswerComparison question={question} released />
       {question.solutionMd !== null ? (
         <div className="flex flex-col gap-2">

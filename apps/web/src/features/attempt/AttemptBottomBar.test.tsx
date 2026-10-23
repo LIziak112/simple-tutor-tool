@@ -33,6 +33,13 @@ function renderBar(
 }
 
 describe("AttemptBottomBar（离线交卷保护，T2.12）", () => {
+  it("单题末题主操作已是交卷时，不重复渲染全卷按钮", () => {
+    renderBar({
+      primaryActions: <button type="button">交卷</button>,
+      hideSubmit: true,
+    });
+    expect(screen.getAllByRole("button", { name: "交卷" })).toHaveLength(1);
+  });
   it("在线：按钮可点击，无离线提示", () => {
     const { onOpenSubmit } = renderBar({
       answered: 2,

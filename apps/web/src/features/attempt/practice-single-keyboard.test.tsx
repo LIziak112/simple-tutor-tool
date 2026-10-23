@@ -327,7 +327,7 @@ it("←→ 仅工作区容器焦点生效；input 内方向键保持原生；弹
     expect(progressRow().textContent).toContain("第 2 / 4 题"),
   );
   // 导航弹层打开：方向键不切题
-  fireEvent.click(screen.getByRole("button", { name: "题目导航" }));
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
   await screen.findByRole("dialog");
   container.focus();
   press(container, "ArrowRight");

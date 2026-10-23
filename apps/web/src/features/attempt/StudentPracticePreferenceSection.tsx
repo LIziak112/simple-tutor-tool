@@ -198,7 +198,8 @@ export function StudentPracticePreferenceSection() {
             <span className="min-w-0 space-y-0.5">
               <span className="block text-sm font-medium">键盘快捷键</span>
               <span className="block text-xs leading-5 text-muted-foreground">
-                保存后作为默认偏好；快捷键将在后续更新中启用。
+                单题专注时可用：数字键选项、方向键切题，Enter
+                提交或下一题；输入文字时不触发。
               </span>
             </span>
           </label>

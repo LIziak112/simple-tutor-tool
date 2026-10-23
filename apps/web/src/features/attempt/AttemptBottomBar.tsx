@@ -1,4 +1,5 @@
 import { AlertTriangle, Ban, Grid2X2, WifiOff } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useAttemptEditor } from "./AttemptEditorContext";
 
@@ -13,6 +14,8 @@ import { useAttemptEditor } from "./AttemptEditorContext";
  * 从页面文件抽出以便直接做组件测试（离线态渲染断言），页面只负责接线。
  */
 export function AttemptBottomBar({
+  primaryActions,
+  hideSubmit = false,
   answered,
   total,
   offline,
@@ -26,6 +29,9 @@ export function AttemptBottomBar({
   onViewResult,
   onOpenNavigator,
 }: {
+  primaryActions?: ReactNode;
+  /** 单题主动作已经承担交卷时，隐藏重复的整卷入口。 */
+  hideSubmit?: boolean;
   answered: number;
   total: number;
   /** 是否离线（useOnlineStatus；离线时禁用交卷） */
@@ -53,11 +59,17 @@ export function AttemptBottomBar({
       data-slot="attempt-bottom-bar"
       className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
     >
+      {primaryActions && (
+        <div className="mx-auto w-full max-w-[1120px] px-3 pt-2 sm:px-6">
+          {primaryActions}
+        </div>
+      )}
       <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-3 px-3 py-2 sm:px-6">
         {onOpenNavigator && (
           <Button
             variant="ghost"
             className="h-11 shrink-0 px-2 lg:hidden"
+            aria-label="答题卡"
             onClick={onOpenNavigator}
           >
             <Grid2X2 aria-hidden className="size-4" />
@@ -122,7 +134,7 @@ export function AttemptBottomBar({
             />
           </div>
         </div>
-        {viewResult ? (
+        {hideSubmit || (viewResult && primaryActions) ? null : viewResult ? (
           <Button
             className="h-11 min-w-[88px] shrink-0 px-4 text-base"
             onClick={onViewResult}
@@ -132,6 +144,7 @@ export function AttemptBottomBar({
         ) : (
           <Button
             className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+            variant={primaryActions ? "outline" : "default"}
             disabled={total === 0 || offline || denied}
             onClick={onOpenSubmit}
           >

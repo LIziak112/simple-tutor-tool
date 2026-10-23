@@ -157,6 +157,9 @@ export function PracticeQuestionFooter({
 
 /** 单题主操作位三态（SingleQuestionActionBar 的 middle 内容） */
 export function PracticeSingleActions({
+  canSubmitQuestion = true,
+  finishDisabled = false,
+  onFinish,
   submitted,
   answered,
   busy,
@@ -169,6 +172,9 @@ export function PracticeSingleActions({
   onViewResult,
   onContinue,
 }: {
+  canSubmitQuestion?: boolean;
+  finishDisabled?: boolean;
+  onFinish?: () => void;
   submitted: boolean;
   answered: boolean;
   busy: boolean;
@@ -183,6 +189,17 @@ export function PracticeSingleActions({
   onViewResult: () => void;
   onContinue: (id: string) => void;
 }) {
+  if (!canSubmitQuestion && !submitted && !finished) {
+    return (
+      <Button
+        className="min-h-11"
+        disabled={busy || (!hasNext && finishDisabled)}
+        onClick={hasNext ? onNext : onFinish}
+      >
+        {hasNext ? "下一题" : "交卷"}
+      </Button>
+    );
+  }
   if (!submitted) {
     return (
       <div

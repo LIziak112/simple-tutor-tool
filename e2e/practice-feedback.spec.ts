@@ -261,7 +261,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       const feedback = q1.getByRole("region", { name: "本题反馈" });
       await expect(feedback).toBeVisible();
       annotateLatency("课程练习逐题提交→反馈可见", Date.now() - submitStart);
-      await expect(feedback.getByText("已提交，待老师批改")).toBeVisible();
+      await expect(feedback.getByText("回答正确")).toBeVisible();
       await expect(feedback.getByText("参考答案：")).toBeVisible();
       await expect(feedback.getByText("解析", { exact: true })).toBeVisible();
       await expect(feedback.getByText(/是正数/)).toBeVisible();
@@ -363,7 +363,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
         studentPage.getByText("做题方式：列表 · 每题提交后查看"),
       ).toBeVisible();
 
-      // —— 第 1 题：提交本题 → 原位反馈（进行中卷对错不下发，M2 设计）+ 行锁定 ——
+      // —— 第 1 题：提交本题 → 原位反馈（显示授权的自动判定）+ 行锁定 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
@@ -372,7 +372,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       const feedback = q1.getByRole("region", { name: "本题反馈" });
       await expect(feedback).toBeVisible();
       annotateLatency("作业逐题提交→反馈可见", Date.now() - submitStart);
-      await expect(feedback.getByText("已提交，待老师批改")).toBeVisible();
+      await expect(feedback.getByText("回答正确")).toBeVisible();
       await expect(feedback.getByText("参考答案：")).toBeVisible();
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),

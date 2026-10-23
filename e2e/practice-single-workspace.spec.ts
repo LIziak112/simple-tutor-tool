@@ -127,8 +127,7 @@ async function focusSingleWorkspace(page: Page): Promise<void> {
 function barNavButton(page: Page, label: "上一题" | "下一题") {
   return page
     .locator('[data-slot="practice-action-bar"]')
-    .getByRole("button", { name: label, exact: true })
-    .and(page.locator('[data-variant="outline"]'));
+    .getByRole("button", { name: label, exact: true });
 }
 
 test.describe("练习反馈升级 M3：单题专注工作区", () => {
@@ -196,8 +195,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await page.keyboard.press("Enter");
     const feedback1 = q1.getByRole("region", { name: "本题反馈" });
     await expect(feedback1).toBeVisible();
-    // 进行中卷对错不下发（M2 设计）：徽章为待批文案，但参考答案/解析可读
-    await expect(feedback1.getByText("已提交，待老师批改")).toBeVisible();
+    // 授权反馈使用自动判定，参考答案与解析可读
+    await expect(feedback1.getByText("回答正确")).toBeVisible();
     await expect(feedback1.getByText("参考答案：")).toBeVisible();
     await expect(feedback1.getByText(/是正数/)).toBeVisible();
     await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
@@ -229,6 +228,11 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await expect(page).toHaveURL(new RegExp(`/s/attempts/${attemptId}`));
     await expect(page.getByText("第 2 / 2 题 · 已提交 2 题")).toBeVisible();
     await expect(feedback2).toBeVisible();
+
+    // 等过两个轮询周期，末题解析必须仍可阅读。
+    await page.waitForTimeout(21000);
+    await expect(feedback2).toBeVisible();
+    await expect(viewResult).toBeVisible();
 
     // —— 手动点击查看结果 → 结果页统计正确 ——
     await viewResult.click();
@@ -311,7 +315,9 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
 
     // —— 「更多」菜单：单题 → 列表（答案仍在，两题恢复可见）——
     await page.getByRole("button", { name: "练习更多" }).click();
-    await page.getByRole("menuitemradio", { name: "做题方式：列表" }).click();
+    await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
+    await page.getByRole("radio", { name: "列表作答", exact: true }).check();
+    await page.getByRole("button", { name: "调整做题方式" }).click();
     await expect(
       page.getByText("做题方式：列表 · 每题提交后查看"),
     ).toBeVisible();
@@ -324,12 +330,14 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await q1.getByRole("button", { name: "提交本题" }).click();
     const feedback1 = q1.getByRole("region", { name: "本题反馈" });
     await expect(feedback1).toBeVisible();
-    await expect(feedback1.getByText("已提交，待老师批改")).toBeVisible();
+    await expect(feedback1.getByText("回答正确")).toBeVisible();
 
     // —— 再切单题：当前题推导为 显式跳转 > URL q > 滚动当前题 > 首道未提交，
     //    列表里刚提交的是第 1 题 → 单题落在第 1 题的已提交回执上 ——
     await page.getByRole("button", { name: "练习更多" }).click();
-    await page.getByRole("menuitemradio", { name: "做题方式：单题" }).click();
+    await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
+    await page.getByRole("radio", { name: "单题专注", exact: true }).check();
+    await page.getByRole("button", { name: "调整做题方式" }).click();
     await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
     await expect(feedback1).toBeVisible();
     // 操作条「下一题」进第 2 题，继续作答提交收尾
@@ -506,7 +514,9 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
 
     // —— 切单题（菜单路径），定位第 1 题 ——
     await page.getByRole("button", { name: "练习更多" }).click();
-    await page.getByRole("menuitemradio", { name: "做题方式：单题" }).click();
+    await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
+    await page.getByRole("radio", { name: "单题专注", exact: true }).check();
+    await page.getByRole("button", { name: "调整做题方式" }).click();
     await expect(
       page.getByText("做题方式：单题 · 每题提交后查看"),
     ).toBeVisible();
@@ -576,7 +586,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await page.getByRole("button", { name: "提交本题" }).click();
     const feedback1 = q1.getByRole("region", { name: "本题反馈" });
     await expect(feedback1).toBeVisible();
-    await expect(feedback1.getByText("已提交，待老师批改")).toBeVisible();
+    await expect(feedback1.getByText("回答正确")).toBeVisible();
     await barNavButton(page, "下一题").click();
     await expect(page.getByText("第 2 / 2 题 · 已提交 1 题")).toBeVisible();
     await chooseAnswer(page, 2, "选项 B");

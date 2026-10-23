@@ -93,9 +93,9 @@ describe("做题方式设置区（M3-D1）", () => {
     expect(getPracticePreference().layout).toBeNull();
   });
 
-  it("快捷键开关文案注明后续生效，不谎称已启用", () => {
+  it("快捷键说明包含当前可用范围与输入让位", () => {
     render(<StudentPracticePreferenceSection />);
-    expect(screen.getByText(/后续更新中启用/)).toBeInTheDocument();
+    expect(screen.getByText(/单题专注时可用/)).toBeInTheDocument();
   });
 
   it("保存失败给出明确提示且草稿保留", () => {

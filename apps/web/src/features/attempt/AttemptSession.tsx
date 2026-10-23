@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
@@ -79,7 +80,6 @@ import {
 import {
   PracticeKeyboardHelpDialog,
   PracticeKeyboardHelpMenuItem,
-  PracticeLayoutMenuItems,
   PracticeModeSummary,
   SingleQuestionActionBar,
   SingleQuestionProgressRow,
@@ -290,6 +290,15 @@ function AnswerView({
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const navigatorTrigger = useRef<HTMLElement | null>(null);
+  const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
+  const openNavigator = () => {
+    navigatorTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setNavigatorOpen(true);
+  };
   // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
   // 内容整树卸载，弹层不能寄居其中
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false);
@@ -712,6 +721,12 @@ function AnswerView({
       void (async () => {
         try {
           if (!submitted) {
+            if (!practiceWorkflow?.canSubmitQuestion) {
+              const next = questionIds[currentIndex + 1];
+              if (next !== undefined) await goSingleQuestion(next);
+              else if (online && !denied) await openSubmitDialog();
+              return;
+            }
             // 与主操作按钮同链：未提交（含空答「不会」）= 提交本题
             await runPracticeSubmit(currentId);
             return;
@@ -949,6 +964,67 @@ function AnswerView({
   // 访问权终态（T2A.6，D7）：已无权限时收起交卷入口（交卷必然同样被拒）
   const denied = draftSync.status.state === "denied";
 
+  const singleActions = singleMode && resolvedSingleQuestionId !== null && (
+    <div
+      inert={!attemptMaterialsEditable(materialRecovery) || answers === null}
+    >
+      <SingleQuestionActionBar
+        showNext={
+          !singleProgressRow?.submittedAt &&
+          !practiceSubmit.finished &&
+          practiceWorkflow?.canSubmitQuestion === true
+        }
+        hasPrev={singleIndex > 0}
+        hasNext={singleIndex < total - 1}
+        busy={practiceSubmit.submittingId !== null}
+        middle={
+          <PracticeSingleActions
+            canSubmitQuestion={practiceWorkflow?.canSubmitQuestion === true}
+            finishDisabled={!online || denied || total === 0}
+            onFinish={openSubmitDialog}
+            submitted={(singleProgressRow?.submittedAt ?? null) !== null}
+            answered={
+              navigationItems[singleIndex]?.completion.state === "filled"
+            }
+            busy={practiceSubmit.submittingId !== null}
+            finished={practiceSubmit.finished}
+            hasNext={singleIndex < total - 1}
+            continueUnsubmittedId={
+              practiceSubmit.firstUnsubmittedId !== null &&
+              practiceSubmit.firstUnsubmittedId !== resolvedSingleQuestionId &&
+              practiceSubmit.firstUnsubmittedId !== questionIds[singleIndex + 1]
+                ? practiceSubmit.firstUnsubmittedId
+                : null
+            }
+            error={
+              practiceSubmit.lastError?.questionId === resolvedSingleQuestionId
+                ? practiceSubmit.lastError.message
+                : null
+            }
+            onSubmit={() => {
+              if (resolvedSingleQuestionId !== null)
+                void runPracticeSubmit(resolvedSingleQuestionId);
+            }}
+            onNext={() => {
+              const next = questionIds[singleIndex + 1];
+              if (next !== undefined) void goSingleQuestion(next);
+            }}
+            onViewResult={() => practiceSubmit.viewResult()}
+            onContinue={(id) => void goSingleQuestion(id)}
+          />
+        }
+        onPrev={() => {
+          const prev = questionIds[singleIndex - 1];
+          if (prev !== undefined) void goSingleQuestion(prev);
+        }}
+        onNext={() => {
+          const next = questionIds[singleIndex + 1];
+          if (next !== undefined) void goSingleQuestion(next);
+        }}
+      />
+    </div>
+  );
+
   return (
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
       <AttemptWorkspace>
@@ -958,10 +1034,21 @@ function AnswerView({
           menuItems={
             practiceWorkflow !== undefined ? (
               <>
-                <PracticeLayoutMenuItems
-                  layout={practiceLayout}
-                  onChange={setPracticeLayoutExplicit}
-                />
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setModeSettingsOpen(true);
+                    requestAnimationFrame(() => {
+                      const trigger =
+                        singleWorkspaceRef.current?.querySelector<HTMLButtonElement>(
+                          '[aria-label="调整做题方式"]',
+                        );
+                      trigger?.scrollIntoView?.({ block: "nearest" });
+                      trigger?.focus();
+                    });
+                  }}
+                >
+                  做题方式
+                </DropdownMenuItem>
                 <PracticeKeyboardHelpMenuItem
                   onOpen={() => setKeyboardHelpOpen(true)}
                 />
@@ -1176,6 +1263,8 @@ function AnswerView({
                   CAS 基线；在途与就地提示（stale/服务端 message）透传 */}
               {practiceWorkflow !== undefined && total > 0 && (
                 <PracticeModeSummary
+                  open={modeSettingsOpen}
+                  onOpenChange={setModeSettingsOpen}
                   workflow={practiceWorkflow}
                   layout={practiceLayout}
                   onLayoutChange={setPracticeLayoutExplicit}
@@ -1194,7 +1283,6 @@ function AnswerView({
                   current={singleIndex + 1}
                   total={total}
                   submittedCount={submittedPracticeCount}
-                  onOpenNavigator={() => setNavigatorOpen(true)}
                 />
               )}
 
@@ -1332,68 +1420,20 @@ function AnswerView({
                   </Button>
                 </div>
               )}
-
-              {/* 单题主操作条（§7.2）：三态接线——提交本题（含「不会」空答
-                  案提交）→ 正在提交…（busy 禁切题）→ 已提交行下一题/查看本次
-                  结果/继续未提交题目 */}
-              {singleMode && resolvedSingleQuestionId !== null && (
-                <SingleQuestionActionBar
-                  hasPrev={singleIndex > 0}
-                  hasNext={singleIndex < total - 1}
-                  busy={practiceSubmit.submittingId !== null}
-                  middle={
-                    <PracticeSingleActions
-                      submitted={
-                        (singleProgressRow?.submittedAt ?? null) !== null
-                      }
-                      answered={
-                        navigationItems[singleIndex]?.completion.state ===
-                        "filled"
-                      }
-                      busy={practiceSubmit.submittingId !== null}
-                      finished={practiceSubmit.finished}
-                      hasNext={singleIndex < total - 1}
-                      continueUnsubmittedId={
-                        practiceSubmit.firstUnsubmittedId !== null &&
-                        practiceSubmit.firstUnsubmittedId !==
-                          resolvedSingleQuestionId
-                          ? practiceSubmit.firstUnsubmittedId
-                          : null
-                      }
-                      error={
-                        practiceSubmit.lastError?.questionId ===
-                        resolvedSingleQuestionId
-                          ? practiceSubmit.lastError.message
-                          : null
-                      }
-                      onSubmit={() => {
-                        if (resolvedSingleQuestionId !== null)
-                          void runPracticeSubmit(resolvedSingleQuestionId);
-                      }}
-                      onNext={() => {
-                        const next = questionIds[singleIndex + 1];
-                        if (next !== undefined) void goSingleQuestion(next);
-                      }}
-                      onViewResult={() => practiceSubmit.viewResult()}
-                      onContinue={(id) => void goSingleQuestion(id)}
-                    />
-                  }
-                  onPrev={() => {
-                    const prev = questionIds[singleIndex - 1];
-                    if (prev !== undefined) void goSingleQuestion(prev);
-                  }}
-                  onNext={() => {
-                    const next = questionIds[singleIndex + 1];
-                    if (next !== undefined) void goSingleQuestion(next);
-                  }}
-                />
-              )}
             </div>
           </div>,
         )}
 
         <Dialog open={navigatorOpen} onOpenChange={setNavigatorOpen}>
-          <DialogContent className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg">
+          <DialogContent
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (singleWorkspaceRef.current?.contains(document.activeElement))
+                return;
+              navigatorTrigger.current?.focus();
+            }}
+            className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg"
+          >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Grid2X2 aria-hidden className="size-4" />
@@ -1426,6 +1466,12 @@ function AnswerView({
             v1 卷追加已提交进度；全部收尾后主按钮换「查看本次结果」（列表模式入口，
             单题模式主动作位同款按钮已承担） */}
         <AttemptBottomBar
+          primaryActions={singleActions}
+          hideSubmit={
+            singleMode &&
+            !practiceWorkflow?.canSubmitQuestion &&
+            singleIndex === total - 1
+          }
           answered={answered}
           total={total}
           offline={!online}
@@ -1436,12 +1482,10 @@ function AnswerView({
           practiceSubmittedCount={
             practiceProtocol === "v1" ? submittedPracticeCount : undefined
           }
-          viewResult={
-            practiceProtocol === "v1" && !singleMode && practiceSubmit.finished
-          }
+          viewResult={practiceProtocol === "v1" && practiceSubmit.finished}
           onViewResult={() => practiceSubmit.viewResult()}
           onOpenSubmit={openSubmitDialog}
-          onOpenNavigator={() => setNavigatorOpen(true)}
+          onOpenNavigator={openNavigator}
         />
 
         {/* 逐题提交缺稿明确选择弹层：choice→busy→error 相在 runPracticeSubmit 内迁移 */}
