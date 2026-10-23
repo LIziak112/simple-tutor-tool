@@ -760,6 +760,11 @@ const SECRET_EXCERPTS = [
 /** 泄露监控句柄：测试末尾取 violations 断言为空 */
 export interface LeakMonitor {
   violations: () => readonly string[];
+  /**
+   * 等在途响应体检查落定（有界：pending 清零即返回，最多等 2s）。
+   * 替代固定 waitForTimeout(800) 采样窗——慢响应体不再漏检，快场景不多等。
+   */
+  drain: () => Promise<void>;
 }
 
 /**
@@ -812,7 +817,8 @@ function attemptStatusOf(body: string): string | undefined {
  *   响应允许携带答案/详解（规则限制的是「未交卷题目」），用 submitted 标志
  *   切换；逐题提交不再误置 submitted——回执只释放「本题」反馈，之后的
  *   草稿取卷等响应必须继续检查；仅当回执显示 attempt 已收尾（最后一题
- *   提交在事务内自动收尾）才置 submitted；
+ *   提交在事务内自动收尾）才置 submitted；两处置位都只认 2xx 成功响应——
+ *   失败（409/5xx）时卷仍 draft，豁免不生效、响应体照常受检（fail-closed）；
  * - 逐题提交回执、题级反馈读取（GET …/questions/:qid/feedback）与讲练
  *   开卷/重做按端点豁免：三者都只携带「已提交题」的当题反馈，与服务端
  *   授权投影同一口径；
@@ -831,26 +837,45 @@ function attemptStatusOf(body: string): string | undefined {
 export function attachLeakMonitor(page: Page): LeakMonitor {
   const violations: string[] = [];
   let submitted = false;
+  // 在途响应体检查计数：drain() 等它清零，替代固定采样窗（欠检测竞态）
+  let pending = 0;
+  const drain = async (): Promise<void> => {
+    const deadline = Date.now() + 2_000;
+    while (pending > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
   page.on("response", (response) => {
     const url = response.url();
     if (!url.includes("/api/student/")) return;
     const method = response.request().method();
-    // 整卷交卷：其后响应允许携带答案/详解（旧口径保留，URL 精确到不含 /questions/）
-    if (method === "POST" && WHOLE_ATTEMPT_SUBMIT_RE.test(url)) {
+    // 整卷交卷成功：其后响应允许携带答案/详解（旧口径保留，URL 精确到不含
+    // /questions/）。仅 2xx 才置 submitted——失败响应（409 revision 冲突等）
+    // 时卷仍是 draft，停监会把该窗口的泄露变成不可见，fail-closed 继续走检查
+    if (
+      method === "POST" &&
+      response.ok() &&
+      WHOLE_ATTEMPT_SUBMIT_RE.test(url)
+    ) {
       submitted = true;
       return;
     }
     if (submitted) return;
     // 逐题提交回执：本题反馈设计内返回，直接豁免；仅当回执显示 attempt 已
-    // 收尾（最后一题自动收尾）才置 submitted，进行中卷继续监控后续响应
-    if (method === "POST" && QUESTION_SUBMIT_RE.test(url)) {
+    // 收尾（最后一题自动收尾）才置 submitted，进行中卷继续监控后续响应。
+    // 同样只豁免 2xx 成功回执——失败体（错误 JSON）走下方常规键级检查
+    if (method === "POST" && response.ok() && QUESTION_SUBMIT_RE.test(url)) {
+      pending++;
       void response
         .text()
         .then((body) => {
           const status = attemptStatusOf(body);
           if (status !== undefined && status !== "draft") submitted = true;
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          pending--;
+        });
       return;
     }
     const contentType = response.headers()["content-type"] ?? "";
@@ -861,6 +886,7 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
     const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
     // 错题本响应：answers/solutionMd 设计内下发（豁免口径见函数头注释）
     const isWrongQuestions = /\/api\/student\/wrong-questions/.test(url);
+    pending++;
     void response
       .text()
       .then((body) => {
@@ -871,9 +897,12 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
             : undefined,
         });
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        pending--;
+      });
   });
-  return { violations: () => violations };
+  return { violations: () => violations, drain };
 }
 
 /** 错题本豁免键：对齐服务端 assertNoLeak({ allow: ["answers", "solutionMd"] }) */

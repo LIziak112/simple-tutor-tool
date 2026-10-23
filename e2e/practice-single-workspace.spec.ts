@@ -236,7 +236,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await expectResultCount(page, "总题数", 2);
     await expectResultCount(page, "答对", 2);
 
-    await page.waitForTimeout(800);
+    // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+    await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
   });
 
@@ -344,7 +345,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
     await expectResultCount(page, "答对", 2);
 
-    await page.waitForTimeout(800);
+    // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+    await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
   });
 
@@ -425,7 +427,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
       q2.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
 
-    await page.waitForTimeout(800);
+    // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+    await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
   });
 
@@ -587,7 +590,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
     await expectResultCount(page, "答对", 2);
 
-    await page.waitForTimeout(800);
+    // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+    await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
   });
 
@@ -697,7 +701,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await expect(q1.getByRole("region", { name: "本题反馈" })).toBeVisible();
     await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
 
-    await page.waitForTimeout(800);
+    // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+    await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
   });
 });

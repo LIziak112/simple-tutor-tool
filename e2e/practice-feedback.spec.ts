@@ -298,7 +298,8 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       await expectResultCount(studentPage, "答对", 2);
 
       // —— 泄露检查：逐题提交后的草稿取卷等响应同样受检 ——
-      await studentPage.waitForTimeout(800);
+      // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+      await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
     } finally {
       await studentContext.close();
@@ -394,7 +395,8 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       });
       await expectResultCount(studentPage, "答对", 2);
 
-      await studentPage.waitForTimeout(800);
+      // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+      await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
     } finally {
       await studentContext.close();
@@ -492,7 +494,8 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       });
       await expectResultCount(studentPage, "答对", 2);
 
-      await studentPage.waitForTimeout(800);
+      // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+      await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
     } finally {
       await studentContext.close();
@@ -591,7 +594,8 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       });
       await expectResultCount(studentPage, "答对", 2);
 
-      await studentPage.waitForTimeout(800);
+      // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+      await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
     } finally {
       await studentContext.close();
@@ -673,7 +677,8 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       });
       await expectResultCount(studentPage, "答对", 2);
 
-      await studentPage.waitForTimeout(800);
+      // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+      await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
     } finally {
       await studentContext.close();
