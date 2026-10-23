@@ -29,15 +29,23 @@ import { describe, expect, it } from "vitest";
  * 守护覆盖不了的局限（仍须人工审查，§11.2）：动态比较（变量间比较、
  * 非字面量判别式）、别名（改名后不叫 kind/type 的局部变量、经函数转发的
  * 判别）、映射索引与集合成员（record[kind]、HANDWRITTEN_TYPES.has(type)）、
- * 数值判别式、字符串拼接构造。packages/*（contract/grading 中央登记与
+ * 数值判别式、字符串拼接构造；三类残余局限（审查补记）：同文件等数置换
+ * （同文件删一处合法片段、增一处同文本有害片段，多重集合计数不变可
+ * 绕过——由类型系统与对话框态行为测试兜底，删合法收窄会编译失败，风险
+ * 有界）、无表达式模板字面量（`fill` 是 TemplateLiteral 节点，
+ * isStringLiteral 不捕获，刻意构造才可触发）、扩展名盲区（收集正则
+ * \.[cm]?tsx?$ 不扫 .js/.jsx/.mjs——当前双端 src 零此类文件，TS strict
+ * 下新增亦不现实，仍声明）。packages/*（contract/grading 中央登记与
  * 判分绑定，§6.3 A）与 dsl-kit 不在 §11.2 规定的扫描范围。守护不能替代
  * 消费者验收（§10.1 表）。
  *
- * 白名单基线（下方 I16_BASELINE）从决策记录 §6.3 迁移：条目 = 文件 +
- * 规范化片段 + 次数（多重集合，与行号无关——上方插入代码不会误报）；
- * 既有分支被删除时同样失败，迫使清理时同步收窄基线。新增合法分支的
- * 唯一路径：中央调度边界 / 绑定 / 参考格式化（§6.3 A）扩项时更新基线
- * 并在决策记录登记理由。
+ * 白名单基线（下方 I16_BASELINE）：条目 = 文件 + 规范化片段 + 次数
+ * （多重集合，与行号无关——上方插入代码不会误报）；既有分支被删除时
+ * 同样失败，迫使清理时同步收窄基线。条目来源：A-D 组源自决策记录 §6.3
+ * 基线表；E 组对话框态并非全部在册——仅两文件直接对应 §6.3 D，其余为
+ * 执行时确认的合法分支，出处逐条见 E 组注释。新增合法分支的唯一路径：
+ * 中央调度边界 / 绑定 / 参考格式化（§6.3 A）扩项时更新基线并在决策
+ * 记录登记理由。
  */
 
 /** 答案 kind 字面量（StudentAnswer 五 kind） */
@@ -269,7 +277,7 @@ function scanProductionSources(): readonly Hit[] {
   return hits;
 }
 
-// ---------- 白名单基线（决策记录 §6.3 迁移；条目理由就地注释） ----------
+// ---------- 白名单基线（A-D 组源自 §6.3；E 组出处见组内注释） ----------
 
 interface BaselineEntry {
   /** 仓库相对路径（正斜杠） */
@@ -361,10 +369,18 @@ const HANDWRITTEN_FINAL_NARROW: readonly BaselineEntry[] = [
 ];
 
 /**
- * E. §6.3 D 对话框态（非答案 kind）：草稿同步与提交证据确认的状态机
- * 用 kind="choice" 表示「让学生选择如何继续」的对话框语义——守护按
- * 字面量保守捕获，白名单理由即其非答案 kind 的澄清；「choice」误伤
- * 实例正是 §11.2 要求 AST 判别而不能裸文本匹配的原因之一。
+ * E. 对话框态（非答案 kind）：草稿同步与提交证据确认的状态机用
+ * kind="choice" 表示「让学生选择如何继续」的对话框语义——守护按字面量
+ * 保守捕获，白名单理由即其非答案 kind 的澄清；「choice」误伤实例正是
+ * §11.2 要求 AST 判别而不能裸文本匹配的原因之一。
+ * 出处如实说明（§6.3 D 只点名 PracticeQuestionSubmit 与
+ * LessonQuestionCard 两文件，非四文件）：PracticeQuestionSubmit ×2、
+ * LessonQuestionCard ×2 直接对应 §6.3 D 在册分支；AttemptSession
+ * notePrep 是 §9.3.7 轻量守护校准记载的对话框态；
+ * use-submit-evidence-confirm ×3 是该状态机经 8ec59d5b「证据确认状态机
+ * 单源」从 PracticeQuestionSubmit 抽出的单源落点（决策记录此前无此
+ * 文件名），执行时逐条亲核为 idle/preparing/choice/error 对话框态联合
+ * 后如实收录——非 §6.3 表内既有行。
  */
 const DIALOG_STATE_NARROW: readonly BaselineEntry[] = [
   {
