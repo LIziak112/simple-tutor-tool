@@ -292,3 +292,10 @@
 - 验收修复（编排者提交）：D3 只跑了 schema:export（brief 要求口径），契约 layout 可选后 dsl-kit/tutor-lint.mjs 未随重生成——CI 校验会挂；重生成提交并复验 gen:spec 零 drift。
 - 自跑全量 5690/5690（479 文件）、typecheck/lint exit 0（哨兵 /tmp/m5-d3-accept-*.log；子代理全量跑于 style 前、终态由本链覆盖）。
 - M5 三层 D1/D2/D3 全部验收通过，进入三闸门（/simplify → /code-review max → /security-review；landing practiceRecommendation 系新增学生端载荷故加跑安全闸门），随后全量回归与合并。
+
+### M5 闸门一 /simplify：审查与修复（2026-10-23，审查子代理只读、修复编排者亲自执行）
+
+- 审查报告 /tmp/m5-gate-simplify.md（结论 应修 2 / 建议 4 / 记档 6）：预裁决①–⑨语义逐条比对未发现实现歪曲——resolver 决定链、assignment 多单元聚合、wrong 短路、坏 JSON null+warn 均与裁定一致；另核实 workflowStartColumns 三调用点、导入清写双 upsert、md-dsl 四步链、新增测试无死 helper 无 TODO。
+- 采纳并修复（提交 17122cea，11 文件 +129/−154）：A1 `practiceDefaultsOf` 全服务端唯一实现（practice-workflow-service 导出；wiring 聚合/student-course landing/library 导出三处平行 JSON.parse+safeParse+warn 收敛，`practiceYamlLineOf` 降私有、warn 文案统一一条）；A2 `ResolveExistingPracticeWorkflowInput` 增 `unitRecommendation?: never` 镜像（删 as 断言，existing 误传编译期拦截，测试注释同步）；B1 `practiceLayoutOptions` 数据对入 practice-protocol（作答页/开始页两处字面量收敛，设置页富变体保留自有渲染）；B2 store `read()` 统一归一未设置态（bind/storage 事件调用点直用，C6 version 不外发随走）；B3 wrong 建卷不查 students（domainTeacherId 三元链与推荐侧 wrong 短路一致）；B4 设置页两枚已设值标题复用 `practiceRhythmLabel`「交卷后查看」（教师端「交卷后统一查看」系 M1 定稿教侧口径不动，测试断言同步）。
+- 记档不修（理由详报告）：C1 Set 取值冗余兜底（noUncheckedIndexedAccess 口径）、C2 PracticeModeSummary 可选 props（呈现件缺省仅呈现，11 处测试消费）、C3 测试纯转发包装、C4 开始页 spread 显式覆盖表达意图、C5 parse/lint 各一份 kind 条件（跨层低于抽象阈值）；B1 的 class 串助手与 feedbackModeOptions 收敛未采纳（2–3 份短字面量不抵跨文件改动）。
+- 修复后验证：目标测试 server 81/81 + web 48/48（web 测试必须从仓库根跑——apps/web 直跑缺 jsdom 环境与 @ 别名，vite.config 注释即记此坑）；全量 `pnpm test --maxWorkers=4` 5690/5690（479 文件）EXIT=0（/tmp/m5-simplify-fix-full.log）；typecheck/lint exit 0（lint 曾出 1 条 useImportType——schema 值导入移除后整组转 `import type` 修复）；gen:spec 重跑 git status 零 drift（哨兵 /tmp/m5-simplify-fix-*.log）。
