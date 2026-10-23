@@ -122,7 +122,11 @@ function ChoiceControls({
   return (
     <div className="flex flex-col gap-2" role="radiogroup" aria-label="选项">
       {(question.options ?? []).map((option, index) => (
-        <label key={option} className={optionShellClass(picked === index)}>
+        // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
+        <label
+          key={`opt-${index}`}
+          className={optionShellClass(picked === index)}
+        >
           <input
             type="radio"
             name={groupName}
@@ -165,8 +169,9 @@ function MultiControls({
       className="m-0 flex flex-col gap-2 border-0 p-0"
     >
       {(question.options ?? []).map((option, index) => (
+        // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
         <label
-          key={option}
+          key={`opt-${index}`}
           className={optionShellClass(pickedIndexes.includes(index))}
         >
           <input

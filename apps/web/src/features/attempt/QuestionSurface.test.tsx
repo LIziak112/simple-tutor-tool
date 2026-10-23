@@ -165,4 +165,60 @@ describe("共享题面", () => {
     expect(screen.getByLabelText("第1空")).toHaveValue("");
     expect(screen.getByLabelText("第2空")).toHaveValue("");
   });
+
+  it("单选重复选项文本不再产生 key 冲突告警，渲染与选中语义不变（§4.2/§13.2）", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onAnswer = vi.fn();
+    const { unmount } = render(
+      <QuestionSurface
+        question={{ ...question, options: ["相同选项", "相同选项", "不同选项"] }}
+        onAnswer={onAnswer}
+      />,
+    );
+    // 重复文本选项逐项渲染，字母按序区分（DOM/class/可访问名称不变）
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(3);
+    expect(radios[0]).toHaveAccessibleName("选项 A 相同选项");
+    expect(radios[1]).toHaveAccessibleName("选项 B 相同选项");
+    expect(radios[0].className).toBe(radios[1].className);
+    // 选中语义按索引区分（I04：索引不被归一化）
+    fireEvent.click(screen.getByRole("radio", { name: "选项 B 相同选项" }));
+    expect(onAnswer).toHaveBeenCalledWith(
+      { kind: "choice", index: 1 },
+      undefined,
+    );
+    const keyWarnings = errorSpy.mock.calls
+      .map((args) => String(args[0]))
+      .filter((message) => message.includes("same key"));
+    expect(keyWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
+    unmount();
+  });
+
+  it("多选重复选项文本同样无 key 冲突告警，勾选按索引区分", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onAnswer = vi.fn();
+    const { unmount } = render(
+      <QuestionSurface
+        question={{
+          ...question,
+          type: "multi",
+          options: ["相同选项", "相同选项"],
+        }}
+        onAnswer={onAnswer}
+      />,
+    );
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("checkbox", { name: "选项 B 相同选项" }));
+    expect(onAnswer).toHaveBeenCalledWith(
+      { kind: "multi", indexes: [1] },
+      undefined,
+    );
+    const keyWarnings = errorSpy.mock.calls
+      .map((args) => String(args[0]))
+      .filter((message) => message.includes("same key"));
+    expect(keyWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
+    unmount();
+  });
 });
