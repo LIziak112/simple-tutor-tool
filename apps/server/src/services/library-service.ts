@@ -1,5 +1,12 @@
-import type { LibraryBatchRequest, TeachingPack } from "@tutor/contract";
-import { teachingPackSchema } from "@tutor/contract";
+import type {
+  LibraryBatchRequest,
+  PracticeRecommendation,
+  TeachingPack,
+} from "@tutor/contract";
+import {
+  practiceRecommendationSchema,
+  teachingPackSchema,
+} from "@tutor/contract";
 import {
   and,
   asc,
@@ -1366,9 +1373,56 @@ export function teachingPackYamlLineOf(column: string | null): string | null {
 }
 
 /**
+ * practice 推荐 → 确定性 YAML flow 映射行（M5-D1）：只写已有字段（键序 layout、
+ * feedback），值 JSON 字符串引号——合法 YAML，frontmatter 解析可原样读回；空推荐
+ * 输出 `practice: {}`（同样合法往返）。server 不依赖 yaml 包（硬性规则 5）。
+ * 列 NULL/坏 JSON/不合契约（写侧恒过契约，此处兜底异常存量）一律视为未声明，
+ * 不导出——老单元导出字节级不变。
+ */
+function practiceYamlLine(rec: PracticeRecommendation): string {
+  const parts: string[] = [];
+  if (rec.layout !== undefined) {
+    parts.push(`layout: ${JSON.stringify(rec.layout)}`);
+  }
+  if (rec.feedback !== undefined) {
+    parts.push(`feedback: ${JSON.stringify(rec.feedback)}`);
+  }
+  return `practice: {${parts.join(", ")}}`;
+}
+
+/**
+ * 从 practiceDefaultsJson 列读回推荐行；无有效推荐返回空（兜底口径与
+ * teachingPackYamlLineOf 一致：坏值 console.warn 留痕，不静默丢——写侧恒过契约，
+ * 走到这里说明数据被外力破坏）。
+ */
+export function practiceYamlLineOf(column: string | null): string | null {
+  if (column === null) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(column);
+  } catch (err) {
+    console.warn(
+      "practiceYamlLineOf: practiceDefaultsJson 不是合法 JSON，导出不含推荐",
+      err,
+    );
+    return null;
+  }
+  const parsed = practiceRecommendationSchema.safeParse(data);
+  if (!parsed.success) {
+    console.warn(
+      "practiceYamlLineOf: practiceDefaultsJson 不合契约，导出不含推荐",
+      parsed.error.issues[0]?.message,
+    );
+    return null;
+  }
+  return practiceYamlLine(parsed.data);
+}
+
+/**
  * 导出单元（GET /api/teacher/units/:id/export.md）：域内取单元（D12，越权 404）：
  * frontmatter（kind: practice、unit、lecture（配套讲义标题，若有）、topic（若有）、
- * teachingPack（列内有声明时回写，T7.8））
+ * teachingPack（列内有声明时回写，T7.8）、practice（列内有推荐时回写，M5-D1，
+ * 无推荐不写行））
  * + 未删除各题 sourceMd 按题序拼接（空行分隔；缺省 id 的题注入显式 id，见
  * ensureQuestionId）。已删题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则
  * 复活已删题；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
@@ -1412,6 +1466,11 @@ export function exportUnitMd(
   const packLine = teachingPackYamlLineOf(unit.teachingPackJson);
   if (packLine !== null) {
     lines.push(packLine);
+  }
+  // practice 推荐写回（M5-D1）：列内有有效推荐才写行，无推荐不写（老单元导出字节级不变）
+  const practiceLine = practiceYamlLineOf(unit.practiceDefaultsJson);
+  if (practiceLine !== null) {
+    lines.push(practiceLine);
   }
   lines.push("---", "");
   const deletedQuestionCount = db
