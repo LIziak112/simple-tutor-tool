@@ -1,3 +1,4 @@
+import { render } from "@testing-library/react";
 import type { QuestionPublic } from "@tutor/contract";
 import { processor } from "@tutor/md-dsl";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -103,6 +104,35 @@ describe("slotsOfQuestion（WeakMap 对象身份缓存，I13）", () => {
     getQuestionCompletion(question, { kind: "fill", values: ["1", "2", "3"] });
     getQuestionCompletion(question, undefined);
     expect(parse).toHaveBeenCalledTimes(1);
+  });
+
+  // React rerender 级调用计数（审查 P2-1）：函数级「同对象重复调用」之上，
+  // 补组件 rerender 不重复解析的断言——模拟 UA-03 呈现层消费形态：
+  // 组件体内经 slotsOfQuestion 取槽位，作答（values）变化引发 rerender
+  // 而题对象身份不变。渲染计数证 rerender 非空转（组件体确实重新执行）。
+  it("作答态变化引发组件 rerender：同一题对象不重复解析（I13）", () => {
+    const parse = vi.spyOn(processor, "parse");
+    const question = { ...baseQuestion, stemMd: "甲 [[]]，乙 [[]]" };
+    let renders = 0;
+    function SlotsProbe({ values }: { values: readonly string[] }) {
+      renders += 1;
+      const slots = slotsOfQuestion(question);
+      return (
+        <output
+          data-testid="slots"
+          data-count={slots.length}
+          data-filled={values.filter((v) => v.trim() !== "").length}
+        />
+      );
+    }
+    const view = render(<SlotsProbe values={["1"]} />);
+    expect(parse).toHaveBeenCalledTimes(1);
+    view.rerender(<SlotsProbe values={["1", "2"]} />);
+    view.rerender(<SlotsProbe values={[]} />);
+    expect(renders).toBe(3); // 3 次渲染均执行组件体，非 React 空转跳过
+    expect(view.getByTestId("slots").getAttribute("data-count")).toBe("2");
+    expect(view.getByTestId("slots").getAttribute("data-filled")).toBe("0");
+    expect(parse).toHaveBeenCalledTimes(1); // 同一题对象：rerender 不重解析
   });
 });
 

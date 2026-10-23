@@ -462,4 +462,30 @@ describe("DirectiveSessionContext slots 子命名空间（UA-02，§8.2）", () 
     expect(blankSlotIdOf(0)).toBe("slot-1");
     expect(blankSlotIdOf(2)).toBe("slot-3");
   });
+
+  // slotId 派生↔反解析互逆（审查 P2-2）：BlankDirective 查询侧用单源
+  // blankSlotIdOf(blankIndex)，BlankAnswersContext 委托 get 侧用正则反解析
+  // 回空序——11 空覆盖两位数编号（slot-10/slot-11），blank-N 回显 values[N-1]
+  // 且 onChange 上报 N-1 即 orderOfSlotId∘blankSlotIdOf = identity。
+  it("slotId 反解析与 blankSlotIdOf 单源互逆：全链回显/上报（含两位数编号）", () => {
+    expect(blankSlotIdOf(9)).toBe("slot-10"); // blank-10 查询的槽位 id
+    const N = 11;
+    const values = Array.from({ length: N }, (_, i) => `回显${i + 1}`);
+    const onChange = vi.fn();
+    const stem = Array.from({ length: N }, () => "[[ ]]").join("，");
+    render(
+      <BlankAnswersProvider state={fillState({ values, onChange })}>
+        <RichMarkdown source={stem} />
+      </BlankAnswersProvider>,
+    );
+    for (let i = 0; i < N; i++) {
+      expect(
+        (screen.getByTestId(`blank-${i + 1}`) as HTMLInputElement).value,
+      ).toBe(`回显${i + 1}`);
+    }
+    fireEvent.change(screen.getByTestId("blank-10") as HTMLInputElement, {
+      target: { value: "两位数编号槽位" },
+    });
+    expect(onChange).toHaveBeenCalledWith(9, "两位数编号槽位");
+  });
 });
