@@ -1,6 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { QuestionAnswers } from "./content.ts";
-import type { StudentAnswer } from "./grading.ts";
 import type {
   AnswerKindBehavior,
   AnswerKindBehaviorTable,
@@ -17,6 +15,8 @@ import {
   fillBehavior,
   judgeBehavior,
 } from "./answer-kinds/index.ts";
+import type { QuestionAnswers } from "./content.ts";
+import type { StudentAnswer } from "./grading.ts";
 
 /**
  * TT-02（UA-00）纯行为登记表接口原型——UA-01 起生产类型与五 kind 行为已

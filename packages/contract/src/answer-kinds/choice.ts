@@ -15,8 +15,7 @@ export const choiceMultiBehavior: AnswerKindBehavior<
   { kind: "choice"; index: number } | { kind: "multi"; indexes: number[] },
   OptionsPublicStructure
 > = {
-  isAnswered: (answer) =>
-    answer.kind === "choice" || answer.indexes.length > 0,
+  isAnswered: (answer) => answer.kind === "choice" || answer.indexes.length > 0,
   formatStudent: (answer, profile, structure) => {
     if (answer.kind === "choice") {
       if (profile === "display") return lettersOf(answer.index);

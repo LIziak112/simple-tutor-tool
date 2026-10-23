@@ -24,7 +24,6 @@ describe("HANDWRITTEN_TYPES（UA-01 起由契约 paperRole 派生）", () => {
   });
 });
 
-
 describe("attemptRoundLabel（轮次标注按来源）", () => {
   it("course/wrong/assignment 既有文案 + lesson=第 n 次讲练（2026-10 讲练一体）", () => {
     expect(attemptRoundLabel("course", 2)).toBe("第 2 次课程练习");

@@ -3,6 +3,7 @@ import type { Question, StudentAnswer } from "@tutor/contract";
 import {
   aiContextSnapshotSchema,
   DEFAULT_AI_PROMPT_TEMPLATES,
+  optionsPublicStructureOf,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -22,7 +23,6 @@ import {
 import { createTestDb, TEST_TEACHER_ID } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { makeStudent } from "../../test/note-fixtures.ts";
-import { optionsPublicStructureOf } from "@tutor/contract";
 import {
   assembleOutboundMessages,
   buildAiContextBundle,

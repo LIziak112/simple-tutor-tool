@@ -21,12 +21,12 @@ import type {
  * formatQuestionAnswers，本登记表与它不得互相导入。
  */
 
-export * from "./types.ts";
-export { judgeBehavior } from "./judge.ts";
 export { choiceMultiBehavior } from "./choice.ts";
-export { multiBehavior } from "./multi.ts";
 export { fillBehavior } from "./fill.ts";
 export { finalBehavior } from "./final.ts";
+export { judgeBehavior } from "./judge.ts";
+export { multiBehavior } from "./multi.ts";
+export * from "./types.ts";
 
 /**
  * 生产登记表：五 kind 全配（satisfies 强制穷尽——漏 kind/错配签名编译失败，

@@ -5,8 +5,8 @@ import {
   dispatchBehavior,
   dispatchIsAnswered,
   emptyPublicStructure,
-  optionsPublicStructureOf,
   type OptionsPublicStructure,
+  optionsPublicStructureOf,
   type PublicStructureByKind,
 } from "./index.ts";
 
@@ -198,39 +198,151 @@ interface DiffCase {
  */
 const CASES: readonly DiffCase[] = [
   // judge（valid-08 第 1 题；false 边界 + 历史字符串 + 空字符串）
-  { label: "judge true", answer: { kind: "judge", value: true }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "judge false", answer: { kind: "judge", value: false }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "judge 历史 √", answer: { kind: "judge", value: "√" }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "judge 历史 F", answer: { kind: "judge", value: "F" }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "judge 空字符串", answer: { kind: "judge", value: "" }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
+  {
+    label: "judge true",
+    answer: { kind: "judge", value: true },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "judge false",
+    answer: { kind: "judge", value: false },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "judge 历史 √",
+    answer: { kind: "judge", value: "√" },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "judge 历史 F",
+    answer: { kind: "judge", value: "F" },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "judge 空字符串",
+    answer: { kind: "judge", value: "" },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
   // choice（0 边界 + 正常 + 非法索引 + ≥26）
-  { label: "choice 0", answer: { kind: "choice", index: 0 }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "choice 1", answer: { kind: "choice", index: 1 }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "choice 非法索引 99", answer: { kind: "choice", index: 99 }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "choice 26（宽表）", answer: { kind: "choice", index: 26 }, aiOptionTexts: WIDE_TEXTS },
+  {
+    label: "choice 0",
+    answer: { kind: "choice", index: 0 },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "choice 1",
+    answer: { kind: "choice", index: 1 },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "choice 非法索引 99",
+    answer: { kind: "choice", index: 99 },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "choice 26（宽表）",
+    answer: { kind: "choice", index: 26 },
+    aiOptionTexts: WIDE_TEXTS,
+  },
   // multi（空数组 + 单选 + 重复索引 + 全填 + 重复且 ≥26 + 非法索引）
-  { label: "multi 空数组", answer: { kind: "multi", indexes: [] }, aiOptionTexts: CORPUS_MULTI_TEXTS },
-  { label: "multi [0]", answer: { kind: "multi", indexes: [0] }, aiOptionTexts: CORPUS_MULTI_TEXTS },
-  { label: "multi 重复 [2,0,2]", answer: { kind: "multi", indexes: [2, 0, 2] }, aiOptionTexts: CORPUS_MULTI_TEXTS },
-  { label: "multi 全填 [0,1,2,3]", answer: { kind: "multi", indexes: [0, 1, 2, 3] }, aiOptionTexts: CORPUS_MULTI_TEXTS },
-  { label: "multi 重复且≥26 [26,26]", answer: { kind: "multi", indexes: [26, 26] }, aiOptionTexts: WIDE_TEXTS },
-  { label: "multi 非法 [7]", answer: { kind: "multi", indexes: [7] }, aiOptionTexts: CORPUS_MULTI_TEXTS },
+  {
+    label: "multi 空数组",
+    answer: { kind: "multi", indexes: [] },
+    aiOptionTexts: CORPUS_MULTI_TEXTS,
+  },
+  {
+    label: "multi [0]",
+    answer: { kind: "multi", indexes: [0] },
+    aiOptionTexts: CORPUS_MULTI_TEXTS,
+  },
+  {
+    label: "multi 重复 [2,0,2]",
+    answer: { kind: "multi", indexes: [2, 0, 2] },
+    aiOptionTexts: CORPUS_MULTI_TEXTS,
+  },
+  {
+    label: "multi 全填 [0,1,2,3]",
+    answer: { kind: "multi", indexes: [0, 1, 2, 3] },
+    aiOptionTexts: CORPUS_MULTI_TEXTS,
+  },
+  {
+    label: "multi 重复且≥26 [26,26]",
+    answer: { kind: "multi", indexes: [26, 26] },
+    aiOptionTexts: WIDE_TEXTS,
+  },
+  {
+    label: "multi 非法 [7]",
+    answer: { kind: "multi", indexes: [7] },
+    aiOptionTexts: CORPUS_MULTI_TEXTS,
+  },
   // fill（空数组 + 全空 + 部分空 + 全填 + 额外空 + 空白串）
-  { label: "fill 空数组", answer: { kind: "fill", values: [] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "fill 全空串", answer: { kind: "fill", values: ["", "", ""] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "fill 部分空", answer: { kind: "fill", values: ["-8", "", "5"] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "fill 全填", answer: { kind: "fill", values: ["-8", "-9", "5"] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "fill 额外空（历史多余项）", answer: { kind: "fill", values: ["x", "", "多余项"] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "fill 空白串", answer: { kind: "fill", values: ["", "  ", "x"] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
+  {
+    label: "fill 空数组",
+    answer: { kind: "fill", values: [] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "fill 全空串",
+    answer: { kind: "fill", values: ["", "", ""] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "fill 部分空",
+    answer: { kind: "fill", values: ["-8", "", "5"] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "fill 全填",
+    answer: { kind: "fill", values: ["-8", "-9", "5"] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "fill 额外空（历史多余项）",
+    answer: { kind: "fill", values: ["x", "", "多余项"] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "fill 空白串",
+    answer: { kind: "fill", values: ["", "  ", "x"] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
   // final（solve/apply/find-error 共用；空串 + 空白 + 原文）
-  { label: "final 空串", answer: { kind: "final", finalAnswer: "" }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "final 空白", answer: { kind: "final", finalAnswer: "  " }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "final 原文（apply 语料）", answer: { kind: "final", finalAnswer: CORPUS_FINAL_TEXT }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
+  {
+    label: "final 空串",
+    answer: { kind: "final", finalAnswer: "" },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "final 空白",
+    answer: { kind: "final", finalAnswer: "  " },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "final 原文（apply 语料）",
+    answer: { kind: "final", finalAnswer: CORPUS_FINAL_TEXT },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
   // 不匹配 kind（答案 kind 与题型不符：旧实现按 answer.kind 分派、不查题型）
-  { label: "不匹配：fill 型题收 choice 答案", answer: { kind: "choice", index: 1 }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "不匹配：solve 型题收 judge 答案", answer: { kind: "judge", value: true }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "不匹配：choice 型题收 fill 答案", answer: { kind: "fill", values: ["x"] }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
-  { label: "不匹配：multi 型题收 final 答案", answer: { kind: "final", finalAnswer: "42" }, aiOptionTexts: CORPUS_CHOICE_TEXTS },
+  {
+    label: "不匹配：fill 型题收 choice 答案",
+    answer: { kind: "choice", index: 1 },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "不匹配：solve 型题收 judge 答案",
+    answer: { kind: "judge", value: true },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "不匹配：choice 型题收 fill 答案",
+    answer: { kind: "fill", values: ["x"] },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
+  {
+    label: "不匹配：multi 型题收 final 答案",
+    answer: { kind: "final", finalAnswer: "42" },
+    aiOptionTexts: CORPUS_CHOICE_TEXTS,
+  },
 ];
 
 describe("I15 三口径差分：登记表 vs 迁移前旧实现（valid-08 语料 + 边界矩阵）", () => {
@@ -257,9 +369,9 @@ describe("I15 三口径差分：登记表 vs 迁移前旧实现（valid-08 语�
     }
 
     // ai-context：旧实现看到的位置 options 与登记表结构由同一语料构造
-    expect(dispatchBehavior(answer, "ai-context", structuresFor(aiOptionTexts))).toBe(
-      oldStudentAnswerTextOf(oldSnapshotOptions, answer) ?? "",
-    );
+    expect(
+      dispatchBehavior(answer, "ai-context", structuresFor(aiOptionTexts)),
+    ).toBe(oldStudentAnswerTextOf(oldSnapshotOptions, answer) ?? "");
 
     // isAnswered 口径差分
     expect(dispatchIsAnswered(answer)).toBe(oldIsAnswered(answer));
@@ -267,12 +379,12 @@ describe("I15 三口径差分：登记表 vs 迁移前旧实现（valid-08 语�
 
   it("ai-context 无选项结构时回落字母（等价旧实现题面无 options 的兜底分支）", () => {
     // 旧实现：snapshot.options 为 undefined → optionTextOf 回落 optionLabel
-    expect(oldStudentAnswerTextOf(undefined, { kind: "choice", index: 1 })).toBe(
-      "B",
-    );
-    expect(oldStudentAnswerTextOf(undefined, { kind: "multi", indexes: [0, 2] })).toBe(
-      "A、C",
-    );
+    expect(
+      oldStudentAnswerTextOf(undefined, { kind: "choice", index: 1 }),
+    ).toBe("B");
+    expect(
+      oldStudentAnswerTextOf(undefined, { kind: "multi", indexes: [0, 2] }),
+    ).toBe("A、C");
     // 新登记表：emptyPublicStructure 的空选项集即同一兜底
     expect(
       dispatchBehavior(
@@ -292,9 +404,9 @@ describe("I15 三口径差分：登记表 vs 迁移前旧实现（valid-08 语�
 
   it("display 与 queue 的选项字母在 ≥26 时有意不同（三口径不合并的实例）", () => {
     const wide = structuresFor(WIDE_TEXTS);
-    expect(dispatchBehavior({ kind: "choice", index: 26 }, "display", wide)).toBe(
-      "AA",
-    );
+    expect(
+      dispatchBehavior({ kind: "choice", index: 26 }, "display", wide),
+    ).toBe("AA");
     expect(
       dispatchBehavior({ kind: "choice", index: 26 }, "teacher-queue", wide),
     ).toBe("26");

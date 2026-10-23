@@ -265,7 +265,11 @@ describe("questionEvidenceBindings（UA-01 跨端证据角色绑定，方案 §4
 
   it("HANDWRITTEN_QUESTION_TYPES 由 paperRole 单源派生，旧七型资格逐字不变", () => {
     // 迁移前字面量 ["solve","apply","find-error"]（原 content.ts:44）逐字保持
-    expect(HANDWRITTEN_QUESTION_TYPES).toEqual(["solve", "apply", "find-error"]);
+    expect(HANDWRITTEN_QUESTION_TYPES).toEqual([
+      "solve",
+      "apply",
+      "find-error",
+    ]);
     // 派生口径可复算：paperRole=answerInk ⇔ 派生集合
     expect(
       questionTypeSchema.options.filter(

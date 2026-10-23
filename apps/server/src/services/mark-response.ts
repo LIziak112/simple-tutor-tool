@@ -6,10 +6,7 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
-import {
-  dispatchBehavior,
-  emptyPublicStructure,
-} from "@tutor/contract";
+import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
 import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {

@@ -261,7 +261,13 @@ export const paperRoleSchema = z.enum(["scratch", "answerInk"]);
 export type PaperRole = z.infer<typeof paperRoleSchema>;
 
 /** 答案 kind 全集（与 StudentAnswer 判别联合互证，不手抄漂移） */
-const answerKindLiterals = ["judge", "choice", "multi", "fill", "final"] as const;
+const answerKindLiterals = [
+  "judge",
+  "choice",
+  "multi",
+  "fill",
+  "final",
+] as const;
 // 双向互证：漏登记 StudentAnswer 新增 kind 时该行编译失败
 type _AnswerKindExhaustive = [
   Exclude<StudentAnswer["kind"], (typeof answerKindLiterals)[number]>,
