@@ -14,7 +14,11 @@ import type {
 import {
   aiContextSnapshotSchema,
   DEFAULT_AI_PROMPT_TEMPLATES,
+  dispatchBehavior,
+  emptyPublicStructure,
   formatQuestionAnswers,
+  type OptionsPublicStructure,
+  optionsPublicStructureOf,
   QUESTION_TYPE_LABELS,
 } from "@tutor/contract";
 import { asc, eq } from "drizzle-orm";
@@ -23,7 +27,6 @@ import { type Attempt, aiMessages, responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { answerOf, attemptTeacherId } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
-import { optionLabel, serializeStudentAnswer } from "../mark-response.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { getTeacherAiSettings } from "./settings-service.ts";
@@ -90,42 +93,28 @@ const INJECTION_GUARD =
 
 // ---------- 本人答案可读文本(B00 §3.1:fill 逐空 / choice 选项文本 / 手写题标注) ----------
 
-/** 选项文本增强:字母后附选项正文(choice/multi 有选项时),AI 无需回查题面列表 */
-function optionTextOf(snapshot: Question, index: number): string {
-  const option = snapshot.options?.[index];
-  return option === undefined
-    ? optionLabel(index)
-    : `${optionLabel(index)}（${option.text}）`;
-}
-
 /**
  * 本人当前答案 → 可读文本(null = 尚无答案/笔迹,仍可求助):
- * - judge/choice/multi/fill 基于既有单源 serializeStudentAnswer,choice/multi
- *   追加选项文本(B00「choice 选项文本」口径);
+ * - judge/choice/multi/fill 基于既有单源序列化,choice/multi 追加选项文本
+ *   (B00「choice 选项文本」口径);
  * - final(手写题):未填最终答案 → 标注「答案在笔迹材料中」(过程在书写
  *   材料,材料是否实际附上由 SAI-10/11 装配,此处只是口径标注)。
+ *
+ * UA-01 起为契约纯行为登记表 ai-context 口径的兼容代理(原 kind switch 与
+ * optionTextOf 已删,输出逐字不变,差分锁定见 packages/contract 差分测试)。
+ * 选项正文经 OptionsPublicStructure 提供,不再收全量 snapshot(决策记录 §6.2
+ * 第一行:冻结快照只在装配入口按白名单展开,文本化不携带题目其余字段)。
  */
 export function studentAnswerTextOf(
-  snapshot: Question,
+  optionsStructure: OptionsPublicStructure,
   answer: StudentAnswer | null,
 ): string | null {
   if (answer === null) return null;
-  switch (answer.kind) {
-    case "judge":
-    case "fill":
-      return serializeStudentAnswer(answer);
-    case "choice":
-      return optionTextOf(snapshot, answer.index);
-    case "multi":
-      return [...new Set(answer.indexes)]
-        .sort((a, b) => a - b)
-        .map((index) => optionTextOf(snapshot, index))
-        .join("、");
-    case "final":
-      return answer.finalAnswer.trim() === ""
-        ? "（答案在笔迹材料中）"
-        : answer.finalAnswer;
-  }
+  return dispatchBehavior(answer, "ai-context", {
+    ...emptyPublicStructure,
+    choice: optionsStructure,
+    multi: optionsStructure,
+  });
 }
 
 // ---------- 参考内容缺失态(需求 §4.1 三态,不伪造) ----------
@@ -357,7 +346,12 @@ function assembleBundleFromRows(args: {
       : null;
   const solutionMd = snapshot.solutionMd ?? null;
   const missingNote = missingNoteOf(snapshot.answers, snapshot.solutionMd);
-  const studentAnswerText = studentAnswerTextOf(snapshot, answerOf(answerJson));
+  const studentAnswerText = studentAnswerTextOf(
+    optionsPublicStructureOf(
+      snapshot.options?.map((option) => option.text) ?? [],
+    ),
+    answerOf(answerJson),
+  );
   const capturedAt = resolveNowDate(args.now).toISOString();
   const snapshotData: AiContextSnapshot = {
     questionRevisionId: responseId,

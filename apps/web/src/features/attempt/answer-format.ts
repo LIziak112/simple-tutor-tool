@@ -5,6 +5,9 @@ import type {
   StudentAnswer,
 } from "@tutor/contract";
 import {
+  dispatchBehavior,
+  dispatchIsAnswered,
+  emptyPublicStructure,
   formatQuestionAnswers,
   lettersOf,
   QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT,
@@ -104,47 +107,24 @@ export function attemptRoundLabel(
 }
 
 /**
- * 该题是否算「已作答」（底栏「已答 n/m」与交卷确认的未答数共用口径）：
- * - judge/choice：有答案对象即已答；
- * - multi：至少选一项；
- * - fill：至少一空非空；
- * - final（手写题最终答案）：非空。
+ * 该题是否算「已作答」（底栏「已答 n/m」与交卷确认的未答数共用口径）。
+ * UA-01 起为契约纯行为登记表的兼容代理（原 kind switch 已删，口径逐字不变：
+ * judge/choice 有答案即已答、multi 至少一项、fill 至少一空非空、final 非空；
+ * undefined 由本入口处理，不进登记表）。
  */
 export function isAnswered(answer: StudentAnswer | undefined): boolean {
   if (answer === undefined) return false;
-  switch (answer.kind) {
-    case "judge":
-    case "choice":
-      return true;
-    case "multi":
-      return answer.indexes.length > 0;
-    case "fill":
-      return answer.values.some((value) => value.trim() !== "");
-    case "final":
-      return answer.finalAnswer.trim() !== "";
-  }
+  return dispatchIsAnswered(answer);
 }
 
-/** 本人答案 → 展示文本（结果视图「你的答案」行；null=未作答） */
+/**
+ * 本人答案 → 展示文本（结果视图「你的答案」行；null=未作答）。
+ * UA-01 起为登记表 display 口径的兼容代理（原 kind switch 已删，输出逐字不变；
+ * null 的「未作答」由本入口处理，不伪造某个 kind 的空答案）。
+ */
 export function formatStudentAnswer(answer: StudentAnswer | null): string {
   if (answer === null) return "未作答";
-  switch (answer.kind) {
-    case "judge":
-      return judgeLabelOf(answer.value);
-    case "choice":
-      return letterOf(answer.index);
-    case "multi":
-      return [...answer.indexes]
-        .sort((a, b) => a - b)
-        .map(letterOf)
-        .join("");
-    case "fill":
-      return answer.values
-        .map((v) => (v.trim() === "" ? "（空）" : v))
-        .join("；");
-    case "final":
-      return answer.finalAnswer.trim() === "" ? "（空）" : answer.finalAnswer;
-  }
+  return dispatchBehavior(answer, "display", emptyPublicStructure);
 }
 
 /** LaTeX 命令形态（\frac、\pm、\sqrt 等；显示侧判断答案是否要走公式管线） */

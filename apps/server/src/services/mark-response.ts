@@ -6,6 +6,10 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
+import {
+  dispatchBehavior,
+  emptyPublicStructure,
+} from "@tutor/contract";
 import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -49,46 +53,25 @@ import {
  * 完成（trim 后空串 → null），服务层不做二次处理。
  */
 
-/** 选项下标 → 展示字母（A=0；超出 26 个选项兜底用数字本身；SAI-09 AI 上下文同口径复用） */
-export function optionLabel(index: number): string {
-  return index >= 0 && index < 26
-    ? String.fromCharCode(65 + index)
-    : String(index);
-}
-
 /**
  * 学生答案 → 人类可读文本（待批卡片与 D13 CSV 导出共用同一序列化口径）：
  * - judge：布尔 →「正确/错误」；字符串（旧版判断题写法）原样保留——待批队列里
  *   正是写法无法归一化的题，教师需要看到学生原文；
- * - choice：选项字母（A=0）；
+ * - choice：选项字母（A=0；≥26 兜底数字本身）；
  * - multi：所选下标升序去重拼接（「A、C」）；空选=未作答语义，序列化为空串；
  * - fill：按空序拼接，空与空用「；」分隔（每空文本可能含「、」，不与其混用）；
  * - final（手写题）：最终答案原文（可空串=只写笔迹未填）；
  * - null（answerJson 缺失）→ null（未作答）。
+ *
+ * UA-01 起为契约纯行为登记表 teacher-queue 口径的兼容代理（原 kind switch
+ * 与 optionLabel 已删——选项字母唯一实现收归契约 answer-kinds
+ * queueOptionLabel；输出逐字不变，差分锁定见 packages/contract 差分测试）。
  */
 export function serializeStudentAnswer(
   answer: StudentAnswer | null,
 ): string | null {
   if (answer === null) return null;
-  switch (answer.kind) {
-    case "judge":
-      return typeof answer.value === "boolean"
-        ? answer.value
-          ? "正确"
-          : "错误"
-        : answer.value;
-    case "choice":
-      return optionLabel(answer.index);
-    case "multi":
-      return [...new Set(answer.indexes)]
-        .sort((a, b) => a - b)
-        .map(optionLabel)
-        .join("、");
-    case "fill":
-      return answer.values.join("；");
-    case "final":
-      return answer.finalAnswer;
-  }
+  return dispatchBehavior(answer, "teacher-queue", emptyPublicStructure);
 }
 
 // ---------- POST /api/teacher/responses/:id/mark ----------
