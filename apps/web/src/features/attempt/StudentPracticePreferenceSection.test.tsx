@@ -121,4 +121,78 @@ describe("做题方式设置区（M3-D1）", () => {
     expect(screen.getByText(/登录后可设置/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存做题方式" })).toBeDisabled();
   });
+
+  // ---------- M5-D3 反馈节奏三选 ----------
+
+  it("M5-D3 反馈节奏三选：默认未设置（跟随单元推荐选中），显式切换暂存并置脏", () => {
+    const storageKey = `ownclass:practice-pref:${JSON.stringify([location.origin, "student", "student-1"])}`;
+    render(<StudentPracticePreferenceSection />);
+    expect(screen.getByRole("radio", { name: /跟随单元推荐/ })).toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: /每题提交后查看/ }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: /交卷后统一查看/ }),
+    ).not.toBeChecked();
+    // 说明文案如实描述未设置语义
+    expect(screen.getByText(/未设置时，新练习按单元推荐或默认逐题反馈/));
+
+    const save = screen.getByRole("button", { name: "保存做题方式" });
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /交卷后统一查看/ }));
+    expect(save).toBeEnabled();
+    // 显式改回「跟随单元推荐」：null 被真实写入草稿，与已保存的未设置态
+    // 一致 → 保存钮回到禁用（若 null 被 ?? 吞掉，草稿仍停在交卷后查看，
+    // 按钮会错误保持可用——这条断言同时守住 update 的 null 语义）
+    fireEvent.click(screen.getByRole("radio", { name: /跟随单元推荐/ }));
+    expect(save).toBeDisabled();
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it("M5-D3 反馈节奏保存往返：显式节奏写入存储；改回未设置后键缺省", () => {
+    const storageKey = `ownclass:practice-pref:${JSON.stringify([location.origin, "student", "student-1"])}`;
+    render(<StudentPracticePreferenceSection />);
+    fireEvent.click(screen.getByRole("radio", { name: /每题提交后查看/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存做题方式" }));
+    expect(getPracticePreference().feedback).toBe("per_question");
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? "{}")).toMatchObject({
+      feedback: "per_question",
+    });
+
+    // 改回「跟随单元推荐」保存：feedback 清除为未设置，存储键缺省不补写
+    fireEvent.click(screen.getByRole("radio", { name: /跟随单元推荐/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存做题方式" }));
+    expect(getPracticePreference().feedback).toBeNull();
+    expect(
+      JSON.parse(localStorage.getItem(storageKey) ?? "{}"),
+    ).not.toHaveProperty("feedback");
+    expect(screen.getByText("做题方式已保存"));
+  });
+
+  it("M5-D3 反馈节奏草稿暂存不丢：重渲染与后台重取不覆盖，取消恢复已保存值", () => {
+    const view = render(<StudentPracticePreferenceSection />);
+    fireEvent.click(screen.getByRole("radio", { name: /每题提交后查看/ }));
+    // 先保存 per_question 作为已保存基线
+    fireEvent.click(screen.getByRole("button", { name: "保存做题方式" }));
+    // 再改选交卷后统一查看（未保存草稿），重渲染不丢
+    fireEvent.click(screen.getByRole("radio", { name: /交卷后统一查看/ }));
+    view.rerender(<StudentPracticePreferenceSection />);
+    expect(screen.getByRole("radio", { name: /交卷后统一查看/ })).toBeChecked();
+    // 后台重取（跨标签保存为列表+逐题+关快捷键）不覆盖本地未保存选择
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: `ownclass:practice-pref:${JSON.stringify([location.origin, "student", "student-1"])}`,
+          newValue:
+            '{"version":1,"layout":"list","feedback":"per_question","keyboardShortcuts":false}',
+          storageArea: localStorage,
+        }),
+      );
+    });
+    expect(screen.getByRole("radio", { name: /交卷后统一查看/ })).toBeChecked();
+    // 取消更改恢复已保存值（每题提交后查看）
+    fireEvent.click(screen.getByRole("button", { name: "取消更改" }));
+    expect(screen.getByRole("radio", { name: /每题提交后查看/ })).toBeChecked();
+    expect(getPracticePreference().feedback).toBe("per_question");
+  });
 });
