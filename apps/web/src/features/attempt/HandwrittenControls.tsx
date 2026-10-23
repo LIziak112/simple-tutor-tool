@@ -28,10 +28,12 @@ import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
+// UA-03：最终答案输入接入 final 呈现（answering/views/final，FinalAnswerInput
+// 的唯一消费出口收归呈现层；控制器所有权不变——本组件仍管辖纸面引擎）
+import { FinalAnswerField } from "../answering/views/final";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import { digestOf, mergeInkDocs } from "./draft-merge";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
-import { FinalAnswerInput } from "./FinalAnswerInput";
 import { useDraftSyncActions } from "./use-draft-sync";
 import {
   type InkUploadController,
@@ -341,8 +343,6 @@ export function HandwrittenControls({
     // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
   }, [attemptId, questionId, inkEnabled, externallyControlled, restoreRetry]);
 
-  const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
-
   // T4.0b ink_fullscreen：挂现成 fullscreen state 的翻转处（§5.0-C14）——
   // 初始 false 不报（挂载即进入答题页不是全屏动作），此后每次进出各报一次
   const onInkFullscreenRef = useRef(onInkFullscreen);
@@ -464,11 +464,11 @@ export function HandwrittenControls({
               />
             </div>
           )}
-        <FinalAnswerInput
-          value={finalAnswer}
-          onChange={(value) =>
-            onAnswer({ kind: "final", finalAnswer: value }, true)
-          }
+        <FinalAnswerField
+          questionId={questionId}
+          stemMd={stemMd}
+          answer={answer?.kind === "final" ? answer : undefined}
+          onAnswer={onAnswer}
         />
       </div>
     );
@@ -613,11 +613,11 @@ export function HandwrittenControls({
       )}
 
       {/* 最终答案（普通输入 / 数学键盘，T2.6 输入框保留 + MathLive 切换） */}
-      <FinalAnswerInput
-        value={finalAnswer}
-        onChange={(value) =>
-          onAnswer({ kind: "final", finalAnswer: value }, true)
-        }
+      <FinalAnswerField
+        questionId={questionId}
+        stemMd={stemMd}
+        answer={answer?.kind === "final" ? answer : undefined}
+        onAnswer={onAnswer}
       />
 
       {/* 引擎切换确认：全屏 → 清空回页内 */}

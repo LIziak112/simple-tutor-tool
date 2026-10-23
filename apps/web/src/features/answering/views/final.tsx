@@ -76,9 +76,10 @@ export function FinalAnswerField({
   questionId: string;
   stemMd: string;
   answer: StudentAnswerOfKind<"final"> | undefined;
+  /** 宿主回调（沿用迁移前形态：defer 恒 true 沿原路径透传） */
   onAnswer: (
     answer: { kind: "final"; finalAnswer: string },
-    defer?: boolean,
+    defer: boolean,
   ) => void;
 }) {
   const model: PreparedOf<"final"> = {
@@ -87,5 +88,14 @@ export function FinalAnswerField({
     stemMd,
     finalInput: { label: "最终答案" },
   };
-  return <>{finalView.Input({ model, answer, update: onAnswer })}</>;
+  return (
+    <>
+      {finalView.Input({
+        model,
+        answer,
+        // final 更新沿迁移前路径恒 defer=true（纸面题不即时 flush）
+        update: (next, _defer) => onAnswer(next, true),
+      })}
+    </>
+  );
 }
