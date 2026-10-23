@@ -1,4 +1,9 @@
-import { type APIRequestContext, expect, type Page, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  expect,
+  type Page,
+  test,
+} from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
@@ -239,8 +244,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
       .click();
     await page.getByRole("button", { name: "开始练习" }).click();
     await page.waitForURL("**/s/attempts/**");
-    const attemptId =
-      page.url().match(/\/s\/attempts\/([^/?#]+)/)?.[1] ?? "";
+    const attemptId = page.url().match(/\/s\/attempts\/([^/?#]+)/)?.[1] ?? "";
     expect(attemptId).not.toBe("");
 
     // —— 摘要行与紧凑进度行；同屏只有第 1 题 ——
@@ -463,9 +467,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
 
     // —— Enter 不提交：无反馈区、无缺稿弹层、进度不变、输入原样保留 ——
     await page.keyboard.press("Enter");
-    await expect(
-      q1.getByRole("region", { name: "本题反馈" }),
-    ).toHaveCount(0);
+    await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
     await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(input).toHaveValue("17");
@@ -550,9 +552,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     // 补丁已在页面生效（失败即早爆，不拖到注入阶段）
     const patched = await page.evaluate(
       () =>
-        (
-          window as typeof window & { __e2eDraftPutPatched?: boolean }
-        ).__e2eDraftPutPatched === true,
+        (window as typeof window & { __e2eDraftPutPatched?: boolean })
+          .__e2eDraftPutPatched === true,
     );
     expect(patched, "IndexedDB put 补丁应已安装").toBe(true);
 
@@ -744,9 +745,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     // 可继续交互：提交第 1 题 → 原位反馈
     await waitForAllSaved(page);
     await page.getByRole("button", { name: "提交本题" }).click();
-    await expect(
-      q1.getByRole("region", { name: "本题反馈" }),
-    ).toBeVisible();
+    await expect(q1.getByRole("region", { name: "本题反馈" })).toBeVisible();
     await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
 
     await page.waitForTimeout(800);
