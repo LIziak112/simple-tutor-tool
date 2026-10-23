@@ -1,4 +1,5 @@
 import type { WrongQuestionCard } from "@tutor/contract";
+import { optionsPublicStructureOf } from "@tutor/contract";
 import { displayStemMd, stripOptionListMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import dayjs from "dayjs";
@@ -14,10 +15,13 @@ import {
 import { Link } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
+import {
+  OptionComparisonList,
+  optionCorrectOf,
+} from "@/features/answering/views/choice";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
   formatReferenceAnswers,
-  letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
@@ -392,43 +396,19 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
   );
 }
 
-/** 选项列表（仅 choice/multi；正确项标记，本人选择不在此回显——答案是文本行） */
+/** 选项列表（仅 choice/multi；正确项标记，本人选择不在此回显——答案是文本行）。
+ * UA-03 起内部委托呈现层选项对照（answering/views/choice wrong 形态，与
+ * 学生结果视图/教师详情同一实现）；DOM/文案逐字不变。 */
 function WrongOptions({ question }: { question: WrongQuestionCard }) {
   const options = question.options;
   if (options === undefined) return null;
-  const correct =
-    question.answers?.kind === "choice"
-      ? [question.answers.index]
-      : question.answers?.kind === "multi"
-        ? question.answers.indexes
-        : [];
   return (
-    <ol className="flex flex-col gap-1.5" aria-label="选项">
-      {options.map((option, index) => {
-        const isCorrect = correct.includes(index);
-        return (
-          <li
-            key={option}
-            className={cn(
-              "flex min-h-11 items-start gap-2 rounded-lg border px-3 py-2 text-sm",
-              isCorrect &&
-                "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10",
-              !isCorrect && "border-transparent",
-            )}
-          >
-            <span className="mt-0.5 w-5 shrink-0 font-semibold">
-              {letterOf(index)}
-            </span>
-            <RichMarkdown source={option} className="min-w-0 flex-1 text-sm" />
-            {isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                正确项
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <OptionComparisonList
+      options={optionsPublicStructureOf(options).options}
+      picked={[]}
+      correct={optionCorrectOf(question.answers)}
+      variant="wrong"
+    />
   );
 }
 
