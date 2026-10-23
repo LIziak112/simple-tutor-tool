@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  attemptScoreSummarySchema,
-  type TeacherMark,
-} from "./attempt.ts";
+import { attemptScoreSummarySchema, type TeacherMark } from "./attempt.ts";
 import type { Question, QuestionType } from "./content.ts";
 
 /**

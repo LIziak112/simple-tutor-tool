@@ -74,6 +74,11 @@ export * from "./public-config.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";
+/** 自评与判定状态契约（TT-05a 域③起为权威定义，决策记录 §5.5 定稿）：判断来源
+ *  三值、自评请求/记录/响应（CAS+幂等）、有效判定投影与 finalCorrect 持久语义、
+ *  单题三态推导（self_pending/teacher_pending 区分）与教师待处理谓词——
+ *  服务端 TT-09 消费的契约层单一出处 */
+export * from "./self-review.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
 export * from "./shared-api.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */
@@ -102,11 +107,6 @@ export * from "./student-course-api.ts";
 export * from "./student-notebook-api.ts";
 /** 学生端记录契约（T3.5 起为权威定义，依据 Phase3 清单 D9/D10/D11）：我的记录索引与错题本 */
 export * from "./student-records-api.ts";
-/** 自评与判定状态契约（TT-05a 域③起为权威定义，决策记录 §5.5 定稿）：判断来源
- *  三值、自评请求/记录/响应（CAS+幂等）、有效判定投影与 finalCorrect 持久语义、
- *  单题三态推导（self_pending/teacher_pending 区分）与教师待处理谓词——
- *  服务端 TT-09 消费的契约层单一出处 */
-export * from "./self-review.ts";
 /** 教师端作答数据契约（T3.1 起为权威定义，依据 Phase3 清单 D5–D8）：作答列表/详情查询与数据、错误码 */
 export * from "./teacher-attempt-api.ts";
 /** 教学包声明契约（T7.8 起为权威定义，方案 §4.6）：frontmatter 可选 teachingPack 命名空间——

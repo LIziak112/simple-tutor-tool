@@ -641,7 +641,9 @@ describe("attemptResultDataSchema（结果视图）", () => {
   it("结果快照组上下文 groupOrdinal（TT-05a 域④ §5.2.3/§5.8.1/§5.8.3）：旧快照缺省=独立题不拒绝、在组内题携带、非 1 起正整数拒绝", () => {
     // 旧快照（RESULT 固件无 groupOrdinal）→ 按「不在组内的独立题」处理（§5.8.3）
     const legacy = attemptResultDataSchema.parse(RESULT);
-    expect(legacy.units[0]?.questions[0]?.snapshot.groupOrdinal).toBeUndefined();
+    expect(
+      legacy.units[0]?.questions[0]?.snapshot.groupOrdinal,
+    ).toBeUndefined();
     const withOrdinal = (groupOrdinal: number) =>
       attemptResultDataSchema.safeParse({
         ...RESULT,
