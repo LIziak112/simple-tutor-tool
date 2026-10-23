@@ -319,9 +319,9 @@ function multiCompletion(
   model: PreparedOf<"multi">,
   answer: StudentAnswerOfKind<"multi"> | undefined,
 ): QuestionCompletion {
-  const filled =
-    answer !== undefined &&
-    answer.indexes.some((index) => index >= 0 && index < model.options.length);
+  const filled = answer?.indexes.some(
+    (index) => index >= 0 && index < model.options.length,
+  );
   return filled
     ? { state: "filled", filledSlots: 1, expectedSlots: 1 }
     : { state: "empty", filledSlots: 0, expectedSlots: 1 };
