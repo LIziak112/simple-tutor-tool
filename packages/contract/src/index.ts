@@ -32,6 +32,11 @@ export * from "./content.ts";
 export * from "./content-api.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
+/** 共享材料与题组契约（TT-05a 域①起为权威定义，决策记录 §5.2 定稿）：材料/题组
+ *  完整形态与公开投影白名单、::ref 引用产物、槽位种类词表、稳定 ID 缺省生成
+ *  规则（TT-06 解析器/导入规范化的单一出处）；unit.materials/groups 的挂载在
+ *  content.ts unitSchema */
+export * from "./material.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
 export * from "./directives.ts";
 /** 判分输入契约（T2.5 起为权威定义）：学生答案按题型判别联合，与 content.ts 的 QuestionAnswers 对应 */

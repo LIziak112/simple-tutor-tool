@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { materialSchema, unitGroupSchema } from "./material.ts";
 import { practiceRecommendationSchema } from "./practice-workflow.ts";
 import { teachingPackSchema } from "./teaching-pack.ts";
 
@@ -230,6 +231,17 @@ export const unitSchema = z.object({
    * 可选且**禁止 z.default()**——缺省不注入键，老文档解析结果形状不变。
    */
   practice: practiceRecommendationSchema.optional(),
+  /**
+   * 文档顶层材料声明（TT-05a 域①，§5.2.1 引用式布局）：解析抽取副本。可选且
+   * 禁止 z.default()——旧文档解析结果键集不变（practice 字段同款纪律，§5.8.1）；
+   * 新代码读旧形态按「无材料」处理（§5.8.3 旧快照读取兼容）。
+   */
+  materials: z.array(materialSchema).optional(),
+  /**
+   * 题组叠加元数据（§5.2.4 定稿）：组不产生题行、不进 questions 平铺数组；
+   * questionIds 必须是 questions 顺序的子序列（lint 校验）。缺省不注入键。
+   */
+  groups: z.array(unitGroupSchema).optional(),
   questions: z.array(questionSchema),
 });
 
