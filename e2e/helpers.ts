@@ -700,11 +700,18 @@ export async function chooseAnswer(
     .click();
 }
 
-/** 等草稿离开「保存中」再触发提交类动作（防缺稿明确选择弹层） */
+/**
+ * 等草稿离开在途态再触发提交类动作（防缺稿明确选择弹层）。
+ * 真实在途文案集出自 summarizeAttemptSaveStatus：正在保存到本机／正在同步／
+ * 正在恢复／等待同步；稳态失败文案（本机保存失败、冲突等）不在途、立即放行，
+ * 由后续断言暴露。勿改回 `.not.toContain("保存中")`——文案集里没有该串，恒真。
+ */
 export async function waitForDraftSaved(page: Page): Promise<void> {
   await expect
-    .poll(async () => page.getByTestId("draft-status").textContent())
-    .not.toContain("保存中");
+    .poll(async () => page.getByTestId("draft-status").textContent(), {
+      timeout: 15_000,
+    })
+    .not.toMatch(/正在保存|正在同步|正在恢复|等待同步/);
 }
 
 /** 等草稿进入稳态「全部已保存」（本机 + 服务端一致） */

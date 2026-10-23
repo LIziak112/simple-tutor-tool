@@ -466,7 +466,12 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
           ) && r.status() === 409,
       );
       await q1.getByRole("button", { name: "提交本题" }).click();
-      await restrictedPromise;
+      const restricted = await restrictedPromise;
+      // 断错误码而非仅状态码：WORKFLOW_REVISION_STALE 等其他 409 同样满足
+      // 状态码条件，不查码会把 revision 回归掩蔽成「服务端拒绝」。
+      expect(((await restricted.json()) as { error?: string }).error).toBe(
+        "WORKFLOW_RESTRICTED",
+      );
       await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
@@ -561,7 +566,11 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
           ) && r.status() === 409,
       );
       await q1.getByRole("button", { name: "提交本题" }).click();
-      await restrictedPromise;
+      const restricted = await restrictedPromise;
+      // 同场景3：断错误码 WORKFLOW_RESTRICTED，防其他 409（如 revision 陈旧）混过。
+      expect(((await restricted.json()) as { error?: string }).error).toBe(
+        "WORKFLOW_RESTRICTED",
+      );
       await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
