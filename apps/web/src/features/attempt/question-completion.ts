@@ -1,9 +1,9 @@
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
-import { questionBindings } from "../answering/question-binding";
 import {
   expectedSlotCountOf,
   slotsOfQuestion,
 } from "../answering/prepare-question";
+import { questionBindings } from "../answering/question-binding";
 
 export interface QuestionCompletion {
   state: "empty" | "partial" | "filled";

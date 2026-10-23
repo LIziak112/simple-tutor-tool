@@ -25,7 +25,8 @@ import {
  */
 
 /** 语料 valid-08 fill 题：studentStemMd 投影把 [[-8]] 等脱敏成 [[]] */
-const VALID08_FILL_STEM = "计算：$(-2)^3=$ [[]]；$-3^2=$ [[]]；$|-4|+(-1)^{10}=$ [[]]。";
+const VALID08_FILL_STEM =
+  "计算：$(-2)^3=$ [[]]；$-3^2=$ [[]]；$|-4|+(-1)^{10}=$ [[]]。";
 
 /** 语料 valid-01 zl-4：[[60.0|60]] 脱敏后单空 */
 const VALID01_ZL4_STEM =
@@ -108,9 +109,7 @@ describe("slotsOfQuestion（WeakMap 对象身份缓存，I13）", () => {
 describe("expectedSlotCountOf（旧 countSlots 口径逐字一致）", () => {
   it("空列表为 0；正常连续编号等于槽位个数", () => {
     expect(expectedSlotCountOf([])).toBe(0);
-    expect(
-      expectedSlotCountOf(analyzeSlots(VALID08_FILL_STEM)),
-    ).toBe(3);
+    expect(expectedSlotCountOf(analyzeSlots(VALID08_FILL_STEM))).toBe(3);
   });
 
   it("病理性重复编号取编号最大值（不按个数虚报）", () => {
@@ -188,7 +187,8 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
     };
     void _omitted;
     const noOptionsPrepared = prepareQuestion(noOptions, "s");
-    if (noOptionsPrepared.kind !== "choice") throw new Error("应为 choice 模型");
+    if (noOptionsPrepared.kind !== "choice")
+      throw new Error("应为 choice 模型");
     expect(noOptionsPrepared.options).toEqual([]);
   });
 

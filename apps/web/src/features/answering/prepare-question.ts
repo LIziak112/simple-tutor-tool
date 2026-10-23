@@ -1,8 +1,4 @@
-import type {
-  PublicOption,
-  PublicSlot,
-  QuestionPublic,
-} from "@tutor/contract";
+import type { PublicOption, PublicSlot, QuestionPublic } from "@tutor/contract";
 import { optionsPublicStructureOf } from "@tutor/contract";
 import { processor } from "@tutor/md-dsl";
 import { blankSlotIdOf } from "@/features/markdown/directives/session-context";
@@ -59,7 +55,9 @@ const slotsByQuestion = new WeakMap<QuestionPublic, readonly PublicSlot[]>();
  * 带缓存的槽位分析：缓存沿用对象身份 WeakMap（是否改为公开内容哈希留待有
  * 性能证据时单独决定，§8.1）；只存无答案派生结构，不混入账号/attempt 级数据。
  */
-export function slotsOfQuestion(question: QuestionPublic): readonly PublicSlot[] {
+export function slotsOfQuestion(
+  question: QuestionPublic,
+): readonly PublicSlot[] {
   const cached = slotsByQuestion.get(question);
   if (cached !== undefined) return cached;
   const slots = analyzeSlots(question.stemMd);

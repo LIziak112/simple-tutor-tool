@@ -1,8 +1,4 @@
-import type {
-  AnswerKind,
-  PaperRole,
-  QuestionType,
-} from "@tutor/contract";
+import type { AnswerKind, PaperRole, QuestionType } from "@tutor/contract";
 import { questionEvidenceBindings } from "@tutor/contract";
 
 /**
