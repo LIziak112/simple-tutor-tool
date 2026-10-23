@@ -7,7 +7,7 @@ import {
   Play,
   RotateCcw,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +16,10 @@ import {
   workflowStartOptions,
 } from "@/features/attempt/attempt-queries";
 import { setAttemptStartLayoutIntent } from "@/features/attempt/attempt-start-intent";
-import { getPracticePreference } from "@/features/attempt/practice-preference-store";
+import {
+  getPracticePreference,
+  usePracticePreference,
+} from "@/features/attempt/practice-preference-store";
 import {
   practiceLayoutLabel,
   practiceLayoutOptions,
@@ -55,6 +58,20 @@ function statusLabel(status: string): string {
   if (status === "draft") return "进行中";
   if (status === "graded") return "已批改";
   return "已交卷";
+}
+
+/**
+ * 选择器初值链（裁决⑨）：已保存偏好 → 单元推荐 → 缺省（列表/逐题）。
+ * 两处消费（单一出处）：挂载 useState 初值 + 未绑定→已绑定对齐 effect（闸门 B1）。
+ */
+function initialSelectionOf(
+  recommendation: StudentUnitLandingData["practiceRecommendation"],
+): { layout: "list" | "single"; feedback: "per_question" | "after_attempt" } {
+  const saved = getPracticePreference();
+  return {
+    layout: saved.layout ?? recommendation?.layout ?? "list",
+    feedback: saved.feedback ?? recommendation?.feedback ?? "per_question",
+  };
 }
 
 /** 再做一次的确认弹层（D10：新一次从空白开始） */
@@ -201,32 +218,48 @@ function UnitLandingView({
   const busy = startAttempt.isPending;
 
   // 初值链：已保存偏好 → 单元推荐 → 缺省；子组件在落地数据到达后挂载，
-  // useState 初值可安全读取推荐与本机偏好
-  const [selected, setSelected] = useState(() => {
-    const saved = getPracticePreference();
-    return {
-      layout: saved.layout ?? landing.practiceRecommendation?.layout ?? "list",
-      feedback:
-        saved.feedback ??
-        landing.practiceRecommendation?.feedback ??
-        "per_question",
-    };
-  });
+  // useState 初值可安全读取推荐；本机偏好若绑定晚到由下方对齐 effect 补
+  const [selected, setSelected] = useState(() =>
+    initialSelectionOf(landing.practiceRecommendation),
+  );
   // 节奏是否被显式触碰：未触碰不携 feedbackMode（M5-D2 链不因本页中断）
   const [rhythmTouched, setRhythmTouched] = useState(false);
+
+  // 闸门 B1（M3-D1.5 同款竞态）：硬刷新时布局层的账号绑定 effect 晚于本组件
+  // 首渲染，初值链可能读到未绑定 store——已保存偏好被错过退化为 推荐??缺省，
+  // 而点击「开始」时 store 已绑定、workflowStartOptions 照发已保存节奏，
+  // 展示预选与实际建卷不一致。store 从未绑定变已绑定的那一刻按初值链对齐
+  // 一次；任一选择器被显式触碰后不再拉扯（裁决⑨「显式点选后本次访问内
+  // 恒定」；换绑与解绑不对齐）。
+  const explicitSelectionRef = useRef(false);
+  const { accountId: boundAccountId } = usePracticePreference();
+  const prevBoundAccountRef = useRef(boundAccountId);
+  useEffect(() => {
+    const previous = prevBoundAccountRef.current;
+    prevBoundAccountRef.current = boundAccountId;
+    if (previous !== null || boundAccountId === null) return;
+    if (explicitSelectionRef.current) return;
+    setSelected(initialSelectionOf(landing.practiceRecommendation));
+  }, [boundAccountId, landing.practiceRecommendation]);
 
   const enterAttempt = (attemptId: string) => {
     void navigate(`/s/attempts/${attemptId}`);
   };
 
   const onStart = () => {
-    // 布局当前值恒写一次性 transient（含继续作答/再做一次路径，统一入口）
-    setAttemptStartLayoutIntent(selected.layout);
     startAttempt.mutate(
       rhythmTouched
         ? { ...workflowStartOptions(), feedbackMode: selected.feedback }
         : undefined,
-      { onSuccess: (attempt) => enterAttempt(attempt.id) },
+      {
+        onSuccess: (attempt) => {
+          // 建卷成功才写一次性 transient（含继续作答/再做一次路径，三入口
+          // 统一；闸门 A1）：失败/中断不得残留——模块级值永不过期，会劫持
+          // 之后任意无关作答的初始布局（裁决⑨「一次性」变「下一次消费」）
+          setAttemptStartLayoutIntent(selected.layout);
+          enterAttempt(attempt.id);
+        },
+      },
     );
   };
 
@@ -348,9 +381,10 @@ function UnitLandingView({
                   name="practice-start-layout"
                   value={value}
                   checked={selected.layout === value}
-                  onChange={() =>
-                    setSelected((prev) => ({ ...prev, layout: value }))
-                  }
+                  onChange={() => {
+                    explicitSelectionRef.current = true;
+                    setSelected((prev) => ({ ...prev, layout: value }));
+                  }}
                 />
                 <span className="text-sm font-medium">{title}</span>
               </label>
@@ -374,6 +408,7 @@ function UnitLandingView({
                   value={value}
                   checked={selected.feedback === value}
                   onChange={() => {
+                    explicitSelectionRef.current = true;
                     setRhythmTouched(true);
                     setSelected((prev) => ({ ...prev, feedback: value }));
                   }}
