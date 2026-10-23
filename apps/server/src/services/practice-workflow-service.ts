@@ -57,7 +57,7 @@ interface ResolvePracticeWorkflowCommon {
 }
 
 /**
- * 新建新协议卷：按教师规则 + 学生选择/缺省推荐裁决；不得携带 stored
+ * 新建新协议卷：按教师规则 + 学生选择/文档推荐/缺省裁决；不得携带 stored
  * （运行时携带即抛错，防伪造已存事实骗授权）。
  * 调用样例：{ sourceType: "course", lifecycle: "new", studentChoice: "per_question" }
  */
@@ -67,6 +67,14 @@ export interface ResolveNewPracticeWorkflowInput
   stored?: never;
   /** 学生本次明确选择 / 持久偏好（新建卷用；不放宽教师限制） */
   studentChoice?: PracticeFeedbackMode | null;
+  /**
+   * 文档推荐档（M5-D2，frontmatter `practice:` 的 feedback 值，装配层读
+   * units.practiceDefaultsJson 聚合后传入）：学生未设置偏好时才生效——
+   * 决定链 studentChoice ?? unitRecommendation ?? "per_question"，整体仍被
+   * allowedFeedbackModes 收敛（推荐不能越权，教师限制最终裁决）。续作不读
+   * 推荐（existing 保持 stored.feedbackMode）。
+   */
+  unitRecommendation?: PracticeFeedbackMode | null;
 }
 
 /**
@@ -280,15 +288,23 @@ export function resolvePracticeWorkflow(
         : "teacher_after_attempt";
 
   // 节奏决定：续作（stored 存在）保持 stored.feedbackMode（教师放宽不改写，
-  // existing 不读 studentChoice 不改写既存事实；收紧见下）；新建先取学生
-  // 明确选择（不得越权到不允许项），否则未受限时默认 per_question（§5.3）。
+  // existing 不读 studentChoice/unitRecommendation，不改写既存事实；收紧见下）；
+  // 新建按 学生明确选择 > 文档推荐（M5-D2，学生未设置偏好时才生效）> 缺省
+  // per_question（§5.3/§5.4 档 2、3），整体不得越权到不允许项（推荐与选择
+  // 同样被 allowedFeedbackModes 收敛——教师限制最终裁决）。
   const frozen = stored
     ? stored.hasSubmittedQuestion || stored.attemptSubmitted
     : false;
+  // existing 分支的 unitRecommendation 不在类型上（续作不读推荐）；运行时
+  // 传入也被 stored 短路忽略（见下方 effectiveMode）
+  const preferred =
+    input.studentChoice ??
+    (input as ResolveNewPracticeWorkflowInput).unitRecommendation ??
+    "per_question";
   const effectiveMode: PracticeFeedbackMode = stored
     ? stored.feedbackMode
-    : allowedFeedbackModes.includes(input.studentChoice ?? "per_question")
-      ? (input.studentChoice ?? "per_question")
+    : allowedFeedbackModes.includes(preferred)
+      ? preferred
       : "after_attempt";
 
   return practiceWorkflowSchema.parse({
