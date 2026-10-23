@@ -56,14 +56,6 @@ export function letterOf(index: number): string {
 }
 
 /**
- * 判断题答案的展示文本：布尔 → 对/错；字符串写法（旧版 √/F 等）原样展示。
- */
-export function judgeLabelOf(value: boolean | string): string {
-  if (typeof value === "boolean") return value ? "对" : "错";
-  return value;
-}
-
-/**
  * 学生端来源行文案（2026-10 收口单源）：答题视图头部（AttemptHeader 下方）
  * 与结果视图汇总行原先两份同文实现合并于此。教师端卡片/详情是另一展示口径
  * （见 teacher-attempts/attempt-views 的 sourceContextOf/sourceLineOf）。
