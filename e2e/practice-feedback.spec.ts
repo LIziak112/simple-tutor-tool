@@ -6,15 +6,20 @@ import {
   test,
 } from "@playwright/test";
 import {
-  addCourseMemberViaApi,
   attachLeakMonitor,
+  chooseAnswer,
   createCourseViaApi,
   createStudentViaApi,
   expectResultCount,
+  FORBIDDEN_EXACT_KEYS,
+  FORBIDDEN_KEY_PREFIXES,
   getStudentViaApi,
-  setCourseItemVisible,
+  importUnitToCourse,
+  openUnitLanding,
+  prepareCourseStudent,
   teacherApiLogin,
   uniqueSuffix,
+  waitForDraftSaved,
 } from "./helpers";
 
 /**
@@ -104,37 +109,6 @@ function recommendedPracticeMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-/** 导入练习单元进课程并放开可见（D23-3 导入兼容路径默认隐藏） */
-async function importUnitToCourse(
-  request: APIRequestContext,
-  courseId: string,
-  unitName: string,
-  markdown: string,
-): Promise<void> {
-  const res = await request.post("/api/teacher/import/commit", {
-    data: { markdown, filename: `${unitName}.md`, courseId },
-  });
-  if (!res.ok()) {
-    throw new Error(
-      `导入练习单元失败：HTTP ${res.status()} ${await res.text()}`,
-    );
-  }
-  await setCourseItemVisible(request, courseId, unitName, true);
-}
-
-/** 造一名专属学生并加入课程，返回学生 id 与链接 token */
-async function prepareCourseStudent(
-  request: APIRequestContext,
-  courseId: string,
-  suffix: string,
-): Promise<{ id: string; linkToken: string }> {
-  const loginName = `e2e-feedback-${suffix}`;
-  await createStudentViaApi(request, `e2e反馈生${suffix}`, loginName);
-  const student = await getStudentViaApi(request, loginName);
-  await addCourseMemberViaApi(request, courseId, student.id);
-  return student;
-}
-
 /** 教师布置一份单单元作业（allowPerQuestionFeedback 控制逐题反馈授权） */
 async function createAssignmentViaApi(
   request: APIRequestContext,
@@ -166,57 +140,9 @@ async function createAssignmentViaApi(
   return id;
 }
 
-/** 学生链接登录并进入课程单元落地页（开始练习前） */
-async function openUnitLanding(
-  page: Page,
-  linkToken: string,
-  courseId: string,
-  courseName: string,
-  unitName: string,
-): Promise<void> {
-  await page.goto(`/s/${linkToken}`);
-  await page.waitForURL("**/s/home");
-  await page.getByRole("link", { name: `打开课程 ${courseName}` }).click();
-  await page.waitForURL(`**/s/courses/${courseId}`);
-  await page
-    .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
-    .click();
-  await page.waitForURL(
-    `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
-  );
-}
-
-/** 选中某题的判断/单选选项（模板同款：radio 祖先 label 点击） */
-async function chooseAnswer(
-  page: Page,
-  questionNo: number,
-  optionName: string,
-  exact = false,
-): Promise<void> {
-  const card = page.locator(`article[aria-label="第 ${questionNo} 题"]`);
-  await card
-    .getByRole("radio", { name: optionName, exact })
-    .locator("xpath=ancestor::label[1]")
-    .click();
-}
-
-/** 等草稿离开「保存中」再触发提交类动作（防缺稿明确选择弹层） */
-async function waitForDraftSaved(page: Page): Promise<void> {
-  await expect
-    .poll(async () => page.getByTestId("draft-status").textContent())
-    .not.toContain("保存中");
-}
-
-/** 草稿取卷键级断言的禁键：answer 系精确键 + solution 前缀（与泄露监控
- * 的 FORBIDDEN_EXACT_KEYS/前缀同口径；answerRelease 是公布时机策略串，非答案） */
-const DRAFT_FORBIDDEN_EXACT_KEYS = new Set([
-  "answer",
-  "answers",
-  "answerJson",
-  "answersJson",
-]);
-
-/** 递归收集禁键路径（草稿取卷防泄露的键级断言） */
+/** 递归收集禁键路径（草稿取卷防泄露的键级断言）：
+ *  复用泄露监控导出的 FORBIDDEN_EXACT_KEYS/FORBIDDEN_KEY_PREFIXES，与服务端
+ *  assert-no-leak 及监控同口径；answerRelease 是公布时机策略串，非答案） */
 function collectSecretKeyPaths(node: unknown, path: string): string[] {
   if (Array.isArray(node)) {
     return node.flatMap((item, index) =>
@@ -227,7 +153,10 @@ function collectSecretKeyPaths(node: unknown, path: string): string[] {
   const hits: string[] = [];
   for (const [key, child] of Object.entries(node)) {
     const keyPath = path === "" ? key : `${path}.${key}`;
-    if (DRAFT_FORBIDDEN_EXACT_KEYS.has(key) || key.startsWith("solution")) {
+    if (
+      FORBIDDEN_EXACT_KEYS.has(key) ||
+      FORBIDDEN_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
       hits.push(keyPath);
     }
     hits.push(...collectSecretKeyPaths(child, keyPath));
@@ -292,7 +221,12 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       unitName,
       perQuestionPracticeMarkdown(unitName),
     );
-    const student = await prepareCourseStudent(request, courseId, suffix);
+    const student = await prepareCourseStudent(
+      request,
+      courseId,
+      `e2e-feedback-${suffix}`,
+      `e2e反馈生${suffix}`,
+    );
 
     // —— 学生端：iPad 独立 context，全程泄露监控 ——
     const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
@@ -578,7 +512,12 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       unitName,
       perQuestionPracticeMarkdown(unitName),
     );
-    const student = await prepareCourseStudent(request, courseId, suffix);
+    const student = await prepareCourseStudent(
+      request,
+      courseId,
+      `e2e-feedback-${suffix}`,
+      `e2e反馈生${suffix}`,
+    );
 
     const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
     const studentPage = await studentContext.newPage();
@@ -668,7 +607,12 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       unitName,
       recommendedPracticeMarkdown(unitName),
     );
-    const student = await prepareCourseStudent(request, courseId, suffix);
+    const student = await prepareCourseStudent(
+      request,
+      courseId,
+      `e2e-feedback-${suffix}`,
+      `e2e反馈生${suffix}`,
+    );
 
     const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
     const studentPage = await studentContext.newPage();

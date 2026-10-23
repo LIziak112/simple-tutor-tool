@@ -633,10 +633,91 @@ export async function handwriteOneStroke(
   }
 }
 
+// ---------- 练习反馈升级（2026-10）spec 共用链路 ----------
+
+/** 导入练习单元进课程并放开可见（D23-3 导入兼容路径默认隐藏） */
+export async function importUnitToCourse(
+  request: APIRequestContext,
+  courseId: string,
+  unitName: string,
+  markdown: string,
+): Promise<void> {
+  const res = await request.post("/api/teacher/import/commit", {
+    data: { markdown, filename: `${unitName}.md`, courseId },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `导入练习单元失败：HTTP ${res.status()} ${await res.text()}`,
+    );
+  }
+  await setCourseItemVisible(request, courseId, unitName, true);
+}
+
+/** 造一名专属学生并加入课程（登录名与显示名由调用方给定，便于各 spec 隔离），返回学生 id 与链接 token */
+export async function prepareCourseStudent(
+  request: APIRequestContext,
+  courseId: string,
+  loginName: string,
+  displayName: string,
+): Promise<{ id: string; linkToken: string }> {
+  await createStudentViaApi(request, displayName, loginName);
+  const student = await getStudentViaApi(request, loginName);
+  await addCourseMemberViaApi(request, courseId, student.id);
+  return student;
+}
+
+/** 学生链接登录并进入课程单元落地页（开始练习前） */
+export async function openUnitLanding(
+  page: Page,
+  linkToken: string,
+  courseId: string,
+  courseName: string,
+  unitName: string,
+): Promise<void> {
+  await page.goto(`/s/${linkToken}`);
+  await page.waitForURL("**/s/home");
+  await page.getByRole("link", { name: `打开课程 ${courseName}` }).click();
+  await page.waitForURL(`**/s/courses/${courseId}`);
+  await page
+    .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
+    .click();
+  await page.waitForURL(
+    `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
+  );
+}
+
+/** 选中某题的判断/单选选项（radio 祖先 label 点击） */
+export async function chooseAnswer(
+  page: Page,
+  questionNo: number,
+  optionName: string,
+  exact = false,
+): Promise<void> {
+  const card = page.locator(`article[aria-label="第 ${questionNo} 题"]`);
+  await card
+    .getByRole("radio", { name: optionName, exact })
+    .locator("xpath=ancestor::label[1]")
+    .click();
+}
+
+/** 等草稿离开「保存中」再触发提交类动作（防缺稿明确选择弹层） */
+export async function waitForDraftSaved(page: Page): Promise<void> {
+  await expect
+    .poll(async () => page.getByTestId("draft-status").textContent())
+    .not.toContain("保存中");
+}
+
+/** 等草稿进入稳态「全部已保存」（本机 + 服务端一致） */
+export async function waitForAllSaved(page: Page): Promise<void> {
+  await expect
+    .poll(async () => page.getByTestId("draft-status").textContent())
+    .toBe("全部已保存");
+}
+
 // ---------- 学生端响应泄露监控 ----------
 
-/** 与服务端 assert-no-leak 同口径的禁键集合（键名精确匹配） */
-const FORBIDDEN_EXACT_KEYS = new Set([
+/** 与服务端 assert-no-leak 同口径的禁键集合（键名精确匹配；供监控与各 spec 键级断言复用） */
+export const FORBIDDEN_EXACT_KEYS = new Set([
   "answer",
   "answers",
   "answerJson",
@@ -651,7 +732,7 @@ const FORBIDDEN_EXACT_KEYS = new Set([
 ]);
 
 /** 禁键前缀（solution / solutionMd / solutionJson …） */
-const FORBIDDEN_KEY_PREFIXES = ["solution"];
+export const FORBIDDEN_KEY_PREFIXES = ["solution"];
 
 /** 公开计数字段白名单（允许） */
 const ALLOWED_EXACT_KEYS = new Set(["hintCount", "hintsUsed"]);
