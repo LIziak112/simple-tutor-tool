@@ -229,7 +229,8 @@ it("M5-D3：跨标签事件 newValue 缺 layout 键 → 未设置（currentLayou
   window.dispatchEvent(
     new StorageEvent("storage", {
       key,
-      newValue: '{"version":1,"feedback":"per_question","keyboardShortcuts":false}',
+      newValue:
+        '{"version":1,"feedback":"per_question","keyboardShortcuts":false}',
       storageArea: localStorage,
     }),
   );

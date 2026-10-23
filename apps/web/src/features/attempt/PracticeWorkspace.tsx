@@ -125,8 +125,7 @@ export function PracticeModeSummary({
             <legend className="sr-only">选择反馈节奏</legend>
             {feedbackModeOptions.map(({ value }) => {
               const itemDisabled =
-                feedbackBusy ||
-                !workflow.allowedFeedbackModes.includes(value);
+                feedbackBusy || !workflow.allowedFeedbackModes.includes(value);
               return (
                 <label
                   key={value}

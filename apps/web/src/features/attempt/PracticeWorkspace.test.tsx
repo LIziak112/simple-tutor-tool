@@ -219,9 +219,9 @@ it("M5-D3 节奏组（提交后冻结）：整组禁用并展示受限文案", (
   expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
   expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
   // 展开区紧邻节奏组展示受限文案（摘要行已有一处，展开区追加同源文案）
-  expect(screen.getAllByText("老师要求交卷后公布").length).toBeGreaterThanOrEqual(
-    2,
-  );
+  expect(
+    screen.getAllByText("老师要求交卷后公布").length,
+  ).toBeGreaterThanOrEqual(2);
 });
 
 it("M5-D3 节奏组（冻结无受限原因，如已开始提交）：整组禁用且不臆造受限文案", () => {

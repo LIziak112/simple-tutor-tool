@@ -1,6 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AttemptWorkflowUpdateData, PracticeWorkflow } from "@tutor/contract";
+import type {
+  AttemptWorkflowUpdateData,
+  PracticeWorkflow,
+} from "@tutor/contract";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ApiError, updateAttemptWorkflowApi } from "@/lib/api";
 import { studentAttemptKey, useUpdateAttemptWorkflow } from "./attempt-queries";
@@ -97,16 +100,18 @@ it("成功后失效该 attempt 详情查询（重取服务端投影），无错�
     expect.objectContaining({ queryKey: studentAttemptKey(ATTEMPT_ID) }),
   );
   await waitFor(() =>
-    expect(
-      screen.getByRole("radio", { name: "交卷后查看" }),
-    ).toBeEnabled(),
+    expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeEnabled(),
   );
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("WORKFLOW_REVISION_STALE：失效详情（重取投影）并提示已刷新请重试", async () => {
   mockedUpdate.mockRejectedValue(
-    new ApiError("WORKFLOW_REVISION_STALE", "反馈节奏已在其他设备修改，请刷新后重试", 409),
+    new ApiError(
+      "WORKFLOW_REVISION_STALE",
+      "反馈节奏已在其他设备修改，请刷新后重试",
+      409,
+    ),
   );
   const { invalidateSpy, expand } = renderHarness(workflowOf({ revision: 3 }));
   expand();
@@ -123,7 +128,11 @@ it("WORKFLOW_REVISION_STALE：失效详情（重取投影）并提示已刷新�
 
 it("其他错误透传服务端 message，且不失效详情查询", async () => {
   mockedUpdate.mockRejectedValue(
-    new ApiError("QUESTION_ALREADY_SUBMITTED", "已有题目提交，反馈节奏已固定", 409),
+    new ApiError(
+      "QUESTION_ALREADY_SUBMITTED",
+      "已有题目提交，反馈节奏已固定",
+      409,
+    ),
   );
   const { invalidateSpy, expand } = renderHarness(workflowOf({ revision: 3 }));
   expand();
@@ -146,7 +155,9 @@ it("PATCH 在途期间节奏组临时禁用（防重复提交），完成后恢�
   expand();
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   await waitFor(() =>
-    expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled(),
+    expect(
+      screen.getByRole("radio", { name: "每题提交后查看" }),
+    ).toBeDisabled(),
   );
   expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
   resolveApi(updateReceiptOf(workflowOf({ feedbackMode: "after_attempt" })));
