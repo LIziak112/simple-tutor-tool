@@ -288,11 +288,11 @@ export function optionPickedOf(
       : [];
 }
 
-/** 参考答案 → 正确项集合（choice/multi；其余 kind 空集） */
+/** 参考答案 → 正确项集合（choice/multi；其余 kind 空集；缺省/无参考为空集） */
 export function optionCorrectOf(
-  answers: QuestionAnswers | null,
+  answers: QuestionAnswers | null | undefined,
 ): readonly number[] {
-  if (answers === null) return [];
+  if (answers === null || answers === undefined) return [];
   return answers.kind === "choice"
     ? [answers.index]
     : answers.kind === "multi"

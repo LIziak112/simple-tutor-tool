@@ -1,4 +1,5 @@
 import type { TeacherAttemptDetailQuestion } from "@tutor/contract";
+import { optionsPublicStructureOf } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
@@ -6,10 +7,14 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
+  OptionComparisonList,
+  optionCorrectOf,
+  optionPickedOf,
+} from "@/features/answering/views/choice";
+import {
   formatReferenceAnswers,
   formatStudentAnswer,
   HANDWRITTEN_TYPES,
-  letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
@@ -47,7 +52,9 @@ function verdictOf(value: boolean | null): { text: string; className: string } {
   return { text: "—", className: "text-muted-foreground" };
 }
 
-/** 选项列表（choice/multi）：标记正确项（仅已交卷下发 answers）与学生所选 */
+/** 选项列表（choice/multi）：标记正确项（仅已交卷下发 answers）与学生所选。
+ * UA-03 起内部委托呈现层选项对照（answering/views/choice teacher 形态，
+ * 与学生结果视图/错题本同一实现）；DOM/文案逐字不变。 */
 function DetailOptions({
   question,
 }: {
@@ -55,51 +62,13 @@ function DetailOptions({
 }) {
   const options = question.options;
   if (options === undefined) return null;
-  const picked =
-    question.answer?.kind === "choice"
-      ? [question.answer.index]
-      : question.answer?.kind === "multi"
-        ? question.answer.indexes
-        : [];
-  const correct =
-    question.answers?.kind === "choice"
-      ? [question.answers.index]
-      : question.answers?.kind === "multi"
-        ? question.answers.indexes
-        : [];
   return (
-    <ol className="flex flex-col gap-1.5" aria-label="选项">
-      {options.map((option, index) => {
-        const isPicked = picked.includes(index);
-        const isCorrect = correct.includes(index);
-        return (
-          <li
-            key={option}
-            className={cn(
-              "flex min-h-11 items-start gap-2 rounded-lg border px-3 py-2 text-sm",
-              isPicked
-                ? "border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10"
-                : "border-border",
-            )}
-          >
-            <span className="mt-0.5 w-5 shrink-0 font-semibold">
-              {letterOf(index)}
-            </span>
-            <RichMarkdown source={option} className="min-w-0 flex-1 text-sm" />
-            {isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                正确项
-              </span>
-            )}
-            {isPicked && (
-              <span className="shrink-0 text-xs font-medium text-sky-700 dark:text-sky-300">
-                学生选择
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <OptionComparisonList
+      options={optionsPublicStructureOf(options).options}
+      picked={optionPickedOf(question.answer)}
+      correct={optionCorrectOf(question.answers)}
+      variant="teacher"
+    />
   );
 }
 
