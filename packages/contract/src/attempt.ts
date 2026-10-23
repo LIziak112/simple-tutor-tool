@@ -524,6 +524,13 @@ export const attemptResultDataSchema = z.object({
    * 渲染同样遵循开关（steps 关闭时详解内 steps 完整展开）。
    */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
+  /**
+   * 练习工作流裁决投影（M4-D3 §13.8，与草稿视图同一 schema 单源）：v1 新协议
+   * 卷携带（feedbackMode 驱动结果页「反馈节奏」摘要行——作答时逐题反馈 /
+   * 交卷后反馈）；lesson / 历史旧协议卷缺省 = 前端不渲染该行。结论只能来自
+   * 服务端 resolver 读时裁决，本字段不作为任何授权依据。
+   */
+  practiceWorkflow: practiceWorkflowSchema.optional(),
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */

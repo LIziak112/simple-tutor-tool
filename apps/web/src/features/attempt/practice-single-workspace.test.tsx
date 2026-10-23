@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { AttemptDraftData } from "@tutor/contract";
+import type { AiTaskPublic, AttemptDraftData } from "@tutor/contract";
 import {
   MemoryRouter,
   Route,
@@ -15,10 +15,42 @@ import {
   useLocation,
   useNavigationType,
 } from "react-router";
-import { beforeEach, expect, it, vi } from "vitest";
-import { fetchAttemptApi } from "@/lib/api";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  installAnnotationBackend,
+  memoryAnnotationBackend,
+} from "@/features/annotation/annotation-store";
+import {
+  bindAnnotationSession,
+  resetAnnotationSession,
+} from "@/features/annotation/annotation-sync";
+import {
+  installNoteBackend,
+  memoryNoteBackend,
+} from "@/features/notes/note-store";
+import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
+import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
+import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
+import {
+  fetchAttemptApi,
+  fetchPracticeQuestionFeedbackApi,
+  fetchStudentAiStatusApi,
+  fetchStudentAiTaskApi,
+  fetchStudentNoteHeadsApi,
+  fetchStudentQuickButtonsApi,
+  listStudentAiTasksApi,
+  openStudentAiReplyApi,
+  saveAttemptAnswerApi,
+  submitPracticeQuestionApi,
+} from "@/lib/api";
+import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
-import { installDraftBackend, type KVBackend } from "./draft-store";
+import { getAttemptRecoveryState } from "./attempt-material-recovery";
+import {
+  installDraftBackend,
+  type KVBackend,
+  memoryBackend,
+} from "./draft-store";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,
@@ -31,6 +63,9 @@ import { workflowOf } from "./practice-test-fixtures";
  * （DOM 节点同一性）；单题切题用 replace 更新 URL q（验证属本卷，非法忽略
  * 回退首道未提交题）；legacy 卷（无 practiceWorkflow）零变化（无摘要行、无
  * 菜单切换项）。lesson 卷不经过本页作答视图（服务端恒不下发 workflow）。
+ * M4-D2（§12.1）：单题切题先收起 AI 阅读（复用收起链，返回原题见折叠入口）；
+ * 旧任务定位先走统一切题入口再展开；键盘不劫持 AI 输入；AI 节点不入题面域
+ * 与反馈区（底图/导出零 AI 输入）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -44,16 +79,88 @@ vi.mock("@/lib/api", async (importOriginal) => {
       annotation: null,
     })),
     fetchAttemptApi: vi.fn(),
+    fetchAttemptMaterialRevisionsApi: vi.fn(async () => ({
+      notes: {},
+      annotations: {},
+      ink: {},
+    })),
+    postAttemptEventsApi: vi.fn(async () => ({ accepted: 1 })),
+    sealAttemptAnnotationsApi: vi.fn(async () => ({
+      phase: "scratch" as const,
+      sealedCount: 0,
+    })),
+    fetchAttemptInkApi: vi.fn(async () => null),
+    putAttemptInkApi: vi.fn(async () => ({
+      questionId: "",
+      inkId: "",
+      strokeCount: 0,
+      width: 0,
+      height: 0,
+      updatedAt: "",
+    })),
+    uploadStudentAiTaskMaterialsApi: vi.fn(async () => undefined),
     createCorrectionApi: vi.fn(),
     sealCorrectionApi: vi.fn(),
     fetchStudentNotebookApi: vi.fn(),
     fetchStudentNoteHeadsApi: vi.fn(),
+    submitPracticeQuestionApi: vi.fn(),
+    fetchPracticeQuestionFeedbackApi: vi.fn(),
+    saveAttemptAnswerApi: vi.fn(),
+    fetchStudentAiStatusApi: vi.fn(async () => connectedAiStatus()),
+    listStudentAiTasksApi: vi.fn(async () => ({
+      tasks: [aiTask],
+      nextCursor: null,
+    })),
+    fetchStudentQuickButtonsApi: vi.fn(async () => ({
+      updatedAt: "2026-10-23T00:00:00Z",
+      buttons: [],
+    })),
+    fetchStudentAiTaskApi: vi.fn(async () => ({
+      task: aiTask,
+      messages: [
+        {
+          id: "reply",
+          taskId: aiTask.id,
+          role: "assistant",
+          contentMd: "先列出条件，再代入特殊值。",
+          createdAt: aiTask.updatedAt,
+        },
+      ],
+      facts: [],
+    })),
+    createStudentAiTaskApi: vi.fn(),
+    followupStudentAiTaskApi: vi.fn(),
+    openStudentAiReplyApi: vi.fn(async () => undefined),
   };
 });
 const mockedFetch = vi.mocked(fetchAttemptApi);
 
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
 const COURSE_ID = "12121212-1212-4121-8121-121212121212";
+
+/** AI 伴学任务夹具：q1 的已回复任务（attemptId 与本卷一致，供旧任务定位） */
+const aiTask: AiTaskPublic = {
+  id: "task-q1",
+  attemptId: ATTEMPT_ID,
+  questionId: "q1",
+  questionRevisionId: "rev-q1",
+  channel: "inapp",
+  status: "replied",
+  modeAtSend: "open_study",
+  question: "为什么？",
+  beforeSubmit: true,
+  contextVersion: "ctx",
+  snapshotAt: "2026-10-23T02:00:00Z",
+  hasReply: true,
+  replyDeliveredAt: "2026-10-23T02:01:00Z",
+  errorText: null,
+  retryCount: 0,
+  allowedActions: ["followup"],
+  materials: [],
+  createdAt: "2026-10-23T02:00:00Z",
+  updatedAt: "2026-10-23T02:01:00Z",
+  archivedAt: null,
+};
 
 /** 三题课程草稿：q1 已提交（反馈可读），q2/q3 未提交；首道未提交 = q2 */
 const baseDraft = (): AttemptDraftData => ({
@@ -183,7 +290,56 @@ beforeEach(() => {
   localStorage.clear();
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("m3d1-test");
+  bindAiDisplayAccount(null);
+  bindAiDisplayAccount("m4d2-ai");
   mockedFetch.mockReset();
+  vi.mocked(fetchPracticeQuestionFeedbackApi).mockReset();
+  vi.mocked(fetchPracticeQuestionFeedbackApi).mockResolvedValue({
+    feedback: { status: "pending_attempt" },
+  });
+  vi.mocked(saveAttemptAnswerApi).mockReset();
+  vi.mocked(saveAttemptAnswerApi).mockImplementation(
+    async (_attemptId, questionId) => ({ questionId, changeCount: 1 }),
+  );
+  vi.mocked(fetchStudentNoteHeadsApi).mockReset();
+  vi.mocked(fetchStudentNoteHeadsApi).mockImplementation(
+    async (_attemptId, ids) =>
+      ids.map(() => ({
+        note: null,
+        images: [],
+        evidence: null,
+        corrections: [],
+        supplements: [],
+      })),
+  );
+  vi.mocked(fetchStudentAiStatusApi).mockReset();
+  vi.mocked(fetchStudentAiStatusApi).mockResolvedValue(connectedAiStatus());
+  vi.mocked(listStudentAiTasksApi).mockReset();
+  vi.mocked(listStudentAiTasksApi).mockImplementation(async (query) => ({
+    tasks: query.questionId === aiTask.questionId ? [aiTask] : [],
+    nextCursor: null,
+  }));
+  vi.mocked(fetchStudentAiTaskApi).mockReset();
+  vi.mocked(fetchStudentAiTaskApi).mockResolvedValue({
+    task: aiTask,
+    messages: [
+      {
+        id: "reply",
+        taskId: aiTask.id,
+        role: "assistant",
+        contentMd: "先列出条件，再代入特殊值。",
+        createdAt: aiTask.updatedAt,
+      },
+    ],
+    facts: [],
+  });
+  vi.mocked(fetchStudentQuickButtonsApi).mockReset();
+  vi.mocked(fetchStudentQuickButtonsApi).mockResolvedValue({
+    updatedAt: "2026-10-23T00:00:00Z",
+    buttons: [],
+  });
+  vi.mocked(openStudentAiReplyApi).mockReset();
+  vi.mocked(openStudentAiReplyApi).mockResolvedValue(aiTask);
 });
 
 it("v1 卷默认列表呈现：摘要行可见，三题同列渲染", async () => {
@@ -529,4 +685,214 @@ it("保存详情定位在单题模式走统一切题入口：更新单题态与 
   await screen.findByText("第 2 / 3 题 · 已提交 1 题");
   await waitFor(() => expect(locationRef.search).toContain("q=q2"));
   expect(locationRef.action).toBe("REPLACE");
+});
+
+// ---------- M4-D2：单题专注 × AI 伴学整合（§12.1） ----------
+
+/** rail 实效状态（data-ai-state）：closed/inline/side/dock/dialog——隐藏面板
+ * 不进可访问树，role 查询区分不了「开着但随卡隐藏」的幽灵面板，用属性判 */
+const railState = () =>
+  document
+    .querySelector('[data-slot="ai-companion-rail"]')
+    ?.getAttribute("data-ai-state") ?? "missing";
+
+/** 单题操作条按钮（上一题/下一题 outline 切题钮所在容器） */
+function barButton(name: string): HTMLElement {
+  const bar = document.querySelector<HTMLElement>(
+    '[data-slot="practice-action-bar"]',
+  );
+  if (bar === null) throw new Error("单题操作条未渲染");
+  return within(bar).getByRole("button", { name });
+}
+
+/** 就绪材料会话：AI 打开的 ready 闸门要求材料恢复成功（空盘点=即刻就绪） */
+function installMaterialSessions() {
+  resetNoteSession();
+  resetAnnotationSession();
+  installNoteBackend(memoryNoteBackend());
+  installAnnotationBackend(memoryAnnotationBackend());
+  const session = { origin: "https://page.test", studentId: "m4d2-ai" };
+  bindNoteSession(session);
+  bindAnnotationSession(session);
+  installEventStore(memoryEventStore());
+}
+
+/** 进入单题模式并打开当前题的 AI 助教（label=当前题显示名） */
+async function openSingleWithAi(entry = "", label = "第 2 题") {
+  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  installDraftBackend(memoryBackend());
+  installMaterialSessions();
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage(entry);
+  await screen.findByText(/做题方式：单题 · 每题提交后查看/);
+  // ready 闸门：等材料恢复状态真实就绪后再单次点击（重复点击会切绑/收起）
+  await waitFor(() =>
+    expect(getAttemptRecoveryState(ATTEMPT_ID).state).toBe("ready"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
+  await screen.findByRole("region", { name: `${label}的 AI 助教` });
+}
+
+afterEach(() => {
+  resetNoteSession();
+  resetAnnotationSession();
+});
+
+it("单题切题先收起 AI 阅读：切换后 rail 关闭，返回原题见折叠入口", async () => {
+  await openSingleWithAi();
+  expect(railState()).toBe("inline");
+  // 操作条「下一题」切题（统一切题入口）：AI 阅读先收起，再切换
+  fireEvent.click(barButton("下一题"));
+  await screen.findByText("第 3 / 3 题 · 已提交 1 题");
+  await waitFor(() => expect(railState()).toBe("closed"));
+  await waitFor(() => expect(locationRef.search).toContain("q=q3"));
+  // 返回 q2：面板不自动重开，折叠入口保留（阅读锚点语义）
+  fireEvent.click(screen.getByRole("button", { name: "上一题" }));
+  await screen.findByText("第 2 / 3 题 · 已提交 1 题");
+  expect(screen.getByRole("button", { name: "再看回复" })).toBeInTheDocument();
+  expect(railState()).toBe("closed");
+  // 「再看回复」原位重开同一题的阅读
+  fireEvent.click(screen.getByRole("button", { name: "再看回复" }));
+  await screen.findByRole("region", { name: "第 2 题的 AI 助教" });
+  expect(railState()).toBe("inline");
+});
+
+it("单题模式旧任务定位先统一切题再展开回复，URL 消费 ai 参数", async () => {
+  // 深链停在 q2，任务属于 q1：必须先经统一切题入口（收笔/落盘/AI 收起
+  // 保护同链）切到 q1，再展开 q1 的回复；失败保留现场不切题
+  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  installDraftBackend(memoryBackend());
+  installMaterialSessions();
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage("?q=q2&aiTask=task-q1&aiQuestion=q1");
+  await screen.findByText("第 1 / 3 题 · 已提交 1 题");
+  expect(
+    await screen.findByRole("region", { name: "第 1 题的 AI 助教" }),
+  ).toBeInTheDocument();
+  await screen.findByText("先列出条件，再代入特殊值。");
+  await waitFor(() => expect(locationRef.search).toContain("q=q1"));
+  await waitFor(() => expect(locationRef.search).not.toContain("aiTask"));
+});
+
+it("AI 输入聚焦时键盘不劫持：Enter/←→/数字保持输入语义", async () => {
+  // q1 换成未提交的单选题，便于断言数字键不误触选项
+  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  installDraftBackend(memoryBackend());
+  installMaterialSessions();
+  mockedFetch.mockResolvedValue({
+    ...v1Draft(),
+    units: [
+      {
+        id: "有理数小练",
+        title: "有理数小练",
+        questions: [
+          {
+            id: "q1",
+            type: "choice",
+            difficulty: 2,
+            knowledge: ["有理数乘法"],
+            stemMd: "下列说法正确的是：",
+            options: ["甲", "乙", "丙"],
+            hintCount: 0,
+            questionRevisionId: "rev-q1",
+          },
+          {
+            id: "q2",
+            type: "fill",
+            difficulty: 2,
+            knowledge: ["有理数加法"],
+            stemMd: "计算：$(-3)+7=$ [[]]。",
+            hintCount: 0,
+            questionRevisionId: "rev-q2",
+          },
+          {
+            id: "q3",
+            type: "judge",
+            difficulty: 2,
+            knowledge: ["有理数减法"],
+            stemMd: "$5-8$ 是负数。[[]]",
+            hintCount: 0,
+            questionRevisionId: "rev-q3",
+          },
+        ],
+      },
+    ],
+    questionProgress: [
+      { questionId: "q1", submittedAt: null, feedbackReadable: false },
+      { questionId: "q2", submittedAt: null, feedbackReadable: false },
+      { questionId: "q3", submittedAt: null, feedbackReadable: false },
+    ],
+  });
+  renderPage("?q=q1");
+  await screen.findByText("第 1 / 3 题 · 已提交 0 题");
+  // ready 闸门：等材料恢复真实就绪后再单次点击（重复点击会切绑/收起）
+  await waitFor(() =>
+    expect(getAttemptRecoveryState(ATTEMPT_ID).state).toBe("ready"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
+  // 有历史回复时输入位是追问框：点「这一步没懂」展开追问输入。role 轮询
+  // 查询用 queryAllByRole 手动等待：getBy/findBy 未命中时的错误转储会枚举
+  // 全文档角色，踩中 jsdom 对 KaTeX MathML 节点的 computed-style 缺口
+  const followupButton = await waitFor(() => {
+    const entry = screen.queryAllByRole("button", { name: "这一步没懂" }).at(0);
+    expect(entry).toBeDefined();
+    return entry as HTMLElement;
+  });
+  fireEvent.click(followupButton);
+  const input = await waitFor(() => {
+    const box = screen
+      .queryAllByRole("textbox", { name: "继续追问本题" })
+      .at(0);
+    expect(box).toBeDefined();
+    return box as HTMLElement;
+  });
+  input.focus();
+  fireEvent.change(input, { target: { value: "我还在写问题" } });
+  input.focus();
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "ArrowRight" });
+  fireEvent.keyDown(input, { key: "1" });
+  // Enter 不提交本题、方向键不切题、数字不误触选项、输入原样保留
+  expect(vi.mocked(submitPracticeQuestionApi)).not.toHaveBeenCalled();
+  expect(screen.getByText("第 1 / 3 题 · 已提交 0 题")).toBeInTheDocument();
+  // 选项可访问名非裸文本（含序号前缀），用正则匹配；精确名未命中同样会
+  // 触发 prettyRoles 转储崩溃
+  expect(screen.getByRole("radio", { name: /甲/ })).not.toBeChecked();
+  expect(input).toHaveValue("我还在写问题");
+});
+
+it("AI 节点不进题面域与反馈区（底图与导出零 AI 输入）", async () => {
+  // q1 已提交且反馈可读：反馈区与题面域同时在场，AI 面板开启状态下断言零交叉
+  await openSingleWithAi("?q=q1", "第 1 题");
+  const regionLabel = "第 1 题的 AI 助教";
+  expect(
+    await screen.findByRole("region", { name: regionLabel }),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      document.querySelector('[data-slot="practice-question-feedback"]'),
+    ).not.toBeNull(),
+  );
+  expect(
+    document.querySelectorAll('[data-slot="question-surface"]').length,
+  ).toBeGreaterThan(0);
+  const aiSelectors =
+    '[data-ai-question], [data-slot="ai-companion-panel"], [data-slot="ai-companion-rail"]';
+  for (const surface of Array.from(
+    document.querySelectorAll('[data-slot="question-surface"]'),
+  )) {
+    expect(surface.querySelector(aiSelectors)).toBeNull();
+  }
+  for (const section of Array.from(
+    document.querySelectorAll('[data-slot="practice-question-feedback"]'),
+  )) {
+    expect(section.querySelector(aiSelectors)).toBeNull();
+  }
+  for (const article of Array.from(document.querySelectorAll("article"))) {
+    expect(article.querySelector(aiSelectors)).toBeNull();
+  }
+  // 全文档只有一份 AI 面板，且位于所有题卡之外（inline 随 li 兄弟位）
+  expect(
+    document.querySelectorAll('[data-slot="ai-companion-panel"]'),
+  ).toHaveLength(1);
 });

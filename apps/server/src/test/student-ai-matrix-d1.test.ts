@@ -48,12 +48,28 @@ import {
  * D1-14 教师默认 post + 学生显式 open：显式学生设置覆盖继承默认
  * D1-15 全未配置：继承默认开放伴学
  * D1-16 完成态优先于明确关闭（学生 post + 已完成 → 开放复盘）
+ * D1-17 link×post×已完成：票据生成与公开读取/附件按完成态开放复盘（闸门补测）
+ *
+ * M4-D1（总计划 §12.2）v1 逐题卷「本题完成」按行级 submittedAt（D1-18..20，
+ * attempt 仍 draft 的单题提交事实）：
+ * D1-18 v1 逐题卷×guided×本题已提交：本题复盘携带参考+解析，邻题仍作答中启发尺度
+ * D1-19 v1 逐题卷×post×本题提交邻题未提交：本题复盘出站，邻题 403 零出站 + 普通取卷无答案
+ * D1-20 v1 逐题卷教师中途切 post：已提交题出站照常复盘，未提交邻题出站前拦截转 paused
  */
 
 const activeDbs: Db[] = [];
 
 function world(): MatrixWorld {
   const w = createMatrixWorld();
+  activeDbs.push(w.db);
+  return w;
+}
+
+/** v1 逐题卷世界（M4-D1：attempt1 建成新协议 per_question 卷，其余夹具同 world） */
+function perQuestionWorld(): MatrixWorld {
+  const w = createMatrixWorld({
+    workflow: { feedbackMode: "per_question" },
+  });
   activeDbs.push(w.db);
   return w;
 }
@@ -510,6 +526,125 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     const material = await w.app.request(`${path}/materials/0.png`);
     expect(material.status).toBe(200);
     expect(material.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("D1-18 v1 逐题卷×guided×本题行级提交：本题复盘携带参考+解析，邻题仍作答中启发尺度", async () => {
+    const w = perQuestionWorld();
+    w.setTeacherDefault(w.teacherA, "guided_only");
+    // 服务端单题提交本题（M2 行级事实；attempt 仍 draft）
+    w.submitQuestion1(w.qMain);
+    // 本题：已提交 → 完成态恒 open_study 复盘（启发限制解除）
+    const created = await createTask(w);
+    expect(created.status).toBe(201);
+    expect(created.data?.modeAtSend).toBe("open_study");
+    w.addInappConnection();
+    const first = await w.dispatchInapp();
+    expect(first.recorded.length).toBe(1);
+    const mainPayload = first.recorded[0]?.body ?? "";
+    // 双断言之允许侧：复盘尺度携带参考答案与官方解析
+    expect(mainPayload).toContain(w.sentinel.refAnswer);
+    expect(mainPayload).toContain(w.sentinel.solution);
+    expect(mainPayload).toContain("完成后复盘");
+    expect(
+      hitsOf(mainPayload, [w.sentinel.teacherNote, w.sentinel.neighborRef]),
+    ).toEqual([]);
+    // 邻题：未提交 → 仍作答中（guided 启发尺度，不随本题提交进入复盘）
+    const neighbor = await createTask(w, { questionId: w.qNeighbor });
+    expect(neighbor.status).toBe(201);
+    expect(neighbor.data?.modeAtSend).toBe("guided_only");
+    const second = await w.dispatchInapp();
+    expect(second.recorded.length).toBe(1);
+    const neighborPayload = second.recorded[0]?.body ?? "";
+    expect(neighborPayload).toContain("仅启发");
+    expect(neighborPayload).toContain("不直接给出最终答案");
+    expect(neighborPayload).not.toContain("完成后复盘");
+  });
+
+  it("D1-19 v1 逐题卷×post×本题提交邻题未提交：本题复盘出站，邻题 403 零出站 + 普通取卷无答案", async () => {
+    const w = perQuestionWorld();
+    w.setOverride("student", w.student1, "post_submit_only");
+    // 提交前：创建拒绝 + 零任务行（禁止场景：无任何出站载体）
+    const before = await createTask(w);
+    expect(before.status).toBe(403);
+    expect(before.error).toBe("AI_POLICY_DISABLED");
+    expect(taskRowCount(w)).toBe(0);
+    // 服务端行级提交本题（attempt 仍 draft）
+    w.submitQuestion1(w.qMain);
+    // 本题：提交后可进入复盘
+    const created = await createTask(w);
+    expect(created.status).toBe(201);
+    expect(created.data?.modeAtSend).toBe("open_study");
+    // 邻题：未提交 → 仍不可用（本题提交不解锁邻题）
+    const neighbor = await createTask(w, { questionId: w.qNeighbor });
+    expect(neighbor.status).toBe(403);
+    expect(neighbor.error).toBe("AI_POLICY_DISABLED");
+    expect(taskRowCount(w)).toBe(1);
+    // 出站：仅本题派发，携带参考+解析；教师私注与邻题答案零出现
+    w.addInappConnection();
+    const { recorded } = await w.dispatchInapp();
+    expect(recorded.length).toBe(1);
+    const payload = recorded[0]?.body ?? "";
+    expect(payload).toContain(w.sentinel.refAnswer);
+    expect(payload).toContain(w.sentinel.solution);
+    expect(
+      hitsOf(payload, [w.sentinel.teacherNote, w.sentinel.neighborRef]),
+    ).toEqual([]);
+    // 普通取卷出口不因行级提交解锁答案（draft 草稿视图与 AI 授权相互独立）
+    const detail = await shellOf(
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/attempts/${w.attempt1}`,
+        "GET",
+      ),
+    );
+    expect(detail.status).toBe(200);
+    expect(
+      hitsOf(detail.raw, [
+        w.sentinel.refAnswer,
+        w.sentinel.solution,
+        w.sentinel.teacherNote,
+        w.sentinel.neighborRef,
+      ]),
+    ).toEqual([]);
+    assertNoLeak(JSON.parse(detail.raw));
+  });
+
+  it("D1-20 v1 逐题卷教师中途切 post：已提交题出站照常复盘，未提交邻题出站前拦截转 paused", async () => {
+    const w = perQuestionWorld();
+    // 开放期（默认 open_study）先建两题任务
+    const main = await createTask(w);
+    expect(main.status).toBe(201);
+    const neighbor = await createTask(w, { questionId: w.qNeighbor });
+    expect(neighbor.status).toBe(201);
+    // 服务端行级提交本题 + 教师中途切换 post_submit_only
+    w.submitQuestion1(w.qMain);
+    w.setTeacherDefault(w.teacherA, "post_submit_only");
+    w.addInappConnection();
+    const { recorded } = await w.dispatchInapp();
+    // 本题已完成 → 复盘裁决不可被新关闭重锁：出站照常携带参考+解析
+    expect(recorded.length).toBe(1);
+    const payload = recorded[0]?.body ?? "";
+    expect(payload).toContain(w.sentinel.refAnswer);
+    expect(payload).toContain(w.sentinel.solution);
+    expect(
+      hitsOf(payload, [w.sentinel.teacherNote, w.sentinel.neighborRef]),
+    ).toEqual([]);
+    // 邻题未提交 → 出站前重校验拦截：paused、零出站（同一任务下次派发按新模式+新完成态）
+    const neighborRow = w.db
+      .select()
+      .from(aiTasks)
+      .where(eq(aiTasks.id, neighbor.data?.id as string))
+      .get();
+    expect(neighborRow?.status).toBe("paused");
+    // 本题任务正常走完派发（不被新关闭转 paused）
+    const mainRow = w.db
+      .select()
+      .from(aiTasks)
+      .where(eq(aiTasks.id, main.data?.id as string))
+      .get();
+    expect(mainRow?.status).not.toBe("paused");
+    expect(mainRow?.status).not.toBe("created");
   });
 });
 

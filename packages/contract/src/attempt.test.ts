@@ -595,6 +595,36 @@ describe("attemptResultDataSchema（结果视图）", () => {
     });
   });
 
+  it("practiceWorkflow 裁决投影可选（M4-D3 §13.8 结果页节奏摘要）：缺省（legacy/lesson 卷）合法、携带合法、形态错误拒绝", () => {
+    const workflow = {
+      version: 1,
+      feedbackMode: "per_question",
+      revision: 0,
+      canChangeFeedback: false,
+      allowedFeedbackModes: ["per_question"],
+      canSubmitQuestion: false,
+      restrictionReason: null,
+      releaseAt: null,
+    };
+    // legacy/lesson 卷不携带 → 结果页不显示节奏摘要行
+    expect(
+      attemptResultDataSchema.parse(RESULT).practiceWorkflow,
+    ).toBeUndefined();
+    const parsed = attemptResultDataSchema.parse({
+      ...RESULT,
+      practiceWorkflow: workflow,
+    });
+    expect(parsed.practiceWorkflow?.feedbackMode).toBe("per_question");
+    expect(parsed.practiceWorkflow?.version).toBe(1);
+    // 形态错误拒绝（非法枚举值不是合法裁决投影）
+    expect(
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        practiceWorkflow: { ...workflow, feedbackMode: "immediately" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("快照携带提示内容字段会被剥离（strip 语义；hintCount 是唯一提示形态）", () => {
     const parsed = attemptResultDataSchema.parse({
       ...RESULT,

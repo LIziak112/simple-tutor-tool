@@ -54,6 +54,7 @@ import {
 } from "@/features/notes/note-layout";
 import { currentNoteSession } from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import {
   HANDWRITTEN_TYPES,
@@ -365,6 +366,9 @@ export function AttemptQuestionCard({
   const [exportOpen, setExportOpen] = useState(false);
   const layoutPreference = useNoteLayoutPreference();
   const sideUsable = useNoteSideUsable(articleRef, layoutPreference === "auto");
+  // AI 侧栏对照激活时「自动」回退上下排布（M4-D2 §12.1）：题干、草稿与
+  // AI 对照不成四列并排；显式布局偏好仍由学生自决，不被 AI 布局拉扯。
+  const compareActive = useAiCompareActive();
   const hasScratchLayout =
     inkEnabled &&
     attemptId !== undefined &&
@@ -372,7 +376,12 @@ export function AttemptQuestionCard({
   // 只有实际展开草稿才分栏；已有标画由固定逻辑画面整体缩放。
   const layout =
     hasScratchLayout && noteOpen
-      ? effectiveNoteLayout(layoutPreference, sideUsable)
+      ? effectiveNoteLayout(
+          layoutPreference === "auto" && compareActive
+            ? "below"
+            : layoutPreference,
+          sideUsable,
+        )
       : "below";
   const hasEditor = editor != null;
   // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。

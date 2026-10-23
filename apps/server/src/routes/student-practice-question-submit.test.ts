@@ -1506,3 +1506,157 @@ describe("M2 泄露矩阵（§10.4）：普通接口不因逐题提交放宽", (
     expect(text).not.toContain(SECRETS.fillMarker);
   });
 });
+
+describe("M4-D3 进行中进度计数与结果页节奏摘要（§13/§13.8）", () => {
+  /** 开卷并返回 (作业 id, attempt id)（作业列表 n/N 断言需要作业 id 定位） */
+  async function startTrackedAttempt(
+    env: Env,
+    startOptions: Record<string, unknown> = { workflowVersion: 1 },
+  ): Promise<{ asgId: string; attemptId: string }> {
+    const asgId = await createAssignment(
+      env.app,
+      env.teacherCookie,
+      env.unitId,
+      "张三",
+      { allowPerQuestionFeedback: true },
+    );
+    const res = await env.app.request(
+      `/api/student/assignments/${asgId}/attempt`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify(startOptions),
+      },
+    );
+    expect(res.status).toBe(200);
+    const attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    if (!attemptId) throw new Error("开卷响应缺少 attempt id");
+    return { asgId, attemptId };
+  }
+
+  interface RecordRow {
+    attemptId: string;
+    status: string;
+    practiceSubmittedCount?: number;
+    practiceQuestionCount?: number;
+  }
+
+  async function fetchRecords(env: Env): Promise<RecordRow[]> {
+    const res = await env.app.request("/api/student/records", {
+      headers: { cookie: env.aCookie },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    // 红线：进度计数只是公开进度事实，索引行绝不含答案/详解/提示键
+    assertNoLeak(body);
+    return (body as { data: { records: RecordRow[] } }).data.records;
+  }
+
+  it("v1 draft 部分提交：记录行与作业列表带 practiceSubmittedCount=n / N；legacy 草稿缺省（前端回落既有呈现）", async () => {
+    const env = await makeEnv();
+    const v1 = await startTrackedAttempt(env);
+    await saveAnswer(env, v1.attemptId, Q.choice, { kind: "choice", index: 1 });
+    // 存答案会推进答案版本 → 提交前重取草稿（与既有闭环用例同序）
+    const draft = await fetchDraft(env, v1.attemptId);
+    await practiceSubmitOk(env, draft, v1.attemptId, Q.choice);
+    // 不带 workflowVersion 的开卷 = 旧协议草稿（对照：不带字段）
+    const legacy = await startTrackedAttempt(env, {});
+
+    const rows = await fetchRecords(env);
+    const v1Row = rows.find((row) => row.attemptId === v1.attemptId);
+    expect(v1Row?.status).toBe("draft");
+    expect(v1Row?.practiceSubmittedCount).toBe(1);
+    expect(v1Row?.practiceQuestionCount).toBe(3);
+    const legacyRow = rows.find((row) => row.attemptId === legacy.attemptId);
+    expect(legacyRow?.status).toBe("draft");
+    expect(legacyRow?.practiceSubmittedCount).toBeUndefined();
+    expect(legacyRow?.practiceQuestionCount).toBeUndefined();
+
+    const asgRes = await env.app.request("/api/student/assignments", {
+      headers: { cookie: env.aCookie },
+    });
+    expect(asgRes.status).toBe(200);
+    const asgBody = (await asgRes.json()) as unknown;
+    assertNoLeak(asgBody);
+    const list = (
+      asgBody as {
+        data: {
+          assignments: {
+            id: string;
+            status: string;
+            questionCount: number;
+            practiceSubmittedCount?: number;
+          }[];
+        };
+      }
+    ).data.assignments;
+    const v1Asg = list.find((entry) => entry.id === v1.asgId);
+    expect(v1Asg?.status).toBe("in_progress");
+    expect(v1Asg?.questionCount).toBe(3);
+    expect(v1Asg?.practiceSubmittedCount).toBe(1);
+    const legacyAsg = list.find((entry) => entry.id === legacy.asgId);
+    expect(legacyAsg?.status).toBe("in_progress");
+    expect(legacyAsg?.practiceSubmittedCount).toBeUndefined();
+  });
+
+  it("v1 卷全部题提交自动收尾：记录行整卷口径 n=N；结果视图（GET 详情）携带 practiceWorkflow；legacy 卷结果视图缺省", async () => {
+    const env = await makeEnv();
+    const { attemptId } = await startTrackedAttempt(env);
+    let draft = await fetchDraft(env, attemptId);
+    await saveAnswer(env, attemptId, Q.choice, { kind: "choice", index: 1 });
+    draft = await fetchDraft(env, attemptId);
+    await practiceSubmitOk(env, draft, attemptId, Q.choice);
+    await saveAnswer(env, attemptId, Q.judge, { kind: "judge", value: true });
+    draft = await fetchDraft(env, attemptId);
+    await practiceSubmitOk(env, draft, attemptId, Q.judge);
+    await saveAnswer(env, attemptId, Q.fill, { kind: "fill", values: ["1"] });
+    draft = await fetchDraft(env, attemptId);
+    const last = await practiceSubmitOk(env, draft, attemptId, Q.fill);
+    expect(last.data.attempt.status).toBe("submitted");
+
+    const rows = await fetchRecords(env);
+    const row = rows.find((entry) => entry.attemptId === attemptId);
+    // 已收尾卷 → 整卷口径：整卷已交，行级计数收敛到 N（前端只按 status 呈现）
+    expect(row?.status).toBe("submitted");
+    expect(row?.practiceSubmittedCount).toBe(3);
+    expect(row?.practiceQuestionCount).toBe(3);
+
+    // §13.8：v1 结果视图携带裁决投影（节奏摘要行数据源）；普通接口投影不放宽
+    const detailRes = await env.app.request(
+      `/api/student/attempts/${attemptId}`,
+      {
+        headers: { cookie: env.aCookie },
+      },
+    );
+    expect(detailRes.status).toBe(200);
+    const detail = (await detailRes.json()) as {
+      data: {
+        attempt: { status: string };
+        practiceWorkflow?: { feedbackMode: string };
+      };
+    };
+    expect(detail.data.attempt.status).toBe("submitted");
+    expect(detail.data.practiceWorkflow?.feedbackMode).toBe("per_question");
+    // 闸门补断言（硬性规则 3）：v1 已收尾结果视图整页泄露面——默认 on_submit
+    // 公布策略下全部题已提交，答案/详解合法在场（allow 白名单）；提示内容
+    // 恒不入正文、题干无解析标记（与草稿视图级断言互补，此前结果视图只断
+    // practiceWorkflow 存在性）
+    assertNoLeak(detail, { allow: ["answers", "answer", "solutionMd"] });
+    assertNoStemLeak(detail);
+    const detailText = JSON.stringify(detail);
+    expect(detailText).not.toContain(SECRETS.choiceHint);
+    expect(detailText).not.toContain(SECRETS.judgeHint);
+
+    // legacy 卷（旧协议）草稿视图不携带 → 前端不渲染节奏摘要行
+    const legacy = await startTrackedAttempt(env, {});
+    const legacyRes = await env.app.request(
+      `/api/student/attempts/${legacy.attemptId}`,
+      { headers: { cookie: env.aCookie } },
+    );
+    expect(legacyRes.status).toBe(200);
+    const legacyDetail = (await legacyRes.json()) as {
+      data: { practiceWorkflow?: unknown };
+    };
+    expect(legacyDetail.data.practiceWorkflow).toBeUndefined();
+  });
+});

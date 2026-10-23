@@ -108,8 +108,10 @@ export const teacherAttemptSourceSchema = z.object({
 /**
  * 列表的单张作答卡片（平铺；按最近活动时间倒序）。
  * 待批数口径（D4 共享谓词，T3.2a 起）：已交卷 responses 中
- * `finalCorrect IS NULL` 的题数（draft 恒 0，未交卷不构成待批；含只写笔迹
- * 未填最终答案的手写题）。由此「待批数 = 0 ⇔ status = graded」。
+ * `finalCorrect IS NULL` 的题数（未交卷不构成待批；含只写笔迹未填最终答案的
+ * 手写题；2026-10 扩展：lesson 单题提交与 M2 起 v1 新协议逐题提交会写行级
+ * submittedAt，进行中卷的已提交行也计数——卡片列表只发非 draft 卷，行为不变）。
+ * 「待批数 = 0 ⇔ status = graded」只对**已收尾卷**（非 draft）成立。
  */
 export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
   /** attempts.id（crypto.randomUUID） */

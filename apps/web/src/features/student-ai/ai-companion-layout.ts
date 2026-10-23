@@ -1,6 +1,8 @@
 import {
+  createContext,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -27,6 +29,19 @@ export const AI_COMPANION_DOCK_MIN_WIDTH = 960;
 export const AI_COMPANION_NAV_EXPAND_MIN_WIDTH = 1280;
 /** 416px 对照栏 + 16px间距 + 44px折叠导航 + 24px间距 + 560px题列。 */
 export const AI_COMPANION_COMPARE_MIN_WIDTH = 1060;
+
+/**
+ * 侧栏对照激活态广播（M4-D2 §12.1）：AI 助教以侧栏对照呈现且面板打开时，
+ * rail 向题卡广播 true。草稿「自动」布局消费此信号回退上下排布——题干、
+ * 草稿与 AI 侧栏不形成四列并排；显式布局偏好仍由学生自决。无 Provider
+ * 时（题下/弹窗呈现、AI 关闭、非作答场景）默认 false，不改变既有布局。
+ */
+export const AiCompareActiveContext = createContext(false);
+
+/** 消费侧栏对照激活态（题卡草稿布局判定用） */
+export function useAiCompareActive(): boolean {
+  return useContext(AiCompareActiveContext);
+}
 
 /** 打开时同步读取当前容器，避免路由首帧测量尚未发布而误判为空间不足。 */
 export function hasAiCompareSpace(element: HTMLElement | null): boolean {

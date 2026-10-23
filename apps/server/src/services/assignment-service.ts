@@ -34,6 +34,8 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { practiceSubmittedCounts } from "./pending-mark";
+import { practiceProtocolOf } from "./practice-workflow-wiring";
 
 /**
  * AssignmentService（T2.2；T2A.7 大改——多单元 + 按课程布置 + 名单增删 + 内容锁定；
@@ -1075,8 +1077,17 @@ export function listStudentAssignments(
 
   // 该学生的全部作业 attempt 摘要按 assignmentId 归组（course 来源不关联作业）
   const attemptsByAssignment = new Map<string, Pick<Attempt, "status">[]>();
+  // M4-D3 进行中进度（§13）：v1 新协议 draft 卷按作业归集，统一批量聚合 n/N
+  const v1DraftByAssignment = new Map<string, Pick<Attempt, "id" | "status">>();
   for (const attempt of db
-    .select({ assignmentId: attempts.assignmentId, status: attempts.status })
+    .select({
+      id: attempts.id,
+      assignmentId: attempts.assignmentId,
+      status: attempts.status,
+      sourceType: attempts.sourceType,
+      practiceWorkflowVersion: attempts.practiceWorkflowVersion,
+      feedbackMode: attempts.feedbackMode,
+    })
     .from(attempts)
     .where(eq(attempts.studentId, studentId))
     .all()) {
@@ -1089,7 +1100,18 @@ export function listStudentAssignments(
     } else {
       list.push({ status: attempt.status });
     }
+    // 协议判定走 practiceProtocolOf 单一谓词；每份作业取进行中的那份草稿
+    //（每 学生×作业 至多一份 draft，computeAssignmentStatus 的 in_progress 同源）
+    if (attempt.status === "draft" && practiceProtocolOf(attempt) === "v1") {
+      v1DraftByAssignment.set(attempt.assignmentId, {
+        id: attempt.id,
+        status: attempt.status,
+      });
+    }
   }
+  const progressByAssignment = practiceSubmittedCounts(db, [
+    ...v1DraftByAssignment.values(),
+  ]);
 
   const unitLists =
     teacherId === null
@@ -1106,6 +1128,13 @@ export function listStudentAssignments(
   return {
     assignments: rows.map((row) => {
       const unitList = unitLists.get(row.id) ?? [];
+      // M4-D3：进行中的 v1 新协议卷携带行级已提交数（N 复用 questionCount）；
+      // legacy / lesson 卷缺省 = 前端回落既有呈现
+      const draftAttemptId = v1DraftByAssignment.get(row.id)?.id;
+      const progress =
+        draftAttemptId !== undefined
+          ? progressByAssignment.get(draftAttemptId)
+          : undefined;
       return {
         id: row.id,
         title: row.title,
@@ -1122,6 +1151,10 @@ export function listStudentAssignments(
           { id: row.id, dueAt: row.dueAt },
           attemptsByAssignment.get(row.id) ?? [],
         ),
+        // 白名单纯公开进度计数，不含对错/得分/答案
+        ...(progress !== undefined
+          ? { practiceSubmittedCount: progress.submitted }
+          : {}),
       };
     }),
   };

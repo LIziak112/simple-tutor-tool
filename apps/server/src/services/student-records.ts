@@ -14,7 +14,8 @@ import {
 } from "../db/schema";
 import { answersReleased, assignmentReleaseByIds } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { pendingMarkCounts } from "./pending-mark";
+import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
+import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
 
@@ -190,6 +191,10 @@ export function listStudentRecords(
   // 来源上下文与公布 gate 的输入（teacherId 域内读单元/题目元信息，T2B.5 D10）
   const teacherId = studentTeacherIdOf(db, studentId);
   const pendingByAttempt = pendingMarkCounts(db, rows);
+  // M4-D3 进行中进度（§13）：只对 v1 新协议卷批量聚合行级已提交 n/N（一次分组
+  // 查询，500 id 一块，与待批数同款模式）；协议判定走 practiceProtocolOf 单一谓词
+  const v1Rows = rows.filter((row) => practiceProtocolOf(row) === "v1");
+  const progressByAttempt = practiceSubmittedCounts(db, v1Rows);
   const assignmentIds = [
     ...new Set(
       rows
@@ -213,19 +218,29 @@ export function listStudentRecords(
         : undefined;
     const released =
       assignmentRow === undefined || answersReleased(assignmentRow, now);
+    const progress = progressByAttempt.get(attempt.id);
     return {
       ...sourceOf(db, attempt, teacherId ?? ""),
       attemptId: attempt.id,
       status: attempt.status,
       // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）
       score: released ? (attempt.scoreFinal ?? attempt.scoreAuto) : null,
-      // D4 共享谓词（2026-10 扩展：draft 卷的已单题提交行也计数——lesson
-      // 进行中卷的待批数；非 lesson 的 draft 恒不在 Map 中 → 0）；
-      // 未公布置 null（与 D9 结果视图同法）
+      // D4 共享谓词（2026-10 扩展：行级提交事实——lesson 单题提交与 M2 起
+      // v1 新协议逐题提交——都会写行级 submittedAt，进行中卷的已提交行也计数；
+      // 无行级提交事实的 legacy draft 不在 Map 中 → 0）；未公布置 null（与
+      // D9 结果视图同法）
       pendingCount: released ? (pendingByAttempt.get(attempt.id) ?? 0) : null,
       answersReleased: released,
       startedAt: attempt.startedAt,
       submittedAt: attempt.submittedAt,
+      // M4-D3 进行中进度（§13）：仅 v1 新协议卷携带（draft 行级 n/N；已收尾
+      // 卷整卷口径 n=N）；白名单纯公开进度计数，不含对错/得分/答案
+      ...(progress !== undefined
+        ? {
+            practiceSubmittedCount: progress.submitted,
+            practiceQuestionCount: progress.total,
+          }
+        : {}),
     };
   });
   return { records, total: totalRow?.n ?? 0 };

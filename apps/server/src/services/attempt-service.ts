@@ -3042,6 +3042,8 @@ function buildResultData(
   const meta = attemptSourceMeta(db, attempt);
   // T7.7：结果视图同口径携带有效启用集（详解内 steps 渲染遵循开关）
   const enabledCapabilities = attemptEnabledCapabilities(db, attempt);
+  // M4-D3 §13.8：工作流裁决投影（lesson / legacy 卷 null = 零查询早退）
+  const workflowView = attemptWorkflowView(db, attempt, now);
   // T2A.8：assignment 来源按作业判定；course 来源恒公布（D11 课程练习交卷即公布）
   const assignmentRow =
     attempt.sourceType === "assignment"
@@ -3134,5 +3136,13 @@ function buildResultData(
     summary,
     units: unitGroups,
     enabledCapabilities,
+    // M4-D3 §13.8 节奏摘要：v1 新协议卷携带裁决投影（feedbackMode 驱动结果页
+    // 「反馈节奏」摘要行），读时按当前规则裁决——与草稿视图同一 resolver/同一
+    // schema 单源；lesson / legacy 卷为 null（缺省 = 前端不渲染该行，零查询
+    // 早退）。只携带授权结论本身，答案/对错仍走 answersReleased gate，不放宽
+    // 任何普通学生接口投影
+    ...(workflowView !== null
+      ? { practiceWorkflow: workflowView.practiceWorkflow }
+      : {}),
   };
 }

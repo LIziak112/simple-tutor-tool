@@ -426,3 +426,49 @@ describe("错误码集合", () => {
     expect(analyticsErrorCodeSchema.safeParse("NOT_FOUND").success).toBe(false);
   });
 });
+
+describe("analyticsUnitCellSchema（M4-D3：v1 卷进行中进度计数）", () => {
+  /** 合法的单元格子样例（缺省 = legacy 卷形态，不带计数） */
+  function unitCellFixture(): Record<string, unknown> {
+    return {
+      kind: "course-unit",
+      studentId: UUID,
+      courseId: UUID,
+      unitId: "有理数课程练习",
+      status: "in-progress",
+      attemptCount: 2,
+      redoCount: 1,
+      firstScore: 80,
+      pendingCount: 0,
+      latestSubmittedAt: "2026-10-01T02:00:00.000Z",
+    };
+  }
+
+  it("缺省合法（legacy 卷格子不带该字段）；携带 n/N 计数合法（in-progress 的 v1 草稿卷）", () => {
+    const legacy = analyticsUnitCellSchema.parse(unitCellFixture());
+    expect(legacy.practiceSubmittedCount).toBeUndefined();
+    expect(legacy.practiceQuestionCount).toBeUndefined();
+    const parsed = analyticsUnitCellSchema.parse({
+      ...unitCellFixture(),
+      practiceSubmittedCount: 2,
+      practiceQuestionCount: 5,
+    });
+    expect(parsed.practiceSubmittedCount).toBe(2);
+    expect(parsed.practiceQuestionCount).toBe(5);
+  });
+
+  it("计数必须为非负整数：负数 / 小数 / 字符串拒绝", () => {
+    for (const bad of [
+      { ...unitCellFixture(), practiceSubmittedCount: -1 },
+      { ...unitCellFixture(), practiceSubmittedCount: 1.5 },
+      { ...unitCellFixture(), practiceSubmittedCount: "2" },
+      { ...unitCellFixture(), practiceQuestionCount: -1 },
+      { ...unitCellFixture(), practiceQuestionCount: 2.5 },
+    ] as const) {
+      expect(
+        analyticsUnitCellSchema.safeParse(bad).success,
+        JSON.stringify(bad),
+      ).toBe(false);
+    }
+  });
+});

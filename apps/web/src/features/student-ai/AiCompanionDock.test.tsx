@@ -615,3 +615,46 @@ describe("题下助教共享会话", () => {
     expect(fetchStudentAiTaskApi).toHaveBeenCalledWith(task.id);
   });
 });
+
+describe("M4-D2 单题导航协作", () => {
+  it("未打开阅读时 collapseForNavigation 直接收起成功", async () => {
+    render(<Harness />);
+    await act(async () => {
+      expect(await capturedDock.current?.collapseForNavigation()).toBe(true);
+    });
+    expect(flush).not.toHaveBeenCalled();
+  });
+  it("collapseForNavigation 复用收起链：rail 关闭并保留本题折叠入口", async () => {
+    render(<Harness />);
+    await open("q1");
+    await screen.findByText("先列出条件，再代入特殊值。");
+    await act(async () => {
+      expect(await capturedDock.current?.collapseForNavigation()).toBe(true);
+    });
+    expect(flush).toHaveBeenCalledWith("q1");
+    expect(
+      screen.queryByRole("region", { name: "第 1 题的 AI 助教" }),
+    ).toBeNull();
+    // 折叠入口（workingQuestions 标记）：返回本题可原位重开
+    expect(
+      within(screen.getByRole("article", { name: "q1" })).getByRole("button", {
+        name: "再看回复",
+      }),
+    ).toBeInTheDocument();
+  });
+  it("collapseForNavigation 落盘失败返回 false，阅读保持不切换", async () => {
+    render(<Harness />);
+    await open("q1");
+    await screen.findByText("先列出条件，再代入特殊值。");
+    flush.mockRejectedValueOnce(new Error("落盘失败"));
+    await act(async () => {
+      expect(await capturedDock.current?.collapseForNavigation()).toBe(false);
+    });
+    expect(
+      screen.getByRole("region", { name: "第 1 题的 AI 助教" }),
+    ).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "重试保存后再收起",
+    );
+  });
+});

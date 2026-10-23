@@ -973,3 +973,66 @@ describe("订正区入口（T6R.15）", () => {
     expect(correctionStubDatasets()).toHaveLength(4);
   });
 });
+
+describe("练习反馈节奏摘要（M4-D3 §13.8）", () => {
+  const WORKFLOW_PER_QUESTION: NonNullable<
+    AttemptResultData["practiceWorkflow"]
+  > = {
+    version: 1,
+    feedbackMode: "per_question",
+    revision: 0,
+    canChangeFeedback: false,
+    allowedFeedbackModes: ["per_question"],
+    canSubmitQuestion: false,
+    restrictionReason: null,
+    releaseAt: null,
+  };
+  const WORKFLOW_AFTER_ATTEMPT: NonNullable<
+    AttemptResultData["practiceWorkflow"]
+  > = {
+    ...WORKFLOW_PER_QUESTION,
+    feedbackMode: "after_attempt",
+    allowedFeedbackModes: ["after_attempt"],
+  };
+
+  it("v1 逐题卷显示「作答时逐题反馈」", () => {
+    render(
+      <AttemptResultView
+        data={{ ...DATA, practiceWorkflow: WORKFLOW_PER_QUESTION }}
+        onBackHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/反馈节奏：作答时逐题反馈/)).toBeInTheDocument();
+  });
+
+  it("v1 整卷卷显示「交卷后反馈」", () => {
+    render(
+      <AttemptResultView
+        data={{ ...DATA, practiceWorkflow: WORKFLOW_AFTER_ATTEMPT }}
+        onBackHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/反馈节奏：交卷后反馈/)).toBeInTheDocument();
+    expect(screen.queryByText(/按教师公布时间/)).toBeNull();
+  });
+
+  it("legacy/lesson 卷（无 practiceWorkflow）不显示节奏摘要行", () => {
+    renderView();
+    expect(screen.queryByText(/反馈节奏：/)).toBeNull();
+  });
+
+  it("after_due 未公布时注明「按教师公布时间」", () => {
+    render(
+      <AttemptResultView
+        data={{
+          ...DATA,
+          answersReleased: false,
+          practiceWorkflow: WORKFLOW_AFTER_ATTEMPT,
+        }}
+        onBackHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/反馈节奏：交卷后反馈/)).toBeInTheDocument();
+    expect(screen.getByText(/按教师公布时间/)).toBeInTheDocument();
+  });
+});
