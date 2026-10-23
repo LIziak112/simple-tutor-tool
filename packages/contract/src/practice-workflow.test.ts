@@ -4,6 +4,7 @@ import {
   practiceFeedbackModeSchema,
   practiceLayoutSchema,
   practiceQuestionProgressSchema,
+  practiceRecommendationSchema,
   practiceWorkflowSchema,
   practiceWorkflowUpdateRequestSchema,
   studentPracticePreferenceSchema,
@@ -29,6 +30,40 @@ describe("practiceLayoutSchema", () => {
     expect(practiceLayoutSchema.parse("list")).toBe("list");
     expect(practiceLayoutSchema.parse("single")).toBe("single");
     expect(() => practiceLayoutSchema.parse("grid")).toThrow();
+  });
+});
+
+describe("practiceRecommendationSchema（M5-D1 frontmatter practice 推荐命名空间）", () => {
+  it("两字段均可选：全缺（空对象）与缺一都合法——不过度设计，空声明不构成错误", () => {
+    expect(practiceRecommendationSchema.parse({})).toEqual({});
+    expect(practiceRecommendationSchema.parse({ layout: "single" })).toEqual({
+      layout: "single",
+    });
+    expect(
+      practiceRecommendationSchema.parse({ feedback: "after_attempt" }),
+    ).toEqual({ feedback: "after_attempt" });
+    expect(
+      practiceRecommendationSchema.parse({
+        layout: "list",
+        feedback: "per_question",
+      }),
+    ).toEqual({ layout: "list", feedback: "per_question" });
+  });
+
+  it("枚举值非法即拒绝；未知键拒绝（strict，与教学策略配置同严口径）", () => {
+    expect(
+      practiceRecommendationSchema.safeParse({ layout: "grid" }).success,
+    ).toBe(false);
+    expect(
+      practiceRecommendationSchema.safeParse({ feedback: "immediate" })
+        .success,
+    ).toBe(false);
+    expect(
+      practiceRecommendationSchema.safeParse({
+        layout: "single",
+        unknown: true,
+      }).success,
+    ).toBe(false);
   });
 });
 

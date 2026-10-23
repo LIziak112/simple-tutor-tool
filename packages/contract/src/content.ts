@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { practiceRecommendationSchema } from "./practice-workflow.ts";
 import { teachingPackSchema } from "./teaching-pack.ts";
 
 /**
@@ -230,6 +231,11 @@ export const unitSchema = z.object({
   topic: z.string().optional(),
   /** 关联讲义标题（frontmatter lecture），导入时解析为 §5.2 units.lectureId */
   lectureTitle: z.string().optional(),
+  /**
+   * 做题方式与反馈节奏推荐（frontmatter practice，M5-D1）：只推荐非权限，
+   * 可选且**禁止 z.default()**——缺省不注入键，老文档解析结果形状不变。
+   */
+  practice: practiceRecommendationSchema.optional(),
   questions: z.array(questionSchema),
 });
 
@@ -260,6 +266,12 @@ export const frontmatterSchema = z.object({
   topic: z.string().optional(),
   /** 教学包声明（T7.8 / 方案 §4.6，可选命名空间）：依赖声明非能力定义，无该字段即普通 MD */
   teachingPack: teachingPackSchema.optional(),
+  /**
+   * 练习推荐（M5-D1，可选命名空间）：做题方式与反馈节奏的展示/反馈推荐，
+   * 仅 practice/mixed 单元生效（lecture/lesson 带 practice 由 lint warning 提示）。
+   * 可选且禁止 z.default()——老 frontmatter 解析结果键集不变。
+   */
+  practice: practiceRecommendationSchema.optional(),
 });
 
 /** linter 输出的单个问题（§5.1）：line/column 均从 1 起；fix 为可选的修正建议文本 */
