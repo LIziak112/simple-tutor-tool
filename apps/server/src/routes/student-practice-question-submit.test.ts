@@ -1637,6 +1637,15 @@ describe("M4-D3 进行中进度计数与结果页节奏摘要（§13/§13.8）",
     };
     expect(detail.data.attempt.status).toBe("submitted");
     expect(detail.data.practiceWorkflow?.feedbackMode).toBe("per_question");
+    // 闸门补断言（硬性规则 3）：v1 已收尾结果视图整页泄露面——默认 on_submit
+    // 公布策略下全部题已提交，答案/详解合法在场（allow 白名单）；提示内容
+    // 恒不入正文、题干无解析标记（与草稿视图级断言互补，此前结果视图只断
+    // practiceWorkflow 存在性）
+    assertNoLeak(detail, { allow: ["answers", "answer", "solutionMd"] });
+    assertNoStemLeak(detail);
+    const detailText = JSON.stringify(detail);
+    expect(detailText).not.toContain(SECRETS.choiceHint);
+    expect(detailText).not.toContain(SECRETS.judgeHint);
 
     // legacy 卷（旧协议）草稿视图不携带 → 前端不渲染节奏摘要行
     const legacy = await startTrackedAttempt(env, {});
