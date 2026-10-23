@@ -143,7 +143,9 @@ interface AnswerKindView<A extends { kind: string }, M, Rf> {
 
 /**
  * 呈现登记表：键 = 答案联合 ∩ 模型联合 ∩ 参考联合 的交集 kind——三者必须
- * 对同一 kind 集体提供呈现，缺一即编译失败（答案/模型/参考的关联性表达）；
+ * 对同一 kind 集体提供呈现（答案/模型/参考的关联性表达）：交集外 kind
+ * 无法进入登记表（登记即编译失败）；三联合不一致靠 contract 调度穷尽
+ * 与生产三联合一致性兜底；
  * 每个键的视图绑定该 kind 经 Extract 解析后的三个具体形态。
  */
 type AnswerKindViewTable<
@@ -747,7 +749,7 @@ function ProductionSurface(props: {
 
 // ---------- 扩展演练（§11.3）：fake-ordering / fake-matching ----------
 
-/** 排序答案（TT-01 定稿 D3 的 ordering 形态；与 contract 原型文件同形） */
+/** 排序答案（演练用形态：字段名 itemKeys 仅为演练代号，TT-01 定稿字段名为 sequence，决策记录 5.3；与 contract 原型文件同形） */
 interface FakeOrderingAnswer {
   readonly kind: "fake-ordering";
   readonly itemKeys: string[];

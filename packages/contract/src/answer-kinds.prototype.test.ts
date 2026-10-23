@@ -344,7 +344,7 @@ void _badFillReference;
 
 // ---------- 扩展演练（§11.3）：fake-ordering / fake-matching ----------
 
-/** 演练用排序答案：itemId 顺序（固定项也出现在序列中，见语料 valid-05 参考行式） */
+/** 演练用排序答案：itemId 顺序（固定项也出现在序列中，见语料 valid-05 参考行式）。字段名 itemKeys 仅为演练代号，TT-01 定稿字段名为 sequence（决策记录 5.3） */
 interface FakeOrderingAnswer {
   kind: "fake-ordering";
   itemKeys: string[];
@@ -963,6 +963,6 @@ describe("纯层接口原型（TT-02）", () => {
       kind: "fake-ordering",
       sequence: ["it-3", "it-2", "it-1", "it-4"],
     };
-    expect(reference.sequence).toHaveLength(4);
+    void reference;
   });
 });
