@@ -285,3 +285,10 @@
 - 状态机抽象再议：不抽象——开始页选择面 2 个 useState（初值链 + touched 布尔）+ 派生 dirty，「显式点选后恒定」由无 effect 拉扯天然保证；抽象只增间接层无第二消费方。
 - 红灯：/tmp/m5-d3-red.log 四层汇总（c1 9 failed、c2 10 failed、c3 模块未建 2 文件、c4 3 failed，均缺功能断言/导入失败，实现后全绿；设置页「改回跟随单元推荐→保存禁用」反断言同时守住 update 的 null 语义）。
 - 全量回归：pnpm test --maxWorkers=4 5690/5690（479 文件）EXIT=0（/tmp/m5-d3-full.log）；typecheck/lint exit 0（/tmp/m5-d3-tsc.log、/tmp/m5-d3-lint.log，style 提交后终态）；schema:export 零 drift（/tmp/m5-d3-schema.log，git status 干净）。注：全量跑于 style 提交前树，style 系纯格式（受影响 4 测试文件 52 用例复跑全绿 /tmp/m5-d3-style-test.log）。
+
+### M5-D3 验收与 D1–D3 收口（2026-10-23，独立验收，Claude 编排）
+
+- 编排者验收：全 diff 20 文件 +1171/−93 逐文件读过——契约/store layout 可选（裁决⑨）、currentLayout 助手与消费面适配；PATCH 面 api/hook/节奏组/作答页接线全按服务端投影（CAS 基线=展示投影 revision、stale 失效重取+提示、禁用不预判）；开始页初值链 偏好→推荐→缺省、rhythmTouched 才发 feedbackMode、布局恒写模块级 transient 三入口统一、legacy/lesson 也消费防残留；设置区三选 null 显式值 `!== undefined` 防 `??` 吞掉；course 建卷 hook 唯一调用方已改，assignment 入口维持 D2 链（按层计划范围）。子代理偏离①成立——brief 误写 PATCH 体含 workflowVersion，practiceWorkflowUpdateRequestSchema strict 只有 {feedbackMode, workflowRevision}，按硬规则 1 契约优先正确拒绝。状态机「不抽象」结论采纳（记档）。
+- 验收修复（编排者提交）：D3 只跑了 schema:export（brief 要求口径），契约 layout 可选后 dsl-kit/tutor-lint.mjs 未随重生成——CI 校验会挂；重生成提交并复验 gen:spec 零 drift。
+- 自跑全量 5690/5690（479 文件）、typecheck/lint exit 0（哨兵 /tmp/m5-d3-accept-*.log；子代理全量跑于 style 前、终态由本链覆盖）。
+- M5 三层 D1/D2/D3 全部验收通过，进入三闸门（/simplify → /code-review max → /security-review；landing practiceRecommendation 系新增学生端载荷故加跑安全闸门），随后全量回归与合并。
