@@ -7,6 +7,12 @@ export * from "./analytics-api.ts";
 /** 题干标注契约（T6R.20 起为权威定义）：固定底图＋独立矢量标注（AnnotationDoc、
  *  底图装配载荷、CAS 上传协议、回看视图、限额常量与错误码；与 note/ink 链隔离） */
 export * from "./annotation.ts";
+/** 作答纯行为登记表（统一作答适配层 UA-01 起为权威定义，方案 §4.3/§10）：
+ *  答案 kind 推导类型（AnswerOf/ReferenceOf）、三文本口径（display/teacher-queue/
+ *  ai-context）、answerKindBehaviors 登记表与唯一调度边界 dispatchBehavior/
+ *  dispatchIsAnswered、公开结构映射（选项/槽位）；无 React/DOM 依赖，server/web
+ *  共用；与 formatQuestionAnswers（参考文本唯一入口）不互相导入 */
+export * from "./answer-kinds/index.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */

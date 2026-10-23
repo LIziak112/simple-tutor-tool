@@ -1,135 +1,43 @@
 import { describe, expect, it } from "vitest";
+import type {
+  AnswerKindBehavior,
+  AnswerKindBehaviorTable,
+  AnswerOf,
+  OptionsPublicStructure,
+  PublicStructureByKind,
+  ReferenceOf,
+  ShapeIssue,
+} from "./answer-kinds/index.ts";
+import {
+  answerKindBehaviors,
+  choiceMultiBehavior,
+  dispatchBehavior,
+  fillBehavior,
+  judgeBehavior,
+} from "./answer-kinds/index.ts";
 import type { QuestionAnswers } from "./content.ts";
-import { lettersOf } from "./content.ts";
 import type { StudentAnswer } from "./grading.ts";
 
 /**
- * TT-02（UA-00）纯行为登记表接口原型——**测试局部代码，不进线上契约**：
- * 全部类型与实现只存在于本 .test.ts 文件内（vitest node project 运行 +
- * `pnpm typecheck` 编译期双覆盖），不被任何生产模块 import。生产落地（UA-01）
- * 时本文件的内容迁入 src/answer-kinds/{types,judge,choice,multi,fill,final}.ts，
- * 文件设计见 docs/题目模型与练习适配/统一作答适配层方案.md §10。
+ * TT-02（UA-00）纯行为登记表接口原型——UA-01 起生产类型与五 kind 行为已
+ * 收归 src/answer-kinds/（本文件改为从生产模块导入，§6.1「原型工程性记录」
+ * 的收编落地）；本文件继续承载：接口编译期负例、三口径字面值锁定、
+ * 扩展演练（§11.3 fake-ordering / fake-matching，UA-05 重跑）。
+ * vitest node project 运行 + `pnpm typecheck` 编译期双覆盖，不进线上契约。
  *
- * 本文件验证的接口约束（方案 §4.3 草案的补齐与实际编译）：
+ * 本文件验证的接口约束（方案 §4.3 定稿形态）：
  * 1. AnswerKind/AnswerOf/ReferenceOf 全部由既有判别联合推导，不手抄成员；
  * 2. AnswerKindBehaviorTable 以 satisfies 强制穷尽登记（漏 kind 编译失败）；
  * 3. 三种文本口径（display/teacher-queue/ai-context）在同一登记表内逐字
- *    复刻既有实现的输出（I15 差分的目标形态；逐字等价断言在 UA-01 迁移时
- *    直接对着旧实现跑，本原型先锁定预期字面值）；
+ *    复刻既有实现的输出（I15 目标形态；逐字差分对照旧实现副本另见
+ *    answer-kinds/profiles.differential.test.ts）；
  * 4. 扩展演练（§11.3）：fake-ordering / fake-matching 经扩展联合 + 结构映射
  *    接入同一张表，不改生产类型、不加 any。
  */
 
-// ---------- §4.3 接口类型（生产落地时迁入 answer-kinds/types.ts） ----------
+// ---------- 公开结构（生产五 kind 从 answer-kinds 导入；演练假结构在下方局部声明） ----------
 
-/** 答案 kind：由学生答案联合推导（五个生产 kind：judge/choice/multi/fill/final） */
-export type AnswerKind = StudentAnswer["kind"];
-
-/**
- * 某个 kind 的学生答案形态。第二参数默认绑定生产联合，扩展演练传入
- * 扩展联合（§11.3「不继续绑定生产 AnswerKind」）。
- */
-export type AnswerOf<
-  K extends string,
-  U extends { kind: string } = StudentAnswer,
-> = Extract<U, { kind: K }>;
-
-/**
- * 某个 kind 的参考答案形态：由 QuestionAnswers 推导，不手抄成员。
- * 第二参数默认绑定生产参考联合；演练的 fake kind 传入演练自己的参考联合
- * （接口调整点 1：方案 §4.3 草案把 ReferenceOf 写死为 QuestionAnswers，
- * 演练证明必须参数化，见决策记录「TT-02 接口调整」）。
- */
-export type ReferenceOf<
-  K extends string,
-  R extends { kind: string } = QuestionAnswers,
-> = Extract<R, { kind: K }>;
-
-/** 文本口径（方案 §2：三种口径有意不同，收口=同文件同穷尽表，不合并输出） */
-export type AnswerTextProfile = "display" | "teacher-queue" | "ai-context";
-
-/**
- * 结构形状问题（inspectShape 的产物）：只报告、不修复、不阻止保存（§8.3），
- * 本阶段不接入保存拦截。code 用字符串而非封闭枚举——扩展 kind 自带新诊断
- * 不应要求修改生产枚举（DSL 兼容规则 11 的精神）。
- */
-export interface ShapeIssue {
-  readonly code: string;
-  readonly message: string;
-}
-
-/**
- * 每种答案的纯行为。结构参数 S 是该 kind 的**公开结构**（不含参考答案、
- * 解析或教师私注——§4.2 PreparedQuestion 的结构面），形状检查不接触
- * 正确顺序、正确配对或标准答案。
- */
-export interface AnswerKindBehavior<A extends { kind: string }, S> {
-  /** 已答判定（旧 isAnswered 口径：fill 至少一空非空、final 非空文本） */
-  isAnswered(answer: A): boolean;
-  /** 本人答案 → 按口径文本化；三口径输出各自锁定（I15） */
-  formatStudent(answer: A, profile: AnswerTextProfile, structure: S): string;
-  /** 结构形状检查：未知引用/重复/越界等，只报告不拦截 */
-  inspectShape(answer: A, structure: S): readonly ShapeIssue[];
-}
-
-/**
- * 穷尽登记表：U 的每个 kind 必须登记，且行为签名与该 kind 的答案形态
- * （Extract 窄化）和 Structures[K] 的结构形态精确相关——错配结构编译失败。
- */
-export type AnswerKindBehaviorTable<
-  U extends { kind: string },
-  Structures extends { readonly [K in U["kind"]]: unknown },
-> = {
-  readonly [K in U["kind"]]: AnswerKindBehavior<
-    Extract<U, { kind: K }>,
-    Structures[K]
-  >;
-};
-
-/** 唯一调度边界收尾用（§4.4：允许中央 switch + assertNever，不追求零 switch） */
-function assertNever(kind: never): never {
-  throw new Error(`未登记的答案 kind：${String(kind)}`);
-}
-
-// ---------- 公开结构映射（生产五 kind，方案 §4.2） ----------
-
-/** 选项项：身份与正文（§4.1 修订：{key,index,text}，修复重复选项文本的 key 冲突） */
-export interface PublicOption {
-  readonly key: string;
-  readonly index: number;
-  readonly text: string;
-}
-
-/** 填空槽位：旧空位 slotId 由序号派生（slot-1…），order 即旧数组下标 */
-export interface PublicSlot {
-  readonly slotId: string;
-  readonly slotKind: "text";
-  readonly order: number;
-}
-
-/** choice/multi 的公开结构：有序选项项 */
-export interface OptionsPublicStructure {
-  readonly options: readonly PublicOption[];
-}
-
-/** fill 的公开结构：有序槽位（同源 AST 抽取，UA-02 analyzeSlots 的产物形态） */
-export interface SlotsPublicStructure {
-  readonly slots: readonly PublicSlot[];
-}
-
-/**
- * 生产五 kind 的公开结构映射：judge/final 的纯行为只读答案本身，无结构
- * 需求（null 显式表达「无」而不是可选结构——登记表仍是全键穷尽）。
- */
-export interface PublicStructureByKind {
-  readonly judge: null;
-  readonly choice: OptionsPublicStructure;
-  readonly multi: OptionsPublicStructure;
-  readonly fill: SlotsPublicStructure;
-  readonly final: null;
-}
-
-// ---------- 三口径的字面值口径（逐字转录既有实现，I15 目标形态） ----------
+// ---------- 三口径的字面值口径说明（行为正文已收归生产 answer-kinds/*.ts） ----------
 //
 // display：apps/web/src/features/attempt/answer-format.ts formatStudentAnswer
 //   - judge：布尔→对/错；历史字符串原样（judgeLabelOf）；
@@ -148,160 +56,8 @@ export interface PublicStructureByKind {
 //   - judge/fill：复用 teacher-queue 序列化；
 //   - choice/multi：字母后附选项正文（选项缺失回落字母）；
 //   - final：空文本→「（答案在笔迹材料中）」。
-
-/** teacher-queue/ai-context 的选项字母（mark-response optionLabel 逐字复刻：≥26 用数字） */
-function queueOptionLabel(index: number): string {
-  return index >= 0 && index < 26
-    ? String.fromCharCode(65 + index)
-    : String(index);
-}
-
-/** ai-context 的选项文本增强（student-ai-context optionTextOf 逐字复刻） */
-function aiOptionTextOf(
-  structure: OptionsPublicStructure,
-  index: number,
-): string {
-  const option = structure.options.find((item) => item.index === index);
-  return option === undefined
-    ? queueOptionLabel(index)
-    : `${queueOptionLabel(index)}（${option.text}）`;
-}
-
-// ---------- 生产五 kind 的行为实现（登记表原型） ----------
-
-const judgeBehavior: AnswerKindBehavior<
-  AnswerOf<"judge">,
-  PublicStructureByKind["judge"]
-> = {
-  isAnswered: () => true,
-  formatStudent: (answer, profile) => {
-    if (typeof answer.value === "boolean") {
-      if (profile === "display") return answer.value ? "对" : "错";
-      return answer.value ? "正确" : "错误";
-    }
-    // 历史字符串写法：三口径一律原样保留（I02/§7.1 不改写历史值）
-    return answer.value;
-  },
-  // judge 无结构需求；历史字符串合法（§7.1），无形状问题可报
-  inspectShape: () => [],
-};
-
-/** choice/multi 共用一份行为：签名覆盖两种答案形态，登记表两个键引用同一实现 */
-const choiceMultiBehavior: AnswerKindBehavior<
-  AnswerOf<"choice"> | AnswerOf<"multi">,
-  OptionsPublicStructure
-> = {
-  isAnswered: (answer) => answer.kind === "choice" || answer.indexes.length > 0,
-  formatStudent: (answer, profile, structure) => {
-    if (answer.kind === "choice") {
-      if (profile === "display") return lettersOf(answer.index);
-      if (profile === "teacher-queue") return queueOptionLabel(answer.index);
-      return aiOptionTextOf(structure, answer.index);
-    }
-    const indexes = answer.indexes;
-    if (profile === "display") {
-      // display：升序不去重、字母拼接（AA 进位）
-      return [...indexes]
-        .sort((a, b) => a - b)
-        .map((index) => lettersOf(index))
-        .join("");
-    }
-    // teacher-queue/ai-context：去重+升序、「、」连接
-    const unique = [...new Set(indexes)].sort((a, b) => a - b);
-    if (profile === "teacher-queue") {
-      return unique.map((index) => queueOptionLabel(index)).join("、");
-    }
-    return unique.map((index) => aiOptionTextOf(structure, index)).join("、");
-  },
-  inspectShape: (answer, structure) => {
-    const issues: ShapeIssue[] = [];
-    const indexes = answer.kind === "choice" ? [answer.index] : answer.indexes;
-    const outOfRange = indexes.filter(
-      (index) => !structure.options.some((option) => option.index === index),
-    );
-    for (const index of outOfRange) {
-      issues.push({
-        code: "OPTION_INDEX_OUT_OF_RANGE",
-        message: `选项下标 ${index} 超出题面选项范围（历史数据保留原值，不自动修复）`,
-      });
-    }
-    return issues;
-  },
-};
-
-const fillBehavior: AnswerKindBehavior<
-  AnswerOf<"fill">,
-  PublicStructureByKind["fill"]
-> = {
-  isAnswered: (answer) => answer.values.some((value) => value.trim() !== ""),
-  formatStudent: (answer, profile) => {
-    if (profile === "display") {
-      // 空值渲染「（空）」、「；」连接；历史多余项照常展示（§7.1）
-      return answer.values
-        .map((value) => (value.trim() === "" ? "（空）" : value))
-        .join("；");
-    }
-    // teacher-queue/ai-context：values 原样「；」连接，空值不渲染占位
-    return answer.values.join("；");
-  },
-  // fill 的历史宽容（I02）：多余数组项合法（7.1「额外数组项不能填补空位」是
-  // 完整度口径，不是形状错误），任何 values 数组都是结构合法的作答
-  inspectShape: () => [],
-};
-
-const finalBehavior: AnswerKindBehavior<
-  AnswerOf<"final">,
-  PublicStructureByKind["final"]
-> = {
-  isAnswered: (answer) => answer.finalAnswer.trim() !== "",
-  formatStudent: (answer, profile) => {
-    if (profile === "display") {
-      return answer.finalAnswer.trim() === "" ? "（空）" : answer.finalAnswer;
-    }
-    if (profile === "teacher-queue") return answer.finalAnswer;
-    // ai-context：只写笔迹未填最终答案 → 标注在笔迹材料中（不伪造文本）
-    return answer.finalAnswer.trim() === ""
-      ? "（答案在笔迹材料中）"
-      : answer.finalAnswer;
-  },
-  inspectShape: () => [],
-};
-
-/** 生产登记表：五 kind 全配（satisfies 强制穷尽——漏 kind/错配签名编译失败） */
-const productionBehaviors = {
-  judge: judgeBehavior,
-  choice: choiceMultiBehavior,
-  multi: choiceMultiBehavior,
-  fill: fillBehavior,
-  final: finalBehavior,
-} satisfies AnswerKindBehaviorTable<StudentAnswer, PublicStructureByKind>;
-
-/**
- * 唯一调度边界原型（§4.4）：按 kind 显式 switch 窄化后调用登记表实现，
- * assertNever 收尾。新增 kind 在此增加穷尽分支（§11.1 触点④）。
- */
-function dispatchBehavior(
-  answer: StudentAnswer,
-  profile: AnswerTextProfile,
-  structures: PublicStructureByKind,
-): string {
-  const table: AnswerKindBehaviorTable<StudentAnswer, PublicStructureByKind> =
-    productionBehaviors;
-  switch (answer.kind) {
-    case "judge":
-      return table.judge.formatStudent(answer, profile, structures.judge);
-    case "choice":
-      return table.choice.formatStudent(answer, profile, structures.choice);
-    case "multi":
-      return table.multi.formatStudent(answer, profile, structures.multi);
-    case "fill":
-      return table.fill.formatStudent(answer, profile, structures.fill);
-    case "final":
-      return table.final.formatStudent(answer, profile, structures.final);
-    default:
-      return assertNever(answer);
-  }
-}
+// 三函数现为登记表兼容代理（UA-01），字面值锁定断言继续指向生产
+// dispatchBehavior / answerKindBehaviors。
 
 // ---------- 编译期负例（@ts-expect-error 全部带原因；tsc 消费） ----------
 
@@ -532,7 +288,7 @@ const matchingBehavior: AnswerKindBehavior<
 
 /** 演练登记表：扩展联合 7 个 kind 全配（生产 5 项原样复用，证明不改旧项） */
 const drillBehaviors = {
-  ...productionBehaviors,
+  ...answerKindBehaviors,
   "fake-ordering": orderingBehavior,
   "fake-matching": matchingBehavior,
 } satisfies AnswerKindBehaviorTable<DrillAnswer, DrillStructures>;
@@ -540,7 +296,7 @@ const drillBehaviors = {
 // 演练联合的负例：漏配假 kind 同样编译失败
 // @ts-expect-error: 演练联合漏 fake-matching 键
 const _drillMissing: AnswerKindBehaviorTable<DrillAnswer, DrillStructures> = {
-  ...productionBehaviors,
+  ...answerKindBehaviors,
   "fake-ordering": orderingBehavior,
 };
 void _drillMissing;
@@ -726,7 +482,7 @@ describe("纯层接口原型（TT-02）", () => {
   });
 
   it("isAnswered 保持旧口径（I06：与完整度分离）", () => {
-    const { judge, choice, multi, fill, final } = productionBehaviors;
+    const { judge, choice, multi, fill, final } = answerKindBehaviors;
     // judge/choice：有答案对象即已答（false 与 0 都是有效输入，I03）
     expect(judge.isAnswered({ kind: "judge", value: false })).toBe(true);
     expect(choice.isAnswered({ kind: "choice", index: 0 })).toBe(true);
@@ -743,7 +499,7 @@ describe("纯层接口原型（TT-02）", () => {
 
   it("inspectShape 只报告不修复：越界索引报问题、fill 历史多余项不报", () => {
     expect(
-      productionBehaviors.choice.inspectShape(
+      answerKindBehaviors.choice.inspectShape(
         { kind: "choice", index: 9 },
         lettersStructure,
       ),
@@ -754,7 +510,7 @@ describe("纯层接口原型（TT-02）", () => {
       },
     ]);
     expect(
-      productionBehaviors.fill.inspectShape(
+      answerKindBehaviors.fill.inspectShape(
         { kind: "fill", values: ["x", "y", "历史多余"] },
         productionStructures.fill,
       ),

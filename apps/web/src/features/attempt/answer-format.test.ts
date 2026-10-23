@@ -4,6 +4,7 @@ import {
   attemptSourceLabel,
   formatReferenceAnswers,
   formatStudentAnswer,
+  HANDWRITTEN_TYPES,
   isAnswered,
   judgeLabelOf,
   letterOf,
@@ -12,6 +13,16 @@ import {
 } from "./answer-format";
 
 /** 作答展示纯函数测试（T2.6）：题型徽章口径见组件测试，这里锁文本化行为。 */
+
+describe("HANDWRITTEN_TYPES（UA-01 起由契约 paperRole 派生）", () => {
+  it("旧七型资格逐字不变：solve/apply/find-error", () => {
+    expect([...HANDWRITTEN_TYPES].sort()).toEqual([
+      "apply",
+      "find-error",
+      "solve",
+    ]);
+  });
+});
 
 describe("attemptRoundLabel（轮次标注按来源）", () => {
   it("course/wrong/assignment 既有文案 + lesson=第 n 次讲练（2026-10 讲练一体）", () => {

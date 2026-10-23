@@ -3,6 +3,7 @@ import type { Question, StudentAnswer } from "@tutor/contract";
 import {
   aiContextSnapshotSchema,
   DEFAULT_AI_PROMPT_TEMPLATES,
+  optionsPublicStructureOf,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -835,30 +836,36 @@ describe("SAI-09 完成条件:确定快照标识且不暴露猜测 oracle", () =
 // ---------- 本人答案可读文本(B00 §3.1 口径) ----------
 
 describe("SAI-09 studentAnswerTextOf:fill 逐空/choice 选项文本/手写题标注", () => {
-  const choiceSnapshot = JSON.parse(snapshotJsonOf({ id: "q" })) as Question;
+  // UA-01:studentAnswerTextOf 的选项正文经 OptionsPublicStructure 提供,
+  // 不再收全量 snapshot(与迁移前 choiceSnapshot.options 同一选项集)
+  const choiceStructure = optionsPublicStructureOf([
+    "选项甲",
+    "选项乙",
+    "选项丙",
+  ]);
 
   it("未作答 → null(仍可求助);choice → 字母+选项文本;multi → 逐项", () => {
-    expect(studentAnswerTextOf(choiceSnapshot, null)).toBeNull();
+    expect(studentAnswerTextOf(choiceStructure, null)).toBeNull();
     expect(
-      studentAnswerTextOf(choiceSnapshot, { kind: "choice", index: 1 }),
+      studentAnswerTextOf(choiceStructure, { kind: "choice", index: 1 }),
     ).toBe("B（选项乙）");
     expect(
-      studentAnswerTextOf(choiceSnapshot, { kind: "multi", indexes: [0, 2] }),
+      studentAnswerTextOf(choiceStructure, { kind: "multi", indexes: [0, 2] }),
     ).toBe("A（选项甲）、C（选项丙）");
   });
 
   it("judge → 正确/错误;fill → 逐空分号;手写题未填 → 答案在笔迹材料中,已填 → 原文", () => {
     expect(
-      studentAnswerTextOf(choiceSnapshot, { kind: "judge", value: true }),
+      studentAnswerTextOf(choiceStructure, { kind: "judge", value: true }),
     ).toBe("正确");
     expect(
-      studentAnswerTextOf(choiceSnapshot, { kind: "fill", values: ["2", ""] }),
+      studentAnswerTextOf(choiceStructure, { kind: "fill", values: ["2", ""] }),
     ).toBe("2；");
     expect(
-      studentAnswerTextOf(choiceSnapshot, { kind: "final", finalAnswer: "" }),
+      studentAnswerTextOf(choiceStructure, { kind: "final", finalAnswer: "" }),
     ).toBe("（答案在笔迹材料中）");
     expect(
-      studentAnswerTextOf(choiceSnapshot, {
+      studentAnswerTextOf(choiceStructure, {
         kind: "final",
         finalAnswer: "x=2",
       }),
