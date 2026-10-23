@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptSubmitRevision,
+  PracticeWorkflowUpdateRequest,
   StudentAnswer,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
 import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
+import { useState } from "react";
 import {
   studentAssignmentsKey,
   studentCoursesKey,
@@ -18,6 +20,7 @@ import {
   startAttemptApi,
   startCourseAttemptApi,
   submitAttemptApi,
+  updateAttemptWorkflowApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
@@ -105,6 +108,46 @@ export function useStartAttempt(assignmentId: string) {
     // mutationFn 执行时才读偏好（点击时刻），不在模块顶层求值
     mutationFn: () => startAttemptApi(assignmentId, workflowStartOptions()),
   });
+}
+
+/**
+ * 反馈节奏切换（M5-D3）：PATCH /attempts/:id/workflow，携带当前
+ * workflowRevision 做 CAS。成功与 WORKFLOW_REVISION_STALE 都失效该 attempt
+ * 详情查询（服务端投影为权威，invalidate 即 refetch）；stale 额外给出
+ * 「已刷新，请重试」提示；其他错误透传服务端 message（notice）。禁用只按
+ * 服务端投影（canChangeFeedback/allowedFeedbackModes），客户端不预判授权。
+ */
+export function useUpdateAttemptWorkflow(attemptId: string) {
+  const queryClient = useQueryClient();
+  const [staleNotice, setStaleNotice] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: (input: PracticeWorkflowUpdateRequest) =>
+      updateAttemptWorkflowApi(attemptId, input),
+    onSuccess: () => {
+      setStaleNotice(null);
+      void queryClient.invalidateQueries({
+        queryKey: studentAttemptKey(attemptId),
+      });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === "WORKFLOW_REVISION_STALE") {
+        // revision 被并发修改（如另一设备已改）：先重取投影再提示重试，
+        // 学生基于刷新后的服务端值重试，不保留过期 revision
+        void queryClient.invalidateQueries({
+          queryKey: studentAttemptKey(attemptId),
+        });
+        setStaleNotice("反馈节奏刚被其他操作修改，已刷新，请重试");
+      }
+    },
+  });
+  return {
+    ...mutation,
+    staleNotice,
+    /** 就地提示（节奏组下方 alert）：stale 提示优先，其余透传服务端 message */
+    notice:
+      staleNotice ??
+      (mutation.error instanceof Error ? mutation.error.message : null),
+  };
 }
 
 /**

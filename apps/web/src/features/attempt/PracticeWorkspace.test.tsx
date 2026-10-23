@@ -156,6 +156,109 @@ it("未受限卷不显示受限文案", () => {
   expect(screen.queryByText(/老师要求/)).toBeNull();
 });
 
+// ---------- 反馈节奏切换组（M5-D3） ----------
+
+it("M5-D3 节奏组（可改态）：两枚单选可点，当前节奏选中，切换回调带目标模式", () => {
+  const onFeedbackModeChange = vi.fn();
+  render(
+    <PracticeModeSummary
+      workflow={workflowOf({ revision: 2 })}
+      layout="list"
+      onLayoutChange={vi.fn()}
+      onFeedbackModeChange={onFeedbackModeChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
+  const perQuestion = screen.getByRole("radio", { name: "每题提交后查看" });
+  const afterAttempt = screen.getByRole("radio", { name: "交卷后查看" });
+  expect(perQuestion).toBeChecked();
+  expect(perQuestion).toBeEnabled();
+  expect(afterAttempt).not.toBeChecked();
+  expect(afterAttempt).toBeEnabled();
+  fireEvent.click(afterAttempt);
+  expect(onFeedbackModeChange).toHaveBeenCalledWith("after_attempt");
+});
+
+it("M5-D3 节奏组（教师限单一模式）：允许集外的项禁用，当前项仍可保持", () => {
+  const onFeedbackModeChange = vi.fn();
+  render(
+    <PracticeModeSummary
+      workflow={workflowOf({
+        feedbackMode: "after_attempt",
+        allowedFeedbackModes: ["after_attempt"],
+      })}
+      layout="list"
+      onLayoutChange={vi.fn()}
+      onFeedbackModeChange={onFeedbackModeChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
+  const afterAttempt = screen.getByRole("radio", { name: "交卷后查看" });
+  const perQuestion = screen.getByRole("radio", { name: "每题提交后查看" });
+  expect(afterAttempt).toBeChecked();
+  expect(afterAttempt).toBeEnabled();
+  expect(perQuestion).toBeDisabled();
+});
+
+it("M5-D3 节奏组（提交后冻结）：整组禁用并展示受限文案", () => {
+  render(
+    <PracticeModeSummary
+      workflow={workflowOf({
+        feedbackMode: "after_attempt",
+        canChangeFeedback: false,
+        allowedFeedbackModes: ["after_attempt"],
+        canSubmitQuestion: false,
+        restrictionReason: "teacher_after_attempt",
+      })}
+      layout="list"
+      onLayoutChange={vi.fn()}
+      onFeedbackModeChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
+  expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
+  // 展开区紧邻节奏组展示受限文案（摘要行已有一处，展开区追加同源文案）
+  expect(screen.getAllByText("老师要求交卷后公布").length).toBeGreaterThanOrEqual(
+    2,
+  );
+});
+
+it("M5-D3 节奏组（冻结无受限原因，如已开始提交）：整组禁用且不臆造受限文案", () => {
+  render(
+    <PracticeModeSummary
+      workflow={workflowOf({ canChangeFeedback: false })}
+      layout="list"
+      onLayoutChange={vi.fn()}
+      onFeedbackModeChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
+  expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
+  expect(screen.queryByText(/老师要求/)).toBeNull();
+});
+
+it("M5-D3 节奏组：PATCH 在途临时禁用；就地错误以 alert 呈现", () => {
+  render(
+    <PracticeModeSummary
+      workflow={workflowOf()}
+      layout="list"
+      onLayoutChange={vi.fn()}
+      onFeedbackModeChange={vi.fn()}
+      feedbackBusy
+      feedbackError="反馈节奏刚被其他操作修改，已刷新，请重试"
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
+  expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
+  // role="alert" 为 name-from-author，不用 name 匹配，断言文本内容
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "反馈节奏刚被其他操作修改，已刷新，请重试",
+  );
+});
+
 // ---------- 单题紧凑进度行与占位主操作条 ----------
 
 it("紧凑进度行显示第 n / N 题与已提交计数，题目导航入口可打开", () => {

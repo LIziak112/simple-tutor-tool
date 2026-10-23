@@ -67,7 +67,7 @@ import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
-import { useSubmitAttempt } from "./attempt-queries";
+import { useSubmitAttempt, useUpdateAttemptWorkflow } from "./attempt-queries";
 import { focusWhenReachable } from "./focus-when-reachable";
 import {
   type PracticeProblemPhase,
@@ -270,6 +270,8 @@ function AnswerView({
   /** 交卷准备中止标志：弹层关闭（=取消）置位，runSubmit 各 await 段后检查 */
   const submitAbortedRef = useRef(false);
   const submit = useSubmitAttempt(attemptId);
+  // 反馈节奏切换（M5-D3）：PATCH CAS + 详情失效；禁用只按服务端投影
+  const feedbackUpdate = useUpdateAttemptWorkflow(attemptId);
 
   // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（避免与课程练习标题重复）。
@@ -1165,12 +1167,22 @@ function AnswerView({
                 </div>
               )}
 
-              {/* 做题方式摘要行（§7.1）：v1 卷才有；legacy/lesson 不渲染 */}
+              {/* 做题方式摘要行（§7.1）：v1 卷才有；legacy/lesson 不渲染。
+                  M5-D3：节奏切换 PATCH 以摘要行展示的服务端投影 revision 为
+                  CAS 基线；在途与就地提示（stale/服务端 message）透传 */}
               {practiceWorkflow !== undefined && total > 0 && (
                 <PracticeModeSummary
                   workflow={practiceWorkflow}
                   layout={practiceLayout}
                   onLayoutChange={setPracticeLayoutExplicit}
+                  onFeedbackModeChange={(mode) =>
+                    feedbackUpdate.mutate({
+                      feedbackMode: mode,
+                      workflowRevision: practiceWorkflow.revision,
+                    })
+                  }
+                  feedbackBusy={feedbackUpdate.isPending}
+                  feedbackError={feedbackUpdate.notice}
                 />
               )}
               {singleMode && resolvedSingleQuestionId !== null && (
