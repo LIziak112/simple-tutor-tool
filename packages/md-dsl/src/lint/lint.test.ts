@@ -974,3 +974,100 @@ describe("lintDocument：原始 HTML 补充（RAW_HTML）", () => {
     expect(issues).toEqual([]);
   });
 });
+
+describe("lintDocument：frontmatter practice 推荐（M5-D1）", () => {
+  it("kind: lecture 带 practice → warning PRACTICE_NOT_APPLICABLE @2（围栏行+1），无其他 issue", () => {
+    const text = md([
+      "---",
+      "kind: lecture",
+      "practice:",
+      "  layout: single",
+      "---",
+      "",
+      "# 第1讲 讲义",
+      "",
+      "正文。",
+    ]);
+    const { issues } = lintDocument(text);
+    expect(codes(issues)).toEqual(["PRACTICE_NOT_APPLICABLE"]);
+    expect(issueOf(issues, "PRACTICE_NOT_APPLICABLE")).toMatchObject({
+      level: "warning",
+      line: 2,
+      column: 1,
+    });
+    expect(issueOf(issues, "PRACTICE_NOT_APPLICABLE")?.message).toContain(
+      "practice/mixed",
+    );
+  });
+
+  it("kind: lesson 带 practice → 同款 warning（讲练页不生效）", () => {
+    const text = md([
+      "---",
+      "kind: lesson",
+      "practice:",
+      "  feedback: after_attempt",
+      "---",
+      "",
+      "# 第1讲 讲练",
+      "",
+      "::::question{type=judge}",
+      "[[正确]]",
+      "::::",
+    ]);
+    const { issues } = lintDocument(text);
+    expect(codes(issues)).toEqual(["PRACTICE_NOT_APPLICABLE"]);
+    expect(issueOf(issues, "PRACTICE_NOT_APPLICABLE")?.level).toBe("warning");
+  });
+
+  it("kind: practice / mixed 带 practice → 0 issue；空对象也合法", () => {
+    const practice = md([
+      "---",
+      "kind: practice",
+      "unit: 推荐练习",
+      "practice:",
+      "  layout: single",
+      "  feedback: per_question",
+      "---",
+      "",
+      "::::question{type=judge}",
+      "[[正确]]",
+      "::::",
+    ]);
+    expect(lintDocument(practice).issues).toEqual([]);
+    const mixed = md([
+      "---",
+      "kind: mixed",
+      "unit: 推荐混合",
+      "practice: {}",
+      "---",
+      "",
+      "# 第1讲 混合",
+      "",
+      "::::question{type=judge}",
+      "[[正确]]",
+      "::::",
+    ]);
+    expect(lintDocument(mixed).issues).toEqual([]);
+  });
+
+  it("practice 枚举非法 → 既有 schema error 路径 INVALID_FRONTMATTER（阻断导入）", () => {
+    const text = md([
+      "---",
+      "kind: practice",
+      "unit: 坏推荐",
+      "practice:",
+      "  feedback: immediate",
+      "---",
+      "",
+      "::::question{type=judge}",
+      "[[正确]]",
+      "::::",
+    ]);
+    const { issues } = lintDocument(text);
+    expect(codes(issues)).toEqual(["INVALID_FRONTMATTER"]);
+    expect(issueOf(issues, "INVALID_FRONTMATTER")?.level).toBe("error");
+    expect(issueOf(issues, "INVALID_FRONTMATTER")?.message).toContain(
+      "practice.feedback",
+    );
+  });
+});
