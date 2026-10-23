@@ -26,8 +26,10 @@ import {
  *    测试「服务端失败不阻塞本机落盘结果」），底栏提示可随重新作答恢复；真正的
  *    「不切题」保护是**本机写失败**（IndexedDB put 注入失败）→ 停留本题、
  *    「本机稿未保存，仍停留本题」+「重试保存并切换」，恢复后可正常切题并提交；
- * 5. 视口抽查（§16.2：可到达、可输入、焦点与正文唯一）：390×844 手机与
- *    1440×900 桌面下单题容器可见可输入、同屏只有一份活动题面（第 2 题卡不可见）；
+ * 5. 视口矩阵（§16.2：可到达、可输入、焦点与正文唯一）：320/390/430、
+ *    768/820、1024/1180、1440 八档宽度逐档轻查（容器可达、当前题可见他题
+ *    隐藏、选项可点选保持、无横向溢出），390×844 手机与 1440×900 桌面
+ *    深查键盘切题焦点唯一与提交流程；
  * 6. 全程 attachLeakMonitor：所有学生页面响应受键名/内容级泄露检查，末尾断言空。
  */
 
@@ -644,7 +646,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     expect(leak.violations().join("\n")).toBe("");
   });
 
-  test("场景5 视口抽查：390 手机与 1440 桌面单题可达、可输入、正文唯一", async ({
+  test("场景5 视口矩阵：320–1440 八档可达、可输入、正文唯一；390/1440 深查键盘与提交", async ({
     request,
     page,
   }) => {
@@ -683,21 +685,36 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     const q1 = page.locator('article[aria-label="第 1 题"]');
     const q2 = page.locator('article[aria-label="第 2 题"]');
 
-    // —— 手机视口 390×844：单题容器可达、可输入、正文唯一 ——
+    // —— §16.2 视口矩阵轻量档：320/390/430、768/820、1024/1180、1440 八档宽度
+    //    逐档核心断言：可达（单题容器与当前题可见）、可输入（选项点选并保持）、
+    //    正文唯一（非当前题不可见）+ 无横向溢出（正文不被裁出屏幕）——
+    const viewports = [
+      [320, 844],
+      [390, 844],
+      [430, 844],
+      [768, 1024],
+      [820, 1180],
+      [1024, 768],
+      [1180, 820],
+      [1440, 900],
+    ] as const;
+    for (const [width, height] of viewports) {
+      await page.setViewportSize({ width, height });
+      await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+      await expect(singleWorkspace(page)).toBeVisible();
+      await expect(q1).toBeVisible();
+      await expect(q2).toBeHidden();
+      await chooseAnswer(page, 1, "对", true);
+      await expect(
+        q1.getByRole("radio", { name: "对", exact: true }),
+      ).toBeChecked();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+    }
+
+    // —— 手机视口 390×844 深查：键盘切题可达，且焦点唯一落回工作区容器 ——
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
-    await expect(singleWorkspace(page)).toBeVisible();
-    await expect(q1).toBeVisible();
-    await expect(q2).toBeHidden();
-    await chooseAnswer(page, 1, "对", true);
-    await expect(
-      q1.getByRole("radio", { name: "对", exact: true }),
-    ).toBeChecked();
-    // 无横向溢出（可到达性：正文不被裁出屏幕）
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBeLessThanOrEqual(390);
-    // 键盘切题在手机宽度同样可达，且焦点唯一落回工作区容器
     await focusSingleWorkspace(page);
     await page.keyboard.press("ArrowRight");
     await expect(page.getByText("第 2 / 2 题 · 已提交 0 题")).toBeVisible();
