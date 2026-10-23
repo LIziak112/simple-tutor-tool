@@ -277,3 +277,11 @@
 - 开始页选择器初值 = 已保存偏好 ?? 单元推荐 ?? 缺省（布局 list、节奏 per_question）；显式点选后本次访问内恒定。
 - 「开始练习」仅当学生本次显式触碰过节奏选择器才随请求发 feedbackMode（预裁决①开始页显式选择恒最高）；未触碰维持 D2 链（已设置发偏好、未设置整键不发）。
 - 布局预选不经服务端（预裁决③）：模块级一次性 transient 携带，作答页初值消费一次后清除；硬刷新直写作答页回落本机偏好（「进入时取一次」语义不变）。
+
+### M5-D3 PATCH 节奏切换 UI + 开始页预选 + 设置反馈节奏项（2026-10-23，子代理实现，TDD 四层红灯先行）
+
+- 提交链：4e07f71e（层1 契约+store：偏好 layout 可选——键缺省=未设置、禁 default（裁决⑨），契约测试「键缺省合法且 parse 产物无 layout 键」；store 三字段化、null 项 storage 键缺省不补写、currentLayout() 助手；消费面测试全量适配）→ af935c5f（层2 摘要卡节奏切换：updateAttemptWorkflowApi + useUpdateAttemptWorkflow——成功与 WORKFLOW_REVISION_STALE 都失效 attempt 详情、stale 提示「已刷新请重试」、其余透传服务端 message；PracticeModeSummary 节奏组 fieldset：canChangeFeedback=false 整组禁用、allowedFeedbackModes 外单项禁用、busy 临时禁用、≥44px；AttemptSession 以服务端投影 revision 为 CAS 基线）→ e7c6a590（层3 开始页：attempt-start-intent 模块级一次性布局预选、作答页消费一次后清除、legacy/lesson 也消费防残留、硬刷新回落本机偏好；UnitLandingView 数据就绪后挂载——推荐标注 Label 同源、选择器初值 偏好→推荐→缺省、显式点选本次访问恒定、节奏 touched 才发 feedbackMode、布局恒写 transient 统一三入口；useStartCourseAttempt 接受调用方组装 options）→ b0bdf8e0（层4 设置页反馈节奏三选：跟随单元推荐(未设置)/每题提交后查看/交卷后统一查看；update 用 !== undefined 防 ?? 吞 null；保存三字段全量移除过渡注释）→ c3f7d9dc（style：仓库级 lint 抓出层1/2 遗留 import 排序与长行，纯格式零行为）。
+- 记档取舍：brief 的 PATCH 请求体含 workflowVersion 与契约不符（practiceWorkflowUpdateRequest strict 无该字段，parseJsonBody 会拒）——按硬性规则 1 只发 {feedbackMode, workflowRevision}；hono hc 对该 PATCH 静态输入仅 {param}（服务端纯 handler 无 zValidator），内联字面量触发 TS2353——沿用 updateCourseApi 的 const args 提取既有模式（变量不触发多余属性检查），json 类型安全由入参契约类型保证，无 any；PracticeModeSummary 读基线 data.practiceWorkflow 而非 overlay（PATCH 后 invalidate 重取刷新）；onFeedbackModeChange 可选 prop 保 M3 纯呈现测试编译。
+- 状态机抽象再议：不抽象——开始页选择面 2 个 useState（初值链 + touched 布尔）+ 派生 dirty，「显式点选后恒定」由无 effect 拉扯天然保证；抽象只增间接层无第二消费方。
+- 红灯：/tmp/m5-d3-red.log 四层汇总（c1 9 failed、c2 10 failed、c3 模块未建 2 文件、c4 3 failed，均缺功能断言/导入失败，实现后全绿；设置页「改回跟随单元推荐→保存禁用」反断言同时守住 update 的 null 语义）。
+- 全量回归：pnpm test --maxWorkers=4 5690/5690（479 文件）EXIT=0（/tmp/m5-d3-full.log）；typecheck/lint exit 0（/tmp/m5-d3-tsc.log、/tmp/m5-d3-lint.log，style 提交后终态）；schema:export 零 drift（/tmp/m5-d3-schema.log，git status 干净）。注：全量跑于 style 提交前树，style 系纯格式（受影响 4 测试文件 52 用例复跑全绿 /tmp/m5-d3-style-test.log）。
