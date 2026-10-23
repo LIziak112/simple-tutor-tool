@@ -264,9 +264,9 @@ function UnitLandingView({
   };
 
   const recommendation = landing.practiceRecommendation;
-  const recommendationText =
+  const recommendationParts =
     recommendation === null
-      ? null
+      ? []
       : [
           recommendation.layout !== undefined
             ? practiceLayoutLabel(recommendation.layout)
@@ -274,9 +274,11 @@ function UnitLandingView({
           recommendation.feedback !== undefined
             ? practiceRhythmLabel(recommendation.feedback)
             : null,
-        ]
-          .filter((part) => part !== null)
-          .join(" · ");
+        ].filter((part) => part !== null);
+  // 空推荐（practice: {} 契约合法）join 得空串，不得按非 null 过渲染门出
+  // 「本单元推荐：」悬空标签（M6 闸门 A3）
+  const recommendationText =
+    recommendationParts.length > 0 ? recommendationParts.join(" · ") : null;
 
   const typeBadges = Object.entries(landing.typeDistribution)
     .map(([type, count]) => `${TYPE_LABELS[type] ?? type} ${count}`)
@@ -420,7 +422,7 @@ function UnitLandingView({
             ))}
           </fieldset>
           <p className="text-xs text-muted-foreground">
-            反馈节奏与布局可在此预选；进入练习后仍可在做题方式里调整。
+            反馈节奏与布局可在此预选；进入练习后可在做题方式里查看，老师允许时也可调整。
           </p>
         </div>
 

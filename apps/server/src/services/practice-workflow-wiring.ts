@@ -28,6 +28,7 @@ import {
   resolvePracticeWorkflow,
 } from "./practice-workflow-service";
 import type { Tx } from "./question-sync";
+import { studentTeacherIdOf } from "./student-course-service";
 
 /**
  * M1b 工作流接线层：把纯裁决器接到数据库事实上（建卷写入列 + 读侧投影 +
@@ -211,16 +212,13 @@ export function resolveNewAttemptWorkflow(
   const facts = assignmentFactsOf(db, input.assignmentId);
   // 推荐列的单元域（T2B.5）：作业按其所属教师；course 按学生归属教师
   // （可见门已保证成员课程与学生同域）；wrong 不读推荐（推荐侧恒 null 短路），
-  // 不查 students——错题重练是高频路径，不为永不消费的域白付一次查询
+  // 不查 students——错题重练是高频路径，不为永不消费的域白付一次查询。
+  // 学生归属域查询复用全服唯一实现 studentTeacherIdOf（M6 闸门 B3 单源替换）
   const domainTeacherId =
     input.sourceType === "assignment"
       ? facts.teacherId
       : input.sourceType === "course"
-        ? (db
-            .select({ teacherId: students.teacherId })
-            .from(students)
-            .where(eq(students.id, input.studentId))
-            .get()?.teacherId ?? null)
+        ? studentTeacherIdOf(db, input.studentId)
         : null;
   const workflow = resolvePracticeWorkflow({
     sourceType: input.sourceType,

@@ -124,8 +124,13 @@ export function useUpdateAttemptWorkflow(attemptId: string) {
   const mutation = useMutation({
     mutationFn: (input: PracticeWorkflowUpdateRequest) =>
       updateAttemptWorkflowApi(attemptId, input),
-    onSuccess: () => {
+    // 每次发起点清旧 stale 提示（M6 闸门 A2）：staleNotice 只在 onSuccess 清
+    // 时，stale 之后任何新错误（如可达的 409 QUESTION_ALREADY_SUBMITTED——
+    // 服务端先查首题提交再查 revision）会被「请重试」无限期掩蔽
+    onMutate: () => {
       setStaleNotice(null);
+    },
+    onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentAttemptKey(attemptId),
       });
