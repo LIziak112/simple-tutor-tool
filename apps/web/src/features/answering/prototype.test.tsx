@@ -4,7 +4,12 @@ import { formatQuestionAnswers, lettersOf } from "@tutor/contract";
 import { createContext, Fragment, type ReactNode, useContext } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { withBlankValue } from "../attempt/answer-format";
-import type { QuestionCompletion } from "../attempt/question-completion";
+import {
+  type AnswerKindView,
+  type AnswerKindViewTable,
+  assertNeverView,
+} from "./types";
+import { referenceColumnOf } from "./views/comparison";
 
 /**
  * TT-02（UA-00）呈现层接口原型——**测试局部代码，不进生产源码**：
@@ -26,6 +31,14 @@ import type { QuestionCompletion } from "../attempt/question-completion";
  *    不是唯一权限控制；
  * 3. PreparedQuestion 增加 scopeId（题面实例标识）：radio name 实例隔离与槽位
  *    作用域身份（§8.2「不生成持久化版本」），由宿主提供。
+ *
+ * UA-05 演练重跑对齐（2026-10-24，原型跟随生产）：AnswerKindView /
+ * AnswerKindViewTable / ServerVerdicts / ReferenceMaterial / assertNeverView
+ * 改为从生产 ./types 导入（与 contract 原型在 UA-01 收编同款），三态参考
+ * 分支复用生产 ./views/comparison 的 referenceColumnOf——修复 TT-03 生产
+ * 演进（§9.2 调整 8 ReferenceMaterial、调整 9 final 题面只渲染题干）后原型
+ * 停留 TT-02 形态的漂移；本文件保留演练局部的 PreparedQuestion 联合与五
+ * kind 视图实现（参数化联合载体，§11.3），不再本地声明接口。
  */
 
 // ---------- 局部纯类型（与 contract 原型文件同形，见文件头说明） ----------
@@ -38,14 +51,6 @@ type ReferenceOf<
   K extends string,
   R extends { kind: string } = QuestionAnswers,
 > = Extract<R, { kind: K }>;
-
-/** 服务端已给出的判定（呈现层只显示，不计算——方案 §4.3/§6） */
-interface ServerVerdicts {
-  /** 题级判定；null = 服务端明确给出「未判定」（待批） */
-  readonly overall?: "correct" | "wrong" | null;
-  /** 逐槽/逐位判定（fill 逐空、ordering 逐位），键由 kind 自定 */
-  readonly byKey?: Readonly<Record<string, "correct" | "wrong">>;
-}
 
 // ---------- 派生模型 PreparedQuestion（方案 §4.2） ----------
 
@@ -107,63 +112,10 @@ type PreparedOf<
   P extends { kind: string } = PreparedQuestion,
 > = Extract<P, { kind: K }>;
 
-// ---------- 呈现登记表接口（方案 §4.3 呈现层草案的参数化形态） ----------
-
-/**
- * 每个 kind 的五种呈现 + 完整度。参数为该 kind 的**三个具体形态**：答案 A、
- * 模型 M、参考 Rf——三者由登记表的交集键映射保证关联，错配在编译期拒绝。
- * （接口调整：原草案按 kind+三个联合参数化，但联合类型参数出现在方法签名
- * 内会被 TS 方差度量判为不变，扩展联合复用生产视图实例时编译失败；改为
- * 在登记表映射层做 Extract，接口只接收已解析的具体形态。见决策记录。）
- */
-interface AnswerKindView<A extends { kind: string }, M, Rf> {
-  Input(p: {
-    model: M;
-    answer: A | undefined;
-    update: (answer: A, defer?: boolean) => void;
-    /** 原位锁定信号（disabled 属性用）；权限控制在数据流，不以此为唯一防线 */
-    disabled?: boolean;
-  }): ReactNode;
-  /** 独立的结果材料呈现入口（不是原位锁定的替身——§5） */
-  ReadOnly(p: { model: M; answer: A | undefined }): ReactNode;
-  Reference(p: { model: M; reference: Rf }): ReactNode;
-  Comparison(p: {
-    model: M;
-    answer: A | undefined;
-    reference: Rf;
-    /** 服务端已给出的判定；呈现层只显示，不计算（§6） */
-    verdicts?: ServerVerdicts;
-  }): ReactNode;
-  completion(
-    model: M,
-    answer: A | undefined,
-    formalInk: boolean,
-  ): QuestionCompletion;
-}
-
-/**
- * 呈现登记表：键 = 答案联合 ∩ 模型联合 ∩ 参考联合 的交集 kind——三者必须
- * 对同一 kind 集体提供呈现（答案/模型/参考的关联性表达）：交集外 kind
- * 无法进入登记表（登记即编译失败）；三联合不一致靠 contract 调度穷尽
- * 与生产三联合一致性兜底；
- * 每个键的视图绑定该 kind 经 Extract 解析后的三个具体形态。
- */
-type AnswerKindViewTable<
-  U extends { kind: string },
-  P extends { kind: string },
-  R extends { kind: string },
-> = {
-  readonly [K in U["kind"] & P["kind"] & R["kind"]]: AnswerKindView<
-    Extract<U, { kind: K }>,
-    Extract<P, { kind: K }>,
-    Extract<R, { kind: K }>
-  >;
-};
-
-/** 唯一调度边界收尾（§4.4：中央 switch + assertNever，不追求零 switch） */
-function assertNever(kind: never): never {
-  throw new Error(`未登记的题面 kind：${String(kind)}`);
-}
+// 呈现登记表接口（AnswerKindView / AnswerKindViewTable / ServerVerdicts /
+// ReferenceMaterial）自 UA-05 起从生产 ./types 导入（原型跟随生产，文件头
+// 对齐记录）；接口形态 = 生产 UA-03 落地版（含 Comparison 的
+// ReferenceMaterial 三态、Input 的 disabled）。
 
 // ---------- mode 联合与旧壳参数转换（方案 §5） ----------
 
@@ -339,7 +291,12 @@ const judgeView: AnswerKindView<
         你的答案：
         {answer === undefined ? "未作答" : String(answer.value)}
       </span>
-      <span>参考答案：{reference.value ? "对" : "错"}</span>
+      <div>
+        {referenceColumnOf(
+          reference,
+          (ref) => `参考答案：${ref.value ? "对" : "错"}`,
+        )}
+      </div>
       {verdicts?.overall !== undefined ? (
         <span>
           判定：
@@ -406,7 +363,12 @@ const choiceView: AnswerKindView<
           ? "未作答"
           : `${lettersOf(answer.index)}（${model.options.find((option) => option.index === answer.index)?.text ?? "越界选项"}）`}
       </span>
-      <span>参考答案：{lettersOf(reference.index)}</span>
+      <div>
+        {referenceColumnOf(
+          reference,
+          (ref) => `参考答案：${lettersOf(ref.index)}`,
+        )}
+      </div>
     </div>
   ),
   completion: (model, answer) => {
@@ -478,13 +440,16 @@ const multiView: AnswerKindView<
           ? "未作答"
           : answer.indexes.map(lettersOf).join("")}
       </span>
-      <span>
-        参考答案：
-        {[...reference.indexes]
-          .sort((a, b) => a - b)
-          .map(lettersOf)
-          .join("")}
-      </span>
+      <div>
+        {referenceColumnOf(
+          reference,
+          (ref) =>
+            `参考答案：${[...ref.indexes]
+              .sort((a, b) => a - b)
+              .map(lettersOf)
+              .join("")}`,
+        )}
+      </div>
     </div>
   ),
   completion: (model, answer) => {
@@ -563,12 +528,12 @@ const fillView: AnswerKindView<
   ),
   Comparison: ({ model, answer, reference, verdicts }) => {
     const own = answer?.kind === "fill" ? answer.values : [];
-    // 行数 = max(结构空位数, 本人项数, 参考空数)——历史多余项有独立行（现状口径）
-    const length = Math.max(
-      model.slots.length,
-      own.length,
-      reference.blanks.length,
-    );
+    // 参考仅在 available 时计入（生产 fill.Comparison 同款，I09 未公布不读
+    // 参考空数）；行数 = max(结构空位数, 本人项数, 参考空数)——历史多余项
+    // 有独立行（现状口径）
+    const ref =
+      reference.status === "available" ? reference.reference.blanks : [];
+    const length = Math.max(model.slots.length, own.length, ref.length);
     return (
       <section aria-label="填空对照">
         {Array.from({ length }, (_, index) => index + 1).map((no) => {
@@ -578,9 +543,7 @@ const fillView: AnswerKindView<
             <div key={no} data-slot="fill-compare-row">
               <span>第{no}空</span>
               <span>{value.trim() === "" ? "未填" : value}</span>
-              <span>
-                {(reference.blanks[no - 1] ?? []).join(" 或 ") || "—"}
-              </span>
+              <span>{(ref[no - 1] ?? []).join(" 或 ") || "—"}</span>
               {verdict !== undefined ? (
                 <span>{verdict === "correct" ? "对" : "错"}</span>
               ) : null}
@@ -636,7 +599,9 @@ const finalView: AnswerKindView<
       <span>
         你的答案：{answer === undefined ? "未作答" : answer.finalAnswer}
       </span>
-      <span>参考答案：{reference.answer}</span>
+      <div>
+        {referenceColumnOf(reference, (ref) => `参考答案：${ref.answer}`)}
+      </div>
     </div>
   ),
   completion: (_model, answer, formalInk) => {
@@ -726,22 +691,21 @@ function ProductionSurface(props: {
       );
       break;
     case "final":
-      content = (
-        <views.final.Input
-          model={model}
-          answer={answer?.kind === "final" ? answer : undefined}
-          update={update}
-          disabled={locked}
-        />
-      );
+      // 调整 9：final 的题面输入区只渲染题干——最终答案输入由纸面控件区
+      // （正式手写宿主经 FinalAnswerField）托管，题面不重复第二份（§10）
+      content = null;
       break;
     default:
-      return assertNever(model);
+      return assertNeverView(model);
   }
   return (
     <div data-slot="question-surface" inert={locked}>
-      {/* fill 的题干与槽位由视图整体渲染（内联注入）；其余题干在输入区上方 */}
-      {model.kind !== "fill" ? <p>{model.stemMd}</p> : null}
+      {/* fill 的题干与槽位由视图整体渲染（内联注入）；final 只渲染题干
+          （调整 9）；其余题干在输入区上方 */}
+      {model.kind !== "fill" && model.kind !== "final" ? (
+        <p>{model.stemMd}</p>
+      ) : null}
+      {model.kind === "final" ? <p>{model.stemMd}</p> : null}
       {content}
     </div>
   );
@@ -959,13 +923,16 @@ const orderingView: AnswerKindView<
     const textOf = (itemId: string) =>
       model.items.find((entry) => entry.itemId === itemId)?.text ??
       `未知项 ${itemId}`;
-    const length = Math.max(own.length, reference.sequence.length);
+    // 参考仅在 available 时计入（生产 fill.Comparison 同款口径，I09）
+    const ref =
+      reference.status === "available" ? reference.reference.sequence : [];
+    const length = Math.max(own.length, ref.length);
     return (
       <section aria-label="排序对照">
         {Array.from({ length }, (_, index) => index + 1).map((no) => {
           const verdict = verdicts?.byKey?.[String(no)];
           const ownId = own[no - 1];
-          const refId = reference.sequence[no - 1];
+          const refId = ref[no - 1];
           return (
             <div key={no} data-slot="ordering-compare-row">
               <span>位置{no}</span>
@@ -1087,7 +1054,11 @@ const matchingView: AnswerKindView<
           answer?.kind === "fake-matching"
             ? (answer.pairs[slot.slotId] ?? "")
             : "";
-        const ref = reference.pairs[slot.slotId] ?? "";
+        // 参考仅在 available 时计入（I09；未公布/无参考显示「—」）
+        const ref =
+          reference.status === "available"
+            ? (reference.reference.pairs[slot.slotId] ?? "")
+            : "";
         const textOf = (optionId: string) =>
           model.optionPool.find((option) => option.optionId === optionId)
             ?.text ?? optionId;
@@ -1136,25 +1107,9 @@ const drillViews: AnswerKindViewTable<
 };
 
 // ---------- 宿主授权分支与空态原型（方案 §6） ----------
-
-/** 参考材料判别联合：available 只说明服务器允许显示，不等于有参考答案 */
-type ReferenceMaterial<R> =
-  | { readonly state: "unavailable" }
-  | { readonly state: "available"; readonly reference: R | null };
-
-/** 宿主空态保持现状文案（ResultAnswerComparison 同款）：未公布锁定 / 无参考 */
-function ReferencePanel<R>(props: {
-  readonly material: ReferenceMaterial<R>;
-  readonly render: (reference: R) => ReactNode;
-}) {
-  if (props.material.state === "unavailable") {
-    return <p>参考答案与详解将在截止后公布 🔒</p>;
-  }
-  if (props.material.reference === null) {
-    return <p>暂无参考答案</p>;
-  }
-  return <>{props.render(props.material.reference)}</>;
-}
+// ReferenceMaterial 与三态分支（锁定/无参考/有参考）自 UA-05 起复用生产
+// 单源：联合从 ./types 导入、referenceColumnOf 从 ./views/comparison 导入
+// （原型跟随生产；原两态本地联合已删除）。
 
 /** 兼容宿主原型：快照题型与参考 kind 错配时按参考自身 kind 呈现（现状策略） */
 function CompatReferenceFallback(props: {
@@ -1806,8 +1761,11 @@ describe("呈现层接口原型（TT-02）", () => {
         model={orderingModel}
         answer={{ kind: "fake-ordering", itemKeys: ["it-3", "it-2"] }}
         reference={{
-          kind: "fake-ordering",
-          sequence: ["it-3", "it-2", "it-1", "it-4"],
+          status: "available",
+          reference: {
+            kind: "fake-ordering",
+            sequence: ["it-3", "it-2", "it-1", "it-4"],
+          },
         }}
         verdicts={{ byKey: { "1": "correct", "2": "correct" } }}
       />,
@@ -1918,7 +1876,10 @@ describe("呈现层接口原型（TT-02）", () => {
       <fillView.Comparison
         model={fillModel}
         answer={{ kind: "fill", values: ["甲", "", "历史多余"] }}
-        reference={{ kind: "fill", blanks: [["0.5", "1/2"], ["x"]] }}
+        reference={{
+          status: "available",
+          reference: { kind: "fill", blanks: [["0.5", "1/2"], ["x"]] },
+        }}
         verdicts={{ byKey: { "1": "correct" } }}
       />,
     );
@@ -1932,6 +1893,21 @@ describe("呈现层接口原型（TT-02）", () => {
     expect(rows[2]?.textContent).toContain("历史多余");
   });
 
+  it("填空对照：未公布不读参考空数（ReferenceMaterial 三态，§9.2 调整 8）", () => {
+    render(
+      <fillView.Comparison
+        model={fillModel}
+        answer={{ kind: "fill", values: ["甲"] }}
+        reference={{ status: "unavailable" }}
+      />,
+    );
+    const rows = screen
+      .getByLabelText("填空对照")
+      .querySelectorAll('[data-slot="fill-compare-row"]');
+    expect(rows).toHaveLength(2); // max(2 空位, 1 本人项)——不读参考空数（I09）
+    expect(rows[1]?.textContent).toContain("未填");
+  });
+
   it("错配参考：兼容宿主按参考自身 kind 呈现，不崩溃不改写（现状策略保持）", () => {
     render(
       <CompatReferenceFallback
@@ -1942,22 +1918,24 @@ describe("呈现层接口原型（TT-02）", () => {
     expect(screen.getByText("A")).toBeInTheDocument(); // formatQuestionAnswers(choice)
   });
 
-  it("参考材料宿主分支：未公布锁定、无参考空态（现状文案保持）", () => {
+  it("参考材料宿主分支：未公布锁定、无参考空态（生产单源 referenceColumnOf）", () => {
     const { unmount } = render(
-      <ReferencePanel
-        material={{ state: "unavailable" }}
-        render={() => <span>不应渲染</span>}
-      />,
+      <div>
+        {referenceColumnOf({ status: "unavailable" }, () => (
+          <span>不应渲染</span>
+        ))}
+      </div>,
     );
     expect(
       screen.getByText("参考答案与详解将在截止后公布 🔒"),
     ).toBeInTheDocument();
     unmount();
     render(
-      <ReferencePanel
-        material={{ state: "available", reference: null }}
-        render={() => <span>不应渲染</span>}
-      />,
+      <div>
+        {referenceColumnOf({ status: "no-reference" }, () => (
+          <span>不应渲染</span>
+        ))}
+      </div>,
     );
     expect(screen.getByText("暂无参考答案")).toBeInTheDocument();
   });
