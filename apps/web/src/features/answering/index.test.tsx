@@ -260,9 +260,7 @@ describe("dispatchComparison 对照派发", () => {
     // 层保证），此层可断言的真实泄露面是参考呈现不挂载；携带 secret 参考内容
     // 的真实哨兵在宿主级（ResultAnswerComparison.test「公布前不读取参考答案
     // 空数或内容」）。
-    expect(
-      screen.queryByRole("list", { name: "参考填空答案" }),
-    ).toBeNull();
+    expect(screen.queryByRole("list", { name: "参考填空答案" })).toBeNull();
     // 左列仍呈现本人作答（未公布不吞掉本人答案）
     expect(
       screen.getByRole("list", { name: "你的填空答案" }),
