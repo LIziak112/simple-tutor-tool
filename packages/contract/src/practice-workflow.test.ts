@@ -55,8 +55,7 @@ describe("practiceRecommendationSchema（M5-D1 frontmatter practice 推荐命名
       practiceRecommendationSchema.safeParse({ layout: "grid" }).success,
     ).toBe(false);
     expect(
-      practiceRecommendationSchema.safeParse({ feedback: "immediate" })
-        .success,
+      practiceRecommendationSchema.safeParse({ feedback: "immediate" }).success,
     ).toBe(false);
     expect(
       practiceRecommendationSchema.safeParse({
