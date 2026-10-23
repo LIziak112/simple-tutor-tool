@@ -7,9 +7,9 @@
       "attrs": [
         {
           "name": "type",
-          "type": "judge / choice / multi / fill / solve / apply / find-error",
+          "type": "judge / choice / multi / fill / solve / apply / find-error / response / matching / ordering",
           "required": true,
-          "description": "题型，必填。七种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错；写其他值会在 lint 报错"
+          "description": "题型，必填。十种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错 / response 开放 / matching 配对 / ordering 排序（新三型的完整作答语法 TT-06 注册、导入入口受发布开关控制）；写其他值会在 lint 报错"
         },
         {
           "name": "difficulty",
@@ -319,6 +319,36 @@
       "validatorId": "find-error",
       "validation": {
         "shape": "exact"
+      }
+    },
+    "response": {
+      "inputType": "text",
+      "evidence": {
+        "format": "ink-strokes"
+      },
+      "validatorId": "response",
+      "validation": {
+        "shape": "rubric"
+      }
+    },
+    "matching": {
+      "inputType": "match",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "matching",
+      "validation": {
+        "shape": "rubric"
+      }
+    },
+    "ordering": {
+      "inputType": "order",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "ordering",
+      "validation": {
+        "shape": "rubric"
       }
     }
   }

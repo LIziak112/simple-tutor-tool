@@ -3,11 +3,16 @@ import { choiceMultiBehavior } from "./choice.ts";
 import { fillBehavior } from "./fill.ts";
 import { finalBehavior } from "./final.ts";
 import { judgeBehavior } from "./judge.ts";
+import { matchingBehavior } from "./matching.ts";
 import { multiBehavior } from "./multi.ts";
+import { orderingBehavior } from "./ordering.ts";
+import { responseBehavior } from "./response.ts";
 import type {
   AnswerKindBehaviorTable,
   AnswerTextProfile,
+  MatchingPublicStructure,
   OptionsPublicStructure,
+  OrderingPublicStructure,
   PublicStructureByKind,
 } from "./types.ts";
 
@@ -25,12 +30,17 @@ export { choiceMultiBehavior } from "./choice.ts";
 export { fillBehavior } from "./fill.ts";
 export { finalBehavior } from "./final.ts";
 export { judgeBehavior } from "./judge.ts";
+export { matchingBehavior } from "./matching.ts";
 export { multiBehavior } from "./multi.ts";
+export { orderingBehavior } from "./ordering.ts";
+export { responseBehavior } from "./response.ts";
 export * from "./types.ts";
 
 /**
- * 生产登记表：五 kind 全配（satisfies 强制穷尽——漏 kind/错配签名编译失败，
- * I01 编译期证据）。choice/multi 两键引用同一份实现（见 ./multi.ts）。
+ * 生产登记表：八 kind 全配（satisfies 强制穷尽——漏 kind/错配签名编译失败，
+ * I01 编译期证据）。choice/multi 两键引用同一份实现（见 ./multi.ts）；
+ * response/matching/ordering 三键为 TT-05a 域②接入（§11.1 触点①纯层，
+ * 呈现层留 TT-08）。
  */
 export const answerKindBehaviors = {
   judge: judgeBehavior,
@@ -38,12 +48,16 @@ export const answerKindBehaviors = {
   multi: multiBehavior,
   fill: fillBehavior,
   final: finalBehavior,
+  response: responseBehavior,
+  matching: matchingBehavior,
+  ordering: orderingBehavior,
 } satisfies AnswerKindBehaviorTable<StudentAnswer, PublicStructureByKind>;
 
 /**
  * 无公开结构时的占位结构：display/teacher-queue 口径不读任何结构；
  * choice/multi 在 ai-context 口径下用它即等价旧实现「题面无 options」的
- * 字母兜底分支（选项缺失回落字母）。
+ * 字母兜底分支（选项缺失回落字母）；matching/ordering 用空池即文本化回落
+ * 裸 id（结构不可用时 inspectShape 不校验，见各行为注释）。
  */
 export const emptyPublicStructure: PublicStructureByKind = {
   judge: null,
@@ -51,6 +65,9 @@ export const emptyPublicStructure: PublicStructureByKind = {
   multi: { options: [] },
   fill: { slots: [] },
   final: null,
+  response: null,
+  matching: { options: [], slotIds: [], allowRepeat: false },
+  ordering: { items: [] },
 };
 
 /** 唯一调度边界收尾用（§4.4：允许中央 switch + assertNever，不追求零 switch） */
@@ -81,6 +98,12 @@ export function dispatchBehavior(
       return table.fill.formatStudent(answer, profile, structures.fill);
     case "final":
       return table.final.formatStudent(answer, profile, structures.final);
+    case "response":
+      return table.response.formatStudent(answer, profile, structures.response);
+    case "matching":
+      return table.matching.formatStudent(answer, profile, structures.matching);
+    case "ordering":
+      return table.ordering.formatStudent(answer, profile, structures.ordering);
     default:
       return assertNever(answer);
   }
@@ -101,6 +124,12 @@ export function dispatchIsAnswered(answer: StudentAnswer): boolean {
       return table.fill.isAnswered(answer);
     case "final":
       return table.final.isAnswered(answer);
+    case "response":
+      return table.response.isAnswered(answer);
+    case "matching":
+      return table.matching.isAnswered(answer);
+    case "ordering":
+      return table.ordering.isAnswered(answer);
     default:
       return assertNever(answer);
   }
@@ -122,6 +151,55 @@ export function optionsPublicStructureOf(
       key: `opt-${index}`,
       index,
       text,
+    })),
+  };
+}
+
+/**
+ * matching 公开结构构造入口（TT-05a 域②）：从题目抽取副本（content.ts
+ * matchingOptionsSchema 形态）+ 声明槽位集合（题内 ::ref slots= 或题干槽区，
+ * TT-06 解析产物）构造；key 即选项稳定 id（opt-…），不另派生。
+ */
+export function matchingPublicStructureOf(
+  pool: {
+    readonly allowRepeat?: boolean;
+    readonly options: readonly {
+      id: string;
+      text: string;
+      distractor?: boolean;
+    }[];
+  },
+  slotIds: readonly string[],
+): MatchingPublicStructure {
+  return {
+    allowRepeat: pool.allowRepeat ?? false,
+    slotIds: [...slotIds],
+    options: pool.options.map((option) => ({
+      key: option.id,
+      text: option.text,
+      distractor: option.distractor ?? false,
+    })),
+  };
+}
+
+/**
+ * ordering 公开结构构造入口：从题目抽取副本（content.ts orderingItemSchema
+ * 形态）构造；fixedPosition/distractor 归一缺省（null/false）。
+ */
+export function orderingPublicStructureOf(
+  items: readonly {
+    id: string;
+    text: string;
+    fixedPosition?: number | null;
+    distractor?: boolean;
+  }[],
+): OrderingPublicStructure {
+  return {
+    items: items.map((item) => ({
+      key: item.id,
+      text: item.text,
+      fixedPosition: item.fixedPosition ?? null,
+      distractor: item.distractor ?? false,
     })),
   };
 }

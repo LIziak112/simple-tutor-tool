@@ -27,8 +27,8 @@ const fullChoiceQuestion = {
     '::::question{type=choice difficulty=1 knowledge="相反数"}\n$-5$ 的相反数是（ ）\n\n- [ ] $-5$\n- [x] $5$\n- [ ] $\\frac{1}{5}$\n::::',
 };
 
-describe("QuestionType：七种题型（§5.1）", () => {
-  it("恰为七种题型，逐一可解析", () => {
+describe("QuestionType：旧七型 + 三新底层交互型（§5.1 / TT-01 D2，TT-05a 落地）", () => {
+  it("恰为十种题型，逐一可解析；旧七型枚举序逐字保持（前缀）", () => {
     expect(questionTypeSchema.options).toEqual([
       "judge",
       "choice",
@@ -37,6 +37,9 @@ describe("QuestionType：七种题型（§5.1）", () => {
       "solve",
       "apply",
       "find-error",
+      "response",
+      "matching",
+      "ordering",
     ]);
     for (const type of questionTypeSchema.options) {
       expect(questionTypeSchema.safeParse(type).success).toBe(true);

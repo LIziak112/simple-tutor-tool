@@ -46,6 +46,11 @@ export * from "./learning-event.ts";
 export * from "./learning-pack.ts";
 /** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
 export * from "./library-api.ts";
+/** 共享材料与题组契约（TT-05a 域①起为权威定义，决策记录 §5.2 定稿）：材料/题组
+ *  完整形态与公开投影白名单、::ref 引用产物、槽位种类词表、稳定 ID 缺省生成
+ *  规则（TT-06 解析器/导入规范化的单一出处）；unit.materials/groups 的挂载在
+ *  content.ts unitSchema */
+export * from "./material.ts";
 /** MCP 教师侧配套契约（T4.6 起为权威定义，依据 Phase4 清单 §2 D22/D24）：apiToken
  *  查看/生成重置、reports 列表/删除、save_report 写入参数；/mcp 端点本身无契约变化 */
 export * from "./mcp-api.ts";
@@ -69,6 +74,11 @@ export * from "./public-config.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";
+/** 自评与判定状态契约（TT-05a 域③起为权威定义，决策记录 §5.5 定稿）：判断来源
+ *  三值、自评请求/记录/响应（CAS+幂等）、有效判定投影与 finalCorrect 持久语义、
+ *  单题三态推导（self_pending/teacher_pending 区分）与教师待处理谓词——
+ *  服务端 TT-09 消费的契约层单一出处 */
+export * from "./self-review.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
 export * from "./shared-api.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */

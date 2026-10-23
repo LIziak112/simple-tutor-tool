@@ -4,6 +4,7 @@ import {
   capabilitiesManifestSchema,
   capabilityProfileSchema,
   capabilitySwitchSchema,
+  directiveInputTypeSchema,
   HANDWRITTEN_QUESTION_TYPES,
   questionCapabilityBindings,
   questionCapabilityBindingsSchema,
@@ -70,6 +71,33 @@ describe("questionCapabilityBindings（T7.4 题型桥接表）", () => {
         validation: { shape: "exact" },
       });
     }
+  });
+
+  it("新题型（response/matching/ordering，§5.7.1 表 D12/D13）：text/match/order 输入 + 恒 null 判分器登记 + rubric", () => {
+    expect(questionCapabilityBindings.response).toEqual({
+      inputType: "text",
+      evidence: { format: "ink-strokes" },
+      validatorId: "response",
+      validation: { shape: "rubric" },
+    });
+    expect(questionCapabilityBindings.matching).toEqual({
+      inputType: "match",
+      evidence: { format: "snapshot" },
+      validatorId: "matching",
+      validation: { shape: "rubric" },
+    });
+    expect(questionCapabilityBindings.ordering).toEqual({
+      inputType: "order",
+      evidence: { format: "snapshot" },
+      validatorId: "ordering",
+      validation: { shape: "rubric" },
+    });
+  });
+
+  it("inputType 词表扩容（D13）：text/match/order 进词表", () => {
+    expect(directiveInputTypeSchema.options).toContain("text");
+    expect(directiveInputTypeSchema.options).toContain("match");
+    expect(directiveInputTypeSchema.options).toContain("order");
   });
 
   it("表内无 partial 声明（词表保留但本阶段无实现无声明）", () => {
@@ -245,7 +273,7 @@ describe("能力启用集 profile（T7.7 / 方案 §4.5）", () => {
 });
 
 describe("questionEvidenceBindings（UA-01 跨端证据角色绑定，方案 §4.1/D14）", () => {
-  it("七题型穷尽登记：judge/choice/multi/fill=judge·choice·multi·fill+scratch，solve/apply/find-error=final+answerInk", () => {
+  it("十题型穷尽登记：旧七型逐字不变；response=response+answerInk（与正文并存）、matching/ordering=scratch（D14 表）", () => {
     expect(
       questionEvidenceBindingsSchema.parse(questionEvidenceBindings),
     ).toEqual(questionEvidenceBindings);
@@ -260,15 +288,20 @@ describe("questionEvidenceBindings（UA-01 跨端证据角色绑定，方案 §4
       solve: { answerKind: "final", paperRole: "answerInk" },
       apply: { answerKind: "final", paperRole: "answerInk" },
       "find-error": { answerKind: "final", paperRole: "answerInk" },
+      response: { answerKind: "response", paperRole: "answerInk" },
+      matching: { answerKind: "matching", paperRole: "scratch" },
+      ordering: { answerKind: "ordering", paperRole: "scratch" },
     });
   });
 
-  it("HANDWRITTEN_QUESTION_TYPES 由 paperRole 单源派生，旧七型资格逐字不变", () => {
-    // 迁移前字面量 ["solve","apply","find-error"]（原 content.ts:44）逐字保持
+  it("HANDWRITTEN_QUESTION_TYPES 由 paperRole 单源派生：旧七型资格逐字不变，response 新进集合是 D14 预期新增", () => {
+    // 迁移前字面量 ["solve","apply","find-error"]（原 content.ts:44）逐字保持为前缀；
+    // response（正文+正式手写并存，answerInk）自 TT-05a 起进派生集合（D14 定稿）
     expect(HANDWRITTEN_QUESTION_TYPES).toEqual([
       "solve",
       "apply",
       "find-error",
+      "response",
     ]);
     // 派生口径可复算：paperRole=answerInk ⇔ 派生集合
     expect(
@@ -278,16 +311,22 @@ describe("questionEvidenceBindings（UA-01 跨端证据角色绑定，方案 §4
     ).toEqual([...HANDWRITTEN_QUESTION_TYPES]);
   });
 
-  it("与 questionCapabilityBindings inputType=ink 派生集一致（md-dsl lint capability.ts 本地副本同源守护，决策记录 §6.3 C/B4）", () => {
-    // md-dsl/src/lint/capability.ts 的本地 HANDWRITTEN_TYPES 即按
-    // questionCapabilityBindings 的 inputType==="ink" 派生（无字面量副本）；
-    // 两派生集相等 = lint 手写区默认规则与契约集合不漂移。四处消费语义
-    // （AttemptSession:322 / StudentLessonPage:554 / export-csv:282,391 /
-    // review-pack:358）全部消费 HANDWRITTEN_QUESTION_TYPES，本断言即覆盖。
+  it("md-dsl lint capability 回退提示集 = inputType=ink 派生集（3 型）；response=text 输入 + answerInk 纸面角色正交（D14，决策记录 §7.4 等式随 TT-05a 更新）", () => {
+    // md-dsl/src/lint/capability.ts 的本地 HANDWRITTEN_TYPES 按 inputType==="ink"
+    // 派生（无字面量副本）。D14 后两集不再全等：response 输入面是 text（正文主
+    // 路径），ink 开关关闭时其正文作答不受影响，lint 不提示回退——故 lint 侧
+    // 保持 inputType=ink 派生（3 型）即为正确行为，md-dsl 零改动。
     const inkDerived = Object.entries(questionCapabilityBindings)
       .filter(([, binding]) => binding.inputType === "ink")
       .map(([type]) => type)
       .sort();
-    expect([...HANDWRITTEN_QUESTION_TYPES].sort()).toEqual(inkDerived);
+    expect(inkDerived).toEqual(["apply", "find-error", "solve"]);
+    // paperRole 集与 ink 集（lint 视角）的差集恰为 response（§4.1「paperRole 不能
+    // 从 answer kind/inputType 推导」的实测落点）
+    expect(
+      [...HANDWRITTEN_QUESTION_TYPES]
+        .filter((type) => !inkDerived.includes(type))
+        .sort(),
+    ).toEqual(["response"]);
   });
 });

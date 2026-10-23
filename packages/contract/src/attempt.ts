@@ -96,6 +96,7 @@ export const attemptSourceSchema = z.enum([
  * 全站仍只有这一份定义（AGENTS 第 1 条）。
  */
 export const teacherMarkSchema = z.enum(["correct", "wrong"]);
+export type TeacherMark = z.infer<typeof teacherMarkSchema>;
 
 /**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
@@ -306,6 +307,13 @@ export const questionRevisionIdSchema = z
  */
 export const attemptQuestionPublicSchema = questionPublicSchema.extend({
   questionRevisionId: questionRevisionIdSchema,
+  /**
+   * 组内序号（TT-05a 域④ §5.2.3/§5.8.1）：开卷冻结时按组的子题引用顺序写入
+   * attempt 上下文快照的公开投影；**不在组内的题不携带**（旧快照缺省 = 独立
+   * 题，§5.8.3 缺省兼容）。显示编号是展示派生，不进主键。组实体与材料正文
+   * 的草稿视图投影随 QM-03/QM-08 接线定稿（材料公开投影见 material.ts）。
+   */
+  groupOrdinal: z.number().int().min(1).optional(),
 });
 
 /**
@@ -425,6 +433,8 @@ export const attemptResultQuestionSchema = z.object({
     options: z.array(z.string()).optional(),
     /** 提示数量（未解锁的提示内容不在此下发） */
     hintCount: z.number().int().min(0),
+    /** 组内序号（TT-05a 域④：开卷冻结写入；不在组内的题不携带，旧快照缺省=独立题） */
+    groupOrdinal: z.number().int().min(1).optional(),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),
@@ -942,7 +952,17 @@ export const attemptDetailDataSchema = z
  * - WORKFLOW_MUTATION_CONFLICT：同一 submissionMutationId 的两次请求内容不一致
  *   （幂等键复用冲突，M2；409，前端换新 mutationId 重试）；
  * - WORKFLOW_RESTRICTED：当前教师规则不允许逐题提交（教师收紧立即生效，
- *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）。
+ *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）；
+ * - SELF_REVIEW_NOT_RELEASED：自评时公布 gate 非 released（未提交/未公布/受限；
+ *   403，决策记录 §5.8.2——不泄露「已提交未公布」之外的答案状态）；
+ * - SELF_REVIEW_TEACHER_MARKED：教师已判，自评被拒（教师优先；409）；
+ * - SELF_REVIEW_REVISION_CONFLICT：自评 baseRevision 过期（409，附 _current
+ *   最新自评与 revision）；
+ * - SELF_REVIEW_NOT_ALLOWED：行 gradingPolicy 非 reference_self（auto 行无自评
+ *   入口；manual_only 无参考不可自评；403）；
+ * - ANSWER_SHAPE_INVALID：新 kind 结构校验失败（未知 slotId/optionId/itemId、
+ *   重复占用、干扰项入序、固定项错位；422，保存与提交同码，草稿部分填充
+ *   **不**触发）。路由与校验链 TT-09（QM-10）落地，契约层先定码。
  */
 export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
@@ -966,6 +986,11 @@ export const attemptErrorCodeSchema = z.enum([
   "WORKFLOW_PROTOCOL_MISMATCH",
   "WORKFLOW_MUTATION_CONFLICT",
   "WORKFLOW_RESTRICTED",
+  "SELF_REVIEW_NOT_RELEASED",
+  "SELF_REVIEW_TEACHER_MARKED",
+  "SELF_REVIEW_REVISION_CONFLICT",
+  "SELF_REVIEW_NOT_ALLOWED",
+  "ANSWER_SHAPE_INVALID",
 ]);
 
 // ---------- 具体化的成功壳 ----------

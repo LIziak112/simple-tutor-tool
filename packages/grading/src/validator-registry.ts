@@ -146,6 +146,20 @@ function gradeFill(
 }
 
 /**
+ * 新题型校验器（TT-05a 域②，决策记录 §5.7.1/D12）：response/matching/
+ * ordering 恒 null——新作答停止自动匹配（§5.6），有参考答案且公布后默认
+ * 对照自评、无参考答案教师处理。shape=rubric 使 grade 在路由第 2 步即短路
+ * null，本校验器经 grade 不可达；照常登记以维持完备性一致（gradeFill 同款
+ * 先例——不添加虚假 exact、不造不可达判分器）。
+ */
+function gradeNewKindAlwaysNull(
+  _question: Question,
+  _answer?: StudentAnswer,
+): boolean | null {
+  return null;
+}
+
+/**
  * 手写题（solve/apply/find-error）校验器：三题型共享同一实现（清单要求，
  * 不复制算法）；有最终答案且题目给了 :::answer 才自动判，否则 null 待批。
  * 未作答（answer 缺省，含只写笔迹未填最终答案）→ null。
@@ -163,7 +177,8 @@ function gradeHandwritten(
 }
 
 // 内置登记：validatorId 与契约题型表同名（judge/choice/multi/fill/solve/
-// apply/find-error）；字面量书写，与契约的漂移由测试的集合相等断言拦截。
+// apply/find-error + TT-05a response/matching/ordering）；字面量书写，与契约
+// 的漂移由测试的集合相等断言拦截。
 registerValidator("judge", gradeJudge);
 registerValidator("choice", gradeChoice);
 registerValidator("multi", gradeMulti);
@@ -171,3 +186,6 @@ registerValidator("fill", gradeFill);
 registerValidator("solve", gradeHandwritten);
 registerValidator("apply", gradeHandwritten);
 registerValidator("find-error", gradeHandwritten);
+registerValidator("response", gradeNewKindAlwaysNull);
+registerValidator("matching", gradeNewKindAlwaysNull);
+registerValidator("ordering", gradeNewKindAlwaysNull);

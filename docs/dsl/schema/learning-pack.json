@@ -256,7 +256,10 @@
                   "fill",
                   "solve",
                   "apply",
-                  "find-error"
+                  "find-error",
+                  "response",
+                  "matching",
+                  "ordering"
                 ]
               },
               "difficulty": {
@@ -379,6 +382,78 @@
                     "required": [
                       "kind",
                       "answer"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "response"
+                      },
+                      "referenceMd": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "variantsMd": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "referenceMd"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "matching"
+                      },
+                      "pairs": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "pairs"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "ordering"
+                      },
+                      "sequence": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sequence"
                     ],
                     "additionalProperties": false
                   }

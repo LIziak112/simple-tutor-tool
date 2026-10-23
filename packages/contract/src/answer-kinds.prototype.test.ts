@@ -323,6 +323,10 @@ const productionStructures: PublicStructureByKind = {
     ],
   },
   final: null,
+  // TT-05a 域②扩容键：演练不消费新 kind 结构，空形态占位（穷尽映射编译期强制）
+  response: null,
+  matching: { options: [], slotIds: [], allowRepeat: false },
+  ordering: { items: [] },
 };
 
 describe("纯层接口原型（TT-02）", () => {
