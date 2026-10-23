@@ -675,9 +675,59 @@ export interface LeakMonitor {
 }
 
 /**
+ * 整卷交卷：POST /api/student/attempts/:id/submit（路径不含 /questions/，
+ * [^/]+ 不跨段，逐题提交 URL 不会误命中）——其后响应允许携带答案/详解。
+ */
+const WHOLE_ATTEMPT_SUBMIT_RE = /\/api\/student\/attempts\/[^/]+\/submit/;
+
+/**
+ * 逐题提交：POST /api/student/attempts/:id/questions/:questionId/submit
+ * （新协议与 lesson 旧协议共用同一 URL，按请求体分流）。
+ */
+const QUESTION_SUBMIT_RE =
+  /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/submit/;
+
+/**
+ * 题级反馈读取：GET /api/student/attempts/:id/questions/:questionId/feedback
+ * ——已提交题的当题反馈（含参考答案/详解）是设计内返回。
+ */
+const QUESTION_FEEDBACK_RE =
+  /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/feedback/;
+
+/**
+ * 讲练开卷/重做：POST /api/student/lectures/:id/lesson/start|restart——
+ * released 只携带「已单题提交题」的当题结果（恒题级粒度，设计内返回）；
+ * 落地页 GET …/lesson/landing 只含计数与元信息，不在豁免之列。
+ */
+const LESSON_START_RE =
+  /\/api\/student\/lectures\/[^/]+\/lesson\/(?:start|restart)/;
+
+/** 从逐题提交回执里取 attempt 状态（新协议与 lesson 回执都携带 attempt 摘要） */
+function attemptStatusOf(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const { data } = parsed as { data?: unknown };
+    if (typeof data !== "object" || data === null) return undefined;
+    const { attempt } = data as { attempt?: unknown };
+    if (typeof attempt !== "object" || attempt === null) return undefined;
+    const { status } = attempt as { status?: unknown };
+    return typeof status === "string" ? status : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 拦截 /api/student/* 响应做泄露检查（AGENTS.md 规则 3 的 E2E 层防线）：
- * - 交卷（POST …/submit）响应与其后的响应允许携带答案/详解（规则限制的是
- *   「未交卷题目」），用 submitted 标志切换；
+ * - 整卷交卷（POST /attempts/:id/submit，不含 /questions/）响应与其后的
+ *   响应允许携带答案/详解（规则限制的是「未交卷题目」），用 submitted 标志
+ *   切换；逐题提交不再误置 submitted——回执只释放「本题」反馈，之后的
+ *   草稿取卷等响应必须继续检查；仅当回执显示 attempt 已收尾（最后一题
+ *   提交在事务内自动收尾）才置 submitted；
+ * - 逐题提交回执、题级反馈读取（GET …/questions/:qid/feedback）与讲练
+ *   开卷/重做按端点豁免：三者都只携带「已提交题」的当题反馈，与服务端
+ *   授权投影同一口径；
  * - 键名级：JSON 递归遍历，对齐服务端 assert-no-leak 的禁键集合；
  * - 内容级：响应原文不含样例 md 的 hint/solution 片段（中文在 JSON 中不转义）。
  *   讲义详情（GET /api/student/lectures/:id）除外——讲义 markdown 是设计内的
@@ -696,13 +746,29 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
   page.on("response", (response) => {
     const url = response.url();
     if (!url.includes("/api/student/")) return;
-    if (url.includes("/submit")) {
+    const method = response.request().method();
+    // 整卷交卷：其后响应允许携带答案/详解（旧口径保留，URL 精确到不含 /questions/）
+    if (method === "POST" && WHOLE_ATTEMPT_SUBMIT_RE.test(url)) {
       submitted = true;
       return;
     }
     if (submitted) return;
+    // 逐题提交回执：本题反馈设计内返回，直接豁免；仅当回执显示 attempt 已
+    // 收尾（最后一题自动收尾）才置 submitted，进行中卷继续监控后续响应
+    if (method === "POST" && QUESTION_SUBMIT_RE.test(url)) {
+      void response
+        .text()
+        .then((body) => {
+          const status = attemptStatusOf(body);
+          if (status !== undefined && status !== "draft") submitted = true;
+        })
+        .catch(() => undefined);
+      return;
+    }
     const contentType = response.headers()["content-type"] ?? "";
     if (!contentType.includes("application/json")) return;
+    // 题级反馈读取 / 讲练开卷重做：只携带已提交题的当题反馈（设计内），豁免
+    if (QUESTION_FEEDBACK_RE.test(url) || LESSON_START_RE.test(url)) return;
     // 讲义详情响应：markdown 设计内全量下发，内容级片段检查豁免（见函数头注释）
     const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
     // 错题本响应：answers/solutionMd 设计内下发（豁免口径见函数头注释）
