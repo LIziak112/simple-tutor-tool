@@ -22,7 +22,8 @@ import type { ReferenceMaterial } from "./types";
  * - I05 回调节奏（fill defer=true、选择/判断即时）；
  * - I08 只读/公开底图不触发答案变更；
  * - ReferenceMaterial 三态（unavailable 锁定 / no-reference 空态 / available）；
- * - I09 泄露：未公布参考不进 DOM（哨兵断言）；
+ * - I09：unavailable 类型上不携带参考且参考呈现不挂载（携带 secret 参考
+ *   内容的真实泄露哨兵在宿主级 ResultAnswerComparison.test）；
  * - I02 只读呈现无答案。
  *
  * 各宿主迁移前后的 DOM 逐字差分以宿主既有测试为基准
@@ -245,7 +246,7 @@ describe("dispatchComparison 对照派发", () => {
     ).toHaveTextContent("第2空");
   });
 
-  it("unavailable：锁定提示，参考内容不进 DOM（I09 哨兵）", () => {
+  it("unavailable：锁定提示，参考呈现不挂载（I09）", () => {
     const model = prepared(fillQuestion);
     render(
       screenStub(
@@ -255,7 +256,13 @@ describe("dispatchComparison 对照派发", () => {
     expect(
       screen.getByText("参考答案与详解将在截止后公布 🔒"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/secret/)).toBeNull();
+    // unavailable 在类型上不携带参考（ReferenceMaterial 判别联合，I09 类型
+    // 层保证），此层可断言的真实泄露面是参考呈现不挂载；携带 secret 参考内容
+    // 的真实哨兵在宿主级（ResultAnswerComparison.test「公布前不读取参考答案
+    // 空数或内容」）。
+    expect(
+      screen.queryByRole("list", { name: "参考填空答案" }),
+    ).toBeNull();
     // 左列仍呈现本人作答（未公布不吞掉本人答案）
     expect(
       screen.getByRole("list", { name: "你的填空答案" }),
