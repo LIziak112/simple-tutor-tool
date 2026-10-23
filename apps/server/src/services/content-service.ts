@@ -691,6 +691,11 @@ export function commitImport(
         unit.lectureTitle !== undefined
           ? (lectureIdByTitle.get(unit.lectureTitle) ?? null)
           : null;
+      // practice 推荐（M5-D1）：按单元落库——文档带 practice 存契约形态 JSON，
+      // 不带置 null（同名重导清除旧推荐，与 teachingPackJson 覆盖语义同口径）。
+      // lecture/lesson 文档解析层不贯通 practice（对讲练不生效），这里恒 null。
+      const practiceDefaultsJson =
+        unit.practice === undefined ? null : JSON.stringify(unit.practice);
       if (existingUnitIds.has(unit.id)) {
         // 命中已有单元：保留其原文件夹（D18），软删行恢复；不写 courseId/folderId
         tx.update(units)
@@ -701,6 +706,7 @@ export function commitImport(
             updatedAt: now,
             deletedAt: null,
             teachingPackJson,
+            practiceDefaultsJson,
           })
           .where(and(eq(units.teacherId, teacherId), eq(units.id, unit.id)))
           .run();
@@ -722,6 +728,7 @@ export function commitImport(
             order: nextUnitOrder,
             updatedAt: now,
             teachingPackJson,
+            practiceDefaultsJson,
           })
           .run();
         nextUnitOrder += 1;

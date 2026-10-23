@@ -1646,3 +1646,109 @@ describe("getContentTree：讲练页嵌入单元不单列（2026-10-20）", () =
     expect(course?.units.map((row) => row.id)).toEqual(["u-normal"]);
   });
 });
+
+// ---------- M5-D1：practice 推荐的导入保存 ----------
+
+/** 带 practice 推荐的 practice 文档（两字段齐全） */
+const REC_PRACTICE_MD = `---
+kind: practice
+unit: 推荐单元
+practice:
+  layout: single
+  feedback: per_question
+---
+
+::::question{type=judge difficulty=1 id=rec-q1}
+$1+1=2$。[[正确]]
+::::
+`;
+
+/** 同文档去掉 practice 三行（普通 MD 重导，应清除旧推荐） */
+const REC_PLAIN_MD = REC_PRACTICE_MD.split("\n")
+  .filter(
+    (line) =>
+      line !== "practice:" &&
+      line !== "  layout: single" &&
+      line !== "  feedback: per_question",
+  )
+  .join("\n");
+
+/** 只带 layout 的变体（重导覆盖旧推荐用） */
+const REC_LAYOUT_ONLY_MD = REC_PRACTICE_MD.replace(
+  "  layout: single\n  feedback: per_question",
+  "  layout: list",
+);
+
+describe("commitImport：practice 推荐保存（M5-D1）", () => {
+  it("带 practice 的文档导入：单元 practiceDefaultsJson 按契约形态落库", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PRACTICE_MD,
+      filename: "推荐.md",
+    });
+    const expected = JSON.stringify({
+      layout: "single",
+      feedback: "per_question",
+    });
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBe(
+      expected,
+    );
+  });
+
+  it("不带 practice 重导清除旧推荐（同名同口径，更新路径）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PRACTICE_MD,
+      filename: "推荐.md",
+    });
+    const second = commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PLAIN_MD,
+      filename: "推荐.md",
+    });
+    expect(second.units.every((u) => u.updated)).toBe(true);
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBeNull();
+  });
+
+  it("重导新推荐覆盖旧推荐（更新路径同口径）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PRACTICE_MD,
+      filename: "推荐.md",
+    });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_LAYOUT_ONLY_MD,
+      filename: "推荐.md",
+    });
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBe(
+      JSON.stringify({ layout: "list" }),
+    );
+  });
+
+  it("lesson 文档带 practice：嵌入单元不落推荐（对讲练不生效，lint 另行 warning）", () => {
+    const db = createTestDb();
+    const lessonMd = `---
+kind: lesson
+practice:
+  layout: single
+---
+
+# 第1讲 讲练推荐
+
+::::question{type=judge difficulty=1 id=lesson-rec-q1}
+$2>1$。[[正确]]
+::::
+`;
+    const preview = previewImport(db, TEST_TEACHER_ID, {
+      markdown: lessonMd,
+      filename: "讲练推荐.md",
+    });
+    expect(
+      preview.issues.some((i) => i.code === "PRACTICE_NOT_APPLICABLE"),
+    ).toBe(true);
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: lessonMd,
+      filename: "讲练推荐.md",
+    });
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBeNull();
+  });
+});

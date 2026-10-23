@@ -747,3 +747,43 @@ describe("M1b practice workflow 新列的备份恢复缺省", () => {
     ).toMatchObject({ v: 1, feedback_mode: "per_question", r: 3 });
   });
 });
+
+describe("M5-D1 practice 推荐列的备份恢复", () => {
+  it("units.practice_defaults_json 随备份往返恢复：推荐不丢（纯展示推荐，与权限面无关）", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const stored = '{"layout":"single","feedback":"per_question"}';
+    handle.db.$client
+      .prepare(
+        "INSERT INTO units (id, teacher_id, title, \"order\", updated_at, practice_defaults_json) VALUES ('unit-rec', ?, '推荐单元', 0, '2026-10-23T00:00:00.000Z', ?)",
+      )
+      .run(TEST_TEACHER_ID, stored);
+
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
+
+    // 备份后清掉推荐：恢复必须回到备份时点
+    handle.db.$client
+      .prepare(
+        "UPDATE units SET practice_defaults_json = NULL WHERE id = 'unit-rec'",
+      )
+      .run();
+
+    await restoreFromBackup(
+      dataDir,
+      handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      new Uint8Array(zipBuffer),
+    );
+    expect(
+      handle.db.$client
+        .prepare(
+          "SELECT practice_defaults_json AS p FROM units WHERE id = 'unit-rec'",
+        )
+        .get(),
+    ).toMatchObject({ p: stored });
+  });
+});
