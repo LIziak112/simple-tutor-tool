@@ -307,3 +307,14 @@
 - 新增三测试：A1 失败不写 transient+重试成功携带当前选择；B1 晚绑定对齐已保存偏好；B1 显式触碰后绑定不拉扯（注：点**已选中**的原生 radio 不触发 change，不构成显式触碰——须真实改选，测试注释记档）。
 - 记档不修（详报告）：C1 StrictMode dev 下 useState 初始化器双调 consume 但 React 保留第一次结果（实证脚本验证）——transient 不得改造成依赖调用次数的形态；C2 practiceDefaultsJson 脏数据导出侧静默丢行自愈（与 teachingPackJson 同口径，如需提示应走导出响应 warning）；C3 rhythmTouched 粘滞系裁决⑨定案语义非缺陷。
 - 修复后验证：开始页测试 14/14；全量 `pnpm test --maxWorkers=4` 5693/5693（479 文件，+3）EXIT=0（/tmp/m5-crfx-full.log）；typecheck/lint exit 0（/tmp/m5-crfx-*.log）。
+
+### M5 闸门三 /security-review（max）：零应修通过（2026-10-23）
+
+- 审查报告 /tmp/m5-gate-security.md（结论 阻断 0 / 应修 0 / 建议 0 / 记档 3；主审六角定向精读 + 盲扫子代理七焦点全量两路独立交叉，零候选发现）。硬性规则 3 在全部新学生端载荷成立：landing 坏 JSON/契约失败归一 null，units.practiceDefaultsJson 原文无任何路径直达学生端；start/PATCH 请求 schema strict 均不含 unitRecommendation（推荐只能服务端按 teacherId 域装配并被 allowedFeedbackModes 收敛）；assert-no-leak.ts 本体零改动且新载荷全覆盖泄露断言；逐题提交回执四键白名单 + no-store；package.json/pnpm-lock 零变更（无新增依赖）。
+- 记档 3（均既有行为非本批引入）：legacy lesson 单题提交路径无 no-store（后续统一补齐时处理）；student-records 作业授权异常行 fail-open 公布口径（记录行不含答案/详解，无泄露后果；记录行加内容字段时须重审）；course/wrong 教师未配置缺省 student_choice（§5.4 产品定案，学生自选仍被服务端收敛）。
+
+### M5 收口（2026-10-23）：三闸门全过，分支合并 v2
+
+- 三闸门：/simplify（应修 2/建议 4/记档 6 → 修复 17122cea）→ /code-review max（阻断 0/应修 1/建议 1/记档 3 → 修复 05d7850f）→ /security-review max（阻断 0/应修 0/建议 0/记档 3，零修复）。闸门发现一律编排者亲自修复并复跑全量，未修项逐条记档给理由。
+- 终态：全量 5693/5693（479 文件）、typecheck/lint exit 0、gen:spec 与 schema:export 双零漂移。分支链：D1（2a59c09d→fecd9751）→ D2（27109389→80909da1）→ 裁决⑨（eeefe338）→ D3（4e07f71e→b0bdf8e0 + style c3f7d9dc + 验收修复 031b93f1/台账 b2be4e32）→ 闸门（17122cea/ebb79f4f/05d7850f/7a1fb606）。
+- 手动验证项（供 M6 验收清单汇入）：设置页反馈节奏三选与未设置态；开始页推荐标注/预选/显式选择发送；作答页节奏切换 CAS 与他端改后 stale 提示；教师导入文档带 practice: 后学生建卷按推荐预选；导出文档往返字节稳定。
