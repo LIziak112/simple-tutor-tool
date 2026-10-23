@@ -375,6 +375,34 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
+        },
+        "materialRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "material": {
+                "type": "string",
+                "minLength": 1
+              },
+              "segs": {
+                "type": "string",
+                "minLength": 1
+              },
+              "slot": {
+                "type": "string",
+                "minLength": 1
+              },
+              "slots": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "material"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -1059,6 +1087,34 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 9007199254740991
+              },
+              "materialRefs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "material": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "segs": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "slot": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "slots": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "material"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -1807,6 +1863,34 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 9007199254740991
+                    },
+                    "materialRefs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "material": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "segs": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "slot": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "slots": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "material"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
