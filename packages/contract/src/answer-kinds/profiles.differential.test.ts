@@ -54,7 +54,13 @@ function oldIsAnswered(answer: StudentAnswer | undefined): boolean {
   }
 }
 
-/** answer-format formatStudentAnswer（迁移前，display 口径） */
+/**
+ * answer-format formatStudentAnswer（迁移前，display 口径）。
+ * 边界（P2-3）：display 的字母算法经共享 lettersOf 活引用而非冻结副本
+ * （旧实现同为 lettersOf 透传调用，行为等价）；若 lettersOf 本身变更，新旧
+ * 两侧同步变化，差分对字母算法失去锁定力——字母输出的锁定力由专项用例的
+ * 字面值断言（"B"/"A、C"/"AA"/"26"）承担，三口径分派逻辑的锁定不受影响。
+ */
 function oldFormatStudentAnswer(answer: StudentAnswer | null): string {
   if (answer === null) return "未作答";
   switch (answer.kind) {
@@ -400,6 +406,36 @@ describe("I15 三口径差分：登记表 vs 迁移前旧实现（valid-08 语�
         emptyPublicStructure,
       ),
     ).toBe("A、C");
+  });
+
+  it("ai-context 按 index 字段查找而非数组位置（非稠密结构锁定，UA-02 护栏）", () => {
+    // P2-1：生产结构全部经 optionsPublicStructureOf 构造（index=数组下标），
+    // 上方矩阵对「按 index 字段查找」与「按数组位置取值」两种实现不可分辨。
+    // 本例字面构造 index 与数组位置错开的非稠密结构，显式锁定登记表选定
+    // 语义（choice.ts aiOptionTextOf 按 option.index 字段查找）；UA-02 引入
+    // 稀疏选项时若实现漂移回按位置取值，此处先行失败，I15 不静默漂移。
+    // 旧实现按位置读 snapshot.options[index]，无此形态的对应行为，不参与对照。
+    const sparse: OptionsPublicStructure = {
+      options: [
+        { key: "opt-0", index: 1, text: "甲" },
+        { key: "opt-1", index: 3, text: "乙" },
+      ],
+    };
+    // 按 index 字段命中第 0 位选项「乙」；按位置取 options[3] 为 undefined
+    // 会回落裸字母 "D"
+    expect(
+      dispatchBehavior({ kind: "choice", index: 3 }, "ai-context", {
+        ...emptyPublicStructure,
+        choice: sparse,
+      }),
+    ).toBe("D（乙）");
+    // 去重+升序后逐个按字段命中：1→第 0 位「甲」、3→第 1 位「乙」
+    expect(
+      dispatchBehavior({ kind: "multi", indexes: [3, 1] }, "ai-context", {
+        ...emptyPublicStructure,
+        multi: sparse,
+      }),
+    ).toBe("B（甲）、D（乙）");
   });
 
   it("display 与 queue 的选项字母在 ≥26 时有意不同（三口径不合并的实例）", () => {

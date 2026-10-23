@@ -110,6 +110,9 @@ export function dispatchIsAnswered(answer: StudentAnswer): boolean {
  * 旧题选项文本数组 → 公开选项结构（§4.2：旧题选项 key 由序号派生 opt-0…，
  * 新结构可用稳定 optionId；答案格式不变仍存 index）。snapshot.options→
  * OptionsPublicStructure 的唯一构造入口，key 派生规则不散落各消费点。
+ * 不变量：产出的 option.index 必须等于数组下标（本函数按 map 序号保证）；
+ * ai-context 按 index 字段查找仅在此不变量下等价旧实现按位置取值。UA-02
+ * 引入稀疏选项（删除选项后 index 跳号）时不得直接字面构造违反此不变量。
  */
 export function optionsPublicStructureOf(
   texts: readonly string[],

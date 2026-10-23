@@ -79,7 +79,14 @@ export type AnswerKindBehaviorTable<
 
 // ---------- 公开结构映射（生产五 kind，方案 §4.2） ----------
 
-/** 选项项：身份与正文（§4.1 修订：{key,index,text}，修复重复选项文本的 key 冲突） */
+/**
+ * 选项项：身份与正文（§4.1 修订：{key,index,text}，修复重复选项文本的 key 冲突）。
+ * 不变量：option.index 必须等于 options 数组下标（唯一构造入口
+ * optionsPublicStructureOf 按序号生成）；ai-context 口径按 index 字段查找，
+ * 仅在该不变量成立时与旧实现按数组位置取值等价。UA-02 引入稳定 optionId/
+ * 稀疏选项时不得直接字面构造违反此不变量（差分测试已用非稠密结构显式锁定
+ * 「按 index 字段查找」语义）。
+ */
 export interface PublicOption {
   readonly key: string;
   readonly index: number;
