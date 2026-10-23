@@ -33,9 +33,9 @@ const layoutOptions = [
 export function StudentPracticePreferenceSection() {
   const saved = usePracticePreference();
   const [draft, setDraft] = useState<{
-    layout: PracticeLayout;
+    layout: PracticeLayout | null;
     keyboardShortcuts: boolean;
-    base: { layout: PracticeLayout; keyboardShortcuts: boolean };
+    base: { layout: PracticeLayout | null; keyboardShortcuts: boolean };
     owner: string | null;
   } | null>(null);
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(
@@ -150,7 +150,16 @@ export function StudentPracticePreferenceSection() {
           disabled={!dirty}
           onClick={() => {
             try {
-              savePracticePreference(selected, draft?.owner);
+              // M5-D3 过渡（反馈节奏行 M5-D3 后续提交接线）：保存不补写未设置
+              // 的 feedback，避免首次保存布局把文档推荐挡死（预裁决①）
+              savePracticePreference(
+                {
+                  layout: selected.layout,
+                  keyboardShortcuts: selected.keyboardShortcuts,
+                  feedback: saved.feedback,
+                },
+                draft?.owner,
+              );
               setDraft(null);
               setNotice({ error: false, text: "做题方式已保存" });
             } catch {

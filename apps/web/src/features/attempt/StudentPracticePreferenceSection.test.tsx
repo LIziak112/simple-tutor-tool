@@ -20,12 +20,12 @@ beforeEach(() => {
 });
 
 describe("做题方式设置区（M3-D1）", () => {
-  it("默认回显已保存偏好；选择暂存，保存后写入存储", async () => {
+  it("M5-D3 未设置态：布局两枚均不选中；选择暂存，保存后写入存储", async () => {
     const { unmount } = render(<StudentPracticePreferenceSection />);
-    // 默认列表 + 快捷键开
+    // 默认未设置（两枚布局 radio 均不选中）+ 快捷键开
     expect(
       (screen.getByRole("radio", { name: /列表/ }) as HTMLInputElement).checked,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       (screen.getByRole("radio", { name: /单题/ }) as HTMLInputElement).checked,
     ).toBe(false);
@@ -88,9 +88,9 @@ describe("做题方式设置区（M3-D1）", () => {
     ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "取消更改" }));
     expect(
-      (screen.getByRole("radio", { name: /列表/ }) as HTMLInputElement).checked,
-    ).toBe(true);
-    expect(getPracticePreference().layout).toBe("list");
+      (screen.getByRole("radio", { name: /单题/ }) as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(getPracticePreference().layout).toBeNull();
   });
 
   it("快捷键开关文案注明后续生效，不谎称已启用", () => {
@@ -111,7 +111,7 @@ describe("做题方式设置区（M3-D1）", () => {
     expect(
       (screen.getByRole("radio", { name: /单题/ }) as HTMLInputElement).checked,
     ).toBe(true);
-    expect(getPracticePreference().layout).toBe("list");
+    expect(getPracticePreference().layout).toBeNull();
     vi.restoreAllMocks();
   });
 

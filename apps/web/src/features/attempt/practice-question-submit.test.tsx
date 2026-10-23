@@ -232,7 +232,7 @@ function renderPage(search = "") {
 }
 
 async function renderSingle(draft: AttemptDraftData, search = "") {
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({ layout: "single", keyboardShortcuts: true, feedback: null });
   mockedFetch.mockResolvedValue(draft);
   const view = renderPage(search);
   await view.findByText(/做题方式：单题 · 每题提交后查看/);
@@ -420,7 +420,7 @@ it("最后一题收尾：不自动重发详情查询，主动作换查看本次�
 // ---------- 列表模式：逐题 footer + 底栏进度 ----------
 
 it("列表模式：每题 footer 提交区按作答态启停，提交后底栏进度与只读更新", async () => {
-  savePracticePreference({ layout: "list", keyboardShortcuts: true });
+  savePracticePreference({ layout: "list", keyboardShortcuts: true, feedback: null });
   mockedFetch.mockResolvedValue(
     baseDraft({
       drafts: { q2: { kind: "fill", values: ["4"] } },
@@ -482,7 +482,7 @@ it("列表模式：每题 footer 提交区按作答态启停，提交后底栏�
 });
 
 it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公布呈现，主动作下一题", async () => {
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({ layout: "single", keyboardShortcuts: true, feedback: null });
   mockedFetch.mockResolvedValue({
     ...baseDraft(),
     practiceWorkflow: workflowOf({
@@ -581,7 +581,7 @@ it("列表模式：可读卡进入视口才惰性取反馈，未提交题不发�
   }
   vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
   try {
-    savePracticePreference({ layout: "list", keyboardShortcuts: true });
+    savePracticePreference({ layout: "list", keyboardShortcuts: true, feedback: null });
     mockedFeedbackGet.mockResolvedValue({
       feedback: { status: "released", question: releasedQuestionOf("q1") },
     });
@@ -653,7 +653,7 @@ it("QUESTION_REVISION_STALE：就地提示刷新，可直接重试收敛", async
 // ---------- M3-D3：提交流接入按题 flush（§11-4 提交第 8 题不等第 19 题在途） ----------
 
 it("提交本题只确认本题答案同步，其他题保存失败不拦本题提交", async () => {
-  savePracticePreference({ layout: "list", keyboardShortcuts: true });
+  savePracticePreference({ layout: "list", keyboardShortcuts: true, feedback: null });
   // q3 保存恒失败（模拟第 19 题网络重试中），q1 正常回执
   vi.mocked(saveAttemptAnswerApi).mockImplementation(
     async (_attemptId, questionId) => {

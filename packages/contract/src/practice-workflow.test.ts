@@ -118,6 +118,15 @@ describe("studentPracticePreferenceSchema", () => {
     expect("feedback" in unset).toBe(false);
   });
 
+  it("M5-D3：layout 键缺省合法——parse 产物无 layout 键（与 feedback 同款未设置语义）", () => {
+    const unset = studentPracticePreferenceSchema.parse({
+      version: 1,
+      keyboardShortcuts: true,
+    });
+    expect(unset).toEqual({ version: 1, keyboardShortcuts: true });
+    expect("layout" in unset).toBe(false);
+  });
+
   it("strict：拒绝未知字段", () => {
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, extra: 1 }),

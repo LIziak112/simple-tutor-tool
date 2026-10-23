@@ -46,7 +46,11 @@ it("已设置偏好（含 M3 存量形态）：feedbackMode 随请求携带", ()
 
 it("保存布局后 feedback 仍缺省：发送链保持不带 feedbackMode（推荐不被挡死）", () => {
   bindPracticePreferenceAccount("a");
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   expect(getPracticePreference().feedback).toBeNull();
   expect(workflowStartOptions()).toEqual({ workflowVersion: 1 });
 });
