@@ -145,8 +145,7 @@ it("M5-D2：跨标签事件 newValue 缺 feedback 键 → 未设置（另一标�
   window.dispatchEvent(
     new StorageEvent("storage", {
       key,
-      newValue:
-        '{"version":1,"layout":"single","keyboardShortcuts":false}',
+      newValue: '{"version":1,"layout":"single","keyboardShortcuts":false}',
       storageArea: localStorage,
     }),
   );

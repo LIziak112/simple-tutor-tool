@@ -9,8 +9,8 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
-  assignmentUnits,
   assignments,
+  assignmentUnits,
   attempts,
   responses,
   students,
@@ -144,7 +144,10 @@ function unitFeedbackRecommendationOf(
     .select({ col: units.practiceDefaultsJson })
     .from(units)
     .where(
-      and(eq(units.teacherId, input.domainTeacherId), inArray(units.id, unitIds)),
+      and(
+        eq(units.teacherId, input.domainTeacherId),
+        inArray(units.id, unitIds),
+      ),
     )
     .all()) {
     if (row.col === null) continue; // 无推荐单元不参与

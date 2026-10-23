@@ -1,10 +1,9 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, it, vi } from "vitest";
-import { afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
-  assignmentUnits,
   assignments,
+  assignmentUnits,
   students,
   teachers,
   units,
