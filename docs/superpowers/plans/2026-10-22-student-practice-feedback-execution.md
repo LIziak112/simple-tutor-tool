@@ -270,3 +270,10 @@
 - 子代理交付 3 提交（27109389→80909da1，22 文件 +1221/−148）：契约 feedback 改可选（禁 default，裁定①⑦——存量 M3 全量形态天然已设置）+ landing practiceRecommendation nullable；裁决链 studentChoice ?? unitRecommendation ?? per_question 整体被 allowedFeedbackModes 收敛（教师限制最终裁决）、续作不读推荐；wiring unitFeedbackRecommendationOf——assignment 按 assignment_units 聚合非空一致才采纳（裁定⑥）、course 单元直取、wrong 恒 null（裁定②）、坏 JSON/契约失败 null+warn、units 复合主键按教师域读（T2B.5）；landing 下发坏数据不下发原文；web 偏好 store feedback null=未设置、保存布局不补写伪造 feedback、workflowStartOptions 未设置整键不发。红灯 /tmp/m5-d2-red.log（26 failed 先行红）。偏离 brief 三项均合理：路径笔误纠正、C1 连带提交保每步绿（硬规则 8）、首轮 SAI-11 环境性抖动（编排者复跑未复现）。
 - 编排者验收：全 diff 逐文件读过（契约/裁决器/wiring/landing/store/发送链/测试）符合裁定①②⑥⑦；assertNoQuestionFields 泄露断言实调用核实（assertNoLeak 全局禁键+题目侧字段）；schema:export 产物零变更成立（改动面不在 content 契约导出集）；自跑全量 5665/5665（478 文件）、typecheck/lint exit 0、gen:spec 双跑 git status 仅余未跟踪交接文档（哨兵 /tmp/m5-d2-accept-*.log）。
 - 附带核查：practiceWorkflowStartOptionsFields.feedbackMode 本就 optional（M1 设计），web 省键契约合法；tutor-lint.mjs 变更系契约源内嵌随 gen:spec 联动，重生成零 drift。
+
+### M5 追加裁决⑨：开始页预选与显式选择（2026-10-23，D3 派单前定案）
+
+- 偏好 schema 的 `layout` 与 `feedback` 同款可选（键缺省=未设置）：存量 M3 文件两字段都带（保存动作一直写全量形态）→ 天然视作已设置；未保存过的学生才是文档推荐生效面。不引入读写迁移。
+- 开始页选择器初值 = 已保存偏好 ?? 单元推荐 ?? 缺省（布局 list、节奏 per_question）；显式点选后本次访问内恒定。
+- 「开始练习」仅当学生本次显式触碰过节奏选择器才随请求发 feedbackMode（预裁决①开始页显式选择恒最高）；未触碰维持 D2 链（已设置发偏好、未设置整键不发）。
+- 布局预选不经服务端（预裁决③）：模块级一次性 transient 携带，作答页初值消费一次后清除；硬刷新直写作答页回落本机偏好（「进入时取一次」语义不变）。
