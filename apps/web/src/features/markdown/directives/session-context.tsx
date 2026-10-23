@@ -96,3 +96,13 @@ export function useDirectiveTelemetry():
   | null {
   return useContext(DirectiveSessionContext).telemetry;
 }
+
+/**
+ * 旧空位 slotId 派生规则（方案 §4.2/§8.2）：order 即旧数组下标（0 起），
+ * slotId 由序号派生 slot-1…。槽位命名空间的唯一派生出处——analyzeSlots
+ * （answering/prepare-question）与 BlankDirective 查询共用，避免两处各写
+ * 一份字符串规则漂移。
+ */
+export function blankSlotIdOf(order: number): string {
+  return `slot-${order + 1}`;
+}
