@@ -264,3 +264,9 @@
 
 - 子代理交付 7 提交（2a59c09d→fecd9751，29 文件 +5158/−118）：契约 practiceRecommendationSchema（strict 双可选）+ frontmatter/unitSchema 挂 practice 可选（禁 default，裁定⑦）；parse.ts kind 门控贯通（practice/mixed 进单元、lecture/lesson 不进，裁定⑤）；lint PRACTICE_NOT_APPLICABLE warning（lecture/lesson 带 practice 提示不阻断，非法值走既有 INVALID_FRONTMATTER error）；spec gen 练习推荐小节 + LINT_RULES 注册；样例 samples/v2/练习推荐样例.md（自动入样例回归，裁定⑫）；迁移 0039 units.practice_defaults_json（drizzle 生成含快照账本）；commitImport 双 upsert 路径写/清（无字段置 null，裁定④）；exportUnitMd 确定性 flow 映射行 practiceYamlLineOf（坏 JSON/契约失败→null+warn 不抛）、无推荐不写行老单元字节级不变；回填保真对比排除新列（随 0039 迁移同口径）；备份往返断言不丢。红灯日志 /tmp/m5-d1-red.log（3 failed：teaching-pack/library 导入导出路径先行红）。
 - 编排者验收：全 diff 逐文件读过（契约/解析/lint/spec/迁移/导入/导出/测试/样例）符合裁定与 brief；红灯日志核实；全量回归 pnpm test --maxWorkers=4 5633/5633（476 文件）、typecheck/lint exit 0、gen:spec 双跑 git diff 为空（哨兵 /tmp/m5-d1-accept-*.log）。
+
+### M5-D2 推荐档接入建卷裁决链（2026-10-23，独立验收，Claude 编排）
+
+- 子代理交付 3 提交（27109389→80909da1，22 文件 +1221/−148）：契约 feedback 改可选（禁 default，裁定①⑦——存量 M3 全量形态天然已设置）+ landing practiceRecommendation nullable；裁决链 studentChoice ?? unitRecommendation ?? per_question 整体被 allowedFeedbackModes 收敛（教师限制最终裁决）、续作不读推荐；wiring unitFeedbackRecommendationOf——assignment 按 assignment_units 聚合非空一致才采纳（裁定⑥）、course 单元直取、wrong 恒 null（裁定②）、坏 JSON/契约失败 null+warn、units 复合主键按教师域读（T2B.5）；landing 下发坏数据不下发原文；web 偏好 store feedback null=未设置、保存布局不补写伪造 feedback、workflowStartOptions 未设置整键不发。红灯 /tmp/m5-d2-red.log（26 failed 先行红）。偏离 brief 三项均合理：路径笔误纠正、C1 连带提交保每步绿（硬规则 8）、首轮 SAI-11 环境性抖动（编排者复跑未复现）。
+- 编排者验收：全 diff 逐文件读过（契约/裁决器/wiring/landing/store/发送链/测试）符合裁定①②⑥⑦；assertNoQuestionFields 泄露断言实调用核实（assertNoLeak 全局禁键+题目侧字段）；schema:export 产物零变更成立（改动面不在 content 契约导出集）；自跑全量 5665/5665（478 文件）、typecheck/lint exit 0、gen:spec 双跑 git status 仅余未跟踪交接文档（哨兵 /tmp/m5-d2-accept-*.log）。
+- 附带核查：practiceWorkflowStartOptionsFields.feedbackMode 本就 optional（M1 设计），web 省键契约合法；tutor-lint.mjs 变更系契约源内嵌随 gen:spec 联动，重生成零 drift。
