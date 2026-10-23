@@ -2,8 +2,10 @@ import {
   type AssignmentAnswerRelease,
   type AttemptSource,
   type PracticeFeedbackMode,
+  type PracticeRecommendation,
   type PracticeRestrictionReason,
   type PracticeWorkflow,
+  practiceRecommendationSchema,
   practiceWorkflowSchema,
   type TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
@@ -57,7 +59,7 @@ interface ResolvePracticeWorkflowCommon {
 }
 
 /**
- * 新建新协议卷：按教师规则 + 学生选择/缺省推荐裁决；不得携带 stored
+ * 新建新协议卷：按教师规则 + 学生选择/文档推荐/缺省裁决；不得携带 stored
  * （运行时携带即抛错，防伪造已存事实骗授权）。
  * 调用样例：{ sourceType: "course", lifecycle: "new", studentChoice: "per_question" }
  */
@@ -67,11 +69,19 @@ export interface ResolveNewPracticeWorkflowInput
   stored?: never;
   /** 学生本次明确选择 / 持久偏好（新建卷用；不放宽教师限制） */
   studentChoice?: PracticeFeedbackMode | null;
+  /**
+   * 文档推荐档（M5-D2，frontmatter `practice:` 的 feedback 值，装配层读
+   * units.practiceDefaultsJson 聚合后传入）：学生未设置偏好时才生效——
+   * 决定链 studentChoice ?? unitRecommendation ?? "per_question"，整体仍被
+   * allowedFeedbackModes 收敛（推荐不能越权，教师限制最终裁决）。续作不读
+   * 推荐（existing 保持 stored.feedbackMode）。
+   */
+  unitRecommendation?: PracticeFeedbackMode | null;
 }
 
 /**
  * 已存卷（续作或历史）：必须显式给 stored 对象或 null（缺省/非法抛错）；
- * 不接受 studentChoice——不得改写既存事实。
+ * 不接受 studentChoice / unitRecommendation——不得改写既存事实，续作不读推荐。
  * 调用样例（续作）：{ sourceType: "course", lifecycle: "existing", stored: { feedbackMode: "per_question", revision: 0, hasSubmittedQuestion: false, attemptSubmitted: false } }
  * 调用样例（legacy）：{ sourceType: "assignment", lifecycle: "existing", stored: null, assignment: {...} }
  */
@@ -80,11 +90,44 @@ export interface ResolveExistingPracticeWorkflowInput
   lifecycle: "existing";
   stored: StoredPracticeWorkflow | null;
   studentChoice?: never;
+  unitRecommendation?: never;
 }
 
 export type ResolvePracticeWorkflowInput =
   | ResolveNewPracticeWorkflowInput
   | ResolveExistingPracticeWorkflowInput;
+
+/**
+ * units.practiceDefaultsJson 列值 → 契约推荐（全服务端唯一实现，M5 simplify
+ * 闸门收敛——此前 wiring 聚合/landing 下发/导出回写三处平行 safeParse，口径
+ * 靠注释维系必然漂移）：坏 JSON/契约失败 → null + console.warn 留痕不抛
+ * （单行脏数据不打挂建卷/落地/导出，也不把原文下发学生端）。写侧恒过契约，
+ * 走到 warn 说明数据被外力破坏。
+ */
+export function practiceDefaultsOf(
+  column: string | null,
+): PracticeRecommendation | null {
+  if (column === null) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(column);
+  } catch (err) {
+    console.warn(
+      "practiceDefaultsOf: practiceDefaultsJson 不是合法 JSON，按无推荐处理",
+      err,
+    );
+    return null;
+  }
+  const parsed = practiceRecommendationSchema.safeParse(data);
+  if (!parsed.success) {
+    console.warn(
+      "practiceDefaultsOf: practiceDefaultsJson 不合契约，按无推荐处理",
+      parsed.error.issues[0]?.message,
+    );
+    return null;
+  }
+  return parsed.data;
+}
 
 /** 是否允许逐题反馈（教师规则维度，与学生已选节奏无关） */
 function perQuestionAllowed(input: ResolvePracticeWorkflowInput): boolean {
@@ -280,15 +323,21 @@ export function resolvePracticeWorkflow(
         : "teacher_after_attempt";
 
   // 节奏决定：续作（stored 存在）保持 stored.feedbackMode（教师放宽不改写，
-  // existing 不读 studentChoice 不改写既存事实；收紧见下）；新建先取学生
-  // 明确选择（不得越权到不允许项），否则未受限时默认 per_question（§5.3）。
+  // existing 不读 studentChoice/unitRecommendation，不改写既存事实；收紧见下）；
+  // 新建按 学生明确选择 > 文档推荐（M5-D2，学生未设置偏好时才生效）> 缺省
+  // per_question（§5.3/§5.4 档 2、3），整体不得越权到不允许项（推荐与选择
+  // 同样被 allowedFeedbackModes 收敛——教师限制最终裁决）。
   const frozen = stored
     ? stored.hasSubmittedQuestion || stored.attemptSubmitted
     : false;
+  // unitRecommendation 与 studentChoice 同款 never 声明（existing 误传编译期
+  // 拦截）；preferred 只在新建分支被消费（stored 短路见下方 effectiveMode）
+  const preferred =
+    input.studentChoice ?? input.unitRecommendation ?? "per_question";
   const effectiveMode: PracticeFeedbackMode = stored
     ? stored.feedbackMode
-    : allowedFeedbackModes.includes(input.studentChoice ?? "per_question")
-      ? (input.studentChoice ?? "per_question")
+    : allowedFeedbackModes.includes(preferred)
+      ? preferred
       : "after_attempt";
 
   return practiceWorkflowSchema.parse({

@@ -2,10 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptSubmitRevision,
+  PracticeWorkflowStartOptions,
+  PracticeWorkflowUpdateRequest,
   StudentAnswer,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
 import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
+import { useState } from "react";
 import {
   studentAssignmentsKey,
   studentCoursesKey,
@@ -18,6 +21,7 @@ import {
   startAttemptApi,
   startCourseAttemptApi,
   submitAttemptApi,
+  updateAttemptWorkflowApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
@@ -86,14 +90,18 @@ export function useStudentUnitLanding(courseId: string, unitId: string) {
 }
 
 /**
- * 建卷工作流选项（M3-D1.5）：执行时同步读本机偏好——只传学生偏好，
- * 教师约束由服务端 resolver 裁决，客户端不预判；显式携带
- * workflowVersion=1 进入新协议，feedbackMode 随当前偏好。
+ * 建卷工作流选项（M3-D1.5；M5-D2 未设置态）：执行时同步读本机偏好——只传
+ * 学生偏好，教师约束由服务端 resolver 裁决，客户端不预判；显式携带
+ * workflowVersion=1 进入新协议。feedbackMode 只在偏好已设置时携带——未设置
+ * （null）整个键不发，服务端按 学生缺省/文档推荐/教师限制 裁决（§5.4）。
  */
-export const workflowStartOptions = () => ({
-  workflowVersion: 1 as const,
-  feedbackMode: getPracticePreference().feedback,
-});
+export const workflowStartOptions = () => {
+  const feedback = getPracticePreference().feedback;
+  return {
+    workflowVersion: 1 as const,
+    ...(feedback !== null ? { feedbackMode: feedback } : {}),
+  };
+};
 
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {
@@ -104,14 +112,62 @@ export function useStartAttempt(assignmentId: string) {
 }
 
 /**
+ * 反馈节奏切换（M5-D3）：PATCH /attempts/:id/workflow，携带当前
+ * workflowRevision 做 CAS。成功与 WORKFLOW_REVISION_STALE 都失效该 attempt
+ * 详情查询（服务端投影为权威，invalidate 即 refetch）；stale 额外给出
+ * 「已刷新，请重试」提示；其他错误透传服务端 message（notice）。禁用只按
+ * 服务端投影（canChangeFeedback/allowedFeedbackModes），客户端不预判授权。
+ */
+export function useUpdateAttemptWorkflow(attemptId: string) {
+  const queryClient = useQueryClient();
+  const [staleNotice, setStaleNotice] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: (input: PracticeWorkflowUpdateRequest) =>
+      updateAttemptWorkflowApi(attemptId, input),
+    onSuccess: () => {
+      setStaleNotice(null);
+      void queryClient.invalidateQueries({
+        queryKey: studentAttemptKey(attemptId),
+      });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === "WORKFLOW_REVISION_STALE") {
+        // revision 被并发修改（如另一设备已改）：先重取投影再提示重试，
+        // 学生基于刷新后的服务端值重试，不保留过期 revision
+        void queryClient.invalidateQueries({
+          queryKey: studentAttemptKey(attemptId),
+        });
+        setStaleNotice("反馈节奏刚被其他操作修改，已刷新，请重试");
+      }
+    },
+  });
+  return {
+    ...mutation,
+    staleNotice,
+    /** 就地提示（节奏组下方 alert）：stale 提示优先，其余透传服务端 message */
+    notice:
+      staleNotice ??
+      (mutation.error instanceof Error ? mutation.error.message : null),
+  };
+}
+
+/**
  * 课程练习入口（T2A.6，D10）：开始/继续/再做一次。
  * 成功后失效落地页与课程列表（目录状态徽章、首页进度联动）。
+ * M5-D3（裁决⑨）：options 由调用方组装传入——未显式触碰节奏时传 undefined，
+ * mutationFn 执行时才读偏好（点击时刻，维持 D2 链：偏好已设置才携带
+ * feedbackMode，未设置由服务端按 单元推荐/教师约束 裁决）；开始页显式触碰
+ * 节奏时传 {...workflowStartOptions(), feedbackMode: 所选}（显式选择恒最高）。
  */
 export function useStartCourseAttempt(courseId: string, unitId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      startCourseAttemptApi(courseId, unitId, workflowStartOptions()),
+    mutationFn: (options: PracticeWorkflowStartOptions | undefined) =>
+      startCourseAttemptApi(
+        courseId,
+        unitId,
+        options ?? workflowStartOptions(),
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentUnitLandingKey(courseId, unitId),

@@ -1,4 +1,8 @@
-import type { PracticeLayout, PracticeWorkflow } from "@tutor/contract";
+import type {
+  PracticeFeedbackMode,
+  PracticeLayout,
+  PracticeWorkflow,
+} from "@tutor/contract";
 import { Check, ChevronDown, Clock, Keyboard } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +21,7 @@ import {
 import { hasCoarsePointer } from "./practice-keyboard";
 import {
   practiceLayoutLabel,
+  practiceLayoutOptions,
   practiceRestrictionCopy,
   practiceRhythmLabel,
 } from "./practice-protocol";
@@ -26,17 +31,34 @@ import {
  * 单题紧凑进度行、占位主操作条与「更多」菜单切换项。只改变呈现，不搬题卡、
  * 不复制题面（题卡列表仍在 AttemptSession 的同一 keyed 序列里，纪律 §11-1）；
  * 主操作条中间为占位容器，三态交互（提交本题→查看反馈→下一题）由 D2 接线。
+ * M5-D3：摘要行展开区追加「反馈节奏」组——切换经 PATCH CAS 提交（调用方
+ * 接线），禁用只按服务端投影（canChangeFeedback/allowedFeedbackModes）。
  */
 
-/** 摘要行：当前布局与反馈节奏一行摘要，可展开改本次布局（不写回默认偏好） */
+/** 反馈节奏两枚选项（标签复用 practiceRhythmLabel 单一出处） */
+const feedbackModeOptions = [
+  { value: "per_question" },
+  { value: "after_attempt" },
+] as const;
+
+/** 摘要行：当前布局与反馈节奏一行摘要，可展开改本次布局与反馈节奏 */
 export function PracticeModeSummary({
   workflow,
   layout,
   onLayoutChange,
+  onFeedbackModeChange,
+  feedbackBusy = false,
+  feedbackError = null,
 }: {
   workflow: PracticeWorkflow;
   layout: PracticeLayout;
   onLayoutChange: (layout: PracticeLayout) => void;
+  /** 反馈节奏切换回调（M5-D3）：由调用方 PATCH CAS 提交；缺省仅呈现 */
+  onFeedbackModeChange?: (mode: PracticeFeedbackMode) => void;
+  /** PATCH 在途：节奏组临时禁用防重复提交 */
+  feedbackBusy?: boolean;
+  /** 就地错误提示（stale「已刷新请重试」或服务端 message） */
+  feedbackError?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const restriction = practiceRestrictionCopy(workflow);
@@ -68,12 +90,7 @@ export function PracticeModeSummary({
         <div className="space-y-2 border-t border-border p-3">
           <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2">
             <legend className="sr-only">选择本次做题布局</legend>
-            {(
-              [
-                { value: "list", title: "列表作答" },
-                { value: "single", title: "单题专注" },
-              ] as const
-            ).map(({ value, title }) => (
+            {practiceLayoutOptions.map(({ value, title }) => (
               <label
                 key={value}
                 className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${
@@ -94,6 +111,52 @@ export function PracticeModeSummary({
               </label>
             ))}
           </fieldset>
+          {/* 反馈节奏（M5-D3）：canChangeFeedback=false 整组禁用（fieldset
+              disabled 连带输入）；allowedFeedbackModes 外的项单项禁用——
+              均只按服务端投影，不客户端预判 */}
+          <fieldset
+            className="grid min-w-0 gap-2 sm:grid-cols-2"
+            disabled={!workflow.canChangeFeedback}
+          >
+            <legend className="sr-only">选择反馈节奏</legend>
+            {feedbackModeOptions.map(({ value }) => {
+              const itemDisabled =
+                feedbackBusy || !workflow.allowedFeedbackModes.includes(value);
+              return (
+                <label
+                  key={value}
+                  className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${
+                    workflow.feedbackMode === value
+                      ? "border-primary bg-primary/5"
+                      : itemDisabled
+                        ? "border-border opacity-60"
+                        : "cursor-pointer border-border hover:bg-muted/40"
+                  }`}
+                >
+                  <input
+                    className="size-4 shrink-0 accent-primary"
+                    type="radio"
+                    name="practice-attempt-feedback-mode"
+                    value={value}
+                    checked={workflow.feedbackMode === value}
+                    disabled={itemDisabled}
+                    onChange={() => onFeedbackModeChange?.(value)}
+                  />
+                  <span className="text-sm font-medium">
+                    {practiceRhythmLabel(value)}
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
+          {!workflow.canChangeFeedback && restriction !== null && (
+            <p className="text-xs text-muted-foreground">{restriction}</p>
+          )}
+          {feedbackError !== null && (
+            <p role="alert" className="text-xs text-destructive">
+              {feedbackError}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             仅对本次作答生效，不改变默认偏好。
           </p>

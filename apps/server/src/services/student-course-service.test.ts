@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
   courseItems,
@@ -830,5 +830,62 @@ describe("getStudentLecture（讲义详情 + D8 配套练习）", () => {
       403,
       "COURSE_ACCESS_DENIED",
     );
+  });
+});
+
+describe("getStudentUnitLanding：practice 推荐下发（M5-D2）", () => {
+  it("有推荐：units.practice_defaults_json 契约形态随落地页下发", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    db.update(units)
+      .set({
+        practiceDefaultsJson: JSON.stringify({
+          layout: "single",
+          feedback: "per_question",
+        }),
+      })
+      .where(eq(units.id, ctx.unitU1Id))
+      .run();
+    const landing = getStudentUnitLanding(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      ctx.unitU1Id,
+    );
+    expect(landing.practiceRecommendation).toEqual({
+      layout: "single",
+      feedback: "per_question",
+    });
+  });
+
+  it("无推荐：列 null → practiceRecommendation null（老单元行为不变）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    const landing = getStudentUnitLanding(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      ctx.unitU1Id,
+    );
+    expect(landing.practiceRecommendation).toBeNull();
+  });
+
+  it("坏 JSON：practiceRecommendation null + console.warn（不抛错、不把原文下发）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    db.update(units)
+      .set({ practiceDefaultsJson: "{broken json" })
+      .where(eq(units.id, ctx.unitU1Id))
+      .run();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const landing = getStudentUnitLanding(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      ctx.unitU1Id,
+    );
+    expect(landing.practiceRecommendation).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

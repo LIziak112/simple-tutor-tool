@@ -19,6 +19,20 @@ export const practiceFeedbackModeSchema = z.enum([
 ]);
 
 /**
+ * frontmatter `practice:` 推荐命名空间（M5-D1，练习反馈升级）：作者对做题方式
+ * 与反馈节奏的**展示/反馈推荐**，随导入存入单元、随导出原样写回；只推荐、
+ * 不是权限配置——授权结论仍只能来自服务端 resolver（上方 practiceWorkflow）。
+ * 两字段均可选、空对象合法（不过度设计）；strict 拒绝未知键。content.ts 反向
+ * 引用本 schema（本文件不 import content.ts，避免环，见 practiceWorkflow 注释）。
+ */
+export const practiceRecommendationSchema = z
+  .object({
+    layout: practiceLayoutSchema.optional(),
+    feedback: practiceFeedbackModeSchema.optional(),
+  })
+  .strict();
+
+/**
  * 教师反馈策略（教师域独立配置，未配置按缺省 student_choice 处理）：
  * - student_choice：学生可在两种反馈节奏中选择；
  * - after_attempt：固定交卷后公布（教师限制）。
@@ -44,12 +58,17 @@ export const practiceRestrictionReasonSchema = z.enum([
 /**
  * 本设备学习偏好（localStorage，strict）：只包含版本、两枚举与快捷键开关，
  * 不保存答案、AI 正文或凭据；version 固定 1，升级时整体失效重写。
+ * feedback 可选（M5-D2）、layout 可选（M5-D3，均禁 z.default 注入）：键缺省
+ * = 未设置——feedback 未设置时建卷请求不携带 feedbackMode，服务端按 学生
+ * 缺省/文档推荐/教师限制 裁决（总计划 §5.4 档 2/3）；layout 未设置时开始页
+ * 可用单元推荐预选（布局不经服务端，预裁决③）。存量 M3 偏好文件两字段都带
+ * （保存动作一直写全量形态），天然视作已设置，不做读迁移。
  */
 export const studentPracticePreferenceSchema = z
   .object({
     version: z.literal(1),
-    layout: practiceLayoutSchema,
-    feedback: practiceFeedbackModeSchema,
+    layout: practiceLayoutSchema.optional(),
+    feedback: practiceFeedbackModeSchema.optional(),
     keyboardShortcuts: z.boolean(),
   })
   .strict();
@@ -202,6 +221,9 @@ export const attemptWorkflowUpdateDataSchema = z
 
 export type PracticeLayout = z.infer<typeof practiceLayoutSchema>;
 export type PracticeFeedbackMode = z.infer<typeof practiceFeedbackModeSchema>;
+export type PracticeRecommendation = z.infer<
+  typeof practiceRecommendationSchema
+>;
 export type TeacherPracticeFeedbackPolicy = z.infer<
   typeof teacherPracticeFeedbackPolicySchema
 >;

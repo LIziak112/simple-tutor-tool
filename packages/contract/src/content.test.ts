@@ -408,6 +408,79 @@ describe("frontmatter 与文档类型", () => {
   });
 });
 
+describe("frontmatter 与 unit 的 practice 推荐（M5-D1）", () => {
+  it("frontmatter 带 practice：两字段齐全解析保留", () => {
+    const parsed = frontmatterSchema.parse({
+      kind: "practice",
+      practice: { layout: "single", feedback: "per_question" },
+    });
+    expect(parsed.practice).toEqual({
+      layout: "single",
+      feedback: "per_question",
+    });
+  });
+
+  it("frontmatter 带 practice：缺一也可（可选字段不注入缺省）", () => {
+    const parsed = frontmatterSchema.parse({
+      kind: "mixed",
+      practice: { layout: "list" },
+    });
+    expect(parsed.practice).toEqual({ layout: "list" });
+  });
+
+  it("practice 枚举值非法时拒绝（走既有 frontmatter schema error 路径）", () => {
+    expect(
+      frontmatterSchema.safeParse({
+        kind: "practice",
+        practice: { layout: "grid" },
+      }).success,
+    ).toBe(false);
+    expect(
+      frontmatterSchema.safeParse({
+        kind: "practice",
+        practice: { feedback: "immediate" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("不含 practice 的老 frontmatter：解析结果键集与旧完全一致（键不注入）", () => {
+    const result = frontmatterSchema.safeParse({
+      kind: "practice",
+      unit: "练习四",
+      topic: "有理数",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data).sort()).toEqual([
+        "dsl",
+        "kind",
+        "topic",
+        "unit",
+      ]);
+      expect(result.data).not.toHaveProperty("practice");
+    }
+  });
+
+  it("unitSchema 带 practice 解析保留；老单元解析结果不含 practice 键", () => {
+    const withPractice = unitSchema.parse({
+      id: "练习四",
+      title: "练习四",
+      questions: [],
+      practice: { layout: "single", feedback: "after_attempt" },
+    });
+    expect(withPractice.practice).toEqual({
+      layout: "single",
+      feedback: "after_attempt",
+    });
+    const withoutPractice = unitSchema.parse({
+      id: "练习四",
+      title: "练习四",
+      questions: [],
+    });
+    expect(withoutPractice).not.toHaveProperty("practice");
+  });
+});
+
 describe("ParsedDocument：解析结果（T1.3/T1.4/T1.6 产出）", () => {
   it("完整练习文档解析成功", () => {
     const doc = parsedDocumentSchema.parse({

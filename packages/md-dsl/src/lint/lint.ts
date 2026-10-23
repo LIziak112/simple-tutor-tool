@@ -16,6 +16,7 @@ import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
 import { lintMathSpacingOutside } from "./math-text.ts";
+import { lintPracticeRecommendation } from "./practice.ts";
 import { lintQuestions } from "./questions.ts";
 import { lintRawHtml } from "./raw-html.ts";
 import { lintTablePipes } from "./tables.ts";
@@ -81,6 +82,8 @@ function runRules(
       ...lintBlankMarkerDollar(tree),
       ...lintRawHtml(tree),
       ...lintEmptyPractice(parsed, tree),
+      // M5-D1：practice 推荐适用性（lecture/lesson 带该字段 → warning，不阻断）
+      ...lintPracticeRecommendation(tree, parsed),
       // T7.7：启用集归一（缺省=全启用 → 规则零新增 issue；显式 undefined 同缺省）
       ...lintCapabilityProfile(
         tree,

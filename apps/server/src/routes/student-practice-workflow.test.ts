@@ -11,6 +11,7 @@ import {
   responses,
   students,
   teachers,
+  units,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { teacherPolicyOfStudent } from "../services/practice-workflow-wiring.ts";
@@ -849,5 +850,169 @@ describe("v2 合并验收补充：异常数据降级与课程失权（2026-10-22
     );
     expect(patch.status).toBe(403);
     expect(((await patch.json()) as ApiErr).error).toBe("COURSE_ACCESS_DENIED");
+  });
+});
+
+describe("M5-D2 建卷：文档推荐进入裁决链（studentChoice > unitRecommendation > per_question）", () => {
+  /** 课程练习环境：教师 + 导入单题单元入课程 + 张三成员，返回课程/单元 id */
+  async function makeCourseEnv(): Promise<
+    Env & { courseId: string; courseUnitId: string }
+  > {
+    const env = await makeEnv();
+    const course = await env.app.request("/api/teacher/courses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ title: "推荐课程" }),
+    });
+    expect(course.status).toBe(201);
+    const courseId = ((await course.json()) as { data: { id: string } }).data
+      .id;
+    const imported = await env.app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({
+        markdown: PRACTICE_MD,
+        filename: "推荐练习.md",
+        courseId,
+      }),
+    });
+    expect(imported.status).toBe(200);
+    const courseUnitId = (
+      (await imported.json()) as { data: { units: { id: string }[] } }
+    ).data.units[0]?.id;
+    if (!courseUnitId) throw new Error("课程导入未产出单元");
+    const detail = await env.app.request(`/api/teacher/courses/${courseId}`, {
+      headers: { cookie: env.teacherCookie },
+    });
+    const item = (
+      (await detail.json()) as {
+        data: { items: { id: string; refId: string | null }[] };
+      }
+    ).data.items.find((entry) => entry.refId === courseUnitId);
+    if (!item) throw new Error("课程目录缺单元条目");
+    const visible = await env.app.request(
+      `/api/teacher/course-items/${item.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ visible: true }),
+      },
+    );
+    expect(visible.status).toBe(200);
+    const zhangId = await studentIdOfLogin(env.app, env.teacherCookie, "张三");
+    const added = await env.app.request(
+      `/api/teacher/courses/${courseId}/members`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ studentIds: [zhangId] }),
+      },
+    );
+    expect(added.status).toBe(200);
+    return { ...env, courseId, courseUnitId };
+  }
+
+  /** 直写单元推荐列（模拟 frontmatter practice 导入产物） */
+  function setUnitRecommendation(
+    env: Env,
+    unitId: string,
+    recommendation: Record<string, unknown> | string | null,
+  ): void {
+    env.db
+      .update(units)
+      .set({
+        practiceDefaultsJson:
+          recommendation === null || typeof recommendation === "string"
+            ? recommendation
+            : JSON.stringify(recommendation),
+      })
+      .where(eq(units.id, unitId))
+      .run();
+  }
+
+  async function startCourseAttempt(
+    env: Env & { courseId: string; courseUnitId: string },
+    options: Record<string, unknown> = {},
+  ): Promise<Response> {
+    return env.app.request(
+      `/api/student/courses/${env.courseId}/units/${env.courseUnitId}/attempts`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify(options),
+      },
+    );
+  }
+
+  it("不传 feedbackMode 且单元推荐 after_attempt → 建卷列 after_attempt（推荐生效面=从未保存偏好的学生）", async () => {
+    const env = await makeCourseEnv();
+    setUnitRecommendation(env, env.courseUnitId, {
+      feedback: "after_attempt",
+    });
+    const res = await startCourseAttempt(env, { workflowVersion: 1 });
+    expect(res.status).toBe(201);
+    const attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    expect(workflowColumns(env.db, attemptId)).toEqual({
+      version: 1,
+      mode: "after_attempt",
+      revision: 0,
+    });
+  });
+
+  it("学生显式选择胜出：推荐 after_attempt 但 feedbackMode=per_question → per_question", async () => {
+    const env = await makeCourseEnv();
+    setUnitRecommendation(env, env.courseUnitId, {
+      feedback: "after_attempt",
+    });
+    const res = await startCourseAttempt(env, {
+      workflowVersion: 1,
+      feedbackMode: "per_question",
+    });
+    expect(res.status).toBe(201);
+    const attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    expect(workflowColumns(env.db, attemptId)?.mode).toBe("per_question");
+  });
+
+  it("教师限制收敛推荐：教师策略 after_attempt + 推荐 per_question → after_attempt", async () => {
+    const env = await makeCourseEnv();
+    setUnitRecommendation(env, env.courseUnitId, {
+      feedback: "per_question",
+    });
+    const put = await env.app.request(
+      "/api/teacher/settings/practice-feedback",
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ practiceFeedbackPolicy: "after_attempt" }),
+      },
+    );
+    expect(put.status).toBe(200);
+    const res = await startCourseAttempt(env, { workflowVersion: 1 });
+    expect(res.status).toBe(201);
+    const attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    expect(workflowColumns(env.db, attemptId)?.mode).toBe("after_attempt");
+  });
+
+  it("单元无推荐 + 不传 feedbackMode → 缺省 per_question（无推荐老文档行为不变）", async () => {
+    const env = await makeCourseEnv();
+    const res = await startCourseAttempt(env, { workflowVersion: 1 });
+    expect(res.status).toBe(201);
+    const attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    expect(workflowColumns(env.db, attemptId)?.mode).toBe("per_question");
   });
 });

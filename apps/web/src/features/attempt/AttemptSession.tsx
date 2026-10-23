@@ -67,7 +67,8 @@ import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
-import { useSubmitAttempt } from "./attempt-queries";
+import { useSubmitAttempt, useUpdateAttemptWorkflow } from "./attempt-queries";
+import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
 import {
   type PracticeProblemPhase,
@@ -90,7 +91,7 @@ import {
   isTextEditingEvent,
 } from "./practice-keyboard";
 import {
-  getPracticePreference,
+  currentLayout,
   usePracticePreference,
 } from "./practice-preference-store";
 import {
@@ -270,6 +271,8 @@ function AnswerView({
   /** 交卷准备中止标志：弹层关闭（=取消）置位，runSubmit 各 await 段后检查 */
   const submitAbortedRef = useRef(false);
   const submit = useSubmitAttempt(attemptId);
+  // 反馈节奏切换（M5-D3）：PATCH CAS + 详情失效；禁用只按服务端投影
+  const feedbackUpdate = useUpdateAttemptWorkflow(attemptId);
 
   // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（避免与课程练习标题重复）。
@@ -384,11 +387,15 @@ function AnswerView({
   // 导航四态、进度行与题卡只读的即时更新。
   const questionProgress =
     practiceProtocol === "v1" ? (data.questionProgress ?? []) : [];
-  // 布局本次作答内自决：进入时取默认偏好一次，之后只随显式切换变化，
-  // 不被偏好变更或后台重取中途拉扯；不写回默认偏好（§7.1）
-  const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() =>
-    practiceProtocol === "v1" ? getPracticePreference().layout : "list",
-  );
+  // 布局本次作答内自决：进入时按「开始页一次性 transient 预选 → 默认偏好」
+  // 取一次（M5-D3 裁决⑨：预选不经服务端，消费即清除；legacy/lesson 也消费
+  // 防同会话残留），之后只随显式切换变化，不被偏好变更或后台重取中途拉扯；
+  // 不写回默认偏好（§7.1）
+  const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() => {
+    const startIntent = consumeAttemptStartLayoutIntent();
+    if (practiceProtocol !== "v1") return "list";
+    return startIntent ?? currentLayout();
+  });
   // M3-D1.5：硬刷新直达作答页时，布局层的账号绑定 effect 晚于本组件首渲染，
   // 已保存默认布局会在初值时被错过——store 从未绑定变已绑定的那一刻按已
   // 保存默认布局对齐一次；用户显式切换过布局之后，绑定变化与跨标签偏好
@@ -407,7 +414,7 @@ function AnswerView({
     if (practiceProtocol !== "v1" || explicitLayoutRef.current) return;
     // 只在「未绑定 → 已绑定」迁移时对齐一次；换绑与解绑不拉扯
     if (previous !== null || boundAccountId === null) return;
-    setPracticeLayout(getPracticePreference().layout);
+    setPracticeLayout(currentLayout());
   }, [boundAccountId, practiceProtocol]);
   const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
   // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
@@ -1164,12 +1171,22 @@ function AnswerView({
                 </div>
               )}
 
-              {/* 做题方式摘要行（§7.1）：v1 卷才有；legacy/lesson 不渲染 */}
+              {/* 做题方式摘要行（§7.1）：v1 卷才有；legacy/lesson 不渲染。
+                  M5-D3：节奏切换 PATCH 以摘要行展示的服务端投影 revision 为
+                  CAS 基线；在途与就地提示（stale/服务端 message）透传 */}
               {practiceWorkflow !== undefined && total > 0 && (
                 <PracticeModeSummary
                   workflow={practiceWorkflow}
                   layout={practiceLayout}
                   onLayoutChange={setPracticeLayoutExplicit}
+                  onFeedbackModeChange={(mode) =>
+                    feedbackUpdate.mutate({
+                      feedbackMode: mode,
+                      workflowRevision: practiceWorkflow.revision,
+                    })
+                  }
+                  feedbackBusy={feedbackUpdate.isPending}
+                  feedbackError={feedbackUpdate.notice}
                 />
               )}
               {singleMode && resolvedSingleQuestionId !== null && (

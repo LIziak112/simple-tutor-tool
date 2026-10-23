@@ -155,6 +155,96 @@ describe("resolvePracticeWorkflow：course/wrong 自由练习", () => {
   });
 });
 
+describe("resolvePracticeWorkflow：文档推荐档（M5-D2，studentChoice > unitRecommendation > per_question）", () => {
+  it("仅推荐（无学生选择）：course 推荐 after_attempt 采纳；无推荐回缺省 per_question", () => {
+    const recommended = resolve({
+      sourceType: "course",
+      lifecycle: "new",
+      unitRecommendation: "after_attempt",
+    });
+    expect(recommended.feedbackMode).toBe("after_attempt");
+    // null = 该单元无推荐，不改变缺省
+    expect(
+      resolve({
+        sourceType: "course",
+        lifecycle: "new",
+        unitRecommendation: null,
+      }).feedbackMode,
+    ).toBe("per_question");
+  });
+
+  it("学生选择优先于推荐：选 per_question 时推荐 after_attempt 不生效（反之亦然）", () => {
+    expect(
+      resolve({
+        sourceType: "course",
+        lifecycle: "new",
+        studentChoice: "per_question",
+        unitRecommendation: "after_attempt",
+      }).feedbackMode,
+    ).toBe("per_question");
+    expect(
+      resolve({
+        sourceType: "course",
+        lifecycle: "new",
+        studentChoice: "after_attempt",
+        unitRecommendation: "per_question",
+      }).feedbackMode,
+    ).toBe("after_attempt");
+  });
+
+  it("推荐被教师限制收敛：推荐 per_question 但教师只允许 after_attempt → after_attempt", () => {
+    const wf = resolve({
+      sourceType: "course",
+      lifecycle: "new",
+      unitRecommendation: "per_question",
+      teacherPolicy: "after_attempt",
+    });
+    expect(wf.feedbackMode).toBe("after_attempt");
+    expect(wf.allowedFeedbackModes).toEqual(["after_attempt"]);
+    expect(wf.restrictionReason).toBe("teacher_after_attempt");
+  });
+
+  it("assignment 来源：推荐 per_question 但作业未授权逐题 → 收敛 after_attempt", () => {
+    const wf = resolve({
+      sourceType: "assignment",
+      lifecycle: "new",
+      unitRecommendation: "per_question",
+      assignment: {
+        answerRelease: "on_submit",
+        allowPerQuestionFeedback: false,
+      },
+    });
+    expect(wf.feedbackMode).toBe("after_attempt");
+    expect(wf.allowedFeedbackModes).toEqual(["after_attempt"]);
+  });
+
+  it("assignment 来源：教师授权 + 推荐 after_attempt（未授权逐题时推荐也不越权）", () => {
+    const wf = resolve({
+      sourceType: "assignment",
+      lifecycle: "new",
+      unitRecommendation: "after_attempt",
+      assignment: {
+        answerRelease: "on_submit",
+        allowPerQuestionFeedback: true,
+      },
+    });
+    expect(wf.feedbackMode).toBe("after_attempt");
+    expect(wf.canSubmitQuestion).toBe(false);
+  });
+
+  it("续作不读推荐：stored.feedbackMode 保持，unitRecommendation 不参与", () => {
+    // existing 类型上 unitRecommendation 为 never（误传编译期拦截）；整对象
+    // as never 绕过验证「运行时传入也被 stored 短路忽略」（同 studentChoice 先例）
+    const wf = resolve({
+      sourceType: "course",
+      lifecycle: "existing",
+      stored: { ...freshStored, feedbackMode: "per_question" },
+      unitRecommendation: "after_attempt",
+    } as never);
+    expect(wf.feedbackMode).toBe("per_question");
+  });
+});
+
 describe("resolvePracticeWorkflow：续作、收紧与冻结", () => {
   it("续作保持 stored feedbackMode（即使教师已放宽，不改写学生已选节奏）", () => {
     const wf = resolve({

@@ -47,6 +47,10 @@ import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
 import { getAttemptRecoveryState } from "./attempt-material-recovery";
 import {
+  consumeAttemptStartLayoutIntent,
+  setAttemptStartLayoutIntent,
+} from "./attempt-start-intent";
+import {
   installDraftBackend,
   type KVBackend,
   memoryBackend,
@@ -288,6 +292,8 @@ async function openPracticeMenu() {
 
 beforeEach(() => {
   localStorage.clear();
+  // M5-D3 开始页 transient 预选为模块级一次性变量，测试间显式清防串扰
+  consumeAttemptStartLayoutIntent();
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("m3d1-test");
   bindAiDisplayAccount(null);
@@ -466,7 +472,11 @@ it("单题模式上一题/下一题切换题目并 replace 更新 q", async () =
 });
 
 it("偏好默认单题：进入即单题呈现，非法 q 忽略并定位首道未提交题", async () => {
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage("?q=not-exist");
   expect(
@@ -476,7 +486,11 @@ it("偏好默认单题：进入即单题呈现，非法 q 忽略并定位首道�
 });
 
 it("偏好默认单题：合法 q 直达该题", async () => {
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage("?q=q3");
   expect(
@@ -533,7 +547,11 @@ it("v1 卷导航区四态可见且已提交待公布行无对错泄露", async (
 function presetSingleAccountThenUnbind() {
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("x");
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   bindPracticePreferenceAccount(null);
 }
 
@@ -719,7 +737,11 @@ function installMaterialSessions() {
 
 /** 进入单题模式并打开当前题的 AI 助教（label=当前题显示名） */
 async function openSingleWithAi(entry = "", label = "第 2 题") {
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   installDraftBackend(memoryBackend());
   installMaterialSessions();
   mockedFetch.mockResolvedValue(v1Draft());
@@ -760,7 +782,11 @@ it("单题切题先收起 AI 阅读：切换后 rail 关闭，返回原题见折
 it("单题模式旧任务定位先统一切题再展开回复，URL 消费 ai 参数", async () => {
   // 深链停在 q2，任务属于 q1：必须先经统一切题入口（收笔/落盘/AI 收起
   // 保护同链）切到 q1，再展开 q1 的回复；失败保留现场不切题
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   installDraftBackend(memoryBackend());
   installMaterialSessions();
   mockedFetch.mockResolvedValue(v1Draft());
@@ -776,7 +802,11 @@ it("单题模式旧任务定位先统一切题再展开回复，URL 消费 ai �
 
 it("AI 输入聚焦时键盘不劫持：Enter/←→/数字保持输入语义", async () => {
   // q1 换成未提交的单选题，便于断言数字键不误触选项
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   installDraftBackend(memoryBackend());
   installMaterialSessions();
   mockedFetch.mockResolvedValue({
@@ -895,4 +925,32 @@ it("AI 节点不进题面域与反馈区（底图与导出零 AI 输入）", asy
   expect(
     document.querySelectorAll('[data-slot="ai-companion-panel"]'),
   ).toHaveLength(1);
+});
+
+// ---------- M5-D3 开始页布局预选（attempt-start-intent transient） ----------
+
+it("M5-D3 开始页 transient 预选：single 意图直接单题呈现，消费一次即清除", async () => {
+  // 开始页「开始练习」写入的一次性预选：不经服务端，作答页初值消费一次
+  setAttemptStartLayoutIntent("single");
+  installDraftBackend(memoryBackend());
+  installMaterialSessions();
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage("");
+  await screen.findByText(/做题方式：单题 · 每题提交后查看/);
+  // 消费一次后清除：同会话再进入别的卷不得残留这份预选
+  expect(consumeAttemptStartLayoutIntent()).toBeNull();
+});
+
+it("M5-D3 无 transient：硬刷新直写作答页回落本机偏好（列表）", async () => {
+  expect(consumeAttemptStartLayoutIntent()).toBeNull();
+  savePracticePreference({
+    layout: "list",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
+  installDraftBackend(memoryBackend());
+  installMaterialSessions();
+  mockedFetch.mockResolvedValue(v1Draft());
+  renderPage("");
+  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
 });

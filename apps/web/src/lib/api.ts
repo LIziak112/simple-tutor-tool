@@ -69,6 +69,7 @@ import {
   type AttemptStartData,
   type AttemptStatus,
   type AttemptSubmitRequest,
+  type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   apiResponseSchema,
   attemptMaterialRevisionsSchema,
@@ -137,6 +138,7 @@ import {
   type PracticeQuestionSubmitData,
   type PracticeQuestionSubmitRequest,
   type PracticeWorkflowStartOptions,
+  type PracticeWorkflowUpdateRequest,
   type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
@@ -963,6 +965,27 @@ export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
   return callApi(() =>
     api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
   );
+}
+
+/**
+ * 更改反馈节奏（M5-D3，PATCH /attempts/:id/workflow）：首次任何提交前可改，
+ * 请求体按契约只含 feedbackMode + workflowRevision（CAS 基线，M1b strict
+ * 契约无 workflowVersion 字段）；返回更新后的裁决投影与题级进度白名单
+ * （无答案秘密）。409 WORKFLOW_REVISION_STALE = 节奏已在别处修改（调用方
+ * 重取详情后提示重试）；WORKFLOW_LEGACY / ALREADY_SUBMITTED /
+ * QUESTION_ALREADY_SUBMITTED / WORKFLOW_MODE_NOT_ALLOWED 等错误码由调用方
+ * 透传服务端 message 就地提示。
+ */
+export function updateAttemptWorkflowApi(
+  attemptId: string,
+  input: PracticeWorkflowUpdateRequest,
+): Promise<AttemptWorkflowUpdateData> {
+  // 沿用 updateCourseApi 等既有 $patch 模式：服务端路由为纯 handler（无
+  // zValidator），hc 静态输入不含 json，内联字面量会触发多余属性检查——
+  // 提为变量绕过（json 类型安全由入参 PracticeWorkflowUpdateRequest 契约
+  // 类型保证），运行时 hc 正常序列化 json 请求体。
+  const args = { param: { id: attemptId }, json: input };
+  return callApi(() => api.api.student.attempts[":id"].workflow.$patch(args));
 }
 
 export async function fetchAttemptMaterialRevisionsApi(

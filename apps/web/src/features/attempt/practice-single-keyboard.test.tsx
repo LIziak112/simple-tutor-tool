@@ -170,7 +170,11 @@ function renderPage(search = "") {
 
 /** 进入单题专注模式并返回工作区容器（含进度行、题卡、操作条的外层容器） */
 async function renderSingle(search = "") {
-  savePracticePreference({ layout: "single", keyboardShortcuts: true });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
   mockedFetch.mockResolvedValue(kbDraft());
   const view = renderPage(search);
   await view.findByText(/做题方式：单题 · 每题提交后查看/);
@@ -395,7 +399,11 @@ it("已提交只读题 1-9 不生效", async () => {
 // ---------- 偏好开关 ----------
 
 it("快捷键关闭后 Enter、←→、1-9 全部不生效", async () => {
-  savePracticePreference({ layout: "single", keyboardShortcuts: false });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: false,
+    feedback: null,
+  });
   mockedFetch.mockResolvedValue(kbDraft());
   renderPage("?q=q2");
   await screen.findByText(/做题方式：单题 · 每题提交后查看/);

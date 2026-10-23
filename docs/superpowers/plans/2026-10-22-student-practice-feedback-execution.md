@@ -253,3 +253,68 @@
 - /security-review（独立子代理，max 力度，六焦点：新字段泄露面/AI 出口重校验/身份越权/请求注入/呈现层边界/TOCTOU）：高/中/低发现 0。核对要点：新契约字段全部只出现在响应 schema（本 diff 未给任何请求 schema 增字段）；attemptWorkflowView.practiceWorkflow 投影 strict 白名单穷举核对（releaseAt 仅复制 dueAt，dueAt 本就在作业列表下发，无 answerRelease 模式值/无 publishedAt/无提前泄露信号）；practiceSubmittedCounts 只读 submittedAt 与行数绝无对错/得分/答案列，计数只泄本人「是否已提交」行为事实不构成侧信道；三消费面全部归属校验后域内查询（学生本人/教师本人域）；AI 四通道（任务新建/MCP 领取/票据附件读/回信交付）实时调 resolveAttemptQuestionAiPolicy 不缓存、裁决与状态迁移/规则重装同一事务（better-sqlite3 同步无请求内交错）；教师中途切 post_submit_only：已提交题 completed→恒 open_study 不回锁（定案兑现）、未提交邻题 403+零任务行出站前拦截（D1-18..20 对 fake provider 捕获的真实出站体断言钉住）；SQL 模板全参数化（inArray chunk 绑定值）无新路由无动态拼接；节奏行由服务端 answersReleased 闸驱动无「答案已公布」误导；两个闸门修复提交复核无安全面回退。观察 5 记档：①v1 已收尾结果视图缺 assertNoLeak 直断言——当场补于 7b5a2e5c（on_submit 默认公布下 allow 白名单 answers/answer/solutionMd + choiceHint/judgeHint 哨兵负断言，硬性规则 3 收口；首跑无 allow 的失败实证默认公布策略下答案/详解合法在场，allow 面与既有 released 场景同款）；②after_attempt 0/N（同 code-review 记档）；③作业卡分母口径（同存疑 1）；④v1 逐题 draft 待批数外显系 D4 既有设计同口径；⑤inapp 派发事务提交后到 provider HTTP 调用间的固有窗口系既有双阶段设计（回执落地按任务态二次门禁）非 M4 引入。
 - 全量回归（编排者自跑，哨兵日志 /tmp/m4-final-full.log）：pnpm test --maxWorkers=4 5603/5603（475 文件）、typecheck/lint/build exit 0。过程记档：首轮链被系统内存压力于 web 工程段中断（3462 例中 7 例 jsdom 失败，落点恰在闸门修复触碰面）——隔离复跑两文件 35/35 全绿定性为环境性失败非代码回归；内存回升（预检 5198MB≥2500 门槛）后以 4-worker 节流版整链重跑全绿。
 - 合并：v2merge 工作树 git merge --no-ff codex/practice-feedback-integration（零冲突，直系后代）→ 快验 → 推送 origin/v2。分支最终形态：D1(5b6dc30d) → D2(62a63ee5) → D3(6cd0421d/53007f4e/a9a2c3dd) → 闸门(62cf3988/945e7131/7b5a2e5c) + 台账提交。
+
+### M5 编排开工（2026-10-23，分支 codex/practice-preferences-dsl，基于 v2@5716bf93，Claude 会话编排）
+
+- 摸底结论（Explore 子代理，缺口图落盘编排会话）：PATCH /attempts/:id/workflow 服务端 M1b 已建成（CAS/错误码/测试齐全），M5 缺口=web UI；frontmatter `practice:` 推荐命名空间、units 推荐列、resolver 推荐档、偏好未设置态、开始页呈现全不存在；feedbackMode 省略语义契约已具备（resolver 缺省档 per_question）；未知 frontmatter 键静默剥离——老文档天然安全。
+- 分层：D1 契约+DSL+导入导出往返（推荐 schema→frontmatter/unitSchema(optional)→md-dsl 解析与 lint→units.practiceDefaultsJson 迁移 0039→commitImport 写/清→exportUnitMd/教学包写回→往返/重导/同名合并/samples 测试→spec 文档段+samples 正例+gen:spec 产物）→ D2 resolver 推荐档与三建卷点（assignment 多单元一致才采纳、course 单元推荐、wrong 不参与；web 偏好未设置省略 feedbackMode；landing 契约推荐字段）→ D3 PATCH 节奏切换 UI + 开始页推荐呈现与显式选择 + 设置反馈节奏项 + 状态机抽象再议。
+- 裁决预告（D2/D3 依据总计划定案，子代理不得另议）：①存量 M3 偏好的 feedback 值视作已设置（M3 保存动作保存完整对象），不做读迁移手术；文档推荐生效面=从未保存偏好的学生；开始页显式选择恒最高优先（§5.4 档 2）。②wrong-practice 不参与文档推荐（无单元语义，§5.1 错题重练用所属教师默认规则）。③layout 推荐只影响开始页预选呈现（layout 非权限、不进 start columns；服务端建卷列仍仅 feedbackMode）。④导出无推荐不写 practice 行（老文件字节级稳定）；重导无字段置 null 清除（teachingPackJson 同款口径）。⑤lecture/lesson 声明 practice → warning「不适用」，讲练语义零变化；非法值 → schema error。⑥多单元推荐冲突回学生偏好/缺省 + 开始页允许选择，不拼多节奏。⑦unitSchema 推荐字段必须 optional 禁 default 注入（防 parse.test toEqual 精确断言破裂）。⑧units 新列随表级备份走，恢复不丢不放宽（§6.2），补恢复测试断言。
+
+### M5-D1 契约+DSL+导入导出往返（2026-10-23，独立验收，Claude 编排）
+
+- 子代理交付 7 提交（2a59c09d→fecd9751，29 文件 +5158/−118）：契约 practiceRecommendationSchema（strict 双可选）+ frontmatter/unitSchema 挂 practice 可选（禁 default，裁定⑦）；parse.ts kind 门控贯通（practice/mixed 进单元、lecture/lesson 不进，裁定⑤）；lint PRACTICE_NOT_APPLICABLE warning（lecture/lesson 带 practice 提示不阻断，非法值走既有 INVALID_FRONTMATTER error）；spec gen 练习推荐小节 + LINT_RULES 注册；样例 samples/v2/练习推荐样例.md（自动入样例回归，裁定⑫）；迁移 0039 units.practice_defaults_json（drizzle 生成含快照账本）；commitImport 双 upsert 路径写/清（无字段置 null，裁定④）；exportUnitMd 确定性 flow 映射行 practiceYamlLineOf（坏 JSON/契约失败→null+warn 不抛）、无推荐不写行老单元字节级不变；回填保真对比排除新列（随 0039 迁移同口径）；备份往返断言不丢。红灯日志 /tmp/m5-d1-red.log（3 failed：teaching-pack/library 导入导出路径先行红）。
+- 编排者验收：全 diff 逐文件读过（契约/解析/lint/spec/迁移/导入/导出/测试/样例）符合裁定与 brief；红灯日志核实；全量回归 pnpm test --maxWorkers=4 5633/5633（476 文件）、typecheck/lint exit 0、gen:spec 双跑 git diff 为空（哨兵 /tmp/m5-d1-accept-*.log）。
+
+### M5-D2 推荐档接入建卷裁决链（2026-10-23，独立验收，Claude 编排）
+
+- 子代理交付 3 提交（27109389→80909da1，22 文件 +1221/−148）：契约 feedback 改可选（禁 default，裁定①⑦——存量 M3 全量形态天然已设置）+ landing practiceRecommendation nullable；裁决链 studentChoice ?? unitRecommendation ?? per_question 整体被 allowedFeedbackModes 收敛（教师限制最终裁决）、续作不读推荐；wiring unitFeedbackRecommendationOf——assignment 按 assignment_units 聚合非空一致才采纳（裁定⑥）、course 单元直取、wrong 恒 null（裁定②）、坏 JSON/契约失败 null+warn、units 复合主键按教师域读（T2B.5）；landing 下发坏数据不下发原文；web 偏好 store feedback null=未设置、保存布局不补写伪造 feedback、workflowStartOptions 未设置整键不发。红灯 /tmp/m5-d2-red.log（26 failed 先行红）。偏离 brief 三项均合理：路径笔误纠正、C1 连带提交保每步绿（硬规则 8）、首轮 SAI-11 环境性抖动（编排者复跑未复现）。
+- 编排者验收：全 diff 逐文件读过（契约/裁决器/wiring/landing/store/发送链/测试）符合裁定①②⑥⑦；assertNoQuestionFields 泄露断言实调用核实（assertNoLeak 全局禁键+题目侧字段）；schema:export 产物零变更成立（改动面不在 content 契约导出集）；自跑全量 5665/5665（478 文件）、typecheck/lint exit 0、gen:spec 双跑 git status 仅余未跟踪交接文档（哨兵 /tmp/m5-d2-accept-*.log）。
+- 附带核查：practiceWorkflowStartOptionsFields.feedbackMode 本就 optional（M1 设计），web 省键契约合法；tutor-lint.mjs 变更系契约源内嵌随 gen:spec 联动，重生成零 drift。
+
+### M5 追加裁决⑨：开始页预选与显式选择（2026-10-23，D3 派单前定案）
+
+- 偏好 schema 的 `layout` 与 `feedback` 同款可选（键缺省=未设置）：存量 M3 文件两字段都带（保存动作一直写全量形态）→ 天然视作已设置；未保存过的学生才是文档推荐生效面。不引入读写迁移。
+- 开始页选择器初值 = 已保存偏好 ?? 单元推荐 ?? 缺省（布局 list、节奏 per_question）；显式点选后本次访问内恒定。
+- 「开始练习」仅当学生本次显式触碰过节奏选择器才随请求发 feedbackMode（预裁决①开始页显式选择恒最高）；未触碰维持 D2 链（已设置发偏好、未设置整键不发）。
+- 布局预选不经服务端（预裁决③）：模块级一次性 transient 携带，作答页初值消费一次后清除；硬刷新直写作答页回落本机偏好（「进入时取一次」语义不变）。
+
+### M5-D3 PATCH 节奏切换 UI + 开始页预选 + 设置反馈节奏项（2026-10-23，子代理实现，TDD 四层红灯先行）
+
+- 提交链：4e07f71e（层1 契约+store：偏好 layout 可选——键缺省=未设置、禁 default（裁决⑨），契约测试「键缺省合法且 parse 产物无 layout 键」；store 三字段化、null 项 storage 键缺省不补写、currentLayout() 助手；消费面测试全量适配）→ af935c5f（层2 摘要卡节奏切换：updateAttemptWorkflowApi + useUpdateAttemptWorkflow——成功与 WORKFLOW_REVISION_STALE 都失效 attempt 详情、stale 提示「已刷新请重试」、其余透传服务端 message；PracticeModeSummary 节奏组 fieldset：canChangeFeedback=false 整组禁用、allowedFeedbackModes 外单项禁用、busy 临时禁用、≥44px；AttemptSession 以服务端投影 revision 为 CAS 基线）→ e7c6a590（层3 开始页：attempt-start-intent 模块级一次性布局预选、作答页消费一次后清除、legacy/lesson 也消费防残留、硬刷新回落本机偏好；UnitLandingView 数据就绪后挂载——推荐标注 Label 同源、选择器初值 偏好→推荐→缺省、显式点选本次访问恒定、节奏 touched 才发 feedbackMode、布局恒写 transient 统一三入口；useStartCourseAttempt 接受调用方组装 options）→ b0bdf8e0（层4 设置页反馈节奏三选：跟随单元推荐(未设置)/每题提交后查看/交卷后统一查看；update 用 !== undefined 防 ?? 吞 null；保存三字段全量移除过渡注释）→ c3f7d9dc（style：仓库级 lint 抓出层1/2 遗留 import 排序与长行，纯格式零行为）。
+- 记档取舍：brief 的 PATCH 请求体含 workflowVersion 与契约不符（practiceWorkflowUpdateRequest strict 无该字段，parseJsonBody 会拒）——按硬性规则 1 只发 {feedbackMode, workflowRevision}；hono hc 对该 PATCH 静态输入仅 {param}（服务端纯 handler 无 zValidator），内联字面量触发 TS2353——沿用 updateCourseApi 的 const args 提取既有模式（变量不触发多余属性检查），json 类型安全由入参契约类型保证，无 any；PracticeModeSummary 读基线 data.practiceWorkflow 而非 overlay（PATCH 后 invalidate 重取刷新）；onFeedbackModeChange 可选 prop 保 M3 纯呈现测试编译。
+- 状态机抽象再议：不抽象——开始页选择面 2 个 useState（初值链 + touched 布尔）+ 派生 dirty，「显式点选后恒定」由无 effect 拉扯天然保证；抽象只增间接层无第二消费方。
+- 红灯：/tmp/m5-d3-red.log 四层汇总（c1 9 failed、c2 10 failed、c3 模块未建 2 文件、c4 3 failed，均缺功能断言/导入失败，实现后全绿；设置页「改回跟随单元推荐→保存禁用」反断言同时守住 update 的 null 语义）。
+- 全量回归：pnpm test --maxWorkers=4 5690/5690（479 文件）EXIT=0（/tmp/m5-d3-full.log）；typecheck/lint exit 0（/tmp/m5-d3-tsc.log、/tmp/m5-d3-lint.log，style 提交后终态）；schema:export 零 drift（/tmp/m5-d3-schema.log，git status 干净）。注：全量跑于 style 提交前树，style 系纯格式（受影响 4 测试文件 52 用例复跑全绿 /tmp/m5-d3-style-test.log）。
+
+### M5-D3 验收与 D1–D3 收口（2026-10-23，独立验收，Claude 编排）
+
+- 编排者验收：全 diff 20 文件 +1171/−93 逐文件读过——契约/store layout 可选（裁决⑨）、currentLayout 助手与消费面适配；PATCH 面 api/hook/节奏组/作答页接线全按服务端投影（CAS 基线=展示投影 revision、stale 失效重取+提示、禁用不预判）；开始页初值链 偏好→推荐→缺省、rhythmTouched 才发 feedbackMode、布局恒写模块级 transient 三入口统一、legacy/lesson 也消费防残留；设置区三选 null 显式值 `!== undefined` 防 `??` 吞掉；course 建卷 hook 唯一调用方已改，assignment 入口维持 D2 链（按层计划范围）。子代理偏离①成立——brief 误写 PATCH 体含 workflowVersion，practiceWorkflowUpdateRequestSchema strict 只有 {feedbackMode, workflowRevision}，按硬规则 1 契约优先正确拒绝。状态机「不抽象」结论采纳（记档）。
+- 验收修复（编排者提交）：D3 只跑了 schema:export（brief 要求口径），契约 layout 可选后 dsl-kit/tutor-lint.mjs 未随重生成——CI 校验会挂；重生成提交并复验 gen:spec 零 drift。
+- 自跑全量 5690/5690（479 文件）、typecheck/lint exit 0（哨兵 /tmp/m5-d3-accept-*.log；子代理全量跑于 style 前、终态由本链覆盖）。
+- M5 三层 D1/D2/D3 全部验收通过，进入三闸门（/simplify → /code-review max → /security-review；landing practiceRecommendation 系新增学生端载荷故加跑安全闸门），随后全量回归与合并。
+
+### M5 闸门一 /simplify：审查与修复（2026-10-23，审查子代理只读、修复编排者亲自执行）
+
+- 审查报告 /tmp/m5-gate-simplify.md（结论 应修 2 / 建议 4 / 记档 6）：预裁决①–⑨语义逐条比对未发现实现歪曲——resolver 决定链、assignment 多单元聚合、wrong 短路、坏 JSON null+warn 均与裁定一致；另核实 workflowStartColumns 三调用点、导入清写双 upsert、md-dsl 四步链、新增测试无死 helper 无 TODO。
+- 采纳并修复（提交 17122cea，11 文件 +129/−154）：A1 `practiceDefaultsOf` 全服务端唯一实现（practice-workflow-service 导出；wiring 聚合/student-course landing/library 导出三处平行 JSON.parse+safeParse+warn 收敛，`practiceYamlLineOf` 降私有、warn 文案统一一条）；A2 `ResolveExistingPracticeWorkflowInput` 增 `unitRecommendation?: never` 镜像（删 as 断言，existing 误传编译期拦截，测试注释同步）；B1 `practiceLayoutOptions` 数据对入 practice-protocol（作答页/开始页两处字面量收敛，设置页富变体保留自有渲染）；B2 store `read()` 统一归一未设置态（bind/storage 事件调用点直用，C6 version 不外发随走）；B3 wrong 建卷不查 students（domainTeacherId 三元链与推荐侧 wrong 短路一致）；B4 设置页两枚已设值标题复用 `practiceRhythmLabel`「交卷后查看」（教师端「交卷后统一查看」系 M1 定稿教侧口径不动，测试断言同步）。
+- 记档不修（理由详报告）：C1 Set 取值冗余兜底（noUncheckedIndexedAccess 口径）、C2 PracticeModeSummary 可选 props（呈现件缺省仅呈现，11 处测试消费）、C3 测试纯转发包装、C4 开始页 spread 显式覆盖表达意图、C5 parse/lint 各一份 kind 条件（跨层低于抽象阈值）；B1 的 class 串助手与 feedbackModeOptions 收敛未采纳（2–3 份短字面量不抵跨文件改动）。
+- 修复后验证：目标测试 server 81/81 + web 48/48（web 测试必须从仓库根跑——apps/web 直跑缺 jsdom 环境与 @ 别名，vite.config 注释即记此坑）；全量 `pnpm test --maxWorkers=4` 5690/5690（479 文件）EXIT=0（/tmp/m5-simplify-fix-full.log）；typecheck/lint exit 0（lint 曾出 1 条 useImportType——schema 值导入移除后整组转 `import type` 修复）；gen:spec 重跑 git status 零 drift（哨兵 /tmp/m5-simplify-fix-*.log）。
+
+### M5 闸门二 /code-review（max）：审查与修复（2026-10-23，审查子代理只读、修复编排者亲自执行）
+
+- 审查报告 /tmp/m5-gate-codereview.md（结论 阻断 0 / 应修 1 / 建议 1 / 记档 3）：七必查角逐条通过——裁决链 §5.4 与八预裁决+裁决⑨比对无歪曲、PATCH CAS 全事务（陈旧先于模式校验、better-sqlite3 同步串行无交错窗口）、practiceDefaultsOf 四路径判空、landing 推荐仅两枚举且 assertNoLeak 过、导出往返幂等字节稳定、迁移 0039 账本一致、store 跨标签/迟到保存防护齐。审查员本地复跑针对性 180/180。
+- 采纳并修复（提交 05d7850f，2 文件 +124/−20）：A1 开始页布局 transient 移入建卷 `onSuccess`——原实现 mutate 前写模块级 intent，建卷失败不导航时永不过期，会劫持之后任意无关作答（我的作业/错题重练）的初始布局，「一次性」变「下一次消费」；三开始入口统一 onStart 一处修复，失败路径零残留。B1 开始页补 M3-D1.5 同款「未绑定→已绑定迁移对齐一次」effect——硬刷新时布局层绑定 effect 晚于子组件首渲染，landing 先到则初值链退化为 推荐??缺省 且展示预选与实际建卷节奏可不一致（点击时 store 已绑定、workflowStartOptions 照发已保存值）；任一选择器显式触碰后不再拉扯（explicitSelectionRef 守卫，布局/节奏 onChange 置位）。初值链公式提为 initialSelectionOf 单一出处（挂载初值与对齐 effect 共用）。
+- 新增三测试：A1 失败不写 transient+重试成功携带当前选择；B1 晚绑定对齐已保存偏好；B1 显式触碰后绑定不拉扯（注：点**已选中**的原生 radio 不触发 change，不构成显式触碰——须真实改选，测试注释记档）。
+- 记档不修（详报告）：C1 StrictMode dev 下 useState 初始化器双调 consume 但 React 保留第一次结果（实证脚本验证）——transient 不得改造成依赖调用次数的形态；C2 practiceDefaultsJson 脏数据导出侧静默丢行自愈（与 teachingPackJson 同口径，如需提示应走导出响应 warning）；C3 rhythmTouched 粘滞系裁决⑨定案语义非缺陷。
+- 修复后验证：开始页测试 14/14；全量 `pnpm test --maxWorkers=4` 5693/5693（479 文件，+3）EXIT=0（/tmp/m5-crfx-full.log）；typecheck/lint exit 0（/tmp/m5-crfx-*.log）。
+
+### M5 闸门三 /security-review（max）：零应修通过（2026-10-23）
+
+- 审查报告 /tmp/m5-gate-security.md（结论 阻断 0 / 应修 0 / 建议 0 / 记档 3；主审六角定向精读 + 盲扫子代理七焦点全量两路独立交叉，零候选发现）。硬性规则 3 在全部新学生端载荷成立：landing 坏 JSON/契约失败归一 null，units.practiceDefaultsJson 原文无任何路径直达学生端；start/PATCH 请求 schema strict 均不含 unitRecommendation（推荐只能服务端按 teacherId 域装配并被 allowedFeedbackModes 收敛）；assert-no-leak.ts 本体零改动且新载荷全覆盖泄露断言；逐题提交回执四键白名单 + no-store；package.json/pnpm-lock 零变更（无新增依赖）。
+- 记档 3（均既有行为非本批引入）：legacy lesson 单题提交路径无 no-store（后续统一补齐时处理）；student-records 作业授权异常行 fail-open 公布口径（记录行不含答案/详解，无泄露后果；记录行加内容字段时须重审）；course/wrong 教师未配置缺省 student_choice（§5.4 产品定案，学生自选仍被服务端收敛）。
+
+### M5 收口（2026-10-23）：三闸门全过，分支合并 v2
+
+- 三闸门：/simplify（应修 2/建议 4/记档 6 → 修复 17122cea）→ /code-review max（阻断 0/应修 1/建议 1/记档 3 → 修复 05d7850f）→ /security-review max（阻断 0/应修 0/建议 0/记档 3，零修复）。闸门发现一律编排者亲自修复并复跑全量，未修项逐条记档给理由。
+- 终态：全量 5693/5693（479 文件）、typecheck/lint exit 0、gen:spec 与 schema:export 双零漂移。分支链：D1（2a59c09d→fecd9751）→ D2（27109389→80909da1）→ 裁决⑨（eeefe338）→ D3（4e07f71e→b0bdf8e0 + style c3f7d9dc + 验收修复 031b93f1/台账 b2be4e32）→ 闸门（17122cea/ebb79f4f/05d7850f/7a1fb606）。
+- 手动验证项（供 M6 验收清单汇入）：设置页反馈节奏三选与未设置态；开始页推荐标注/预选/显式选择发送；作答页节奏切换 CAS 与他端改后 stale 提示；教师导入文档带 practice: 后学生建卷按推荐预选；导出文档往返字节稳定。

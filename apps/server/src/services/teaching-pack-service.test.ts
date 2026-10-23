@@ -247,3 +247,56 @@ describe("exportTeachingPackZip（T7.8 教学包 ZIP 导出）", () => {
     ).toEqual(["steps", "ink"]);
   });
 });
+
+/** 带 practice 推荐的练习文档（M5-D1 往返用） */
+const REC_UNIT_ID = "推荐导出单元";
+
+const REC_PACK_MD = `---
+kind: practice
+unit: ${REC_UNIT_ID}
+practice:
+  layout: single
+  feedback: per_question
+---
+
+::::question{type=judge difficulty=1 id="rec-pack-q1"}
+$3>2$。[[正确]]
+::::
+`;
+
+describe("exportTeachingPackZip：practice 推荐随包往返（M5-D1）", () => {
+  it("带推荐导出 zip 的 content.md 写回 practice 行；全新库 commitZipImport 后推荐不丢", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PACK_MD,
+      filename: "推荐包.md",
+    });
+
+    const zip = await exportTeachingPackZip(
+      db,
+      TEST_TEACHER_ID,
+      "unit",
+      REC_UNIT_ID,
+      dataDir,
+    );
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
+    const contentMd = entries.get("content.md")?.toString("utf8") ?? "";
+    expect(contentMd).toContain(
+      'practice: {layout: "single", feedback: "per_question"}',
+    );
+
+    // 往返：全新库 commitZipImport → 推荐按契约形态落库
+    const dbB = createTestDb();
+    const dataDirB = createTestDir();
+    const bundle = unpackImportZip(zip.bytes);
+    commitZipImport(dbB, TEST_TEACHER_ID, dataDirB, {
+      bundle,
+      folderId: null,
+      zipName: "推荐包.zip",
+    });
+    expect(dbB.select().from(units).all()[0]?.practiceDefaultsJson).toBe(
+      JSON.stringify({ layout: "single", feedback: "per_question" }),
+    );
+  });
+});

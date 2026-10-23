@@ -1269,6 +1269,9 @@ export function workflowStartColumns(
   studentId: string,
   assignmentId: string | null,
   options: AttemptWorkflowStartOptions,
+  /** 该卷的单元 id（M5-D2 文档推荐档：course 传单元、assignment 恒不传——
+   * 多单元按 assignment_units 聚合；wrong 不传，恒无推荐） */
+  unitId?: string | null,
 ): {
   practiceWorkflowVersion?: 1;
   feedbackMode?: PracticeFeedbackMode;
@@ -1279,6 +1282,7 @@ export function workflowStartColumns(
     sourceType,
     studentId,
     assignmentId,
+    unitId: unitId ?? null,
     studentChoice: options.feedbackMode ?? null,
   });
   return {
@@ -1456,8 +1460,9 @@ export function startCourseAttempt(
       unitId,
       attemptNo: maxAttemptNo + 1,
       startedAt: new Date().toISOString(),
-      // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议
-      ...workflowStartColumns(db, "course", studentId, null, options),
+      // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议。
+      // M5-D2：传该卷 unitId——学生未设置偏好时课程单元的文档推荐参与裁决
+      ...workflowStartColumns(db, "course", studentId, null, options, unitId),
     });
     // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入的读走
     // 外层 db（better-sqlite3 同连接同步执行，事务内读取与写入口径一致），

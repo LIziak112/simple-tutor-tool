@@ -436,6 +436,13 @@ export const units = sqliteTable(
      * lectures.teachingPackJson（导入覆盖 / 编辑保留 / 普通 MD 重导清空）。
      */
     teachingPackJson: text("teaching_pack_json"),
+    /**
+     * practice 推荐 JSON（M5-D1，形态来自 contract practiceRecommendationSchema）：
+     * frontmatter `practice:` 的做题方式/反馈节奏**展示推荐**——只推荐非权限配置，
+     * 授权仍由服务端 resolver 裁决；NULL = 未声明。写读语义同 teachingPackJson
+     * （导入覆盖 / 不带 practice 的重导清空 / 导出原样写回）。
+     */
+    practiceDefaultsJson: text("practice_defaults_json"),
   },
   (table) => [primaryKey({ columns: [table.teacherId, table.id] })],
 );

@@ -4,6 +4,7 @@ import {
   practiceFeedbackModeSchema,
   practiceLayoutSchema,
   practiceQuestionProgressSchema,
+  practiceRecommendationSchema,
   practiceWorkflowSchema,
   practiceWorkflowUpdateRequestSchema,
   studentPracticePreferenceSchema,
@@ -29,6 +30,39 @@ describe("practiceLayoutSchema", () => {
     expect(practiceLayoutSchema.parse("list")).toBe("list");
     expect(practiceLayoutSchema.parse("single")).toBe("single");
     expect(() => practiceLayoutSchema.parse("grid")).toThrow();
+  });
+});
+
+describe("practiceRecommendationSchema（M5-D1 frontmatter practice 推荐命名空间）", () => {
+  it("两字段均可选：全缺（空对象）与缺一都合法——不过度设计，空声明不构成错误", () => {
+    expect(practiceRecommendationSchema.parse({})).toEqual({});
+    expect(practiceRecommendationSchema.parse({ layout: "single" })).toEqual({
+      layout: "single",
+    });
+    expect(
+      practiceRecommendationSchema.parse({ feedback: "after_attempt" }),
+    ).toEqual({ feedback: "after_attempt" });
+    expect(
+      practiceRecommendationSchema.parse({
+        layout: "list",
+        feedback: "per_question",
+      }),
+    ).toEqual({ layout: "list", feedback: "per_question" });
+  });
+
+  it("枚举值非法即拒绝；未知键拒绝（strict，与教学策略配置同严口径）", () => {
+    expect(
+      practiceRecommendationSchema.safeParse({ layout: "grid" }).success,
+    ).toBe(false);
+    expect(
+      practiceRecommendationSchema.safeParse({ feedback: "immediate" }).success,
+    ).toBe(false);
+    expect(
+      practiceRecommendationSchema.safeParse({
+        layout: "single",
+        unknown: true,
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -66,17 +100,48 @@ describe("studentPracticePreferenceSchema", () => {
     keyboardShortcuts: true,
   };
 
-  it("接受合法 v1 偏好", () => {
+  it("接受合法 v1 偏好（M3 存量全量形态，feedback 视作已设置）", () => {
     expect(studentPracticePreferenceSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("M5-D2：feedback 键缺省合法——parse 产物无 feedback 键（未设置 ≠ 伪造默认值）", () => {
+    const unset = studentPracticePreferenceSchema.parse({
+      version: 1,
+      layout: "single",
+      keyboardShortcuts: false,
+    });
+    expect(unset).toEqual({
+      version: 1,
+      layout: "single",
+      keyboardShortcuts: false,
+    });
+    expect("feedback" in unset).toBe(false);
+  });
+
+  it("M5-D3：layout 键缺省合法——parse 产物无 layout 键（与 feedback 同款未设置语义）", () => {
+    const unset = studentPracticePreferenceSchema.parse({
+      version: 1,
+      keyboardShortcuts: true,
+    });
+    expect(unset).toEqual({ version: 1, keyboardShortcuts: true });
+    expect("layout" in unset).toBe(false);
   });
 
   it("strict：拒绝未知字段", () => {
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, extra: 1 }),
     ).toThrow();
+    expect(() =>
+      studentPracticePreferenceSchema.parse({
+        version: 1,
+        layout: "list",
+        keyboardShortcuts: true,
+        extra: 1,
+      }),
+    ).toThrow();
   });
 
-  it("拒绝 version 2 与非法枚举", () => {
+  it("拒绝 version 2 与非法枚举（feedback 有值时仍校验枚举，禁止 z.default 注入）", () => {
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, version: 2 }),
     ).toThrow();
@@ -85,6 +150,14 @@ describe("studentPracticePreferenceSchema", () => {
     ).toThrow();
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, feedback: "fast" }),
+    ).toThrow();
+    expect(() =>
+      studentPracticePreferenceSchema.parse({
+        version: 1,
+        layout: "list",
+        keyboardShortcuts: true,
+        feedback: "fast",
+      }),
     ).toThrow();
   });
 });

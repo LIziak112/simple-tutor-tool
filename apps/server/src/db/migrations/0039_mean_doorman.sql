@@ -1,0 +1,1 @@
+ALTER TABLE `units` ADD `practice_defaults_json` text;

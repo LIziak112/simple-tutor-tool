@@ -4,15 +4,17 @@ import type {
   PracticeWorkflow,
   TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
   assignments,
+  assignmentUnits,
   attempts,
   responses,
   students,
   teachers,
+  units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireVisibleCourseUnit } from "./course-service";
@@ -21,6 +23,7 @@ import {
   type AssignmentFeedbackGrant,
   attemptAnswersPublished,
   type PracticeWorkflowSource,
+  practiceDefaultsOf,
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
 } from "./practice-workflow-service";
@@ -62,30 +65,99 @@ export function teacherPolicyOfStudent(
 
 /**
  * 作业授权事实 + 截止时间（一次查询；行缺失 → grant null：assignment 来源
- * 交给 resolver fail closed 抛错；dueAt 仅复制到 releaseAt，不携带答案）
+ * 交给 resolver fail closed 抛错；dueAt 仅复制到 releaseAt，不携带答案）。
+ * teacherId 供 M5-D2 文档推荐的单元域内读（T2B.5：units 复合主键，同 id
+ * 单元分属不同教师，推荐列必须按作业所属教师域取）。
  */
 function assignmentFactsOf(
   db: Db,
   assignmentId: string | null,
-): { grant: AssignmentFeedbackGrant | null; dueAt: string | null } {
-  if (assignmentId === null) return { grant: null, dueAt: null };
+): {
+  grant: AssignmentFeedbackGrant | null;
+  dueAt: string | null;
+  teacherId: string | null;
+} {
+  if (assignmentId === null) {
+    return { grant: null, dueAt: null, teacherId: null };
+  }
   const row = db
     .select({
       answerRelease: assignments.answerRelease,
       allow: assignments.allowPerQuestionFeedback,
       dueAt: assignments.dueAt,
+      teacherId: assignments.teacherId,
     })
     .from(assignments)
     .where(eq(assignments.id, assignmentId))
     .get();
-  if (row === undefined) return { grant: null, dueAt: null };
+  if (row === undefined) {
+    return { grant: null, dueAt: null, teacherId: null };
+  }
   return {
     grant: {
       answerRelease: row.answerRelease,
       allowPerQuestionFeedback: row.allow,
     },
     dueAt: row.dueAt,
+    teacherId: row.teacherId,
   };
+}
+
+/**
+ * 文档推荐档（M5-D2）：units.practiceDefaultsJson 的 feedback 值聚合——
+ * - wrong 恒 null（预裁决②：错题重练无单元语义）；
+ * - course 直取该单元推荐；assignment 取作业全部单元（assignment_units）；
+ * - 列值解析统一走 practiceDefaultsOf（坏 JSON/契约失败 → 该单元按无推荐 +
+ *   warn，单行脏数据不打挂建卷）；
+ * - 全部非空值一致（且至少一个）才采纳；无推荐值的单元不参与；冲突 →
+ *   null 回学生偏好/缺省（预裁决⑥：不拼多节奏）。
+ * 域内读（T2B.5）：assignment 按作业所属教师，course 按学生归属教师
+ * （可见门已保证成员课程与学生同域）。
+ */
+function unitFeedbackRecommendationOf(
+  db: Db,
+  input: {
+    sourceType: PracticeWorkflowSource;
+    domainTeacherId: string | null;
+    assignmentId: string | null;
+    unitId: string | null;
+  },
+): PracticeFeedbackMode | null {
+  if (input.sourceType === "wrong") return null;
+  if (input.domainTeacherId === null) return null;
+  let unitIds: string[];
+  if (input.sourceType === "assignment") {
+    if (input.assignmentId === null) return null; // 防御：作业来源必有 id
+    unitIds = db
+      .select({ unitId: assignmentUnits.unitId })
+      .from(assignmentUnits)
+      .where(eq(assignmentUnits.assignmentId, input.assignmentId))
+      .all()
+      .map((row) => row.unitId);
+  } else {
+    if (input.unitId === null) return null;
+    unitIds = [input.unitId];
+  }
+  if (unitIds.length === 0) return null;
+  const values = new Set<PracticeFeedbackMode>();
+  for (const row of db
+    .select({ col: units.practiceDefaultsJson })
+    .from(units)
+    .where(
+      and(
+        eq(units.teacherId, input.domainTeacherId),
+        inArray(units.id, unitIds),
+      ),
+    )
+    .all()) {
+    // 无推荐单元（null）与坏数据单元（practiceDefaultsOf 返 null）都不参与
+    const recommendation = practiceDefaultsOf(row.col);
+    if (recommendation?.feedback !== undefined) {
+      values.add(recommendation.feedback);
+    }
+  }
+  if (values.size !== 1) return null;
+  return values.values().next().value ?? null;
 }
 
 /** 读侧 resolver 公共输入（assignment 卷查授权+截止，course/wrong 卷查教师策略） */
@@ -120,8 +192,8 @@ export interface NewAttemptWorkflowColumns {
 }
 
 /**
- * 新建卷裁决：按当前教师规则/作业授权 + 学生显式选择决定新协议列
- * （不信任学生参数越权——不允许的选择收敛到 after_attempt）。
+ * 新建卷裁决：按当前教师规则/作业授权 + 学生显式选择 + 文档推荐（M5-D2）
+ * 决定新协议列（不信任学生参数越权——不允许的选择收敛到 after_attempt）。
  * sourceType 仅普通三来源（lesson 不经本函数）。
  */
 export function resolveNewAttemptWorkflow(
@@ -130,15 +202,36 @@ export function resolveNewAttemptWorkflow(
     sourceType: PracticeWorkflowSource;
     studentId: string;
     assignmentId: string | null;
+    /** 该卷的单元（course 来源=单元 id；assignment 恒 null——多单元按作业聚合） */
+    unitId: string | null;
     /** 学生显式选择（请求 feedbackMode）；未传 null */
     studentChoice: PracticeFeedbackMode | null;
   },
 ): NewAttemptWorkflowColumns {
   const facts = assignmentFactsOf(db, input.assignmentId);
+  // 推荐列的单元域（T2B.5）：作业按其所属教师；course 按学生归属教师
+  // （可见门已保证成员课程与学生同域）；wrong 不读推荐（推荐侧恒 null 短路），
+  // 不查 students——错题重练是高频路径，不为永不消费的域白付一次查询
+  const domainTeacherId =
+    input.sourceType === "assignment"
+      ? facts.teacherId
+      : input.sourceType === "course"
+        ? (db
+            .select({ teacherId: students.teacherId })
+            .from(students)
+            .where(eq(students.id, input.studentId))
+            .get()?.teacherId ?? null)
+        : null;
   const workflow = resolvePracticeWorkflow({
     sourceType: input.sourceType,
     lifecycle: "new",
     studentChoice: input.studentChoice,
+    unitRecommendation: unitFeedbackRecommendationOf(db, {
+      sourceType: input.sourceType,
+      domainTeacherId,
+      assignmentId: input.assignmentId,
+      unitId: input.unitId,
+    }),
     assignment: input.sourceType === "assignment" ? facts.grant : null,
     teacherPolicy:
       input.sourceType === "assignment"

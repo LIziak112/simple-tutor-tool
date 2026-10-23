@@ -24,6 +24,7 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
+import { practiceDefaultsOf } from "./practice-workflow-service";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -376,6 +377,8 @@ export function getStudentCourseDetail(
  * 访问权：requireVisibleCourseUnit（D5 + D22——非成员/归档 403、不可见 404）。
  * 安全：只读 questions 的 type 列做分布统计，不触碰任何内容列。
  * T2B.5：单元标题/题数/题型分布按课程根行 teacherId 域内读（D10，对外行为不变）。
+ * 推荐列解析统一走 practiceDefaultsOf（M5 simplify 收敛，坏数据不打挂落地页，
+ * 也不把原始 JSON 下发学生端）。
  */
 export function getStudentUnitLanding(
   db: Db,
@@ -395,7 +398,11 @@ export function getStudentUnitLanding(
     throw notFound(); // 防御：可见门通过后资源必存在（D9 异常行 fail closed）
   }
   const unit = db
-    .select({ title: units.title, topic: units.topic })
+    .select({
+      title: units.title,
+      topic: units.topic,
+      practiceDefaultsJson: units.practiceDefaultsJson,
+    })
     .from(units)
     .where(
       and(
@@ -451,6 +458,8 @@ export function getStudentUnitLanding(
     topic: unit.topic,
     questionCount,
     typeDistribution,
+    // practice 展示推荐（M5-D2）：只推荐非权限，坏数据按无推荐处理
+    practiceRecommendation: practiceDefaultsOf(unit.practiceDefaultsJson),
     attempts: attemptRows.map((row) => ({
       attemptId: row.id,
       attemptNo: row.attemptNo,

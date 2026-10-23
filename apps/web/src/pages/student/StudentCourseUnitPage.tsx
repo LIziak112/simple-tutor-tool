@@ -1,3 +1,4 @@
+import type { StudentUnitLandingData } from "@tutor/contract";
 import {
   ArrowLeft,
   ClipboardList,
@@ -6,13 +7,24 @@ import {
   Play,
   RotateCcw,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   useStartCourseAttempt,
   useStudentUnitLanding,
+  workflowStartOptions,
 } from "@/features/attempt/attempt-queries";
+import { setAttemptStartLayoutIntent } from "@/features/attempt/attempt-start-intent";
+import {
+  getPracticePreference,
+  usePracticePreference,
+} from "@/features/attempt/practice-preference-store";
+import {
+  practiceLayoutLabel,
+  practiceLayoutOptions,
+  practiceRhythmLabel,
+} from "@/features/attempt/practice-protocol";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -46,6 +58,20 @@ function statusLabel(status: string): string {
   if (status === "draft") return "进行中";
   if (status === "graded") return "已批改";
   return "已交卷";
+}
+
+/**
+ * 选择器初值链（裁决⑨）：已保存偏好 → 单元推荐 → 缺省（列表/逐题）。
+ * 两处消费（单一出处）：挂载 useState 初值 + 未绑定→已绑定对齐 effect（闸门 B1）。
+ */
+function initialSelectionOf(
+  recommendation: StudentUnitLandingData["practiceRecommendation"],
+): { layout: "list" | "single"; feedback: "per_question" | "after_attempt" } {
+  const saved = getPracticePreference();
+  return {
+    layout: saved.layout ?? recommendation?.layout ?? "list",
+    feedback: saved.feedback ?? recommendation?.feedback ?? "per_question",
+  };
 }
 
 /** 再做一次的确认弹层（D10：新一次从空白开始） */
@@ -101,8 +127,6 @@ export default function StudentCourseUnitPage() {
   }>();
   const navigate = useNavigate();
   const landingQuery = useStudentUnitLanding(courseId, unitId);
-  const startAttempt = useStartCourseAttempt(courseId, unitId);
-  const [redoOpen, setRedoOpen] = useState(false);
 
   const accessDenied =
     landingQuery.error instanceof ApiError &&
@@ -152,22 +176,107 @@ export default function StudentCourseUnitPage() {
     );
   }
 
-  const landing = landingQuery.data;
+  // 数据就绪后挂载子组件：选择器 useState 初值才能读到单元推荐与本机偏好
+  return (
+    <UnitLandingView
+      courseId={courseId}
+      unitId={unitId}
+      landing={landingQuery.data}
+    />
+  );
+}
+
+/** 做题方式反馈节奏两枚选项（标签复用 practiceRhythmLabel 单一出处） */
+const rhythmOptions = ["per_question", "after_attempt"] as const;
+
+/**
+ * 单元落地视图（数据就绪后挂载；M5-D3 裁决⑨）：
+ * - 呈现单元推荐标注（布局与节奏标签，同源 practiceLayoutLabel/RhythmLabel）；
+ * - 两枚选择器初值 = 已保存偏好 → 单元推荐 → 缺省（列表/逐题）；显式点选后
+ *   本次访问内恒定（无 effect 拉扯）；
+ * - 「开始练习」仅显式触碰节奏选择器才发 feedbackMode（显式选择恒最高），
+ *   未触碰维持 M5-D2 建卷裁决链（学生偏好 → 单元推荐 → 教师约束，服务端裁决）；
+ * - 布局当前值恒经一次性 transient 传作答页（不经服务端，硬刷新回落本机偏好）。
+ */
+function UnitLandingView({
+  courseId,
+  unitId,
+  landing,
+}: {
+  courseId: string;
+  unitId: string;
+  landing: StudentUnitLandingData;
+}) {
+  const navigate = useNavigate();
+  const startAttempt = useStartCourseAttempt(courseId, unitId);
+  const [redoOpen, setRedoOpen] = useState(false);
+
   const summary = landing.summary;
   const hasDraft = summary?.hasDraft === true;
   const submittedCount = summary?.submittedCount ?? 0;
   const nextAttemptNo = (summary?.count ?? 0) + 1;
   const busy = startAttempt.isPending;
 
+  // 初值链：已保存偏好 → 单元推荐 → 缺省；子组件在落地数据到达后挂载，
+  // useState 初值可安全读取推荐；本机偏好若绑定晚到由下方对齐 effect 补
+  const [selected, setSelected] = useState(() =>
+    initialSelectionOf(landing.practiceRecommendation),
+  );
+  // 节奏是否被显式触碰：未触碰不携 feedbackMode（M5-D2 链不因本页中断）
+  const [rhythmTouched, setRhythmTouched] = useState(false);
+
+  // 闸门 B1（M3-D1.5 同款竞态）：硬刷新时布局层的账号绑定 effect 晚于本组件
+  // 首渲染，初值链可能读到未绑定 store——已保存偏好被错过退化为 推荐??缺省，
+  // 而点击「开始」时 store 已绑定、workflowStartOptions 照发已保存节奏，
+  // 展示预选与实际建卷不一致。store 从未绑定变已绑定的那一刻按初值链对齐
+  // 一次；任一选择器被显式触碰后不再拉扯（裁决⑨「显式点选后本次访问内
+  // 恒定」；换绑与解绑不对齐）。
+  const explicitSelectionRef = useRef(false);
+  const { accountId: boundAccountId } = usePracticePreference();
+  const prevBoundAccountRef = useRef(boundAccountId);
+  useEffect(() => {
+    const previous = prevBoundAccountRef.current;
+    prevBoundAccountRef.current = boundAccountId;
+    if (previous !== null || boundAccountId === null) return;
+    if (explicitSelectionRef.current) return;
+    setSelected(initialSelectionOf(landing.practiceRecommendation));
+  }, [boundAccountId, landing.practiceRecommendation]);
+
   const enterAttempt = (attemptId: string) => {
     void navigate(`/s/attempts/${attemptId}`);
   };
 
   const onStart = () => {
-    startAttempt.mutate(undefined, {
-      onSuccess: (attempt) => enterAttempt(attempt.id),
-    });
+    startAttempt.mutate(
+      rhythmTouched
+        ? { ...workflowStartOptions(), feedbackMode: selected.feedback }
+        : undefined,
+      {
+        onSuccess: (attempt) => {
+          // 建卷成功才写一次性 transient（含继续作答/再做一次路径，三入口
+          // 统一；闸门 A1）：失败/中断不得残留——模块级值永不过期，会劫持
+          // 之后任意无关作答的初始布局（裁决⑨「一次性」变「下一次消费」）
+          setAttemptStartLayoutIntent(selected.layout);
+          enterAttempt(attempt.id);
+        },
+      },
+    );
   };
+
+  const recommendation = landing.practiceRecommendation;
+  const recommendationText =
+    recommendation === null
+      ? null
+      : [
+          recommendation.layout !== undefined
+            ? practiceLayoutLabel(recommendation.layout)
+            : null,
+          recommendation.feedback !== undefined
+            ? practiceRhythmLabel(recommendation.feedback)
+            : null,
+        ]
+          .filter((part) => part !== null)
+          .join(" · ");
 
   const typeBadges = Object.entries(landing.typeDistribution)
     .map(([type, count]) => `${TYPE_LABELS[type] ?? type} ${count}`)
@@ -199,7 +308,7 @@ export default function StudentCourseUnitPage() {
         </div>
       </header>
 
-      {/* 单元信息卡：题数/题型分布/得分汇总 + 入口按钮 */}
+      {/* 单元信息卡：题数/题型分布/得分汇总 + 做题方式选择 + 入口按钮 */}
       <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xs">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
@@ -245,6 +354,75 @@ export default function StudentCourseUnitPage() {
             )}
           </div>
         )}
+
+        {/* 开始前做题方式选择（M5-D3）：推荐只做标注，授权结论仍由服务端
+            建卷 resolver 裁决；触控目标 ≥44px */}
+        <div className="flex min-w-0 flex-col gap-2 rounded-xl bg-muted/40 p-3">
+          <p className="text-xs text-muted-foreground">
+            做题方式
+            {recommendationText !== null && (
+              <span> · 本单元推荐：{recommendationText}</span>
+            )}
+          </p>
+          <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2">
+            <legend className="sr-only">选择做题布局</legend>
+            {practiceLayoutOptions.map(({ value, title }) => (
+              <label
+                key={value}
+                className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${
+                  selected.layout === value
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:bg-muted/40"
+                }`}
+              >
+                <input
+                  className="size-4 shrink-0 accent-primary"
+                  type="radio"
+                  name="practice-start-layout"
+                  value={value}
+                  checked={selected.layout === value}
+                  onChange={() => {
+                    explicitSelectionRef.current = true;
+                    setSelected((prev) => ({ ...prev, layout: value }));
+                  }}
+                />
+                <span className="text-sm font-medium">{title}</span>
+              </label>
+            ))}
+          </fieldset>
+          <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2">
+            <legend className="sr-only">选择反馈节奏</legend>
+            {rhythmOptions.map((value) => (
+              <label
+                key={value}
+                className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${
+                  selected.feedback === value
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:bg-muted/40"
+                }`}
+              >
+                <input
+                  className="size-4 shrink-0 accent-primary"
+                  type="radio"
+                  name="practice-start-rhythm"
+                  value={value}
+                  checked={selected.feedback === value}
+                  onChange={() => {
+                    explicitSelectionRef.current = true;
+                    setRhythmTouched(true);
+                    setSelected((prev) => ({ ...prev, feedback: value }));
+                  }}
+                />
+                <span className="text-sm font-medium">
+                  {practiceRhythmLabel(value)}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <p className="text-xs text-muted-foreground">
+            反馈节奏与布局可在此预选；进入练习后仍可在做题方式里调整。
+          </p>
+        </div>
 
         {/* 入口：开始练习（从未做）/ 继续作答（有未交卷）/ 再做一次（确认后新建） */}
         <div className="flex flex-wrap items-center gap-3">

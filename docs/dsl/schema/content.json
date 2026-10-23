@@ -297,6 +297,26 @@
         "lectureTitle": {
           "type": "string"
         },
+        "practice": {
+          "type": "object",
+          "properties": {
+            "layout": {
+              "type": "string",
+              "enum": [
+                "list",
+                "single"
+              ]
+            },
+            "feedback": {
+              "type": "string",
+              "enum": [
+                "per_question",
+                "after_attempt"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
         "questions": {
           "type": "array",
           "items": {
@@ -608,6 +628,26 @@
                 "validators"
               ],
               "additionalProperties": false
+            },
+            "practice": {
+              "type": "object",
+              "properties": {
+                "layout": {
+                  "type": "string",
+                  "enum": [
+                    "list",
+                    "single"
+                  ]
+                },
+                "feedback": {
+                  "type": "string",
+                  "enum": [
+                    "per_question",
+                    "after_attempt"
+                  ]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [
@@ -686,6 +726,26 @@
               },
               "lectureTitle": {
                 "type": "string"
+              },
+              "practice": {
+                "type": "object",
+                "properties": {
+                  "layout": {
+                    "type": "string",
+                    "enum": [
+                      "list",
+                      "single"
+                    ]
+                  },
+                  "feedback": {
+                    "type": "string",
+                    "enum": [
+                      "per_question",
+                      "after_attempt"
+                    ]
+                  }
+                },
+                "additionalProperties": false
               },
               "questions": {
                 "type": "array",

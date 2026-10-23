@@ -149,6 +149,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "practice 文档没有讲义，title 不适用（title 是讲义显示名，仅 lecture/mixed 生效）：请删除该字段",
   },
   {
+    code: "PRACTICE_NOT_APPLICABLE",
+    level: "warning",
+    description:
+      "practice 推荐仅适用于练习（practice/mixed）单元，对讲练不生效（lecture/lesson 文档带 frontmatter practice 不报错也不生效）：请删除该字段，或把 kind 改为 practice / mixed",
+  },
+  {
     code: "PARSE_INTERNAL_ERROR",
     level: "error",
     description: "解析器内部错误（这是解析器缺陷，请反馈给开发者）",

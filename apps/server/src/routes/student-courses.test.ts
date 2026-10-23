@@ -7,11 +7,13 @@ import {
   studentLectureDetailOkSchema,
   studentLectureListOkSchema,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
@@ -672,5 +674,87 @@ describe("GET /api/student/lectures/:id（讲义详情 + D8 配套练习）", ()
     });
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiErr).error).toBe("NOT_FOUND");
+  });
+});
+
+describe("GET /api/student/courses/:id/units/:unitId 单元落地页（M5-D2 推荐下发与泄露面）", () => {
+  it("practice 推荐随落地页下发（有推荐对象 / 无推荐 null）；响应过 assertNoLeak（无答案/详解哨兵）", async () => {
+    const env = await makeEnv({ importLinkedPractice: true });
+    const items = await teacherItems(env);
+    const unitItem = items.find(
+      (item) => item.kind === "unit" && item.refId !== null,
+    );
+    if (!unitItem || unitItem.refId === null) {
+      throw new Error("夹具缺练习单元条目");
+    }
+    await patchItem(env, unitItem.id, { visible: true });
+    // 直写推荐列（模拟 frontmatter practice 导入产物）
+    env.db
+      .update(units)
+      .set({
+        practiceDefaultsJson: JSON.stringify({
+          layout: "single",
+          feedback: "after_attempt",
+        }),
+      })
+      .where(eq(units.id, unitItem.refId))
+      .run();
+
+    const res = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${unitItem.refId}`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { practiceRecommendation: unknown };
+    };
+    expect(body.data.practiceRecommendation).toEqual({
+      layout: "single",
+      feedback: "after_attempt",
+    });
+    assertNoQuestionFields(body);
+
+    // 清掉推荐 → null（无推荐老单元）
+    env.db
+      .update(units)
+      .set({ practiceDefaultsJson: null })
+      .where(eq(units.id, unitItem.refId))
+      .run();
+    const again = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${unitItem.refId}`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    const againBody = (await again.json()) as {
+      data: { practiceRecommendation: unknown };
+    };
+    expect(againBody.data.practiceRecommendation).toBeNull();
+    assertNoQuestionFields(againBody);
+  });
+
+  it("推荐列坏 JSON → practiceRecommendation null（不抛错、不泄露原文）", async () => {
+    const env = await makeEnv({ importLinkedPractice: true });
+    const items = await teacherItems(env);
+    const unitItem = items.find(
+      (item) => item.kind === "unit" && item.refId !== null,
+    );
+    if (!unitItem || unitItem.refId === null) {
+      throw new Error("夹具缺练习单元条目");
+    }
+    await patchItem(env, unitItem.id, { visible: true });
+    env.db
+      .update(units)
+      .set({ practiceDefaultsJson: "{broken json" })
+      .where(eq(units.id, unitItem.refId))
+      .run();
+    const res = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${unitItem.refId}`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { practiceRecommendation: unknown };
+    };
+    expect(body.data.practiceRecommendation).toBeNull();
+    assertNoQuestionFields(body);
   });
 });
