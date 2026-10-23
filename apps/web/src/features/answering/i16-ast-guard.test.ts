@@ -134,11 +134,15 @@ function isKindOrTypeAccessor(node: AstNode | undefined): boolean {
       return isStringLiteral(property, DISCRIMINANT_NAMES);
     }
     return (
-      property?.type === "Identifier" && DISCRIMINANT_NAMES.has(property.name)
+      property?.type === "Identifier" &&
+      typeof property.name === "string" &&
+      DISCRIMINANT_NAMES.has(property.name)
     );
   }
   return (
-    current.type === "Identifier" && isKindOrTypeIdentifierName(current.name)
+    current.type === "Identifier" &&
+    typeof current.name === "string" &&
+    isKindOrTypeIdentifierName(current.name)
   );
 }
 
@@ -192,7 +196,9 @@ function scanSource(file: string, source: string): readonly Hit[] {
     }
     for (const child of childrenOf(node)) visit(child);
   };
-  visit(ast as AstNode);
+  // rollup Program 节点与本文件宽松 AstNode 的结构边界：运行时同形（都按
+  // type/children 遍历），类型系统无法直接断言重叠，经 unknown 一次
+  visit(ast as unknown as AstNode);
   return hits;
 }
 
