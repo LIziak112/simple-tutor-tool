@@ -34,7 +34,7 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
 export const HANDWRITTEN_TYPES: ReadonlySet<QuestionType> =
   new Set<QuestionType>(HANDWRITTEN_QUESTION_TYPES);
 
-/** 题型徽章配色（按客观/主观两档区分，视觉分组） */
+/** 题型徽章配色（按客观/主观两档区分，视觉分组；新三型归主观档，TT-05a 编译期强制补键） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
   judge: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
   choice: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
@@ -45,6 +45,12 @@ export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
   apply:
     "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
   "find-error":
+    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
+  response:
+    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
+  matching:
+    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
+  ordering:
     "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
 };
 

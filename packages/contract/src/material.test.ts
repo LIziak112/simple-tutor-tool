@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-
+import { unitSchema } from "./content.ts";
 import {
   materialPublicSchema,
   materialRefSchema,
   materialSchema,
-  questionGroupSchema,
   questionGroupPublicSchema,
+  questionGroupSchema,
   unitGroupSchema,
 } from "./material.ts";
-import { unitSchema } from "./content.ts";
 
 /**
  * 材料/题组契约测试（TT-05a 域①，QM-01 §5.2 定稿）：
@@ -32,7 +31,8 @@ const groupFixture = {
   id: "grp-1",
   title: "根据以下资料回答第 1～5 题",
   label: "1～5",
-  sourceMd: "::::group{id=grp-1}\n::ref{material=mat-1}\n::ref{question=q-1}\n::::",
+  sourceMd:
+    "::::group{id=grp-1}\n::ref{material=mat-1}\n::ref{question=q-1}\n::::",
   introMd: "根据以下资料回答第 1～5 题",
   materialRefs: [{ material: "mat-1" }],
   questionIds: ["q-1"],
@@ -46,7 +46,9 @@ describe("materialSchema（教师侧完整形态）", () => {
     expect(parsed.sourceMd).toContain("::::material");
     expect(parsed.contentMd).toBe("正文……");
     expect(parsed.anchors).toEqual([{ id: "seg-1", order: 0 }]);
-    expect(parsed.slots).toEqual([{ id: "slot-1", slotKind: "choice", order: 0 }]);
+    expect(parsed.slots).toEqual([
+      { id: "slot-1", slotKind: "choice", order: 0 },
+    ]);
     expect(parsed.mediaPaths).toEqual(["blobs/media/9af3.png"]);
   });
 
@@ -123,9 +125,7 @@ describe("materialRefSchema（::ref 引用解析产物）", () => {
         slot: "slot-2",
       }),
     ).toEqual({ material: "mat-1", segs: "seg-1..seg-3", slot: "slot-2" });
-    expect(
-      materialRefSchema.safeParse({ segs: "seg-1" }).success,
-    ).toBe(false);
+    expect(materialRefSchema.safeParse({ segs: "seg-1" }).success).toBe(false);
   });
 });
 
@@ -158,9 +158,9 @@ describe("questionGroupSchema / unitGroupSchema / 公开投影", () => {
       questionIds: ["q-1", "q-2"],
     });
     expect(parsed.questionIds).toHaveLength(2);
-    expect(
-      unitGroupSchema.safeParse({ questionIds: ["q-1"] }).success,
-    ).toBe(false);
+    expect(unitGroupSchema.safeParse({ questionIds: ["q-1"] }).success).toBe(
+      false,
+    );
   });
 
   it("题组公开投影剥 sourceMd（教师侧原文不下发）", () => {

@@ -52,6 +52,38 @@ export const handwrittenStudentAnswerSchema = z.object({
   finalAnswer: z.string(),
 });
 
+/**
+ * response 学生答案（TT-05a 域②，§5.3.1）：title 可选（未填不携带）、body
+ * 必填（空串=未写正文，仅手写作答合法——完整度口径见 answer-kinds response
+ * 行为，isAnswered = body 非空白）。不校验字数（word-min/max 仅提示）。
+ */
+export const responseStudentAnswerSchema = z.object({
+  kind: z.literal("response"),
+  title: z.string().optional(),
+  body: z.string(),
+});
+
+/**
+ * matching 学生答案：slotId→optionId 映射。部分配对=草稿合法（保存只校验
+ * 结构/范围，永不比对参考答案，§5.3.1）；键∈声明槽位集合、值∈选项池、
+ * allowRepeat=false 的重复占用由 answer-kinds matching 行为的 inspectShape
+ * 报告（只报告不拦截）。
+ */
+export const matchingStudentAnswerSchema = z.object({
+  kind: z.literal("matching"),
+  pairs: z.record(z.string().min(1), z.string().min(1)),
+});
+
+/**
+ * ordering 学生答案：已放 itemId 序列。部分序列=草稿合法；无重复、干扰项
+ * 不得进入、固定项在位为结构约束（inspectShape 报告，DISTRACTOR_IN_SEQUENCE
+ * 等），schema 层不拦截。
+ */
+export const orderingStudentAnswerSchema = z.object({
+  kind: z.literal("ordering"),
+  sequence: z.array(z.string().min(1)),
+});
+
 /** 学生答案：按 kind 判别的联合（对应题型的作答形态） */
 export const studentAnswerSchema = z.discriminatedUnion("kind", [
   judgeStudentAnswerSchema,
@@ -59,6 +91,9 @@ export const studentAnswerSchema = z.discriminatedUnion("kind", [
   multiStudentAnswerSchema,
   fillStudentAnswerSchema,
   handwrittenStudentAnswerSchema,
+  responseStudentAnswerSchema,
+  matchingStudentAnswerSchema,
+  orderingStudentAnswerSchema,
 ]);
 
 export type JudgeStudentAnswer = z.infer<typeof judgeStudentAnswerSchema>;
@@ -68,4 +103,7 @@ export type FillStudentAnswer = z.infer<typeof fillStudentAnswerSchema>;
 export type HandwrittenStudentAnswer = z.infer<
   typeof handwrittenStudentAnswerSchema
 >;
+export type ResponseStudentAnswer = z.infer<typeof responseStudentAnswerSchema>;
+export type MatchingStudentAnswer = z.infer<typeof matchingStudentAnswerSchema>;
+export type OrderingStudentAnswer = z.infer<typeof orderingStudentAnswerSchema>;
 export type StudentAnswer = z.infer<typeof studentAnswerSchema>;

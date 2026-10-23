@@ -51,6 +51,10 @@ function oldIsAnswered(answer: StudentAnswer | undefined): boolean {
       return answer.values.some((value) => value.trim() !== "");
     case "final":
       return answer.finalAnswer.trim() !== "";
+    default:
+      // TT-05a 起联合扩容 response/matching/ordering：旧实现不存在这些分支，
+      // 差分矩阵只喂旧五 kind，到达即夹具写错
+      throw new Error("旧实现夹具不认识新 kind（差分只覆盖旧五 kind）");
   }
 }
 
@@ -79,6 +83,8 @@ function oldFormatStudentAnswer(answer: StudentAnswer | null): string {
         .join("；");
     case "final":
       return answer.finalAnswer.trim() === "" ? "（空）" : answer.finalAnswer;
+    default:
+      throw new Error("旧实现夹具不认识新 kind（差分只覆盖旧五 kind）");
   }
 }
 
@@ -112,6 +118,8 @@ function oldSerializeStudentAnswer(
       return answer.values.join("；");
     case "final":
       return answer.finalAnswer;
+    default:
+      throw new Error("旧实现夹具不认识新 kind（差分只覆盖旧五 kind）");
   }
 }
 
@@ -147,6 +155,8 @@ function oldStudentAnswerTextOf(
       return answer.finalAnswer.trim() === ""
         ? "（答案在笔迹材料中）"
         : answer.finalAnswer;
+    default:
+      throw new Error("旧实现夹具不认识新 kind（差分只覆盖旧五 kind）");
   }
 }
 

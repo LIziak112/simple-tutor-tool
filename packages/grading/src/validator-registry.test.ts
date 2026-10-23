@@ -24,14 +24,17 @@ function builtinValidatorIds(): string[] {
 }
 
 describe("注册表机制", () => {
-  it("七个内置校验器在模块加载期完成登记（清单：七题型登记项）", () => {
+  it("十个内置校验器在模块加载期完成登记（旧七型 + TT-05a 新三型恒 null 判分器）", () => {
     expect(builtinValidatorIds().sort()).toEqual([
       "apply",
       "choice",
       "fill",
       "find-error",
       "judge",
+      "matching",
       "multi",
+      "ordering",
+      "response",
       "solve",
     ]);
   });
@@ -59,12 +62,39 @@ describe("契约表引用完备性（验收：登记集合与契约引用一致�
     const contractIds = new Set(
       Object.values(questionCapabilityBindings).map((b) => b.validatorId),
     );
-    // 七题型穷尽（键由契约侧穷尽 Record 保证；此处锁 validatorId 值不退化）
-    expect(contractIds.size).toBe(7);
+    // 十题型穷尽（键由契约侧穷尽 Record 保证；此处锁 validatorId 值不退化）
+    expect(contractIds.size).toBe(10);
     expect(new Set(builtinValidatorIds())).toEqual(contractIds);
   });
 
   it("assertValidatorCoverage 通过：契约引用全部有服务端实现", () => {
     expect(() => assertValidatorCoverage()).not.toThrow();
+  });
+
+  it("新三型恒 null 判分器（TT-05a 域②，D12：沿 gradeFill 先例，不造不可达判分器）", () => {
+    const question = {
+      id: "q",
+      type: "response" as const,
+      difficulty: 3,
+      knowledge: [],
+      stemMd: "题干",
+      hints: [],
+      sourceMd: "原文",
+      answers: {
+        kind: "response" as const,
+        referenceMd: "参考",
+      },
+    };
+    for (const [id, validator] of [
+      ["response", getValidator("response")],
+      ["matching", getValidator("matching")],
+      ["ordering", getValidator("ordering")],
+    ] as const) {
+      expect(validator, id).toBeDefined();
+      // 已提交 / 未作答 / 错配 kind 一律 null——新作答不做自动匹配（§5.6）；
+      // 运行时经 grade 路由在 shape=rubric 即短路 null，本登记维持完备性一致
+      expect(validator?.(question, { kind: "response", body: "x" })).toBeNull();
+      expect(validator?.(question, undefined)).toBeNull();
+    }
   });
 });

@@ -217,5 +217,15 @@ export function prepareQuestion(
         },
         context,
       );
+    case "response":
+    case "matching":
+    case "ordering":
+      // TT-05a 域②扩容（D2/D14）后的编译期穷尽分支：题型枚举/证据角色已在契约
+      // 落地，但 PreparedQuestion 模型与 views 属呈现层（TT-08 接入）。当前无
+      // 自然数据路径（DSL 注册 TT-06、导入发布开关默认关 QM-05），到达即显式
+      // 报错——方案 §7.1「新增类型遗漏必需模式须明确报错，不静默降级」
+      throw new Error(
+        `答案 kind「${answerKind}」的题面呈现尚未接入（TT-08 呈现层落地前不应对学生下发）`,
+      );
   }
 }

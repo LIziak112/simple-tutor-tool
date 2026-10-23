@@ -14,10 +14,11 @@ import {
 /** 作答展示纯函数测试（T2.6）：题型徽章口径见组件测试，这里锁文本化行为。 */
 
 describe("HANDWRITTEN_TYPES（UA-01 起由契约 paperRole 派生）", () => {
-  it("旧七型资格逐字不变：solve/apply/find-error", () => {
+  it("旧七型资格逐字不变（solve/apply/find-error 前缀），response 自 TT-05a 新进集合（D14 预期新增）", () => {
     expect([...HANDWRITTEN_TYPES].sort()).toEqual([
       "apply",
       "find-error",
+      "response",
       "solve",
     ]);
   });

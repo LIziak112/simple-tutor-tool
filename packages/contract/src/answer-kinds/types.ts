@@ -111,8 +111,44 @@ export interface SlotsPublicStructure {
 }
 
 /**
- * 生产五 kind 的公开结构映射：judge/final 的纯行为只读答案本身，无结构
- * 需求（null 显式表达「无」而不是可选结构——登记表仍是全键穷尽）。
+ * matching 选项项（§5.2.2 选项池；key 即选项稳定 id opt-…）。distractor 是
+ * 公开结构标记（§6.1 调整 6）：干扰选项在池内、学生可选——选错是答案错误
+ * 而非形状错误，inspectShape 不报。
+ */
+export interface PublicMatchingOption {
+  readonly key: string;
+  readonly text: string;
+  readonly distractor: boolean;
+}
+
+/** matching 的公开结构：选项池 + 声明槽位集合 + 是否允许重复占用 */
+export interface MatchingPublicStructure {
+  readonly options: readonly PublicMatchingOption[];
+  readonly slotIds: readonly string[];
+  readonly allowRepeat: boolean;
+}
+
+/**
+ * ordering 项。fixedPosition 为固定项锁定显示位置（1 起来自参考序列声明位，
+ * §6.1 调整 3：公开来源，不泄露其余项顺序）；distractor 标记公开但形状检查
+ * 口径与 matching 相反——干扰项不得进入序列。
+ */
+export interface PublicOrderingItem {
+  readonly key: string;
+  readonly text: string;
+  readonly fixedPosition: number | null;
+  readonly distractor: boolean;
+}
+
+/** ordering 的公开结构：题内声明的全部项（含固定项与干扰项） */
+export interface OrderingPublicStructure {
+  readonly items: readonly PublicOrderingItem[];
+}
+
+/**
+ * 生产 kind 的公开结构映射：judge/final/response 的纯行为只读答案本身，无
+ * 结构需求（null 显式表达「无」而不是可选结构——登记表仍是全键穷尽）。
+ * TT-05a 域②新增 matching/ordering/response 三键。
  */
 export interface PublicStructureByKind {
   readonly judge: null;
@@ -120,4 +156,7 @@ export interface PublicStructureByKind {
   readonly multi: OptionsPublicStructure;
   readonly fill: SlotsPublicStructure;
   readonly final: null;
+  readonly response: null;
+  readonly matching: MatchingPublicStructure;
+  readonly ordering: OrderingPublicStructure;
 }

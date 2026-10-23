@@ -56,9 +56,9 @@ describe("renderSpecMarkdown：稳定性与完整性", () => {
     expect([...spec.matchAll(/^### ([a-z][a-z0-9-]*)$/gm)]).toHaveLength(17);
   });
 
-  it("question 属性表：type 行含七值与必填标记，difficulty 含缺省 2", () => {
+  it("question 属性表：type 行含十值（旧七型 + TT-05a 新三型）与必填标记，difficulty 含缺省 2", () => {
     expect(spec).toContain(
-      "| type | judge / choice / multi / fill / solve / apply / find-error | 是 | — |",
+      "| type | judge / choice / multi / fill / solve / apply / find-error / response / matching / ordering | 是 | — |",
     );
     expect(spec).toContain("| difficulty | number | 否 | 2 |");
     expect(spec).toContain("judge 判断 / choice 单选");

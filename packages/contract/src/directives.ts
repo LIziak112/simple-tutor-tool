@@ -324,7 +324,7 @@ export const questionDirective = defineDirective({
   since: "2.0",
   allowedIn: ["document"],
   attrs: directiveAttrs({
-    /** 题型（必填，七种；与 content.ts 的 questionTypeSchema 同源，未知值 lint 报错） */
+    /** 题型（必填，旧七种 + TT-05a 三新底层交互型；与 content.ts 的 questionTypeSchema 同源，未知值 lint 报错） */
     type: questionTypeSchema,
     /** 难度 1–5 的整数，缺省 2；remark-directive 属性值是字符串，故用 coerce */
     difficulty: z.coerce.number().int().min(1).max(5).default(2),
@@ -332,7 +332,7 @@ export const questionDirective = defineDirective({
     knowledge: z.string().min(1).optional(),
   }),
   attrDocs: {
-    type: "题型，必填。七种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错；写其他值会在 lint 报错",
+    type: "题型，必填。十种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错 / response 开放 / matching 配对 / ordering 排序（新三型的完整作答语法 TT-06 注册、导入入口受发布开关控制）；写其他值会在 lint 报错",
     difficulty:
       "难度 1–5 的整数，缺省 2；可写字符串数字（如 difficulty=3），解析时自动转换",
     knowledge: "考点（单个字符串），用于学情统计；解析时归一为数组入库",

@@ -48,15 +48,18 @@ import { describe, expect, it } from "vitest";
  * 记录登记理由。
  */
 
-/** 答案 kind 字面量（StudentAnswer 五 kind） */
+/** 答案 kind 字面量（StudentAnswer 八 kind——TT-05a 域②扩容 response/matching/ordering） */
 const ANSWER_KIND_LITERALS = new Set([
   "judge",
   "choice",
   "multi",
   "fill",
   "final",
+  "response",
+  "matching",
+  "ordering",
 ] as const);
-/** 题型字面量（QuestionType 旧七型） */
+/** 题型字面量（QuestionType 十型——TT-05a 域②扩容，旧七型 + 新三型） */
 const QUESTION_TYPE_LITERALS = new Set([
   "judge",
   "choice",
@@ -65,6 +68,9 @@ const QUESTION_TYPE_LITERALS = new Set([
   "solve",
   "apply",
   "find-error",
+  "response",
+  "matching",
+  "ordering",
 ] as const);
 /** 守护判别集合：两集合并（kind 与 type 混用比较同样可疑，一并捕获） */
 const KIND_LITERALS = new Set<string>([
@@ -317,9 +323,21 @@ const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
 /**
  * B. 准备层唯一分发边界：prepare-question 按 questionBindings 的
  * answerKind 中央 switch 逐形态白名单构造 PreparedQuestion（§8.1-2）。
+ * TT-05a 域②扩容 response/matching/ordering 三 case：编译期穷尽补齐的显式
+ * throw 守卫（呈现模型留 TT-08，方案 §7.1 缺模式明确报错）——决策记录
+ * §12 TT-05a 登记理由。
  */
 const PREPARE_CASES: readonly BaselineEntry[] = (
-  ["judge", "choice", "multi", "fill", "final"] as const
+  [
+    "judge",
+    "choice",
+    "multi",
+    "fill",
+    "final",
+    "response",
+    "matching",
+    "ordering",
+  ] as const
 ).map((literal) => ({
   file: "apps/web/src/features/answering/prepare-question.ts",
   snippet: `case "${literal}":`,
@@ -543,7 +561,7 @@ describe("I16 全量 AST 守护（§11.2）", () => {
     ],
     [
       "case 字面量不在集合",
-      'switch (model.kind) { case "ordering": break; default: break; }',
+      'switch (model.kind) { case "cloze": break; default: break; }',
       [],
     ],
     // AST 免疫裸文本误伤（§11.2 明文要求）

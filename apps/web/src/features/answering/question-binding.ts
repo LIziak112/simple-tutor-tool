@@ -30,7 +30,13 @@ export type InputPlacement =
   /** 填空：题干内联槽位（§8 槽位命名空间注入题干） */
   | "inline-slots"
   /** solve/apply/find-error：原 HandwrittenControls 的最终答案位置 */
-  | "handwritten-final";
+  | "handwritten-final"
+  /** response：题干下方多行正文（与正式手写并存，§5.7.2；控件 TT-08 接入） */
+  | "text-below-stem"
+  /** matching：题干下方配对控件（选项池 + 槽位绑定，TT-08 接入） */
+  | "match-controls"
+  /** ordering：题干下方排序控件（items 驱动独立排序区，TT-08 接入） */
+  | "order-controls";
 
 /** 单个题型的绑定项（answer kind / 输入位置 / 纸面角色） */
 export interface QuestionBinding {
@@ -39,7 +45,7 @@ export interface QuestionBinding {
   readonly paperRole: PaperRole;
 }
 
-/** 七旧型穷尽绑定（§4.1 定稿表；response/matching/ordering 按 D2 在 TT-05 落地枚举后由编译期强制补键） */
+/** 十题型穷尽绑定（旧七型 §4.1 定稿表；新三型 TT-05a 域②编译期强制补键——决策记录 §5.7.2 表，呈现 TT-08 接入） */
 export const questionBindings = {
   judge: {
     answerKind: questionEvidenceBindings.judge.answerKind,
@@ -75,5 +81,20 @@ export const questionBindings = {
     answerKind: questionEvidenceBindings["find-error"].answerKind,
     placement: "handwritten-final",
     paperRole: questionEvidenceBindings["find-error"].paperRole,
+  },
+  response: {
+    answerKind: questionEvidenceBindings.response.answerKind,
+    placement: "text-below-stem",
+    paperRole: questionEvidenceBindings.response.paperRole,
+  },
+  matching: {
+    answerKind: questionEvidenceBindings.matching.answerKind,
+    placement: "match-controls",
+    paperRole: questionEvidenceBindings.matching.paperRole,
+  },
+  ordering: {
+    answerKind: questionEvidenceBindings.ordering.answerKind,
+    placement: "order-controls",
+    paperRole: questionEvidenceBindings.ordering.paperRole,
   },
 } satisfies Record<QuestionType, QuestionBinding>;
