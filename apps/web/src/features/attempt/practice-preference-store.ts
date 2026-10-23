@@ -7,26 +7,30 @@ import { useSyncExternalStore } from "react";
 import { createExternalPrefStore } from "@/lib/create-external-pref-store";
 
 /**
- * 做题方式本设备偏好（M3-D1，2026-10-22 计划 §7.1）：默认布局 + 快捷键开关。
- * - localStorage 仅落契约 strict v1 形态（版本 + 两枚举 + 开关），按部署来源、
- *   student 角色、账号隔离；feedback 字段 D1 不暴露 UI，仅维持契约完整形态，
- *   待 M5 偏好链接线；
- * - 存储不可读/损坏回默认（列表 + 快捷键开），不抛错、不阻断作答；写入失败
- *   抛错由设置区提示，本次会话内仍可用内存值；
+ * 做题方式本设备偏好（M3-D1，2026-10-22 计划 §7.1；M5-D2 反馈节奏接线）：
+ * 默认布局 + 快捷键开关 + 反馈节奏（可未设置）。
+ * - feedback: null = 未设置 = localStorage 键缺省（禁伪造默认值）——建卷请求
+ *   不携带 feedbackMode，服务端按 学生缺省/文档推荐/教师限制 裁决；保存布局
+ *   不补写 feedback，否则首次存布局就把文档推荐挡死（M5-D2 预裁决①）。
+ *   存量 M3 偏好文件都带 feedback（保存动作一直写全量形态），天然视作已设置；
+ * - localStorage 仅落契约 strict v1 形态，按部署来源、student 角色、账号隔离；
+ * - 存储不可读/损坏回默认（列表 + 快捷键开 + 未设置），不抛错、不阻断作答；
+ *   写入失败抛错由设置区提示，本次会话内仍可用内存值；
  * - 仿 ai-display-preference-store 先例（模块级 store + 账号绑定 + 跨标签事件）。
  */
 
 const defaultPreference = {
   layout: "list" as PracticeLayout,
   keyboardShortcuts: true,
-  feedback: "per_question" as PracticeFeedbackMode,
+  feedback: null as PracticeFeedbackMode | null,
 };
 
 export interface PracticePreferenceState {
   accountId: string | null;
   layout: PracticeLayout;
   keyboardShortcuts: boolean;
-  feedback: PracticeFeedbackMode;
+  /** null = 未设置（storage 键缺省）；已设置 = 学生明确保存过的反馈节奏 */
+  feedback: PracticeFeedbackMode | null;
 }
 
 const store = createExternalPrefStore({
@@ -47,7 +51,7 @@ function read(raw: string | null) {
 function publish(value: {
   layout: PracticeLayout;
   keyboardShortcuts: boolean;
-  feedback: PracticeFeedbackMode;
+  feedback: PracticeFeedbackMode | null;
 }) {
   const current = store.get();
   if (
@@ -69,7 +73,7 @@ export function bindPracticePreferenceAccount(accountId: string | null) {
       value = {
         layout: parsed.layout,
         keyboardShortcuts: parsed.keyboardShortcuts,
-        feedback: parsed.feedback,
+        feedback: parsed.feedback ?? null,
       };
     }
   } catch {
@@ -86,7 +90,8 @@ export const usePracticePreference = () =>
 
 /**
  * 保存默认偏好：写入成功才发布；expectedAccountId 供设置草稿防迟到保存串号。
- * feedback 保持当前存储值不变（D1 无该 UI），整体仍写契约 v1 完整形态。
+ * feedback 保持当前值原样（未设置 = 键缺省不补写；已设置 = 原值保留），契约
+ * v1 形态由 schema 校验。
  */
 export function savePracticePreference(
   input: { layout: PracticeLayout; keyboardShortcuts: boolean },
@@ -98,11 +103,15 @@ export function savePracticePreference(
   const value = studentPracticePreferenceSchema.parse({
     version: 1,
     layout: input.layout,
-    feedback,
+    ...(feedback !== null ? { feedback } : {}),
     keyboardShortcuts: input.keyboardShortcuts,
   });
   localStorage.setItem(storageKey(accountId), JSON.stringify(value));
-  publish(value);
+  publish({
+    layout: value.layout,
+    keyboardShortcuts: value.keyboardShortcuts,
+    feedback: value.feedback ?? null,
+  });
 }
 
 window.addEventListener("storage", (event) => {
@@ -113,7 +122,7 @@ window.addEventListener("storage", (event) => {
     publish({
       layout: parsed.layout,
       keyboardShortcuts: parsed.keyboardShortcuts,
-      feedback: parsed.feedback,
+      feedback: parsed.feedback ?? null,
     });
   } else if (event.key === null) {
     publish({ ...defaultPreference });

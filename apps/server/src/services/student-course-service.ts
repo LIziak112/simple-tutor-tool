@@ -1,12 +1,14 @@
-import type {
-  StudentCourseDetailData,
-  StudentCourseSummary,
-  StudentLectureCourseGroup,
-  StudentLectureDetail,
-  StudentLectureListData,
-  StudentLectureSummary,
-  StudentUnitAttemptSummary,
-  StudentUnitLandingData,
+import {
+  type PracticeRecommendation,
+  practiceRecommendationSchema,
+  type StudentCourseDetailData,
+  type StudentCourseSummary,
+  type StudentLectureCourseGroup,
+  type StudentLectureDetail,
+  type StudentLectureListData,
+  type StudentLectureSummary,
+  type StudentUnitAttemptSummary,
+  type StudentUnitLandingData,
 } from "@tutor/contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -371,6 +373,36 @@ export function getStudentCourseDetail(
 // ---------- 单元落地页（GET /api/student/courses/:id/units/:unitId，T2A.6） ----------
 
 /**
+ * practiceDefaultsJson → 契约推荐（M5-D2；坏 JSON/契约失败 → null + warn，
+ * 与 M5-D1 practiceYamlLineOf 同口径——单行脏数据不打挂落地页，也不把原始
+ * JSON 下发学生端）。
+ */
+function practiceRecommendationOf(
+  column: string | null,
+): PracticeRecommendation | null {
+  if (column === null) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(column);
+  } catch (err) {
+    console.warn(
+      "practiceRecommendationOf: practiceDefaultsJson 不是合法 JSON，按无推荐处理",
+      err,
+    );
+    return null;
+  }
+  const parsed = practiceRecommendationSchema.safeParse(data);
+  if (!parsed.success) {
+    console.warn(
+      "practiceRecommendationOf: practiceDefaultsJson 不合契约，按无推荐处理",
+      parsed.error.issues[0]?.message,
+    );
+    return null;
+  }
+  return parsed.data;
+}
+
+/**
  * 单元落地信息（D10）：题数、题型分布、历次作答列表（attemptNo、状态、得分、
  * 交卷时间）、首次/最近/最高分、是否存在未交卷作答。
  * 访问权：requireVisibleCourseUnit（D5 + D22——非成员/归档 403、不可见 404）。
@@ -395,7 +427,11 @@ export function getStudentUnitLanding(
     throw notFound(); // 防御：可见门通过后资源必存在（D9 异常行 fail closed）
   }
   const unit = db
-    .select({ title: units.title, topic: units.topic })
+    .select({
+      title: units.title,
+      topic: units.topic,
+      practiceDefaultsJson: units.practiceDefaultsJson,
+    })
     .from(units)
     .where(
       and(
@@ -451,6 +487,8 @@ export function getStudentUnitLanding(
     topic: unit.topic,
     questionCount,
     typeDistribution,
+    // practice 展示推荐（M5-D2）：只推荐非权限，坏数据按无推荐处理
+    practiceRecommendation: practiceRecommendationOf(unit.practiceDefaultsJson),
     attempts: attemptRows.map((row) => ({
       attemptId: row.id,
       attemptNo: row.attemptNo,

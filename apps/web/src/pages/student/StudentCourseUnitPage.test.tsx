@@ -36,6 +36,7 @@ const NEVER_DONE: StudentUnitLandingData = {
   topic: "正数与负数",
   questionCount: 4,
   typeDistribution: { judge: 2, fill: 2 },
+  practiceRecommendation: null,
   attempts: [],
   summary: null,
 };

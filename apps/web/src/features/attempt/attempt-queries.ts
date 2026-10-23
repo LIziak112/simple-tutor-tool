@@ -86,14 +86,18 @@ export function useStudentUnitLanding(courseId: string, unitId: string) {
 }
 
 /**
- * 建卷工作流选项（M3-D1.5）：执行时同步读本机偏好——只传学生偏好，
- * 教师约束由服务端 resolver 裁决，客户端不预判；显式携带
- * workflowVersion=1 进入新协议，feedbackMode 随当前偏好。
+ * 建卷工作流选项（M3-D1.5；M5-D2 未设置态）：执行时同步读本机偏好——只传
+ * 学生偏好，教师约束由服务端 resolver 裁决，客户端不预判；显式携带
+ * workflowVersion=1 进入新协议。feedbackMode 只在偏好已设置时携带——未设置
+ * （null）整个键不发，服务端按 学生缺省/文档推荐/教师限制 裁决（§5.4）。
  */
-export const workflowStartOptions = () => ({
-  workflowVersion: 1 as const,
-  feedbackMode: getPracticePreference().feedback,
-});
+export const workflowStartOptions = () => {
+  const feedback = getPracticePreference().feedback;
+  return {
+    workflowVersion: 1 as const,
+    ...(feedback !== null ? { feedbackMode: feedback } : {}),
+  };
+};
 
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {

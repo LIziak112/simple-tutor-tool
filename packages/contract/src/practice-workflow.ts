@@ -58,12 +58,16 @@ export const practiceRestrictionReasonSchema = z.enum([
 /**
  * 本设备学习偏好（localStorage，strict）：只包含版本、两枚举与快捷键开关，
  * 不保存答案、AI 正文或凭据；version 固定 1，升级时整体失效重写。
+ * feedback 可选（M5-D2，禁 z.default 注入）：键缺省 = 未设置——建卷请求不
+ * 携带 feedbackMode，服务端按 学生缺省/文档推荐/教师限制 裁决（总计划 §5.4
+ * 档 2/3）；存量 M3 偏好文件都带 feedback（保存动作一直写全量形态），天然
+ * 视作已设置，不做读迁移。
  */
 export const studentPracticePreferenceSchema = z
   .object({
     version: z.literal(1),
     layout: practiceLayoutSchema,
-    feedback: practiceFeedbackModeSchema,
+    feedback: practiceFeedbackModeSchema.optional(),
     keyboardShortcuts: z.boolean(),
   })
   .strict();

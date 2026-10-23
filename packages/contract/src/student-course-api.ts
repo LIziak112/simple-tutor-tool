@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { practiceRecommendationSchema } from "./practice-workflow.ts";
 
 /**
  * 学生端课程契约（T2A.5 起为权威定义）：我的课程列表、课程可见目录（按 D5 过滤）
@@ -179,6 +180,14 @@ export const studentUnitLandingDataSchema = z.object({
   questionCount: z.number().int().min(0),
   /** 题型分布：题型 → 题数（仅含有题数的题型） */
   typeDistribution: z.record(z.string(), z.number().int().min(1)),
+  /**
+   * 该单元的做题方式/反馈节奏**展示推荐**（M5-D2，frontmatter `practice:`
+   * 导入产物）：只推荐非权限——授权结论仍由服务端建卷 resolver 裁决；
+   * null = 该单元无推荐。layout 推荐只影响开始页预选呈现（非权限、不进
+   * 建卷列），feedback 推荐在学生未设置偏好时参与建卷裁决（学生显式选择
+   * 恒优先）。
+   */
+  practiceRecommendation: practiceRecommendationSchema.nullable(),
   /** 历次作答（attemptNo 降序） */
   attempts: z.array(studentUnitAttemptRecordSchema),
   /** 作答汇总；从未做为 null */

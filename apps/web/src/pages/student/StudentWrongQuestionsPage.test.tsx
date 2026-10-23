@@ -780,11 +780,10 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     await screen.findByRole("button", { name: "重练全部（2 题）" });
     fireEvent.click(screen.getByRole("button", { name: "重练全部（2 题）" }));
     // 顺序 = 当前 tab 列表序（q-fill-2 在前、q-judge-1 在后）；M3-D1.5 建卷
-    // 请求显式携带 workflowVersion=1 与当前偏好反馈节奏
+    // 请求显式携带 workflowVersion=1；M5-D2 偏好未设置时不发 feedbackMode
     await waitFor(() => {
       expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
         workflowVersion: 1,
-        feedbackMode: "per_question",
       });
     });
     await waitFor(() => {
@@ -846,7 +845,6 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     await waitFor(() => {
       expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2"], {
         workflowVersion: 1,
-        feedbackMode: "per_question",
       });
     });
     // 失败：错误横幅出现（含服务端信息），页面仍留在错题本

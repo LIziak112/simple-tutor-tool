@@ -100,17 +100,39 @@ describe("studentPracticePreferenceSchema", () => {
     keyboardShortcuts: true,
   };
 
-  it("接受合法 v1 偏好", () => {
+  it("接受合法 v1 偏好（M3 存量全量形态，feedback 视作已设置）", () => {
     expect(studentPracticePreferenceSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("M5-D2：feedback 键缺省合法——parse 产物无 feedback 键（未设置 ≠ 伪造默认值）", () => {
+    const unset = studentPracticePreferenceSchema.parse({
+      version: 1,
+      layout: "single",
+      keyboardShortcuts: false,
+    });
+    expect(unset).toEqual({
+      version: 1,
+      layout: "single",
+      keyboardShortcuts: false,
+    });
+    expect("feedback" in unset).toBe(false);
   });
 
   it("strict：拒绝未知字段", () => {
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, extra: 1 }),
     ).toThrow();
+    expect(() =>
+      studentPracticePreferenceSchema.parse({
+        version: 1,
+        layout: "list",
+        keyboardShortcuts: true,
+        extra: 1,
+      }),
+    ).toThrow();
   });
 
-  it("拒绝 version 2 与非法枚举", () => {
+  it("拒绝 version 2 与非法枚举（feedback 有值时仍校验枚举，禁止 z.default 注入）", () => {
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, version: 2 }),
     ).toThrow();
@@ -119,6 +141,14 @@ describe("studentPracticePreferenceSchema", () => {
     ).toThrow();
     expect(() =>
       studentPracticePreferenceSchema.parse({ ...valid, feedback: "fast" }),
+    ).toThrow();
+    expect(() =>
+      studentPracticePreferenceSchema.parse({
+        version: 1,
+        layout: "list",
+        keyboardShortcuts: true,
+        feedback: "fast",
+      }),
     ).toThrow();
   });
 });
