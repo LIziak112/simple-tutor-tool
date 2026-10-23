@@ -722,6 +722,9 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.practice_mutation_id;
         delete row.practice_request_digest;
       }
+      // 0039（M5-D1）units practice 推荐列：NULL=未声明，新列语义见
+      // migrate-practice-defaults / content-service 测试
+      delete row.practice_defaults_json;
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());
