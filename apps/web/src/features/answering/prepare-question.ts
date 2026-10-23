@@ -136,6 +136,15 @@ function judgeTailMarkerOf(stemMd: string): JudgeTailMarker {
   return JUDGE_TAIL_MARKER_RE.test(stemMd) ? "paren" : "none";
 }
 
+/**
+ * 判断题题干的显示形态：尾部空标记（studentStemMd 投影把 [[答案]] 脱敏成
+ * [[]]）替换为「（　）」——与迁移前 QuestionSurface judgeStemOf 逐字一致；
+ * 无尾部标记时不匹配不变。与 tailMarker 检测共用同一正则（单源）。
+ */
+export function judgeDisplayStemOf(stemMd: string): string {
+  return stemMd.replace(JUDGE_TAIL_MARKER_RE, "（　）");
+}
+
 /** exactOptionalPropertyTypes：未传 context 时不设键 */
 function withContext<P extends PreparedQuestion>(
   prepared: P,

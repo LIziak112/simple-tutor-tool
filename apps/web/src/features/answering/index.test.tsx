@@ -1,5 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { QuestionAnswers, QuestionPublic, StudentAnswer } from "@tutor/contract";
+import type {
+  QuestionAnswers,
+  QuestionPublic,
+  StudentAnswer,
+} from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import type { QuestionCompletion } from "../attempt/question-completion";
 import {
@@ -8,8 +12,8 @@ import {
   dispatchCompletion,
   dispatchInput,
 } from "./index";
-import type { ReferenceMaterial } from "./types";
 import { prepareQuestion } from "./prepare-question";
+import type { ReferenceMaterial } from "./types";
 
 /**
  * 呈现登记表与唯一调度边界（方案 §4.4/§10，UA-03 落地）的路由与差分测试：
@@ -36,7 +40,9 @@ const choiceQuestion: QuestionPublic = {
   options: ["甲", "乙"],
 };
 
-function prepared(question: QuestionPublic): ReturnType<typeof prepareQuestion> {
+function prepared(
+  question: QuestionPublic,
+): ReturnType<typeof prepareQuestion> {
   return prepareQuestion(question, `${question.id}-test`);
 }
 
@@ -54,12 +60,26 @@ describe("answerKindViews 登记表", () => {
 
 describe("dispatchInput 题面输入派发", () => {
   it("judge：radiogroup 判断对错，false 是有效输入（I03）", () => {
-    const model = prepared({ ...choiceQuestion, type: "judge", options: undefined, stemMd: "命题。[[]]" });
+    const model = prepared({
+      ...choiceQuestion,
+      type: "judge",
+      options: undefined,
+      stemMd: "命题。[[]]",
+    });
     const update = vi.fn();
-    render(screenStub(dispatchInput(model, { kind: "judge", value: true }, update, false)));
-    expect(screen.getByRole("radiogroup", { name: "判断对错" })).toBeInTheDocument();
+    render(
+      screenStub(
+        dispatchInput(model, { kind: "judge", value: true }, update, false),
+      ),
+    );
+    expect(
+      screen.getByRole("radiogroup", { name: "判断对错" }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "错" }));
-    expect(update).toHaveBeenCalledWith({ kind: "judge", value: false }, undefined);
+    expect(update).toHaveBeenCalledWith(
+      { kind: "judge", value: false },
+      undefined,
+    );
   });
 
   it("choice：radio 即时回调（I05 不 defer），index=0 有效（I03）", () => {
@@ -67,16 +87,34 @@ describe("dispatchInput 题面输入派发", () => {
     const update = vi.fn();
     render(screenStub(dispatchInput(model, undefined, update, false)));
     fireEvent.click(screen.getByRole("radio", { name: /甲/ }));
-    expect(update).toHaveBeenCalledWith({ kind: "choice", index: 0 }, undefined);
+    expect(update).toHaveBeenCalledWith(
+      { kind: "choice", index: 0 },
+      undefined,
+    );
   });
 
   it("multi：checkbox 勾选顺序不被排序改写（I04）", () => {
     const model = prepared({ ...choiceQuestion, type: "multi" });
     const update = vi.fn();
-    render(screenStub(dispatchInput(model, undefined, update, false)));
+    const { rerender } = render(
+      screenStub(dispatchInput(model, undefined, update, false)),
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: /乙/ }));
+    expect(update).toHaveBeenLastCalledWith(
+      { kind: "multi", indexes: [1] },
+      undefined,
+    );
+    // 受控更新：以首次结果续勾，顺序 [1,0] 不被排序改写
+    rerender(
+      screenStub(
+        dispatchInput(model, { kind: "multi", indexes: [1] }, update, false),
+      ),
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: /甲/ }));
-    expect(update).toHaveBeenLastCalledWith({ kind: "multi", indexes: [1, 0] }, undefined);
+    expect(update).toHaveBeenLastCalledWith(
+      { kind: "multi", indexes: [1, 0] },
+      undefined,
+    );
   });
 
   it("fill：内联空位 defer=true（I05），空序与已有答案一致", () => {
@@ -89,7 +127,12 @@ describe("dispatchInput 题面输入派发", () => {
     const update = vi.fn();
     render(
       screenStub(
-        dispatchInput(model, { kind: "fill", values: ["原", ""] }, update, false),
+        dispatchInput(
+          model,
+          { kind: "fill", values: ["原", ""] },
+          update,
+          false,
+        ),
       ),
     );
     expect(screen.getByRole("textbox", { name: "第1空" })).toHaveValue("原");
@@ -123,19 +166,29 @@ describe("dispatchInput 题面输入派发", () => {
     expect(screen.getByRole("radio", { name: /乙/ })).not.toBeChecked();
   });
 
-  it("disabled 只读态输入禁用且不触发更新（I08）", () => {
+  it("disabled 只读态输入携带禁用语义（I08；更新拦截在宿主数据流——§5）", () => {
     const model = prepared({
       ...choiceQuestion,
       type: "fill",
       options: undefined,
       stemMd: "甲 [[]]",
     });
-    const update = vi.fn();
-    render(screenStub(dispatchInput(model, { kind: "fill", values: ["值"] }, update, true)));
-    const input = screen.getByRole("textbox", { name: "第1空" });
-    expect(input).toBeDisabled();
-    fireEvent.change(input, { target: { value: "改" } });
-    expect(update).not.toHaveBeenCalled();
+    render(
+      screenStub(
+        dispatchInput(model, { kind: "fill", values: ["值"] }, vi.fn(), true),
+      ),
+    );
+    expect(screen.getByRole("textbox", { name: "第1空" })).toBeDisabled();
+    const judgeModel = prepared({
+      ...choiceQuestion,
+      id: "q-judge2",
+      type: "judge",
+      options: undefined,
+      stemMd: "命题。[[]]",
+    });
+    render(screenStub(dispatchInput(judgeModel, undefined, vi.fn(), true)));
+    expect(screen.getByRole("radio", { name: "对" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "错" })).toBeDisabled();
   });
 });
 
@@ -157,16 +210,17 @@ describe("dispatchComparison 对照派发", () => {
     const model = prepared(fillQuestion);
     const { container } = render(
       screenStub(
-        dispatchComparison(
-          model,
-          fillAnswer,
-          { status: "available", reference: fillReference },
-        ),
+        dispatchComparison(model, fillAnswer, {
+          status: "available",
+          reference: fillReference,
+        }),
       ),
     );
     const own = screen.getByRole("list", { name: "你的填空答案" });
     expect(within(own).getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByRole("list", { name: "参考填空答案" })).toHaveTextContent("8");
+    expect(
+      screen.getByRole("list", { name: "参考填空答案" }),
+    ).toHaveTextContent("8");
     expect(container.querySelectorAll(".katex").length).toBeGreaterThan(0);
   });
 
@@ -186,21 +240,35 @@ describe("dispatchComparison 对照派发", () => {
     );
     const own = screen.getByRole("list", { name: "你的填空答案" });
     expect(within(own).getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByRole("list", { name: "参考填空答案" })).toHaveTextContent("第2空");
+    expect(
+      screen.getByRole("list", { name: "参考填空答案" }),
+    ).toHaveTextContent("第2空");
   });
 
   it("unavailable：锁定提示，参考内容不进 DOM（I09 哨兵）", () => {
     const model = prepared(fillQuestion);
-    render(screenStub(dispatchComparison(model, fillAnswer, { status: "unavailable" })));
-    expect(screen.getByText("参考答案与详解将在截止后公布 🔒")).toBeInTheDocument();
+    render(
+      screenStub(
+        dispatchComparison(model, fillAnswer, { status: "unavailable" }),
+      ),
+    );
+    expect(
+      screen.getByText("参考答案与详解将在截止后公布 🔒"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/secret/)).toBeNull();
     // 左列仍呈现本人作答（未公布不吞掉本人答案）
-    expect(screen.getByRole("list", { name: "你的填空答案" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("list", { name: "你的填空答案" }),
+    ).toBeInTheDocument();
   });
 
   it("no-reference：已公布但无参考显示原有空态", () => {
     const model = prepared(fillQuestion);
-    render(screenStub(dispatchComparison(model, fillAnswer, { status: "no-reference" })));
+    render(
+      screenStub(
+        dispatchComparison(model, fillAnswer, { status: "no-reference" }),
+      ),
+    );
     expect(screen.getByText("暂无参考答案")).toBeInTheDocument();
   });
 
@@ -236,13 +304,28 @@ describe("dispatchCompletion 完整度派发", () => {
       stemMd: "甲 [[]]，乙 [[]]",
     });
     expect(
-      dispatchCompletion(model, { kind: "fill", values: ["a", "b", "c"] }, false),
-    ).toEqual({ state: "filled", filledSlots: 2, expectedSlots: 2 } satisfies QuestionCompletion);
+      dispatchCompletion(
+        model,
+        { kind: "fill", values: ["a", "b", "c"] },
+        false,
+      ),
+    ).toEqual({
+      state: "filled",
+      filledSlots: 2,
+      expectedSlots: 2,
+    } satisfies QuestionCompletion);
   });
 
   it("final 有正式笔迹未填最终答案为 partial（I06）", () => {
-    const model = prepared({ ...choiceQuestion, type: "solve", options: undefined, stemMd: "求解。" });
-    expect(dispatchCompletion(model, { kind: "final", finalAnswer: "" }, true)).toEqual({
+    const model = prepared({
+      ...choiceQuestion,
+      type: "solve",
+      options: undefined,
+      stemMd: "求解。",
+    });
+    expect(
+      dispatchCompletion(model, { kind: "final", finalAnswer: "" }, true),
+    ).toEqual({
       state: "partial",
       filledSlots: 0,
       expectedSlots: 1,
@@ -251,7 +334,9 @@ describe("dispatchCompletion 完整度派发", () => {
 
   it("choice 越界索引不算已填写", () => {
     const model = prepared(choiceQuestion);
-    expect(dispatchCompletion(model, { kind: "choice", index: 99 }, false)).toEqual({
+    expect(
+      dispatchCompletion(model, { kind: "choice", index: 99 }, false),
+    ).toEqual({
       state: "empty",
       filledSlots: 0,
       expectedSlots: 1,
@@ -261,17 +346,18 @@ describe("dispatchCompletion 完整度派发", () => {
 
 describe("登记表视图的只读呈现（I02 只读无答案）", () => {
   it("各 kind ReadOnly 不含参考答案内容", () => {
-    const judgeModel = prepared({
+    const preparedJudge = prepared({
       ...choiceQuestion,
       id: "q-judge",
       type: "judge",
       options: undefined,
       stemMd: "命题。[[]]",
     });
+    if (preparedJudge.kind !== "judge") throw new Error("非 judge 模型");
     const { container } = render(
       screenStub(
         answerKindViews.judge.ReadOnly({
-          model: judgeModel,
+          model: preparedJudge,
           answer: { kind: "judge", value: true },
         }),
       ),
@@ -289,7 +375,9 @@ function screenStub(node: React.ReactNode): React.ReactElement {
 /** 类型层负例：ReferenceMaterial 不携带参考对象时无法读取答案（编译期保护，运行时无操作） */
 describe("ReferenceMaterial 类型", () => {
   it("unavailable 分支运行时不携带参考", () => {
-    const material: ReferenceMaterial<QuestionAnswers> = { status: "unavailable" };
+    const material: ReferenceMaterial<QuestionAnswers> = {
+      status: "unavailable",
+    };
     expect(material.status).toBe("unavailable");
   });
 });
