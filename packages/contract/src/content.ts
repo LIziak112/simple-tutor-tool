@@ -27,8 +27,9 @@ export const questionTypeSchema = z.enum([
 
 /**
  * 题型中文名（UI 徽章与 T3.4 CSV 导出共用；前后端共用同一份，禁止各自手写）。
- * 手写题集合（solve/apply/find-error，答案 kind=final 的题型）也由此推导：
- * 供 CSV 手写笔迹列等处判断题型是否可书写。
+ * 手写题集合（solve/apply/find-error，答案 kind=final 的题型）自 UA-01 起由
+ * capability.ts 的跨端证据角色绑定派生（HANDWRITTEN_QUESTION_TYPES，正式纸面
+ * 资格单源），不再在本文件维护字面量。
  */
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   judge: "判断",
@@ -39,13 +40,6 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   apply: "应用",
   "find-error": "找错",
 };
-
-/** 可书写（手写）题型：答案为 final 文本 + 可上传笔迹的三种 */
-export const HANDWRITTEN_QUESTION_TYPES: readonly QuestionType[] = [
-  "solve",
-  "apply",
-  "find-error",
-];
 
 /** 化名编号（学生A/学生B…，按名单顺序编号）：字母列号核心算法单一来源 */
 export function lettersOf(index: number): string {

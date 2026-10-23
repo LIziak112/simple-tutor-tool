@@ -4,8 +4,11 @@ import {
   capabilitiesManifestSchema,
   capabilityProfileSchema,
   capabilitySwitchSchema,
+  HANDWRITTEN_QUESTION_TYPES,
   questionCapabilityBindings,
   questionCapabilityBindingsSchema,
+  questionEvidenceBindings,
+  questionEvidenceBindingsSchema,
 } from "./capability";
 import { questionTypeSchema } from "./content";
 import { listDirectives } from "./directives";
@@ -238,5 +241,49 @@ describe("能力启用集 profile（T7.7 / 方案 §4.5）", () => {
     expect(
       capabilityProfileSchema.safeParse({ enabledcapabilities: [] }).success,
     ).toBe(false);
+  });
+});
+
+describe("questionEvidenceBindings（UA-01 跨端证据角色绑定，方案 §4.1/D14）", () => {
+  it("七题型穷尽登记：judge/choice/multi/fill=judge·choice·multi·fill+scratch，solve/apply/find-error=final+answerInk", () => {
+    expect(
+      questionEvidenceBindingsSchema.parse(questionEvidenceBindings),
+    ).toEqual(questionEvidenceBindings);
+    expect(Object.keys(questionEvidenceBindings).sort()).toEqual(
+      [...questionTypeSchema.options].sort(),
+    );
+    expect(questionEvidenceBindings).toEqual({
+      judge: { answerKind: "judge", paperRole: "scratch" },
+      choice: { answerKind: "choice", paperRole: "scratch" },
+      multi: { answerKind: "multi", paperRole: "scratch" },
+      fill: { answerKind: "fill", paperRole: "scratch" },
+      solve: { answerKind: "final", paperRole: "answerInk" },
+      apply: { answerKind: "final", paperRole: "answerInk" },
+      "find-error": { answerKind: "final", paperRole: "answerInk" },
+    });
+  });
+
+  it("HANDWRITTEN_QUESTION_TYPES 由 paperRole 单源派生，旧七型资格逐字不变", () => {
+    // 迁移前字面量 ["solve","apply","find-error"]（原 content.ts:44）逐字保持
+    expect(HANDWRITTEN_QUESTION_TYPES).toEqual(["solve", "apply", "find-error"]);
+    // 派生口径可复算：paperRole=answerInk ⇔ 派生集合
+    expect(
+      questionTypeSchema.options.filter(
+        (type) => questionEvidenceBindings[type].paperRole === "answerInk",
+      ),
+    ).toEqual([...HANDWRITTEN_QUESTION_TYPES]);
+  });
+
+  it("与 questionCapabilityBindings inputType=ink 派生集一致（md-dsl lint capability.ts 本地副本同源守护，决策记录 §6.3 C/B4）", () => {
+    // md-dsl/src/lint/capability.ts 的本地 HANDWRITTEN_TYPES 即按
+    // questionCapabilityBindings 的 inputType==="ink" 派生（无字面量副本）；
+    // 两派生集相等 = lint 手写区默认规则与契约集合不漂移。四处消费语义
+    // （AttemptSession:322 / StudentLessonPage:554 / export-csv:282,391 /
+    // review-pack:358）全部消费 HANDWRITTEN_QUESTION_TYPES，本断言即覆盖。
+    const inkDerived = Object.entries(questionCapabilityBindings)
+      .filter(([, binding]) => binding.inputType === "ink")
+      .map(([type]) => type)
+      .sort();
+    expect([...HANDWRITTEN_QUESTION_TYPES].sort()).toEqual(inkDerived);
   });
 });

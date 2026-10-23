@@ -9,6 +9,7 @@ import {
   dispatchIsAnswered,
   emptyPublicStructure,
   formatQuestionAnswers,
+  HANDWRITTEN_QUESTION_TYPES,
   lettersOf,
   QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT,
 } from "@tutor/contract";
@@ -26,10 +27,12 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
 /**
  * 手写题型集合（T6R.11 起收归本共享模块）：作答 ink 走 HandwrittenControls，
  * 不接草稿层/草稿原稿查看（原查看 AttemptQuestionCard 的本地副本——教师端
- * 详情/待批卡同样需要该判定，单一事实来源）。
+ * 详情/待批卡同样需要该判定，单一事实来源）。UA-01 起由契约跨端证据角色
+ * （paperRole=answerInk）派生的 HANDWRITTEN_QUESTION_TYPES 构造，不再本地
+ * 维护字面量（正式纸面资格单源；旧七型资格逐字不变）。
  */
 export const HANDWRITTEN_TYPES: ReadonlySet<QuestionType> =
-  new Set<QuestionType>(["solve", "apply", "find-error"]);
+  new Set<QuestionType>(HANDWRITTEN_QUESTION_TYPES);
 
 /** 题型徽章配色（按客观/主观两档区分，视觉分组） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
