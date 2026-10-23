@@ -1,9 +1,9 @@
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
-import { processor } from "@tutor/md-dsl";
-import type { MdNode } from "@/features/markdown/remark/mdast-interop";
-import { remarkBlank } from "@/features/markdown/remark/remark-blank";
-import { remarkDirectiveHost } from "@/features/markdown/remark/remark-directive-host";
-import { HANDWRITTEN_TYPES } from "./answer-format";
+import {
+  expectedSlotCountOf,
+  slotsOfQuestion,
+} from "../answering/prepare-question";
+import { questionBindings } from "../answering/question-binding";
 
 export interface QuestionCompletion {
   state: "empty" | "partial" | "filled";
@@ -11,39 +11,19 @@ export interface QuestionCompletion {
   expectedSlots: number;
 }
 
-const slotsByQuestion = new WeakMap<QuestionPublic, number>();
-
-/** 按实际题面渲染管线识别空位，答案变化不重复解析题干。 */
-function countSlots(question: QuestionPublic): number {
-  const cached = slotsByQuestion.get(question);
-  if (cached !== undefined) return cached;
-  // 渲染器使用最小AST结构；remark扩展节点的data类型通过此边界适配。
-  const tree = processor.parse(question.stemMd) as unknown as MdNode;
-  remarkBlank()(tree);
-  remarkDirectiveHost()(tree);
-  let count = 0;
-  function visit(node: MdNode): void {
-    if (
-      node.name === "blank" &&
-      typeof node.data?.hProperties?.index === "number"
-    ) {
-      count = Math.max(count, node.data.hProperties.index);
-    }
-    node.children?.forEach(visit);
-  }
-  visit(tree);
-  slotsByQuestion.set(question, count);
-  return count;
-}
-
-/** 填写完整度不判分，也不改变历史 isAnswered 的统计含义。 */
+/**
+ * 填写完整度不判分，也不改变历史 isAnswered 的统计含义。
+ * UA-02 起槽位统计经 analyzeSlots 同源（I07：与真实渲染同一节点语义、
+ * 缓存按对象身份）；final 的手写资格经 questionBindings 的纸面角色判定
+ * （paperRole=answerInk ≡ 旧 HANDWRITTEN_TYPES 集合，一致性测试锁死）。
+ */
 export function getQuestionCompletion(
   question: QuestionPublic,
   answer: StudentAnswer | undefined,
   formalInkPresence = false,
 ): QuestionCompletion {
   if (question.type === "fill") {
-    const expectedSlots = countSlots(question);
+    const expectedSlots = expectedSlotCountOf(slotsOfQuestion(question));
     const values = answer?.kind === "fill" ? answer.values : [];
     let filledSlots = 0;
     for (let i = 0; i < expectedSlots; i++) {
@@ -80,7 +60,7 @@ export function getQuestionCompletion(
       break;
     case "final":
       filled =
-        HANDWRITTEN_TYPES.has(question.type) &&
+        questionBindings[question.type].paperRole === "answerInk" &&
         answer.finalAnswer.trim() !== "";
       break;
   }

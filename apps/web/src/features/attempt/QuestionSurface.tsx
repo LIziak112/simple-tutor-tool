@@ -122,7 +122,12 @@ function ChoiceControls({
   return (
     <div className="flex flex-col gap-2" role="radiogroup" aria-label="选项">
       {(question.options ?? []).map((option, index) => (
-        <label key={option} className={optionShellClass(picked === index)}>
+        // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
+        <label
+          // biome-ignore lint/suspicious/noArrayIndexKey: 选项文本可重复（历史数据与合法题面），key 由序号派生是 §4.2 旧题定稿规则
+          key={`opt-${index}`}
+          className={optionShellClass(picked === index)}
+        >
           <input
             type="radio"
             name={groupName}
@@ -165,8 +170,10 @@ function MultiControls({
       className="m-0 flex flex-col gap-2 border-0 p-0"
     >
       {(question.options ?? []).map((option, index) => (
+        // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
         <label
-          key={option}
+          // biome-ignore lint/suspicious/noArrayIndexKey: 选项文本可重复（历史数据与合法题面），key 由序号派生是 §4.2 旧题定稿规则
+          key={`opt-${index}`}
           className={optionShellClass(pickedIndexes.includes(index))}
         >
           <input
