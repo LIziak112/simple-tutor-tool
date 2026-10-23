@@ -6,7 +6,6 @@ import {
   formatStudentAnswer,
   HANDWRITTEN_TYPES,
   isAnswered,
-  judgeLabelOf,
   letterOf,
   mathifyAnswerText,
   withBlankValue,
@@ -73,16 +72,10 @@ describe("attemptSourceLabel（学生端来源行文案，2026-10 收口单源�
   });
 });
 
-describe("letterOf / judgeLabelOf", () => {
+describe("letterOf", () => {
   it("下标转字母（0→A、2→C）", () => {
     expect(letterOf(0)).toBe("A");
     expect(letterOf(2)).toBe("C");
-  });
-
-  it("判断题布尔 → 对/错；字符串写法原样", () => {
-    expect(judgeLabelOf(true)).toBe("对");
-    expect(judgeLabelOf(false)).toBe("错");
-    expect(judgeLabelOf("√")).toBe("√");
   });
 });
 

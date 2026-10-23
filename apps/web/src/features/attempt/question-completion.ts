@@ -1,9 +1,6 @@
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
-import {
-  expectedSlotCountOf,
-  slotsOfQuestion,
-} from "../answering/prepare-question";
-import { questionBindings } from "../answering/question-binding";
+import { dispatchCompletion } from "../answering";
+import { prepareQuestion } from "../answering/prepare-question";
 
 export interface QuestionCompletion {
   state: "empty" | "partial" | "filled";
@@ -22,53 +19,14 @@ export function getQuestionCompletion(
   answer: StudentAnswer | undefined,
   formalInkPresence = false,
 ): QuestionCompletion {
-  if (question.type === "fill") {
-    const expectedSlots = expectedSlotCountOf(slotsOfQuestion(question));
-    const values = answer?.kind === "fill" ? answer.values : [];
-    let filledSlots = 0;
-    for (let i = 0; i < expectedSlots; i++) {
-      if ((values[i] ?? "").trim() !== "") filledSlots++;
-    }
-    return {
-      state:
-        filledSlots === 0
-          ? "empty"
-          : filledSlots === expectedSlots
-            ? "filled"
-            : "partial",
-      filledSlots,
-      expectedSlots,
-    };
-  }
-  let filled = false;
-  switch (answer?.kind) {
-    case "judge":
-      filled = question.type === "judge";
-      break;
-    case "choice":
-      filled =
-        question.type === "choice" &&
-        answer.index >= 0 &&
-        answer.index < (question.options?.length ?? 0);
-      break;
-    case "multi":
-      filled =
-        question.type === "multi" &&
-        answer.indexes.some(
-          (index) => index >= 0 && index < (question.options?.length ?? 0),
-        );
-      break;
-    case "final":
-      filled =
-        questionBindings[question.type].paperRole === "answerInk" &&
-        answer.finalAnswer.trim() !== "";
-      break;
-  }
-  return {
-    state: filled ? "filled" : formalInkPresence ? "partial" : "empty",
-    filledSlots: filled ? 1 : 0,
-    expectedSlots: 1,
-  };
+  // UA-03 起为呈现登记表的兼容代理：完整度口径（fill 按有效空位计、final
+  // 有笔迹未填为 partial、choice/multi 越界不算已填写、I02 错配按未作答）
+  // 收进各 kind 视图的 completion（answering/views）；本入口只准备模型并派发
+  return dispatchCompletion(
+    prepareQuestion(question, question.id),
+    answer,
+    formalInkPresence,
+  );
 }
 
 export function completionLabel(completion: QuestionCompletion): string {

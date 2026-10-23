@@ -3,7 +3,6 @@ import type {
   HintOpenedEntry,
   LessonStartData,
 } from "@tutor/contract";
-import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -32,6 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { questionBindings } from "@/features/answering/question-binding";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
@@ -549,9 +549,10 @@ function LessonAnswerInner({
     questions: data.questions,
     isHandwritten: (questionId) => {
       const question = data.questions.find((item) => item.id === questionId);
+      // UA-03：纸面角色经题型绑定（paperRole=answerInk ≡ 旧七型手写资格，I09）
       return (
         question !== undefined &&
-        HANDWRITTEN_QUESTION_TYPES.includes(question.type)
+        questionBindings[question.type].paperRole === "answerInk"
       );
     },
     surfaceOf: (questionId) =>

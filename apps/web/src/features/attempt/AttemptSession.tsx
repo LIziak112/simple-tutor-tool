@@ -5,7 +5,6 @@ import type {
   HintOpenedEntry,
   PracticeLayout,
 } from "@tutor/contract";
-import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -27,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
+import { questionBindings } from "@/features/answering/question-binding";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
@@ -317,9 +317,11 @@ function AnswerView({
     questions: flatQuestions,
     isHandwritten: (questionId) =>
       flatQuestions.some(
+        // UA-03：纸面角色经题型绑定（paperRole=answerInk ≡ 旧七型手写资格，
+        // question-binding.test 三方一致性锁死，I09 资格逐字不变）
         (question) =>
           question.id === questionId &&
-          HANDWRITTEN_QUESTION_TYPES.includes(question.type),
+          questionBindings[question.type].paperRole === "answerInk",
       ),
     surfaceOf: (questionId) =>
       cardElements.current
