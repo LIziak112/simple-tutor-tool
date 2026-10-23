@@ -126,6 +126,39 @@ it("WORKFLOW_REVISION_STALE：失效详情（重取投影）并提示已刷新�
   );
 });
 
+it("stale 后的新错误不再被旧提示掩蔽（M6 闸门 A2：onMutate 清 staleNotice）", async () => {
+  // 序列：第一次切换撞 stale（另一设备已改）→ 提示已刷新请重试；重试时
+  // 撞 QUESTION_ALREADY_SUBMITTED（服务端先查首题提交再查 revision，可达）——
+  // 旧提示必须让位给本次错误，不能无限期掩蔽（staleNotice 只在 onSuccess
+  // 清除时，第二次失败后 notice 仍是「请重试」，学生永远看不到真实原因）
+  mockedUpdate
+    .mockRejectedValueOnce(
+      new ApiError(
+        "WORKFLOW_REVISION_STALE",
+        "反馈节奏已在其他设备修改，请刷新后重试",
+        409,
+      ),
+    )
+    .mockRejectedValueOnce(
+      new ApiError(
+        "QUESTION_ALREADY_SUBMITTED",
+        "已有题目提交，反馈节奏已固定",
+        409,
+      ),
+    );
+  const { expand } = renderHarness(workflowOf({ revision: 3 }));
+  expand();
+  fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "反馈节奏刚被其他操作修改，已刷新，请重试",
+  );
+  // 基于（已重取的）新投影重试，本次撞上另一类错误：提示应为本次错误
+  fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "已有题目提交，反馈节奏已固定",
+  );
+});
+
 it("其他错误透传服务端 message，且不失效详情查询", async () => {
   mockedUpdate.mockRejectedValue(
     new ApiError(

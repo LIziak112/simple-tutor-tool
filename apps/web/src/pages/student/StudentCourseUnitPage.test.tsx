@@ -208,6 +208,14 @@ describe("StudentCourseUnitPage", () => {
 
   // ---------- M5-D3 开始页做题方式选择（裁决⑨） ----------
 
+  it("M6 闸门 A3：契约合法的空推荐（practice: {}）不出「本单元推荐：」悬空标签", async () => {
+    // practiceDefaultsOf 对 {} safeParse 通过（两键均可选），landing 会携带
+    // 空对象而非 null——join 结果为空串时不得按非 null 过渲染门
+    renderPage({ ...NEVER_DONE, practiceRecommendation: {} });
+    expect(await screen.findByText("有理数小练")).toBeInTheDocument();
+    expect(screen.queryByText(/本单元推荐/)).toBeNull();
+  });
+
   it("M5-D3：呈现单元推荐标注（布局与节奏标签同源）", async () => {
     renderPage({
       ...NEVER_DONE,
