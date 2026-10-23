@@ -16,6 +16,11 @@ import { z } from "zod";
  * 公开投影的白名单形态，fail closed 同 questionPublicSchema 纪律——多给的
  * 教师侧字段（sourceMd 等）在 parse 时被 strip；材料正文不含答案型内容由
  * lint 的 MATERIAL_CONTAINS_ANSWER 保证（TT-06），本投影是第二道结构防线。
+ *
+ * 两公开投影为手写白名单而非 Zod pick/omit 派生（questionPublicSchema
+ * 先例）：新增应公开字段需与完整 schema 两处手动同步——残余风险是功能
+ * 缺失向而非泄露向，由 material.test.ts 精确键集断言兜底（tt-05a 审查
+ * P2-4 注记）。
  */
 
 /**
@@ -75,7 +80,11 @@ export const materialSchema = z.object({
 });
 export type Material = z.infer<typeof materialSchema>;
 
-/** 材料（学生端公开投影）：白名单字段，教师侧 sourceMd 不下发（fail closed） */
+/**
+ * 材料（学生端公开投影）：手写白名单（非 pick/omit 派生——新增应公开字段
+ * 与 materialSchema 两处手动同步，精确键集测试兜底，见文件头注记）；
+ * 教师侧 sourceMd 不下发（fail closed）。
+ */
 export const materialPublicSchema = z.object({
   id: z.string().min(1),
   title: z.string().optional(),
@@ -109,7 +118,11 @@ export const questionGroupSchema = z.object({
 });
 export type QuestionGroup = z.infer<typeof questionGroupSchema>;
 
-/** 题组（学生端公开投影）：白名单字段，教师侧 sourceMd 不下发 */
+/**
+ * 题组（学生端公开投影）：手写白名单（同 materialPublicSchema：非 pick/omit
+ * 派生、与 questionGroupSchema 两处手动同步、键集测试兜底）；教师侧
+ * sourceMd 不下发（fail closed）。
+ */
 export const questionGroupPublicSchema = z.object({
   id: z.string().min(1),
   title: z.string().optional(),
