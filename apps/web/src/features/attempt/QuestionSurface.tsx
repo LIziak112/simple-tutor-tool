@@ -124,6 +124,7 @@ function ChoiceControls({
       {(question.options ?? []).map((option, index) => (
         // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
         <label
+          // biome-ignore lint/suspicious/noArrayIndexKey: 选项文本可重复（历史数据与合法题面），key 由序号派生是 §4.2 旧题定稿规则
           key={`opt-${index}`}
           className={optionShellClass(picked === index)}
         >
@@ -171,6 +172,7 @@ function MultiControls({
       {(question.options ?? []).map((option, index) => (
         // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
         <label
+          // biome-ignore lint/suspicious/noArrayIndexKey: 选项文本可重复（历史数据与合法题面），key 由序号派生是 §4.2 旧题定稿规则
           key={`opt-${index}`}
           className={optionShellClass(pickedIndexes.includes(index))}
         >
