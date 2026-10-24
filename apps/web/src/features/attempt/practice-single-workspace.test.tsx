@@ -61,6 +61,10 @@ import {
 } from "./practice-preference-store";
 import { workflowOf } from "./practice-test-fixtures";
 
+// 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
+// 5s 默认超时随机击中本文件任意用例——统一 15s（仍保留挂死检测，真卡死 3 倍即报）。
+vi.setConfig({ testTimeout: 15_000 });
+
 /**
  * PracticeWorkspace 集成（M3-D1，§11 纪律 1/7）：v1 新协议卷在作答页引入
  * 列表/单题两种呈现——同一 keyed 题卡序列仅改变容器呈现，互切不重建题面
