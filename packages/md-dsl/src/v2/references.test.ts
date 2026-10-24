@@ -1,5 +1,5 @@
-import { parseDocument } from "./parse.ts";
 import { describe, expect, it } from "vitest";
+import { parseDocument } from "./parse.ts";
 
 /**
  * TT-06 两遍解析第二遍：引用解析与结构校验（§5.4.3 静态面全码表）。
@@ -19,7 +19,7 @@ const VALID_BASE = [
   "正文 {{slot-1}} 与 {{slot-2}}。",
   "::::",
   "",
-  "::::group{id=grp-1 title=\"组题\"}",
+  '::::group{id=grp-1 title="组题"}',
   "::ref{material=mat-1}",
   "::ref{question=q-1}",
   "::ref{question=q-2}",
@@ -116,7 +116,9 @@ describe("组引用健康（§5.4.3）", () => {
   it("组引用未声明材料：UNKNOWN_MATERIAL_REF（题级引用同码）", () => {
     expect(errorCodes(VALID_BASE)).toEqual([]);
     expect(
-      errorCodes(VALID_BASE.replace("::ref{material=mat-1}", "::ref{material=mat-404}")),
+      errorCodes(
+        VALID_BASE.replace("::ref{material=mat-1}", "::ref{material=mat-404}"),
+      ),
     ).toContain("UNKNOWN_MATERIAL_REF");
     expect(
       errorCodes(
@@ -170,9 +172,9 @@ describe("片段锚点校验（§5.2.2 区间语义）", () => {
   });
 
   it("segs= 引用不存在的锚点 id：SEG_REF_UNKNOWN", () => {
-    expect(
-      errorCodes(SEG_BASE.replace("segs=seg-2", "segs=seg-x")),
-    ).toContain("SEG_REF_UNKNOWN");
+    expect(errorCodes(SEG_BASE.replace("segs=seg-2", "segs=seg-x"))).toContain(
+      "SEG_REF_UNKNOWN",
+    );
   });
 
   it("segs= 列表形态：区间 + 单点 + 列表混合合法", () => {
@@ -193,7 +195,10 @@ describe("槽位校验与绑定（§5.2.2）", () => {
 
   it("材料槽位未被绑定：SLOT_UNBOUND", () => {
     const codes = errorCodes(
-      VALID_BASE.replace("第 2 空。::ref{material=mat-1 slot=slot-2}", "第 2 空。"),
+      VALID_BASE.replace(
+        "第 2 空。::ref{material=mat-1 slot=slot-2}",
+        "第 2 空。",
+      ),
     );
     expect(codes).toContain("SLOT_UNBOUND");
   });

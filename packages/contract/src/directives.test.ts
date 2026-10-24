@@ -23,8 +23,8 @@ import {
   optionDirective,
   optionsDirective,
   questionDirective,
-  refDirective,
   type RegisteredDirective,
+  refDirective,
   segDirective,
   solutionDirective,
   stepDirective,
@@ -456,9 +456,9 @@ describe("TT-06 材料与题组指令（§5.4.1 注册草案）", () => {
 
   it("ref：material 与 question 恰写其一（§5.2.1 两种引用形态，语料为准）", () => {
     // 材料引用：material + 可选 segs/slot/slots
-    expect(
-      refDirective.attrs.safeParse({ material: "mat-1" }).success,
-    ).toBe(true);
+    expect(refDirective.attrs.safeParse({ material: "mat-1" }).success).toBe(
+      true,
+    );
     expect(
       refDirective.attrs.safeParse({
         material: "mat-1",
@@ -478,8 +478,7 @@ describe("TT-06 材料与题组指令（§5.4.1 注册草案）", () => {
     ).toBe(false);
     // 未知属性拒绝（strict）
     expect(
-      refDirective.attrs.safeParse({ material: "mat-1", seg: "seg-1" })
-        .success,
+      refDirective.attrs.safeParse({ material: "mat-1", seg: "seg-1" }).success,
     ).toBe(false);
   });
 

@@ -42,7 +42,7 @@ describe("题级 ::ref 抽取（块式 + 行内式）", () => {
         "::::",
         "",
         "::::question{id=q1 type=response}",
-        "::ref{material=mat-1 segs=\"seg-1..seg-2\"}",
+        '::ref{material=mat-1 segs="seg-1..seg-2"}',
         "::ref{material=mat-2}",
         "概括资料。",
         ":::answer",
@@ -81,11 +81,11 @@ describe("题级 ::ref 抽取（块式 + 行内式）", () => {
     expect(q?.options).toEqual([{ text: "甲" }, { text: "乙" }]);
   });
 
-  it("行内式带引号属性（segs=\"seg-1..seg-3\"）正确解析", () => {
+  it('行内式带引号属性（segs="seg-1..seg-3"）正确解析', () => {
     const { q } = question(
       [
         "::::question{id=q1 type=response}",
-        "引用：::ref{material=mat-1 segs=\"seg-1..seg-3\"}",
+        '引用：::ref{material=mat-1 segs="seg-1..seg-3"}',
         ":::answer",
         "参考。",
         ":::",
@@ -99,11 +99,7 @@ describe("题级 ::ref 抽取（块式 + 行内式）", () => {
 
   it("旧七型无 ref：materialRefs 键不注入（旧题目键集不变）", () => {
     const { q } = question(
-      [
-        "::::question{type=judge}",
-        "判断。[[]]",
-        "::::",
-      ].join("\n"),
+      ["::::question{type=judge}", "判断。[[]]", "::::"].join("\n"),
     );
     expect(q && "materialRefs" in q).toBe(false);
   });
@@ -210,7 +206,9 @@ describe("matching：选项池与行式参考（§5.4.2）", () => {
       ].join("\n"),
     );
     expect(
-      issues.some((i) => i.code === "INVALID_OPTION_REF" && i.level === "error"),
+      issues.some(
+        (i) => i.code === "INVALID_OPTION_REF" && i.level === "error",
+      ),
     ).toBe(true);
     expect(q?.answers).toBeUndefined();
   });
@@ -230,9 +228,7 @@ describe("matching：选项池与行式参考（§5.4.2）", () => {
         ":::::",
       ].join("\n"),
     );
-    expect(
-      issues.some((i) => i.code === "INVALID_OPTION_REF"),
-    ).toBe(true);
+    expect(issues.some((i) => i.code === "INVALID_OPTION_REF")).toBe(true);
   });
 
   it("行式格式不符（非 a = b 行）：INVALID_REFERENCE_ANSWER_FORMAT，答案不落字段", () => {
@@ -252,7 +248,8 @@ describe("matching：选项池与行式参考（§5.4.2）", () => {
     );
     expect(
       issues.some(
-        (i) => i.code === "INVALID_REFERENCE_ANSWER_FORMAT" && i.level === "error",
+        (i) =>
+          i.code === "INVALID_REFERENCE_ANSWER_FORMAT" && i.level === "error",
       ),
     ).toBe(true);
     expect(q?.answers).toBeUndefined();
@@ -338,7 +335,7 @@ describe("response：参考 Markdown、多参考表达与字数提示（§5.4.1/
   it(":::answer → referenceMd；:::variant 依次收进 variantsMd；word-min/max 落题面", () => {
     const { q, issues } = question(
       [
-        '::::question{id=r1 type=response word-min=150 word-max=250}',
+        "::::question{id=r1 type=response word-min=150 word-max=250}",
         "概括材料特点。",
         "",
         ":::answer",

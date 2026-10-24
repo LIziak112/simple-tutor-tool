@@ -741,7 +741,8 @@ export const segDirective = defineDirective({
   attrs: directiveAttrs({}),
   description:
     "材料内的片段锚点：包裹一段可被单独引用的块级内容（段/句群/表）。id 缺省按材料内出现顺序生成 seg-序号。用 ::ref{material=… segs=seg-1..seg-3} 选择片段（单个 / 区间 / 列表；区间含中间未列名片段）。只能写在 ::::material 内部。",
-  example: ":::seg{id=seg-1}\n转机出现在试点社区：街道把改造清单拆成三十七个小项。\n:::",
+  example:
+    ":::seg{id=seg-1}\n转机出现在试点社区：街道把改造清单拆成三十七个小项。\n:::",
 });
 
 /** seg 指令属性经注册表 schema 校验后的输出形态 */
@@ -773,14 +774,18 @@ export const refDirective = defineDirective({
   }).refine(
     (attrs) =>
       (attrs.material !== undefined) !== (attrs.question !== undefined),
-    { message: "material 与 question 必须恰写其一（材料引用写 material=，子题引用写 question=）" },
+    {
+      message:
+        "material 与 question 必须恰写其一（材料引用写 material=，子题引用写 question=）",
+    },
   ),
   attrDocs: {
     material: "被引用的材料 id（材料引用时写，与 question 互斥）",
     question: "被引用的子题 id（组内子题引用时写，与 material 互斥）",
     segs: "片段选择，可选：seg-2 单个 / seg-1..seg-3 区间 / seg-1,seg-4 列表；缺省为材料全文",
     slot: "单个槽位绑定，可选：子题绑定该材料的某个槽位作答（完形逐空绑定）",
-    slots: "槽位集合，可选：matching 题声明其槽位区间/列表（如 slot-1..slot-5）",
+    slots:
+      "槽位集合，可选：matching 题声明其槽位区间/列表（如 slot-1..slot-5）",
   },
   description:
     "引用指令：组内引用材料（全组共享展示）或按序引用子题；题内引用材料/片段/槽位。写法 ::ref{material=mat-1}（材料）、::ref{material=mat-1 segs=seg-1..seg-2 slot=slot-3}（题内绑定材料片段与槽位）、::ref{material=mat-1 slots=slot-1..slot-5}（matching 声明槽位集合）、::ref{question=q-1}（组内子题引用，行序即组内题序）。material 与 question 恰写其一；向后引用合法（材料/组可声明在题块之后）。",
@@ -844,14 +849,15 @@ export const itemDirective = defineDirective({
     distractor: booleanAttr(false),
   }),
   attrDocs: {
-    fixed: "固定项标记，缺省 false：写 fixed=true 锁定该项显示位置（位置由参考答案行序定义）",
+    fixed:
+      "固定项标记，缺省 false：写 fixed=true 锁定该项显示位置（位置由参考答案行序定义）",
     distractor:
       "干扰项标记，缺省 false：写 distractor=true 声明该项不属于正确序列；未显式声明时解析从参考序列推导（不在序列即干扰项）",
   },
   description:
     "ordering 排序题的一个排序项：内容为项正文，id 缺省按题内声明顺序生成 item-题目id-序号。fixed=true 为固定项（显示位置由 :::answer 行序锁定，对学生是既定位置提示）；distractor=true 为干扰项（不属于正确序列）。正确顺序写在题内 :::answer（每行一个 id，行序即顺序）。",
   example:
-    ':::item{id=it-2 fixed=true}\n如何对一部作品作出恰如其分的评价？\n:::',
+    ":::item{id=it-2 fixed=true}\n如何对一部作品作出恰如其分的评价？\n:::",
 });
 
 /** item 指令属性经注册表 schema 校验后的输出形态 */

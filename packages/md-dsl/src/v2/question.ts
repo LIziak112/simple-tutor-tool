@@ -1,19 +1,16 @@
 import {
+  defaultItemIdOf,
+  defaultOptionIdOf,
   type LintIssue,
   type MaterialRef,
+  optionsDirective,
   type Question,
   type QuestionAnswers,
   type QuestionDirectiveAttrs,
-  defaultItemIdOf,
-  defaultOptionIdOf,
-  optionsDirective,
   questionDirective,
 } from "@tutor/contract";
 import type { ListItem, RootContent } from "mdast";
-import type {
-  ContainerDirective,
-  LeafDirective,
-} from "mdast-util-directive";
+import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
 import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
 import { materialRefOf, parseRefAttrs } from "./materials.ts";
@@ -277,9 +274,7 @@ function extractQuestion(
       // 选项 → 该参考不落结构化字段（保留原文，发布校验拒绝，§5.4.2）
       if (answerText !== undefined && matchingPool !== undefined) {
         answers = parseMatchingAnswer(answerText, {
-          optionIds: new Set(
-            matchingPool.options.map((option) => option.id),
-          ),
+          optionIds: new Set(matchingPool.options.map((option) => option.id)),
           line: startLine,
           issues,
         });
@@ -542,8 +537,7 @@ function collectInlineRefs(
         found.push({
           ref,
           line: baseLine + newlines,
-          column:
-            lastNewline === -1 ? baseColumn + index : index - lastNewline,
+          column: lastNewline === -1 ? baseColumn + index : index - lastNewline,
         });
       }
       return;
@@ -560,8 +554,9 @@ function extractMatchingOptions(
   issues: LintIssue[],
 ): Question["matchingOptions"] {
   const parsedAttrs = optionsDirective.attrs.safeParse(node.attributes ?? {});
-  const allowRepeat =
-    parsedAttrs.success ? parsedAttrs.data["allow-repeat"] : false;
+  const allowRepeat = parsedAttrs.success
+    ? parsedAttrs.data["allow-repeat"]
+    : false;
   const options: NonNullable<Question["matchingOptions"]>["options"] = [];
   const seenIds = new Map<string, number>();
   let ordinal = 0;
@@ -608,9 +603,7 @@ function parseMatchingAnswer(
 ): QuestionAnswers | undefined {
   const pairs: Record<string, string> = {};
   let broken = false;
-  let answerLine = 0;
   for (const raw of answerText.split("\n")) {
-    answerLine += 1;
     const line = raw.trim();
     if (line.length === 0) continue;
     const match = /^(\S+?)\s*=\s*(\S+)$/.exec(line);
@@ -707,8 +700,7 @@ function extractOrderingItems(
       fixedPosition:
         parseBoolAttr(node, "fixed") && position >= 0 ? position + 1 : null,
       // 干扰项：不在参考序列即干扰项（显式声明优先；§5.4.1 解析推导）
-      distractor:
-        parseBoolAttr(node, "distractor") || position < 0 ? true : false,
+      distractor: !!(parseBoolAttr(node, "distractor") || position < 0),
     };
   });
 }

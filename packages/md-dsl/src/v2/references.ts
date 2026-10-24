@@ -66,7 +66,11 @@ function parseSelection(selection: string): SelectionItem[] {
     if (part.length === 0) continue;
     const range = /^(.+?)\.\.(.+)$/.exec(part);
     if (range !== null) {
-      items.push({ raw: part, from: range[1]?.trim() ?? "", to: range[2]?.trim() });
+      items.push({
+        raw: part,
+        from: range[1]?.trim() ?? "",
+        to: range[2]?.trim(),
+      });
     } else {
       items.push({ raw: part, from: part, to: undefined });
     }
@@ -161,8 +165,13 @@ export function resolveQmReferences(input: QmResolutionInput): void {
   // ---- 材料/片段/槽位引用闭合 + 槽位绑定登记 ----
   /** 每个材料被绑定的槽位：slotId → 派生种类（首个绑定者定种类） */
   const boundSlots = new Map<string, Map<string, "choice" | "match">>();
-  const bind = (materialId: string, slotId: string, kind: "choice" | "match") => {
-    const per = boundSlots.get(materialId) ?? new Map<string, "choice" | "match">();
+  const bind = (
+    materialId: string,
+    slotId: string,
+    kind: "choice" | "match",
+  ) => {
+    const per =
+      boundSlots.get(materialId) ?? new Map<string, "choice" | "match">();
     if (!per.has(slotId)) per.set(slotId, kind);
     boundSlots.set(materialId, per);
   };
@@ -249,7 +258,9 @@ export function resolveQmReferences(input: QmResolutionInput): void {
     // 槽位集合（slots=）：matching 声明槽位集合；其他题型按 choice 绑定收口
     if (ref.slots !== undefined) {
       const owner =
-        site.ownerKind === "question" ? questionById.get(site.ownerId) : undefined;
+        site.ownerKind === "question"
+          ? questionById.get(site.ownerId)
+          : undefined;
       const kind: "choice" | "match" =
         site.ownerKind === "question" && owner?.type === "matching"
           ? "match"

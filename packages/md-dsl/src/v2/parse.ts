@@ -12,14 +12,11 @@ import type { ContainerDirective } from "mdast-util-directive";
 import { extractFrontmatter } from "./frontmatter.ts";
 import { headingText, isH1, splitLectures } from "./lecture.ts";
 import {
-  type MaterialsResult,
   extractMaterialsAndGroups,
+  type MaterialsResult,
 } from "./materials.ts";
 import { extractQuestions, isQuestionContainer } from "./question.ts";
-import {
-  type QmRefSite,
-  resolveQmReferences,
-} from "./references.ts";
+import { type QmRefSite, resolveQmReferences } from "./references.ts";
 import {
   errorMessage,
   FALLBACK_UNIT_ID,
@@ -402,10 +399,7 @@ function parseMixedDocument(ctx: ParseContext): {
     children: ctx.tree.children,
     lines: ctx.lines,
     contentStartLine: ctx.contentStartLine,
-    questionRanges: [
-      ...questionNodes.map(lineRange),
-      ...qm.containerRanges,
-    ],
+    questionRanges: [...questionNodes.map(lineRange), ...qm.containerRanges],
     issues: ctx.issues,
   });
 
@@ -585,7 +579,8 @@ function buildUnit(
   }
   // TT-06：材料与组是叠加元数据（§5.2.4）——不产生题行、不进 questions 平铺
   // 数组；仅在存在时挂载（旧文档解析结果键集不变）
-  if (qm !== undefined && qm.materials.length > 0) unit.materials = [...qm.materials];
+  if (qm !== undefined && qm.materials.length > 0)
+    unit.materials = [...qm.materials];
   if (qm !== undefined && qm.groups.length > 0) unit.groups = [...qm.groups];
   return unit;
 }

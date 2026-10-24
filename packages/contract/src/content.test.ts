@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  type QuestionType,
-  NEW_QUESTION_TYPES,
   documentKindSchema,
   frontmatterSchema,
   lectureSchema,
   lintIssueSchema,
+  NEW_QUESTION_TYPES,
   parsedDocumentSchema,
+  type QuestionType,
   questionAnswersSchema,
   questionPublicSchema,
   questionSchema,

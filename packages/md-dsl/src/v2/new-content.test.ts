@@ -35,7 +35,7 @@ describe("detectNewContent：旧文档零命中（负对照）", () => {
       "折叠内容。",
       ":::",
       "",
-      "::image{src=\"blobs/media/ab.png\"}",
+      '::image{src="blobs/media/ab.png"}',
     ].join("\n");
     expect(detectNewContent(md)).toEqual([]);
   });
@@ -72,7 +72,15 @@ describe("detectNewContent：新题型枚举（§12.2-8）", () => {
   }
 
   it("judge/choice 等旧七型零标记（题型维度负对照）", () => {
-    for (const type of ["judge", "choice", "multi", "fill", "solve", "apply", "find-error"]) {
+    for (const type of [
+      "judge",
+      "choice",
+      "multi",
+      "fill",
+      "solve",
+      "apply",
+      "find-error",
+    ]) {
       expect(
         detectNewContent(OLD_DOC.replace("type=judge", `type=${type}`)).filter(
           (marker) => marker.kind === "question-type",
@@ -122,7 +130,9 @@ describe("detectNewContent：新指令与属性（§5.8.4 清单）", () => {
       "文{{slot-1}}空。",
       "::::",
     ].join("\n");
-    const markers = detectNewContent(md).filter((marker) => marker.kind === "slot");
+    const markers = detectNewContent(md).filter(
+      (marker) => marker.kind === "slot",
+    );
     expect(markers).toHaveLength(1);
     expect(markers[0]?.line).toBeGreaterThan(0);
   });

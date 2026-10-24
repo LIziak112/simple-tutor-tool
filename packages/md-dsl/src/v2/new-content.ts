@@ -1,7 +1,4 @@
-import {
-  NEW_QUESTION_TYPES,
-  getDirective,
-} from "@tutor/contract";
+import { getDirective, NEW_QUESTION_TYPES } from "@tutor/contract";
 import type { Root } from "mdast";
 import { SKIP, visit } from "unist-util-visit";
 import { canonicalName, processor } from "./shared.ts";
@@ -90,7 +87,10 @@ export function detectNewContent(md: string): readonly NewContentUsage[] {
       };
       const name = canonicalName(directive);
       const definition = getDirective(name);
-      if (definition !== undefined && definition.since !== BASE_DIRECTIVE_VERSION) {
+      if (
+        definition !== undefined &&
+        definition.since !== BASE_DIRECTIVE_VERSION
+      ) {
         usages.push({ kind: "directive", name, line, column });
       }
       // question 容器的新题型与新属性在指令节点上判定（question 自身 since 2.0）
@@ -119,8 +119,7 @@ export function detectNewContent(md: string): readonly NewContentUsage[] {
       const lastNewline = before.lastIndexOf("\n");
       return {
         line: baseLine + newlines,
-        column:
-          lastNewline === -1 ? baseColumn + index : index - lastNewline,
+        column: lastNewline === -1 ? baseColumn + index : index - lastNewline,
       };
     };
     for (const match of value.matchAll(SLOT_MARKER_RE)) {

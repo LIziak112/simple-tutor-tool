@@ -1,16 +1,14 @@
 import {
+  defaultGroupIdOf,
+  defaultMaterialIdOf,
+  defaultSegmentIdOf,
+  defaultSlotIdOf,
   type LintIssue,
   type Material,
   type MaterialRef,
   type MaterialSlot,
   type QuestionGroup,
   type SlotKind,
-} from "@tutor/contract";
-import {
-  defaultGroupIdOf,
-  defaultMaterialIdOf,
-  defaultSegmentIdOf,
-  defaultSlotIdOf,
 } from "@tutor/contract";
 import type { RootContent, Text } from "mdast";
 import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
@@ -423,7 +421,8 @@ function collectSlots(
       for (const match of text.value.matchAll(SLOT_MARKER_RE)) {
         const explicit = (match[1] ?? "").trim();
         slots.push({
-          id: explicit.length > 0 ? explicit : defaultSlotIdOf(slots.length + 1),
+          id:
+            explicit.length > 0 ? explicit : defaultSlotIdOf(slots.length + 1),
           // 槽位种类由第二遍引用绑定推导（§5.7.3：choice=完形空位、match=配对槽），
           // 此处先落 text 占位；未绑定槽位由 SLOT_UNBOUND 报错，kind 不再细分
           slotKind: "text" as SlotKind,
