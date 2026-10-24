@@ -11,7 +11,6 @@ import {
   aiPolicyOverrides,
   aiTeacherSettings,
   courses,
-  questions,
   students,
 } from "./schema";
 import { createTestDb, makeMigrationsFolderUpTo } from "./test-utils.ts";
@@ -139,25 +138,14 @@ describe("T6R.2 迁移：空库与带存量库", () => {
       )
       .run(unitId, teacherId, now);
     const questionId = "练习四-1";
-    db.insert(questions)
-      .values({
-        id: questionId,
-        teacherId,
-        unitId,
-        order: 0,
-        type: "judge",
-        difficulty: 1,
-        stemMd: "题干 [[正确]]",
-        optionsJson: null,
-        answersJson: '{"kind":"judge","value":true}',
-        hintsJson: "[]",
-        solutionMd: null,
-        sourceMd: "::::question{type=judge difficulty=1}\n题干 [[正确]]\n::::",
-        version: 3,
-        updatedAt: now,
-        deletedAt: null,
-      })
-      .run();
+    // 题目行同走原生 SQL（tt-05b 0040 前的旧库没有 material_refs_json 列，
+    // Drizzle 当前表模型会带上该列导致旧库插入失败——assignments 同款惯例）
+    db.$client
+      .prepare(
+        `INSERT INTO questions (id, teacher_id, unit_id, "order", type, difficulty, stem_md, options_json, answers_json, hints_json, solution_md, source_md, version, updated_at, deleted_at)
+         VALUES (?, ?, ?, 0, 'judge', 1, '题干 [[正确]]', NULL, '{"kind":"judge","value":true}', '[]', NULL, '::::question{type=judge difficulty=1}\n题干 [[正确]]\n::::', 3, ?, NULL)`,
+      )
+      .run(questionId, teacherId, unitId, now);
     const assignmentId = randomUUID();
     // assignments 同走原生 SQL（M1b 0038 前的旧库没有 allow_per_question_feedback
     // 列，Drizzle 表模型会给带默认值的新列显式赋值导致旧库插入失败）
