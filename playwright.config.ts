@@ -28,6 +28,12 @@ import { defineConfig, devices } from "@playwright/test";
 /** 是否在 CI（GitHub Actions）中运行 */
 const IS_CI = !!process.env.CI;
 
+/** e2e 前端服务模式：E2E_WEB_PREVIEW=1（e2e:full）先 vite build 再 vite preview
+ *  服务构建产物——页面免 dev server 冷转译，加载通常快 2-3 倍。preview 的
+ *  /api 代理与 PWA 禁用见 apps/web/vite.config.ts（E2E_WEB_PREVIEW 经
+ *  process.env 合并自动传入）。e2e:affected 开发循环仍用 dev server 便于排错。 */
+const USE_PREVIEW = process.env.E2E_WEB_PREVIEW === "1";
+
 /** E2E 专用端口：避开日常 dev 的 8787（server）与 5173-517x（vite 自动顺延段） */
 const E2E_SERVER_PORT = 8899;
 const E2E_WEB_PORT = 5199;
@@ -69,8 +75,9 @@ export default defineConfig({
   forbidOnly: IS_CI,
   // CI 重试 1 次吸收 runner 的网络/首编译抖动；本机不重试，避免掩盖真问题
   retries: IS_CI ? 1 : 0,
-  // CI 限并发（2 核 runner）；本机用默认（exactOptionalPropertyTypes：仅 CI 展开）
-  ...(IS_CI ? { workers: 2 } : {}),
+  // CI 限 2（2 核 runner）；本机显式 6——默认值是 CPU 逻辑核数的一半（本机 8），
+  // 16GB 内存下 8 路 Edge/WebKit 并发会顶到内存上限，6 路是实测安全档
+  workers: IS_CI ? 2 : 6,
   reporter: IS_CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: `http://127.0.0.1:${E2E_WEB_PORT}`,
@@ -124,13 +131,18 @@ export default defineConfig({
       gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     },
     {
-      // 同样去 pnpm 壳：node 直接跑 vite bin，cwd 到 apps/web（vite 以 cwd 为 root）
-      command: `node node_modules/vite/bin/vite.js --port ${E2E_WEB_PORT} --strictPort`,
+      // 同样去 pnpm 壳：node 直接跑 vite bin，cwd 到 apps/web（vite 以 cwd 为 root）。
+      // E2E_WEB_PREVIEW=1：先 build 再 preview 服务 dist（对照实验，见上）；build
+      // 产物里的 SW 已被 vite.config.ts 按 E2E_WEB_PREVIEW 禁用
+      command: USE_PREVIEW
+        ? `node node_modules/vite/bin/vite.js build && node node_modules/vite/bin/vite.js preview --port ${E2E_WEB_PORT} --strictPort`
+        : `node node_modules/vite/bin/vite.js --port ${E2E_WEB_PORT} --strictPort`,
       cwd: "apps/web",
       url: `http://127.0.0.1:${E2E_WEB_PORT}`,
       reuseExistingServer: false,
-      // 180s：vite 冷启动（依赖预构建）在 CI 上明显慢于本机
-      timeout: 180_000,
+      // dev 180s：vite 冷启动（依赖预构建）在 CI 上明显慢于本机；
+      // preview 300s：先完整 build（本机 1-2 分钟）再起 preview
+      timeout: USE_PREVIEW ? 300_000 : 180_000,
       env: {
         DEV_API_PROXY_TARGET: `http://127.0.0.1:${E2E_SERVER_PORT}`,
       },
