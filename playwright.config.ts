@@ -132,10 +132,10 @@ export default defineConfig({
     },
     {
       // 同样去 pnpm 壳：node 直接跑 vite bin，cwd 到 apps/web（vite 以 cwd 为 root）。
-      // E2E_WEB_PREVIEW=1：先 build 再 preview 服务 dist（对照实验，见上）；build
-      // 产物里的 SW 已被 vite.config.ts 按 E2E_WEB_PREVIEW 禁用
+      // E2E_WEB_PREVIEW=1：先 build 再 preview 服务 dist（对照实验，见上）；两端都带
+      // --mode e2e-preview——vite.config 以此 mode 裁剪 PWA 插件并启用 preview 代理
       command: USE_PREVIEW
-        ? `node node_modules/vite/bin/vite.js build && node node_modules/vite/bin/vite.js preview --port ${E2E_WEB_PORT} --strictPort`
+        ? `node node_modules/vite/bin/vite.js build --mode e2e-preview && node node_modules/vite/bin/vite.js preview --port ${E2E_WEB_PORT} --strictPort --mode e2e-preview`
         : `node node_modules/vite/bin/vite.js --port ${E2E_WEB_PORT} --strictPort`,
       cwd: "apps/web",
       url: `http://127.0.0.1:${E2E_WEB_PORT}`,

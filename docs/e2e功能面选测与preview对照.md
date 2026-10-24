@@ -30,9 +30,9 @@
 4. `e2e/*.spec.ts` 变动 → 自身标签并入；未登记的新 spec → 全量；
 5. 其余（docs 等）不贡献标签；无命中 → 仅 `@smoke`。
 
-在此之上叠加 Playwright 自带 `--only-changed=<ref>`（只认 spec/helper 的 import 图）：先 `--list` 试探与 grep 的交集，非空才叠加——纯应用源码变更时它选空（应用源码不在 import 图内），直接叠加会把映射表选出的功能面清零。`--list` 不启动 webServer/globalSetup，试探开销约 2s。
+在此之上**不使用** Playwright 自带 `--only-changed`：它只认 spec/helper 的 import 图、认不到应用源码（所以映射表不能省）；且它与 `--grep` 是 AND 关系，叠加会把未变动的冒烟 spec 滤掉，违背「任何选测结果恒含 @smoke」。取而代之：仅 spec 变动（无应用源码命中）时直接以文件参数跑「变动 spec ∪ 冒烟 spec」，精确度相同、恒含冒烟、且省掉一次 `playwright --list` 试探进程。`e2e/` 目录 default-deny：除已登记标签的 spec 外一切路径（fixtures/、package.json、未登记新 spec、未来嵌套目录）一律全量。
 
-决策函数 `decideE2e` 纯函数化，10 组单测（`scripts/e2e-affected.test.mjs`，vitest node project 新增 `scripts/*.test.mjs` include）。
+决策函数 `decideE2e` 纯函数化，12 组单测（`scripts/e2e-affected.test.mjs`，vitest node project 新增 `scripts/*.test.mjs` include）。
 
 ## 三、workers 与 CI
 

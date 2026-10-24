@@ -3,32 +3,35 @@
 // PR CI 闸门与每晚 schedule。决策链（自上而下，命中即止）：
 //   1) 命中 affected-lib 兜底清单（依赖锁/各类配置/契约/迁移/scripts 等，见
 //      affected-lib.mjs）或本脚本 e2e 兜底（packages/**、apps/server/src/db/**、
-//      app.ts、e2e 非 spec 基建如 fake-ai-provider/annotation-assertions）→ 全量
+//      app.ts——前两条是对 lib 清单对应条目的本档加宽：lib 的 packages/contract、
+//      db/schema+migrations 在本档放宽为整个 packages/ 与整个 db/）→ 全量
 //      （全部用例，仍仅 chromium）；
-//   2) 应用源码经显式映射表命中功能面标签（apps/web/src/features/<面> 与
+//   2) e2e/ 目录 default-deny：除已登记标签的 *.spec.ts 外的一切路径
+//      （helpers/global-setup 已由 lib 清单兜底；fixtures/、package.json、
+//      未登记的新 spec、未来嵌套目录如 page-objects/）一律全量——比逐项
+//      列举基建文件更稳，新增文件不可能静默漏成「仅冒烟」；
+//   3) 应用源码经显式映射表命中功能面标签（apps/web/src/features/<面> 与
 //      apps/server/src/routes/<文件>；.test.ts 视同同名实现文件）→
-//      `--grep "@smoke|@x|@y"`；
-//   3) apps/ 下未进映射表的源码（features/markdown、features/shared、src/lib、
-//      services、vite.config 等）是跨功能面共享 → 全量；映射表不能省也正在此：
-//      只有它认识应用源码，Playwright 的 import 图不认识；
-//   4) e2e/*.spec.ts 变动 → 该 spec 自身标签并入 grep；未登记的新 spec → 全量；
-//   5) 其余变动（docs 等）不贡献标签；无任何命中 → 只跑 @smoke。
-// 在 grep 之上再叠加 Playwright 自带 --only-changed=<ref>（它只认 spec/helper 的
-// import 图）：先用 --list 试探两者交集非空才叠加——纯应用源码变更时
-// --only-changed 会选空（应用源码不在 import 图里），直接叠加会把映射表选出的
-// 功能面清零。
+//      `--grep "@smoke|@x|@y"`。映射表不能省：应用源码不出现在任何 spec 的
+//      import 图里，Playwright 自带的 --only-changed 认不到它们；
+//   4) apps/ 下未进映射表的源码（features/markdown、features/shared、src/lib、
+//      services、vite.config 等）是跨功能面共享 → 全量；
+//   5) 仅 spec 变动（无任何应用源码命中）→ 直接以文件参数跑「变动 spec ∪
+//      冒烟 spec」——比 grep 标签面更精确（改一个 spec 不必回归整个功能面），
+//      也保留恒含冒烟。不用 Playwright 的 --only-changed 达成此事：它与
+//      --grep 是 AND 关系，会把未变动的冒烟 spec 一并滤掉，违背「任何选测
+//      结果恒含 @smoke」；
+//   6) 其余变动（docs 等）不贡献标签；无任何命中 → 只跑 @smoke。
 //
 // 用法：node scripts/e2e-affected.mjs [ref]（默认 v2——本仓库开发循环的基线分支，
 // 与 test:affected 的 origin/main 口径不同：v2 长期领先 main，以 main 为基线任何
 // 分支都会摊成全量，选测就失效了）。
 // 环境变量 AFFECTED_DRY_RUN=1 只打印决策不执行。
-import { spawnSync } from "node:child_process";
 import {
   collectChangedFiles,
   hitForceFull,
   runIfMain,
   runOrDryRun,
-  toCommandLine,
 } from "./affected-lib.mjs";
 
 /** 冒烟标签：任何选测结果都包含（三个跨功能面主链 spec，见 SPEC_TAGS） */
@@ -119,6 +122,11 @@ export const SPEC_TAGS = {
   "phase3-full-chain.spec.ts": ["@teacher", "@student"],
 };
 
+/** 冒烟 spec（SPEC_TAGS 里登记 @smoke 的），「仅 spec 变动」档恒随跑 */
+export const SMOKE_SPECS = Object.entries(SPEC_TAGS)
+  .filter(([, tags]) => tags.includes(SMOKE_TAG))
+  .map(([name]) => `e2e/${name}`);
+
 /** apps/web/src/features/<目录名> → 标签；未列目录（markdown、shared）→ 全量 */
 export const FEATURE_DIR_TAGS = {
   admin: ["@admin"],
@@ -144,7 +152,7 @@ export const FEATURE_DIR_TAGS = {
 };
 
 /** apps/server/src/routes/<去 .ts 文件名> → 标签；未列（public、auth 等）→ 全量。
- *  .test.ts 在收集阶段先归一化成同名 .ts，单测与实现文件同一映射。 */
+ *  .test.ts 在判定前先归一化成同名 .ts，单测与实现文件同一映射。 */
 export const ROUTE_TAGS = {
   admin: ["@admin"],
   content: ["@teacher"],
@@ -197,17 +205,16 @@ export const ROUTE_TAGS = {
   "teacher-students": ["@teacher"],
 };
 
-/** e2e 档专属兜底：affected-lib 清单之外，对 e2e 而言全局性的变动 → 全量 */
+/** e2e 档专属兜底：affected-lib 清单之外，对 e2e 而言全局性的变动 → 全量。
+ *  packages/ 与 db/ 两条是 lib 清单对应条目（packages/contract、
+ *  db/schema+migrations）在本档的加宽；e2e/ 目录的兜底不在此列——
+ *  由 decideE2e 里的 default-deny 结构规则统一处理。 */
 const E2E_FORCE_FULL_PATTERNS = [
   // 所有包（不止 contract）：md-dsl/grading 等都会进两端
   /^packages\//,
   // 服务端数据层与装配入口
   /^apps\/server\/src\/db\//,
   /^apps\/server\/src\/app\.ts$/,
-  // e2e 非 spec 基建：fake-ai-provider、annotation-assertions、navigation-ring、
-  // review-resource-probe、fixtures 等（helpers/global-setup 已在 lib 清单）
-  /^e2e\/fixtures\//,
-  /^e2e\/(?!.*\.spec\.ts$)[^/]+\.ts$/,
 ];
 
 /** 全量哨兵：映射表外的 apps/ 源码（跨功能面共享） */
@@ -237,8 +244,9 @@ function tagsForPath(path) {
 
 /**
  * 纯决策函数（供单测）：变更文件清单 → 选测决策。
- * 返回 { mode: "full", reason } 或 { mode: "grep", tags, reason }；
- * grep 模式 tags 恒含 @smoke 且居首。
+ * - { mode: "full", reason }
+ * - { mode: "specs", specs: [...], reason }  仅 spec 变动：specs = 变动 spec ∪ 冒烟 spec
+ * - { mode: "grep", tags: [...], reason }    tags 恒含 @smoke 且居首
  */
 export function decideE2e(changed) {
   const libForce = hitForceFull(changed);
@@ -250,19 +258,18 @@ export function decideE2e(changed) {
       return { mode: "full", reason: `e2e 兜底变动 ${path}` };
     }
   }
-  const tags = new Set([SMOKE_TAG]);
-  const hitFiles = [];
+  const specHits = [];
+  const tagSources = [];
   for (const path of changed) {
-    const specMatch = path.match(/^e2e\/([^/]+\.spec\.ts)$/);
-    if (specMatch) {
-      const specTags = SPEC_TAGS[specMatch[1]];
+    if (path.startsWith("e2e/")) {
+      const name = path.slice("e2e/".length);
+      const specTags = SPEC_TAGS[name];
+      // default-deny：已登记 spec 才放行；fixtures/、package.json、嵌套目录、
+      // 未登记的新 spec 一律全量（新 spec 先去 SPEC_TAGS 打标签）
       if (!specTags) {
-        return { mode: "full", reason: `未登记的 spec ${path}（先打标签）` };
+        return { mode: "full", reason: `e2e/ 下未登记路径 ${path}` };
       }
-      for (const tag of specTags) {
-        tags.add(tag);
-      }
-      hitFiles.push(path);
+      specHits.push(name);
       continue;
     }
     const mapped = tagsForPath(path);
@@ -270,49 +277,42 @@ export function decideE2e(changed) {
       return { mode: "full", reason: `映射表外的应用源码 ${path}` };
     }
     if (mapped) {
-      for (const tag of mapped) {
-        tags.add(tag);
-      }
-      hitFiles.push(path);
+      tagSources.push({ path, tags: mapped });
     }
   }
-  if (hitFiles.length === 0) {
+  if (specHits.length > 0 && tagSources.length === 0) {
+    const specs = [
+      ...new Set([...SMOKE_SPECS, ...specHits.map((n) => `e2e/${n}`)]),
+    ];
+    return {
+      mode: "specs",
+      specs,
+      reason: `仅 spec 变动：${specHits.join("、")}`,
+    };
+  }
+  if (specHits.length === 0 && tagSources.length === 0) {
     return {
       mode: "grep",
       tags: [SMOKE_TAG],
       reason: "无应用源码命中，仅冒烟",
     };
   }
+  const tags = new Set([SMOKE_TAG]);
+  for (const name of specHits) {
+    for (const tag of SPEC_TAGS[name]) {
+      tags.add(tag);
+    }
+  }
+  for (const { tags: mapped } of tagSources) {
+    for (const tag of mapped) {
+      tags.add(tag);
+    }
+  }
   return {
     mode: "grep",
-    tags: [SMOKE_TAG, ...[...tags].filter((tag) => tag !== SMOKE_TAG)],
-    reason: `命中 ${hitFiles.join("、")}`,
+    tags: [...tags],
+    reason: `命中 ${[...specHits.map((n) => `e2e/${n}`), ...tagSources.map((s) => s.path)].join("、")}`,
   };
-}
-
-/** --only-changed 试探：返回「grep × only-changed」交集的用例数（0 = 不叠加）。
- *  --list 不启动 webServer；status!=0（无匹配用例等）一律按 0 处理。 */
-function probeOnlyChangedCount(grep, ref) {
-  const argv = [
-    "pnpm",
-    "exec",
-    "playwright",
-    "test",
-    "--project=chromium",
-    "--grep",
-    grep,
-    `--only-changed=${ref}`,
-    "--list",
-  ];
-  const probe = spawnSync(toCommandLine(argv), {
-    shell: true,
-    encoding: "utf8",
-  });
-  if (probe.status !== 0) {
-    return 0;
-  }
-  return probe.stdout.split("\n").filter((line) => /\.spec\.ts/.test(line))
-    .length;
 }
 
 function main() {
@@ -321,33 +321,24 @@ function main() {
   const summary =
     decision.mode === "full"
       ? `全量（${decision.reason}）`
-      : `--grep "${decision.tags.join("|")}"（${decision.reason}）`;
+      : decision.mode === "specs"
+        ? `直跑 ${decision.specs.join(" ")}（${decision.reason}）`
+        : `--grep "${decision.tags.join("|")}"（${decision.reason}）`;
   console.log(`[e2e-affected] 基线 ${ref}：${summary}`);
 
+  // 全量 = 全部用例，本档仍只跑 chromium；webkit 与双浏览器全量归 PR CI / 夜跑
   const base = ["pnpm", "exec", "playwright", "test", "--project=chromium"];
   if (decision.mode === "full") {
-    // 全量 = 全部用例，本档仍只跑 chromium；webkit 与双浏览器全量归 PR CI / 夜跑
     return runOrDryRun("e2e-affected", base);
   }
-  const grep = decision.tags.join("|");
-  const argv = [...base, "--grep", grep];
-
-  // 叠加 --only-changed：纯应用源码变更时它会选空（import 图不认识应用源码），
-  // 必须先试探交集，非空才叠加，映射表的结论不被清零
-  if (process.env.AFFECTED_DRY_RUN !== "1") {
-    const count = probeOnlyChangedCount(grep, ref);
-    if (count > 0) {
-      console.log(
-        `[e2e-affected] 叠加 --only-changed=${ref}（交集 ${count} 条用例）`,
-      );
-      argv.push(`--only-changed=${ref}`);
-    } else {
-      console.log(
-        `[e2e-affected] 不叠加 --only-changed（交集为空，应用源码不在 spec import 图内）`,
-      );
-    }
+  if (decision.mode === "specs") {
+    return runOrDryRun("e2e-affected", [...base, ...decision.specs]);
   }
-  return runOrDryRun("e2e-affected", argv);
+  return runOrDryRun("e2e-affected", [
+    ...base,
+    "--grep",
+    decision.tags.join("|"),
+  ]);
 }
 
 runIfMain(import.meta.url, main);

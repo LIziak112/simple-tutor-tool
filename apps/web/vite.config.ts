@@ -12,10 +12,11 @@ import { pwaManifest } from "./src/lib/pwa-manifest";
 // web=jsdom 环境；本文件不含 test 段）——在 apps/web 下直接跑 vitest 会
 // 缺 jsdom 环境与 @ 别名（T6R.8 复审⑮注记）。
 
-/** e2e 全量对照模式（e2e:full，E2E_WEB_PREVIEW=1，playwright.config.ts 传入）：
- *  走 vite build + preview。此模式下禁用 PWA 插件——e2e 的 PUBLIC_URL 本就是
- *  http 不会注册 SW，这里再保证构建产物不含 sw.js，preview 下无缓存干扰。 */
-const E2E_PREVIEW = process.env.E2E_WEB_PREVIEW === "1";
+// e2e 全量对照模式（E2E_WEB_PREVIEW=1 → playwright.config 的 webServer 以
+// `--mode e2e-preview` 跑 vite build + preview）：此模式下不启用 PWA 插件——
+// e2e 的 PUBLIC_URL 本就是 http 不会注册 SW，这里再保证构建产物不含 sw.js，
+// preview 下无缓存干扰。模式契约是命令行 --mode 参数（vite 内建挂点），
+// 不是又一个 env 字符串。
 
 /** Excalidraw 静态资源的对外 URL 前缀（适配器设置 window.EXCALIDRAW_ASSET_PATH） */
 const EXCALIDRAW_ASSET_PREFIX = "/excalidraw-assets/";
@@ -144,12 +145,12 @@ const proxyConfig = {
   "/mcp": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
 };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
     excalidrawAssets(),
-    ...(E2E_PREVIEW ? [] : [pwa()]),
+    ...(mode === "e2e-preview" ? [] : [pwa()]),
   ],
   resolve: {
     alias: {
@@ -173,4 +174,4 @@ export default defineConfig({
     proxy: proxyConfig,
   },
   // build.outDir 保持默认 dist：生产模式由 apps/server 托管 apps/web/dist
-});
+}));

@@ -1,7 +1,12 @@
 // e2e-affected 决策函数单测：选测语义的回归网（纯函数，不碰 git/playwright）
 import { readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ALL_TAGS, decideE2e, SPEC_TAGS } from "./e2e-affected.mjs";
+import {
+  ALL_TAGS,
+  decideE2e,
+  SMOKE_SPECS,
+  SPEC_TAGS,
+} from "./e2e-affected.mjs";
 
 describe("decideE2e 选测决策", () => {
   it("无任何命中 → 只跑冒烟", () => {
@@ -54,13 +59,28 @@ describe("decideE2e 选测决策", () => {
     });
   });
 
-  it("spec 变动并入自身标签；未登记的 spec 兜底全量", () => {
-    expect(decideE2e(["e2e/mcp-smoke.spec.ts"])).toEqual({
-      mode: "grep",
-      tags: ["@smoke", "@mcp"],
-      reason: "命中 e2e/mcp-smoke.spec.ts",
-    });
-    expect(decideE2e(["e2e/brand-new.spec.ts"]).mode).toBe("full");
+  it("仅 spec 变动 → 直跑变动 spec ∪ 冒烟 spec（文件参数，恒含冒烟）", () => {
+    const decision = decideE2e(["e2e/mcp-smoke.spec.ts"]);
+    expect(decision.mode).toBe("specs");
+    expect(decision.specs).toEqual([
+      ...SMOKE_SPECS.filter((s) => !s.includes("mcp-smoke")),
+      "e2e/mcp-smoke.spec.ts",
+    ]);
+    // 冒烟 spec 自身变动时不重复列出
+    const smokeOnly = decideE2e(["e2e/full-chain.spec.ts"]);
+    expect(smokeOnly.mode).toBe("specs");
+    expect(smokeOnly.specs).toEqual([...SMOKE_SPECS]);
+  });
+
+  it("spec 与功能面源码同时变动 → 标签并集（grep 档）", () => {
+    const decision = decideE2e([
+      "e2e/mcp-smoke.spec.ts",
+      "apps/web/src/features/annotation/Overlay.tsx",
+    ]);
+    expect(decision.mode).toBe("grep");
+    expect(new Set(decision.tags)).toEqual(
+      new Set(["@smoke", "@mcp", "@annotation"]),
+    );
   });
 
   it("兜底清单 → 全量", () => {
@@ -73,8 +93,9 @@ describe("decideE2e 选测决策", () => {
       "e2e/helpers.ts",
       "e2e/global-setup.ts",
       "e2e/fake-ai-provider.ts",
-      "e2e/annotation-assertions.ts",
       "e2e/fixtures/ai-review-samples.md",
+      "e2e/navigation-ring.ts",
+      "e2e/review-resource-probe.ts",
       "playwright.config.ts",
       "scripts/affected-lib.mjs",
       "pnpm-lock.yaml",
@@ -83,6 +104,17 @@ describe("decideE2e 选测决策", () => {
         mode: "full",
         reason: expect.stringContaining(path),
       });
+    }
+  });
+
+  it("e2e/ 目录 default-deny：未登记路径（含嵌套、非 ts、新 spec）一律全量", () => {
+    for (const path of [
+      "e2e/brand-new.spec.ts",
+      "e2e/package.json",
+      "e2e/page-objects/login.ts",
+      "e2e/tsconfig.json",
+    ]) {
+      expect(decideE2e([path]).mode, path).toBe("full");
     }
   });
 
@@ -131,5 +163,13 @@ describe("标签登记完整性", () => {
     for (const spec of specs) {
       expect(SPEC_TAGS[spec], spec).toBeDefined();
     }
+  });
+
+  it("SMOKE_SPECS 与 @smoke 登记一致（恒含冒烟的数据源）", () => {
+    expect(SMOKE_SPECS).toEqual([
+      "e2e/full-chain.spec.ts",
+      "e2e/student-course-practice.spec.ts",
+      "e2e/password-login.spec.ts",
+    ]);
   });
 });

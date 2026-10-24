@@ -15,7 +15,7 @@
     "test:affected": "node scripts/test-affected.mjs origin/main",
     "test:full": "vitest run --passWithNoTests",
     "e2e": "playwright test",
-    "e2e:full": "playwright test",
+    "e2e:full": "pnpm run e2e",
     "e2e:affected": "node scripts/e2e-affected.mjs",
     "lint": "biome check .",
     "lint:changed": "node scripts/lint-affected.mjs origin/main",
