@@ -243,6 +243,12 @@ export const importCommitDataSchema = z.object({
   units: z.array(importUnitReportSchema),
   lectures: z.array(importLectureReportSchema),
   questions: importQuestionsReportSchema,
+  /**
+   * 材料/组导入统计（tt-06b / QM-05 可选增量，形状同题目统计；缺省兼容
+   * 历史留档 JSON）。材料/组不产生题行——题目统计只数可答子题。
+   */
+  materials: importQuestionsReportSchema.optional(),
+  groups: importQuestionsReportSchema.optional(),
 });
 
 // ---------- tt-06b / QM-05：材料/题组编辑与删除（教师端，片段原文提交） ----------

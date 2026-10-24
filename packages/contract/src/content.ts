@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   materialRefSchema,
   materialSchema,
+  questionGroupSchema,
   unitGroupSchema,
 } from "./material.ts";
 import { practiceRecommendationSchema } from "./practice-workflow.ts";
@@ -425,6 +426,19 @@ export const parsedDocumentSchema = z.object({
   frontmatter: frontmatterSchema.optional(),
   lectures: z.array(lectureSchema).default([]),
   units: z.array(unitSchema).default([]),
+  /**
+   * 文档顶层材料实体（完整形态含 sourceMd，tt-06b / QM-05）：unit.materials
+   * 与本数组同源（同对象）；导入落库读这里（单一事实来源，§5.2.5-2）。
+   * 可选、禁止 z.default()——旧文档（无材料）解析结果键集不变。
+   */
+  materials: z.array(materialSchema).optional(),
+  /**
+   * 文档顶层题组实体（完整形态含 sourceMd/introMd，tt-06b / QM-05）。注意
+   * unit.groups 是 §5.2.4 定稿的**索引形态**（unitGroupSchema，不带组源文），
+   * 落库需要源文——导入层从这里取完整实体（同源抽取，两处视图）。
+   * 可选、禁止 z.default()——旧文档解析结果键集不变。
+   */
+  groups: z.array(questionGroupSchema).optional(),
   issues: z.array(lintIssueSchema).default([]),
 });
 

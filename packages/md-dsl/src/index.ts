@@ -36,6 +36,13 @@ export type {
   NormalizeQmIdsOptions,
 } from "./v2/normalize-ids.ts";
 export { normalizeQmIds } from "./v2/normalize-ids.ts";
+// TT-06 新内容检测（决策记录 §5.8.4 触发清单）：NEW_CONTENT_DISABLED 的判定面，
+// 导入层（QM-05）消费——本包只检测，不产 lint issue。无解析器核心改动。
+export type { NewContentUsage } from "./v2/new-content.ts";
+export { detectNewContent } from "./v2/new-content.ts";
+// ::ref 属性串解析（行内式 ::ref 的属性抽取单源，materials.ts 单一出处）：
+// 服务端导入层（P2-2 题内块式 ::ref{question=} 告警）复用，不另写一份。
+export { parseRefAttrs } from "./v2/materials.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
 // 题干形态变换唯一公开面：学生端 payload 用 studentStemMd（脱敏 + 剥选项），
