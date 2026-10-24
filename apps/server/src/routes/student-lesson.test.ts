@@ -2580,3 +2580,125 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
     expect(anonymous.status).toBe(401);
   });
 });
+
+// ---------- QM-12（TT-09c）：自评行讲练汇总与 P3-1 口径对齐 ----------
+
+/** 自评夹具：choice（auto）+ 带参考 fill（reference_self，开关开启时冻结） */
+const LESSON_SELF_REVIEW_MD = `---
+kind: lesson
+unit: 自评讲练
+topic: 单题自评
+---
+
+# 第3讲 自评练习
+
+::::question{type=choice difficulty=1}
+下列是正整数的是：
+
+- [ ] $-1$
+- [x] $1$
+::::
+
+::::question{type=fill difficulty=2}
+计算：$1+1=$ [[2]]。
+::::
+`;
+
+const SR = { choice: "自评讲练-1", fill: "自评讲练-2" } as const;
+
+describe("QM-12：reference_self 行讲练自评与汇总口径（P3-1 对齐）", () => {
+  /** 开关开启开卷的自评夹具（gradingPolicy 冻结 auto / reference_self） */
+  async function makeSelfReviewEnv(): Promise<{
+    env: TestEnv;
+    attemptId: string;
+    revisions: Map<string, string>;
+  }> {
+    const env = await makeEnv({ markdown: LESSON_SELF_REVIEW_MD });
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    let started: StartBody;
+    try {
+      started = await startOk(env);
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+    return {
+      env,
+      attemptId: started.data.attempt.id,
+      revisions: new Map(
+        started.data.questions.map((q) => [q.id, q.questionRevisionId]),
+      ),
+    };
+  }
+
+  it("提交一题自评后：自评回执汇总只计已提交行（P3-1 对齐），自评计入 correct、未自评不进教师待批", async () => {
+    const { env, attemptId, revisions } = await makeSelfReviewEnv();
+    // 冻结策略断言（§5.6 表）：choice=auto、有参考 fill=reference_self
+    expect(
+      env.db
+        .select({ policy: responses.gradingPolicy })
+        .from(responses)
+        .where(eq(responses.attemptId, attemptId))
+        .all()
+        .map((r) => r.policy),
+    ).toEqual(["auto", "reference_self"]);
+
+    // 两题都存草稿，只提交 fill（讲练进行中卷）
+    await saveDraftAnswer(env, attemptId, SR.choice, {
+      kind: "choice",
+      index: 0,
+    });
+    await saveDraftAnswer(env, attemptId, SR.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    const submitted = await submitQuestionOk(
+      env,
+      attemptId,
+      SR.fill,
+      revisions.get(SR.fill) ?? "",
+    );
+    // 单题提交响应的 summary（lessonLiveSummaryOf）：已提交 fill 未自评 → pending
+    expect(submitted.data.summary).toMatchObject({
+      total: 2,
+      answered: 1,
+      correct: 0,
+      wrong: 0,
+      pending: 1,
+      unanswered: 1,
+      // D4 教师待批：reference_self 行不进教师队列
+      pendingCount: 0,
+    });
+
+    // 讲练当题释放 → 自评 fill=correct；回执汇总（attemptScoreSummaryOf）
+    // 与 lessonLive 口径对齐：只计已提交行，自评计入 correct（P3-1 修复前
+    // 整卷计数：草稿 choice 计入 answered、未提交行计入 pending）
+    const reviewRes = await env.app.request(
+      `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(
+        SR.fill,
+      )}/self-review`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.memberCookie },
+        body: JSON.stringify({
+          verdict: "correct",
+          baseRevision: 0,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    expect(reviewRes.status).toBe(200);
+    const reviewBody = (await reviewRes.json()) as SubmitBody;
+    expect(reviewBody.data.summary).toMatchObject({
+      total: 2,
+      answered: 1,
+      correct: 1,
+      wrong: 0,
+      pending: 0,
+      unanswered: 1,
+      autoGradable: 1,
+      pendingCount: 0,
+    });
+  });
+});

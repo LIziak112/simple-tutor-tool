@@ -17,6 +17,8 @@ import {
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
+  type EffectiveVerdict,
+  effectiveVerdictOf,
   type GradingPolicy,
   type HintOpenedEntry,
   type LessonQuestionSubmitData,
@@ -41,6 +43,7 @@ import {
   type StudentPaperUnit,
   type SubmitEvidenceDeclaration,
   studentAnswerSchema,
+  type TeacherMark,
 } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import {
@@ -2379,63 +2382,68 @@ export function submitAttempt(
  * attempt 级得分汇总的读侧现算（QM-10 / TT-09a：自评响应的 summary 消费；
  * 结果视图的完整汇总仍走 buildResultData 的公布感知投影——本函数只服务
  * 「已过公布 gate」的回执场景，不做受限形态投影）：
- * - total/answered/correct/wrong/pending/unanswered/autoGradable 与结果视图
- *   scoreSummaryOf 同口径（全卷行、answer 非空即 answered、autoCorrect 三分）；
+ * - QM-12（TT-09c）起 correct/wrong/pending 为**有效判定口径**（教师判 >
+ *   自评 > 自动——自评对/错计入，未自评 reference_self 行计 pending），
+ *   与结果视图 scoreSummaryOf、讲练 lessonLiveSummaryOf 同一核心；
  * - scoreFinal 读 attempt 行（自评不推动 graded/scoreFinal——教师权威线）；
- * - pendingCount 走 pendingMarkCount（D4 共享谓词，QM-10 起排除
- *   reference_self 行）；快照缺失的历史行跳过（与判分/视图口径一致）。
+ * - pendingCount 是 D4 教师待批计数（排除 reference_self 行；快照缺失的历史
+ *   行跳过——与判分/视图口径一致）。
  */
 export function attemptScoreSummaryOf(
   db: Db,
   attempt: Pick<Attempt, "id" | "status"> & { scoreFinal: number | null },
 ): AttemptScoreSummary {
+  // P3-1（TT-09a 审查遗留，本单定夺=对齐）：与 lessonLiveSummaryOf 共用同一
+  // 计数核心（scoreSummaryCoreOf）。非 draft 卷按已收尾口径整卷计数（行为与
+  // 旧实现一致）；draft 卷（lesson / v1 逐题进行中）只计已单题提交的行——
+  // 修复前该函数整卷计数，与讲练开卷投影/单题提交响应的 lessonLive 口径
+  // 漂移（草稿答案也计入 answered、未提交行计入 pending）。
   const rows = db
     .select({
+      hasSnapshot:
+        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
+          Boolean,
+        ),
       answerJson: responses.answerJson,
+      submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
+      finalCorrect: responses.finalCorrect,
+      gradingPolicy: responses.gradingPolicy,
+      teacherMark: responses.teacherMark,
+      selfReviewVerdict: responses.selfReviewVerdict,
+      selfReviewAt: responses.selfReviewAt,
+      selfReviewRevision: responses.selfReviewRevision,
     })
     .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attempt.id),
-        isNotNull(responses.questionSnapshotJson),
-      ),
-    )
+    .where(eq(responses.attemptId, attempt.id))
     .all();
-  const total = rows.length;
-  const answered = rows.filter((r) => answerOf(r.answerJson) !== null).length;
-  const correct = rows.filter((r) => r.autoCorrect === true).length;
-  const wrong = rows.filter((r) => r.autoCorrect === false).length;
   return {
-    total,
-    answered,
-    correct,
-    wrong,
-    pending: total - correct - wrong,
-    unanswered: total - answered,
-    autoGradable: correct + wrong,
+    ...scoreSummaryCoreOf(rows, {
+      finalized: attempt.status !== "draft",
+    }),
     scoreFinal: attempt.scoreFinal,
-    pendingCount: pendingMarkCount(db, attempt),
   };
 }
 
 /**
- * lesson 卷的读侧现算汇总（2026-10 讲练一体；lesson-service 开卷投影与
- * submitLessonQuestion 响应共用同一口径，单一出处）：
- * - 仅**已提交行**（responses.submittedAt 非空）计入对错（autoCorrect）与
- *   answered（answer 非 null），未提交行全部计入 unanswered——「提交瞬间看到
- *   部分汇总、刷新 start 又变」两者永不漂移；
- * - pendingCount 按 D4 的 finalCorrect 口径只数已提交行（进行中卷教师课中
- *   批改后即归零）；
- * - scoreFinal 读 attempt 行（进行中恒 null；离开 draft 时由收尾链路写入）；
- * - 快照缺失的历史行跳过（与判分/视图口径一致；lesson 建卷即冻结全快照，
- *   正常链路无此类行）。
+ * 得分汇总的统一计数核心（QM-12 / TT-09c，P3-1 对齐的落点）：correct/wrong/
+ * pending 为**有效判定口径**（教师判 > 自评 > 自动，effectiveVerdictOfRow
+ * 单一出处）；pendingCount 恒 D4 教师待批（finalCorrect IS NULL 且非
+ * reference_self 行——与 pending-mark.ts 谓词同口径，快照空行已由 hasSnapshot
+ * 排除）。attemptScoreSummaryOf（自评回执）与 lessonLiveSummaryOf（讲练开卷
+ * 投影/单题提交响应）共用本核心，两函数只差行集来源：
+ * - finalized=false（进行中卷）：仅**已提交行**（responses.submittedAt 非空）
+ *   计入对错与 answered，未提交行只进 total/unanswered——「提交瞬间看到部分
+ *   汇总、刷新 start 又变」两者永不漂移；
+ * - finalized=true（已收尾卷）：整卷口径（legacy 协议行不写行级 submittedAt，
+ *   与 attemptFinalOutcomeOf 的 finalized 归一同口径）。
+ * 快照缺失的历史行跳过（与判分/视图口径一致）。
  */
 
-/** lessonLiveSummaryOf 的判定输入行（M2 起快照列降为存在性布尔——汇总
- *  判定只需要「快照非空」与对错计数，不再搬运每题数 KB 的快照原文；单题
- *  提交事务带出的行集即此形态，开卷链路用完整行按此映射） */
-interface LessonSummaryRow {
+/** 汇总核心的判定输入行（M2 起快照列降为存在性布尔——汇总判定只需要
+ *  「快照非空」与判定计数，不再搬运每题数 KB 的快照原文；单题提交事务带出
+ *  的行集即此形态，开卷链路用完整行按此映射） */
+export interface ScoreSummaryRow {
   hasSnapshot: boolean;
   answerJson: string | null;
   submittedAt: string | null;
@@ -2444,12 +2452,16 @@ interface LessonSummaryRow {
   /** QM-10：pendingCount 排除 reference_self 行（教师必批谓词同口径） */
   gradingPolicy: GradingPolicy | null;
   teacherMark: string | null;
+  /** QM-12：有效判定需要自评记录（teacherMark 与 autoCorrect 均空时回落） */
+  selfReviewVerdict: "correct" | "wrong" | null;
+  selfReviewAt: string | null;
+  selfReviewRevision: number;
 }
 
-export function lessonLiveSummaryOf(
-  rows: readonly LessonSummaryRow[],
-  attempt: Pick<Attempt, "scoreFinal">,
-): AttemptScoreSummary {
+export function scoreSummaryCoreOf(
+  rows: readonly ScoreSummaryRow[],
+  opts: { finalized: boolean },
+): Omit<AttemptScoreSummary, "scoreFinal"> {
   let total = 0;
   let answered = 0;
   let correct = 0;
@@ -2459,13 +2471,14 @@ export function lessonLiveSummaryOf(
   for (const row of rows) {
     if (!row.hasSnapshot) continue;
     total += 1;
-    if (row.submittedAt === null) continue;
+    if (row.submittedAt === null && !opts.finalized) continue;
     if (answerOf(row.answerJson) !== null) answered += 1;
-    if (row.autoCorrect === true) correct += 1;
-    else if (row.autoCorrect === false) wrong += 1;
-    else pending += 1;
-    // QM-10：D4 必批谓词排除 reference_self 行（有参考走自评，不进教师必批
-    // ——pending-mark.ts 同口径；null 策略旧行不受影响）
+    const effective = effectiveVerdictOfRow(row);
+    if (effective === null) pending += 1;
+    else if (effective.value) correct += 1;
+    else wrong += 1;
+    // D4 教师待批：finalCorrect IS NULL 且非 reference_self 行（pending-mark.ts
+    // 谓词同口径；null 策略旧行不受影响）
     if (row.finalCorrect === null && row.gradingPolicy !== "reference_self") {
       pendingCount += 1;
     }
@@ -2478,8 +2491,24 @@ export function lessonLiveSummaryOf(
     pending,
     unanswered: total - answered,
     autoGradable: correct + wrong,
-    scoreFinal: attempt.scoreFinal,
     pendingCount,
+  };
+}
+
+/**
+ * lesson 卷的读侧现算汇总（2026-10 讲练一体；lesson-service 开卷投影与
+ * submitLessonQuestion 响应共用同一口径，单一出处；QM-12 起计数核心与
+ * attemptScoreSummaryOf 统一为 scoreSummaryCoreOf——P3-1 口径并存的兜底
+ * 定夺即「对齐到同一核心」）。进行中卷恒 finalized=false（调用方只在
+ * draft 卷消费本函数；已收尾卷的结果视图走 buildResultData）。
+ */
+export function lessonLiveSummaryOf(
+  rows: readonly ScoreSummaryRow[],
+  attempt: Pick<Attempt, "scoreFinal">,
+): AttemptScoreSummary {
+  return {
+    ...scoreSummaryCoreOf(rows, { finalized: false }),
+    scoreFinal: attempt.scoreFinal,
   };
 }
 
@@ -2512,7 +2541,7 @@ function autoFinishPerQuestionAttempt(
   tx: Tx,
   attemptId: string,
   nowIso: string,
-): { rows: LessonSummaryRow[]; attempt: Attempt | null } {
+): { rows: ScoreSummaryRow[]; attempt: Attempt | null } {
   const rowsAfter = tx
     .select({
       // 快照原文不搬运（每题数 KB，收尾判定只需要存在性）
@@ -2529,6 +2558,10 @@ function autoFinishPerQuestionAttempt(
       // QM-10 细项7：收尾判定与 lesson 汇总的 pendingCount 需要（§5.5.5）
       gradingPolicy: responses.gradingPolicy,
       teacherMark: responses.teacherMark,
+      // QM-12：汇总核心的有效判定需要自评记录（reference_self 行回落）
+      selfReviewVerdict: responses.selfReviewVerdict,
+      selfReviewAt: responses.selfReviewAt,
+      selfReviewRevision: responses.selfReviewRevision,
     })
     .from(responses)
     .where(eq(responses.attemptId, attemptId))
@@ -3244,10 +3277,22 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * 讲练一体起导出供 lesson-service 复用。
  */
 /**
+ * teacherMark 列值的枚举收窄（列无 $type，按 D9 值域收窄给投影用）。原定义在
+ * self-review-service（TT-09a），QM-12 移驻本文件：有效判定单一出处需要同一
+ * 收窄，教师详情/汇总/错题/学情各消费面不再各写一份。
+ */
+export function teacherMarkOf(value: string | null): TeacherMark | null {
+  return value === "correct" || value === "wrong" ? value : null;
+}
+
+/**
  * 行上自评记录的读取投影（QM-10 定义于 self-review-service，TT-09b 移驻本
  * 文件：结果单题投影与自评服务共用同一读取口径，且避免 attempt-service ←→
  * self-review-service 值循环）。verdict 列只存实际判断——undecided 已清除
  * 为 null；revision 的单独下发见 resultQuestionOf。
+ * P3-2（TT-09a 审查遗留，本单落地）：脏行防御——verdict 非空而 at 缺失
+ * （异常/历史写入）时契约 at min(1) 不成立，按「无记录」降级并 warn 留痕
+ * （服务层拿不到 app 层 pino 实例，用固定前缀便于检索），不伪造空时间戳。
  */
 export function selfReviewRecordOf(
   row: Pick<
@@ -3256,11 +3301,41 @@ export function selfReviewRecordOf(
   >,
 ): SelfReviewRecord | null {
   if (row.selfReviewVerdict === null) return null;
+  if (row.selfReviewAt === null) {
+    console.warn(
+      `【数据异常】responses 自评脏行（verdict 非空而 at 缺失），按无记录降级（revision=${row.selfReviewRevision}）`,
+    );
+    return null;
+  }
   return {
     verdict: row.selfReviewVerdict,
-    at: row.selfReviewAt ?? "",
+    at: row.selfReviewAt,
     revision: row.selfReviewRevision,
   };
+}
+
+/**
+ * 行级有效判定单一出处（QM-12 细项1：教师判 > 自评 > 自动，与契约
+ * effectiveVerdictOf 同序）。服务端各消费面（教师详情计数、错题集合、学情
+ * 统计、CSV/材料整理包、AI 复盘过滤）一律经本函数，不再各写
+ * `finalCorrect ?? autoCorrect` 之类的快捷回落——该口径对自评行恒漏判
+ * （reference_self 行 finalCorrect 恒 null）。
+ */
+export function effectiveVerdictOfRow(
+  row: Pick<
+    ResponseRow,
+    | "autoCorrect"
+    | "teacherMark"
+    | "selfReviewVerdict"
+    | "selfReviewAt"
+    | "selfReviewRevision"
+  >,
+): EffectiveVerdict | null {
+  return effectiveVerdictOf(
+    row.autoCorrect,
+    teacherMarkOf(row.teacherMark),
+    selfReviewRecordOf(row),
+  );
 }
 
 export function resultQuestionOf(
@@ -3320,18 +3395,31 @@ export function studentFacingResultOf(
   };
 }
 
-/** 得分汇总的自动判分计数部分（口径与 scoreAutoOf 一致：scoreAuto =
- * correct/autoGradable 百分比）。D9 的 scoreFinal/pendingCount 不在此算——
- * 前者取 attempt 行、后者走 pendingMarkCount（D4 共享谓词），由 buildResultData
- * 组装进完整 AttemptScoreSummary */
+/** 得分汇总的判定计数部分（QM-12 起有效判定口径：教师判 > 自评 > 自动——
+ *  与逐题徽章 verdictBadgeDisplayOf 同一显示口径，汇总与徽章不再漂移；
+ *  未公布的受限形态由 buildResultData 覆写不泄露对错）。D9 的 scoreFinal/
+ *  pendingCount 不在此算——前者取 attempt 行、后者走 pendingMarkCount
+ *  （D4 共享谓词），由 buildResultData 组装进完整 AttemptScoreSummary */
 function scoreSummaryOf(
   rows: readonly AttemptResultQuestion[],
 ): Omit<AttemptScoreSummary, "scoreFinal" | "pendingCount"> {
   const total = rows.length;
   const answered = rows.filter((r) => r.answer !== null).length;
-  const correct = rows.filter((r) => r.autoCorrect === true).length;
-  const wrong = rows.filter((r) => r.autoCorrect === false).length;
-  const pending = rows.filter((r) => r.autoCorrect === null).length;
+  let correct = 0;
+  let wrong = 0;
+  let pending = 0;
+  for (const item of rows) {
+    // 有效判定（公布 gate 已过：selfReview/teacherMark/autoCorrect 均为真实值；
+    // 未公布形态的覆写在 buildResultData）
+    const effective = effectiveVerdictOf(
+      item.autoCorrect,
+      item.teacherMark,
+      item.selfReview?.record ?? null,
+    );
+    if (effective === null) pending += 1;
+    else if (effective.value) correct += 1;
+    else wrong += 1;
+  }
   return {
     total,
     answered,
