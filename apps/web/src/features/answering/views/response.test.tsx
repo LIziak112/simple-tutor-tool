@@ -222,6 +222,27 @@ describe("responseView.Reference / Comparison（参考与对照）", () => {
     );
     expect(screen.getByText("我的概括。")).toBeInTheDocument();
     expect(screen.getByText(/气温在波动中回升/)).toBeInTheDocument();
+    // QM-11 细项 2：对照面附字数行（契约单源；无建议时不带括号）；未作答不显示
+    expect(screen.getByText("正文共 5 字")).toBeInTheDocument();
+    rerender(
+      responseView.Comparison({
+        model: modelWithHints,
+        answer: { kind: "response", body: "This is a pen." },
+        reference: { status: "available", reference },
+      }),
+    );
+    expect(
+      screen.getByText("正文共 4 字（建议 150–250 字）"),
+    ).toBeInTheDocument();
+    rerender(
+      responseView.Comparison({
+        model: modelWithHints,
+        answer: undefined,
+        reference: { status: "available", reference },
+      }),
+    );
+    expect(screen.queryByText(/正文共/)).toBeNull();
+    expect(screen.getByText("未作答")).toBeInTheDocument();
   });
 });
 

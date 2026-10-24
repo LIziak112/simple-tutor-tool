@@ -128,14 +128,32 @@ export const responseView: AnswerKindView<
       ))}
     </div>
   ),
-  Comparison: ({ model, answer, reference }) => (
-    <AnswerComparisonShell
-      ownColumn={responseView.ReadOnly({ model, answer })}
-      referenceColumn={referenceColumnOf(reference, (ref) =>
-        responseView.Reference({ model, reference: ref }),
-      )}
-    />
-  ),
+  Comparison: ({ model, answer, reference }) => {
+    // QM-11 细项 2：对照保留本人正文与参考表达，并附字数口径行（契约
+    // countResponseWords 单源 + wordMin/wordMax 建议——与输入面同一口径，
+    // 不硬校验不截断）；未作答不显示字数行（正文为空无对照意义）
+    const hint = wordHintOf(model.wordMin, model.wordMax);
+    const ownColumn =
+      answer === undefined ? (
+        responseView.ReadOnly({ model, answer })
+      ) : (
+        <div className="flex min-w-0 flex-col gap-2">
+          {responseView.ReadOnly({ model, answer })}
+          <p
+            aria-live="polite"
+            className="text-xs text-muted-foreground"
+          >{`正文共 ${countResponseWords(answer.body)} 字${hint === null ? "" : `（${hint}）`}`}</p>
+        </div>
+      );
+    return (
+      <AnswerComparisonShell
+        ownColumn={ownColumn}
+        referenceColumn={referenceColumnOf(reference, (ref) =>
+          responseView.Reference({ model, reference: ref }),
+        )}
+      />
+    );
+  },
   completion: (_model, answer, formalInk) => {
     // 决策记录 §5.7.3：filled = body 非空白 或 有正式笔迹（仅手写合法）；
     // 正文空白与笔迹皆无 = empty（isAnswered 纯行为口径另在契约，二者分离）
