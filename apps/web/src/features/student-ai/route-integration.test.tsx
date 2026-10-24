@@ -149,10 +149,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("SAI-07 真实路由联调", () => {
-  it("教师设置：get 默认开放 → 暂存改动 → save 真实落库 → refetch 回显", { // 真实路由 + 真实库的集成用例：全量并发下含整包 server 模块求值，5s 默认超时在负载下不够
-    timeout: 30_000,
-  }, async () => {
+// 真实路由联调组：makeEnv 动态 import 真实 server 全量模块 + 建库 + setup 往返，
+// 组内用例在全量并发下整体偏重——describe 级超时对齐 SAI-18 文件惯例，一处覆盖
+describe("SAI-07 真实路由联调", { timeout: 30_000 }, () => {
+  it("教师设置：get 默认开放 → 暂存改动 → save 真实落库 → refetch 回显", async () => {
     const client = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -202,9 +202,7 @@ describe("SAI-07 真实路由联调", () => {
     );
   });
 
-  it("版本冲突：另一页面先保存后，本页保存收到 409，输入不被覆盖且库值保留", {
-    timeout: 30_000,
-  }, async () => {
+  it("版本冲突：另一页面先保存后，本页保存收到 409，输入不被覆盖且库值保留", async () => {
     const client = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -325,7 +323,7 @@ describe("SAI-07 真实路由联调", () => {
   });
 });
 
-describe("SAI-08 真实路由联调（学生快捷按钮）", () => {
+describe("SAI-08 真实路由联调（学生快捷按钮）", { timeout: 30_000 }, () => {
   it("get 默认四项不物化 → 保存真实落库 → 删光空组墓碑不回填", async () => {
     const { createStudentSession } = await import(
       "../../../../server/src/auth/session"

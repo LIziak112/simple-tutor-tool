@@ -16,13 +16,12 @@ export default defineConfig({
     },
   },
   test: {
-    // dot reporter：5700+ 用例逐行输出本身有可观开销，收敛为点阵（失败详情仍在末尾）。
-    // 并发档位（perf/test-speedup 实测，16 逻辑核/15.6GB 本机）：默认并发最快
-    //（~240s）但重 web 用例偶发超时抖动；maxWorkers=8 全绿但 ~490s；12 居中仍抖。
-    // 故不设上限、以修抖动用例根治（见 route-integration 等的显式超时），需要求稳
-    // 可临时 CLI --maxWorkers=8。环境复用两案实测否决：vmThreads 的 VM 上下文缺
-    // Web Streams/WebCrypto 全局、且路径过滤/--changed 匹配不到测试（击穿分层
-    // 测试的 test:quick）；threads+isolate:false 共享全局致跨文件串扰（957 失败）。
+    // dot reporter：数千用例的逐行输出开销可观，收敛为点阵（失败详情仍在末尾）。
+    // 并发不设上限（实测最快），重用例的负载抖动以逐组显式超时根治（route-integration 等），
+    // 求稳可临时 CLI --maxWorkers=8。环境复用两案实测否决、勿重试：vmThreads 的 VM
+    // 上下文缺 Web Streams/WebCrypto 全局、且路径过滤/--changed 匹配不到测试（会静默
+    // 击穿 test:quick 分层闸门）；threads+isolate:false 共享全局致跨文件串扰。
+    // 实测数据与依据见 c5f63800 / 8350fec2 提交记录。
     reporter: "dot",
     projects: [
       {

@@ -30,8 +30,8 @@ export const TEST_TEACHER_ID = "teacher-test-0000";
  * 用完可 db.$client.close() 释放，不关也会随进程退出回收。
  *
  * 动机：全量迁移+回填每次上百毫秒，本仓库测试高频建库（重测试文件单文件数十次），
- * 是 node 项目单测的主要耗时；模板克隆把单次建库降到亚毫秒级（见 perf/test-speedup
- * 的 50 次基准记录）。需要「未迁移空库 / 截断迁移目录 / 旧结构」的测试不走本工厂
+ * 是 node 项目单测的主要耗时；模板克隆把单次建库降到亚毫秒级（50 次基准记录见
+ * c5f63800 提交）。需要「未迁移空库 / 截断迁移目录 / 旧结构」的测试不走本工厂
  * （模板已是最终结构）：直接组合 createDb + migrate/makeMigrationsFolderUpTo 原语，
  * 见 backfill.test、migrate*.test 的既有惯例。
  */
