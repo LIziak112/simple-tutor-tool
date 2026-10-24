@@ -13,7 +13,10 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
+import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
+import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { HintEntryList } from "@/features/attempt/HintPanel";
+import { QuestionGroupBlock } from "@/features/attempt/QuestionGroupBlock";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
@@ -472,6 +475,11 @@ export function AttemptResultView({
   onRefresh?: (() => void) | undefined;
 }) {
   const { attempt, summary } = data;
+  // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
+  // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
+  // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
+  // （材料缺省不阻断回看；服务端对坏快照已 fail-closed 409）
+  const contextQuery = useAttemptContext(attempt.id);
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
   // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）
@@ -759,38 +767,78 @@ export function AttemptResultView({
             </p>
           )}
 
-          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
+          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续）。
+              QM-08：题目序经 groupSegmentsOfUnit 解释成组段——组段共享材料
+              按组渲染一份（与作答视图同一数据解释单源），题行 key 稳定 */}
           <ol className="flex flex-col gap-4">
-            {data.units.map((unit) => (
-              <li key={unit.id} className="flex flex-col gap-4">
-                {showUnitHeaders && (
-                  <h2
-                    data-review-unit={unit.id}
-                    className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                  >
-                    {unit.title}
-                  </h2>
-                )}
-                <ol className="flex flex-col gap-4">
-                  {unit.questions.map((question) => (
-                    <li key={question.questionId}>
-                      <ResultQuestionCard
-                        aiTrigger={aiCompanion.triggerForQuestion(
-                          question.questionId,
-                        )}
-                        index={flatQuestions.indexOf(question)}
-                        question={question}
-                        attemptId={attempt.id}
-                        released={released}
-                        roundLabel={roundLabel}
-                        onSolutionToggle={onSolutionToggle}
-                      />
-                      {aiCompanion.inlineForQuestion(question.questionId)}
-                    </li>
-                  ))}
-                </ol>
-              </li>
-            ))}
+            {data.units.map((unit) => {
+              const questionById = new Map(
+                unit.questions.map(
+                  (question) => [question.questionId, question] as const,
+                ),
+              );
+              const segments = groupSegmentsOfUnit(
+                contextQuery.data,
+                unit.questions.map((question) => question.questionId),
+              );
+              /** 单题行（组段/独立段共用；组段内不挂「查看材料」——回看布局
+                  上下排布自然阅读，无需 reveal 跳转） */
+              const renderRow = (questionId: string) => {
+                const question = questionById.get(questionId);
+                if (question === undefined) return null;
+                return (
+                  <li key={question.questionId}>
+                    <ResultQuestionCard
+                      aiTrigger={aiCompanion.triggerForQuestion(
+                        question.questionId,
+                      )}
+                      index={flatQuestions.indexOf(question)}
+                      question={question}
+                      attemptId={attempt.id}
+                      released={released}
+                      roundLabel={roundLabel}
+                      onSolutionToggle={onSolutionToggle}
+                    />
+                    {aiCompanion.inlineForQuestion(question.questionId)}
+                  </li>
+                );
+              };
+              return (
+                <li key={unit.id} className="flex flex-col gap-4">
+                  {showUnitHeaders && (
+                    <h2
+                      data-review-unit={unit.id}
+                      className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                    >
+                      {unit.title}
+                    </h2>
+                  )}
+                  <ol className="flex flex-col gap-4">
+                    {segments.map((segment) =>
+                      segment.kind === "solo" ? (
+                        segment.questionIds.map((questionId) =>
+                          renderRow(questionId),
+                        )
+                      ) : (
+                        <li key={segment.group.id}>
+                          <QuestionGroupBlock
+                            group={segment.group}
+                            materials={segment.materials}
+                            readingKey={`${attempt.id}|${segment.group.id}`}
+                          >
+                            <ol className="flex flex-col gap-4">
+                              {segment.questionIds.map((questionId) =>
+                                renderRow(questionId),
+                              )}
+                            </ol>
+                          </QuestionGroupBlock>
+                        </li>
+                      ),
+                    )}
+                  </ol>
+                </li>
+              );
+            })}
           </ol>
         </div>,
       )}
