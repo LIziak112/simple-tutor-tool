@@ -41,7 +41,12 @@ describe("回看展示模型", () => {
     ).toBe(true);
     expect(
       reviewQuestionState(
-        { ...question, finalCorrect: null, teacherMark: null, autoCorrect: null },
+        {
+          ...question,
+          finalCorrect: null,
+          teacherMark: null,
+          autoCorrect: null,
+        },
         true,
       ).verdict,
     ).toBeNull();
