@@ -76,6 +76,8 @@ function FeedbackPending({
 
 /** 题卡 footer 槽：v1 卷的本题提交区 / 已提交反馈区（legacy 不挂） */
 export function PracticeQuestionFooter({
+  attemptId,
+  referenceAvailable = true,
   mode,
   submitted,
   readable,
@@ -89,6 +91,8 @@ export function PracticeQuestionFooter({
   onSubmit,
   onRetryFeedback,
 }: {
+  attemptId?: string;
+  referenceAvailable?: boolean;
   /** list = 列表模式（footer 承担提交按钮）；single = 单题模式（按钮在主操作位） */
   mode: "list" | "single";
   submitted: boolean;
@@ -105,6 +109,12 @@ export function PracticeQuestionFooter({
   onRetryFeedback: () => void;
 }) {
   if (!submitted) {
+    if (mode === "list" && !referenceAvailable)
+      return (
+        <p className="text-xs text-muted-foreground">
+          本题暂无参考答案，请随整卷交卷。
+        </p>
+      );
     // 逐题提交入口只在服务端允许时呈现；统一反馈直接走整卷交卷。
     if (mode === "single" || !workflow?.canSubmitQuestion) return null;
     return (
@@ -141,7 +151,10 @@ export function PracticeQuestionFooter({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {feedback !== null ? (
-        <QuestionFeedback feedback={feedback} />
+        <QuestionFeedback
+          feedback={feedback}
+          {...(attemptId ? { attemptId } : {})}
+        />
       ) : readable ? (
         <FeedbackPending failed={feedbackFailed} onRetry={onRetryFeedback} />
       ) : (

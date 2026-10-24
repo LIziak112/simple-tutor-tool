@@ -732,7 +732,10 @@ function AnswerView({
       void (async () => {
         try {
           if (!submitted) {
-            if (!practiceWorkflow?.canSubmitQuestion) {
+            if (
+              !practiceWorkflow?.canSubmitQuestion ||
+              flatQuestions[currentIndex]?.canSubmitQuestion === false
+            ) {
               const next = questionIds[currentIndex + 1];
               if (next !== undefined) await goSingleQuestion(next);
               else if (online && !denied) await openSubmitDialog();
@@ -992,7 +995,10 @@ function AnswerView({
           feedbackError: feedbackUpdate.notice,
         };
   // 单题吸底进度：题号 + 逐题提交进度（整卷反馈不可逐题提交时报已填写）
-  const singleCanSubmit = practiceWorkflow?.canSubmitQuestion === true;
+  const singleCanSubmit =
+    practiceWorkflow?.canSubmitQuestion === true &&
+    flatQuestions.find((question) => question.id === resolvedSingleQuestionId)
+      ?.canSubmitQuestion !== false;
   const singleProgressCount = singleCanSubmit
     ? submittedPracticeCount
     : answered;
@@ -1376,6 +1382,10 @@ function AnswerView({
                             footer={
                               practiceProtocol === "v1" ? (
                                 <PracticeQuestionFooter
+                                  attemptId={attemptId}
+                                  referenceAvailable={
+                                    question.canSubmitQuestion !== false
+                                  }
                                   mode={singleMode ? "single" : "list"}
                                   submitted={practiceSubmitted}
                                   readable={
@@ -1395,7 +1405,18 @@ function AnswerView({
                                   feedbackFailed={practiceSubmit.feedbackFailedOf(
                                     question.id,
                                   )}
-                                  workflow={practiceSubmit.workflow}
+                                  workflow={
+                                    practiceSubmit.workflow
+                                      ? {
+                                          ...practiceSubmit.workflow,
+                                          canSubmitQuestion:
+                                            practiceSubmit.workflow
+                                              .canSubmitQuestion &&
+                                            question.canSubmitQuestion !==
+                                              false,
+                                        }
+                                      : undefined
+                                  }
                                   error={
                                     practiceSubmit.lastError?.questionId ===
                                     question.id

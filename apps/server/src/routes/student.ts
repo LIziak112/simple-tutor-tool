@@ -22,6 +22,8 @@ import {
   practiceQuestionSubmitDataSchema,
   practiceQuestionSubmitRequestSchema,
   practiceWorkflowUpdateRequestSchema,
+  selfReviewDataSchema,
+  selfReviewRequestSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
   studentRecordsQuerySchema,
@@ -111,6 +113,7 @@ import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { saveSelfReview } from "../services/self-review-service.ts";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -402,6 +405,25 @@ export function createStudentRoutes(
       // 当前教师策略全查（与取卷同口径）；data 只承载共用授权投影（与提交回执
       // 的 feedback 字段同一实现，practiceQuestionFeedbackOf）；四态按读取时刻
       // 裁决，未授权形态零题目秘密；响应 no-store 不落 PWA/浏览器缓存
+      .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
+        const body = await parseJsonBody(c, selfReviewRequestSchema);
+        return c.json(
+          {
+            ok: true,
+            data: selfReviewDataSchema.parse(
+              saveSelfReview(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                c.req.param("questionId"),
+                body,
+              ),
+            ),
+          },
+          200,
+          { "Cache-Control": "private, no-store" },
+        );
+      })
       .get("/attempts/:id/questions/:questionId/feedback", (c) => {
         return c.json(
           {

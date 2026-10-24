@@ -18,6 +18,8 @@ import {
 } from "../db/schema";
 import { answerOf } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
+import { createQuestionReviewReader } from "./review-access.ts";
+import { reviewSourceOf } from "./review-state.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
@@ -69,6 +71,7 @@ import { sourceOf } from "./teacher-attempt-service";
  * 已交卷且 finalCorrect 非 null 的作答（公布 gate 过滤后）。
  */
 interface JudgedRoundRow {
+  reviewSource?: import("@tutor/contract").SelfReviewState["source"];
   questionId: string;
   attemptId: string;
   responseId: string;
@@ -117,9 +120,20 @@ function judgedRoundsByQuestion(
       questionId: responses.questionId,
       attemptId: sql<string>`${attempts.id}`.as("attempt_id"),
       responseId: sql<string>`${responses.id}`.as("response_id"),
-      submittedAt: attempts.submittedAt,
+      submittedAt: sql<
+        string | null
+      >`coalesce(${responses.submittedAt}, ${attempts.submittedAt})`.as(
+        "submitted_at",
+      ),
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
+      attempt: attempts,
+      response: {
+        submittedAt: responses.submittedAt,
+        teacherMark: responses.teacherMark,
+        selfCorrect: responses.selfCorrect,
+        autoCorrect: responses.autoCorrect,
+      },
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
@@ -130,19 +144,20 @@ function judgedRoundsByQuestion(
       and(
         eq(attempts.studentId, studentId),
         // 已判定作答谓词（D11）：已交卷 + finalCorrect 非 null（待批不参与）
-        ne(attempts.status, "draft"),
+        or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
         isNotNull(responses.finalCorrect),
         // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
         releaseGateSql(nowIso),
       ),
-    )
-    .as("ranked");
+    );
 
-  const rows = db.select().from(ranked).all();
+  const rows = ranked.all();
   const roundsByQuestion = new Map<string, JudgedRoundRow[]>();
+  const readable = createQuestionReviewReader(db, now);
   for (const row of rows) {
+    if (!readable(row.attempt, row.response)) continue;
     const list = roundsByQuestion.get(row.questionId) ?? [];
-    list.push(row);
+    list.push({ ...row, reviewSource: reviewSourceOf(row.response) });
     roundsByQuestion.set(row.questionId, list);
   }
   for (const list of roundsByQuestion.values()) {
@@ -218,6 +233,7 @@ function pendingCountByQuestion(
           eq(attempts.studentId, studentId),
           ne(attempts.status, "draft"),
           isNull(responses.finalCorrect),
+          eq(responses.reviewEligible, false),
           releaseGateSql(nowIso),
         ),
       )
@@ -370,6 +386,7 @@ export function listWrongQuestions(
       const source = sourceOfAttempt(round.attemptId);
       if (source === null) continue; // 防御：轮次行必来自已加载 attempt
       roundsPayload.push({
+        reviewSource: round.reviewSource ?? null,
         attemptId: round.attemptId,
         sourceType: source.sourceType,
         correct: round.finalCorrect === true,

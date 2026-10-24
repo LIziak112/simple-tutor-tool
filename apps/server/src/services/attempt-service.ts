@@ -18,6 +18,8 @@ import {
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
   type HintOpenedEntry,
+  hasReferenceAnswer,
+  isSelfReviewQuestion,
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
   type NoteSubmissionEvidenceState,
@@ -33,6 +35,7 @@ import {
   type QuestionOption,
   questionAnswersSchema,
   questionSchema,
+  reviewPolicySchema,
   type StudentAnswer,
   type StudentPaperData,
   type StudentPaperUnit,
@@ -101,6 +104,7 @@ import {
   requireOwnActiveAttempt,
   resolveNewAttemptWorkflow,
 } from "./practice-workflow-wiring";
+import { selfReviewStateOf } from "./review-state.ts";
 
 // answersReleased 原定义在本文件（T2A.8），M2 迁入纯裁决器层（题级反馈
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
@@ -212,6 +216,7 @@ export function attemptResponseRows(db: Db, attemptId: string): ResponseRow[] {
 
 /** 冻结行插入的最小入参（建卷与 wrong 组卷共用一处的 15 列字面量） */
 export interface FrozenResponseInsert {
+  readonly reviewPolicy?: import("@tutor/contract").ReviewPolicy;
   readonly attemptId: string;
   readonly questionId: string;
   readonly questionVersion: number;
@@ -231,6 +236,7 @@ export function insertFrozenResponse(
   values: FrozenResponseInsert,
 ): string {
   const id = randomUUID();
+  const snapshot = snapshotOfRow(values);
   tx.insert(responses)
     .values({
       id,
@@ -244,6 +250,12 @@ export function insertFrozenResponse(
       finalCorrect: null,
       teacherMark: null,
       teacherComment: null,
+      reviewPolicy: values.reviewPolicy ?? "legacy",
+      reviewEligible:
+        values.reviewPolicy === "self_review" &&
+        snapshot !== null &&
+        isSelfReviewQuestion(snapshot) &&
+        hasReferenceAnswer(snapshot),
       activeSec: null,
       hintsUsed: 0,
       changeCount: 0,
@@ -266,6 +278,16 @@ export function insertFrozenResponses(
   liveRows: readonly QuestionRow[],
   knowledgeByQuestion: ReadonlyMap<string, string[]>,
 ): void {
+  const attempt = tx
+    .select()
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .get();
+  // 无工作流版本的旧客户端仍按旧协议；新协议与讲练采用对照自评策略。
+  const reviewPolicy =
+    attempt && practiceProtocolOf(attempt) !== "legacy"
+      ? "self_review"
+      : "legacy";
   for (const row of liveRows) {
     insertFrozenResponse(tx, {
       attemptId,
@@ -275,6 +297,7 @@ export function insertFrozenResponses(
         questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []),
       ),
       unitId: row.unitId,
+      reviewPolicy,
     });
   }
 }
@@ -677,6 +700,7 @@ export function publicOfSnapshot(
       : {}),
     hintCount: question.hints.length,
     questionRevisionId,
+    canSubmitQuestion: hasReferenceAnswer(question),
   });
 }
 
@@ -2033,7 +2057,11 @@ export function submitAttempt(
       response: ownRow,
       question: snapshot,
       answer,
-      autoCorrect: grade(snapshot, answer),
+      autoCorrect: grade(
+        snapshot,
+        answer,
+        reviewPolicySchema.parse(ownRow.reviewPolicy),
+      ),
     };
     allFrozen.push(entry);
     graded.push(entry);
@@ -2174,6 +2202,7 @@ export function submitAttempt(
  *  判定只需要「快照非空」与对错计数，不再搬运每题数 KB 的快照原文；单题
  *  提交事务带出的行集即此形态，开卷链路用完整行按此映射） */
 interface LessonSummaryRow {
+  reviewEligible?: boolean;
   hasSnapshot: boolean;
   answerJson: string | null;
   submittedAt: string | null;
@@ -2191,6 +2220,7 @@ export function lessonLiveSummaryOf(
   let wrong = 0;
   let pending = 0;
   let pendingCount = 0;
+  let pendingSelfReviewCount = 0;
   for (const row of rows) {
     if (!row.hasSnapshot) continue;
     total += 1;
@@ -2199,7 +2229,10 @@ export function lessonLiveSummaryOf(
     if (row.autoCorrect === true) correct += 1;
     else if (row.autoCorrect === false) wrong += 1;
     else pending += 1;
-    if (row.finalCorrect === null) pendingCount += 1;
+    if (row.finalCorrect === null) {
+      if (row.reviewEligible) pendingSelfReviewCount += 1;
+      else pendingCount += 1;
+    }
   }
   return {
     total,
@@ -2211,6 +2244,7 @@ export function lessonLiveSummaryOf(
     autoGradable: correct + wrong,
     scoreFinal: attempt.scoreFinal,
     pendingCount,
+    pendingSelfReviewCount,
   };
 }
 
@@ -2257,6 +2291,7 @@ function autoFinishPerQuestionAttempt(
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
       finalCorrect: responses.finalCorrect,
+      reviewEligible: responses.reviewEligible,
     })
     .from(responses)
     .where(eq(responses.attemptId, attemptId))
@@ -2371,7 +2406,17 @@ export function submitLessonQuestion(
   }
   // 草稿答案已在行内（无 = 未作答提交，grade 按 D1 客观题判 false）
   const answer = answerOf(row.answerJson) ?? undefined;
-  const autoCorrect = grade(snapshot, answer);
+  if (!hasReferenceAnswer(snapshot))
+    throw new HttpError(
+      409,
+      "REFERENCE_ANSWER_REQUIRED",
+      "本题暂无参考答案，请随整卷交卷",
+    );
+  const autoCorrect = grade(
+    snapshot,
+    answer,
+    reviewPolicySchema.parse(row.reviewPolicy),
+  );
 
   // 笔记证据（单题化）：验证纯读、先于事务；写入与判分同事务
   const evidenceRow = buildSingleQuestionEvidence(
@@ -2643,7 +2688,17 @@ export function submitPracticeQuestion(
       throw questionNotFound();
     }
     const answer = answerOf(row.answerJson) ?? undefined;
-    const autoCorrect = grade(snapshot, answer);
+    if (!hasReferenceAnswer(snapshot))
+      throw new HttpError(
+        409,
+        "REFERENCE_ANSWER_REQUIRED",
+        "本题暂无参考答案，请随整卷交卷",
+      );
+    const autoCorrect = grade(
+      snapshot,
+      answer,
+      reviewPolicySchema.parse(row.reviewPolicy),
+    );
 
     // 证据声明核对（frozen/none/missing，与 lesson 单题提交同一实现）
     const evidenceRow = buildSingleQuestionEvidence(
@@ -2970,6 +3025,7 @@ export function resultQuestionOf(
         : null,
     teacherComment: row.teacherComment,
     finalCorrect: row.finalCorrect,
+    selfReview: selfReviewStateOf(row, snapshot),
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
   };
@@ -3074,6 +3130,7 @@ function buildResultData(
           teacherMark: null,
           teacherComment: null,
           finalCorrect: null,
+          selfReview: undefined,
         };
   };
 
@@ -3108,11 +3165,15 @@ function buildResultData(
   // 泄露整卷批改进度，与「待公布」口径冲突）。已公布时 scoreFinal 取 attempt 行、
   // pendingCount 走 pendingMarkCount（D4 共享谓词，与教师端列表/详情同一实现）
   const fullSummary = scoreSummaryOf(resultQuestions);
+  const pendingSelfReviewCount = resultQuestions.filter(
+    (question) => question.selfReview?.awaitingSelfReview,
+  ).length;
   const summary = released
     ? {
         ...fullSummary,
         scoreFinal: attempt.scoreFinal,
         pendingCount: pendingMarkCount(db, attempt),
+        ...(pendingSelfReviewCount > 0 ? { pendingSelfReviewCount } : {}),
       }
     : {
         total: fullSummary.total,

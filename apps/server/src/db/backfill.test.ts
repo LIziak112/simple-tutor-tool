@@ -707,6 +707,17 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       if (table === "responses") {
         delete row.answer_revision;
         delete row.answer_mutation_id;
+        // 0040 自评列的兼容默认值单独核对，不改变旧业务字段。
+        for (const key of [
+          "review_policy",
+          "review_eligible",
+          "self_correct",
+          "review_revision",
+          "review_mutation_id",
+          "review_mutation_hash",
+          "reviewed_at",
+        ])
+          delete row[key];
       }
       // 0038（M1b）新增列：assignments 逐题反馈授权默认 0；新列语义见
       // practice-workflow 相关测试，此处只保真原有业务字段。
@@ -812,6 +823,18 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
     expect(revisions.length).toBeGreaterThan(0);
     for (const row of revisions)
       expect(row).toEqual({ answer_revision: 0, answer_mutation_id: null });
+    const reviews = db.$client
+      .prepare(
+        "SELECT review_policy, review_eligible, self_correct, review_revision FROM responses",
+      )
+      .all();
+    for (const row of reviews)
+      expect(row).toEqual({
+        review_policy: "legacy",
+        review_eligible: 0,
+        self_correct: null,
+        review_revision: 0,
+      });
     db.$client.close();
   });
 

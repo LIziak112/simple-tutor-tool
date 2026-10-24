@@ -8,6 +8,7 @@ import {
   practiceFeedbackRestrictedCopy,
 } from "./practice-protocol";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
+import { SelfReviewControl } from "./SelfReviewControl";
 
 /**
  * 题级反馈区（M3-D2，§10.4 授权投影四态呈现）：提交回执/题级反馈读取共用
@@ -36,8 +37,10 @@ export function FeedbackNoticeBox({ children }: { children: string }) {
 
 export function QuestionFeedback({
   feedback,
+  attemptId,
 }: {
   feedback: PracticeQuestionFeedback;
+  attemptId?: string;
 }) {
   if (feedback.status === "not_submitted") return null;
   if (
@@ -58,18 +61,27 @@ export function QuestionFeedback({
       className="flex flex-col gap-3 border-t border-border pt-3"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <VerdictBadge
-          verdict={question.finalCorrect ?? question.autoCorrect}
-          pendingLabel="已提交，待老师批改"
-          toned
-          correctLabel="回答正确"
-          wrongLabel="回答有误"
-        />
+        {(!question.selfReview || !attemptId) && (
+          <VerdictBadge
+            verdict={question.finalCorrect ?? question.autoCorrect}
+            pendingLabel="已提交，待老师批改"
+            toned
+            correctLabel="回答正确"
+            wrongLabel="回答有误"
+          />
+        )}
         <span className="text-xs text-muted-foreground">
           反馈按老师当前设置公布，如与讲解不一致以老师为准。
         </span>
       </div>
       <ResultAnswerComparison question={question} released />
+      {attemptId && question.selfReview && (
+        <SelfReviewControl
+          attemptId={attemptId}
+          question={question}
+          preserveAttemptView
+        />
+      )}
       {question.solutionMd !== null ? (
         <div className="flex flex-col gap-2">
           <p className="text-sm font-medium">解析</p>

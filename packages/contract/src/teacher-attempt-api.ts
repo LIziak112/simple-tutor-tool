@@ -6,6 +6,7 @@ import {
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { selfReviewStateSchema } from "./self-review.ts";
 
 /**
  * 教师端作答数据页契约（T3.1，依据 Phase3 清单 D5–D8）：
@@ -202,6 +203,7 @@ export const teacherAttemptDetailQuestionSchema = z.object({
   autoCorrect: z.boolean().nullable(),
   /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null */
   finalCorrect: z.boolean().nullable(),
+  selfReview: selfReviewStateSchema.optional(),
   /** 教师批改标记（D3；本阶段恒 null） */
   teacherMark: teacherMarkSchema.nullable(),
   /** 教师评语（T3.2；未评为 null） */

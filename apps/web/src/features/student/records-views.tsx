@@ -141,6 +141,11 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
                 待批 {row.pendingCount}
               </span>
             )}
+          {row.answersReleased && (row.pendingSelfReviewCount ?? 0) > 0 && (
+            <span className="text-xs text-amber-700">
+              待自评 {row.pendingSelfReviewCount}
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-0.5 text-sm font-medium text-primary">
             {isDraft ? "继续作答" : "查看结果"}
             <ChevronRight

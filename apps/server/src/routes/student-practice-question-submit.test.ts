@@ -1,14 +1,17 @@
+import { join } from "node:path";
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
   practiceQuestionFeedbackOkSchema,
   practiceQuestionSubmitOkSchema,
+  selfReviewDataSchema,
 } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
-import type { Db } from "../db/client";
+import { createDb, type Db } from "../db/client";
+import { runMigrations } from "../db/migrate";
 import {
   assignments,
   attempts,
@@ -1334,6 +1337,221 @@ describe("M2 异常数据降级（作业授权行悬挂——v2 加固 d7c84b89 
     expect(body.data.feedback).toEqual({ status: "pending_attempt" });
     assertNoLeak(body);
     assertNoStemLeak(body);
+  });
+});
+
+describe("学生对照自评", () => {
+  it("单题提交后自评立即生效、修正、幂等、冲突保护，整卷交卷保留自评", async () => {
+    const env = await makeEnv();
+    const id = await startPracticeAttempt(env);
+    const review = (
+      mark: boolean | null,
+      baseRevision: number,
+      mutationId = crypto.randomUUID(),
+    ) =>
+      env.app.request(
+        `/api/student/attempts/${id}/questions/${Q.fill}/self-review`,
+        {
+          method: "POST",
+          headers: { cookie: env.aCookie },
+          body: JSON.stringify({ mark, baseRevision, mutationId }),
+        },
+      );
+    await expectErr(await review(false, 0), 409, "SELF_REVIEW_UNAVAILABLE");
+    await practiceSubmitOk(env, await fetchDraft(env, id), id, Q.fill);
+    const mutationId = crypto.randomUUID();
+    const first = await review(false, 0, mutationId);
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as { data: unknown };
+    expect(selfReviewDataSchema.parse(body.data)).toMatchObject({
+      review: { mark: false, revision: 1, source: "self" },
+      finalCorrect: false,
+    });
+    assertNoLeak(body);
+    const wrong = await env.app.request("/api/student/wrong-questions", {
+      headers: { cookie: env.aCookie },
+    });
+    const wrongBody = (await wrong.json()) as {
+      data: { questions: { questionId: string }[] };
+    };
+    expect(wrong.status, JSON.stringify(wrongBody)).toBe(200);
+    expect(
+      wrongBody.data.questions.some(
+        (question) => question.questionId === Q.fill,
+      ),
+    ).toBe(true);
+    expect((await review(false, 0, mutationId)).status).toBe(200);
+    await expectErr(
+      await review(true, 0, mutationId),
+      409,
+      "SELF_REVIEW_MUTATION_CONFLICT",
+    );
+    await expectErr(
+      await review(true, 0),
+      409,
+      "SELF_REVIEW_REVISION_CONFLICT",
+    );
+    expect((await review(true, 1)).status).toBe(200);
+    const corrected = await env.app.request("/api/student/wrong-questions", {
+      headers: { cookie: env.aCookie },
+    });
+    expect(JSON.stringify(await corrected.json())).not.toContain(Q.fill);
+    expect((await review(null, 2)).status).toBe(200);
+    expect(responseRowOf(env.db, id, Q.fill).finalCorrect).toBeNull();
+    expect((await review(true, 3)).status).toBe(200);
+    const submit = await submitAttemptRequest(env.app, env.aCookie, id, [
+      { questionId: Q.choice, state: "none" },
+      { questionId: Q.judge, state: "none" },
+    ]);
+    expect(submit.status).toBe(200);
+    expect(responseRowOf(env.db, id, Q.fill).finalCorrect).toBe(true);
+    expect(responseRowOf(env.db, id, Q.fill).teacherMark).toBeNull();
+    // 与部署备份一致的整库快照恢复：自评与版本不能在升级/恢复后丢失。
+    const backupPath = join(createTestDir(), "review-backup.db");
+    env.db.$client.prepare("VACUUM INTO ?").run(backupPath);
+    const restored = createDb(backupPath);
+    try {
+      runMigrations(restored);
+      expect(responseRowOf(restored, id, Q.fill)).toMatchObject({
+        selfCorrect: true,
+        finalCorrect: true,
+        reviewRevision: 4,
+        reviewPolicy: "self_review",
+      });
+    } finally {
+      restored.$client.close();
+    }
+  });
+
+  it("截止前不可自评，教师判定优先，清除教师判定回落自评并拒绝旧版本", async () => {
+    const env = await makeEnv();
+    const blockedId = await startPracticeAttempt(env, {
+      allowPerQuestionFeedback: false,
+      answerRelease: "after_due",
+      dueAt: "2099-01-01T00:00:00.000Z",
+    });
+    expect(
+      (await submitAttemptRequest(env.app, env.aCookie, blockedId)).status,
+    ).toBe(200);
+    const request = (id: string, revision: number, cookie = env.aCookie) =>
+      env.app.request(
+        `/api/student/attempts/${id}/questions/${Q.fill}/self-review`,
+        {
+          method: "POST",
+          headers: { cookie },
+          body: JSON.stringify({
+            mark: false,
+            baseRevision: revision,
+            mutationId: crypto.randomUUID(),
+          }),
+        },
+      );
+    const denied = await request(blockedId, 0);
+    await expectErr(denied, 409, "SELF_REVIEW_UNAVAILABLE");
+    const hidden = await env.app.request(`/api/student/attempts/${blockedId}`, {
+      headers: { cookie: env.aCookie },
+    });
+    const hiddenBody = (await hidden.json()) as {
+      data: {
+        units: {
+          questions: {
+            answers: unknown;
+            solutionMd: unknown;
+            teacherComment: unknown;
+            selfReview?: unknown;
+          }[];
+        }[];
+      };
+    };
+    for (const question of hiddenBody.data.units.flatMap(
+      (unit) => unit.questions,
+    )) {
+      expect(question.answers).toBeNull();
+      expect(question.solutionMd).toBeNull();
+      expect(question.teacherComment).toBeNull();
+      expect(question.selfReview).toBeUndefined();
+    }
+    assertNoLeak(hiddenBody, { allow: ["answer", "answers", "solutionMd"] });
+
+    const id = await startPracticeAttempt(env);
+    await practiceSubmitOk(env, await fetchDraft(env, id), id, Q.fill);
+    expect((await request(id, 0)).status).toBe(200);
+    const row = responseRowOf(env.db, id, Q.fill);
+    const mark = (value: string | null) =>
+      env.app.request(`/api/teacher/responses/${row.id}/mark`, {
+        method: "POST",
+        headers: { cookie: env.teacherCookie },
+        body: JSON.stringify({ mark: value, comment: null }),
+      });
+    expect((await mark("correct")).status).toBe(200);
+    await expectErr(await request(id, 1), 409, "SELF_REVIEW_TEACHER_MARKED");
+    expect(responseRowOf(env.db, id, Q.fill).finalCorrect).toBe(true);
+    expect((await mark(null)).status).toBe(200);
+    expect(responseRowOf(env.db, id, Q.fill).finalCorrect).toBe(false);
+    await expectErr(await request(id, 1), 409, "SELF_REVIEW_REVISION_CONFLICT");
+    const stranger = await env.app.request(
+      `/api/student/attempts/${id}/questions/${Q.fill}/self-review`,
+      {
+        method: "POST",
+        headers: { cookie: env.bCookie },
+        body: JSON.stringify({
+          mark: true,
+          baseRevision: 3,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    expect(stranger.status).toBe(403);
+    const anonymous = await env.app.request(
+      `/api/student/attempts/${id}/questions/${Q.fill}/self-review`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          mark: true,
+          baseRevision: 3,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    expect(anonymous.status).toBe(401);
+  });
+
+  it("无参考答案的题拒绝逐题提交和自评，仍可整卷交卷", async () => {
+    const env = await makeEnv();
+    const id = await startPracticeAttempt(env);
+    const row = responseRowOf(env.db, id, Q.fill);
+    const snapshot = JSON.parse(row.questionSnapshotJson ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    delete snapshot.answers;
+    delete snapshot.solutionMd;
+    env.db
+      .update(responses)
+      .set({ questionSnapshotJson: JSON.stringify(snapshot) })
+      .where(eq(responses.id, row.id))
+      .run();
+    await expectErr(
+      await practiceSubmit(env, await fetchDraft(env, id), id, Q.fill),
+      409,
+      "REFERENCE_ANSWER_REQUIRED",
+    );
+    expect((await submitAttemptRequest(env.app, env.aCookie, id)).status).toBe(
+      200,
+    );
+    const result = await env.app.request(
+      `/api/student/attempts/${id}/questions/${Q.fill}/self-review`,
+      {
+        method: "POST",
+        headers: { cookie: env.aCookie },
+        body: JSON.stringify({
+          mark: false,
+          baseRevision: 0,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    await expectErr(result, 409, "SELF_REVIEW_UNAVAILABLE");
   });
 });
 

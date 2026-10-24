@@ -33,6 +33,25 @@ function makeQuestion(partial: {
 }
 
 describe("grade：判断题", () => {
+  it("新自评策略下主观题不匹配最终答案，历史规则不重判", () => {
+    const question = makeQuestion({
+      type: "solve",
+      answers: { kind: "final", answer: "2" },
+    });
+    const answer = { kind: "final" as const, finalAnswer: "2" };
+    expect(grade(question, answer, "self_review")).toBeNull();
+    expect(grade(question, answer)).toBe(true);
+    expect(
+      grade(
+        makeQuestion({
+          type: "judge",
+          answers: { kind: "judge", value: true },
+        }),
+        { kind: "judge", value: true },
+        "self_review",
+      ),
+    ).toBe(true);
+  });
   const q = (value: boolean) =>
     makeQuestion({ type: "judge", answers: { kind: "judge", value } });
 

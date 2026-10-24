@@ -448,6 +448,22 @@
                   "null"
                 ]
               },
+              "reviewSource": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "teacher",
+                      "self",
+                      "automatic"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "判定来源；学生自评不能作为独立完成或客观能力的证明"
+              },
               "teacherMark": {
                 "anyOf": [
                   {

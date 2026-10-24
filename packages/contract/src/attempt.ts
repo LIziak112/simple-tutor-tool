@@ -13,6 +13,7 @@ import {
   practiceWorkflowStartOptionsFields,
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
+import { selfReviewStateSchema } from "./self-review.ts";
 import {
   studentUnitAttemptRecordSchema,
   studentUnitAttemptSummarySchema,
@@ -436,6 +437,8 @@ export const attemptResultQuestionSchema = z.object({
   teacherComment: z.string().nullable(),
   /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
   finalCorrect: z.boolean().nullable(),
+  /** 仅已授权公布的题携带；未公布时不下发自评与来源。 */
+  selfReview: selfReviewStateSchema.optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
@@ -447,6 +450,8 @@ export const attemptResultQuestionSchema = z.object({
  * 之外的整卷批改进度，且与「待公布」口径冲突，故一并不下发）。
  */
 export const attemptScoreSummarySchema = z.object({
+  /** 与教师待批分开计数，未公布不返回。 */
+  pendingSelfReviewCount: z.number().int().min(0).optional(),
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
   /** 已作答题数（answer 非 null）。lesson 讲练页的现算汇总（开卷投影/单题提交

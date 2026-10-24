@@ -193,6 +193,8 @@ export const questionSchema = z.object({
  * - hints 只暴露数量 hintCount，内容由 T2.11 分步接口按需下发。
  */
 export const questionPublicSchema = z.object({
+  /** 无参考答案的题不提供逐题提交，随整卷交卷；旧投影缺省沿用旧行为。 */
+  canSubmitQuestion: z.boolean().optional(),
   id: z.string().min(1),
   type: questionTypeSchema,
   difficulty: z.number().int().min(1).max(5),
