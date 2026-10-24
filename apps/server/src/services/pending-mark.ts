@@ -137,7 +137,8 @@ export function pendingMarkCounts(
  * 该 attempt 的待自评行数（分组查询，500 id 一块，与 pendingMarkCounts 同款
  * 模式）。QM 口径 = reference_self 行且教师未判（teacherMark null）且学生未
  * 自评（selfReviewVerdict null）——与 teacher-attempt-service 详情的
- * selfReviewPendingCount 读侧循环同一语义（有判定来源即归零），draft 批次
+ * selfReviewPendingCount 读侧循环同一语义（有判定来源即归零，注释互指、口径
+ * 不漂移；路由投影锁见 routes/student-records.test.ts QM-12 节），draft 批次
  * 同样叠加行级已提交（未提交行无自评入口）。
  */
 export function pendingSelfReviewCounts(

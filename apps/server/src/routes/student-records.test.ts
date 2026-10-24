@@ -830,3 +830,212 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
     expect(a2?.pendingCount).toBe(1);
   });
 });
+
+// ---------- QM 两线收敛（TT-09c 审查 P2-1）：记录行待自评计数 ----------
+
+/** 自评夹具：judge（auto）+ 带参考 fill（NEW_CONTENT_ENABLED 开卷冻结 reference_self） */
+const SELF_REVIEW_RECORDS_MD = `---
+kind: practice
+unit: 记录自评练习
+topic: 对照自评
+---
+
+::::question{type=judge difficulty=1 knowledge="有理数的概念"}
+$1$ 是正数。[[正确]]
+::::
+
+::::question{type=fill difficulty=2 knowledge="填空对照"}
+把二分之一化成小数：[[0.5|1/2]]
+::::
+`;
+
+/** 题目 id（单元 slug 缺省编号） */
+const SRQ = {
+  judge: "记录自评练习-1",
+  fill: "记录自评练习-2",
+} as const;
+
+/** 开关开启下开卷（行冻结 reference_self；student-wrong-questions 同款口径） */
+async function startNewContentAttempt(
+  start: () => Promise<string>,
+): Promise<string> {
+  const previous = process.env.NEW_CONTENT_ENABLED;
+  process.env.NEW_CONTENT_ENABLED = "true";
+  try {
+    return await start();
+  } finally {
+    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+    else process.env.NEW_CONTENT_ENABLED = previous;
+  }
+}
+
+describe("GET /api/student/records（QM-12：待自评计数两线收敛接线）", () => {
+  /**
+   * pendingSelfReviewCount 零覆盖补测（审查 P2-1）：reference_self 已提交未
+   * 自评计 1 / 已自评归零 / after_due 未公布 null 投影——谓词与教师详情
+   * selfReviewPendingCount（teacher-attempt-service）同一语义（有判定来源即
+   * 归零，pending-mark.pendingSelfReviewCounts 注释互指），此处锁路由投影。
+   */
+  it("reference_self 已提交未自评计 1；自评后归零；after_due 未公布 null 投影；auto 行不计入", async () => {
+    const db = createTestDb();
+    const app = createApp({
+      isProduction: false,
+      logger: silentLogger,
+      db,
+      publicUrl: "http://localhost:8787",
+      dataDir: createTestDir(),
+    });
+    const setup = await app.request("/api/public/teacher/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        loginName: "teacher",
+        password: TEACHER_PASSWORD,
+      }),
+    });
+    const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+    const created = await app.request("/api/teacher/courses", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ title: "初一上" }),
+    });
+    expect(created.status).toBe(201);
+    const courseId = ((await created.json()) as { data: { id: string } }).data
+      .id;
+    const imported = await app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        markdown: SELF_REVIEW_RECORDS_MD,
+        filename: "记录自评练习.md",
+        courseId,
+      }),
+    });
+    expect(imported.status).toBe(200);
+    const srUnitId = (
+      (await imported.json()) as { data: { units: { id: string }[] } }
+    ).data.units[0]?.id;
+    if (!srUnitId) throw new Error("自评夹具导入未产出单元");
+    // 导入兼容路径默认单元隐藏 → 放开可见（D23-3 口径）
+    const detail = await app.request(`/api/teacher/courses/${courseId}`, {
+      headers: { cookie: teacherCookie },
+    });
+    const item = (
+      (await detail.json()) as {
+        data: { items: { id: string; refId: string | null }[] };
+      }
+    ).data.items.find((entry) => entry.refId === srUnitId);
+    if (!item) throw new Error("课程目录中未找到自评单元条目");
+    const patched = await app.request(`/api/teacher/course-items/${item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ visible: true }),
+    });
+    expect(patched.status).toBe(200);
+
+    const a = await createStudentAndLogin(app, teacherCookie, "自评甲");
+    const addMembers = await app.request(
+      `/api/teacher/courses/${courseId}/members`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: teacherCookie },
+        body: JSON.stringify({ studentIds: [a.studentId] }),
+      },
+    );
+    expect(addMembers.status).toBe(200);
+
+    // 课程练习：开关开启开卷（judge 冻结 auto、fill 冻结 reference_self），
+    // 答完交卷（course 恒公布）
+    const courseAttemptId = await startNewContentAttempt(() =>
+      startCourseAttempt(app, a.cookie, courseId, srUnitId),
+    );
+    await saveAnswer(app, a.cookie, courseAttemptId, SRQ.judge, {
+      kind: "judge",
+      value: true,
+    });
+    await saveAnswer(app, a.cookie, courseAttemptId, SRQ.fill, {
+      kind: "fill",
+      values: ["0.5"],
+    });
+    await submit(app, a.cookie, courseAttemptId);
+    // 冻结策略断言（防止夹具漂移导致计数为 0 的空过）
+    expect(
+      db
+        .select({ policy: responses.gradingPolicy })
+        .from(responses)
+        .where(eq(responses.attemptId, courseAttemptId))
+        .all()
+        .map((row) => row.policy),
+    ).toEqual(["auto", "reference_self"]);
+
+    // after_due 未公布作业（同款冻结；已交卷但整体不公布）
+    const assignmentRes = await app.request("/api/teacher/assignments", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        unitIds: [srUnitId],
+        studentIds: [a.studentId],
+        dueAt: FAR_DUE,
+        answerRelease: "after_due",
+      }),
+    });
+    expect(assignmentRes.status).toBe(201);
+    const dueAssignmentId = (
+      (await assignmentRes.json()) as {
+        data: { assignments: { id: string }[] };
+      }
+    ).data.assignments[0]?.id;
+    if (dueAssignmentId === undefined) {
+      throw new Error("布置作业响应缺少作业 id");
+    }
+    const dueAttemptId = await startNewContentAttempt(() =>
+      startAssignmentAttempt(app, a.cookie, dueAssignmentId),
+    );
+    await saveAnswer(app, a.cookie, dueAttemptId, SRQ.judge, {
+      kind: "judge",
+      value: true,
+    });
+    await saveAnswer(app, a.cookie, dueAttemptId, SRQ.fill, {
+      kind: "fill",
+      values: ["0.5"],
+    });
+    await submit(app, a.cookie, dueAttemptId);
+
+    // ① 未自评：reference_self 已提交未自评计 1（auto 行不计入、不进待批）
+    const before = await getRecords(app, a.cookie);
+    const course = before.data?.records.find(
+      (row) => row.attemptId === courseAttemptId,
+    );
+    expect(course?.answersReleased).toBe(true);
+    expect(course?.pendingSelfReviewCount).toBe(1);
+    expect(course?.pendingCount).toBe(0); // reference_self 不进教师待批（分列）
+    // ③ 未公布 null 投影（与 score/pendingCount 同法，不泄露对错）
+    const due = before.data?.records.find(
+      (row) => row.attemptId === dueAttemptId,
+    );
+    expect(due?.answersReleased).toBe(false);
+    expect(due?.pendingSelfReviewCount).toBeNull();
+
+    // ② 已自评归零（有判定来源即归零——与教师详情 selfReviewPendingCount 同语义）
+    const review = await app.request(
+      `/api/student/attempts/${courseAttemptId}/questions/${encodeURIComponent(
+        SRQ.fill,
+      )}/self-review`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: a.cookie },
+        body: JSON.stringify({
+          verdict: "wrong",
+          baseRevision: 0,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    expect(review.status).toBe(200);
+    const after = await getRecords(app, a.cookie);
+    expect(
+      after.data?.records.find((row) => row.attemptId === courseAttemptId)
+        ?.pendingSelfReviewCount,
+    ).toBe(0);
+  });
+});

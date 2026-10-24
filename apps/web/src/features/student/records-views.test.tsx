@@ -71,3 +71,40 @@ describe("记录卡片进行中进度（M4-D3）", () => {
     expect(screen.queryByText(/已提交 \d/)).toBeNull();
   });
 });
+
+describe("记录卡片待自评徽章（QM-12 两线收敛接线）", () => {
+  /**
+   * 服务端 pendingSelfReviewCount（pending-mark.pendingSelfReviewCounts 批量
+   * 谓词）的呈现面：已公布且 >0 显示「待自评 N」（与教师详情
+   * selfReviewPendingCount 分列同一语义——reference_self 行不进教师待批）。
+   * 服务端行为见 routes/student-records.test.ts 同名口径测试。
+   */
+  const submitted = {
+    status: "submitted" as const,
+    submittedAt: "2026-10-01T02:00:00.000Z",
+    score: 80,
+  };
+
+  it("已公布且待自评 >0 显示「待自评 2」", () => {
+    renderRow(rowFixture({ ...submitted, pendingSelfReviewCount: 2 }));
+    expect(screen.getByText("待自评 2")).toBeInTheDocument();
+  });
+
+  it("归零、null 投影与未公布都不渲染徽章", () => {
+    // 已自评归零（0）：不显示
+    renderRow(rowFixture({ ...submitted, pendingSelfReviewCount: 0 }));
+    expect(screen.queryByText(/待自评/)).toBeNull();
+    // after_due 未公布（服务端置 null）：不显示——计数会泄露对错
+    renderRow(rowFixture({ ...submitted, pendingSelfReviewCount: null }));
+    expect(screen.queryByText(/待自评/)).toBeNull();
+    // 未公布行即使带计数也不显示（投影正常态之外的防御）
+    renderRow(
+      rowFixture({
+        ...submitted,
+        pendingSelfReviewCount: 3,
+        answersReleased: false,
+      }),
+    );
+    expect(screen.queryByText(/待自评/)).toBeNull();
+  });
+});

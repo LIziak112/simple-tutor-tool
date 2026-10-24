@@ -560,7 +560,9 @@ export function getTeacherAttemptDetail(
   // 判定计数（QM-12 有效判定口径：教师判 > 自评 > 自动）；draft 未交卷无判定，
   // 对/错/待批/待自评全 0（D5）。待批数走 D4 共享谓词（与列表卡片/矩阵同口径，
   // 不含待自评行——细项2 两队列分开）；待自评数 = reference_self 行且教师未判
-  // 且学生未自评（读侧现算，自评后即归零）
+  // 且学生未自评（读侧现算，自评后即归零）——与 pending-mark.pendingSelfReviewCounts
+  // （学生记录行徽章的批量 SQL 谓词）同一语义，注释互指、口径不漂移
+  //（路由投影锁见 routes/student-records.test.ts QM-12 节）
   let correctCount = 0;
   let wrongCount = 0;
   let selfReviewPendingCount = 0;
