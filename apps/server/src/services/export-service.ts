@@ -22,8 +22,10 @@ import type {
   LearningPackV2Question,
   LearningPackV2Response,
   NotePhase,
+  SelfReviewRecord,
 } from "@tutor/contract";
 import {
+  effectiveVerdictOf,
   LEARNING_PACK_GOAL_LABELS,
   LEARNING_PACK_MAX_BYTES,
   learningPackAliasOf,
@@ -68,7 +70,12 @@ import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
-import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
+import {
+  answerOf,
+  effectiveVerdictOfRow,
+  frozenRowsInDisplayOrder,
+  selfReviewRecordOf,
+} from "./attempt-service";
 import {
   beijingDateTimeOf,
   beijingExportStampOf,
@@ -747,10 +754,14 @@ export function assembleLearningPack(
       let correct = 0;
       let wrong = 0;
       let pending = 0;
+      let selfJudged = 0;
       for (const row of rows) {
-        if (row.finalCorrect === null) pending += 1;
-        else if (row.finalCorrect) correct += 1;
+        // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单列
+        const effective = effectiveVerdictOfRow(row);
+        if (effective === null) pending += 1;
+        else if (effective.value) correct += 1;
         else wrong += 1;
+        if (effective?.source === "self") selfJudged += 1;
       }
       summaryRows.push({
         attemptId: attempt.id,
@@ -773,6 +784,7 @@ export function assembleLearningPack(
         correctCount: correct,
         wrongCount: wrong,
         pendingCount: pending,
+        selfJudgedCount: selfJudged,
       });
     }
   }
@@ -895,13 +907,17 @@ export function assembleLearningPack(
       let judged = 0;
       let correct = 0;
       let pending = 0;
+      let selfJudged = 0;
       let activeTotal = 0;
       for (const attempt of mine) {
         for (const row of responsesByAttempt.get(attempt.id) ?? []) {
-          if (row.finalCorrect === null) pending += 1;
+          // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单列不进分母
+          const effective = effectiveVerdictOfRow(row);
+          if (effective === null) pending += 1;
           else {
             judged += 1;
-            if (row.finalCorrect) correct += 1;
+            if (effective.source === "self") selfJudged += 1;
+            if (effective.value) correct += 1;
           }
           if (row.activeSec !== null) activeTotal += row.activeSec;
         }
@@ -917,6 +933,7 @@ export function assembleLearningPack(
         judgedCount: judged,
         correctCount: correct,
         pendingCount: pending,
+        selfJudgedCount: selfJudged,
         correctRate: judged > 0 ? correct / judged : null,
         activeSecTotal: activeTotal,
         offlineShare: activeTotal > 0 ? Math.min(1, offline / activeTotal) : 0,
@@ -928,6 +945,7 @@ export function assembleLearningPack(
         judgedCount: acc.judgedCount + row.judgedCount,
         correctCount: acc.correctCount + row.correctCount,
         pendingCount: acc.pendingCount + row.pendingCount,
+        selfJudgedCount: acc.selfJudgedCount + (row.selfJudgedCount ?? 0),
         activeSecTotal: acc.activeSecTotal + row.activeSecTotal,
       }),
       {
@@ -935,6 +953,7 @@ export function assembleLearningPack(
         judgedCount: 0,
         correctCount: 0,
         pendingCount: 0,
+        selfJudgedCount: 0,
         activeSecTotal: 0,
       },
     );
@@ -956,6 +975,7 @@ export function assembleLearningPack(
         judgedCount: overall.judgedCount,
         correctCount: overall.correctCount,
         pendingCount: overall.pendingCount,
+        selfJudgedCount: overall.selfJudgedCount,
         correctRate:
           overall.judgedCount > 0
             ? overall.correctCount / overall.judgedCount
@@ -1260,6 +1280,9 @@ function responseBaseOf(
         ? row.teacherMark
         : null,
     teacherComment: row.teacherComment,
+    // QM-12：自评记录与行策略（教师面数据包——判定来源可见，与教师详情同形）
+    selfReview: selfReviewRecordOf(row),
+    gradingPolicy: row.gradingPolicy,
     ...(inkFile !== undefined ? { inkFile } : {}),
   };
 }
@@ -2124,8 +2147,12 @@ interface SummaryMdInput {
   }>;
   readonly summaryRows: readonly LearningPackAttemptSummary[];
   /** 逐题行（v1/v2 形状皆可——只消费 finalCorrect） */
+  /** 逐题行（v1/v2 形状皆可——QM-12 起按有效判定统计：教师判 > 自评 > 自动；
+   *  selfReview 可选（旧包缺省）与 null（未评）同作无记录处理） */
   readonly responseRows: ReadonlyArray<{
-    readonly finalCorrect: boolean | null;
+    readonly autoCorrect: boolean | null;
+    readonly teacherMark: "correct" | "wrong" | null;
+    readonly selfReview?: SelfReviewRecord | null | undefined;
   }>;
   readonly traceRows: readonly LearningPackQuestionTrace[];
   readonly lectureTraceRows: readonly LearningPackLectureTrace[];
@@ -2267,21 +2294,34 @@ function renderSummaryMd(input: SummaryMdInput): string {
   }
 
   if (m.responses) {
-    const judged = input.responseRows.filter(
-      (r) => r.finalCorrect !== null,
-    ).length;
-    const correct = input.responseRows.filter(
-      (r) => r.finalCorrect === true,
-    ).length;
-    const pending = input.responseRows.filter(
-      (r) => r.finalCorrect === null,
-    ).length;
+    // QM-12 有效判定口径（教师判 > 自评 > 自动）：未判断单列；自评数注明
+    // 来源（自评是学生本人判定，不能冒充客观独立完成证据）
+    let judged = 0;
+    let correct = 0;
+    let pending = 0;
+    let selfJudged = 0;
+    for (const row of input.responseRows) {
+      const effective = effectiveVerdictOf(
+        row.autoCorrect,
+        row.teacherMark,
+        row.selfReview ?? null,
+      );
+      if (effective === null) {
+        pending += 1;
+        continue;
+      }
+      judged += 1;
+      if (effective.source === "self") selfJudged += 1;
+      if (effective.value) correct += 1;
+    }
     lines.push("## 逐题作答");
     lines.push("");
     lines.push(
       `- 共 ${input.responseRows.length} 个逐题行（全部历次）；判定：对 ${correct} / 错 ${
         judged - correct
-      } / 待批 ${pending}（正确率分母不含待批）。`,
+      } / 未判断 ${pending}（正确率分母不含未判断）${
+        selfJudged > 0 ? `；其中学生自评 ${selfJudged} 题为学生本人判定，非客观测评` : ""
+      }。`,
     );
     lines.push(
       "- 明细见 pack.json 的 attempts.responses（no 为该次作答内的连续题号）。",
