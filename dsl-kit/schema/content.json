@@ -1914,6 +1914,168 @@
             "additionalProperties": false
           }
         },
+        "materials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "sourceMd": {
+                "type": "string"
+              },
+              "contentMd": {
+                "type": "string"
+              },
+              "anchors": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "order": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "order"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "slots": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "slotKind": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "choice",
+                        "match"
+                      ]
+                    },
+                    "order": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slotKind",
+                    "order"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "mediaPaths": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "id",
+              "sourceMd",
+              "contentMd",
+              "anchors",
+              "slots",
+              "mediaPaths"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "sourceMd": {
+                "type": "string"
+              },
+              "introMd": {
+                "type": "string"
+              },
+              "materialRefs": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "material": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "segs": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "slot": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "slots": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "material"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "questionIds": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "id",
+              "sourceMd",
+              "introMd",
+              "materialRefs",
+              "questionIds"
+            ],
+            "additionalProperties": false
+          }
+        },
         "issues": {
           "default": [],
           "type": "array",
