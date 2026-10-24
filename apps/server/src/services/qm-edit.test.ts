@@ -8,8 +8,9 @@ import {
   teachers,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
-import { commitImport } from "./content-service.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { commitImport } from "./content-service.ts";
+import { getMaterial, getQuestionGroup } from "./material-repository.ts";
 import {
   deleteMaterial,
   deleteQuestionGroup,
@@ -18,7 +19,6 @@ import {
   updateMaterial,
   updateQuestionGroup,
 } from "./qm-edit-service.ts";
-import { getMaterial, getQuestionGroup } from "./material-repository.ts";
 
 /**
  * tt-06b / QM-05 材料/题组编辑与删除测试（服务层级）：
@@ -105,7 +105,12 @@ describe("QM-05 材料编辑（单元文档重建，同一源文解析）", () =
       db,
       TEST_TEACHER_ID,
       MATERIAL_ID,
-      { sourceMd: materialSourceMd(db).replace("给定资料正文", "修改后的资料正文") },
+      {
+        sourceMd: materialSourceMd(db).replace(
+          "给定资料正文",
+          "修改后的资料正文",
+        ),
+      },
       true,
     );
     expect(updated.version).toBe(2);
@@ -185,9 +190,17 @@ describe("QM-05 材料编辑（单元文档重建，同一源文解析）", () =
       .replace(`id=${MATERIAL_ID}`, "id=mat-别的")
       .replace("{{slot-1}}", "无槽位");
     expect(() =>
-      updateMaterial(db, TEST_TEACHER_ID, MATERIAL_ID, { sourceMd: fragment }, true),
+      updateMaterial(
+        db,
+        TEST_TEACHER_ID,
+        MATERIAL_ID,
+        { sourceMd: fragment },
+        true,
+      ),
     ).toThrowError(
-      expect.objectContaining({ code: "ID_IMMUTABLE" }) satisfies Partial<HttpError>,
+      expect.objectContaining({
+        code: "ID_IMMUTABLE",
+      }) satisfies Partial<HttpError>,
     );
   });
 
@@ -196,7 +209,13 @@ describe("QM-05 材料编辑（单元文档重建，同一源文解析）", () =
     commitBase(db);
     const fragment = `${materialSourceMd(db)}\n\n::::material{id=mat-新}\n新。\n::::`;
     expect(() =>
-      updateMaterial(db, TEST_TEACHER_ID, MATERIAL_ID, { sourceMd: fragment }, true),
+      updateMaterial(
+        db,
+        TEST_TEACHER_ID,
+        MATERIAL_ID,
+        { sourceMd: fragment },
+        true,
+      ),
     ).toThrowError(
       expect.objectContaining({
         code: "VALIDATION_ERROR",
@@ -283,10 +302,7 @@ describe("QM-05 材料编辑（单元文档重建，同一源文解析）", () =
         ),
       )
       .all();
-    expect(refs.map((r) => r.materialId)).toEqual([
-      MATERIAL_ID,
-      "mat-跨单元",
-    ]);
+    expect(refs.map((r) => r.materialId)).toEqual([MATERIAL_ID, "mat-跨单元"]);
   });
 });
 
@@ -319,7 +335,13 @@ describe("QM-05 题组编辑", () => {
       "::ref{question=不存在的题}",
     );
     expect(() =>
-      updateQuestionGroup(db, TEST_TEACHER_ID, GROUP_ID, { sourceMd: fragment }, true),
+      updateQuestionGroup(
+        db,
+        TEST_TEACHER_ID,
+        GROUP_ID,
+        { sourceMd: fragment },
+        true,
+      ),
     ).toThrowError(HttpError);
   });
 
@@ -346,9 +368,9 @@ describe("QM-05 材料/组删除（软删 + 受影响清单）", () => {
     expect(getMaterial(db, TEST_TEACHER_ID, MATERIAL_ID)).toBeNull();
     // 再删 → 404（软删后按不存在处理）
     expect(() => deleteMaterial(db, TEST_TEACHER_ID, MATERIAL_ID)).toThrowError(
-      expect.objectContaining({ code: "MATERIAL_NOT_FOUND" }) satisfies Partial<
-        HttpError
-      >,
+      expect.objectContaining({
+        code: "MATERIAL_NOT_FOUND",
+      }) satisfies Partial<HttpError>,
     );
     // 重导同 id 恢复（deletedAt 清空）
     commitBase(db);
@@ -392,25 +414,29 @@ describe("QM-05 教师域隔离（编辑与删除）", () => {
     const db = createTestDb();
     seedTeacherB(db);
     commitBase(db);
-    expect(() =>
-      getMaterialDetail(db, TEACHER_B_ID, MATERIAL_ID),
-    ).toThrowError(
-      expect.objectContaining({ code: "MATERIAL_NOT_FOUND" }) satisfies Partial<
-        HttpError
-      >,
+    expect(() => getMaterialDetail(db, TEACHER_B_ID, MATERIAL_ID)).toThrowError(
+      expect.objectContaining({
+        code: "MATERIAL_NOT_FOUND",
+      }) satisfies Partial<HttpError>,
     );
     expect(() =>
-      updateMaterial(db, TEACHER_B_ID, MATERIAL_ID, { sourceMd: "::::material{id=x}\n改。\n::::" }, true),
+      updateMaterial(
+        db,
+        TEACHER_B_ID,
+        MATERIAL_ID,
+        { sourceMd: "::::material{id=x}\n改。\n::::" },
+        true,
+      ),
     ).toThrowError(HttpError);
-    expect(() =>
-      deleteMaterial(db, TEACHER_B_ID, MATERIAL_ID),
-    ).toThrowError(HttpError);
+    expect(() => deleteMaterial(db, TEACHER_B_ID, MATERIAL_ID)).toThrowError(
+      HttpError,
+    );
     expect(() =>
       getQuestionGroupDetail(db, TEACHER_B_ID, GROUP_ID),
     ).toThrowError(
-      expect.objectContaining({ code: "GROUP_NOT_FOUND" }) satisfies Partial<
-        HttpError
-      >,
+      expect.objectContaining({
+        code: "GROUP_NOT_FOUND",
+      }) satisfies Partial<HttpError>,
     );
   });
 });

@@ -308,11 +308,8 @@ describe("QM-05 commit 落库与事务原子性", () => {
     expect(again.questions).toEqual({ inserted: 0, updated: 1 });
     expect(getMaterial(db, TEST_TEACHER_ID, "mat-资料分析-1")?.version).toBe(1);
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.id, "资料分析-1"))
-        .get()?.version,
+      db.select().from(questions).where(eq(questions.id, "资料分析-1")).get()
+        ?.version,
     ).toBe(2);
     // 内容变更 → 材料 version+1
     commitQm(db, QM_MD.replace("给定资料正文", "修改后的给定资料正文"));
@@ -447,9 +444,9 @@ describe("QM-05 引用解析与跨单元移动", () => {
       "",
     ].join("\n");
     const previewB = previewQm(db, docB, TEACHER_B_ID);
-    expect(
-      previewB.issues.some((i) => i.code === "UNKNOWN_MATERIAL_REF"),
-    ).toBe(true);
+    expect(previewB.issues.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(
+      true,
+    );
   });
 });
 
@@ -459,7 +456,9 @@ describe("QM-05 导出重导往返稳定", () => {
     const unitMaterials = db
       .select()
       .from(materials)
-      .where(and(eq(materials.teacherId, teacherId), eq(materials.unitId, unitId)))
+      .where(
+        and(eq(materials.teacherId, teacherId), eq(materials.unitId, unitId)),
+      )
       .all()
       .sort((a, b) => a.order - b.order);
     const unitGroups = db
@@ -476,7 +475,9 @@ describe("QM-05 导出重导往返稳定", () => {
     const unitQuestions = db
       .select()
       .from(questions)
-      .where(and(eq(questions.teacherId, teacherId), eq(questions.unitId, unitId)))
+      .where(
+        and(eq(questions.teacherId, teacherId), eq(questions.unitId, unitId)),
+      )
       .all()
       .sort((a, b) => a.order - b.order);
     return [
@@ -512,9 +513,7 @@ describe("QM-05 导出重导往返稳定", () => {
     expect(JSON.parse(group?.materialRefsJson ?? "[]")).toEqual([
       { material: "mat-资料分析-1", slot: "slot-1" },
     ]);
-    expect(JSON.parse(group?.questionIdsJson ?? "[]")).toEqual([
-      "资料分析-1",
-    ]);
+    expect(JSON.parse(group?.questionIdsJson ?? "[]")).toEqual(["资料分析-1"]);
 
     // 再导出：与首次导出逐字节一致（round-trip 稳定）
     const exported2 = exportUnitMd(db, "资料分析", TEST_TEACHER_ID);
@@ -548,12 +547,12 @@ describe("QM-05 材料含媒体的往返（媒体存在性 + 导出重导不丢�
     commitQm(db, QM_MD_WITH_IMAGE);
     const material = getMaterial(db, TEST_TEACHER_ID, "mat-资料分析-1");
     expect(material?.mediaPathsJson).toContain("blobs/media/");
-    expect(material?.sourceMd).toContain("::image{src=\"blobs/media/");
+    expect(material?.sourceMd).toContain('::image{src="blobs/media/');
 
     // 导出重导：真实 exportUnitMd 覆盖材料正文（含 ::image 行）
     const { exportUnitMd } = await import("./library-service.ts");
     const exported = exportUnitMd(db, TEST_TEACHER_ID, "资料分析");
-    expect(exported.markdown).toContain("::image{src=\"blobs/media/");
+    expect(exported.markdown).toContain('::image{src="blobs/media/');
     commitQm(db, exported.markdown);
     const again = getMaterial(db, TEST_TEACHER_ID, "mat-资料分析-1");
     expect(again?.mediaPathsJson).toBe(material?.mediaPathsJson);

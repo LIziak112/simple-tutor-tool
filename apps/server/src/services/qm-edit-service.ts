@@ -220,7 +220,8 @@ function assertEntityIdsUnchanged(
   const removed = existingIds.filter((id) => !parsedSet.has(id));
   const parts: string[] = [];
   if (added.length > 0) parts.push(`解析出新增实体（${added.join("、")}）`);
-  if (removed.length > 0) parts.push(`原实体在解析结果中缺失（${removed.join("、")}）`);
+  if (removed.length > 0)
+    parts.push(`原实体在解析结果中缺失（${removed.join("、")}）`);
   throw new HttpError(
     422,
     "VALIDATION_ERROR",
@@ -234,7 +235,11 @@ function assertEntityIdsUnchanged(
 function requireMaterial(db: Db, teacherId: string, id: string): MaterialRow {
   const row = getMaterial(db, teacherId, id);
   if (row === null) {
-    throw new HttpError(404, "MATERIAL_NOT_FOUND", "材料不存在（可能已被删除）");
+    throw new HttpError(
+      404,
+      "MATERIAL_NOT_FOUND",
+      "材料不存在（可能已被删除）",
+    );
   }
   return row;
 }
@@ -290,7 +295,11 @@ export function updateMaterial(
   );
   const next = (parsed.materials ?? []).find((m) => m.id === id);
   if (next === undefined) {
-    throw new HttpError(422, "ID_IMMUTABLE", "材料 id 不可变；如需新增请走导入");
+    throw new HttpError(
+      422,
+      "ID_IMMUTABLE",
+      "材料 id 不可变；如需新增请走导入",
+    );
   }
 
   const saved = db.transaction((tx) =>
@@ -321,11 +330,13 @@ export function deleteMaterial(
   id: string,
 ): MaterialDeleteData {
   requireMaterial(db, teacherId, id);
-  const affectedRefs = findMaterialRefOwners(db, teacherId, id).map((owner) => ({
-    ownerKind: owner.ownerKind,
-    ownerId: owner.ownerId,
-    refOrder: owner.refOrder,
-  }));
+  const affectedRefs = findMaterialRefOwners(db, teacherId, id).map(
+    (owner) => ({
+      ownerKind: owner.ownerKind,
+      ownerId: owner.ownerId,
+      refOrder: owner.refOrder,
+    }),
+  );
   const deleted = softDeleteMaterial(
     db,
     teacherId,
@@ -333,7 +344,11 @@ export function deleteMaterial(
     new Date().toISOString(),
   );
   if (deleted === null) {
-    throw new HttpError(404, "MATERIAL_NOT_FOUND", "材料不存在（可能已被删除）");
+    throw new HttpError(
+      404,
+      "MATERIAL_NOT_FOUND",
+      "材料不存在（可能已被删除）",
+    );
   }
   return { id, deletedAt: deleted.deletedAt ?? "", affectedRefs };
 }
@@ -400,7 +415,11 @@ export function updateQuestionGroup(
   );
   const next = (parsed.groups ?? []).find((g) => g.id === id);
   if (next === undefined) {
-    throw new HttpError(422, "ID_IMMUTABLE", "题组 id 不可变；如需新增请走导入");
+    throw new HttpError(
+      422,
+      "ID_IMMUTABLE",
+      "题组 id 不可变；如需新增请走导入",
+    );
   }
 
   const saved = db.transaction((tx) =>

@@ -13,8 +13,8 @@ import type { Db } from "../db/client.ts";
 import type {
   Lecture,
   MaterialRow,
-  Question as QuestionRow,
   QuestionGroupRow,
+  Question as QuestionRow,
 } from "../db/schema.ts";
 import {
   knowledgePoints,
@@ -24,21 +24,18 @@ import {
   questionKnowledge,
   questions,
 } from "../db/schema.ts";
-import {
-  liveMaterialIdsOf,
-  resolveQmImportIssues,
-} from "./import-qm.ts";
+import { liveMaterialIdsOf, resolveQmImportIssues } from "./import-qm.ts";
 import {
   replaceQuestionMaterialRefsWithin,
   saveMaterialWithin,
   saveQuestionGroupWithin,
 } from "./material-repository.ts";
+import { assembleUnitDoc } from "./qm-edit-service.ts";
 import {
   loadKnowledgeIdByName,
   questionFields,
   syncQuestionKnowledge,
 } from "./question-sync.ts";
-import { assembleUnitDoc } from "./qm-edit-service.ts";
 
 /**
  * reparse 服务（T1.14，§5.1.1(4)「原文是真相」）：用当前解析器从
@@ -199,11 +196,7 @@ function planQuestion(
   const issues =
     resolvableMaterialIds === undefined
       ? parsed.issues
-      : resolveQmImportIssues(
-          parsed.issues,
-          parsed,
-          resolvableMaterialIds,
-        );
+      : resolveQmImportIssues(parsed.issues, parsed, resolvableMaterialIds);
 
   // 解析失败（结构性 error，如被篡改的 sourceMd）：跳过，绝不丢数据。
   // 材料缺失的题级引用单独给出「原文件重导」指引——不从相邻文本猜测恢复
@@ -561,7 +554,8 @@ function planQmUnit(
       return {
         id: row.id,
         status: "skipped",
-        reason: "sourceMd 在单元重建文档中解析不出该材料（id 不一致或容器损坏），保持原样未修改",
+        reason:
+          "sourceMd 在单元重建文档中解析不出该材料（id 不一致或容器损坏），保持原样未修改",
         changes: [],
         row,
         order: row.order,
@@ -635,7 +629,8 @@ function planQmUnit(
       return {
         id: row.id,
         status: "skipped",
-        reason: "sourceMd 在单元重建文档中解析不出该题组（id 不一致或容器损坏），保持原样未修改",
+        reason:
+          "sourceMd 在单元重建文档中解析不出该题组（id 不一致或容器损坏），保持原样未修改",
         changes: [],
         row,
         order: row.order,

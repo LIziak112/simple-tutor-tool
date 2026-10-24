@@ -62,126 +62,136 @@ import {
  * 删除接口返回 { ok: true, data: null }（统一壳，前端 callApi 直接解包）。
  */
 export function createContentRoutes(db: Db) {
-  return new Hono<TeacherEnv>()
-    .get("/content", (c) => {
-      return c.json({
-        ok: true,
-        data: getContentTree(db, c.var.teacher.id),
-      });
-    })
-    .get("/questions/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getQuestionDetail(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .put("/questions/:id", async (c) => {
-      const body: QuestionUpdateRequest = await parseJsonBody(
-        c,
-        questionUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateQuestion(db, c.var.teacher.id, c.req.param("id"), body),
-      });
-    })
-    .delete("/questions/:id", (c) => {
-      deleteQuestion(db, c.var.teacher.id, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .get("/lectures/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getLectureDetail(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .put("/lectures/:id", async (c) => {
-      const body: LectureUpdateRequest = await parseJsonBody(
-        c,
-        lectureUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateLecture(db, c.var.teacher.id, c.req.param("id"), body),
-      });
-    })
-    .delete("/lectures/:id", (c) => {
-      deleteLecture(db, c.var.teacher.id, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .post("/reorder", async (c) => {
-      const body: ReorderRequest = await parseJsonBody(c, reorderRequestSchema);
-      reorderContent(db, c.var.teacher.id, body);
-      return c.json({ ok: true, data: null });
-    })
-    // tt-06b / QM-05：材料/题组的详情、片段编辑与软删（教师域强制；编辑走
-    // 单元文档重建解析，删除返回受影响引用/子题清单）
-    .get("/materials/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getMaterialDetail(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .put("/materials/:id", async (c) => {
-      const body: MaterialUpdateRequest = await parseJsonBody(
-        c,
-        materialUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateMaterial(db, c.var.teacher.id, c.req.param("id"), body),
-      });
-    })
-    .delete("/materials/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: deleteMaterial(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .get("/groups/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getQuestionGroupDetail(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .put("/groups/:id", async (c) => {
-      const body: QuestionGroupUpdateRequest = await parseJsonBody(
-        c,
-        questionGroupUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateQuestionGroup(db, c.var.teacher.id, c.req.param("id"), body),
-      });
-    })
-    .delete("/groups/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: deleteQuestionGroup(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .post("/courses", async (c) => {
-      const body: CourseCreateRequest = await parseJsonBody(
-        c,
-        courseCreateRequestSchema,
-      );
-      return c.json(
-        { ok: true, data: createCourse(db, c.var.teacher.id, body) },
-        201,
-      );
-    })
-    .patch("/courses/:id", async (c) => {
-      const body: CourseUpdateRequest = await parseJsonBody(
-        c,
-        courseUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateCourse(db, c.var.teacher.id, c.req.param("id"), body),
-      });
-    })
-    .delete("/courses/:id", (c) => {
-      deleteCourse(db, c.var.teacher.id, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    });
+  return (
+    new Hono<TeacherEnv>()
+      .get("/content", (c) => {
+        return c.json({
+          ok: true,
+          data: getContentTree(db, c.var.teacher.id),
+        });
+      })
+      .get("/questions/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getQuestionDetail(db, c.var.teacher.id, c.req.param("id")),
+        });
+      })
+      .put("/questions/:id", async (c) => {
+        const body: QuestionUpdateRequest = await parseJsonBody(
+          c,
+          questionUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateQuestion(db, c.var.teacher.id, c.req.param("id"), body),
+        });
+      })
+      .delete("/questions/:id", (c) => {
+        deleteQuestion(db, c.var.teacher.id, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .get("/lectures/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getLectureDetail(db, c.var.teacher.id, c.req.param("id")),
+        });
+      })
+      .put("/lectures/:id", async (c) => {
+        const body: LectureUpdateRequest = await parseJsonBody(
+          c,
+          lectureUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateLecture(db, c.var.teacher.id, c.req.param("id"), body),
+        });
+      })
+      .delete("/lectures/:id", (c) => {
+        deleteLecture(db, c.var.teacher.id, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .post("/reorder", async (c) => {
+        const body: ReorderRequest = await parseJsonBody(
+          c,
+          reorderRequestSchema,
+        );
+        reorderContent(db, c.var.teacher.id, body);
+        return c.json({ ok: true, data: null });
+      })
+      // tt-06b / QM-05：材料/题组的详情、片段编辑与软删（教师域强制；编辑走
+      // 单元文档重建解析，删除返回受影响引用/子题清单）
+      .get("/materials/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getMaterialDetail(db, c.var.teacher.id, c.req.param("id")),
+        });
+      })
+      .put("/materials/:id", async (c) => {
+        const body: MaterialUpdateRequest = await parseJsonBody(
+          c,
+          materialUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateMaterial(db, c.var.teacher.id, c.req.param("id"), body),
+        });
+      })
+      .delete("/materials/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: deleteMaterial(db, c.var.teacher.id, c.req.param("id")),
+        });
+      })
+      .get("/groups/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getQuestionGroupDetail(db, c.var.teacher.id, c.req.param("id")),
+        });
+      })
+      .put("/groups/:id", async (c) => {
+        const body: QuestionGroupUpdateRequest = await parseJsonBody(
+          c,
+          questionGroupUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateQuestionGroup(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            body,
+          ),
+        });
+      })
+      .delete("/groups/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: deleteQuestionGroup(db, c.var.teacher.id, c.req.param("id")),
+        });
+      })
+      .post("/courses", async (c) => {
+        const body: CourseCreateRequest = await parseJsonBody(
+          c,
+          courseCreateRequestSchema,
+        );
+        return c.json(
+          { ok: true, data: createCourse(db, c.var.teacher.id, body) },
+          201,
+        );
+      })
+      .patch("/courses/:id", async (c) => {
+        const body: CourseUpdateRequest = await parseJsonBody(
+          c,
+          courseUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateCourse(db, c.var.teacher.id, c.req.param("id"), body),
+        });
+      })
+      .delete("/courses/:id", (c) => {
+        deleteCourse(db, c.var.teacher.id, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+  );
 }

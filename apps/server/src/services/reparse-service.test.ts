@@ -672,9 +672,7 @@ describe("reparseAll：材料/题组（tt-06b / QM-05）", () => {
     const db = createTestDb();
     commitQmForReparse(db);
     // 模拟旧库丢失：材料行被外力删除，组/题引用悬垂
-    db.delete(materials)
-      .where(eq(materials.id, "mat-资料分析-1"))
-      .run();
+    db.delete(materials).where(eq(materials.id, "mat-资料分析-1")).run();
 
     const report = reparseAll(db, { dryRun: false });
 

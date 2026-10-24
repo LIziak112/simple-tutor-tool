@@ -878,12 +878,14 @@ describe("QM-05 导入预览与材料/组编辑契约增量", () => {
       folderName: null,
       restore: false,
     };
-    expect(importPreviewDataSchema.safeParse({
-      summary: summaryBase,
-      issues: [],
-      actions: [action],
-      warnings: [],
-    }).success).toBe(true);
+    expect(
+      importPreviewDataSchema.safeParse({
+        summary: summaryBase,
+        issues: [],
+        actions: [action],
+        warnings: [],
+      }).success,
+    ).toBe(true);
     expect(
       importPreviewDataSchema.safeParse({
         summary: summaryBase,
@@ -902,11 +904,13 @@ describe("QM-05 导入预览与材料/组编辑契约增量", () => {
       warnings: [
         {
           code: "REF_QUESTION_IN_QUESTION",
-          message: "题内 ::ref{question=q1} 是无效写法：子题引用只能写在组内；该行不会进入题干也不会建立引用",
+          message:
+            "题内 ::ref{question=q1} 是无效写法：子题引用只能写在组内；该行不会进入题干也不会建立引用",
         },
         {
           code: "MATERIAL_MOVED_ACROSS_UNITS",
-          message: "材料「mat-1」将从单元「甲」移动到单元「乙」，3 处引用仍指向该材料",
+          message:
+            "材料「mat-1」将从单元「甲」移动到单元「乙」，3 处引用仍指向该材料",
         },
       ],
     };
@@ -944,9 +948,9 @@ describe("QM-05 导入预览与材料/组编辑契约增量", () => {
       materialUpdateRequestSchema.safeParse({ sourceMd: "::::material{…}" })
         .success,
     ).toBe(true);
-    expect(materialUpdateRequestSchema.safeParse({ sourceMd: "" }).success).toBe(
-      false,
-    );
+    expect(
+      materialUpdateRequestSchema.safeParse({ sourceMd: "" }).success,
+    ).toBe(false);
 
     const update = materialUpdateDataSchema.safeParse({
       id: "mat-u1-1",

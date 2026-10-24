@@ -1,6 +1,6 @@
-import { parseDocument } from "./parse.ts";
-import { normalizeQmIds } from "./normalize-ids.ts";
 import { describe, expect, it } from "vitest";
+import { normalizeQmIds } from "./normalize-ids.ts";
+import { parseDocument } from "./parse.ts";
 
 /**
  * tt-06b / QM-05 导入规范化回写（§5.2.3 回写=是、§5.2.5-4 只在导入时发生）：
@@ -86,7 +86,9 @@ describe("normalizeQmIds（导入规范化回写）", () => {
     const { markdown, changed } = normalizeQmIds(DOC, {});
     expect(changed).toBe(true);
     // 材料：mat-{unitId}-1 注入既有属性块（保留 title）
-    expect(markdown).toContain("::::material{id=mat-资料分析-1 title=给定资料}");
+    expect(markdown).toContain(
+      "::::material{id=mat-资料分析-1 title=给定资料}",
+    );
     // 组：grp-{unitId}-1
     expect(markdown).toContain("::::group{id=grp-资料分析-1 label=1～5}");
     // 锚点：seg-1/seg-2（材料内顺序；裸围栏补属性块）
@@ -152,12 +154,16 @@ describe("normalizeQmIds（导入规范化回写）", () => {
     const explicit = DOC.replace(
       "::::material{title=给定资料}",
       "::::material{id=mat-x title=给定资料}",
-    ).replace("{{}} 与显式", "{{slot-1}} 与显式")
+    )
+      .replace("{{}} 与显式", "{{slot-1}} 与显式")
       .replace("末尾无号 {{}}。", "末尾无号 {{slot-3}}。")
       .replace(":::seg\n首段。", ":::seg{id=seg-1}\n首段。")
       .replace(":::seg\n次段。", ":::seg{id=seg-2}\n次段。")
       .replace("::::group{label=1～5}", "::::group{id=grp-x label=1～5}")
-      .replace("::::options\n:::option\n选项甲", "::::options\n:::option{id=opt-a}\n选项甲")
+      .replace(
+        "::::options\n:::option\n选项甲",
+        "::::options\n:::option{id=opt-a}\n选项甲",
+      )
       .replace(":::item\n甲项", ":::item{id=it-1}\n甲项")
       .replace(":::item\n乙项", ":::item{id=it-2}\n乙项");
     const { markdown, changed } = normalizeQmIds(explicit, {});

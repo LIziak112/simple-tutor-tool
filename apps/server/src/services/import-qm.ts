@@ -1,6 +1,9 @@
-import type { ImportPreviewWarning, LintIssue, ParsedDocument } from "@tutor/contract";
-import { normalizeQmIds, parseRefAttrs } from "@tutor/md-dsl";
-import { detectNewContent } from "@tutor/md-dsl";
+import type {
+  ImportPreviewWarning,
+  LintIssue,
+  ParsedDocument,
+} from "@tutor/contract";
+import { detectNewContent, normalizeQmIds, parseRefAttrs } from "@tutor/md-dsl";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { materials } from "../db/schema.ts";
@@ -24,9 +27,7 @@ export function liveMaterialIdsOf(db: Db, teacherId: string): Set<string> {
   for (const row of db
     .select({ id: materials.id })
     .from(materials)
-    .where(
-      and(eq(materials.teacherId, teacherId), isNull(materials.deletedAt)),
-    )
+    .where(and(eq(materials.teacherId, teacherId), isNull(materials.deletedAt)))
     .all()) {
     ids.add(row.id);
   }

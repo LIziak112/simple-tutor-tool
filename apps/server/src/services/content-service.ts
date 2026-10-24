@@ -1009,7 +1009,12 @@ export function commitImport(
       lectures: lectureReports,
       questions: { inserted: insertedQuestions, updated: updatedQuestions },
       ...(insertedMaterials + updatedMaterials > 0
-        ? { materials: { inserted: insertedMaterials, updated: updatedMaterials } }
+        ? {
+            materials: {
+              inserted: insertedMaterials,
+              updated: updatedMaterials,
+            },
+          }
         : {}),
       ...(insertedGroups + updatedGroups > 0
         ? { groups: { inserted: insertedGroups, updated: updatedGroups } }
