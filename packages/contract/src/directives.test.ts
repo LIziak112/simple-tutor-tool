@@ -8,20 +8,29 @@ import {
   colDirective,
   columnsDirective,
   defineDirective,
+  directiveLocationSchema,
   exampleDirective,
   foldDirective,
   getDirective,
   graphDirective,
+  groupDirective,
   hintDirective,
   imageDirective,
+  itemDirective,
   listDirectives,
   markDirective,
+  materialDirective,
+  optionDirective,
+  optionsDirective,
   questionDirective,
+  refDirective,
   type RegisteredDirective,
+  segDirective,
   solutionDirective,
   stepDirective,
   stepsDirective,
   tipDirective,
+  variantDirective,
   warningDirective,
 } from "./directives";
 
@@ -31,7 +40,10 @@ import {
  * directives.registry.test.ts 中，依赖 vitest 文件级模块隔离）。
  */
 
-/** §5.1.1(5) 首发指令全集，按表中类别顺序（题目结构 5 / 讲义互动 4 / 版式强调 6 / 媒体 2） */
+/**
+ * §5.1.1(5) 首发指令全集（题目结构 5 / 讲义互动 4 / 版式强调 6 / 媒体 2）
+ * + TT-06 材料与题组批次（§5.4.1：material/group/seg/ref/options/option/item/variant）。
+ */
 const FIRST_RELEASE_DIRECTIVES = [
   // 题目结构
   "question",
@@ -54,20 +66,39 @@ const FIRST_RELEASE_DIRECTIVES = [
   // 媒体
   "image",
   "graph",
+  // 材料与题组（TT-06/QM-04，§5.4.1 新增批次）
+  "material",
+  "group",
+  "seg",
+  "ref",
+  "options",
+  "option",
+  "item",
+  "variant",
 ] as const;
 
 describe("首发清单：§5.1.1(5) 全部指令已登记", () => {
-  it("数量恰为 17，名称与顺序与架构文档一致", () => {
+  it("数量恰为 25（首发 17 + TT-06 批次 8），名称与注册顺序一致", () => {
     const names = listDirectives().map((d) => d.name);
     expect(names).toEqual([...FIRST_RELEASE_DIRECTIVES]);
-    expect(names).toHaveLength(17);
+    expect(names).toHaveLength(25);
   });
 
-  it("每个首发指令按名可查，since 均为 2.0，描述/样例非空", () => {
+  it("每个首发指令按名可查（2.0 首发 / 2.1 TT-06 批次），描述/样例非空", () => {
+    const SINCE_21 = new Set([
+      "material",
+      "group",
+      "seg",
+      "ref",
+      "options",
+      "option",
+      "item",
+      "variant",
+    ]);
     for (const name of FIRST_RELEASE_DIRECTIVES) {
       const d = getDirective(name);
       expect(d, `指令 ${name} 应已注册`).toBeDefined();
-      expect(d?.since).toBe("2.0");
+      expect(d?.since).toBe(SINCE_21.has(name) ? "2.1" : "2.0");
       expect(d?.description.length ?? 0).toBeGreaterThan(4);
       expect(d?.example.length ?? 0).toBeGreaterThan(0);
       expect(d?.allowedIn.length ?? 0).toBeGreaterThan(0);
@@ -285,11 +316,16 @@ describe("allowedIn：与 §5.1 规则要点表一致", () => {
       boxDirective,
       columnsDirective,
       markDirective,
-      imageDirective,
       graphDirective,
     ]) {
       expect([...d.allowedIn].sort()).toEqual(["lecture", "question"]);
     }
+    // image 自 TT-06 起 additionally 允许材料内（§5.4.1，材料内图片同规则）
+    expect([...imageDirective.allowedIn].sort()).toEqual([
+      "lecture",
+      "material",
+      "question",
+    ]);
   });
 
   it("blank 仅在 question 语境（题干中的 [[…]]）", () => {
@@ -390,5 +426,104 @@ describe("能力标注与方案 §4.3 标注表一致（T7.4）", () => {
     for (const d of listDirectives()) {
       expect(d.capability?.validation?.shape, `${d.name}`).not.toBe("partial");
     }
+  });
+});
+
+describe("TT-06 材料与题组指令（§5.4.1 注册草案）", () => {
+  it("位置枚举含 material/group/options 三个新语境", () => {
+    for (const loc of ["material", "group", "options"] as const) {
+      expect(directiveLocationSchema.safeParse(loc).success).toBe(true);
+    }
+    expect(directiveLocationSchema.safeParse("hallway").success).toBe(false);
+  });
+
+  it("material/group：文档顶层容器；seg 限材料内；option 限选项池内", () => {
+    expect(materialDirective.allowedIn).toEqual(["document"]);
+    expect(groupDirective.allowedIn).toEqual(["document"]);
+    expect(segDirective.allowedIn).toEqual(["material"]);
+    expect(optionDirective.allowedIn).toEqual(["options"]);
+    expect(optionsDirective.allowedIn).toEqual(["question"]);
+    expect(itemDirective.allowedIn).toEqual(["question"]);
+    expect(variantDirective.allowedIn).toEqual(["question"]);
+    expect(refDirective.allowedIn).toEqual(["group", "question"]);
+  });
+
+  it("image 的 allowedIn 含 material（材料内图片同规则，§5.4.1）", () => {
+    expect(imageDirective.allowedIn).toContain("material");
+    expect(imageDirective.allowedIn).toContain("lecture");
+    expect(imageDirective.allowedIn).toContain("question");
+  });
+
+  it("ref：material 与 question 恰写其一（§5.2.1 两种引用形态，语料为准）", () => {
+    // 材料引用：material + 可选 segs/slot/slots
+    expect(
+      refDirective.attrs.safeParse({ material: "mat-1" }).success,
+    ).toBe(true);
+    expect(
+      refDirective.attrs.safeParse({
+        material: "mat-1",
+        segs: "seg-1..seg-2",
+        slot: "slot-3",
+      }).success,
+    ).toBe(true);
+    // 子题引用：question（组内子题引用，§5.2.1）
+    expect(refDirective.attrs.safeParse({ question: "q-1" }).success).toBe(
+      true,
+    );
+    // 两者都缺 / 两者都写：拒绝
+    expect(refDirective.attrs.safeParse({}).success).toBe(false);
+    expect(
+      refDirective.attrs.safeParse({ material: "mat-1", question: "q-1" })
+        .success,
+    ).toBe(false);
+    // 未知属性拒绝（strict）
+    expect(
+      refDirective.attrs.safeParse({ material: "mat-1", seg: "seg-1" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("bool 属性以字符串 true/false 书写并解析为布尔（§5.4：mdast 属性恒为字符串）", () => {
+    // options.allow-repeat（输出键保留 DSL 属性名，allowRepeat 映射在解析层）
+    expect(optionsDirective.attrs.parse({})).toEqual({
+      "allow-repeat": false,
+    });
+    expect(optionsDirective.attrs.parse({ "allow-repeat": "true" })).toEqual({
+      "allow-repeat": true,
+    });
+    expect(optionsDirective.attrs.parse({ "allow-repeat": "false" })).toEqual({
+      "allow-repeat": false,
+    });
+    expect(
+      optionsDirective.attrs.safeParse({ "allow-repeat": "yes" }).success,
+    ).toBe(false);
+    // item.fixed / item.distractor
+    expect(itemDirective.attrs.parse({})).toEqual({
+      fixed: false,
+      distractor: false,
+    });
+    expect(
+      itemDirective.attrs.parse({ fixed: "true", distractor: "true" }),
+    ).toEqual({ fixed: true, distractor: true });
+  });
+
+  it("question 新增 word-min/word-max：字符串数字 coerce、正整数、可选", () => {
+    expect(
+      questionDirective.attrs.parse({ type: "response", "word-min": "150" }),
+    ).toMatchObject({ type: "response", "word-min": 150 });
+    expect(
+      questionDirective.attrs.parse({ type: "response", "word-max": "1000" }),
+    ).toMatchObject({ type: "response", "word-max": 1000 });
+    expect(
+      questionDirective.attrs.safeParse({ type: "response", "word-min": "0" })
+        .success,
+    ).toBe(false);
+    expect(
+      questionDirective.attrs.parse({ type: "response" })["word-min"],
+    ).toBeUndefined();
+    // 旧文档键集不受影响：不带新属性照常解析
+    expect(
+      questionDirective.attrs.parse({ type: "fill", difficulty: "3" }),
+    ).toMatchObject({ type: "fill", difficulty: 3 });
   });
 });
