@@ -87,3 +87,12 @@
 - `pnpm lint` → 1247 files / 无修改；`pnpm typecheck`、`pnpm build` 已通过。末轮类型复验在并行任务新建、未跟踪的 `apps/server/scripts/test-import-verify.ts:30` 语法错误处阻断，本任务不修改或提交该脚本；后续以 PR 干净检出的完整 CI 为最终闸门。
 - 同步最新 v2 的分层测试流程后，全量测试与构建交由 PR CI 执行一次，本机保留快速档与专项真实双浏览器回归；本次仅合入 v2，不发布 main。
 - 最终专项真实浏览器：`pnpm e2e e2e/annotation-cross-device-view.spec.ts e2e/annotation-pixel-grid.spec.ts e2e/question-base.spec.ts --workers=1` → 15 passed / 1 skipped，4.1m。跳过项为 WebKit 不支持的 Chromium 原生系统缩放启动参数；新旧稿双向续写、布局保护、缺布局只读恢复与公式字体异常路径均通过。
+
+### 完整 CI 发现的历史 E2E 语义漂移
+
+- PR #5 首轮质量 job 在干净检出中通过：489 files / 5776 tests，435.95s；lint、类型、规范生成一致性与构建均通过。完整 E2E 暴露了此前专项没有覆盖的历史断言，继续按质量闸门修复，未据专项绿色直接发布。
+- 同期 v2 合入功能面标签与选择器更新，先合并上游并保留圈画修复，再为新缩放用例补齐 `@annotation`；标签选择器单测 16/16、E2E 类型检查与构建通过。
+- `full-chain` 仍按旧“答对”徽章查找，而当前评判状态为“回答正确”；改为核对“本题评判”区域的状态文本。
+- `insights-pages`、`lesson` 与 `teacher-mark-flow` 仍假设有参考答案的填空进入教师待批，和现行冻结行自评策略冲突。保留学情数字、错题、参考答案公式化、防泄露和教师覆盖判定的断言，流程改为学生自评或从教师作答详情改判；另明确断言此类题不进入教师待批。
+- `expectResultCount` 改为精确核对统计项主定义；待批与“另有待自评”的独立说明分别断言，避免把说明文字拼进数字。未改产品判分、自评规则或服务端接口。
+- 先复现失败：三个历史 spec 在双浏览器 6/6 失败，教师改判旧用例在 Chromium 失败；改后四个场景联合复跑 → 4 passed，1.8m。合并验证待后续 CI 记录。
