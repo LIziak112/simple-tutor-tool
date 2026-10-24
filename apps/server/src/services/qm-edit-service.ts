@@ -80,44 +80,58 @@ interface RebuiltUnitDoc {
 }
 
 /**
- * 单元文档重建（导入规范序：材料 → 组 → 题目；与 exportUnitMd / 重导同一
- * 拼装口径）。片段起始行 = 前缀行数 + 前序块的行数累计（块间一空行分隔）。
+ * 单元文档纯拼装（导入规范序：材料 → 组 → 题目；与 exportUnitMd / 重导同一
+ * 拼装口径）。编辑重建与 reparse 共用——单一拼装出处，不产生第二事实来源。
  */
-export function rebuildUnitDoc(source: UnitDocSource): RebuiltUnitDoc {
+export function assembleUnitDoc(
+  unitId: string,
+  blocks: {
+    readonly materials: readonly string[];
+    readonly groups: readonly string[];
+    readonly questions: readonly string[];
+  },
+): string {
   const prefixLines = [
     "---",
     "kind: practice",
-    `unit: ${JSON.stringify(source.unitId)}`,
+    `unit: ${JSON.stringify(unitId)}`,
     "---",
     "",
-    `# ${source.unitId}`,
+    `# ${unitId}`,
     "",
   ];
+  return [
+    ...prefixLines,
+    ...blocks.materials,
+    ...blocks.groups,
+    ...blocks.questions,
+    "",
+  ].join("\n");
+}
+
+/**
+ * 单元文档重建（assembleUnitDoc 的编辑形态：被编辑实体以提交片段替换）。
+ * 片段起始行 = 前缀行数 + 前序块的行数累计（块间一空行分隔）。
+ */
+export function rebuildUnitDoc(source: UnitDocSource): RebuiltUnitDoc {
   const targetInMaterials = source.materials.some(
     (m) => m.id === source.targetId,
   );
   const targetSequence = targetInMaterials ? source.materials : source.groups;
   const replace = (id: string, sourceMd: string): string =>
     id === source.targetId ? source.submittedSourceMd : sourceMd;
-  const materialBlocks = source.materials.map((m) =>
-    replace(m.id, m.sourceMd),
-  );
-  const groupBlocks = source.groups.map((g) => replace(g.id, g.sourceMd));
-  const blocks = [
-    ...materialBlocks,
-    ...groupBlocks,
-    ...source.questions.map((q) => q.sourceMd),
-  ];
-  let fragmentStartLine = prefixLines.length + 1;
+  const markdown = assembleUnitDoc(source.unitId, {
+    materials: source.materials.map((m) => replace(m.id, m.sourceMd)),
+    groups: source.groups.map((g) => replace(g.id, g.sourceMd)),
+    questions: source.questions.map((q) => q.sourceMd),
+  });
+  let fragmentStartLine = 8;
   for (const entity of targetSequence) {
     const block = replace(entity.id, entity.sourceMd);
     if (entity.id === source.targetId) break;
     fragmentStartLine += block.split("\n").length + 1;
   }
-  return {
-    markdown: [...prefixLines, ...blocks, ""].join("\n"),
-    fragmentStartLine,
-  };
+  return { markdown, fragmentStartLine };
 }
 
 /** lint 重建文档并做教师域引用降级；error → 422 LINT_ERROR（附片段起始行） */

@@ -141,13 +141,13 @@ const REF_BLOCK_LINE_RE = /^\s*::ref\{([^}]*)\}\s*$/;
  * P2-2 预览警告：题内块式 ::ref{question=…}（无效写法——子题引用只能写在
  * ::::group 内）。解析层把该行从 stemMd 排除且不建立引用（题内 ::ref 只认
  * material=）；此处扫描题目 sourceMd 行，逐处产出可见 warning（不静默吞）。
- * 两个出口形态共用同一实现：issue 形态（lintIssue 兼容，单题编辑响应）与
- * 预览 warning 形态（{code,message}）。
+ * 两个出口形态共用同一实现：issue 形态（lintIssue 兼容，单题编辑响应；code
+ * 收窄为字面量类型，预览形态映射无需断言）与预览 warning 形态（{code,message}）。
  */
 export function qmStemRefIssues(
   parsed: ParsedDocument,
-): LintIssue[] {
-  const issues: LintIssue[] = [];
+): (LintIssue & { code: "REF_QUESTION_IN_QUESTION" })[] {
+  const issues: (LintIssue & { code: "REF_QUESTION_IN_QUESTION" })[] = [];
   for (const unit of parsed.units) {
     for (const question of unit.questions) {
       const lines = question.sourceMd.split("\n");
