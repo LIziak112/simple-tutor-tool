@@ -617,3 +617,71 @@ describe("QM-07 P2-4：拼装规范序单源（assembleQmBlocks 两出口一致�
     );
   });
 });
+
+describe("QM-07 P2-5：编辑片段夹带异类实体显式拒绝（不静默丢弃）", () => {
+  it("材料片段夹带组块 → 422 VALIDATION_ERROR 且零写入", () => {
+    const db = createTestDb();
+    commitBase(db);
+    const base = materialSourceMd(db);
+    const fragment = [base, "", "::::group{id=grp-extra}", "::::"].join("\n");
+    expect(() =>
+      updateMaterial(db, TEST_TEACHER_ID, MATERIAL_ID, { sourceMd: fragment }, true),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("非目标实体"),
+      }) satisfies Partial<HttpError>,
+    );
+    // 零写入：材料版本保持 1、无 grp-extra 组落库
+    expect(getMaterial(db, TEST_TEACHER_ID, MATERIAL_ID)?.version).toBe(1);
+    expect(getQuestionGroup(db, TEST_TEACHER_ID, "grp-extra")).toBeNull();
+  });
+
+  it("材料片段夹带题块 → 422 且零写入（题块也不随材料编辑落库）", () => {
+    const db = createTestDb();
+    commitBase(db);
+    const base = materialSourceMd(db);
+    const fragment = [
+      base,
+      "",
+      "::::question{type=judge}",
+      "判断。[[正确]]",
+      "::::",
+    ].join("\n");
+    expect(() =>
+      updateMaterial(db, TEST_TEACHER_ID, MATERIAL_ID, { sourceMd: fragment }, true),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("题目"),
+      }) satisfies Partial<HttpError>,
+    );
+    expect(getMaterial(db, TEST_TEACHER_ID, MATERIAL_ID)?.version).toBe(1);
+  });
+
+  it("组片段夹带材料块 → 422 且零写入", () => {
+    const db = createTestDb();
+    commitBase(db);
+    const base = groupSourceMd(db);
+    const fragment = [
+      base,
+      "",
+      "::::material{id=mat-extra}",
+      "额外材料正文。",
+      "::::",
+    ].join("\n");
+    expect(() =>
+      updateQuestionGroup(db, TEST_TEACHER_ID, GROUP_ID, { sourceMd: fragment }, true),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("材料"),
+      }) satisfies Partial<HttpError>,
+    );
+    expect(getQuestionGroup(db, TEST_TEACHER_ID, GROUP_ID)?.version).toBe(1);
+    expect(getMaterial(db, TEST_TEACHER_ID, "mat-extra")).toBeNull();
+  });
+});

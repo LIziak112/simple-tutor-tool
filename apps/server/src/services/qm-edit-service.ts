@@ -243,6 +243,66 @@ function assertEntityIdsUnchanged(
   );
 }
 
+/**
+ * 编辑片段夹带异类实体检测（tt-07b / QM-07 P2-5）：提交片段只应包含目标实体
+ * 块——重建文档由库内各行拼装，解析出的非目标种类实体集合必须与库内一致；
+ * 夹带块此前被静默丢弃（只写目标实体），教师会以为夹带内容已保存。差异 →
+ * 422 显式拒绝（新增实体走导入、删除走删除接口）。目标种类传 null 跳过
+ * （同种类集合由 assertEntityIdsUnchanged 用更精确的 id 语义裁决）。
+ */
+function assertFragmentEntitiesConsistent(
+  parsed: ParsedDocument,
+  existing: {
+    readonly materials: readonly string[] | null;
+    readonly groups: readonly string[] | null;
+    readonly questions: readonly string[];
+  },
+  targetName: string,
+): void {
+  const extra: string[] = [];
+  const missing: string[] = [];
+  const compare = (
+    parsedIds: readonly string[],
+    existingIds: readonly string[] | null,
+    kindName: string,
+  ): void => {
+    if (existingIds === null) return;
+    const parsedSet = new Set(parsedIds);
+    for (const id of parsedSet) {
+      if (!existingIds.includes(id)) extra.push(`${kindName}「${id}」`);
+    }
+    for (const id of existingIds) {
+      if (!parsedSet.has(id)) missing.push(`${kindName}「${id}」`);
+    }
+  };
+  compare(
+    (parsed.materials ?? []).map((m) => m.id),
+    existing.materials,
+    "材料",
+  );
+  compare(
+    (parsed.groups ?? []).map((g) => g.id),
+    existing.groups,
+    "题组",
+  );
+  compare(
+    parsed.units.flatMap((unit) => unit.questions.map((q) => q.id)),
+    existing.questions,
+    "题目",
+  );
+  if (extra.length === 0 && missing.length === 0) return;
+  const parts: string[] = [];
+  if (extra.length > 0)
+    parts.push(`片段夹带 ${extra.length} 个非目标实体块（${extra.join("、")}）`);
+  if (missing.length > 0)
+    parts.push(`库内实体在解析结果中缺失（${missing.join("、")}，可能被片段遮挡）`);
+  throw new HttpError(
+    422,
+    "VALIDATION_ERROR",
+    `一次只能编辑一个${targetName}实体：${parts.join("；")}——夹带内容不会随保存落库；新增实体请走导入，删除请走删除接口`,
+  );
+}
+
 // ---------- 材料 ----------
 
 /** 取材料行（教师域、未软删）；缺失/软删 → 404 MATERIAL_NOT_FOUND */
@@ -292,11 +352,12 @@ export function updateMaterial(
 
   const unitMaterials = listMaterialsByUnit(db, teacherId, row.unitId);
   const unitGroups = listQuestionGroupsByUnit(db, teacherId, row.unitId);
+  const unitQuestions = liveQuestionsOfUnit(db, teacherId, row.unitId);
   const rebuilt = rebuildUnitDoc({
     unitId: row.unitId,
     materials: unitMaterials.map((m) => ({ id: m.id, sourceMd: m.sourceMd })),
     groups: unitGroups.map((g) => ({ id: g.id, sourceMd: g.sourceMd })),
-    questions: liveQuestionsOfUnit(db, teacherId, row.unitId),
+    questions: unitQuestions,
     targetId: id,
     submittedSourceMd: input.sourceMd,
   });
@@ -305,6 +366,16 @@ export function updateMaterial(
     (parsed.materials ?? []).map((m) => m.id),
     unitMaterials.map((m) => m.id),
     id,
+    "材料",
+  );
+  // P2-5：材料片段夹带组块/题块（或遮挡库内其他实体）→ 显式拒绝
+  assertFragmentEntitiesConsistent(
+    parsed,
+    {
+      materials: null,
+      groups: unitGroups.map((g) => g.id),
+      questions: unitQuestions.map((q) => q.id),
+    },
     "材料",
   );
   const next = (parsed.materials ?? []).find((m) => m.id === id);
@@ -412,11 +483,12 @@ export function updateQuestionGroup(
 
   const unitMaterials = listMaterialsByUnit(db, teacherId, row.unitId);
   const unitGroups = listQuestionGroupsByUnit(db, teacherId, row.unitId);
+  const unitQuestions = liveQuestionsOfUnit(db, teacherId, row.unitId);
   const rebuilt = rebuildUnitDoc({
     unitId: row.unitId,
     materials: unitMaterials.map((m) => ({ id: m.id, sourceMd: m.sourceMd })),
     groups: unitGroups.map((g) => ({ id: g.id, sourceMd: g.sourceMd })),
-    questions: liveQuestionsOfUnit(db, teacherId, row.unitId),
+    questions: unitQuestions,
     targetId: id,
     submittedSourceMd: input.sourceMd,
   });
@@ -425,6 +497,16 @@ export function updateQuestionGroup(
     (parsed.groups ?? []).map((g) => g.id),
     unitGroups.map((g) => g.id),
     id,
+    "题组",
+  );
+  // P2-5：题组片段夹带材料块/题块（或遮挡库内其他实体）→ 显式拒绝
+  assertFragmentEntitiesConsistent(
+    parsed,
+    {
+      materials: unitMaterials.map((m) => m.id),
+      groups: null,
+      questions: unitQuestions.map((q) => q.id),
+    },
     "题组",
   );
   const next = (parsed.groups ?? []).find((g) => g.id === id);
