@@ -41,3 +41,16 @@ iPad 在已有练习圈画并确认上传后，电脑打开同一题：排版兼
 - 真机 iPad/Pencil 验收尚未执行；按仓库手写技能要求，桌面 WebKit 结果不替代真机。
 
 用户追加授权：完成后合并 v2、推送远端并部署云服务器；部署前备份，部署后验证健康与原稿查看。
+
+## 合并、部署与线上验收
+
+- 修复提交 `8ee2e9d6`，合并并推送 origin/v2 的运行代码提交 `95e010ec5dba887346cbf276bdfc903d6a71c321`。未操作 main。
+- 云服务器 `47.116.99.166`，服务 `simple-tutor-tool`，程序 `/opt/simple-tutor-tool`；沿用已使用的 tar-over 流程，归档 SHA-256 `907ba72f6b0347fa247f91c15f46f436de999055b95d8b5c202dad4b7bc9ea1e`，服务器收包校验通过。
+- 服务器记录北京时间 2026-10-24 20:24:28 停服并完整备份，20:24:56 启动，20:24:58 健康检查通过；依赖全部复用缓存，独立 staging 构建成功后切换，配置和整个数据目录保留。
+- 数据备份 `/opt/simple-tutor-backups/data-before-95e010ec-20261024-202428.tar.gz`；旧程序 `/opt/simple-tutor-backups/app-before-95e010ec-20261024-202428`；日志 `/opt/simple-tutor-staging/deploy-95e010ec.log`。脚本包含失败回滚。
+- 停服后的切换前后 41 张业务表按全部行内容排序后散列比较完全一致。启动及浏览验证后，除正常更新的 events/sessions 外其余表仍一致：attempts 49、responses 782、notes 59、ink 2、annotation_bases 36、annotations 35。SQLite quick_check = ok。
+- 公网健康接口成功，systemd 为 active，`.deployed-commit` 与运行代码提交一致。
+- 在用户已有浏览器会话中刷新实际作答 `be31d0b8-0048-4797-bfbb-89d7fc08daff`（刷新前为全部已保存），第 1 题 1 笔、第 2 题 6 笔均成功打开只读原稿，旧布局报错不再出现；关闭第一题后仍为全部已保存，未修改任何答案或笔迹。
+- 第 1 题保存的旧 PNG 内部分公式原本为空白，此次按原底图展示，没有自动重建或覆盖。旧底图采集质量需另查，与本批跨设备读取解耦。
+- 线上截图保存在被忽略的 `e2e/.artifacts/annotation-deploy/production-original.png` 与 `production-original-question2.png`。这些真实记录验证发生在电脑浏览器，仍不能替代 iPad/Pencil 真机操作验收。
+- 本节后续文档提交只补验收记录，不改变服务器已部署的运行代码。
