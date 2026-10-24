@@ -1,3 +1,5 @@
+// 相对导入带 .ts 扩展名（仓库约定：本模块被导入/重导（QM-05）与开卷冻结
+// （QM-06/TT-07）共用，也可能被 reparse CLI（Node 24 原生类型剥离运行）间接导入）
 import type {
   Material,
   MaterialPublic,
@@ -5,20 +7,18 @@ import type {
   QuestionGroup,
   QuestionGroupPublic,
 } from "@tutor/contract";
-import { and, asc, eq, isNull, isNotNull, or } from "drizzle-orm";
-// 本模块被导入/重导（QM-05）与开卷冻结（QM-06/TT-07）共用，也可能被 reparse CLI
-// （Node 24 原生类型剥离运行）经服务层间接导入——相对导入带 .ts 扩展名（仓库约定）
+import { and, asc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
   type AttemptContextSnapshotRow,
   attemptContextSnapshots,
   type MaterialRow,
-  materials,
   materialRefs,
-  questions,
+  materials,
   type QuestionGroupRow,
   questionGroupMembers,
   questionGroups,
+  questions,
 } from "../db/schema.ts";
 
 /**
@@ -73,7 +73,9 @@ export function saveMaterial(db: Db, input: SaveMaterialInput): MaterialRow {
     const existing = tx
       .select()
       .from(materials)
-      .where(and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)))
+      .where(
+        and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)),
+      )
       .get();
     const fields = {
       unitId: input.unitId,
@@ -100,15 +102,36 @@ export function saveMaterial(db: Db, input: SaveMaterialInput): MaterialRow {
               : existing.version + 1,
           deletedAt: null,
         })
-        .where(and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)))
+        .where(
+          and(
+            eq(materials.teacherId, teacherId),
+            eq(materials.id, material.id),
+          ),
+        )
         .run();
     }
-    return tx
-      .select()
-      .from(materials)
-      .where(and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)))
-      .get()!;
+    return requireJustWrittenRow(
+      tx
+        .select()
+        .from(materials)
+        .where(
+          and(
+            eq(materials.teacherId, teacherId),
+            eq(materials.id, material.id),
+          ),
+        )
+        .get(),
+      `materials(${teacherId}, ${material.id})`,
+    );
   });
+}
+
+/** 事务内刚写入的行回读缺失 = 事务异常（不静默返回 null，防半份状态外泄） */
+function requireJustWrittenRow<T>(row: T | undefined, what: string): T {
+  if (row === undefined) {
+    throw new Error(`数据库读写不一致：${what} 刚写入即缺失`);
+  }
+  return row;
 }
 
 /** 按 (teacherId, id) 读材料；默认排除软删行（includeDeleted 可见） */
@@ -118,14 +141,17 @@ export function getMaterial(
   id: string,
   options: IncludeDeletedOptions = {},
 ): MaterialRow | null {
-  const conditions = [
-    eq(materials.teacherId, teacherId),
-    eq(materials.id, id),
-  ];
+  const conditions = [eq(materials.teacherId, teacherId), eq(materials.id, id)];
   if (options.includeDeleted !== true) {
     conditions.push(isNull(materials.deletedAt));
   }
-  return db.select().from(materials).where(and(...conditions)).get() ?? null;
+  return (
+    db
+      .select()
+      .from(materials)
+      .where(and(...conditions))
+      .get() ?? null
+  );
 }
 
 /** 单元内材料列表（unit.materials 重建入口；按文档序 order 升序） */
@@ -174,11 +200,13 @@ export function softDeleteMaterial(
         .where(and(eq(materials.teacherId, teacherId), eq(materials.id, id)))
         .run();
     }
-    return tx
-      .select()
-      .from(materials)
-      .where(and(eq(materials.teacherId, teacherId), eq(materials.id, id)))
-      .get() ?? null;
+    return (
+      tx
+        .select()
+        .from(materials)
+        .where(and(eq(materials.teacherId, teacherId), eq(materials.id, id)))
+        .get() ?? null
+    );
   });
 }
 
@@ -265,17 +293,26 @@ export function saveQuestionGroup(
         .run();
     }
     // 组材料引用索引整体替换（ownerKind='group'）
-    replaceOwnerMaterialRefs(tx, teacherId, "group", group.id, group.materialRefs);
-    return tx
-      .select()
-      .from(questionGroups)
-      .where(
-        and(
-          eq(questionGroups.teacherId, teacherId),
-          eq(questionGroups.id, group.id),
-        ),
-      )
-      .get()!;
+    replaceOwnerMaterialRefs(
+      tx,
+      teacherId,
+      "group",
+      group.id,
+      group.materialRefs,
+    );
+    return requireJustWrittenRow(
+      tx
+        .select()
+        .from(questionGroups)
+        .where(
+          and(
+            eq(questionGroups.teacherId, teacherId),
+            eq(questionGroups.id, group.id),
+          ),
+        )
+        .get(),
+      `question_groups(${teacherId}, ${group.id})`,
+    );
   });
 }
 
@@ -294,7 +331,11 @@ export function getQuestionGroup(
     conditions.push(isNull(questionGroups.deletedAt));
   }
   return (
-    db.select().from(questionGroups).where(and(...conditions)).get() ?? null
+    db
+      .select()
+      .from(questionGroups)
+      .where(and(...conditions))
+      .get() ?? null
   );
 }
 
@@ -332,10 +373,7 @@ export function softDeleteQuestionGroup(
       .select()
       .from(questionGroups)
       .where(
-        and(
-          eq(questionGroups.teacherId, teacherId),
-          eq(questionGroups.id, id),
-        ),
+        and(eq(questionGroups.teacherId, teacherId), eq(questionGroups.id, id)),
       )
       .get();
     if (existing === undefined) return null;
@@ -350,16 +388,18 @@ export function softDeleteQuestionGroup(
         )
         .run();
     }
-    return tx
-      .select()
-      .from(questionGroups)
-      .where(
-        and(
-          eq(questionGroups.teacherId, teacherId),
-          eq(questionGroups.id, id),
-        ),
-      )
-      .get() ?? null;
+    return (
+      tx
+        .select()
+        .from(questionGroups)
+        .where(
+          and(
+            eq(questionGroups.teacherId, teacherId),
+            eq(questionGroups.id, id),
+          ),
+        )
+        .get() ?? null
+    );
   });
 }
 
@@ -435,7 +475,11 @@ export function findMaterialRefOwners(
         eq(materialRefs.materialId, materialId),
       ),
     )
-    .orderBy(asc(materialRefs.ownerKind), asc(materialRefs.ownerId), asc(materialRefs.refOrder))
+    .orderBy(
+      asc(materialRefs.ownerKind),
+      asc(materialRefs.ownerId),
+      asc(materialRefs.refOrder),
+    )
     .all();
 }
 
@@ -541,10 +585,7 @@ export function findDanglingGroupMembers(
         or(isNull(questions.id), isNotNull(questions.deletedAt)),
       ),
     )
-    .orderBy(
-      asc(questionGroupMembers.groupId),
-      asc(questionGroupMembers.order),
-    )
+    .orderBy(asc(questionGroupMembers.groupId), asc(questionGroupMembers.order))
     .all();
 }
 

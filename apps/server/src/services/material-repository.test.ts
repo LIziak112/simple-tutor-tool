@@ -239,7 +239,9 @@ describe("材料仓储：saveMaterial / getMaterial / 软删与复活", () => {
     const v2 = saveMaterial(db, {
       teacherId: TEST_TEACHER_ID,
       unitId,
-      material: materialFixture({ sourceMd: "::::material{id=mat-u1-1}\n新正文\n::::" }),
+      material: materialFixture({
+        sourceMd: "::::material{id=mat-u1-1}\n新正文\n::::",
+      }),
       order: 0,
       now: NOW2,
     });
@@ -269,7 +271,12 @@ describe("材料仓储：saveMaterial / getMaterial / 软删与复活", () => {
     const deleted = softDeleteMaterial(db, TEST_TEACHER_ID, "mat-u1-1", NOW2);
     expect(deleted?.deletedAt).toBe(NOW2);
     // 幂等：重复软删不更新时间
-    const again = softDeleteMaterial(db, TEST_TEACHER_ID, "mat-u1-1", "2026-10-25T00:00:00.000Z");
+    const again = softDeleteMaterial(
+      db,
+      TEST_TEACHER_ID,
+      "mat-u1-1",
+      "2026-10-25T00:00:00.000Z",
+    );
     expect(again?.deletedAt).toBe(NOW2);
     expect(getMaterial(db, TEST_TEACHER_ID, "mat-u1-1")).toBeNull();
     expect(
@@ -282,7 +289,9 @@ describe("材料仓储：saveMaterial / getMaterial / 软删与复活", () => {
         includeDeleted: true,
       }),
     ).toHaveLength(1);
-    expect(softDeleteMaterial(db, TEST_TEACHER_ID, "mat-none", NOW2)).toBeNull();
+    expect(
+      softDeleteMaterial(db, TEST_TEACHER_ID, "mat-none", NOW2),
+    ).toBeNull();
     db.$client.close();
   });
 
@@ -331,9 +340,9 @@ describe("材料仓储：saveMaterial / getMaterial / 软删与复活", () => {
     });
     expect(rowB.title).toBe("教师 B 的同 id 材料");
     // 各自只读到自己域内的行
-    expect(
-      getMaterial(db, TEST_TEACHER_ID, "mat-u1-1")?.title,
-    ).toBe("2023 年税收构成");
+    expect(getMaterial(db, TEST_TEACHER_ID, "mat-u1-1")?.title).toBe(
+      "2023 年税收构成",
+    );
     expect(getMaterial(db, teacherB, "mat-u1-1")?.title).toBe(
       "教师 B 的同 id 材料",
     );
@@ -503,7 +512,11 @@ describe("题组仓储：saveQuestionGroup 与成员/材料引用索引", () => 
     ).toThrow();
     expect(getQuestionGroup(db, TEST_TEACHER_ID, "grp-u1-1")).toBeNull();
     expect(
-      db.select().from(memberTable).where(eq(memberTable.groupId, "grp-u1-1")).all(),
+      db
+        .select()
+        .from(memberTable)
+        .where(eq(memberTable.groupId, "grp-u1-1"))
+        .all(),
     ).toHaveLength(0);
     expect(
       db
@@ -549,7 +562,9 @@ describe("题组仓储：saveQuestionGroup 与成员/材料引用索引", () => 
     ).toHaveLength(1);
     // B 域不受影响
     expect(listQuestionGroupsByUnit(db, teacherB, "u1")).toHaveLength(1);
-    expect(getQuestionGroup(db, teacherB, "grp-u1-1")?.title).toBe("教师 B 的组");
+    expect(getQuestionGroup(db, teacherB, "grp-u1-1")?.title).toBe(
+      "教师 B 的组",
+    );
     db.$client.close();
   });
 });
@@ -656,10 +671,9 @@ describe("引用反查与悬垂检测（删除/移动影响查询）", () => {
       order: 1,
       now: NOW,
     });
-    expect(findGroupsReferencingQuestion(db, TEST_TEACHER_ID, "u1-1").sort()).toEqual([
-      "grp-u1-1",
-      "grp-u1-2",
-    ]);
+    expect(
+      findGroupsReferencingQuestion(db, TEST_TEACHER_ID, "u1-1").sort(),
+    ).toEqual(["grp-u1-1", "grp-u1-2"]);
     expect(
       findGroupsReferencingQuestion(db, TEST_TEACHER_ID, "u1-none"),
     ).toEqual([]);
@@ -753,64 +767,79 @@ describe("attempt 上下文冻结快照（§5.6/§5.8.1 预留存储）", () => 
   it("冻结写入与去重：同 (attempt, kind, id, version) 幂等；同 id 不同版本两行不覆盖", () => {
     const db = createTestDb();
     const attemptId = seedAttempt(db);
-    const inserted1 = freezeAttemptContextSnapshots(db, attemptId, [
-      {
-        kind: "material",
-        sourceId: "mat-u1-1",
-        sourceVersion: 1,
-        snapshot: {
-          id: "mat-u1-1",
-          title: "材料一",
-          contentMd: "正文 v1",
-          anchors: [],
-          slots: [],
-          mediaPaths: [],
+    const inserted1 = freezeAttemptContextSnapshots(
+      db,
+      attemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-u1-1",
+          sourceVersion: 1,
+          snapshot: {
+            id: "mat-u1-1",
+            title: "材料一",
+            contentMd: "正文 v1",
+            anchors: [],
+            slots: [],
+            mediaPaths: [],
+          },
         },
-      },
-      {
-        kind: "group",
-        sourceId: "grp-u1-1",
-        sourceVersion: 1,
-        snapshot: {
-          id: "grp-u1-1",
-          introMd: "公共说明",
-          materialRefs: [],
-          questionIds: [],
+        {
+          kind: "group",
+          sourceId: "grp-u1-1",
+          sourceVersion: 1,
+          snapshot: {
+            id: "grp-u1-1",
+            introMd: "公共说明",
+            materialRefs: [],
+            questionIds: [],
+          },
         },
-      },
-    ], NOW);
+      ],
+      NOW,
+    );
     expect(inserted1).toBe(2);
     // 同键重复冻结 → 去重（返回新插入数 0，行数不变）
-    const inserted2 = freezeAttemptContextSnapshots(db, attemptId, [
-      {
-        kind: "material",
-        sourceId: "mat-u1-1",
-        sourceVersion: 1,
-        snapshot: {
-          id: "mat-u1-1",
-          contentMd: "正文 v1",
-          anchors: [],
-          slots: [],
-          mediaPaths: [],
+    const inserted2 = freezeAttemptContextSnapshots(
+      db,
+      attemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-u1-1",
+          sourceVersion: 1,
+          snapshot: {
+            id: "mat-u1-1",
+            contentMd: "正文 v1",
+            anchors: [],
+            slots: [],
+            mediaPaths: [],
+          },
         },
-      },
-    ], NOW2);
+      ],
+      NOW2,
+    );
     expect(inserted2).toBe(0);
     // 同 id 不同版本 → 新行（§5.3：材料同 ID 不同版本不互相覆盖）
-    const inserted3 = freezeAttemptContextSnapshots(db, attemptId, [
-      {
-        kind: "material",
-        sourceId: "mat-u1-1",
-        sourceVersion: 2,
-        snapshot: {
-          id: "mat-u1-1",
-          contentMd: "正文 v2",
-          anchors: [],
-          slots: [],
-          mediaPaths: [],
+    const inserted3 = freezeAttemptContextSnapshots(
+      db,
+      attemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-u1-1",
+          sourceVersion: 2,
+          snapshot: {
+            id: "mat-u1-1",
+            contentMd: "正文 v2",
+            anchors: [],
+            slots: [],
+            mediaPaths: [],
+          },
         },
-      },
-    ], NOW2);
+      ],
+      NOW2,
+    );
     expect(inserted3).toBe(1);
     const rows = listAttemptContextSnapshots(db, attemptId);
     expect(rows).toHaveLength(3);
@@ -829,28 +858,51 @@ describe("attempt 上下文冻结快照（§5.6/§5.8.1 预留存储）", () => 
     const db = createTestDb();
     const attemptA = seedAttempt(db);
     const attemptB = seedAttempt(db);
-    freezeAttemptContextSnapshots(db, attemptA, [
-      {
-        kind: "group",
-        sourceId: "grp-x",
-        sourceVersion: 1,
-        snapshot: { id: "grp-x", introMd: "说明", materialRefs: [], questionIds: [] },
-      },
-    ], NOW);
+    freezeAttemptContextSnapshots(
+      db,
+      attemptA,
+      [
+        {
+          kind: "group",
+          sourceId: "grp-x",
+          sourceVersion: 1,
+          snapshot: {
+            id: "grp-x",
+            introMd: "说明",
+            materialRefs: [],
+            questionIds: [],
+          },
+        },
+      ],
+      NOW,
+    );
     expect(listAttemptContextSnapshots(db, attemptB)).toHaveLength(0);
-    expect(getAttemptContextSnapshot(db, attemptB, "group", "grp-x", 1)).toBeNull();
+    expect(
+      getAttemptContextSnapshot(db, attemptB, "group", "grp-x", 1),
+    ).toBeNull();
 
     // attempt 不存在 → FK 拒绝，整批不落（批内共用 attemptId，单事务承载原子性；
     // 「快照与 responses 同时成功才开卷成功」由开卷事务整体保证，写入方 QM-06）
     expect(() =>
-      freezeAttemptContextSnapshots(db, randomUUID(), [
-        {
-          kind: "material",
-          sourceId: "mat-z",
-          sourceVersion: 1,
-          snapshot: { id: "mat-z", contentMd: "正文", anchors: [], slots: [], mediaPaths: [] },
-        },
-      ], NOW2),
+      freezeAttemptContextSnapshots(
+        db,
+        randomUUID(),
+        [
+          {
+            kind: "material",
+            sourceId: "mat-z",
+            sourceVersion: 1,
+            snapshot: {
+              id: "mat-z",
+              contentMd: "正文",
+              anchors: [],
+              slots: [],
+              mediaPaths: [],
+            },
+          },
+        ],
+        NOW2,
+      ),
     ).toThrow();
     expect(
       db.$client

@@ -215,11 +215,7 @@ describe("QM-03 迁移：材料/组/引用索引/冻结快照五表（空库与�
       .prepare(
         "UPDATE questions SET material_refs_json = ? WHERE id = ? AND teacher_id = ?",
       )
-      .run(
-        '[{"material":"mat-u-1"}]',
-        seeded.questionId,
-        seeded.teacherId,
-      );
+      .run('[{"material":"mat-u-1"}]', seeded.questionId, seeded.teacherId);
     const updatedQuestion = db.$client
       .prepare(
         "SELECT material_refs_json FROM questions WHERE id = ? AND teacher_id = ?",
