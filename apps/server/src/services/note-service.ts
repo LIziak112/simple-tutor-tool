@@ -1329,6 +1329,7 @@ export function getStudentQuestionNotebook(
         questionId: responses.questionId,
         questionVersion: responses.questionVersion,
         submittedAt: responses.submittedAt,
+        unitId: responses.unitId,
         questionSnapshotJson: responses.questionSnapshotJson,
       },
     })
@@ -1398,6 +1399,8 @@ export function getStudentQuestionNotebook(
             // QM-13：matching 槽位集合按该卷冻结材料槽位序展开（跨卷轮次
             // 各自取用，不混卷）
             materialSlots: materialSlotOrderOf(db, row.attempt.id),
+            // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+            unitId: row.response.unitId,
           })
         : null;
     const release =

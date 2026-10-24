@@ -3,11 +3,13 @@ import type {
   AttemptDraftData,
   AttemptResultData,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { responses } from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { fetchSubmitRevisions } from "../test/submit-revisions";
@@ -354,6 +356,115 @@ describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽
     const raw = JSON.stringify(body.data);
     expect(raw).not.toContain("详解哨兵");
     expect(raw).not.toContain("排序详解哨兵");
+  });
+});
+
+describe("审查 P2-1：旧冻结快照的 sourceMd 兜底重抽", () => {
+  /** 把该卷全部冻结快照降级为 QM-13 前的旧格式（删三结构键，保留 sourceMd） */
+  function stripStructureKeys(db: Db, attemptId: string): void {
+    const rows = db
+      .select({
+        id: responses.id,
+        snapshotJson: responses.questionSnapshotJson,
+      })
+      .from(responses)
+      .where(eq(responses.attemptId, attemptId))
+      .all();
+    for (const row of rows) {
+      if (row.snapshotJson === null) continue;
+      const snapshot = JSON.parse(row.snapshotJson) as Record<string, unknown>;
+      delete snapshot.matchingOptions;
+      delete snapshot.orderingItems;
+      delete snapshot.materialRefs;
+      db.update(responses)
+        .set({ questionSnapshotJson: JSON.stringify(snapshot) })
+        .where(eq(responses.id, row.id))
+        .run();
+    }
+  }
+
+  it("三结构键全缺的旧快照：开卷可作答（学生面结构照常投影）、答案可保存、保存校验用重抽全量结构", async () => {
+    const { app, db, aCookie, attemptId } = await makeQm13App();
+    stripStructureKeys(db, attemptId);
+    const draft = await getDraft(app, aCookie, attemptId);
+    const matching = draftQuestionOf(draft, Q.matching);
+    expect(matching.matchingOptions?.options).toHaveLength(7);
+    expect(matching.matchingSlots).toEqual([
+      "slot-1",
+      "slot-2",
+      "slot-3",
+      "slot-4",
+      "slot-5",
+    ]);
+    const ordering = draftQuestionOf(draft, Q.ordering);
+    expect(ordering.orderingItems).toHaveLength(6);
+    expect(ordering.sortableCount).toBe(4);
+    // 学生面口径不因兜底放宽：逐项仍无 distractor 键
+    expect(JSON.stringify(draft)).not.toContain("distractor");
+    // 合法结构可保存（结构校验用重抽到的快照自身结构，不引活库）
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.matching, {
+          kind: "matching",
+          pairs: { "slot-1": "opt-3" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.ordering, {
+          kind: "ordering",
+          sequence: ["it-1", "it-2", "it-3", "it-4", "it-5"],
+        })
+      ).status,
+    ).toBe(200);
+    // 重抽结构含干扰项身份：干扰入序照旧 400（服务端校验不因旧快照放宽）
+    await expectValidationError(
+      putAnswer(app, aCookie, attemptId, Q.ordering, {
+        kind: "ordering",
+        sequence: ["it-6"],
+      }),
+    );
+  });
+
+  it("旧快照交卷后的结果视图同口径兜底（对照结构随结果快照下发）", async () => {
+    const { app, db, aCookie, attemptId } = await makeQm13App();
+    stripStructureKeys(db, attemptId);
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.matching, {
+          kind: "matching",
+          pairs: { "slot-1": "opt-1" },
+        })
+      ).status,
+    ).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    const submitRes = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({ revisions, now: "2026-10-25T10:00:00Z" }),
+      },
+    );
+    expect(submitRes.status).toBe(200);
+    const detailRes = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    const detail = ((await detailRes.json()) as { data: AttemptResultData })
+      .data;
+    const matching = detail.units
+      .flatMap((unit) => unit.questions)
+      .find((question) => question.questionId === Q.matching);
+    expect(matching?.snapshot.matchingOptions?.options).toHaveLength(7);
+    expect(matching?.snapshot.matchingSlots).toEqual([
+      "slot-1",
+      "slot-2",
+      "slot-3",
+      "slot-4",
+      "slot-5",
+    ]);
+    expect(JSON.stringify(detail)).not.toContain("distractor");
   });
 });
 

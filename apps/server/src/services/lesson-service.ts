@@ -229,7 +229,13 @@ function buildLessonStartData(
   for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
-    questions.push(publicOfSnapshot(snapshot, row.id, { materialSlots }));
+    questions.push(
+      publicOfSnapshot(snapshot, row.id, {
+        materialSlots,
+        // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+        unitId: row.unitId,
+      }),
+    );
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;

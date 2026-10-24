@@ -716,8 +716,15 @@ export function publicOfSnapshot(
   options: {
     /** 冻结材料槽位序（materialId → 有序 slotId）；matching 槽位集合展开用 */
     readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
+    /** 冻结行单元归属（responses.unitId；审查 P2-1 旧快照兜底重抽的语境） */
+    readonly unitId?: string | null;
   } = {},
 ): AttemptQuestionPublic {
+  // 审查 P2-1：旧格式冻结快照（三结构键全缺）从快照自身 sourceMd 兜底重抽
+  const structure = effectiveStructureOfSnapshot(
+    question,
+    options.unitId ?? null,
+  );
   return attemptQuestionPublicSchema.parse({
     id: question.id,
     type: question.type,
@@ -735,16 +742,64 @@ export function publicOfSnapshot(
     // 槽位序展开，材料快照缺失不携带键——学生端呈现防御形态）。2026-10-25
     // 审查 P1 收紧：两结构走学生面变体（剥离 distractor，ordering 附
     // sortableCount 计数），教师侧全量不经本投影
-    ...(question.matchingOptions !== undefined
-      ? { matchingOptions: matchingOptionsStudentOf(question.matchingOptions) }
+    ...(structure.matchingOptions !== undefined
+      ? { matchingOptions: matchingOptionsStudentOf(structure.matchingOptions) }
       : {}),
-    ...(question.orderingItems !== undefined
-      ? orderingStudentOf(question.orderingItems)
+    ...(structure.orderingItems !== undefined
+      ? orderingStudentOf(structure.orderingItems)
       : {}),
-    ...matchingSlotsProjection(question, options.materialSlots),
+    ...matchingSlotsProjection(structure, options.materialSlots),
     hintCount: question.hints.length,
     questionRevisionId,
   });
+}
+
+/**
+ * 快照的作答面结构（含旧快照兜底，2026-10-25 审查 P2-1）：
+ * snapshot.matchingOptions / orderingItems / materialRefs **三键全缺**（QM-13
+ * 之前冻结的旧快照）且题型属新题型时，从快照自身的 sourceMd 重抽
+ * （qmStructureOfSourceMd 同款管线：wrapSingleQuestionMd + parseDocument +
+ * 按 id 命中后只取结构字段）。**不引活库**——教师改题库不影响已开卷的卷，
+ * 冻结语义不变；重抽只在本次投影内使用，不回写库。导入规范化后新题型 id
+ * 恒显式（缺省 id 推导不参与命中）；未命中/解析失败保持缺省（学生端呈现
+ * 防御形态）。部分缺键（非全缺）= 真脏数据，同样保持缺省不兜底。
+ */
+function effectiveStructureOfSnapshot(
+  snapshot: Question,
+  unitId: string | null,
+): Pick<Question, "matchingOptions" | "orderingItems" | "materialRefs"> {
+  if (
+    !NEW_QUESTION_TYPES.includes(snapshot.type) ||
+    snapshot.matchingOptions !== undefined ||
+    snapshot.orderingItems !== undefined ||
+    snapshot.materialRefs !== undefined
+  ) {
+    return snapshot;
+  }
+  try {
+    const parsed = parseDocument(
+      wrapSingleQuestionMd(unitId ?? "", snapshot.sourceMd),
+      { unitId: unitId ?? "", questionStartNumber: 1 },
+    );
+    const hit = parsed.units
+      .flatMap((unit) => unit.questions)
+      .find((item) => item.id === snapshot.id);
+    if (hit === undefined) return snapshot;
+    return {
+      ...(hit.matchingOptions !== undefined
+        ? { matchingOptions: hit.matchingOptions }
+        : {}),
+      ...(hit.orderingItems !== undefined
+        ? { orderingItems: hit.orderingItems }
+        : {}),
+      ...(hit.materialRefs !== undefined
+        ? { materialRefs: hit.materialRefs }
+        : {}),
+    };
+  } catch {
+    // sourceMd 损坏（历史脏行）不阻断投影：结构缺失走防御形态
+    return snapshot;
+  }
 }
 
 /**
@@ -793,7 +848,7 @@ function orderingStudentOf(items: NonNullable<Question["orderingItems"]>): {
  * 题型的 materialRefs 无 slots 键、展开恒为空。
  */
 function matchingSlotsProjection(
-  question: Question,
+  question: Pick<Question, "materialRefs">,
   materialSlots: ReadonlyMap<string, readonly string[]> | undefined,
 ): { matchingSlots?: string[] } {
   if (question.materialRefs === undefined || materialSlots === undefined) {
@@ -844,24 +899,27 @@ export function materialSlotOrderOf(
 
 /**
  * 快照 → 完整公开结构集（QM-13 保存校验用）：matching 选项池 + 展开槽位
- * 集合、ordering 项；结构缺失（选项池/排序项/材料槽位快照不可用）按
- * emptyPublicStructure 防御形态（inspectShape 对空结构无从校验即放行，
- * 只影响该维度校验，不影响其余防线）。
+ * 集合、ordering 项；旧快照（三键全缺）先经 effectiveStructureOfSnapshot
+ * 兜底重抽（审查 P2-1）。结构仍缺失（选项池/排序项/材料槽位快照不可用或
+ * 重抽未命中）按 emptyPublicStructure 防御形态（inspectShape 对空结构无从
+ * 校验即放行，只影响该维度校验，不影响其余防线）。
  */
 function structuresOfSnapshot(
   snapshot: Question,
   materialSlots: ReadonlyMap<string, readonly string[]>,
+  unitId: string | null,
 ): PublicStructureByKind {
+  const structure = effectiveStructureOfSnapshot(snapshot, unitId);
   const matching =
-    snapshot.matchingOptions !== undefined
+    structure.matchingOptions !== undefined
       ? matchingPublicStructureOf(
-          snapshot.matchingOptions,
-          matchingSlotsProjection(snapshot, materialSlots).matchingSlots ?? [],
+          structure.matchingOptions,
+          matchingSlotsProjection(structure, materialSlots).matchingSlots ?? [],
         )
       : emptyPublicStructure.matching;
   const ordering =
-    snapshot.orderingItems !== undefined
-      ? orderingPublicStructureOf(snapshot.orderingItems)
+    structure.orderingItems !== undefined
+      ? orderingPublicStructureOf(structure.orderingItems)
       : emptyPublicStructure.ordering;
   return { ...emptyPublicStructure, matching, ordering };
 }
@@ -885,6 +943,7 @@ function assertNewKindAnswerShape(
     .select({
       attemptId: responses.attemptId,
       questionId: responses.questionId,
+      unitId: responses.unitId,
       questionSnapshotJson: responses.questionSnapshotJson,
     })
     .from(responses)
@@ -902,6 +961,7 @@ function assertNewKindAnswerShape(
   const structures = structuresOfSnapshot(
     snapshot,
     materialSlotOrderOf(db, attemptId),
+    row.unitId,
   );
   const issues = inspectShapeOfAnswer(answer, structures);
   if (issues.length > 0) {
@@ -1144,7 +1204,11 @@ function attemptPublicUnitGroups(
   // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
   const materialSlots = materialSlotOrderOf(db, attempt.id);
   return groupedSnapshotRows(db, attempt, (row, snapshot) =>
-    publicOfSnapshot(snapshot, row.id, { materialSlots }),
+    publicOfSnapshot(snapshot, row.id, {
+      materialSlots,
+      // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+      unitId: row.unitId,
+    }),
   ).map((group) => ({
     id: group.id,
     title: group.title,
@@ -3482,7 +3546,11 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     // T2.11：已解锁提示回显（纯函数——文本取自同一份冻结快照，不再二次查库）
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
-    return publicOfSnapshot(snapshot, row.id, { materialSlots });
+    return publicOfSnapshot(snapshot, row.id, {
+      materialSlots,
+      // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+      unitId: row.unitId,
+    });
   }).map((group) => ({
     id: group.id,
     title: group.title,
@@ -3586,6 +3654,9 @@ export function resultQuestionOf(
     readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
   } = {},
 ): AttemptResultQuestion {
+  // 审查 P2-1：旧格式冻结快照（三结构键全缺）从快照自身 sourceMd 兜底重抽
+  // （行内冻结单元归属作解析语境；不引活库）
+  const structure = effectiveStructureOfSnapshot(snapshot, row.unitId);
   return {
     questionId: row.questionId,
     snapshot: {
@@ -3600,14 +3671,16 @@ export function resultQuestionOf(
       // QM-13：matching/ordering 作答面结构随结果快照下发（对照呈现需要）；
       // 2026-10-25 审查 P1 收紧：学生面变体（剥离 distractor，ordering 附
       // sortableCount 计数）——对照呈现不需要逐项干扰标记
-      ...(snapshot.matchingOptions !== undefined
+      ...(structure.matchingOptions !== undefined
         ? {
-            matchingOptions: matchingOptionsStudentOf(snapshot.matchingOptions),
+            matchingOptions: matchingOptionsStudentOf(
+              structure.matchingOptions,
+            ),
           }
         : {}),
-      ...matchingSlotsProjection(snapshot, options.materialSlots),
-      ...(snapshot.orderingItems !== undefined
-        ? orderingStudentOf(snapshot.orderingItems)
+      ...matchingSlotsProjection(structure, options.materialSlots),
+      ...(structure.orderingItems !== undefined
+        ? orderingStudentOf(structure.orderingItems)
         : {}),
       hintCount: snapshot.hints.length,
     },
