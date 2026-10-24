@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { attemptScoreSummarySchema, type TeacherMark } from "./attempt.ts";
+// 仅类型导入（编译期擦除，不构成运行时循环）；attempt.ts 反向值引用本文件
+import type { TeacherMark } from "./attempt.ts";
 import type { Question, QuestionType } from "./content.ts";
 
 /**
@@ -16,6 +17,11 @@ import type { Question, QuestionType } from "./content.ts";
  * 自评不写 teacherMark、不写 finalCorrect：自评是本人声明，不能伪装成教师
  * 或自动判定。服务端校验链与路由落地在 TT-09（QM-10）；本文件是契约层
  * 单一出处（schema + 纯推导函数），发布顺序见 §5.5.1。
+ *
+ * 依赖方向（TT-09b 起）：本文件不依赖 attempt.ts（selfReviewDataSchema
+ * 因 attemptScoreSummarySchema 移驻 attempt.ts，消除循环导入），attempt.ts
+ * 反向引用本文件的记录 schema 与策略枚举——结果单题投影携带自评状态
+ * （QM-11）。
  */
 
 /** 判定来源三值（AI 评判接入时另行扩展，本轮不预设——设计方案 §6.2） */
@@ -71,14 +77,9 @@ export const selfReviewConflictCurrentSchema = z.object({
   selfReview: selfReviewRecordSchema.nullable(),
   revision: z.number().int().nonnegative(),
 });
-
-/** 自评响应 data：本题有效判定 + 卷汇总刷新（汇总口径沿 attemptScoreSummary） */
-export const selfReviewDataSchema = z.object({
-  selfReview: selfReviewRecordSchema.nullable(),
-  effective: effectiveVerdictSchema.nullable(),
-  summary: attemptScoreSummarySchema,
-});
-export type SelfReviewData = z.infer<typeof selfReviewDataSchema>;
+export type SelfReviewConflictCurrent = z.infer<
+  typeof selfReviewConflictCurrentSchema
+>;
 
 // ---------- 纯推导函数（服务端 TT-09 消费的单一出处） ----------
 

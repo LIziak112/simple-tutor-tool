@@ -676,6 +676,85 @@ describe("attemptResultDataSchema（结果视图）", () => {
     expect(withOrdinal(2.5).success).toBe(false);
   });
 
+  it("QM-11 自评状态两键可选：旧载荷缺省合法、携带（record/revision + gradingPolicy）合法、公布前 null 投影合法、形态错误拒绝", () => {
+    const base = RESULT.units[0]?.questions[0];
+    if (base === undefined) throw new Error("测试固件缺题");
+    const withSelfReview = (selfReview: unknown, gradingPolicy: unknown) =>
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        units: [
+          {
+            ...RESULT.units[0],
+            questions: [
+              { ...base, selfReview, gradingPolicy },
+              RESULT.units[0].questions[1],
+            ],
+          },
+        ],
+      });
+    // 旧载荷（升级前缓存/旧服务端响应）缺省合法——optional 兼容
+    expect(
+      attemptResultDataSchema.parse(RESULT).units[0]?.questions[0],
+    ).not.toHaveProperty("selfReview");
+    // 携带合法：未自评（record=null 但 revision 推进过——undecided 清除后）
+    const cleared = withSelfReview(
+      { record: null, revision: 2 },
+      "reference_self",
+    );
+    expect(cleared.success).toBe(true);
+    if (cleared.success) {
+      expect(cleared.data.units[0]?.questions[0]?.selfReview).toEqual({
+        record: null,
+        revision: 2,
+      });
+      expect(cleared.data.units[0]?.questions[0]?.gradingPolicy).toBe(
+        "reference_self",
+      );
+    }
+    // 已自评：record 三键完整
+    const reviewed = withSelfReview(
+      {
+        record: {
+          verdict: "wrong",
+          at: "2026-10-24T01:00:00.000Z",
+          revision: 1,
+        },
+        revision: 1,
+      },
+      "reference_self",
+    );
+    expect(reviewed.success).toBe(true);
+    // 公布前受限形态：整键 null 投影（读侧按「无自评信息」处理）
+    const gated = withSelfReview(null, null);
+    expect(gated.success).toBe(true);
+    if (gated.success) {
+      expect(gated.data.units[0]?.questions[0]?.selfReview).toBeNull();
+      expect(gated.data.units[0]?.questions[0]?.gradingPolicy).toBeNull();
+    }
+    // 旧行与 manual_only/auto 策略值合法；非法策略枚举 / record 非法 verdict 拒绝
+    expect(withSelfReview({ record: null, revision: 0 }, null).success).toBe(
+      true,
+    );
+    expect(
+      withSelfReview({ record: null, revision: 0 }, "manual_only").success,
+    ).toBe(true);
+    expect(withSelfReview({ record: null, revision: 0 }, "auto").success).toBe(
+      true,
+    );
+    expect(withSelfReview({ record: null, revision: 0 }, "magic").success).toBe(
+      false,
+    );
+    expect(
+      withSelfReview(
+        { record: { verdict: "undecided", at: "x", revision: 1 }, revision: 1 },
+        "reference_self",
+      ).success,
+    ).toBe(false);
+    expect(withSelfReview({ record: null, revision: -1 }, "auto").success).toBe(
+      false,
+    );
+  });
+
   it("practiceWorkflow 裁决投影可选（M4-D3 §13.8 结果页节奏摘要）：缺省（legacy/lesson 卷）合法、携带合法、形态错误拒绝", () => {
     const workflow = {
       version: 1,

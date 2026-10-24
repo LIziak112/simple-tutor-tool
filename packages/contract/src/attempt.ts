@@ -15,6 +15,11 @@ import {
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
 import {
+  effectiveVerdictSchema,
+  gradingPolicySchema,
+  selfReviewRecordSchema,
+} from "./self-review.ts";
+import {
   studentUnitAttemptRecordSchema,
   studentUnitAttemptSummarySchema,
 } from "./student-course-api.ts";
@@ -447,6 +452,26 @@ export const attemptResultQuestionSchema = z.object({
   teacherComment: z.string().nullable(),
   /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
   finalCorrect: z.boolean().nullable(),
+  /**
+   * QM-11（TT-09b）行级自评状态（公布 gate 截止前置 null 投影；旧载荷缺省
+   * = 无自评信息，读侧按 null 处理）：record=null 表示未自评或已撤回
+   * （undecided 清除记录），revision 是 CAS 基线（清除亦递增——record=null
+   * 时不能从 record 推出，故单独下发）；与 gradingPolicy 组合经
+   * resolveSelfReviewState 单一出处推导 self_pending/self_reviewed 等展示态。
+   */
+  selfReview: z
+    .object({
+      record: selfReviewRecordSchema.nullable(),
+      revision: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+  /**
+   * QM-11（TT-09b）行级判分策略（开卷冻结；null=旧行或公布前投影——旧行
+   * 历史不开放自评）。reference_self 行公布后开放自评入口；auto/manual_only
+   * 与旧行的展示沿用既有判定徽章路径。
+   */
+  gradingPolicy: gradingPolicySchema.nullable().optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
@@ -486,6 +511,19 @@ export const attemptScoreSummarySchema = z.object({
    */
   pendingCount: z.number().int().min(0).nullable(),
 });
+
+/**
+ * 自评响应 data（QM-10 路由回执；TT-09b 自 self-review.ts 移驻本文件以消除
+ * 循环导入——attempt.ts 反向值引用 self-review.ts 的记录 schema）：本题有效
+ * 判定投影 + 卷汇总刷新（汇总口径沿 attemptScoreSummary；公布 gate 已过，
+ * 无受限形态投影需求）。
+ */
+export const selfReviewDataSchema = z.object({
+  selfReview: selfReviewRecordSchema.nullable(),
+  effective: effectiveVerdictSchema.nullable(),
+  summary: attemptScoreSummarySchema,
+});
+export type SelfReviewData = z.infer<typeof selfReviewDataSchema>;
 
 /** 结果视图的单元分组（T2A.7）：逐题结果按交卷时的单元归属分节（单元序+题序） */
 export const attemptResultUnitSchema = z.object({
