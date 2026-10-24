@@ -172,7 +172,15 @@ function judgedRoundsByQuestion(
         or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
         or(
           isNotNull(responses.finalCorrect),
-          isNotNull(responses.selfReviewVerdict),
+          // 自评分支与读侧 selfReviewRecordOf 脏行降级成对（TT-09c 审查
+          // P2-2）：verdict 非空且 at 非空才算已判定轮——at 与 verdict 恒成对
+          // 写入是 D3 同款不变量，单看 verdict 会放进「verdict 非空而 at
+          // 缺失」的脏行，读侧 effectiveVerdictOfRow 降级为未判断后 correct
+          // =false 冒充错轮、wrongCount 虚增
+          and(
+            isNotNull(responses.selfReviewVerdict),
+            isNotNull(responses.selfReviewAt),
+          ),
         ),
         // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
         releaseGateSql(nowIso),

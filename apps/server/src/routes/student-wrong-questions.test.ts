@@ -1054,6 +1054,44 @@ describe("GET /api/student/wrong-questions（QM-12：自评行错题集合）", 
       (await getWrongQuestions(env)).data?.questions.map((c) => c.questionId),
     ).toEqual([SR.fill]);
   });
+
+  it("自评脏行（verdict 非空而 at 缺失）不冒充错轮：SQL 预筛与读侧 selfReviewRecordOf 降级同口径，wrongCount 不虚增", async () => {
+    const env = await makeSelfReviewEnv();
+    // 第 1 轮：自评「错」→ 入本 1 轮（有效错轮基线）
+    const a1 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a1, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a1, SR.fill, { kind: "fill", values: ["3"] });
+    await submitAt(env, a1, T1);
+    await selfReview(env, a1, SR.fill, "wrong");
+    const first = await getWrongQuestions(env);
+    expect(first.data?.questions.map((c) => c.questionId)).toEqual([SR.fill]);
+    expect(first.data?.questions[0]?.rounds).toHaveLength(1);
+    expect(first.data?.questions[0]?.wrongCount).toBe(1);
+
+    // 第 2 轮：自评「对」后直写库构造脏行（at 置 null，模拟异常/历史写入）。
+    // 修复前：SQL 预筛只看 verdict 非空放行该轮，读侧 effectiveOfRound 又按
+    // selfReviewRecordOf 脏行降级为未判断 → rounds 里 correct=false 冒充错轮
+    // （wrongCount 虚增为 2，且「对」轮被顶成未判断盖住攻克态）
+    const a2 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a2, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a2, SR.fill, { kind: "fill", values: ["3"] });
+    await submitAt(env, a2, T2);
+    expect((await selfReview(env, a2, SR.fill, "correct")).status).toBe(200);
+    env.db
+      .update(responses)
+      .set({ selfReviewAt: null })
+      .where(
+        and(eq(responses.attemptId, a2), eq(responses.questionId, SR.fill)),
+      )
+      .run();
+
+    const after = await getWrongQuestions(env);
+    const card = after.data?.questions.find((c) => c.questionId === SR.fill);
+    // 脏行不入轮次（未判断轮不参与，模块头注释口径）——轮次与计数回到
+    // 仅有效错轮的事实
+    expect(card?.rounds).toHaveLength(1);
+    expect(card?.wrongCount).toBe(1);
+  });
 });
 
 describe("GET /api/teacher/attempts/:id（QM-12：教师详情有效判定与两队列计数）", () => {
