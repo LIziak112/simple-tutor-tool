@@ -41,10 +41,7 @@ function practiceMarkdown(unitName: string): string {
     '::::question{type=solve difficulty=2 knowledge="有理数加法"}',
     "计算：$(-2)+5=$，写出过程。",
     "",
-    ":::answer",
-    "3",
-    ":::",
-    "",
+    // 手写题不设参考答案，保持本用例的教师待批路径（有答案时走学生自评）。
     ":::solution",
     "$(-2)+5=3$。",
     ":::",
@@ -176,6 +173,24 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
 
       // —— 学生端：「我的记录」看到该条目「已批改」徽章与得分（1/2 = 50）——
       await studentPage.goto("/s/records");
+      const sort = studentPage.getByRole("combobox", {
+        name: "排序",
+        exact: true,
+      });
+      await expect(sort).toHaveValue("activity_desc");
+      await sort.selectOption("started_asc");
+      await expect(studentPage).toHaveURL(/sort=started_asc/);
+      await expect(studentPage.getByText(/开始于 /).first()).toBeVisible();
+      await studentPage.reload();
+      await expect(sort).toHaveValue("started_asc");
+      await studentPage.screenshot({
+        path: test.info().outputPath("records-sorting.png"),
+      });
+      await sort.selectOption("started_desc");
+      await expect(studentPage).toHaveURL(/sort=started_desc/);
+      await sort.selectOption("activity_desc");
+      await expect(studentPage.getByText(/最近作答 /).first()).toBeVisible();
+
       const recordLink = studentPage.getByRole("link", {
         name: `查看结果：${assignmentTitle}（已批改）`,
       });
@@ -202,10 +217,10 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       const q2Result = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(q2Result.getByText(/老师批改：判对/)).toBeVisible();
       await expect(q2Result.getByText(commentText)).toBeVisible();
-      await expect(q2Result.getByLabel("答对")).toBeVisible();
+      await expect(q2Result.getByRole("status")).toHaveText("教师判定：正确");
       // 判断题（第 1 题）：答错（无批改块）
       const q1Result = studentPage.locator('article[aria-label="第 1 题"]');
-      await expect(q1Result.getByLabel("答错")).toBeVisible();
+      await expect(q1Result.getByRole("status")).toHaveText("回答有误");
       await expect(q1Result.getByText(/老师批改/)).toHaveCount(0);
 
       // —— 错题本（D11；2026-10 轮次史视图）：默认待复习 + 按练习分组 ——

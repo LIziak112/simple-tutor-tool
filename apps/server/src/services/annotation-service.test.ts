@@ -11,6 +11,7 @@ import type { Db } from "../db/client.ts";
 import {
   annotationBases as annotationBasesTable,
   annotations as annotationsTable,
+  attempts,
   questions as questionsTable,
   responses as responsesTable,
 } from "../db/schema.ts";
@@ -1629,4 +1630,42 @@ it("维护重置仅清理指定草稿标画，拒绝旧客户端重建并保留�
       expectedStrokes: 0,
     }),
   ).toThrow();
+});
+
+it("标画正文更新活动时间，底图读取、相同正文与幂等重放不更新", () => {
+  const world = makeWorld();
+  const { attemptId, revisionId } = makePaper(world);
+  const activity = () =>
+    world.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+      ?.lastActivityAt;
+  readyBase(world, attemptId, revisionId);
+  expect(activity()).toBeNull();
+  const doc = gzipJson(annotationDoc(900, 2));
+  const mutationId = randomUUID();
+  const put = (baseRevision: number, id: string, body = doc) =>
+    putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      body,
+      { baseRevision, mutationId: id },
+    );
+  put(0, mutationId);
+  expect(activity()).toBeTruthy();
+  const old = "2026-10-02T00:00:00.000Z";
+  world.db
+    .update(attempts)
+    .set({ lastActivityAt: old })
+    .where(eq(attempts.id, attemptId))
+    .run();
+  put(0, mutationId);
+  expect(activity()).toBe(old);
+  put(1, randomUUID());
+  expect(activity()).toBe(old);
+  expect(() => put(0, randomUUID(), gzipJson(annotationDoc(900, 3)))).toThrow();
+  expect(activity()).toBe(old);
+  put(2, randomUUID(), gzipJson(annotationDoc(900, 3)));
+  expect(activity()).not.toBe(old);
 });

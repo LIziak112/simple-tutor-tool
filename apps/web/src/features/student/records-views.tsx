@@ -1,6 +1,7 @@
 import type {
   AttemptStatus,
   StudentRecordRow,
+  StudentRecordsSort,
   TeacherAttemptSource,
 } from "@tutor/contract";
 import { cn } from "cn";
@@ -86,9 +87,18 @@ function RecordScore({ row }: { row: StudentRecordRow }) {
 }
 
 /** 单条记录卡片（整卡可点，触控目标 ≥44px） */
-export function RecordCard({ row }: { row: StudentRecordRow }) {
+export function RecordCard({
+  row,
+  sort = "activity_desc",
+}: {
+  row: StudentRecordRow;
+  sort?: StudentRecordsSort;
+}) {
   const [search] = useSearchParams();
-  const activityAt = row.submittedAt ?? row.startedAt;
+  const activityAt =
+    sort === "activity_desc"
+      ? (row.lastActivityAt ?? row.submittedAt ?? row.startedAt)
+      : row.startedAt;
   const isDraft = row.status === "draft";
   return (
     <li>
@@ -105,6 +115,7 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
           <SourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
           <span className="ml-auto text-xs text-muted-foreground">
+            {sort === "activity_desc" ? "最近作答 " : "开始于 "}
             {formatCnTime(activityAt)}
           </span>
         </p>

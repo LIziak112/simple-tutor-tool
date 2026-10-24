@@ -1,0 +1,1 @@
+ALTER TABLE `attempts` ADD `last_activity_at` text;

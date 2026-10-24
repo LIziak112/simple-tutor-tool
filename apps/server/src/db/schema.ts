@@ -809,6 +809,8 @@ export const attempts = sqliteTable(
     status: text("status").$type<AttemptStatus>().notNull(),
     /** 开始作答时间：UTC ISO 字符串 */
     startedAt: text("started_at").notNull(),
+    /** 最近有效作答确认时间；历史缺省由查询回退，不推测历史编辑。 */
+    lastActivityAt: text("last_activity_at"),
     /** 交卷时间：UTC ISO 字符串；未交为 NULL */
     submittedAt: text("submitted_at"),
     /**

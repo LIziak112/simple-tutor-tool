@@ -25,7 +25,8 @@ export function useStudentRecords(params: StudentRecordsParams) {
   return useQuery({
     queryKey: studentRecordsKey(params),
     queryFn: () => fetchStudentRecordsApi(params),
-    staleTime: 15_000,
+    // 返回列表时重新核对活动时间，避免刚续作的记录被旧缓存压住。
+    staleTime: 0,
     refetchOnWindowFocus: false,
   });
 }
