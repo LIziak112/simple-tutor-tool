@@ -27,10 +27,21 @@ const question: AttemptResultQuestion = {
 };
 
 describe("回看展示模型", () => {
-  it("教师清除判定后回到待批，不能用旧自动判分覆盖finalCorrect=null", () => {
+  // D3 后旧断言（教师清除→待批、不回落 autoCorrect）已失效：服务端清除
+  // 事务重写 finalCorrect = autoCorrect（teacher-marks「清除改判→finalCorrect
+  // 回落 autoCorrect=true」），finalCorrect=null 且 autoCorrect 非 null 的
+  // 服务端行不存在；客户端徽章口径 = finalCorrect 优先、autoCorrect 兜底、
+  // 均空才待批（M6，verdictBadgeDisplayOf 单一出处）
+  it("finalCorrect 优先、autoCorrect 兜底；判分来源枯竭（均空）才是待批", () => {
     expect(
       reviewQuestionState(
         { ...question, finalCorrect: null, teacherMark: null },
+        true,
+      ).verdict,
+    ).toBe(true);
+    expect(
+      reviewQuestionState(
+        { ...question, finalCorrect: null, teacherMark: null, autoCorrect: null },
         true,
       ).verdict,
     ).toBeNull();

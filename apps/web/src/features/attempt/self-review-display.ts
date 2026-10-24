@@ -21,7 +21,11 @@ export interface VerdictBadgeDisplay {
 export function verdictBadgeDisplayOf(
   question: Pick<
     AttemptResultQuestion,
-    "gradingPolicy" | "teacherMark" | "selfReview" | "finalCorrect"
+    | "gradingPolicy"
+    | "teacherMark"
+    | "selfReview"
+    | "finalCorrect"
+    | "autoCorrect"
   >,
 ): VerdictBadgeDisplay {
   if (
@@ -42,6 +46,9 @@ export function verdictBadgeDisplayOf(
     return { verdict: null, pendingLabel: "已完成、待自评" };
   }
   // 其余行（auto/manual_only/旧行/教师已判）沿既有 finalCorrect 路径零变化
-  // （reviewQuestionState 同口径；不做 autoCorrect 回退——待批就是待批）
-  return { verdict: question.finalCorrect };
+  // （reviewQuestionState 同口径）：finalCorrect 优先、autoCorrect 兜底，
+  // 两者均空才是待批（M6 授权题级反馈口径，与服务端 effectiveVerdictOf
+  // 的自动回落一致；进行中单题反馈的行级 finalCorrect 尚未写入，丢兜底
+  // 会让客观题误报待批、汇总与徽章漂移）
+  return { verdict: question.finalCorrect ?? question.autoCorrect };
 }

@@ -11,7 +11,11 @@ const row = (
   overrides: Partial<
     Pick<
       AttemptResultQuestion,
-      "gradingPolicy" | "teacherMark" | "selfReview" | "finalCorrect"
+      | "gradingPolicy"
+      | "teacherMark"
+      | "selfReview"
+      | "finalCorrect"
+      | "autoCorrect"
     >
   > = {},
 ) => ({
@@ -89,9 +93,16 @@ describe("verdictBadgeDisplayOf", () => {
     expect(verdictBadgeDisplayOf(row({ finalCorrect: true }))).toEqual({
       verdict: true,
     });
-    // 待批（finalCorrect=null）不做 autoCorrect 回退——既有路径零变化
+    // 待批 = finalCorrect 与 autoCorrect 均空（M6 兜底口径，与服务端
+    // effectiveVerdictOf 的自动回落一致）；进行中单题反馈只有 autoCorrect
     expect(verdictBadgeDisplayOf(row({ finalCorrect: null }))).toEqual({
       verdict: null,
     });
+    expect(
+      verdictBadgeDisplayOf(row({ finalCorrect: null, autoCorrect: false })),
+    ).toEqual({ verdict: false });
+    expect(
+      verdictBadgeDisplayOf(row({ finalCorrect: null, autoCorrect: true })),
+    ).toEqual({ verdict: true });
   });
 });

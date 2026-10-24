@@ -63,7 +63,7 @@ const releasedQuestion = (overrides: Partial<AttemptResultQuestion> = {}) =>
 
 describe("QuestionFeedback", () => {
   it("选择题反馈只给答案对照，不重复题面已有整组选项", () => {
-    render(
+    renderFeedback(
       <QuestionFeedback
         attemptId="attempt-1"
         feedback={{
@@ -128,7 +128,7 @@ describe("QuestionFeedback", () => {
   });
 
   it("进行中客观题使用已授权的自动判定，不误报待批", () => {
-    render(
+    renderFeedback(
       <QuestionFeedback
         attemptId="attempt-1"
         feedback={{
