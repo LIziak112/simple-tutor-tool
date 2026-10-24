@@ -14,10 +14,7 @@ import {
  * 学生由教师 API 创建（UI 建学生的路径在主流程用例覆盖，此处只验登录本身）。
  */
 test.describe("学生密码登录", { tag: ["@smoke"] }, () => {
-  test("登录名与初始密码正确时进入学生首页", { tag: ["@smoke"] }, async ({
-    page,
-    request,
-  }) => {
+  test("登录名与初始密码正确时进入学生首页", async ({ page, request }) => {
     await teacherApiLogin(request);
 
     const suffix = uniqueSuffix();

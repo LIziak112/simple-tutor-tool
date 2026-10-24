@@ -382,9 +382,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
   // 组内顺序运行；跨文件和浏览器的剧本、捕获、重置按用例凭据隔离。
   test.describe.configure({ mode: "serial" });
 
-  test("题下助教跨视口阅读、单输入、草稿恢复与原题返回", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("题下助教跨视口阅读、单输入、草稿恢复与原题返回", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(FULL_CHAIN_TIMEOUT);
     const suffix = uniqueSuffix();
     const assignmentTitle = `${"有理数专题巩固练习与错因分析，阅读提示后回题尝试。".repeat(3)}${suffix}`;
@@ -592,9 +593,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
     }
   });
 
-  test("教师设置→学生连接→作答求助→回信追问→交卷复盘→教师记录", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("教师设置→学生连接→作答求助→回信追问→交卷复盘→教师记录", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(FULL_CHAIN_TIMEOUT);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -826,9 +828,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
     }
   });
 
-  test("出站错误链：429 退避重试、坏响应待确认后重试成功、断网保输入", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("出站错误链：429 退避重试、坏响应待确认后重试成功、断网保输入", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(240_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -977,9 +980,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
     }
   });
 
-  test("link 通道：生成上下文链接，外部 AI 经公开端点只读本题快照", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("link 通道：生成上下文链接，外部 AI 经公开端点只读本题快照", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(240_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -1040,9 +1044,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
     }
   });
 
-  test("隔离与策略实时：他人不可见任务，教师改模式立即生效", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("隔离与策略实时：他人不可见任务，教师改模式立即生效", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(240_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);

@@ -84,9 +84,10 @@ test.describe("SAI-33 错误链（页内与出站）", { tag: ["@ai"] }, () => {
   // 组内顺序运行；供应商状态按用例凭据隔离，跨文件可并行。
   test.describe.configure({ mode: "serial" });
 
-  test("页内错误：提交失败保输入、禁用给原因、缺图补传、复制降级", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("页内错误：提交失败保输入、禁用给原因、缺图补传、复制降级", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(300_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -312,9 +313,10 @@ test.describe("SAI-33 错误链（页内与出站）", { tag: ["@ai"] }, () => {
     }
   });
 
-  test("出站链错误：60s 超时收敛 uncertain，批量任务部分成功互不阻塞", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("出站链错误：60s 超时收敛 uncertain，批量任务部分成功互不阻塞", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(300_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -444,9 +446,10 @@ test.describe("SAI-33 错误链（页内与出站）", { tag: ["@ai"] }, () => {
     }
   });
 
-  test("作废卷：讲练重开后旧任务动作收敛、回信 409，新卷 AI 可用", {
-    tag: ["@ai"],
-  }, async ({ browser, request }) => {
+  test("作废卷：讲练重开后旧任务动作收敛、回信 409，新卷 AI 可用", async ({
+    browser,
+    request,
+  }) => {
     test.setTimeout(300_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);

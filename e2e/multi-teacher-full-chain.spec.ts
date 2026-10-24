@@ -26,9 +26,12 @@ import {
 test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入建课布置 → 学生作答 → 甲不可见", {
   tag: ["@teacher"],
 }, () => {
-  test("完整链路各环节串联，甲对乙的资源按 id 404 且列表互不可见", {
-    tag: ["@teacher"],
-  }, async ({ page, request, browser, browserName }) => {
+  test("完整链路各环节串联，甲对乙的资源按 id 404 且列表互不可见", async ({
+    page,
+    request,
+    browser,
+    browserName,
+  }) => {
     // 链条含注册 + 共享导入 + 三步向导 + 学生作答四段 UI：与 full-chain 同量级
     test.setTimeout(150_000);
 

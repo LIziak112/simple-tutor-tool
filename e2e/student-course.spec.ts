@@ -22,9 +22,10 @@ import {
 test.describe("学生端课程与讲义浏览（T2A.5，D5 可见性）", {
   tag: ["@student"],
 }, () => {
-  test("成员学生浏览课程目录与讲义；教师放开配套练习后学生刷新可见", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("成员学生浏览课程目录与讲义；教师放开配套练习后学生刷新可见", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(120_000);
 
     // —— 造数（教师 API）：专属课程 + 讲义样例 + 配套练习单元（名称唯一化，

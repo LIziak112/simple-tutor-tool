@@ -56,9 +56,11 @@ function practiceMarkdown(unitName: string): string {
 test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师端可见", {
   tag: ["@student"],
 }, () => {
-  test("重练只练一题，两次做对后迁入已攻克；教师数据页与 CSV 来源=错题重练", {
-    tag: ["@student"],
-  }, async ({ page, request, browser }) => {
+  test("重练只练一题，两次做对后迁入已攻克；教师数据页与 CSV 来源=错题重练", async ({
+    page,
+    request,
+    browser,
+  }) => {
     test.setTimeout(300_000);
 
     // —— 造数（教师 API）：专属课程 + 两题判断单元放开可见 + 学生入成员 ——
@@ -299,9 +301,10 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
 test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点（2026-10）", {
   tag: ["@student"],
 }, () => {
-  test("做错一题的课程卷：结果页按钮只圈判错题 → 新卷单题 → 交卷后轮次史多一轮且可点回看；全对卷无按钮", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("做错一题的课程卷：结果页按钮只圈判错题 → 新卷单题 → 交卷后轮次史多一轮且可点回看；全对卷无按钮", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(300_000);
 
     // —— 造数（教师 API）：专属课程 + 两题判断单元放开可见 + 学生入成员 ——

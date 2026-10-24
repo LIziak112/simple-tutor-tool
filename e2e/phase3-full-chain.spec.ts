@@ -132,9 +132,11 @@ function parseCsv(text: string): string[][] {
 test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 → 记录 → CSV → 错题本", {
   tag: ["@teacher", "@student"],
 }, () => {
-  test("学生三题作答交卷，教师三视图查看批改并导出 CSV，学生记录与错题本全见", {
-    tag: ["@teacher", "@student"],
-  }, async ({ page, request, browser }) => {
+  test("学生三题作答交卷，教师三视图查看批改并导出 CSV，学生记录与错题本全见", async ({
+    page,
+    request,
+    browser,
+  }) => {
     // 链路横跨学生作答 + 教师三视图/详情/回放/队列 + 学生记录/结果/错题本 +
     // CSV 下载，比 full-chain 更长一截：CI 2 核 runner 冷编译下放宽到 240s
     test.setTimeout(240_000);

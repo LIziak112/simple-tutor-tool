@@ -38,9 +38,11 @@ async function teacherUiLogin(page: Page): Promise<void> {
 test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", {
   tag: ["@insights", "@export"],
 }, () => {
-  test("对照：不开证据组下载的仍是 v1 包（meta.version=1、无 manifest、无 evidence/）", {
-    tag: ["@insights", "@export"],
-  }, async ({ request, browser, page }) => {
+  test("对照：不开证据组下载的仍是 v1 包（meta.version=1、无 manifest、无 evidence/）", async ({
+    request,
+    browser,
+    page,
+  }) => {
     test.setTimeout(240_000);
 
     // —— 造数：1 判断题课程练习 + 学生（答对交卷） ——

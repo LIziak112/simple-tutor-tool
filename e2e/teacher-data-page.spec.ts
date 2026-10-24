@@ -53,9 +53,11 @@ function practiceMarkdown(unitName: string): string {
 test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大）", {
   tag: ["@insights"],
 }, () => {
-  test("学生课程练习交卷后，数据页按课程视图可见、进详情见手写图、切按学生视图仍可见", {
-    tag: ["@insights"],
-  }, async ({ page, request, browser }) => {
+  test("学生课程练习交卷后，数据页按课程视图可见、进详情见手写图、切按学生视图仍可见", async ({
+    page,
+    request,
+    browser,
+  }) => {
     test.setTimeout(150_000);
 
     // —— 造数（教师 API）：专属课程 + 可见练习单元 + 学生入成员 ——

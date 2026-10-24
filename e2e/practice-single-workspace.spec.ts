@@ -131,9 +131,10 @@ function barNavButton(page: Page, label: "上一题" | "下一题") {
 }
 
 test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student"] }, () => {
-  test("场景1 单题+逐题深流程：键盘作答 → 原位反馈 → 末题不跳走、结果手动查看", {
-    tag: ["@student"],
-  }, async ({ request, page }) => {
+  test("场景1 单题+逐题深流程：键盘作答 → 原位反馈 → 末题不跳走、结果手动查看", async ({
+    request,
+    page,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数：专属课程 + 两题练习（判断+单选）+ 学生入成员 ——
@@ -273,9 +274,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     expect(leak.violations().join("\n")).toBe("");
   });
 
-  test("场景2 列表↔单题互切输入不丢：面板与菜单两条路径，两模式都可提交", {
-    tag: ["@student"],
-  }, async ({ request, page }) => {
+  test("场景2 列表↔单题互切输入不丢：面板与菜单两条路径，两模式都可提交", async ({
+    request,
+    page,
+  }) => {
     test.setTimeout(180_000);
 
     await teacherApiLogin(request);
@@ -389,9 +391,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     expect(leak.violations().join("\n")).toBe("");
   });
 
-  test("场景3 键盘守门：文本输入聚焦时 1-9/←→/Enter 让位，焦点回容器后恢复", {
-    tag: ["@student"],
-  }, async ({ request, page }) => {
+  test("场景3 键盘守门：文本输入聚焦时 1-9/←→/Enter 让位，焦点回容器后恢复", async ({
+    request,
+    page,
+  }) => {
     test.setTimeout(180_000);
 
     await teacherApiLogin(request);
@@ -472,9 +475,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     expect(leak.violations().join("\n")).toBe("");
   });
 
-  test("场景4 保存失败：网络 abort 离线可切题（设计内），本机写失败不切题可重试", {
-    tag: ["@student"],
-  }, async ({ request, page }) => {
+  test("场景4 保存失败：网络 abort 离线可切题（设计内），本机写失败不切题可重试", async ({
+    request,
+    page,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 注入「本机写失败」开关：patch IndexedDB put，仅作用于 tutor-drafts 库。
@@ -640,9 +644,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     expect(leak.violations().join("\n")).toBe("");
   });
 
-  test("场景5 视口矩阵：320–1440 八档可达、可输入、正文唯一；390/1440 深查键盘与提交", {
-    tag: ["@student"],
-  }, async ({ request, page }) => {
+  test("场景5 视口矩阵：320–1440 八档可达、可输入、正文唯一；390/1440 深查键盘与提交", async ({
+    request,
+    page,
+  }) => {
     test.setTimeout(180_000);
 
     await teacherApiLogin(request);

@@ -140,9 +140,11 @@ const SECRET_MARKERS = [
 test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批改闭环 → 再做一次", {
   tag: ["@teacher", "@student"],
 }, () => {
-  test("教师导入讲练文档，学生逐题作答即时反馈，教师课中批改，重做开新卷", {
-    tag: ["@teacher", "@student"],
-  }, async ({ page, request, browser }) => {
+  test("教师导入讲练文档，学生逐题作答即时反馈，教师课中批改，重做开新卷", async ({
+    page,
+    request,
+    browser,
+  }) => {
     // 链路覆盖教师导入/资源库 + 学生全程 + 教师待批批改 + 记录/错题本，
     // 与 phase3-full-chain 同量级：CI 2 核 runner 冷编译下放宽到 240s
     test.setTimeout(240_000);

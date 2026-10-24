@@ -64,9 +64,10 @@ function packMarkdown(unitName: string, imageSrc: string): string {
 test.describe("T7.8 教学包往返：导入 → 作答判分 → 导出 ZIP → 再导入", {
   tag: ["@teacher"],
 }, () => {
-  test("声明与随行图片全程保留，学生正式作答与判分不受影响", {
-    tag: ["@teacher"],
-  }, async ({ request, browser }) => {
+  test("声明与随行图片全程保留，学生正式作答与判分不受影响", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数（甲教师 API；唯一后缀隔离）——

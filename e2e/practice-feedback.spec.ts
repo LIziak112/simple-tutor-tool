@@ -204,9 +204,10 @@ function annotateLatency(label: string, elapsedMs: number): void {
 
 test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@student"] }, () => {
   for (const mode of ["列表逐题", "单题逐题", "统一交卷"] as const) {
-    test(`整卷交卷回归：${mode}提交全部剩余题并结束整卷`, {
-      tag: ["@student"],
-    }, async ({ request, browser }) => {
+    test(`整卷交卷回归：${mode}提交全部剩余题并结束整卷`, async ({
+      request,
+      browser,
+    }) => {
       await teacherApiLogin(request);
       const suffix = uniqueSuffix();
       const courseName = `交卷回归课程${suffix}`;
@@ -305,9 +306,10 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
     });
   }
 
-  test("课程自由练习默认逐题：原位反馈 + 行锁定 + 未交题不泄露 + 自动收尾", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("课程自由练习默认逐题：原位反馈 + 行锁定 + 未交题不泄露 + 自动收尾", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数：专属课程 + 两题练习 + 学生入成员 ——
@@ -407,9 +409,10 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
     }
   });
 
-  test("作业授权逐题（allowPerQuestionFeedback）：/s/assignments 进入同款逐题流", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("作业授权逐题（allowPerQuestionFeedback）：/s/assignments 进入同款逐题流", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数：练习单元入资源库 + 授权作业（不挂课程）+ 专属学生 ——
@@ -503,9 +506,10 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
     }
   });
 
-  test("教师未授权作业：整卷节奏 + 节奏组禁用 + 隐藏逐题入口 + 交卷出结果", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("教师未授权作业：整卷节奏 + 节奏组禁用 + 隐藏逐题入口 + 交卷出结果", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数：同款单元 + 未授权作业（不携带 allowPerQuestionFeedback）——
@@ -597,9 +601,10 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
     }
   });
 
-  test("作答中切换反馈节奏（PATCH CAS）：切交卷后逐题提交不再即时反馈", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("作答中切换反馈节奏（PATCH CAS）：切交卷后逐题提交不再即时反馈", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数：课程自由练习（教师策略未配置 → 两种节奏均可选）——
@@ -693,9 +698,10 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
     }
   });
 
-  test("开始页推荐预选（M5）：单题 + 交卷后推荐直达作答页节奏", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("开始页推荐预选（M5）：单题 + 交卷后推荐直达作答页节奏", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数：带 practice 推荐的单元（单题 + 交卷后查看）——

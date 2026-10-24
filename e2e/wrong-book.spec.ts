@@ -74,9 +74,10 @@ function singleJudgeMarkdown(unitName: string, stem: string): string {
 test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）", {
   tag: ["@student"],
 }, () => {
-  test("三轮作答后错题本按单元/时间/考点分组展示轮次史，攻克标准切换改变分区归属", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("三轮作答后错题本按单元/时间/考点分组展示轮次史，攻克标准切换改变分区归属", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(240_000);
 
     // —— 造数（教师 API）：专属课程 + 两题判断单元放开可见 + 学生入成员 ——
@@ -262,9 +263,10 @@ test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）"
 });
 
 test.describe("错题本：课程筛选（2026-10）", { tag: ["@student"] }, () => {
-  test("选课程后列表只剩该课程的题且重练全部计数跟随筛选；深链与全部课程恢复", {
-    tag: ["@student"],
-  }, async ({ request, browser }) => {
+  test("选课程后列表只剩该课程的题且重练全部计数跟随筛选；深链与全部课程恢复", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(180_000);
 
     // —— 造数（教师 API）：两门课程各一个单元一道判断题，学生两门各做错一轮 ——

@@ -59,9 +59,11 @@ function fillPracticeMarkdown(unitName: string): string {
 test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
   tag: ["@teacher"],
 }, () => {
-  test("学生填空题（LaTeX 等价答案）交卷进待批，教师批对后学生端见判对与公式化参考答案", {
-    tag: ["@teacher"],
-  }, async ({ page, request, browser }) => {
+  test("学生填空题（LaTeX 等价答案）交卷进待批，教师批对后学生端见判对与公式化参考答案", async ({
+    page,
+    request,
+    browser,
+  }) => {
     test.setTimeout(150_000);
 
     // —— 造数（教师 API）：专属课程 + 判断/fill 两题单元 + 学生 + 按课布置作业 ——

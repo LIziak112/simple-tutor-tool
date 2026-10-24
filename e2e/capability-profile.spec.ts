@@ -76,9 +76,10 @@ async function saveCapabilityProfile(
 test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式作答 → 恢复", {
   tag: ["@teacher"],
 }, () => {
-  test("全关后学生端 steps 完整展开、手写入口隐藏、可交卷；恢复后入口回来", {
-    tag: ["@teacher"],
-  }, async ({ request, browser }) => {
+  test("全关后学生端 steps 完整展开、手写入口隐藏、可交卷；恢复后入口回来", async ({
+    request,
+    browser,
+  }) => {
     test.setTimeout(150_000);
 
     // —— 造数（乙教师 API）：先保证甲存在（注册 409 前置），再注册专属乙并

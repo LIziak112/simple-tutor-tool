@@ -25,9 +25,10 @@ for (const natural of [false, true]) {
   test.describe(`答题页草稿层（${natural ? "自然笔感" : "标准硬笔"}）`, {
     tag: ["@annotation"],
   }, () => {
-    test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", {
-      tag: ["@annotation"],
-    }, async ({ request, browser }) => {
+    test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", async ({
+      request,
+      browser,
+    }) => {
       test.setTimeout(120_000);
 
       // —— 造数（教师 API）：专属课程 + 可见两题练习 + 学生入成员 ——

@@ -53,9 +53,11 @@ function practiceMarkdown(unitName: string): string {
 test.describe("学生我的记录与错题本（T3.5：批改延伸）", {
   tag: ["@student"],
 }, () => {
-  test("学生答错判断+手写交卷，教师批改后学生在我的记录见「已批」与评语，错题本出现错题", {
-    tag: ["@student"],
-  }, async ({ page, request, browser }) => {
+  test("学生答错判断+手写交卷，教师批改后学生在我的记录见「已批」与评语，错题本出现错题", async ({
+    page,
+    request,
+    browser,
+  }) => {
     test.setTimeout(150_000);
 
     // —— 造数（教师 API）：专属课程 + 两题单元 + 学生 + 按课布置作业 ——
