@@ -725,6 +725,17 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // 0039（M5-D1）units practice 推荐列：NULL=未声明，新列语义见
       // migrate-practice-defaults / content-service 测试
       delete row.practice_defaults_json;
+      // 0040（tt-05b / QM-03）新增列：questions 题级 ::ref 抽取副本（NULL=无
+      // 引用）；responses 行级判分策略（NULL=旧行旧语义）与自评四列（NULL/0=
+      // 从未自评）。新列语义见 migrate-qm-materials / material-repository 测试
+      if (table === "questions") delete row.material_refs_json;
+      if (table === "responses") {
+        delete row.grading_policy;
+        delete row.self_review_verdict;
+        delete row.self_review_at;
+        delete row.self_review_revision;
+        delete row.self_review_mutation_id;
+      }
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());
