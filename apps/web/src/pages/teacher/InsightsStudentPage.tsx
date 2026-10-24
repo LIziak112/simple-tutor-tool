@@ -177,7 +177,8 @@ export function InsightsStudentPage() {
                 {(data.totals.selfJudgedCount ?? 0) > 0 && (
                   <span>
                     {" "}
-                    · 含自评 {data.totals.selfJudgedCount ?? 0} 题（学生本人判定）
+                    · 含自评 {data.totals.selfJudgedCount ?? 0}{" "}
+                    题（学生本人判定）
                   </span>
                 )}
               </>

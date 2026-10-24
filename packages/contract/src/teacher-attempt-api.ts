@@ -6,10 +6,7 @@ import {
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
-import {
-  gradingPolicySchema,
-  selfReviewRecordSchema,
-} from "./self-review.ts";
+import { gradingPolicySchema, selfReviewRecordSchema } from "./self-review.ts";
 
 /**
  * 教师端作答数据页契约（T3.1，依据 Phase3 清单 D5–D8）：

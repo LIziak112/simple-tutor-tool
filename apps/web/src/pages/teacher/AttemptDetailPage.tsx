@@ -131,7 +131,8 @@ function DetailSummary({
         </span>
         {(data.selfReviewPendingCount ?? 0) > 0 && (
           <span>
-            待自评 <b className="text-sky-600">{data.selfReviewPendingCount}</b> 题
+            待自评 <b className="text-sky-600">{data.selfReviewPendingCount}</b>{" "}
+            题
           </span>
         )}
       </p>

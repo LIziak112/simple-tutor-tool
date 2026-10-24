@@ -891,7 +891,10 @@ async function makeSelfReviewEnv(): Promise<WrongEnv & { srUnitId: string }> {
     `/api/teacher/course-items/${item.id}`,
     {
       method: "PATCH",
-      headers: { "content-type": "application/json", cookie: env.teacherCookie },
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
       body: JSON.stringify({ visible: true }),
     },
   );
@@ -986,7 +989,9 @@ describe("GET /api/student/wrong-questions（QM-12：自评行错题集合）", 
     const wrongRes = await selfReview(env, a1, SR.fill, "wrong");
     expect(wrongRes.status).toBe(200);
     const wrongList = await getWrongQuestions(env);
-    expect(wrongList.data?.questions.map((c) => c.questionId)).toEqual([SR.fill]);
+    expect(wrongList.data?.questions.map((c) => c.questionId)).toEqual([
+      SR.fill,
+    ]);
     const fillCard = wrongList.data?.questions[0];
     expect(fillCard?.firstCorrect).toBe(false);
     expect(fillCard?.resolved).toBe(false);
@@ -1030,7 +1035,9 @@ describe("GET /api/student/wrong-questions（QM-12：自评行错题集合）", 
     const fillRow = env.db
       .select({ id: responses.id })
       .from(responses)
-      .where(and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)))
+      .where(
+        and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)),
+      )
       .get();
     if (fillRow === undefined) throw new Error("夹具缺 fill 行");
     expect((await teacherMark(env, fillRow.id, "correct")).status).toBe(200);
@@ -1038,9 +1045,7 @@ describe("GET /api/student/wrong-questions（QM-12：自评行错题集合）", 
       (await getWrongQuestions(env)).data?.questions.map((c) => c.questionId),
     ).toEqual([]);
     expect(
-      (
-        await getWrongQuestions(env, "?includeResolved=true")
-      ).data?.questions,
+      (await getWrongQuestions(env, "?includeResolved=true")).data?.questions,
     ).toEqual([]);
 
     // 教师清除 → 回落学生自评（错）→ 回到默认集合（§5.5.4 ✱ 行）
@@ -1084,9 +1089,7 @@ describe("GET /api/teacher/attempts/:id（QM-12：教师详情有效判定与两
     // 两队列分开：无 manual_only 行 → 教师待批 0；solve 待自评 1
     expect(detail.data.pendingCount).toBe(0);
     expect(detail.data.selfReviewPendingCount).toBe(1);
-    const byId = new Map(
-      detail.data.questions.map((q) => [q.questionId, q]),
-    );
+    const byId = new Map(detail.data.questions.map((q) => [q.questionId, q]));
     expect(byId.get(SR.judge)).toMatchObject({
       gradingPolicy: "auto",
       selfReview: null,
@@ -1104,7 +1107,9 @@ describe("GET /api/teacher/attempts/:id（QM-12：教师详情有效判定与两
     const fillRow = env.db
       .select({ id: responses.id })
       .from(responses)
-      .where(and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)))
+      .where(
+        and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)),
+      )
       .get();
     if (fillRow === undefined) throw new Error("夹具缺 fill 行");
     expect((await teacherMark(env, fillRow.id, "correct")).status).toBe(200);

@@ -49,11 +49,10 @@ import {
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
-import { answerOf } from "./attempt-service";
+import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
-import { effectiveVerdictOfRow } from "./attempt-service";
 import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { snapshotOfRow } from "./snapshot";

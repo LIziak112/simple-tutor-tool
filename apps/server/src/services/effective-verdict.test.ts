@@ -138,7 +138,11 @@ describe("effectiveVerdictOfRow：教师判 > 自评 > 自动（细项1/3）", (
   it("自评脏行（at 缺失）不参与回落——按无记录降级", () => {
     expect(
       effectiveVerdictOfRow(
-        rowOf({ autoCorrect: null, selfReviewVerdict: "wrong", selfReviewAt: null }),
+        rowOf({
+          autoCorrect: null,
+          selfReviewVerdict: "wrong",
+          selfReviewAt: null,
+        }),
       ),
     ).toBeNull();
   });
@@ -164,7 +168,8 @@ function summaryRow(partial: {
     gradingPolicy: partial.gradingPolicy ?? null,
     teacherMark: partial.teacherMark ?? null,
     selfReviewVerdict: partial.selfReviewVerdict ?? null,
-    selfReviewAt: partial.selfReviewVerdict === null ? null : "2026-10-25T00:00:00.000Z",
+    selfReviewAt:
+      partial.selfReviewVerdict === null ? null : "2026-10-25T00:00:00.000Z",
     selfReviewRevision: 0,
   };
 }
@@ -174,11 +179,21 @@ describe("scoreSummaryCoreOf：统一计数核心（P3-1 对齐 + 有效判定�
     const core = scoreSummaryCoreOf(
       [
         // choice：自动判对
-        summaryRow({ autoCorrect: true, finalCorrect: true, gradingPolicy: "auto" }),
+        summaryRow({
+          autoCorrect: true,
+          finalCorrect: true,
+          gradingPolicy: "auto",
+        }),
         // fill（reference_self）：自评错 → wrong（有效判定）
-        summaryRow({ gradingPolicy: "reference_self", selfReviewVerdict: "wrong" }),
+        summaryRow({
+          gradingPolicy: "reference_self",
+          selfReviewVerdict: "wrong",
+        }),
         // solve 有参考（reference_self）：自评对 → correct
-        summaryRow({ gradingPolicy: "reference_self", selfReviewVerdict: "correct" }),
+        summaryRow({
+          gradingPolicy: "reference_self",
+          selfReviewVerdict: "correct",
+        }),
         // solve 无参考（manual_only）：教师未判 → pending 且 pendingCount+1
         summaryRow({ gradingPolicy: "manual_only" }),
       ],
@@ -207,7 +222,12 @@ describe("scoreSummaryCoreOf：统一计数核心（P3-1 对齐 + 有效判定�
       ],
       { finalized: true },
     );
-    expect(core).toMatchObject({ correct: 1, wrong: 0, pending: 0, pendingCount: 0 });
+    expect(core).toMatchObject({
+      correct: 1,
+      wrong: 0,
+      pending: 0,
+      pendingCount: 0,
+    });
   });
 
   it("进行中卷（finalized=false）只计已提交行；未提交行只进 total/unanswered", () => {
@@ -249,8 +269,16 @@ describe("scoreSummaryCoreOf：统一计数核心（P3-1 对齐 + 有效判定�
   it("快照缺失行（幽灵行）不进任何计数", () => {
     const core = scoreSummaryCoreOf(
       [
-        summaryRow({ hasSnapshot: false, autoCorrect: true, finalCorrect: true }),
-        summaryRow({ autoCorrect: true, finalCorrect: true, gradingPolicy: "auto" }),
+        summaryRow({
+          hasSnapshot: false,
+          autoCorrect: true,
+          finalCorrect: true,
+        }),
+        summaryRow({
+          autoCorrect: true,
+          finalCorrect: true,
+          gradingPolicy: "auto",
+        }),
       ],
       { finalized: true },
     );

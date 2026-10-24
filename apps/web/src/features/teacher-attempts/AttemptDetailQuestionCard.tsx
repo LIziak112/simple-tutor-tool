@@ -409,14 +409,17 @@ export function AttemptDetailQuestionCard({
           （verdict 三值 + 教师优先语义；判定区 VerdictSection 另有完整行展示） */}
       {question.teacherMark === null && question.selfReview?.verdict ? (
         <p className="text-sm text-muted-foreground">
-          学生自评：{question.selfReview.verdict === "correct" ? "正确" : "错误"}
+          学生自评：
+          {question.selfReview.verdict === "correct" ? "正确" : "错误"}
           （无需再次确认，可由教师改判）
         </p>
       ) : null}
       {question.teacherMark === null &&
         (question.gradingPolicy ?? null) === "reference_self" &&
         question.selfReview === null && (
-          <p className="text-sm text-muted-foreground">待学生对照参考答案自评</p>
+          <p className="text-sm text-muted-foreground">
+            待学生对照参考答案自评
+          </p>
         )}
       <AiHelpQuestionSection
         attemptId={attemptId}

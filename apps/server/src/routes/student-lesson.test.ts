@@ -2785,7 +2785,10 @@ describe("QM-12：reference_self 行讲练自评与汇总口径（P3-1 对齐）
       )}/self-review`,
       {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: env.memberCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: env.memberCookie,
+        },
         body: JSON.stringify({
           verdict: "correct",
           baseRevision: 0,

@@ -654,9 +654,7 @@ describe("AttemptDetailPage 有效判定与自评行（QM-12）", () => {
     // 第 1 题：学生自评错误 → 最终判定按自评（教师判 > 自评 > 自动）
     const q1 = screen.getByRole("article", { name: "第 1 题" });
     expect(within(q1).getByText("自评错误")).toBeInTheDocument();
-    expect(
-      within(q1).getByText(/最终判定按学生自评/),
-    ).toBeInTheDocument();
+    expect(within(q1).getByText(/最终判定按学生自评/)).toBeInTheDocument();
     // 第 2 题：reference_self 未自评 → 「待自评」（不是「待批」——不进教师队列）
     const q2 = screen.getByRole("article", { name: "第 2 题" });
     expect(within(q2).getAllByText("待自评").length).toBe(2);

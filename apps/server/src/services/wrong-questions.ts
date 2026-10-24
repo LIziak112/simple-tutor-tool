@@ -169,10 +169,7 @@ function judgedRoundsByQuestion(
         // 轮不参与——免得一道待评题把旧的「错」盖成未知）。两线收敛：逐题
         // 语义卷进行中（draft）的已单题提交行同样构成轮次（行级 submittedAt
         // 非空——lesson/v1 逐题提交在公布后即可判定）
-        or(
-          ne(attempts.status, "draft"),
-          isNotNull(responses.submittedAt),
-        ),
+        or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
         or(
           isNotNull(responses.finalCorrect),
           isNotNull(responses.selfReviewVerdict),

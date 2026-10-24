@@ -1338,16 +1338,16 @@ describe("QM-12 得分汇总卡有效判定口径（结果视图）", () => {
   });
 
   it("汇总瓦片按有效判定计数：自评错入答错、待自评入待判断，并注明口径", () => {
-    render(
-      <AttemptResultView data={mixedData(true)} onBackHome={vi.fn()} />,
-    );
+    render(<AttemptResultView data={mixedData(true)} onBackHome={vi.fn()} />);
     const statistics = screen.getByLabelText("题目数量统计");
     expect(statistics).toHaveTextContent("答对0题");
     expect(statistics).toHaveTextContent("答错1题");
     expect(statistics).toHaveTextContent("待判断1题");
     // 逐题徽章与瓦片同出处：同一题自评错在题卡与瓦片口径一致
     const wrongCard = screen.getByRole("article", { name: "第 1 题" });
-    expect(within(wrongCard).getAllByText("自评错误").length).toBeGreaterThan(0);
+    expect(within(wrongCard).getAllByText("自评错误").length).toBeGreaterThan(
+      0,
+    );
     const pendingCard = screen.getByRole("article", { name: "第 2 题" });
     expect(within(pendingCard).getByText("已完成、待自评")).toBeInTheDocument();
     // 含自评行 → 口径注明（自评不是客观测评成绩）
@@ -1383,9 +1383,7 @@ describe("QM-12 得分汇总卡有效判定口径（结果视图）", () => {
   });
 
   it("未公布：自评键 null 投影——瓦片全零、无自评口径注、无徽章三态", () => {
-    render(
-      <AttemptResultView data={mixedData(false)} onBackHome={vi.fn()} />,
-    );
+    render(<AttemptResultView data={mixedData(false)} onBackHome={vi.fn()} />);
     expect(screen.queryByLabelText("题目数量统计")).toBeNull();
     expect(
       screen.queryByText(/含对照自评的题目按你的自评计入答对\/答错/),

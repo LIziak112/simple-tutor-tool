@@ -2325,7 +2325,9 @@ function renderSummaryMd(input: SummaryMdInput): string {
       `- 共 ${input.responseRows.length} 个逐题行（全部历次）；判定：对 ${correct} / 错 ${
         judged - correct
       } / 未判断 ${pending}（正确率分母不含未判断）${
-        selfJudged > 0 ? `；其中学生自评 ${selfJudged} 题为学生本人判定，非客观测评` : ""
+        selfJudged > 0
+          ? `；其中学生自评 ${selfJudged} 题为学生本人判定，非客观测评`
+          : ""
       }。`,
     );
     lines.push(

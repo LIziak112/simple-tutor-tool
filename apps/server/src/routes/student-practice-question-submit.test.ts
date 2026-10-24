@@ -1352,7 +1352,6 @@ describe("M2 异常数据降级（作业授权行悬挂——v2 加固 d7c84b89 
   });
 });
 
-
 describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余行）", () => {
   it("部分逐题提交后整卷提交：已提交行判定/submittedAt/幂等凭据保留，剩余行判分，attempt 只收尾一次", async () => {
     const env = await makeEnv();
