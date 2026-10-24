@@ -17,7 +17,7 @@
     "e2e": "playwright test",
     "e2e:affected": "node scripts/e2e-affected.mjs origin/main",
     "lint": "biome check .",
-    "lint:changed": "biome check --changed .",
+    "lint:changed": "node scripts/lint-affected.mjs origin/main",
     "typecheck": "tsc -p e2e/tsconfig.json && pnpm -r run typecheck",
     "typecheck:affected": "pnpm --filter \"...[origin/main]\" run typecheck",
     "format": "biome format --write .",
