@@ -35,6 +35,7 @@ import {
   recoverAttemptMaterials,
   useAttemptMaterialRecovery,
 } from "@/features/attempt/attempt-material-recovery";
+import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
 import { draftStore } from "@/features/attempt/draft-store";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
@@ -67,7 +68,11 @@ import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
-import { useSubmitAttempt, useUpdateAttemptWorkflow } from "./attempt-queries";
+import {
+  useAttemptContext,
+  useSubmitAttempt,
+  useUpdateAttemptWorkflow,
+} from "./attempt-queries";
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
 import {
@@ -99,6 +104,7 @@ import {
   firstUnsubmittedQuestionId,
   practiceProtocolOfDraft,
 } from "./practice-protocol";
+import { QuestionGroupBlock } from "./QuestionGroupBlock";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
@@ -289,6 +295,17 @@ function AnswerView({
   );
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
+  // QM-08：冻结上下文（材料/组快照）——共享材料渲染数据源；错误非阻断（题面
+  // 不依赖本载荷），就地提示 + 重试
+  const contextQuery = useAttemptContext(attemptId);
+  /** 「查看材料」reveal 信号（组 id → 递增计数；QuestionGroupBlock 滚入恢复） */
+  const [materialReveal, setMaterialReveal] = useState<Record<string, number>>({});
+  const openGroupMaterial = useCallback((groupId: string) => {
+    setMaterialReveal((previous) => ({
+      ...previous,
+      [groupId]: (previous[groupId] ?? 0) + 1,
+    }));
+  }, []);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
   // 内容整树卸载，弹层不能寄居其中
@@ -1087,6 +1104,26 @@ function AnswerView({
             </Button>
           </div>
         )}
+        {/* QM-08：共享材料上下文读取失败——题面照常可答，材料恢复独立重试 */}
+        {contextQuery.isError && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-4"
+          >
+            <p className="min-w-0 text-sm">
+              {contextQuery.error instanceof Error
+                ? contextQuery.error.message
+                : "共享材料加载失败，不影响作答题目。"}
+            </p>
+            <Button
+              variant="outline"
+              disabled={contextQuery.isFetching}
+              onClick={() => void contextQuery.refetch()}
+            >
+              重试加载共享材料
+            </Button>
+          </div>
+        )}
 
         {/* SAI-19：AI 伴学栏与主区共栖（dock 右栏/窄屏独立面板），主区
             （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定。
@@ -1203,9 +1240,108 @@ function AnswerView({
               {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
               T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续。
               M3-D1 单题专注：同一 keyed 序列仅隐藏非当前题（不卸载不搬卡），
-              单元节头在单题态不显示（紧凑结构，§7.2） */}
+              单元节头在单题态不显示（紧凑结构，§7.2）。
+              QM-08：题目序经 groupSegmentsOfUnit 解释成独立题段/题组段——组段
+              的共享材料按组渲染一份（数据解释单源），子题题卡仍逐题 key 稳定 */}
               <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
-                {data.units.map((unit) => (
+                {data.units.map((unit) => {
+                  const questionById = new Map(
+                    unit.questions.map((question) => [question.id, question] as const),
+                  );
+                  const segments = groupSegmentsOfUnit(
+                    contextQuery.data,
+                    unit.questions.map((question) => question.id),
+                  );
+                  /** 单题行渲染（组段/独立段共用；onOpenMaterial 仅组内带材料题挂） */
+                  const renderRow = (
+                    question: (typeof unit.questions)[number],
+                    onOpenMaterial?: () => void,
+                  ) => {
+                    const index = flatQuestions.indexOf(question);
+                    // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
+                    // 并在 footer 槽追加反馈区；legacy/lesson 完全不挂
+                    const practiceRow =
+                      practiceProtocol === "v1"
+                        ? progressById.get(question.id)
+                        : undefined;
+                    const practiceSubmitted =
+                      (practiceRow?.submittedAt ?? null) !== null;
+                    return (
+                      <AttemptQuestionRow
+                        key={question.id}
+                        cardElements={cardElements}
+                        events={attemptEvents}
+                        index={index}
+                        question={question}
+                        assignmentTitle={data.title}
+                        answer={answers?.[question.id]}
+                        onAnswer={setAnswer}
+                        attemptId={attemptId}
+                        flagged={flaggedQuestions.has(question.id)}
+                        onToggleFlag={toggleFlag}
+                        formalInkPresence={
+                          formalInkPresence.get(question.id) ?? false
+                        }
+                        onInkPresenceChange={onInkPresenceChange}
+                        registerInkController={registerInkController}
+                        hints={hintsOpened[question.id]}
+                        onHintUnlocked={unlockHint}
+                        {...(onOpenMaterial !== undefined ? { onOpenMaterial } : {})}
+                        aiTrigger={aiCompanion.triggerForQuestion(
+                          question.id,
+                        )}
+                        aiContent={aiCompanion.inlineForQuestion(
+                          question.id,
+                        )}
+                        hidden={
+                          singleMode &&
+                          question.id !== resolvedSingleQuestionId
+                        }
+                        readOnly={
+                          practiceProtocol === "v1" && practiceSubmitted
+                        }
+                        footer={
+                          practiceProtocol === "v1" ? (
+                            <PracticeQuestionFooter
+                              mode={singleMode ? "single" : "list"}
+                              submitted={practiceSubmitted}
+                              readable={
+                                practiceRow?.feedbackReadable ?? false
+                              }
+                              answered={
+                                navigationItems[index]?.completion.state ===
+                                "filled"
+                              }
+                              busy={
+                                practiceSubmit.submittingId === question.id
+                              }
+                              anyBusy={practiceSubmit.submittingId !== null}
+                              feedback={practiceSubmit.feedbackOf(
+                                question.id,
+                              )}
+                              feedbackFailed={practiceSubmit.feedbackFailedOf(
+                                question.id,
+                              )}
+                              workflow={practiceSubmit.workflow}
+                              error={
+                                practiceSubmit.lastError?.questionId ===
+                                question.id
+                                  ? practiceSubmit.lastError.message
+                                  : null
+                              }
+                              onSubmit={(opts) =>
+                                void runPracticeSubmit(question.id, opts)
+                              }
+                              onRetryFeedback={() =>
+                                practiceSubmit.retryFeedback(question.id)
+                              }
+                            />
+                          ) : undefined
+                        }
+                      />
+                    );
+                  };
+                  return (
                   <li
                     key={unit.id}
                     hidden={
@@ -1225,93 +1361,52 @@ function AnswerView({
                       </h2>
                     )}
                     <ol className="flex flex-col gap-4">
-                      {unit.questions.map((question) => {
-                        const index = flatQuestions.indexOf(question);
-                        // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
-                        // 并在 footer 槽追加反馈区；legacy/lesson 完全不挂
-                        const practiceRow =
-                          practiceProtocol === "v1"
-                            ? progressById.get(question.id)
-                            : undefined;
-                        const practiceSubmitted =
-                          (practiceRow?.submittedAt ?? null) !== null;
-                        return (
-                          <AttemptQuestionRow
-                            key={question.id}
-                            cardElements={cardElements}
-                            events={attemptEvents}
-                            index={index}
-                            question={question}
-                            assignmentTitle={data.title}
-                            answer={answers?.[question.id]}
-                            onAnswer={setAnswer}
-                            attemptId={attemptId}
-                            flagged={flaggedQuestions.has(question.id)}
-                            onToggleFlag={toggleFlag}
-                            formalInkPresence={
-                              formalInkPresence.get(question.id) ?? false
-                            }
-                            onInkPresenceChange={onInkPresenceChange}
-                            registerInkController={registerInkController}
-                            hints={hintsOpened[question.id]}
-                            onHintUnlocked={unlockHint}
-                            aiTrigger={aiCompanion.triggerForQuestion(
-                              question.id,
-                            )}
-                            aiContent={aiCompanion.inlineForQuestion(
-                              question.id,
-                            )}
+                      {segments.map((segment) =>
+                        segment.kind === "solo" ? (
+                          segment.questionIds.map((questionId) => {
+                            const question = questionById.get(questionId);
+                            return question === undefined
+                              ? null
+                              : renderRow(question, undefined);
+                          })
+                        ) : (
+                          <li
+                            key={segment.group.id}
                             hidden={
                               singleMode &&
-                              question.id !== resolvedSingleQuestionId
+                              !segment.questionIds.includes(
+                                resolvedSingleQuestionId ?? "",
+                              )
                             }
-                            readOnly={
-                              practiceProtocol === "v1" && practiceSubmitted
-                            }
-                            footer={
-                              practiceProtocol === "v1" ? (
-                                <PracticeQuestionFooter
-                                  mode={singleMode ? "single" : "list"}
-                                  submitted={practiceSubmitted}
-                                  readable={
-                                    practiceRow?.feedbackReadable ?? false
-                                  }
-                                  answered={
-                                    navigationItems[index]?.completion.state ===
-                                    "filled"
-                                  }
-                                  busy={
-                                    practiceSubmit.submittingId === question.id
-                                  }
-                                  anyBusy={practiceSubmit.submittingId !== null}
-                                  feedback={practiceSubmit.feedbackOf(
-                                    question.id,
-                                  )}
-                                  feedbackFailed={practiceSubmit.feedbackFailedOf(
-                                    question.id,
-                                  )}
-                                  workflow={practiceSubmit.workflow}
-                                  error={
-                                    practiceSubmit.lastError?.questionId ===
-                                    question.id
-                                      ? practiceSubmit.lastError.message
-                                      : null
-                                  }
-                                  onSubmit={(opts) =>
-                                    void runPracticeSubmit(question.id, opts)
-                                  }
-                                  onRetryFeedback={() =>
-                                    practiceSubmit.retryFeedback(question.id)
-                                  }
-                                />
-                              ) : undefined
-                            }
-                          />
-                        );
-                      })}
+                          >
+                            <QuestionGroupBlock
+                              group={segment.group}
+                              materials={segment.materials}
+                              readingKey={`${attemptId}|${segment.group.id}`}
+                              revealSignal={
+                                materialReveal[segment.group.id] ?? 0
+                              }
+                            >
+                              <ol className="flex flex-col gap-4">
+                                {segment.questionIds.map((questionId) => {
+                                  const question = questionById.get(questionId);
+                                  if (question === undefined) return null;
+                                  return renderRow(
+                                    question,
+                                    segment.materials.length > 0
+                                      ? () => openGroupMaterial(segment.group.id)
+                                      : undefined,
+                                  );
+                                })}
+                              </ol>
+                            </QuestionGroupBlock>
+                          </li>
+                        ),
+                      )}
                     </ol>
                   </li>
-                ))}
+                  );
+                })}
               </ol>
 
               {/* 切题保护提示（M3-D3 §11-5）：本机落盘失败停留本题，重试成功继续切题 */}

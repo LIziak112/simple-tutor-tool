@@ -3,7 +3,6 @@ import type {
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { render, screen } from "@testing-library/react";
-import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AiCompareActiveContext } from "@/features/student-ai/ai-companion-layout";
 import { MaterialPanel } from "./MaterialPanel";

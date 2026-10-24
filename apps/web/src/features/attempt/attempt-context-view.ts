@@ -81,7 +81,9 @@ export function groupSegmentsOfUnit(
     .filter((span): span is { group: AttemptContextGroup; first: number; last: number } => span !== null)
     .sort((a, b) => a.group.id.localeCompare(b.group.id));
   // 每题归属：区间包含该题的组里按 id 序首个；无区间 → solo
-  const ownerOf = new Array<AttemptContextGroup | null>(questionIds.length).fill(null);
+  const ownerOf: Array<AttemptContextGroup | null> = questionIds.map(
+    () => null,
+  );
   for (const span of groups) {
     for (let i = span.first; i <= span.last; i += 1) {
       if (ownerOf[i] === null) ownerOf[i] = span.group;
@@ -91,7 +93,7 @@ export function groupSegmentsOfUnit(
   const segments: UnitContextSegment[] = [];
   let i = 0;
   while (i < questionIds.length) {
-    const owner = ownerOf[i];
+    const owner = ownerOf[i] ?? null;
     if (owner === null) {
       // 连续 solo 题（到下一个有归属的题为止）
       let end = i;
