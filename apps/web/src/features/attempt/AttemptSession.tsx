@@ -1324,6 +1324,7 @@ function AnswerView({
                         footer={
                           practiceProtocol === "v1" ? (
                             <PracticeQuestionFooter
+                              attemptId={attemptId}
                               mode={singleMode ? "single" : "list"}
                               submitted={practiceSubmitted}
                               readable={practiceRow?.feedbackReadable ?? false}

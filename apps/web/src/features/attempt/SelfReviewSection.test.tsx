@@ -216,7 +216,7 @@ it("失败保留现场可重试：同一意图复用同一 mutationId，换意�
     expect(screen.getByRole("status").textContent).toContain("自评正确"),
   );
   const [first, second] = mockedSave.mock.calls.map((call) => call[2]);
-  expect(second.mutationId).toBe(first!.mutationId);
+  expect(second?.mutationId).toBe(first?.mutationId);
 });
 
 it("教师已判：整块不渲染（教师判定优先，不可被客户端覆盖）；manual_only 行提示不假装可自动判断", () => {

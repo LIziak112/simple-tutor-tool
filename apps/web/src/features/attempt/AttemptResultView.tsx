@@ -46,6 +46,8 @@ import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
+import { SelfReviewSection } from "./SelfReviewSection";
+import { verdictBadgeDisplayOf } from "./self-review-display";
 import { useResultReviewLocation } from "./use-result-review-location";
 
 /**
@@ -242,8 +244,11 @@ function ResultQuestionCard({
   // 复算一次共享：verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源
   const reviewState = reviewQuestionState(question, released);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
-  // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
-  const verdict = reviewState.verdict;
+  // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）。
+  // QM-11：reference_self 行（教师未判）按自评三态显示（待自评/自评正确/
+  // 自评错误，verdictBadgeDisplayOf 单一出处）；徽章与左边框共用其 verdict
+  const badge = verdictBadgeDisplayOf(question);
+  const verdict = released ? badge.verdict : reviewState.verdict;
   const renderTools = (
     explanationTrigger?: ReactNode,
     explanationContent?: ReactNode,
@@ -336,7 +341,18 @@ function ResultQuestionCard({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
         {released ? (
-          <VerdictBadge verdict={verdict} />
+          <VerdictBadge
+            verdict={badge.verdict}
+            {...(badge.pendingLabel !== undefined && {
+              pendingLabel: badge.pendingLabel,
+            })}
+            {...(badge.correctLabel !== undefined && {
+              correctLabel: badge.correctLabel,
+            })}
+            {...(badge.wrongLabel !== undefined && {
+              wrongLabel: badge.wrongLabel,
+            })}
+          />
         ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
             未作答
@@ -399,6 +415,12 @@ function ResultQuestionCard({
       </AnnotationView>
 
       <ResultAnswerComparison question={question} released={released} />
+
+      {/* QM-11：对照后挂自评动作（reference_self 行；教师已判时整块不渲染，
+          判定显示走下方批改块——教师优先） */}
+      {released && (
+        <SelfReviewSection attemptId={attemptId} question={question} />
+      )}
 
       {released &&
         (question.teacherMark !== null || question.teacherComment !== null) && (
