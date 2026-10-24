@@ -639,6 +639,42 @@ describe("reparseAll：材料/题组（tt-06b / QM-05）", () => {
     expect(members.map((m) => m.questionId)).toEqual(["资料分析-1"]);
   });
 
+  it("QM-07 P2-3：updated 保持行内 order（0,1,5 不重排为 0,1,2）", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    // 模拟历史库的非连续 order（中间实体被清理后留下空洞）
+    db.update(materials)
+      .set({ order: 5, slotsJson: "[]" })
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .run();
+    db.update(questionGroups)
+      .set({ order: 5, questionIdsJson: "[]" })
+      .where(eq(questionGroups.id, "grp-资料分析-1"))
+      .run();
+
+    const report = reparseAll(db, { dryRun: false });
+
+    // 两实体均走 updated 分支（抽取副本被篡改触发恢复）
+    expect(report.materials.find((r) => r.id === "mat-资料分析-1")?.status).toBe(
+      "updated",
+    );
+    expect(report.groups.find((r) => r.id === "grp-资料分析-1")?.status).toBe(
+      "updated",
+    );
+    // reparse 只刷新抽取副本：order 维持行内原值，不按数组下标重排
+    expect(
+      db.select().from(materials).where(eq(materials.id, "mat-资料分析-1")).get()
+        ?.order,
+    ).toBe(5);
+    expect(
+      db
+        .select()
+        .from(questionGroups)
+        .where(eq(questionGroups.id, "grp-资料分析-1"))
+        .get()?.order,
+    ).toBe(5);
+  });
+
   it("干净 QM 库：材料/组全部 unchanged；报告含材料/题组两段且渲染四行统计", () => {
     const db = createTestDb();
     commitQmForReparse(db);
