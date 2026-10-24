@@ -1062,11 +1062,7 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
       {
         id: "材料小练",
         title: "材料小练",
-        questions: [
-          "gq-1",
-          "gq-2",
-          "gq-3",
-        ].map((questionId, i) => ({
+        questions: ["gq-1", "gq-2", "gq-3"].map((questionId, i) => ({
           questionId,
           snapshot: {
             id: questionId,
@@ -1122,13 +1118,21 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
     // 材料标题出现（等待 context 查询落地）
     expect(await findByText("四天气温表")).toBeInTheDocument();
     const groupBlock = screen.getByLabelText("题组：根据材料回答第 1～2 题");
-    expect(within(groupBlock).getByText("先读表，再判断。")).toBeInTheDocument();
+    expect(
+      within(groupBlock).getByText("先读表，再判断。"),
+    ).toBeInTheDocument();
     // 共享材料一份（组块外无第二份）
     expect(screen.getAllByText("四天气温表")).toHaveLength(1);
     // 三题行齐全（题号全卷连续）
-    expect(screen.getByRole("article", { name: "第 1 题" })).toBeInTheDocument();
-    expect(screen.getByRole("article", { name: "第 2 题" })).toBeInTheDocument();
-    expect(screen.getByRole("article", { name: "第 3 题" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 1 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 2 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 3 题" }),
+    ).toBeInTheDocument();
     mockedContext.mockReset();
     mockedContext.mockResolvedValue({
       attemptId: "",

@@ -76,9 +76,16 @@ export function groupSegmentsOfUnit(
       const indexes = group.questionIds
         .map((id) => indexById.get(id))
         .filter((i): i is number => i !== undefined);
-      return indexes.length === 0 ? null : { group, first: Math.min(...indexes), last: Math.max(...indexes) };
+      return indexes.length === 0
+        ? null
+        : { group, first: Math.min(...indexes), last: Math.max(...indexes) };
     })
-    .filter((span): span is { group: AttemptContextGroup; first: number; last: number } => span !== null)
+    .filter(
+      (
+        span,
+      ): span is { group: AttemptContextGroup; first: number; last: number } =>
+        span !== null,
+    )
     .sort((a, b) => a.group.id.localeCompare(b.group.id));
   // 每题归属：区间包含该题的组里按 id 序首个；无区间 → solo
   const ownerOf: Array<AttemptContextGroup | null> = questionIds.map(

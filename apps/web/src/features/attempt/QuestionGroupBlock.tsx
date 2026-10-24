@@ -1,11 +1,9 @@
-import type { AttemptContextGroup, AttemptContextMaterial } from "@tutor/contract";
+import type {
+  AttemptContextGroup,
+  AttemptContextMaterial,
+} from "@tutor/contract";
 import { Layers } from "lucide-react";
-import {
-  type ReactNode,
-  memo,
-  useEffect,
-  useRef,
-} from "react";
+import { memo, type ReactNode, useEffect, useRef } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { MaterialPanel } from "./MaterialPanel";
@@ -51,7 +49,7 @@ export const QuestionGroupBlock = memo(function QuestionGroupBlock({
 }) {
   // AI 侧栏对照激活 → 回退上下排布（与题卡草稿「自动」布局同款信号）
   const compareActive = useAiCompareActive();
-  const materialsRef = useRef<HTMLDivElement>(null);
+  const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
 
   // 阅读位置记录：材料列自身滚动（compare 模式）或窗口滚过材料顶（stack）
@@ -70,7 +68,10 @@ export const QuestionGroupBlock = memo(function QuestionGroupBlock({
       } else {
         // stack 模式：页面滚过材料顶部的距离（截断到材料自身高度）
         const top = node.getBoundingClientRect().top;
-        noteMaterialReadingOffset(readingKey, Math.min(Math.max(-top, 0), node.scrollHeight));
+        noteMaterialReadingOffset(
+          readingKey,
+          Math.min(Math.max(-top, 0), node.scrollHeight),
+        );
       }
     };
     const schedule = () => {
@@ -121,7 +122,10 @@ export const QuestionGroupBlock = memo(function QuestionGroupBlock({
         className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3"
       >
         <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
-          <Layers aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          <Layers
+            aria-hidden
+            className="size-4 shrink-0 text-muted-foreground"
+          />
           {title && title.length > 0 ? title : "题组"}
           {label && label.length > 0 ? (
             <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
@@ -150,7 +154,7 @@ export const QuestionGroupBlock = memo(function QuestionGroupBlock({
         }
       >
         {hasMaterials && (
-          <div
+          <section
             ref={materialsRef}
             data-slot="group-materials"
             tabIndex={-1}
@@ -160,7 +164,7 @@ export const QuestionGroupBlock = memo(function QuestionGroupBlock({
             {materials.map((material) => (
               <MaterialPanel key={material.id} material={material} />
             ))}
-          </div>
+          </section>
         )}
         <div
           data-slot="group-questions"

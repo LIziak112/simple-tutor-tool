@@ -1,8 +1,8 @@
+import { render, screen } from "@testing-library/react";
 import type {
   AttemptContextGroup,
   AttemptContextMaterial,
 } from "@tutor/contract";
-import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AiCompareActiveContext } from "@/features/student-ai/ai-companion-layout";
 import { MaterialPanel } from "./MaterialPanel";
@@ -88,7 +88,9 @@ describe("QuestionGroupBlock", () => {
     );
     const body = document.querySelector('[data-slot="question-group-body"]');
     expect(body?.getAttribute("data-layout")).toBe("compare");
-    expect(body?.className).toContain("xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]");
+    expect(body?.className).toContain(
+      "xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
+    );
     // 窄容器不变量：双栏列与材料列都带 min-w-0（不撑出整页横向溢出）
     expect(
       document
@@ -138,9 +140,9 @@ describe("QuestionGroupBlock", () => {
     // data-layout 变化经 context 触发重渲染（子组件随父重渲染合法），
     // 但 children 元素身份不变——React 复用同一 DOM 节点
     const probe = screen.getByText("子题占位");
-    expect(document.querySelector('[data-slot="group-questions"]')?.contains(probe)).toBe(
-      true,
-    );
+    expect(
+      document.querySelector('[data-slot="group-questions"]')?.contains(probe),
+    ).toBe(true);
     expect(renders).toBeGreaterThan(initial);
   });
 
@@ -164,7 +166,9 @@ describe("QuestionGroupBlock", () => {
     expect(scrollIntoView).toHaveBeenCalled();
     // jsdom 无布局：stack 分支走 window.scrollBy（无已读偏移时不调用）
     expect(scrollBy).not.toHaveBeenCalled();
-    const materialsColumn = document.querySelector('[data-slot="group-materials"]');
+    const materialsColumn = document.querySelector(
+      '[data-slot="group-materials"]',
+    );
     expect(materialsColumn).toBe(document.activeElement);
     // 模拟已读偏移后再 reveal：恢复滚动
     rerender(
@@ -195,7 +199,9 @@ describe("QuestionGroupBlock", () => {
       </QuestionGroupBlock>,
     );
     // 同 props（children 同一元素字面量形态）保持同一 DOM 实例
-    expect(document.querySelector('[data-slot="question-group-block"]')).toBe(before);
+    expect(document.querySelector('[data-slot="question-group-block"]')).toBe(
+      before,
+    );
     rerender(
       <QuestionGroupBlock group={group} materials={[]} hidden={true}>
         <p>子题占位</p>
@@ -211,8 +217,9 @@ describe("QuestionGroupBlock", () => {
 
 describe("material-reading-position（会话内阅读位置保留）", () => {
   it("记录/读取/非法值防御", async () => {
-    const { materialReadingOffsetOf, noteMaterialReadingOffset } =
-      await import("./material-reading-position");
+    const { materialReadingOffsetOf, noteMaterialReadingOffset } = await import(
+      "./material-reading-position"
+    );
     expect(materialReadingOffsetOf("attempt-1|grp-x")).toBe(0);
     noteMaterialReadingOffset("attempt-1|grp-x", 320);
     expect(materialReadingOffsetOf("attempt-1|grp-x")).toBe(320);

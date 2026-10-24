@@ -1,12 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AttemptContextData, AttemptDraftData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
-import {
-  fetchAttemptApi,
-  fetchAttemptContextApi,
-} from "@/lib/api";
+import { fetchAttemptApi, fetchAttemptContextApi } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
 import { installDraftBackend, memoryBackend } from "./draft-store";
 import {
@@ -189,7 +192,11 @@ beforeEach(() => {
   // jsdom 无 scrollIntoView（reveal 滚入用）；list 布局全题可见（role 查询
   // 不含隐藏行，单题/窄宽切换由组件级测试覆盖）
   Element.prototype.scrollIntoView = () => {};
-  savePracticePreference({ layout: "list", keyboardShortcuts: false, feedback: null });
+  savePracticePreference({
+    layout: "list",
+    keyboardShortcuts: false,
+    feedback: null,
+  });
 });
 
 it("组段渲染：组头一次、共享材料一份、组内题卡可见材料入口（组外无）", async () => {
@@ -211,14 +218,14 @@ it("组段渲染：组头一次、共享材料一份、组内题卡可见材料�
   expect(
     screen.getByRole("button", { name: "第 2 题查看共享材料" }),
   ).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /第 3 题查看共享材料/ })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /第 3 题查看共享材料/ }),
+  ).toBeNull();
 });
 
 it("查看材料：reveal 后焦点落材料列（阅读位置恢复由组件测试覆盖）", async () => {
   await renderWith(contextOf());
-  fireEvent.click(
-    screen.getByRole("button", { name: "第 1 题查看共享材料" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "第 1 题查看共享材料" }));
   await waitFor(() =>
     expect(document.activeElement?.getAttribute("aria-label")).toBe(
       "本组共享材料",
@@ -237,7 +244,9 @@ it("上下文读取失败非阻断：题面照常可答 + 就地重试恢复", a
   expect(alert.textContent).toContain("共享材料加载失败");
   // 重试恢复：本仓 mock 逐次固定，重试前切为成功载荷
   mockedContext.mockResolvedValue(contextOf());
-  fireEvent.click(within(alert).getByRole("button", { name: "重试加载共享材料" }));
+  fireEvent.click(
+    within(alert).getByRole("button", { name: "重试加载共享材料" }),
+  );
   await waitFor(() => {
     expect(screen.queryByText("共享材料加载失败")).toBeNull();
     expect(screen.getByText("四天气温表")).toBeInTheDocument();

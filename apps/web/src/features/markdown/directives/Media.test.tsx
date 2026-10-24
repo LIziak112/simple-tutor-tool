@@ -117,7 +117,12 @@ describe("GraphDirective：function-plot 模块形态互操作", () => {
 describe("ImageDirective：放大查看与加载重试（QM-08 长内容细项）", () => {
   function renderImage(src = "blobs/media/ab.png", alt = "统计图") {
     return render(
-      <ImageDirective name="image" attrs={{ src, alt }} index={0} docIndex={0} />,
+      <ImageDirective
+        name="image"
+        attrs={{ src, alt }}
+        index={0}
+        docIndex={0}
+      />,
     );
   }
 

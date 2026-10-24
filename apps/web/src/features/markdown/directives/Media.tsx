@@ -2,11 +2,7 @@ import type { GraphDirectiveAttrs, ImageDirectiveAttrs } from "@tutor/contract";
 import type { FunctionPlotOptions } from "function-plot";
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { resolveFunctionPlot } from "../function-plot-interop";
 import { parseGraphRange } from "../graph-range";
 import type { DirectiveProps } from "./types";

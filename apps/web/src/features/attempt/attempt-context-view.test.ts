@@ -45,7 +45,11 @@ function context(
   materials: readonly AttemptContextMaterial[],
   groups: readonly AttemptContextGroup[],
 ): AttemptContextData {
-  return { attemptId: "attempt-1", materials: [...materials], groups: [...groups] };
+  return {
+    attemptId: "attempt-1",
+    materials: [...materials],
+    groups: [...groups],
+  };
 }
 
 describe("groupSegmentsOfUnit（共用数据解释）", () => {
@@ -64,7 +68,10 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
   it("空题目列表 → 零段", () => {
     expect(groupSegmentsOfUnit(context([], []), [])).toEqual([]);
     expect(
-      groupSegmentsOfUnit(context([], [group("g1", { questionIds: ["q1"] })]), []),
+      groupSegmentsOfUnit(
+        context([], [group("g1", { questionIds: ["q1"] })]),
+        [],
+      ),
     ).toEqual([]);
   });
 
@@ -93,7 +100,12 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
   it("组块插在首位成员处一次，后置独立题保持 solo（组不重复出现）", () => {
     const ctx = context(
       [material("m1")],
-      [group("g1", { materialRefs: [{ material: "m1" }], questionIds: ["q1"] })],
+      [
+        group("g1", {
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q1"],
+        }),
+      ],
     );
     const segments = groupSegmentsOfUnit(ctx, ["q1", "q2", "q3"]);
     expect(segments).toEqual([
@@ -111,7 +123,10 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
     const ctx = context(
       [material("m1")],
       [
-        group("g1", { materialRefs: [{ material: "m1" }], questionIds: ["q9"] }),
+        group("g1", {
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q9"],
+        }),
         group("g2", { questionIds: ["q1"] }),
       ],
     );
@@ -130,10 +145,17 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
 
   it("同 id 多版本条目（wrong 双版本边界）→ 组与材料各取最高冻结版本", () => {
     const ctx = context(
-      [material("m1", { sourceVersion: 1 }), material("m1", { sourceVersion: 2, contentMd: "v2 正文" })],
+      [
+        material("m1", { sourceVersion: 1 }),
+        material("m1", { sourceVersion: 2, contentMd: "v2 正文" }),
+      ],
       [
         group("g1", { sourceVersion: 1, questionIds: ["q1"] }),
-        group("g1", { sourceVersion: 3, materialRefs: [{ material: "m1" }], questionIds: ["q1"] }),
+        group("g1", {
+          sourceVersion: 3,
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q1"],
+        }),
       ],
     );
     const segments = groupSegmentsOfUnit(ctx, ["q1"]);
@@ -146,12 +168,15 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
   });
 
   it("组材料引用缺快照条目（防御：闭包保证外的坏数据）→ 跳过该材料不崩溃", () => {
-    const ctx = context([material("m1")], [
-      group("g1", {
-        materialRefs: [{ material: "m1" }, { material: "m-missing" }],
-        questionIds: ["q1"],
-      }),
-    ]);
+    const ctx = context(
+      [material("m1")],
+      [
+        group("g1", {
+          materialRefs: [{ material: "m1" }, { material: "m-missing" }],
+          questionIds: ["q1"],
+        }),
+      ],
+    );
     const segments = groupSegmentsOfUnit(ctx, ["q1"]);
     const groupSegment = segments[0];
     expect(groupSegment?.kind).toBe("group");
@@ -163,8 +188,14 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
     const ctx = context(
       [material("m1"), material("m2")],
       [
-        group("g1", { materialRefs: [{ material: "m1" }], questionIds: ["q1"] }),
-        group("g2", { materialRefs: [{ material: "m2" }], questionIds: ["q3"] }),
+        group("g1", {
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q1"],
+        }),
+        group("g2", {
+          materialRefs: [{ material: "m2" }],
+          questionIds: ["q3"],
+        }),
       ],
     );
     const segments = groupSegmentsOfUnit(ctx, ["q1", "q2", "q3"]);
@@ -173,10 +204,16 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
   });
 
   it("一题属多组（数据异常防御）→ 按稳定序（id）首个组收编，判定确定", () => {
-    const ctx = context([material("m1")], [
-      group("g1", { materialRefs: [{ material: "m1" }], questionIds: ["q1"] }),
-      group("g2", { questionIds: ["q1"] }),
-    ]);
+    const ctx = context(
+      [material("m1")],
+      [
+        group("g1", {
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q1"],
+        }),
+        group("g2", { questionIds: ["q1"] }),
+      ],
+    );
     const segments = groupSegmentsOfUnit(ctx, ["q1", "q2"]);
     const groupSegment = segments[0];
     expect(groupSegment?.kind).toBe("group");
@@ -186,9 +223,15 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
   });
 
   it("成员区间内夹非成员题（子序列允许的空洞）→ 随组段渲染不拆组块", () => {
-    const ctx = context([material("m1")], [
-      group("g1", { materialRefs: [{ material: "m1" }], questionIds: ["q1", "q3"] }),
-    ]);
+    const ctx = context(
+      [material("m1")],
+      [
+        group("g1", {
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q1", "q3"],
+        }),
+      ],
+    );
     const segments = groupSegmentsOfUnit(ctx, ["q1", "q2", "q3"]);
     expect(segments).toHaveLength(1);
     const groupSegment = segments[0];

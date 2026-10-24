@@ -30,12 +30,12 @@ import { questionBindings } from "@/features/answering/question-binding";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
+import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
 import {
   attemptMaterialsEditable,
   recoverAttemptMaterials,
   useAttemptMaterialRecovery,
 } from "@/features/attempt/attempt-material-recovery";
-import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
 import { draftStore } from "@/features/attempt/draft-store";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
@@ -299,7 +299,9 @@ function AnswerView({
   // 不依赖本载荷），就地提示 + 重试
   const contextQuery = useAttemptContext(attemptId);
   /** 「查看材料」reveal 信号（组 id → 递增计数；QuestionGroupBlock 滚入恢复） */
-  const [materialReveal, setMaterialReveal] = useState<Record<string, number>>({});
+  const [materialReveal, setMaterialReveal] = useState<Record<string, number>>(
+    {},
+  );
   const openGroupMaterial = useCallback((groupId: string) => {
     setMaterialReveal((previous) => ({
       ...previous,
@@ -1246,7 +1248,9 @@ function AnswerView({
               <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
                 {data.units.map((unit) => {
                   const questionById = new Map(
-                    unit.questions.map((question) => [question.id, question] as const),
+                    unit.questions.map(
+                      (question) => [question.id, question] as const,
+                    ),
                   );
                   const segments = groupSegmentsOfUnit(
                     contextQuery.data,
@@ -1286,16 +1290,13 @@ function AnswerView({
                         registerInkController={registerInkController}
                         hints={hintsOpened[question.id]}
                         onHintUnlocked={unlockHint}
-                        {...(onOpenMaterial !== undefined ? { onOpenMaterial } : {})}
-                        aiTrigger={aiCompanion.triggerForQuestion(
-                          question.id,
-                        )}
-                        aiContent={aiCompanion.inlineForQuestion(
-                          question.id,
-                        )}
+                        {...(onOpenMaterial !== undefined
+                          ? { onOpenMaterial }
+                          : {})}
+                        aiTrigger={aiCompanion.triggerForQuestion(question.id)}
+                        aiContent={aiCompanion.inlineForQuestion(question.id)}
                         hidden={
-                          singleMode &&
-                          question.id !== resolvedSingleQuestionId
+                          singleMode && question.id !== resolvedSingleQuestionId
                         }
                         readOnly={
                           practiceProtocol === "v1" && practiceSubmitted
@@ -1305,20 +1306,14 @@ function AnswerView({
                             <PracticeQuestionFooter
                               mode={singleMode ? "single" : "list"}
                               submitted={practiceSubmitted}
-                              readable={
-                                practiceRow?.feedbackReadable ?? false
-                              }
+                              readable={practiceRow?.feedbackReadable ?? false}
                               answered={
                                 navigationItems[index]?.completion.state ===
                                 "filled"
                               }
-                              busy={
-                                practiceSubmit.submittingId === question.id
-                              }
+                              busy={practiceSubmit.submittingId === question.id}
                               anyBusy={practiceSubmit.submittingId !== null}
-                              feedback={practiceSubmit.feedbackOf(
-                                question.id,
-                              )}
+                              feedback={practiceSubmit.feedbackOf(question.id)}
                               feedbackFailed={practiceSubmit.feedbackFailedOf(
                                 question.id,
                               )}
@@ -1342,69 +1337,72 @@ function AnswerView({
                     );
                   };
                   return (
-                  <li
-                    key={unit.id}
-                    hidden={
-                      singleMode &&
-                      !unit.questions.some(
-                        (question) => question.id === resolvedSingleQuestionId,
-                      )
-                    }
-                    className="flex flex-col gap-4"
-                  >
-                    {showUnitHeaders && !singleMode && (
-                      <h2
-                        data-slot="attempt-unit-heading"
-                        className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                      >
-                        {unit.title}
-                      </h2>
-                    )}
-                    <ol className="flex flex-col gap-4">
-                      {segments.map((segment) =>
-                        segment.kind === "solo" ? (
-                          segment.questionIds.map((questionId) => {
-                            const question = questionById.get(questionId);
-                            return question === undefined
-                              ? null
-                              : renderRow(question, undefined);
-                          })
-                        ) : (
-                          <li
-                            key={segment.group.id}
-                            hidden={
-                              singleMode &&
-                              !segment.questionIds.includes(
-                                resolvedSingleQuestionId ?? "",
-                              )
-                            }
-                          >
-                            <QuestionGroupBlock
-                              group={segment.group}
-                              materials={segment.materials}
-                              readingKey={`${attemptId}|${segment.group.id}`}
-                              revealSignal={
-                                materialReveal[segment.group.id] ?? 0
+                    <li
+                      key={unit.id}
+                      hidden={
+                        singleMode &&
+                        !unit.questions.some(
+                          (question) =>
+                            question.id === resolvedSingleQuestionId,
+                        )
+                      }
+                      className="flex flex-col gap-4"
+                    >
+                      {showUnitHeaders && !singleMode && (
+                        <h2
+                          data-slot="attempt-unit-heading"
+                          className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                        >
+                          {unit.title}
+                        </h2>
+                      )}
+                      <ol className="flex flex-col gap-4">
+                        {segments.map((segment) =>
+                          segment.kind === "solo" ? (
+                            segment.questionIds.map((questionId) => {
+                              const question = questionById.get(questionId);
+                              return question === undefined
+                                ? null
+                                : renderRow(question, undefined);
+                            })
+                          ) : (
+                            <li
+                              key={segment.group.id}
+                              hidden={
+                                singleMode &&
+                                !segment.questionIds.includes(
+                                  resolvedSingleQuestionId ?? "",
+                                )
                               }
                             >
-                              <ol className="flex flex-col gap-4">
-                                {segment.questionIds.map((questionId) => {
-                                  const question = questionById.get(questionId);
-                                  if (question === undefined) return null;
-                                  return renderRow(
-                                    question,
-                                    segment.materials.length > 0
-                                      ? () => openGroupMaterial(segment.group.id)
-                                      : undefined,
-                                  );
-                                })}
-                              </ol>
-                            </QuestionGroupBlock>
-                          </li>
-                        ),
-                      )}
-                    </ol>
-                  </li>
+                              <QuestionGroupBlock
+                                group={segment.group}
+                                materials={segment.materials}
+                                readingKey={`${attemptId}|${segment.group.id}`}
+                                revealSignal={
+                                  materialReveal[segment.group.id] ?? 0
+                                }
+                              >
+                                <ol className="flex flex-col gap-4">
+                                  {segment.questionIds.map((questionId) => {
+                                    const question =
+                                      questionById.get(questionId);
+                                    if (question === undefined) return null;
+                                    return renderRow(
+                                      question,
+                                      segment.materials.length > 0
+                                        ? () =>
+                                            openGroupMaterial(segment.group.id)
+                                        : undefined,
+                                    );
+                                  })}
+                                </ol>
+                              </QuestionGroupBlock>
+                            </li>
+                          ),
+                        )}
+                      </ol>
+                    </li>
                   );
                 })}
               </ol>
