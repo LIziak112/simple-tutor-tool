@@ -12,7 +12,6 @@ import type { ContainerDirective } from "mdast-util-directive";
 import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
 import { extractFrontmatter } from "./frontmatter.ts";
-import { isGroupContainer, isMaterialContainer } from "./materials.ts";
 import { defaultQuestionIdOf, isQuestionContainer } from "./question.ts";
 import {
   canonicalName,
@@ -184,7 +183,10 @@ export function normalizeQmIds(
   let groupOrdinal = 0;
   let questionOrdinal = 0;
   for (const child of tree.children as RootContent[]) {
-    if (isMaterialContainer(child)) {
+    // 先收敛到容器（名字分派，避免类型谓词在 else-if 负分支上互相收窄成 never）
+    if (!isContainer(child)) continue;
+    const name = canonicalName(child);
+    if (name === "material") {
       materialOrdinal += 1;
       const explicit = child.attributes?.id?.trim();
       if (explicit === undefined || explicit.length === 0) {
@@ -209,7 +211,7 @@ export function normalizeQmIds(
           );
         }
       }
-    } else if (isGroupContainer(child)) {
+    } else if (name === "group") {
       groupOrdinal += 1;
       const explicit = child.attributes?.id?.trim();
       if (explicit === undefined || explicit.length === 0) {

@@ -115,17 +115,16 @@ describe("normalizeQmIds（导入规范化回写）", () => {
     const parsed = parseDocument(markdown);
     expect(parsed.issues.filter((i) => i.level === "error")).toEqual([]);
     const unit = parsed.units[0];
-    expect(unit?.materials.map((m) => m.id)).toEqual(["mat-资料分析-1"]);
-    expect(unit?.materials[0]?.slots.map((s) => s.id)).toEqual([
+    const materials = unit?.materials ?? [];
+    const groups = unit?.groups ?? [];
+    expect(materials.map((m) => m.id)).toEqual(["mat-资料分析-1"]);
+    expect(materials[0]?.slots.map((s) => s.id)).toEqual([
       "slot-1",
       "slot-2",
       "slot-3",
     ]);
-    expect(unit?.materials[0]?.anchors.map((a) => a.id)).toEqual([
-      "seg-1",
-      "seg-2",
-    ]);
-    expect(unit?.groups.map((g) => g.id)).toEqual(["grp-资料分析-1"]);
+    expect(materials[0]?.anchors.map((a) => a.id)).toEqual(["seg-1", "seg-2"]);
+    expect(groups.map((g) => g.id)).toEqual(["grp-资料分析-1"]);
     const q2 = unit?.questions.find((q) => q.id === "q2");
     expect(q2?.matchingOptions?.options.map((o) => o.id)).toEqual([
       "opt-q2-1",
