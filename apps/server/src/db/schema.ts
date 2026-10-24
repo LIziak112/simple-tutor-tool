@@ -12,6 +12,7 @@ import type {
   AttemptSource,
   AttemptStatus,
   DocumentKind,
+  GradingPolicy,
   LearningEventType,
   NoteImageSpec,
   NoteImageState,
@@ -19,6 +20,7 @@ import type {
   NoteSubmissionEvidenceState,
   PracticeFeedbackMode,
   QuestionType,
+  SelfReviewRecord,
   TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
 import { sql } from "drizzle-orm";
@@ -71,6 +73,13 @@ import {
  * ai_messages / ai_facts / ai_share_tickets / ai_quick_buttons——docs/
  * 学生端AI伴学/技术实施方案.md §5.1 为权威设计），全部新表零改既有列；
  * BLOB_BACKUP_REF_COLUMNS 增 ai_task_materials.png_path 行（§5.2 备份保护）。
+ * 题型与练习适配（2026-10，tt-05b / QM-03）：追加材料/组/引用索引/冻结快照
+ * 五表（materials、question_groups、question_group_members、material_refs、
+ * attempt_context_snapshots——docs/题目模型与练习适配/决策记录.md §5.2/§5.5/
+ * §5.6 与设计方案 §5.1 为权威设计）；既有表只增可空/带默认列：questions 加
+ * material_refs_json（题级 ::ref 抽取副本）、responses 加 gradingPolicy
+ * （§5.6 行级判分策略冻结，NULL=旧行旧语义）与自评四列（§5.5.1 三源分立，
+ * verdict 为 NULL = 从未自评/已撤回）。既有行身份与既有迁移零改动。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -550,6 +559,13 @@ export const questions = sqliteTable(
     solutionMd: text("solution_md"),
     /** 该题原始 Markdown 片段（reparse 与单题编辑的依据，T1.12/T1.14） */
     sourceMd: text("source_md").notNull(),
+    /**
+     * 题级 ::ref 抽取副本 JSON（tt-05b / QM-03，契约 questionSchema.materialRefs，
+     * materialRefSchema[] 形态：{material, segs?, slot?, slots?}）。NULL = 无引用
+     * （旧题目键集不变）；::ref 行原文保留在 sourceMd 中——原文是真相，本列可由
+     * reparse 重建。反向影响查询走 material_refs 索引表（ownerKind='question'）。
+     */
+    materialRefsJson: text("material_refs_json"),
     /** 内容版本：新插入 1，同 id 更新 +1 */
     version: integer("version").notNull().default(1),
     /** 最近更新时间：UTC ISO 字符串 */
@@ -558,6 +574,175 @@ export const questions = sqliteTable(
     deletedAt: text("deleted_at"),
   },
   (table) => [primaryKey({ columns: [table.teacherId, table.id] })],
+);
+
+/**
+ * 材料表（tt-05b / QM-03，决策记录 §5.2 定稿）——::::material 容器的持久化。
+ * - id 来自 DSL（显式属性或缺省 mat-{unitId}-{n}，导入规范化回写后恒显式），
+ *   与 teacherId 组成复合主键（questions 同款：两位教师各持同 id 材料合法；
+ *   材料 id 仅在教师域 + 单元内保证可解析，§5.2.3）；
+ * - 「原文是真相」（§5.2.5）：sourceMd 是材料容器的作者源文（含 id/title 属性
+ *   与内部 seg/slot），anchors/slots/mediaPaths 是抽取副本（可由 reparse 重建，
+ *   不接受绕开源文的独立修改）；
+ * - version：内容版本（sourceMd 变更 +1，抽取字段重建不升版——仓储层策略，
+ *   见 material-repository.ts）；开卷冻结快照按 (sourceId, sourceVersion) 去重；
+ * - 软删延续（deletedAt 置值；同 id 再导入视为恢复）；跨单元同 id 重导按
+ *   「更新」处理（unitId 随之更新，questions 同款）。
+ */
+export const materials = sqliteTable(
+  "materials",
+  {
+    /** 材料 id：来自 DSL（§0.3 主键约定例外），与 teacherId 组成复合主键 */
+    id: text("id").notNull(),
+    /** 归属教师（复合主键组成部分；新表直接非空——无 D9 加列回填中间态） */
+    teacherId: text("teacher_id").notNull(),
+    /** 所属单元（units.id；无外键，D10 口径同 questions.unitId——域一致性由服务层保证） */
+    unitId: text("unit_id").notNull(),
+    /** 显示标题（::::material 的 title 属性）；未提供为 NULL */
+    title: text("title"),
+    /** 材料容器原始 Markdown（含围栏与属性；导入规范化回写后固化） */
+    sourceMd: text("source_md").notNull(),
+    /** 容器内部 Markdown（渲染与学生端公开投影用，不含围栏与属性） */
+    contentMd: text("content_md").notNull(),
+    /** 片段锚点抽取副本 JSON（materialAnchorSchema[]：{id, order}） */
+    anchorsJson: text("anchors_json").notNull(),
+    /** 槽位抽取副本 JSON（materialSlotSchema[]：{id, slotKind, order}） */
+    slotsJson: text("slots_json").notNull(),
+    /** 媒体引用 JSON（string[]，blobs/media/ 内容寻址路径；冻结依赖闭包与备份清理由此索引） */
+    mediaPathsJson: text("media_paths_json").notNull(),
+    /** 文档内出现顺序（0 起，同单元内材料按文档序排列） */
+    order: integer("order").notNull(),
+    /** 内容版本：新插入 1，sourceMd 变更的更新 +1 */
+    version: integer("version").notNull().default(1),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+    /** 软删时间：UTC ISO 字符串；未删除为 NULL（同 id 再导入视为恢复） */
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.teacherId, table.id] }),
+    // 单元内材料列表（unit.materials 重建）的定位索引
+    index("materials_teacher_unit_idx").on(table.teacherId, table.unitId),
+  ],
+);
+
+/**
+ * 题组表（tt-05b / QM-03，决策记录 §5.2 定稿）——::::group 容器的持久化。
+ * 组是叠加元数据（§5.2.4）：不产生题行、不进 units.questions 平铺数组；
+ * questionIds 必须是单元题序的子序列（lint 校验，GROUP_ORDER_INVALID）；
+ * 首版仅一层（组引用组在 lint 报错，GROUP_NESTED_OR_CYCLIC）。sourceMd
+ * 是组容器源文（含 ::ref 引用行）；introMd/materialRefs/questionIds 是
+ * 抽取副本。组成员与材料引用的**可查询索引**在 question_group_members /
+ * material_refs 两表（从源文抽取重建，不是第二份人工维护的真相）。
+ */
+export const questionGroups = sqliteTable(
+  "question_groups",
+  {
+    /** 组 id：来自 DSL（显式属性或缺省 grp-{unitId}-{n}），与 teacherId 组成复合主键 */
+    id: text("id").notNull(),
+    /** 归属教师（复合主键组成部分；新表直接非空） */
+    teacherId: text("teacher_id").notNull(),
+    /** 所属单元（units.id；无外键，D10 口径同 questions.unitId） */
+    unitId: text("unit_id").notNull(),
+    /** 组标题（::::group 的 title 属性，可选） */
+    title: text("title"),
+    /** 组级显示编号说明（如「1～5」；显示编号是展示派生，不进主键，§5.2.3） */
+    label: text("label"),
+    /** 组容器原始 Markdown（含 ::ref 引用行；导入规范化回写后固化） */
+    sourceMd: text("source_md").notNull(),
+    /** 公共说明正文（容器内部 Markdown） */
+    introMd: text("intro_md").notNull(),
+    /** 材料引用抽取副本 JSON（materialRefSchema[]，按书写顺序） */
+    materialRefsJson: text("material_refs_json").notNull(),
+    /** 子题 id 顺序抽取副本 JSON（string[]，::ref{question=} 书写顺序；单元题序子序列） */
+    questionIdsJson: text("question_ids_json").notNull(),
+    /** 文档内出现顺序（0 起） */
+    order: integer("order").notNull(),
+    /** 内容版本：新插入 1，sourceMd 变更的更新 +1（materials 同款策略） */
+    version: integer("version").notNull().default(1),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+    /** 软删时间：UTC ISO 字符串；未删除为 NULL（同 id 再导入视为恢复） */
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.teacherId, table.id] }),
+    // 单元内组列表（unit.groups 重建）的定位索引
+    index("question_groups_teacher_unit_idx").on(table.teacherId, table.unitId),
+  ],
+);
+
+/**
+ * 题组成员索引（tt-05b / QM-03，设计方案 §5.1「组成员/材料引用索引」）——
+ * 从组源文抽取的成员关系（question_group_members ↔ questionGroups 同事务
+ * 替换，material-repository.ts 维护），用于缺失引用检测、删除/移动影响和
+ * 组卷查询；不是第二份人工维护的真相。同一子题在同一组内重复引用由复合
+ * 主键拒绝（lint 的 GROUP_MEMBER_DUPLICATED 在导入前拦截，仓储层兜底回滚）。
+ */
+export const questionGroupMembers = sqliteTable(
+  "question_group_members",
+  {
+    /** 归属教师（与组行同值；索引查询全部含教师域） */
+    teacherId: text("teacher_id").notNull(),
+    /** 所属组（question_groups.id；无外键——materials/groups 均为域内软删实体，值域一致性由服务层保证） */
+    groupId: text("group_id").notNull(),
+    /** 子题（questions.id；无外键，D10 口径） */
+    questionId: text("question_id").notNull(),
+    /** 组内序（::ref{question=} 书写顺序，0 起） */
+    order: integer("order").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.teacherId, table.groupId, table.questionId] }),
+    // 题目删除/移动影响反查（哪些组引用了该题）
+    index("question_group_members_teacher_question_idx").on(
+      table.teacherId,
+      table.questionId,
+    ),
+  ],
+);
+
+/**
+ * 材料引用索引（tt-05b / QM-03，设计方案 §5.1）——从组/题源文抽取的
+ * ::ref{material=…} 关系（ownerKind 区分引用方；与 owner 的 materialRefs
+ * 抽取副本同事务替换）。材料删除/移动影响反查（哪些组/题引用了该材料）
+ * 与悬垂引用检测（findDanglingMaterialRefs）走本表。同一 owner 引用同一
+ * 材料多次（不同片段/槽位选择）合法——refOrder（owner 的 materialRefs
+ * 数组下标）参与主键区分。
+ */
+export const materialRefs = sqliteTable(
+  "material_refs",
+  {
+    /** 归属教师（索引查询全部含教师域） */
+    teacherId: text("teacher_id").notNull(),
+    /** 引用方类型：group=题组（组内共享展示）/ question=题目（题内 ::ref） */
+    ownerKind: text("owner_kind").$type<"group" | "question">().notNull(),
+    /** 引用方 id（question_groups.id / questions.id） */
+    ownerId: text("owner_id").notNull(),
+    /** 被引用材料（materials.id；无外键，域一致性由服务层保证） */
+    materialId: text("material_id").notNull(),
+    /** 引用顺序（owner 的 materialRefs 数组下标，0 起） */
+    refOrder: integer("ref_order").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.teacherId,
+        table.ownerKind,
+        table.ownerId,
+        table.materialId,
+        table.refOrder,
+      ],
+    }),
+    // 材料删除/移动影响反查
+    index("material_refs_teacher_material_idx").on(
+      table.teacherId,
+      table.materialId,
+    ),
+    check(
+      "material_refs_owner_kind_check",
+      sql`${table.ownerKind} in ('group', 'question')`,
+    ),
+  ],
 );
 
 /** 知识考点表。同名考点全局归一复用（knowledge 属性按 name 匹配）。 */
@@ -987,12 +1172,88 @@ export const responses = sqliteTable(
      * 同 id 不同摘要 → 409；未逐题提交为 NULL。
      */
     practiceRequestDigest: text("practice_request_digest"),
+    /**
+     * 行级判分策略（tt-05b / QM-03 建列，决策记录 §5.6 D11）：开卷冻结时按题目
+     * 快照内容写入（gradingPolicyOf 单一出处）——auto / reference_self /
+     * manual_only。**NULL = 旧行旧语义**（升级前历史卷不重释：judge/choice/multi
+     * 自动判定、fill 恒 null 进待批、solve/apply/find-error final 等价比较）；
+     * 写入接线在 QM-06/TT-07 开卷冻结闭包。值域不加 DB CHECK（teacherMark 同款
+     * 口径，由写入方契约把关）。
+     */
+    gradingPolicy: text("grading_policy").$type<GradingPolicy>(),
+    /**
+     * 学生自评 verdict（tt-05b / QM-03 建列，决策记录 §5.5.1/§5.5.2 三源分立）：
+     * correct/wrong 只存实际判断；NULL = 从未自评或已撤回（undecided = 清除
+     * 记录，不是一次写入）。自评不写 teacherMark/finalCorrect（D7）；路由与
+     * CAS/幂等校验链在 TT-09 落地，本列是存储预留。
+     */
+    selfReviewVerdict: text("self_review_verdict").$type<
+      SelfReviewRecord["verdict"]
+    >(),
+    /** 最近一次自评时刻（UTC ISO）；从未自评为 NULL */
+    selfReviewAt: text("self_review_at"),
+    /**
+     * 自评记录修订版本（CAS 基线，首次自评为 0；撤回/修正亦递增——决策记录
+     * §5.5.1「undecided 是清除自评记录的幂等写，revision 递增」）。
+     */
+    selfReviewRevision: integer("self_review_revision").notNull().default(0),
+    /** 最近一次自评写入的幂等键（网络重试同键不重复写）；从未自评为 NULL */
+    selfReviewMutationId: text("self_review_mutation_id"),
   },
   (table) => [
     // 草稿 upsert 与交卷整行重写的定位键
     uniqueIndex("responses_attempt_question_uk").on(
       table.attemptId,
       table.questionId,
+    ),
+  ],
+);
+
+/**
+ * attempt 上下文冻结快照表（tt-05b / QM-03 预留，决策记录 §5.8.1 与设计方案
+ * §5.1/§5.3）——开卷冻结时按 attempt 保存组与材料的冻结内容、版本及引用：
+ * - 冻结后显示、判分、AI 组装、导出、错题重练只读快照；不能仅引用 live
+ *   materials（教师改题库不影响进行中卷）；
+ * - 去重键 (attemptId, kind, sourceId, sourceVersion)：同一材料同版本一次
+ *   存储（一篇长文章多题共享，不每题复制一份）；**材料快照与 responses
+ *   同时成功才算开卷成功**（同事务写入，写入方 QM-06/TT-07 接线）；
+ * - 错题重练复制来源作答的该子题及必要材料/说明：新卷有自己的快照行，
+ *   同 ID 不同版本经 sourceVersion 天然不互相覆盖（§5.3）；
+ * - snapshotJson 为学生作答所需的**公开投影形态**（materialPublicSchema /
+ *   questionGroupPublicSchema 序列化——白名单字段，教师侧 sourceMd 不冻结
+ *   下发；导出重建走 live 库源文）。
+ */
+export const attemptContextSnapshots = sqliteTable(
+  "attempt_context_snapshots",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id；归属链 attemptId → studentId → teacherId 由服务层推导，客户端不可指定） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 冻结实体类型：material=材料 / group=题组 */
+    kind: text("kind").$type<"material" | "group">().notNull(),
+    /** 来源实体 id（materials.id / question_groups.id，教师域 DSL id） */
+    sourceId: text("source_id").notNull(),
+    /** 冻结时的来源内容版本（materials.version / question_groups.version） */
+    sourceVersion: integer("source_version").notNull(),
+    /** 冻结内容 JSON（公开投影形态序列化，见表注释） */
+    snapshotJson: text("snapshot_json").notNull(),
+    /** 冻结时间：UTC ISO 字符串（与建卷 frozenAt 同事务） */
+    frozenAt: text("frozen_at").notNull(),
+  },
+  (table) => [
+    // 去重键：同一 attempt 同一实体同版本只存一份（onConflictDoNothing 承载幂等）
+    uniqueIndex("attempt_context_snapshots_dedupe_uk").on(
+      table.attemptId,
+      table.kind,
+      table.sourceId,
+      table.sourceVersion,
+    ),
+    check(
+      "attempt_context_snapshots_kind_check",
+      sql`${table.kind} in ('material', 'group')`,
     ),
   ],
 );
@@ -2166,3 +2427,26 @@ export type NewAiShareTicketRow = typeof aiShareTickets.$inferInsert;
 export type AiQuickButtonRow = typeof aiQuickButtons.$inferSelect;
 /** ai_quick_buttons 表插入类型 */
 export type NewAiQuickButtonRow = typeof aiQuickButtons.$inferInsert;
+/** materials 表行类型（SELECT 结果；tt-05b 共享材料） */
+export type MaterialRow = typeof materials.$inferSelect;
+/** materials 表插入类型 */
+export type NewMaterialRow = typeof materials.$inferInsert;
+/** question_groups 表行类型（SELECT 结果；tt-05b 题组叠加元数据） */
+export type QuestionGroupRow = typeof questionGroups.$inferSelect;
+/** question_groups 表插入类型 */
+export type NewQuestionGroupRow = typeof questionGroups.$inferInsert;
+/** question_group_members 表行类型（SELECT 结果；tt-05b 组成员索引） */
+export type QuestionGroupMemberRow = typeof questionGroupMembers.$inferSelect;
+/** question_group_members 表插入类型 */
+export type NewQuestionGroupMemberRow =
+  typeof questionGroupMembers.$inferInsert;
+/** material_refs 表行类型（SELECT 结果；tt-05b 材料引用索引） */
+export type MaterialRefRow = typeof materialRefs.$inferSelect;
+/** material_refs 表插入类型 */
+export type NewMaterialRefRow = typeof materialRefs.$inferInsert;
+/** attempt_context_snapshots 表行类型（SELECT 结果；tt-05b 冻结快照） */
+export type AttemptContextSnapshotRow =
+  typeof attemptContextSnapshots.$inferSelect;
+/** attempt_context_snapshots 表插入类型 */
+export type NewAttemptContextSnapshotRow =
+  typeof attemptContextSnapshots.$inferInsert;

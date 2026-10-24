@@ -281,6 +281,13 @@
       "when": 1792716837680,
       "tag": "0039_mean_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792808701314,
+      "tag": "0040_marvelous_kingpin",
+      "breakpoints": true
     }
   ]
 }

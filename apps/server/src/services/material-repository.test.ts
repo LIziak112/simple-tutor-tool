@@ -433,7 +433,7 @@ describe("题组仓储：saveQuestionGroup 与成员/材料引用索引", () => 
     db.$client.close();
   });
 
-  it("二次保存替换索引：成员与引用变化后旧索引行消失、新行就位；源文未变 version 不变", () => {
+  it("二次保存替换索引：成员与引用变化后旧索引行消失、新行就位；源文变更升版、未变不再升", () => {
     const db = createTestDb();
     const unitId = seedUnit(db, TEST_TEACHER_ID, "u1");
     seedQuestion(db, TEST_TEACHER_ID, unitId, "u1-1");
@@ -453,18 +453,20 @@ describe("题组仓储：saveQuestionGroup 与成员/材料引用索引", () => 
       order: 0,
       now: NOW,
     });
+    const revised: QuestionGroup = groupFixture({
+      sourceMd:
+        "::::group{id=grp-u1-1}\n::ref{material=mat-u1-1}\n::ref{question=u1-3}\n::::",
+      questionIds: ["u1-3"],
+    });
     const row = saveQuestionGroup(db, {
       teacherId: TEST_TEACHER_ID,
       unitId,
-      group: groupFixture({
-        sourceMd:
-          "::::group{id=grp-u1-1}\n::ref{material=mat-u1-1}\n::ref{question=u1-3}\n::::",
-        questionIds: ["u1-3"],
-      }),
+      group: revised,
       order: 0,
       now: NOW2,
     });
-    expect(row.version).toBe(1);
+    // 源文变更 → 升版（材料同款策略）
+    expect(row.version).toBe(2);
     const members = db
       .select()
       .from(memberTable)
@@ -472,6 +474,15 @@ describe("题组仓储：saveQuestionGroup 与成员/材料引用索引", () => 
       .all();
     expect(members.map((m) => m.questionId)).toEqual(["u1-3"]);
     expect(JSON.parse(row.questionIdsJson)).toEqual(["u1-3"]);
+    // 同源文再保存（幂等重导）→ 版本保持
+    const again = saveQuestionGroup(db, {
+      teacherId: TEST_TEACHER_ID,
+      unitId,
+      group: revised,
+      order: 0,
+      now: NOW2,
+    });
+    expect(again.version).toBe(2);
     db.$client.close();
   });
 
@@ -814,7 +825,7 @@ describe("attempt 上下文冻结快照（§5.6/§5.8.1 预留存储）", () => 
     db.$client.close();
   });
 
-  it("读取按 attempt 隔离：他卷不可见；事务回滚：批内一条 FK 破坏 → 整批不落", () => {
+  it("读取按 attempt 隔离：他卷不可见；不存在的 attempt 冻结被外键拒绝（整批不落）", () => {
     const db = createTestDb();
     const attemptA = seedAttempt(db);
     const attemptB = seedAttempt(db);
@@ -829,15 +840,10 @@ describe("attempt 上下文冻结快照（§5.6/§5.8.1 预留存储）", () => 
     expect(listAttemptContextSnapshots(db, attemptB)).toHaveLength(0);
     expect(getAttemptContextSnapshot(db, attemptB, "group", "grp-x", 1)).toBeNull();
 
-    // 批内第二条 FK 破坏（attempt 不存在）→ 整批回滚，第一条不留
+    // attempt 不存在 → FK 拒绝，整批不落（批内共用 attemptId，单事务承载原子性；
+    // 「快照与 responses 同时成功才开卷成功」由开卷事务整体保证，写入方 QM-06）
     expect(() =>
-      freezeAttemptContextSnapshots(db, attemptB, [
-        {
-          kind: "group",
-          sourceId: "grp-y",
-          sourceVersion: 1,
-          snapshot: { id: "grp-y", introMd: "说明", materialRefs: [], questionIds: [] },
-        },
+      freezeAttemptContextSnapshots(db, randomUUID(), [
         {
           kind: "material",
           sourceId: "mat-z",
@@ -846,7 +852,11 @@ describe("attempt 上下文冻结快照（§5.6/§5.8.1 预留存储）", () => 
         },
       ], NOW2),
     ).toThrow();
-    expect(listAttemptContextSnapshots(db, attemptB)).toHaveLength(0);
+    expect(
+      db.$client
+        .prepare("SELECT count(*) AS n FROM attempt_context_snapshots")
+        .get(),
+    ).toMatchObject({ n: 1 });
     db.$client.close();
   });
 });
