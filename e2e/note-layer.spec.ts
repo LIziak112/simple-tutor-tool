@@ -22,7 +22,9 @@ import {
  */
 
 for (const natural of [false, true]) {
-  test.describe(`答题页草稿层（${natural ? "自然笔感" : "标准硬笔"}）`, () => {
+  test.describe(`答题页草稿层（${natural ? "自然笔感" : "标准硬笔"}）`, {
+    tag: ["@annotation"],
+  }, () => {
     test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", async ({
       request,
       browser,
@@ -176,10 +178,9 @@ for (const natural of [false, true]) {
   });
 }
 
-test("切换草稿后题干保持可见，正常打开不强制置顶", async ({
-  request,
-  page,
-}) => {
+test("切换草稿后题干保持可见，正常打开不强制置顶", {
+  tag: ["@annotation"],
+}, async ({ request, page }) => {
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const unitName = `草稿定位${suffix}`;

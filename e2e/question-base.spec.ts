@@ -26,7 +26,9 @@ async function generateBase(page: Page) {
   await expect(page.locator('[data-slot="question-base-host"]')).toHaveCount(0);
 }
 
-test("极限公式首次及重复生成均与正常题面的公式像素一致", async ({ page }) => {
+test("极限公式首次及重复生成均与正常题面的公式像素一致", {
+  tag: ["@student"],
+}, async ({ page }) => {
   await page.goto("/dev/question-base");
   await page.getByLabel("题面宽度").fill("720");
   await page.getByLabel("题面夹具").selectOption("limit");
@@ -36,7 +38,9 @@ test("极限公式首次及重复生成均与正常题面的公式像素一致",
   await expectFormulaInBase(page);
 });
 
-test("先普通题再公式题，后续新字体不被旧快照遗漏", async ({ page }) => {
+test("先普通题再公式题，后续新字体不被旧快照遗漏", {
+  tag: ["@student"],
+}, async ({ page }) => {
   await page.goto("/dev/question-base");
   await page.getByLabel("题面宽度").fill("720");
   await page.getByLabel("题面夹具").selectOption("judge");
@@ -48,7 +52,9 @@ test("先普通题再公式题，后续新字体不被旧快照遗漏", async ({
   }
 });
 
-test("字体嵌入请求失败不生成 PNG，恢复后同页重试成功", async ({ page }) => {
+test("字体嵌入请求失败不生成 PNG，恢复后同页重试成功", {
+  tag: ["@student"],
+}, async ({ page }) => {
   await page.goto("/dev/question-base");
   await page.getByLabel("题面宽度").fill("720");
   await page.getByLabel("题面夹具").selectOption("limit");
@@ -69,7 +75,9 @@ test("字体嵌入请求失败不生成 PNG，恢复后同页重试成功", asyn
   await expectFormulaInBase(page);
 });
 
-test("坏公式与超高题面拒绝生成残缺底图", async ({ page }) => {
+test("坏公式与超高题面拒绝生成残缺底图", { tag: ["@student"] }, async ({
+  page,
+}) => {
   await page.goto("/dev/question-base");
   for (const fixture of ["broken", "tall"]) {
     await page.getByLabel("题面夹具").selectOption(fixture);
@@ -83,7 +91,9 @@ test("坏公式与超高题面拒绝生成残缺底图", async ({ page }) => {
   }
 });
 
-test("交互展开导致版式不同及配图失败时不放行底图", async ({ page }) => {
+test("交互展开导致版式不同及配图失败时不放行底图", {
+  tag: ["@student"],
+}, async ({ page }) => {
   await page.goto("/dev/question-base");
   await page.getByLabel("题面夹具").selectOption("fold");
   await page.getByRole("button", { name: "公开材料", exact: true }).click();

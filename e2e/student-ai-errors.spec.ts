@@ -80,7 +80,7 @@ async function pollTaskTerminal(
   return status;
 }
 
-test.describe("SAI-33 错误链（页内与出站）", () => {
+test.describe("SAI-33 错误链（页内与出站）", { tag: ["@ai"] }, () => {
   // 组内顺序运行；供应商状态按用例凭据隔离，跨文件可并行。
   test.describe.configure({ mode: "serial" });
 

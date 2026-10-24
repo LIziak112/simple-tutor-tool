@@ -130,7 +130,7 @@ function barNavButton(page: Page, label: "上一题" | "下一题") {
     .getByRole("button", { name: label, exact: true });
 }
 
-test.describe("练习反馈升级 M3：单题专注工作区", () => {
+test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student"] }, () => {
   test("场景1 单题+逐题深流程：键盘作答 → 原位反馈 → 末题不跳走、结果手动查看", async ({
     request,
     page,

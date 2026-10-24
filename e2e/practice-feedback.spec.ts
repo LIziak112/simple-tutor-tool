@@ -202,7 +202,7 @@ function annotateLatency(label: string, elapsedMs: number): void {
   console.log(`[测量记录非阈值] ${description}`);
 }
 
-test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
+test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@student"] }, () => {
   for (const mode of ["列表逐题", "单题逐题", "统一交卷"] as const) {
     test(`整卷交卷回归：${mode}提交全部剩余题并结束整卷`, async ({
       request,

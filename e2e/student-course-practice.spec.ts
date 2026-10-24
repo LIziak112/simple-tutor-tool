@@ -55,7 +55,9 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历次记录（T2A.6）", () => {
+test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历次记录（T2A.6）", {
+  tag: ["@smoke"],
+}, () => {
   test("学生在课程中完成单元两次，历次记录显示 2 次且得分独立", async ({
     request,
     browser,
