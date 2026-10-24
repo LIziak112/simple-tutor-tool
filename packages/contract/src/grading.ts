@@ -53,14 +53,29 @@ export const handwrittenStudentAnswerSchema = z.object({
 });
 
 /**
+ * response 标题的防御性字符上限（QM-09 细项 3「保存只校验结构/范围」）：超限
+ * 整体拒绝（保存与提交同码走 VALIDATION_ERROR），不在任何一层截断长文。
+ * 200 字符远超任何标题用途，只拦异常粘贴/恶意载荷。
+ */
+export const RESPONSE_TITLE_MAX_CHARS = 200;
+
+/**
+ * response 正文的防御性字符上限（同上，只校验范围不截断）：5 万字符量级
+ * 覆盖最长的作文/申论作答（高考作文上限约 1000 字），与 word-min/word-max
+ * 「仅提示不硬校验」正交——那是题目给学生的作答建议，这是接口防御边界。
+ */
+export const RESPONSE_BODY_MAX_CHARS = 50_000;
+
+/**
  * response 学生答案（TT-05a 域②，§5.3.1）：title 可选（未填不携带）、body
  * 必填（空串=未写正文，仅手写作答合法——完整度口径见 answer-kinds response
- * 行为，isAnswered = body 非空白）。不校验字数（word-min/max 仅提示）。
+ * 行为，isAnswered = body 非空白）。不校验字数（word-min/max 仅提示），
+ * 仅上述防御性字符上限。
  */
 export const responseStudentAnswerSchema = z.object({
   kind: z.literal("response"),
-  title: z.string().optional(),
-  body: z.string(),
+  title: z.string().max(RESPONSE_TITLE_MAX_CHARS).optional(),
+  body: z.string().max(RESPONSE_BODY_MAX_CHARS),
 });
 
 /**

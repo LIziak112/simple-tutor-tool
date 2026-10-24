@@ -127,6 +127,18 @@ export type PreparedQuestion =
       /** 既有最终答案输入描述（FinalAnswerInput 的公开形态：默认标签） */
       readonly finalInput: { readonly label: string };
       readonly context?: PreparedQuestionContext;
+    }
+  | {
+      readonly kind: "response";
+      readonly scopeId: string;
+      readonly stemMd: string;
+      /**
+       * 字数建议提示（word-min/word-max，§5.4.1 仅提示不硬校验不截断）；
+       * 旧题不携带两键。字数口径单源在契约 countResponseWords。
+       */
+      readonly wordMin?: number;
+      readonly wordMax?: number;
+      readonly context?: PreparedQuestionContext;
     };
 
 /** 与 QuestionSurface judgeStemOf 的替换正则同口径（题面呈现形态由视图执行） */
@@ -218,14 +230,25 @@ export function prepareQuestion(
         context,
       );
     case "response":
+      // QM-09 细项1：开放作答（可选标题 + 多行正文 + 正式手写并存）。
+      // 字数建议两键缺省不携带（exactOptionalPropertyTypes 不设键）
+      return withContext(
+        {
+          kind: "response",
+          scopeId,
+          stemMd: question.stemMd,
+          ...(question.wordMin !== undefined && { wordMin: question.wordMin }),
+          ...(question.wordMax !== undefined && { wordMax: question.wordMax }),
+        },
+        context,
+      );
     case "matching":
     case "ordering":
-      // TT-05a 域②扩容（D2/D14）后的编译期穷尽分支：题型枚举/证据角色已在契约
-      // 落地，但 PreparedQuestion 模型与 views 属呈现层（TT-08 接入）。当前无
-      // 自然数据路径（DSL 注册 TT-06、导入发布开关默认关 QM-05），到达即显式
-      // 报错——方案 §7.1「新增类型遗漏必需模式须明确报错，不静默降级」
+      // TT-05a 域②扩容（D2/D14）后的编译期穷尽分支：response 已随 QM-09
+      // 接入呈现层；matching/ordering 属 QM-13（呈现控件未接入），到达即
+      // 显式报错——方案 §7.1「新增类型遗漏必需模式须明确报错，不静默降级」
       throw new Error(
-        `答案 kind「${answerKind}」的题面呈现尚未接入（TT-08 呈现层落地前不应对学生下发）`,
+        `答案 kind「${answerKind}」的题面呈现尚未接入（QM-13 呈现层落地前不应对学生下发）`,
       );
   }
 }

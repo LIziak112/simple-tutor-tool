@@ -33,7 +33,7 @@ export { judgeBehavior } from "./judge.ts";
 export { matchingBehavior } from "./matching.ts";
 export { multiBehavior } from "./multi.ts";
 export { orderingBehavior } from "./ordering.ts";
-export { responseBehavior } from "./response.ts";
+export { countResponseWords, responseBehavior } from "./response.ts";
 export * from "./types.ts";
 
 /**

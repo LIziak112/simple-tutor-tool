@@ -48,13 +48,14 @@ function prepared(
 }
 
 describe("answerKindViews 登记表", () => {
-  it("五 kind 全配（I01 运行时键集）", () => {
+  it("六 kind 全配（I01 运行时键集；response 随 QM-09 登记）", () => {
     expect(Object.keys(answerKindViews).sort()).toEqual([
       "choice",
       "fill",
       "final",
       "judge",
       "multi",
+      "response",
     ]);
   });
 });
@@ -321,7 +322,7 @@ describe("dispatchCompletion 完整度派发", () => {
     } satisfies QuestionCompletion);
   });
 
-  it("final 有正式笔迹未填最终答案为 partial（I06）", () => {
+  it("final 有正式笔迹未填最终答案即已作答（QM-09：旧题型不强制再填单行最终答案）", () => {
     const model = prepared({
       ...choiceQuestion,
       type: "solve",
@@ -331,7 +332,15 @@ describe("dispatchCompletion 完整度派发", () => {
     expect(
       dispatchCompletion(model, { kind: "final", finalAnswer: "" }, true),
     ).toEqual({
-      state: "partial",
+      state: "filled",
+      filledSlots: 1,
+      expectedSlots: 1,
+    } satisfies QuestionCompletion);
+    // 正文与笔迹皆无才 empty（I06 旧 partial 口径随 QM-09 作废）
+    expect(
+      dispatchCompletion(model, { kind: "final", finalAnswer: "" }, false),
+    ).toEqual({
+      state: "empty",
       filledSlots: 0,
       expectedSlots: 1,
     } satisfies QuestionCompletion);

@@ -247,6 +247,45 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
     });
   });
 
+  it("response：开放作答模型携带字数提示（QM-09，白名单只挑公开字段）", () => {
+    const withHints = prepareQuestion(
+      {
+        ...baseQuestion,
+        type: "response",
+        wordMin: 150,
+        wordMax: 250,
+        stemMd: "根据给定资料，概括主要特点。",
+      },
+      "s-resp",
+    );
+    expect(withHints).toEqual({
+      kind: "response",
+      scopeId: "s-resp",
+      stemMd: "根据给定资料，概括主要特点。",
+      wordMin: 150,
+      wordMax: 250,
+    });
+    // 无字数提示的题：两键缺省不携带（旧键集不变）
+    const bare = prepareQuestion(
+      { ...baseQuestion, type: "response" },
+      "s-resp-2",
+    );
+    expect(bare).toEqual({
+      kind: "response",
+      scopeId: "s-resp-2",
+      stemMd: baseQuestion.stemMd,
+    });
+  });
+
+  it("matching/ordering 守卫保持武装（TT-08 呈现层 QM-13 接入前不静默降级）", () => {
+    expect(() =>
+      prepareQuestion({ ...baseQuestion, type: "matching" }, "s-m"),
+    ).toThrow("尚未接入");
+    expect(() =>
+      prepareQuestion({ ...baseQuestion, type: "ordering" }, "s-o"),
+    ).toThrow("尚未接入");
+  });
+
   it("字段白名单：键集恰为各形态挑选的公开字段，禁 {...fullQuestion} 展开", () => {
     const full: QuestionPublic = {
       ...baseQuestion,
@@ -260,6 +299,10 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
       [{ ...full, type: "multi" }, ["kind", "scopeId", "stemMd", "options"]],
       [{ ...full, type: "fill" }, ["kind", "scopeId", "stemMd", "slots"]],
       [{ ...full, type: "solve" }, ["kind", "scopeId", "stemMd", "finalInput"]],
+      [
+        { ...full, type: "response", wordMin: 10, wordMax: 20 },
+        ["kind", "scopeId", "stemMd", "wordMin", "wordMax"],
+      ],
     ];
     for (const [question, keys] of cases) {
       expect(Object.keys(prepareQuestion(question, "s")).sort()).toEqual(
