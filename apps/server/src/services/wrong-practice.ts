@@ -2,8 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { AttemptStartData } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { attempts, type ResponseRow } from "../db/schema";
+import { attempts, type ResponseRow, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import {
+  frozenGradingPolicyOf,
+  wrongAttemptContextPlan,
+} from "./attempt-context.ts";
 import {
   type AttemptWorkflowStartOptions,
   attemptSummaryOf,
@@ -11,6 +15,8 @@ import {
   newDraftAttempt,
   workflowStartColumns,
 } from "./attempt-service";
+import { newContentEnabledFromEnv } from "./import-qm.ts";
+import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { snapshotOfRow } from "./snapshot";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
 
@@ -29,7 +35,9 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
  *   作答 responses 行的 questionSnapshotJson / questionVersion 进新 attempt 的
  *   自有 responses 行（题序 = questionIds 去重后的顺序 = 插入顺序，读路径按
  *   rowid 升序还原，见 db/schema.ts responses 表注释）。教师此后改题库/软删题
- *   不影响已建的卷与判分（判分输入 = 冻结快照，不查 questions 表）；
+ *   不影响已建的卷与判分（判分输入 = 冻结快照，不查 questions 表）。tt-07a
+ *   （QM-06）起材料/组依赖同事务冻结（来源卷快照优先——错题时学生所见的
+ *   版本），gradingPolicy 按复制的来源快照逐行写入（§5.6/§5.8.4 开关控制）；
  * - attempt 行：sourceType='wrong'、assignmentId/courseId/unitId 恒 null（契约
  *   superRefine 锁定；无课程归属 → **永不失权**，草稿与记录一直可见）；
  *   attemptNo = 该生已有 wrong 来源 attempt 数 + 1（从 1 起）；不限制同时存在
@@ -48,6 +56,8 @@ export function startWrongPractice(
   studentId: string,
   questionIds: readonly string[],
   options: AttemptWorkflowStartOptions = {},
+  /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
+  newContentEnabled?: boolean,
 ): AttemptStartData {
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
@@ -65,13 +75,27 @@ export function startWrongPractice(
     .map((questionId) => pickOf(questionId))
     .filter((row): row is ResponseRow => row !== null);
 
-  if (picked.length === 0) {
+  // tt-07a（QM-06）：错题重练的依赖冻结走本单统一路径（设计方案 §5.3「错题
+  // 重练复制来源作答的该子题及必要材料/说明」）——依赖条目**来源卷快照优先**
+  // （错题时学生所见的版本），来源卷无快照回退 live 当前版本；依赖在两边都
+  // 不可得（教师软删且来源卷未冻结）→ 该题剔除（学生自助重练不整卷失败）
+  const teacherId =
+    db
+      .select({ teacherId: students.teacherId })
+      .from(students)
+      .where(eq(students.id, studentId))
+      .get()?.teacherId ?? null;
+  const plan = wrongAttemptContextPlan(db, teacherId, picked);
+
+  if (picked.length === 0 || plan.usable.length === 0) {
     throw new HttpError(
       400,
       "WRONG_PRACTICE_EMPTY",
       "这些题目不在你的错题本里（或状态有变），请刷新后再试",
     );
   }
+
+  const freezePolicy = newContentEnabled ?? newContentEnabledFromEnv();
 
   return db.transaction((tx) => {
     const countRow = tx
@@ -104,18 +128,29 @@ export function startWrongPractice(
     tx.insert(attempts).values(attempt).run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
     // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
-    // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）
-    for (const source of picked) {
+    // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）。tt-07a：gradingPolicy
+    // 按复制的来源快照逐行写入（frozenGradingPolicyOf 单一出处，§5.8.4 开关
+    // 控制 NULL=旧语义）——判分策略与题目本体同源自冻结，教师事后改题不影响
+    for (const source of plan.usable) {
       const snapshotJson = source.questionSnapshotJson;
-      if (snapshotJson === null) continue; // pickOf 已校验非空（坏快照剔除），防御性收敛
+      const snapshot = snapshotOfRow(source); // pickOf 已校验可解析，防御性收敛
+      if (snapshotJson === null || snapshot === null) continue;
       insertFrozenResponse(tx, {
         attemptId: id,
         questionId: source.questionId,
         questionVersion: source.questionVersion,
         questionSnapshotJson: snapshotJson,
         unitId: null,
+        gradingPolicy: frozenGradingPolicyOf(snapshot, freezePolicy),
       });
     }
+    // 依赖闭包条目（来源卷快照优先）同事务冻结——开卷途中失败全回滚
+    freezeAttemptContextSnapshotsWithin(
+      tx,
+      id,
+      plan.entries,
+      attempt.startedAt,
+    );
     const row = tx.select().from(attempts).where(eq(attempts.id, id)).get();
     if (row === undefined) {
       throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");

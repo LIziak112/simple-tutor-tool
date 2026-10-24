@@ -642,33 +642,47 @@ export function freezeAttemptContextSnapshots(
   entries: readonly AttemptContextSnapshotEntry[],
   now: string,
 ): number {
-  return db.transaction((tx) => {
-    let inserted = 0;
-    for (const entry of entries) {
-      const result = tx
-        .insert(attemptContextSnapshots)
-        .values({
-          id: crypto.randomUUID(),
-          attemptId,
-          kind: entry.kind,
-          sourceId: entry.sourceId,
-          sourceVersion: entry.sourceVersion,
-          snapshotJson: JSON.stringify(entry.snapshot),
-          frozenAt: now,
-        })
-        .onConflictDoNothing({
-          target: [
-            attemptContextSnapshots.attemptId,
-            attemptContextSnapshots.kind,
-            attemptContextSnapshots.sourceId,
-            attemptContextSnapshots.sourceVersion,
-          ],
-        })
-        .run();
-      inserted += result.changes;
-    }
-    return inserted;
-  });
+  return db.transaction((tx) =>
+    freezeAttemptContextSnapshotsWithin(tx, attemptId, entries, now),
+  );
+}
+
+/**
+ * freezeAttemptContextSnapshots 的事务内实现（tt-07a / QM-06）：四来源建卷
+ * 把快照冻结与 attempt 行、responses 预插放进**同一个建卷事务**——开卷途中
+ * 任一环节失败全回滚，不留半冻结状态（saveMaterialWithin 同款形态）。
+ */
+export function freezeAttemptContextSnapshotsWithin(
+  tx: RepositoryTx,
+  attemptId: string,
+  entries: readonly AttemptContextSnapshotEntry[],
+  now: string,
+): number {
+  let inserted = 0;
+  for (const entry of entries) {
+    const result = tx
+      .insert(attemptContextSnapshots)
+      .values({
+        id: crypto.randomUUID(),
+        attemptId,
+        kind: entry.kind,
+        sourceId: entry.sourceId,
+        sourceVersion: entry.sourceVersion,
+        snapshotJson: JSON.stringify(entry.snapshot),
+        frozenAt: now,
+      })
+      .onConflictDoNothing({
+        target: [
+          attemptContextSnapshots.attemptId,
+          attemptContextSnapshots.kind,
+          attemptContextSnapshots.sourceId,
+          attemptContextSnapshots.sourceVersion,
+        ],
+      })
+      .run();
+    inserted += result.changes;
+  }
+  return inserted;
 }
 
 /** 某卷全部冻结上下文（作答渲染/导出/错题重练只读快照的读取入口） */

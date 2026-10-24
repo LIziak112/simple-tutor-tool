@@ -16,6 +16,10 @@ import type { Db } from "../db/client";
 import { type Attempt, attempts, questions, units } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  contextEntriesOf,
+  liveAttemptContextClosure,
+} from "./attempt-context.ts";
+import {
   answerOf,
   attemptEnabledCapabilities,
   attemptResponseRows,
@@ -31,6 +35,7 @@ import {
 } from "./attempt-service";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
+import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
 import { snapshotOfRow } from "./snapshot";
@@ -168,9 +173,30 @@ function createLessonAttempt(
   });
   // 冻结输入的读走外层 db（better-sqlite3 同连接同步执行，事务内读取与写入
   // 口径一致，startCourseAttempt 同款）；写走 tx 与 attempt 行同事务落库
-  const { liveRows, knowledgeByQuestion } = freezeInputsOfAttempt(db, attempt);
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+    db,
+    attempt,
+  );
+  // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（嵌入单元 live 题的依赖；
+  // 讲练具体混排渲染留 QM-14，本处只保证冻结闭包与四来源统一）
+  const entries =
+    teacherId === null
+      ? []
+      : contextEntriesOf(
+          liveAttemptContextClosure(
+            db,
+            teacherId,
+            liveRows.map((row) => row.id),
+          ),
+        );
   tx.insert(attempts).values(attempt).run();
   insertFrozenResponses(tx, attempt.id, liveRows, knowledgeByQuestion);
+  freezeAttemptContextSnapshotsWithin(
+    tx,
+    attempt.id,
+    entries,
+    attempt.startedAt,
+  );
   return attempt;
 }
 
