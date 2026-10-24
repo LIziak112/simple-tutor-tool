@@ -320,6 +320,14 @@ export const questionPublicSchema = z.object({
    */
   matchingOptions: matchingOptionsSchema.optional(),
   orderingItems: z.array(orderingItemSchema).optional(),
+  /**
+   * matching 槽位集合（QM-13 细项 2）：题内 ::ref{slots=…} 声明的槽位按
+   * 材料槽位序**服务端展开**后的有序 slotId 列表（区间的展开依赖材料文档
+   * 顺序，学生端不重复解析 DSL 选择串）。仅 matching 题携带；展开失败
+   * （材料快照缺失等防御形态）不注入键。与 matchingOptions 分开下发——
+   * 选项池是题面抽取副本，槽位集合是题级引用的展开产物，两者来源独立。
+   */
+  matchingSlots: z.array(z.string().min(1)).min(1).optional(),
   wordMin: z.number().int().min(1).optional(),
   wordMax: z.number().int().min(1).optional(),
 });

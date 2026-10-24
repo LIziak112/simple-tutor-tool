@@ -336,6 +336,28 @@ describe("questionPublicSchema 白名单扩展（作答面结构随题下发，f
     expect(parsed.wordMin).toBe(10);
   });
 
+  it("matching 槽位集合（服务端按材料槽位序展开的有序 slotId）随题下发；缺省不注入键", () => {
+    // QM-13 细项 2：matching 作答行 = 声明槽位集合；slots= 区间的展开在
+    // 服务端投影时完成，学生端只消费有序 id 列表（不重复解析 DSL 选择串）
+    const parsed = questionPublicSchema.parse({
+      ...base,
+      matchingSlots: ["slot-1", "slot-2", "slot-3"],
+    });
+    expect(parsed.matchingSlots).toEqual(["slot-1", "slot-2", "slot-3"]);
+    // 空 id / 空数组拒绝（防御性边界：展开产物必非空）
+    expect(
+      questionPublicSchema.safeParse({
+        ...base,
+        matchingSlots: ["slot-1", ""],
+      }).success,
+    ).toBe(false);
+    expect(
+      questionPublicSchema.safeParse({ ...base, matchingSlots: [] }).success,
+    ).toBe(false);
+    const bare = questionPublicSchema.parse(base);
+    expect(bare).not.toHaveProperty("matchingSlots");
+  });
+
   it("教师侧键（answers/solutionMd/sourceMd/hints 内容）仍被剥离", () => {
     const parsed = questionPublicSchema.parse({
       ...base,
