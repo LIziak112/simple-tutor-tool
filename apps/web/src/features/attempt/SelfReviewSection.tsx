@@ -135,6 +135,12 @@ export function SelfReviewSection({
               record: parsed.data.selfReview,
               revision: parsed.data.revision,
             });
+          } else {
+            // _current 缺失/形态不符（旧后端或网关改写）：本机无新基线可采纳，
+            // 刷新本题投影由服务端事实接管（与教师竞争/未公布分支同口径）
+            void client.invalidateQueries({
+              queryKey: ["student", "attempt", attemptId],
+            });
           }
         } else if (cause.code === "SELF_REVIEW_TEACHER_MARKED") {
           // 教师竞争：动作入口收起（显示以教师判定为准），刷新投影

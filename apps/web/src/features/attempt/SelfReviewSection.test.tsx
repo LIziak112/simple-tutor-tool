@@ -118,12 +118,12 @@ it("点「对了」：POST correct+baseRevision=0+uuid → 状态「自评正确
     expect(screen.getByRole("status").textContent).toContain("自评正确"),
   );
   expect(mockedSave).toHaveBeenCalledTimes(1);
-  const [attemptId, questionId, request] = mockedSave.mock.calls[0]!;
+  const [attemptId, questionId, request] = mockedSave.mock.calls.at(0) ?? [];
   expect(attemptId).toBe(ATTEMPT_ID);
   expect(questionId).toBe("q1");
-  expect(request.verdict).toBe("correct");
-  expect(request.baseRevision).toBe(0);
-  expect(request.mutationId).toMatch(
+  expect(request?.verdict).toBe("correct");
+  expect(request?.baseRevision).toBe(0);
+  expect(request?.mutationId).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   );
   // 成功后刷新本题与聚合缓存（attempt 前缀 + 讲练/记录/错题/教师聚合）
@@ -156,15 +156,15 @@ it("修正与撤回：已评 correct 后点「错了」用 baseRevision=1；「�
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain("自评错误"),
   );
-  expect(mockedSave.mock.calls[0]![2].baseRevision).toBe(1);
+  expect(mockedSave.mock.calls.at(0)?.[2].baseRevision).toBe(1);
 
   mockedSave.mockResolvedValueOnce(okData(null, 3));
   fireEvent.click(screen.getByRole("button", { name: "暂不判断" }));
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain("已完成，待自评"),
   );
-  expect(mockedSave.mock.calls[1]![2].verdict).toBe("undecided");
-  expect(mockedSave.mock.calls[1]![2].baseRevision).toBe(2);
+  expect(mockedSave.mock.calls.at(1)?.[2].verdict).toBe("undecided");
+  expect(mockedSave.mock.calls.at(1)?.[2].baseRevision).toBe(2);
 });
 
 it("CAS 409 REVISION_CONFLICT：呈现冲突提示并采纳 _current 作为新基线（再评用 revision=2）", async () => {
@@ -196,7 +196,27 @@ it("CAS 409 REVISION_CONFLICT：呈现冲突提示并采纳 _current 作为新�
   mockedSave.mockResolvedValueOnce(okData("wrong", 3));
   fireEvent.click(screen.getByRole("button", { name: "错了" }));
   await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(2));
-  expect(mockedSave.mock.calls[1]![2].baseRevision).toBe(2);
+  expect(mockedSave.mock.calls.at(1)?.[2].baseRevision).toBe(2);
+});
+
+it("CAS 409 无/畸形 _current（safeParse 失败）：不采纳本地基线，刷新本题投影由服务端事实接管", async () => {
+  const { invalidateSpy: spy } = renderSection(questionOf());
+  mockedSave.mockRejectedValueOnce(
+    new ApiError(
+      "SELF_REVIEW_REVISION_CONFLICT",
+      "这道题的自评已在其他设备更新，请刷新后查看最新自评再试",
+      409,
+      // 冲突体不含 _current（旧后端/网关剥离）：safeParse 必失败
+      {},
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "对了" }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toContain("其他设备"),
+  );
+  // 本机无新基线可采纳：与教师竞争/未公布分支同口径刷新本题投影
+  const keys = spy.mock.calls.map((call) => JSON.stringify(call[0]?.queryKey));
+  expect(keys.some((key) => key.includes('"attempt"'))).toBe(true);
 });
 
 it("失败保留现场可重试：同一意图复用同一 mutationId，换意图换新键", async () => {
@@ -217,6 +237,19 @@ it("失败保留现场可重试：同一意图复用同一 mutationId，换意�
   );
   const [first, second] = mockedSave.mock.calls.map((call) => call[2]);
   expect(second?.mutationId).toBe(first?.mutationId);
+  // 换意图换新键：失败后点另一 verdict，不复用失败意图的 mutationId
+  // （先例 AiBatchReviewPanel.test.tsx 重试新幂等键断言）
+  mockedSave.mockRejectedValueOnce(new Error("网络再次中断，请稍后重试"));
+  fireEvent.click(screen.getByRole("button", { name: "错了" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+  mockedSave.mockResolvedValueOnce(okData(null, 2));
+  fireEvent.click(screen.getByRole("button", { name: "暂不判断" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status").textContent).toContain("已完成，待自评"),
+  );
+  const third = mockedSave.mock.calls.at(2)?.[2];
+  const fourth = mockedSave.mock.calls.at(3)?.[2];
+  expect(fourth?.mutationId).not.toBe(third?.mutationId);
 });
 
 it("教师已判：整块不渲染（教师判定优先，不可被客户端覆盖）；manual_only 行提示不假装可自动判断", () => {

@@ -82,7 +82,8 @@ describe("verdictBadgeDisplayOf", () => {
         }),
       ),
     ).toEqual({ verdict: true });
-    // manual_only / 旧行（null）/ 公布前 null 投影：finalCorrect ?? autoCorrect
+    // manual_only / 旧行（null）/ 公布前 null 投影：沿 finalCorrect 原路径、
+    // 不做 autoCorrect 回退（实现 self-review-display.ts 落尾 return 同口径）
     expect(
       verdictBadgeDisplayOf(row({ gradingPolicy: "manual_only" })),
     ).toEqual({ verdict: null });
