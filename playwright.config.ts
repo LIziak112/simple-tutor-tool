@@ -28,10 +28,14 @@ import { defineConfig, devices } from "@playwright/test";
 /** 是否在 CI（GitHub Actions）中运行 */
 const IS_CI = !!process.env.CI;
 
-/** e2e 前端服务模式：E2E_WEB_PREVIEW=1（e2e:full）先 vite build 再 vite preview
- *  服务构建产物——页面免 dev server 冷转译，加载通常快 2-3 倍。preview 的
- *  /api 代理与 PWA 禁用见 apps/web/vite.config.ts（E2E_WEB_PREVIEW 经
- *  process.env 合并自动传入）。e2e:affected 开发循环仍用 dev server 便于排错。 */
+/** e2e 前端对照实验模式（2026-10-25 已判决**不切换**，默认关闭，见
+ *  docs/e2e功能面选测与preview对照.md：spec 依赖 dev server 的 /src 源码路径
+ *  与 /dev 调试页，preview 结构性不兼容）：手动设置 E2E_WEB_PREVIEW=1 时
+ *  webServer 先 vite build 再 vite preview 服务构建产物。注意 e2e:full 与
+ *  pnpm e2e 等价（dev server），本变量只服务手动对照复现——
+ *  Git Bash：E2E_WEB_PREVIEW=1 pnpm e2e；cmd：set E2E_WEB_PREVIEW=1&&pnpm e2e；
+ *  PowerShell：$env:E2E_WEB_PREVIEW="1"; pnpm e2e。preview 的代理与 PWA
+ *  裁剪经 --mode e2e-preview 挂在 vite 内建 mode 上（apps/web/vite.config.ts）。 */
 const USE_PREVIEW = process.env.E2E_WEB_PREVIEW === "1";
 
 /** E2E 专用端口：避开日常 dev 的 8787（server）与 5173-517x（vite 自动顺延段） */
@@ -76,7 +80,8 @@ export default defineConfig({
   // CI 重试 1 次吸收 runner 的网络/首编译抖动；本机不重试，避免掩盖真问题
   retries: IS_CI ? 1 : 0,
   // CI 限 2（2 核 runner）；本机显式 6——默认值是 CPU 逻辑核数的一半（本机 8），
-  // 16GB 内存下 8 路 Edge/WebKit 并发会顶到内存上限，6 路是实测安全档
+  // 16GB 内存下 8 路 Edge/WebKit 并发会顶到内存上限，6 路是实测安全档。
+  // 低配/高配机可用 CLI 覆盖：pnpm e2e --workers=N
   workers: IS_CI ? 2 : 6,
   reporter: IS_CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {

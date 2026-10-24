@@ -1,9 +1,11 @@
 // e2e-affected 决策函数单测：选测语义的回归网（纯函数，不碰 git/playwright）
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ALL_TAGS,
   decideE2e,
+  FEATURE_DIR_TAGS,
+  ROUTE_TAGS,
   SMOKE_SPECS,
   SPEC_TAGS,
 } from "./e2e-affected.mjs";
@@ -63,7 +65,9 @@ describe("decideE2e 选测决策", () => {
     const decision = decideE2e(["e2e/mcp-smoke.spec.ts"]);
     expect(decision.mode).toBe("specs");
     expect(decision.specs).toEqual([
-      ...SMOKE_SPECS.filter((s) => !s.includes("mcp-smoke")),
+      "e2e/full-chain.spec.ts",
+      "e2e/student-course-practice.spec.ts",
+      "e2e/password-login.spec.ts",
       "e2e/mcp-smoke.spec.ts",
     ]);
     // 冒烟 spec 自身变动时不重复列出
@@ -162,6 +166,69 @@ describe("标签登记完整性", () => {
     expect(specs.length).toBeGreaterThan(50);
     for (const spec of specs) {
       expect(SPEC_TAGS[spec], spec).toBeDefined();
+    }
+  });
+
+  it("spec 文件内的 tag 声明与 SPEC_TAGS 登记一致（grep 档的正确性根基）", () => {
+    const specs = readdirSync(new URL("../e2e", import.meta.url), {
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".spec.ts"))
+      .map((entry) => entry.name);
+    for (const spec of specs) {
+      const source = readFileSync(
+        new URL(`../e2e/${spec}`, import.meta.url),
+        "utf8",
+      );
+      const declared = new Set();
+      for (const match of source.matchAll(/tag: \[([^\]]*)\]/g)) {
+        for (const item of match[1].split(",")) {
+          const tag = item.trim().replaceAll('"', "").replaceAll("'", "");
+          if (tag) {
+            declared.add(tag);
+          }
+        }
+      }
+      expect([...declared].sort(), spec).toEqual([...SPEC_TAGS[spec]].sort());
+    }
+  });
+
+  it("每个顶层 test/describe 调用都带 tag（防已登记 spec 里新增用例漏标）", () => {
+    const specs = readdirSync(new URL("../e2e", import.meta.url), {
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".spec.ts"))
+      .map((entry) => entry.name);
+    for (const spec of specs) {
+      const lines = readFileSync(
+        new URL(`../e2e/${spec}`, import.meta.url),
+        "utf8",
+      ).split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        // 顶层调用（缩进 0，首参为标题字符串；test.skip(condition, …) 形态不匹配）
+        if (!/^test(\.\w+)*\s*\(\s*["'`]/.test(lines[i])) {
+          continue;
+        }
+        // biome 可能把 tag 参数拆到后续行，看 4 行窗口
+        const window = lines.slice(i, i + 4).join("\n");
+        expect(window.includes("tag:"), `${spec}:${i + 1} 顶层调用缺 tag`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it("FEATURE_DIR_TAGS 与 ROUTE_TAGS 的每个值非空且都在 ALL_TAGS 里（空数组会让命中静默落成仅冒烟）", () => {
+    for (const [table, name] of [
+      [FEATURE_DIR_TAGS, "FEATURE_DIR_TAGS"],
+      [ROUTE_TAGS, "ROUTE_TAGS"],
+    ]) {
+      for (const [key, tags] of Object.entries(table)) {
+        expect(tags.length, `${name}[${key}]`).toBeGreaterThan(0);
+        for (const tag of tags) {
+          expect(ALL_TAGS, `${name}[${key}] 的 ${tag}`).toContain(tag);
+        }
+      }
     }
   });
 

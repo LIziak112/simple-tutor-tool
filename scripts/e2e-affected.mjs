@@ -28,10 +28,13 @@
 // 分支都会摊成全量，选测就失效了）。
 // 环境变量 AFFECTED_DRY_RUN=1 只打印决策不执行。
 import {
+  CMD_LENGTH_LIMIT,
   collectChangedFiles,
+  existing,
   hitForceFull,
   runIfMain,
   runOrDryRun,
+  toCommandLine,
 } from "./affected-lib.mjs";
 
 /** 冒烟标签：任何选测结果都包含（三个跨功能面主链 spec，见 SPEC_TAGS） */
@@ -318,11 +321,21 @@ export function decideE2e(changed) {
 function main() {
   const ref = process.argv[2] ?? "v2";
   const decision = decideE2e(collectChangedFiles(ref));
+  // 已删除/改名的 spec 从直跑清单剔除（collectChangedFiles 有意保留已删文件，
+  // 而 Playwright 的文件参数对不存在的路径只是匹配零用例并静默跳过——不过滤
+  // 的话日志会谎称直跑了一个实际不存在的文件）
+  const specs = decision.mode === "specs" ? existing(decision.specs) : [];
+  if (decision.mode === "specs" && specs.length === 0) {
+    console.log(
+      `[e2e-affected] 基线 ${ref}：变动的 spec 均已删除（${decision.reason}），跳过；全量由 PR CI 兜底`,
+    );
+    return 0;
+  }
   const summary =
     decision.mode === "full"
       ? `全量（${decision.reason}）`
       : decision.mode === "specs"
-        ? `直跑 ${decision.specs.join(" ")}（${decision.reason}）`
+        ? `直跑 ${specs.join(" ")}（${decision.reason}）`
         : `--grep "${decision.tags.join("|")}"（${decision.reason}）`;
   console.log(`[e2e-affected] 基线 ${ref}：${summary}`);
 
@@ -332,7 +345,13 @@ function main() {
     return runOrDryRun("e2e-affected", base);
   }
   if (decision.mode === "specs") {
-    return runOrDryRun("e2e-affected", [...base, ...decision.specs]);
+    const argv = [...base, ...specs];
+    // 直跑清单超命令行上限时回退全量——分批跑会重复启动 webServer（每批 30s+）
+    if (toCommandLine(argv).length > CMD_LENGTH_LIMIT) {
+      console.log("[e2e-affected] 直跑清单超命令行上限，回退全量");
+      return runOrDryRun("e2e-affected", base);
+    }
+    return runOrDryRun("e2e-affected", argv);
   }
   return runOrDryRun("e2e-affected", [
     ...base,
