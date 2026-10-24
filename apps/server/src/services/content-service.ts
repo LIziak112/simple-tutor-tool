@@ -67,6 +67,7 @@ import {
   normalizeForImport,
   qmStemRefIssues,
   qmStemRefWarnings,
+  requireGroupEntityOf,
   resolveNewContentEnabled,
   resolveQmImportIssues,
 } from "./import-qm";
@@ -900,8 +901,9 @@ export function commitImport(
         }
       }
       for (const [index, unitGroup] of (unit.groups ?? []).entries()) {
-        const group = groupEntitiesById.get(unitGroup.id);
-        if (group === undefined) continue;
+        // P2-2 记账：索引缺实体 = 解析器内部不一致（不可达分支），fail closed
+        // 拒整卷（事务回滚），不再静默 continue 丢组
+        const group = requireGroupEntityOf(unitGroup, groupEntitiesById);
         saveQuestionGroupWithin(tx, {
           teacherId,
           unitId: unit.id,

@@ -2,6 +2,8 @@ import type {
   ImportPreviewWarning,
   LintIssue,
   ParsedDocument,
+  QuestionGroup,
+  UnitGroup,
 } from "@tutor/contract";
 import { detectNewContent, normalizeQmIds, parseRefAttrs } from "@tutor/md-dsl";
 import { and, eq, isNull } from "drizzle-orm";
@@ -141,6 +143,28 @@ export function resolveQmImportIssues(
 
 /** 块式 ::ref 行（行首 ::ref{…}，mdast leafDirective 只认行首形态） */
 const REF_BLOCK_LINE_RE = /^\s*::ref\{([^}]*)\}\s*$/;
+
+/**
+ * 单元组索引 → 顶层组实体的「不可达即断言」（tt-07b P2-2 记账）：unit.groups
+ * 与 parsed.groups 由同一次解析派生（两视图同源），索引 id 找不到完整实体 =
+ * 解析器内部不一致（正常不可能）——此前 commit 侧静默 continue 丢组，现
+ * fail closed 抛 500 拒绝整个导入（commitImport 事务回滚、零写入），
+ * 与 reparse 侧逐实体 skipped 报告对齐可见性。
+ */
+export function requireGroupEntityOf(
+  unitGroup: UnitGroup,
+  groupEntitiesById: ReadonlyMap<string, QuestionGroup>,
+): QuestionGroup {
+  const group = groupEntitiesById.get(unitGroup.id);
+  if (group === undefined) {
+    throw new HttpError(
+      500,
+      "IMPORT_INCONSISTENT_STATE",
+      `导入产物内部不一致：单元题组「${unitGroup.id}」的完整实体在解析结果中缺失（解析器两视图应同源，这是解析缺陷，请反馈）；本次导入已整体取消，未写入任何内容`,
+    );
+  }
+  return group;
+}
 
 /**
  * P2-2 预览警告：题内块式 ::ref{question=…}（无效写法——子题引用只能写在

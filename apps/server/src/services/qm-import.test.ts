@@ -14,7 +14,7 @@ import {
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { commitImport, previewImport } from "./content-service.ts";
-import { resolveQmImportIssues } from "./import-qm.ts";
+import { requireGroupEntityOf, resolveQmImportIssues } from "./import-qm.ts";
 import { getMaterial, getQuestionGroup } from "./material-repository.ts";
 
 /**
@@ -696,5 +696,43 @@ describe("QM-07 P2-1：resolveQmImportIssues 结构化传递（消除 message �
     };
     const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
     expect(resolved).toHaveLength(1);
+  });
+});
+
+describe("QM-07 P2-2：commitImport 组实体缺失不可达即断言（不静默丢组）", () => {
+  it("单元组索引找不到顶层实体 → 500 IMPORT_INCONSISTENT_STATE（fail closed）", () => {
+    // 两视图同源时不可达；上游形态变动时此处显式拒整卷而非静默 continue 丢组
+    const groupEntitiesById = new Map();
+    expect(() =>
+      requireGroupEntityOf(
+        {
+          id: "grp-lost",
+          title: "组",
+          materialRefs: [],
+          questionIds: [],
+        },
+        groupEntitiesById,
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 500,
+        code: "IMPORT_INCONSISTENT_STATE",
+      }) satisfies Partial<HttpError>,
+    );
+    // 命中时原样返回实体
+    const group = {
+      id: "grp-ok",
+      title: "组",
+      materialRefs: [],
+      questionIds: [],
+      introMd: "",
+      sourceMd: "::::group{id=grp-ok}\n::::",
+    };
+    expect(
+      requireGroupEntityOf(
+        { id: "grp-ok", title: "组", materialRefs: [], questionIds: [] },
+        new Map([[group.id, group]]),
+      ),
+    ).toBe(group);
   });
 });
