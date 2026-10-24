@@ -7,10 +7,10 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// 命中任一 → 各档全量。路径为仓库根相对路径（脚本约定在根目录执行）。
+// 命中任一 → 各档全量。路径为仓库根相对路径（runIfMain 已先 chdir 到仓库根）。
 // vitest --changed 只按 import 模块图选测试，这些文件是被 fs 读进来的输入或
 // 测试基建，import 图看不见；变更面无法静态推导，只能全量。
-export const FORCE_FULL_PATTERNS = [
+const FORCE_FULL_PATTERNS = [
   // 依赖锁与测试/构建配置：影响所有测试的装载与转译方式
   /^pnpm-lock\.yaml$/,
   /(^|\/)vitest\.(config|workspace)\.[cm]?ts$/,
@@ -31,8 +31,13 @@ export const FORCE_FULL_PATTERNS = [
   /^scripts\//,
 ];
 
-export function gitLines(args) {
-  const result = spawnSync("git", args, { encoding: "utf8" });
+// git 输出恒带 core.quotepath=false：默认 true 会把非 ASCII 路径转成带引号的
+// 八进制转义串（本仓库 samples/v2 即有中文命名样例、docs 有中文目录），兜底
+// 正则与 existsSync 全部失配，全量被静默绕过。
+function gitLines(args) {
+  const result = spawnSync("git", ["-c", "core.quotepath=false", ...args], {
+    encoding: "utf8",
+  });
   if (result.status !== 0) {
     console.error(`git ${args.join(" ")} 失败：${result.stderr.trim()}`);
     process.exit(1);
@@ -73,11 +78,32 @@ export function toCommandLine(argv) {
 }
 
 export function runArgv(argv) {
+  // cmd.exe 会在引号内部展开 %VAR%，且命令行上下文无法转义——直接拒绝，
+  // 不让 biome/playwright 静默收到被展开后的错误路径
+  const risky = argv.find((arg) => arg.includes("%"));
+  if (risky) {
+    console.error(`[runArgv] 参数含 %，无法安全经 cmd 传递：${risky}`);
+    return 1;
+  }
   const result = spawnSync(toCommandLine(argv), {
     stdio: "inherit",
     shell: true,
   });
+  if (result.error) {
+    console.error(`[runArgv] 启动失败：${result.error.message}`);
+    return 1;
+  }
   return result.status ?? 1;
+}
+
+// DRY_RUN 时打印将执行的完整命令并返回 0，否则执行。三档统一走这里，
+// 避免各入口自抄一份 dry-run 分支
+export function runOrDryRun(tag, argv) {
+  if (isDryRun()) {
+    console.log(`[${tag}] DRY_RUN 将执行：${toCommandLine(argv)}`);
+    return 0;
+  }
+  return runArgv(argv);
 }
 
 // cmd.exe 单条命令约 8191 字符上限，留余量；超限的文件列表必须分批或升级全量
@@ -102,10 +128,17 @@ export function packChunks(base, paths) {
   return chunks;
 }
 
-// 直接执行时跑 main；被其他模块导入复用时不跑。
+// 直接执行时先回到仓库根再跑 main：兜底正则与 existsSync 都按仓库根相对路径
+// 工作，子目录手工运行时 git 输出相对 cwd 的路径会静默失配。
 export function runIfMain(importMetaUrl, main) {
   const entry = process.argv[1];
   if (entry && fileURLToPath(importMetaUrl) === resolve(entry)) {
+    const root = gitLines(["rev-parse", "--show-toplevel"])[0];
+    if (!root) {
+      console.error("无法定位仓库根目录（git rev-parse --show-toplevel）");
+      process.exit(1);
+    }
+    process.chdir(root);
     process.exit(main());
   }
 }

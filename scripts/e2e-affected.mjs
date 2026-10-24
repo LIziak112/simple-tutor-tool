@@ -14,9 +14,8 @@ import {
   collectChangedFiles,
   existing,
   hitForceFull,
-  isDryRun,
-  runArgv,
   runIfMain,
+  runOrDryRun,
   toCommandLine,
 } from "./affected-lib.mjs";
 
@@ -49,11 +48,7 @@ function main() {
     return 0;
   }
   if (decision.mode === "full") {
-    if (isDryRun()) {
-      console.log("[e2e-affected] DRY_RUN 将执行：pnpm run e2e（全量）");
-      return 0;
-    }
-    return runArgv(["pnpm", "run", "e2e"]);
+    return runOrDryRun("e2e-affected", ["pnpm", "run", "e2e"]);
   }
 
   // 已删除的 spec 过滤掉；剩余超长时回退全量——分批跑 playwright 会重复启动
@@ -68,17 +63,9 @@ function main() {
     console.log(
       `[e2e-affected] 变动 spec ${specs.length} 个超出命令行上限，回退全量`,
     );
-    if (isDryRun()) {
-      console.log("[e2e-affected] DRY_RUN 将执行：pnpm run e2e（全量）");
-      return 0;
-    }
-    return runArgv(["pnpm", "run", "e2e"]);
+    return runOrDryRun("e2e-affected", ["pnpm", "run", "e2e"]);
   }
-  if (isDryRun()) {
-    console.log(`[e2e-affected] DRY_RUN 将执行：${argv.join(" ")}`);
-    return 0;
-  }
-  return runArgv(argv);
+  return runOrDryRun("e2e-affected", argv);
 }
 
 runIfMain(import.meta.url, main);

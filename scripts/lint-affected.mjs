@@ -15,6 +15,7 @@ import {
   packChunks,
   runArgv,
   runIfMain,
+  runOrDryRun,
 } from "./affected-lib.mjs";
 
 function main() {
@@ -27,11 +28,7 @@ function main() {
       : `[lint-affected] 基线 ${ref}：无兜底命中 → 只查变更文件`,
   );
   if (hit) {
-    if (isDryRun()) {
-      console.log("[lint-affected] DRY_RUN 将执行：pnpm run lint");
-      return 0;
-    }
-    return runArgv(["pnpm", "run", "lint"]);
+    return runOrDryRun("lint-affected", ["pnpm", "run", "lint"]);
   }
 
   const base = ["pnpm", "exec", "biome", "check"];

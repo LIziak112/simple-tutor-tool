@@ -1,5 +1,5 @@
 // 分层测试兜底（2026-10-25）——单测档：兜底清单未命中时透传 vitest --changed <ref>
-// （按 import 模块图选受影响测试；跟随 package.json test 脚本透传，flag 演进不漂移）。
+// （按 import 模块图选受影响测试；经 pnpm run test 透传，test 脚本演进不漂移）。
 //
 // 用法：node scripts/test-affected.mjs <ref>
 //   ref = HEAD        → 未提交改动（快档，pnpm test:quick）
@@ -8,9 +8,8 @@
 import {
   collectChangedFiles,
   hitForceFull,
-  isDryRun,
-  runArgv,
   runIfMain,
+  runOrDryRun,
 } from "./affected-lib.mjs";
 
 function main() {
@@ -26,11 +25,7 @@ function main() {
       ? `[test-affected] 基线 ${ref}：命中兜底 ${hit} → 全量`
       : `[test-affected] 基线 ${ref}：无兜底命中 → --changed`,
   );
-  if (isDryRun()) {
-    console.log(`[test-affected] DRY_RUN 将执行：${argv.join(" ")}`);
-    return 0;
-  }
-  return runArgv(argv);
+  return runOrDryRun("test-affected", argv);
 }
 
 runIfMain(import.meta.url, main);
