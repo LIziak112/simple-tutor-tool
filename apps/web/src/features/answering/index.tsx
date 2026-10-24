@@ -16,6 +16,8 @@ import { AnswerComparisonShell } from "./views/comparison";
 import { fillView } from "./views/fill";
 import { finalView } from "./views/final";
 import { judgeView } from "./views/judge";
+import { matchingView } from "./views/matching";
+import { orderingView } from "./views/ordering";
 import { responseView } from "./views/response";
 
 /**
@@ -28,7 +30,9 @@ import { responseView } from "./views/response";
  *   调度边界以外，业务代码不得新增按 answer.kind/题型字面量的分支（I16）。
  */
 
-/** 生产呈现登记表：五 kind 全配（漏 kind/三联合不交集即编译失败） */
+/** 生产呈现登记表：八 kind 全配（漏 kind/三联合不交集即编译失败）——
+ * matching/ordering 随 QM-13（TT-10a）接入，登记后 ResultAnswerComparison 的
+ * 通用文本占位自动消失（§21.2-3 登记表成员判别口径） */
 export const answerKindViews = {
   judge: judgeView,
   choice: choiceView,
@@ -36,6 +40,8 @@ export const answerKindViews = {
   fill: fillView,
   final: finalView,
   response: responseView,
+  matching: matchingView,
+  ordering: orderingView,
 } satisfies AnswerKindViewTable<
   StudentAnswer,
   PreparedQuestion,
@@ -118,6 +124,24 @@ export function dispatchInput(
           disabled={disabled}
         />
       );
+    case "matching":
+      return (
+        <answerKindViews.matching.Input
+          model={model}
+          answer={answer?.kind === "matching" ? answer : undefined}
+          update={update}
+          disabled={disabled}
+        />
+      );
+    case "ordering":
+      return (
+        <answerKindViews.ordering.Input
+          model={model}
+          answer={answer?.kind === "ordering" ? answer : undefined}
+          update={update}
+          disabled={disabled}
+        />
+      );
     default:
       return assertNeverView(model);
   }
@@ -169,6 +193,20 @@ export function dispatchReadOnly(
         <answerKindViews.response.ReadOnly
           model={model}
           answer={answer?.kind === "response" ? answer : undefined}
+        />
+      );
+    case "matching":
+      return (
+        <answerKindViews.matching.ReadOnly
+          model={model}
+          answer={answer?.kind === "matching" ? answer : undefined}
+        />
+      );
+    case "ordering":
+      return (
+        <answerKindViews.ordering.ReadOnly
+          model={model}
+          answer={answer?.kind === "ordering" ? answer : undefined}
         />
       );
     default:
@@ -250,6 +288,22 @@ export function dispatchComparison(
           reference={materialOf<"response">(reference)}
         />
       );
+    case "matching":
+      return (
+        <answerKindViews.matching.Comparison
+          model={model}
+          answer={answer?.kind === "matching" ? answer : undefined}
+          reference={materialOf<"matching">(reference)}
+        />
+      );
+    case "ordering":
+      return (
+        <answerKindViews.ordering.Comparison
+          model={model}
+          answer={answer?.kind === "ordering" ? answer : undefined}
+          reference={materialOf<"ordering">(reference)}
+        />
+      );
     default:
       return assertNeverView(model);
   }
@@ -296,6 +350,18 @@ export function dispatchCompletion(
       return answerKindViews.response.completion(
         model,
         answer?.kind === "response" ? answer : undefined,
+        formalInk,
+      );
+    case "matching":
+      return answerKindViews.matching.completion(
+        model,
+        answer?.kind === "matching" ? answer : undefined,
+        formalInk,
+      );
+    case "ordering":
+      return answerKindViews.ordering.completion(
+        model,
+        answer?.kind === "ordering" ? answer : undefined,
         formalInk,
       );
     default:

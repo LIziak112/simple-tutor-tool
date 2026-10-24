@@ -48,7 +48,8 @@ it("公布前不读取参考答案空数或内容，温和展示截止后公布�
   ).toBeInTheDocument();
 });
 
-// ---------- QM-11 细项 2：matching/ordering 通用文本占位（逐项格式留 QM-13） ----------
+// ---------- QM-13 细项 5：matching/ordering 逐项对照（TT-09b 通用文本占位随
+// QM-13 登记真实视图后自动消失——§21.2-3 登记表成员判别口径，本节为转正断言） ----------
 
 const matchingQuestion: Pick<
   AttemptResultQuestion,
@@ -61,6 +62,15 @@ const matchingQuestion: Pick<
     knowledge: [],
     stemMd: "把城市与国家配对。",
     hintCount: 0,
+    // 对照需要作答面结构（与公开投影同字段，resultQuestionOf 随结果快照下发）
+    matchingOptions: {
+      allowRepeat: false,
+      options: [
+        { id: "opt-1", text: "中国", distractor: false },
+        { id: "opt-2", text: "日本", distractor: false },
+      ],
+    },
+    matchingSlots: ["北京", "东京"],
   },
   answer: { kind: "matching", pairs: { 北京: "opt-1" } },
   answers: {
@@ -69,24 +79,66 @@ const matchingQuestion: Pick<
   },
 };
 
-it("QM-11 matching 占位：两栏通用文本对照（本人 display 文本化 + 参考序列化），不崩溃不伪造逐项格式", () => {
+const orderingQuestion: Pick<
+  AttemptResultQuestion,
+  "snapshot" | "answer" | "answers"
+> = {
+  snapshot: {
+    id: "order",
+    type: "ordering",
+    difficulty: 2,
+    knowledge: [],
+    stemMd: "按温差排序。",
+    hintCount: 0,
+    orderingItems: [
+      {
+        id: "it-1",
+        text: "+4（周二）",
+        fixedPosition: null,
+        distractor: false,
+      },
+      {
+        id: "it-2",
+        text: "-2（周三）",
+        fixedPosition: null,
+        distractor: false,
+      },
+      { id: "it-3", text: "+3（周四）", fixedPosition: 2, distractor: false },
+    ],
+  },
+  answer: { kind: "ordering", sequence: ["it-1", "it-2"] },
+  answers: { kind: "ordering", sequence: ["it-2", "it-3", "it-1"] },
+};
+
+it("QM-13 matching 逐项对照：两栏按槽位序逐行（未选择如实），不再走通用文本占位", () => {
   const { container } = render(
     <ResultAnswerComparison question={matchingQuestion} released />,
   );
   expect(screen.getByText("你的答案：")).toBeInTheDocument();
   expect(screen.getByText("参考答案：")).toBeInTheDocument();
-  // 本人 display：slot = 裸选项 id（emptyPublicStructure 回落）
-  expect(screen.getByText("北京 = opt-1")).toBeInTheDocument();
-  // 参考：键排序确定性序列化（slot = option；「；」连接）
-  expect(screen.getByText("东京 = opt-2；北京 = opt-1")).toBeInTheDocument();
-  expect(
-    screen.getByText("逐项对照将在配对/排序题型上线后提供。"),
-  ).toBeInTheDocument();
-  // 未启用 KaTeX（通用纯文本，无公式渲染负担）
-  expect(container.querySelectorAll(".katex")).toHaveLength(0);
+  expect(container.textContent).toContain("第 1 空：中国");
+  expect(container.textContent).toContain("第 2 空：未选择");
+  expect(container.textContent).toContain("第 2 空：日本");
+  // 通用文本占位（裸 id 文本化）已消失
+  expect(screen.queryByText("北京 = opt-1")).toBeNull();
+  expect(screen.queryByText("东京 = opt-2；北京 = opt-1")).toBeNull();
 });
 
-it("QM-11 matching 未公布/无参考沿用占位三态（锁定提示/暂无参考答案），未作答显示未作答", () => {
+it("QM-13 ordering 逐位对照：本人按序、参考按正确序（固定项标注），不再走通用文本占位", () => {
+  const { container } = render(
+    <ResultAnswerComparison question={orderingQuestion} released />,
+  );
+  expect(container.textContent).toContain("你的答案：");
+  expect(container.textContent).toContain("参考答案：");
+  expect(container.textContent).toContain("第 1 位：+4（周二）");
+  expect(container.textContent).toContain("第 2 位：-2（周三）");
+  // 参考列按参考序逐位（it-2 第 1 位、it-3 第 2 位固定标注）
+  expect(container.textContent).toContain("第 1 位：-2（周三）");
+  expect(container.textContent).toContain("（已固定）");
+  expect(screen.queryByText("it-1 → it-2")).toBeNull();
+});
+
+it("QM-13 matching 未公布/无参考沿用三态（锁定提示/暂无参考答案），未作答显示未作答", () => {
   const { unmount } = render(
     <ResultAnswerComparison question={matchingQuestion} released={false} />,
   );

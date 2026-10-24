@@ -3,6 +3,8 @@ import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
+  matchingOptionsSchema,
+  orderingItemSchema,
   questionAnswersSchema,
   questionPublicSchema,
 } from "./content.ts";
@@ -441,6 +443,14 @@ export const attemptResultQuestionSchema = z.object({
     hintCount: z.number().int().min(0),
     /** 组内序号（TT-05a 域④：开卷冻结写入；不在组内的题不携带，旧快照缺省=独立题） */
     groupOrdinal: z.number().int().min(1).optional(),
+    /**
+     * QM-13：matching/ordering 作答面公开结构（与 questionPublicSchema 同
+     * 字段——结果视图/题级反馈的对照呈现需要槽位/选项/项；旧载荷缺省合法）。
+     * 无答案内容（distractor/fixedPosition 属公开结构，§6.1 调整 3/6）。
+     */
+    matchingOptions: matchingOptionsSchema.optional(),
+    matchingSlots: z.array(z.string().min(1)).min(1).optional(),
+    orderingItems: z.array(orderingItemSchema).optional(),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),

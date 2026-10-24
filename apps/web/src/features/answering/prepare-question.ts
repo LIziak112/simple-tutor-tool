@@ -1,5 +1,10 @@
 import type { PublicOption, PublicSlot, QuestionPublic } from "@tutor/contract";
-import { optionsPublicStructureOf } from "@tutor/contract";
+import {
+  emptyPublicStructure,
+  matchingPublicStructureOf,
+  optionsPublicStructureOf,
+  orderingPublicStructureOf,
+} from "@tutor/contract";
 import { processor } from "@tutor/md-dsl";
 import { blankSlotIdOf } from "@/features/markdown/directives/session-context";
 import type { MdNode } from "@/features/markdown/remark/mdast-interop";
@@ -139,6 +144,41 @@ export type PreparedQuestion =
       readonly wordMin?: number;
       readonly wordMax?: number;
       readonly context?: PreparedQuestionContext;
+    }
+  | {
+      readonly kind: "matching";
+      readonly scopeId: string;
+      readonly stemMd: string;
+      /**
+       * matching 公开结构（QM-13 细项 2）：选项池（key/text/distractor——干扰
+       * 项在池内可选，§6.1 调整 6）+ 服务端展开的有序槽位集合 + 是否允许重复。
+       * 结构不可用（投影防御形态）= 空池空槽，视图显式报错不静默降级。
+       */
+      readonly options: readonly {
+        readonly key: string;
+        readonly text: string;
+        readonly distractor: boolean;
+      }[];
+      readonly slotIds: readonly string[];
+      readonly allowRepeat: boolean;
+      readonly context?: PreparedQuestionContext;
+    }
+  | {
+      readonly kind: "ordering";
+      readonly scopeId: string;
+      readonly stemMd: string;
+      /**
+       * ordering 公开结构（QM-13 细项 3）：排序项（key/text/fixedPosition/
+       * distractor——固定位与干扰项标记属公开结构，§6.1 调整 3/6）。结构
+       * 不可用（投影防御形态）= 空项，视图显式报错不静默降级。
+       */
+      readonly items: readonly {
+        readonly key: string;
+        readonly text: string;
+        readonly fixedPosition: number | null;
+        readonly distractor: boolean;
+      }[];
+      readonly context?: PreparedQuestionContext;
     };
 
 /** 与 QuestionSurface judgeStemOf 的替换正则同口径（题面呈现形态由视图执行） */
@@ -243,12 +283,45 @@ export function prepareQuestion(
         context,
       );
     case "matching":
+      // QM-13 细项 2：选项池 + 服务端展开的槽位集合（MatchingPublicStructure
+      // 构造入口单源）；结构缺失走空结构防御形态（视图显式报错，§7.1）
+      return withContext(
+        question.matchingOptions !== undefined &&
+          question.matchingSlots !== undefined
+          ? {
+              kind: "matching",
+              scopeId,
+              stemMd: question.stemMd,
+              ...matchingPublicStructureOf(
+                question.matchingOptions,
+                question.matchingSlots,
+              ),
+            }
+          : {
+              kind: "matching",
+              scopeId,
+              stemMd: question.stemMd,
+              ...emptyPublicStructure.matching,
+            },
+        context,
+      );
     case "ordering":
-      // TT-05a 域②扩容（D2/D14）后的编译期穷尽分支：response 已随 QM-09
-      // 接入呈现层；matching/ordering 属 QM-13（呈现控件未接入），到达即
-      // 显式报错——方案 §7.1「新增类型遗漏必需模式须明确报错，不静默降级」
-      throw new Error(
-        `答案 kind「${answerKind}」的题面呈现尚未接入（QM-13 呈现层落地前不应对学生下发）`,
+      // QM-13 细项 3：排序项（OrderingPublicStructure 构造入口单源）
+      return withContext(
+        question.orderingItems !== undefined
+          ? {
+              kind: "ordering",
+              scopeId,
+              stemMd: question.stemMd,
+              ...orderingPublicStructureOf(question.orderingItems),
+            }
+          : {
+              kind: "ordering",
+              scopeId,
+              stemMd: question.stemMd,
+              ...emptyPublicStructure.ordering,
+            },
+        context,
       );
   }
 }

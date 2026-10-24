@@ -242,7 +242,7 @@ function buildLessonStartData(
     // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
     // 含 [[答案]] 标记的原文不下发）
     released[row.questionId] = studentFacingResultOf(
-      resultQuestionOf(row, snapshot),
+      resultQuestionOf(row, snapshot, { materialSlots }),
     );
   }
   return {

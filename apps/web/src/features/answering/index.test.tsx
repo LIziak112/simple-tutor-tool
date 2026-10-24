@@ -48,13 +48,15 @@ function prepared(
 }
 
 describe("answerKindViews 登记表", () => {
-  it("六 kind 全配（I01 运行时键集；response 随 QM-09 登记）", () => {
+  it("八 kind 全配（I01 运行时键集；response 随 QM-09、matching/ordering 随 QM-13 登记）", () => {
     expect(Object.keys(answerKindViews).sort()).toEqual([
       "choice",
       "fill",
       "final",
       "judge",
+      "matching",
       "multi",
+      "ordering",
       "response",
     ]);
   });

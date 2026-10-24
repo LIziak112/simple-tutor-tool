@@ -2953,7 +2953,11 @@ export function submitLessonQuestion(
     throw new HttpError(500, "INTERNAL", "提交失败，请刷新页面后重试");
   }
   return {
-    question: studentFacingResultOf(resultQuestionOf(freshRow, snapshot)),
+    question: studentFacingResultOf(
+      resultQuestionOf(freshRow, snapshot, {
+        materialSlots: materialSlotOrderOf(db, attemptId),
+      }),
+    ),
     summary: lessonLiveSummaryOf(summaryRows, freshAttempt),
     attempt: attemptSummaryOf(freshAttempt),
   };
@@ -3284,7 +3288,11 @@ export function practiceQuestionFeedbackOf(
     // 已提交行的快照损坏：不静默降级成无秘密态（与未提交读区分）
     throw questionNotFound();
   }
-  const question = studentFacingResultOf(resultQuestionOf(row, snapshot));
+  const question = studentFacingResultOf(
+    resultQuestionOf(row, snapshot, {
+      materialSlots: materialSlotOrderOf(db, attempt.id),
+    }),
+  );
   return {
     status: "released",
     // 进行中卷教师域字段恒 null（收尾公布后随行）；已收尾卷按结果视图原样
@@ -3531,6 +3539,10 @@ export function effectiveVerdictOfRow(
 export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,
+  options: {
+    /** 冻结材料槽位序（QM-13：matching 槽位集合展开用；缺省不携带键） */
+    readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
+  } = {},
 ): AttemptResultQuestion {
   return {
     questionId: row.questionId,
@@ -3542,6 +3554,14 @@ export function resultQuestionOf(
       stemMd: snapshot.stemMd,
       ...(snapshot.options !== undefined
         ? { options: snapshot.options.map((option) => option.text) }
+        : {}),
+      // QM-13：matching/ordering 作答面结构随结果快照下发（对照呈现需要）
+      ...(snapshot.matchingOptions !== undefined
+        ? { matchingOptions: snapshot.matchingOptions }
+        : {}),
+      ...matchingSlotsProjection(snapshot, options.materialSlots),
+      ...(snapshot.orderingItems !== undefined
+        ? { orderingItems: snapshot.orderingItems }
         : {}),
       hintCount: snapshot.hints.length,
     },
@@ -3690,12 +3710,16 @@ function buildResultData(
 
   // 逐题条目与分组同批组装（groupedSnapshotRows 统一「跳过缺失+组 id 回退+
   // 空组过滤」；快照优先取预加载，未覆盖行现场 parse）
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   const resultQuestions: AttemptResultQuestion[] = [];
   const unitGroups: AttemptResultUnit[] = groupedSnapshotRows(
     db,
     attempt,
     (row, snapshot) => {
-      const item = releaseAwareQuestion(resultQuestionOf(row, snapshot));
+      const item = releaseAwareQuestion(
+        resultQuestionOf(row, snapshot, { materialSlots }),
+      );
       resultQuestions.push(item);
       return item;
     },
