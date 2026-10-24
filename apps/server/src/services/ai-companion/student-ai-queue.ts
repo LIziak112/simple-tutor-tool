@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   AiChannel,
   AiContextSnapshot,
@@ -12,6 +12,7 @@ import type {
   AiTaskTeacher,
 } from "@tutor/contract";
 import {
+  AI_MCP_LEASE_MAX_TOTAL_MS,
   AI_MCP_LEASE_MINUTES,
   AI_OUTBOUND_TIMEOUT_MS,
   AI_REPLY_MAX_CHARS,
@@ -54,6 +55,7 @@ import {
 import { HttpError } from "../../lib/http-error.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
+import { attemptReviewQueueCountsOf } from "./student-ai-attempt-review.ts";
 import { appendAiFact } from "./student-ai-audit.ts";
 import {
   buildAiContextBundle,
@@ -64,6 +66,15 @@ import {
   loadAiTaskMaterialRows,
   taskOf,
 } from "./student-ai-materials.ts";
+import {
+  asDb,
+  beijingDayWindowOf,
+  conflict,
+  decodeCursor,
+  encodeCursor,
+  type QueueTx,
+  sha256Hex,
+} from "./student-ai-shared.ts";
 import {
   type AiPolicyConfigSource,
   resolveAttemptQuestionAiPolicy,
@@ -92,8 +103,8 @@ import {
 
 // ---------- 服务层运营常量（契约 §9 限额单源在 @tutor/contract，此处只补运营边界） ----------
 
-/** MCP 租约累计占用上限（自本次领取起 60 分钟；续租不得无限占用） */
-export const AI_MCP_LEASE_MAX_TOTAL_MS = 60 * 60 * 1000;
+/** MCP 租约累计占用上限（契约单源；此处转出口供既有调用方） */
+export { AI_MCP_LEASE_MAX_TOTAL_MS };
 
 /** failed/uncertain 的显式重试次数上限（有界次数，绝不自动重发） */
 export const AI_TASK_MAX_RETRY_COUNT = 3;
@@ -107,23 +118,7 @@ export const AI_TASK_RETRY_BACKOFF_MAX_MS = 10 * 60 * 1000;
 /** FIFO 领取单次扫描候选上限（防策略全禁时全表扫描；领取数由调用方批次控制） */
 const CLAIM_SCAN_LIMIT = 50;
 
-/** 北京时间相对 UTC 固定偏移（AI 日限额按北京自然日，作业列表同口径） */
-const BEIJING_OFFSET_MS = 8 * 3_600_000;
-
-const DAY_MS = 86_400_000;
-
-// ---------- 事务句柄统一（tx 与 Db 同一底层连接；结构同源） ----------
-
-/** db.transaction 回调的事务参数类型（与 Db 同源的结构类型） */
-type QueueTx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-
-/**
- * 事务参数按 Db 传递：两者包装同一底层 better-sqlite3 连接，查询方法签名
- * 同源；断言只发生在本函数一处（不用 any，不绕过类型检查的其余部分）。
- */
-function asDb(handle: Db | QueueTx): Db {
-  return handle as Db;
-}
+// 事务句柄/时间窗口/哈希/游标等小件统一从 student-ai-shared 导入（/simplify 收敛）
 
 // ---------- 时间与工具 ----------
 
@@ -138,24 +133,7 @@ function nowSpecOf(now?: Date | string): NowSpec {
   return { date, iso: date.toISOString() };
 }
 
-/** 北京自然日窗口 [startIso, endIso)（AI_TASK_DAILY_PER_STUDENT 的计数口径） */
-function beijingDayWindowOf(now: Date): { startIso: string; endIso: string } {
-  const dayStartMs =
-    Math.floor((now.getTime() + BEIJING_OFFSET_MS) / DAY_MS) * DAY_MS -
-    BEIJING_OFFSET_MS;
-  return {
-    startIso: new Date(dayStartMs).toISOString(),
-    endIso: new Date(dayStartMs + DAY_MS).toISOString(),
-  };
-}
-
-function sha256Hex(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-function conflict(message: string): HttpError {
-  return new HttpError(409, "AI_STATE_CONFLICT", message);
-}
+/** 北京自然日窗口、sha256、conflict 从 student-ai-shared 单源导入 */
 
 function invalid(message: string): HttpError {
   return new HttpError(400, "VALIDATION_ERROR", message);
@@ -738,35 +716,6 @@ export function createAiTask(
 
 // ---------- 操作与语义 2：列表（本人 + 范围 + 稳定游标）与公开视图 ----------
 
-/** 游标载荷（base64url JSON；稳定排序键 createdAt+id 的不透明化） */
-interface CursorPayload {
-  readonly c: string;
-  readonly i: string;
-}
-
-function encodeCursor(payload: CursorPayload): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decodeCursor(cursor: string): CursorPayload {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(cursor, "base64url").toString("utf8"),
-    ) as Partial<CursorPayload>;
-    if (
-      typeof parsed.c !== "string" ||
-      typeof parsed.i !== "string" ||
-      parsed.c.length === 0 ||
-      parsed.i.length === 0
-    ) {
-      throw new Error("bad shape");
-    }
-    return { c: parsed.c, i: parsed.i };
-  } catch {
-    throw invalid("分页游标格式非法");
-  }
-}
-
 export interface ListAiTasksInput {
   readonly studentId: string;
   readonly attemptId?: string;
@@ -1234,10 +1183,15 @@ export function aiQueueSummaryOf(
       ),
     )
     .all().length;
+  // 整体复盘任务（任务 1ef854c7）并入顶栏三计数：顶栏总待处理/处理中/未读
+  // 由服务器统一聚合两类任务（交接方案 §8）；分桶语义由该域导出的
+  // attemptReviewQueueCountsOf 单源提供，本模块不解读其状态字面量。
+  const arCounts = attemptReviewQueueCountsOf(db, studentId);
   return {
-    pendingCount: countOf(AI_TASK_QUEUE_BUCKETS.pending),
-    processingCount: countOf(AI_TASK_QUEUE_BUCKETS.processing),
-    unreadReplyCount,
+    pendingCount: countOf(AI_TASK_QUEUE_BUCKETS.pending) + arCounts.pending,
+    processingCount:
+      countOf(AI_TASK_QUEUE_BUCKETS.processing) + arCounts.processing,
+    unreadReplyCount: unreadReplyCount + arCounts.unread,
   };
 }
 

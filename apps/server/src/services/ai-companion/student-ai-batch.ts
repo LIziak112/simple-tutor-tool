@@ -63,7 +63,7 @@ function failedItem(
  * 按作业行读时比较）。作业行缺失按**未公布**处理（fail closed）：公布态
  * 无法判定时拒绝批量，绝不借逐项对错结果泄露判分。
  */
-function attemptAnswersReleased(db: Db, attempt: Attempt): boolean {
+export function attemptAnswersReleased(db: Db, attempt: Attempt): boolean {
   if (attempt.sourceType !== "assignment" || attempt.assignmentId === null) {
     return true;
   }

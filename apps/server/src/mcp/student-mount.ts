@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
+import { loadOrCreateSecretKey } from "../config";
 import type { Db } from "../db/client";
 import {
   createRequireStudentMcpToken,
@@ -95,6 +96,8 @@ function createRejectForeignOrigin(publicUrl: string) {
 export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
   const rejectForeignOrigin = createRejectForeignOrigin(options.publicUrl);
   const requireToken = createRequireStudentMcpToken(options.db);
+  // 快照装配 HMAC 密钥一次性读入（与路由层同源 DATA_DIR/secret.key）
+  const hmacSecret = loadOrCreateSecretKey(options.dataDir);
   return new Hono<StudentMcpEnv>()
     .use("*", rejectForeignOrigin)
     .use("*", requireToken)
@@ -104,6 +107,7 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
         db: options.db,
         dataDir: options.dataDir,
         studentId: c.var.mcpStudent.id,
+        hmacSecret,
       });
       // stateless 模式：不传 sessionIdGenerator（缺省即 undefined = 无会话；
       // 教师 mount.ts 同款注释口径）+ JSON 响应模式（工具型服务器）

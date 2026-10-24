@@ -230,9 +230,13 @@ describe("SAI-26 只读列表与工具注解", () => {
     expect(list.tools.map((t) => t.name).sort()).toEqual(
       [
         "claim_ai_task",
+        "claim_attempt_review",
         "list_my_ai_tasks",
+        "list_my_attempt_reviews",
         "renew_ai_lease",
+        "renew_attempt_review_lease",
         "submit_ai_reply",
+        "submit_attempt_review_result",
       ].sort(),
     );
     expect(byName.get("list_my_ai_tasks")?.annotations?.readOnlyHint).toBe(
@@ -246,6 +250,23 @@ describe("SAI-26 只读列表与工具注解", () => {
     );
     expect(byName.get("claim_ai_task")?.annotations?.readOnlyHint).toBeFalsy();
     expect(byName.get("renew_ai_lease")?.annotations?.readOnlyHint).toBeFalsy();
+    // 整体复盘四工具（任务 1ef854c7）注解同口径：list 只读，submit 幂等
+    // 非破坏，claim/renew 无只读标记
+    expect(
+      byName.get("list_my_attempt_reviews")?.annotations?.readOnlyHint,
+    ).toBe(true);
+    expect(
+      byName.get("submit_attempt_review_result")?.annotations?.idempotentHint,
+    ).toBe(true);
+    expect(
+      byName.get("submit_attempt_review_result")?.annotations?.destructiveHint,
+    ).toBe(false);
+    expect(
+      byName.get("claim_attempt_review")?.annotations?.readOnlyHint,
+    ).toBeFalsy();
+    expect(
+      byName.get("renew_attempt_review_lease")?.annotations?.readOnlyHint,
+    ).toBeFalsy();
     await client.close();
   });
 });
