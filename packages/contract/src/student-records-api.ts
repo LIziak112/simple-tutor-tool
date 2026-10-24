@@ -132,7 +132,8 @@ export const wrongQuestionsQuerySchema = z.object({
 
 /**
  * 错题本单轮作答（wrongQuestionCardSchema.rounds 的元素，2026-10 轮次史）：
- * 该题的一次**已判定**作答（已交卷且 finalCorrect 非 null；待批轮不出现）。
+ * 该题的一次**已判定**作答（已交卷且有效判定非 null——QM-12 起 reference_self
+ * 行按学生自评计为已判定轮；未判断轮不出现）。
  * 来源标题为服务端算好的展示串（作业=作业标题；课程练习=「单元标题 · 第 n 次」，
  * 与前端 records-views.recordTitleOf 同口径），无教师侧敏感键。
  */
@@ -141,7 +142,7 @@ export const wrongQuestionRoundSchema = z.object({
   attemptId: z.uuid(),
   /** 该轮作答来源 */
   sourceType: attemptSourceSchema,
-  /** 该轮最终判定是否做对 */
+  /** 该轮有效判定是否做对（QM-12：教师判 > 自评 > 自动——自评「错」即错轮） */
   correct: z.boolean(),
   /** 该轮交卷时间（attempt 的 submittedAt，防御回退 startedAt）：UTC ISO */
   submittedAt: z.string().min(1),
