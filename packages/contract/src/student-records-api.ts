@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+import { selfReviewStateSchema } from "./self-review.ts";
 import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
 
 /**
@@ -81,6 +82,7 @@ export const studentRecordsQuerySchema = z.object({
  *   进行中草稿不出现在索引中（可见性口径见服务端 student-records）。
  */
 export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
+  pendingSelfReviewCount: z.number().int().min(0).nullable().optional(),
   /** attempts.id（点击进入 /s/attempts/:attemptId） */
   attemptId: z.uuid(),
   status: attemptStatusSchema,
@@ -137,6 +139,8 @@ export const wrongQuestionsQuerySchema = z.object({
  * 与前端 records-views.recordTitleOf 同口径），无教师侧敏感键。
  */
 export const wrongQuestionRoundSchema = z.object({
+  /** 历史轮次缺省未记录来源，不能冒充客观判断。 */
+  reviewSource: selfReviewStateSchema.shape.source.optional(),
   /** 该轮作答 id（attempts.id） */
   attemptId: z.uuid(),
   /** 该轮作答来源 */

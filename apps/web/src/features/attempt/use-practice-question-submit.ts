@@ -119,6 +119,14 @@ export function usePracticeQuestionSubmit(input: {
   const { attemptId, questionIds, singleMode } = input;
   const queryClient = useQueryClient();
   const isV1 = input.data.practiceWorkflow !== undefined;
+  const activeRef = useRef(true);
+  useEffect(() => {
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+      resumeAttemptDetailPolling(attemptId);
+    };
+  }, [attemptId]);
 
   // ---- 回执 overlay 与题级反馈缓存（data 刷新整体重置：服务端值为权威） ----
   const [overlay, setOverlay] = useState<PracticeOverlay | null>(null);
@@ -206,6 +214,8 @@ export function usePracticeQuestionSubmit(input: {
         setLastError({ questionId, message });
         return { kind: "error", message };
       };
+      let pausedForSubmission = false;
+      let keepPaused = false;
       try {
         // 手写题笔迹先行（同整卷/lesson「提交前该题笔迹已上传」口径）
         const controller = input.inkControllers.current.get(questionId);
@@ -265,6 +275,19 @@ export function usePracticeQuestionSubmit(input: {
         const mutationId =
           pair !== null && pair.key === payloadKey ? pair.id : randomUuid();
         mutationPairRef.current = { id: mutationId, key: payloadKey };
+        if (!activeRef.current) return { kind: "aborted" };
+        const remaining = progressRef.current.filter(
+          (row) => row.submittedAt === null,
+        );
+        if (remaining.length === 1 && remaining[0]?.questionId === questionId) {
+          // 在末题请求出站前保护阅读现场，避免服务端已收尾、回执仍在途时被详情抢先覆盖。
+          pauseAttemptDetailPolling(attemptId);
+          pausedForSubmission = true;
+          await queryClient.cancelQueries({
+            queryKey: studentAttemptKey(attemptId),
+            exact: true,
+          });
+        }
         let result: Awaited<ReturnType<typeof postOnce>>;
         try {
           result = await postOnce(mutationId);
@@ -294,9 +317,10 @@ export function usePracticeQuestionSubmit(input: {
           attempt: result.attempt,
           workflow: result.practiceWorkflow,
         });
-        if (result.attempt.status !== "draft") {
+        if (result.attempt.status !== "draft" && activeRef.current) {
           // 最后一题已收尾：停轮询、保持反馈视图——学生显式查看才收敛（§10.3）
           pauseAttemptDetailPolling(attemptId);
+          keepPaused = true;
         }
         return { kind: "submitted" };
       } catch (err) {
@@ -331,11 +355,14 @@ export function usePracticeQuestionSubmit(input: {
         }
         return failWith(messageOf(err, "提交失败，请稍后重试"));
       } finally {
+        if (pausedForSubmission && !keepPaused) {
+          resumeAttemptDetailPolling(attemptId);
+        }
         submittingRef.current = null;
         setSubmittingId(null);
       }
     },
-    [attemptId, input.inkControllers, refetchDetail],
+    [attemptId, input.inkControllers, queryClient, refetchDetail],
   );
 
   // ---- 已提交可读题的题级反馈按需 GET（缓存一次，失败可重试） ----

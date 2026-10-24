@@ -36,6 +36,26 @@ const releasedQuestion = (overrides: Partial<AttemptResultQuestion> = {}) =>
   }) as AttemptResultQuestion;
 
 describe("QuestionFeedback", () => {
+  it("选择题反馈只给答案对照，不重复题面已有整组选项", () => {
+    render(
+      <QuestionFeedback
+        feedback={{
+          status: "released",
+          question: releasedQuestion({
+            snapshot: {
+              ...releasedQuestion().snapshot,
+              type: "choice",
+              options: ["甲", "乙"],
+            },
+            answer: { kind: "choice", index: 0 },
+            answers: { kind: "choice", index: 1 },
+          }),
+        }}
+      />,
+    );
+    expect(screen.queryByRole("list", { name: "选项" })).toBeNull();
+    expect(screen.getByText("参考答案：")).toBeInTheDocument();
+  });
   it("released 正确题：结论徽章 + 本人/参考答案对照 + 解析默认展开", () => {
     render(
       <QuestionFeedback
@@ -69,12 +89,28 @@ describe("QuestionFeedback", () => {
       <QuestionFeedback
         feedback={{
           status: "released",
-          question: releasedQuestion({ finalCorrect: null }),
+          question: releasedQuestion({ finalCorrect: null, autoCorrect: null }),
         }}
       />,
     );
     expect(screen.getByText("已提交，待老师批改")).toBeInTheDocument();
     expect(screen.queryByText(/回答正确|回答有误/)).toBeNull();
+  });
+
+  it("进行中客观题使用已授权的自动判定，不误报待批", () => {
+    render(
+      <QuestionFeedback
+        feedback={{
+          status: "released",
+          question: releasedQuestion({
+            finalCorrect: null,
+            autoCorrect: false,
+          }),
+        }}
+      />,
+    );
+    expect(screen.getByText("回答有误")).toBeInTheDocument();
+    expect(screen.queryByText("已提交，待老师批改")).toBeNull();
   });
 
   it("released 无解析：明确「本题暂无解析」，不造空白折叠卡", () => {

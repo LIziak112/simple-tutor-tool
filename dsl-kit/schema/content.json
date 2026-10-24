@@ -227,6 +227,9 @@
     "questionPublic": {
       "type": "object",
       "properties": {
+        "canSubmitQuestion": {
+          "type": "boolean"
+        },
         "id": {
           "type": "string",
           "minLength": 1

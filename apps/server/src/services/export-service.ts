@@ -85,6 +85,7 @@ import {
   normalizeEvidencePhases,
   readyEvidenceImagesOf,
 } from "./question-evidence";
+import { reviewSourceOf } from "./review-state.ts";
 import { snapshotOfRow } from "./snapshot";
 import { sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
@@ -1255,6 +1256,7 @@ function responseBaseOf(
     answerText: serializeStudentAnswer(answerOf(row.answerJson)),
     autoCorrect: row.autoCorrect,
     finalCorrect: row.finalCorrect,
+    ...(row.selfCorrect !== null ? { reviewSource: reviewSourceOf(row) } : {}),
     teacherMark:
       row.teacherMark === "correct" || row.teacherMark === "wrong"
         ? row.teacherMark

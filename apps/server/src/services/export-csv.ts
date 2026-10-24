@@ -9,6 +9,7 @@ import { attempts, questions, responses, students } from "../db/schema";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import { answerOf, unitGroupedRows } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
+import { reviewSourceOf } from "./review-state.ts";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -170,9 +171,24 @@ function autoCorrectText(autoCorrect: boolean | null): string {
   return autoCorrect ? "答对" : "答错";
 }
 
-function finalCorrectText(finalCorrect: boolean | null): string {
-  if (finalCorrect === null) return "待批";
-  return finalCorrect ? "答对" : "答错";
+function finalCorrectText(
+  finalCorrect: boolean | null,
+  row?: import("../db/schema.ts").ResponseRow,
+): string {
+  if (finalCorrect === null) return row?.reviewEligible ? "待学生自评" : "待批";
+  const label = finalCorrect ? "答对" : "答错";
+  return row && reviewSourceOf(row) === "self" ? `学生自评：${label}` : label;
+}
+
+function reviewSourceText(row: import("../db/schema.ts").ResponseRow): string {
+  const source = reviewSourceOf(row);
+  return source === "teacher"
+    ? "教师"
+    : source === "self"
+      ? "学生自评"
+      : row.reviewEligible && row.finalCorrect === null
+        ? "待学生自评"
+        : "自动";
 }
 
 /**
@@ -299,11 +315,8 @@ export function exportCsv(
             knowledge.join("；"),
             answerText,
             autoCorrectText(row.response.autoCorrect),
-            finalCorrectText(row.response.finalCorrect),
-            row.response.teacherMark === "correct" ||
-            row.response.teacherMark === "wrong"
-              ? "教师"
-              : "自动",
+            finalCorrectText(row.response.finalCorrect, row.response),
+            reviewSourceText(row.response),
             row.response.activeSec === null
               ? ""
               : String(row.response.activeSec),
@@ -405,10 +418,8 @@ export function exportCsv(
           knowledge.join("；"),
           answerText,
           autoCorrectText(response.autoCorrect),
-          finalCorrectText(response.finalCorrect),
-          response.teacherMark === "correct" || response.teacherMark === "wrong"
-            ? "教师"
-            : "自动",
+          finalCorrectText(response.finalCorrect, response),
+          reviewSourceText(response),
           response.activeSec === null ? "" : String(response.activeSec),
           String(response.hintsUsed),
           String(response.changeCount),

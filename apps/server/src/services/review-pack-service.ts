@@ -45,6 +45,7 @@ import {
   evidenceMissingRowsOf,
   readyEvidenceImagesOf,
 } from "./question-evidence";
+import { reviewSourceOf } from "./review-state.ts";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
@@ -600,6 +601,9 @@ export function assembleReviewPack(
             studentId: attempt.studentId,
             autoCorrect: row.autoCorrect,
             finalCorrect: row.finalCorrect,
+            ...(row.selfCorrect !== null
+              ? { reviewSource: reviewSourceOf(row) }
+              : {}),
             teacherMark:
               row.teacherMark === "correct" || row.teacherMark === "wrong"
                 ? row.teacherMark

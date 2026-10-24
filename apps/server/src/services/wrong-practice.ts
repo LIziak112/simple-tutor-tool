@@ -110,6 +110,7 @@ export function startWrongPractice(
       if (snapshotJson === null) continue; // pickOf 已校验非空（坏快照剔除），防御性收敛
       insertFrozenResponse(tx, {
         attemptId: id,
+        reviewPolicy: "self_review",
         questionId: source.questionId,
         questionVersion: source.questionVersion,
         questionSnapshotJson: snapshotJson,

@@ -76,6 +76,8 @@ function FeedbackPending({
 
 /** 题卡 footer 槽：v1 卷的本题提交区 / 已提交反馈区（legacy 不挂） */
 export function PracticeQuestionFooter({
+  attemptId,
+  referenceAvailable = true,
   mode,
   submitted,
   readable,
@@ -89,6 +91,8 @@ export function PracticeQuestionFooter({
   onSubmit,
   onRetryFeedback,
 }: {
+  attemptId?: string;
+  referenceAvailable?: boolean;
   /** list = 列表模式（footer 承担提交按钮）；single = 单题模式（按钮在主操作位） */
   mode: "list" | "single";
   submitted: boolean;
@@ -105,7 +109,14 @@ export function PracticeQuestionFooter({
   onRetryFeedback: () => void;
 }) {
   if (!submitted) {
-    if (mode === "single") return null;
+    if (mode === "list" && !referenceAvailable)
+      return (
+        <p className="text-xs text-muted-foreground">
+          本题暂无参考答案，请随整卷交卷。
+        </p>
+      );
+    // 逐题提交入口只在服务端允许时呈现；统一反馈直接走整卷交卷。
+    if (mode === "single" || !workflow?.canSubmitQuestion) return null;
     return (
       <div
         data-slot="practice-question-submit"
@@ -140,7 +151,10 @@ export function PracticeQuestionFooter({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {feedback !== null ? (
-        <QuestionFeedback feedback={feedback} />
+        <QuestionFeedback
+          feedback={feedback}
+          {...(attemptId ? { attemptId } : {})}
+        />
       ) : readable ? (
         <FeedbackPending failed={feedbackFailed} onRetry={onRetryFeedback} />
       ) : (
@@ -157,6 +171,9 @@ export function PracticeQuestionFooter({
 
 /** 单题主操作位三态（SingleQuestionActionBar 的 middle 内容） */
 export function PracticeSingleActions({
+  canSubmitQuestion = true,
+  finishDisabled = false,
+  onFinish,
   submitted,
   answered,
   busy,
@@ -169,6 +186,9 @@ export function PracticeSingleActions({
   onViewResult,
   onContinue,
 }: {
+  canSubmitQuestion?: boolean;
+  finishDisabled?: boolean;
+  onFinish?: () => void;
   submitted: boolean;
   answered: boolean;
   busy: boolean;
@@ -183,17 +203,31 @@ export function PracticeSingleActions({
   onViewResult: () => void;
   onContinue: (id: string) => void;
 }) {
+  if (!canSubmitQuestion && !submitted && !finished) {
+    return (
+      <Button
+        className="min-h-11"
+        disabled={busy || (!hasNext && finishDisabled)}
+        onClick={hasNext ? onNext : onFinish}
+      >
+        {hasNext ? "下一题" : "交卷"}
+      </Button>
+    );
+  }
   if (!submitted) {
+    // 未提交只保留一个提交类主动作：已作答=提交本题；未作答=「不会」空答案
+    // 提交（同一提交链），不再并列一个禁用的提交按钮
     return (
       <div
         data-slot="practice-primary-action"
         className="flex min-w-0 flex-col gap-1.5"
       >
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <Button
             type="button"
+            variant={answered ? "default" : "outline"}
             className="min-h-11 w-fit px-5"
-            disabled={!answered || busy}
+            disabled={busy}
             onClick={onSubmit}
           >
             {busy ? (
@@ -201,24 +235,15 @@ export function PracticeSingleActions({
                 <LoaderCircle aria-hidden className="size-4 animate-spin" />
                 正在提交…
               </>
-            ) : (
+            ) : answered ? (
               "提交本题"
+            ) : (
+              "不会，提交并看解析"
             )}
           </Button>
-          {!answered && (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 w-fit px-4"
-              disabled={busy}
-              onClick={onSubmit}
-            >
-              不会，提交并看解析
-            </Button>
-          )}
         </div>
         {error !== null && (
-          <div className="flex justify-end">
+          <div className="flex justify-center">
             <InlineError message={error} />
           </div>
         )}
@@ -228,7 +253,7 @@ export function PracticeSingleActions({
   return (
     <div
       data-slot="practice-primary-action"
-      className="flex min-w-0 flex-wrap items-center justify-end gap-2"
+      className="flex min-w-0 flex-wrap items-center justify-center gap-2"
     >
       {finished ? (
         <Button

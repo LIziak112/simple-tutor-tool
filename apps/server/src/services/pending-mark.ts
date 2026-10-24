@@ -47,9 +47,13 @@ export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
  * 「已交」，保持既有口径不加条件——设计依据详见模块头注释）。两函数（单卷/
  * 批量）共用本构造器，口径永不漂移。
  */
-function pendingMarkConditions(draft: boolean): (SQL | undefined)[] {
+function pendingMarkConditions(
+  draft: boolean,
+  selfReview = false,
+): (SQL | undefined)[] {
   return [
     isNull(responses.finalCorrect),
+    eq(responses.reviewEligible, selfReview),
     isNotNull(responses.questionSnapshotJson),
     draft ? isNotNull(responses.submittedAt) : undefined,
   ];
@@ -83,6 +87,7 @@ export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
 export function pendingMarkCounts(
   db: Db,
   attempts: readonly PendingMarkAttempt[],
+  selfReview = false,
 ): Map<string, number> {
   const map = new Map<string, number>();
   const idsOf = (draft: boolean) =>
@@ -103,7 +108,7 @@ export function pendingMarkCounts(
         .where(
           and(
             inArray(responses.attemptId, chunk),
-            ...pendingMarkConditions(draft),
+            ...pendingMarkConditions(draft, selfReview),
           ),
         )
         .groupBy(responses.attemptId)

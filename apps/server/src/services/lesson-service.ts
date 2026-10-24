@@ -241,6 +241,7 @@ function buildLessonStartData(
         submittedAt: row.submittedAt,
         autoCorrect: row.autoCorrect,
         finalCorrect: row.finalCorrect,
+        reviewEligible: row.reviewEligible,
       })),
       attempt,
     ),

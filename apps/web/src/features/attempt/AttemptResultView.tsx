@@ -42,6 +42,7 @@ import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
+import { SelfReviewControl } from "./SelfReviewControl";
 import { useResultReviewLocation } from "./use-result-review-location";
 
 /**
@@ -332,7 +333,9 @@ function ResultQuestionCard({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
         {released ? (
-          <VerdictBadge verdict={verdict} />
+          !question.selfReview ? (
+            <VerdictBadge verdict={verdict} />
+          ) : null
         ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
             未作答
@@ -395,6 +398,9 @@ function ResultQuestionCard({
       </AnnotationView>
 
       <ResultAnswerComparison question={question} released={released} />
+      {released && question.selfReview && (
+        <SelfReviewControl attemptId={attemptId} question={question} />
+      )}
 
       {released &&
         (question.teacherMark !== null || question.teacherComment !== null) && (
@@ -642,7 +648,11 @@ export function AttemptResultView({
                   </p>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {summary.scoreFinal !== null
-                      ? "含老师批改，满分 100"
+                      ? flatQuestions.some(
+                          (question) => question.selfReview?.source === "self",
+                        )
+                        ? "含学生自评，满分 100"
+                        : "含老师批改，满分 100"
                       : attempt.scoreAuto === null
                         ? "暂无可自动判分的题目"
                         : "满分 100"}
@@ -681,6 +691,11 @@ export function AttemptResultView({
                       {summary.pendingCount ?? summary.pending}
                       <span>题</span>
                     </dd>
+                    {(summary.pendingSelfReviewCount ?? 0) > 0 && (
+                      <dd className="text-xs">
+                        另有 {summary.pendingSelfReviewCount} 题待自评
+                      </dd>
+                    )}
                   </div>
                   {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
                   （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/

@@ -379,6 +379,15 @@ export function AttemptDetailQuestionCard({
 
       {/* SAI-24 教师督学标签（B13）：旁置呈现 AI 求助事实——只消费服务端
           事实记录，不改写对错/待批/分数/评语原值；记录抽屉按题过滤本卷任务 */}
+      {question.selfReview?.source === "self" && (
+        <p className="text-sm text-muted-foreground">
+          学生自评：{question.selfReview.mark ? "正确" : "错误"}
+          （无需再次确认，可由教师改判）
+        </p>
+      )}
+      {question.selfReview?.awaitingSelfReview && (
+        <p className="text-sm text-muted-foreground">待学生对照参考答案自评</p>
+      )}
       <AiHelpQuestionSection
         attemptId={attemptId}
         questionId={question.questionId}

@@ -963,6 +963,18 @@ export const responses = sqliteTable(
     teacherMark: text("teacher_mark"),
     /** 教师评语（T3.2）；未评为 NULL */
     teacherComment: text("teacher_comment"),
+    /** 冻结时确定评判策略；迁移后的历史行保持原规则，不重判。 */
+    reviewPolicy: text("review_policy").notNull().default("legacy"),
+    /** 有参考答案且需对照自评的题，独立于是否已判断。 */
+    reviewEligible: integer("review_eligible", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    /** 学生本人对照声明，不能写入教师标记。 */
+    selfCorrect: integer("self_correct", { mode: "boolean" }),
+    reviewRevision: integer("review_revision").notNull().default(0),
+    reviewMutationId: text("review_mutation_id"),
+    reviewMutationHash: text("review_mutation_hash"),
+    reviewedAt: text("reviewed_at"),
     /** 每题有效用时（秒；T2.10 按事件计算回写）；未计算为 NULL */
     activeSec: integer("active_sec"),
     /** 已查看提示数（T2.11：去重后的已解锁序号集合大小；交卷时冻结保留） */

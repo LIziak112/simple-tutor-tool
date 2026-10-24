@@ -35,6 +35,7 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { selfReviewStateOf } from "./review-state.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
 /**
@@ -413,6 +414,7 @@ function detailItemOf(
     answer: answerOf(row.answerJson),
     autoCorrect: isDraft ? null : row.autoCorrect,
     finalCorrect: isDraft ? null : row.finalCorrect,
+    ...(!isDraft ? { selfReview: selfReviewStateOf(row, snapshot) } : {}),
     teacherMark: isDraft
       ? null
       : row.teacherMark === "correct" || row.teacherMark === "wrong"

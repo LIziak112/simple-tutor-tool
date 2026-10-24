@@ -148,6 +148,7 @@ import {
   type ReportListData,
   type ReviewPackPreviewData,
   type ReviewPackRole,
+  type SelfReviewRequest,
   type SharedFileList,
   type SharedImportRequest,
   type SharedPreviewData,
@@ -173,6 +174,7 @@ import {
   type StudentSummary,
   type StudentUnitLandingData,
   type StudentUpdateRequest,
+  selfReviewDataSchema,
   type TeacherApiTokenData,
   type TeacherApiTokenResetData,
   type TeacherAssignment,
@@ -954,6 +956,21 @@ export function submitAttemptApi(
     },
   };
   return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
+}
+
+/** 学生声明对照结果；参考答案仍由既有公布接口提供。 */
+export async function saveSelfReviewApi(
+  attemptId: string,
+  questionId: string,
+  request: SelfReviewRequest,
+) {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  const data = await callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"][
+      "self-review"
+    ].$post(args),
+  );
+  return selfReviewDataSchema.parse(data);
 }
 
 /**
