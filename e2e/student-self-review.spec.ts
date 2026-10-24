@@ -10,7 +10,13 @@ import {
   waitForDraftSaved,
 } from "./helpers";
 
-test("对照自评无需教师确认，单题入错题并可修正；无答案题逐题提交走教师批改", {
+// fixme（2026-10-25，TT-09c 验证留痕）：本 spec 需要 NEW_CONTENT_ENABLED=true
+// 的服务端（开卷才冻结 gradingPolicy：fill=reference_self →「已完成，待自评」、
+// solve=manual_only → 逐题提交走教师待批）。e2e 共享 webServer 恒开发布开关
+// （playwright.config server env 未设 NEW_CONTENT_ENABLED——全局开会翻转其他
+// spec 的旧行语义断言），共享环境下第 1 题永远拿不到待自评徽章。待专用
+// 开关 e2e 项目或 spec 内独立服务拍板（决策记录 §22.2 后续项）后恢复。
+test.fixme("对照自评无需教师确认，单题入错题并可修正；无答案题逐题提交走教师批改", {
   tag: ["@student"],
 }, async ({ request, page }) => {
   await teacherApiLogin(request);

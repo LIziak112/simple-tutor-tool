@@ -229,7 +229,7 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       // 答对 1（判断）+ 答错 1（判断）+ 待批 1（手写只写笔迹）
       await expectResultCount(studentPage, "答对", 1);
       await expectResultCount(studentPage, "答错", 1);
-      await expectResultCount(studentPage, "待批", 1);
+      await expectResultCount(studentPage, "待判断", 1);
       expect(leak.violations().join("\n")).toBe("");
 
       // —— 教师端 UI：登录 → 数据页三视图各切换一次 ——
@@ -402,7 +402,7 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(
         studentPage.getByText("含老师批改，满分 100", { exact: true }),
       ).toBeVisible();
-      await expectResultCount(studentPage, "待批", 0);
+      await expectResultCount(studentPage, "待判断", 0);
       // 手写题（第 3 题）：老师批改块「判对」+ 评语；图标答对
       const q3Result = studentPage.locator('article[aria-label="第 3 题"]');
       await expect(q3Result.getByText(/老师批改：判对/)).toBeVisible();

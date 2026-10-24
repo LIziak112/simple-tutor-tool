@@ -144,7 +144,7 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", {
       });
       // 判错 1（判断答错）+ 待批 1（手写只写笔迹）
       await expectResultCount(studentPage, "答错", 1);
-      await expectResultCount(studentPage, "待批", 1);
+      await expectResultCount(studentPage, "待判断", 1);
       expect(leak.violations().join("\n")).toBe("");
 
       // —— 教师端 UI：登录 → 待批队列 → 评语 + 键盘 1 标对（同 T3.2b 流程）——

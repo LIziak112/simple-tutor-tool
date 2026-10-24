@@ -146,7 +146,7 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
       // 判断题自动判对；fill 全人工批改 → 不自动判对错：该题「待批改」、
       // 汇总「待批 1 题」（未批完不显示最终得分）
       await expectResultCount(studentPage, "答对", 1);
-      await expectResultCount(studentPage, "待批", 1);
+      await expectResultCount(studentPage, "待判断", 1);
       const q2Pending = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(
         q2Pending.getByText("待批改", { exact: true }),
@@ -199,7 +199,7 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
         studentPage.getByText("含老师批改，满分 100", { exact: true }),
       ).toBeVisible();
       await expect(studentPage.locator("span.text-4xl")).toHaveText("100");
-      await expectResultCount(studentPage, "待批", 0);
+      await expectResultCount(studentPage, "待判断", 0);
       const q2Final = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(q2Final.getByText(/老师批改：判对/)).toBeVisible();
       await expect(q2Final.getByLabel("答对")).toBeVisible();

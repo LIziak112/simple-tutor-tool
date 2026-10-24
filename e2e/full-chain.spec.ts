@@ -499,7 +499,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expectResultCount(assignPage, "总题数", 3);
       await expectResultCount(assignPage, "答对", 3);
       await expectResultCount(assignPage, "答错", 0);
-      await expectResultCount(assignPage, "待批", 0);
+      await expectResultCount(assignPage, "待判断", 0);
       const resultUnitHeaders = assignPage.locator("[data-review-unit]");
       await expect(resultUnitHeaders).toHaveCount(2);
       await expect(resultUnitHeaders.nth(0)).toHaveText(courseUnitName);

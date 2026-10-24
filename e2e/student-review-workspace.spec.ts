@@ -578,7 +578,7 @@ test(
     ).toBeVisible();
     const first = page.getByRole("article", { name: "第 1 题", exact: true });
     await expect(
-      page.getByText("未答数单独统计，可能与判错或待批重叠，不能相加。", {
+      page.getByText("未答数单独统计，可能与判错或待判断重叠，不能相加。", {
         exact: true,
       }),
     ).toBeVisible();

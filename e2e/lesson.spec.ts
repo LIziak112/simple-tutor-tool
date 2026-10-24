@@ -435,7 +435,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         studentPage.getByText("已完成", { exact: true }),
       ).toBeVisible();
       await expect(
-        studentPage.getByText("答对 3 · 答错 1 · 待批 1"),
+        studentPage.getByText("答对 3 · 答错 1 · 待判断 1"),
       ).toBeVisible();
       await expect(
         studentPage.getByRole("link", { name: "查看结果" }),
@@ -453,7 +453,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expectResultCount(studentPage, "总题数", 5);
       await expectResultCount(studentPage, "答对", 3);
       await expectResultCount(studentPage, "答错", 1);
-      await expectResultCount(studentPage, "待批", 1);
+      await expectResultCount(studentPage, "待判断", 1);
       await studentPage.getByRole("button", { name: "返回讲练页" }).click();
       await studentPage.waitForURL(/\/s\/lectures\/[^/]+\/lesson/);
 
@@ -519,7 +519,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       // 教师批对的 fill 不进 correct；待批数走 pendingCount（finalCorrect 权威
       // 计数）——批后归零。题卡级徽章断言见下方。
       await expect(
-        studentPage.getByText("答对 3 · 答错 1 · 待批 0"),
+        studentPage.getByText("答对 3 · 答错 1 · 待判断 0"),
       ).toBeVisible();
       const q4Marked = studentPage.locator('article[aria-label="第 4 题"]');
       await expect(
