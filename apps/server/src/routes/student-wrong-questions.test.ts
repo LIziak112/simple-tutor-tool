@@ -1050,3 +1050,76 @@ describe("GET /api/student/wrong-questions（QM-12：自评行错题集合）", 
     ).toEqual([SR.fill]);
   });
 });
+
+describe("GET /api/teacher/attempts/:id（QM-12：教师详情有效判定与两队列计数）", () => {
+  it("自评行携带 selfReview/gradingPolicy；对/错按有效判定计数，待批与待自评分开；教师改判/清除回落同序", async () => {
+    const env = await makeSelfReviewEnv();
+    const a1 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a1, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a1, SR.fill, { kind: "fill", values: ["3"] });
+    await saveAnswer(env, a1, SR.solve, { kind: "final", finalAnswer: "1" });
+    await submitAt(env, a1, T1);
+    expect((await selfReview(env, a1, SR.fill, "wrong")).status).toBe(200);
+
+    const detailRes = await env.app.request(`/api/teacher/attempts/${a1}`, {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(detailRes.status).toBe(200);
+    const detail = (await detailRes.json()) as {
+      data: {
+        correctCount: number;
+        wrongCount: number;
+        pendingCount: number;
+        selfReviewPendingCount: number;
+        questions: Array<{
+          questionId: string;
+          gradingPolicy: string | null;
+          selfReview: { verdict: string } | null;
+        }>;
+      };
+    };
+    // 对/错按有效判定：judge 自动对 + fill 自评错；solve 待自评不计对错
+    expect(detail.data.correctCount).toBe(1);
+    expect(detail.data.wrongCount).toBe(1);
+    // 两队列分开：无 manual_only 行 → 教师待批 0；solve 待自评 1
+    expect(detail.data.pendingCount).toBe(0);
+    expect(detail.data.selfReviewPendingCount).toBe(1);
+    const byId = new Map(
+      detail.data.questions.map((q) => [q.questionId, q]),
+    );
+    expect(byId.get(SR.judge)).toMatchObject({
+      gradingPolicy: "auto",
+      selfReview: null,
+    });
+    expect(byId.get(SR.fill)).toMatchObject({
+      gradingPolicy: "reference_self",
+      selfReview: { verdict: "wrong" },
+    });
+    expect(byId.get(SR.solve)).toMatchObject({
+      gradingPolicy: "reference_self",
+      selfReview: null,
+    });
+
+    // 教师改判 fill=对 → 教师优先：对 2 / 错 0；清除后回落自评（错）→ 对 1 / 错 1
+    const fillRow = env.db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)))
+      .get();
+    if (fillRow === undefined) throw new Error("夹具缺 fill 行");
+    expect((await teacherMark(env, fillRow.id, "correct")).status).toBe(200);
+    const marked = (await (
+      await env.app.request(`/api/teacher/attempts/${a1}`, {
+        headers: { cookie: env.teacherCookie },
+      })
+    ).json()) as { data: { correctCount: number; wrongCount: number } };
+    expect(marked.data).toMatchObject({ correctCount: 2, wrongCount: 0 });
+    expect((await teacherMark(env, fillRow.id, null)).status).toBe(200);
+    const cleared = (await (
+      await env.app.request(`/api/teacher/attempts/${a1}`, {
+        headers: { cookie: env.teacherCookie },
+      })
+    ).json()) as { data: { correctCount: number; wrongCount: number } };
+    expect(cleared.data).toMatchObject({ correctCount: 1, wrongCount: 1 });
+  });
+});
