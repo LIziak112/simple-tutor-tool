@@ -1,5 +1,11 @@
 # 学生对照答案自评实施计划
 
+> **取代说明（2026-10-25，两线收敛）**：本计划对应的 v2 实现（e0e60af2）已按裁定被
+> QM 支线 TT-09a/b/c 体系（selfReviewDataSchema record/revision、gradingPolicy 行级
+> 冻结、effectiveVerdictOfRow 有效判定）取代，合并于 codex/tt-09c@eadff82b；
+> 独有行为的接线保留清单与移除清单见
+> docs/题目模型与练习适配/决策记录.md §22.1。本文留作 v2 线历史记录。
+
 目标分支：`codex/practice-experience-fixes`。用户已确认实施，并补充无参考答案不开放自评或逐题提交。
 
 ## 已确认的产品依据与实施前核对
