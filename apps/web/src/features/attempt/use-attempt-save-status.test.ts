@@ -110,6 +110,32 @@ it("四域均确认才显示全部保存；只有标画待传不能宣称云端�
     "已存本机，正在同步…",
   );
 });
+it("response 长文本作答未确认同步或恢复中时，不冒称全部已保存（QM-09 细项4/6）", async () => {
+  installDraftBackend(memoryBackend());
+  const answer = {
+    kind: "response",
+    title: "留住记忆，改善生活",
+    body: "城市更新应当在保留与改善之间寻找平衡……",
+  } as const;
+  // 本机已写长文、尚未确认云端同步：保存详情按「等待同步」呈现
+  draftStore.saveAnswer("resp-details", "q1", answer);
+  await draftStore.flush("resp-details");
+  expect(
+    readAttemptSaveDetails("resp-details", ["q1"], new Map())[0]?.answer,
+  ).toBe("等待同步");
+  // 材料恢复进行中：摘要行是「正在恢复」，不是「全部已保存」
+  expect(
+    summarizeAttemptSaveStatus({ ...saved, recovery: { state: "loading" } }),
+  ).toBe("正在恢复作答与材料…");
+  // 确认同步（含恢复读回的完整长文）后才显示已保存
+  const record = await draftStore.loadDraft("resp-details");
+  expect(record?.answers.q1).toEqual(answer);
+  await draftStore.markAnswerSynced("resp-details", "q1", answer);
+  expect(
+    readAttemptSaveDetails("resp-details", ["q1"], new Map())[0]?.answer,
+  ).toBe("已保存");
+  installDraftBackend(memoryBackend());
+});
 it("重试按钮不能把仍失败的答案落盘宣称成功", async () => {
   const flush = vi.spyOn(draftStore, "flush").mockResolvedValue();
   await retryAttemptLocalPersistence("retry-empty", []);
