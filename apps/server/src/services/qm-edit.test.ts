@@ -706,4 +706,70 @@ describe("QM-07 P2-5：编辑片段夹带异类实体显式拒绝（不静默丢
     expect(getQuestionGroup(db, TEST_TEACHER_ID, GROUP_ID)?.version).toBe(1);
     expect(getMaterial(db, TEST_TEACHER_ID, "mat-extra")).toBeNull();
   });
+
+  // §17.5 P2-1：missing 分支（库内实体在解析结果中缺失）。直接吞行的未闭合
+  // 容器会先触发 UNCLOSED_CONTAINER（error 级 lint）；本例用「片段尾部开
+  // dangling box、由库内组行的结束围栏按等冒号规则隐式闭合」的构造——围栏
+  // 全平衡、lint 零 error，但库内组行被嵌进 box 不再出现在顶层解析结果中
+  it("片段尾部 dangling box 遮挡库内组（missing 分支）→ 422 且零写入", () => {
+    const db = createTestDb();
+    // 无槽位材料 + 纯题引用组：材料带槽位时组被遮挡会先触发 SLOT_UNBOUND
+    // （error 级 lint），须避开才能抵达本分支
+    commitImport(
+      db,
+      TEST_TEACHER_ID,
+      {
+        markdown: [
+          "---",
+          "kind: practice",
+          "unit: 遮挡实验",
+          "---",
+          "",
+          "# 遮挡实验练习",
+          "",
+          "::::material{id=mat-遮挡-1}",
+          "给定资料正文，无槽位。",
+          "::::",
+          "",
+          "::::group{id=grp-遮挡-1 label=1～1}",
+          "::ref{question=遮挡实验-1}",
+          "::::",
+          "",
+          "::::question{type=choice difficulty=2}",
+          "根据材料回答。",
+          "",
+          "- [ ] 甲",
+          "- [x] 乙",
+          "::::",
+          "",
+        ].join("\n"),
+        filename: "遮挡实验.md",
+      },
+      undefined,
+      undefined,
+      true,
+    );
+    const before = getMaterial(db, TEST_TEACHER_ID, "mat-遮挡-1");
+    if (before === null) throw new Error("基线材料未落库");
+    const fragment = `${before.sourceMd}\n::::box{title=陷阱}`;
+    expect(() =>
+      updateMaterial(
+        db,
+        TEST_TEACHER_ID,
+        "mat-遮挡-1",
+        { sourceMd: fragment },
+        true,
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("在解析结果中缺失"),
+      }) satisfies Partial<HttpError>,
+    );
+    // 零写入：材料版本与 sourceMd 原样
+    const after = getMaterial(db, TEST_TEACHER_ID, "mat-遮挡-1");
+    expect(after?.version).toBe(1);
+    expect(after?.sourceMd).toBe(before.sourceMd);
+  });
 });
