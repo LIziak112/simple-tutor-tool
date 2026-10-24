@@ -60,6 +60,26 @@ topic: 混合练习
 用一句话说说你的解题思路。（本题无参考答案，由教师批改。）
 ::::`;
 
+/** 全 auto 客观卷夹具（P1 修复回归）：choice×2——没有 manual_only/reference_self
+ *  行，整卷交卷即全部判定完成，graded 期望不被教师待批阻塞掩盖 */
+const QM10_CHOICE_MD = `---
+kind: practice
+unit: 客观整卷
+topic: 全自动判分
+---
+
+::::question{type=choice difficulty=1 knowledge="客观一"}
+1+1 等于几？
+- [x] 2
+- [ ] 3
+::::
+
+::::question{type=choice difficulty=1 knowledge="客观二"}
+2+2 等于几？
+- [ ] 3
+- [x] 4
+::::`;
+
 /** 夹具题目 id（默认规则：单元名-序号） */
 const Q = {
   choice: "主观匹配-1",
@@ -77,8 +97,12 @@ interface Qm10Fixture {
   unitId: string;
 }
 
-/** 基础夹具：教师 + 导入混合练习单元（旧七型语法，无需发布开关） */
-async function makeQm10App(): Promise<Qm10Fixture> {
+/** 基础夹具：教师 + 导入练习单元（旧七型语法，无需发布开关；默认混合卷，
+ *  P1 回归传全 auto 客观卷） */
+async function makeQm10App(
+  markdown: string = QM10_MD,
+  filename = "主观匹配.md",
+): Promise<Qm10Fixture> {
   const db = createTestDb();
   const app = createApp({
     isProduction: false,
@@ -96,7 +120,7 @@ async function makeQm10App(): Promise<Qm10Fixture> {
   const importRes = await app.request("/api/teacher/import/commit", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ markdown: QM10_MD, filename: "主观匹配.md" }),
+    body: JSON.stringify({ markdown, filename }),
   });
   if (importRes.status !== 200) {
     throw new Error(`夹具导入失败：${JSON.stringify(await importRes.json())}`);
@@ -298,14 +322,14 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
     );
     const aCookie = await loginStudent(app, "张三");
     const attemptId = await startAttempt(app, aCookie, assignmentId, true);
-    await putAnswer(app, aCookie, attemptId, Q.fill, {
-      kind: "fill",
-      values: ["1/2"],
-    });
-    await putAnswer(app, aCookie, attemptId, Q.solveWithRef, {
-      kind: "final",
-      finalAnswer: "2.0",
-    });
+    // 逐题断言保存成功（P3：防静默丢稿让「等价/不同」前提失效）
+    for (const [questionId, answer] of [
+      [Q.fill, { kind: "fill", values: ["1/2"] }],
+      [Q.solveWithRef, { kind: "final", finalAnswer: "2.0" }],
+    ] as const) {
+      const save = await putAnswer(app, aCookie, attemptId, questionId, answer);
+      expect(save.status).toBe(200);
+    }
     const res = await submitAttemptRequest(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     expect(rowOf(db, attemptId, Q.fill).autoCorrect).toBeNull();
@@ -517,6 +541,103 @@ describe("QM-10 细项7：graded 放宽与教师待批边界（§5.5.5/§5.5.3�
   });
 });
 
+describe("QM-10 细项7 修复（审查 P1）：legacy 协议+开关开启卷的整卷收尾建模", () => {
+  // 缺口形态：行级 submittedAt 仅逐题语义卷写（responses.submittedAt 是逐题
+  // 提交列），legacy 协议行恒 null → attemptFinalOutcomeOf 的 allSubmitted 恒
+  // false → 整卷交卷后恒 submitted/scoreFinal=null，教师批改重算同病。四态
+  // gate（practiceQuestionFeedbackStateOf）对已收尾卷按「row.submittedAt ??
+  // 收尾事实」放行——收尾判定须同口径。
+  it("legacy 协议全 auto 卷整卷交卷 → graded+scoreFinal（整卷交卷即全部判分行已提交；行级 submittedAt 保持协议分野不写）", async () => {
+    const { app, db, teacherCookie, unitId } = await makeQm10App(
+      QM10_CHOICE_MD,
+      "客观整卷.md",
+    );
+    const studentId = await createStudent(app, teacherCookie, "王七");
+    const assignmentId = await createAssignment(
+      app,
+      teacherCookie,
+      unitId,
+      studentId,
+    );
+    const aCookie = await loginStudent(app, "王七");
+    // legacy 协议（不请求 workflowVersion）+ 开关开启：行冻结 auto，但不启用
+    // 逐题提交语义（升级前客户端在开关开启部署开卷的真实形态）
+    const attemptId = await startAttempt(
+      app,
+      aCookie,
+      assignmentId,
+      true,
+      false,
+    );
+    expect(
+      responseRowsOf(db, attemptId).every((r) => r.gradingPolicy === "auto"),
+    ).toBe(true);
+
+    for (const [questionId, answer] of [
+      ["客观整卷-1", { kind: "choice", index: 0 }],
+      ["客观整卷-2", { kind: "choice", index: 1 }],
+    ] as const) {
+      const save = await putAnswer(app, aCookie, attemptId, questionId, answer);
+      expect(save.status).toBe(200);
+    }
+    const res = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(res.status).toBe(200);
+    // 全 auto 行交卷即全部判定完成 → graded；scoreFinal=round(2/2×100)=100
+    //（修复前：行 submittedAt 恒 null → allSubmitted=false → 恒 submitted）
+    const attempt = attemptRowOf(db, attemptId);
+    expect(attempt.status).toBe("graded");
+    expect(attempt.scoreFinal).toBe(100);
+    // 协议分野护栏：responses.submittedAt 是逐题提交列，legacy 整卷交卷不写
+    expect(
+      responseRowsOf(db, attemptId).every((r) => r.submittedAt === null),
+    ).toBe(true);
+  });
+
+  it("legacy 协议+开关开启混合卷：manual_only 未判仍阻塞 submitted；教师判完 → graded（批改重算链路同修）；清除回落 submitted", async () => {
+    const { app, db, teacherCookie, unitId } = await makeQm10App();
+    const studentId = await createStudent(app, teacherCookie, "张三");
+    const assignmentId = await createAssignment(
+      app,
+      teacherCookie,
+      unitId,
+      studentId,
+    );
+    const aCookie = await loginStudent(app, "张三");
+    const attemptId = await startAttempt(
+      app,
+      aCookie,
+      assignmentId,
+      true,
+      false,
+    );
+    await saveAllAnswers(app, aCookie, attemptId);
+    const res = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(res.status).toBe(200);
+    // 组合回归：manual_only 未判行照旧阻塞 graded（放宽不吞教师必批）
+    expect(attemptRowOf(db, attemptId).status).toBe("submitted");
+
+    // 教师判掉 manual_only 行 → 批改重算 graded、scoreFinal=round(2/4×100)=50
+    //（修复前：重算读 DB 行 submittedAt 全 null → 恒 submitted，教师解救不了）
+    const manualRow = rowOf(db, attemptId, Q.solveNoRef);
+    const markRes = await markResponse(
+      app,
+      teacherCookie,
+      manualRow.id,
+      "correct",
+    );
+    expect(markRes.status).toBe(200);
+    let attempt = attemptRowOf(db, attemptId);
+    expect(attempt.status).toBe("graded");
+    expect(attempt.scoreFinal).toBe(50);
+    // 清除教师判定 → manual_only 回到未判 → 整卷回落 submitted、scoreFinal=null
+    const clearRes = await markResponse(app, teacherCookie, manualRow.id, null);
+    expect(clearRes.status).toBe(200);
+    attempt = attemptRowOf(db, attemptId);
+    expect(attempt.status).toBe("submitted");
+    expect(attempt.scoreFinal).toBeNull();
+  });
+});
+
 // ---------- 自评端点（QM-10 细项4/5/6） ----------
 
 const uuid = (): string => crypto.randomUUID();
@@ -579,6 +700,13 @@ const review = (verdict: string, baseRevision = 0) => ({
 function errCodeOf(body: unknown): string {
   const err = (body as { error?: unknown }).error;
   return typeof err === "string" ? err : "";
+}
+
+/** 详解正文值级哨兵断言（审查 P2）：assertNoLeak 只做键名匹配，forbid 里的
+ *  内容哨兵（"详解哨兵"是 :::solution 块正文，非键名）永不命中——值级断言
+ *  补齐：详解正文以字面值出现在响应体任何字符串字段即失败 */
+function assertNoSolutionSentinel(body: unknown): void {
+  expect(JSON.stringify(body)).not.toContain("详解哨兵");
 }
 
 describe("QM-10 细项4：自评校验链（登录/归属/子题/已提交/公布/策略/参考）", () => {
@@ -758,7 +886,8 @@ describe("QM-10 细项5/6：自评写入、幂等/CAS、教师竞争与投影", 
     expect(row.teacherMark).toBeNull();
     expect(row.finalCorrect).toBeNull();
     expect(attemptRowOf(db, attemptId).status).toBe("submitted");
-    assertNoLeak(body, { forbid: ["answers", "solutionMd", "详解哨兵"] });
+    assertNoLeak(body, { forbid: ["answers", "solutionMd"] });
+    assertNoSolutionSentinel(body);
   });
 
   it("重复提交（同 mutationId 重试）→ 同回执、revision 不递增", async () => {
@@ -807,7 +936,8 @@ describe("QM-10 细项5/6：自评写入、幂等/CAS、教师竞争与投影", 
       selfReview: { verdict: "correct", revision: 1 },
       revision: 1,
     });
-    assertNoLeak(stale.body, { forbid: ["answers", "solutionMd", "详解哨兵"] });
+    assertNoLeak(stale.body, { forbid: ["answers", "solutionMd"] });
+    assertNoSolutionSentinel(stale.body);
   });
 
   it("修正自评 correct → wrong（新基线）；undecided 撤回清除记录且 revision 递增", async () => {
@@ -923,7 +1053,7 @@ describe("QM-10 细项5/6：自评写入、幂等/CAS、教师竞争与投影", 
 
   it("assertNoLeak：全部自评响应与错误体无答案/详解/提示内容", async () => {
     const { app, aCookie, attemptId } = await newPolicySubmittedAttempt();
-    const forbidden = ["answers", "solutionMd", "hints", "详解哨兵"];
+    const forbidden = ["answers", "solutionMd", "hints"];
     const cases = [
       await selfReviewJson(app, aCookie, attemptId, Q.fill, review("correct")),
       await selfReviewJson(app, aCookie, attemptId, Q.fill, review("wrong")),
@@ -944,6 +1074,7 @@ describe("QM-10 细项5/6：自评写入、幂等/CAS、教师竞争与投影", 
     ];
     for (const { body } of cases) {
       assertNoLeak(body, { forbid: forbidden });
+      assertNoSolutionSentinel(body);
     }
   });
 });

@@ -2091,11 +2091,17 @@ export interface FinalOutcomeRow {
  * - **新行口径**：graded ⟺ 全部行已提交 且 无「教师待处理」行
  *   （manual_only 且 teacherMark=null——判定来源枯竭，唯一出口是教师；
  *   reference_self 行自评与否不阻塞，「完成作答不以自评为前提」）；
+ * - opts.finalized（整卷已收尾）时全部行按已提交语义参与 allSubmitted——与
+ *   四态 gate（practiceQuestionFeedbackStateOf）同口径：整卷交卷/收尾即全部
+ *   判分行已交，legacy 协议行不写行级 submittedAt（逐题列，协议分野保持）；
  *   scoreFinal 公式沿用 D3（round(finalCorrect=true ÷ 全部题数 × 100)，
  *   reference_self 行 finalCorrect 恒 null——计分母不计分子，教师权威线）；
  * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
  */
-export function attemptFinalOutcomeOf(rows: readonly FinalOutcomeRow[]): {
+export function attemptFinalOutcomeOf(
+  rows: readonly FinalOutcomeRow[],
+  opts: { finalized?: boolean } = {},
+): {
   status: "submitted" | "graded";
   scoreFinal: number | null;
 } {
@@ -2103,7 +2109,14 @@ export function attemptFinalOutcomeOf(rows: readonly FinalOutcomeRow[]): {
   if (rows.some((row) => row.gradingPolicy === null)) {
     return finalScoreOf(rows.map((row) => row.finalCorrect));
   }
-  const allSubmitted = rows.every((row) => row.submittedAt !== null);
+  // P1 修复（审查 TT-09a）：整卷收尾即全部判分行已提交——与四态 gate
+  // （practiceQuestionFeedbackStateOf 的 `row.submittedAt !== null || finalized`）
+  // 同一口径。legacy 协议行不写行级 submittedAt（responses.submittedAt 是逐题
+  // 提交列，协议分野保持），不归一则 legacy+开关开启卷整卷交卷恒 submitted/
+  // scoreFinal=null，教师批改重算同病。finalized 由调用方声明收尾事实：
+  // 交卷链路交卷即收尾、自动收尾正在收尾、markResponse 只对已收尾卷重算
+  const allSubmitted =
+    opts.finalized === true || rows.every((row) => row.submittedAt !== null);
   const teacherPending = rows.some(
     (row) => row.gradingPolicy === "manual_only" && row.teacherMark === null,
   );
@@ -2258,9 +2271,12 @@ export function submitAttempt(
   // D3：本次判分行 finalCorrect = autoCorrect（teacherMark 必空）；lesson 已
   // 提交行按行内当前 finalCorrect（教师批改优先）。QM-10 细项7：status/
   // scoreFinal 走 attemptFinalOutcomeOf（§5.5.5 新行口径放宽 / 旧行旧口径
-  // 单一出处——与自动收尾、教师批改重算同源，不复制公式）
-  const { status: finalStatus, scoreFinal } =
-    attemptFinalOutcomeOf(outcomeRows);
+  // 单一出处——与自动收尾、教师批改重算同源，不复制公式）；整卷交卷即收尾
+  //（finalized 对齐四态 gate——legacy 协议行不写行级 submittedAt，审查 P1）
+  const { status: finalStatus, scoreFinal } = attemptFinalOutcomeOf(
+    outcomeRows,
+    { finalized: true },
+  );
   // 逐题语义卷收尾把「本次交卷的行」提交时刻记为交卷时刻（responses.submittedAt
   // 列注释口径）；历史卷行不写该列（保持 null，行为零变化）。事务内 update 与
   // 下方内存镜像展开同一对象，两处口径永不漂移
@@ -2518,7 +2534,10 @@ function autoFinishPerQuestionAttempt(
     .all();
   const gradable = rowsAfter.filter((r) => r.hasSnapshot);
   if (gradable.every((r) => r.submittedAt !== null)) {
-    const { status, scoreFinal } = attemptFinalOutcomeOf(gradable);
+    // 正在收尾 → finalized（与上方 gate 同刻事实，口径见 attemptFinalOutcomeOf）
+    const { status, scoreFinal } = attemptFinalOutcomeOf(gradable, {
+      finalized: true,
+    });
     const attempt = tx
       .update(attempts)
       .set({
