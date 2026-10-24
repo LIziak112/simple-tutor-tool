@@ -143,7 +143,11 @@ export function markResponse(
         ),
       )
       .all();
-    const { status, scoreFinal } = attemptFinalOutcomeOf(outcomeRows);
+    const { status, scoreFinal } = attemptFinalOutcomeOf(outcomeRows, {
+      // 到达重算的卷恒已收尾（上方 draft 早退）——legacy 协议行不写行级
+      // submittedAt，按收尾事实归一（审查 P1，口径对齐四态 gate）
+      finalized: true,
+    });
     // 3. 写回 attempt（scoreAuto/submittedAt 等其余列不动）
     tx.update(attempts)
       .set({ status, scoreFinal })
