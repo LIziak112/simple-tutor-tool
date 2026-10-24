@@ -25,12 +25,10 @@ import {
 /** 注册用教师密码（契约 ≥8 字符） */
 const YI_PASSWORD = "e2e-yi-pass-88";
 
-test.describe("T2B.6 教师自助注册", () => {
-  test("乙自助注册 → 自动登录 → 空资源库/空课程/空学生（与甲隔离）", async ({
-    page,
-    request,
-    browserName,
-  }) => {
+test.describe("T2B.6 教师自助注册", { tag: ["@admin"] }, () => {
+  test("乙自助注册 → 自动登录 → 空资源库/空课程/空学生（与甲隔离）", {
+    tag: ["@admin"],
+  }, async ({ page, request, browserName }) => {
     // 保证首位教师（甲）存在：无教师行时注册接口不可用（409 TEACHER_NOT_EXISTS）
     await teacherApiLogin(request);
     await isolateRegisterRateLimit(
@@ -58,12 +56,10 @@ test.describe("T2B.6 教师自助注册", () => {
   });
 });
 
-test.describe("T2B.6 管理端注册开关", () => {
-  test("管理员关闭注册 → 注册页提示关闭、登录页无注册入口", async ({
-    page,
-    request,
-    browserName,
-  }) => {
+test.describe("T2B.6 管理端注册开关", { tag: ["@admin"] }, () => {
+  test("管理员关闭注册 → 注册页提示关闭、登录页无注册入口", {
+    tag: ["@admin"],
+  }, async ({ page, request, browserName }) => {
     // 注册开关是全局状态：只在一个浏览器项目上验证关闭态（另一项目的注册
     // 用例以等待+重试吸收本用例造成的短暂关闭窗口）
     test.skip(

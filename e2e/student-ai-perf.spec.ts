@@ -86,14 +86,15 @@ async function makeWorld(
   return { assignmentTitle, loginName };
 }
 
-test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存延迟）", () => {
+test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存延迟）", {
+  tag: ["@ai"],
+}, () => {
   // 两浏览器独立世界与供应商会话；同题内容谓词继续验证出站对应关系。
   test.describe.configure({ mode: "serial" });
 
-  test("同一合成场景：无 AI 相与任务在途相的布局/轮询/保存采样", async ({
-    browser,
-    request,
-  }) => {
+  test("同一合成场景：无 AI 相与任务在途相的布局/轮询/保存采样", {
+    tag: ["@ai"],
+  }, async ({ browser, request }) => {
     test.setTimeout(PERF_TIMEOUT);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);

@@ -1,10 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { teacherApiLogin, uniqueSuffix } from "./helpers";
 
-test("账号命名配置跨设备可用，设备选择独立，版本冲突可重新载入", async ({
-  browser,
-  page,
-}) => {
+test("账号命名配置跨设备可用，设备选择独立，版本冲突可重新载入", {
+  tag: ["@annotation"],
+}, async ({ browser, page }) => {
   await teacherApiLogin(page.request);
   await page.goto("/t/ink-feel");
   const name = `平板-${uniqueSuffix()}`;
@@ -57,7 +56,9 @@ test("账号命名配置跨设备可用，设备选择独立，版本冲突可�
   }
 });
 
-test("手感页面精简，旧开发页删除，切笔感保留撤销", async ({ page }) => {
+test("手感页面精简，旧开发页删除，切笔感保留撤销", {
+  tag: ["@annotation"],
+}, async ({ page }) => {
   await page.goto("/dev/ink");
   await expect(page.getByText("手写开发页 /dev/ink")).toHaveCount(0);
   await page.goto("/dev/ink-feel");

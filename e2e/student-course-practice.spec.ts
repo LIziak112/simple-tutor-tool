@@ -55,11 +55,12 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历次记录（T2A.6）", () => {
-  test("学生在课程中完成单元两次，历次记录显示 2 次且得分独立", async ({
-    request,
-    browser,
-  }) => {
+test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历次记录（T2A.6）", {
+  tag: ["@smoke"],
+}, () => {
+  test("学生在课程中完成单元两次，历次记录显示 2 次且得分独立", {
+    tag: ["@smoke"],
+  }, async ({ request, browser }) => {
     test.setTimeout(150_000);
 
     // —— 造数（教师 API）：专属课程 + 可见练习单元 + 学生入成员 ——

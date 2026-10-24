@@ -184,11 +184,10 @@ async function loginStudent(
   return { context, page };
 }
 
-test.describe("SAI-27 学生 MCP 闭环（协议客户端）", () => {
-  test("两题入队 → 外部客户端领取写回 → 各题收到对应回复；等待状态真实", async ({
-    browser,
-    request,
-  }) => {
+test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }, () => {
+  test("两题入队 → 外部客户端领取写回 → 各题收到对应回复；等待状态真实", {
+    tag: ["@mcp"],
+  }, async ({ browser, request }) => {
     test.setTimeout(180_000);
     const suffix = uniqueSuffix();
     const title = `MCP闭环作业${suffix}`;
@@ -452,10 +451,9 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", () => {
     }
   });
 
-  test("重置 Token 后旧客户端立即拒绝；未写回任务保持真实等待", async ({
-    browser,
-    request,
-  }) => {
+  test("重置 Token 后旧客户端立即拒绝；未写回任务保持真实等待", {
+    tag: ["@mcp"],
+  }, async ({ browser, request }) => {
     test.setTimeout(180_000);
     const suffix = uniqueSuffix();
     const title = `MCP撤销作业${suffix}`;

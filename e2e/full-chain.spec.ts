@@ -99,12 +99,12 @@ function brokenMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程练习两次 → 两单元作业（T2A.9）", () => {
-  test("教师批量导入与建课，学生完成课程练习两次后作答两单元作业", async ({
-    page,
-    request,
-    browser,
-  }) => {
+test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程练习两次 → 两单元作业（T2A.9）", {
+  tag: ["@smoke"],
+}, () => {
+  test("教师批量导入与建课，学生完成课程练习两次后作答两单元作业", {
+    tag: ["@smoke"],
+  }, async ({ page, request, browser }) => {
     // 链条长于主流程（多一轮课程练习与一个非成员 context）：本机 ~30s，
     // CI 2 核 runner 冷编译 60-90s，150s 留余量（卡死快速失败，重试由 CI 吸收）
     test.setTimeout(150_000);

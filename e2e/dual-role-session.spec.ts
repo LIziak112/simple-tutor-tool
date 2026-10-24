@@ -17,11 +17,12 @@ import {
  * （page.request 与页面共享同一 Cookie jar）先后登录两种身份，
  * API 与 UI 两侧都应同时在线。
  */
-test.describe("双身份并存（会话 Cookie 拆分回归）", () => {
-  test("同一浏览器：教师登录后学生登录，双方会话与页面都存活", async ({
-    browser,
-    request,
-  }) => {
+test.describe("双身份并存（会话 Cookie 拆分回归）", {
+  tag: ["@teacher", "@student"],
+}, () => {
+  test("同一浏览器：教师登录后学生登录，双方会话与页面都存活", {
+    tag: ["@teacher", "@student"],
+  }, async ({ browser, request }) => {
     // 数据准备走独立的 request 上下文（教师会话 + 建学生），不污染被测 jar
     await teacherApiLogin(request);
     const loginName = `双开学生${uniqueSuffix()}`;

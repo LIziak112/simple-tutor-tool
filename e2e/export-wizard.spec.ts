@@ -35,12 +35,12 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("导出向导全流程（T4.7：五步走到下载）", () => {
-  test("五步向导 → 预览清单 → 下载 zip（文件名与魔数）", async ({
-    page,
-    request,
-    browser,
-  }) => {
+test.describe("导出向导全流程（T4.7：五步走到下载）", {
+  tag: ["@export"],
+}, () => {
+  test("五步向导 → 预览清单 → 下载 zip（文件名与魔数）", {
+    tag: ["@export"],
+  }, async ({ page, request, browser }) => {
     test.setTimeout(180_000);
 
     // —— 造数（教师 API）——

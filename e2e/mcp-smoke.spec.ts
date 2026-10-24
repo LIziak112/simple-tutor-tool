@@ -93,10 +93,12 @@ async function setupDedicatedTeacher(
   await teacherLoginViaApi(request, loginName, TEACHER_PASSWORD);
 }
 
-test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", () => {
-  test("教师 token 经 /mcp 完成 initialize → 13 工具清单 → list_students 见本域学生", async ({
-    request,
-  }) => {
+test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", {
+  tag: ["@mcp"],
+}, () => {
+  test("教师 token 经 /mcp 完成 initialize → 13 工具清单 → list_students 见本域学生", {
+    tag: ["@mcp"],
+  }, async ({ request }) => {
     test.setTimeout(60_000);
 
     // 专属教师域（token 域隔离，见 setupDedicatedTeacher 注释）
@@ -159,9 +161,9 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
     expect(text).toContain(studentName);
   });
 
-  test("get_student_learning_pack v2（T6R.16）：packVersion=2 + evidence/evidencePhases 覆盖 → pack.json 为 v2 证据装配骨架", async ({
-    request,
-  }) => {
+  test("get_student_learning_pack v2（T6R.16）：packVersion=2 + evidence/evidencePhases 覆盖 → pack.json 为 v2 证据装配骨架", {
+    tag: ["@mcp"],
+  }, async ({ request }) => {
     test.setTimeout(60_000);
 
     // 教师生成 token + 造一名学生（本用例只验链路与结构键，不造作答数据——

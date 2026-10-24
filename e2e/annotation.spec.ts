@@ -78,11 +78,10 @@ function tooTallPracticeMarkdown(unitName: string): string {
   return lines.join("\n");
 }
 
-test.describe("题干标注（T6R.20）", () => {
-  test("无底图：超高题显式禁用文案；mock 装配 500 同禁用（草稿照用）", async ({
-    request,
-    browser,
-  }) => {
+test.describe("题干标注（T6R.20）", { tag: ["@annotation"] }, () => {
+  test("无底图：超高题显式禁用文案；mock 装配 500 同禁用（草稿照用）", {
+    tag: ["@annotation"],
+  }, async ({ request, browser }) => {
     test.setTimeout(240_000);
 
     await teacherApiLogin(request);
@@ -140,10 +139,9 @@ test.describe("题干标注（T6R.20）", () => {
     }
   });
 
-  test("mock 装配载荷投影失败（500 EXPORT_ASSEMBLY_BROKEN）→ 入口禁用文案", async ({
-    request,
-    browser,
-  }) => {
+  test("mock 装配载荷投影失败（500 EXPORT_ASSEMBLY_BROKEN）→ 入口禁用文案", {
+    tag: ["@annotation"],
+  }, async ({ request, browser }) => {
     test.setTimeout(180_000);
 
     await teacherApiLogin(request);

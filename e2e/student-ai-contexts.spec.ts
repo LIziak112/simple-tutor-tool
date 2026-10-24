@@ -166,14 +166,13 @@ async function connectInapp(
   expect(res.status()).toBe(201);
 }
 
-test.describe("SAI-33 四来源与结果页共存", () => {
+test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
   // 组内顺序运行；供应商状态按用例凭据隔离，跨文件可并行。
   test.describe.configure({ mode: "serial" });
 
-  test("课程练习与错题重练：作答中求助出站含答案，完成后复盘可用", async ({
-    browser,
-    request,
-  }) => {
+  test("课程练习与错题重练：作答中求助出站含答案，完成后复盘可用", {
+    tag: ["@ai"],
+  }, async ({ browser, request }) => {
     test.setTimeout(300_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -304,10 +303,9 @@ test.describe("SAI-33 四来源与结果页共存", () => {
     }
   });
 
-  test("讲练逐题：作答中可求助，显示答案后题级释放且未提交题零泄露", async ({
-    browser,
-    request,
-  }) => {
+  test("讲练逐题：作答中可求助，显示答案后题级释放且未提交题零泄露", {
+    tag: ["@ai"],
+  }, async ({ browser, request }) => {
     test.setTimeout(300_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
@@ -424,10 +422,9 @@ test.describe("SAI-33 四来源与结果页共存", () => {
     }
   });
 
-  test("结果页共存：AI 复盘与圈画/草稿/保存保护/详解/原稿/订正/历史互不干扰", async ({
-    browser,
-    request,
-  }) => {
+  test("结果页共存：AI 复盘与圈画/草稿/保存保护/详解/原稿/订正/历史互不干扰", {
+    tag: ["@ai"],
+  }, async ({ browser, request }) => {
     test.setTimeout(300_000);
     const suffix = uniqueSuffix();
     const control = fakeAiControl(request);
