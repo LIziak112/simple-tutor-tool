@@ -106,6 +106,32 @@ describe("材料实体抽取（第一遍）", () => {
     expect(slots.every((s, i) => s.order === i)).toBe(true);
   });
 
+  it("材料内槽位 id 重复：MATERIAL_DUPLICATE_ID（tt-06b P2-1——显式与缺省同域查重）", () => {
+    const { materials, issues } = parse(
+      [
+        HEADING,
+        "",
+        "::::material{id=mat-1}",
+        "无号 {{}} 后显式 {{slot-1}} 撞名；再显式 {{slot-2}} 与 {{slot-2}} 重名。",
+        "::::",
+        "",
+      ].join("\n"),
+    );
+    const codes = issues.filter((i) => i.code === "MATERIAL_DUPLICATE_ID");
+    // 缺省 slot-1 与显式 slot-1 撞名 1 条 + 显式 slot-2 重复 1 条
+    expect(codes).toHaveLength(2);
+    expect(codes.every((i) => i.level === "error")).toBe(true);
+    expect(codes[0]?.message).toContain("slot-1");
+    expect(codes[1]?.message).toContain("slot-2");
+    // 槽位照常产出（宽松解析：实体产出、error 阻断交导入层）
+    expect(materials[0]?.slots.map((s) => s.id)).toEqual([
+      "slot-1",
+      "slot-1",
+      "slot-2",
+      "slot-2",
+    ]);
+  });
+
   it("媒体引用：材料内 ::image src 收集进 mediaPaths（去重、保序）", () => {
     const { materials } = parse(
       [

@@ -29,6 +29,13 @@ export {
   simplifySizedMathDelimiters,
   sizedMathDelimiters,
 } from "./v2/math-delimiters.ts";
+// 导入规范化回写（tt-06b / QM-05，§5.2.3）：缺省 id 生成后写回源文——
+// 导入层（content-service）在 lint/落库前调用；编辑器/导出不追加改写。
+export type {
+  NormalizedQmIds,
+  NormalizeQmIdsOptions,
+} from "./v2/normalize-ids.ts";
+export { normalizeQmIds } from "./v2/normalize-ids.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
 // 题干形态变换唯一公开面：学生端 payload 用 studentStemMd（脱敏 + 剥选项），

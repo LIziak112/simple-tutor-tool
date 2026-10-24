@@ -286,6 +286,7 @@ function extractQuestion(
       if (answerText !== undefined) {
         answers = parseOrderingAnswer(answerText, {
           itemIds: itemNodes.map((item) => item),
+          questionId: id,
           line: startLine,
           issues,
         });
@@ -646,14 +647,21 @@ function parseOrderingAnswer(
   answerText: string,
   ctx: {
     readonly itemIds: readonly ContainerDirective[];
+    readonly questionId: string;
     readonly line: number;
     readonly issues: LintIssue[];
   },
 ): QuestionAnswers | undefined {
+  // declared 含缺省 id（tt-06b P2-3 对称化：与 matching 的缺省 opt-{qid}-{n}
+  // 同口径——先按抽取序生成缺省 item id，再校验参考行，参考可直接引用缺省 id）
   const declared = new Set<string>();
-  for (const item of ctx.itemIds) {
-    const id = item.attributes?.id?.trim();
-    if (id !== undefined && id.length > 0) declared.add(id);
+  for (const [index, item] of ctx.itemIds.entries()) {
+    const explicit = item.attributes?.id?.trim();
+    declared.add(
+      explicit !== undefined && explicit.length > 0
+        ? explicit
+        : defaultItemIdOf(ctx.questionId, index + 1),
+    );
   }
   const sequence: string[] = [];
   let broken = false;

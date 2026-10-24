@@ -254,7 +254,7 @@ function extractMaterial(
   }
 
   // 槽位与媒体：材料子树文本节点 / ::image
-  const slots = collectSlots(node, lines);
+  const slots = collectSlots(node, lines, issues);
   const mediaPaths = collectMediaPaths(node);
   lintMaterialAnswers(node, lines, issues);
 
@@ -405,8 +405,11 @@ function firstAttr(node: ContainerDirective, key: string): string | undefined {
 function collectSlots(
   node: ContainerDirective,
   _lines: readonly string[],
+  issues: LintIssue[],
 ): MaterialSlot[] {
   const slots: MaterialSlot[] = [];
+  // 槽位 id 同域查重（tt-06b P2-1 补齐）：id → 首次出现行（缺省号与显式 id 互相撞名同报）
+  const seenSlotIds = new Map<string, number>();
   visit(node, (current) => {
     if (
       current.type === "math" ||
@@ -418,11 +421,26 @@ function collectSlots(
     }
     if (current.type === "text") {
       const text = current as Text;
+      const line = text.position?.start.line ?? 1;
       for (const match of text.value.matchAll(SLOT_MARKER_RE)) {
         const explicit = (match[1] ?? "").trim();
+        const id =
+          explicit.length > 0 ? explicit : defaultSlotIdOf(slots.length + 1);
+        const firstSeen = seenSlotIds.get(id);
+        if (firstSeen === undefined) seenSlotIds.set(id, line);
+        else {
+          issues.push(
+            makeIssue(
+              "error",
+              line,
+              1,
+              "MATERIAL_DUPLICATE_ID",
+              `槽位 id「${id}」（第 ${line} 行）与本材料第 ${firstSeen} 行的槽位重复：同一材料内槽位 id 必须唯一（slot=/slots= 引用与绑定按 id 解析）`,
+            ),
+          );
+        }
         slots.push({
-          id:
-            explicit.length > 0 ? explicit : defaultSlotIdOf(slots.length + 1),
+          id,
           // 槽位种类由第二遍引用绑定推导（§5.7.3：choice=完形空位、match=配对槽），
           // 此处先落 text 占位；未绑定槽位由 SLOT_UNBOUND 报错，kind 不再细分
           slotKind: "text" as SlotKind,
