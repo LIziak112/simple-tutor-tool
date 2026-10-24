@@ -2,7 +2,7 @@ import type { PracticeQuestionFeedback } from "@tutor/contract";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 // 轻量呈现件走 AttemptResultParts：本组件挂在草稿视图题卡上，不得静态
 // 引入懒加载的结果回看重模块（T6R.15 F「草稿入口不提前加载结果回看模块」）
-import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
+import { VerdictBadge } from "./AttemptResultParts";
 import {
   PENDING_ATTEMPT_FEEDBACK_COPY,
   practiceFeedbackRestrictedCopy,
@@ -77,7 +77,6 @@ export function QuestionFeedback({
           反馈按老师当前设置公布，如与讲解不一致以老师为准。
         </span>
       </div>
-      <ResultOptions question={question} released />
       <ResultAnswerComparison question={question} released />
       <SelfReviewSection attemptId={attemptId} question={question} />
       {question.solutionMd !== null ? (

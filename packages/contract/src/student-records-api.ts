@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+import { verdictSourceSchema } from "./self-review.ts";
 import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
 
 /**
@@ -17,8 +18,8 @@ import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
  * 约定（与 student-course-api.ts / attempt.ts 一致）：
  * - 本文件只定义查询参数与 data 部分；响应壳 { ok, data } 由 index.ts 统一描述，
  *   此处仅用局部 helper 具体化成功壳（避免循环依赖）；
- * - 时间一律 UTC ISO 字符串（带 Z 后缀；from/to 与列表排序同一「最近活动时间」
- *   轴：submittedAt ?? startedAt，D6/D10 同口径）；
+ * - 时间一律 UTC ISO 字符串（带 Z 后缀；from/to 固定使用「最近有效作答」
+ *   轴：lastActivityAt / submittedAt / startedAt 的最大值）；
  * - 来源上下文复用教师端的 teacherAttemptSourceSchema（同一概念同一份定义，
  *   AGENTS 第 1 条）：assignment=assignmentTitle（+可选 courseName）、
  *   course=unitTitle + courseName + attemptNo（前端拼「单元标题 · 第 n 次」）；
@@ -45,11 +46,20 @@ export const STUDENT_RECORDS_PAGE_MAX = 200;
  *   作业所属课程，course 来源即练习课程）、作业过滤；
  * - status：作答状态（draft=进行中；失权草稿不出现在任何筛选结果中）；
  * - from / to：时间范围（UTC ISO，带 Z 后缀）——按「最近活动时间」
- *   （submittedAt ?? startedAt）过滤，与排序同一时间轴；
+ *   （lastActivityAt / submittedAt / startedAt 的最大值）过滤，切换开始排序不改变筛选含义；
  * - limit / offset：分页（limit 默认 50、1–200；offset 默认 0）。
  * 查询参数为字符串，数值字段用 coerce 解析（"50" → 50）。
  */
+export const studentRecordsSortSchema = z.enum([
+  "activity_desc",
+  "started_desc",
+  "started_asc",
+]);
+export type StudentRecordsSort = z.infer<typeof studentRecordsSortSchema>;
+
+/** 排序先于分页，缺省最近作答；旧查询兼容。 */
 export const studentRecordsQuerySchema = z.object({
+  sort: studentRecordsSortSchema.default("activity_desc"),
   sourceType: attemptSourceSchema.optional(),
   courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
   assignmentId: z.uuid("assignmentId 必须是 UUID 格式").optional(),
@@ -70,7 +80,7 @@ export const studentRecordsQuerySchema = z.object({
 });
 
 /**
- * 记录索引行（本人每一次作答一条；按最近活动时间倒序）：
+ * 记录索引行（本人每一次作答一条；默认按最近有效作答倒序）：
  * - 得分 score：scoreFinal ?? scoreAuto（D2 展示口径）；draft 或无可判分为 null；
  * - after_due 未公布（answersReleased=false）：score 与 pendingCount 置 null
  *   （前端显示「待公布」，D10）；draft 行恒 answersReleased=true（无结果可公布，
@@ -81,6 +91,9 @@ export const studentRecordsQuerySchema = z.object({
  *   进行中草稿不出现在索引中（可见性口径见服务端 student-records）。
  */
 export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
+  /** 最近有效作答确认时间；旧客户端兼容缺省时回退交卷/开始时间。 */
+  lastActivityAt: z.iso.datetime().optional(),
+  pendingSelfReviewCount: z.number().int().min(0).nullable().optional(),
   /** attempts.id（点击进入 /s/attempts/:attemptId） */
   attemptId: z.uuid(),
   status: attemptStatusSchema,
@@ -105,7 +118,7 @@ export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
   practiceQuestionCount: z.number().int().min(0).optional(),
 });
 
-/** GET /api/student/records 响应 data（按最近活动时间倒序；total 为筛选后总条数） */
+/** GET /api/student/records 响应 data（按请求顺序；total 为筛选后总条数） */
 export const studentRecordsDataSchema = z.object({
   records: z.array(studentRecordRowSchema),
   /** 筛选后的总条数（分页前；失权草稿不计入；offset 越界时 records 为空但 total 照常） */
@@ -138,6 +151,8 @@ export const wrongQuestionsQuerySchema = z.object({
  * 与前端 records-views.recordTitleOf 同口径），无教师侧敏感键。
  */
 export const wrongQuestionRoundSchema = z.object({
+  /** 历史轮次缺省未记录来源，不能冒充客观判断。 */
+  reviewSource: verdictSourceSchema.optional(),
   /** 该轮作答 id（attempts.id） */
   attemptId: z.uuid(),
   /** 该轮作答来源 */

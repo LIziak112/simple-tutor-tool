@@ -1092,6 +1092,11 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
       revisions.get(S.choice) ?? "",
     );
 
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.lastActivityAt,
+    ).toBe(responseRowOf(env.db, attemptId, S.choice).submittedAt);
+
     // 当题结果：判对 + 参考答案释放 + 学生端题干投影
     expect(body.data.question).toMatchObject({
       questionId: S.choice,
@@ -1230,7 +1235,7 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
       correct: 0,
       wrong: 0,
       pending: 1,
-      pendingCount: 1, // D4 finalCorrect 口径：待批
+      pendingCount: 0,
       unanswered: 3,
     });
     expect(responseRowOf(env.db, attemptId, S.fill)).toMatchObject({
@@ -1676,7 +1681,7 @@ describe("最后一题单题提交自动收尾（Review Focus 3：与「完成�
       correct: 2,
       wrong: 1,
       pending: 1,
-      pendingCount: 1,
+      pendingCount: 0,
       scoreFinal: null,
     });
     expect(questionSubmitEventsOf(env.db, attemptId)).toBe(4);
@@ -2112,7 +2117,7 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
     ).data.marks;
     expect(beforeMarks.filter((m) => m.attemptId === attemptId)).toEqual([]);
 
-    // 单题提交 fill（恒人工）→ 立即进队
+    // 有参考答案的 fill 进入待自评，不再强制交给教师；教师仍可主动批改。
     await saveDraftAnswer(env, attemptId, S.fill, {
       kind: "fill",
       values: ["2"],
@@ -2136,16 +2141,11 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
         };
       }
     ).data.marks.filter((m) => m.attemptId === attemptId);
-    expect(marks).toHaveLength(1);
-    expect(marks[0]).toMatchObject({
-      questionId: S.fill,
-      sourceType: "lesson",
-      studentName: "成员张三",
-    });
+    expect(marks).toHaveLength(0);
 
     // 教师课中批改（correct）→ 出队
     const marked = await env.app.request(
-      `/api/teacher/responses/${marks[0]?.responseId}/mark`,
+      `/api/teacher/responses/${revisions.get(S.fill)}/mark`,
       {
         method: "POST",
         headers: {
@@ -2173,6 +2173,109 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
       teacherMark: "correct",
       finalCorrect: true,
     });
+  });
+});
+
+// ==================== 两线收敛（2026-10-25）：v2 讲练自评接线 QM 口径 ====================
+// v2 e0e60af2 的自评实现被 QM 支线取代（决策记录 TT-09c）：请求/响应形状改走
+// selfReviewRequestSchema（verdict 三值）与 selfReview record/revision 投影；
+// 无参考答案行不再设「只能整卷提交」门控（QM 判分框架下逐题提交恒可用，
+// 判定来源枯竭走教师待批）。
+
+describe("讲练自评与无参考答案行（QM 口径）", () => {
+  it("讲练提交后可立即自评（verdict=wrong、CAS 基线、教师未判）；无参考答案行逐题提交不阻塞、走教师待批", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+    const review = await env.app.request(
+      `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(S.fill)}/self-review`,
+      {
+        method: "POST",
+        headers: { cookie: env.memberCookie },
+        body: JSON.stringify({
+          verdict: "wrong",
+          baseRevision: 0,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    expect(review.status).toBe(200);
+    const reviewData = (
+      (await review.json()) as {
+        data: {
+          selfReview: { verdict: string; revision: number } | null;
+          effective: { source: string; value: boolean } | null;
+        };
+      }
+    ).data;
+    expect(reviewData.selfReview).toMatchObject({
+      verdict: "wrong",
+      revision: 1,
+    });
+    expect(reviewData.effective).toEqual({ source: "self", value: false });
+    const reopened = await startOk(env);
+    expect(reopened.data.released[S.fill]).toMatchObject({
+      finalCorrect: null, // 自评不写 finalCorrect（D7 三源分立）
+      selfReview: { record: { verdict: "wrong" }, revision: 1 },
+    });
+    // 无参考答案（快照手术删 answers）：逐题提交不被拒，grade=null 进教师待批
+    const row = env.db
+      .select()
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, S.judge),
+        ),
+      )
+      .get();
+    if (!row) throw new Error("缺少讲练题目冻结行");
+    const snapshot = JSON.parse(row.questionSnapshotJson ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    delete snapshot.answers;
+    snapshot.solutionMd = "仅有解析，没有提供参考答案";
+    env.db
+      .update(responses)
+      .set({ questionSnapshotJson: JSON.stringify(snapshot) })
+      .where(eq(responses.id, row.id))
+      .run();
+    const noAnswer = await submitQuestion(
+      env,
+      attemptId,
+      S.judge,
+      revisions.get(S.judge) ?? "",
+    );
+    expect(noAnswer.status).toBe(200);
+    expect(responseRowOf(env.db, attemptId, S.judge)).toMatchObject({
+      autoCorrect: null,
+      finalCorrect: null,
+    });
+    // 无参考答案行进教师待批队列（D4：非 reference_self 且 finalCorrect null）；
+    // 冻结行 id 即 questionRevisionId，直接由 responses 行取
+    const judgeRowId = env.db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, S.judge),
+        ),
+      )
+      .get()?.id;
+    if (!judgeRowId) throw new Error("缺少 judge 冻结行");
+    const pending = await env.app.request("/api/teacher/pending-marks", {
+      headers: { cookie: env.teacherCookie },
+    });
+    const pendingMarks = (
+      (await pending.json()) as { data: { marks: { responseId: string }[] } }
+    ).data.marks;
+    expect(pendingMarks.some((m) => m.responseId === judgeRowId)).toBe(true);
+    expect(
+      (await submitAttemptRequest(env.app, env.memberCookie, attemptId)).status,
+    ).toBe(200);
+    // 收尾后自评事实保留（finalCorrect 仍 null——自评不推动 graded）
+    expect(responseRowOf(env.db, attemptId, S.fill).finalCorrect).toBe(null);
   });
 });
 
@@ -2214,7 +2317,7 @@ describe("我的记录收录 lesson 来源（恒可回看 + 讲练标题 + 教�
       unitTitle: "第2讲 单题提交", // 标题=讲义标题（记录聚合口径）
       attemptNo: 1,
       status: "draft",
-      pendingCount: 1, // 已提交待批行（D4 扩展谓词：draft + 行 submittedAt 非空）
+      pendingCount: 0, // 有参考答案的题待学生自评，不能计入教师必批。
       answersReleased: true, // lesson 恒公布（不适用 after_due）
     });
 
@@ -2253,7 +2356,7 @@ describe("我的记录收录 lesson 来源（恒可回看 + 讲练标题 + 教�
       sourceType: "lesson",
       unitTitle: "第2讲 单题提交",
       assignmentId: null,
-      pendingCount: 1,
+      pendingCount: 0,
     });
 
     // 移出课程（D7）：lesson 不失权——草稿照常列出（对照 wrong 口径）
@@ -2491,7 +2594,9 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
     const pendingBefore = await env.app.request("/api/teacher/pending-marks", {
       headers: { cookie: env.teacherCookie },
     });
-    expect(JSON.stringify(await pendingBefore.json())).toContain("成员张三");
+    expect(JSON.stringify(await pendingBefore.json())).not.toContain(
+      "成员张三",
+    );
     const recordsBefore = await env.app.request("/api/student/records", {
       headers: { cookie: env.memberCookie },
     });

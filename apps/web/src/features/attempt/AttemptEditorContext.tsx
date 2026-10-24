@@ -9,6 +9,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { Button } from "@/components/ui/button";
+import { localPersistenceErrorMessage } from "@/lib/local-persistence-error";
 
 export type AttemptEditor = {
   questionId: string;
@@ -42,6 +44,36 @@ interface EditorStore extends Omit<EditorContextValue, "active" | "paper"> {
   subscribe(listener: () => void): () => void;
 }
 const Context = createContext<EditorStore | null>(null);
+const NoticeContext = createContext<{
+  message: string | null;
+  retrying: boolean;
+  retry(): Promise<void>;
+} | null>(null);
+
+/** 放进标题的正常布局，随标题一同测量，不能另设悬浮层遮住题目。 */
+export function AttemptEditorNotice() {
+  const notice = useContext(NoticeContext);
+  if (!notice?.message) return null;
+  return (
+    <div
+      role="alert"
+      className="col-span-full flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-card px-3 py-2 text-sm text-destructive"
+    >
+      <span className="min-w-0 flex-1 break-words">
+        上次操作未完成：{notice.message}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11"
+        disabled={notice.retrying}
+        onClick={() => void notice.retry()}
+      >
+        {notice.retrying ? "正在重试…" : "重试操作"}
+      </Button>
+    </div>
+  );
+}
 const noSubscribe = () => () => {};
 /** undefined订阅全局，题号只订阅本题，null只取稳定操作而不订阅模式。 */
 export function useAttemptEditor(
@@ -95,6 +127,13 @@ export function useAttemptEditor(
 /** 切换等待原编辑者收笔与本机落盘；失败不卸载原稿。 */
 export function AttemptEditorProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const retryLock = useRef(false);
+  const failedOperation = useRef<{
+    kind: "active" | "paper";
+    next: AttemptEditor | null;
+    prepare?: (signal: AbortSignal) => Promise<boolean>;
+  } | null>(null);
   const activeRef = useRef<AttemptEditor | null>(null);
   // 纸面展开与标画模式独立；同题两个区域可直接落笔。
   const paperRef = useRef<AttemptEditor | null>(null);
@@ -120,8 +159,11 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         !paperRef.current &&
         previous?.questionId === next?.questionId &&
         previous?.kind === next?.kind
-      )
+      ) {
+        failedOperation.current = null;
+        setError(null);
         return true;
+      }
       try {
         if (previous)
           await controllers.current.get(
@@ -144,13 +186,18 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         if (next && paper?.questionId !== next.questionId)
           paperRef.current = null;
         publish(next);
+        failedOperation.current = null;
         setError(null);
         return true;
       } catch (cause) {
-        if (generation === sequence.current)
-          setError(
-            cause instanceof Error ? cause.message : "本机稿未保存，请重试",
-          );
+        if (generation === sequence.current) {
+          failedOperation.current = {
+            kind: "active",
+            next,
+            ...(prepare ? { prepare } : {}),
+          };
+          setError(localPersistenceErrorMessage(cause));
+        }
         return false;
       }
     },
@@ -176,13 +223,14 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         if (generation !== sequence.current) return false;
         paperRef.current = next;
         publish(closeActive ? null : active);
+        failedOperation.current = null;
         setError(null);
         return true;
       } catch (cause) {
-        if (generation === sequence.current)
-          setError(
-            cause instanceof Error ? cause.message : "本机稿未保存，请重试",
-          );
+        if (generation === sequence.current) {
+          failedOperation.current = { kind: "paper", next };
+          setError(localPersistenceErrorMessage(cause));
+        }
         return false;
       }
     },
@@ -203,6 +251,19 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+  const retry = useCallback(async () => {
+    const operation = failedOperation.current;
+    if (!operation || retryLock.current) return;
+    retryLock.current = true;
+    setRetrying(true);
+    try {
+      if (operation.kind === "paper") await requestPaper(operation.next);
+      else await request(operation.next, operation.prepare);
+    } finally {
+      retryLock.current = false;
+      setRetrying(false);
+    }
+  }, [request, requestPaper]);
   // 固定顺序收笔（标画 → 草稿 → 正式手写）；只碰本题注册的控制器。
   const flush = useCallback(
     async (questionId: string, kinds?: readonly AttemptEditor["kind"][]) => {
@@ -253,15 +314,9 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
   );
   return (
     <Context.Provider value={value}>
-      {error && (
-        <div
-          role="alert"
-          className="sticky top-[var(--attempt-header-height,64px)] z-40 border-b border-destructive bg-card px-3 py-2 text-sm text-destructive"
-        >
-          {error}
-        </div>
-      )}
-      {children}
+      <NoticeContext.Provider value={{ message: error, retrying, retry }}>
+        {children}
+      </NoticeContext.Provider>
     </Context.Provider>
   );
 }

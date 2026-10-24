@@ -28,6 +28,8 @@ export * from "./backup-api.ts";
 export * from "./capability.ts";
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content.ts";
+/** 非加密内容签名（v2 圈画跨设备续写）：FNV-1a 八轮，浏览器与服务端共用 */
+export * from "./content-signature.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
 export * from "./content-api.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */

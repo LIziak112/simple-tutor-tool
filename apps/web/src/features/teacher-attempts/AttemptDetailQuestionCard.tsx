@@ -405,8 +405,19 @@ export function AttemptDetailQuestionCard({
         <span>改答 {question.changeCount} 次</span>
       </p>
 
-      {/* SAI-24 教师督学标签（B13）：旁置呈现 AI 求助事实——只消费服务端
-          事实记录，不改写对错/待批/分数/评语原值；记录抽屉按题过滤本卷任务 */}
+      {/* 两线收敛接线（v2 错题闭环旁注）：教师侧自评提示改走 QM record 形状
+          （verdict 三值 + 教师优先语义；判定区 VerdictSection 另有完整行展示） */}
+      {question.teacherMark === null && question.selfReview?.verdict ? (
+        <p className="text-sm text-muted-foreground">
+          学生自评：{question.selfReview.verdict === "correct" ? "正确" : "错误"}
+          （无需再次确认，可由教师改判）
+        </p>
+      ) : null}
+      {question.teacherMark === null &&
+        (question.gradingPolicy ?? null) === "reference_self" &&
+        question.selfReview === null && (
+          <p className="text-sm text-muted-foreground">待学生对照参考答案自评</p>
+        )}
       <AiHelpQuestionSection
         attemptId={attemptId}
         questionId={question.questionId}

@@ -60,6 +60,7 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
+import { touchAttemptActivity } from "./attempt-activity";
 import {
   answersReleased,
   assignmentReleaseByIds,
@@ -72,6 +73,7 @@ import {
 } from "./attempt-service";
 import { collectBackupReferencedPaths } from "./backup-service";
 import { gcInkFiles } from "./ink-gc";
+import { createQuestionReviewReader } from "./review-access.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import {
@@ -636,6 +638,15 @@ export function saveNoteVersion(
           "草稿头指针切换未命中（并发写竞争，本次写入已回滚）",
         );
       }
+      const previousHash = existing?.currentVersionId
+        ? tx
+            .select({ hash: noteVersions.hash })
+            .from(noteVersions)
+            .where(eq(noteVersions.id, existing.currentVersionId))
+            .get()?.hash
+        : undefined;
+      if (phase === "scratch" && previousHash !== hash)
+        touchAttemptActivity(tx, attemptId, now);
     });
   } catch (err) {
     // 8. 失败清理与跨进程兜底（better-sqlite3 同步单进程下兜底分支不可达，
@@ -1328,7 +1339,12 @@ export function getStudentQuestionNotebook(
         eq(responses.questionId, questionId),
       ),
     )
-    .where(and(eq(attempts.studentId, studentId), ne(attempts.status, "draft")))
+    .where(
+      and(
+        eq(attempts.studentId, studentId),
+        or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
+      ),
+    )
     .orderBy(asc(attempts.submittedAt), asc(attempts.id))
     .all();
   if (rows.length === 0) {
@@ -1347,7 +1363,12 @@ export function getStudentQuestionNotebook(
         .filter((id): id is string => id !== null),
     ),
   ]);
-  const rounds: NotebookRound[] = rows.map((row, index) => {
+  const readable = createQuestionReviewReader(db, new Date());
+  const visibleRows = rows.filter(
+    (row) =>
+      row.attempt.status !== "draft" || readable(row.attempt, row.response),
+  );
+  const rounds: NotebookRound[] = visibleRows.map((row, index) => {
     const source = sourceOf(db, row.attempt, teacherId ?? "");
     // 公布 gate（模块头安全口径；answersReleased 读时比较，无定时任务）：
     // - assignment：按作业配置（on_submit 交卷即公布 / after_due 到截止；
@@ -1360,11 +1381,13 @@ export function getStudentQuestionNotebook(
         ? assignmentRelease.get(row.attempt.assignmentId)
         : undefined;
     const isReleased =
-      source.sourceType === "assignment"
-        ? assignment !== undefined && answersReleased(assignment)
-        : source.sourceType === "lesson"
-          ? lessonQuestionSubmitted(row.response)
-          : true;
+      row.attempt.status === "draft"
+        ? readable(row.attempt, row.response)
+        : source.sourceType === "assignment"
+          ? assignment !== undefined && answersReleased(assignment)
+          : source.sourceType === "lesson"
+            ? lessonQuestionSubmitted(row.response)
+            : true;
     // 快照投影（题面与解析同源）：question 走 publicOfSnapshot 脱敏白名单，
     // release 经 releaseOfSnapshot 单一投影（gate 放行且快照可用才构造）
     const snapshot = snapshotOfRow(row.response);

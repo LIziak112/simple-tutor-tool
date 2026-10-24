@@ -16,6 +16,7 @@ import {
 import {
   gradingPolicySchema,
   selfReviewRecordSchema,
+  verdictSourceSchema,
 } from "./self-review.ts";
 
 /**
@@ -429,6 +430,8 @@ export const learningPackResponseSchema = z.object({
   /** 最终判定（教师权威线 teacherMark ?? autoCorrect；null=未判）。QM-12 起展示
    *  口径的有效判定 = 教师判 > 自评 > 自动，来源见 selfReview/gradingPolicy 两键 */
   finalCorrect: z.boolean().nullable(),
+  /** 判定来源（v2 两线收敛：v2 错题闭环的来源标注接线 QM 有效判定口径） */
+  reviewSource: verdictSourceSchema.optional(),
   teacherMark: z.enum(["correct", "wrong"]).nullable(),
   /** 教师评语原文（不改动；未评为 null） */
   teacherComment: z.string().nullable(),

@@ -420,6 +420,9 @@ export function WrongQuestionItem({
 }) {
   return (
     <article className="flex flex-col gap-4 rounded-2xl border border-primary/30 bg-card p-4 text-card-foreground shadow-xs sm:p-5">
+      {question.rounds.at(-1)?.reviewSource === "self" && (
+        <p className="text-xs text-muted-foreground">最近判定来自学生自评</p>
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <FirstCorrectMark firstCorrect={question.firstCorrect} />
         <span

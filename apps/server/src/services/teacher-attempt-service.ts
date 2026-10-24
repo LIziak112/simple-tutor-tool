@@ -448,7 +448,7 @@ function detailItemOf(
  *   兜底组不丢弃——修正旧 inner join 直接丢行的行为）；
  * - 手写信息：ink 表 (attemptId, questionId) 关联（draft 也可能有笔迹无行）；
  * - 全卷连续题号：attempt 单元顺序 × 题目顺序，1 起；
- * - 计数：effectiveCorrect（finalCorrect ?? autoCorrect）口径；draft 全 0。
+ * - 计数：有效判定口径（教师判 > 自评 > 自动）；draft 全 0。
  */
 export function getTeacherAttemptDetail(
   db: Db,

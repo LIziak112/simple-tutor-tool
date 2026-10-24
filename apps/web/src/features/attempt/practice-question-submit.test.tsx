@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   AttemptDraftData,
   AttemptResultData,
@@ -7,16 +13,31 @@ import type {
   PracticeQuestionSubmitData,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  installAnnotationBackend,
+  memoryAnnotationBackend,
+} from "@/features/annotation/annotation-store";
+import {
+  bindAnnotationSession,
+  resetAnnotationSession,
+} from "@/features/annotation/annotation-sync";
+import {
+  installNoteBackend,
+  memoryNoteBackend,
+} from "@/features/notes/note-store";
+import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import {
   ApiError,
   fetchAttemptApi,
   fetchPracticeQuestionFeedbackApi,
   fetchStudentNoteHeadsApi,
   saveAttemptAnswerApi,
+  submitAttemptApi,
   submitPracticeQuestionApi,
 } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
+import { getAttemptRecoveryState } from "./attempt-material-recovery";
 import { installDraftBackend, memoryBackend } from "./draft-store";
 import {
   bindPracticePreferenceAccount,
@@ -55,6 +76,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     sealCorrectionApi: vi.fn(),
     fetchStudentNotebookApi: vi.fn(),
     fetchStudentNoteHeadsApi: vi.fn(),
+    submitAttemptApi: vi.fn(),
+    sealAttemptAnnotationsApi: vi.fn(async () => undefined),
+    postAttemptEventsApi: vi.fn(async () => ({ accepted: 1 })),
   };
 });
 const mockedFetch = vi.mocked(fetchAttemptApi);
@@ -217,13 +241,12 @@ const resultDataOf = (): AttemptResultData => ({
   enabledCapabilities: ["steps", "ink"],
 });
 
-function renderPage(search = "") {
+function renderPage(
+  search = "",
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/s/attempts/${ATTEMPT_ID}${search}`]}>
         <Routes>
           <Route
@@ -245,7 +268,7 @@ async function renderSingle(draft: AttemptDraftData, search = "") {
   });
   mockedFetch.mockResolvedValue(draft);
   const view = renderPage(search);
-  await view.findByText(/做题方式：单题 · 每题提交后查看/);
+  await view.findByText(/第 \d+ \/ 3 题 · 已提交 \d+ 题/);
   return view;
 }
 
@@ -258,6 +281,7 @@ beforeEach(() => {
   mockedFetch.mockReset();
   mockedSubmit.mockReset();
   mockedFeedbackGet.mockReset();
+  vi.mocked(submitAttemptApi).mockReset();
   mockedSubmit.mockResolvedValue(submitReceipt({}));
   mockedFeedbackGet.mockResolvedValue({
     feedback: { status: "not_submitted" },
@@ -283,6 +307,64 @@ beforeEach(() => {
 });
 
 // ---------- 单题模式：提交闭环 ----------
+
+afterEach(() => {
+  resetNoteSession();
+  resetAnnotationSession();
+});
+
+it.each(["list", "single"] as const)(
+  "%s：本页逐题提交后交卷，版本校验覆盖全卷，证据仅覆盖剩余题并进入结果",
+  async (layout) => {
+    installNoteBackend(memoryNoteBackend());
+    installAnnotationBackend(memoryAnnotationBackend());
+    const session = { origin: "https://page.test", studentId: "submit-test" };
+    bindNoteSession(session);
+    bindAnnotationSession(session);
+    savePracticePreference({ layout, keyboardShortcuts: true, feedback: null });
+    mockedFetch.mockResolvedValue(baseDraft());
+    renderPage();
+    await screen.findByRole("button", { name: "第 1 题更多" });
+    await waitFor(() =>
+      expect(getAttemptRecoveryState(ATTEMPT_ID).state).toBe("ready"),
+    );
+    // 使用本页提交回执推进进度，防止只消费初次取卷的过期进度。
+    const answer = screen.getAllByRole("radio", { name: "对" })[0];
+    if (!answer) throw new Error("缺少首题作答入口");
+    fireEvent.click(answer);
+    const submitButton = (
+      await screen.findAllByRole("button", { name: "提交本题" })
+    )[0];
+    if (!submitButton) throw new Error("缺少首题提交入口");
+    fireEvent.click(submitButton);
+    await screen.findByText("回答正确");
+    vi.mocked(submitAttemptApi).mockImplementation(async () => {
+      const result = resultDataOf();
+      mockedFetch.mockResolvedValue(result);
+      return result;
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: layout === "single" ? "提前交卷" : "交卷",
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "确认交卷" }));
+    await waitFor(() => expect(submitAttemptApi).toHaveBeenCalledOnce());
+    expect(vi.mocked(submitAttemptApi).mock.calls[0]).toEqual([
+      ATTEMPT_ID,
+      [
+        { questionId: "q1", questionRevisionId: "rev-q1" },
+        { questionId: "q2", questionRevisionId: "rev-q2" },
+        { questionId: "q3", questionRevisionId: "rev-q3" },
+      ],
+      [
+        { questionId: "q2", state: "none" },
+        { questionId: "q3", state: "none" },
+      ],
+    ]);
+    await screen.findByText("批改结果");
+  },
+);
 
 it("提交本题：请求体五字段齐备，回执反馈原位呈现且该题切只读", async () => {
   const { container } = await renderSingle(baseDraft());
@@ -323,7 +405,7 @@ it("提交本题：请求体五字段齐备，回执反馈原位呈现且该题�
   expect(
     screen.getByRole("button", { name: "第 1 题，已提交" }),
   ).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
 });
 
 it("expectedAnswerRevision 取自本机草稿版本（draftRevisions 播种）", async () => {
@@ -338,9 +420,9 @@ it("expectedAnswerRevision 取自本机草稿版本（draftRevisions 播种）",
   expect(mockedSubmit.mock.calls[0]?.[2]?.expectedAnswerRevision).toBe(4);
 });
 
-it("未作答：提交本题禁用，「不会，提交并看解析」发空答案提交", async () => {
+it("未作答：仅「不会，提交并看解析」发空答案提交", async () => {
   await renderSingle(baseDraft());
-  expect(screen.getByRole("button", { name: "提交本题" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "不会，提交并看解析" }));
   await screen.findByText("回答正确");
   expect(mockedSubmit.mock.calls[0]?.[1]).toBe("q1");
@@ -424,10 +506,140 @@ it("最后一题收尾：不自动重发详情查询，主动作换查看本次�
   expect(
     screen.getByRole("button", { name: "查看本次结果" }),
   ).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "下一题" })).toBeNull();
+});
+
+it("末题提交失败后恢复详情读取，不把作答永久暂停", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
+  mockedFetch.mockResolvedValue(
+    baseDraft({
+      questionProgress: progressOf([
+        { id: "q1", submitted: true, readable: true },
+        { id: "q2", submitted: true, readable: true },
+        { id: "q3" },
+      ]),
+    }),
+  );
+  mockedSubmit.mockRejectedValue(new Error("末题网络异常"));
+  renderPage("", client);
+  await screen.findByText("第 3 / 3 题 · 已提交 2 题");
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await screen.findByText("末题网络异常");
+  const calls = mockedFetch.mock.calls.length;
+  await act(async () => {
+    await client.invalidateQueries({
+      queryKey: ["student", "attempt", ATTEMPT_ID],
+    });
+  });
+  expect(mockedFetch.mock.calls.length).toBeGreaterThan(calls);
+});
+
+it("末题提交回执迟到时，期间详情重取也不能提前切到结果", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const draft = baseDraft({
+    questionProgress: progressOf([
+      { id: "q1", submitted: true, readable: true },
+      { id: "q2", submitted: true, readable: true },
+      { id: "q3" },
+    ]),
+  });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
+  mockedFetch.mockResolvedValueOnce(draft).mockResolvedValue(resultDataOf());
+  let complete: ((data: PracticeQuestionSubmitData) => void) | undefined;
+  mockedSubmit.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  );
+  renderPage("", client);
+  await screen.findByText("第 3 / 3 题 · 已提交 2 题");
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledOnce());
+  try {
+    await act(async () => {
+      await client.invalidateQueries({
+        queryKey: ["student", "attempt", ATTEMPT_ID],
+      });
+    });
+    expect(
+      client.getQueryData<AttemptDraftData>(["student", "attempt", ATTEMPT_ID])
+        ?.attempt.status,
+    ).toBe("draft");
+  } finally {
+    await act(async () => {
+      complete?.(
+        submitReceipt({
+          questionId: "q3",
+          attemptStatus: "submitted",
+          questionProgress: progressOf([
+            { id: "q1", submitted: true, readable: true },
+            { id: "q2", submitted: true, readable: true },
+            { id: "q3", submitted: true, readable: true },
+          ]),
+        }),
+      );
+    });
+  }
 });
 
 // ---------- 列表模式：逐题 footer + 底栏进度 ----------
+
+it("离开页面后末题回执迟到，不阻止重新进入读取权威结果", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const draft = baseDraft({
+    questionProgress: progressOf([
+      { id: "q1", submitted: true, readable: true },
+      { id: "q2", submitted: true, readable: true },
+      { id: "q3" },
+    ]),
+  });
+  savePracticePreference({
+    layout: "single",
+    keyboardShortcuts: true,
+    feedback: null,
+  });
+  mockedFetch.mockResolvedValueOnce(draft).mockResolvedValue(resultDataOf());
+  let complete: ((data: PracticeQuestionSubmitData) => void) | undefined;
+  mockedSubmit.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  );
+  const view = renderPage("", client);
+  await screen.findByText("第 3 / 3 题 · 已提交 2 题");
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledOnce());
+  view.unmount();
+  await act(async () => {
+    complete?.(submitReceipt({ questionId: "q3", attemptStatus: "submitted" }));
+  });
+  renderPage("", client);
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  expect(
+    client.getQueryData<AttemptDraftData>(["student", "attempt", ATTEMPT_ID])
+      ?.attempt.status,
+  ).toBe("submitted");
+});
 
 it("列表模式：每题 footer 提交区按作答态启停，提交后底栏进度与只读更新", async () => {
   savePracticePreference({
@@ -495,6 +707,30 @@ it("列表模式：每题 footer 提交区按作答态启停，提交后底栏�
   ).toHaveLength(2);
 });
 
+it.each(["list", "single"] as const)(
+  "%s：交卷后查看不提供逐题提交入口",
+  async (layout) => {
+    savePracticePreference({ layout, keyboardShortcuts: true, feedback: null });
+    mockedFetch.mockResolvedValue({
+      ...baseDraft(),
+      practiceWorkflow: workflowOf({
+        feedbackMode: "after_attempt",
+        canSubmitQuestion: false,
+      }),
+    });
+    renderPage();
+    await screen.findByRole("button", { name: "第 1 题更多" });
+    const answer = screen.getAllByRole("radio", { name: "对" })[0];
+    if (!answer) throw new Error("缺少首题选项");
+    fireEvent.click(answer);
+    expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "不会，提交并看解析" }),
+    ).toBeNull();
+    expect(mockedSubmit).not.toHaveBeenCalled();
+  },
+);
+
 it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公布呈现，主动作下一题", async () => {
   savePracticePreference({
     layout: "single",
@@ -520,11 +756,11 @@ it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公�
     }),
   );
   renderPage();
-  await screen.findByText(/做题方式：单题 · 交卷后查看/);
+  await screen.findByText(/第 \d+ \/ 3 题 · 已提交 \d+ 题/);
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
   fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
   await screen.findByText("已提交，交卷后统一公布");
-  expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
   // 导航只报提交事实（待公布），无对错泄露
   expect(
     screen.getByRole("button", { name: "第 1 题，已提交，反馈待公布" }),

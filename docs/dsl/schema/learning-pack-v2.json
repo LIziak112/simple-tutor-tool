@@ -582,6 +582,14 @@
                   "null"
                 ]
               },
+              "reviewSource": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "teacher",
+                  "self"
+                ]
+              },
               "teacherMark": {
                 "anyOf": [
                   {

@@ -291,6 +291,80 @@ test("题卡扩宽后题面居中且保留标画原尺寸与像素", async ({ pa
   ).toHaveCount(0);
 });
 
+test("圈画保存失败不丢原稿或遮标题，显式重试成功后可退出并刷新恢复", async ({
+  page,
+}, testInfo) => {
+  const card = page.getByRole("article", { name: "第 1 题", exact: true });
+  const trigger = card.getByRole("button", { name: /圈画题干/ });
+  const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
+  await trigger.click();
+  await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (
+      value: unknown,
+      key?: IDBValidKey,
+    ) {
+      const request =
+        key === undefined
+          ? original.call(this, value)
+          : original.call(this, value, key);
+      if (this.transaction.db.name === "tutor-annotations") {
+        queueMicrotask(() => this.transaction.abort());
+      }
+      return request;
+    };
+    const testWindow = window as Window & {
+      restoreAnnotationWrites?: () => void;
+    };
+    testWindow.restoreAnnotationWrites = () => {
+      IDBObjectStore.prototype.put = original;
+      delete testWindow.restoreAnnotationWrites;
+    };
+  });
+  const restore = () =>
+    page.evaluate(() => {
+      const testWindow = window as Window & {
+        restoreAnnotationWrites?: () => void;
+      };
+      testWindow.restoreAnnotationWrites?.();
+    });
+  try {
+    await drawStrokeWithPointerEvents(canvas);
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await expect(page.getByTestId("draft-status")).toContainText(
+      "本机保存失败",
+    );
+    await page.getByRole("button", { name: "作答", exact: true }).click();
+    const notice = page.locator('[data-slot="attempt-header"] [role="alert"]');
+    await expect(notice).toContainText("本机存储");
+    await expect(notice).not.toContainText("null");
+    await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+    const titleBox = await page
+      .locator('[data-slot="attempt-header"] h1')
+      .boundingBox();
+    const noticeBox = await notice.boundingBox();
+    expect(titleBox).not.toBeNull();
+    expect(noticeBox).not.toBeNull();
+    if (!titleBox || !noticeBox) throw new Error("缺少标题或错误提示布局");
+    expect(noticeBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+    await page.screenshot({
+      path: testInfo.outputPath("annotation-save-error.png"),
+    });
+    await restore();
+    await notice.getByRole("button", { name: "重试操作" }).click();
+    await expect(notice).toHaveCount(0);
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await page.reload();
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await trigger.click();
+    await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+  } finally {
+    await restore();
+  }
+});
+
 test("圈画再次点击与双击取消，不丢已有笔迹", async ({ page }) => {
   const card = page.getByRole("article", { name: "第 1 题", exact: true });
   const trigger = card.getByRole("button", { name: /圈画题干/ });

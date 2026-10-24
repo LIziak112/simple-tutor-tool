@@ -19,6 +19,9 @@ import {
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
 import { notSelfReviewPendingRow } from "./pending-mark";
+// 两线收敛接线：v2 错题闭环的轮次可见性守卫（公布/可见性单一出处，note-service
+// 同款复用）——不将 AI 出口授权当成学生读答案权限
+import { createQuestionReviewReader } from "./review-access";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
@@ -76,6 +79,8 @@ import { sourceOf } from "./teacher-attempt-service";
  * effectiveVerdictOfRow 单一出处计算，不再各写 finalCorrect 回落）。
  */
 interface JudgedRoundRow {
+  /** 判定来源（两线收敛：v2 错题闭环来源标注接线 QM 有效判定口径） */
+  reviewSource?: import("@tutor/contract").VerdictSource;
   questionId: string;
   attemptId: string;
   responseId: string;
@@ -134,7 +139,11 @@ function judgedRoundsByQuestion(
       questionId: responses.questionId,
       attemptId: sql<string>`${attempts.id}`.as("attempt_id"),
       responseId: sql<string>`${responses.id}`.as("response_id"),
-      submittedAt: attempts.submittedAt,
+      submittedAt: sql<
+        string | null
+      >`coalesce(${responses.submittedAt}, ${attempts.submittedAt})`.as(
+        "submitted_at",
+      ),
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
       autoCorrect: responses.autoCorrect,
@@ -142,6 +151,10 @@ function judgedRoundsByQuestion(
       selfReviewVerdict: responses.selfReviewVerdict,
       selfReviewAt: responses.selfReviewAt,
       selfReviewRevision: responses.selfReviewRevision,
+      // 两线收敛接线（v2 错题闭环）：轮次可见性守卫按 attempt + 行级提交事实
+      // 裁决（逐题提交的进行中卷已释放行可入轮次；受限行不可见不装配）
+      attempt: attempts,
+      rowSubmittedAt: responses.submittedAt,
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
@@ -153,8 +166,13 @@ function judgedRoundsByQuestion(
         eq(attempts.studentId, studentId),
         // 已判定作答谓词（D11，QM-12 有效判定口径）：已交卷 + 有效判定非
         // null（教师判 finalCorrect / 自评 selfReviewVerdict 任一即可；未判断
-        // 轮不参与——免得一道待评题把旧的「错」盖成未知）
-        ne(attempts.status, "draft"),
+        // 轮不参与——免得一道待评题把旧的「错」盖成未知）。两线收敛：逐题
+        // 语义卷进行中（draft）的已单题提交行同样构成轮次（行级 submittedAt
+        // 非空——lesson/v1 逐题提交在公布后即可判定）
+        or(
+          ne(attempts.status, "draft"),
+          isNotNull(responses.submittedAt),
+        ),
         or(
           isNotNull(responses.finalCorrect),
           isNotNull(responses.selfReviewVerdict),
@@ -162,14 +180,21 @@ function judgedRoundsByQuestion(
         // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
         releaseGateSql(nowIso),
       ),
-    )
-    .as("ranked");
+    );
 
-  const rows = db.select().from(ranked).all();
+  const rows = ranked.all();
   const roundsByQuestion = new Map<string, JudgedRoundRow[]>();
+  const readable = createQuestionReviewReader(db, now);
   for (const row of rows) {
+    if (!readable(row.attempt, { submittedAt: row.rowSubmittedAt })) continue;
     const list = roundsByQuestion.get(row.questionId) ?? [];
-    list.push(row);
+    // 来源标注走有效判定单一出处（教师判 > 自评 > 自动；无有效判定的防御
+    // 行省略键——契约 optional，历史载荷缺省不冒充客观判断）
+    const effective = effectiveOfRound(row);
+    list.push({
+      ...row,
+      ...(effective !== null ? { reviewSource: effective.source } : {}),
+    });
     roundsByQuestion.set(row.questionId, list);
   }
   for (const list of roundsByQuestion.values()) {
@@ -409,6 +434,9 @@ export function listWrongQuestions(
       const source = sourceOfAttempt(round.attemptId);
       if (source === null) continue; // 防御：轮次行必来自已加载 attempt
       roundsPayload.push({
+        ...(round.reviewSource !== undefined
+          ? { reviewSource: round.reviewSource }
+          : {}),
         attemptId: round.attemptId,
         sourceType: source.sourceType,
         // 有效判定（教师判 > 自评 > 自动）——自评「错」即错轮（QM-12）

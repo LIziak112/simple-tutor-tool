@@ -14,6 +14,7 @@ import {
   NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   notePhaseSchema,
 } from "./note.ts";
+import { verdictSourceSchema } from "./self-review.ts";
 
 /**
  * 单题完整导出（review-pack）契约（T6R.13，方案 §8/§9.1）：
@@ -95,6 +96,7 @@ export const reviewPackResponseSchema = z.object({
   autoCorrect: z.boolean().nullable().optional(),
   /** 最终判定（统计唯一口径；null=待批） */
   finalCorrect: z.boolean().nullable().optional(),
+  reviewSource: verdictSourceSchema.optional(),
   teacherMark: z.enum(["correct", "wrong"]).nullable().optional(),
   /** 教师评语原文（不改动；未评为 null） */
   teacherComment: z.string().nullable().optional(),

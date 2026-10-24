@@ -1267,6 +1267,7 @@ function responseBaseOf(
   const inkFile = core.inkEntryByAttemptQuestion.get(
     `${attempt.id}:${row.questionId}`,
   );
+  const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -1275,6 +1276,10 @@ function responseBaseOf(
     answerText: serializeStudentAnswer(answerOf(row.answerJson)),
     autoCorrect: row.autoCorrect,
     finalCorrect: row.finalCorrect,
+    // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
+    ...(effectiveSourceOfRow !== undefined
+      ? { reviewSource: effectiveSourceOfRow }
+      : {}),
     teacherMark:
       row.teacherMark === "correct" || row.teacherMark === "wrong"
         ? row.teacherMark

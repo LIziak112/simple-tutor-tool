@@ -70,11 +70,19 @@ it("原位回看自动读取封存笔迹，底图成功前保留题面，成功�
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("img", { name: "本题题干标注底图" }),
+      screen.getByRole("img", { name: "本题题干标注底图", hidden: true }),
     ).toBeInTheDocument(),
   );
   expect(screen.getByText("原位公开题面")).toBeVisible();
-  fireEvent.load(screen.getByRole("img", { name: "本题题干标注底图" }));
+  const image = screen.getByRole("img", {
+    name: "本题题干标注底图",
+    hidden: true,
+  });
+  Object.defineProperties(image, {
+    naturalWidth: { value: READY_BASE.pixelWidth },
+    naturalHeight: { value: READY_BASE.pixelHeight },
+  });
+  fireEvent.load(image);
   await waitFor(() =>
     expect(screen.getByText("原位公开题面").parentElement).toHaveClass(
       "sr-only",
@@ -620,6 +628,10 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     const img = await screen.findByAltText("本题题干标注底图");
+    Object.defineProperties(img, {
+      naturalWidth: { value: READY_BASE.pixelWidth },
+      naturalHeight: { value: READY_BASE.pixelHeight },
+    });
     fireEvent.load(img);
     await waitFor(() => {
       expect(lastAtrament().begins.length).toBeGreaterThan(0);
@@ -652,6 +664,10 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     );
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     const img = await screen.findByAltText("本题题干标注底图");
+    Object.defineProperties(img, {
+      naturalWidth: { value: READY_BASE.pixelWidth },
+      naturalHeight: { value: READY_BASE.pixelHeight },
+    });
     fireEvent.load(img);
     await waitFor(() => {
       expect(lastAtrament().begins.length).toBeGreaterThan(0);

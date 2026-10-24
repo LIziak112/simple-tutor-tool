@@ -179,7 +179,7 @@ export default function StudentRecordsPage() {
         ) : (
           <ol className="flex flex-col gap-2">
             {recordsQuery.data.records.map((row) => (
-              <RecordCard key={row.attemptId} row={row} />
+              <RecordCard key={row.attemptId} row={row} sort={state.sort} />
             ))}
           </ol>
         ))}

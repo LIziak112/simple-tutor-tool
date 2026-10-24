@@ -1,5 +1,93 @@
 import { expect, test } from "@playwright/test";
 
+test("真实存储事务中止：错误可读，手动重试保留原稿并在刷新后恢复", async ({
+  page,
+}) => {
+  await page.goto("/dev/question-base");
+  const result = await page.evaluate(async () => {
+    const moduleUrl = "/src/lib/kv-backend.ts";
+    const { idbKVBackend } = (await import(moduleUrl)) as {
+      idbKVBackend: (
+        db: string,
+        store: string,
+      ) => {
+        set: (key: string, value: unknown) => Promise<void>;
+        get: (key: string) => Promise<unknown>;
+      };
+    };
+    const backend = idbKVBackend("annotation-abort-regression", "drafts");
+    const previous = { version: 1, strokes: [1], mutationId: "previous" };
+    const latest = {
+      version: 2,
+      strokes: [1, 2],
+      mutationId: "latest",
+      png: new Blob(["原稿底图"], { type: "image/png" }),
+    };
+    await backend.set("稿件", previous);
+    const put = IDBObjectStore.prototype.put;
+    let abort = true;
+    IDBObjectStore.prototype.put = function (
+      value: unknown,
+      key?: IDBValidKey,
+    ) {
+      const request =
+        key === undefined ? put.call(this, value) : put.call(this, value, key);
+      if (abort && this.transaction.db.name === "annotation-abort-regression") {
+        abort = false;
+        queueMicrotask(() => this.transaction.abort());
+      }
+      return request;
+    };
+    try {
+      let message = "";
+      try {
+        await backend.set("稿件", latest);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      const afterFailure = await backend.get("稿件");
+      await backend.set("稿件", latest);
+      return { message, afterFailure, previous };
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+  });
+  expect(result.message).toContain("本机存储");
+  expect(result.message).not.toContain("null");
+  expect(result.afterFailure).toEqual(result.previous);
+  await page.reload();
+  const restored = await page.evaluate(async () => {
+    const moduleUrl = "/src/lib/kv-backend.ts";
+    const { idbKVBackend } = (await import(moduleUrl)) as {
+      idbKVBackend: (
+        db: string,
+        store: string,
+      ) => { get: (key: string) => Promise<unknown> };
+    };
+    const value = (await idbKVBackend(
+      "annotation-abort-regression",
+      "drafts",
+    ).get("稿件")) as {
+      version: number;
+      strokes: number[];
+      mutationId: string;
+      png: Blob;
+    };
+    return {
+      version: value.version,
+      strokes: value.strokes,
+      mutationId: value.mutationId,
+      png: await value.png.text(),
+    };
+  });
+  expect(restored).toEqual({
+    version: 2,
+    strokes: [1, 2],
+    mutationId: "latest",
+    png: "原稿底图",
+  });
+});
+
 test("本机原位稿：真实IndexedDB原子存PNG/布局/矢量，页面重启恢复且账号隔离", async ({
   page,
 }) => {

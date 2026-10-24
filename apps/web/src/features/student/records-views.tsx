@@ -1,6 +1,7 @@
 import type {
   AttemptStatus,
   StudentRecordRow,
+  StudentRecordsSort,
   TeacherAttemptSource,
 } from "@tutor/contract";
 import { cn } from "cn";
@@ -86,9 +87,18 @@ function RecordScore({ row }: { row: StudentRecordRow }) {
 }
 
 /** 单条记录卡片（整卡可点，触控目标 ≥44px） */
-export function RecordCard({ row }: { row: StudentRecordRow }) {
+export function RecordCard({
+  row,
+  sort = "activity_desc",
+}: {
+  row: StudentRecordRow;
+  sort?: StudentRecordsSort;
+}) {
   const [search] = useSearchParams();
-  const activityAt = row.submittedAt ?? row.startedAt;
+  const activityAt =
+    sort === "activity_desc"
+      ? (row.lastActivityAt ?? row.submittedAt ?? row.startedAt)
+      : row.startedAt;
   const isDraft = row.status === "draft";
   return (
     <li>
@@ -105,6 +115,7 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
           <SourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
           <span className="ml-auto text-xs text-muted-foreground">
+            {sort === "activity_desc" ? "最近作答 " : "开始于 "}
             {formatCnTime(activityAt)}
           </span>
         </p>
@@ -141,6 +152,11 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
                 待批 {row.pendingCount}
               </span>
             )}
+          {row.answersReleased && (row.pendingSelfReviewCount ?? 0) > 0 && (
+            <span className="text-xs text-amber-700">
+              待自评 {row.pendingSelfReviewCount}
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-0.5 text-sm font-medium text-primary">
             {isDraft ? "继续作答" : "查看结果"}
             <ChevronRight

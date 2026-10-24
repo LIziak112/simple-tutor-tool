@@ -216,3 +216,30 @@ it("重试原子落盘保留同一底图、文档版本和待传标识", async (
     (await getAnnotationRecord(session, scope))?.localBase?.layout,
   ).toEqual(layout);
 });
+
+it("空错误不会显示为 null；再次写入成功前持续保留原稿和失败状态", async () => {
+  const backend = memoryAnnotationBackend();
+  let failed = true;
+  installAnnotationBackend({
+    ...backend,
+    set: async (key, value) => {
+      if (failed) throw null;
+      await backend.set(key, value);
+    },
+  });
+  await expect(
+    writeLocalAnnotationBase(session, scope, { png, layout }, doc),
+  ).rejects.toThrow("本机存储");
+  const before = await getAnnotationRecord(session, scope);
+  expect(before?.local).toBe("failed");
+  expect(before?.localError).not.toBe("null");
+  await expect(retryAnnotationPersistence(session, scope)).rejects.toThrow();
+  expect((await getAnnotationRecord(session, scope))?.local).toBe("failed");
+  failed = false;
+  await retryAnnotationPersistence(session, scope);
+  const saved = await getAnnotationRecord(session, scope);
+  expect(saved?.local).toBe("saved");
+  expect(saved?.localBase).toEqual(before?.localBase);
+  expect(saved?.pending).toEqual(before?.pending);
+  expect(saved?.docVersion).toBe(before?.docVersion);
+});

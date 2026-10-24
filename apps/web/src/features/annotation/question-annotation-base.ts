@@ -12,6 +12,7 @@ import {
   type AnnotationSessionRef,
   applyAnnotationView,
   getAnnotationRecord,
+  retryAnnotationPersistence,
   settleAnnotationRecordPersistence,
   writeLocalAnnotationBase,
 } from "./annotation-store";
@@ -55,6 +56,8 @@ export async function prepareQuestionAnnotationBase(
   guard();
   if (cached?.localBase != null) {
     await settleAnnotationRecordPersistence(session, scope);
+    guard();
+    await retryAnnotationPersistence(session, scope);
     guard();
     const saved = await getAnnotationRecord(session, scope);
     guard();

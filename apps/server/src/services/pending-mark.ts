@@ -133,6 +133,51 @@ export function pendingMarkCounts(
 }
 
 /**
+ * 批量待自评数（两线收敛接线，v2 记录行「待自评」徽章的数据源）：attemptId →
+ * 该 attempt 的待自评行数（分组查询，500 id 一块，与 pendingMarkCounts 同款
+ * 模式）。QM 口径 = reference_self 行且教师未判（teacherMark null）且学生未
+ * 自评（selfReviewVerdict null）——与 teacher-attempt-service 详情的
+ * selfReviewPendingCount 读侧循环同一语义（有判定来源即归零），draft 批次
+ * 同样叠加行级已提交（未提交行无自评入口）。
+ */
+export function pendingSelfReviewCounts(
+  db: Db,
+  attempts: readonly PendingMarkAttempt[],
+): Map<string, number> {
+  const map = new Map<string, number>();
+  const idsOf = (draft: boolean) =>
+    attempts
+      .filter((attempt) => (attempt.status === "draft") === draft)
+      .map((attempt) => attempt.id);
+  for (const [draft, ids] of [
+    [false, idsOf(false)],
+    [true, idsOf(true)],
+  ] as const) {
+    for (let start = 0; start < ids.length; start += 500) {
+      const chunk = ids.slice(start, start + 500);
+      for (const row of db
+        .select({ attemptId: responses.attemptId, n: sql<number>`count(*)` })
+        .from(responses)
+        .where(
+          and(
+            inArray(responses.attemptId, chunk),
+            eq(responses.gradingPolicy, "reference_self"),
+            isNull(responses.teacherMark),
+            isNull(responses.selfReviewVerdict),
+            isNotNull(responses.questionSnapshotJson),
+            draft ? isNotNull(responses.submittedAt) : undefined,
+          ),
+        )
+        .groupBy(responses.attemptId)
+        .all()) {
+        map.set(row.attemptId, row.n);
+      }
+    }
+  }
+  return map;
+}
+
+/**
  * v1 逐题卷「进行中进度」批量计数（M4-D3 §13）：attemptId → 行级已提交数 /
  * 本卷总行数（分组查询，500 id 一块，与 pendingMarkCounts 同款模式）。
  * - 调用方传**已按协议过滤的 v1 行**（协议判定统一走 practiceProtocolOf 单一
