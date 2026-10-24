@@ -388,3 +388,17 @@ function expandSelection(
   }
   return ids;
 }
+
+/**
+ * 选择串展开的公开入口（QM-13 细项 2）：题级 ::ref{slots=…} 的原始选择串 +
+ * 材料槽位序 → 展开后的有序 slotId 列表。服务端公开投影（matchingSlots）
+ * 与保存校验共用本单源，不在两侧各写一遍区间解析；语义与 lint 第二遍的
+ * 展开（区间按文档顺序、未知/逆序区间展开为空、显式单点保留）逐字一致。
+ */
+export function expandSelectionIds(
+  selection: string,
+  orderedIds: readonly string[],
+): string[] {
+  const positions = new Map(orderedIds.map((id, index) => [id, index]));
+  return expandSelection(selection, positions);
+}

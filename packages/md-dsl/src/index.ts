@@ -45,6 +45,9 @@ export type {
 export { normalizeQmIds } from "./v2/normalize-ids.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
+// 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
+// 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
+export { expandSelectionIds } from "./v2/references.ts";
 // 题干形态变换唯一公开面：学生端 payload 用 studentStemMd（脱敏 + 剥选项），
 // 显示侧用 displayStemMd（剥选项不脱敏）；publicStemMd 不再出口——单独使用
 // 它组学生载荷会泄露 [x] 正确项标记（v2/public-stem.ts 内部实现）。
