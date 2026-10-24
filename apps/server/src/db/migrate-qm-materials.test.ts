@@ -279,10 +279,6 @@ describe("QM-03 迁移：材料/组/引用索引/冻结快照五表（空库与�
       const cols = db.$client
         .prepare(`PRAGMA table_info(${table})`)
         .all() as Array<{ type: string }>;
-      expect(
-        cols.map((c) => c.type.toLowerCase()),
-        `${table} 列类型应为 text/integer`,
-      ).toEqual(expect.arrayContaining([]));
       for (const col of cols) {
         expect(["text", "integer"]).toContain(col.type.toLowerCase());
       }
