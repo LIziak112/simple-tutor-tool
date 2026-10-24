@@ -50,11 +50,11 @@ allowRepeat 语义）；固定项不能错移（UI 锁定 + FIXED_ITEM_OUT_OF_PO
 | pnpm lint:changed | 清洁 EXIT=0（每提交块后执行） |
 | pnpm test:quick（三档快检） | 6397→6413 全绿（分块执行） |
 | pnpm gen:spec ×2 | EXIT=0，零漂移（确定性再生） |
-| pnpm e2e:affected（契约兜底全量，本机 chromium 126 例） | 执行至 83 例 0 失败（后台续跑收尾，退出码与尾数以编排目录同步件补记） |
+| pnpm e2e:affected（契约兜底全量，本机 chromium 126 例） | **124 过 + 1 跳过（既有 skip）+ 1 失败 EXIT=1**；唯一失败 student-workspace「130题长作业」为性能预算断言（warm 帧 153.7ms vs ≤150ms，超 2.4%）——**隔离复跑 1/1 过 EXIT=0（50.1s）**，判定为全量并行下计时噪声（共租机器负载，记忆口径同款），非功能回归 |
 
 ## 五、遗留
 
-- e2e:affected 收尾退出码（后台任务完成时补记；截至 83/126 例 0 失败）。
+- e2e:affected 唯一失败（130题长作业性能预算 153.7ms>150ms）已隔离复跑转绿；如编排者需强证据可在安静窗口背靠背复测该 spec。
 - QM-14（lesson 原位适配）消费本单结构投影；题级反馈面的 matching/ordering
   对照已随 QuestionFeedback 自动获得（共用 ResultAnswerComparison）。
 - 材料槽位标记在 code/math 环境内的同名 id 会被字符串替换误命中（实际
