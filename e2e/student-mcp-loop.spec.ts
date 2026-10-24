@@ -29,12 +29,16 @@ import {
 /** 与 playwright.config.ts 保持一致（server 直连地址；vite 代理不转发 /mcp） */
 const STUDENT_MCP_URL = "http://127.0.0.1:8899/mcp/student";
 
-/** SAI-26 定稿的学生四工具（与服务端 student-mcp 测试同清单） */
+/** 学生 MCP 八工具（四逐题 + 四整体复盘，任务 1ef854c7；与服务端 student-mcp 测试同清单） */
 const EXPECTED_STUDENT_TOOLS = [
   "claim_ai_task",
+  "claim_attempt_review",
   "list_my_ai_tasks",
+  "list_my_attempt_reviews",
   "renew_ai_lease",
+  "renew_attempt_review_lease",
   "submit_ai_reply",
+  "submit_attempt_review_result",
 ].sort();
 
 /** JSON-RPC 请求体构造 */
@@ -309,7 +313,7 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", () => {
       expect(materialsBody.data.materials[0]?.state).toBe("ready");
       expect(materialsBody.data.totalBytes).toBe(materialPng.byteLength);
 
-      // ④ 协议客户端：initialize → tools/list 恰好四工具
+      // ④ 协议客户端：initialize → tools/list 恰好八工具（四逐题 + 四整体复盘）
       const initRes = await postStudentRpc(request, init, token);
       expect(initRes.status).toBe(200);
       expect(initRes.json.error).toBeUndefined();
