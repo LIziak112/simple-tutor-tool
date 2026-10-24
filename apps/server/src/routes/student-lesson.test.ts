@@ -953,6 +953,19 @@ interface SubmitBody {
 }
 
 /** 单题提交夹具环境（4 题讲练页 + 成员开卷） */
+/** §5.8.4 发布开关内开卷（冻结 gradingPolicy：auto / reference_self）——
+ * 开关关的开卷冻结 null（旧行旧语义），自评相关用例必须走本 helper */
+async function startOkNewContent(env: TestEnv): Promise<StartBody> {
+  const previous = process.env.NEW_CONTENT_ENABLED;
+  process.env.NEW_CONTENT_ENABLED = "true";
+  try {
+    return await startOk(env);
+  } finally {
+    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+    else process.env.NEW_CONTENT_ENABLED = previous;
+  }
+}
+
 async function makeSubmitEnv(): Promise<{
   env: TestEnv;
   attemptId: string;
@@ -1235,7 +1248,9 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
       correct: 0,
       wrong: 0,
       pending: 1,
-      pendingCount: 0,
+      // 开关关（§5.8.4）→ 行冻结策略 null（旧行）→ D4 教师待批照计；
+      // v2 的「进待自评、pendingCount=0」只在 reference_self 冻结行成立
+      pendingCount: 1,
       unanswered: 3,
     });
     expect(responseRowOf(env.db, attemptId, S.fill)).toMatchObject({
@@ -1681,7 +1696,7 @@ describe("最后一题单题提交自动收尾（Review Focus 3：与「完成�
       correct: 2,
       wrong: 1,
       pending: 1,
-      pendingCount: 0,
+      pendingCount: 1, // fill 旧行（策略 null）待批照计（同上，D4 口径）
       scoreFinal: null,
     });
     expect(questionSubmitEventsOf(env.db, attemptId)).toBe(4);
@@ -2117,7 +2132,8 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
     ).data.marks;
     expect(beforeMarks.filter((m) => m.attemptId === attemptId)).toEqual([]);
 
-    // 有参考答案的 fill 进入待自评，不再强制交给教师；教师仍可主动批改。
+    // 单题提交 fill（恒人工）→ 立即进队（策略 null 旧行进教师待批；
+    // reference_self 冻结行才转待自评，见 makeSelfReviewEnv 用例）
     await saveDraftAnswer(env, attemptId, S.fill, {
       kind: "fill",
       values: ["2"],
@@ -2141,11 +2157,16 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
         };
       }
     ).data.marks.filter((m) => m.attemptId === attemptId);
-    expect(marks).toHaveLength(0);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toMatchObject({
+      questionId: S.fill,
+      sourceType: "lesson",
+      studentName: "成员张三",
+    });
 
     // 教师课中批改（correct）→ 出队
     const marked = await env.app.request(
-      `/api/teacher/responses/${revisions.get(S.fill)}/mark`,
+      `/api/teacher/responses/${marks[0]?.responseId}/mark`,
       {
         method: "POST",
         headers: {
@@ -2184,7 +2205,15 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
 
 describe("讲练自评与无参考答案行（QM 口径）", () => {
   it("讲练提交后可立即自评（verdict=wrong、CAS 基线、教师未判）；无参考答案行逐题提交不阻塞、走教师待批", async () => {
-    const { env, attemptId, revisions } = await makeSubmitEnv();
+    // 发布开关开启开卷：fill（有参考答案）冻结 reference_self 才可自评；
+    // 开关关时该行为 null 旧行 → 403 SELF_REVIEW_NOT_ALLOWED（专测见
+    // student-self-review.test「旧行（NULL 策略）→ 403」）
+    const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+    const started = await startOkNewContent(env);
+    const attemptId = started.data.attempt.id;
+    const revisions = new Map(
+      started.data.questions.map((q) => [q.id, q.questionRevisionId]),
+    );
     await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
     const review = await env.app.request(
       `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(S.fill)}/self-review`,
@@ -2317,7 +2346,7 @@ describe("我的记录收录 lesson 来源（恒可回看 + 讲练标题 + 教�
       unitTitle: "第2讲 单题提交", // 标题=讲义标题（记录聚合口径）
       attemptNo: 1,
       status: "draft",
-      pendingCount: 0, // 有参考答案的题待学生自评，不能计入教师必批。
+      pendingCount: 1, // 已提交待批行（D4 扩展谓词：draft + 行 submittedAt 非空）
       answersReleased: true, // lesson 恒公布（不适用 after_due）
     });
 
@@ -2356,7 +2385,7 @@ describe("我的记录收录 lesson 来源（恒可回看 + 讲练标题 + 教�
       sourceType: "lesson",
       unitTitle: "第2讲 单题提交",
       assignmentId: null,
-      pendingCount: 0,
+      pendingCount: 1,
     });
 
     // 移出课程（D7）：lesson 不失权——草稿照常列出（对照 wrong 口径）
@@ -2590,13 +2619,11 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
     });
     await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
 
-    // 重开前：教师待批队列含该生；学生记录含该 draft
+    // 重开前：教师待批队列含该生（已提交 fill 旧行进队）；学生记录含该 draft
     const pendingBefore = await env.app.request("/api/teacher/pending-marks", {
       headers: { cookie: env.teacherCookie },
     });
-    expect(JSON.stringify(await pendingBefore.json())).not.toContain(
-      "成员张三",
-    );
+    expect(JSON.stringify(await pendingBefore.json())).toContain("成员张三");
     const recordsBefore = await env.app.request("/api/student/records", {
       headers: { cookie: env.memberCookie },
     });
@@ -2719,15 +2746,7 @@ describe("QM-12：reference_self 行讲练自评与汇总口径（P3-1 对齐）
     revisions: Map<string, string>;
   }> {
     const env = await makeEnv({ markdown: LESSON_SELF_REVIEW_MD });
-    const previous = process.env.NEW_CONTENT_ENABLED;
-    process.env.NEW_CONTENT_ENABLED = "true";
-    let started: StartBody;
-    try {
-      started = await startOk(env);
-    } finally {
-      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
-      else process.env.NEW_CONTENT_ENABLED = previous;
-    }
+    const started = await startOkNewContent(env);
     return {
       env,
       attemptId: started.data.attempt.id,
