@@ -1,4 +1,4 @@
-import { countResponseWords, RESPONSE_TITLE_MAX_CHARS } from "@tutor/contract";
+import { countResponseWords } from "@tutor/contract";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import type {
   AnswerKindView,
@@ -15,6 +15,8 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
  *   文本输入 defer=true 防抖保存（I05 回调节奏与 fill 同款）；
  * - 字数口径单源契约 countResponseWords（中文按字含中文标点、英文按词），
  *   UI 只显示不重算；word-min/max 是建议提示，超限不硬拦不截断（§5.4.1）；
+ *   title/body 契约上限同为防御性边界——超限整体拒绝（服务端 400），
+ *   任何一层都不截断（§19.2-1，审查 P2-1：标题输入不设 maxLength 预拦）；
  * - 输入面是原生受控 textarea：输入法组合输入（composition）中间态不被
  *   截断——受控值只在 change 事件同步，不对 composition 中间态做变换过滤；
  * - 与正式手写共存：本视图只管文字面，纸面控件区（HandwrittenControls）
@@ -55,7 +57,6 @@ export const responseView: AnswerKindView<
           placeholder="标题（可选）"
           value={title}
           disabled={disabled}
-          maxLength={RESPONSE_TITLE_MAX_CHARS}
           onChange={(event) =>
             update(
               // title 未填不携带（契约语义：缺省=没有标题）

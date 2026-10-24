@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { RESPONSE_TITLE_MAX_CHARS } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { responseView } from "./response";
 
@@ -41,6 +42,33 @@ describe("responseView.Input（开放作答输入面）", () => {
       { kind: "response", title: "治理的起点", body: "" },
       true,
     );
+  });
+
+  it("标题超限不截断：不设 maxLength 预拦，超长粘贴原样外发并可回显（§19.2-1 超限整体拒绝，审查 P2-1）", () => {
+    const update = vi.fn();
+    const { rerender } = render(
+      responseView.Input({ model, answer: undefined, update }),
+    );
+    const title = screen.getByRole("textbox", { name: "标题（可选）" });
+    const overlong = "题".repeat(RESPONSE_TITLE_MAX_CHARS + 1);
+    // 输入框不携带 maxLength（jsdom 对原生 maxLength 会静默截断粘贴值）
+    expect(title).not.toHaveAttribute("maxlength");
+    // 超限标题完整进入保存通道——服务端 400 VALIDATION_ERROR 路径从 web 可达
+    // （拒绝不截断的契约语义已有服务级/契约级测试，此处只守 UI 不预拦）
+    fireEvent.change(title, { target: { value: overlong } });
+    expect(update).toHaveBeenCalledWith(
+      { kind: "response", title: overlong, body: "" },
+      true,
+    );
+    // 已有超限标题回填不被截断显示
+    rerender(
+      responseView.Input({
+        model,
+        update,
+        answer: { kind: "response", title: overlong, body: "" },
+      }),
+    );
+    expect(title).toHaveValue(overlong);
   });
 
   it("已有答案回填：title 与 body 原样进入输入框（含分段与公式源码）", () => {
