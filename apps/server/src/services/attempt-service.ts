@@ -1141,7 +1141,7 @@ export function assertRowNotSubmitted(
 
 /** 严格口径的 WHERE 单源（单题/批量两兄弟共用；C8）——三条件：
  * attempt 归属 + 题目成员 + 快照非空（语义见 requireAttemptQuestion 注释） */
-function buildAttemptQuestionWhere(attemptId: string, questionId: string): SQL {
+export function buildAttemptQuestionWhere(attemptId: string, questionId: string): SQL {
   return and(
     eq(responses.attemptId, attemptId),
     eq(responses.questionId, questionId),
@@ -2354,6 +2354,50 @@ export function submitAttempt(
 // ---------- POST /api/student/attempts/:id/questions/:questionId/submit（2026-10） ----------
 
 /**
+ * attempt 级得分汇总的读侧现算（QM-10 / TT-09a：自评响应的 summary 消费；
+ * 结果视图的完整汇总仍走 buildResultData 的公布感知投影——本函数只服务
+ * 「已过公布 gate」的回执场景，不做受限形态投影）：
+ * - total/answered/correct/wrong/pending/unanswered/autoGradable 与结果视图
+ *   scoreSummaryOf 同口径（全卷行、answer 非空即 answered、autoCorrect 三分）；
+ * - scoreFinal 读 attempt 行（自评不推动 graded/scoreFinal——教师权威线）；
+ * - pendingCount 走 pendingMarkCount（D4 共享谓词，QM-10 起排除
+ *   reference_self 行）；快照缺失的历史行跳过（与判分/视图口径一致）。
+ */
+export function attemptScoreSummaryOf(
+  db: Db,
+  attempt: Pick<Attempt, "id" | "status"> & { scoreFinal: number | null },
+): AttemptScoreSummary {
+  const rows = db
+    .select({
+      answerJson: responses.answerJson,
+      autoCorrect: responses.autoCorrect,
+    })
+    .from(responses)
+    .where(
+      and(
+        eq(responses.attemptId, attempt.id),
+        isNotNull(responses.questionSnapshotJson),
+      ),
+    )
+    .all();
+  const total = rows.length;
+  const answered = rows.filter((r) => answerOf(r.answerJson) !== null).length;
+  const correct = rows.filter((r) => r.autoCorrect === true).length;
+  const wrong = rows.filter((r) => r.autoCorrect === false).length;
+  return {
+    total,
+    answered,
+    correct,
+    wrong,
+    pending: total - correct - wrong,
+    unanswered: total - answered,
+    autoGradable: correct + wrong,
+    scoreFinal: attempt.scoreFinal,
+    pendingCount: pendingMarkCount(db, attempt),
+  };
+}
+
+/**
  * lesson 卷的读侧现算汇总（2026-10 讲练一体；lesson-service 开卷投影与
  * submitLessonQuestion 响应共用同一口径，单一出处）：
  * - 仅**已提交行**（responses.submittedAt 非空）计入对错（autoCorrect）与
@@ -2427,7 +2471,7 @@ function questionAlreadySubmitted(): HttpError {
 }
 
 /** 该题不在本卷冻结集合（或快照损坏）的统一 404（M2 起提交/反馈多端点共用） */
-function questionNotFound(): HttpError {
+export function questionNotFound(): HttpError {
   return new HttpError(404, "QUESTION_NOT_FOUND", "题目不存在或不属于这次练习");
 }
 
@@ -2985,29 +3029,7 @@ export function practiceQuestionFeedbackOf(
   now: Date | string = new Date(),
   view?: AttemptWorkflowView | null,
 ): PracticeQuestionFeedback {
-  const finalized = attempt.status !== "draft";
-  // 已收尾作业卷的公布事实：assignmentReleaseByIds 含软删（作答记录不随作业
-  // 软删消失）；行悬挂（异常数据）Map 无键 → null → 单一公式 fail closed 未
-  // 公布，不把读取裸抛成 404（与草稿态 restricted(legacy_attempt)、回执态
-  // 409 WORKFLOW_LEGACY 同一降级家族）
-  const release =
-    finalized && attempt.sourceType === "assignment"
-      ? (assignmentReleaseByIds(db, [attempt.assignmentId ?? ""]).get(
-          attempt.assignmentId ?? "",
-        ) ?? null)
-      : null;
-  const state = resolvePracticeQuestionFeedbackState({
-    submitted: row.submittedAt !== null,
-    attemptSubmitted: finalized,
-    published: attemptAnswersPublished(
-      { attemptSubmitted: finalized, sourceType: attempt.sourceType, release },
-      now,
-    ),
-    workflow: finalized
-      ? null
-      : ((view ?? attemptWorkflowView(db, attempt, now))?.practiceWorkflow ??
-        null),
-  });
+  const state = practiceQuestionFeedbackStateOf(db, attempt, row, now, view);
   if (state.status !== "released") {
     return state;
   }
@@ -3023,6 +3045,53 @@ export function practiceQuestionFeedbackOf(
     question:
       attempt.status === "draft" ? nullTeacherFieldsOf(question) : question,
   };
+}
+
+/**
+ * 单题反馈四态的门控组装单一出处（M2 收敛点提炼：题级反馈投影
+ * practiceQuestionFeedbackOf 与学生自评 gate——self-review-service——共用，
+ * release 查询与公式不复制）。普通来源交 resolvePracticeQuestionFeedbackState
+ * 纯裁决（同款输入组装）；lesson 独立适配：恒 on_submit 题级释放（提交即
+ * 公布，submitLessonQuestion 同源语义），只有未提交/已释放两态——无
+ * pending_release/restricted 中间态，不适用普通四态裁决器的进行中分支。
+ */
+export function practiceQuestionFeedbackStateOf(
+  db: Db,
+  attempt: Attempt,
+  row: Pick<ResponseRow, "submittedAt">,
+  now: Date | string = new Date(),
+  view?: AttemptWorkflowView | null,
+): PracticeQuestionFeedback {
+  const finalized = attempt.status !== "draft";
+  // 已收尾卷的行按已提交语义进四态（旧行无行级 submittedAt——整卷交卷即
+  // 全部判分行已交；行级判别只服务进行中卷。v1/lesson 已收尾行本就带
+  // submittedAt，行为不变；QM-10 自评 gate 对历史卷由本口径放行到策略检查）
+  const submitted = row.submittedAt !== null || finalized;
+  if (attempt.sourceType === "lesson") {
+    return submitted ? { status: "released" } : { status: "not_submitted" };
+  }
+  // 已收尾作业卷的公布事实：assignmentReleaseByIds 含软删（作答记录不随作业
+  // 软删消失）；行悬挂（异常数据）Map 无键 → null → 单一公式 fail closed 未
+  // 公布，不把读取裸抛成 404（与草稿态 restricted(legacy_attempt)、回执态
+  // 409 WORKFLOW_LEGACY 同一降级家族）
+  const release =
+    finalized && attempt.sourceType === "assignment"
+      ? (assignmentReleaseByIds(db, [attempt.assignmentId ?? ""]).get(
+          attempt.assignmentId ?? "",
+        ) ?? null)
+      : null;
+  return resolvePracticeQuestionFeedbackState({
+    submitted,
+    attemptSubmitted: finalized,
+    published: attemptAnswersPublished(
+      { attemptSubmitted: finalized, sourceType: attempt.sourceType, release },
+      now,
+    ),
+    workflow: finalized
+      ? null
+      : ((view ?? attemptWorkflowView(db, attempt, now))?.practiceWorkflow ??
+        null),
+  });
 }
 
 /**
