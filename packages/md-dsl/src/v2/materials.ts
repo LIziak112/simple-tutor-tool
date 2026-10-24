@@ -144,7 +144,7 @@ export function extractMaterialsAndGroups(
       ) {
         issues.push(
           makeIssue(
-            "error",
+            "warning",
             start,
             1,
             "MATERIAL_BEFORE_FIRST_HEADING",

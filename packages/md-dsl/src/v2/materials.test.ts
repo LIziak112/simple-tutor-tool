@@ -215,6 +215,8 @@ describe("材料实体抽取（第一遍）", () => {
     );
     expect(codes).toHaveLength(1); // 仅 mat-0；grp-0 在首个 H1 之后
     expect(codes[0]?.line).toBe(1);
+    // 级别与 LINT_RULES/生成规范一致（审查 P1）：同族 CONTENT/QUESTION_BEFORE_FIRST_HEADING 均 warning
+    expect(codes[0]?.level).toBe("warning");
   });
 });
 
