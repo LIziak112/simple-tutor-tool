@@ -1,28 +1,35 @@
 // 相对导入带 .ts 扩展名（仓库约定：可能被 reparse CLI / 路由层间接导入）
 import type {
+  AttemptContextData,
+  AttemptContextGroup,
+  AttemptContextMaterial,
   GradingPolicy,
   MaterialPublic,
   Question,
   QuestionGroupPublic,
 } from "@tutor/contract";
-import { gradingPolicyOf } from "@tutor/contract";
+import {
+  gradingPolicyOf,
+  materialPublicSchema,
+  questionGroupPublicSchema,
+} from "@tutor/contract";
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
+  type MaterialRow,
   materialRefs,
   materials,
+  type QuestionGroupRow,
   questionGroupMembers,
   questionGroups,
-  type MaterialRow,
-  type QuestionGroupRow,
   type ResponseRow,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
+  type AttemptContextSnapshotEntry,
   getMaterial,
   getQuestionGroup,
   listAttemptContextSnapshots,
-  type AttemptContextSnapshotEntry,
 } from "./material-repository.ts";
 
 /**
@@ -306,6 +313,68 @@ function liveEntryOf(
   return row === null
     ? null
     : (contextEntriesOf({ materials: [], groups: [row] })[0] ?? null);
+}
+
+// ---------- 读路径：冻结快照的学生公开投影（tt-07a / QM-06） ----------
+
+/**
+ * 学生可读的冻结上下文（GET /attempts/:id/context 的数据源）：某卷全部
+ * 快照条目按公开投影 schema 逐条 safeParse（materialPublicSchema /
+ * questionGroupPublicSchema 白名单——三投影纪律的结构防线，未知键 strip、
+ * 教师侧键 fail closed）。**坏快照（JSON 损坏/形态不符）→ 409
+ * ATTEMPT_CONTEXT_BROKEN 显式报错**，不静默跳过、不改用 live 资源替代
+ * （旧卷一致性不可侵犯）。条目按 (sourceId, sourceVersion) 稳定排序，不依赖
+ * live order（TT-06b P2-3 记账）。归属校验由路由层完成
+ * （requireUsableAttempt——TT-05b P2-2 记账：快照读取按 attemptId 直查，
+ * 防线在路由）。
+ */
+export function studentAttemptContext(
+  db: Db,
+  attemptId: string,
+): AttemptContextData {
+  const materialsList: AttemptContextMaterial[] = [];
+  const groupsList: AttemptContextGroup[] = [];
+  for (const row of listAttemptContextSnapshots(db, attemptId)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.snapshotJson) as unknown;
+    } catch {
+      parsed = undefined;
+    }
+    if (row.kind === "material") {
+      const material = materialPublicSchema.safeParse(parsed);
+      if (!material.success) throw brokenSnapshotError(row);
+      materialsList.push({
+        ...material.data,
+        sourceVersion: row.sourceVersion,
+      });
+    } else {
+      const group = questionGroupPublicSchema.safeParse(parsed);
+      if (!group.success) throw brokenSnapshotError(row);
+      groupsList.push({ ...group.data, sourceVersion: row.sourceVersion });
+    }
+  }
+  const byIdThenVersion = (
+    a: { id: string; sourceVersion: number },
+    b: { id: string; sourceVersion: number },
+  ): number => a.id.localeCompare(b.id) || a.sourceVersion - b.sourceVersion;
+  return {
+    attemptId,
+    materials: materialsList.sort(byIdThenVersion),
+    groups: groupsList.sort(byIdThenVersion),
+  };
+}
+
+/** 坏快照显式报错（按条目定位，供错误消息检索；与缺依赖 409 同码） */
+function brokenSnapshotError(row: {
+  kind: string;
+  sourceId: string;
+}): HttpError {
+  return new HttpError(
+    409,
+    "ATTEMPT_CONTEXT_BROKEN",
+    `这份作答的${row.kind === "material" ? "材料" : "题组"}快照损坏（${row.sourceId}），请联系老师重新检查`,
+  );
 }
 
 /** 依赖引用集合（题 → 组 ids + 材料 ids；live 索引，不读实体行） */

@@ -610,14 +610,13 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
     );
     expect(materialSnapshot?.sourceVersion).toBe(1);
-    expect(
-      JSON.parse(materialSnapshot?.snapshotJson ?? "{}"),
-    ).toMatchObject({ contentMd: "来源卷 v1 的材料正文" });
+    expect(JSON.parse(materialSnapshot?.snapshotJson ?? "{}")).toMatchObject({
+      contentMd: "来源卷 v1 的材料正文",
+    });
     // 组快照同样来自来源卷
     expect(
       contextRows(db, started.id).some(
-        (row) =>
-          row.kind === "group" && row.sourceId === "grp-资料分析-1",
+        (row) => row.kind === "group" && row.sourceId === "grp-资料分析-1",
       ),
     ).toBe(true);
     // gradingPolicy：来源快照是 choice（有参考）→ auto
@@ -731,12 +730,35 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
     );
     const versions = contextRows(db, started.id)
       .filter(
-        (row) =>
-          row.kind === "material" && row.sourceId === "mat-资料分析-1",
+        (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
       )
       .map((row) => row.sourceVersion)
       .sort();
     expect(versions).toEqual([1, 2]);
+  });
+
+  it("wrong 组卷冻结中断（快照写入抛错）→ 新卷三表零残留（与开卷同款事务回滚）", () => {
+    const { db } = makeEnv();
+    vi.mocked(freezeAttemptContextSnapshotsWithin).mockImplementationOnce(
+      () => {
+        throw new Error("模拟快照写入中途失败");
+      },
+    );
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-rb",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [],
+    });
+    expect(() =>
+      startWrongPractice(db, STUDENT_ID, ["资料分析-1"], {}, true),
+    ).toThrowError("模拟快照写入中途失败");
+    // 新 wrong 卷零残留（种子来源行原样保留：无新 attempts/responses、快照空）
+    expect(
+      db.select().from(attempts).where(eq(attempts.sourceType, "wrong")).all(),
+    ).toEqual([]);
+    expect(db.select().from(responses).all()).toHaveLength(1); // 仅来源行
+    expect(db.select().from(attemptContextSnapshots).all()).toEqual([]);
   });
 });
 

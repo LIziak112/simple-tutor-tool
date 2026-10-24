@@ -95,8 +95,7 @@ export function startWrongPractice(
     );
   }
 
-  const freezePolicy =
-    newContentEnabled ?? newContentEnabledFromEnv();
+  const freezePolicy = newContentEnabled ?? newContentEnabledFromEnv();
 
   return db.transaction((tx) => {
     const countRow = tx
@@ -146,7 +145,12 @@ export function startWrongPractice(
       });
     }
     // 依赖闭包条目（来源卷快照优先）同事务冻结——开卷途中失败全回滚
-    freezeAttemptContextSnapshotsWithin(tx, id, plan.entries, attempt.startedAt);
+    freezeAttemptContextSnapshotsWithin(
+      tx,
+      id,
+      plan.entries,
+      attempt.startedAt,
+    );
     const row = tx.select().from(attempts).where(eq(attempts.id, id)).get();
     if (row === undefined) {
       throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");

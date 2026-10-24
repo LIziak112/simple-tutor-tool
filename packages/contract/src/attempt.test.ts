@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   attemptAnswerSaveDataSchema,
   attemptAnswerSaveRequestSchema,
+  attemptContextGroupSchema,
+  attemptContextMaterialSchema,
   attemptDetailDataSchema,
   attemptDraftDataSchema,
   attemptErrorCodeSchema,
@@ -1031,6 +1033,59 @@ describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () =>
     ] as const) {
       expect(attemptErrorCodeSchema.safeParse(code).success).toBe(true);
     }
+  });
+
+  it("错误码集合包含 ATTEMPT_CONTEXT_BROKEN（开卷缺依赖/上下文快照损坏，409 fail closed——tt-07a/QM-06）", () => {
+    expect(
+      attemptErrorCodeSchema.safeParse("ATTEMPT_CONTEXT_BROKEN").success,
+    ).toBe(true);
+  });
+
+  it("attemptContext 条目投影 strip 教师侧/答案类键，键集 = 公开白名单 + sourceVersion（tt-07a/QM-06 三投影纪律）", () => {
+    const material = attemptContextMaterialSchema.safeParse({
+      id: "mat-1",
+      title: "给定资料",
+      contentMd: "正文",
+      anchors: [],
+      slots: [],
+      mediaPaths: [],
+      sourceVersion: 2,
+      // 教师侧/答案类多余键：parse 后 strip（白名单防线）
+      sourceMd: "::::material{id=mat-1}\n正文\n::::",
+      answers: { kind: "choice", index: 1 },
+      solutionMd: "详解哨兵",
+      hints: ["提示哨兵"],
+    });
+    expect(material.success).toBe(true);
+    expect(Object.keys(material.data ?? {}).sort()).toEqual([
+      "anchors",
+      "contentMd",
+      "id",
+      "mediaPaths",
+      "slots",
+      "sourceVersion",
+      "title",
+    ]);
+    const group = attemptContextGroupSchema.safeParse({
+      id: "grp-1",
+      title: "资料组",
+      label: "1～2",
+      introMd: "",
+      materialRefs: [],
+      questionIds: ["q-1"],
+      sourceVersion: 1,
+      sourceMd: "::::group\n::::",
+    });
+    expect(group.success).toBe(true);
+    expect(Object.keys(group.data ?? {}).sort()).toEqual([
+      "id",
+      "introMd",
+      "label",
+      "materialRefs",
+      "questionIds",
+      "sourceVersion",
+      "title",
+    ]);
   });
 });
 

@@ -71,11 +71,13 @@ import {
   getStudentAssignmentPaper,
   listStudentAssignments,
 } from "../services/assignment-service";
+import { studentAttemptContext } from "../services/attempt-context";
 import {
   getAttemptDetail,
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
   getStudentAttemptPaper,
+  requireUsableAttempt,
   saveDraftAnswer,
   startAttempt,
   startCourseAttempt,
@@ -444,6 +446,18 @@ export function createStudentRoutes(
             c.req.param("id"),
             new Date(),
           ),
+        });
+      })
+      // tt-07a（QM-06）：冻结上下文公开投影（材料/组快照）读取——作答期渲染与
+      // 结果回看共用，只读快照不查 live 库（教师改材料/软删不影响已开卷）；坏
+      // 快照 409 ATTEMPT_CONTEXT_BROKEN 显式报错。归属校验复用
+      // requireUsableAttempt（TT-05b 审查 P2-2 记账：快照读取按 attemptId 直查
+      // 不过滤 teacherId，归属防线在路由层——跨域同 attempt id 不可见）
+      .get("/attempts/:id/context", (c) => {
+        requireUsableAttempt(db, c.var.student.id, c.req.param("id"));
+        return c.json({
+          ok: true,
+          data: studentAttemptContext(db, c.req.param("id")),
         });
       })
       // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
