@@ -10,10 +10,9 @@ import {
   waitForDraftSaved,
 } from "./helpers";
 
-test("对照自评无需教师确认，单题入错题并可修正；无答案题逐题提交走教师批改", async ({
-  request,
-  page,
-}) => {
+test("对照自评无需教师确认，单题入错题并可修正；无答案题逐题提交走教师批改", {
+  tag: ["@student"],
+}, async ({ request, page }) => {
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `自评课程${suffix}`;

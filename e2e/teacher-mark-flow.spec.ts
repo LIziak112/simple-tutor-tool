@@ -56,7 +56,9 @@ function fillPracticeMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", () => {
+test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
+  tag: ["@teacher"],
+}, () => {
   test("学生填空题（LaTeX 等价答案）交卷进待批，教师批对后学生端见判对与公式化参考答案", async ({
     page,
     request,

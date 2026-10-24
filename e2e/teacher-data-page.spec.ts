@@ -50,7 +50,9 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大）", () => {
+test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大）", {
+  tag: ["@insights"],
+}, () => {
   test("学生课程练习交卷后，数据页按课程视图可见、进详情见手写图、切按学生视图仍可见", async ({
     page,
     request,

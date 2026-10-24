@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("真实存储事务中止：错误可读，手动重试保留原稿并在刷新后恢复", async ({
-  page,
-}) => {
+test("真实存储事务中止：错误可读，手动重试保留原稿并在刷新后恢复", {
+  tag: ["@annotation"],
+}, async ({ page }) => {
   await page.goto("/dev/question-base");
   const result = await page.evaluate(async () => {
     const moduleUrl = "/src/lib/kv-backend.ts";
@@ -88,9 +88,9 @@ test("真实存储事务中止：错误可读，手动重试保留原稿并在�
   });
 });
 
-test("本机原位稿：真实IndexedDB原子存PNG/布局/矢量，页面重启恢复且账号隔离", async ({
-  page,
-}) => {
+test("本机原位稿：真实IndexedDB原子存PNG/布局/矢量，页面重启恢复且账号隔离", {
+  tag: ["@annotation"],
+}, async ({ page }) => {
   await page.goto("/dev/question-base");
   await page.getByRole("button", { name: "生成底图", exact: true }).click();
   await expect(page.getByTestId("layout-result")).toBeVisible({

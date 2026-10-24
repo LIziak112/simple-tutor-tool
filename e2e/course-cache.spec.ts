@@ -3,7 +3,9 @@ import { teacherApiLogin, uniqueSuffix } from "./helpers";
 
 test.use({ viewport: { width: 1280, height: 900 } });
 
-test("预热导入页后创建课程，无需刷新即可选择新课程", async ({ page }) => {
+test("预热导入页后创建课程，无需刷新即可选择新课程", {
+  tag: ["@teacher"],
+}, async ({ page }) => {
   await teacherApiLogin(page.request);
   await page.goto("/t/import");
   await page.getByRole("checkbox", { name: /同时加入课程/ }).check();

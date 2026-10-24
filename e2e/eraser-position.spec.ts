@@ -10,9 +10,9 @@ type PaperControls = Pick<
 >;
 
 for (const renderer of ["atrament", "freehand", "annotation"] as const) {
-  test(`${renderer} 擦右侧后左侧真实像素保留，正文与撤销重做一致`, async ({
-    page,
-  }) => {
+  test(`${renderer} 擦右侧后左侧真实像素保留，正文与撤销重做一致`, {
+    tag: ["@annotation"],
+  }, async ({ page }) => {
     await page.goto("/dev/ink-feel");
     const result = await page.evaluate(async (renderer) => {
       const engineUrl = "/src/features/ink/engine/index.ts";

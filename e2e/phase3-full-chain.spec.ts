@@ -129,7 +129,9 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 → 记录 → CSV → 错题本", () => {
+test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 → 记录 → CSV → 错题本", {
+  tag: ["@teacher", "@student"],
+}, () => {
   test("学生三题作答交卷，教师三视图查看批改并导出 CSV，学生记录与错题本全见", async ({
     page,
     request,

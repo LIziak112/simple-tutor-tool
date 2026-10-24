@@ -50,7 +50,9 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
+test.describe("学生我的记录与错题本（T3.5：批改延伸）", {
+  tag: ["@student"],
+}, () => {
   test("学生答错判断+手写交卷，教师批改后学生在我的记录见「已批」与评语，错题本出现错题", async ({
     page,
     request,

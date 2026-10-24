@@ -99,7 +99,9 @@ function brokenMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程练习两次 → 两单元作业（T2A.9）", () => {
+test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程练习两次 → 两单元作业（T2A.9）", {
+  tag: ["@smoke"],
+}, () => {
   test("教师批量导入与建课，学生完成课程练习两次后作答两单元作业", async ({
     page,
     request,

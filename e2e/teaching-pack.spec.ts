@@ -61,7 +61,9 @@ function packMarkdown(unitName: string, imageSrc: string): string {
   ].join("\n");
 }
 
-test.describe("T7.8 教学包往返：导入 → 作答判分 → 导出 ZIP → 再导入", () => {
+test.describe("T7.8 教学包往返：导入 → 作答判分 → 导出 ZIP → 再导入", {
+  tag: ["@teacher"],
+}, () => {
   test("声明与随行图片全程保留，学生正式作答与判分不受影响", async ({
     request,
     browser,

@@ -137,7 +137,9 @@ const SECRET_MARKERS = [
   "填空题提示",
 ] as const;
 
-test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批改闭环 → 再做一次", () => {
+test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批改闭环 → 再做一次", {
+  tag: ["@teacher", "@student"],
+}, () => {
   test("教师导入讲练文档，学生逐题作答即时反馈，教师课中批改，重做开新卷", async ({
     page,
     request,

@@ -54,7 +54,9 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与阅读地图 + 题目行展开）", () => {
+test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与阅读地图 + 题目行展开）", {
+  tag: ["@insights"],
+}, () => {
   test("种子造数下总览计数与矩阵正确，画像图表/阅读地图/错题可见，题目行可展开", async ({
     page,
     request,

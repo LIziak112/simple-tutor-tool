@@ -93,7 +93,9 @@ async function setupDedicatedTeacher(
   await teacherLoginViaApi(request, loginName, TEACHER_PASSWORD);
 }
 
-test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", () => {
+test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", {
+  tag: ["@mcp"],
+}, () => {
   test("教师 token 经 /mcp 完成 initialize → 13 工具清单 → list_students 见本域学生", async ({
     request,
   }) => {

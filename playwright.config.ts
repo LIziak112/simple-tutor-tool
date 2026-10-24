@@ -28,6 +28,16 @@ import { defineConfig, devices } from "@playwright/test";
 /** 是否在 CI（GitHub Actions）中运行 */
 const IS_CI = !!process.env.CI;
 
+/** e2e 前端对照实验模式（2026-10-25 已判决**不切换**，默认关闭，见
+ *  docs/e2e功能面选测与preview对照.md：spec 依赖 dev server 的 /src 源码路径
+ *  与 /dev 调试页，preview 结构性不兼容）：手动设置 E2E_WEB_PREVIEW=1 时
+ *  webServer 先 vite build 再 vite preview 服务构建产物。注意 e2e:full 与
+ *  pnpm e2e 等价（dev server），本变量只服务手动对照复现——
+ *  Git Bash：E2E_WEB_PREVIEW=1 pnpm e2e；cmd：set E2E_WEB_PREVIEW=1&&pnpm e2e；
+ *  PowerShell：$env:E2E_WEB_PREVIEW="1"; pnpm e2e。preview 的代理与 PWA
+ *  裁剪经 --mode e2e-preview 挂在 vite 内建 mode 上（apps/web/vite.config.ts）。 */
+const USE_PREVIEW = process.env.E2E_WEB_PREVIEW === "1";
+
 /** E2E 专用端口：避开日常 dev 的 8787（server）与 5173-517x（vite 自动顺延段） */
 const E2E_SERVER_PORT = 8899;
 const E2E_WEB_PORT = 5199;
@@ -69,8 +79,10 @@ export default defineConfig({
   forbidOnly: IS_CI,
   // CI 重试 1 次吸收 runner 的网络/首编译抖动；本机不重试，避免掩盖真问题
   retries: IS_CI ? 1 : 0,
-  // CI 限并发（2 核 runner）；本机用默认（exactOptionalPropertyTypes：仅 CI 展开）
-  ...(IS_CI ? { workers: 2 } : {}),
+  // CI 限 2（2 核 runner）；本机显式 6——默认值是 CPU 逻辑核数的一半（本机 8），
+  // 16GB 内存下 8 路 Edge/WebKit 并发会顶到内存上限，6 路是实测安全档。
+  // 低配/高配机可用 CLI 覆盖：pnpm e2e --workers=N
+  workers: IS_CI ? 2 : 6,
   reporter: IS_CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: `http://127.0.0.1:${E2E_WEB_PORT}`,
@@ -124,13 +136,18 @@ export default defineConfig({
       gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     },
     {
-      // 同样去 pnpm 壳：node 直接跑 vite bin，cwd 到 apps/web（vite 以 cwd 为 root）
-      command: `node node_modules/vite/bin/vite.js --port ${E2E_WEB_PORT} --strictPort`,
+      // 同样去 pnpm 壳：node 直接跑 vite bin，cwd 到 apps/web（vite 以 cwd 为 root）。
+      // E2E_WEB_PREVIEW=1：先 build 再 preview 服务 dist（对照实验，见上）；两端都带
+      // --mode e2e-preview——vite.config 以此 mode 裁剪 PWA 插件并启用 preview 代理
+      command: USE_PREVIEW
+        ? `node node_modules/vite/bin/vite.js build --mode e2e-preview && node node_modules/vite/bin/vite.js preview --port ${E2E_WEB_PORT} --strictPort --mode e2e-preview`
+        : `node node_modules/vite/bin/vite.js --port ${E2E_WEB_PORT} --strictPort`,
       cwd: "apps/web",
       url: `http://127.0.0.1:${E2E_WEB_PORT}`,
       reuseExistingServer: false,
-      // 180s：vite 冷启动（依赖预构建）在 CI 上明显慢于本机
-      timeout: 180_000,
+      // dev 180s：vite 冷启动（依赖预构建）在 CI 上明显慢于本机；
+      // preview 300s：先完整 build（本机 1-2 分钟）再起 preview
+      timeout: USE_PREVIEW ? 300_000 : 180_000,
       env: {
         DEV_API_PROXY_TARGET: `http://127.0.0.1:${E2E_SERVER_PORT}`,
       },
