@@ -1141,7 +1141,10 @@ export function assertRowNotSubmitted(
 
 /** 严格口径的 WHERE 单源（单题/批量两兄弟共用；C8）——三条件：
  * attempt 归属 + 题目成员 + 快照非空（语义见 requireAttemptQuestion 注释） */
-export function buildAttemptQuestionWhere(attemptId: string, questionId: string): SQL {
+export function buildAttemptQuestionWhere(
+  attemptId: string,
+  questionId: string,
+): SQL {
   return and(
     eq(responses.attemptId, attemptId),
     eq(responses.questionId, questionId),
@@ -2092,9 +2095,10 @@ export interface FinalOutcomeRow {
  *   reference_self 行 finalCorrect 恒 null——计分母不计分子，教师权威线）；
  * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
  */
-export function attemptFinalOutcomeOf(
-  rows: readonly FinalOutcomeRow[],
-): { status: "submitted" | "graded"; scoreFinal: number | null } {
+export function attemptFinalOutcomeOf(rows: readonly FinalOutcomeRow[]): {
+  status: "submitted" | "graded";
+  scoreFinal: number | null;
+} {
   if (rows.length === 0) return finalScoreOf([]);
   if (rows.some((row) => row.gradingPolicy === null)) {
     return finalScoreOf(rows.map((row) => row.finalCorrect));
@@ -2255,7 +2259,8 @@ export function submitAttempt(
   // 提交行按行内当前 finalCorrect（教师批改优先）。QM-10 细项7：status/
   // scoreFinal 走 attemptFinalOutcomeOf（§5.5.5 新行口径放宽 / 旧行旧口径
   // 单一出处——与自动收尾、教师批改重算同源，不复制公式）
-  const { status: finalStatus, scoreFinal } = attemptFinalOutcomeOf(outcomeRows);
+  const { status: finalStatus, scoreFinal } =
+    attemptFinalOutcomeOf(outcomeRows);
   // 逐题语义卷收尾把「本次交卷的行」提交时刻记为交卷时刻（responses.submittedAt
   // 列注释口径）；历史卷行不写该列（保持 null，行为零变化）。事务内 update 与
   // 下方内存镜像展开同一对象，两处口径永不漂移
@@ -3061,7 +3066,7 @@ export function practiceQuestionFeedbackStateOf(
   row: Pick<ResponseRow, "submittedAt">,
   now: Date | string = new Date(),
   view?: AttemptWorkflowView | null,
-): PracticeQuestionFeedback {
+): ReturnType<typeof resolvePracticeQuestionFeedbackState> {
   const finalized = attempt.status !== "draft";
   // 已收尾卷的行按已提交语义进四态（旧行无行级 submittedAt——整卷交卷即
   // 全部判分行已交；行级判别只服务进行中卷。v1/lesson 已收尾行本就带

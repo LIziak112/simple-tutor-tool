@@ -3,9 +3,9 @@ import {
   effectiveVerdictOf,
   type SelfReviewData,
   type SelfReviewRecord,
+  type SelfReviewRequest,
   selfReviewConflictCurrentSchema,
   selfReviewDataSchema,
-  type SelfReviewRequest,
   type TeacherMark,
 } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";

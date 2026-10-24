@@ -1,6 +1,6 @@
 import {
-  questionCapabilityBindings,
   type Question,
+  questionCapabilityBindings,
   type StudentAnswer,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
@@ -53,10 +53,10 @@ const fillWithBlanks = makeQuestion({
 
 /** 填空题四种作答形态（同款四情形口径） */
 const fillAnswers: ReadonlyArray<[string, StudentAnswer | undefined]> = [
-  ["相同", { kind: "fill", blanks: ["0.5"] }],
-  ["等价", { kind: "fill", blanks: ["1/2"] }],
-  ["不同", { kind: "fill", blanks: ["3"] }],
-  ["空白", { kind: "fill", blanks: [""] }],
+  ["相同", { kind: "fill", values: ["0.5"] }],
+  ["等价", { kind: "fill", values: ["1/2"] }],
+  ["不同", { kind: "fill", values: ["3"] }],
+  ["空白", { kind: "fill", values: [""] }],
 ];
 
 describe("gradeResponseRow：新策略行取消主观匹配（QM-10 细项 1）", () => {
@@ -94,11 +94,10 @@ describe("gradeResponseRow：新策略行取消主观匹配（QM-10 细项 1）"
 
       it("无参考答案（manual_only 的常态）→ null", () => {
         expect(
-          gradeResponseRow(
-            policy,
-            makeQuestion({ type: "solve" }),
-            { kind: "final", finalAnswer: "0.5" },
-          ),
+          gradeResponseRow(policy, makeQuestion({ type: "solve" }), {
+            kind: "final",
+            finalAnswer: "0.5",
+          }),
         ).toBeNull();
       });
 
@@ -156,19 +155,19 @@ describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释
 
   it("旧行 fill 恒 null（2026-10-02 决策）与 auto 新行客观题照旧", () => {
     expect(
-      gradeResponseRow(null, fillWithBlanks, { kind: "fill", blanks: ["0.5"] }),
+      gradeResponseRow(null, fillWithBlanks, { kind: "fill", values: ["0.5"] }),
     ).toBeNull();
     const choice = makeQuestion({
       type: "choice",
       answers: { kind: "choice", index: 0 },
       options: [{ text: "A" }, { text: "B" }],
     });
-    expect(
-      gradeResponseRow("auto", choice, { kind: "choice", index: 0 }),
-    ).toBe(true);
-    expect(
-      gradeResponseRow("auto", choice, { kind: "choice", index: 1 }),
-    ).toBe(false);
+    expect(gradeResponseRow("auto", choice, { kind: "choice", index: 0 })).toBe(
+      true,
+    );
+    expect(gradeResponseRow("auto", choice, { kind: "choice", index: 1 })).toBe(
+      false,
+    );
     // 未作答客观题判错（D1）在 auto 新行保持
     expect(gradeResponseRow("auto", choice, undefined)).toBe(false);
     // judge/multi 的 auto 新行同样走原校验器
@@ -186,9 +185,9 @@ describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释
       type: "judge",
       answers: { kind: "judge", value: false },
     });
-    expect(
-      gradeResponseRow(null, judge, { kind: "judge", value: false }),
-    ).toBe(true);
+    expect(gradeResponseRow(null, judge, { kind: "judge", value: false })).toBe(
+      true,
+    );
     expect(gradeResponseRow(null, judge, undefined)).toBe(false);
   });
 
@@ -198,7 +197,10 @@ describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释
       answers: { kind: "ordering", sequence: ["a", "b"] },
     });
     expect(
-      gradeResponseRow(null, question, { kind: "ordering", sequence: ["a", "b"] }),
+      gradeResponseRow(null, question, {
+        kind: "ordering",
+        sequence: ["a", "b"],
+      }),
     ).toBeNull();
   });
 });
@@ -218,12 +220,7 @@ describe("能力面：旧客观题按原规则、主观与新题型非自动（Q
   });
 
   it("fill 与新题型（response/matching/ordering）非 exact（rubric 恒人工）", () => {
-    for (const type of [
-      "fill",
-      "response",
-      "matching",
-      "ordering",
-    ] as const) {
+    for (const type of ["fill", "response", "matching", "ordering"] as const) {
       expect(questionCapabilityBindings[type].validation.shape).not.toBe(
         "exact",
       );

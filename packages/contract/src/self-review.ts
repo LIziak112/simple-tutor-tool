@@ -57,6 +57,7 @@ export const selfReviewRequestSchema = z.object({
   /** 幂等键（网络重试同键不重复写） */
   mutationId: z.string().uuid(),
 });
+export type SelfReviewRequest = z.infer<typeof selfReviewRequestSchema>;
 
 /** 有效判定投影（学生侧展示/记录/错题本消费；携带来源徽章） */
 export const effectiveVerdictSchema = z.object({
@@ -77,6 +78,7 @@ export const selfReviewDataSchema = z.object({
   effective: effectiveVerdictSchema.nullable(),
   summary: attemptScoreSummarySchema,
 });
+export type SelfReviewData = z.infer<typeof selfReviewDataSchema>;
 
 // ---------- 纯推导函数（服务端 TT-09 消费的单一出处） ----------
 

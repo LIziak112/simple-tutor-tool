@@ -111,11 +111,11 @@ import {
   sealCorrection,
 } from "../services/note-service";
 import { updateAttemptWorkflow } from "../services/practice-workflow-wiring";
-import { submitSelfReview } from "../services/self-review-service";
 import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { submitSelfReview } from "../services/self-review-service";
 import {
   getStudentCourseDetail,
   getStudentLecture,
