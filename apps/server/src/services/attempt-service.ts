@@ -41,7 +41,7 @@ import {
   studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
-import { studentStemMd } from "@tutor/md-dsl";
+import { parseDocument, studentStemMd, wrapSingleQuestionMd } from "@tutor/md-dsl";
 import {
   and,
   asc,
@@ -1247,6 +1247,11 @@ function requireAssignmentVisible(
  * questions 行 → 契约 Question（判分输入与快照内容；解析失败的字段按缺省处理）。
  * T6R.20 审查修复 4 起导出：annotation-service 的 stale 判定以同构路径对题库
  * 当前行重建快照算 hash（与建卷冻结同一实现单源，不另写副本）。
+ * QM-09（TT-08b）：response 的字数建议（word-min/max）无专列——沿用 reparse
+ * 的「结构化字段以 sourceMd 为单一来源」口径，建卷冻结时从 sourceMd 重抽取
+ * （wrapSingleQuestionMd + parseDocument 同款机制，零迁移）；仅 response 行
+ * 付出解析成本，其余题型零开销；解析失败静默缺省（建议只是提示性投影，
+ * 缺失不阻断建卷）。
  */
 export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
   const answers: QuestionAnswers | undefined =
@@ -1259,7 +1264,7 @@ export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
       ? (optionSchema.array().safeParse(jsonOf(row.optionsJson)).data ??
         undefined)
       : undefined;
-  return questionSchema.parse({
+  const question = questionSchema.parse({
     id: row.id,
     type: row.type,
     difficulty: row.difficulty,
@@ -1271,6 +1276,43 @@ export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
     ...(row.solutionMd !== null ? { solutionMd: row.solutionMd } : {}),
     sourceMd: row.sourceMd,
   });
+  if (row.type === "response") {
+    const wordHint = wordHintOfSourceMd(row);
+    if (wordHint.wordMin !== undefined) question.wordMin = wordHint.wordMin;
+    if (wordHint.wordMax !== undefined) question.wordMax = wordHint.wordMax;
+  }
+  return question;
+}
+
+/**
+ * 单题 sourceMd → response 字数建议（word-min/word-max，缺省不携带键）。
+ * 包装与解析选项与 reparse-service.planQuestion 完全同款（unitId/起始序号
+ * 覆盖缺省 id 推导，保证解析出的题与库中行同 id）；包装内恰一题，按 id 命中
+ * 后取 wordMin/wordMax，其余字段一概不采（快照仍按既有列组卷，本函数只是
+ * 无专列字段的重抽通道）。
+ */
+function wordHintOfSourceMd(row: QuestionRow): {
+  wordMin?: number;
+  wordMax?: number;
+} {
+  try {
+    const parsed = parseDocument(
+      wrapSingleQuestionMd(row.unitId, row.sourceMd),
+      { unitId: row.unitId, questionStartNumber: row.order + 1 },
+    );
+    const hit = parsed.units
+      .flatMap((unit) => unit.questions)
+      .find((item) => item.id === row.id);
+    return hit === undefined
+      ? {}
+      : {
+          ...(hit.wordMin !== undefined ? { wordMin: hit.wordMin } : {}),
+          ...(hit.wordMax !== undefined ? { wordMax: hit.wordMax } : {}),
+        };
+  } catch {
+    // sourceMd 损坏（历史脏行）不阻断建卷：字数建议缺失只是少一条提示
+    return {};
+  }
 }
 
 /**
