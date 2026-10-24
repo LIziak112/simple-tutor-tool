@@ -177,7 +177,9 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
 
     // —— 摘要行与紧凑进度行；同屏只有第 1 题 ——
     await expect(
-      page.getByText("做题方式：单题 · 每题提交后查看"),
+      page
+        .locator('[data-slot="attempt-bottom-bar"]')
+        .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
     ).toBeVisible();
     const q1 = page.locator('article[aria-label="第 1 题"]');
     const q2 = page.locator('article[aria-label="第 2 题"]');
@@ -185,6 +187,33 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await expect(q1).toBeVisible();
     await expect(q2).toBeHidden();
     await expectWorkspaceFocused(page);
+
+    // 三种宽度核对吸底栏不溢出，进度和提交入口各一份，并留图复核。
+    const viewport = page.viewportSize();
+    for (const width of [390, 820, 1440]) {
+      await page.setViewportSize({ width, height: 1180 });
+      const footer = page.locator('[data-slot="attempt-bottom-bar"]');
+      await expect(footer.getByText("第 1 / 2 题 · 已提交 0 题")).toHaveCount(
+        1,
+      );
+      await expect(
+        footer.getByRole("button", { name: "不会，提交并看解析" }),
+      ).toHaveCount(1);
+      await expect(
+        footer.getByRole("button", { name: "提交本题", exact: true }),
+      ).toHaveCount(0);
+      const bounds = await footer.boundingBox();
+      expect(bounds?.width).toBe(width);
+      expect(bounds?.height).toBeLessThan(150);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      await page.screenshot({
+        path: test.info().outputPath(`single-${width}.png`),
+      });
+    }
+    if (viewport) await page.setViewportSize(viewport);
+    await focusSingleWorkspace(page);
 
     // —— 第 1 题：数字 1 选「对」→ Enter 主动作提交 → 原位反馈 ——
     await page.keyboard.press("1");
@@ -303,21 +332,23 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
       .locator("xpath=ancestor::label[1]")
       .click();
     await expect(
-      page.getByText("做题方式：单题 · 每题提交后查看"),
+      page
+        .locator('[data-slot="attempt-bottom-bar"]')
+        .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
     ).toBeVisible();
     await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
     await expect(
       q1.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
     await expect(q2).toBeHidden();
-    // 收起面板，避免遮挡后续交互
-    await page.getByRole("button", { name: "调整做题方式" }).click();
 
     // —— 「更多」菜单：单题 → 列表（答案仍在，两题恢复可见）——
     await page.getByRole("button", { name: "练习更多" }).click();
     await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
-    await page.getByRole("radio", { name: "列表作答", exact: true }).check();
-    await page.getByRole("button", { name: "调整做题方式" }).click();
+    await page
+      .getByRole("radio", { name: "列表作答", exact: true })
+      .locator("xpath=ancestor::label[1]")
+      .click();
     await expect(
       page.getByText("做题方式：列表 · 每题提交后查看"),
     ).toBeVisible();
@@ -336,8 +367,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     //    列表里刚提交的是第 1 题 → 单题落在第 1 题的已提交回执上 ——
     await page.getByRole("button", { name: "练习更多" }).click();
     await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
-    await page.getByRole("radio", { name: "单题专注", exact: true }).check();
-    await page.getByRole("button", { name: "调整做题方式" }).click();
+    await page
+      .getByRole("radio", { name: "单题专注", exact: true })
+      .locator("xpath=ancestor::label[1]")
+      .click();
     await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
     await expect(feedback1).toBeVisible();
     // 操作条「下一题」进第 2 题，继续作答提交收尾
@@ -397,7 +430,9 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await page.getByRole("button", { name: "开始练习" }).click();
     await page.waitForURL("**/s/attempts/**");
     await expect(
-      page.getByText("做题方式：单题 · 每题提交后查看"),
+      page
+        .locator('[data-slot="attempt-bottom-bar"]')
+        .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
     ).toBeVisible();
     await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
     const q1 = page.locator('article[aria-label="第 1 题"]');
@@ -515,10 +550,14 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     // —— 切单题（菜单路径），定位第 1 题 ——
     await page.getByRole("button", { name: "练习更多" }).click();
     await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
-    await page.getByRole("radio", { name: "单题专注", exact: true }).check();
-    await page.getByRole("button", { name: "调整做题方式" }).click();
+    await page
+      .getByRole("radio", { name: "单题专注", exact: true })
+      .locator("xpath=ancestor::label[1]")
+      .click();
     await expect(
-      page.getByText("做题方式：单题 · 每题提交后查看"),
+      page
+        .locator('[data-slot="attempt-bottom-bar"]')
+        .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
     ).toBeVisible();
     await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
     const q1 = page.locator('article[aria-label="第 1 题"]');
@@ -644,7 +683,9 @@ test.describe("练习反馈升级 M3：单题专注工作区", () => {
     await page.getByRole("button", { name: "开始练习" }).click();
     await page.waitForURL("**/s/attempts/**");
     await expect(
-      page.getByText("做题方式：单题 · 每题提交后查看"),
+      page
+        .locator('[data-slot="attempt-bottom-bar"]')
+        .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
     ).toBeVisible();
     const q1 = page.locator('article[aria-label="第 1 题"]');
     const q2 = page.locator('article[aria-label="第 2 题"]');

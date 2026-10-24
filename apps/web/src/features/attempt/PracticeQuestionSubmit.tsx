@@ -201,16 +201,19 @@ export function PracticeSingleActions({
     );
   }
   if (!submitted) {
+    // 未提交只保留一个提交类主动作：已作答=提交本题；未作答=「不会」空答案
+    // 提交（同一提交链），不再并列一个禁用的提交按钮
     return (
       <div
         data-slot="practice-primary-action"
         className="flex min-w-0 flex-col gap-1.5"
       >
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <Button
             type="button"
+            variant={answered ? "default" : "outline"}
             className="min-h-11 w-fit px-5"
-            disabled={!answered || busy}
+            disabled={busy}
             onClick={onSubmit}
           >
             {busy ? (
@@ -218,24 +221,15 @@ export function PracticeSingleActions({
                 <LoaderCircle aria-hidden className="size-4 animate-spin" />
                 正在提交…
               </>
-            ) : (
+            ) : answered ? (
               "提交本题"
+            ) : (
+              "不会，提交并看解析"
             )}
           </Button>
-          {!answered && (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 w-fit px-4"
-              disabled={busy}
-              onClick={onSubmit}
-            >
-              不会，提交并看解析
-            </Button>
-          )}
         </div>
         {error !== null && (
-          <div className="flex justify-end">
+          <div className="flex justify-center">
             <InlineError message={error} />
           </div>
         )}
@@ -245,7 +239,7 @@ export function PracticeSingleActions({
   return (
     <div
       data-slot="practice-primary-action"
-      className="flex min-w-0 flex-wrap items-center justify-end gap-2"
+      className="flex min-w-0 flex-wrap items-center justify-center gap-2"
     >
       {finished ? (
         <Button

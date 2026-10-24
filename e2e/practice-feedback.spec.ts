@@ -650,11 +650,11 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
         .click();
       await studentPage.waitForURL("**/s/attempts/**");
       await expect(
-        studentPage.getByText("做题方式：单题 · 交卷后查看"),
+        studentPage.getByText("第 1 / 2 题 · 已填写 0 题"),
       ).toBeVisible();
       await expect(
-        studentPage.getByText(/第 1 \/ 2 题 · 已提交 0 题/),
-      ).toBeVisible();
+        studentPage.getByRole("button", { name: "调整做题方式" }),
+      ).toHaveCount(0);
 
       // —— 单题布局作答两题（下一题导航），整卷交卷出结果 ——
       await chooseAnswer(studentPage, 1, "对", true);

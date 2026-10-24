@@ -177,7 +177,7 @@ async function renderSingle(search = "") {
   });
   mockedFetch.mockResolvedValue(kbDraft());
   const view = renderPage(search);
-  await view.findByText(/做题方式：单题 · 每题提交后查看/);
+  await view.findByText(/第 \d+ \/ 4 题 · 已提交 \d+ 题/);
   const container = document.querySelector<HTMLElement>(
     '[data-slot="practice-single-workspace"]',
   );
@@ -406,7 +406,7 @@ it("快捷键关闭后 Enter、←→、1-9 全部不生效", async () => {
   });
   mockedFetch.mockResolvedValue(kbDraft());
   renderPage("?q=q2");
-  await screen.findByText(/做题方式：单题 · 每题提交后查看/);
+  await screen.findByText(/第 \d+ \/ 4 题 · 已提交 \d+ 题/);
   const container = document.querySelector<HTMLElement>(
     '[data-slot="practice-single-workspace"]',
   );

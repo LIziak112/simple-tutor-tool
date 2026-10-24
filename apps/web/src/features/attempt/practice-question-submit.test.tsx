@@ -244,7 +244,7 @@ async function renderSingle(draft: AttemptDraftData, search = "") {
   });
   mockedFetch.mockResolvedValue(draft);
   const view = renderPage(search);
-  await view.findByText(/做题方式：单题 · 每题提交后查看/);
+  await view.findByText(/第 \d+ \/ 3 题 · 已提交 \d+ 题/);
   return view;
 }
 
@@ -337,9 +337,9 @@ it("expectedAnswerRevision 取自本机草稿版本（draftRevisions 播种）",
   expect(mockedSubmit.mock.calls[0]?.[2]?.expectedAnswerRevision).toBe(4);
 });
 
-it("未作答：提交本题禁用，「不会，提交并看解析」发空答案提交", async () => {
+it("未作答：仅「不会，提交并看解析」发空答案提交", async () => {
   await renderSingle(baseDraft());
-  expect(screen.getByRole("button", { name: "提交本题" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "不会，提交并看解析" }));
   await screen.findByText("回答正确");
   expect(mockedSubmit.mock.calls[0]?.[1]).toBe("q1");
@@ -649,7 +649,7 @@ it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公�
     }),
   );
   renderPage();
-  await screen.findByText(/做题方式：单题 · 交卷后查看/);
+  await screen.findByText(/第 \d+ \/ 3 题 · 已提交 \d+ 题/);
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
   fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
   await screen.findByText("已提交，交卷后统一公布");

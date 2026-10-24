@@ -12,10 +12,16 @@ import { useAttemptEditor } from "./AttemptEditorContext";
  * - 无权限（T2A.6，D7）：保存/上传收到 403/404 的终态——交卷同样必然被拒，
  *   按钮禁用并提示「已无权限访问该练习」。
  * 从页面文件抽出以便直接做组件测试（离线态渲染断言），页面只负责接线。
+ * 单题紧凑布局（2026-10-24）：传入 primaryActions（单题主操作条）时，操作条
+ * 与进度合并在同一容器（宽屏一行、窄屏两排，无内嵌卡片）；进度文案由
+ * progressLabel 接管（题号 + 提交进度只出现这一处），整卷交卷降级为文字
+ * 按钮「提前交卷」，禁用条件不变。
  */
 export function AttemptBottomBar({
   primaryActions,
   hideSubmit = false,
+  progressLabel,
+  progressValue,
   answered,
   total,
   offline,
@@ -32,6 +38,10 @@ export function AttemptBottomBar({
   primaryActions?: ReactNode;
   /** 单题主动作已经承担交卷时，隐藏重复的整卷入口。 */
   hideSubmit?: boolean;
+  /** 单题紧凑布局的进度文案（替代默认「已填写/已提交」计数） */
+  progressLabel?: ReactNode;
+  /** 进度条比例（0–1）；缺省按已填写比例 */
+  progressValue?: number | undefined;
   answered: number;
   total: number;
   /** 是否离线（useOnlineStatus；离线时禁用交卷） */
@@ -54,31 +64,30 @@ export function AttemptBottomBar({
 }) {
   const editor = useAttemptEditor();
   if (editor?.active?.kind === "annotation") return null;
-  return (
-    <div
-      data-slot="attempt-bottom-bar"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
+  const compact = Boolean(primaryActions);
+  const ratio =
+    progressValue ?? (total === 0 ? 0 : Math.min(1, answered / total));
+  const navigatorButton = onOpenNavigator && (
+    <Button
+      variant="ghost"
+      className="h-11 shrink-0 px-2 lg:hidden"
+      aria-label="答题卡"
+      onClick={onOpenNavigator}
     >
-      {primaryActions && (
-        <div className="mx-auto w-full max-w-[1120px] px-3 pt-2 sm:px-6">
-          {primaryActions}
-        </div>
-      )}
-      <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-3 px-3 py-2 sm:px-6">
-        {onOpenNavigator && (
-          <Button
-            variant="ghost"
-            className="h-11 shrink-0 px-2 lg:hidden"
-            aria-label="答题卡"
-            onClick={onOpenNavigator}
-          >
-            <Grid2X2 aria-hidden className="size-4" />
-            <span className="hidden min-[390px]:inline">答题卡</span>
-            <span className="sr-only min-[390px]:hidden">答题卡</span>
-          </Button>
-        )}
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+      <Grid2X2 aria-hidden className="size-4" />
+      <span className="hidden min-[390px]:inline">答题卡</span>
+      <span className="sr-only min-[390px]:hidden">答题卡</span>
+    </Button>
+  );
+  const progress = (
+    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        {progressLabel !== undefined ? (
+          <span aria-live="polite" className="tabular-nums">
+            {progressLabel}
+          </span>
+        ) : (
+          <>
             <span className="tabular-nums">
               已填写 <b className="text-primary">{answered}</b> / {total} 题
             </span>
@@ -87,71 +96,101 @@ export function AttemptBottomBar({
                 已提交 {practiceSubmittedCount} / {total} 题
               </span>
             )}
-            {offline && (
-              <span className="flex items-center gap-1 text-xs text-amber-600">
-                <WifiOff aria-hidden className="size-4" />
-                离线中，已作答内容保存在本机，恢复网络后可交卷
-              </span>
-            )}
-            {denied && (
-              <span
-                role="alert"
-                className="flex items-center gap-1 text-xs text-destructive"
-              >
-                <Ban aria-hidden className="size-4" />
-                已无权限访问该练习，无法继续作答或交卷
-              </span>
-            )}
-            {saveFailed && (
-              <span className="flex items-center gap-1 text-xs text-destructive">
-                <AlertTriangle aria-hidden className="size-4" />
-                有答案保存失败，请检查网络后重试（重新作答该题即可）
-              </span>
-            )}
-            {inkFlushError && (
-              <span className="flex items-center gap-1 text-xs text-destructive">
-                <AlertTriangle aria-hidden className="size-4" />
-                有题目的笔迹还没上传成功，交卷被暂时阻止——请检查网络后重新点「交卷」
-              </span>
-            )}
-            {submitError !== null && (
-              <span className="flex items-center gap-1 text-xs text-destructive">
-                <AlertTriangle aria-hidden className="size-4" />
-                {submitError}
-              </span>
-            )}
-          </p>
-          {/* 作答进度条（读屏已有「已答 n / m 题」文本，进度条只作视觉提示） */}
-          <div
-            aria-hidden
-            className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted"
+          </>
+        )}
+        {offline && (
+          <span className="flex items-center gap-1 text-xs text-amber-600">
+            <WifiOff aria-hidden className="size-4" />
+            离线中，已作答内容保存在本机，恢复网络后可交卷
+          </span>
+        )}
+        {denied && (
+          <span
+            role="alert"
+            className="flex items-center gap-1 text-xs text-destructive"
           >
-            <div
-              className="h-full rounded-full bg-primary motion-safe:transition-[width]"
-              style={{
-                width: `${total === 0 ? 0 : Math.round((answered / total) * 100)}%`,
-              }}
-            />
+            <Ban aria-hidden className="size-4" />
+            已无权限访问该练习，无法继续作答或交卷
+          </span>
+        )}
+        {saveFailed && (
+          <span className="flex items-center gap-1 text-xs text-destructive">
+            <AlertTriangle aria-hidden className="size-4" />
+            有答案保存失败，请检查网络后重试（重新作答该题即可）
+          </span>
+        )}
+        {inkFlushError && (
+          <span className="flex items-center gap-1 text-xs text-destructive">
+            <AlertTriangle aria-hidden className="size-4" />
+            有题目的笔迹还没上传成功，交卷被暂时阻止——请检查网络后重新点「交卷」
+          </span>
+        )}
+        {submitError !== null && (
+          <span className="flex items-center gap-1 text-xs text-destructive">
+            <AlertTriangle aria-hidden className="size-4" />
+            {submitError}
+          </span>
+        )}
+      </p>
+      {/* 进度条只作视觉提示（读屏已有进度文本） */}
+      <div
+        aria-hidden
+        className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className="h-full rounded-full bg-primary motion-safe:transition-[width]"
+          style={{ width: `${Math.round(ratio * 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+  const submitDisabled = total === 0 || offline || denied;
+  return (
+    <div
+      data-slot="attempt-bottom-bar"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
+    >
+      {compact ? (
+        // 单题紧凑布局：窄屏主操作在上、进度在下；宽屏同一行（进度居左）
+        <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-1 px-3 py-2 sm:px-6 md:flex-row-reverse md:items-center md:gap-4">
+          <div className="min-w-0 md:shrink-0">{primaryActions}</div>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {navigatorButton}
+            {progress}
+            {!hideSubmit && !viewResult && (
+              <Button
+                variant="ghost"
+                className="h-11 shrink-0 px-3 text-sm text-muted-foreground"
+                disabled={submitDisabled}
+                onClick={onOpenSubmit}
+              >
+                提前交卷
+              </Button>
+            )}
           </div>
         </div>
-        {hideSubmit || (viewResult && primaryActions) ? null : viewResult ? (
-          <Button
-            className="h-11 min-w-[88px] shrink-0 px-4 text-base"
-            onClick={onViewResult}
-          >
-            查看本次结果
-          </Button>
-        ) : (
-          <Button
-            className="h-11 min-w-[88px] shrink-0 px-4 text-base"
-            variant={primaryActions ? "outline" : "default"}
-            disabled={total === 0 || offline || denied}
-            onClick={onOpenSubmit}
-          >
-            交卷
-          </Button>
-        )}
-      </div>
+      ) : (
+        <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-3 px-3 py-2 sm:px-6">
+          {navigatorButton}
+          {progress}
+          {hideSubmit ? null : viewResult ? (
+            <Button
+              className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+              onClick={onViewResult}
+            >
+              查看本次结果
+            </Button>
+          ) : (
+            <Button
+              className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+              disabled={submitDisabled}
+              onClick={onOpenSubmit}
+            >
+              交卷
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
