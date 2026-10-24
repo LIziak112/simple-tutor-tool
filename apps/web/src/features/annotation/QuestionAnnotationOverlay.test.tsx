@@ -270,7 +270,13 @@ it("题面变化时先收笔，核对期间切工具继续保持输入保护", a
     await new Promise<void>((resolve) => {
       release = resolve;
     });
-    return { cssWidth: 300, cssHeight: 200, blocks: [], fonts: [] };
+    return {
+      cssWidth: 300,
+      cssHeight: 200,
+      blocks: [],
+      fonts: [],
+      textRects: [],
+    };
   });
   const finishes = engine.finish.mock.calls.length;
   const surface = document.querySelector<HTMLElement>(
