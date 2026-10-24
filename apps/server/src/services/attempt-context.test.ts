@@ -13,6 +13,7 @@ import {
   students,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import { HttpError } from "../lib/http-error.ts";
 import {
   contextEntriesOf,
   liveAttemptContextClosure,
@@ -302,6 +303,43 @@ describe("contextEntriesOf：冻结条目 = 公开投影 + 来源版本", () => 
       "资料分析-1",
       "资料分析-2",
     ]);
+  });
+
+  it("QM-07 C7：JSON 列坏数据 fail closed（409 ATTEMPT_CONTEXT_BROKEN，不静默按 [] 冻结）", () => {
+    const { db } = makeEnv();
+    // 材料行 anchorsJson 损坏（导入层唯一写入方正常产不出，护栏兜异常库）
+    db.$client
+      .prepare(
+        "UPDATE materials SET anchors_json = ? WHERE teacher_id = ? AND id = ?",
+      )
+      .run("{bad json", TEST_TEACHER_ID, "mat-资料分析-1");
+    const closure = liveAttemptContextClosure(db, TEST_TEACHER_ID, [
+      "资料分析-1",
+    ]);
+    expect(() => contextEntriesOf(closure)).toThrowError(
+      expect.objectContaining({
+        status: 409,
+        code: "ATTEMPT_CONTEXT_BROKEN",
+      }) satisfies Partial<HttpError>,
+    );
+  });
+
+  it("QM-07 C7：组条目 JSON 列坏数据同样 fail closed（五列统一口径）", () => {
+    const { db } = makeEnv();
+    db.$client
+      .prepare(
+        "UPDATE question_groups SET question_ids_json = ? WHERE teacher_id = ? AND id = ?",
+      )
+      .run("[broken", TEST_TEACHER_ID, "grp-资料分析-1");
+    const closure = liveAttemptContextClosure(db, TEST_TEACHER_ID, [
+      "资料分析-1",
+    ]);
+    expect(() => contextEntriesOf(closure)).toThrowError(
+      expect.objectContaining({
+        status: 409,
+        code: "ATTEMPT_CONTEXT_BROKEN",
+      }) satisfies Partial<HttpError>,
+    );
   });
 });
 

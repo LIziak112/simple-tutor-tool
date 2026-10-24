@@ -156,9 +156,9 @@ export function contextEntriesOf(
         id: row.id,
         ...(row.title !== null ? { title: row.title } : {}),
         contentMd: row.contentMd,
-        anchors: parseColumn(row.anchorsJson, []),
-        slots: parseColumn(row.slotsJson, []),
-        mediaPaths: parseColumn(row.mediaPathsJson, []),
+        anchors: parseColumn(row, "material", "anchors", row.anchorsJson),
+        slots: parseColumn(row, "material", "slots", row.slotsJson),
+        mediaPaths: parseColumn(row, "material", "mediaPaths", row.mediaPathsJson),
       },
     });
   }
@@ -172,21 +172,37 @@ export function contextEntriesOf(
         ...(row.title !== null ? { title: row.title } : {}),
         ...(row.label !== null ? { label: row.label } : {}),
         introMd: row.introMd,
-        materialRefs: parseColumn(row.materialRefsJson, []),
-        questionIds: parseColumn(row.questionIdsJson, []),
+        materialRefs: parseColumn(row, "group", "materialRefs", row.materialRefsJson),
+        questionIds: parseColumn(row, "group", "questionIds", row.questionIdsJson),
       },
     });
   }
   return entries;
 }
 
-/** JSON 列安全解析（NULL/坏 JSON → 缺省值；冻结输入行由导入层保证形态） */
-function parseColumn<T>(json: string | null, fallback: T): T {
-  if (json === null) return fallback;
+/**
+ * 冻结输入 JSON 列解析（§16.8 P2-2 / tt-07b C7：fail closed）：五列均
+ * NOT NULL 且导入层是唯一写入方（JSON.stringify，正常产不出坏 JSON），
+ * **坏 JSON → 409 ATTEMPT_CONTEXT_BROKEN 显式报错**——与同模块缺依赖 409
+ * 同款纪律（此前静默按 [] 降级，坏数据会被当「无槽位/无引用」冻进卷里，
+ * 错误发生在写入侧且被吞）。NULL 分支保留纯防御（列 NOT NULL 不可达）。
+ * 读取侧 safeParse 坏快照 409 的事后兜底继续成立。
+ */
+function parseColumn<T>(
+  row: { id: string },
+  kind: "material" | "group",
+  column: string,
+  json: string | null,
+): T {
+  if (json === null) return [] as T;
   try {
     return JSON.parse(json) as T;
   } catch {
-    return fallback;
+    throw new HttpError(
+      409,
+      "ATTEMPT_CONTEXT_BROKEN",
+      `开卷依赖的${kind === "material" ? "材料" : "题组"}（${row.id}）的${column} 数据损坏，请联系老师重新检查后再开卷`,
+    );
   }
 }
 
