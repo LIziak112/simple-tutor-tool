@@ -103,6 +103,12 @@ describe("QuestionGroupAnchor", () => {
         "--qg-row-span",
       ),
     ).toBe("3");
+    // 审查 P2-2：reveal 滚入目标让出粘性顶栏（与题卡/结果卡 scroll-mt 同款
+    // 约定值；jsdom 测不出遮挡，静态判定类存在——组头是零材料组的回落目标）
+    const scrollMargin =
+      "scroll-mt-[calc(var(--attempt-header-height,64px)+16px)]";
+    expect(materials?.className.includes(scrollMargin)).toBe(true);
+    expect(header?.className.includes(scrollMargin)).toBe(true);
   });
 
   it("属性更新不换 DOM 实例（真实身份断言）：reveal 信号递增/材料增删前后组头与材料列节点 .toBe 保持", () => {

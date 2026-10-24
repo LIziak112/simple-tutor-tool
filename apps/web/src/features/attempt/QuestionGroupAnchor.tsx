@@ -129,7 +129,8 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
         <header
           ref={headerRef}
           data-slot="question-group-header"
-          className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 xl:col-span-2"
+          // reveal 滚入目标让出粘性顶栏（零材料组的回落目标；审查 P2-2）
+          className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] xl:col-span-2"
         >
           <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
             <Layers
@@ -167,7 +168,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                 "--qg-row-span": String(Math.max(questionCount, 1)),
               } as CSSProperties
             }
-            className="flex min-w-0 flex-col gap-4 self-start focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1 xl:[grid-row:span_var(--qg-row-span)]"
+            className="flex min-w-0 flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1 xl:[grid-row:span_var(--qg-row-span)]"
           >
             {materials.map((material) => (
               <MaterialPanel key={material.id} material={material} />
