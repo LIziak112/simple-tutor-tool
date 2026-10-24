@@ -12,6 +12,12 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -30,6 +36,7 @@ import {
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { withTimeout } from "@/features/notes/rasterize-utils";
 import { measureStage } from "@/lib/performance-stages";
+import { AnnotationOriginal } from "./AnnotationOriginal";
 import {
   getAnnotationRecord,
   retryAnnotationPersistence,
@@ -85,6 +92,36 @@ export const QuestionAnnotationOverlay = forwardRef<
   const viewport = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [originalScope, setOriginalScope] = useState<string | null>(null);
+  const originalScopeKey = JSON.stringify([
+    session?.origin,
+    session?.studentId,
+    attemptId,
+    question.id,
+    record?.resetVersion ?? 0,
+  ]);
+  const originalOpen = originalScope === originalScopeKey && !hidden;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 会话与显示范围变化必须清除旧弹窗，不能在返回旧题或账号时复开
+  useEffect(() => {
+    // 换题、换账号、维护重置或隐藏后，不恢复前一会话的查看弹窗。
+    setOriginalScope(null);
+  }, [session, originalScopeKey, hidden]);
+  const originalBlob = originalOpen ? record?.localBase?.png : undefined;
+  const [originalImage, setOriginalImage] = useState<{
+    blob: Blob;
+    url: string;
+  } | null>(null);
+  const originalBlobUrl =
+    originalImage?.blob === originalBlob ? originalImage?.url : null;
+  useEffect(() => {
+    if (!originalBlob) {
+      setOriginalImage(null);
+      return;
+    }
+    const url = URL.createObjectURL(originalBlob);
+    setOriginalImage({ blob: originalBlob, url });
+    return () => URL.revokeObjectURL(url);
+  }, [originalBlob]);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
   const [color, setColor] = useState<InkPenColor>("red");
   const [size, setSize] = useState<InkPenSize>("thin");
@@ -225,6 +262,14 @@ export const QuestionAnnotationOverlay = forwardRef<
         return;
       }
       if (!editor || !session || loading) return;
+      // 查看原稿不重新生成底图，也不进入原位编辑的布局准入流程。
+      if ((record?.localBase || record?.base) && (rejectedLayout || !layout)) {
+        if (await editor.request(null)) {
+          setError(null);
+          setOriginalScope(originalScopeKey);
+        }
+        return;
+      }
       if (rejectedLayout) setCompatible(null);
       opening.current = true;
       setLoading(true);
@@ -275,10 +320,10 @@ export const QuestionAnnotationOverlay = forwardRef<
             );
             if (signal.aborted) return false;
             setCompatible(matches);
-            if (!matches)
-              throw new Error(
-                "题面布局已变化，不能在不同排版上继续标画，请重新开始练习",
-              );
+            if (!matches) {
+              setOriginalScope(originalScopeKey);
+              return false;
+            }
             return true;
           },
         );
@@ -611,6 +656,78 @@ export const QuestionAnnotationOverlay = forwardRef<
           {error}
         </div>
       )}
+      <Dialog
+        open={originalOpen}
+        onOpenChange={(open) => {
+          if (!open) setOriginalScope(null);
+        }}
+      >
+        <DialogContent
+          className="max-w-4xl"
+          onCloseAutoFocus={(event) => {
+            // 入口由题卡通过 ref 调用，关闭时恢复真实的圈画按钮。
+            const button = root.current
+              ?.closest("article")
+              ?.querySelector<HTMLButtonElement>("[data-annotation-trigger]");
+            if (button) {
+              event.preventDefault();
+              button.focus();
+            }
+          }}
+        >
+          <DialogTitle>{label}原圈画</DialogTitle>
+          <DialogDescription>
+            按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。
+          </DialogDescription>
+          {record?.local === "failed" && (
+            <p role="alert">
+              本机保存失败，当前原稿仍保留在本设备，请恢复保存后再离开。
+            </p>
+          )}
+          {record?.pendingMutationId && (
+            <p className="text-sm text-muted-foreground">
+              本设备有尚未同步的圈画。
+            </p>
+          )}
+          {record?.conflict && (
+            <p role="note">圈画存在同步冲突，当前显示本设备保留的原稿。</p>
+          )}
+          {record?.base?.stale && (
+            <p role="note">这是旧版本题面的原圈画，笔迹保持在保存时的位置。</p>
+          )}
+          {record?.doc &&
+          (originalBlobUrl ||
+            (!record.localBase && record.base?.downloadUrl)) ? (
+            <AnnotationOriginal
+              src={originalBlobUrl ?? record.base?.downloadUrl ?? ""}
+              pixelWidth={
+                record.localBase
+                  ? Math.ceil(
+                      record.localBase.layout.cssWidth *
+                        record.localBase.layout.pixelRatio,
+                    )
+                  : (record.base?.pixelWidth ?? 0)
+              }
+              pixelHeight={
+                record.localBase
+                  ? Math.ceil(
+                      record.localBase.layout.cssHeight *
+                        record.localBase.layout.pixelRatio,
+                    )
+                  : (record.base?.pixelHeight ?? 0)
+              }
+              doc={record.doc}
+              label={`${label}原圈画`}
+            />
+          ) : (
+            <p role={record?.localBase ? "status" : "alert"}>
+              {record?.localBase
+                ? "正在读取本机原圈画…"
+                : "原圈画底图尚未就绪，请重新加载材料；笔迹已保留。"}
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
       {active && (
         <div
           data-slot="attempt-bottom-bar"
