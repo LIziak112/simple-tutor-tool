@@ -139,17 +139,20 @@ function renderWithClient(element: React.ReactElement, client: QueryClient) {
 
 let env: Awaited<ReturnType<typeof makeEnv>>;
 
+// makeEnv：动态 import 真实 server 全量模块 + 建库 + setup 往返，负载下会越 10s 默认钩子超时
 beforeEach(async () => {
   env = await makeEnv();
   installFetchStub(env.app, env.cookie);
-});
+}, 30_000);
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("SAI-07 真实路由联调", () => {
-  it("教师设置：get 默认开放 → 暂存改动 → save 真实落库 → refetch 回显", async () => {
+  it("教师设置：get 默认开放 → 暂存改动 → save 真实落库 → refetch 回显", { // 真实路由 + 真实库的集成用例：全量并发下含整包 server 模块求值，5s 默认超时在负载下不够
+    timeout: 30_000,
+  }, async () => {
     const client = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -199,7 +202,9 @@ describe("SAI-07 真实路由联调", () => {
     );
   });
 
-  it("版本冲突：另一页面先保存后，本页保存收到 409，输入不被覆盖且库值保留", async () => {
+  it("版本冲突：另一页面先保存后，本页保存收到 409，输入不被覆盖且库值保留", {
+    timeout: 30_000,
+  }, async () => {
     const client = new QueryClient({
       defaultOptions: {
         queries: { retry: false },

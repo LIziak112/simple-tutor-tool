@@ -345,7 +345,10 @@ afterEach(() => {
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
-  it("部分填空不计完整，答题卡和交卷遗漏使用同一份状态", async () => {
+  // 整页作答流程用例在 jsdom 内 5-10s，全量并发下会越 5s 默认超时
+  it("部分填空不计完整，答题卡和交卷遗漏使用同一份状态", {
+    timeout: 15_000,
+  }, async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch.mockResolvedValue({
       ...DRAFT_DATA,
@@ -595,7 +598,10 @@ describe("StudentAssignmentAttemptPage：交卷 flush", () => {
     expect(mockedPutInk).not.toHaveBeenCalled();
   });
 
-  it("笔迹上传失败：submit 被阻止 + 底栏可指导提示；恢复后重新交卷成功", async () => {
+  // 同上：笔迹上传失败重试链路是重流程用例
+  it("笔迹上传失败：submit 被阻止 + 底栏可指导提示；恢复后重新交卷成功", {
+    timeout: 15_000,
+  }, async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch
       .mockResolvedValueOnce(HANDWRITTEN_DRAFT)
