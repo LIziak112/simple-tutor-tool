@@ -32,6 +32,7 @@ import { withTimeout } from "@/features/notes/rasterize-utils";
 import { measureStage } from "@/lib/performance-stages";
 import {
   getAnnotationRecord,
+  retryAnnotationPersistence,
   settleAnnotationRecordPersistence,
   writeAnnotationDoc,
 } from "./annotation-store";
@@ -133,6 +134,11 @@ export const QuestionAnnotationOverlay = forwardRef<
     surface.current?.finish();
     if (session) {
       await settleAnnotationRecordPersistence(session, {
+        attemptId,
+        questionId: question.id,
+        phase: "scratch",
+      });
+      await retryAnnotationPersistence(session, {
         attemptId,
         questionId: question.id,
         phase: "scratch",

@@ -11,13 +11,18 @@ import type {
 } from "@tutor/contract";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
+import {
+  AttemptEditorNotice,
+  AttemptEditorProvider,
+} from "@/features/attempt/AttemptEditorContext";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
+  settleAnnotationRecordPersistence,
+  writeAnnotationDoc,
   writeLocalAnnotationBase,
 } from "./annotation-store";
 import {
@@ -91,6 +96,7 @@ function Harness({ hidden = false }: { hidden?: boolean }) {
   const ref = useRef<QuestionAnnotationOverlayHandle>(null);
   return (
     <AttemptEditorProvider>
+      <AttemptEditorNotice />
       <button type="button" onClick={() => void ref.current?.start()}>
         标画
       </button>
@@ -133,6 +139,47 @@ beforeEach(async () => {
     { png: new Blob(["png"], { type: "image/png" }), layout },
     { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
   );
+});
+
+it("收笔时重试失败的本机稿，恢复写入后可退出圈画且原稿不变", async () => {
+  render(<Harness />);
+  fireEvent.click(screen.getByText("标画"));
+  await screen.findByRole("toolbar", { name: "第1题标画工具栏" });
+  const before = await getAnnotationRecord(session, scope);
+  if (!before) throw new Error("缺少标画夹具");
+  const backend = memoryAnnotationBackend();
+  let failed = true;
+  // 保留已有记录，只给后续写入注入失败；重新读取后模拟继续书写。
+  installAnnotationBackend({
+    ...backend,
+    get: async () => before,
+    set: async (key, value) => {
+      if (failed) throw null;
+      await backend.set(key, value);
+    },
+  });
+  await getAnnotationRecord(session, scope);
+  await act(async () => {
+    writeAnnotationDoc(session, scope, before.doc);
+    await settleAnnotationRecordPersistence(session, scope);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "作答" }));
+  await screen.findByRole("alert");
+  expect(
+    screen.getByRole("toolbar", { name: "第1题标画工具栏" }),
+  ).toBeVisible();
+  const pending = (await getAnnotationRecord(session, scope))?.pending;
+  failed = false;
+  fireEvent.click(screen.getByRole("button", { name: "重试操作" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("toolbar", { name: "第1题标画工具栏" }),
+    ).toBeNull(),
+  );
+  const saved = await getAnnotationRecord(session, scope);
+  expect(saved?.local).toBe("saved");
+  expect(saved?.pending).toEqual(pending);
+  expect(saved?.doc).toEqual(before?.doc);
 });
 afterEach(() => {
   vi.useRealTimers();

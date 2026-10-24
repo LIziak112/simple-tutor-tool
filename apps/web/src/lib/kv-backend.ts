@@ -13,7 +13,11 @@
  * 在长库下的成本与库大小解耦。上界取 prefix + U+FFFF：合法 JSON.stringify
  * 键（本仓键形态）不包含该字符，区间恰好覆盖全部前缀键。
  */
-import { createStore, del, get, set } from "idb-keyval";
+import { createStore, del, get, set, type UseStore } from "idb-keyval";
+import {
+  localPersistenceErrorMessage,
+  persistenceErrorName,
+} from "./local-persistence-error";
 
 /**
  * 键值存取完整面（新消费方按需 Pick 收窄）。keys 已随 getAll 落地删除
@@ -65,32 +69,60 @@ export function idbKVBackend(
   dbName: string,
   storeName: string,
 ): KVStoreBackend {
-  const store = createStore(dbName, storeName);
-  return {
-    get: (key) => get(key, store),
-    set: (key, value) => set(key, value, store),
-    del: (key) => del(key, store),
-    getAll: async (prefix) => {
-      // 同一事务内 getAllKeys + getAll（同一 range 同序）；回调返回 Promise
-      // 的口径与 keys 同（customStore 只 resolve 回调返回值）
-      const range = prefixRange(prefix);
-      const request = <T>(r: IDBRequest<T>) =>
-        new Promise<T>((resolve, reject) => {
-          r.onsuccess = () => resolve(r.result);
-          r.onerror = () => reject(r.error);
-        });
-      const [rawKeys, values] = await store("readonly", (objectStore) =>
-        Promise.all([
-          request(objectStore.getAllKeys(range)),
-          request(objectStore.getAll(range)),
-        ]),
-      );
-      const pairs: Array<[string, unknown]> = [];
-      for (let i = 0; i < rawKeys.length; i++) {
-        const key = rawKeys[i];
-        if (typeof key === "string") pairs.push([key, values[i] ?? null]);
+  const connect = () => ({
+    store: createStore(dbName, storeName),
+    db: null as IDBDatabase | null,
+  });
+  let connection = connect();
+  const run = async <T>(
+    operation: (store: UseStore) => Promise<T>,
+  ): Promise<T> => {
+    const current = connection;
+    const store: UseStore = (mode, callback) =>
+      current.store(mode, (objectStore) => {
+        current.db = objectStore.transaction.db;
+        return callback(objectStore);
+      });
+    try {
+      return await operation(store);
+    } catch (cause) {
+      const name = persistenceErrorName(cause);
+      if (["InvalidStateError", "UnknownError", "AbortError"].includes(name)) {
+        // 只为下一次显式操作重连；不自动重放写入，不删除数据库或内存原稿。
+        current.db?.close();
+        if (connection === current) connection = connect();
       }
-      return pairs;
-    },
+      const error = new Error(localPersistenceErrorMessage(cause), { cause });
+      error.name = name;
+      throw error;
+    }
+  };
+  return {
+    get: (key) => run((store) => get<unknown>(key, store)),
+    set: (key, value) => run((store) => set(key, value, store)),
+    del: (key) => run((store) => del(key, store)),
+    getAll: (prefix) =>
+      run(async (store) => {
+        // 同一事务内 getAllKeys + getAll（同一 range 同序）；回调返回 Promise
+        // 的口径与 keys 同（customStore 只 resolve 回调返回值）
+        const range = prefixRange(prefix);
+        const request = <T>(r: IDBRequest<T>) =>
+          new Promise<T>((resolve, reject) => {
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+          });
+        const [rawKeys, values] = await store("readonly", (objectStore) =>
+          Promise.all([
+            request(objectStore.getAllKeys(range)),
+            request(objectStore.getAll(range)),
+          ]),
+        );
+        const pairs: Array<[string, unknown]> = [];
+        for (let i = 0; i < rawKeys.length; i++) {
+          const key = rawKeys[i];
+          if (typeof key === "string") pairs.push([key, values[i] ?? null]);
+        }
+        return pairs;
+      }),
   };
 }

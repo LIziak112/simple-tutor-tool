@@ -35,6 +35,7 @@ import {
   type KVStoreBackend,
   memoryKVBackend,
 } from "@/lib/kv-backend";
+import { localPersistenceErrorMessage } from "@/lib/local-persistence-error";
 import { randomUuid } from "@/lib/uuid";
 
 // ---------- 会话与键 ----------
@@ -325,7 +326,7 @@ async function drain(key: string): Promise<void> {
         const current = records.get(key);
         if (current !== undefined) {
           current.local = "failed";
-          current.localError = err instanceof Error ? err.message : String(err);
+          current.localError = localPersistenceErrorMessage(err);
           notify(key);
         }
         continue;
