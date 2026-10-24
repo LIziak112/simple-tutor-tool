@@ -1,10 +1,19 @@
 # CI：install → lint → typecheck → test → build（开发任务清单 T0.6）
 name: CI
 
-# 触发：push 到所有分支 + 所有 pull_request
+# 触发（2026-10-25 分层测试）：
+# - push 仅 main：PR 分支只由 pull_request 事件跑，消掉 push + PR 双跑（一个 PR 一组 check）；
+# - pull_request：所有 PR 单次全量（lint/typecheck/test/build + e2e 双浏览器）；
+# - schedule：每晚全量回归。schedule 与 workflow_dispatch 只执行默认分支 main 上的本文件
+#   与代码——v2 未发 main 期间夜跑覆盖的是 main 现状，发 main 后自动追平；
+# - workflow_dispatch：手动补跑全量。
 on:
   push:
+    branches: [main]
   pull_request:
+  schedule:
+    - cron: "37 17 * * *" # UTC 17:37 = 北京时间次日 01:37，避开整点
+  workflow_dispatch:
 
 # 同一分支/PR 有新推送时，取消仍在跑的旧运行，节省 CI 时长
 concurrency:
