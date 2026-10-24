@@ -260,7 +260,8 @@ function buildLessonStartData(
     released,
     summary: lessonLiveSummaryOf(
       // 开卷本就装载完整行（题目投影需要快照原文）；喂汇总前映射为存在性
-      // 布尔形态（LessonSummaryRow，不重复搬运快照列语义）
+      // 布尔形态（ScoreSummaryRow，不重复搬运快照列语义；QM-12 起补自评
+      // 三列——汇总核心的有效判定需要）
       rows.map((row) => ({
         hasSnapshot: row.questionSnapshotJson !== null,
         answerJson: row.answerJson,
@@ -269,6 +270,9 @@ function buildLessonStartData(
         finalCorrect: row.finalCorrect,
         gradingPolicy: row.gradingPolicy,
         teacherMark: row.teacherMark,
+        selfReviewVerdict: row.selfReviewVerdict,
+        selfReviewAt: row.selfReviewAt,
+        selfReviewRevision: row.selfReviewRevision,
       })),
       attempt,
     ),

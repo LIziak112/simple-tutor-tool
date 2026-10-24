@@ -113,9 +113,9 @@ export function PracticeFeedbackSection({
           <p className="flex items-start gap-2 text-[0.8125rem] leading-relaxed text-muted-foreground">
             <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
             <span>
-              只影响之后新建的普通练习卷；进行中和历史作答保持原有节奏。
+              默认选择用于新练习；收紧限制也会约束进行中练习的后续提交与反馈读取。
               <br />
-              教师中途收紧规则时，已提交的结果保留，剩余题目按新规则完成。
+              已提交事实保留，已经显示的内容无法撤回。
             </span>
           </p>
           {saveMutation.isError && (

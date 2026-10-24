@@ -288,6 +288,13 @@
       "when": 1792808701314,
       "tag": "0040_marvelous_kingpin",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1792827896265,
+      "tag": "0041_fat_master_mold",
+      "breakpoints": true
     }
   ]
 }

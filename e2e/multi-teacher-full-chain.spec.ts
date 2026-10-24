@@ -23,7 +23,9 @@ import {
  * 用 10.239.1.x，互不占额）；开关竞态由 helper 内「等开放 + 重试」吸收。
  * 单元/课程/作业/学生名全部带唯一后缀：两个浏览器项目并行跑同一数据目录互不干扰。
  */
-test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入建课布置 → 学生作答 → 甲不可见", () => {
+test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入建课布置 → 学生作答 → 甲不可见", {
+  tag: ["@teacher"],
+}, () => {
   test("完整链路各环节串联，甲对乙的资源按 id 404 且列表互不可见", async ({
     page,
     request,
@@ -255,7 +257,7 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
       await expect(studentPage.getByText("100", { exact: true })).toBeVisible();
       await expectResultCount(studentPage, "总题数", 2);
       await expectResultCount(studentPage, "答对", 2);
-      await expectResultCount(studentPage, "待批", 0);
+      await expectResultCount(studentPage, "待判断", 0);
 
       // 泄露检查：交卷前所有 /api/student/* 响应无禁用键、无提示/详解原文
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

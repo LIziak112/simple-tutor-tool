@@ -8,11 +8,7 @@
  * - 导出合成图＝canvas 直绘（drawImage 底图＋笔迹层单 PNG，不走
  *   html-to-image——见 annotation-composite）。
  */
-import type {
-  AnnotationDoc,
-  AnnotationPhase,
-  AnnotationViewData,
-} from "@tutor/contract";
+import type { AnnotationPhase, AnnotationViewData } from "@tutor/contract";
 import {
   ChevronDown,
   CircleAlert,
@@ -32,85 +28,19 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import {
   fetchAnnotationViewApi,
   fetchTeacherAnnotationViewApi,
   saveBlobAs,
 } from "@/lib/api";
 import { copyPngBlobToClipboard } from "@/lib/copy";
+import { AnnotationOriginal } from "./AnnotationOriginal";
 import {
   annotationCompositeFilename,
   exportAnnotationComposite,
 } from "./annotation-composite";
-import { replayAnnotationStroke } from "./annotation-surface";
 
 type ViewPhase = "idle" | "loading" | "loaded" | "error";
-
-/**
- * 静态笔迹层：底图 img 上方的只读 canvas（backing=底图像素域，CSS 同盒缩放）。
- *
- * 回放比例（审查修复 P0-1）：canvas 的 CSS 盒=底图显示宽≠位图域——atrament
- * 内部按 canvas.width/offsetWidth 再放大，重放必须以 cssPerBase=显示宽/位图宽
- * 换算坐标与线宽（与 annotation-surface redraw 的 scale=cssW/baseWidth 同口径）。
- * 布局就绪门控：等底图 img load 后才重放（img 未加载时容器 offsetHeight=0，
- * atrament 的 y 换算会产出 Infinity/NaN——审查次生缺陷）。effect 依赖收窄到
- * doc/base 字段与就绪标志（Q-L6：导出等 UI 状态刷新不得触发重放）。
- */
-function AnnotationStaticCanvas({
-  doc,
-  base,
-  baseLoaded,
-}: {
-  doc: AnnotationDoc;
-  base: NonNullable<AnnotationViewData["base"]>;
-  /** 底图 img 已加载（布局就绪信号——父组件 img onLoad 驱动） */
-  baseLoaded: boolean;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    if (!baseLoaded) return;
-    const canvas = canvasRef.current;
-    if (
-      canvas === null ||
-      base.pixelWidth === null ||
-      base.pixelHeight === null
-    ) {
-      return;
-    }
-    // 布局就绪防御：量不到正尺寸（隐藏/未布局）不重放，等下一次就绪信号
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-    canvas.width = base.pixelWidth;
-    canvas.height = base.pixelHeight;
-    const ctx = canvas.getContext("2d");
-    if (ctx === null) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    const cssPerBase = rect.width / base.pixelWidth;
-    let atrament = null;
-    try {
-      atrament = createProgrammaticAtrament(canvas);
-      for (const stroke of doc.strokes) {
-        replayAnnotationStroke(atrament, cssPerBase, stroke);
-      }
-    } catch (error) {
-      atrament?.destroy();
-      throw error;
-    }
-    // destroy会清画布，只在静态回放卸载/重绘时执行，不能抹掉刚绘制的圈。
-    return () => atrament?.destroy();
-  }, [baseLoaded, doc, base]);
-  return (
-    <canvas
-      ref={canvasRef}
-      data-slot="annotation-static-canvas"
-      className="pointer-events-none absolute inset-0 block h-full w-full"
-      aria-hidden
-    />
-  );
-}
 
 export interface AnnotationViewProps {
   /** 题面原位回看：进入可见区域自动读取，成功后在同一位置呈现原稿。 */
@@ -266,25 +196,13 @@ export function AnnotationView({
             className="relative mx-auto w-full"
             style={{ maxWidth: view.base.layout?.cssWidth ?? 720 }}
           >
-            <img
-              src={view.base.downloadUrl}
-              alt={`${label}底图`}
-              className={
-                baseLoaded
-                  ? "block h-auto w-full"
-                  : "absolute h-0 w-0 opacity-0"
-              }
-              onLoad={() => setLoadedBaseId(view.base?.baseId ?? null)}
-              onError={() => {
-                setLoadedBaseId(null);
-                setError("原标画底图加载失败");
-                setPhaseState("error");
-              }}
-            />
-            <AnnotationStaticCanvas
-              base={view.base}
+            <AnnotationOriginal
+              src={view.base.downloadUrl ?? ""}
+              pixelWidth={view.base.pixelWidth ?? 0}
+              pixelHeight={view.base.pixelHeight ?? 0}
               doc={view.doc}
-              baseLoaded={baseLoaded}
+              label={label}
+              onReadyChange={(ready) => setLoadedBaseId(ready ? baseId : null)}
             />
           </div>
         )}
@@ -425,18 +343,12 @@ export function AnnotationView({
               {view.doc !== null && baseReady && view.base !== null && (
                 <>
                   <div className="relative w-full overflow-hidden rounded-lg border border-border bg-white">
-                    <img
-                      src={view.base.downloadUrl}
-                      alt={`${label}底图`}
-                      className="block w-full select-none"
-                      draggable={false}
-                      loading="lazy"
-                      onLoad={() => setLoadedBaseId(baseId)}
-                    />
-                    <AnnotationStaticCanvas
+                    <AnnotationOriginal
+                      src={view.base.downloadUrl ?? ""}
+                      pixelWidth={view.base.pixelWidth ?? 0}
+                      pixelHeight={view.base.pixelHeight ?? 0}
                       doc={view.doc}
-                      base={view.base}
-                      baseLoaded={baseLoaded}
+                      label={label}
                     />
                   </div>
                   <div className="flex flex-wrap items-center gap-2">

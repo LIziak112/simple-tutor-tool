@@ -489,15 +489,17 @@ export const attemptScoreSummarySchema = z.object({
    * 响应）只统计已单题提交的行——见 lessonLiveSummaryOf 口径与
    * lessonQuestionSubmitDataSchema 注释；结果视图（整卷）计全部卷行 */
   answered: z.number().int().min(0),
-  /** 自动判对数 */
+  /** 判对数（QM-12 有效判定口径：教师判 > 自评 > 自动——reference_self 行
+   *  按学生自评计入；来源在逐题徽章可见，不以计数冒充客观独立完成） */
   correct: z.number().int().min(0),
-  /** 自动判错数（D1 后含未作答客观题） */
+  /** 判错数（QM-12 有效判定口径同上；D1 后含未作答客观题） */
   wrong: z.number().int().min(0),
-  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题） */
+  /** 未判断数（有效判定=null：待教师批改 + 待自评——与 pendingCount 的
+   *  D4 教师待批口径区分；公布 gate 未公布形态按 answered 口径投影） */
   pending: z.number().int().min(0),
   /** 未作答题数（answer=null） */
   unanswered: z.number().int().min(0),
-  /** 可自动判分题数（autoCorrect 非 null）= correct + wrong */
+  /** 已判定题数 = correct + wrong（QM-12 起为有效判定计数；字段名沿用） */
   autoGradable: z.number().int().min(0),
   /**
    * 最终得分（D9，D2/D3 口径：round(finalCorrect=true 题数 ÷ 全部题数 × 100)；

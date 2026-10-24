@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   studentRecordRowSchema,
+  studentRecordsQuerySchema,
   wrongQuestionCardSchema,
   wrongQuestionRoundSchema,
   wrongQuestionsOkSchema,
@@ -253,4 +254,14 @@ describe("studentRecordRowSchema（M4-D3：v1 卷进行中进度计数）", () =
       ).toBe(false);
     }
   });
+});
+
+it("记录排序缺省最近作答，只接受约定的三种顺序", () => {
+  expect(studentRecordsQuerySchema.parse({}).sort).toBe("activity_desc");
+  for (const sort of ["activity_desc", "started_desc", "started_asc"]) {
+    expect(studentRecordsQuerySchema.parse({ sort }).sort).toBe(sort);
+  }
+  expect(studentRecordsQuerySchema.safeParse({ sort: "broken" }).success).toBe(
+    false,
+  );
 });

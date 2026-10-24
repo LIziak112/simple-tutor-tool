@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { InkDoc, InkStroke } from "../packages/contract/src/ink";
 
-test("自然笔感的点号在正式 PNG、裁剪草稿与回放中均保留", async ({ page }) => {
+test("自然笔感的点号在正式 PNG、裁剪草稿与回放中均保留", {
+  tag: ["@annotation"],
+}, async ({ page }) => {
   await page.goto("/dev/ink-feel");
   const pixels = await page.evaluate(async () => {
     const snapshotUrl = "/src/features/ink/render-ink-snapshot.ts";
@@ -99,7 +101,9 @@ test("自然笔感的点号在正式 PNG、裁剪草稿与回放中均保留", a
 });
 
 /** 用户页面不再包含验证面板；浏览器直接检查草稿自产 PNG。 */
-test("草稿真实像素回归不依赖开发页", async ({ page }) => {
+test("草稿真实像素回归不依赖开发页", { tag: ["@annotation"] }, async ({
+  page,
+}) => {
   await page.goto("/dev/ink-feel");
   const verdicts = await page.evaluate(async () => {
     const modulePath = "/src/features/ink/lab/note-render-checks.ts";

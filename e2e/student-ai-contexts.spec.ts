@@ -166,7 +166,7 @@ async function connectInapp(
   expect(res.status()).toBe(201);
 }
 
-test.describe("SAI-33 四来源与结果页共存", () => {
+test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
   // 组内顺序运行；供应商状态按用例凭据隔离，跨文件可并行。
   test.describe.configure({ mode: "serial" });
 
@@ -401,7 +401,7 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .click();
       await q2.getByRole("button", { name: "显示答案" }).click();
       await expect(page.getByText("已完成", { exact: true })).toBeVisible();
-      await expect(page.getByText("答对 2 · 答错 0 · 待批 0")).toBeVisible();
+      await expect(page.getByText("答对 2 · 答错 0 · 待判断 0")).toBeVisible();
 
       // —— 结果页：来源「讲练」+ 按题召唤 AI 助教（两题均已 submittedAt → 复盘尺度）——
       await page.getByRole("link", { name: "查看结果" }).click();

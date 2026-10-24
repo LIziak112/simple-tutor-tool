@@ -588,6 +588,11 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
                 hints: [],
               },
         ),
+        // D3 写入不变量对齐（TT-09c 细项4 有效判定候选化）：finalCorrect 非空的
+        // 行必带 autoCorrect 或 teacherMark（真实链路交卷/批改同事务成对写入）；
+        // 只写 finalCorrect 的合成行在 effectiveVerdictOfRow 下无有效判定，错题
+        // 聚合按未判断行处理（种子补 autoCorrect 镜像，模拟自动判错轮）
+        autoCorrect: config.finalCorrect,
         finalCorrect: config.finalCorrect,
         answerRevision: 0,
         hintsUsed: 0,

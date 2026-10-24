@@ -71,7 +71,9 @@ function singleJudgeMarkdown(unitName: string, stem: string): string {
   ].join("\n");
 }
 
-test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）", () => {
+test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）", {
+  tag: ["@student"],
+}, () => {
   test("三轮作答后错题本按单元/时间/考点分组展示轮次史，攻克标准切换改变分区归属", async ({
     request,
     browser,
@@ -260,7 +262,7 @@ test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）"
   });
 });
 
-test.describe("错题本：课程筛选（2026-10）", () => {
+test.describe("错题本：课程筛选（2026-10）", { tag: ["@student"] }, () => {
   test("选课程后列表只剩该课程的题且重练全部计数跟随筛选；深链与全部课程恢复", async ({
     request,
     browser,

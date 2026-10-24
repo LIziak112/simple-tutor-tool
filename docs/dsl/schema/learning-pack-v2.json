@@ -582,6 +582,14 @@
                   "null"
                 ]
               },
+              "reviewSource": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "teacher",
+                  "self"
+                ]
+              },
               "teacherMark": {
                 "anyOf": [
                   {
@@ -600,6 +608,55 @@
                 "type": [
                   "string",
                   "null"
+                ]
+              },
+              "selfReview": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "verdict": {
+                        "type": "string",
+                        "enum": [
+                          "correct",
+                          "wrong"
+                        ]
+                      },
+                      "at": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "verdict",
+                      "at",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "gradingPolicy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "reference_self",
+                      "manual_only"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
               "inkFile": {
@@ -790,6 +847,11 @@
                 "maximum": 9007199254740991
               },
               "pendingCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "selfJudgedCount": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
@@ -1570,6 +1632,11 @@
                 "minimum": 0,
                 "maximum": 9007199254740991
               },
+              "selfJudgedCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
               "correctRate": {
                 "anyOf": [
                   {
@@ -1636,6 +1703,11 @@
               "maximum": 9007199254740991
             },
             "pendingCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "selfJudgedCount": {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991

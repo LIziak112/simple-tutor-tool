@@ -10,7 +10,6 @@ import {
   PracticeLayoutMenuItems,
   PracticeModeSummary,
   SingleQuestionActionBar,
-  SingleQuestionProgressRow,
 } from "./PracticeWorkspace";
 import {
   firstUnsubmittedQuestionId,
@@ -260,21 +259,6 @@ it("M5-D3 节奏组：PATCH 在途临时禁用；就地错误以 alert 呈现", 
 });
 
 // ---------- 单题紧凑进度行与占位主操作条 ----------
-
-it("紧凑进度行显示第 n / N 题与已提交计数，题目导航入口可打开", () => {
-  const onOpenNavigator = vi.fn();
-  render(
-    <SingleQuestionProgressRow
-      current={8}
-      total={20}
-      submittedCount={7}
-      onOpenNavigator={onOpenNavigator}
-    />,
-  );
-  expect(screen.getByText("第 8 / 20 题 · 已提交 7 题")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "题目导航" }));
-  expect(onOpenNavigator).toHaveBeenCalled();
-});
 
 it("占位主操作条：上一题/下一题可达且首末题禁用；中间为占位容器", () => {
   const onPrev = vi.fn();

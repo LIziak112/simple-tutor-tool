@@ -534,6 +534,11 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
       practiceRequestDigest: expect.any(String),
     });
 
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.lastActivityAt,
+    ).toBe(responseRowOf(env.db, attemptId, Q.choice).submittedAt);
+
     // 泄露三层：键名级（放行当题 answers/answer/solutionMd）+ 题干级 + 邻题内容级
     assertNoLeak({ data }, { allow: ["answers", "answer", "solutionMd"] });
     assertNoStemLeak({ data });
@@ -563,6 +568,12 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
       Q.choice,
     ).submittedAt;
 
+    const activityBeforeRetry = env.db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get()?.lastActivityAt;
+
     // 模拟「结果未知可恢复」：同 mutationId 原样重试（practiceSubmitOk 内含
     // 200 与契约壳校验，与其他用例同一断言强度）
     const retry = await practiceSubmitOk(env, draft, attemptId, Q.choice, {
@@ -581,6 +592,10 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
     );
     expect(questionSubmitEventsOf(env.db, attemptId)).toBe(1);
     expect(first.data.attempt.status).toBe("draft");
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.lastActivityAt,
+    ).toBe(activityBeforeRetry);
   });
 
   it("同 mutationId 异请求摘要 → 409 WORKFLOW_MUTATION_CONFLICT（不重放、不覆盖）", async () => {
@@ -1347,6 +1362,31 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
     const mutationId = crypto.randomUUID();
     await practiceSubmitOk(env, draft, attemptId, Q.choice, { mutationId });
     const submittedAt = responseRowOf(env.db, attemptId, Q.choice).submittedAt;
+    const sealedEvidence = env.db
+      .select()
+      .from(submissionEvidence)
+      .where(eq(submissionEvidence.attemptId, attemptId))
+      .all();
+    expect(sealedEvidence).toHaveLength(1);
+
+    // 本次证据必须精确覆盖剩余题：全卷、缺项、重复和未知题均不允许。
+    for (const ids of [
+      [Q.choice, Q.judge, Q.fill],
+      [Q.judge],
+      [Q.judge, Q.judge],
+      [Q.judge, "00000000-0000-4000-8000-000000000000"],
+    ]) {
+      await expectErr(
+        await submitAttemptRequest(
+          env.app,
+          env.aCookie,
+          attemptId,
+          ids.map((questionId) => ({ questionId, state: "none" as const })),
+        ),
+        409,
+        "NOTE_EVIDENCE_MISMATCH",
+      );
+    }
 
     // 教师对已提交行课中批改（「教师改判后收尾不得覆盖」预埋——§13.5）
     env.db
@@ -1369,6 +1409,10 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
       env.app,
       env.aCookie,
       attemptId,
+      [
+        { questionId: Q.judge, state: "none" },
+        { questionId: Q.fill, state: "none" },
+      ],
     );
     expect([200, 201]).toContain(submitRes.status);
 
@@ -1378,6 +1422,15 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
     expect(keptRow.teacherMark).toBe("correct");
     expect(keptRow.submittedAt).toBe(submittedAt); // 单题提交时刻不被交卷时刻覆盖
     expect(keptRow.practiceMutationId).toBe(mutationId);
+    const finalEvidence = env.db
+      .select()
+      .from(submissionEvidence)
+      .where(eq(submissionEvidence.attemptId, attemptId))
+      .all();
+    expect(finalEvidence).toHaveLength(3);
+    expect(finalEvidence.find((row) => row.questionId === Q.choice)).toEqual(
+      sealedEvidence[0],
+    );
 
     const judgeRow = responseRowOf(env.db, attemptId, Q.judge);
     expect(judgeRow.autoCorrect).toBe(false); // 剩余行判分（未作答 judge 判 false）

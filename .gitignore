@@ -30,3 +30,9 @@ playwright-report/
 
 # 本地 MCP 客户端配置（含会话 Bearer 凭据），严禁入库
 mcp_config.json
+
+# e2e preview 对照实验产物（独立于生产 dist，见 apps/web/vite.config.ts）
+dist-e2e-preview/
+
+# vitest 本机运行产物（json 报告等调试输出，不入库）
+.vitest/

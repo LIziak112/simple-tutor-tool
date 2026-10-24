@@ -13,6 +13,11 @@ import {
   notePhaseSchema,
   noteSubmissionEvidenceStateSchema,
 } from "./note.ts";
+import {
+  gradingPolicySchema,
+  selfReviewRecordSchema,
+  verdictSourceSchema,
+} from "./self-review.ts";
 
 /**
  * AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19 与架构
@@ -422,11 +427,18 @@ export const learningPackResponseSchema = z.object({
   answerText: z.string().nullable(),
   /** 自动判定（null=不能自动判定） */
   autoCorrect: z.boolean().nullable(),
-  /** 最终判定（统计唯一口径；null=待批） */
+  /** 最终判定（教师权威线 teacherMark ?? autoCorrect；null=未判）。QM-12 起展示
+   *  口径的有效判定 = 教师判 > 自评 > 自动，来源见 selfReview/gradingPolicy 两键 */
   finalCorrect: z.boolean().nullable(),
+  /** 判定来源（v2 两线收敛：v2 错题闭环的来源标注接线 QM 有效判定口径） */
+  reviewSource: verdictSourceSchema.optional(),
   teacherMark: z.enum(["correct", "wrong"]).nullable(),
   /** 教师评语原文（不改动；未评为 null） */
   teacherComment: z.string().nullable(),
+  /** 学生自评记录（QM-12：reference_self 行的自评事实；未评/撤回/非自评行为 null） */
+  selfReview: selfReviewRecordSchema.nullable().optional(),
+  /** 行判分策略（QM-12：待自评/待批的行级判别依据） */
+  gradingPolicy: gradingPolicySchema.nullable().optional(),
   /** zip 内笔迹文件路径（ink/…；勾选 ink 且该题有笔迹才出现） */
   inkFile: z.string().optional(),
 });
@@ -453,11 +465,13 @@ export const learningPackAttemptSummarySchema = z.object({
   scoreAuto: z.number().int().min(0).max(100).nullable(),
   scoreFinal: z.number().int().min(0).max(100).nullable(),
   questionCount: z.number().int().min(0),
-  /** finalCorrect=true 题数（统计唯一口径） */
+  /** 有效判定=true 题数（QM-12：教师判 > 自评 > 自动） */
   correctCount: z.number().int().min(0),
   wrongCount: z.number().int().min(0),
-  /** 待批数（finalCorrect=null，D4） */
+  /** 未判断数（有效判定=null：待教师批改 + 待自评） */
   pendingCount: z.number().int().min(0),
+  /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
 });
 
 /** attempts section：逐题作答或汇总任一勾选才出现（D19） */
@@ -530,8 +544,11 @@ export const learningPackStudentSummarySchema = z.object({
   attemptCount: z.number().int().min(0),
   judgedCount: z.number().int().min(0),
   correctCount: z.number().int().min(0),
+  /** 未判断数（有效判定=null：待教师批改 + 待自评） */
   pendingCount: z.number().int().min(0),
-  /** 正确率 = 判对 ÷ 已判定（D4）；无已判定为 null */
+  /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
+  /** 正确率 = 判对 ÷ 已判定（含自评判定）；无已判定为 null */
   correctRate: z.number().min(0).max(1).nullable(),
   /** 有效作答总时长（秒） */
   activeSecTotal: z.number().int().min(0),
@@ -550,6 +567,8 @@ export const learningPackSummarySectionSchema = z.object({
     judgedCount: z.number().int().min(0),
     correctCount: z.number().int().min(0),
     pendingCount: z.number().int().min(0),
+    /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+    selfJudgedCount: z.number().int().min(0).optional(),
     correctRate: z.number().min(0).max(1).nullable(),
     activeSecTotal: z.number().int().min(0),
     offlineShare: z.number().min(0).max(1),

@@ -5,7 +5,6 @@ import {
   type SelfReviewRequest,
   selfReviewConflictCurrentSchema,
   selfReviewDataSchema,
-  type TeacherMark,
 } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -18,6 +17,7 @@ import {
   questionNotFound,
   requireUsableAttempt,
   selfReviewRecordOf,
+  teacherMarkOf,
 } from "./attempt-service";
 import { snapshotOfRow } from "./snapshot";
 
@@ -49,10 +49,8 @@ import { snapshotOfRow } from "./snapshot";
  * 组装前提，无受限形态投影需求）。
  */
 
-/** teacherMark 列值的枚举收窄（列无 $type，按 D9 值域收窄给投影用） */
-function teacherMarkOf(value: string | null): TeacherMark | null {
-  return value === "correct" || value === "wrong" ? value : null;
-}
+// teacherMarkOf 已移驻 attempt-service（QM-12 有效判定单一出处共用收窄），
+// 经顶部 import 使用
 
 /** CAS 冲突的统一 409（附 _current：最新自评与 revision——只含本人自评事实） */
 function selfReviewRevisionConflict(row: ResponseRow): HttpError {

@@ -295,10 +295,10 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
     // submittedAt 2026-09-28T10:05Z → 18:05:00（Asia/Shanghai）；draft 卡无
     // submittedAt 回落 startedAt 10:00Z → 18:00:00；不再出现相对时间文案
     expect(
-      within(gradedCard).getByText("2026年9月28日 18:05:00"),
+      within(gradedCard).getByText("最近作答 2026年9月28日 18:05:00"),
     ).toBeInTheDocument();
     expect(
-      within(draftCard).getByText("2026年9月28日 18:00:00"),
+      within(draftCard).getByText("最近作答 2026年9月28日 18:00:00"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/分钟前|小时前|天前|刚刚/),
@@ -378,4 +378,38 @@ describe("StudentRecordsPage 筛选与分页的 URL 同步", () => {
       screen.queryByRole("link", { name: /打开错题本|错题本/ }),
     ).not.toBeInTheDocument();
   });
+});
+
+it("排序切换回第一页并更新卡片时间和返回上下文，刷新保留", async () => {
+  mockedRecords.mockResolvedValue({
+    records: [makeRow({ lastActivityAt: "2026-10-24T01:00:00.000Z" })],
+    total: 60,
+  });
+  renderPage("/s/records?status=draft&offset=50");
+  await screen.findByText("最近作答 2026年10月24日 09:00:00");
+  fireEvent.change(screen.getByRole("combobox", { name: "排序" }), {
+    target: { value: "started_asc" },
+  });
+  await waitFor(() =>
+    expect(mockedRecords).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sort: "started_asc",
+        status: "draft",
+        offset: 0,
+      }),
+    ),
+  );
+  expect(screen.getByTestId("location-probe")).toHaveTextContent(
+    "sort=started_asc",
+  );
+  expect(screen.getByTestId("location-probe")).not.toHaveTextContent(
+    "offset=50",
+  );
+  expect(
+    await screen.findByText("开始于 2026年9月28日 18:00:00"),
+  ).toBeInTheDocument();
+  const link = screen.getByRole("link", { name: /查看结果：周末加练/ });
+  expect(decodeURIComponent(link.getAttribute("href") ?? "")).toContain(
+    "sort=started_asc",
+  );
 });

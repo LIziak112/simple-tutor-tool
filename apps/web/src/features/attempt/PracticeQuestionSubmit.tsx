@@ -108,7 +108,8 @@ export function PracticeQuestionFooter({
   onRetryFeedback: () => void;
 }) {
   if (!submitted) {
-    if (mode === "single") return null;
+    // 逐题提交入口只在工作流允许时呈现（规则收紧时统一反馈走整卷交卷）。
+    if (mode === "single" || !workflow?.canSubmitQuestion) return null;
     return (
       <div
         data-slot="practice-question-submit"
@@ -160,6 +161,9 @@ export function PracticeQuestionFooter({
 
 /** 单题主操作位三态（SingleQuestionActionBar 的 middle 内容） */
 export function PracticeSingleActions({
+  canSubmitQuestion = true,
+  finishDisabled = false,
+  onFinish,
   submitted,
   answered,
   busy,
@@ -172,6 +176,12 @@ export function PracticeSingleActions({
   onViewResult,
   onContinue,
 }: {
+  /** 工作流级逐题提交开关（练习反馈模式收紧时 false——主操作位退为切题/交卷；
+   *  两线收敛注：v2 曾叠加题目级「无参考答案」门控，QM 判分框架下
+   *  reference_self/manual_only 行均可逐题提交，题目级门控已随 v2 自评实现移除） */
+  canSubmitQuestion?: boolean;
+  finishDisabled?: boolean;
+  onFinish?: () => void;
   submitted: boolean;
   answered: boolean;
   busy: boolean;
@@ -186,17 +196,31 @@ export function PracticeSingleActions({
   onViewResult: () => void;
   onContinue: (id: string) => void;
 }) {
+  if (!canSubmitQuestion && !submitted && !finished) {
+    return (
+      <Button
+        className="min-h-11"
+        disabled={busy || (!hasNext && finishDisabled)}
+        onClick={hasNext ? onNext : onFinish}
+      >
+        {hasNext ? "下一题" : "交卷"}
+      </Button>
+    );
+  }
   if (!submitted) {
+    // 未提交只保留一个提交类主动作：已作答=提交本题；未作答=「不会」空答案
+    // 提交（同一提交链），不再并列一个禁用的提交按钮
     return (
       <div
         data-slot="practice-primary-action"
         className="flex min-w-0 flex-col gap-1.5"
       >
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <Button
             type="button"
+            variant={answered ? "default" : "outline"}
             className="min-h-11 w-fit px-5"
-            disabled={!answered || busy}
+            disabled={busy}
             onClick={onSubmit}
           >
             {busy ? (
@@ -204,24 +228,15 @@ export function PracticeSingleActions({
                 <LoaderCircle aria-hidden className="size-4 animate-spin" />
                 正在提交…
               </>
-            ) : (
+            ) : answered ? (
               "提交本题"
+            ) : (
+              "不会，提交并看解析"
             )}
           </Button>
-          {!answered && (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 w-fit px-4"
-              disabled={busy}
-              onClick={onSubmit}
-            >
-              不会，提交并看解析
-            </Button>
-          )}
         </div>
         {error !== null && (
-          <div className="flex justify-end">
+          <div className="flex justify-center">
             <InlineError message={error} />
           </div>
         )}
@@ -231,7 +246,7 @@ export function PracticeSingleActions({
   return (
     <div
       data-slot="practice-primary-action"
-      className="flex min-w-0 flex-wrap items-center justify-end gap-2"
+      className="flex min-w-0 flex-wrap items-center justify-center gap-2"
     >
       {finished ? (
         <Button

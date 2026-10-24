@@ -6,6 +6,7 @@ import {
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { gradingPolicySchema, selfReviewRecordSchema } from "./self-review.ts";
 
 /**
  * 教师端作答数据页契约（T3.1，依据 Phase3 清单 D5–D8）：
@@ -200,12 +201,22 @@ export const teacherAttemptDetailQuestionSchema = z.object({
   answer: studentAnswerSchema.nullable(),
   /** 自动判定（true/false）；不能自动判定为 null；draft 为 null */
   autoCorrect: z.boolean().nullable(),
-  /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null */
+  /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null。
+   *  QM-12：展示口径的有效判定 = 教师判 > 自评 > 自动（effectiveVerdictOf 同序，
+   *  自评行 finalCorrect 恒 null——不据此判断「待批」，见 selfReview/gradingPolicy） */
   finalCorrect: z.boolean().nullable(),
   /** 教师批改标记（D3；本阶段恒 null） */
   teacherMark: teacherMarkSchema.nullable(),
   /** 教师评语（T3.2；未评为 null） */
   teacherComment: z.string().nullable(),
+  /**
+   * 学生自评记录（QM-12，TT-09c）：reference_self 行的自评事实（未评/已撤回/
+   * 非自评行为 null）。教师优先——teacherMark 非空时本记录保留但展示以教师
+   * 判定为准（清除后自评恢复生效）。draft 缺省不发（未交卷无自评）。
+   */
+  selfReview: selfReviewRecordSchema.nullable().optional(),
+  /** 行判分策略（QM-12：待自评/待批的行级判别依据）；draft 缺省不发 */
+  gradingPolicy: gradingPolicySchema.nullable().optional(),
   /** 每题有效用时（秒；未计算为 null） */
   activeSec: z.number().int().min(0).nullable(),
   /** 已解锁提示数 */
@@ -222,9 +233,9 @@ export const teacherAttemptDetailQuestionSchema = z.object({
 
 /**
  * GET /api/teacher/attempts/:id 响应 data（D7；draft 亦可用，D5）。
- * 对/错/待批计数用统一展示口径 `effectiveCorrect = finalCorrect ?? autoCorrect`
- * （T3.2a 起交卷即写 finalCorrect，故等价 finalCorrect；T3.2b 批注后以教师判定
- * 优先）；draft 全 0（未交卷）。
+ * 对/错计数用有效判定口径 `教师判 > 自评 > 自动`（QM-12 统一有效判定投影，
+ * 与学生结果视图/错题本/学情同一出处）；待批数与待自评数分开计数（QM-12
+ * 细项2：两队列口径清晰）；draft 全 0（未交卷）。
  */
 export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
   {
@@ -235,12 +246,15 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     status: attemptStatusSchema,
     scoreAuto: z.number().int().min(0).max(100).nullable(),
     scoreFinal: z.number().int().min(0).max(100).nullable(),
-    /** 判对题数（effectiveCorrect = true） */
+    /** 判对题数（有效判定 = true：教师判 > 自评 > 自动） */
     correctCount: z.number().int().min(0),
-    /** 判错题数（effectiveCorrect = false） */
+    /** 判错题数（有效判定 = false：教师判 > 自评 > 自动） */
     wrongCount: z.number().int().min(0),
-    /** 待批数（effectiveCorrect = null；口径同列表卡片 pendingCount） */
+    /** 待教师批改数（D4 共享谓词——与列表卡片/矩阵同一口径；不含待自评行） */
     pendingCount: z.number().int().min(0),
+    /** 待自评数（QM-12：reference_self 且教师未判且学生未自评的已交行；
+     *  与 pendingCount 互斥分列——待自评不进教师批改队列。draft 恒 0） */
+    selfReviewPendingCount: z.number().int().min(0).optional(),
     startedAt: z.string().min(1),
     submittedAt: z.string().nullable(),
     activeSec: z.number().int().min(0).nullable(),

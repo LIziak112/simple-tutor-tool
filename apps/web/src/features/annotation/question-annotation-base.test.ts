@@ -109,6 +109,46 @@ it("本机已ready不等待网络或重复栅格化", async () => {
   expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
+
+it("失败的缓存底图再次打开时重写原记录，成功前不放行也不重建底图", async () => {
+  const backend = memoryAnnotationBackend();
+  let failed = true;
+  installAnnotationBackend({
+    ...backend,
+    set: async (key, value) => {
+      if (failed) throw null;
+      await backend.set(key, value);
+    },
+  });
+  await expect(
+    writeLocalAnnotationBase(
+      session,
+      scope,
+      { png, layout },
+      {
+        version: 1,
+        baseWidth: 600,
+        baseHeight: 400,
+        strokes: [],
+      },
+    ),
+  ).rejects.toThrow();
+  const before = await getAnnotationRecord(session, scope);
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).rejects.toThrow();
+  expect((await getAnnotationRecord(session, scope))?.local).toBe("failed");
+  failed = false;
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).resolves.toMatchObject({ kind: "surface" });
+  const saved = await getAnnotationRecord(session, scope);
+  expect(saved?.local).toBe("saved");
+  expect(saved?.pending).toEqual(before?.pending);
+  expect(saved?.docVersion).toBe(before?.docVersion);
+  expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
 it("另一题写盘挂起不阻塞已保存底图打开或本题底图保存", async () => {
   const backend = memoryAnnotationBackend();
   let release = () => {};

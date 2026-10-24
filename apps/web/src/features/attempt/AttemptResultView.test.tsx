@@ -251,7 +251,7 @@ describe("得分汇总卡", () => {
     expect(statistics).toHaveTextContent("总题数4题");
     expect(statistics).toHaveTextContent("答对1题");
     expect(statistics).toHaveTextContent("答错2题");
-    expect(statistics).toHaveTextContent("待批1题");
+    expect(statistics).toHaveTextContent("待判断1题");
     expect(statistics).toHaveTextContent("未答1题");
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });
@@ -286,7 +286,7 @@ describe("得分汇总卡", () => {
       />,
     );
     expect(
-      screen.getByText("未答数单独统计，可能与判错或待批重叠，不能相加。"),
+      screen.getByText("未答数单独统计，可能与判错或待判断重叠，不能相加。"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/已计入判错/)).toBeNull();
   });
@@ -626,10 +626,11 @@ describe("D9（T3.5）老师批改后的展示", () => {
     // 回归：不再显示旧口径的自动判分标签
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     // pendingCount=0（summary.pending 仍为 1，展示以权威计数为准；
-    // 数字与标签组成独立统计项，采用服务端权威计数。
+    // 数字与标签组成独立统计项，采用服务端权威计数（QM-12：待判断=有效
+    // 判定 null 数，与逐题徽章同口径）。
     const statistics = screen.getByLabelText("题目数量统计");
-    expect(statistics).toHaveTextContent("待批0题");
-    expect(statistics).not.toHaveTextContent("待批1题");
+    expect(statistics).toHaveTextContent("待判断0题");
+    expect(statistics).not.toHaveTextContent("待判断1题");
   });
 
   it("批过的题显著展示「老师批改：判对/判错」与评语", () => {
@@ -1268,5 +1269,126 @@ describe("QM-11 自评三态与动作（结果视图）", () => {
     expect(within(card).queryByRole("button", { name: "对了" })).toBeNull();
     expect(within(card).queryByRole("region", { name: "本题自评" })).toBeNull();
     expect(within(card).getByText(/判对/)).toBeInTheDocument();
+  });
+});
+
+// ---------- QM-12（TT-09c）：汇总瓦片有效判定口径 + 自评来源注明 ----------
+
+describe("QM-12 得分汇总卡有效判定口径（结果视图）", () => {
+  const selfRow = (
+    questionId: string,
+    selfReview: AttemptResultData["units"][number]["questions"][number]["selfReview"],
+    teacherMark: "correct" | "wrong" | null = null,
+  ): AttemptResultData["units"][number]["questions"][number] => ({
+    questionId,
+    snapshot: {
+      id: questionId,
+      type: "solve",
+      difficulty: 2,
+      knowledge: ["解答"],
+      stemMd: `计算 ${questionId}。`,
+      hintCount: 0,
+    },
+    answers: { kind: "final", answer: "2" },
+    solutionMd: "过程略。",
+    answer: { kind: "final", finalAnswer: "2" },
+    autoCorrect: null,
+    teacherMark,
+    teacherComment: null,
+    finalCorrect: null,
+    gradingPolicy: "reference_self",
+    selfReview,
+    hintsOpened: [],
+  });
+
+  const mixedData = (answersReleased: boolean): AttemptResultData => ({
+    ...DATA,
+    answersReleased,
+    summary: {
+      ...DATA.summary,
+      total: 2,
+      answered: 2,
+      correct: 1,
+      wrong: 1,
+      pending: 1,
+      unanswered: 0,
+      autoGradable: 1,
+      scoreFinal: null,
+      pendingCount: 1,
+    },
+    units: [
+      {
+        id: "练习四",
+        title: "练习四",
+        questions: [
+          // 自评「错」→ 答错（不冒充客观判定，来源在逐题徽章可见）
+          selfRow("练习四-9", {
+            record: {
+              verdict: "wrong",
+              at: "2026-10-24T00:00:00.000Z",
+              revision: 1,
+            },
+            revision: 1,
+          }),
+          // 已完成、待自评 → 待判断（不是待批改）
+          selfRow("练习四-10", { record: null, revision: 0 }),
+        ],
+      },
+    ],
+  });
+
+  it("汇总瓦片按有效判定计数：自评错入答错、待自评入待判断，并注明口径", () => {
+    render(<AttemptResultView data={mixedData(true)} onBackHome={vi.fn()} />);
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("答对0题");
+    expect(statistics).toHaveTextContent("答错1题");
+    expect(statistics).toHaveTextContent("待判断1题");
+    // 逐题徽章与瓦片同出处：同一题自评错在题卡与瓦片口径一致
+    const wrongCard = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(wrongCard).getAllByText("自评错误").length).toBeGreaterThan(
+      0,
+    );
+    const pendingCard = screen.getByRole("article", { name: "第 2 题" });
+    expect(within(pendingCard).getByText("已完成、待自评")).toBeInTheDocument();
+    // 含自评行 → 口径注明（自评不是客观测评成绩）
+    expect(
+      screen.getByText(/含对照自评的题目按你的自评计入答对\/答错/),
+    ).toBeInTheDocument();
+  });
+
+  it("教师判优先：教师改判对后该题入答对、瓦片与批改块一致", () => {
+    const data = mixedData(true);
+    // noUncheckedIndexedAccess 下先收窄再展开（同文件既有 idiom）
+    const unit = data.units[0];
+    const first = unit?.questions[0];
+    if (unit === undefined || first === undefined) {
+      throw new Error("测试夹具缺少首题");
+    }
+    unit.questions[0] = {
+      ...first,
+      // markResponse D3 口径：教师改判同步写 finalCorrect（教师已判行走
+      // finalCorrect 徽章路径）；自评「错」保留但不再参与计数
+      teacherMark: "correct",
+      finalCorrect: true,
+    };
+    render(<AttemptResultView data={data} onBackHome={vi.fn()} />);
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("答对1题");
+    expect(statistics).toHaveTextContent("答错0题");
+    expect(statistics).toHaveTextContent("待判断1题");
+    // 批改块照常展示教师判定（教师优先，自评动作整块不渲染）
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).getByText(/判对/)).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "对了" })).toBeNull();
+  });
+
+  it("未公布：自评键 null 投影——瓦片全零、无自评口径注、无徽章三态", () => {
+    render(<AttemptResultView data={mixedData(false)} onBackHome={vi.fn()} />);
+    expect(screen.queryByLabelText("题目数量统计")).toBeNull();
+    expect(
+      screen.queryByText(/含对照自评的题目按你的自评计入答对\/答错/),
+    ).toBeNull();
+    expect(screen.queryByText("已完成、待自评")).toBeNull();
+    expect(screen.queryByText("自评错误")).toBeNull();
   });
 });

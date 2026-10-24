@@ -4,9 +4,9 @@ import type { InkProfileConfig } from "../packages/contract/src/ink-profile";
 
 for (const renderer of ["atrament", "freehand"] as const) {
   for (const interrupt of ["pointercancel", "blur"] as const) {
-    test(`${renderer} ${interrupt} 保留真实采样、切换配置保留历史`, async ({
-      page,
-    }) => {
+    test(`${renderer} ${interrupt} 保留真实采样、切换配置保留历史`, {
+      tag: ["@annotation"],
+    }, async ({ page }) => {
       await page.goto("/dev/ink-feel");
       const result = await page.evaluate(
         async ({ renderer, interrupt }) => {

@@ -29,8 +29,8 @@ import {
  *    最后一题自动收尾 → 查看本次结果；
  * 2. 作业粒度授权（allowPerQuestionFeedback=true）：/s/assignments/:id 进入，
  *    与 1 同款逐题流；
- * 3. 教师未授权作业（收紧）：整卷节奏 + 节奏组禁用 + 逐题提交被服务端拒绝
- *    （409 WORKFLOW_RESTRICTED，客户端静默不显示反馈）→ 整卷交卷出结果；
+ * 3. 教师未授权作业（收紧）：整卷节奏 + 节奏组禁用 + 隐藏逐题提交入口
+ *    （服务端拒绝由路由测试覆盖）→ 整卷交卷出结果；
  * 4. 作答中节奏切换（M5-D3 PATCH CAS）：切「交卷后查看」后摘要更新、逐题
  *    提交不再即时反馈，整卷交卷收尾；
  * 5. 开始页推荐预选（M5）：frontmatter practice 推荐单题 + 交卷后查看 →
@@ -202,7 +202,110 @@ function annotateLatency(label: string, elapsedMs: number): void {
   console.log(`[测量记录非阈值] ${description}`);
 }
 
-test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
+test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@student"] }, () => {
+  for (const mode of ["列表逐题", "单题逐题", "统一交卷"] as const) {
+    test(`整卷交卷回归：${mode}提交全部剩余题并结束整卷`, async ({
+      request,
+      browser,
+    }) => {
+      await teacherApiLogin(request);
+      const suffix = uniqueSuffix();
+      const courseName = `交卷回归课程${suffix}`;
+      const unitName = `交卷回归小练${suffix}`;
+      const courseId = await createCourseViaApi(request, courseName);
+      await importUnitToCourse(
+        request,
+        courseId,
+        unitName,
+        perQuestionPracticeMarkdown(unitName),
+      );
+      const student = await prepareCourseStudent(
+        request,
+        courseId,
+        `submit-${suffix}`,
+        `交卷生${suffix}`,
+      );
+      const context = await browser.newContext(devices["iPad (gen 7)"]);
+      const page = await context.newPage();
+      try {
+        const leak = attachLeakMonitor(page);
+        await openUnitLanding(
+          page,
+          student.linkToken,
+          courseId,
+          courseName,
+          unitName,
+        );
+        await page
+          .getByRole("radio", {
+            name: mode === "单题逐题" ? "单题专注" : "列表作答",
+            exact: true,
+          })
+          .check();
+        await page
+          .getByRole("radio", {
+            name: mode === "统一交卷" ? "交卷后查看" : "每题提交后查看",
+            exact: true,
+          })
+          .check();
+        await page.getByRole("button", { name: "开始练习" }).click();
+        await page.waitForURL("**/s/attempts/**");
+        const q1 = page.locator('article[aria-label="第 1 题"]');
+        await chooseAnswer(page, 1, "对", true);
+        await waitForDraftSaved(page);
+        if (mode !== "统一交卷") {
+          // 单题专注的提交入口在吸底栏，列表在题卡内。
+          await page
+            .getByRole("button", { name: "提交本题", exact: true })
+            .first()
+            .click();
+          await expect(
+            q1.getByRole("region", { name: "本题反馈" }),
+          ).toBeVisible();
+          await expect(
+            q1.getByRole("radio", { name: "对", exact: true }),
+          ).toBeDisabled();
+        } else {
+          await expect(
+            page.getByRole("button", { name: "提交本题", exact: true }),
+          ).toHaveCount(0);
+        }
+        // 第二题留空也能交卷，不强迫先逐题提交。
+        const responsePromise = page.waitForResponse(
+          (response) =>
+            /\/api\/student\/attempts\/[^/]+\/submit$/.test(response.url()) &&
+            response.request().method() === "POST",
+        );
+        await page
+          .getByRole("button", {
+            name: mode === "单题逐题" ? "提前交卷" : "交卷",
+            exact: true,
+          })
+          .click();
+        await page
+          .getByRole("button", { name: "确认交卷", exact: true })
+          .click();
+        const response = await responsePromise;
+        expect(response.status()).toBe(200);
+        const sent = response.request().postDataJSON() as {
+          revisions: unknown[];
+          evidence: unknown[];
+        };
+        expect(sent.revisions).toHaveLength(2);
+        expect(sent.evidence).toHaveLength(mode === "统一交卷" ? 2 : 1);
+        await expect(page.getByText("批改结果", { exact: true })).toBeVisible();
+        await expectResultCount(page, "答对", 1);
+        await expect(
+          page.getByRole("button", { name: "确认交卷", exact: true }),
+        ).toHaveCount(0);
+        await leak.drain();
+        expect(leak.violations().join("\n")).toBe("");
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
   test("课程自由练习默认逐题：原位反馈 + 行锁定 + 未交题不泄露 + 自动收尾", async ({
     request,
     browser,
@@ -261,7 +364,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       const feedback = q1.getByRole("region", { name: "本题反馈" });
       await expect(feedback).toBeVisible();
       annotateLatency("课程练习逐题提交→反馈可见", Date.now() - submitStart);
-      await expect(feedback.getByText("已提交，待老师批改")).toBeVisible();
+      await expect(feedback.getByText("回答正确")).toBeVisible();
       await expect(feedback.getByText("参考答案：")).toBeVisible();
       await expect(feedback.getByText("解析", { exact: true })).toBeVisible();
       await expect(feedback.getByText(/是正数/)).toBeVisible();
@@ -363,7 +466,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
         studentPage.getByText("做题方式：列表 · 每题提交后查看"),
       ).toBeVisible();
 
-      // —— 第 1 题：提交本题 → 原位反馈（进行中卷对错不下发，M2 设计）+ 行锁定 ——
+      // —— 第 1 题：提交本题 → 原位反馈（显示授权的自动判定）+ 行锁定 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
@@ -372,7 +475,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
       const feedback = q1.getByRole("region", { name: "本题反馈" });
       await expect(feedback).toBeVisible();
       annotateLatency("作业逐题提交→反馈可见", Date.now() - submitStart);
-      await expect(feedback.getByText("已提交，待老师批改")).toBeVisible();
+      await expect(feedback.getByText("回答正确")).toBeVisible();
       await expect(feedback.getByText("参考答案：")).toBeVisible();
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
@@ -403,7 +506,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
     }
   });
 
-  test("教师未授权作业：整卷节奏 + 节奏组禁用 + 逐题提交被拒 + 交卷出结果", async ({
+  test("教师未授权作业：整卷节奏 + 节奏组禁用 + 隐藏逐题入口 + 交卷出结果", async ({
     request,
     browser,
   }) => {
@@ -457,23 +560,19 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
         studentPage.getByRole("radio", { name: "交卷后查看" }),
       ).toBeDisabled();
 
-      // —— 逐题提交被服务端拒绝（409 WORKFLOW_RESTRICTED），无任何反馈 ——
+      // —— 教师限制下不提供逐题提交，普通作答不出现反馈 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
-      const restrictedPromise = studentPage.waitForResponse(
-        (r) =>
-          /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/submit/.test(
-            r.url(),
-          ) && r.status() === 409,
-      );
-      await q1.getByRole("button", { name: "提交本题" }).click();
-      const restricted = await restrictedPromise;
-      // 断错误码而非仅状态码：WORKFLOW_REVISION_STALE 等其他 409 同样满足
-      // 状态码条件，不查码会把 revision 回归掩蔽成「服务端拒绝」。
-      expect(((await restricted.json()) as { error?: string }).error).toBe(
-        "WORKFLOW_RESTRICTED",
-      );
+      await expect(
+        studentPage.getByRole("button", { name: "提交本题", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        studentPage.getByRole("button", {
+          name: "不会，提交并看解析",
+          exact: true,
+        }),
+      ).toHaveCount(0);
       await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
@@ -558,22 +657,19 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
         studentPage.getByText("做题方式：列表 · 交卷后查看"),
       ).toBeVisible();
 
-      // —— 切换后逐题提交被服务端拒绝（409），不再出现即时反馈 ——
+      // —— 切换后收起逐题提交入口，不出现即时反馈 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
-      const restrictedPromise = studentPage.waitForResponse(
-        (r) =>
-          /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/submit/.test(
-            r.url(),
-          ) && r.status() === 409,
-      );
-      await q1.getByRole("button", { name: "提交本题" }).click();
-      const restricted = await restrictedPromise;
-      // 同场景3：断错误码 WORKFLOW_RESTRICTED，防其他 409（如 revision 陈旧）混过。
-      expect(((await restricted.json()) as { error?: string }).error).toBe(
-        "WORKFLOW_RESTRICTED",
-      );
+      await expect(
+        studentPage.getByRole("button", { name: "提交本题", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        studentPage.getByRole("button", {
+          name: "不会，提交并看解析",
+          exact: true,
+        }),
+      ).toHaveCount(0);
       await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
@@ -650,11 +746,11 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", () => {
         .click();
       await studentPage.waitForURL("**/s/attempts/**");
       await expect(
-        studentPage.getByText("做题方式：单题 · 交卷后查看"),
+        studentPage.getByText("第 1 / 2 题 · 已填写 0 题"),
       ).toBeVisible();
       await expect(
-        studentPage.getByText(/第 1 \/ 2 题 · 已提交 0 题/),
-      ).toBeVisible();
+        studentPage.getByRole("button", { name: "调整做题方式" }),
+      ).toHaveCount(0);
 
       // —— 单题布局作答两题（下一题导航），整卷交卷出结果 ——
       await chooseAnswer(studentPage, 1, "对", true);

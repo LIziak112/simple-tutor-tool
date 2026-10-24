@@ -183,7 +183,7 @@ async function renderSingle(search = "") {
   });
   mockedFetch.mockResolvedValue(kbDraft());
   const view = renderPage(search);
-  await view.findByText(/做题方式：单题 · 每题提交后查看/);
+  await view.findByText(/第 \d+ \/ 4 题 · 已提交 \d+ 题/);
   const container = document.querySelector<HTMLElement>(
     '[data-slot="practice-single-workspace"]',
   );
@@ -333,7 +333,7 @@ it("←→ 仅工作区容器焦点生效；input 内方向键保持原生；弹
     expect(progressRow().textContent).toContain("第 2 / 4 题"),
   );
   // 导航弹层打开：方向键不切题
-  fireEvent.click(screen.getByRole("button", { name: "题目导航" }));
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
   await screen.findByRole("dialog");
   container.focus();
   press(container, "ArrowRight");
@@ -412,7 +412,7 @@ it("快捷键关闭后 Enter、←→、1-9 全部不生效", async () => {
   });
   mockedFetch.mockResolvedValue(kbDraft());
   renderPage("?q=q2");
-  await screen.findByText(/做题方式：单题 · 每题提交后查看/);
+  await screen.findByText(/第 \d+ \/ 4 题 · 已提交 \d+ 题/);
   const container = document.querySelector<HTMLElement>(
     '[data-slot="practice-single-workspace"]',
   );

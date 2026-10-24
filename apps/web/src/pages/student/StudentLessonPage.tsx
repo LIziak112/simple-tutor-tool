@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { questionBindings } from "@/features/answering/question-binding";
 import {
+  AttemptEditorNotice,
   AttemptEditorProvider,
   useAttemptEditor,
 } from "@/features/attempt/AttemptEditorContext";
@@ -618,6 +619,7 @@ function LessonAnswerInner({
           }
         />
 
+        <AttemptEditorNotice />
         {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
         {total === 0 && (
           <p className="rounded-2xl border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
@@ -744,8 +746,9 @@ function LessonCompletedView({
               </span>
               {summary !== null && (
                 <span>
-                  答对 {summary.correct} · 答错 {summary.wrong} · 待批{" "}
-                  {summary.pendingCount ?? summary.pending}
+                  {/* QM-12：有效判定口径——待判断含待教师批改与待自评 */}
+                  答对 {summary.correct} · 答错 {summary.wrong} · 待判断{" "}
+                  {summary.pending}
                 </span>
               )}
             </>

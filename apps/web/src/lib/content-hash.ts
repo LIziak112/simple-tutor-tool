@@ -8,6 +8,10 @@
  * 但保持 annotationHashSchema 要求的 64 位小写十六进制形状。
  * 与 lib/uuid.ts、lib/copy.ts 的安全上下文降级同理。
  */
+import { stableContentHash64 } from "@tutor/contract";
+
+export { stableContentHash64 } from "@tutor/contract";
+
 export async function contentHash64(value: unknown): Promise<string> {
   const text = JSON.stringify(value);
   if (typeof crypto.subtle?.digest === "function") {
@@ -19,19 +23,5 @@ export async function contentHash64(value: unknown): Promise<string> {
       byte.toString(16).padStart(2, "0"),
     ).join("");
   }
-  return fallbackHash64(text);
-}
-
-/** FNV-1a 32 位 × 8 轮（每轮不同初值）拼成 64 位小写 hex；确定性、无加密强度。 */
-function fallbackHash64(text: string): string {
-  let out = "";
-  for (let round = 0; round < 8; round += 1) {
-    let hash = 0x811c9dc5 ^ (round * 0x9e3779b1);
-    for (let index = 0; index < text.length; index += 1) {
-      hash ^= text.charCodeAt(index);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    out += (hash >>> 0).toString(16).padStart(8, "0");
-  }
-  return out;
+  return stableContentHash64(value);
 }

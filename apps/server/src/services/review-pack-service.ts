@@ -33,6 +33,7 @@ import {
   answerOf,
   answersReleased,
   attemptTeacherId,
+  effectiveVerdictOfRow,
   frozenRowsInDisplayOrder,
   requireUsableAttempt,
 } from "./attempt-service";
@@ -294,6 +295,8 @@ export function assembleReviewPack(
   const eRef = evidenceEntry.ref;
   const material = revision.material;
   const answerText = serializeStudentAnswer(answerOf(row.answerJson));
+  // 判定来源（教师域键；两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
+  const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
 
   // —— 题目文字（questions/q001/stem.md）：静态素材单一实现（md-dsl） ——
   const staticMaterial = buildStaticQuestionMaterial({
@@ -600,6 +603,10 @@ export function assembleReviewPack(
             studentId: attempt.studentId,
             autoCorrect: row.autoCorrect,
             finalCorrect: row.finalCorrect,
+            // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
+            ...(effectiveSourceOfRow !== undefined
+              ? { reviewSource: effectiveSourceOfRow }
+              : {}),
             teacherMark:
               row.teacherMark === "correct" || row.teacherMark === "wrong"
                 ? row.teacherMark

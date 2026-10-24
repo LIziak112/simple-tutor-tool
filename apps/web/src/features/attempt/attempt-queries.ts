@@ -8,7 +8,7 @@ import type {
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
 import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   studentAssignmentsKey,
   studentCoursesKey,
@@ -75,23 +75,59 @@ export const studentUnitLandingKey = (courseId: string, unitId: string) =>
  * 恒不轮询）。
  */
 const detailPollingPaused = new Set<string>();
+const detailPollingListeners = new Set<() => void>();
+function subscribeDetailPolling(listener: () => void) {
+  detailPollingListeners.add(listener);
+  return () => {
+    detailPollingListeners.delete(listener);
+  };
+}
 
 /** 最后一题自动收尾后调用：停掉该卷的 draft 轮询，等学生显式查看结果 */
 export function pauseAttemptDetailPolling(attemptId: string): void {
   detailPollingPaused.add(attemptId);
+  for (const listener of detailPollingListeners) listener();
 }
 
 /** 学生显式查看结果（或重新进入作答）时解除暂停 */
 export function resumeAttemptDetailPolling(attemptId: string): void {
   detailPollingPaused.delete(attemptId);
+  for (const listener of detailPollingListeners) listener();
 }
 
 /** attempt 详情（draft→草稿视图、submitted/graded→结果视图；按 attempt.status 分支） */
 export function useAttemptDetail(attemptId: string | undefined) {
+  const queryClient = useQueryClient();
+  const paused = useSyncExternalStore(
+    subscribeDetailPolling,
+    () => attemptId !== undefined && detailPollingPaused.has(attemptId),
+  );
+  useEffect(
+    () => () => {
+      if (attemptId !== undefined) resumeAttemptDetailPolling(attemptId);
+    },
+    [attemptId],
+  );
   return useQuery({
     queryKey: studentAttemptKey(attemptId ?? "pending"),
-    queryFn: () => fetchAttemptApi(attemptId ?? ""),
-    enabled: attemptId !== undefined,
+    queryFn: async () => {
+      const previous = queryClient.getQueryData<
+        Awaited<ReturnType<typeof fetchAttemptApi>>
+      >(studentAttemptKey(attemptId ?? "pending"));
+      // 暂停期间不出站；已在途的详情也不能覆盖末题阅读现场。
+      if (previous && detailPollingPaused.has(attemptId ?? "")) return previous;
+      try {
+        const next = await fetchAttemptApi(attemptId ?? "");
+        return previous && detailPollingPaused.has(attemptId ?? "")
+          ? previous
+          : next;
+      } catch (error) {
+        if (previous && detailPollingPaused.has(attemptId ?? ""))
+          return previous;
+        throw error;
+      }
+    },
+    enabled: attemptId !== undefined && !paused,
     staleTime: 0,
     refetchOnMount: "always",
     // 窗口焦点重取同样尊重收尾暂停（闸门修复）：否则最后一题自动收尾后
@@ -99,6 +135,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
     refetchOnWindowFocus: () =>
       attemptId === undefined || !detailPollingPaused.has(attemptId),
     refetchInterval: (query) =>
+      !paused &&
       query.state.data?.attempt.status === "draft" &&
       (attemptId === undefined || !detailPollingPaused.has(attemptId))
         ? 10_000

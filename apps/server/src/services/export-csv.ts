@@ -7,7 +7,11 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, questions, responses, students } from "../db/schema";
 import { knowledgeNamesByQuestion } from "./assignment-service";
-import { answerOf, unitGroupedRows } from "./attempt-service";
+import {
+  answerOf,
+  effectiveVerdictOfRow,
+  unitGroupedRows,
+} from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -170,9 +174,26 @@ function autoCorrectText(autoCorrect: boolean | null): string {
   return autoCorrect ? "答对" : "答错";
 }
 
-function finalCorrectText(finalCorrect: boolean | null): string {
-  if (finalCorrect === null) return "待批";
-  return finalCorrect ? "答对" : "答错";
+/**
+ * 有效判定的展示文本（QM-12：教师判 > 自评 > 自动；原 finalCorrect 快捷口径
+ * 对自评行恒「待批」，与详情/错题本/学情不一致）。「未判断」区分待教师批改
+ * 与待自评（来源列同步给出），不再用「待批」一概而论。
+ */
+function effectiveVerdictText(
+  effective: ReturnType<typeof effectiveVerdictOfRow>,
+): string {
+  if (effective === null) return "未判断";
+  return effective.value ? "答对" : "答错";
+}
+
+/** 判定来源列：教师/自评/自动；未判断行如实标注（原口径对未判行标「自动」） */
+function verdictSourceText(
+  effective: ReturnType<typeof effectiveVerdictOfRow>,
+): string {
+  if (effective === null) return "未判断";
+  if (effective.source === "teacher") return "教师";
+  if (effective.source === "self") return "自评";
+  return "自动";
 }
 
 /**
@@ -299,11 +320,14 @@ export function exportCsv(
             knowledge.join("；"),
             answerText,
             autoCorrectText(row.response.autoCorrect),
-            finalCorrectText(row.response.finalCorrect),
-            row.response.teacherMark === "correct" ||
-            row.response.teacherMark === "wrong"
-              ? "教师"
-              : "自动",
+            // QM-12：最终判定/来源按有效判定（教师判 > 自评 > 自动）
+            ...((): string[] => {
+              const effective = effectiveVerdictOfRow(row.response);
+              return [
+                effectiveVerdictText(effective),
+                verdictSourceText(effective),
+              ];
+            })(),
             row.response.activeSec === null
               ? ""
               : String(row.response.activeSec),
@@ -392,6 +416,8 @@ export function exportCsv(
           inkRow !== undefined
             ? `${base}/api/teacher/ink/${inkRow.id}.png`
             : "";
+        // QM-12：最终判定/来源按有效判定（教师判 > 自评 > 自动）
+        const effective = effectiveVerdictOfRow(response);
         const cells = [
           studentName,
           sourceTypeText,
@@ -405,10 +431,8 @@ export function exportCsv(
           knowledge.join("；"),
           answerText,
           autoCorrectText(response.autoCorrect),
-          finalCorrectText(response.finalCorrect),
-          response.teacherMark === "correct" || response.teacherMark === "wrong"
-            ? "教师"
-            : "自动",
+          effectiveVerdictText(effective),
+          verdictSourceText(effective),
           response.activeSec === null ? "" : String(response.activeSec),
           String(response.hintsUsed),
           String(response.changeCount),

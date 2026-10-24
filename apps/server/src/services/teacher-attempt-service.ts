@@ -30,8 +30,10 @@ import {
   attemptQuestionRows,
   attemptResponseRows,
   attemptUnitIds,
+  effectiveVerdictOfRow,
   ensureAttemptFrozen,
   lessonSourceContextOf,
+  selfReviewRecordOf,
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
@@ -56,16 +58,13 @@ import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
  */
 
 /**
- * 判定展示口径（D2/D3 前置约定）：`finalCorrect ?? autoCorrect`——教师批改
- * （T3.2 落地）优先，否则回落自动判定。汇总计数（详情头对/错/待批）统一用它；
- * 本阶段 finalCorrect 恒 null，等价于 autoCorrect。
+ * 判定展示口径（QM-12 统一有效判定投影）：教师判 > 自评 > 自动——
+ * effectiveVerdictOfRow 单一出处（原 `finalCorrect ?? autoCorrect` 快捷回落
+ * 对自评行恒漏判：reference_self 行 finalCorrect 恒 null；该函数已删，
+ * 详情计数与逐题显示一律走有效判定）。汇总计数（详情头对/错/待批/待自评）
+ * 统一用它；待批数（pendingCount）单独走 D4 共享谓词（与列表卡片/矩阵同
+ * 口径，不含待自评行）。
  */
-export function effectiveCorrect(
-  finalCorrect: boolean | null,
-  autoCorrect: boolean | null,
-): boolean | null {
-  return finalCorrect ?? autoCorrect;
-}
 
 /** 最近活动时间排序键（D6/D10 同一口径：submittedAt ?? startedAt） */
 const lastActivitySql = sql`coalesce(${attempts.submittedAt}, ${attempts.startedAt})`;
@@ -419,6 +418,14 @@ function detailItemOf(
         ? row.teacherMark
         : null,
     teacherComment: isDraft ? null : row.teacherComment,
+    // QM-12：自评记录与行策略（教师优先——teacherMark 非空时展示以教师判定
+    // 为准；draft 未交卷无自评，缺省不发）
+    ...(isDraft
+      ? {}
+      : {
+          selfReview: selfReviewRecordOf(row),
+          gradingPolicy: row.gradingPolicy,
+        }),
     activeSec: row.activeSec,
     hintsUsed: row.hintsUsed,
     changeCount: row.changeCount,
@@ -441,7 +448,7 @@ function detailItemOf(
  *   兜底组不丢弃——修正旧 inner join 直接丢行的行为）；
  * - 手写信息：ink 表 (attemptId, questionId) 关联（draft 也可能有笔迹无行）；
  * - 全卷连续题号：attempt 单元顺序 × 题目顺序，1 起；
- * - 计数：effectiveCorrect（finalCorrect ?? autoCorrect）口径；draft 全 0。
+ * - 计数：有效判定口径（教师判 > 自评 > 自动）；draft 全 0。
  */
 export function getTeacherAttemptDetail(
   db: Db,
@@ -460,8 +467,10 @@ export function getTeacherAttemptDetail(
   const source = sourceOf(db, attempt, teacherId);
   const inkByQuestion = inkByQuestionOf(db, attemptId);
 
-  // 逐题条目（先按单元归属排序，再统一编号）
+  // 逐题条目（先按单元归属排序，再统一编号）；行同步收集（判定计数用——
+  // 有效判定的输入是行事实，不经过投影条目反推）
   const items: Omit<TeacherAttemptDetailQuestion, "no">[] = [];
+  const detailRows: ResponseRow[] = [];
   if (attempt.sourceType === "wrong") {
     // wrong（2026-10）：题目集合 = attempt 自有 responses 行（建卷时冻结的错题
     // 快照，按插入序 = 组卷题序）；draft 与已交卷同源（不查当前题库出题——
@@ -492,6 +501,7 @@ export function getTeacherAttemptDetail(
       const snapshot = snapshotOfRow(row);
       if (snapshot === null) continue; // 坏快照按缺失计（建卷即冻结，理论不可达）
       const originUnitId = unitByQuestion.get(row.questionId) ?? row.questionId;
+      detailRows.push(row);
       items.push(
         detailItemOf(row, snapshot, {
           isDraft: attempt.status === "draft",
@@ -516,6 +526,7 @@ export function getTeacherAttemptDetail(
       for (const row of group.rows) {
         const snapshot = snapshotOfRow(row);
         if (snapshot === null) continue; // 历史题目缺失跳过
+        detailRows.push(row);
         items.push(
           detailItemOf(row, snapshot, {
             isDraft,
@@ -546,13 +557,31 @@ export function getTeacherAttemptDetail(
     }),
   );
 
-  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）
-  const judged =
-    attempt.status === "draft"
-      ? []
-      : questionsOut.map((item) =>
-          effectiveCorrect(item.finalCorrect, item.autoCorrect),
-        );
+  // 判定计数（QM-12 有效判定口径：教师判 > 自评 > 自动）；draft 未交卷无判定，
+  // 对/错/待批/待自评全 0（D5）。待批数走 D4 共享谓词（与列表卡片/矩阵同口径，
+  // 不含待自评行——细项2 两队列分开）；待自评数 = reference_self 行且教师未判
+  // 且学生未自评（读侧现算，自评后即归零）——与 pending-mark.pendingSelfReviewCounts
+  // （学生记录行徽章的批量 SQL 谓词）同一语义，注释互指、口径不漂移
+  //（路由投影锁见 routes/student-records.test.ts QM-12 节）
+  let correctCount = 0;
+  let wrongCount = 0;
+  let selfReviewPendingCount = 0;
+  for (const row of attempt.status === "draft" ? [] : detailRows) {
+    const effective = effectiveVerdictOfRow(row);
+    if (effective === null) {
+      // 待自评单独分列（不进教师待批队列）；其余未判断行走 D4 待批数
+      if (
+        row.gradingPolicy === "reference_self" &&
+        row.teacherMark === null &&
+        row.selfReviewVerdict === null
+      ) {
+        selfReviewPendingCount += 1;
+      }
+      continue;
+    }
+    if (effective.value) correctCount += 1;
+    else wrongCount += 1;
+  }
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -561,9 +590,13 @@ export function getTeacherAttemptDetail(
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
-    correctCount: judged.filter((value) => value === true).length,
-    wrongCount: judged.filter((value) => value === false).length,
-    pendingCount: judged.filter((value) => value === null).length,
+    correctCount,
+    wrongCount,
+    // D4 共享谓词（finalCorrect IS NULL 且非 reference_self 行；与列表卡片/
+    // 待批队列/学情矩阵同一实现——不再用 effectiveCorrect=null 计数，避免把
+    // 待自评行算进教师待批）
+    pendingCount: pendingMarkCount(db, attempt),
+    selfReviewPendingCount,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,

@@ -12,6 +12,13 @@ import { pwaManifest } from "./src/lib/pwa-manifest";
 // web=jsdom 环境；本文件不含 test 段）——在 apps/web 下直接跑 vitest 会
 // 缺 jsdom 环境与 @ 别名（T6R.8 复审⑮注记）。
 
+// e2e 对照实验模式（手动设 E2E_WEB_PREVIEW=1 时 playwright 的 webServer 以
+// `--mode e2e-preview` 跑 vite build + preview；2026-10-25 实验已判决不切换，
+// 默认关闭）：此模式下不启用 PWA 插件（e2e 的 PUBLIC_URL 本就是 http 不会
+// 注册 SW，这里再保证产物不含 sw.js）、build 输出到独立 dist-e2e-preview/
+// （不覆盖生产 dist）、preview 带代理。模式契约是命令行 --mode 参数（vite
+// 内建挂点），不是又一个 env 字符串。
+
 /** Excalidraw 静态资源的对外 URL 前缀（适配器设置 window.EXCALIDRAW_ASSET_PATH） */
 const EXCALIDRAW_ASSET_PREFIX = "/excalidraw-assets/";
 
@@ -126,8 +133,29 @@ function pwa() {
   });
 }
 
-export default defineConfig({
-  plugins: [react(), tailwindcss(), excalidrawAssets(), pwa()],
+/** /api、/blobs、/mcp 反向代理：dev server 与 vite preview（e2e:full 对照模式）
+ *  共用同一份。用 127.0.0.1 而非 localhost，避免 Windows 上解析到 IPv6 导致
+ *  代理失败。DEV_API_PROXY_TARGET 覆盖目标：E2E（T2.13）起独立 server 在 8899，
+ *  与日常 pnpm dev（8787）互不干扰；不设置时行为不变。 */
+const proxyConfig = {
+  "/api": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
+  // 图片伺服（媒体管线第二单）：/blobs/* 由 server 从 DATA_DIR/blobs/media
+  // 内容寻址直出（生产同源托管，无代理）；dev 下与 /api 同目标同逻辑转发。
+  "/blobs": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
+  // MCP 服务：/mcp/* 转发给本地 server
+  "/mcp": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
+};
+
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    react(),
+    tailwindcss(),
+    excalidrawAssets(),
+    ...(mode === "e2e-preview" ? [] : [pwa()]),
+  ],
+  // e2e 对照产物落到独立目录，绝不覆盖生产 dist（apps/server 托管的就是它）；
+  // vite preview 服务同一 outDir
+  ...(mode === "e2e-preview" ? { build: { outDir: "dist-e2e-preview" } } : {}),
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -141,18 +169,13 @@ export default defineConfig({
     // 启动即预热入口（触发依赖预构建）：dev 首屏与 E2E 首个导航不再等
     // 预构建（CI 全新环境上冷预构建曾把首个用例拖超时）
     warmup: { clientFiles: ["./index.html", "./src/main.tsx"] },
-    proxy: {
-      // 开发环境把 /api 转发给本地 server（端口见 §0.3，默认 8787）。
-      // 用 127.0.0.1 而不是 localhost，避免 Windows 上解析到 IPv6 导致代理失败。
-      // DEV_API_PROXY_TARGET 覆盖目标：E2E（T2.13）起独立 server 在 8899，
-      // 与日常 pnpm dev（8787）互不干扰；不设置时行为不变。
-      "/api": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
-      // 图片伺服（媒体管线第二单）：/blobs/* 由 server 从 DATA_DIR/blobs/media
-      // 内容寻址直出（生产同源托管，无代理）；dev 下与 /api 同目标同逻辑转发。
-      "/blobs": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
-      // MCP 服务：/mcp/* 转发给本地 server
-      "/mcp": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
-    },
+    proxy: proxyConfig,
   },
+  // vite preview 仅在 e2e 对照模式（--mode e2e-preview）下带代理与局域网暴露；
+  // 其他 mode 保持 vite 默认（localhost、无代理）——v2 起就没有 preview 代理，
+  // 不为对照实验把暴露面静默加宽到日常 `vite preview`
+  ...(mode === "e2e-preview"
+    ? { preview: { host: true, proxy: proxyConfig } }
+    : {}),
   // build.outDir 保持默认 dist：生产模式由 apps/server 托管 apps/web/dist
-});
+}));

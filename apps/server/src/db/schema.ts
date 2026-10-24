@@ -994,6 +994,8 @@ export const attempts = sqliteTable(
     status: text("status").$type<AttemptStatus>().notNull(),
     /** 开始作答时间：UTC ISO 字符串 */
     startedAt: text("started_at").notNull(),
+    /** 最近有效作答确认时间；历史缺省由查询回退，不推测历史编辑。 */
+    lastActivityAt: text("last_activity_at"),
     /** 交卷时间：UTC ISO 字符串；未交为 NULL */
     submittedAt: text("submitted_at"),
     /**
@@ -1148,7 +1150,7 @@ export const responses = sqliteTable(
     teacherMark: text("teacher_mark"),
     /** 教师评语（T3.2）；未评为 NULL */
     teacherComment: text("teacher_comment"),
-    /** 每题有效用时（秒；T2.10 按事件计算回写）；未计算为 NULL */
+    /** 每题有效用时（秒，T2.10 按事件计算回写）；未计算为 NULL */
     activeSec: integer("active_sec"),
     /** 已查看提示数（T2.11：去重后的已解锁序号集合大小；交卷时冻结保留） */
     hintsUsed: integer("hints_used").notNull().default(0),

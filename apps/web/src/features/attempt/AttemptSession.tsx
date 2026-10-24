@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { questionBindings } from "@/features/answering/question-binding";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
@@ -85,10 +86,9 @@ import {
 import {
   PracticeKeyboardHelpDialog,
   PracticeKeyboardHelpMenuItem,
-  PracticeLayoutMenuItems,
+  PracticeModeDialog,
   PracticeModeSummary,
   SingleQuestionActionBar,
-  SingleQuestionProgressRow,
 } from "./PracticeWorkspace";
 import {
   isActivatingTarget,
@@ -312,6 +312,15 @@ function AnswerView({
     }));
   }, []);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const navigatorTrigger = useRef<HTMLElement | null>(null);
+  const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
+  const openNavigator = () => {
+    navigatorTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setNavigatorOpen(true);
+  };
   // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
   // 内容整树卸载，弹层不能寄居其中
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false);
@@ -495,6 +504,17 @@ function AnswerView({
   });
   const practiceProgress =
     practiceProtocol === "v1" ? practiceSubmit.progress : [];
+  // 交卷结束整卷，但仅为尚未提交题固定本次证据；已提交题沿用单题封存。
+  // 使用提交回执合并后的进度，避免本页刚提交的题仍进入整卷证据声明。
+  const submitEvidenceQuestionIds = useMemo(() => {
+    if (practiceProtocol !== "v1") return questionIds;
+    const submitted = new Set(
+      practiceSubmit.progress
+        .filter((row) => row.submittedAt !== null)
+        .map((row) => row.questionId),
+    );
+    return questionIds.filter((id) => !submitted.has(id));
+  }, [practiceProtocol, practiceSubmit.progress, questionIds]);
   // 按题查表：导航项/键盘裁决/题卡渲染多处取行，避免逐题线性 find
   const progressById = new Map(
     practiceProgress.map((row) => [row.questionId, row] as const),
@@ -736,6 +756,14 @@ function AnswerView({
       void (async () => {
         try {
           if (!submitted) {
+            // 工作流收紧时 Enter 退为切题/交卷（与主操作位同链）；题目级
+            // 参考答案门控已随 v2 自评实现移除（QM 判分框架下逐题提交恒可用）
+            if (!practiceWorkflow?.canSubmitQuestion) {
+              const next = questionIds[currentIndex + 1];
+              if (next !== undefined) await goSingleQuestion(next);
+              else if (online && !denied) await openSubmitDialog();
+              return;
+            }
             // 与主操作按钮同链：未提交（含空答「不会」）= 提交本题
             await runPracticeSubmit(currentId);
             return;
@@ -835,7 +863,7 @@ function AnswerView({
         if (submitAbortedRef.current) return { kind: "aborted" };
         prep = await prepareSubmitEvidence({
           attemptId,
-          questionIds,
+          questionIds: submitEvidenceQuestionIds,
           ...(ctx.missingConfirmed !== null
             ? { allowMissing: ctx.missingConfirmed }
             : {}),
@@ -902,8 +930,8 @@ function AnswerView({
       materialRecovery.state,
       flushAnswers,
       onAnnotationSealFailed,
-      questionIds,
       submit,
+      submitEvidenceQuestionIds,
       submitRevisions,
     ],
   );
@@ -918,7 +946,7 @@ function AnswerView({
     confirmMissing: confirmMissingSubmit,
   } = useSubmitEvidenceConfirm({
     attemptId,
-    questionIds,
+    questionIds: submitEvidenceQuestionIds,
     run: runSubmit,
   });
 
@@ -973,6 +1001,90 @@ function AnswerView({
   // 访问权终态（T2A.6，D7）：已无权限时收起交卷入口（交卷必然同样被拒）
   const denied = draftSync.status.state === "denied";
 
+  // 做题方式唯一编辑器的接线（列表模式行内摘要行 / 单题模式弹窗共用）
+  const practiceModeEditor =
+    practiceWorkflow === undefined
+      ? null
+      : {
+          workflow: practiceWorkflow,
+          layout: practiceLayout,
+          onLayoutChange: setPracticeLayoutExplicit,
+          onFeedbackModeChange: (mode: typeof practiceWorkflow.feedbackMode) =>
+            feedbackUpdate.mutate({
+              feedbackMode: mode,
+              workflowRevision: practiceWorkflow.revision,
+            }),
+          feedbackBusy: feedbackUpdate.isPending,
+          feedbackError: feedbackUpdate.notice,
+        };
+  // 单题吸底进度：题号 + 逐题提交进度（整卷反馈不可逐题提交时报已填写）；
+  // canSubmitQuestion 只取工作流级开关——题目级参考答案门控已随 v2 自评实现移除
+  const singleCanSubmit = practiceWorkflow?.canSubmitQuestion === true;
+  const singleProgressCount = singleCanSubmit
+    ? submittedPracticeCount
+    : answered;
+
+  const singleActions = singleMode && resolvedSingleQuestionId !== null && (
+    <div
+      inert={!attemptMaterialsEditable(materialRecovery) || answers === null}
+    >
+      <SingleQuestionActionBar
+        showNext={
+          !singleProgressRow?.submittedAt &&
+          !practiceSubmit.finished &&
+          singleCanSubmit
+        }
+        hasPrev={singleIndex > 0}
+        hasNext={singleIndex < total - 1}
+        busy={practiceSubmit.submittingId !== null}
+        middle={
+          <PracticeSingleActions
+            canSubmitQuestion={singleCanSubmit}
+            finishDisabled={!online || denied || total === 0}
+            onFinish={openSubmitDialog}
+            submitted={(singleProgressRow?.submittedAt ?? null) !== null}
+            answered={
+              navigationItems[singleIndex]?.completion.state === "filled"
+            }
+            busy={practiceSubmit.submittingId !== null}
+            finished={practiceSubmit.finished}
+            hasNext={singleIndex < total - 1}
+            continueUnsubmittedId={
+              practiceSubmit.firstUnsubmittedId !== null &&
+              practiceSubmit.firstUnsubmittedId !== resolvedSingleQuestionId &&
+              practiceSubmit.firstUnsubmittedId !== questionIds[singleIndex + 1]
+                ? practiceSubmit.firstUnsubmittedId
+                : null
+            }
+            error={
+              practiceSubmit.lastError?.questionId === resolvedSingleQuestionId
+                ? practiceSubmit.lastError.message
+                : null
+            }
+            onSubmit={() => {
+              if (resolvedSingleQuestionId !== null)
+                void runPracticeSubmit(resolvedSingleQuestionId);
+            }}
+            onNext={() => {
+              const next = questionIds[singleIndex + 1];
+              if (next !== undefined) void goSingleQuestion(next);
+            }}
+            onViewResult={() => practiceSubmit.viewResult()}
+            onContinue={(id) => void goSingleQuestion(id)}
+          />
+        }
+        onPrev={() => {
+          const prev = questionIds[singleIndex - 1];
+          if (prev !== undefined) void goSingleQuestion(prev);
+        }}
+        onNext={() => {
+          const next = questionIds[singleIndex + 1];
+          if (next !== undefined) void goSingleQuestion(next);
+        }}
+      />
+    </div>
+  );
+
   return (
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
       <AttemptWorkspace>
@@ -982,10 +1094,23 @@ function AnswerView({
           menuItems={
             practiceWorkflow !== undefined ? (
               <>
-                <PracticeLayoutMenuItems
-                  layout={practiceLayout}
-                  onChange={setPracticeLayoutExplicit}
-                />
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setModeSettingsOpen(true);
+                    // 单题模式由弹窗承载同一编辑器；列表模式展开行内摘要行
+                    if (singleMode) return;
+                    requestAnimationFrame(() => {
+                      const trigger =
+                        singleWorkspaceRef.current?.querySelector<HTMLButtonElement>(
+                          '[aria-label="调整做题方式"]',
+                        );
+                      trigger?.scrollIntoView?.({ block: "nearest" });
+                      trigger?.focus();
+                    });
+                  }}
+                >
+                  做题方式
+                </DropdownMenuItem>
                 <PracticeKeyboardHelpMenuItem
                   onOpen={() => setKeyboardHelpOpen(true)}
                 />
@@ -1215,30 +1340,15 @@ function AnswerView({
                 </div>
               )}
 
-              {/* 做题方式摘要行（§7.1）：v1 卷才有；legacy/lesson 不渲染。
-                  M5-D3：节奏切换 PATCH 以摘要行展示的服务端投影 revision 为
-                  CAS 基线；在途与就地提示（stale/服务端 message）透传 */}
-              {practiceWorkflow !== undefined && total > 0 && (
+              {/* 做题方式摘要行（§7.1）：v1 卷列表模式才常驻；单题模式经「更多」
+                  在弹窗打开同一编辑器（见下 PracticeModeDialog）；legacy/lesson
+                  不渲染。M5-D3：节奏切换 PATCH 以服务端投影 revision 为 CAS
+                  基线；在途与就地提示（stale/服务端 message）透传 */}
+              {practiceModeEditor !== null && total > 0 && !singleMode && (
                 <PracticeModeSummary
-                  workflow={practiceWorkflow}
-                  layout={practiceLayout}
-                  onLayoutChange={setPracticeLayoutExplicit}
-                  onFeedbackModeChange={(mode) =>
-                    feedbackUpdate.mutate({
-                      feedbackMode: mode,
-                      workflowRevision: practiceWorkflow.revision,
-                    })
-                  }
-                  feedbackBusy={feedbackUpdate.isPending}
-                  feedbackError={feedbackUpdate.notice}
-                />
-              )}
-              {singleMode && resolvedSingleQuestionId !== null && (
-                <SingleQuestionProgressRow
-                  current={singleIndex + 1}
-                  total={total}
-                  submittedCount={submittedPracticeCount}
-                  onOpenNavigator={() => setNavigatorOpen(true)}
+                  open={modeSettingsOpen}
+                  onOpenChange={setModeSettingsOpen}
+                  {...practiceModeEditor}
                 />
               )}
 
@@ -1456,68 +1566,20 @@ function AnswerView({
                   </Button>
                 </div>
               )}
-
-              {/* 单题主操作条（§7.2）：三态接线——提交本题（含「不会」空答
-                  案提交）→ 正在提交…（busy 禁切题）→ 已提交行下一题/查看本次
-                  结果/继续未提交题目 */}
-              {singleMode && resolvedSingleQuestionId !== null && (
-                <SingleQuestionActionBar
-                  hasPrev={singleIndex > 0}
-                  hasNext={singleIndex < total - 1}
-                  busy={practiceSubmit.submittingId !== null}
-                  middle={
-                    <PracticeSingleActions
-                      submitted={
-                        (singleProgressRow?.submittedAt ?? null) !== null
-                      }
-                      answered={
-                        navigationItems[singleIndex]?.completion.state ===
-                        "filled"
-                      }
-                      busy={practiceSubmit.submittingId !== null}
-                      finished={practiceSubmit.finished}
-                      hasNext={singleIndex < total - 1}
-                      continueUnsubmittedId={
-                        practiceSubmit.firstUnsubmittedId !== null &&
-                        practiceSubmit.firstUnsubmittedId !==
-                          resolvedSingleQuestionId
-                          ? practiceSubmit.firstUnsubmittedId
-                          : null
-                      }
-                      error={
-                        practiceSubmit.lastError?.questionId ===
-                        resolvedSingleQuestionId
-                          ? practiceSubmit.lastError.message
-                          : null
-                      }
-                      onSubmit={() => {
-                        if (resolvedSingleQuestionId !== null)
-                          void runPracticeSubmit(resolvedSingleQuestionId);
-                      }}
-                      onNext={() => {
-                        const next = questionIds[singleIndex + 1];
-                        if (next !== undefined) void goSingleQuestion(next);
-                      }}
-                      onViewResult={() => practiceSubmit.viewResult()}
-                      onContinue={(id) => void goSingleQuestion(id)}
-                    />
-                  }
-                  onPrev={() => {
-                    const prev = questionIds[singleIndex - 1];
-                    if (prev !== undefined) void goSingleQuestion(prev);
-                  }}
-                  onNext={() => {
-                    const next = questionIds[singleIndex + 1];
-                    if (next !== undefined) void goSingleQuestion(next);
-                  }}
-                />
-              )}
             </div>
           </div>,
         )}
 
         <Dialog open={navigatorOpen} onOpenChange={setNavigatorOpen}>
-          <DialogContent className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg">
+          <DialogContent
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (singleWorkspaceRef.current?.contains(document.activeElement))
+                return;
+              navigatorTrigger.current?.focus();
+            }}
+            className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg"
+          >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Grid2X2 aria-hidden className="size-4" />
@@ -1550,6 +1612,24 @@ function AnswerView({
             v1 卷追加已提交进度；全部收尾后主按钮换「查看本次结果」（列表模式入口，
             单题模式主动作位同款按钮已承担） */}
         <AttemptBottomBar
+          primaryActions={singleActions}
+          progressLabel={
+            singleMode
+              ? `第 ${singleIndex + 1} / ${total} 题 · 已${singleCanSubmit ? "提交" : "填写"} ${singleProgressCount} 题`
+              : undefined
+          }
+          progressValue={
+            singleMode
+              ? total === 0
+                ? 0
+                : singleProgressCount / total
+              : undefined
+          }
+          hideSubmit={
+            singleMode &&
+            !practiceWorkflow?.canSubmitQuestion &&
+            singleIndex === total - 1
+          }
           answered={answered}
           total={total}
           offline={!online}
@@ -1560,13 +1640,27 @@ function AnswerView({
           practiceSubmittedCount={
             practiceProtocol === "v1" ? submittedPracticeCount : undefined
           }
-          viewResult={
-            practiceProtocol === "v1" && !singleMode && practiceSubmit.finished
-          }
+          viewResult={practiceProtocol === "v1" && practiceSubmit.finished}
           onViewResult={() => practiceSubmit.viewResult()}
           onOpenSubmit={openSubmitDialog}
-          onOpenNavigator={() => setNavigatorOpen(true)}
+          onOpenNavigator={openNavigator}
         />
+
+        {singleMode && practiceModeEditor !== null && (
+          <PracticeModeDialog
+            open={modeSettingsOpen}
+            onOpenChange={setModeSettingsOpen}
+            onReturnFocus={() => {
+              singleWorkspaceRef.current
+                ?.closest('[data-slot="attempt-workspace"]')
+                ?.querySelector<HTMLButtonElement>(
+                  'button[aria-label="练习更多"]',
+                )
+                ?.focus();
+            }}
+            {...practiceModeEditor}
+          />
+        )}
 
         {/* 逐题提交缺稿明确选择弹层：choice→busy→error 相在 runPracticeSubmit 内迁移 */}
         <PracticeSubmitProblemDialog

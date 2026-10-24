@@ -172,6 +172,7 @@ import {
   type StudentQuickButtonsData,
   type StudentQuickButtonsPutRequest,
   type StudentRecordsData,
+  type StudentRecordsQuery,
   type StudentResetLinkData,
   type StudentResetPasswordData,
   type StudentSummary,
@@ -2351,16 +2352,9 @@ export async function downloadTeacherExportCsv(
  * limit / offset 恒发送（分页）。from / to 为带 Z 后缀的 UTC ISO（页面把
  * datetime-local 本地值经 lib/time.localInputToUtcIso 转换后传入）。
  */
-export interface StudentRecordsParams {
-  sourceType?: AttemptSource | undefined;
-  courseId?: string | undefined;
-  assignmentId?: string | undefined;
-  status?: AttemptStatus | undefined;
-  from?: string | undefined;
-  to?: string | undefined;
-  limit: number;
-  offset: number;
-}
+export type StudentRecordsParams = Omit<StudentRecordsQuery, "sort"> & {
+  sort?: StudentRecordsQuery["sort"] | undefined;
+};
 
 /**
  * 我的记录（GET /api/student/records，D10）：本人全部作答的时间倒序索引
@@ -2371,6 +2365,7 @@ export function fetchStudentRecordsApi(
   params: StudentRecordsParams,
 ): Promise<StudentRecordsData> {
   const query: Record<string, string> = {};
+  if (params.sort !== undefined) query.sort = params.sort;
   if (params.sourceType !== undefined) query.sourceType = params.sourceType;
   if (params.courseId !== undefined) query.courseId = params.courseId;
   if (params.assignmentId !== undefined) {
