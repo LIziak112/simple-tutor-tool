@@ -30,8 +30,7 @@ export const responseBehavior: AnswerKindBehavior<
  * + 中文行文常用的通用标点段（U+2013–2026：——……“”‘’）。作文字数惯例
  * 含标点，故中文标点一并计入。
  */
-const CJK_CHAR_RE =
-  "[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿㄰-㆏가-힯＀-￯–-…]";
+const CJK_CHAR_RE = "[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿㄰-㆏가-힯＀-￯–-…]";
 
 /**
  * 拉丁词（连续字母/数字 + 内嵌撇号/连字符计 1 词）：it's = 1、well-known = 1、

@@ -246,10 +246,7 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
           `${source} 开放作答应有手写区入口（与正文并存）`,
         ).toBeInTheDocument();
         // 字数建议（word-min/max 携带时展示；口径单源契约 countResponseWords）
-        if (
-          question.wordMin !== undefined ||
-          question.wordMax !== undefined
-        ) {
+        if (question.wordMin !== undefined || question.wordMax !== undefined) {
           expect(
             article?.textContent ?? "",
             `${source} 开放作答应展示字数建议`,

@@ -119,6 +119,7 @@ export const responseView: AnswerKindView<
     <div className="flex min-w-0 flex-col gap-2">
       <RichMarkdown source={reference.referenceMd} className="min-w-0" />
       {(reference.variantsMd ?? []).map((variant, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: 冻结参考投影的静态只读列表，序号即内容语义（「备选表达 N」），渲染期无重排
         <div key={index} className="min-w-0 border-t border-border pt-2">
           <p className="mb-1 text-muted-foreground">{`备选表达 ${index + 1}`}</p>
           <RichMarkdown source={variant} className="min-w-0" />
@@ -137,8 +138,7 @@ export const responseView: AnswerKindView<
   completion: (_model, answer, formalInk) => {
     // 决策记录 §5.7.3：filled = body 非空白 或 有正式笔迹（仅手写合法）；
     // 正文空白与笔迹皆无 = empty（isAnswered 纯行为口径另在契约，二者分离）
-    const filled =
-      (answer?.body.trim() ?? "") !== "" || formalInk;
+    const filled = (answer?.body.trim() ?? "") !== "" || formalInk;
     return {
       state: filled ? "filled" : "empty",
       filledSlots: filled ? 1 : 0,

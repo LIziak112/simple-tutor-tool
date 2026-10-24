@@ -28,7 +28,7 @@ const modelWithHints = {
 describe("responseView.Input（开放作答输入面）", () => {
   it("标题（可选）+ 正文多行输入；正文更新 defer=true（文本防抖，I05）", () => {
     const update = vi.fn();
-    render(<>{responseView.Input({ model, answer: undefined, update })}</>);
+    render(responseView.Input({ model, answer: undefined, update }));
     const body = screen.getByRole("textbox", { name: "正文" });
     fireEvent.change(body, { target: { value: "第一段……" } });
     expect(update).toHaveBeenCalledWith(
@@ -45,17 +45,15 @@ describe("responseView.Input（开放作答输入面）", () => {
 
   it("已有答案回填：title 与 body 原样进入输入框（含分段与公式源码）", () => {
     render(
-      <>
-        {responseView.Input({
-          model,
-          update: vi.fn(),
-          answer: {
-            kind: "response",
-            title: "分歧与治理",
-            body: "第一段：$x^2$ 的意义。\n\n第二段：结论。",
-          },
-        })}
-      </>,
+      responseView.Input({
+        model,
+        update: vi.fn(),
+        answer: {
+          kind: "response",
+          title: "分歧与治理",
+          body: "第一段：$x^2$ 的意义。\n\n第二段：结论。",
+        },
+      }),
     );
     expect(screen.getByRole("textbox", { name: "标题（可选）" })).toHaveValue(
       "分歧与治理",
@@ -68,13 +66,14 @@ describe("responseView.Input（开放作答输入面）", () => {
   it("字数口径：契约单源（中英混排按字+词），word-min/max 仅建议提示", () => {
     const update = vi.fn();
     render(
-      <>
-        {responseView.Input({
-          model: modelWithHints,
-          update,
-          answer: { kind: "response", body: "概括主要特点，no more than 250 words。" },
-        })}
-      </>,
+      responseView.Input({
+        model: modelWithHints,
+        update,
+        answer: {
+          kind: "response",
+          body: "概括主要特点，no more than 250 words。",
+        },
+      }),
     );
     // 「概括主要特点，」7 + 5 词 + 「。」1 = 13（契约口径原样展示，UI 不重算）
     expect(screen.getByText(/正文已写 13 字/)).toBeInTheDocument();
@@ -91,7 +90,7 @@ describe("responseView.Input（开放作答输入面）", () => {
 
   it("输入法组合输入不截断：composition 中间态与最终态都完整进入受控值", () => {
     const update = vi.fn();
-    render(<>{responseView.Input({ model, answer: undefined, update })}</>);
+    render(responseView.Input({ model, answer: undefined, update }));
     const body = screen.getByRole("textbox", { name: "正文" });
     fireEvent.compositionStart(body);
     fireEvent.change(body, { target: { value: "zheng ce" } });
@@ -109,26 +108,31 @@ describe("responseView.Input（开放作答输入面）", () => {
 
   it("disabled：已提交只读时输入控件禁用", () => {
     render(
-      <>{responseView.Input({ model, answer: undefined, update: vi.fn(), disabled: true })}</>,
+      responseView.Input({
+        model,
+        answer: undefined,
+        update: vi.fn(),
+        disabled: true,
+      }),
     );
     expect(screen.getByRole("textbox", { name: "正文" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "标题（可选）" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "标题（可选）" }),
+    ).toBeDisabled();
   });
 });
 
 describe("responseView.ReadOnly（本人答案列）", () => {
   it("title 前置一行 + 正文经 RichMarkdown 渲染（公式与分段保留）", () => {
     const { container } = render(
-      <>
-        {responseView.ReadOnly({
-          model,
-          answer: {
-            kind: "response",
-            title: "关于测试的讨论",
-            body: "第一段：$x+1=2$。\n\n第二段：结论。",
-          },
-        })}
-      </>,
+      responseView.ReadOnly({
+        model,
+        answer: {
+          kind: "response",
+          title: "关于测试的讨论",
+          body: "第一段：$x+1=2$。\n\n第二段：结论。",
+        },
+      }),
     );
     expect(screen.getByText("关于测试的讨论")).toBeInTheDocument();
     // 分段保留（两段文本都在；行内公式把段落拆成多节点，按整体文本断言）
@@ -141,18 +145,16 @@ describe("responseView.ReadOnly（本人答案列）", () => {
 
   it("仅手写形态（body 空串）：明示未填写正文，不算未作答", () => {
     render(
-      <>
-        {responseView.ReadOnly({
-          model,
-          answer: { kind: "response", body: "" },
-        })}
-      </>,
+      responseView.ReadOnly({
+        model,
+        answer: { kind: "response", body: "" },
+      }),
     );
     expect(screen.getByText("未填写正文")).toBeInTheDocument();
   });
 
   it("无答案：未作答", () => {
-    render(<>{responseView.ReadOnly({ model, answer: undefined })}</>);
+    render(responseView.ReadOnly({ model, answer: undefined }));
     expect(screen.getByText("未作答")).toBeInTheDocument();
   });
 });
@@ -165,7 +167,7 @@ describe("responseView.Reference / Comparison（参考与对照）", () => {
   };
 
   it("Reference：主参考渲染 + variants 逐条列出（§5.7.3 备选表达）", () => {
-    render(<>{responseView.Reference({ model, reference })}</>);
+    render(responseView.Reference({ model, reference }));
     expect(screen.getByText(/气温在波动中回升/)).toBeInTheDocument();
     expect(screen.getByText(/备选表达 1/)).toBeInTheDocument();
     expect(screen.getByText(/整体呈上升趋势/)).toBeInTheDocument();
@@ -173,24 +175,22 @@ describe("responseView.Reference / Comparison（参考与对照）", () => {
 
   it("Comparison：unavailable 不渲染参考内容（I09）；available 两列对照", () => {
     const { rerender } = render(
-      <>
-        {responseView.Comparison({
-          model,
-          answer: { kind: "response", body: "我的概括。" },
-          reference: { status: "unavailable" },
-        })}
-      </>,
+      responseView.Comparison({
+        model,
+        answer: { kind: "response", body: "我的概括。" },
+        reference: { status: "unavailable" },
+      }),
     );
     expect(screen.getByText("你的答案：")).toBeInTheDocument();
-    expect(screen.getByText(/参考答案与详解将在截止后公布/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/参考答案与详解将在截止后公布/),
+    ).toBeInTheDocument();
     rerender(
-      <>
-        {responseView.Comparison({
-          model,
-          answer: { kind: "response", body: "我的概括。" },
-          reference: { status: "available", reference },
-        })}
-      </>,
+      responseView.Comparison({
+        model,
+        answer: { kind: "response", body: "我的概括。" },
+        reference: { status: "available", reference },
+      }),
     );
     expect(screen.getByText("我的概括。")).toBeInTheDocument();
     expect(screen.getByText(/气温在波动中回升/)).toBeInTheDocument();
@@ -200,7 +200,11 @@ describe("responseView.Reference / Comparison（参考与对照）", () => {
 describe("responseView.completion（完整度，QM-09 口径）", () => {
   it("body 非空白或正式笔迹任一即 filled；空白与错配不算", () => {
     expect(
-      responseView.completion(model, { kind: "response", body: "概括。" }, false),
+      responseView.completion(
+        model,
+        { kind: "response", body: "概括。" },
+        false,
+      ),
     ).toEqual({ state: "filled", filledSlots: 1, expectedSlots: 1 });
     expect(
       responseView.completion(model, { kind: "response", body: "" }, true),

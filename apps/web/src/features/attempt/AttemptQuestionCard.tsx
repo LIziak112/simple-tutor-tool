@@ -38,12 +38,12 @@ import {
   type QuestionAnnotationOverlayHandle,
 } from "@/features/annotation/QuestionAnnotationOverlay";
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
+import { questionBindings } from "@/features/answering/question-binding";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import {
   createOngoingQuestionImages,
   loadOngoingPaper,
 } from "@/features/export/ongoing-question-export";
-import { questionBindings } from "@/features/answering/question-binding";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import {
   effectiveNoteLayout,

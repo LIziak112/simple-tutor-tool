@@ -1,8 +1,11 @@
+import { gzipSync } from "node:zlib";
 import type { ApiErr, AttemptDraftData, InkDoc } from "@tutor/contract";
-import { RESPONSE_BODY_MAX_CHARS, RESPONSE_TITLE_MAX_CHARS } from "@tutor/contract";
+import {
+  RESPONSE_BODY_MAX_CHARS,
+  RESPONSE_TITLE_MAX_CHARS,
+} from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
-import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
@@ -97,12 +100,12 @@ function gzipDoc(doc: InkDoc): Uint8Array {
 
 /** 最小合法 PNG（1×1 像素） */
 const MINIMAL_PNG = new Uint8Array([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-  0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
-  0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
-  0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
-  0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
+  0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
+  0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44,
+  0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d,
+  0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42,
+  0x60, 0x82,
 ]);
 
 /** 全套前置：教师 + 导入开放作答夹具（发布开关内）+ 张三开卷 */
@@ -140,7 +143,9 @@ async function makeResponseApp(): Promise<{
       body: JSON.stringify({ markdown: RESPONSE_MD, filename: "开放作答.md" }),
     });
     if (importRes.status !== 200) {
-      throw new Error(`夹具导入失败：${JSON.stringify(await importRes.json())}`);
+      throw new Error(
+        `夹具导入失败：${JSON.stringify(await importRes.json())}`,
+      );
     }
     unitId = ((await importRes.json()) as { data: { units: { id: string }[] } })
       .data.units[0]?.id;
@@ -318,9 +323,9 @@ describe("QM-09 细项3：response 保存只校验结构/范围，不比较参�
     const draft = await getDraft(app, aCookie, attemptId);
     // 重进读回完整长文（不截断）
     expect(draft.drafts[Q.composed]).toEqual(answer);
-    expect(
-      (draft.drafts[Q.composed] as { body: string }).body.length,
-    ).toBe(body.length);
+    expect((draft.drafts[Q.composed] as { body: string }).body.length).toBe(
+      body.length,
+    );
     expect(draft.draftRevisions?.[Q.composed]).toBe(1);
     // 字数建议随公开投影下发（word-min/max）；防泄露矩阵整卷把关
     const question = draft.units
@@ -403,8 +408,11 @@ describe("QM-09 细项4：可靠保存与恢复（既有逐题版本协议沿用
     );
     expect(first.status).toBe(200);
     expect(
-      ((await first.json()) as { data: { revision: number; changeCount: number } })
-        .data,
+      (
+        (await first.json()) as {
+          data: { revision: number; changeCount: number };
+        }
+      ).data,
     ).toMatchObject({ revision: 1, changeCount: 1 });
 
     // 回执丢失后重试：同 mutationId 同内容 → 同回执不重复计数
@@ -419,8 +427,11 @@ describe("QM-09 细项4：可靠保存与恢复（既有逐题版本协议沿用
     );
     expect(retry.status).toBe(200);
     expect(
-      ((await retry.json()) as { data: { revision: number; changeCount: number } })
-        .data,
+      (
+        (await retry.json()) as {
+          data: { revision: number; changeCount: number };
+        }
+      ).data,
     ).toMatchObject({ revision: 1, changeCount: 1 });
 
     // 同 mutationId 异内容（载荷被篡改/拼装错误）→ 409，不静默改写
@@ -498,7 +509,8 @@ describe("QM-09 细项4：可靠保存与恢复（既有逐题版本协议沿用
     );
     expect(continued.status).toBe(200);
     expect(
-      ((await continued.json()) as { data: { revision: number } }).data.revision,
+      ((await continued.json()) as { data: { revision: number } }).data
+        .revision,
     ).toBe(2);
     const reread = await getDraft(app, aCookie, attemptId);
     expect(reread.drafts[Q.free]).toEqual({
@@ -521,10 +533,12 @@ describe("QM-09 细项6 验收行：长文字/仅手写/混合三形态均能提
     ).toBe(200);
     // 第二题不答也可交卷（未答题进卷是常态）
     expect(
-      (await putAnswer(app, aCookie, attemptId, Q.free, {
-        kind: "response",
-        body: "只写一句话也合法。",
-      })).status,
+      (
+        await putAnswer(app, aCookie, attemptId, Q.free, {
+          kind: "response",
+          body: "只写一句话也合法。",
+        })
+      ).status,
     ).toBe(200);
 
     const submit = await submitAttemptRequest(app, aCookie, attemptId);
@@ -618,14 +632,16 @@ describe("QM-09 细项6 验收行：长文字/仅手写/混合三形态均能提
     ).toBe(200);
     // 第二题同形态（无参考答案的开放题也支持并存）
     expect(
-      (await putAnswer(app, aCookie, attemptId, Q.free, {
-        kind: "response",
-        body: "第二题也写一点。",
-      })).status,
+      (
+        await putAnswer(app, aCookie, attemptId, Q.free, {
+          kind: "response",
+          body: "第二题也写一点。",
+        })
+      ).status,
     ).toBe(200);
-    expect(
-      (await putInk(app, aCookie, attemptId, Q.free, doc)).status,
-    ).toBe(200);
+    expect((await putInk(app, aCookie, attemptId, Q.free, doc)).status).toBe(
+      200,
+    );
 
     const submit = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submit.status).toBe(200);
