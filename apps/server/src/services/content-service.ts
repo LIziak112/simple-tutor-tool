@@ -63,7 +63,9 @@ import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
 import {
   assertNewContentAllowed,
+  liveMaterialIdsOf,
   normalizeForImport,
+  qmStemRefIssues,
   qmStemRefWarnings,
   resolveNewContentEnabled,
   resolveQmImportIssues,
@@ -1289,6 +1291,8 @@ export function updateQuestion(
   teacherId: string,
   id: string,
   input: { sourceMd: string },
+  /** tt-06b / QM-05：发布开关显式注入（缺省读部署 env NEW_CONTENT_ENABLED） */
+  newContentEnabled?: boolean,
 ): QuestionUpdateData {
   const row = db
     .select()
@@ -1303,6 +1307,13 @@ export function updateQuestion(
     );
   }
 
+  // tt-06b / QM-05：闸门只判提交片段（题内 ::ref 等 QM 语法属新内容；
+  // 开关关闭的部署编辑旧七型题目不受影响）
+  assertNewContentAllowed(
+    input.sourceMd,
+    resolveNewContentEnabled(newContentEnabled),
+  );
+
   const parseOptions = {
     unitId: row.unitId,
     questionStartNumber: row.order + 1,
@@ -1310,9 +1321,17 @@ export function updateQuestion(
   const wrapped = wrapSingleQuestionMd(row.unitId, input.sourceMd);
   const { parsed, issues } = lintDocument(wrapped, parseOptions);
 
+  // tt-06b / QM-05：题级 ::ref{material=库内既有材料} 的教师域解析降级
+  // （单题片段文档不含材料声明；与 preview/commit 同口径）
+  const resolved = resolveQmImportIssues(
+    issues,
+    parsed,
+    liveMaterialIdsOf(db, teacherId),
+  );
+
   // error 级 issue 最先拦（含"题目被解析器丢弃"的场景，如未知题型：
   // 此时题数检查给不出行号，LINT_ERROR 的 _issues 才能标红到具体行）
-  const errors = issues.filter((issue) => issue.level === "error");
+  const errors = resolved.filter((issue) => issue.level === "error");
   const firstError = errors[0];
   if (firstError !== undefined) {
     throw new HttpError(
@@ -1367,6 +1386,14 @@ export function updateQuestion(
       })
       .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
       .run();
+    // tt-06b / QM-05：题级材料引用索引同事务替换（ownerKind='question'；
+    // 与导入 commit 同款——索引随 sourceMd 的 ::ref 行变化）
+    replaceQuestionMaterialRefsWithin(
+      tx,
+      teacherId,
+      id,
+      next.materialRefs ?? [],
+    );
     const knowledgeIdByName = loadKnowledgeIdByName(tx);
     syncQuestionKnowledge(tx, next, knowledgeIdByName, teacherId);
   });
@@ -1377,7 +1404,12 @@ export function updateQuestion(
     type: next.type,
     difficulty: next.difficulty,
     knowledge: next.knowledge,
-    issues: shiftLintIssuesToFragment(issues, SINGLE_QUESTION_PREFIX_LINES),
+    issues: [
+      ...shiftLintIssuesToFragment(issues, SINGLE_QUESTION_PREFIX_LINES),
+      // P2-2（tt-06b）：题内块式 ::ref{question=} 的可见警告（不静默吞；
+      // 行号按题目 sourceMd 计算，即片段坐标）
+      ...qmStemRefIssues(parsed),
+    ],
   };
 }
 

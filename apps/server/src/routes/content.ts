@@ -2,6 +2,8 @@ import type {
   CourseCreateRequest,
   CourseUpdateRequest,
   LectureUpdateRequest,
+  MaterialUpdateRequest,
+  QuestionGroupUpdateRequest,
   QuestionUpdateRequest,
   ReorderRequest,
 } from "@tutor/contract";
@@ -9,6 +11,8 @@ import {
   courseCreateRequestSchema,
   courseUpdateRequestSchema,
   lectureUpdateRequestSchema,
+  materialUpdateRequestSchema,
+  questionGroupUpdateRequestSchema,
   questionUpdateRequestSchema,
   reorderRequestSchema,
 } from "@tutor/contract";
@@ -29,6 +33,14 @@ import {
   updateLecture,
   updateQuestion,
 } from "../services/content-service";
+import {
+  deleteMaterial,
+  deleteQuestionGroup,
+  getMaterialDetail,
+  getQuestionGroupDetail,
+  updateMaterial,
+  updateQuestionGroup,
+} from "../services/qm-edit-service";
 
 /**
  * 内容管理路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下：
@@ -101,6 +113,52 @@ export function createContentRoutes(db: Db) {
       const body: ReorderRequest = await parseJsonBody(c, reorderRequestSchema);
       reorderContent(db, c.var.teacher.id, body);
       return c.json({ ok: true, data: null });
+    })
+    // tt-06b / QM-05：材料/题组的详情、片段编辑与软删（教师域强制；编辑走
+    // 单元文档重建解析，删除返回受影响引用/子题清单）
+    .get("/materials/:id", (c) => {
+      return c.json({
+        ok: true,
+        data: getMaterialDetail(db, c.var.teacher.id, c.req.param("id")),
+      });
+    })
+    .put("/materials/:id", async (c) => {
+      const body: MaterialUpdateRequest = await parseJsonBody(
+        c,
+        materialUpdateRequestSchema,
+      );
+      return c.json({
+        ok: true,
+        data: updateMaterial(db, c.var.teacher.id, c.req.param("id"), body),
+      });
+    })
+    .delete("/materials/:id", (c) => {
+      return c.json({
+        ok: true,
+        data: deleteMaterial(db, c.var.teacher.id, c.req.param("id")),
+      });
+    })
+    .get("/groups/:id", (c) => {
+      return c.json({
+        ok: true,
+        data: getQuestionGroupDetail(db, c.var.teacher.id, c.req.param("id")),
+      });
+    })
+    .put("/groups/:id", async (c) => {
+      const body: QuestionGroupUpdateRequest = await parseJsonBody(
+        c,
+        questionGroupUpdateRequestSchema,
+      );
+      return c.json({
+        ok: true,
+        data: updateQuestionGroup(db, c.var.teacher.id, c.req.param("id"), body),
+      });
+    })
+    .delete("/groups/:id", (c) => {
+      return c.json({
+        ok: true,
+        data: deleteQuestionGroup(db, c.var.teacher.id, c.req.param("id")),
+      });
     })
     .post("/courses", async (c) => {
       const body: CourseCreateRequest = await parseJsonBody(

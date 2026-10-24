@@ -1,10 +1,13 @@
 import type { ImportPreviewWarning, LintIssue, ParsedDocument } from "@tutor/contract";
 import { normalizeQmIds, parseRefAttrs } from "@tutor/md-dsl";
 import { detectNewContent } from "@tutor/md-dsl";
+import { and, eq, isNull } from "drizzle-orm";
+import type { Db } from "../db/client.ts";
+import { materials } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 
 /**
- * tt-06b / QM-05 导入主链的 QM 专用辅助（纯函数，preview/commit/batch/zip 共用）：
+ * tt-06b / QM-05 导入主链的 QM 专用辅助（preview/commit/batch/zip/编辑共用）：
  * - NEW_CONTENT_DISABLED 发布开关（§5.8.4）：NEW_CONTENT_ENABLED 缺省 false，
  *   关闭部署导入新指令/新属性文档 → 403（判定面 detectNewContent，TT-06 交付）；
  * - 导入规范化回写（§5.2.3）：normalizeQmIds 在 lint/落库前运行——实体 sourceMd
@@ -14,6 +17,21 @@ import { HttpError } from "../lib/http-error.ts";
  * - P2-2 题内块式 ::ref{question=} 预览警告：题内子题引用属无效写法——该行
  *   从 stemMd 排除且不建立引用，预览必须可见、不许静默吞。
  */
+
+/** 教师域存活（未软删）材料 id 集（引用降级与编辑重建共用的一次查询） */
+export function liveMaterialIdsOf(db: Db, teacherId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const row of db
+    .select({ id: materials.id })
+    .from(materials)
+    .where(
+      and(eq(materials.teacherId, teacherId), isNull(materials.deletedAt)),
+    )
+    .all()) {
+    ids.add(row.id);
+  }
+  return ids;
+}
 
 /** 部署级环境变量名（§5.8.4 发布开关；缺省 false = 新内容不开放导入） */
 export const NEW_CONTENT_ENABLED_ENV = "NEW_CONTENT_ENABLED";
@@ -123,11 +141,13 @@ const REF_BLOCK_LINE_RE = /^\s*::ref\{([^}]*)\}\s*$/;
  * P2-2 预览警告：题内块式 ::ref{question=…}（无效写法——子题引用只能写在
  * ::::group 内）。解析层把该行从 stemMd 排除且不建立引用（题内 ::ref 只认
  * material=）；此处扫描题目 sourceMd 行，逐处产出可见 warning（不静默吞）。
+ * 两个出口形态共用同一实现：issue 形态（lintIssue 兼容，单题编辑响应）与
+ * 预览 warning 形态（{code,message}）。
  */
-export function qmStemRefWarnings(
+export function qmStemRefIssues(
   parsed: ParsedDocument,
-): ImportPreviewWarning[] {
-  const warnings: ImportPreviewWarning[] = [];
+): LintIssue[] {
+  const issues: LintIssue[] = [];
   for (const unit of parsed.units) {
     for (const question of unit.questions) {
       const lines = question.sourceMd.split("\n");
@@ -142,7 +162,10 @@ export function qmStemRefWarnings(
           questionTarget.length > 0 &&
           (material === undefined || material.length === 0)
         ) {
-          warnings.push({
+          issues.push({
+            level: "warning",
+            line: index + 1,
+            column: 1,
             code: "REF_QUESTION_IN_QUESTION",
             message: `题目「${question.id}」第 ${index + 1} 行的 ::ref{question=${questionTarget}} 是无效写法：子题引用只能写在 ::::group 内；该行不会进入题干，也不会建立引用（题内 ::ref 只支持 material= 引用材料）`,
           });
@@ -150,5 +173,15 @@ export function qmStemRefWarnings(
       }
     }
   }
-  return warnings;
+  return issues;
+}
+
+/** qmStemRefIssues 的预览形态出口（ImportPreviewWarning = {code,message}） */
+export function qmStemRefWarnings(
+  parsed: ParsedDocument,
+): ImportPreviewWarning[] {
+  return qmStemRefIssues(parsed).map((issue) => ({
+    code: issue.code,
+    message: issue.message,
+  }));
 }

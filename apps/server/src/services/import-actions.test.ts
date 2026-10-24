@@ -139,6 +139,11 @@ function snapshot(overrides: Partial<LibrarySnapshot> = {}): LibrarySnapshot {
       [FOLDER_B, "第二章"],
     ]),
     openAssignmentCountByUnitId: new Map(),
+    // tt-06b / QM-05：材料/组快照字段（空域缺省）
+    materials: new Map(),
+    groups: new Map(),
+    materialRefOwners: new Map(),
+    liveMaterialIds: new Set(),
     ...overrides,
   };
 }

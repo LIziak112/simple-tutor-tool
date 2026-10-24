@@ -372,7 +372,6 @@ describe("QM-05 引用解析与跨单元移动", () => {
       /资料分析/g,
       "目标单元",
     );
-    const preview = previewQm(db, movedDoc);
     // 同 id 材料（mat-目标单元-1 是新 id——换名重导不是移动；用不改 id 的文档测）
     // 改用：保留材料显式 id 的跨单元文档
     const movedExplicit = [

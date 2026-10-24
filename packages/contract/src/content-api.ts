@@ -308,6 +308,24 @@ export const questionGroupDetailSchema = z.object({
   updatedAt: z.string(),
 });
 export type QuestionGroupDetail = z.infer<typeof questionGroupDetailSchema>;
+/** PUT /api/teacher/materials/:id 请求体（材料容器片段原文） */
+export type MaterialUpdateRequest = z.infer<typeof materialUpdateRequestSchema>;
+/** PUT /api/teacher/materials/:id 响应 data */
+export type MaterialUpdateData = z.infer<typeof materialUpdateDataSchema>;
+/** DELETE /api/teacher/materials/:id 响应 data */
+export type MaterialDeleteData = z.infer<typeof materialDeleteDataSchema>;
+/** PUT /api/teacher/groups/:id 请求体（组容器片段原文） */
+export type QuestionGroupUpdateRequest = z.infer<
+  typeof questionGroupUpdateRequestSchema
+>;
+/** PUT /api/teacher/groups/:id 响应 data */
+export type QuestionGroupUpdateData = z.infer<
+  typeof questionGroupUpdateDataSchema
+>;
+/** DELETE /api/teacher/groups/:id 响应 data */
+export type QuestionGroupDeleteData = z.infer<
+  typeof questionGroupDeleteDataSchema
+>;
 
 /** PUT /api/teacher/groups/:id 请求体：组容器片段原文 */
 export const questionGroupUpdateRequestSchema = z.object({
