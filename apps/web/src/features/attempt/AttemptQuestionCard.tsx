@@ -9,6 +9,7 @@ import {
   CircleAlert,
   Eye,
   EyeOff,
+  FileText,
   Flag,
   FlagOff,
   ImageDown,
@@ -100,6 +101,8 @@ function QuestionMeta({
   formalInkPresence: boolean;
   tools: {
     aiTrigger?: ReactNode;
+    /** QM-08：组内共享材料的「查看材料」入口（组段装配注入；组外题为空） */
+    openMaterial?: () => void;
     annotationOpen: boolean;
     paperOpen: boolean;
     paperEnabled: boolean;
@@ -191,6 +194,20 @@ function QuestionMeta({
             {tools.annotationCount > 0 && (
               <span aria-hidden className="size-1.5 rounded-full bg-current" />
             )}
+          </Button>
+        )}
+        {tools?.openMaterial && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11 min-w-11 gap-1.5 px-2"
+            title="查看共享材料"
+            aria-label={`第 ${index + 1} 题查看共享材料`}
+            data-material-trigger
+            onClick={tools.openMaterial}
+          >
+            <FileText aria-hidden className="size-4" />
+            <span className="hidden lg:inline">材料</span>
           </Button>
         )}
         {tools?.paperEnabled && !tools.editLocked && (
@@ -291,6 +308,7 @@ export function AttemptQuestionCard({
   onHintUnlocked,
   flagged = false,
   onToggleFlag,
+  onOpenMaterial,
   formalInkPresence = false,
   onInkPresenceChange,
   assignmentTitle = "练习",
@@ -321,6 +339,8 @@ export function AttemptQuestionCard({
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
   flagged?: boolean;
   onToggleFlag?: () => void;
+  /** QM-08：组内带共享材料时的「查看材料」入口（滚动到组材料列并恢复已读位置） */
+  onOpenMaterial?: () => void;
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
   assignmentTitle?: string;
@@ -527,7 +547,7 @@ export function AttemptQuestionCard({
           return;
         if (
           event.target.closest(
-            '[data-annotation-trigger], [data-paper-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"], [data-slot="note-layer"], [data-slot="handwritten-controls"]',
+            '[data-annotation-trigger], [data-paper-trigger], [data-material-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"], [data-slot="note-layer"], [data-slot="handwritten-controls"]',
           )
         )
           return;
@@ -546,6 +566,9 @@ export function AttemptQuestionCard({
             ? null
             : {
                 aiTrigger,
+                ...(onOpenMaterial !== undefined
+                  ? { openMaterial: onOpenMaterial }
+                  : {}),
                 annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,

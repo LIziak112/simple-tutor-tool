@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub";
 import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
+import { fetchAttemptContextApi } from "@/lib/api";
 import { AttemptResultView } from "./AttemptResultView";
 
 // SAI-22 起结果视图接 AI 复盘装配（查询客户端必需）；每次渲染独立 client，
@@ -58,6 +59,20 @@ vi.mock("@/features/export/review-pack-panel", async () => {
     "@/features/export/review-pack-test-stub"
   );
   return { ReviewPackPanel: ReviewPackTestStub };
+});
+
+// QM-08：只读题面消费 /attempts/:id/context 冻结投影（组段数据解释）——
+// 缺省空投影（legacy 卷）；组段用例在测试内覆写返回值
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    fetchAttemptContextApi: vi.fn(async (attemptId: string) => ({
+      attemptId,
+      materials: [],
+      groups: [],
+    })),
+  };
 });
 
 const DATA: AttemptResultData = {
@@ -1034,5 +1049,113 @@ describe("练习反馈节奏摘要（M4-D3 §13.8）", () => {
     );
     expect(screen.getByText(/反馈节奏：交卷后反馈/)).toBeInTheDocument();
     expect(screen.getByText(/按教师公布时间/)).toBeInTheDocument();
+  });
+});
+
+describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context → groupSegmentsOfUnit）", () => {
+  const mockedContext = vi.mocked(fetchAttemptContextApi);
+
+  /** 三题单单元：gq-1/gq-2 入组、gq-3 独立（题面刻意不含数学） */
+  const GROUP_DATA: AttemptResultData = {
+    ...DATA,
+    units: [
+      {
+        id: "材料小练",
+        title: "材料小练",
+        questions: ["gq-1", "gq-2", "gq-3"].map((questionId, i) => ({
+          questionId,
+          snapshot: {
+            id: questionId,
+            type: "judge" as const,
+            difficulty: 1,
+            knowledge: ["读表"],
+            stemMd: `第${i + 1}题判断：表内数字为正。[[正确]]`,
+            hintCount: 0,
+          },
+          answers: { kind: "judge" as const, value: true },
+          solutionMd: null,
+          answer: { kind: "judge" as const, value: true },
+          autoCorrect: true,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: true,
+          hintsOpened: [],
+        })),
+      },
+    ],
+  };
+
+  it("组段渲染：组头一次、共享材料一份、组内/组外题行都齐全", async () => {
+    mockedContext.mockResolvedValue({
+      attemptId: DATA.attempt.id,
+      materials: [
+        {
+          id: "mat-1",
+          title: "四天气温表",
+          contentMd:
+            "| 日期 | 最高 | 最低 |\n| --- | --- | --- |\n| 周一 | 1 | -3 |",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [
+        {
+          id: "grp-1",
+          title: "根据材料回答第 1～2 题",
+          label: "1～2",
+          introMd: "先读表，再判断。",
+          materialRefs: [{ material: "mat-1" }],
+          questionIds: ["gq-1", "gq-2"],
+          sourceVersion: 1,
+        },
+      ],
+    });
+    const { findByText } = render(
+      <AttemptResultView data={GROUP_DATA} onBackHome={vi.fn()} />,
+    );
+    // 材料标题出现（等待 context 查询落地）
+    expect(await findByText("四天气温表")).toBeInTheDocument();
+    const groupBlock = screen.getByLabelText("题组：根据材料回答第 1～2 题");
+    expect(
+      within(groupBlock).getByText("先读表，再判断。"),
+    ).toBeInTheDocument();
+    // 共享材料一份（组块外无第二份）
+    expect(screen.getAllByText("四天气温表")).toHaveLength(1);
+    // 三题行齐全（题号全卷连续）
+    expect(
+      screen.getByRole("article", { name: "第 1 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 2 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 3 题" }),
+    ).toBeInTheDocument();
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: "",
+      materials: [],
+      groups: [],
+    });
+  });
+
+  it("上下文读取失败非阻断：全部按独立题段渲染，回看零变化", async () => {
+    mockedContext.mockReset();
+    mockedContext.mockRejectedValue(new Error("上下文不可用"));
+    const { findAllByRole } = render(
+      <AttemptResultView data={GROUP_DATA} onBackHome={vi.fn()} />,
+    );
+    const cards = await findAllByRole("article");
+    expect(cards).toHaveLength(3);
+    expect(screen.queryByLabelText(/题组：/)).toBeNull();
+    expect(screen.queryByText("四天气温表")).toBeNull();
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: "",
+      materials: [],
+      groups: [],
+    });
   });
 });

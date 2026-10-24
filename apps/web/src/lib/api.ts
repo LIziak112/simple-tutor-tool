@@ -62,6 +62,7 @@ import {
   type AssignmentUpdateRequest,
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
+  type AttemptContextData,
   type AttemptDetailData,
   type AttemptEvent,
   type AttemptMaterialRevisions,
@@ -72,6 +73,7 @@ import {
   type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   apiResponseSchema,
+  attemptContextDataSchema,
   attemptMaterialRevisionsSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
@@ -997,6 +999,23 @@ export async function fetchAttemptMaterialRevisionsApi(
     }),
   );
   return attemptMaterialRevisionsSchema.parse(data);
+}
+
+/**
+ * 冻结上下文公开投影（tt-07a / QM-06 → TT-08a 前端消费）：GET
+ * /attempts/:id/context——本卷全部材料/组快照（作答期渲染与结果回看共用，
+ * 只读快照不查 live）。数据随卷冻结不可变，坏快照 409 ATTEMPT_CONTEXT_BROKEN
+ * （服务端中文 message 由调用方非阻断透出——题面渲染不依赖本载荷）。
+ */
+export async function fetchAttemptContextApi(
+  attemptId: string,
+): Promise<AttemptContextData> {
+  const data = await callApi(() =>
+    api.api.student.attempts[":id"].context.$get({
+      param: { id: attemptId },
+    }),
+  );
+  return attemptContextDataSchema.parse(data);
 }
 
 /**

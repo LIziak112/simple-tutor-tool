@@ -13,7 +13,10 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
+import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
+import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { HintEntryList } from "@/features/attempt/HintPanel";
+import { QuestionGroupAnchor } from "@/features/attempt/QuestionGroupAnchor";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
@@ -22,6 +25,7 @@ import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
@@ -472,6 +476,13 @@ export function AttemptResultView({
   onRefresh?: (() => void) | undefined;
 }) {
   const { attempt, summary } = data;
+  // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
+  // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
+  // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
+  // （材料缺省不阻断回看；服务端对坏快照已 fail-closed 409）
+  const contextQuery = useAttemptContext(attempt.id);
+  // AI 侧栏对照激活 → 组段呈现回退上下排布（与作答视图同款信号）
+  const compareActive = useAiCompareActive();
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
   // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）
@@ -759,38 +770,104 @@ export function AttemptResultView({
             </p>
           )}
 
-          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
+          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续）。
+              QM-08：题目序经 groupSegmentsOfUnit 解释成组段——组段共享材料
+              按组渲染一份（与作答视图同一数据解释单源）。审查 P1 修复：与
+              作答视图同构——题组只是题行 ol 里的兄弟锚点，题行永不进组子树，
+              context 后到不重挂题卡（回看本无控制器，与作答侧共享一份结构）。 */}
           <ol className="flex flex-col gap-4">
-            {data.units.map((unit) => (
-              <li key={unit.id} className="flex flex-col gap-4">
-                {showUnitHeaders && (
-                  <h2
-                    data-review-unit={unit.id}
-                    className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+            {data.units.map((unit) => {
+              const questionById = new Map(
+                unit.questions.map(
+                  (question) => [question.questionId, question] as const,
+                ),
+              );
+              const segments = groupSegmentsOfUnit(
+                contextQuery.data,
+                unit.questions.map((question) => question.questionId),
+              );
+              // compare 网格仅对确有题组的单元开启（AI 对照激活回退上下排布）
+              const unitHasGroups = segments.some(
+                (segment) => segment.kind === "group",
+              );
+              const groupGrid = unitHasGroups && !compareActive;
+              /** 单题行（组行/独立行共用；组行不挂「查看材料」——回看布局
+                  上下排布自然阅读，无需 reveal 跳转） */
+              const renderRow = (questionId: string, grouped: boolean) => {
+                const question = questionById.get(questionId);
+                if (question === undefined) return null;
+                return (
+                  <li
+                    key={question.questionId}
+                    className={
+                      groupGrid
+                        ? grouped
+                          ? "min-w-0 xl:col-start-2"
+                          : "min-w-0 xl:col-span-2"
+                        : undefined
+                    }
                   >
-                    {unit.title}
-                  </h2>
-                )}
-                <ol className="flex flex-col gap-4">
-                  {unit.questions.map((question) => (
-                    <li key={question.questionId}>
-                      <ResultQuestionCard
-                        aiTrigger={aiCompanion.triggerForQuestion(
-                          question.questionId,
-                        )}
-                        index={flatQuestions.indexOf(question)}
-                        question={question}
-                        attemptId={attempt.id}
-                        released={released}
-                        roundLabel={roundLabel}
-                        onSolutionToggle={onSolutionToggle}
-                      />
-                      {aiCompanion.inlineForQuestion(question.questionId)}
-                    </li>
-                  ))}
-                </ol>
-              </li>
-            ))}
+                    <ResultQuestionCard
+                      aiTrigger={aiCompanion.triggerForQuestion(
+                        question.questionId,
+                      )}
+                      index={flatQuestions.indexOf(question)}
+                      question={question}
+                      attemptId={attempt.id}
+                      released={released}
+                      roundLabel={roundLabel}
+                      onSolutionToggle={onSolutionToggle}
+                    />
+                    {aiCompanion.inlineForQuestion(question.questionId)}
+                  </li>
+                );
+              };
+              return (
+                <li key={unit.id} className="flex flex-col gap-4">
+                  {showUnitHeaders && (
+                    <h2
+                      data-review-unit={unit.id}
+                      className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                    >
+                      {unit.title}
+                    </h2>
+                  )}
+                  <ol
+                    data-layout={
+                      unitHasGroups
+                        ? groupGrid
+                          ? "compare"
+                          : "stack"
+                        : undefined
+                    }
+                    className={
+                      groupGrid
+                        ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                        : "flex flex-col gap-4"
+                    }
+                  >
+                    {segments.map((segment) =>
+                      segment.kind === "solo"
+                        ? segment.questionIds.map((questionId) =>
+                            renderRow(questionId, false),
+                          )
+                        : [
+                            <QuestionGroupAnchor
+                              key={`group:${segment.group.id}`}
+                              group={segment.group}
+                              materials={segment.materials}
+                              questionCount={segment.questionIds.length}
+                              readingKey={`${attempt.id}|${segment.group.id}`}
+                            />,
+                            ...segment.questionIds.map((questionId) =>
+                              renderRow(questionId, true),
+                            ),
+                          ],
+                    )}
+                  </ol>
+                </li>
+              );
+            })}
           </ol>
         </div>,
       )}

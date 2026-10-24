@@ -293,6 +293,15 @@
 .ai-reply-markdown table {
   display: block;
 }
+/* QM-08 共享材料长内容：长表/长公式在材料面板内局部横向滚动，不把
+   作答页撑出整页横向溢出（窄容器验收行；与 ai-reply-markdown 同款）。 */
+.material-reading :is(.katex-display, pre, table) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.material-reading table {
+  display: block;
+}
 .ai-reply-markdown .ai-reply-section > summary > :is(h1, h2, h3, h4, h5, h6) {
   margin: 0;
   font-size: 1.0625rem;

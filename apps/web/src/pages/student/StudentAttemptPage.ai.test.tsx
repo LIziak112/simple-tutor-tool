@@ -53,6 +53,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchAttemptApi: vi.fn(),
+    // QM-08：作答会话消费冻结上下文投影——本用例无材料/组，空投影即可
+    fetchAttemptContextApi: vi.fn(async (attemptId: string) => ({
+      attemptId,
+      materials: [],
+      groups: [],
+    })),
     fetchAnnotationViewApi: vi.fn(async () => ({
       base: null,
       maxWidthPx: 1440,
