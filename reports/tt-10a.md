@@ -50,11 +50,11 @@ allowRepeat 语义）；固定项不能错移（UI 锁定 + FIXED_ITEM_OUT_OF_PO
 | pnpm lint:changed | 清洁 EXIT=0（每提交块后执行） |
 | pnpm test:quick（三档快检） | 6397→6413 全绿（分块执行） |
 | pnpm gen:spec ×2 | EXIT=0，零漂移（确定性再生） |
-| pnpm e2e:affected（契约兜底全量，本机 chromium） | 见下方补记 |
+| pnpm e2e:affected（契约兜底全量，本机 chromium 126 例） | 执行至 83 例 0 失败（后台续跑收尾，退出码与尾数以编排目录同步件补记） |
 
 ## 五、遗留
 
-- e2e:affected 全量结果（后台执行中，完成号见编排目录同步件补记）。
+- e2e:affected 收尾退出码（后台任务完成时补记；截至 83/126 例 0 失败）。
 - QM-14（lesson 原位适配）消费本单结构投影；题级反馈面的 matching/ordering
   对照已随 QuestionFeedback 自动获得（共用 ResultAnswerComparison）。
 - 材料槽位标记在 code/math 环境内的同名 id 会被字符串替换误命中（实际
