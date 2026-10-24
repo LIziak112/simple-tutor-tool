@@ -493,6 +493,25 @@ describe("QM-07：教师与学生计数一致（材料/组不重复计题，两�
     // 两侧一致且等于可答子题数（材料/组不产生题行、组不重复计题）
     expect(teacherCount).toBe(3);
     expect(studentCount).toBe(3);
+
+    // §17.5 P2-2 软删判别：软删独立题后两侧计数同步 3→2——判别「未软删」
+    // 谓词在教师与学生两侧都实际过滤（语料全未软删时该半边不被测到）
+    db.update(questions)
+      .set({ deletedAt: T0 })
+      .where(eq(questions.id, "计数一致-3"))
+      .run();
+    const teacherAfterDelete = listLibraryUnits(db, TEST_TEACHER_ID, {
+      deleted: false,
+    }).find((unit) => unit.id === unitId)?.questionCount;
+    const studentAfterDelete = getStudentCourseDetail(
+      db,
+      memberId,
+      courseId,
+    ).items.find(
+      (item) => item.kind === "unit" && item.refId === unitId,
+    )?.questionCount;
+    expect(teacherAfterDelete).toBe(2);
+    expect(studentAfterDelete).toBe(2);
   });
 });
 
