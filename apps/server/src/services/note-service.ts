@@ -60,6 +60,7 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
+import { touchAttemptActivity } from "./attempt-activity";
 import {
   answersReleased,
   assignmentReleaseByIds,
@@ -637,6 +638,15 @@ export function saveNoteVersion(
           "草稿头指针切换未命中（并发写竞争，本次写入已回滚）",
         );
       }
+      const previousHash = existing?.currentVersionId
+        ? tx
+            .select({ hash: noteVersions.hash })
+            .from(noteVersions)
+            .where(eq(noteVersions.id, existing.currentVersionId))
+            .get()?.hash
+        : undefined;
+      if (phase === "scratch" && previousHash !== hash)
+        touchAttemptActivity(tx, attemptId, now);
     });
   } catch (err) {
     // 8. 失败清理与跨进程兜底（better-sqlite3 同步单进程下兜底分支不可达，

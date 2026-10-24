@@ -56,6 +56,7 @@ import {
   requireAnnotationResetVersion,
 } from "./annotation-reset";
 import { knowledgeNamesByQuestion } from "./assignment-service";
+import { touchAttemptActivity } from "./attempt-activity";
 import {
   attemptTeacherId,
   frozenRowsInDisplayOrder,
@@ -928,6 +929,8 @@ export function putAnnotationDoc(
           );
         }
       }
+      if (phase === "scratch" && existing?.hash !== hash)
+        touchAttemptActivity(tx, attemptId, now);
     });
   } catch (err) {
     // 唯一索引冲突（annotations_mutation_id_uk）兜底：单进程同步下不可达，

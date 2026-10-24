@@ -82,6 +82,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
+import { touchAttemptActivity } from "./attempt-activity";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
@@ -1354,6 +1355,7 @@ export function newDraftAttempt(config: {
     attemptNo: config.attemptNo,
     status: "draft",
     startedAt: config.startedAt,
+    lastActivityAt: null,
     submittedAt: null,
     activeSec: null,
     device: null,
@@ -1685,6 +1687,8 @@ export function saveDraftAnswer(
       })
       .where(eq(responses.id, existing.id))
       .run();
+    if (encoded !== existing.answerJson)
+      touchAttemptActivity(tx, attemptId, new Date().toISOString());
     return { questionId, changeCount: nextCount, revision: nextRevision };
   });
 }
@@ -2124,6 +2128,7 @@ export function submitAttempt(
         })
         .run();
     }
+    touchAttemptActivity(tx, attemptId, nowIso);
     tx.update(attempts)
       .set({
         // D2/D3：全部 finalCorrect 非 null → 直接 graded 并写 scoreFinal；
@@ -2480,6 +2485,7 @@ export function submitLessonQuestion(
     // 自动收尾：全部冻结行都已提交 → 最后一题，共同收尾函数（lesson 与 M2
     // 新协议逐题提交同一实现；返回瘦行集出事务即 lessonLiveSummaryOf 的输入，
     // 与开卷链路同一口径，不复制谓词）
+    touchAttemptActivity(tx, attemptId, nowIso);
     return autoFinishPerQuestionAttempt(tx, attemptId, nowIso).rows;
   });
 
@@ -2741,6 +2747,7 @@ export function submitPracticeQuestion(
     // 最后一题：共同收尾函数（与 lesson 同一实现；并发下整卷只收尾一次）。
     // 收尾 RETURNING 带回顾卷新行；no-op（他方已收尾）时回落事务内已读行
     //（同步单连接下与事务后重读恒等）
+    touchAttemptActivity(tx, attemptId, nowIso);
     const finished = autoFinishPerQuestionAttempt(tx, attemptId, nowIso);
     // 有效提交在事务内记事件（重放分支不会到这——§10.3 不重复写；与提交
     // 原子落库，省一次独立 autocommit 的 fsync，不留「提交已持久、事件丢失」

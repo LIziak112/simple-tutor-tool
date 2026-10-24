@@ -1017,6 +1017,7 @@ export function createStudentRoutes(
       .get("/records", (c) => {
         // GET 无 JSON body：查询参数手工过契约 schema（数值字段经 coerce 解析）
         const parsed = studentRecordsQuerySchema.safeParse({
+          sort: c.req.query("sort"),
           sourceType: c.req.query("sourceType") ?? undefined,
           courseId: c.req.query("courseId") ?? undefined,
           assignmentId: c.req.query("assignmentId") ?? undefined,

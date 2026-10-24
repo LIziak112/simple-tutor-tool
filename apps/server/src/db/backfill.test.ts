@@ -700,7 +700,12 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // （imports.kind 是 T1.10 既有列，保留在对比内）；attempts.lecture_id 与
       // responses.submitted_at 可空、存量行恒 NULL。新增列语义见 schema/migrate 测试
       if (table === "lectures") delete row.kind;
-      if (table === "attempts") delete row.lecture_id;
+      if (table === "attempts") {
+        delete row.lecture_id;
+        // 活动时间新列历史为空，不推测更早的保存事实。
+        expect(row.last_activity_at ?? null).toBeNull();
+        delete row.last_activity_at;
+      }
       // 0034 新增废弃时间，旧行默认NULL；原有业务字段仍逐项保真。
       if (table === "attempts") delete row.abandoned_at;
       if (table === "responses") delete row.submitted_at;

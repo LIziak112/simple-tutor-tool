@@ -20,6 +20,7 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngSize } from "../lib/png";
+import { touchAttemptActivity } from "./attempt-activity";
 import {
   assertRowNotSubmitted,
   requireAttemptQuestion,
@@ -266,6 +267,20 @@ export function saveInk(
           "另一设备已更新笔迹，请选择保留本机稿或云端稿",
         );
       }
+      // 活动时间比较实际矢量内容，不把 PNG 编码、压缩方式或协议时间戳当作答。
+      let contentChanged = true;
+      if (current) {
+        try {
+          const previous = parseStrokesDoc(
+            readFileSync(inkFileAbs(dataDir, current.strokesPath, ".json.gz")),
+          );
+          contentChanged =
+            previous.engine !== doc.engine ||
+            JSON.stringify(previous.data) !== JSON.stringify(doc.data);
+        } catch {
+          // 原文件损坏仍允许有效新稿修复；此时按一次有效保存记录。
+        }
+      }
       const revision = (current?.revision ?? 0) + 1;
 
       // 落盘（原子替换：唯一 tmp + rename，机制在 lib/blob-io.writeFileAtomic——
@@ -324,6 +339,7 @@ export function saveInk(
         // 防御：upsert 必有受影响行（drizzle/SQLite 契约），不可达
         throw new HttpError(500, "INTERNAL", "笔迹行写入失败");
       }
+      if (contentChanged) touchAttemptActivity(tx, attemptId, now);
       const inkId = saved.id;
 
       return {

@@ -1092,6 +1092,11 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
       revisions.get(S.choice) ?? "",
     );
 
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.lastActivityAt,
+    ).toBe(responseRowOf(env.db, attemptId, S.choice).submittedAt);
+
     // 当题结果：判对 + 参考答案释放 + 学生端题干投影
     expect(body.data.question).toMatchObject({
       questionId: S.choice,

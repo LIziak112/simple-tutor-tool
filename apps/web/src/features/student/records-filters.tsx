@@ -1,7 +1,10 @@
 import {
   type AttemptSource,
   type AttemptStatus,
+  type StudentRecordsQuery,
+  type StudentRecordsSort,
   studentRecordsQuerySchema,
+  studentRecordsSortSchema,
 } from "@tutor/contract";
 import { CalendarRange, ChevronDown, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
@@ -33,6 +36,7 @@ export interface StudentRecordsUrlState {
   /** datetime-local 本地串；空串 = 未选 */
   from: string;
   to: string;
+  sort: StudentRecordsSort;
   offset: number;
 }
 
@@ -44,6 +48,7 @@ export const DEFAULT_STUDENT_RECORDS_URL_STATE: StudentRecordsUrlState = {
   status: "all",
   from: "",
   to: "",
+  sort: "activity_desc",
   offset: 0,
 };
 
@@ -63,6 +68,9 @@ export function parseStudentRecordsUrl(
   const courseId = search.get("courseId");
   const assignmentId = search.get("assignmentId");
   const state: StudentRecordsUrlState = {
+    sort: studentRecordsSortSchema
+      .catch("activity_desc")
+      .parse(search.get("sort") ?? "activity_desc"),
     sourceType: pickEnum(
       search.get("sourceType"),
       ["all", "assignment", "course", "wrong", "lesson"],
@@ -109,6 +117,7 @@ export function studentRecordsUrlQuery(
   state: StudentRecordsUrlState,
 ): URLSearchParams {
   const params = new URLSearchParams();
+  if (state.sort !== "activity_desc") params.set("sort", state.sort);
   if (state.sourceType !== "all") params.set("sourceType", state.sourceType);
   if (state.courseId !== null) params.set("courseId", state.courseId);
   if (state.assignmentId !== null) {
@@ -139,16 +148,7 @@ export function hasActiveRecordsFilters(
 export function studentRecordsApiParams(
   state: StudentRecordsUrlState,
   limit: number,
-): {
-  sourceType?: AttemptSource | undefined;
-  courseId?: string | undefined;
-  assignmentId?: string | undefined;
-  status?: AttemptStatus | undefined;
-  from?: string | undefined;
-  to?: string | undefined;
-  limit: number;
-  offset: number;
-} {
+): StudentRecordsQuery {
   return {
     ...(state.sourceType !== "all" ? { sourceType: state.sourceType } : {}),
     ...(state.courseId !== null ? { courseId: state.courseId } : {}),
@@ -158,6 +158,7 @@ export function studentRecordsApiParams(
     ...(state.status !== "all" ? { status: state.status } : {}),
     ...(state.from !== "" ? { from: localInputToUtcIso(state.from) } : {}),
     ...(state.to !== "" ? { to: localInputToUtcIso(state.to) } : {}),
+    sort: state.sort,
     limit,
     offset: state.offset,
   };
@@ -189,6 +190,28 @@ export function StudentRecordsFilters({
   return (
     <div className="flex min-w-0 flex-col gap-3 border-y border-border py-3">
       <div className="flex flex-wrap items-end gap-3">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label
+            htmlFor="records-sort"
+            className="text-sm text-muted-foreground"
+          >
+            排序
+          </label>
+          <select
+            id="records-sort"
+            value={state.sort}
+            onChange={(event) =>
+              onPatch({
+                sort: studentRecordsSortSchema.parse(event.target.value),
+              })
+            }
+            className="min-h-11 rounded-lg border border-input bg-background px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <option value="activity_desc">最近作答</option>
+            <option value="started_desc">最近开始</option>
+            <option value="started_asc">最早开始</option>
+          </select>
+        </div>
         <div className="flex min-w-0 flex-col gap-1.5">
           <label
             htmlFor="records-source-filter"
@@ -364,7 +387,7 @@ export function StudentRecordsFilters({
           </div>
           <div className="flex min-w-0 flex-col gap-1.5">
             <label htmlFor="records-from-filter" className="text-sm">
-              开始日期（从）
+              作答活动时间（从）
             </label>
             <input
               id="records-from-filter"
@@ -377,7 +400,7 @@ export function StudentRecordsFilters({
 
           <div className="flex min-w-0 flex-col gap-1.5">
             <label htmlFor="records-to-filter" className="text-sm">
-              结束日期（到）
+              作答活动时间（到）
             </label>
             <input
               id="records-to-filter"

@@ -537,6 +537,11 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
       practiceRequestDigest: expect.any(String),
     });
 
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.lastActivityAt,
+    ).toBe(responseRowOf(env.db, attemptId, Q.choice).submittedAt);
+
     // 泄露三层：键名级（放行当题 answers/answer/solutionMd）+ 题干级 + 邻题内容级
     assertNoLeak({ data }, { allow: ["answers", "answer", "solutionMd"] });
     assertNoStemLeak({ data });
@@ -566,6 +571,12 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
       Q.choice,
     ).submittedAt;
 
+    const activityBeforeRetry = env.db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get()?.lastActivityAt;
+
     // 模拟「结果未知可恢复」：同 mutationId 原样重试（practiceSubmitOk 内含
     // 200 与契约壳校验，与其他用例同一断言强度）
     const retry = await practiceSubmitOk(env, draft, attemptId, Q.choice, {
@@ -584,6 +595,10 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
     );
     expect(questionSubmitEventsOf(env.db, attemptId)).toBe(1);
     expect(first.data.attempt.status).toBe("draft");
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.lastActivityAt,
+    ).toBe(activityBeforeRetry);
   });
 
   it("同 mutationId 异请求摘要 → 409 WORKFLOW_MUTATION_CONFLICT（不重放、不覆盖）", async () => {

@@ -11,6 +11,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { assignments, attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { saveDraftAnswer } from "../services/attempt-service";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
@@ -160,7 +161,11 @@ function setAttemptTimes(
   times: { startedAt: string; submittedAt: string | null },
 ): void {
   db.update(attempts)
-    .set({ startedAt: times.startedAt, submittedAt: times.submittedAt })
+    .set({
+      startedAt: times.startedAt,
+      submittedAt: times.submittedAt,
+      lastActivityAt: null,
+    })
     .where(eq(attempts.id, attemptId))
     .run();
 }
@@ -492,6 +497,95 @@ async function makeRecordsEnv(): Promise<RecordsEnv> {
 }
 
 describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
+  it("旧卷有效续作置顶，相同答案和幂等重试不再次更新时间；开始排序在分页前执行", async () => {
+    const env = await makeRecordsEnv();
+    saveDraftAnswer(
+      env.db,
+      env.aStudentId,
+      env.course2AttemptId,
+      Q.judge1,
+      { kind: "judge", value: true },
+      { baseRevision: 0, mutationId: crypto.randomUUID() },
+    );
+    const result = await getRecords(env.app, env.aCookie, "?status=draft");
+    expect(result.data?.records[0]?.attemptId).toBe(env.course2AttemptId);
+    const activityAt = result.data?.records[0]?.lastActivityAt;
+    expect(activityAt).toBeTruthy();
+    saveDraftAnswer(
+      env.db,
+      env.aStudentId,
+      env.course2AttemptId,
+      Q.judge1,
+      { kind: "judge", value: true },
+      { baseRevision: 1, mutationId: crypto.randomUUID() },
+    );
+    const again = await getRecords(env.app, env.aCookie, "?status=draft");
+    expect(again.data?.records[0]?.lastActivityAt).toBe(activityAt);
+    const oldest = await getRecords(
+      env.app,
+      env.aCookie,
+      "?sort=started_asc&limit=1&offset=1",
+    );
+    expect(oldest.data?.records[0]?.attemptId).toBe(env.a1AttemptId);
+    const newest = await getRecords(
+      env.app,
+      env.aCookie,
+      "?sort=started_desc&limit=1",
+    );
+    expect(newest.data?.records[0]?.attemptId).toBe(env.a3AttemptId);
+    assertNoLeak(result.body);
+    assertNoLeak(oldest.body);
+  });
+
+  it("时间过滤固定活动轴，活动并列按开始时间和 ID 稳定分页，非法排序拒绝", async () => {
+    const env = await makeRecordsEnv();
+    const active = "2026-10-24T00:00:00.000Z";
+    for (const id of [env.a3AttemptId, env.course2AttemptId]) {
+      env.db
+        .update(attempts)
+        .set({ lastActivityAt: active })
+        .where(eq(attempts.id, id))
+        .run();
+    }
+    for (const sort of ["activity_desc", "started_desc", "started_asc"]) {
+      const result = await getRecords(
+        env.app,
+        env.aCookie,
+        `?sort=${sort}&from=${active}&to=${active}`,
+      );
+      expect(result.data?.total).toBe(2);
+      expect(result.data?.records.map((row) => row.attemptId)).toEqual(
+        sort === "started_asc"
+          ? [env.course2AttemptId, env.a3AttemptId]
+          : [env.a3AttemptId, env.course2AttemptId],
+      );
+      assertNoLeak(result.body);
+    }
+    env.db
+      .update(attempts)
+      .set({ startedAt: T.a3Start })
+      .where(eq(attempts.id, env.course2AttemptId))
+      .run();
+    const expected = [env.a3AttemptId, env.course2AttemptId].sort().reverse();
+    const first = await getRecords(
+      env.app,
+      env.aCookie,
+      "?status=draft&limit=1",
+    );
+    const second = await getRecords(
+      env.app,
+      env.aCookie,
+      "?status=draft&limit=1&offset=1",
+    );
+    expect([
+      first.data?.records[0]?.attemptId,
+      second.data?.records[0]?.attemptId,
+    ]).toEqual(expected);
+    expect(
+      (await getRecords(env.app, env.aCookie, "?sort=broken")).status,
+    ).toBe(400);
+  });
+
   it("索引与排序：作业与课程练习混排、最近活动时间倒序；各状态行字段与 D2 得分口径正确；assertNoLeak 通过", async () => {
     const env = await makeRecordsEnv();
     const { status, body, data } = await getRecords(env.app, env.aCookie);
