@@ -8,6 +8,7 @@ import type {
 import {
   type AnswerKindBehaviorTable,
   answerKindBehaviors,
+  countResponseWords,
   dispatchBehavior,
   dispatchIsAnswered,
   emptyPublicStructure,
@@ -160,6 +161,29 @@ describe("response 纯行为（§5.3.1/§11.4：isAnswered = body 非空白）",
     expect(
       behavior.inspectShape({ kind: "response", body: "x" }, null),
     ).toEqual([]);
+  });
+});
+
+describe("response 字数口径（QM-09：中文按字含中文标点、英文按词，UI 与保存共用单源）", () => {
+  it("中文正文：每个汉字与中文标点各计 1 字", () => {
+    expect(countResponseWords("老旧小区改造")).toBe(6);
+    // 中文标点同样计入（作文字数惯例含标点）
+    expect(countResponseWords("分歧，是起点。")).toBe(7);
+  });
+
+  it("英文正文：连续拉丁字母/数字/撇号串计 1 词", () => {
+    expect(countResponseWords("Reading furnishes the mind")).toBe(4);
+    expect(countResponseWords("it's a well-known fact")).toBe(4);
+    expect(countResponseWords("x^2 + 3")).toBe(3); // x、2、3 各一词
+  });
+
+  it("中英混排：中文字数与英文词数相加；空白/换行/英文标点不计", () => {
+    // 「概括主要特点，」7 字（含中文逗号）+ no/more/than/250/words 五词 + 「。」1 字 = 13
+    expect(countResponseWords("概括主要特点，no more than 250 words。")).toBe(
+      13,
+    );
+    expect(countResponseWords("  \n\n ")).toBe(0);
+    expect(countResponseWords("")).toBe(0);
   });
 });
 

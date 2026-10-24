@@ -5,6 +5,9 @@ import {
   handwrittenStudentAnswerSchema,
   judgeStudentAnswerSchema,
   multiStudentAnswerSchema,
+  RESPONSE_BODY_MAX_CHARS,
+  RESPONSE_TITLE_MAX_CHARS,
+  responseStudentAnswerSchema,
   studentAnswerSchema,
 } from "./grading";
 
@@ -103,6 +106,44 @@ describe("StudentAnswer：各题型学生答案（T2.5）", () => {
     ).toBe(true);
     expect(
       handwrittenStudentAnswerSchema.safeParse({ kind: "final" }).success,
+    ).toBe(false);
+  });
+
+  it("response：title 可缺省、body 允许空串（仅手写作答合法）；标题/正文各有防御性字符上限（拒绝不截断，QM-09）", () => {
+    expect(
+      responseStudentAnswerSchema.safeParse({ kind: "response", body: "" })
+        .success,
+    ).toBe(true);
+    expect(
+      responseStudentAnswerSchema.safeParse({
+        kind: "response",
+        title: "分歧是治理的起点",
+        body: "第一段……\n\n第二段……",
+      }).success,
+    ).toBe(true);
+    // 上限内长文不截断可保存（5 万字符量级，远超任何作文题）
+    expect(
+      responseStudentAnswerSchema.safeParse({
+        kind: "response",
+        body: "字".repeat(RESPONSE_BODY_MAX_CHARS),
+      }).success,
+    ).toBe(true);
+    // 超限拒绝（保存与提交同码走 VALIDATION_ERROR，不在任何一层截断长文）
+    expect(
+      responseStudentAnswerSchema.safeParse({
+        kind: "response",
+        body: "字".repeat(RESPONSE_BODY_MAX_CHARS + 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      responseStudentAnswerSchema.safeParse({
+        kind: "response",
+        title: "题".repeat(RESPONSE_TITLE_MAX_CHARS + 1),
+        body: "正文",
+      }).success,
+    ).toBe(false);
+    expect(
+      responseStudentAnswerSchema.safeParse({ kind: "response" }).success,
     ).toBe(false);
   });
 
