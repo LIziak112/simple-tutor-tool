@@ -535,3 +535,91 @@ vi.mock("./material-repository.ts", async (importOriginal) => {
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+describe("QM-05 材料含媒体的往返（媒体存在性 + 导出重导不丢）", () => {
+  /** 材料正文带 ::image（已上传的内容寻址路径形态）的 QM 文档 */
+  const QM_MD_WITH_IMAGE = QM_MD.replace(
+    "给定资料正文，含槽位 {{}}。",
+    '给定资料正文，含槽位 {{}} 与插图。\n\n::image{src="blobs/media/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.png" width=320}',
+  );
+
+  it("材料 mediaPaths 落库；导出重导后 mediaPaths 不丢（src 在材料源文原样保留）", async () => {
+    const db = createTestDb();
+    commitQm(db, QM_MD_WITH_IMAGE);
+    const material = getMaterial(db, TEST_TEACHER_ID, "mat-资料分析-1");
+    expect(material?.mediaPathsJson).toContain("blobs/media/");
+    expect(material?.sourceMd).toContain("::image{src=\"blobs/media/");
+
+    // 导出重导：真实 exportUnitMd 覆盖材料正文（含 ::image 行）
+    const { exportUnitMd } = await import("./library-service.ts");
+    const exported = exportUnitMd(db, TEST_TEACHER_ID, "资料分析");
+    expect(exported.markdown).toContain("::image{src=\"blobs/media/");
+    commitQm(db, exported.markdown);
+    const again = getMaterial(db, TEST_TEACHER_ID, "mat-资料分析-1");
+    expect(again?.mediaPathsJson).toBe(material?.mediaPathsJson);
+    expect(again?.sourceMd).toBe(material?.sourceMd);
+  });
+
+  it("媒体存在性核对覆盖材料内 ::image（缺失 → IMAGE_SRC_NOT_FOUND warning，不阻断）", () => {
+    const db = createTestDb();
+    const preview = previewImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: QM_MD_WITH_IMAGE, filename: "资料分析.md" },
+      // 传真实 dataDir（临时目录里没有该图）→ 材料内 ::image 报缺失 warning
+      import.meta.dirname,
+      true,
+    );
+    const missing = preview.issues.find(
+      (issue) => issue.code === "IMAGE_SRC_NOT_FOUND",
+    );
+    expect(missing).toBeDefined();
+    // warning 级：commit 照常成功（先导 md 后补图的工作流）
+    const report = commitImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: QM_MD_WITH_IMAGE, filename: "资料分析.md" },
+      import.meta.dirname,
+      undefined,
+      true,
+    );
+    expect(report.materials?.inserted).toBe(1);
+  });
+});
+
+describe("QM-05 ZIP 链路（新内容闸门同样生效）", () => {
+  it("previewZipImport 对 QM 文档在开关关闭时 403 NEW_CONTENT_DISABLED；开启后正常预览", async () => {
+    const db = createTestDb();
+    const { ZipArchive } = await import("archiver");
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    const chunks: Buffer[] = [];
+    archive.on("data", (chunk: Buffer) => chunks.push(chunk));
+    archive.append(Buffer.from(QM_MD, "utf8"), { name: "资料分析.md" });
+    await archive.finalize();
+    const zipBytes = Buffer.concat(chunks);
+    const { decodeImportZipBase64, previewZipImport, unpackImportZip } =
+      await import("./zip-import-service.ts");
+    // 生产链路两步：base64 解码（路由入口）→ 解包出 bundle（mdFiles 等）
+    const bundle = unpackImportZip(
+      decodeImportZipBase64(zipBytes.toString("base64"), "资料分析.zip"),
+    );
+    // 开关关闭（缺省）：QM 文档 403
+    const run = { bundle, folderId: null, zipName: "资料分析.zip" };
+    expect(() => previewZipImport(db, TEST_TEACHER_ID, run)).toThrowError(
+      expect.objectContaining({
+        status: 403,
+        code: "NEW_CONTENT_DISABLED",
+      }) satisfies Partial<HttpError>,
+    );
+    // 开关打开：预览正常（summary 材料计数可见）
+    process.env.NEW_CONTENT_ENABLED = "true";
+    try {
+      const report = previewZipImport(db, TEST_TEACHER_ID, run);
+      const file = report.files[0];
+      expect(file?.summary.materialCount).toBe(1);
+      expect(file?.summary.groupCount).toBe(1);
+    } finally {
+      delete process.env.NEW_CONTENT_ENABLED;
+    }
+  });
+});
