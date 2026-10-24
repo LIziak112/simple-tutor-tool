@@ -42,6 +42,9 @@ import {
 /** 引用方类型（material_refs.ownerKind 值域） */
 export type MaterialRefOwnerKind = "group" | "question";
 
+/** 事务回调拿到的数据库句柄类型（better-sqlite3 同步事务；question-sync 同款） */
+export type RepositoryTx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
 /** 冻结快照实体类型（attempt_context_snapshots.kind 值域） */
 export type AttemptContextKind = "material" | "group";
 
@@ -68,62 +71,66 @@ export interface SaveMaterialInput {
  * （deletedAt 清空）。返回保存后的行。
  */
 export function saveMaterial(db: Db, input: SaveMaterialInput): MaterialRow {
+  return db.transaction((tx) => saveMaterialWithin(tx, input));
+}
+
+/**
+ * saveMaterial 的事务内实现（tt-06b / QM-05）：导入 commit 把材料与题目/组
+ * 写进**同一个事务**（§5.3.3-「批次验证全部成功才事务提交」）时经本入口
+ * 传入外层 tx；独立调用走 saveMaterial（自开事务）。
+ */
+export function saveMaterialWithin(
+  tx: RepositoryTx,
+  input: SaveMaterialInput,
+): MaterialRow {
   const { teacherId, material, now } = input;
-  return db.transaction((tx) => {
-    const existing = tx
+  const existing = tx
+    .select()
+    .from(materials)
+    .where(
+      and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)),
+    )
+    .get();
+  const fields = {
+    unitId: input.unitId,
+    title: material.title ?? null,
+    sourceMd: material.sourceMd,
+    contentMd: material.contentMd,
+    anchorsJson: JSON.stringify(material.anchors),
+    slotsJson: JSON.stringify(material.slots),
+    mediaPathsJson: JSON.stringify(material.mediaPaths),
+    order: input.order,
+    updatedAt: now,
+  };
+  if (existing === undefined) {
+    tx.insert(materials)
+      .values({ id: material.id, teacherId, ...fields, deletedAt: null })
+      .run();
+  } else {
+    tx.update(materials)
+      .set({
+        ...fields,
+        version:
+          existing.sourceMd === material.sourceMd
+            ? existing.version
+            : existing.version + 1,
+        deletedAt: null,
+      })
+      .where(
+        and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)),
+      )
+      .run();
+  }
+  return requireJustWrittenRow(
+    tx
       .select()
       .from(materials)
       .where(
         and(eq(materials.teacherId, teacherId), eq(materials.id, material.id)),
       )
-      .get();
-    const fields = {
-      unitId: input.unitId,
-      title: material.title ?? null,
-      sourceMd: material.sourceMd,
-      contentMd: material.contentMd,
-      anchorsJson: JSON.stringify(material.anchors),
-      slotsJson: JSON.stringify(material.slots),
-      mediaPathsJson: JSON.stringify(material.mediaPaths),
-      order: input.order,
-      updatedAt: now,
-    };
-    if (existing === undefined) {
-      tx.insert(materials)
-        .values({ id: material.id, teacherId, ...fields, deletedAt: null })
-        .run();
-    } else {
-      tx.update(materials)
-        .set({
-          ...fields,
-          version:
-            existing.sourceMd === material.sourceMd
-              ? existing.version
-              : existing.version + 1,
-          deletedAt: null,
-        })
-        .where(
-          and(
-            eq(materials.teacherId, teacherId),
-            eq(materials.id, material.id),
-          ),
-        )
-        .run();
-    }
-    return requireJustWrittenRow(
-      tx
-        .select()
-        .from(materials)
-        .where(
-          and(
-            eq(materials.teacherId, teacherId),
-            eq(materials.id, material.id),
-          ),
-        )
-        .get(),
-      `materials(${teacherId}, ${material.id})`,
-    );
-  });
+      .get(),
+    `materials(${teacherId}, ${material.id})`,
+  );
 }
 
 /** 事务内刚写入的行回读缺失 = 事务异常（不静默返回 null，防半份状态外泄） */
@@ -233,9 +240,82 @@ export function saveQuestionGroup(
   db: Db,
   input: SaveQuestionGroupInput,
 ): QuestionGroupRow {
+  return db.transaction((tx) => saveQuestionGroupWithin(tx, input));
+}
+
+/** saveQuestionGroup 的事务内实现（tt-06b / QM-05 导入 commit 同事务调用） */
+export function saveQuestionGroupWithin(
+  tx: RepositoryTx,
+  input: SaveQuestionGroupInput,
+): QuestionGroupRow {
   const { teacherId, group, now } = input;
-  return db.transaction((tx) => {
-    const existing = tx
+  const existing = tx
+    .select()
+    .from(questionGroups)
+    .where(
+      and(
+        eq(questionGroups.teacherId, teacherId),
+        eq(questionGroups.id, group.id),
+      ),
+    )
+    .get();
+  const fields = {
+    unitId: input.unitId,
+    title: group.title ?? null,
+    label: group.label ?? null,
+    sourceMd: group.sourceMd,
+    introMd: group.introMd,
+    materialRefsJson: JSON.stringify(group.materialRefs),
+    questionIdsJson: JSON.stringify(group.questionIds),
+    order: input.order,
+    updatedAt: now,
+  };
+  if (existing === undefined) {
+    tx.insert(questionGroups)
+      .values({ id: group.id, teacherId, ...fields, deletedAt: null })
+      .run();
+  } else {
+    tx.update(questionGroups)
+      .set({
+        ...fields,
+        version:
+          existing.sourceMd === group.sourceMd
+            ? existing.version
+            : existing.version + 1,
+        deletedAt: null,
+      })
+      .where(
+        and(
+          eq(questionGroups.teacherId, teacherId),
+          eq(questionGroups.id, group.id),
+        ),
+      )
+      .run();
+  }
+  // 成员索引整体替换（::ref{question=} 书写顺序即组内序）
+  tx.delete(questionGroupMembers)
+    .where(
+      and(
+        eq(questionGroupMembers.teacherId, teacherId),
+        eq(questionGroupMembers.groupId, group.id),
+      ),
+    )
+    .run();
+  for (const [index, questionId] of group.questionIds.entries()) {
+    tx.insert(questionGroupMembers)
+      .values({ teacherId, groupId: group.id, questionId, order: index })
+      .run();
+  }
+  // 组材料引用索引整体替换（ownerKind='group'）
+  replaceOwnerMaterialRefs(
+    tx,
+    teacherId,
+    "group",
+    group.id,
+    group.materialRefs,
+  );
+  return requireJustWrittenRow(
+    tx
       .select()
       .from(questionGroups)
       .where(
@@ -244,76 +324,9 @@ export function saveQuestionGroup(
           eq(questionGroups.id, group.id),
         ),
       )
-      .get();
-    const fields = {
-      unitId: input.unitId,
-      title: group.title ?? null,
-      label: group.label ?? null,
-      sourceMd: group.sourceMd,
-      introMd: group.introMd,
-      materialRefsJson: JSON.stringify(group.materialRefs),
-      questionIdsJson: JSON.stringify(group.questionIds),
-      order: input.order,
-      updatedAt: now,
-    };
-    if (existing === undefined) {
-      tx.insert(questionGroups)
-        .values({ id: group.id, teacherId, ...fields, deletedAt: null })
-        .run();
-    } else {
-      tx.update(questionGroups)
-        .set({
-          ...fields,
-          version:
-            existing.sourceMd === group.sourceMd
-              ? existing.version
-              : existing.version + 1,
-          deletedAt: null,
-        })
-        .where(
-          and(
-            eq(questionGroups.teacherId, teacherId),
-            eq(questionGroups.id, group.id),
-          ),
-        )
-        .run();
-    }
-    // 成员索引整体替换（::ref{question=} 书写顺序即组内序）
-    tx.delete(questionGroupMembers)
-      .where(
-        and(
-          eq(questionGroupMembers.teacherId, teacherId),
-          eq(questionGroupMembers.groupId, group.id),
-        ),
-      )
-      .run();
-    for (const [index, questionId] of group.questionIds.entries()) {
-      tx.insert(questionGroupMembers)
-        .values({ teacherId, groupId: group.id, questionId, order: index })
-        .run();
-    }
-    // 组材料引用索引整体替换（ownerKind='group'）
-    replaceOwnerMaterialRefs(
-      tx,
-      teacherId,
-      "group",
-      group.id,
-      group.materialRefs,
-    );
-    return requireJustWrittenRow(
-      tx
-        .select()
-        .from(questionGroups)
-        .where(
-          and(
-            eq(questionGroups.teacherId, teacherId),
-            eq(questionGroups.id, group.id),
-          ),
-        )
-        .get(),
-      `question_groups(${teacherId}, ${group.id})`,
-    );
-  });
+      .get(),
+    `question_groups(${teacherId}, ${group.id})`,
+  );
 }
 
 /** 按 (teacherId, id) 读题组；默认排除软删行 */
@@ -415,13 +428,23 @@ export function replaceQuestionMaterialRefs(
   refs: readonly MaterialRef[],
 ): void {
   db.transaction((tx) => {
-    replaceOwnerMaterialRefs(tx, teacherId, "question", questionId, refs);
+    replaceQuestionMaterialRefsWithin(tx, teacherId, questionId, refs);
   });
+}
+
+/** replaceQuestionMaterialRefs 的事务内实现（tt-06b / QM-05 导入/reparse 同事务调用） */
+export function replaceQuestionMaterialRefsWithin(
+  tx: RepositoryTx,
+  teacherId: string,
+  questionId: string,
+  refs: readonly MaterialRef[],
+): void {
+  replaceOwnerMaterialRefs(tx, teacherId, "question", questionId, refs);
 }
 
 /** owner 维度引用索引替换的事务内实现（Db | Tx 双态，见上方两入口） */
 function replaceOwnerMaterialRefs(
-  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  tx: RepositoryTx,
   teacherId: string,
   ownerKind: MaterialRefOwnerKind,
   ownerId: string,

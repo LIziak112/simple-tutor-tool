@@ -33,6 +33,8 @@ export function questionFields(
   hintsJson: string;
   solutionMd: string | null;
   sourceMd: string;
+  /** 题级 ::ref 抽取副本（tt-06b / QM-05：questionSchema.materialRefs 落库；NULL=无引用） */
+  materialRefsJson: string | null;
   updatedAt: string;
 } {
   return {
@@ -48,6 +50,10 @@ export function questionFields(
     hintsJson: JSON.stringify(question.hints),
     solutionMd: question.solutionMd ?? null,
     sourceMd: question.sourceMd,
+    materialRefsJson:
+      question.materialRefs !== undefined && question.materialRefs.length > 0
+        ? JSON.stringify(question.materialRefs)
+        : null,
     updatedAt: now,
   };
 }

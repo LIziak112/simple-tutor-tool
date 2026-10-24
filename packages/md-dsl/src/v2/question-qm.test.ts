@@ -303,6 +303,45 @@ describe("ordering：项、固定位与干扰项派生（§5.4.2/§6.1-3）", ()
     expect(q?.stemMd).toBe("排序。");
   });
 
+  it("参考引用缺省 item id：与 matching 对称合法（tt-06b P2-3——缺省 id 先生成再校验参考行）", () => {
+    const { q, issues } = question(
+      [
+        "::::question{id=px type=ordering}",
+        ":::item",
+        "甲项。",
+        ":::",
+        ":::item",
+        "乙项。",
+        ":::",
+        ":::answer",
+        "item-px-2",
+        "item-px-1",
+        ":::",
+        "::::",
+      ].join("\n"),
+    );
+    expect(issues.filter((i) => i.level === "error")).toEqual([]);
+    expect(q?.answers).toEqual({
+      kind: "ordering",
+      sequence: ["item-px-2", "item-px-1"],
+    });
+    // 两项都在序列内：非干扰项；fixedPosition 需显式 fixed=true（本例未声明 → null）
+    expect(q?.orderingItems).toEqual([
+      {
+        id: "item-px-1",
+        text: "甲项。",
+        fixedPosition: null,
+        distractor: false,
+      },
+      {
+        id: "item-px-2",
+        text: "乙项。",
+        fixedPosition: null,
+        distractor: false,
+      },
+    ]);
+  });
+
   it("参考引用未声明 item id：INVALID_REFERENCE_ANSWER_FORMAT；缺省 id 走 item-题目id-序号", () => {
     const { q, issues } = question(
       [

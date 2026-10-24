@@ -51,6 +51,8 @@ import {
   knowledgePoints,
   lectures,
   libraryFolders,
+  materials,
+  questionGroups,
   questionKnowledge,
   questions,
   units,
@@ -59,8 +61,22 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
+import {
+  assertNewContentAllowed,
+  liveMaterialIdsOf,
+  normalizeForImport,
+  qmStemRefIssues,
+  qmStemRefWarnings,
+  resolveNewContentEnabled,
+  resolveQmImportIssues,
+} from "./import-qm";
 import { lessonEmbeddedUnitIds } from "./lesson-embedded";
 import { softDeleteLecture } from "./library-service";
+import {
+  replaceQuestionMaterialRefsWithin,
+  saveMaterialWithin,
+  saveQuestionGroupWithin,
+} from "./material-repository";
 import { missingMediaImageSrcs } from "./media-service";
 import {
   loadKnowledgeIdByName,
@@ -152,12 +168,17 @@ function fallbackUnitIdOf(name: string | undefined): string | undefined {
 export function summarizeParsed(parsed: ParsedDocument): ImportSummary {
   const typeDistribution: Record<string, number> = {};
   let questionCount = 0;
+  let materialCount = 0;
+  let groupCount = 0;
   for (const unit of parsed.units) {
     for (const question of unit.questions) {
       questionCount += 1;
       typeDistribution[question.type] =
         (typeDistribution[question.type] ?? 0) + 1;
     }
+    // tt-06b / QM-05：材料/组单列计数——题数口径不把父组/材料重复算题
+    materialCount += unit.materials?.length ?? 0;
+    groupCount += unit.groups?.length ?? 0;
   }
   return {
     // 文档形态（2026-10-15）：kind=lesson 时前端按「讲练页一件事」呈现
@@ -165,6 +186,8 @@ export function summarizeParsed(parsed: ParsedDocument): ImportSummary {
     unitCount: parsed.units.length,
     lectureCount: parsed.lectures.length,
     questionCount,
+    ...(materialCount > 0 ? { materialCount } : {}),
+    ...(groupCount > 0 ? { groupCount } : {}),
     typeDistribution,
   };
 }
@@ -201,23 +224,32 @@ function buildPreview(
   folderId: string | null,
   fallbackUnitId?: string,
   dataDir?: string,
+  /** tt-06b：发布开关（缺省读部署 env NEW_CONTENT_ENABLED） */
+  newContentEnabled?: boolean,
 ): ImportPreviewData {
+  // tt-06b / QM-05：新内容闸门（§5.8.4）+ 导入规范化回写（§5.2.3）先于 lint
+  assertNewContentAllowed(
+    markdown,
+    resolveNewContentEnabled(newContentEnabled),
+  );
+  const normalized = normalizeForImport(markdown, fallbackUnitId);
   // T7.7：携带教师启用集（steps/手写回退提示随预览可见）
-  const { issues, parsed } = analyzeImport(markdown, {
+  const { issues, parsed } = analyzeImport(normalized, {
     fallbackUnitId,
     enabledCapabilities: getCapabilityProfile(db, teacherId)
       .enabledCapabilities,
   });
-  const plan = buildImportPlan({
-    parsed,
-    folderId,
-    snapshot: loadLibrarySnapshot(db, new Date().toISOString(), teacherId),
-  });
+  const snapshot = loadLibrarySnapshot(db, new Date().toISOString(), teacherId);
+  const plan = buildImportPlan({ parsed, folderId, snapshot });
   return {
     summary: summarizeParsed(parsed),
-    issues: [...issues, ...mediaImageExistenceIssues(markdown, dataDir)],
+    issues: [
+      // 文档外材料引用的教师域解析降级（§5.4.3：跨文档引用由导入层解析）
+      ...resolveQmImportIssues(issues, parsed, snapshot.liveMaterialIds),
+      ...mediaImageExistenceIssues(markdown, dataDir),
+    ],
     actions: [...plan.actions],
-    warnings: [...plan.warnings],
+    warnings: [...plan.warnings, ...qmStemRefWarnings(parsed)],
   };
 }
 
@@ -254,12 +286,15 @@ function mediaImageExistenceIssues(
  * 导入预览：摘要 + 全部 lint issues（含 IMAGE_SRC_NOT_FOUND
  * 图片存在性 warning）+ 动作清单（D19）与 warning（D18/D19）（不写库）。
  * folderId = 目标文件夹（null/缺省 = 未归类）。
+ * tt-06b：newContentEnabled 显式注入（缺省读部署 env）——新内容闸门在
+ * buildPreview 内执行（含 NEW_CONTENT_DISABLED 403）。
  */
 export function previewImport(
   db: Db,
   teacherId: string,
   input: ImportPreviewRequest,
   dataDir?: string,
+  newContentEnabled?: boolean,
 ): ImportPreviewData {
   const folderId = input.folderId ?? null;
   assertFolderExists(db, teacherId, folderId);
@@ -270,6 +305,7 @@ export function previewImport(
     folderId,
     fallbackUnitIdOf(input.filename),
     dataDir,
+    newContentEnabled,
   );
 }
 
@@ -433,9 +469,14 @@ export function previewImportBatch(
         : folderToCreate
           ? subdirNameOf(file.path)
           : null;
-    const { issues, parsed } = analyzeImport(file.markdown, {
+    // tt-06b：闸门 + 规范化 + 教师域解析降级 + P2-2 题内引用告警（单文件同款）
+    const newContentFlag = resolveNewContentEnabled(undefined);
+    assertNewContentAllowed(file.markdown, newContentFlag);
+    const fallbackUnitId = fallbackUnitIdOf(file.path);
+    const normalized = normalizeForImport(file.markdown, fallbackUnitId);
+    const { issues, parsed } = analyzeImport(normalized, {
       // 单元名锚定文件名（方案 §2）：批量路径取相对路径的 basename
-      fallbackUnitId: fallbackUnitIdOf(file.path),
+      fallbackUnitId,
       enabledCapabilities,
     });
     const plan = buildImportPlan({ parsed, folderId, snapshot });
@@ -447,11 +488,11 @@ export function previewImportBatch(
       preview: {
         summary: summarizeParsed(parsed),
         issues: [
-          ...issues,
+          ...resolveQmImportIssues(issues, parsed, snapshot.liveMaterialIds),
           ...mediaImageExistenceIssues(file.markdown, dataDir),
         ],
         actions: [...plan.actions],
-        warnings: [...plan.warnings],
+        warnings: [...plan.warnings, ...qmStemRefWarnings(parsed)],
       },
       conflicts: [],
       hasError: false,
@@ -501,17 +542,36 @@ export function commitImport(
   dataDir?: string,
   /** T7.7：批量导入路径整批查一次后传入；缺省本函数自查（单文件路径） */
   enabledCapabilities?: readonly CapabilitySwitch[],
+  /** tt-06b / QM-05：发布开关显式注入（缺省读部署 env NEW_CONTENT_ENABLED） */
+  newContentEnabled?: boolean,
 ): ImportCommitData {
+  // tt-06b：新内容闸门（§5.8.4，403 NEW_CONTENT_DISABLED）先于一切写入
+  assertNewContentAllowed(
+    input.markdown,
+    resolveNewContentEnabled(newContentEnabled),
+  );
+  // 导入规范化回写（§5.2.3）：实体 sourceMd 固化缺省 id；imports.rawMd 仍留档
+  // 教师提交原文（normalizeQmIds 幂等——已显式文档逐字节不变）
+  const fallbackUnitId = fallbackUnitIdOf(input.filename);
+  const normalized = normalizeForImport(input.markdown, fallbackUnitId);
+
   // 图片存在性核对与 lint 合并为完整 issue 集（IMAGE_SRC_NOT_FOUND 是 warning
   // 级、不阻断提交——保留「先导 md 后补图」的工作流，问题在预览响应可见）
-  const { issues, parsed } = analyzeImport(input.markdown, {
-    fallbackUnitId: fallbackUnitIdOf(input.filename),
+  const { issues, parsed } = analyzeImport(normalized, {
+    fallbackUnitId,
     enabledCapabilities:
       enabledCapabilities ??
       getCapabilityProfile(db, teacherId).enabledCapabilities,
   });
+  // 文档外材料引用的教师域解析降级（与 preview 同口径，§5.4.3）
+  const resolvedIssues = resolveQmImportIssues(
+    issues,
+    parsed,
+    loadLibrarySnapshot(db, new Date().toISOString(), teacherId)
+      .liveMaterialIds,
+  );
   const allIssues = [
-    ...issues,
+    ...resolvedIssues,
     ...mediaImageExistenceIssues(input.markdown, dataDir),
   ];
 
@@ -784,7 +844,76 @@ export function commitImport(
           existingQuestions.set(question.id, existingVersion + 1);
           updatedQuestions += 1;
         }
+        // 题级材料引用索引同事务替换（ownerKind='question'；索引不是真相，
+        // 源文 ::ref 行在 sourceMd/material_refs_json）
+        replaceQuestionMaterialRefsWithin(
+          tx,
+          teacherId,
+          question.id,
+          question.materialRefs ?? [],
+        );
         syncQuestionKnowledge(tx, question, knowledgeIdByName, teacherId);
+      }
+    }
+
+    // ---- 材料/组（tt-06b / QM-05）：同事务落库（§5.3.3 批次验证成功才提交；
+    //      任一失败整体回滚，不留半套引用索引）。同 id 命中按仓储版本策略
+    //      （sourceMd 变更 +1，未变保持）；软删行重导恢复。----
+    let insertedMaterials = 0;
+    let updatedMaterials = 0;
+    let insertedGroups = 0;
+    let updatedGroups = 0;
+    const existingMaterialIds = new Set(
+      tx
+        .select({ id: materials.id })
+        .from(materials)
+        .where(eq(materials.teacherId, teacherId))
+        .all()
+        .map((row) => row.id),
+    );
+    const existingGroupIds = new Set(
+      tx
+        .select({ id: questionGroups.id })
+        .from(questionGroups)
+        .where(eq(questionGroups.teacherId, teacherId))
+        .all()
+        .map((row) => row.id),
+    );
+    // 顶层组实体按 id 索引：unit.groups 是索引形态（§5.2.4，经契约校验后不带
+    // sourceMd/introMd），落库需要的完整实体在 parsed.groups（同源抽取，两处视图）
+    const groupEntitiesById = new Map(
+      (parsed.groups ?? []).map((group) => [group.id, group] as const),
+    );
+    for (const unit of parsed.units) {
+      for (const [index, material] of (unit.materials ?? []).entries()) {
+        saveMaterialWithin(tx, {
+          teacherId,
+          unitId: unit.id,
+          material,
+          order: index,
+          now,
+        });
+        if (existingMaterialIds.has(material.id)) updatedMaterials += 1;
+        else {
+          insertedMaterials += 1;
+          existingMaterialIds.add(material.id);
+        }
+      }
+      for (const [index, unitGroup] of (unit.groups ?? []).entries()) {
+        const group = groupEntitiesById.get(unitGroup.id);
+        if (group === undefined) continue;
+        saveQuestionGroupWithin(tx, {
+          teacherId,
+          unitId: unit.id,
+          group,
+          order: index,
+          now,
+        });
+        if (existingGroupIds.has(group.id)) updatedGroups += 1;
+        else {
+          insertedGroups += 1;
+          existingGroupIds.add(group.id);
+        }
       }
     }
 
@@ -879,6 +1008,17 @@ export function commitImport(
       units: unitReports,
       lectures: lectureReports,
       questions: { inserted: insertedQuestions, updated: updatedQuestions },
+      ...(insertedMaterials + updatedMaterials > 0
+        ? {
+            materials: {
+              inserted: insertedMaterials,
+              updated: updatedMaterials,
+            },
+          }
+        : {}),
+      ...(insertedGroups + updatedGroups > 0
+        ? { groups: { inserted: insertedGroups, updated: updatedGroups } }
+        : {}),
     };
     tx.insert(imports)
       .values({
@@ -886,6 +1026,8 @@ export function commitImport(
         teacherId,
         filename: input.filename,
         kind: parsed.frontmatter?.kind ?? "practice",
+        // rawMd 留档教师提交原文（§5.2.5 留档语义——规范化回写后的源文在
+        // 各实体 sourceMd，原文重导经同一规范化幂等还原）
         rawMd: input.markdown,
         reportJson: JSON.stringify(report),
         sourcePath: input.sourcePath ?? null,
@@ -1154,6 +1296,8 @@ export function updateQuestion(
   teacherId: string,
   id: string,
   input: { sourceMd: string },
+  /** tt-06b / QM-05：发布开关显式注入（缺省读部署 env NEW_CONTENT_ENABLED） */
+  newContentEnabled?: boolean,
 ): QuestionUpdateData {
   const row = db
     .select()
@@ -1168,6 +1312,13 @@ export function updateQuestion(
     );
   }
 
+  // tt-06b / QM-05：闸门只判提交片段（题内 ::ref 等 QM 语法属新内容；
+  // 开关关闭的部署编辑旧七型题目不受影响）
+  assertNewContentAllowed(
+    input.sourceMd,
+    resolveNewContentEnabled(newContentEnabled),
+  );
+
   const parseOptions = {
     unitId: row.unitId,
     questionStartNumber: row.order + 1,
@@ -1175,9 +1326,17 @@ export function updateQuestion(
   const wrapped = wrapSingleQuestionMd(row.unitId, input.sourceMd);
   const { parsed, issues } = lintDocument(wrapped, parseOptions);
 
+  // tt-06b / QM-05：题级 ::ref{material=库内既有材料} 的教师域解析降级
+  // （单题片段文档不含材料声明；与 preview/commit 同口径）
+  const resolved = resolveQmImportIssues(
+    issues,
+    parsed,
+    liveMaterialIdsOf(db, teacherId),
+  );
+
   // error 级 issue 最先拦（含"题目被解析器丢弃"的场景，如未知题型：
   // 此时题数检查给不出行号，LINT_ERROR 的 _issues 才能标红到具体行）
-  const errors = issues.filter((issue) => issue.level === "error");
+  const errors = resolved.filter((issue) => issue.level === "error");
   const firstError = errors[0];
   if (firstError !== undefined) {
     throw new HttpError(
@@ -1232,6 +1391,14 @@ export function updateQuestion(
       })
       .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
       .run();
+    // tt-06b / QM-05：题级材料引用索引同事务替换（ownerKind='question'；
+    // 与导入 commit 同款——索引随 sourceMd 的 ::ref 行变化）
+    replaceQuestionMaterialRefsWithin(
+      tx,
+      teacherId,
+      id,
+      next.materialRefs ?? [],
+    );
     const knowledgeIdByName = loadKnowledgeIdByName(tx);
     syncQuestionKnowledge(tx, next, knowledgeIdByName, teacherId);
   });
@@ -1242,7 +1409,12 @@ export function updateQuestion(
     type: next.type,
     difficulty: next.difficulty,
     knowledge: next.knowledge,
-    issues: shiftLintIssuesToFragment(issues, SINGLE_QUESTION_PREFIX_LINES),
+    issues: [
+      ...shiftLintIssuesToFragment(issues, SINGLE_QUESTION_PREFIX_LINES),
+      // P2-2（tt-06b）：题内块式 ::ref{question=} 的可见警告（不静默吞；
+      // 行号按题目 sourceMd 计算，即片段坐标）
+      ...qmStemRefIssues(parsed),
+    ],
   };
 }
 

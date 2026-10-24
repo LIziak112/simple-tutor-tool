@@ -2,9 +2,11 @@ import {
   type DocumentFrontmatter,
   type Lecture,
   type LintIssue,
+  type Material,
   type ParsedDocument,
   parsedDocumentSchema,
   type Question,
+  type QuestionGroup,
   type Unit,
 } from "@tutor/contract";
 import type { Root, RootContent } from "mdast";
@@ -161,7 +163,14 @@ function parseInner(md: string, options: ParseOptions): ParsedDocument {
 
   // ---- kind 分派：frontmatter 不可用时按 practice 继续（题目仍尽量解析，T1.3 行为） ----
   const kind = frontmatter?.kind ?? "practice";
-  let body: { lectures: Lecture[]; units: Unit[] };
+  // tt-06b / QM-05：顶层材料/组完整形态（含 sourceMd——unit.groups 经契约校验后
+  // 是索引形态）；导入落库从这里取实体。仅在存在时挂载（旧文档键集不变）
+  let body: {
+    lectures: Lecture[];
+    units: Unit[];
+    materials?: Material[];
+    groups?: QuestionGroup[];
+  };
   switch (kind) {
     case "lecture":
       body = parseLectureDocument(ctx);
@@ -239,7 +248,12 @@ function parsePracticeDocument(ctx: ParseContext): {
       buildUnit(ctx, questions, firstNonEmpty(ctx.frontmatter?.lecture), qm),
     );
   }
-  return { lectures: [], units };
+  return {
+    lectures: [],
+    units,
+    ...(qm.materials.length > 0 ? { materials: [...qm.materials] } : {}),
+    ...(qm.groups.length > 0 ? { groups: [...qm.groups] } : {}),
+  };
 }
 
 // ---------- lecture（T1.4） ----------
@@ -419,7 +433,12 @@ function parseMixedDocument(ctx: ParseContext): {
     );
     units.push(buildUnit(ctx, questions, lectureTitle, qm));
   }
-  return { lectures, units };
+  return {
+    lectures,
+    units,
+    ...(qm.materials.length > 0 ? { materials: [...qm.materials] } : {}),
+    ...(qm.groups.length > 0 ? { groups: [...qm.groups] } : {}),
+  };
 }
 
 // ---------- lesson（2026-10 讲练一体：讲练页） ----------

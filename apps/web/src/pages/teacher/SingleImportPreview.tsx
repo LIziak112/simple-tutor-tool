@@ -363,6 +363,17 @@ export function StatsBar({
           <span>
             题目 <strong>{summary.questionCount}</strong>
           </span>
+          {/* tt-06b / QM-05：材料/组单列计数——题目口径不把父组/材料重复算题 */}
+          {summary.materialCount !== undefined && summary.materialCount > 0 ? (
+            <span>
+              材料 <strong>{summary.materialCount}</strong>
+            </span>
+          ) : null}
+          {summary.groupCount !== undefined && summary.groupCount > 0 ? (
+            <span>
+              题组 <strong>{summary.groupCount}</strong>
+            </span>
+          ) : null}
           {nameParts.length > 0 ? (
             <span
               className="min-w-0 max-w-72 truncate text-muted-foreground"
