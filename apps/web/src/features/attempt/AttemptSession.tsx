@@ -480,6 +480,17 @@ function AnswerView({
   });
   const practiceProgress =
     practiceProtocol === "v1" ? practiceSubmit.progress : [];
+  // 交卷结束整卷，但仅为尚未提交题固定本次证据；已提交题沿用单题封存。
+  // 使用提交回执合并后的进度，避免本页刚提交的题仍进入整卷证据声明。
+  const submitEvidenceQuestionIds = useMemo(() => {
+    if (practiceProtocol !== "v1") return questionIds;
+    const submitted = new Set(
+      practiceSubmit.progress
+        .filter((row) => row.submittedAt !== null)
+        .map((row) => row.questionId),
+    );
+    return questionIds.filter((id) => !submitted.has(id));
+  }, [practiceProtocol, practiceSubmit.progress, questionIds]);
   // 按题查表：导航项/键盘裁决/题卡渲染多处取行，避免逐题线性 find
   const progressById = new Map(
     practiceProgress.map((row) => [row.questionId, row] as const),
@@ -826,7 +837,7 @@ function AnswerView({
         if (submitAbortedRef.current) return { kind: "aborted" };
         prep = await prepareSubmitEvidence({
           attemptId,
-          questionIds,
+          questionIds: submitEvidenceQuestionIds,
           ...(ctx.missingConfirmed !== null
             ? { allowMissing: ctx.missingConfirmed }
             : {}),
@@ -893,8 +904,8 @@ function AnswerView({
       materialRecovery.state,
       flushAnswers,
       onAnnotationSealFailed,
-      questionIds,
       submit,
+      submitEvidenceQuestionIds,
       submitRevisions,
     ],
   );
@@ -909,7 +920,7 @@ function AnswerView({
     confirmMissing: confirmMissingSubmit,
   } = useSubmitEvidenceConfirm({
     attemptId,
-    questionIds,
+    questionIds: submitEvidenceQuestionIds,
     run: runSubmit,
   });
 

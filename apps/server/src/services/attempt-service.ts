@@ -1763,9 +1763,8 @@ function validateSubmitRevisions(
  * 旧客户端（缺 evidence 字段）：检测到**参与本次判分题目的**草稿存在 ⇒ 409
  * 要求刷新（不能把已有草稿记 none）；确无草稿按兼容规则交卷——**不落证据行**
  * （= 未采集，与 state='none'〔明确空稿〕区分）。graded 范围 = 本次交卷要
- * 判分的行（lesson 整卷收尾只含未提交题——已单题提交题的证据已在该题提交
- * 事务冻结，其草稿不再阻塞收尾；非 lesson 来源 graded 恒为全部冻结题，
- * 行为零变化）。
+ * 判分的行（lesson 与新协议普通卷整卷收尾只含未提交题——已单题提交题的
+ * 证据已在该题提交事务冻结，其草稿不再阻塞收尾；历史协议为全部冻结题）。
  *
  * 新客户端：声明集合必须与 graded 范围精确一致（缺项/多项/未知/重复
  * 同 409，口径同 validateSubmitRevisions）。
@@ -1965,7 +1964,7 @@ export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
  *   集合）与**全部冻结题**（含 lesson 已单题提交的行——旧标签页的整卷提交
  *   仍须回传完整版本集合）精确比对，不符 409 QUESTION_REVISION_STALE；
  *   服务层内部调用（seed 等）可省略参数跳过验证；
- * - T6R.10 笔记证据：验证范围 = 参与本次判分的行（lesson：未提交题——已提交
+ * - T6R.10 笔记证据：验证范围 = 参与本次判分的行（逐题语义卷：未提交题——已提交
  *   题证据已单题冻结不重做）；写入与判分同事务；
  * - attempt.status/scoreAuto/scoreFinal 按 D2/D3：全部 finalCorrect 非 null →
  *   直接 graded 并写 scoreFinal（=scoreAuto，此时分母相同）；否则 submitted、
@@ -2007,7 +2006,7 @@ export function submitAttempt(
   const eventChangeCountByQuestion = countAnswerChanges(timeline);
 
   // allFrozen：全部冻结题（revisions 全集校验与整卷得分汇总的输入）；
-  // graded：本次要判分写入的行（lesson 剔除已单题提交者）
+  // graded：本次要判分写入的行（逐题语义卷剔除已单题提交者）
   const allFrozen: GradedResponse[] = [];
   const graded: GradedResponse[] = [];
   const keptRows: ResponseRow[] = [];
@@ -2046,7 +2045,7 @@ export function submitAttempt(
     validateSubmitRevisions(allFrozen, clientRevisions);
   }
   // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
-  // 范围 = 参与本次判分的行（lesson：未提交题）；任一项验证失败零落行，
+  // 范围 = 参与本次判分的行（逐题语义卷：未提交题）；任一项验证失败零落行，
   // attempt 保持 draft 可恢复
   const evidenceRows = buildSubmissionEvidence(
     db,

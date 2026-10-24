@@ -1347,6 +1347,31 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
     const mutationId = crypto.randomUUID();
     await practiceSubmitOk(env, draft, attemptId, Q.choice, { mutationId });
     const submittedAt = responseRowOf(env.db, attemptId, Q.choice).submittedAt;
+    const sealedEvidence = env.db
+      .select()
+      .from(submissionEvidence)
+      .where(eq(submissionEvidence.attemptId, attemptId))
+      .all();
+    expect(sealedEvidence).toHaveLength(1);
+
+    // 本次证据必须精确覆盖剩余题：全卷、缺项、重复和未知题均不允许。
+    for (const ids of [
+      [Q.choice, Q.judge, Q.fill],
+      [Q.judge],
+      [Q.judge, Q.judge],
+      [Q.judge, "00000000-0000-4000-8000-000000000000"],
+    ]) {
+      await expectErr(
+        await submitAttemptRequest(
+          env.app,
+          env.aCookie,
+          attemptId,
+          ids.map((questionId) => ({ questionId, state: "none" as const })),
+        ),
+        409,
+        "NOTE_EVIDENCE_MISMATCH",
+      );
+    }
 
     // 教师对已提交行课中批改（「教师改判后收尾不得覆盖」预埋——§13.5）
     env.db
@@ -1369,6 +1394,10 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
       env.app,
       env.aCookie,
       attemptId,
+      [
+        { questionId: Q.judge, state: "none" },
+        { questionId: Q.fill, state: "none" },
+      ],
     );
     expect([200, 201]).toContain(submitRes.status);
 
@@ -1378,6 +1407,15 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
     expect(keptRow.teacherMark).toBe("correct");
     expect(keptRow.submittedAt).toBe(submittedAt); // 单题提交时刻不被交卷时刻覆盖
     expect(keptRow.practiceMutationId).toBe(mutationId);
+    const finalEvidence = env.db
+      .select()
+      .from(submissionEvidence)
+      .where(eq(submissionEvidence.attemptId, attemptId))
+      .all();
+    expect(finalEvidence).toHaveLength(3);
+    expect(finalEvidence.find((row) => row.questionId === Q.choice)).toEqual(
+      sealedEvidence[0],
+    );
 
     const judgeRow = responseRowOf(env.db, attemptId, Q.judge);
     expect(judgeRow.autoCorrect).toBe(false); // 剩余行判分（未作答 judge 判 false）

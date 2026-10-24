@@ -105,7 +105,8 @@ export function PracticeQuestionFooter({
   onRetryFeedback: () => void;
 }) {
   if (!submitted) {
-    if (mode === "single") return null;
+    // 逐题提交入口只在服务端允许时呈现；统一反馈直接走整卷交卷。
+    if (mode === "single" || !workflow?.canSubmitQuestion) return null;
     return (
       <div
         data-slot="practice-question-submit"
