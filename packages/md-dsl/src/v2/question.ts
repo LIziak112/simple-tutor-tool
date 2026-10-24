@@ -1,14 +1,23 @@
 import {
   type LintIssue,
+  type MaterialRef,
   type Question,
   type QuestionAnswers,
   type QuestionDirectiveAttrs,
+  defaultItemIdOf,
+  defaultOptionIdOf,
+  optionsDirective,
   questionDirective,
 } from "@tutor/contract";
 import type { ListItem, RootContent } from "mdast";
-import type { ContainerDirective } from "mdast-util-directive";
+import type {
+  ContainerDirective,
+  LeafDirective,
+} from "mdast-util-directive";
 import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
+import { materialRefOf, parseRefAttrs } from "./materials.ts";
+import type { QmRefSite } from "./references.ts";
 import {
   canonicalName,
   isContainer,
@@ -70,6 +79,10 @@ export function extractQuestions(
       unitId: ctx.unitId,
       number,
       issues: ctx.issues,
+      ...(ctx.qmRefSites !== undefined ? { qmRefSites: ctx.qmRefSites } : {}),
+      ...(ctx.qmEntityLines !== undefined
+        ? { qmEntityLines: ctx.qmEntityLines }
+        : {}),
     });
     number += 1; // 被丢弃的题也占序号，见文件头注释第 4 条
     if (question !== undefined) questions.push(question);
@@ -83,6 +96,12 @@ export interface QuestionStreamContext {
   /** 缺省题目序号起点（缺省 1）。reparse 单题片段时由调用方传入原题序号 */
   readonly startNumber: number;
   readonly issues: LintIssue[];
+  /**
+   * TT-06 题级 ::ref 站点登记（两遍解析第二遍的行号来源；可选——reparse 等
+   * 单题片段路径没有材料/组上下文，不登记）。qmEntityLines 同理记题目起始行。
+   */
+  readonly qmRefSites?: QmRefSite[];
+  readonly qmEntityLines?: Map<string, number>;
 }
 
 interface QuestionContext {
@@ -90,6 +109,8 @@ interface QuestionContext {
   readonly unitId: string;
   readonly number: number;
   readonly issues: LintIssue[];
+  readonly qmRefSites?: QmRefSite[];
+  readonly qmEntityLines?: Map<string, number>;
 }
 
 /**
@@ -112,9 +133,18 @@ function extractQuestion(
   if (attrs === undefined) return undefined;
 
   // ---- 子指令分区：hint（可多个）/ answer / solution 收进对应字段，其余为题干 ----
+  // TT-06 新增结构性子指令：::ref（块式）、::::options、:::item、:::variant
+  // 一律排除出题干（防泄露边界：选项/项/备选参考正文不得混进 stemMd）；
+  // 行内式 ::ref（valid-03「第 1 空。::ref{…}」）是纯文本节点，留在题干
+  // 原文（[[…]] 同款纪律：教师侧原文不动，公开投影 publicStemMd 剥离）。
   const hints: string[] = [];
   let answerText: string | undefined;
   let solutionMd: string | undefined;
+  const variants: string[] = [];
+  let optionsNode: ContainerDirective | undefined;
+  const itemNodes: ContainerDirective[] = [];
+  const blockRefs: Array<{ ref: MaterialRef; line: number; column: number }> =
+    [];
   const excluded: Array<[number, number]> = [];
   const stemNodes: RootContent[] = [];
   for (const child of node.children) {
@@ -135,7 +165,36 @@ function extractQuestion(
         excluded.push(lineRange(child));
         continue;
       }
+      if (name === "variant") {
+        variants.push(sliceInnerLines(child, lines));
+        excluded.push(lineRange(child));
+        continue;
+      }
+      if (name === "options") {
+        optionsNode ??= child; // 多个 options 容器取第一个
+        excluded.push(lineRange(child));
+        continue;
+      }
+      if (name === "item") {
+        itemNodes.push(child);
+        excluded.push(lineRange(child));
+        continue;
+      }
       // 其余容器（:::warning 等版式指令、未知指令）留在题干内
+    } else if (
+      child.type === "leafDirective" &&
+      canonicalName(child as LeafDirective) === "ref"
+    ) {
+      const ref = materialRefOf((child as LeafDirective).attributes ?? {});
+      if (ref !== undefined) {
+        blockRefs.push({
+          ref,
+          line: child.position?.start.line ?? startLine,
+          column: child.position?.start.column ?? 1,
+        });
+      }
+      excluded.push(lineRange(child));
+      continue;
     }
     stemNodes.push(child);
   }
@@ -150,6 +209,37 @@ function extractQuestion(
 
   // ---- 题干扫描：填空标记、判断标记、任务列表选项（跳过公式/代码子树） ----
   const scan = scanStem(stemNodes, lines, issues);
+
+  // ---- 题级 ::ref：块式 + 行内式按文档顺序合并（展示按引用顺序，§5.2.2） ----
+  const materialRefs = [...blockRefs, ...collectInlineRefs(stemNodes)].sort(
+    (a, b) => a.line - b.line || a.column - b.column,
+  );
+
+  // ---- 题目 id：显式属性优先，缺省「单元id-序号」（defaultQuestionIdOf 单一出处） ----
+  // （先于答案组装：matching 选项池的缺省 id 与参考校验都依赖最终题目 id）
+  const explicitId = attrs.id?.trim();
+  const id =
+    explicitId !== undefined && explicitId.length > 0
+      ? explicitId
+      : defaultQuestionIdOf(ctx.unitId, ctx.number);
+
+  // TT-06 站点登记：题级 ::ref 位置（第二遍引用校验）与题目起始行（答案收口定位）
+  ctx.qmEntityLines?.set(id, startLine);
+  for (const entry of materialRefs) {
+    ctx.qmRefSites?.push({
+      ownerKind: "question",
+      ownerId: id,
+      materialRef: entry.ref,
+      line: entry.line,
+      column: entry.column,
+    });
+  }
+
+  // ---- matching 选项池（先抽一次，参考答案校验共用同一份 id 集，含缺省 id） ----
+  const matchingPool =
+    attrs.type === "matching" && optionsNode !== undefined
+      ? extractMatchingOptions(optionsNode, id, lines, issues)
+      : undefined;
 
   // ---- 按题型组装答案 ----
   let answers: QuestionAnswers | undefined;
@@ -175,19 +265,44 @@ function extractQuestion(
       if (indexes.length > 0) answers = { kind: "multi", indexes };
       break;
     }
+    case "response":
+      // 主参考 :::answer → referenceMd（Markdown 原文）；备选 :::variant → variantsMd
+      if (answerText !== undefined) {
+        answers = { kind: "response", referenceMd: answerText };
+        if (variants.length > 0) answers.variantsMd = [...variants];
+      }
+      break;
+    case "matching": {
+      // 行式参考：每行 `slotId = optionId`（行序无关）；格式不符或引用未声明
+      // 选项 → 该参考不落结构化字段（保留原文，发布校验拒绝，§5.4.2）
+      if (answerText !== undefined && matchingPool !== undefined) {
+        answers = parseMatchingAnswer(answerText, {
+          optionIds: new Set(
+            matchingPool.options.map((option) => option.id),
+          ),
+          line: startLine,
+          issues,
+        });
+      }
+      break;
+    }
+    case "ordering": {
+      // 行式参考：每行一个 itemId，行序即正确顺序（固定项也列出）
+      if (answerText !== undefined) {
+        answers = parseOrderingAnswer(answerText, {
+          itemIds: itemNodes.map((item) => item),
+          line: startLine,
+          issues,
+        });
+      }
+      break;
+    }
     default:
       // solve / apply / find-error：可选 :::answer 为最终答案；无则 answers 缺省
       if (answerText !== undefined)
         answers = { kind: "final", answer: answerText };
       break;
   }
-
-  // ---- 题目 id：显式属性优先，缺省「单元id-序号」（defaultQuestionIdOf 单一出处） ----
-  const explicitId = attrs.id?.trim();
-  const id =
-    explicitId !== undefined && explicitId.length > 0
-      ? explicitId
-      : defaultQuestionIdOf(ctx.unitId, ctx.number);
 
   const question: Question = {
     id,
@@ -209,6 +324,27 @@ function extractQuestion(
   if (answers !== undefined) question.answers = answers;
   if (solutionMd !== undefined && solutionMd.length > 0)
     question.solutionMd = solutionMd;
+  // ---- TT-06 新字段（§5.8.1 全量可选：缺省不注入键，旧题目键集不变） ----
+  if (materialRefs.length > 0) {
+    question.materialRefs = materialRefs.map((entry) => entry.ref);
+  }
+  if (attrs.type === "matching" && matchingPool !== undefined) {
+    question.matchingOptions = matchingPool;
+  }
+  if (attrs.type === "ordering" && itemNodes.length > 0) {
+    question.orderingItems = extractOrderingItems(
+      itemNodes,
+      id,
+      lines,
+      answers?.kind === "ordering" ? answers.sequence : [],
+    );
+  }
+  if (attrs.type === "response") {
+    const wordMin = attrs["word-min"];
+    const wordMax = attrs["word-max"];
+    if (wordMin !== undefined) question.wordMin = wordMin;
+    if (wordMax !== undefined) question.wordMax = wordMax;
+  }
   return question;
 }
 
@@ -235,7 +371,15 @@ function parseQuestionAttrs(
     ),
   );
 
-  const knownKeys = ["type", "difficulty", "knowledge", "id", "class"];
+  const knownKeys = [
+    "type",
+    "difficulty",
+    "knowledge",
+    "id",
+    "class",
+    "word-min",
+    "word-max",
+  ];
   const filtered: Record<string, string> = {};
   for (const key of knownKeys) {
     const value = raw[key];
@@ -253,7 +397,7 @@ function parseQuestionAttrs(
         line,
         column,
         "UNKNOWN_QUESTION_TYPE",
-        `未知题型 type="${raw.type}"，该题未能入库（合法值：judge | choice | multi | fill | solve | apply | find-error）`,
+        `未知题型 type="${raw.type}"，该题未能入库（合法值：judge | choice | multi | fill | solve | apply | find-error | response | matching | ordering；后三种为新题型，导入入口受部署发布开关控制）`,
       ),
     );
   } else {
@@ -263,7 +407,7 @@ function parseQuestionAttrs(
         line,
         column,
         "MISSING_QUESTION_TYPE",
-        "question 缺少必填属性 type（judge | choice | multi | fill | solve | apply | find-error）",
+        "question 缺少必填属性 type（judge | choice | multi | fill | solve | apply | find-error | response | matching | ordering）",
       ),
     );
   }
@@ -363,4 +507,213 @@ function taskItemText(item: ListItem, lines: readonly string[]): string {
 
 function isListItem(node: Node): node is ListItem {
   return node.type === "listItem";
+}
+
+// ---------- TT-06：题级 ::ref 行内式与 matching/ordering 结构抽取 ----------
+
+/** 行内式 ::ref{…} 标记（跟在文字后的写法，valid-03 形态；块式见分区循环） */
+const INLINE_REF_RE = /::ref\{([^{}]*)\}/g;
+
+/** 题干子树文本节点里的行内 ::ref（跳过公式/代码子树，[[…]] 识别纪律同款） */
+function collectInlineRefs(
+  nodes: readonly RootContent[],
+): Array<{ ref: MaterialRef; line: number; column: number }> {
+  const found: Array<{ ref: MaterialRef; line: number; column: number }> = [];
+  for (const node of nodes) {
+    visit(node, (current) => {
+      if (
+        current.type === "math" ||
+        current.type === "inlineMath" ||
+        current.type === "code" ||
+        current.type === "inlineCode"
+      ) {
+        return SKIP;
+      }
+      if (!isText(current)) return;
+      const baseLine = current.position?.start.line ?? 1;
+      const baseColumn = current.position?.start.column ?? 1;
+      for (const match of current.value.matchAll(INLINE_REF_RE)) {
+        const ref = materialRefOf(parseRefAttrs(match[1] ?? ""));
+        if (ref === undefined) continue;
+        const index = match.index ?? 0;
+        const before = current.value.slice(0, index);
+        const newlines = before.split("\n").length - 1;
+        const lastNewline = before.lastIndexOf("\n");
+        found.push({
+          ref,
+          line: baseLine + newlines,
+          column:
+            lastNewline === -1 ? baseColumn + index : index - lastNewline,
+        });
+      }
+      return;
+    });
+  }
+  return found;
+}
+
+/** 选项池 ::::options 容器的结构化抽取（matching 专用；option id 重复报错） */
+function extractMatchingOptions(
+  node: ContainerDirective,
+  questionId: string,
+  lines: readonly string[],
+  issues: LintIssue[],
+): Question["matchingOptions"] {
+  const parsedAttrs = optionsDirective.attrs.safeParse(node.attributes ?? {});
+  const allowRepeat =
+    parsedAttrs.success ? parsedAttrs.data["allow-repeat"] : false;
+  const options: NonNullable<Question["matchingOptions"]>["options"] = [];
+  const seenIds = new Map<string, number>();
+  let ordinal = 0;
+  for (const child of node.children) {
+    if (!isContainer(child) || canonicalName(child) !== "option") continue;
+    const [optStart] = lineRange(child);
+    const explicit = child.attributes?.id?.trim();
+    const id =
+      explicit !== undefined && explicit.length > 0
+        ? explicit
+        : defaultOptionIdOf(questionId, ordinal + 1);
+    const first = seenIds.get(id);
+    if (first === undefined) seenIds.set(id, optStart);
+    else {
+      issues.push(
+        makeIssue(
+          "error",
+          optStart,
+          1,
+          "INVALID_OPTION_REF",
+          `选项 id「${id}」（第 ${optStart} 行）与本题第 ${first} 行的选项重复声明：选项池内 id 必须唯一（参考答案与配对作答按 id 解析）`,
+        ),
+      );
+    }
+    options.push({
+      id,
+      text: sliceInnerLines(child, lines),
+      distractor: parseBoolAttr(child, "distractor"),
+    });
+    ordinal += 1;
+  }
+  if (options.length === 0) return undefined;
+  return { allowRepeat, options };
+}
+
+/** matching 行式参考：每行 `slotId = optionId`（空格可省、行序无关） */
+function parseMatchingAnswer(
+  answerText: string,
+  ctx: {
+    readonly optionIds: ReadonlySet<string>;
+    readonly line: number;
+    readonly issues: LintIssue[];
+  },
+): QuestionAnswers | undefined {
+  const pairs: Record<string, string> = {};
+  let broken = false;
+  let answerLine = 0;
+  for (const raw of answerText.split("\n")) {
+    answerLine += 1;
+    const line = raw.trim();
+    if (line.length === 0) continue;
+    const match = /^(\S+?)\s*=\s*(\S+)$/.exec(line);
+    if (match === null) {
+      ctx.issues.push(
+        makeIssue(
+          "error",
+          ctx.line,
+          1,
+          "INVALID_REFERENCE_ANSWER_FORMAT",
+          `matching 参考答案的「${line}」行不是合法的配对行式：每行必须写成 槽位id = 选项id（如 slot-1 = opt-1，空格可省）；该参考答案不落结构化字段，发布校验将拒绝`,
+        ),
+      );
+      broken = true;
+      continue;
+    }
+    const slot = match[1] ?? "";
+    const option = match[2] ?? "";
+    if (!ctx.optionIds.has(option)) {
+      ctx.issues.push(
+        makeIssue(
+          "error",
+          ctx.line,
+          1,
+          "INVALID_OPTION_REF",
+          `matching 参考答案引用了选项池未声明的选项「${option}」（槽位 ${slot}）：参考只能引用本题 ::::options 内声明的 option id；该参考答案不落结构化字段，发布校验将拒绝`,
+        ),
+      );
+      broken = true;
+      continue;
+    }
+    pairs[slot] = option;
+  }
+  if (broken || Object.keys(pairs).length === 0) return undefined;
+  return { kind: "matching", pairs };
+}
+
+/** ordering 行式参考：每行一个 itemId，行序即正确顺序（固定项也列出） */
+function parseOrderingAnswer(
+  answerText: string,
+  ctx: {
+    readonly itemIds: readonly ContainerDirective[];
+    readonly line: number;
+    readonly issues: LintIssue[];
+  },
+): QuestionAnswers | undefined {
+  const declared = new Set<string>();
+  for (const item of ctx.itemIds) {
+    const id = item.attributes?.id?.trim();
+    if (id !== undefined && id.length > 0) declared.add(id);
+  }
+  const sequence: string[] = [];
+  let broken = false;
+  for (const raw of answerText.split("\n")) {
+    const line = raw.trim();
+    if (line.length === 0) continue;
+    if (!/^\S+$/.test(line) || !declared.has(line)) {
+      ctx.issues.push(
+        makeIssue(
+          "error",
+          ctx.line,
+          1,
+          "INVALID_REFERENCE_ANSWER_FORMAT",
+          `ordering 参考答案的「${line}」行不合法：每行必须恰为本题已声明的一个排序项 id（裸 id、无空格，行序即正确顺序）；该参考答案不落结构化字段，发布校验将拒绝`,
+        ),
+      );
+      broken = true;
+      continue;
+    }
+    sequence.push(line);
+  }
+  if (broken || sequence.length === 0) return undefined;
+  return { kind: "ordering", sequence };
+}
+
+/** :::item 容器组 → orderingItems（fixedPosition 由参考序列声明位派生，§6.1-3） */
+function extractOrderingItems(
+  nodes: readonly ContainerDirective[],
+  questionId: string,
+  lines: readonly string[],
+  sequence: readonly string[],
+): NonNullable<Question["orderingItems"]> {
+  return nodes.map((node, index) => {
+    const explicit = node.attributes?.id?.trim();
+    const id =
+      explicit !== undefined && explicit.length > 0
+        ? explicit
+        : defaultItemIdOf(questionId, index + 1);
+    const position = sequence.indexOf(id);
+    return {
+      id,
+      text: sliceInnerLines(node, lines),
+      // 固定项的锁定位置来自参考序列的声明位（对学生可见的既定位置提示）
+      fixedPosition:
+        parseBoolAttr(node, "fixed") && position >= 0 ? position + 1 : null,
+      // 干扰项：不在参考序列即干扰项（显式声明优先；§5.4.1 解析推导）
+      distractor:
+        parseBoolAttr(node, "distractor") || position < 0 ? true : false,
+    };
+  });
+}
+
+/** 布尔属性的轻量读取（true/false 字符串；缺省/非法按 false，注册表已校验） */
+function parseBoolAttr(node: ContainerDirective, key: string): boolean {
+  return node.attributes?.[key]?.trim() === "true";
 }

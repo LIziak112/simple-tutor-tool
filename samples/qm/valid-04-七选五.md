@@ -24,7 +24,7 @@ Finally, treat sleep as infrastructure rather than indulgence. {{slot-5}} The be
 ::ref{question=qx-1}
 ::::
 
-::::question{id=qx-1 type=matching difficulty=4 knowledge="七选五"}
+:::::question{id=qx-1 type=matching difficulty=4 knowledge="七选五"}
 从下方 7 个选项中为文中 5 个空白处选择最合适的内容（每空限选一项，不可重复）。
 
 ::ref{material=mat-1 slots=slot-1..slot-5}
@@ -51,7 +51,7 @@ Respecting that tool means giving it a job description: sleep, and little else.
 :::option{id=opt-7}
 A morning espresso therefore has largely left the bloodstream before the next cycle begins.
 :::
-::::
+:::::
 
 :::answer
 slot-1 = opt-1

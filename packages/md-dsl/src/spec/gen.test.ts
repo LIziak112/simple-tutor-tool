@@ -46,14 +46,17 @@ describe("renderSpecMarkdown：稳定性与完整性", () => {
     expect(spec.length).toBeGreaterThan(5000);
   });
 
-  it("17 个首发指令全部出现：标题、description、example 完整渲染", () => {
+  it("注册表全部指令（25 个：17 首发 + TT-06 材料/组/引用 8 个）全部出现：标题、description、example 完整渲染", () => {
     for (const d of specDirectives) {
       expect(spec).toContain(`### ${d.name}\n`);
       expect(spec).toContain(d.description);
       expect(spec).toContain(d.example);
     }
-    // 指令小节标题是独立的「### 名称」整行（二节的题型等小节标题含中文，不匹配）
-    expect([...spec.matchAll(/^### ([a-z][a-z0-9-]*)$/gm)]).toHaveLength(17);
+    // 指令小节标题是独立的「### 名称」整行（二节的题型等小节标题含中文，不匹配）；
+    // 数量从注册表派生（不写死），新注册指令自动纳入
+    expect([...spec.matchAll(/^### ([a-z][a-z0-9-]*)$/gm)]).toHaveLength(
+      specDirectives.length,
+    );
   });
 
   it("question 属性表：type 行含十值（旧七型 + TT-05a 新三型）与必填标记，difficulty 含缺省 2", () => {

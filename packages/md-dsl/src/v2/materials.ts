@@ -1,6 +1,7 @@
 import {
   type LintIssue,
   type Material,
+  type MaterialRef,
   type MaterialSlot,
   type QuestionGroup,
   type SlotKind,
@@ -15,6 +16,7 @@ import type { RootContent, Text } from "mdast";
 import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
 import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
+import type { QmRefSite } from "./references.ts";
 import {
   canonicalName,
   isContainer,
@@ -53,12 +55,32 @@ export function isGroupContainer(node: Node): node is ContainerDirective {
 
 /** 材料顶层的 ::ref 容器谓词（leaf 指令，组/题内引用的统一形态） */
 function isRefDirective(node: Node): node is LeafDirective {
-  return node.type === "leafDirective" && canonicalName(node) === "ref";
+  return (
+    node.type === "leafDirective" &&
+    canonicalName(node as LeafDirective) === "ref"
+  );
 }
 
-/** 从 ref 指令还原材料引用契约形态（material/segs/slot/slots 仅在存在时携带） */
-export function materialRefOf(node: LeafDirective) {
-  const attrs = node.attributes ?? {};
+/**
+ * 行内式 ::ref{…} 的属性串解析（valid-03「第 1 空。::ref{…}」形态）：
+ * remark-directive 只把行首的 `::ref` 解析成 leafDirective，跟在文字后的
+ * 写法是纯文本节点——属性串需在此解析（key=value，值可加引号含空格）。
+ */
+export function parseRefAttrs(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([a-zA-Z][a-zA-Z0-9-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+  for (const match of raw.matchAll(re)) {
+    const key = match[1];
+    if (key === undefined) continue;
+    attrs[key] = match[2] ?? match[3] ?? match[4] ?? "";
+  }
+  return attrs;
+}
+
+/** 从 ref 属性集还原材料引用契约形态（material/segs/slot/slots 仅在存在时携带） */
+export function materialRefOf(
+  attrs: Readonly<Record<string, string | null | undefined>>,
+): MaterialRef | undefined {
   const material = attrs.material?.trim();
   if (material === undefined || material.length === 0) return undefined;
   const ref: Record<string, string> = { material };
@@ -66,12 +88,7 @@ export function materialRefOf(node: LeafDirective) {
     const value = attrs[key]?.trim();
     if (value !== undefined && value.length > 0) ref[key] = value;
   }
-  return ref as {
-    material: string;
-    segs?: string;
-    slot?: string;
-    slots?: string;
-  };
+  return ref as MaterialRef;
 }
 
 export interface MaterialsContext {
@@ -86,6 +103,10 @@ export interface MaterialsResult {
   readonly groups: QuestionGroup[];
   /** 材料/组容器占用的行区间（mixed 文档剔除讲义原文用，与题块同规则） */
   readonly containerRanges: ReadonlyArray<readonly [number, number]>;
+  /** 组内 ::ref 站点（第二遍引用校验的行号来源；题级站点由 question.ts 登记） */
+  readonly sites: QmRefSite[];
+  /** 材料/组声明起始行（GROUP_ORDER_INVALID / SLOT_UNBOUND 的定位） */
+  readonly entityLines: ReadonlyMap<string, number>;
 }
 
 /** 第一遍：抽取文档顶层全部材料与组实体（按出现顺序），不做引用校验 */
@@ -97,6 +118,8 @@ export function extractMaterialsAndGroups(
   const materials: Material[] = [];
   const groups: QuestionGroup[] = [];
   const containerRanges: Array<[number, number]> = [];
+  const sites: QmRefSite[] = [];
+  const entityLines = new Map<string, number>();
 
   // MATERIAL_BEFORE_FIRST_HEADING：首个 H1 的起始行（无 H1 时不告警）
   let firstHeadingLine: number | undefined;
@@ -134,29 +157,30 @@ export function extractMaterialsAndGroups(
     }
     if (isMaterialContainer(child)) {
       materialOrdinal += 1;
-      materials.push(
-        extractMaterial(child, {
-          lines,
-          issues,
-          unitId: ctx.unitId,
-          ordinal: materialOrdinal,
-          seenMaterialIds,
-        }),
-      );
+      const material = extractMaterial(child, {
+        lines,
+        issues,
+        unitId: ctx.unitId,
+        ordinal: materialOrdinal,
+        seenMaterialIds,
+      });
+      entityLines.set(material.id, lineRange(child)[0]);
+      materials.push(material);
     } else if (isGroupContainer(child)) {
       groupOrdinal += 1;
-      groups.push(
-        extractGroup(child, {
-          lines,
-          issues,
-          unitId: ctx.unitId,
-          ordinal: groupOrdinal,
-          seenGroupIds,
-        }),
-      );
+      const group = extractGroup(child, {
+        lines,
+        issues,
+        unitId: ctx.unitId,
+        ordinal: groupOrdinal,
+        seenGroupIds,
+        sites,
+      });
+      entityLines.set(group.id, lineRange(child)[0]);
+      groups.push(group);
     }
   }
-  return { materials, groups, containerRanges };
+  return { materials, groups, containerRanges, sites, entityLines };
 }
 
 /** 同一文档对 MATERIAL_BEFORE_FIRST_HEADING 只报一次（多处前置不刷屏） */
@@ -303,6 +327,7 @@ function extractGroup(
   node: ContainerDirective,
   ctx: EntityContext & {
     readonly seenGroupIds: Map<string, number>;
+    readonly sites: QmRefSite[];
   },
 ): QuestionGroup {
   const { lines, issues } = ctx;
@@ -334,13 +359,31 @@ function extractGroup(
   for (const child of node.children) {
     if (!isRefDirective(child)) continue;
     excluded.push(lineRange(child));
-    const ref = materialRefOf(child);
+    const line = child.position?.start.line ?? start;
+    const column = child.position?.start.column ?? 1;
+    const ref = materialRefOf(child.attributes ?? {});
     if (ref !== undefined) {
       materialRefs.push(ref);
+      ctx.sites.push({
+        ownerKind: "group",
+        ownerId: id,
+        materialRef: ref,
+        line,
+        column,
+      });
       continue;
     }
     const question = child.attributes?.question?.trim();
-    if (question !== undefined && question.length > 0) questionIds.push(question);
+    if (question !== undefined && question.length > 0) {
+      questionIds.push(question);
+      ctx.sites.push({
+        ownerKind: "group",
+        ownerId: id,
+        questionTarget: question,
+        line,
+        column,
+      });
+    }
   }
 
   return {

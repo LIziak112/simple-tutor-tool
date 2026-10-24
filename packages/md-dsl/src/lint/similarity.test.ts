@@ -40,7 +40,8 @@ describe("suggestDirectiveName：从注册表主名+别名中找最近候选", (
     expect(suggestDirectiveName("zzzzzz")).toBeUndefined();
     expect(suggestDirectiveName("xyz")).toBeUndefined();
     // 未来的指令名不在注册表里，也找不到相近候选
-    expect(suggestDirectiveName("video")).toBeUndefined();
+    //（video 在 TT-06 注册 item 后成为有效近似名，改用与全部主名距离 ≥3 的 quiz）
+    expect(suggestDirectiveName("quiz")).toBeUndefined();
   });
 
   it("距离并列时优先更短的候选", () => {

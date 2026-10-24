@@ -42,6 +42,18 @@ export const questionTypeSchema = z.enum([
 ]);
 
 /**
+ * 新题型（TT-05a 追加的枚举尾三项）：NEW_CONTENT_DISABLED 触发条件的单源
+ * （决策记录 §12.2-8——纯旧语法文档写 type=response/matching/ordering 必须
+ * 触发发布开关检测，不得只按新指令判）。检测实现在 md-dsl new-content.ts，
+ * 导入层（QM-05）调用。追加新题型时同步更新本清单与该检测。
+ */
+export const NEW_QUESTION_TYPES: readonly QuestionType[] = [
+  "response",
+  "matching",
+  "ordering",
+];
+
+/**
  * 题型中文名（UI 徽章与 T3.4 CSV 导出共用；前后端共用同一份，禁止各自手写）。
  * 手写题集合（solve/apply/find-error，答案 kind=final 的题型）自 UA-01 起由
  * capability.ts 的跨端证据角色绑定派生（HANDWRITTEN_QUESTION_TYPES，正式纸面

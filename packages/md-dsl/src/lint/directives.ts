@@ -55,10 +55,20 @@ export const LOCATION_LABELS: Record<DirectiveLocation, string> = {
   question: "题目内",
   steps: ":::steps 内部",
   columns: ":::columns 内部",
+  material: "::::material 内部",
+  group: "::::group 内部",
+  options: "::::options 内部",
 };
 
-/** 会为子节点追加位置语境的容器指令名（与 DirectiveLocation 的三个容器语境一一对应） */
-const CONTEXT_CONTAINER_NAMES = new Set(["question", "steps", "columns"]);
+/** 会为子节点追加位置语境的容器指令名（与 DirectiveLocation 的容器语境一一对应） */
+const CONTEXT_CONTAINER_NAMES = new Set([
+  "question",
+  "steps",
+  "columns",
+  "material",
+  "group",
+  "options",
+]);
 
 type AnyDirectiveNode = ContainerDirective | LeafDirective | TextDirective;
 
