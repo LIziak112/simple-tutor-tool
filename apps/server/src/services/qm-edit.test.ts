@@ -5,6 +5,7 @@ import {
   imports,
   materialRefs as materialRefsTable,
   questionGroupMembers,
+  questions,
   teachers,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
@@ -12,13 +13,17 @@ import { HttpError } from "../lib/http-error.ts";
 import { commitImport } from "./content-service.ts";
 import { getMaterial, getQuestionGroup } from "./material-repository.ts";
 import {
+  assembleQmBlocks,
+  assembleUnitDoc,
   deleteMaterial,
   deleteQuestionGroup,
   getMaterialDetail,
   getQuestionGroupDetail,
+  rebuildUnitDoc,
   updateMaterial,
   updateQuestionGroup,
 } from "./qm-edit-service.ts";
+import { exportUnitMd } from "./library-service.ts";
 
 /**
  * tt-06b / QM-05 材料/题组编辑与删除测试（服务层级）：
@@ -470,5 +475,145 @@ describe("QM-05 导出重导覆盖材料正文（真实 exportUnitMd）", () => 
     );
     // imports 留档两笔
     expect(db.select().from(imports).all()).toHaveLength(2);
+  });
+});
+
+describe("QM-07 P2-4：拼装规范序单源（assembleQmBlocks 两出口一致）", () => {
+  it("assembleUnitDoc：实体块按规范序空行分隔（材料 → 组 → 题）", () => {
+    const doc = assembleUnitDoc("u1", {
+      materials: ["::::material{id=m1}\n正文\n::::"],
+      groups: ["::::group{id=g1}\n::ref{question=q-1}\n::::"],
+      questions: ["::::question{id=q-1 type=judge}\n判断。[[]]\n::::"],
+    });
+    const lines = doc.split("\n");
+    // 材料块与组块之间、组块与题块之间各恰一空行（与 exportUnitMd 同规范序）
+    const matEnd = lines.indexOf("::::");
+    expect(lines[matEnd + 1]).toBe("");
+    expect(lines[matEnd + 2]).toBe("::::group{id=g1}");
+    const grpEnd = lines.indexOf("::::", matEnd + 2);
+    expect(lines[grpEnd + 1]).toBe("");
+    expect(lines[grpEnd + 2]).toContain("::::question");
+  });
+
+  it("rebuildUnitDoc：fragmentStartLine = 片段首行在重建文档中的实际行号", () => {
+    const m1 = ["::::material{id=m1}", "正文", "::::"].join("\n");
+    const m2 = ["::::material{id=m2}", "正文二", "::::"].join("\n");
+    const rebuilt = rebuildUnitDoc({
+      unitId: "u1",
+      materials: [
+        { id: "m1", sourceMd: m1 },
+        { id: "m2", sourceMd: "旧片段" },
+      ],
+      groups: [],
+      questions: [],
+      targetId: "m2",
+      submittedSourceMd: m2,
+    });
+    const lines = rebuilt.markdown.split("\n");
+    expect(lines[rebuilt.fragmentStartLine - 1]).toBe("::::material{id=m2}");
+  });
+
+  it("exportUnitMd 正文段与 assembleQmBlocks 同源（两出口一致锁定）", () => {
+    const db = createTestDb();
+    // 专用单元：题块带显式引号 id（避免缺省 id 注入改写题块首行，锁定纯拼装口径）
+    const md = [
+      "---",
+      "kind: practice",
+      "unit: 拼装单元",
+      "---",
+      "",
+      "# 拼装单元练习",
+      "",
+      '::::material{id=pz-mat-1}',
+      "材料正文 {{pz-slot-1}}。",
+      "::::",
+      "",
+      '::::group{id=pz-grp-1}',
+      "::ref{material=pz-mat-1 slot=pz-slot-1}",
+      '::ref{question=pz-q-1}',
+      "::::",
+      "",
+      '::::question{id="pz-q-1" type=choice}',
+      "根据材料回答。",
+      "",
+      "- [ ] 甲",
+      "- [x] 乙",
+      "::::",
+      "",
+    ].join("\n");
+    commitImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: md, filename: "拼装单元.md" },
+      undefined,
+      undefined,
+      true,
+    );
+    const material = getMaterial(db, TEST_TEACHER_ID, "pz-mat-1")?.sourceMd;
+    const group = getQuestionGroup(db, TEST_TEACHER_ID, "pz-grp-1")?.sourceMd;
+    const question = db
+      .select({ sourceMd: questions.sourceMd })
+      .from(questions)
+      .where(
+        and(
+          eq(questions.teacherId, TEST_TEACHER_ID),
+          eq(questions.unitId, "拼装单元"),
+        ),
+      )
+      .all()[0]?.sourceMd;
+    if (material === undefined || group === undefined || question === undefined) {
+      throw new Error("拼装单元实体未落库");
+    }
+    const body = assembleQmBlocks({
+      materials: [material],
+      groups: [group],
+      questions: [question],
+    });
+    const exported = exportUnitMd(db, TEST_TEACHER_ID, "拼装单元").markdown;
+    expect(exported.endsWith(`${body}\n`)).toBe(true);
+  });
+
+  it("旧单元（无 QM 行）导出字节级不变（直接断言，非结构等值推演）", () => {
+    const db = createTestDb();
+    const md = [
+      "---",
+      "kind: practice",
+      "unit: 旧单元",
+      "---",
+      "",
+      "# 旧单元练习",
+      "",
+      "::::question{type=judge}",
+      "判断。[[正确]]",
+      "",
+      "- [x] 对",
+      "::::",
+      "",
+    ].join("\n");
+    commitImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: md, filename: "旧单元.md" },
+      undefined,
+      undefined,
+      true,
+    );
+    const exported = exportUnitMd(db, TEST_TEACHER_ID, "旧单元").markdown;
+    expect(exported).toBe(
+      [
+        "---",
+        'kind: practice',
+        'unit: "旧单元"',
+        "---",
+        "",
+        // 缺省 id 在导入时注入开围栏（单元slug-序号），导出原样保留
+        '::::question{type=judge id="旧单元-1"}',
+        "判断。[[正确]]",
+        "",
+        "- [x] 对",
+        "::::",
+        "",
+      ].join("\n"),
+    );
   });
 });

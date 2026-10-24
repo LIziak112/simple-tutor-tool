@@ -80,8 +80,28 @@ interface RebuiltUnitDoc {
 }
 
 /**
+ * 单元文档实体块的规范序拼装（导入规范序：材料 → 组 → 题目，源文原样、
+ * 块间空行分隔）——编辑重建（assembleUnitDoc）、重解析与导出
+ * （exportUnitMd）共用的**单一出处**（tt-07b P2-4：此前两处实现靠注释互指
+ * + 往返测试锁定，规范序变更须同步两处；现 exportUnitMd 复用本函数，
+ * 分隔符与顺序漂移在结构上不可能）。
+ */
+export function assembleQmBlocks(
+  blocks: {
+    readonly materials: readonly string[];
+    readonly groups: readonly string[];
+    readonly questions: readonly string[];
+  },
+): string {
+  return [...blocks.materials, ...blocks.groups, ...blocks.questions].join(
+    "\n\n",
+  );
+}
+
+/**
  * 单元文档纯拼装（导入规范序：材料 → 组 → 题目；与 exportUnitMd / 重导同一
- * 拼装口径）。编辑重建与 reparse 共用——单一拼装出处，不产生第二事实来源。
+ * 拼装口径，实体块经 assembleQmBlocks 单源）。编辑重建与 reparse 共用——
+ * 单一拼装出处，不产生第二事实来源。
  */
 export function assembleUnitDoc(
   unitId: string,
@@ -100,13 +120,7 @@ export function assembleUnitDoc(
     `# ${unitId}`,
     "",
   ];
-  return [
-    ...prefixLines,
-    ...blocks.materials,
-    ...blocks.groups,
-    ...blocks.questions,
-    "",
-  ].join("\n");
+  return [prefixLines.join("\n"), assembleQmBlocks(blocks), ""].join("\n");
 }
 
 /**
