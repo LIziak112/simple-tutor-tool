@@ -41,7 +41,7 @@ import {
   type SubmitEvidenceDeclaration,
   studentAnswerSchema,
 } from "@tutor/contract";
-import { grade } from "@tutor/grading";
+import { gradeResponseRow } from "@tutor/grading";
 import {
   parseDocument,
   studentStemMd,
@@ -2165,7 +2165,9 @@ export function submitAttempt(
       response: ownRow,
       question: snapshot,
       answer,
-      autoCorrect: grade(snapshot, answer),
+      // QM-10 细项1：行级判分走 gradeResponseRow（§5.6 D11——新策略行不自动
+      // 匹配，旧行按题型旧语义；判分输入仍是冻结快照，服务端权威判分不变）
+      autoCorrect: gradeResponseRow(ownRow.gradingPolicy, snapshot, answer),
     };
     allFrozen.push(entry);
     graded.push(entry);
@@ -2501,9 +2503,10 @@ export function submitLessonQuestion(
     // 理论不可达（严格口径已保证快照非空）；防御性兜底不静默
     throw questionNotFound();
   }
-  // 草稿答案已在行内（无 = 未作答提交，grade 按 D1 客观题判 false）
+  // 草稿答案已在行内（无 = 未作答提交，grade 按 D1 客观题判 false）。
+  // QM-10 细项1：行级判分走 gradeResponseRow——lesson 新冻结行同样不自动匹配
   const answer = answerOf(row.answerJson) ?? undefined;
-  const autoCorrect = grade(snapshot, answer);
+  const autoCorrect = gradeResponseRow(row.gradingPolicy, snapshot, answer);
 
   // 笔记证据（单题化）：验证纯读、先于事务；写入与判分同事务
   const evidenceRow = buildSingleQuestionEvidence(
@@ -2775,7 +2778,8 @@ export function submitPracticeQuestion(
       throw questionNotFound();
     }
     const answer = answerOf(row.answerJson) ?? undefined;
-    const autoCorrect = grade(snapshot, answer);
+    // QM-10 细项1：行级判分走 gradeResponseRow（新策略行不自动匹配）
+    const autoCorrect = gradeResponseRow(row.gradingPolicy, snapshot, answer);
 
     // 证据声明核对（frozen/none/missing，与 lesson 单题提交同一实现）
     const evidenceRow = buildSingleQuestionEvidence(
