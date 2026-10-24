@@ -1,6 +1,7 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import type { AttemptResultQuestion, PracticeWorkflow } from "@tutor/contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   practiceFeedbackRestrictedCopy,
   practiceUnreadableFeedbackCopy,
@@ -11,7 +12,32 @@ import { QuestionFeedback } from "./QuestionFeedback";
  * 题级反馈区（M3-D2，§10.4 授权投影四态）：released 简短结论 + 本人/参考
  * 答案对照 + 解析默认展开（无解析明确文案）；pending_attempt / restricted
  * 按原因给文案；not_submitted 不渲染。文案函数与 practice-protocol 单源。
+ * QM-11：released 分支挂 SelfReviewSection（reference_self 行待自评/自评
+ * 三态 + 对了/错了/暂不判断动作，api mock 后不发真实请求）。
  */
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    saveSelfReviewApi: vi.fn(async () => {
+      throw new Error("测试不应出站");
+    }),
+  };
+});
+
+/** QuestionFeedback 现挂 SelfReviewSection（react-query 上下文）——统一包装渲染 */
+function renderFeedback(ui: React.ReactElement) {
+  return render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      {ui}
+    </QueryClientProvider>,
+  );
+}
 
 const releasedQuestion = (overrides: Partial<AttemptResultQuestion> = {}) =>
   ({
@@ -37,8 +63,9 @@ const releasedQuestion = (overrides: Partial<AttemptResultQuestion> = {}) =>
 
 describe("QuestionFeedback", () => {
   it("released 正确题：结论徽章 + 本人/参考答案对照 + 解析默认展开", () => {
-    render(
+    renderFeedback(
       <QuestionFeedback
+        attemptId="att-1"
         feedback={{ status: "released", question: releasedQuestion() }}
       />,
     );
@@ -53,8 +80,9 @@ describe("QuestionFeedback", () => {
   });
 
   it("released 错误题：结论为回答有误", () => {
-    render(
+    renderFeedback(
       <QuestionFeedback
+        attemptId="att-1"
         feedback={{
           status: "released",
           question: releasedQuestion({ finalCorrect: false }),
@@ -65,8 +93,9 @@ describe("QuestionFeedback", () => {
   });
 
   it("released 待批题（finalCorrect=null）：待老师批改文案，不出现对错", () => {
-    render(
+    renderFeedback(
       <QuestionFeedback
+        attemptId="att-1"
         feedback={{
           status: "released",
           question: releasedQuestion({ finalCorrect: null }),
@@ -78,8 +107,9 @@ describe("QuestionFeedback", () => {
   });
 
   it("released 无解析：明确「本题暂无解析」，不造空白折叠卡", () => {
-    render(
+    renderFeedback(
       <QuestionFeedback
+        attemptId="att-1"
         feedback={{
           status: "released",
           question: releasedQuestion({ solutionMd: null }),
@@ -91,7 +121,12 @@ describe("QuestionFeedback", () => {
   });
 
   it("pending_attempt：交卷后统一公布文案，无任何题目内容", () => {
-    render(<QuestionFeedback feedback={{ status: "pending_attempt" }} />);
+    renderFeedback(
+      <QuestionFeedback
+        attemptId="att-1"
+        feedback={{ status: "pending_attempt" }}
+      />,
+    );
     expect(screen.getByText("已提交，交卷后统一公布")).toBeInTheDocument();
     expect(screen.queryByText(/你的答案|参考答案|解析/)).toBeNull();
   });
@@ -106,8 +141,9 @@ describe("QuestionFeedback", () => {
     expect(practiceFeedbackRestrictedCopy("legacy_attempt")).toBe(
       "本练习不支持逐题反馈",
     );
-    render(
+    renderFeedback(
       <QuestionFeedback
+        attemptId="att-1"
         feedback={{
           status: "restricted",
           restrictionReason: "teacher_after_due",
@@ -119,12 +155,54 @@ describe("QuestionFeedback", () => {
 
   it("not_submitted：不渲染反馈区", () => {
     const { container } = render(
-      <QuestionFeedback feedback={{ status: "not_submitted" }} />,
+      <QuestionFeedback
+        attemptId="att-1"
+        feedback={{ status: "not_submitted" }}
+      />,
     );
     expect(
       container.querySelector('[data-slot="practice-question-feedback"]'),
     ).toBeNull();
     expect(screen.queryByRole("region", { name: "本题反馈" })).toBeNull();
+  });
+
+  it("QM-11 reference_self 行：徽章三态（待自评/自评正确/自评错误）+ 对照后挂自评动作", () => {
+    const selfRow = (selfReview: AttemptResultQuestion["selfReview"]) =>
+      releasedQuestion({
+        gradingPolicy: "reference_self",
+        selfReview,
+        autoCorrect: null,
+        finalCorrect: null,
+        answers: { kind: "fill", blanks: [["1"]] },
+      });
+    const { unmount } = renderFeedback(
+      <QuestionFeedback
+        attemptId="att-1"
+        feedback={{ status: "released", question: selfRow(null) }}
+      />,
+    );
+    // 未自评：三态明确——已完成、待自评（不是待老师批改），动作默认出现
+    expect(screen.getByText("已完成、待自评")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "对了" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "错了" })).toBeInTheDocument();
+    unmount();
+
+    renderFeedback(
+      <QuestionFeedback
+        attemptId="att-1"
+        feedback={{
+          status: "released",
+          question: selfRow({
+            record: { verdict: "wrong", at: "t", revision: 1 },
+            revision: 1,
+          }),
+        }}
+      />,
+    );
+    // 徽章与自评区状态各一处「自评错误」
+    expect(screen.getAllByText("自评错误").length).toBeGreaterThanOrEqual(1);
+    // 不自动替学生选：按钮呈现但以本人已评为准（高亮=错了）
+    expect(screen.queryByText("已提交，待老师批改")).toBeNull();
   });
 
   it("不可读行的本地文案：受限按原因，否则按统一公布（不额外发请求时也能呈现）", () => {

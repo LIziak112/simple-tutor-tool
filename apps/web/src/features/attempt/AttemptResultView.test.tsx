@@ -72,6 +72,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
       materials: [],
       groups: [],
     })),
+    // QM-11：自评动作存在（组件行为见 SelfReviewSection.test），此处只测呈现
+    saveSelfReviewApi: vi.fn(async () => {
+      throw new Error("测试不应出站");
+    }),
   };
 });
 
@@ -1157,5 +1161,112 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
       materials: [],
       groups: [],
     });
+  });
+});
+
+// ---------- QM-11（TT-09b）：reference_self 行的自评三态与动作挂载 ----------
+
+describe("QM-11 自评三态与动作（结果视图）", () => {
+  const selfAttemptData = (
+    selfReview: AttemptResultData["units"][number]["questions"][number]["selfReview"],
+    teacherMark: "correct" | "wrong" | null = null,
+  ): AttemptResultData => ({
+    ...DATA,
+    units: [
+      {
+        id: "练习四",
+        title: "练习四",
+        questions: [
+          {
+            questionId: "练习四-9",
+            snapshot: {
+              id: "练习四-9",
+              type: "solve",
+              difficulty: 2,
+              knowledge: ["解答"],
+              stemMd: "计算 $1+1$。",
+              hintCount: 0,
+            },
+            answers: { kind: "final", answer: "2" },
+            solutionMd: "1+1=2。",
+            answer: { kind: "final", finalAnswer: "2" },
+            autoCorrect: null,
+            teacherMark,
+            teacherComment: null,
+            finalCorrect: null,
+            gradingPolicy: "reference_self",
+            selfReview,
+            hintsOpened: [],
+          },
+        ],
+      },
+    ],
+  });
+
+  it("待自评：徽章「已完成、待自评」（不是待批改）、左边框琥珀、对照后挂对了/错了/暂不判断", () => {
+    render(
+      <AttemptResultView
+        data={selfAttemptData({ record: null, revision: 0 })}
+        onBackHome={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).getByText("已完成、待自评")).toBeInTheDocument();
+    expect(within(card).queryByText("待批改")).toBeNull();
+    expect(within(card).getByRole("button", { name: "对了" })).toBeEnabled();
+    expect(within(card).getByRole("button", { name: "错了" })).toBeEnabled();
+    expect(
+      within(card).getByRole("button", { name: "暂不判断" }),
+    ).toBeDisabled();
+    // 未自评不自动替学生选：对了/错了均无高亮态 aria-pressed=true
+    expect(
+      within(card)
+        .getByRole("button", { name: "错了" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("已自评错：徽章「自评错误」、左边框红；可修正（按钮保持可用）", () => {
+    render(
+      <AttemptResultView
+        data={selfAttemptData({
+          record: {
+            verdict: "wrong",
+            at: "2026-10-24T00:00:00.000Z",
+            revision: 1,
+          },
+          revision: 1,
+        })}
+        onBackHome={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).getAllByText("自评错误").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(within(card).getByRole("button", { name: "对了" })).toBeEnabled();
+  });
+
+  it("教师已判：自评动作不渲染（教师优先），批改块照常展示", () => {
+    render(
+      <AttemptResultView
+        data={selfAttemptData(
+          {
+            record: {
+              verdict: "wrong",
+              at: "2026-10-24T00:00:00.000Z",
+              revision: 1,
+            },
+            revision: 1,
+          },
+          "correct",
+        )}
+        onBackHome={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).queryByRole("button", { name: "对了" })).toBeNull();
+    expect(within(card).queryByRole("region", { name: "本题自评" })).toBeNull();
+    expect(within(card).getByText(/判对/)).toBeInTheDocument();
   });
 });

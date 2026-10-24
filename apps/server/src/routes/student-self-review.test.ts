@@ -5,7 +5,13 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, lectures, type ResponseRow, responses } from "../db/schema";
+import {
+  assignments,
+  attempts,
+  lectures,
+  type ResponseRow,
+  responses,
+} from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -1192,5 +1198,127 @@ topic: 测试
       value: true,
     });
     assertNoLeak(body, { forbid: ["answers", "solutionMd"] });
+  });
+});
+
+// ---------- QM-11（TT-09b）：结果视图自评状态投影 ----------
+
+/** GET /attempts/:id 结果视图逐题（questionId → 该题投影） */
+async function resultQuestionsOf(
+  app: App,
+  cookie: string,
+  attemptId: string,
+): Promise<Record<string, Record<string, unknown>>> {
+  const res = await app.request(`/api/student/attempts/${attemptId}`, {
+    headers: { cookie },
+  });
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    data: {
+      units: { questions: Record<string, unknown>[] }[];
+    };
+  };
+  const map: Record<string, Record<string, unknown>> = {};
+  for (const unit of body.data.units) {
+    for (const question of unit.questions) {
+      map[String(question.questionId)] = question;
+    }
+  }
+  return map;
+}
+
+describe("QM-11：结果视图携带 selfReview/gradingPolicy（公布 gate 投影）", () => {
+  it("已公布结果视图：gradingPolicy 逐行透传、selfReview 随写入演进（未评 → 已评 → 撤回后 record=null 但 revision 推进）", async () => {
+    const { app, aCookie, attemptId } = await newPolicySubmittedAttempt();
+    // 交卷即公布（on_submit 作业）：四行策略透传、自评零值
+    const first = await resultQuestionsOf(app, aCookie, attemptId);
+    expect(first[Q.choice]?.gradingPolicy).toBe("auto");
+    expect(first[Q.fill]?.gradingPolicy).toBe("reference_self");
+    expect(first[Q.solveWithRef]?.gradingPolicy).toBe("reference_self");
+    expect(first[Q.solveNoRef]?.gradingPolicy).toBe("manual_only");
+    expect(first[Q.fill]?.selfReview).toEqual({ record: null, revision: 0 });
+
+    // 自评 correct → 结果视图回读 record+revision=1
+    const ok = await selfReviewJson(
+      app,
+      aCookie,
+      attemptId,
+      Q.fill,
+      review("correct"),
+    );
+    expect(ok.res.status).toBe(200);
+    const second = await resultQuestionsOf(app, aCookie, attemptId);
+    expect(second[Q.fill]?.selfReview).toEqual({
+      record: { verdict: "correct", at: expect.any(String), revision: 1 },
+      revision: 1,
+    });
+
+    // 撤回（undecided 清除记录）：record=null、revision=2（CAS 基线单独下发）
+    const clear = await selfReviewJson(
+      app,
+      aCookie,
+      attemptId,
+      Q.fill,
+      review("undecided", 1),
+    );
+    expect(clear.res.status).toBe(200);
+    const third = await resultQuestionsOf(app, aCookie, attemptId);
+    expect(third[Q.fill]?.selfReview).toEqual({ record: null, revision: 2 });
+    // 撤回后按 revision=2 继续 CAS 成功（不是 0——清除亦递增）
+    const again = await selfReviewJson(
+      app,
+      aCookie,
+      attemptId,
+      Q.fill,
+      review("wrong", 2),
+    );
+    expect(again.res.status).toBe(200);
+  });
+
+  it("after_due 截止前受限形态：selfReview/gradingPolicy 整键 null 投影（不泄露行策略与自评状态），截止后恢复", async () => {
+    const { app, db, teacherCookie, unitId } = await makeQm10App();
+    const studentId = await createStudent(app, teacherCookie, "钱七");
+    // 未来截止 + 截止后公布
+    const assignmentRes = await app.request("/api/teacher/assignments", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        unitIds: [unitId],
+        studentIds: [studentId],
+        dueAt: "2099-01-01T00:00:00.000Z",
+        answerRelease: "after_due",
+      }),
+    });
+    expect(assignmentRes.status).toBe(201);
+    const assignmentId = (
+      (await assignmentRes.json()) as {
+        data: { assignments: { id: string }[] };
+      }
+    ).data.assignments[0]?.id;
+    if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
+    const aCookie = await loginStudent(app, "钱七");
+    const attemptId = await startAttempt(app, aCookie, assignmentId, true);
+    await saveAllAnswers(app, aCookie, attemptId);
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(submitRes.status).toBe(200);
+
+    const gated = await resultQuestionsOf(app, aCookie, attemptId);
+    expect(gated[Q.fill]?.selfReview).toBeNull();
+    expect(gated[Q.fill]?.gradingPolicy).toBeNull();
+    // 受限形态整体防泄露（口径与 T2A.8 既有断言一致）
+    const rawRes = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    const rawBody = await rawRes.json();
+    assertNoLeak(rawBody, { allow: ["answer", "answers", "solutionMd"] });
+
+    // 截止后（改库推进时间口径的最小侵入：直接把 dueAt 改到过去）恢复完整投影
+    db.update(assignments)
+      .set({ dueAt: "2000-01-01T00:00:00.000Z" })
+      .where(eq(assignments.id, assignmentId))
+      .run();
+    const released = await resultQuestionsOf(app, aCookie, attemptId);
+    expect(released[Q.fill]?.gradingPolicy).toBe("reference_self");
+    expect(released[Q.fill]?.selfReview).toEqual({ record: null, revision: 0 });
   });
 });

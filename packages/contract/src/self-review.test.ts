@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { selfReviewDataSchema } from "./attempt.ts";
 import type { QuestionType } from "./content.ts";
 import { contentErrorCodeSchema } from "./content-api.ts";
 import {
@@ -10,7 +11,6 @@ import {
   resolveRowGradingSemantics,
   resolveSelfReviewState,
   type SelfReviewRecord,
-  selfReviewDataSchema,
   selfReviewRecordSchema,
   selfReviewRequestSchema,
   verdictSourceSchema,

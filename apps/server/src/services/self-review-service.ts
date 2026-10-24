@@ -2,7 +2,6 @@ import {
   type EffectiveVerdict,
   effectiveVerdictOf,
   type SelfReviewData,
-  type SelfReviewRecord,
   type SelfReviewRequest,
   selfReviewConflictCurrentSchema,
   selfReviewDataSchema,
@@ -18,6 +17,7 @@ import {
   practiceQuestionFeedbackStateOf,
   questionNotFound,
   requireUsableAttempt,
+  selfReviewRecordOf,
 } from "./attempt-service";
 import { snapshotOfRow } from "./snapshot";
 
@@ -48,21 +48,6 @@ import { snapshotOfRow } from "./snapshot";
  * （attemptScoreSummaryOf 现算；公布 gate 已过——见 practiceQuestionFeedbackStateOf
  * 组装前提，无受限形态投影需求）。
  */
-
-/** 行上自评记录的读取投影（verdict 列只存实际判断——undecided 已清除为 null） */
-export function selfReviewRecordOf(
-  row: Pick<
-    ResponseRow,
-    "selfReviewVerdict" | "selfReviewAt" | "selfReviewRevision"
-  >,
-): SelfReviewRecord | null {
-  if (row.selfReviewVerdict === null) return null;
-  return {
-    verdict: row.selfReviewVerdict,
-    at: row.selfReviewAt ?? "",
-    revision: row.selfReviewRevision,
-  };
-}
 
 /** teacherMark 列值的枚举收窄（列无 $type，按 D9 值域收窄给投影用） */
 function teacherMarkOf(value: string | null): TeacherMark | null {

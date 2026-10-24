@@ -76,6 +76,7 @@ function FeedbackPending({
 
 /** 题卡 footer 槽：v1 卷的本题提交区 / 已提交反馈区（legacy 不挂） */
 export function PracticeQuestionFooter({
+  attemptId,
   mode,
   submitted,
   readable,
@@ -89,6 +90,8 @@ export function PracticeQuestionFooter({
   onSubmit,
   onRetryFeedback,
 }: {
+  /** 作答 id（已提交反馈区的自评动作出站路径参数，QM-11） */
+  attemptId: string;
   /** list = 列表模式（footer 承担提交按钮）；single = 单题模式（按钮在主操作位） */
   mode: "list" | "single";
   submitted: boolean;
@@ -140,7 +143,7 @@ export function PracticeQuestionFooter({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {feedback !== null ? (
-        <QuestionFeedback feedback={feedback} />
+        <QuestionFeedback attemptId={attemptId} feedback={feedback} />
       ) : readable ? (
         <FeedbackPending failed={feedbackFailed} onRetry={onRetryFeedback} />
       ) : (

@@ -8,14 +8,17 @@ import {
   practiceFeedbackRestrictedCopy,
 } from "./practice-protocol";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
+import { SelfReviewSection } from "./SelfReviewSection";
+import { verdictBadgeDisplayOf } from "./self-review-display";
 
 /**
  * 题级反馈区（M3-D2，§10.4 授权投影四态呈现）：提交回执/题级反馈读取共用
  * 同一 schema（practiceQuestionFeedbackSchema），本组件是其唯一呈现出口：
- * - released：简短结论（VerdictBadge 复用，finalCorrect 优先）+ 本人答案与
- *   参考答案对照（ResultAnswerComparison / ResultOptions，与整卷结果视图
- *   同构同源）+ 解析默认展开（教师演示口径；null 明确「本题暂无解析」，
- *   不造空白折叠卡）；
+ * - released：简短结论（VerdictBadge 复用，finalCorrect 优先；QM-11 起
+ *   reference_self 行按 verdictBadgeDisplayOf 显示待自评/自评三态）+ 本人
+ *   答案与参考答案对照（ResultAnswerComparison / ResultOptions，与整卷
+ *   结果视图同构同源）+ 自评动作（SelfReviewSection，QM-11）+ 解析默认
+ *   展开（教师演示口径；null 明确「本题暂无解析」，不造空白折叠卡）；
  * - pending_attempt：已提交、交卷后统一公布（零题目内容）；
  * - restricted：按 restrictionReason 文案（practice-protocol 单源）；
  * - not_submitted：不渲染反馈区（调用方也不应在未提交行挂本组件）。
@@ -35,8 +38,11 @@ export function FeedbackNoticeBox({ children }: { children: string }) {
 }
 
 export function QuestionFeedback({
+  attemptId,
   feedback,
 }: {
+  /** 自评动作所需的作答 id（SelfReviewSection 出站路径参数） */
+  attemptId: string;
   feedback: PracticeQuestionFeedback;
 }) {
   if (feedback.status === "not_submitted") return null;
@@ -51,6 +57,8 @@ export function QuestionFeedback({
     return <FeedbackNoticeBox>{copy}</FeedbackNoticeBox>;
   }
   const question = feedback.question;
+  // QM-11：reference_self 行显示待自评/自评三态，其余行沿用既有文案
+  const badge = verdictBadgeDisplayOf(question);
   return (
     <section
       data-slot="practice-question-feedback"
@@ -59,11 +67,11 @@ export function QuestionFeedback({
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <VerdictBadge
-          verdict={question.finalCorrect}
-          pendingLabel="已提交，待老师批改"
+          verdict={badge.verdict}
+          pendingLabel={badge.pendingLabel ?? "已提交，待老师批改"}
           toned
-          correctLabel="回答正确"
-          wrongLabel="回答有误"
+          correctLabel={badge.correctLabel ?? "回答正确"}
+          wrongLabel={badge.wrongLabel ?? "回答有误"}
         />
         <span className="text-xs text-muted-foreground">
           反馈按老师当前设置公布，如与讲解不一致以老师为准。
@@ -71,6 +79,7 @@ export function QuestionFeedback({
       </div>
       <ResultOptions question={question} released />
       <ResultAnswerComparison question={question} released />
+      <SelfReviewSection attemptId={attemptId} question={question} />
       {question.solutionMd !== null ? (
         <div className="flex flex-col gap-2">
           <p className="text-sm font-medium">解析</p>

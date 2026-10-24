@@ -85,6 +85,14 @@ pnpm dev / pnpm test / pnpm e2e（真实Playwright：Chromium/WebKit，隔离临
 - 原稿与订正控制器持续挂载；切换操作分组或从待公布变为公布时，不丢编辑状态。
 - 本题历史必须保留来源结果页、回看范围与当前题目，并在加载、错误、空记录状态提供返回入口；只接受学生作答结果路径（`/s/attempts/:id`、`/s/assignments/:id`），直接访问时回退我的记录。
 
+## 学生对照自评 UI 约定（QM 支线，2026-10-24）
+
+- 已提交且参考答案按四态 gate 公布后，reference_self 行在结果视图、题级反馈与讲练题卡默认出现对照答案、解析与「对了／错了／暂不判断」动作；不自动替学生选，未自评时「暂不判断」禁用（无可清除对象）。
+- 完成状态三态经 `verdictBadgeDisplayOf` 单一出处：reference_self 教师未判行显示「已完成、待自评／自评正确／自评错误」（结果卡左边框随自评 verdict 变色），其余行沿既有 finalCorrect 徽章路径零变化；manual_only 行提示「暂无参考答案」，不假装可自动判断；教师已判时自评动作整块不渲染，显示走批改块（教师优先，不可被客户端覆盖）。
+- 投影与 CAS：结果单题携带 `selfReview`（record + revision，undecided 清除后 record=null 但 revision 单独下发）与 `gradingPolicy`，公布前整键 null 投影；UI 只消费投影，本地采纳的成功回执/409 `_current` 仅在 revision 更大时生效，refetch 落地即回归服务端事实。同一意图重试复用同一 mutationId；成功后失效 attempt 前缀与讲练/记录/错题/教师聚合缓存。
+- 对照格式：填空逐空对照（既有）；response 对照面附字数行（`countResponseWords` 契约单源 + wordMin/wordMax 建议，未作答不显示）；matching/ordering 以登记表成员判别（`answerKind in answerKindViews`，I16 集合口径）走通用文本占位，逐项格式留 QM-13，不伪造。
+- 自评不阻塞回看、原稿、订正与记录入口；做完题即可回看或离开。
+
 ## 学生作业列表 UI 约定
 - 首页只显示最新两份待完成作业，并显示待办总数；已交卷和已批改作业在独立「我的作业」页面查看。
 - 完整作业列表默认展示全部时间的待完成作业，每页 10 份；状态、布置日期、标题搜索和页码保存在 URL。日期按北京时间自然日计算。
