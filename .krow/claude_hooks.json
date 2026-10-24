@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolBatch": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /app/teammate_kit/hooks/inject_hook.py --cli claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /app/teammate_kit/hooks/inject_hook.py --cli claude --event stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

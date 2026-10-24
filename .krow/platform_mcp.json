@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "krow-platform": {
+      "command": "python",
+      "args": [
+        "/app/teammate_kit/mcp_bridge_boot.py"
+      ]
+    }
+  }
+}
