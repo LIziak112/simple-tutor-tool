@@ -252,3 +252,47 @@ it("上下文读取失败非阻断：题面照常可答 + 就地重试恢复", a
     expect(screen.getByText("四天气温表")).toBeInTheDocument();
   });
 });
+
+// 审查 P1：组段把题行移入 li(group) 子树——context 后到/重试成功时 React 按
+// key+位置调和无法跨父匹配，组内题卡整体卸载重挂，草稿/手写/标画控制器随行
+// 销毁且绕过收笔落盘保护。修复不变量：题行树位稳定（组标记只是兄弟锚点），
+// 组段采纳前后题干 DOM 节点身份不变（.toBe——重挂即换节点）。
+it("context 后到不重挂组内题卡：首帧 solo 行在组段采纳后保持同一 DOM 实例", async () => {
+  let resolveContext: ((value: AttemptContextData) => void) | undefined;
+  mockedFetch.mockResolvedValue(draftOf());
+  mockedContext.mockImplementation(
+    () =>
+      new Promise<AttemptContextData>((resolve) => {
+        resolveContext = resolve;
+      }),
+  );
+  renderPage();
+  // 首帧：题面已渲染、context 未解析（q1/q2/q3 全 solo 行）
+  const q1Stem = await screen.findByText(/周二温差最大/);
+  const q2Stem = screen.getByText(/周四气温为正/);
+  // context 后到 → 组段采纳（组头出现，q1/q2 入组）
+  resolveContext?.(contextOf());
+  await screen.findByLabelText("题组：根据材料回答第 1～2 题");
+  expect(screen.getByText(/周二温差最大/)).toBe(q1Stem);
+  expect(screen.getByText(/周四气温为正/)).toBe(q2Stem);
+});
+
+it("重试成功不重挂组内题卡：作答中途恢复共享材料不销毁题卡控制器（审查 P1）", async () => {
+  await renderWith(new Error("共享材料加载失败"));
+  const q1Stem = screen.getByText(/周二温差最大/);
+  const q2Stem = screen.getByText(/周四气温为正/);
+  // 作答中途重试成功 → 组段采纳，题卡实例必须存活
+  mockedContext.mockResolvedValue(contextOf());
+  fireEvent.click(
+    within(screen.getByRole("alert")).getByRole("button", {
+      name: "重试加载共享材料",
+    }),
+  );
+  await screen.findByText("四天气温表");
+  expect(screen.getByText(/周二温差最大/)).toBe(q1Stem);
+  expect(screen.getByText(/周四气温为正/)).toBe(q2Stem);
+  // 身份保持不阻断组功能：材料入口照常挂上
+  expect(
+    screen.getByRole("button", { name: "第 1 题查看共享材料" }),
+  ).toBeInTheDocument();
+});

@@ -56,6 +56,7 @@ import {
 } from "@/features/notes/submit-evidence";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -104,7 +105,7 @@ import {
   firstUnsubmittedQuestionId,
   practiceProtocolOfDraft,
 } from "./practice-protocol";
-import { QuestionGroupBlock } from "./QuestionGroupBlock";
+import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
@@ -298,7 +299,9 @@ function AnswerView({
   // QM-08：冻结上下文（材料/组快照）——共享材料渲染数据源；错误非阻断（题面
   // 不依赖本载荷），就地提示 + 重试
   const contextQuery = useAttemptContext(attemptId);
-  /** 「查看材料」reveal 信号（组 id → 递增计数；QuestionGroupBlock 滚入恢复） */
+  /** AI 侧栏对照激活 → 组段呈现回退上下排布（与题卡草稿「自动」布局同款信号） */
+  const compareActive = useAiCompareActive();
+  /** 「查看材料」reveal 信号（组 id → 递增计数；QuestionGroupAnchor 滚入恢复） */
   const [materialReveal, setMaterialReveal] = useState<Record<string, number>>(
     {},
   );
@@ -1244,7 +1247,9 @@ function AnswerView({
               M3-D1 单题专注：同一 keyed 序列仅隐藏非当前题（不卸载不搬卡），
               单元节头在单题态不显示（紧凑结构，§7.2）。
               QM-08：题目序经 groupSegmentsOfUnit 解释成独立题段/题组段——组段
-              的共享材料按组渲染一份（数据解释单源），子题题卡仍逐题 key 稳定 */}
+              的共享材料按组渲染一份（数据解释单源）。审查 P1 修复：题组只是
+              题行 ol 里的兄弟锚点（QuestionGroupAnchor），题行永不进组子树，
+              context 后到/重试成功不重挂题卡（控制器随行存活）。 */}
               <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
                 {data.units.map((unit) => {
                   const questionById = new Map(
@@ -1256,10 +1261,18 @@ function AnswerView({
                     contextQuery.data,
                     unit.questions.map((question) => question.id),
                   );
-                  /** 单题行渲染（组段/独立段共用；onOpenMaterial 仅组内带材料题挂） */
+                  // compare 网格仅对确有题组的单元开启（AI 对照激活/单题态
+                  // 回退上下排布）；无组单元保持纯 flex 零变化
+                  const unitHasGroups = segments.some(
+                    (segment) => segment.kind === "group",
+                  );
+                  const groupGrid =
+                    unitHasGroups && !singleMode && !compareActive;
+                  /** 单题行渲染（组行/独立行共用；onOpenMaterial 仅组内带材料题挂） */
                   const renderRow = (
                     question: (typeof unit.questions)[number],
                     onOpenMaterial?: () => void,
+                    grouped = false,
                   ) => {
                     const index = flatQuestions.indexOf(question);
                     // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
@@ -1273,6 +1286,13 @@ function AnswerView({
                     return (
                       <AttemptQuestionRow
                         key={question.id}
+                        className={
+                          groupGrid
+                            ? grouped
+                              ? "min-w-0 xl:col-start-2"
+                              : "min-w-0 xl:col-span-2"
+                            : undefined
+                        }
                         cardElements={cardElements}
                         events={attemptEvents}
                         index={index}
@@ -1356,50 +1376,58 @@ function AnswerView({
                           {unit.title}
                         </h2>
                       )}
-                      <ol className="flex flex-col gap-4">
+                      <ol
+                        data-layout={
+                          unitHasGroups
+                            ? groupGrid
+                              ? "compare"
+                              : "stack"
+                            : undefined
+                        }
+                        className={
+                          groupGrid
+                            ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                            : "flex flex-col gap-4"
+                        }
+                      >
                         {segments.map((segment) =>
-                          segment.kind === "solo" ? (
-                            segment.questionIds.map((questionId) => {
-                              const question = questionById.get(questionId);
-                              return question === undefined
-                                ? null
-                                : renderRow(question, undefined);
-                            })
-                          ) : (
-                            <li
-                              key={segment.group.id}
-                              hidden={
-                                singleMode &&
-                                !segment.questionIds.includes(
-                                  resolvedSingleQuestionId ?? "",
-                                )
-                              }
-                            >
-                              <QuestionGroupBlock
-                                group={segment.group}
-                                materials={segment.materials}
-                                readingKey={`${attemptId}|${segment.group.id}`}
-                                revealSignal={
-                                  materialReveal[segment.group.id] ?? 0
-                                }
-                              >
-                                <ol className="flex flex-col gap-4">
-                                  {segment.questionIds.map((questionId) => {
-                                    const question =
-                                      questionById.get(questionId);
-                                    if (question === undefined) return null;
-                                    return renderRow(
-                                      question,
-                                      segment.materials.length > 0
-                                        ? () =>
-                                            openGroupMaterial(segment.group.id)
-                                        : undefined,
-                                    );
-                                  })}
-                                </ol>
-                              </QuestionGroupBlock>
-                            </li>
-                          ),
+                          segment.kind === "solo"
+                            ? segment.questionIds.map((questionId) => {
+                                const question = questionById.get(questionId);
+                                return question === undefined
+                                  ? null
+                                  : renderRow(question, undefined, false);
+                              })
+                            : [
+                                <QuestionGroupAnchor
+                                  key={`group:${segment.group.id}`}
+                                  group={segment.group}
+                                  materials={segment.materials}
+                                  questionCount={segment.questionIds.length}
+                                  readingKey={`${attemptId}|${segment.group.id}`}
+                                  revealSignal={
+                                    materialReveal[segment.group.id] ?? 0
+                                  }
+                                  hidden={
+                                    singleMode &&
+                                    !segment.questionIds.includes(
+                                      resolvedSingleQuestionId ?? "",
+                                    )
+                                  }
+                                />,
+                                ...segment.questionIds.map((questionId) => {
+                                  const question = questionById.get(questionId);
+                                  if (question === undefined) return null;
+                                  return renderRow(
+                                    question,
+                                    segment.materials.length > 0
+                                      ? () =>
+                                          openGroupMaterial(segment.group.id)
+                                      : undefined,
+                                    true,
+                                  );
+                                }),
+                              ],
                         )}
                       </ol>
                     </li>
