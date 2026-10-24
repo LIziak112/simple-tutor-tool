@@ -2,6 +2,11 @@ import type { GraphDirectiveAttrs, ImageDirectiveAttrs } from "@tutor/contract";
 import type { FunctionPlotOptions } from "function-plot";
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { resolveFunctionPlot } from "../function-plot-interop";
 import { parseGraphRange } from "../graph-range";
 import type { DirectiveProps } from "./types";
@@ -25,12 +30,16 @@ function normalizeImageSrc(src: string): string {
  * ::image 块级图片：src 为服务端 blobs 路径（归一化为根相对），width 缺省自适应，
  * alt 缺省「图片」。src 必填已由注册表 schema 保证（缺失在渲染层降级），
  * trim 后为空的书写值（schema min(1) 允许纯空白）仍走占位分支。三态齐全：
- * 加载成功 / 加载失败占位（onError 切入，不裂图）/ 空白 src 提示。
+ * 加载成功（可点击放大，QM-08 长内容细项）/ 加载失败占位（onError 切入，
+ * 不裂图；提供「重新加载」重试）/ 空白 src 提示。
  */
 export function ImageDirective({ attrs }: DirectiveProps<ImageDirectiveAttrs>) {
   const src = attrs.src.trim();
   // 失败按 src 记录：文档编辑换图（src 变化）后不再命中，无需 effect 重置
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  /** 重试计数：递增换 img key 重挂重取（onError 只触发一次的浏览器语义） */
+  const [attempt, setAttempt] = useState(0);
+  const [zoomOpen, setZoomOpen] = useState(false);
   if (src.length === 0) {
     return (
       <div className="my-3 flex min-h-11 items-center gap-2 rounded-xl border border-dashed border-border bg-muted/40 px-3 text-sm text-muted-foreground">
@@ -43,7 +52,7 @@ export function ImageDirective({ attrs }: DirectiveProps<ImageDirectiveAttrs>) {
     return (
       <div
         role="alert"
-        className="my-3 flex min-h-11 flex-col items-start gap-1 rounded-xl border border-dashed border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
+        className="my-3 flex min-h-11 flex-col items-start gap-2 rounded-xl border border-dashed border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
       >
         <span className="flex items-center gap-2 text-foreground">
           <ImageOff aria-hidden className="size-4" />
@@ -53,18 +62,56 @@ export function ImageDirective({ attrs }: DirectiveProps<ImageDirectiveAttrs>) {
           请把图片与文档一起在导入页选择上传（引用会自动替换为服务器路径）（src：
           {src}）
         </span>
+        <button
+          type="button"
+          onClick={() => {
+            setFailedSrc(null);
+            setAttempt((n) => n + 1);
+          }}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-border px-4 font-medium text-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <RefreshCw aria-hidden className="size-4" />
+          重新加载
+        </button>
       </div>
     );
   }
+  const resolved = normalizeImageSrc(src);
+  const alt = attrs.alt?.trim() || "图片";
   return (
-    <img
-      src={normalizeImageSrc(src)}
-      alt={attrs.alt?.trim() || "图片"}
-      loading="lazy"
-      onError={() => setFailedSrc(src)}
-      className="my-3 h-auto max-w-full rounded-xl border border-border"
-      style={attrs.width ? { width: attrs.width } : undefined}
-    />
+    <figure data-slot="image-block" className="my-3">
+      <button
+        type="button"
+        onClick={() => setZoomOpen(true)}
+        aria-label={`放大查看：${alt}`}
+        title="点击放大"
+        className="block w-full cursor-zoom-in rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <img
+          key={attempt}
+          src={resolved}
+          alt={alt}
+          loading="lazy"
+          onError={() => setFailedSrc(src)}
+          className="h-auto max-w-full rounded-xl border border-border"
+          style={attrs.width ? { width: attrs.width } : undefined}
+        />
+      </button>
+      <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+        <DialogContent
+          className="max-w-[calc(100vw-24px)] border-0 bg-background/95 p-3 sm:max-w-[min(1200px,calc(100vw-48px))]"
+          // 放大查看是纯浏览弹层：点遮罩即关，无表单焦点循环
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <DialogTitle className="sr-only">{`放大查看：${alt}`}</DialogTitle>
+          <img
+            src={resolved}
+            alt={alt}
+            className="max-h-[80dvh] w-auto max-w-full rounded-lg object-contain"
+          />
+        </DialogContent>
+      </Dialog>
+    </figure>
   );
 }
 
