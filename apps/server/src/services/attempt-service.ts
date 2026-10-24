@@ -35,6 +35,7 @@ import {
   type QuestionOption,
   questionAnswersSchema,
   questionSchema,
+  type SelfReviewRecord,
   type StudentAnswer,
   type StudentPaperData,
   type StudentPaperUnit,
@@ -3223,6 +3224,26 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * studentFacingResultOf 整题投影（唯一包装处，不得再各自手写）。2026-10
  * 讲练一体起导出供 lesson-service 复用。
  */
+/**
+ * 行上自评记录的读取投影（QM-10 定义于 self-review-service，TT-09b 移驻本
+ * 文件：结果单题投影与自评服务共用同一读取口径，且避免 attempt-service ←→
+ * self-review-service 值循环）。verdict 列只存实际判断——undecided 已清除
+ * 为 null；revision 的单独下发见 resultQuestionOf。
+ */
+export function selfReviewRecordOf(
+  row: Pick<
+    ResponseRow,
+    "selfReviewVerdict" | "selfReviewAt" | "selfReviewRevision"
+  >,
+): SelfReviewRecord | null {
+  if (row.selfReviewVerdict === null) return null;
+  return {
+    verdict: row.selfReviewVerdict,
+    at: row.selfReviewAt ?? "",
+    revision: row.selfReviewRevision,
+  };
+}
+
 export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,
@@ -3250,6 +3271,14 @@ export function resultQuestionOf(
         : null,
     teacherComment: row.teacherComment,
     finalCorrect: row.finalCorrect,
+    // QM-11（TT-09b）：行级自评状态与判分策略（公布 gate 在
+    // releaseAwareQuestion 投影为 null——未公布形态无自评入口；record=null
+    // 表示未评或已撤回，revision 是 CAS 基线、undecided 清除亦递增）
+    selfReview: {
+      record: selfReviewRecordOf(row),
+      revision: row.selfReviewRevision,
+    },
+    gradingPolicy: row.gradingPolicy,
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
   };
@@ -3341,7 +3370,10 @@ function buildResultData(
    * 渲染为空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下
    * 都不含 [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd
    * 唯一入口）。D9 字段 teacherMark / teacherComment / finalCorrect 与
-   * autoCorrect 同法置 null——教师已批也不在截止前泄露对错与评语 */
+   * autoCorrect 同法置 null——教师已批也不在截止前泄露对错与评语。
+   * QM-11：selfReview / gradingPolicy 同法置 null——未公布形态无自评入口，
+   * 行策略与自评状态不下发（与 §5.5.3 pending_release「不显示答案、无自评
+   * 入口」同一读侧口径） */
   const releaseAwareQuestion = (item: AttemptResultQuestion) => {
     const projected = studentFacingResultOf(item);
     return released
@@ -3354,6 +3386,8 @@ function buildResultData(
           teacherMark: null,
           teacherComment: null,
           finalCorrect: null,
+          selfReview: null,
+          gradingPolicy: null,
         };
   };
 
