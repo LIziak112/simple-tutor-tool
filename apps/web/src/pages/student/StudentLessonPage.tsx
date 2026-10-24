@@ -744,8 +744,9 @@ function LessonCompletedView({
               </span>
               {summary !== null && (
                 <span>
-                  答对 {summary.correct} · 答错 {summary.wrong} · 待批{" "}
-                  {summary.pendingCount ?? summary.pending}
+                  {/* QM-12：有效判定口径——待判断含待教师批改与待自评 */}
+                  答对 {summary.correct} · 答错 {summary.wrong} · 待判断{" "}
+                  {summary.pending}
                 </span>
               )}
             </>

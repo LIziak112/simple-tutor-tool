@@ -129,6 +129,11 @@ function DetailSummary({
         <span>
           待批 <b className="text-amber-600">{data.pendingCount}</b> 题
         </span>
+        {(data.selfReviewPendingCount ?? 0) > 0 && (
+          <span>
+            待自评 <b className="text-sky-600">{data.selfReviewPendingCount}</b> 题
+          </span>
+        )}
       </p>
       <p className="flex items-baseline gap-1.5 text-sm text-muted-foreground">
         自动判分：

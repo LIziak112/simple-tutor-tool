@@ -164,7 +164,33 @@ function SolutionFold({ solutionMd }: { solutionMd: string }) {
   );
 }
 
-/** 判定区：draft 一律「未交卷」（D5）；已交卷展示四行判定/评语 */
+/**
+ * 教师端单题有效判定（QM-12：与结果视图/错题本/学情同一口径——教师判 >
+ * 自评 > 自动；未判断行按行策略区分「待自评/待批」）。
+ */
+function teacherEffectiveOf(question: TeacherAttemptDetailQuestion): {
+  value: boolean | null;
+  source: "teacher" | "self" | "auto" | null;
+} {
+  if (question.teacherMark === "correct") {
+    return { value: true, source: "teacher" };
+  }
+  if (question.teacherMark === "wrong") {
+    return { value: false, source: "teacher" };
+  }
+  if (question.selfReview?.verdict === "correct") {
+    return { value: true, source: "self" };
+  }
+  if (question.selfReview?.verdict === "wrong") {
+    return { value: false, source: "self" };
+  }
+  if (question.autoCorrect !== null) {
+    return { value: question.autoCorrect, source: "auto" };
+  }
+  return { value: null, source: null };
+}
+
+/** 判定区：draft 一律「未交卷」（D5）；已交卷展示五项判定/评语（QM-12 增自评行） */
 function VerdictSection({
   question,
   isDraft,
@@ -181,10 +207,16 @@ function VerdictSection({
     );
   }
   const auto = verdictOf(question.autoCorrect);
-  const final = verdictOf(question.finalCorrect);
+  const effective = teacherEffectiveOf(question);
+  const final = verdictOf(effective.value);
   const teacher =
     question.teacherMark === null ? null : question.teacherMark === "correct";
   const byTeacher = verdictOf(teacher);
+  // 待自评行单独提示（与教师待批区分——不进教师批改队列）
+  const isSelfReviewPending =
+    effective.value === null &&
+    (question.gradingPolicy ?? null) === "reference_self" &&
+    question.teacherMark === null;
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:grid-cols-2">
       <div className="flex gap-2">
@@ -194,7 +226,29 @@ function VerdictSection({
       <div className="flex gap-2">
         <dt className="shrink-0 text-muted-foreground">最终判定：</dt>
         <dd className={cn("font-medium", final.className)}>
-          {question.finalCorrect === null ? "待批" : final.text}
+          {effective.value === null
+            ? isSelfReviewPending
+              ? "待自评"
+              : "待批"
+            : final.text}
+        </dd>
+      </div>
+      <div className="flex gap-2">
+        <dt className="shrink-0 text-muted-foreground">学生自评：</dt>
+        <dd
+          className={cn(
+            "font-medium",
+            question.selfReview?.verdict === "correct" && "text-emerald-600",
+            question.selfReview?.verdict === "wrong" && "text-red-600",
+          )}
+        >
+          {question.selfReview?.verdict === "correct"
+            ? "自评正确"
+            : question.selfReview?.verdict === "wrong"
+              ? "自评错误"
+              : isSelfReviewPending
+                ? "待自评"
+                : "—"}
         </dd>
       </div>
       <div className="flex gap-2">
@@ -207,7 +261,7 @@ function VerdictSection({
               : "判错"}
         </dd>
       </div>
-      <div className="flex min-w-0 gap-2">
+      <div className="flex min-w-0 gap-2 sm:col-span-1">
         <dt className="shrink-0 text-muted-foreground">教师评语：</dt>
         <dd className="min-w-0">
           {question.teacherComment === null || question.teacherComment === ""
@@ -215,6 +269,11 @@ function VerdictSection({
             : question.teacherComment}
         </dd>
       </div>
+      {effective.source === "self" && (
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          最终判定按学生自评（自评是本人对照答案的判断，教师可随时改判）。
+        </p>
+      )}
     </dl>
   );
 }

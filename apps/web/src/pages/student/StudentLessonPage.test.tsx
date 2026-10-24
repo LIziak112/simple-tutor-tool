@@ -501,8 +501,9 @@ describe("StudentLessonPage：已完成卷视图", () => {
     expect(
       await screen.findByRole("button", { name: "再做一次" }),
     ).toBeInTheDocument();
-    // 汇总行（graded：答对 1 · 答错 1 · 待批 1）
-    expect(screen.getByText("答对 1 · 答错 1 · 待批 1")).toBeInTheDocument();
+    // 汇总行（graded：答对 1 · 答错 1 · 待判断 1——QM-12 有效判定口径的
+    // 未判断数，与逐题徽章同出处）
+    expect(screen.getByText("答对 1 · 答错 1 · 待判断 1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "再做一次" }));
     fireEvent.click(await screen.findByRole("button", { name: "开始新一轮" }));
     await waitFor(() => expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID));

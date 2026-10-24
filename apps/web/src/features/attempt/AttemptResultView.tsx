@@ -66,9 +66,11 @@ import { useResultReviewLocation } from "./use-result-review-location";
  * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect——教师批注
  * 后以批注为准）与老师批改块（teacherMark/teacherComment 显著展示，未批且
  * 已交维持既有待批态）；汇总区大数字改 scoreFinal ?? scoreAuto（全部批完显示
- * 「最终得分」），待批计数改用 pendingCount（D4 权威口径——批注后 autoCorrect
- * 仍空而 finalCorrect 已定，summary.pending 会虚高）。公布 gate 截止前服务端
- * 已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
+ * 「最终得分」）。QM-12（TT-09c）：待判断计数与对/错计数统一走有效判定口径
+ * （reviewCounts → verdictBadgeDisplayOf：教师判 > 自评 > 自动——自评行按
+ * 自评三态计数，与逐题徽章同出处不漂移；原 D9 的 pendingCount（教师待批
+ * 权威计数）不再顶「待批」瓦片——自评卷会漏计待自评行）。公布 gate 截止前
+ * 服务端已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
  * 2026-10（学生端闭环补完）：汇总卡操作区新增「练习本卷错题（N 题）」次级
  * 按钮——N = 本卷已判定为错的题数（逐题 finalCorrect === false，不含待批
  * finalCorrect=null；公布前已被 gate 置 null，天然不参与计数）。未公布
@@ -519,12 +521,20 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
-  // 圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为 0），
-  // 与 released 显隐判据双保险。
+  // 2026-10：本卷判错题——直达重练的圈题范围与示数。QM-12 起按有效判定
+  // （教师判 > 自评 > 自动，verdictBadgeDisplayOf 同口径）：自评「错」同样
+  // 可重练。未公布时服务端已把判定键整键 null 投影（数出来必为 0），与
+  // released 显隐判据双保险。
   const wrongQuestionIds = flatQuestions
-    .filter((question) => question.finalCorrect === false)
+    .filter((question) => verdictBadgeDisplayOf(question).verdict === false)
     .map((question) => question.questionId);
+  // QM-12：含自评行时注明口径（自评是本人判定；得分只按自动判定与教师
+  // 批改计算——不把自评冒充客观独立完成证据）
+  const hasSelfReviewRows =
+    released &&
+    flatQuestions.some(
+      (question) => (question.gradingPolicy ?? null) === "reference_self",
+    );
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;
   // SAI-22 结果页 AI 复盘：完成后按 §7.5 入口变「AI 复盘」，绑定回看当前题；
@@ -597,9 +607,13 @@ export function AttemptResultView({
               label: indexOfQuestion.has(question.questionId)
                 ? `第 ${indexOfQuestion.get(question.questionId)} 题`
                 : question.questionId,
+              // QM-12：喂有效判定（教师判 > 自评 > 自动，verdictBadgeDisplayOf
+              // 同口径）——自评「错」进错题组（与服务端批量过滤同口径）；
               // 未公布时服务端已置 null，这里再按 released 收口（双保险，
               // 与上方错题重练同款显隐判据）
-              finalCorrect: released ? question.finalCorrect : null,
+              finalCorrect: released
+                ? verdictBadgeDisplayOf(question).verdict
+                : null,
             }))}
             released={released}
           />
@@ -707,11 +721,14 @@ export function AttemptResultView({
                     </dd>
                   </div>
                   <div className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                    <dt>待批</dt>
+                    <dt>待判断</dt>
                     <dd>
-                      {/* D9：pendingCount 为 D4 权威计数（批注后 autoCorrect 仍空而
-                      finalCorrect 已定；公布态下恒非 null，回退仅兜底） */}
-                      {summary.pendingCount ?? summary.pending}
+                      {/* QM-12：有效判定口径（教师判 > 自评 > 自动）的未判断数
+                      （含待教师批改与待自评，逐题徽章区分两态）；与徽章同出处
+                      （reviewCounts→verdictBadgeDisplayOf），公布态下与答对/答错
+                      三分互补。D9 的 pendingCount（教师待批权威计数）另在
+                      「有 X 题待批」提示位消费 */}
+                      {counts.pending}
                       <span>题</span>
                     </dd>
                   </div>
@@ -728,7 +745,13 @@ export function AttemptResultView({
                 </dl>
                 {summary.unanswered > 0 && (
                   <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
-                    未答数单独统计，可能与判错或待批重叠，不能相加。
+                    未答数单独统计，可能与判错或待判断重叠，不能相加。
+                  </p>
+                )}
+                {hasSelfReviewRows && (
+                  <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
+                    含对照自评的题目按你的自评计入答对/答错；得分只按自动判定
+                    与老师批改计算，自评不是客观测评成绩。
                   </p>
                 )}
               </div>

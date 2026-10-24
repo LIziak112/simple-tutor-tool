@@ -385,7 +385,7 @@ describe("InsightsStudentPage 指标区", () => {
 
     expect(screen.getByText("李小红")).toBeInTheDocument();
     expect(
-      screen.getByText(/正确率 50%（对 3 \/ 已判定 6 题）· 待批 2 题/),
+      screen.getByText(/正确率 50%（对 3 \/ 已判定 6 题）· 未判断 2 题/),
     ).toBeInTheDocument();
 
     // 图表数据装配（mock echarts/core 后走真实 option 构造）：
