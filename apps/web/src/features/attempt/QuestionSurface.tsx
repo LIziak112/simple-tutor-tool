@@ -6,6 +6,7 @@ import { memo, useId } from "react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { letterOf, withBlankValue } from "./answer-format";
+import { QuestionSurfaceFrame } from "./QuestionSurfaceFrame";
 
 /** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
 function judgeStemOf(stemMd: string): string {
@@ -204,80 +205,82 @@ export const QuestionSurface = memo(function QuestionSurface({
   };
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
   return (
-    <div
-      data-slot="question-surface"
-      inert={mode === "export"}
-      className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
-    >
-      {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
-      {question.type === "judge" ? (
-        <RichMarkdown
-          source={judgeStemOf(question.stemMd)}
-          className="text-base leading-[1.75]"
-        />
-      ) : question.type === "fill" ? (
-        <BlankAnswersProvider
-          state={{
-            values: answer?.kind === "fill" ? answer.values : [],
-            onChange: (blankIndex, value) =>
-              onAnswer(
-                {
-                  kind: "fill",
-                  values: withBlankValue(
-                    answer?.kind === "fill" ? answer.values : [],
-                    blankIndex,
-                    value,
-                  ),
-                },
-                true,
-              ),
-            disabled: readOnly,
-          }}
-        >
+    <QuestionSurfaceFrame>
+      <div
+        data-slot="question-surface"
+        inert={mode === "export"}
+        className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
+      >
+        {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
+        {question.type === "judge" ? (
+          <RichMarkdown
+            source={judgeStemOf(question.stemMd)}
+            className="text-base leading-[1.75]"
+          />
+        ) : question.type === "fill" ? (
+          <BlankAnswersProvider
+            state={{
+              values: answer?.kind === "fill" ? answer.values : [],
+              onChange: (blankIndex, value) =>
+                onAnswer(
+                  {
+                    kind: "fill",
+                    values: withBlankValue(
+                      answer?.kind === "fill" ? answer.values : [],
+                      blankIndex,
+                      value,
+                    ),
+                  },
+                  true,
+                ),
+              disabled: readOnly,
+            }}
+          >
+            <RichMarkdown
+              source={question.stemMd}
+              className="text-base leading-[1.75]"
+            />
+          </BlankAnswersProvider>
+        ) : question.type === "choice" || question.type === "multi" ? (
+          // 选择题：选项在下方按钮里——服务端 stemMd 已是 studentStemMd 投影形态，
+          // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
+          <RichMarkdown
+            source={displayStemMd(question)}
+            className="text-base leading-[1.75]"
+          />
+        ) : (
           <RichMarkdown
             source={question.stemMd}
             className="text-base leading-[1.75]"
           />
-        </BlankAnswersProvider>
-      ) : question.type === "choice" || question.type === "multi" ? (
-        // 选择题：选项在下方按钮里——服务端 stemMd 已是 studentStemMd 投影形态，
-        // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
-        <RichMarkdown
-          source={displayStemMd(question)}
-          className="text-base leading-[1.75]"
-        />
-      ) : (
-        <RichMarkdown
-          source={question.stemMd}
-          className="text-base leading-[1.75]"
-        />
-      )}
+        )}
 
-      {/* 作答控件 */}
-      {question.type === "judge" && (
-        <JudgeControls
-          question={question}
-          answer={answer}
-          onAnswer={plainAnswer}
-          disabled={readOnly}
-        />
-      )}
-      {question.type === "choice" && (
-        <ChoiceControls
-          question={question}
-          answer={answer}
-          onAnswer={plainAnswer}
-          disabled={readOnly}
-        />
-      )}
-      {question.type === "multi" && (
-        <MultiControls
-          question={question}
-          answer={answer}
-          onAnswer={plainAnswer}
-          disabled={readOnly}
-        />
-      )}
-    </div>
+        {/* 作答控件 */}
+        {question.type === "judge" && (
+          <JudgeControls
+            question={question}
+            answer={answer}
+            onAnswer={plainAnswer}
+            disabled={readOnly}
+          />
+        )}
+        {question.type === "choice" && (
+          <ChoiceControls
+            question={question}
+            answer={answer}
+            onAnswer={plainAnswer}
+            disabled={readOnly}
+          />
+        )}
+        {question.type === "multi" && (
+          <MultiControls
+            question={question}
+            answer={answer}
+            onAnswer={plainAnswer}
+            disabled={readOnly}
+          />
+        )}
+      </div>
+    </QuestionSurfaceFrame>
   );
 });

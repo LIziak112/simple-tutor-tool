@@ -141,6 +141,42 @@ beforeEach(async () => {
   );
 });
 
+it("旧稿原排版已匹配时不强制切换像素网格，可继续原位编辑", async () => {
+  const { container } = render(<Harness />);
+  await waitFor(() => expect(questionSurfaceMatchesLayout).toHaveBeenCalled());
+  expect(
+    container.querySelector('[data-slot="question-surface-frame"]'),
+  ).toHaveAttribute("data-pixel-grid", "native");
+  fireEvent.click(screen.getByText("标画"));
+  await screen.findByRole("toolbar", { name: "第1题标画工具栏" });
+  expect(
+    container.querySelector('[data-slot="question-surface-frame"]'),
+  ).toHaveAttribute("data-pixel-grid", "native");
+});
+
+it("原排版不匹配时尝试稳定网格，成功后原位续写且不修改旧正文", async () => {
+  vi.mocked(questionSurfaceMatchesLayout).mockImplementation(
+    async () =>
+      document
+        .querySelector('[data-slot="question-surface-frame"]')
+        ?.getAttribute("data-pixel-grid") === "stable",
+  );
+  const before = await getAnnotationRecord(session, scope);
+  const { container } = render(<Harness />);
+  await waitFor(() =>
+    expect(
+      container.querySelector('[data-slot="question-surface-frame"]'),
+    ).toHaveAttribute("data-pixel-grid", "stable"),
+  );
+  fireEvent.click(screen.getByText("标画"));
+  await screen.findByRole("toolbar", { name: "第1题标画工具栏" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const after = await getAnnotationRecord(session, scope);
+  expect(after?.doc).toEqual(before?.doc);
+  expect(after?.pending).toEqual(before?.pending);
+  expect(after?.docVersion).toBe(before?.docVersion);
+});
+
 it("收笔时重试失败的本机稿，恢复写入后可退出圈画且原稿不变", async () => {
   render(<Harness />);
   fireEvent.click(screen.getByText("标画"));

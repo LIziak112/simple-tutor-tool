@@ -1,4 +1,4 @@
-import { chromium, expect, test, webkit } from "@playwright/test";
+import { test as baseTest, chromium, expect, webkit } from "@playwright/test";
 import type { AnnotationViewData } from "../packages/contract/src/annotation";
 import { annotationSurfaceLayoutCore } from "../packages/contract/src/annotation";
 import {
@@ -13,6 +13,26 @@ import {
   teacherApiLogin,
   uniqueSuffix,
 } from "./helpers";
+
+// 源设备也使用真实原生缩放，覆盖首次建稿后从无布局切到固定布局的过程。
+const test = baseTest.extend({
+  launchOptions: [
+    async ({ browserName, launchOptions }, use) => {
+      await use(
+        browserName === "chromium"
+          ? {
+              ...launchOptions,
+              args: [
+                ...(launchOptions.args ?? []),
+                "--force-device-scale-factor=1.25",
+              ],
+            }
+          : launchOptions,
+      );
+    },
+    { scope: "worker" },
+  ],
+});
 
 for (const legacySource of [false, true]) {
   test(`跨内核原位续写：${legacySource ? "旧稿原设备核验升级" : "新稿"}双向增写、擦除、撤销与回读，真实排版变化保稿`, async ({
@@ -110,13 +130,15 @@ for (const legacySource of [false, true]) {
     const otherBrowser =
       testInfo.project.name === "chromium"
         ? await webkit.launch({ channel: "" })
-        : await chromium.launch(
-            process.env.CI ? { channel: "" } : { channel: "msedge" },
-          );
+        : await chromium.launch({
+            channel: process.env.CI ? "" : "msedge",
+            args: ["--force-device-scale-factor=1.25"],
+          });
     try {
       const context = await otherBrowser.newContext({
         baseURL,
         viewport: { width: 1280, height: 900 },
+        deviceScaleFactor: 1.25,
       });
       const other = await context.newPage();
       const leaks = attachLeakMonitor(other);
@@ -256,7 +278,6 @@ for (const legacySource of [false, true]) {
       expect(writes).toBe(0);
       expect(leaks.violations()).toEqual([]);
       const storageState = await context.storageState();
-      await context.close();
 
       // 兼容缺少布局字段的历史响应；只改测试响应，不改写云端原稿。
       const legacyContext = await otherBrowser.newContext({
@@ -279,6 +300,9 @@ for (const legacySource of [false, true]) {
         } else await route.continue();
       });
       await legacy.goto(page.url());
+      // Windows WebKit 关闭最后一个页面后可能暂停动画帧；保持窗口并显式激活新页面。
+      await legacy.bringToFront();
+      await context.close();
       await legacy
         .locator('article[aria-label="第 1 题"]')
         .getByRole("button", { name: /圈画题干/ })
