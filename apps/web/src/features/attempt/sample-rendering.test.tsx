@@ -127,12 +127,29 @@ function toPublic(
     // QM-09：response 字数建议随公开投影下发（仅提示不校验）
     ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
     ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
-    // QM-13：matching 选项池/展开槽位集合与 ordering 项（公开作答面结构）
+    // QM-13：matching 选项池/展开槽位集合与 ordering 项（公开作答面结构）；
+    // 2026-10-25 审查 P1 收紧：学生面变体——剥离 distractor 键，ordering 附
+    // sortableCount 计数（与 attempt-service 学生面投影同口径）
     ...(question.matchingOptions !== undefined
-      ? { matchingOptions: question.matchingOptions }
+      ? {
+          matchingOptions: {
+            allowRepeat: question.matchingOptions.allowRepeat,
+            options: question.matchingOptions.options.map(({ id, text }) => ({
+              id,
+              text,
+            })),
+          },
+        }
       : {}),
     ...(question.orderingItems !== undefined
-      ? { orderingItems: question.orderingItems }
+      ? {
+          orderingItems: question.orderingItems.map(
+            ({ id, text, fixedPosition }) => ({ id, text, fixedPosition }),
+          ),
+          sortableCount: question.orderingItems.filter(
+            (item) => !item.distractor && item.fixedPosition === null,
+          ).length,
+        }
       : {}),
     ...(matchingSlotsOf(question, materials) !== undefined
       ? { matchingSlots: matchingSlotsOf(question, materials) }
@@ -271,14 +288,22 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
           break;
         }
         case "ordering": {
-          // QM-13（TT-10a）转正：排序真实控件——排序区按非干扰项数出行、
-          // 固定项锁定（无移动/移除按钮）、待排序项池含干扰项（不加标记）
+          // QM-13（TT-10a）转正：排序真实控件——排序区按 sortableCount+固定项数
+          // 出行、固定项锁定（无移动/移除按钮）、待排序项池含干扰项（不加标记）
           const items = publicQuestion.orderingItems ?? [];
-          const nonDistractors = items.filter(
-            (item) => !item.distractor,
+          const fixedCount = items.filter(
+            (item) => item.fixedPosition !== null,
           ).length;
           expect(items.length, `${source} ordering 应有排序项`).toBeGreaterThan(
             0,
+          );
+          // 计数一致性：sortableCount + 固定项数 = 教师侧全量的非干扰项数
+          // （固定项恒非干扰，fixedPosition 声明自参考序列）
+          const nonDistractors = (question.orderingItems ?? []).filter(
+            (item) => !item.distractor,
+          ).length;
+          expect(publicQuestion.sortableCount ?? 0).toBe(
+            nonDistractors - fixedCount,
           );
           for (const item of items) {
             if (item.fixedPosition !== null) {
@@ -293,11 +318,13 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
           ).toHaveLength(
             items.filter((item) => item.fixedPosition === null).length,
           );
-          // 排序区行数 = 非干扰项数（固定项预置占位）
+          // 排序区行数 = sortableCount + 固定项数（固定项预置占位）
           const board = screen.getByText(
             "排序区（按正确顺序放置）",
           ).parentElement;
-          expect(board?.querySelectorAll("li")).toHaveLength(nonDistractors);
+          expect(board?.querySelectorAll("li")).toHaveLength(
+            (publicQuestion.sortableCount ?? 0) + fixedCount,
+          );
           break;
         }
         case "response":

@@ -285,8 +285,8 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
         matchingOptions: {
           allowRepeat: false,
           options: [
-            { id: "opt-1", text: "甲", distractor: false },
-            { id: "opt-2", text: "乙", distractor: false },
+            { id: "opt-1", text: "甲" },
+            { id: "opt-2", text: "乙" },
           ],
         },
         matchingSlots: ["slot-1", "slot-2"],
@@ -298,8 +298,8 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
       scopeId: "s-m",
       stemMd: baseQuestion.stemMd,
       options: [
-        { key: "opt-1", text: "甲", distractor: false },
-        { key: "opt-2", text: "乙", distractor: false },
+        { key: "opt-1", text: "甲" },
+        { key: "opt-2", text: "乙" },
       ],
       slotIds: ["slot-1", "slot-2"],
       allowRepeat: false,
@@ -309,9 +309,10 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
         ...baseQuestion,
         type: "ordering",
         orderingItems: [
-          { id: "it-1", text: "甲", fixedPosition: null, distractor: false },
-          { id: "it-2", text: "乙", fixedPosition: 1, distractor: false },
+          { id: "it-1", text: "甲", fixedPosition: null },
+          { id: "it-2", text: "乙", fixedPosition: 1 },
         ],
+        sortableCount: 1,
       },
       "s-o",
     );
@@ -320,9 +321,10 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
       scopeId: "s-o",
       stemMd: baseQuestion.stemMd,
       items: [
-        { key: "it-1", text: "甲", fixedPosition: null, distractor: false },
-        { key: "it-2", text: "乙", fixedPosition: 1, distractor: false },
+        { key: "it-1", text: "甲", fixedPosition: null },
+        { key: "it-2", text: "乙", fixedPosition: 1 },
       ],
+      sortableCount: 1,
     });
     // 结构缺失（服务端投影防御形态）：空池空槽，视图显式报错不静默降级
     expect(
@@ -342,6 +344,25 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
       scopeId: "s-o2",
       stemMd: baseQuestion.stemMd,
       items: [],
+      sortableCount: 0,
+    });
+    // sortableCount 缺失（半结构态）= 结构不可用，同走防御形态（审查 P1：
+    // 学生面无逐项干扰标记，缺计数则板行数/完成度无从派生）
+    expect(
+      prepareQuestion(
+        {
+          ...baseQuestion,
+          type: "ordering",
+          orderingItems: [{ id: "it-1", text: "甲", fixedPosition: null }],
+        },
+        "s-o3",
+      ),
+    ).toEqual({
+      kind: "ordering",
+      scopeId: "s-o3",
+      stemMd: baseQuestion.stemMd,
+      items: [],
+      sortableCount: 0,
     });
   });
 
@@ -368,7 +389,7 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
           type: "matching",
           matchingOptions: {
             allowRepeat: false,
-            options: [{ id: "opt-1", text: "甲", distractor: false }],
+            options: [{ id: "opt-1", text: "甲" }],
           },
           matchingSlots: ["slot-1"],
         },
@@ -378,11 +399,10 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
         {
           ...full,
           type: "ordering",
-          orderingItems: [
-            { id: "it-1", text: "甲", fixedPosition: null, distractor: false },
-          ],
+          orderingItems: [{ id: "it-1", text: "甲", fixedPosition: null }],
+          sortableCount: 1,
         },
-        ["kind", "scopeId", "stemMd", "items"],
+        ["kind", "scopeId", "stemMd", "items", "sortableCount"],
       ],
     ];
     for (const [question, keys] of cases) {

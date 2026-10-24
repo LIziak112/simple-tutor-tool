@@ -300,7 +300,7 @@ function draftQuestionOf(
 }
 
 describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽位/排序项）", () => {
-  it("matching：选项池（含干扰项）与展开槽位集合随草稿下发；slots= 区间按材料槽位序展开", async () => {
+  it("matching：选项池与展开槽位集合随草稿下发；slots= 区间按材料槽位序展开", async () => {
     const { app, aCookie, attemptId } = await makeQm13App();
     const draft = await getDraft(app, aCookie, attemptId);
     const question = draftQuestionOf(draft, Q.matching);
@@ -313,23 +313,35 @@ describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽
       "slot-4",
       "slot-5",
     ]);
-    // 干扰项标记是公开结构（§6.1 调整 6：matching 干扰项在池内可选）
-    expect(
-      question.matchingOptions?.options.filter((o) => o.distractor),
-    ).toHaveLength(0); // 本夹具未显式标记 matching 干扰项（由答案口径推导不了）
   });
 
-  it("ordering：排序项（固定位/干扰项标记公开）随草稿下发", async () => {
+  it("ordering：排序项（固定位公开）随草稿下发", async () => {
     const { app, aCookie, attemptId } = await makeQm13App();
     const draft = await getDraft(app, aCookie, attemptId);
     const question = draftQuestionOf(draft, Q.ordering);
     expect(question.orderingItems).toHaveLength(6);
     const fixed = question.orderingItems?.find((item) => item.id === "it-3");
     expect(fixed?.fixedPosition).toBe(3);
-    const distractor = question.orderingItems?.find(
-      (item) => item.id === "it-6",
-    );
-    expect(distractor?.distractor).toBe(true);
+  });
+
+  it("审查 P1 收紧：公布前学生载荷逐项不含 distractor 键；ordering 以 sortableCount 计数替代", async () => {
+    const { app, aCookie, attemptId } = await makeQm13App();
+    const draft = await getDraft(app, aCookie, attemptId);
+    const matching = draftQuestionOf(draft, Q.matching);
+    // matching 选项逐项无 distractor 键（教师侧全量结构不随学生面下发）
+    expect(matching.matchingOptions?.options ?? []).not.toHaveLength(0);
+    for (const option of matching.matchingOptions?.options ?? []) {
+      expect("distractor" in option).toBe(false);
+    }
+    const ordering = draftQuestionOf(draft, Q.ordering);
+    expect(ordering.orderingItems ?? []).not.toHaveLength(0);
+    for (const item of ordering.orderingItems ?? []) {
+      expect("distractor" in item).toBe(false);
+    }
+    // sortableCount：非干扰且非固定项数（it-1/2/4/5 可排，it-3 固定、it-6 干扰）
+    expect(ordering.sortableCount).toBe(4);
+    // 整载荷无 distractor 键名（干扰项身份属答案侧信息，AGENTS 第 3 条口径）
+    expect(JSON.stringify(draft)).not.toContain("distractor");
   });
 
   it("投影零泄露：草稿视图不携带 answers/solution/hints（assertNoLeak + 详解哨兵）", async () => {
@@ -517,5 +529,16 @@ describe("QM-13 细项6：提交后「未填写」与「未判断」不混为一
       sequence: ["it-1", "it-2", "it-3", "it-4", "it-5"],
     });
     expect(ordering?.finalCorrect).toBeNull();
+    // 审查 P1：结果快照同口径——逐项无 distractor 键、携带 sortableCount，
+    // 对照呈现所需的选项池/排序项/槽位结构不缺（公布态对照不回归）
+    for (const option of matching?.snapshot.matchingOptions?.options ?? []) {
+      expect("distractor" in option).toBe(false);
+    }
+    for (const item of ordering?.snapshot.orderingItems ?? []) {
+      expect("distractor" in item).toBe(false);
+    }
+    expect(ordering?.snapshot.sortableCount).toBe(4);
+    expect(matching?.snapshot.matchingOptions?.options).toHaveLength(7);
+    expect(JSON.stringify(detail)).not.toContain("distractor");
   });
 });

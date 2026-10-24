@@ -363,7 +363,8 @@ describe("预期解析投影的契约可解析性（七选五 matching）", () =
       throw new Error(`应为 matching，实为 ${parsed.data.kind}`);
     }
     expect(Object.keys(parsed.data.pairs)).toHaveLength(5);
-    // 干扰项标记是公开结构（学生可见可错选）
+    // 审查 P1 收紧：学生面剥离 distractor 键（干扰项身份属答案侧，教师侧
+    // 全量结构见 matchingOptionsSchema）；混入的标记经 parse strip
     const options = {
       allowRepeat: false,
       options: [
@@ -372,17 +373,19 @@ describe("预期解析投影的契约可解析性（七选五 matching）", () =
         { id: "opt-7", text: "早晨的咖啡因早已代谢", distractor: true },
       ],
     };
-    expect(
-      questionPublicSchema.safeParse({
-        id: "qx-1",
-        type: "matching",
-        difficulty: 4,
-        knowledge: ["七选五"],
-        stemMd: "从 7 个选项中选 5 个",
-        hintCount: 0,
-        matchingOptions: options,
-      }).success,
-    ).toBe(true);
+    const studentFacing = questionPublicSchema.parse({
+      id: "qx-1",
+      type: "matching",
+      difficulty: 4,
+      knowledge: ["七选五"],
+      stemMd: "从 7 个选项中选 5 个",
+      hintCount: 0,
+      matchingOptions: options,
+    });
+    expect(studentFacing.matchingOptions?.options).toHaveLength(3);
+    for (const option of studentFacing.matchingOptions?.options ?? []) {
+      expect("distractor" in option).toBe(false);
+    }
   });
 });
 

@@ -1,10 +1,5 @@
 import type { PublicOption, PublicSlot, QuestionPublic } from "@tutor/contract";
-import {
-  emptyPublicStructure,
-  matchingPublicStructureOf,
-  optionsPublicStructureOf,
-  orderingPublicStructureOf,
-} from "@tutor/contract";
+import { optionsPublicStructureOf } from "@tutor/contract";
 import { processor } from "@tutor/md-dsl";
 import { blankSlotIdOf } from "@/features/markdown/directives/session-context";
 import type { MdNode } from "@/features/markdown/remark/mdast-interop";
@@ -150,14 +145,14 @@ export type PreparedQuestion =
       readonly scopeId: string;
       readonly stemMd: string;
       /**
-       * matching 公开结构（QM-13 细项 2）：选项池（key/text/distractor——干扰
-       * 项在池内可选，§6.1 调整 6）+ 服务端展开的有序槽位集合 + 是否允许重复。
-       * 结构不可用（投影防御形态）= 空池空槽，视图显式报错不静默降级。
+       * matching 公开结构（QM-13 细项 2）：选项池（key/text——2026-10-25 审查
+       * P1 收紧起学生面不含 distractor 标记，池内一律可选，选错是答案错误）+
+       * 服务端展开的有序槽位集合 + 是否允许重复。结构不可用（投影防御形态）
+       * = 空池空槽，视图显式报错不静默降级。
        */
       readonly options: readonly {
         readonly key: string;
         readonly text: string;
-        readonly distractor: boolean;
       }[];
       readonly slotIds: readonly string[];
       readonly allowRepeat: boolean;
@@ -168,16 +163,18 @@ export type PreparedQuestion =
       readonly scopeId: string;
       readonly stemMd: string;
       /**
-       * ordering 公开结构（QM-13 细项 3）：排序项（key/text/fixedPosition/
-       * distractor——固定位与干扰项标记属公开结构，§6.1 调整 3/6）。结构
-       * 不可用（投影防御形态）= 空项，视图显式报错不静默降级。
+       * ordering 公开结构（QM-13 细项 3）：排序项（key/text/fixedPosition——
+       * 固定位属公开结构 §6.1 调整 3；2026-10-25 审查 P1 收紧起学生面不含
+       * distractor 标记）+ sortableCount（学生需自行放置的项数：板行数与
+       * 完成度由计数派生，不再从逐项标记推导）。结构不可用（投影防御形态）
+       * = 空项零计数，视图显式报错不静默降级。
        */
       readonly items: readonly {
         readonly key: string;
         readonly text: string;
         readonly fixedPosition: number | null;
-        readonly distractor: boolean;
       }[];
+      readonly sortableCount: number;
       readonly context?: PreparedQuestionContext;
     };
 
@@ -283,8 +280,9 @@ export function prepareQuestion(
         context,
       );
     case "matching":
-      // QM-13 细项 2：选项池 + 服务端展开的槽位集合（MatchingPublicStructure
-      // 构造入口单源）；结构缺失走空结构防御形态（视图显式报错，§7.1）
+      // QM-13 细项 2：选项池 + 服务端展开的槽位集合；结构缺失走空结构防御
+      // 形态（视图显式报错，§7.1）。审查 P1 收紧：学生面选项池不含 distractor
+      // 标记（呈现零消费），池键 = 选项稳定 id
       return withContext(
         question.matchingOptions !== undefined &&
           question.matchingSlots !== undefined
@@ -292,34 +290,49 @@ export function prepareQuestion(
               kind: "matching",
               scopeId,
               stemMd: question.stemMd,
-              ...matchingPublicStructureOf(
-                question.matchingOptions,
-                question.matchingSlots,
-              ),
+              allowRepeat: question.matchingOptions.allowRepeat,
+              options: question.matchingOptions.options.map((option) => ({
+                key: option.id,
+                text: option.text,
+              })),
+              slotIds: [...question.matchingSlots],
             }
           : {
               kind: "matching",
               scopeId,
               stemMd: question.stemMd,
-              ...emptyPublicStructure.matching,
+              options: [],
+              slotIds: [],
+              allowRepeat: false,
             },
         context,
       );
     case "ordering":
-      // QM-13 细项 3：排序项（OrderingPublicStructure 构造入口单源）
+      // QM-13 细项 3：排序项 + sortableCount（审查 P1 收紧：学生面不含
+      // distractor 标记，板行数/完成度由计数派生）；两键缺一按结构不可用
+      // 防御形态处理（视图显式报错，§7.1）
       return withContext(
-        question.orderingItems !== undefined
+        question.orderingItems !== undefined &&
+          question.sortableCount !== undefined
           ? {
               kind: "ordering",
               scopeId,
               stemMd: question.stemMd,
-              ...orderingPublicStructureOf(question.orderingItems),
+              items: question.orderingItems.map(
+                ({ id, text, fixedPosition }) => ({
+                  key: id,
+                  text,
+                  fixedPosition,
+                }),
+              ),
+              sortableCount: question.sortableCount,
             }
           : {
               kind: "ordering",
               scopeId,
               stemMd: question.stemMd,
-              ...emptyPublicStructure.ordering,
+              items: [],
+              sortableCount: 0,
             },
         context,
       );

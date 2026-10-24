@@ -25,11 +25,13 @@ import {
   inspectShapeOfAnswer,
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
+  type MatchingOptionsStudent,
   matchingPublicStructureOf,
   materialPublicSchema,
   materialRefSchema,
   NEW_QUESTION_TYPES,
   type NoteSubmissionEvidenceState,
+  type OrderingItemStudent,
   optionSchema,
   orderingPublicStructureOf,
   type PracticeFeedbackMode,
@@ -729,19 +731,59 @@ export function publicOfSnapshot(
     // 数字，不含任何参考内容（§5.4.1 不硬校验不截断）
     ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
     ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
-    // QM-13：matching 选项池 / ordering 项（公开作答面结构——干扰项与固定位
-    // 标记属公开结构 §6.1 调整 3/6）与展开槽位集合（slots= 区间按材料槽位
-    // 序展开，材料快照缺失不携带键——学生端呈现防御形态）
+    // QM-13：matching 选项池 / ordering 项与展开槽位集合（slots= 区间按材料
+    // 槽位序展开，材料快照缺失不携带键——学生端呈现防御形态）。2026-10-25
+    // 审查 P1 收紧：两结构走学生面变体（剥离 distractor，ordering 附
+    // sortableCount 计数），教师侧全量不经本投影
     ...(question.matchingOptions !== undefined
-      ? { matchingOptions: question.matchingOptions }
+      ? { matchingOptions: matchingOptionsStudentOf(question.matchingOptions) }
       : {}),
     ...(question.orderingItems !== undefined
-      ? { orderingItems: question.orderingItems }
+      ? orderingStudentOf(question.orderingItems)
       : {}),
     ...matchingSlotsProjection(question, options.materialSlots),
     hintCount: question.hints.length,
     questionRevisionId,
   });
+}
+
+/**
+ * 学生面 matching 选项池（2026-10-25 审查 P1 收紧）：剥离逐项 distractor 键
+ * ——干扰项身份属答案侧信息，不随学生载荷下发（教师侧全量结构由
+ * matchingOptionsSchema 承载，保存校验继续用快照全量）。匹配呈现零消费标记。
+ */
+function matchingOptionsStudentOf(
+  pool: NonNullable<Question["matchingOptions"]>,
+): MatchingOptionsStudent {
+  return {
+    allowRepeat: pool.allowRepeat,
+    options: pool.options.map((option) => ({
+      id: option.id,
+      text: option.text,
+    })),
+  };
+}
+
+/**
+ * 学生面 ordering 项 + sortableCount（2026-10-25 审查 P1 收紧）：逐项剥离
+ * distractor 键（ordering 干扰项由参考序列推导，逐项下发=公布前枚举答案成员）；
+ * 学生要自行放置的项数（非干扰且非固定）改以计数下发，板行数与完成度由它
+ * 派生（固定项恒非干扰——fixedPosition 声明自参考序列）。
+ */
+function orderingStudentOf(items: NonNullable<Question["orderingItems"]>): {
+  orderingItems: OrderingItemStudent[];
+  sortableCount: number;
+} {
+  return {
+    orderingItems: items.map(({ id, text, fixedPosition }) => ({
+      id,
+      text,
+      fixedPosition,
+    })),
+    sortableCount: items.filter(
+      (item) => !item.distractor && item.fixedPosition === null,
+    ).length,
+  };
 }
 
 /**
@@ -3555,13 +3597,17 @@ export function resultQuestionOf(
       ...(snapshot.options !== undefined
         ? { options: snapshot.options.map((option) => option.text) }
         : {}),
-      // QM-13：matching/ordering 作答面结构随结果快照下发（对照呈现需要）
+      // QM-13：matching/ordering 作答面结构随结果快照下发（对照呈现需要）；
+      // 2026-10-25 审查 P1 收紧：学生面变体（剥离 distractor，ordering 附
+      // sortableCount 计数）——对照呈现不需要逐项干扰标记
       ...(snapshot.matchingOptions !== undefined
-        ? { matchingOptions: snapshot.matchingOptions }
+        ? {
+            matchingOptions: matchingOptionsStudentOf(snapshot.matchingOptions),
+          }
         : {}),
       ...matchingSlotsProjection(snapshot, options.materialSlots),
       ...(snapshot.orderingItems !== undefined
-        ? { orderingItems: snapshot.orderingItems }
+        ? orderingStudentOf(snapshot.orderingItems)
         : {}),
       hintCount: snapshot.hints.length,
     },

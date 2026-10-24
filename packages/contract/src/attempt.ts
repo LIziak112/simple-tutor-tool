@@ -3,8 +3,8 @@ import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
-  matchingOptionsSchema,
-  orderingItemSchema,
+  matchingOptionsStudentSchema,
+  orderingItemStudentSchema,
   questionAnswersSchema,
   questionPublicSchema,
 } from "./content.ts";
@@ -446,11 +446,14 @@ export const attemptResultQuestionSchema = z.object({
     /**
      * QM-13：matching/ordering 作答面公开结构（与 questionPublicSchema 同
      * 字段——结果视图/题级反馈的对照呈现需要槽位/选项/项；旧载荷缺省合法）。
-     * 无答案内容（distractor/fixedPosition 属公开结构，§6.1 调整 3/6）。
+     * 2026-10-25 审查 P1 收紧起为学生面变体：逐项剥离 distractor 键（干扰项
+     * 身份属答案侧信息），ordering 以 sortableCount 计数替代；fixedPosition
+     * 属公开结构（§6.1 调整 3）保留。
      */
-    matchingOptions: matchingOptionsSchema.optional(),
+    matchingOptions: matchingOptionsStudentSchema.optional(),
     matchingSlots: z.array(z.string().min(1)).min(1).optional(),
-    orderingItems: z.array(orderingItemSchema).optional(),
+    orderingItems: z.array(orderingItemStudentSchema).optional(),
+    sortableCount: z.number().int().min(0).optional(),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),

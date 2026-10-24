@@ -372,4 +372,36 @@ describe("questionPublicSchema 白名单扩展（作答面结构随题下发，f
     expect(parsed).not.toHaveProperty("hints");
     expect(parsed.hintCount).toBe(0);
   });
+
+  it("审查 P1 收紧：学生面变体剥离 distractor 键（教师侧全量另见 matchingOptionsSchema/orderingItemSchema），sortableCount 计数随 ordering 下发", () => {
+    const parsed = questionPublicSchema.parse({
+      ...base,
+      matchingOptions: {
+        allowRepeat: false,
+        options: [
+          { id: "opt-1", text: "一", distractor: true },
+          { id: "opt-2", text: "二", distractor: false },
+        ],
+      },
+      orderingItems: [
+        { id: "it-1", text: "甲", fixedPosition: null, distractor: false },
+        { id: "it-2", text: "乙", fixedPosition: 1, distractor: false },
+        { id: "it-6", text: "己", fixedPosition: null, distractor: true },
+      ],
+      sortableCount: 1,
+    });
+    // 混入的 distractor 标记被 strip（fail closed：多给的键不透传）
+    for (const option of parsed.matchingOptions?.options ?? []) {
+      expect("distractor" in option).toBe(false);
+    }
+    for (const item of parsed.orderingItems ?? []) {
+      expect("distractor" in item).toBe(false);
+    }
+    // fixedPosition 属公开结构（§6.1 调整 3），学生面保留
+    expect(parsed.orderingItems?.[1]?.fixedPosition).toBe(1);
+    expect(parsed.sortableCount).toBe(1);
+    // sortableCount 缺省不注入键（非 ordering 题不携带）
+    const bare = questionPublicSchema.parse(base);
+    expect(bare).not.toHaveProperty("sortableCount");
+  });
 });

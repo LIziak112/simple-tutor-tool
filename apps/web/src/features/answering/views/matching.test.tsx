@@ -6,7 +6,8 @@ import { matchingView } from "./matching";
 /**
  * matching 视图测试（QM-13 细项 2/5）：槽位行 + 原生 select、不可重复约束的
  * 客户端面（被占选项禁用）、部分配对草稿合法、只读/参考/对照/完成度。
- * 防泄露：视图不渲染参考答案（Reference/Comparison 只消费宿主授权材料）。
+ * 防泄露：视图不渲染参考答案（Reference/Comparison 只消费宿主授权材料）；
+ * 2026-10-25 审查 P1 收紧起模型选项不含 distractor 标记（池内一律可选）。
  */
 
 const baseModel: PreparedOf<"matching"> = {
@@ -14,9 +15,9 @@ const baseModel: PreparedOf<"matching"> = {
   scopeId: "scope-m",
   stemMd: "从选项中为空白处选择内容。",
   options: [
-    { key: "opt-1", text: "选项甲", distractor: false },
-    { key: "opt-2", text: "选项乙", distractor: false },
-    { key: "opt-8", text: "干扰项", distractor: true },
+    { key: "opt-1", text: "选项甲" },
+    { key: "opt-2", text: "选项乙" },
+    { key: "opt-8", text: "干扰项" },
   ],
   slotIds: ["slot-1", "slot-2"],
   allowRepeat: false,

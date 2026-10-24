@@ -11,17 +11,20 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
 /**
  * ordering 排序呈现（QM-13 细项 3/5）。板模型口径（与契约 inspectShape 逐字
  * 对齐，§6.1 调整 3/6）：
- * - 板 = 非干扰项行序列（行数 = 非干扰项数）；固定项从开答即预置在声明位、
- *   锁定不可移动/移除（「已固定」徽标，fixedPosition 属公开结构）；
+ * - 板 = 非干扰项行序列（行数 = sortableCount + 固定项数——2026-10-25 审查
+ *   P1 收紧：学生面剥离逐项 distractor 标记，行数与完成度改由 sortableCount
+ *   计数派生；固定项恒非干扰，fixedPosition 声明自参考序列）；固定项从开答
+ *   即预置在声明位、锁定不可移动/移除（「已固定」徽标，fixedPosition 属公开
+ *   结构）；
  * - 待排序项池「加入排序」放入首个空行；已放可动项支持 上移/下移（跳过固定
  *   行：目标空则移入、被占则交换）与「移除」回池——按钮原生键盘可达、触控
  *   ≥44px；干扰项在池内不加标记（学生从保存拒绝信息得知，§6.1 调整 6——
- *   UI 不预拦以免提前泄露干扰项身份）；
+ *   UI 不预拦，学生面也无从标记）；
  * - 保存序列派生：按行序收集已放项；**固定项仅当其上方全部行已满（锚定）时
  *   进入序列**——保证任意合法板态派生的序列过服务端结构校验（固定项若出现
  *   必在其声明位）。恢复：固定项回其声明行，序列中的可动项按序填入剩余空行
  *   （部分草稿保序不保距——完整作答无差异）；
- * - 分项未放=合法草稿；完成度按已放非干扰项计。
+ * - 分项未放=合法草稿；完成度按已放应放项计（期望数 = sortableCount）。
  */
 
 /** 排序板：行 → 项 key（null = 空行） */
@@ -35,9 +38,20 @@ function itemOf(
   return model.items.find((item) => item.key === key);
 }
 
+/**
+ * 板行数 = sortableCount + 固定项数（学生面无逐项干扰标记，从计数派生；
+ * 固定项恒非干扰——fixedPosition 声明自参考序列，不会与干扰项重叠）
+ */
+function boardRowCountOf(model: PreparedOf<"ordering">): number {
+  return (
+    model.sortableCount +
+    model.items.filter((item) => item.fixedPosition !== null).length
+  );
+}
+
 /** 固定行下标集合（fixedPosition 预置行，永不可移入/移出） */
 function fixedRowIndexesOf(model: PreparedOf<"ordering">): ReadonlySet<number> {
-  const total = model.items.filter((item) => !item.distractor).length;
+  const total = boardRowCountOf(model);
   const indexes = new Set<number>();
   for (const item of model.items) {
     if (item.fixedPosition !== null && item.fixedPosition <= total) {
@@ -52,8 +66,10 @@ function boardOf(
   model: PreparedOf<"ordering">,
   answer: StudentAnswerOfKind<"ordering"> | undefined,
 ): (string | null)[] {
-  const total = model.items.filter((item) => !item.distractor).length;
-  const rows: Array<string | null> = Array.from({ length: total }, () => null);
+  const rows: Array<string | null> = Array.from(
+    { length: boardRowCountOf(model) },
+    () => null,
+  );
   for (const index of fixedRowIndexesOf(model)) {
     const fixed = model.items.find((item) => item.fixedPosition === index + 1);
     if (fixed !== undefined) rows[index] = fixed.key;
@@ -210,7 +226,7 @@ export const orderingView: AnswerKindView<
     }
     const fixedRows = fixedRowIndexesOf(model);
     const rows = boardOf(model, answer);
-    const firstEmptyRow = rows.findIndex((key) => key === null);
+    const firstEmptyRow = rows.indexOf(null);
     const placedKeys = new Set(
       rows.filter((key): key is string => key !== null),
     );
@@ -374,17 +390,14 @@ export const orderingView: AnswerKindView<
     />
   ),
   completion: (model, answer) => {
-    // 分项未放=合法草稿：完成度按学生实际要放的项计——非干扰且非固定
-    // （固定项开答即预置、不算学生工作；干扰项不计入应放数）
-    const expected = model.items.filter(
-      (item) => !item.distractor && item.fixedPosition === null,
-    ).length;
+    // 分项未放=合法草稿：完成度期望 = sortableCount（应放项数：非干扰且非
+    // 固定——固定项开答即预置、不算学生工作）；已放按序列命中计。学生序列
+    // 经服务端结构校验不含干扰项（干扰入序 400），本地未保存态短暂多计不
+    // 影响保存结果（2026-10-25 审查 P1 后学生面无逐项标记，无从预拦）
+    const expected = model.sortableCount;
     const placedKeys = new Set(answer?.sequence ?? []);
     const filled = model.items.filter(
-      (item) =>
-        !item.distractor &&
-        item.fixedPosition === null &&
-        placedKeys.has(item.key),
+      (item) => item.fixedPosition === null && placedKeys.has(item.key),
     ).length;
     return {
       state:

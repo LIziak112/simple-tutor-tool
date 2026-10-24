@@ -62,12 +62,13 @@ const matchingQuestion: Pick<
     knowledge: [],
     stemMd: "把城市与国家配对。",
     hintCount: 0,
-    // 对照需要作答面结构（与公开投影同字段，resultQuestionOf 随结果快照下发）
+    // 对照需要作答面结构（与公开投影同字段，resultQuestionOf 随结果快照下发；
+    // 2026-10-25 审查 P1 收紧后为学生面变体——不含 distractor 键）
     matchingOptions: {
       allowRepeat: false,
       options: [
-        { id: "opt-1", text: "中国", distractor: false },
-        { id: "opt-2", text: "日本", distractor: false },
+        { id: "opt-1", text: "中国" },
+        { id: "opt-2", text: "日本" },
       ],
     },
     matchingSlots: ["北京", "东京"],
@@ -91,20 +92,11 @@ const orderingQuestion: Pick<
     stemMd: "按温差排序。",
     hintCount: 0,
     orderingItems: [
-      {
-        id: "it-1",
-        text: "+4（周二）",
-        fixedPosition: null,
-        distractor: false,
-      },
-      {
-        id: "it-2",
-        text: "-2（周三）",
-        fixedPosition: null,
-        distractor: false,
-      },
-      { id: "it-3", text: "+3（周四）", fixedPosition: 2, distractor: false },
+      { id: "it-1", text: "+4（周二）", fixedPosition: null },
+      { id: "it-2", text: "-2（周三）", fixedPosition: null },
+      { id: "it-3", text: "+3（周四）", fixedPosition: 2 },
     ],
+    sortableCount: 2,
   },
   answer: { kind: "ordering", sequence: ["it-1", "it-2"] },
   answers: { kind: "ordering", sequence: ["it-2", "it-3", "it-1"] },

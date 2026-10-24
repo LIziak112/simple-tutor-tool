@@ -6,33 +6,21 @@ import { orderingView } from "./ordering";
 /**
  * ordering 视图测试（QM-13 细项 3/5）：固定项锁定不可移、可动项加入/上移/
  * 下移/移除（原生按钮键盘可达）、部分序列草稿合法、固定项锚定入序口径、
- * 只读/参考/对照/完成度。干扰项在池内不加标记（§6.1 调整 6）。
+ * 只读/参考/对照/完成度。干扰项在池内不加标记（§6.1 调整 6；2026-10-25
+ * 审查 P1 收紧起学生面不含逐项 distractor 标记，板行数/完成度由 sortableCount
+ * 计数派生——本夹具 2 可排 + 1 固定 = 板 3 行，it-6 为干扰项不计数）。
  */
 
 const baseModel: PreparedOf<"ordering"> = {
   kind: "ordering",
   scopeId: "scope-o",
   stemMd: "将下列段落排成连贯文字。",
+  sortableCount: 2,
   items: [
-    {
-      key: "it-1",
-      text: "甲：也就是说",
-      fixedPosition: null,
-      distractor: false,
-    },
-    { key: "it-2", text: "乙：如何评价", fixedPosition: 3, distractor: false },
-    {
-      key: "it-3",
-      text: "丙：不以人废言",
-      fixedPosition: null,
-      distractor: false,
-    },
-    {
-      key: "it-6",
-      text: "己：豆浆油条",
-      fixedPosition: null,
-      distractor: true,
-    },
+    { key: "it-1", text: "甲：也就是说", fixedPosition: null },
+    { key: "it-2", text: "乙：如何评价", fixedPosition: 3 },
+    { key: "it-3", text: "丙：不以人废言", fixedPosition: null },
+    { key: "it-6", text: "己：豆浆油条", fixedPosition: null },
   ],
 };
 

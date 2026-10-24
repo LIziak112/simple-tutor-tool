@@ -188,6 +188,45 @@ export const orderingItemSchema = z.object({
 });
 
 /**
+ * matching 选项池（学生面变体，2026-10-25 TT-10a 审查 P1 收紧）：逐项不含
+ * distractor 键——干扰项身份属答案侧信息（「哪些选项必然错误」的分类），
+ * 随学生载荷下发与未公布答案的口径冲突；matching 呈现对标记零消费（池内
+ * 一律可选，选错是答案错误），剥离无功能损失。教师侧全量结构（导入/lint/
+ * 保存校验用）见 matchingOptionsSchema；parse 对混入的 distractor 键 strip。
+ */
+export const matchingOptionsStudentSchema = z.object({
+  allowRepeat: z.boolean().default(false),
+  options: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        text: z.string(),
+      }),
+    )
+    .min(1),
+});
+
+/**
+ * ordering 项（学生面变体，2026-10-25 TT-10a 审查 P1 收紧）：不含 distractor
+ * 键——TT-06 解析的 distractor 由「是否在参考序列」推导，逐项下发等于公布前
+ * 枚举参考序列成员（触 AGENTS 第 3 条底线）；fixedPosition 是题面既定位置
+ * 提示（§6.1 调整 3），学生面保留。板行数/完成度由 sortableCount 计数派生
+ * （见 questionPublicSchema.sortableCount），呈现层不再需要逐项标记。
+ */
+export const orderingItemStudentSchema = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  fixedPosition: z.number().int().min(1).nullable().default(null),
+});
+
+/** matching 学生面选项池（教师全量 matchingOptionsSchema 的剥离变体） */
+export type MatchingOptionsStudent = z.infer<
+  typeof matchingOptionsStudentSchema
+>;
+/** ordering 学生面排序项（教师全量 orderingItemSchema 的剥离变体） */
+export type OrderingItemStudent = z.infer<typeof orderingItemStudentSchema>;
+
+/**
  * 各题型答案形态（存入 §5.2 questions.answersJson）：
  * - fill：blanks 外层按空位顺序与题干 `[[…]]` 标记一一对应，内层为该空的可接受答案列表（等价答案，如 ["0.5", "1/2"]）；
  * - choice：index 为正确项下标（0 起，对应 A=0）；单选恰一个正确项由 linter 保证；
@@ -315,11 +354,20 @@ export const questionPublicSchema = z.object({
   hintCount: z.number().int().min(0),
   /**
    * 新题型作答面公开结构（TT-05a 域②）：matching 选项池与 ordering 项随题
-   * 下发（学生作答必需；distractor/fixedPosition 标记属公开结构，§6.1 调整
-   * 3/6）；word-min/word-max 字数提示。全部可选——旧七型题目不携带。
+   * 下发（学生作答必需）；2026-10-25 审查 P1 收紧起为**学生面变体**——逐项
+   * 剥离 distractor 键（干扰项身份属答案侧，教师侧全量另见
+   * matchingOptionsSchema/orderingItemSchema）；fixedPosition 属公开结构
+   * （§6.1 调整 3）保留；word-min/word-max 字数提示。全部可选——旧七型不携带。
    */
-  matchingOptions: matchingOptionsSchema.optional(),
-  orderingItems: z.array(orderingItemSchema).optional(),
+  matchingOptions: matchingOptionsStudentSchema.optional(),
+  orderingItems: z.array(orderingItemStudentSchema).optional(),
+  /**
+   * ordering 学生需自行放置的项数（2026-10-25 审查 P1 随附计数）：非干扰且
+   * 非固定项数——学生面剥离 distractor 后，排序板行数（sortableCount + 固定
+   * 项数）与完成度期望由本计数派生。仅 ordering 携带，服务端从快照全量结构
+   * 计算（固定项恒非干扰：fixedPosition 声明自参考序列）。
+   */
+  sortableCount: z.number().int().min(0).optional(),
   /**
    * matching 槽位集合（QM-13 细项 2）：题内 ::ref{slots=…} 声明的槽位按
    * 材料槽位序**服务端展开**后的有序 slotId 列表（区间的展开依赖材料文档
