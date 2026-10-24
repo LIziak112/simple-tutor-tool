@@ -308,6 +308,25 @@
   scroll-margin-top: calc(var(--attempt-header-height, 64px) + 12px);
 }
 
+/* ---- 单行收敛形态（InlineMarkdown：错题本紧凑行等列表预览）----
+   继承所在行的字号与行高；块级公式随行内排（不独占一行、不居中），
+   截断由外层容器的 truncate / line-clamp 承担。选择器叠两级类名以压过
+   katex.min.css 的 .katex-display > .katex（同为两级）与上方 .rich-markdown
+   规则；放在全部 .katex 规则之后，保持特异性递增（biome noDescendingSpecificity）。 */
+.rich-markdown.rich-markdown-inline {
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+}
+.rich-markdown.rich-markdown-inline .katex-display,
+.rich-markdown.rich-markdown-inline .katex-display > .katex,
+.rich-markdown.rich-markdown-inline .katex-display > .katex > .katex-html {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+}
+
 /* 教师工作台语义色独立作用于页面与显式标记的弹层，不改学生主题。 */
 .teacher-theme {
   --background: oklch(0.972949 0.00287 264.542);
