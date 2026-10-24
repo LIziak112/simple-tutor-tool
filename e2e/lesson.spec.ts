@@ -515,11 +515,11 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(
         studentPage.getByText("已完成", { exact: true }),
       ).toBeVisible();
-      // 汇总行口径（契约 attemptScoreSummary）：correct/wrong 是自动判定计数，
-      // 教师批对的 fill 不进 correct；待批数走 pendingCount（finalCorrect 权威
-      // 计数）——批后归零。题卡级徽章断言见下方。
+      // 汇总行口径（QM-12 有效判定：教师判 > 自评 > 自动）：教师批对的
+      // fill 计入 correct（4/5），待判断（有效判定口径 pending）批后归零。
+      // 题卡级徽章断言见下方。
       await expect(
-        studentPage.getByText("答对 3 · 答错 1 · 待判断 0"),
+        studentPage.getByText("答对 4 · 答错 1 · 待判断 0"),
       ).toBeVisible();
       const q4Marked = studentPage.locator('article[aria-label="第 4 题"]');
       await expect(
