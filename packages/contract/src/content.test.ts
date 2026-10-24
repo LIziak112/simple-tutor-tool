@@ -4,7 +4,9 @@ import {
   frontmatterSchema,
   lectureSchema,
   lintIssueSchema,
+  NEW_QUESTION_TYPES,
   parsedDocumentSchema,
+  type QuestionType,
   questionAnswersSchema,
   questionPublicSchema,
   questionSchema,
@@ -49,6 +51,12 @@ describe("QuestionType：旧七型 + 三新底层交互型（§5.1 / TT-01 D2，
   it("未知题型被拒绝（lint 由 T1.5 报错，契约层不允许入库）", () => {
     expect(questionTypeSchema.safeParse("essay").success).toBe(false);
     expect(questionTypeSchema.safeParse("single-choice").success).toBe(false);
+  });
+
+  it("NEW_QUESTION_TYPES 恰为枚举尾三项（§12.2-8 开关检测单源的漂移守卫）", () => {
+    expect(NEW_QUESTION_TYPES).toEqual(
+      questionTypeSchema.options.slice(-3) as QuestionType[],
+    );
   });
 });
 

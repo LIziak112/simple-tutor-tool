@@ -164,6 +164,91 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     level: "error",
     description: "解析产出不符合内部契约（这是解析器缺陷，请反馈给开发者）",
   },
+  // ---------- TT-06 材料/组/引用（决策记录 §5.4.3 码表；两遍解析第二遍裁决） ----------
+  {
+    code: "UNKNOWN_MATERIAL_REF",
+    level: "error",
+    description:
+      "::ref 的 material= 在本文档不可解析（未声明）：材料须用 ::::material 在文档顶层声明后才能被引用；跨单元既有材料的引用由导入层按教师域解析",
+  },
+  {
+    code: "GROUP_MEMBER_NOT_FOUND",
+    level: "error",
+    description:
+      "组的 ::ref{question=} 目标不存在：子题引用必须是本文档的题块 id（向后引用合法，材料/组可声明在题块之后）",
+  },
+  {
+    code: "GROUP_MEMBER_DUPLICATED",
+    level: "error",
+    description:
+      "同一子题被两组引用或组内重复引用：一个 attempt 内每题恰出现一次，同一题只能进一个组、组内只能引用一次",
+  },
+  {
+    code: "GROUP_NESTED_OR_CYCLIC",
+    level: "error",
+    description:
+      "组引用组：首版题组仅一层，::ref{question=} 不能指向另一个组，请直接引用题块 id",
+  },
+  {
+    code: "GROUP_ORDER_INVALID",
+    level: "error",
+    description:
+      "组 questionIds 不是单元题序的子序列：组内 ::ref{question=…} 的书写顺序必须与题块在文档中的顺序一致",
+  },
+  {
+    code: "UNKNOWN_SLOT_REF",
+    level: "error",
+    description:
+      "slot=/slots= 引用的槽位在目标材料中不存在：槽位用 {{槽位id}} 标记在材料正文中声明",
+  },
+  {
+    code: "SLOT_UNBOUND",
+    level: "error",
+    description:
+      "材料槽位未被任何子题/题目绑定：材料槽位必须由子题 ::ref{slot=…} 逐空绑定或 matching 题 ::ref{slots=…} 声明集合",
+  },
+  {
+    code: "SEG_REF_UNKNOWN",
+    level: "error",
+    description:
+      "segs= 引用的片段锚点不存在：锚点用 :::seg{id=…} 在材料内声明（id 缺省按出现顺序 seg-{n}）",
+  },
+  {
+    code: "SEG_RANGE_OUT_OF_BOUNDS",
+    level: "error",
+    description:
+      "segs= 区间端点不存在或区间逆序/越界：区间按材料内出现顺序书写（如 seg-1..seg-3），端点必须是已声明的锚点 id",
+  },
+  {
+    code: "MATERIAL_CONTAINS_ANSWER",
+    level: "error",
+    description:
+      "材料正文含答案型内容（[[…]] 答案标记、:::answer、:::solution、:::hint、答案指令）：公共材料不得携带答案（学生端材料投影不设防泄露面）",
+  },
+  {
+    code: "INVALID_OPTION_REF",
+    level: "error",
+    description:
+      "matching 参考答案引用了选项池未声明的 optionId，或选项池内 option id 重复声明：参考与配对作答都按 id 解析，选项池内 id 必须唯一",
+  },
+  {
+    code: "INVALID_REFERENCE_ANSWER_FORMAT",
+    level: "error",
+    description:
+      "answer 行式格式不符：matching 每行写 槽位id = 选项id，ordering 每行恰一个已声明的排序项 id（行序即正确顺序）；该参考答案不落结构化字段，发布校验将拒绝",
+  },
+  {
+    code: "MATERIAL_DUPLICATE_ID",
+    level: "error",
+    description:
+      "文档内材料 id 重复（组 id、材料内锚点 id、槽位 id 同域重复并入各自码域）：id 用于跨文档引用，必须唯一",
+  },
+  {
+    code: "MATERIAL_BEFORE_FIRST_HEADING",
+    level: "warning",
+    description:
+      "材料/组声明在首个 H1 之前（与题块同规则）：建议移到标题之后，避免并入讲义首篇",
+  },
   // ---------- 规则层（src/lint/）：指令、题型语义、围栏 ----------
   {
     code: "UNCLOSED_CONTAINER",

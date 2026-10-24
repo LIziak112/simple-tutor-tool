@@ -11,7 +11,12 @@ import type { Root, RootContent } from "mdast";
 import type { ContainerDirective } from "mdast-util-directive";
 import { extractFrontmatter } from "./frontmatter.ts";
 import { headingText, isH1, splitLectures } from "./lecture.ts";
+import {
+  extractMaterialsAndGroups,
+  type MaterialsResult,
+} from "./materials.ts";
 import { extractQuestions, isQuestionContainer } from "./question.ts";
+import { type QmRefSite, resolveQmReferences } from "./references.ts";
 import {
   errorMessage,
   FALLBACK_UNIT_ID,
@@ -23,6 +28,14 @@ import {
   processor,
   zodErrorsText,
 } from "./shared.ts";
+
+/** 两遍解析实体行号合并（题与材料/组同域；后者者覆盖前者——题行只做兜底定位） */
+function mergeMaps(
+  first: ReadonlyMap<string, number>,
+  second: ReadonlyMap<string, number>,
+): Map<string, number> {
+  return new Map([...first, ...second]);
+}
 
 /**
  * DSL v2 文档解析入口（T1.3 练习题；T1.4 起按 frontmatter kind 分派）：
@@ -187,10 +200,34 @@ function parsePracticeDocument(ctx: ParseContext): {
     );
   }
 
+  // TT-06 两遍解析的站点收集器（题级 ::ref 位置与题目起始行；组/材料站点在
+  // extractMaterialsAndGroups 内登记，第二遍统一裁决）
+  const qmSites: QmRefSite[] = [];
+  const qmEntityLines = new Map<string, number>();
+
   const questions = extractQuestions(ctx.tree.children, {
     lines: ctx.lines,
     unitId: ctx.unitId,
     startNumber: ctx.options.questionStartNumber ?? 1,
+    issues: ctx.issues,
+    qmRefSites: qmSites,
+    qmEntityLines: qmEntityLines,
+  });
+
+  // TT-06 材料/组实体（第一遍）：practice 文档顶层声明，挂载进单元叠加元数据
+  const qm = extractMaterialsAndGroups(ctx.tree.children, {
+    lines: ctx.lines,
+    unitId: ctx.unitId,
+    issues: ctx.issues,
+  });
+
+  // 两遍解析第二遍：引用解析与结构校验（§5.4.4；向后引用在此闭合）
+  resolveQmReferences({
+    materials: qm.materials,
+    groups: qm.groups,
+    questions,
+    sites: [...qm.sites, ...qmSites],
+    entityLines: mergeMaps(qm.entityLines, qmEntityLines),
     issues: ctx.issues,
   });
 
@@ -199,7 +236,7 @@ function parsePracticeDocument(ctx: ParseContext): {
   const units: Unit[] = [];
   if (questions.length > 0 || ctx.frontmatter?.kind === "practice") {
     units.push(
-      buildUnit(ctx, questions, firstNonEmpty(ctx.frontmatter?.lecture)),
+      buildUnit(ctx, questions, firstNonEmpty(ctx.frontmatter?.lecture), qm),
     );
   }
   return { lectures: [], units };
@@ -326,10 +363,34 @@ function parseMixedDocument(ctx: ParseContext): {
     ctx.tree.children,
   );
 
+  // TT-06 站点收集器（与 parsePracticeDocument 同款，见该处注释）
+  const qmSites: QmRefSite[] = [];
+  const qmEntityLines = new Map<string, number>();
+
   const questions = extractQuestions(ctx.tree.children, {
     lines: ctx.lines,
     unitId: ctx.unitId,
     startNumber: ctx.options.questionStartNumber ?? 1,
+    issues: ctx.issues,
+    qmRefSites: qmSites,
+    qmEntityLines: qmEntityLines,
+  });
+
+  // TT-06 材料/组实体：mixed 的练习单元同款挂载；容器行区间与题块一同从
+  // 讲义原文剔除（§5.2.1「与题块同规则」——材料/组是单元结构，不是讲义内容）
+  const qm = extractMaterialsAndGroups(ctx.tree.children, {
+    lines: ctx.lines,
+    unitId: ctx.unitId,
+    issues: ctx.issues,
+  });
+
+  // 两遍解析第二遍（与 practice 同款）
+  resolveQmReferences({
+    materials: qm.materials,
+    groups: qm.groups,
+    questions,
+    sites: [...qm.sites, ...qmSites],
+    entityLines: mergeMaps(qm.entityLines, qmEntityLines),
     issues: ctx.issues,
   });
 
@@ -338,7 +399,7 @@ function parseMixedDocument(ctx: ParseContext): {
     children: ctx.tree.children,
     lines: ctx.lines,
     contentStartLine: ctx.contentStartLine,
-    questionRanges: questionNodes.map(lineRange),
+    questionRanges: [...questionNodes.map(lineRange), ...qm.containerRanges],
     issues: ctx.issues,
   });
 
@@ -356,7 +417,7 @@ function parseMixedDocument(ctx: ParseContext): {
       questionNodes[0],
       firstNonEmpty(ctx.frontmatter?.lecture),
     );
-    units.push(buildUnit(ctx, questions, lectureTitle));
+    units.push(buildUnit(ctx, questions, lectureTitle, qm));
   }
   return { lectures, units };
 }
@@ -483,6 +544,8 @@ function buildUnit(
   ctx: ParseContext,
   questions: Question[],
   lectureTitle: string | undefined,
+  /** TT-06 材料/组实体（两遍解析第一遍产物）；缺省不注入键（§5.8.1） */
+  qm?: MaterialsResult,
 ): Unit {
   if (ctx.unitFromFallback !== undefined) {
     ctx.issues.push(
@@ -514,6 +577,11 @@ function buildUnit(
   ) {
     unit.practice = ctx.frontmatter.practice;
   }
+  // TT-06：材料与组是叠加元数据（§5.2.4）——不产生题行、不进 questions 平铺
+  // 数组；仅在存在时挂载（旧文档解析结果键集不变）
+  if (qm !== undefined && qm.materials.length > 0)
+    unit.materials = [...qm.materials];
+  if (qm !== undefined && qm.groups.length > 0) unit.groups = [...qm.groups];
   return unit;
 }
 

@@ -24,7 +24,7 @@ Finally, treat sleep as infrastructure rather than indulgence. {{slot-5}} The be
 ::ref{question=qx-1}
 ::::
 
-::::question{id=qx-1 type=matching difficulty=4 knowledge="七选五"}
+:::::question{id=qx-1 type=matching difficulty=4 knowledge="七选五"}
 从下方 7 个选项中为文中 5 个空白处选择最合适的内容（每空限选一项，不可重复）。
 
 ::ref{material=mat-1 slots=slot-1..slot-5}
@@ -64,4 +64,4 @@ slot-5 = opt-6
 :::solution
 干扰项分析：opt-2（午睡话题未出现）、opt-7（早晨咖啡与原文「下午咖啡影响午夜」方向相反）。五个空位分别承接「清洁循环→glymphatic」「经济学误解→八小时是工业产物」「疲惫徽章→骄傲于劣化表现」「固定起床时间→同频锚定」「基础设施→工具职责」。
 :::
-::::
+:::::

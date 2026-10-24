@@ -52,6 +52,9 @@ export { directiveKindSchema } from "./capability.ts";
  * - question：question 容器内部（题干、hint/answer/solution 等，任意深度）
  * - steps：:::steps 容器内部
  * - columns：:::columns 容器内部
+ * - material：::::material 容器内部（TT-06，§5.2.1）
+ * - group：::::group 容器内部（TT-06）
+ * - options：::::options 选项池容器内部（TT-06）
  */
 export const directiveLocationSchema = z.enum([
   "document",
@@ -59,6 +62,9 @@ export const directiveLocationSchema = z.enum([
   "question",
   "steps",
   "columns",
+  "material",
+  "group",
+  "options",
 ]);
 export type DirectiveLocation = z.infer<typeof directiveLocationSchema>;
 
@@ -330,12 +336,23 @@ export const questionDirective = defineDirective({
     difficulty: z.coerce.number().int().min(1).max(5).default(2),
     /** 考点（单个；解析时归一为数组入库，见 content.ts questionSchema.knowledge） */
     knowledge: z.string().min(1).optional(),
+    /**
+     * response 类字数提示下限（TT-06，§5.4.1）：正整数，可选；仅展示提示，
+     * 不硬校验不截断（设计方案 §7.3，硬限制属后续扩展）。
+     */
+    "word-min": z.coerce.number().int().min(1).optional(),
+    /** response 类字数提示上限（同 word-min，仅提示） */
+    "word-max": z.coerce.number().int().min(1).optional(),
   }),
   attrDocs: {
     type: "题型，必填。十种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错 / response 开放 / matching 配对 / ordering 排序（新三型的完整作答语法 TT-06 注册、导入入口受发布开关控制）；写其他值会在 lint 报错",
     difficulty:
       "难度 1–5 的整数，缺省 2；可写字符串数字（如 difficulty=3），解析时自动转换",
     knowledge: "考点（单个字符串），用于学情统计；解析时归一为数组入库",
+    "word-min":
+      "response 开放题的字数提示下限（正整数，可选）：仅作答时展示提示，不硬校验、不截断",
+    "word-max":
+      "response 开放题的字数提示上限（正整数，可选）：仅展示提示，不硬校验",
   },
   description:
     "一道题，练习/混合文档的顶层容器。内部依次为：题干正文（填空标记 [[…]]、判断 [[正确]]/[[错误]]、选择题任务列表 - [x] 都直接写在题干里）、可选的 :::hint（可多个）、手写题可选 :::answer、可选 :::solution。id 可用 {#p4-q7} 指定，缺省为「单元slug-序号」；编辑内容时保持 id 不变，学情统计才能跨版本延续。type 必填，difficulty 缺省 2。",
@@ -609,7 +626,7 @@ export const imageDirective = defineDirective({
   name: "image",
   kind: "leaf",
   since: "2.0",
-  allowedIn: ["lecture", "question"],
+  allowedIn: ["lecture", "question", "material"],
   attrs: directiveAttrs({
     /** 图片路径（必填）：图片上传接口返回的 blobs/media/<内容哈希>.<扩展名> 路径，非外链 URL */
     src: z.string().min(1),
@@ -654,3 +671,209 @@ export const graphDirective = defineDirective({
 
 /** graph 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
 export type GraphDirectiveAttrs = z.output<typeof graphDirective.attrs>;
+
+// ---------- 材料与题组（TT-06/QM-04，§5.4.1 注册批次，since 2.1） ----------
+
+/**
+ * 布尔属性（§5.4.1）：mdast 指令属性值恒为字符串，bool 属性以字符串
+ * `true`/`false` 书写。注意不能用 z.coerce.boolean()——Boolean("false")
+ * 是 true，会把误写的任意非空串静默当真；显式枚举 + 转换让非法值在
+ * lint 阶段报 INVALID_DIRECTIVE_ATTRS（difficulty 数字 coerce 同款先例
+ * 的布尔版：可恢复缺省 + 非法值显式失败）。
+ */
+const booleanAttr = (def: boolean) =>
+  z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .default(def);
+
+/** 材料（文档顶层共享内容容器，§5.2.1 引用式布局） */
+export const materialDirective = defineDirective({
+  name: "material",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["document"],
+  attrs: directiveAttrs({
+    /** 显示标题（可选；不写则前端仅显示「材料」编号） */
+    title: z.string().min(1).optional(),
+  }),
+  attrDocs: { title: "材料显示标题，可选（如「给定资料一」）" },
+  description:
+    "共享材料：文档顶层的材料容器，与题块平级（须在首个 H1 之后）。内容为材料 Markdown 原文（文字、表格、图片 ::image、公式、:::seg 片段锚点、{{槽位id}} 挖空标记）。id 用 {#mat-1} 或 {id=mat-1} 指定，缺省按文档出现顺序生成 mat-单元-序号（导入时回写源文）。材料正文不得携带答案型内容（[[…]] 填空标记、:::answer、:::solution、:::hint 都会报错）——材料是全卷学生共享内容，答案经材料绕过会破坏学生端投影防线。同题或题组用 ::ref 引用材料。",
+  example:
+    '::::material{id=mat-1 title="2025 年某省粮食生产情况"}\n全省粮食总产量 $3{,}096.2$ 万吨，比上年增加 $56.4$ 万吨。\n\n:::seg{id=seg-1}\n分品种看，稻谷产量 $1{,}542.3$ 万吨，小麦产量 $1{,}026.8$ 万吨。\n:::\n::::',
+});
+
+/** material 指令属性经注册表 schema 校验后的输出形态 */
+export type MaterialDirectiveAttrs = z.output<typeof materialDirective.attrs>;
+
+/** 题组（文档顶层组容器，公共说明 + 引用子题与材料，§5.2.1） */
+export const groupDirective = defineDirective({
+  name: "group",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["document"],
+  attrs: directiveAttrs({
+    /** 组标题（公共说明的标题行；正文写在容器内） */
+    title: z.string().min(1).optional(),
+    /** 组级显示编号说明（如「1～5」；显示编号是展示派生，不进主键） */
+    label: z.string().min(1).optional(),
+  }),
+  attrDocs: {
+    title: "组标题，可选（公共说明的标题行；说明正文写在容器内）",
+    label: "组级显示编号说明，可选（如「1～5」「1–20」）",
+  },
+  description:
+    "题组：把若干共享材料与共同说明的子题组成一组的顶层容器（与题块平级）。内容为公共说明文字 + 引用指令：::ref{material=材料id} 声明全组共享材料（可多个），::ref{question=题目id} 按序引用子题（可多个）。子题仍是文档顶层题块——组用引用表达、不物理包含；组的子题顺序 = ::ref{question=…} 的书写顺序。id 缺省按文档出现顺序生成 grp-单元-序号。首版仅一层：组不能引用组。同一子题不能被两个组引用或组内重复引用。",
+  example:
+    '::::group{id=grp-1 title="根据以下资料回答第 1～3 题" label="1～3"}\n::ref{material=mat-1}\n::ref{question=q-1}\n::ref{question=q-2}\n::ref{question=q-3}\n::::',
+});
+
+/** group 指令属性经注册表 schema 校验后的输出形态 */
+export type GroupDirectiveAttrs = z.output<typeof groupDirective.attrs>;
+
+/** 片段锚点（材料内的可引用块级片段，§5.2.2） */
+export const segDirective = defineDirective({
+  name: "seg",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["material"],
+  attrs: directiveAttrs({}),
+  description:
+    "材料内的片段锚点：包裹一段可被单独引用的块级内容（段/句群/表）。id 缺省按材料内出现顺序生成 seg-序号。用 ::ref{material=… segs=seg-1..seg-3} 选择片段（单个 / 区间 / 列表；区间含中间未列名片段）。只能写在 ::::material 内部。",
+  example:
+    ":::seg{id=seg-1}\n转机出现在试点社区：街道把改造清单拆成三十七个小项。\n:::",
+});
+
+/** seg 指令属性经注册表 schema 校验后的输出形态 */
+export type SegDirectiveAttrs = z.output<typeof segDirective.attrs>;
+
+/**
+ * 引用指令（组与题内引用材料/子题/槽位，§5.2.2）。
+ * material 与 question 恰写其一：::ref{material=mat-1 …} 为材料引用
+ * （组内=全组共享展示、题内=题级引用），::ref{question=q-1} 为组内子题
+ * 引用。§5.4.1 表把 material 标为必填是材料引用形态的描述；组内子题引用
+ * 必然只写 question（§5.2.1、QM-02 语料定稿），注册表按「恰其一」收紧。
+ */
+export const refDirective = defineDirective({
+  name: "ref",
+  kind: "leaf",
+  since: "2.1",
+  allowedIn: ["group", "question"],
+  attrs: directiveAttrs({
+    /** 被引用材料 id（材料引用必写其一；与 question 互斥） */
+    material: z.string().min(1).optional(),
+    /** 被引用子题 id（组内子题引用；与 material 互斥） */
+    question: z.string().min(1).optional(),
+    /** 片段选择：seg-2 单个 / seg-1..seg-3 区间 / seg-1,seg-4 列表；缺省=材料全文 */
+    segs: z.string().min(1).optional(),
+    /** 单个槽位绑定（子题绑定该材料槽位作答，如完形第 n 空） */
+    slot: z.string().min(1).optional(),
+    /** 槽位集合（matching 题声明其槽位区间/列表，如 slot-1..slot-5） */
+    slots: z.string().min(1).optional(),
+  }).refine(
+    (attrs) =>
+      (attrs.material !== undefined) !== (attrs.question !== undefined),
+    {
+      message:
+        "material 与 question 必须恰写其一（材料引用写 material=，子题引用写 question=）",
+    },
+  ),
+  attrDocs: {
+    material: "被引用的材料 id（材料引用时写，与 question 互斥）",
+    question: "被引用的子题 id（组内子题引用时写，与 material 互斥）",
+    segs: "片段选择，可选：seg-2 单个 / seg-1..seg-3 区间 / seg-1,seg-4 列表；缺省为材料全文",
+    slot: "单个槽位绑定，可选：子题绑定该材料的某个槽位作答（完形逐空绑定）",
+    slots:
+      "槽位集合，可选：matching 题声明其槽位区间/列表（如 slot-1..slot-5）",
+  },
+  description:
+    "引用指令：组内引用材料（全组共享展示）或按序引用子题；题内引用材料/片段/槽位。写法 ::ref{material=mat-1}（材料）、::ref{material=mat-1 segs=seg-1..seg-2 slot=slot-3}（题内绑定材料片段与槽位）、::ref{material=mat-1 slots=slot-1..slot-5}（matching 声明槽位集合）、::ref{question=q-1}（组内子题引用，行序即组内题序）。material 与 question 恰写其一；向后引用合法（材料/组可声明在题块之后）。",
+  example: '::ref{material=mat-1 segs="seg-1..seg-2"}',
+});
+
+/** ref 指令属性经注册表 schema 校验后的输出形态 */
+export type RefDirectiveAttrs = z.output<typeof refDirective.attrs>;
+
+/** matching 选项池容器（§5.4.1；只能写在 matching 题内） */
+export const optionsDirective = defineDirective({
+  name: "options",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["question"],
+  attrs: directiveAttrs({
+    /**
+     * 同一选项可否被多槽占用：缺省 false（七选五默认即够）；
+     * 字符串 true/false 书写（§5.4）
+     */
+    "allow-repeat": booleanAttr(false),
+  }),
+  attrDocs: {
+    "allow-repeat":
+      "同一选项可否被多个槽位占用，缺省 false；写 allow-repeat=true 开启（字符串布尔）",
+  },
+  description:
+    "matching 配对题的选项池：容器内由若干 :::option 组成（id + 选项内容）。allow-repeat 缺省 false——同一选项不得被多槽占用（七选五默认即够）。干扰选项写在池内、学生可选（选错是答案错误，不是形状错误）。只能写在 type=matching 的题内。",
+  example:
+    "::::options\n:::option{id=opt-1}\nDuring deep sleep, the brain flushes waste proteins.\n:::\n:::option{id=opt-2}\nA ten-minute nap improves afternoon alertness.\n:::\n::::",
+});
+
+/** options 指令属性经注册表 schema 校验后的输出形态 */
+export type OptionsDirectiveAttrs = z.output<typeof optionsDirective.attrs>;
+
+/** 选项池中的一个配对选项（§5.4.1；必须写在 :::options 内部） */
+export const optionDirective = defineDirective({
+  name: "option",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["options"],
+  attrs: directiveAttrs({}),
+  description:
+    "matching 选项池中的一个选项：内容为选项正文，id 缺省按题内声明顺序生成 opt-题目id-序号（导入时回写）。必须写在 ::::options 内部。",
+  example: ":::option{id=opt-1}\n别林斯基\n:::",
+});
+
+/** option 指令属性经注册表 schema 校验后的输出形态 */
+export type OptionDirectiveAttrs = z.output<typeof optionDirective.attrs>;
+
+/** ordering 排序项（§5.4.1；只能写在 ordering 题内） */
+export const itemDirective = defineDirective({
+  name: "item",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["question"],
+  attrs: directiveAttrs({
+    /** 固定项：锁定显示位置（位置来自参考序列的声明位，对学生可见）；字符串布尔 */
+    fixed: booleanAttr(false),
+    /** 干扰项：不属于正确序列、学生不得选用（进入序列报形状错误）；字符串布尔 */
+    distractor: booleanAttr(false),
+  }),
+  attrDocs: {
+    fixed:
+      "固定项标记，缺省 false：写 fixed=true 锁定该项显示位置（位置由参考答案行序定义）",
+    distractor:
+      "干扰项标记，缺省 false：写 distractor=true 声明该项不属于正确序列；未显式声明时解析从参考序列推导（不在序列即干扰项）",
+  },
+  description:
+    "ordering 排序题的一个排序项：内容为项正文，id 缺省按题内声明顺序生成 item-题目id-序号。fixed=true 为固定项（显示位置由 :::answer 行序锁定，对学生是既定位置提示）；distractor=true 为干扰项（不属于正确序列）。正确顺序写在题内 :::answer（每行一个 id，行序即顺序）。",
+  example:
+    ":::item{id=it-2 fixed=true}\n如何对一部作品作出恰如其分的评价？\n:::",
+});
+
+/** item 指令属性经注册表 schema 校验后的输出形态 */
+export type ItemDirectiveAttrs = z.output<typeof itemDirective.attrs>;
+
+/** response 备选参考表达（§5.4.1；只能写在 response 题内） */
+export const variantDirective = defineDirective({
+  name: "variant",
+  kind: "container",
+  since: "2.1",
+  allowedIn: ["question"],
+  attrs: directiveAttrs({}),
+  description:
+    "response 开放题的备选参考表达：内容为一条可接受的参考 Markdown（翻译的多种译法、作文的多角度范文）。主参考写在题内 :::answer，若干 :::variant 依次为备选表达（有序数组、无 id）。只能写在 type=response 的题内。",
+  example: ":::variant\n另一种可接受的译法：书籍只为头脑提供知识的原料……\n:::",
+});
+
+/** variant 指令属性经注册表 schema 校验后的输出形态 */
+export type VariantDirectiveAttrs = z.output<typeof variantDirective.attrs>;

@@ -11,7 +11,7 @@ unit: 引用错误示例
 {{slot-1}}认为批评的锋芒应指向作品本身；{{slot-2}}则主张批评首先是历史的批评。
 ::::
 
-::::question{id=ew-1 type=matching difficulty=3}
+:::::question{id=ew-1 type=matching difficulty=3}
 将人名与其观点配对。
 
 ::ref{material=mat-1 slots=slot-1..slot-2}
@@ -32,4 +32,4 @@ unit: 引用错误示例
 slot-1 = opt-9
 slot-2 = opt-1
 :::
-::::
+:::::

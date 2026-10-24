@@ -9,14 +9,22 @@ import {
   foldDirective,
   getDirective,
   graphDirective,
+  groupDirective,
   hintDirective,
   imageDirective,
+  itemDirective,
   markDirective,
+  materialDirective,
+  optionDirective,
+  optionsDirective,
   questionDirective,
+  refDirective,
+  segDirective,
   solutionDirective,
   stepDirective,
   stepsDirective,
   tipDirective,
+  variantDirective,
   warningDirective,
 } from "@tutor/contract";
 import { type ComponentType, createElement, type ReactNode } from "react";
@@ -25,6 +33,16 @@ import { BoxDirective, TipDirective, WarningDirective } from "./Callout";
 import { ColDirective, ColumnsDirective } from "./Columns";
 import { BlankDirective, MarkDirective } from "./Inline";
 import { GraphDirective, ImageDirective } from "./Media";
+import {
+  GroupDirective,
+  ItemDirective,
+  MaterialDirective,
+  OptionDirective,
+  OptionsDirective,
+  RefDirective,
+  SegDirective,
+  VariantDirective,
+} from "./Qm";
 import {
   ExampleDirective,
   QuestionDirective,
@@ -106,6 +124,15 @@ export const directiveComponents: Readonly<Record<string, DirectiveRenderer>> =
     // 媒体
     image: withTypedAttrs(imageDirective, ImageDirective),
     graph: withTypedAttrs(graphDirective, GraphDirective),
+    // TT-06 材料/组/引用（静态渲染壳，交互接 TT-08/TT-10——见 Qm.tsx 注释）
+    material: withTypedAttrs(materialDirective, MaterialDirective),
+    group: withTypedAttrs(groupDirective, GroupDirective),
+    seg: withTypedAttrs(segDirective, SegDirective),
+    ref: withTypedAttrs(refDirective, RefDirective),
+    options: withTypedAttrs(optionsDirective, OptionsDirective),
+    option: withTypedAttrs(optionDirective, OptionDirective),
+    item: withTypedAttrs(itemDirective, ItemDirective),
+    variant: withTypedAttrs(variantDirective, VariantDirective),
   };
 
 /**
