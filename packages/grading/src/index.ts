@@ -12,6 +12,7 @@
  *   assertValidatorCoverage（服务器启动期调用，防注册遗漏静默换判分）。
  */
 export { grade } from "./grade.ts";
+export { gradeResponseRow } from "./grade-row.ts";
 export { judgeOf, normalize } from "./normalize.ts";
 export type { Rational } from "./rational.ts";
 export { equivalent, parseRational } from "./rational.ts";

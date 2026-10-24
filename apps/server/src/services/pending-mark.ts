@@ -4,6 +4,8 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
+  or,
   type SQL,
   sql,
 } from "drizzle-orm";
@@ -41,18 +43,33 @@ export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
 
 /**
  * D4 待批行的共享条件（不含 attempt 归属筛选——单卷 eq / 批量 inArray 各自给）：
- * finalCorrect IS NULL + 快照非空（排幽灵行）+ draft 批次叠加行级已提交
- * （lesson 单题提交与 v1 新协议逐题提交都会写行级 submittedAt——进行中卷只数
- * 已单题提交的行；无行级提交事实的 legacy draft 恒 0。非 draft 批次整卷恒
- * 「已交」，保持既有口径不加条件——设计依据详见模块头注释）。两函数（单卷/
- * 批量）共用本构造器，口径永不漂移。
+ * finalCorrect IS NULL + 快照非空（排幽灵行）+ **排除 reference_self 行**
+ * （QM-10 / §5.5.3 D9：有参考答案的新策略行走学生自评，永不进教师必批
+ * 队列——教师可选批改走全部已交列表；NULL 策略旧行不受影响）+ draft 批次
+ * 叠加行级已提交（lesson 单题提交与 v1 新协议逐题提交都会写行级
+ * submittedAt——进行中卷只数已单题提交的行；无行级提交事实的 legacy draft
+ * 恒 0。非 draft 批次整卷恒「已交」，保持既有口径不加条件——设计依据详见
+ * 模块头注释）。两函数（单卷/批量）共用本构造器，口径永不漂移。
  */
 function pendingMarkConditions(draft: boolean): (SQL | undefined)[] {
   return [
     isNull(responses.finalCorrect),
     isNotNull(responses.questionSnapshotJson),
+    notSelfReviewPendingRow(),
     draft ? isNotNull(responses.submittedAt) : undefined,
   ];
+}
+
+/**
+ * 「非 reference_self 行」条件（D4 谓词与 mark-response 待批队列共用）：
+ * grading_policy 列可空（旧行 NULL = 旧语义），SQL 三值逻辑下 `!= 'x'` 对
+ * NULL 行求值为 NULL 会被 and 吞掉——必须显式 isNull OR ne。
+ */
+export function notSelfReviewPendingRow(): SQL {
+  return or(
+    isNull(responses.gradingPolicy),
+    ne(responses.gradingPolicy, "reference_self"),
+  ) as SQL;
 }
 
 /**

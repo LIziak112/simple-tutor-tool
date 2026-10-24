@@ -267,6 +267,8 @@ function buildLessonStartData(
         submittedAt: row.submittedAt,
         autoCorrect: row.autoCorrect,
         finalCorrect: row.finalCorrect,
+        gradingPolicy: row.gradingPolicy,
+        teacherMark: row.teacherMark,
       })),
       attempt,
     ),

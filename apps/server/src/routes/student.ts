@@ -22,6 +22,8 @@ import {
   practiceQuestionSubmitDataSchema,
   practiceQuestionSubmitRequestSchema,
   practiceWorkflowUpdateRequestSchema,
+  selfReviewDataSchema,
+  selfReviewRequestSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
   studentRecordsQuerySchema,
@@ -113,6 +115,7 @@ import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { submitSelfReview } from "../services/self-review-service";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -415,6 +418,29 @@ export function createStudentRoutes(
                 c.req.param("id"),
                 c.req.param("questionId"),
                 new Date(),
+              ),
+            ),
+          },
+          200,
+          { "Cache-Control": "private, no-store" },
+        );
+      })
+      // QM-10（TT-09a）学生自评：已提交且公布后对了/错了/暂不判断，即时生效
+      // 无需教师确认；校验链与幂等/CAS/教师优先见 self-review-service（契约层
+      // packages/contract self-review.ts TT-05a 定稿）；自评不写 teacherMark/
+      // finalCorrect、不推动 graded；响应 no-store 不落缓存
+      .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
+        const body = await parseJsonBody(c, selfReviewRequestSchema);
+        return c.json(
+          {
+            ok: true,
+            data: selfReviewDataSchema.parse(
+              submitSelfReview(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                c.req.param("questionId"),
+                body,
               ),
             ),
           },
