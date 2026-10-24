@@ -86,13 +86,11 @@ interface RebuiltUnitDoc {
  * + 往返测试锁定，规范序变更须同步两处；现 exportUnitMd 复用本函数，
  * 分隔符与顺序漂移在结构上不可能）。
  */
-export function assembleQmBlocks(
-  blocks: {
-    readonly materials: readonly string[];
-    readonly groups: readonly string[];
-    readonly questions: readonly string[];
-  },
-): string {
+export function assembleQmBlocks(blocks: {
+  readonly materials: readonly string[];
+  readonly groups: readonly string[];
+  readonly questions: readonly string[];
+}): string {
   return [...blocks.materials, ...blocks.groups, ...blocks.questions].join(
     "\n\n",
   );
@@ -293,9 +291,13 @@ function assertFragmentEntitiesConsistent(
   if (extra.length === 0 && missing.length === 0) return;
   const parts: string[] = [];
   if (extra.length > 0)
-    parts.push(`片段夹带 ${extra.length} 个非目标实体块（${extra.join("、")}）`);
+    parts.push(
+      `片段夹带 ${extra.length} 个非目标实体块（${extra.join("、")}）`,
+    );
   if (missing.length > 0)
-    parts.push(`库内实体在解析结果中缺失（${missing.join("、")}，可能被片段遮挡）`);
+    parts.push(
+      `库内实体在解析结果中缺失（${missing.join("、")}，可能被片段遮挡）`,
+    );
   throw new HttpError(
     422,
     "VALIDATION_ERROR",

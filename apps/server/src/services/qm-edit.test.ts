@@ -11,6 +11,7 @@ import {
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { commitImport } from "./content-service.ts";
+import { exportUnitMd } from "./library-service.ts";
 import { getMaterial, getQuestionGroup } from "./material-repository.ts";
 import {
   assembleQmBlocks,
@@ -23,7 +24,6 @@ import {
   updateMaterial,
   updateQuestionGroup,
 } from "./qm-edit-service.ts";
-import { exportUnitMd } from "./library-service.ts";
 
 /**
  * tt-06b / QM-05 材料/题组编辑与删除测试（服务层级）：
@@ -524,13 +524,13 @@ describe("QM-07 P2-4：拼装规范序单源（assembleQmBlocks 两出口一致�
       "",
       "# 拼装单元练习",
       "",
-      '::::material{id=pz-mat-1}',
+      "::::material{id=pz-mat-1}",
       "材料正文 {{pz-slot-1}}。",
       "::::",
       "",
-      '::::group{id=pz-grp-1}',
+      "::::group{id=pz-grp-1}",
       "::ref{material=pz-mat-1 slot=pz-slot-1}",
-      '::ref{question=pz-q-1}',
+      "::ref{question=pz-q-1}",
       "::::",
       "",
       '::::question{id="pz-q-1" type=choice}',
@@ -561,7 +561,11 @@ describe("QM-07 P2-4：拼装规范序单源（assembleQmBlocks 两出口一致�
         ),
       )
       .all()[0]?.sourceMd;
-    if (material === undefined || group === undefined || question === undefined) {
+    if (
+      material === undefined ||
+      group === undefined ||
+      question === undefined
+    ) {
       throw new Error("拼装单元实体未落库");
     }
     const body = assembleQmBlocks({
@@ -602,7 +606,7 @@ describe("QM-07 P2-4：拼装规范序单源（assembleQmBlocks 两出口一致�
     expect(exported).toBe(
       [
         "---",
-        'kind: practice',
+        "kind: practice",
         'unit: "旧单元"',
         "---",
         "",
@@ -625,7 +629,13 @@ describe("QM-07 P2-5：编辑片段夹带异类实体显式拒绝（不静默丢
     const base = materialSourceMd(db);
     const fragment = [base, "", "::::group{id=grp-extra}", "::::"].join("\n");
     expect(() =>
-      updateMaterial(db, TEST_TEACHER_ID, MATERIAL_ID, { sourceMd: fragment }, true),
+      updateMaterial(
+        db,
+        TEST_TEACHER_ID,
+        MATERIAL_ID,
+        { sourceMd: fragment },
+        true,
+      ),
     ).toThrowError(
       expect.objectContaining({
         status: 422,
@@ -650,7 +660,13 @@ describe("QM-07 P2-5：编辑片段夹带异类实体显式拒绝（不静默丢
       "::::",
     ].join("\n");
     expect(() =>
-      updateMaterial(db, TEST_TEACHER_ID, MATERIAL_ID, { sourceMd: fragment }, true),
+      updateMaterial(
+        db,
+        TEST_TEACHER_ID,
+        MATERIAL_ID,
+        { sourceMd: fragment },
+        true,
+      ),
     ).toThrowError(
       expect.objectContaining({
         status: 422,
@@ -673,7 +689,13 @@ describe("QM-07 P2-5：编辑片段夹带异类实体显式拒绝（不静默丢
       "::::",
     ].join("\n");
     expect(() =>
-      updateQuestionGroup(db, TEST_TEACHER_ID, GROUP_ID, { sourceMd: fragment }, true),
+      updateQuestionGroup(
+        db,
+        TEST_TEACHER_ID,
+        GROUP_ID,
+        { sourceMd: fragment },
+        true,
+      ),
     ).toThrowError(
       expect.objectContaining({
         status: 422,

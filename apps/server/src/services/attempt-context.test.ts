@@ -13,7 +13,7 @@ import {
   students,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
-import { HttpError } from "../lib/http-error.ts";
+import type { HttpError } from "../lib/http-error.ts";
 import {
   contextEntriesOf,
   liveAttemptContextClosure,
@@ -829,7 +829,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
     const rows = contextRows(db, started.id);
     // 冻结的是来源卷所见：grp@v1 + mat-1@v1，不带入教师事后改指的 mat-2
     expect(
-      rows.map((row) => `${row.kind}:${row.sourceId}@${row.sourceVersion}`).sort(),
+      rows
+        .map((row) => `${row.kind}:${row.sourceId}@${row.sourceVersion}`)
+        .sort(),
     ).toEqual(["group:grp-资料分析-1@1", "material:mat-资料分析-1@1"]);
   });
 
@@ -861,7 +863,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       );
     db.$client
       .prepare(
-        "INSERT INTO question_group_members (teacher_id, group_id, question_id, \"order\") VALUES (?, ?, ?, 0)",
+        'INSERT INTO question_group_members (teacher_id, group_id, question_id, "order") VALUES (?, ?, ?, 0)',
       )
       .run(TEST_TEACHER_ID, "grp-post-hoc", "资料分析-1");
     const started = startWrongPractice(
@@ -875,7 +877,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
     // 组边只认来源卷冻结的 grp@v1；live 新组不入卷
     expect(rows.some((row) => row.sourceId === "grp-post-hoc")).toBe(false);
     expect(
-      rows.map((row) => `${row.kind}:${row.sourceId}@${row.sourceVersion}`).sort(),
+      rows
+        .map((row) => `${row.kind}:${row.sourceId}@${row.sourceVersion}`)
+        .sort(),
     ).toEqual(["group:grp-资料分析-1@1", "material:mat-资料分析-1@1"]);
   });
 

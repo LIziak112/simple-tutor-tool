@@ -158,7 +158,12 @@ export function contextEntriesOf(
         contentMd: row.contentMd,
         anchors: parseColumn(row, "material", "anchors", row.anchorsJson),
         slots: parseColumn(row, "material", "slots", row.slotsJson),
-        mediaPaths: parseColumn(row, "material", "mediaPaths", row.mediaPathsJson),
+        mediaPaths: parseColumn(
+          row,
+          "material",
+          "mediaPaths",
+          row.mediaPathsJson,
+        ),
       },
     });
   }
@@ -172,8 +177,18 @@ export function contextEntriesOf(
         ...(row.title !== null ? { title: row.title } : {}),
         ...(row.label !== null ? { label: row.label } : {}),
         introMd: row.introMd,
-        materialRefs: parseColumn(row, "group", "materialRefs", row.materialRefsJson),
-        questionIds: parseColumn(row, "group", "questionIds", row.questionIdsJson),
+        materialRefs: parseColumn(
+          row,
+          "group",
+          "materialRefs",
+          row.materialRefsJson,
+        ),
+        questionIds: parseColumn(
+          row,
+          "group",
+          "questionIds",
+          row.questionIdsJson,
+        ),
       },
     });
   }

@@ -655,16 +655,19 @@ describe("reparseAll：材料/题组（tt-06b / QM-05）", () => {
     const report = reparseAll(db, { dryRun: false });
 
     // 两实体均走 updated 分支（抽取副本被篡改触发恢复）
-    expect(report.materials.find((r) => r.id === "mat-资料分析-1")?.status).toBe(
-      "updated",
-    );
+    expect(
+      report.materials.find((r) => r.id === "mat-资料分析-1")?.status,
+    ).toBe("updated");
     expect(report.groups.find((r) => r.id === "grp-资料分析-1")?.status).toBe(
       "updated",
     );
     // reparse 只刷新抽取副本：order 维持行内原值，不按数组下标重排
     expect(
-      db.select().from(materials).where(eq(materials.id, "mat-资料分析-1")).get()
-        ?.order,
+      db
+        .select()
+        .from(materials)
+        .where(eq(materials.id, "mat-资料分析-1"))
+        .get()?.order,
     ).toBe(5);
     expect(
       db

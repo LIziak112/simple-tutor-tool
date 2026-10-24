@@ -483,7 +483,11 @@ describe("QM-07：教师与学生计数一致（材料/组不重复计题，两�
       deleted: false,
     }).find((unit) => unit.id === unitId)?.questionCount;
     // 学生侧：课程可见目录（同谓词 liveQuestionCounts）
-    const studentCount = getStudentCourseDetail(db, memberId, courseId).items.find(
+    const studentCount = getStudentCourseDetail(
+      db,
+      memberId,
+      courseId,
+    ).items.find(
       (item) => item.kind === "unit" && item.refId === unitId,
     )?.questionCount;
     // 两侧一致且等于可答子题数（材料/组不产生题行、组不重复计题）

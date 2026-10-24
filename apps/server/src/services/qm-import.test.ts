@@ -1,4 +1,8 @@
-import type { ImportPreviewData, LintIssue, ParsedDocument } from "@tutor/contract";
+import type {
+  ImportPreviewData,
+  LintIssue,
+  ParsedDocument,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../db/client.ts";
@@ -657,7 +661,11 @@ describe("QM-07 P2-1：resolveQmImportIssues 结构化传递（消除 message �
       message: "无法解析的引用目标：mat-live（教师域既有材料由导入层解析）",
       target: { material: "mat-live" },
     };
-    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    const resolved = resolveQmImportIssues(
+      [issue],
+      parsedOf(),
+      liveMaterialIds,
+    );
     expect(resolved.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(false);
   });
 
@@ -667,9 +675,13 @@ describe("QM-07 P2-1：resolveQmImportIssues 结构化传递（消除 message �
       line: 9,
       column: 1,
       code: "UNKNOWN_MATERIAL_REF",
-      message: '::ref 引用的材料「mat-live」在本文档中不可解析（未声明）',
+      message: "::ref 引用的材料「mat-live」在本文档中不可解析（未声明）",
     };
-    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    const resolved = resolveQmImportIssues(
+      [issue],
+      parsedOf(),
+      liveMaterialIds,
+    );
     expect(resolved.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(true);
   });
 
@@ -679,10 +691,14 @@ describe("QM-07 P2-1：resolveQmImportIssues 结构化传递（消除 message �
       line: 9,
       column: 1,
       code: "UNKNOWN_MATERIAL_REF",
-      message: '::ref 引用的材料「mat-404」在本文档中不可解析（未声明）',
+      message: "::ref 引用的材料「mat-404」在本文档中不可解析（未声明）",
       target: { material: "mat-404" },
     };
-    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    const resolved = resolveQmImportIssues(
+      [issue],
+      parsedOf(),
+      liveMaterialIds,
+    );
     expect(resolved.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(true);
   });
 
@@ -694,7 +710,11 @@ describe("QM-07 P2-1：resolveQmImportIssues 结构化传递（消除 message �
       code: "UNIT_FROM_FALLBACK",
       message: "frontmatter 未声明 unit",
     };
-    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    const resolved = resolveQmImportIssues(
+      [issue],
+      parsedOf(),
+      liveMaterialIds,
+    );
     expect(resolved).toHaveLength(1);
   });
 });
