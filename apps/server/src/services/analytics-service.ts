@@ -53,6 +53,7 @@ import { answerOf } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
+import { effectiveVerdictOfRow } from "./attempt-service";
 import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { snapshotOfRow } from "./snapshot";
@@ -792,11 +793,15 @@ function buildTrend(
     const weekAttempts = byWeek.get(key) ?? [];
     let judged = 0;
     let correct = 0;
+    let selfJudged = 0;
     for (const attempt of weekAttempts) {
       for (const response of ctx.responsesByAttempt.get(attempt.id) ?? []) {
-        if (response.finalCorrect === null) continue; // D4：待批不进分母
+        // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断不进分母
+        const effective = effectiveVerdictOfRow(response);
+        if (effective === null) continue;
         judged += 1;
-        if (response.finalCorrect) correct += 1;
+        if (effective.source === "self") selfJudged += 1;
+        if (effective.value) correct += 1;
       }
     }
     points.push({
@@ -804,6 +809,7 @@ function buildTrend(
       attemptCount: weekAttempts.length,
       judgedCount: judged,
       correctCount: correct,
+      selfJudgedCount: selfJudged,
       correctRate: judged > 0 ? correct / judged : null,
     });
   }
@@ -821,12 +827,13 @@ function buildKnowledgeRows(
     correct: number;
     wrong: number;
     pending: number;
+    selfJudged: number;
   }
   const byKnowledge = new Map<string, Tally>();
   const tallyOf = (name: string): Tally => {
     let tally = byKnowledge.get(name);
     if (tally === undefined) {
-      tally = { correct: 0, wrong: 0, pending: 0 };
+      tally = { correct: 0, wrong: 0, pending: 0, selfJudged: 0 };
       byKnowledge.set(name, tally);
     }
     return tally;
@@ -834,12 +841,22 @@ function buildKnowledgeRows(
   for (const { response } of scoped) {
     const knowledge = knowledgeOfResponse(response, ctx.knowledgeFallback);
     if (knowledge.length === 0) continue;
-    if (response.finalCorrect === null) {
+    // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单独计 pending
+    const effective = effectiveVerdictOfRow(response);
+    if (effective === null) {
       for (const name of knowledge) tallyOf(name).pending += 1;
-    } else if (response.finalCorrect) {
-      for (const name of knowledge) tallyOf(name).correct += 1;
+    } else if (effective.value) {
+      for (const name of knowledge) {
+        const tally = tallyOf(name);
+        tally.correct += 1;
+        if (effective.source === "self") tally.selfJudged += 1;
+      }
     } else {
-      for (const name of knowledge) tallyOf(name).wrong += 1;
+      for (const name of knowledge) {
+        const tally = tallyOf(name);
+        tally.wrong += 1;
+        if (effective.source === "self") tally.selfJudged += 1;
+      }
     }
   }
   return [...byKnowledge.entries()]
@@ -851,6 +868,7 @@ function buildKnowledgeRows(
         wrongCount: tally.wrong,
         pendingCount: tally.pending,
         judgedCount: judged,
+        selfJudgedCount: tally.selfJudged,
         correctRate: judged > 0 ? tally.correct / judged : null,
       };
     })
@@ -905,6 +923,7 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
   interface PointTally {
     correct: number;
     wrong: number;
+    selfJudged: number;
     /** 该考点周期内的错例（questionId → 次数 + 最近一次错例） */
     wrongByQuestion: Map<string, { count: number; worst: ScopedResponse }>;
   }
@@ -912,18 +931,25 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
   const tallyOf = (name: string): PointTally => {
     let tally = byKnowledge.get(name);
     if (tally === undefined) {
-      tally = { correct: 0, wrong: 0, wrongByQuestion: new Map() };
+      tally = {
+        correct: 0,
+        wrong: 0,
+        selfJudged: 0,
+        wrongByQuestion: new Map(),
+      };
       byKnowledge.set(name, tally);
     }
     return tally;
   };
   for (const item of scopedResponses) {
-    const finalCorrect = item.response.finalCorrect;
-    if (finalCorrect === null) continue; // 待批不算错（与 D4 同精神）
+    // QM-12 有效判定口径：未判断不算错；自评「错」计入错例（教师判 > 自评 > 自动）
+    const effective = effectiveVerdictOfRow(item.response);
+    if (effective === null) continue;
     const knowledge = knowledgeOfResponse(item.response, ctx.knowledgeFallback);
     for (const name of knowledge) {
       const tally = tallyOf(name);
-      if (finalCorrect) {
+      if (effective.source === "self") tally.selfJudged += 1;
+      if (effective.value) {
         tally.correct += 1;
         continue;
       }
@@ -983,6 +1009,7 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
         knowledge,
         wrongCount: tally.wrong,
         judgedCount: judged,
+        selfJudgedCount: tally.selfJudged,
         correctRate: judged > 0 ? tally.correct / judged : null,
         representative: {
           questionId: item?.response.questionId ?? "",
@@ -1213,7 +1240,8 @@ function buildWrongQuestionRows(
   // questionId → 最新一次判错的响应（submittedAt/attemptId 降序取最大）
   const latestByQuestion = new Map<string, ScopedResponse>();
   for (const item of responses) {
-    if (item.response.finalCorrect !== false) continue;
+    // QM-12 有效判定口径：自评「错」同样进入错题行；未判断不在列表
+    if (effectiveVerdictOfRow(item.response)?.value !== false) continue;
     const prev = latestByQuestion.get(item.response.questionId);
     if (prev === undefined || laterThan(item.attempt, prev.attempt)) {
       latestByQuestion.set(item.response.questionId, item);
@@ -1388,17 +1416,22 @@ function buildQuestionRows(ctx: AnalyticsContext): AnalyticsQuestionRow[] {
     let judged = 0;
     let correct = 0;
     let pending = 0;
+    let selfJudged = 0;
     const secs: number[] = [];
     let anomalyCount = 0;
     const wrongAnswerCount = new Map<string, number>();
     for (const { response } of group.rows) {
-      if (response.finalCorrect === null) {
-        pending += 1; // D4：待批单列，不进分母
-      } else if (response.finalCorrect) {
+      // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单列不进分母
+      const effective = effectiveVerdictOfRow(response);
+      if (effective === null) {
+        pending += 1;
+      } else if (effective.value) {
         judged += 1;
         correct += 1;
+        if (effective.source === "self") selfJudged += 1;
       } else {
         judged += 1;
+        if (effective.source === "self") selfJudged += 1;
         if (WRONG_ANSWER_TYPES.has(type)) {
           const key = serializeStudentAnswer(answerOf(response.answerJson));
           const mapKey = key ?? "\u0000未作答";
@@ -1447,6 +1480,7 @@ function buildQuestionRows(ctx: AnalyticsContext): AnalyticsQuestionRow[] {
       judgedCount: judged,
       correctCount: correct,
       pendingCount: pending,
+      selfJudgedCount: selfJudged,
       correctRate: judged > 0 ? correct / judged : null,
       avgSec:
         secs.length > 0
@@ -1522,10 +1556,14 @@ export function getAnalyticsOverview(
   // 周期内全域汇总（D4 口径）
   let judged = 0;
   let correct = 0;
+  let selfJudged = 0;
   for (const { response } of scopedResponsesOf(ctx, ctx.qualifying)) {
-    if (response.finalCorrect === null) continue;
+    // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断不进分母
+    const effective = effectiveVerdictOfRow(response);
+    if (effective === null) continue;
     judged += 1;
-    if (response.finalCorrect) correct += 1;
+    if (effective.source === "self") selfJudged += 1;
+    if (effective.value) correct += 1;
   }
 
   return {
@@ -1541,6 +1579,7 @@ export function getAnalyticsOverview(
     overall: {
       judgedCount: judged,
       correctCount: correct,
+      selfJudgedCount: selfJudged,
       correctRate: judged > 0 ? correct / judged : null,
     },
   };
@@ -1578,11 +1617,15 @@ export function getAnalyticsStudent(
   let judged = 0;
   let correct = 0;
   let pending = 0;
+  let selfJudged = 0;
   for (const { response } of responses) {
-    if (response.finalCorrect === null) pending += 1;
+    // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单独计 pending
+    const effective = effectiveVerdictOfRow(response);
+    if (effective === null) pending += 1;
     else {
       judged += 1;
-      if (response.finalCorrect) correct += 1;
+      if (effective.source === "self") selfJudged += 1;
+      if (effective.value) correct += 1;
     }
   }
 
@@ -1597,6 +1640,7 @@ export function getAnalyticsStudent(
       judgedCount: judged,
       correctCount: correct,
       pendingCount: pending,
+      selfJudgedCount: selfJudged,
       correctRate: judged > 0 ? correct / judged : null,
     },
     anomalies: buildAnomalies(ctx, scoped),
