@@ -12,6 +12,7 @@ import {
   dispatchBehavior,
   dispatchIsAnswered,
   emptyPublicStructure,
+  inspectShapeOfAnswer,
   type MatchingPublicStructure,
   matchingPublicStructureOf,
   type OrderingPublicStructure,
@@ -397,5 +398,70 @@ describe("调度边界扩展（§11.1 触点①：dispatch 三 case + assertNeve
       final: answerKindBehaviors.final,
     };
     void incomplete;
+  });
+});
+
+/** 部分覆写的完整结构集（空结构打底，缺省键沿用 emptyPublicStructure） */
+function structuresOf(overrides: {
+  matching?: MatchingPublicStructure;
+  ordering?: OrderingPublicStructure;
+}): PublicStructureByKind {
+  return {
+    ...emptyPublicStructure,
+    ...(overrides.matching !== undefined
+      ? { matching: overrides.matching }
+      : {}),
+    ...(overrides.ordering !== undefined
+      ? { ordering: overrides.ordering }
+      : {}),
+  };
+}
+
+describe("inspectShapeOfAnswer 调度器（QM-13：服务端保存路径结构校验唯一入口）", () => {
+  it("matching：经完整公开结构报告未知槽位/未知选项/重复占用；结构不可用返回空", () => {
+    const issues = inspectShapeOfAnswer(
+      { kind: "matching", pairs: { "slot-9": "opt-1", "slot-1": "opt-99" } },
+      structuresOf({ matching: matchingStructure }),
+    );
+    expect(issues.map((issue) => issue.code)).toEqual([
+      "MATCHING_UNKNOWN_SLOT",
+      "MATCHING_UNKNOWN_OPTION",
+    ]);
+    // allowRepeat=false 的重复占用（matchingStructure 无重复许可）
+    const reuse = inspectShapeOfAnswer(
+      {
+        kind: "matching",
+        pairs: { "slot-1": "opt-1", "slot-2": "opt-1" },
+      },
+      structuresOf({ matching: matchingStructure }),
+    );
+    expect(reuse.map((issue) => issue.code)).toEqual([
+      "MATCHING_OPTION_REUSED",
+    ]);
+    // 空结构（材料/选项池不可用）= 无从校验
+    expect(
+      inspectShapeOfAnswer(
+        { kind: "matching", pairs: { x: "y" } },
+        emptyPublicStructure,
+      ),
+    ).toEqual([]);
+  });
+
+  it("ordering：报告干扰项入序/未知项/重复项/固定项错位", () => {
+    const issues = inspectShapeOfAnswer(
+      {
+        kind: "ordering",
+        sequence: ["it-9", "it-2", "it-2", "it-6"],
+      },
+      structuresOf({ ordering: orderingStructure }),
+    );
+    // it-2 重复出现两次，各在其错位上报（fixedPosition=1，两处均不在位）
+    expect(issues.map((issue) => issue.code)).toEqual([
+      "ORDERING_UNKNOWN_ITEM",
+      "FIXED_ITEM_OUT_OF_POSITION",
+      "ORDERING_DUPLICATE_ITEM",
+      "FIXED_ITEM_OUT_OF_POSITION",
+      "DISTRACTOR_IN_SEQUENCE",
+    ]);
   });
 });

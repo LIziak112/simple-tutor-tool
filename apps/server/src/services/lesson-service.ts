@@ -28,6 +28,7 @@ import {
   insertFrozenResponses,
   lessonLiveSummaryOf,
   lessonQuestionSubmitted,
+  materialSlotOrderOf,
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
@@ -217,6 +218,8 @@ function buildLessonStartData(
 ): LessonStartData {
   const blocks: LessonBlock[] = splitLessonBlocks(lecture.markdown);
 
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   const questions: AttemptQuestionPublic[] = [];
   const drafts: Record<string, StudentAnswer> = {};
   const draftRevisions: Record<string, number> = {};
@@ -226,7 +229,7 @@ function buildLessonStartData(
   for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
-    questions.push(publicOfSnapshot(snapshot, row.id));
+    questions.push(publicOfSnapshot(snapshot, row.id, { materialSlots }));
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;

@@ -65,6 +65,7 @@ import {
   answersReleased,
   assignmentReleaseByIds,
   lessonQuestionSubmitted,
+  materialSlotOrderOf,
   publicOfSnapshot,
   requireAttemptQuestion,
   requireAttemptQuestionRow,
@@ -1392,7 +1393,13 @@ export function getStudentQuestionNotebook(
     // release 经 releaseOfSnapshot 单一投影（gate 放行且快照可用才构造）
     const snapshot = snapshotOfRow(row.response);
     const question =
-      snapshot !== null ? publicOfSnapshot(snapshot, row.response.id) : null;
+      snapshot !== null
+        ? publicOfSnapshot(snapshot, row.response.id, {
+            // QM-13：matching 槽位集合按该卷冻结材料槽位序展开（跨卷轮次
+            // 各自取用，不混卷）
+            materialSlots: materialSlotOrderOf(db, row.attempt.id),
+          })
+        : null;
     const release =
       isReleased && snapshot !== null ? releaseOfSnapshot(snapshot) : null;
     const { evidence, corrections, supplements } = noteCollectionsOf(
