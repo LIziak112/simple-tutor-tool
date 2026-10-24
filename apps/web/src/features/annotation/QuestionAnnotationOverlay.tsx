@@ -48,6 +48,7 @@ import {
   createAnnotationSurface,
 } from "./annotation-surface";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
+import { prepareQuestionAnnotationContinuation } from "./question-annotation-continuation";
 import {
   awaitQuestionSurfaceReady,
   questionSurfaceMatchesLayout,
@@ -128,7 +129,8 @@ export const QuestionAnnotationOverlay = forwardRef<
   const [, setHistory] = useState(0);
   const layout = record?.localBase?.layout ?? record?.base?.layout;
   const rejectedLayout = compatible === false;
-  const displayLayout = rejectedLayout ? undefined : layout;
+  // 校验失败也保留保存时的逻辑宽度，否则下次校验会在另一套排版上永久失败。
+  const displayLayout = layout;
   const cssWidth = displayLayout?.cssWidth;
   const cssHeight = displayLayout?.cssHeight;
   const baseWidth = displayLayout
@@ -263,7 +265,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       }
       if (!editor || !session || loading) return;
       // 查看原稿不重新生成底图，也不进入原位编辑的布局准入流程。
-      if ((record?.localBase || record?.base) && (rejectedLayout || !layout)) {
+      if ((record?.localBase || record?.base) && !layout) {
         if (await editor.request(null)) {
           setError(null);
           setOriginalScope(originalScopeKey);
@@ -311,11 +313,20 @@ export const QuestionAnnotationOverlay = forwardRef<
               ),
             );
             if (signal.aborted) return false;
+            const continuation = await prepareQuestionAnnotationContinuation(
+              session,
+              scope,
+              question,
+              element,
+              prepared.localBase,
+              signal,
+            );
+            if (signal.aborted) return false;
             const matches = await measureStage("annotation:layout-match", () =>
               questionSurfaceMatchesLayout(
                 question,
                 element,
-                prepared.localBase.layout,
+                continuation.layout,
               ),
             );
             if (signal.aborted) return false;
@@ -344,7 +355,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     const element = root.current?.querySelector<HTMLElement>(
       '[data-slot="question-surface"]',
     );
-    if (!layout || !element || rejectedLayout) return;
+    if (!layout || !element) return;
     let generation = 0;
     let alive = true;
     let frame = 0;
@@ -404,7 +415,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, rejectedLayout, hidden, scale]);
+  }, [layout, question, hidden, scale]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -581,7 +592,10 @@ export const QuestionAnnotationOverlay = forwardRef<
           className="relative overflow-clip"
           style={
             cssWidth && cssHeight
-              ? { width: cssWidth * scale, height: cssHeight * scale }
+              ? {
+                  width: cssWidth * scale,
+                  height: rejectedLayout ? undefined : cssHeight * scale,
+                }
               : undefined
           }
         >

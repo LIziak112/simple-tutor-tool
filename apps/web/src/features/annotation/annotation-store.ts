@@ -27,6 +27,7 @@ import type {
 import {
   ANNOTATION_BASE_PNG_MAX_BYTES,
   annotationDocSchema,
+  annotationSurfaceLayoutCore,
   annotationSurfaceLayoutSchema,
 } from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
@@ -37,6 +38,7 @@ import {
 } from "@/lib/kv-backend";
 import { localPersistenceErrorMessage } from "@/lib/local-persistence-error";
 import { randomUuid } from "@/lib/uuid";
+import { annotationByteBackend } from "./annotation-byte-backend";
 
 // ---------- 会话与键 ----------
 
@@ -254,7 +256,9 @@ export function memoryAnnotationBackend(): AnnotationStoreBackend {
 }
 
 function idbAnnotationBackend(): AnnotationStoreBackend {
-  return idbKVBackend(ANNOTATION_IDB_DB, ANNOTATION_IDB_STORE);
+  return annotationByteBackend(
+    idbKVBackend(ANNOTATION_IDB_DB, ANNOTATION_IDB_STORE),
+  );
 }
 
 let activeBackend: AnnotationStoreBackend | null = null;
@@ -644,6 +648,37 @@ export async function applyBasePreview(
   });
 }
 
+/** 接收服务端核验的补充证据；不产生编辑、不改待传正文和版本。 */
+export async function applyAnnotationBaseCompatibility(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  base: AnnotationBaseRef,
+  resetVersion: number,
+  guard: () => void,
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    guard();
+    const local = record.localBase;
+    if (
+      (record.resetVersion ?? 0) !== resetVersion ||
+      record.base?.baseId !== base.baseId ||
+      !local ||
+      local.boundBaseId !== base.baseId ||
+      !base.layout?.compatibility ||
+      JSON.stringify(annotationSurfaceLayoutCore(local.layout)) !==
+        JSON.stringify(annotationSurfaceLayoutCore(base.layout))
+    )
+      throw new Error("圈画底图已变化，不能接收旧续写证据，请重试");
+    const layout = annotationSurfaceLayoutSchema.parse(base.layout);
+    record.base = base;
+    record.localBase = {
+      ...local,
+      layout,
+    };
+  });
+  await settleAnnotationRecordPersistence(session, scope);
+}
+
 /** 底图禁用原因落地（too-tall/装配失败：入口显示，草稿照用） */
 export async function applyBaseDisabled(
   session: AnnotationSessionRef,
@@ -741,6 +776,18 @@ export async function applyAnnotationView(
       return;
     }
     record.base = view.base;
+    const cloudLayout = view.base?.layout;
+    if (
+      cloudLayout?.compatibility &&
+      record.localBase &&
+      !record.localBase.layout.compatibility &&
+      record.localBase.boundBaseId === view.base?.baseId &&
+      JSON.stringify(annotationSurfaceLayoutCore(record.localBase.layout)) ===
+        JSON.stringify(annotationSurfaceLayoutCore(cloudLayout))
+    ) {
+      // 同一底图的服务器证据进入本机缓存，既有待传内容与编辑身份不变。
+      record.localBase = { ...record.localBase, layout: cloudLayout };
+    }
     record.baseRevision = meta?.revision ?? 0;
     record.annotationId = meta?.annotationId ?? null;
     if (view.doc === null) {
