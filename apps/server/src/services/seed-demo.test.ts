@@ -23,7 +23,10 @@ import { createStudent } from "./student-service";
 const SEED_NOW = "2026-10-01T04:00:00.000Z";
 
 describe("seed-demo：多教师登录名避让与失败回滚（T4.1 修复）", () => {
-  it("同库双教师播种成功：第二域学生登录名自动加后缀、displayName 不变、第一域不受影响", async () => {
+  // 双域全量种子世界：固有 6-7s，负载下会越 5s 默认超时
+  it("同库双教师播种成功：第二域学生登录名自动加后缀、displayName 不变、第一域不受影响", {
+    timeout: 15_000,
+  }, async () => {
     const db = createTestDb();
     try {
       // 第一域（demo）：三名种子学生登录名均为原名
