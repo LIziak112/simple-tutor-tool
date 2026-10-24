@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { type ResponseRow, responses } from "../db/schema";
+import { attempts, type ResponseRow, responses } from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -158,12 +158,15 @@ async function createAssignment(
   return id;
 }
 
-/** 在开关指定状态下开卷（§5.8.4：gradingPolicy 冻结读开卷时点的部署开关） */
+/** 在开关指定状态下开卷（§5.8.4：gradingPolicy 冻结读开卷时点的部署开关）。
+ *  v1=true 显式请求新协议卷（workflowVersion: 1，M1b 建卷口径——不显式
+ *  请求按旧协议建卷）；false 开旧协议卷（legacy 对照）。 */
 async function startAttempt(
   app: App,
   aCookie: string,
   assignmentId: string,
   newContentEnabled: boolean,
+  v1 = true,
 ): Promise<string> {
   const previous = process.env.NEW_CONTENT_ENABLED;
   process.env.NEW_CONTENT_ENABLED = newContentEnabled ? "true" : "false";
@@ -171,7 +174,11 @@ async function startAttempt(
   try {
     const res = await app.request(
       `/api/student/assignments/${assignmentId}/attempt`,
-      { method: "POST", headers: { cookie: aCookie } },
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        ...(v1 ? { body: JSON.stringify({ workflowVersion: 1 }) } : {}),
+      },
     );
     expect(res.status).toBe(200);
     attemptId = ((await res.json()) as { data: { id: string } }).data.id;
@@ -304,5 +311,159 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
     expect(rowOf(db, attemptId, Q.fill).autoCorrect).toBeNull();
     expect(rowOf(db, attemptId, Q.choice).autoCorrect).toBe(true);
     expect(rowOf(db, attemptId, Q.solveNoRef).autoCorrect).toBeNull();
+  });
+});
+
+/** 读 attempts 行（status/scoreFinal 断言） */
+function attemptRowOf(db: Db, attemptId: string) {
+  const row = db.select().from(attempts).where(eq(attempts.id, attemptId)).get();
+  if (row === undefined) throw new Error("测试夹具缺 attempt 行");
+  return row;
+}
+
+/** 教师批注（mark=null 清除） */
+async function markResponse(
+  app: App,
+  teacherCookie: string,
+  responseId: string,
+  mark: "correct" | "wrong" | null,
+): Promise<Response> {
+  return app.request(`/api/teacher/responses/${responseId}/mark`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: teacherCookie },
+    body: JSON.stringify({ mark, comment: null }),
+  });
+}
+
+/** 教师待批队列的题目 id 集合 */
+async function pendingMarkQuestionIds(
+  app: App,
+  teacherCookie: string,
+): Promise<string[]> {
+  const res = await app.request("/api/teacher/pending-marks", {
+    headers: { cookie: teacherCookie },
+  });
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    data: { marks: { questionId: string }[] };
+  };
+  return body.data.marks.map((m) => m.questionId);
+}
+
+/** 新策略卷开卷→作答→交卷的公共前导（张三 + 交卷回执） */
+async function newPolicySubmittedAttempt(): Promise<
+  Qm10Fixture & { aCookie: string; attemptId: string }
+> {
+  const fixture = await makeQm10App();
+  const studentId = await createStudent(
+    fixture.app,
+    fixture.teacherCookie,
+    "张三",
+  );
+  const assignmentId = await createAssignment(
+    fixture.app,
+    fixture.teacherCookie,
+    fixture.unitId,
+    studentId,
+  );
+  const aCookie = await loginStudent(fixture.app, "张三");
+  const attemptId = await startAttempt(
+    fixture.app,
+    aCookie,
+    assignmentId,
+    true,
+  );
+  await saveAllAnswers(fixture.app, aCookie, attemptId);
+  const res = await submitAttemptRequest(fixture.app, aCookie, attemptId);
+  expect(res.status).toBe(200);
+  return { ...fixture, aCookie, attemptId };
+}
+
+describe("QM-10 细项7：graded 放宽与教师待批边界（§5.5.5/§5.5.3）", () => {
+  it("含 manual_only 行的新策略卷交卷 → submitted（教师待处理阻塞 graded），reference_self 行不进必批队列", async () => {
+    const { app, db, teacherCookie, attemptId } =
+      await newPolicySubmittedAttempt();
+    const attempt = attemptRowOf(db, attemptId);
+    // manual_only（无参考 solve）未判 → 整卷停留 submitted；scoreFinal 未写
+    expect(attempt.status).toBe("submitted");
+    expect(attempt.scoreFinal).toBeNull();
+    // scoreAuto 分母只含可自动判分行（choice 一题）
+    expect(attempt.scoreAuto).toBe(100);
+    // 必批队列：只有 manual_only 行；reference_self（fill/solve 有参考）不入队
+    const pending = await pendingMarkQuestionIds(app, teacherCookie);
+    expect(pending).toContain(Q.solveNoRef);
+    expect(pending).not.toContain(Q.fill);
+    expect(pending).not.toContain(Q.solveWithRef);
+  });
+
+  it("教师判完 manual_only 行 → graded（scoreFinal=round(对/全部)），清除后回落 submitted", async () => {
+    const { app, db, teacherCookie, attemptId } =
+      await newPolicySubmittedAttempt();
+    const manualRow = rowOf(db, attemptId, Q.solveNoRef);
+    const markRes = await markResponse(
+      app,
+      teacherCookie,
+      manualRow.id,
+      "correct",
+    );
+    expect(markRes.status).toBe(200);
+    // 全部行已提交且无教师待处理行 → graded；scoreFinal = round(2/4×100)=50
+    //（choice 对 + 教师判对；reference_self 两行 finalCorrect 恒 null 计分母）
+    let attempt = attemptRowOf(db, attemptId);
+    expect(attempt.status).toBe("graded");
+    expect(attempt.scoreFinal).toBe(50);
+    // 清除教师判定 → 该行回到教师待处理 → 整卷回落 submitted、scoreFinal 置 null
+    const clearRes = await markResponse(app, teacherCookie, manualRow.id, null);
+    expect(clearRes.status).toBe(200);
+    attempt = attemptRowOf(db, attemptId);
+    expect(attempt.status).toBe("submitted");
+    expect(attempt.scoreFinal).toBeNull();
+  });
+
+  it("教师批改 reference_self 行写 finalCorrect 且整卷保持 graded；清除后该行不回必批队列", async () => {
+    const { app, db, teacherCookie, attemptId } =
+      await newPolicySubmittedAttempt();
+    // 先判掉 manual_only 行使整卷 graded
+    await markResponse(app, teacherCookie, rowOf(db, attemptId, Q.solveNoRef).id, "correct");
+    expect(attemptRowOf(db, attemptId).status).toBe("graded");
+
+    const fillRow = rowOf(db, attemptId, Q.fill);
+    const markRes = await markResponse(app, teacherCookie, fillRow.id, "correct");
+    expect(markRes.status).toBe(200);
+    expect(rowOf(db, attemptId, Q.fill).finalCorrect).toBe(true);
+    // 整卷仍 graded（无教师待处理行）；scoreFinal 更新 = round(3/4×100)=75
+    //（choice 对 + manual 行教师判对 + fill 教师判对）
+    expect(attemptRowOf(db, attemptId).status).toBe("graded");
+    expect(attemptRowOf(db, attemptId).scoreFinal).toBe(75);
+
+    // 清除：finalCorrect 回落 autoCorrect（null），不回必批队列（有参考行
+    // 恒不进教师必批——§5.5.3）；整卷保持 graded
+    const clearRes = await markResponse(app, teacherCookie, fillRow.id, null);
+    expect(clearRes.status).toBe(200);
+    expect(rowOf(db, attemptId, Q.fill).finalCorrect).toBeNull();
+    expect(attemptRowOf(db, attemptId).status).toBe("graded");
+    expect(attemptRowOf(db, attemptId).scoreFinal).toBe(50);
+    const pending = await pendingMarkQuestionIds(app, teacherCookie);
+    expect(pending).not.toContain(Q.fill);
+  });
+
+  it("历史卷（旧行 NULL）graded 口径零变化：有待批行停留 submitted，待批队列含旧行", async () => {
+    const { app, db, teacherCookie, unitId } = await makeQm10App();
+    const studentId = await createStudent(app, teacherCookie, "李四");
+    const assignmentId = await createAssignment(app, teacherCookie, unitId, studentId);
+    const aCookie = await loginStudent(app, "李四");
+    // 旧协议卷（不请求 workflowVersion——升级前历史卷的真实形态）
+    const attemptId = await startAttempt(app, aCookie, assignmentId, false, false);
+    await saveAllAnswers(app, aCookie, attemptId);
+    const res = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(res.status).toBe(200);
+    // 旧口径：fill 与无参考 solve finalCorrect null → submitted（不放宽）
+    const attempt = attemptRowOf(db, attemptId);
+    expect(attempt.status).toBe("submitted");
+    // 旧行按原语义进待批队列（fill 恒 null 进待批、无参考 solve 待批）
+    const pending = await pendingMarkQuestionIds(app, teacherCookie);
+    expect(pending).toContain(Q.fill);
+    expect(pending).toContain(Q.solveNoRef);
+    expect(pending).not.toContain(Q.solveWithRef); // solve 等价判 true 不待批
   });
 });

@@ -2067,6 +2067,53 @@ export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
 }
 
 /**
+ * 收尾判定的行级输入（attemptFinalOutcomeOf 消费；finalCorrect 为该口径下
+ * 的写入后事实值——交卷链路 = autoCorrect，批改链路 = teacherMark ?? autoCorrect）
+ */
+export interface FinalOutcomeRow {
+  readonly gradingPolicy: GradingPolicy | null;
+  readonly submittedAt: string | null;
+  /** 教师批改标记（teacher_pending 判定只消费 null 与否，形态由列类型把关） */
+  readonly teacherMark: string | null;
+  readonly finalCorrect: boolean | null;
+}
+
+/**
+ * QM-10 细项7（§5.5.5 graded 触发放宽，新行口径单一出处——交卷/自动收尾/
+ * 教师批改重算三链路共用）：
+ * - **旧行旧口径（历史不重释）**：任一行 gradingPolicy=NULL（升级前开的卷、
+ *   开关关闭部署）→ 整卷按 finalScoreOf（D2/D3：全部 finalCorrect 非 null 才
+ *   graded）。正常数据新旧不混卷（行策略在开卷时整卷冻结），混卷防御性取
+ *   旧口径——与「禁止重释历史」同一保守侧；
+ * - **新行口径**：graded ⟺ 全部行已提交 且 无「教师待处理」行
+ *   （manual_only 且 teacherMark=null——判定来源枯竭，唯一出口是教师；
+ *   reference_self 行自评与否不阻塞，「完成作答不以自评为前提」）；
+ *   scoreFinal 公式沿用 D3（round(finalCorrect=true ÷ 全部题数 × 100)，
+ *   reference_self 行 finalCorrect 恒 null——计分母不计分子，教师权威线）；
+ * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
+ */
+export function attemptFinalOutcomeOf(
+  rows: readonly FinalOutcomeRow[],
+): { status: "submitted" | "graded"; scoreFinal: number | null } {
+  if (rows.length === 0) return finalScoreOf([]);
+  if (rows.some((row) => row.gradingPolicy === null)) {
+    return finalScoreOf(rows.map((row) => row.finalCorrect));
+  }
+  const allSubmitted = rows.every((row) => row.submittedAt !== null);
+  const teacherPending = rows.some(
+    (row) => row.gradingPolicy === "manual_only" && row.teacherMark === null,
+  );
+  if (!allSubmitted || teacherPending) {
+    return { status: "submitted", scoreFinal: null };
+  }
+  const correct = rows.filter((row) => row.finalCorrect === true).length;
+  return {
+    status: "graded",
+    scoreFinal: Math.round((correct / rows.length) * 100),
+  };
+}
+
+/**
  * 交卷（服务端权威判分；T6R.3 起三来源统一读冻结快照）：
  * - attempt 不存在 → 404；非本人 → 403；已交卷 → 409 ALREADY_SUBMITTED（验收项）；
  * - 判分输入 = 该 attempt 自有 responses 行的 questionSnapshotJson（建卷/懒冻结
@@ -2137,12 +2184,15 @@ export function submitAttempt(
   const activeSecByQuestion = computePerQuestionActiveSec(timeline);
   const eventChangeCountByQuestion = countAnswerChanges(timeline);
 
+  const nowIso = new Date(now).toISOString();
   // allFrozen：全部冻结题（revisions 全集校验与整卷得分汇总的输入）；
   // graded：本次要判分写入的行（lesson 剔除已单题提交者）
   const allFrozen: GradedResponse[] = [];
   const graded: GradedResponse[] = [];
   const keptRows: ResponseRow[] = [];
-  const finalCorrects: (boolean | null)[] = [];
+  // QM-10 细项7：收尾判定的行级输入（§5.5.5——kept 行按行内事实、本次判分
+  // 行 finalCorrect=autoCorrect 且逐题语义卷提交时刻=交卷时刻）
+  const outcomeRows: FinalOutcomeRow[] = [];
   for (const ownRow of ownRows) {
     const snapshot = snapshotOfRow(ownRow);
     if (snapshot === null) continue; // 历史题目缺失/坏快照按缺失计（不回填、不判分）
@@ -2158,7 +2208,12 @@ export function submitAttempt(
         answer,
         autoCorrect: ownRow.autoCorrect,
       });
-      finalCorrects.push(ownRow.finalCorrect);
+      outcomeRows.push({
+        gradingPolicy: ownRow.gradingPolicy,
+        submittedAt: ownRow.submittedAt,
+        teacherMark: ownRow.teacherMark,
+        finalCorrect: ownRow.finalCorrect,
+      });
       continue;
     }
     const entry: GradedResponse = {
@@ -2171,7 +2226,14 @@ export function submitAttempt(
     };
     allFrozen.push(entry);
     graded.push(entry);
-    finalCorrects.push(entry.autoCorrect);
+    outcomeRows.push({
+      gradingPolicy: ownRow.gradingPolicy,
+      // 逐题语义卷的本次判分行提交时刻 = 交卷时刻（rowSubmittedAtPatch 同款
+      // 内存镜像口径；历史卷行保持 null——旧行旧口径不消费该键）
+      submittedAt: perQuestionAttempt ? nowIso : null,
+      teacherMark: ownRow.teacherMark,
+      finalCorrect: entry.autoCorrect,
+    });
   }
 
   // revisions 全集校验不变：比对对象是**全部冻结题**（lesson 含已提交行）
@@ -2190,10 +2252,10 @@ export function submitAttempt(
 
   const scoreAuto = scoreAutoOf(allFrozen);
   // D3：本次判分行 finalCorrect = autoCorrect（teacherMark 必空）；lesson 已
-  // 提交行按行内当前 finalCorrect（教师批改优先）；D2 据此定 status/scoreFinal
-  const { status: finalStatus, scoreFinal } = finalScoreOf(finalCorrects);
-
-  const nowIso = new Date(now).toISOString();
+  // 提交行按行内当前 finalCorrect（教师批改优先）。QM-10 细项7：status/
+  // scoreFinal 走 attemptFinalOutcomeOf（§5.5.5 新行口径放宽 / 旧行旧口径
+  // 单一出处——与自动收尾、教师批改重算同源，不复制公式）
+  const { status: finalStatus, scoreFinal } = attemptFinalOutcomeOf(outcomeRows);
   // 逐题语义卷收尾把「本次交卷的行」提交时刻记为交卷时刻（responses.submittedAt
   // 列注释口径）；历史卷行不写该列（保持 null，行为零变化）。事务内 update 与
   // 下方内存镜像展开同一对象，两处口径永不漂移
@@ -2313,6 +2375,9 @@ interface LessonSummaryRow {
   submittedAt: string | null;
   autoCorrect: boolean | null;
   finalCorrect: boolean | null;
+  /** QM-10：pendingCount 排除 reference_self 行（教师必批谓词同口径） */
+  gradingPolicy: GradingPolicy | null;
+  teacherMark: string | null;
 }
 
 export function lessonLiveSummaryOf(
@@ -2333,7 +2398,11 @@ export function lessonLiveSummaryOf(
     if (row.autoCorrect === true) correct += 1;
     else if (row.autoCorrect === false) wrong += 1;
     else pending += 1;
-    if (row.finalCorrect === null) pendingCount += 1;
+    // QM-10：D4 必批谓词排除 reference_self 行（有参考走自评，不进教师必批
+    // ——pending-mark.ts 同口径；null 策略旧行不受影响）
+    if (row.finalCorrect === null && row.gradingPolicy !== "reference_self") {
+      pendingCount += 1;
+    }
   }
   return {
     total,
@@ -2391,15 +2460,16 @@ function autoFinishPerQuestionAttempt(
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
       finalCorrect: responses.finalCorrect,
+      // QM-10 细项7：收尾判定与 lesson 汇总的 pendingCount 需要（§5.5.5）
+      gradingPolicy: responses.gradingPolicy,
+      teacherMark: responses.teacherMark,
     })
     .from(responses)
     .where(eq(responses.attemptId, attemptId))
     .all();
   const gradable = rowsAfter.filter((r) => r.hasSnapshot);
   if (gradable.every((r) => r.submittedAt !== null)) {
-    const { status, scoreFinal } = finalScoreOf(
-      gradable.map((r) => r.finalCorrect),
-    );
+    const { status, scoreFinal } = attemptFinalOutcomeOf(gradable);
     const attempt = tx
       .update(attempts)
       .set({

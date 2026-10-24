@@ -17,8 +17,8 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { answerOf, finalScoreOf } from "./attempt-service";
-import { pendingMarkCount } from "./pending-mark";
+import { answerOf, attemptFinalOutcomeOf } from "./attempt-service";
+import { notSelfReviewPendingRow, pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -123,11 +123,18 @@ export function markResponse(
     // 已离开 draft 的卷才重算整卷状态（lesson 进行中卷的 D2 状态机由收尾
     // 链路驱动——课中批改只落本题判定，不提前收卷）
     if (row.attempt.status === "draft") return;
-    // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）。
-    //    与待批谓词同口径过滤幽灵行（快照空的历史题目缺失行不进重算——
-    //    它们永远 null finalCorrect，计入会让 attempt 永卡 submitted）
-    const finalCorrects = tx
-      .select({ finalCorrect: responses.finalCorrect })
+    // 2. 整卷重算（attemptFinalOutcomeOf 与交卷链路同一实现，D2 状态机不复制
+    //    公式；QM-10 细项7：§5.5.5 新行口径——reference_self 行不阻塞 graded，
+    //    manual_only 未判行阻塞）。与待批谓词同口径过滤幽灵行（快照空的历史
+    //    题目缺失行不进重算——它们永远 null finalCorrect，计入会让 attempt
+    //    永卡 submitted）
+    const outcomeRows = tx
+      .select({
+        gradingPolicy: responses.gradingPolicy,
+        submittedAt: responses.submittedAt,
+        teacherMark: responses.teacherMark,
+        finalCorrect: responses.finalCorrect,
+      })
       .from(responses)
       .where(
         and(
@@ -135,9 +142,8 @@ export function markResponse(
           isNotNull(responses.questionSnapshotJson),
         ),
       )
-      .all()
-      .map((r) => r.finalCorrect);
-    const { status, scoreFinal } = finalScoreOf(finalCorrects);
+      .all();
+    const { status, scoreFinal } = attemptFinalOutcomeOf(outcomeRows);
     // 3. 写回 attempt（scoreAuto/submittedAt 等其余列不动）
     tx.update(attempts)
       .set({ status, scoreFinal })
@@ -208,6 +214,9 @@ export function listPendingMarks(
     or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
     isNull(responses.finalCorrect),
     isNotNull(responses.questionSnapshotJson),
+    // QM-10 / §5.5.3 D9：reference_self 行走学生自评，不进教师必批队列
+    //（与 pending-mark.ts D4 谓词同一实现，不复制口径）
+    notSelfReviewPendingRow(),
     query.studentId !== undefined
       ? eq(attempts.studentId, query.studentId)
       : undefined,
