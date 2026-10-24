@@ -86,3 +86,21 @@ git diff --cached --check
 代码审查结论：通过，无未处理的 blocking / important 问题。简化、正确性、安全、迁移与兼容性检查已完成。
 
 本地 main 开始时领先 origin/main 36 个既有提交；本次仅本地合并，不顺带推送这些未发布提交，不打发布 tag，不操作线上数据库。已有的其他未跟踪文档保持原样且不纳入本次提交。
+
+
+## 云服务器部署验收（2026-10-24）
+
+用户后续明确授权「合并 v2 并推送到云服务器」。已推送 origin/v2，运行代码部署提交为 `d4b8fdf6373bca5d0e9ba6b39c76bf55dd9c33ef`。
+
+- 目标：`47.116.99.166`，systemd 服务 `simple-tutor-tool`，部署目录 `/opt/simple-tutor-tool`。
+- 沿用服务器既有 tar-over 脚本：Node 24 / pnpm 12.6.0，先停服务、备份完整 data、在独立 staging 安装和构建，再切换程序目录，保留原数据目录；失败有旧程序与数据备份回退路径。
+- 停服：16:14:05；启动：16:14:30；健康检查及部署完成：16:14:32（北京时间）。
+- 完整数据备份：`/opt/simple-tutor-backups/data-before-d4b8fdf6-20261024-161405.tar.gz`。
+- 旧程序：`/opt/simple-tutor-backups/app-before-d4b8fdf6-20261024-161405`。
+- 自动启动迁移成功，迁移总数 42，`attempts.last_activity_at` 已存在；SQLite quick_check = ok，未手工修改线上库结构。
+- 升级前后业务行数一致：attempts 47、responses 770、ink 2、notes 56、annotations 28。
+- 公网健康接口成功；公开演示学生登录后，三种排序各读取 5 条实际记录，均含活动时间且顺序符合约定；非法 sort 返回 400。验证只读取记录，未创建/修改作答。
+- 公网新前端资源已核对，包含「最近作答／最近开始／最早开始」；排序控件所在共享 chunk 正常返回。
+- 服务器日志：`/opt/simple-tutor-staging/deploy-d4b8fdf6.log`；本地验证摘要与日志位于被 git 忽略的 `e2e/.artifacts/records-deploy/`。
+
+上文「未推送/未部署」描述的是首轮实现验收结束时的状态，本节为后续实际部署结果。未推送本地 main 中原有的未发布提交；本次服务器使用已验收 v2 代码。
