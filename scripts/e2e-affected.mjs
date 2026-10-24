@@ -1,21 +1,24 @@
 // e2e 受影响档兜底（2026-10-25）：Playwright 无法按 import 图选用例——e2e spec
 // 不导入应用源码，应用代码变更映射不到任何 spec。取最保守的可推导集合：
-//   1) 命中与单测同一张兜底清单（迁移/契约/测试基建等，见 test-affected.mjs）
+//   1) 命中与单测同一张兜底清单（迁移/契约/测试基建等，见 affected-lib.mjs）
 //      → 全量 pnpm e2e；
 //   2) e2e/ 下非 spec 文件（helpers、断言工具、global-setup 等）变动 → 全量
 //      （几乎被全部 spec 复用，受影响面推不出）；
 //   3) 只有 e2e/**/*.spec.ts 变动 → 只跑变动的 spec（pnpm e2e 支持追加 spec 路径）；
 //   4) e2e 无关变动 → 跳过（全量由 PR CI 与每晚 schedule 兜底）。
+//
 // 用法：node scripts/e2e-affected.mjs [ref]（默认 origin/main）
-// 环境变量 TEST_AFFECTED_DRY_RUN=1 只打印决策不执行。
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+// 环境变量 AFFECTED_DRY_RUN=1 只打印决策不执行。
 import {
+  CMD_LENGTH_LIMIT,
   collectChangedFiles,
+  existing,
   hitForceFull,
+  isDryRun,
   runArgv,
-} from "./test-affected.mjs";
+  runIfMain,
+  toCommandLine,
+} from "./affected-lib.mjs";
 
 export function decideE2e(changed) {
   const forceFull = hitForceFull(changed);
@@ -39,9 +42,6 @@ function main() {
   console.log(
     `[e2e-affected] 基线 ${ref}：${decision.mode}（${decision.reason}）`,
   );
-  if (process.env.TEST_AFFECTED_DRY_RUN === "1") {
-    return 0;
-  }
   if (decision.mode === "skip") {
     console.log(
       "[e2e-affected] 跳过本地 e2e；全量由 PR CI 与每晚 schedule 兜底",
@@ -49,21 +49,36 @@ function main() {
     return 0;
   }
   if (decision.mode === "full") {
+    if (isDryRun()) {
+      console.log("[e2e-affected] DRY_RUN 将执行：pnpm run e2e（全量）");
+      return 0;
+    }
     return runArgv(["pnpm", "run", "e2e"]);
   }
-  // 已删除的 spec 不再存在，传给 playwright 会因找不到文件而失败，先过滤掉
-  const specs = decision.specs.filter((path) => existsSync(path));
+
+  // 已删除的 spec 过滤掉；剩余超长时回退全量——分批跑 playwright 会重复启动
+  // webServer（每批 30s+），不如一次全量省
+  const specs = existing(decision.specs);
   if (specs.length === 0) {
     console.log("[e2e-affected] 变动的 spec 均已删除，跳过；全量由 PR CI 兜底");
     return 0;
   }
-  return runArgv(["pnpm", "run", "e2e", ...specs]);
+  const argv = ["pnpm", "run", "e2e", ...specs];
+  if (toCommandLine(argv).length > CMD_LENGTH_LIMIT) {
+    console.log(
+      `[e2e-affected] 变动 spec ${specs.length} 个超出命令行上限，回退全量`,
+    );
+    if (isDryRun()) {
+      console.log("[e2e-affected] DRY_RUN 将执行：pnpm run e2e（全量）");
+      return 0;
+    }
+    return runArgv(["pnpm", "run", "e2e"]);
+  }
+  if (isDryRun()) {
+    console.log(`[e2e-affected] DRY_RUN 将执行：${argv.join(" ")}`);
+    return 0;
+  }
+  return runArgv(argv);
 }
 
-// 直接执行时跑 main；被其他模块导入复用时不跑。
-if (
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === resolve(process.argv[1])
-) {
-  process.exit(main());
-}
+runIfMain(import.meta.url, main);
