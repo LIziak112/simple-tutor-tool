@@ -38,6 +38,7 @@ import { HttpError } from "../lib/http-error";
 import { addCourseItems } from "./course-service.ts";
 import { lessonEmbeddedUnitIds } from "./lesson-embedded.ts";
 import { practiceDefaultsOf } from "./practice-workflow-service";
+import { assembleQmBlocks } from "./qm-edit-service.ts";
 
 /**
  * LibraryService（T2A.1 服务层 + T2A.2 资源库页面业务）——文件夹 CRUD、讲义/单元
@@ -1318,7 +1319,10 @@ function ensureQuestionId(sourceMd: string, id: string): string {
   const match = /^(:{4}question)(\{.*)?$/.exec(firstLine);
   if (match === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
   const [, prefix, attrs = ""] = match;
-  if (/(^|\s)id\s*=/.test(attrs)) return sourceMd; // 已有显式 id
+  // 已有显式 id（含 id 为首属性、紧跟左花括号的形态）——tt-07b P2-4 修复：
+  // 原正则漏了 { 紧邻形态，id 排首位时导出会重复注入（{id=… type=… id=…}），
+  // 与 md-dsl FENCE_ATTR_ID_RE（[\s{]）对齐
+  if (/(^|[\s{])id\s*=/.test(attrs)) return sourceMd;
   // 注入进属性花括号内：{type=judge …} → {type=judge … id="…"}；
   // 无属性则补 {id="…"}。属性未闭合（不以 } 结尾）属异常形态，不改动交给 lint。
   let injected: string;
@@ -1511,12 +1515,16 @@ export function exportUnitMd(
     )
     .orderBy(asc(questionGroups.order), asc(questionGroups.id))
     .all();
-  const blocks = [
-    ...unitMaterials.map((row) => row.sourceMd),
-    ...unitGroups.map((row) => row.sourceMd),
-    ...liveQuestions,
-  ];
-  lines.push(blocks.join("\n\n"), "");
+  // tt-07b P2-4：实体块拼装复用 assembleQmBlocks 单源（与编辑重建/重导同一
+  // 规范序与分隔符）；exportUnitMd 自身只保留 frontmatter 回写等导出专属语义
+  lines.push(
+    assembleQmBlocks({
+      materials: unitMaterials.map((row) => row.sourceMd),
+      groups: unitGroups.map((row) => row.sourceMd),
+      questions: liveQuestions,
+    }),
+    "",
+  );
   return {
     markdown: lines.join("\n"),
     filename: `${safeFilename(unit.id)}.md`,

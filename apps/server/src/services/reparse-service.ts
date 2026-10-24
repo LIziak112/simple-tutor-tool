@@ -548,7 +548,7 @@ function planQmUnit(
     (parsed.groups ?? []).map((g) => [g.id, g] as const),
   );
 
-  const materialPlans: MaterialPlan[] = materialRows.map((row, index) => {
+  const materialPlans: MaterialPlan[] = materialRows.map((row) => {
     const next = parsedMaterials.get(row.id);
     if (next === undefined) {
       return {
@@ -619,11 +619,13 @@ function planQmUnit(
           changes,
           parsedMaterial: next,
           row,
-          order: index,
+          // P2-3 记账：只刷新抽取副本——updated 也保持行内 order（写库侧同传
+          // row.order），不重写成连续序（0,1,5 不变 0,1,2）
+          order: row.order,
         };
   });
 
-  const groupPlans: GroupPlan[] = groupRows.map((row, index) => {
+  const groupPlans: GroupPlan[] = groupRows.map((row) => {
     const next = parsedGroups.get(row.id);
     if (next === undefined) {
       return {
@@ -694,7 +696,8 @@ function planQmUnit(
           changes,
           parsedGroup: next,
           row,
-          order: index,
+          // P2-3 记账：同材料侧——updated 保持 row.order，不重排连续序
+          order: row.order,
         };
   });
 

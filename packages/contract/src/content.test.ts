@@ -295,6 +295,32 @@ describe("LintIssue：linter 输出（§5.1）", () => {
       expect(lintIssueSchema.safeParse(bad).success).toBe(false);
     }
   });
+
+  it("target 可选结构化定位（tt-07b P2-1）：可选携带、缺省不注入键", () => {
+    const valid = {
+      level: "error",
+      line: 2,
+      column: 3,
+      code: "UNKNOWN_MATERIAL_REF",
+      message: "m",
+    };
+    // 可选携带：键值为字符串的结构化目标
+    const withTarget = lintIssueSchema.parse({
+      ...valid,
+      target: { material: "mat-404" },
+    });
+    expect(withTarget.target).toEqual({ material: "mat-404" });
+    // 缺省不注入键（与 materials/groups 同款键集纪律）
+    const withoutTarget = lintIssueSchema.parse(valid);
+    expect("target" in withoutTarget).toBe(false);
+    // 值类型收窄：非字符串值拒绝
+    expect(
+      lintIssueSchema.safeParse({
+        ...valid,
+        target: { material: 42 },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("Unit：练习单元", () => {

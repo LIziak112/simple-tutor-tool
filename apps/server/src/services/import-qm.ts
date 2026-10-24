@@ -2,6 +2,8 @@ import type {
   ImportPreviewWarning,
   LintIssue,
   ParsedDocument,
+  QuestionGroup,
+  UnitGroup,
 } from "@tutor/contract";
 import { detectNewContent, normalizeQmIds, parseRefAttrs } from "@tutor/md-dsl";
 import { and, eq, isNull } from "drizzle-orm";
@@ -116,6 +118,11 @@ export function collectExternalMaterialIds(
  * 存活材料（liveMaterials = 教师域材料 id 集，含任意单元），对应 lint error
  * 从 issue 集合移除（错误码表 §5.4.3：跨文档引用「由导入层按教师域解析」）。
  * 解析不到的照报 error（commit 因 LINT_ERROR 拒绝）。
+ *
+ * 裁决依据是 issue 的结构化 target.material（tt-07b P2-1 落实：md-dsl 生成
+ * 时附着），不从 message 文本正则反提取——措辞改写或 id 含「」字符时降级
+ * 不静默失效。target 缺失（旧形态）保守保留 error（方向保守：导入被拒，
+ * 不产生悬垂放行）。
  */
 export function resolveQmImportIssues(
   issues: readonly LintIssue[],
@@ -129,14 +136,35 @@ export function resolveQmImportIssues(
   if (resolvable.size === 0) return [...issues];
   return issues.filter((issue) => {
     if (issue.code !== "UNKNOWN_MATERIAL_REF") return true;
-    const match = /材料「([^」]+)」/.exec(issue.message);
-    const id = match?.[1];
+    const id = issue.target?.material;
     return !(id !== undefined && resolvable.has(id));
   });
 }
 
 /** 块式 ::ref 行（行首 ::ref{…}，mdast leafDirective 只认行首形态） */
 const REF_BLOCK_LINE_RE = /^\s*::ref\{([^}]*)\}\s*$/;
+
+/**
+ * 单元组索引 → 顶层组实体的「不可达即断言」（tt-07b P2-2 记账）：unit.groups
+ * 与 parsed.groups 由同一次解析派生（两视图同源），索引 id 找不到完整实体 =
+ * 解析器内部不一致（正常不可能）——此前 commit 侧静默 continue 丢组，现
+ * fail closed 抛 500 拒绝整个导入（commitImport 事务回滚、零写入），
+ * 与 reparse 侧逐实体 skipped 报告对齐可见性。
+ */
+export function requireGroupEntityOf(
+  unitGroup: UnitGroup,
+  groupEntitiesById: ReadonlyMap<string, QuestionGroup>,
+): QuestionGroup {
+  const group = groupEntitiesById.get(unitGroup.id);
+  if (group === undefined) {
+    throw new HttpError(
+      500,
+      "IMPORT_INCONSISTENT_STATE",
+      `导入产物内部不一致：单元题组「${unitGroup.id}」的完整实体在解析结果中缺失（解析器两视图应同源，这是解析缺陷，请反馈）；本次导入已整体取消，未写入任何内容`,
+    );
+  }
+  return group;
+}
 
 /**
  * P2-2 预览警告：题内块式 ::ref{question=…}（无效写法——子题引用只能写在

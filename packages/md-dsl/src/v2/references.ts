@@ -188,6 +188,8 @@ export function resolveQmReferences(input: QmResolutionInput): void {
           site.column,
           "UNKNOWN_MATERIAL_REF",
           `::ref 引用的材料「${ref.material}」在本文档中不可解析（未声明）：材料须用 ::::material 在文档顶层声明后才能被引用；跨单元既有材料的引用由导入层按教师域解析（本提示为文档内静态检查）`,
+          // 结构化目标（tt-07b P2-1）：教师域降级按此裁决，不依赖 message 措辞
+          { material: ref.material },
         ),
       );
       continue;
