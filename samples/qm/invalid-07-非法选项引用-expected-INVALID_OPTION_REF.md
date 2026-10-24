@@ -26,10 +26,10 @@ unit: 引用错误示例
 :::option{id=opt-3}
 杜勃罗留波夫
 :::
-:::::
+::::
 
 :::answer
 slot-1 = opt-9
 slot-2 = opt-1
 :::
-::::
+:::::

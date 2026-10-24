@@ -51,7 +51,7 @@ Respecting that tool means giving it a job description: sleep, and little else.
 :::option{id=opt-7}
 A morning espresso therefore has largely left the bloodstream before the next cycle begins.
 :::
-:::::
+::::
 
 :::answer
 slot-1 = opt-1
@@ -64,4 +64,4 @@ slot-5 = opt-6
 :::solution
 干扰项分析：opt-2（午睡话题未出现）、opt-7（早晨咖啡与原文「下午咖啡影响午夜」方向相反）。五个空位分别承接「清洁循环→glymphatic」「经济学误解→八小时是工业产物」「疲惫徽章→骄傲于劣化表现」「固定起床时间→同频锚定」「基础设施→工具职责」。
 :::
-::::
+:::::
