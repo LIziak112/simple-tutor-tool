@@ -116,6 +116,11 @@ export function collectExternalMaterialIds(
  * 存活材料（liveMaterials = 教师域材料 id 集，含任意单元），对应 lint error
  * 从 issue 集合移除（错误码表 §5.4.3：跨文档引用「由导入层按教师域解析」）。
  * 解析不到的照报 error（commit 因 LINT_ERROR 拒绝）。
+ *
+ * 裁决依据是 issue 的结构化 target.material（tt-07b P2-1 落实：md-dsl 生成
+ * 时附着），不从 message 文本正则反提取——措辞改写或 id 含「」字符时降级
+ * 不静默失效。target 缺失（旧形态）保守保留 error（方向保守：导入被拒，
+ * 不产生悬垂放行）。
  */
 export function resolveQmImportIssues(
   issues: readonly LintIssue[],
@@ -129,8 +134,7 @@ export function resolveQmImportIssues(
   if (resolvable.size === 0) return [...issues];
   return issues.filter((issue) => {
     if (issue.code !== "UNKNOWN_MATERIAL_REF") return true;
-    const match = /材料「([^」]+)」/.exec(issue.message);
-    const id = match?.[1];
+    const id = issue.target?.material;
     return !(id !== undefined && resolvable.has(id));
   });
 }

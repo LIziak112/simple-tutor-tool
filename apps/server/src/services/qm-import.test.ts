@@ -1,4 +1,4 @@
-import type { ImportPreviewData } from "@tutor/contract";
+import type { ImportPreviewData, LintIssue, ParsedDocument } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../db/client.ts";
@@ -14,6 +14,7 @@ import {
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { commitImport, previewImport } from "./content-service.ts";
+import { resolveQmImportIssues } from "./import-qm.ts";
 import { getMaterial, getQuestionGroup } from "./material-repository.ts";
 
 /**
@@ -620,5 +621,80 @@ describe("QM-05 ZIP 链路（新内容闸门同样生效）", () => {
     } finally {
       delete process.env.NEW_CONTENT_ENABLED;
     }
+  });
+});
+
+describe("QM-07 P2-1：resolveQmImportIssues 结构化传递（消除 message 文本耦合）", () => {
+  /** 最小 parsed：单元组引用一个文档外材料 mat-live */
+  const parsedOf = (): ParsedDocument => ({
+    lectures: [],
+    units: [
+      {
+        id: "u1",
+        title: "单元",
+        questions: [],
+        groups: [
+          {
+            id: "grp-1",
+            title: "组",
+            materialRefs: [{ material: "mat-live" }],
+            questionIds: [],
+          },
+        ],
+      },
+    ],
+    issues: [],
+  });
+  const liveMaterialIds = new Set(["mat-live"]);
+
+  it("message 不含「」引号措辞时仍能按 target 降级（文本解耦）", () => {
+    // 措辞改写/本地化后的 issue：旧正则提取不到 id 会保留 error（降级静默失效）
+    const issue: LintIssue = {
+      level: "error",
+      line: 9,
+      column: 1,
+      code: "UNKNOWN_MATERIAL_REF",
+      message: "无法解析的引用目标：mat-live（教师域既有材料由导入层解析）",
+      target: { material: "mat-live" },
+    };
+    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    expect(resolved.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(false);
+  });
+
+  it("target 缺失（旧形态）→ 保守保留 error（方向保守：宁拒不悬垂放行）", () => {
+    const issue: LintIssue = {
+      level: "error",
+      line: 9,
+      column: 1,
+      code: "UNKNOWN_MATERIAL_REF",
+      message: '::ref 引用的材料「mat-live」在本文档中不可解析（未声明）',
+    };
+    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    expect(resolved.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(true);
+  });
+
+  it("target 指向教师域外材料 → 照报 error", () => {
+    const issue: LintIssue = {
+      level: "error",
+      line: 9,
+      column: 1,
+      code: "UNKNOWN_MATERIAL_REF",
+      message: '::ref 引用的材料「mat-404」在本文档中不可解析（未声明）',
+      target: { material: "mat-404" },
+    };
+    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    expect(resolved.some((i) => i.code === "UNKNOWN_MATERIAL_REF")).toBe(true);
+  });
+
+  it("非本码 issue 不受影响（target 不参与其他码的裁决）", () => {
+    const issue: LintIssue = {
+      level: "warning",
+      line: 3,
+      column: 1,
+      code: "UNIT_FROM_FALLBACK",
+      message: "frontmatter 未声明 unit",
+    };
+    const resolved = resolveQmImportIssues([issue], parsedOf(), liveMaterialIds);
+    expect(resolved).toHaveLength(1);
   });
 });

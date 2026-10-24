@@ -129,6 +129,17 @@ describe("组引用健康（§5.4.3）", () => {
       ),
     ).toContain("UNKNOWN_MATERIAL_REF");
   });
+
+  it("UNKNOWN_MATERIAL_REF 附结构化 target.material（tt-07b P2-1：消费方不得从 message 反提取）", () => {
+    const doc = parseDocument(
+      `${FRONT}${VALID_BASE.replace("::ref{material=mat-1}", "::ref{material=mat-404}")}\n`,
+    );
+    const issues = doc.issues.filter((i) => i.code === "UNKNOWN_MATERIAL_REF");
+    expect(issues.length).toBeGreaterThanOrEqual(1);
+    for (const issue of issues) {
+      expect(issue.target).toEqual({ material: "mat-404" });
+    }
+  });
 });
 
 describe("片段锚点校验（§5.2.2 区间语义）", () => {

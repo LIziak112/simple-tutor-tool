@@ -104,6 +104,8 @@ export function makeIssue(
   column: number,
   code: string,
   message: string,
+  /** 结构化目标定位（可选，按 code 约定键集；tt-07b P2-1：消费方不从 message 反提取） */
+  target?: Readonly<Record<string, string>>,
 ): LintIssue {
   return {
     level,
@@ -111,6 +113,7 @@ export function makeIssue(
     column: Math.max(1, Math.trunc(column) || 1),
     code,
     message,
+    ...(target !== undefined ? { target: { ...target } } : {}),
   };
 }
 

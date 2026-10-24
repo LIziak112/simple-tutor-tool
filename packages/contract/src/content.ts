@@ -415,6 +415,13 @@ export const lintIssueSchema = z.object({
   code: z.string().min(1),
   message: z.string().min(1),
   fix: z.string().optional(),
+  /**
+   * 结构化目标定位（tt-07b / QM-07，可选增量）：按 code 约定键集的目标实体
+   * id——消费方（导入降级等）不得从 message 文本反提取。当前使用：
+   * UNKNOWN_MATERIAL_REF → { material: 引用目标材料 id }。可选、禁止
+   * z.default()——不带 target 的 issue 键集不变（旧消费方按保守保留处理）。
+   */
+  target: z.record(z.string(), z.string()).optional(),
 });
 
 /**
