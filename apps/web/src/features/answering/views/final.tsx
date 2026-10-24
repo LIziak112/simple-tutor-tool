@@ -52,12 +52,16 @@ export const finalView: AnswerKindView<
     />
   ),
   completion: (_model, answer, formalInk) => {
-    // I06：有正式笔迹未填最终答案 = partial（本次不改成 filled）
-    const filled = answer !== undefined && answer.finalAnswer.trim() !== "";
-    if (filled) return { state: "filled", filledSlots: 1, expectedSlots: 1 };
-    if (formalInk)
-      return { state: "partial", filledSlots: 0, expectedSlots: 1 };
-    return { state: "empty", filledSlots: 0, expectedSlots: 1 };
+    // QM-09 细项2：旧 solve/apply/find-error 不强制再填单行最终答案——有正式
+    // 笔迹即已作答（filled）；正文与笔迹皆无才 empty。I06 旧注（笔迹未填=
+    // partial）随本单作废，见决策记录 TT-08b 小节
+    const filled =
+      (answer !== undefined && answer.finalAnswer.trim() !== "") || formalInk;
+    return {
+      state: filled ? "filled" : "empty",
+      filledSlots: filled ? 1 : 0,
+      expectedSlots: 1,
+    };
   },
 };
 

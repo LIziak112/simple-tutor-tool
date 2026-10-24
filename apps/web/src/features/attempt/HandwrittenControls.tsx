@@ -93,6 +93,13 @@ export interface HandwrittenControlsProps {
   onExpandedChange?: (expanded: boolean) => void;
   showExpandTrigger?: boolean;
   ariaPrefix?: string;
+  /**
+   * 是否挂载单行最终答案输入（final 呈现，FinalAnswerField）。QM-09（D14）：
+   * response 的纸面角色同为 answerInk 但输入面是正文——最终答案输入是
+   * final kind 专属，宿主按 questionBindings 的 answerKind 传入；缺省 true
+   * （solve/apply/find-error 与既有测试不受影响）。
+   */
+  showFinalAnswer?: boolean;
 }
 
 export function HandwrittenControls({
@@ -110,6 +117,7 @@ export function HandwrittenControls({
   onExpandedChange,
   showExpandTrigger = true,
   ariaPrefix = "本题",
+  showFinalAnswer = true,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -464,12 +472,14 @@ export function HandwrittenControls({
               />
             </div>
           )}
-        <FinalAnswerField
-          questionId={questionId}
-          stemMd={stemMd}
-          answer={answer?.kind === "final" ? answer : undefined}
-          onAnswer={onAnswer}
-        />
+        {showFinalAnswer && (
+          <FinalAnswerField
+            questionId={questionId}
+            stemMd={stemMd}
+            answer={answer?.kind === "final" ? answer : undefined}
+            onAnswer={onAnswer}
+          />
+        )}
       </div>
     );
   }
@@ -613,12 +623,14 @@ export function HandwrittenControls({
       )}
 
       {/* 最终答案（普通输入 / 数学键盘，T2.6 输入框保留 + MathLive 切换） */}
-      <FinalAnswerField
-        questionId={questionId}
-        stemMd={stemMd}
-        answer={answer?.kind === "final" ? answer : undefined}
-        onAnswer={onAnswer}
-      />
+      {showFinalAnswer && (
+        <FinalAnswerField
+          questionId={questionId}
+          stemMd={stemMd}
+          answer={answer?.kind === "final" ? answer : undefined}
+          onAnswer={onAnswer}
+        />
+      )}
 
       {/* 引擎切换确认：全屏 → 清空回页内 */}
       <Dialog open={confirmReset} onOpenChange={setConfirmReset}>

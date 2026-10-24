@@ -43,6 +43,7 @@ import {
   createOngoingQuestionImages,
   loadOngoingPaper,
 } from "@/features/export/ongoing-question-export";
+import { questionBindings } from "@/features/answering/question-binding";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import {
   effectiveNoteLayout,
@@ -485,6 +486,11 @@ export function AttemptQuestionCard({
             expanded={noteOpen}
             onExpandedChange={setNoteOpen}
             showExpandTrigger={false}
+            // QM-09（D14）：单行最终答案输入是 final kind 专属——response 的
+            // 手写纸面与正文并存，不挂最终答案行（中央绑定派生，不写字面量）
+            showFinalAnswer={
+              questionBindings[question.type].answerKind === "final"
+            }
           />
         )}
 

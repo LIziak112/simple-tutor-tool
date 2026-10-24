@@ -16,6 +16,7 @@ import { AnswerComparisonShell } from "./views/comparison";
 import { fillView } from "./views/fill";
 import { finalView } from "./views/final";
 import { judgeView } from "./views/judge";
+import { responseView } from "./views/response";
 
 /**
  * 呈现登记表与唯一调度边界（方案 §4.4/§10，UA-03 落地）：
@@ -34,6 +35,7 @@ export const answerKindViews = {
   multi: multiView,
   fill: fillView,
   final: finalView,
+  response: responseView,
 } satisfies AnswerKindViewTable<
   StudentAnswer,
   PreparedQuestion,
@@ -107,6 +109,15 @@ export function dispatchInput(
           className="text-base leading-[1.75]"
         />
       );
+    case "response":
+      return (
+        <answerKindViews.response.Input
+          model={model}
+          answer={answer?.kind === "response" ? answer : undefined}
+          update={update}
+          disabled={disabled}
+        />
+      );
     default:
       return assertNeverView(model);
   }
@@ -151,6 +162,13 @@ export function dispatchReadOnly(
         <answerKindViews.final.ReadOnly
           model={model}
           answer={answer?.kind === "final" ? answer : undefined}
+        />
+      );
+    case "response":
+      return (
+        <answerKindViews.response.ReadOnly
+          model={model}
+          answer={answer?.kind === "response" ? answer : undefined}
         />
       );
     default:
@@ -224,6 +242,14 @@ export function dispatchComparison(
           reference={materialOf<"final">(reference)}
         />
       );
+    case "response":
+      return (
+        <answerKindViews.response.Comparison
+          model={model}
+          answer={answer?.kind === "response" ? answer : undefined}
+          reference={materialOf<"response">(reference)}
+        />
+      );
     default:
       return assertNeverView(model);
   }
@@ -264,6 +290,12 @@ export function dispatchCompletion(
       return answerKindViews.final.completion(
         model,
         answer?.kind === "final" ? answer : undefined,
+        formalInk,
+      );
+    case "response":
+      return answerKindViews.response.completion(
+        model,
+        answer?.kind === "response" ? answer : undefined,
         formalInk,
       );
     default:

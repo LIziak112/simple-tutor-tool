@@ -700,6 +700,10 @@ export function publicOfSnapshot(
     ...(question.options !== undefined
       ? { options: question.options.map((option) => option.text) }
       : {}),
+    // QM-09：response 字数建议（word-min/max）随公开投影下发——仅提示性
+    // 数字，不含任何参考内容（§5.4.1 不硬校验不截断）
+    ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
+    ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
     hintCount: question.hints.length,
     questionRevisionId,
   });

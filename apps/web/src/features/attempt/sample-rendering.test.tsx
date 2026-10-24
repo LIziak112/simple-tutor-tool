@@ -21,15 +21,14 @@ import { HANDWRITTEN_TYPES } from "./answer-format";
 
 /**
  * TT-06 新题型（matching/ordering/response，完整样例自 TT-06 起含此类题）：
- * 呈现层在 TT-08 接入，此前 prepareQuestion 显式 throw（§7.1 不静默降级，
- * prepare-question.ts 守卫）。本测试对它们断言**守卫确实武装**——TT-08 落地
- * 后渲染不再掷错、本断言翻红，强制把新题型转进下方真实控件断言
- * （qm-corpus 注册表探针同款失败驱动转正，不存在忘记路径）。
+ * 呈现层此前 prepareQuestion 显式 throw（§7.1 不静默降级，prepare-question.ts
+ * 守卫）。response 已随 QM-09（TT-08b）转进真实控件断言；matching/ordering
+ * 呈现控件属 QM-13，守卫保持武装——QM-13 落地后渲染不再掷错、断言翻红，
+ * 强制转进真实控件断言（qm-corpus 注册表探针同款失败驱动转正，不存在忘记路径）。
  */
-const TT08_PENDING_TYPES: ReadonlySet<string> = new Set([
+const QM13_PENDING_TYPES: ReadonlySet<string> = new Set([
   "matching",
   "ordering",
-  "response",
 ]);
 
 /**
@@ -92,6 +91,9 @@ function toPublic(question: Question): QuestionPublic {
     ...(question.options !== undefined
       ? { options: question.options.map((option) => option.text) }
       : {}),
+    // QM-09：response 字数建议随公开投影下发（仅提示不校验）
+    ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
+    ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
     hintCount: question.hints.length,
   });
 }
@@ -119,8 +121,8 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
       `${source} 学生投影题干不得泄露答案标记`,
     ).toBe(false);
 
-    if (TT08_PENDING_TYPES.has(question.type)) {
-      // 新题型守卫断言：渲染必须掷 TT-08 未接入错误，而不是产出作答面
+    if (QM13_PENDING_TYPES.has(question.type)) {
+      // 新题型守卫断言：渲染必须掷 QM-13 未接入错误，而不是产出作答面
       const guardClient = new QueryClient({
         defaultOptions: { queries: { retry: false } },
       });
@@ -136,8 +138,8 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
               />
             </QueryClientProvider>,
           ),
-        `${source} TT-08 前新题型须掷守卫错误而非渲染作答面`,
-      ).toThrow(/TT-08 呈现层落地前不应对学生下发/);
+        `${source} QM-13 前新题型须掷守卫错误而非渲染作答面`,
+      ).toThrow(/QM-13 呈现层落地前不应对学生下发/);
       return;
     }
 
@@ -224,6 +226,36 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
         }
         break;
       }
+      case "response":
+        // QM-09（TT-08b）转正：开放作答真实控件——可选标题 + 多行正文 +
+        // 手写区入口（正式手写与正文并存，D14）；没有单行最终答案输入
+        expect(
+          screen.getByRole("textbox", { name: "标题（可选）" }),
+          `${source} 开放作答应有可选标题输入`,
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("textbox", { name: "正文" }),
+          `${source} 开放作答应有正文输入`,
+        ).toBeInTheDocument();
+        expect(
+          screen.queryByLabelText("最终答案"),
+          `${source} 开放作答不应有单行最终答案输入`,
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /手写作答/ }),
+          `${source} 开放作答应有手写区入口（与正文并存）`,
+        ).toBeInTheDocument();
+        // 字数建议（word-min/max 携带时展示；口径单源契约 countResponseWords）
+        if (
+          question.wordMin !== undefined ||
+          question.wordMax !== undefined
+        ) {
+          expect(
+            article?.textContent ?? "",
+            `${source} 开放作答应展示字数建议`,
+          ).toMatch(/建议.*字/);
+        }
+        break;
       default:
         expect(
           screen.getByRole("button", { name: /手写作答/ }),
