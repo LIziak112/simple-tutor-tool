@@ -20,6 +20,7 @@ import {
 import { startCourseAttempt } from "./attempt-service.ts";
 import { commitImport } from "./content-service.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
+import { startWrongPractice } from "./wrong-practice.ts";
 
 /**
  * QM-06（tt-07a）开卷依赖冻结服务层测试：依赖闭包计算（题级引用 ∪ 组成员
@@ -460,6 +461,282 @@ describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => 
     expect(db.select().from(attempts).all()).toEqual([]);
     expect(db.select().from(responses).all()).toEqual([]);
     expect(db.select().from(attemptContextSnapshots).all()).toEqual([]);
+  });
+});
+
+describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", () => {
+  /** 种一份已交卷已判定的 course 来源作答 + 指定材料/组冻结快照（来源卷） */
+  function seedJudgedSource(
+    db: Db,
+    config: {
+      attemptId: string;
+      questionId: string;
+      finalCorrect: boolean;
+      /** 来源快照题型（choice 判错场景默认；solve 用于题级引用场景） */
+      snapshotType?: "choice" | "solve";
+      /** 该来源卷的材料快照 (sourceId → 版本) */
+      materialSnapshots: ReadonlyArray<{ id: string; version: number }>;
+      /** 该来源卷的组快照（可选） */
+      groupSnapshot?: { id: string; version: number };
+    },
+  ): void {
+    db.insert(attempts)
+      .values({
+        id: config.attemptId,
+        studentId: STUDENT_ID,
+        sourceType: "course",
+        assignmentId: null,
+        courseId: COURSE_ID,
+        unitId: null,
+        attemptNo: 1,
+        status: "submitted",
+        startedAt: "2026-10-20T08:00:00.000Z",
+        submittedAt: "2026-10-20T09:00:00.000Z",
+        activeSec: 60,
+        device: null,
+        scoreAuto: 0,
+        scoreFinal: 0,
+        frozenAt: "2026-10-20T08:00:00.000Z",
+        legacyUnverified: false,
+        abandonedAt: null,
+      })
+      .run();
+    const questionRow = db.$client
+      .prepare("SELECT source_md, version FROM questions WHERE id = ?")
+      .get(config.questionId) as { source_md: string; version: number };
+    db.insert(responses)
+      .values({
+        id: `resp-${config.attemptId}-${config.questionId}`,
+        attemptId: config.attemptId,
+        questionId: config.questionId,
+        questionVersion: questionRow.version,
+        questionSnapshotJson: JSON.stringify(
+          config.snapshotType === "solve"
+            ? {
+                id: config.questionId,
+                type: "solve",
+                difficulty: 3,
+                knowledge: [],
+                stemMd: questionRow.source_md,
+                sourceMd: questionRow.source_md,
+                answers: { kind: "final", answer: "42" },
+                hints: [],
+              }
+            : {
+                id: config.questionId,
+                type: "choice",
+                difficulty: 2,
+                knowledge: [],
+                stemMd: questionRow.source_md,
+                sourceMd: questionRow.source_md,
+                answers: { kind: "choice", index: 1 },
+                options: [{ text: "甲" }, { text: "乙" }],
+                hints: [],
+              },
+        ),
+        finalCorrect: config.finalCorrect,
+        answerRevision: 0,
+        hintsUsed: 0,
+        changeCount: 0,
+      })
+      .run();
+    for (const material of config.materialSnapshots) {
+      db.insert(attemptContextSnapshots)
+        .values({
+          id: randomUUID(),
+          attemptId: config.attemptId,
+          kind: "material",
+          sourceId: material.id,
+          sourceVersion: material.version,
+          snapshotJson: JSON.stringify({
+            id: material.id,
+            title: "给定资料",
+            contentMd: `来源卷 v${material.version} 的材料正文`,
+            anchors: [],
+            slots: [],
+            mediaPaths: [],
+          }),
+          frozenAt: "2026-10-20T08:00:00.000Z",
+        })
+        .run();
+    }
+    if (config.groupSnapshot !== undefined) {
+      db.insert(attemptContextSnapshots)
+        .values({
+          id: randomUUID(),
+          attemptId: config.attemptId,
+          kind: "group",
+          sourceId: config.groupSnapshot.id,
+          sourceVersion: config.groupSnapshot.version,
+          snapshotJson: JSON.stringify({
+            id: config.groupSnapshot.id,
+            title: "资料组",
+            label: "1～2",
+            introMd: "",
+            materialRefs: [],
+            questionIds: [],
+          }),
+          frozenAt: "2026-10-20T08:00:00.000Z",
+        })
+        .run();
+    }
+  }
+
+  it("来源卷快照优先：教师改材料 v2 后重练 → 新卷冻结来源 v1；gradingPolicy 按快照写入", () => {
+    const { db } = makeEnv();
+    // 来源卷（开卷于 v1，快照 mat-1@v1 + grp@v1），题 1 判错
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-1",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: { id: "grp-资料分析-1", version: 1 },
+    });
+    // 教师随后改材料 → v2
+    db.$client
+      .prepare(
+        "UPDATE materials SET source_md = source_md || char(10) || char(10) || '教师改稿。', version = version + 1 WHERE teacher_id = ? AND id = ?",
+      )
+      .run(TEST_TEACHER_ID, "mat-资料分析-1");
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1"],
+      {},
+      true,
+    );
+    // 新卷快照 = 来源卷版本（不是 live v2）
+    const materialSnapshot = contextRows(db, started.id).find(
+      (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
+    );
+    expect(materialSnapshot?.sourceVersion).toBe(1);
+    expect(
+      JSON.parse(materialSnapshot?.snapshotJson ?? "{}"),
+    ).toMatchObject({ contentMd: "来源卷 v1 的材料正文" });
+    // 组快照同样来自来源卷
+    expect(
+      contextRows(db, started.id).some(
+        (row) =>
+          row.kind === "group" && row.sourceId === "grp-资料分析-1",
+      ),
+    ).toBe(true);
+    // gradingPolicy：来源快照是 choice（有参考）→ auto
+    const rows = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, started.id))
+      .all();
+    expect(rows.map((row) => row.gradingPolicy)).toEqual(["auto"]);
+  });
+
+  it("来源卷无快照（旧服务端开的卷）→ 回退 live 冻结当前版本", () => {
+    const { db } = makeEnv();
+    db.$client
+      .prepare(
+        "UPDATE materials SET source_md = source_md || char(10) || char(10) || '教师改稿。', version = version + 1 WHERE teacher_id = ? AND id = ?",
+      )
+      .run(TEST_TEACHER_ID, "mat-资料分析-1");
+    // 来源卷无任何 context 快照（升级前开的卷）
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-2",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [],
+    });
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1"],
+      {},
+      true,
+    );
+    const materialSnapshot = contextRows(db, started.id).find(
+      (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
+    );
+    // 回退 live：冻结 v2 且正文为 live 内容
+    expect(materialSnapshot?.sourceVersion).toBe(2);
+    expect(JSON.parse(materialSnapshot?.snapshotJson ?? "{}")).toMatchObject({
+      contentMd: expect.stringContaining("给定资料正文"),
+    });
+  });
+
+  it("依赖在来源卷与 live 均不可得（软删）→ 该题剔除，其余照常组卷", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-3a",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [],
+    });
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-3b",
+      questionId: "资料分析-5",
+      finalCorrect: false,
+      snapshotType: "solve",
+      materialSnapshots: [],
+    });
+    // 题 1（组引用 mat-1）的材料软删、来源卷无快照 → 剔除；题 5（题级引用
+    // mat-2）live 可得 → 保留
+    db.$client
+      .prepare(
+        "UPDATE materials SET deleted_at = ? WHERE teacher_id = ? AND id = ?",
+      )
+      .run(NOW, TEST_TEACHER_ID, "mat-资料分析-1");
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1", "资料分析-5"],
+      {},
+      true,
+    );
+    const rows = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, started.id))
+      .all();
+    expect(rows.map((row) => row.questionId)).toEqual(["资料分析-5"]);
+    expect(contextRows(db, started.id).map((row) => row.sourceId)).toEqual([
+      "mat-资料分析-2",
+    ]);
+  });
+
+  it("同材料不同来源版本并存（两题来自不同历史卷，§5.3 同 ID 不同版本不覆盖）", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-4a",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+    });
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-4b",
+      questionId: "资料分析-5",
+      finalCorrect: false,
+      snapshotType: "solve",
+      // 题 5 的题级引用目标改为 mat-1（v2 来源卷）——直接种一条 v2 快照
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 2 }],
+    });
+    // 把题 5 的题级引用索引指向 mat-1（同材料两版本场景）
+    db.$client
+      .prepare(
+        "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'question' AND owner_id = ?",
+      )
+      .run("mat-资料分析-1", "资料分析-5");
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1", "资料分析-5"],
+      {},
+      true,
+    );
+    const versions = contextRows(db, started.id)
+      .filter(
+        (row) =>
+          row.kind === "material" && row.sourceId === "mat-资料分析-1",
+      )
+      .map((row) => row.sourceVersion)
+      .sort();
+    expect(versions).toEqual([1, 2]);
   });
 });
 

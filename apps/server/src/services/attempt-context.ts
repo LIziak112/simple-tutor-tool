@@ -1,5 +1,10 @@
 // 相对导入带 .ts 扩展名（仓库约定：可能被 reparse CLI / 路由层间接导入）
-import type { GradingPolicy, Question } from "@tutor/contract";
+import type {
+  GradingPolicy,
+  MaterialPublic,
+  Question,
+  QuestionGroupPublic,
+} from "@tutor/contract";
 import { gradingPolicyOf } from "@tutor/contract";
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -8,12 +13,16 @@ import {
   materials,
   questionGroupMembers,
   questionGroups,
+  type MaterialRow,
+  type QuestionGroupRow,
+  type ResponseRow,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
-import type {
-  AttemptContextSnapshotEntry,
-  MaterialRow,
-  QuestionGroupRow,
+import {
+  getMaterial,
+  getQuestionGroup,
+  listAttemptContextSnapshots,
+  type AttemptContextSnapshotEntry,
 } from "./material-repository.ts";
 
 /**
@@ -52,48 +61,7 @@ export function liveAttemptContextClosure(
   questionIds: readonly string[],
 ): AttemptContextClosure {
   if (questionIds.length === 0) return { materials: [], groups: [] };
-  const uniqueQuestionIds = [...new Set(questionIds)];
-
-  // 题 → 组（组成员反查，教师域）
-  const groupIds = new Set(
-    db
-      .selectDistinct({ groupId: questionGroupMembers.groupId })
-      .from(questionGroupMembers)
-      .where(
-        and(
-          eq(questionGroupMembers.teacherId, teacherId),
-          inArray(questionGroupMembers.questionId, uniqueQuestionIds),
-        ),
-      )
-      .all()
-      .map((row) => row.groupId),
-  );
-
-  // 题/组 owner 的全部材料引用（ownerKind 区分；题级 OR 组级并集，一次批量）
-  const ownerConditions = [
-    and(
-      eq(materialRefs.teacherId, teacherId),
-      eq(materialRefs.ownerKind, "question"),
-      inArray(materialRefs.ownerId, uniqueQuestionIds),
-    ),
-  ];
-  if (groupIds.size > 0) {
-    ownerConditions.push(
-      and(
-        eq(materialRefs.teacherId, teacherId),
-        eq(materialRefs.ownerKind, "group"),
-        inArray(materialRefs.ownerId, [...groupIds]),
-      ),
-    );
-  }
-  const materialIds = new Set(
-    db
-      .selectDistinct({ materialId: materialRefs.materialId })
-      .from(materialRefs)
-      .where(or(...ownerConditions))
-      .all()
-      .map((row) => row.materialId),
-  );
+  const { groupIds, materialIds } = closureRefIds(db, teacherId, questionIds);
 
   return {
     groups: requireClosureRows(
@@ -226,4 +194,166 @@ export function frozenGradingPolicyOf(
   newContentEnabled: boolean,
 ): GradingPolicy | null {
   return newContentEnabled ? gradingPolicyOf(question) : null;
+}
+
+// ---------- wrong 组卷：来源卷快照优先（设计方案 §5.3「错题重练复制来源
+// 作答的该子题及必要材料/说明」；「同 ID 不同版本并存不覆盖」） ----------
+
+/** wrong 组卷的依赖冻结计划 */
+export interface WrongAttemptContextPlan {
+  /** 依赖可完整冻结的来源行（保持传入顺序） */
+  readonly usable: readonly ResponseRow[];
+  /** 冻结条目（来源卷快照优先 + live 回退；(kind, sourceId, version) 去重） */
+  readonly entries: readonly AttemptContextSnapshotEntry[];
+}
+
+/**
+ * wrong 组卷闭包计划（live 读路径，组卷事务外调用）：逐题按 live 引用索引
+ * 求依赖（题级 ::ref ∪ 所属组 → 组引用），每个依赖**优先复制来源卷的冻结
+ * 快照**（错题时学生所见的版本——同 ID 沿用来源版本），来源卷无该快照
+ * （升级前旧服务端开的卷）回退 live 冻结当前版本；两者皆不可得（live 已
+ * 软删/缺失）→ **剔除该题**（与 pickOf「坏快照剔除」同款语义——学生自助
+ * 重练不整卷失败，剔完由调用方按 WRONG_PRACTICE_EMPTY 拒绝）。
+ * teacherId 为 null（学生无教师域的异常行）→ 依赖为空集，全部可用、零条目
+ * （不阻塞旧数据重练）。
+ */
+export function wrongAttemptContextPlan(
+  db: Db,
+  teacherId: string | null,
+  sources: readonly ResponseRow[],
+): WrongAttemptContextPlan {
+  if (teacherId === null) return { usable: sources, entries: [] };
+  // 各来源卷的快照索引：(kind|sourceId) → 条目（一次开卷一次冻结，同键至多
+  // 一条；防御性取末条 = 最高版本）
+  const sourceEntryByAttempt = new Map<
+    string,
+    Map<string, AttemptContextSnapshotEntry>
+  >();
+  const sourceEntriesOf = (attemptId: string) => {
+    const cached = sourceEntryByAttempt.get(attemptId);
+    if (cached !== undefined) return cached;
+    const index = new Map<string, AttemptContextSnapshotEntry>();
+    for (const row of listAttemptContextSnapshots(db, attemptId)) {
+      // 分支构造让 kind 与 snapshot 投影形态在类型层成对（表由冻结入口独写，
+      // snapshotJson 形态即对应 kind 的公开投影）
+      if (row.kind === "material") {
+        index.set(`material|${row.sourceId}`, {
+          kind: row.kind,
+          sourceId: row.sourceId,
+          sourceVersion: row.sourceVersion,
+          snapshot: JSON.parse(row.snapshotJson) as MaterialPublic,
+        });
+      } else {
+        index.set(`group|${row.sourceId}`, {
+          kind: row.kind,
+          sourceId: row.sourceId,
+          sourceVersion: row.sourceVersion,
+          snapshot: JSON.parse(row.snapshotJson) as QuestionGroupPublic,
+        });
+      }
+    }
+    sourceEntryByAttempt.set(attemptId, index);
+    return index;
+  };
+
+  const entryByDedupeKey = new Map<string, AttemptContextSnapshotEntry>();
+  const usable: ResponseRow[] = [];
+
+  for (const source of sources) {
+    const refs = closureRefIds(db, teacherId, [source.questionId]);
+    const sourceEntries = sourceEntriesOf(source.attemptId);
+    const resolved: AttemptContextSnapshotEntry[] = [];
+    let ok = true;
+    for (const kind of ["group", "material"] as const) {
+      for (const id of kind === "group" ? refs.groupIds : refs.materialIds) {
+        // 来源卷快照优先（错题时学生所见版本）→ live 回退（旧服务端开的卷）
+        const entry =
+          sourceEntries.get(`${kind}|${id}`) ??
+          liveEntryOf(db, teacherId, kind, id);
+        if (entry === null) {
+          ok = false; // 两者皆不可得 → 剔除该题
+          break;
+        }
+        resolved.push(entry);
+      }
+      if (!ok) break;
+    }
+    if (!ok) continue;
+    usable.push(source);
+    for (const entry of resolved) {
+      const key = `${entry.kind}|${entry.sourceId}|${entry.sourceVersion}`;
+      if (!entryByDedupeKey.has(key)) entryByDedupeKey.set(key, entry);
+    }
+  }
+
+  return { usable, entries: [...entryByDedupeKey.values()] };
+}
+
+/** live 行 → 冻结条目（软删/缺失返回 null；复用 contextEntriesOf 的白名单挑键） */
+function liveEntryOf(
+  db: Db,
+  teacherId: string,
+  kind: "material" | "group",
+  id: string,
+): AttemptContextSnapshotEntry | null {
+  if (kind === "material") {
+    const row = getMaterial(db, teacherId, id);
+    return row === null
+      ? null
+      : (contextEntriesOf({ materials: [row], groups: [] })[0] ?? null);
+  }
+  const row = getQuestionGroup(db, teacherId, id);
+  return row === null
+    ? null
+    : (contextEntriesOf({ materials: [], groups: [row] })[0] ?? null);
+}
+
+/** 依赖引用集合（题 → 组 ids + 材料 ids；live 索引，不读实体行） */
+function closureRefIds(
+  db: Db,
+  teacherId: string,
+  questionIds: readonly string[],
+): { groupIds: Set<string>; materialIds: Set<string> } {
+  if (questionIds.length === 0) {
+    return { groupIds: new Set(), materialIds: new Set() };
+  }
+  const uniqueQuestionIds = [...new Set(questionIds)];
+  const groupIds = new Set(
+    db
+      .selectDistinct({ groupId: questionGroupMembers.groupId })
+      .from(questionGroupMembers)
+      .where(
+        and(
+          eq(questionGroupMembers.teacherId, teacherId),
+          inArray(questionGroupMembers.questionId, uniqueQuestionIds),
+        ),
+      )
+      .all()
+      .map((row) => row.groupId),
+  );
+  const ownerConditions = [
+    and(
+      eq(materialRefs.teacherId, teacherId),
+      eq(materialRefs.ownerKind, "question"),
+      inArray(materialRefs.ownerId, uniqueQuestionIds),
+    ),
+  ];
+  if (groupIds.size > 0) {
+    ownerConditions.push(
+      and(
+        eq(materialRefs.teacherId, teacherId),
+        eq(materialRefs.ownerKind, "group"),
+        inArray(materialRefs.ownerId, [...groupIds]),
+      ),
+    );
+  }
+  const materialIds = new Set(
+    db
+      .selectDistinct({ materialId: materialRefs.materialId })
+      .from(materialRefs)
+      .where(or(...ownerConditions))
+      .all()
+      .map((row) => row.materialId),
+  );
+  return { groupIds, materialIds };
 }
