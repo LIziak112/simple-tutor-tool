@@ -52,3 +52,31 @@ reference_self」的期望改写，与收敛实现（QM 支线为基础，§22.1
 - student-self-review e2e fixme 待开关环境方案；
 - SelfReviewSection 五处 noNonNullAssertion 预存警告（非阻塞）；
 - 分支合并 v2 与发 main 拍板（沿用 TT-09c 既定流程）。
+
+## 八、审查修复附录（P2×2 修复 + P3-3 订正，2026-10-25）
+
+审查单有条件放行（P0/P1 无、P2×2、P3×5），修复在本分支内完成（提交
+79da7a41 / e1eb693b，先红后绿）：
+
+### P2×2 修法与测试
+
+| 项 | 修法 | 测试 |
+| --- | --- | --- |
+| P2-2 脏行冒充错轮入错题本 | wrong-questions 轮次 SQL 预筛自评分支改 `isNotNull(selfReviewVerdict)` 与 `isNotNull(selfReviewAt)` 成对——与读侧 selfReviewRecordOf 脏行降级同口径（D3「成对写入」不变量精神同构），latestJudgedResponsesByQuestion 共用同一查询自动一致 | 先红后绿：两轮构造（有效错轮 + 自评「对」后直写库清 at 的脏行）断言 rounds / wrongCount 恒 1，修复前实测 2/2 翻红；文件 14/14 |
+| P2-1 pendingSelfReviewCount 零测试覆盖 | 补测 + 注释互指：pending-mark.pendingSelfReviewCounts ↔ teacher-attempt-service 详情 selfReviewPendingCount（同一语义、口径不漂移） | student-records 三断言（未自评计 1 且不进待批 / 自评归零 / 未公布 null 投影，附冻结策略断言防空过）11/11；records-views「待自评 N」徽章渲染（归零/null/未公布不渲染）5/5 |
+
+### 三档快检与 test:affected（2026-10-25，worktree stt-qm）
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm test:quick` | **EXIT=0**（树已提交→空集；改动三套件定向 14/14、11/11、5/5 已绿） |
+| `pnpm typecheck:affected` | 首轮 EXIT=1（TS6133 两处未用参数）→ 修正后 **EXIT=0** |
+| `pnpm lint:changed` | 首轮 1 error（biome format）→ 收口后 **EXIT=0**（余 5 处预存警告非 error） |
+| `pnpm test:affected` | 兜底全量 **EXIT=0（216.5s）：524 文件 / 6382 用例全绿**（= §七 6378 + 本修复轮 4） |
+
+### P3-3 订正（随验收裁定更新）
+
+原报告 §四「运行中验证」段的进行时措辞由验收记录 TT-09 节验证表终值 +
+编排者独立复跑证据取代：§七各行为终态留痕（test:affected 集成收口轮终值
+6378、本轮修复后 6382；e2e 终跑 124 过 / 1 skip / 1 挂、唯一挂例隔离复跑
+通过判环境负载），本文件无进行时验证措辞残留。
