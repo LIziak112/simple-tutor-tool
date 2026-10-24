@@ -17,6 +17,7 @@ import {
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
+  type GradingPolicy,
   type HintOpenedEntry,
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
@@ -79,6 +80,11 @@ import {
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
+import {
+  contextEntriesOf,
+  frozenGradingPolicyOf,
+  liveAttemptContextClosure,
+} from "./attempt-context.ts";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
@@ -87,6 +93,8 @@ import {
   openedHintEcho,
   resultHintsOpenedOf,
 } from "./hint-service";
+import { newContentEnabledFromEnv } from "./import-qm.ts";
+import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCount } from "./pending-mark";
 import {
   answersReleased,
@@ -218,6 +226,12 @@ export interface FrozenResponseInsert {
   readonly questionSnapshotJson: string;
   /** 冻结时刻的单元归属（wrong 组卷为 null） */
   readonly unitId: string | null;
+  /**
+   * 行级判分策略（tt-07a / QM-06，§5.6）：开卷按题目快照写入
+   * （frozenGradingPolicyOf 单一出处）；缺省 null = 旧行旧语义（懒冻结
+   * 补行、开关关闭部署）。
+   */
+  readonly gradingPolicy?: GradingPolicy | null;
 }
 
 /**
@@ -239,6 +253,7 @@ export function insertFrozenResponse(
       questionVersion: values.questionVersion,
       questionSnapshotJson: values.questionSnapshotJson,
       unitId: values.unitId,
+      gradingPolicy: values.gradingPolicy ?? null,
       answerJson: null,
       autoCorrect: null,
       finalCorrect: null,
@@ -259,22 +274,29 @@ export function insertFrozenResponse(
  * 冻结时版本与单元归属，逐行插入。建卷时 attempt 行刚插入、responses 必无行，
  * 无需查重（与懒冻结的补写入口 backfillFrozenResponses 相区分）。
  * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（同款冻结语义）。
+ * tt-07a（QM-06）：newContentEnabled 控制行级判分策略写入（§5.8.4——开关
+ * 关闭的部署 gradingPolicy=NULL 旧行旧语义；缺省读部署 env）。
  */
 export function insertFrozenResponses(
   tx: Tx,
   attemptId: string,
   liveRows: readonly QuestionRow[],
   knowledgeByQuestion: ReadonlyMap<string, string[]>,
+  newContentEnabled?: boolean,
 ): void {
+  const freezePolicy =
+    newContentEnabled === undefined
+      ? newContentEnabledFromEnv()
+      : newContentEnabled;
   for (const row of liveRows) {
+    const snapshot = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
     insertFrozenResponse(tx, {
       attemptId,
       questionId: row.id,
       questionVersion: row.version,
-      questionSnapshotJson: JSON.stringify(
-        questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []),
-      ),
+      questionSnapshotJson: JSON.stringify(snapshot),
       unitId: row.unitId,
+      gradingPolicy: frozenGradingPolicyOf(snapshot, freezePolicy),
     });
   }
 }
@@ -343,11 +365,14 @@ export function freezeInputsOfAttempt(
 ): {
   liveRows: QuestionRow[];
   knowledgeByQuestion: ReadonlyMap<string, string[]>;
+  /** 题目所属教师域（tt-07a 依赖闭包计算用；异常行 null → 闭包为空） */
+  teacherId: string | null;
 } {
   const teacherId = attemptTeacherId(db, attempt);
   const liveRows = attemptQuestionRows(db, attempt);
   return {
     liveRows,
+    teacherId,
     knowledgeByQuestion:
       teacherId === null
         ? new Map<string, string[]>()
@@ -1364,6 +1389,8 @@ export function startAttempt(
   studentId: string,
   assignmentId: string,
   options: AttemptWorkflowStartOptions = {},
+  /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
+  newContentEnabled?: boolean,
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
 
@@ -1402,10 +1429,36 @@ export function startAttempt(
   // T6R.3：建卷冻结——题目集合/题序/完整快照/单元归属逐题预插 responses 行
   //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷。
   // 冻结输入的读在建卷事务前完成（better-sqlite3 同步单进程，同线程无竞态）
-  const { liveRows, knowledgeByQuestion } = freezeInputsOfAttempt(db, attempt);
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+    db,
+    attempt,
+  );
+  // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（缺依赖先于事务 fail closed）
+  const entries =
+    teacherId === null
+      ? []
+      : contextEntriesOf(
+          liveAttemptContextClosure(
+            db,
+            teacherId,
+            liveRows.map((row) => row.id),
+          ),
+        );
   db.transaction((tx) => {
     tx.insert(attempts).values(attempt).run();
-    insertFrozenResponses(tx, attempt.id, liveRows, knowledgeByQuestion);
+    insertFrozenResponses(
+      tx,
+      attempt.id,
+      liveRows,
+      knowledgeByQuestion,
+      newContentEnabled,
+    );
+    freezeAttemptContextSnapshotsWithin(
+      tx,
+      attempt.id,
+      entries,
+      attempt.startedAt,
+    );
   });
   return attemptSummaryOf(attempt);
 }
@@ -1428,6 +1481,8 @@ export function startCourseAttempt(
   courseId: string,
   unitId: string,
   options: AttemptWorkflowStartOptions = {},
+  /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
+  newContentEnabled?: boolean,
 ): AttemptStartData {
   requireVisibleCourseUnit(db, studentId, courseId, unitId);
 
@@ -1467,12 +1522,35 @@ export function startCourseAttempt(
     // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入的读走
     // 外层 db（better-sqlite3 同连接同步执行，事务内读取与写入口径一致），
     // 写走 tx 与 attempt 行同事务落库
-    const { liveRows, knowledgeByQuestion } = freezeInputsOfAttempt(
+    const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
       db,
       attempt,
     );
+    // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（读在外层 db，同款口径）
+    const entries =
+      teacherId === null
+        ? []
+        : contextEntriesOf(
+            liveAttemptContextClosure(
+              db,
+              teacherId,
+              liveRows.map((row) => row.id),
+            ),
+          );
     tx.insert(attempts).values(attempt).run();
-    insertFrozenResponses(tx, attempt.id, liveRows, knowledgeByQuestion);
+    insertFrozenResponses(
+      tx,
+      attempt.id,
+      liveRows,
+      knowledgeByQuestion,
+      newContentEnabled,
+    );
+    freezeAttemptContextSnapshotsWithin(
+      tx,
+      attempt.id,
+      entries,
+      attempt.startedAt,
+    );
     return attemptSummaryOf(attempt);
   });
 }
