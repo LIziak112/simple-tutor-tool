@@ -8,7 +8,7 @@ import {
   type SelfReviewVerdict,
   selfReviewConflictCurrentSchema,
 } from "@tutor/contract";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ApiError, saveSelfReviewApi } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
@@ -67,6 +67,7 @@ export function SelfReviewSection({
   const scope = `${attemptId}:${question.questionId}`;
 
   // 换题/换卷重置本地状态（宿主按题挂载，此处兜底同位复用）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope 是重置的变更键（effect 体不直接读取，题/卷身份变化即重置）
   useEffect(() => {
     intentRef.current = null;
     setError(null);
@@ -88,80 +89,77 @@ export function SelfReviewSection({
   const current = currentSelfReviewOf(question, override);
   const record = current?.record ?? null;
 
-  const save = useCallback(
-    async (verdict: SelfReviewVerdict) => {
-      if (busy) return;
-      const baseRevision = current?.revision ?? 0;
-      const previous = intentRef.current;
-      const request: SelfReviewRequest =
-        previous !== null &&
-        previous.verdict === verdict &&
-        previous.baseRevision === baseRevision
-          ? previous
-          : { verdict, baseRevision, mutationId: randomUuid() };
-      intentRef.current = request;
-      setBusy(true);
-      setError(null);
-      try {
-        const data = await saveSelfReviewApi(
-          attemptId,
-          question.questionId,
-          request,
-        );
-        // 成功采纳：record 来自回执；undecided 清除后 record=null、revision=base+1
-        setOverride({ record: data.selfReview, revision: baseRevision + 1 });
-        intentRef.current = null;
-        // 刷新本题与聚合缓存（结果/草稿经 attempt 前缀；讲练页/记录/错题/
-        // 教师面消费同一服务端事实；context 冻结投影幂等重取无副作用）
-        void client.invalidateQueries({
-          queryKey: ["student", "attempt", attemptId],
-        });
-        void client.invalidateQueries({ queryKey: ["student", "lesson"] });
-        void client.invalidateQueries({ queryKey: ["student", "records"] });
-        void client.invalidateQueries({
-          queryKey: ["student", "wrong-questions"],
-        });
-        void client.invalidateQueries({ queryKey: ["teacher"] });
-      } catch (cause) {
-        if (cause instanceof ApiError) {
-          setError(cause.message);
-          if (cause.code === "SELF_REVIEW_REVISION_CONFLICT") {
-            // CAS 冲突：采纳 _current 为最新基线（下次提交直接用新 revision）
-            const parsed = selfReviewConflictCurrentSchema.safeParse(
-              cause.extra?._current,
-            );
-            if (parsed.success) {
-              setOverride({
-                record: parsed.data.selfReview,
-                revision: parsed.data.revision,
-              });
-            }
-          } else if (cause.code === "SELF_REVIEW_TEACHER_MARKED") {
-            // 教师竞争：动作入口收起（显示以教师判定为准），刷新投影
-            setSupersededByTeacher(true);
-            void client.invalidateQueries({
-              queryKey: ["student", "attempt", attemptId],
-            });
-          } else if (
-            cause.code === "SELF_REVIEW_NOT_RELEASED" ||
-            cause.code === "SELF_REVIEW_NOT_ALLOWED"
-          ) {
-            // UI 状态过期（教师改设置/策略不符）：刷新本题投影，按钮待新投影
-            void client.invalidateQueries({
-              queryKey: ["student", "attempt", attemptId],
+  const save = async (verdict: SelfReviewVerdict) => {
+    if (busy) return;
+    const baseRevision = current?.revision ?? 0;
+    const previous = intentRef.current;
+    const request: SelfReviewRequest =
+      previous !== null &&
+      previous.verdict === verdict &&
+      previous.baseRevision === baseRevision
+        ? previous
+        : { verdict, baseRevision, mutationId: randomUuid() };
+    intentRef.current = request;
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await saveSelfReviewApi(
+        attemptId,
+        question.questionId,
+        request,
+      );
+      // 成功采纳：record 来自回执；undecided 清除后 record=null、revision=base+1
+      setOverride({ record: data.selfReview, revision: baseRevision + 1 });
+      intentRef.current = null;
+      // 刷新本题与聚合缓存（结果/草稿经 attempt 前缀；讲练页/记录/错题/
+      // 教师面消费同一服务端事实；context 冻结投影幂等重取无副作用）
+      void client.invalidateQueries({
+        queryKey: ["student", "attempt", attemptId],
+      });
+      void client.invalidateQueries({ queryKey: ["student", "lesson"] });
+      void client.invalidateQueries({ queryKey: ["student", "records"] });
+      void client.invalidateQueries({
+        queryKey: ["student", "wrong-questions"],
+      });
+      void client.invalidateQueries({ queryKey: ["teacher"] });
+    } catch (cause) {
+      if (cause instanceof ApiError) {
+        setError(cause.message);
+        if (cause.code === "SELF_REVIEW_REVISION_CONFLICT") {
+          // CAS 冲突：采纳 _current 为最新基线（下次提交直接用新 revision）
+          const parsed = selfReviewConflictCurrentSchema.safeParse(
+            cause.extra?._current,
+          );
+          if (parsed.success) {
+            setOverride({
+              record: parsed.data.selfReview,
+              revision: parsed.data.revision,
             });
           }
-        } else {
-          setError(
-            cause instanceof Error ? cause.message : "自评保存失败，请重试",
-          );
+        } else if (cause.code === "SELF_REVIEW_TEACHER_MARKED") {
+          // 教师竞争：动作入口收起（显示以教师判定为准），刷新投影
+          setSupersededByTeacher(true);
+          void client.invalidateQueries({
+            queryKey: ["student", "attempt", attemptId],
+          });
+        } else if (
+          cause.code === "SELF_REVIEW_NOT_RELEASED" ||
+          cause.code === "SELF_REVIEW_NOT_ALLOWED"
+        ) {
+          // UI 状态过期（教师改设置/策略不符）：刷新本题投影，按钮待新投影
+          void client.invalidateQueries({
+            queryKey: ["student", "attempt", attemptId],
+          });
         }
-      } finally {
-        setBusy(false);
+      } else {
+        setError(
+          cause instanceof Error ? cause.message : "自评保存失败，请重试",
+        );
       }
-    },
-    [attemptId, busy, client, current, question.questionId],
-  );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // manual_only：无参考答案，不假装可自动判断——只提示待老师批改
   if (gradingPolicy === "manual_only") {
