@@ -215,14 +215,18 @@ export interface WrongAttemptContextPlan {
 }
 
 /**
- * wrong 组卷闭包计划（live 读路径，组卷事务外调用）：逐题按 live 引用索引
- * 求依赖（题级 ::ref ∪ 所属组 → 组引用），每个依赖**优先复制来源卷的冻结
- * 快照**（错题时学生所见的版本——同 ID 沿用来源版本），来源卷无该快照
- * （升级前旧服务端开的卷）回退 live 冻结当前版本；两者皆不可得（live 已
- * 软删/缺失）→ **剔除该题**（与 pickOf「坏快照剔除」同款语义——学生自助
- * 重练不整卷失败，剔完由调用方按 WRONG_PRACTICE_EMPTY 拒绝）。
- * teacherId 为 null（学生无教师域的异常行）→ 依赖为空集，全部可用、零条目
- * （不阻塞旧数据重练）。
+ * wrong 组卷闭包计划（live 读路径，组卷事务外调用）：逐题求依赖边集——
+ * **来源卷有冻结快照（tt-07a 后开的卷）时边集与快照内容同源构边**（组快照
+ * questionIds 定组归属、组快照 materialRefs 与题目快照 materialRefs 定材料，
+ * §16.8 P2-1 / tt-07b C6：教师事后增删 ::ref 或改组成员不再影响组卷边集，
+ * 不冻入学生当时未见的依赖、不漏冻当时已见的）；来源卷零快照（升级前旧
+ * 服务端开的卷）按 live 引用索引构边（显式 live 回退边界，见决策记录
+ * TT-07b）。每个依赖**优先复制来源卷的冻结快照**（错题时学生所见的版本
+ * ——同 ID 沿用来源版本），来源卷无该快照回退 live 冻结当前版本；两者皆
+ * 不可得（live 已软删/缺失）→ **剔除该题**（与 pickOf「坏快照剔除」同款
+ * 语义——学生自助重练不整卷失败，剔完由调用方按 WRONG_PRACTICE_EMPTY
+ * 拒绝）。teacherId 为 null（学生无教师域的异常行）→ 依赖为空集，全部
+ * 可用、零条目（不阻塞旧数据重练）。
  */
 export function wrongAttemptContextPlan(
   db: Db,
@@ -267,8 +271,12 @@ export function wrongAttemptContextPlan(
   const usable: ResponseRow[] = [];
 
   for (const source of sources) {
-    const refs = closureRefIds(db, teacherId, [source.questionId]);
     const sourceEntries = sourceEntriesOf(source.attemptId);
+    // 依赖图口径（§16.8 P2-1 / tt-07b C6）：有快照同源构边，零快照 live 构边
+    const refs =
+      sourceEntries.size > 0
+        ? frozenRefIdsOf(sourceEntries, source)
+        : closureRefIds(db, teacherId, [source.questionId]);
     const resolved: AttemptContextSnapshotEntry[] = [];
     let ok = true;
     for (const kind of ["group", "material"] as const) {
@@ -294,6 +302,46 @@ export function wrongAttemptContextPlan(
   }
 
   return { usable, entries: [...entryByDedupeKey.values()] };
+}
+
+/**
+ * 从来源卷冻结快照同源构边（§16.8 P2-1 / tt-07b C6）：组归属 = 组快照
+ * questionIds 含该题（开卷时学生所见的成员关系），组级材料 = 组快照
+ * materialRefs，题级材料 = 题目快照 materialRefs（开卷时无题级引用则无键
+ * = 无边）。完全不读 live 引用索引——教师事后增删 ::ref / 改组成员只影响
+ * 之后的新卷。题目快照由 wrong-practice pickOf 保证可用（坏快照行已被
+ * 剔除），此处解析防御性失败按无题级引用处理（组归属不依赖题目快照）；
+ * 组快照的 questionIds/materialRefs 防御性空数组回退（条目经 JSON.parse
+ * 直转，未经 safeParse）。
+ */
+function frozenRefIdsOf(
+  sourceEntries: ReadonlyMap<string, AttemptContextSnapshotEntry>,
+  source: ResponseRow,
+): { groupIds: Set<string>; materialIds: Set<string> } {
+  const groupIds = new Set<string>();
+  const materialIds = new Set<string>();
+  for (const entry of sourceEntries.values()) {
+    if (entry.kind !== "group") continue;
+    if (!(entry.snapshot.questionIds ?? []).includes(source.questionId))
+      continue;
+    groupIds.add(entry.sourceId);
+    for (const ref of entry.snapshot.materialRefs ?? []) {
+      materialIds.add(ref.material);
+    }
+  }
+  if (source.questionSnapshotJson !== null) {
+    try {
+      const parsed = JSON.parse(source.questionSnapshotJson) as {
+        materialRefs?: ReadonlyArray<{ material: string }>;
+      };
+      for (const ref of parsed.materialRefs ?? []) {
+        materialIds.add(ref.material);
+      }
+    } catch {
+      // 题目快照损坏按无题级引用处理（组归属仍来自组快照）
+    }
+  }
+  return { groupIds, materialIds };
 }
 
 /** live 行 → 冻结条目（软删/缺失返回 null；复用 contextEntriesOf 的白名单挑键） */

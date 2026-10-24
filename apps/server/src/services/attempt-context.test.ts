@@ -476,8 +476,15 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       snapshotType?: "choice" | "solve";
       /** 该来源卷的材料快照 (sourceId → 版本) */
       materialSnapshots: ReadonlyArray<{ id: string; version: number }>;
-      /** 该来源卷的组快照（可选） */
-      groupSnapshot?: { id: string; version: number };
+      /** 该来源卷的组快照（可选）；materialRefs/questionIds 缺省空数组（半冻结种子） */
+      groupSnapshot?: {
+        id: string;
+        version: number;
+        materialRefs?: ReadonlyArray<{ material: string; slot?: string }>;
+        questionIds?: readonly string[];
+      };
+      /** 题目快照的题级 ::ref 投影（post-tt-06b 真实形态；仅 solve 场景使用） */
+      snapshotMaterialRefs?: ReadonlyArray<{ material: string; slot?: string }>;
     },
   ): void {
     db.insert(attempts)
@@ -521,6 +528,15 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
                 sourceMd: questionRow.source_md,
                 answers: { kind: "final", answer: "42" },
                 hints: [],
+                ...(config.snapshotMaterialRefs === undefined
+                  ? {}
+                  : {
+                      materialRefs: config.snapshotMaterialRefs.map((ref) =>
+                        ref.slot === undefined
+                          ? { material: ref.material }
+                          : { material: ref.material, slot: ref.slot },
+                      ),
+                    }),
               }
             : {
                 id: config.questionId,
@@ -573,8 +589,8 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
             title: "资料组",
             label: "1～2",
             introMd: "",
-            materialRefs: [],
-            questionIds: [],
+            materialRefs: config.groupSnapshot.materialRefs ?? [],
+            questionIds: config.groupSnapshot.questionIds ?? [],
           }),
           frozenAt: "2026-10-20T08:00:00.000Z",
         })
@@ -589,8 +605,14 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       attemptId: "attempt-wrong-src-1",
       questionId: "资料分析-1",
       finalCorrect: false,
+      // 真实闭包形态：组快照携带成员归属与组级引用（同源构边的输入）
       materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
-      groupSnapshot: { id: "grp-资料分析-1", version: 1 },
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1", slot: "slot-1" }],
+        questionIds: ["资料分析-1"],
+      },
     });
     // 教师随后改材料 → v2
     db.$client
@@ -706,21 +728,23 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       questionId: "资料分析-1",
       finalCorrect: false,
       materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1", slot: "slot-1" }],
+        questionIds: ["资料分析-1"],
+      },
     });
     seedJudgedSource(db, {
       attemptId: "attempt-wrong-src-4b",
       questionId: "资料分析-5",
       finalCorrect: false,
       snapshotType: "solve",
-      // 题 5 的题级引用目标改为 mat-1（v2 来源卷）——直接种一条 v2 快照
+      // 题 5 的题级引用指向 mat-1（v2 来源卷）——题目快照携带引用投影，
+      // 来源卷冻结 mat-1@v2（同源构边，不依赖 live 索引）
+      snapshotMaterialRefs: [{ material: "mat-资料分析-1" }],
       materialSnapshots: [{ id: "mat-资料分析-1", version: 2 }],
     });
-    // 把题 5 的题级引用索引指向 mat-1（同材料两版本场景）
-    db.$client
-      .prepare(
-        "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'question' AND owner_id = ?",
-      )
-      .run("mat-资料分析-1", "资料分析-5");
     const started = startWrongPractice(
       db,
       STUDENT_ID,
@@ -735,6 +759,140 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       .map((row) => row.sourceVersion)
       .sort();
     expect(versions).toEqual([1, 2]);
+  });
+
+  it("QM-07 C6：来源卷有快照时依赖图与快照内容同源——教师事后改组引用不带入新卷", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-c6a",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1", slot: "slot-1" }],
+        questionIds: ["资料分析-1"],
+      },
+    });
+    // 教师错题后把组的材料引用改指 mat-2（live 索引变动）
+    db.$client
+      .prepare(
+        "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'group' AND owner_id = ?",
+      )
+      .run("mat-资料分析-2", "grp-资料分析-1");
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1"],
+      {},
+      true,
+    );
+    const rows = contextRows(db, started.id);
+    // 冻结的是来源卷所见：grp@v1 + mat-1@v1，不带入教师事后改指的 mat-2
+    expect(
+      rows.map((row) => `${row.kind}:${row.sourceId}@${row.sourceVersion}`).sort(),
+    ).toEqual(["group:grp-资料分析-1@1", "material:mat-资料分析-1@1"]);
+  });
+
+  it("QM-07 C6：教师事后把题移入新组 → 不冻入学生当时未见的新组（组归属同源）", () => {
+    const { db, unitId } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-c6b",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1", slot: "slot-1" }],
+        questionIds: ["资料分析-1"],
+      },
+    });
+    // 教师事后建新组并把题 1 移入（live 成员索引变动；live 组真实存在可冻结）
+    db.$client
+      .prepare(
+        "INSERT INTO question_groups (id, teacher_id, unit_id, title, label, intro_md, source_md, material_refs_json, question_ids_json, version, \"order\", deleted_at, updated_at) VALUES (?, ?, ?, NULL, NULL, '', ?, '[]', '[]', 1, 0, NULL, ?)",
+      )
+      .run(
+        "grp-post-hoc",
+        TEST_TEACHER_ID,
+        unitId,
+        "::::group{id=grp-post-hoc}\n::::",
+        NOW,
+      );
+    db.$client
+      .prepare(
+        "INSERT INTO question_group_members (teacher_id, group_id, question_id, \"order\") VALUES (?, ?, ?, 0)",
+      )
+      .run(TEST_TEACHER_ID, "grp-post-hoc", "资料分析-1");
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1"],
+      {},
+      true,
+    );
+    const rows = contextRows(db, started.id);
+    // 组边只认来源卷冻结的 grp@v1；live 新组不入卷
+    expect(rows.some((row) => row.sourceId === "grp-post-hoc")).toBe(false);
+    expect(
+      rows.map((row) => `${row.kind}:${row.sourceId}@${row.sourceVersion}`).sort(),
+    ).toEqual(["group:grp-资料分析-1@1", "material:mat-资料分析-1@1"]);
+  });
+
+  it("QM-07 C6：题级引用同源——题目快照 materialRefs 优先于 live 索引", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-c6c",
+      questionId: "资料分析-5",
+      finalCorrect: false,
+      snapshotType: "solve",
+      snapshotMaterialRefs: [{ material: "mat-资料分析-2" }],
+      materialSnapshots: [{ id: "mat-资料分析-2", version: 1 }],
+    });
+    // 教师事后把题 5 的题级引用改指 mat-1（live 索引变动）
+    db.$client
+      .prepare(
+        "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'question' AND owner_id = ?",
+      )
+      .run("mat-资料分析-1", "资料分析-5");
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-5"],
+      {},
+      true,
+    );
+    const rows = contextRows(db, started.id);
+    // 边来自题目快照的引用投影：冻 mat-2@v1（来源卷所见），不带 live 改指的 mat-1
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sourceId).toBe("mat-资料分析-2");
+    expect(rows[0]?.sourceVersion).toBe(1);
+  });
+
+  it("QM-07 C6 边界：题目快照无 materialRefs 键（开卷时无题级引用）→ 教师事后加的 live 引用不带入", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-c6d",
+      questionId: "资料分析-5",
+      finalCorrect: false,
+      snapshotType: "solve",
+      // 开卷时题 5 无题级引用（题目快照无 materialRefs 键）；来源卷另有
+      // mat-2 快照（同题卷其他题的依赖，同源模式生效）。live 索引里题 5
+      // 的 ::ref{material=mat-资料分析-2} 系导入原生（对照面：若按 live 构边
+      // 会冻入 mat-2，而来源卷题目快照表明学生作答时无此依赖）
+      materialSnapshots: [{ id: "mat-资料分析-2", version: 1 }],
+    });
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-5"],
+      {},
+      true,
+    );
+    // 同源构边不读 live 索引：题 5 开卷时无依赖 → 新卷零上下文条目
+    expect(contextRows(db, started.id)).toEqual([]);
   });
 
   it("wrong 组卷冻结中断（快照写入抛错）→ 新卷三表零残留（与开卷同款事务回滚）", () => {
