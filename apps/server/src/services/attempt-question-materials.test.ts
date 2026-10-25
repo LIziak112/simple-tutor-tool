@@ -309,28 +309,16 @@ describe("P1-2 题级材料的服务端口径（作答/结果 UI 可见性）", 
       .find((row) => row.questionId === env.fillQuestionId);
     if (solveRow === undefined || fillRow === undefined)
       throw new Error("建卷未冻结响应行");
-    const solve = resultQuestionOf(
-      solveRow,
-      snapshotOfRow(solveRow) ?? {
-        id: env.solveQuestionId,
-        type: "solve",
-        stemMd: "",
-        sourceMd: "",
-      },
-    );
+    const solveSnapshot = snapshotOfRow(solveRow);
+    if (solveSnapshot === null) throw new Error("solve 行快照不可用");
+    const solve = resultQuestionOf(solveRow, solveSnapshot);
     // 题级引用随结果快照下发（P1-2 回看锚解析用）；无引用题不注入键
     expect(solve.snapshot.materialRefs).toEqual([
       { material: "mat-阅读单元-2" },
     ]);
-    const fill = resultQuestionOf(
-      fillRow,
-      snapshotOfRow(fillRow) ?? {
-        id: env.fillQuestionId,
-        type: "fill",
-        stemMd: "",
-        sourceMd: "",
-      },
-    );
+    const fillSnapshot = snapshotOfRow(fillRow);
+    if (fillSnapshot === null) throw new Error("fill 行快照不可用");
+    const fill = resultQuestionOf(fillRow, fillSnapshot);
     expect("materialRefs" in fill.snapshot).toBe(false);
     // 材料正文只在 /context 冻结投影，不进结果载荷（id 列表是题面公开内容）
     expect(JSON.stringify(solve)).not.toContain("题级引用目标材料");

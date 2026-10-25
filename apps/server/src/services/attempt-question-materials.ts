@@ -9,6 +9,7 @@ import {
 } from "@tutor/contract";
 import { slotNumberedContentOf } from "@tutor/md-dsl";
 import type { Db } from "../db/client.ts";
+import type { AttemptContextSnapshotRow } from "../db/schema.ts";
 import { listAttemptContextSnapshots } from "./material-repository.ts";
 
 /**
@@ -41,12 +42,32 @@ export function frozenMaterialsForQuestion(
   snapshot: Question | null,
   options: { readonly versionBadge?: boolean } = {},
 ): FrozenQuestionMaterial[] {
+  return frozenMaterialsFromRows(
+    listAttemptContextSnapshots(db, attemptId),
+    questionId,
+    snapshot,
+    options,
+  );
+}
+
+/**
+ * 冻结快照行集合上的同一闭包计算（纯函数，TT-14 细项 5 抽出）：大卷导出
+ * 逐题循环按 attemptId 预取快照行后复用本函数——O(行×快照查询) 收敛为
+ * O(快照查询/attempt)；单题消费方（review-pack/AI 上下文）继续走
+ * frozenMaterialsForQuestion 便捷入口，语义同一实现。
+ */
+export function frozenMaterialsFromRows(
+  snapshotRows: readonly AttemptContextSnapshotRow[],
+  questionId: string,
+  snapshot: Question | null,
+  options: { readonly versionBadge?: boolean } = {},
+): FrozenQuestionMaterial[] {
   const materials = new Map<
     string,
     MaterialPublic & { sourceVersion: number }
   >();
   const groups: QuestionGroupPublic[] = [];
-  for (const row of listAttemptContextSnapshots(db, attemptId)) {
+  for (const row of snapshotRows) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(row.snapshotJson) as unknown;
