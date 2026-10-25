@@ -265,6 +265,122 @@ it("迟到的准备结果被取消，不能重新打开已退出的编辑者", a
   expect(screen.getByRole("status")).toHaveTextContent("作答");
 });
 
+it("打开前置失败不进全局横幅，错误抛回调用方就地呈现，后续操作不受影响", async () => {
+  const failures: string[] = [];
+  function PrepareControls() {
+    const editor = useAttemptEditor();
+    return (
+      <>
+        <AttemptEditorNotice />
+        <output>{editor?.active?.questionId ?? "作答"}</output>
+        <button
+          type="button"
+          onClick={() =>
+            void editor
+              ?.request({ questionId: "q1", kind: "annotation" }, async () => {
+                throw new Error("标画已随交卷固定");
+              })
+              .catch((cause: unknown) => {
+                failures.push(
+                  cause instanceof Error ? cause.message : "打开失败",
+                );
+              })
+          }
+        >
+          打开
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void editor?.request({ questionId: "q2", kind: "scratch" })
+          }
+        >
+          乙
+        </button>
+      </>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <PrepareControls />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("打开"));
+  await waitFor(() => expect(failures).toEqual(["标画已随交卷固定"]));
+  // 打开失败是前置条件不满足：不进「上次操作未完成」横幅、无全局重试按钮。
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "重试操作" })).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("作答");
+  // 后续操作不受残留状态影响。
+  fireEvent.click(screen.getByText("乙"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q2"),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("重试重放期间打开前置失败沿用横幅语义，不静默吞错", async () => {
+  const finish = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("本机写入失败"))
+    .mockResolvedValueOnce();
+  function ReplayControls() {
+    const editor = useAttemptEditor();
+    return (
+      <>
+        <AttemptEditorNotice />
+        <output>{editor?.active?.questionId ?? "作答"}</output>
+        <button
+          type="button"
+          onClick={() => {
+            editor?.register("q1", finish);
+            void editor?.request({ questionId: "q1", kind: "annotation" });
+          }}
+        >
+          甲
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void editor?.request(
+              { questionId: "q2", kind: "annotation" },
+              async () => {
+                throw new Error("标画已随交卷固定");
+              },
+            )
+          }
+        >
+          乙
+        </button>
+      </>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <ReplayControls />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("甲"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q1"),
+  );
+  // 切乙时甲的收笔失败：横幅 + 重试（保存未完成语义，历史行为）。
+  fireEvent.click(screen.getByText("乙"));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("本机写入失败"),
+  );
+  // 重试：收笔这次成功，但乙的打开前置失败——重放沿用横幅语义并可再重试。
+  fireEvent.click(screen.getByRole("button", { name: "重试操作" }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("标画已随交卷固定"),
+  );
+  expect(
+    screen.getByRole("button", { name: "重试操作" }),
+  ).toBeInTheDocument();
+  // 收笔已成功、乙未打开：无活动编辑者（publish(null) 先于 prepare，既有顺序）。
+  expect(screen.getByRole("status")).toHaveTextContent("作答");
+});
+
 it("同题草稿与标画独立展开，退出标画保留草稿，切题收笔后关闭旧草稿", async () => {
   const finishPaper = vi.fn(async () => undefined);
   function Papers() {

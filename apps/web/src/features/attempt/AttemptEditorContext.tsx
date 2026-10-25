@@ -22,11 +22,16 @@ interface EditorContextValue {
   getActive(): AttemptEditor | null;
   getPaper(): AttemptEditor | null;
   requestPaper(next: AttemptEditor | null): Promise<boolean>;
+  /**
+   * 切换活动编辑者：先收笔落盘原编辑者（失败进「上次操作未完成」横幅并
+   * 保留原编辑者，可重试）；带 prepare 时，prepare 抛错属「打开失败」
+   * （前置条件不满足），不进横幅、不提供全局重试，错误原样抛回调用方
+   * 就地呈现（不带 prepare 的调用永不 reject）。
+   */
   request(
     next: AttemptEditor | null,
     prepare?: (signal: AbortSignal) => Promise<boolean>,
-  ): Promise<boolean>;
-  register(
+  ): Promise<boolean>;  register(
     questionId: string,
     finish: () => Promise<void>,
     kind?: AttemptEditor["kind"],
@@ -145,10 +150,16 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
   const controllers = useRef(new Map<string, () => Promise<void>>());
   const sequence = useRef(0);
   const preparation = useRef<AbortController | null>(null);
-  const request = useCallback(
+  // 语义分流（annotation/scratch/answerInk 共用）：阶段一「收笔落盘」失败是
+  // 数据未保存，保留原编辑者并进全局横幅（可重试）；阶段二「打开前置」失败是
+  // 前置条件不满足（v1 底图/已封存/布局不匹配等确定性错误），重试无意义，
+  // 不进横幅、错误抛回调用方就地呈现。replay 供 retry() 重放历史失败操作，
+  // 其阶段二失败沿用横幅语义（与既有行为一致，不向调用方抛出）。
+  const runRequest = useCallback(
     async (
       next: AttemptEditor | null,
       prepare?: (signal: AbortSignal) => Promise<boolean>,
+      replay = false,
     ) => {
       const generation = ++sequence.current;
       preparation.current?.abort();
@@ -164,6 +175,7 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         setError(null);
         return true;
       }
+      // 阶段一：原编辑者与纸面收笔并本机落盘（失败=保存未完成）。
       try {
         if (previous)
           await controllers.current.get(
@@ -174,21 +186,6 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
           await controllers.current.get(
             `${paper.kind}:${paper.questionId}`,
           )?.();
-        if (generation !== sequence.current) return false;
-        if (prepare) {
-          publish(null);
-          if (
-            !(await prepare(controller.signal)) ||
-            generation !== sequence.current
-          )
-            return false;
-        }
-        if (next && paper?.questionId !== next.questionId)
-          paperRef.current = null;
-        publish(next);
-        failedOperation.current = null;
-        setError(null);
-        return true;
       } catch (cause) {
         if (generation === sequence.current) {
           failedOperation.current = {
@@ -200,8 +197,41 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         }
         return false;
       }
+      if (generation !== sequence.current) return false;
+      // 阶段二：新编辑者的打开前置（失败=打开失败，就地呈现）。
+      if (prepare) {
+        publish(null);
+        try {
+          if (!(await prepare(controller.signal))) return false;
+          if (generation !== sequence.current) return false;
+        } catch (cause) {
+          if (generation !== sequence.current) return false;
+          if (replay) {
+            failedOperation.current = { kind: "active", next, prepare };
+            setError(localPersistenceErrorMessage(cause));
+            return false;
+          }
+          // 挂起的旧失败已随本次收笔成功一并了结，不再保留过期重试目标。
+          failedOperation.current = null;
+          setError(null);
+          throw cause;
+        }
+      }
+      if (next && paperRef.current?.questionId !== next.questionId)
+        paperRef.current = null;
+      publish(next);
+      failedOperation.current = null;
+      setError(null);
+      return true;
     },
     [publish],
+  );
+  const request = useCallback(
+    async (
+      next: AttemptEditor | null,
+      prepare?: (signal: AbortSignal) => Promise<boolean>,
+    ) => runRequest(next, prepare, false),
+    [runRequest],
   );
   const requestPaper = useCallback(
     async (next: AttemptEditor | null) => {
@@ -258,12 +288,12 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
     setRetrying(true);
     try {
       if (operation.kind === "paper") await requestPaper(operation.next);
-      else await request(operation.next, operation.prepare);
+      else await runRequest(operation.next, operation.prepare, true);
     } finally {
       retryLock.current = false;
       setRetrying(false);
     }
-  }, [request, requestPaper]);
+  }, [runRequest, requestPaper]);
   // 固定顺序收笔（标画 → 草稿 → 正式手写）；只碰本题注册的控制器。
   const flush = useCallback(
     async (questionId: string, kinds?: readonly AttemptEditor["kind"][]) => {

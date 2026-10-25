@@ -656,13 +656,17 @@ it("分栏改变可用宽度后重新适配，不能保留放大造成局部横�
   }
 });
 
-it("底图准备失败仍能答题且显示重试原因", async () => {
+it("底图准备失败仍能答题且就地显示原因，不进全局重试横幅", async () => {
   vi.mocked(prepareQuestionAnnotationBase).mockRejectedValue(
     new Error("图片加载失败"),
   );
   render(<Harness />);
   await act(async () => fireEvent.click(screen.getByText("标画")));
-  expect(await screen.findByRole("alert")).toHaveTextContent("图片加载失败");
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("图片加载失败");
+  // 打开失败是前置条件不满足：不走「上次操作未完成」全局横幅、无重试按钮。
+  expect(alert).not.toHaveTextContent("上次操作未完成");
+  expect(screen.queryByRole("button", { name: "重试操作" })).toBeNull();
   expect(
     document.querySelector('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert");
