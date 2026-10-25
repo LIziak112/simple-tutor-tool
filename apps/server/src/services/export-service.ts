@@ -83,7 +83,7 @@ import {
 } from "./export-csv";
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
-import { serializeStudentAnswer } from "./mark-response";
+import { serializeStudentAnswerOfRow } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 import {
   assembleQuestionEvidence,
@@ -1273,7 +1273,12 @@ function responseBaseOf(
     studentId: attempt.studentId,
     questionId: row.questionId,
     no,
-    answerText: serializeStudentAnswer(answerOf(row.answerJson)),
+    answerText: serializeStudentAnswerOfRow(
+      core.db,
+      attempt.id,
+      row,
+      answerOf(row.answerJson),
+    ),
     autoCorrect: row.autoCorrect,
     finalCorrect: row.finalCorrect,
     // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）

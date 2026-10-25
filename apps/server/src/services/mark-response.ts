@@ -6,7 +6,11 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
-import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
+import {
+  dispatchBehavior,
+  emptyPublicStructure,
+  NEW_QUESTION_TYPES,
+} from "@tutor/contract";
 import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -17,7 +21,12 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { answerOf, attemptFinalOutcomeOf } from "./attempt-service";
+import {
+  answerOf,
+  attemptFinalOutcomeOf,
+  materialSlotOrderOf,
+  structuresOfSnapshot,
+} from "./attempt-service";
 import { notSelfReviewPendingRow, pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -69,6 +78,38 @@ export function serializeStudentAnswer(
 ): string | null {
   if (answer === null) return null;
   return dispatchBehavior(answer, "teacher-queue", emptyPublicStructure);
+}
+
+/**
+ * 行级序列化（QM-16 细项 3）：待批队列/CSV/单题包/AI 受控出口共用——
+ * 新题型按冻结快照装配完整公开结构（matching 选项池+槽位序 ordinal、
+ * ordering 项正文），配对/排序答案以**真实选项/项正文**与「第 N 空」标签
+ * 序列化（与材料面板（N）编号同口径）；旧七型结构恒空，输出逐字不变。
+ * 快照缺失/坏行回落裸序列化（emptyPublicStructure——id 回落路径，不抛错）。
+ */
+export function serializeStudentAnswerOfRow(
+  db: Db,
+  attemptId: string,
+  row: Pick<
+    ResponseRow,
+    "attemptId" | "questionId" | "questionSnapshotJson" | "unitId"
+  >,
+  answer: StudentAnswer | null,
+): string | null {
+  if (answer === null) return null;
+  const snapshot = snapshotOfRow(row);
+  if (snapshot === null || !NEW_QUESTION_TYPES.includes(snapshot.type)) {
+    return serializeStudentAnswer(answer);
+  }
+  return dispatchBehavior(
+    answer,
+    "teacher-queue",
+    structuresOfSnapshot(
+      snapshot,
+      materialSlotOrderOf(db, attemptId),
+      row.unitId,
+    ),
+  );
 }
 
 // ---------- POST /api/teacher/responses/:id/mark ----------
@@ -292,7 +333,12 @@ export function listPendingMarks(
           ? { options: snapshot.options.map((option) => option.text) }
           : {}),
         answers: snapshot.answers ?? null,
-        answerText: serializeStudentAnswer(answerOf(response.answerJson)),
+        answerText: serializeStudentAnswerOfRow(
+          db,
+          attemptId,
+          response,
+          answerOf(response.answerJson),
+        ),
         ink: inkInfoOf(inkByQuestion.get(response.questionId)),
         activeSec: response.activeSec,
         hintsUsed: response.hintsUsed,

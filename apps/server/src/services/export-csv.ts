@@ -12,7 +12,7 @@ import {
   effectiveVerdictOfRow,
   unitGroupedRows,
 } from "./attempt-service";
-import { serializeStudentAnswer } from "./mark-response";
+import { serializeStudentAnswerOfRow } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -296,7 +296,12 @@ export function exportCsv(
         const knowledge =
           snapshot?.knowledge ?? fallbackKnowledgeOf(row.response.questionId);
         const answerText =
-          serializeStudentAnswer(answerOf(row.response.answerJson)) ?? "";
+          serializeStudentAnswerOfRow(
+            db,
+            attempt.id,
+            row.response,
+            answerOf(row.response.answerJson),
+          ) ?? "";
         const inkRow = inkByQuestion.get(row.response.questionId);
         const inkUrl =
           type !== null &&
@@ -408,7 +413,12 @@ export function exportCsv(
           knowledge = knowledgeFallback.get(response.questionId) ?? [];
         }
         const answerText =
-          serializeStudentAnswer(answerOf(response.answerJson)) ?? "";
+          serializeStudentAnswerOfRow(
+            db,
+            attempt.id,
+            response,
+            answerOf(response.answerJson),
+          ) ?? "";
         const inkRow = inkByQuestion.get(response.questionId);
         const inkUrl =
           type !== null &&

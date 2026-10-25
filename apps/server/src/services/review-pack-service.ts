@@ -40,7 +40,7 @@ import {
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
-import { serializeStudentAnswer } from "./mark-response";
+import { serializeStudentAnswerOfRow } from "./mark-response";
 import {
   assembleQuestionEvidence,
   evidenceMissingRowsOf,
@@ -294,7 +294,12 @@ export function assembleReviewPack(
   const qRef = revision.ref;
   const eRef = evidenceEntry.ref;
   const material = revision.material;
-  const answerText = serializeStudentAnswer(answerOf(row.answerJson));
+  const answerText = serializeStudentAnswerOfRow(
+    db,
+    attempt.id,
+    row,
+    answerOf(row.answerJson),
+  );
   // 判定来源（教师域键；两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
   const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
 
