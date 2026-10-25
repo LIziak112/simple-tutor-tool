@@ -42,6 +42,7 @@ import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
 import { lettersOf } from "@tutor/contract";
 import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
+import { materialSlotOrderOf, structuresOfSnapshot } from "./attempt-service.ts";
 import { serializeStudentAnswerOfRow } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
 import { snapshotOfRow } from "./snapshot.ts";
@@ -308,11 +309,12 @@ export function assembleReviewPack(
   // 材料正文是公开投影（导入 lint MATERIAL_CONTAINS_ANSWER + 冻结白名单
   // 双防线），学生包照常携带；不带材料的单题包不可独立阅读。多版本逐版
   // 成条（title 附历史版本说明），正文已槽位编号（（N）与题干「第 N 空」对齐）。
+  const rowSnapshot = snapshotOfRow(row);
   const frozenMaterials = frozenMaterialsForQuestion(
     db,
     attempt.id,
     row.questionId,
-    snapshotOfRow(row),
+    rowSnapshot,
   );
   // 判定来源（教师域键；两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
   const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
@@ -339,9 +341,41 @@ ${frozenMaterial.contentMd}`,
   if (teacherRole) {
     if (material.answers !== undefined) {
       // plain 形态（不注 mathify）：裸 LaTeX 原样保留对 AI 更友好，渲染管线
-      // 的包 $ 启发式是显示侧行为（contract formatQuestionAnswers 参数化）
+      // 的包 $ 启发式是显示侧行为（contract formatQuestionAnswers 参数化）。
+      // QM-16 细项 3：配对/排序参考换可读标签（材料槽位序/选项/项正文），
+      // 与学生答案序列化同一结构装配——教师包可对照阅读
+      // 快照缺失行 materialOf 恒不携带 answers，进入本分支即行必在（防御
+      // 守卫与 materialOf 单点约定一致，不静默造空结构）
+      if (rowSnapshot === null) {
+        throw new HttpError(
+          500,
+          "EXPORT_ASSEMBLY_BROKEN",
+          "快照缺失行携带参考答案（内部不变量破坏）",
+        );
+      }
+      const answerStructures = structuresOfSnapshot(
+        rowSnapshot,
+        materialSlotOrderOf(db, attempt.id),
+        row.unitId,
+      );
+      const optionLabelOf = (id: string): string =>
+        answerStructures.matching.options.find((option) => option.key === id)
+          ?.text ?? id;
+      const slotLabelOf = (id: string): string => {
+        const ordinal = answerStructures.matching.slotOrdinals?.[id];
+        return ordinal === undefined ? id : `第 ${ordinal} 空`;
+      };
+      const itemLabelOf = (id: string): string =>
+        answerStructures.ordering.items.find((item) => item.key === id)
+          ?.text ?? id;
       stemSections.push(
-        `**参考答案**：${formatQuestionAnswers(material.answers)}`,
+        `**参考答案**：${formatQuestionAnswers(material.answers, {
+          labels: {
+            slot: slotLabelOf,
+            option: optionLabelOf,
+            item: itemLabelOf,
+          },
+        })}`,
       );
     }
     if (material.solutionMd !== undefined) {

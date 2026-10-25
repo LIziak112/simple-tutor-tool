@@ -98,9 +98,20 @@ export function formatQuestionAnswers(
   answers: QuestionAnswers,
   options: {
     readonly mathify?: (text: string) => string;
+    /**
+     * QM-16 细项 3：matching/ordering 的 id → 可读标签（受控出口/单题包
+     * 用材料槽位序与选项/项正文替换裸 id——教师与 AI 才能对照阅读）；缺省
+     * 或未命中回落裸 id（缺结构不猜位置，与登记表口径一致）。
+     */
+    readonly labels?: {
+      readonly slot?: (id: string) => string;
+      readonly option?: (id: string) => string;
+      readonly item?: (id: string) => string;
+    };
   } = {},
 ): string {
   const mathify = options.mathify ?? ((text: string) => text);
+  const labels = options.labels ?? {};
   switch (answers.kind) {
     case "judge":
       return answers.value ? "对" : "错";
@@ -121,14 +132,21 @@ export function formatQuestionAnswers(
       // 参考正文已是完整 Markdown（含公式/列表），不做 mathify 包裹
       return answers.referenceMd;
     case "matching":
-      // 与 DSL :::answer 行式书写对称（§5.4.2）；键排序保证确定性输出
+      // 与 DSL :::answer 行式书写对称（§5.4.2）；键排序保证确定性输出；
+      // QM-16 labels 在场时槽位/选项换可读标签（第 N 空 = 选项正文）
       return Object.entries(answers.pairs)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([slot, option]) => `${slot} = ${option}`)
+        .map(
+          ([slot, option]) =>
+            `${labels.slot?.(slot) ?? slot} = ${labels.option?.(option) ?? option}`,
+        )
         .join("；");
     case "ordering":
-      // 行序即正确顺序（§5.4.2）；「 → 」连接为单行可读形态
-      return answers.sequence.join(" → ");
+      // 行序即正确顺序（§5.4.2）；「 → 」连接为单行可读形态（QM-16 labels
+      // 在场时换项正文）
+      return answers.sequence
+        .map((item) => labels.item?.(item) ?? item)
+        .join(" → ");
   }
 }
 
