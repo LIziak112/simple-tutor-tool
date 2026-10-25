@@ -218,6 +218,31 @@ function checkDirective(
     return;
   }
 
+  if (name === "material" || name === "group") {
+    if (!isTopLevel && (kind === "lesson" || kind === "mixed")) {
+      // 安全红线（TT-10b 审查 P1）：两遍解析与切段剔除都只扫文档顶层——嵌套
+      // 材料/组不抽取实体（题级/组级 ::ref 无法解析）、原文也不被剔除，会随
+      // 讲义段落原样下发学生端（可能含 [[答案]] 标记、{{槽位}} 文本，AGENTS
+      // 规则 3 的 API 级泄露），与 QUESTION_NESTED_IN_LESSON 同机理，记 error
+      // 阻断导入与编辑保存。practice 无讲义正文学生下发面、lecture 无材料
+      // 语义（顶层已有位置告警），两 kind 维持既有行为（DSL 只增不改）。
+      issues.push(
+        makeIssue(
+          "error",
+          line,
+          column,
+          name === "material"
+            ? "MATERIAL_NESTED_IN_CONTAINER"
+            : "GROUP_NESTED_IN_CONTAINER",
+          name === "material"
+            ? `材料容器（第 ${line} 行）嵌套在其他容器内部：嵌套材料不会注册为单元材料（::ref 无法解析、槽位不抽取），其原文（含 [[…]] 答案标记与 {{槽位}} 文本）会随讲义段落原样下发学生端；材料只能作为文档顶层容器，请把它移到版式容器（box/columns/fold 等）之外`
+            : `组容器（第 ${line} 行）嵌套在其他容器内部：嵌套组不会注册为题组（子题 ::ref 不生效），其原文会随讲义段落原样下发学生端；组只能作为文档顶层容器，请把它移到版式容器（box/columns/fold 等）之外`,
+        ),
+      );
+    }
+    // 不提前返回：allowedIn / 属性校验照旧（嵌套时 document 仍命中语境链首，无位置双报）
+  }
+
   if (name === "hint" || name === "solution" || name === "answer") {
     const inQuestion = chain.includes("question");
     const inLecture = chain.includes("lecture");

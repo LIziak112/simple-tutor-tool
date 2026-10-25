@@ -715,6 +715,163 @@ describe("lintDocument：指令规则补充", () => {
     );
   });
 
+  it("lesson/mixed：材料/组嵌套在版式容器内 → error MATERIAL/GROUP_NESTED_IN_CONTAINER（嵌套容器不抽取、不剔除，原文含 [[答案]]/槽位标记会随讲义段落原样下发学生端，安全红线）；practice 同写法零新增 issue；顶层材料/组不误报", () => {
+    const nested = md([
+      "---",
+      "kind: lesson",
+      "unit: 随堂练习",
+      "---",
+      "",
+      "# 第1讲 资料分析",
+      "",
+      // 嵌套写法：外层容器围栏比内层长（remark-directive 语义，同 question 包 options）
+      ":::::box",
+      "边栏里的长材料。",
+      "",
+      '::::material{id=mat-1 title="嵌套材料"}',
+      "正文含答案。第 {{slot-1}} 空。",
+      "",
+      "[[参考答案甲]]",
+      "::::",
+      "",
+      "::::group{id=grp-1}",
+      "::ref{question=q1}",
+      "::::",
+      ":::::",
+      "",
+      "::::question{type=judge id=q1}",
+      "$0$ 是最小的正整数。[[错误]]",
+      "::::",
+    ]);
+    const lesson = lintDocument(nested);
+    expect(
+      issueOf(lesson.issues, "MATERIAL_NESTED_IN_CONTAINER"),
+    ).toMatchObject({ level: "error", line: 11 });
+    expect(issueOf(lesson.issues, "GROUP_NESTED_IN_CONTAINER")).toMatchObject({
+      level: "error",
+      line: 17,
+    });
+
+    // mixed 同构写法同样 error（两 kind 都覆盖：mixed 讲义段落学生同样可读）
+    const mixed = lintDocument(nested.replace("kind: lesson", "kind: mixed"));
+    expect(issueOf(mixed.issues, "MATERIAL_NESTED_IN_CONTAINER")?.level).toBe(
+      "error",
+    );
+    expect(issueOf(mixed.issues, "GROUP_NESTED_IN_CONTAINER")?.level).toBe(
+      "error",
+    );
+
+    // practice 无讲义正文学生下发面，维持既有行为（零新增 code）
+    const practice = lintDocument(
+      nested.replace("kind: lesson", "kind: practice"),
+    );
+    expect(codes(practice.issues)).not.toContain(
+      "MATERIAL_NESTED_IN_CONTAINER",
+    );
+    expect(codes(practice.issues)).not.toContain("GROUP_NESTED_IN_CONTAINER");
+
+    // 顶层材料/组（DSL 支持的唯一形态）不误报
+    const topLevel = lintDocument(
+      md([
+        "---",
+        "kind: lesson",
+        "unit: 随堂练习",
+        "---",
+        "",
+        "# 第1讲 资料分析",
+        "",
+        '::::material{id=mat-1 title="某省粮食生产"}',
+        "粮食总产量三千万吨。",
+        "::::",
+        "",
+        "::::group{id=grp-1}",
+        "::ref{question=q1}",
+        "::::",
+        "",
+        "::::question{type=judge id=q1}",
+        "$0$ 是最小的正整数。[[错误]]",
+        "::::",
+      ]),
+    );
+    expect(
+      codes(topLevel.issues).filter((c) => c.endsWith("_NESTED_IN_CONTAINER")),
+    ).toEqual([]);
+  });
+
+  it("lesson/mixed：讲义正文（题块外）裸 [[…]] → error BLANK_MARKER_OUTSIDE_QUESTION（答案原文随 md 段下发学生端，UI 空框不抵消 API 级泄露）；题目内不误报；材料内由 MATERIAL_CONTAINS_ANSWER 单报；lecture/practice 不加严", () => {
+    const lessonText = md([
+      "---",
+      "kind: lesson",
+      "unit: 随堂练习",
+      "---",
+      "",
+      "# 第1讲 有理数",
+      "",
+      "正文讲解。请填 [[参考答案]]。",
+      "",
+      ":::fold",
+      "折叠讲解里的 [[提示答案]]。",
+      ":::",
+      "",
+      "::::question{type=fill id=q1}",
+      "$|-5|=$ [[5]]",
+      "::::",
+    ]);
+    const lesson = lintDocument(lessonText);
+    const markers = lesson.issues.filter(
+      (i) => i.code === "BLANK_MARKER_OUTSIDE_QUESTION",
+    );
+    expect(markers).toHaveLength(2);
+    expect(markers[0]).toMatchObject({ level: "error", line: 8 });
+    expect(markers[1]?.line).toBe(11);
+    // 题目内 [[…]] 是合法判分标记（fill 识别到空位），零误报
+    expect(issueOf(lesson.issues, "FILL_NO_BLANK")).toBeUndefined();
+
+    // mixed 同口径：讲义段落学生同样可读，泄露机理与 lesson 完全一致
+    const mixed = lintDocument(
+      lessonText.replace("kind: lesson", "kind: mixed"),
+    );
+    expect(issueOf(mixed.issues, "BLANK_MARKER_OUTSIDE_QUESTION")?.level).toBe(
+      "error",
+    );
+
+    // 材料内 [[…]] 由 MATERIAL_CONTAINS_ANSWER 单报（error），不双报
+    const material = lintDocument(
+      md([
+        "---",
+        "kind: lesson",
+        "unit: 随堂练习",
+        "---",
+        "",
+        "# 第1讲 资料分析",
+        "",
+        '::::material{id=mat-1 title="材料"}',
+        "材料正文 [[材料内答案]]。",
+        "::::",
+      ]),
+    );
+    expect(issueOf(material.issues, "MATERIAL_CONTAINS_ANSWER")?.level).toBe(
+      "error",
+    );
+    expect(codes(material.issues)).not.toContain(
+      "BLANK_MARKER_OUTSIDE_QUESTION",
+    );
+
+    // lecture 不加严：无题目语境，正文标记不构成未交卷答案泄露（显示层空框属渲染降级）
+    const lecture = lintDocument(
+      md([
+        "---",
+        "kind: lecture",
+        "---",
+        "",
+        "# 第1讲 有理数",
+        "",
+        "正文讲解。请填 [[参考答案]]。",
+      ]),
+    );
+    expect(codes(lecture.issues)).toEqual([]);
+  });
+
   it("question 嵌套在 question 内：DIRECTIVE_NOT_ALLOWED_HERE；外层判断题同时报多标记 warning", () => {
     const text = md([
       "---",

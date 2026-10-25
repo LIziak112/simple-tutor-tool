@@ -90,6 +90,18 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "讲练页（kind: lesson）的题目容器嵌套在其他容器内部：嵌套题不会进题库（无法作答），其原文（含正确项标记/参考答案/详解）会随讲义段落下发学生端；题块必须作为文档顶层容器",
   },
   {
+    code: "MATERIAL_NESTED_IN_CONTAINER",
+    level: "error",
+    description:
+      "讲练页/混合文档的材料容器嵌套在其他容器内部：嵌套材料不会注册为单元材料（::ref 无法解析、槽位不抽取），其原文（含 [[…]] 答案标记与 {{槽位}} 文本）会随讲义段落原样下发学生端；材料只能作为文档顶层容器",
+  },
+  {
+    code: "GROUP_NESTED_IN_CONTAINER",
+    level: "error",
+    description:
+      "讲练页/混合文档的组容器嵌套在其他容器内部：嵌套组不会注册为题组（子题 ::ref 不生效），其原文会随讲义段落原样下发学生端；组只能作为文档顶层容器",
+  },
+  {
     code: "MISSING_HEADING",
     level: "error",
     description:
@@ -366,6 +378,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     level: "error",
     description:
       "填空/判断标记 [[…]] 内出现 $（$…$ 会被先行识别成公式定界符、把标记从中间切开：空位识别不到无法判分，答案原文还会随题干泄露给学生）：LaTeX 答案直接写在标记内不要包 $，如 [[\\frac{5}{4}|0.5]]",
+  },
+  {
+    code: "BLANK_MARKER_OUTSIDE_QUESTION",
+    level: "error",
+    description:
+      "讲练页/混合文档的讲义正文（题块外）出现 [[…]] 填空标记：正文里的标记会渲染成空填空框，且标记内的答案原文会随讲义段落原样下发学生端；标记只能写在 ::::question 题目内",
   },
   {
     code: "DUPLICATE_QUESTION_ID",

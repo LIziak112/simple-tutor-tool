@@ -232,7 +232,7 @@ async function importDoc(
         : { markdown, filename, courseId },
     ),
   });
-  expect(res.status).toBe(200);
+  expect(res.status, JSON.stringify(await res.json())).toBe(200);
 }
 
 /** 组装被测环境：教师 + 课程 + 讲练页导入（courseId 路径：讲义条目可见）+ 成员/非成员 */
@@ -2827,5 +2827,466 @@ describe("QM-12：reference_self 行讲练自评与汇总口径（P3-1 对齐）
       autoGradable: 1,
       pendingCount: 0,
     });
+  });
+});
+
+/**
+ * QM-14（讲练原位适配）：新材料/组与新题型进入讲练闭环——细项 1–6 对照
+ * 实施清单 §QM-14。夹具为「材料 + 组(matching/ordering) + 组外 response」的
+ * 讲练页：材料/组抽取（TT-10b md-dsl）、冻结闭包、组段投影
+ * （/attempts/:id/context）、当题提交释放、自评衔接、自动收尾、开卷幂等、
+ * 孤儿冻结题与防泄露零放宽。
+ */
+describe("QM-14：讲练原位适配（材料/组 + 全部新题型进入讲练闭环）", () => {
+  /** 讲练页夹具：材料含槽位、组引用材料与 matching/ordering 子题、组外 response */
+  const LESSON_QM_MD = `---
+kind: lesson
+unit: 讲练材料单元
+topic: 资料分析
+---
+
+# 第1讲 资料分析
+
+讲解段一：先读材料再作答。
+
+::::material{id=qm-mat title="某省粮食生产"}
+2025 年粮食总产量 $3{,}096.2$ 万吨，比上年增加 $56.4$ 万吨，实现 {{slot-1}} 十二年增产；播种面积比上年增长 {{slot-2}}。
+::::
+
+::::group{id=qm-grp title="根据以下资料回答第 1～3 题" label="1–3"}
+::ref{material=qm-mat}
+::ref{question=ls-m}
+::ref{question=ls-c}
+::ref{question=ls-o}
+::::
+
+:::::question{id=ls-m type=matching difficulty=3}
+为文中空位选择合适的内容 ::ref{material=qm-mat slots=slot-1}
+
+::::options
+:::option{id=opt-1}
+连续
+:::
+:::option{id=opt-2}
+中断
+:::
+::::
+
+:::answer
+slot-1 = opt-1
+:::
+
+:::solution
+配对题详解：连续十二年增产，应选「连续」。
+:::
+:::::
+
+::::question{id=ls-c type=choice difficulty=2}
+第 1 空：播种面积比上年增长。::ref{material=qm-mat slot=slot-2}
+
+- [x] 0.5%
+- [ ] -0.5%
+
+:::solution
+完形子题详解：播种面积 8321.5 万亩对 8278.9 万亩，增长约 0.5%。
+:::
+::::
+
+讲解段二：排序题同组。
+
+::::question{id=ls-o type=ordering difficulty=3}
+把下列语句排成语意连贯的一段（it-2 已固定）。
+
+:::item{id=it-1}
+也就是说，评价要指向作品本身。
+:::
+
+:::item{id=it-2 fixed=true}
+如何评价一部作品？
+:::
+
+:::answer
+it-2
+it-1
+:::
+
+:::solution
+排序题详解：设问（it-2，固定）在前，「也就是说」回扣收束（it-1）。
+:::
+::::
+
+讲解段三：组外独立开放题。
+
+::::question{id=ls-r type=response difficulty=2}
+结合材料写一段 80 字左右的分析。
+:::
+
+:::answer
+参考分析：粮食总产量连续十二年增产。
+:::
+
+:::solution
+解答题详解：能引用材料数据、言之成理即可。
+:::
+::::
+
+结尾段。`;
+
+  /** 新题型题块原文里的答案/详解哨兵（材料正文是公开内容，不是哨兵） */
+  const QM_SECRETS = [
+    "slot-1 = opt-1",
+    "配对题详解",
+    "排序题详解",
+    "完形子题详解",
+    "解答题详解",
+    "参考分析：粮食总产量连续十二年增产",
+    // 注：行内式 ::ref{…} 是不可见结构指针（RefDirective 空渲染，与练习流
+    // QM-13 同口径），留在公开题干不构成泄露——哨兵不含 ::ref 文本本身
+    "[[",
+  ];
+
+  interface QmStartBody {
+    data: {
+      attempt: { id: string; attemptNo: number; status: string };
+      blocks: { type: string; md?: string; questionId?: string }[];
+      questions: {
+        id: string;
+        stemMd: string;
+        questionRevisionId: string;
+        matchingOptions?: { options: { id: string }[] };
+        matchingSlots?: { id: string }[];
+        orderingItems?: { id: string }[];
+        sortableCount?: number;
+      }[];
+      released: Record<
+        string,
+        {
+          autoCorrect: boolean | null;
+          finalCorrect: boolean | null;
+          solutionMd: string | null;
+          snapshot: { stemMd: string };
+        }
+      >;
+      summary: {
+        total: number;
+        correct: number;
+        wrong: number;
+        pending: number;
+      } | null;
+    };
+  }
+
+  /** 导入（需发布开关）+ 成员开卷（开卷冻结 gradingPolicy 同需开关） */
+  async function makeQmEnv(): Promise<{
+    env: TestEnv;
+    body: QmStartBody;
+    attemptId: string;
+    revisionOf: (id: string) => string;
+  }> {
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    let started: QmStartBody | undefined;
+    let env: TestEnv | undefined;
+    try {
+      env = await makeEnv({ markdown: LESSON_QM_MD });
+      const res = await startLesson(env);
+      expect(res.status).toBe(200);
+      const raw = (await res.json()) as { data: QmStartBody["data"] };
+      started = { data: raw.data };
+      const revisionOf = (id: string): string => {
+        const row = started?.data.questions.find((q) => q.id === id);
+        if (row === undefined) throw new Error(`开卷缺少题目 ${id}`);
+        return row.questionRevisionId;
+      };
+      return {
+        env,
+        body: started,
+        attemptId: started.data.attempt.id,
+        revisionOf,
+      };
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+  }
+
+  /** GET /attempts/:id/context（学生冻结上下文投影——组段渲染数据源） */
+  async function getContext(
+    env: TestEnv,
+    attemptId: string,
+  ): Promise<{
+    materials: { id: string; title: string | null }[];
+    groups: {
+      id: string;
+      title: string | null;
+      materialRefs: { material: string }[];
+      questionIds: string[];
+    }[];
+  }> {
+    const res = await env.app.request(
+      `/api/student/attempts/${attemptId}/context`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        materials: { id: string; title: string | null }[];
+        groups: {
+          id: string;
+          title: string | null;
+          materialRefs: { material: string }[];
+          questionIds: string[];
+        }[];
+      };
+    };
+    return body.data;
+  }
+
+  /** PUT 草稿答案（讲练作答链路同普通卷） */
+  async function putAnswer(
+    env: TestEnv,
+    attemptId: string,
+    questionId: string,
+    answer: unknown,
+  ): Promise<void> {
+    const res = await env.app.request(
+      `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
+      {
+        method: "PUT",
+        headers: {
+          cookie: env.memberCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ answer }),
+      },
+    );
+    expect(res.status).toBe(200);
+  }
+
+  it("细项1：材料/组冻结进入上下文投影，md 段剔除容器原文（讲义原文零下发）", async () => {
+    const { env, body, attemptId } = await makeQmEnv();
+    // 冻结上下文：材料与组公开投影（组段渲染数据源，groupSegmentsOfUnit 消费）
+    const context = await getContext(env, attemptId);
+    expect(context.materials.map((m) => m.id)).toEqual(["qm-mat"]);
+    expect(context.groups.map((g) => g.id)).toEqual(["qm-grp"]);
+    expect(context.groups[0]?.materialRefs.map((r) => r.material)).toEqual([
+      "qm-mat",
+    ]);
+    expect(context.groups[0]?.questionIds).toEqual(["ls-m", "ls-c", "ls-o"]);
+    // 材料 title 是公开元数据（材料正文快照经 materialPublicSchema 白名单）
+    expect(context.materials[0]?.title).toContain("某省粮食生产");
+    // 题目公开投影携带作答面结构（matching 槽位集合按材料槽位序展开）
+    const matching = body.data.questions.find((q) => q.id === "ls-m");
+    expect(matching?.matchingSlots?.map((s) => s.id)).toEqual(["slot-1"]);
+    expect(matching?.matchingOptions?.options.map((o) => o.id)).toEqual([
+      "opt-1",
+      "opt-2",
+    ]);
+    const ordering = body.data.questions.find((q) => q.id === "ls-o");
+    expect(ordering?.orderingItems?.map((i) => i.id)).toEqual(["it-1", "it-2"]);
+    expect(ordering?.sortableCount).toBe(1);
+    // md 段不含容器围栏/槽位标记/::ref 文本（安全 blocks）
+    for (const block of body.data.blocks) {
+      if (block.type !== "md") continue;
+      expect(block.md).not.toContain("::::material");
+      expect(block.md).not.toContain("::::group");
+      expect(block.md).not.toContain("{{slot-1}}");
+      expect(block.md).not.toContain("::ref{");
+    }
+    // 讲义原文与题块答案零下发（assertNoLeak + 哨兵双断言）
+    assertNoLeak(body);
+    const text = JSON.stringify(body);
+    for (const secret of QM_SECRETS) {
+      expect(text, `学生端开卷响应出现哨兵：${secret}`).not.toContain(secret);
+    }
+  });
+
+  it("细项2：当题提交保存证据、锁定输入、当题释放；主观类进入自评（reference_self）", async () => {
+    const { env, attemptId, revisionOf } = await makeQmEnv();
+    await putAnswer(env, attemptId, "ls-m", {
+      kind: "matching",
+      pairs: { "slot-1": "opt-2" },
+    });
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    let submitRes: Response | undefined;
+    try {
+      submitRes = await submitQuestion(
+        env,
+        attemptId,
+        "ls-m",
+        revisionOf("ls-m"),
+        {
+          questionId: "ls-m",
+          state: "none",
+        },
+      );
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+    expect(submitRes?.status).toBe(200);
+    // 证据行落库（state=none）
+    const evidenceRows = await env.db
+      .select()
+      .from(submissionEvidence)
+      .where(
+        and(
+          eq(submissionEvidence.attemptId, attemptId),
+          eq(submissionEvidence.questionId, "ls-m"),
+        ),
+      )
+      .all();
+    expect(evidenceRows).toHaveLength(1);
+    // 行级锁定：已提交题再保存答案 → 409
+    const lock = await env.app.request(
+      `/api/student/attempts/${attemptId}/answers/${encodeURIComponent("ls-m")}`,
+      {
+        method: "PUT",
+        headers: {
+          cookie: env.memberCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          answer: { kind: "matching", pairs: { "slot-1": "opt-1" } },
+        }),
+      },
+    );
+    expect(lock.status).toBe(409);
+    // 开卷投影：released 当题释放（恒题级），判定走 reference_self（恒 null）
+    const body = await startOk(env);
+    const released = body.data.released["ls-m"];
+    expect(released).toBeDefined();
+    expect(released?.autoCorrect).toBeNull();
+    expect(released?.finalCorrect).toBeNull();
+    // 解析隔离（细项5）：兄弟题（ls-o/ls-r）的答案与详解不随本次释放
+    const text = JSON.stringify(body);
+    expect(text).not.toContain("排序题详解");
+    expect(text).not.toContain("解答题详解");
+    expect(text).toContain("配对题详解"); // 当题已释放
+  });
+
+  it("细项3：最后一题自动收尾不等逐题自评；已提交行不重判", async () => {
+    const { env, attemptId, revisionOf } = await makeQmEnv();
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    try {
+      // 完形子题（choice）先作答对路：自动判定 true；其余三题提交不判（待自评）
+      await putAnswer(env, attemptId, "ls-c", { kind: "choice", index: 0 });
+      for (const id of ["ls-m", "ls-o", "ls-c", "ls-r"]) {
+        const res = await submitQuestion(env, attemptId, id, revisionOf(id), {
+          questionId: id,
+          state: "none",
+        });
+        expect(res.status).toBe(200);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+    // 最后一题提交 → 事务内自动收尾（无任何自评也离开 draft）
+    const body = await startOk(env);
+    expect(body.data.attempt.status).not.toBe("draft");
+    expect(body.data.summary).not.toBeNull();
+    // 完形子题（auto）自动判对计入 correct；三个 reference_self 行未自评 → 待判断
+    expect(body.data.summary?.correct).toBe(1);
+    expect(body.data.summary?.wrong).toBe(0);
+    expect(body.data.summary?.pending).toBe(3);
+    // 已提交行不重判：重复提交已提交题 → 409 QUESTION_ALREADY_SUBMITTED
+    const dup = await submitQuestion(
+      env,
+      attemptId,
+      "ls-m",
+      revisionOf("ls-m"),
+      {
+        questionId: "ls-m",
+        state: "none",
+      },
+    );
+    expect(dup.status).toBe(409);
+  });
+
+  it("细项4：开卷幂等——已完成刷新不增 attemptNo；仅显式 restart 新开", async () => {
+    const { env, attemptId, revisionOf } = await makeQmEnv();
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    try {
+      for (const id of ["ls-m", "ls-o", "ls-c", "ls-r"]) {
+        const res = await submitQuestion(env, attemptId, id, revisionOf(id), {
+          questionId: id,
+          state: "none",
+        });
+        expect(res.status).toBe(200);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+    // 已完成后再 start：返回同一份（不消耗 attemptNo）
+    const again = await startOk(env);
+    expect(again.data.attempt.id).toBe(attemptId);
+    expect(again.data.attempt.attemptNo).toBe(1);
+    // 显式 restart：新卷 attemptNo=2、从空白开始
+    const restarted = await restartLesson(env);
+    expect(restarted.status).toBe(201);
+    const restartRaw = (await restarted.json()) as {
+      data: QmStartBody["data"];
+    };
+    expect(restartRaw.data.attempt.attemptNo).toBe(2);
+    expect(restartRaw.data.attempt.status).toBe("draft");
+    expect(Object.keys(restartRaw.data.released)).toHaveLength(0);
+  });
+
+  it("细项6：重导后孤儿冻结题继续可见，嵌入单元过滤不变", async () => {
+    const { env, attemptId } = await makeQmEnv();
+    // 重导：材料/组与全部题目换成新 id（旧冻结题成孤儿）
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    try {
+      const reimport = LESSON_QM_MD.replace(/ls-m/g, "nw-m")
+        .replace(/ls-o/g, "nw-o")
+        .replace(/ls-c/g, "nw-c")
+        .replace(/ls-r/g, "nw-r")
+        .replace(/qm-mat/g, "nw-mat")
+        .replace(/qm-grp/g, "nw-grp");
+      const res = await env.app.request("/api/teacher/import/commit", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({
+          markdown: reimport,
+          filename: "随堂讲练.md",
+          courseId: env.courseId,
+        }),
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+    // 已开卷（draft）再 start 取回同一份：旧冻结题全在 questions（孤儿不丢）
+    const body = await startOk(env);
+    expect(body.data.attempt.id).toBe(attemptId);
+    const ids = body.data.questions.map((q) => q.id);
+    expect(ids).toEqual(["ls-m", "ls-c", "ls-o", "ls-r"]);
+    // blocks 只含新题槽 + md 段（旧题不在当前 markdown → 前端页尾孤儿分组）
+    const slotIds = body.data.blocks
+      .filter((b) => b.type === "question")
+      .map((b) => b.questionId);
+    expect(slotIds).toEqual(["nw-m", "nw-c", "nw-o", "nw-r"]);
+    // 嵌入单元过滤：重导不追加课程条目（讲练页嵌入单元不进目录）
+    const catalog = await env.app.request(
+      `/api/student/courses/${env.courseId}`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    expect(catalog.status).toBe(200);
+    const catalogData = (await catalog.json()) as {
+      data: { items?: { kind: string; title?: string }[] };
+    };
+    // 课程目录无「随堂练习」类单元条目（嵌入单元过滤面不变）
+    const titles = JSON.stringify(catalogData.data.items ?? []);
+    expect(titles).not.toContain("讲练材料单元");
   });
 });
