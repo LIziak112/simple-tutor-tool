@@ -3730,6 +3730,12 @@ export function resultQuestionOf(
       ...(structure.orderingItems !== undefined
         ? orderingStudentOf(structure.orderingItems)
         : {}),
+      // P1-2：题级材料引用随结果快照下发（材料 id/选择串属题面公开内容；
+      // 回看题级材料锚解析用，正文仍走 /context 冻结白名单投影）
+      ...(snapshot.materialRefs !== undefined &&
+      snapshot.materialRefs.length > 0
+        ? { materialRefs: snapshot.materialRefs }
+        : {}),
       hintCount: snapshot.hints.length,
     },
     ...releaseOfSnapshot(snapshot),

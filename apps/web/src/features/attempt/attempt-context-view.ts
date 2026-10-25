@@ -2,6 +2,7 @@ import type {
   AttemptContextData,
   AttemptContextGroup,
   AttemptContextMaterial,
+  MaterialRef,
 } from "@tutor/contract";
 
 /**
@@ -83,10 +84,17 @@ function versionsById<T extends { id: string; sourceVersion: number }>(
  * 单元题目序 → 组段列表。questionIds 是**本单元在本卷内**的题目 id 序列
  * （作答/结果两视图都持有序列，不查 live）。context 为 undefined（legacy
  * 卷未请求/未冻结）时全部 solo，渲染零变化。
+ *
+ * questionRefs（P1-2）：题级 ::ref 引用映射（学生题目投影的 materialRefs，
+ * 可选）——组段材料并入**本段成员**的题级引用（组引用先、题级后，按材料
+ * id 去重），与服务端 frozenMaterialsForQuestion 组∪题级闭包同源口径；
+ * 不传时既有组材料解释零变化。solo 题的题级材料经 questionMaterialsOf
+ * 单独解析（无组归属，不进组段）。
  */
 export function groupSegmentsOfUnit(
   context: AttemptContextData | undefined,
   questionIds: readonly string[],
+  questionRefs?: ReadonlyMap<string, readonly MaterialRef[]>,
 ): readonly UnitContextSegment[] {
   if (context === undefined || questionIds.length === 0) {
     return questionIds.length === 0 ? [] : [{ kind: "solo", questionIds }];
@@ -136,11 +144,20 @@ export function groupSegmentsOfUnit(
     // 连续同组题归一段（区间边界一致时整段即区间；防御重叠时按归属数组切分）
     let end = i;
     while (end < questionIds.length && ownerOf[end]?.id === owner.id) end += 1;
+    const memberIds = questionIds.slice(i, end);
+    // 组∪题级闭包（P1-2）：成员题级引用按卷内题序并入（组引用先、题级后）
+    const unionRefs: readonly MaterialRef[] =
+      questionRefs === undefined
+        ? owner.materialRefs
+        : [
+            ...owner.materialRefs,
+            ...memberIds.flatMap((id) => questionRefs.get(id) ?? []),
+          ];
     segments.push({
       kind: "group",
       group: owner,
-      materials: resolveMaterials(materialsById, owner),
-      questionIds: questionIds.slice(i, end),
+      materials: resolveRefs(materialsById, unionRefs),
+      questionIds: memberIds,
     });
     i = end;
   }
@@ -149,16 +166,34 @@ export function groupSegmentsOfUnit(
 
 /** 组材料引用 → 冻结材料实例（引用序按 id 去重；同 id 多版本全收、版本
  *  升序——QM-15 细项 4；缺条目跳过） */
-function resolveMaterials(
+function resolveRefs(
   materialsById: ReadonlyMap<string, readonly AttemptContextMaterial[]>,
-  group: AttemptContextGroup,
+  refs: readonly MaterialRef[],
 ): readonly AttemptContextMaterial[] {
   const resolved: AttemptContextMaterial[] = [];
   const seen = new Set<string>();
-  for (const ref of group.materialRefs) {
+  for (const ref of refs) {
     if (seen.has(ref.material)) continue;
     seen.add(ref.material);
     resolved.push(...(materialsById.get(ref.material) ?? []));
   }
   return resolved;
+}
+
+/**
+ * 题级 ::ref 材料 → 冻结材料实例（P1-2 单源）：solo 题（无组归属）的材料
+ * 入口数据解释——引用序按 id 去重、同 id 多版本全收升序、缺快照条目跳过，
+ * 与组段材料同一解析纪律。question 携带学生题目投影的 materialRefs（公开
+ * 白名单内容，2026-10-25 审查 P2-2 起随题下发）；无引用或无上下文 → 空
+ * （不渲染锚点，旧卷零变化）。
+ */
+export function questionMaterialsOf(
+  context: AttemptContextData | undefined,
+  question: { readonly materialRefs?: readonly MaterialRef[] | undefined },
+): readonly AttemptContextMaterial[] {
+  const refs = question.materialRefs;
+  if (context === undefined || refs === undefined || refs.length === 0) {
+    return [];
+  }
+  return resolveRefs(versionsById(context.materials), refs);
 }

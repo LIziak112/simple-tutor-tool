@@ -350,6 +350,54 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     expect(screen.queryByText("网络异常")).not.toBeInTheDocument();
   });
 
+  // P1-2：solo 题的题级 ::ref 材料随题卡之前自然阅读（讲练单列排版与组块
+  // 同纪律，不挂跳转按钮）。
+  it("P1-2 题级材料：solo 题材料块在题卡前渲染；组不误挂题级材料", async () => {
+    mockedStart.mockResolvedValue(
+      lessonStart({
+        questions: [
+          Q1,
+          { ...Q2, materialRefs: [{ material: "mat-solo" }] },
+          Q3,
+        ],
+      }),
+    );
+    mockedAttemptContext.mockResolvedValue({
+      attemptId: ATTEMPT_ID,
+      materials: [
+        {
+          id: "mat-solo",
+          title: "给定资料一",
+          contentMd: "题级引用材料正文。",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [],
+    });
+    renderPage();
+    expect(
+      await screen.findByRole("region", { name: "共享材料：给定资料一" }),
+    ).toBeInTheDocument();
+    const soloBlock = screen.getByLabelText("本题材料");
+    // DOM 序：材料块在第 2 题（引用题）题卡之前
+    const secondCard = screen.getByText("第 2 题").closest("article,div");
+    expect(secondCard).not.toBeNull();
+    expect(
+      (soloBlock.compareDocumentPosition(secondCard as Node) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 第 1 题（无题级引用）前无材料块：材料块在第一题之后（属于第 2 题）
+    const firstCard = screen.getByText("第 1 题").closest("article,div");
+    expect(firstCard).not.toBeNull();
+    expect(
+      (firstCard?.compareDocumentPosition(soloBlock) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("md 段拼接目录：桌面侧栏展示全部 H2 标题", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     renderPage();

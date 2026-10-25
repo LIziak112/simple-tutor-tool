@@ -153,6 +153,54 @@ const contextOf = (): AttemptContextData => ({
   ],
 });
 
+/** P1-2 题级 ::ref 材料语料：q3（solo）挂 mat-solo、q2（组员）挂 mat-q2 */
+const draftOfSoloMaterial = (): AttemptDraftData => {
+  const draft = draftOf();
+  const questions = draft.units[0]?.questions;
+  if (questions !== undefined) {
+    const groupMember = questions[1];
+    const solo = questions[2];
+    if (groupMember !== undefined && solo !== undefined) {
+      questions[1] = {
+        ...groupMember,
+        materialRefs: [{ material: "mat-q2" }],
+      };
+      questions[2] = {
+        ...solo,
+        materialRefs: [{ material: "mat-solo" }],
+      };
+    }
+  }
+  return draft;
+};
+
+/** P1-2 上下文：组材料之外另冻 solo/组员题级材料各一份 */
+const contextOfSoloMaterial = (): AttemptContextData => ({
+  attemptId: ATTEMPT_ID,
+  materials: [
+    ...contextOf().materials,
+    {
+      id: "mat-solo",
+      title: "给定资料一",
+      contentMd: "申论给定资料一正文。",
+      anchors: [],
+      slots: [],
+      mediaPaths: [],
+      sourceVersion: 1,
+    },
+    {
+      id: "mat-q2",
+      title: "题级补充材料",
+      contentMd: "第二题补充材料正文。",
+      anchors: [],
+      slots: [],
+      mediaPaths: [],
+      sourceVersion: 1,
+    },
+  ],
+  groups: contextOf().groups,
+});
+
 function renderPage() {
   return render(
     <QueryClientProvider
@@ -172,8 +220,11 @@ function renderPage() {
   );
 }
 
-async function renderWith(context: AttemptContextData | Error) {
-  mockedFetch.mockResolvedValue(draftOf());
+async function renderWith(
+  context: AttemptContextData | Error,
+  draft: AttemptDraftData = draftOf(),
+) {
+  mockedFetch.mockResolvedValue(draft);
   if (context instanceof Error) mockedContext.mockRejectedValue(context);
   else mockedContext.mockResolvedValue(context);
   const view = renderPage();
@@ -295,4 +346,53 @@ it("重试成功不重挂组内题卡：作答中途恢复共享材料不销毁�
   expect(
     screen.getByRole("button", { name: "第 1 题查看共享材料" }),
   ).toBeInTheDocument();
+});
+
+// P1-2：solo 题的题级 ::ref 材料此前仅导出/AI 闭包可达、作答 UI 无入口
+//（QM-19 第一批记档）——修复后题级材料锚常驻渲染、题卡挂「查看本题材料」，
+// 组员题级引用并入组材料列（组∪题级单源，与服务端 frozenMaterialsForQuestion
+// 同口径）。
+it("P1-2 solo 题级材料：锚点常驻 + 题卡挂「查看本题材料」；组员题级引用并入组材料列", async () => {
+  await renderWith(contextOfSoloMaterial(), draftOfSoloMaterial());
+  // solo 锚点：本题材料区 + 材料面板正文可见
+  const soloAnchor = screen.getByLabelText("本题材料");
+  expect(within(soloAnchor).getByText("给定资料一")).toBeInTheDocument();
+  expect(screen.getByText("申论给定资料一正文。")).toBeInTheDocument();
+  // q3 题卡挂题级入口；q1/q2 组入口语义不变（共享）
+  expect(
+    screen.getByRole("button", { name: "第 3 题查看本题材料" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "第 1 题查看共享材料" }),
+  ).toBeInTheDocument();
+  // 组材料列并集：组材料（四天气温表）+ 组员题级（题级补充材料）都在
+  const groupMaterials = screen.getByLabelText("本组共享材料");
+  expect(within(groupMaterials).getByText("四天气温表")).toBeInTheDocument();
+  expect(within(groupMaterials).getByText("题级补充材料")).toBeInTheDocument();
+});
+
+it("P1-2 题级材料 reveal：点击「查看本题材料」焦点落本题材料区（键盘可达）", async () => {
+  await renderWith(contextOfSoloMaterial(), draftOfSoloMaterial());
+  fireEvent.click(screen.getByRole("button", { name: "第 3 题查看本题材料" }));
+  await waitFor(() =>
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("本题材料"),
+  );
+});
+
+// P1-2 树位不变量（同审查 P1 纪律）：题级材料锚点与题行是兄弟项，context
+// 后到插入锚点不重挂 solo 题卡（草稿/手写/标画控制器随行存活）。
+it("P1-2 context 后到不重挂 solo 题卡：题级材料锚点作为兄弟插入，q3 题干 DOM 身份不变", async () => {
+  let resolveContext: ((value: AttemptContextData) => void) | undefined;
+  mockedFetch.mockResolvedValue(draftOfSoloMaterial());
+  mockedContext.mockImplementation(
+    () =>
+      new Promise<AttemptContextData>((resolve) => {
+        resolveContext = resolve;
+      }),
+  );
+  renderPage();
+  const q3Stem = await screen.findByText(/0 是整数/);
+  resolveContext?.(contextOfSoloMaterial());
+  await screen.findByLabelText("本题材料");
+  expect(screen.getByText(/0 是整数/)).toBe(q3Stem);
 });

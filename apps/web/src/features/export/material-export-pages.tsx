@@ -100,13 +100,17 @@ export function exportMaterialsOfQuestion(
   }));
 }
 
-/** 离屏渲染 markdown 片段并栅格化为 PNG（固定矢量管线，无活画布截图） */
-async function renderMarkdownPng(
+/**
+ * 离屏挂载 markdown 片段并等待就绪（P3-6 形态 ②：挂载与栅格化分离——
+ * 量高只挂载不栅格化，整篇超限材料不再先付一次注定失败的 toBlob）。
+ * 返回就绪容器与卸载函数；字体/图片等待口径与题面底图同一稳定等待。
+ */
+async function mountMaterial(
   host: HTMLElement,
   contentMd: string,
-  fontCss: string,
-): Promise<Blob> {
+): Promise<{ target: HTMLElement; unmount: () => void }> {
   const root = createRoot(host);
+  const unmount = () => root.unmount();
   try {
     await withTimeout(
       new Promise<void>((resolve) => {
@@ -137,47 +141,142 @@ async function renderMarkdownPng(
     // 图片与公式就绪（与题面底图同一稳定等待口径；失败抛可读错误）
     if (document.fonts) await document.fonts.ready;
     const images = [...target.querySelectorAll<HTMLImageElement>("img")];
+    // 离屏宿主（fixed -10000px）内的懒加载图片（::image 缺省 loading=lazy）
+    // 永远不会进入视口触发加载——decode() 会无限挂起（QM-19 e2e 实测）。
+    // 显式切 eager 再等待，与题面底图 question-base-image 的导出副本同款口径。
+    for (const image of images) image.loading = "eager";
+    // 等全部图片进入终态（成功/失败）再统一判失败——刚切 eager 时 404 图片
+    // 可能尚未置 complete，直接判 broken 会漏判继续挂起
+    await withTimeout(
+      Promise.all(
+        images.map(
+          (image) =>
+            new Promise<void>((resolve) => {
+              if (image.complete) return resolve();
+              image.addEventListener("load", () => resolve(), { once: true });
+              image.addEventListener("error", () => resolve(), { once: true });
+            }),
+        ),
+      ),
+      STEP_TIMEOUT_MS,
+      "材料配图加载超时，请重试",
+    );
     const broken = images.filter(
       (image) => image.complete && image.naturalWidth === 0,
     );
     if (broken.length > 0) {
       throw new Error("材料配图加载失败，请重试");
     }
-    await Promise.all(images.map((image) => image.decode()));
-    const blob = await withTimeout(
-      toBlob(target, {
-        backgroundColor: "#ffffff",
-        fontEmbedCSS: fontCss,
-      }),
+    await withTimeout(
+      Promise.all(images.map((image) => image.decode())),
       STEP_TIMEOUT_MS,
-      "材料栅格化超时",
+      "材料配图解码超时，请重试",
     );
-    if (blob === null) throw new Error("材料图片编码失败，请重试");
-    return blob;
-  } finally {
-    root.unmount();
+    return { target, unmount };
+  } catch (error) {
+    unmount();
+    throw error;
   }
 }
 
-/** 测量单块渲染高度（复用同一 host；渲染失败按超限处理交由上层报错） */
+/** 已挂载容器 → PNG（固定矢量管线，无活画布截图） */
+async function rasterizeMaterial(
+  target: HTMLElement,
+  fontCss: string,
+): Promise<Blob> {
+  const blob = await withTimeout(
+    toBlob(target, {
+      backgroundColor: "#ffffff",
+      fontEmbedCSS: fontCss,
+    }),
+    STEP_TIMEOUT_MS,
+    "材料栅格化超时",
+  );
+  if (blob === null) throw new Error("材料图片编码失败，请重试");
+  return blob;
+}
+
+/** 测量单块渲染高度（挂载读 getBoundingClientRect().height（ceil 口径保守），不栅格化——低成本量高） */
 async function measureBlockHeight(
   host: HTMLElement,
   contentMd: string,
-  fontCss: string,
 ): Promise<number> {
-  const blob = await renderMarkdownPng(host, contentMd, fontCss);
-  // PNG IHGR 高度读取（24 偏移，与题面底图同款校验口径）
-  const header = new DataView(await blob.slice(0, 24).arrayBuffer());
-  return header.byteLength >= 24 ? header.getUint32(20) : 0;
+  const { target, unmount } = await mountMaterial(host, contentMd);
+  try {
+    return pngHeightOf(target.getBoundingClientRect().height);
+  } finally {
+    unmount();
+  }
+}
+
+/**
+ * CSS 高度 → PNG 像素高度估计（html-to-image 缺省 pixelRatio =
+ * devicePixelRatio，与栅格化实际缩放同口径；MATERIAL_PAGE_MAX_PIXELS 上限
+ * 在 PNG 像素域，量高侧同域比较才有效）
+ */
+function pngHeightOf(cssHeight: number): number {
+  return Math.ceil(cssHeight * (window.devicePixelRatio || 1));
+}
+
+/**
+ * 空行分块（围栏感知，P3-6 形态 ①）：只在**未进入** ```/~~~ 围栏的空行处
+ * 切开——含空行的围栏代码块/引用块（`>` 续行的空行不是空行）不被切成两个
+ * 残块（残开栏会把后续正文吞进代码块）。纯函数，供分页与单测共用。
+ */
+export function splitMaterialBlocks(contentMd: string): string[] {
+  // 入口归一行尾（\r\n 与孤立 \r → \n）再进入行式状态机：不归一时 closeFence
+  // 的 $ 不吞行尾 \r，CRLF 正文（Windows 编辑器/autocrlf 签出，导入链无换行
+  // 归一化）围栏永不闭合、首个开栏后整段并成一块，超限长材料退回「单块独立
+  // 成页」显式失败（审查 P3-1）。取入口归一而非只给 closeFence 补 \r：状态
+  // 机内任何行尾敏感判定（含后续新增的 $ 锚定正则）恒见 \n，单点补丁会留
+  // 同类隐患；块内容经重新挂载渲染，remark 对行尾归一无差。
+  const normalized = contentMd.replace(/\r\n?/g, "\n");
+  const blocks: string[] = [];
+  let current: string[] = [];
+  /** 开栏围栏（```/~~~ 至少 3 个，记录字符与长度；闭栏需同字符且长度≥开栏） */
+  let fence: { char: string; length: number } | null = null;
+  const openFence = /^ {0,3}(`{3,}|~{3,})/;
+  const closeFence = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+  for (const line of normalized.split("\n")) {
+    if (fence !== null) {
+      current.push(line);
+      const close = closeFence.exec(line);
+      if (
+        close !== null &&
+        close[1]?.[0] === fence.char &&
+        (close[1]?.length ?? 0) >= fence.length
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    const open = openFence.exec(line);
+    if (open !== null) {
+      const marker = open[1] ?? "";
+      fence = { char: marker[0] ?? "`", length: marker.length };
+      current.push(line);
+      continue;
+    }
+    if (line.trim() === "") {
+      // 只在已积累非空内容处切段（首尾/连续空行不产生空块）
+      if (current.some((entry) => entry.trim() !== "")) {
+        blocks.push(current.join("\n"));
+        current = [];
+      }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.some((entry) => entry.trim() !== "")) {
+    blocks.push(current.join("\n"));
+  }
+  return blocks
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
 }
 
 /** 材料分页计划：空行分块贪心装箱；单块超限也独立成页（栅格化时显式失败） */
-function planMaterialBlocks(contentMd: string, heights: number[]): string[][] {
-  const blocks =
-    contentMd
-      .split(/\n\s*\n/)
-      .map((block) => block.trim())
-      .filter((block) => block.length > 0) ?? [];
+function planMaterialBlocks(blocks: string[], heights: number[]): string[][] {
   if (blocks.length !== heights.length) {
     throw new Error("材料分块与测量不一致，请重试");
   }
@@ -227,45 +326,45 @@ export async function renderMaterialExportPages(
     );
     const pages: MaterialExportPage[] = [];
     for (const material of materials) {
-      // 先整篇渲染：页高内直接单页（材料常态），超限再分块装箱
-      const fullBlob = await renderMarkdownPng(
-        host,
-        material.contentMd,
-        fontCss,
+      // P3-6 形态 ②：先低成本量高（挂载读 getBoundingClientRect，不栅格化）
+      // 再决定整篇/分块——此前「先整篇 toBlob 读 PNG 头」在 Safari canvas
+      // 面积上限（≈1677 万 px²）附近 toBlob 恒 null（页高无上限的超长材料），
+      // 报错重试永远失败；量高路径永不栅格化超限内容，页高上限内的单页
+      // 复用同一挂载直接栅格化（常态材料仍只付一次 toBlob）。
+      const mounted = await mountMaterial(host, material.contentMd);
+      const fullHeight = pngHeightOf(
+        mounted.target.getBoundingClientRect().height,
       );
-      const fullHeader = new DataView(
-        await fullBlob.slice(0, 24).arrayBuffer(),
-      );
-      const fullHeight =
-        fullHeader.byteLength >= 24 ? fullHeader.getUint32(20) : 0;
       if (fullHeight <= MATERIAL_PAGE_MAX_PIXELS) {
-        pages.push({
-          blob: fullBlob,
-          label: `材料 ${material.letter}：${material.label}`,
-        });
+        try {
+          pages.push({
+            blob: await rasterizeMaterial(mounted.target, fontCss),
+            label: `材料 ${material.letter}：${material.label}`,
+          });
+        } finally {
+          mounted.unmount();
+        }
         continue;
       }
-      // 长材料按块分页（细项 4：不静默裁切）
-      const blocks =
-        material.contentMd
-          .split(/\n\s*\n/)
-          .map((block) => block.trim())
-          .filter((block) => block.length > 0) ?? [];
+      mounted.unmount();
+      // 长材料按块分页（细项 4：不静默裁切；分块围栏感知，含空行的代码块/
+      // 引用块不被切断）
+      const blocks = splitMaterialBlocks(material.contentMd);
       const heights: number[] = [];
       for (const block of blocks) {
-        heights.push(await measureBlockHeight(host, block, fontCss));
+        heights.push(await measureBlockHeight(host, block));
       }
-      const planned = planMaterialBlocks(material.contentMd, heights);
+      const planned = planMaterialBlocks(blocks, heights);
       for (const [pageIndex, pageBlocks] of planned.entries()) {
-        const blob = await renderMarkdownPng(
-          host,
-          pageBlocks.join("\n\n"),
-          fontCss,
-        );
-        pages.push({
-          blob,
-          label: `材料 ${material.letter}：${material.label} · 第 ${pageIndex + 1}/${planned.length} 页`,
-        });
+        const page = await mountMaterial(host, pageBlocks.join("\n\n"));
+        try {
+          pages.push({
+            blob: await rasterizeMaterial(page.target, fontCss),
+            label: `材料 ${material.letter}：${material.label} · 第 ${pageIndex + 1}/${planned.length} 页`,
+          });
+        } finally {
+          page.unmount();
+        }
       }
     }
     return pages;

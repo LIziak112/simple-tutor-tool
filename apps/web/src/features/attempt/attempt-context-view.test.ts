@@ -4,7 +4,10 @@ import type {
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { groupSegmentsOfUnit } from "./attempt-context-view";
+import {
+  groupSegmentsOfUnit,
+  questionMaterialsOf,
+} from "./attempt-context-view";
 import { materialVersionKey } from "./MaterialPanel";
 
 /**
@@ -246,5 +249,81 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
     // 区间内题全部归组段（q2 虽非成员但夹在首尾成员之间；真实语料成员连续，
     // 此规则保证一组一块不重开）
     expect(groupSegment.questionIds).toEqual(["q1", "q2", "q3"]);
+  });
+});
+
+describe("questionMaterialsOf（题级材料单源，P1-2）", () => {
+  it("题级引用 → 冻结材料全版本（引用序、版本升序）；无引用/无上下文 → 空", () => {
+    const ctx = context(
+      [
+        material("m-solo", { sourceVersion: 1 }),
+        material("m-solo", { sourceVersion: 2, contentMd: "二版正文" }),
+        material("m-other"),
+      ],
+      [],
+    );
+    const refs = [{ material: "m-solo" }, { material: "m-missing" }];
+    expect(
+      questionMaterialsOf(ctx, { materialRefs: refs }).map(
+        (m) => `${materialVersionKey(m)}:${m.contentMd}`,
+      ),
+    ).toEqual(["m-solo|1:材料 m-solo 正文。", "m-solo|2:二版正文"]);
+    expect(questionMaterialsOf(ctx, {})).toEqual([]);
+    expect(questionMaterialsOf(undefined, { materialRefs: refs })).toEqual([]);
+  });
+
+  it("同 id 重复引用去重（不翻倍）；引用缺快照条目跳过不崩溃", () => {
+    const ctx = context([material("m1")], []);
+    const refs = [{ material: "m1" }, { material: "m1" }];
+    expect(questionMaterialsOf(ctx, { materialRefs: refs })).toHaveLength(1);
+    expect(
+      questionMaterialsOf(ctx, { materialRefs: [{ material: "m-none" }] }),
+    ).toEqual([]);
+  });
+});
+
+describe("groupSegmentsOfUnit 组∪题级闭包（P1-2：与 frozenMaterialsForQuestion 同源口径）", () => {
+  it("组段材料并入成员题级引用：组引用先、题级后去重；缺 refs 映射零变化", () => {
+    const ctx = context(
+      [material("m-grp"), material("m-q", { contentMd: "题级材料正文" })],
+      [
+        group("g1", {
+          materialRefs: [{ material: "m-grp" }],
+          questionIds: ["q1", "q2"],
+        }),
+      ],
+    );
+    const questionRefs = new Map([
+      ["q1", [{ material: "m-q" }]],
+      ["q2", [{ material: "m-grp" }]], // 与组重复 → 去重
+    ]);
+    const segments = groupSegmentsOfUnit(ctx, ["q1", "q2"], questionRefs);
+    const groupSegment = segments[0];
+    expect(groupSegment?.kind).toBe("group");
+    if (groupSegment?.kind !== "group") return;
+    expect(groupSegment.materials.map((m) => m.id)).toEqual(["m-grp", "m-q"]);
+    // 不传第三参：既有两参调用零变化（旧视图/旧测试口径）
+    expect(
+      groupSegmentsOfUnit(ctx, ["q1", "q2"]).map((s) =>
+        s.kind === "group" ? s.materials.map((m) => m.id) : null,
+      ),
+    ).toEqual([["m-grp"]]);
+  });
+
+  it("题级引用映射里的非本组/缺席题不进本组材料（只收编本段成员）", () => {
+    const ctx = context(
+      [material("m1"), material("m-solo")],
+      [group("g1", { questionIds: ["q1"] })],
+    );
+    const questionRefs = new Map([
+      ["q1", [{ material: "m1" }]],
+      ["q2", [{ material: "m-solo" }]], // solo 题：不进 g1 组段
+    ]);
+    const segments = groupSegmentsOfUnit(ctx, ["q1", "q2"], questionRefs);
+    const groupSegment = segments[0];
+    expect(groupSegment?.kind).toBe("group");
+    if (groupSegment?.kind !== "group") return;
+    expect(groupSegment.materials.map((m) => m.id)).toEqual(["m1"]);
+    expect(segments[1]).toEqual({ kind: "solo", questionIds: ["q2"] });
   });
 });

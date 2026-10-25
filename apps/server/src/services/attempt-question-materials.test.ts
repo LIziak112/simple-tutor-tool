@@ -13,8 +13,9 @@ import {
   students,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import { studentAttemptContext } from "./attempt-context.ts";
 import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
-import { startCourseAttempt } from "./attempt-service.ts";
+import { resultQuestionOf, startCourseAttempt } from "./attempt-service.ts";
 import { commitImport } from "./content-service.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
@@ -265,5 +266,62 @@ describe("frozenMaterialsForQuestion（QM-16/QM-17 闭包单源）", () => {
         null,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("P1-2 题级材料的服务端口径（作答/结果 UI 可见性）", () => {
+  it("studentAttemptContext 含 solo 题引用材料（正文走 materialPublicSchema 白名单，无教师侧键）", () => {
+    const env = makeEnv();
+    const context = studentAttemptContext(env.db, env.attemptId);
+    const ids = context.materials.map((material) => material.id);
+    // solve 题级引用 + 组材料都在冻结上下文（开卷闭包 ownerKind='question' ∪ 组）
+    expect(ids).toContain("mat-阅读单元-1");
+    expect(ids).toContain("mat-阅读单元-2");
+    // 白名单键集：教师侧 sourceMd 等不进学生投影（title 可选——无题材料不带）
+    const whitelist = new Set([
+      "anchors",
+      "contentMd",
+      "id",
+      "mediaPaths",
+      "slots",
+      "sourceVersion",
+      "title",
+    ]);
+    for (const material of context.materials) {
+      for (const key of Object.keys(material))
+        expect(whitelist.has(key)).toBe(true);
+    }
+  });
+
+  it("resultQuestionOf：snapshot 携带题级 materialRefs（id 列表），材料正文不进结果载荷", () => {
+    const env = makeEnv();
+    const solveRow = env.db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, env.attemptId))
+      .all()
+      .find((row) => row.questionId === env.solveQuestionId);
+    const fillRow = env.db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, env.attemptId))
+      .all()
+      .find((row) => row.questionId === env.fillQuestionId);
+    if (solveRow === undefined || fillRow === undefined)
+      throw new Error("建卷未冻结响应行");
+    const solveSnapshot = snapshotOfRow(solveRow);
+    if (solveSnapshot === null) throw new Error("solve 行快照不可用");
+    const solve = resultQuestionOf(solveRow, solveSnapshot);
+    // 题级引用随结果快照下发（P1-2 回看锚解析用）；无引用题不注入键
+    expect(solve.snapshot.materialRefs).toEqual([
+      { material: "mat-阅读单元-2" },
+    ]);
+    const fillSnapshot = snapshotOfRow(fillRow);
+    if (fillSnapshot === null) throw new Error("fill 行快照不可用");
+    const fill = resultQuestionOf(fillRow, fillSnapshot);
+    expect("materialRefs" in fill.snapshot).toBe(false);
+    // 材料正文只在 /context 冻结投影，不进结果载荷（id 列表是题面公开内容）
+    expect(JSON.stringify(solve)).not.toContain("题级引用目标材料");
+    expect(JSON.stringify(solve)).not.toContain("阅读材料 A");
   });
 });

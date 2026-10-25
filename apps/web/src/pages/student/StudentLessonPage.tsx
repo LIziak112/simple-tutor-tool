@@ -1,4 +1,5 @@
 import type {
+  AttemptContextMaterial,
   AttemptQuestionPublic,
   HintOpenedEntry,
   LessonStartData,
@@ -41,6 +42,7 @@ import {
 import {
   type GroupContextSegment,
   groupSegmentsOfUnit,
+  questionMaterialsOf,
 } from "@/features/attempt/attempt-context-view";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
@@ -49,7 +51,10 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
-import { LessonGroupBlock } from "@/features/lesson/LessonGroupBlock";
+import {
+  LessonGroupBlock,
+  LessonQuestionMaterials,
+} from "@/features/lesson/LessonGroupBlock";
 import { LessonQuestionCard } from "@/features/lesson/LessonQuestionCard";
 import {
   useLessonStart,
@@ -257,34 +262,59 @@ function lessonQuestionOrder(data: LessonStartData): {
  * QM-14 组段呈现：冻结上下文（/attempts/:id/context）经 groupSegmentsOfUnit
  * （数据解释单源，与作答/结果视图同一实现）解释成组段——组头+共享材料在
  * **首个成员**题卡之前渲染一次（LessonGroupBlock 只承担讲练单列排版）。
- * context 未到位/为空（legacy 卷或旧部署）→ 空映射，渲染零变化；失败非阻断
- * （题面渲染不依赖本载荷，页面层就地提示 + 重试）。
+ * P1-2：solo 题的题级 ::ref 材料经 questionMaterialsOf 解析，随题卡之前
+ * 自然阅读（LessonQuestionMaterials）；组段材料并入成员题级引用（组∪题级
+ * 单源）。context 未到位/为空（legacy 卷或旧部署）→ 空映射，渲染零变化；
+ * 失败非阻断（题面渲染不依赖本载荷，页面层就地提示 + 重试）。
  */
 function useLessonGroupAnchors(
   attemptId: string,
   order: ReturnType<typeof lessonQuestionOrder>,
 ): {
   anchors: ReadonlyMap<string, GroupContextSegment>;
+  soloMaterials: ReadonlyMap<string, readonly AttemptContextMaterial[]>;
   contextError: string | null;
   contextRetry: () => void;
   contextFetching: boolean;
 } {
   const contextQuery = useAttemptContext(attemptId);
-  const anchors = useMemo(() => {
-    if (contextQuery.data === undefined) return EMPTY_ANCHORS;
+  const [anchors, soloMaterials] = useMemo(() => {
+    if (contextQuery.data === undefined)
+      return [EMPTY_ANCHORS, EMPTY_SOLO_MATERIALS] as const;
     const map = new Map<string, GroupContextSegment>();
+    const solo = new Map<string, readonly AttemptContextMaterial[]>();
+    // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 块共用
+    const questionRefs = new Map<
+      string,
+      readonly { readonly material: string }[]
+    >([]);
+    for (const slot of order.ordered) {
+      const refs = slot.question.materialRefs;
+      if (refs !== undefined && refs.length > 0)
+        questionRefs.set(slot.question.id, refs);
+    }
     for (const segment of groupSegmentsOfUnit(
       contextQuery.data,
       order.ordered.map((slot) => slot.question.id),
+      questionRefs,
     )) {
-      if (segment.kind !== "group") continue;
-      const first = segment.questionIds[0];
-      if (first !== undefined) map.set(first, segment);
+      if (segment.kind === "group") {
+        const first = segment.questionIds[0];
+        if (first !== undefined) map.set(first, segment);
+        continue;
+      }
+      for (const questionId of segment.questionIds) {
+        const slot = order.byId.get(questionId);
+        if (slot === undefined) continue;
+        const materials = questionMaterialsOf(contextQuery.data, slot.question);
+        if (materials.length > 0) solo.set(questionId, materials);
+      }
     }
-    return map;
+    return [map, solo] as const;
   }, [contextQuery.data, order]);
   return {
     anchors,
+    soloMaterials,
     // 固定文案（不透出 error.message：网络层异常是技术信息，如 fetch failed）
     contextError: contextQuery.isError
       ? "共享材料加载失败，不影响作答题目。"
@@ -293,6 +323,12 @@ function useLessonGroupAnchors(
     contextFetching: contextQuery.isFetching,
   };
 }
+
+/** 空题级材料映射（模块级稳定引用：无 context 时 useMemo 返回同一实例） */
+const EMPTY_SOLO_MATERIALS: ReadonlyMap<
+  string,
+  readonly AttemptContextMaterial[]
+> = new Map();
 
 /** 空锚点映射（模块级稳定引用：无 context 时 useMemo 返回同一实例） */
 const EMPTY_ANCHORS: ReadonlyMap<string, GroupContextSegment> = new Map();
@@ -307,6 +343,7 @@ function LessonBody({
   order,
   renderCard,
   anchors,
+  soloMaterials,
   contextError,
   contextRetry,
   contextFetching,
@@ -323,6 +360,8 @@ function LessonBody({
   ) => ReactNode;
   /** QM-14：questionId → 首成员组段（组头+材料锚点）；缺省空映射零变化 */
   anchors?: ReadonlyMap<string, GroupContextSegment>;
+  /** P1-2：questionId → 题级材料（solo 题自然阅读块）；缺省空映射零变化 */
+  soloMaterials?: ReadonlyMap<string, readonly AttemptContextMaterial[]>;
   /** 冻结上下文加载失败（非阻断：材料列缺失不阻塞作答） */
   contextError?: string | null;
   contextRetry?: () => void;
@@ -443,6 +482,10 @@ function LessonBody({
           const slot = order.byId.get(block.questionId);
           const anchor =
             slot === undefined ? undefined : anchors?.get(slot.question.id);
+          const soloBlock =
+            slot === undefined || anchor !== undefined
+              ? undefined
+              : soloMaterials?.get(slot.question.id);
           return slot !== undefined ? (
             <Fragment key={`slot-${block.questionId}`}>
               {/* QM-14：首个组员题卡之前的组头+共享材料（单列流式呈现） */}
@@ -451,6 +494,10 @@ function LessonBody({
                   group={anchor.group}
                   materials={anchor.materials}
                 />
+              )}
+              {/* P1-2：solo 题级材料随题卡之前自然阅读（组员题级引用已并入组块） */}
+              {soloBlock !== undefined && (
+                <LessonQuestionMaterials materials={soloBlock} />
               )}
               {renderCard(slot.question, slot.index, slot.orphan)}
             </Fragment>
@@ -483,6 +530,10 @@ function LessonBody({
             <div className="flex flex-col gap-4">
               {orphans.map(({ question, index }) => {
                 const anchor = anchors?.get(question.id);
+                const soloBlock =
+                  anchor === undefined
+                    ? soloMaterials?.get(question.id)
+                    : undefined;
                 return (
                   <Fragment key={`orphan-${question.id}`}>
                     {/* QM-14：全孤儿组的组头+材料也随孤儿分组渲染（不丢共享材料） */}
@@ -491,6 +542,10 @@ function LessonBody({
                         group={anchor.group}
                         materials={anchor.materials}
                       />
+                    )}
+                    {/* P1-2：孤儿 solo 题的题级材料同样不丢 */}
+                    {soloBlock !== undefined && (
+                      <LessonQuestionMaterials materials={soloBlock} />
                     )}
                     {renderCard(question, index, true)}
                   </Fragment>
@@ -629,8 +684,13 @@ function LessonAnswerInner({
   const [retryingSave, setRetryingSave] = useState(false);
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
   // QM-14：组段呈现（作答态与完成回看同一组锚点；context 失败非阻断）
-  const { anchors, contextError, contextRetry, contextFetching } =
-    useLessonGroupAnchors(attemptId, order);
+  const {
+    anchors,
+    soloMaterials,
+    contextError,
+    contextRetry,
+    contextFetching,
+  } = useLessonGroupAnchors(attemptId, order);
   const questionIds = useMemo(
     () => data.questions.map((question) => question.id),
     [data.questions],
@@ -786,6 +846,7 @@ function LessonAnswerInner({
             data={data}
             order={order}
             renderCard={renderCard}
+            soloMaterials={soloMaterials}
             anchors={anchors}
             contextError={contextError}
             contextRetry={contextRetry}
@@ -813,8 +874,13 @@ function LessonCompletedView({
   const attemptId = data.attempt.id;
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
   // QM-14：完成回看同样呈现组段（材料随冻结上下文可见，回看不依赖当前讲义）
-  const { anchors, contextError, contextRetry, contextFetching } =
-    useLessonGroupAnchors(attemptId, order);
+  const {
+    anchors,
+    soloMaterials,
+    contextError,
+    contextRetry,
+    contextFetching,
+  } = useLessonGroupAnchors(attemptId, order);
   const capabilities = useMemo(
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
@@ -923,6 +989,7 @@ function LessonCompletedView({
             data={data}
             order={order}
             renderCard={renderCard}
+            soloMaterials={soloMaterials}
             anchors={anchors}
             contextError={contextError}
             contextRetry={contextRetry}

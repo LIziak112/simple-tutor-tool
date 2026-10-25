@@ -84,3 +84,38 @@ export const LessonGroupBlock = memo(function LessonGroupBlock({
     </section>
   );
 });
+
+/**
+ * 讲练页题级材料块（P1-2）：solo 题的 ::ref 材料（questionMaterialsOf 单源
+ * 解析）在题卡之前自然阅读——与 LessonGroupBlock 同排版纪律（单列流式，
+ * 不挂跳转按钮），只承担「本题材料」语义的轻量标注。
+ */
+export const LessonQuestionMaterials = memo(function LessonQuestionMaterials({
+  materials,
+}: {
+  /** questionMaterialsOf 解析后的冻结材料（attempt-context-view 单源） */
+  materials: readonly AttemptContextMaterial[];
+}) {
+  const versionNotes = useMemo(
+    () => materialVersionNotesOf(materials),
+    [materials],
+  );
+  return (
+    <section
+      data-slot="lesson-question-materials"
+      aria-label="本题材料"
+      className="flex min-w-0 flex-col gap-3"
+    >
+      <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        本题材料
+      </p>
+      {materials.map((material) => (
+        <MaterialPanel
+          key={materialVersionKey(material)}
+          material={material}
+          versionNote={versionNotes.get(materialVersionKey(material))}
+        />
+      ))}
+    </section>
+  );
+});

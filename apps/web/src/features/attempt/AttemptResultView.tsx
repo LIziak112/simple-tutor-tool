@@ -1,4 +1,8 @@
-import type { AttemptResultData, AttemptResultQuestion } from "@tutor/contract";
+import type {
+  AttemptResultData,
+  AttemptResultQuestion,
+  MaterialRef,
+} from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import {
@@ -13,10 +17,14 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
-import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
+import {
+  groupSegmentsOfUnit,
+  questionMaterialsOf,
+} from "@/features/attempt/attempt-context-view";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { HintEntryList } from "@/features/attempt/HintPanel";
 import { QuestionGroupAnchor } from "@/features/attempt/QuestionGroupAnchor";
+import { QuestionMaterialsAnchor } from "@/features/attempt/QuestionMaterialsAnchor";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
@@ -823,7 +831,10 @@ export function AttemptResultView({
               QM-08：题目序经 groupSegmentsOfUnit 解释成组段——组段共享材料
               按组渲染一份（与作答视图同一数据解释单源）。审查 P1 修复：与
               作答视图同构——题组只是题行 ol 里的兄弟锚点，题行永不进组子树，
-              context 后到不重挂题卡（回看本无控制器，与作答侧共享一份结构）。 */}
+              context 后到不重挂题卡（回看本无控制器，与作答侧共享一份结构）。
+              P1-2：solo 题的题级 ::ref 材料挂题级锚（与作答视图同口径）；
+              segments 展平成单层题行数组（嵌套数组 key 带段位前缀会重挂行，
+              与作答侧同修复）。 */}
           <ol className="flex flex-col gap-4">
             {data.units.map((unit) => {
               const questionById = new Map(
@@ -831,9 +842,17 @@ export function AttemptResultView({
                   (question) => [question.questionId, question] as const,
                 ),
               );
+              // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 锚共用
+              const questionRefs = new Map<string, readonly MaterialRef[]>([]);
+              for (const question of unit.questions) {
+                const refs = question.snapshot.materialRefs;
+                if (refs !== undefined && refs.length > 0)
+                  questionRefs.set(question.questionId, refs);
+              }
               const segments = groupSegmentsOfUnit(
                 contextQuery.data,
                 unit.questions.map((question) => question.questionId),
+                questionRefs,
               );
               // compare 网格仅对确有题组的单元开启（AI 对照激活回退上下排布）
               const unitHasGroups = segments.some(
@@ -895,11 +914,34 @@ export function AttemptResultView({
                         : "flex flex-col gap-4"
                     }
                   >
-                    {segments.map((segment) =>
+                    {segments.flatMap((segment) =>
                       segment.kind === "solo"
-                        ? segment.questionIds.map((questionId) =>
-                            renderRow(questionId, false),
-                          )
+                        ? segment.questionIds.flatMap((questionId) => {
+                            const question = questionById.get(questionId);
+                            if (question === undefined) return [];
+                            // P1-2：solo 题级材料锚（回看自然阅读，无 reveal
+                            // 跳转——与组材料列同理由）
+                            const soloMaterials = questionMaterialsOf(
+                              contextQuery.data,
+                              question.snapshot,
+                            );
+                            return soloMaterials.length === 0
+                              ? [renderRow(questionId, false)]
+                              : [
+                                  <QuestionMaterialsAnchor
+                                    key={`qmat:${question.questionId}`}
+                                    questionId={question.questionId}
+                                    materials={soloMaterials}
+                                    readingKey={`${attempt.id}|q:${question.questionId}`}
+                                    className={
+                                      groupGrid
+                                        ? "min-w-0 xl:col-span-2"
+                                        : undefined
+                                    }
+                                  />,
+                                  renderRow(questionId, false),
+                                ];
+                          })
                         : [
                             <QuestionGroupAnchor
                               key={`group:${segment.group.id}`}

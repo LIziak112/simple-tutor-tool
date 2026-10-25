@@ -294,7 +294,13 @@
   display: block;
 }
 /* QM-08 共享材料长内容：长表/长公式在材料面板内局部横向滚动，不把
-   作答页撑出整页横向溢出（窄容器验收行；与 ai-reply-markdown 同款）。 */
+   作答页撑出整页横向溢出（窄容器验收行；与 ai-reply-markdown 同款）。
+   TT-14 细项 3：行内公式长串（如「8{,}321.5 万亩」连续 KaTeX 片段不可
+   断行）的 min-content 会把组材料列撑出手机视口——.material-reading 自身
+   成为横向滚动容器，段落级溢出就地局部滚动（display 数学/表规则不变）。 */
+.material-reading {
+  overflow-x: auto;
+}
 .material-reading :is(.katex-display, pre, table) {
   max-width: 100%;
   overflow-x: auto;

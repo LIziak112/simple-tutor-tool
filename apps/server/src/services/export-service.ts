@@ -71,7 +71,7 @@ import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
-import { frozenMaterialsForQuestion } from "./attempt-question-materials";
+import { frozenMaterialsFromRows } from "./attempt-question-materials";
 import {
   answerOf,
   effectiveVerdictOfRow,
@@ -86,6 +86,7 @@ import {
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { batchSerializeStudentAnswerOfRow } from "./mark-response";
+import { listAttemptContextSnapshots } from "./material-repository";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 import {
   assembleQuestionEvidence,
@@ -1601,9 +1602,23 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   const skippedEmptyMaterials = new Set<string>();
   if (m.questions !== undefined) {
     // —— content.materials（TT-13）：组材料 ∪ 题级引用闭包按
-    // (materialId, sourceVersion) 整组去重——单源 frozenMaterialsForQuestion
+    // (materialId, sourceVersion) 整组去重——单源 frozenMaterialsFromRows
     // （versionBadge=false：包内条目显式携带 sourceVersion，不重复标注）；
-    // 逐题 materialRefs 引用该轮实际冻结的版本（多版本并存逐版成条） ——
+    // 逐题 materialRefs 引用该轮实际冻结的版本（多版本并存逐版成条）。
+    // TT-14 细项 5：快照行按 attemptId 预取缓存——此前逐题调
+    // frozenMaterialsForQuestion 每题重查快照表（O(行×快照查询)，130 题
+    // = 130 次全表读），收敛为每 attempt 一次 ——
+    const snapshotRowsByAttempt = new Map<
+      string,
+      ReturnType<typeof listAttemptContextSnapshots>
+    >();
+    const snapshotRowsOf = (attemptId: string) => {
+      const cached = snapshotRowsByAttempt.get(attemptId);
+      if (cached !== undefined) return cached;
+      const loaded = listAttemptContextSnapshots(db, attemptId);
+      snapshotRowsByAttempt.set(attemptId, loaded);
+      return loaded;
+    };
     const collected: Array<{
       materialId: string;
       sourceVersion: number;
@@ -1613,14 +1628,14 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     }> = [];
     const collectedByKey = new Map<string, number>();
     for (const { attempt, rows } of scopeItems) {
+      const attemptSnapshotRows = snapshotRowsOf(attempt.id);
       for (const row of rows) {
         const qRef = evidenceAsm.refByResponseRowId.get(row.id);
         if (qRef === undefined) continue;
         const snapshot = snapshotOfRow(row);
         if (snapshot === null) continue; // 坏快照行无材料闭包（缺失即显式缺失）
-        for (const material of frozenMaterialsForQuestion(
-          db,
-          attempt.id,
+        for (const material of frozenMaterialsFromRows(
+          attemptSnapshotRows,
           row.questionId,
           snapshot,
           { versionBadge: false },
