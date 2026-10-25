@@ -616,7 +616,7 @@ describe("审查 P2-1：旧冻结快照的 sourceMd 兜底重抽", () => {
         body: JSON.stringify({
           verdict: "wrong",
           baseRevision: 0,
-          mutationId: crypto.randomUUID(),
+          mutationId: randomUUID(),
         }),
       },
     );
