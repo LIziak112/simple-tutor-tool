@@ -715,6 +715,89 @@ describe("lintDocument：指令规则补充", () => {
     );
   });
 
+  it("lesson/mixed：材料/组嵌套在版式容器内 → error MATERIAL/GROUP_NESTED_IN_CONTAINER（嵌套容器不抽取、不剔除，原文含 [[答案]]/槽位标记会随讲义段落原样下发学生端，安全红线）；practice 同写法零新增 issue；顶层材料/组不误报", () => {
+    const nested = md([
+      "---",
+      "kind: lesson",
+      "unit: 随堂练习",
+      "---",
+      "",
+      "# 第1讲 资料分析",
+      "",
+      // 嵌套写法：外层容器围栏比内层长（remark-directive 语义，同 question 包 options）
+      ":::::box",
+      "边栏里的长材料。",
+      "",
+      '::::material{id=mat-1 title="嵌套材料"}',
+      "正文含答案。第 {{slot-1}} 空。",
+      "",
+      "[[参考答案甲]]",
+      "::::",
+      "",
+      "::::group{id=grp-1}",
+      "::ref{question=q1}",
+      "::::",
+      ":::::",
+      "",
+      "::::question{type=judge id=q1}",
+      "$0$ 是最小的正整数。[[错误]]",
+      "::::",
+    ]);
+    const lesson = lintDocument(nested);
+    expect(
+      issueOf(lesson.issues, "MATERIAL_NESTED_IN_CONTAINER"),
+    ).toMatchObject({ level: "error", line: 11 });
+    expect(issueOf(lesson.issues, "GROUP_NESTED_IN_CONTAINER")).toMatchObject({
+      level: "error",
+      line: 17,
+    });
+
+    // mixed 同构写法同样 error（两 kind 都覆盖：mixed 讲义段落学生同样可读）
+    const mixed = lintDocument(nested.replace("kind: lesson", "kind: mixed"));
+    expect(issueOf(mixed.issues, "MATERIAL_NESTED_IN_CONTAINER")?.level).toBe(
+      "error",
+    );
+    expect(issueOf(mixed.issues, "GROUP_NESTED_IN_CONTAINER")?.level).toBe(
+      "error",
+    );
+
+    // practice 无讲义正文学生下发面，维持既有行为（零新增 code）
+    const practice = lintDocument(
+      nested.replace("kind: lesson", "kind: practice"),
+    );
+    expect(codes(practice.issues)).not.toContain(
+      "MATERIAL_NESTED_IN_CONTAINER",
+    );
+    expect(codes(practice.issues)).not.toContain("GROUP_NESTED_IN_CONTAINER");
+
+    // 顶层材料/组（DSL 支持的唯一形态）不误报
+    const topLevel = lintDocument(
+      md([
+        "---",
+        "kind: lesson",
+        "unit: 随堂练习",
+        "---",
+        "",
+        "# 第1讲 资料分析",
+        "",
+        '::::material{id=mat-1 title="某省粮食生产"}',
+        "粮食总产量三千万吨。",
+        "::::",
+        "",
+        "::::group{id=grp-1}",
+        "::ref{question=q1}",
+        "::::",
+        "",
+        "::::question{type=judge id=q1}",
+        "$0$ 是最小的正整数。[[错误]]",
+        "::::",
+      ]),
+    );
+    expect(
+      codes(topLevel.issues).filter((c) => c.endsWith("_NESTED_IN_CONTAINER")),
+    ).toEqual([]);
+  });
+
   it("question 嵌套在 question 内：DIRECTIVE_NOT_ALLOWED_HERE；外层判断题同时报多标记 warning", () => {
     const text = md([
       "---",
