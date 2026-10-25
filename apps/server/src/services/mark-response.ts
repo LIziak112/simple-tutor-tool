@@ -77,18 +77,22 @@ export function serializeStudentAnswer(
         ? answer.value
           ? "正确"
           : "错误"
-        : answer.value;
+        : answer.value.trim() === ""
+          ? null
+          : answer.value;
     case "choice":
       return optionLabel(answer.index);
     case "multi":
+      if (answer.indexes.length === 0) return null;
       return [...new Set(answer.indexes)]
         .sort((a, b) => a - b)
         .map(optionLabel)
         .join("、");
     case "fill":
+      if (answer.values.every((value) => value.trim() === "")) return null;
       return answer.values.join("；");
     case "final":
-      return answer.finalAnswer;
+      return answer.finalAnswer.trim() === "" ? null : answer.finalAnswer;
   }
 }
 

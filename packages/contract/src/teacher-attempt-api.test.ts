@@ -229,6 +229,7 @@ describe("teacherAttemptDetailDataSchema（详情头）", () => {
       scoreFinal: null,
       correctCount: 1,
       wrongCount: 1,
+      notDoneCount: 0,
       pendingCount: 1,
       startedAt: "2026-09-28T10:00:00.000Z",
       submittedAt: "2026-09-28T10:20:00.000Z",

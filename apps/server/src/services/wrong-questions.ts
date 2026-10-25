@@ -84,25 +84,34 @@ interface JudgedRoundRow {
   answered: boolean;
   /** #6980-4：该轮做题时学生是否标了「不会」（responses.student_flag） */
   studentFlag: string | null;
+  /** #6980-3（审查修复 P0-1）：该轮的人工显式判定（批改/自评），不被「未做」掩盖 */
+  teacherMark: string | null;
+  selfCorrect: boolean | null;
 }
 
 /**
  * 错题本入本谓词（#6980-3/#6980-4 单一出处）：任一次已判定作答「答了且判错」
  * 或「标了不会」（studentFlag=unsure，无论对错与是否作答）——未做且未标不会
- * 的轮（answered=false，isUnanswered 口径）不入本。listWrongQuestions 聚合
- * 与 latestJudgedResponsesByQuestion（重练组卷成员校验 + 快照来源）共用本
- * 函数，防口径漂移。
+ * 的轮（answered=false）不入本，但人工显式判定（teacherMark / selfCorrect，
+ * 审查修复 P0-1）不被「未做」掩盖：老师显式批错、学生自评「错了」的行照常
+ * 入本计错次。listWrongQuestions 聚合与 latestJudgedResponsesByQuestion
+ * （重练组卷成员校验 + 快照来源）共用本函数，防口径漂移。
  */
 function enteredWrongBook(
   rounds: readonly {
     finalCorrect: boolean | null;
     answered: boolean;
     studentFlag: string | null;
+    teacherMark: string | null;
+    selfCorrect: boolean | null;
   }[],
 ): boolean {
   return rounds.some(
     (round) =>
-      (round.finalCorrect === false && round.answered) ||
+      (round.finalCorrect === false &&
+        (round.answered ||
+          round.teacherMark !== null ||
+          round.selfCorrect !== null)) ||
       round.studentFlag === "unsure",
   );
 }
@@ -186,7 +195,12 @@ function judgedRoundsByQuestion(
   for (const row of rows) {
     if (!readable(row.attempt, row.response)) continue;
     const list = roundsByQuestion.get(row.questionId) ?? [];
-    list.push({ ...row, reviewSource: reviewSourceOf(row.response) });
+    list.push({
+      ...row,
+      reviewSource: reviewSourceOf(row.response),
+      teacherMark: row.response.teacherMark,
+      selfCorrect: row.response.selfCorrect,
+    });
     roundsByQuestion.set(row.questionId, list);
   }
   for (const list of roundsByQuestion.values()) {
@@ -448,9 +462,14 @@ export function listWrongQuestions(
       firstAt: first.submittedAt ?? first.startedAt,
       lastAt: last.submittedAt ?? last.startedAt,
       rounds: roundsPayload,
-      // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）
-      wrongCount: roundsPayload.filter(
-        (round) => !round.correct && round.answered,
+      // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）；人工显式判定
+      // 的未做轮不被掩盖（审查修复 P0-1：老师批错/自评判错的行照常计错次）
+      wrongCount: rounds.filter(
+        (round) =>
+          round.finalCorrect === false &&
+          (round.answered ||
+            round.teacherMark !== null ||
+            round.selfCorrect !== null),
       ).length,
       correctCount: roundsPayload.filter((round) => round.correct).length,
       pendingCount: pendingCounts.get(questionId) ?? 0,
