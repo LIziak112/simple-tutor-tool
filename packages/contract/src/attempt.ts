@@ -550,6 +550,13 @@ export const attemptResultQuestionSchema = z.object({
     matchingSlots: z.array(matchingSlotSchema).min(1).optional(),
     orderingItems: z.array(orderingItemStudentSchema).optional(),
     sortableCount: z.number().int().min(0).optional(),
+    /**
+     * 题级材料引用（P1-2，2026-10-25）：材料 id 与选择串属题面公开内容、
+     * 无泄露面（正文投影经 materialPublicSchema 白名单）——结果回看的题级
+     * 材料锚据此解析（questionMaterialsOf，与作答视图同口径）；可选——
+     * 无题级引用/旧载荷不携带（缺省合法，零变化）。
+     */
+    materialRefs: questionPublicSchema.shape.materialRefs.optional(),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),

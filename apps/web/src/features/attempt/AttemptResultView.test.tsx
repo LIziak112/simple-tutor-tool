@@ -1163,6 +1163,103 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
       groups: [],
     });
   });
+
+  // P1-2：solo 题的题级 ::ref 材料在回看挂题级锚（自然阅读、与组材料列
+  // 同口径）；组员题级引用并入组材料列（组∪题级单源）。
+  it("P1-2 题级材料锚：solo 题材料可见；组员题级引用并入组材料列", async () => {
+    const soloRefData: AttemptResultData = {
+      ...GROUP_DATA,
+      units: [
+        {
+          ...GROUP_DATA.units[0]!,
+          questions: GROUP_DATA.units[0]!.questions.map((question, i) =>
+            i === 1
+              ? {
+                  ...question,
+                  snapshot: {
+                    ...question.snapshot,
+                    materialRefs: [{ material: "mat-q2" }],
+                  },
+                }
+              : i === 2
+                ? {
+                    ...question,
+                    snapshot: {
+                      ...question.snapshot,
+                      materialRefs: [{ material: "mat-solo" }],
+                    },
+                  }
+                : question,
+          ),
+        },
+      ],
+    };
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: DATA.attempt.id,
+      materials: [
+        {
+          id: "mat-1",
+          title: "四天气温表",
+          contentMd: "| 日期 | 周一 |",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+        {
+          id: "mat-q2",
+          title: "题级补充材料",
+          contentMd: "第二题补充材料正文。",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+        {
+          id: "mat-solo",
+          title: "给定资料一",
+          contentMd: "申论给定资料一正文。",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [
+        {
+          id: "grp-1",
+          title: "根据材料回答第 1～2 题",
+          label: "1～2",
+          introMd: "",
+          materialRefs: [{ material: "mat-1" }],
+          questionIds: ["gq-1", "gq-2"],
+          sourceVersion: 1,
+        },
+      ],
+    });
+    const { findByText } = render(
+      <AttemptResultView data={soloRefData} onBackHome={vi.fn()} />,
+    );
+    // solo 锚（本题材料）+ 组材料列并集都在（等待 context 落地）
+    expect(await findByText("申论给定资料一正文。")).toBeInTheDocument();
+    expect(screen.getByLabelText("本题材料")).toBeInTheDocument();
+    const groupMaterials = screen.getByLabelText("本组共享材料");
+    expect(within(groupMaterials).getByText("四天气温表")).toBeInTheDocument();
+    expect(
+      within(groupMaterials).getByText("题级补充材料"),
+    ).toBeInTheDocument();
+    // 三题行仍齐全
+    expect(
+      screen.getByRole("article", { name: "第 3 题" }),
+    ).toBeInTheDocument();
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: "",
+      materials: [],
+      groups: [],
+    });
+  });
 });
 
 // ---------- QM-11（TT-09b）：reference_self 行的自评三态与动作挂载 ----------

@@ -90,8 +90,6 @@ describe("QuestionMaterialsAnchor（题级材料锚）", () => {
         className="min-w-0 xl:col-span-2"
       />,
     );
-    expect(
-      anchor?.className.includes("xl:col-span-2"),
-    ).toBe(true);
+    expect(anchor?.className.includes("xl:col-span-2")).toBe(true);
   });
 });

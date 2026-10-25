@@ -4,7 +4,10 @@ import type {
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { groupSegmentsOfUnit, questionMaterialsOf } from "./attempt-context-view";
+import {
+  groupSegmentsOfUnit,
+  questionMaterialsOf,
+} from "./attempt-context-view";
 import { materialVersionKey } from "./MaterialPanel";
 
 /**
@@ -266,9 +269,7 @@ describe("questionMaterialsOf（题级材料单源，P1-2）", () => {
       ),
     ).toEqual(["m-solo|1:材料 m-solo 正文。", "m-solo|2:二版正文"]);
     expect(questionMaterialsOf(ctx, {})).toEqual([]);
-    expect(
-      questionMaterialsOf(undefined, { materialRefs: refs }),
-    ).toEqual([]);
+    expect(questionMaterialsOf(undefined, { materialRefs: refs })).toEqual([]);
   });
 
   it("同 id 重复引用去重（不翻倍）；引用缺快照条目跳过不崩溃", () => {

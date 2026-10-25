@@ -4,8 +4,9 @@
  * 材料内容不进入持久化存储，会话结束即弃（与题级阅读位置
  * use-reading-position 的持久化语义不同：那是整卷作答续读，这是组内往返）。
  */
-import { useEffect } from "react";
+
 import type { RefObject } from "react";
+import { useEffect } from "react";
 
 const offsets = new Map<string, number>();
 

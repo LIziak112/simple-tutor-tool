@@ -3,6 +3,7 @@ import type {
   AttemptDraftData,
   AttemptResultData,
   HintOpenedEntry,
+  MaterialRef,
   PracticeLayout,
 } from "@tutor/contract";
 import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
@@ -34,7 +35,10 @@ import {
 } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
-import { groupSegmentsOfUnit } from "@/features/attempt/attempt-context-view";
+import {
+  groupSegmentsOfUnit,
+  questionMaterialsOf,
+} from "@/features/attempt/attempt-context-view";
 import {
   attemptMaterialsEditable,
   recoverAttemptMaterials,
@@ -109,6 +113,7 @@ import {
   practiceProtocolOfDraft,
 } from "./practice-protocol";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
+import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
@@ -304,7 +309,7 @@ function AnswerView({
   const contextQuery = useAttemptContext(attemptId);
   /** AI 侧栏对照激活 → 组段呈现回退上下排布（与题卡草稿「自动」布局同款信号） */
   const compareActive = useAiCompareActive();
-  /** 「查看材料」reveal 信号（组 id → 递增计数；QuestionGroupAnchor 滚入恢复） */
+  /** 「查看材料」reveal 信号（组 id / 题级材料的题 id → 递增计数；锚点滚入恢复） */
   const [materialReveal, setMaterialReveal] = useState<Record<string, number>>(
     {},
   );
@@ -1380,7 +1385,9 @@ function AnswerView({
               QM-08：题目序经 groupSegmentsOfUnit 解释成独立题段/题组段——组段
               的共享材料按组渲染一份（数据解释单源）。审查 P1 修复：题组只是
               题行 ol 里的兄弟锚点（QuestionGroupAnchor），题行永不进组子树，
-              context 后到/重试成功不重挂题卡（控制器随行存活）。 */}
+              context 后到/重试成功不重挂题卡（控制器随行存活）。
+              P1-2：solo 题的题级 ::ref 材料挂题级锚（QuestionMaterialsAnchor，
+              同为兄弟项不包裹题行）；组段材料并入成员题级引用（组∪题级单源）。 */}
               <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
                 {data.units.map((unit) => {
                   const questionById = new Map(
@@ -1388,9 +1395,19 @@ function AnswerView({
                       (question) => [question.id, question] as const,
                     ),
                   );
+                  // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 锚共用
+                  const questionRefs = new Map<string, readonly MaterialRef[]>(
+                    [],
+                  );
+                  for (const question of unit.questions) {
+                    const refs = question.materialRefs;
+                    if (refs !== undefined && refs.length > 0)
+                      questionRefs.set(question.id, refs);
+                  }
                   const segments = groupSegmentsOfUnit(
                     contextQuery.data,
                     unit.questions.map((question) => question.id),
+                    questionRefs,
                   );
                   // compare 网格仅对确有题组的单元开启（AI 对照激活/单题态
                   // 回退上下排布）；无组单元保持纯 flex 零变化
@@ -1399,11 +1416,13 @@ function AnswerView({
                   );
                   const groupGrid =
                     unitHasGroups && !singleMode && !compareActive;
-                  /** 单题行渲染（组行/独立行共用；onOpenMaterial 仅组内带材料题挂） */
+                  /** 单题行渲染（组行/独立行共用；onOpenMaterial 组内挂共享
+                      材料、solo 题挂题级材料，openMaterialLabel 区分语义） */
                   const renderRow = (
                     question: (typeof unit.questions)[number],
                     onOpenMaterial?: () => void,
                     grouped = false,
+                    openMaterialLabel?: string,
                   ) => {
                     const index = flatQuestions.indexOf(question);
                     // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
@@ -1442,7 +1461,12 @@ function AnswerView({
                         hints={hintsOpened[question.id]}
                         onHintUnlocked={unlockHint}
                         {...(onOpenMaterial !== undefined
-                          ? { onOpenMaterial }
+                          ? {
+                              onOpenMaterial,
+                              ...(openMaterialLabel !== undefined
+                                ? { openMaterialLabel }
+                                : {}),
+                            }
                           : {})}
                         aiTrigger={aiCompanion.triggerForQuestion(question.id)}
                         aiContent={aiCompanion.inlineForQuestion(question.id)}
@@ -1522,13 +1546,50 @@ function AnswerView({
                             : "flex flex-col gap-4"
                         }
                       >
-                        {segments.map((segment) =>
+                        {/* flatMap 展平成单层题行数组：嵌套数组里元素的 key 会
+                            带外层段位前缀（.0/q3 → .1/q3），context 后到段位
+                            变化会重挂后续 solo 题卡（审查 P1 树位不变量的漏网
+                            形态——控制器随段位漂移销毁）；展平后 key 与段位无关 */}
+                        {segments.flatMap((segment) =>
                           segment.kind === "solo"
-                            ? segment.questionIds.map((questionId) => {
+                            ? segment.questionIds.flatMap((questionId) => {
                                 const question = questionById.get(questionId);
-                                return question === undefined
-                                  ? null
-                                  : renderRow(question, undefined, false);
+                                if (question === undefined) return [];
+                                // P1-2：solo 题的题级 ::ref 材料——兄弟锚点
+                                // 常驻渲染 + 题卡「查看本题材料」入口
+                                const soloMaterials = questionMaterialsOf(
+                                  contextQuery.data,
+                                  question,
+                                );
+                                return soloMaterials.length === 0
+                                  ? [renderRow(question, undefined, false)]
+                                  : [
+                                      <QuestionMaterialsAnchor
+                                        key={`qmat:${question.id}`}
+                                        questionId={question.id}
+                                        materials={soloMaterials}
+                                        readingKey={`${attemptId}|q:${question.id}`}
+                                        revealSignal={
+                                          materialReveal[question.id] ?? 0
+                                        }
+                                        hidden={
+                                          singleMode &&
+                                          question.id !==
+                                            resolvedSingleQuestionId
+                                        }
+                                        className={
+                                          groupGrid
+                                            ? "min-w-0 xl:col-span-2"
+                                            : undefined
+                                        }
+                                      />,
+                                      renderRow(
+                                        question,
+                                        () => openGroupMaterial(question.id),
+                                        false,
+                                        "查看本题材料",
+                                      ),
+                                    ];
                               })
                             : [
                                 <QuestionGroupAnchor

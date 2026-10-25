@@ -107,8 +107,12 @@ function QuestionMeta({
   formalInkPresence: boolean;
   tools: {
     aiTrigger?: ReactNode;
-    /** QM-08：组内共享材料的「查看材料」入口（组段装配注入；组外题为空） */
+    /** QM-08：组内共享材料的「查看材料」入口（组段装配注入；组外题为空）。
+     *  P1-2：solo 题的题级 ::ref 材料同入口挂载（组装配传「共享」、题级
+     *  装配传「本题」，openMaterialLabel 区分语义） */
     openMaterial?: () => void;
+    /** 材料入口按钮文案（缺省「查看共享材料」；题级装配传「查看本题材料」） */
+    openMaterialLabel?: string;
     annotationOpen: boolean;
     paperOpen: boolean;
     paperEnabled: boolean;
@@ -207,8 +211,8 @@ function QuestionMeta({
             type="button"
             variant="ghost"
             className="h-11 min-w-11 gap-1.5 px-2"
-            title="查看共享材料"
-            aria-label={`第 ${index + 1} 题查看共享材料`}
+            title={tools.openMaterialLabel ?? "查看共享材料"}
+            aria-label={`第 ${index + 1} 题${tools.openMaterialLabel ?? "查看共享材料"}`}
             data-material-trigger
             onClick={tools.openMaterial}
           >
@@ -315,6 +319,7 @@ export function AttemptQuestionCard({
   flagged = false,
   onToggleFlag,
   onOpenMaterial,
+  openMaterialLabel,
   formalInkPresence = false,
   onInkPresenceChange,
   assignmentTitle = "练习",
@@ -345,8 +350,11 @@ export function AttemptQuestionCard({
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
   flagged?: boolean;
   onToggleFlag?: () => void;
-  /** QM-08：组内带共享材料时的「查看材料」入口（滚动到组材料列并恢复已读位置） */
+  /** QM-08：组内带共享材料时的「查看材料」入口（滚动到组材料列并恢复已读位置）；
+   *  P1-2：solo 题级材料同入口（滚动到题级材料锚），label 由调用方区分语义 */
   onOpenMaterial?: () => void;
+  /** 材料入口按钮文案（缺省「查看共享材料」；题级装配传「查看本题材料」） */
+  openMaterialLabel?: string;
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
   assignmentTitle?: string;
@@ -578,7 +586,12 @@ export function AttemptQuestionCard({
             : {
                 aiTrigger,
                 ...(onOpenMaterial !== undefined
-                  ? { openMaterial: onOpenMaterial }
+                  ? {
+                      openMaterial: onOpenMaterial,
+                      ...(openMaterialLabel !== undefined
+                        ? { openMaterialLabel }
+                        : {}),
+                    }
                   : {}),
                 annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
