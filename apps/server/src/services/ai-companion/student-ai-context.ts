@@ -384,13 +384,12 @@ function assembleBundleFromRows(args: {
   // QM-17 细项 1：新题型答案结构化文本（matching/ordering 以真实选项/项正文
   // + 材料槽位序「第 N 空」序列化，结构与参考标签同一装配）；旧七型结构恒空，
   // 输出逐字不变。
-  const answerStructures = answerStructuresFirst;
   const studentAnswerText = studentAnswerTextOf(
     optionsPublicStructureOf(
       snapshot.options?.map((option) => option.text) ?? [],
     ),
     answerOf(answerJson),
-    answerStructures,
+    answerStructuresFirst,
   );
   // QM-17 细项 1：本题必需公开材料（冻结上下文闭包——组材料 ∪ 题级引用；
   // 正文槽位编号与材料面板同口径；材料正文无答案型内容，双防线见闭包单源）
@@ -453,6 +452,9 @@ function assembleBundleFromRows(args: {
 /**
  * contextVersion 的 HMAC 输入:实质字段的固定顺序序列化(capturedAt 不参与
  * ——相同实质输入跨时刻同标识;含答案字段由 HMAC 密钥保护,无密钥不可构造)。
+ * 审查 P3-1:materials 并入输入序列——冻结闭包材料是实质字段,不参与会让
+ * 材料不同的两份快照同戳;MCP 领取/回执链的戳另有全量序列化实现
+ * (student-ai-queue contextVersionOf),本戳只服务页内即算即用,无在途兼容面。
  */
 function contextVersionInput(snapshot: AiContextSnapshot): string {
   return JSON.stringify([
@@ -468,6 +470,7 @@ function contextVersionInput(snapshot: AiContextSnapshot): string {
     snapshot.solutionMd,
     snapshot.missingNote,
     snapshot.promptSnapshotMd,
+    snapshot.materials,
   ]);
 }
 

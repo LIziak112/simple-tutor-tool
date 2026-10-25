@@ -799,6 +799,44 @@ describe("SAI-09 完成条件:确定快照标识且不暴露猜测 oracle", () =
     db.$client.close();
   });
 
+  it("审查 P3-1:材料进 HMAC 输入序列——冻结闭包材料变化即换标识(旧实现两份材料不同的快照同戳)", () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db);
+    const a = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    expect(a.snapshot.materials).toHaveLength(1);
+    // 同 id 材料追加 v2(正文不同)→ 冻结闭包多一条历史版本,实质输入变化;
+    // MCP 领取/回执链的戳另有全量序列化实现(student-ai-queue contextVersionOf),
+    // 本戳只服务页内即算即用,改输入无在途兼容面
+    db.insert(attemptContextSnapshots)
+      .values({
+        id: randomUUID(),
+        attemptId: world.attemptId,
+        kind: "material",
+        sourceId: "m-mat-1",
+        sourceVersion: 2,
+        snapshotJson: JSON.stringify({
+          id: "m-mat-1",
+          title: "阅读材料",
+          contentMd: "第二版正文:材料实质变了。",
+          anchors: [],
+          slots: [{ id: "m-slot-1", slotKind: "match", order: 0 }],
+          mediaPaths: [],
+        }),
+        frozenAt: NOW,
+      })
+      .run();
+    const b = buildAiContextBundle(db, world, {
+      now: LATER,
+      hmacSecret: SECRET_A,
+    });
+    expect(b.snapshot.materials).toHaveLength(2);
+    expect(b.contextVersion).not.toBe(a.contextVersion);
+    db.$client.close();
+  });
+
   it("contextVersion 由服务端密钥参与(HMAC):换密钥即换标识,裸 sha256 猜测不可复现", () => {
     const db = createTestDb();
     const world = setupWorld(db);

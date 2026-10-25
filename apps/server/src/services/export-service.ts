@@ -83,7 +83,7 @@ import {
 } from "./export-csv";
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
-import { serializeStudentAnswerOfRow } from "./mark-response";
+import { batchSerializeStudentAnswerOfRow } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 import {
   assembleQuestionEvidence,
@@ -1032,6 +1032,7 @@ export function assembleLearningPack(
     mappingTxt,
     // 闸门 F6：单次规范化（v1 也算——evidence 恒 false 不消费，成本可忽略）
     normalizedEvidencePhases: normalizeEvidencePhases(m.evidencePhases),
+    answerTextOf: batchSerializeStudentAnswerOfRow(db),
   };
   if (isV2) {
     return assembleV2(core);
@@ -1082,6 +1083,11 @@ interface PackCore {
    * normalizeEvidencePhases 重复收敛）
    */
   readonly normalizedEvidencePhases: readonly NotePhase[];
+  /**
+   * 学生答案行级序列化（审查 P3-3：v1/v2 的 responseBaseOf 行循环共用批量
+   * 出口，attemptId 请求内记忆化槽位序，一处 Map 覆盖整个导出请求）
+   */
+  readonly answerTextOf: ReturnType<typeof batchSerializeStudentAnswerOfRow>;
 }
 
 /**
@@ -1273,12 +1279,7 @@ function responseBaseOf(
     studentId: attempt.studentId,
     questionId: row.questionId,
     no,
-    answerText: serializeStudentAnswerOfRow(
-      core.db,
-      attempt.id,
-      row,
-      answerOf(row.answerJson),
-    ),
+    answerText: core.answerTextOf(attempt.id, row, answerOf(row.answerJson)),
     autoCorrect: row.autoCorrect,
     finalCorrect: row.finalCorrect,
     // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）

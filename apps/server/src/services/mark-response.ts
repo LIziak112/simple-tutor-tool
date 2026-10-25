@@ -4,6 +4,7 @@ import type {
   PendingMarkCard,
   PendingMarkListData,
   PendingMarkListQuery,
+  Question,
   StudentAnswer,
 } from "@tutor/contract";
 import {
@@ -87,6 +88,24 @@ export function serializeStudentAnswer(
  * 序列化（与材料面板（N）编号同口径）；旧七型结构恒空，输出逐字不变。
  * 快照缺失/坏行回落裸序列化（emptyPublicStructure——id 回落路径，不抛错）。
  */
+/** 行级序列化主体（单题/批量两出口共用一条路径，不复制装配） */
+function serializeRowWithStructures(
+  answer: StudentAnswer | null,
+  snapshot: Question | null,
+  slotOrder: ReadonlyMap<string, readonly string[]>,
+  unitId: string | null,
+): string | null {
+  if (answer === null) return null;
+  if (snapshot === null || !NEW_QUESTION_TYPES.includes(snapshot.type)) {
+    return serializeStudentAnswer(answer);
+  }
+  return dispatchBehavior(
+    answer,
+    "teacher-queue",
+    structuresOfSnapshot(snapshot, slotOrder, unitId),
+  );
+}
+
 export function serializeStudentAnswerOfRow(
   db: Db,
   attemptId: string,
@@ -96,20 +115,45 @@ export function serializeStudentAnswerOfRow(
   >,
   answer: StudentAnswer | null,
 ): string | null {
-  if (answer === null) return null;
-  const snapshot = snapshotOfRow(row);
-  if (snapshot === null || !NEW_QUESTION_TYPES.includes(snapshot.type)) {
-    return serializeStudentAnswer(answer);
-  }
-  return dispatchBehavior(
+  return serializeRowWithStructures(
     answer,
-    "teacher-queue",
-    structuresOfSnapshot(
-      snapshot,
-      materialSlotOrderOf(db, attemptId),
-      row.unitId,
-    ),
+    snapshotOfRow(row),
+    materialSlotOrderOf(db, attemptId),
+    row.unitId,
   );
+}
+
+/**
+ * serializeStudentAnswerOfRow 的批量消费点出口（审查 P3-3）：原函数逐行调用
+ * 都全量重扫 attempt_context_snapshots 并逐条 JSON.parse——130 题全待批即
+ * 130 次全卷扫描。本工厂按 attemptId 请求内记忆化槽位序（一处 Map，行循环
+ * 外建一次），待批队列/错题重练 CSV/学情包导出（v1+v2 经 PackCore）共用；
+ * 行为与逐行原函数逐字一致。单题调用点（单题包）无循环收益，直接用原函数。
+ */
+export function batchSerializeStudentAnswerOfRow(
+  db: Db,
+): (
+  attemptId: string,
+  row: Pick<
+    ResponseRow,
+    "attemptId" | "questionId" | "questionSnapshotJson" | "unitId"
+  >,
+  answer: StudentAnswer | null,
+) => string | null {
+  const slotOrders = new Map<string, Map<string, readonly string[]>>();
+  return (attemptId, row, answer) => {
+    let slotOrder = slotOrders.get(attemptId);
+    if (slotOrder === undefined) {
+      slotOrder = materialSlotOrderOf(db, attemptId);
+      slotOrders.set(attemptId, slotOrder);
+    }
+    return serializeRowWithStructures(
+      answer,
+      snapshotOfRow(row),
+      slotOrder,
+      row.unitId,
+    );
+  };
 }
 
 // ---------- POST /api/teacher/responses/:id/mark ----------
@@ -312,6 +356,8 @@ export function listPendingMarks(
   }
 
   const marks: PendingMarkCard[] = [];
+  // 审查 P3-3：行循环用批量出口（attemptId 请求内记忆化槽位序，一处 Map）
+  const answerTextOf = batchSerializeStudentAnswerOfRow(db);
   for (const [attemptId, group] of byAttempt) {
     const source = sourceOf(db, group.attempt, teacherId);
     const inkByQuestion = inkByQuestionOf(db, attemptId);
@@ -333,8 +379,7 @@ export function listPendingMarks(
           ? { options: snapshot.options.map((option) => option.text) }
           : {}),
         answers: snapshot.answers ?? null,
-        answerText: serializeStudentAnswerOfRow(
-          db,
+        answerText: answerTextOf(
           attemptId,
           response,
           answerOf(response.answerJson),
