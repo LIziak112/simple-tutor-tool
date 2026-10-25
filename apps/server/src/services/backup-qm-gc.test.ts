@@ -24,7 +24,6 @@ import {
   units,
 } from "../db/schema";
 import { TEST_TEACHER_ID } from "../db/test-utils";
-import { insertBackupTeacher } from "../test/backup-fixtures";
 import { frozenDraftAttempt, snapshotJsonOf } from "../test/evidence-fixtures";
 import { makeStudent } from "../test/note-fixtures";
 import { frozenMaterialsForQuestion } from "./attempt-question-materials";
