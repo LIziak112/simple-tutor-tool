@@ -145,6 +145,7 @@ describe("teacherAttemptDetailQuestionSchema（D7：draft 不带答案详解）"
     answer: { kind: "judge", value: true },
     autoCorrect: null,
     answered: true,
+    studentFlag: null,
     finalCorrect: null,
     teacherMark: null,
     teacherComment: null,

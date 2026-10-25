@@ -56,10 +56,11 @@ describe("isConquered（按标准从轮次史计算）", () => {
   });
 
   it("标过不会的做对轮不算攻克（#6980-4）：宽松不认它、严格打断连续做对", () => {
-    const flagged = (correct: boolean, studentFlag: "unsure" | null) => ({
-      ...roundsOf(correct)[0],
-      studentFlag,
-    });
+    const flagged = (correct: boolean, studentFlag: "unsure" | null) => {
+      const base = roundsOf(correct)[0];
+      if (base === undefined) throw new Error("unreachable");
+      return { ...base, studentFlag };
+    };
     // 宽松：最后一轮做对但标过不会 → 未攻克
     expect(
       isConquered(

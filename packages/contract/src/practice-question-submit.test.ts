@@ -65,6 +65,7 @@ const RELEASED_FEEDBACK = {
     teacherComment: null,
     finalCorrect: true,
     answered: true,
+    studentFlag: null,
     hintsOpened: [{ index: 0, text: "提示一" }],
   },
 } as const;

@@ -101,6 +101,9 @@ export const teacherMarkSchema = z.enum(["correct", "wrong"]);
 /** 做题时学生自标「不会」（#6980-4）：值域当前只有 unsure（可扩展）。 */
 export const studentFlagSchema = z.literal("unsure");
 
+/** 学生做题时标注「不会」的取值类型（#6980-4；端上 setStudentFlagApi 复用）。 */
+export type StudentFlag = z.infer<typeof studentFlagSchema>;
+
 /**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
  * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
