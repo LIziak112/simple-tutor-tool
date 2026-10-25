@@ -16,6 +16,7 @@ import {
   applyAnnotationView,
   applyBaseDisabled,
   applyBasePreview,
+  clearAnnotationRetained,
   deriveAnnotationServerState,
   getAnnotationRecord,
   getAnnotationView,
@@ -25,6 +26,7 @@ import {
   parseAnnotationKey,
   peekAnnotationRecord,
   resetAnnotationStoreForTest,
+  resolveAnnotationConflictKeepLocal,
   settleAnnotationPersistence,
   setUploading,
   subscribeAnnotationStore,
@@ -314,9 +316,16 @@ describe("回执 / 冲突 / 被拒落地", () => {
       hash: "c".repeat(64),
       savedAt: "2026-10-08T02:00:00Z",
     };
-    await applyAnnotationConflict(SESSION, SCOPE, current, "版本冲突");
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "revision",
+      current,
+      "版本冲突",
+    );
     let record = peekAnnotationRecord(SESSION, SCOPE);
     expect(record?.conflict?.current?.revision).toBe(5);
+    expect(record?.conflict?.kind).toBe("revision");
     expect(record?.pending).not.toBeNull();
     await applyAnnotationDenied(SESSION, SCOPE, "access", "已交卷");
     record = peekAnnotationRecord(SESSION, SCOPE);
@@ -324,17 +333,195 @@ describe("回执 / 冲突 / 被拒落地", () => {
   });
 });
 
+describe("冲突分类 kind 落库（批次三 A）", () => {
+  it("revision/mutation/layout 三类 kind 如实落库", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1)]));
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "revision",
+      {
+        annotationId: "n-1",
+        revision: 5,
+        hash: "c".repeat(64),
+        savedAt: "2026-10-08T02:00:00Z",
+      },
+      "版本冲突",
+    );
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.conflict?.kind).toBe(
+      "revision",
+    );
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "mutation",
+      null,
+      "幂等键错配",
+    );
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.conflict?.kind).toBe(
+      "mutation",
+    );
+    await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "另一布局");
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.conflict?.kind).toBe("layout");
+  });
+
+  it("旧记录缺 kind 缺省推导：current 非空→revision、空→mutation（保留旧裁决行为）", async () => {
+    const storage = memoryAnnotationBackend();
+    const base = {
+      doc: docOf([strokeAt(1, 1)]),
+      pending: null,
+      baseRevision: 0,
+      annotationId: null,
+      base: null,
+      baseDisabledReason: null,
+      denied: null,
+      local: "saved",
+      localError: null,
+      editedAt: 0,
+      docVersion: 1,
+    };
+    await storage.set(annotationKeyOf(SESSION, SCOPE), {
+      ...base,
+      conflict: {
+        reason: "旧版冲突",
+        current: {
+          annotationId: "n-1",
+          revision: 5,
+          hash: "c".repeat(64),
+          savedAt: "2026-10-08T02:00:00Z",
+        },
+      },
+    });
+    const legacyMutationScope = { ...SCOPE, questionId: "q-0002" };
+    await storage.set(annotationKeyOf(SESSION, legacyMutationScope), {
+      ...base,
+      conflict: { reason: "旧版幂等键错配", current: null },
+    });
+    installAnnotationBackend(storage);
+    expect((await getAnnotationRecord(SESSION, SCOPE))?.conflict?.kind).toBe(
+      "revision",
+    );
+    expect(
+      (await getAnnotationRecord(SESSION, legacyMutationScope))?.conflict?.kind,
+    ).toBe("mutation");
+  });
+});
+
+describe("retained 本机保留态（批次三 B）", () => {
+  it("layout keep-local＝置 retained 不重铸；revision 维持对齐重传口径", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1)]));
+    const mutationId = peekAnnotationRecord(SESSION, SCOPE)?.pending
+      ?.mutationId;
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局",
+    );
+    await expect(
+      resolveAnnotationConflictKeepLocal(SESSION, SCOPE),
+    ).resolves.toBe("retained");
+    let record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.conflict).toBeNull();
+    expect(record?.retained?.reason).toContain("另一布局");
+    expect(record?.pending?.mutationId).toBe(mutationId); // 不重铸
+    expect(getAnnotationView(SESSION, SCOPE)?.server).toBe("retained");
+
+    const correctionScope = { ...SCOPE, phase: "correction" as const };
+    writeAnnotationDoc(SESSION, correctionScope, docOf([strokeAt(2, 2)]));
+    await applyAnnotationConflict(
+      SESSION,
+      correctionScope,
+      "revision",
+      {
+        annotationId: "n-2",
+        revision: 9,
+        hash: "d".repeat(64),
+        savedAt: "2026-10-08T03:00:00Z",
+      },
+      "版本冲突",
+    );
+    await expect(
+      resolveAnnotationConflictKeepLocal(SESSION, correctionScope),
+    ).resolves.toBe("rearm");
+    record = peekAnnotationRecord(SESSION, correctionScope);
+    expect(record?.retained).toBeNull();
+    expect(record?.baseRevision).toBe(9);
+  });
+
+  it("无冲突时 keep-local 幂等跳过（none）", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1)]));
+    await expect(
+      resolveAnnotationConflictKeepLocal(SESSION, SCOPE),
+    ).resolves.toBe("none");
+  });
+
+  it("清除路径：手动清返回幂等；采用云端版本（choice）清；维护重置清", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1)]));
+    const expected =
+      peekAnnotationRecord(SESSION, SCOPE)?.pending?.mutationId ?? null;
+    await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "另一布局");
+    await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.retained?.reason).toContain(
+      "另一布局",
+    );
+    await expect(clearAnnotationRetained(SESSION, SCOPE)).resolves.toBe(true);
+    await expect(clearAnnotationRetained(SESSION, SCOPE)).resolves.toBe(false);
+
+    // retained 态下采用云端版本（choice）：retained 清、云端正文采用
+    await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "另一布局");
+    await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+    const cloud = docOf([strokeAt(9, 9)]);
+    await applyAnnotationView(SESSION, SCOPE, viewOf({ doc: cloud }), {
+      expectedMutationId: expected,
+    });
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.retained).toBeNull();
+    expect(record?.conflict).toBeNull();
+    expect(record?.pending).toBeNull();
+
+    // 维护重置（resetVersion 推进）同样清 retained
+    await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "另一布局");
+    await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+    await applyAnnotationView(SESSION, SCOPE, {
+      base: null,
+      doc: null,
+      annotation: null,
+      maxWidthPx: 1440,
+      resetVersion: 5,
+    });
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.retained).toBeNull();
+  });
+
+  it("非 choice 播种不清 retained（保留态稳定，不重启自动同步）", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1)]));
+    await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "另一布局");
+    await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+    // 云端空视图（无 doc）：本地未同步保留，retained 不动
+    await applyAnnotationView(SESSION, SCOPE, viewOf({ doc: null }));
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.retained?.reason).toContain(
+      "另一布局",
+    );
+  });
+});
+
 describe("派生态与快照", () => {
-  it("denied > conflict > uploading > dirty > synced", async () => {
+  it("denied > conflict > retained > uploading > dirty > synced", async () => {
     writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1)]));
     const record = peekAnnotationRecord(SESSION, SCOPE);
     if (record === null) throw new Error("记录应在");
     expect(deriveAnnotationServerState(record, false)).toBe("dirty");
     expect(deriveAnnotationServerState(record, true)).toBe("uploading");
-    await applyAnnotationConflict(SESSION, SCOPE, null, "冲突");
+    await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "冲突");
     const conflicted = peekAnnotationRecord(SESSION, SCOPE);
     if (conflicted === null) throw new Error("记录应在");
     expect(deriveAnnotationServerState(conflicted, true)).toBe("conflict");
+    await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+    const retainedRecord = peekAnnotationRecord(SESSION, SCOPE);
+    if (retainedRecord === null) throw new Error("记录应在");
+    expect(retainedRecord.retained).not.toBeNull();
+    expect(deriveAnnotationServerState(retainedRecord, true)).toBe("retained");
     await applyAnnotationDenied(SESSION, SCOPE, "access", "拒");
     const denied = peekAnnotationRecord(SESSION, SCOPE);
     if (denied === null) throw new Error("记录应在");

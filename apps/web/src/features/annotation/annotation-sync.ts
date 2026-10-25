@@ -29,6 +29,7 @@ import {
 } from "@/lib/api";
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 import {
+  type AnnotationConflictKind,
   type AnnotationLocalRecord,
   type AnnotationPendingVersion,
   type AnnotationScope,
@@ -178,6 +179,8 @@ type PutVerdict =
   | { kind: "aborted" }
   | {
       kind: "conflict";
+      /** 冲突类别（批次三 A）：revision/mutation/layout，随 409 code 区分 */
+      conflictKind: AnnotationConflictKind;
       current: AnnotationConflictSummary["current"];
       reason: string;
     }
@@ -199,6 +202,7 @@ function classifyPutError(err: unknown): PutVerdict {
     if (parsed.success && parsed.data.current !== null) {
       return {
         kind: "conflict",
+        conflictKind: "revision",
         current: parsed.data.current,
         reason: message,
       };
@@ -208,11 +212,17 @@ function classifyPutError(err: unknown): PutVerdict {
   if (status === 409 && code === "ANNOTATION_RESET_REQUIRED")
     return { kind: "refetch-view", reason: "标画已重置，请重新读取" };
   if (status === 409 && code === "ANNOTATION_BASE_LAYOUT_CONFLICT") {
-    return { kind: "conflict", current: null, reason: message };
+    return {
+      kind: "conflict",
+      conflictKind: "layout",
+      current: null,
+      reason: message,
+    };
   }
   if (status === 409 && code === "ANNOTATION_MUTATION_MISMATCH") {
     return {
       kind: "conflict",
+      conflictKind: "mutation",
       current: null,
       reason: `${message}（同一上传标识已对应不同正文，请重试以本机为准）`,
     };
@@ -387,6 +397,7 @@ async function runUpload(
         await applyAnnotationConflict(
           session,
           scope,
+          verdict.conflictKind,
           verdict.current,
           verdict.reason,
         );

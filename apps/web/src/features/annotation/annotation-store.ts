@@ -134,8 +134,16 @@ export interface AnnotationPendingVersion {
   doc: AnnotationDoc;
 }
 
-/** 冲突副本：云端摘要（null=服务端状态未知）+ 原因；本地稿即 record.doc */
+/**
+ * 冲突类别（批次三 P0-2）：revision=CAS 版本冲突（附云端摘要）；
+ * mutation=幂等键错配（无摘要，重铸后重传是正确行为）；
+ * layout=底图布局冲突（无摘要，重传必再撞 409——终局是本机保留或采用云端）。
+ */
+export type AnnotationConflictKind = "revision" | "mutation" | "layout";
+
+/** 冲突副本：类别 + 云端摘要（null=服务端状态未知）+ 原因；本地稿即 record.doc */
 export interface AnnotationConflictInfo {
+  kind: AnnotationConflictKind;
   reason: string;
   current: AnnotationConflictCurrent | null;
 }
@@ -170,6 +178,12 @@ export interface AnnotationLocalRecord {
   baseDisabledReason: string | null;
   /** 冲突副本（非 null 时停止自动上传，等用户裁决） */
   conflict: AnnotationConflictInfo | null;
+  /**
+   * 本机保留态（批次三 B）：layout 冲突「保留本机」＝本机保留、不再自动同步
+   * （uploadable 排除；本机 doc/localBase 照常可查看与导出）。清除路径：
+   * 采用云端版本（choice）/ 维护重置（resetVersion 推进）/ 手动「重新尝试同步」。
+   */
+  retained: { reason: string } | null;
   /** 被拒终态 */
   denied: AnnotationDeniedInfo | null;
   /** 本机持久化状态 */
@@ -192,6 +206,7 @@ function freshRecord(): AnnotationLocalRecord {
     base: null,
     baseDisabledReason: null,
     conflict: null,
+    retained: null,
     denied: null,
     local: "saved",
     localError: null,
@@ -229,7 +244,29 @@ function reviveRecord(raw: unknown): AnnotationLocalRecord | null {
     base: r.base ?? null,
     baseDisabledReason:
       typeof r.baseDisabledReason === "string" ? r.baseDisabledReason : null,
-    conflict: r.conflict ?? null,
+    conflict:
+      r.conflict == null
+        ? null
+        : {
+            // 旧记录无 kind 的缺省推导：current 非空→revision（对齐重传）、
+            // 空→mutation（重铸重传）——完整保留旧裁决行为；确是 layout 冲突的
+            // 旧记录重撞一次后即带类别落库，自愈到新出口。
+            kind:
+              r.conflict.kind === "revision" ||
+              r.conflict.kind === "mutation" ||
+              r.conflict.kind === "layout"
+                ? r.conflict.kind
+                : r.conflict.current != null
+                  ? "revision"
+                  : "mutation",
+            reason:
+              typeof r.conflict.reason === "string" ? r.conflict.reason : "",
+            current: r.conflict.current ?? null,
+          },
+    retained:
+      r.retained && typeof r.retained.reason === "string"
+        ? { reason: r.retained.reason }
+        : null,
     denied: r.denied ?? null,
     editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
     docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
@@ -408,13 +445,14 @@ export function notifyAnnotationStoreAll(): void {
 
 // ---------- 状态派生 ----------
 
-/** 服务端维度派生：denied > conflict > uploading > dirty > synced（同 note-store） */
+/** 服务端维度派生：denied > conflict > retained > uploading > dirty > synced */
 export function deriveAnnotationServerState(
   record: AnnotationLocalRecord,
   uploading: boolean,
-): "denied" | "conflict" | "uploading" | "dirty" | "synced" {
+): "denied" | "conflict" | "retained" | "uploading" | "dirty" | "synced" {
   if (record.denied !== null) return "denied";
   if (record.conflict !== null) return "conflict";
+  if (record.retained !== null) return "retained";
   if (uploading) return "uploading";
   if (record.pending !== null) return "dirty";
   return "synced";
@@ -429,7 +467,7 @@ export interface AnnotationRecordView {
   doc: AnnotationDoc | null;
   local: "saving" | "saved" | "failed";
   localError: string | null;
-  server: "denied" | "conflict" | "uploading" | "dirty" | "synced";
+  server: "denied" | "conflict" | "retained" | "uploading" | "dirty" | "synced";
   baseRevision: number;
   annotationId: string | null;
   /** 底图引用缓存（挂画布 gate） */
@@ -437,6 +475,7 @@ export interface AnnotationRecordView {
   baseDisabledReason: string | null;
   pendingMutationId: string | null;
   conflict: AnnotationConflictInfo | null;
+  retained: { reason: string } | null;
   denied: AnnotationDeniedInfo | null;
   docVersion: number;
 }
@@ -505,6 +544,7 @@ export function getAnnotationView(
     pendingMutationId: record.pending?.mutationId ?? null,
     localBase: record.localBase,
     conflict: record.conflict,
+    retained: record.retained,
     denied: record.denied,
     docVersion: record.docVersion,
   };
@@ -741,6 +781,7 @@ export async function applyAnnotationView(
     const meta = view.annotation;
     if (!choice && (meta?.revision ?? 0) < record.baseRevision) {
       record.conflict = {
+        kind: "revision",
         reason: "云端标画版本比本机已确认版本更旧，请重新核对并选择",
         current: {
           annotationId: meta?.annotationId ?? null,
@@ -765,6 +806,7 @@ export async function applyAnnotationView(
       meta.revision > record.baseRevision
     ) {
       record.conflict = {
+        kind: "revision",
         reason: "当前设备与云端都修改了本题标画，请选择保留版本",
         current: {
           annotationId: meta.annotationId,
@@ -805,6 +847,9 @@ export async function applyAnnotationView(
     record.doc = view.doc;
     record.docVersion += 1;
     record.conflict = null;
+    // 采用云端版本（用户显式裁决）清本机保留态：裁决后回到自动同步；
+    // 非 choice 播种不主动清（保留态稳定，不重启自动同步——重传必再撞冲突）
+    if (choice) record.retained = null;
   });
 }
 
@@ -836,15 +881,16 @@ export async function applyAnnotationReceipt(
   });
 }
 
-/** 冲突落地（409 REVISION_CONFLICT 附 _current / MUTATION_MISMATCH 无摘要） */
+/** 冲突落地（409：REVISION_CONFLICT 附 _current；MUTATION_MISMATCH/LAYOUT_CONFLICT 无摘要） */
 export async function applyAnnotationConflict(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
+  kind: AnnotationConflictKind,
   current: AnnotationConflictCurrent | null,
   reason: string,
 ): Promise<void> {
   await mutateLoaded(session, scope, null, (record) => {
-    record.conflict = { reason, current };
+    record.conflict = { kind, reason, current };
   });
 }
 
@@ -860,19 +906,31 @@ export async function applyAnnotationDenied(
   });
 }
 
+/** keep-local 结果：retained＝本机保留（不再自动同步）；rearm＝可立即重传；none＝无可裁决冲突 */
+export type AnnotationKeepLocalOutcome = "retained" | "rearm" | "none";
+
 /**
- * 冲突裁决「以本机为准」（题干圈画单人小稿的唯一裁决路径）：对齐云端摘要
- * revision（无摘要——MISMATCH——保持本地已知 base 并重铸 mutationId），
- * 清 conflict；重传编排由调用方（annotation-sync）负责。
+ * 冲突裁决「以本机为准」（批次三 B 按 kind 分叉）：
+ * - revision：对齐云端摘要 revision（CAS 重写后重传）；
+ * - mutation：无摘要——保持本地已知基线并重铸 mutationId（幂等键错配重传是正确行为）；
+ * - layout：**本机保留、不再自动同步**（置 retained；不重铸不重传——同一布局
+ *   差异重传必再撞 409，这是死锁出口；重传编排由 annotation-sync 按
+ *   返回值跳过）。清除路径见 retained 字段注释。
  */
 export async function resolveAnnotationConflictKeepLocal(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
-): Promise<void> {
+): Promise<AnnotationKeepLocalOutcome> {
+  let outcome: AnnotationKeepLocalOutcome = "none";
   await mutateLoaded(session, scope, null, (record) => {
     const conflict = record.conflict;
     if (conflict === null) return; // 无分歧（重复裁决）：幂等跳过
     record.conflict = null;
+    if (conflict.kind === "layout") {
+      record.retained = { reason: conflict.reason };
+      outcome = "retained";
+      return;
+    }
     if (conflict.current !== null) {
       record.baseRevision = conflict.current.revision;
       if (conflict.current.annotationId !== null) {
@@ -884,7 +942,26 @@ export async function resolveAnnotationConflictKeepLocal(
         doc: record.pending.doc,
       };
     }
+    outcome = "rearm";
   });
+  return outcome;
+}
+
+/**
+ * retained 手动清除（「重新尝试同步」按钮）：服务端 pending 行过期接管后
+ * 这条路能真正成功。返回是否实际清除；补传编排由 annotation-sync 负责。
+ */
+export async function clearAnnotationRetained(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<boolean> {
+  let cleared = false;
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.retained === null) return;
+    record.retained = null;
+    cleared = true;
+  });
+  return cleared;
 }
 
 /** 在途上传标记（sync 维护；派生 uploading 维度） */
