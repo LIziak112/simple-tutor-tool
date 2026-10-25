@@ -454,15 +454,44 @@ function parseMixedDocument(ctx: ParseContext): {
 function parseLessonDocument(ctx: ParseContext): {
   lectures: Lecture[];
   units: Unit[];
+  materials?: Material[];
+  groups?: QuestionGroup[];
 } {
   const { questionNodes, lastQuestionLectureTitle } = trackQuestionContainers(
     ctx.tree.children,
   );
 
+  // TT-06 两遍解析的站点收集器（题级 ::ref 位置与题目起始行；组/材料站点在
+  // extractMaterialsAndGroups 内登记，第二遍统一裁决）
+  const qmSites: QmRefSite[] = [];
+  const qmEntityLines = new Map<string, number>();
+
   let questions: Question[] = extractQuestions(ctx.tree.children, {
     lines: ctx.lines,
     unitId: ctx.unitId,
     startNumber: ctx.options.questionStartNumber ?? 1,
+    issues: ctx.issues,
+    qmRefSites: qmSites,
+    qmEntityLines: qmEntityLines,
+  });
+
+  // QM-14（讲练原位适配）：材料/组实体抽取与 practice/mixed 同构——组用
+  // ::ref 表达、不物理包含子题，故不触碰 lesson 的嵌套安全前提（设计
+  // 方案「组声明引用子题，不在 question 中直接嵌 question」）。此前 lesson
+  // 不抽取材料/组，题级 ::ref 索引进库而实体缺失，讲练开卷闭包 fail closed
+  const qm = extractMaterialsAndGroups(ctx.tree.children, {
+    lines: ctx.lines,
+    unitId: ctx.unitId,
+    issues: ctx.issues,
+  });
+
+  // 两遍解析第二遍：引用解析与结构校验（与 practice/mixed 同款）
+  resolveQmReferences({
+    materials: qm.materials,
+    groups: qm.groups,
+    questions,
+    sites: [...qm.sites, ...qmSites],
+    entityLines: mergeMaps(qm.entityLines, qmEntityLines),
     issues: ctx.issues,
   });
 
@@ -521,9 +550,14 @@ function parseLessonDocument(ctx: ParseContext): {
       questionNodes[0],
       declaredIsOwn ? declared : undefined,
     );
-    units.push(buildUnit(ctx, questions, lectureTitle));
+    units.push(buildUnit(ctx, questions, lectureTitle, qm));
   }
-  return { lectures, units };
+  return {
+    lectures,
+    units,
+    ...(qm.materials.length > 0 ? { materials: [...qm.materials] } : {}),
+    ...(qm.groups.length > 0 ? { groups: [...qm.groups] } : {}),
+  };
 }
 
 // ---------- 公共组装 ----------
