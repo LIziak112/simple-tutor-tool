@@ -1720,6 +1720,9 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       registerQuestionMedia(miss.src, false, miss.questionRefs);
     }
     for (const revision of evidenceAsm.revisions) {
+      // 一次查表（审查 P3-3：此前同 Map 连查两次，外层判非 undefined 后内层
+      // ?? [] 恒不触发）
+      const matRefs = materialRefsByQuestionRef.get(revision.ref);
       questionItemsV2.push({
         ref: revision.ref,
         questionId: revision.questionId,
@@ -1733,13 +1736,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         snapshotHash: revision.snapshotHash,
         media: mediaByRef.get(revision.ref) ?? [],
         // TT-13 材料节引用：该题条目（按内容身份去重后）引用的全部材料版本
-        ...(materialRefsByQuestionRef.get(revision.ref) !== undefined
-          ? {
-              materialRefs: [
-                ...(materialRefsByQuestionRef.get(revision.ref) ?? []),
-              ],
-            }
-          : {}),
+        ...(matRefs !== undefined ? { materialRefs: [...matRefs] } : {}),
         ...(revision.material.options !== undefined
           ? { options: [...revision.material.options] }
           : {}),
