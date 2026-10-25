@@ -13,8 +13,8 @@ import { HttpError } from "../lib/http-error.ts";
 
 /**
  * tt-06b / QM-05 导入主链的 QM 专用辅助（preview/commit/batch/zip/编辑共用）：
- * - NEW_CONTENT_DISABLED 发布开关（§5.8.4）：NEW_CONTENT_ENABLED 缺省 false，
- *   关闭部署导入新指令/新属性文档 → 403（判定面 detectNewContent，TT-06 交付）；
+ * - NEW_CONTENT_ENABLED 发布开关（§5.8.4，缺省 false 即新内容默认停用）：关闭
+ *   部署导入新指令/新属性文档 → 403（判定面 detectNewContent，TT-06 交付）；
  * - 导入规范化回写（§5.2.3）：normalizeQmIds 在 lint/落库前运行——实体 sourceMd
  *   固化缺省 id，imports.rawMd 仍留档教师提交原文（§5.2.5 留档语义）；
  * - UNKNOWN_MATERIAL_REF 教师域解析降级：静态 lint 只看本文档，文档外引用

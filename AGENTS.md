@@ -111,8 +111,16 @@ pnpm dev / pnpm test / pnpm e2e（真实Playwright：Chromium/WebKit，隔离临
 - 已提交且参考答案按四态 gate 公布后，reference_self 行在结果视图、题级反馈与讲练题卡默认出现对照答案、解析与「对了／错了／暂不判断」动作；不自动替学生选，未自评时「暂不判断」禁用（无可清除对象）。
 - 完成状态三态经 `verdictBadgeDisplayOf` 单一出处：reference_self 教师未判行显示「已完成、待自评／自评正确／自评错误」（结果卡左边框随自评 verdict 变色），其余行沿既有 finalCorrect 徽章路径零变化；manual_only 行提示「暂无参考答案」，不假装可自动判断；教师已判时自评动作整块不渲染，显示走批改块（教师优先，不可被客户端覆盖）。
 - 投影与 CAS：结果单题携带 `selfReview`（record + revision，undecided 清除后 record=null 但 revision 单独下发）与 `gradingPolicy`，公布前整键 null 投影；UI 只消费投影，本地采纳的成功回执/409 `_current` 仅在 revision 更大时生效，refetch 落地即回归服务端事实。同一意图重试复用同一 mutationId；成功后失效 attempt 前缀与讲练/记录/错题/教师聚合缓存。
-- 对照格式：填空逐空对照（既有）；response 对照面附字数行（`countResponseWords` 契约单源 + wordMin/wordMax 建议，未作答不显示）；matching/ordering 以登记表成员判别（`answerKind in answerKindViews`，I16 集合口径）走通用文本占位，逐项格式留 QM-13，不伪造。
+- 对照格式：填空逐空对照（既有）；response 对照面附字数行（`countResponseWords` 契约单源 + wordMin/wordMax 建议，未作答不显示）；matching/ordering 逐项对照已随 QM-13 由登记表转正（ResultAnswerComparison 通用宿主，`answerKind in answerKindViews` I16 集合口径），不再走通用文本占位。
 - 自评不阻塞回看、原稿、订正与记录入口；做完题即可回看或离开。
+
+## 题目模型与练习适配（QM，2026-10）
+
+- 材料/组/引用是题目之上的教师域实体（迁移 0044 五表 + `attempt_context_snapshots`）：DSL 稳定 id 是教师域全局主键，同教师同 id 重导按「同 ID 更新/移动」覆盖（多语料连导须拆教师域）；开卷同事务冻结依赖闭包，学生侧一切消费（作答/结果/历史/错题/导出/AI 上下文）恒读冻结快照、零 live 回退，缺依赖 fail closed 不以活库顶替旧卷内容。
+- 学生作答文本序列化单源 `serializeStudentAnswerOfRow`（待批队列/CSV×2/学情包/单题包/错题本五出口共用，批量出口按 attemptId 记忆化）；matching「第 N 空＝选项正文」用 matchingSlots 携带的材料槽位 ordinal，不得用题内下标重排。
+- 导出与 AI 出站的材料闭包单源：`frozenMaterialsForQuestion`（服务端）/`exportMaterialsOfQuestion`（web PNG）组∪题级、全版本、(id, sourceVersion) 稳定序后编号；新增出口不得另写第二闭包。题级 ::ref 材料（无组）入口经 `questionMaterialsOf` + `QuestionMaterialsAnchor` 单源挂接作答/结果/讲练三视图，新视图不得只挂组段材料。
+- 新题型学生面投影：matching/ordering 干扰项 distractor 逐项剥离、sortableCount 计数替代（公布前不枚举答案成员）；保存校验仍用快照全量结构（干扰入序/固定错位 400 不回归）。旧冻结快照缺结构键时从快照自身 sourceMd 兜底重抽——只用于当次投影，不引活库、不回写、不重判。
+- 新内容发布开关 `NEW_CONTENT_ENABLED` 只裁决新导入与新开卷的判分策略写入；已开卷按冻结快照继续作答完成，与 answersReleased 相互独立。部署顺序、兼容边界与回退见 docs/题目模型与练习适配/发布说明与回退预案.md（v2 0040 `review_*` 七列已弃用无运行时读写，DROP 待拍板）。
 
 ## 学生作业列表 UI 约定
 - 首页只显示最新两份待完成作业，并显示待办总数；已交卷和已批改作业在独立「我的作业」页面查看。
