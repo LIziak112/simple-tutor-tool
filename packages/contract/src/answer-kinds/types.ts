@@ -57,8 +57,14 @@ export interface ShapeIssue {
 export interface AnswerKindBehavior<A extends { kind: string }, S> {
   /** 已答判定（旧 isAnswered 口径：fill 至少一空非空、final 非空文本；I06 与完整度分离） */
   isAnswered(answer: A): boolean;
-  /** 本人答案 → 按口径文本化；三口径输出各自锁定（I15） */
-  formatStudent(answer: A, profile: AnswerTextProfile, structure: S): string;
+  /** 本人答案 → 按口径文本化；三口径输出各自锁定（I15）。null 仅 teacher-queue
+   *  口径的空结构「未做」（#6980-3：judge 空串/multi 空选/fill 全空/final 空文本
+   *  → null，待批队列与 CSV 不伪造空答案）；display/ai-context 恒返回 string */
+  formatStudent(
+    answer: A,
+    profile: AnswerTextProfile,
+    structure: S,
+  ): string | null;
   /** 结构形状检查：未知引用/重复/越界等，只报告不拦截 */
   inspectShape(answer: A, structure: S): readonly ShapeIssue[];
 }

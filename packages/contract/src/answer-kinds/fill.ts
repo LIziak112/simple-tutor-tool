@@ -20,7 +20,11 @@ export const fillBehavior: AnswerKindBehavior<
         .map((value) => (value.trim() === "" ? "（空）" : value))
         .join("；");
     }
-    // teacher-queue/ai-context：values 原样「；」连接，空值不渲染占位
+    // teacher-queue/ai-context：全空按「未做」序列化为 null（#6980-3——v2 起
+    // ai-context 的 fill 经 serializeStudentAnswer 委托，同口径不伪造分隔串）
+    if (answer.values.every((value) => value.trim() === "")) {
+      return null;
+    }
     return answer.values.join("；");
   },
   // fill 的历史宽容（I02）：多余数组项合法（7.1「额外数组项不能填补空位」是

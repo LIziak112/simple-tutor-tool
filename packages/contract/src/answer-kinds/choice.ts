@@ -30,8 +30,10 @@ export const choiceMultiBehavior: AnswerKindBehavior<
         .map((index) => lettersOf(index))
         .join("");
     }
-    // teacher-queue/ai-context：去重+升序、「、」连接（§7.1 与 display 有意不同）
+    // teacher-queue/ai-context：去重+升序、「、」连接（§7.1 与 display 有意不同）；
+    // 空选按「未做」序列化为 null（#6980-3：queue/ai 统一口径，不伪造空串）
     const unique = [...new Set(indexes)].sort((a, b) => a - b);
+    if (unique.length === 0) return null;
     if (profile === "teacher-queue") {
       return unique.map((index) => queueOptionLabel(index)).join("、");
     }

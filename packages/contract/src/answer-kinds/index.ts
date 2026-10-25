@@ -80,12 +80,14 @@ function assertNever(kind: never): never {
  * 唯一调度边界（§4.4）：按 kind 显式 switch 窄化后调用登记表实现，
  * assertNever 收尾。新增 kind 在此增加穷尽分支（§11.1 触点清单）。
  * 调度边界以外，业务代码不得新增按 answer.kind 字面量的分支（I16）。
+ * 返回 null 仅 teacher-queue 口径的空结构「未做」（#6980-3，见
+ * AnswerKindBehavior.formatStudent 注释）；display/ai-context 恒 string。
  */
 export function dispatchBehavior(
   answer: StudentAnswer,
   profile: AnswerTextProfile,
   structures: PublicStructureByKind,
-): string {
+): string | null {
   const table: AnswerKindBehaviorTable<StudentAnswer, PublicStructureByKind> =
     answerKindBehaviors;
   switch (answer.kind) {

@@ -17,7 +17,10 @@ export const finalBehavior: AnswerKindBehavior<
     if (profile === "display") {
       return answer.finalAnswer.trim() === "" ? "（空）" : answer.finalAnswer;
     }
-    if (profile === "teacher-queue") return answer.finalAnswer;
+    // teacher-queue：空文本按「未做」序列化为 null（#6980-3；只写笔迹未填的
+    // 待批行靠笔迹材料展示，不伪造空答案文本）
+    if (profile === "teacher-queue")
+      return answer.finalAnswer.trim() === "" ? null : answer.finalAnswer;
     // ai-context：只写笔迹未填最终答案 → 标注在笔迹材料中（不伪造文本）
     return answer.finalAnswer.trim() === ""
       ? "（答案在笔迹材料中）"

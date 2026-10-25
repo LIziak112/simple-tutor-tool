@@ -18,7 +18,15 @@ export const judgeBehavior: AnswerKindBehavior<
       if (profile === "display") return answer.value ? "对" : "错";
       return answer.value ? "正确" : "错误";
     }
-    // 历史字符串写法：三口径一律原样保留（I02/§7.1 不改写历史值）
+    // 历史字符串写法：三口径一律原样保留（I02/§7.1 不改写历史值）；
+    // 空串按「未做」序列化为 null（#6980-3：v2 起 queue/ai 同口径——ai-context
+    // 的 judge 经 serializeStudentAnswer 委托，空串不伪造文本）
+    if (
+      (profile === "teacher-queue" || profile === "ai-context") &&
+      answer.value.trim() === ""
+    ) {
+      return null;
+    }
     return answer.value;
   },
   inspectShape: () => [],

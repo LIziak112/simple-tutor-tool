@@ -99,6 +99,9 @@ function oldOptionLabel(index: number): string {
 function oldSerializeStudentAnswer(
   answer: StudentAnswer | null,
 ): string | null {
+  // v2 #6980-3 审查修复（494b7e2c）后的现网口径：teacher-queue 空结构按
+  // 「未做」序列化为 null——差分基准随现网语义更新（judge 空串/multi 空选/
+  // fill 全空/final 空文本）
   if (answer === null) return null;
   switch (answer.kind) {
     case "judge":
@@ -106,18 +109,22 @@ function oldSerializeStudentAnswer(
         ? answer.value
           ? "正确"
           : "错误"
-        : answer.value;
+        : answer.value.trim() === ""
+          ? null
+          : answer.value;
     case "choice":
       return oldOptionLabel(answer.index);
     case "multi":
+      if (answer.indexes.length === 0) return null;
       return [...new Set(answer.indexes)]
         .sort((a, b) => a - b)
         .map((index) => oldOptionLabel(index))
         .join("、");
     case "fill":
+      if (answer.values.every((value) => value.trim() === "")) return null;
       return answer.values.join("；");
     case "final":
-      return answer.finalAnswer;
+      return answer.finalAnswer.trim() === "" ? null : answer.finalAnswer;
     default:
       throw new Error("旧实现夹具不认识新 kind（差分只覆盖旧五 kind）");
   }
@@ -147,6 +154,8 @@ function oldStudentAnswerTextOf(
     case "choice":
       return oldOptionTextOf(options, answer.index);
     case "multi":
+      // #6980-3 归一口径：空选「未做」→ null（与 teacher-queue 统一）
+      if (answer.indexes.length === 0) return null;
       return [...new Set(answer.indexes)]
         .sort((a, b) => a - b)
         .map((index) => oldOptionTextOf(options, index))
@@ -381,13 +390,13 @@ describe("I15 三口径差分：登记表 vs 迁移前旧实现（valid-08 语�
       expect(
         dispatchBehavior(answer, "teacher-queue", structures),
         `teacher-queue × ${structures.choice.options.length} 选项结构`,
-      ).toBe(oldSerializeStudentAnswer(answer) ?? "");
+      ).toBe(oldSerializeStudentAnswer(answer));
     }
 
     // ai-context：旧实现看到的位置 options 与登记表结构由同一语料构造
     expect(
       dispatchBehavior(answer, "ai-context", structuresFor(aiOptionTexts)),
-    ).toBe(oldStudentAnswerTextOf(oldSnapshotOptions, answer) ?? "");
+    ).toBe(oldStudentAnswerTextOf(oldSnapshotOptions, answer));
 
     // isAnswered 口径差分
     expect(dispatchIsAnswered(answer)).toBe(oldIsAnswered(answer));

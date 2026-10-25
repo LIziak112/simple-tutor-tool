@@ -423,7 +423,8 @@ describe("纯层接口原型（TT-02）", () => {
       ),
     ).toBe("x");
 
-    // final：display 空文本「（空）」；queue 原文；ai-context 标注笔迹材料
+    // final：display 空文本「（空）」；queue 空文本按「未做」序列化 null
+    // （#6980-3）；ai-context 标注笔迹材料
     expect(
       dispatchBehavior(
         { kind: "final", finalAnswer: "42" },
@@ -444,7 +445,7 @@ describe("纯层接口原型（TT-02）", () => {
         "teacher-queue",
         productionStructures,
       ),
-    ).toBe("");
+    ).toBeNull();
     expect(
       dispatchBehavior(
         { kind: "final", finalAnswer: "" },
