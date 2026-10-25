@@ -168,39 +168,32 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
+      // 新冻结行按当前自评策略判定，教师待批与学生待自评分开统计。
+      const resultQ1 = studentPage.locator('article[aria-label="第 1 题"]');
+      await expect(
+        resultQ1.getByText("已完成，待自评", { exact: true }),
+      ).toBeVisible();
+      await resultQ1.getByRole("button", { name: "错了", exact: true }).click();
+      await expect(
+        resultQ1.getByText("自评错误", { exact: true }),
+      ).toBeVisible();
     } finally {
       await studentContext.close();
     }
 
-    // —— 教师端 UI：登录（学情专属教师）→ 待批队列批错填空题 → 学情总览 ——
+    // —— 教师端 UI：登录（学情专属教师）→ 查看学生自评后的学情总览 ——
     await page.goto("/t/login");
     await page.fill("#login-name", teacherName);
     await page.fill("#login-password", INSIGHTS_TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.waitForURL("**/t/library");
 
-    // fill 全人工批改（2026-10-02）：学生答 6 的填空题交卷后不自动判错 → 进
-    // 待批；教师批错后整卷 graded（判断自动判对 + 填空教师判错 → 1/2 = 50%），
-    // 下方总览/矩阵/错题断言与批改前的原口径数字一致。点「标错（2）」按钮
-    // （与快捷键 2 同款）：selectOption 后焦点在 select 内会被快捷键守卫跳过。
-    await page.goto("/t/data/pending");
-    await page
-      .locator("#pending-student-filter option", { hasText: studentName })
-      .waitFor({ state: "attached" });
-    await page.selectOption("#pending-student-filter", {
-      label: studentName,
-    });
-    const pendingCard = page.locator(
-      `article[aria-label="待批卡片：${studentName}"]`,
-    );
-    await expect(pendingCard).toBeVisible();
-    await expect(pendingCard.getByText("参考答案：")).toBeVisible();
-    await pendingCard.getByRole("button", { name: "标错（2）" }).click();
-    await expect(pendingCard).toHaveCount(0);
-    await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
+    const pending = await request.get("/api/teacher/pending-marks");
+    expect(pending.ok()).toBe(true);
+    expect(JSON.stringify(await pending.json())).not.toContain(studentName);
 
     await page.goto("/t/insights");
-    // 关键计数：判断自动判对 + 填空教师批错 → graded，正确率 50%（D4：判对 1 / 已判定 2）
+    // 判断自动判对 + 填空自评错误 → graded，正确率 50%（判对 1 / 已判定 2）。
     await expect(page.getByText("总正确率")).toBeVisible();
     const overall = page.getByText("总正确率").locator("..");
     await expect(overall.getByText("50%", { exact: true })).toBeVisible();
