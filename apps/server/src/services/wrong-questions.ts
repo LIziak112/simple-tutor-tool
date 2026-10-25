@@ -17,7 +17,7 @@ import {
   units,
 } from "../db/schema";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
-import { serializeStudentAnswer } from "./mark-response";
+import { serializeStudentAnswerOfRow } from "./mark-response";
 import { notSelfReviewPendingRow } from "./pending-mark";
 // 两线收敛接线：v2 错题闭环的轮次可见性守卫（公布/可见性单一出处，note-service
 // 同款复用）——不将 AI 出口授权当成学生读答案权限
@@ -57,8 +57,9 @@ import { sourceOf } from "./teacher-attempt-service";
  * - 条目内容（题干/题型/难度/考点/参考答案/详解）取**最近一次判定作答**的
  *   questionSnapshotJson 快照（含 [[答案]] 标记原文——已交卷内容允许下发，
  *   与结果视图同一口径；坏快照按缺失计跳过并留痕，snapshotOfRow 同口径）；
- * - answerText：本人最近答案的序列化文本（serializeStudentAnswer，与教师端
- *   待批卡片/CSV 导出同一口径）；来源上下文取最近一次判定作答所属 attempt；
+ * - answerText：本人最近答案的序列化文本（serializeStudentAnswerOfRow，
+ *   与教师端待批卡片/CSV 导出/学情包同一单源）；来源上下文取最近一次判定
+ *   作答所属 attempt；
  * - originUnitId/originUnitTitle：题目**归属单元**（questions.unitId join
  *   units 取标题，按练习分组的依据——历史合并作业里的错题按题挂回各自单元）。
  *   软删题目/单元行仍在、标题照常可读；题目行缺失的防御为 null；
@@ -466,7 +467,14 @@ export function listWrongQuestions(
         ? { options: snapshot.options.map((option) => option.text) }
         : {}),
       ...releaseOfSnapshot(snapshot),
-      answerText: serializeStudentAnswer(answerOf(lastResponse.answerJson)),
+      // P3-5：与待批队列/CSV/学情包/单题包同走行级序列化单源（matching/ordering
+      // 按冻结结构装配「第 N 空 = 选项正文」/项正文串联；旧七型输出逐字不变）
+      answerText: serializeStudentAnswerOfRow(
+        db,
+        last.attemptId,
+        lastResponse,
+        answerOf(lastResponse.answerJson),
+      ),
       firstCorrect: effectiveOfRound(first)?.value === true,
       resolved: effectiveOfRound(last)?.value === true,
       firstAt: first.submittedAt ?? first.startedAt,
