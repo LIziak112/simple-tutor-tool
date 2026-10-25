@@ -150,6 +150,14 @@ function QuestionMeta({
             className="size-3.5 fill-primary text-primary"
           />
         )}
+        {/* #6980-4（审查 P2-7）：题卡头部琥珀问号——手机端/单题模式收起答题
+        卡时，点完菜单也能看到「标过不会」的即时反馈 */}
+        {unsure && (
+          <CircleHelp
+            aria-label="标过不会"
+            className="size-3.5 text-amber-600 dark:text-amber-400"
+          />
+        )}
         {detailsOpen && (
           <div className="contents">
             <span
@@ -559,7 +567,9 @@ export function AttemptQuestionCard({
         flagged={flagged}
         onToggleFlag={onToggleFlag}
         unsure={unsure}
-        onToggleUnsure={onToggleUnsure}
+        // 行级锁同步（#6980-4 审查 P1-3）：单题已提交（readOnly）后服务端
+        // 拒改标记，菜单项同步隐藏，不给「点了必失败」的入口
+        onToggleUnsure={readOnly ? undefined : onToggleUnsure}
         formalInkPresence={formalInkPresence}
         tools={
           attemptId === undefined

@@ -334,17 +334,12 @@ function ResultQuestionCard({
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
+        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答。
+            「标过不会」是学生做题时的事实标注（#6980-4），不受公布 gate 与
+            自评分支影响——自评题与待公布卷同样显示（审查修复 P1-5） */}
         {released ? (
           !question.selfReview ? (
-            <span className="flex items-center gap-2">
-              <VerdictBadge verdict={verdict} notDone={!question.answered} />
-              {question.studentFlag === "unsure" && (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                  标过不会
-                </span>
-              )}
-            </span>
+            <VerdictBadge verdict={verdict} notDone={!question.answered} />
           ) : null
         ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
@@ -357,6 +352,11 @@ function ResultQuestionCard({
               className="size-4 shrink-0 text-sky-500"
             />
             答案已保存 · 待公布
+          </span>
+        )}
+        {question.studentFlag === "unsure" && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            标过不会
           </span>
         )}
         <h3
@@ -502,11 +502,16 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
-  // 圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为 0），
-  // 与 released 显隐判据双保险。#6980-3：未做题（answered=false）不圈入。
+  // 2026-10：本卷错题（finalCorrect === false 且已答，按本卷题序）——直达
+  // 重练的圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为
+  // 0），与 released 显隐判据双保险。#6980-3：未做题不圈入；#6980-4：标过
+  // 「不会」的题（含做对）也进本卷错题（标不会 = 按做错结算的主人口径）
   const wrongQuestionIds = flatQuestions
-    .filter((question) => question.finalCorrect === false && question.answered)
+    .filter(
+      (question) =>
+        (question.finalCorrect === false && question.answered) ||
+        question.studentFlag === "unsure",
+    )
     .map((question) => question.questionId);
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;

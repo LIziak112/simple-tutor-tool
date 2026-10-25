@@ -319,6 +319,7 @@ interface SubmitBody {
         teacherComment: string | null;
         finalCorrect: boolean | null;
         answered: boolean;
+        studentFlag: string | null;
         snapshot: { stemMd: string };
       };
     };
@@ -567,10 +568,13 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
     expect(data.feedback.question.answer).toBeNull();
     expect(data.feedback.question.autoCorrect).toBe(false); // D1：未作答客观题判错进分母
     expect(data.feedback.question.answered).toBe(true); // 单题主动提交恒已答
+    // 空提交 =「不会，提交并看解析」→ 自动标「不会」，按做错结算（主人口径）
+    expect(data.feedback.question.studentFlag).toBe("unsure");
     expect(responseRowOf(env.db, attemptId, Q.choice)).toMatchObject({
       autoCorrect: false,
       finalCorrect: false,
       answered: true,
+      studentFlag: "unsure",
     });
   });
 

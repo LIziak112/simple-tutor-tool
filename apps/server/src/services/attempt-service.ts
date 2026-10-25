@@ -2483,6 +2483,24 @@ export function submitLessonQuestion(
     reviewPolicySchema.parse(row.reviewPolicy),
   );
 
+  // #6980-4（2026-10-25 主人口径）：空提交 =「不会，提交并看解析」——学生
+  // 已读题、承认不会、当场看解析，按做错结算：自动标「不会」进错题本。
+  // 判定 = 无文本作答（isUnanswered）且无正式笔迹（ink 表 (attemptId,
+  // questionId) 唯一键，responses.inkId 为 T2.8 遗留列恒空）
+  const unsureOnEmpty =
+    isUnanswered(answer) &&
+    db
+      .select({ id: ink.id })
+      .from(ink)
+      .where(
+        and(
+          eq(ink.attemptId, attemptId),
+          eq(ink.questionId, questionId),
+          gt(ink.strokeCount, 0),
+        ),
+      )
+      .get() === undefined;
+
   // 笔记证据（单题化）：验证纯读、先于事务；写入与判分同事务
   const evidenceRow = buildSingleQuestionEvidence(
     db,
@@ -2530,6 +2548,9 @@ export function submitLessonQuestion(
         //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
         // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
         answered: true,
+        // #6980-4（主人口径）：空提交自动标「不会」；有答案/笔迹的提交不覆盖
+        // 既有标注（学生可先自标「不会」再作答，标注保留）
+        studentFlag: unsureOnEmpty ? "unsure" : (row.studentFlag ?? null),
         submittedAt: nowIso,
       })
       .where(eq(responses.id, row.id))
@@ -2770,6 +2791,24 @@ export function submitPracticeQuestion(
       reviewPolicySchema.parse(row.reviewPolicy),
     );
 
+    // #6980-4（2026-10-25 主人口径）：空提交 =「不会，提交并看解析」——学生
+    // 已读题、承认不会、当场看解析，按做错结算：自动标「不会」进错题本。
+    // 判定 = 无文本作答（isUnanswered）且无正式笔迹（ink 表 (attemptId,
+    // questionId) 唯一键；responses.inkId 为 T2.8 遗留列恒空）
+    const unsureOnEmpty =
+      isUnanswered(answer) &&
+      db
+        .select({ id: ink.id })
+        .from(ink)
+        .where(
+          and(
+            eq(ink.attemptId, attemptId),
+            eq(ink.questionId, questionId),
+            gt(ink.strokeCount, 0),
+          ),
+        )
+        .get() === undefined;
+
     // 证据声明核对（frozen/none/missing，与 lesson 单题提交同一实现）
     const evidenceRow = buildSingleQuestionEvidence(
       db,
@@ -2789,6 +2828,9 @@ export function submitPracticeQuestion(
         //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
         // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
         answered: true,
+        // #6980-4（主人口径）：空提交自动标「不会」；有答案/笔迹的提交不覆盖
+        // 既有标注（学生可先自标「不会」不覆盖）
+        studentFlag: unsureOnEmpty ? "unsure" : (row.studentFlag ?? null),
         submittedAt: nowIso,
         practiceMutationId: req.submissionMutationId,
         practiceRequestDigest: digest,
@@ -3156,6 +3198,10 @@ export function setStudentFlag(
     );
   }
   requireAttemptQuestion(db, attempt, questionId);
+  // 行级锁（#6980-4 审查 P1-3）：单题已提交（逐题反馈/讲练看解析）后，
+  // 「做题时标了不会」的事实已随提交落定，不能事后追加或取消——否则蒙对
+  // 后可摘标记逃逸错题本。与 saveDraftAnswer / saveInk 同一守卫口径
+  assertRowNotSubmitted(db, attemptId, questionId, "修改「不会」标记");
   db.update(responses)
     .set({ studentFlag: flag })
     .where(

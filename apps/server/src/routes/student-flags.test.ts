@@ -3,10 +3,12 @@ import {
   type WrongQuestionsData,
   wrongQuestionsOkSchema,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
+import { responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -53,6 +55,7 @@ interface FlagEnv {
   aCookie: string;
   courseId: string;
   unitId: string;
+  db: ReturnType<typeof createTestDb>;
 }
 
 async function makeFlagEnv(): Promise<FlagEnv> {
@@ -139,6 +142,7 @@ async function makeFlagEnv(): Promise<FlagEnv> {
     aCookie: `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`,
     courseId,
     unitId,
+    db,
   };
 }
 
@@ -261,6 +265,19 @@ describe("PUT /api/student/attempts/:id/flags/:questionId（#6980-4 标注不会
     expect(((await unknown.json()) as { ok: false; error: string }).error).toBe(
       "QUESTION_NOT_FOUND",
     );
+
+    // 行级锁（#6980-4 审查 P1-3）：仅单题提交（整卷仍 draft）的行同样不可
+    // 改标记——蒙对后摘标记逃逸错题本的口子堵死
+    env.db
+      .update(responses)
+      .set({ submittedAt: new Date().toISOString() })
+      .where(eq(responses.questionId, Q.judge2))
+      .run();
+    const rowLocked = await setFlag(env, attemptId, Q.judge2, "unsure");
+    expect(rowLocked.status).toBe(409);
+    expect(
+      ((await rowLocked.json()) as { ok: false; error: string }).error,
+    ).toBe("QUESTION_ALREADY_SUBMITTED");
   });
 
   it("交卷后 409；结果视图保留标志；仅标不会（判对）也入错题本，轮次带标志不计错次", async () => {
@@ -299,15 +316,17 @@ describe("PUT /api/student/attempts/:id/flags/:questionId（#6980-4 标注不会
       .find((question) => question.questionId === Q.judge1);
     expect(resultJudge1?.studentFlag).toBe("unsure");
 
-    // 错题本：judge1 以「标过不会」入本（判对、wrongCount=0），轮次带标志
-    // judge1 最近一次判对 → 属「已攻克」，includeResolved 才列出
-    const wrong = await getWrongQuestions(env, "?includeResolved=true");
+    // 错题本：judge1 以「标过不会」入本（判对、wrongCount=0），轮次带标志；
+    // 标过不会的做对轮不算攻克（#6980-4 审查 P1-4）→ 默认列表就列出且
+    // resolved=false，不再被服务端当「已攻克」过滤掉
+    const wrong = await getWrongQuestions(env);
     expect(wrong.status).toBe(200);
     expect(wrongQuestionsOkSchema.safeParse(wrong.body).success).toBe(true);
     const judge1 = wrong.data?.questions.find(
       (card) => card.questionId === Q.judge1,
     );
     expect(judge1).toBeDefined();
+    expect(judge1?.resolved).toBe(false);
     expect(judge1?.rounds).toHaveLength(1);
     expect(judge1?.rounds[0]?.studentFlag).toBe("unsure");
     expect(judge1?.rounds[0]?.correct).toBe(true);

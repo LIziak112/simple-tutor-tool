@@ -1384,7 +1384,7 @@ function AnswerView({
                             flagged={flaggedQuestions.has(question.id)}
                             onToggleFlag={toggleFlag}
                             unsure={studentFlags.has(question.id)}
-                            onToggleUnsure={() => toggleUnsure(question.id)}
+                            onToggleUnsure={toggleUnsure}
                             formalInkPresence={
                               formalInkPresence.get(question.id) ?? false
                             }
