@@ -30,10 +30,10 @@ test(
       '::::question{type=choice difficulty=1 knowledge="数据结构"}',
       "可以用（ ）定义一个完整的数据结构。",
       "",
-      "- [ ] 数据元素",
-      "- [ ] 数据对象",
-      "- [ ] 数据关系",
-      "- [x] 抽象数据类型",
+      "- [ ] 0.",
+      "- [ ] 1.",
+      "- [ ] 2.",
+      "- [x] 3.",
       "::::",
       "",
       '::::question{type=multi difficulty=1 knowledge="数据结构"}',
@@ -69,6 +69,19 @@ test(
         const box = await option.boundingBox();
         expect(box?.height).toBeGreaterThanOrEqual(44);
         expect(box?.height).toBeLessThanOrEqual(48);
+      }
+      for (const label of await first
+        .locator('[role="radiogroup"] > label')
+        .or(second.locator("fieldset > label"))
+        .all()) {
+        const offset = await label.evaluate((element) => {
+          const letter = element.querySelector(":scope > span");
+          if (!letter) throw new Error("缺少选项字母");
+          const row = element.getBoundingClientRect();
+          const glyph = letter.getBoundingClientRect();
+          return Math.abs(glyph.y + glyph.height / 2 - row.y - row.height / 2);
+        });
+        expect(offset).toBeLessThanOrEqual(1);
       }
       const boxes = await Promise.all([
         first.boundingBox(),
