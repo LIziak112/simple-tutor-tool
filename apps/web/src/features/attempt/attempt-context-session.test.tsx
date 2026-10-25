@@ -158,14 +158,18 @@ const draftOfSoloMaterial = (): AttemptDraftData => {
   const draft = draftOf();
   const questions = draft.units[0]?.questions;
   if (questions !== undefined) {
-    questions[1] = {
-      ...questions[1]!,
-      materialRefs: [{ material: "mat-q2" }],
-    };
-    questions[2] = {
-      ...questions[2]!,
-      materialRefs: [{ material: "mat-solo" }],
-    };
+    const groupMember = questions[1];
+    const solo = questions[2];
+    if (groupMember !== undefined && solo !== undefined) {
+      questions[1] = {
+        ...groupMember,
+        materialRefs: [{ material: "mat-q2" }],
+      };
+      questions[2] = {
+        ...solo,
+        materialRefs: [{ material: "mat-solo" }],
+      };
+    }
   }
   return draft;
 };

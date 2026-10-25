@@ -1167,12 +1167,14 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
   // P1-2：solo 题的题级 ::ref 材料在回看挂题级锚（自然阅读、与组材料列
   // 同口径）；组员题级引用并入组材料列（组∪题级单源）。
   it("P1-2 题级材料锚：solo 题材料可见；组员题级引用并入组材料列", async () => {
+    const unit = GROUP_DATA.units[0];
+    if (unit === undefined) throw new Error("夹具缺首单元");
     const soloRefData: AttemptResultData = {
       ...GROUP_DATA,
       units: [
         {
-          ...GROUP_DATA.units[0]!,
-          questions: GROUP_DATA.units[0]!.questions.map((question, i) =>
+          ...unit,
+          questions: unit.questions.map((question, i) =>
             i === 1
               ? {
                   ...question,
