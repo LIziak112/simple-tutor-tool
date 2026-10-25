@@ -28,6 +28,7 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { createEventQueue } from "@/lib/event-queue";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
 
@@ -65,7 +66,8 @@ export default function StudentLectureViewPage() {
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false);
   const [currentIndex, setCurrentIndex] = useState<number | null>(0);
-  const toolbarRef = useRef<HTMLElement>(null);
+  const toolbar = useReadingToolbar({ blocked: mobileOutlineOpen });
+  const toolbarRef = toolbar.ref;
   const articleRef = useRef<HTMLElement>(null);
   const outlineTriggerRef = useRef<HTMLButtonElement>(null);
   const desktopOutlineScrollRef = useRef<HTMLDivElement>(null);
@@ -94,7 +96,7 @@ export default function StudentLectureViewPage() {
       observer.disconnect();
       root.style.scrollPaddingTop = previousPadding;
     };
-  }, []);
+  }, [toolbarRef]);
 
   useEffect(() => {
     if (isDesktop) setMobileOutlineOpen(false);
@@ -224,8 +226,9 @@ export default function StudentLectureViewPage() {
     >
       <nav
         ref={toolbarRef}
+        data-reading-hidden={toolbar.hidden}
         aria-label="讲义阅读工具栏"
-        className="sticky top-0 z-20 -mx-3 flex min-h-16 items-center gap-2 border-b border-border bg-background px-3 py-2 sm:-mx-6 sm:px-6"
+        className="reading-toolbar sticky top-0 z-20 -mx-3 flex min-h-14 items-center gap-2 border-b border-border bg-background px-3 py-1.5 sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2"
       >
         <Link
           to={courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures"}
@@ -235,7 +238,7 @@ export default function StudentLectureViewPage() {
           <ArrowLeft aria-hidden className="size-5" />
         </Link>
         <div className="min-w-0 flex-1">
-          <p className="text-sm leading-relaxed font-semibold break-words sm:text-base">
+          <p className="truncate text-sm leading-relaxed font-semibold sm:whitespace-normal sm:break-words sm:text-base">
             {lectureQuery.data?.title ?? "讲义"}
           </p>
         </div>

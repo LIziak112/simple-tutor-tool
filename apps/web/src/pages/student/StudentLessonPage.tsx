@@ -65,6 +65,7 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
@@ -136,7 +137,7 @@ export default function StudentLessonPage() {
   );
 }
 
-/** 顶部工具栏：返回 + 标题 + 操作区 + 上下文行（sticky） */
+/** 顶部工具栏：窄屏随阅读收起，手写期间固定。 */
 function HeaderBar({
   title,
   backTo,
@@ -151,33 +152,51 @@ function HeaderBar({
   actions: ReactNode;
   context: ReactNode;
 }) {
+  const editor = useAttemptEditor();
+  const isDesktop = useDesktopViewport();
+  const toolbar = useReadingToolbar({
+    blocked: editor?.active != null || editor?.paper != null,
+  });
   return (
-    <nav
-      aria-label="讲练页工具栏"
-      className="sticky top-0 z-20 -mx-3 flex min-h-16 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2 sm:-mx-6 sm:px-6"
-    >
-      <Link
-        to={backTo}
-        aria-label={backLabel}
-        className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+    <>
+      <nav
+        ref={toolbar.ref}
+        data-reading-hidden={toolbar.hidden}
+        aria-label="讲练页工具栏"
+        className="reading-toolbar sticky top-0 z-20 -mx-3 flex min-h-14 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-1.5 sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2"
       >
-        <ArrowLeft aria-hidden className="size-5" />
-      </Link>
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-sm leading-relaxed font-semibold break-words sm:text-base">
-          <Sparkles aria-hidden className="size-4 shrink-0 text-primary" />
-          <span className="min-w-0 break-words">{title}</span>
-        </p>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <Link
+          to={backTo}
+          aria-label={backLabel}
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <ArrowLeft aria-hidden className="size-5" />
+        </Link>
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-2 text-sm leading-relaxed font-semibold break-words sm:text-base">
+            <Sparkles aria-hidden className="size-4 shrink-0 text-primary" />
+            <span className="min-w-0 truncate sm:whitespace-normal sm:break-words">
+              {title}
+            </span>
+          </p>
+          {isDesktop && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {context}
+            </div>
+          )}
+        </div>
+        {actions !== null && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {actions}
+          </div>
+        )}
+      </nav>
+      {!isDesktop && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {context}
         </div>
-      </div>
-      {actions !== null && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {actions}
-        </div>
       )}
-    </nav>
+    </>
   );
 }
 

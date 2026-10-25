@@ -41,7 +41,7 @@ it("编辑失败提示属于标题正常布局，不在标题外悬浮覆盖", a
   expect(screen.getByRole("heading", { name: "练习标题" })).toBeVisible();
 });
 
-it("返回可用，长标题限制两行，更多可查看完整标题", () => {
+it("返回可用，手机标题单行桌面最多两行，更多可查看完整标题", () => {
   const back = vi.fn();
   render(
     <AttemptHeader
@@ -59,7 +59,10 @@ it("返回可用，长标题限制两行，更多可查看完整标题", () => {
       课程信息
     </AttemptHeader>,
   );
-  expect(screen.getByRole("heading", { level: 1 })).toHaveClass("line-clamp-2");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveClass(
+    "truncate",
+    "sm:line-clamp-2",
+  );
   fireEvent.click(screen.getByRole("button", { name: "返回" }));
   expect(back).toHaveBeenCalledOnce();
   fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {

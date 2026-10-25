@@ -1,0 +1,14 @@
+/* 导航仅平移自身，保留题面布局及锚点预留；键盘聚焦通过控制器找回。 */
+@media (width < 1024px) {
+  .reading-toolbar {
+    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .reading-toolbar[data-reading-hidden="true"] {
+    transform: translateY(-100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reading-toolbar {
+    transition: none;
+  }
+}
