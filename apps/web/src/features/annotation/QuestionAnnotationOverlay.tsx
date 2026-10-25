@@ -1,4 +1,7 @@
-import type { AttemptQuestionPublic } from "@tutor/contract";
+import {
+  type AttemptQuestionPublic,
+  annotationSurfaceLayoutCore,
+} from "@tutor/contract";
 import { Eraser, MoreHorizontal, PenLine, Redo2, Undo2 } from "lucide-react";
 import {
   forwardRef,
@@ -12,6 +15,12 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -19,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
+import { StableQuestionPixelGridContext } from "@/features/attempt/QuestionSurfaceFrame";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
@@ -30,8 +40,10 @@ import {
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { withTimeout } from "@/features/notes/rasterize-utils";
 import { measureStage } from "@/lib/performance-stages";
+import { AnnotationOriginal } from "./AnnotationOriginal";
 import {
   getAnnotationRecord,
+  retryAnnotationPersistence,
   settleAnnotationRecordPersistence,
   writeAnnotationDoc,
 } from "./annotation-store";
@@ -40,6 +52,7 @@ import {
   createAnnotationSurface,
 } from "./annotation-surface";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
+import { prepareQuestionAnnotationContinuation } from "./question-annotation-continuation";
 import {
   awaitQuestionSurfaceReady,
   questionSurfaceMatchesLayout,
@@ -84,13 +97,59 @@ export const QuestionAnnotationOverlay = forwardRef<
   const viewport = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [originalScope, setOriginalScope] = useState<string | null>(null);
+  const originalScopeKey = JSON.stringify([
+    session?.origin,
+    session?.studentId,
+    attemptId,
+    question.id,
+    record?.resetVersion ?? 0,
+  ]);
+  const originalOpen = originalScope === originalScopeKey && !hidden;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 会话与显示范围变化必须清除旧弹窗，不能在返回旧题或账号时复开
+  useEffect(() => {
+    // 换题、换账号、维护重置或隐藏后，不恢复前一会话的查看弹窗。
+    setOriginalScope(null);
+  }, [session, originalScopeKey, hidden]);
+  const originalBlob = originalOpen ? record?.localBase?.png : undefined;
+  const [originalImage, setOriginalImage] = useState<{
+    blob: Blob;
+    url: string;
+  } | null>(null);
+  const originalBlobUrl =
+    originalImage?.blob === originalBlob ? originalImage?.url : null;
+  useEffect(() => {
+    if (!originalBlob) {
+      setOriginalImage(null);
+      return;
+    }
+    const url = URL.createObjectURL(originalBlob);
+    setOriginalImage({ blob: originalBlob, url });
+    return () => URL.revokeObjectURL(url);
+  }, [originalBlob]);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
   const [color, setColor] = useState<InkPenColor>("red");
   const [size, setSize] = useState<InkPenSize>("thin");
   const [, setHistory] = useState(0);
   const layout = record?.localBase?.layout ?? record?.base?.layout;
+  const pixelGridKey = JSON.stringify([
+    session?.origin,
+    session?.studentId,
+    attemptId,
+    question.id,
+    record?.resetVersion ?? 0,
+    layout ? annotationSurfaceLayoutCore(layout) : null,
+  ]);
+  const [canonicalGridKey, setCanonicalGridKey] = useState<string | null>(null);
+  const usingCanonicalGrid = !layout || canonicalGridKey === pixelGridKey;
+  const pixelGridRef = useRef({
+    key: pixelGridKey,
+    canonical: usingCanonicalGrid,
+  });
+  pixelGridRef.current = { key: pixelGridKey, canonical: usingCanonicalGrid };
   const rejectedLayout = compatible === false;
-  const displayLayout = rejectedLayout ? undefined : layout;
+  // 校验失败也保留保存时的逻辑宽度，否则下次校验会在另一套排版上永久失败。
+  const displayLayout = layout;
   const cssWidth = displayLayout?.cssWidth;
   const cssHeight = displayLayout?.cssHeight;
   const baseWidth = displayLayout
@@ -133,6 +192,11 @@ export const QuestionAnnotationOverlay = forwardRef<
     surface.current?.finish();
     if (session) {
       await settleAnnotationRecordPersistence(session, {
+        attemptId,
+        questionId: question.id,
+        phase: "scratch",
+      });
+      await retryAnnotationPersistence(session, {
         attemptId,
         questionId: question.id,
         phase: "scratch",
@@ -219,6 +283,14 @@ export const QuestionAnnotationOverlay = forwardRef<
         return;
       }
       if (!editor || !session || loading) return;
+      // 查看原稿不重新生成底图，也不进入原位编辑的布局准入流程。
+      if ((record?.localBase || record?.base) && !layout) {
+        if (await editor.request(null)) {
+          setError(null);
+          setOriginalScope(originalScopeKey);
+        }
+        return;
+      }
       if (rejectedLayout) setCompatible(null);
       opening.current = true;
       setLoading(true);
@@ -249,30 +321,55 @@ export const QuestionAnnotationOverlay = forwardRef<
             if (signal.aborted) return false;
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
-            await measureStage("annotation:surface-ready", () =>
-              withTimeout(
-                awaitQuestionSurfaceReady(element, () => {
-                  if (signal.aborted)
-                    throw new DOMException("标画已取消", "AbortError");
-                }),
-                15_000,
-                "题面资源加载超时，请重试",
-              ),
-            );
+            const awaitReady = () =>
+              measureStage("annotation:surface-ready", () =>
+                withTimeout(
+                  awaitQuestionSurfaceReady(element, () => {
+                    if (signal.aborted)
+                      throw new DOMException("标画已取消", "AbortError");
+                  }),
+                  15_000,
+                  "题面资源加载超时，请重试",
+                ),
+              );
+            await awaitReady();
             if (signal.aborted) return false;
-            const matches = await measureStage("annotation:layout-match", () =>
-              questionSurfaceMatchesLayout(
+            const matchContinuation = async () => {
+              const continuation = await prepareQuestionAnnotationContinuation(
+                session,
+                scope,
                 question,
                 element,
-                prepared.localBase.layout,
-              ),
-            );
+                prepared.localBase,
+                signal,
+              );
+              if (signal.aborted) return false;
+              return measureStage("annotation:layout-match", () =>
+                questionSurfaceMatchesLayout(
+                  question,
+                  element,
+                  continuation.layout,
+                ),
+              );
+            };
+            let matches = await matchContinuation();
+            if (!matches && !pixelGridRef.current.canonical) {
+              setCanonicalGridKey(pixelGridRef.current.key);
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve()),
+                ),
+              );
+              if (signal.aborted) return false;
+              await awaitReady();
+              matches = await matchContinuation();
+            }
             if (signal.aborted) return false;
             setCompatible(matches);
-            if (!matches)
-              throw new Error(
-                "题面布局已变化，不能在不同排版上继续标画，请重新开始练习",
-              );
+            if (!matches) {
+              setOriginalScope(originalScopeKey);
+              return false;
+            }
             return true;
           },
         );
@@ -293,7 +390,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     const element = root.current?.querySelector<HTMLElement>(
       '[data-slot="question-surface"]',
     );
-    if (!layout || !element || rejectedLayout) return;
+    if (!layout || !element) return;
     let generation = 0;
     let alive = true;
     let frame = 0;
@@ -318,6 +415,10 @@ export const QuestionAnnotationOverlay = forwardRef<
           .then(() => questionSurfaceMatchesLayout(question, element, layout))
           .then((matches) => {
             if (!alive || current !== generation) return;
+            if (!matches && !usingCanonicalGrid) {
+              setCanonicalGridKey(pixelGridKey);
+              return;
+            }
             layoutChecking.current = false;
             setCompatible(matches);
             if (matches && selectedRef.current && !hidden)
@@ -353,7 +454,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, rejectedLayout, hidden, scale]);
+  }, [layout, question, hidden, scale, pixelGridKey, usingCanonicalGrid]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -530,7 +631,10 @@ export const QuestionAnnotationOverlay = forwardRef<
           className="relative overflow-clip"
           style={
             cssWidth && cssHeight
-              ? { width: cssWidth * scale, height: cssHeight * scale }
+              ? {
+                  width: cssWidth * scale,
+                  height: rejectedLayout ? undefined : cssHeight * scale,
+                }
               : undefined
           }
         >
@@ -547,7 +651,9 @@ export const QuestionAnnotationOverlay = forwardRef<
                 : undefined
             }
           >
-            {children}
+            <StableQuestionPixelGridContext value={usingCanonicalGrid}>
+              {children}
+            </StableQuestionPixelGridContext>
           </div>
           {cssWidth && cssHeight && (
             <div
@@ -605,6 +711,78 @@ export const QuestionAnnotationOverlay = forwardRef<
           {error}
         </div>
       )}
+      <Dialog
+        open={originalOpen}
+        onOpenChange={(open) => {
+          if (!open) setOriginalScope(null);
+        }}
+      >
+        <DialogContent
+          className="max-w-4xl"
+          onCloseAutoFocus={(event) => {
+            // 入口由题卡通过 ref 调用，关闭时恢复真实的圈画按钮。
+            const button = root.current
+              ?.closest("article")
+              ?.querySelector<HTMLButtonElement>("[data-annotation-trigger]");
+            if (button) {
+              event.preventDefault();
+              button.focus();
+            }
+          }}
+        >
+          <DialogTitle>{label}原圈画</DialogTitle>
+          <DialogDescription>
+            按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。
+          </DialogDescription>
+          {record?.local === "failed" && (
+            <p role="alert">
+              本机保存失败，当前原稿仍保留在本设备，请恢复保存后再离开。
+            </p>
+          )}
+          {record?.pendingMutationId && (
+            <p className="text-sm text-muted-foreground">
+              本设备有尚未同步的圈画。
+            </p>
+          )}
+          {record?.conflict && (
+            <p role="note">圈画存在同步冲突，当前显示本设备保留的原稿。</p>
+          )}
+          {record?.base?.stale && (
+            <p role="note">这是旧版本题面的原圈画，笔迹保持在保存时的位置。</p>
+          )}
+          {record?.doc &&
+          (originalBlobUrl ||
+            (!record.localBase && record.base?.downloadUrl)) ? (
+            <AnnotationOriginal
+              src={originalBlobUrl ?? record.base?.downloadUrl ?? ""}
+              pixelWidth={
+                record.localBase
+                  ? Math.ceil(
+                      record.localBase.layout.cssWidth *
+                        record.localBase.layout.pixelRatio,
+                    )
+                  : (record.base?.pixelWidth ?? 0)
+              }
+              pixelHeight={
+                record.localBase
+                  ? Math.ceil(
+                      record.localBase.layout.cssHeight *
+                        record.localBase.layout.pixelRatio,
+                    )
+                  : (record.base?.pixelHeight ?? 0)
+              }
+              doc={record.doc}
+              label={`${label}原圈画`}
+            />
+          ) : (
+            <p role={record?.localBase ? "status" : "alert"}>
+              {record?.localBase
+                ? "正在读取本机原圈画…"
+                : "原圈画底图尚未就绪，请重新加载材料；笔迹已保留。"}
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
       {active && (
         <div
           data-slot="attempt-bottom-bar"

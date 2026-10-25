@@ -187,6 +187,46 @@ export const annotationHashSchema = z
 /** 原位题面布局身份；旧底图缺省layout时仍按固定宽v1处理。 */
 export const ANNOTATION_SURFACE_RENDER_VERSION = 2;
 export const ANNOTATION_SURFACE_PIXEL_RATIO = 2;
+const annotationSurfaceRectSchema = z.strictObject({
+  x: z.number().min(-ANNOTATION_MAX_PIXEL_DIM).max(ANNOTATION_MAX_PIXEL_DIM),
+  y: z.number().min(-ANNOTATION_MAX_PIXEL_DIM).max(ANNOTATION_MAX_PIXEL_DIM),
+  width: z.number().nonnegative().max(ANNOTATION_MAX_PIXEL_DIM),
+  height: z.number().nonnegative().max(ANNOTATION_MAX_PIXEL_DIM),
+});
+const annotationSurfaceFontValueSchema = z.string().max(256);
+/** 公开几何证据，不保存文字、表单值或答案；旧布局可缺省。 */
+export const annotationSurfaceCompatibilitySchema = z
+  .strictObject({
+    version: z.literal(1),
+    /** 固定 FNV-1a 八轮算法，不随 HTTP/HTTPS 改变。 */
+    contentSignature: annotationHashSchema,
+    blocks: z
+      .array(
+        annotationSurfaceRectSchema.extend({ tag: z.string().min(1).max(16) }),
+      )
+      .min(1)
+      .max(2048),
+    fonts: z
+      .array(
+        z.tuple([
+          annotationSurfaceFontValueSchema,
+          annotationSurfaceFontValueSchema,
+          annotationSurfaceFontValueSchema,
+          annotationSurfaceFontValueSchema,
+          annotationSurfaceFontValueSchema,
+        ]),
+      )
+      .min(1)
+      .max(2048),
+    textRects: z.array(annotationSurfaceRectSchema).max(4096),
+  })
+  .refine(
+    (value) => value.blocks.length === value.fonts.length,
+    "几何与字体必须逐块对应",
+  );
+export type AnnotationSurfaceCompatibility = z.infer<
+  typeof annotationSurfaceCompatibilitySchema
+>;
 export const annotationSurfaceLayoutSchema = z.strictObject({
   renderVersion: z.literal(ANNOTATION_SURFACE_RENDER_VERSION),
   questionRevisionId: questionRevisionIdSchema,
@@ -204,10 +244,19 @@ export const annotationSurfaceLayoutSchema = z.strictObject({
   contentSignature: annotationHashSchema,
   geometrySignature: annotationHashSchema,
   fontSignature: annotationHashSchema,
+  compatibility: annotationSurfaceCompatibilitySchema.optional(),
 });
 export type AnnotationSurfaceLayout = z.infer<
   typeof annotationSurfaceLayoutSchema
 >;
+
+/** 底图不可变身份；兼容证据只允许经原签名核验后补充一次。 */
+export function annotationSurfaceLayoutCore(
+  layout: AnnotationSurfaceLayout,
+): Omit<AnnotationSurfaceLayout, "compatibility"> {
+  const { compatibility: _compatibility, ...core } = layout;
+  return core;
+}
 
 /** 运维重置的作答标画代次；缺省 0，其他作答与历史只读数据不受影响。 */
 export const annotationResetVersionSchema = z

@@ -1,6 +1,45 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "./AttemptEditorContext";
 import { AttemptHeader } from "./AttemptHeader";
+
+it("编辑失败提示属于标题正常布局，不在标题外悬浮覆盖", async () => {
+  function Switch() {
+    const editor = useAttemptEditor();
+    return (
+      <button
+        type="button"
+        onClick={async () => {
+          editor?.register("q1", async () => {
+            throw new Error("本机存储不可用");
+          });
+          await editor?.request({ questionId: "q1", kind: "annotation" });
+          await editor?.request({ questionId: "q2", kind: "annotation" });
+        }}
+      >
+        切题
+      </button>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <AttemptHeader title="练习标题" status={() => null} onBack={() => {}}>
+        课程信息
+      </AttemptHeader>
+      <Switch />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "切题" }));
+  const notice = await screen.findByRole("alert");
+  expect(notice.closest('[data-slot="attempt-header"]')).toBe(
+    screen.getByRole("banner"),
+  );
+  expect(notice.className).not.toMatch(/sticky|fixed/);
+  expect(screen.getByRole("heading", { name: "练习标题" })).toBeVisible();
+});
 
 it("返回可用，长标题限制两行，更多可查看完整标题", () => {
   const back = vi.fn();

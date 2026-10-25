@@ -24,6 +24,7 @@ export * from "./capability.ts";
 export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
 export * from "./content-api.ts";
+export * from "./content-signature.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */

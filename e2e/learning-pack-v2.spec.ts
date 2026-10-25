@@ -35,7 +35,9 @@ async function teacherUiLogin(page: Page): Promise<void> {
   await page.waitForURL("**/t/library");
 }
 
-test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
+test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", {
+  tag: ["@insights", "@export"],
+}, () => {
   test("对照：不开证据组下载的仍是 v1 包（meta.version=1、无 manifest、无 evidence/）", async ({
     request,
     browser,

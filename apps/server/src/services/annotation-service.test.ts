@@ -1,9 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { AnnotationDoc, Question, QuestionAnswers } from "@tutor/contract";
-import { annotationDocSchema } from "@tutor/contract";
+import {
+  annotationDocSchema,
+  annotationSurfaceLayoutSchema,
+  stableContentHash64,
+} from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -174,6 +178,183 @@ function readyBase(
 }
 
 // ---------- assembleAnnotationBase ----------
+
+describe("旧圈画补齐续写证据", () => {
+  it.each(["sha256", "http-fnv"])(
+    "原设备严格命中 %s 旧签名后只补充几何，不改底图、正文和版本",
+    (algorithm) => {
+      const world = makeWorld();
+      const stemMd = "公开题目 [[]]";
+      const { attemptId, revisionId } = makePaper(world, { stemMd });
+      const blocks = [{ tag: "DIV", x: 0, y: 0, width: 300, height: 200 }];
+      const fonts = [
+        ["Geist Variable, sans-serif", "16px", "400", "28px", "normal"],
+      ];
+      const publicContent = { type: "fill", stemMd, options: [] };
+      const hash = (value: unknown) =>
+        algorithm === "sha256"
+          ? createHash("sha256").update(JSON.stringify(value)).digest("hex")
+          : stableContentHash64(value);
+      const legacy = annotationSurfaceLayoutSchema.parse({
+        renderVersion: 2,
+        questionRevisionId: revisionId,
+        cssWidth: 300,
+        cssHeight: 200,
+        pixelRatio: 2,
+        styleVersion: 1,
+        contentSignature: hash(publicContent),
+        geometrySignature: hash(blocks),
+        fontSignature: hash(fonts),
+      });
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        legacy,
+      );
+      registerBaseImage(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        makeNotePng(600, 400),
+        {
+          questionRevisionId: revisionId,
+          baseRenderVersion: 2,
+          phase: "scratch",
+        },
+      );
+      const doc = { ...annotationDoc(400, 2), baseWidth: 600 };
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        gzipJson(doc),
+        { baseRevision: 0, mutationId: randomUUID() },
+      );
+      const baseBefore = world.db.select().from(annotationBasesTable).get();
+      const inkBefore = world.db.select().from(annotationsTable).all();
+      const attemptBefore = world.db.select().from(attempts).all();
+      const upgraded = annotationSurfaceLayoutSchema.parse({
+        ...legacy,
+        compatibility: {
+          version: 1,
+          contentSignature: stableContentHash64(publicContent),
+          blocks,
+          fonts,
+          textRects: [{ x: 0, y: 2, width: 100, height: 22 }],
+        },
+      });
+      const proof = upgraded.compatibility;
+      if (!proof) throw new Error("缺少兼容证据夹具");
+      for (const invalid of [
+        {
+          ...upgraded,
+          compatibility: {
+            ...upgraded.compatibility,
+            contentSignature: "e".repeat(64),
+          },
+        },
+        {
+          ...upgraded,
+          compatibility: {
+            ...upgraded.compatibility,
+            blocks: [{ ...blocks[0], width: 301 }],
+          },
+        },
+        {
+          ...upgraded,
+          compatibility: {
+            ...upgraded.compatibility,
+            fonts: [["serif", "16px", "400", "28px", "normal"]],
+          },
+        },
+      ]) {
+        expect(() =>
+          assembleAnnotationBase(
+            world.db,
+            world.studentId,
+            attemptId,
+            Q,
+            "scratch",
+            annotationSurfaceLayoutSchema.parse(invalid),
+          ),
+        ).toThrow();
+        expect(world.db.select().from(annotationBasesTable).get()).toEqual(
+          baseBefore,
+        );
+      }
+      // 补证不能改变单题已提交或原稿已封存的事实。
+      for (const locked of ["submitted", "sealed"] as const) {
+        const at = "2026-10-24T13:00:00.000Z";
+        if (locked === "submitted")
+          world.db.update(responsesTable).set({ submittedAt: at }).run();
+        else world.db.update(annotationsTable).set({ sealedAt: at }).run();
+        expect(() =>
+          assembleAnnotationBase(
+            world.db,
+            world.studentId,
+            attemptId,
+            Q,
+            "scratch",
+            upgraded,
+          ),
+        ).toThrow();
+        expect(world.db.select().from(annotationBasesTable).get()).toEqual(
+          baseBefore,
+        );
+        world.db.update(responsesTable).set({ submittedAt: null }).run();
+        world.db.update(annotationsTable).set({ sealedAt: null }).run();
+      }
+      const preview = assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        upgraded,
+      );
+      assertNoLeak(preview);
+      for (const sentinel of Object.values(SENTINELS))
+        expect(JSON.stringify(preview)).not.toContain(JSON.stringify(sentinel));
+      expect(preview.base.layout).toEqual(upgraded);
+      expect(world.db.select().from(annotationBasesTable).get()).toEqual({
+        ...baseBefore,
+        layout: upgraded,
+      });
+      expect(world.db.select().from(annotationsTable).all()).toEqual(inkBefore);
+      expect(world.db.select().from(attempts).all()).toEqual(attemptBefore);
+      expect(
+        assembleAnnotationBase(
+          world.db,
+          world.studentId,
+          attemptId,
+          Q,
+          "scratch",
+          legacy,
+        ).base.layout,
+      ).toEqual(upgraded);
+      expect(() =>
+        assembleAnnotationBase(
+          world.db,
+          world.studentId,
+          attemptId,
+          Q,
+          "scratch",
+          {
+            ...upgraded,
+            compatibility: { ...proof, textRects: [] },
+          },
+        ),
+      ).toThrow();
+    },
+  );
+});
 
 describe("assembleAnnotationBase：载荷装配与泄露防线", () => {
   it("建 pending 行并返回学生 stem 投影载荷（不含 snapshotHash/答案哨兵）", () => {

@@ -10,10 +10,9 @@ import {
   uniqueSuffix,
 } from "./helpers";
 
-test("旧标画布局不能复现时仍在题干内填空，不出现图片与独立答案兜底", async ({
-  page,
-  request,
-}) => {
+test("旧标画布局不能复现时仍在题干内填空，不出现图片与独立答案兜底", {
+  tag: ["@annotation"],
+}, async ({ page, request }) => {
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `原生题面${suffix}`;

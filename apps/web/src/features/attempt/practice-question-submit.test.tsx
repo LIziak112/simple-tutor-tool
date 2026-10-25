@@ -314,6 +314,8 @@ afterEach(() => {
 
 it.each(["list", "single"] as const)(
   "%s：本页逐题提交后交卷，版本校验覆盖全卷，证据仅覆盖剩余题并进入结果",
+  // 全流程闭环（提交→封存→结果态）在 jsdom 内本身 5-7s，全量并发下会越 5s 默认超时
+  { timeout: 15_000 },
   async (layout) => {
     installNoteBackend(memoryNoteBackend());
     installAnnotationBackend(memoryAnnotationBackend());
@@ -361,7 +363,7 @@ it.each(["list", "single"] as const)(
         { questionId: "q3", state: "none" },
       ],
     ]);
-    await screen.findByText("批改结果");
+    await screen.findByText("批改结果", {}, { timeout: 10_000 });
   },
 );
 

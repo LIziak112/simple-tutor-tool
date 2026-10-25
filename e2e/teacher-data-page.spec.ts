@@ -18,7 +18,7 @@ import {
  * 逐题与手写缩略图并可放大（lightbox）→ 返回数据页 → 切按学生视图仍可见。
  */
 
-/** 两题小练习：判断（可自动判分）+ solve 手写（最终答案留空 → 待批，落笔迹） */
+/** 两题小练习：判断（可自动判分）+ 无参考答案的 solve 手写（待批，落笔迹） */
 function practiceMarkdown(unitName: string): string {
   return [
     "---",
@@ -38,10 +38,6 @@ function practiceMarkdown(unitName: string): string {
     '::::question{type=solve difficulty=2 knowledge="有理数加法"}',
     "计算：$(-2)+5=$，写出过程。",
     "",
-    ":::answer",
-    "3",
-    ":::",
-    "",
     ":::solution",
     "$(-2)+5=3$。",
     ":::",
@@ -50,7 +46,9 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大）", () => {
+test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大）", {
+  tag: ["@insights"],
+}, () => {
   test("学生课程练习交卷后，数据页按课程视图可见、进详情见手写图、切按学生视图仍可见", async ({
     page,
     request,

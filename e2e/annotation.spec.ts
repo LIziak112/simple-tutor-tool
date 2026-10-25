@@ -78,7 +78,7 @@ function tooTallPracticeMarkdown(unitName: string): string {
   return lines.join("\n");
 }
 
-test.describe("题干标注（T6R.20）", () => {
+test.describe("题干标注（T6R.20）", { tag: ["@annotation"] }, () => {
   test("无底图：超高题显式禁用文案；mock 装配 500 同禁用（草稿照用）", async ({
     request,
     browser,

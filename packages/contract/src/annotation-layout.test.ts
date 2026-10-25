@@ -13,6 +13,32 @@ const layout = {
   fontSignature: "c".repeat(64),
 };
 describe("原位题面布局契约", () => {
+  it("可选兼容证据保留旧签名，并限制几何数量、坐标与字体长度", () => {
+    const compatibility = {
+      version: 1,
+      contentSignature: "d".repeat(64),
+      blocks: [{ tag: "P", x: 0, y: 0, width: 300, height: 28 }],
+      fonts: [["geist variable,sans-serif", "16px", "400", "28px", "normal"]],
+      textRects: [{ x: 0, y: 2, width: 100, height: 22 }],
+    };
+    expect(
+      annotationSurfaceLayoutSchema.parse({ ...layout, compatibility }),
+    ).toEqual({ ...layout, compatibility });
+    for (const change of [
+      { version: 2 },
+      { blocks: Array(2049).fill(compatibility.blocks[0]) },
+      { textRects: [{ x: Infinity, y: 0, width: 1, height: 1 }] },
+      { fonts: [["x".repeat(257), "16px", "400", "28px", "normal"]] },
+      { fonts: [] },
+    ]) {
+      expect(
+        annotationSurfaceLayoutSchema.safeParse({
+          ...layout,
+          compatibility: { ...compatibility, ...change },
+        }).success,
+      ).toBe(false);
+    }
+  });
   it("接受分数CSS尺寸，但保留固定像素比与版本", () => {
     expect(annotationSurfaceLayoutSchema.parse(layout)).toEqual(layout);
     expect(

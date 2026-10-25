@@ -3,6 +3,7 @@ import {
   ANNOTATION_MAX_PIXEL_DIM,
   ANNOTATION_SURFACE_PIXEL_RATIO,
   ANNOTATION_SURFACE_RENDER_VERSION,
+  type AnnotationSurfaceCompatibility,
   type AnnotationSurfaceLayout,
   type AttemptQuestionPublic,
   annotationSurfaceLayoutSchema,
@@ -18,8 +19,13 @@ import {
   TEACHER_SECTION_MARKERS,
   withTimeout,
 } from "@/features/notes/rasterize-utils";
-import { contentHash64 } from "@/lib/content-hash";
+import { contentHash64, stableContentHash64 } from "@/lib/content-hash";
 import { measureStage } from "@/lib/performance-stages";
+import {
+  compatibleSurfaceEvidence,
+  legacySurfaceFontCandidates,
+  normalizeSurfaceFont,
+} from "./annotation-layout-compatibility";
 
 const STEP_TIMEOUT_MS = 15_000;
 const BLOCK_SELECTOR =
@@ -48,9 +54,35 @@ export function measureQuestionSurface(surface: HTMLElement) {
       (node) => !node.closest('[data-slot="question-annotation-overlay"]'),
     ),
   ];
+  const textRects: AnnotationSurfaceCompatibility["textRects"] = [];
+  const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (
+      !node.textContent?.trim() ||
+      node.parentElement?.closest(
+        '.sr-only, .katex-mathml, input, textarea, select, [data-slot="question-annotation-overlay"]',
+      )
+    )
+      continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    // jsdom 无文本行测量；真实浏览器按每个文本片段的行框核对换行。
+    if (typeof range.getClientRects !== "function") continue;
+    for (const rect of range.getClientRects()) {
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      textRects.push({
+        x: rounded(rect.left - root.left),
+        y: rounded(rect.top - root.top),
+        width: rounded(rect.width),
+        height: rounded(rect.height),
+      });
+    }
+  }
   return {
     cssWidth: root.width / scale,
     cssHeight: root.height / scale,
+    textRects,
     blocks: nodes.map((node) => {
       const rect = node === surface ? root : node.getBoundingClientRect();
       return {
@@ -65,7 +97,7 @@ export function measureQuestionSurface(surface: HTMLElement) {
       const style = getComputedStyle(node);
       return FONT_PROPERTIES.map((property) =>
         style.getPropertyValue(property),
-      );
+      ) as [string, string, string, string, string];
     }),
   };
 }
@@ -75,18 +107,7 @@ function sameGeometry(left: SurfaceMeasure, right: SurfaceMeasure): boolean {
   return (
     Math.abs(left.cssWidth - right.cssWidth) <= 1 &&
     Math.abs(left.cssHeight - right.cssHeight) <= 1 &&
-    left.blocks.length === right.blocks.length &&
-    left.blocks.every((block, index) => {
-      const other = right.blocks[index];
-      return (
-        other !== undefined &&
-        block.tag === other.tag &&
-        (["x", "y", "width", "height"] as const).every(
-          (key) => Math.abs(block[key] - other[key]) <= 1,
-        )
-      );
-    }) &&
-    JSON.stringify(left.fonts) === JSON.stringify(right.fonts)
+    compatibleSurfaceEvidence(left, right)
   );
 }
 
@@ -103,19 +124,73 @@ export async function questionSurfaceMatchesLayout(
     Math.abs(measure.cssHeight - layout.cssHeight) > 1
   )
     return false;
-  const [content, geometry, fonts] = await Promise.all([
-    contentHash64({
+  const publicContent = {
+    type: question.type,
+    stemMd: question.stemMd,
+    options: question.options ?? [],
+  };
+  if (layout.compatibility) {
+    return (
+      stableContentHash64(publicContent) ===
+        layout.compatibility.contentSignature &&
+      compatibleSurfaceEvidence(layout.compatibility, measure)
+    );
+  }
+  return (await legacyCompatibility(publicContent, measure, layout)) !== null;
+}
+
+async function legacyCompatibility(
+  publicContent: {
+    type: AttemptQuestionPublic["type"];
+    stemMd: string;
+    options: string[];
+  },
+  measure: SurfaceMeasure,
+  layout: AnnotationSurfaceLayout,
+): Promise<AnnotationSurfaceCompatibility | null> {
+  const matchesLegacyHash = async (value: unknown, saved: string) =>
+    stableContentHash64(value) === saved ||
+    (await contentHash64(value)) === saved;
+  if (
+    !(await matchesLegacyHash(publicContent, layout.contentSignature)) ||
+    !(await matchesLegacyHash(measure.blocks, layout.geometrySignature))
+  )
+    return null;
+  for (const candidate of legacySurfaceFontCandidates(measure.fonts)) {
+    if (await matchesLegacyHash(candidate, layout.fontSignature))
+      return {
+        version: 1,
+        contentSignature: stableContentHash64(publicContent),
+        blocks: measure.blocks,
+        fonts: candidate,
+        textRects: measure.textRects,
+      };
+  }
+  return null;
+}
+
+/** 显式续写时为旧稿生成可核验的补充证据；原签名未命中绝不生成。 */
+export async function verifiedLegacySurfaceCompatibility(
+  question: AttemptQuestionPublic,
+  surface: HTMLElement,
+  layout: AnnotationSurfaceLayout,
+): Promise<AnnotationSurfaceCompatibility | null> {
+  const measure = measureQuestionSurface(surface);
+  if (
+    layout.compatibility ||
+    question.questionRevisionId !== layout.questionRevisionId ||
+    Math.abs(measure.cssWidth - layout.cssWidth) > 1 ||
+    Math.abs(measure.cssHeight - layout.cssHeight) > 1
+  )
+    return null;
+  return legacyCompatibility(
+    {
       type: question.type,
       stemMd: question.stemMd,
       options: question.options ?? [],
-    }),
-    contentHash64(measure.blocks),
-    contentHash64(measure.fonts),
-  ]);
-  return (
-    content === layout.contentSignature &&
-    geometry === layout.geometrySignature &&
-    fonts === layout.fontSignature
+    },
+    measure,
+    layout,
   );
 }
 
@@ -291,6 +366,17 @@ export async function renderQuestionBaseImage(
       contentSignature,
       geometrySignature,
       fontSignature,
+      compatibility: {
+        version: 1,
+        contentSignature: stableContentHash64({
+          type: question.type,
+          stemMd: question.stemMd,
+          options: question.options ?? [],
+        }),
+        blocks: before.blocks,
+        fonts: before.fonts.map(normalizeSurfaceFont),
+        textRects: before.textRects,
+      },
     });
     const fontCss = await measureStage("annotation:font-css", () =>
       withTimeout(

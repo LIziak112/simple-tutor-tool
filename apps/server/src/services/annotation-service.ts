@@ -28,6 +28,8 @@ import {
   annotationConflictCurrentSchema,
   annotationDocSchema,
   annotationIssueIsLimit,
+  annotationSurfaceLayoutCore,
+  stableContentHash64,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
 import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
@@ -439,11 +441,70 @@ export function assembleAnnotationBase(
     layout !== undefined &&
     JSON.stringify(base.layout) !== JSON.stringify(layout)
   ) {
-    throw new HttpError(
-      409,
-      "ANNOTATION_BASE_LAYOUT_CONFLICT",
-      "服务器已有另一布局的底图，请保留本机稿并查看原标画",
-    );
+    const saved = base.layout;
+    const proof = layout.compatibility;
+    const sameCore =
+      saved !== null &&
+      JSON.stringify(annotationSurfaceLayoutCore(saved)) ===
+        JSON.stringify(annotationSurfaceLayoutCore(layout));
+    const conflict = () =>
+      new HttpError(
+        409,
+        "ANNOTATION_BASE_LAYOUT_CONFLICT",
+        "服务器已有另一布局的底图，请保留本机稿并查看原标画",
+      );
+    if (!sameCore || saved === null) throw conflict();
+    // 已补充证据的底图仍接受旧客户端原身份，但禁止替换既有证据。
+    if (proof !== undefined) {
+      if (
+        saved.compatibility !== undefined ||
+        base.state !== "ready" ||
+        base.snapshotHash !== snapshotHash
+      )
+        throw conflict();
+      if (
+        (phase === "scratch" && row.submittedAt !== null) ||
+        annotationRowOf(db, attempt.id, questionId, phase)?.sealedAt != null
+      )
+        throw conflict();
+      const material = materialOf(snapshot, true, "stem");
+      const content = {
+        type: material.type,
+        stemMd: material.stemMd,
+        options: material.options ?? [],
+      };
+      const matchesHash = (value: unknown, signature: string) =>
+        stableContentHash64(value) === signature ||
+        createHash("sha256").update(JSON.stringify(value)).digest("hex") ===
+          signature;
+      // 历史算法的字段顺序也是签名的一部分；Zod 输出顺序不充当历史测量顺序。
+      const blocks = proof.blocks.map(({ tag, x, y, width, height }) => ({
+        tag,
+        x,
+        y,
+        width,
+        height,
+      }));
+      const root = blocks[0];
+      if (
+        root?.tag !== "DIV" ||
+        root.x !== 0 ||
+        root.y !== 0 ||
+        Math.abs(root.width - layout.cssWidth) > 1 ||
+        Math.abs(root.height - layout.cssHeight) > 1 ||
+        !matchesHash(content, saved.contentSignature) ||
+        stableContentHash64(content) !== proof.contentSignature ||
+        !matchesHash(blocks, saved.geometrySignature) ||
+        !matchesHash(proof.fonts, saved.fontSignature)
+      )
+        throw conflict();
+      // 只补 JSON 元数据；原 PNG、旧签名、正文版本、封存证据与活动时间均不改。
+      db.update(annotationBasesTable)
+        .set({ layout })
+        .where(eq(annotationBasesTable.id, base.id))
+        .run();
+      base = { ...base, layout };
+    }
   }
 
   // 学生 stem 级投影＋静态素材（双哨兵：materialOf 500 / buildStatic 抛错）

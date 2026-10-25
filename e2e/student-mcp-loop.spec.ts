@@ -188,7 +188,7 @@ async function loginStudent(
   return { context, page };
 }
 
-test.describe("SAI-27 学生 MCP 闭环（协议客户端）", () => {
+test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }, () => {
   test("两题入队 → 外部客户端领取写回 → 各题收到对应回复；等待状态真实", async ({
     browser,
     request,

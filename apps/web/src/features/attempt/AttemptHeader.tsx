@@ -14,6 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { AttemptEditorNotice } from "./AttemptEditorContext";
 
 export function AttemptHeader({
   title,
@@ -98,6 +99,7 @@ export function AttemptHeader({
           {status(closeDetails)}
         </div>
       </div>
+      <AttemptEditorNotice />
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent
           className="max-h-[70dvh] overflow-y-auto"

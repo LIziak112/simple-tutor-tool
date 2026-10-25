@@ -13,7 +13,7 @@ import {
  * T2.13 学生密码登录用例：/s/login 登录名+密码 → 进入首页。
  * 学生由教师 API 创建（UI 建学生的路径在主流程用例覆盖，此处只验登录本身）。
  */
-test.describe("学生密码登录", () => {
+test.describe("学生密码登录", { tag: ["@smoke"] }, () => {
   test("登录名与初始密码正确时进入学生首页", async ({ page, request }) => {
     await teacherApiLogin(request);
 
@@ -33,9 +33,9 @@ test.describe("学生密码登录", () => {
   });
 });
 
-test("学生甲退出后登录乙，无刷新更新姓名与课程并保留教师会话", async ({
-  page,
-}) => {
+test("学生甲退出后登录乙，无刷新更新姓名与课程并保留教师会话", {
+  tag: ["@smoke"],
+}, async ({ page }) => {
   await teacherApiLogin(page.request);
   const suffix = uniqueSuffix();
   const nameA = `学生甲${suffix}`;

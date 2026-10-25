@@ -73,7 +73,9 @@ async function saveCapabilityProfile(
   }
 }
 
-test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式作答 → 恢复", () => {
+test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式作答 → 恢复", {
+  tag: ["@teacher"],
+}, () => {
   test("全关后学生端 steps 完整展开、手写入口隐藏、可交卷；恢复后入口回来", async ({
     request,
     browser,

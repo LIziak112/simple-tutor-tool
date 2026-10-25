@@ -21,6 +21,10 @@ import {
 } from "./practice-preference-store";
 import { workflowOf } from "./practice-test-fixtures";
 
+// 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
+// 5s 默认超时随机击中本文件任意用例——统一 15s（仍保留挂死检测，真卡死 3 倍即报）。
+vi.setConfig({ testTimeout: 15_000 });
+
 /**
  * 单题专注键盘方案（M3-D3，计划 §9.2）：Enter 主动作 / ←→ 切题 / 1-9 选项。
  * 守门矩阵：文本编辑区（composedPath 含 shadow DOM）不劫持；按钮/链接保留
