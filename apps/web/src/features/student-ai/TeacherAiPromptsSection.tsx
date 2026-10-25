@@ -235,7 +235,7 @@ export function TeacherAiPromptsSection() {
                       </label>
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="outline"
                         className="min-h-9 px-3 text-xs"
                         disabled={
                           checked !== null &&
