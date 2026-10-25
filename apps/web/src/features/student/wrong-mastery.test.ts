@@ -141,3 +141,12 @@ describe("localStorage 持久化（本设备自选）", () => {
     expect(loadWrongMasteryStandard()).toBe("strict");
   });
 });
+
+it("未做轮打断连续做对，即使该轮被判对也不成为攻克依据", () => {
+  const rounds = roundsOf(true, true, true);
+  const middle = rounds[1];
+  if (!middle) throw new Error("缺少中间轮次");
+  rounds[1] = { ...middle, answered: false };
+  expect(isConquered({ rounds }, "strict")).toBe(false);
+  expect(isConquered({ rounds: rounds.slice(0, 2) }, "lenient")).toBe(false);
+});

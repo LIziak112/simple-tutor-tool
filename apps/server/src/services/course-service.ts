@@ -32,6 +32,7 @@ import {
   lessonEmbeddedUnitIds,
 } from "./lesson-embedded.ts";
 import { pendingMarkCounts } from "./pending-mark.ts";
+import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 import { canStudentSeeItem } from "./visibility.ts";
 
 /**
@@ -1382,6 +1383,7 @@ export function getCourseProgress(
 
   // 待批题数（D4 共享谓词：finalCorrect IS NULL，按 attempt 聚合；draft 恒 0）
   const pendingByAttempt = pendingMarkCounts(db, courseAttempts);
+  const resultCounts = attemptResultCounts(db, courseAttempts);
 
   // (studentId, unitId) → 聚合 + 历次
   const aggregateByCell = new Map<
@@ -1433,6 +1435,7 @@ export function getCourseProgress(
       attemptNo: row.attemptNo,
       status: row.status,
       score,
+      resultCounts: resultCounts.get(row.id) ?? null,
       submittedAt: row.submittedAt,
     });
     aggregateByCell.set(key, entry);
@@ -1456,6 +1459,10 @@ export function getCourseProgress(
       studentId,
       unitId,
       ...entry.aggregate,
+      ...resultCountsSummary(
+        entry.history.map((row) => row.attemptId),
+        resultCounts,
+      ),
       latestSubmittedAt: latest?.submittedAt ?? null,
       history: entry.history.sort((a, b) => b.attemptNo - a.attemptNo),
     });

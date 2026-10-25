@@ -454,6 +454,31 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     );
   });
 
+  it("未做轮即使人工判对也打断攻克，不增加错次", async () => {
+    const env = await makeWrongEnv();
+    const first = await startCourseAttempt(env);
+    await saveAnswer(env, first, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, first, T1);
+    const next = await startCourseAttempt(env);
+    await submitAt(env, next, T2);
+    env.db
+      .update(responses)
+      .set({ finalCorrect: true, teacherMark: "correct" })
+      .where(
+        and(eq(responses.attemptId, next), eq(responses.questionId, Q.judge1)),
+      )
+      .run();
+    const result = await getWrongQuestions(env);
+    const card = result.data?.questions.find(
+      (question) => question.questionId === Q.judge1,
+    );
+    expect(card?.rounds).toHaveLength(2);
+    expect(card?.rounds.at(-1)?.answered).toBe(false);
+    expect(card?.resolved).toBe(false);
+    expect(card?.wrongCount).toBe(1);
+    assertNoLeak(result.body, { allow: ["answers", "solutionMd"] });
+  });
+
   it("未做轮（#6980-3）：未做判错不入本、不计错次；rounds 带 answered；答了判错才入本", async () => {
     const env = await makeWrongEnv();
     // 第 1 次：judge1 答了判错；judge2 整题未做（D1 判错但 answered=false）

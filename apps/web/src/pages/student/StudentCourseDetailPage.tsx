@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { LessonBadge } from "@/components/source-badge";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentCourse } from "@/features/student/student-queries";
 import {
@@ -24,7 +25,7 @@ import { ApiError } from "@/lib/api";
  * /s/courses/:id 课程目录页（T2A.5；T2A.6 单元项接入作答）：
  * 分节标题（仅文字）、讲义项（进入阅读页，带 courseId 上下文）、单元项
  * （进入单元落地页——开始/继续/再做一次与历次记录，D10）。
- * 单元项状态（D10）：未做 / 进行中 / 已完成（最近 xx 分 · 共 n 次）/ 有待批。
+ * 单元项状态（D10）：未做 / 进行中 / 已完成（最近做对 X / N 题 · 共 n 次）/ 有待批。
  * 越权（D22）：非成员/课程已归档 → 403 COURSE_ACCESS_DENIED，展示中文引导
  * （可能已被移出）；课程不存在 → 404（服务端不暴露存在性，前端统一「打不开了」）。
  */
@@ -57,7 +58,8 @@ function UnitStatusBadge({ item }: { item: StudentCourseItem }) {
   return (
     <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
       <CircleCheck aria-hidden className="size-3.5" />
-      已完成（最近 {attempt.latestScore ?? "—"} 分 · 共 {attempt.count} 次）
+      已完成（最近 {formatResultCounts(attempt.latestResultCounts)} · 共{" "}
+      {attempt.count} 次）
     </span>
   );
 }

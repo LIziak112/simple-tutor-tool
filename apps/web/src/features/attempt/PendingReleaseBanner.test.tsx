@@ -40,7 +40,7 @@ describe("PendingReleaseBanner", () => {
     expect(screen.getByText("5 / 6 题")).toBeInTheDocument();
     expect(screen.getByText("手写原稿状态")).toBeInTheDocument();
     expect(screen.getByText("已归档保存")).toBeInTheDocument();
-    expect(screen.getByText("得分状态")).toBeInTheDocument();
+    expect(screen.getByText("作答结果")).toBeInTheDocument();
     expect(screen.getByText("待公布 🔒（截止后自动判分）")).toBeInTheDocument();
   });
 

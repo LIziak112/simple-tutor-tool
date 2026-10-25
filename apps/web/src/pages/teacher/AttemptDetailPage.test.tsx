@@ -304,8 +304,8 @@ describe("AttemptDetailPage 已交卷详情（D7）", () => {
       ).toBeInTheDocument();
     }
     // scoreFinal null → 最终得分「未批」；自动判分显示 70
-    expect(screen.getByText("未批", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("70")).toBeInTheDocument();
+    expect(screen.getByText("做对 1 / 3 题")).toBeInTheDocument();
+    expect(screen.queryByText("70")).toBeNull();
   });
 
   it("逐题连续题号 + 单元节标题（多单元）；判定区与参考答案、详解折叠", async () => {
@@ -495,10 +495,7 @@ describe("AttemptDetailPage 改判/评语内联编辑（T3.2b，D3）", () => {
       ),
     ).toBeInTheDocument();
     await waitFor(() => {
-      const finalScore = screen
-        .getAllByText("100")
-        .find((el) => el.classList.contains("text-2xl"));
-      expect(finalScore).toBeDefined();
+      expect(screen.getByText("做对 2 / 3 题")).toBeInTheDocument();
     });
   });
 

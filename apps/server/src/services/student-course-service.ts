@@ -25,6 +25,7 @@ import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
 import { practiceDefaultsOf } from "./practice-workflow-service";
+import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -180,9 +181,11 @@ export function courseUnitAttemptSummaries(
 
   // 待批题数（按 attempt 聚合后归到单元；draft 恒 0）
   const pendingByAttempt = pendingMarkCounts(db, rows);
+  const resultCounts = attemptResultCounts(db, rows);
 
   interface CellState extends StudentUnitAttemptSummary {
     firstSubmittedSeen: boolean;
+    attemptIds: string[];
   }
   const byUnit = new Map<string, CellState>();
   for (const row of rows) {
@@ -198,7 +201,9 @@ export function courseUnitAttemptSummaries(
         bestScore: null,
         pendingCount: 0,
         firstSubmittedSeen: false,
+        attemptIds: [],
       } satisfies CellState);
+    cell.attemptIds.push(row.id);
     cell.count += 1;
     cell.pendingCount += pendingByAttempt.get(row.id) ?? 0;
     const score = row.scoreFinal ?? row.scoreAuto;
@@ -222,8 +227,11 @@ export function courseUnitAttemptSummaries(
 
   const result = new Map<string, StudentUnitAttemptSummary>();
   for (const [unitId, cell] of byUnit) {
-    const { firstSubmittedSeen: _omit, ...summary } = cell;
-    result.set(unitId, summary);
+    const { firstSubmittedSeen: _omit, attemptIds, ...summary } = cell;
+    result.set(unitId, {
+      ...summary,
+      ...resultCountsSummary(attemptIds, resultCounts),
+    });
   }
   return result;
 }
@@ -449,6 +457,7 @@ export function getStudentUnitLanding(
     .orderBy(desc(attempts.attemptNo))
     .all();
   const attemptsByUnit = courseUnitAttemptSummaries(db, studentId, courseId);
+  const resultCounts = attemptResultCounts(db, attemptRows);
 
   return {
     courseId,
@@ -465,6 +474,7 @@ export function getStudentUnitLanding(
       attemptNo: row.attemptNo,
       status: row.status,
       score: row.scoreFinal ?? row.scoreAuto,
+      resultCounts: resultCounts.get(row.id) ?? null,
       startedAt: row.startedAt,
       submittedAt: row.submittedAt,
     })),

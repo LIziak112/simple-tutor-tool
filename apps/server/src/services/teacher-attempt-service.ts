@@ -38,6 +38,7 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { attemptResultCounts } from "./result-counts";
 import { selfReviewStateOf } from "./review-state.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
@@ -340,6 +341,10 @@ export function listTeacherAttempts(
     .offset(query.offset)
     .all();
 
+  const resultCounts = attemptResultCounts(
+    db,
+    rows.map((row) => row.attempt),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -366,6 +371,7 @@ export function listTeacherAttempts(
             .get()?.n ?? 0)
         : attemptQuestionRows(db, attempt).length,
     status: attempt.status,
+    resultCounts: resultCounts.get(attempt.id) ?? null,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
@@ -630,6 +636,7 @@ export function getTeacherAttemptDetail(
     studentId: attempt.studentId,
     studentName,
     ...source,
+    resultCounts: attemptResultCounts(db, [attempt]).get(attempt.id) ?? null,
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
