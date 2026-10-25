@@ -137,13 +137,37 @@ async function renderMarkdownPng(
     // 图片与公式就绪（与题面底图同一稳定等待口径；失败抛可读错误）
     if (document.fonts) await document.fonts.ready;
     const images = [...target.querySelectorAll<HTMLImageElement>("img")];
+    // 离屏宿主（fixed -10000px）内的懒加载图片（::image 缺省 loading=lazy）
+    // 永远不会进入视口触发加载——decode() 会无限挂起（QM-19 e2e 实测）。
+    // 显式切 eager 再等待，与题面底图 question-base-image 的导出副本同款口径。
+    for (const image of images) image.loading = "eager";
+    // 等全部图片进入终态（成功/失败）再统一判失败——刚切 eager 时 404 图片
+    // 可能尚未置 complete，直接判 broken 会漏判继续挂起
+    await withTimeout(
+      Promise.all(
+        images.map(
+          (image) =>
+            new Promise<void>((resolve) => {
+              if (image.complete) return resolve();
+              image.addEventListener("load", () => resolve(), { once: true });
+              image.addEventListener("error", () => resolve(), { once: true });
+            }),
+        ),
+      ),
+      STEP_TIMEOUT_MS,
+      "材料配图加载超时，请重试",
+    );
     const broken = images.filter(
       (image) => image.complete && image.naturalWidth === 0,
     );
     if (broken.length > 0) {
       throw new Error("材料配图加载失败，请重试");
     }
-    await Promise.all(images.map((image) => image.decode()));
+    await withTimeout(
+      Promise.all(images.map((image) => image.decode())),
+      STEP_TIMEOUT_MS,
+      "材料配图解码超时，请重试",
+    );
     const blob = await withTimeout(
       toBlob(target, {
         backgroundColor: "#ffffff",
