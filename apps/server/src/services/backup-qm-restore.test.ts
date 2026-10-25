@@ -565,14 +565,20 @@ describe("QM-18：备份恢复后可续写、看旧卷、重练与导出（新�
     worlds.push(source.cleanup);
     const { db, dataDir } = source;
 
-    // —— 备份前身份快照（题目/材料/组/快照/自评/笔迹/AI 材料行 + 文件字节） ——
+    // —— 备份前身份快照（题目含 materialRefsJson 列/材料/组/引用索引行/组员
+    // 行/快照/自评/笔迹/AI 任务与材料行 + 文件字节） ——
     const identityOf = (target: Db) => ({
+      // 审查 P3-1 补齐：材料引用抽取副本列（questions.materialRefsJson）
+      // 随 questions 面进入逐项相等断言
       questions: target
-        .select({ id: questions.id })
+        .select({
+          id: questions.id,
+          materialRefsJson: questions.materialRefsJson,
+        })
         .from(questions)
         .all()
-        .map((row) => row.id)
-        .sort(),
+        .map((row) => [row.id, row.materialRefsJson] as const)
+        .sort(([aId], [bId]) => aId.localeCompare(bId)),
       materials: target
         .select({
           id: materials.id,
@@ -615,6 +621,52 @@ describe("QM-18：备份恢复后可续写、看旧卷、重练与导出（新�
         .select({ pngPath: aiTaskMaterials.pngPath })
         .from(aiTaskMaterials)
         .all(),
+      // 审查 P3-1 补齐三面：material_refs 索引行 / 组员行 / AI 任务行
+      //（此前两表行虽在世界中创建、aiTasks 行有 PNG 保留断言，但均不在
+      // 逐项相等断言内——报告断言面声明比实测宽，补齐一劳永逸）
+      materialRefRows: target
+        .select({
+          ownerKind: materialRefs.ownerKind,
+          ownerId: materialRefs.ownerId,
+          materialId: materialRefs.materialId,
+          refOrder: materialRefs.refOrder,
+        })
+        .from(materialRefs)
+        .all()
+        .sort(
+          (a, b) =>
+            a.ownerId.localeCompare(b.ownerId) || a.refOrder - b.refOrder,
+        ),
+      groupMembers: target
+        .select({
+          groupId: questionGroupMembers.groupId,
+          questionId: questionGroupMembers.questionId,
+          order: questionGroupMembers.order,
+        })
+        .from(questionGroupMembers)
+        .all()
+        .sort(
+          (a, b) =>
+            a.groupId.localeCompare(b.groupId) ||
+            a.questionId.localeCompare(b.questionId),
+        ),
+      aiTaskRows: target
+        .select({
+          id: aiTasks.id,
+          attemptId: aiTasks.attemptId,
+          questionId: aiTasks.questionId,
+          questionRevisionId: aiTasks.questionRevisionId,
+          channel: aiTasks.channel,
+          modeAtSend: aiTasks.modeAtSend,
+          promptHash: aiTasks.promptHash,
+          contextSnapshotJson: aiTasks.contextSnapshotJson,
+          status: aiTasks.status,
+          mutationId: aiTasks.mutationId,
+          replyDeliveredAt: aiTasks.replyDeliveredAt,
+        })
+        .from(aiTasks)
+        .all()
+        .sort((a, b) => a.id.localeCompare(b.id)),
     });
     const before = identityOf(db);
     const mediaBefore = readMediaBlob(
