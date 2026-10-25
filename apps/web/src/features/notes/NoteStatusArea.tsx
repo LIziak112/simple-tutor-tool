@@ -36,6 +36,8 @@ export interface NoteStatusAreaProps {
   onKeepLocal: () => void;
   onKeepCloud: () => void;
   onRetryDenied: () => void;
+  /** denied(content)「采用云端版本」（圈画审查 P0-1）：缺省不显示出口按钮 */
+  onAdoptCloud?: () => void;
   /** 图片重试进行中（images=true 时消费） */
   imageRetrying?: boolean;
   onRetryImages?: () => void;
@@ -50,6 +52,7 @@ export function NoteStatusArea({
   onKeepLocal,
   onKeepCloud,
   onRetryDenied,
+  onAdoptCloud,
   imageRetrying = false,
   onRetryImages,
 }: NoteStatusAreaProps) {
@@ -97,9 +100,26 @@ export function NoteStatusArea({
           <p className="break-words text-muted-foreground">
             {view.denied.reason}
             {view.denied.kind === "content"
-              ? "。继续书写产生新内容后会自动重试上传。"
+              ? `。继续书写产生新内容后会自动重试上传${
+                  onAdoptCloud !== undefined
+                    ? "；也可采用云端版本（丢弃本机未同步的改动）"
+                    : ""
+                }。`
               : `。本机${label}已保留，若权限恢复可重试同步。`}
           </p>
+          {view.denied.kind === "content" && onAdoptCloud !== undefined && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 self-start"
+              onClick={onAdoptCloud}
+            >
+              采用云端版本
+            </Button>
+          )}
+          {view.denied.kind === "content" && resolveError !== null && (
+            <p className="text-destructive">{resolveError}</p>
+          )}
           {view.denied.kind === "access" && (
             <Button
               type="button"

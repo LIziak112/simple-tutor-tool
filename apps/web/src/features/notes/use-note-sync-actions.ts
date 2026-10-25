@@ -11,6 +11,7 @@ import type { NoteScope, NoteSessionRef } from "@/features/notes/note-store";
 import {
   resolveNoteConflictKeepCloud,
   resolveNoteConflictKeepLocal,
+  resolveNoteDeniedKeepCloud,
   retryNoteUpload,
 } from "@/features/notes/note-sync";
 
@@ -24,6 +25,8 @@ export interface NoteSyncActions {
   keepCloud: () => void;
   /** denied(access) 手动重试（清终态并立即补传） */
   retryDenied: () => void;
+  /** denied(content)「采用云端版本」（圈画审查 P0-1：拉云端稿为工作稿） */
+  adoptCloud: () => void;
 }
 
 /**
@@ -59,5 +62,21 @@ export function useNoteSyncActions(
     if (session === null) return;
     void retryNoteUpload(session, scopeRef.current);
   }, [session]);
-  return { resolveError, setResolveError, keepLocal, keepCloud, retryDenied };
+  const adoptCloud = useCallback(() => {
+    if (session === null) return;
+    setResolveError(null);
+    void resolveNoteDeniedKeepCloud(session, scopeRef.current).catch(
+      (err: unknown) => {
+        setResolveError(err instanceof Error ? err.message : "操作失败");
+      },
+    );
+  }, [session]);
+  return {
+    resolveError,
+    setResolveError,
+    keepLocal,
+    keepCloud,
+    retryDenied,
+    adoptCloud,
+  };
 }

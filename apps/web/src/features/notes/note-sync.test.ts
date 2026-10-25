@@ -4,6 +4,7 @@ import { noteDocSchema } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
+  applyUploadDenied,
   applyUploadReceipt,
   getNoteRecord,
   installNoteBackend,
@@ -16,6 +17,7 @@ import {
   DOC_A,
   DOC_B,
   DOC_EMPTY,
+  headOf,
   receiptOf,
   SCOPE,
   SESSION_A,
@@ -39,6 +41,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     putNoteDocumentApi: vi.fn(),
     fetchStudentNoteDocumentApi: vi.fn(),
+    fetchStudentNoteHeadsApi: vi.fn(),
   };
 });
 
@@ -51,15 +54,19 @@ import {
   resetNoteSession,
   resolveNoteConflictKeepCloud,
   resolveNoteConflictKeepLocal,
+  resolveNoteDeniedKeepCloud,
   retryNoteUpload,
 } from "@/features/notes/note-sync";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
+  fetchStudentNoteHeadsApi,
   putNoteDocumentApi,
 } from "@/lib/api";
 
 const putMock = vi.mocked(putNoteDocumentApi);
+const headsMock = vi.mocked(fetchStudentNoteHeadsApi);
+const docMock = vi.mocked(fetchStudentNoteDocumentApi);
 
 /** 解上传 body（gzip 魔数判断，兼容 jsdom 无压缩回退的原始 JSON） */
 async function bodyDoc(blob: Blob): Promise<{ ink: { strokes: unknown[] } }> {
@@ -829,5 +836,44 @@ describe("note-sync：上传前预检与就地修复（圈画审查 P0-1）", ()
     expect(putMock.mock.calls.length).toBe(1);
     expect(record?.denied?.kind).toBe("content");
     expect(record?.pending).not.toBeNull(); // 本地内容保留（面板「采用云端版本」出口兜底）
+  });
+});
+
+describe("note-sync：resolveNoteDeniedKeepCloud（denied(content) 出口，圈画审查 P0-1）", () => {
+  it("采用云端版本：拉 head+正文物化为工作稿，denied/pending 清空、不再上传", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿文档不合法：坏字段");
+    const head21 = headOf({
+      note: {
+        ...headOf().note!,
+        revision: 21,
+        currentVersionId: receiptOf(21).versionId,
+      },
+    });
+    headsMock.mockResolvedValue([head21]);
+    docMock.mockResolvedValue(DOC_B);
+
+    await resolveNoteDeniedKeepCloud(SESSION_A, SCOPE);
+
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    expect(record?.denied).toBeNull();
+    expect(record?.pending).toBeNull();
+    expect(record?.baseRevision).toBe(21);
+    expect(record?.doc).toEqual(DOC_B);
+    expect(putMock).not.toHaveBeenCalled();
+  });
+
+  it("云端无可读版本（head.note 为空）→ 明确报错、本地保留", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿文档不合法：坏字段");
+    headsMock.mockResolvedValue([headOf({ note: null })]);
+
+    await expect(
+      resolveNoteDeniedKeepCloud(SESSION_A, SCOPE),
+    ).rejects.toThrow(/云端没有可读取的版本/);
+
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    expect(record?.denied?.kind).toBe("content");
+    expect(record?.pending).not.toBeNull();
   });
 });
