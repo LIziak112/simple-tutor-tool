@@ -16,7 +16,7 @@ function judgeStemOf(stemMd: string): string {
 /** 选项按钮的公共外壳（单选/多选共用；触控 ≥44px；has-[:checked] 联动选中态） */
 function optionShellClass(selected: boolean): string {
   return cn(
-    "flex min-h-11 w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
+    "flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
     selected
       ? "border-primary bg-primary/5 ring-1 ring-primary"
       : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
@@ -25,13 +25,15 @@ function optionShellClass(selected: boolean): string {
 
 /** 单个选项的内容（字母 + Markdown/公式文本） */
 function OptionBody({ letter, text }: { letter: string; text: string }) {
+  // 独立的「0.」「1.」是选项正文，不能被 Markdown 解释成空的有序列表。
+  const source = text.replace(/^(\s*\d+)\.(\s*)$/, "$1\\.$2");
   return (
     <>
-      <span className="w-5 shrink-0 text-sm leading-7 font-semibold">
+      <span className="w-5 shrink-0 text-center text-sm leading-7 font-semibold">
         <span className="sr-only">选项</span> {letter}
       </span>
       <RichMarkdown
-        source={text}
+        source={source}
         className="question-markdown min-w-0 flex-1 text-base leading-[1.75]"
       />
     </>

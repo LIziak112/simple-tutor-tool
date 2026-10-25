@@ -14,6 +14,27 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it.each(["choice", "multi"] as const)(
+    "%s 的独立数字句点选项按正文显示，真实列表仍保留",
+    (type) => {
+      const { container } = render(
+        <QuestionSurface
+          question={{
+            ...question,
+            type,
+            options: ["0.", "1.", "2.", "3.", "1. 第一条\n2. 第二条"],
+          }}
+        />,
+      );
+      const labels = [...container.querySelectorAll("label")];
+      for (const [index, label] of labels.slice(0, 4).entries()) {
+        expect(label).toHaveTextContent(`${index}.`);
+        expect(label.querySelector("ol")).toBeNull();
+      }
+      expect(labels[4]?.querySelectorAll("ol > li")).toHaveLength(2);
+    },
+  );
+
   it("相同作答属性重渲染时保持原生选择控件静止，更新回调后使用最新操作", () => {
     const onAnswer = vi.fn();
     const judge = { ...question, type: "judge" as const };
