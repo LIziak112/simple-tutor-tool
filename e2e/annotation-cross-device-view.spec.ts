@@ -239,10 +239,15 @@ for (const legacySource of [false, true]) {
         await expect(
           restored.getByText(/题面已固定为保存时的底图/),
         ).toBeVisible();
-        const continuationImage = restored.getByRole("img", {
+        // 原位画布在 45 秒保活窗口内仍留在 DOM（容器 hidden 不卸载），
+        // 定位器必须收窄到续画容器，避免 strict mode 命中两张画布。
+        const continuation = restored.locator(
+          '[data-slot="annotation-continuation"]',
+        );
+        const continuationImage = continuation.getByRole("img", {
           name: /题干标注底图/,
         });
-        const replay = restored.locator(
+        const replay = continuation.locator(
           'canvas[data-slot="annotation-canvas"]',
         );
         await expect(continuationImage).toBeVisible();
