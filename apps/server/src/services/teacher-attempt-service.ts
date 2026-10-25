@@ -1,13 +1,4 @@
-import type {
-  Question,
-  TeacherAttemptCard,
-  TeacherAttemptDetailData,
-  TeacherAttemptDetailQuestion,
-  TeacherAttemptInkInfo,
-  TeacherAttemptListData,
-  TeacherAttemptListQuery,
-  TeacherAttemptSource,
-} from "@tutor/contract";
+import { type Question, type TeacherAttemptCard, type TeacherAttemptDetailData, type TeacherAttemptDetailQuestion, type TeacherAttemptInkInfo, type TeacherAttemptListData, type TeacherAttemptListQuery, type TeacherAttemptSource, type WrongScope, wrongPracticeScopeSchema, wrongScopeLabelOf } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -99,6 +90,50 @@ export function inkInfoOf(
  * 作答记录不随作业删除消失，标题为布置时快照），异常缺失时兜底占位文案。
  * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
  */
+
+/**
+ * 错题重练范围展示形态（#6980-2，sourceOf 与师生两端标题单源共用）：
+ * label 取建卷存的 scope 快照（历史卷无存档为 null）；questionCount=卷内
+ * 冻结 responses 行数；originUnits=冻结 responses→questions→units 反查的
+ * 归属单元分布（题/单元已删除自然缺项；按次数倒序、同数次数字典序稳定）。
+ */
+export function wrongScopeOf(db: Db, attempt: Attempt): WrongScope {
+  const rows = db
+    .select({ id: responses.id })
+    .from(responses)
+    .where(eq(responses.attemptId, attempt.id))
+    .all();
+  const unitRows = db
+    .select({ title: units.title })
+    .from(responses)
+    .innerJoin(questions, eq(responses.questionId, questions.id))
+    .innerJoin(units, eq(questions.unitId, units.id))
+    .where(eq(responses.attemptId, attempt.id))
+    .all();
+  const unitCounts = new Map<string, number>();
+  for (const row of unitRows) {
+    unitCounts.set(row.title, (unitCounts.get(row.title) ?? 0) + 1);
+  }
+  const originUnits = [...unitCounts.entries()]
+    .map(([title, count]) => ({ title, count }))
+    .sort(
+      (a, b) =>
+        b.count - a.count || a.title.localeCompare(b.title, "zh-Hans-CN"),
+    );
+  let label: string | null = null;
+  if (attempt.practiceScopeJson !== null) {
+    try {
+      const parsed = wrongPracticeScopeSchema.safeParse(
+        JSON.parse(attempt.practiceScopeJson),
+      );
+      label = parsed.success ? wrongScopeLabelOf(parsed.data) : null;
+    } catch {
+      label = null;
+    }
+  }
+  return { label, questionCount: rows.length, originUnits };
+}
+
 export function sourceOf(
   db: Db,
   attempt: Attempt,
@@ -114,6 +149,7 @@ export function sourceOf(
       unitId: null,
       unitTitle: null,
       attemptNo: attempt.attemptNo,
+      wrongScope: wrongScopeOf(db, attempt),
     };
   }
   if (attempt.sourceType === "lesson") {

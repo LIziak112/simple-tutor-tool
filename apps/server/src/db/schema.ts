@@ -804,6 +804,12 @@ export const attempts = sqliteTable(
      * 已拆，域一致性由服务层保证）。
      */
     lectureId: text("lecture_id"),
+    /**
+     * 错题重练建卷范围快照（2026-10-25 #6980-2）：wrong 来源建卷时写入请求的
+     * scope JSON（wrongPracticeScopeSchema）；其余来源恒 NULL。历史卷为
+     * NULL，展示由 sourceOf 从冻结 responses→questions→units 反查现算。
+     */
+    practiceScopeJson: text("practice_scope_json"),
     /** 第几次作答（D10：course 来源从 1 递增；assignment 来源恒 1） */
     attemptNo: integer("attempt_no").notNull().default(1),
     /** 作答状态：draft | submitted | graded */

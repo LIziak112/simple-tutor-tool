@@ -1,0 +1,1 @@
+ALTER TABLE `attempts` ADD `practice_scope_json` text;

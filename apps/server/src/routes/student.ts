@@ -1095,6 +1095,7 @@ export function createStudentRoutes(
                 workflowVersion: body.workflowVersion,
                 feedbackMode: body.feedbackMode,
               },
+              body.scope,
             ),
           },
           201,

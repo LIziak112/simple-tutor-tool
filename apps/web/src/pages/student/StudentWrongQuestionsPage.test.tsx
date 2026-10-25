@@ -782,9 +782,12 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     // 顺序 = 当前 tab 列表序（q-fill-2 在前、q-judge-1 在后）；M3-D1.5 建卷
     // 请求显式携带 workflowVersion=1；M5-D2 偏好未设置时不发 feedbackMode
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
-        workflowVersion: 1,
-      });
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-fill-2", "q-judge-1"],
+        { workflowVersion: 1 },
+        // #6980-2：范围快照随请求上报（重练全部、无课程筛选 → 无 courseName）
+        { kind: "all" },
+      );
     });
     await waitFor(() => {
       expect(screen.getByTestId("location-probe")).toHaveTextContent(
@@ -818,10 +821,15 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     await screen.findByRole("button", { name: "重练全部（2 题）" });
     fireEvent.click(screen.getByRole("button", { name: "重练全部（2 题）" }));
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
-        workflowVersion: 1,
-        feedbackMode: "after_attempt",
-      });
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-fill-2", "q-judge-1"],
+        {
+          workflowVersion: 1,
+          feedbackMode: "after_attempt",
+        },
+        // #6980-2：范围快照随请求上报（重练全部、无课程筛选 → 无 courseName）
+        { kind: "all" },
+      );
     });
     // 模块级 store 跨用例残留：解绑回默认，避免影响同文件其他用例
     bindPracticePreferenceAccount(null);
@@ -843,9 +851,12 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     expect(groupButtons).toHaveLength(2);
     fireEvent.click(groupButtons[0] as HTMLElement);
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2"], {
-        workflowVersion: 1,
-      });
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-fill-2"],
+        { workflowVersion: 1 },
+        // #6980-2：范围快照（按练习分组 → dimension:"unit" + 组名，无课程筛选）
+        { kind: "group", dimension: "unit", groupTitle: "有理数加法" },
+      );
     });
     // 失败：错误横幅出现（含服务端信息），页面仍留在错题本
     expect(await screen.findByRole("alert")).toHaveTextContent("重练组卷失败");

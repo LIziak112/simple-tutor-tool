@@ -1,9 +1,4 @@
-import type {
-  AttemptStatus,
-  StudentRecordRow,
-  StudentRecordsSort,
-  TeacherAttemptSource,
-} from "@tutor/contract";
+import { type AttemptStatus, type StudentRecordRow, type StudentRecordsSort, type TeacherAttemptSource, wrongAttemptTitleOf } from "@tutor/contract";
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
@@ -60,7 +55,12 @@ export function recordTitleOf(row: TeacherAttemptSource): string {
     return row.assignmentTitle ?? "（作业已删除）";
   }
   if (row.sourceType === "wrong") {
-    return `错题重练 · 第 ${row.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleOf）——label=建卷范围快照，
+    // 历史卷由服务端 wrongScope 现算「来自 …」
+    return wrongAttemptTitleOf({
+      attemptNo: row.attemptNo,
+      wrongScope: row.wrongScope ?? null,
+    });
   }
   return `${row.unitTitle ?? ""} · 第 ${row.attemptNo} 次`;
 }

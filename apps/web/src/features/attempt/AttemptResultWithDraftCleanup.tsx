@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import type { AttemptResultData } from "@tutor/contract";
+import { type AttemptResultData, type WrongPracticeScope } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { startWrongPracticeApi } from "@/lib/api";
@@ -66,7 +66,12 @@ export default function AttemptResultWithDraftCleanup({
   const practice = useMutation({
     // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
     mutationFn: (questionIds: string[]) =>
-      startWrongPracticeApi(questionIds, workflowStartOptions()),
+      // #6980-2：结果页重练范围 = 来源卷标题（data.title），随卷落库供记录
+      // 标题说明「练的是什么」
+      startWrongPracticeApi(questionIds, workflowStartOptions(), {
+        kind: "result",
+        sourceTitle: data.title,
+      } satisfies WrongPracticeScope),
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
     },

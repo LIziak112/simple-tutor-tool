@@ -1,8 +1,6 @@
 import { z } from "zod";
 import {
-  attemptSourceSchema,
-  attemptStatusSchema,
-  teacherMarkSchema,
+  attemptSourceSchema,attemptStatusSchema,teacherMarkSchema,wrongScopeSchema,
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
@@ -102,6 +100,12 @@ export const teacherAttemptSourceSchema = z.object({
   unitTitle: z.string().min(1).nullable(),
   /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
   attemptNo: z.number().int().min(1),
+  /**
+   * 错题重练范围（2026-10-25 #6980-2）：wrong 来源携带——服务端 sourceOf
+   * 计算 label（建卷存的快照）/题数/来源单元分布，前端标题单源
+   * wrongAttemptTitleOf 消费；其余来源缺省（旧载荷兼容）。
+   */
+  wrongScope: wrongScopeSchema.nullable().optional(),
 });
 
 // 教师批改标记 teacherMarkSchema 定义在 attempt.ts（T3.5/D9 起学生端结果视图
