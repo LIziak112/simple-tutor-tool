@@ -787,3 +787,47 @@ describe("note-sync：T6R.15 三 phase 上送与订正分诊", () => {
     expect(putMock.mock.calls.length).toBe(1); // 终态停传
   });
 });
+
+describe("note-sync：上传前预检与就地修复（圈画审查 P0-1）", () => {
+  it("坏 pending（越界坐标+NaN 点）上传前就地修复：服务端收到的正文过契约、本地工作稿同步替换", async () => {
+    putMock.mockResolvedValue(receiptOf(1));
+    const bad = docOf([stroke([[10, 20], [40, 60]])]);
+    bad.ink.strokes[0]!.points[0] = { x: -3, y: 20, p: 0.5, t: 0 };
+    bad.ink.strokes[0]!.points.push({
+      x: Number.NaN,
+      y: 5,
+      p: 0.5,
+      t: 1,
+    });
+    writeNoteDoc(SESSION_A, SCOPE, bad);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+
+    // 只传一次，且传出字节整体通过契约（NaN 点被丢、-3 夹紧到 0）
+    expect(putMock.mock.calls.length).toBe(1);
+    const sent = noteDocSchema.parse(await bodyDoc(callOf(0).blob));
+    const points = sent.ink.strokes[0]!.points;
+    expect(points.length).toBe(2);
+    expect(points[0]!.x).toBe(0);
+    // 修复稿物化为本地工作稿（docVersion 推进、无 denied、回执清 pending）
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    expect(record?.denied).toBeNull();
+    expect(record?.pending).toBeNull();
+    expect(noteDocSchema.safeParse(record?.doc).success).toBe(true);
+  });
+
+  it("不可修复的坏 pending（version 错）：原样上传交服务端裁决 → denied(content) 终态", async () => {
+    putMock.mockRejectedValueOnce(
+      new ApiError("NOTE_VALIDATION_FAILED", "草稿文档不合法：版本不认识", 400),
+    );
+    const broken = {
+      ...docOf([stroke([[10, 20]])]),
+      version: 2,
+    } as unknown as Parameters<typeof writeNoteDoc>[2];
+    writeNoteDoc(SESSION_A, SCOPE, broken);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    expect(putMock.mock.calls.length).toBe(1);
+    expect(record?.denied?.kind).toBe("content");
+    expect(record?.pending).not.toBeNull(); // 本地内容保留（面板「采用云端版本」出口兜底）
+  });
+});

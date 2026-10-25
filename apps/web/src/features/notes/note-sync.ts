@@ -40,9 +40,10 @@ import type {
   NoteDocInput,
   NoteVersionReceipt,
 } from "@tutor/contract";
-import { noteConflictSummarySchema } from "@tutor/contract";
+import { noteConflictSummarySchema, noteDocSchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
+import { repairNoteDoc } from "@/features/notes/note-doc-repair.ts";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
@@ -71,6 +72,7 @@ import {
   settleNotePersistence,
   setUploading,
   subscribeNoteStore,
+  writeNoteDoc,
 } from "./note-store.ts";
 
 // ---------- 调度常量（方案 §6.2 建议初值；非丢失窗口承诺） ----------
@@ -203,6 +205,25 @@ function uploadable(
   );
 }
 
+/**
+ * 上传前预检（圈画审查 P0-1）：pending 不合契约时先就地修复（夹紧坐标/
+ * 丢非法点等，见 note-doc-repair）——修复成功即物化为新 pending（writeNoteDoc
+ * 同款语义：清 denied(content)、docVersion+1），上传的是修复稿；不可修复
+ * 返回 false，原样上传交服务端裁决（400 → denied(content)，面板有
+ * 「采用云端版本」出口兜底）。修复只在本机进行，不触碰服务端数据。
+ */
+function preflightRepair(
+  session: NoteSessionRef,
+  scope: NoteScope,
+  record: NoteLocalRecord & { pending: NotePendingVersion },
+): boolean {
+  if (noteDocSchema.safeParse(record.pending.doc).success) return false;
+  const repaired = repairNoteDoc(record.pending.doc);
+  if (repaired === null) return false;
+  writeNoteDoc(session, scope, repaired);
+  return true;
+}
+
 /** 键是否属于当前会话（是→返回解析出的 session+scope；否→null） */
 function keyInSession(
   key: string,
@@ -331,8 +352,14 @@ async function runUpload(
   const put = bridgePutSignal(controller.signal);
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const record = peekNoteRecord(session, scope);
+      let record = peekNoteRecord(session, scope);
       if (!uploadable(record)) return; // SEALED 重置期间被回执/终态清空：空跑退出
+      if (preflightRepair(session, scope, record)) {
+        // 修复写入后记录已换新（新 pending/新幂等键）——重取快照再传
+        const repaired = peekNoteRecord(session, scope);
+        if (!uploadable(repaired)) return;
+        record = repaired;
+      }
       const { mutationId, doc } = record.pending;
       const baseRevision = record.baseRevision;
       let receipt: NoteVersionReceipt;
