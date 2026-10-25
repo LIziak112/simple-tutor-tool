@@ -1260,6 +1260,8 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
       answer: null,
       autoCorrect: false,
       finalCorrect: false,
+      // 空提交 =「不会，提交并看解析」→ 自动标「不会」（#6980-4 主人口径）
+      studentFlag: "unsure",
     });
     // 未作答的单题主动提交 =「不会，提交并看解析」路径 → 显式交锋计已答
     //（answered=1，2026-10-25 主人口径），判错照旧进 wrong

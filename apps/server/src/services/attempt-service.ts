@@ -2483,6 +2483,24 @@ export function submitLessonQuestion(
     reviewPolicySchema.parse(row.reviewPolicy),
   );
 
+  // #6980-4（2026-10-25 主人口径）：空提交 =「不会，提交并看解析」——学生
+  // 已读题、承认不会、当场看解析，按做错结算：自动标「不会」进错题本。
+  // 判定 = 无文本作答（isUnanswered）且无正式笔迹（ink 表 (attemptId,
+  // questionId) 唯一键，responses.inkId 为 T2.8 遗留列恒空）
+  const unsureOnEmpty =
+    isUnanswered(answer) &&
+    db
+      .select({ id: ink.id })
+      .from(ink)
+      .where(
+        and(
+          eq(ink.attemptId, attemptId),
+          eq(ink.questionId, questionId),
+          gt(ink.strokeCount, 0),
+        ),
+      )
+      .get() === undefined;
+
   // 笔记证据（单题化）：验证纯读、先于事务；写入与判分同事务
   const evidenceRow = buildSingleQuestionEvidence(
     db,
@@ -2530,6 +2548,9 @@ export function submitLessonQuestion(
         //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
         // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
         answered: true,
+        // #6980-4（主人口径）：空提交自动标「不会」；有答案/笔迹的提交不覆盖
+        // 既有标注（学生可先自标「不会」再作答，标注保留）
+        studentFlag: unsureOnEmpty ? "unsure" : (row.studentFlag ?? null),
         submittedAt: nowIso,
       })
       .where(eq(responses.id, row.id))
@@ -2770,6 +2791,24 @@ export function submitPracticeQuestion(
       reviewPolicySchema.parse(row.reviewPolicy),
     );
 
+    // #6980-4（2026-10-25 主人口径）：空提交 =「不会，提交并看解析」——学生
+    // 已读题、承认不会、当场看解析，按做错结算：自动标「不会」进错题本。
+    // 判定 = 无文本作答（isUnanswered）且无正式笔迹（ink 表 (attemptId,
+    // questionId) 唯一键；responses.inkId 为 T2.8 遗留列恒空）
+    const unsureOnEmpty =
+      isUnanswered(answer) &&
+      db
+        .select({ id: ink.id })
+        .from(ink)
+        .where(
+          and(
+            eq(ink.attemptId, attemptId),
+            eq(ink.questionId, questionId),
+            gt(ink.strokeCount, 0),
+          ),
+        )
+        .get() === undefined;
+
     // 证据声明核对（frozen/none/missing，与 lesson 单题提交同一实现）
     const evidenceRow = buildSingleQuestionEvidence(
       db,
@@ -2789,6 +2828,9 @@ export function submitPracticeQuestion(
         //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
         // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
         answered: true,
+        // #6980-4（主人口径）：空提交自动标「不会」；有答案/笔迹的提交不覆盖
+        // 既有标注（学生可先自标「不会」不覆盖）
+        studentFlag: unsureOnEmpty ? "unsure" : (row.studentFlag ?? null),
         submittedAt: nowIso,
         practiceMutationId: req.submissionMutationId,
         practiceRequestDigest: digest,
@@ -3030,12 +3072,16 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const drafts: Record<string, StudentAnswer> = {};
   const draftRevisions: Record<string, number> = {};
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
+  // #6980-4：做题时自标「不会」（草稿实时下发；交卷后进结果与轮次史）
+  const studentFlags: Record<string, "unsure"> = {};
   // 单一数据源：行只查一次、快照只 parse 一次——公开投影/草稿答案/提示回显
   // 在同一批行上派生（groupedSnapshotRows 统一「跳过缺失+组 id 回退+空组过滤」）
   const units = groupedSnapshotRows(db, attempt, (row, snapshot) => {
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;
+    if (row.studentFlag === "unsure")
+      studentFlags[row.questionId] = row.studentFlag;
     // T2.11：已解锁提示回显（纯函数——文本取自同一份冻结快照，不再二次查库）
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
@@ -3058,6 +3104,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     drafts,
     draftRevisions,
     hintsOpened,
+    studentFlags,
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
     enabledCapabilities,
@@ -3103,6 +3150,8 @@ export function resultQuestionOf(
     // #6980-3：是否有实际作答（判分写点落库；finalCorrect=false 且 false 时
     // 端上灰显「未做」，练习本卷错题默认不含）
     answered: row.answered,
+    // #6980-4：做题时自标「不会」（交卷后只读事实，不受公布 gate 影响）
+    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
     selfReview: selfReviewStateOf(row, snapshot),
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
@@ -3124,6 +3173,45 @@ export function studentFacingResultOf(
     ...item,
     snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
   };
+}
+
+/**
+ * 标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409 ALREADY_SUBMITTED
+ * ——「做题时标了不会」是入错题本的事实，交卷后不能再追加）；flag=null 取消。
+ * 守卫与 saveDraftAnswer 同口径（requireUsableAttempt + 成员校验）。标志不是
+ * 作答内容：请求/回执契约只有标志位，无泄露面（泄露测试见
+ * routes/student-flags.test.ts）。
+ */
+export function setStudentFlag(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  flag: "unsure" | null,
+): { questionId: string; studentFlag: string | null } {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  if (attempt.status !== "draft") {
+    throw new HttpError(
+      409,
+      "ALREADY_SUBMITTED",
+      "这份练习已交卷，不能再改标记",
+    );
+  }
+  requireAttemptQuestion(db, attempt, questionId);
+  // 行级锁（#6980-4 审查 P1-3）：单题已提交（逐题反馈/讲练看解析）后，
+  // 「做题时标了不会」的事实已随提交落定，不能事后追加或取消——否则蒙对
+  // 后可摘标记逃逸错题本。与 saveDraftAnswer / saveInk 同一守卫口径
+  assertRowNotSubmitted(db, attemptId, questionId, "修改「不会」标记");
+  db.update(responses)
+    .set({ studentFlag: flag })
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .run();
+  return { questionId, studentFlag: flag };
 }
 
 /** 得分汇总的自动判分计数部分（口径与 scoreAutoOf 一致：scoreAuto =

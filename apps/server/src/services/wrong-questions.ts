@@ -82,14 +82,17 @@ interface JudgedRoundRow {
   finalCorrect: boolean | null;
   /** #6980-3：该轮是否有实际作答（responses.answered，判分写点落库） */
   answered: boolean;
+  /** #6980-4：该轮做题时学生是否标了「不会」（responses.student_flag） */
+  studentFlag: string | null;
   /** #6980-3（审查修复 P0-1）：该轮的人工显式判定（批改/自评），不被「未做」掩盖 */
   teacherMark: string | null;
   selfCorrect: boolean | null;
 }
 
 /**
- * 错题本入本谓词（#6980-3 单一出处）：任一次已判定作答「答了且判错」——
- * 未做轮（answered=false）不再入本，但人工显式判定（teacherMark / selfCorrect，
+ * 错题本入本谓词（#6980-3/#6980-4 单一出处）：任一次已判定作答「答了且判错」
+ * 或「标了不会」（studentFlag=unsure，无论对错与是否作答）——未做且未标不会
+ * 的轮（answered=false）不入本，但人工显式判定（teacherMark / selfCorrect，
  * 审查修复 P0-1）不被「未做」掩盖：老师显式批错、学生自评「错了」的行照常
  * 入本计错次。listWrongQuestions 聚合与 latestJudgedResponsesByQuestion
  * （重练组卷成员校验 + 快照来源）共用本函数，防口径漂移。
@@ -98,16 +101,18 @@ function enteredWrongBook(
   rounds: readonly {
     finalCorrect: boolean | null;
     answered: boolean;
+    studentFlag: string | null;
     teacherMark: string | null;
     selfCorrect: boolean | null;
   }[],
 ): boolean {
   return rounds.some(
     (round) =>
-      round.finalCorrect === false &&
-      (round.answered ||
-        round.teacherMark !== null ||
-        round.selfCorrect !== null),
+      (round.finalCorrect === false &&
+        (round.answered ||
+          round.teacherMark !== null ||
+          round.selfCorrect !== null)) ||
+      round.studentFlag === "unsure",
   );
 }
 
@@ -159,6 +164,7 @@ function judgedRoundsByQuestion(
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
       answered: responses.answered,
+      studentFlag: responses.studentFlag,
       attempt: attempts,
       response: {
         submittedAt: responses.submittedAt,
@@ -304,11 +310,14 @@ export function listWrongQuestions(
 
   // 候选：入本（任一次答了且判错，#6980-3 enteredWrongBook 单一出处）+
   // 默认剔除已攻克（服务端口径=最近一次做对）
-  const candidates = [...roundsByQuestion.entries()].filter(
-    ([, rounds]) =>
-      enteredWrongBook(rounds) &&
-      (includeResolved || rounds[rounds.length - 1]?.finalCorrect !== true),
-  );
+  const candidates = [...roundsByQuestion.entries()].filter(([, rounds]) => {
+    if (!enteredWrongBook(rounds)) return false;
+    if (includeResolved) return true;
+    // 已攻克口径与端上 isConquered（宽松标准）同源：最近一轮做对且未标
+    // 「不会」才算攻克——标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
+    const last = rounds[rounds.length - 1];
+    return !(last?.finalCorrect === true && last.studentFlag !== "unsure");
+  });
 
   // 候选题涉及的 attempt 与最近一次判定的 response（轮次来源上下文与条目内容）
   const attemptIdSet = new Set<string>();
@@ -429,6 +438,7 @@ export function listWrongQuestions(
         sourceType: source.sourceType,
         correct: round.finalCorrect === true,
         answered: round.answered,
+        studentFlag: round.studentFlag === "unsure" ? "unsure" : null,
         submittedAt: round.submittedAt ?? round.startedAt,
         sourceTitle: roundSourceTitle(source),
         // 与 courseName 同一处（sourceOf）取值：course=练习课程、assignment=
@@ -451,7 +461,9 @@ export function listWrongQuestions(
       ...releaseOfSnapshot(snapshot),
       answerText: serializeStudentAnswer(answerOf(lastResponse.answerJson)),
       firstCorrect: first.finalCorrect === true,
-      resolved: last.finalCorrect === true,
+      // 已攻克（宽松口径，与默认过滤同源）：最近一轮做对且未标「不会」——
+      // 标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
+      resolved: last.finalCorrect === true && last.studentFlag !== "unsure",
       firstAt: first.submittedAt ?? first.startedAt,
       lastAt: last.submittedAt ?? last.startedAt,
       rounds: roundsPayload,

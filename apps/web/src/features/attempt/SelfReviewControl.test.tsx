@@ -18,6 +18,7 @@ const question: AttemptResultQuestion = {
   },
   answer: { kind: "fill", values: ["2"] },
   answered: true,
+  studentFlag: null,
   answers: { kind: "fill", blanks: [["2"]] },
   solutionMd: "参考解答",
   autoCorrect: null,

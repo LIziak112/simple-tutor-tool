@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Clock, Flag } from "lucide-react";
+import { ArrowRight, Check, CircleHelp, Clock, Flag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PracticeSubmittedMark } from "./PracticeWorkspace";
 import {
@@ -11,6 +11,8 @@ export interface QuestionNavigationItem {
   index: number;
   completion: QuestionCompletion;
   flagged: boolean;
+  /** #6980-4：做题时标了「不会」（服务端保存；题号导航用不同图标与待检查并存） */
+  unsure?: boolean;
   /**
    * 逐题提交进度（M3-D1，v1 新协议卷）：submitted=服务端已确认提交；
    * feedbackReadable=当前节奏与教师 gate 是否允许读本题反馈。undefined =
@@ -27,7 +29,7 @@ function itemLabel(item: QuestionNavigationItem): string {
       ? "已提交"
       : "已提交，反馈待公布"
     : completionLabel(item.completion);
-  return `第 ${item.index + 1} 题，${state}${item.flagged ? "，待检查" : ""}`;
+  return `第 ${item.index + 1} 题，${state}${item.flagged ? "，待检查" : ""}${item.unsure ? "，标过不会" : ""}`;
 }
 
 /** 单格样式：已提交用中性前景色系（可读=浅底实线、待公布=灰底），非红绿 */
@@ -132,6 +134,12 @@ export function QuestionNavigator({
                 <Flag
                   aria-hidden
                   className="absolute right-0.5 top-0.5 size-2.5"
+                />
+              )}
+              {item.unsure && (
+                <CircleHelp
+                  aria-hidden
+                  className="absolute bottom-0.5 right-0.5 size-2.5 text-amber-600 dark:text-amber-400"
                 />
               )}
             </button>

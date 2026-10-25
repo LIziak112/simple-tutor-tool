@@ -28,7 +28,10 @@ import {
 } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
-import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
+import {
+  AttemptBottomBar,
+  AttemptNavigatorButton,
+} from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
 import {
@@ -56,7 +59,7 @@ import {
 } from "@/features/notes/submit-evidence";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import { sealAttemptAnnotationsApi } from "@/lib/api";
+import { sealAttemptAnnotationsApi, setStudentFlagApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import {
@@ -367,6 +370,29 @@ function AnswerView({
   }, [navigatorCollapsed]);
   const { flags: flaggedQuestions, toggle: toggleFlag } =
     useWorkspaceFlags(attemptId);
+  // #6980-4：服务端「不会」标记（draft 限定，交卷后只读）。乐观更新、失败
+  // 回滚——标记只影响错题本归档口径，不阻塞作答与提交
+  const [studentFlags, setStudentFlags] = useState<ReadonlySet<string>>(
+    () => new Set(Object.keys(data.studentFlags ?? {})),
+  );
+  const toggleUnsure = useCallback(
+    (questionId: string) => {
+      const next = new Set(studentFlags);
+      const flag: "unsure" | null = next.has(questionId) ? null : "unsure";
+      if (flag === null) next.delete(questionId);
+      else next.add(questionId);
+      setStudentFlags(next);
+      setStudentFlagApi(attemptId, questionId, flag).catch(() => {
+        setStudentFlags((previous) => {
+          const rollback = new Set(previous);
+          if (flag === null) rollback.add(questionId);
+          else rollback.delete(questionId);
+          return rollback;
+        });
+      });
+    },
+    [attemptId, studentFlags],
+  );
   const [formalInkPresence, setFormalInkPresence] = useState<
     ReadonlyMap<string, boolean>
   >(new Map());
@@ -588,6 +614,7 @@ function AnswerView({
       formalInkPresence.get(question.id),
     ),
     flagged: flaggedQuestions.has(question.id),
+    unsure: studentFlags.has(question.id),
     // v1 卷四态口径（§9.1）：progress 缺行按未提交处理；统一公布模式下
     // feedbackReadable=false 的已提交行在导航里只报提交事实，不显示对错。
     // 用回执 overlay 后的进度（practiceProgress）——提交即时反映，不等服务端重取
@@ -1008,6 +1035,15 @@ function AnswerView({
       inert={!attemptMaterialsEditable(materialRecovery) || answers === null}
     >
       <SingleQuestionActionBar
+        navigation={
+          <AttemptNavigatorButton
+            icon={false}
+            onOpen={openNavigator}
+            disabled={practiceSubmit.submittingId !== null}
+          >
+            {singleIndex + 1}/{total}
+          </AttemptNavigatorButton>
+        }
         showNext={
           !singleProgressRow?.submittedAt &&
           !practiceSubmit.finished &&
@@ -1071,30 +1107,40 @@ function AnswerView({
         <AttemptHeader
           title={data.title}
           menuItems={
-            practiceWorkflow !== undefined ? (
-              <>
+            <>
+              {singleMode && !practiceSubmit.finished && (
                 <DropdownMenuItem
-                  onSelect={() => {
-                    setModeSettingsOpen(true);
-                    // 单题模式由弹窗承载同一编辑器；列表模式展开行内摘要行
-                    if (singleMode) return;
-                    requestAnimationFrame(() => {
-                      const trigger =
-                        singleWorkspaceRef.current?.querySelector<HTMLButtonElement>(
-                          '[aria-label="调整做题方式"]',
-                        );
-                      trigger?.scrollIntoView?.({ block: "nearest" });
-                      trigger?.focus();
-                    });
-                  }}
+                  disabled={!online || denied || total === 0}
+                  onSelect={openSubmitDialog}
                 >
-                  做题方式
+                  提前交卷
                 </DropdownMenuItem>
-                <PracticeKeyboardHelpMenuItem
-                  onOpen={() => setKeyboardHelpOpen(true)}
-                />
-              </>
-            ) : undefined
+              )}
+              {practiceWorkflow !== undefined && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setModeSettingsOpen(true);
+                      // 单题模式由弹窗承载同一编辑器；列表模式展开行内摘要行
+                      if (singleMode) return;
+                      requestAnimationFrame(() => {
+                        const trigger =
+                          singleWorkspaceRef.current?.querySelector<HTMLButtonElement>(
+                            '[aria-label="调整做题方式"]',
+                          );
+                        trigger?.scrollIntoView?.({ block: "nearest" });
+                        trigger?.focus();
+                      });
+                    }}
+                  >
+                    做题方式
+                  </DropdownMenuItem>
+                  <PracticeKeyboardHelpMenuItem
+                    onOpen={() => setKeyboardHelpOpen(true)}
+                  />
+                </>
+              )}
+            </>
           }
           actions={
             <AiQueueButton
@@ -1183,15 +1229,14 @@ function AnswerView({
             )}
             <span>共 {total} 题</span>
           </p>
-          {/* T6R.3：升级遗留卷懒冻结标记——内容为恢复时刻的版本，不能宣称是
-              学生更早看到的（方案 §5.1 legacy_unverified），如实告知 */}
-          {data.legacyUnverified && (
-            <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-              这份练习的内容是系统升级后恢复的版本，可能与之前看到的不同；请按
-              当前页面内容作答。
-            </p>
-          )}
         </AttemptHeader>
+
+        {/* 升级遗留卷按恢复版本作答的提醒随正文滚动，不占吸顶导航。 */}
+        {data.legacyUnverified && (
+          <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+            这份练习的内容是系统升级后恢复的版本，可能与之前看到的不同；请按当前页面内容作答。
+          </p>
+        )}
 
         <AttemptSyncConflicts
           attemptId={attemptId}
@@ -1359,6 +1404,8 @@ function AnswerView({
                             attemptId={attemptId}
                             flagged={flaggedQuestions.has(question.id)}
                             onToggleFlag={toggleFlag}
+                            unsure={studentFlags.has(question.id)}
+                            onToggleUnsure={toggleUnsure}
                             formalInkPresence={
                               formalInkPresence.get(question.id) ?? false
                             }
@@ -1472,7 +1519,7 @@ function AnswerView({
                 return;
               navigatorTrigger.current?.focus();
             }}
-            className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg"
+            className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg max-lg:top-auto max-lg:bottom-0 max-lg:w-full max-lg:translate-y-0 max-lg:rounded-b-none max-lg:pb-[max(16px,env(safe-area-inset-bottom))]"
           >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -1481,6 +1528,12 @@ function AnswerView({
               </DialogTitle>
               <DialogDescription>
                 已填写 {answered}/{total} 题
+                {practiceProtocol === "v1" && (
+                  <>
+                    {" "}
+                    · 已提交 {submittedPracticeCount}/{total} 题
+                  </>
+                )}
               </DialogDescription>
             </DialogHeader>
             <div className="min-h-0 overflow-y-auto overscroll-contain p-1">
@@ -1490,6 +1543,30 @@ function AnswerView({
                 onJump={jumpForMode}
                 locked={singleMode && practiceSubmit.submittingId !== null}
               />
+            </div>
+            <div className="flex shrink-0 justify-end border-t border-border pt-3">
+              {practiceSubmit.finished ? (
+                <Button
+                  className="min-h-11"
+                  onClick={() => {
+                    setNavigatorOpen(false);
+                    practiceSubmit.viewResult();
+                  }}
+                >
+                  查看本次结果
+                </Button>
+              ) : (
+                <Button
+                  className="min-h-11"
+                  disabled={!online || denied || total === 0}
+                  onClick={() => {
+                    setNavigatorOpen(false);
+                    openSubmitDialog();
+                  }}
+                >
+                  {singleMode ? "提前交卷" : "交卷"}
+                </Button>
+              )}
             </div>
           </DialogContent>
         </Dialog>

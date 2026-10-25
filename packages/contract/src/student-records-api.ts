@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
+import {
+  attemptSourceSchema,
+  attemptStatusSchema,
+  studentFlagSchema,
+} from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { selfReviewStateSchema } from "./self-review.ts";
 import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
@@ -164,6 +168,11 @@ export const wrongQuestionRoundSchema = z.object({
    * 未做轮与做错轮同样打断「连续做对」（correct=false 即打断）。
    */
   answered: z.boolean(),
+  /**
+   * 做题时学生自标「不会」（#6980-4）：unsure / null。标过不会的轮无论对错、
+   * 是否作答，该题都保留在错题本；标过不会的做对轮不算攻克（端上判定）。
+   */
+  studentFlag: studentFlagSchema.nullable(),
   /** 该轮交卷时间（attempt 的 submittedAt，防御回退 startedAt）：UTC ISO */
   submittedAt: z.string().min(1),
   /** 该轮来源标题（服务端口径：作业=作业标题；课程=「单元标题 · 第 n 次」） */
