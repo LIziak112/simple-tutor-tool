@@ -13,6 +13,7 @@ import type {
   StudentAnswer,
 } from "@tutor/contract";
 import {
+  dispatchIsAnswered,
   optionsPublicStructureOf,
 } from "@tutor/contract";
 import {
@@ -328,30 +329,11 @@ function requireAttemptReviewAccess(
   return { attempt, rows, released };
 }
 
-/** 内容存在性独立于答案对象存在性；空对象形态不能证明学生已作答。 */
+/** 内容存在性独立于答案对象存在性；空对象形态不能证明学生已作答。
+ * v2 同步合入后走契约登记表 isAnswered 调度（I16 纪律：不手写 kind 分支，
+ * 完整度口径全平台单源——judge 空串边缘以登记表为准）。 */
 function hasAnswerContent(answer: StudentAnswer | null): boolean {
-  if (answer === null) return false;
-  switch (answer.kind) {
-    case "judge":
-      return typeof answer.value === "boolean" || answer.value.trim() !== "";
-    case "choice":
-      return true;
-    case "multi":
-      return answer.indexes.length > 0;
-    case "fill":
-      return answer.values.some((value) => value.trim() !== "");
-    case "final":
-      return answer.finalAnswer.trim() !== "";
-    // QM 新题型（v2 同步合入后出现在联合里）：response 以 body 非空白为
-    // 已作答（契约 §5.3.1 isAnswered 口径）；matching/ordering 部分作答
-    // = 草稿合法，至少一项才算有内容
-    case "response":
-      return answer.body.trim() !== "";
-    case "matching":
-      return Object.keys(answer.pairs).length > 0;
-    case "ordering":
-      return answer.sequence.length > 0;
-  }
+  return answer !== null && dispatchIsAnswered(answer);
 }
 
 function attemptReviewRangeOf(
