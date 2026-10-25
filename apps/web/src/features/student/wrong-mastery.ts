@@ -44,6 +44,9 @@ export function saveWrongMasteryStandard(standard: WrongMasteryStandard): void {
 /**
  * 是否已攻克：按标准从轮次史（rounds，服务端保证按时间升序）计算。
  * 空 rounds（防御，正常数据不会出现）恒未攻克。
+ * #6980-4：标了「不会」（studentFlag="unsure"）的做对轮不算攻克——宽松标准
+ * 下最后一次做对轮带标记即未攻克；严格标准下带标记的做对轮等同做错、打断
+ * 「连续做对」。
  */
 export function isConquered(
   question: Pick<WrongQuestionCard, "rounds">,
@@ -52,9 +55,20 @@ export function isConquered(
   const rounds = question.rounds;
   const last = rounds[rounds.length - 1];
   if (last === undefined) return false;
-  if (standard === "lenient") return last.correct;
+  if (standard === "lenient") {
+    return (
+      last.correct && last.answered === true && last.studentFlag !== "unsure"
+    );
+  }
   const prev = rounds[rounds.length - 2];
-  return last.correct && (prev?.correct ?? false);
+  return (
+    last.correct &&
+    last.answered === true &&
+    last.studentFlag !== "unsure" &&
+    prev?.correct === true &&
+    prev.answered === true &&
+    prev.studentFlag !== "unsure"
+  );
 }
 
 /** 按攻克标准分流（待复习 / 已攻克）；组内顺序保持入参顺序（页面自行排序） */

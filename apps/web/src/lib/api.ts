@@ -71,6 +71,7 @@ import {
   type AttemptAnswerSaveRequest,
   type AttemptDetailData,
   type AttemptEvent,
+  type AttemptFlagData,
   type AttemptMaterialRevisions,
   type AttemptSource,
   type AttemptStartData,
@@ -79,6 +80,7 @@ import {
   type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   apiResponseSchema,
+  attemptFlagDataSchema,
   attemptMaterialRevisionsSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
@@ -167,6 +169,7 @@ import {
   type StudentCourseListData,
   type StudentCreateData,
   type StudentCreateRequest,
+  type StudentFlag,
   type StudentLectureDetail,
   type StudentLectureListData,
   type StudentListData,
@@ -986,6 +989,24 @@ export async function saveSelfReviewApi(
     ].$post(args),
   );
   return selfReviewDataSchema.parse(data);
+}
+
+/**
+ * 做题时标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409）；
+ * 请求/回执只有标志位，不含任何作答内容。
+ */
+export function setStudentFlagApi(
+  attemptId: string,
+  questionId: string,
+  flag: StudentFlag | null,
+): Promise<AttemptFlagData> {
+  const args = {
+    param: { id: attemptId, questionId },
+    json: { flag },
+  };
+  return callApi(() =>
+    api.api.student.attempts[":id"].flags[":questionId"].$put(args),
+  ).then((data) => attemptFlagDataSchema.parse(data));
 }
 
 /**

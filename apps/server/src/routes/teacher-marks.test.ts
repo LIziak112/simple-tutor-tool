@@ -975,7 +975,10 @@ describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
       scoreAuto: 83,
       scoreFinal: null,
       correctCount: 5,
-      wrongCount: 2, // 未作答单选（false）+ 批错的 solve
+      // #6980-3：批错的 solve 只交正式手写笔迹（strokeCount>0）= 已答 → 计错次；
+      // 未作答单选判错但未做 → 不计错次，进 notDoneCount（详情灰显「未做」）
+      wrongCount: 1,
+      notDoneCount: 1,
       pendingCount: 1,
     });
     const solve = (detail.questions as Record<string, unknown>[]).find(
@@ -986,6 +989,7 @@ describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
       teacherComment: "漏了进位",
       finalCorrect: false,
       autoCorrect: null,
+      answered: true, // 只交正式笔迹也是已答（审查修复 P0-1）
     });
   });
 });

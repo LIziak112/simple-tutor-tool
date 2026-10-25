@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attemptResultCountsSchema } from "./result-counts.ts";
 
 /**
  * 课程 API 契约（T2A.4 起为权威定义）：教师端课程编辑页（目录编排 + 可见性 + 成员）
@@ -296,8 +297,11 @@ export const courseProgressCellSchema = z.object({
   count: z.number().int().min(0),
   submittedCount: z.number().int().min(0),
   firstScore: z.number().int().min(0).max(100).nullable(),
+  firstResultCounts: attemptResultCountsSchema.nullable().optional(),
   latestScore: z.number().int().min(0).max(100).nullable(),
+  latestResultCounts: attemptResultCountsSchema.nullable().optional(),
   bestScore: z.number().int().min(0).max(100).nullable(),
+  bestResultCounts: attemptResultCountsSchema.nullable().optional(),
   pendingCount: z.number().int().min(0),
   /** 最近一次交卷时间：UTC ISO；从未交卷为 null */
   latestSubmittedAt: z.string().nullable(),
@@ -308,6 +312,7 @@ export const courseProgressCellSchema = z.object({
       attemptNo: z.number().int().min(1),
       status: z.enum(["draft", "submitted", "graded"]),
       score: z.number().int().min(0).max(100).nullable(),
+      resultCounts: attemptResultCountsSchema.nullable().optional(),
       submittedAt: z.string().nullable(),
     }),
   ),

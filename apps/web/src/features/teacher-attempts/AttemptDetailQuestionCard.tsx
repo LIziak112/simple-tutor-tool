@@ -40,10 +40,18 @@ export function formatActiveSec(sec: number | null): string {
   return seconds === 0 ? `${minutes} 分` : `${minutes} 分 ${seconds} 秒`;
 }
 
-/** 判定单元格文本与配色（true 绿 / false 红 / null 灰「—」） */
-function verdictOf(value: boolean | null): { text: string; className: string } {
+/** 判定单元格文本与配色（true 绿 / false 红 / null 灰「—」；#6980-3：判错但
+ *  未实际作答（answered=false）灰显「未做」而非红「答错」） */
+function verdictOf(
+  value: boolean | null,
+  answered = true,
+): { text: string; className: string } {
   if (value === true) return { text: "答对", className: "text-emerald-600" };
-  if (value === false) return { text: "答错", className: "text-red-600" };
+  if (value === false) {
+    return answered
+      ? { text: "答错", className: "text-red-600" }
+      : { text: "未做", className: "text-muted-foreground" };
+  }
   return { text: "—", className: "text-muted-foreground" };
 }
 
@@ -211,13 +219,21 @@ function VerdictSection({
       </p>
     );
   }
-  const auto = verdictOf(question.autoCorrect);
-  const final = verdictOf(question.finalCorrect);
+  const auto = verdictOf(question.autoCorrect, question.answered);
+  const final = verdictOf(question.finalCorrect, question.answered);
   const teacher =
     question.teacherMark === null ? null : question.teacherMark === "correct";
   const byTeacher = verdictOf(teacher);
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:grid-cols-2">
+      {question.studentFlag === "unsure" && (
+        <div className="flex gap-2 sm:col-span-2">
+          <dt className="shrink-0 text-muted-foreground">学生标注：</dt>
+          <dd className="font-medium text-muted-foreground">
+            做题时标了「不会」（该题保留在学生错题本）
+          </dd>
+        </div>
+      )}
       <div className="flex gap-2">
         <dt className="shrink-0 text-muted-foreground">自动判定：</dt>
         <dd className={cn("font-medium", auto.className)}>{auto.text}</dd>

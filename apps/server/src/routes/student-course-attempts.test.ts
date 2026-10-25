@@ -513,6 +513,24 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
     expect(landing.data.attempts[0]?.score).toBe(0);
     expect(landing.data.attempts[1]?.score).toBe(100);
     expect(landing.data.summary).toEqual({
+      firstResultCounts: {
+        correctCount: 2,
+        totalCount: 3,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
+      latestResultCounts: {
+        correctCount: 0,
+        totalCount: 3,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
+      bestResultCounts: {
+        correctCount: 2,
+        totalCount: 3,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
       count: 2,
       submittedCount: 2,
       hasDraft: false,

@@ -357,7 +357,9 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       );
       await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
       await expect(
-        studentPage.getByText(/首次 100 分 · 最近 0 分 · 最高 100 分/),
+        studentPage.getByText(
+          /首次 做对 2 \/ 2 题 · 最近 做对 0 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
+        ),
       ).toBeVisible();
 
       // —— 泄露检查（课程练习段）：全程无禁用键、无提示/详解原文 ——

@@ -150,7 +150,9 @@ test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大�
       card.getByText(`${courseName} · ${unitName} · 第 1 次`),
     ).toBeVisible();
     await expect(card.getByText("待批 1")).toBeVisible();
-    await expect(card.getByText("100", { exact: true })).toBeVisible();
+    await expect(
+      card.getByText("做对 1 / 2 题", { exact: true }),
+    ).toBeVisible();
 
     // —— 详情：来源头 + 得分汇总 + 逐题 + 手写缩略图放大 ——
     await card.click();
@@ -163,7 +165,9 @@ test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大�
     await expect(page.getByText("答对 1 题")).toBeVisible();
     await expect(page.getByText("答错 0 题")).toBeVisible();
     await expect(page.getByText("待批 1 题")).toBeVisible();
-    await expect(page.getByText("未批", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("做对 1 / 2 题", { exact: true }),
+    ).toBeVisible();
     // 逐题（单单元不显示节头）：第 1 题判对——D3（T3.2a）交卷即写 finalCorrect，
     // 判定区「自动判定」与「最终判定」两行同为答对；第 2 题待批（手写只写笔迹，
     // 自动判定「—」+ 最终判定「待批」）

@@ -23,7 +23,7 @@ import DataPage from "./DataPage";
 
 /**
  * /t/data 作答数据页组件测试（T3.1）：三态、三视图分组、卡片字段口径
- * （进行中徽章、得分回退 scoreFinal??scoreAuto、待批徽章）、筛选/分页与
+ * （进行中徽章、题数口径 resultCounts·缺计数「—」、待批徽章）、筛选/分页与
  * URL 同步。API 层 mock（真实接口行为由后端集成与 E2E 覆盖）。
  * T3.4 增补：「导出 CSV」按钮携带当前筛选（映射口径见 exportCsvParamsOf）。
  */
@@ -257,10 +257,10 @@ describe("DataPage 导出 CSV（T3.4，D13）", () => {
 });
 
 describe("DataPage 卡片字段口径（D5/D2）", () => {
-  it("进行中显著徽章；得分 scoreFinal??scoreAuto（无分「—」）；待批徽章", async () => {
+  it("进行中显著徽章；题数口径 resultCounts（缺计数「—」）；待批徽章", async () => {
     mockedAttempts.mockResolvedValue({
       attempts: [
-        // draft：无任何得分 → 「—」+ 进行中徽章
+        // draft：无计数（草稿/旧响应）→ 「—」+ 进行中徽章
         makeCard({
           status: "draft",
           scoreAuto: null,
@@ -268,18 +268,31 @@ describe("DataPage 卡片字段口径（D5/D2）", () => {
           submittedAt: null,
           attemptId: ATTEMPT_IDS[10] as string,
         }),
-        // submitted：scoreFinal null → 回退显示 scoreAuto 80，待批 2
+        // submitted：做对 8/10 题（待批 2 题未判），卡片另显待批徽章；
+        // scoreAuto 80 保留在契约里但不再展示
         makeCard({
           scoreAuto: 80,
           scoreFinal: null,
           pendingCount: 2,
+          resultCounts: {
+            correctCount: 8,
+            totalCount: 10,
+            pendingCount: 2,
+            pendingSelfReviewCount: 0,
+          },
           attemptId: ATTEMPT_IDS[11] as string,
         }),
-        // graded：scoreFinal 90 优先于 scoreAuto 100
+        // graded：做对 9/10 题；scoreFinal 90 不再展示（不从百分比猜题数）
         makeCard({
           status: "graded",
           scoreAuto: 100,
           scoreFinal: 90,
+          resultCounts: {
+            correctCount: 9,
+            totalCount: 10,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
           attemptId: ATTEMPT_IDS[12] as string,
         }),
       ],
@@ -299,22 +312,31 @@ describe("DataPage 卡片字段口径（D5/D2）", () => {
     const submittedCard = screen.getByRole("link", {
       name: "查看 张三 的作答详情（已交卷）",
     });
-    // 卡片骨架与姓名先渲染、得分/徽标字段随后；慢环境饥饿下数据帧可迟到
+    // 卡片骨架与姓名先渲染、题数口径字段随后；慢环境饥饿下数据帧可迟到
     // 数秒，等待窗放宽到 10s 避免竞态（正常环境首个轮询即命中）。
     expect(
-      await within(submittedCard).findByText("80", {}, { timeout: 10_000 }),
+      await within(submittedCard).findByText(
+        "做对 8 / 10 题",
+        {},
+        { timeout: 10_000 },
+      ),
     ).toBeInTheDocument();
     expect(
       await within(submittedCard).findByText("待批 2", {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
+    expect(within(submittedCard).queryByText("80")).not.toBeInTheDocument();
 
     const gradedCard = screen.getByRole("link", {
       name: "查看 张三 的作答详情（已批改）",
     });
     expect(
-      await within(gradedCard).findByText("90", {}, { timeout: 10_000 }),
+      await within(gradedCard).findByText(
+        "做对 9 / 10 题",
+        {},
+        { timeout: 10_000 },
+      ),
     ).toBeInTheDocument();
-    expect(within(gradedCard).queryByText("100")).not.toBeInTheDocument();
+    expect(within(gradedCard).queryByText("90")).not.toBeInTheDocument();
   });
 });
 

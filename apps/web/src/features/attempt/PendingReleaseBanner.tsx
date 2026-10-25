@@ -151,7 +151,7 @@ export function PendingReleaseBanner({
           </span>
         </div>
         <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3">
-          <span className="text-xs text-muted-foreground">得分状态</span>
+          <span className="text-xs text-muted-foreground">作答结果</span>
           <span className="font-medium text-amber-700 dark:text-amber-400">
             待公布 🔒（截止后自动判分）
           </span>

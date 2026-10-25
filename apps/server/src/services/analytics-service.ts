@@ -55,6 +55,7 @@ import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
+import { attemptResultCounts } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
@@ -173,6 +174,7 @@ function lastSubmittedOf(group: readonly Attempt[]): Attempt | undefined {
 
 /** 学情作用域：一次请求内装载的域内数据（教师域 + D3/D5 筛选后） */
 interface AnalyticsContext {
+  readonly resultCounts: ReturnType<typeof attemptResultCounts>;
   readonly teacherId: string;
   readonly query: AnalyticsQuery;
   readonly range: AnalyticsRange;
@@ -432,6 +434,7 @@ function buildContext(
   return {
     teacherId,
     query,
+    resultCounts: attemptResultCounts(db, allAttempts),
     range: { days: query.days, from: fromIso, to: nowIso },
     nowMs,
     studentRows,
@@ -728,6 +731,10 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
         redoCount: group.length - 1,
         firstScore:
           submitted[0] === undefined ? null : effectiveScore(submitted[0]),
+        firstResultCounts:
+          submitted[0] === undefined
+            ? null
+            : (ctx.resultCounts.get(submitted[0].id) ?? null),
         pendingCount: group.reduce(
           (sum, attempt) => sum + (pendingByAttempt.get(attempt.id) ?? 0),
           0,
@@ -1184,6 +1191,10 @@ function buildRedoRows(
       redoCount: group.length - 1,
       firstScore:
         submitted[0] === undefined ? null : effectiveScore(submitted[0]),
+      firstResultCounts:
+        submitted[0] === undefined
+          ? null
+          : (ctx.resultCounts.get(submitted[0].id) ?? null),
       latestSubmittedAt: submitted[submitted.length - 1]?.submittedAt ?? null,
     });
   }

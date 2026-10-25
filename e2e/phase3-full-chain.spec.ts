@@ -250,7 +250,9 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
         card.getByText(`${courseName} · ${unitName} · 第 1 次`),
       ).toBeVisible();
       await expect(card.getByText("待批 1")).toBeVisible();
-      await expect(card.getByText("50", { exact: true })).toBeVisible();
+      await expect(
+        card.getByText("做对 1 / 3 题", { exact: true }),
+      ).toBeVisible();
 
       // 视图二（按作业）：课程练习按「课程练习 · 单元」单独成组
       await page.getByRole("button", { name: "按作业" }).click();
@@ -286,7 +288,9 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(page.getByText("答对 1 题")).toBeVisible();
       await expect(page.getByText("答错 1 题")).toBeVisible();
       await expect(page.getByText("待批 1 题")).toBeVisible();
-      await expect(page.getByText("未批", { exact: true })).toBeVisible();
+      await expect(
+        page.getByText("做对 1 / 3 题", { exact: true }),
+      ).toBeVisible();
       // 第 1 题判对——D3（T3.2a）交卷即写 finalCorrect，「自动判定」与
       // 「最终判定」两行同为答对；第 2 题答错（两行同为答错）；第 3 题待批
       const q1Card = page.locator('article[aria-label="第 1 题"]');
@@ -387,7 +391,9 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(
         recordLink.getByText("课程练习", { exact: true }),
       ).toBeVisible();
-      await expect(recordLink.getByText("67", { exact: true })).toBeVisible();
+      await expect(
+        recordLink.getByText("做对 2 / 3 题", { exact: true }),
+      ).toBeVisible();
       // 2026-10 IA 调整：错题本入口升为顶栏导航（记录页页头入口已移除）
       await expect(
         studentPage.getByRole("link", { name: "错题本" }),

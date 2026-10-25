@@ -71,3 +71,58 @@ describe("记录卡片进行中进度（M4-D3）", () => {
     expect(screen.queryByText(/已提交 \d/)).toBeNull();
   });
 });
+
+it("已公布记录展示冻结题数，不再展示百分比分数", () => {
+  renderRow(
+    rowFixture({
+      status: "submitted",
+      score: 100,
+      resultCounts: {
+        correctCount: 2,
+        totalCount: 5,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
+    }),
+  );
+  expect(screen.getByText(/做对 2 \/ 5 题/)).toBeVisible();
+  expect(screen.queryByText(/得分/)).toBeNull();
+});
+
+it("未公布即使意外携带计数也不渲染答对数", () => {
+  renderRow(
+    rowFixture({
+      status: "submitted",
+      answersReleased: false,
+      resultCounts: {
+        correctCount: 2,
+        totalCount: 5,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
+    }),
+  );
+  expect(screen.getByText("待公布")).toBeVisible();
+  expect(screen.queryByText(/做对/)).toBeNull();
+});
+
+it.each([0, 2])(
+  "进行中卷显示已做 %i / 6 题，不依赖逐题提交协议",
+  (answeredCount) => {
+    renderRow(rowFixture({ answerProgress: { answeredCount, totalCount: 6 } }));
+    expect(screen.getByText(`已做 ${answeredCount} / 6 题`)).toBeVisible();
+    expect(screen.getByText("继续作答")).toBeVisible();
+  },
+);
+
+it("有通用已做进度时不重复展示旧已提交计数", () => {
+  renderRow(
+    rowFixture({
+      answerProgress: { answeredCount: 3, totalCount: 6 },
+      practiceSubmittedCount: 1,
+      practiceQuestionCount: 6,
+    }),
+  );
+  expect(screen.getByText("已做 3 / 6 题")).toBeVisible();
+  expect(screen.queryByText(/已提交/)).toBeNull();
+});

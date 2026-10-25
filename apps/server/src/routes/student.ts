@@ -7,6 +7,7 @@ import {
   annotationSealRequestSchema,
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
+  attemptFlagRequestSchema,
   attemptStartOptionsRequestSchema,
   attemptSubmitRequestSchema,
   attemptWorkflowUpdateDataSchema,
@@ -79,6 +80,7 @@ import {
   getPracticeQuestionFeedback,
   getStudentAttemptPaper,
   saveDraftAnswer,
+  setStudentFlag,
   startAttempt,
   startCourseAttempt,
   submitAttempt,
@@ -320,6 +322,21 @@ export function createStudentRoutes(
             c.req.param("questionId"),
             body.answer,
             body,
+          ),
+        });
+      })
+      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），
+      // 请求/回执只有标志位、不含任何答案内容（泄露测试 student-flags.test.ts）
+      .put("/attempts/:id/flags/:questionId", async (c) => {
+        const body = await parseJsonBody(c, attemptFlagRequestSchema);
+        return c.json({
+          ok: true,
+          data: setStudentFlag(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body.flag,
           ),
         });
       })

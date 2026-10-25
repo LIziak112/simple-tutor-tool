@@ -55,6 +55,12 @@ const SUBMITTED_ONCE: StudentUnitLandingData = {
       attemptNo: 1,
       status: "submitted",
       score: 75,
+      resultCounts: {
+        correctCount: 3,
+        totalCount: 4,
+        pendingCount: 0,
+        pendingSelfReviewCount: 0,
+      },
       startedAt: "2026-09-27T02:00:00.000Z",
       submittedAt: "2026-09-27T02:30:00.000Z",
     },
@@ -64,8 +70,26 @@ const SUBMITTED_ONCE: StudentUnitLandingData = {
     submittedCount: 1,
     hasDraft: false,
     firstScore: 75,
+    firstResultCounts: {
+      correctCount: 3,
+      totalCount: 4,
+      pendingCount: 0,
+      pendingSelfReviewCount: 0,
+    },
     latestScore: 75,
+    latestResultCounts: {
+      correctCount: 3,
+      totalCount: 4,
+      pendingCount: 0,
+      pendingSelfReviewCount: 0,
+    },
     bestScore: 75,
+    bestResultCounts: {
+      correctCount: 3,
+      totalCount: 4,
+      pendingCount: 0,
+      pendingSelfReviewCount: 0,
+    },
     pendingCount: 1,
   },
 };
@@ -125,7 +149,7 @@ describe("StudentCourseUnitPage", () => {
   it("已交卷一次：显示得分汇总与历次记录；「再做一次」先确认（第 n+1 次、从空白开始）", async () => {
     const utils = renderPage(SUBMITTED_ONCE);
     expect(await screen.findByText(/已做 1 次/)).toBeInTheDocument();
-    expect(screen.getByText(/首次 75 分/)).toBeInTheDocument();
+    expect(screen.getByText(/首次 做对 3 \/ 4 题/)).toBeInTheDocument();
     expect(screen.getByText(/有 1 题待批/)).toBeInTheDocument();
     // 历次记录：点击进入该次结果视图（只读）
     expect(
@@ -162,8 +186,26 @@ describe("StudentCourseUnitPage", () => {
         submittedCount: 1,
         hasDraft: true,
         firstScore: 75,
+        firstResultCounts: {
+          correctCount: 3,
+          totalCount: 4,
+          pendingCount: 0,
+          pendingSelfReviewCount: 0,
+        },
         latestScore: 75,
+        latestResultCounts: {
+          correctCount: 3,
+          totalCount: 4,
+          pendingCount: 0,
+          pendingSelfReviewCount: 0,
+        },
         bestScore: 75,
+        bestResultCounts: {
+          correctCount: 3,
+          totalCount: 4,
+          pendingCount: 0,
+          pendingSelfReviewCount: 0,
+        },
         pendingCount: 0,
       },
     };

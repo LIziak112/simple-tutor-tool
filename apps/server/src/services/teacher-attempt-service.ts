@@ -38,6 +38,7 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { attemptResultCounts } from "./result-counts";
 import { selfReviewStateOf } from "./review-state.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
@@ -340,6 +341,10 @@ export function listTeacherAttempts(
     .offset(query.offset)
     .all();
 
+  const resultCounts = attemptResultCounts(
+    db,
+    rows.map((row) => row.attempt),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -366,6 +371,7 @@ export function listTeacherAttempts(
             .get()?.n ?? 0)
         : attemptQuestionRows(db, attempt).length,
     status: attempt.status,
+    resultCounts: resultCounts.get(attempt.id) ?? null,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
@@ -462,6 +468,10 @@ function detailItemOf(
     answer: answerOf(row.answerJson),
     autoCorrect: isDraft ? null : row.autoCorrect,
     finalCorrect: isDraft ? null : row.finalCorrect,
+    // #6980-3：是否有实际作答（draft 行恒默认 false，判定区仅已交卷消费）
+    answered: row.answered,
+    // #6980-4：做题时学生自标「不会」（draft 亦下发，教师可提前看到）
+    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
     ...(!isDraft ? { selfReview: selfReviewStateOf(row, snapshot) } : {}),
     teacherMark: isDraft
       ? null
@@ -596,24 +606,50 @@ export function getTeacherAttemptDetail(
     }),
   );
 
-  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）
-  const judged =
+  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）。
+  // #6980-3：错次不含未做行——answered=false 的判错在详情里灰显「未做」，
+  // 与学生结果视图、错题本 wrongCount 同口径。人工显式判定（teacherMark /
+  // selfCorrect，审查修复 P0-1）不被「未做」掩盖：显式判错的行计入错次。
+  // 计数从 responses 原始行取——questionsOut 投影不含 selfCorrect，且 draft
+  // 投影会把判定置 null（isDraft 时 finalCorrect/autoCorrect 恒 null）。
+  const judgedRows =
     attempt.status === "draft"
       ? []
-      : questionsOut.map((item) =>
-          effectiveCorrect(item.finalCorrect, item.autoCorrect),
-        );
+      : db
+          .select({
+            finalCorrect: responses.finalCorrect,
+            autoCorrect: responses.autoCorrect,
+            answered: responses.answered,
+            teacherMark: responses.teacherMark,
+            selfCorrect: responses.selfCorrect,
+          })
+          .from(responses)
+          .where(eq(responses.attemptId, attempt.id))
+          .all()
+          .map((row) => ({
+            verdict: effectiveCorrect(row.finalCorrect, row.autoCorrect),
+            answered: row.answered,
+            marked: row.teacherMark !== null || row.selfCorrect !== null,
+          }));
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
     studentName,
     ...source,
+    resultCounts: attemptResultCounts(db, [attempt]).get(attempt.id) ?? null,
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
-    correctCount: judged.filter((value) => value === true).length,
-    wrongCount: judged.filter((value) => value === false).length,
-    pendingCount: judged.filter((value) => value === null).length,
+    correctCount: judgedRows.filter((row) => row.verdict === true).length,
+    wrongCount: judgedRows.filter(
+      (row) => row.verdict === false && (row.answered || row.marked),
+    ).length,
+    // #6980-3（审查修复 P1-4）：详情汇总补「未做」计数——判错但无实际作答且
+    // 无人工判定，此前不进任何计数，四数对不上总题数
+    notDoneCount: judgedRows.filter(
+      (row) => row.verdict === false && !row.answered && !row.marked,
+    ).length,
+    pendingCount: judgedRows.filter((row) => row.verdict === null).length,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,

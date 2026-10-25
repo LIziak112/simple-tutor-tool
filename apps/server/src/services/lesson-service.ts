@@ -33,6 +33,7 @@ import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
 import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
+import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
 import {
   notFound,
@@ -241,6 +242,7 @@ function buildLessonStartData(
         submittedAt: row.submittedAt,
         autoCorrect: row.autoCorrect,
         finalCorrect: row.finalCorrect,
+        answered: row.answered,
         reviewEligible: row.reviewEligible,
       })),
       attempt,
@@ -421,6 +423,7 @@ export function getLessonLanding(
   }
 
   const attemptRows = lessonAttemptsOf(db, studentId, lectureId);
+  const resultCounts = attemptResultCounts(db, attemptRows);
   const submittedRows = attemptRows.filter((row) => row.status !== "draft");
   const ascending = [...submittedRows].sort(
     (a, b) => a.attemptNo - b.attemptNo,
@@ -447,12 +450,17 @@ export function getLessonLanding(
       attemptNo: row.attemptNo,
       status: row.status,
       score: scoreOf(row),
+      resultCounts: resultCounts.get(row.id) ?? null,
       startedAt: row.startedAt,
       submittedAt: row.submittedAt,
     })),
     summary:
       attemptRows.length > 0
         ? {
+            ...resultCountsSummary(
+              ascending.map((row) => row.id),
+              resultCounts,
+            ),
             count: attemptRows.length,
             submittedCount: submittedRows.length,
             hasDraft: attemptRows.some((row) => row.status === "draft"),
