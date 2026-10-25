@@ -333,9 +333,13 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     // 单元列口径为答对题数：陈小明 做过 3 次 · 首次 做对 10 / 10 题 + 重做 2；李小红 待批 2
     // （作业列先渲染、单元统计切片随后；慢环境饥饿下可迟到数秒，等待窗 10s）
     expect(
-      await screen.findByText("做过 3 次 · 首次 做对 10 / 10 题", {}, {
-        timeout: 10_000,
-      }),
+      await screen.findByText(
+        "做过 3 次 · 首次 做对 10 / 10 题",
+        {},
+        {
+          timeout: 10_000,
+        },
+      ),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("重做 2", {}, { timeout: 10_000 }),
