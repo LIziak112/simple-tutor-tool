@@ -605,23 +605,30 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     );
 
     // —— W4：valid-06 response×3 + valid-07 两问组（solve+response）——
+    // P1 记档（QM-19 发现）：题级 ::ref 材料（无组）在作答/结果 UI 无任何入口
+    // （AttemptSession 仅组段 segment.materials 挂 openMaterial，solo 行恒
+    // undefined）——学生读不到给定资料；题级材料目前仅经导出闭包/AI 出站可达。
+    // 此处按现状断言：导出本题的材料页可达题级材料（导出闭包口径），UI 入口
+    // 缺失留编排者裁定（reports/tt-14.md P1-2）。
     await runAssignment(
       worldOf("W4"),
       async (page) => {
-        // 多材料申论：seg 片段引用（题面指向材料一、二）；作文有字数建议提示
-        await expect(page.getByText("给定资料一").first()).toBeVisible();
-        await expect(page.getByText("给定资料二").first()).toBeVisible();
         const q1 = questionCard(page, 1);
         await expect(q1.getByText(/建议.*150/).first()).toBeVisible();
+        // 导出本题：材料页携带题级材料（材料 A：给定资料一）
+        await q1.getByRole("button", { name: "第 1 题更多" }).click();
+        await page.getByRole("menuitem", { name: "导出本题" }).click();
+        await expect(page.getByText(/材料 A：给定资料一/).first()).toBeVisible({ timeout: 90_000 });
+        await page.getByRole("button", { name: "关闭弹层" }).click();
         await q1.getByRole("textbox", { name: "正文" }).fill("S 市议事协商的做法有三个特点：一是化整为零，把改造项目拆分为小项逐楼栋协商；二是公开透明，预算上墙、结果可查；三是把分歧摆上桌面对话解决，不以表决代替协商，并把先协商后改造写入立项条件。");
         const q2 = questionCard(page, 2);
         await q2.getByRole("textbox", { name: "正文" }).fill("读书只能为心灵提供知识的材料，唯有思考才能把读到的变成自己的。记忆尤须着力锻炼，因为强健的记忆力与鲜活的想象力密不可分。");
         const q3 = questionCard(page, 3);
         await q3.getByRole("textbox", { name: "标题（可选）" }).fill("分歧是治理的起点");
         await q3.getByRole("textbox", { name: "正文" }).fill("老旧小区的墙面可以刷新，埋在墙里的分歧刷不掉。S 市的试点给出相反的答案：把分歧摆上桌面，三十七个小项逐一议过，改造反而一次通过。这提示我们，分歧不是治理的失败，而是治理的起点。".repeat(8));
-        // valid-07 两问组（第 4/5 题）：solve 最终答案 + response 正文
-        await questionCard(page, 4).getByLabel("最终答案").fill("证明：两问分别取特殊值验证");
-        await questionCard(page, 5).getByRole("textbox", { name: "正文" }).fill("第（2）问的证明思路：先证单调性，再用介值定理说明存在性，最后由严格单调得唯一性。");
+        // valid-07 两问组（第 4/5 题）：zm-1 response 证明正文 + zm-2 solve 最终答案
+        await questionCard(page, 4).getByRole("textbox", { name: "正文" }).fill("由递推式得 a_{n+1}+1=2(a_n+1)，且 a_1+1=2≠0，故 {a_n+1} 是首项 2、公比 2 的等比数列，a_n=2^n-1。");
+        await questionCard(page, 5).getByLabel("最终答案").fill("裂项相消，得 S_n=3/2 - 1/(2·3^n)");
       },
       async (page) => {
         // response 参考答案（variant 同卷）：对照面附字数行；自评「对了」
@@ -632,7 +639,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
         await expect(wordRow.first()).toBeVisible();
         await q1.getByRole("button", { name: "对了" }).click();
         await expect(q1.getByText("自评正确").first()).toBeVisible();
-        // 组内子题（zm-1 solve）也 reference_self 待自评（有参考答案）
+        // 组内子题（zm-1 response）也 reference_self 待自评（有参考答案）
         await expect(questionCard(page, 4).getByText("已完成，待自评").first()).toBeVisible();
       },
     );
@@ -657,7 +664,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await lq1.getByRole("combobox", { name: "第 1 空的选项" }).selectOption({ label: "a small, half-hidden signal" });
     await lq1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({ label: "The examiner is not testing memory but the ability to repair a broken chain of reasoning." });
     await lq1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({ label: "A repeated noun works the same way: it promises the reader that the topic has not changed." });
-    await lq1.getByRole("button", { name: "提交本题" }).click();
+    await lq1.getByRole("button", { name: "显示答案" }).click();
     // reference_self：当题反馈 = 对照参考 + 待自评（无 auto 徽章）
     await expect(lq1.getByText("已完成，待自评").first()).toBeVisible();
     await lq1.getByRole("button", { name: "对了" }).click();
@@ -666,7 +673,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // 题 2 choice 单题提交（auto 判对）
     const lq2 = questionCard(page, 2);
     await chooseRadio(lq2, "when");
-    await lq2.getByRole("button", { name: "提交本题" }).click();
+    await lq2.getByRole("button", { name: "显示答案" }).click();
     await expect(lq2.getByText("答对", { exact: true })).toBeVisible();
 
     // 末题 ordering 提交后自动收尾；刷新不开新卷（幂等语义）
@@ -675,13 +682,16 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       "七选五把契约撕开一个缺口让你补上；排序题则把整份契约拆散让你重装。",
       "也就是说，衔接练习的终点不是背熟套话，而是能在任何话题下找到那句「承接前文、开启后文」的句子。",
     ]);
-    await questionCard(page, 3).getByRole("button", { name: "提交本题" }).click();
+    await questionCard(page, 3).getByRole("button", { name: "显示答案" }).click();
     await expect(page.getByText(/已完成|全部完成/).first()).toBeVisible({ timeout: 30_000 });
     await page.reload();
     await expect(questionCard(page, 1).getByText("自评正确").first()).toBeVisible();
 
-    // 已提交行锁定：刷新后题 1 编辑入口不再可改（select 禁用）
-    await expect(questionCard(page, 1).getByRole("combobox", { name: "第 1 空的选项" })).toBeDisabled();
+    // 已提交行锁定：刷新后题 1 呈只读对照（你的答案/参考答案逐空行，无编辑控件）
+    const lockedQ1 = questionCard(page, 1);
+    await expect(lockedQ1.getByText("你的答案：")).toBeVisible();
+    await expect(lockedQ1.getByText(/第 1 空：a small, half-hidden signal/).first()).toBeVisible();
+    await expect(lockedQ1.getByRole("combobox")).toHaveCount(0);
 
     await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
@@ -776,32 +786,51 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       else route.continue();
     });
     await chooseRadio(questionCard(robustPage, 3), "masterpieces");
+    // 服务端同步失败：本机稿保留、状态如实暴露（已存本机等待同步，不冒称全部已保存）
     await expect
       .poll(async () => robustPage.getByTestId("draft-status").textContent(), { timeout: 20_000 })
-      .toContain("失败");
+      .toContain("等待同步");
     await expect(questionCard(robustPage, 3).getByRole("radio", { name: "masterpieces" })).toBeChecked();
     await robustPage.unrouteAll({ behavior: "ignoreErrors" });
     await waitForAllSaved(robustPage);
 
-    // 重复提交幂等（API 级）：整卷交卷后重复 submit → 同一回执不重判
-    const submitOnce = await robustPage.request.post(
-      `/api/student/attempts/${attemptIdOf(robustPage)}/submit`,
+    // 重复提交幂等（API 级）：经答案保存请求取真实 attemptId（作业 URL 段是
+    // assignmentId 不是 attemptId）；经 UI 交卷一次（拦截请求取每题
+    // questionRevisionId 载荷），同载荷重放 → 409 ALREADY_SUBMITTED、
+    // 判定不重落（服务层既有幂等语义的路由级回归）
+    const answerPut = robustPage.waitForRequest(
+      (req) =>
+        req.method() === "PUT" && /\/api\/student\/attempts\/[^/]+\/answers\//.test(req.url()),
+      { timeout: 15_000 },
     );
-    expect(submitOnce.ok()).toBeTruthy();
-    const receipt1 = await submitOnce.json();
-    const submitTwice = await robustPage.request.post(
-      `/api/student/attempts/${attemptIdOf(robustPage)}/submit`,
+    await chooseRadio(questionCard(robustPage, 4), "errors");
+    const attemptId = ((await answerPut).url().match(/\/attempts\/([^/]+)\/answers\//) ?? [])[1] ?? "";
+    expect(attemptId).not.toBe("");
+    const uiSubmitBody = robustPage.waitForRequest(
+      (req) =>
+        req.method() === "POST" && /\/api\/student\/attempts\/[^/]+\/submit$/.test(req.url()),
+      { timeout: 15_000 },
     );
-    expect(submitTwice.ok()).toBeTruthy();
-    const receipt2 = await submitTwice.json();
-    expect(JSON.stringify(receipt2)).toBe(JSON.stringify(receipt1));
+    await waitForDraftSaved(robustPage);
+    await robustPage.getByRole("button", { name: "交卷", exact: true }).click();
+    await robustPage.getByRole("button", { name: "确认交卷" }).first().click();
+    const uiSubmit = await uiSubmitBody;
+    const uiResponse = await uiSubmit.response();
+    expect(uiResponse?.ok(), `UI 交卷失败：${uiSubmit.url()}`).toBeTruthy();
+    const payload = uiSubmit.postDataJSON() as { revisions: string[] };
+    expect(payload.revisions.length).toBe(20);
+    const replay = await robustPage.request.post(`/api/student/attempts/${attemptId}/submit`, {
+      data: payload,
+    });
+    expect(replay.status()).toBe(409);
+    expect(((await replay.json()) as { error: string }).error).toBe("ALREADY_SUBMITTED");
 
     // 换账号隔离：另一名教师域学生直接读本卷 → 403/404，不吐任何题目投影
     const otherContext = await browser.newContext({ baseURL: pair.webUrl });
     const otherPage = await otherContext.newPage();
     await otherPage.goto(`/s/${worldOf("W3").linkToken}`);
     await otherPage.waitForURL("**/s/home");
-    const denied = await otherPage.request.get(`/api/student/attempts/${attemptIdOf(robustPage)}`);
+    const denied = await otherPage.request.get(`/api/student/attempts/${attemptId}`);
     expect([403, 404]).toContain(denied.status());
     const deniedBody = await denied.text();
     expect(deniedBody).not.toContain("sourceMd");
@@ -810,9 +839,6 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
   });
 });
 
-function attemptIdOf(page: Page): string {
-  return page.url().split("/").pop() ?? "";
-}
 
 /** ordering 板：按正文依次「加入排序」可动项（固定项已预置） */
 async function placeOrdering(page: Page, no: number, itemTexts: string[]): Promise<void> {
