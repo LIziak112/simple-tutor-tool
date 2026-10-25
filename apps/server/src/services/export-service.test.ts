@@ -6,6 +6,8 @@ import {
   learningPackExportRequestSchema,
   learningPackSchema,
   learningPackV2Schema,
+  materialPublicSchema,
+  questionGroupPublicSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -45,6 +47,7 @@ import {
   previewLearningPack,
 } from "./export-service";
 import { saveInk } from "./ink-service";
+import { freezeAttemptContextSnapshots } from "./material-repository";
 import { saveMedia } from "./media-service";
 import {
   attachNoteImage,
@@ -2520,5 +2523,264 @@ describe("ink 路径目录边界（T6R.14：同前缀相邻目录/向上逃逸/�
     const err = await assembleErrorOf(world);
     expect(err).toBeInstanceOf(HttpError);
     expect((err as HttpError).code).toBe("INK_UNREADABLE");
+  });
+});
+
+// ---------- TT-13 携带留项：v2 学情数据包材料节（整组去重 + 逐题引用） ----------
+
+describe("TT-13 LearningPack v2：content.materials 材料节", () => {
+  /**
+   * 独立小世界（同 v2 describe 隔离口径，scope 只圈本世界学生）：
+   * - 同题 wm-1 两轮：round1 题级 materialRefs 引用 mat-1 v1（正文含在/缺两图）；
+   *   round2 无题级引用、经组快照 grp-1 关联 mat-1 v2（教师改材料后重开卷——
+   *   同 id 多版本并存，逐版成条可分辨）。
+   * - 断言：materials 按 (materialId, sourceVersion) 去重排序、正文为槽位编号后
+   *   形态且无答案标记、逐题 materialRefs 指向自己轮次冻结的版本、材料配图
+   *   进 zip media（refs=引用该材料的 q 条目）/缺失进 manifest.missing；
+   *   questions 模块未勾选时材料节整体缺席（未选模块不夹带内容）。
+   */
+  const MAT_NOW = "2026-10-06T04:00:00.000Z";
+  /** 合法内容寻址形态但文件缺失的材料配图 src */
+  const matMissingSrc = `blobs/media/${"f".repeat(64)}.png`;
+  let matStudent: string;
+  let matRound1AttemptId: string;
+  let matRound2AttemptId: string;
+  let matMediaSrc: string;
+
+  beforeAll(() => {
+    matStudent = makeStudent(db);
+    matMediaSrc = saveMedia(dataDir, fakePng(40, 40)).src;
+    const matV1Content = [
+      "第一空 {{w-1}}；第二空 {{w-2}}。",
+      "",
+      `::image{src="${matMediaSrc}"}`,
+      "",
+      `::image{src="${matMissingSrc}"}`,
+      "",
+    ].join("\n");
+    const matV2Content = "改稿正文：第一空 {{w-1}}（新增提示语）。";
+
+    // round1：题级 materialRefs（slots= 集合声明）+ 材料 mat-1 v1 冻结
+    matRound1AttemptId = frozenDraftAttempt(db, matStudent, [
+      {
+        questionId: "wm-1",
+        snapshotJson: snapshotJsonOf({
+          id: "wm-1",
+          type: "matching",
+          stemMd: "round1：为空白选择内容。",
+          materialRefs: [{ material: "mat-1", slots: "w-1,w-2" }],
+        }),
+      },
+    ]).attemptId;
+    freezeAttemptContextSnapshots(
+      db,
+      matRound1AttemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-1",
+          sourceVersion: 1,
+          snapshot: materialPublicSchema.parse({
+            id: "mat-1",
+            title: "配对材料",
+            contentMd: matV1Content,
+            slots: [
+              { id: "w-1", slotKind: "match", order: 0 },
+              { id: "w-2", slotKind: "match", order: 1 },
+            ],
+          }),
+        },
+      ],
+      "2026-10-02T00:00:00.000Z",
+    );
+    submitAttemptStatus(db, matRound1AttemptId, "2026-10-02T00:00:00.000Z");
+
+    // round2：题快照无 materialRefs，经组快照 grp-1 关联 mat-1 v2
+    matRound2AttemptId = frozenDraftAttempt(db, matStudent, [
+      {
+        questionId: "wm-1",
+        snapshotJson: snapshotJsonOf({
+          id: "wm-1",
+          type: "matching",
+          stemMd: "round2：为空白选择内容（题干已改，内容身份独立成条）。",
+        }),
+      },
+    ]).attemptId;
+    freezeAttemptContextSnapshots(
+      db,
+      matRound2AttemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-1",
+          sourceVersion: 2,
+          snapshot: materialPublicSchema.parse({
+            id: "mat-1",
+            title: "配对材料",
+            contentMd: matV2Content,
+            slots: [{ id: "w-1", slotKind: "match", order: 0 }],
+          }),
+        },
+        {
+          kind: "group",
+          sourceId: "grp-1",
+          sourceVersion: 1,
+          snapshot: questionGroupPublicSchema.parse({
+            id: "grp-1",
+            introMd: "组说明。",
+            materialRefs: [{ material: "mat-1" }],
+            questionIds: ["wm-1"],
+          }),
+        },
+      ],
+      "2026-10-03T00:00:00.000Z",
+    );
+    submitAttemptStatus(db, matRound2AttemptId, "2026-10-03T00:00:00.000Z");
+  });
+
+  function matRequest(overrides: Record<string, unknown> = {}) {
+    return learningPackExportRequestSchema.parse({
+      packVersion: 2,
+      scope: { studentIds: [matStudent] },
+      modules: { questions: "solution", responses: true },
+      goal: "diagnose-weakness",
+      ...overrides,
+    });
+  }
+
+  it("整组去重逐版成条、槽位编号正文、逐题引用各轮版本、配图与缺失清单、无答案键", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      matRequest(),
+      {
+        now: MAT_NOW,
+      },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pack = packEntryOf(entries, learningPackV2Schema);
+
+    // —— 材料节：mat-1 两版本去重后逐版成条，按 (materialId, sourceVersion) 排序 ——
+    const materials = pack.content?.materials ?? [];
+    expect(materials).toHaveLength(2);
+    expect(materials.map((m) => [m.materialId, m.sourceVersion])).toEqual([
+      ["mat-1", 1],
+      ["mat-1", 2],
+    ]);
+    expect(materials[0]?.ref).toBe("m001");
+    expect(materials[0]?.title).toBe("配对材料");
+    // 槽位编号后形态（{{w-1}} → **（1）**）；材料是公开投影，无答案标记
+    expect(materials[0]?.contentMd).toContain(
+      "第一空 **（1）**；第二空 **（2）**。",
+    );
+    for (const material of materials) {
+      expect(material.contentMd).not.toContain("[[");
+      expect(material.contentMd).not.toContain(":::answer");
+    }
+
+    // —— 逐题引用：两轮题条目（内容身份独立）各指向自己轮次冻结的版本 ——
+    const questions = pack.content?.questions ?? [];
+    expect(questions).toHaveLength(2);
+    const byStem = new Map(questions.map((q) => [q.stemMd.slice(0, 6), q]));
+    const round1Q = byStem.get("round1");
+    const round2Q = byStem.get("round2");
+    expect(round1Q?.materialRefs).toEqual(["m001"]);
+    expect(round2Q?.materialRefs).toEqual(["m002"]);
+    const mRefs = new Set(materials.map((m) => m.ref));
+    for (const q of questions) {
+      for (const ref of q.materialRefs ?? []) expect(mRefs.has(ref)).toBe(true);
+    }
+
+    // —— 材料配图：在场图进 files（refs=引用该材料的 q 条目），缺失图进 missing ——
+    const mediaFile = pack.manifest.files.find((f) => f.path === matMediaSrc);
+    expect(mediaFile?.kind).toBe("media");
+    expect(mediaFile?.refs).toEqual([round1Q?.ref]);
+    expect(entries.has(matMediaSrc)).toBe(true);
+    const missing = pack.manifest.missing.find((m) => m.path === matMissingSrc);
+    expect(missing?.kind).toBe("media");
+    expect(missing?.refs).toEqual([round1Q?.ref]);
+    // manifest refs 全部可解析（m 条目并入既有 q/e 校验面）
+    const allRefs = new Set([
+      ...questions.map((q) => q.ref),
+      ...(pack.evidence ?? []).map((e) => e.ref),
+    ]);
+    for (const item of [...pack.manifest.files, ...pack.manifest.missing]) {
+      for (const ref of item.refs) expect(allRefs.has(ref)).toBe(true);
+    }
+  });
+
+  it("questions 模块未勾选：材料节整体缺席（未选模块不夹带内容）", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      matRequest({ modules: { responses: true } }),
+      { now: MAT_NOW },
+    );
+    const pack = packEntryOf(unzipEntries(zip.bytes), learningPackV2Schema);
+    expect(pack.content?.materials).toBeUndefined();
+    expect(pack.content?.questions).toBeUndefined();
+  });
+
+  it("空正文材料快照：材料节缺该条、manifest 记缺失、自检 parse 通过（审查 P2-1——存量空材料不炸 v2 导出）", async () => {
+    // 独立小世界：题级引用指向正文为空串的冻结材料（materialPublicSchema 无
+    // min，存量可入库；装配前契约 learningPackMaterialSchema.contentMd
+    // min(1) 自检会抛、导出 500——守卫后跳过条目并显式记缺失）
+    const student = makeStudent(db);
+    const attemptId = frozenDraftAttempt(db, student, [
+      {
+        questionId: "wm-empty",
+        snapshotJson: snapshotJsonOf({
+          id: "wm-empty",
+          type: "matching",
+          stemMd: "引用空材料的题。",
+          materialRefs: [{ material: "mat-empty" }],
+        }),
+      },
+    ]).attemptId;
+    freezeAttemptContextSnapshots(
+      db,
+      attemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-empty",
+          sourceVersion: 1,
+          snapshot: materialPublicSchema.parse({
+            id: "mat-empty",
+            title: "空材料",
+            contentMd: "",
+          }),
+        },
+      ],
+      "2026-10-04T00:00:00.000Z",
+    );
+    submitAttemptStatus(db, attemptId, "2026-10-04T00:00:00.000Z");
+
+    // 服务端自检（learningPackV2Schema.parse）在装配内执行——守卫生效的
+    // 证明即本调用不再抛 ZodError（修复前 min(1) violation 整包 500）
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      learningPackExportRequestSchema.parse({
+        packVersion: 2,
+        scope: { studentIds: [student] },
+        modules: { questions: "solution", responses: true },
+        goal: "diagnose-weakness",
+      }),
+      { now: MAT_NOW },
+    );
+    const pack = packEntryOf(unzipEntries(zip.bytes), learningPackV2Schema);
+    // 材料节缺该条（不编号）；逐题 materialRefs 不含悬空编号
+    expect(pack.content?.materials ?? []).toEqual([]);
+    const questions = pack.content?.questions ?? [];
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.materialRefs).toBeUndefined();
+    // manifest 显式记缺失（contextNotes，与坏快照行同口径）
+    expect(
+      pack.manifest.contextNotes.some((note) => note.includes("正文为空")),
+    ).toBe(true);
   });
 });

@@ -1166,3 +1166,177 @@ describe("GET /api/teacher/attempts/:id（QM-12：教师详情有效判定与两
     expect(cleared.data).toMatchObject({ correctCount: 1, wrongCount: 1 });
   });
 });
+
+// ---------- P3-5（TT-13 携带留项）：matching/ordering 的 answerText 走冻结结构单源 ----------
+
+/**
+ * 材料配对 + 排序夹具（错题本序列化口径回归）：matching 答案在旧路径
+ * serializeStudentAnswer（空结构）下回退为「slot-1 = opt-2」裸 id——修复后
+ * 与待批队列/CSV/学情包/单题包四出口同走 serializeStudentAnswerOfRow
+ * （材料槽位序「第 N 空」标签 + 真实选项/项正文）。
+ */
+const QM_MATCHING_WRONG_MD = `---
+kind: practice
+unit: 配对错题单元
+---
+
+::::material{id=wmat-1 title="配对材料"}
+第一空 {{w-1}}；第二空 {{w-2}}。
+::::
+
+::::group{id=wgrp-1 title="为空白选择内容。" label="1"}
+::ref{material=wmat-1}
+::ref{question=wq-1}
+::::
+
+:::::question{id=wq-1 type=matching difficulty=2 knowledge="配对"}
+为空白选择内容。
+
+::ref{material=wmat-1 slots=w-1,w-2}
+
+::::options
+:::option{id=wo-1}
+选项甲正文。
+:::
+:::option{id=wo-2}
+选项乙正文。
+:::
+::::
+
+:::answer
+w-1 = wo-1
+w-2 = wo-2
+:::
+:::::
+
+:::::question{id=wo-1 type=ordering difficulty=2 knowledge="语句排序"}
+把两句排成通顺的话。
+
+:::item{id=wi-1}
+首句正文。
+:::
+
+:::item{id=wi-2}
+次句正文。
+:::
+
+:::answer
+wi-1
+wi-2
+:::
+:::::
+`;
+
+/** QM 夹具题目 id（md 内显式声明） */
+const WM = { matching: "wq-1", ordering: "wo-1" } as const;
+
+/** 导入配对/排序单元并置课程可见（NEW_CONTENT_ENABLED 包裹导入），开课程卷 */
+async function makeQmMatchingEnv(): Promise<WrongEnv & { qmUnitId: string }> {
+  const env = await makeWrongEnv();
+  const previous = process.env.NEW_CONTENT_ENABLED;
+  process.env.NEW_CONTENT_ENABLED = "true";
+  let qmUnitId: string;
+  try {
+    const imported = await env.app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({
+        markdown: QM_MATCHING_WRONG_MD,
+        filename: "配对错题练习.md",
+        courseId: env.courseId,
+      }),
+    });
+    if (imported.status !== 200) {
+      throw new Error(
+        `配对夹具导入失败：${JSON.stringify(await imported.json())}`,
+      );
+    }
+    qmUnitId =
+      ((await imported.json()) as { data: { units: { id: string }[] } }).data
+        .units[0]?.id ?? "";
+  } finally {
+    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+    else process.env.NEW_CONTENT_ENABLED = previous;
+  }
+  if (!qmUnitId) throw new Error("配对夹具导入未产出单元");
+
+  const detail = await env.app.request(`/api/teacher/courses/${env.courseId}`, {
+    headers: { cookie: env.teacherCookie },
+  });
+  const item = (
+    (await detail.json()) as {
+      data: { items: { id: string; refId: string | null }[] };
+    }
+  ).data.items.find((entry) => entry.refId === qmUnitId);
+  if (!item) throw new Error("课程目录中未找到配对单元条目");
+  const patched = await env.app.request(
+    `/api/teacher/course-items/${item.id}`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ visible: true }),
+    },
+  );
+  expect(patched.status).toBe(200);
+  return { ...env, qmUnitId };
+}
+
+describe("GET /api/student/wrong-questions（P3-5：matching/ordering 序列化走冻结结构单源）", () => {
+  it("matching=「第 N 空 = 选项正文」、ordering=项正文串联（与待批队列/CSV/学情包同口径）；assertNoLeak 通过", async () => {
+    const env = await makeQmMatchingEnv();
+    // 开卷仍需开关（gradingPolicy 冻结走开卷时点）
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    let attemptId: string;
+    try {
+      const res = await env.app.request(
+        `/api/student/courses/${env.courseId}/units/${encodeURIComponent(
+          env.qmUnitId,
+        )}/attempts`,
+        { method: "POST", headers: { cookie: env.aCookie } },
+      );
+      expect([200, 201]).toContain(res.status);
+      attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+
+    // 两题均答错（matching 整对调换、ordering 倒序）；matching/ordering 冻结
+    // 策略为 reference_self（无 auto 判定）——自评「错」入本（QM-12 口径）
+    await saveAnswer(env, attemptId, WM.matching, {
+      kind: "matching",
+      pairs: { "w-1": "wo-2", "w-2": "wo-1" },
+    });
+    await saveAnswer(env, attemptId, WM.ordering, {
+      kind: "ordering",
+      sequence: ["wi-2", "wi-1"],
+    });
+    await submitAt(env, attemptId, T1);
+    expect(
+      (await selfReview(env, attemptId, WM.matching, "wrong")).status,
+    ).toBe(200);
+    expect(
+      (await selfReview(env, attemptId, WM.ordering, "wrong")).status,
+    ).toBe(200);
+
+    const list = await getWrongQuestions(env);
+    expect(list.status).toBe(200);
+    const byId = new Map(
+      (list.data?.questions ?? []).map((card) => [card.questionId, card]),
+    );
+    // 修复前：裸 id 形态「w-1 = wo-2；w-2 = wo-1」/「wi-2 → wi-1」
+    expect(byId.get(WM.matching)?.answerText).toBe(
+      "第 1 空 = 选项乙正文。；第 2 空 = 选项甲正文。",
+    );
+    expect(byId.get(WM.ordering)?.answerText).toBe("次句正文。 → 首句正文。");
+    // 学生答案不是秘密，但答案键/详解仍不得出现（选项正文属公开投影）
+    assertNoLeak(list.body, { allow: ["answers", "solutionMd"] });
+  });
+});

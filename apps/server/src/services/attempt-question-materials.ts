@@ -39,6 +39,7 @@ export function frozenMaterialsForQuestion(
   attemptId: string,
   questionId: string,
   snapshot: Question | null,
+  options: { readonly versionBadge?: boolean } = {},
 ): FrozenQuestionMaterial[] {
   const materials = new Map<
     string,
@@ -83,10 +84,15 @@ export function frozenMaterialsForQuestion(
       contentMd: slotNumberedContentOf(material.contentMd, material.slots),
     });
   }
-  // 多版本计数（title 徽标判定）：同 id 出现多版才加「历史版本 N」
+  // 多版本计数（title 徽标判定）：同 id 出现多版才加「历史版本 N」。
+  // versionBadge=false（学情包材料节）：title 保持原样——包内条目显式携带
+  // sourceVersion，徽标按「单题闭包内多版本」计算在全局去重后口径不稳
+  //（不同题看到不同版本子集），不重复标注
   const countById = new Map<string, number>();
-  for (const material of collected) {
-    countById.set(material.id, (countById.get(material.id) ?? 0) + 1);
+  if (options.versionBadge !== false) {
+    for (const material of collected) {
+      countById.set(material.id, (countById.get(material.id) ?? 0) + 1);
+    }
   }
   const resolved = collected.map((material) => {
     const versionNote =

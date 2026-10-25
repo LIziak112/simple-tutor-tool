@@ -602,6 +602,8 @@ export const learningPackSchema = z.object({
  */
 export const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
 export const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
+/** 材料条目编号（m001…；TT-13 学情包材料节） */
+export const PACK_REF_MATERIAL_RE = /^m\d{3,}$/;
 
 /**
  * 快照内容身份（64 位小写 hex sha-256）：对快照对象做**递归键序排序的
@@ -655,6 +657,15 @@ export const learningPackV2QuestionSchema = learningPackQuestionSchema.extend({
       }),
     )
     .default([]),
+  /**
+   * 引用的材料条目编号（TT-13 材料节）：指向 content.materials 条目——
+   * 组材料 ∪ 题级 materialRefs 闭包、按 (materialId, sourceVersion) 整组
+   * 去重后的包内条目。材料节缺席（questions 模块未勾选）时不得出现；
+   * 无材料闭包的题缺省不携带。
+   */
+  materialRefs: z
+    .array(z.string().regex(PACK_REF_MATERIAL_RE, "材料条目编号形如 m001"))
+    .optional(),
 });
 
 /**
@@ -815,9 +826,33 @@ export const learningPackV2MetaSchema = learningPackMetaSchema.extend({
   }),
 });
 
+/**
+ * v2 材料条目（TT-13 学情包材料节）：题目材料闭包（组材料 ∪ 题级
+ * materialRefs）的**公开投影**——按 (materialId, sourceVersion) 整组去重，
+ * 同材料多版本并存时逐版成条（不同轮次冻结不同版本可分辨）；contentMd 为
+ * 槽位编号后形态（{{slot-id}} → **（N）**，与学生面板/单题包/AI 出口同一
+ * 实现）。材料正文按导入 lint 不含答案型内容且非空（MATERIAL_CONTAINS_
+ * ANSWER / MATERIAL_EMPTY；存量空材料由装配侧跳过并显式记缺失），公开投影
+ * 白名单无答案键通道（materialPublicSchema——sourceMd/教师域键不进包）。
+ * ::image 配图随包 media 附件附上（缺失进 manifest.missing）。
+ */
+export const learningPackMaterialSchema = z.object({
+  ref: z.string().regex(PACK_REF_MATERIAL_RE, "材料条目编号形如 m001"),
+  /** 材料 id（教师域定位键，与题目条目的 questionId 同口径） */
+  materialId: z.string().min(1),
+  /** 冻结时的材料版本（materials.version；同 id 多版本并存时逐版成条） */
+  sourceVersion: z.number().int().min(1),
+  /** 解析后标题（缺省「材料」；不附版本徽标——sourceVersion 显式可辨） */
+  title: z.string().min(1),
+  /** 槽位编号后正文（::image 引用的配图随包 media 节附上） */
+  contentMd: z.string().min(1),
+});
+
 /** v2 content section：题目条目换 v2 形状（ref/present/snapshotHash/media） */
 export const learningPackV2ContentSchema = learningPackContentSchema.extend({
   questions: z.array(learningPackV2QuestionSchema).optional(),
+  /** 材料节（TT-13）：随 questions 模块装配，题目经 materialRefs 引用 */
+  materials: z.array(learningPackMaterialSchema).optional(),
 });
 
 /** v2 attempts section：逐题作答行换 v2 形状（快照关联三字段） */
@@ -1413,6 +1448,7 @@ export type LearningPackV2Question = z.infer<
   typeof learningPackV2QuestionSchema
 >;
 export type LearningPackV2Content = z.infer<typeof learningPackV2ContentSchema>;
+export type LearningPackMaterial = z.infer<typeof learningPackMaterialSchema>;
 export type LearningPackV2Response = z.infer<
   typeof learningPackV2ResponseSchema
 >;

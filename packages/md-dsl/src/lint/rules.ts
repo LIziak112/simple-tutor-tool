@@ -238,6 +238,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "材料正文含答案型内容（[[…]] 答案标记、:::answer、:::solution、:::hint、答案指令）：公共材料不得携带答案（学生端材料投影不设防泄露面）",
   },
   {
+    code: "MATERIAL_EMPTY",
+    level: "error",
+    description:
+      "材料正文为空（容器内没有任何非空行，纯空与仅空白行同报）：材料是全卷学生共享的阅读内容，空正文违反学情数据包材料条目契约；请补写正文或删除该容器",
+  },
+  {
     code: "INVALID_OPTION_REF",
     level: "error",
     description:

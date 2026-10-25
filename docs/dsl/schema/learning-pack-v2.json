@@ -516,6 +516,13 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "materialRefs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^m\\d{3,}$"
+                }
               }
             },
             "required": [
@@ -530,6 +537,43 @@
               "present",
               "snapshotHash",
               "media"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "pattern": "^m\\d{3,}$"
+              },
+              "materialId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contentMd": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "ref",
+              "materialId",
+              "sourceVersion",
+              "title",
+              "contentMd"
             ],
             "additionalProperties": false
           }

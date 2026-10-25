@@ -185,6 +185,31 @@ describe("材料实体抽取（第一遍）", () => {
     expect(codes.some((i) => i.line === 4)).toBe(true); // [[…]] 在第 4 行
   });
 
+  it("空体材料：MATERIAL_EMPTY（容器内无任何非空行；TT-13 审查 P2-1——正文非空是学情包材料条目契约前置）", () => {
+    const { materials, issues } = parse(
+      [
+        HEADING,
+        "",
+        "::::material{id=mat-empty}",
+        "::::",
+        "",
+        "::::material{id=mat-blank}",
+        "   ",
+        "\t",
+        "::::",
+        "",
+      ].join("\n"),
+    );
+    const codes = issues.filter((i) => i.code === "MATERIAL_EMPTY");
+    // 纯空容器与仅空白行容器同报（sliceInnerLines 去首尾空白行后同为 ""）
+    expect(codes).toHaveLength(2);
+    expect(codes.every((i) => i.level === "error")).toBe(true);
+    expect(codes.some((i) => i.line === 3)).toBe(true); // 首个空体容器起始行
+    // 实体照常产出（宽松解析：contentMd 为空串，错误阻断交给导入层）
+    expect(materials.map((m) => m.id)).toEqual(["mat-empty", "mat-blank"]);
+    expect(materials.every((m) => m.contentMd === "")).toBe(true);
+  });
+
   it("材料 id 重复与材料内锚点 id 重复：MATERIAL_DUPLICATE_ID", () => {
     const { issues } = parse(
       [
