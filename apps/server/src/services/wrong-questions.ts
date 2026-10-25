@@ -1,9 +1,10 @@
-import type {
-  TeacherAttemptSource,
-  WrongQuestionCard,
-  WrongQuestionRound,
-  WrongQuestionsData,
-  WrongQuestionsQuery,
+import {
+  type TeacherAttemptSource,
+  type WrongQuestionCard,
+  type WrongQuestionRound,
+  type WrongQuestionsData,
+  type WrongQuestionsQuery,
+  wrongAttemptTitleOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
@@ -437,7 +438,7 @@ export function listWrongQuestions(
  * 轮次来源标题（服务端算好的展示串）：作业=作业标题；课程练习=「单元标题 ·
  * 第 n 次」；错题重练=「错题重练 · 第 n 次」（2026-10，重练交卷后自动成为
  * 新一轮）。与前端 records-views.recordTitleOf 同口径（展示约定在
- * teacherAttemptSourceSchema 注释；跨端小格式化函数不进契约包，注释互指）。
+ * teacherAttemptSourceSchema 注释；#6980-2 起格式化收敛进契约包
  * T6R.15 起导出：note-service.getStudentQuestionNotebook 的 sourceLabel 与
  * 本函数同一实现（同一概念同一份定义，不复制粘贴）。
  */
@@ -446,7 +447,12 @@ export function roundSourceTitle(source: TeacherAttemptSource): string {
     return source.assignmentTitle ?? "（作业已删除）";
   }
   if (source.sourceType === "wrong") {
-    return `错题重练 · 第 ${source.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleOf）——label 来自建卷存的
+    // scope 快照，历史卷由 sourceOf 现算「来自 …」分布
+    return wrongAttemptTitleOf({
+      attemptNo: source.attemptNo,
+      wrongScope: source.wrongScope ?? null,
+    });
   }
   return `${source.unitTitle ?? ""} · 第 ${source.attemptNo} 次`;
 }

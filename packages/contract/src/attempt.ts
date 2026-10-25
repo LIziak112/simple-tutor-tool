@@ -148,6 +148,10 @@ export const attemptSummarySchema = z
      * 两者分母相同、数值相等）。
      */
     scoreAuto: z.number().int().min(0).max(100).nullable(),
+    /** 错题重练范围标签（2026-10-25 #6980-2）：wrong 来源按建卷存的 scope
+     * 取 label（答题页/结果页来源行用）；其余来源与历史卷缺省（旧载荷
+     * 兼容，optional） */
+    wrongScopeLabel: z.string().min(1).nullable().optional(),
   })
   .superRefine((summary, ctx) => {
     // lectureId 是讲练开卷专属归属键（2026-10）：除 lesson 外的来源携带即拒绝
@@ -259,11 +263,102 @@ export const attemptStartDataSchema = attemptSummarySchema;
  *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
  *   WRONG_PRACTICE_EMPTY（附中文说明）。
  */
+/**
+ * 错题重练建卷范围（2026-10-25 #6980-2「我的记录要说明重练的是哪些错题」）：
+ * 前端组卷时随请求下发，服务端原样落 attempts.practice_scope_json（快照语义，
+ * 单元/考点改名不影响历史卷标题）。三种口径对应错题本的三个重练入口：
+ * - all：页头「重练全部」（当前 tab + 课程筛选圈定的全部题）；
+ * - group：组头「重练本组」（分组维度 + 组标题 + 可选课程名）；
+ * - result：结果页「练习本卷错题」（来源卷标题）。
+ */
+export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("group"),
+    /** 分组维度（错题本三种分组同词表） */
+    dimension: z.enum(["unit", "time", "knowledge"]),
+    /** 组标题（单元标题 /「本周」「较早」等时间桶 / 考点名） */
+    groupTitle: z.string().min(1).max(120),
+    /** 课程名（课程筛选激活时可携带） */
+    courseName: z.string().min(1).max(120).optional(),
+  }),
+  z.object({
+    kind: z.literal("result"),
+    /** 来源卷标题（结果页视角，如「周末加练 · 第 1 次」） */
+    sourceTitle: z.string().min(1).max(200),
+  }),
+  z.object({
+    kind: z.literal("all"),
+    /** 课程名（课程筛选激活时可携带） */
+    courseName: z.string().min(1).max(120).optional(),
+  }),
+]);
+export type WrongPracticeScope = z.infer<typeof wrongPracticeScopeSchema>;
+
+/** 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题 */
+export function wrongScopeLabelOf(scope: WrongPracticeScope): string {
+  if (scope.kind === "all")
+    return scope.courseName !== undefined
+      ? `全部错题（${scope.courseName}）`
+      : "全部错题";
+  if (scope.kind === "group") return scope.groupTitle;
+  return scope.sourceTitle;
+}
+
+/**
+ * wrongScope 展示形态（teacherAttemptSourceSchema.wrongScope 同源）：
+ * label=建卷时存的范围标签（历史卷无存档为 null）；questionCount=卷内题目数
+ * （冻结 responses 行数）；originUnits=题目归属单元分布（responses→
+ * questions→units 反查；题/单元已删除时自然缺项）。服务端 sourceOf 计算。
+ */
+export const wrongScopeSchema = z.object({
+  label: z.string().min(1).nullable(),
+  questionCount: z.number().int().min(0),
+  originUnits: z.array(
+    z.object({
+      title: z.string().min(1),
+      count: z.number().int().min(1),
+    }),
+  ),
+});
+export type WrongScope = z.infer<typeof wrongScopeSchema>;
+
+/**
+ * 错题重练标题（师生两端单源格式化；记录卡、答题页来源行、结果页、错题本
+ * 轮次史、教师端作答列表同取此处）：有范围标签 →「错题重练 · 第 n 次 ·
+ * {label}」；历史卷无存档 →「错题重练 · 第 n 次（来自 {u1} ×a、{u2} ×b，
+ * 共 N 题）」；都不可得 → 原样「错题重练 · 第 n 次」。
+ */
+/**
+ * 错题重练标题（label-only 便捷形态，答题页/结果页来源行用：摘要只携带
+ * label）：label 缺省 = 原样「错题重练 · 第 n 次」（历史卷）。
+ */
+export function wrongAttemptTitleWithLabel(
+  attemptNo: number,
+  label: string | null | undefined,
+): string {
+  const base = `错题重练 · 第 ${attemptNo} 次`;
+  return label !== null && label !== undefined ? `${base} · ${label}` : base;
+}
+
+export function wrongAttemptTitleOf(scope: {
+  attemptNo: number;
+  wrongScope: WrongScope | null | undefined;
+}): string {
+  const base = `错题重练 · 第 ${scope.attemptNo} 次`;
+  const s = scope.wrongScope;
+  if (!s) return base;
+  if (s.label !== null) return `${base} · ${s.label}`;
+  const units = s.originUnits.map((u) => `${u.title} ×${u.count}`).join("、");
+  return units ? `${base}（来自 ${units}，共 ${s.questionCount} 题）` : base;
+}
+
 export const wrongPracticeRequestSchema = z
   .object({
     questionIds: z
       .array(z.string().min(1, "题目 id 不能为空"))
       .min(1, "至少选择一道错题"),
+    /** 建卷范围（随卷快照，展示「练的是什么」；缺省=历史行为不变） */
+    scope: wrongPracticeScopeSchema.optional(),
     /** 建卷可选工作流选项（M1b）：不带字段维持旧协议 */
     ...practiceWorkflowStartOptionsFields,
   })

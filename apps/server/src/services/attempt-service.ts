@@ -41,6 +41,8 @@ import {
   type StudentPaperUnit,
   type SubmitEvidenceDeclaration,
   studentAnswerSchema,
+  wrongPracticeScopeSchema,
+  wrongScopeLabelOf,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
@@ -176,6 +178,20 @@ import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
  */
 
 /** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts / lesson-service.ts 组卷复用（同一投影） */
+
+/**
+ * 建卷范围快照 → 展示标签（#6980-2）：坏 JSON/不合法形态按无存档处理（null），
+ * 不打挂摘要读取。
+ */
+function parseWrongScopeLabel(json: string): string | null {
+  try {
+    const parsed = wrongPracticeScopeSchema.safeParse(JSON.parse(json));
+    return parsed.success ? wrongScopeLabelOf(parsed.data) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function attemptSummaryOf(row: Attempt): AttemptStartData {
   return {
     id: row.id,
@@ -196,6 +212,12 @@ export function attemptSummaryOf(row: Attempt): AttemptStartData {
     startedAt: row.startedAt,
     submittedAt: row.submittedAt,
     scoreAuto: row.scoreAuto,
+    // #6980-2：错题重练范围标签（wrong 来源按建卷存的 scope 取 label，
+    // 答题页/结果页来源行「练的是什么」；其余来源与历史卷恒 null）
+    wrongScopeLabel:
+      row.sourceType === "wrong" && row.practiceScopeJson !== null
+        ? parseWrongScopeLabel(row.practiceScopeJson)
+        : null,
   };
 }
 
@@ -1366,6 +1388,8 @@ export function newDraftAttempt(config: {
     // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，讲练重开时才由
     // restartLessonAttempt 写入
     abandonedAt: null,
+    // 错题重练建卷范围快照（#6980-2）：缺省 null，wrong 建卷路径显式写入
+    practiceScopeJson: null,
     // M1b 工作流列：缺省旧协议（NULL/NULL/0），新协议卷由建卷路径显式传入
     practiceWorkflowVersion: config.practiceWorkflowVersion ?? null,
     feedbackMode: config.feedbackMode ?? null,

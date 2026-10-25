@@ -705,6 +705,9 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         // 活动时间新列历史为空，不推测更早的保存事实。
         expect(row.last_activity_at ?? null).toBeNull();
         delete row.last_activity_at;
+        // 错题重练范围快照列（0043 新增，2026-10 #6980-2）：可空、存量行恒
+        // NULL，不参与保真对比；新列语义见 schema 测试与 wrong-practice 服务
+        delete row.practice_scope_json;
       }
       // 0034 新增废弃时间，旧行默认NULL；原有业务字段仍逐项保真。
       if (table === "attempts") delete row.abandoned_at;

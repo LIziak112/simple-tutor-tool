@@ -25,7 +25,7 @@ import { submitAttemptRequest } from "../test/submit-revisions";
  * - 快照冻结口径：建卷后教师改题库（题干/答案/版本 +1），重练卷的草稿题干与
  *   交卷判分仍按**建卷时**的快照（练的就是当时做错的那道题）；
  * - 交卷链路复用：wrong 来源交卷 → graded/submitted 照常；交卷后成为错题本
- *   新一轮（rounds 新增 sourceType=wrong、来源标题「错题重练 · 第 n 次」）；
+ *   新一轮（rounds 新增 sourceType=wrong；#6980-2 起标题带范围标签或来源单元分布）；
  *   无标准答案手写题重练照常进教师待批队列、批改后 graded；
  * - 我的记录：wrong 草稿与已交卷记录一直可见（永不失权——sourceType=wrong
  *   筛选可命中）；
@@ -520,7 +520,10 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
       correct: boolean;
     };
     expect(secondRound.sourceType).toBe("wrong");
-    expect(secondRound.sourceTitle).toBe("错题重练 · 第 1 次");
+    // #6980-2：历史卷（未存 scope）标题现算来源单元分布
+    expect(secondRound.sourceTitle).toBe(
+      "错题重练 · 第 1 次（来自 重练课程练习 ×2，共 2 题）",
+    );
     expect(secondRound.correct).toBe(true);
     // judge2 曾错本轮做对 → 也在聚合内（includeResolved），轮次同样 +1
     const judge2 = wrong.questions.find((card) => card.questionId === Q.judge2);

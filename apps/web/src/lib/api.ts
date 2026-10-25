@@ -198,6 +198,7 @@ import {
   type TeacherStatusData,
   type UnitMetaData,
   type UnitMetaUpdate,
+  type WrongPracticeScope,
   type WrongQuestionsData,
 } from "@tutor/contract";
 import { hc } from "hono/client";
@@ -913,9 +914,15 @@ export function startCourseAttemptApi(
 export function startWrongPracticeApi(
   questionIds: string[],
   options?: PracticeWorkflowStartOptions,
+  /** 建卷范围快照（#6980-2）：随卷落库，记录/轮次史标题「练的是什么」 */
+  scope?: WrongPracticeScope,
 ): Promise<AttemptStartData> {
   const args = {
-    json: { questionIds, ...(options !== undefined ? { ...options } : {}) },
+    json: {
+      questionIds,
+      ...(options !== undefined ? { ...options } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+    },
   };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
 }
