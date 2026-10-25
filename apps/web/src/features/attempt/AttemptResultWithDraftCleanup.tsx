@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { type AttemptResultData, type WrongPracticeScope } from "@tutor/contract";
+import type { AttemptResultData, WrongPracticeScope } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { startWrongPracticeApi } from "@/lib/api";
