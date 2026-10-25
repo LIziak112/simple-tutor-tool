@@ -1308,4 +1308,25 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
       MAT_SENTINEL_CONTENT.replace("{{m-slot-1}}", "**（1）**"),
     );
   });
+
+  it("审查 P1：附件在场时共享材料段仍在出站文本中（书写材料与共享材料拼接，不互斥）", () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db);
+    const bundle = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    const assembly = assembleOutboundMessages({
+      bundle,
+      studentQuestion: "结合我的笔迹图看推导错在哪",
+      materials: [{ kind: "draft", pageIndex: 0, byteSize: 2048 }],
+    });
+    // 两段并存：书写材料提示行（附件）+ 共享材料正文（配对题面不可独立
+    // 阅读，附件不能挤掉材料正文——此前互斥三元在此丢段）
+    expect(assembly.contextDataMd).toContain("## 书写材料");
+    expect(assembly.contextDataMd).toContain("随本消息附带 1 张书写材料图片");
+    expect(assembly.contextDataMd).toContain("## 共享材料");
+    expect(assembly.contextDataMd).toContain("阅读材料正文哨兵");
+    expect(assembly.contextDataMd).toContain("**（1）**");
+  });
 });
