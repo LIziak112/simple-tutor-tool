@@ -455,6 +455,14 @@ describe("RichMarkdown compact（单行收敛形态）", () => {
     expect(container.textContent).not.toContain(":::");
   });
 
+  it("compact 公式走 KaTeX 纯 HTML 输出：不产 <math> 节点，可见渲染照常（回归：jsdom 无 MathMLElement，<math> 会让可访问名计算崩溃）", () => {
+    const { container } = render(
+      <RichMarkdown source={"计算 $\\frac{1}{2}x+3=5$"} compact />,
+    );
+    expect(container.querySelector(".katex")).not.toBeNull();
+    expect(container.querySelector("math")).toBeNull();
+  });
+
   it("缺省（不传 compact）时表格照常渲染为表格元素，不带收敛样式类", () => {
     const { container } = render(
       <RichMarkdown source={"| a | b |\n|---|---|\n| 1 | 2 |"} />,

@@ -15,6 +15,7 @@ import type { DirectiveTelemetryInfo } from "./directives/session-context";
 import { DirectiveSessionProvider } from "./directives/session-context";
 import {
   richMarkdownRehypePlugins,
+  richMarkdownRehypePluginsCompact,
   richMarkdownRemarkPlugins,
 } from "./pipeline";
 
@@ -73,8 +74,10 @@ export interface RichMarkdownProps {
   /**
    * 单行收敛形态（错题本紧凑行等行内预览）：块级公式收敛为行内、图片与
    * 表格降级为「[图]」「[表格]」文本占位、指令围栏标记剥离（内容保留），
-   * 根容器 line-clamp 收敛为单行（超出省略）。渲染管线与 sanitize 与缺省
-   * 形态完全一致，只做源文降级（compact-inline.ts）与容器样式类。
+   * 根容器 line-clamp 收敛为单行（超出省略）。解析与 sanitize 与缺省形态
+   * 完全一致，仅 KaTeX 输出改纯 HTML（见 pipeline.ts
+   * richMarkdownRehypePluginsCompact：行内读屏语义由 sr-only 摘要承担，
+   * 不产 MathML 副本），源文降级见 compact-inline.ts。
    */
   compact?: boolean | undefined;
 }
@@ -102,7 +105,11 @@ export const RichMarkdown = memo(function RichMarkdown({
     <DirectiveSessionProvider telemetry={telemetry}>
       <ReactMarkdown
         remarkPlugins={richMarkdownRemarkPlugins}
-        rehypePlugins={richMarkdownRehypePlugins}
+        rehypePlugins={
+          compact === true
+            ? richMarkdownRehypePluginsCompact
+            : richMarkdownRehypePlugins
+        }
         components={directiveHostComponents}
       >
         {compact === true ? compactInlineSource(source) : source}
