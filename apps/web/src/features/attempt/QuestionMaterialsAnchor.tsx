@@ -84,7 +84,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
         data-slot="question-materials"
         tabIndex={-1}
         aria-label="本题材料"
-        className="flex min-w-0 flex-col gap-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="flex min-w-0 max-w-full flex-col gap-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         {materials.map((material) => (
           <MaterialPanel

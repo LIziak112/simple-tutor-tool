@@ -124,6 +124,7 @@ export const SPEC_TAGS = {
   "dual-role-session.spec.ts": ["@teacher", "@student"],
   "phase3-full-chain.spec.ts": ["@teacher", "@student"],
   "qm-full-chain.spec.ts": ["@teacher", "@student"],
+  "qm-device-perf.spec.ts": ["@teacher", "@student"],
 };
 
 /** 冒烟 spec（SPEC_TAGS 里登记 @smoke 的），「仅 spec 变动」档恒随跑 */
