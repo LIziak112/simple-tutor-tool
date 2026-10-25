@@ -380,6 +380,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "填空/判断标记 [[…]] 内出现 $（$…$ 会被先行识别成公式定界符、把标记从中间切开：空位识别不到无法判分，答案原文还会随题干泄露给学生）：LaTeX 答案直接写在标记内不要包 $，如 [[\\frac{5}{4}|0.5]]",
   },
   {
+    code: "BLANK_MARKER_OUTSIDE_QUESTION",
+    level: "error",
+    description:
+      "讲练页/混合文档的讲义正文（题块外）出现 [[…]] 填空标记：正文里的标记会渲染成空填空框，且标记内的答案原文会随讲义段落原样下发学生端；标记只能写在 ::::question 题目内",
+  },
+  {
     code: "DUPLICATE_QUESTION_ID",
     level: "error",
     description:

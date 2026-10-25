@@ -10,7 +10,10 @@ import type { ParseOptions } from "../v2/parse.ts";
 import { parseDocument } from "../v2/parse.ts";
 import { isQuestionContainer } from "../v2/question.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
-import { lintBlankMarkerDollar } from "./blank-marker.ts";
+import {
+  lintBlankMarkerDollar,
+  lintBlankMarkerOutsideQuestion,
+} from "./blank-marker.ts";
 import { lintCapabilityProfile } from "./capability.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
@@ -80,6 +83,8 @@ function runRules(
       ...lintMathSpacingOutside(tree),
       ...lintTablePipes(tree),
       ...lintBlankMarkerDollar(tree),
+      // TT-10b 审查 P2：lesson/mixed 讲义正文（题块外）裸 [[…]] 泄露红线
+      ...lintBlankMarkerOutsideQuestion(tree, kind),
       ...lintRawHtml(tree),
       ...lintEmptyPractice(parsed, tree),
       // M5-D1：practice 推荐适用性（lecture/lesson 带该字段 → warning，不阻断）

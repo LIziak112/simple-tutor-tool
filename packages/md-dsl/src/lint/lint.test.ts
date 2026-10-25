@@ -798,6 +798,80 @@ describe("lintDocument：指令规则补充", () => {
     ).toEqual([]);
   });
 
+  it("lesson/mixed：讲义正文（题块外）裸 [[…]] → error BLANK_MARKER_OUTSIDE_QUESTION（答案原文随 md 段下发学生端，UI 空框不抵消 API 级泄露）；题目内不误报；材料内由 MATERIAL_CONTAINS_ANSWER 单报；lecture/practice 不加严", () => {
+    const lessonText = md([
+      "---",
+      "kind: lesson",
+      "unit: 随堂练习",
+      "---",
+      "",
+      "# 第1讲 有理数",
+      "",
+      "正文讲解。请填 [[参考答案]]。",
+      "",
+      ":::fold",
+      "折叠讲解里的 [[提示答案]]。",
+      ":::",
+      "",
+      "::::question{type=fill id=q1}",
+      "$|-5|=$ [[5]]",
+      "::::",
+    ]);
+    const lesson = lintDocument(lessonText);
+    const markers = lesson.issues.filter(
+      (i) => i.code === "BLANK_MARKER_OUTSIDE_QUESTION",
+    );
+    expect(markers).toHaveLength(2);
+    expect(markers[0]).toMatchObject({ level: "error", line: 8 });
+    expect(markers[1]?.line).toBe(11);
+    // 题目内 [[…]] 是合法判分标记（fill 识别到空位），零误报
+    expect(issueOf(lesson.issues, "FILL_NO_BLANK")).toBeUndefined();
+
+    // mixed 同口径：讲义段落学生同样可读，泄露机理与 lesson 完全一致
+    const mixed = lintDocument(
+      lessonText.replace("kind: lesson", "kind: mixed"),
+    );
+    expect(issueOf(mixed.issues, "BLANK_MARKER_OUTSIDE_QUESTION")?.level).toBe(
+      "error",
+    );
+
+    // 材料内 [[…]] 由 MATERIAL_CONTAINS_ANSWER 单报（error），不双报
+    const material = lintDocument(
+      md([
+        "---",
+        "kind: lesson",
+        "unit: 随堂练习",
+        "---",
+        "",
+        "# 第1讲 资料分析",
+        "",
+        '::::material{id=mat-1 title="材料"}',
+        "材料正文 [[材料内答案]]。",
+        "::::",
+      ]),
+    );
+    expect(issueOf(material.issues, "MATERIAL_CONTAINS_ANSWER")?.level).toBe(
+      "error",
+    );
+    expect(codes(material.issues)).not.toContain(
+      "BLANK_MARKER_OUTSIDE_QUESTION",
+    );
+
+    // lecture 不加严：无题目语境，正文标记不构成未交卷答案泄露（显示层空框属渲染降级）
+    const lecture = lintDocument(
+      md([
+        "---",
+        "kind: lecture",
+        "---",
+        "",
+        "# 第1讲 有理数",
+        "",
+        "正文讲解。请填 [[参考答案]]。",
+      ]),
+    );
+    expect(codes(lecture.issues)).toEqual([]);
+  });
+
   it("question 嵌套在 question 内：DIRECTIVE_NOT_ALLOWED_HERE；外层判断题同时报多标记 warning", () => {
     const text = md([
       "---",
