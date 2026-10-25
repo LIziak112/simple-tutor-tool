@@ -1322,3 +1322,100 @@ describe("QM-11：结果视图携带 selfReview/gradingPolicy（公布 gate 投�
     expect(released[Q.fill]?.selfReview).toEqual({ record: null, revision: 0 });
   });
 });
+
+describe("QM-15 细项2：订正语义（自评改选不改写原稿；不用改答案替代订正）", () => {
+  it("自评改选与撤回：交卷事实逐字节不动——答案/快照/判定/卷状态/行 id 全不变（改选只写自评三列）", async () => {
+    const { app, db, aCookie, attemptId } = await newPolicySubmittedAttempt();
+    const before = rowOf(db, attemptId, Q.fill);
+    const attemptBefore = attemptRowOf(db, attemptId);
+
+    await selfReviewJson(app, aCookie, attemptId, Q.fill, review("correct"));
+    await selfReviewJson(app, aCookie, attemptId, Q.fill, review("wrong", 1));
+    await selfReviewJson(
+      app,
+      aCookie,
+      attemptId,
+      Q.fill,
+      review("undecided", 2),
+    );
+
+    const after = rowOf(db, attemptId, Q.fill);
+    // 交卷原稿与判定事实：answerJson/快照/自动判定/教师列/提交时刻/保存次数
+    expect(after.id).toBe(before.id);
+    expect(after.answerJson).toBe(before.answerJson);
+    expect(after.questionSnapshotJson).toBe(before.questionSnapshotJson);
+    expect(after.autoCorrect).toBe(before.autoCorrect);
+    expect(after.finalCorrect).toBe(before.finalCorrect);
+    expect(after.teacherMark).toBe(before.teacherMark);
+    expect(after.submittedAt).toBe(before.submittedAt);
+    expect(after.changeCount).toBe(before.changeCount);
+    // 卷级事实同样不动
+    const attemptAfter = attemptRowOf(db, attemptId);
+    expect(attemptAfter.status).toBe(attemptBefore.status);
+    expect(attemptAfter.submittedAt).toBe(attemptBefore.submittedAt);
+    expect(attemptAfter.scoreAuto).toBe(attemptBefore.scoreAuto);
+    expect(attemptAfter.scoreFinal).toBe(attemptBefore.scoreFinal);
+    // 自评三列确实推进（证明操作生效，非空转）
+    expect(after.selfReviewVerdict).toBeNull();
+    expect(after.selfReviewAt).toBeNull();
+    expect(after.selfReviewRevision).toBe(3);
+  });
+
+  it("不用改答案替代订正：交卷后改答案 409；订正沿用原证据阶段挂原行", async () => {
+    const { app, db, aCookie, attemptId } = await newPolicySubmittedAttempt();
+    const original = rowOf(db, attemptId, Q.fill);
+
+    // 交卷后改答案被拒（订正是交卷后唯一的本人修订通道）
+    const res = await app.request(
+      `/api/student/attempts/${attemptId}/answers/${Q.fill}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", cookie: aCookie },
+        body: JSON.stringify({
+          answer: { kind: "fill", values: ["999"] },
+          baseRevision: 0,
+          mutationId: uuid(),
+        }),
+      },
+    );
+    expect(res.status).toBe(409);
+    expect(errCodeOf(await res.json())).toBe("ALREADY_SUBMITTED");
+    expect(rowOf(db, attemptId, Q.fill).answerJson).toBe(original.answerJson);
+
+    // 自评改选后订正仍可创建：沿用原证据阶段（挂原 attemptId + 原 responses
+    // 行 id = questionRevisionId，不漂移到新轮次/新身份）
+    await selfReviewJson(app, aCookie, attemptId, Q.fill, review("wrong"));
+    const corr = await app.request(
+      `/api/student/attempts/${attemptId}/notes/${Q.fill}/corrections`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: aCookie },
+        body: JSON.stringify({ copyFromOriginal: false }),
+      },
+    );
+    expect(corr.status).toBe(201);
+
+    // 笔记本聚合：订正挂原轮（round.attemptId = 原卷），轮次不因自评/订正漂移
+    const notebook = await app.request(
+      `/api/student/notebook/questions/${Q.fill}`,
+      { headers: { cookie: aCookie } },
+    );
+    expect(notebook.status).toBe(200);
+    const notebookBody = (await notebook.json()) as {
+      data: {
+        rounds: {
+          attemptId: string;
+          corrections: { questionRevisionId: string }[];
+        }[];
+      };
+    };
+    const round = notebookBody.data.rounds.find(
+      (r) => r.attemptId === attemptId,
+    );
+    expect(round).toBeDefined();
+    expect(round?.corrections).toHaveLength(1);
+    expect(round?.corrections[0]?.questionRevisionId).toBe(original.id);
+    // 学生端整包泄露断言（公布后 release.answers 合法携带，allow 放行答案键）
+    assertNoLeak(notebookBody, { allow: ["answer", "answers", "solutionMd"] });
+  });
+});
