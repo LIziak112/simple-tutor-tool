@@ -362,7 +362,8 @@ export const questionSchema = z.object({
    * 题级 ::ref 产物（§5.2.2：::ref allowedIn group/**question**——完形子题逐空
    * 绑定 slot、matching 槽位集合 slots、多材料题内引用累加）。QM-02 语料对撞
    * 补齐域①遗漏：可选且缺省不注入键（旧题目键集不变，§5.8.1 同款纪律）。
-   * 学生端公开投影暂不携带（材料上下文投影随 QM-03/QM-08 接线定稿）。
+   * 2026-10-25 审查 P2-2 起学生端公开投影携带（材料 id 与选择串属题面公开
+   * 内容、无泄露面；导出闭包组∪题级同源所需，见 questionPublicSchema）。
    */
   materialRefs: z.array(materialRefSchema).optional(),
 });
@@ -412,6 +413,14 @@ export const questionPublicSchema = z.object({
   matchingSlots: z.array(matchingSlotSchema).min(1).optional(),
   wordMin: z.number().int().min(1).optional(),
   wordMax: z.number().int().min(1).optional(),
+  /**
+   * 题级材料引用（2026-10-25 审查 P2-2）：材料为题面公开内容、无泄露面
+   * （正文投影经 materialPublicSchema 白名单，另由导入 lint
+   * MATERIAL_CONTAINS_ANSWER 双防线）。只含材料 id 与 DSL 原始选择串；
+   * web 单题导出闭包据此并入题级材料（与服务端 frozenMaterialsForQuestion
+   * 组∪题级同源）。可选——无题级引用的题不注入键（旧载荷键集不变）。
+   */
+  materialRefs: z.array(materialRefSchema).optional(),
 });
 
 /**

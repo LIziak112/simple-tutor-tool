@@ -1,6 +1,7 @@
 import type {
   AttemptContextData,
   AttemptContextMaterial,
+  MaterialRef,
 } from "@tutor/contract";
 import { lettersOf } from "@tutor/contract";
 import { slotNumberedContentOf } from "@tutor/md-dsl";
@@ -18,8 +19,9 @@ import {
 
 /**
  * 单题导出的材料页装配（QM-16 细项 1/4）：
- * - 闭包口径与作答页一致——组快照 questionIds 含该题的组材料（全部版本，
- *   版本键不塌缩；同 attempt-context-view resolveMaterials 同规则）；
+ * - 闭包口径与服务端 frozenMaterialsForQuestion 同源——组材料 ∪ 题级
+ *   materialRefs（学生题目投影携带），引用材料的全部版本（版本键不塌缩），
+ *   (id, sourceVersion) 稳定排序（审查 P2-2/P3-2）；
  * - 正文槽位编号（{{slot-id}} → **（N）**，md-dsl 单源），多材料字母编号
  *   （材料 A/B…，与单题包 lettersOf 同口径）；
  * - 长材料按块分页（空行分段贪心装箱，页高上限内不静默裁切；超限块单独
@@ -44,10 +46,16 @@ export interface ExportMaterial {
   readonly contentMd: string;
 }
 
-/** 该题的组材料闭包（学生实际可见口径：组内题 → 组引用材料的全部版本） */
+/**
+ * 该题的材料闭包（学生实际可见口径）：组引用 ∪ 题级 materialRefs（随学生
+ * 题目投影下发，2026-10-25 审查 P2-2）→ 引用材料的全部版本（版本键不
+ * 塌缩）。排序 (id, sourceVersion) 稳定——与服务端 frozenMaterialsForQuestion
+ * 闭包单源同口径（审查 P3-2），两出口（PNG 材料页 / 单题包）字母编号一致。
+ */
 export function exportMaterialsOfQuestion(
   context: AttemptContextData,
   questionId: string,
+  questionMaterialRefs?: readonly MaterialRef[],
 ): ExportMaterial[] {
   const materialsById = new Map<string, AttemptContextMaterial[]>();
   for (const material of context.materials) {
@@ -55,30 +63,40 @@ export function exportMaterialsOfQuestion(
     list.push(material);
     materialsById.set(material.id, list);
   }
-  for (const list of materialsById.values()) {
-    list.sort((a, b) => a.sourceVersion - b.sourceVersion);
-  }
   const notes = materialVersionNotesOf(context.materials);
-  const collected: ExportMaterial[] = [];
-  const seen = new Set<string>();
+  // 引用集：组材料（组快照 questionIds 含该题）∪ 题级引用，按材料 id 去重
+  const wantedIds = new Set<string>();
   for (const group of context.groups) {
     if (!group.questionIds.includes(questionId)) continue;
-    for (const ref of group.materialRefs) {
-      if (seen.has(ref.material)) continue;
-      seen.add(ref.material);
-      for (const material of materialsById.get(ref.material) ?? []) {
-        const versionNote = notes.get(materialVersionKey(material));
-        collected.push({
-          letter: "",
-          label: `${material.title?.trim() || "材料"}${versionNote === undefined ? "" : `（${versionNote}）`}`,
-          contentMd: slotNumberedContentOf(material.contentMd, material.slots),
-        });
-      }
+    for (const ref of group.materialRefs) wantedIds.add(ref.material);
+  }
+  for (const ref of questionMaterialRefs ?? []) wantedIds.add(ref.material);
+  const collected: (ExportMaterial & {
+    id: string;
+    sourceVersion: number;
+  })[] = [];
+  for (const id of wantedIds) {
+    for (const material of [...(materialsById.get(id) ?? [])].sort(
+      (a, b) => a.sourceVersion - b.sourceVersion,
+    )) {
+      const versionNote = notes.get(materialVersionKey(material));
+      collected.push({
+        id: material.id,
+        sourceVersion: material.sourceVersion,
+        letter: "",
+        label: `${material.title?.trim() || "材料"}${versionNote === undefined ? "" : `（${versionNote}）`}`,
+        contentMd: slotNumberedContentOf(material.contentMd, material.slots),
+      });
     }
   }
+  collected.sort(
+    (a, b) => a.id.localeCompare(b.id) || a.sourceVersion - b.sourceVersion,
+  );
+  // 排序键（id/sourceVersion）只在闭包内部使用，不进导出条目
   return collected.map((material, index) => ({
-    ...material,
     letter: lettersOf(index),
+    label: material.label,
+    contentMd: material.contentMd,
   }));
 }
 

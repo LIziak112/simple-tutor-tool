@@ -502,6 +502,24 @@ describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽
     ]);
   });
 
+  it("审查 P2-2：题级 materialRefs 随学生题目投影下发（导出闭包同源所需）；无引用题不注入键", async () => {
+    const { app, aCookie, attemptId } = await makeQm13App();
+    const draft = await getDraft(app, aCookie, attemptId);
+    const matching = draftQuestionOf(draft, Q.matching);
+    expect(matching.materialRefs).toEqual([
+      { material: "mat-1", slots: "slot-1..slot-5" },
+    ]);
+    const subset = draftQuestionOf(draft, Q.matchingSubset);
+    expect(subset.materialRefs).toEqual([
+      { material: "mat-1", slots: "slot-3..slot-5" },
+    ]);
+    // 无题级引用的题不注入键（旧载荷键集不变）
+    const ordering = draftQuestionOf(draft, Q.ordering);
+    expect("materialRefs" in ordering).toBe(false);
+    // materialRefs 只含材料 id 与选择串，无答案侧内容
+    expect(JSON.stringify(matching.materialRefs)).not.toContain("opt-");
+  });
+
   it("投影零泄露：草稿视图不携带 answers/solution/hints（assertNoLeak + 详解哨兵）", async () => {
     const { app, aCookie, attemptId } = await makeQm13App();
     const res = await app.request(`/api/student/attempts/${attemptId}`, {

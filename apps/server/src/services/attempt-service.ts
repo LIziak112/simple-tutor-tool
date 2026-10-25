@@ -750,6 +750,12 @@ export function publicOfSnapshot(
       ? orderingStudentOf(structure.orderingItems)
       : {}),
     ...matchingSlotsProjection(structure, options.materialSlots),
+    // 审查 P2-2：题级材料引用随公开投影下发（材料 id 与选择串属题面公开
+    // 内容；web 单题导出闭包据此与服务端组∪题级同源）。旧快照经
+    // effectiveStructureOfSnapshot 兜底重抽同样携带；无引用题不注入键
+    ...(structure.materialRefs !== undefined
+      ? { materialRefs: structure.materialRefs }
+      : {}),
     hintCount: question.hints.length,
     questionRevisionId,
   });

@@ -63,8 +63,53 @@ describe("exportMaterialsOfQuestion（导出材料闭包）", () => {
     expect(materials[1]?.contentMd).toBe("第二版 **（1）**。");
   });
 
-  it("组外题零材料（不携带无关材料；多材料题级引用不在学生投影，导出闭包同口径）", () => {
+  it("组外题零材料（不携带无关材料）；题级引用随学生投影并入闭包（审查 P2-2：与服务端组∪题级同源）", () => {
     expect(exportMaterialsOfQuestion(context, "q-9")).toEqual([]);
+    // 题级引用（无组）也进闭包——多材料题正文引用的材料随题导出
+    const withQuestionRefs = exportMaterialsOfQuestion(context, "q-3", [
+      { material: "m-2" },
+    ]);
+    expect(withQuestionRefs).toHaveLength(1);
+    expect(withQuestionRefs[0]).toMatchObject({
+      letter: "A",
+      label: "材料",
+    });
+    expect(withQuestionRefs[0]?.contentMd).toBe("独立材料，组未引用。");
+  });
+
+  it("组引用 ∪ 题级引用去重；编号口径与服务端闭包对齐（审查 P3-2：(id, sourceVersion) 稳定序）", () => {
+    // 组引用顺序（m-2 先、m-1 后）与 id 稳定序（m-1 < m-2）相反——字母编号
+    // 必须按服务端 frozenMaterialsForQuestion 的 (id, sourceVersion) 排序，
+    // 两出口（PNG 材料页 / 单题包）字母一致
+    const mixed: AttemptContextData = {
+      attemptId: "a-3",
+      materials: [
+        material("m-2", 1, "材料二正文。", "材料二"),
+        material("m-1", 1, "材料一 v1 {{m-1-s1}}。", "材料一"),
+        material("m-1", 2, "材料一 v2 {{m-1-s1}}。", "材料一"),
+      ],
+      groups: [
+        {
+          id: "g-3",
+          sourceVersion: 1,
+          title: "组",
+          introMd: "",
+          materialRefs: [{ material: "m-2" }, { material: "m-1" }],
+          questionIds: ["q-7"],
+        },
+      ],
+    };
+    // 组 ∪ 题级同材料去重（m-1 两版本各一条，不因重复引用翻倍）
+    const union = exportMaterialsOfQuestion(mixed, "q-7", [
+      { material: "m-1" },
+    ]);
+    expect(union.map((item) => `${item.letter}:${item.label}`)).toEqual([
+      "A:材料一（历史版本 1）",
+      "B:材料一（历史版本 2）",
+      "C:材料二",
+    ]);
+    // 仅题级（组外题）零材料口径不回归
+    expect(exportMaterialsOfQuestion(mixed, "q-8")).toEqual([]);
   });
 
   it("无标题材料回落「材料」；未声明槽位标记原样保留", () => {

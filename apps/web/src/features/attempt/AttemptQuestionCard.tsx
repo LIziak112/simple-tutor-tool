@@ -706,13 +706,18 @@ export function AttemptQuestionCard({
               (record?.doc?.strokes.length ?? 0) > 0,
             );
             guard();
-            // QM-16 细项 1：组材料页前置（材料来自冻结上下文投影，与隐藏
-            // 标画/收起纸面无关）；读取/渲染失败显式抛错（对话框可重试），
-            // 不静默省略材料
+            // QM-16 细项 1：材料页前置（材料来自冻结上下文投影与题目公开
+            // 投影的题级引用——组∪题级与服务端闭包同源；与隐藏标画/收起
+            // 纸面无关）；读取/渲染失败显式抛错（对话框可重试），不静默
+            // 省略材料
             const context = await fetchAttemptContextApi(attemptId);
             guard();
             const materialPages = await renderMaterialExportPages(
-              exportMaterialsOfQuestion(context, question.id),
+              exportMaterialsOfQuestion(
+                context,
+                question.id,
+                question.materialRefs,
+              ),
             );
             guard();
             return [
