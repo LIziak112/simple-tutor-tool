@@ -349,19 +349,6 @@ describe("QM-18 细项 4：GC 保留当前/历史作答与备份依赖；材料�
       safetyWindowMs: 0,
     });
     expect(result.unreadableBackupDbs).toBe(0);
-    console.log("GCRESULT", JSON.stringify(result));
-    console.log(
-      "MEDIADIR",
-      require("node:fs")
-        .readdirSync(join(dataDir, "blobs", "media"))
-        .join("|"),
-    );
-    try {
-      require("node:fs").unlinkSync(join(dataDir, world.mediaTmpPath));
-      console.log("MANUAL-UNLINK-OK");
-    } catch (e) {
-      console.log("MANUAL-UNLINK-FAIL", String(e));
-    }
 
     // 旧卷配图保留：材料软删不清 blobs/media 正式文件，readMediaBlob 可读
     const mediaFile = readMediaBlob(
