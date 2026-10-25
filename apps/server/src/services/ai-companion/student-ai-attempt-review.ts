@@ -10,6 +10,7 @@ import type {
   AiAttemptReviewSnapshot,
   AiAttemptReviewStatus,
   AiAttemptReviewTaskPublic,
+  StudentAnswer,
 } from "@tutor/contract";
 import {
   AI_ATTEMPT_REVIEW_ALLOWED_ACTIONS,
@@ -19,9 +20,6 @@ import {
   AI_ATTEMPT_REVIEW_PROMPT_VERSION,
   AI_ATTEMPT_REVIEW_RESULT_MAX_CHARS,
   AI_MCP_LEASE_MAX_TOTAL_MS,
-  AI_TASK_DAILY_PER_STUDENT,
-  AI_TASK_PENDING_PER_STUDENT,
-  AI_TASK_QUEUE_BUCKETS,
   aiAttemptReviewCountsSchema,
   aiAttemptReviewReportSchema,
   aiAttemptReviewSnapshotSchema,
@@ -32,7 +30,6 @@ import {
   asc,
   desc,
   eq,
-  gt,
   inArray,
   isNull,
   lt,
@@ -47,7 +44,6 @@ import {
   aiAttemptReviewFacts,
   aiAttemptReviewResults,
   aiAttemptReviewTasks,
-  aiTasks,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import {
@@ -62,7 +58,7 @@ import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { missingNoteOf, studentAnswerTextOf } from "./student-ai-context.ts";
 import {
   asDb,
-  beijingDayWindowOf,
+  assertStudentAiTaskQuota,
   conflict,
   decodeCursor,
   encodeCursor,
@@ -268,15 +264,14 @@ const FIELD_NOTES: readonly string[] = [
 ];
 
 /**
- * 装配整体范围（单一实现，三处共用）：归属/作废/失权由 requireUsableAttempt
- * 把关；draft/未公布整卷统一拒绝；逐题当前策略裁决任一不可用即拒绝；
- * 缺冻结题面 = 数据损坏整体拒绝。返回契约自检后的白名单题目与四桶计数。
+ * 整体任务的实时授权门：创建、领取、报告写回、详情和打开共用。
+ * 归属/作废/失权复用 requireUsableAttempt，交卷、公布及逐题策略任一不满足即拒绝。
  */
-function attemptReviewRangeOf(
+function requireAttemptReviewAccess(
   db: Db | QueueTx,
   input: { studentId: string; attemptId: string },
-  options: AttemptReviewServiceOptions,
-): AttemptReviewRange {
+  options: Pick<AttemptReviewServiceOptions, "configSource"> = {},
+) {
   const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
   const attempt = requireUsableAttempt(
     asDb(db),
@@ -305,6 +300,54 @@ function attemptReviewRangeOf(
   const rows = frozenRowsInDisplayOrder(asDb(db), attempt).map(
     (entry) => entry.row,
   );
+  for (const row of rows) {
+    // 逐题当前策略裁决（教师刚改设置立即生效；任一题不可用整体拒绝）。
+    // 裁决入口自身的 HttpError（404/403 等权威码）原样上抛，不吞成策略拒绝
+    const { resolution } = resolveAttemptQuestionAiPolicy(
+      asDb(db),
+      input.studentId,
+      input.attemptId,
+      row.questionId,
+      configSource,
+    );
+    if (!resolution.usable || resolution.mode === undefined) {
+      throw new HttpError(
+        403,
+        "AI_POLICY_DISABLED",
+        "当前教学模式下本次练习暂不能整体复盘（部分题目的 AI 求助被关闭）",
+      );
+    }
+  }
+  return { attempt, rows, released };
+}
+
+/** 内容存在性独立于答案对象存在性；空对象形态不能证明学生已作答。 */
+function hasAnswerContent(answer: StudentAnswer | null): boolean {
+  if (answer === null) return false;
+  switch (answer.kind) {
+    case "judge":
+      return typeof answer.value === "boolean" || answer.value.trim() !== "";
+    case "choice":
+      return true;
+    case "multi":
+      return answer.indexes.length > 0;
+    case "fill":
+      return answer.values.some((value) => value.trim() !== "");
+    case "final":
+      return answer.finalAnswer.trim() !== "";
+  }
+}
+
+function attemptReviewRangeOf(
+  db: Db | QueueTx,
+  input: { studentId: string; attemptId: string },
+  options: AttemptReviewServiceOptions,
+): AttemptReviewRange {
+  const { attempt, rows, released } = requireAttemptReviewAccess(
+    db,
+    input,
+    options,
+  );
   if (rows.length === 0) {
     throw new HttpError(
       500,
@@ -323,22 +366,6 @@ function attemptReviewRangeOf(
   const questions: AiAttemptReviewQuestion[] = [];
   let hasAnyInk = false;
   for (const [index, row] of rows.entries()) {
-    // 逐题当前策略裁决（教师刚改设置立即生效；任一题不可用整体拒绝）。
-    // 裁决入口自身的 HttpError（404/403 等权威码）原样上抛，不吞成策略拒绝
-    const { resolution } = resolveAttemptQuestionAiPolicy(
-      asDb(db),
-      input.studentId,
-      input.attemptId,
-      row.questionId,
-      configSource,
-    );
-    if (!resolution.usable || resolution.mode === undefined) {
-      throw new HttpError(
-        403,
-        "AI_POLICY_DISABLED",
-        "当前教学模式下本次练习暂不能整体复盘（部分题目的 AI 求助被关闭）",
-      );
-    }
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) {
       throw new HttpError(
@@ -357,7 +384,7 @@ function attemptReviewRangeOf(
     if (row.answerJson !== null && answer === null) {
       answerState = "unknown";
       notes.push("答案数据无法解析，是否作答无法确认");
-    } else if (answer !== null) {
+    } else if (hasAnswerContent(answer)) {
       answerState = "answered";
     } else if (hasFormalInk) {
       // 无文字答案但存在正式笔迹：作答事实存在，文字不可读
@@ -390,10 +417,15 @@ function attemptReviewRangeOf(
       questionRevisionId: row.id,
       questionType: snapshot.type,
       stemMd: snapshot.stemMd,
+      options: (snapshot.options ?? []).map((option) => ({
+        text: option.text,
+      })),
       knowledgePoints: [...snapshot.knowledge],
       difficulty: snapshot.difficulty,
       studentAnswerText:
-        answer === null ? null : studentAnswerTextOf(snapshot, answer),
+        answerState === "unanswered"
+          ? null
+          : studentAnswerTextOf(snapshot, answer),
       referenceAnswerMd:
         snapshot.answers !== undefined
           ? formatQuestionAnswers(snapshot.answers)
@@ -452,14 +484,7 @@ function attemptReviewRangeOf(
         AI_ATTEMPT_REVIEW_PROMPT_VERSION,
         attempt.id,
         released,
-        questions.map((question) => [
-          question.questionRevisionId,
-          question.answerState,
-          question.gradingState,
-          question.hasFormalInk,
-          question.missingNote,
-          question.studentAnswerText,
-        ]),
+        questions,
       ]),
       "utf8",
     )
@@ -689,70 +714,12 @@ export function createAttemptReviewTask(
         capturedAt: nowIso,
       });
 
-      // 配额（与逐题任务同一事务合计；一条整体任务计一份）
-      const activeStatuses = [
-        ...AI_TASK_QUEUE_BUCKETS.pending,
-        ...AI_TASK_QUEUE_BUCKETS.processing,
-      ];
-      const pendingCount =
-        tx
-          .select({ id: aiTasks.id })
-          .from(aiTasks)
-          .where(
-            and(
-              eq(aiTasks.studentId, input.studentId),
-              inArray(aiTasks.status, [...activeStatuses]),
-            ),
-          )
-          .all().length +
-        tx
-          .select({ id: aiAttemptReviewTasks.id })
-          .from(aiAttemptReviewTasks)
-          .where(
-            and(
-              eq(aiAttemptReviewTasks.studentId, input.studentId),
-              inArray(aiAttemptReviewTasks.status, [...AR_ACTIVE_STATUSES]),
-            ),
-          )
-          .all().length;
-      if (pendingCount >= AI_TASK_PENDING_PER_STUDENT) {
-        throw new HttpError(
-          409,
-          "AI_TASK_LIMIT_REACHED",
-          `待处理的 AI 任务已达上限（${AI_TASK_PENDING_PER_STUDENT} 个），请先处理或取消现有任务`,
-        );
-      }
-      const window = beijingDayWindowOf(resolveNowDate(options.now));
-      const dailyCount =
-        tx
-          .select({ id: aiTasks.id })
-          .from(aiTasks)
-          .where(
-            and(
-              eq(aiTasks.studentId, input.studentId),
-              gt(aiTasks.createdAt, window.startIso),
-              lt(aiTasks.createdAt, window.endIso),
-            ),
-          )
-          .all().length +
-        tx
-          .select({ id: aiAttemptReviewTasks.id })
-          .from(aiAttemptReviewTasks)
-          .where(
-            and(
-              eq(aiAttemptReviewTasks.studentId, input.studentId),
-              gt(aiAttemptReviewTasks.createdAt, window.startIso),
-              lt(aiAttemptReviewTasks.createdAt, window.endIso),
-            ),
-          )
-          .all().length;
-      if (dailyCount >= AI_TASK_DAILY_PER_STUDENT) {
-        throw new HttpError(
-          409,
-          "AI_TASK_LIMIT_REACHED",
-          `今日 AI 任务数已达上限（${AI_TASK_DAILY_PER_STUDENT} 个），请明天再试`,
-        );
-      }
+      // 与逐题入口复用同一事务内的配额检查。
+      assertStudentAiTaskQuota(
+        tx,
+        input.studentId,
+        resolveNowDate(options.now),
+      );
 
       const taskId = randomUUID();
       try {
@@ -896,6 +863,10 @@ export function attemptReviewDetailOf(
   input: { studentId: string; taskId: string },
 ): { task: AiAttemptReviewTaskPublic; result: AiAttemptReviewReport | null } {
   const task = requireOwnAttemptReviewTask(db, input.studentId, input.taskId);
+  requireAttemptReviewAccess(db, {
+    studentId: task.studentId,
+    attemptId: task.attemptId,
+  });
   const resultRow = db
     .select()
     .from(aiAttemptReviewResults)
@@ -974,6 +945,10 @@ export function attemptReviewActionOf(
         insertArFact(tx, updated, "archived", nowIso);
         break;
       case "open":
+        requireAttemptReviewAccess(tx, {
+          studentId: task.studentId,
+          attemptId: task.attemptId,
+        });
         updated = {
           ...task,
           openedAt: task.openedAt ?? nowIso,
@@ -1060,10 +1035,11 @@ export function claimAttemptReviewTask(
         } catch (error) {
           if (error instanceof HttpError) {
             if (
-              error.code === "AI_ATTEMPT_REVIEW_NOT_RELEASED" ||
-              error.code === "AI_POLICY_DISABLED"
+              error.status === 403 ||
+              error.status === 404 ||
+              error.status === 409
             ) {
-              return null; // 授权/策略收紧 → paused
+              return null; // 作废、失权或公布/策略收紧 → paused，FIFO 继续扫描
             }
           }
           throw error;
@@ -1313,6 +1289,12 @@ export function submitAttemptReviewResult(
           message: "租约已失效或任务状态已变化，报告已记录为迟到事实",
         };
       }
+      // 租约有效不等于仍有教学授权：写回交付时重新核对当前状态。
+      requireAttemptReviewAccess(
+        tx,
+        { studentId: task.studentId, attemptId: task.attemptId },
+        options,
+      );
       // 证据题号归属复核：越界即拒绝（报告按不可信输入对待）。题号在
       // 装配时即 1..questionCount 连续（快照契约锁定），按行上题数判定
       // 即可，无需在写事务中解析整体快照

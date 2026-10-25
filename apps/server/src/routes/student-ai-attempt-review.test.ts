@@ -16,6 +16,7 @@ import { createApp } from "../app.ts";
 import { createStudentSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import {
+  aiAttemptReviewResults,
   aiAttemptReviewTasks,
   assignments,
   attempts,
@@ -151,6 +152,91 @@ async function previewOf(
 }
 
 describe("整体复盘路由", () => {
+  it("撤回公布后，详情与打开接口均不返回报告答案哨兵，且保留未读状态", async () => {
+    const { app, db, cookie, studentId } = world();
+    const attemptId = submittedAttempt(db, studentId);
+    addQuestion(db, attemptId, "q1", { finalCorrect: false });
+    insertAiConnectionFixture(db, studentId);
+    const preview = await previewOf(app, cookie, attemptId);
+    const created = await app.request("/api/student/ai/attempt-reviews", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        attemptId,
+        mutationId: "m-revoke",
+        expectedPreviewVersion: preview.opaquePreviewVersion,
+        purpose: "复盘",
+        channel: "mcp",
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { task } = (
+      (await created.json()) as { data: AiAttemptReviewCreateData }
+    ).data;
+    db.update(aiAttemptReviewTasks)
+      .set({ status: "replied", generation: 1 })
+      .where(eq(aiAttemptReviewTasks.id, task.id))
+      .run();
+    db.insert(aiAttemptReviewResults)
+      .values({
+        id: randomUUID(),
+        taskId: task.id,
+        generation: 1,
+        contentHash: "fixture",
+        reportJson: JSON.stringify({
+          schemaVersion: 1,
+          overview: SENTINEL_SOLUTION,
+          knowledgeFindings: [],
+          errorPatterns: [],
+          performanceNotes: [],
+          trainingPlan: [],
+          limitations: [],
+        }),
+        receivedAt: "2026-10-25T06:00:00.000Z",
+      })
+      .run();
+    // 允许场景确实能读取模型正文；禁用后双断言不得返回同一哨兵。
+    const allowed = await app.request(
+      `/api/student/ai/attempt-reviews/${task.id}`,
+      { headers: { cookie } },
+    );
+    expect(allowed.status).toBe(200);
+    expect(JSON.stringify(await allowed.json())).toContain(SENTINEL_SOLUTION);
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    db.update(assignments)
+      .set({ answerRelease: "after_due", dueAt: "2099-01-01T00:00:00.000Z" })
+      .where(eq(assignments.id, attempt?.assignmentId ?? ""))
+      .run();
+    const detail = await app.request(
+      `/api/student/ai/attempt-reviews/${task.id}`,
+      { headers: { cookie } },
+    );
+    const opened = await app.request(
+      `/api/student/ai/attempt-reviews/${task.id}/actions`,
+      {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ action: "open" }),
+      },
+    );
+    for (const response of [detail, opened]) {
+      expect(response.status).toBe(409);
+      const body: unknown = await response.json();
+      assertNoLeak(body);
+      expect(JSON.stringify(body)).not.toContain(SENTINEL_SOLUTION);
+    }
+    expect(
+      db
+        .select()
+        .from(aiAttemptReviewTasks)
+        .where(eq(aiAttemptReviewTasks.id, task.id))
+        .get()?.openedAt,
+    ).toBeNull();
+  });
   it("预览：形状合法且不含题面/答案/解析（键名与内容双断言）", async () => {
     const { app, db, cookie, studentId } = world();
     const attemptId = submittedAttempt(db, studentId);

@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { AiAttemptReviewReport } from "@tutor/contract";
+import {
+  AI_TASK_DAILY_PER_STUDENT,
+  type AiAttemptReviewReport,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Db } from "../../db/client.ts";
@@ -23,7 +26,7 @@ import {
   listAttemptReviewTasks,
   submitAttemptReviewResult,
 } from "./student-ai-attempt-review.ts";
-import { aiQueueSummaryOf } from "./student-ai-queue.ts";
+import { aiQueueSummaryOf, createAiTask } from "./student-ai-queue.ts";
 
 /**
  * 本次练习整体复盘服务测试（任务 1ef854c7；交接方案 §10 矩阵的服务端部分：
@@ -858,5 +861,308 @@ describe("整体复盘：领取、租约与写回", () => {
         action: "cancel",
       }),
     ).toThrowError(/不支持该动作/);
+  });
+});
+describe("PR4 审查回归", () => {
+  function setupTask() {
+    const { db, studentId } = world();
+    const attemptId = threeQuestionAttempt(db, studentId);
+    const preview = attemptReviewPreviewOf(
+      db,
+      { studentId, attemptId },
+      { hmacSecret: SECRET },
+    );
+    const { task } = createAttemptReviewTask(
+      db,
+      {
+        studentId,
+        attemptId,
+        mutationId: randomUUID(),
+        expectedPreviewVersion: preview.opaquePreviewVersion,
+        purpose: "复盘",
+      },
+      { hmacSecret: SECRET },
+    );
+    return { db, studentId, attemptId, task };
+  }
+
+  it("领取视图应包含全部选择题选项", () => {
+    const { db, studentId, task } = setupTask();
+    const view = claimAttemptReviewTask(
+      db,
+      { studentId, taskId: task.id },
+      { hmacSecret: SECRET },
+    );
+    // 第一道选乙，快照还应包含未选的甲，供 AI 理解完整题目。
+    expect(JSON.stringify(view?.snapshot.questions[0])).toContain("甲");
+  });
+
+  it("领取后教师撤回公布，应拒绝交付报告", () => {
+    const { db, studentId, attemptId, task } = setupTask();
+    const view = claimAttemptReviewTask(
+      db,
+      { studentId, taskId: task.id },
+      { hmacSecret: SECRET },
+    );
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    db.update(assignments)
+      .set({ answerRelease: "after_due", dueAt: "2099-01-01T00:00:00.000Z" })
+      .where(eq(assignments.id, attempt?.assignmentId ?? ""))
+      .run();
+    expect(() =>
+      submitAttemptReviewResult(
+        db,
+        {
+          studentId,
+          taskId: task.id,
+          leaseToken: view?.lease.leaseToken ?? "",
+          generation: view?.generation ?? 0,
+          snapshotVersion: view?.snapshotVersion ?? "",
+          report: validReport(),
+        },
+        { hmacSecret: SECRET },
+      ),
+    ).toThrow();
+  });
+
+  it("已收到报告后撤回公布，详情与打开均不得交付正文或标记已读", () => {
+    const { db, studentId, attemptId, task } = setupTask();
+    const view = claimAttemptReviewTask(
+      db,
+      { studentId, taskId: task.id },
+      { hmacSecret: SECRET },
+    );
+    submitAttemptReviewResult(
+      db,
+      {
+        studentId,
+        taskId: task.id,
+        leaseToken: view?.lease.leaseToken ?? "",
+        generation: view?.generation ?? 0,
+        snapshotVersion: view?.snapshotVersion ?? "",
+        report: validReport(),
+      },
+      { hmacSecret: SECRET },
+    );
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    db.update(assignments)
+      .set({ answerRelease: "after_due", dueAt: "2099-01-01T00:00:00.000Z" })
+      .where(eq(assignments.id, attempt?.assignmentId ?? ""))
+      .run();
+    expect(() =>
+      attemptReviewDetailOf(db, { studentId, taskId: task.id }),
+    ).toThrowError(/答案未公布/);
+    expect(() =>
+      attemptReviewActionOf(db, { studentId, taskId: task.id, action: "open" }),
+    ).toThrowError(/答案未公布/);
+    expect(
+      db
+        .select()
+        .from(aiAttemptReviewTasks)
+        .where(eq(aiAttemptReviewTasks.id, task.id))
+        .get()?.openedAt,
+    ).toBeNull();
+    // 授权恢复后仍可读取原报告，不静默改写快照。
+    db.update(assignments)
+      .set({ answerRelease: "on_submit" })
+      .where(eq(assignments.id, attempt?.assignmentId ?? ""))
+      .run();
+    expect(
+      attemptReviewDetailOf(db, { studentId, taskId: task.id }).result,
+    ).toEqual(validReport());
+  });
+
+  it("领取后作答作废，报告写回必须拒绝", () => {
+    const { db, studentId, attemptId, task } = setupTask();
+    const view = claimAttemptReviewTask(
+      db,
+      { studentId, taskId: task.id },
+      { hmacSecret: SECRET },
+    );
+    db.update(attempts)
+      .set({ abandonedAt: "2026-06-02T00:00:00.000Z" })
+      .where(eq(attempts.id, attemptId))
+      .run();
+    expect(() =>
+      submitAttemptReviewResult(
+        db,
+        {
+          studentId,
+          taskId: task.id,
+          leaseToken: view?.lease.leaseToken ?? "",
+          generation: view?.generation ?? 0,
+          snapshotVersion: view?.snapshotVersion ?? "",
+          report: validReport(),
+        },
+        { hmacSecret: SECRET },
+      ),
+    ).toThrowError(/作废/);
+    expect(
+      attemptReviewDetailOf.bind(null, db, { studentId, taskId: task.id }),
+    ).toThrowError(/作废/);
+  });
+
+  it("FIFO 应跳过已作废的旧任务并领取后续有效任务", () => {
+    const { db, studentId, attemptId, task } = setupTask();
+    db.update(aiAttemptReviewTasks)
+      .set({ createdAt: "2020-01-01T00:00:00.000Z" })
+      .where(eq(aiAttemptReviewTasks.id, task.id))
+      .run();
+    const nextAttemptId = threeQuestionAttempt(db, studentId);
+    const preview = attemptReviewPreviewOf(
+      db,
+      { studentId, attemptId: nextAttemptId },
+      { hmacSecret: SECRET },
+    );
+    const { task: next } = createAttemptReviewTask(
+      db,
+      {
+        studentId,
+        attemptId: nextAttemptId,
+        mutationId: randomUUID(),
+        expectedPreviewVersion: preview.opaquePreviewVersion,
+        purpose: "复盘",
+      },
+      { hmacSecret: SECRET },
+    );
+    db.update(attempts)
+      .set({ abandonedAt: "2026-06-02T00:00:00.000Z" })
+      .where(eq(attempts.id, attemptId))
+      .run();
+    expect(
+      claimAttemptReviewTask(db, { studentId }, { hmacSecret: SECRET })?.taskId,
+    ).toBe(next.id);
+    expect(
+      db
+        .select()
+        .from(aiAttemptReviewTasks)
+        .where(eq(aiAttemptReviewTasks.id, task.id))
+        .get()?.status,
+    ).toBe("paused");
+  });
+
+  it("十个整体任务占满配额后，逐题创建也应被拒绝", () => {
+    const { db, studentId, attemptId } = setupTask();
+    for (let i = 0; i < 9; i += 1) {
+      const otherAttemptId = threeQuestionAttempt(db, studentId);
+      const preview = attemptReviewPreviewOf(
+        db,
+        { studentId, attemptId: otherAttemptId },
+        { hmacSecret: SECRET },
+      );
+      createAttemptReviewTask(
+        db,
+        {
+          studentId,
+          attemptId: otherAttemptId,
+          mutationId: randomUUID(),
+          expectedPreviewVersion: preview.opaquePreviewVersion,
+          purpose: "复盘",
+        },
+        { hmacSecret: SECRET },
+      );
+    }
+    expect(aiQueueSummaryOf(db, studentId).pendingCount).toBe(10);
+    expect(() =>
+      createAiTask(
+        db,
+        {
+          studentId,
+          attemptId,
+          questionId: "q-correct",
+          question: "帮我复盘",
+          channel: "mcp",
+          mutationId: randomUUID(),
+        },
+        { hmacSecret: SECRET },
+      ),
+    ).toThrowError(/上限/);
+  });
+
+  it("整体任务的当日配额须在逐题与整体入口双向生效，取消不退还当日额度", () => {
+    const { db, studentId, attemptId, task } = setupTask();
+    const now = "2026-10-25T06:00:00.000Z";
+    db.update(aiAttemptReviewTasks)
+      .set({ status: "cancelled", createdAt: now })
+      .where(eq(aiAttemptReviewTasks.id, task.id))
+      .run();
+    for (let i = 1; i < AI_TASK_DAILY_PER_STUDENT; i += 1) {
+      db.insert(aiAttemptReviewTasks)
+        .values({
+          ...task,
+          id: randomUUID(),
+          mutationId: randomUUID(),
+          status: "cancelled",
+          createdAt: now,
+        })
+        .run();
+    }
+    expect(() =>
+      createAiTask(
+        db,
+        {
+          studentId,
+          attemptId,
+          questionId: "q-correct",
+          question: "复盘",
+          channel: "mcp",
+          mutationId: randomUUID(),
+        },
+        { hmacSecret: SECRET, now },
+      ),
+    ).toThrowError(/今日 AI 任务数已达上限/);
+    const preview = attemptReviewPreviewOf(
+      db,
+      { studentId, attemptId },
+      { hmacSecret: SECRET },
+    );
+    expect(() =>
+      createAttemptReviewTask(
+        db,
+        {
+          studentId,
+          attemptId,
+          mutationId: randomUUID(),
+          purpose: "复盘",
+          expectedPreviewVersion: preview.opaquePreviewVersion,
+        },
+        { hmacSecret: SECRET, now },
+      ),
+    ).toThrowError(/今日 AI 任务数已达上限/);
+  });
+
+  it("空白填空与空 finalAnswer 不应算已作答", () => {
+    const { db, studentId, attemptId } = setupTask();
+    db.update(responses)
+      .set({
+        questionSnapshotJson: JSON.stringify({
+          id: "q-blank",
+          type: "solve",
+          difficulty: 3,
+          knowledge: [],
+          stemMd: "求解方程",
+          answers: { kind: "final", answer: "2" },
+          hints: [],
+          sourceMd: "::::question{type=solve}\n求解方程\n::::",
+        }),
+        answerJson: JSON.stringify({ kind: "final", finalAnswer: "" }),
+        finalCorrect: null,
+      })
+      .where(eq(responses.questionId, "q-blank"))
+      .run();
+    const preview = attemptReviewPreviewOf(
+      db,
+      { studentId, attemptId },
+      { hmacSecret: SECRET },
+    );
+    expect(preview.counts.unansweredCount).toBe(1);
   });
 });

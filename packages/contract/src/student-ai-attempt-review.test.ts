@@ -29,6 +29,7 @@ function questionOf(
     questionRevisionId: "rev-1",
     questionType: "choice",
     stemMd: "题干",
+    options: [],
     knowledgePoints: [],
     difficulty: 3,
     studentAnswerText: null,
@@ -75,6 +76,23 @@ function countsOf(
 }
 
 describe("整体复盘四桶计数不变式", () => {
+  it("选项白名单保留正文且拒绝夹带正确性，旧快照缺省兼容空数组", () => {
+    const { options: _options, ...oldQuestion } = questionOf();
+    expect(aiAttemptReviewQuestionSchema.parse(oldQuestion)).toHaveProperty(
+      "options",
+      [],
+    );
+    const options = [{ text: "甲" }, { text: "乙" }];
+    expect(
+      aiAttemptReviewQuestionSchema.parse({ ...oldQuestion, options }),
+    ).toHaveProperty("options", options);
+    expect(
+      aiAttemptReviewQuestionSchema.safeParse({
+        ...oldQuestion,
+        options: [{ text: "甲", correct: true }],
+      }).success,
+    ).toBe(false);
+  });
   it("互斥四桶加总等于总题数，已判分准确率带分母", () => {
     const parsed = aiAttemptReviewCountsSchema.parse(countsOf({}));
     expect(parsed.total).toBe(3);

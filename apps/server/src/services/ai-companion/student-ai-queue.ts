@@ -18,8 +18,6 @@ import {
   AI_REPLY_MAX_CHARS,
   AI_TASK_ACTIVE_PER_QUESTION,
   AI_TASK_ALLOWED_ACTIONS,
-  AI_TASK_DAILY_PER_STUDENT,
-  AI_TASK_PENDING_PER_STUDENT,
   AI_TASK_QUEUE_BUCKETS,
   AI_TURNS_MAX,
   aiContextSnapshotSchema,
@@ -29,7 +27,6 @@ import {
   asc,
   desc,
   eq,
-  gt,
   inArray,
   isNotNull,
   isNull,
@@ -68,7 +65,7 @@ import {
 } from "./student-ai-materials.ts";
 import {
   asDb,
-  beijingDayWindowOf,
+  assertStudentAiTaskQuota,
   conflict,
   decodeCursor,
   encodeCursor,
@@ -609,45 +606,8 @@ export function createAiTask(
           `本题进行中的 AI 任务已达上限（${AI_TASK_ACTIVE_PER_QUESTION} 个），请先处理或取消现有任务`,
         );
       }
-      // ② 学生待处理（技术方案 §限额表：pending+dispatching+claimed+uncertain
-      //   全集 = pending+processing 桶并集；paused/failed 与终态不占额）
-      const pendingCount = tx
-        .select({ id: aiTasks.id })
-        .from(aiTasks)
-        .where(
-          and(
-            eq(aiTasks.studentId, input.studentId),
-            inArray(aiTasks.status, [...activeStatuses]),
-          ),
-        )
-        .all().length;
-      if (pendingCount >= AI_TASK_PENDING_PER_STUDENT) {
-        throw new HttpError(
-          409,
-          "AI_TASK_LIMIT_REACHED",
-          `待处理的 AI 任务已达上限（${AI_TASK_PENDING_PER_STUDENT} 个），请先处理或取消现有任务`,
-        );
-      }
-      // ③ 学生当日（北京自然日；取消/终态同样计入当日使用量）
-      const window = beijingDayWindowOf(now.date);
-      const dailyCount = tx
-        .select({ id: aiTasks.id })
-        .from(aiTasks)
-        .where(
-          and(
-            eq(aiTasks.studentId, input.studentId),
-            gt(aiTasks.createdAt, window.startIso),
-            lt(aiTasks.createdAt, window.endIso),
-          ),
-        )
-        .all().length;
-      if (dailyCount >= AI_TASK_DAILY_PER_STUDENT) {
-        throw new HttpError(
-          409,
-          "AI_TASK_LIMIT_REACHED",
-          `今日 AI 任务数已达上限（${AI_TASK_DAILY_PER_STUDENT} 个），请明天再试`,
-        );
-      }
+      // ②③ 学生待处理与当日配额：逐题和整体任务同事务合计。
+      assertStudentAiTaskQuota(tx, input.studentId, now.date);
 
       const taskId = randomUUID();
       // 并发同键双写由唯一索引兜底：约束冲突按幂等语义复走查重分支

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionSchema } from "./content.ts";
 import {
   AI_BATCH_MAX_QUESTIONS,
   AI_MCP_LEASE_MINUTES,
@@ -80,8 +81,10 @@ export const aiAttemptReviewQuestionSchema = z
     /** 版本锚定 = responses 行 id（与单题任务同源口径） */
     questionRevisionId: z.string().min(1),
     questionType: z.string().min(1),
-    /** 题干 Markdown（含选项，公式保留） */
+    /** 题干 Markdown（选项独立保存，公式保留） */
     stemMd: z.string().min(1),
+    /** 全部选项正文；不含正确性。缺省兼容旧任务，旧任务领取仍须核对版本。 */
+    options: z.array(optionSchema.pick({ text: true }).strict()).default([]),
     knowledgePoints: z.array(z.string().min(1)),
     difficulty: z.number().int().min(0).nullable(),
     /** 本人正式答案可读文本；null = 未作答 */

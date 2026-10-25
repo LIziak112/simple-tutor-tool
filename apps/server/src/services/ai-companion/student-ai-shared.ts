@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
+import {
+  AI_TASK_DAILY_PER_STUDENT,
+  AI_TASK_PENDING_PER_STUDENT,
+  AI_TASK_QUEUE_BUCKETS,
+} from "@tutor/contract";
+import { and, eq, gte, inArray, lt, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
+import { aiAttemptReviewTasks, aiTasks } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 
 /**
@@ -43,6 +50,58 @@ export function beijingDayWindowOf(now: Date): {
     startIso: new Date(dayStartMs).toISOString(),
     endIso: new Date(dayStartMs + DAY_MS).toISOString(),
   };
+}
+
+/** 两类任务共用配额；必须由调用方在创建事务内执行，终态仍计入北京自然日。 */
+export function assertStudentAiTaskQuota(
+  db: Db | QueueTx,
+  studentId: string,
+  now: Date,
+): void {
+  const window = beijingDayWindowOf(now);
+  const countOf = (
+    table: typeof aiTasks | typeof aiAttemptReviewTasks,
+    activeCondition: SQL,
+  ) =>
+    asDb(db)
+      .select({
+        pending: sql<number>`count(case when ${activeCondition} then 1 end)`,
+        daily: sql<number>`count(case when ${and(gte(table.createdAt, window.startIso), lt(table.createdAt, window.endIso))} then 1 end)`,
+      })
+      .from(table)
+      .where(eq(table.studentId, studentId))
+      .get();
+  const single = countOf(
+    aiTasks,
+    inArray(aiTasks.status, [
+      ...AI_TASK_QUEUE_BUCKETS.pending,
+      ...AI_TASK_QUEUE_BUCKETS.processing,
+    ]),
+  );
+  const overall = countOf(
+    aiAttemptReviewTasks,
+    inArray(aiAttemptReviewTasks.status, ["created", "claimed"]),
+  );
+  if (
+    (single?.pending ?? 0) + (overall?.pending ?? 0) >=
+    AI_TASK_PENDING_PER_STUDENT
+  ) {
+    throw new HttpError(
+      409,
+      "AI_TASK_LIMIT_REACHED",
+      `待处理的 AI 任务已达上限（${AI_TASK_PENDING_PER_STUDENT} 个），请先处理或取消现有任务`,
+    );
+  }
+  if (
+    (single?.daily ?? 0) + (overall?.daily ?? 0) >=
+    AI_TASK_DAILY_PER_STUDENT
+  ) {
+    throw new HttpError(
+      409,
+      "AI_TASK_LIMIT_REACHED",
+      `今日 AI 任务数已达上限（${AI_TASK_DAILY_PER_STUDENT} 个），请明天再试`,
+    );
+  }
 }
 
 /** 游标载荷（base64url JSON；稳定排序键 createdAt+id 的不透明化） */
