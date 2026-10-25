@@ -309,6 +309,20 @@
       "when": 1792907217889,
       "tag": "0043_white_reptil",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1792912597972,
+      "tag": "0044_odd_bloodstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1792915800229,
+      "tag": "0045_lazy_iron_monger",
+      "breakpoints": true
     }
   ]
 }

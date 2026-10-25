@@ -318,6 +318,8 @@ interface SubmitBody {
         teacherMark: string | null;
         teacherComment: string | null;
         finalCorrect: boolean | null;
+        answered: boolean;
+        studentFlag: string | null;
         snapshot: { stemMd: string };
       };
     };
@@ -553,6 +555,27 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
     expect(text).not.toContain(SECRETS.judgeAnswerMarker);
 
     expect(questionSubmitEventsOf(env.db, attemptId)).toBe(1);
+  });
+
+  it("空答案单题提交（「不会，提交并看解析」路径）：判错仍进分母、answered=true（单题主动提交 = 显式交锋计已答，#6980-3 审查修复）", async () => {
+    const env = await makeEnv();
+    const attemptId = await startPracticeAttempt(env);
+    const fresh = await fetchDraft(env, attemptId);
+
+    const { data } = await practiceSubmitOk(env, fresh, attemptId, Q.choice);
+
+    expect(data.feedback.status).toBe("released");
+    expect(data.feedback.question.answer).toBeNull();
+    expect(data.feedback.question.autoCorrect).toBe(false); // D1：未作答客观题判错进分母
+    expect(data.feedback.question.answered).toBe(true); // 单题主动提交恒已答
+    // 空提交 =「不会，提交并看解析」→ 自动标「不会」，按做错结算（主人口径）
+    expect(data.feedback.question.studentFlag).toBe("unsure");
+    expect(responseRowOf(env.db, attemptId, Q.choice)).toMatchObject({
+      autoCorrect: false,
+      finalCorrect: false,
+      answered: true,
+      studentFlag: "unsure",
+    });
   });
 
   it("同 mutationId 同请求重试 → 200 同一提交事实（不重判、不重复事件、submittedAt 不变、按当前规则投影）", async () => {
@@ -1373,6 +1396,8 @@ describe("学生对照自评", () => {
         },
       );
     await expectErr(await review(false, 0), 409, "SELF_REVIEW_UNAVAILABLE");
+    // #6980-3：先落一个实际作答——未做（空作答）的判错不再入错题本
+    await saveAnswer(env, id, Q.fill, { kind: "fill", values: ["1"] });
     await practiceSubmitOk(env, await fetchDraft(env, id), id, Q.fill);
     const mutationId = crypto.randomUUID();
     const first = await review(false, 0, mutationId);

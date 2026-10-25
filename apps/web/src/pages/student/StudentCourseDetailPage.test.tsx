@@ -149,6 +149,12 @@ describe("StudentCourseDetailPage", () => {
 
   it("单元项状态徽章：已完成（最近 xx 分 · 共 n 次）；有待批优先于已完成", async () => {
     const withAttempt = (attempt: {
+      latestResultCounts?: {
+        correctCount: number;
+        totalCount: number;
+        pendingCount: number;
+        pendingSelfReviewCount: number;
+      };
       count: number;
       submittedCount: number;
       hasDraft: boolean;
@@ -170,6 +176,12 @@ describe("StudentCourseDetailPage", () => {
         hasDraft: false,
         firstScore: 60,
         latestScore: 90,
+        latestResultCounts: {
+          correctCount: 9,
+          totalCount: 10,
+          pendingCount: 0,
+          pendingSelfReviewCount: 0,
+        },
         bestScore: 90,
         pendingCount: 0,
       }),
@@ -178,7 +190,7 @@ describe("StudentCourseDetailPage", () => {
     expect(
       await screen.findByText(
         (_, element) =>
-          element?.textContent === "已完成（最近 90 分 · 共 3 次）",
+          element?.textContent === "已完成（最近 做对 9 / 10 题 · 共 3 次）",
       ),
     ).toBeInTheDocument();
   });
@@ -196,6 +208,12 @@ describe("StudentCourseDetailPage", () => {
                 hasDraft: false,
                 firstScore: 60,
                 latestScore: 90,
+                latestResultCounts: {
+                  correctCount: 9,
+                  totalCount: 10,
+                  pendingCount: 0,
+                  pendingSelfReviewCount: 0,
+                },
                 bestScore: 90,
                 pendingCount: 2,
               },

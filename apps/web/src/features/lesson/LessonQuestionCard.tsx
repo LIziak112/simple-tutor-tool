@@ -235,7 +235,11 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           {released.finalCorrect !== null && (
-            <VerdictBadge verdict={released.finalCorrect} toned />
+            <VerdictBadge
+              verdict={released.finalCorrect}
+              notDone={!released.answered}
+              toned
+            />
           )}
           <h3 className="text-base font-semibold">第 {index + 1} 题</h3>
           <span

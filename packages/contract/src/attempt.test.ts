@@ -546,6 +546,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
             teacherMark: null,
             teacherComment: null,
             finalCorrect: true,
+            answered: true,
+            studentFlag: null,
             hintsOpened: [],
           },
           {
@@ -566,6 +568,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
             teacherMark: "wrong",
             teacherComment: "第三空漏了，重算一遍异号相加。",
             finalCorrect: false,
+            answered: true,
+            studentFlag: null,
             // 做题时看过第 0 条提示 → 结果视图回显该条（其余不下发）
             hintsOpened: [{ index: 0, text: "同号相加，取相同的符号。" }],
           },
@@ -675,6 +679,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
                 teacherMark: null,
                 teacherComment: null,
                 finalCorrect: null,
+                answered: false,
+                studentFlag: null,
                 hintsOpened: [],
               },
             ],
@@ -1199,6 +1205,8 @@ describe("lessonStartDataSchema / lessonQuestionSubmit（2026-10 讲练一体）
         teacherMark: null,
         teacherComment: null,
         finalCorrect: true,
+        answered: true,
+        studentFlag: null,
         hintsOpened: [],
       },
       summary: {

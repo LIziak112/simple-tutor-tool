@@ -180,6 +180,12 @@ function makeStudent(
         attemptCount: 1,
         redoCount: 0,
         firstScore: 80,
+        firstResultCounts: {
+          correctCount: 4,
+          totalCount: 5,
+          pendingCount: 0,
+          pendingSelfReviewCount: 0,
+        },
         latestSubmittedAt: NOW,
       },
     ],
@@ -510,7 +516,7 @@ describe("InsightsStudentPage 指标区", () => {
       name: /课程练习重做概览/,
     });
     expect(within(redoTable).getByText("有理数随堂练习")).toBeInTheDocument();
-    expect(within(redoTable).getByText("80 分")).toBeInTheDocument();
+    expect(within(redoTable).getByText("做对 4 / 5 题")).toBeInTheDocument();
     expect(screen.getByText(/离线 1 分钟 \/ 有效 17 分钟/)).toBeInTheDocument();
   });
 

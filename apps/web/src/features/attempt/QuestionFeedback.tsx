@@ -64,6 +64,7 @@ export function QuestionFeedback({
         {(!question.selfReview || !attemptId) && (
           <VerdictBadge
             verdict={question.finalCorrect ?? question.autoCorrect}
+            notDone={!question.answered}
             pendingLabel="已提交，待老师批改"
             toned
             correctLabel="回答正确"

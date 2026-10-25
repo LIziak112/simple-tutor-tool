@@ -17,6 +17,8 @@ const question: AttemptResultQuestion = {
     hintCount: 0,
   },
   answer: { kind: "judge", value: false },
+  answered: true,
+  studentFlag: null,
   answers: { kind: "judge", value: false },
   autoCorrect: true,
   finalCorrect: false,
@@ -35,19 +37,20 @@ describe("回看展示模型", () => {
       ).verdict,
     ).toBeNull();
   });
-  it("教师最终判定优先，判断false仍是作答，未答与判错独立", () => {
+  it("教师最终判定优先，未答与判错独立（answered 口径：判错的未做行不计答错）", () => {
     expect(reviewQuestionState(question, true)).toEqual({
       verdict: false,
       unanswered: false,
     });
-    const empty = { ...question, answer: null };
+    const empty = { ...question, answer: null, answered: false };
     expect(reviewQuestionState(empty, true)).toEqual({
       verdict: false,
       unanswered: true,
     });
+    // 判错的未做行（empty）只进未作答计数，不进判错（#6980-3 口径统一）
     expect(reviewCounts([question, empty], true)).toEqual({
       correct: 0,
-      wrong: 2,
+      wrong: 1,
       pending: 0,
       unanswered: 1,
     });

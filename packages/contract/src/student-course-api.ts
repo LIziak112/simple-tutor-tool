@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { practiceRecommendationSchema } from "./practice-workflow.ts";
+import { attemptResultCountsSchema } from "./result-counts.ts";
 
 /**
  * 学生端课程契约（T2A.5 起为权威定义）：我的课程列表、课程可见目录（按 D5 过滤）
@@ -77,8 +78,11 @@ export const studentUnitAttemptSummarySchema = z.object({
   submittedCount: z.number().int().min(0),
   hasDraft: z.boolean(),
   firstScore: z.number().int().min(0).max(100).nullable(),
+  firstResultCounts: attemptResultCountsSchema.nullable().optional(),
   latestScore: z.number().int().min(0).max(100).nullable(),
+  latestResultCounts: attemptResultCountsSchema.nullable().optional(),
   bestScore: z.number().int().min(0).max(100).nullable(),
+  bestResultCounts: attemptResultCountsSchema.nullable().optional(),
   pendingCount: z.number().int().min(0),
 });
 
@@ -155,6 +159,7 @@ export const studentUnitAttemptRecordSchema = z.object({
   status: z.enum(["draft", "submitted", "graded"]),
   /** 得分（0–100 整数百分比；未交/无可判分为 null） */
   score: z.number().int().min(0).max(100).nullable(),
+  resultCounts: attemptResultCountsSchema.nullable().optional(),
   /** 开始时间：UTC ISO */
   startedAt: z.string().min(1),
   /** 交卷时间：UTC ISO；未交为 null */

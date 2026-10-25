@@ -9,6 +9,7 @@ import {
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
   useLessonLanding,
   useRestartLesson,
@@ -330,9 +331,7 @@ export default function StudentLessonLandingPage() {
                     </span>
                     {!draft && (
                       <span className="shrink-0 text-sm">
-                        {attempt.score !== null
-                          ? `${attempt.score} 分`
-                          : "待批"}
+                        {formatResultCounts(attempt.resultCounts)}
                       </span>
                     )}
                     <span className="ml-auto truncate text-xs text-muted-foreground">

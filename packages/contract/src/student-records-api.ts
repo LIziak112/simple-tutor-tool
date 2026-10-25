@@ -1,6 +1,14 @@
 import { z } from "zod";
-import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
+import {
+  attemptSourceSchema,
+  attemptStatusSchema,
+  studentFlagSchema,
+} from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+import {
+  attemptAnswerProgressSchema,
+  attemptResultCountsSchema,
+} from "./result-counts.ts";
 import { selfReviewStateSchema } from "./self-review.ts";
 import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
 
@@ -99,6 +107,9 @@ export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
   status: attemptStatusSchema,
   /** 得分（0–100 整数百分比；scoreFinal ?? scoreAuto；draft/无可判分/未公布为 null） */
   score: z.number().int().min(0).max(100).nullable(),
+  resultCounts: attemptResultCountsSchema.nullable().optional(),
+  /** 进行中卷的已做/总题数；仅公开进度，旧响应可缺省。 */
+  answerProgress: attemptAnswerProgressSchema.nullable().optional(),
   /** 待批题数（D4 口径；draft 恒 0；after_due 未公布置 null） */
   pendingCount: z.number().int().min(0).nullable(),
   /** 该条结果是否已公布（T2A.8；false = after_due 未到截止，score/pendingCount 已置 null） */
@@ -158,6 +169,17 @@ export const wrongQuestionRoundSchema = z.object({
   sourceType: attemptSourceSchema,
   /** 该轮最终判定是否做对 */
   correct: z.boolean(),
+  /**
+   * 该轮是否有实际作答内容（#6980-3，@tutor/grading isUnanswered 口径）：
+   * false = 未做轮，不计入 wrongCount、轮次史显示「未做」；攻克标准里
+   * 未做轮与做错轮同样打断「连续做对」（correct=false 即打断）。
+   */
+  answered: z.boolean(),
+  /**
+   * 做题时学生自标「不会」（#6980-4）：unsure / null。标过不会的轮无论对错、
+   * 是否作答，该题都保留在错题本；标过不会的做对轮不算攻克（端上判定）。
+   */
+  studentFlag: studentFlagSchema.nullable(),
   /** 该轮交卷时间（attempt 的 submittedAt，防御回退 startedAt）：UTC ISO */
   submittedAt: z.string().min(1),
   /** 该轮来源标题（服务端口径：作业=作业标题；课程=「单元标题 · 第 n 次」） */
@@ -227,7 +249,7 @@ export const wrongQuestionCardSchema = teacherAttemptSourceSchema.extend({
    * 计算——服务端不下发判定规则（学生自选，存本设备 localStorage）。
    */
   rounds: z.array(wrongQuestionRoundSchema),
-  /** 已判定作答中判错次数（= rounds 中 correct=false 的数量，省端上重算） */
+  /** 已判定作答中「答了且判错」次数（#6980-3：未做轮不计错次；= rounds 中 correct=false 且 answered=true 的数量，省端上重算） */
   wrongCount: z.number().int().min(0),
   /** 已判定作答中判对次数（= rounds 中 correct=true 的数量） */
   correctCount: z.number().int().min(0),

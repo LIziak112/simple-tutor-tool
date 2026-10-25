@@ -32,3 +32,6 @@ mcp_config.json
 
 # e2e preview 对照实验产物（独立于生产 dist，见 apps/web/vite.config.ts）
 dist-e2e-preview/
+
+# Node/原生崩溃转储（曾以 310MB 混入提交被 GitHub 拒收）
+/core

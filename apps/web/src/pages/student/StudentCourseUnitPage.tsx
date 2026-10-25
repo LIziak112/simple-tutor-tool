@@ -25,6 +25,7 @@ import {
   practiceLayoutOptions,
   practiceRhythmLabel,
 } from "@/features/attempt/practice-protocol";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -34,7 +35,7 @@ import { formatRelativeTime } from "@/lib/time";
 
 /**
  * /s/courses/:id/units/:unitId 单元落地页（T2A.6，D10）：
- * - 单元信息：标题/主题/题数/题型分布 + 首次/最近/最高分汇总；
+ * - 单元信息：标题/主题/题数/题型分布 + 首次/最近/最佳题数汇总；
  * - 入口三态：开始练习（从未做）/ 继续作答（存在未交卷作答 → 直接进答题页）/
  *   再做一次（已交卷后，确认「将开始第 n+1 次，从空白开始」）；
  * - 历次记录列表：点击进入该次结果视图（只读，/s/attempts/:attemptId）。
@@ -310,7 +311,7 @@ function UnitLandingView({
         </div>
       </header>
 
-      {/* 单元信息卡：题数/题型分布/得分汇总 + 做题方式选择 + 入口按钮 */}
+      {/* 单元信息卡：题数/题型分布/作答表现 + 做题方式选择 + 入口按钮 */}
       <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xs">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
@@ -323,19 +324,19 @@ function UnitLandingView({
         {summary !== null && submittedCount > 0 && (
           <div aria-hidden className="grid grid-cols-3 gap-2">
             {[
-              { label: "首次", value: summary.firstScore },
-              { label: "最近", value: summary.latestScore },
-              { label: "最高", value: summary.bestScore },
+              { label: "首次", value: summary.firstResultCounts },
+              { label: "最近", value: summary.latestResultCounts },
+              { label: "最佳", value: summary.bestResultCounts },
             ].map((tile) => (
               <div
                 key={tile.label}
                 className="rounded-xl bg-muted/60 px-3 py-2.5 text-center"
               >
-                <p className="text-2xl font-bold text-foreground">
-                  {tile.value ?? "—"}
+                <p className="text-base font-bold text-foreground">
+                  {formatResultCounts(tile.value)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {tile.label}得分
+                  {tile.label}表现
                 </p>
               </div>
             ))}
@@ -345,9 +346,9 @@ function UnitLandingView({
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>已做 {summary.count} 次</span>
             <span>
-              首次 {summary.firstScore ?? "—"} 分 · 最近{" "}
-              {summary.latestScore ?? "—"} 分 · 最高 {summary.bestScore ?? "—"}{" "}
-              分
+              首次 {formatResultCounts(summary.firstResultCounts)} · 最近{" "}
+              {formatResultCounts(summary.latestResultCounts)} · 最佳{" "}
+              {formatResultCounts(summary.bestResultCounts)}
             </span>
             {summary.pendingCount > 0 && (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
@@ -497,7 +498,7 @@ function UnitLandingView({
                   </span>
                   {attempt.status !== "draft" && (
                     <span className="shrink-0 text-sm">
-                      {attempt.score !== null ? `${attempt.score} 分` : "待批"}
+                      {formatResultCounts(attempt.resultCounts)}
                     </span>
                   )}
                   <span className="ml-auto truncate text-xs text-muted-foreground">
