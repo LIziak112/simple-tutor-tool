@@ -309,6 +309,13 @@
       "when": 1792907217889,
       "tag": "0043_white_reptil",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1792912597972,
+      "tag": "0044_odd_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

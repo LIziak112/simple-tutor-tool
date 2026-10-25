@@ -921,14 +921,15 @@ describe("多单元取卷与作答（D12）", () => {
     // judgeB 不作答（未答也进 responses，D1 未作答客观题判错）
 
     const result = await submitAttempt(env.app, env.cookie, attemptId);
-    // 全卷口径：4 题、答 3、对 2、错 2（含未答的 judgeB——D1 未作答客观题判错）、
-    // 可判 4 → scoreAuto=50；全部 finalCorrect 非 null → 交卷即 graded（D2/D3）
+    // 全卷口径：4 题、答 3、对 2、错 1（未答的 judgeB 判错但未做，不计答错——
+    // #6980-3 口径统一）、可判 4（未做可判分题照进分母）→ scoreAuto=50；
+    // 全部 finalCorrect 非 null → 交卷即 graded（D2/D3）
     // （单元 MD 已随 2026-10-02 fill 全人工批改改为可自动判题型，保住本断言口径）
     expect(result.summary).toEqual({
       total: 4,
       answered: 3,
       correct: 2,
-      wrong: 2,
+      wrong: 1,
       pending: 0,
       unanswered: 1,
       autoGradable: 4,

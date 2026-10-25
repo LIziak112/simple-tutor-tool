@@ -294,10 +294,15 @@ export function WrongQuestionRow({
             aria-label="最近一轮做对"
             className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
           />
-        ) : (
+        ) : lastRound.answered ? (
           <XCircle
             aria-label="最近一轮做错"
             className="size-4 shrink-0 text-red-600 dark:text-red-400"
+          />
+        ) : (
+          <XCircle
+            aria-label="最近一轮未做"
+            className="size-4 shrink-0 text-muted-foreground"
           />
         ))}
       <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">
@@ -367,10 +372,15 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
                   <CheckCircle2 aria-hidden className="size-3.5" />
                   做对
                 </span>
-              ) : (
+              ) : round.answered ? (
                 <span className="flex shrink-0 items-center gap-1 font-medium text-red-700 dark:text-red-300">
                   <XCircle aria-hidden className="size-3.5" />
                   做错
+                </span>
+              ) : (
+                <span className="flex shrink-0 items-center gap-1 font-medium text-muted-foreground">
+                  <XCircle aria-hidden className="size-3.5" />
+                  未做
                 </span>
               )}
               <span className="shrink-0 whitespace-nowrap tabular-nums">

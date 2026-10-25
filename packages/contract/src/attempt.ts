@@ -532,6 +532,14 @@ export const attemptResultQuestionSchema = z.object({
   teacherComment: z.string().nullable(),
   /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
   finalCorrect: z.boolean().nullable(),
+  /**
+   * 是否有实际作答内容（#6980-3）：整卷交卷按「非空答案或正式手写笔迹」判定；
+   * 单题主动提交恒 true（显式交锋，含「不会，提交并看解析」的空提交，2026-10-25
+   * 主人口径）。与判分正交——未做仍按 D1 判错进分母。finalCorrect=false 且
+   * answered=false 时端上按灰色「未做」展示而非红色「判错」；「练习本卷错题」
+   * 默认不含未做题。
+   */
+  answered: z.boolean(),
   /** 仅已授权公布的题携带；未公布时不下发自评与来源。 */
   selfReview: selfReviewStateSchema.optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
@@ -549,19 +557,20 @@ export const attemptScoreSummarySchema = z.object({
   pendingSelfReviewCount: z.number().int().min(0).optional(),
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
-  /** 已作答题数（answer 非 null）。lesson 讲练页的现算汇总（开卷投影/单题提交
-   * 响应）只统计已单题提交的行——见 lessonLiveSummaryOf 口径与
-   * lessonQuestionSubmitDataSchema 注释；结果视图（整卷）计全部卷行 */
+  /** 已作答题数（responses.answered 口径：非空答案/正式笔迹/单题提交）。
+   * lesson 讲练页的现算汇总（开卷投影/单题提交响应）只统计已单题提交的行——
+   * 见 lessonLiveSummaryOf 口径与 lessonQuestionSubmitDataSchema 注释；
+   * 结果视图（整卷）计全部卷行 */
   answered: z.number().int().min(0),
   /** 自动判对数 */
   correct: z.number().int().min(0),
-  /** 自动判错数（D1 后含未作答客观题） */
+  /** 自动判错数（已答判错；未做行不计——#6980-3 口径统一） */
   wrong: z.number().int().min(0),
-  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题） */
+  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题；未做待批行计入） */
   pending: z.number().int().min(0),
-  /** 未作答题数（answer=null） */
+  /** 未作答题数（responses.answered=false：被动跳过/空结构答案） */
   unanswered: z.number().int().min(0),
-  /** 可自动判分题数（autoCorrect 非 null）= correct + wrong */
+  /** 可自动判分题数（autoCorrect 非 null）= correct + wrong + 未做可判分题（未做不计答错但进判分分母） */
   autoGradable: z.number().int().min(0),
   /**
    * 最终得分（D9，D2/D3 口径：round(finalCorrect=true 题数 ÷ 全部题数 × 100)；

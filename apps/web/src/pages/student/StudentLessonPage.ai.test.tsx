@@ -175,6 +175,7 @@ function releasedOf(question: AttemptQuestionPublic): AttemptResultQuestion {
     answers: question.type === "choice" ? { kind: "choice", index: 0 } : null,
     solutionMd: "解析内容。",
     answer: null,
+    answered: false,
     autoCorrect: true,
     teacherMark: null,
     teacherComment: null,

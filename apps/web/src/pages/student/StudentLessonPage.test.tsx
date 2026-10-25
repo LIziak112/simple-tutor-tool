@@ -171,6 +171,7 @@ function releasedOf(
     answers: question.type === "choice" ? { kind: "choice", index: 0 } : null,
     solutionMd: "解析内容。",
     answer: null,
+    answered: false,
     autoCorrect: verdict.autoCorrect,
     teacherMark: null,
     teacherComment: null,

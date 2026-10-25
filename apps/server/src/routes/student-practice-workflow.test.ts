@@ -346,16 +346,17 @@ async function submitAllWrong(
   cookie: string,
   attemptId: string,
 ): Promise<void> {
-  const paper = await app.request(`/api/student/attempts/${attemptId}/paper`, {
-    headers: { cookie },
-  });
-  const units = (
-    (await paper.json()) as {
-      data: { units: { questions: { questionId: string }[] }[] };
-    }
-  ).data.units;
-  void units;
-  // 未作答的 judge 题交卷即判错（D1），足以制造错题
+  // #6980-3：未做判错不再入错题本——制造错题改为「答了判错」：
+  // 单道 judge 题标准答案是「正确」，答 false 判错
+  const saved = await app.request(
+    `/api/student/attempts/${attemptId}/answers/${encodeURIComponent("工作流练习-1")}`,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ answer: { kind: "judge", value: false } }),
+    },
+  );
+  expect(saved.status).toBe(200);
   const submit = await submitAttemptRequest(app, cookie, attemptId);
   expect([200, 201]).toContain(submit.status);
 }

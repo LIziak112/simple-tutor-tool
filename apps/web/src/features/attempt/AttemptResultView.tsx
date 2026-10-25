@@ -326,7 +326,9 @@ function ResultQuestionCard({
           : verdict === true
             ? "before:bg-emerald-500"
             : verdict === false
-              ? "before:bg-red-500"
+              ? question.answered
+                ? "before:bg-red-500"
+                : "before:bg-muted" // #6980-3：未做灰，不套判错红
               : "before:bg-amber-400",
       )}
       aria-label={`第 ${index + 1} 题`}
@@ -335,7 +337,7 @@ function ResultQuestionCard({
         {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
         {released ? (
           !question.selfReview ? (
-            <VerdictBadge verdict={verdict} />
+            <VerdictBadge verdict={verdict} notDone={!question.answered} />
           ) : null
         ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
@@ -495,9 +497,9 @@ export function AttemptResultView({
   const showUnitHeaders = data.units.length > 1;
   // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
   // 圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为 0），
-  // 与 released 显隐判据双保险。
+  // 与 released 显隐判据双保险。#6980-3：未做题（answered=false）不圈入。
   const wrongQuestionIds = flatQuestions
-    .filter((question) => question.finalCorrect === false)
+    .filter((question) => question.finalCorrect === false && question.answered)
     .map((question) => question.questionId);
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;

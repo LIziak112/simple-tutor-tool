@@ -44,13 +44,14 @@ import {
   wrongPracticeScopeSchema,
   wrongScopeLabelOf,
 } from "@tutor/contract";
-import { grade } from "@tutor/grading";
+import { grade, isUnanswered } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
 import {
   and,
   asc,
   desc,
   eq,
+  gt,
   inArray,
   isNotNull,
   isNull,
@@ -2110,6 +2111,20 @@ export function submitAttempt(
     evidenceDeclarations,
   );
 
+  // #6980-3（审查修复 P0-1，2026-10-25）：正式手写笔迹也算「有实际作答」——
+  // 只交手写、未填文本的主观题不是「未做」。正式笔迹的真实关联在 ink 表
+  // (attemptId, questionId) 唯一键（responses.inkId 是 T2.8 遗留列、恒空，
+  // 不作数）；strokeCount>0 才算正式笔迹。一次查出本卷有稿题集，判分写点
+  // 与内存镜像统一消费。
+  const inkQuestionIds = new Set(
+    db
+      .select({ questionId: ink.questionId })
+      .from(ink)
+      .where(and(eq(ink.attemptId, attemptId), gt(ink.strokeCount, 0)))
+      .all()
+      .map((row) => row.questionId),
+  );
+
   const scoreAuto = scoreAutoOf(allFrozen);
   // D3：本次判分行 finalCorrect = autoCorrect（teacherMark 必空）；lesson 已
   // 提交行按行内当前 finalCorrect（教师批改优先）；D2 据此定 status/scoreFinal
@@ -2128,6 +2143,12 @@ export function submitAttempt(
           autoCorrect: g.autoCorrect,
           // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
           finalCorrect: g.autoCorrect,
+          // #6980-3：是否有实际作答（与判分正交；错题本入本/未做灰显共用）。
+          // 正式手写笔迹也算已答（审查修复 P0-1：只交手写未填文本的主观题
+          // 不是「未做」）；被动跳过（无答案、无笔迹、未单题提交）才冷处理
+          answered:
+            !isUnanswered(g.answer) ||
+            inkQuestionIds.has(g.response.questionId),
           ...rowSubmittedAtPatch,
           activeSec: activeSecByQuestion[g.response.questionId] ?? null,
           changeCount: Math.max(
@@ -2184,6 +2205,8 @@ export function submitAttempt(
       answerJson: g.answer !== undefined ? JSON.stringify(g.answer) : null,
       autoCorrect: g.autoCorrect,
       finalCorrect: g.autoCorrect,
+      answered:
+        !isUnanswered(g.answer) || inkQuestionIds.has(g.response.questionId),
       ...rowSubmittedAtPatch,
       activeSec: activeSecByQuestion[g.response.questionId] ?? null,
       changeCount: Math.max(
@@ -2237,6 +2260,8 @@ interface LessonSummaryRow {
   submittedAt: string | null;
   autoCorrect: boolean | null;
   finalCorrect: boolean | null;
+  /** #6980-3：判分写点落库的「是否有实际作答」（单题提交恒 true；未提交行 false） */
+  answered: boolean;
 }
 
 export function lessonLiveSummaryOf(
@@ -2248,16 +2273,26 @@ export function lessonLiveSummaryOf(
   let correct = 0;
   let wrong = 0;
   let pending = 0;
+  let autoGradableCount = 0;
   let pendingCount = 0;
   let pendingSelfReviewCount = 0;
   for (const row of rows) {
     if (!row.hasSnapshot) continue;
     total += 1;
     if (row.submittedAt === null) continue;
-    if (answerOf(row.answerJson) !== null) answered += 1;
-    if (row.autoCorrect === true) correct += 1;
-    else if (row.autoCorrect === false) wrong += 1;
-    else pending += 1;
+    // #6980-3（审查修复 P1-4）：已答口径统一 responses.answered（判分写点
+    // 落库），不再按 answer != null 现算——空结构答案与「不会」空提交口径不分裂
+    if (row.answered) answered += 1;
+    // 未做客观题判错但不计答错（#6980-3）；待批与可判分分母保持旧口径
+    if (row.autoCorrect === true) {
+      correct += 1;
+      autoGradableCount += 1;
+    } else if (row.autoCorrect === false) {
+      if (row.answered) wrong += 1;
+      autoGradableCount += 1;
+    } else {
+      pending += 1;
+    }
     if (row.finalCorrect === null) {
       if (row.reviewEligible) pendingSelfReviewCount += 1;
       else pendingCount += 1;
@@ -2270,7 +2305,7 @@ export function lessonLiveSummaryOf(
     wrong,
     pending,
     unanswered: total - answered,
-    autoGradable: correct + wrong,
+    autoGradable: autoGradableCount,
     scoreFinal: attempt.scoreFinal,
     pendingCount,
     pendingSelfReviewCount,
@@ -2320,6 +2355,7 @@ function autoFinishPerQuestionAttempt(
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
       finalCorrect: responses.finalCorrect,
+      answered: responses.answered,
       reviewEligible: responses.reviewEligible,
     })
     .from(responses)
@@ -2490,6 +2526,10 @@ export function submitLessonQuestion(
         autoCorrect,
         // D3：提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
         finalCorrect: autoCorrect,
+        // #6980-3：是否有实际作答——单题主动提交即显式交锋，恒记 true
+        //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
+        // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
+        answered: true,
         submittedAt: nowIso,
       })
       .where(eq(responses.id, row.id))
@@ -2745,6 +2785,10 @@ export function submitPracticeQuestion(
         autoCorrect,
         // 提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
         finalCorrect: autoCorrect,
+        // #6980-3：是否有实际作答——单题主动提交即显式交锋，恒记 true
+        //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
+        // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
+        answered: true,
         submittedAt: nowIso,
         practiceMutationId: req.submissionMutationId,
         practiceRequestDigest: digest,
@@ -3056,6 +3100,9 @@ export function resultQuestionOf(
         : null,
     teacherComment: row.teacherComment,
     finalCorrect: row.finalCorrect,
+    // #6980-3：是否有实际作答（判分写点落库；finalCorrect=false 且 false 时
+    // 端上灰显「未做」，练习本卷错题默认不含）
+    answered: row.answered,
     selfReview: selfReviewStateOf(row, snapshot),
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
@@ -3087,10 +3134,16 @@ function scoreSummaryOf(
   rows: readonly AttemptResultQuestion[],
 ): Omit<AttemptScoreSummary, "scoreFinal" | "pendingCount"> {
   const total = rows.length;
-  const answered = rows.filter((r) => r.answer !== null).length;
+  // #6980-3（审查修复 P1-4）：汇总口径统一 responses.answered（判分写点落库），
+  // 与题卡灰显「未做」、错题本入本同一事实。答错不含未做行；待批与可判分
+  // 分母保持旧口径（未做待批行照常计入，判分分母不受展示口径影响）
+  const answered = rows.filter((r) => r.answered).length;
   const correct = rows.filter((r) => r.autoCorrect === true).length;
-  const wrong = rows.filter((r) => r.autoCorrect === false).length;
+  const wrong = rows.filter(
+    (r) => r.autoCorrect === false && r.answered,
+  ).length;
   const pending = rows.filter((r) => r.autoCorrect === null).length;
+  const autoGradable = rows.filter((r) => r.autoCorrect !== null).length;
   return {
     total,
     answered,
@@ -3098,7 +3151,7 @@ function scoreSummaryOf(
     wrong,
     pending,
     unanswered: total - answered,
-    autoGradable: correct + wrong,
+    autoGradable,
   };
 }
 

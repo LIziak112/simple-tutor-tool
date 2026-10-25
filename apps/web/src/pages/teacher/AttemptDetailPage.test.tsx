@@ -93,6 +93,7 @@ function makeQuestion(
     stemMd: "$1$ 是正数。",
     options: undefined,
     answer: null,
+    answered: false,
     autoCorrect: null,
     finalCorrect: null,
     teacherMark: null,
@@ -128,6 +129,7 @@ function makeDetail(
     scoreFinal: null,
     correctCount: 1,
     wrongCount: 1,
+    notDoneCount: 0,
     pendingCount: 1,
     startedAt: "2026-09-28T10:00:00.000Z",
     submittedAt: "2026-09-28T10:05:00.000Z",
@@ -136,6 +138,7 @@ function makeDetail(
       makeQuestion({
         no: 1,
         answer: { kind: "judge", value: true },
+        answered: true,
         autoCorrect: true,
         finalCorrect: true,
         answers: { kind: "judge", value: true },
@@ -144,6 +147,7 @@ function makeDetail(
         questionId: "q2",
         no: 2,
         answer: { kind: "fill", values: ["-1"] },
+        answered: true,
         autoCorrect: false,
         finalCorrect: false,
         answers: { kind: "fill", blanks: [["4"]] },
@@ -349,6 +353,7 @@ describe("AttemptDetailPage draft 详情（D5）", () => {
           makeQuestion({
             no: 1,
             answer: { kind: "judge", value: true },
+            answered: true,
             // draft 服务端不下发 answers/solutionMd（缺省字段）
           }),
           makeQuestion({ questionId: "q2", no: 2, answer: null }),
