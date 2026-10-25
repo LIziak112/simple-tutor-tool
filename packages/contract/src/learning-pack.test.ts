@@ -627,6 +627,82 @@ describe("LearningPack v2 schema（T6R.12：快照关联 + manifest）", () => {
     expect(pack.evidence?.[1]?.state).toBe("not_collected");
   });
 
+  it("v2 材料节（TT-13）：content.materials 整组去重条目 + 逐题 materialRefs 引用；编号形如 m001", () => {
+    const question = {
+      ref: "q001",
+      questionId: "配对错题单元-1",
+      unitId: "配对错题单元",
+      unitTitle: "配对错题单元",
+      type: "matching",
+      difficulty: 3,
+      knowledge: ["七选五"],
+      stemMd: "为空白选择内容。",
+      present: true,
+      snapshotHash:
+        "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      media: [],
+      materialRefs: ["m001", "m002"],
+    } as const;
+    const materials = [
+      {
+        ref: "m001",
+        materialId: "mat-1",
+        sourceVersion: 1,
+        title: "配对材料",
+        contentMd: "第一空 **（1）**；第二空 **（2）**。",
+      },
+      {
+        // 同材料历史版本并存：逐版成条，可分辨「当时看到的是哪一版」
+        ref: "m002",
+        materialId: "mat-1",
+        sourceVersion: 2,
+        title: "配对材料",
+        contentMd: "改稿正文。",
+      },
+    ];
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      meta: {
+        ...MIN_V2_PACK.meta,
+        modules: { ...MIN_V2_PACK.meta.modules, questions: "solution" },
+      },
+      content: { questions: [question], materials },
+    });
+    expect(pack.content?.materials).toHaveLength(2);
+    expect(pack.content?.materials?.[1]?.sourceVersion).toBe(2);
+    expect(pack.content?.questions?.[0]?.materialRefs).toEqual([
+      "m001",
+      "m002",
+    ]);
+    // 材料编号形态校验：非 mNNN（3 位起步）拒绝；sourceVersion 至少 1
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        meta: {
+          ...MIN_V2_PACK.meta,
+          modules: { ...MIN_V2_PACK.meta.modules, questions: "solution" },
+        },
+        content: {
+          questions: [{ ...question, materialRefs: ["x001"] }],
+          materials,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        meta: {
+          ...MIN_V2_PACK.meta,
+          modules: { ...MIN_V2_PACK.meta.modules, questions: "solution" },
+        },
+        content: {
+          questions: [question],
+          materials: [{ ...materials[0], sourceVersion: 0 }],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("manifest：files/missing/contextNotes；missing 必带 reason 与关联 refs", () => {
     const pack = learningPackV2Schema.parse({
       ...MIN_V2_PACK,
