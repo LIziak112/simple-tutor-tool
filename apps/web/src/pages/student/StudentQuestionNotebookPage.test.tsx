@@ -140,22 +140,30 @@ describe("StudentQuestionNotebookPage：三态", () => {
       await screen.findByRole("link", { name: "返回我的记录" }),
     ).toHaveAttribute("href", "/s/records");
   });
-  it("加载中显示骨架（不白屏）", async () => {
+  it("加载中显示骨架（不白屏）；返回入口可回来源结果页（QM-15 细项 5）", async () => {
     notebookMock.mockReturnValue(new Promise(() => {}));
-    renderPage();
+    renderPage(`/s/attempts/att-back-loading`);
     expect(
       await screen.findByLabelText("正在加载题目笔记本"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回作答结果" })).toHaveAttribute(
+      "href",
+      "/s/attempts/att-back-loading",
+    );
   });
 
-  it("错误态：中文错误 + 重试", async () => {
+  it("错误态：中文错误 + 重试；返回入口保持（QM-15 细项 5）", async () => {
     // ApiError（终态类）不重试——普通网络错误按生产语义退避，等不及断言
     notebookMock.mockRejectedValue(
       new ApiError("UNAUTHORIZED", "登录已过期，请重新登录", 401),
     );
-    renderPage();
+    renderPage(`/s/assignments/asn-back-error`);
     expect(await screen.findByText("笔记本加载失败")).toBeInTheDocument();
     expect(screen.getByText(/登录已过期/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回作答结果" })).toHaveAttribute(
+      "href",
+      "/s/assignments/asn-back-error",
+    );
     notebookMock.mockResolvedValue(notebookOf([round({ roundOrdinal: 1 })]));
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => {
