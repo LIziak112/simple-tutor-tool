@@ -259,6 +259,13 @@
             }
           ]
         },
+        "materialRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^m\\d{3,}$"
+          }
+        },
         "no": {
           "type": "integer",
           "minimum": 1,

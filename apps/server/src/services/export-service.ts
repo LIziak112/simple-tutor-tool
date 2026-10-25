@@ -9,6 +9,7 @@ import type {
   LearningPackLecture,
   LearningPackLectureTrace,
   LearningPackManifest,
+  LearningPackMaterial,
   LearningPackModules,
   LearningPackPreviewData,
   LearningPackPreviewEvidenceImage,
@@ -70,6 +71,7 @@ import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
+import { frozenMaterialsForQuestion } from "./attempt-question-materials";
 import {
   answerOf,
   effectiveVerdictOfRow,
@@ -1205,9 +1207,15 @@ function packSectionsOf<Q, R>(
     readonly questions: Q[] | null;
     readonly responses: R[] | null;
     readonly evidence: LearningPackEvidence[] | null;
+    /** v2 材料节（TT-13）：null = questions 模块未勾选（section 缺席） */
+    readonly materials?: LearningPackMaterial[] | null;
   },
 ): {
-  content?: { lectures?: LearningPackLecture[]; questions?: Q[] };
+  content?: {
+    lectures?: LearningPackLecture[];
+    questions?: Q[];
+    materials?: LearningPackMaterial[];
+  };
   attempts?: {
     responses?: R[];
     summaries?: LearningPackAttemptSummary[];
@@ -1227,6 +1235,9 @@ function packSectionsOf<Q, R>(
             ...(m.lectures.length > 0 ? { lectures: core.lectureItems } : {}),
             ...(sections.questions !== null
               ? { questions: sections.questions }
+              : {}),
+            ...(sections.materials != null && sections.materials.length > 0
+              ? { materials: sections.materials }
               : {}),
           },
         }
@@ -1526,16 +1537,17 @@ function assembleV2(core: PackCore): LearningPackAssembly {
    * （assembleMedia，「未选模块不夹带内容」）。
    */
   const needsAssembly = m.questions !== undefined || m.evidence || m.responses;
+  const scopeItems = needsAssembly
+    ? core.orderedAttempts.map((attempt) => ({
+        attempt,
+        rows: core.displayRowsOf(attempt),
+      }))
+    : [];
   const evidenceAsm = assembleQuestionEvidence(
     db,
     dataDir,
     teacherId,
-    needsAssembly
-      ? core.orderedAttempts.map((attempt) => ({
-          attempt,
-          rows: core.displayRowsOf(attempt),
-        }))
-      : [],
+    scopeItems,
     {
       role: "teacher",
       // 题目模块未勾选时 material 不进包，层级取最小权限层
@@ -1557,7 +1569,123 @@ function assembleV2(core: PackCore): LearningPackAssembly {
    * 都不携带未选模块的关系，refs 不悬空、不外泄。
    */
   const mediaRefsBySrc = new Map<string, string[]>();
+  /**
+   * 材料配图（TT-13 材料节）：材料正文 ::image 引用的落盘核对结果
+   * （present 附 absPath/bytes；refs = 引用该材料的 q 条目——与题目媒体
+   * 的 manifest refs 同口径）。下方 media 合并段与讲义/题目媒体同 src 去重。
+   */
+  let materialMedia: ReadonlyArray<
+    | {
+        readonly src: string;
+        readonly present: true;
+        readonly absPath: string;
+        readonly bytes: number;
+        readonly refs: string[];
+      }
+    | {
+        readonly src: string;
+        readonly present: false;
+        readonly reason: string;
+        readonly refs: string[];
+      }
+  > = [];
+  /** 材料条目（m001…；TT-13：questions 模块勾选才装配） */
+  const materialItems: LearningPackMaterial[] = [];
+  /** q 条目 → 材料条目编号（顺序 = materialItems 全局序，确定性） */
+  const materialRefsByQuestionRef = new Map<string, string[]>();
   if (m.questions !== undefined) {
+    // —— content.materials（TT-13）：组材料 ∪ 题级引用闭包按
+    // (materialId, sourceVersion) 整组去重——单源 frozenMaterialsForQuestion
+    // （versionBadge=false：包内条目显式携带 sourceVersion，不重复标注）；
+    // 逐题 materialRefs 引用该轮实际冻结的版本（多版本并存逐版成条） ——
+    const collected: Array<{
+      materialId: string;
+      sourceVersion: number;
+      title: string;
+      contentMd: string;
+      questionRefs: Set<string>;
+    }> = [];
+    const collectedByKey = new Map<string, number>();
+    for (const { attempt, rows } of scopeItems) {
+      for (const row of rows) {
+        const qRef = evidenceAsm.refByResponseRowId.get(row.id);
+        if (qRef === undefined) continue;
+        const snapshot = snapshotOfRow(row);
+        if (snapshot === null) continue; // 坏快照行无材料闭包（缺失即显式缺失）
+        for (const material of frozenMaterialsForQuestion(
+          db,
+          attempt.id,
+          row.questionId,
+          snapshot,
+          { versionBadge: false },
+        )) {
+          const key = `${material.id}|${material.sourceVersion}`;
+          let index = collectedByKey.get(key);
+          if (index === undefined) {
+            index = collected.length;
+            collectedByKey.set(key, index);
+            collected.push({
+              materialId: material.id,
+              sourceVersion: material.sourceVersion,
+              title: material.title,
+              contentMd: material.contentMd,
+              questionRefs: new Set<string>(),
+            });
+          }
+          collected[index]?.questionRefs.add(qRef);
+        }
+      }
+    }
+    // 排序后编号（(materialId, sourceVersion) 稳定序 → m001… 可复现；
+    // 与 frozenMaterialsForQuestion 单题闭包的排序口径一致）
+    collected.sort(
+      (a, b) =>
+        a.materialId.localeCompare(b.materialId) ||
+        a.sourceVersion - b.sourceVersion,
+    );
+    const mediaQRefsBySrc = new Map<string, Set<string>>();
+    collected.forEach((material, index) => {
+      const ref = `m${String(index + 1).padStart(3, "0")}`;
+      materialItems.push({
+        ref,
+        materialId: material.materialId,
+        sourceVersion: material.sourceVersion,
+        title: material.title,
+        contentMd: material.contentMd,
+      });
+      for (const qRef of material.questionRefs) {
+        const refs = materialRefsByQuestionRef.get(qRef);
+        if (refs === undefined) materialRefsByQuestionRef.set(qRef, [ref]);
+        else refs.push(ref);
+      }
+      // 材料配图核对（不静默缺图：缺失进 manifest.missing）
+      for (const src of extractMediaImageSrcs([material.contentMd])) {
+        let qRefs = mediaQRefsBySrc.get(src);
+        if (qRefs === undefined) {
+          qRefs = new Set<string>();
+          mediaQRefsBySrc.set(src, qRefs);
+        }
+        for (const qRef of material.questionRefs) qRefs.add(qRef);
+      }
+    });
+    materialMedia = [...mediaQRefsBySrc].map(([src, qRefs]) => {
+      const refs = [...qRefs];
+      const stat = statMediaSrc(dataDir, src);
+      return "absPath" in stat
+        ? {
+            src,
+            present: true as const,
+            absPath: stat.absPath,
+            bytes: stat.bytes,
+            refs,
+          }
+        : {
+            src,
+            present: false as const,
+            reason: stat.reason,
+            refs,
+          };
+    });
     const mediaByRef = new Map<
       string,
       Array<{ src: string; present: boolean }>
@@ -1594,6 +1722,14 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         present: revision.present,
         snapshotHash: revision.snapshotHash,
         media: mediaByRef.get(revision.ref) ?? [],
+        // TT-13 材料节引用：该题条目（按内容身份去重后）引用的全部材料版本
+        ...(materialRefsByQuestionRef.get(revision.ref) !== undefined
+          ? {
+              materialRefs: [
+                ...(materialRefsByQuestionRef.get(revision.ref) ?? []),
+              ],
+            }
+          : {}),
         ...(revision.material.options !== undefined
           ? { options: [...revision.material.options] }
           : {}),
@@ -1665,6 +1801,32 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       }
       for (const miss of evidenceAsm.missingMedia) {
         upsertMissingMedia(miss.src, miss.reason, miss.questionRefs);
+      }
+      // TT-13 材料配图：材料正文引用的图片并入（同 src 与讲义/题目媒体去重；
+      // manifest refs 与题目媒体同口径合并，不覆盖已登记的 q 条目关联）
+      for (const medium of materialMedia) {
+        if (medium.present) {
+          if (seenEntry.has(medium.src)) {
+            const registered = mediaRefsBySrc.get(medium.src);
+            if (registered !== undefined) {
+              for (const ref of medium.refs) {
+                if (!registered.includes(ref)) registered.push(ref);
+              }
+            } else {
+              mediaRefsBySrc.set(medium.src, [...medium.refs]);
+            }
+            continue;
+          }
+          seenEntry.add(medium.src);
+          mediaEntries.push({
+            entry: medium.src,
+            absPath: medium.absPath,
+            bytes: medium.bytes,
+          });
+          mediaRefsBySrc.set(medium.src, [...medium.refs]);
+        } else {
+          upsertMissingMedia(medium.src, medium.reason, medium.refs);
+        }
       }
     }
   }
@@ -1887,6 +2049,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       questions: m.questions !== undefined ? questionItemsV2 : null,
       responses: m.responses ? responseRowsV2 : null,
       evidence: m.evidence ? evidenceSection : null,
+      materials: m.questions !== undefined ? materialItems : null,
     }),
   };
 
@@ -1924,6 +2087,25 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     contextNotes.push(
       `${missingSnapshotCount} 个题目版本的历史快照缺失（题目已删除或升级遗留），对应作答无题干内容，不回填当前题库。`,
     );
+  }
+  // TT-13 材料节口径：同材料多版本并存时逐版成条（不同轮次冻结不同版本可
+  // 分辨「当时看到的是哪一版」）；材料正文为公开投影（不含答案型内容）
+  if (materialItems.length > 0) {
+    const multiVersion = new Set(
+      materialItems
+        .filter((material, index) =>
+          materialItems.some(
+            (other, otherIndex) =>
+              otherIndex !== index && other.materialId === material.materialId,
+          ),
+        )
+        .map((material) => material.materialId),
+    );
+    if (multiVersion.size > 0) {
+      contextNotes.push(
+        `${multiVersion.size} 份材料存在多个历史版本并存（各轮开卷冻结的版本不同），逐版成条；题目条目的 materialRefs 指向该轮实际冻结的版本。`,
+      );
+    }
   }
   // T6R.16 多阶段口径说明（evidence 勾选才谈；阶段以装配端规范化序列判断；
   // 闸门 F6：读 core 单次规范化值）
