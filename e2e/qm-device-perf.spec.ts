@@ -383,6 +383,9 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       ).toBeVisible();
       // 按需加载：reveal 重入不重发 /context（react-query 缓存）
       await q1.getByRole("button", { name: "第 1 题查看本题材料" }).click();
+      // 固定等待窗为已知口径（审查 P3-6）：absence 断言无事件化手段，只能开
+      // 窗等可能的重发——慢机上重复请求若迟于 500ms 才发会漏检（假通过方向），
+      // 已知余量；改事件化（如断言「窗口内无第二次请求」的探针）才可收口。
       await page.waitForTimeout(500);
       expect(probe.contextCount(), "/context 只应请求一次").toBe(1);
       const preSubmitViolations = probe.violations();

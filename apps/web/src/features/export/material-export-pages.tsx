@@ -196,7 +196,7 @@ async function rasterizeMaterial(
   return blob;
 }
 
-/** 测量单块渲染高度（挂载读 offsetHeight，不栅格化——低成本量高） */
+/** 测量单块渲染高度（挂载读 getBoundingClientRect().height（ceil 口径保守），不栅格化——低成本量高） */
 async function measureBlockHeight(
   host: HTMLElement,
   contentMd: string,

@@ -767,11 +767,9 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     );
 
     // —— W4：valid-06 response×3 + valid-07 两问组（solve+response）——
-    // P1 记档（QM-19 发现）：题级 ::ref 材料（无组）在作答/结果 UI 无任何入口
-    // （AttemptSession 仅组段 segment.materials 挂 openMaterial，solo 行恒
-    // undefined）——学生读不到给定资料；题级材料目前仅经导出闭包/AI 出站可达。
-    // 此处按现状断言：导出本题的材料页可达题级材料（导出闭包口径），UI 入口
-    // 缺失留编排者裁定（reports/tt-14.md P1-2）。
+    // 题级 ::ref 材料入口已由 P1-2 修复转正（solo 行挂「查看本题材料」，
+    // 6c600293），UI 断言在 qm-device-perf ③ 持有；此处保导出闭包口径
+    // （导出本题的材料页可达题级材料）。
     await runAssignment(
       worldOf("W4"),
       async (page) => {
