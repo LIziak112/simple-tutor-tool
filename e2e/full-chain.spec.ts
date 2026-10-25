@@ -508,9 +508,8 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(
         assignPage
           .locator('article[aria-label="第 3 题"]')
-          .getByRole("region", { name: "本题评判" })
-          .getByRole("status"),
-      ).toHaveText("回答正确");
+          .getByText("答对", { exact: true }),
+      ).toBeVisible();
 
       // —— 泄露检查（作业段）：交卷前所有 /api/student/* 响应无禁用键/原文 ——
       await assignPage.waitForTimeout(800); // 等最后一批响应体读完

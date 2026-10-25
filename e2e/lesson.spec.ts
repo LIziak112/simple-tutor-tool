@@ -31,8 +31,8 @@ import {
  * - 刷新：已显示题保持结果态、未显示题草稿答案恢复；
  * - 最后一题显示答案（事务内自动收尾）→ 完成视图 → 结果页可进（来源行
  *   「讲练」）、我的记录出现「讲练」来源行；
- * - 错题本含答错题；有参考答案的 fill 待学生自评，教师可从作答详情改判并
- *   保存评语 → 学生讲练页刷新见教师判定；
+ * - 错题本含答错题；教师待批队列出现该卷 fill 题（讲练徽章 + 讲义标题 ·
+ *   第 n 次上下文）→ 标对 → 学生讲练页刷新见 teacherMark 判定；
  * - 再做一次 → 新卷（第 2 次从空白开始），旧卷保留在记录；
  * - 落地页随时重开：进行中卷「重新开始」→ 旧卷作废（退出历次与记录），
  *   新卷第 3 次从空白开始。
@@ -444,10 +444,6 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       // —— 结果页可进：来源行「讲练」+ 汇总 + 返回讲练页 ——
       await studentPage.getByRole("link", { name: "查看结果" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
-      const completedAttemptId = studentPage
-        .url()
-        .match(/\/s\/attempts\/([^/?]+)/)?.[1];
-      if (!completedAttemptId) throw new Error("缺少已完成的讲练作答标识");
       await expect(studentPage.getByText("批改结果")).toBeVisible();
       await expect(
         studentPage.getByText(`讲练：${lectureTitle} · 第 1 次`),
@@ -461,7 +457,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await studentPage.getByRole("button", { name: "返回讲练页" }).click();
       await studentPage.waitForURL(/\/s\/lectures\/[^/]+\/lesson/);
 
-      // —— 我的记录：「讲练」来源行（fill 尚未判断 → 已交卷）——
+      // —— 我的记录：「讲练」来源行（fill 未批 → 已交卷）——
       await studentPage.goto("/s/records");
       const recordLink = studentPage.getByRole("link", {
         name: `查看结果：${lectureTitle} · 第 1 次（已交卷）`,
@@ -487,25 +483,33 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       // 错题本卡片的参考答案标签是「正确答案：」（与结果页「参考答案：」不同词）
       await expect(wrongCard.getByText("正确答案：")).toBeVisible();
 
-      // 有参考答案的填空不进入教师待批；详情仍允许教师改判并保存评语。
-      const pending = await request.get("/api/teacher/pending-marks");
-      expect(pending.ok()).toBe(true);
-      expect(JSON.stringify(await pending.json())).not.toContain(studentName);
-      await page.goto(`/t/data/attempts/${completedAttemptId}`);
-      const teacherQ4 = page.locator('article[aria-label="第 4 题"]');
+      // —— 教师待批队列：该卷 fill 题出现（讲练徽章 + 讲义标题上下文）→ 标对 ——
+      // e2e 共享服务端不设 NEW_CONTENT_ENABLED（§5.8.4）：fill 冻结旧行语义，
+      // 单题提交后进教师待批（student-lesson.test.ts §2122 在案），教师走待批
+      // 队列批改；作答详情改判入口是补充路径，不在本链路断言。
+      await page.goto("/t/data/pending");
+      await page
+        .locator("#pending-student-filter option", { hasText: studentName })
+        .waitFor({ state: "attached" });
+      await page.selectOption("#pending-student-filter", {
+        label: studentName,
+      });
+      const pendingCard = page.locator(
+        `article[aria-label="待批卡片：${studentName}"]`,
+      );
+      await expect(pendingCard).toBeVisible();
       await expect(
-        page.getByText(`讲练：${lectureTitle} · 第 1 次`),
+        pendingCard.getByText("讲练", { exact: true }),
       ).toBeVisible();
-      await teacherQ4
-        .getByRole("button", { name: "判对", exact: true })
-        .click();
-      await teacherQ4.getByLabel("评语（与判定一并保存）").fill(commentText);
-      await teacherQ4
-        .getByRole("button", { name: "保存判定与评语", exact: true })
-        .click();
       await expect(
-        teacherQ4.getByRole("definition").filter({ hasText: commentText }),
-      ).toHaveText(commentText);
+        pendingCard.getByText(`${lectureTitle} · 第 1 次`),
+      ).toBeVisible();
+      await expect(pendingCard.getByText("参考答案：")).toBeVisible();
+      await expect(pendingCard.getByText("学生最终答案：")).toBeVisible();
+      await page.fill("#pending-comment-input", commentText);
+      await pendingCard.getByRole("button", { name: /标对（1）/ }).click();
+      await expect(pendingCard).toHaveCount(0);
+      await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
 
       // —— 学生讲练页（作答页）刷新：fill 题见 teacherMark 判定（徽章按 finalCorrect 显示；批改块不在讲练卡展示）——
       await studentPage.goto(
@@ -522,7 +526,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       ).toBeVisible();
       const q4Marked = studentPage.locator('article[aria-label="第 4 题"]');
       await expect(
-        q4Marked.getByText("教师判定：正确", { exact: true }),
+        q4Marked.getByText("答对", { exact: true }).first(),
       ).toBeVisible();
       // 教师演示简化形态：批改块/批语不在讲练卡展示（在结果页可见）
       await expect(q4Marked.getByText(/老师批改：/)).toHaveCount(0);

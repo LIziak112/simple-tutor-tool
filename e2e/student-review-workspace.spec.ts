@@ -625,9 +625,7 @@ test(
     await expect(
       first.getByText("先补全每一空，再核对计算过程。"),
     ).toBeVisible();
-    await expect(
-      first.getByRole("region", { name: "本题评判" }).getByRole("status"),
-    ).toHaveText("教师判定：错误");
+    await expect(first.getByLabel("答错")).toBeVisible();
     const responseId = teacher.questions[0]?.responseId;
     if (!responseId) throw new Error("测试缺少作答响应ID");
     const revised = await request.post(
@@ -637,9 +635,7 @@ test(
     expect(revised.ok(), await revised.text()).toBe(true);
     await page.reload();
     await expect(page.locator("span.text-4xl")).toHaveText("50");
-    await expect(
-      first.getByRole("region", { name: "本题评判" }).getByRole("status"),
-    ).toHaveText("教师判定：正确");
+    await expect(first.getByLabel("答对")).toBeVisible();
     await expect(first.getByText("核对原稿后改判为对。")).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("review-teacher-revised-320.png"),
