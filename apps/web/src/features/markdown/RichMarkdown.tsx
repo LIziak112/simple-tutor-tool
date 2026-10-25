@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { memo } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import { compactInlineSource } from "./compact-inline";
 import {
   DirectiveContainerHost,
   DirectiveLeafHost,
@@ -69,6 +70,13 @@ export interface RichMarkdownProps {
    * 零变化）。学生端 markdown 永不含题块，本模式仅教师路径触达。
    */
   questionPlaceholder?: boolean | undefined;
+  /**
+   * 单行收敛形态（错题本紧凑行等行内预览）：块级公式收敛为行内、图片与
+   * 表格降级为「[图]」「[表格]」文本占位、指令围栏标记剥离（内容保留），
+   * 根容器 line-clamp 收敛为单行（超出省略）。渲染管线与 sanitize 与缺省
+   * 形态完全一致，只做源文降级（compact-inline.ts）与容器样式类。
+   */
+  compact?: boolean | undefined;
 }
 
 /** 相同属性不重复解析；内部指令的上下文与交互状态仍独立更新。 */
@@ -78,6 +86,7 @@ export const RichMarkdown = memo(function RichMarkdown({
   onDirectiveTelemetry,
   onDirectiveExpand,
   questionPlaceholder,
+  compact,
 }: RichMarkdownProps) {
   // 兼容别名：旧回调只收 open 方向（收起/揭晓是 T4.0b 新增语义，旧回调不感知）
   const telemetry: ((event: DirectiveTelemetryInfo) => void) | null =
@@ -96,12 +105,18 @@ export const RichMarkdown = memo(function RichMarkdown({
         rehypePlugins={richMarkdownRehypePlugins}
         components={directiveHostComponents}
       >
-        {source}
+        {compact === true ? compactInlineSource(source) : source}
       </ReactMarkdown>
     </DirectiveSessionProvider>
   );
   return (
-    <div className={cn("rich-markdown", className)}>
+    <div
+      className={cn(
+        "rich-markdown",
+        compact && "rich-markdown-compact",
+        className,
+      )}
+    >
       {questionPlaceholder === true ? (
         // 占位卡按 sourceRange 从 source 切题块原文（position 经 sanitize 保留）
         <QuestionViewProvider value={{ placeholder: true, source }}>

@@ -277,9 +277,17 @@ export function WrongQuestionRow({
       >
         {QUESTION_TYPE_LABELS[question.type]}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm">
-        {stemSummaryOf(question.stemMd)}
-      </span>
+      <div
+        aria-label={stemSummaryOf(question.stemMd)}
+        title={stemSummaryOf(question.stemMd)}
+        className="min-w-0 flex-1"
+      >
+        <RichMarkdown
+          source={displayStemMd(question)}
+          compact
+          className="text-sm"
+        />
+      </div>
       <span className="shrink-0 text-xs text-muted-foreground">
         错 {question.wrongCount} · 对 {question.correctCount}
       </span>
