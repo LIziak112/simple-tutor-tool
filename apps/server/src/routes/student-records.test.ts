@@ -9,7 +9,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { assignments, attempts, responses } from "../db/schema.ts";
+import { assignments, attempts, ink, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { saveDraftAnswer } from "../services/attempt-service";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
@@ -642,6 +642,10 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
       expect(draft?.status).toBe("draft");
       expect(draft?.score).toBeNull();
       expect(draft?.resultCounts).toBeNull();
+      expect(draft?.answerProgress).toEqual({
+        answeredCount: 0,
+        totalCount: 3,
+      });
       expect(draft?.pendingCount).toBe(0);
       expect(draft?.answersReleased).toBe(true);
       expect(draft?.submittedAt).toBeNull();
@@ -819,6 +823,68 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
     const ids = data?.records.map((row) => row.attemptId);
     expect(ids).not.toContain(env.a3AttemptId); // 草稿失权 → 不列
     expect(ids).toContain(env.a1AttemptId); // 已交卷 → 保留
+  });
+
+  it("进行中普通卷公开已做进度，包含正式手写但不含判定或答案", async () => {
+    const env = await makeRecordsEnv();
+    await saveAnswer(env.app, env.aCookie, env.course2AttemptId, Q.judge1, {
+      kind: "judge",
+      value: false,
+    });
+    env.db
+      .insert(ink)
+      .values({
+        id: crypto.randomUUID(),
+        attemptId: env.course2AttemptId,
+        questionId: Q.solve,
+        strokesPath: "test.json.gz",
+        pngPath: "test.png",
+        width: 100,
+        height: 100,
+        strokeCount: 1,
+        updatedAt: T.course2Start,
+      })
+      .run();
+    const { data, body } = await getRecords(env.app, env.aCookie);
+    const row = data?.records.find(
+      (record) => record.attemptId === env.course2AttemptId,
+    );
+    expect(row?.answerProgress).toEqual({ answeredCount: 2, totalCount: 3 });
+    expect(row?.resultCounts).toBeNull();
+    assertNoLeak(body);
+  });
+
+  it("未冻结且无 response 的历史草稿也有总题数，读取不会冻结或创建答案", async () => {
+    const env = await makeRecordsEnv();
+    env.db
+      .update(attempts)
+      .set({ frozenAt: null })
+      .where(eq(attempts.id, env.a3AttemptId))
+      .run();
+    env.db
+      .delete(responses)
+      .where(eq(responses.attemptId, env.a3AttemptId))
+      .run();
+    const { data, body } = await getRecords(env.app, env.aCookie);
+    expect(
+      data?.records.find((row) => row.attemptId === env.a3AttemptId)
+        ?.answerProgress,
+    ).toEqual({ answeredCount: 0, totalCount: 3 });
+    expect(
+      env.db
+        .select({ frozenAt: attempts.frozenAt })
+        .from(attempts)
+        .where(eq(attempts.id, env.a3AttemptId))
+        .get()?.frozenAt,
+    ).toBeNull();
+    expect(
+      env.db
+        .select({ id: responses.id })
+        .from(responses)
+        .where(eq(responses.attemptId, env.a3AttemptId))
+        .all(),
+    ).toHaveLength(0);
+    assertNoLeak(body);
   });
 
   it("after_due 截止后（读时比较）：得分与待批数自动恢复真实值", async () => {

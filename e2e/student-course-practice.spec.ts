@@ -122,6 +122,15 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(
         studentPage.getByText(`课程：${courseName} · 第 1 次`),
       ).toBeVisible();
+      const progressPage = await studentContext.newPage();
+      const progressLeak = attachLeakMonitor(progressPage);
+      await progressPage.goto("/s/records");
+      const progressCard = progressPage.getByRole("link", {
+        name: `继续作答：${unitName} · 第 1 次（进行中）`,
+      });
+      await expect(
+        progressCard.getByText("已做 0 / 2 题", { exact: true }),
+      ).toBeVisible();
       const first = studentPage.locator('article[aria-label="第 1 题"]');
       await first
         .getByRole("radio", { name: "对", exact: true })
@@ -135,6 +144,12 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
+      await progressPage.reload();
+      await expect(
+        progressCard.getByText("已做 2 / 2 题", { exact: true }),
+      ).toBeVisible();
+      expect(progressLeak.violations()).toEqual([]);
+      await progressPage.close();
       await studentPage
         .getByRole("button", { name: "交卷", exact: true })
         .click();

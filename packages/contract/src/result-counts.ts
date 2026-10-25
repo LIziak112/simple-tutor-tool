@@ -21,3 +21,15 @@ export const attemptResultCountsSchema = z
   );
 
 export type AttemptResultCounts = z.infer<typeof attemptResultCountsSchema>;
+
+/** 仅公开作答进度，不携带判定或答案。 */
+export const attemptAnswerProgressSchema = z
+  .object({
+    answeredCount: z.number().int().min(0),
+    totalCount: z.number().int().min(0),
+  })
+  .refine(
+    (value) => value.answeredCount <= value.totalCount,
+    "已做题数不能超过总题数",
+  );
+export type AttemptAnswerProgress = z.infer<typeof attemptAnswerProgressSchema>;

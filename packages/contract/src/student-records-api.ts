@@ -5,7 +5,10 @@ import {
   studentFlagSchema,
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
-import { attemptResultCountsSchema } from "./result-counts.ts";
+import {
+  attemptAnswerProgressSchema,
+  attemptResultCountsSchema,
+} from "./result-counts.ts";
 import { selfReviewStateSchema } from "./self-review.ts";
 import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
 
@@ -105,6 +108,8 @@ export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
   /** 得分（0–100 整数百分比；scoreFinal ?? scoreAuto；draft/无可判分/未公布为 null） */
   score: z.number().int().min(0).max(100).nullable(),
   resultCounts: attemptResultCountsSchema.nullable().optional(),
+  /** 进行中卷的已做/总题数；仅公开进度，旧响应可缺省。 */
+  answerProgress: attemptAnswerProgressSchema.nullable().optional(),
   /** 待批题数（D4 口径；draft 恒 0；after_due 未公布置 null） */
   pendingCount: z.number().int().min(0).nullable(),
   /** 该条结果是否已公布（T2A.8；false = after_due 未到截止，score/pendingCount 已置 null） */

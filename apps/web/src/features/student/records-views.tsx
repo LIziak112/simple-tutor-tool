@@ -132,9 +132,15 @@ export function RecordCard({
         </p>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <RecordResult row={row} />
-          {/* M4-D3 进行中进度（§13）：v1 新协议 draft 卷携带行级 n/N（服务端
-          白名单纯进度计数）；legacy/lesson 卷缺省不渲染，已收尾行以状态为准 */}
+          {/* 进行中优先显示通用已做进度；旧响应缺少字段时保留逐题已提交进度。 */}
+          {isDraft && row.answerProgress && (
+            <span className="text-sm tabular-nums text-muted-foreground">
+              已做 {row.answerProgress.answeredCount} /{" "}
+              {row.answerProgress.totalCount} 题
+            </span>
+          )}
           {isDraft &&
+            !row.answerProgress &&
             row.practiceSubmittedCount !== undefined &&
             row.practiceQuestionCount !== undefined && (
               <span className="text-xs tabular-nums text-sky-700 dark:text-sky-300">
