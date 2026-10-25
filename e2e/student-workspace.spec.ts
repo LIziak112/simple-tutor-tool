@@ -105,6 +105,14 @@ test(
         ).toBeHidden();
         const headerBox = await header.boundingBox();
         expect(headerBox?.height).toBeLessThanOrEqual(80);
+        const footer = page.locator('[data-slot="attempt-bottom-bar"]');
+        expect((await footer.boundingBox())?.height).toBeLessThanOrEqual(60);
+        await expect(
+          footer.getByRole("button", { name: "答题卡", exact: true }),
+        ).toContainText("已填 1/2");
+        await expect(
+          footer.locator('[data-slot="attempt-desktop-progress"]'),
+        ).toBeHidden();
         const details = await openPracticeInfoDialog(page);
         await expect(details).toContainText(courseName);
         await expect(details).toContainText(unitName);
@@ -125,6 +133,33 @@ test(
           header.getByText(`课程：${courseName}`, { exact: false }),
         ).toBeVisible();
       }
+      // 所有尺寸都可向下阅读收起顶栏，横屏和电脑也不例外。
+      // 短卷用短视口产生真实滚动；等待两帧让旋转/缩放事件先落定。
+      await page.setViewportSize({ width, height: 300 });
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      });
+      const beforeWidth = (await first.boundingBox())?.width;
+      await page.mouse.move(width * 0.7, 150);
+      await page.mouse.wheel(0, 180);
+      await expect(header).toHaveAttribute("data-reading-hidden", "true");
+      await expect
+        .poll(() =>
+          header.evaluate((element) => element.getBoundingClientRect().bottom),
+        )
+        .toBeLessThanOrEqual(1);
+      expect((await first.boundingBox())?.width).toBe(beforeWidth);
+      await page.mouse.wheel(0, -80);
+      await expect(header).toHaveAttribute("data-reading-hidden", "false");
+      await page.evaluate(() =>
+        window.scrollTo({ top: 0, behavior: "instant" }),
+      );
+      await page.setViewportSize({ width, height });
       if (width >= 1024) {
         await expectNavigationRingSpace(
           page.getByRole("navigation", { name: "答题卡" }),

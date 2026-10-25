@@ -33,6 +33,18 @@ function renderBar(
 }
 
 describe("AttemptBottomBar（离线交卷保护，T2.12）", () => {
+  it("手机列表将进度合并进唯一答题卡入口，底栏进度仅供桌面展示", () => {
+    const onOpenNavigator = vi.fn();
+    const { container } = renderBar({ answered: 2, total: 5, onOpenNavigator });
+    const navigator = screen.getByRole("button", { name: "答题卡" });
+    expect(navigator).toHaveTextContent("已填 2/5");
+    expect(navigator).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(navigator);
+    expect(onOpenNavigator).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector('[data-slot="attempt-desktop-progress"]'),
+    ).toHaveClass("hidden", "lg:flex");
+  });
   it("单题末题主操作已是交卷时，不重复渲染全卷按钮", () => {
     renderBar({
       primaryActions: <button type="button">交卷</button>,

@@ -70,7 +70,35 @@ test(
     await page.goto(`/s/courses/${courseId}`);
     await page.getByRole("link", { name: `阅读讲义 ${title}` }).click();
     const lectureUrl = page.url();
+    // 先等待长正文加载，骨架屏尚无可滚动内容。
+    await expect(
+      page.getByRole("heading", { name: title, level: 1 }),
+    ).toBeVisible();
 
+    // iPad 横屏及电脑同样收起顶栏，不能以 1024px 为停用分界。
+    const toolbar = page.getByRole("navigation", { name: "讲义阅读工具栏" });
+    for (const width of [1024, 1180, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 500 });
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      });
+      await page.mouse.move(width * 0.7, 250);
+      await page.mouse.wheel(0, 320);
+      await expect(toolbar).toHaveAttribute("data-reading-hidden", "true");
+      await expect
+        .poll(() =>
+          toolbar.evaluate((element) => element.getBoundingClientRect().bottom),
+        )
+        .toBeLessThanOrEqual(1);
+      await page.mouse.wheel(0, -80);
+      await expect(toolbar).toHaveAttribute("data-reading-hidden", "false");
+    }
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(
       page.getByRole("navigation", { name: "学生端导航" }),
@@ -184,6 +212,17 @@ test(
         name: "展开目录",
         exact: true,
       });
+      // 讲义正文随用户向下阅读收起导航，反向阅读找回；弹层滚动不影响正文。
+      const toolbar = page.getByRole("navigation", { name: "讲义阅读工具栏" });
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+      });
+      await page.mouse.move(width / 2, 400);
+      await page.mouse.wheel(0, 240);
+      await expect(toolbar).toHaveAttribute("data-reading-hidden", "true");
+      await page.mouse.wheel(0, -80);
+      await expect(toolbar).toHaveAttribute("data-reading-hidden", "false");
       await trigger.press("Enter");
       const dialog = page.getByRole("dialog", { name: "讲义目录" });
       await expect(dialog).toBeVisible();
@@ -241,7 +280,6 @@ test(
       .getByRole("button", { name: chapters[2], exact: true })
       .click();
     await expect(target).toBeFocused();
-    const toolbar = page.getByRole("navigation", { name: "讲义阅读工具栏" });
     const toolbarBox = await toolbar.boundingBox();
     const headingBox = await target.boundingBox();
     expect(headingBox?.y).toBeGreaterThanOrEqual(toolbarBox?.height ?? 0);
