@@ -22,6 +22,7 @@ it("仅顶栏保存状态更新时不重渲染题面；答案或待检查变化�
     index: 0,
     onAnswer: vi.fn(),
     onToggleFlag: vi.fn(),
+    onToggleUnsure: vi.fn(),
     onHintUnlocked: vi.fn(),
     cardElements: { current: new Map<string, HTMLElement>() },
     events: {

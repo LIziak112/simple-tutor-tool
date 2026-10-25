@@ -702,6 +702,9 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // 未做维度列（0044 新增，#6980-3）：默认 false，不参与保真对比；新列
       // 语义见 schema 测试与判分写点
       if (table === "responses") delete row.answered;
+      // 「不会」标注列（0045 新增，#6980-4）：可空、存量行恒 NULL，不参与
+      // 保真对比；语义见 student-flags 路由测试
+      if (table === "responses") delete row.student_flag;
       // T7.8 教学包声明列（lectures/units，0029 新增，NULL=未声明）
       delete row.teaching_pack_json;
       // 讲练一体三列（0031 新增，2026-10）：lectures.kind 带默认值 'lecture'

@@ -15,6 +15,7 @@ const question: AttemptResultQuestion = {
   },
   answer: null,
   answered: false,
+  studentFlag: null,
   answers: null,
   autoCorrect: false,
   finalCorrect: false,

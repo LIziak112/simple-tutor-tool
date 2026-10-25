@@ -383,6 +383,11 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
                   未做
                 </span>
               )}
+              {round.studentFlag === "unsure" && (
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  标过不会
+                </span>
+              )}
               <span className="shrink-0 whitespace-nowrap tabular-nums">
                 {formatCnTime(round.submittedAt)}
               </span>

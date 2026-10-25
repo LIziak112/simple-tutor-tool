@@ -176,6 +176,7 @@ function releasedOf(question: AttemptQuestionPublic): AttemptResultQuestion {
     solutionMd: "解析内容。",
     answer: null,
     answered: false,
+    studentFlag: null,
     autoCorrect: true,
     teacherMark: null,
     teacherComment: null,

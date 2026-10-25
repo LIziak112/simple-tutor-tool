@@ -7,6 +7,8 @@ import type {
 import { displayStemMd } from "@tutor/md-dsl";
 import {
   CircleAlert,
+  CircleHelp,
+  CircleX,
   Eye,
   EyeOff,
   Flag,
@@ -89,6 +91,8 @@ function QuestionMeta({
   answer,
   flagged,
   onToggleFlag,
+  unsure,
+  onToggleUnsure,
   formalInkPresence,
   tools,
 }: {
@@ -97,6 +101,9 @@ function QuestionMeta({
   answer: StudentAnswer | undefined;
   flagged: boolean;
   onToggleFlag: (() => void) | undefined;
+  /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
+  unsure: boolean;
+  onToggleUnsure: (() => void) | undefined;
   formalInkPresence: boolean;
   tools: {
     aiTrigger?: ReactNode;
@@ -141,6 +148,14 @@ function QuestionMeta({
           <Flag
             aria-label="待检查"
             className="size-3.5 fill-primary text-primary"
+          />
+        )}
+        {/* #6980-4（审查 P2-7）：题卡头部琥珀问号——手机端/单题模式收起答题
+        卡时，点完菜单也能看到「标过不会」的即时反馈 */}
+        {unsure && (
+          <CircleHelp
+            aria-label="标过不会"
+            className="size-3.5 text-amber-600 dark:text-amber-400"
           />
         )}
         {detailsOpen && (
@@ -269,6 +284,12 @@ function QuestionMeta({
                 </DropdownMenuItem>
               </>
             )}
+            {onToggleUnsure && (
+              <DropdownMenuItem onSelect={onToggleUnsure}>
+                {unsure ? <CircleX aria-hidden /> : <CircleHelp aria-hidden />}
+                {unsure ? "取消不会标记" : "标记不会（进错题本）"}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -291,6 +312,8 @@ export function AttemptQuestionCard({
   onHintUnlocked,
   flagged = false,
   onToggleFlag,
+  unsure = false,
+  onToggleUnsure,
   formalInkPresence = false,
   onInkPresenceChange,
   assignmentTitle = "练习",
@@ -321,6 +344,9 @@ export function AttemptQuestionCard({
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
   flagged?: boolean;
   onToggleFlag?: () => void;
+  /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
+  unsure?: boolean;
+  onToggleUnsure?: () => void;
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
   assignmentTitle?: string;
@@ -540,6 +566,10 @@ export function AttemptQuestionCard({
         answer={answer}
         flagged={flagged}
         onToggleFlag={onToggleFlag}
+        unsure={unsure}
+        // 行级锁同步（#6980-4 审查 P1-3）：单题已提交（readOnly）后服务端
+        // 拒改标记，菜单项同步隐藏，不给「点了必失败」的入口
+        onToggleUnsure={readOnly ? undefined : onToggleUnsure}
         formalInkPresence={formalInkPresence}
         tools={
           attemptId === undefined
