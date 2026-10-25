@@ -44,3 +44,16 @@ export const richMarkdownRehypePlugins: RehypePluginList = [
   // rehype-sanitize 的选项就是 schema 本身（v6 签名：rehypeSanitize(schema)）
   [rehypeSanitize, richMarkdownSanitizeSchema],
 ];
+
+/**
+ * compact 变体（RichMarkdown 单行收敛形态专用）：仅 KaTeX 输出改纯 HTML
+ * （output:"html"，不产 <math> 节点）。行内预览的读屏语义由宿主的 sr-only
+ * 纯文本摘要承担，紧凑行里再放 MathML 副本只会让可访问名重复；且 jsdom
+ * （≤30）没有 MathMLElement，测试库按可访问名查询时 getComputedStyle(<math>)
+ * 直接抛 TypeError（PR #6 CI 事故）。可见渲染与 sanitize 与缺省形态完全一致。
+ */
+export const richMarkdownRehypePluginsCompact: RehypePluginList = [
+  rehypeMathFallback,
+  [rehypeKatex, { output: "html" }],
+  [rehypeSanitize, richMarkdownSanitizeSchema],
+];
