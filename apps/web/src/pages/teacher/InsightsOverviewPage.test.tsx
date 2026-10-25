@@ -154,6 +154,12 @@ function makeOverview(
           attemptCount: 3,
           redoCount: 2,
           firstScore: 100,
+          firstResultCounts: {
+            correctCount: 10,
+            totalCount: 10,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
           pendingCount: 0,
           latestSubmittedAt: NOW,
         },
@@ -308,7 +314,7 @@ describe("InsightsOverviewPage 三态", () => {
 });
 
 describe("InsightsOverviewPage 完成矩阵（D2）", () => {
-  it("五状态徽标齐全；未指派渲染「—」；单元列显示做过次数/首次得分/重做/待批", async () => {
+  it("五状态徽标齐全；未指派渲染「—」；单元列显示做过次数/首次答对题数/重做/待批", async () => {
     mockedOverview.mockResolvedValue(makeOverview());
     renderPage();
     await screen.findByText("开学摸底练习");
@@ -324,8 +330,10 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
         .some((el) => el.textContent === "—"),
     ).toBe(true);
 
-    // 单元列口径：陈小明 做过 3 次 · 首次 100 分 + 重做 2；李小红 待批 2
-    expect(screen.getByText("做过 3 次 · 首次 100 分")).toBeInTheDocument();
+    // 单元列口径为答对题数：陈小明 做过 3 次 · 首次 做对 10 / 10 题 + 重做 2；李小红 待批 2
+    expect(
+      screen.getByText("做过 3 次 · 首次 做对 10 / 10 题"),
+    ).toBeInTheDocument();
     expect(screen.getByText("重做 2")).toBeInTheDocument();
     expect(screen.getByText("待批 2")).toBeInTheDocument();
   });
