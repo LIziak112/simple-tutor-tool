@@ -3096,10 +3096,16 @@ it-1
     process.env.NEW_CONTENT_ENABLED = "true";
     let submitRes: Response | undefined;
     try {
-      submitRes = await submitQuestion(env, attemptId, "ls-m", revisionOf("ls-m"), {
-        questionId: "ls-m",
-        state: "none",
-      });
+      submitRes = await submitQuestion(
+        env,
+        attemptId,
+        "ls-m",
+        revisionOf("ls-m"),
+        {
+          questionId: "ls-m",
+          state: "none",
+        },
+      );
     } finally {
       if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
       else process.env.NEW_CONTENT_ENABLED = previous;
@@ -3136,8 +3142,8 @@ it-1
     const body = await startOk(env);
     const released = body.data.released["ls-m"];
     expect(released).toBeDefined();
-    expect(released.autoCorrect).toBeNull();
-    expect(released.finalCorrect).toBeNull();
+    expect(released?.autoCorrect).toBeNull();
+    expect(released?.finalCorrect).toBeNull();
     // 解析隔离（细项5）：兄弟题（ls-o/ls-r）的答案与详解不随本次释放
     const text = JSON.stringify(body);
     expect(text).not.toContain("排序题详解");
@@ -3171,10 +3177,16 @@ it-1
     expect(body.data.summary?.wrong).toBe(0);
     expect(body.data.summary?.pending).toBe(3);
     // 已提交行不重判：重复提交已提交题 → 409 QUESTION_ALREADY_SUBMITTED
-    const dup = await submitQuestion(env, attemptId, "ls-m", revisionOf("ls-m"), {
-      questionId: "ls-m",
-      state: "none",
-    });
+    const dup = await submitQuestion(
+      env,
+      attemptId,
+      "ls-m",
+      revisionOf("ls-m"),
+      {
+        questionId: "ls-m",
+        state: "none",
+      },
+    );
     expect(dup.status).toBe(409);
   });
 
@@ -3201,7 +3213,9 @@ it-1
     // 显式 restart：新卷 attemptNo=2、从空白开始
     const restarted = await restartLesson(env);
     expect(restarted.status).toBe(201);
-    const restartRaw = (await restarted.json()) as { data: QmStartBody["data"] };
+    const restartRaw = (await restarted.json()) as {
+      data: QmStartBody["data"];
+    };
     expect(restartRaw.data.attempt.attemptNo).toBe(2);
     expect(restartRaw.data.attempt.status).toBe("draft");
     expect(Object.keys(restartRaw.data.released)).toHaveLength(0);

@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   type ReactNode,
   type RefObject,
@@ -37,12 +38,18 @@ import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "@/features/attempt/AttemptEditorContext";
+import {
+  type GroupContextSegment,
+  groupSegmentsOfUnit,
+} from "@/features/attempt/attempt-context-view";
+import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { LessonGroupBlock } from "@/features/lesson/LessonGroupBlock";
 import { LessonQuestionCard } from "@/features/lesson/LessonQuestionCard";
 import {
   useLessonStart,
@@ -78,6 +85,9 @@ import { useDesktopViewport } from "@/lib/use-desktop-viewport";
  *   data-lesson-md 限定目录标题采集范围——题干内的标题不进目录）；question
  *   槽按 questionId 绑定冻结题；孤儿冻结题（教师重导后不在当前 markdown）
  *   在页尾「本次练习其余题目」分组渲染（不丢失，方案决策 2）；
+ * - QM-14 组段呈现：冻结上下文（/attempts/:id/context）经 groupSegmentsOfUnit
+ *   单源解释成组段，组头+共享材料（LessonGroupBlock）在首个成员题卡之前
+ *   渲染一次；context 失败/为空非阻断（材料列缺失不阻塞作答）；
  * - 目录：全部 md 段拼接 extractOutline（桌面 sticky 侧栏 / 窄屏弹层，
  *   LectureOutline 复用）；
  * - 顶部：标题 + 课程/讲练次数 + 草稿保存状态（教师演示口径：无「完成练习」
@@ -225,6 +235,52 @@ function lessonQuestionOrder(data: LessonStartData): {
 }
 
 /**
+ * QM-14 组段呈现：冻结上下文（/attempts/:id/context）经 groupSegmentsOfUnit
+ * （数据解释单源，与作答/结果视图同一实现）解释成组段——组头+共享材料在
+ * **首个成员**题卡之前渲染一次（LessonGroupBlock 只承担讲练单列排版）。
+ * context 未到位/为空（legacy 卷或旧部署）→ 空映射，渲染零变化；失败非阻断
+ * （题面渲染不依赖本载荷，页面层就地提示 + 重试）。
+ */
+function useLessonGroupAnchors(
+  attemptId: string,
+  order: ReturnType<typeof lessonQuestionOrder>,
+): {
+  anchors: ReadonlyMap<string, GroupContextSegment>;
+  contextError: string | null;
+  contextRetry: () => void;
+  contextFetching: boolean;
+} {
+  const contextQuery = useAttemptContext(attemptId);
+  const anchors = useMemo(() => {
+    if (contextQuery.data === undefined) return EMPTY_ANCHORS;
+    const map = new Map<string, GroupContextSegment>();
+    for (const segment of groupSegmentsOfUnit(
+      contextQuery.data,
+      order.ordered.map((slot) => slot.question.id),
+    )) {
+      if (segment.kind !== "group") continue;
+      const first = segment.questionIds[0];
+      if (first !== undefined) map.set(first, segment);
+    }
+    return map;
+  }, [contextQuery.data, order]);
+  return {
+    anchors,
+    contextError:
+      contextQuery.error instanceof Error
+        ? contextQuery.error.message
+        : contextQuery.isError
+          ? "共享材料加载失败，不影响作答题目。"
+          : null,
+    contextRetry: () => void contextQuery.refetch(),
+    contextFetching: contextQuery.isFetching,
+  };
+}
+
+/** 空锚点映射（模块级稳定引用：无 context 时 useMemo 返回同一实例） */
+const EMPTY_ANCHORS: ReadonlyMap<string, GroupContextSegment> = new Map();
+
+/**
  * 正文：目录（md 段拼接）+ blocks 交替渲染 + 孤儿题分组。
  * renderCard 由两个视图注入（作答卡带 handlers / 完成卡只读）；order 由
  * 父组件 useMemo 算好传入（两视图与题槽渲染同一份）。
@@ -233,6 +289,10 @@ function LessonBody({
   data,
   order,
   renderCard,
+  anchors,
+  contextError,
+  contextRetry,
+  contextFetching,
 }: {
   data: LessonStartData;
   order: {
@@ -244,6 +304,12 @@ function LessonBody({
     index: number,
     orphan: boolean,
   ) => ReactNode;
+  /** QM-14：questionId → 首成员组段（组头+材料锚点）；缺省空映射零变化 */
+  anchors?: ReadonlyMap<string, GroupContextSegment>;
+  /** 冻结上下文加载失败（非阻断：材料列缺失不阻塞作答） */
+  contextError?: string | null;
+  contextRetry?: () => void;
+  contextFetching?: boolean;
 }) {
   const isDesktop = useDesktopViewport();
   const [outlineOpen, setOutlineOpen] = useState(true);
@@ -324,6 +390,25 @@ function LessonBody({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {/* 冻结上下文加载失败（QM-14）：非阻断提示 + 重试（题面不依赖本载荷） */}
+        {contextError !== null && contextError !== undefined && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-4"
+          >
+            <p className="min-w-0 text-sm">{contextError}</p>
+            {contextRetry !== undefined && (
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={contextFetching ?? false}
+                onClick={contextRetry}
+              >
+                重试加载共享材料
+              </Button>
+            )}
+          </div>
+        )}
         {/* blocks：md 段与题卡按讲义顺序交替 */}
         {data.blocks.map((block, blockIndex) => {
           if (block.type === "md") {
@@ -339,8 +424,19 @@ function LessonBody({
             );
           }
           const slot = order.byId.get(block.questionId);
+          const anchor =
+            slot === undefined ? undefined : anchors?.get(slot.question.id);
           return slot !== undefined ? (
-            renderCard(slot.question, slot.index, slot.orphan)
+            <Fragment key={`slot-${block.questionId}`}>
+              {/* QM-14：首个组员题卡之前的组头+共享材料（单列流式呈现） */}
+              {anchor !== undefined && (
+                <LessonGroupBlock
+                  group={anchor.group}
+                  materials={anchor.materials}
+                />
+              )}
+              {renderCard(slot.question, slot.index, slot.orphan)}
+            </Fragment>
           ) : (
             // 题槽未冻结（重导新增的题）：本次练习按开卷内容进行，占位说明
             <p
@@ -368,9 +464,21 @@ function LessonBody({
               老师更新了这份讲练页，这些题不在当前讲义里，但仍在你的本次练习中——照常作答即可。
             </p>
             <div className="flex flex-col gap-4">
-              {orphans.map(({ question, index }) =>
-                renderCard(question, index, true),
-              )}
+              {orphans.map(({ question, index }) => {
+                const anchor = anchors?.get(question.id);
+                return (
+                  <Fragment key={`orphan-${question.id}`}>
+                    {/* QM-14：全孤儿组的组头+材料也随孤儿分组渲染（不丢共享材料） */}
+                    {anchor !== undefined && (
+                      <LessonGroupBlock
+                        group={anchor.group}
+                        materials={anchor.materials}
+                      />
+                    )}
+                    {renderCard(question, index, true)}
+                  </Fragment>
+                );
+              })}
             </div>
           </section>
         )}
@@ -503,6 +611,9 @@ function LessonAnswerInner({
   );
   const [retryingSave, setRetryingSave] = useState(false);
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
+  // QM-14：组段呈现（作答态与完成回看同一组锚点；context 失败非阻断）
+  const { anchors, contextError, contextRetry, contextFetching } =
+    useLessonGroupAnchors(attemptId, order);
   const questionIds = useMemo(
     () => data.questions.map((question) => question.id),
     [data.questions],
@@ -654,7 +765,15 @@ function LessonAnswerInner({
         )}
 
         {aiCompanion.rail(
-          <LessonBody data={data} order={order} renderCard={renderCard} />,
+          <LessonBody
+            data={data}
+            order={order}
+            renderCard={renderCard}
+            anchors={anchors}
+            contextError={contextError}
+            contextRetry={contextRetry}
+            contextFetching={contextFetching}
+          />,
         )}
       </article>
     </EnabledCapabilitiesProvider>
@@ -676,6 +795,9 @@ function LessonCompletedView({
   const summary = data.summary;
   const attemptId = data.attempt.id;
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
+  // QM-14：完成回看同样呈现组段（材料随冻结上下文可见，回看不依赖当前讲义）
+  const { anchors, contextError, contextRetry, contextFetching } =
+    useLessonGroupAnchors(attemptId, order);
   const capabilities = useMemo(
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
@@ -780,7 +902,15 @@ function LessonCompletedView({
         />
 
         {aiCompanion.rail(
-          <LessonBody data={data} order={order} renderCard={renderCard} />,
+          <LessonBody
+            data={data}
+            order={order}
+            renderCard={renderCard}
+            anchors={anchors}
+            contextError={contextError}
+            contextRetry={contextRetry}
+            contextFetching={contextFetching}
+          />,
         )}
 
         {/* 再做一次确认：显式动作（新卷从空白开始，之前作答保留可回看） */}

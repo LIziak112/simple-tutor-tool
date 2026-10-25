@@ -944,7 +944,10 @@ it-1
   });
 
   it("引用校验在 lesson 语境同样生效：未知材料 → UNKNOWN_MATERIAL_REF（error）", () => {
-    const md = QM_LESSON_MD.replace("::ref{material=mat-1}", "::ref{material=mat-9}");
+    const md = QM_LESSON_MD.replace(
+      "::ref{material=mat-1}",
+      "::ref{material=mat-9}",
+    );
     const result = parseDocument(md);
     const codesOfErrors = result.issues
       .filter((i) => i.level === "error")

@@ -244,9 +244,7 @@ ${MATERIAL_LESSON_MD}
     const questionIds = blocks.flatMap((block) =>
       block.type === "question" ? [block.questionId] : [],
     );
-    expect(questionIds).toEqual(
-      parsed.units[0]?.questions.map((q) => q.id),
-    );
+    expect(questionIds).toEqual(parsed.units[0]?.questions.map((q) => q.id));
     for (const block of blocks) {
       if (block.type === "md") {
         expect(block.md).not.toContain("::::material");
