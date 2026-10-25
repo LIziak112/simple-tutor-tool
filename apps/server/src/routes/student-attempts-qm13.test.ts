@@ -19,7 +19,7 @@ import { fetchSubmitRevisions } from "../test/submit-revisions";
  * 展开槽位集合 + 排序项）、保存结构校验（合法结构放行/非法结构 400，不比较
  * 参考答案）、未填写与未判定的口径分离。夹具：材料 5 槽位 + matching 题
  * （7 选项 2 干扰、slots= 区间声明）+ ordering 题（固定项 it-3 锚定位 3、
- * 干扰项 it-6）。
+ * 干扰项 it-6）；另二十空翻序夹具（qm20Md，验证单部分符项转正）。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -154,9 +154,118 @@ const Q = {
   ordering: "px-1",
 } as const;
 
+// ---------- 二十空翻序夹具（验证单部分符项转正：重排不串答） ----------
+
+/**
+ * 材料文档序与槽位 id 数值序互不一致（s-13 居首、s-7 次之……s-15 居末）——
+ * 文档位置即真相，任何按 id 字典/数值序或题内列举序的假设都会错位。
+ */
+const DOC_SLOTS: readonly string[] = [
+  "s-13",
+  "s-7",
+  "s-1",
+  "s-20",
+  "s-9",
+  "s-4",
+  "s-16",
+  "s-8",
+  "s-11",
+  "s-2",
+  "s-18",
+  "s-5",
+  "s-14",
+  "s-10",
+  "s-3",
+  "s-19",
+  "s-6",
+  "s-12",
+  "s-17",
+  "s-15",
+];
+
+/** 槽位的材料文档位（1 起） */
+function docOrdinalOf(slotId: string): number {
+  return DOC_SLOTS.indexOf(slotId) + 1;
+}
+
+/** mt-1 翻序声明 s-13,s-7..s-9 的展开：显式单点 s-13（文档第 1 位）+ 区间
+ * s-7..s-9（文档第 2..5 位，按文档序带出未点名的 s-1/s-20） */
+const MATCHING_SLOTS = ["s-13", "s-7", "s-1", "s-20", "s-9"] as const;
+
+/** 其余 15 空由 choice 子题逐空绑定（文档第 6..20 位） */
+const CHOICE_SLOTS = DOC_SLOTS.slice(5);
+
+/** 生成二十空翻序练习文档：材料槽位文档序 ≠ 槽位 id 数值序，choice 子题
+ * 列举序（绑定材料第 6..20 位）与空位文档序整体错位（第 1 道子题绑定材料
+ * 第 6 位空——「第 n 道子题 ↔ 第 n 空」的位置假设在此必错位） */
+function qm20Md(): string {
+  const materialLine = [...DOC_SLOTS]
+    .map((id, index) => `句${index + 1} {{${id}}}`)
+    .join("；");
+  const groupRefs = CHOICE_SLOTS.map((id) => `::ref{question=cz-${id}}`).join(
+    "\n",
+  );
+  const choiceQuestions = CHOICE_SLOTS.map((id) => {
+    const ordinal = docOrdinalOf(id);
+    // 正确项下标按文档位 mod 4 轮转——整体倒序映射（p ↔ 21−p）恒改变
+    // p mod 4（2p ≡ 1 (mod 4) 无解），系统性错位必然被逐题断言捕获
+    const correct = ordinal % 4;
+    const options = ["甲", "乙", "丙", "丁"].map((text, index) =>
+      index === correct ? `- [x] ${text}` : `- [ ] ${text}`,
+    );
+    return [
+      `::::question{id=cz-${id} type=choice difficulty=1}`,
+      `材料第 ${ordinal} 空。::ref{material=mat-20 slot=${id}}`,
+      "",
+      ...options,
+      `::::`,
+    ].join("\n");
+  });
+  const matchingOptions = [...MATCHING_SLOTS]
+    .map(
+      (_id, index) => `:::option{id=mx-${index + 1}}\n选项${index + 1}。\n:::`,
+    )
+    .join("\n");
+  const matchingAnswer = [...MATCHING_SLOTS]
+    .map((id, index) => `${id} = mx-${index + 1}`)
+    .join("\n");
+  return [
+    "---",
+    "kind: practice",
+    "unit: 二十空翻序",
+    "---",
+    "",
+    `::::material{id=mat-20 title="翻序材料"}`,
+    materialLine,
+    "::::",
+    "",
+    `::::group{id=grp-20 title="阅读材料，按内容作答。" label="1–16"}`,
+    "::ref{material=mat-20}",
+    groupRefs,
+    "::ref{question=mt-1}",
+    "::::",
+    "",
+    choiceQuestions.join("\n\n"),
+    "",
+    `:::::question{id=mt-1 type=matching difficulty=3 knowledge="七选五翻序"}`,
+    "为材料的部分空白处选择内容（翻序声明：显式单点 + 区间）。",
+    "",
+    "::ref{material=mat-20 slots=s-13,s-7..s-9}",
+    "",
+    "::::options",
+    matchingOptions,
+    "::::",
+    "",
+    ":::answer",
+    matchingAnswer,
+    ":::",
+    ":::::",
+  ].join("\n");
+}
+
 type App = ReturnType<typeof createApp>;
 
-async function makeQm13App(): Promise<{
+async function makeQm13App(markdown: string = QM13_MD): Promise<{
   app: App;
   db: Db;
   teacherCookie: string;
@@ -187,7 +296,7 @@ async function makeQm13App(): Promise<{
     const importRes = await app.request("/api/teacher/import/commit", {
       method: "POST",
       headers: { "content-type": "application/json", cookie: teacherCookie },
-      body: JSON.stringify({ markdown: QM13_MD, filename: "配对排序.md" }),
+      body: JSON.stringify({ markdown, filename: "配对排序.md" }),
     });
     if (importRes.status !== 200) {
       throw new Error(
@@ -698,5 +807,97 @@ describe("QM-13 细项6：提交后「未填写」与「未判断」不混为一
     expect(ordering?.snapshot.sortableCount).toBe(4);
     expect(matching?.snapshot.matchingOptions?.options).toHaveLength(7);
     expect(JSON.stringify(detail)).not.toContain("distractor");
+  });
+});
+
+describe("二十空重排不串答（验证单部分符项转正：材料文档序≠id 序/翻序声明/列举错位）", () => {
+  it("翻序声明 s-13,s-7..s-9 按材料文档序展开：区间带出未点名槽位、ordinal 沿用材料文档位", async () => {
+    const { app, aCookie, attemptId } = await makeQm13App(qm20Md());
+    const draft = await getDraft(app, aCookie, attemptId);
+    const matching = draftQuestionOf(draft, "mt-1");
+    // 显式单点在前、区间按文档序展开在后；区间端点是文档位锚（第 2..5 位），
+    // 展开带出未在声明中点名的 s-1/s-20——序号是材料文档位而非题内行号
+    expect(matching.matchingSlots).toEqual([
+      { id: "s-13", ordinal: 1 },
+      { id: "s-7", ordinal: 2 },
+      { id: "s-1", ordinal: 3 },
+      { id: "s-20", ordinal: 4 },
+      { id: "s-9", ordinal: 5 },
+    ]);
+  });
+
+  it("列举错位的 15 道逐空子题（第 1 道绑定材料第 6 位空）：答案按题 id 存取，保存→交卷→结果逐题不串位", async () => {
+    const { app, aCookie, attemptId } = await makeQm13App(qm20Md());
+    // 草稿视图应含全部 16 题（15 choice + 1 matching），槽位按 id 显式绑定
+    const draft = await getDraft(app, aCookie, attemptId);
+    const ids = new Set(
+      draft.units.flatMap((unit) => unit.questions).map((q) => q.id),
+    );
+    expect(ids.size).toBe(16);
+    for (const slotId of CHOICE_SLOTS)
+      expect(ids.has(`cz-${slotId}`)).toBe(true);
+    // 逐题保存：答案下标取该题绑定槽位的文档位 mod 4（题间取值分布交错，
+    // 系统性错位必被捕获——见 qm20Md 内注释）
+    for (const slotId of CHOICE_SLOTS) {
+      expect(
+        (
+          await putAnswer(app, aCookie, attemptId, `cz-${slotId}`, {
+            kind: "choice",
+            index: docOrdinalOf(slotId) % 4,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    // matching 部分配对（翻序展开集内的两端点）也是合法草稿
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, "mt-1", {
+          kind: "matching",
+          pairs: { "s-13": "mx-1", "s-9": "mx-5" },
+        })
+      ).status,
+    ).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    const submitRes = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({ revisions, now: "2026-10-25T10:00:00Z" }),
+      },
+    );
+    expect(submitRes.status).toBe(200);
+    const detailRes = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    expect(detailRes.status).toBe(200);
+    const detail = ((await detailRes.json()) as { data: AttemptResultData })
+      .data;
+    const byId = new Map(
+      detail.units
+        .flatMap((unit) => unit.questions)
+        .map((question) => [question.questionId, question]),
+    );
+    // 结果视图逐题回读：每题答案仍挂在本题 id 下（不因列举序与空位文档序
+    // 错位、材料文档序≠id 序而串位）
+    for (const slotId of CHOICE_SLOTS) {
+      expect(byId.get(`cz-${slotId}`)?.answer).toEqual({
+        kind: "choice",
+        index: docOrdinalOf(slotId) % 4,
+      });
+    }
+    const matching = byId.get("mt-1");
+    expect(matching?.answer).toEqual({
+      kind: "matching",
+      pairs: { "s-13": "mx-1", "s-9": "mx-5" },
+    });
+    // 结果快照同口径：翻序展开集附材料文档位（对照呈现的「第 N 空」对齐）
+    expect(matching?.snapshot.matchingSlots).toEqual([
+      { id: "s-13", ordinal: 1 },
+      { id: "s-7", ordinal: 2 },
+      { id: "s-1", ordinal: 3 },
+      { id: "s-20", ordinal: 4 },
+      { id: "s-9", ordinal: 5 },
+    ]);
   });
 });
