@@ -4,6 +4,7 @@ import {
   assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
   matchingOptionsStudentSchema,
+  matchingSlotSchema,
   orderingItemStudentSchema,
   questionAnswersSchema,
   questionPublicSchema,
@@ -451,7 +452,7 @@ export const attemptResultQuestionSchema = z.object({
      * 属公开结构（§6.1 调整 3）保留。
      */
     matchingOptions: matchingOptionsStudentSchema.optional(),
-    matchingSlots: z.array(z.string().min(1)).min(1).optional(),
+    matchingSlots: z.array(matchingSlotSchema).min(1).optional(),
     orderingItems: z.array(orderingItemStudentSchema).optional(),
     sortableCount: z.number().int().min(0).optional(),
   }),

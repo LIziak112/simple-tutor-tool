@@ -148,13 +148,18 @@ export type PreparedQuestion =
        * matching 公开结构（QM-13 细项 2）：选项池（key/text——2026-10-25 审查
        * P1 收紧起学生面不含 distractor 标记，池内一律可选，选错是答案错误）+
        * 服务端展开的有序槽位集合 + 是否允许重复。结构不可用（投影防御形态）
-       * = 空池空槽，视图显式报错不静默降级。
+       * = 空池空槽，视图显式报错不静默降级。槽位行附材料槽位序 ordinal
+       * （2026-10-25 审查 P2-2）：子集选择沿用材料编号，「第 N 空」标签与
+       * 材料面板编号空位（N）对齐，不用题内重排的 1/2/3。
        */
       readonly options: readonly {
         readonly key: string;
         readonly text: string;
       }[];
-      readonly slotIds: readonly string[];
+      readonly slots: readonly {
+        readonly id: string;
+        readonly ordinal: number;
+      }[];
       readonly allowRepeat: boolean;
       readonly context?: PreparedQuestionContext;
     }
@@ -282,7 +287,7 @@ export function prepareQuestion(
     case "matching":
       // QM-13 细项 2：选项池 + 服务端展开的槽位集合；结构缺失走空结构防御
       // 形态（视图显式报错，§7.1）。审查 P1 收紧：学生面选项池不含 distractor
-      // 标记（呈现零消费），池键 = 选项稳定 id
+      // 标记（呈现零消费），池键 = 选项稳定 id；审查 P2-2：槽位行附材料槽位序
       return withContext(
         question.matchingOptions !== undefined &&
           question.matchingSlots !== undefined
@@ -295,14 +300,17 @@ export function prepareQuestion(
                 key: option.id,
                 text: option.text,
               })),
-              slotIds: [...question.matchingSlots],
+              slots: question.matchingSlots.map(({ id, ordinal }) => ({
+                id,
+                ordinal,
+              })),
             }
           : {
               kind: "matching",
               scopeId,
               stemMd: question.stemMd,
               options: [],
-              slotIds: [],
+              slots: [],
               allowRepeat: false,
             },
         context,

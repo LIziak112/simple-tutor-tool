@@ -18,11 +18,14 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
  *   不静默降级（§7.1）；
  * - ReadOnly/Reference/Comparison：按槽位序逐行「第 N 空：选项正文」，
  *   对照两栏共用 AnswerComparisonShell；呈现层只显示不计算判定。
+ * - 槽位标签用材料槽位序 ordinal（2026-10-25 审查 P2-2）：子集选择
+ *   （slots=slot-3..slot-5）显示第 3/4/5 空，与材料面板编号空位（N）对齐，
+ *   不用题内重排的 1/2/3。
  */
 
-/** 槽位显示序号：slotIds 下标 + 1（服务端按材料阅读序展开） */
-function slotLabelOf(index: number): string {
-  return `第 ${index + 1} 空`;
+/** 槽位显示序号：材料槽位序 ordinal（服务端投影附送，材料文档位置 1 起） */
+function slotLabelOf(ordinal: number): string {
+  return `第 ${ordinal} 空`;
 }
 
 /** 槽位行文本（选项池缺该 id 回落裸 id——与契约 formatStudent 同口径） */
@@ -40,14 +43,14 @@ function referenceRowsOf(
   model: PreparedOf<"matching">,
   pairs: Readonly<Record<string, string>>,
 ): Array<{ slot: string; text: string }> {
-  const known = model.slotIds
-    .filter((slot) => pairs[slot] !== undefined)
-    .map((slot, index) => ({
-      slot: slotLabelOf(index),
-      text: slotRowTextOf(model, pairs[slot]),
+  const known = model.slots
+    .filter((slot) => pairs[slot.id] !== undefined)
+    .map((slot) => ({
+      slot: slotLabelOf(slot.ordinal),
+      text: slotRowTextOf(model, pairs[slot.id]),
     }));
   const unknown = Object.keys(pairs)
-    .filter((slot) => !model.slotIds.includes(slot))
+    .filter((id) => !model.slots.some((slot) => slot.id === id))
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .map((slot) => ({ slot, text: slotRowTextOf(model, pairs[slot]) }));
   return [...known, ...unknown];
@@ -61,7 +64,7 @@ export const matchingView: AnswerKindView<
   Input: ({ model, answer, update, disabled = false }) => {
     const pairs = answer?.pairs ?? {};
     // 结构不可用防御态：显式报错不静默降级（§7.1）
-    if (model.slotIds.length === 0 || model.options.length === 0) {
+    if (model.slots.length === 0 || model.options.length === 0) {
       return (
         <div className="flex min-w-0 flex-col gap-3">
           <RichMarkdown
@@ -88,28 +91,28 @@ export const matchingView: AnswerKindView<
           className="text-base leading-[1.75]"
         />
         <div className="flex min-w-0 flex-col gap-2">
-          {model.slotIds.map((slot, index) => {
-            const selectId = `matching-${model.scopeId}-${slot}`;
+          {model.slots.map((slot) => {
+            const selectId = `matching-${model.scopeId}-${slot.id}`;
             return (
               <div
-                key={slot}
+                key={slot.id}
                 className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3"
               >
                 <label
                   htmlFor={selectId}
                   className="shrink-0 text-sm font-medium sm:w-16"
                 >
-                  {slotLabelOf(index)}
+                  {slotLabelOf(slot.ordinal)}
                 </label>
                 <select
                   id={selectId}
-                  aria-label={`${slotLabelOf(index)}的选项`}
-                  value={pairs[slot] ?? ""}
+                  aria-label={`${slotLabelOf(slot.ordinal)}的选项`}
+                  value={pairs[slot.id] ?? ""}
                   disabled={disabled}
                   onChange={(event) => {
                     const next = { ...pairs };
-                    if (event.target.value === "") delete next[slot];
-                    else next[slot] = event.target.value;
+                    if (event.target.value === "") delete next[slot.id];
+                    else next[slot.id] = event.target.value;
                     update({ kind: "matching", pairs: next }, undefined);
                   }}
                   className="min-h-11 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -119,7 +122,7 @@ export const matchingView: AnswerKindView<
                     <option
                       key={option.key}
                       value={option.key}
-                      disabled={usedElsewhere(option.key, slot)}
+                      disabled={usedElsewhere(option.key, slot.id)}
                     >
                       {option.text}
                     </option>
@@ -129,7 +132,7 @@ export const matchingView: AnswerKindView<
             );
           })}
         </div>
-        {!model.allowRepeat && model.slotIds.length > 1 && (
+        {!model.allowRepeat && model.slots.length > 1 && (
           <p className="text-sm text-muted-foreground">
             每个选项只能用于一个空位。
           </p>
@@ -147,13 +150,13 @@ export const matchingView: AnswerKindView<
     }
     return (
       <ul className="m-0 flex min-w-0 list-none flex-col gap-1 p-0">
-        {model.slotIds.map((slot, index) => (
-          <li key={slot} className="min-w-0">
+        {model.slots.map((slot) => (
+          <li key={slot.id} className="min-w-0">
             <span className="text-muted-foreground">
-              {slotLabelOf(index)}：
+              {slotLabelOf(slot.ordinal)}：
             </span>
             <span className="font-medium">
-              {slotRowTextOf(model, answer.pairs[slot])}
+              {slotRowTextOf(model, answer.pairs[slot.id])}
             </span>
           </li>
         ))}
@@ -181,7 +184,7 @@ export const matchingView: AnswerKindView<
   completion: (model, answer) => {
     // 分项未填=合法草稿：完成度按已配对槽数/声明槽数计，不判对错
     const filled = answer ? Object.keys(answer.pairs).length : 0;
-    const expected = model.slotIds.length;
+    const expected = model.slots.length;
     return {
       state:
         filled === 0 || expected === 0

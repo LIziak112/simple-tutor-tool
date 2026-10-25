@@ -71,7 +71,11 @@ const matchingQuestion: Pick<
         { id: "opt-2", text: "日本" },
       ],
     },
-    matchingSlots: ["北京", "东京"],
+    // 审查 P2-2：槽位行附材料序 ordinal（对照标签「第 N 空」用材料序）
+    matchingSlots: [
+      { id: "北京", ordinal: 1 },
+      { id: "东京", ordinal: 2 },
+    ],
   },
   answer: { kind: "matching", pairs: { 北京: "opt-1" } },
   answers: {

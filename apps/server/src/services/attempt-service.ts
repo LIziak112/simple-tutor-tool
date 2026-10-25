@@ -26,6 +26,7 @@ import {
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
   type MatchingOptionsStudent,
+  type MatchingSlot,
   matchingPublicStructureOf,
   materialPublicSchema,
   materialRefSchema,
@@ -842,7 +843,10 @@ function orderingStudentOf(items: NonNullable<Question["orderingItems"]>): {
 }
 
 /**
- * matching 槽位集合投影：题级 ::ref{slots=} 按材料槽位序展开（QM-13 细项 2）。
+ * matching 槽位集合投影：题级 ::ref{slots=} 按材料槽位序展开（QM-13 细项 2），
+ * 2026-10-25 审查 P2-2 起行附材料槽位序 ordinal（材料文档位置 1 起）——子集
+ * 选择（slots=slot-3..slot-5）沿用材料编号 3/4/5，题内「第 N 空」标签与材料
+ * 面板编号空位（N）对齐，不用题内重排的 1/2/3。
  * 门控走数据驱动（materialRefs[].slots 存在性）而非题型字面量分支（I16）：
  * lint 第二遍已保证 slots= 只出现在 matching 题（references.ts 收口），其他
  * 题型的 materialRefs 无 slots 键、展开恒为空。
@@ -850,20 +854,24 @@ function orderingStudentOf(items: NonNullable<Question["orderingItems"]>): {
 function matchingSlotsProjection(
   question: Pick<Question, "materialRefs">,
   materialSlots: ReadonlyMap<string, readonly string[]> | undefined,
-): { matchingSlots?: string[] } {
+): { matchingSlots?: MatchingSlot[] } {
   if (question.materialRefs === undefined || materialSlots === undefined) {
     return {};
   }
-  const ids: string[] = [];
+  const rows: MatchingSlot[] = [];
   for (const ref of question.materialRefs) {
     if (ref.slots === undefined) continue;
     const order = materialSlots.get(ref.material);
     if (order === undefined) continue;
     for (const id of expandSelectionIds(ref.slots, order)) {
-      if (!ids.includes(id)) ids.push(id);
+      if (rows.some((row) => row.id === id)) continue;
+      // 展开产物必属材料槽位序（lint SLOT_UNBOUND 收口）；显式单点的未知 id
+      // 属防御形态，无材料位置可言，回落题内行序保证 ordinal 恒正
+      const at = order.indexOf(id);
+      rows.push({ id, ordinal: at >= 0 ? at + 1 : rows.length + 1 });
     }
   }
-  return ids.length > 0 ? { matchingSlots: ids } : {};
+  return rows.length > 0 ? { matchingSlots: rows } : {};
 }
 
 /**
@@ -914,7 +922,10 @@ function structuresOfSnapshot(
     structure.matchingOptions !== undefined
       ? matchingPublicStructureOf(
           structure.matchingOptions,
-          matchingSlotsProjection(structure, materialSlots).matchingSlots ?? [],
+          // 结构校验只认槽位 id 集合（P2-2 的 ordinal 是呈现用材料序，校验零消费）
+          matchingSlotsProjection(structure, materialSlots).matchingSlots?.map(
+            (row) => row.id,
+          ) ?? [],
         )
       : emptyPublicStructure.matching;
   const ordering =

@@ -19,7 +19,10 @@ const baseModel: PreparedOf<"matching"> = {
     { key: "opt-2", text: "选项乙" },
     { key: "opt-8", text: "干扰项" },
   ],
-  slotIds: ["slot-1", "slot-2"],
+  slots: [
+    { id: "slot-1", ordinal: 1 },
+    { id: "slot-2", ordinal: 2 },
+  ],
   allowRepeat: false,
 };
 
@@ -92,12 +95,38 @@ describe("matching Input", () => {
     unmount();
     render(
       matchingView.Input({
-        model: modelOf({ ...baseModel, slotIds: [] }),
+        model: modelOf({ ...baseModel, slots: [] }),
         answer: undefined,
         update: () => {},
       }),
     );
     expect(screen.getByRole("alert").textContent).toContain("不完整");
+  });
+
+  it("审查 P2-2：子集选择（材料第 3–5 空）标签沿用材料序，不按题内重排 1/2/3", () => {
+    const subset: PreparedOf<"matching"> = {
+      ...baseModel,
+      slots: [
+        { id: "slot-3", ordinal: 3 },
+        { id: "slot-4", ordinal: 4 },
+        { id: "slot-5", ordinal: 5 },
+      ],
+    };
+    const update = vi.fn();
+    render(matchingView.Input({ model: subset, answer: undefined, update }));
+    // 标签是材料面板编号空位（N）的第 3/4/5 空，不是题内 1/2/3
+    expect(screen.getByLabelText("第 3 空的选项")).toBeInTheDocument();
+    expect(screen.getByLabelText("第 4 空的选项")).toBeInTheDocument();
+    expect(screen.getByLabelText("第 5 空的选项")).toBeInTheDocument();
+    expect(screen.queryByLabelText("第 1 空的选项")).not.toBeInTheDocument();
+    // 作答键仍是槽位 id（答案不因标签口径变化）
+    fireEvent.change(screen.getByLabelText("第 4 空的选项"), {
+      target: { value: "opt-2" },
+    });
+    expect(update).toHaveBeenCalledWith(
+      { kind: "matching", pairs: { "slot-4": "opt-2" } },
+      undefined,
+    );
   });
 });
 

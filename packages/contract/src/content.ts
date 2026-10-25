@@ -219,12 +219,25 @@ export const orderingItemStudentSchema = z.object({
   fixedPosition: z.number().int().min(1).nullable().default(null),
 });
 
+/**
+ * matching 槽位行（2026-10-25 TT-10a 审查 P2-2）：id 为题内 ::ref{slots=…}
+ * 声明、按材料槽位序服务端展开后的 slotId；ordinal 为该槽在所属材料中的
+ * 1 起序号——子集选择（slots=slot-3..slot-5）沿用材料编号 3/4/5，题内
+ * 「第 N 空」标签与材料面板编号空位（N）对齐，不用题内重排的 1/2/3。
+ */
+export const matchingSlotSchema = z.object({
+  id: z.string().min(1),
+  ordinal: z.number().int().min(1),
+});
+
 /** matching 学生面选项池（教师全量 matchingOptionsSchema 的剥离变体） */
 export type MatchingOptionsStudent = z.infer<
   typeof matchingOptionsStudentSchema
 >;
 /** ordering 学生面排序项（教师全量 orderingItemSchema 的剥离变体） */
 export type OrderingItemStudent = z.infer<typeof orderingItemStudentSchema>;
+/** matching 槽位行（id + 材料槽位序 ordinal，审查 P2-2） */
+export type MatchingSlot = z.infer<typeof matchingSlotSchema>;
 
 /**
  * 各题型答案形态（存入 §5.2 questions.answersJson）：
@@ -370,12 +383,15 @@ export const questionPublicSchema = z.object({
   sortableCount: z.number().int().min(0).optional(),
   /**
    * matching 槽位集合（QM-13 细项 2）：题内 ::ref{slots=…} 声明的槽位按
-   * 材料槽位序**服务端展开**后的有序 slotId 列表（区间的展开依赖材料文档
+   * 材料槽位序**服务端展开**后的有序槽位行（区间的展开依赖材料文档
    * 顺序，学生端不重复解析 DSL 选择串）。仅 matching 题携带；展开失败
    * （材料快照缺失等防御形态）不注入键。与 matchingOptions 分开下发——
    * 选项池是题面抽取副本，槽位集合是题级引用的展开产物，两者来源独立。
+   * 2026-10-25 审查 P2-2 起行附材料槽位序 ordinal（1 起）：子集选择
+   * （slots=slot-3..slot-5）沿用材料编号 3/4/5，题内「第 N 空」标签与
+   * 材料面板编号空位（N）对齐，不用题内重排的 1/2/3。
    */
-  matchingSlots: z.array(z.string().min(1)).min(1).optional(),
+  matchingSlots: z.array(matchingSlotSchema).min(1).optional(),
   wordMin: z.number().int().min(1).optional(),
   wordMax: z.number().int().min(1).optional(),
 });

@@ -289,7 +289,10 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
             { id: "opt-2", text: "乙" },
           ],
         },
-        matchingSlots: ["slot-1", "slot-2"],
+        matchingSlots: [
+          { id: "slot-1", ordinal: 1 },
+          { id: "slot-2", ordinal: 2 },
+        ],
       },
       "s-m",
     );
@@ -301,7 +304,10 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
         { key: "opt-1", text: "甲" },
         { key: "opt-2", text: "乙" },
       ],
-      slotIds: ["slot-1", "slot-2"],
+      slots: [
+        { id: "slot-1", ordinal: 1 },
+        { id: "slot-2", ordinal: 2 },
+      ],
       allowRepeat: false,
     });
     const ordering = prepareQuestion(
@@ -334,7 +340,7 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
       scopeId: "s-m2",
       stemMd: baseQuestion.stemMd,
       options: [],
-      slotIds: [],
+      slots: [],
       allowRepeat: false,
     });
     expect(
@@ -391,9 +397,9 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
             allowRepeat: false,
             options: [{ id: "opt-1", text: "甲" }],
           },
-          matchingSlots: ["slot-1"],
+          matchingSlots: [{ id: "slot-1", ordinal: 1 }],
         },
-        ["kind", "scopeId", "stemMd", "options", "slotIds", "allowRepeat"],
+        ["kind", "scopeId", "stemMd", "options", "slots", "allowRepeat"],
       ],
       [
         {

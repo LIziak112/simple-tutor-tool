@@ -83,6 +83,30 @@ slot-5 = opt-6
 :::
 :::::
 
+:::::question{id=pd-2 type=matching difficulty=3 knowledge="七选五子集"}
+子集配对：只为材料的第 3 到第 5 空选择（审查 P2-2 槽位标签对齐材料序）。
+
+::ref{material=mat-1 slots=slot-3..slot-5}
+
+::::options
+:::option{id=ox-1}
+子集选项一：经济学误解的对策。
+:::
+:::option{id=ox-2}
+子集选项二：文化态度的转变。
+:::
+:::option{id=ox-3}
+子集选项三：具体的行动建议。
+:::
+::::
+
+:::answer
+slot-3 = ox-1
+slot-4 = ox-2
+slot-5 = ox-3
+:::
+:::::
+
 ::::question{id=px-1 type=ordering difficulty=3 knowledge="语句排序"}
 将下列段落排成一段语意连贯的文字，其中一段位置已固定（已标注），另有一段不属于本段文字，请勿选用。
 
@@ -126,6 +150,7 @@ it-5
 /** 夹具题目 id */
 const Q = {
   matching: "pd-1",
+  matchingSubset: "pd-2",
   ordering: "px-1",
 } as const;
 
@@ -309,11 +334,11 @@ describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽
     expect(question.matchingOptions?.allowRepeat).toBe(false);
     expect(question.matchingOptions?.options).toHaveLength(7);
     expect(question.matchingSlots).toEqual([
-      "slot-1",
-      "slot-2",
-      "slot-3",
-      "slot-4",
-      "slot-5",
+      { id: "slot-1", ordinal: 1 },
+      { id: "slot-2", ordinal: 2 },
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
     ]);
   });
 
@@ -344,6 +369,28 @@ describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽
     expect(ordering.sortableCount).toBe(4);
     // 整载荷无 distractor 键名（干扰项身份属答案侧信息，AGENTS 第 3 条口径）
     expect(JSON.stringify(draft)).not.toContain("distractor");
+  });
+
+  it("审查 P2-2：matchingSlots 附材料槽位序——子集选择（slot-3..slot-5）的序号沿用材料编号", async () => {
+    const { app, aCookie, attemptId } = await makeQm13App();
+    const draft = await getDraft(app, aCookie, attemptId);
+    const subset = draftQuestionOf(draft, Q.matchingSubset);
+    // 子集题只选 3 空，但序号是材料槽位序（3/4/5），不是题内 1/2/3——
+    // 题内标签与材料面板编号空位（N）对齐
+    expect(subset.matchingSlots).toEqual([
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
+    ]);
+    // 全量选择（pd-1）序号即材料顺序 1..5
+    const full = draftQuestionOf(draft, Q.matching);
+    expect(full.matchingSlots).toEqual([
+      { id: "slot-1", ordinal: 1 },
+      { id: "slot-2", ordinal: 2 },
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
+    ]);
   });
 
   it("投影零泄露：草稿视图不携带 answers/solution/hints（assertNoLeak + 详解哨兵）", async () => {
@@ -390,11 +437,11 @@ describe("审查 P2-1：旧冻结快照的 sourceMd 兜底重抽", () => {
     const matching = draftQuestionOf(draft, Q.matching);
     expect(matching.matchingOptions?.options).toHaveLength(7);
     expect(matching.matchingSlots).toEqual([
-      "slot-1",
-      "slot-2",
-      "slot-3",
-      "slot-4",
-      "slot-5",
+      { id: "slot-1", ordinal: 1 },
+      { id: "slot-2", ordinal: 2 },
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
     ]);
     const ordering = draftQuestionOf(draft, Q.ordering);
     expect(ordering.orderingItems).toHaveLength(6);
@@ -458,11 +505,11 @@ describe("审查 P2-1：旧冻结快照的 sourceMd 兜底重抽", () => {
       .find((question) => question.questionId === Q.matching);
     expect(matching?.snapshot.matchingOptions?.options).toHaveLength(7);
     expect(matching?.snapshot.matchingSlots).toEqual([
-      "slot-1",
-      "slot-2",
-      "slot-3",
-      "slot-4",
-      "slot-5",
+      { id: "slot-1", ordinal: 1 },
+      { id: "slot-2", ordinal: 2 },
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
     ]);
     expect(JSON.stringify(detail)).not.toContain("distractor");
   });

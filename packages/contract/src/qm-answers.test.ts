@@ -336,19 +336,42 @@ describe("questionPublicSchema 白名单扩展（作答面结构随题下发，f
     expect(parsed.wordMin).toBe(10);
   });
 
-  it("matching 槽位集合（服务端按材料槽位序展开的有序 slotId）随题下发；缺省不注入键", () => {
+  it("matching 槽位集合（服务端按材料槽位序展开 + 槽位行附材料序号）随题下发；缺省不注入键", () => {
     // QM-13 细项 2：matching 作答行 = 声明槽位集合；slots= 区间的展开在
-    // 服务端投影时完成，学生端只消费有序 id 列表（不重复解析 DSL 选择串）
+    // 服务端投影时完成，学生端只消费展开产物（不重复解析 DSL 选择串）。
+    // 2026-10-25 审查 P2-2：行附材料槽位序 ordinal——子集选择
+    // （slots=slot-3..slot-5）沿用材料编号 3/4/5，题内标签与材料面板
+    // 编号空位（N）对齐，不用题内重排的 1/2/3
     const parsed = questionPublicSchema.parse({
       ...base,
-      matchingSlots: ["slot-1", "slot-2", "slot-3"],
+      matchingSlots: [
+        { id: "slot-3", ordinal: 3 },
+        { id: "slot-4", ordinal: 4 },
+        { id: "slot-5", ordinal: 5 },
+      ],
     });
-    expect(parsed.matchingSlots).toEqual(["slot-1", "slot-2", "slot-3"]);
-    // 空 id / 空数组拒绝（防御性边界：展开产物必非空）
+    expect(parsed.matchingSlots).toEqual([
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
+    ]);
+    // 空 id / 缺序号 / 序号非正整数 / 空数组拒绝（防御性边界：展开产物必非空）
     expect(
       questionPublicSchema.safeParse({
         ...base,
-        matchingSlots: ["slot-1", ""],
+        matchingSlots: [{ id: "", ordinal: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      questionPublicSchema.safeParse({
+        ...base,
+        matchingSlots: [{ id: "slot-1" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      questionPublicSchema.safeParse({
+        ...base,
+        matchingSlots: [{ id: "slot-1", ordinal: 0 }],
       }).success,
     ).toBe(false);
     expect(

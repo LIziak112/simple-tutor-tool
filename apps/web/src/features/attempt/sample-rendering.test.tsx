@@ -90,24 +90,26 @@ function slotOrderOf(materials: readonly Material[]): Map<string, string[]> {
   );
 }
 
-/** matching 槽位集合：题级 ::ref{slots=} 按材料槽位序展开
+/** matching 槽位集合：题级 ::ref{slots=} 按材料槽位序展开并附材料序号
  *  （与 attempt-service.matchingSlotsProjection 同口径，expandSelectionIds 单源） */
 function matchingSlotsOf(
   question: Question,
   materials: readonly Material[],
-): string[] | undefined {
+): QuestionPublic["matchingSlots"] {
   if (question.materialRefs === undefined) return undefined;
   const order = slotOrderOf(materials);
-  const ids: string[] = [];
+  const rows: NonNullable<QuestionPublic["matchingSlots"]> = [];
   for (const ref of question.materialRefs) {
     if (ref.slots === undefined) continue;
     const slots = order.get(ref.material);
     if (slots === undefined) continue;
     for (const id of expandSelectionIds(ref.slots, slots)) {
-      if (!ids.includes(id)) ids.push(id);
+      if (rows.some((row) => row.id === id)) continue;
+      const at = slots.indexOf(id);
+      rows.push({ id, ordinal: at >= 0 ? at + 1 : rows.length + 1 });
     }
   }
-  return ids.length > 0 ? ids : undefined;
+  return rows.length > 0 ? rows : undefined;
 }
 
 /** Question → 学生端公开形态（与 attempt-service.publicOfSnapshot 同口径） */
@@ -268,16 +270,17 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
         }
         case "matching": {
           // QM-13（TT-10a）转正：配对真实控件——每声明槽位一行原生 select、
-          // 选项池含干扰项（不加标记）、选项数含未选择占位
+          // 选项池含干扰项（不加标记）、选项数含未选择占位；审查 P2-2 起标签
+          // 用材料槽位序 ordinal（子集选择沿用材料编号）
           const slots = publicQuestion.matchingSlots ?? [];
           expect(
             slots.length,
             `${source} matching 应有展开槽位集合`,
           ).toBeGreaterThan(0);
-          for (const [index] of slots.entries()) {
+          for (const slot of slots) {
             expect(
-              screen.getByLabelText(`第 ${index + 1} 空的选项`),
-              `${source} 第 ${index + 1} 空配对下拉`,
+              screen.getByLabelText(`第 ${slot.ordinal} 空的选项`),
+              `${source} 材料第 ${slot.ordinal} 空（${slot.id}）配对下拉`,
             ).toBeInTheDocument();
           }
           const poolSize = publicQuestion.matchingOptions?.options.length ?? 0;
