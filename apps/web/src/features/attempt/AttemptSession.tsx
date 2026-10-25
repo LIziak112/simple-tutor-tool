@@ -1356,7 +1356,7 @@ function AnswerView({
                         {unit.title}
                       </h2>
                     )}
-                    <ol className="flex flex-col gap-4">
+                    <ol className="flex flex-col gap-3">
                       {unit.questions.map((question) => {
                         const index = flatQuestions.indexOf(question);
                         // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
