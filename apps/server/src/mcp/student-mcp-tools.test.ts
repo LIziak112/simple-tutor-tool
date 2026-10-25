@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
+import {
+  aiAttemptReviewCreateOkSchema,
+  aiAttemptReviewMcpClaimViewSchema,
+  aiAttemptReviewPreviewOkSchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -132,6 +137,87 @@ function mkTask(
 // ---------- 必测①：重放同 claim / 两客户端竞争唯一写回 ----------
 
 describe("SAI-26 领取与写回竞争", () => {
+  it("整体复盘真实 MCP 领取含全部选项，作答作废后拒绝报告交付", async () => {
+    const env = await makeEnv();
+    env.db
+      .update(attempts)
+      .set({ status: "submitted", submittedAt: NOW })
+      .where(eq(attempts.id, env.world.attemptId))
+      .run();
+    const previewRes = await env.app.request(
+      `/api/student/ai/attempt-reviews/preview?attemptId=${env.world.attemptId}`,
+      { headers: { cookie: env.studentCookie } },
+    );
+    expect(previewRes.status).toBe(200);
+    const preview = aiAttemptReviewPreviewOkSchema.parse(
+      await previewRes.json(),
+    ).data;
+    const createdRes = await env.app.request(
+      "/api/student/ai/attempt-reviews",
+      {
+        method: "POST",
+        headers: {
+          cookie: env.studentCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          attemptId: env.world.attemptId,
+          mutationId: randomUUID(),
+          expectedPreviewVersion: preview.opaquePreviewVersion,
+          purpose: "复盘",
+          channel: "mcp",
+        }),
+      },
+    );
+    expect(createdRes.status).toBe(201);
+    const task = aiAttemptReviewCreateOkSchema.parse(await createdRes.json())
+      .data.task;
+    const client = await connectClient(env);
+    try {
+      const result = await callJson(client, "claim_attempt_review", {
+        taskId: task.id,
+      });
+      expect(result.isError).toBe(false);
+      const { claimed, ...payload } = result.data;
+      expect(claimed).toBe(true);
+      const view = aiAttemptReviewMcpClaimViewSchema.parse(payload);
+      expect(view.snapshot.questions[0]?.options).toEqual([
+        { text: "甲" },
+        { text: "乙" },
+      ]);
+      env.db
+        .update(attempts)
+        .set({ abandonedAt: NOW })
+        .where(eq(attempts.id, env.world.attemptId))
+        .run();
+      const reply = await callJson(client, "submit_attempt_review_result", {
+        taskId: task.id,
+        leaseToken: view.lease.leaseToken,
+        generation: view.generation,
+        snapshotVersion: view.snapshotVersion,
+        report: {
+          schemaVersion: 1,
+          overview: "不应交付的答案正文",
+          knowledgeFindings: [],
+          errorPatterns: [],
+          performanceNotes: [],
+          trainingPlan: [],
+          limitations: [],
+        },
+      });
+      expect(reply.isError).toBe(true);
+      expect(reply.data.error).toBe("ATTEMPT_ABANDONED");
+      const detailRes = await env.app.request(
+        `/api/student/ai/attempt-reviews/${task.id}`,
+        { headers: { cookie: env.studentCookie } },
+      );
+      expect(detailRes.status).toBe(409);
+      expect(await detailRes.text()).not.toContain("不应交付的答案正文");
+    } finally {
+      await client.close();
+      env.db.$client.close();
+    }
+  });
   it("FIFO 两客户端各领一题；指定已领 taskId 重放 409；非持有者不能写回", async () => {
     const env = await makeEnv();
     const t1 = mkTask(env);
@@ -230,9 +316,13 @@ describe("SAI-26 只读列表与工具注解", () => {
     expect(list.tools.map((t) => t.name).sort()).toEqual(
       [
         "claim_ai_task",
+        "claim_attempt_review",
         "list_my_ai_tasks",
+        "list_my_attempt_reviews",
         "renew_ai_lease",
+        "renew_attempt_review_lease",
         "submit_ai_reply",
+        "submit_attempt_review_result",
       ].sort(),
     );
     expect(byName.get("list_my_ai_tasks")?.annotations?.readOnlyHint).toBe(
@@ -246,6 +336,23 @@ describe("SAI-26 只读列表与工具注解", () => {
     );
     expect(byName.get("claim_ai_task")?.annotations?.readOnlyHint).toBeFalsy();
     expect(byName.get("renew_ai_lease")?.annotations?.readOnlyHint).toBeFalsy();
+    // 整体复盘四工具（任务 1ef854c7）注解同口径：list 只读，submit 幂等
+    // 非破坏，claim/renew 无只读标记
+    expect(
+      byName.get("list_my_attempt_reviews")?.annotations?.readOnlyHint,
+    ).toBe(true);
+    expect(
+      byName.get("submit_attempt_review_result")?.annotations?.idempotentHint,
+    ).toBe(true);
+    expect(
+      byName.get("submit_attempt_review_result")?.annotations?.destructiveHint,
+    ).toBe(false);
+    expect(
+      byName.get("claim_attempt_review")?.annotations?.readOnlyHint,
+    ).toBeFalsy();
+    expect(
+      byName.get("renew_attempt_review_lease")?.annotations?.readOnlyHint,
+    ).toBeFalsy();
     await client.close();
   });
 });
