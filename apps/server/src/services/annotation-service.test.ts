@@ -40,6 +40,7 @@ import {
   assembleAnnotationPairs,
   canonicalAnnotationJson,
   getAnnotationView,
+  parseAnnotationBodyBytes,
   putAnnotationDoc,
   registerBaseImage,
   removeAnnotationBodyIfUnreferenced,
@@ -730,6 +731,27 @@ describe("putAnnotationDoc：CAS/幂等/门槛", () => {
     } catch (err) {
       expectHttpError(err, 409, "ANNOTATION_BASE_NOT_READY");
     }
+  });
+
+  it("parseAnnotationBodyBytes：形状错误 400 错误体附 zod issue 路径（_issues，P0-1）", () => {
+    const doc = annotationDoc();
+    const stroke = doc.strokes[0];
+    if (stroke === undefined) throw new Error("夹具错误：无笔画");
+    stroke.points[0] = { x: -1, y: 20, p: 0.5, t: 0 };
+    let err: unknown = null;
+    try {
+      parseAnnotationBodyBytes(gzipJson(doc));
+      throw new Error("应当抛 400");
+    } catch (cause) {
+      err = cause;
+    }
+    expectHttpError(err, 400, "ANNOTATION_VALIDATION_FAILED");
+    const issues = (
+      err as { extra?: { _issues?: Array<{ path: string }> } }
+    ).extra?._issues;
+    expect(issues?.some((issue) => issue.path === "strokes.0.points.0.x")).toBe(
+      true,
+    );
   });
 
   it("文档坐标域与底图几何不一致 400", () => {

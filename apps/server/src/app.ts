@@ -183,6 +183,11 @@ export function createApp(options: CreateAppOptions) {
             status: err.status,
             method: c.req.method,
             path: sanitizePathForLog(c.req.path),
+            // 圈画审查 P0-1/P2-3：HttpError 携带的校验明细（如 NOTE/ANNOTATION
+            // _VALIDATION_FAILED 的 _issues 路径清单）随日志落盘——仍不含请求体
+            ...(Array.isArray(err.extra?._issues)
+              ? { issues: err.extra._issues }
+              : {}),
           },
           "业务错误",
         );

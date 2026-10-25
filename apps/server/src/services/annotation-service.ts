@@ -207,6 +207,16 @@ export function parseAnnotationBodyBytes(bytes: Uint8Array): AnnotationDoc {
       400,
       "ANNOTATION_VALIDATION_FAILED",
       `标注文档不合法：${first}`,
+      // 圈画审查 P0-1（同 note-service 口径）：错误体附 zod issue 路径与
+      // 文案（不含正文），线下可定位坏字段
+      {
+        _issues: parsed.error.issues
+          .slice(0, 5)
+          .map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+      },
     );
   }
   return parsed.data;
