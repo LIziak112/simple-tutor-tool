@@ -35,7 +35,7 @@ export function materialVersionKey(material: {
  * 「这道题当时看到的是哪一版」。键 = materialVersionKey。
  */
 export function materialVersionNotesOf(
-  materials: readonly AttemptContextMaterial[],
+  materials: readonly { readonly id: string; readonly sourceVersion: number }[],
 ): Map<string, string> {
   const countById = new Map<string, number>();
   for (const material of materials) {

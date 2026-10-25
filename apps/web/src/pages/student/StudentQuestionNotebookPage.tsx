@@ -236,6 +236,12 @@ function NotebookRounds({
 function RoundContextSection({ context }: { context: NotebookRoundContext }) {
   const versionNotes = useMemo(
     () => materialVersionNotesOf(context.materials),
+    // 组多版本徽标同构（TT-11 P3-③顺手修）：materialVersionNotesOf 按
+    // {id, sourceVersion} 泛化工作，组的双版本题头同样可分辨——不另写一套
+    [context.materials],
+  );
+  const groupVersionNotes = useMemo(
+    () => materialVersionNotesOf(context.groups),
     [context],
   );
   return (
@@ -249,6 +255,9 @@ function RoundContextSection({ context }: { context: NotebookRoundContext }) {
           const title = group.title?.trim();
           const label = group.label?.trim();
           const intro = group.introMd.trim();
+          const groupVersionNote = groupVersionNotes.get(
+            materialVersionKey(group),
+          );
           return (
             <header
               key={`${group.id}|${group.sourceVersion}`}
@@ -260,6 +269,11 @@ function RoundContextSection({ context }: { context: NotebookRoundContext }) {
                 {label && label.length > 0 && (
                   <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
                     {label}
+                  </span>
+                )}
+                {groupVersionNote !== undefined && (
+                  <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+                    {groupVersionNote}
                   </span>
                 )}
               </p>
