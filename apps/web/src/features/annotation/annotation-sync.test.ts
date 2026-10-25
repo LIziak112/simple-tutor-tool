@@ -1,15 +1,22 @@
 import { gunzipSync } from "node:zlib";
-import type { AnnotationReceipt } from "@tutor/contract";
+import type {
+  AnnotationBasePreviewData,
+  AnnotationBaseRef,
+  AnnotationReceipt,
+  AnnotationSurfaceLayout,
+} from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AnnotationScope,
   type AnnotationSessionRef,
+  applyAnnotationConflict,
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
   peekAnnotationRecord,
   resetAnnotationStoreForTest,
   writeAnnotationDoc,
+  writeLocalAnnotationBase,
 } from "./annotation-store";
 
 /**
@@ -25,27 +32,36 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     putAnnotationDocApi: vi.fn(),
     fetchAnnotationViewApi: vi.fn(),
+    postAnnotationBaseApi: vi.fn(),
+    postAnnotationBaseImageApi: vi.fn(),
   };
 });
 
 import {
   ApiError,
   fetchAnnotationViewApi,
+  postAnnotationBaseApi,
+  postAnnotationBaseImageApi,
   putAnnotationDocApi,
+  studentAnnotationBasePngUrl,
 } from "@/lib/api";
 import {
   ANNOTATION_SYNC_BACKOFF_BASE_MS,
   ANNOTATION_SYNC_BACKOFF_MAX_MS,
   ANNOTATION_SYNC_DEBOUNCE_MS,
+  ANNOTATION_SYNC_MAX_WAIT_MS,
   bindAnnotationSession,
   flushAnnotationSync,
   resetAnnotationSession,
+  resolveAnnotationConflictKeepCloud,
   resolveAnnotationConflictKeepLocalAndUpload,
   retryAnnotationUpload,
 } from "./annotation-sync";
 
 const putMock = vi.mocked(putAnnotationDocApi);
 const viewMock = vi.mocked(fetchAnnotationViewApi);
+const baseMock = vi.mocked(postAnnotationBaseApi);
+const baseImageMock = vi.mocked(postAnnotationBaseImageApi);
 
 const SESSION_A: AnnotationSessionRef = {
   origin: "https://a.example",
@@ -107,6 +123,8 @@ beforeEach(() => {
   resetAnnotationSession();
   putMock.mockReset();
   viewMock.mockReset();
+  baseMock.mockReset();
+  baseImageMock.mockReset();
   bindAnnotationSession(SESSION_A);
 });
 
@@ -383,5 +401,273 @@ describe("annotation-sync：交卷 flush", () => {
     await flushAnnotationSync("a-0001");
     expect(putMock.mock.calls.length).toBe(1);
     expect(peekAnnotationRecord(SESSION_A, SCOPE)?.pending).toBeNull();
+  });
+});
+
+// ---------- 批次三（P0-2）：布局冲突死锁出口 ----------
+
+/** 本机布局（600×400 像素域；无兼容证据——续写/上传场景的常见形态） */
+const LOCAL_LAYOUT: AnnotationSurfaceLayout = {
+  renderVersion: 2,
+  questionRevisionId: "44444444-4444-4444-8444-444444444444",
+  cssWidth: 300,
+  cssHeight: 200,
+  pixelRatio: 2,
+  styleVersion: 1,
+  contentSignature: "a".repeat(64),
+  geometrySignature: "b".repeat(64),
+  fontSignature: "c".repeat(64),
+};
+const LOCAL_PNG = new Blob(["local-png"], { type: "image/png" });
+const CLOUD_PNG = new Blob(["cloud-png"], { type: "image/png" });
+const CLOUD_BASE_ID = "55555555-5555-4555-8555-555555555555";
+
+/** 与本机同核、已补兼容证据的云端布局（重渲染非确定性＝同核不同字节） */
+function cloudLayoutSameCore(): AnnotationSurfaceLayout {
+  return {
+    ...LOCAL_LAYOUT,
+    compatibility: {
+      version: 1,
+      contentSignature: "d".repeat(64),
+      blocks: [{ tag: "DIV", x: 0, y: 0, width: 300, height: 200 }],
+      fonts: [["sans-serif", "16px", "400", "28px", "normal"]],
+      textRects: [],
+    },
+  };
+}
+
+function previewOf(base: AnnotationBaseRef): AnnotationBasePreviewData {
+  const layout = base.layout;
+  return {
+    base,
+    baseRenderVersion: 2,
+    maxWidthPx: Math.ceil(
+      (layout?.cssWidth ?? 300) * (layout?.pixelRatio ?? 2),
+    ),
+    questionRevisionId: LOCAL_LAYOUT.questionRevisionId,
+    questionNo: 1,
+    questionMd: "题面",
+    mediaSrcs: [],
+    graphFigures: [],
+    interactionNotes: [],
+  };
+}
+
+/** 本机底图 + 空稿起步（600×400 坐标域与 LOCAL_LAYOUT 对齐） */
+async function createLocalBase(): Promise<void> {
+  await writeLocalAnnotationBase(
+    SESSION_A,
+    SCOPE,
+    { png: LOCAL_PNG, layout: LOCAL_LAYOUT },
+    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  );
+}
+
+describe("annotation-sync：底图布局冲突死锁出口（批次三 P0-2）", () => {
+  it("同核 ready 底图采纳：不再 POST image，重绑云端 baseId 后 PUT 正常", async () => {
+    const cloudLayout = cloudLayoutSameCore();
+    baseMock.mockResolvedValue(
+      previewOf({
+        baseId: CLOUD_BASE_ID,
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        layout: cloudLayout,
+      }),
+    );
+    putMock.mockResolvedValue(receiptOf(1));
+    await createLocalBase();
+    await flushAnnotationSync(SCOPE.attemptId);
+    expect(baseImageMock).not.toHaveBeenCalled(); // 不再回传 PNG
+    expect(putMock).toHaveBeenCalledTimes(1);
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.base?.state).toBe("ready");
+    expect(record?.localBase?.boundBaseId).toBe(CLOUD_BASE_ID);
+    expect(record?.localBase?.png).toBe(LOCAL_PNG); // 本机字节保留，绑定换云端
+    expect(record?.conflict).toBeNull();
+    expect(record?.pending).toBeNull();
+  });
+
+  it("不同核 ready 布局维持冲突转换：不 POST image、不 PUT、kind=layout", async () => {
+    baseMock.mockResolvedValue(
+      previewOf({
+        baseId: CLOUD_BASE_ID,
+        state: "ready",
+        stale: false,
+        pixelWidth: 700,
+        pixelHeight: 400,
+        layout: { ...LOCAL_LAYOUT, cssWidth: 350 },
+      }),
+    );
+    await createLocalBase();
+    await flushAnnotationSync(SCOPE.attemptId);
+    expect(baseImageMock).not.toHaveBeenCalled();
+    expect(putMock).not.toHaveBeenCalled();
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.conflict?.kind).toBe("layout");
+    expect(record?.pending).not.toBeNull();
+  });
+
+  it("layout keep-local：置 retained 不重铸、不再自动重传", async () => {
+    putMock.mockRejectedValueOnce(
+      new ApiError(
+        "ANNOTATION_BASE_LAYOUT_CONFLICT",
+        "服务器已有另一布局",
+        409,
+      ),
+    );
+    putMock.mockResolvedValue(receiptOf(1));
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
+    await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
+    expect(putMock.mock.calls.length).toBe(1);
+    const conflicted = peekAnnotationRecord(SESSION_A, SCOPE);
+    expect(conflicted?.conflict?.kind).toBe("layout");
+    await resolveAnnotationConflictKeepLocalAndUpload(SESSION_A, SCOPE);
+    await vi.advanceTimersByTimeAsync(0); // 排干串行队列微任务
+    const retained = peekAnnotationRecord(SESSION_A, SCOPE);
+    expect(retained?.conflict).toBeNull();
+    expect(retained?.retained?.reason).toContain("另一布局");
+    expect(retained?.pending?.mutationId).toBe(conflicted?.pending?.mutationId);
+    // retained：任何计时器推进都不再自动重传
+    await vi.advanceTimersByTimeAsync(
+      ANNOTATION_SYNC_MAX_WAIT_MS + ANNOTATION_SYNC_BACKOFF_MAX_MS,
+    );
+    expect(putMock.mock.calls.length).toBe(1);
+  });
+
+  it("retained 态新笔画不排队；「重新尝试同步」清态立即补传一次", async () => {
+    putMock.mockRejectedValueOnce(
+      new ApiError(
+        "ANNOTATION_BASE_LAYOUT_CONFLICT",
+        "服务器已有另一布局",
+        409,
+      ),
+    );
+    putMock.mockResolvedValueOnce(receiptOf(1));
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
+    await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
+    await resolveAnnotationConflictKeepLocalAndUpload(SESSION_A, SCOPE);
+    expect(peekAnnotationRecord(SESSION_A, SCOPE)?.retained).not.toBeNull();
+    // retained 态写新笔画：不排队上传
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(2));
+    await vi.advanceTimersByTimeAsync(
+      ANNOTATION_SYNC_MAX_WAIT_MS + ANNOTATION_SYNC_BACKOFF_MAX_MS,
+    );
+    expect(putMock.mock.calls.length).toBe(1);
+    // 手动重试：清 retained 立即补传（同 mutationId 幂等）
+    await retryAnnotationUpload(SESSION_A, SCOPE);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(putMock.mock.calls.length).toBe(2);
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.retained).toBeNull();
+    expect(record?.pending).toBeNull();
+  });
+
+  it("keep-cloud：采用云端正文并下载云端 PNG 重绑本机底图", async () => {
+    await createLocalBase();
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1)); // 本地未同步改动
+    await applyAnnotationConflict(
+      SESSION_A,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局",
+    );
+    const cloudLayout = { ...LOCAL_LAYOUT, cssWidth: 320 };
+    viewMock.mockResolvedValue({
+      base: {
+        baseId: CLOUD_BASE_ID,
+        state: "ready",
+        stale: false,
+        pixelWidth: 640,
+        pixelHeight: 400,
+        layout: cloudLayout,
+      },
+      maxWidthPx: 640,
+      doc: { version: 1, baseWidth: 640, baseHeight: 400, strokes: [] },
+      annotation: {
+        annotationId: "00000000-0000-4000-8000-000000000009",
+        revision: 4,
+        hash: "f".repeat(64),
+        savedAt: "2026-10-08T00:00:00Z",
+        sealedAt: null,
+        strokeCount: 0,
+        pointCount: 0,
+      },
+    });
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      blob: async () => CLOUD_PNG,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await resolveAnnotationConflictKeepCloud(SESSION_A, SCOPE);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fetchMock).toHaveBeenCalledWith(
+      studentAnnotationBasePngUrl(SCOPE.attemptId, CLOUD_BASE_ID),
+      expect.anything(),
+    );
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.conflict).toBeNull();
+    expect(record?.pending).toBeNull();
+    expect(record?.baseRevision).toBe(4);
+    expect(record?.doc.strokes).toHaveLength(0); // 云端正文
+    expect(record?.localBase?.png).toBe(CLOUD_PNG); // 本机底图替换为云端
+    expect(record?.localBase?.layout).toEqual(cloudLayout);
+    expect(record?.localBase?.boundBaseId).toBe(CLOUD_BASE_ID);
+  });
+
+  it("keep-cloud 底图下载失败：保留冲突态可重试，不半途清态", async () => {
+    await createLocalBase();
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
+    await applyAnnotationConflict(
+      SESSION_A,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局",
+    );
+    viewMock.mockResolvedValue({
+      base: {
+        baseId: CLOUD_BASE_ID,
+        state: "ready",
+        stale: false,
+        pixelWidth: 640,
+        pixelHeight: 400,
+        layout: { ...LOCAL_LAYOUT, cssWidth: 320 },
+      },
+      maxWidthPx: 640,
+      doc: { version: 1, baseWidth: 640, baseHeight: 400, strokes: [] },
+      annotation: {
+        annotationId: "00000000-0000-4000-8000-000000000009",
+        revision: 4,
+        hash: "f".repeat(64),
+        savedAt: "2026-10-08T00:00:00Z",
+        sealedAt: null,
+        strokeCount: 0,
+        pointCount: 0,
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("网络中断");
+      }),
+    );
+    try {
+      await expect(
+        resolveAnnotationConflictKeepCloud(SESSION_A, SCOPE),
+      ).rejects.toThrow("云端底图下载失败");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.conflict?.kind).toBe("layout");
+    expect(record?.pending).not.toBeNull();
+    expect(record?.localBase?.png).toBe(LOCAL_PNG); // 本机底图未动
+    expect(record?.doc.strokes).toHaveLength(1); // 本地稿未被覆盖
   });
 });

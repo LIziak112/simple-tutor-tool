@@ -17,7 +17,10 @@ import type {
   AnnotationConflictSummary,
   AnnotationReceipt,
 } from "@tutor/contract";
-import { annotationConflictSummarySchema } from "@tutor/contract";
+import {
+  annotationConflictSummarySchema,
+  annotationSurfaceLayoutCore,
+} from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
 import {
   ApiError,
@@ -34,6 +37,7 @@ import {
   type AnnotationPendingVersion,
   type AnnotationScope,
   type AnnotationSessionRef,
+  adoptCloudAnnotationBase,
   annotationKeyOf,
   applyAnnotationConflict,
   applyAnnotationDenied,
@@ -41,6 +45,7 @@ import {
   applyAnnotationView,
   applyBasePreview,
   clearAnnotationDeniedAccess,
+  clearAnnotationRetained,
   listPendingAnnotations,
   notifyAnnotationStoreAll,
   parseAnnotationKey,
@@ -150,7 +155,7 @@ function sameSession(
   return a.origin === b.origin && a.studentId === b.studentId;
 }
 
-/** 记录是否可传（conflict/denied 阻塞；类型谓词顺带收窄 pending 非空） */
+/** 记录是否可传（conflict/denied/retained 阻塞；类型谓词顺带收窄 pending 非空） */
 function uploadable(
   record: AnnotationLocalRecord | null,
 ): record is AnnotationLocalRecord & { pending: AnnotationPendingVersion } {
@@ -158,7 +163,8 @@ function uploadable(
     record !== null &&
     record.pending !== null &&
     record.conflict === null &&
-    record.denied === null
+    record.denied === null &&
+    record.retained === null
   );
 }
 
@@ -301,75 +307,98 @@ async function runUpload(
           ...(record.resetVersion ? ([record.resetVersion] as const) : []),
         );
         if (stale()) return;
-        if (
-          JSON.stringify(preview.base.layout) !== JSON.stringify(local.layout)
-        )
-          throw new ApiError(
-            "ANNOTATION_BASE_LAYOUT_CONFLICT",
-            "服务器已有另一布局，保留本机稿并查看原标画",
-            409,
-          );
-        let image: Awaited<ReturnType<typeof postAnnotationBaseImageApi>>;
-        try {
-          image = await postAnnotationBaseImageApi(
-            scope.attemptId,
-            scope.questionId,
-            local.png,
-            {
-              questionRevisionId: local.layout.questionRevisionId,
-              baseRenderVersion: local.layout.renderVersion,
-              phase: scope.phase,
-              ...(record.resetVersion
-                ? { resetVersion: record.resetVersion }
-                : {}),
-            },
-            put.signal,
-          );
-        } catch (error) {
+        if (preview.base.state === "ready") {
+          // 批次三 D：云端底图已 ready 且与本机布局**同核**（重渲染非确定性、
+          // 兼容证据差异）→ 直接采纳云端底图重绑 baseId，不再回传 PNG（ready
+          // 永不重生成，同核异字节不构成冲突）；不同核才落 LAYOUT_CONFLICT。
+          const cloudLayout = preview.base.layout;
           if (
-            error instanceof ApiError &&
-            error.code === "ANNOTATION_BASE_ALREADY_READY"
+            cloudLayout === undefined ||
+            JSON.stringify(annotationSurfaceLayoutCore(cloudLayout)) !==
+              JSON.stringify(annotationSurfaceLayoutCore(local.layout))
           )
             throw new ApiError(
               "ANNOTATION_BASE_LAYOUT_CONFLICT",
-              "本机底图与服务器固定底图不同，已保留本机稿",
+              "服务器已有另一布局，保留本机稿并查看原标画",
               409,
             );
-          throw error;
-        }
-        if (stale()) return;
-        if (
-          image.baseId !== preview.base.baseId ||
-          image.pixelWidth !==
-            Math.ceil(local.layout.cssWidth * local.layout.pixelRatio) ||
-          image.pixelHeight !==
-            Math.ceil(local.layout.cssHeight * local.layout.pixelRatio)
-        )
-          throw new ApiError(
-            "ANNOTATION_BASE_LAYOUT_CONFLICT",
-            "服务器底图回执与本机布局不匹配，已保留本机稿",
-            409,
-          );
-        await applyBasePreview(
-          session,
-          scope,
-          {
-            ...preview,
-            base: {
-              ...preview.base,
-              state: "ready",
-              pixelWidth: image.pixelWidth,
-              pixelHeight: image.pixelHeight,
-              downloadUrl: studentAnnotationBasePngUrl(
-                scope.attemptId,
-                image.baseId,
-              ),
+          await applyBasePreview(session, scope, preview, local.png);
+          await settleAnnotationPersistence();
+          if (stale()) return;
+        } else {
+          // pending 行必须与本机布局严格一致（首次绑定/本人续传）
+          if (
+            JSON.stringify(preview.base.layout) !== JSON.stringify(local.layout)
+          )
+            throw new ApiError(
+              "ANNOTATION_BASE_LAYOUT_CONFLICT",
+              "服务器已有另一布局，保留本机稿并查看原标画",
+              409,
+            );
+          let image: Awaited<ReturnType<typeof postAnnotationBaseImageApi>>;
+          try {
+            image = await postAnnotationBaseImageApi(
+              scope.attemptId,
+              scope.questionId,
+              local.png,
+              {
+                questionRevisionId: local.layout.questionRevisionId,
+                baseRenderVersion: local.layout.renderVersion,
+                phase: scope.phase,
+                ...(record.resetVersion
+                  ? { resetVersion: record.resetVersion }
+                  : {}),
+              },
+              put.signal,
+            );
+          } catch (error) {
+            if (
+              error instanceof ApiError &&
+              error.code === "ANNOTATION_BASE_ALREADY_READY"
+            )
+              // 竞态窗口（preview 后他端置 ready）：不同核语义的冲突转换维持，
+              // 下次重试 POST base 即走同核采纳/裁决出口
+              throw new ApiError(
+                "ANNOTATION_BASE_LAYOUT_CONFLICT",
+                "本机底图与服务器固定底图不同，已保留本机稿",
+                409,
+              );
+            throw error;
+          }
+          if (stale()) return;
+          if (
+            image.baseId !== preview.base.baseId ||
+            image.pixelWidth !==
+              Math.ceil(local.layout.cssWidth * local.layout.pixelRatio) ||
+            image.pixelHeight !==
+              Math.ceil(local.layout.cssHeight * local.layout.pixelRatio)
+          )
+            throw new ApiError(
+              "ANNOTATION_BASE_LAYOUT_CONFLICT",
+              "服务器底图回执与本机布局不匹配，已保留本机稿",
+              409,
+            );
+          await applyBasePreview(
+            session,
+            scope,
+            {
+              ...preview,
+              base: {
+                ...preview.base,
+                state: "ready",
+                pixelWidth: image.pixelWidth,
+                pixelHeight: image.pixelHeight,
+                downloadUrl: studentAnnotationBasePngUrl(
+                  scope.attemptId,
+                  image.baseId,
+                ),
+              },
             },
-          },
-          local.png,
-        );
-        await settleAnnotationPersistence();
-        if (stale()) return;
+            local.png,
+          );
+          await settleAnnotationPersistence();
+          if (stale()) return;
+        }
       }
       let bytes = gzipMemo.get(doc);
       if (bytes === undefined) {
@@ -643,13 +672,14 @@ export async function catchUpAnnotations(attemptId: string): Promise<void> {
 
 // ---------- 冲突裁决 / 被拒重试（UI 调用） ----------
 
-/** denied(access) 手动重试：清终态 → 立即补传（幂等；再拒回到终态） */
+/** denied(access)/retained 手动重试：清态 → 立即补传（幂等；再拒回到对应态） */
 export async function retryAnnotationUpload(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
 ): Promise<void> {
-  const cleared = await clearAnnotationDeniedAccess(session, scope);
-  if (!cleared) return;
+  const clearedDenied = await clearAnnotationDeniedAccess(session, scope);
+  const clearedRetained = await clearAnnotationRetained(session, scope);
+  if (!clearedDenied && !clearedRetained) return;
   if (sameSessionSafe(session)) {
     const key = annotationKeyOf(session, scope);
     clearTimers(key);
@@ -657,12 +687,17 @@ export async function retryAnnotationUpload(
   }
 }
 
-/** 冲突裁决「以本机为准」：store 对齐云端摘要（或重铸幂等键）后立即上传 */
+/**
+ * 冲突裁决「以本机为准」（批次三 B 分叉）：revision/mutation 对齐或重铸后
+ * 立即上传；layout＝本机保留（retained），**不重铸也不重传**——同一布局差异
+ * 重传必再撞 409（死锁出口；服务端 pending 行过期后可走「重新尝试同步」）。
+ */
 export async function resolveAnnotationConflictKeepLocalAndUpload(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
 ): Promise<void> {
-  await resolveAnnotationConflictKeepLocal(session, scope);
+  const outcome = await resolveAnnotationConflictKeepLocal(session, scope);
+  if (outcome !== "rearm") return;
   if (sameSessionSafe(session)) {
     const key = annotationKeyOf(session, scope);
     clearTimers(key);
@@ -670,13 +705,38 @@ export async function resolveAnnotationConflictKeepLocalAndUpload(
   }
 }
 
-/** 只在用户明确选择后采用云端稿；拉取期间的新笔画不得被覆盖。 */
+/** 下载云端 ready 底图 PNG（keep-cloud 重绑用；学生端 attempt 授权直出） */
+async function downloadCloudBasePng(
+  attemptId: string,
+  baseId: string,
+): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(studentAnnotationBasePngUrl(attemptId, baseId), {
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    throw new Error(
+      `云端底图下载失败，请重试（${err instanceof Error ? err.message : "网络异常"}）`,
+    );
+  }
+  if (!response.ok) throw new Error("云端底图下载失败，请重试");
+  return await response.blob();
+}
+
+/**
+ * 只在用户明确选择后采用云端稿；拉取期间的新笔画不得被覆盖（expectedMutationId
+ * 守卫）。批次三 C：云端底图 ready 时**先下载 PNG 再落地裁决**——把本机底图替换
+ * 为云端底图（否则本机仍是旧布局，下次打开/续画/上传继续撞同一冲突）；下载失败
+ * 保留冲突/保留态原样可重试，不半途清态。
+ */
 export async function resolveAnnotationConflictKeepCloud(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
 ): Promise<void> {
   const record = peekAnnotationRecord(session, scope);
-  if (!record?.conflict) return;
+  if (record === null || (record.conflict === null && record.retained === null))
+    return;
   const expectedMutationId = record.pending?.mutationId ?? null;
   const view = await fetchAnnotationViewApi(
     scope.attemptId,
@@ -686,7 +746,20 @@ export async function resolveAnnotationConflictKeepCloud(
   if (!sameSessionSafe(session))
     throw new Error("账号已切换，请重新进入作答页");
   if (!view.doc) throw new Error("云端标画正文不可读取，请重试");
-  await applyAnnotationView(session, scope, view, { expectedMutationId });
+  const cloudLayout = view.base?.layout;
+  if (view.base?.state === "ready" && cloudLayout !== undefined) {
+    const png = await downloadCloudBasePng(scope.attemptId, view.base.baseId);
+    if (!sameSessionSafe(session))
+      throw new Error("账号已切换，请重新进入作答页");
+    await applyAnnotationView(session, scope, view, { expectedMutationId });
+    await adoptCloudAnnotationBase(session, scope, {
+      png,
+      layout: cloudLayout,
+      boundBaseId: view.base.baseId,
+    });
+  } else {
+    await applyAnnotationView(session, scope, view, { expectedMutationId });
+  }
   await settleAnnotationPersistence();
 }
 

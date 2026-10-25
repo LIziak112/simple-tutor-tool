@@ -3,12 +3,14 @@ import type {
   AnnotationConflictCurrent,
   AnnotationDoc,
   AnnotationReceipt,
+  AnnotationSurfaceLayout,
   AnnotationViewData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { digestOf } from "@/features/attempt/draft-merge";
 import {
   type AnnotationSessionRef,
+  adoptCloudAnnotationBase,
   annotationKeyOf,
   applyAnnotationConflict,
   applyAnnotationDenied,
@@ -31,6 +33,7 @@ import {
   setUploading,
   subscribeAnnotationStore,
   writeAnnotationDoc,
+  writeLocalAnnotationBase,
 } from "./annotation-store";
 
 /**
@@ -648,4 +651,133 @@ it("重置前迟到回执不能拉回旧标画行或旧版本基线", async () =
   expect((await getAnnotationRecord(SESSION, SCOPE))?.baseRevision).toBe(0);
   expect((await getAnnotationRecord(SESSION, SCOPE))?.annotationId).toBeNull();
   expect(getAnnotationView(SESSION, SCOPE)?.resetVersion).toBe(6);
+});
+
+describe("adoptCloudAnnotationBase 与同核重绑（批次三 C/D）", () => {
+  const LAYOUT: AnnotationSurfaceLayout = {
+    renderVersion: 2,
+    questionRevisionId: "44444444-4444-4444-8444-444444444444",
+    cssWidth: 300,
+    cssHeight: 200,
+    pixelRatio: 2,
+    styleVersion: 1,
+    contentSignature: "a".repeat(64),
+    geometrySignature: "b".repeat(64),
+    fontSignature: "c".repeat(64),
+  };
+  const LOCAL_PNG = new Blob(["local-png"], { type: "image/png" });
+  const CLOUD_PNG = new Blob(["cloud-png"], { type: "image/png" });
+
+  async function seedLocalBase(): Promise<void> {
+    await writeLocalAnnotationBase(
+      SESSION,
+      SCOPE,
+      { png: LOCAL_PNG, layout: LAYOUT },
+      { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+    );
+  }
+
+  function preview(
+    base: AnnotationBaseRef,
+  ): Parameters<typeof applyBasePreview>[2] {
+    return {
+      base,
+      baseRenderVersion: 2,
+      maxWidthPx: Math.ceil(
+        (base.layout?.cssWidth ?? 300) * (base.layout?.pixelRatio ?? 2),
+      ),
+      questionRevisionId: LAYOUT.questionRevisionId,
+      questionNo: 1,
+      questionMd: "题面",
+      mediaSrcs: [],
+      graphFigures: [],
+      interactionNotes: [],
+    };
+  }
+
+  it("adoptCloudAnnotationBase：ready 同布局才替换 localBase，不动正文与待传", async () => {
+    await seedLocalBase();
+    writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(3, 3)]));
+    const pendingBefore = peekAnnotationRecord(SESSION, SCOPE)?.pending;
+    await applyBasePreview(
+      SESSION,
+      SCOPE,
+      preview({
+        baseId: "b-00000000-0000-4000-8000-000000000005",
+        state: "ready",
+        stale: false,
+        pixelWidth: 640,
+        pixelHeight: 400,
+        layout: { ...LAYOUT, cssWidth: 320 },
+      }),
+    );
+    // record.base 与传入布局不同（重绑前底图行已变化）：拒绝
+    await expect(
+      adoptCloudAnnotationBase(SESSION, SCOPE, {
+        png: CLOUD_PNG,
+        layout: LAYOUT,
+        boundBaseId: "b-00000000-0000-4000-8000-000000000005",
+      }),
+    ).rejects.toThrow("云端底图已变化");
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.localBase?.png).toBe(
+      LOCAL_PNG,
+    );
+    // base 行一致后替换成功；正文与待传不动
+    await applyBasePreview(
+      SESSION,
+      SCOPE,
+      preview({
+        baseId: "b-00000000-0000-4000-8000-000000000006",
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        layout: LAYOUT,
+      }),
+    );
+    await adoptCloudAnnotationBase(SESSION, SCOPE, {
+      png: CLOUD_PNG,
+      layout: LAYOUT,
+      boundBaseId: "b-00000000-0000-4000-8000-000000000006",
+    });
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.localBase?.png).toBe(CLOUD_PNG);
+    expect(record?.localBase?.boundBaseId).toBe(
+      "b-00000000-0000-4000-8000-000000000006",
+    );
+    expect(record?.pending).toEqual(pendingBefore);
+  });
+
+  it("applyBasePreview confirmedLocalPng 绑定放宽到同核并采纳服务端布局证据", async () => {
+    await seedLocalBase();
+    const cloudLayout: AnnotationSurfaceLayout = {
+      ...LAYOUT,
+      compatibility: {
+        version: 1,
+        contentSignature: "d".repeat(64),
+        blocks: [{ tag: "DIV", x: 0, y: 0, width: 300, height: 200 }],
+        fonts: [["sans-serif", "16px", "400", "28px", "normal"]],
+        textRects: [],
+      },
+    };
+    await applyBasePreview(
+      SESSION,
+      SCOPE,
+      preview({
+        baseId: "b-00000000-0000-4000-8000-000000000007",
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        layout: cloudLayout,
+      }),
+      LOCAL_PNG,
+    );
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.localBase?.boundBaseId).toBe(
+      "b-00000000-0000-4000-8000-000000000007",
+    );
+    expect(record?.localBase?.layout).toEqual(cloudLayout); // 采纳服务端证据
+    expect(record?.localBase?.png).toBe(LOCAL_PNG);
+  });
 });

@@ -669,16 +669,20 @@ export async function applyBasePreview(
 ): Promise<void> {
   await mutateLoaded(session, scope, freshRecord, (record) => {
     if (confirmedLocalPng !== undefined) {
+      // 批次三 D：绑定校验放宽到同核（重渲染非确定性与兼容证据差异不阻断
+      // 重绑）；绑定同时采纳服务端布局（同核 ⇒ 同几何，证据更全）。
       if (
         record.localBase === null ||
         record.localBase.png !== confirmedLocalPng ||
         preview.base.state !== "ready" ||
-        JSON.stringify(record.localBase.layout) !==
-          JSON.stringify(preview.base.layout)
+        preview.base.layout === undefined ||
+        JSON.stringify(annotationSurfaceLayoutCore(record.localBase.layout)) !==
+          JSON.stringify(annotationSurfaceLayoutCore(preview.base.layout))
       )
         throw new Error("本机底图已更新，不能确认旧的布局绑定");
       record.localBase = {
-        ...record.localBase,
+        png: confirmedLocalPng,
+        layout: preview.base.layout,
         boundBaseId: preview.base.baseId,
       };
     }
@@ -686,6 +690,45 @@ export async function applyBasePreview(
     // 载荷到达即底图链路可用，此前缓存的禁用原因作废
     record.baseDisabledReason = null;
   });
+}
+
+/**
+ * 冲突裁决「采用云端版本」后的底图重绑（批次三 C）：把本机底图**替换**为
+ * 云端 ready 底图（云端 layout + boundBaseId）。与 writeLocalAnnotationBase
+ * 的「不能覆盖另一布局」守卫不同——本函数只在用户显式裁决采用云端后调用，
+ * 替换即目的；不产生编辑、不改待传正文与版本（正文已由 applyAnnotationView
+ * 采用），拉取期间的新笔画由调用方的 expectedMutationId 守卫保护。
+ */
+export async function adoptCloudAnnotationBase(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  cloud: { png: Blob; layout: AnnotationSurfaceLayout; boundBaseId: string },
+): Promise<void> {
+  const layout = annotationSurfaceLayoutSchema.parse(cloud.layout);
+  if (
+    cloud.png.size === 0 ||
+    cloud.png.size > ANNOTATION_BASE_PNG_MAX_BYTES ||
+    cloud.png.type !== "image/png"
+  )
+    throw new Error("云端底图PNG为空、格式错误或超限");
+  await mutateLoaded(session, scope, null, (record) => {
+    if (
+      record.base?.state !== "ready" ||
+      record.base.baseId !== cloud.boundBaseId ||
+      record.base.layout === undefined ||
+      JSON.stringify(record.base.layout) !== JSON.stringify(layout)
+    )
+      throw new Error("云端底图已变化，请重新选择");
+    record.localBase = {
+      png: cloud.png,
+      layout,
+      boundBaseId: cloud.boundBaseId,
+    };
+  });
+  await settleAnnotationRecordPersistence(session, scope);
+  const saved = peekAnnotationRecord(session, scope);
+  if (saved?.local !== "saved")
+    throw new Error(saved?.localError ?? "本机底图未保存，请重试");
 }
 
 /** 接收服务端核验的补充证据；不产生编辑、不改待传正文和版本。 */
