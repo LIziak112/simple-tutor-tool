@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   ApiErr,
   AttemptDraftData,
@@ -9,7 +10,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { responses } from "../db/schema";
+import { attempts, responses } from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { fetchSubmitRevisions } from "../test/submit-revisions";
@@ -581,6 +582,123 @@ describe("审查 P2-1：旧冻结快照的 sourceMd 兜底重抽", () => {
         sequence: ["it-6"],
       }),
     );
+  });
+
+  it("旧卷判定不重判、不漂移（QM-18 细项 3）：回看×2/错题重练/教师读路径后冻结行逐字节不变", async () => {
+    const { app, db, aCookie, teacherCookie, attemptId } = await makeQm13App();
+    stripStructureKeys(db, attemptId);
+    // 旧卷已交卷：matching 部分作答 → 交卷（reference_self 行无自动判定）→ 自评「错」
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.matching, {
+          kind: "matching",
+          pairs: { "slot-1": "opt-3" },
+        })
+      ).status,
+    ).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    const submitRes = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({ revisions, now: "2026-10-25T10:00:00Z" }),
+      },
+    );
+    expect(submitRes.status).toBe(200);
+    const selfReviewRes = await app.request(
+      `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(
+        Q.matching,
+      )}/self-review`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          verdict: "wrong",
+          baseRevision: 0,
+          mutationId: crypto.randomUUID(),
+        }),
+      },
+    );
+    expect(selfReviewRes.status).toBe(200);
+
+    // 冻结行基线（快照原文/答案/判定/自评列全量）与 attempt 行
+    const rowsOf = () =>
+      db
+        .select({
+          questionId: responses.questionId,
+          snapshotJson: responses.questionSnapshotJson,
+          answerJson: responses.answerJson,
+          autoCorrect: responses.autoCorrect,
+          finalCorrect: responses.finalCorrect,
+          teacherMark: responses.teacherMark,
+          submittedAt: responses.submittedAt,
+          gradingPolicy: responses.gradingPolicy,
+          selfReviewVerdict: responses.selfReviewVerdict,
+          selfReviewRevision: responses.selfReviewRevision,
+        })
+        .from(responses)
+        .where(eq(responses.attemptId, attemptId))
+        .all();
+    const rowsBefore = JSON.stringify(rowsOf());
+    const attemptBefore = JSON.stringify(
+      db.select().from(attempts).where(eq(attempts.id, attemptId)).get(),
+    );
+
+    // 读路径 ①：结果视图 ×2——判定/自评/行策略两次读数一致（不重判）
+    const readDetail = async (): Promise<AttemptResultData> => {
+      const res = await app.request(`/api/student/attempts/${attemptId}`, {
+        headers: { cookie: aCookie },
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { data: AttemptResultData }).data;
+    };
+    const first = await readDetail();
+    const second = await readDetail();
+    const matchingOf = (detail: AttemptResultData) =>
+      detail.units
+        .flatMap((unit) => unit.questions)
+        .find((question) => question.questionId === Q.matching);
+    expect(matchingOf(first)).toMatchObject({
+      gradingPolicy: "reference_self",
+      selfReview: { record: { verdict: "wrong" } },
+      finalCorrect: null,
+    });
+    // 两次读数一致（漂移即失败）
+    expect(JSON.stringify(matchingOf(second))).toBe(
+      JSON.stringify(matchingOf(first)),
+    );
+
+    // 读路径 ②：错题本聚合 + 错题重练开卷（来源行被复制，不改写来源卷）
+    const wrongRes = await app.request("/api/student/wrong-questions", {
+      headers: { cookie: aCookie },
+    });
+    expect(wrongRes.status).toBe(200);
+    const practiceRes = await app.request("/api/student/wrong-practice", {
+      method: "POST",
+      headers: { cookie: aCookie, "content-type": "application/json" },
+      body: JSON.stringify({ questionIds: [Q.matching] }),
+    });
+    expect(practiceRes.status).toBe(201);
+
+    // 读路径 ③：教师详情 + 待批队列（reference_self 行不进教师必批）
+    const teacherDetail = await app.request(
+      `/api/teacher/attempts/${attemptId}`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(teacherDetail.status).toBe(200);
+    const pendingRes = await app.request("/api/teacher/pending-marks", {
+      headers: { cookie: teacherCookie },
+    });
+    expect(pendingRes.status).toBe(200);
+
+    // 冻结行与 attempt 行逐字节不变：兜底重抽只用于当次投影，不回写库、不重判
+    expect(JSON.stringify(rowsOf())).toBe(rowsBefore);
+    expect(
+      JSON.stringify(
+        db.select().from(attempts).where(eq(attempts.id, attemptId)).get(),
+      ),
+    ).toBe(attemptBefore);
   });
 
   it("旧快照交卷后的结果视图同口径兜底（对照结构随结果快照下发）", async () => {
