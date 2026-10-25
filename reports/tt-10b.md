@@ -57,7 +57,13 @@ TT-10 收官。口径与提交明细见决策记录 §24。
 
 ## 四、收口验证数字
 
-（执行时回填：test 全量 / e2e:affected chromium 数字与退出码）
+- `pnpm test`（test:affected 兜底全量）：**529 文件 / 6442 用例全绿 EXIT=0**
+  （基线 6423 + 本单 19：parse 5 + split-lesson 4 + lesson 六细项 5 +
+  LessonGroupBlock 3 + 页面 2）。
+- e2e:affected（迁移兜底全量、本机 chromium）：**124 过 / 1 skip（fixme）/
+  1 挂 EXIT=1 → 挂例隔离复跑 1/1 过 EXIT=0（49.0s，warm 100.8–126.9ms 全部
+  ≤150ms）**——挂例为既有「130 题长作业性能预算」用例（TT-10a P3-① 同款
+  满载计时噪声，预算口径待拍板项），判环境负载抖动、与本单无关。
 
 ## 五、硬性边界对照
 
