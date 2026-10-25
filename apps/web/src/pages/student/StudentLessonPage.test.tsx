@@ -343,6 +343,11 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     expect(
       screen.getByRole("button", { name: "重试加载共享材料" }),
     ).toBeInTheDocument();
+    // 固定文案面向学生，不透出技术异常文本（error.message 如 fetch failed）
+    expect(
+      screen.getByText("共享材料加载失败，不影响作答题目。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("网络异常")).not.toBeInTheDocument();
   });
 
   it("md 段拼接目录：桌面侧栏展示全部 H2 标题", async () => {

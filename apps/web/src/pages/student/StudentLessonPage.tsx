@@ -266,12 +266,10 @@ function useLessonGroupAnchors(
   }, [contextQuery.data, order]);
   return {
     anchors,
-    contextError:
-      contextQuery.error instanceof Error
-        ? contextQuery.error.message
-        : contextQuery.isError
-          ? "共享材料加载失败，不影响作答题目。"
-          : null,
+    // 固定文案（不透出 error.message：网络层异常是技术信息，如 fetch failed）
+    contextError: contextQuery.isError
+      ? "共享材料加载失败，不影响作答题目。"
+      : null,
     contextRetry: () => void contextQuery.refetch(),
     contextFetching: contextQuery.isFetching,
   };

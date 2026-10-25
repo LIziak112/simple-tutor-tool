@@ -46,10 +46,12 @@ TT-10 收官。口径与提交明细见决策记录 §24。
 
 - 执行单三档快检：md-dsl 全量 435/435（首轮）→ 契约面全仓 6432/6432
   （packages/md-dsl 目录下 vitest 捡到全仓 workspace）；lesson 文件 42/42；
-  web LessonGroupBlock 3/3 + StudentLessonPage 19/19 + ai 5/5；
+  web LessonGroupBlock 3/3 + StudentLessonPage 16/16（新增 2）+ ai 5/5；
   typecheck:affected Done（首轮揭 split-lesson 谓词负向收窄 TS2339 ×2、
   测试两处 optional/TS2739，当场修复后复绿）；lint:changed 首轮揭 6 文件
-  format + organizeImports，biome 收口后清洁。
+  format + organizeImports，biome 收口后清洁（订正：该表述失实——后续
+  3a4bfc27 又引入一处 format 错使 lint:changed 退出码 1，验证单已揭、
+  修复附录已订正）。
 - 收口（兜底全量如实执行）：test:affected 命中迁移兜底 → 全量（数字见
   §四）；e2e:affected 命中迁移兜底 → 全量 chromium（数字见 §四）。
 - `pnpm typecheck` 一次 + gen:spec/schema:export：契约零改动（git diff
@@ -74,6 +76,12 @@ null（gradeResponseRow 零改动）；零新依赖；零新迁移；教师端 U
 
 ## 六、遗留
 
+- 审查 P3-2（samples/qm 增补 lesson×材料/组×新题型语料）：留 QM-15——
+  语料框架按 practice 锁型（contract qm-corpus.test.ts 的
+  ExpectedValid.kind: "practice"、md-dsl 名册同源），扩 lesson 语料需
+  同时改两处名册与类型锁，属 QM-15 语料批次，不在本收尾单顺手范围；
+  现状唯一 lesson 样例 samples/v2/讲练样例.md 无材料/组，该组合面仍仅
+  单测锁定（lint 红线与切段剔除已由本修复附录补测试收口）。
 - TT-10a P3 未修项维持记档不属本单范围：①note-service 逐行
   materialSlotOrderOf N+1（缓存优化建议）；②attempt-service 保存路径重复
   查询与无谓材料扫（matching 短路建议）；③材料槽位 code/math 同名 id 字符串

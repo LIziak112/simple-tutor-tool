@@ -3072,11 +3072,7 @@ it-1
     expect(context.groups[0]?.materialRefs.map((r) => r.material)).toEqual([
       "qm-mat",
     ]);
-    expect(context.groups[0]?.questionIds).toEqual([
-      "ls-m",
-      "ls-c",
-      "ls-o",
-    ]);
+    expect(context.groups[0]?.questionIds).toEqual(["ls-m", "ls-c", "ls-o"]);
     // 材料 title 是公开元数据（材料正文快照经 materialPublicSchema 白名单）
     expect(context.materials[0]?.title).toContain("某省粮食生产");
     // 题目公开投影携带作答面结构（matching 槽位集合按材料槽位序展开）
