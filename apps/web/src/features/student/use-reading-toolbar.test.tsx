@@ -147,6 +147,27 @@ it("隐藏后出现编辑错误时立即找回提示", async () => {
   expect(header).toHaveAttribute("data-reading-hidden", "false");
 });
 
+it("滚动经过未聚焦输入框仍属于阅读，实际聚焦输入才锁定导航", () => {
+  render(
+    <>
+      <Toolbar />
+      <input aria-label="未聚焦答案" />
+    </>,
+  );
+  fireEvent.wheel(screen.getByRole("textbox"), { deltaY: 180 });
+  scroll(180, false);
+  expect(screen.getByRole("banner")).toHaveAttribute(
+    "data-reading-hidden",
+    "true",
+  );
+  act(() => screen.getByRole("textbox").focus());
+  scroll(240);
+  expect(screen.getByRole("banner")).toHaveAttribute(
+    "data-reading-hidden",
+    "false",
+  );
+});
+
 it("桌面不自动隐藏，卸载清理滚动监听", () => {
   vi.stubGlobal(
     "matchMedia",

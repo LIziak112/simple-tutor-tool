@@ -44,7 +44,7 @@ export function useReadingToolbar({ blocked = false } = {}) {
       }
       if (
         event.target instanceof Element &&
-        event.target.closest(`${EDITING}, ${OVERLAY}, canvas`)
+        event.target.closest(`${OVERLAY}, canvas`)
       )
         return;
       userUntil = performance.now() + 1200;
