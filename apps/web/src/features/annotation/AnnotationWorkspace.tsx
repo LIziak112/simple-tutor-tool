@@ -124,6 +124,14 @@ export function AnnotationWorkspace({
   const [penSize, setPenSize] = useState<InkPenSize>("medium");
   const [historyTick, setHistoryTick] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
+  /** 裁决/重试出口的异步失败就地呈现（网络错误等不让按钮静默失效） */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const runAction = (action: () => Promise<void>) => {
+    setActionError(null);
+    void action().catch((err: unknown) => {
+      setActionError(err instanceof Error ? err.message : "操作失败，请重试");
+    });
+  };
 
   const baseWidth = base.pixelWidth;
   const baseHeight = base.pixelHeight;
@@ -258,11 +266,13 @@ export function AnnotationWorkspace({
                 variant="outline"
                 className="h-9 px-2.5 text-xs"
                 onClick={() =>
-                  void retryAnnotationUpload(session, {
-                    attemptId,
-                    questionId,
-                    phase,
-                  })
+                  runAction(() =>
+                    retryAnnotationUpload(session, {
+                      attemptId,
+                      questionId,
+                      phase,
+                    }),
+                  )
                 }
               >
                 重试同步
@@ -282,11 +292,13 @@ export function AnnotationWorkspace({
                     variant="outline"
                     className="h-9 px-2.5 text-xs"
                     onClick={() =>
-                      void resolveAnnotationConflictKeepCloud(session, {
-                        attemptId,
-                        questionId,
-                        phase,
-                      })
+                      runAction(() =>
+                        resolveAnnotationConflictKeepCloud(session, {
+                          attemptId,
+                          questionId,
+                          phase,
+                        }),
+                      )
                     }
                   >
                     采用云端版本
@@ -295,13 +307,12 @@ export function AnnotationWorkspace({
                     variant="outline"
                     className="h-9 px-2.5 text-xs"
                     onClick={() =>
-                      void resolveAnnotationConflictKeepLocalAndUpload(
-                        session,
-                        {
+                      runAction(() =>
+                        resolveAnnotationConflictKeepLocalAndUpload(session, {
                           attemptId,
                           questionId,
                           phase,
-                        },
+                        }),
                       )
                     }
                   >
@@ -313,11 +324,13 @@ export function AnnotationWorkspace({
                   variant="outline"
                   className="h-9 px-2.5 text-xs"
                   onClick={() =>
-                    void resolveAnnotationConflictKeepLocalAndUpload(session, {
-                      attemptId,
-                      questionId,
-                      phase,
-                    })
+                    runAction(() =>
+                      resolveAnnotationConflictKeepLocalAndUpload(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      }),
+                    )
                   }
                 >
                   以本机为准并重传
@@ -336,11 +349,13 @@ export function AnnotationWorkspace({
                   variant="outline"
                   className="h-9 px-2.5 text-xs"
                   onClick={() =>
-                    void retryAnnotationUpload(session, {
-                      attemptId,
-                      questionId,
-                      phase,
-                    })
+                    runAction(() =>
+                      retryAnnotationUpload(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      }),
+                    )
                   }
                 >
                   重新尝试同步
@@ -349,17 +364,24 @@ export function AnnotationWorkspace({
                   variant="outline"
                   className="h-9 px-2.5 text-xs"
                   onClick={() =>
-                    void resolveAnnotationConflictKeepCloud(session, {
-                      attemptId,
-                      questionId,
-                      phase,
-                    })
+                    runAction(() =>
+                      resolveAnnotationConflictKeepCloud(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      }),
+                    )
                   }
                 >
                   采用云端版本
                 </Button>
               </>
             )}
+          </span>
+        )}
+        {actionError !== null && (
+          <span role="alert" className="text-destructive">
+            {actionError}
           </span>
         )}
       </div>

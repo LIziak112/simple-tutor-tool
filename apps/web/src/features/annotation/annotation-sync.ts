@@ -44,6 +44,7 @@ import {
   applyAnnotationReceipt,
   applyAnnotationView,
   applyBasePreview,
+  assertAdoptableCloudBasePng,
   clearAnnotationDeniedAccess,
   clearAnnotationRetained,
   listPendingAnnotations,
@@ -751,6 +752,9 @@ export async function resolveAnnotationConflictKeepCloud(
     const png = await downloadCloudBasePng(scope.attemptId, view.base.baseId);
     if (!sameSessionSafe(session))
       throw new Error("账号已切换，请重新进入作答页");
+    // 内容校验前移到采用云端正文之前：坏 PNG（反代改写类型/截断/超限）在
+    // 冲突/保留态原样时即失败，不产生「正文已换云端、底图未重绑」的半态。
+    assertAdoptableCloudBasePng(png);
     await applyAnnotationView(session, scope, view, { expectedMutationId });
     await adoptCloudAnnotationBase(session, scope, {
       png,

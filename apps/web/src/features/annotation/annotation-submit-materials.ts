@@ -39,7 +39,7 @@ export async function snapshotAnnotationProblems(
         record.local === "failed"
           ? "标画本机保存失败，请保持页面打开并重试"
           : record.retained
-            ? "标画已保留本机、不再自动同步：可重新尝试同步或采用云端版本后再交卷"
+            ? "标画已保留本机、不再自动同步：可采用云端版本继续同步后交卷，或保持现状交卷（本题本机笔迹不会上传）"
             : record.conflict
               ? `标画同步冲突：${record.conflict.reason}`
               : record.denied

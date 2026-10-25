@@ -620,6 +620,64 @@ describe("annotation-sync：底图布局冲突死锁出口（批次三 P0-2）",
     expect(record?.localBase?.boundBaseId).toBe(CLOUD_BASE_ID);
   });
 
+  it("keep-cloud 坏 PNG（反代改写类型）：预校验在采用正文之前拦截，不产生正文/底图半态", async () => {
+    await createLocalBase();
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
+    await applyAnnotationConflict(
+      SESSION_A,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局",
+    );
+    viewMock.mockResolvedValue({
+      base: {
+        baseId: CLOUD_BASE_ID,
+        state: "ready",
+        stale: false,
+        pixelWidth: 640,
+        pixelHeight: 400,
+        layout: { ...LOCAL_LAYOUT, cssWidth: 320 },
+      },
+      maxWidthPx: 640,
+      doc: { version: 1, baseWidth: 640, baseHeight: 400, strokes: [] },
+      annotation: {
+        annotationId: "00000000-0000-4000-8000-000000000009",
+        revision: 4,
+        hash: "f".repeat(64),
+        savedAt: "2026-10-08T00:00:00Z",
+        sealedAt: null,
+        strokeCount: 0,
+        pointCount: 0,
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        blob: async () =>
+          new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], {
+            type: "application/octet-stream",
+          }),
+      })),
+    );
+    try {
+      await expect(
+        resolveAnnotationConflictKeepCloud(SESSION_A, SCOPE),
+      ).rejects.toThrow("云端底图PNG为空、格式错误或超限");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.conflict?.kind).toBe("layout");
+    expect(record?.pending).not.toBeNull();
+    expect(record?.localBase?.png).toBe(LOCAL_PNG);
+    // 关键：云端正文未被采用（doc 仍为本机稿），正文/底图坐标域不一致的
+    // 半态不可达。
+    expect(record?.doc.strokes).toHaveLength(1);
+    expect(record?.baseRevision).not.toBe(4);
+  });
+
   it("keep-cloud 底图下载失败：保留冲突态可重试，不半途清态", async () => {
     await createLocalBase();
     writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));

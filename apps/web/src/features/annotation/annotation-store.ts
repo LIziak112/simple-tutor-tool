@@ -916,6 +916,20 @@ export async function applyBasePreview(
 }
 
 /**
+ * 云端底图 PNG 内容校验（keep-cloud 采用前的预检与 adopt 内防御共用）：
+ * 空/超限/非 PNG 在采用云端正文**之前**拦截，避免「正文已换云端、底图未重绑」
+ * 的坐标域半态。
+ */
+export function assertAdoptableCloudBasePng(png: Blob): void {
+  if (
+    png.size === 0 ||
+    png.size > ANNOTATION_BASE_PNG_MAX_BYTES ||
+    png.type !== "image/png"
+  )
+    throw new Error("云端底图PNG为空、格式错误或超限");
+}
+
+/**
  * 冲突裁决「采用云端版本」后的底图重绑（批次三 C）：把本机底图**替换**为
  * 云端 ready 底图（云端 layout + boundBaseId）。与 writeLocalAnnotationBase
  * 的「不能覆盖另一布局」守卫不同——本函数只在用户显式裁决采用云端后调用，
@@ -928,12 +942,7 @@ export async function adoptCloudAnnotationBase(
   cloud: { png: Blob; layout: AnnotationSurfaceLayout; boundBaseId: string },
 ): Promise<void> {
   const layout = annotationSurfaceLayoutSchema.parse(cloud.layout);
-  if (
-    cloud.png.size === 0 ||
-    cloud.png.size > ANNOTATION_BASE_PNG_MAX_BYTES ||
-    cloud.png.type !== "image/png"
-  )
-    throw new Error("云端底图PNG为空、格式错误或超限");
+  assertAdoptableCloudBasePng(cloud.png);
   await mutateLoaded(session, scope, null, (record) => {
     if (
       record.base?.state !== "ready" ||

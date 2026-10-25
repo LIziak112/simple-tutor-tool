@@ -894,6 +894,26 @@ describe("AnnotationWorkspace：布局冲突裁决出口（批次三 P0-2）", (
     expect(putDocMock).not.toHaveBeenCalled(); // 保留本机不重传
   });
 
+  it("采用云端版本异步失败：错误就地呈现，冲突保留可重试（不静默失效）", async () => {
+    await openWorkspace();
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局，保留本机稿并查看原标画",
+    );
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    viewMock.mockRejectedValue(new Error("网络中断，请稍后重试"));
+    fireEvent.click(screen.getByRole("button", { name: "采用云端版本" }));
+    expect(await screen.findByText("网络中断，请稍后重试")).toBeInTheDocument();
+    // 冲突仍在（未半途清态），按钮可再次点击
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "采用云端版本" }),
+    ).toBeInTheDocument();
+  });
+
   it("revision 冲突：维持既有「以本机为准并重传」按钮", async () => {
     await openWorkspace();
     await applyAnnotationConflict(
