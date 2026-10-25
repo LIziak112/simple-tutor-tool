@@ -12,7 +12,7 @@ import {
 } from "./MaterialPanel";
 import {
   materialReadingOffsetOf,
-  noteMaterialReadingOffset,
+  useMaterialReadingPosition,
 } from "./material-reading-position";
 
 /**
@@ -63,38 +63,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   );
 
   // 阅读位置记录：材料列自身滚动（compare 模式）或窗口滚过材料顶（stack）
-  useEffect(() => {
-    if (readingKey === undefined) return;
-    const element = materialsRef.current;
-    if (element === null) return;
-    let frame = 0;
-    const record = () => {
-      frame = 0;
-      const node = materialsRef.current;
-      if (node === null || readingKey === undefined) return;
-      if (node.scrollHeight > node.clientHeight) {
-        // compare 模式：列内自身滚动，偏移即 scrollTop
-        noteMaterialReadingOffset(readingKey, node.scrollTop);
-      } else {
-        // stack 模式：页面滚过材料顶部的距离（截断到材料自身高度）
-        const top = node.getBoundingClientRect().top;
-        noteMaterialReadingOffset(
-          readingKey,
-          Math.min(Math.max(-top, 0), node.scrollHeight),
-        );
-      }
-    };
-    const schedule = () => {
-      if (frame === 0) frame = requestAnimationFrame(record);
-    };
-    element.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("scroll", schedule, { passive: true });
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
-      element.removeEventListener("scroll", schedule);
-      window.removeEventListener("scroll", schedule);
-    };
-  }, [readingKey]);
+  useMaterialReadingPosition(materialsRef, readingKey);
 
   // reveal：滚入 + 恢复已读偏移 + 焦点落材料列（键盘可达）
   useEffect(() => {
