@@ -2,7 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import type { AnnotationDoc, Question, QuestionAnswers } from "@tutor/contract";
+import type {
+  AnnotationDoc,
+  AnnotationSurfaceLayout,
+  Question,
+  QuestionAnswers,
+} from "@tutor/contract";
 import {
   annotationDocSchema,
   annotationSurfaceLayoutSchema,
@@ -33,6 +38,7 @@ import {
 import { expectHttpError } from "../test/expect-http-error.ts";
 import { gzipJson, makeNotePng, makeStudent } from "../test/note-fixtures.ts";
 import {
+  ANNOTATION_BASE_PENDING_TAKEOVER_MS,
   annotationBaseImageBytes,
   annotationBaseRelPath,
   annotationBodyRelPath,
@@ -494,6 +500,177 @@ describe("assembleAnnotationBase：载荷装配与泄露防线", () => {
     } catch (err) {
       expectHttpError(err, 500, "EXPORT_ASSEMBLY_BROKEN");
     }
+  });
+});
+
+// ---------- 批次三（P0-2）：pending 行过期接管 ----------
+
+/** 服务端视角的布局夹具（cssWidth 可变＝不同核；几何 300×200 CSS＝600×400 像素） */
+function surfaceLayoutOf(
+  revisionId: string,
+  cssWidth: number,
+): AnnotationSurfaceLayout {
+  return annotationSurfaceLayoutSchema.parse({
+    renderVersion: 2,
+    questionRevisionId: revisionId,
+    cssWidth,
+    cssHeight: 200,
+    pixelRatio: 2,
+    styleVersion: 1,
+    contentSignature: "a".repeat(64),
+    geometrySignature: "b".repeat(64),
+    fontSignature: "c".repeat(64),
+  });
+}
+
+/** 把唯一底图行的 updatedAt 回拨到超过 TTL（模拟半途死亡后过了接管窗口） */
+function backdateBaseRow(world: World): void {
+  world.db
+    .update(annotationBasesTable)
+    .set({
+      updatedAt: new Date(
+        Date.now() - (ANNOTATION_BASE_PENDING_TAKEOVER_MS + 60_000),
+      ).toISOString(),
+    })
+    .run();
+}
+
+describe("assembleAnnotationBase：pending 行过期接管（批次三 P0-2）", () => {
+  it("半途死亡的 pending 行超 TTL：后来设备接管布局并完成两阶段上传", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    // 设备 A：preview 建了 pending 行（无 layout）后死亡，image 一直没回传
+    assembleAnnotationBase(world.db, world.studentId, attemptId, Q);
+    backdateBaseRow(world);
+    // 设备 B：携带自己的布局接管该行（行无 imagePath 无内容，不改写历史）
+    const layout = surfaceLayoutOf(revisionId, 300);
+    const preview = assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      layout,
+    );
+    expect(preview.base.state).toBe("pending");
+    expect(preview.base.layout).toEqual(layout);
+    const row = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    expect(row?.layout).toEqual(layout);
+    expect(row?.baseRenderVersion).toBe(2);
+    expect(row?.questionRevisionId).toBe(revisionId);
+    // 接管后两阶段照常走完
+    const receipt = registerBaseImage(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      makeNotePng(600, 400),
+      {
+        questionRevisionId: revisionId,
+        baseRenderVersion: 2,
+        phase: "scratch",
+      },
+    );
+    expect(receipt.state).toBe("ready");
+    const put = putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson({ ...annotationDoc(400), baseWidth: 600 }),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    expect(put.revision).toBe(1);
+  });
+
+  it("未超 TTL：维持 409 ANNOTATION_BASE_LAYOUT_CONFLICT 且行不被改写", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    assembleAnnotationBase(world.db, world.studentId, attemptId, Q);
+    const rowBefore = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    try {
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        surfaceLayoutOf(revisionId, 300),
+      );
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ANNOTATION_BASE_LAYOUT_CONFLICT");
+    }
+    expect(
+      world.db
+        .select()
+        .from(annotationBasesTable)
+        .where(eq(annotationBasesTable.attemptId, attemptId))
+        .get(),
+    ).toEqual(rowBefore);
+  });
+
+  it("ready 行永不接管：过期且不同核也 409，布局与时间不变（不变量回归）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    const layoutA = surfaceLayoutOf(revisionId, 300);
+    assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      layoutA,
+    );
+    registerBaseImage(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      makeNotePng(600, 400),
+      {
+        questionRevisionId: revisionId,
+        baseRenderVersion: 2,
+        phase: "scratch",
+      },
+    );
+    backdateBaseRow(world);
+    const rowBefore = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    try {
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        surfaceLayoutOf(revisionId, 350),
+      );
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ANNOTATION_BASE_LAYOUT_CONFLICT");
+    }
+    expect(
+      world.db
+        .select()
+        .from(annotationBasesTable)
+        .where(eq(annotationBasesTable.attemptId, attemptId))
+        .get(),
+    ).toEqual(rowBefore);
   });
 });
 
