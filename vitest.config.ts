@@ -16,11 +16,20 @@ export default defineConfig({
     },
   },
   test: {
+    // dot reporter：数千用例的逐行输出开销可观，收敛为点阵（失败详情仍在末尾）。
+    // 并发不设上限（实测最快），重用例的负载抖动以逐组显式超时根治（route-integration 等），
+    // 求稳可临时 CLI --maxWorkers=8。环境复用两案实测否决、勿重试：vmThreads 的 VM
+    // 上下文缺 Web Streams/WebCrypto 全局、且路径过滤/--changed 匹配不到测试（会静默
+    // 击穿 test:quick 分层闸门）；threads+isolate:false 共享全局致跨文件串扰。
+    // 实测数据与依据见 c5f63800 / 8350fec2 提交记录。
+    reporter: "dot",
     projects: [
       {
         test: {
           name: "node",
           environment: "node",
+          // better-sqlite3 等原生模块不能在 vm 上下文里加载，保持进程池（vitest 默认）
+          pool: "forks",
           include: [
             "apps/server/src/**/*.test.ts",
             "packages/*/src/**/*.test.ts",

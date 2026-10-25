@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDb, createDbHandle, staticDbHandle } from "./client";
+import {
+  createDb,
+  createDbFromBuffer,
+  createDbHandle,
+  staticDbHandle,
+} from "./client";
 import { runMigrations } from "./migrate";
 import { teachers } from "./schema";
 
@@ -121,5 +126,63 @@ describe("staticDbHandle（缺省包装）", () => {
     expect(() => handle.close()).toThrow("无法执行恢复");
     expect(() => handle.restart()).toThrow("无法执行恢复");
     db.$client.close();
+  });
+});
+
+describe("createDbFromBuffer（模板克隆）", () => {
+  it("克隆携带模板内容与逐连接 foreign_keys；写入不污染模板字节、克隆间互不干扰", () => {
+    // 模板：迁移后写入一位教师，serialize 成字节即关闭
+    const template = createDb(":memory:");
+    runMigrations(template);
+    template
+      .insert(teachers)
+      .values({
+        id: "t-tpl-1",
+        loginName: "tpl",
+        isAdmin: true,
+        disabledAt: null,
+        passwordHash: null,
+        apiToken: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      })
+      .run();
+    const bytes = template.$client.serialize();
+    template.$client.close();
+
+    const first = createDbFromBuffer(bytes);
+    // 逐连接 pragma 与 createDb 同套（外键默认关，不补开就会漏约束）
+    expect(first.$client.pragma("foreign_keys", { simple: true })).toBe(1);
+    // 模板内容随字节带过来
+    expect(
+      first.select().from(teachers).where(eq(teachers.id, "t-tpl-1")).get(),
+    ).toBeDefined();
+
+    // 在首个克隆上写入，再从同一份字节克隆：后写的行不存在（字节未被污染）
+    first
+      .insert(teachers)
+      .values({
+        id: "t-clone-only",
+        loginName: "c",
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: null,
+        apiToken: null,
+        createdAt: "2026-01-02T00:00:00.000Z",
+      })
+      .run();
+    first.$client.close();
+
+    const second = createDbFromBuffer(bytes);
+    expect(
+      second
+        .select()
+        .from(teachers)
+        .where(eq(teachers.id, "t-clone-only"))
+        .get(),
+    ).toBeUndefined();
+    expect(
+      second.select().from(teachers).where(eq(teachers.id, "t-tpl-1")).get(),
+    ).toBeDefined();
+    second.$client.close();
   });
 });
