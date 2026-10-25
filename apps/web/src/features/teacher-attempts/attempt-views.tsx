@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { formatRelativeTime } from "@/lib/time";
 import type { AttemptViewMode } from "./attempt-filters";
 
@@ -102,15 +103,6 @@ export function sourceLineOf(data: TeacherAttemptDetailData): string {
     : `作业 · ${data.assignmentTitle ?? ""}`;
 }
 
-/** 展示得分（D2 口径：scoreFinal ?? scoreAuto；无分「—」） */
-export function displayScoreOf(card: {
-  scoreFinal: number | null;
-  scoreAuto: number | null;
-}): string {
-  const score = card.scoreFinal ?? card.scoreAuto;
-  return score === null ? "—" : String(score);
-}
-
 /** 分组键与组标题（按视图；不依赖列表顺序的纯映射） */
 function groupOf(
   card: TeacherAttemptCard,
@@ -174,9 +166,8 @@ function AttemptCard({ card }: { card: TeacherAttemptCard }) {
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           <span>{card.questionCount} 题</span>
           <span>
-            得分{" "}
             <b className="font-semibold text-foreground">
-              {displayScoreOf(card)}
+              {formatResultCounts(card.resultCounts, false)}
             </b>
           </span>
           {card.pendingCount > 0 && (
@@ -184,6 +175,9 @@ function AttemptCard({ card }: { card: TeacherAttemptCard }) {
               <Clock3 aria-hidden className="size-3" />
               待批 {card.pendingCount}
             </span>
+          )}
+          {(card.resultCounts?.pendingSelfReviewCount ?? 0) > 0 && (
+            <span>待自评 {card.resultCounts?.pendingSelfReviewCount} 题</span>
           )}
         </p>
       </Link>

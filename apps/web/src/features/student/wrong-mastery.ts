@@ -56,13 +56,17 @@ export function isConquered(
   const last = rounds[rounds.length - 1];
   if (last === undefined) return false;
   if (standard === "lenient") {
-    return last.correct && last.studentFlag !== "unsure";
+    return (
+      last.correct && last.answered === true && last.studentFlag !== "unsure"
+    );
   }
   const prev = rounds[rounds.length - 2];
   return (
     last.correct &&
+    last.answered === true &&
     last.studentFlag !== "unsure" &&
     prev?.correct === true &&
+    prev.answered === true &&
     prev.studentFlag !== "unsure"
   );
 }

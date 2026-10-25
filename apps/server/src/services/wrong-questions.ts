@@ -316,7 +316,11 @@ export function listWrongQuestions(
     // 已攻克口径与端上 isConquered（宽松标准）同源：最近一轮做对且未标
     // 「不会」才算攻克——标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
     const last = rounds[rounds.length - 1];
-    return !(last?.finalCorrect === true && last.studentFlag !== "unsure");
+    return !(
+      last?.finalCorrect === true &&
+      last.answered &&
+      last.studentFlag !== "unsure"
+    );
   });
 
   // 候选题涉及的 attempt 与最近一次判定的 response（轮次来源上下文与条目内容）
@@ -463,7 +467,10 @@ export function listWrongQuestions(
       firstCorrect: first.finalCorrect === true,
       // 已攻克（宽松口径，与默认过滤同源）：最近一轮做对且未标「不会」——
       // 标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
-      resolved: last.finalCorrect === true && last.studentFlag !== "unsure",
+      resolved:
+        last.finalCorrect === true &&
+        last.answered &&
+        last.studentFlag !== "unsure",
       firstAt: first.submittedAt ?? first.startedAt,
       lastAt: last.submittedAt ?? last.startedAt,
       rounds: roundsPayload,

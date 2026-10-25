@@ -609,6 +609,12 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
     expect(course1?.attemptNo).toBe(1);
     expect(course1?.status).toBe("submitted");
     expect(course1?.score).toBe(100);
+    expect(course1?.resultCounts).toEqual({
+      correctCount: 2,
+      totalCount: 3,
+      pendingCount: 1,
+      pendingSelfReviewCount: 0,
+    });
     expect(course1?.pendingCount).toBe(1);
     expect(course1?.answersReleased).toBe(true);
     expect(course1?.startedAt).toBe(T.course1Start);
@@ -626,6 +632,7 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
     const a2 = byId.get(env.a2AttemptId);
     expect(a2?.status).toBe("submitted");
     expect(a2?.score).toBeNull();
+    expect(a2?.resultCounts).toBeNull();
     expect(a2?.pendingCount).toBeNull();
     expect(a2?.answersReleased).toBe(false);
 
@@ -634,6 +641,7 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
       const draft = byId.get(draftId);
       expect(draft?.status).toBe("draft");
       expect(draft?.score).toBeNull();
+      expect(draft?.resultCounts).toBeNull();
       expect(draft?.pendingCount).toBe(0);
       expect(draft?.answersReleased).toBe(true);
       expect(draft?.submittedAt).toBeNull();
@@ -827,6 +835,12 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
     expect(a2?.answersReleased).toBe(true);
     // 两判断一错一对 → scoreAuto=50；solve 未答待批 1（submitted）
     expect(a2?.score).toBe(50);
+    expect(a2?.resultCounts).toEqual({
+      correctCount: 1,
+      totalCount: 3,
+      pendingCount: 1,
+      pendingSelfReviewCount: 0,
+    });
     expect(a2?.pendingCount).toBe(1);
   });
 });

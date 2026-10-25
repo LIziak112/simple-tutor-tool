@@ -71,3 +71,37 @@ describe("记录卡片进行中进度（M4-D3）", () => {
     expect(screen.queryByText(/已提交 \d/)).toBeNull();
   });
 });
+
+it("已公布记录展示冻结题数，不再展示百分比分数", () => {
+  renderRow(
+    rowFixture({
+      status: "submitted",
+      score: 100,
+      resultCounts: {
+        correctCount: 2,
+        totalCount: 5,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
+    }),
+  );
+  expect(screen.getByText(/做对 2 \/ 5 题/)).toBeVisible();
+  expect(screen.queryByText(/得分/)).toBeNull();
+});
+
+it("未公布即使意外携带计数也不渲染答对数", () => {
+  renderRow(
+    rowFixture({
+      status: "submitted",
+      answersReleased: false,
+      resultCounts: {
+        correctCount: 2,
+        totalCount: 5,
+        pendingCount: 1,
+        pendingSelfReviewCount: 0,
+      },
+    }),
+  );
+  expect(screen.getByText("待公布")).toBeVisible();
+  expect(screen.queryByText(/做对/)).toBeNull();
+});

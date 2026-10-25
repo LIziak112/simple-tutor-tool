@@ -8,6 +8,7 @@ import {
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { attemptResultCountsSchema } from "./result-counts.ts";
 import { selfReviewStateSchema } from "./self-review.ts";
 
 /**
@@ -123,6 +124,7 @@ export const teacherAttemptSourceSchema = z.object({
  * 「待批数 = 0 ⇔ status = graded」只对**已收尾卷**（非 draft）成立。
  */
 export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
+  resultCounts: attemptResultCountsSchema.nullable().optional(),
   /** attempts.id（crypto.randomUUID） */
   attemptId: z.uuid(),
   /** 作答学生 id */
@@ -242,6 +244,7 @@ export const teacherAttemptDetailQuestionSchema = z.object({
  */
 export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
   {
+    resultCounts: attemptResultCountsSchema.nullable().optional(),
     /** attempts.id */
     attemptId: z.uuid(),
     studentId: z.uuid(),

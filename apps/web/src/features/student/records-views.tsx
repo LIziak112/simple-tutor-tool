@@ -10,6 +10,7 @@ import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { formatCnTime } from "@/lib/time";
 import { recordReviewHref } from "./record-review-navigation";
 
@@ -71,23 +72,14 @@ export function recordTitleOf(row: TeacherAttemptSource): string {
   return `${row.unitTitle ?? ""} · 第 ${row.attemptNo} 次`;
 }
 
-/**
- * 得分展示（D10）：服务端已按 scoreFinal ?? scoreAuto 口径算好 score——
- * - null 且未公布（answersReleased=false，after_due 未到截止）→ 「待公布」；
- * - null 且已公布 → 无可判分或全待批 → 「待批」；
- * - draft 不渲染得分（无结果可看）。
- */
-function RecordScore({ row }: { row: StudentRecordRow }) {
+/** 作答结果仅在已交且公布后展示；缺少计数的旧响应不从得分猜测。 */
+function RecordResult({ row }: { row: StudentRecordRow }) {
   if (row.status === "draft") return null;
   if (!row.answersReleased)
     return <span className="text-sm text-muted-foreground">待公布</span>;
-  if (row.score === null) {
-    return <span className="text-sm text-muted-foreground">得分 待批</span>;
-  }
   return (
-    <span className="text-sm text-muted-foreground">
-      得分 <b className="font-semibold text-foreground">{row.score}</b>
-      <span className="tabular-nums"> / 100</span>
+    <span className="text-sm text-muted-foreground tabular-nums">
+      {formatResultCounts(row.resultCounts, false)}
     </span>
   );
 }
@@ -139,7 +131,7 @@ export function RecordCard({
           )}
         </p>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <RecordScore row={row} />
+          <RecordResult row={row} />
           {/* M4-D3 进行中进度（§13）：v1 新协议 draft 卷携带行级 n/N（服务端
           白名单纯进度计数）；legacy/lesson 卷缺省不渲染，已收尾行以状态为准 */}
           {isDraft &&

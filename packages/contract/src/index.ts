@@ -141,3 +141,5 @@ export type ErrorCode = z.infer<typeof errorCodeSchema>;
 export type ApiOk = z.infer<typeof apiOkSchema>;
 export type ApiErr = z.infer<typeof apiErrSchema>;
 export type ApiResponse = z.infer<typeof apiResponseSchema>;
+
+export * from "./result-counts.ts";

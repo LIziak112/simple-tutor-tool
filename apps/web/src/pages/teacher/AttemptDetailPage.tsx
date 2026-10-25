@@ -6,6 +6,7 @@ import {
   attemptRoundLabel,
   isAnswered,
 } from "@/features/attempt/answer-format";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
   AttemptDetailQuestionCard,
   formatActiveSec,
@@ -117,17 +118,26 @@ function DetailSummary({
       </div>
     );
   }
+  const pendingSelfReviewCount = data.questions.filter(
+    (question) => question.selfReview?.awaitingSelfReview,
+  ).length;
+  const counts = data.resultCounts ?? {
+    correctCount: data.correctCount,
+    totalCount: data.questions.length,
+    pendingCount: Math.max(0, data.pendingCount - pendingSelfReviewCount),
+    pendingSelfReviewCount,
+  };
   return (
     <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
       <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
         <span>
-          答对 <b className="text-emerald-600">{data.correctCount}</b> 题
+          答对 <b className="text-emerald-600">{counts.correctCount}</b> 题
         </span>
         <span>
           答错 <b className="text-red-600">{data.wrongCount}</b> 题
         </span>
         <span>
-          待批 <b className="text-amber-600">{data.pendingCount}</b> 题
+          待批 <b className="text-amber-600">{counts.pendingCount}</b> 题
         </span>
         {/* #6980-3（审查修复 P1-4）：补「未做」计数——判错但无实际作答且无
         人工判定的行此前不进任何计数，四数合计对不上总题数 */}
@@ -136,18 +146,12 @@ function DetailSummary({
             未做 <b className="text-muted-foreground">{data.notDoneCount}</b> 题
           </span>
         )}
+        {counts.pendingSelfReviewCount > 0 && (
+          <span>待自评 {counts.pendingSelfReviewCount} 题</span>
+        )}
       </p>
-      <p className="flex items-baseline gap-1.5 text-sm text-muted-foreground">
-        自动判分：
-        <b className="text-lg font-semibold text-foreground">
-          {data.scoreAuto === null ? "—" : data.scoreAuto}
-        </b>
-      </p>
-      <p className="flex items-baseline gap-1.5 text-sm text-muted-foreground">
-        最终得分：
-        <b className="text-2xl font-bold text-primary">
-          {data.scoreFinal === null ? "未批" : data.scoreFinal}
-        </b>
+      <p className="text-lg font-semibold text-primary">
+        {formatResultCounts(counts, false)}
       </p>
     </div>
   );
