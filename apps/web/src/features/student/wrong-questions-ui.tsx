@@ -277,11 +277,8 @@ export function WrongQuestionRow({
       >
         {QUESTION_TYPE_LABELS[question.type]}
       </span>
-      <div
-        aria-label={stemSummaryOf(question.stemMd)}
-        title={stemSummaryOf(question.stemMd)}
-        className="min-w-0 flex-1"
-      >
+      <div title={stemSummaryOf(question.stemMd)} className="min-w-0 flex-1">
+        <span className="sr-only">{stemSummaryOf(question.stemMd)}</span>
         <RichMarkdown
           source={displayStemMd(question)}
           compact
