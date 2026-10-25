@@ -21,6 +21,7 @@ import {
   questionGroupPublicSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, describe, expect, it } from "vitest";
 import { runBackfills } from "../db/backfill";
 import { createDbHandle, type Db, type DbHandle } from "../db/client";
@@ -41,7 +42,7 @@ import {
   responses,
   units,
 } from "../db/schema";
-import { TEST_TEACHER_ID } from "../db/test-utils";
+import { makeMigrationsFolderUpTo, TEST_TEACHER_ID } from "../db/test-utils";
 import {
   BACKUP_TEST_PASSWORD,
   insertBackupTeacher,
@@ -499,6 +500,60 @@ function makeQmWorld(tag: string): QmWorld {
   };
 }
 
+/**
+ * 0039 边界旧库的已交卷已判行（原生 SQL——drizzle 绑当前 schema，不能向旧
+ * 结构插含新列的行；返回 responseId 供恢复后比对）。judge 答错 →
+ * auto/final = 0（升级后不得重判漂移）。
+ */
+function seedLegacyJudgedRow(db: Db): string {
+  const now = "2026-09-01T00:00:00.000Z";
+  const teacherId = randomUUID();
+  db.$client
+    .prepare(
+      `INSERT INTO teachers (id, login_name, is_admin, disabled_at, password_hash, api_token, capability_profile_json, created_at)
+       VALUES (?, 'legacyteacher', 1, NULL, NULL, NULL, NULL, ?)`,
+    )
+    .run(teacherId, now);
+  const studentId = randomUUID();
+  db.$client
+    .prepare(
+      `INSERT INTO students (id, teacher_id, display_name, login_name, password_hash, link_token, link_enabled, password_enabled, note, archived_at, created_at)
+       VALUES (?, ?, '旧库学生', 'legacystu', NULL, ?, 1, 0, NULL, NULL, ?)`,
+    )
+    .run(studentId, teacherId, `link-${randomUUID()}`, now);
+  const unitId = "legacy-bak-unit";
+  db.$client
+    .prepare(
+      `INSERT INTO units (id, teacher_id, course_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+       VALUES (?, ?, NULL, NULL, NULL, '旧库单元', NULL, 0, ?, NULL)`,
+    )
+    .run(unitId, teacherId, now);
+  const questionId = "legacy-bak-unit-1";
+  db.$client
+    .prepare(
+      `INSERT INTO questions (id, teacher_id, unit_id, "order", type, difficulty, stem_md, options_json, answers_json, hints_json, solution_md, source_md, version, updated_at, deleted_at)
+       VALUES (?, ?, ?, 0, 'judge', 1, '旧库题干 [[正确]]', NULL, '{"kind":"judge","value":true}', '[]', NULL, '::::question{type=judge}
+旧库题干
+::::', 1, ?, NULL)`,
+    )
+    .run(questionId, teacherId, unitId, now);
+  const attemptId = randomUUID();
+  db.$client
+    .prepare(
+      `INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, lecture_id, attempt_no, status, started_at, submitted_at, frozen_at, active_sec, device, score_auto, score_final, legacy_unverified, abandoned_at)
+       VALUES (?, ?, 'course', NULL, NULL, ?, NULL, 1, 'graded', ?, ?, ?, NULL, NULL, 0, 0, 0, NULL)`,
+    )
+    .run(attemptId, studentId, unitId, now, now, now);
+  const responseId = randomUUID();
+  db.$client
+    .prepare(
+      `INSERT INTO responses (id, attempt_id, unit_id, question_id, question_version, question_snapshot_json, answer_json, answer_revision, answer_mutation_id, submitted_at, auto_correct, final_correct, teacher_mark, teacher_comment, active_sec, hints_used, hints_opened_json, change_count, ink_id)
+       VALUES (?, ?, ?, ?, 1, '{"id":"legacy-bak-unit-1","type":"judge"}', '{"kind":"judge","value":false}', 1, NULL, ?, 0, 0, NULL, NULL, 30, 0, NULL, 0, NULL)`,
+    )
+    .run(responseId, attemptId, unitId, questionId, now);
+  return responseId;
+}
+
 const worlds: Array<() => void> = [];
 afterEach(() => {
   for (const cleanup of worlds.splice(0)) cleanup();
@@ -719,6 +774,76 @@ describe("QM-18：备份恢复后可续写、看旧卷、重练与导出（新�
         .flatMap((unit) => unit.questions)
         .some((q) => q.id === Q.judge),
     ).toBe(true);
+    targetHandle.close();
+  });
+  it("恢复旧版本备份（0040 前结构，无 QM 五表）：onOpen 迁移钩子自动升级、存量行完好（QM-18 细项 5 服务端守卫）", async () => {
+    // 旧结构库：截断迁移目录升到 0039 边界 + 原生 SQL 种一份已交卷已判行
+    //（「不直接降级到无法读取的版本」的对偶面：旧备份恢复进当前服务端 =
+    //  自动升级，存量行不重判；反向〔新库配旧服务端〕的兼容边界见专题发布说明）
+    const legacyDir = mkdtempSync(join(tmpdir(), "tutor-qm-bak-legacy-"));
+    let legacyHandleRef: DbHandle | null = null;
+    worlds.push(() => {
+      legacyHandleRef?.close();
+      rmSync(legacyDir, { recursive: true, force: true });
+    });
+    const legacyHandle = createDbHandle(
+      join(legacyDir, "tutor.db"),
+      (fresh) => {
+        migrate(fresh, {
+          migrationsFolder: makeMigrationsFolderUpTo("0039_mean_doorman"),
+        });
+      },
+    );
+    legacyHandleRef = legacyHandle;
+    const legacyResponseId = seedLegacyJudgedRow(legacyHandle.db);
+    const legacyZip = await zipToBackupBuffer(
+      buildBackupZip(legacyDir, legacyHandle.db),
+    );
+    legacyHandle.close();
+
+    // 目标：全新实例恢复旧备份 → onOpen 迁移自动补 0040/0041
+    const targetDir = mkdtempSync(
+      join(tmpdir(), "tutor-qm-bak-legacy-restore-"),
+    );
+    let targetHandleRef: DbHandle | null = null;
+    worlds.push(() => {
+      targetHandleRef?.close();
+      rmSync(targetDir, { recursive: true, force: true });
+    });
+    const targetHandle = createDbHandle(
+      join(targetDir, "tutor.db"),
+      (fresh) => {
+        runMigrations(fresh);
+        runBackfills(fresh);
+      },
+    );
+    targetHandleRef = targetHandle;
+    await insertBackupTeacher(targetHandle.db, BACKUP_TEST_PASSWORD);
+    const result = await restoreFromBackup(
+      targetDir,
+      targetHandle,
+      TEST_TEACHER_ID,
+      BACKUP_TEST_PASSWORD,
+      legacyZip,
+    );
+    expect(result.sessionWarning).toBe(true);
+
+    const db = targetHandle.db;
+    // QM 表经迁移补齐；存量已判行答案/判定原样（升级不重判）
+    const tables = db.$client
+      .prepare(
+        "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('materials', 'question_groups', 'attempt_context_snapshots')",
+      )
+      .get() as { n: number };
+    expect(tables.n).toBe(3);
+    const row = db.$client
+      .prepare(
+        "SELECT answer_json AS answer, auto_correct AS auto, final_correct AS final FROM responses WHERE id = ?",
+      )
+      .get(legacyResponseId) as { answer: string; auto: number; final: number };
+    expect(JSON.parse(row.answer)).toEqual({ kind: "judge", value: false });
+    expect(row.auto).toBe(0);
+    expect(row.final).toBe(0);
     targetHandle.close();
   });
 });
