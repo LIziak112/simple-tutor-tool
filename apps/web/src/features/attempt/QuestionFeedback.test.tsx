@@ -31,6 +31,7 @@ const releasedQuestion = (overrides: Partial<AttemptResultQuestion> = {}) =>
     teacherMark: null,
     teacherComment: null,
     finalCorrect: true,
+    answered: true,
     hintsOpened: [],
     ...overrides,
   }) as AttemptResultQuestion;

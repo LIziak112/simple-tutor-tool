@@ -15,7 +15,10 @@ export function reviewQuestionState(
 ) {
   return {
     verdict: released ? question.finalCorrect : null,
-    unanswered: question.answer === null,
+    // #6980-3（审查修复 P1-4）：未做口径统一服务端落库的 answered，与题卡
+    // 灰显、错题本入本同一事实——不再按 answer === null 现算（空结构答案
+    // 曾出现「题卡未做、汇总已答」的同页分裂）
+    unanswered: !question.answered,
   };
 }
 
@@ -32,7 +35,10 @@ export function reviewCounts(
   const counts = { correct: 0, wrong: 0, pending: 0, unanswered: 0 };
   for (const question of questions) {
     const state = reviewQuestionState(question, released);
-    if (state.unanswered) counts.unanswered++;
+    if (state.unanswered) {
+      counts.unanswered++;
+      continue; // 未做只进「未作答」，不进判错/待批（#6980-3 口径统一）
+    }
     if (!released) continue;
     if (state.verdict === true) counts.correct++;
     else if (state.verdict === false) counts.wrong++;

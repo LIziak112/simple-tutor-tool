@@ -248,8 +248,10 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     scoreFinal: z.number().int().min(0).max(100).nullable(),
     /** 判对题数（effectiveCorrect = true） */
     correctCount: z.number().int().min(0),
-    /** 判错题数（effectiveCorrect = false） */
+    /** 判错题数（effectiveCorrect = false 且（有实际作答或人工显式判定）） */
     wrongCount: z.number().int().min(0),
+    /** 未做题数（#6980-3）：判错但无实际作答且无人工显式判定——详情灰显「未做」 */
+    notDoneCount: z.number().int().min(0),
     /** 待批数（effectiveCorrect = null；口径同列表卡片 pendingCount） */
     pendingCount: z.number().int().min(0),
     startedAt: z.string().min(1),

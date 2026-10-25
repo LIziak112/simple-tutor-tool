@@ -129,6 +129,13 @@ function DetailSummary({
         <span>
           待批 <b className="text-amber-600">{data.pendingCount}</b> 题
         </span>
+        {/* #6980-3（审查修复 P1-4）：补「未做」计数——判错但无实际作答且无
+        人工判定的行此前不进任何计数，四数合计对不上总题数 */}
+        {data.notDoneCount > 0 && (
+          <span>
+            未做 <b className="text-muted-foreground">{data.notDoneCount}</b> 题
+          </span>
+        )}
       </p>
       <p className="flex items-baseline gap-1.5 text-sm text-muted-foreground">
         自动判分：

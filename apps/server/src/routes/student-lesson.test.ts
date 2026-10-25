@@ -695,8 +695,8 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
     );
     expect(text).not.toContain("大于 $0$ 的自然数是正整数。");
 
-    // 进行中 summary：已提交题计入对错、未提交计入 unanswered（本题提交时未
-    // 填答案 → 按契约 answer 口径不计 answered）
+    // 进行中 summary：已提交题计入对错、未提交计入 unanswered；answered 按
+    // 行内落库值（本 fixture 直改库模拟提交、未走提交写点，行 answered=false）
     expect(body.data.summary).toMatchObject({
       total: 2,
       answered: 0,
@@ -1261,11 +1261,12 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
       autoCorrect: false,
       finalCorrect: false,
     });
-    // 未作答不计入 answered（契约 answer 口径）
+    // 未作答的单题主动提交 =「不会，提交并看解析」路径 → 显式交锋计已答
+    //（answered=1，2026-10-25 主人口径），判错照旧进 wrong
     expect(body.data.summary).toMatchObject({
-      answered: 0,
+      answered: 1,
       wrong: 1,
-      unanswered: 4,
+      unanswered: 3,
     });
   });
 

@@ -600,14 +600,29 @@ export function getTeacherAttemptDetail(
 
   // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）。
   // #6980-3：错次不含未做行——answered=false 的判错在详情里灰显「未做」，
-  // 与学生结果视图、错题本 wrongCount 同口径
+  // 与学生结果视图、错题本 wrongCount 同口径。人工显式判定（teacherMark /
+  // selfCorrect，审查修复 P0-1）不被「未做」掩盖：显式判错的行计入错次。
+  // 计数从 responses 原始行取——questionsOut 投影不含 selfCorrect，且 draft
+  // 投影会把判定置 null（isDraft 时 finalCorrect/autoCorrect 恒 null）。
   const judgedRows =
     attempt.status === "draft"
       ? []
-      : questionsOut.map((item) => ({
-          verdict: effectiveCorrect(item.finalCorrect, item.autoCorrect),
-          answered: item.answered,
-        }));
+      : db
+          .select({
+            finalCorrect: responses.finalCorrect,
+            autoCorrect: responses.autoCorrect,
+            answered: responses.answered,
+            teacherMark: responses.teacherMark,
+            selfCorrect: responses.selfCorrect,
+          })
+          .from(responses)
+          .where(eq(responses.attemptId, attempt.id))
+          .all()
+          .map((row) => ({
+            verdict: effectiveCorrect(row.finalCorrect, row.autoCorrect),
+            answered: row.answered,
+            marked: row.teacherMark !== null || row.selfCorrect !== null,
+          }));
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -618,7 +633,12 @@ export function getTeacherAttemptDetail(
     scoreFinal: attempt.scoreFinal,
     correctCount: judgedRows.filter((row) => row.verdict === true).length,
     wrongCount: judgedRows.filter(
-      (row) => row.verdict === false && row.answered,
+      (row) => row.verdict === false && (row.answered || row.marked),
+    ).length,
+    // #6980-3（审查修复 P1-4）：详情汇总补「未做」计数——判错但无实际作答且
+    // 无人工判定，此前不进任何计数，四数对不上总题数
+    notDoneCount: judgedRows.filter(
+      (row) => row.verdict === false && !row.answered && !row.marked,
     ).length,
     pendingCount: judgedRows.filter((row) => row.verdict === null).length,
     startedAt: attempt.startedAt,
