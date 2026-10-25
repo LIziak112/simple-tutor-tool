@@ -41,8 +41,8 @@ const CORPUS_DIR = fileURLToPath(
 // ---------- 1. 清单与预期表（八类有效形态；对照实施清单 QM-02 细项一） ----------
 
 interface ExpectedValid {
-  /** frontmatter 来源（全部 practice：本轮语料不含 lecture/lesson） */
-  readonly kind: "practice";
+  /** frontmatter 来源（practice 为主；valid-09 起 lesson×材料/组×新题型进回归，TT-10b P3-2） */
+  readonly kind: "practice" | "lesson";
   /** 材料数与每份材料的 (锚点数, 槽位数) */
   readonly materials: ReadonlyArray<{
     readonly id: string;
@@ -63,8 +63,8 @@ interface ExpectedValid {
     /** 参考答案归属：有=answers 存在；无=manual_only 演示 */
     readonly hasAnswer: boolean;
   }>;
-  /** 材料槽位总数与种类（choice=完形空位、match=配对槽） */
-  readonly slotKind?: "choice" | "match";
+  /** 材料槽位总数与种类（choice=完形空位、match=配对槽、mixed=同材料混用） */
+  readonly slotKind?: "choice" | "match" | "mixed";
 }
 
 const EXPECTED_VALID: Record<string, ExpectedValid> = {
@@ -156,6 +156,24 @@ const EXPECTED_VALID: Record<string, ExpectedValid> = {
       { id: "", type: "find-error", hasAnswer: true },
     ],
   },
+  "valid-09-讲练材料组新题型.md": {
+    kind: "lesson",
+    materials: [{ id: "lesson-mat-1", anchors: 0, slots: 4 }],
+    groups: [
+      {
+        id: "lesson-grp-1",
+        label: "1–2",
+        materialRefs: 1,
+        questions: 2,
+      },
+    ],
+    questions: [
+      { id: "lq-1", type: "matching", hasAnswer: true },
+      { id: "lq-2", type: "choice", hasAnswer: true },
+      { id: "lq-3", type: "ordering", hasAnswer: true },
+    ],
+    slotKind: "mixed",
+  },
 };
 
 /** 七类错误语料的预期码表（§5.4.3；文件名已带 expected- 前缀，此处双核对） */
@@ -193,20 +211,20 @@ function valid(name: string): ExpectedValid {
 }
 
 describe("QM-02 语料清单（samples/qm 新专题目录，§5.9/§12）", () => {
-  it("目录恰好包含 8 有效 + 7 错误共 15 份；新增语料必须同步登记预期表", () => {
+  it("目录恰好包含 9 有效 + 7 错误共 16 份；新增语料必须同步登记预期表", () => {
     const onDisk = readdirSync(CORPUS_DIR)
       .filter((name) => name.endsWith(".md"))
       .sort();
     expect(onDisk).toEqual(
       [...Object.keys(EXPECTED_VALID), ...Object.keys(EXPECTED_INVALID)].sort(),
     );
-    expect(onDisk).toHaveLength(15);
+    expect(onDisk).toHaveLength(16);
   });
 
-  it("预期表自检：八类有效形态与实施清单 QM-02 细项逐条对应", () => {
+  it("预期表自检：八类有效形态与实施清单 QM-02 细项逐条对应（valid-09 = QM-15 增补的 lesson×材料/组×新题型）", () => {
     // 八类形态各占一份（资料分析/英语阅读/二十空完形/七选五/固定项排序/
-    // 多材料申论翻译作文/两问证明计算/旧七型混合）
-    expect(Object.keys(EXPECTED_VALID)).toHaveLength(8);
+    // 多材料申论翻译作文/两问证明计算/旧七型混合）+ lesson 组合形态
+    expect(Object.keys(EXPECTED_VALID)).toHaveLength(9);
     // 二十空完形：20 槽 20 choice 子题（逐空绑定）
     const cloze = valid("valid-03-二十空完形.md");
     expect(cloze.materials[0]?.slots).toBe(20);
