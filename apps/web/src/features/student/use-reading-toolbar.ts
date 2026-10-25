@@ -5,14 +5,13 @@ const EDITING =
   'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), textarea, select, math-field, [contenteditable="true"]';
 const OVERLAY = '[role="dialog"], [role="menu"]';
 
-/** 只响应窄屏正文的用户滚动；保留导航布局尺寸，避免题面和笔迹坐标跳动。 */
+/** 所有窗口宽度均响应正文的用户滚动；保留布局尺寸，避免题面和笔迹坐标跳动。 */
 export function useReadingToolbar({ blocked = false } = {}) {
   const ref = useRef<HTMLElement>(null);
   const [hidden, setHidden] = useState(false);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const desktop = window.matchMedia?.("(min-width: 1024px)");
     let lastY = Math.max(0, window.scrollY);
     let distance = 0;
     let direction = 0;
@@ -31,7 +30,6 @@ export function useReadingToolbar({ blocked = false } = {}) {
     };
     const locked = () =>
       blocked ||
-      desktop?.matches ||
       (keyboardNavigation && element.contains(document.activeElement)) ||
       document.activeElement?.matches(EDITING) ||
       document.querySelector(OVERLAY) !== null ||
@@ -108,7 +106,6 @@ export function useReadingToolbar({ blocked = false } = {}) {
     document.addEventListener("focusin", focusIn);
     window.addEventListener("scroll", scroll, { passive: true });
     window.addEventListener("resize", resize);
-    desktop?.addEventListener("change", resize);
     return () => {
       notices.disconnect();
       document.removeEventListener("wheel", authorize);
@@ -118,7 +115,6 @@ export function useReadingToolbar({ blocked = false } = {}) {
       document.removeEventListener("focusin", focusIn);
       window.removeEventListener("scroll", scroll);
       window.removeEventListener("resize", resize);
-      desktop?.removeEventListener("change", resize);
     };
   }, [blocked]);
   return { ref, hidden };

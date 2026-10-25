@@ -137,7 +137,7 @@ export default function StudentLessonPage() {
   );
 }
 
-/** 顶部工具栏：窄屏随阅读收起，手写期间固定。 */
+/** 顶部工具栏：所有尺寸随阅读收起，手写期间固定。 */
 function HeaderBar({
   title,
   backTo,

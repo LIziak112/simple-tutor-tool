@@ -49,7 +49,7 @@ const LectureMarkdown = memo(RichMarkdown);
  *   §5.0-C13）；目录点击报 lecture_toc_jump。讲义域位置/交互事件带
  *   lectureUpdatedAt（版本定位，§4.4.2 前提 1）；队列 dispose 时尽力 flush；
  * - 自动目录（H2/H3）：目录条目顺序 = 正文 h2/h3 顺序，点击滚动到对应标题；
- * - 专用阅读栏常驻返回与目录入口，章节状态复用既有位置观察器；
+ * - 专用阅读栏提供返回与目录入口，所有尺寸随阅读收起，章节状态复用既有位置观察器；
  * - iPad 适配：窄屏目录弹层；横屏（lg:）目录固定在左侧 sticky 双栏，
  *   两侧都不出现横向滚动（公式块 overflow 由 rich-markdown 样式内部消化）。
  */

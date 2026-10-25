@@ -168,22 +168,35 @@ it("滚动经过未聚焦输入框仍属于阅读，实际聚焦输入才锁定�
   );
 });
 
-it("桌面不自动隐藏，卸载清理滚动监听", () => {
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn(() => ({
-      matches: true,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    })),
-  );
+it.each([1024, 1180, 1440, 1920])(
+  "%ipx 横屏与桌面同样随阅读收起、反向展开",
+  (width) => {
+    vi.stubGlobal("innerWidth", width);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    render(<Toolbar />);
+    scroll(180);
+    expect(screen.getByRole("banner")).toHaveAttribute(
+      "data-reading-hidden",
+      "true",
+    );
+    scroll(160);
+    expect(screen.getByRole("banner")).toHaveAttribute(
+      "data-reading-hidden",
+      "false",
+    );
+  },
+);
+
+it("卸载清理滚动监听", () => {
   const remove = vi.spyOn(window, "removeEventListener");
   const { unmount } = render(<Toolbar />);
-  scroll(180);
-  expect(screen.getByRole("banner")).toHaveAttribute(
-    "data-reading-hidden",
-    "false",
-  );
   unmount();
   expect(remove).toHaveBeenCalledWith("scroll", expect.any(Function));
   remove.mockRestore();

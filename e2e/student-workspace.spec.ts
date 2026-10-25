@@ -127,29 +127,39 @@ test(
         await saves.getByRole("button", { name: "定位第 1 题" }).click();
         await expect(page.getByRole("dialog")).toHaveCount(0);
         await expect(first).toBeFocused();
-        // 用户向下阅读收起、反向展开；程序定位保持展开，不改变题卡尺寸。
-        // 两题短卷在高屏上无需滚动，使用短视口核对实际阅读行为。
-        await page.setViewportSize({ width, height: 400 });
-        const beforeWidth = (await first.boundingBox())?.width;
-        await page.mouse.move(width / 2, 200);
-        await page.mouse.wheel(0, 180);
-        await expect(header).toHaveAttribute("data-reading-hidden", "true");
-        await expect
-          .poll(async () => (await header.boundingBox())?.y ?? 0)
-          .toBeLessThan(0);
-        expect((await first.boundingBox())?.width).toBe(beforeWidth);
-        await page.mouse.wheel(0, -80);
-        await expect(header).toHaveAttribute("data-reading-hidden", "false");
-        await page.evaluate(() =>
-          window.scrollTo({ top: 0, behavior: "instant" }),
-        );
-        await page.setViewportSize({ width, height });
       } else {
         await expect(header.getByTestId("draft-status")).toBeVisible();
         await expect(
           header.getByText(`课程：${courseName}`, { exact: false }),
         ).toBeVisible();
       }
+      // 所有尺寸都可向下阅读收起顶栏，横屏和电脑也不例外。
+      // 短卷用短视口产生真实滚动；等待两帧让旋转/缩放事件先落定。
+      await page.setViewportSize({ width, height: 300 });
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      });
+      const beforeWidth = (await first.boundingBox())?.width;
+      await page.mouse.move(width * 0.7, 150);
+      await page.mouse.wheel(0, 180);
+      await expect(header).toHaveAttribute("data-reading-hidden", "true");
+      await expect
+        .poll(() =>
+          header.evaluate((element) => element.getBoundingClientRect().bottom),
+        )
+        .toBeLessThanOrEqual(1);
+      expect((await first.boundingBox())?.width).toBe(beforeWidth);
+      await page.mouse.wheel(0, -80);
+      await expect(header).toHaveAttribute("data-reading-hidden", "false");
+      await page.evaluate(() =>
+        window.scrollTo({ top: 0, behavior: "instant" }),
+      );
+      await page.setViewportSize({ width, height });
       if (width >= 1024) {
         await expectNavigationRingSpace(
           page.getByRole("navigation", { name: "答题卡" }),
