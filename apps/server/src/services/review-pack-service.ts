@@ -40,7 +40,11 @@ import {
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
+import { lettersOf } from "@tutor/contract";
+import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
 import { serializeStudentAnswerOfRow } from "./mark-response";
+import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
+import { snapshotOfRow } from "./snapshot.ts";
 import {
   assembleQuestionEvidence,
   evidenceMissingRowsOf,
@@ -300,6 +304,16 @@ export function assembleReviewPack(
     row,
     answerOf(row.answerJson),
   );
+  // —— QM-16 细项 1：题级冻结材料闭包（组材料 ∪ 题级引用）随包携带——
+  // 材料正文是公开投影（导入 lint MATERIAL_CONTAINS_ANSWER + 冻结白名单
+  // 双防线），学生包照常携带；不带材料的单题包不可独立阅读。多版本逐版
+  // 成条（title 附历史版本说明），正文已槽位编号（（N）与题干「第 N 空」对齐）。
+  const frozenMaterials = frozenMaterialsForQuestion(
+    db,
+    attempt.id,
+    row.questionId,
+    snapshotOfRow(row),
+  );
   // 判定来源（教师域键；两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
   const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
 
@@ -311,7 +325,17 @@ export function assembleReviewPack(
     ...(answerText !== null ? { answerText } : {}),
     questionNo: no,
   });
-  const stemSections = [staticMaterial.markdown.trimEnd()];
+  // 材料节在题面之前（学生先读材料再看题）；字母编号材料 A/B…与页间索引
+  // （材料多份时每份独立成节，题内 ::ref 引用按字母回指）清晰可导航
+  const stemSections: string[] = [];
+  frozenMaterials.forEach((frozenMaterial, index) => {
+    stemSections.push(
+      `## 材料 ${lettersOf(index)}：${frozenMaterial.title}
+
+${frozenMaterial.contentMd}`,
+    );
+  });
+  stemSections.push(staticMaterial.markdown.trimEnd());
   if (teacherRole) {
     if (material.answers !== undefined) {
       // plain 形态（不注 mathify）：裸 LaTeX 原样保留对 AI 更友好，渲染管线
@@ -358,6 +382,28 @@ export function assembleReviewPack(
     })),
     ...evidenceMissingRowsOf(asm),
   ];
+  // —— QM-16 细项 5：材料正文 ::image 引用同样落盘核对（媒体齐全口径）；
+  // 缺失显式进 missing（complete=false + review.md 材料不完整），不静默裁切
+  for (const src of extractMediaImageSrcs(
+    frozenMaterials.map((frozenMaterial) => frozenMaterial.contentMd),
+  )) {
+    if (mediaEntries.some((medium) => medium.entry === src)) continue;
+    const stat = statMediaSrc(dataDir, src);
+    if ("absPath" in stat) {
+      mediaEntries.push({
+        entry: src,
+        absPath: stat.absPath,
+        bytes: stat.bytes,
+      });
+    } else {
+      missing.push({
+        path: src,
+        kind: "media" as const,
+        reason: stat.reason,
+        refs: [qRef],
+      });
+    }
+  }
 
   // —— 手写题笔迹（/code-review A1，方案 §9.3/D6.3）：作答即笔迹——学生
   // ink 快照 PNG 作为 response 侧附件进包（manifest kind=ink；文件名化名
@@ -493,6 +539,11 @@ export function assembleReviewPack(
 
   // —— manifest（pack.json 同时为清单；pack.json 自身不列） ——
   const contextNotes: string[] = [];
+  if (frozenMaterials.length > 0) {
+    contextNotes.push(
+      `本题依赖共享材料 ${frozenMaterials.length} 份，已随包携带（材料 A/B… 在题面前）。`,
+    );
+  }
   if (!revision.present) {
     contextNotes.push(
       "本题历史快照缺失（题目已删除或升级遗留）：题干为空，不回填当前题库内容。",
