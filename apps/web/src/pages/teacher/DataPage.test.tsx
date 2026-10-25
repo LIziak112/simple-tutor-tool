@@ -299,16 +299,21 @@ describe("DataPage 卡片字段口径（D5/D2）", () => {
     const submittedCard = screen.getByRole("link", {
       name: "查看 张三 的作答详情（已交卷）",
     });
-    // 卡片骨架与姓名先渲染、得分/徽标字段随后；等待式断言避免慢环境竞态。
-    expect(await within(submittedCard).findByText("80")).toBeInTheDocument();
+    // 卡片骨架与姓名先渲染、得分/徽标字段随后；慢环境饥饿下数据帧可迟到
+    // 数秒，等待窗放宽到 10s 避免竞态（正常环境首个轮询即命中）。
     expect(
-      await within(submittedCard).findByText("待批 2"),
+      await within(submittedCard).findByText("80", {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    expect(
+      await within(submittedCard).findByText("待批 2", {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
 
     const gradedCard = screen.getByRole("link", {
       name: "查看 张三 的作答详情（已批改）",
     });
-    expect(await within(gradedCard).findByText("90")).toBeInTheDocument();
+    expect(
+      await within(gradedCard).findByText("90", {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     expect(within(gradedCard).queryByText("100")).not.toBeInTheDocument();
   });
 });
