@@ -5,12 +5,13 @@ import type {
   AnalyticsUnitCell,
 } from "@tutor/contract";
 import { Link } from "react-router";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { CELL_STATUS_LABELS } from "./insights-format";
 
 /**
  * 完成矩阵（T4.2，D2）：学生 × 布置的作业 + 可见课程单元。
  * - 五状态徽章分色（not-assigned 渲染「—」——未指派不是没完成）；
- * - 课程单元列显示做过次数与首次得分（D2），重做/待批为附加行；
+ * - 课程单元列显示做过次数与首次答对题数（D2），重做/待批为附加行；
  * - 作业格有 attempt 时整格可点跳作答详情（触控 ≥44px）；
  * - 学生名链接画像页（携带当前筛选 query，返回不丢上下文）；
  * - 矩阵是当下状态一览，**不受时间范围影响**（契约 D5 注释），页面注明；
@@ -219,9 +220,7 @@ export function InsightsMatrix({
                           <CellStatusBadge status={cell.status} />
                           <p className="text-xs text-muted-foreground whitespace-nowrap">
                             做过 {cell.attemptCount} 次 · 首次{" "}
-                            {cell.firstScore === null
-                              ? "—"
-                              : `${cell.firstScore} 分`}
+                            {formatResultCounts(cell.firstResultCounts)}
                           </p>
                           {/* M4-D3 进行中进度（§13）：服务端仅对 in-progress 的
                           v1 新协议草稿卷携带 n/N（白名单纯进度计数）；legacy

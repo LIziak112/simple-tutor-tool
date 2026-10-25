@@ -90,6 +90,12 @@ function makeRow(overrides: Partial<StudentRecordRow> = {}): StudentRecordRow {
     attemptId: ATTEMPT_IDS[0] as string,
     status: "graded",
     score: 90,
+    resultCounts: {
+      correctCount: 9,
+      totalCount: 10,
+      pendingCount: 0,
+      pendingSelfReviewCount: 0,
+    },
     pendingCount: 0,
     answersReleased: true,
     startedAt: "2026-09-28T10:00:00.000Z",
@@ -147,7 +153,15 @@ describe("StudentRecordsPage 三态", () => {
   it("0分有效，未公布不展示得分或待批计数", async () => {
     mockedRecords.mockResolvedValue({
       records: [
-        makeRow({ score: 0 }),
+        makeRow({
+          score: 0,
+          resultCounts: {
+            correctCount: 0,
+            totalCount: 10,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+        }),
         makeRow({
           attemptId: "aaaaaaaa-0000-4000-8000-000000000001",
           assignmentTitle: "未公布卷",
@@ -162,8 +176,8 @@ describe("StudentRecordsPage 三态", () => {
     const zero = await screen.findByRole("link", {
       name: "查看结果：周末加练（已批改）",
     });
-    expect(within(zero).getByText("0")).toBeInTheDocument();
-    expect(zero).toHaveTextContent("/ 100");
+    expect(zero).toHaveTextContent("做对 0 / 10 题");
+    expect(zero).not.toHaveTextContent("/ 100");
     const restricted = screen.getByRole("link", {
       name: "查看结果：未公布卷（已批改）",
     });
@@ -263,7 +277,7 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
       `/s/attempts/${ATTEMPT_IDS[0]}?returnTo=%2Fs%2Frecords`,
     );
     expect(within(gradedCard).getByText("作业")).toBeInTheDocument();
-    expect(within(gradedCard).getByText("90")).toBeInTheDocument();
+    expect(gradedCard).toHaveTextContent("做对 9 / 10 题");
 
     // submitted 课程练习卡：课程练习徽章 + 已交卷 + 待批 2 + 课程名
     const submittedCard = screen.getByRole("link", {

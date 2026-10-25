@@ -107,6 +107,12 @@ export const attemptSourceSchema = z.enum([
 export const teacherMarkSchema = z.enum(["correct", "wrong"]);
 export type TeacherMark = z.infer<typeof teacherMarkSchema>;
 
+/** 做题时学生自标「不会」（#6980-4）：值域当前只有 unsure（可扩展）。 */
+export const studentFlagSchema = z.literal("unsure");
+
+/** 学生做题时标注「不会」的取值类型（#6980-4；端上 setStudentFlagApi 复用）。 */
+export type StudentFlag = z.infer<typeof studentFlagSchema>;
+
 /**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
  * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
@@ -483,6 +489,12 @@ export const attemptDraftDataSchema = z.object({
    */
   hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
   /**
+   * 做题时学生自标「不会」（#6980-4）：questionId → "unsure"。草稿视图实时
+   * 下发，交卷后进结果视图单题与错题本轮次史；不是作答内容，无泄露面。
+   * 旧响应缺省按无标记处理。
+   */
+  studentFlags: z.record(z.string(), studentFlagSchema).optional(),
+  /**
    * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
    * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
    * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
@@ -569,6 +581,19 @@ export const attemptResultQuestionSchema = z.object({
   /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
   finalCorrect: z.boolean().nullable(),
   /**
+   * 是否有实际作答内容（#6980-3）：整卷交卷按「非空答案或正式手写笔迹」判定；
+   * 单题主动提交恒 true（显式交锋，含「不会，提交并看解析」的空提交，2026-10-25
+   * 主人口径）。与判分正交——未做仍按 D1 判错进分母。finalCorrect=false 且
+   * answered=false 时端上按灰色「未做」展示而非红色「判错」；「练习本卷错题」
+   * 默认不含未做题。
+   */
+  answered: z.boolean(),
+  /**
+   * 做题时学生自标「不会」（#6980-4）：unsure / null。入错题本条件之一
+   * （标过不会的题无论对错都保留），不是作答内容、不受公布 gate 影响。
+   */
+  studentFlag: studentFlagSchema.nullable(),
+  /**
    * QM-11（TT-09b）行级自评状态（公布 gate 截止前置 null 投影；旧载荷缺省
    * = 无自评信息，读侧按 null 处理）：record=null 表示未自评或已撤回
    * （undecided 清除记录），revision 是 CAS 基线（清除亦递增——record=null
@@ -601,19 +626,22 @@ export const attemptResultQuestionSchema = z.object({
 export const attemptScoreSummarySchema = z.object({
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
-  /** 已作答题数（answer 非 null）。lesson 讲练页的现算汇总（开卷投影/单题提交
-   * 响应）只统计已单题提交的行——见 lessonLiveSummaryOf 口径与
-   * lessonQuestionSubmitDataSchema 注释；结果视图（整卷）计全部卷行 */
+  /** 已作答题数（responses.answered 口径：非空答案/正式笔迹/单题提交）。
+   * lesson 讲练页的现算汇总（开卷投影/单题提交响应）只统计已单题提交的行——
+   * 见 lessonLiveSummaryOf 口径与 lessonQuestionSubmitDataSchema 注释；
+   * 结果视图（整卷）计全部卷行 */
   answered: z.number().int().min(0),
   /** 判对数（QM-12 有效判定口径：教师判 > 自评 > 自动——reference_self 行
    *  按学生自评计入；来源在逐题徽章可见，不以计数冒充客观独立完成） */
   correct: z.number().int().min(0),
-  /** 判错数（QM-12 有效判定口径同上；D1 后含未作答客观题） */
+  /** 判错数（QM-12 有效判定口径同上；D1 后含未作答客观题。v2 #6980-3 起
+   *  端上「未做」以 answered 维度另行展示，不以此计数区分） */
   wrong: z.number().int().min(0),
   /** 未判断数（有效判定=null：待教师批改 + 待自评——与 pendingCount 的
    *  D4 教师待批口径区分；公布 gate 未公布形态按 answered 口径投影） */
   pending: z.number().int().min(0),
-  /** 未作答题数（answer=null） */
+  /** 未作答题数（responses.answered=false：被动跳过/空结构答案——与判分
+   *  维度正交，#6980-3：未做仍进判分分母，仅不计入 answered） */
   unanswered: z.number().int().min(0),
   /** 已判定题数 = correct + wrong（QM-12 起为有效判定计数；字段名沿用） */
   autoGradable: z.number().int().min(0),
@@ -1156,6 +1184,17 @@ export const attemptErrorCodeSchema = z.enum([
 
 // ---------- 具体化的成功壳 ----------
 
+/** 标注「不会」的请求体（#6980-4）：flag=null 表示取消标记 */
+export const attemptFlagRequestSchema = z.object({
+  flag: studentFlagSchema.nullable(),
+});
+
+/** 标注「不会」的回执（#6980-4）：只回标志位，不含任何作答内容 */
+export const attemptFlagDataSchema = z.object({
+  questionId: z.string().min(1),
+  studentFlag: studentFlagSchema.nullable(),
+});
+
 /** 携带创建/取回 attempt 结果的成功响应壳 */
 export const attemptStartOkSchema = apiOkExtend(attemptStartDataSchema);
 /** 携带草稿视图的成功响应壳 */
@@ -1225,6 +1264,8 @@ export type QuestionRevisionId = z.infer<typeof questionRevisionIdSchema>;
 /** 试卷题目的可选版本形态（仅通用取卷携带 revisionId） */
 export type StudentPaperQuestion = z.infer<typeof studentPaperQuestionSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
+export type AttemptFlagRequest = z.infer<typeof attemptFlagRequestSchema>;
+export type AttemptFlagData = z.infer<typeof attemptFlagDataSchema>;
 export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
 export type AttemptResultData = z.infer<typeof attemptResultDataSchema>;

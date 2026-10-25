@@ -200,7 +200,9 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", {
       // 来源徽章（exact：标题本身也含「作业」两字）；得分同样 exact——
       // 随机后缀里可能恰好含「50」子串，模糊匹配会撞标题/课程名（曾致 flake）
       await expect(recordLink.getByText("作业", { exact: true })).toBeVisible();
-      await expect(recordLink.getByText("50", { exact: true })).toBeVisible();
+      await expect(
+        recordLink.getByText("做对 1 / 2 题", { exact: true }),
+      ).toBeVisible();
       // 2026-10 IA 调整：错题本入口升为顶栏导航（记录页页头入口已移除）
       await expect(
         studentPage.getByRole("link", { name: "错题本" }),

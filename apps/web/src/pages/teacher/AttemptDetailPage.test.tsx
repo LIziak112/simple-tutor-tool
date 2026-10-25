@@ -93,6 +93,8 @@ function makeQuestion(
     stemMd: "$1$ 是正数。",
     options: undefined,
     answer: null,
+    answered: false,
+    studentFlag: null,
     autoCorrect: null,
     finalCorrect: null,
     teacherMark: null,
@@ -128,6 +130,7 @@ function makeDetail(
     scoreFinal: null,
     correctCount: 1,
     wrongCount: 1,
+    notDoneCount: 0,
     pendingCount: 1,
     startedAt: "2026-09-28T10:00:00.000Z",
     submittedAt: "2026-09-28T10:05:00.000Z",
@@ -136,6 +139,7 @@ function makeDetail(
       makeQuestion({
         no: 1,
         answer: { kind: "judge", value: true },
+        answered: true,
         autoCorrect: true,
         finalCorrect: true,
         answers: { kind: "judge", value: true },
@@ -144,6 +148,7 @@ function makeDetail(
         questionId: "q2",
         no: 2,
         answer: { kind: "fill", values: ["-1"] },
+        answered: true,
         autoCorrect: false,
         finalCorrect: false,
         answers: { kind: "fill", blanks: [["4"]] },
@@ -299,8 +304,8 @@ describe("AttemptDetailPage 已交卷详情（D7）", () => {
       ).toBeInTheDocument();
     }
     // scoreFinal null → 最终得分「未批」；自动判分显示 70
-    expect(screen.getByText("未批", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("70")).toBeInTheDocument();
+    expect(screen.getByText("做对 1 / 3 题")).toBeInTheDocument();
+    expect(screen.queryByText("70")).toBeNull();
   });
 
   it("逐题连续题号 + 单元节标题（多单元）；判定区与参考答案、详解折叠", async () => {
@@ -349,6 +354,7 @@ describe("AttemptDetailPage draft 详情（D5）", () => {
           makeQuestion({
             no: 1,
             answer: { kind: "judge", value: true },
+            answered: true,
             // draft 服务端不下发 answers/solutionMd（缺省字段）
           }),
           makeQuestion({ questionId: "q2", no: 2, answer: null }),
@@ -489,10 +495,7 @@ describe("AttemptDetailPage 改判/评语内联编辑（T3.2b，D3）", () => {
       ),
     ).toBeInTheDocument();
     await waitFor(() => {
-      const finalScore = screen
-        .getAllByText("100")
-        .find((el) => el.classList.contains("text-2xl"));
-      expect(finalScore).toBeDefined();
+      expect(screen.getByText("做对 2 / 3 题")).toBeInTheDocument();
     });
   });
 

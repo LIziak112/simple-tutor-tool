@@ -2,11 +2,13 @@ import { z } from "zod";
 import {
   attemptSourceSchema,
   attemptStatusSchema,
+  studentFlagSchema,
   teacherMarkSchema,
   wrongScopeSchema,
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { attemptResultCountsSchema } from "./result-counts.ts";
 import { gradingPolicySchema, selfReviewRecordSchema } from "./self-review.ts";
 
 /**
@@ -122,6 +124,7 @@ export const teacherAttemptSourceSchema = z.object({
  * 「待批数 = 0 ⇔ status = graded」只对**已收尾卷**（非 draft）成立。
  */
 export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
+  resultCounts: attemptResultCountsSchema.nullable().optional(),
   /** attempts.id（crypto.randomUUID） */
   attemptId: z.uuid(),
   /** 作答学生 id */
@@ -212,6 +215,10 @@ export const teacherAttemptDetailQuestionSchema = z.object({
    *  QM-12：展示口径的有效判定 = 教师判 > 自评 > 自动（effectiveVerdictOf 同序，
    *  自评行 finalCorrect 恒 null——不据此判断「待批」，见 selfReview/gradingPolicy） */
   finalCorrect: z.boolean().nullable(),
+  /** 是否有实际作答内容（#6980-3）：false 的判错行在教师作答详情灰显「未做」 */
+  answered: z.boolean(),
+  /** 做题时学生自标「不会」（#6980-4）：unsure / null，详情卡片灰显提示 */
+  studentFlag: studentFlagSchema.nullable(),
   /** 教师批改标记（D3；本阶段恒 null） */
   teacherMark: teacherMarkSchema.nullable(),
   /** 教师评语（T3.2；未评为 null） */
@@ -246,6 +253,7 @@ export const teacherAttemptDetailQuestionSchema = z.object({
  */
 export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
   {
+    resultCounts: attemptResultCountsSchema.nullable().optional(),
     /** attempts.id */
     attemptId: z.uuid(),
     studentId: z.uuid(),
@@ -255,8 +263,11 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     scoreFinal: z.number().int().min(0).max(100).nullable(),
     /** 判对题数（有效判定 = true：教师判 > 自评 > 自动） */
     correctCount: z.number().int().min(0),
-    /** 判错题数（有效判定 = false：教师判 > 自评 > 自动） */
+    /** 判错题数（有效判定 = false：教师判 > 自评 > 自动——含未做题，未做仍进分母） */
     wrongCount: z.number().int().min(0),
+    /** 未做题数（#6980-3）：判错行中 answered=false 且无教师显式判定的子集
+     *  ——详情灰显「未做」（wrongCount - notDoneCount 即「答了且判错」展示数） */
+    notDoneCount: z.number().int().min(0),
     /** 待教师批改数（D4 共享谓词——与列表卡片/矩阵同一口径；不含待自评行） */
     pendingCount: z.number().int().min(0),
     /** 待自评数（QM-12：reference_self 且教师未判且学生未自评的已交行；

@@ -36,3 +36,5 @@ dist-e2e-preview/
 
 # vitest 本机运行产物（json 报告等调试输出，不入库）
 .vitest/
+# Node/原生崩溃转储（曾以 310MB 混入提交被 GitHub 拒收）
+/core

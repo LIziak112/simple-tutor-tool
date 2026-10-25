@@ -98,6 +98,8 @@ function round(
     attemptId,
     sourceType: "assignment",
     correct,
+    answered: true,
+    studentFlag: null,
     submittedAt,
     sourceTitle,
     courseId,

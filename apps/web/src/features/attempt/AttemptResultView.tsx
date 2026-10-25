@@ -344,16 +344,21 @@ function ResultQuestionCard({
           : verdict === true
             ? "before:bg-emerald-500"
             : verdict === false
-              ? "before:bg-red-500"
+              ? question.answered
+                ? "before:bg-red-500"
+                : "before:bg-muted" // #6980-3：未做灰，不套判错红
               : "before:bg-amber-400",
       )}
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
+        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答。
+            「标过不会」是学生做题时的事实标注（#6980-4），不受公布 gate 与
+            自评分支影响——自评题与待公布卷同样显示（审查修复 P1-5） */}
         {released ? (
           <VerdictBadge
             verdict={badge.verdict}
+            notDone={badge.notDone ?? false}
             {...(badge.pendingLabel !== undefined && {
               pendingLabel: badge.pendingLabel,
             })}
@@ -375,6 +380,11 @@ function ResultQuestionCard({
               className="size-4 shrink-0 text-sky-500"
             />
             答案已保存 · 待公布
+          </span>
+        )}
+        {question.studentFlag === "unsure" && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            标过不会
           </span>
         )}
         <h3
@@ -530,12 +540,23 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷判错题——直达重练的圈题范围与示数。QM-12 起按有效判定
+  // 2026-10：本卷错题——直达重练的圈题范围与示数。QM-12 起判错按有效判定
   // （教师判 > 自评 > 自动，verdictBadgeDisplayOf 同口径）：自评「错」同样
-  // 可重练。未公布时服务端已把判定键整键 null 投影（数出来必为 0），与
-  // released 显隐判据双保险。
+  // 可重练；#6980-3：未做轮不圈入（人工显式判定的未做行不被掩盖——与
+  // 错题本 enteredWrongBook 同口径）；#6980-4：标过「不会」的题（含做对）
+  // 也进本卷错题（标不会 = 按做错结算的主人口径）。未公布时服务端已把判定键
+  // 整键 null 投影（数出来必为 0），与 released 显隐判据双保险。
   const wrongQuestionIds = flatQuestions
-    .filter((question) => verdictBadgeDisplayOf(question).verdict === false)
+    .filter((question) => {
+      const badge = verdictBadgeDisplayOf(question);
+      if (question.studentFlag === "unsure") return true;
+      if (badge.verdict !== false) return false;
+      return (
+        question.answered ||
+        question.teacherMark !== null ||
+        (question.selfReview?.record?.verdict ?? null) !== null
+      );
+    })
     .map((question) => question.questionId);
   // QM-12：含自评行时注明口径（自评是本人判定；得分只按自动判定与教师
   // 批改计算——不把自评冒充客观独立完成证据）

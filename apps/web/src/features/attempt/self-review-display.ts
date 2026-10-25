@@ -16,6 +16,12 @@ export interface VerdictBadgeDisplay {
   readonly pendingLabel?: string;
   readonly correctLabel?: string;
   readonly wrongLabel?: string;
+  /**
+   * 判错但未做（#6980-3）：verdict=false 且 answered=false 且无人工显式判定
+   * （teacherMark / 自评 record）——徽章灰显「未做」不套判错红；显式判定的
+   * 未做行不被掩盖（错题本 P0-1 同口径）。仅 verdict=false 时有意义。
+   */
+  readonly notDone?: boolean;
 }
 
 export function verdictBadgeDisplayOf(
@@ -26,6 +32,7 @@ export function verdictBadgeDisplayOf(
     | "selfReview"
     | "finalCorrect"
     | "autoCorrect"
+    | "answered"
   >,
 ): VerdictBadgeDisplay {
   if (
@@ -34,7 +41,7 @@ export function verdictBadgeDisplayOf(
   ) {
     // reference_self 行 autoCorrect/finalCorrect 恒 null（TT-09a 判分口径，
     // 自评不写 finalCorrect），有效显示 = 自评记录；未评/已撤回
-    // （record=null）→ 已完成、待自评
+    // （record=null）→ 已完成、待自评。自评是显性交锋——本分支恒无「未做」
     const verdict = question.selfReview?.record?.verdict ?? null;
     if (verdict !== null) {
       return {
@@ -50,5 +57,16 @@ export function verdictBadgeDisplayOf(
   // 两者均空才是待批（M6 授权题级反馈口径，与服务端 effectiveVerdictOf
   // 的自动回落一致；进行中单题反馈的行级 finalCorrect 尚未写入，丢兜底
   // 会让客观题误报待批、汇总与徽章漂移）
-  return { verdict: question.finalCorrect ?? question.autoCorrect };
+  const verdict = question.finalCorrect ?? question.autoCorrect;
+  // #6980-3：判错且未做且无人工显式判定 → 灰显「未做」（教师批错/自评错的
+  // 未做行不掩盖，显式判定照常红显）
+  const explicit =
+    question.teacherMark !== null ||
+    (question.selfReview?.record?.verdict ?? null) !== null;
+  return {
+    verdict,
+    ...(verdict === false && !question.answered && !explicit
+      ? { notDone: true }
+      : {}),
+  };
 }

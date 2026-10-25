@@ -220,7 +220,9 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     const studentCell = matrix.getByRole("link", { name: studentName });
     await expect(studentCell).toBeVisible();
     await expect(matrix.getByText("已批", { exact: true })).toBeVisible();
-    await expect(matrix.getByText(/做过 1 次 · 首次 50 分/)).toBeVisible();
+    await expect(
+      matrix.getByText(/做过 1 次 · 首次 做对 1 \/ 2 题/),
+    ).toBeVisible();
 
     // 点学生名 → 画像页
     await studentCell.click();

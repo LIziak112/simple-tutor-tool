@@ -1031,9 +1031,9 @@ function StepModules({
             onChange={(e) => onSummariesChange(e.target.checked)}
           />
           <span className="flex flex-col">
-            <span>作答汇总（得分、状态、历次）</span>
+            <span>作答汇总（题数、状态、历次）</span>
             <span className="text-xs text-muted-foreground">
-              每次作答的得分与对错计数一览，可看历次进步
+              每次作答的答对数量与总题数一览，可看历次进步
             </span>
           </span>
         </label>

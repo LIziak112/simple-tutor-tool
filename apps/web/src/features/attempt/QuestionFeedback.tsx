@@ -68,6 +68,7 @@ export function QuestionFeedback({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <VerdictBadge
           verdict={badge.verdict}
+          notDone={badge.notDone ?? false}
           pendingLabel={badge.pendingLabel ?? "已提交，待老师批改"}
           toned
           correctLabel={badge.correctLabel ?? "回答正确"}

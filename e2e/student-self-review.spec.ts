@@ -61,10 +61,15 @@ topic: 对照自评
   );
   await page.getByRole("button", { name: "开始练习" }).click();
   await page.waitForURL("**/s/attempts/**");
+  // fill 不检查祖先的 inert；材料恢复完成前填写会被作答保护忽略。
+  await expect(
+    page.locator('[data-slot="practice-single-workspace"]'),
+  ).not.toHaveAttribute("inert", "");
   const q1 = page.locator('article[aria-label="第 1 题"]');
   const q2 = page.locator('article[aria-label="第 2 题"]');
   await q1.getByRole("textbox", { name: "第1空" }).fill("3");
   await waitForDraftSaved(page);
+  await expect(q1.getByRole("textbox", { name: "第1空" })).toHaveValue("3");
   await q1.getByRole("button", { name: "提交本题", exact: true }).click();
   await expect(q1.getByText("已完成，待自评", { exact: true })).toBeVisible();
   // QM 判分框架（两线收敛）：无参考答案的 solve 行冻结为 manual_only，

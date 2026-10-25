@@ -361,6 +361,8 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
             answers: { kind: "judge", value: true },
             solutionMd: null,
             answer: { kind: "judge", value: false },
+            answered: true,
+            studentFlag: null,
             autoCorrect: false,
             teacherMark: null,
             teacherComment: null,

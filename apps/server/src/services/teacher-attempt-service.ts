@@ -40,6 +40,7 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { attemptResultCounts } from "./result-counts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
 /**
@@ -338,6 +339,10 @@ export function listTeacherAttempts(
     .offset(query.offset)
     .all();
 
+  const resultCounts = attemptResultCounts(
+    db,
+    rows.map((row) => row.attempt),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -364,6 +369,7 @@ export function listTeacherAttempts(
             .get()?.n ?? 0)
         : attemptQuestionRows(db, attempt).length,
     status: attempt.status,
+    resultCounts: resultCounts.get(attempt.id) ?? null,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
@@ -460,6 +466,10 @@ function detailItemOf(
     answer: answerOf(row.answerJson),
     autoCorrect: isDraft ? null : row.autoCorrect,
     finalCorrect: isDraft ? null : row.finalCorrect,
+    // #6980-3：是否有实际作答（draft 行恒默认 false，判定区仅已交卷消费）
+    answered: row.answered,
+    // #6980-4：做题时学生自标「不会」（draft 亦下发，教师可提前看到）
+    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
     teacherMark: isDraft
       ? null
       : row.teacherMark === "correct" || row.teacherMark === "wrong"
@@ -611,8 +621,12 @@ export function getTeacherAttemptDetail(
   // 且学生未自评（读侧现算，自评后即归零）——与 pending-mark.pendingSelfReviewCounts
   // （学生记录行徽章的批量 SQL 谓词）同一语义，注释互指、口径不漂移
   //（路由投影锁见 routes/student-records.test.ts QM-12 节）
+  // #6980-3：判错行含未做（未做仍进分母），其中 answered=false 且无人工显式
+  // 判定的子集单列 notDoneCount（详情灰显「未做」——wrongCount - notDoneCount
+  // 即「答了且判错」展示数）；老师显式批错/自评判错的行不被「未做」掩盖
   let correctCount = 0;
   let wrongCount = 0;
+  let notDoneCount = 0;
   let selfReviewPendingCount = 0;
   for (const row of attempt.status === "draft" ? [] : detailRows) {
     const effective = effectiveVerdictOfRow(row);
@@ -628,18 +642,30 @@ export function getTeacherAttemptDetail(
       continue;
     }
     if (effective.value) correctCount += 1;
-    else wrongCount += 1;
+    else {
+      wrongCount += 1;
+      if (
+        !row.answered &&
+        row.teacherMark === null &&
+        row.selfReviewVerdict === null
+      ) {
+        notDoneCount += 1;
+      }
+    }
   }
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
     studentName,
     ...source,
+    resultCounts: attemptResultCounts(db, [attempt]).get(attempt.id) ?? null,
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
     correctCount,
     wrongCount,
+    // 判错行中无实际作答且无人工显式判定的子集（#6980-3，灰显「未做」）
+    notDoneCount,
     // D4 共享谓词（finalCorrect IS NULL 且非 reference_self 行；与列表卡片/
     // 待批队列/学情矩阵同一实现——不再用 effectiveCorrect=null 计数，避免把
     // 待自评行算进教师待批）

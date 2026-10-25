@@ -15,6 +15,7 @@ type RowProps = Omit<
   CardProps,
   | "onAnswer"
   | "onToggleFlag"
+  | "onToggleUnsure"
   | "onHintUnlocked"
   | "onInkStroke"
   | "onInkEdit"
@@ -25,6 +26,7 @@ type RowProps = Omit<
   aiContent?: ReactNode;
   onAnswer: AttemptAnswersState["setAnswer"];
   onToggleFlag(id: string): void;
+  onToggleUnsure(id: string): void;
   onHintUnlocked(id: string, entry: HintOpenedEntry): void;
   cardElements: RefObject<Map<string, HTMLElement>>;
   /**
@@ -53,6 +55,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   question,
   onAnswer,
   onToggleFlag,
+  onToggleUnsure,
   onHintUnlocked,
   cardElements,
   events,
@@ -83,6 +86,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
         hints={props.hints ?? emptyHints}
         onAnswer={handleAnswer}
         onToggleFlag={() => onToggleFlag(question.id)}
+        onToggleUnsure={() => onToggleUnsure(question.id)}
         onHintUnlocked={(entry) => onHintUnlocked(question.id, entry)}
         onInkStroke={(strokes) => {
           events.noteInteraction(question.id);

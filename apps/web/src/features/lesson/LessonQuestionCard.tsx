@@ -246,6 +246,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
             <VerdictBadge
               verdict={badge.verdict}
               toned
+              notDone={badge.notDone ?? false}
               {...(badge.pendingLabel !== undefined && {
                 pendingLabel: badge.pendingLabel,
               })}

@@ -22,6 +22,8 @@ function roundsOf(...corrects: boolean[]): WrongQuestionCard["rounds"] {
     attemptId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
     sourceType: "course",
     correct,
+    answered: true,
+    studentFlag: null,
     submittedAt: `2026-10-0${index + 1}T00:00:00.000Z`,
     sourceTitle: `单元 · 第 ${index + 1} 次`,
     courseId: "00000000-0000-4000-8000-00000000000a",
@@ -51,6 +53,50 @@ describe("isConquered（按标准从轮次史计算）", () => {
     expect(isConquered(cardOf(false, true, true, false), "strict")).toBe(false);
     // 对-错-对：最后一轮对但前一轮错 → 未攻克（重新计数）
     expect(isConquered(cardOf(true, false, true), "strict")).toBe(false);
+  });
+
+  it("标过不会的做对轮不算攻克（#6980-4）：宽松不认它、严格打断连续做对", () => {
+    const flagged = (correct: boolean, studentFlag: "unsure" | null) => {
+      const base = roundsOf(correct)[0];
+      if (base === undefined) throw new Error("unreachable");
+      return { ...base, studentFlag };
+    };
+    // 宽松：最后一轮做对但标过不会 → 未攻克
+    expect(
+      isConquered(
+        { rounds: [...roundsOf(false), flagged(true, "unsure")] },
+        "lenient",
+      ),
+    ).toBe(false);
+    // 宽松：标过不会的轮之后再正常做对 → 攻克
+    expect(
+      isConquered(
+        {
+          rounds: [
+            ...roundsOf(false),
+            flagged(true, "unsure"),
+            ...roundsOf(true),
+          ],
+        },
+        "lenient",
+      ),
+    ).toBe(true);
+    // 严格：最后两轮都对但最后一轮标过不会 → 打断，未攻克
+    expect(
+      isConquered(
+        { rounds: [...roundsOf(false, true), flagged(true, "unsure")] },
+        "strict",
+      ),
+    ).toBe(false);
+    // 严格：倒数第二轮标过不会 → 打断，未攻克
+    expect(
+      isConquered(
+        {
+          rounds: [...roundsOf(true, true, false), flagged(true, "unsure")],
+        },
+        "strict",
+      ),
+    ).toBe(false);
   });
 
   it("空轮次（防御）恒未攻克", () => {
@@ -94,4 +140,13 @@ describe("localStorage 持久化（本设备自选）", () => {
     saveWrongMasteryStandard("strict");
     expect(loadWrongMasteryStandard()).toBe("strict");
   });
+});
+
+it("未做轮打断连续做对，即使该轮被判对也不成为攻克依据", () => {
+  const rounds = roundsOf(true, true, true);
+  const middle = rounds[1];
+  if (!middle) throw new Error("缺少中间轮次");
+  rounds[1] = { ...middle, answered: false };
+  expect(isConquered({ rounds }, "strict")).toBe(false);
+  expect(isConquered({ rounds: rounds.slice(0, 2) }, "lenient")).toBe(false);
 });

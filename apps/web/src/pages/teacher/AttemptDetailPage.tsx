@@ -6,6 +6,7 @@ import {
   attemptRoundLabel,
   isAnswered,
 } from "@/features/attempt/answer-format";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
   AttemptDetailQuestionCard,
   formatActiveSec,
@@ -117,36 +118,48 @@ function DetailSummary({
       </div>
     );
   }
+  // QM 口径的待自评兜底（旧载荷无 resultCounts 时从行级字段现算）：
+  // reference_self 行且教师未判且学生未自评——与 pending-mark 批量谓词同语义
+  const pendingSelfReviewCount = data.questions.filter(
+    (question) =>
+      (question.gradingPolicy ?? null) === "reference_self" &&
+      question.teacherMark === null &&
+      question.selfReview === null,
+  ).length;
+  const counts = data.resultCounts ?? {
+    correctCount: data.correctCount,
+    totalCount: data.questions.length,
+    pendingCount: data.pendingCount,
+    pendingSelfReviewCount,
+  };
   return (
     <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
       <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
         <span>
-          答对 <b className="text-emerald-600">{data.correctCount}</b> 题
+          答对 <b className="text-emerald-600">{counts.correctCount}</b> 题
         </span>
         <span>
           答错 <b className="text-red-600">{data.wrongCount}</b> 题
         </span>
         <span>
-          待批 <b className="text-amber-600">{data.pendingCount}</b> 题
+          待批 <b className="text-amber-600">{counts.pendingCount}</b> 题
         </span>
-        {(data.selfReviewPendingCount ?? 0) > 0 && (
+        {/* #6980-3（审查修复 P1-4）：补「未做」计数——判错但无实际作答且无
+        人工判定的行此前不进任何计数，四数合计对不上总题数 */}
+        {data.notDoneCount > 0 && (
           <span>
-            待自评 <b className="text-sky-600">{data.selfReviewPendingCount}</b>{" "}
+            未做 <b className="text-muted-foreground">{data.notDoneCount}</b> 题
+          </span>
+        )}
+        {counts.pendingSelfReviewCount > 0 && (
+          <span>
+            待自评 <b className="text-sky-600">{counts.pendingSelfReviewCount}</b>{" "}
             题
           </span>
         )}
       </p>
-      <p className="flex items-baseline gap-1.5 text-sm text-muted-foreground">
-        自动判分：
-        <b className="text-lg font-semibold text-foreground">
-          {data.scoreAuto === null ? "—" : data.scoreAuto}
-        </b>
-      </p>
-      <p className="flex items-baseline gap-1.5 text-sm text-muted-foreground">
-        最终得分：
-        <b className="text-2xl font-bold text-primary">
-          {data.scoreFinal === null ? "未批" : data.scoreFinal}
-        </b>
+      <p className="text-lg font-semibold text-primary">
+        {formatResultCounts(counts, false)}
       </p>
     </div>
   );
