@@ -316,3 +316,77 @@ it("恢复默认整组提交：四项与顺序正确，其他连接偏好不被�
     [{ id: "conn-1" }],
   );
 });
+
+// ---------- AI 提示词设置（hall-9533）：GET/PUT /api/student/ai/prompts ----------
+
+const STUDENT_PROMPTS_PATH = "/api/student/ai/prompts";
+
+it("学生 AI 提示词：默认全默认 → 覆盖生效 → 空白 400 → 过期锚点 409 → null 恢复默认；教师 Cookie 不可读写", async () => {
+  const env = world();
+  const first = await jsonReq(env.app, "GET", STUDENT_PROMPTS_PATH, env.a);
+  expect(first.status).toBe(200);
+  const firstData = (await first.json()) as {
+    data: {
+      slots: Array<{
+        key: string;
+        body: string;
+        defaultBody: string;
+        isCustom: boolean;
+      }>;
+      updatedAt: string;
+    };
+  };
+  expect(firstData.data.updatedAt).toBe("1970-01-01T00:00:00.000Z");
+  expect(firstData.data.slots.map((slot) => slot.key)).toEqual([
+    "review-pack-student",
+  ]);
+  expect(
+    firstData.data.slots.every(
+      (slot) => !slot.isCustom && slot.body === slot.defaultBody,
+    ),
+  ).toBe(true);
+
+  const put = await jsonReq(env.app, "PUT", STUDENT_PROMPTS_PATH, env.a, {
+    baseUpdatedAt: firstData.data.updatedAt,
+    updates: [{ key: "review-pack-student", body: "我的复习指令" }],
+  });
+  expect(put.status).toBe(200);
+  const putData = (await put.json()) as typeof firstData;
+  expect(putData.data.slots[0]?.isCustom).toBe(true);
+  expect(putData.data.slots[0]?.body).toBe("我的复习指令");
+
+  // 学生槽位互不串号：B 学生读不到 A 的覆盖
+  const other = await jsonReq(env.app, "GET", STUDENT_PROMPTS_PATH, env.b);
+  const otherData = (await other.json()) as typeof firstData;
+  expect(otherData.data.slots[0]?.isCustom).toBe(false);
+
+  const putBlank = await jsonReq(env.app, "PUT", STUDENT_PROMPTS_PATH, env.a, {
+    updates: [{ key: "review-pack-student", body: "   " }],
+  });
+  expect(putBlank.status).toBe(400);
+  expect(((await putBlank.json()) as ApiErr).error).toBe("AI_PROMPT_INVALID");
+
+  const putStale = await jsonReq(env.app, "PUT", STUDENT_PROMPTS_PATH, env.a, {
+    baseUpdatedAt: firstData.data.updatedAt,
+    updates: [{ key: "review-pack-student", body: "过期写" }],
+  });
+  expect(putStale.status).toBe(409);
+  expect(((await putStale.json()) as ApiErr).error).toBe("AI_SETTINGS_STALE");
+
+  const putReset = await jsonReq(env.app, "PUT", STUDENT_PROMPTS_PATH, env.a, {
+    baseUpdatedAt: putData.data.updatedAt,
+    updates: [{ key: "review-pack-student", body: null }],
+  });
+  expect(putReset.status).toBe(200);
+  const resetData = (await putReset.json()) as typeof firstData;
+  expect(resetData.data.slots[0]?.isCustom).toBe(false);
+
+  // 教师 Cookie 打学生端点：会话类型不匹配 → 401
+  const teacherGet = await jsonReq(
+    env.app,
+    "GET",
+    STUDENT_PROMPTS_PATH,
+    env.teacher,
+  );
+  expect(teacherGet.status).toBe(401);
+});

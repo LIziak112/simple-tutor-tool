@@ -20,6 +20,22 @@ vi.mock("@/lib/api", async (importOriginal) => {
       buttons: DEFAULT_QUICK_BUTTONS,
       updatedAt: "1970-01-01T00:00:00.000Z",
     }),
+    // hall-9533：复习包提示词区在页面测试只要求渲染，不取真实接口
+    fetchStudentAiPromptsApi: async () => ({
+      slots: [
+        {
+          key: "review-pack-student",
+          title: "单题复习包指令（学生自助）",
+          description: "说明",
+          group: "review-pack",
+          body: "默认",
+          defaultBody: "默认",
+          isCustom: false,
+          updatedAt: "1970-01-01T00:00:00.000Z",
+        },
+      ],
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    }),
   };
 });
 

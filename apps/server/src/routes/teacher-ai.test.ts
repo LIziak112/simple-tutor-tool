@@ -563,3 +563,120 @@ describe("GET/PUT /api/teacher/{students,assignments}/:id/ai-policy（SAI-06 覆
     );
   });
 });
+
+// ---------- AI 提示词设置（hall-9533）：GET/PUT /api/teacher/ai/prompts ----------
+
+const PROMPTS_PATH = "/api/teacher/ai/prompts";
+
+interface PromptsData {
+  data: {
+    slots: Array<{
+      key: string;
+      body: string;
+      defaultBody: string;
+      isCustom: boolean;
+    }>;
+    updatedAt: string;
+  };
+}
+
+describe("GET/PUT /api/teacher/ai/prompts（AI 提示词槽位）", () => {
+  it("未登录 → 401；学生 Cookie 不构成教师会话 → 401", async () => {
+    const env = await makeEnv();
+    const getAnon = await jsonReq(env.app, "GET", PROMPTS_PATH, undefined);
+    expect(getAnon.status).toBe(401);
+    expect(((await getAnon.json()) as ApiErr).error).toBe("UNAUTHORIZED");
+    const putAnon = await jsonReq(env.app, "PUT", PROMPTS_PATH, undefined, {
+      updates: [{ key: "content-ai-instruction", body: "x" }],
+    });
+    expect(putAnon.status).toBe(401);
+    const putStudent = await jsonReq(
+      env.app,
+      "PUT",
+      PROMPTS_PATH,
+      env.studentCookieA,
+      { updates: [{ key: "content-ai-instruction", body: "x" }] },
+    );
+    expect(putStudent.status).toBe(401);
+  });
+
+  it("GET 默认全默认（只含教师受众槽位）→ PUT 覆盖生效 → 越权槽位 404 → 空白 400 AI_PROMPT_INVALID → null 恢复默认", async () => {
+    const env = await makeEnv();
+    const first = await jsonReq(env.app, "GET", PROMPTS_PATH, env.cookieA);
+    expect(first.status).toBe(200);
+    const firstData = (await first.json()) as PromptsData;
+    expect(firstData.data.updatedAt).toBe("1970-01-01T00:00:00.000Z");
+    const keys = firstData.data.slots.map((slot) => slot.key);
+    expect(keys).toContain("learning-pack.diagnose-weakness");
+    expect(keys).not.toContain("review-pack-student");
+    expect(
+      firstData.data.slots.every(
+        (slot) => !slot.isCustom && slot.body === slot.defaultBody,
+      ),
+    ).toBe(true);
+
+    const put = await jsonReq(env.app, "PUT", PROMPTS_PATH, env.cookieA, {
+      baseUpdatedAt: firstData.data.updatedAt,
+      updates: [
+        { key: "content-ai-instruction", body: "自定义开场：请出 {kind}。" },
+      ],
+    });
+    expect(put.status).toBe(200);
+    const putData = (await put.json()) as PromptsData;
+    const custom = putData.data.slots.find(
+      (slot) => slot.key === "content-ai-instruction",
+    );
+    expect(custom?.isCustom).toBe(true);
+    expect(custom?.body).toBe("自定义开场：请出 {kind}。");
+
+    const putForeign = await jsonReq(
+      env.app,
+      "PUT",
+      PROMPTS_PATH,
+      env.cookieA,
+      {
+        updates: [{ key: "review-pack-student", body: "越权" }],
+      },
+    );
+    expect(putForeign.status).toBe(404);
+
+    const putBlank = await jsonReq(env.app, "PUT", PROMPTS_PATH, env.cookieA, {
+      updates: [{ key: "content-ai-instruction", body: "   " }],
+    });
+    expect(putBlank.status).toBe(400);
+    expect(((await putBlank.json()) as ApiErr).error).toBe("AI_PROMPT_INVALID");
+
+    const putReset = await jsonReq(env.app, "PUT", PROMPTS_PATH, env.cookieA, {
+      baseUpdatedAt: putData.data.updatedAt,
+      updates: [{ key: "content-ai-instruction", body: null }],
+    });
+    expect(putReset.status).toBe(200);
+    const resetData = (await putReset.json()) as PromptsData;
+    expect(
+      resetData.data.slots.find((slot) => slot.key === "content-ai-instruction")
+        ?.isCustom,
+    ).toBe(false);
+  });
+
+  it("409 AI_SETTINGS_STALE：过期锚点拒绝并保留服务器值", async () => {
+    const env = await makeEnv();
+    const first = await jsonReq(env.app, "GET", PROMPTS_PATH, env.cookieA);
+    const firstData = (await first.json()) as PromptsData;
+    await jsonReq(env.app, "PUT", PROMPTS_PATH, env.cookieA, {
+      baseUpdatedAt: firstData.data.updatedAt,
+      updates: [{ key: "content-ai-instruction", body: "第一版" }],
+    });
+    const stale = await jsonReq(env.app, "PUT", PROMPTS_PATH, env.cookieA, {
+      baseUpdatedAt: firstData.data.updatedAt,
+      updates: [{ key: "content-ai-instruction", body: "过期写" }],
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as ApiErr).error).toBe("AI_SETTINGS_STALE");
+    const after = await jsonReq(env.app, "GET", PROMPTS_PATH, env.cookieA);
+    const afterData = (await after.json()) as PromptsData;
+    expect(
+      afterData.data.slots.find((slot) => slot.key === "content-ai-instruction")
+        ?.body,
+    ).toBe("第一版");
+  });
+});

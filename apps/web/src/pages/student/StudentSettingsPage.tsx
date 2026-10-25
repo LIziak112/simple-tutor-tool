@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  FileText,
   PenLine,
   SlidersHorizontal,
   UserRound,
@@ -10,6 +11,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
+import { StudentAiPromptsSection } from "@/features/student-ai/StudentAiPromptsSection";
 import { StudentQuickButtonsSection } from "@/features/student-ai/StudentQuickButtonsSection";
 
 /** 学生个人设置；账号守卫和配置绑定由学生布局负责。 */
@@ -17,6 +19,7 @@ export default function StudentSettingsPage() {
   const { data: student } = useStudentMe();
   const profile = useInkProfileSelection();
   const [quickButtonsDirty, setQuickButtonsDirty] = useState(false);
+  const [promptsDirty, setPromptsDirty] = useState(false);
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-8 pb-8">
       <header className="space-y-2">
@@ -138,6 +141,33 @@ export default function StudentSettingsPage() {
           </summary>
           <div className="border-t border-border p-4 sm:p-6">
             <StudentQuickButtonsSection onDirtyChange={setQuickButtonsDirty} />
+          </div>
+        </details>
+        <details className="group rounded-xl border border-border bg-card">
+          <summary className="flex min-h-16 cursor-pointer list-none items-center gap-4 rounded-xl p-5 focus-visible:outline-2 focus-visible:outline-ring sm:p-6 [&::-webkit-details-marker]:hidden">
+            <FileText
+              aria-hidden
+              className="size-5 shrink-0 text-muted-foreground"
+            />
+            <span className="min-w-0 flex-1 space-y-1">
+              <span className="block font-medium">复习包 AI 提示词</span>
+              {promptsDirty && (
+                <span className="block text-xs font-medium text-primary">
+                  有未保存更改
+                </span>
+              )}
+              <span className="block text-sm text-muted-foreground">
+                导出「单题复习包」给 AI
+                自助复习时使用的指令，可自定义并随时恢复默认。
+              </span>
+            </span>
+            <ChevronDown
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground group-open:rotate-180"
+            />
+          </summary>
+          <div className="border-t border-border p-4 sm:p-6">
+            <StudentAiPromptsSection onDirtyChange={setPromptsDirty} />
           </div>
         </details>
       </section>

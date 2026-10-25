@@ -1,7 +1,15 @@
+import {
+  DEFAULT_CONTENT_AI_INSTRUCTION,
+  renderContentAiInstruction,
+} from "@tutor/contract";
+
 /**
  * "AI 出题助手"提示词拼装（T1.13，§5.1 规范文档化：教师端一键复制「规范 + 样例 + 模板」）。
  * 纯函数：不触碰剪贴板、不发请求（三份文档经 /api/public/spec 拉取，
  * 由 TanStack Query 缓存，见 spec-queries.ts；复制交互在 AiPromptPanel 组件处理）。
+ * hall-9533：开场指令支持教师自定义（教师 AI 提示词槽位
+ * content-ai-instruction），{kind}/{topic} 占位符经契约
+ * renderContentAiInstruction 替换；缺省用契约默认正文，输出与旧版逐字一致。
  */
 
 /** 生成内容的 kind（与 DSL frontmatter 的 kind 取值一致） */
@@ -35,6 +43,8 @@ export interface AiPromptInput {
   example: string;
   /** 出题提示词模板全文（/api/public/spec/prompt.md） */
   promptTemplate: string;
+  /** 开场指令正文（教师自定义槽位；缺省 = 契约默认正文） */
+  instructionBody?: string;
 }
 
 /**
@@ -42,9 +52,12 @@ export interface AiPromptInput {
  * 开头（角色 + kind + 主题）→ 规范全文 → 完整样例全文 → 提示词模板全文 → 结尾输出要求。
  */
 export function buildAiPrompt(input: AiPromptInput): string {
-  const topic = input.topic.trim() || "教师自定";
+  const instruction = renderContentAiInstruction(
+    input.instructionBody ?? DEFAULT_CONTENT_AI_INSTRUCTION,
+    { kind: KIND_LABELS[input.kind], topic: input.topic },
+  );
   return [
-    `你是一对一辅导老师的内容助手。请按下面的 DSL 规范生成一份${KIND_LABELS[input.kind]}，主题：${topic}。`,
+    instruction,
     "",
     "## DSL 规范",
     "",

@@ -8,6 +8,11 @@ import SettingsPage from "./SettingsPage";
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchTeacherMe: vi.fn(),
+  // hall-9533：AI 提示词区在页面测试只要求渲染，不取真实接口
+  fetchTeacherAiPromptsApi: async () => ({
+    slots: [],
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  }),
 }));
 
 // 模拟有未保存本地状态的配置，验证分类切换不会卸载配置控制器。

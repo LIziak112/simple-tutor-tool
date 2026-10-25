@@ -13,6 +13,7 @@ import {
   useLogoutTeacher,
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
+import { TeacherAiPromptsSection } from "@/features/student-ai/TeacherAiPromptsSection";
 import { TeacherAiSettingsSection } from "@/features/student-ai/TeacherAiSettingsSection";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
@@ -89,6 +90,7 @@ export function SettingsPage() {
           teacherId={meQuery.data.id}
         />
         <TeacherAiSettingsSection />
+        <TeacherAiPromptsSection />
         <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
           <div>
             <h2 className="text-sm font-semibold">让 AI 参与备课</h2>

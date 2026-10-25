@@ -267,6 +267,13 @@
       "when": 1792124690963,
       "tag": "0037_outstanding_young_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1792935275845,
+      "tag": "0038_fancy_moon_knight",
+      "breakpoints": true
     }
   ]
 }
