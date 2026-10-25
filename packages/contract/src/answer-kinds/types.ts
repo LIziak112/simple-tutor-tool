@@ -126,6 +126,13 @@ export interface MatchingPublicStructure {
   readonly options: readonly PublicMatchingOption[];
   readonly slotIds: readonly string[];
   readonly allowRepeat: boolean;
+  /**
+   * 槽位 → 材料槽位序 ordinal（QM-16，可选）：携带时文本化槽位标签用
+   * 「第 N 空」（与材料面板 {{slot}} 的（N） 编号、题卡配对视图同一口径），
+   * 缺省（含 emptyPublicStructure）回落裸槽位 id——结构不完整不猜位置。
+   * 键集 ⊆ slotIds 之外的答案槽位同样回落裸 id。
+   */
+  readonly slotOrdinals?: Readonly<Record<string, number>>;
 }
 
 /**

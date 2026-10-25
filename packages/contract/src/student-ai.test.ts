@@ -178,6 +178,33 @@ it("合法单题上下文包含参考答案解析；缺任一者仍合法且有�
   ).toBe(false);
 });
 
+it("QM-17 细项 1：materials 携带本题必需公开材料（可选——旧任务无该键仍合法）；材料条目只含标题与正文", () => {
+  const withMaterials = aiContextSnapshotSchema.parse({
+    ...fullContext,
+    materials: [
+      { title: "阅读材料 A", contentMd: "Passage one …（1）…（2）" },
+      { title: "材料", contentMd: "第二份材料正文" },
+    ],
+  });
+  expect(withMaterials.materials?.[0]?.contentMd).toContain("（2）");
+  // 旧任务（TT-12 之前冻结）无该键：合法，出站装配不携带材料段
+  const legacy = aiContextSnapshotSchema.parse(fullContext);
+  expect(legacy.materials).toBeUndefined();
+  // 材料条目形态不合法：整体拒绝（strict 白名单）
+  expect(
+    aiContextSnapshotSchema.safeParse({
+      ...fullContext,
+      materials: [{ title: "阅读材料 A", contentMd: "x", sourceMd: ":::material" }],
+    }).success,
+  ).toBe(false);
+  expect(
+    aiContextSnapshotSchema.safeParse({
+      ...fullContext,
+      materials: [{ title: "", contentMd: "x" }],
+    }).success,
+  ).toBe(false);
+});
+
 it("任务八态与允许动作表和B00 §3.4 状态机一致", () => {
   expect(aiTaskStatusSchema.options).toEqual([
     "created",
