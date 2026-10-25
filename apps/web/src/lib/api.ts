@@ -9,6 +9,13 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
+  type AiAttemptReviewAction,
+  type AiAttemptReviewCreateData,
+  type AiAttemptReviewCreateRequest,
+  type AiAttemptReviewDetailData,
+  type AiAttemptReviewListData,
+  type AiAttemptReviewPreviewData,
+  type AiAttemptReviewTaskPublic,
   type AiBatchCreateData,
   type AiBatchReviewCreateRequest,
   type AiConnectionCreateData,
@@ -193,6 +200,7 @@ import {
   type TeacherStatusData,
   type UnitMetaData,
   type UnitMetaUpdate,
+  type WrongPracticeScope,
   type WrongQuestionsData,
 } from "@tutor/contract";
 import { hc } from "hono/client";
@@ -908,9 +916,15 @@ export function startCourseAttemptApi(
 export function startWrongPracticeApi(
   questionIds: string[],
   options?: PracticeWorkflowStartOptions,
+  /** 建卷范围快照（#6980-2）：随卷落库，记录/轮次史标题「练的是什么」 */
+  scope?: WrongPracticeScope,
 ): Promise<AttemptStartData> {
   const args = {
-    json: { questionIds, ...(options !== undefined ? { ...options } : {}) },
+    json: {
+      questionIds,
+      ...(options !== undefined ? { ...options } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+    },
   };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
 }
@@ -2892,6 +2906,65 @@ export function createStudentAiTaskApi(
  * 新幂等键。路由用 parseJsonBodyWithCode 手动解析（同 share 口径），hc 推断
  * 不出 json 入参——走同构 fetch。
  */
+/**
+ * 整体复盘预览（GET /ai/attempt-reviews/preview，任务 1ef854c7）：范围题数、
+ * 四类计数与不透明预览版本——创建必须携带本版本，范围/判分变化后 409 重预览。
+ */
+export function fetchStudentAiAttemptReviewPreviewApi(
+  attemptId: string,
+): Promise<AiAttemptReviewPreviewData> {
+  return callApi(() =>
+    fetch(
+      `/api/student/ai/attempt-reviews/preview?attemptId=${encodeURIComponent(attemptId)}`,
+    ),
+  );
+}
+
+/** 整体复盘任务列表（GET /ai/attempt-reviews，按 attempt 过滤，取前 50 条） */
+export function listStudentAiAttemptReviewsApi(
+  attemptId: string,
+): Promise<AiAttemptReviewListData> {
+  return callApi(() =>
+    fetch(
+      `/api/student/ai/attempt-reviews?attemptId=${encodeURIComponent(attemptId)}&limit=50`,
+    ),
+  );
+}
+
+/** 整体复盘任务创建（POST /ai/attempt-reviews，channel 固定 mcp） */
+export function createStudentAiAttemptReviewApi(
+  request: AiAttemptReviewCreateRequest,
+): Promise<AiAttemptReviewCreateData> {
+  return callApi(() =>
+    fetch("/api/student/ai/attempt-reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+/** 整体复盘详情（GET /ai/attempt-reviews/:id）：任务 + 已收到的结构化报告 */
+export function fetchStudentAiAttemptReviewDetailApi(
+  taskId: string,
+): Promise<AiAttemptReviewDetailData> {
+  return callApi(() => fetch(`/api/student/ai/attempt-reviews/${taskId}`));
+}
+
+/** 整体复盘显式动作（POST /ai/attempt-reviews/:id/actions） */
+export function postStudentAiAttemptReviewActionApi(
+  taskId: string,
+  action: AiAttemptReviewAction,
+): Promise<AiAttemptReviewTaskPublic> {
+  return callApi(() =>
+    fetch(`/api/student/ai/attempt-reviews/${taskId}/actions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    }),
+  );
+}
+
 export function createStudentAiBatchReviewApi(
   request: AiBatchReviewCreateRequest,
 ): Promise<AiBatchCreateData> {

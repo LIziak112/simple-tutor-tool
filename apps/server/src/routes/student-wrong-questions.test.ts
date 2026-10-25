@@ -653,7 +653,10 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     ]);
     expect(judge1?.rounds[1]?.courseId).toBeNull();
     expect(judge1?.rounds[1]?.courseName).toBeNull();
-    expect(judge1?.rounds[1]?.sourceTitle).toBe("错题重练 · 第 1 次");
+    // #6980-2：历史卷（未存 scope）标题现算来源单元分布
+    expect(judge1?.rounds[1]?.sourceTitle).toBe(
+      "错题重练 · 第 1 次（来自 有理数课程练习 ×1，共 1 题）",
+    );
   });
 
   it("pendingCount：fill 待批轮计数——交卷待批计 1、老师批完归 0 并入 rounds；after_due 未公布与 draft 不计入（同一公布 gate）", async () => {

@@ -91,6 +91,25 @@ function fillJudgePracticeMarkdown(unitName: string): string {
   ].join("\n");
 }
 
+/** 手机显示当前题号，完整提交计数在答题卡；桌面保留完整进度。 */
+async function expectSingleProgress(
+  page: Page,
+  index: number,
+  submitted: number,
+) {
+  const footer = page.locator('[data-slot="attempt-bottom-bar"]');
+  const progress = footer.getByText(
+    `第 ${index} / 2 题 · 已提交 ${submitted} 题`,
+  );
+  await expect(progress).toHaveCount(1);
+  if ((page.viewportSize()?.width ?? 1440) < 1024) {
+    await expect(
+      footer.getByRole("button", { name: "答题卡", exact: true }),
+    ).toHaveText(`${index}/2`);
+    await expect(progress).toBeHidden();
+  } else await expect(progress).toBeVisible();
+}
+
 /** 单题工作区容器（键盘域：tabIndex=-1 可聚焦） */
 function singleWorkspace(page: Page) {
   return page.locator('[data-slot="practice-single-workspace"]');
@@ -128,6 +147,24 @@ function barNavButton(page: Page, label: "上一题" | "下一题") {
   return page
     .locator('[data-slot="practice-action-bar"]')
     .getByRole("button", { name: label, exact: true });
+}
+
+/** 手机未提交题通过答题卡跳过；保存失败时关闭面板查看原题保护提示。 */
+async function navigateSingleQuestion(page: Page, label: "上一题" | "下一题") {
+  const direct = barNavButton(page, label);
+  if (await direct.isVisible()) {
+    await direct.click();
+    return;
+  }
+  const navigator = page.getByRole("button", { name: "答题卡", exact: true });
+  const current = Number((await navigator.innerText()).split("/")[0]);
+  await navigator.click();
+  const panel = page.getByRole("dialog", { name: "答题卡", exact: true });
+  const target = current + (label === "下一题" ? 1 : -1);
+  await panel
+    .getByRole("button", { name: new RegExp(`^第 ${target} 题，`) })
+    .click();
+  if (await panel.isVisible()) await panel.press("Escape");
 }
 
 test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student"] }, () => {
@@ -180,10 +217,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       page
         .locator('[data-slot="attempt-bottom-bar"]')
         .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
-    ).toBeVisible();
+    ).toHaveCount(1);
     const q1 = page.locator('article[aria-label="第 1 题"]');
     const q2 = page.locator('article[aria-label="第 2 题"]');
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 0);
     await expect(q1).toBeVisible();
     await expect(q2).toBeHidden();
     await expectWorkspaceFocused(page);
@@ -204,7 +241,25 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       ).toHaveCount(0);
       const bounds = await footer.boundingBox();
       expect(bounds?.width).toBe(width);
-      expect(bounds?.height).toBeLessThan(150);
+      expect(bounds?.height).toBeLessThanOrEqual(60);
+      if (width < 1024) {
+        const navigator = footer.getByRole("button", {
+          name: "答题卡",
+          exact: true,
+        });
+        await expect(navigator).toHaveText("1/2");
+        await expect(
+          footer.getByRole("button", { name: "提前交卷" }),
+        ).toBeHidden();
+        await navigator.click();
+        const panel = page.getByRole("dialog", { name: "答题卡", exact: true });
+        await expect(panel).toContainText("已填写 0/2 题 · 已提交 0/2 题");
+        await expect(
+          panel.getByRole("button", { name: "提前交卷" }),
+        ).toBeVisible();
+        await panel.press("Escape");
+        await expect(navigator).toBeFocused();
+      }
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(width);
@@ -228,11 +283,11 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     await expect(feedback1.getByText("回答正确")).toBeVisible();
     await expect(feedback1.getByText("参考答案：")).toBeVisible();
     await expect(feedback1.getByText(/是正数/)).toBeVisible();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 1);
 
     // —— Enter 再按 = 已提交题的下一题导航 ——
     await page.keyboard.press("Enter");
-    await expect(page.getByText("第 2 / 2 题 · 已提交 1 题")).toBeVisible();
+    await expectSingleProgress(page, 2, 1);
     await expect(q2).toBeVisible();
     await expect(q1).toBeHidden();
     await expectWorkspaceFocused(page);
@@ -245,7 +300,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     const feedback2 = q2.getByRole("region", { name: "本题反馈" });
     await expect(feedback2).toBeVisible();
     await expect(feedback2.getByText("回答正确")).toBeVisible();
-    await expect(page.getByText("第 2 / 2 题 · 已提交 2 题")).toBeVisible();
+    await expectSingleProgress(page, 2, 2);
 
     // —— 末题反馈保留、不瞬间跳整卷；Enter 永不触发查看结果（§9.2）——
     // URL 断言用 attemptId 正则：切题按 M3 设计把当前题写进 ?q=（replaceState），
@@ -255,7 +310,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     await expectWorkspaceFocused(page);
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(new RegExp(`/s/attempts/${attemptId}`));
-    await expect(page.getByText("第 2 / 2 题 · 已提交 2 题")).toBeVisible();
+    await expectSingleProgress(page, 2, 2);
     await expect(feedback2).toBeVisible();
 
     // 等过两个轮询周期，末题解析必须仍可阅读。
@@ -335,8 +390,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       page
         .locator('[data-slot="attempt-bottom-bar"]')
         .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
-    ).toBeVisible();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    ).toHaveCount(1);
+    await expectSingleProgress(page, 1, 0);
     await expect(
       q1.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
@@ -371,11 +426,11 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       .getByRole("radio", { name: "单题专注", exact: true })
       .locator("xpath=ancestor::label[1]")
       .click();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 1);
     await expect(feedback1).toBeVisible();
     // 操作条「下一题」进第 2 题，继续作答提交收尾
-    await barNavButton(page, "下一题").click();
-    await expect(page.getByText("第 2 / 2 题 · 已提交 1 题")).toBeVisible();
+    await navigateSingleQuestion(page, "下一题");
+    await expectSingleProgress(page, 2, 1);
     await chooseAnswer(page, 2, "选项 B");
     await waitForAllSaved(page);
     await page.getByRole("button", { name: "提交本题" }).click();
@@ -433,8 +488,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       page
         .locator('[data-slot="attempt-bottom-bar"]')
         .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
-    ).toBeVisible();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    ).toHaveCount(1);
+    await expectSingleProgress(page, 1, 0);
     const q1 = page.locator('article[aria-label="第 1 题"]');
     const q2 = page.locator('article[aria-label="第 2 题"]');
 
@@ -447,12 +502,12 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
 
     // —— ←→ 不切题（输入保留原生方向键语义）——
     await page.keyboard.press("ArrowRight");
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 0);
 
     // —— Enter 不提交：无反馈区、无缺稿弹层、进度不变、输入原样保留 ——
     await page.keyboard.press("Enter");
     await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(input).toHaveValue("17");
     // 已作答 → 主操作「提交本题」可点（输入真实生效，键盘守门不等于禁用提交）
@@ -462,7 +517,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     await focusSingleWorkspace(page);
     await expectWorkspaceFocused(page);
     await page.keyboard.press("ArrowRight");
-    await expect(page.getByText("第 2 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 2, 0);
     await expect(q2).toBeVisible();
     await expectWorkspaceFocused(page);
     await page.keyboard.press("1");
@@ -558,8 +613,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       page
         .locator('[data-slot="attempt-bottom-bar"]')
         .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
-    ).toBeVisible();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    ).toHaveCount(1);
+    await expectSingleProgress(page, 1, 0);
     const q1 = page.locator('article[aria-label="第 1 题"]');
 
     // —— 形态一：一次性 abort 答案保存 PUT（网络失败）——
@@ -578,10 +633,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       q1.getByRole("radio", { name: "错", exact: true }),
     ).toBeChecked();
     // 网络失败不阻塞切题（本机稿已核对即离线可切题——设计内行为）
-    await barNavButton(page, "下一题").click();
-    await expect(page.getByText("第 2 / 2 题 · 已提交 0 题")).toBeVisible();
-    await barNavButton(page, "上一题").click();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await navigateSingleQuestion(page, "下一题");
+    await expectSingleProgress(page, 2, 0);
+    await navigateSingleQuestion(page, "上一题");
+    await expectSingleProgress(page, 1, 0);
     await expect(
       q1.getByRole("radio", { name: "错", exact: true }),
     ).toBeChecked();
@@ -597,10 +652,10 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
         window as typeof window & { __e2eFailDraftWrites?: boolean }
       ).__e2eFailDraftWrites = true;
     });
-    await barNavButton(page, "下一题").click();
+    await navigateSingleQuestion(page, "下一题");
     const blockedAlert = page.getByText("本机稿未保存，仍停留本题");
     await expect(blockedAlert).toBeVisible();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 0);
     await expect(page.getByTestId("draft-status")).toContainText(
       "本机保存失败",
     );
@@ -612,13 +667,13 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       ).__e2eFailDraftWrites = false;
     });
     await page.getByRole("button", { name: "重试保存并切换" }).click();
-    await expect(page.getByText("第 2 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 2, 0);
     await expect(blockedAlert).toHaveCount(0);
     await waitForAllSaved(page);
 
     // —— 收尾：回到第 1 题提交，再提交末题，结果统计正确 ——
-    await barNavButton(page, "上一题").click();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await navigateSingleQuestion(page, "上一题");
+    await expectSingleProgress(page, 1, 0);
     await expect(
       q1.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
@@ -626,8 +681,8 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     const feedback1 = q1.getByRole("region", { name: "本题反馈" });
     await expect(feedback1).toBeVisible();
     await expect(feedback1.getByText("回答正确")).toBeVisible();
-    await barNavButton(page, "下一题").click();
-    await expect(page.getByText("第 2 / 2 题 · 已提交 1 题")).toBeVisible();
+    await navigateSingleQuestion(page, "下一题");
+    await expectSingleProgress(page, 2, 1);
     await chooseAnswer(page, 2, "选项 B");
     await waitForAllSaved(page);
     await page.getByRole("button", { name: "提交本题" }).click();
@@ -686,7 +741,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       page
         .locator('[data-slot="attempt-bottom-bar"]')
         .getByText(/第 \d+ \/ 2 题 · 已提交 \d+ 题/),
-    ).toBeVisible();
+    ).toHaveCount(1);
     const q1 = page.locator('article[aria-label="第 1 题"]');
     const q2 = page.locator('article[aria-label="第 2 题"]');
 
@@ -705,10 +760,29 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     ] as const;
     for (const [width, height] of viewports) {
       await page.setViewportSize({ width, height });
-      await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+      await expectSingleProgress(page, 1, 0);
       await expect(singleWorkspace(page)).toBeVisible();
       await expect(q1).toBeVisible();
       await expect(q2).toBeHidden();
+      const footer = page.locator('[data-slot="attempt-bottom-bar"]');
+      expect((await footer.boundingBox())?.height).toBeLessThanOrEqual(60);
+      const controls = await footer.getByRole("button").evaluateAll((buttons) =>
+        buttons
+          .map((button) => button.getBoundingClientRect())
+          .filter((rect) => rect.width > 0 && rect.height > 0)
+          .map((rect) => ({
+            x: rect.x,
+            right: rect.right,
+            width: rect.width,
+            height: rect.height,
+          })),
+      );
+      for (const control of controls) {
+        expect(control.x).toBeGreaterThanOrEqual(0);
+        expect(control.right).toBeLessThanOrEqual(width);
+        expect(control.width).toBeGreaterThanOrEqual(44);
+        expect(control.height).toBeGreaterThanOrEqual(44);
+      }
       await chooseAnswer(page, 1, "对", true);
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
@@ -722,19 +796,19 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     await page.setViewportSize({ width: 390, height: 844 });
     await focusSingleWorkspace(page);
     await page.keyboard.press("ArrowRight");
-    await expect(page.getByText("第 2 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 2, 0);
     await expect(q2).toBeVisible();
     await expect(q1).toBeHidden();
     await expectWorkspaceFocused(page);
     await page.keyboard.press("ArrowLeft");
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 0);
     await expect(
       q1.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
 
     // —— 桌面视口 1440×900：单题可达可输入、正文唯一、侧栏答题定位在场 ——
     await page.setViewportSize({ width: 1440, height: 900 });
-    await expect(page.getByText("第 1 / 2 题 · 已提交 0 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 0);
     await expect(q1).toBeVisible();
     await expect(q2).toBeHidden();
     await expect(
@@ -750,7 +824,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     await waitForAllSaved(page);
     await page.getByRole("button", { name: "提交本题" }).click();
     await expect(q1.getByRole("region", { name: "本题反馈" })).toBeVisible();
-    await expect(page.getByText("第 1 / 2 题 · 已提交 1 题")).toBeVisible();
+    await expectSingleProgress(page, 1, 1);
 
     // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
     await leak.drain();

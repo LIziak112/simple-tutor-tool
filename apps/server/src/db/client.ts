@@ -25,7 +25,21 @@ export type Db = BetterSQLite3Database<typeof schema> & {
  * 同步 API（better-sqlite3 特性），无需 await；连接随进程退出或显式 `db.$client.close()` 释放。
  */
 export function createDb(filename: string): Db {
-  const sqlite = new DatabaseCtor(filename);
+  return wrapWithPragmas(new DatabaseCtor(filename));
+}
+
+/**
+ * 从序列化字节（`Database#serialize()` 产物）克隆出独立的内存库：内容与生成
+ * 该字节的库一致，后续写入只落在克隆自身、不影响原字节。与 createDb 走同一套
+ * 逐连接 pragma（外键约束每个连接都要显式开启）。服务测试工厂的「模板库克隆」
+ * 入口：把建库成本从全量迁移的百毫秒级降到一次字节拷贝。
+ */
+export function createDbFromBuffer(template: Buffer): Db {
+  return wrapWithPragmas(new DatabaseCtor(template));
+}
+
+/** 统一执行逐连接 pragma 并包装 drizzle；pragma 失败先关句柄再抛，不泄漏 Windows 文件锁 */
+function wrapWithPragmas(sqlite: Database): Db {
   try {
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("foreign_keys = ON");

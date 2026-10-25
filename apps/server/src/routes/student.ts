@@ -1114,6 +1114,9 @@ export function createStudentRoutes(
                 workflowVersion: body.workflowVersion,
                 feedbackMode: body.feedbackMode,
               },
+              // newContentEnabled 缺省读部署 env（§5.8.4）；scope 为第 6 参
+              undefined,
+              body.scope,
             ),
           },
           201,

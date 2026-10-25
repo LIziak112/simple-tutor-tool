@@ -320,10 +320,14 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(
       screen.getByRole("heading", { name: /有理数 · 待复习 1 题/ }),
     ).toBeInTheDocument();
-    // 紧凑行：题干摘要（公式取内文、[[正确]] 渲染为空框）+ 错 N · 对 M + 绝对时间
-    expect(await screen.findByText("错 2 · 对 0")).toBeInTheDocument();
+    // 紧凑行：题干预览走 RichMarkdown（公式 KaTeX 渲染、[[正确]] 空框）+
+    // 错 N · 对 M + 绝对时间
+    const pendingRow = await screen.findByRole("button", {
+      name: /错 2 · 对 0/,
+    });
     expect(screen.getByText("错 1 · 对 1")).toBeInTheDocument();
-    expect(screen.getByText(/1 是正数。/)).toBeInTheDocument();
+    expect(pendingRow.querySelector(".katex")).not.toBeNull();
+    expect(pendingRow.textContent).toContain("是正数");
     // 绝对时间（formatCnTime：UTC → Asia/Shanghai；不再出现相对时间口径）
     expect(screen.getByText("2020年9月28日 10:00:00")).toBeInTheDocument();
     expect(screen.getByText("2020年9月29日 10:00:00")).toBeInTheDocument();
@@ -390,9 +394,12 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(
       screen.getByRole("heading", { name: /有理数 · 已攻克 1 题/ }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/0 是负数。/)).toBeInTheDocument();
+    const conqueredRow = screen.getByRole("button", { name: /错 1 · 对 2/ });
+    expect(conqueredRow.textContent).toContain("是负数");
     // 待复习那两道不在
-    expect(screen.queryByText(/1 是正数。/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /错 2 · 对 0/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("计算：(-2)+5=", { exact: false }),
     ).not.toBeInTheDocument();
@@ -438,9 +445,8 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     await screen.findByRole("button", { name: "待复习 2 题" });
 
     // 严格（默认）：错-对 的题在待复习分组里
-    expect(
-      screen.getByText("计算：(-2)+5=", { exact: false }),
-    ).toBeInTheDocument();
+    const fillRowStrict = screen.getByRole("button", { name: /错 1 · 对 1/ });
+    expect(fillRowStrict.textContent).toContain("计算：");
     fireEvent.click(screen.getByRole("button", { name: "做对 1 次" }));
     // 宽松：待复习剩 1（错-错）、已攻克变 2（错-对 + 错-对-对）
     await waitFor(() =>
@@ -540,9 +546,14 @@ describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
     expect(
       screen.getByRole("button", { name: "已攻克 0 题" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/-1 在数轴上位于原点左边/)).toBeInTheDocument();
-    expect(screen.queryByText(/1 是正数。/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/\|-3\|=3/)).not.toBeInTheDocument();
+    const crossRow = screen.getByRole("button", { name: /错 1 · 对 1/ });
+    expect(crossRow.textContent).toContain("位于原点左边");
+    expect(
+      screen.queryByRole("button", { name: /错 2 · 对 0/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /错 1 · 对 0/ }),
+    ).not.toBeInTheDocument();
     // 页头「重练全部」计数跟随筛选后的集合
     expect(
       screen.getByRole("button", { name: "重练全部（1 题）" }),
@@ -564,11 +575,14 @@ describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
     mockedWrong.mockResolvedValue(COURSE_FILTER_DATA);
     renderPage(`/s/wrong?courseId=${COURSE_B}`);
     // 不经交互即筛好：只剩跨课程题，下拉回显初一下
-    expect(
-      await screen.findByText(/-1 在数轴上位于原点左边/),
-    ).toBeInTheDocument();
+    const crossRow = await screen.findByRole("button", {
+      name: /错 1 · 对 1/,
+    });
+    expect(crossRow.textContent).toContain("位于原点左边");
     expect(screen.getByLabelText("课程")).toHaveValue(COURSE_B);
-    expect(screen.queryByText(/1 是正数。/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /错 2 · 对 0/ }),
+    ).not.toBeInTheDocument();
     cleanup();
 
     // 课程列表外的 courseId（课程已归档/已移出成员）：占位选项兜底 + 空态归因筛选
@@ -782,9 +796,12 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     // 顺序 = 当前 tab 列表序（q-fill-2 在前、q-judge-1 在后）；M3-D1.5 建卷
     // 请求显式携带 workflowVersion=1；M5-D2 偏好未设置时不发 feedbackMode
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
-        workflowVersion: 1,
-      });
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-fill-2", "q-judge-1"],
+        { workflowVersion: 1 },
+        // #6980-2：范围快照随请求上报（重练全部、无课程筛选 → 无 courseName）
+        { kind: "all" },
+      );
     });
     await waitFor(() => {
       expect(screen.getByTestId("location-probe")).toHaveTextContent(
@@ -818,10 +835,15 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     await screen.findByRole("button", { name: "重练全部（2 题）" });
     fireEvent.click(screen.getByRole("button", { name: "重练全部（2 题）" }));
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"], {
-        workflowVersion: 1,
-        feedbackMode: "after_attempt",
-      });
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-fill-2", "q-judge-1"],
+        {
+          workflowVersion: 1,
+          feedbackMode: "after_attempt",
+        },
+        // #6980-2：范围快照随请求上报（重练全部、无课程筛选 → 无 courseName）
+        { kind: "all" },
+      );
     });
     // 模块级 store 跨用例残留：解绑回默认，避免影响同文件其他用例
     bindPracticePreferenceAccount(null);
@@ -843,9 +865,12 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     expect(groupButtons).toHaveLength(2);
     fireEvent.click(groupButtons[0] as HTMLElement);
     await waitFor(() => {
-      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2"], {
-        workflowVersion: 1,
-      });
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-fill-2"],
+        { workflowVersion: 1 },
+        // #6980-2：范围快照（按练习分组 → dimension:"unit" + 组名，无课程筛选）
+        { kind: "group", dimension: "unit", groupTitle: "有理数加法" },
+      );
     });
     // 失败：错误横幅出现（含服务端信息），页面仍留在错题本
     expect(await screen.findByRole("alert")).toHaveTextContent("重练组卷失败");

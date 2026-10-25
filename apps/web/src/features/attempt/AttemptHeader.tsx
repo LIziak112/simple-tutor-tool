@@ -14,7 +14,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { AttemptEditorNotice } from "./AttemptEditorContext";
+import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
+import { AttemptEditorNotice, useAttemptEditor } from "./AttemptEditorContext";
 
 export function AttemptHeader({
   title,
@@ -37,6 +38,10 @@ export function AttemptHeader({
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const editor = useAttemptEditor();
+  const toolbar = useReadingToolbar({
+    blocked: detailsOpen || editor?.active != null || editor?.paper != null,
+  });
   const navigating = useRef(false);
   const closeDetails = () => {
     navigating.current = detailsOpen;
@@ -45,8 +50,10 @@ export function AttemptHeader({
   const hasActions = actions != null;
   return (
     <header
+      ref={toolbar.ref}
+      data-reading-hidden={toolbar.hidden}
       data-slot="attempt-header"
-      className={`sticky top-0 z-20 -mx-3 grid min-h-16 items-center gap-x-2 gap-y-1 border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 ${hasActions ? "grid-cols-[44px_minmax(0,1fr)_44px_44px] sm:grid-cols-[44px_minmax(0,1fr)_44px_auto_44px]" : "grid-cols-[44px_minmax(0,1fr)_44px] sm:grid-cols-[44px_minmax(0,1fr)_auto_44px]"}`}
+      className={`reading-toolbar sticky top-0 z-20 -mx-3 grid min-h-14 items-center gap-x-2 gap-y-1 border-b border-border bg-background/95 px-3 py-1.5 backdrop-blur sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2 ${hasActions ? "grid-cols-[44px_minmax(0,1fr)_44px_44px] sm:grid-cols-[44px_minmax(0,1fr)_44px_auto_44px]" : "grid-cols-[44px_minmax(0,1fr)_44px] sm:grid-cols-[44px_minmax(0,1fr)_auto_44px]"}`}
     >
       <div className="contents">
         <Button
@@ -59,7 +66,7 @@ export function AttemptHeader({
         >
           <ArrowLeft aria-hidden className="size-5" />
         </Button>
-        <h1 className="col-start-2 row-start-1 line-clamp-2 min-w-0 text-lg leading-[1.45] font-semibold break-words">
+        <h1 className="col-start-2 row-start-1 truncate min-w-0 text-base leading-[1.45] font-semibold sm:line-clamp-2 sm:whitespace-normal sm:text-lg sm:break-words">
           {title}
         </h1>
         {hasActions && (

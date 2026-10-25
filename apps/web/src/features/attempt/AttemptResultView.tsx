@@ -22,6 +22,7 @@ import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
+import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
@@ -617,6 +618,9 @@ export function AttemptResultView({
             }))}
             released={released}
           />
+          {/* 整体复盘入口（任务 1ef854c7）：预览确认后创建一个 MCP 整体任务，
+              与逐题批量复盘互不混装 */}
+          <AiAttemptReviewEntry attemptId={attempt.id} released={released} />
           <AiQueueButton
             currentAttemptId={aiCompanion.send.attemptId}
             onOpenTask={aiCompanion.openTask}

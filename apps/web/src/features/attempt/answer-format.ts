@@ -12,6 +12,7 @@ import {
   HANDWRITTEN_QUESTION_TYPES,
   lettersOf,
   QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT,
+  wrongAttemptTitleWithLabel,
 } from "@tutor/contract";
 
 /**
@@ -71,7 +72,11 @@ export function letterOf(index: number): string {
  * - assignment：挂课程「作业 · 课程名」（T2A.7），未挂「作业」。
  */
 export function attemptSourceLabel(data: {
-  attempt: { sourceType: AttemptSource; attemptNo: number };
+  attempt: {
+    sourceType: AttemptSource;
+    attemptNo: number;
+    wrongScopeLabel?: string | null | undefined;
+  };
   courseName: string | null;
   title: string;
 }): string {
@@ -79,7 +84,12 @@ export function attemptSourceLabel(data: {
     return `课程：${data.courseName ?? ""} · 第 ${data.attempt.attemptNo} 次`;
   }
   if (data.attempt.sourceType === "wrong") {
-    return `错题重练 · 第 ${data.attempt.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleWithLabel）——label=建卷
+    // 范围快照，历史卷原样「错题重练 · 第 n 次」
+    return wrongAttemptTitleWithLabel(
+      data.attempt.attemptNo,
+      data.attempt.wrongScopeLabel,
+    );
   }
   if (data.attempt.sourceType === "lesson") {
     return `讲练：${data.title} · 第 ${data.attempt.attemptNo} 次`;

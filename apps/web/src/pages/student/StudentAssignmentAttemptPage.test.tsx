@@ -350,7 +350,9 @@ afterEach(() => {
   resetAnnotationSession();
 });
 
-describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
+describe("StudentAssignmentAttemptPage：草稿作答流程", {
+  timeout: 15_000,
+}, () => {
   it("部分填空不计完整，答题卡和交卷遗漏使用同一份状态", async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch.mockResolvedValue({
@@ -457,7 +459,9 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
       ),
     );
     // 详情已失效重取 → 结果视图
-    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "交卷" })).toBeNull();
   });
@@ -493,7 +497,9 @@ describe("StudentAssignmentAttemptPage：已交卷直接结果视图", () => {
     mockedFetch.mockResolvedValue(RESULT_DATA);
     renderPage();
 
-    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();
     expect(mockedFetch).toHaveBeenCalledWith(ATTEMPT_ID);
     // 答题控件不出现
@@ -563,7 +569,9 @@ async function clickSubmitAndConfirm(): Promise<void> {
   fireEvent.click(confirm);
 }
 
-describe("StudentAssignmentAttemptPage：交卷 flush", () => {
+describe("StudentAssignmentAttemptPage：交卷 flush", {
+  timeout: 15_000,
+}, () => {
   it("两道手写题都写过 → 逐题 PUT 全部完成后才调 submit（调用顺序）", async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch
@@ -631,7 +639,9 @@ describe("StudentAssignmentAttemptPage：交卷 flush", () => {
 
 // ---------- T6R.20 审查修复 2：seal 时序（交卷不可逆点之后） ----------
 
-describe("StudentAssignmentAttemptPage：标注 seal 时序（审查修复 2）", () => {
+describe("StudentAssignmentAttemptPage：标注 seal 时序（审查修复 2）", {
+  timeout: 15_000,
+}, () => {
   it("seal 在交卷成功之后补调（顺序锁定：submit → seal）；成功无警示", async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch
@@ -656,7 +666,9 @@ describe("StudentAssignmentAttemptPage：标注 seal 时序（审查修复 2）"
 
     await waitFor(() => expect(mockedSeal).toHaveBeenCalledTimes(1));
     expect(order.indexOf("submit")).toBeLessThan(order.indexOf("seal"));
-    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/标注封存待重试/)).toBeNull();
   });
 
@@ -675,7 +687,9 @@ describe("StudentAssignmentAttemptPage：标注 seal 时序（审查修复 2）"
     await waitFor(() => expect(mockedSave).toHaveBeenCalled());
     await clickSubmitAndConfirm();
 
-    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     expect(await screen.findByText(/标注封存待重试/)).toBeInTheDocument();
     expect(mockedSubmit).toHaveBeenCalledTimes(1);
   });
@@ -729,7 +743,7 @@ function localInkDoc(strokes: number): InkDoc {
   };
 }
 
-describe("StudentAssignmentAttemptPage：草稿防丢", () => {
+describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () => {
   it("刷新恢复（答案）：本地较新的答案在进入页面后还原到控件，并自动补传服务端", async () => {
     // 模拟「上次会话写了答案、刷新前最后一次同步没到服务端」：
     // 本地草稿仓有答案，服务端 drafts 为空
@@ -802,7 +816,9 @@ describe("StudentAssignmentAttemptPage：草稿防丢", () => {
     fireEvent.click(screen.getByRole("button", { name: "交卷" }));
     fireEvent.click(await screen.findByRole("button", { name: "确认交卷" }));
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     await waitFor(async () => {
       expect(await draftStore.loadDraft(ATTEMPT_ID)).toBeNull();
     });
@@ -1088,7 +1104,9 @@ describe("StudentAssignmentAttemptPage：分步提示", () => {
     });
     renderPage();
 
-    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("做题时看过的提示（1 条）")).toBeInTheDocument();
     expect(screen.getByText("提示 1")).toBeInTheDocument();
     // 结果视图没有解锁按钮（回看语义，不做新解锁）

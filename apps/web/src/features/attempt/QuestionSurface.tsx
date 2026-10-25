@@ -2,6 +2,7 @@ import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
 import { memo, useId } from "react";
 import { dispatchInput } from "@/features/answering";
 import { prepareQuestion } from "@/features/answering/prepare-question";
+import { QuestionSurfaceFrame } from "./QuestionSurfaceFrame";
 
 /**
  * 正常作答与底图共用题面；导出保持布局但清除个人填答与选中态。
@@ -43,12 +44,14 @@ export const QuestionSurface = memo(function QuestionSurface({
       ? STABLE_NOOP_UPDATE
       : (suppliedOnAnswer ?? STABLE_NOOP_UPDATE);
   return (
-    <div
-      data-slot="question-surface"
-      inert={isPublicBase}
-      className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
-    >
-      {dispatchInput(prepared, answer, update, readOnly)}
-    </div>
+<QuestionSurfaceFrame>
+      <div
+        data-slot="question-surface"
+        inert={isPublicBase}
+        className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
+      >
+        {dispatchInput(prepared, answer, update, readOnly)}
+      </div>
+    </QuestionSurfaceFrame>
   );
 });

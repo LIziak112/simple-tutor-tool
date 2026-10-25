@@ -7,6 +7,7 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
+import { RichMarkdown } from "./RichMarkdown";
 import { renderMd } from "./test-support/render-md";
 
 /**
@@ -428,5 +429,45 @@ describe("RichMarkdown：XSS 防护（rehype-sanitize）", () => {
       expect(img.getAttribute("onerror")).toBeNull();
     }
     expect(container.querySelector("script")).toBeNull();
+  });
+});
+
+describe("RichMarkdown compact（单行收敛形态）", () => {
+  it("图片/表格降级为占位文本，行内公式照常 KaTeX 渲染，根容器带收敛样式类", () => {
+    const source =
+      "计算 $\\frac{1}{2}$：\n\n![几何图](media/geo.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+    const { container } = render(<RichMarkdown source={source} compact />);
+    expect(container.querySelector(".rich-markdown-compact")).not.toBeNull();
+    expect(container.querySelector(".katex")).not.toBeNull();
+    expect(container.textContent).toContain("[图]");
+    expect(container.textContent).toContain("[表格]");
+    expect(container.textContent).not.toContain("![几何图]");
+    expect(container.textContent).not.toContain("| a | b |");
+  });
+
+  it("块级公式收敛为行内 KaTeX 渲染，指令围栏剥离后内容照常渲染", () => {
+    const { container } = render(
+      <RichMarkdown source={":::hint\n$$E=mc^2$$\n:::"} compact />,
+    );
+    expect(container.querySelector(".katex")).not.toBeNull();
+    expect(container.textContent).toContain("E=mc");
+    expect(container.textContent).not.toContain("$$");
+    expect(container.textContent).not.toContain(":::");
+  });
+
+  it("compact 公式走 KaTeX 纯 HTML 输出：不产 <math> 节点，可见渲染照常（回归：jsdom 无 MathMLElement，<math> 会让可访问名计算崩溃）", () => {
+    const { container } = render(
+      <RichMarkdown source={"计算 $\\frac{1}{2}x+3=5$"} compact />,
+    );
+    expect(container.querySelector(".katex")).not.toBeNull();
+    expect(container.querySelector("math")).toBeNull();
+  });
+
+  it("缺省（不传 compact）时表格照常渲染为表格元素，不带收敛样式类", () => {
+    const { container } = render(
+      <RichMarkdown source={"| a | b |\n|---|---|\n| 1 | 2 |"} />,
+    );
+    expect(container.querySelector(".rich-markdown-compact")).toBeNull();
+    expect(container.querySelector("table")).not.toBeNull();
   });
 });

@@ -1,8 +1,9 @@
-import type {
-  AttemptStatus,
-  TeacherAttemptCard,
-  TeacherAttemptDetailData,
-  TeacherAttemptSource,
+import {
+  type AttemptStatus,
+  type TeacherAttemptCard,
+  type TeacherAttemptDetailData,
+  type TeacherAttemptSource,
+  wrongAttemptTitleOf,
 } from "@tutor/contract";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
@@ -60,7 +61,11 @@ export function sourceContextOf(card: TeacherAttemptSource): string {
       : (card.assignmentTitle ?? "");
   }
   if (card.sourceType === "wrong") {
-    return `错题重练 · 第 ${card.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleOf）
+    return wrongAttemptTitleOf({
+      attemptNo: card.attemptNo,
+      wrongScope: card.wrongScope ?? null,
+    });
   }
   if (card.sourceType === "lesson") {
     // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）；courseId 可空
@@ -82,7 +87,11 @@ export function sourceLineOf(data: TeacherAttemptDetailData): string {
     return `课程：${data.courseName ?? ""} · 第 ${data.attemptNo} 次`;
   }
   if (data.sourceType === "wrong") {
-    return `错题重练 · 第 ${data.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleOf）
+    return wrongAttemptTitleOf({
+      attemptNo: data.attemptNo,
+      wrongScope: data.wrongScope ?? null,
+    });
   }
   if (data.sourceType === "lesson") {
     // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）

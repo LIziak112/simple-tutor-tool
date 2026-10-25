@@ -18,9 +18,11 @@ import {
 import { makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 /**
- * QM 专题迁移（0040 材料五表 + responses 自评列、0041 last_activity_at）
+ * QM 专题迁移（0044 材料五表 + responses 自评列、0041 last_activity_at）——
+ * 2026-10-25 v2 同步对齐：v2 链 0040_bizarre~0043 为正主（自评列族/复盘
+ * 三表/错题重练范围），QM 五表迁移由原 0040 重排生成 0044_true_groot。
  * 的存量升级与身份稳定测试（QM-18 细项 2）：
- * - 空库 / 旧库（0040 前结构，原生 SQL 种 0039-era 存量行）/ 含进行中草稿
+ * - 空库 / 旧库（0039 边界结构，原生 SQL 种 0039-era 存量行）/ 含进行中草稿
  *   与笔迹的库 / 新旧内容混合库四类边界；
  * - 升级后存量数据完好（题目 id、已交卷答案/判定、进行中草稿原样）、新列
  *   缺省保守（grading_policy NULL、self_review_revision 0、last_activity_at
@@ -43,10 +45,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** QM 五表起点之前的边界（0040_marvelous_kingpin 建 attempt_context_snapshots 等） */
+/** QM 五表起点之前的边界（0044_true_groot 建 attempt_context_snapshots 等） */
 const PRE_QM_TABLES_TAG = "0039_mean_doorman";
-/** 0041（attempts.last_activity_at）之前的边界 */
-const PRE_LAST_ACTIVITY_TAG = "0040_marvelous_kingpin";
+/** 0041（attempts.last_activity_at，v2 链）之前的边界 */
+const PRE_LAST_ACTIVITY_TAG = "0040_bizarre_fabian_cortez";
 
 function countJournalEntries(): number {
   const journal = JSON.parse(

@@ -1,6 +1,10 @@
 import {
   type AiTaskMaterialInternal,
   type AiTaskPublic,
+  aiAttemptReviewActionRequestSchema,
+  aiAttemptReviewCreateRequestSchema,
+  aiAttemptReviewListQuerySchema,
+  aiAttemptReviewPreviewQuerySchema,
   aiBatchReviewCreateRequestSchema,
   aiConnectionCreateRequestSchema,
   aiConnectionModelsRequestSchema,
@@ -40,6 +44,14 @@ import {
   getStudentQuickButtons,
   putStudentQuickButtons,
 } from "../services/ai-companion/quick-buttons-service.ts";
+import {
+  attemptReviewActionOf,
+  attemptReviewDetailOf,
+  attemptReviewPreviewOf,
+  attemptReviewPublicViewOf,
+  createAttemptReviewTask,
+  listAttemptReviewTasks,
+} from "../services/ai-companion/student-ai-attempt-review.ts";
 import { createAiBatchReviewTasks } from "../services/ai-companion/student-ai-batch.ts";
 import {
   type AiMaterialUploadPage,
@@ -124,6 +136,21 @@ import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts
  * AI_TASK_LIMIT_REACHED、404 NOT_FOUND 同文案），中文消息即操作指引，
  * 不回显参考/路径/密钥。
  */
+
+/**
+ * 首次知情门（三个任务创建入口共用，规则三已到：批量复盘 / 单题任务 /
+ * 整体复盘）：无任何 active 连接 = 未跨过首次知情，403 且不落任务行
+ * （不占配额，也不产必然发送失败的僵尸任务）。
+ */
+function requireAiInformedGate(db: Db, studentId: string): void {
+  if (listStudentAiConnections(db, studentId).length === 0) {
+    throw new HttpError(
+      403,
+      "AI_SETUP_REQUIRED",
+      "还没有可用的 AI 连接，请先在设置中完成连接与首次知情确认",
+    );
+  }
+}
 
 /**
  * 解析按钮请求体：buttons 域校验失败 → AI_BUTTONS_INVALID，其余 → VALIDATION_ERROR。
@@ -292,13 +319,7 @@ export function createStudentAiRoutes(
       //    （规则/幂等派生/不重复计费在 student-ai-batch 服务层单源；本路由
       //    只做知情门 + 契约解析——与 POST /ai/tasks 同口径不落任何任务行）。
       .post("/ai/batch-review", async (c) => {
-        if (listStudentAiConnections(db, c.var.student.id).length === 0) {
-          throw new HttpError(
-            403,
-            "AI_SETUP_REQUIRED",
-            "还没有可用的 AI 连接，请先在设置中完成连接与首次知情确认",
-          );
-        }
+        requireAiInformedGate(db, c.var.student.id);
         const body = await parseJsonBodyWithCode(
           c,
           aiBatchReviewCreateRequestSchema,
@@ -316,6 +337,103 @@ export function createStudentAiRoutes(
           { hmacSecret },
         );
         return c.json({ ok: true, data });
+      })
+      // —— 本次练习整体复盘（任务 1ef854c7）：范围预览 → 确认创建 →
+      //    列表/详情/动作；裁决与防线全在服务层（student-ai-attempt-review
+      //    单源），本文件只做知情门 + 契约解析。整体任务只走 MCP 通道。——
+      .get("/ai/attempt-reviews/preview", (c) => {
+        const parsed = aiAttemptReviewPreviewQuerySchema.safeParse({
+          attemptId: c.req.query("attemptId") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${firstIssueMessage(parsed.error)}`,
+          );
+        }
+        return c.json({
+          ok: true,
+          data: attemptReviewPreviewOf(
+            db,
+            { studentId: c.var.student.id, attemptId: parsed.data.attemptId },
+            { hmacSecret },
+          ),
+        });
+      })
+      .post("/ai/attempt-reviews", async (c) => {
+        // 知情门与批量复盘同口径：无任何 active 连接 = 未跨过首次知情，
+        // 403 且不落任务行（不占配额，不产必然失败的僵尸任务）
+        requireAiInformedGate(db, c.var.student.id);
+        const body = await parseJsonBody(c, aiAttemptReviewCreateRequestSchema);
+        const { task, created } = createAttemptReviewTask(
+          db,
+          {
+            studentId: c.var.student.id,
+            attemptId: body.attemptId,
+            mutationId: body.mutationId,
+            expectedPreviewVersion: body.expectedPreviewVersion,
+            purpose: body.purpose,
+          },
+          { hmacSecret },
+        );
+        return c.json(
+          {
+            ok: true,
+            data: {
+              task: attemptReviewPublicViewOf(db, task),
+              created,
+            },
+          },
+          created ? 201 : 200,
+        );
+      })
+      .get("/ai/attempt-reviews", (c) => {
+        const rawLimit = c.req.query("limit");
+        const parsed = aiAttemptReviewListQuerySchema.safeParse({
+          attemptId: c.req.query("attemptId") ?? undefined,
+          status: c.req.query("status") ?? undefined,
+          limit: rawLimit === undefined ? undefined : Number(rawLimit),
+          cursor: c.req.query("cursor") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${firstIssueMessage(parsed.error)}`,
+          );
+        }
+        const { attemptId, status, limit, cursor } = parsed.data;
+        return c.json({
+          ok: true,
+          data: listAttemptReviewTasks(db, {
+            studentId: c.var.student.id,
+            ...(attemptId !== undefined && { attemptId }),
+            ...(status !== undefined && { status }),
+            ...(cursor !== undefined && { cursor }),
+            limit,
+          }),
+        });
+      })
+      .get("/ai/attempt-reviews/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: attemptReviewDetailOf(db, {
+            studentId: c.var.student.id,
+            taskId: c.req.param("id"),
+          }),
+        });
+      })
+      .post("/ai/attempt-reviews/:id/actions", async (c) => {
+        const body = await parseJsonBody(c, aiAttemptReviewActionRequestSchema);
+        return c.json({
+          ok: true,
+          data: attemptReviewActionOf(db, {
+            studentId: c.var.student.id,
+            taskId: c.req.param("id"),
+            action: body.action,
+          }),
+        });
       })
       // —— 单题状态（SAI-20；伴学栏/发送控制器的服务端裁决入口）——
       .get("/ai/status", (c) => {
@@ -345,13 +463,7 @@ export function createStudentAiRoutes(
         // 引导之外直调路由同样不能绕过——无任何 active 连接 = 未跨过首次
         // 知情（status firstUseRequired 同口径单源），403 且不落任务行
         // （不占同题/当日配额，也不产必然发送失败的僵尸任务）。
-        if (listStudentAiConnections(db, c.var.student.id).length === 0) {
-          throw new HttpError(
-            403,
-            "AI_SETUP_REQUIRED",
-            "还没有可用的 AI 连接，请先在设置中完成连接与首次知情确认",
-          );
-        }
+        requireAiInformedGate(db, c.var.student.id);
         const body = await parseJsonBodyWithCode(
           c,
           aiTaskCreateRequestSchema,

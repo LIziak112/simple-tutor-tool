@@ -128,7 +128,7 @@ export function studentAnswerTextOf(
 // ---------- 参考内容缺失态(需求 §4.1 三态,不伪造) ----------
 
 /** 缺失标记推导(与契约 superRefine 同式;答案/解析实际有无为唯一依据) */
-function missingNoteOf(
+export function missingNoteOf(
   answers: QuestionAnswers | undefined,
   solutionMd: string | undefined,
 ): AiContextMissingNote | null {

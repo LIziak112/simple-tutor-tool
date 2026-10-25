@@ -285,8 +285,8 @@
     {
       "idx": 40,
       "version": "6",
-      "when": 1792808701314,
-      "tag": "0040_marvelous_kingpin",
+      "when": 1792814364329,
+      "tag": "0040_bizarre_fabian_cortez",
       "breakpoints": true
     },
     {
@@ -294,6 +294,27 @@
       "version": "6",
       "when": 1792827896265,
       "tag": "0041_fat_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1792836068879,
+      "tag": "0042_wealthy_donald_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1792907217889,
+      "tag": "0043_white_reptil",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1792923068927,
+      "tag": "0044_true_groot",
       "breakpoints": true
     }
   ]

@@ -456,7 +456,12 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
     db.insert(attempts).values(attempt).run();
     expect(
       db.select().from(attempts).where(eq(attempts.id, attempt.id)).get(),
-    ).toEqual({ ...attempt, abandonedAt: null, lastActivityAt: null });
+    ).toEqual({
+      ...attempt,
+      abandonedAt: null,
+      lastActivityAt: null,
+      practiceScopeJson: null, // 0043 新增（#6980-2），缺省 NULL
+    });
     db.$client.close();
   });
 
@@ -620,7 +625,12 @@ describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectu
     db.insert(attempts).values(attempt).run();
     expect(
       db.select().from(attempts).where(eq(attempts.id, attempt.id)).get(),
-    ).toEqual({ ...attempt, abandonedAt: null, lastActivityAt: null });
+    ).toEqual({
+      ...attempt,
+      abandonedAt: null,
+      lastActivityAt: null,
+      practiceScopeJson: null, // 0043 新增（#6980-2），缺省 NULL
+    });
     db.$client.close();
   });
 

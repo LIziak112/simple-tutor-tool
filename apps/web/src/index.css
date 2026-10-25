@@ -485,3 +485,19 @@
     border-bottom-color: Highlight;
   }
 }
+
+/* ---- RichMarkdown 单行收敛形态（compact）：错题本紧凑行等行内预览。
+   容器 line-clamp 收敛为单行（超出省略）；块级元素上下边距归零并入同一
+   行盒；图片/表格/块级公式在源文层已降级（compact-inline.ts）。 */
+.rich-markdown-compact {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.rich-markdown.rich-markdown-compact
+  :is(h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table) {
+  margin-top: 0;
+  margin-bottom: 0;
+}

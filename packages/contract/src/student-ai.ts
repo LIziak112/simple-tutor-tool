@@ -42,6 +42,8 @@ export const AI_OUTBOUND_TIMEOUT_MS = 60_000;
 export const AI_CONNECTION_TEST_TIMEOUT_MS = 10_000;
 /** MCP 租约时长（分钟；过期回队，迟到写回仅记 late_reply 事实） */
 export const AI_MCP_LEASE_MINUTES = 10;
+/** MCP 租约累计占用上限（ms；自本次领取起 60 分钟，续租不得无限占用） */
+export const AI_MCP_LEASE_MAX_TOTAL_MS = 60 * 60 * 1000;
 /** 票据默认有效期（小时） */
 export const AI_SHARE_DEFAULT_VALID_HOURS = 24;
 /** 票据有效期上限（小时） */
@@ -656,6 +658,18 @@ export const aiErrorCodeSchema = z.enum([
   "AI_SHARE_EXPIRED",
   "AI_SHARE_REVOKED",
   "AI_CONNECTION_INVALID",
+  // —— 本次练习整体复盘（MCP，student-ai-attempt-review.ts）新增错误码 ——
+  // 尚未交卷 / 作业答案未公布（整卷统一拒绝，不泄露逐题对错）；
+  // 超 30 题或上下文超 256KiB（明确拒绝不截断）；冻结题面缺失等数据损坏；
+  // 预览版本过期（范围/判分/公布态变化后须重新预览确认）；报告结构或
+  // 证据题号越界（外部 AI 产回按不可信校验）。
+  "AI_ATTEMPT_REVIEW_NOT_SUBMITTED",
+  "AI_ATTEMPT_REVIEW_NOT_RELEASED",
+  "AI_ATTEMPT_REVIEW_LIMIT",
+  "AI_ATTEMPT_REVIEW_CONTEXT_TOO_LARGE",
+  "AI_ATTEMPT_REVIEW_BROKEN",
+  "AI_ATTEMPT_REVIEW_RANGE_CHANGED",
+  "AI_ATTEMPT_REVIEW_REPORT_INVALID",
   "UNAUTHORIZED",
   "FORBIDDEN",
   "NOT_FOUND",

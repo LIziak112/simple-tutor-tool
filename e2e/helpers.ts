@@ -39,7 +39,8 @@ export async function expectResultCount(
     .getByText(label, { exact: true })
     .locator("..");
   await expect(metric).toBeVisible();
-  await expect(metric).toHaveText(`${label}${count}题`);
+  // 「待批」另有独立的待自评说明，数字断言只核对该统计项的主定义。
+  await expect(metric.locator("dd").first()).toHaveText(`${count}题`);
 }
 
 // ---------- 教师 API 会话 ----------

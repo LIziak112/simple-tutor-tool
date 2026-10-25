@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AttemptStartData } from "@tutor/contract";
+import type { AttemptStartData, WrongPracticeScope } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow, students } from "../db/schema";
@@ -58,6 +58,8 @@ export function startWrongPractice(
   options: AttemptWorkflowStartOptions = {},
   /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
   newContentEnabled?: boolean,
+  /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
+  scope?: WrongPracticeScope | undefined,
 ): AttemptStartData {
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
@@ -125,7 +127,13 @@ export function startWrongPractice(
       ...workflowStartColumns(db, "wrong", studentId, null, options),
     });
     const id = attempt.id;
-    tx.insert(attempts).values(attempt).run();
+    // #6980-2：范围随卷快照落库（快照语义——之后单元/考点改名不影响历史卷标题）
+    tx.insert(attempts)
+      .values({
+        ...attempt,
+        practiceScopeJson: scope === undefined ? null : JSON.stringify(scope),
+      })
+      .run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
     // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
     // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）。tt-07a：gradingPolicy

@@ -1,4 +1,7 @@
-import type { AttemptQuestionPublic } from "@tutor/contract";
+import {
+  type AttemptQuestionPublic,
+  annotationSurfaceLayoutCore,
+} from "@tutor/contract";
 import { Eraser, MoreHorizontal, PenLine, Redo2, Undo2 } from "lucide-react";
 import {
   forwardRef,
@@ -25,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
+import { StableQuestionPixelGridContext } from "@/features/attempt/QuestionSurfaceFrame";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
@@ -128,6 +132,21 @@ export const QuestionAnnotationOverlay = forwardRef<
   const [size, setSize] = useState<InkPenSize>("thin");
   const [, setHistory] = useState(0);
   const layout = record?.localBase?.layout ?? record?.base?.layout;
+  const pixelGridKey = JSON.stringify([
+    session?.origin,
+    session?.studentId,
+    attemptId,
+    question.id,
+    record?.resetVersion ?? 0,
+    layout ? annotationSurfaceLayoutCore(layout) : null,
+  ]);
+  const [canonicalGridKey, setCanonicalGridKey] = useState<string | null>(null);
+  const usingCanonicalGrid = !layout || canonicalGridKey === pixelGridKey;
+  const pixelGridRef = useRef({
+    key: pixelGridKey,
+    canonical: usingCanonicalGrid,
+  });
+  pixelGridRef.current = { key: pixelGridKey, canonical: usingCanonicalGrid };
   const rejectedLayout = compatible === false;
   // 校验失败也保留保存时的逻辑宽度，否则下次校验会在另一套排版上永久失败。
   const displayLayout = layout;
@@ -302,33 +321,49 @@ export const QuestionAnnotationOverlay = forwardRef<
             if (signal.aborted) return false;
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
-            await measureStage("annotation:surface-ready", () =>
-              withTimeout(
-                awaitQuestionSurfaceReady(element, () => {
-                  if (signal.aborted)
-                    throw new DOMException("标画已取消", "AbortError");
-                }),
-                15_000,
-                "题面资源加载超时，请重试",
-              ),
-            );
+            const awaitReady = () =>
+              measureStage("annotation:surface-ready", () =>
+                withTimeout(
+                  awaitQuestionSurfaceReady(element, () => {
+                    if (signal.aborted)
+                      throw new DOMException("标画已取消", "AbortError");
+                  }),
+                  15_000,
+                  "题面资源加载超时，请重试",
+                ),
+              );
+            await awaitReady();
             if (signal.aborted) return false;
-            const continuation = await prepareQuestionAnnotationContinuation(
-              session,
-              scope,
-              question,
-              element,
-              prepared.localBase,
-              signal,
-            );
-            if (signal.aborted) return false;
-            const matches = await measureStage("annotation:layout-match", () =>
-              questionSurfaceMatchesLayout(
+            const matchContinuation = async () => {
+              const continuation = await prepareQuestionAnnotationContinuation(
+                session,
+                scope,
                 question,
                 element,
-                continuation.layout,
-              ),
-            );
+                prepared.localBase,
+                signal,
+              );
+              if (signal.aborted) return false;
+              return measureStage("annotation:layout-match", () =>
+                questionSurfaceMatchesLayout(
+                  question,
+                  element,
+                  continuation.layout,
+                ),
+              );
+            };
+            let matches = await matchContinuation();
+            if (!matches && !pixelGridRef.current.canonical) {
+              setCanonicalGridKey(pixelGridRef.current.key);
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve()),
+                ),
+              );
+              if (signal.aborted) return false;
+              await awaitReady();
+              matches = await matchContinuation();
+            }
             if (signal.aborted) return false;
             setCompatible(matches);
             if (!matches) {
@@ -380,6 +415,10 @@ export const QuestionAnnotationOverlay = forwardRef<
           .then(() => questionSurfaceMatchesLayout(question, element, layout))
           .then((matches) => {
             if (!alive || current !== generation) return;
+            if (!matches && !usingCanonicalGrid) {
+              setCanonicalGridKey(pixelGridKey);
+              return;
+            }
             layoutChecking.current = false;
             setCompatible(matches);
             if (matches && selectedRef.current && !hidden)
@@ -415,7 +454,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, hidden, scale]);
+  }, [layout, question, hidden, scale, pixelGridKey, usingCanonicalGrid]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -612,7 +651,9 @@ export const QuestionAnnotationOverlay = forwardRef<
                 : undefined
             }
           >
-            {children}
+            <StableQuestionPixelGridContext value={usingCanonicalGrid}>
+              {children}
+            </StableQuestionPixelGridContext>
           </div>
           {cssWidth && cssHeight && (
             <div
