@@ -1,4 +1,16 @@
-import { type Question, type TeacherAttemptCard, type TeacherAttemptDetailData, type TeacherAttemptDetailQuestion, type TeacherAttemptInkInfo, type TeacherAttemptListData, type TeacherAttemptListQuery, type TeacherAttemptSource, type WrongScope, wrongPracticeScopeSchema, wrongScopeLabelOf } from "@tutor/contract";
+import {
+  type Question,
+  type TeacherAttemptCard,
+  type TeacherAttemptDetailData,
+  type TeacherAttemptDetailQuestion,
+  type TeacherAttemptInkInfo,
+  type TeacherAttemptListData,
+  type TeacherAttemptListQuery,
+  type TeacherAttemptSource,
+  type WrongScope,
+  wrongPracticeScopeSchema,
+  wrongScopeLabelOf,
+} from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -450,6 +462,8 @@ function detailItemOf(
     answer: answerOf(row.answerJson),
     autoCorrect: isDraft ? null : row.autoCorrect,
     finalCorrect: isDraft ? null : row.finalCorrect,
+    // #6980-3：是否有实际作答（draft 行恒默认 false，判定区仅已交卷消费）
+    answered: row.answered,
     ...(!isDraft ? { selfReview: selfReviewStateOf(row, snapshot) } : {}),
     teacherMark: isDraft
       ? null
@@ -584,13 +598,16 @@ export function getTeacherAttemptDetail(
     }),
   );
 
-  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）
-  const judged =
+  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）。
+  // #6980-3：错次不含未做行——answered=false 的判错在详情里灰显「未做」，
+  // 与学生结果视图、错题本 wrongCount 同口径
+  const judgedRows =
     attempt.status === "draft"
       ? []
-      : questionsOut.map((item) =>
-          effectiveCorrect(item.finalCorrect, item.autoCorrect),
-        );
+      : questionsOut.map((item) => ({
+          verdict: effectiveCorrect(item.finalCorrect, item.autoCorrect),
+          answered: item.answered,
+        }));
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -599,9 +616,11 @@ export function getTeacherAttemptDetail(
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
-    correctCount: judged.filter((value) => value === true).length,
-    wrongCount: judged.filter((value) => value === false).length,
-    pendingCount: judged.filter((value) => value === null).length,
+    correctCount: judgedRows.filter((row) => row.verdict === true).length,
+    wrongCount: judgedRows.filter(
+      (row) => row.verdict === false && row.answered,
+    ).length,
+    pendingCount: judgedRows.filter((row) => row.verdict === null).length,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,

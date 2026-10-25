@@ -1,4 +1,10 @@
-import { type AttemptStatus, type StudentRecordRow, type StudentRecordsSort, type TeacherAttemptSource, wrongAttemptTitleOf } from "@tutor/contract";
+import {
+  type AttemptStatus,
+  type StudentRecordRow,
+  type StudentRecordsSort,
+  type TeacherAttemptSource,
+  wrongAttemptTitleOf,
+} from "@tutor/contract";
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";

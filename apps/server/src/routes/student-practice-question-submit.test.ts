@@ -1373,6 +1373,8 @@ describe("学生对照自评", () => {
         },
       );
     await expectErr(await review(false, 0), 409, "SELF_REVIEW_UNAVAILABLE");
+    // #6980-3：先落一个实际作答——未做（空作答）的判错不再入错题本
+    await saveAnswer(env, id, Q.fill, { kind: "fill", values: ["1"] });
     await practiceSubmitOk(env, await fetchDraft(env, id), id, Q.fill);
     const mutationId = crypto.randomUUID();
     const first = await review(false, 0, mutationId);

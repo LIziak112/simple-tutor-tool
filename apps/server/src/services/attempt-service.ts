@@ -1,6 +1,50 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ALL_ENABLED_CAPABILITIES, type AttemptAnswerSaveData, type AttemptAnswerSaveRequest, type AttemptDetailData, type AttemptDraftData, type AttemptDraftUnit, type AttemptMaterialRevisions, type AttemptQuestionPublic, type AttemptResultData, type AttemptResultQuestion, type AttemptResultUnit, type AttemptScoreSummary, type AttemptStartData, type AttemptSubmitRevision, type CapabilitySwitch, type HintOpenedEntry, type LessonQuestionSubmitData, type LessonQuestionSubmitRequest, type NoteSubmissionEvidenceState, type PracticeFeedbackMode, type PracticeQuestionFeedback, type PracticeQuestionFeedbackData, type PracticeQuestionSubmitData, type PracticeQuestionSubmitRequest, type PracticeWorkflowStartOptions, type Question, type QuestionAnswers, type QuestionOption, type StudentAnswer, type StudentPaperData, type StudentPaperUnit, type SubmitEvidenceDeclaration, attemptAnswerConflictCurrentSchema, attemptQuestionPublicSchema, hasReferenceAnswer, isSelfReviewQuestion, optionSchema, questionAnswersSchema, questionSchema, reviewPolicySchema, studentAnswerSchema, wrongPracticeScopeSchema, wrongScopeLabelOf } from "@tutor/contract";
-import { grade } from "@tutor/grading";
+import {
+  ALL_ENABLED_CAPABILITIES,
+  type AttemptAnswerSaveData,
+  type AttemptAnswerSaveRequest,
+  type AttemptDetailData,
+  type AttemptDraftData,
+  type AttemptDraftUnit,
+  type AttemptMaterialRevisions,
+  type AttemptQuestionPublic,
+  type AttemptResultData,
+  type AttemptResultQuestion,
+  type AttemptResultUnit,
+  type AttemptScoreSummary,
+  type AttemptStartData,
+  type AttemptSubmitRevision,
+  attemptAnswerConflictCurrentSchema,
+  attemptQuestionPublicSchema,
+  type CapabilitySwitch,
+  type HintOpenedEntry,
+  hasReferenceAnswer,
+  isSelfReviewQuestion,
+  type LessonQuestionSubmitData,
+  type LessonQuestionSubmitRequest,
+  type NoteSubmissionEvidenceState,
+  optionSchema,
+  type PracticeFeedbackMode,
+  type PracticeQuestionFeedback,
+  type PracticeQuestionFeedbackData,
+  type PracticeQuestionSubmitData,
+  type PracticeQuestionSubmitRequest,
+  type PracticeWorkflowStartOptions,
+  type Question,
+  type QuestionAnswers,
+  type QuestionOption,
+  questionAnswersSchema,
+  questionSchema,
+  reviewPolicySchema,
+  type StudentAnswer,
+  type StudentPaperData,
+  type StudentPaperUnit,
+  type SubmitEvidenceDeclaration,
+  studentAnswerSchema,
+  wrongPracticeScopeSchema,
+  wrongScopeLabelOf,
+} from "@tutor/contract";
+import { grade, isUnanswered } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
 import {
   and,
@@ -2084,6 +2128,8 @@ export function submitAttempt(
           autoCorrect: g.autoCorrect,
           // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
           finalCorrect: g.autoCorrect,
+          // #6980-3：是否有实际作答（与判分正交；错题本入本/未做灰显共用）
+          answered: !isUnanswered(g.answer),
           ...rowSubmittedAtPatch,
           activeSec: activeSecByQuestion[g.response.questionId] ?? null,
           changeCount: Math.max(
@@ -2140,6 +2186,7 @@ export function submitAttempt(
       answerJson: g.answer !== undefined ? JSON.stringify(g.answer) : null,
       autoCorrect: g.autoCorrect,
       finalCorrect: g.autoCorrect,
+      answered: !isUnanswered(g.answer),
       ...rowSubmittedAtPatch,
       activeSec: activeSecByQuestion[g.response.questionId] ?? null,
       changeCount: Math.max(
@@ -2446,6 +2493,8 @@ export function submitLessonQuestion(
         autoCorrect,
         // D3：提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
         finalCorrect: autoCorrect,
+        // #6980-3：是否有实际作答（与判分正交；错题本入本/未做灰显共用）
+        answered: !isUnanswered(answer),
         submittedAt: nowIso,
       })
       .where(eq(responses.id, row.id))
@@ -2701,6 +2750,8 @@ export function submitPracticeQuestion(
         autoCorrect,
         // 提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
         finalCorrect: autoCorrect,
+        // #6980-3：是否有实际作答（与判分正交；错题本入本/未做灰显共用）
+        answered: !isUnanswered(answer),
         submittedAt: nowIso,
         practiceMutationId: req.submissionMutationId,
         practiceRequestDigest: digest,
@@ -3012,6 +3063,9 @@ export function resultQuestionOf(
         : null,
     teacherComment: row.teacherComment,
     finalCorrect: row.finalCorrect,
+    // #6980-3：是否有实际作答（判分写点落库；finalCorrect=false 且 false 时
+    // 端上灰显「未做」，练习本卷错题默认不含）
+    answered: row.answered,
     selfReview: selfReviewStateOf(row, snapshot),
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),

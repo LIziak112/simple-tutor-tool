@@ -24,6 +24,7 @@ export function VerdictBadge({
   toned = false,
   correctLabel = "答对",
   wrongLabel = "答错",
+  notDone = false,
 }: {
   verdict: boolean | null;
   /** 待批（null）文案覆盖——讲练页用「待老师批改」 */
@@ -34,9 +35,17 @@ export function VerdictBadge({
   correctLabel?: string;
   /** 判错（false）文案覆盖——逐题反馈用「回答有误」（M3-D2；缺省不变） */
   wrongLabel?: string;
+  /**
+   * #6980-3 未做灰显：verdict=false 且无实际作答（AttemptResultQuestion
+   * answered=false）时传 true——灰「未做」替代红「答错」。
+   */
+  notDone?: boolean;
 }) {
-  const label =
-    verdict === true
+  // #6980-3：判错 + 未做 → 灰「未做」（有实际作答的判错才红）
+  const notDoneActive = notDone && verdict === false;
+  const label = notDoneActive
+    ? "未做"
+    : verdict === true
       ? correctLabel
       : verdict === false
         ? wrongLabel
@@ -49,8 +58,11 @@ export function VerdictBadge({
       />
     ) : verdict === false ? (
       <XCircle
-        aria-label={wrongLabel}
-        className="size-5 shrink-0 text-red-600"
+        aria-label={notDoneActive ? "未做" : wrongLabel}
+        className={cn(
+          "size-5 shrink-0",
+          notDoneActive ? "text-muted-foreground" : "text-red-600",
+        )}
       />
     ) : (
       <Clock
@@ -63,7 +75,11 @@ export function VerdictBadge({
       className={cn(
         "flex items-center gap-1.5 text-sm font-semibold",
         toned && verdict === true && "text-emerald-700 dark:text-emerald-300",
-        toned && verdict === false && "text-red-600 dark:text-red-400",
+        toned &&
+          verdict === false &&
+          (notDoneActive
+            ? "text-muted-foreground"
+            : "text-red-600 dark:text-red-400"),
         toned && verdict === null && "text-amber-700 dark:text-amber-300",
       )}
     >

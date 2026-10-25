@@ -694,6 +694,9 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       delete row.frozen_at;
       delete row.legacy_unverified;
       if (table === "responses") delete row.unit_id;
+      // 未做维度列（0044 新增，#6980-3）：默认 false，不参与保真对比；新列
+      // 语义见 schema 测试与判分写点
+      if (table === "responses") delete row.answered;
       // T7.8 教学包声明列（lectures/units，0029 新增，NULL=未声明）
       delete row.teaching_pack_json;
       // 讲练一体三列（0031 新增，2026-10）：lectures.kind 带默认值 'lecture'

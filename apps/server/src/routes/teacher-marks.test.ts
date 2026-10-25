@@ -975,7 +975,8 @@ describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
       scoreAuto: 83,
       scoreFinal: null,
       correctCount: 5,
-      wrongCount: 2, // 未作答单选（false）+ 批错的 solve
+      // #6980-3：未作答单选与批错的 solve 都无实际作答（详情灰显「未做」），不计错次
+      wrongCount: 0,
       pendingCount: 1,
     });
     const solve = (detail.questions as Record<string, unknown>[]).find(
@@ -986,6 +987,7 @@ describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
       teacherComment: "漏了进位",
       finalCorrect: false,
       autoCorrect: null,
+      answered: false, // 只写笔迹未填最终答案 = 未做
     });
   });
 });

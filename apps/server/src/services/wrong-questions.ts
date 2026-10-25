@@ -1,4 +1,11 @@
-import { type TeacherAttemptSource, type WrongQuestionCard, type WrongQuestionRound, type WrongQuestionsData, type WrongQuestionsQuery, wrongAttemptTitleOf } from "@tutor/contract";
+import {
+  type TeacherAttemptSource,
+  type WrongQuestionCard,
+  type WrongQuestionRound,
+  type WrongQuestionsData,
+  type WrongQuestionsQuery,
+  wrongAttemptTitleOf,
+} from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -25,7 +32,8 @@ import { sourceOf } from "./teacher-attempt-service";
  *
  * - 只统计**已判定**作答：已交卷（status != draft）且 finalCorrect 非 null
  *   （待批题不参与——免得一道待批题把旧的「错」盖成未知）；
- * - 入本条件：任一次已判定作答判错（覆盖「首次对 → 中间错 → 最近对」这类
+ * - 入本条件：任一次已判定作答「答了且判错」（#6980-3：未做轮 answered=false
+ *   不入本；覆盖「首次对 → 中间错 → 最近对」这类
  *   首末皆对但曾错的题）；默认只显示「最近一次判定仍为错」（resolved=false）；
  *   includeResolved=true 额外列出「曾错、最近一次已做对」（resolved=true）；
  * - rounds：该题全部已判定作答按时间升序（同刻按 attemptId 升序兜底稳定），
@@ -72,6 +80,20 @@ interface JudgedRoundRow {
   submittedAt: string | null;
   startedAt: string;
   finalCorrect: boolean | null;
+  /** #6980-3：该轮是否有实际作答（responses.answered，判分写点落库） */
+  answered: boolean;
+}
+
+/**
+ * 错题本入本谓词（#6980-3 单一出处）：任一次已判定作答「答了且判错」——
+ * 未做轮（answered=false，isUnanswered 口径）不再入本。listWrongQuestions
+ * 聚合与 latestJudgedResponsesByQuestion（重练组卷成员校验 + 快照来源）
+ * 共用本函数，防口径漂移。
+ */
+function enteredWrongBook(
+  rounds: readonly { finalCorrect: boolean | null; answered: boolean }[],
+): boolean {
+  return rounds.some((round) => round.finalCorrect === false && round.answered);
 }
 
 /**
@@ -121,6 +143,7 @@ function judgedRoundsByQuestion(
       ),
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
+      answered: responses.answered,
       attempt: attempts,
       response: {
         submittedAt: responses.submittedAt,
@@ -182,7 +205,7 @@ export function latestJudgedResponsesByQuestion(
   // 候选（入本）= 任一次判错；每题取组内最后一轮（时间升序的尾元素）
   const lastResponseIdByQuestion = new Map<string, string>();
   for (const [questionId, rounds] of roundsByQuestion) {
-    if (!rounds.some((round) => round.finalCorrect === false)) continue;
+    if (!enteredWrongBook(rounds)) continue;
     const last = rounds[rounds.length - 1];
     if (last !== undefined) {
       lastResponseIdByQuestion.set(questionId, last.responseId);
@@ -259,10 +282,11 @@ export function listWrongQuestions(
   // pendingCountByQuestion 注释）；查出后按题取值 ?? 0
   const pendingCounts = pendingCountByQuestion(db, studentId, now);
 
-  // 候选：入本（任一次判错）+ 默认剔除已攻克（服务端口径=最近一次做对）
+  // 候选：入本（任一次答了且判错，#6980-3 enteredWrongBook 单一出处）+
+  // 默认剔除已攻克（服务端口径=最近一次做对）
   const candidates = [...roundsByQuestion.entries()].filter(
     ([, rounds]) =>
-      rounds.some((round) => round.finalCorrect === false) &&
+      enteredWrongBook(rounds) &&
       (includeResolved || rounds[rounds.length - 1]?.finalCorrect !== true),
   );
 
@@ -384,6 +408,7 @@ export function listWrongQuestions(
         attemptId: round.attemptId,
         sourceType: source.sourceType,
         correct: round.finalCorrect === true,
+        answered: round.answered,
         submittedAt: round.submittedAt ?? round.startedAt,
         sourceTitle: roundSourceTitle(source),
         // 与 courseName 同一处（sourceOf）取值：course=练习课程、assignment=
@@ -410,7 +435,10 @@ export function listWrongQuestions(
       firstAt: first.submittedAt ?? first.startedAt,
       lastAt: last.submittedAt ?? last.startedAt,
       rounds: roundsPayload,
-      wrongCount: roundsPayload.filter((round) => !round.correct).length,
+      // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）
+      wrongCount: roundsPayload.filter(
+        (round) => !round.correct && round.answered,
+      ).length,
       correctCount: roundsPayload.filter((round) => round.correct).length,
       pendingCount: pendingCounts.get(questionId) ?? 0,
       originUnitId: origin?.unitId ?? null,

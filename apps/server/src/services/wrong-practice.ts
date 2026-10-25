@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  type AttemptStartData,
-  type WrongPracticeScope,
-} from "@tutor/contract";
+import type { AttemptStartData, WrongPracticeScope } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow } from "../db/schema";
@@ -107,9 +104,11 @@ export function startWrongPractice(
     });
     const id = attempt.id;
     // #6980-2：范围随卷快照落库（快照语义——之后单元/考点改名不影响历史卷标题）
-    tx
-      .insert(attempts)
-      .values({ ...attempt, practiceScopeJson: scope === undefined ? null : JSON.stringify(scope) })
+    tx.insert(attempts)
+      .values({
+        ...attempt,
+        practiceScopeJson: scope === undefined ? null : JSON.stringify(scope),
+      })
       .run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
     // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端

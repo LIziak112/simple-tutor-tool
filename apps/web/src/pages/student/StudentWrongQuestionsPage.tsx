@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { type WrongPracticeScope, type WrongQuestionCard } from "@tutor/contract";
+import type { WrongPracticeScope, WrongQuestionCard } from "@tutor/contract";
 import {
   BookX,
   Filter,
@@ -250,7 +250,11 @@ export default function StudentWrongQuestionsPage() {
     }) => {
       lastPracticeRef.current = input;
       // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
-      return startWrongPracticeApi(input.ids, workflowStartOptions(), input.scopePayload);
+      return startWrongPracticeApi(
+        input.ids,
+        workflowStartOptions(),
+        input.scopePayload,
+      );
     },
     onMutate: (input) => {
       setPracticeScope(input.scope);
@@ -266,7 +270,8 @@ export default function StudentWrongQuestionsPage() {
   // 落 attempts.practice_scope_json，记录/轮次史标题据此说明「练的是什么」
   const courseNameForScope =
     state.courseId !== null
-      ? (courses.find((course) => course.id === state.courseId)?.name ?? undefined)
+      ? (courses.find((course) => course.id === state.courseId)?.name ??
+        undefined)
       : undefined;
   const scopePayloadFor = (
     scopeKey: string,
@@ -275,7 +280,9 @@ export default function StudentWrongQuestionsPage() {
     if (scopeKey === "all") {
       return {
         kind: "all",
-        ...(courseNameForScope !== undefined ? { courseName: courseNameForScope } : {}),
+        ...(courseNameForScope !== undefined
+          ? { courseName: courseNameForScope }
+          : {}),
       };
     }
     if (groupTitle !== null) {
@@ -283,7 +290,9 @@ export default function StudentWrongQuestionsPage() {
         kind: "group",
         dimension: state.group,
         groupTitle,
-        ...(courseNameForScope !== undefined ? { courseName: courseNameForScope } : {}),
+        ...(courseNameForScope !== undefined
+          ? { courseName: courseNameForScope }
+          : {}),
       };
     }
     return undefined;
@@ -457,7 +466,11 @@ export default function StudentWrongQuestionsPage() {
                   count={group.questions.length}
                   loading={practiceScope === `group:${group.key}`}
                   onPractice={() =>
-                    practiceQuestions(`group:${group.key}`, group.questions, group.title)
+                    practiceQuestions(
+                      `group:${group.key}`,
+                      group.questions,
+                      group.title,
+                    )
                   }
                 />
               </div>

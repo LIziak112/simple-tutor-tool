@@ -17,6 +17,7 @@ const question: AttemptResultQuestion = {
     hintCount: 0,
   },
   answer: { kind: "judge", value: false },
+  answered: true,
   answers: { kind: "judge", value: false },
   autoCorrect: true,
   finalCorrect: false,

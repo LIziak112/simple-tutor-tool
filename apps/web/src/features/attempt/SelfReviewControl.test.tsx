@@ -17,6 +17,7 @@ const question: AttemptResultQuestion = {
     hintCount: 0,
   },
   answer: { kind: "fill", values: ["2"] },
+  answered: true,
   answers: { kind: "fill", blanks: [["2"]] },
   solutionMd: "参考解答",
   autoCorrect: null,

@@ -4,7 +4,12 @@ import type {
   QuestionType,
   StudentAnswer,
 } from "@tutor/contract";
-import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT, formatQuestionAnswers, lettersOf, wrongAttemptTitleWithLabel } from "@tutor/contract";
+import {
+  formatQuestionAnswers,
+  lettersOf,
+  QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT,
+  wrongAttemptTitleWithLabel,
+} from "@tutor/contract";
 
 /**
  * 作答展示的纯函数集（T2.6 答题页/结果视图共用）：
@@ -77,7 +82,10 @@ export function attemptSourceLabel(data: {
   if (data.attempt.sourceType === "wrong") {
     // #6980-2：标题单源（契约 wrongAttemptTitleWithLabel）——label=建卷
     // 范围快照，历史卷原样「错题重练 · 第 n 次」
-    return wrongAttemptTitleWithLabel(data.attempt.attemptNo, data.attempt.wrongScopeLabel);
+    return wrongAttemptTitleWithLabel(
+      data.attempt.attemptNo,
+      data.attempt.wrongScopeLabel,
+    );
   }
   if (data.attempt.sourceType === "lesson") {
     return `讲练：${data.title} · 第 ${data.attempt.attemptNo} 次`;

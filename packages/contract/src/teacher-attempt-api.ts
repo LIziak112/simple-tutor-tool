@@ -1,6 +1,9 @@
 import { z } from "zod";
 import {
-  attemptSourceSchema,attemptStatusSchema,teacherMarkSchema,wrongScopeSchema,
+  attemptSourceSchema,
+  attemptStatusSchema,
+  teacherMarkSchema,
+  wrongScopeSchema,
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
@@ -207,6 +210,8 @@ export const teacherAttemptDetailQuestionSchema = z.object({
   autoCorrect: z.boolean().nullable(),
   /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null */
   finalCorrect: z.boolean().nullable(),
+  /** 是否有实际作答内容（#6980-3）：false 的判错行在教师作答详情灰显「未做」 */
+  answered: z.boolean(),
   selfReview: selfReviewStateSchema.optional(),
   /** 教师批改标记（D3；本阶段恒 null） */
   teacherMark: teacherMarkSchema.nullable(),

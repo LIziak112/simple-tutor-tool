@@ -72,6 +72,7 @@ const RELEASED_Q1: AttemptResultQuestion = {
   answers: { kind: "choice", index: 0 },
   solutionMd: "正数是 $+7$。",
   answer: { kind: "choice", index: 0 },
+  answered: true,
   autoCorrect: true,
   teacherMark: null,
   teacherComment: null,

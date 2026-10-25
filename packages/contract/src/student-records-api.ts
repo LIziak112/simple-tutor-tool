@@ -158,6 +158,12 @@ export const wrongQuestionRoundSchema = z.object({
   sourceType: attemptSourceSchema,
   /** 该轮最终判定是否做对 */
   correct: z.boolean(),
+  /**
+   * 该轮是否有实际作答内容（#6980-3，@tutor/grading isUnanswered 口径）：
+   * false = 未做轮，不计入 wrongCount、轮次史显示「未做」；攻克标准里
+   * 未做轮与做错轮同样打断「连续做对」（correct=false 即打断）。
+   */
+  answered: z.boolean(),
   /** 该轮交卷时间（attempt 的 submittedAt，防御回退 startedAt）：UTC ISO */
   submittedAt: z.string().min(1),
   /** 该轮来源标题（服务端口径：作业=作业标题；课程=「单元标题 · 第 n 次」） */
@@ -227,7 +233,7 @@ export const wrongQuestionCardSchema = teacherAttemptSourceSchema.extend({
    * 计算——服务端不下发判定规则（学生自选，存本设备 localStorage）。
    */
   rounds: z.array(wrongQuestionRoundSchema),
-  /** 已判定作答中判错次数（= rounds 中 correct=false 的数量，省端上重算） */
+  /** 已判定作答中「答了且判错」次数（#6980-3：未做轮不计错次；= rounds 中 correct=false 且 answered=true 的数量，省端上重算） */
   wrongCount: z.number().int().min(0),
   /** 已判定作答中判对次数（= rounds 中 correct=true 的数量） */
   correctCount: z.number().int().min(0),

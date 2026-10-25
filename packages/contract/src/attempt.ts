@@ -348,9 +348,7 @@ export function wrongAttemptTitleOf(scope: {
   const s = scope.wrongScope;
   if (!s) return base;
   if (s.label !== null) return `${base} · ${s.label}`;
-  const units = s.originUnits
-    .map((u) => `${u.title} ×${u.count}`)
-    .join("、");
+  const units = s.originUnits.map((u) => `${u.title} ×${u.count}`).join("、");
   return units ? `${base}（来自 ${units}，共 ${s.questionCount} 题）` : base;
 }
 
@@ -534,6 +532,13 @@ export const attemptResultQuestionSchema = z.object({
   teacherComment: z.string().nullable(),
   /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
   finalCorrect: z.boolean().nullable(),
+  /**
+   * 是否有实际作答内容（#6980-3）：多选空选/填空全空/手写未填最终答案都算
+   * 未做（@tutor/grading isUnanswered 口径，与判分正交——未做仍按 D1 判错
+   * 进分母）。finalCorrect=false 且 answered=false 时端上按灰色「未做」
+   * 展示而非红色「判错」；「练习本卷错题」默认不含未做题。
+   */
+  answered: z.boolean(),
   /** 仅已授权公布的题携带；未公布时不下发自评与来源。 */
   selfReview: selfReviewStateSchema.optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */

@@ -968,6 +968,14 @@ export const responses = sqliteTable(
     autoCorrect: integer("auto_correct", { mode: "boolean" }),
     /** 最终判定（D3：交卷时写 = autoCorrect，教师批注后 teacherMark 优先）；未批为 NULL，即待批（D4） */
     finalCorrect: integer("final_correct", { mode: "boolean" }),
+    /**
+     * 是否有实际作答内容（#6980-3）：判分写点按 @tutor/grading isUnanswered
+     * 同步落库（多选空选/填空全空/手写未填最终答案 = 未做）；0044 迁移按
+     * answer_json IS NOT NULL 回填历史行。与判分正交——未做仍按 D1 判错进
+     * 分母；错题本入本（「答了且判错」）、结果视图/教师详情「未做」灰显、
+     * 「练习本卷错题」默认圈题共用本事实。
+     */
+    answered: integer("answered", { mode: "boolean" }).notNull().default(false),
     /** 教师批注标记（T3.2：正确 | 错误 | null）；未批为 NULL */
     teacherMark: text("teacher_mark"),
     /** 教师评语（T3.2）；未评为 NULL */
