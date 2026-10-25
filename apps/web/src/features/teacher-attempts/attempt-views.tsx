@@ -1,4 +1,10 @@
-import { type AttemptStatus, type TeacherAttemptCard, type TeacherAttemptDetailData, type TeacherAttemptSource, wrongAttemptTitleOf } from "@tutor/contract";
+import {
+  type AttemptStatus,
+  type TeacherAttemptCard,
+  type TeacherAttemptDetailData,
+  type TeacherAttemptSource,
+  wrongAttemptTitleOf,
+} from "@tutor/contract";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
 import { SourceBadge } from "@/components/source-badge";

@@ -348,9 +348,7 @@ export function wrongAttemptTitleOf(scope: {
   const s = scope.wrongScope;
   if (!s) return base;
   if (s.label !== null) return `${base} · ${s.label}`;
-  const units = s.originUnits
-    .map((u) => `${u.title} ×${u.count}`)
-    .join("、");
+  const units = s.originUnits.map((u) => `${u.title} ×${u.count}`).join("、");
   return units ? `${base}（来自 ${units}，共 ${s.questionCount} 题）` : base;
 }
 

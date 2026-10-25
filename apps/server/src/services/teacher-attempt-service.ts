@@ -1,4 +1,16 @@
-import { type Question, type TeacherAttemptCard, type TeacherAttemptDetailData, type TeacherAttemptDetailQuestion, type TeacherAttemptInkInfo, type TeacherAttemptListData, type TeacherAttemptListQuery, type TeacherAttemptSource, type WrongScope, wrongPracticeScopeSchema, wrongScopeLabelOf } from "@tutor/contract";
+import {
+  type Question,
+  type TeacherAttemptCard,
+  type TeacherAttemptDetailData,
+  type TeacherAttemptDetailQuestion,
+  type TeacherAttemptInkInfo,
+  type TeacherAttemptListData,
+  type TeacherAttemptListQuery,
+  type TeacherAttemptSource,
+  type WrongScope,
+  wrongPracticeScopeSchema,
+  wrongScopeLabelOf,
+} from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
