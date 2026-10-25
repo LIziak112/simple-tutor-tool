@@ -32,7 +32,7 @@ import {
  */
 
 /** 三题课程练习：判断（学生答对）/ 判断（学生答错 → 进错题本）/ solve 手写
- * （只写笔迹不填最终答案 → 待批，落评语）。三个考点互不相同（错题本条目与
+ * （无参考答案，只写笔迹 → 待批，落评语）。三个考点互不相同（错题本条目与
  * 「批对的题不出现」断言各用各的考点名定位）。 */
 function practiceMarkdown(unitName: string): string {
   return [
@@ -60,10 +60,6 @@ function practiceMarkdown(unitName: string): string {
     "",
     '::::question{type=solve difficulty=2 knowledge="有理数加法"}',
     "计算：$(-2)+5=$，写出过程。",
-    "",
-    ":::answer",
-    "3",
-    ":::",
     "",
     ":::solution",
     "$(-2)+5=3$。",
@@ -364,7 +360,9 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(pendingCard).toBeVisible();
       // 卡片要素：参考答案 / 学生最终答案（未作答仅笔迹）/ 笔迹缩略图 / 来源上下文
       await expect(pendingCard.getByText("参考答案：")).toBeVisible();
-      await expect(pendingCard.getByText("3", { exact: true })).toBeVisible();
+      await expect(
+        pendingCard.getByText("无标准答案（由你裁定）"),
+      ).toBeVisible();
       await expect(pendingCard.getByText("未作答（仅笔迹）")).toBeVisible();
       const pendingInk = pendingCard.locator('img[alt*="手写笔迹"]');
       await expect(pendingInk).toBeVisible();
@@ -403,17 +401,23 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
         studentPage.getByText("含老师批改，满分 100", { exact: true }),
       ).toBeVisible();
       await expectResultCount(studentPage, "待批", 0);
-      // 手写题（第 3 题）：老师批改块「判对」+ 评语；图标答对
+      // 手写题（第 3 题）：老师批改块「判对」+ 评语与教师评判状态
       const q3Result = studentPage.locator('article[aria-label="第 3 题"]');
       await expect(q3Result.getByText(/老师批改：判对/)).toBeVisible();
       await expect(q3Result.getByText(commentText)).toBeVisible();
-      await expect(q3Result.getByLabel("答对")).toBeVisible();
+      await expect(
+        q3Result.getByRole("region", { name: "本题评判" }).getByRole("status"),
+      ).toHaveText("教师判定：正确");
       // 判断题：第 1 题答对、第 2 题答错（均无批改块）
       const q1Result = studentPage.locator('article[aria-label="第 1 题"]');
-      await expect(q1Result.getByLabel("答对")).toBeVisible();
+      await expect(
+        q1Result.getByRole("region", { name: "本题评判" }).getByRole("status"),
+      ).toHaveText("回答正确");
       await expect(q1Result.getByText(/老师批改/)).toHaveCount(0);
       const q2Result = studentPage.locator('article[aria-label="第 2 题"]');
-      await expect(q2Result.getByLabel("答错")).toBeVisible();
+      await expect(
+        q2Result.getByRole("region", { name: "本题评判" }).getByRole("status"),
+      ).toHaveText("回答有误");
       await expect(q2Result.getByText(/老师批改/)).toHaveCount(0);
 
       // —— 教师导出 CSV（D13）：API request 下载响应体并逐列断言 ——

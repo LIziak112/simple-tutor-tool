@@ -128,7 +128,7 @@ for (const legacySource of [false, true]) {
       // 每个项目的第二台设备使用另一内核，而不是同一 browser.newContext。
       const otherBrowser =
         testInfo.project.name === "chromium"
-          ? await webkit.launch({ channel: "" })
+          ? await webkit.launch({ channel: "", args: [] })
           : await chromium.launch({
               channel: process.env.CI ? "" : "msedge",
               args: ["--force-device-scale-factor=1.25"],

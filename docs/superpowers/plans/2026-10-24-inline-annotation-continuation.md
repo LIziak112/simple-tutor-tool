@@ -96,3 +96,6 @@
 - `insights-pages`、`lesson` 与 `teacher-mark-flow` 仍假设有参考答案的填空进入教师待批，和现行冻结行自评策略冲突。保留学情数字、错题、参考答案公式化、防泄露和教师覆盖判定的断言，流程改为学生自评或从教师作答详情改判；另明确断言此类题不进入教师待批。
 - `expectResultCount` 改为精确核对统计项主定义；待批与“另有待自评”的独立说明分别断言，避免把说明文字拼进数字。未改产品判分、自评规则或服务端接口。
 - 先复现失败：三个历史 spec 在双浏览器 6/6 失败，教师改判旧用例在 Chromium 失败；改后四个场景联合复跑 → 4 passed，1.8m。合并验证待后续 CI 记录。
+- 首轮完整 E2E 最终为 16 failed / 235 passed / 1 flaky / 1 skipped，触发 30 分钟全局上限，没有合并或部署。Linux GTK 的 WebKit 明确拒绝被继承的 Chromium `--force-device-scale-factor`；手动启动另一内核时显式清空 `args`，保留 Chromium 原生缩放覆盖。
+- 其余历史断言修复：教师数据页与 Phase 3 全链路改用无参考答案的手写题，继续覆盖真实教师待批、PNG/回放、键盘批改、CSV 和错题集合；富题型回看核对当前教师评判状态。没有删除流程、减少业务断言或修改产品判分规则。补丁已完成简化与正确性复核，E2E 类型检查及四文件 lint 通过。
+- 四份相关 spec 联合复跑：`pnpm e2e e2e/teacher-data-page.spec.ts e2e/phase3-full-chain.spec.ts e2e/student-review-workspace.spec.ts e2e/annotation-cross-device-view.spec.ts --project=chromium --workers=2` → 8 passed，2.8m，退出码 0；包含真实另一内核设备与 130 题回看。
