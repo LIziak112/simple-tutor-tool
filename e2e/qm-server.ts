@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -119,7 +119,12 @@ export async function startQmPair(ports: QmPorts): Promise<QmPair> {
 
   const web = spawn(
     nodeBin,
-    ["node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"],
+    [
+      "node_modules/vite/bin/vite.js",
+      "--port",
+      String(webPort),
+      "--strictPort",
+    ],
     {
       cwd: join(repoRoot, "apps", "web"),
       env: {
@@ -152,7 +157,9 @@ export async function startQmPair(ports: QmPorts): Promise<QmPair> {
 function childExitWatch(child: ChildProcess, name: string): void {
   child.on("exit", (code, signal) => {
     if (started.some((entry) => entry.child === child)) {
-      console.error(`[qm-pair] ${name} 意外退出：code=${code} signal=${signal}`);
+      console.error(
+        `[qm-pair] ${name} 意外退出：code=${code} signal=${signal}`,
+      );
     }
   });
 }

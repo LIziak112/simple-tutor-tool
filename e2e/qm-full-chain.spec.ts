@@ -2,15 +2,21 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  expect,
-  test,
   type APIRequestContext,
   type BrowserContext,
+  expect,
   type Locator,
   type Page,
+  test,
 } from "@playwright/test";
 import { FORBIDDEN_EXACT_KEYS, FORBIDDEN_KEY_PREFIXES } from "./helpers";
-import { qmApi, qmTeacherLogin, type QmPair, startQmPair, stopQmPair } from "./qm-server";
+import {
+  type QmPair,
+  qmApi,
+  qmTeacherLogin,
+  startQmPair,
+  stopQmPair,
+} from "./qm-server";
 
 /**
  * QM-19 全链路 e2e：samples/qm 九份语料驱动的真实链路，跑在 spec 自起的
@@ -53,7 +59,12 @@ import { qmApi, qmTeacherLogin, type QmPair, startQmPair, stopQmPair } from "./q
  * 检查（口径同 helpers.attachLeakMonitor，豁免端点一致）。
  */
 
-const SAMPLES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "samples", "qm");
+const SAMPLES_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "samples",
+  "qm",
+);
 
 function readSample(name: string): string {
   return readFileSync(join(SAMPLES_DIR, name), "utf8");
@@ -88,7 +99,8 @@ interface TeacherWorld {
 }
 
 /** 世界集合（① 构建；serial 后续 test 经 worldOf 取用，未建即抛错） */
-const worlds: Partial<Record<"W1" | "W2" | "W3" | "W4" | "W5", TeacherWorld>> = {};
+const worlds: Partial<Record<"W1" | "W2" | "W3" | "W4" | "W5", TeacherWorld>> =
+  {};
 
 function worldOf(key: "W1" | "W2" | "W3" | "W4" | "W5"): TeacherWorld {
   const world = worlds[key];
@@ -117,16 +129,26 @@ function attachQmLeakMonitor(page: Page): {
     const url = response.url();
     if (!url.includes("/api/student/")) return;
     const method = response.request().method();
-    if (method === "POST" && response.ok() && /\/api\/student\/attempts\/[^/]+\/submit/.test(url)) {
+    if (
+      method === "POST" &&
+      response.ok() &&
+      /\/api\/student\/attempts\/[^/]+\/submit/.test(url)
+    ) {
       submitted = true;
       return;
     }
     if (submitted) return;
-    if (method === "POST" && response.ok() && /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/submit/.test(url)) {
+    if (
+      method === "POST" &&
+      response.ok() &&
+      /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/submit/.test(url)
+    ) {
       return; // 逐题提交回执只释放当题反馈（设计内）
     }
-    if (/\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/feedback/.test(url)) return;
-    if (/\/api\/student\/lectures\/[^/]+\/lesson\/(?:start|restart)/.test(url)) return;
+    if (/\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/feedback/.test(url))
+      return;
+    if (/\/api\/student\/lectures\/[^/]+\/lesson\/(?:start|restart)/.test(url))
+      return;
     const contentType = response.headers()["content-type"] ?? "";
     if (!contentType.includes("application/json")) return;
     const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
@@ -148,13 +170,16 @@ function attachQmLeakMonitor(page: Page): {
               const forbidden =
                 !allowed.has(key) &&
                 (FORBIDDEN_EXACT_KEYS.has(key) ||
-                  FORBIDDEN_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)));
+                  FORBIDDEN_KEY_PREFIXES.some((prefix) =>
+                    key.startsWith(prefix),
+                  ));
               if (forbidden) leaked.push(key);
               walk(child);
             }
           };
           walk(parsed);
-          if (leaked.length > 0) violations.push(`${url} 出现禁用键：${leaked.join("、")}`);
+          if (leaked.length > 0)
+            violations.push(`${url} 出现禁用键：${leaked.join("、")}`);
           if (!isLectureDetail && !isWrongQuestions) {
             for (const secret of QM_SECRET_EXCERPTS) {
               if (body.includes(secret)) {
@@ -177,14 +202,18 @@ function attachQmLeakMonitor(page: Page): {
 /** 等草稿离开在途态（口径同 helpers.waitForDraftSaved） */
 async function waitForDraftSaved(page: Page): Promise<void> {
   await expect
-    .poll(async () => page.getByTestId("draft-status").textContent(), { timeout: 15_000 })
+    .poll(async () => page.getByTestId("draft-status").textContent(), {
+      timeout: 15_000,
+    })
     .not.toMatch(/正在保存|正在同步|正在恢复|等待同步/);
 }
 
 /** 等草稿回到稳态「全部已保存」 */
 async function waitForAllSaved(page: Page): Promise<void> {
   await expect
-    .poll(async () => page.getByTestId("draft-status").textContent(), { timeout: 30_000 })
+    .poll(async () => page.getByTestId("draft-status").textContent(), {
+      timeout: 30_000,
+    })
     .toBe("全部已保存");
 }
 
@@ -195,12 +224,21 @@ function questionCard(page: Page, no: number): Locator {
 
 /** 结果页统计项（label → 「N题」） */
 function resultMetric(page: Page, label: string): Locator {
-  return page.getByLabel("题目数量统计").getByText(label, { exact: true }).locator("..");
+  return page
+    .getByLabel("题目数量统计")
+    .getByText(label, { exact: true })
+    .locator("..");
 }
 
 /** radio 选项点击（经祖先 label，同既有 spec 口径） */
-async function chooseRadio(card: Locator, name: string | RegExp): Promise<void> {
-  await card.getByRole("radio", { name }).locator("xpath=ancestor::label[1]").click();
+async function chooseRadio(
+  card: Locator,
+  name: string | RegExp,
+): Promise<void> {
+  await card
+    .getByRole("radio", { name })
+    .locator("xpath=ancestor::label[1]")
+    .click();
 }
 
 // ---------- 世界构造 ----------
@@ -210,13 +248,19 @@ async function chooseRadio(card: Locator, name: string | RegExp): Promise<void> 
  * isolateRegisterRateLimit 的额度隔离意图；注册开关默认开放）。注册即登录
  * （Cookie 落在本 api 上下文）。
  */
-async function registerTeacher(api: APIRequestContext, login: string, ip: string): Promise<void> {
+async function registerTeacher(
+  api: APIRequestContext,
+  login: string,
+  ip: string,
+): Promise<void> {
   const res = await api.post("/api/public/teacher/register", {
     headers: { "x-forwarded-for": ip },
     data: { loginName: login, password: "e2e-qm-pass-1" },
   });
   if (!res.ok()) {
-    throw new Error(`注册教师 ${login} 失败：${res.status()} ${await res.text()}`);
+    throw new Error(
+      `注册教师 ${login} 失败：${res.status()} ${await res.text()}`,
+    );
   }
 }
 
@@ -234,10 +278,15 @@ interface WorldSpec {
 }
 
 /** 建一个世界：教师会话 → 导入语料 → 建课加单元 → 造学生成员 → 布置作业 */
-async function buildWorld(spec: WorldSpec, suffix: string): Promise<TeacherWorld> {
+async function buildWorld(
+  spec: WorldSpec,
+  suffix: string,
+): Promise<TeacherWorld> {
   const api = await qmApi(pair);
   const teacherLogin = spec.teacherLogin ?? "teacher";
-  const teacherPassword = spec.teacherLogin ? "e2e-qm-pass-1" : "e2e-teacher-pass";
+  const teacherPassword = spec.teacherLogin
+    ? "e2e-qm-pass-1"
+    : "e2e-teacher-pass";
   if (spec.teacherLogin) {
     await registerTeacher(api, spec.teacherLogin, spec.ip);
   } else {
@@ -245,19 +294,29 @@ async function buildWorld(spec: WorldSpec, suffix: string): Promise<TeacherWorld
   }
 
   const courseName = `e2eQm${spec.key}课${suffix}`;
-  const courseRes = await api.post("/api/teacher/courses", { data: { title: courseName } });
+  const courseRes = await api.post("/api/teacher/courses", {
+    data: { title: courseName },
+  });
   if (!courseRes.ok()) {
-    throw new Error(`建课失败（${spec.key}）：${courseRes.status()} ${await courseRes.text()}`);
+    throw new Error(
+      `建课失败（${spec.key}）：${courseRes.status()} ${await courseRes.text()}`,
+    );
   }
-  const courseId = ((await courseRes.json()) as { data: { id: string } }).data.id;
+  const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+    .id;
 
   const unitIds: Record<string, string> = {};
   for (const name of spec.samples) {
     const res = await api.post("/api/teacher/import/commit", {
       data: { markdown: readSample(name), filename: name, courseId },
     });
-    expect(res.ok(), `导入 ${name} 失败：${res.status()} ${await res.text()}`).toBeTruthy();
-    const body = (await res.json()) as { data: { units: Array<{ id: string; title: string }> } };
+    expect(
+      res.ok(),
+      `导入 ${name} 失败：${res.status()} ${await res.text()}`,
+    ).toBeTruthy();
+    const body = (await res.json()) as {
+      data: { units: Array<{ id: string; title: string }> };
+    };
     expect(body.data.units.length, `${name} 应导入出单元`).toBeGreaterThan(0);
     for (const unit of body.data.units) unitIds[unit.title] = unit.id;
   }
@@ -265,12 +324,18 @@ async function buildWorld(spec: WorldSpec, suffix: string): Promise<TeacherWorld
   const studentName = `e2eQm${spec.key}生${suffix}`;
   const studentLogin = `e2eqm-${spec.key}-${suffix}`;
   await api.post("/api/teacher/students", {
-    data: { displayName: studentName, loginName: studentLogin, password: "e2e-stu-pass" },
+    data: {
+      displayName: studentName,
+      loginName: studentLogin,
+      password: "e2e-stu-pass",
+    },
   });
   const studentsRes = await api.get("/api/teacher/students");
   const studentRow = (
     (await studentsRes.json()) as {
-      data: { students: Array<{ loginName: string; id: string; linkToken: string }> };
+      data: {
+        students: Array<{ loginName: string; id: string; linkToken: string }>;
+      };
     }
   ).data.students.find((s) => s.loginName === studentLogin);
   if (studentRow === undefined) throw new Error(`未找到学生 ${studentLogin}`);
@@ -282,13 +347,17 @@ async function buildWorld(spec: WorldSpec, suffix: string): Promise<TeacherWorld
   // 课程目录放开指定单元（导入兼容口径默认隐藏）
   const detail = await api.get(`/api/teacher/courses/${courseId}`);
   const items = (
-    (await detail.json()) as { data: { items: Array<{ id: string; title: string; visible: boolean }> } }
+    (await detail.json()) as {
+      data: { items: Array<{ id: string; title: string; visible: boolean }> };
+    }
   ).data.items;
   for (const unitName of spec.visibleUnits) {
     const item = items.find((entry) => entry.title === unitName);
     if (item === undefined) throw new Error(`课程目录缺条目 ${unitName}`);
     if (!item.visible) {
-      const res = await api.patch(`/api/teacher/course-items/${item.id}`, { data: { visible: true } });
+      const res = await api.patch(`/api/teacher/course-items/${item.id}`, {
+        data: { visible: true },
+      });
       expect(res.ok(), `放开 ${unitName} 可见性失败`).toBeTruthy();
     }
   }
@@ -302,7 +371,10 @@ async function buildWorld(spec: WorldSpec, suffix: string): Promise<TeacherWorld
       courseId,
     },
   });
-  expect(assignRes.ok(), `布置作业失败（${spec.key}）：${assignRes.status()} ${await assignRes.text()}`).toBeTruthy();
+  expect(
+    assignRes.ok(),
+    `布置作业失败（${spec.key}）：${assignRes.status()} ${await assignRes.text()}`,
+  ).toBeTruthy();
 
   const world: TeacherWorld = {
     api,
@@ -332,11 +404,14 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
 
   test.afterAll(async () => {
     await studentContext?.close().catch(() => undefined);
-    for (const world of Object.values(worlds)) await world.api.dispose().catch(() => undefined);
+    for (const world of Object.values(worlds))
+      await world.api.dispose().catch(() => undefined);
     stopQmPair();
   });
 
-  test("① 五世界导入与四来源布置（九语料全部真实导入）", async ({ browser }) => {
+  test("① 五世界导入与四来源布置（九语料全部真实导入）", async ({
+    browser,
+  }) => {
     const suffix = Date.now().toString(36);
     await buildWorld(
       {
@@ -418,12 +493,17 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await teacherContext.close();
   });
 
-  test("② W1 作业链：组材料/排序/旧七型 → 恢复 → 交卷 → 对照/自评 → 记录/错题/重练/导出", async ({ browser }) => {
+  test("② W1 作业链：组材料/排序/旧七型 → 恢复 → 交卷 → 对照/自评 → 记录/错题/重练/导出", async ({
+    browser,
+  }) => {
     test.setTimeout(300_000);
     const w1 = worldOf("W1");
     // 桌面宽视口：组材料列在 xl 断点内联呈现（TT-08a 组段锚点 + 材料列跨行）；
     // 手机/窄屏布局面由 qm-device-perf.spec 的视口矩阵覆盖
-    studentContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, baseURL: pair.webUrl });
+    studentContext = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      baseURL: pair.webUrl,
+    });
     const page = await studentContext.newPage();
     const leak = attachQmLeakMonitor(page);
     await page.goto(`/s/${w1.linkToken}`);
@@ -438,15 +518,23 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await expect(questionCard(page, 14)).toBeVisible();
 
     // —— 组材料面：valid-01 组材料列可见（材料标题 + 组说明）——
-    await expect(page.getByText("2025 年某省粮食生产情况").first()).toBeVisible();
+    await expect(
+      page.getByText("2025 年某省粮食生产情况").first(),
+    ).toBeVisible();
     await expect(page.getByText("根据以下资料回答第 1～5 题")).toBeVisible();
 
     // —— 题 1-5 valid-01：choice 对 / choice 对 / multi 对 / fill 填对 / choice 故意错 ——
     await chooseRadio(questionCard(page, 1), "3.0%");
     await chooseRadio(questionCard(page, 2), "49.8%");
     const q3 = questionCard(page, 3);
-    await q3.getByRole("checkbox", { name: /实现连续十二年增产/ }).locator("xpath=ancestor::label[1]").click();
-    await q3.getByRole("checkbox", { name: /机械化率比上年提高 1.1 个百分点/ }).locator("xpath=ancestor::label[1]").click();
+    await q3
+      .getByRole("checkbox", { name: /实现连续十二年增产/ })
+      .locator("xpath=ancestor::label[1]")
+      .click();
+    await q3
+      .getByRole("checkbox", { name: /机械化率比上年提高 1.1 个百分点/ })
+      .locator("xpath=ancestor::label[1]")
+      .click();
     await questionCard(page, 4).getByLabel("第1空").fill("60.0");
     await chooseRadio(questionCard(page, 5), "稻谷 > 小麦 > 玉米");
 
@@ -457,20 +545,36 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       "也就是说，批评的锋芒最终要指向作品本身，而不是借作品浇自己胸中的块垒。",
       "因此，批评家首先需要的不是立场，而是耐心——把作品读完、读透的耐心。",
     ]);
-    await placeOrdering(page, 7, ["Add the indicator to the flask containing the analyte solution."]);
+    await placeOrdering(page, 7, [
+      "Add the indicator to the flask containing the analyte solution.",
+    ]);
 
     // —— 题 8-14 valid-08 旧七型：judge 对 / choice 对 / multi 对 / fill 三空 / solve / apply / find-error 最终答案 ——
     await chooseRadio(questionCard(page, 8), /对/);
-    await questionCard(page, 9).getByRole("radio").nth(1).locator("xpath=ancestor::label[1]").click();
+    await questionCard(page, 9)
+      .getByRole("radio")
+      .nth(1)
+      .locator("xpath=ancestor::label[1]")
+      .click();
     const q10 = questionCard(page, 10);
-    await q10.getByRole("checkbox").nth(0).locator("xpath=ancestor::label[1]").click();
-    await q10.getByRole("checkbox").nth(2).locator("xpath=ancestor::label[1]").click();
+    await q10
+      .getByRole("checkbox")
+      .nth(0)
+      .locator("xpath=ancestor::label[1]")
+      .click();
+    await q10
+      .getByRole("checkbox")
+      .nth(2)
+      .locator("xpath=ancestor::label[1]")
+      .click();
     await questionCard(page, 11).getByLabel("第1空").fill("-8");
     await questionCard(page, 11).getByLabel("第2空").fill("-9");
     await questionCard(page, 11).getByLabel("第3空").fill("5");
     await questionCard(page, 12).getByLabel("最终答案").fill("-a^2+2，值为 -2");
     await questionCard(page, 13).getByLabel("最终答案").fill("100 元");
-    await questionCard(page, 14).getByLabel("最终答案").fill("第一步错误：漏乘 6");
+    await questionCard(page, 14)
+      .getByLabel("最终答案")
+      .fill("第一步错误：漏乘 6");
 
     // —— 恢复：整页刷新后逐题草稿原样回来（QM 新题型抽样断言）——
     await waitForAllSaved(page);
@@ -478,15 +582,23 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await expect(questionCard(page, 14)).toBeVisible();
     await expect(questionCard(page, 4).getByLabel("第1空")).toHaveValue("60.0");
     await expect(questionCard(page, 9).getByRole("radio").nth(1)).toBeChecked();
-    await expect(questionCard(page, 6).getByText(/已固定/).first()).toBeVisible();
+    await expect(
+      questionCard(page, 6)
+        .getByText(/已固定/)
+        .first(),
+    ).toBeVisible();
 
     // —— 本题导出（作答态）：verbatim 语料的 ::image 指向未随行上传的哈希路径
     // （导入警告 IMAGE_SRC_NOT_FOUND 不阻断）→ 导出显式报错不静默、不挂起
     // （QM-19 修复回归：懒加载离屏图曾致导出无限「正在生成图片…」）——
-    const q1More = questionCard(page, 1).getByRole("button", { name: "第 1 题更多" });
+    const q1More = questionCard(page, 1).getByRole("button", {
+      name: "第 1 题更多",
+    });
     await q1More.click();
     await page.getByRole("menuitem", { name: "导出本题" }).click();
-    await expect(page.getByText("材料配图加载失败，请重试")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("材料配图加载失败，请重试")).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByRole("button", { name: "重试生成" })).toBeVisible();
     await page.getByRole("button", { name: "关闭弹层" }).click();
 
@@ -514,7 +626,9 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await expect(resultQ6.getByText("自评错误").first()).toBeVisible();
 
     // —— 题 12 solve 有参考答案 → reference_self 待自评；题 7 部分序列也待自评 ——
-    await expect(questionCard(page, 12).getByText("已完成，待自评").first()).toBeVisible();
+    await expect(
+      questionCard(page, 12).getByText("已完成，待自评").first(),
+    ).toBeVisible();
 
     // —— 「暂不判断」清除态：题 13 自评后改暂不判断 → 回到待自评（revision 语义抽样）——
     const resultQ13 = questionCard(page, 13);
@@ -530,7 +644,9 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // —— 错题本：auto 判错（题 5 增长贡献）+ 自评错（题 6 语句排序）出现 ——
     await page.goto("/s/wrong");
     await expect(page.getByText("待复习 2 题")).toBeVisible();
-    await expect(page.getByText("按增量贡献从大到小排序").first()).toBeVisible();
+    await expect(
+      page.getByText("按增量贡献从大到小排序").first(),
+    ).toBeVisible();
     await expect(page.getByText("语句排序").first()).toBeVisible();
 
     // —— 泄露检查：交卷前响应无禁键、无详解哨兵 ——
@@ -553,14 +669,27 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await page.getByRole("button", { name: "交卷", exact: true }).click();
     await page.getByRole("button", { name: "确认交卷" }).first().click();
     await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
-    await expect(questionCard(page, 1).getByText("已完成，待自评").first()).toBeVisible();
-    await expect(questionCard(page, 2).getByText("答对", { exact: true })).toBeVisible();
+    await expect(
+      questionCard(page, 1).getByText("已完成，待自评").first(),
+    ).toBeVisible();
+    await expect(
+      questionCard(page, 2).getByText("答对", { exact: true }),
+    ).toBeVisible();
   });
 
-  test("③ W3+W4：matching 七选五与 response 多材料卷 → 交卷 → 对照/自评", async ({ browser }) => {
+  test("③ W3+W4：matching 七选五与 response 多材料卷 → 交卷 → 对照/自评", async ({
+    browser,
+  }) => {
     test.setTimeout(240_000);
-    const runAssignment = async (world: TeacherWorld, answer: (page: Page) => Promise<void>, checks: (page: Page) => Promise<void>) => {
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, baseURL: pair.webUrl });
+    const runAssignment = async (
+      world: TeacherWorld,
+      answer: (page: Page) => Promise<void>,
+      checks: (page: Page) => Promise<void>,
+    ) => {
+      const context = await browser.newContext({
+        viewport: { width: 1440, height: 900 },
+        baseURL: pair.webUrl,
+      });
       const page = await context.newPage();
       const leak = attachQmLeakMonitor(page);
       await page.goto(`/s/${world.linkToken}`);
@@ -583,15 +712,35 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await runAssignment(
       worldOf("W3"),
       async (page) => {
-        await expect(page.getByText("Why We Sleep — Excerpt").first()).toBeVisible();
+        await expect(
+          page.getByText("Why We Sleep — Excerpt").first(),
+        ).toBeVisible();
         const q1 = questionCard(page, 1);
-        await q1.getByRole("combobox", { name: "第 1 空的选项" }).selectOption({ label: "During deep sleep, the brain's glymphatic system flushes waste proteins that accumulate during waking hours." });
-        await q1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({ label: "Historians note that the eight-hour norm is itself an artefact of industrial shift scheduling." });
-        await q1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({ label: "Pride in sleeplessness is, from the data's point of view, pride in degraded performance." });
-        await q1.getByRole("combobox", { name: "第 4 空的选项" }).selectOption({ label: "Waking at the same time daily — even after a late night — rebuilds the rhythm faster than sleeping in." });
-        await q1.getByRole("combobox", { name: "第 5 空的选项" }).selectOption({ label: "Respecting that tool means giving it a job description: sleep, and little else." });
+        await q1.getByRole("combobox", { name: "第 1 空的选项" }).selectOption({
+          label:
+            "During deep sleep, the brain's glymphatic system flushes waste proteins that accumulate during waking hours.",
+        });
+        await q1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({
+          label:
+            "Historians note that the eight-hour norm is itself an artefact of industrial shift scheduling.",
+        });
+        await q1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({
+          label:
+            "Pride in sleeplessness is, from the data's point of view, pride in degraded performance.",
+        });
+        await q1.getByRole("combobox", { name: "第 4 空的选项" }).selectOption({
+          label:
+            "Waking at the same time daily — even after a late night — rebuilds the rhythm faster than sleeping in.",
+        });
+        await q1.getByRole("combobox", { name: "第 5 空的选项" }).selectOption({
+          label:
+            "Respecting that tool means giving it a job description: sleep, and little else.",
+        });
         // 不可重复约束（客户端面）：第 1 空的下拉中已占用的选项被禁用
-        const occupied = await q1.getByRole("combobox", { name: "第 1 空的选项" }).locator("option", { hasText: "Historians note" }).isDisabled();
+        const occupied = await q1
+          .getByRole("combobox", { name: "第 1 空的选项" })
+          .locator("option", { hasText: "Historians note" })
+          .isDisabled();
         expect(occupied).toBeTruthy();
       },
       async (page) => {
@@ -618,29 +767,57 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
         // 导出本题：材料页携带题级材料（材料 A：给定资料一）
         await q1.getByRole("button", { name: "第 1 题更多" }).click();
         await page.getByRole("menuitem", { name: "导出本题" }).click();
-        await expect(page.getByText(/材料 A：给定资料一/).first()).toBeVisible({ timeout: 90_000 });
+        await expect(page.getByText(/材料 A：给定资料一/).first()).toBeVisible({
+          timeout: 90_000,
+        });
         await page.getByRole("button", { name: "关闭弹层" }).click();
-        await q1.getByRole("textbox", { name: "正文" }).fill("S 市议事协商的做法有三个特点：一是化整为零，把改造项目拆分为小项逐楼栋协商；二是公开透明，预算上墙、结果可查；三是把分歧摆上桌面对话解决，不以表决代替协商，并把先协商后改造写入立项条件。");
+        await q1
+          .getByRole("textbox", { name: "正文" })
+          .fill(
+            "S 市议事协商的做法有三个特点：一是化整为零，把改造项目拆分为小项逐楼栋协商；二是公开透明，预算上墙、结果可查；三是把分歧摆上桌面对话解决，不以表决代替协商，并把先协商后改造写入立项条件。",
+          );
         const q2 = questionCard(page, 2);
-        await q2.getByRole("textbox", { name: "正文" }).fill("读书只能为心灵提供知识的材料，唯有思考才能把读到的变成自己的。记忆尤须着力锻炼，因为强健的记忆力与鲜活的想象力密不可分。");
+        await q2
+          .getByRole("textbox", { name: "正文" })
+          .fill(
+            "读书只能为心灵提供知识的材料，唯有思考才能把读到的变成自己的。记忆尤须着力锻炼，因为强健的记忆力与鲜活的想象力密不可分。",
+          );
         const q3 = questionCard(page, 3);
-        await q3.getByRole("textbox", { name: "标题（可选）" }).fill("分歧是治理的起点");
-        await q3.getByRole("textbox", { name: "正文" }).fill("老旧小区的墙面可以刷新，埋在墙里的分歧刷不掉。S 市的试点给出相反的答案：把分歧摆上桌面，三十七个小项逐一议过，改造反而一次通过。这提示我们，分歧不是治理的失败，而是治理的起点。".repeat(8));
+        await q3
+          .getByRole("textbox", { name: "标题（可选）" })
+          .fill("分歧是治理的起点");
+        await q3
+          .getByRole("textbox", { name: "正文" })
+          .fill(
+            "老旧小区的墙面可以刷新，埋在墙里的分歧刷不掉。S 市的试点给出相反的答案：把分歧摆上桌面，三十七个小项逐一议过，改造反而一次通过。这提示我们，分歧不是治理的失败，而是治理的起点。".repeat(
+              8,
+            ),
+          );
         // valid-07 两问组（第 4/5 题）：zm-1 response 证明正文 + zm-2 solve 最终答案
-        await questionCard(page, 4).getByRole("textbox", { name: "正文" }).fill("由递推式得 a_{n+1}+1=2(a_n+1)，且 a_1+1=2≠0，故 {a_n+1} 是首项 2、公比 2 的等比数列，a_n=2^n-1。");
-        await questionCard(page, 5).getByLabel("最终答案").fill("裂项相消，得 S_n=3/2 - 1/(2·3^n)");
+        await questionCard(page, 4)
+          .getByRole("textbox", { name: "正文" })
+          .fill(
+            "由递推式得 a_{n+1}+1=2(a_n+1)，且 a_1+1=2≠0，故 {a_n+1} 是首项 2、公比 2 的等比数列，a_n=2^n-1。",
+          );
+        await questionCard(page, 5)
+          .getByLabel("最终答案")
+          .fill("裂项相消，得 S_n=3/2 - 1/(2·3^n)");
       },
       async (page) => {
         // response 参考答案（variant 同卷）：对照面附字数行；自评「对了」
         const q1 = questionCard(page, 1);
         await expect(q1.getByLabel("本题自评")).toBeVisible();
-        await expect(q1.getByText(/S 市议事协商做法的主要特点/).first()).toBeVisible();
+        await expect(
+          q1.getByText(/S 市议事协商做法的主要特点/).first(),
+        ).toBeVisible();
         const wordRow = q1.getByText(/\d+\s*字/);
         await expect(wordRow.first()).toBeVisible();
         await q1.getByRole("button", { name: "对了" }).click();
         await expect(q1.getByText("自评正确").first()).toBeVisible();
         // 组内子题（zm-1 response）也 reference_self 待自评（有参考答案）
-        await expect(questionCard(page, 4).getByText("已完成，待自评").first()).toBeVisible();
+        await expect(
+          questionCard(page, 4).getByText("已完成，待自评").first(),
+        ).toBeVisible();
       },
     );
   });
@@ -653,17 +830,31 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await page.goto("/s/home");
     await page.getByRole("link", { name: "按讲义浏览" }).click();
     await page.waitForURL("**/s/lectures");
-    await page.getByRole("link", { name: /打开讲练 第 7 讲 段落逻辑衔接/ }).click();
+    await page
+      .getByRole("link", { name: /打开讲练 第 7 讲 段落逻辑衔接/ })
+      .click();
     await page.waitForURL(/\/s\/lectures\/[^/]+\/lesson(\?|$)/);
-    await page.getByRole("button", { name: "开始练习 第 7 讲 段落逻辑衔接" }).click();
+    await page
+      .getByRole("button", { name: "开始练习 第 7 讲 段落逻辑衔接" })
+      .click();
     await page.waitForURL(/\/s\/lectures\/[^/]+\/lesson\/run/);
 
     // 讲练页：材料 + 题卡交错（md 段在前）；题 1 matching 单题提交
-    await expect(page.getByText("Cohesion in English Paragraphs — Excerpt").first()).toBeVisible();
+    await expect(
+      page.getByText("Cohesion in English Paragraphs — Excerpt").first(),
+    ).toBeVisible();
     const lq1 = questionCard(page, 1);
-    await lq1.getByRole("combobox", { name: "第 1 空的选项" }).selectOption({ label: "a small, half-hidden signal" });
-    await lq1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({ label: "The examiner is not testing memory but the ability to repair a broken chain of reasoning." });
-    await lq1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({ label: "A repeated noun works the same way: it promises the reader that the topic has not changed." });
+    await lq1
+      .getByRole("combobox", { name: "第 1 空的选项" })
+      .selectOption({ label: "a small, half-hidden signal" });
+    await lq1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({
+      label:
+        "The examiner is not testing memory but the ability to repair a broken chain of reasoning.",
+    });
+    await lq1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({
+      label:
+        "A repeated noun works the same way: it promises the reader that the topic has not changed.",
+    });
     await lq1.getByRole("button", { name: "显示答案" }).click();
     // reference_self：当题反馈 = 对照参考 + 待自评（无 auto 徽章）
     await expect(lq1.getByText("已完成，待自评").first()).toBeVisible();
@@ -682,22 +873,32 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       "七选五把契约撕开一个缺口让你补上；排序题则把整份契约拆散让你重装。",
       "也就是说，衔接练习的终点不是背熟套话，而是能在任何话题下找到那句「承接前文、开启后文」的句子。",
     ]);
-    await questionCard(page, 3).getByRole("button", { name: "显示答案" }).click();
-    await expect(page.getByText(/已完成|全部完成/).first()).toBeVisible({ timeout: 30_000 });
+    await questionCard(page, 3)
+      .getByRole("button", { name: "显示答案" })
+      .click();
+    await expect(page.getByText(/已完成|全部完成/).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await page.reload();
-    await expect(questionCard(page, 1).getByText("自评正确").first()).toBeVisible();
+    await expect(
+      questionCard(page, 1).getByText("自评正确").first(),
+    ).toBeVisible();
 
     // 已提交行锁定：刷新后题 1 呈只读对照（你的答案/参考答案逐空行，无编辑控件）
     const lockedQ1 = questionCard(page, 1);
     await expect(lockedQ1.getByText("你的答案：")).toBeVisible();
-    await expect(lockedQ1.getByText(/第 1 空：a small, half-hidden signal/).first()).toBeVisible();
+    await expect(
+      lockedQ1.getByText(/第 1 空：a small, half-hidden signal/).first(),
+    ).toBeVisible();
     await expect(lockedQ1.getByRole("combobox")).toHaveCount(0);
 
     await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
   });
 
-  test("⑤ 课程练习来源 + 健壮性（W1 课程单元 / W2 长卷：断网、保存失败、换账号、幂等）", async ({ browser }) => {
+  test("⑤ 课程练习来源 + 健壮性（W1 课程单元 / W2 长卷：断网、保存失败、换账号、幂等）", async ({
+    browser,
+  }) => {
     test.setTimeout(240_000);
     const w1 = worldOf("W1");
     const page = await studentContext.newPage();
@@ -711,31 +912,47 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       "base64",
     );
     const upload = await w1.api.post("/api/teacher/media", {
-      multipart: { file: { name: "chart.png", mimeType: "image/png", buffer: png1x1 } },
+      multipart: {
+        file: { name: "chart.png", mimeType: "image/png", buffer: png1x1 },
+      },
     });
     expect(upload.ok(), `媒体上传失败：${upload.status()}`).toBeTruthy();
-    const mediaSrc = ((await upload.json()) as { data: { src: string } }).data.src;
+    const mediaSrc = ((await upload.json()) as { data: { src: string } }).data
+      .src;
     const fixedMd = readSample("valid-01-资料分析五题.md").replace(
       "blobs/media/9af3c2e1b7d84a06f2c5e3d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2.png",
       mediaSrc,
     );
     const reimport = await w1.api.post("/api/teacher/import/commit", {
-      data: { markdown: fixedMd, filename: "valid-01-资料分析五题.md", courseId: w1.courseId },
+      data: {
+        markdown: fixedMd,
+        filename: "valid-01-资料分析五题.md",
+        courseId: w1.courseId,
+      },
     });
-    expect(reimport.ok(), `随图重导失败：${reimport.status()} ${await reimport.text()}`).toBeTruthy();
+    expect(
+      reimport.ok(),
+      `随图重导失败：${reimport.status()} ${await reimport.text()}`,
+    ).toBeTruthy();
 
     // —— 课程练习来源：W1 课程目录 → 资料分析专项单元（重导后开卷新冻结材料 v2）——
     await page.goto("/s/home");
     await page.getByRole("link", { name: `打开课程 ${w1.courseName}` }).click();
     await page.waitForURL(`**/s/courses/${w1.courseId}`);
-    await page.getByRole("link", { name: "打开练习 资料分析专项（5 题）" }).click();
+    await page
+      .getByRole("link", { name: "打开练习 资料分析专项（5 题）" })
+      .click();
     await page.getByRole("button", { name: "开始练习" }).click();
     await page.waitForURL("**/s/attempts/**");
-    await expect(page.getByText(`课程：${w1.courseName} · 第 1 次`)).toBeVisible();
+    await expect(
+      page.getByText(`课程：${w1.courseName} · 第 1 次`),
+    ).toBeVisible();
 
     // —— 本题导出成功路径：材料页 PNG 实栅格化（TT-12 携带留项；Chromium 真渲染，
     //    jsdom 不伪造 html-to-image）——材料长文 + 真实配图成页
-    const q1More = questionCard(page, 1).getByRole("button", { name: "第 1 题更多" });
+    const q1More = questionCard(page, 1).getByRole("button", {
+      name: "第 1 题更多",
+    });
     await q1More.click();
     await page.getByRole("menuitem", { name: "导出本题" }).click();
     const preview = page.getByRole("img", { name: "本题导出预览" });
@@ -754,7 +971,9 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await page.getByRole("button", { name: "确认交卷" }).first().click();
     await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
     await expect(resultMetric(page, "未答")).toContainText("4题");
-    await expect(questionCard(page, 1).getByText("答对", { exact: true })).toBeVisible();
+    await expect(
+      questionCard(page, 1).getByText("答对", { exact: true }),
+    ).toBeVisible();
 
     await leak.drain();
     expect(leak.violations().join("\n")).toBe("");
@@ -774,23 +993,34 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // 断网：离线作答不阻塞输入、草稿状态明确（不冒称全部已保存）
     await robustPage.context().setOffline(true);
     await chooseRadio(questionCard(robustPage, 2), "refuse");
-    await expect(robustPage.getByTestId("draft-status")).not.toHaveText("全部已保存");
+    await expect(robustPage.getByTestId("draft-status")).not.toHaveText(
+      "全部已保存",
+    );
     await robustPage.context().setOffline(false);
     await waitForAllSaved(robustPage);
     await robustPage.reload();
-    await expect(questionCard(robustPage, 2).getByRole("radio", { name: "refuse" })).toBeChecked();
+    await expect(
+      questionCard(robustPage, 2).getByRole("radio", { name: "refuse" }),
+    ).toBeChecked();
 
     // 保存失败：拦截 answers PUT → 状态暴露失败、答案留在界面；重试通道恢复
-    await robustPage.route(/\/api\/student\/attempts\/[^/]+\/answers/, (route) => {
-      if (route.request().method() === "PUT") route.abort();
-      else route.continue();
-    });
+    await robustPage.route(
+      /\/api\/student\/attempts\/[^/]+\/answers/,
+      (route) => {
+        if (route.request().method() === "PUT") route.abort();
+        else route.continue();
+      },
+    );
     await chooseRadio(questionCard(robustPage, 3), "masterpieces");
     // 服务端同步失败：本机稿保留、状态如实暴露（已存本机等待同步，不冒称全部已保存）
     await expect
-      .poll(async () => robustPage.getByTestId("draft-status").textContent(), { timeout: 20_000 })
+      .poll(async () => robustPage.getByTestId("draft-status").textContent(), {
+        timeout: 20_000,
+      })
       .toContain("等待同步");
-    await expect(questionCard(robustPage, 3).getByRole("radio", { name: "masterpieces" })).toBeChecked();
+    await expect(
+      questionCard(robustPage, 3).getByRole("radio", { name: "masterpieces" }),
+    ).toBeChecked();
     await robustPage.unrouteAll({ behavior: "ignoreErrors" });
     await waitForAllSaved(robustPage);
 
@@ -800,15 +1030,19 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // 判定不重落（服务层既有幂等语义的路由级回归）
     const answerPut = robustPage.waitForRequest(
       (req) =>
-        req.method() === "PUT" && /\/api\/student\/attempts\/[^/]+\/answers\//.test(req.url()),
+        req.method() === "PUT" &&
+        /\/api\/student\/attempts\/[^/]+\/answers\//.test(req.url()),
       { timeout: 15_000 },
     );
     await chooseRadio(questionCard(robustPage, 4), "errors");
-    const attemptId = ((await answerPut).url().match(/\/attempts\/([^/]+)\/answers\//) ?? [])[1] ?? "";
+    const attemptId =
+      ((await answerPut).url().match(/\/attempts\/([^/]+)\/answers\//) ??
+        [])[1] ?? "";
     expect(attemptId).not.toBe("");
     const uiSubmitBody = robustPage.waitForRequest(
       (req) =>
-        req.method() === "POST" && /\/api\/student\/attempts\/[^/]+\/submit$/.test(req.url()),
+        req.method() === "POST" &&
+        /\/api\/student\/attempts\/[^/]+\/submit$/.test(req.url()),
       { timeout: 15_000 },
     );
     await waitForDraftSaved(robustPage);
@@ -819,18 +1053,25 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     expect(uiResponse?.ok(), `UI 交卷失败：${uiSubmit.url()}`).toBeTruthy();
     const payload = uiSubmit.postDataJSON() as { revisions: string[] };
     expect(payload.revisions.length).toBe(20);
-    const replay = await robustPage.request.post(`/api/student/attempts/${attemptId}/submit`, {
-      data: payload,
-    });
+    const replay = await robustPage.request.post(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        data: payload,
+      },
+    );
     expect(replay.status()).toBe(409);
-    expect(((await replay.json()) as { error: string }).error).toBe("ALREADY_SUBMITTED");
+    expect(((await replay.json()) as { error: string }).error).toBe(
+      "ALREADY_SUBMITTED",
+    );
 
     // 换账号隔离：另一名教师域学生直接读本卷 → 403/404，不吐任何题目投影
     const otherContext = await browser.newContext({ baseURL: pair.webUrl });
     const otherPage = await otherContext.newPage();
     await otherPage.goto(`/s/${worldOf("W3").linkToken}`);
     await otherPage.waitForURL("**/s/home");
-    const denied = await otherPage.request.get(`/api/student/attempts/${attemptId}`);
+    const denied = await otherPage.request.get(
+      `/api/student/attempts/${attemptId}`,
+    );
     expect([403, 404]).toContain(denied.status());
     const deniedBody = await denied.text();
     expect(deniedBody).not.toContain("sourceMd");
@@ -839,17 +1080,25 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
   });
 });
 
-
 /** ordering 板：按正文依次「加入排序」可动项（固定项已预置） */
-async function placeOrdering(page: Page, no: number, itemTexts: string[]): Promise<void> {
+async function placeOrdering(
+  page: Page,
+  no: number,
+  itemTexts: string[],
+): Promise<void> {
   await placeOrderingOn(questionCard(page, no), itemTexts);
 }
 
-async function placeOrderingOn(card: Locator, itemTexts: string[]): Promise<void> {
+async function placeOrderingOn(
+  card: Locator,
+  itemTexts: string[],
+): Promise<void> {
   for (const text of itemTexts) {
     // 池项 li：正文 + 「加入排序」按钮（放入后同一正文移入板行，hasText 仍唯一）
     const poolItem = card.locator("li", { hasText: text });
     await expect(poolItem).toBeVisible();
-    await poolItem.getByRole("button", { name: "加入排序", exact: true }).click();
+    await poolItem
+      .getByRole("button", { name: "加入排序", exact: true })
+      .click();
   }
 }
