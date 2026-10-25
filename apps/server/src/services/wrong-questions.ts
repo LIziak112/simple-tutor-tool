@@ -82,18 +82,29 @@ interface JudgedRoundRow {
   finalCorrect: boolean | null;
   /** #6980-3：该轮是否有实际作答（responses.answered，判分写点落库） */
   answered: boolean;
+  /** #6980-4：该轮做题时学生是否标了「不会」（responses.student_flag） */
+  studentFlag: string | null;
 }
 
 /**
- * 错题本入本谓词（#6980-3 单一出处）：任一次已判定作答「答了且判错」——
- * 未做轮（answered=false，isUnanswered 口径）不再入本。listWrongQuestions
- * 聚合与 latestJudgedResponsesByQuestion（重练组卷成员校验 + 快照来源）
- * 共用本函数，防口径漂移。
+ * 错题本入本谓词（#6980-3/#6980-4 单一出处）：任一次已判定作答「答了且判错」
+ * 或「标了不会」（studentFlag=unsure，无论对错与是否作答）——未做且未标不会
+ * 的轮（answered=false，isUnanswered 口径）不入本。listWrongQuestions 聚合
+ * 与 latestJudgedResponsesByQuestion（重练组卷成员校验 + 快照来源）共用本
+ * 函数，防口径漂移。
  */
 function enteredWrongBook(
-  rounds: readonly { finalCorrect: boolean | null; answered: boolean }[],
+  rounds: readonly {
+    finalCorrect: boolean | null;
+    answered: boolean;
+    studentFlag: string | null;
+  }[],
 ): boolean {
-  return rounds.some((round) => round.finalCorrect === false && round.answered);
+  return rounds.some(
+    (round) =>
+      (round.finalCorrect === false && round.answered) ||
+      round.studentFlag === "unsure",
+  );
 }
 
 /**
@@ -144,6 +155,7 @@ function judgedRoundsByQuestion(
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
       answered: responses.answered,
+      studentFlag: responses.studentFlag,
       attempt: attempts,
       response: {
         submittedAt: responses.submittedAt,
@@ -409,6 +421,7 @@ export function listWrongQuestions(
         sourceType: source.sourceType,
         correct: round.finalCorrect === true,
         answered: round.answered,
+        studentFlag: round.studentFlag === "unsure" ? "unsure" : null,
         submittedAt: round.submittedAt ?? round.startedAt,
         sourceTitle: roundSourceTitle(source),
         // 与 courseName 同一处（sourceOf）取值：course=练习课程、assignment=

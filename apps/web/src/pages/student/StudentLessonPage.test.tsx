@@ -172,6 +172,7 @@ function releasedOf(
     solutionMd: "解析内容。",
     answer: null,
     answered: false,
+    studentFlag: null,
     autoCorrect: verdict.autoCorrect,
     teacherMark: null,
     teacherComment: null,

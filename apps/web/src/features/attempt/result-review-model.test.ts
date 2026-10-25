@@ -18,6 +18,7 @@ const question: AttemptResultQuestion = {
   },
   answer: { kind: "judge", value: false },
   answered: true,
+  studentFlag: null,
   answers: { kind: "judge", value: false },
   autoCorrect: true,
   finalCorrect: false,

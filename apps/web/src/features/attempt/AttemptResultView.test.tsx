@@ -112,6 +112,7 @@ const DATA: AttemptResultData = {
           solutionMd: "$0$ 是正数与负数的分界点。",
           answer: { kind: "judge", value: true },
           answered: true,
+          studentFlag: null,
           autoCorrect: true,
           // D9：未批注 → null，finalCorrect 随 autoCorrect
           teacherMark: null,
@@ -134,6 +135,7 @@ const DATA: AttemptResultData = {
           solutionMd: "故选 B。",
           answer: { kind: "choice", index: 0 },
           answered: true,
+          studentFlag: null,
           autoCorrect: false,
           teacherMark: null,
           teacherComment: null,
@@ -159,6 +161,7 @@ const DATA: AttemptResultData = {
           solutionMd: null,
           answer: { kind: "fill", values: ["1/2", ""] },
           answered: true,
+          studentFlag: null,
           autoCorrect: false,
           teacherMark: null,
           teacherComment: null,
@@ -179,6 +182,7 @@ const DATA: AttemptResultData = {
           solutionMd: null,
           answer: null,
           answered: false,
+          studentFlag: null,
           autoCorrect: null,
           // D9：手写题未批 → 批注与最终判定全 null（待批）
           teacherMark: null,

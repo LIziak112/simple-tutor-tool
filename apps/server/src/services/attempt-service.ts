@@ -2993,12 +2993,16 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const drafts: Record<string, StudentAnswer> = {};
   const draftRevisions: Record<string, number> = {};
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
+  // #6980-4：做题时自标「不会」（草稿实时下发；交卷后进结果与轮次史）
+  const studentFlags: Record<string, "unsure"> = {};
   // 单一数据源：行只查一次、快照只 parse 一次——公开投影/草稿答案/提示回显
   // 在同一批行上派生（groupedSnapshotRows 统一「跳过缺失+组 id 回退+空组过滤」）
   const units = groupedSnapshotRows(db, attempt, (row, snapshot) => {
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;
+    if (row.studentFlag === "unsure")
+      studentFlags[row.questionId] = row.studentFlag;
     // T2.11：已解锁提示回显（纯函数——文本取自同一份冻结快照，不再二次查库）
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
@@ -3021,6 +3025,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     drafts,
     draftRevisions,
     hintsOpened,
+    studentFlags,
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
     enabledCapabilities,
@@ -3066,6 +3071,8 @@ export function resultQuestionOf(
     // #6980-3：是否有实际作答（判分写点落库；finalCorrect=false 且 false 时
     // 端上灰显「未做」，练习本卷错题默认不含）
     answered: row.answered,
+    // #6980-4：做题时自标「不会」（交卷后只读事实，不受公布 gate 影响）
+    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
     selfReview: selfReviewStateOf(row, snapshot),
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
@@ -3087,6 +3094,41 @@ export function studentFacingResultOf(
     ...item,
     snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
   };
+}
+
+/**
+ * 标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409 ALREADY_SUBMITTED
+ * ——「做题时标了不会」是入错题本的事实，交卷后不能再追加）；flag=null 取消。
+ * 守卫与 saveDraftAnswer 同口径（requireUsableAttempt + 成员校验）。标志不是
+ * 作答内容：请求/回执契约只有标志位，无泄露面（泄露测试见
+ * routes/student-flags.test.ts）。
+ */
+export function setStudentFlag(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  flag: "unsure" | null,
+): { questionId: string; studentFlag: string | null } {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  if (attempt.status !== "draft") {
+    throw new HttpError(
+      409,
+      "ALREADY_SUBMITTED",
+      "这份练习已交卷，不能再改标记",
+    );
+  }
+  requireAttemptQuestion(db, attempt, questionId);
+  db.update(responses)
+    .set({ studentFlag: flag })
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .run();
+  return { questionId, studentFlag: flag };
 }
 
 /** 得分汇总的自动判分计数部分（口径与 scoreAutoOf 一致：scoreAuto =

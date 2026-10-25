@@ -7,6 +7,8 @@ import type {
 import { displayStemMd } from "@tutor/md-dsl";
 import {
   CircleAlert,
+  CircleHelp,
+  CircleX,
   Eye,
   EyeOff,
   Flag,
@@ -89,6 +91,8 @@ function QuestionMeta({
   answer,
   flagged,
   onToggleFlag,
+  unsure,
+  onToggleUnsure,
   formalInkPresence,
   tools,
 }: {
@@ -97,6 +101,9 @@ function QuestionMeta({
   answer: StudentAnswer | undefined;
   flagged: boolean;
   onToggleFlag: (() => void) | undefined;
+  /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
+  unsure: boolean;
+  onToggleUnsure: (() => void) | undefined;
   formalInkPresence: boolean;
   tools: {
     aiTrigger?: ReactNode;
@@ -269,6 +276,12 @@ function QuestionMeta({
                 </DropdownMenuItem>
               </>
             )}
+            {onToggleUnsure && (
+              <DropdownMenuItem onSelect={onToggleUnsure}>
+                {unsure ? <CircleX aria-hidden /> : <CircleHelp aria-hidden />}
+                {unsure ? "取消不会标记" : "标记不会（进错题本）"}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -291,6 +304,8 @@ export function AttemptQuestionCard({
   onHintUnlocked,
   flagged = false,
   onToggleFlag,
+  unsure = false,
+  onToggleUnsure,
   formalInkPresence = false,
   onInkPresenceChange,
   assignmentTitle = "练习",
@@ -321,6 +336,9 @@ export function AttemptQuestionCard({
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
   flagged?: boolean;
   onToggleFlag?: () => void;
+  /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
+  unsure?: boolean;
+  onToggleUnsure?: () => void;
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
   assignmentTitle?: string;
@@ -540,6 +558,8 @@ export function AttemptQuestionCard({
         answer={answer}
         flagged={flagged}
         onToggleFlag={onToggleFlag}
+        unsure={unsure}
+        onToggleUnsure={onToggleUnsure}
         formalInkPresence={formalInkPresence}
         tools={
           attemptId === undefined

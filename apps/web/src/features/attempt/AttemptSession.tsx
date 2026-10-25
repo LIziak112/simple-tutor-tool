@@ -56,7 +56,7 @@ import {
 } from "@/features/notes/submit-evidence";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import { sealAttemptAnnotationsApi } from "@/lib/api";
+import { sealAttemptAnnotationsApi, setStudentFlagApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import {
@@ -367,6 +367,29 @@ function AnswerView({
   }, [navigatorCollapsed]);
   const { flags: flaggedQuestions, toggle: toggleFlag } =
     useWorkspaceFlags(attemptId);
+  // #6980-4：服务端「不会」标记（draft 限定，交卷后只读）。乐观更新、失败
+  // 回滚——标记只影响错题本归档口径，不阻塞作答与提交
+  const [studentFlags, setStudentFlags] = useState<ReadonlySet<string>>(
+    () => new Set(Object.keys(data.studentFlags ?? {})),
+  );
+  const toggleUnsure = useCallback(
+    (questionId: string) => {
+      const next = new Set(studentFlags);
+      const flag: "unsure" | null = next.has(questionId) ? null : "unsure";
+      if (flag === null) next.delete(questionId);
+      else next.add(questionId);
+      setStudentFlags(next);
+      setStudentFlagApi(attemptId, questionId, flag).catch(() => {
+        setStudentFlags((previous) => {
+          const rollback = new Set(previous);
+          if (flag === null) rollback.add(questionId);
+          else rollback.delete(questionId);
+          return rollback;
+        });
+      });
+    },
+    [attemptId, studentFlags],
+  );
   const [formalInkPresence, setFormalInkPresence] = useState<
     ReadonlyMap<string, boolean>
   >(new Map());
@@ -588,6 +611,7 @@ function AnswerView({
       formalInkPresence.get(question.id),
     ),
     flagged: flaggedQuestions.has(question.id),
+    unsure: studentFlags.has(question.id),
     // v1 卷四态口径（§9.1）：progress 缺行按未提交处理；统一公布模式下
     // feedbackReadable=false 的已提交行在导航里只报提交事实，不显示对错。
     // 用回执 overlay 后的进度（practiceProgress）——提交即时反映，不等服务端重取
@@ -1359,6 +1383,8 @@ function AnswerView({
                             attemptId={attemptId}
                             flagged={flaggedQuestions.has(question.id)}
                             onToggleFlag={toggleFlag}
+                            unsure={studentFlags.has(question.id)}
+                            onToggleUnsure={() => toggleUnsure(question.id)}
                             formalInkPresence={
                               formalInkPresence.get(question.id) ?? false
                             }

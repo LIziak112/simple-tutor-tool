@@ -1,0 +1,1 @@
+ALTER TABLE `responses` ADD `student_flag` text;

@@ -226,6 +226,14 @@ function VerdictSection({
   const byTeacher = verdictOf(teacher);
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:grid-cols-2">
+      {question.studentFlag === "unsure" && (
+        <div className="flex gap-2 sm:col-span-2">
+          <dt className="shrink-0 text-muted-foreground">学生标注：</dt>
+          <dd className="font-medium text-muted-foreground">
+            做题时标了「不会」（该题保留在学生错题本）
+          </dd>
+        </div>
+      )}
       <div className="flex gap-2">
         <dt className="shrink-0 text-muted-foreground">自动判定：</dt>
         <dd className={cn("font-medium", auto.className)}>{auto.text}</dd>

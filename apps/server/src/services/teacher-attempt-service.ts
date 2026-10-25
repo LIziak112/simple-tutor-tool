@@ -464,6 +464,8 @@ function detailItemOf(
     finalCorrect: isDraft ? null : row.finalCorrect,
     // #6980-3：是否有实际作答（draft 行恒默认 false，判定区仅已交卷消费）
     answered: row.answered,
+    // #6980-4：做题时学生自标「不会」（draft 亦下发，教师可提前看到）
+    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
     ...(!isDraft ? { selfReview: selfReviewStateOf(row, snapshot) } : {}),
     teacherMark: isDraft
       ? null

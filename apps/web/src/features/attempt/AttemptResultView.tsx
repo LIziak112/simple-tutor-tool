@@ -337,7 +337,14 @@ function ResultQuestionCard({
         {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答 */}
         {released ? (
           !question.selfReview ? (
-            <VerdictBadge verdict={verdict} notDone={!question.answered} />
+            <span className="flex items-center gap-2">
+              <VerdictBadge verdict={verdict} notDone={!question.answered} />
+              {question.studentFlag === "unsure" && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  标过不会
+                </span>
+              )}
+            </span>
           ) : null
         ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">

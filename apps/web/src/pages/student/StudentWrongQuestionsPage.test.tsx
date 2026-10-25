@@ -99,6 +99,7 @@ function round(
     sourceType: "assignment",
     correct,
     answered: true,
+    studentFlag: null,
     submittedAt,
     sourceTitle,
     courseId,

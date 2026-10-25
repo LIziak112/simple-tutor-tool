@@ -189,6 +189,7 @@ const releasedQuestionOf = (
   teacherComment: null,
   finalCorrect: true,
   answered: true,
+  studentFlag: null,
   hintsOpened: [],
   ...overrides,
 });

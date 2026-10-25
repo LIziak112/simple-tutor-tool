@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   attemptSourceSchema,
   attemptStatusSchema,
+  studentFlagSchema,
   teacherMarkSchema,
   wrongScopeSchema,
 } from "./attempt.ts";
@@ -212,6 +213,8 @@ export const teacherAttemptDetailQuestionSchema = z.object({
   finalCorrect: z.boolean().nullable(),
   /** 是否有实际作答内容（#6980-3）：false 的判错行在教师作答详情灰显「未做」 */
   answered: z.boolean(),
+  /** 做题时学生自标「不会」（#6980-4）：unsure / null，详情卡片灰显提示 */
+  studentFlag: studentFlagSchema.nullable(),
   selfReview: selfReviewStateSchema.optional(),
   /** 教师批改标记（D3；本阶段恒 null） */
   teacherMark: teacherMarkSchema.nullable(),

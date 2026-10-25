@@ -94,6 +94,7 @@ function makeQuestion(
     options: undefined,
     answer: null,
     answered: false,
+    studentFlag: null,
     autoCorrect: null,
     finalCorrect: null,
     teacherMark: null,

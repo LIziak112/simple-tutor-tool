@@ -976,6 +976,13 @@ export const responses = sqliteTable(
      * 「练习本卷错题」默认圈题共用本事实。
      */
     answered: integer("answered", { mode: "boolean" }).notNull().default(false),
+    /**
+     * 做题时学生自标「不会」（#6980-4）：'unsure' / NULL。draft 时经
+     * PUT /attempts/:id/flags/:questionId 写入（交卷后 409）；随草稿/结果/
+     * 错题本轮次/教师详情下发。标过不会的题入错题本（无论对错与是否作答），
+     * 标过不会的做对轮不算攻克。不是作答内容，无泄露面。
+     */
+    studentFlag: text("student_flag"),
     /** 教师批注标记（T3.2：正确 | 错误 | null）；未批为 NULL */
     teacherMark: text("teacher_mark"),
     /** 教师评语（T3.2）；未评为 NULL */
