@@ -435,7 +435,9 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       await expect(aiPanel).toBeVisible();
       // 题 4（fill）打开草稿纸面：AI 面板与纸面并存不塌
       const q4 = page.getByRole("article", { name: "第 4 题", exact: true });
-      await q4.getByRole("button", { name: "第 4 题草稿纸", exact: true }).click();
+      await q4
+        .getByRole("button", { name: "第 4 题草稿纸", exact: true })
+        .click();
       await expect(q4.locator('[data-slot="note-layer"]')).toBeVisible();
       await expect(aiPanel).toBeVisible();
       // 手机横屏下两者仍可达（窄空间布局回退不互相遮蔽卸载）
@@ -497,7 +499,10 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       expect(painted, "隐藏往返后画布仍含原笔迹像素").toBeGreaterThan(10);
       // 草稿纸开合：控制器挂载稳定（关闭不卸载、重开不报错）
       const q4 = page.getByRole("article", { name: "第 4 题", exact: true });
-      const paperTrigger = q4.getByRole("button", { name: "第 4 题草稿纸", exact: true });
+      const paperTrigger = q4.getByRole("button", {
+        name: "第 4 题草稿纸",
+        exact: true,
+      });
       await paperTrigger.click();
       await expect(q4.locator('[data-slot="note-layer"]')).toBeVisible();
       await paperTrigger.click();
