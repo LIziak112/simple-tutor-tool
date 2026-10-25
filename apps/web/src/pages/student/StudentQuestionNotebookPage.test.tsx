@@ -435,4 +435,96 @@ describe("StudentQuestionNotebookPage：题面与解析区", () => {
     // solutionMd=null 时 SolutionFold 直接渲染空态（无折叠按钮）
     expect(await screen.findByText("这道题没有详解。")).toBeInTheDocument();
   });
+
+  it("来源材料/题组（QM-15）：context 渲染组头说明与材料正文；null 轮整区不渲染", async () => {
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({
+          roundOrdinal: 1,
+          question: QUESTION_VIEW,
+          context: {
+            materials: [
+              {
+                id: "mat-1",
+                title: "给定资料",
+                contentMd: "冻结版材料正文。",
+                anchors: [],
+                slots: [],
+                mediaPaths: [],
+                sourceVersion: 2,
+              },
+            ],
+            groups: [
+              {
+                id: "grp-1",
+                title: "资料分析组",
+                introMd: "根据以下资料回答。",
+                materialRefs: [{ material: "mat-1" }],
+                questionIds: [QUESTION_ID],
+                sourceVersion: 1,
+              },
+            ],
+          },
+        }),
+        round({ roundOrdinal: 2 }),
+      ]),
+    );
+    renderPage();
+    // 默认最新一轮（第 2 轮）context=null：整区不渲染（轮徽标 + 导航按钮
+    // 各出现一次「第 2 次」，取第一个即可）
+    expect(await screen.findAllByText("第 2 次")).not.toHaveLength(0);
+    expect(screen.queryByText("来源材料与题组")).toBeNull();
+    // 切回第 1 轮：组头说明 + 冻结材料正文 + 冻结口径说明
+    fireEvent.click(screen.getByRole("button", { name: "第 1 次" }));
+    expect(
+      await screen.findByText("来源材料与题组", { selector: "p" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("资料分析组")).toBeInTheDocument();
+    expect(await screen.findByText("根据以下资料回答。")).toBeInTheDocument();
+    expect(await screen.findByText("冻结版材料正文。")).toBeInTheDocument();
+    expect(screen.getByText(/开卷时冻结/)).toBeInTheDocument();
+  });
+
+  it("同材料多版本并存（QM-15 细项 4）：两版正文都渲染并逐版标注历史版本", async () => {
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({
+          roundOrdinal: 1,
+          context: {
+            materials: [
+              {
+                id: "mat-1",
+                contentMd: "v1 正文。",
+                anchors: [],
+                slots: [],
+                mediaPaths: [],
+                sourceVersion: 1,
+              },
+              {
+                id: "mat-1",
+                contentMd: "v2 正文。",
+                anchors: [],
+                slots: [],
+                mediaPaths: [],
+                sourceVersion: 2,
+              },
+            ],
+            groups: [],
+          },
+        }),
+      ]),
+    );
+    renderPage();
+    expect(await screen.findByText("v1 正文。")).toBeInTheDocument();
+    expect(await screen.findByText("v2 正文。")).toBeInTheDocument();
+    expect(screen.getByText("历史版本 1")).toBeInTheDocument();
+    expect(screen.getByText("历史版本 2")).toBeInTheDocument();
+  });
+
+  it("context=null 轮：来源材料/题组整区不渲染（与空态区分，不误导）", async () => {
+    notebookMock.mockResolvedValue(notebookOf([round({ roundOrdinal: 1 })]));
+    renderPage();
+    expect(await screen.findByText(/交卷时间/)).toBeInTheDocument();
+    expect(screen.queryByText("来源材料与题组")).toBeNull();
+  });
 });

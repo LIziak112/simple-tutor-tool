@@ -3,9 +3,13 @@ import type {
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { Layers } from "lucide-react";
-import { type CSSProperties, memo, useEffect, useRef } from "react";
+import { type CSSProperties, memo, useEffect, useMemo, useRef } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { MaterialPanel } from "./MaterialPanel";
+import {
+  MaterialPanel,
+  materialVersionKey,
+  materialVersionNotesOf,
+} from "./MaterialPanel";
 import {
   materialReadingOffsetOf,
   noteMaterialReadingOffset,
@@ -52,6 +56,11 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
+  // 同材料多版本才逐版标注（QM-15 细项 4；单版本零徽标零视觉噪音）
+  const versionNotes = useMemo(
+    () => materialVersionNotesOf(materials),
+    [materials],
+  );
 
   // 阅读位置记录：材料列自身滚动（compare 模式）或窗口滚过材料顶（stack）
   useEffect(() => {
@@ -171,7 +180,13 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
             className="flex min-w-0 flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1 xl:[grid-row:span_var(--qg-row-span)]"
           >
             {materials.map((material) => (
-              <MaterialPanel key={material.id} material={material} />
+              <MaterialPanel
+                // QM-15 细项 4：键含冻结版本——同材料多版本分别保留（React
+                // key 按 materialId 会在双版本卷撞键丢面板）
+                key={materialVersionKey(material)}
+                material={material}
+                versionNote={versionNotes.get(materialVersionKey(material))}
+              />
             ))}
           </section>
         )}

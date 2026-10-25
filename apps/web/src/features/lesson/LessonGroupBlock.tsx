@@ -3,14 +3,18 @@ import type {
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { Layers } from "lucide-react";
-import { memo } from "react";
-import { MaterialPanel } from "@/features/attempt/MaterialPanel";
+import { memo, useMemo } from "react";
+import {
+  MaterialPanel,
+  materialVersionKey,
+  materialVersionNotesOf,
+} from "@/features/attempt/MaterialPanel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 
 /**
  * 讲练页题组块（QM-14 细项 1）：groupSegmentsOfUnit 解释出的组段在讲练页
  * 单列布局的流式呈现——组头（标题/标签/说明）+ 共享材料列表，渲染在首个
- * 成员题卡之前一次。数据解释（组归属/材料解析/latestById）与材料渲染
+ * 成员题卡之前一次。数据解释（组归属/材料解析/多版本保留）与材料渲染
  * （MaterialPanel，含槽位编号空位）全部复用既有单源，本组件只承担讲练
  * 语境的排版：不使用作答页 compare 网格的 xl:sticky/列跨类（讲练材料就在
  * 组员上方自然阅读，与结果回看同理由不挂「查看材料」跳转）。
@@ -23,13 +27,18 @@ export const LessonGroupBlock = memo(function LessonGroupBlock({
   materials,
 }: {
   group: AttemptContextGroup;
-  /** 组引用解析后的冻结材料（attempt-context-view 单源产物，引用序） */
+  /** 组引用解析后的冻结材料（attempt-context-view 单源产物，引用序+版本序） */
   materials: readonly AttemptContextMaterial[];
 }) {
   const hasMaterials = materials.length > 0;
   const intro = group.introMd.trim();
   const title = group.title?.trim();
   const label = group.label?.trim();
+  // 同材料多版本才逐版标注（QM-15 细项 4；单版本零徽标）
+  const versionNotes = useMemo(
+    () => materialVersionNotesOf(materials),
+    [materials],
+  );
   return (
     <section
       data-slot="lesson-group-block"
@@ -64,7 +73,11 @@ export const LessonGroupBlock = memo(function LessonGroupBlock({
       {hasMaterials && (
         <div className="flex min-w-0 flex-col gap-4">
           {materials.map((material) => (
-            <MaterialPanel key={material.id} material={material} />
+            <MaterialPanel
+              key={materialVersionKey(material)}
+              material={material}
+              versionNote={versionNotes.get(materialVersionKey(material))}
+            />
           ))}
         </div>
       )}

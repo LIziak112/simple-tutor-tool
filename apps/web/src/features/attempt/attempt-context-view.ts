@@ -13,17 +13,21 @@ import type {
  * questionGroupPublicSchema），与本模型消费同一冻结白名单键集。
  *
  * 解释规则（与 lint「组是单元题序子序列」的既有口径对齐）：
- * - **同 id 多版本取最高冻结版**：wrong 重练可把不同历史卷的同名材料/组
- *   双版本冻进一卷（tt-07a 去重键含版本）；快照引用只携带 id，无按版本
- *   绑定通道，展示口径固定为「每 id 一份、取最新冻结版」——两版都是冻结
- *   内容，绝无 live 回退，旧版仅在该 id 只有旧版时出现。
+ * - **材料多版本分别保留（QM-15 细项 4）**：wrong 重练可把不同历史卷的同
+ *   名材料双版本冻进一卷（tt-07a 去重键含 (kind, id, version)）；引用只携
+ *   带 id、无按版本绑定通道，展示口径为「每 id 的全部冻结版本都保留、按
+ *   版本升序排列」——两版都是冻结内容，绝不按 materialId 取最新覆盖旧版
+ *   （设计方案 §5.3），消费方键用 materialVersionKey(id|version)。**组仍每
+ *   id 一段取最高冻结版**：组是结构键（成员区间/组头归属），材料才是学生
+ *   阅读的内容主体；多版本材料面板由 materialVersionNotesOf 逐版标注。
  * - **组块在首位卷内成员处出现一次**：段内题目 = 首尾成员之间的全部卷内
  *   题（成员区间内的非成员题随段渲染，真实语料成员连续，此规则保证一组
  *   一块、不因 lint 允许的子序列空洞重开组块）。
  * - **一题多组（数据异常防御）**：按条目稳定序（id 升序）首个组收编，
  *   判定确定。
- * - **组材料按引用序去重解析**；引用缺快照条目（闭包保证外的坏数据）→
- *   跳过该材料不崩溃；组仍渲染（materials 可为空数组）。
+ * - **组材料按引用序解析**（同 id 各版本按版本升序依次收进）；引用缺快照
+ *   条目（闭包保证外的坏数据）→ 跳过该材料不崩溃；组仍渲染（materials
+ *   可为空数组）。
  * - 卷外成员（wrong 剔除/跨单元）不进段；零卷内成员的组不渲染。
  */
 
@@ -57,6 +61,25 @@ function latestById<T extends { id: string; sourceVersion: number }>(
 }
 
 /**
+ * 同 id 的全部版本按 sourceVersion 升序（QM-15 细项 4：多版本分别保留，
+ * 不按 materialId 覆盖；缺条目 id 为空数组由调用方跳过）
+ */
+function versionsById<T extends { id: string; sourceVersion: number }>(
+  entries: readonly T[],
+): Map<string, T[]> {
+  const byId = new Map<string, T[]>();
+  for (const entry of entries) {
+    const list = byId.get(entry.id) ?? [];
+    list.push(entry);
+    byId.set(entry.id, list);
+  }
+  for (const list of byId.values()) {
+    list.sort((a, b) => a.sourceVersion - b.sourceVersion);
+  }
+  return byId;
+}
+
+/**
  * 单元题目序 → 组段列表。questionIds 是**本单元在本卷内**的题目 id 序列
  * （作答/结果两视图都持有序列，不查 live）。context 为 undefined（legacy
  * 卷未请求/未冻结）时全部 solo，渲染零变化。
@@ -68,7 +91,8 @@ export function groupSegmentsOfUnit(
   if (context === undefined || questionIds.length === 0) {
     return questionIds.length === 0 ? [] : [{ kind: "solo", questionIds }];
   }
-  const materialsById = latestById(context.materials);
+  // 材料按 id 收全版本（QM-15：不覆盖）；组仍每 id 取最高冻结版（结构键）
+  const materialsById = versionsById(context.materials);
   // 组 → 卷内成员区间（首/尾成员下标；按 id 稳定序，重叠区间首个组收编）
   const indexById = new Map(questionIds.map((id, i) => [id, i] as const));
   const groups = [...latestById(context.groups).values()]
@@ -123,9 +147,10 @@ export function groupSegmentsOfUnit(
   return segments;
 }
 
-/** 组材料引用 → 冻结材料实例（引用序去重；缺条目跳过） */
+/** 组材料引用 → 冻结材料实例（引用序按 id 去重；同 id 多版本全收、版本
+ *  升序——QM-15 细项 4；缺条目跳过） */
 function resolveMaterials(
-  materialsById: ReadonlyMap<string, AttemptContextMaterial>,
+  materialsById: ReadonlyMap<string, readonly AttemptContextMaterial[]>,
   group: AttemptContextGroup,
 ): readonly AttemptContextMaterial[] {
   const resolved: AttemptContextMaterial[] = [];
@@ -133,8 +158,7 @@ function resolveMaterials(
   for (const ref of group.materialRefs) {
     if (seen.has(ref.material)) continue;
     seen.add(ref.material);
-    const material = materialsById.get(ref.material);
-    if (material !== undefined) resolved.push(material);
+    resolved.push(...(materialsById.get(ref.material) ?? []));
   }
   return resolved;
 }

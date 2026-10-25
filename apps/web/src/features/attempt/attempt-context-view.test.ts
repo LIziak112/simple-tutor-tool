@@ -5,6 +5,7 @@ import type {
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import { groupSegmentsOfUnit } from "./attempt-context-view";
+import { materialVersionKey } from "./MaterialPanel";
 
 /**
  * TT-08a / QM-08 共用数据解释模型测试：/attempts/:id/context 冻结投影 →
@@ -143,7 +144,7 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
     ]);
   });
 
-  it("同 id 多版本条目（wrong 双版本边界）→ 组与材料各取最高冻结版本", () => {
+  it("同 id 多版本条目（wrong 双版本边界）→ 组每 id 一段取最高冻结版；材料全版本分别保留不按 materialId 覆盖（QM-15 细项 4）", () => {
     const ctx = context(
       [
         material("m1", { sourceVersion: 1 }),
@@ -164,7 +165,12 @@ describe("groupSegmentsOfUnit（共用数据解释）", () => {
     expect(groupSegment?.kind).toBe("group");
     if (groupSegment?.kind !== "group") return;
     expect(groupSegment.group.sourceVersion).toBe(3);
-    expect(groupSegment.materials[0]?.contentMd).toBe("v2 正文");
+    // 材料双版本全量保留（引用序内版本升序），不取最高覆盖旧版
+    expect(
+      groupSegment.materials.map(
+        (m) => `${materialVersionKey(m)}:${m.contentMd}`,
+      ),
+    ).toEqual(["m1|1:材料 m1 正文。", "m1|2:v2 正文"]);
   });
 
   it("组材料引用缺快照条目（防御：闭包保证外的坏数据）→ 跳过该材料不崩溃", () => {
