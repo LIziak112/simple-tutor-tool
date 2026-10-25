@@ -206,6 +206,7 @@ export function matchingPublicStructureOf(
     }[];
   },
   slotIds: readonly string[],
+  slotOrdinals?: Readonly<Record<string, number>>,
 ): MatchingPublicStructure {
   return {
     allowRepeat: pool.allowRepeat ?? false,
@@ -215,6 +216,7 @@ export function matchingPublicStructureOf(
       text: option.text,
       distractor: option.distractor ?? false,
     })),
+    ...(slotOrdinals !== undefined ? { slotOrdinals } : {}),
   };
 }
 

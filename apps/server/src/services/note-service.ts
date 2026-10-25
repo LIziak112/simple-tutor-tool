@@ -1295,31 +1295,6 @@ export function sealCorrection(
   return noteHeadOf(db, attempt.id, questionId);
 }
 
-// ---------- T6R.15：题目笔记本聚合（D7——查询聚合，不建全局表） ----------
-
-/**
- * 学生本人某题的跨来源历史轮次（GET /api/student/notebook/questions/:qid）：
- * - rounds = 该生该题全部**已交卷** attempt（status 非 draft，含 submitted 与
- *   graded；join responses 定题目成员——responses 行在即该卷含此题，wrong/
- *   course/assignment 三来源同口径），按 submittedAt 升序（同刻 attemptId
- *   升序兜底稳定，与错题本 rounds 同口径），roundOrdinal 从 1 递增；
- * - 每轮 sourceType/sourceLabel：复用 teacher-attempt-service.sourceOf +
- *   wrong-questions.roundSourceTitle 同一计算函数（作业 = 作业标题；课程
- *   练习 = 「单元标题 · 第 n 次」；错题重练 = 「错题重练 · 第 n 次」——
- *   AGENTS 第 1 条同一概念同一份定义，不复制粘贴逻辑）；
- * - questionVersion：responses.question_version 列（建卷冻结时的 questions.
- *   version 数字；契约注记口径为「冻结快照里的题目 version」——快照 JSON
- *   本身不含 version 字段，冻结版本号在 responses 行列上）。0（升级遗留
- *   未冻结语义）→ null，**绝不回填当前题库**；
- * - 题面与解析（公布 gate 矩阵）：question/release 均从该轮冻结快照投影
- *   （唯一解析出口 snapshotOfRow，坏快照 null 留痕，绝不回填 live 题）；
- *   release 按来源 gate 受控放行——assignment 依 answersReleased（作业行
- *   含已软删，异常缺失 fail-closed）、course/wrong 恒交卷即公布（D11）、
- *   lesson 按题级 submittedAt（与 lesson-service released 同判定）；
- * - evidence/corrections/supplements：noteCollectionsOf 单点投影（与头投影
- *   同口径）；
- * - 无轮次 → rounds=[]（不探测题目存在性——空数组即「没有历史」）。
- */
 /**
  * 该轮来源材料/组投影（QM-15 细项 1/4）：**纯读该轮 attempt_context_snapshots
  * 冻结快照**，零 live 回退——教师改稿/软删不影响历史轮次展示（快照不可侵犯）。
@@ -1433,6 +1408,31 @@ function notebookRoundContextOf(
   };
 }
 
+// ---------- T6R.15：题目笔记本聚合（D7——查询聚合，不建全局表） ----------
+
+/**
+ * 学生本人某题的跨来源历史轮次（GET /api/student/notebook/questions/:qid）：
+ * - rounds = 该生该题全部**已交卷** attempt（status 非 draft，含 submitted 与
+ *   graded；join responses 定题目成员——responses 行在即该卷含此题，wrong/
+ *   course/assignment 三来源同口径），按 submittedAt 升序（同刻 attemptId
+ *   升序兜底稳定，与错题本 rounds 同口径），roundOrdinal 从 1 递增；
+ * - 每轮 sourceType/sourceLabel：复用 teacher-attempt-service.sourceOf +
+ *   wrong-questions.roundSourceTitle 同一计算函数（作业 = 作业标题；课程
+ *   练习 = 「单元标题 · 第 n 次」；错题重练 = 「错题重练 · 第 n 次」——
+ *   AGENTS 第 1 条同一概念同一份定义，不复制粘贴逻辑）；
+ * - questionVersion：responses.question_version 列（建卷冻结时的 questions.
+ *   version 数字；契约注记口径为「冻结快照里的题目 version」——快照 JSON
+ *   本身不含 version 字段，冻结版本号在 responses 行列上）。0（升级遗留
+ *   未冻结语义）→ null，**绝不回填当前题库**；
+ * - 题面与解析（公布 gate 矩阵）：question/release 均从该轮冻结快照投影
+ *   （唯一解析出口 snapshotOfRow，坏快照 null 留痕，绝不回填 live 题）；
+ *   release 按来源 gate 受控放行——assignment 依 answersReleased（作业行
+ *   含已软删，异常缺失 fail-closed）、course/wrong 恒交卷即公布（D11）、
+ *   lesson 按题级 submittedAt（与 lesson-service released 同判定）；
+ * - evidence/corrections/supplements：noteCollectionsOf 单点投影（与头投影
+ *   同口径）；
+ * - 无轮次 → rounds=[]（不探测题目存在性——空数组即「没有历史」）。
+ */
 export function getStudentQuestionNotebook(
   db: Db,
   studentId: string,

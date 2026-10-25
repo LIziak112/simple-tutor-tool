@@ -23,9 +23,18 @@ export const matchingBehavior: AnswerKindBehavior<
     const textOf = new Map(
       structure.options.map((option) => [option.key, option.text]),
     );
+    // QM-16：材料槽位序 ordinal 在场 → 槽位标签「第 N 空」（与材料面板（N）
+    // 编号同口径）；ordinal 表缺该槽位回落裸 id（不猜位置）
+    const labelOf = (slot: string): string => {
+      const ordinal = structure.slotOrdinals?.[slot];
+      return ordinal === undefined ? slot : `第 ${ordinal} 空`;
+    };
     return Object.entries(answer.pairs)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([slot, option]) => `${slot} = ${textOf.get(option) ?? option}`)
+      .map(
+        ([slot, option]) =>
+          `${labelOf(slot)} = ${textOf.get(option) ?? option}`,
+      )
       .join("；");
   },
   inspectShape: (answer, structure): readonly ShapeIssue[] => {

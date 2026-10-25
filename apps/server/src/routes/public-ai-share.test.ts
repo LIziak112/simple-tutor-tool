@@ -8,6 +8,7 @@ import {
   aiPolicyOverrides,
   aiShareTickets,
   aiTasks,
+  attemptContextSnapshots,
   responses,
   students,
   teachers,
@@ -372,6 +373,78 @@ describe("SAI-29 分享正文及附件（公开读端点）", () => {
       const bytes = new Uint8Array(await res.arrayBuffer());
       expect(bytes.byteLength).toBe(w.png.byteLength);
       expect(bytes).toEqual(w.png);
+    });
+
+    it("审查 P2-1：正文携带共享材料段（快照冻结材料，排序与导出口径一致）；授权/隐私哨兵口径不变", async () => {
+      // 冻结上下文（材料 + 组含 q-alpha）须在创建任务前注入——快照在创建时冻结
+      const w = world();
+      const frozenAt = "2026-06-01T00:00:00.000Z";
+      w.db
+        .insert(attemptContextSnapshots)
+        .values([
+          {
+            id: randomUUID(),
+            attemptId: w.attemptId,
+            kind: "material",
+            sourceId: "mat-share-1",
+            sourceVersion: 1,
+            snapshotJson: JSON.stringify({
+              id: "mat-share-1",
+              title: "共享材料标题哨兵",
+              contentMd: "共享材料正文哨兵：题面不可独立缺省的段落。",
+              anchors: [],
+              slots: [],
+              mediaPaths: [],
+            }),
+            frozenAt,
+          },
+          {
+            id: randomUUID(),
+            attemptId: w.attemptId,
+            kind: "group",
+            sourceId: "grp-share-1",
+            sourceVersion: 1,
+            snapshotJson: JSON.stringify({
+              id: "grp-share-1",
+              title: "阅读组",
+              introMd: "",
+              materialRefs: [{ material: "mat-share-1" }],
+              questionIds: ["q-alpha"],
+            }),
+            frozenAt,
+          },
+        ])
+        .run();
+      const { task } = createAiTask(
+        w.db,
+        {
+          studentId: w.studentId,
+          attemptId: w.attemptId,
+          questionId: "q-alpha",
+          question: "结合材料看我的问题 SENTINEL_QUESTION",
+          channel: "link",
+          mutationId: randomUUID(),
+        },
+        { hmacSecret: SECRET },
+      );
+      const { token } = createAiShareTicket(w.db, {
+        studentId: w.studentId,
+        taskId: task.id,
+      });
+      const res = await w.app.request(`/api/public/ai/share/${token}`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // 共享材料段在 HTML 中（标题 + 正文，mdBlock 按文本呈现）
+      expect(html).toContain("共享材料");
+      expect(html).toContain("共享材料标题哨兵");
+      expect(html).toContain("共享材料正文哨兵：题面不可独立缺省的段落。");
+      // 授权面不收窄：参考答案/解析仍按票据既有授权可读
+      expect(html).toContain("参考答案");
+      expect(html).toContain("解析");
+      // 隐私哨兵不放宽：姓名/私注/内部 UUID/绝对路径照旧不出
+      expect(html).not.toContain(NAME_SENTINEL);
+      expect(html).not.toContain(PRIVATE_NOTE_SENTINEL);
+      expect(html).not.toContain(task.id);
     });
   });
 

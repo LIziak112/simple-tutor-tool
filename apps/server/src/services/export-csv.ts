@@ -12,7 +12,7 @@ import {
   effectiveVerdictOfRow,
   unitGroupedRows,
 } from "./attempt-service";
-import { serializeStudentAnswer } from "./mark-response";
+import { batchSerializeStudentAnswerOfRow } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -243,6 +243,8 @@ export function exportCsv(
   const lines: string[] = [CSV_COLUMNS.map(csvCell).join(",")];
   // 考点兜底表（快照缺失时按题目 id 从当前库关联；懒加载一次，正常数据不触发）
   let knowledgeFallback: Map<string, string[]> | null = null;
+  // 审查 P3-3：两处行循环共用批量出口（attemptId 请求内记忆化槽位序，一处 Map）
+  const answerTextOf = batchSerializeStudentAnswerOfRow(db);
 
   for (const { attempt, studentName } of attemptRows) {
     const source = sourceOf(db, attempt, teacherId);
@@ -296,7 +298,11 @@ export function exportCsv(
         const knowledge =
           snapshot?.knowledge ?? fallbackKnowledgeOf(row.response.questionId);
         const answerText =
-          serializeStudentAnswer(answerOf(row.response.answerJson)) ?? "";
+          answerTextOf(
+            attempt.id,
+            row.response,
+            answerOf(row.response.answerJson),
+          ) ?? "";
         const inkRow = inkByQuestion.get(row.response.questionId);
         const inkUrl =
           type !== null &&
@@ -408,7 +414,8 @@ export function exportCsv(
           knowledge = knowledgeFallback.get(response.questionId) ?? [];
         }
         const answerText =
-          serializeStudentAnswer(answerOf(response.answerJson)) ?? "";
+          answerTextOf(attempt.id, response, answerOf(response.answerJson)) ??
+          "";
         const inkRow = inkByQuestion.get(response.questionId);
         const inkUrl =
           type !== null &&

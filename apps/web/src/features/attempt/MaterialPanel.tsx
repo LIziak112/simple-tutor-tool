@@ -1,30 +1,19 @@
 import type { AttemptContextMaterial } from "@tutor/contract";
+import { slotNumberedContentOf } from "@tutor/md-dsl";
 import { FileText } from "lucide-react";
 import { memo } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-
-/**
- * 槽位标记：{{slot-id}}（与 md-dsl materials.ts collectSlots 同一识别形态；
- * 空内容/未声明 id 的标记不替换——导入规范化后源文均为显式 id）
- */
-const SLOT_MARKER_RE = /\{\{([^{}]*)\}\}/g;
 
 /**
  * 材料槽位标记 → 编号空位（QM-13 细项 1）：公共文章不使用带参考答案的
  * [[…]] 填空标记充当选择槽位——完形（choice）/配对（match）槽位按材料
  * 槽位序渲染为加粗编号（**（N）**），编号与子题/题干的「第 N 空」对应；
  * 未声明 id 的标记原样保留（防御：不猜测不崩溃）。教师预览走源码形态
- * （Qm.tsx 指令），不经本函数。
+ * （Qm.tsx 指令），不经本函数。QM-16 起实现收归 md-dsl
+ * slotNumberedContentOf 单源（服务端导出与受控 AI 出口共用同一编号口径）。
  */
 function slotMarkedContentOf(material: AttemptContextMaterial): string {
-  if (material.slots.length === 0) return material.contentMd;
-  const ordinalById = new Map(
-    material.slots.map((slot, index) => [slot.id, index + 1] as const),
-  );
-  return material.contentMd.replace(SLOT_MARKER_RE, (raw, id: string) => {
-    const ordinal = ordinalById.get(id.trim());
-    return ordinal === undefined ? raw : `**（${ordinal}）**`;
-  });
+  return slotNumberedContentOf(material.contentMd, material.slots);
 }
 
 /**
@@ -46,7 +35,7 @@ export function materialVersionKey(material: {
  * 「这道题当时看到的是哪一版」。键 = materialVersionKey。
  */
 export function materialVersionNotesOf(
-  materials: readonly AttemptContextMaterial[],
+  materials: readonly { readonly id: string; readonly sourceVersion: number }[],
 ): Map<string, string> {
   const countById = new Map<string, number>();
   for (const material of materials) {

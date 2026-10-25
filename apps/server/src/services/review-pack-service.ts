@@ -10,6 +10,7 @@ import type {
 import {
   formatQuestionAnswers,
   HANDWRITTEN_QUESTION_TYPES,
+  lettersOf,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -29,6 +30,7 @@ import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
+import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
 import {
   answerOf,
   answersReleased,
@@ -37,15 +39,21 @@ import {
   frozenRowsInDisplayOrder,
   requireUsableAttempt,
 } from "./attempt-service";
+import {
+  materialSlotOrderOf,
+  structuresOfSnapshot,
+} from "./attempt-service.ts";
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
-import { serializeStudentAnswer } from "./mark-response";
+import { serializeStudentAnswerOfRow } from "./mark-response";
+import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
 import {
   assembleQuestionEvidence,
   evidenceMissingRowsOf,
   readyEvidenceImagesOf,
 } from "./question-evidence";
+import { snapshotOfRow } from "./snapshot.ts";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
@@ -294,7 +302,23 @@ export function assembleReviewPack(
   const qRef = revision.ref;
   const eRef = evidenceEntry.ref;
   const material = revision.material;
-  const answerText = serializeStudentAnswer(answerOf(row.answerJson));
+  const answerText = serializeStudentAnswerOfRow(
+    db,
+    attempt.id,
+    row,
+    answerOf(row.answerJson),
+  );
+  // —— QM-16 细项 1：题级冻结材料闭包（组材料 ∪ 题级引用）随包携带——
+  // 材料正文是公开投影（导入 lint MATERIAL_CONTAINS_ANSWER + 冻结白名单
+  // 双防线），学生包照常携带；不带材料的单题包不可独立阅读。多版本逐版
+  // 成条（title 附历史版本说明），正文已槽位编号（（N）与题干「第 N 空」对齐）。
+  const rowSnapshot = snapshotOfRow(row);
+  const frozenMaterials = frozenMaterialsForQuestion(
+    db,
+    attempt.id,
+    row.questionId,
+    rowSnapshot,
+  );
   // 判定来源（教师域键；两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
   const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
 
@@ -306,13 +330,55 @@ export function assembleReviewPack(
     ...(answerText !== null ? { answerText } : {}),
     questionNo: no,
   });
-  const stemSections = [staticMaterial.markdown.trimEnd()];
+  // 材料节在题面之前（学生先读材料再看题）；字母编号材料 A/B…与页间索引
+  // （材料多份时每份独立成节，题内 ::ref 引用按字母回指）清晰可导航
+  const stemSections: string[] = [];
+  frozenMaterials.forEach((frozenMaterial, index) => {
+    stemSections.push(
+      `## 材料 ${lettersOf(index)}：${frozenMaterial.title}
+
+${frozenMaterial.contentMd}`,
+    );
+  });
+  stemSections.push(staticMaterial.markdown.trimEnd());
   if (teacherRole) {
     if (material.answers !== undefined) {
       // plain 形态（不注 mathify）：裸 LaTeX 原样保留对 AI 更友好，渲染管线
-      // 的包 $ 启发式是显示侧行为（contract formatQuestionAnswers 参数化）
+      // 的包 $ 启发式是显示侧行为（contract formatQuestionAnswers 参数化）。
+      // QM-16 细项 3：配对/排序参考换可读标签（材料槽位序/选项/项正文），
+      // 与学生答案序列化同一结构装配——教师包可对照阅读
+      // 快照缺失行 materialOf 恒不携带 answers，进入本分支即行必在（防御
+      // 守卫与 materialOf 单点约定一致，不静默造空结构）
+      if (rowSnapshot === null) {
+        throw new HttpError(
+          500,
+          "EXPORT_ASSEMBLY_BROKEN",
+          "快照缺失行携带参考答案（内部不变量破坏）",
+        );
+      }
+      const answerStructures = structuresOfSnapshot(
+        rowSnapshot,
+        materialSlotOrderOf(db, attempt.id),
+        row.unitId,
+      );
+      const optionLabelOf = (id: string): string =>
+        answerStructures.matching.options.find((option) => option.key === id)
+          ?.text ?? id;
+      const slotLabelOf = (id: string): string => {
+        const ordinal = answerStructures.matching.slotOrdinals?.[id];
+        return ordinal === undefined ? id : `第 ${ordinal} 空`;
+      };
+      const itemLabelOf = (id: string): string =>
+        answerStructures.ordering.items.find((item) => item.key === id)?.text ??
+        id;
       stemSections.push(
-        `**参考答案**：${formatQuestionAnswers(material.answers)}`,
+        `**参考答案**：${formatQuestionAnswers(material.answers, {
+          labels: {
+            slot: slotLabelOf,
+            option: optionLabelOf,
+            item: itemLabelOf,
+          },
+        })}`,
       );
     }
     if (material.solutionMd !== undefined) {
@@ -353,6 +419,28 @@ export function assembleReviewPack(
     })),
     ...evidenceMissingRowsOf(asm),
   ];
+  // —— QM-16 细项 5：材料正文 ::image 引用同样落盘核对（媒体齐全口径）；
+  // 缺失显式进 missing（complete=false + review.md 材料不完整），不静默裁切
+  for (const src of extractMediaImageSrcs(
+    frozenMaterials.map((frozenMaterial) => frozenMaterial.contentMd),
+  )) {
+    if (mediaEntries.some((medium) => medium.entry === src)) continue;
+    const stat = statMediaSrc(dataDir, src);
+    if ("absPath" in stat) {
+      mediaEntries.push({
+        entry: src,
+        absPath: stat.absPath,
+        bytes: stat.bytes,
+      });
+    } else {
+      missing.push({
+        path: src,
+        kind: "media" as const,
+        reason: stat.reason,
+        refs: [qRef],
+      });
+    }
+  }
 
   // —— 手写题笔迹（/code-review A1，方案 §9.3/D6.3）：作答即笔迹——学生
   // ink 快照 PNG 作为 response 侧附件进包（manifest kind=ink；文件名化名
@@ -488,6 +576,11 @@ export function assembleReviewPack(
 
   // —— manifest（pack.json 同时为清单；pack.json 自身不列） ——
   const contextNotes: string[] = [];
+  if (frozenMaterials.length > 0) {
+    contextNotes.push(
+      `本题依赖共享材料 ${frozenMaterials.length} 份，已随包携带（材料 A/B… 在题面前）。`,
+    );
+  }
   if (!revision.present) {
     contextNotes.push(
       "本题历史快照缺失（题目已删除或升级遗留）：题干为空，不回填当前题库内容。",

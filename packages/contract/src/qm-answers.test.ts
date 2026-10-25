@@ -214,6 +214,30 @@ describe("formatQuestionAnswers 三分支（参考文本唯一入口）", () => 
       }),
     ).toBe("item-2 → item-4 → item-1");
   });
+
+  it("QM-16 labels：matching/ordering 的 id 经标签函数替换（材料槽位序/选项/项正文），未提供或未命中回落裸 id", () => {
+    const labels = {
+      slot: (id: string) => (id === "slot-1" ? "第 1 空" : id),
+      option: (id: string) => (id === "opt-1" ? "甲项" : id),
+      item: (id: string) => (id === "item-2" ? "乙句" : id),
+    };
+    expect(
+      formatQuestionAnswers(
+        { kind: "matching", pairs: { "slot-1": "opt-1", "slot-9": "opt-5" } },
+        { labels },
+      ),
+    ).toBe("第 1 空 = 甲项；slot-9 = opt-5");
+    expect(
+      formatQuestionAnswers(
+        { kind: "ordering", sequence: ["item-2", "item-4"] },
+        { labels },
+      ),
+    ).toBe("乙句 → item-4");
+    // labels 缺省：既有行为逐字不变（上方两用例锁定的形态）
+    expect(
+      formatQuestionAnswers({ kind: "matching", pairs: { "slot-1": "opt-1" } }),
+    ).toBe("slot-1 = opt-1");
+  });
 });
 
 describe("questionSchema 新可选字段（§5.4.1/§5.8.1：全量可选，不侵入旧文档）", () => {

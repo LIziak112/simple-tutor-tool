@@ -150,6 +150,24 @@ export const aiContextSnapshotSchema = z
     missingNote: aiContextMissingNoteSchema.nullable(),
     /** 当时有效提示词快照：教师模板正文 + 模式硬约束句（模板删空仅剩硬约束句） */
     promptSnapshotMd: z.string().min(1),
+    /**
+     * 本题必需公开材料（QM-17 细项 1，2026-10-25 可选键——TT-12 之前的
+     * 旧任务快照无该键，出站装配不携带材料段）：冻结上下文投影（组材料 ∪
+     * 题级引用），contentMd 为**槽位编号后正文**（{{slot-id}} → （N），与
+     * 学生端材料面板同一口径）；同 id 多版本并存时逐版成条、title 附版本
+     * 说明。材料正文不含参考答案（导入 lint MATERIAL_CONTAINS_ANSWER 保证，
+     * 冻结投影白名单无答案键通道）。
+     */
+    materials: z
+      .array(
+        z
+          .object({
+            title: z.string().min(1),
+            contentMd: z.string().min(1),
+          })
+          .strict(),
+      )
+      .optional(),
     /** 快照时间（UTC ISO） */
     capturedAt: z.string().min(1),
   })

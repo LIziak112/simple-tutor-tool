@@ -214,6 +214,46 @@ describe("matching 纯行为（§5.3.1：pairs 非空对象=已答；部分配�
     ).toBe("slot-1 = opt-1；slot-2 = opt-8");
   });
 
+  it("QM-16：slotOrdinals 携带材料槽位序时文本化用「第 N 空」（与材料面板（N）编号及题卡视图同一口径），未携带回落裸 id", () => {
+    const answer: MatchingStudentAnswer = {
+      kind: "matching",
+      pairs: { "slot-2": "opt-8", "slot-1": "opt-1" },
+    };
+    const withOrdinals = matchingPublicStructureOf(
+      {
+        allowRepeat: false,
+        options: [
+          { id: "opt-1", text: "选项一" },
+          { id: "opt-8", text: "干扰项", distractor: true },
+        ],
+      },
+      ["slot-2"],
+      { "slot-2": 2 },
+    );
+    for (const profile of ["display", "teacher-queue", "ai-context"] as const) {
+      // ordinal 表只含 slot-2：slot-1 回落裸 id（键序稳定），slot-2 用第 2 空
+      expect(behavior.formatStudent(answer, profile, withOrdinals)).toBe(
+        "slot-1 = 选项一；第 2 空 = 干扰项",
+      );
+    }
+    // 答案引用了 ordinal 表外的槽位（结构不完整防御形态）：该槽位回落裸 id
+    const partial = matchingPublicStructureOf(
+      {
+        allowRepeat: false,
+        options: [{ id: "opt-1", text: "选项一" }],
+      },
+      ["slot-1"],
+      { "slot-1": 1 },
+    );
+    expect(
+      behavior.formatStudent(
+        { kind: "matching", pairs: { "slot-1": "opt-1", "slot-9": "opt-1" } },
+        "teacher-queue",
+        partial,
+      ),
+    ).toBe("第 1 空 = 选项一；slot-9 = 选项一");
+  });
+
   it("inspectShape：未知槽位/未知选项/重复占用（allowRepeat=false）各自报 ShapeIssue；干扰选项被选不报", () => {
     expect(
       behavior

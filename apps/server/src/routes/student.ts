@@ -1016,8 +1016,9 @@ export function createStudentRoutes(
       // T6R.15 D7：题目笔记本——本人该题的跨来源已交卷轮次聚合（GET
       // /notebook/questions/:qid，聚合查询不建全局表）。service
       // getStudentQuestionNotebook 内 join responses 定题目成员、按 submittedAt
-      // 升序编轮；零答案零题干（题目侧只有 questionVersion 版本号数字，
-      // AGENTS 第 3 条）；无轮次 200 空数组（不探测题目存在性）。
+      // 升序编轮；题目侧携带 question/release（QM-11 公布 gate 投影）与
+      // context（QM-15 来源材料/组冻结投影）——三者均按公布规则受控，答案
+      // 键恒无（AGENTS 第 3 条）；无轮次 200 空数组（不探测题目存在性）。
       .get("/notebook/questions/:questionId", (c) => {
         return c.json({
           ok: true,

@@ -1,5 +1,5 @@
 import type { AiTeachingMode } from "@tutor/contract";
-import { aiContextSnapshotSchema } from "@tutor/contract";
+import { aiContextSnapshotSchema, lettersOf } from "@tutor/contract";
 import { eq, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -26,10 +26,11 @@ import {
  * SAI-29 分享正文及附件（B15；需求规格 §10、技术方案 §4.2 公开读表）。
  *
  * 外部 AI 可读的公开端点（无会话，票据即授权），挂在 /api/public/ai/share：
- * - GET/HEAD /:token：单题 HTML 正文——题号/快照时间/有效模式/题干/学生
- *   作答/参考答案/官方解析/学生问题/材料清单。只装配该票据绑定任务的冻结
- *   快照（contextSnapshotJson），绝不从最新题库重拼（旧链接不悄悄指向新稿
- *   由 SAI-28 payloadHash 把关）；
+ * - GET/HEAD /:token：单题 HTML 正文——题号/快照时间/有效模式/共享材料/
+ *   题干/学生作答/参考答案/官方解析/学生问题/材料清单。只装配该票据绑定
+ *   任务的冻结快照（contextSnapshotJson），绝不从最新题库重拼（旧链接不
+ *   悄悄指向新稿由 SAI-28 payloadHash 把关）；共享材料段随快照 materials
+ *   呈现（字母编号与导出口径一致，材料正文经 mdBlock 按文本转义）；
  * - GET/HEAD /:token/materials/:n.png：仅本票据任务已登记材料的 PNG 附件。
  *
  * 安全口径（批次实施步骤逐条）：
@@ -206,6 +207,21 @@ function buildShareBodyHtml(
     snapshot.studentAnswerText !== null
       ? mdBlock(snapshot.studentAnswerText)
       : '<p class="missing">求助时尚未作答（或作答为笔迹，无可读文本）。</p>';
+  // 审查 P2-1：共享材料段（快照冻结材料，题面不可独立阅读时随附）——
+  // 快照材料即 frozenMaterialsForQuestion 冻结闭包（(id, sourceVersion)
+  // 稳定序），字母编号与单题包/PNG 材料页同一 lettersOf 口径；旧任务
+  // 无 materials 键不带本段
+  const sharedMaterialSections =
+    snapshot.materials !== undefined && snapshot.materials.length > 0
+      ? snapshot.materials
+          .map(
+            (material, index) => `<section>
+<h2>共享材料 ${lettersOf(index)}：${escapeHtml(material.title)}</h2>
+${mdBlock(material.contentMd)}
+</section>`,
+          )
+          .join("\n")
+      : "";
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -239,7 +255,7 @@ footer { border-top: 1px solid rgba(128,128,128,.35); margin-top: 2rem; padding-
 <p class="notice">获得本链接者可读取本题参考答案、官方解析与选定材料；链接有有效期且可被学生撤销，内容为发送时刻的快照。</p>
 <p class="notice">AI 读取要求：每次回答前重新请求本次提供的所有链接，不复用历史读取结果或缓存；多个链接须逐条读取并核对题号，无法读取时明确指出，不得用其他题目代替。本链接仅对应上方题号与快照。</p>
 </header>
-<section>
+${sharedMaterialSections}<section>
 <h2>题面</h2>
 ${mdBlock(snapshot.stemMd)}
 </section>

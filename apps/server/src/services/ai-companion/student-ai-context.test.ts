@@ -14,6 +14,7 @@ import {
   aiTasks,
   aiTeacherSettings,
   assignments,
+  attemptContextSnapshots,
   attempts,
   lectures,
   questions,
@@ -29,6 +30,7 @@ import {
   loadTaskHistory,
   studentAnswerTextOf,
 } from "./student-ai-context.ts";
+import { outboundAssemblyOfTask } from "./student-ai-worker.ts";
 
 /**
  * SAI-09 单题文字上下文装配测试(B04;技术方案 §3.1/§3.3、需求规格 §4–5)。
@@ -797,6 +799,44 @@ describe("SAI-09 完成条件:确定快照标识且不暴露猜测 oracle", () =
     db.$client.close();
   });
 
+  it("审查 P3-1:材料进 HMAC 输入序列——冻结闭包材料变化即换标识(旧实现两份材料不同的快照同戳)", () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db);
+    const a = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    expect(a.snapshot.materials).toHaveLength(1);
+    // 同 id 材料追加 v2(正文不同)→ 冻结闭包多一条历史版本,实质输入变化;
+    // MCP 领取/回执链的戳另有全量序列化实现(student-ai-queue contextVersionOf),
+    // 本戳只服务页内即算即用,改输入无在途兼容面
+    db.insert(attemptContextSnapshots)
+      .values({
+        id: randomUUID(),
+        attemptId: world.attemptId,
+        kind: "material",
+        sourceId: "m-mat-1",
+        sourceVersion: 2,
+        snapshotJson: JSON.stringify({
+          id: "m-mat-1",
+          title: "阅读材料",
+          contentMd: "第二版正文:材料实质变了。",
+          anchors: [],
+          slots: [{ id: "m-slot-1", slotKind: "match", order: 0 }],
+          mediaPaths: [],
+        }),
+        frozenAt: NOW,
+      })
+      .run();
+    const b = buildAiContextBundle(db, world, {
+      now: LATER,
+      hmacSecret: SECRET_A,
+    });
+    expect(b.snapshot.materials).toHaveLength(2);
+    expect(b.contextVersion).not.toBe(a.contextVersion);
+    db.$client.close();
+  });
+
   it("contextVersion 由服务端密钥参与(HMAC):换密钥即换标识,裸 sha256 猜测不可复现", () => {
     const db = createTestDb();
     const world = setupWorld(db);
@@ -1090,5 +1130,241 @@ describe("SAI-09 边界", () => {
       teacherB,
     ]);
     db.$client.close();
+  });
+});
+
+// ---------- QM-17 细项 1/5：新题型 × 材料闭包 × 结构化文本（双断言） ----------
+
+const MAT_SENTINEL_CONTENT =
+  "阅读材料正文哨兵:The passage mentions {{m-slot-1}} twice.";
+const MATCHING_STEM = "MQ-配对题干哨兵:把人物与作品配对。";
+const MATCHING_SOLUTION = "MQ-官方解析哨兵:按时间线对应。";
+
+/** matching 世界：组材料 + 冻结组/材料快照 + matching 冻结行（含选项池与参考） */
+function setupMatchingWorld(
+  db: Db,
+  opts?: {
+    answer?: StudentAnswer | null;
+    submitted?: boolean;
+    mode?: "open_study" | "guided_only" | "post_submit_only";
+  },
+): {
+  studentId: string;
+  attemptId: string;
+  questionId: string;
+  responseId: string;
+} {
+  const studentId = makeStudent(db);
+  const assignmentId = insertAssignment(db);
+  const attemptId = insertAttempt(db, { studentId, assignmentId });
+  if (opts?.mode !== undefined) setTeacherDefaultMode(db, opts.mode);
+  const snapshotJson = snapshotJsonOf({
+    id: "mq-1",
+    type: "matching",
+    stemMd: MATCHING_STEM,
+    options: undefined,
+    answers: { kind: "matching", pairs: { "m-slot-1": "m-opt-1" } },
+    solutionMd: MATCHING_SOLUTION,
+    matchingOptions: {
+      allowRepeat: false,
+      options: [
+        { id: "m-opt-1", text: "甲作品", distractor: false },
+        { id: "m-opt-2", text: "乙作品", distractor: true },
+      ],
+    },
+    materialRefs: [{ material: "m-mat-1", slots: "m-slot-1" }],
+    sourceMd: ":::::question{type=matching}",
+  });
+  const responseId = insertResponse(db, attemptId, "mq-1", {
+    snapshotJson,
+    answer:
+      opts?.answer === undefined
+        ? { kind: "matching", pairs: { "m-slot-1": "m-opt-1" } }
+        : opts.answer,
+    submittedAt: opts?.submitted === true ? NOW : null,
+  });
+  db.insert(attemptContextSnapshots)
+    .values([
+      {
+        id: randomUUID(),
+        attemptId,
+        kind: "material",
+        sourceId: "m-mat-1",
+        sourceVersion: 1,
+        snapshotJson: JSON.stringify({
+          id: "m-mat-1",
+          title: "阅读材料",
+          contentMd: MAT_SENTINEL_CONTENT,
+          anchors: [],
+          slots: [{ id: "m-slot-1", slotKind: "match", order: 0 }],
+          mediaPaths: [],
+        }),
+        frozenAt: NOW,
+      },
+      {
+        id: randomUUID(),
+        attemptId,
+        kind: "group",
+        sourceId: "m-grp-1",
+        sourceVersion: 1,
+        snapshotJson: JSON.stringify({
+          id: "m-grp-1",
+          title: "配对组",
+          introMd: "",
+          materialRefs: [{ material: "m-mat-1" }],
+          questionIds: ["mq-1"],
+        }),
+        frozenAt: NOW,
+      },
+    ])
+    .run();
+  return { studentId, attemptId, questionId: "mq-1", responseId };
+}
+
+describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双断言", () => {
+  it("允许场景(开放伴学):材料与结构化答案进快照与出站载荷;参考答案为可读标签非裸 id", () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db);
+    const bundle = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    // 材料：冻结闭包投影，正文槽位编号（（1））
+    expect(bundle.snapshot.materials).toEqual([
+      {
+        title: "阅读材料",
+        contentMd: "阅读材料正文哨兵:The passage mentions **（1）** twice.",
+      },
+    ]);
+    // 学生答案：结构化文本（第 N 空 = 选项正文），非裸 id
+    expect(bundle.snapshot.studentAnswerText).toBe("第 1 空 = 甲作品");
+    // 参考答案：可读标签（同一结构装配）
+    expect(bundle.snapshot.referenceAnswerMd).toBe("第 1 空 = 甲作品");
+    const assembly = assembleOutboundMessages({
+      bundle,
+      studentQuestion: "第二空怎么选？",
+    });
+    const allText = assembly.messages
+      .map((message) => message.content)
+      .join("\n");
+    expect(allText).toContain("## 共享材料");
+    expect(allText).toContain("阅读材料");
+    expect(allText).toContain("**（1）**");
+    expect(allText).toContain("第 1 空 = 甲作品");
+    // 双断言之「允许侧」：本题答案与解析确实进入外发载荷
+    expect(allText).toContain(MATCHING_SOLUTION);
+  });
+
+  it("禁止场景(post_submit_only 作答中):拒绝装配,无任何答案/解析/材料正文外泄面", () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db, { mode: "post_submit_only" });
+    expectHttpError(
+      () => buildAiContextBundle(db, world, { now: NOW, hmacSecret: SECRET_A }),
+      403,
+      "AI_POLICY_DISABLED",
+    );
+  });
+
+  it("自评不冒充已提交:行未 submittedAt 时 post_submit_only 仍拒绝;提交后换复盘尺度", () => {
+    const db = createTestDb();
+    const before = setupMatchingWorld(db, {
+      mode: "post_submit_only",
+      submitted: false,
+    });
+    expectHttpError(
+      () =>
+        buildAiContextBundle(db, before, { now: NOW, hmacSecret: SECRET_A }),
+      403,
+      "AI_POLICY_DISABLED",
+    );
+    // 同一学生交卷（assignment 完成态单源 = attempt 已提交;自评三列与解锁无关）
+    db.update(responses)
+      .set({
+        submittedAt: NOW,
+        selfReviewVerdict: "correct",
+        selfReviewAt: NOW,
+        selfReviewRevision: 1,
+      })
+      .where(eq(responses.id, before.responseId))
+      .run();
+    db.update(attempts)
+      .set({ status: "submitted", submittedAt: NOW })
+      .where(eq(attempts.id, before.attemptId))
+      .run();
+    const bundle = buildAiContextBundle(db, before, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    expect(bundle.completed).toBe(true);
+    expect(bundle.promptTemplateKey).toBe("review");
+  });
+
+  it("出站重装配走任务行冻结材料段(outboundAssemblyOfTask 单源),旧任务无材料键不携带", async () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db);
+    const taskId = insertTask(db, {
+      studentId: world.studentId,
+      attemptId: world.attemptId,
+      questionId: world.questionId,
+    });
+    const bundle = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    const taskRowOf = () =>
+      db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get();
+    db.update(aiTasks)
+      .set({ contextSnapshotJson: JSON.stringify(bundle.snapshot) })
+      .where(eq(aiTasks.id, taskId))
+      .run();
+    insertMessage(db, taskId, "student", "怎么配对？", NOW);
+    const taskRow = taskRowOf();
+    if (taskRow === undefined) throw new Error("任务行缺失");
+    const assembly = outboundAssemblyOfTask(db, taskRow);
+    const allText = assembly.messages
+      .map((message) => message.content)
+      .join("\n");
+    expect(allText).toContain("## 共享材料");
+    // 旧任务形态:无 materials 键的快照仍可装配(不带材料段)
+    db.update(aiTasks)
+      .set({
+        contextSnapshotJson: JSON.stringify({
+          ...bundle.snapshot,
+          materials: undefined,
+        }),
+      })
+      .where(eq(aiTasks.id, taskId))
+      .run();
+    const legacyRow = taskRowOf();
+    if (legacyRow === undefined) throw new Error("任务行缺失");
+    const legacy = outboundAssemblyOfTask(db, legacyRow);
+    const legacyText = legacy.messages
+      .map((message) => message.content)
+      .join("\n");
+    expect(legacyText).not.toContain("## 共享材料");
+    expect(legacyText).not.toContain(
+      MAT_SENTINEL_CONTENT.replace("{{m-slot-1}}", "**（1）**"),
+    );
+  });
+
+  it("审查 P1：附件在场时共享材料段仍在出站文本中（书写材料与共享材料拼接，不互斥）", () => {
+    const db = createTestDb();
+    const world = setupMatchingWorld(db);
+    const bundle = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    const assembly = assembleOutboundMessages({
+      bundle,
+      studentQuestion: "结合我的笔迹图看推导错在哪",
+      materials: [{ kind: "draft", pageIndex: 0, byteSize: 2048 }],
+    });
+    // 两段并存：书写材料提示行（附件）+ 共享材料正文（配对题面不可独立
+    // 阅读，附件不能挤掉材料正文——此前互斥三元在此丢段）
+    expect(assembly.contextDataMd).toContain("## 书写材料");
+    expect(assembly.contextDataMd).toContain("随本消息附带 1 张书写材料图片");
+    expect(assembly.contextDataMd).toContain("## 共享材料");
+    expect(assembly.contextDataMd).toContain("阅读材料正文哨兵");
+    expect(assembly.contextDataMd).toContain("**（1）**");
   });
 });

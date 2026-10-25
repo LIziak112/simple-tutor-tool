@@ -750,6 +750,12 @@ export function publicOfSnapshot(
       ? orderingStudentOf(structure.orderingItems)
       : {}),
     ...matchingSlotsProjection(structure, options.materialSlots),
+    // 审查 P2-2：题级材料引用随公开投影下发（材料 id 与选择串属题面公开
+    // 内容；web 单题导出闭包据此与服务端组∪题级同源）。旧快照经
+    // effectiveStructureOfSnapshot 兜底重抽同样携带；无引用题不注入键
+    ...(structure.materialRefs !== undefined
+      ? { materialRefs: structure.materialRefs }
+      : {}),
     hintCount: question.hints.length,
     questionRevisionId,
   });
@@ -906,26 +912,33 @@ export function materialSlotOrderOf(
 }
 
 /**
- * 快照 → 完整公开结构集（QM-13 保存校验用）：matching 选项池 + 展开槽位
- * 集合、ordering 项；旧快照（三键全缺）先经 effectiveStructureOfSnapshot
- * 兜底重抽（审查 P2-1）。结构仍缺失（选项池/排序项/材料槽位快照不可用或
- * 重抽未命中）按 emptyPublicStructure 防御形态（inspectShape 对空结构无从
- * 校验即放行，只影响该维度校验，不影响其余防线）。
+ * 快照 → 完整公开结构集（QM-13 保存校验用；QM-16 起导出/序列化共用出口）：
+ * matching 选项池 + 展开槽位集合、ordering 项；旧快照（三键全缺）先经
+ * effectiveStructureOfSnapshot 兜底重抽（审查 P2-1）。结构仍缺失（选项池/
+ * 排序项/材料槽位快照不可用或重抽未命中）按 emptyPublicStructure 防御形态
+ * （inspectShape 对空结构无从校验即放行，只影响该维度校验，不影响其余防线）。
+ * QM-16：matchingSlots 行附材料槽位序 ordinal 映射进结构（slotOrdinals），
+ * 文本化「第 N 空」与材料面板（N）编号同口径——待批队列/CSV/单题包/AI
+ * 受控出口的配对答案序列化共用本函数，不另写结构装配。
  */
-function structuresOfSnapshot(
+export function structuresOfSnapshot(
   snapshot: Question,
   materialSlots: ReadonlyMap<string, readonly string[]>,
   unitId: string | null,
 ): PublicStructureByKind {
   const structure = effectiveStructureOfSnapshot(snapshot, unitId);
+  const matchingSlots =
+    structure.matchingOptions !== undefined
+      ? (matchingSlotsProjection(structure, materialSlots).matchingSlots ?? [])
+      : [];
   const matching =
     structure.matchingOptions !== undefined
       ? matchingPublicStructureOf(
           structure.matchingOptions,
           // 结构校验只认槽位 id 集合（P2-2 的 ordinal 是呈现用材料序，校验零消费）
-          matchingSlotsProjection(structure, materialSlots).matchingSlots?.map(
-            (row) => row.id,
-          ) ?? [],
+          matchingSlots.map((row) => row.id),
+          // QM-16：ordinal 映射（slotOrdinals）——结构校验零消费，序列化消费
+          Object.fromEntries(matchingSlots.map((row) => [row.id, row.ordinal])),
         )
       : emptyPublicStructure.matching;
   const ordering =
