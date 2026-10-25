@@ -10,6 +10,112 @@ import {
 } from "./helpers";
 
 test(
+  "选择题紧凑排版保留触控高度、长选项与草稿空间",
+  {
+    tag: ["@student"],
+  },
+  async ({ page, request }, testInfo) => {
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const title = `紧凑排版${suffix}`;
+    const courseId = await createCourseViaApi(request, title);
+    const longOption =
+      "这是一段用于检查窄屏自然换行的长选项，包含完整的条件说明与推理过程，不能截断或省略正文。";
+    const markdown = [
+      "---",
+      "kind: practice",
+      `unit: ${title}`,
+      "---",
+      "",
+      '::::question{type=choice difficulty=1 knowledge="数据结构"}',
+      "可以用（ ）定义一个完整的数据结构。",
+      "",
+      "- [ ] 数据元素",
+      "- [ ] 数据对象",
+      "- [ ] 数据关系",
+      "- [x] 抽象数据类型",
+      "::::",
+      "",
+      '::::question{type=multi difficulty=1 knowledge="数据结构"}',
+      "选择符合条件的说明。",
+      "",
+      "- [x] 树",
+      `- [ ] ${longOption}`,
+      "- [x] $x^2 + y^2 = 1$",
+      "::::",
+    ].join("\n");
+    const imported = await request.post("/api/teacher/import/commit", {
+      data: { markdown, filename: `${title}.md`, courseId },
+    });
+    expect(imported.ok(), await imported.text()).toBe(true);
+    await setCourseItemVisible(request, courseId, title, true);
+    const loginName = `density-${suffix}`;
+    await request.post("/api/teacher/students", {
+      data: { displayName: "紧凑排版测试生", loginName },
+    });
+    const student = await getStudentViaApi(request, loginName);
+    await addCourseMemberViaApi(request, courseId, student.id);
+    await page.goto(`/s/${student.linkToken}`);
+    await page.waitForURL("**/s/home");
+    await openChoicePractice(page, courseId, title, title);
+    const first = page.getByRole("article", { name: "第 1 题", exact: true });
+    const second = page.getByRole("article", { name: "第 2 题", exact: true });
+    const options = first
+      .getByRole("radiogroup", { name: "选项", exact: true })
+      .locator("label");
+    const checkDensity = async () => {
+      await expect(options).toHaveCount(4);
+      for (const option of await options.all()) {
+        const box = await option.boundingBox();
+        expect(box?.height).toBeGreaterThanOrEqual(44);
+        expect(box?.height).toBeLessThanOrEqual(48);
+      }
+      const boxes = await Promise.all([
+        first.boundingBox(),
+        second.boundingBox(),
+      ]);
+      const [a, b] = boxes;
+      expect(a).not.toBeNull();
+      expect(b).not.toBeNull();
+      if (a && b) expect(b.y - a.y - a.height).toBeCloseTo(12, 0);
+    };
+    for (const width of [1440, 820, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await checkDensity();
+      await expect(second.getByText(longOption, { exact: true })).toBeVisible();
+      expect(
+        await second.evaluate((card) => card.scrollWidth <= card.clientWidth),
+      ).toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath(`compact-${width}.png`),
+        fullPage: true,
+      });
+    }
+    const longBox = await second
+      .getByRole("checkbox")
+      .nth(1)
+      .locator("..")
+      .boundingBox();
+    expect(longBox?.height).toBeGreaterThan(48);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const paper = first.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ });
+    await paper.click();
+    await checkDensity();
+    await page.screenshot({
+      path: testInfo.outputPath("compact-with-paper.png"),
+      fullPage: true,
+    });
+    await paper.click();
+    await options.nth(1).click();
+    await expect(first.getByRole("radio").nth(1)).toBeChecked();
+    await second.getByRole("checkbox").first().locator("..").click();
+    await second.getByRole("checkbox").nth(2).locator("..").click();
+    await expect(second.getByRole("checkbox").first()).toBeChecked();
+    await expect(second.getByRole("checkbox").nth(2)).toBeChecked();
+  },
+);
+
+test(
   "混合题型外框共享父列边缘，草稿偏好与助教开合后保持对齐",
   { tag: ["@student"] },
   async ({ page, request }, testInfo) => {
