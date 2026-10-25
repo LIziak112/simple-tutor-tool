@@ -1,4 +1,5 @@
 import type { LessonBlock, LintIssue } from "@tutor/contract";
+import { isGroupContainer, isMaterialContainer } from "./materials.ts";
 import { defaultQuestionIdOf, isQuestionContainer } from "./question.ts";
 import {
   FALLBACK_UNIT_ID,
@@ -53,7 +54,21 @@ export function splitLessonBlocks(
   let cursor = 1; // 下一个 md 段的起始行（1 起）
   let ordinal = 0; // 题块序号（按全部题块计，与解析器缺省 id 占号一致）
   for (const child of tree.children) {
-    if (!isQuestionContainer(child)) continue;
+    if (!isQuestionContainer(child)) {
+      // QM-14：材料/组容器是单元结构（与题块同规则剔除）——学生侧正文经
+      // 冻结上下文投影（MaterialPanel）按组呈现，容器原文（含 {{slot}} 槽位
+      // 标记与 ::ref 指令文本）不随 md 段下发
+      if (isMaterialContainer(child) || isGroupContainer(child)) {
+        pushMdBlock(
+          blocks,
+          lines,
+          cursor,
+          (child.position?.start.line ?? 1) - 1,
+        );
+        cursor = (child.position?.end.line ?? 1) + 1;
+      }
+      continue;
+    }
     const [startLine, endLine] = [
       child.position?.start.line ?? 1,
       child.position?.end.line ?? 1,
