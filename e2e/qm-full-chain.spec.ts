@@ -56,7 +56,9 @@ import {
  * 6. 健壮性（W2 长卷）：断网草稿保底、保存失败保留现场、换账号隔离。
  *
  * 全程对学生端 /api/student/* 响应做键名级泄露检查 + QM 语料详解哨兵内容级
- * 检查（口径同 helpers.attachLeakMonitor，豁免端点一致）。
+ * 检查（键级口径同 helpers.attachLeakMonitor 三档分层：全局仅 hintCount/
+ * hintsUsed；answers/solutionMd 仅尝试详情与错题本按端点放行；逐题回执/
+ * 题级反馈/lesson 开卷按端点整体豁免）。
  */
 
 const SAMPLES_DIR = join(
@@ -110,7 +112,7 @@ function worldOf(key: "W1" | "W2" | "W3" | "W4" | "W5"): TeacherWorld {
 
 let studentContext: BrowserContext;
 
-/** QM 对上的泄露监控（同 helpers.attachLeakMonitor 口径，哨兵扩 QM 语料） */
+/** QM 对上的泄露监控（键级同 helpers.attachLeakMonitor 三档口径，哨兵扩 QM 语料） */
 function attachQmLeakMonitor(page: Page): {
   violations: () => readonly string[];
   drain: () => Promise<void>;
@@ -124,7 +126,14 @@ function attachQmLeakMonitor(page: Page): {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   };
-  const allowed = new Set(["hintCount", "hintsUsed", "answers", "solutionMd"]);
+  // 键级三档（对齐 helpers.attachLeakMonitor）：全局仅公开计数；
+  // answers/solutionMd 只在合法端点按层放行——尝试详情（lesson/逐题卷单题
+  // 提交后重取携带已释放行，题级粒度设计内）与错题本（条目只来自已交卷
+  // 已判定作答）；逐题回执/题级反馈/lesson 开卷在上方提前 return 整体豁免，
+  // 不到键级检查（审查 P2-1：此前全局放行会把 /context 等载荷的 answers
+  // 键漏检降级为纯内容级兜底）。
+  const allowed = new Set(["hintCount", "hintsUsed"]);
+  const allowedReleased = new Set(["answers", "solutionMd"]);
   page.on("response", (response) => {
     const url = response.url();
     if (!url.includes("/api/student/")) return;
@@ -153,6 +162,9 @@ function attachQmLeakMonitor(page: Page): {
     if (!contentType.includes("application/json")) return;
     const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
     const isWrongQuestions = /\/api\/student\/wrong-questions/.test(url);
+    const isAttemptDetail = /\/api\/student\/attempts\/[^/]+$/.test(url);
+    const keyAllowed =
+      isAttemptDetail || isWrongQuestions ? allowedReleased : undefined;
     pending++;
     void response
       .text()
@@ -169,6 +181,7 @@ function attachQmLeakMonitor(page: Page): {
             for (const [key, child] of Object.entries(node)) {
               const forbidden =
                 !allowed.has(key) &&
+                !(keyAllowed?.has(key) ?? false) &&
                 (FORBIDDEN_EXACT_KEYS.has(key) ||
                   FORBIDDEN_KEY_PREFIXES.some((prefix) =>
                     key.startsWith(prefix),
