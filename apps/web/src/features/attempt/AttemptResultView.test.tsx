@@ -1088,6 +1088,8 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
           answers: { kind: "judge" as const, value: true },
           solutionMd: null,
           answer: { kind: "judge" as const, value: true },
+          answered: true,
+          studentFlag: null,
           autoCorrect: true,
           teacherMark: null,
           teacherComment: null,
@@ -1298,6 +1300,8 @@ describe("QM-11 自评三态与动作（结果视图）", () => {
             answers: { kind: "final", answer: "2" },
             solutionMd: "1+1=2。",
             answer: { kind: "final", finalAnswer: "2" },
+            answered: true,
+            studentFlag: null,
             autoCorrect: null,
             teacherMark,
             teacherComment: null,
@@ -1405,6 +1409,8 @@ describe("QM-12 得分汇总卡有效判定口径（结果视图）", () => {
     finalCorrect: null,
     gradingPolicy: "reference_self",
     selfReview,
+    answered: true,
+    studentFlag: null,
     hintsOpened: [],
   });
 

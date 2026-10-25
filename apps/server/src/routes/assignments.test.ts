@@ -929,7 +929,9 @@ describe("多单元取卷与作答（D12）", () => {
       total: 4,
       answered: 3,
       correct: 2,
-      wrong: 1,
+      // QM-12 有效判定口径：未做判错计入 wrong（未做仍进分母，端上按
+      // answered 灰显「未做」——两维度正交）
+      wrong: 2,
       pending: 0,
       unanswered: 1,
       autoGradable: 4,

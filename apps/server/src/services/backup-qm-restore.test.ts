@@ -334,6 +334,8 @@ function makeQmWorld(tag: string): QmWorld {
       autoCorrect: false,
       finalCorrect: false,
       gradingPolicy: "auto",
+      // #6980-3：已答维度随判分写点落库（模拟交卷链路成对写入）
+      answered: true,
     })
     .where(eq(responses.id, submitted.rowIds[0] ?? ""))
     .run();

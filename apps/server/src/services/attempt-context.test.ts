@@ -596,6 +596,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         // 聚合按未判断行处理（种子补 autoCorrect 镜像，模拟自动判错轮）
         autoCorrect: config.finalCorrect,
         finalCorrect: config.finalCorrect,
+        // #6980-3：已答维度随判分写点落库——已判定轮按「答了」种子（错题本
+        // 入本口径 answered && 判错）
+        answered: true,
         answerRevision: 0,
         hintsUsed: 0,
         changeCount: 0,

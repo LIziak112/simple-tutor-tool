@@ -842,8 +842,9 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     // 错；两道 fill 不进分母）= 50（四舍五入百分比）
     expect(data.attempt.scoreAuto).toBe(50);
     expect(data.summary.correct).toBe(2);
-    // 未答 choice 判错但未做，不计答错（#6980-3 口径统一）
-    expect(data.summary.wrong).toBe(1);
+    // 未答 choice 判错计入 wrong（QM-12 有效判定：未做仍进分母；端上按
+    // answered 维度灰显「未做」，#6980-3 两维度正交）
+    expect(data.summary.wrong).toBe(2);
     expect(data.summary.pending).toBe(4);
     expect(data.summary.unanswered).toBe(4);
     expect(data.summary.autoGradable).toBe(4);

@@ -158,6 +158,8 @@ function summaryRow(partial: {
   gradingPolicy?: "auto" | "reference_self" | "manual_only" | null;
   teacherMark?: string | null;
   selfReviewVerdict?: "correct" | "wrong" | null;
+  /** #6980-3：已答口径（判分写点落库）；缺省按「有文本作答」推导（answerJson 非空） */
+  answered?: boolean;
 }): Parameters<typeof scoreSummaryCoreOf>[0][number] {
   return {
     hasSnapshot: partial.hasSnapshot ?? true,
@@ -171,6 +173,7 @@ function summaryRow(partial: {
     selfReviewAt:
       partial.selfReviewVerdict === null ? null : "2026-10-25T00:00:00.000Z",
     selfReviewRevision: 0,
+    answered: partial.answered ?? partial.answerJson !== null,
   };
 }
 

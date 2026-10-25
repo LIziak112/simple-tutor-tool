@@ -16,6 +16,7 @@ const row = (
       | "selfReview"
       | "finalCorrect"
       | "autoCorrect"
+      | "answered"
     >
   > = {},
 ) => ({
@@ -24,6 +25,9 @@ const row = (
   selfReview: null,
   finalCorrect: null,
   autoCorrect: null,
+  // #6980-3：已答维度缺省「答了」（旧行判错场景不灰显「未做」；未做场景
+  // 显式传 answered: false）
+  answered: true,
   ...overrides,
 });
 

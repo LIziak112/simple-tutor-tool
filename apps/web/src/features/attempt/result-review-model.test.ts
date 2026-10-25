@@ -53,7 +53,7 @@ describe("回看展示模型", () => {
       ).verdict,
     ).toBeNull();
   });
-  it("教师最终判定优先，未答与判错独立（answered 口径：判错的未做行不计答错）", () => {
+  it("教师最终判定优先，未答与判定两维度正交（answered 口径：判错的未做行仍进答错分母）", () => {
     expect(reviewQuestionState(question, true)).toEqual({
       verdict: false,
       unanswered: false,
@@ -63,10 +63,12 @@ describe("回看展示模型", () => {
       verdict: false,
       unanswered: true,
     });
-    // 判错的未做行（empty）只进未作答计数，不进判错（#6980-3 口径统一）
+    // 判错的未做行（empty）同时进未作答与答错（#6980-3 × QM-12 两维度
+    // 正交：未做仍进分母，与服务端 summary 同口径；题卡灰显「未做」走
+    // verdictBadgeDisplayOf 的 notDone，不以计数掩盖判定）
     expect(reviewCounts([question, empty], true)).toEqual({
       correct: 0,
-      wrong: 1,
+      wrong: 2,
       pending: 0,
       unanswered: 1,
     });
