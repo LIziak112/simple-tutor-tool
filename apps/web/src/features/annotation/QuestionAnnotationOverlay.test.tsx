@@ -14,6 +14,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   AttemptEditorNotice,
   AttemptEditorProvider,
+  useAttemptEditor,
 } from "@/features/attempt/AttemptEditorContext";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
@@ -59,6 +60,16 @@ vi.mock("./question-base-image", () => ({
 vi.mock("./question-annotation-base", () => ({
   prepareQuestionAnnotationBase: vi.fn(),
 }));
+// 只包装 overlay 收笔链路里的单题 settle 供断言（其余保持真实实现）。
+vi.mock("./annotation-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./annotation-store")>();
+  return {
+    ...actual,
+    settleAnnotationRecordPersistence: vi.fn(
+      actual.settleAnnotationRecordPersistence,
+    ),
+  };
+});
 
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import {
@@ -92,6 +103,15 @@ const layout: AnnotationSurfaceLayout = {
   geometrySignature: "b".repeat(64),
   fontSignature: "c".repeat(64),
 };
+/** 模拟切题收笔：对协调器发起本题 flush（标注/草稿/手写固定顺序）。 */
+function FlushButton({ questionId }: { questionId: string }) {
+  const editor = useAttemptEditor(null);
+  return (
+    <button type="button" onClick={() => void editor?.flush(questionId)}>
+      flush
+    </button>
+  );
+}
 function Harness({ hidden = false }: { hidden?: boolean }) {
   const ref = useRef<QuestionAnnotationOverlayHandle>(null);
   return (
@@ -101,6 +121,7 @@ function Harness({ hidden = false }: { hidden?: boolean }) {
         标画
       </button>
       <input aria-label="正常答案" />
+      <FlushButton questionId={question.id} />
       <QuestionAnnotationOverlay
         ref={ref}
         attemptId={scope.attemptId}
@@ -338,33 +359,90 @@ it("题面变化时先收笔，核对期间切工具继续保持输入保护", a
     expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
   );
 });
-it("布局不匹配时从圈画入口查看原稿，保留唯一原生作答且不启用编辑", async () => {
+it("布局不匹配且有本机底图时内联固定底图续画，不弹只读弹窗且题面保持可作答", async () => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
   const before = await getAnnotationRecord(session, scope);
   render(<Harness />);
   await waitFor(() => expect(questionSurfaceMatchesLayout).toHaveBeenCalled());
-  expect(screen.queryByRole("img", { name: /原标画底图/ })).toBeNull();
-  expect(screen.queryByText(/答案在下方填写/)).toBeNull();
-  expect(
-    document.querySelector('[data-slot="question-surface"]'),
-  ).toBeVisible();
+  // 被动核对失败即出现续画区块（说明 + 固定底图工作台），不进弹窗。
+  expect(await screen.findByText(/题面已固定为保存时的底图/)).toBeVisible();
+  const continuationImage = await screen.findByRole("img", {
+    name: "第1题题干标注底图",
+  });
+  expect(continuationImage).toHaveAttribute("src", "blob:annotation-test");
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(
     document.querySelector('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert");
-  fireEvent.click(screen.getByText("标画"));
-  expect(
-    await screen.findByRole("dialog", { name: "第1题原圈画" }),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("img", { name: "第1题原圈画底图", hidden: true }),
-  ).toHaveAttribute("src", "blob:annotation-test");
-  expect(screen.queryByText(/请重新开始练习/)).toBeNull();
   expect(screen.getAllByLabelText("正常答案")).toHaveLength(1);
+  expect(screen.queryByRole("toolbar", { name: "第1题标画工具栏" })).toBeNull();
+  // 重复点击圈画：重校验仍不匹配 → 续画区块恢复展开，仍不自动弹只读弹窗。
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() =>
+    expect(prepareQuestionAnnotationBase).toHaveBeenCalledTimes(1),
+  );
+  expect(await screen.findByText(/题面已固定为保存时的底图/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "收起固定底图圈画" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByText(/请重新开始练习/)).toBeNull();
   expect((await getAnnotationRecord(session, scope))?.pending).toEqual(
     before?.pending,
   );
   expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
-  expect(screen.queryByRole("toolbar")).toBeNull();
+});
+
+it("布局不匹配时续画区块可收起，留入口按钮可再展开", async () => {
+  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+  render(<Harness />);
+  await screen.findByText(/题面已固定为保存时的底图/);
+  fireEvent.click(screen.getByRole("button", { name: "收起固定底图圈画" }));
+  expect(
+    await screen.findByRole("button", { name: "在固定底图上圈画" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("img", { name: "第1题题干标注底图" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "在固定底图上圈画" }));
+  expect(
+    await screen.findByRole("img", { name: "第1题题干标注底图" }),
+  ).toBeVisible();
+});
+
+it("展开续画再收起后切题 flush 仍收笔并落盘本题标画", async () => {
+  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+  render(<Harness />);
+  // 等内嵌工作台真正挂载（objectURL 就绪后第二拍渲染）再断言注册归属。
+  await screen.findByRole("img", { name: "第1题题干标注底图" });
+  const settleRecord = vi.mocked(settleAnnotationRecordPersistence);
+  // 续画工作台挂载期间持有本题收笔注册：flush 走工作台收笔（引擎 finish）。
+  const finishes = engine.finish.mock.calls.length;
+  fireEvent.click(screen.getByRole("button", { name: "flush" }));
+  await waitFor(() =>
+    expect(engine.finish.mock.calls.length).toBeGreaterThan(finishes),
+  );
+  expect(settleRecord).not.toHaveBeenCalled();
+  // 收起工作台后注册键交还 overlay：flush 仍 settle 本题标画持久化。
+  fireEvent.click(screen.getByRole("button", { name: "收起固定底图圈画" }));
+  await screen.findByRole("button", { name: "在固定底图上圈画" });
+  settleRecord.mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "flush" }));
+  await waitFor(() =>
+    expect(settleRecord).toHaveBeenCalledWith(session, scope),
+  );
+});
+
+it("布局恢复匹配后再次圈画回到原位编辑，续画区块退场", async () => {
+  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+  render(<Harness />);
+  await screen.findByRole("button", { name: "收起固定底图圈画" });
+  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(true);
+  fireEvent.click(screen.getByText("标画"));
+  await screen.findByRole("toolbar", { name: "第1题标画工具栏" });
+  expect(screen.queryByText(/题面已固定为保存时的底图/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "在固定底图上圈画" })).toBeNull();
+  expect(
+    document.querySelector('[data-slot="question-surface"]'),
+  ).toHaveAttribute("inert");
 });
 
 it("无保存布局时题面和标画容器共同跟随父列宽度", async () => {
@@ -387,17 +465,18 @@ it("无保存布局时题面和标画容器共同跟随父列宽度", async () =
   }
 });
 
-it("隐藏再显示题面不复开原稿弹窗，查看保留本机待传材料", async () => {
+it("隐藏时收起续画区块，重新显示不复开只读弹窗且保留本机待传材料", async () => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
   const before = await getAnnotationRecord(session, scope);
   const { rerender } = render(<Harness />);
-  await waitFor(() => expect(questionSurfaceMatchesLayout).toHaveBeenCalled());
-  fireEvent.click(screen.getByText("标画"));
-  await screen.findByRole("dialog", { name: "第1题原圈画" });
-  expect(screen.getByText("本设备有尚未同步的圈画。")).toBeVisible();
+  await screen.findByText(/题面已固定为保存时的底图/);
   rerender(<Harness hidden />);
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByText(/题面已固定为保存时的底图/)).toBeNull(),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
   rerender(<Harness />);
+  await screen.findByText(/题面已固定为保存时的底图/);
   expect(screen.queryByRole("dialog")).toBeNull();
   const after = await getAnnotationRecord(session, scope);
   expect(after?.doc).toEqual(before?.doc);
@@ -432,6 +511,9 @@ it("旧稿缺少布局信息仍能查看云端原底图，读取不创建待传�
     "src",
     "/legacy.png",
   );
+  // v1 底图无 layout：无续画区块，仍自动弹只读原稿弹窗（回归）。
+  expect(screen.queryByText(/题面已固定为保存时的底图/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "在固定底图上圈画" })).toBeNull();
   expect(prepareQuestionAnnotationBase).not.toHaveBeenCalled();
   expect((await getAnnotationRecord(session, scope))?.pending).toBeNull();
 });

@@ -28,6 +28,7 @@ import {
   useSessionInputPreference,
 } from "@/features/ink/input-preference";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import { studentAnnotationBasePngUrl } from "@/lib/api";
 import {
   getAnnotationRecord,
   settleAnnotationPersistence,
@@ -46,12 +47,42 @@ import {
   useAnnotationSessionRef,
 } from "./use-annotation-record";
 
+/**
+ * 工作台实际消费的最小底图结构（不携带服务器身份字段——续画场景由本机
+ * PNG 组装，禁止为 localBase 合成假 AnnotationBaseRef）。
+ */
+export interface AnnotationWorkspaceBase {
+  pixelWidth: number;
+  pixelHeight: number;
+  downloadUrl: string;
+}
+
+/** 契约底图引用 → 工作台底图（ready 且像素宽高非空才可用）。downloadUrl 缺失时按 attemptId 直构学生直出路由（与服务端同源单源）。 */
+export function annotationWorkspaceBaseOf(
+  ref: AnnotationBaseRef,
+  attemptId: string,
+): AnnotationWorkspaceBase | null {
+  if (
+    ref.state !== "ready" ||
+    ref.pixelWidth === null ||
+    ref.pixelHeight === null
+  ) {
+    return null;
+  }
+  return {
+    pixelWidth: ref.pixelWidth,
+    pixelHeight: ref.pixelHeight,
+    downloadUrl:
+      ref.downloadUrl ?? studentAnnotationBasePngUrl(attemptId, ref.baseId),
+  };
+}
+
 export interface AnnotationWorkspaceProps {
   attemptId: string;
   questionId: string;
   phase: "scratch" | "correction";
-  /** ready 底图引用（像素宽高＝坐标域；downloadUrl 为底图 img src） */
-  base: AnnotationBaseRef;
+  /** 底图（像素宽高＝坐标域；downloadUrl 为底图 img src） */
+  base: AnnotationWorkspaceBase;
   /** 无障碍标签前缀（拼「标注」） */
   ariaPrefix?: string;
 }
@@ -95,10 +126,6 @@ export function AnnotationWorkspace({
 
   const baseWidth = base.pixelWidth;
   const baseHeight = base.pixelHeight;
-  if (baseWidth === null || baseHeight === null) {
-    // 契约保证 ready 底图必带宽高（annotationBaseRefSchema superRefine）
-    throw new Error("ready 底图缺少像素宽高（契约不变量破坏）");
-  }
 
   // 记录未载入（null）时显示加载态；docVersion 用于自写自载守卫
   const doc = record?.doc ?? null;

@@ -40,6 +40,10 @@ import {
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { withTimeout } from "@/features/notes/rasterize-utils";
 import { measureStage } from "@/lib/performance-stages";
+import {
+  AnnotationContinuation,
+  annotationContinuationBaseSource,
+} from "./AnnotationContinuation";
 import { AnnotationOriginal } from "./AnnotationOriginal";
 import {
   getAnnotationRecord,
@@ -267,10 +271,24 @@ export const QuestionAnnotationOverlay = forwardRef<
     record?.base,
     recovery,
   ]);
-  useEffect(
-    () => editor?.register(question.id, finish),
-    [editor?.register, question.id, finish],
+  // 固定底图续画（布局不匹配且底图可读）：本机 PNG 优先，云端 ready 底图需带
+  // layout（v1 无 layout 不支持续画，维持只读原稿弹窗）。
+  const continuationSource = annotationContinuationBaseSource(
+    record,
+    attemptId,
   );
+  const continuationVisible =
+    compatible === false && !hidden && continuationSource !== null;
+  const [continuationExpandSignal, setContinuationExpandSignal] = useState(0);
+  const [continuationWorkspaceActive, setContinuationWorkspaceActive] =
+    useState(false);
+  // 续画工作台挂载期间由其持有 annotation 键的收笔注册（其 finish 含画布收笔，
+  // register 的整体替换语义）；工作台卸载删除该键后这里重新注册自己的 finish，
+  // 保证「展开续画→收起→切题 flush(questionId)」仍会收笔并 settle 本题标画。
+  useEffect(() => {
+    if (continuationWorkspaceActive) return;
+    return editor?.register(question.id, finish);
+  }, [editor?.register, question.id, finish, continuationWorkspaceActive]);
 
   useImperativeHandle(ref, () => ({
     async start() {
@@ -367,7 +385,15 @@ export const QuestionAnnotationOverlay = forwardRef<
             if (signal.aborted) return false;
             setCompatible(matches);
             if (!matches) {
-              setOriginalScope(originalScopeKey);
+              // 有可用冻结底图（本机 PNG 或云端 ready 底图）时不自动弹只读原稿
+              // 弹窗，改为展开固定底图续画区块；不可续画（如 v1 底图无 layout，
+              // 此处防御兜底）时维持只读弹窗现状。
+              const saved = await getAnnotationRecord(session, scope);
+              if (annotationContinuationBaseSource(saved, attemptId) === null) {
+                setOriginalScope(originalScopeKey);
+              } else {
+                setContinuationExpandSignal((value) => value + 1);
+              }
               return false;
             }
             return true;
@@ -680,6 +706,16 @@ export const QuestionAnnotationOverlay = forwardRef<
           )}
         </div>
       </div>
+      {continuationVisible && (
+        <AnnotationContinuation
+          attemptId={attemptId}
+          questionId={question.id}
+          label={label}
+          record={record}
+          expandSignal={continuationExpandSignal}
+          onWorkspaceActiveChange={setContinuationWorkspaceActive}
+        />
+      )}
       {fitScale < 0.85 && (
         <Button
           variant="ghost"
