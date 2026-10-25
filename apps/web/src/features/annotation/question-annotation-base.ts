@@ -135,8 +135,7 @@ export async function prepareQuestionAnnotationBase(
       throw error;
     // 网络失败允许从已经授权显示的公开题面建本机稿，重连时严格绑定。
   }
-  if (base !== null && base.layout === undefined)
-    return { kind: "legacy" };
+  if (base !== null && base.layout === undefined) return { kind: "legacy" };
   if (base?.state === "ready" && base.layout !== undefined) {
     const png = await fetchCloudBasePngWithRetry(
       studentAnnotationBasePngUrl(scope.attemptId, base.baseId),

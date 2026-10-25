@@ -374,9 +374,7 @@ it("重试重放期间打开前置失败沿用横幅语义，不静默吞错", a
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("标画已随交卷固定"),
   );
-  expect(
-    screen.getByRole("button", { name: "重试操作" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "重试操作" })).toBeInTheDocument();
   // 收笔已成功、乙未打开：无活动编辑者（publish(null) 先于 prepare，既有顺序）。
   expect(screen.getByRole("status")).toHaveTextContent("作答");
 });

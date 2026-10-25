@@ -31,7 +31,8 @@ interface EditorContextValue {
   request(
     next: AttemptEditor | null,
     prepare?: (signal: AbortSignal) => Promise<boolean>,
-  ): Promise<boolean>;  register(
+  ): Promise<boolean>;
+  register(
     questionId: string,
     finish: () => Promise<void>,
     kind?: AttemptEditor["kind"],
