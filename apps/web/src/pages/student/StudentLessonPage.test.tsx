@@ -393,7 +393,7 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     const firstCard = screen.getByText("第 1 题").closest("article,div");
     expect(firstCard).not.toBeNull();
     expect(
-      (firstCard.compareDocumentPosition(soloBlock) ?? 0) &
+      (firstCard?.compareDocumentPosition(soloBlock) ?? 0) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
