@@ -72,7 +72,19 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
       // 未做判错（#6980-3）：answered=false 仍进分母，不计判对
       insert.run("blank", "done", "q5", "{}", 0, 0, 0, null, null, null, null);
       // 待批：finalCorrect null 且非 reference_self 行（D4 谓词）
-      insert.run("pending", "done", "q6", "{}", null, null, 1, null, null, null, null);
+      insert.run(
+        "pending",
+        "done",
+        "q6",
+        "{}",
+        null,
+        null,
+        1,
+        null,
+        null,
+        null,
+        null,
+      );
       // 待自评：reference_self 且教师未判且学生未自评
       insert.run(
         "self-pending",
@@ -88,19 +100,7 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         null,
       );
       // 幽灵行（快照缺失）：不计入任何计数
-      insert.run(
-        "ghost",
-        "done",
-        "q8",
-        null,
-        1,
-        1,
-        1,
-        null,
-        null,
-        null,
-        null,
-      );
+      insert.run("ghost", "done", "q8", null, 1, 1, 1, null, null, null, null);
       // 草稿行：整卷不产生结果
       insert.run(
         "draft-row",

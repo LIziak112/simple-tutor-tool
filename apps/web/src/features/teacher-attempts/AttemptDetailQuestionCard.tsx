@@ -218,7 +218,8 @@ function VerdictSection({
   const effective = teacherEffectiveOf(question);
   // #6980-3：判错且未做灰显「未做」——但人工显式判定（教师判/自评）不被
   // 「未做」掩盖，照常红显「答错」
-  const explicit = effective.source === "teacher" || effective.source === "self";
+  const explicit =
+    effective.source === "teacher" || effective.source === "self";
   const final = verdictOf(effective.value, explicit ? true : question.answered);
   const teacher =
     question.teacherMark === null ? null : question.teacherMark === "correct";

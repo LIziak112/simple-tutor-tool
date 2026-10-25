@@ -153,8 +153,8 @@ function DetailSummary({
         )}
         {counts.pendingSelfReviewCount > 0 && (
           <span>
-            待自评 <b className="text-sky-600">{counts.pendingSelfReviewCount}</b>{" "}
-            题
+            待自评{" "}
+            <b className="text-sky-600">{counts.pendingSelfReviewCount}</b> 题
           </span>
         )}
       </p>

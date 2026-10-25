@@ -135,7 +135,8 @@ export function isAnswered(answer: StudentAnswer | undefined): boolean {
  */
 export function formatStudentAnswer(answer: StudentAnswer | null): string {
   if (answer === null) return "未作答";
-  return dispatchBehavior(answer, "display", emptyPublicStructure);
+  // null 仅 teacher-queue 的「未做」口径会产生，display 恒非空——兜底同文案
+  return dispatchBehavior(answer, "display", emptyPublicStructure) ?? "未作答";
 }
 
 /** LaTeX 命令形态（\frac、\pm、\sqrt 等；显示侧判断答案是否要走公式管线） */

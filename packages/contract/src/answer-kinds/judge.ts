@@ -12,7 +12,10 @@ export const judgeBehavior: AnswerKindBehavior<
   { kind: "judge"; value: boolean | string },
   null
 > = {
-  isAnswered: () => true,
+  // #6980-3 收编：旧版空串判断写法算「未做」（isUnanswered 同口径），
+  // 布尔值与非空字符串存在即已答
+  isAnswered: (answer) =>
+    typeof answer.value === "boolean" || answer.value.trim() !== "",
   formatStudent: (answer, profile) => {
     if (typeof answer.value === "boolean") {
       if (profile === "display") return answer.value ? "对" : "错";

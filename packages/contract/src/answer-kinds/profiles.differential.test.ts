@@ -43,6 +43,8 @@ function oldIsAnswered(answer: StudentAnswer | undefined): boolean {
   if (answer === undefined) return false;
   switch (answer.kind) {
     case "judge":
+      // #6980-3 收编：旧版空串判断写法算「未做」（现网 isUnanswered 同口径）
+      return typeof answer.value === "boolean" || answer.value.trim() !== "";
     case "choice":
       return true;
     case "multi":

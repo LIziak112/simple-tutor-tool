@@ -87,9 +87,10 @@ function JudgeControls({
   );
 }
 
-/** judge 的本人答案展示文本（display 口径：布尔→对/错，历史字符串原样，§7.1） */
+/** judge 的本人答案展示文本（display 口径：布尔→对/错，历史字符串原样，§7.1；
+ *  null 仅 teacher-queue 的「未做」口径会产生，display 恒非空——兜底空串） */
 function judgeDisplayText(answer: AnswerOf<"judge">): string {
-  return dispatchBehavior(answer, "display", emptyPublicStructure);
+  return dispatchBehavior(answer, "display", emptyPublicStructure) ?? "";
 }
 
 export const judgeView: AnswerKindView<
