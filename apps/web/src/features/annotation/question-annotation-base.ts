@@ -27,6 +27,38 @@ import {
 } from "./question-base-prewarm";
 import { questionBaseRenderQueue } from "./question-base-render-queue";
 
+/** 云端底图 PNG 下载：失败后退避约 1s 重试一次（每次仍走 15s 超时）；
+ * 取消与会话切换由 guard 在等待间隙同样拦截（直接抛出，不重试）；
+ * 两次都失败才抛「原标画底图下载失败，请重试」。 */
+async function fetchCloudBasePngWithRetry(
+  url: string,
+  guard: () => void,
+): Promise<Blob> {
+  for (let round = 0; round < 2; round++) {
+    if (round > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      guard();
+    }
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    } catch {
+      continue; // 网络中断或超时：退避后重试一次
+    }
+    guard();
+    if (!response.ok) continue;
+    let png: Blob;
+    try {
+      png = await response.blob();
+    } catch {
+      continue; // 字节流读取失败同样按下载失败重试
+    }
+    guard();
+    return png;
+  }
+  throw new Error("原标画底图下载失败，请重试");
+}
+
 export type QuestionAnnotationBaseResult =
   | {
       kind: "surface";
@@ -106,14 +138,10 @@ export async function prepareQuestionAnnotationBase(
   if (base !== null && base.layout === undefined)
     return { kind: "legacy" };
   if (base?.state === "ready" && base.layout !== undefined) {
-    const response = await fetch(
+    const png = await fetchCloudBasePngWithRetry(
       studentAnnotationBasePngUrl(scope.attemptId, base.baseId),
-      { signal: AbortSignal.timeout(15_000) },
+      guard,
     );
-    guard();
-    if (!response.ok) throw new Error("原标画底图下载失败，请重试");
-    const png = await response.blob();
-    guard();
     const layout = base.layout;
     await measureStage("annotation:local-save", () =>
       writeLocalAnnotationBase(

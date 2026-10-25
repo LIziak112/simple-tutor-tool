@@ -369,6 +369,130 @@ it("surface=null：云端 ready 底图下载落盘后可用，不依赖活题面
   expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(png);
 });
 
+// ---------- 云端底图 PNG 下载退避重试（P1-3） ----------
+
+/** 带布局的云端 ready 底图视图（进入下载分支的标准夹具）。 */
+function cloudReadyView() {
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base: {
+      baseId: "33333333-3333-4333-8333-333333333333",
+      state: "ready" as const,
+      stale: false,
+      pixelWidth: 600,
+      pixelHeight: 400,
+      layout,
+    },
+    maxWidthPx: 1440,
+    doc: null,
+    annotation: null,
+  });
+}
+it("云端底图下载首败退避约 1s 重试一次，成功后正常落盘", async () => {
+  cloudReadyView();
+  const fetchMock = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("网络中断"))
+    .mockResolvedValueOnce({ ok: true, blob: async () => png });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.useFakeTimers();
+  try {
+    const prepared = prepareQuestionAnnotationBase(
+      session,
+      scope,
+      question,
+      null,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(prepared).resolves.toMatchObject({ kind: "surface" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(
+      png,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("云端底图下载两次失败（非 2xx 与网络中断）才抛既有错误文案", async () => {
+  cloudReadyView();
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: false, blob: async () => png })
+    .mockRejectedValueOnce(new TypeError("网络中断"));
+  vi.stubGlobal("fetch", fetchMock);
+  vi.useFakeTimers();
+  try {
+    const prepared = prepareQuestionAnnotationBase(
+      session,
+      scope,
+      question,
+      null,
+    );
+    const outcome = expect(prepared).rejects.toThrow(
+      "原标画底图下载失败，请重试",
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await outcome;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 两次下载都失败不落空稿。
+    expect((await getAnnotationRecord(session, scope))?.localBase).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("重试间隙标画会话切换则不再重试，直接抛会话错误", async () => {
+  cloudReadyView();
+  const fetchMock = vi.fn().mockRejectedValue(new TypeError("网络中断"));
+  vi.stubGlobal("fetch", fetchMock);
+  vi.useFakeTimers();
+  try {
+    const prepared = prepareQuestionAnnotationBase(
+      session,
+      scope,
+      question,
+      null,
+    );
+    const outcome = expect(prepared).rejects.toThrow(
+      "标画会话已切换，请重新打开",
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resetAnnotationSession();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await outcome;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("重试间隙外部取消则不再重试，直接抛取消错误", async () => {
+  cloudReadyView();
+  const fetchMock = vi.fn().mockRejectedValue(new TypeError("网络中断"));
+  vi.stubGlobal("fetch", fetchMock);
+  vi.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    const prepared = prepareQuestionAnnotationBase(
+      session,
+      scope,
+      question,
+      null,
+      controller.signal,
+    );
+    const outcome = expect(prepared).rejects.toThrow("标画打开已取消");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await outcome;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("surface=null：无任何缓存底图需新渲染时明确失败，不当空稿", async () => {
   await expect(
     prepareQuestionAnnotationBase(session, scope, question, null),
