@@ -1027,7 +1027,12 @@ describe("resolveNoteDeniedAdoptCloud：denied(content) 的「采用云端版本
     resetNoteStoreForTest();
     installNoteBackend(memoryNoteBackend());
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿文档不合法：坏字段");
+    await applyUploadDenied(
+      SESSION_A,
+      SCOPE,
+      "content",
+      "草稿文档不合法：坏字段",
+    );
     const before = await getNoteRecord(SESSION_A, SCOPE);
     const versionBefore = before?.docVersion ?? 0;
 

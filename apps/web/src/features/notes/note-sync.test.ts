@@ -798,9 +798,16 @@ describe("note-sync：T6R.15 三 phase 上送与订正分诊", () => {
 describe("note-sync：上传前预检与就地修复（圈画审查 P0-1）", () => {
   it("坏 pending（越界坐标+NaN 点）上传前就地修复：服务端收到的正文过契约、本地工作稿同步替换", async () => {
     putMock.mockResolvedValue(receiptOf(1));
-    const bad = docOf([stroke([[10, 20], [40, 60]])]);
-    bad.ink.strokes[0]!.points[0] = { x: -3, y: 20, p: 0.5, t: 0 };
-    bad.ink.strokes[0]!.points.push({
+    const bad = docOf([
+      stroke([
+        [10, 20],
+        [40, 60],
+      ]),
+    ]);
+    const badStroke = bad.ink.strokes[0];
+    if (badStroke === undefined) throw new Error("夹具错误：无笔画");
+    badStroke.points[0] = { x: -3, y: 20, p: 0.5, t: 0 };
+    badStroke.points.push({
       x: Number.NaN,
       y: 5,
       p: 0.5,
@@ -812,9 +819,10 @@ describe("note-sync：上传前预检与就地修复（圈画审查 P0-1）", ()
     // 只传一次，且传出字节整体通过契约（NaN 点被丢、-3 夹紧到 0）
     expect(putMock.mock.calls.length).toBe(1);
     const sent = noteDocSchema.parse(await bodyDoc(callOf(0).blob));
-    const points = sent.ink.strokes[0]!.points;
-    expect(points.length).toBe(2);
-    expect(points[0]!.x).toBe(0);
+    const sentStroke = sent.ink.strokes[0];
+    if (sentStroke === undefined) throw new Error("夹具错误：上传稿无笔画");
+    expect(sentStroke.points.length).toBe(2);
+    expect(sentStroke.points[0]?.x).toBe(0);
     // 修复稿物化为本地工作稿（docVersion 推进、无 denied、回执清 pending）
     const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.denied).toBeNull();
@@ -842,10 +850,17 @@ describe("note-sync：上传前预检与就地修复（圈画审查 P0-1）", ()
 describe("note-sync：resolveNoteDeniedKeepCloud（denied(content) 出口，圈画审查 P0-1）", () => {
   it("采用云端版本：拉 head+正文物化为工作稿，denied/pending 清空、不再上传", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿文档不合法：坏字段");
+    await applyUploadDenied(
+      SESSION_A,
+      SCOPE,
+      "content",
+      "草稿文档不合法：坏字段",
+    );
+    const baseNote = headOf().note;
+    if (baseNote === null) throw new Error("夹具错误：head 无 note");
     const head21 = headOf({
       note: {
-        ...headOf().note!,
+        ...baseNote,
         revision: 21,
         currentVersionId: receiptOf(21).versionId,
       },
@@ -865,12 +880,17 @@ describe("note-sync：resolveNoteDeniedKeepCloud（denied(content) 出口，圈�
 
   it("云端无可读版本（head.note 为空）→ 明确报错、本地保留", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿文档不合法：坏字段");
+    await applyUploadDenied(
+      SESSION_A,
+      SCOPE,
+      "content",
+      "草稿文档不合法：坏字段",
+    );
     headsMock.mockResolvedValue([headOf({ note: null })]);
 
-    await expect(
-      resolveNoteDeniedKeepCloud(SESSION_A, SCOPE),
-    ).rejects.toThrow(/云端没有可读取的版本/);
+    await expect(resolveNoteDeniedKeepCloud(SESSION_A, SCOPE)).rejects.toThrow(
+      /云端没有可读取的版本/,
+    );
 
     const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.denied?.kind).toBe("content");

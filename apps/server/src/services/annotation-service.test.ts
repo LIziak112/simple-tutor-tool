@@ -746,9 +746,8 @@ describe("putAnnotationDoc：CAS/幂等/门槛", () => {
       err = cause;
     }
     expectHttpError(err, 400, "ANNOTATION_VALIDATION_FAILED");
-    const issues = (
-      err as { extra?: { _issues?: Array<{ path: string }> } }
-    ).extra?._issues;
+    const issues = (err as { extra?: { _issues?: Array<{ path: string }> } })
+      .extra?._issues;
     expect(issues?.some((issue) => issue.path === "strokes.0.points.0.x")).toBe(
       true,
     );

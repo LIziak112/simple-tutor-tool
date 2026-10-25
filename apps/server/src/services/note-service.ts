@@ -274,12 +274,10 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
       // 卡死记录（如 12fed1e6/5.3-36）此前日志与响应都不含字段位置，无法
       // 定位坏字段；路径字符串无内容语义，随响应壳下发不放宽任何投影
       {
-        _issues: parsed.error.issues
-          .slice(0, 5)
-          .map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+        _issues: parsed.error.issues.slice(0, 5).map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
       },
     );
   }

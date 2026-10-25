@@ -4,10 +4,16 @@
  * 结构性损坏（version 错、无 strokes）返回 null 交回服务端裁决。
  */
 import { describe, expect, it } from "vitest";
-import { docOf, stroke } from "./note-fixtures.ts";
 import { repairNoteDoc } from "./note-doc-repair.ts";
+import { docOf, stroke } from "./note-fixtures.ts";
 
-const validDoc = () => docOf([stroke([[10, 20], [40, 60]])]);
+const validDoc = () =>
+  docOf([
+    stroke([
+      [10, 20],
+      [40, 60],
+    ]),
+  ]);
 
 describe("repairNoteDoc：可修复的坏数据", () => {
   it("合法文档返回物化后的等价文档（不改动内容）", () => {
@@ -42,7 +48,9 @@ describe("repairNoteDoc：可修复的坏数据", () => {
 
   it("NaN/Infinity 点被丢弃；修复产物整体通过契约 schema", () => {
     const bad = validDoc();
-    bad.ink.strokes[0]!.points[0] = { x: Number.NaN, y: 20, p: 0.5, t: 0 };
+    const badStroke = bad.ink.strokes[0];
+    if (badStroke === undefined) throw new Error("夹具错误：无笔画");
+    badStroke.points[0] = { x: Number.NaN, y: 20, p: 0.5, t: 0 };
     const repaired = repairNoteDoc(bad);
     expect(repaired).not.toBeNull();
     expect(repaired?.ink.strokes[0]?.points.length).toBe(1);
@@ -59,9 +67,7 @@ describe("repairNoteDoc：可修复的坏数据", () => {
           { ...stroke([[3, 3]]), color: "" },
           {
             ...stroke([[4, 4]]),
-            points: [
-              { x: Number.NaN, y: Number.NaN, p: 0.5, t: 0 },
-            ],
+            points: [{ x: Number.NaN, y: Number.NaN, p: 0.5, t: 0 }],
           },
           stroke([[5, 5]]),
         ],

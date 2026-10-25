@@ -877,7 +877,12 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
         ],
       },
     });
-    await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿文档不合法：坏字段");
+    await applyUploadDenied(
+      SESSION_A,
+      SCOPE,
+      "content",
+      "草稿文档不合法：坏字段",
+    );
     const cloud = docOf([
       stroke([
         [5, 5],

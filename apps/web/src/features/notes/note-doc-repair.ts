@@ -42,11 +42,7 @@ export function repairNoteDoc(input: unknown): NoteDoc | null {
     | { width?: unknown; strokes?: unknown }
     | null
     | undefined;
-  if (
-    typeof ink !== "object" ||
-    ink === null ||
-    !Array.isArray(ink.strokes)
-  )
+  if (typeof ink !== "object" || ink === null || !Array.isArray(ink.strokes))
     return null;
 
   const strokes: RepairedStroke[] = [];
@@ -103,11 +99,7 @@ export function repairNoteDoc(input: unknown): NoteDoc | null {
   const paperHeightLogical =
     typeof source.paperHeightLogical === "number" &&
     Number.isFinite(source.paperHeightLogical)
-      ? clamp(
-          Math.floor(source.paperHeightLogical),
-          1,
-          NOTE_PAPER_HEIGHT_MAX,
-        )
+      ? clamp(Math.floor(source.paperHeightLogical), 1, NOTE_PAPER_HEIGHT_MAX)
       : NOTE_PAPER_HEIGHT_DEFAULT;
   const background =
     source.background === "white" || source.background === "line"

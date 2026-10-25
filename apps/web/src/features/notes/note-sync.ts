@@ -42,8 +42,8 @@ import type {
 } from "@tutor/contract";
 import { noteConflictSummarySchema, noteDocSchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
-import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import { repairNoteDoc } from "@/features/notes/note-doc-repair.ts";
+import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
@@ -354,16 +354,17 @@ async function runUpload(
   const put = bridgePutSignal(controller.signal);
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      let record = peekNoteRecord(session, scope);
+      const record = peekNoteRecord(session, scope);
       if (!uploadable(record)) return; // SEALED 重置期间被回执/终态清空：空跑退出
+      let snapshot = record;
       if (preflightRepair(session, scope, record)) {
         // 修复写入后记录已换新（新 pending/新幂等键）——重取快照再传
         const repaired = peekNoteRecord(session, scope);
         if (!uploadable(repaired)) return;
-        record = repaired;
+        snapshot = repaired;
       }
-      const { mutationId, doc } = record.pending;
-      const baseRevision = record.baseRevision;
+      const { mutationId, doc } = snapshot.pending;
+      const baseRevision = snapshot.baseRevision;
       let receipt: NoteVersionReceipt;
       try {
         // 同引用直接复用字节（退避重试不重复 gzip；SEALED 重置保留正文
@@ -753,7 +754,9 @@ export async function resolveNoteDeniedKeepCloud(
   scope: NoteScope,
 ): Promise<void> {
   if (scope.phase !== "scratch") {
-    throw new Error("订正与补充稿暂不支持采用云端版本，请继续书写或保留本机内容");
+    throw new Error(
+      "订正与补充稿暂不支持采用云端版本，请继续书写或保留本机内容",
+    );
   }
   const record = peekNoteRecord(session, scope);
   if (record?.denied?.kind !== "content") return; // 无被拒：幂等跳过
