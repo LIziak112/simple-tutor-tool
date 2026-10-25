@@ -20,12 +20,8 @@ import { expectNavigationRingSpace } from "./navigation-ring";
  * 断言目的是防回归劣化而非卡硬件差异，300 仍远紧于可感知卡顿。 */
 const WARM_OPEN_BUDGET_MS = 300;
 
-/** 计时断言的环境门（2026-10-25，治理本机满载全量「130题长作业」双浏览器同挂）：
- * CI（PR 全量 + 每晚 schedule，2 workers 独占 runner）或显式 E2E_PERF_GATE=1 时
- * 硬断言 5 次热开的 max ≤ 预算；本机 6 workers 并行时 max 对单次 GC 停顿/邻
- * worker 抢占零容忍——失败在两浏览器对称出现是环境指纹而非回归——降为看中位数
- * （5 样本容忍 ≤2 个离群）仅告警，workspace-performance.json 附件照常落盘。
- * unrelatedMutations 为确定性架构守护（负载不会制造额外 DOM 变更），恒硬断言。 */
+/** CI 或显式 E2E_PERF_GATE=1 时硬断言热开最大值；本机默认按中位数告警，
+ * 避免单次调度停顿干扰。原始样本始终写入附件，无关题卡的 DOM 变更恒硬断言。 */
 const PERF_GATE = !!process.env.CI || process.env.E2E_PERF_GATE === "1";
 
 test(
@@ -621,8 +617,7 @@ test(
     });
     await page.getByRole("button", { name: "作答", exact: true }).click();
     const warmMaxMs = Math.max(...warmMs);
-    // 本机告警看中位数：真回归抬升全部样本，单次 GC 只抬离群值；CI 硬门仍看
-    // max，隔次抖动也应在安静环境抓住。
+    // 中位数容忍少量离群样本；CI 保留最大值守护，继续检测偶发慢路径。
     const warmMedianMs =
       [...warmMs].sort((a, b) => a - b)[Math.floor(warmMs.length / 2)] ??
       Infinity;
