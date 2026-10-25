@@ -43,6 +43,27 @@ import {
 /** 槽位标记：{{slot-id}}（内容不含花括号；空内容 → 缺省 id） */
 const SLOT_MARKER_RE = /\{\{([^{}]*)\}\}/g;
 
+/**
+ * 槽位编号正文（QM-16 单源）：{{slot-id}} → **（N）**（N = 该材料槽位序，
+ * 1 起）——完形（choice）/配对（match）的公共材料以编号空位呈现，编号与
+ * 子题「第 N 空」文案对应；未声明 id 的标记原样保留（防御：不猜测不崩溃）。
+ * 服务端导出/受控 AI 出口与学生端材料面板（MaterialPanel）共用本实现，
+ * 不另写副本。
+ */
+export function slotNumberedContentOf(
+  contentMd: string,
+  slots: readonly { readonly id: string }[],
+): string {
+  if (slots.length === 0) return contentMd;
+  const ordinalById = new Map(
+    slots.map((slot, index) => [slot.id, index + 1] as const),
+  );
+  return contentMd.replace(SLOT_MARKER_RE, (raw, id: string) => {
+    const ordinal = ordinalById.get(id.trim());
+    return ordinal === undefined ? raw : `**（${ordinal}）**`;
+  });
+}
+
 export function isMaterialContainer(node: Node): node is ContainerDirective {
   return isContainer(node) && canonicalName(node) === "material";
 }
