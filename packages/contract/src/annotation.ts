@@ -269,9 +269,6 @@ export const annotationBaseCreateRequestSchema = z.strictObject({
   resetVersion: annotationResetVersionSchema.optional(),
   layout: annotationSurfaceLayoutSchema.optional(),
 });
-export type AnnotationBaseCreateRequest = z.infer<
-  typeof annotationBaseCreateRequestSchema
->;
 
 // ---------- 上传协议（CAS＋mutationId 幂等；同 note.ts §6.2 形态） ----------
 
@@ -670,20 +667,16 @@ export type AnnotationUploadMeta = z.infer<typeof annotationUploadMetaSchema>;
 export type AnnotationUploadMetaInput = z.input<
   typeof annotationUploadMetaSchema
 >;
-export type AnnotationSealRequest = z.infer<typeof annotationSealRequestSchema>;
 export type AnnotationReceipt = z.infer<typeof annotationReceiptSchema>;
 export type AnnotationBaseImageReceipt = z.infer<
   typeof annotationBaseImageReceiptSchema
 >;
 export type AnnotationBaseRef = z.infer<typeof annotationBaseRefSchema>;
-export type AnnotationGraphFigure = z.infer<typeof annotationGraphFigureSchema>;
 export type AnnotationBasePreviewData = z.infer<
   typeof annotationBasePreviewDataSchema
 >;
-export type AnnotationMeta = z.infer<typeof annotationMetaSchema>;
 export type AnnotationViewData = z.infer<typeof annotationViewDataSchema>;
 export type AnnotationSealData = z.infer<typeof annotationSealDataSchema>;
-export type AnnotationErrorCode = z.infer<typeof annotationErrorCodeSchema>;
 
 // ---------- 与后续任务的关系 ----------
 

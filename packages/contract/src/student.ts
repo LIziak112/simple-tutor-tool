@@ -205,13 +205,8 @@ export const studentListOkSchema = apiOkExtend(studentListDataSchema);
 /** 携带创建结果（含一次性初始密码）的成功响应壳 */
 export const studentCreateOkSchema = apiOkExtend(studentCreateDataSchema);
 /** 携带学生摘要的成功响应壳（PATCH） */
-export const studentUpdateOkSchema = apiOkExtend(studentSummarySchema);
 /** 携带重置密码结果的成功响应壳 */
-export const studentResetPasswordOkSchema = apiOkExtend(
-  studentResetPasswordDataSchema,
-);
 /** 携带重置链接结果的成功响应壳 */
-export const studentResetLinkOkSchema = apiOkExtend(studentResetLinkDataSchema);
 /** 携带学生基本信息（登录成功 / me）的成功响应壳 */
 export const studentMeOkSchema = apiOkExtend(studentMeDataSchema);
 
@@ -219,7 +214,6 @@ export const studentMeOkSchema = apiOkExtend(studentMeDataSchema);
 
 export type StudentCreateRequest = z.infer<typeof studentCreateRequestSchema>;
 export type StudentUpdateRequest = z.infer<typeof studentUpdateRequestSchema>;
-export type StudentListQuery = z.infer<typeof studentListQuerySchema>;
 export type StudentSummary = z.infer<typeof studentSummarySchema>;
 export type StudentListData = z.infer<typeof studentListDataSchema>;
 export type StudentCreateData = z.infer<typeof studentCreateDataSchema>;
@@ -232,4 +226,3 @@ export type StudentMeData = z.infer<typeof studentMeDataSchema>;
 export type StudentPasswordChangeRequest = z.infer<
   typeof studentPasswordChangeRequestSchema
 >;
-export type StudentErrorCode = z.infer<typeof studentErrorCodeSchema>;
