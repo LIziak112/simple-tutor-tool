@@ -384,8 +384,11 @@ ${frozenMaterial.contentMd}`,
     if (material.solutionMd !== undefined) {
       stemSections.push(`**详解**\n\n${material.solutionMd}`);
     }
-    // draft 未交卷无判定（与教师详情页 D5 口径一致——不显示「待批」误导）
-    const judged = row.finalCorrect ?? row.autoCorrect;
+    // 判定走有效判定单源 effectiveVerdictOfRow（教师判 > 自评 > 自动；终审
+    // P2-1：旧 finalCorrect ?? autoCorrect 对 reference_self 已自评行恒 null
+    // → 误显「待批」，且与上方 reviewSource 推导不同源）。draft 未交卷无判定
+    // （与教师详情页 D5 口径一致——不显示「待批」误导）
+    const judged = effectiveVerdictOfRow(row)?.value ?? null;
     const verdictText =
       attempt.status === "draft"
         ? "未交卷"
