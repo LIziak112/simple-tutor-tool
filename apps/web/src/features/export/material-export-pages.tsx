@@ -224,13 +224,20 @@ function pngHeightOf(cssHeight: number): number {
  * 残块（残开栏会把后续正文吞进代码块）。纯函数，供分页与单测共用。
  */
 export function splitMaterialBlocks(contentMd: string): string[] {
+  // 入口归一行尾（\r\n 与孤立 \r → \n）再进入行式状态机：不归一时 closeFence
+  // 的 $ 不吞行尾 \r，CRLF 正文（Windows 编辑器/autocrlf 签出，导入链无换行
+  // 归一化）围栏永不闭合、首个开栏后整段并成一块，超限长材料退回「单块独立
+  // 成页」显式失败（审查 P3-1）。取入口归一而非只给 closeFence 补 \r：状态
+  // 机内任何行尾敏感判定（含后续新增的 $ 锚定正则）恒见 \n，单点补丁会留
+  // 同类隐患；块内容经重新挂载渲染，remark 对行尾归一无差。
+  const normalized = contentMd.replace(/\r\n?/g, "\n");
   const blocks: string[] = [];
   let current: string[] = [];
   /** 开栏围栏（```/~~~ 至少 3 个，记录字符与长度；闭栏需同字符且长度≥开栏） */
   let fence: { char: string; length: number } | null = null;
   const openFence = /^ {0,3}(`{3,}|~{3,})/;
   const closeFence = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
-  for (const line of contentMd.split("\n")) {
+  for (const line of normalized.split("\n")) {
     if (fence !== null) {
       current.push(line);
       const close = closeFence.exec(line);

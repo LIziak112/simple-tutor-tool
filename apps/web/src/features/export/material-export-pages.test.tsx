@@ -203,6 +203,23 @@ describe("splitMaterialBlocks（P3-6 形态 ①：围栏感知分块）", () => 
     // 文档结尾未闭合的围栏整体成块（防御：不崩溃不丢内容）
     expect(splitMaterialBlocks("```\nunclosed")).toEqual(["```\nunclosed"]);
   });
+
+  it("CRLF 正文围栏照常闭合（审查 P3-1：行尾 \\r 归一，含空行代码块不并成单块）", () => {
+    // Windows 编辑器/autocrlf 签出的 contentMd 携带 \r\n——不归一时 closeFence
+    // 的 $ 不吞行尾 \r，首个开栏后整段并成一块
+    const crlf =
+      "前文段落。\r\n\r\n```\r\ncode a\r\n\r\ncode b\r\n```\r\n\r\n后文段落。";
+    expect(splitMaterialBlocks(crlf)).toEqual([
+      "前文段落。",
+      "```\ncode a\n\ncode b\n```",
+      "后文段落。",
+    ]);
+    // 孤立 \r（旧 Mac 行尾）同样归一，~ 围栏与 \r\n 混排不产残块
+    expect(splitMaterialBlocks("~~~\ra\r\rb\r\n~~~\n\n后文")).toEqual([
+      "~~~\na\n\nb\n~~~",
+      "后文",
+    ]);
+  });
 });
 
 describe("renderMaterialExportPages 量高路径（P3-6 形态 ②）", () => {
@@ -214,6 +231,13 @@ describe("renderMaterialExportPages 量高路径（P3-6 形态 ②）", () => {
 
   /** 计划块结构断言的口径材料：三段普通文本 */
   const TALL = ["段落一。", "段落二。", "段落三。"].join("\n\n");
+
+  /** CRLF 口径材料（审查 P3-1）：三块，中块为含空行代码块（\r\n 与 \n 混排） */
+  const TALL_CRLF = [
+    "段落一。",
+    "```\ncode a\r\n\r\ncode b\r\n```",
+    "段落三。",
+  ].join("\r\n\r\n");
 
   it("整篇超限（Safari 面积上限形态）：先量高分块，超限整篇永不进 toBlob", async () => {
     const { renderMaterialExportPages } = await import(
@@ -262,5 +286,39 @@ describe("renderMaterialExportPages 量高路径（P3-6 形态 ②）", () => {
     ]);
     expect(toBlobMock).toHaveBeenCalledTimes(1);
     expect(toBlobMock.mock.calls[0]?.[0]?.textContent).toContain("单段正文。");
+  });
+
+  it("CRLF 长材料分页正确（审查 P3-1：代码块整块成页，不并成单块超限失败）", async () => {
+    const { renderMaterialExportPages } = await import(
+      "./material-export-pages"
+    );
+    // 量高恒超限（css 100000 × dpr 1 > 3600）：每块独立成页
+    Element.prototype.getBoundingClientRect = () =>
+      ({
+        height: 100_000,
+        width: 720,
+        top: 0,
+        left: 0,
+        right: 720,
+        bottom: 100_000,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const pages = await renderMaterialExportPages([
+      { letter: "A", label: "CRLF 长材料", contentMd: TALL_CRLF },
+    ]);
+    // 未归一时首个开栏后整段并成一块 → 只 1 页且必超限失败；归一后 3 页
+    expect(pages).toHaveLength(3);
+    expect(pages.map((page) => page.label)).toEqual([
+      "材料 A：CRLF 长材料 · 第 1/3 页",
+      "材料 A：CRLF 长材料 · 第 2/3 页",
+      "材料 A：CRLF 长材料 · 第 3/3 页",
+    ]);
+    expect(toBlobMock).toHaveBeenCalledTimes(3);
+    // 中页是完整代码块：内部空行保留、code a 与 code b 同页不切残
+    const codePage = toBlobMock.mock.calls[1]?.[0]?.textContent ?? "";
+    expect(codePage).toContain("code a");
+    expect(codePage).toContain("code b");
   });
 });
