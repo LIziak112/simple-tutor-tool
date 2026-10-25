@@ -339,6 +339,12 @@ export const QuestionAnnotationOverlay = forwardRef<
             if (signal.aborted) return false;
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
+            if (prepared.kind === "legacy") {
+              // v1 旧版底图（无 layout）：直接转只读原圈画查看，不报错、
+              // 不进原位编辑（不重建底图、不创建待传空稿）。
+              setOriginalScope(originalScopeKey);
+              return false;
+            }
             const awaitReady = () =>
               measureStage("annotation:surface-ready", () =>
                 withTimeout(
@@ -768,7 +774,9 @@ export const QuestionAnnotationOverlay = forwardRef<
         >
           <DialogTitle>{label}原圈画</DialogTitle>
           <DialogDescription>
-            按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。
+            {layout
+              ? "按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。"
+              : "此题标画为旧版，仅供查看。关闭后可继续作答。"}
           </DialogDescription>
           {record?.local === "failed" && (
             <p role="alert">

@@ -32,7 +32,9 @@ export type QuestionAnnotationBaseResult =
       kind: "surface";
       localBase: NonNullable<AnnotationLocalRecord["localBase"]>;
     }
-  | { kind: "sealed" };
+  | { kind: "sealed" }
+  /** v1 旧版底图（无 layout）：旧稿可查看不可编辑，上层转只读原圈画弹窗。 */
+  | { kind: "legacy" };
 
 /** 只由当前题显式调用；全局最多一个栅格任务，缓存不等待网络。
  * surface 允许 null（B05 AI 材料采集）：已保存底图不需要活题面；只有需要
@@ -66,7 +68,8 @@ export async function prepareQuestionAnnotationBase(
     return { kind: "surface", localBase: saved.localBase };
   }
   if (cached?.base != null && cached.base.layout === undefined)
-    throw new Error("旧标画布局不再支持，请重新开始练习后圈画");
+    // v1 旧版底图无布局证据：可查看旧稿，不当失败操作要求重开练习。
+    return { kind: "legacy" };
   // 云端回填可能清理控件候选；先接管在途或已完成的预备，再核对云端。
   // surface 为 null（材料收起/未挂载）时跳过预备接管：预备只为加速新渲染。
   const candidatePromise =
@@ -101,7 +104,7 @@ export async function prepareQuestionAnnotationBase(
     // 网络失败允许从已经授权显示的公开题面建本机稿，重连时严格绑定。
   }
   if (base !== null && base.layout === undefined)
-    throw new Error("旧标画布局不再支持，请重新开始练习后圈画");
+    return { kind: "legacy" };
   if (base?.state === "ready" && base.layout !== undefined) {
     const response = await fetch(
       studentAnnotationBasePngUrl(scope.attemptId, base.baseId),

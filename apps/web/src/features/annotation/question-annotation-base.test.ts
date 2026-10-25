@@ -15,6 +15,7 @@ vi.mock("./question-base-image", () => ({
 
 import { ApiError, fetchAnnotationViewApi } from "@/lib/api";
 import {
+  applyAnnotationView,
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
@@ -251,7 +252,7 @@ it("失败的本机记录不能被缓存快路径冒称ready", async () => {
     prepareQuestionAnnotationBase(session, scope, question, surface),
   ).rejects.toThrow("本机存储不可用");
 });
-it("旧版底图拒绝继续编辑，拒绝访问不离线兜底", async () => {
+it("旧版底图返回只读查看信号，不当失败操作；拒绝访问不离线兜底", async () => {
   const base = {
     baseId: "22222222-2222-4222-8222-222222222222",
     state: "ready" as const,
@@ -267,8 +268,12 @@ it("旧版底图拒绝继续编辑，拒绝访问不离线兜底", async () => {
   });
   await expect(
     prepareQuestionAnnotationBase(session, scope, question, surface),
-  ).rejects.toThrow("旧标画布局不再支持");
+  ).resolves.toMatchObject({ kind: "legacy" });
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+  // 只读查看所需的云端底图引用已回填本机记录（弹窗据此渲染），未建本机稿。
+  const saved = await getAnnotationRecord(session, scope);
+  expect(saved?.base?.baseId).toBe(base.baseId);
+  expect(saved?.localBase).toBeNull();
   vi.mocked(fetchAnnotationViewApi).mockRejectedValue(
     new ApiError("FORBIDDEN", "无权访问", 403),
   );
@@ -280,6 +285,28 @@ it("旧版底图拒绝继续编辑，拒绝访问不离线兜底", async () => {
       surface,
     ),
   ).rejects.toThrow("无权访问");
+});
+
+it("本机缓存的旧版底图直接返回只读信号，不等待网络", async () => {
+  // 预置：记录里只有 v1 云端底图（无 layout、无本机稿）。
+  await applyAnnotationView(session, scope, {
+    base: {
+      baseId: "22222222-2222-4222-8222-222222222222",
+      state: "ready",
+      stale: false,
+      pixelWidth: 1440,
+      pixelHeight: 900,
+    },
+    maxWidthPx: 1440,
+    doc: null,
+    annotation: null,
+  });
+  vi.mocked(fetchAnnotationViewApi).mockClear();
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).resolves.toMatchObject({ kind: "legacy" });
+  expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
 
 // ---------- surface=null（B05 AI 材料采集：材料收起/画布释放） ----------
@@ -298,7 +325,7 @@ it("surface=null：本机已保存底图直接复用，不依赖活题面", asyn
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
 
-it("surface=null：旧版底图拒绝继续编辑，不因缺题面重新渲染", async () => {
+it("surface=null：旧版底图返回只读信号，不因缺题面重新渲染", async () => {
   vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
     base: {
       baseId: "22222222-2222-4222-8222-222222222222",
@@ -313,7 +340,7 @@ it("surface=null：旧版底图拒绝继续编辑，不因缺题面重新渲染"
   });
   await expect(
     prepareQuestionAnnotationBase(session, scope, question, null),
-  ).rejects.toThrow("旧标画布局不再支持");
+  ).resolves.toMatchObject({ kind: "legacy" });
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
 

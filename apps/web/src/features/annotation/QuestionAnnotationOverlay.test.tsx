@@ -18,6 +18,7 @@ import {
 } from "@/features/attempt/AttemptEditorContext";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
+  applyAnnotationView,
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
@@ -516,6 +517,48 @@ it("旧稿缺少布局信息仍能查看云端原底图，读取不创建待传�
   expect(screen.queryByRole("button", { name: "在固定底图上圈画" })).toBeNull();
   expect(prepareQuestionAnnotationBase).not.toHaveBeenCalled();
   expect((await getAnnotationRecord(session, scope))?.pending).toBeNull();
+});
+
+it("打开时才发现的旧版底图直接转只读查看，不报错不进入编辑", async () => {
+  // 本机无任何缓存：record 层分流不接手，prepare 从云端首次带回 v1 底图。
+  resetAnnotationStoreForTest();
+  installAnnotationBackend(memoryAnnotationBackend());
+  vi.mocked(prepareQuestionAnnotationBase).mockImplementation(async () => {
+    await applyAnnotationView(session, scope, {
+      base: {
+        baseId: "legacy-base",
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        downloadUrl: "/legacy.png",
+      },
+      doc: { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+      maxWidthPx: 1440,
+      annotation: null,
+    });
+    return { kind: "legacy" };
+  });
+  render(<Harness />);
+  fireEvent.click(screen.getByText("标画"));
+  const dialog = await screen.findByRole("dialog", { name: "第1题原圈画" });
+  expect(dialog).toBeVisible();
+  // v1 场景的明确语义文案，而不是错误横幅或误导性重开提示。
+  expect(
+    screen.getByText("此题标画为旧版，仅供查看。关闭后可继续作答。"),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "重试操作" })).toBeNull();
+  expect(screen.queryByText(/上次操作未完成/)).toBeNull();
+  expect(screen.queryByRole("toolbar")).toBeNull();
+  expect(screen.queryByText(/题面已固定为保存时的底图/)).toBeNull();
+  expect(screen.getByRole("img", { hidden: true })).toHaveAttribute(
+    "src",
+    "/legacy.png",
+  );
+  // 只读查看：不重建底图、不创建待传空稿。
+  const saved = await getAnnotationRecord(session, scope);
+  expect(saved?.localBase).toBeNull();
+  expect(saved?.pending).toBeNull();
 });
 
 it("已有布局固定逻辑宽度，由同一区域整体缩放，隐藏标画不解除排版", async () => {
