@@ -287,6 +287,7 @@ export function SingleQuestionActionBar({
   hasNext,
   busy = false,
   middle,
+  navigation,
   onPrev,
   onNext,
 }: {
@@ -297,6 +298,8 @@ export function SingleQuestionActionBar({
   busy?: boolean;
   /** 主操作位内容（PracticeSingleActions）；缺省保持占位容器 */
   middle?: ReactNode;
+  /** 手机题号兼答题卡入口，与主操作共用一行。 */
+  navigation?: ReactNode;
   onPrev: () => void;
   onNext: () => void;
 }) {
@@ -307,16 +310,17 @@ export function SingleQuestionActionBar({
     >
       <Button
         variant="ghost"
-        className="min-h-11 shrink-0 px-2 sm:px-3"
+        className="size-11 shrink-0 p-0 lg:w-auto lg:px-3"
         aria-label="上一题"
         disabled={!hasPrev || busy}
         onClick={onPrev}
       >
         <ChevronLeft aria-hidden className="size-4" />
-        <span aria-hidden className="hidden min-[400px]:inline">
+        <span aria-hidden className="hidden lg:inline">
           上一题
         </span>
       </Button>
+      {navigation}
       <div
         data-slot="practice-action-placeholder"
         aria-hidden={middle === undefined ? true : undefined}
@@ -329,12 +333,12 @@ export function SingleQuestionActionBar({
       {(showNext ?? middle === undefined) && (
         <Button
           variant="ghost"
-          className="min-h-11 shrink-0 px-2 sm:px-3"
+          className={`${navigation ? "hidden lg:flex" : "flex"} size-11 shrink-0 p-0 lg:w-auto lg:px-3`}
           aria-label="下一题"
           disabled={!hasNext || busy}
           onClick={onNext}
         >
-          <span aria-hidden className="hidden min-[400px]:inline">
+          <span aria-hidden className="hidden lg:inline">
             下一题
           </span>
           <ChevronRight aria-hidden className="size-4" />

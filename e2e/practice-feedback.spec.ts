@@ -276,12 +276,16 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
             /\/api\/student\/attempts\/[^/]+\/submit$/.test(response.url()) &&
             response.request().method() === "POST",
         );
-        await page
-          .getByRole("button", {
-            name: mode === "单题逐题" ? "提前交卷" : "交卷",
-            exact: true,
-          })
-          .click();
+        if (mode === "单题逐题") {
+          await page
+            .getByRole("button", { name: "答题卡", exact: true })
+            .click();
+          await page
+            .getByRole("dialog", { name: "答题卡", exact: true })
+            .getByRole("button", { name: "提前交卷", exact: true })
+            .click();
+        } else
+          await page.getByRole("button", { name: "交卷", exact: true }).click();
         await page
           .getByRole("button", { name: "确认交卷", exact: true })
           .click();
@@ -747,7 +751,10 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.waitForURL("**/s/attempts/**");
       await expect(
         studentPage.getByText("第 1 / 2 题 · 已填写 0 题"),
-      ).toBeVisible();
+      ).toHaveCount(1);
+      await expect(
+        studentPage.getByRole("button", { name: "答题卡", exact: true }),
+      ).toHaveText("1/2");
       await expect(
         studentPage.getByRole("button", { name: "调整做题方式" }),
       ).toHaveCount(0);
