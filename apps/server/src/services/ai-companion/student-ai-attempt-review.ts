@@ -13,14 +13,6 @@ import type {
   StudentAnswer,
 } from "@tutor/contract";
 import {
-  dispatchIsAnswered,
-  optionsPublicStructureOf,
-} from "@tutor/contract";
-import {
-  materialSlotOrderOf,
-  structuresOfSnapshot,
-} from "../attempt-service.ts";
-import {
   AI_ATTEMPT_REVIEW_ALLOWED_ACTIONS,
   AI_ATTEMPT_REVIEW_CONTEXT_MAX_BYTES,
   AI_ATTEMPT_REVIEW_LEASE_MINUTES,
@@ -31,7 +23,9 @@ import {
   aiAttemptReviewCountsSchema,
   aiAttemptReviewReportSchema,
   aiAttemptReviewSnapshotSchema,
+  dispatchIsAnswered,
   formatQuestionAnswers,
+  optionsPublicStructureOf,
 } from "@tutor/contract";
 import {
   and,
@@ -57,7 +51,9 @@ import { HttpError } from "../../lib/http-error.ts";
 import {
   answerOf,
   frozenRowsInDisplayOrder,
+  materialSlotOrderOf,
   requireUsableAttempt,
+  structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { jsonOf, snapshotOfRow } from "../snapshot.ts";
@@ -424,18 +420,18 @@ function attemptReviewRangeOf(
         answerState === "unanswered"
           ? null
           : // UA-01 收窄签名：选项正文经公开结构、新题型结构经
-             // structuresOfSnapshot 装配（同 student-ai-context 生产形态）
-             studentAnswerTextOf(
-               optionsPublicStructureOf(
-                 (snapshot.options ?? []).map((option) => option.text),
-               ),
-               answer,
-               structuresOfSnapshot(
-                 snapshot,
-                 materialSlotOrderOf(asDb(db), attempt.id),
-                 attempt.unitId,
-               ),
-             ),
+            // structuresOfSnapshot 装配（同 student-ai-context 生产形态）
+            studentAnswerTextOf(
+              optionsPublicStructureOf(
+                (snapshot.options ?? []).map((option) => option.text),
+              ),
+              answer,
+              structuresOfSnapshot(
+                snapshot,
+                materialSlotOrderOf(asDb(db), attempt.id),
+                attempt.unitId,
+              ),
+            ),
       referenceAnswerMd:
         snapshot.answers !== undefined
           ? formatQuestionAnswers(snapshot.answers)

@@ -44,7 +44,7 @@ export const QuestionSurface = memo(function QuestionSurface({
       ? STABLE_NOOP_UPDATE
       : (suppliedOnAnswer ?? STABLE_NOOP_UPDATE);
   return (
-<QuestionSurfaceFrame>
+    <QuestionSurfaceFrame>
       <div
         data-slot="question-surface"
         inert={isPublicBase}
