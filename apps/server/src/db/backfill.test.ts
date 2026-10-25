@@ -743,6 +743,18 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.self_review_at;
         delete row.self_review_revision;
         delete row.self_review_mutation_id;
+        // 0040_bizarre（v2 链正主，2026-10-25 迁移对齐后并入本链）自评列族
+        // 的兼容默认值单独核对，不改变旧业务字段；与上方 QM 族（0044）并存
+        for (const key of [
+          "review_policy",
+          "review_eligible",
+          "self_correct",
+          "review_revision",
+          "review_mutation_id",
+          "review_mutation_hash",
+          "reviewed_at",
+        ])
+          delete row[key];
       }
       return JSON.stringify(row, Object.keys(row).sort());
     });
@@ -841,6 +853,19 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
         grading_policy: null,
         self_review_verdict: null,
         self_review_revision: 0,
+      });
+    // 0040_bizarre（v2 链）自评列族兼容默认值（迁移对齐后两族并存）
+    const reviewFamily = db.$client
+      .prepare(
+        "SELECT review_policy, review_eligible, self_correct, review_revision FROM responses",
+      )
+      .all();
+    for (const row of reviewFamily)
+      expect(row).toEqual({
+        review_policy: "legacy",
+        review_eligible: 0,
+        self_correct: null,
+        review_revision: 0,
       });
     db.$client.close();
   });
