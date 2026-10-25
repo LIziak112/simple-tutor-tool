@@ -35,6 +35,8 @@ import {
  *   （复用 [[…]] 的识别纪律，question.ts BLANK_MARKER_RE 同款）；
  * - 材料正文防答案（MATERIAL_CONTAINS_ANSWER）在此层静态检测（安全重点：
  *   材料是全卷学生共享内容，答案型内容经材料正文绕过三投影防线）；
+ * - 材料正文非空（MATERIAL_EMPTY）同在此层检测——空正文违反学情数据包
+ *   材料条目契约（contentMd min(1)），与防答案同为导入 lint 的正文基线；
  * - 引用合法性（组→子题、题→材料/片段/槽位）在第二遍 references.ts。
  *
  * 纯函数、宽松解析：结构问题记 issues，实体照常产出（阻断交导入层）。
@@ -279,11 +281,27 @@ function extractMaterial(
   const mediaPaths = collectMediaPaths(node);
   lintMaterialAnswers(node, lines, issues);
 
+  const contentMd = sliceInnerLines(node, lines);
+  // MATERIAL_EMPTY：空体材料（容器内无任何非空行，纯空与仅空白行同报——
+  // sliceInnerLines 去首尾空白后同为 ""）。正文非空是学情数据包材料条目
+  // 契约（contentMd min(1)）的 lint 前置；实体照常产出，阻断交导入层
+  if (contentMd === "") {
+    issues.push(
+      makeIssue(
+        "error",
+        start,
+        1,
+        "MATERIAL_EMPTY",
+        `材料「${id}」（第 ${start} 行）正文为空：容器内没有任何非空行，材料是全卷学生共享的阅读内容；请补写正文或删除该容器`,
+      ),
+    );
+  }
+
   return {
     id,
     ...(title !== undefined ? { title } : {}),
     sourceMd: sliceLines(lines, start, end),
-    contentMd: sliceInnerLines(node, lines),
+    contentMd,
     anchors,
     slots,
     mediaPaths,

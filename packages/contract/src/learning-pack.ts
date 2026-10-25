@@ -831,9 +831,10 @@ export const learningPackV2MetaSchema = learningPackMetaSchema.extend({
  * materialRefs）的**公开投影**——按 (materialId, sourceVersion) 整组去重，
  * 同材料多版本并存时逐版成条（不同轮次冻结不同版本可分辨）；contentMd 为
  * 槽位编号后形态（{{slot-id}} → **（N）**，与学生面板/单题包/AI 出口同一
- * 实现）。材料正文按导入 lint 不含答案型内容，公开投影白名单无答案键通道
- * （materialPublicSchema——sourceMd/教师域键不进包）。::image 配图随包
- * media 附件附上（缺失进 manifest.missing）。
+ * 实现）。材料正文按导入 lint 不含答案型内容且非空（MATERIAL_CONTAINS_
+ * ANSWER / MATERIAL_EMPTY；存量空材料由装配侧跳过并显式记缺失），公开投影
+ * 白名单无答案键通道（materialPublicSchema——sourceMd/教师域键不进包）。
+ * ::image 配图随包 media 附件附上（缺失进 manifest.missing）。
  */
 export const learningPackMaterialSchema = z.object({
   ref: z.string().regex(PACK_REF_MATERIAL_RE, "材料条目编号形如 m001"),

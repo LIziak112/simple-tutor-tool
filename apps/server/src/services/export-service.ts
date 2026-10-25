@@ -1593,6 +1593,11 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   const materialItems: LearningPackMaterial[] = [];
   /** q 条目 → 材料条目编号（顺序 = materialItems 全局序，确定性） */
   const materialRefsByQuestionRef = new Map<string, string[]>();
+  // 空正文材料（materialId|sourceVersion 去重键）显式缺失登记（TT-13 审查
+  // P2-1）：MATERIAL_EMPTY 红线前导入的存量空材料冻结快照 contentMd 为空，
+  // 违反材料条目契约 min(1)——跳过条目不编号、manifest.contextNotes 计数
+  // （与坏快照行「缺失即显式缺失」同口径），重导即修复
+  const skippedEmptyMaterials = new Set<string>();
   if (m.questions !== undefined) {
     // —— content.materials（TT-13）：组材料 ∪ 题级引用闭包按
     // (materialId, sourceVersion) 整组去重——单源 frozenMaterialsForQuestion
@@ -1620,6 +1625,11 @@ function assembleV2(core: PackCore): LearningPackAssembly {
           { versionBadge: false },
         )) {
           const key = `${material.id}|${material.sourceVersion}`;
+          // 空正文：契约 min(1) 前置不满足，跳过条目显式记缺失（见上注）
+          if (material.contentMd.trim().length === 0) {
+            skippedEmptyMaterials.add(key);
+            continue;
+          }
           let index = collectedByKey.get(key);
           if (index === undefined) {
             index = collected.length;
@@ -2106,6 +2116,12 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         `${multiVersion.size} 份材料存在多个历史版本并存（各轮开卷冻结的版本不同），逐版成条；题目条目的 materialRefs 指向该轮实际冻结的版本。`,
       );
     }
+  }
+  // TT-13 审查 P2-1：存量空材料（MATERIAL_EMPTY 红线前导入）跳过不静默
+  if (skippedEmptyMaterials.size > 0) {
+    contextNotes.push(
+      `${skippedEmptyMaterials.size} 份冻结材料正文为空（历史导入的空材料），材料节未收录对应条目，相关题目的 materialRefs 不含其编号；重新导入文档可修复。`,
+    );
   }
   // T6R.16 多阶段口径说明（evidence 勾选才谈；阶段以装配端规范化序列判断；
   // 闸门 F6：读 core 单次规范化值）

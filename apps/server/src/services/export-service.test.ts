@@ -2722,4 +2722,65 @@ describe("TT-13 LearningPack v2：content.materials 材料节", () => {
     expect(pack.content?.materials).toBeUndefined();
     expect(pack.content?.questions).toBeUndefined();
   });
+
+  it("空正文材料快照：材料节缺该条、manifest 记缺失、自检 parse 通过（审查 P2-1——存量空材料不炸 v2 导出）", async () => {
+    // 独立小世界：题级引用指向正文为空串的冻结材料（materialPublicSchema 无
+    // min，存量可入库；装配前契约 learningPackMaterialSchema.contentMd
+    // min(1) 自检会抛、导出 500——守卫后跳过条目并显式记缺失）
+    const student = makeStudent(db);
+    const attemptId = frozenDraftAttempt(db, student, [
+      {
+        questionId: "wm-empty",
+        snapshotJson: snapshotJsonOf({
+          id: "wm-empty",
+          type: "matching",
+          stemMd: "引用空材料的题。",
+          materialRefs: [{ material: "mat-empty" }],
+        }),
+      },
+    ]).attemptId;
+    freezeAttemptContextSnapshots(
+      db,
+      attemptId,
+      [
+        {
+          kind: "material",
+          sourceId: "mat-empty",
+          sourceVersion: 1,
+          snapshot: materialPublicSchema.parse({
+            id: "mat-empty",
+            title: "空材料",
+            contentMd: "",
+          }),
+        },
+      ],
+      "2026-10-04T00:00:00.000Z",
+    );
+    submitAttemptStatus(db, attemptId, "2026-10-04T00:00:00.000Z");
+
+    // 服务端自检（learningPackV2Schema.parse）在装配内执行——守卫生效的
+    // 证明即本调用不再抛 ZodError（修复前 min(1) violation 整包 500）
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      learningPackExportRequestSchema.parse({
+        packVersion: 2,
+        scope: { studentIds: [student] },
+        modules: { questions: "solution", responses: true },
+        goal: "diagnose-weakness",
+      }),
+      { now: MAT_NOW },
+    );
+    const pack = packEntryOf(unzipEntries(zip.bytes), learningPackV2Schema);
+    // 材料节缺该条（不编号）；逐题 materialRefs 不含悬空编号
+    expect(pack.content?.materials ?? []).toEqual([]);
+    const questions = pack.content?.questions ?? [];
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.materialRefs).toBeUndefined();
+    // manifest 显式记缺失（contextNotes，与坏快照行同口径）
+    expect(
+      pack.manifest.contextNotes.some((note) => note.includes("正文为空")),
+    ).toBe(true);
+  });
 });
