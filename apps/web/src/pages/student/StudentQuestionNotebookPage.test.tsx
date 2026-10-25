@@ -59,6 +59,7 @@ function round(
     evidence: null,
     corrections: [],
     supplements: [],
+    context: null,
     ...overrides,
   };
 }
