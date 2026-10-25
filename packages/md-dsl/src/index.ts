@@ -27,7 +27,9 @@ export {
 } from "./v2/lecture-structure.ts";
 // ::ref 属性串解析（行内式 ::ref 的属性抽取单源，materials.ts 单一出处）：
 // 服务端导入层（P2-2 题内块式 ::ref{question=} 告警）复用，不另写一份。
-export { parseRefAttrs } from "./v2/materials.ts";
+// 槽位编号正文（QM-16 单源）：{{slot-id}} → **（N）——学生端材料面板、
+// 服务端导出与受控 AI 出口共用，编号口径不散落各处。
+export { parseRefAttrs, slotNumberedContentOf } from "./v2/materials.ts";
 export {
   simplifySizedMathDelimiters,
   sizedMathDelimiters,
@@ -58,9 +60,6 @@ export {
 // 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
 // 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
 export { expandSelectionIds } from "./v2/references.ts";
-// 槽位编号正文（QM-16 单源）：{{slot-id}} → **（N）——学生端材料面板、
-// 服务端导出与受控 AI 出口共用，编号口径不散落各处。
-export { slotNumberedContentOf } from "./v2/materials.ts";
 export { processor } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。

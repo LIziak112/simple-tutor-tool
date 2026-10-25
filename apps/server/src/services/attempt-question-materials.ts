@@ -1,4 +1,8 @@
-import type { MaterialPublic, Question, QuestionGroupPublic } from "@tutor/contract";
+import type {
+  MaterialPublic,
+  Question,
+  QuestionGroupPublic,
+} from "@tutor/contract";
 import {
   materialPublicSchema,
   questionGroupPublicSchema,
@@ -36,7 +40,10 @@ export function frozenMaterialsForQuestion(
   questionId: string,
   snapshot: Question | null,
 ): FrozenQuestionMaterial[] {
-  const materials = new Map<string, MaterialPublic & { sourceVersion: number }>();
+  const materials = new Map<
+    string,
+    MaterialPublic & { sourceVersion: number }
+  >();
   const groups: QuestionGroupPublic[] = [];
   for (const row of listAttemptContextSnapshots(db, attemptId)) {
     let parsed: unknown;

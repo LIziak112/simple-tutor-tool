@@ -7,8 +7,8 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
-  attemptContextSnapshots,
   assignments,
+  attemptContextSnapshots,
   attempts as attemptsTable,
   responses as responsesTable,
 } from "../db/schema.ts";

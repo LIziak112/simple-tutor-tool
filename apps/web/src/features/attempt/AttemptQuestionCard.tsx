@@ -41,6 +41,10 @@ import { useAnnotationRecord } from "@/features/annotation/use-annotation-record
 import { questionBindings } from "@/features/answering/question-binding";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import {
+  exportMaterialsOfQuestion,
+  renderMaterialExportPages,
+} from "@/features/export/material-export-pages";
+import {
   createOngoingQuestionImages,
   loadOngoingPaper,
 } from "@/features/export/ongoing-question-export";
@@ -57,6 +61,7 @@ import {
 import { currentNoteSession } from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
+import { fetchAttemptContextApi } from "@/lib/api";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import {
   HANDWRITTEN_TYPES,
@@ -693,13 +698,30 @@ export function AttemptQuestionCard({
               phase: "scratch",
             });
             guard();
-            return createOngoingQuestionImages(
+            const questionPages = await createOngoingQuestionImages(
               questionImage,
               paper,
               `${assignmentTitle} · 第 ${index + 1} 题`,
               guard,
               (record?.doc?.strokes.length ?? 0) > 0,
             );
+            guard();
+            // QM-16 细项 1：组材料页前置（材料来自冻结上下文投影，与隐藏
+            // 标画/收起纸面无关）；读取/渲染失败显式抛错（对话框可重试），
+            // 不静默省略材料
+            const context = await fetchAttemptContextApi(attemptId);
+            guard();
+            const materialPages = await renderMaterialExportPages(
+              exportMaterialsOfQuestion(context, question.id),
+            );
+            guard();
+            return [
+              ...materialPages.map((page) => ({
+                blob: page.blob,
+                label: page.label,
+              })),
+              ...questionPages,
+            ];
           }}
         />
       )}

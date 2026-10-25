@@ -13,8 +13,8 @@ import {
   aiPolicyOverrides,
   aiTasks,
   aiTeacherSettings,
-  attemptContextSnapshots,
   assignments,
+  attemptContextSnapshots,
   attempts,
   lectures,
   questions,
@@ -1097,14 +1097,19 @@ describe("SAI-09 边界", () => {
 
 // ---------- QM-17 细项 1/5：新题型 × 材料闭包 × 结构化文本（双断言） ----------
 
-const MAT_SENTINEL_CONTENT = "阅读材料正文哨兵:The passage mentions {{m-slot-1}} twice.";
+const MAT_SENTINEL_CONTENT =
+  "阅读材料正文哨兵:The passage mentions {{m-slot-1}} twice.";
 const MATCHING_STEM = "MQ-配对题干哨兵:把人物与作品配对。";
 const MATCHING_SOLUTION = "MQ-官方解析哨兵:按时间线对应。";
 
 /** matching 世界：组材料 + 冻结组/材料快照 + matching 冻结行（含选项池与参考） */
 function setupMatchingWorld(
   db: Db,
-  opts?: { answer?: StudentAnswer | null; submitted?: boolean; mode?: "open_study" | "guided_only" | "post_submit_only" },
+  opts?: {
+    answer?: StudentAnswer | null;
+    submitted?: boolean;
+    mode?: "open_study" | "guided_only" | "post_submit_only";
+  },
 ): {
   studentId: string;
   attemptId: string;
@@ -1188,7 +1193,10 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
     });
     // 材料：冻结闭包投影，正文槽位编号（（1））
     expect(bundle.snapshot.materials).toEqual([
-      { title: "阅读材料", contentMd: "阅读材料正文哨兵:The passage mentions **（1）** twice." },
+      {
+        title: "阅读材料",
+        contentMd: "阅读材料正文哨兵:The passage mentions **（1）** twice.",
+      },
     ]);
     // 学生答案：结构化文本（第 N 空 = 选项正文），非裸 id
     expect(bundle.snapshot.studentAnswerText).toBe("第 1 空 = 甲作品");
@@ -1198,7 +1206,9 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
       bundle,
       studentQuestion: "第二空怎么选？",
     });
-    const allText = assembly.messages.map((message) => message.content).join("\n");
+    const allText = assembly.messages
+      .map((message) => message.content)
+      .join("\n");
     expect(allText).toContain("## 共享材料");
     expect(allText).toContain("阅读材料");
     expect(allText).toContain("**（1）**");
@@ -1211,8 +1221,7 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
     const db = createTestDb();
     const world = setupMatchingWorld(db, { mode: "post_submit_only" });
     expectHttpError(
-      () =>
-        buildAiContextBundle(db, world, { now: NOW, hmacSecret: SECRET_A }),
+      () => buildAiContextBundle(db, world, { now: NOW, hmacSecret: SECRET_A }),
       403,
       "AI_POLICY_DISABLED",
     );
@@ -1220,7 +1229,10 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
 
   it("自评不冒充已提交:行未 submittedAt 时 post_submit_only 仍拒绝;提交后换复盘尺度", () => {
     const db = createTestDb();
-    const before = setupMatchingWorld(db, { mode: "post_submit_only", submitted: false });
+    const before = setupMatchingWorld(db, {
+      mode: "post_submit_only",
+      submitted: false,
+    });
     expectHttpError(
       () =>
         buildAiContextBundle(db, before, { now: NOW, hmacSecret: SECRET_A }),
@@ -1229,7 +1241,12 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
     );
     // 同一学生交卷（assignment 完成态单源 = attempt 已提交;自评三列与解锁无关）
     db.update(responses)
-      .set({ submittedAt: NOW, selfReviewVerdict: "correct", selfReviewAt: NOW, selfReviewRevision: 1 })
+      .set({
+        submittedAt: NOW,
+        selfReviewVerdict: "correct",
+        selfReviewAt: NOW,
+        selfReviewRevision: 1,
+      })
       .where(eq(responses.id, before.responseId))
       .run();
     db.update(attempts)
@@ -1266,7 +1283,9 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
     const taskRow = taskRowOf();
     if (taskRow === undefined) throw new Error("任务行缺失");
     const assembly = outboundAssemblyOfTask(db, taskRow);
-    const allText = assembly.messages.map((message) => message.content).join("\n");
+    const allText = assembly.messages
+      .map((message) => message.content)
+      .join("\n");
     expect(allText).toContain("## 共享材料");
     // 旧任务形态:无 materials 键的快照仍可装配(不带材料段)
     db.update(aiTasks)
@@ -1285,8 +1304,8 @@ describe("QM-17 新题型求助:材料进受控出口,答案解析按策略双�
       .map((message) => message.content)
       .join("\n");
     expect(legacyText).not.toContain("## 共享材料");
-    expect(
-      legacyText,
-    ).not.toContain(MAT_SENTINEL_CONTENT.replace("{{m-slot-1}}", "**（1）**"));
+    expect(legacyText).not.toContain(
+      MAT_SENTINEL_CONTENT.replace("{{m-slot-1}}", "**（1）**"),
+    );
   });
 });

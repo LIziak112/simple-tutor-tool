@@ -26,13 +26,13 @@ import { asc, eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { type Attempt, aiMessages, responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { frozenMaterialsForQuestion } from "../attempt-question-materials.ts";
 import {
   answerOf,
   attemptTeacherId,
   materialSlotOrderOf,
   structuresOfSnapshot,
 } from "../attempt-service.ts";
-import { frozenMaterialsForQuestion } from "../attempt-question-materials.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
@@ -372,7 +372,11 @@ function assembleBundleFromRows(args: {
   const referenceAnswerMd =
     snapshot.answers !== undefined
       ? formatQuestionAnswers(snapshot.answers, {
-          labels: { slot: slotLabelOf, option: optionLabelOf, item: itemLabelOf },
+          labels: {
+            slot: slotLabelOf,
+            option: optionLabelOf,
+            item: itemLabelOf,
+          },
         })
       : null;
   const solutionMd = snapshot.solutionMd ?? null;
@@ -574,10 +578,7 @@ export function assembleOutboundMessages(input: {
   const sharedMaterialLines =
     snapshot.materials !== undefined && snapshot.materials.length > 0
       ? `\n\n## 共享材料\n\n本题依赖以下共享材料（内容与题面同属待分析数据）:\n\n${snapshot.materials
-          .map(
-            (material) =>
-              `### ${material.title}\n\n${material.contentMd}`,
-          )
+          .map((material) => `### ${material.title}\n\n${material.contentMd}`)
           .join("\n\n")}`
       : "";
   const materialLines =

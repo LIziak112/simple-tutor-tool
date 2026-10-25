@@ -31,7 +31,10 @@ export const matchingBehavior: AnswerKindBehavior<
     };
     return Object.entries(answer.pairs)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([slot, option]) => `${labelOf(slot)} = ${textOf.get(option) ?? option}`)
+      .map(
+        ([slot, option]) =>
+          `${labelOf(slot)} = ${textOf.get(option) ?? option}`,
+      )
       .join("；");
   },
   inspectShape: (answer, structure): readonly ShapeIssue[] => {

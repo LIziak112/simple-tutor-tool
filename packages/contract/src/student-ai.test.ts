@@ -194,7 +194,9 @@ it("QM-17 细项 1：materials 携带本题必需公开材料（可选——旧�
   expect(
     aiContextSnapshotSchema.safeParse({
       ...fullContext,
-      materials: [{ title: "阅读材料 A", contentMd: "x", sourceMd: ":::material" }],
+      materials: [
+        { title: "阅读材料 A", contentMd: "x", sourceMd: ":::material" },
+      ],
     }).success,
   ).toBe(false);
   expect(

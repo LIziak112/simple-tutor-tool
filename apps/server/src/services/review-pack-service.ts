@@ -10,6 +10,7 @@ import type {
 import {
   formatQuestionAnswers,
   HANDWRITTEN_QUESTION_TYPES,
+  lettersOf,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -29,6 +30,7 @@ import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
+import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
 import {
   answerOf,
   answersReleased,
@@ -37,20 +39,21 @@ import {
   frozenRowsInDisplayOrder,
   requireUsableAttempt,
 } from "./attempt-service";
+import {
+  materialSlotOrderOf,
+  structuresOfSnapshot,
+} from "./attempt-service.ts";
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
-import { lettersOf } from "@tutor/contract";
-import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
-import { materialSlotOrderOf, structuresOfSnapshot } from "./attempt-service.ts";
 import { serializeStudentAnswerOfRow } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
-import { snapshotOfRow } from "./snapshot.ts";
 import {
   assembleQuestionEvidence,
   evidenceMissingRowsOf,
   readyEvidenceImagesOf,
 } from "./question-evidence";
+import { snapshotOfRow } from "./snapshot.ts";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
@@ -366,8 +369,8 @@ ${frozenMaterial.contentMd}`,
         return ordinal === undefined ? id : `第 ${ordinal} 空`;
       };
       const itemLabelOf = (id: string): string =>
-        answerStructures.ordering.items.find((item) => item.key === id)
-          ?.text ?? id;
+        answerStructures.ordering.items.find((item) => item.key === id)?.text ??
+        id;
       stemSections.push(
         `**参考答案**：${formatQuestionAnswers(material.answers, {
           labels: {

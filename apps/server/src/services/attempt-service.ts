@@ -923,7 +923,7 @@ export function structuresOfSnapshot(
   const structure = effectiveStructureOfSnapshot(snapshot, unitId);
   const matchingSlots =
     structure.matchingOptions !== undefined
-      ? matchingSlotsProjection(structure, materialSlots).matchingSlots ?? []
+      ? (matchingSlotsProjection(structure, materialSlots).matchingSlots ?? [])
       : [];
   const matching =
     structure.matchingOptions !== undefined

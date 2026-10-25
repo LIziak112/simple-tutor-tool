@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { materialPublicSchema } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { materialPublicSchema } from "@tutor/contract";
 import type { Db } from "../db/client.ts";
 import {
   attemptContextSnapshots,
