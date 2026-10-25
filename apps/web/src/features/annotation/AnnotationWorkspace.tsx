@@ -39,6 +39,7 @@ import {
   createAnnotationSurface,
 } from "./annotation-surface";
 import {
+  resolveAnnotationConflictKeepCloud,
   resolveAnnotationConflictKeepLocalAndUpload,
   retryAnnotationUpload,
 } from "./annotation-sync";
@@ -272,20 +273,92 @@ export function AnnotationWorkspace({
         {record !== null && server === "conflict" && (
           <span className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-400">
             <span>标注同步冲突：{record.conflict?.reason ?? "需要裁决"}</span>
+            {session !== null &&
+              (record.conflict?.kind === "layout" ? (
+                // 布局冲突双出口（批次三 P0-2）：重传必再撞 409，只有
+                // 「采用云端」（重绑底图续画）与「保留本机」（不再同步）两条终局
+                <>
+                  <Button
+                    variant="outline"
+                    className="h-9 px-2.5 text-xs"
+                    onClick={() =>
+                      void resolveAnnotationConflictKeepCloud(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      })
+                    }
+                  >
+                    采用云端版本
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-9 px-2.5 text-xs"
+                    onClick={() =>
+                      void resolveAnnotationConflictKeepLocalAndUpload(
+                        session,
+                        {
+                          attemptId,
+                          questionId,
+                          phase,
+                        },
+                      )
+                    }
+                  >
+                    保留本机（不再同步）
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  className="h-9 px-2.5 text-xs"
+                  onClick={() =>
+                    void resolveAnnotationConflictKeepLocalAndUpload(session, {
+                      attemptId,
+                      questionId,
+                      phase,
+                    })
+                  }
+                >
+                  以本机为准并重传
+                </Button>
+              ))}
+          </span>
+        )}
+        {record !== null && server === "retained" && (
+          <span className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-400">
+            <span>
+              本机标注已保留本机，不再自动同步（云端存有另一布局的底图）
+            </span>
             {session !== null && (
-              <Button
-                variant="outline"
-                className="h-9 px-2.5 text-xs"
-                onClick={() =>
-                  void resolveAnnotationConflictKeepLocalAndUpload(session, {
-                    attemptId,
-                    questionId,
-                    phase,
-                  })
-                }
-              >
-                以本机为准并重传
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  className="h-9 px-2.5 text-xs"
+                  onClick={() =>
+                    void retryAnnotationUpload(session, {
+                      attemptId,
+                      questionId,
+                      phase,
+                    })
+                  }
+                >
+                  重新尝试同步
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-9 px-2.5 text-xs"
+                  onClick={() =>
+                    void resolveAnnotationConflictKeepCloud(session, {
+                      attemptId,
+                      questionId,
+                      phase,
+                    })
+                  }
+                >
+                  采用云端版本
+                </Button>
+              </>
             )}
           </span>
         )}

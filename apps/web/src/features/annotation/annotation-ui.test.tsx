@@ -175,6 +175,7 @@ import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
 import {
+  applyAnnotationConflict,
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
@@ -844,5 +845,75 @@ describe("AnnotationLayer：底图回传 409 自愈（审查修复 11）", () =>
     expect(baseImageMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/底图生成失败/)).toBeNull();
     expect(renderMock).toHaveBeenCalledTimes(1); // 不再重复栅格化
+  });
+});
+
+// ---------- 批次三（P0-2）：布局冲突双出口与 retained 常驻提示 ----------
+
+describe("AnnotationWorkspace：布局冲突裁决出口（批次三 P0-2）", () => {
+  const SCOPE = {
+    attemptId: "a1",
+    questionId: "q1",
+    phase: "scratch" as const,
+  };
+
+  async function openWorkspace(): Promise<void> {
+    viewMock.mockResolvedValue(emptyView(READY_BASE));
+    render(<AnnotationLayer attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+  }
+
+  it("layout 冲突：双出口「采用云端版本」「保留本机（不再同步）」；保留后常驻提示 + 重新尝试同步", async () => {
+    await openWorkspace();
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局，保留本机稿并查看原标画",
+    );
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "以本机为准并重传" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "保留本机（不再同步）" }),
+    );
+    expect(
+      await screen.findByText(/已保留本机，不再自动同步/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重新尝试同步" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "采用云端版本" }),
+    ).toBeInTheDocument();
+    expect(putDocMock).not.toHaveBeenCalled(); // 保留本机不重传
+  });
+
+  it("revision 冲突：维持既有「以本机为准并重传」按钮", async () => {
+    await openWorkspace();
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "revision",
+      {
+        annotationId: "00000000-0000-4000-8000-000000000001",
+        revision: 7,
+        hash: "b".repeat(64),
+        savedAt: "2026-10-08T03:00:00Z",
+      },
+      "标注已在别处保存了更新的版本",
+    );
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "以本机为准并重传" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "保留本机（不再同步）" }),
+    ).toBeNull();
   });
 });

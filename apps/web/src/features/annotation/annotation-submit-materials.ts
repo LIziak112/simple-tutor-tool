@@ -38,11 +38,13 @@ export async function snapshotAnnotationProblems(
       reason:
         record.local === "failed"
           ? "标画本机保存失败，请保持页面打开并重试"
-          : record.conflict
-            ? `标画同步冲突：${record.conflict.reason}`
-            : record.denied
-              ? `标画同步被拒：${record.denied.reason}`
-              : "标画尚未上传完整",
+          : record.retained
+            ? "标画已保留本机、不再自动同步：可重新尝试同步或采用云端版本后再交卷"
+            : record.conflict
+              ? `标画同步冲突：${record.conflict.reason}`
+              : record.denied
+                ? `标画同步被拒：${record.denied.reason}`
+                : "标画尚未上传完整",
     });
   }
   if (currentAnnotationSession() !== session)
