@@ -15,6 +15,19 @@ import {
 } from "./helpers";
 import { expectNavigationRingSpace } from "./navigation-ring";
 
+/** 标画热开预算（毫秒）。2026-10-25 由 150 放宽至 300：CI 实测 176.5-189ms
+ * （PR #6 e2e 失败、#8785 两轮），本机 197-226ms——150 在 CI 硬件上从不可达；
+ * 断言目的是防回归劣化而非卡硬件差异，300 仍远紧于可感知卡顿。 */
+const WARM_OPEN_BUDGET_MS = 300;
+
+/** 计时断言的环境门（2026-10-25，治理本机满载全量「130题长作业」双浏览器同挂）：
+ * CI（PR 全量 + 每晚 schedule，2 workers 独占 runner）或显式 E2E_PERF_GATE=1 时
+ * 硬断言 5 次热开的 max ≤ 预算；本机 6 workers 并行时 max 对单次 GC 停顿/邻
+ * worker 抢占零容忍——失败在两浏览器对称出现是环境指纹而非回归——降为看中位数
+ * （5 样本容忍 ≤2 个离群）仅告警，workspace-performance.json 附件照常落盘。
+ * unrelatedMutations 为确定性架构守护（负载不会制造额外 DOM 变更），恒硬断言。 */
+const PERF_GATE = !!process.env.CI || process.env.E2E_PERF_GATE === "1";
+
 test(
   "学生工作区：部分填写、遗漏定位、答题卡与响应式布局",
   { tag: ["@student"] },
@@ -280,6 +293,9 @@ test(
   "130题长作业：答题卡独立滚动、跳到末题、待检查刷新恢复",
   { tag: ["@student"] },
   async ({ request, page }, testInfo) => {
+    // 满载全量下多次 reload + 130 题材料恢复可能整条超 120s；360s 顶格余量
+    // （只放大用例级超时，expect 的 15s 预算不变）。
+    test.slow();
     await page.addInitScript(() => {
       const listeners = new Set<EventListenerOrEventListenerObject>();
       const add = EventTarget.prototype.addEventListener;
@@ -604,10 +620,18 @@ test(
       };
     });
     await page.getByRole("button", { name: "作答", exact: true }).click();
+    const warmMaxMs = Math.max(...warmMs);
+    // 本机告警看中位数：真回归抬升全部样本，单次 GC 只抬离群值；CI 硬门仍看
+    // max，隔次抖动也应在安静环境抓住。
+    const warmMedianMs =
+      [...warmMs].sort((a, b) => a - b)[Math.floor(warmMs.length / 2)] ??
+      Infinity;
     const metrics = {
       browser: testInfo.project.name,
       questions: 130,
       network: "隔离本机API，无节流",
+      perfGate: PERF_GATE ? "hard" : "advisory",
+      warmMedianMs,
       firstOpenMs,
       warmMs,
       listenerCount: beforeListeners,
@@ -630,10 +654,13 @@ test(
     const { stages: _stages, ...summary } = metrics;
     console.log("工作区实测", JSON.stringify(summary));
     expect(moveMetrics.unrelatedMutations).toBe(0);
-    // 2026-10-25 放宽 150→300ms（保留守护）：CI 实测 176.5-189ms（PR #6 e2e
-    // 失败、#8785 两轮），本机 197-226ms——150ms 在 CI 硬件上从不可达；
-    // 断言目的是防回归劣化而非卡硬件差异，300ms 仍远紧于可感知卡顿。
-    expect(Math.max(...warmMs)).toBeLessThanOrEqual(300);
+    if (PERF_GATE) {
+      expect(warmMaxMs).toBeLessThanOrEqual(WARM_OPEN_BUDGET_MS);
+    } else if (warmMedianMs > WARM_OPEN_BUDGET_MS) {
+      console.warn(
+        `热开中位数 ${warmMedianMs}ms 超预算 ${WARM_OPEN_BUDGET_MS}ms（max ${warmMaxMs}ms，样本 ${JSON.stringify(warmMs)}），请安静机器或 E2E_PERF_GATE=1 复验`,
+      );
+    }
     // 手机端顶栏精简（2026-10-15 决策）：保存详情入口在「更多 → 练习信息」
     // 弹层里，与首个用例同款路径；当前视口 390px。
     const saves = await openSaveDetailsViaInfoDialog(page);

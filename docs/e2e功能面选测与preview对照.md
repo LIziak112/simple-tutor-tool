@@ -57,3 +57,5 @@
 - question-base 依赖 `/dev/question-base` 调试页与 `题面宽度` 控件——开发页不在生产构建里。
 
 基线 19 挂的构成：full-chain 双浏览器（已用 v2 原版 spec 复现，确认 v2 预存项，与本任务无关）；其余为负载敏感型（130 题长作业、富题型回看、学情三视图、批改流、三条全链——两次独立全量 run 失败集高度重合，双浏览器对称），待机器空闲大概率可过；CI（2 workers、独占 runner）历史上这些用例是绿的。注意：该 19 挂与 workers 6 同批落地，未与 Playwright 默认 workers 单独归因（当时的失败也可能有 workers 并发抬高的成分）。`E2E_WEB_PREVIEW` 机制保留在代码里（默认关闭、零影响），供未来 spec 全面脱敏 dev 源码路径后重试。
+
+「130题长作业」计时断言处置（2026-10-25，fix/e2e-130-perf-gate）：热开预算断言改为环境门——CI（`process.env.CI`）或显式 `E2E_PERF_GATE=1` 时硬断言 5 次热开 max ≤300ms，本机并行满载降为中位数（容忍 ≤2 离群样本）仅 console.warn，`workspace-performance.json` 附件照常落盘并新增 `perfGate`/`warmMedianMs` 字段；`unrelatedMutations === 0` 为确定性架构守护（负载不制造 DOM 变更），保持无条件硬断言；用例加 `test.slow()`（120s→360s，只放大用例级超时，expect 15s 预算不变）。@perf 标签 + 专用 workers=1 run 的结构性方案**未采**——需动 package.json 脚本、CI workflow 与「pnpm e2e 即全量」的语义分叉，且本机日常已走 e2e:affected（仅 chromium），边际收益小；留作本机全量仍被该用例拖累时的后手（届时须同步接 CI 每晚 e2e:perf 专用步，防止性能守护无处运行）。
