@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { attemptQuestionPublicSchema, attemptSourceSchema } from "./attempt.ts";
+import {
+  attemptContextGroupSchema,
+  attemptContextMaterialSchema,
+  attemptQuestionPublicSchema,
+  attemptSourceSchema,
+} from "./attempt.ts";
 import { questionAnswersSchema } from "./content.ts";
 import {
   noteRecordMetaSchema,
@@ -61,13 +66,35 @@ export const notebookRoundReleaseSchema = z.object({
 });
 
 /**
+ * 该轮来源材料/组投影（QM-15 细项 1/4，2026-10-25）：**该轮开卷时冻结的**
+ * attempt_context_snapshots 中与本题相关的依赖闭包——题级 materialRefs ∪
+ * 所属组（组快照 questionIds 含本题）的组行与组级材料引用。材料子题从
+ * 历史再次打开可独立理解的展示数据源。
+ *
+ * 口径（与 /attempts/:id/context 同一冻结白名单实例，不重定义投影）：
+ * - 恒读冻结快照，零 live 回退——当前库改稿/软删不换历史轮次内容
+ *   （快照不可侵犯）；
+ * - **同材料不同历史版本并存**：wrong 重练卷可把同 id 双版本冻进一卷，
+ *   条目按 (kind, sourceId, sourceVersion) 分别保留，不按 materialId 合并
+ *   覆盖（设计方案 §5.3；排序 id 升序 → sourceVersion 升序稳定）；
+ * - 空（无冻结依赖/legacy 卷）为 null；单条坏快照服务端跳过该条不打挂
+ *   整页（显式 409 属 /context 独立读路径），详见服务层注释。
+ */
+export const notebookRoundContextSchema = z.object({
+  materials: z.array(attemptContextMaterialSchema),
+  groups: z.array(attemptContextGroupSchema),
+});
+
+/**
  * 笔记本单轮（notebookRound）：该生该题的一次**已交卷**作答及其笔记材料。
  * - roundOrdinal：该生该题按提交时间排序的轮次号（从 1 递增；同刻按
  *   attemptId 升序兜底稳定，与错题本 rounds 排序同口径）；
  * - evidence：该轮逐题提交证据行；null = 无证据行（旧客户端兼容交卷，
  *   与 state='none'〔明确空稿〕区分）；
  * - corrections / supplements：该轮的订正记录（含已封存与未封存）与交卷后
- *   找回的补充稿（noteRecordMeta 形状，见 note.ts T6R.15 段）。
+ *   找回的补充稿（noteRecordMeta 形状，见 note.ts T6R.15 段）；
+ * - context：该轮来源材料/组投影（见 notebookRoundContextSchema 注释）；
+ *   null = 无冻结依赖。
  */
 export const notebookRoundSchema = z.object({
   /** 该轮作答 id（attempts.id） */
@@ -104,6 +131,8 @@ export const notebookRoundSchema = z.object({
   corrections: z.array(noteRecordMetaSchema),
   /** 该轮补充稿（phase='supplement' 行，交卷后找回） */
   supplements: z.array(noteRecordMetaSchema),
+  /** 该轮来源材料/组投影（QM-15）；null = 无冻结依赖（legacy 卷） */
+  context: notebookRoundContextSchema.nullable(),
 });
 
 /**
@@ -126,5 +155,6 @@ export const studentNotebookOkSchema = apiOkExtend(studentNotebookDataSchema);
 
 // ---------- 推断类型导出 ----------
 
+export type NotebookRoundContext = z.infer<typeof notebookRoundContextSchema>;
 export type NotebookRound = z.infer<typeof notebookRoundSchema>;
 export type StudentNotebookData = z.infer<typeof studentNotebookDataSchema>;

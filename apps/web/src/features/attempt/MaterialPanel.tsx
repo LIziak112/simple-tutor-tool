@@ -28,6 +28,43 @@ function slotMarkedContentOf(material: AttemptContextMaterial): string {
 }
 
 /**
+ * 材料条目的版本感知键（QM-15 细项 4）：同材料不同历史版本同时选入
+ * （wrong 重练双版本卷）时分别保留——React key / 消费方去重必须用
+ * (id, sourceVersion)，不能按 materialId（设计方案 §5.3「不能按 materialId
+ * 合并覆盖」；快照身份 = id + 冻结版本）。
+ */
+export function materialVersionKey(material: {
+  id: string;
+  sourceVersion: number;
+}): string {
+  return `${material.id}|${material.sourceVersion}`;
+}
+
+/**
+ * 同 id 多版本才有的版本徽标文案（QM-15 细项 4）：单版本材料不带徽标
+ * （正常卷恒单版本，零视觉噪音）；双版本并存时逐版标注，学生可对上
+ * 「这道题当时看到的是哪一版」。键 = materialVersionKey。
+ */
+export function materialVersionNotesOf(
+  materials: readonly AttemptContextMaterial[],
+): Map<string, string> {
+  const countById = new Map<string, number>();
+  for (const material of materials) {
+    countById.set(material.id, (countById.get(material.id) ?? 0) + 1);
+  }
+  const notes = new Map<string, string>();
+  for (const material of materials) {
+    if ((countById.get(material.id) ?? 0) > 1) {
+      notes.set(
+        materialVersionKey(material),
+        `历史版本 ${material.sourceVersion}`,
+      );
+    }
+  }
+  return notes;
+}
+
+/**
  * 共享材料面板（QM-08 细项 1/4）：组内子题共用的同一份冻结材料实例——
  * 标题（缺省「材料」）+ 正文经 RichMarkdown（与教师预览同一 markdown 管线
  * 与指令组件，共用数据解释）。材料正文是只读内容：无任何作答/选中态，
@@ -40,6 +77,7 @@ function slotMarkedContentOf(material: AttemptContextMaterial): string {
 export const MaterialPanel = memo(function MaterialPanel({
   material,
   variant = "block",
+  versionNote,
 }: {
   material: AttemptContextMaterial;
   /**
@@ -47,6 +85,11 @@ export const MaterialPanel = memo(function MaterialPanel({
    * compact = 侧栏对照列（更紧凑的内边距，正文不变）
    */
   variant?: "block" | "compact";
+  /**
+   * 同材料多版本并存时的版本徽标文案（materialVersionNotesOf 的值）；
+   * 单版本不传（不渲染徽标）
+   */
+  versionNote?: string | undefined;
 }) {
   const title = material.title?.trim();
   return (
@@ -60,9 +103,14 @@ export const MaterialPanel = memo(function MaterialPanel({
           : "flex min-w-0 flex-col gap-4 rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-5"
       }
     >
-      <p className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+      <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-semibold text-muted-foreground">
         <FileText aria-hidden className="size-4 shrink-0" />
         {title && title.length > 0 ? title : "材料"}
+        {versionNote !== undefined && (
+          <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+            {versionNote}
+          </span>
+        )}
       </p>
       <div className="material-reading min-w-0 text-base leading-[1.75]">
         <RichMarkdown source={slotMarkedContentOf(material)} />

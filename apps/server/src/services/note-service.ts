@@ -11,14 +11,19 @@ import { gzipSync } from "node:zlib";
 import type {
   CorrectionCreateRequest,
   CorrectionSealRequest,
+  MaterialPublic,
+  NotebookRoundContext,
   NoteImageUploadMeta,
   NoteRecordMeta,
   NoteSubmissionEvidenceMeta,
   NoteUploadMetaInput,
+  Question,
+  QuestionGroupPublic,
   StudentNotebookData,
 } from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
+  materialPublicSchema,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_IMAGE_PNG_MAX_BYTES,
@@ -36,6 +41,7 @@ import {
   noteRecordMetaSchema,
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
+  questionGroupPublicSchema,
 } from "@tutor/contract";
 import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -74,6 +80,7 @@ import {
 } from "./attempt-service";
 import { collectBackupReferencedPaths } from "./backup-service";
 import { gcInkFiles } from "./ink-gc";
+import { listAttemptContextSnapshots } from "./material-repository";
 import { createQuestionReviewReader } from "./review-access.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
@@ -1313,6 +1320,119 @@ export function sealCorrection(
  *   同口径）；
  * - 无轮次 → rounds=[]（不探测题目存在性——空数组即「没有历史」）。
  */
+/**
+ * 该轮来源材料/组投影（QM-15 细项 1/4）：**纯读该轮 attempt_context_snapshots
+ * 冻结快照**，零 live 回退——教师改稿/软删不影响历史轮次展示（快照不可侵犯）。
+ *
+ * 依赖闭包（与 wrongAttemptContextPlan 的 frozenRefIdsOf 同口径构边）：组 =
+ * 组快照 questionIds 含该题（组多版本时含该题的版本都保留）；材料 = 题快照
+ * materialRefs ∪ 组级 materialRefs，**同 id 多版本分别保留**（wrong 双版本卷
+ * 不按 materialId 覆盖，排序 id 升序 → sourceVersion 升序与 /context 同序）。
+ *
+ * 坏快照（JSON 损坏/形态不符）跳过该条不打挂整页——显式 409 属 /context
+ * （studentAttemptContext）独立读路径；聚合页与题目区 question:null 降级同
+ * 防御口径。引用缺快照条目（闭包外的坏数据）同样跳过不崩溃。该卷零冻结
+ * 条目或闭包为空 → null（契约：null = 无冻结依赖，与空数组区分）。
+ */
+function notebookRoundContextOf(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  snapshot: Question | null,
+): NotebookRoundContext | null {
+  const rows = listAttemptContextSnapshots(db, attemptId);
+  if (rows.length === 0) return null;
+  type Entry =
+    | {
+        kind: "material";
+        sourceId: string;
+        sourceVersion: number;
+        data: MaterialPublic;
+      }
+    | {
+        kind: "group";
+        sourceId: string;
+        sourceVersion: number;
+        data: QuestionGroupPublic;
+      };
+  const entriesByKindId = new Map<string, Entry[]>();
+  for (const row of rows) {
+    let value: unknown;
+    try {
+      value = JSON.parse(row.snapshotJson) as unknown;
+    } catch {
+      continue;
+    }
+    const parsed =
+      row.kind === "material"
+        ? materialPublicSchema.safeParse(value)
+        : questionGroupPublicSchema.safeParse(value);
+    if (!parsed.success) continue;
+    const key = `${row.kind}|${row.sourceId}`;
+    const entry: Entry =
+      row.kind === "material"
+        ? {
+            kind: row.kind,
+            sourceId: row.sourceId,
+            sourceVersion: row.sourceVersion,
+            data: parsed.data as MaterialPublic,
+          }
+        : {
+            kind: row.kind,
+            sourceId: row.sourceId,
+            sourceVersion: row.sourceVersion,
+            data: parsed.data as QuestionGroupPublic,
+          };
+    const list = entriesByKindId.get(key) ?? [];
+    list.push(entry);
+    entriesByKindId.set(key, list);
+  }
+  const groups: Array<{ sourceVersion: number; data: QuestionGroupPublic }> =
+    [];
+  const materialIds = new Set<string>();
+  for (const list of entriesByKindId.values()) {
+    for (const entry of list) {
+      if (entry.kind !== "group") continue;
+      if (!(entry.data.questionIds ?? []).includes(questionId)) continue;
+      groups.push({ sourceVersion: entry.sourceVersion, data: entry.data });
+      for (const ref of entry.data.materialRefs ?? []) {
+        materialIds.add(ref.material);
+      }
+    }
+  }
+  for (const ref of snapshot?.materialRefs ?? []) {
+    materialIds.add(ref.material);
+  }
+  const materials: Array<{
+    sourceVersion: number;
+    data: MaterialPublic;
+  }> = [];
+  for (const id of materialIds) {
+    for (const entry of entriesByKindId.get(`material|${id}`) ?? []) {
+      if (entry.kind === "material") {
+        materials.push({
+          sourceVersion: entry.sourceVersion,
+          data: entry.data,
+        });
+      }
+    }
+  }
+  if (materials.length === 0 && groups.length === 0) return null;
+  const byIdThenVersion = (
+    a: { data: { id: string }; sourceVersion: number },
+    b: { data: { id: string }; sourceVersion: number },
+  ): number =>
+    a.data.id.localeCompare(b.data.id) || a.sourceVersion - b.sourceVersion;
+  return {
+    materials: materials
+      .sort(byIdThenVersion)
+      .map((m) => ({ ...m.data, sourceVersion: m.sourceVersion })),
+    groups: groups
+      .sort(byIdThenVersion)
+      .map((g) => ({ ...g.data, sourceVersion: g.sourceVersion })),
+  };
+}
+
 export function getStudentQuestionNotebook(
   db: Db,
   studentId: string,
@@ -1405,6 +1525,13 @@ export function getStudentQuestionNotebook(
         : null;
     const release =
       isReleased && snapshot !== null ? releaseOfSnapshot(snapshot) : null;
+    // 该轮来源材料/组投影（QM-15）：纯读该卷冻结快照，零 live 回退
+    const context = notebookRoundContextOf(
+      db,
+      row.attempt.id,
+      questionId,
+      snapshot,
+    );
     const { evidence, corrections, supplements } = noteCollectionsOf(
       db,
       row.attempt.id,
@@ -1424,6 +1551,7 @@ export function getStudentQuestionNotebook(
       evidence,
       corrections,
       supplements,
+      context,
     };
   });
   return { questionId, rounds };

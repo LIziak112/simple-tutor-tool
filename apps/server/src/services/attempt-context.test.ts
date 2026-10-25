@@ -14,11 +14,13 @@ import {
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import type { HttpError } from "../lib/http-error.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   contextEntriesOf,
   liveAttemptContextClosure,
+  studentAttemptContext,
 } from "./attempt-context.ts";
-import { startCourseAttempt } from "./attempt-service.ts";
+import { getAttemptDetail, startCourseAttempt } from "./attempt-service.ts";
 import { commitImport } from "./content-service.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { startWrongPractice } from "./wrong-practice.ts";
@@ -964,6 +966,138 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
     ).toEqual([]);
     expect(db.select().from(responses).all()).toHaveLength(1); // 仅来源行
     expect(db.select().from(attemptContextSnapshots).all()).toEqual([]);
+  });
+
+  // ---- QM-15 细项 3：重练卷的身份与防泄露（新 response ID / 新 CAS 基线 /
+  // 快照逐字节复制 / 兄弟题答案零携带） ----
+
+  it("QM-15：重练卷新 response ID 与新保存版本基线；题目快照逐字节复制源卷", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-id1",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1", slot: "slot-1" }],
+        questionIds: ["资料分析-1"],
+      },
+    });
+    const sourceRow = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, "attempt-wrong-src-id1"))
+      .get();
+    if (sourceRow === undefined) throw new Error("来源行未种入");
+
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1"],
+      {},
+      true,
+    );
+    const newRow = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, started.id))
+      .get();
+    if (newRow === undefined) throw new Error("重练卷行缺失");
+    // 新身份：行 id（= 对外 questionRevisionId）与来源不同；保存版本从零起
+    expect(newRow.id).not.toBe(sourceRow.id);
+    expect(newRow.answerRevision).toBe(0);
+    expect(newRow.answerMutationId).toBeNull();
+    expect(newRow.practiceMutationId).toBeNull();
+    // 内容冻结：快照逐字节复制（含版本号），判分输入与来源一致
+    expect(newRow.questionSnapshotJson).toBe(sourceRow.questionSnapshotJson);
+    expect(newRow.questionVersion).toBe(sourceRow.questionVersion);
+    // 草稿视图对外下发新 questionRevisionId（= 新行 id，交卷回传/订正挂靠新身份）
+    const detail = getAttemptDetail(db, STUDENT_ID, started.id);
+    if (!("drafts" in detail)) throw new Error("重练卷应为草稿视图");
+    expect(
+      detail.units.flatMap((unit) => unit.questions.map((q) => q.id)),
+    ).toEqual(["资料分析-1"]);
+    const publicQuestion = detail.units[0]?.questions[0];
+    expect(publicQuestion?.questionRevisionId).toBe(newRow.id);
+  });
+
+  it("QM-15：单题重练只复制依赖——兄弟题答案零携带（组快照仅成员 id 与引用）", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-src-sib",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1", slot: "slot-1" }],
+        // 组快照照实携带成员归属（含兄弟题 id——仅 id，无任何内容）
+        questionIds: ["资料分析-1", "资料分析-2"],
+      },
+    });
+    // 同卷兄弟题行：题干/答案/详解带哨兵（材料内含答案本被 lint 禁绝，
+    // 组快照 questionIds 是兄弟题身份的唯一携带通道）
+    const siblingSource = db.$client
+      .prepare("SELECT source_md, version FROM questions WHERE id = ?")
+      .get("资料分析-2") as { source_md: string; version: number };
+    db.insert(responses)
+      .values({
+        id: "resp-sibling-src",
+        attemptId: "attempt-wrong-src-sib",
+        questionId: "资料分析-2",
+        questionVersion: siblingSource.version,
+        questionSnapshotJson: JSON.stringify({
+          id: "资料分析-2",
+          type: "choice",
+          difficulty: 2,
+          knowledge: [],
+          stemMd: "兄弟题题干-SENTINEL-STEM",
+          sourceMd: siblingSource.source_md,
+          answers: { kind: "choice", index: 1 },
+          solutionMd: "兄弟题详解-SENTINEL-SOL",
+          options: [{ text: "甲" }, { text: "乙" }],
+          hints: [],
+        }),
+        autoCorrect: true,
+        finalCorrect: true,
+        answerRevision: 0,
+        hintsUsed: 0,
+        changeCount: 0,
+      })
+      .run();
+
+    const started = startWrongPractice(
+      db,
+      STUDENT_ID,
+      ["资料分析-1"],
+      {},
+      true,
+    );
+    // 重练卷只有选定题；兄弟题行不复制（答案/详解无携带通道）
+    const rows = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, started.id))
+      .all();
+    expect(rows.map((row) => row.questionId)).toEqual(["资料分析-1"]);
+
+    const detail = getAttemptDetail(db, STUDENT_ID, started.id);
+    const context = studentAttemptContext(db, started.id);
+    const draftJson = JSON.stringify(detail);
+    const contextJson = JSON.stringify(context);
+    expect(draftJson).not.toContain("SENTINEL-STEM");
+    expect(draftJson).not.toContain("SENTINEL-SOL");
+    expect(contextJson).not.toContain("SENTINEL-STEM");
+    expect(contextJson).not.toContain("SENTINEL-SOL");
+    // 组快照成员 id 照常携带（结构身份，非内容）——依赖闭包完整可独立理解
+    expect(contextJson).toContain("资料分析-2");
+    expect(context.groups[0]?.materialRefs[0]?.material).toBe("mat-资料分析-1");
+    // 学生端两载荷通用泄露断言（AGENTS 第 3 条）
+    assertNoLeak(detail);
+    assertNoLeak(context);
   });
 });
 

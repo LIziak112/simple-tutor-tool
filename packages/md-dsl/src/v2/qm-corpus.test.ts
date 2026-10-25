@@ -88,9 +88,12 @@ describe.skipIf(!newDslRegistered())(
       );
     });
 
-    // ---- TT-06 语料验收转正（§5.9 时序解除）：15 份全量进回归 ----
+    // ---- TT-06 语料验收转正（§5.9 时序解除）：16 份全量进回归（valid-09
+    // 由 QM-15 增补，lesson×材料/组×新题型）----
 
-    /** 8 份有效语料：tutor-lint 语义零 error（与 pnpm tutor-lint 分跑记录互证） */
+    /** 9 份有效语料：tutor-lint 语义零 error（与 pnpm tutor-lint 分跑记录
+     *  互证）；valid-09 = QM-15 增补的 lesson×材料/组×新题型（TT-10b P3-2，
+     *  题块与材料/组全顶层、[[答案]] 仅题块内——lesson 语境红线覆盖面） */
     const VALID_FILES = [
       "valid-01-资料分析五题.md",
       "valid-02-英语阅读五题.md",
@@ -100,6 +103,7 @@ describe.skipIf(!newDslRegistered())(
       "valid-06-多材料申论翻译作文.md",
       "valid-07-两问证明计算.md",
       "valid-08-旧七型混合题.md",
+      "valid-09-讲练材料组新题型.md",
     ] as const;
 
     for (const file of VALID_FILES) {
