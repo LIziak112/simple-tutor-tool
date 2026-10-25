@@ -336,6 +336,51 @@ describe("questionPublicSchema 白名单扩展（作答面结构随题下发，f
     expect(parsed.wordMin).toBe(10);
   });
 
+  it("matching 槽位集合（服务端按材料槽位序展开 + 槽位行附材料序号）随题下发；缺省不注入键", () => {
+    // QM-13 细项 2：matching 作答行 = 声明槽位集合；slots= 区间的展开在
+    // 服务端投影时完成，学生端只消费展开产物（不重复解析 DSL 选择串）。
+    // 2026-10-25 审查 P2-2：行附材料槽位序 ordinal——子集选择
+    // （slots=slot-3..slot-5）沿用材料编号 3/4/5，题内标签与材料面板
+    // 编号空位（N）对齐，不用题内重排的 1/2/3
+    const parsed = questionPublicSchema.parse({
+      ...base,
+      matchingSlots: [
+        { id: "slot-3", ordinal: 3 },
+        { id: "slot-4", ordinal: 4 },
+        { id: "slot-5", ordinal: 5 },
+      ],
+    });
+    expect(parsed.matchingSlots).toEqual([
+      { id: "slot-3", ordinal: 3 },
+      { id: "slot-4", ordinal: 4 },
+      { id: "slot-5", ordinal: 5 },
+    ]);
+    // 空 id / 缺序号 / 序号非正整数 / 空数组拒绝（防御性边界：展开产物必非空）
+    expect(
+      questionPublicSchema.safeParse({
+        ...base,
+        matchingSlots: [{ id: "", ordinal: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      questionPublicSchema.safeParse({
+        ...base,
+        matchingSlots: [{ id: "slot-1" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      questionPublicSchema.safeParse({
+        ...base,
+        matchingSlots: [{ id: "slot-1", ordinal: 0 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      questionPublicSchema.safeParse({ ...base, matchingSlots: [] }).success,
+    ).toBe(false);
+    const bare = questionPublicSchema.parse(base);
+    expect(bare).not.toHaveProperty("matchingSlots");
+  });
+
   it("教师侧键（answers/solutionMd/sourceMd/hints 内容）仍被剥离", () => {
     const parsed = questionPublicSchema.parse({
       ...base,
@@ -349,5 +394,37 @@ describe("questionPublicSchema 白名单扩展（作答面结构随题下发，f
     expect(parsed).not.toHaveProperty("sourceMd");
     expect(parsed).not.toHaveProperty("hints");
     expect(parsed.hintCount).toBe(0);
+  });
+
+  it("审查 P1 收紧：学生面变体剥离 distractor 键（教师侧全量另见 matchingOptionsSchema/orderingItemSchema），sortableCount 计数随 ordering 下发", () => {
+    const parsed = questionPublicSchema.parse({
+      ...base,
+      matchingOptions: {
+        allowRepeat: false,
+        options: [
+          { id: "opt-1", text: "一", distractor: true },
+          { id: "opt-2", text: "二", distractor: false },
+        ],
+      },
+      orderingItems: [
+        { id: "it-1", text: "甲", fixedPosition: null, distractor: false },
+        { id: "it-2", text: "乙", fixedPosition: 1, distractor: false },
+        { id: "it-6", text: "己", fixedPosition: null, distractor: true },
+      ],
+      sortableCount: 1,
+    });
+    // 混入的 distractor 标记被 strip（fail closed：多给的键不透传）
+    for (const option of parsed.matchingOptions?.options ?? []) {
+      expect("distractor" in option).toBe(false);
+    }
+    for (const item of parsed.orderingItems ?? []) {
+      expect("distractor" in item).toBe(false);
+    }
+    // fixedPosition 属公开结构（§6.1 调整 3），学生面保留
+    expect(parsed.orderingItems?.[1]?.fixedPosition).toBe(1);
+    expect(parsed.sortableCount).toBe(1);
+    // sortableCount 缺省不注入键（非 ordering 题不携带）
+    const bare = questionPublicSchema.parse(base);
+    expect(bare).not.toHaveProperty("sortableCount");
   });
 });

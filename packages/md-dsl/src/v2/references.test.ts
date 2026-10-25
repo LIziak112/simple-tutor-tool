@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseDocument } from "./parse.ts";
+import { expandSelectionIds } from "./references.ts";
 
 /**
  * TT-06 两遍解析第二遍：引用解析与结构校验（§5.4.3 静态面全码表）。
@@ -308,5 +309,27 @@ describe("防泄露与结构（安全重点）", () => {
     );
     expect(codes).toContain("MATERIAL_DUPLICATE_ID");
     expect(codes).not.toContain("UNKNOWN_MATERIAL_REF");
+  });
+});
+
+describe("选择串展开公开入口（QM-13 细项 2：服务端槽位集合投影共用）", () => {
+  it("单点/列表/区间按 orderedIds 文档顺序展开；未知端点区间展开为空", () => {
+    const ordered = ["slot-1", "slot-2", "slot-3", "slot-4", "slot-5"];
+    expect(expandSelectionIds("slot-2", ordered)).toEqual(["slot-2"]);
+    expect(expandSelectionIds("slot-1, slot-4", ordered)).toEqual([
+      "slot-1",
+      "slot-4",
+    ]);
+    expect(expandSelectionIds("slot-1..slot-3", ordered)).toEqual([
+      "slot-1",
+      "slot-2",
+      "slot-3",
+    ]);
+    // 未知端点 / 逆序区间与 lint 同口径：展开为空（服务端投影侧由调用方
+    // 决定缺省，不在此抛错）；显式 id 不在 ordered 内按单点保留（题级
+    // slots= 的 lint 校验已拦未知引用，投影侧防御性保留不静默丢）
+    expect(expandSelectionIds("slot-x..slot-3", ordered)).toEqual([]);
+    expect(expandSelectionIds("slot-3..slot-1", ordered)).toEqual([]);
+    expect(expandSelectionIds("slot-x", ordered)).toEqual(["slot-x"]);
   });
 });

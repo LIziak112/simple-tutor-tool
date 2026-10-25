@@ -28,6 +28,7 @@ import {
   insertFrozenResponses,
   lessonLiveSummaryOf,
   lessonQuestionSubmitted,
+  materialSlotOrderOf,
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
@@ -217,6 +218,8 @@ function buildLessonStartData(
 ): LessonStartData {
   const blocks: LessonBlock[] = splitLessonBlocks(lecture.markdown);
 
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   const questions: AttemptQuestionPublic[] = [];
   const drafts: Record<string, StudentAnswer> = {};
   const draftRevisions: Record<string, number> = {};
@@ -226,7 +229,13 @@ function buildLessonStartData(
   for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
-    questions.push(publicOfSnapshot(snapshot, row.id));
+    questions.push(
+      publicOfSnapshot(snapshot, row.id, {
+        materialSlots,
+        // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+        unitId: row.unitId,
+      }),
+    );
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;
@@ -239,7 +248,7 @@ function buildLessonStartData(
     // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
     // 含 [[答案]] 标记的原文不下发）
     released[row.questionId] = studentFacingResultOf(
-      resultQuestionOf(row, snapshot),
+      resultQuestionOf(row, snapshot, { materialSlots }),
     );
   }
   return {

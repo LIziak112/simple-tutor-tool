@@ -277,13 +277,99 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
     });
   });
 
-  it("matching/ordering 守卫保持武装（TT-08 呈现层 QM-13 接入前不静默降级）", () => {
-    expect(() =>
-      prepareQuestion({ ...baseQuestion, type: "matching" }, "s-m"),
-    ).toThrow("尚未接入");
-    expect(() =>
-      prepareQuestion({ ...baseQuestion, type: "ordering" }, "s-o"),
-    ).toThrow("尚未接入");
+  it("matching/ordering 真实构造（QM-13 转正）：选项池+展开槽位/排序项进模型；结构缺失走空结构防御形态", () => {
+    const matching = prepareQuestion(
+      {
+        ...baseQuestion,
+        type: "matching",
+        matchingOptions: {
+          allowRepeat: false,
+          options: [
+            { id: "opt-1", text: "甲" },
+            { id: "opt-2", text: "乙" },
+          ],
+        },
+        matchingSlots: [
+          { id: "slot-1", ordinal: 1 },
+          { id: "slot-2", ordinal: 2 },
+        ],
+      },
+      "s-m",
+    );
+    expect(matching).toEqual({
+      kind: "matching",
+      scopeId: "s-m",
+      stemMd: baseQuestion.stemMd,
+      options: [
+        { key: "opt-1", text: "甲" },
+        { key: "opt-2", text: "乙" },
+      ],
+      slots: [
+        { id: "slot-1", ordinal: 1 },
+        { id: "slot-2", ordinal: 2 },
+      ],
+      allowRepeat: false,
+    });
+    const ordering = prepareQuestion(
+      {
+        ...baseQuestion,
+        type: "ordering",
+        orderingItems: [
+          { id: "it-1", text: "甲", fixedPosition: null },
+          { id: "it-2", text: "乙", fixedPosition: 1 },
+        ],
+        sortableCount: 1,
+      },
+      "s-o",
+    );
+    expect(ordering).toEqual({
+      kind: "ordering",
+      scopeId: "s-o",
+      stemMd: baseQuestion.stemMd,
+      items: [
+        { key: "it-1", text: "甲", fixedPosition: null },
+        { key: "it-2", text: "乙", fixedPosition: 1 },
+      ],
+      sortableCount: 1,
+    });
+    // 结构缺失（服务端投影防御形态）：空池空槽，视图显式报错不静默降级
+    expect(
+      prepareQuestion({ ...baseQuestion, type: "matching" }, "s-m2"),
+    ).toEqual({
+      kind: "matching",
+      scopeId: "s-m2",
+      stemMd: baseQuestion.stemMd,
+      options: [],
+      slots: [],
+      allowRepeat: false,
+    });
+    expect(
+      prepareQuestion({ ...baseQuestion, type: "ordering" }, "s-o2"),
+    ).toEqual({
+      kind: "ordering",
+      scopeId: "s-o2",
+      stemMd: baseQuestion.stemMd,
+      items: [],
+      sortableCount: 0,
+    });
+    // sortableCount 缺失（半结构态）= 结构不可用，同走防御形态（审查 P1：
+    // 学生面无逐项干扰标记，缺计数则板行数/完成度无从派生）
+    expect(
+      prepareQuestion(
+        {
+          ...baseQuestion,
+          type: "ordering",
+          orderingItems: [{ id: "it-1", text: "甲", fixedPosition: null }],
+        },
+        "s-o3",
+      ),
+    ).toEqual({
+      kind: "ordering",
+      scopeId: "s-o3",
+      stemMd: baseQuestion.stemMd,
+      items: [],
+      sortableCount: 0,
+    });
   });
 
   it("字段白名单：键集恰为各形态挑选的公开字段，禁 {...fullQuestion} 展开", () => {
@@ -302,6 +388,27 @@ describe("prepareQuestion（公开内容→PreparedQuestion，§4.2）", () => {
       [
         { ...full, type: "response", wordMin: 10, wordMax: 20 },
         ["kind", "scopeId", "stemMd", "wordMin", "wordMax"],
+      ],
+      [
+        {
+          ...full,
+          type: "matching",
+          matchingOptions: {
+            allowRepeat: false,
+            options: [{ id: "opt-1", text: "甲" }],
+          },
+          matchingSlots: [{ id: "slot-1", ordinal: 1 }],
+        },
+        ["kind", "scopeId", "stemMd", "options", "slots", "allowRepeat"],
+      ],
+      [
+        {
+          ...full,
+          type: "ordering",
+          orderingItems: [{ id: "it-1", text: "甲", fixedPosition: null }],
+          sortableCount: 1,
+        },
+        ["kind", "scopeId", "stemMd", "items", "sortableCount"],
       ],
     ];
     for (const [question, keys] of cases) {

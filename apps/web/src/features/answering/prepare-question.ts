@@ -139,6 +139,48 @@ export type PreparedQuestion =
       readonly wordMin?: number;
       readonly wordMax?: number;
       readonly context?: PreparedQuestionContext;
+    }
+  | {
+      readonly kind: "matching";
+      readonly scopeId: string;
+      readonly stemMd: string;
+      /**
+       * matching 公开结构（QM-13 细项 2）：选项池（key/text——2026-10-25 审查
+       * P1 收紧起学生面不含 distractor 标记，池内一律可选，选错是答案错误）+
+       * 服务端展开的有序槽位集合 + 是否允许重复。结构不可用（投影防御形态）
+       * = 空池空槽，视图显式报错不静默降级。槽位行附材料槽位序 ordinal
+       * （2026-10-25 审查 P2-2）：子集选择沿用材料编号，「第 N 空」标签与
+       * 材料面板编号空位（N）对齐，不用题内重排的 1/2/3。
+       */
+      readonly options: readonly {
+        readonly key: string;
+        readonly text: string;
+      }[];
+      readonly slots: readonly {
+        readonly id: string;
+        readonly ordinal: number;
+      }[];
+      readonly allowRepeat: boolean;
+      readonly context?: PreparedQuestionContext;
+    }
+  | {
+      readonly kind: "ordering";
+      readonly scopeId: string;
+      readonly stemMd: string;
+      /**
+       * ordering 公开结构（QM-13 细项 3）：排序项（key/text/fixedPosition——
+       * 固定位属公开结构 §6.1 调整 3；2026-10-25 审查 P1 收紧起学生面不含
+       * distractor 标记）+ sortableCount（学生需自行放置的项数：板行数与
+       * 完成度由计数派生，不再从逐项标记推导）。结构不可用（投影防御形态）
+       * = 空项零计数，视图显式报错不静默降级。
+       */
+      readonly items: readonly {
+        readonly key: string;
+        readonly text: string;
+        readonly fixedPosition: number | null;
+      }[];
+      readonly sortableCount: number;
+      readonly context?: PreparedQuestionContext;
     };
 
 /** 与 QuestionSurface judgeStemOf 的替换正则同口径（题面呈现形态由视图执行） */
@@ -243,12 +285,64 @@ export function prepareQuestion(
         context,
       );
     case "matching":
+      // QM-13 细项 2：选项池 + 服务端展开的槽位集合；结构缺失走空结构防御
+      // 形态（视图显式报错，§7.1）。审查 P1 收紧：学生面选项池不含 distractor
+      // 标记（呈现零消费），池键 = 选项稳定 id；审查 P2-2：槽位行附材料槽位序
+      return withContext(
+        question.matchingOptions !== undefined &&
+          question.matchingSlots !== undefined
+          ? {
+              kind: "matching",
+              scopeId,
+              stemMd: question.stemMd,
+              allowRepeat: question.matchingOptions.allowRepeat,
+              options: question.matchingOptions.options.map((option) => ({
+                key: option.id,
+                text: option.text,
+              })),
+              slots: question.matchingSlots.map(({ id, ordinal }) => ({
+                id,
+                ordinal,
+              })),
+            }
+          : {
+              kind: "matching",
+              scopeId,
+              stemMd: question.stemMd,
+              options: [],
+              slots: [],
+              allowRepeat: false,
+            },
+        context,
+      );
     case "ordering":
-      // TT-05a 域②扩容（D2/D14）后的编译期穷尽分支：response 已随 QM-09
-      // 接入呈现层；matching/ordering 属 QM-13（呈现控件未接入），到达即
-      // 显式报错——方案 §7.1「新增类型遗漏必需模式须明确报错，不静默降级」
-      throw new Error(
-        `答案 kind「${answerKind}」的题面呈现尚未接入（QM-13 呈现层落地前不应对学生下发）`,
+      // QM-13 细项 3：排序项 + sortableCount（审查 P1 收紧：学生面不含
+      // distractor 标记，板行数/完成度由计数派生）；两键缺一按结构不可用
+      // 防御形态处理（视图显式报错，§7.1）
+      return withContext(
+        question.orderingItems !== undefined &&
+          question.sortableCount !== undefined
+          ? {
+              kind: "ordering",
+              scopeId,
+              stemMd: question.stemMd,
+              items: question.orderingItems.map(
+                ({ id, text, fixedPosition }) => ({
+                  key: id,
+                  text,
+                  fixedPosition,
+                }),
+              ),
+              sortableCount: question.sortableCount,
+            }
+          : {
+              kind: "ordering",
+              scopeId,
+              stemMd: question.stemMd,
+              items: [],
+              sortableCount: 0,
+            },
+        context,
       );
   }
 }

@@ -14,6 +14,7 @@ import type {
   OptionsPublicStructure,
   OrderingPublicStructure,
   PublicStructureByKind,
+  ShapeIssue,
 } from "./types.ts";
 
 /**
@@ -130,6 +131,41 @@ export function dispatchIsAnswered(answer: StudentAnswer): boolean {
       return table.matching.isAnswered(answer);
     case "ordering":
       return table.ordering.isAnswered(answer);
+    default:
+      return assertNever(answer);
+  }
+}
+
+/**
+ * 结构形状检查的调度边界（QM-13 细项 4）：服务端保存路径（saveDraftAnswer）
+ * 的结构校验唯一入口——按 kind 窄化后委托登记表 inspectShape。**只报告结构
+ * 问题（未知引用/重复/越界/固定项错位），永不比对参考答案**；拦截与否由
+ * 调用方裁决（保存路径对新题型非法结构整体拒绝，历史题面数据只读不改写）。
+ * 与 dispatchBehavior/dispatchIsAnswered 同文件同纪律（§4.4 唯一调度边界）。
+ */
+export function inspectShapeOfAnswer(
+  answer: StudentAnswer,
+  structures: PublicStructureByKind,
+): readonly ShapeIssue[] {
+  const table: AnswerKindBehaviorTable<StudentAnswer, PublicStructureByKind> =
+    answerKindBehaviors;
+  switch (answer.kind) {
+    case "judge":
+      return table.judge.inspectShape(answer, structures.judge);
+    case "choice":
+      return table.choice.inspectShape(answer, structures.choice);
+    case "multi":
+      return table.multi.inspectShape(answer, structures.multi);
+    case "fill":
+      return table.fill.inspectShape(answer, structures.fill);
+    case "final":
+      return table.final.inspectShape(answer, structures.final);
+    case "response":
+      return table.response.inspectShape(answer, structures.response);
+    case "matching":
+      return table.matching.inspectShape(answer, structures.matching);
+    case "ordering":
+      return table.ordering.inspectShape(answer, structures.ordering);
     default:
       return assertNever(answer);
   }

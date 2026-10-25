@@ -55,6 +55,9 @@ export {
   stripOptionListMd,
   studentStemMd,
 } from "./v2/public-stem.ts";
+// 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
+// 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
+export { expandSelectionIds } from "./v2/references.ts";
 export { processor } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。

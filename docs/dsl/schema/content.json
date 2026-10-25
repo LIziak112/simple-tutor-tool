@@ -492,16 +492,11 @@
                   },
                   "text": {
                     "type": "string"
-                  },
-                  "distractor": {
-                    "default": false,
-                    "type": "boolean"
                   }
                 },
                 "required": [
                   "id",
-                  "text",
-                  "distractor"
+                  "text"
                 ],
                 "additionalProperties": false
               }
@@ -537,17 +532,40 @@
                     "type": "null"
                   }
                 ]
-              },
-              "distractor": {
-                "default": false,
-                "type": "boolean"
               }
             },
             "required": [
               "id",
               "text",
-              "fixedPosition",
-              "distractor"
+              "fixedPosition"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sortableCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "matchingSlots": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ordinal": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "ordinal"
             ],
             "additionalProperties": false
           }

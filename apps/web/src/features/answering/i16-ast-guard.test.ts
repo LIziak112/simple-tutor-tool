@@ -301,20 +301,37 @@ interface BaselineEntry {
  * 窄化三元是 switch case 臂内把联合 answer 收窄到该 kind 视图的传参。
  */
 const DISPATCH_INDEX_CASES: readonly BaselineEntry[] = (
-  ["judge", "choice", "multi", "fill", "final", "response"] as const
+  [
+    "judge",
+    "choice",
+    "multi",
+    "fill",
+    "final",
+    "response",
+    "matching",
+    "ordering",
+  ] as const
 ).map((literal) => ({
   file: "apps/web/src/features/answering/index.tsx",
   snippet: `case "${literal}":`,
   count: 4,
 }));
 const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
-  ...(["judge", "choice", "multi", "fill", "response"] as const).map(
-    (literal) => ({
-      file: "apps/web/src/features/answering/index.tsx",
-      snippet: `answer?.kind === "${literal}"`,
-      count: 4, // Input/ReadOnly/Comparison/Completion 四调度臂内收窄
-    }),
-  ),
+  ...(
+    [
+      "judge",
+      "choice",
+      "multi",
+      "fill",
+      "response",
+      "matching",
+      "ordering",
+    ] as const
+  ).map((literal) => ({
+    file: "apps/web/src/features/answering/index.tsx",
+    snippet: `answer?.kind === "${literal}"`,
+    count: 4, // Input/ReadOnly/Comparison/Completion 四调度臂内收窄
+  })),
   {
     file: "apps/web/src/features/answering/index.tsx",
     snippet: 'answer?.kind === "final"',

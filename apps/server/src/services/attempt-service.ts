@@ -19,19 +19,29 @@ import {
   type CapabilitySwitch,
   type EffectiveVerdict,
   effectiveVerdictOf,
+  emptyPublicStructure,
   type GradingPolicy,
   type HintOpenedEntry,
+  inspectShapeOfAnswer,
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
+  type MatchingOptionsStudent,
+  type MatchingSlot,
+  matchingPublicStructureOf,
+  materialPublicSchema,
+  materialRefSchema,
   NEW_QUESTION_TYPES,
   type NoteSubmissionEvidenceState,
+  type OrderingItemStudent,
   optionSchema,
+  orderingPublicStructureOf,
   type PracticeFeedbackMode,
   type PracticeQuestionFeedback,
   type PracticeQuestionFeedbackData,
   type PracticeQuestionSubmitData,
   type PracticeQuestionSubmitRequest,
   type PracticeWorkflowStartOptions,
+  type PublicStructureByKind,
   type Question,
   type QuestionAnswers,
   type QuestionOption,
@@ -47,6 +57,7 @@ import {
 } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import {
+  expandSelectionIds,
   parseDocument,
   studentStemMd,
   wrapSingleQuestionMd,
@@ -104,7 +115,10 @@ import {
   resultHintsOpenedOf,
 } from "./hint-service";
 import { newContentEnabledFromEnv } from "./import-qm.ts";
-import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
+import {
+  freezeAttemptContextSnapshotsWithin,
+  listAttemptContextSnapshots,
+} from "./material-repository.ts";
 import { pendingMarkCount } from "./pending-mark";
 import {
   answersReleased,
@@ -700,7 +714,18 @@ export const UNGROUPED_TITLE = "未分组题目";
 export function publicOfSnapshot(
   question: Question,
   questionRevisionId: string,
+  options: {
+    /** 冻结材料槽位序（materialId → 有序 slotId）；matching 槽位集合展开用 */
+    readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
+    /** 冻结行单元归属（responses.unitId；审查 P2-1 旧快照兜底重抽的语境） */
+    readonly unitId?: string | null;
+  } = {},
 ): AttemptQuestionPublic {
+  // 审查 P2-1：旧格式冻结快照（三结构键全缺）从快照自身 sourceMd 兜底重抽
+  const structure = effectiveStructureOfSnapshot(
+    question,
+    options.unitId ?? null,
+  );
   return attemptQuestionPublicSchema.parse({
     id: question.id,
     type: question.type,
@@ -714,9 +739,249 @@ export function publicOfSnapshot(
     // 数字，不含任何参考内容（§5.4.1 不硬校验不截断）
     ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
     ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
+    // QM-13：matching 选项池 / ordering 项与展开槽位集合（slots= 区间按材料
+    // 槽位序展开，材料快照缺失不携带键——学生端呈现防御形态）。2026-10-25
+    // 审查 P1 收紧：两结构走学生面变体（剥离 distractor，ordering 附
+    // sortableCount 计数），教师侧全量不经本投影
+    ...(structure.matchingOptions !== undefined
+      ? { matchingOptions: matchingOptionsStudentOf(structure.matchingOptions) }
+      : {}),
+    ...(structure.orderingItems !== undefined
+      ? orderingStudentOf(structure.orderingItems)
+      : {}),
+    ...matchingSlotsProjection(structure, options.materialSlots),
     hintCount: question.hints.length,
     questionRevisionId,
   });
+}
+
+/**
+ * 快照的作答面结构（含旧快照兜底，2026-10-25 审查 P2-1）：
+ * snapshot.matchingOptions / orderingItems / materialRefs **三键全缺**（QM-13
+ * 之前冻结的旧快照）且题型属新题型时，从快照自身的 sourceMd 重抽
+ * （qmStructureOfSourceMd 同款管线：wrapSingleQuestionMd + parseDocument +
+ * 按 id 命中后只取结构字段）。**不引活库**——教师改题库不影响已开卷的卷，
+ * 冻结语义不变；重抽只在本次投影内使用，不回写库。导入规范化后新题型 id
+ * 恒显式（缺省 id 推导不参与命中）；未命中/解析失败保持缺省（学生端呈现
+ * 防御形态）。部分缺键（非全缺）= 真脏数据，同样保持缺省不兜底。
+ */
+function effectiveStructureOfSnapshot(
+  snapshot: Question,
+  unitId: string | null,
+): Pick<Question, "matchingOptions" | "orderingItems" | "materialRefs"> {
+  if (
+    !NEW_QUESTION_TYPES.includes(snapshot.type) ||
+    snapshot.matchingOptions !== undefined ||
+    snapshot.orderingItems !== undefined ||
+    snapshot.materialRefs !== undefined
+  ) {
+    return snapshot;
+  }
+  try {
+    const parsed = parseDocument(
+      wrapSingleQuestionMd(unitId ?? "", snapshot.sourceMd),
+      { unitId: unitId ?? "", questionStartNumber: 1 },
+    );
+    const hit = parsed.units
+      .flatMap((unit) => unit.questions)
+      .find((item) => item.id === snapshot.id);
+    if (hit === undefined) return snapshot;
+    return {
+      ...(hit.matchingOptions !== undefined
+        ? { matchingOptions: hit.matchingOptions }
+        : {}),
+      ...(hit.orderingItems !== undefined
+        ? { orderingItems: hit.orderingItems }
+        : {}),
+      ...(hit.materialRefs !== undefined
+        ? { materialRefs: hit.materialRefs }
+        : {}),
+    };
+  } catch {
+    // sourceMd 损坏（历史脏行）不阻断投影：结构缺失走防御形态
+    return snapshot;
+  }
+}
+
+/**
+ * 学生面 matching 选项池（2026-10-25 审查 P1 收紧）：剥离逐项 distractor 键
+ * ——干扰项身份属答案侧信息，不随学生载荷下发（教师侧全量结构由
+ * matchingOptionsSchema 承载，保存校验继续用快照全量）。匹配呈现零消费标记。
+ */
+function matchingOptionsStudentOf(
+  pool: NonNullable<Question["matchingOptions"]>,
+): MatchingOptionsStudent {
+  return {
+    allowRepeat: pool.allowRepeat,
+    options: pool.options.map((option) => ({
+      id: option.id,
+      text: option.text,
+    })),
+  };
+}
+
+/**
+ * 学生面 ordering 项 + sortableCount（2026-10-25 审查 P1 收紧）：逐项剥离
+ * distractor 键（ordering 干扰项由参考序列推导，逐项下发=公布前枚举答案成员）；
+ * 学生要自行放置的项数（非干扰且非固定）改以计数下发，板行数与完成度由它
+ * 派生（固定项恒非干扰——fixedPosition 声明自参考序列）。
+ */
+function orderingStudentOf(items: NonNullable<Question["orderingItems"]>): {
+  orderingItems: OrderingItemStudent[];
+  sortableCount: number;
+} {
+  return {
+    orderingItems: items.map(({ id, text, fixedPosition }) => ({
+      id,
+      text,
+      fixedPosition,
+    })),
+    sortableCount: items.filter(
+      (item) => !item.distractor && item.fixedPosition === null,
+    ).length,
+  };
+}
+
+/**
+ * matching 槽位集合投影：题级 ::ref{slots=} 按材料槽位序展开（QM-13 细项 2），
+ * 2026-10-25 审查 P2-2 起行附材料槽位序 ordinal（材料文档位置 1 起）——子集
+ * 选择（slots=slot-3..slot-5）沿用材料编号 3/4/5，题内「第 N 空」标签与材料
+ * 面板编号空位（N）对齐，不用题内重排的 1/2/3。
+ * 门控走数据驱动（materialRefs[].slots 存在性）而非题型字面量分支（I16）：
+ * lint 第二遍已保证 slots= 只出现在 matching 题（references.ts 收口），其他
+ * 题型的 materialRefs 无 slots 键、展开恒为空。
+ */
+function matchingSlotsProjection(
+  question: Pick<Question, "materialRefs">,
+  materialSlots: ReadonlyMap<string, readonly string[]> | undefined,
+): { matchingSlots?: MatchingSlot[] } {
+  if (question.materialRefs === undefined || materialSlots === undefined) {
+    return {};
+  }
+  const rows: MatchingSlot[] = [];
+  for (const ref of question.materialRefs) {
+    if (ref.slots === undefined) continue;
+    const order = materialSlots.get(ref.material);
+    if (order === undefined) continue;
+    for (const id of expandSelectionIds(ref.slots, order)) {
+      if (rows.some((row) => row.id === id)) continue;
+      // 展开产物必属材料槽位序（lint SLOT_UNBOUND 收口）；显式单点的未知 id
+      // 属防御形态，无材料位置可言，回落题内行序保证 ordinal 恒正
+      const at = order.indexOf(id);
+      rows.push({ id, ordinal: at >= 0 ? at + 1 : rows.length + 1 });
+    }
+  }
+  return rows.length > 0 ? { matchingSlots: rows } : {};
+}
+
+/**
+ * 冻结材料槽位序（QM-13）：attemptId → materialId → 有序 slotId 列表。
+ * 读 attempt_context_snapshots 冻结快照，同 id 多版本取最高 sourceVersion
+ * （行序已按 sourceVersion 升序，后写覆盖即最新；与 attempt-context-view
+ * latestById 同口径）；坏快照/坏 JSON 跳过该条不抛错（投影侧防御口径：
+ * matchingSlots 缺失只是少作答面，不让单条脏快照打挂整卷取卷——与
+ * /context 端点的显式 409 口径不同，后者是学生显式读上下文的独立防线）。
+ */
+export function materialSlotOrderOf(
+  db: Db,
+  attemptId: string,
+): Map<string, readonly string[]> {
+  const order = new Map<string, readonly string[]>();
+  for (const row of listAttemptContextSnapshots(db, attemptId)) {
+    if (row.kind !== "material") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.snapshotJson) as unknown;
+    } catch {
+      continue;
+    }
+    const material = materialPublicSchema.safeParse(parsed);
+    if (!material.success || material.data.slots.length === 0) continue;
+    order.set(
+      material.data.id,
+      material.data.slots.map((slot) => slot.id),
+    );
+  }
+  return order;
+}
+
+/**
+ * 快照 → 完整公开结构集（QM-13 保存校验用）：matching 选项池 + 展开槽位
+ * 集合、ordering 项；旧快照（三键全缺）先经 effectiveStructureOfSnapshot
+ * 兜底重抽（审查 P2-1）。结构仍缺失（选项池/排序项/材料槽位快照不可用或
+ * 重抽未命中）按 emptyPublicStructure 防御形态（inspectShape 对空结构无从
+ * 校验即放行，只影响该维度校验，不影响其余防线）。
+ */
+function structuresOfSnapshot(
+  snapshot: Question,
+  materialSlots: ReadonlyMap<string, readonly string[]>,
+  unitId: string | null,
+): PublicStructureByKind {
+  const structure = effectiveStructureOfSnapshot(snapshot, unitId);
+  const matching =
+    structure.matchingOptions !== undefined
+      ? matchingPublicStructureOf(
+          structure.matchingOptions,
+          // 结构校验只认槽位 id 集合（P2-2 的 ordinal 是呈现用材料序，校验零消费）
+          matchingSlotsProjection(structure, materialSlots).matchingSlots?.map(
+            (row) => row.id,
+          ) ?? [],
+        )
+      : emptyPublicStructure.matching;
+  const ordering =
+    structure.orderingItems !== undefined
+      ? orderingPublicStructureOf(structure.orderingItems)
+      : emptyPublicStructure.ordering;
+  return { ...emptyPublicStructure, matching, ordering };
+}
+
+/**
+ * QM-13 细项4：新题型答案的保存结构校验（saveDraftAnswer 内调用）。
+ * 只检查合法结构——契约 inspectShapeOfAnswer 单源调度（未知槽位/未知选项/
+ * 重复占用/干扰项入序/固定项错位/未知项/重复项），非法结构整体拒绝
+ * （400 VALIDATION_ERROR）；部分作答（部分配对/部分序列/空清除态）合法。
+ * **永不比对参考答案**（对错恒 null，gradeNewKindAlwaysNull 口径不动）。
+ * 旧七型零变化：门控走 NEW_QUESTION_TYPES 单源集合（I16 集合成员口径，
+ * 不写字面量分支）。
+ */
+function assertNewKindAnswerShape(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  answer: StudentAnswer,
+): void {
+  const row = db
+    .select({
+      attemptId: responses.attemptId,
+      questionId: responses.questionId,
+      unitId: responses.unitId,
+      questionSnapshotJson: responses.questionSnapshotJson,
+    })
+    .from(responses)
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .get();
+  // 成员校验先行（requireAttemptQuestion 已挡不存在行）；防御性兜底不静默
+  if (row === undefined) throw questionNotFound();
+  const snapshot = snapshotOfRow(row);
+  if (snapshot === null || !NEW_QUESTION_TYPES.includes(snapshot.type)) return;
+  const structures = structuresOfSnapshot(
+    snapshot,
+    materialSlotOrderOf(db, attemptId),
+    row.unitId,
+  );
+  const issues = inspectShapeOfAnswer(answer, structures);
+  if (issues.length > 0) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      `答案结构不合法：${issues.map((issue) => issue.message).join("；")}`,
+    );
+  }
 }
 
 /** 冻结行条目：行 + 冻结单元归属（null = 无归属信息，消费方归兜底组） */
@@ -947,8 +1212,14 @@ function attemptPublicUnitGroups(
   db: Db,
   attempt: Attempt,
 ): (AttemptDraftUnit & StudentPaperUnit)[] {
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   return groupedSnapshotRows(db, attempt, (row, snapshot) =>
-    publicOfSnapshot(snapshot, row.id),
+    publicOfSnapshot(snapshot, row.id, {
+      materialSlots,
+      // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+      unitId: row.unitId,
+    }),
   ).map((group) => ({
     id: group.id,
     title: group.title,
@@ -1290,25 +1561,44 @@ export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
     ...(row.solutionMd !== null ? { solutionMd: row.solutionMd } : {}),
     sourceMd: row.sourceMd,
   });
+  // 题级 ::ref 抽取副本（tt-05b 列；cloze 槽位绑定/matching 槽位集合声明）
+  if (row.materialRefsJson !== null) {
+    const refs = materialRefSchema
+      .array()
+      .safeParse(jsonOf(row.materialRefsJson));
+    if (refs.success && refs.data.length > 0) {
+      question.materialRefs = refs.data;
+    }
+  }
   if (NEW_QUESTION_TYPES.includes(row.type)) {
-    const wordHint = wordHintOfSourceMd(row);
-    if (wordHint.wordMin !== undefined) question.wordMin = wordHint.wordMin;
-    if (wordHint.wordMax !== undefined) question.wordMax = wordHint.wordMax;
+    const structure = qmStructureOfSourceMd(row);
+    if (structure.wordMin !== undefined) question.wordMin = structure.wordMin;
+    if (structure.wordMax !== undefined) question.wordMax = structure.wordMax;
+    // matching 选项池 / ordering 项（QM-13）：无专列结构化字段循 word-min/max
+    // 同款「sourceMd 为单一来源」重抽口径（§19.2-4，零迁移不另建第二套）
+    if (structure.matchingOptions !== undefined) {
+      question.matchingOptions = structure.matchingOptions;
+    }
+    if (structure.orderingItems !== undefined) {
+      question.orderingItems = structure.orderingItems;
+    }
   }
   return question;
 }
 
 /**
- * 单题 sourceMd → response 字数建议（word-min/word-max，缺省不携带键）。
- * 包装与解析选项与 reparse-service.planQuestion 完全同款（unitId/起始序号
- * 覆盖缺省 id 推导，保证解析出的题与库中行同 id）；包装内恰一题，按 id 命中
- * 后取 wordMin/wordMax，其余字段一概不采（快照仍按既有列组卷，本函数只是
- * 无专列字段的重抽通道——matching/ordering 结构化字段 QM-13 落地时循同口径
- * 扩展，不另建第二套）。
+ * 单题 sourceMd → 无专列结构化字段的重抽通道（word-min/word-max +
+ * matchingOptions/orderingItems，QM-13 扩展）。包装与解析选项与
+ * reparse-service.planQuestion 完全同款（unitId/起始序号覆盖缺省 id 推导，
+ * 保证解析出的题与库中行同 id）；包装内恰一题，按 id 命中后只取无专列字段，
+ * 其余字段一概不采（快照仍按既有列组卷）。解析失败静默缺省（建议/结构缺失
+ * 只是少作答面投影，不阻断建卷——结构缺失时学生端呈现防御形态）。
  */
-function wordHintOfSourceMd(row: QuestionRow): {
+function qmStructureOfSourceMd(row: QuestionRow): {
   wordMin?: number;
   wordMax?: number;
+  matchingOptions?: Question["matchingOptions"];
+  orderingItems?: Question["orderingItems"];
 } {
   try {
     const parsed = parseDocument(
@@ -1323,6 +1613,12 @@ function wordHintOfSourceMd(row: QuestionRow): {
       : {
           ...(hit.wordMin !== undefined ? { wordMin: hit.wordMin } : {}),
           ...(hit.wordMax !== undefined ? { wordMax: hit.wordMax } : {}),
+          ...(hit.matchingOptions !== undefined
+            ? { matchingOptions: hit.matchingOptions }
+            : {}),
+          ...(hit.orderingItems !== undefined
+            ? { orderingItems: hit.orderingItems }
+            : {}),
         };
   } catch {
     // sourceMd 损坏（历史脏行）不阻断建卷：字数建议缺失只是少一条提示
@@ -1719,6 +2015,9 @@ export function saveDraftAnswer(
     // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
     //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
     assertRowNotSubmitted(db, attemptId, questionId);
+    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
+    // 永不比对参考答案；旧七型行为零变化
+    assertNewKindAnswerShape(db, attemptId, questionId, answer);
 
     // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
     // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
@@ -2771,7 +3070,11 @@ export function submitLessonQuestion(
     throw new HttpError(500, "INTERNAL", "提交失败，请刷新页面后重试");
   }
   return {
-    question: studentFacingResultOf(resultQuestionOf(freshRow, snapshot)),
+    question: studentFacingResultOf(
+      resultQuestionOf(freshRow, snapshot, {
+        materialSlots: materialSlotOrderOf(db, attemptId),
+      }),
+    ),
     summary: lessonLiveSummaryOf(summaryRows, freshAttempt),
     attempt: attemptSummaryOf(freshAttempt),
   };
@@ -3102,7 +3405,11 @@ export function practiceQuestionFeedbackOf(
     // 已提交行的快照损坏：不静默降级成无秘密态（与未提交读区分）
     throw questionNotFound();
   }
-  const question = studentFacingResultOf(resultQuestionOf(row, snapshot));
+  const question = studentFacingResultOf(
+    resultQuestionOf(row, snapshot, {
+      materialSlots: materialSlotOrderOf(db, attempt.id),
+    }),
+  );
   return {
     status: "released",
     // 进行中卷教师域字段恒 null（收尾公布后随行）；已收尾卷按结果视图原样
@@ -3241,6 +3548,8 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   // 单一数据源：行只查一次、快照只 parse 一次——公开投影/草稿答案/提示回显
   // 在同一批行上派生（groupedSnapshotRows 统一「跳过缺失+组 id 回退+空组过滤」）
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   const units = groupedSnapshotRows(db, attempt, (row, snapshot) => {
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
@@ -3248,7 +3557,11 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     // T2.11：已解锁提示回显（纯函数——文本取自同一份冻结快照，不再二次查库）
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
-    return publicOfSnapshot(snapshot, row.id);
+    return publicOfSnapshot(snapshot, row.id, {
+      materialSlots,
+      // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+      unitId: row.unitId,
+    });
   }).map((group) => ({
     id: group.id,
     title: group.title,
@@ -3347,7 +3660,14 @@ export function effectiveVerdictOfRow(
 export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,
+  options: {
+    /** 冻结材料槽位序（QM-13：matching 槽位集合展开用；缺省不携带键） */
+    readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
+  } = {},
 ): AttemptResultQuestion {
+  // 审查 P2-1：旧格式冻结快照（三结构键全缺）从快照自身 sourceMd 兜底重抽
+  // （行内冻结单元归属作解析语境；不引活库）
+  const structure = effectiveStructureOfSnapshot(snapshot, row.unitId);
   return {
     questionId: row.questionId,
     snapshot: {
@@ -3358,6 +3678,20 @@ export function resultQuestionOf(
       stemMd: snapshot.stemMd,
       ...(snapshot.options !== undefined
         ? { options: snapshot.options.map((option) => option.text) }
+        : {}),
+      // QM-13：matching/ordering 作答面结构随结果快照下发（对照呈现需要）；
+      // 2026-10-25 审查 P1 收紧：学生面变体（剥离 distractor，ordering 附
+      // sortableCount 计数）——对照呈现不需要逐项干扰标记
+      ...(structure.matchingOptions !== undefined
+        ? {
+            matchingOptions: matchingOptionsStudentOf(
+              structure.matchingOptions,
+            ),
+          }
+        : {}),
+      ...matchingSlotsProjection(structure, options.materialSlots),
+      ...(structure.orderingItems !== undefined
+        ? orderingStudentOf(structure.orderingItems)
         : {}),
       hintCount: snapshot.hints.length,
     },
@@ -3506,12 +3840,16 @@ function buildResultData(
 
   // 逐题条目与分组同批组装（groupedSnapshotRows 统一「跳过缺失+组 id 回退+
   // 空组过滤」；快照优先取预加载，未覆盖行现场 parse）
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   const resultQuestions: AttemptResultQuestion[] = [];
   const unitGroups: AttemptResultUnit[] = groupedSnapshotRows(
     db,
     attempt,
     (row, snapshot) => {
-      const item = releaseAwareQuestion(resultQuestionOf(row, snapshot));
+      const item = releaseAwareQuestion(
+        resultQuestionOf(row, snapshot, { materialSlots }),
+      );
       resultQuestions.push(item);
       return item;
     },
