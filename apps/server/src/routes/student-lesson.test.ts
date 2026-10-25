@@ -232,7 +232,7 @@ async function importDoc(
         : { markdown, filename, courseId },
     ),
   });
-  expect(res.status).toBe(200);
+  expect(res.status, JSON.stringify(await res.json())).toBe(200);
 }
 
 /** 组装被测环境：教师 + 课程 + 讲练页导入（courseId 路径：讲义条目可见）+ 成员/非成员 */
@@ -2850,12 +2850,13 @@ topic: 资料分析
 讲解段一：先读材料再作答。
 
 ::::material{id=qm-mat title="某省粮食生产"}
-2025 年粮食总产量 $3{,}096.2$ 万吨，比上年增加 $56.4$ 万吨，实现 {{slot-1}} 十二年增产。
+2025 年粮食总产量 $3{,}096.2$ 万吨，比上年增加 $56.4$ 万吨，实现 {{slot-1}} 十二年增产；播种面积比上年增长 {{slot-2}}。
 ::::
 
-::::group{id=qm-grp title="根据以下资料回答第 1～2 题" label="1–2"}
+::::group{id=qm-grp title="根据以下资料回答第 1～3 题" label="1–3"}
 ::ref{material=qm-mat}
 ::ref{question=ls-m}
+::ref{question=ls-c}
 ::ref{question=ls-o}
 ::::
 
@@ -2879,6 +2880,17 @@ slot-1 = opt-1
 配对题详解：连续十二年增产，应选「连续」。
 :::
 :::::
+
+::::question{id=ls-c type=choice difficulty=2}
+第 1 空：播种面积比上年增长。::ref{material=qm-mat slot=slot-2}
+
+- [x] 0.5%
+- [ ] -0.5%
+
+:::solution
+完形子题详解：播种面积 8321.5 万亩对 8278.9 万亩，增长约 0.5%。
+:::
+::::
 
 讲解段二：排序题同组。
 
@@ -2925,8 +2937,11 @@ it-1
     "slot-1 = opt-1",
     "配对题详解",
     "排序题详解",
+    "完形子题详解",
     "解答题详解",
     "参考分析：粮食总产量连续十二年增产",
+    // 注：行内式 ::ref{…} 是不可见结构指针（RefDirective 空渲染，与练习流
+    // QM-13 同口径），留在公开题干不构成泄露——哨兵不含 ::ref 文本本身
     "[[",
   ];
 
@@ -3057,7 +3072,11 @@ it-1
     expect(context.groups[0]?.materialRefs.map((r) => r.material)).toEqual([
       "qm-mat",
     ]);
-    expect(context.groups[0]?.questionIds).toEqual(["ls-m", "ls-o"]);
+    expect(context.groups[0]?.questionIds).toEqual([
+      "ls-m",
+      "ls-c",
+      "ls-o",
+    ]);
     // 材料 title 是公开元数据（材料正文快照经 materialPublicSchema 白名单）
     expect(context.materials[0]?.title).toContain("某省粮食生产");
     // 题目公开投影携带作答面结构（matching 槽位集合按材料槽位序展开）
@@ -3156,8 +3175,9 @@ it-1
     const previous = process.env.NEW_CONTENT_ENABLED;
     process.env.NEW_CONTENT_ENABLED = "true";
     try {
-      // 三题全部提交（均不作自评）
-      for (const id of ["ls-m", "ls-o", "ls-r"]) {
+      // 完形子题（choice）先作答对路：自动判定 true；其余三题提交不判（待自评）
+      await putAnswer(env, attemptId, "ls-c", { kind: "choice", index: 0 });
+      for (const id of ["ls-m", "ls-o", "ls-c", "ls-r"]) {
         const res = await submitQuestion(env, attemptId, id, revisionOf(id), {
           questionId: id,
           state: "none",
@@ -3172,8 +3192,8 @@ it-1
     const body = await startOk(env);
     expect(body.data.attempt.status).not.toBe("draft");
     expect(body.data.summary).not.toBeNull();
-    // 全部 reference_self 且未自评 → 三题均待判断（correct/wrong 不计入）
-    expect(body.data.summary?.correct).toBe(0);
+    // 完形子题（auto）自动判对计入 correct；三个 reference_self 行未自评 → 待判断
+    expect(body.data.summary?.correct).toBe(1);
     expect(body.data.summary?.wrong).toBe(0);
     expect(body.data.summary?.pending).toBe(3);
     // 已提交行不重判：重复提交已提交题 → 409 QUESTION_ALREADY_SUBMITTED
@@ -3195,7 +3215,7 @@ it-1
     const previous = process.env.NEW_CONTENT_ENABLED;
     process.env.NEW_CONTENT_ENABLED = "true";
     try {
-      for (const id of ["ls-m", "ls-o", "ls-r"]) {
+      for (const id of ["ls-m", "ls-o", "ls-c", "ls-r"]) {
         const res = await submitQuestion(env, attemptId, id, revisionOf(id), {
           questionId: id,
           state: "none",
@@ -3229,6 +3249,7 @@ it-1
     try {
       const reimport = LESSON_QM_MD.replace(/ls-m/g, "nw-m")
         .replace(/ls-o/g, "nw-o")
+        .replace(/ls-c/g, "nw-c")
         .replace(/ls-r/g, "nw-r")
         .replace(/qm-mat/g, "nw-mat")
         .replace(/qm-grp/g, "nw-grp");
@@ -3253,12 +3274,12 @@ it-1
     const body = await startOk(env);
     expect(body.data.attempt.id).toBe(attemptId);
     const ids = body.data.questions.map((q) => q.id);
-    expect(ids).toEqual(["ls-m", "ls-o", "ls-r"]);
+    expect(ids).toEqual(["ls-m", "ls-c", "ls-o", "ls-r"]);
     // blocks 只含新题槽 + md 段（旧题不在当前 markdown → 前端页尾孤儿分组）
     const slotIds = body.data.blocks
       .filter((b) => b.type === "question")
       .map((b) => b.questionId);
-    expect(slotIds).toEqual(["nw-m", "nw-o", "nw-r"]);
+    expect(slotIds).toEqual(["nw-m", "nw-c", "nw-o", "nw-r"]);
     // 嵌入单元过滤：重导不追加课程条目（讲练页嵌入单元不进目录）
     const catalog = await env.app.request(
       `/api/student/courses/${env.courseId}`,
