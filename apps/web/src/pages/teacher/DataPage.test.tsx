@@ -299,13 +299,16 @@ describe("DataPage 卡片字段口径（D5/D2）", () => {
     const submittedCard = screen.getByRole("link", {
       name: "查看 张三 的作答详情（已交卷）",
     });
-    expect(within(submittedCard).getByText("80")).toBeInTheDocument();
-    expect(within(submittedCard).getByText("待批 2")).toBeInTheDocument();
+    // 卡片骨架与姓名先渲染、得分/徽标字段随后；等待式断言避免慢环境竞态。
+    expect(await within(submittedCard).findByText("80")).toBeInTheDocument();
+    expect(
+      await within(submittedCard).findByText("待批 2"),
+    ).toBeInTheDocument();
 
     const gradedCard = screen.getByRole("link", {
       name: "查看 张三 的作答详情（已批改）",
     });
-    expect(within(gradedCard).getByText("90")).toBeInTheDocument();
+    expect(await within(gradedCard).findByText("90")).toBeInTheDocument();
     expect(within(gradedCard).queryByText("100")).not.toBeInTheDocument();
   });
 });
