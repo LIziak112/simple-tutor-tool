@@ -22,7 +22,6 @@ import {
   filterWrongQuestionsByCourse,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
-  stemSummaryOf,
 } from "@/features/student/wrong-questions-ui";
 import {
   fetchStudentCoursesApi,
@@ -258,6 +257,13 @@ const COURSE_FILTER_DATA: WrongQuestionsData = {
   questions: [makeQuestion(), CROSS_COURSE, WRONG_PRACTICE_ONLY],
 };
 
+/** 公式子树外的正文（KaTeX 的 MathML <annotation> 本就携带 TeX 源码，不算残留） */
+function textOutsideMath(element: Element): string {
+  const clone = element.cloneNode(true) as Element;
+  for (const math of clone.querySelectorAll(".katex")) math.remove();
+  return clone.textContent ?? "";
+}
+
 /** 路由地址探针（断言 tab/分组写进 URL） */
 function LocationProbe() {
   const location = useLocation();
@@ -322,14 +328,11 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(
       screen.getByRole("heading", { name: /有理数 · 待复习 1 题/ }),
     ).toBeInTheDocument();
-    // 紧凑行：题干预览走 RichMarkdown（公式 KaTeX 渲染、[[正确]] 空框）+
-    // 错 N · 对 M + 绝对时间
-    const pendingRow = await screen.findByRole("button", {
-      name: /错 2 · 对 0/,
-    });
+    // 紧凑行：题干单行真渲染（公式为 KaTeX、[[正确]] 渲染为空框，公式外正文可读）
+    // + 错 N · 对 M + 绝对时间
+    expect(await screen.findByText("错 2 · 对 0")).toBeInTheDocument();
     expect(screen.getByText("错 1 · 对 1")).toBeInTheDocument();
-    expect(pendingRow.querySelector(".katex")).not.toBeNull();
-    expect(pendingRow.textContent).toContain("是正数");
+    expect(screen.getByText(/是正数。/)).toBeInTheDocument();
     // 绝对时间（formatCnTime：UTC → Asia/Shanghai；不再出现相对时间口径）
     expect(screen.getByText("2020年9月28日 10:00:00")).toBeInTheDocument();
     expect(screen.getByText("2020年9月29日 10:00:00")).toBeInTheDocument();
@@ -338,6 +341,59 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     ).not.toBeInTheDocument();
     // 默认不展开完整卡片（无「我的最近答案」）
     expect(screen.queryByText("我的最近答案：")).not.toBeInTheDocument();
+  });
+
+  it("紧凑行题干真渲染（#6972 第 1 条）：公式为 KaTeX 而非 LaTeX 原文、图片/表格降级为占位、[[答案]] 为空框且不显示答案、按钮内无块级/交互元素", async () => {
+    mockedWrong.mockResolvedValue({
+      questions: [
+        makeQuestion({
+          questionId: "q-rich",
+          type: "fill",
+          stemMd: [
+            "如图，![三角形 ABC](blobs/tri.png)",
+            "",
+            "| 边 | 长 |",
+            "| - | - |",
+            "| a | 3 |",
+            "",
+            "解方程 $\\frac{1}{2}x+3=5$，得 $x=$ [[4]]。",
+          ].join("\n"),
+          answers: { kind: "fill", blanks: [["4"]] },
+          answerText: "2",
+        }),
+      ],
+    });
+    renderPage();
+    const row = await screen.findByRole("button", { name: /错 2 · 对 0/ });
+    const stem = row.querySelector(".rich-markdown");
+    if (!(stem instanceof HTMLElement)) {
+      throw new Error("紧凑行缺少题干真渲染容器 .rich-markdown");
+    }
+    // 公式：KaTeX 输出（两处公式各一份）；公式子树外的正文不残留 \frac / $ 原文
+    //（KaTeX 自带的 MathML <annotation> 携带 TeX 源码供读屏且视觉隐藏，不算残留）
+    expect(stem.querySelectorAll(".katex")).toHaveLength(2);
+    const prose = textOutsideMath(stem);
+    expect(prose).not.toContain("\\frac");
+    expect(prose).not.toContain("$");
+    // 图片 / 表格：降级为占位，不残留 Markdown 记号（![…](…)、竖线）
+    expect(stem.querySelector("img")).toBeNull();
+    expect(stem.querySelector("table")).toBeNull();
+    expect(prose).not.toContain("![");
+    expect(prose).not.toContain("|");
+    expect(stem).toHaveTextContent("[图]");
+    expect(stem).toHaveTextContent("[表格]");
+    // 填空：空框占位，答案原文不显示（与展开卡同一 blank 指令）
+    expect(stem.querySelector('[data-testid="blank"]')).not.toBeNull();
+    expect(prose).not.toContain("4");
+    // 单行收敛：按钮内只允许短语内容，不得出现块级 / 交互元素
+    expect(
+      stem.querySelector(
+        "p, div, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, blockquote, a, input, hr",
+      ),
+    ).toBeNull();
+    // 正文仍完整可读
+    expect(stem).toHaveTextContent(/如图，/);
+    expect(stem).toHaveTextContent(/解方程/);
   });
 
   it("点击紧凑行展开完整卡片：答案/详解折叠/轮次史（统计 + 每轮一行 + 绝对时间）；再点收起", async () => {
@@ -396,15 +452,10 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(
       screen.getByRole("heading", { name: /有理数 · 已攻克 1 题/ }),
     ).toBeInTheDocument();
-    const conqueredRow = screen.getByRole("button", { name: /错 1 · 对 2/ });
-    expect(conqueredRow.textContent).toContain("是负数");
+    expect(screen.getByText(/是负数。/)).toBeInTheDocument();
     // 待复习那两道不在
-    expect(
-      screen.queryByRole("button", { name: /错 2 · 对 0/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("计算：(-2)+5=", { exact: false }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/是正数。/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/计算：/)).not.toBeInTheDocument();
   });
 
   it("分组维度切换写 URL：按时间出现时间桶组头、按考点出现考点组头", async () => {
@@ -447,8 +498,7 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     await screen.findByRole("button", { name: "待复习 2 题" });
 
     // 严格（默认）：错-对 的题在待复习分组里
-    const fillRowStrict = screen.getByRole("button", { name: /错 1 · 对 1/ });
-    expect(fillRowStrict.textContent).toContain("计算：");
+    expect(screen.getByText(/计算：/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "做对 1 次" }));
     // 宽松：待复习剩 1（错-错）、已攻克变 2（错-对 + 错-对-对）
     await waitFor(() =>
@@ -548,13 +598,11 @@ describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
     expect(
       screen.getByRole("button", { name: "已攻克 0 题" }),
     ).toBeInTheDocument();
-    const crossRow = screen.getByRole("button", { name: /错 1 · 对 1/ });
-    expect(crossRow.textContent).toContain("位于原点左边");
+    expect(screen.getByText(/在数轴上位于原点左边/)).toBeInTheDocument();
+    expect(screen.queryByText(/是正数。/)).not.toBeInTheDocument();
+    // 纯重练题（题干只有公式 + 句号）：按其独有的最近时间断言不在
     expect(
-      screen.queryByRole("button", { name: /错 2 · 对 0/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /错 1 · 对 0/ }),
+      screen.queryByText("2020年9月30日 10:00:00"),
     ).not.toBeInTheDocument();
     // 页头「重练全部」计数跟随筛选后的集合
     expect(
@@ -577,14 +625,9 @@ describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
     mockedWrong.mockResolvedValue(COURSE_FILTER_DATA);
     renderPage(`/s/wrong?courseId=${COURSE_B}`);
     // 不经交互即筛好：只剩跨课程题，下拉回显初一下
-    const crossRow = await screen.findByRole("button", {
-      name: /错 1 · 对 1/,
-    });
-    expect(crossRow.textContent).toContain("位于原点左边");
+    expect(await screen.findByText(/在数轴上位于原点左边/)).toBeInTheDocument();
     expect(screen.getByLabelText("课程")).toHaveValue(COURSE_B);
-    expect(
-      screen.queryByRole("button", { name: /错 2 · 对 0/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/是正数。/)).not.toBeInTheDocument();
     cleanup();
 
     // 课程列表外的 courseId（课程已归档/已移出成员）：占位选项兜底 + 空态归因筛选
@@ -621,13 +664,6 @@ describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
 });
 
 describe("wrong-questions-ui 纯函数", () => {
-  it("stemSummaryOf：[[答案]] 替换为空框（不泄露答案原文）、公式取内文、剥 Markdown 记号", () => {
-    expect(stemSummaryOf("$1$ 是正数。[[正确]]")).toBe("1 是正数。（　）");
-    expect(stemSummaryOf("计算 $\\frac{1}{2}$ 的**相反数**")).toBe(
-      "计算 \\frac{1}{2} 的相反数",
-    );
-  });
-
   it("parseWrongQuestionsUrl：默认待复习+按练习+全部课程；tab/group/courseId 解析；旧参数映射/忽略", () => {
     expect(parseWrongQuestionsUrl(new URLSearchParams(""))).toEqual({
       tab: "pending",

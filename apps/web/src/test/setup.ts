@@ -19,3 +19,16 @@ class ResizeObserverStub implements ResizeObserver {
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverStub;
 }
+
+// jsdom 30 的 getComputedStyle 对非 HTML/SVG 元素抛 TypeError（内部读
+// elementImpl.style.length，而 KaTeX 公式输出里的 MathML <math>/<mrow>/
+// <annotation>… 没有 style）。Testing Library 按 name 查询按钮时
+// （dom-accessibility-api 的 isHidden）会对按钮的全部后代调用它——含公式的
+// 错题本紧凑行等「按钮里有公式」的元素因此无法按 name 定位。兜底：没有 style
+// 的元素返回一份空声明（视为可见），HTML/SVG 元素照常走 jsdom 实现。
+const jsdomGetComputedStyle = window.getComputedStyle.bind(window);
+const EMPTY_COMPUTED_STYLE = document.createElement("span").style;
+window.getComputedStyle = (element, pseudoElement) =>
+  "style" in element
+    ? jsdomGetComputedStyle(element, pseudoElement)
+    : EMPTY_COMPUTED_STYLE;

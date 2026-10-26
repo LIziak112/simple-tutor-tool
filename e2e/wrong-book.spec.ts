@@ -228,26 +228,29 @@ test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）"
       await expect(
         studentPage.getByRole("heading", { name: "正数与负数 · 已攻克 1 题" }),
       ).toBeVisible();
+      // KaTeX 按数学语义将 ASCII 连字符渲染为减号「−」（U+2212）；
+      // 预览已移除旧纯文本摘要，按真实可访问名定位，同时确认公式没有退回源码。
+      const negativeRow = studentPage.getByRole("button", {
+        name: /−1 是负数/,
+      });
+      await expect(negativeRow).toBeVisible();
       await expect(
-        studentPage.getByRole("button", { name: /-1 是负数/ }),
-      ).toBeVisible();
+        negativeRow.locator(".rich-markdown-inline .katex"),
+      ).toHaveCount(1);
+      await expect(negativeRow.getByRole("math")).toHaveCount(1);
       // 待复习只剩 q1（按考点分组下归「有理数的概念」组）
       await studentPage.getByRole("button", { name: "待复习 1 题" }).click();
       await expect(
         studentPage.getByRole("button", { name: /1 是正数/ }),
       ).toBeVisible();
-      await expect(
-        studentPage.getByRole("button", { name: /-1 是负数/ }),
-      ).toHaveCount(0);
+      await expect(negativeRow).toHaveCount(0);
 
       // —— 刷新：URL 分区与 localStorage 攻克标准都保持 ——
       await studentPage.reload();
       await expect(
         studentPage.getByRole("button", { name: /1 是正数/ }),
       ).toBeVisible();
-      await expect(
-        studentPage.getByRole("button", { name: /-1 是负数/ }),
-      ).toHaveCount(0);
+      await expect(negativeRow).toHaveCount(0);
       await expect(
         studentPage.getByRole("button", { name: "做对 1 次" }),
       ).toHaveAttribute("aria-pressed", "true");

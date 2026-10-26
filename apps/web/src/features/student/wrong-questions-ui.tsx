@@ -1,5 +1,5 @@
 import type { WrongQuestionCard } from "@tutor/contract";
-import { displayStemMd, stripOptionListMd } from "@tutor/md-dsl";
+import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
@@ -21,6 +21,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
+import { InlineMarkdown } from "@/features/markdown/InlineMarkdown";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
 import { recordTitleOf } from "./records-views";
@@ -41,8 +42,12 @@ dayjs.extend(timezone);
  * - 旧 URL 参数兼容：includeResolved=true 映射为 tab=conquered（旧「显示已
  *   攻克」开关的书签/深链不丢语义）；旧 knowledge 筛选被「按考点」分组取代，
  *   忽略不报错；
- * - 条目默认紧凑行（题型徽章 + 题干纯文本摘要 + 错 N · 对 M + 最近一轮 ✓/✗
- *   + 绝对时间），点击行展开完整卡片；
+ * - 条目默认紧凑行（题型徽章 + 题干单行真渲染 + 错 N · 对 M + 最近一轮 ✓/✗
+ *   + 绝对时间），点击行展开完整卡片。题干走 InlineMarkdown（与展开卡同一
+ *   解析管线的单行收敛形态：公式 KaTeX、[[答案]] 空框、图片/表格占位、
+ *   块级元素收成行内，由行容器 truncate 截断）——2026-10 修复 #6972 第 1 条
+ *   「题目缩略未渲染」：此前用正则剥 Markdown 记号，公式只去掉 $ 留下
+ *   \frac{1}{2} 原文、图片残留 ![…](…)、表格残留竖线；
  * - 展开卡：题干（快照 RichMarkdown 渲染，[[答案]] 标记渲染为空框）、本人
  *   最近答案、正确答案、详解折叠（共用结果视图的 SolutionFold）、首次是否
  *   做对标记、轮次史区块（已做错 N 次 · 做对 M 次 + 每轮一行可点回看该轮
@@ -232,25 +237,10 @@ export function groupCountLabel(tab: WrongTab, count: number): string {
 // ---------- 紧凑行 ----------
 
 /**
- * 题干纯文本摘要（单行截断预览）：[[答案]] 标记替换为空框（绝不显示答案原文），
- * 指令围栏与强调记号剥除、公式取内文（LaTeX 命令保留原文——预览不求精美，
- * 完整渲染看展开卡）。仅为行内预览口径。
- */
-export function stemSummaryOf(stemMd: string): string {
-  return (
-    stripOptionListMd(stemMd)
-      .replace(/\[\[[^\]]*\]\]/g, "（　）")
-      .replace(/:::+[a-zA-Z-]*/g, " ")
-      .replace(/\$\$?([^$]+)\$\$?/g, "$1")
-      .replace(/[*_`>#~]/g, "")
-      // 只折叠 ASCII 空白（\s 会把全角空格 U+3000 一并折叠，破坏「（　）」空框）
-      .replace(/[ \t\r\n]+/g, " ")
-      .trim()
-  );
-}
-
-/**
  * 单条错题紧凑行（默认形态；点击展开完整卡片）。触控 ≥44px。
+ * 题干用 InlineMarkdown 单行真渲染（与展开卡同一 displayStemMd 投影），
+ * 行容器 truncate 截断；按钮内只允许短语内容，InlineMarkdown 保证不产出
+ * 块级或交互元素。
  */
 export function WrongQuestionRow({
   question,
@@ -277,14 +267,9 @@ export function WrongQuestionRow({
       >
         {QUESTION_TYPE_LABELS[question.type]}
       </span>
-      <div title={stemSummaryOf(question.stemMd)} className="min-w-0 flex-1">
-        <span className="sr-only">{stemSummaryOf(question.stemMd)}</span>
-        <RichMarkdown
-          source={displayStemMd(question)}
-          compact
-          className="text-sm"
-        />
-      </div>
+      <span className="min-w-0 flex-1 truncate text-sm">
+        <InlineMarkdown source={displayStemMd(question)} />
+      </span>
       <span className="shrink-0 text-xs text-muted-foreground">
         错 {question.wrongCount} · 对 {question.correctCount}
       </span>
