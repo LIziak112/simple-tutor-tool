@@ -111,3 +111,27 @@ it("surface=null 时已保存底图仍走既有合成，null 透传底图准备�
   );
   expect(mocks.compositeSource).toHaveBeenCalledOnce();
 });
+
+it("v1 旧版底图明确告知不支持导出合成，不当本机未保存误报", async () => {
+  mocks.record.mockResolvedValue({
+    localBase: null,
+    base: {
+      baseId: "legacy",
+      state: "ready",
+      stale: false,
+      pixelWidth: 600,
+      pixelHeight: 400,
+    },
+    doc: { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  });
+  mocks.prepare.mockResolvedValue({ kind: "legacy" });
+  await expect(
+    exportQuestionAnnotationImage(
+      mocks.session,
+      { attemptId: "a", questionId: "q", phase: "scratch" },
+      question,
+      document.createElement("div"),
+    ),
+  ).rejects.toThrow("旧版");
+  expect(mocks.compositeSource).not.toHaveBeenCalled();
+});

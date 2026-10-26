@@ -39,6 +39,14 @@ it("未确认恢复或恢复失败时不能显示全部已保存", () => {
     "有答案同步冲突，请选择保留版本",
   );
 });
+it("retained 标画已裁决保留本机，不谎称正在同步（批次三 P0-2）", () => {
+  expect(
+    summarizeAttemptSaveStatus({
+      ...saved,
+      annotations: [{ local: "saved" as const, server: "retained" as const }],
+    }),
+  ).toBe("有标画已保留本机，不再自动同步");
+});
 it("仅预取的空草稿壳不是已使用稿件，不污染保存详情", async () => {
   installNoteBackend(memoryNoteBackend());
   const session = { origin: "details-origin", studentId: "student" };

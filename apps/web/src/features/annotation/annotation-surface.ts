@@ -569,7 +569,13 @@ export function createAnnotationSurface(
       if (initial) {
         withReason("load", () => store.replace(initial.strokes));
       }
-      redraw();
+      // 宿主零尺寸（固定底图工作台挂载时底图 img 尚未加载、宿主折叠）期间
+      // atrament 的 CSS→位图换算会把整笔投出画布（÷0），初始重绘挂起，待
+      // ResizeObserver 首次量得非零尺寸（img 加载撑起宿主即触发）补绘一次。
+      const laidOut = () =>
+        canvas !== null && canvas.offsetWidth > 0 && canvas.offsetHeight > 0;
+      if (laidOut()) redraw();
+      let awaitingLayout = !laidOut();
 
       bindInput(options.inputEnabled ?? true);
 
@@ -577,6 +583,10 @@ export function createAnnotationSurface(
       // 变换）；位图恒定无需重设——CSS 缩放由浏览器完成
       observer = new ResizeObserver(() => {
         finishPointer({ kind: "layoutchange" });
+        if (awaitingLayout && laidOut()) {
+          awaitingLayout = false;
+          redraw();
+        }
       });
       observer.observe(el);
     },

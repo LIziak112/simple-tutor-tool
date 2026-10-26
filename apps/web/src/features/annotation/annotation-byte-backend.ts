@@ -14,7 +14,12 @@ function localBaseOf(
   };
 }
 
-/** WebKit 部分环境不能把 Blob 写入 IDB；同一事务保存 PNG 字节及原有正文，不另开图片键。 */
+/**
+ * WebKit 部分环境不能把 Blob 写入 IDB，PNG 字节仍以 Uint8Array 落库。
+ * 批次五 P1-1 分键后本包装只剩两个消费点：旧单键内嵌格式（及重置归档键）
+ * 的读取解码、重置归档键的写入编码；新格式的底图字节在 annotation-store
+ * 内直接以 Uint8Array 读写独立底图键，不经本包装转换。
+ */
 export function annotationByteBackend(raw: KVStoreBackend): KVStoreBackend {
   const decode = (value: unknown): unknown => {
     const entry = localBaseOf(value);

@@ -20,6 +20,8 @@ type Conflict = {
   questionId: string;
   questionNo: number;
   kind: "答案" | "草稿" | "标画";
+  /** 标画布局冲突（批次三 P0-2）：保留本机＝不再自动同步（口径与工作台一致） */
+  layoutConflict?: boolean;
 };
 /** 裁决以题目和材料为单位，不覆盖其它设备已完成的题目。 */
 export function AttemptSyncConflicts({
@@ -41,16 +43,21 @@ export function AttemptSyncConflicts({
     const rows: Conflict[] = [];
     questionIds.forEach((questionId, index) => {
       const scope = { attemptId, questionId, phase: "scratch" as const };
-      const add = (kind: Conflict["kind"]) =>
-        rows.push({ questionId, questionNo: index + 1, kind });
+      const add = (kind: Conflict["kind"], layoutConflict = false) =>
+        rows.push({
+          questionId,
+          questionNo: index + 1,
+          kind,
+          ...(layoutConflict ? { layoutConflict: true } : {}),
+        });
       if (draftStore.peekAnswerConflicts(attemptId)[questionId]) add("答案");
       if (notes && getNoteView(notes, scope)?.server === "conflict")
         add("草稿");
-      if (
-        annotations &&
-        getAnnotationView(annotations, scope)?.server === "conflict"
-      )
-        add("标画");
+      if (annotations) {
+        const annotationView = getAnnotationView(annotations, scope);
+        if (annotationView?.server === "conflict")
+          add("标画", annotationView.conflict?.kind === "layout");
+      }
     });
     return JSON.stringify(rows);
   });
@@ -118,7 +125,9 @@ export function AttemptSyncConflicts({
             disabled={busy}
             onClick={() => void resolve(row, "local")}
           >
-            保留当前设备版本
+            {row.kind === "标画" && row.layoutConflict
+              ? "保留本机（不再同步）"
+              : "保留当前设备版本"}
           </Button>
           <Button
             variant="outline"
