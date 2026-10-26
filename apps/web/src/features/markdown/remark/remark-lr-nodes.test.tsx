@@ -1,0 +1,60 @@
+import { render } from "@testing-library/react";
+import { questionNodesOf } from "@tutor/md-dsl";
+import { describe, expect, it } from "vitest";
+import { RichMarkdown } from "../RichMarkdown";
+
+/**
+ * LR-5 parity 单测（LR-PR2）：渲染器打的 data-lr-node 键序列必须与
+ * questionNodesOf 的题干块键序列完全一致（锚点跨「枚举 / 渲染」互认的前提，
+ * 学习记录模型设计稿 §5.1/§5.2）。选项键（options/option/<n>）由
+ * QuestionSurface 的 label 直打，不在本测试范围。
+ */
+
+const MD = [
+  "先化简再计算：",
+  "",
+  "$$",
+  "\\frac{1}{2} + \\frac{1}{3}",
+  "$$",
+  "",
+  "## 二、判断",
+  "",
+  "- 列表项甲",
+  "- 列表项乙",
+  "",
+  "```js",
+  "let x = 1;",
+  "```",
+  "",
+  "> 引用块内容",
+  "",
+  "把过程写在下方。",
+].join("\n");
+
+describe("remark-lr-nodes（LR-5 data-lr-node 打键）", () => {
+  it("渲染键序列与 questionNodesOf 题干块键序列一致（含公式/标题/列表/代码/引用）", () => {
+    const { container } = render(<RichMarkdown source={MD} lrNodes />);
+    const domKeys = [...container.querySelectorAll("[data-lr-node]")].map(
+      (el) => el.getAttribute("data-lr-node"),
+    );
+    const expected = questionNodesOf({ stemMd: MD })
+      .filter((node) => node.key.startsWith("stem/"))
+      .map((node) => node.key);
+    expect(domKeys).toEqual(expected);
+    // 抽查具体键：段落/公式块/列表项分别计数
+    expect(domKeys).toContain("stem/p/0");
+    expect(domKeys).toContain("stem/math-block/0");
+    expect(domKeys).toContain("stem/list-item/0");
+    expect(domKeys).toContain("stem/list-item/1");
+    expect(domKeys).toContain("stem/other/0");
+  });
+
+  it("嵌套渲染不开启（缺省无键），显式开启才打键", () => {
+    const { container } = render(<RichMarkdown source="只有一段。" />);
+    expect(container.querySelector("[data-lr-node]")).toBeNull();
+    const enabled = render(<RichMarkdown source="只有一段。" lrNodes />);
+    expect(
+      enabled.container.querySelector('[data-lr-node="stem/p/0"]'),
+    ).not.toBeNull();
+  });
+});

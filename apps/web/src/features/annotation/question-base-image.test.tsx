@@ -57,6 +57,24 @@ describe("新题面底图准入", () => {
       measureQuestionSurface(reference).blocks.map((block) => block.tag),
     ).toEqual(["DIV", "P"]);
   });
+  it("LR-5：blocks[].node 采自身或最近 data-lr-node 祖先的键（surface 根恒有 root）", () => {
+    const reference = document.createElement("div");
+    reference.setAttribute("data-lr-node", "root");
+    const paragraph = document.createElement("p");
+    paragraph.setAttribute("data-lr-node", "stem/p/0");
+    const katex = document.createElement("div");
+    katex.className = "katex"; // 公式子块 → 继承最近带键祖先（段落）
+    const figure = document.createElement("figure"); // 无自身键 → 继承根 root
+    paragraph.append(katex);
+    reference.append(paragraph, figure);
+    const blocks = measureQuestionSurface(reference).blocks;
+    const nodeOf = (tag: string) => blocks.find((b) => b.tag === tag)?.node;
+    expect(nodeOf("DIV")).toBe("root");
+    expect(nodeOf("P")).toBe("stem/p/0");
+    expect(nodeOf("FIGURE")).toBe("root");
+    // 公式子块继承段落键（surface 根是其上方第一个 DIV，公式是第二个）
+    expect(blocks.filter((b) => b.tag === "DIV")[1]?.node).toBe("stem/p/0");
+  });
   it("拒绝未脱敏题面和选项，不创建离屏宿主", async () => {
     const reference = document.createElement("div");
     for (const unsafe of [

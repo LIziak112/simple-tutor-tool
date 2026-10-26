@@ -85,8 +85,15 @@ export function measureQuestionSurface(surface: HTMLElement) {
     textRects,
     blocks: nodes.map((node) => {
       const rect = node === surface ? root : node.getBoundingClientRect();
+      // LR-5：最近的 data-lr-node 祖先（含自身）的语义节点键；QuestionSurface
+      // 根带 "root"，新底图每块都有键；裸 DOM（无键）时缺省省略
+      const nodeKey =
+        node.getAttribute("data-lr-node") ??
+        node.closest("[data-lr-node]")?.getAttribute("data-lr-node") ??
+        undefined;
       return {
         tag: node.tagName,
+        ...(nodeKey !== undefined ? { node: nodeKey } : {}),
         x: rounded(rect.left - root.left),
         y: rounded(rect.top - root.top),
         width: rounded(rect.width),
