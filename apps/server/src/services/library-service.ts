@@ -1,4 +1,8 @@
-import type { LibraryBatchRequest, TeachingPack } from "@tutor/contract";
+import type {
+  LibraryBatchRequest,
+  PracticeRecommendation,
+  TeachingPack,
+} from "@tutor/contract";
 import { teachingPackSchema } from "@tutor/contract";
 import {
   and,
@@ -8,6 +12,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  notInArray,
   sql,
 } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -29,6 +34,8 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { addCourseItems } from "./course-service.ts";
+import { lessonEmbeddedUnitIds } from "./lesson-embedded.ts";
+import { practiceDefaultsOf } from "./practice-workflow-service";
 
 /**
  * LibraryService（T2A.1 服务层 + T2A.2 资源库页面业务）——文件夹 CRUD、讲义/单元
@@ -106,20 +113,7 @@ export function listFolders(db: Db, teacherId: string): LibraryFolderData[] {
       lectureCounts.set(row.folderId, Number(row.count));
     }
   }
-  const unitCounts = new Map<string, number>();
-  for (const row of db
-    .select({
-      folderId: units.folderId,
-      count: sql<number>`count(*)`,
-    })
-    .from(units)
-    .where(and(eq(units.teacherId, teacherId), isNull(units.deletedAt)))
-    .groupBy(units.folderId)
-    .all()) {
-    if (row.folderId !== null) {
-      unitCounts.set(row.folderId, Number(row.count));
-    }
-  }
+  const unitCounts = countLiveUnitsByFolder(db, teacherId);
   return rows.map((row) => ({
     ...row,
     lectureCount: lectureCounts.get(row.id) ?? 0,
@@ -214,7 +208,39 @@ export function renameFolder(
   return { ...row, name, lectureCount, unitCount };
 }
 
-/** 文件夹内未删除讲义/单元计数（rename 返回值用；「未归类」不在调用范围） */
+/** 各文件夹未删除单元数（排除讲练嵌入单元；listFolders 与 rename 回包共用同一口径） */
+function countLiveUnitsByFolder(
+  db: Db,
+  teacherId: string,
+): Map<string, number> {
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
+  const counts = new Map<string, number>();
+  const rows = db
+    .select({
+      folderId: units.folderId,
+      count: sql<number>`count(*)`,
+    })
+    .from(units)
+    .where(
+      and(
+        eq(units.teacherId, teacherId),
+        isNull(units.deletedAt),
+        embeddedUnitIds.size === 0
+          ? undefined
+          : notInArray(units.id, [...embeddedUnitIds]),
+      ),
+    )
+    .groupBy(units.folderId)
+    .all();
+  for (const row of rows) {
+    if (row.folderId !== null) {
+      counts.set(row.folderId, Number(row.count));
+    }
+  }
+  return counts;
+}
+
+/** 文件夹内未删除讲义/单元计数（rename 返回值用；「未归类」不在调用范围；嵌入单元不计） */
 function countFolderResources(
   db: Db,
   teacherId: string,
@@ -231,17 +257,7 @@ function countFolderResources(
       ),
     )
     .all().length;
-  const unitCount = db
-    .select({ id: units.id })
-    .from(units)
-    .where(
-      and(
-        eq(units.teacherId, teacherId),
-        eq(units.folderId, id),
-        isNull(units.deletedAt),
-      ),
-    )
-    .all().length;
+  const unitCount = countLiveUnitsByFolder(db, teacherId).get(id) ?? 0;
   return [lectureCount, unitCount];
 }
 
@@ -705,16 +721,7 @@ export function listLibraryUnits(
   // 课堂门面是讲练页，单元只是讲练页与作答体系的数据地基（2026-10-15 决策；
   // 课程添加面板走同一查询故一并隐藏；mixed/practice 的配套单元不受影响，
   // 回收站视图不过滤——删除恢复路径仍需可见）
-  const lessonLectureIds = new Set(
-    db
-      .select({ id: lectures.id })
-      .from(lectures)
-      .where(
-        and(eq(lectures.teacherId, teacherId), eq(lectures.kind, "lesson")),
-      )
-      .all()
-      .map((row) => row.id),
-  );
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   // 使用各单元的未删除作业数（T2A.7 起走 assignment_units 关联；复合主键保证
   // 同一作业对同一单元只贡献 1；只数本教师的作业，D13 域内）
   const assignmentCounts = new Map<string, number>();
@@ -803,12 +810,8 @@ export function listLibraryUnits(
     .filter((row) =>
       filter.deleted ? row.deletedAt !== null : row.deletedAt === null,
     )
-    // 讲练嵌入单元只在回收站视图出现（见上方 lessonLectureIds 注释）
-    .filter(
-      (row) =>
-        filter.deleted ||
-        !(row.lectureId !== null && lessonLectureIds.has(row.lectureId)),
-    )
+    // 讲练嵌入单元只在回收站视图出现（见上方 embeddedUnitIds 注释）
+    .filter((row) => filter.deleted || !embeddedUnitIds.has(row.id))
     .map((row) => {
       const unitQuestions = questionsByUnit.get(row.id) ?? [];
       const typeDistribution: Record<string, number> = {};
@@ -1368,9 +1371,36 @@ export function teachingPackYamlLineOf(column: string | null): string | null {
 }
 
 /**
+ * practice 推荐 → 确定性 YAML flow 映射行（M5-D1）：只写已有字段（键序 layout、
+ * feedback），值 JSON 字符串引号——合法 YAML，frontmatter 解析可原样读回；空推荐
+ * 输出 `practice: {}`（同样合法往返）。server 不依赖 yaml 包（硬性规则 5）。
+ */
+function practiceYamlLine(rec: PracticeRecommendation): string {
+  const parts: string[] = [];
+  if (rec.layout !== undefined) {
+    parts.push(`layout: ${JSON.stringify(rec.layout)}`);
+  }
+  if (rec.feedback !== undefined) {
+    parts.push(`feedback: ${JSON.stringify(rec.feedback)}`);
+  }
+  return `practice: {${parts.join(", ")}}`;
+}
+
+/**
+ * 从 practiceDefaultsJson 列读回推荐行；列解析统一走 practiceDefaultsOf
+ * （M5 simplify 收敛——全服务端唯一实现），无有效推荐返回 null 不导出
+ * （老单元导出字节级不变）。
+ */
+function practiceYamlLineOf(column: string | null): string | null {
+  const recommendation = practiceDefaultsOf(column);
+  return recommendation === null ? null : practiceYamlLine(recommendation);
+}
+
+/**
  * 导出单元（GET /api/teacher/units/:id/export.md）：域内取单元（D12，越权 404）：
  * frontmatter（kind: practice、unit、lecture（配套讲义标题，若有）、topic（若有）、
- * teachingPack（列内有声明时回写，T7.8））
+ * teachingPack（列内有声明时回写，T7.8）、practice（列内有推荐时回写，M5-D1，
+ * 无推荐不写行））
  * + 未删除各题 sourceMd 按题序拼接（空行分隔；缺省 id 的题注入显式 id，见
  * ensureQuestionId）。已删题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则
  * 复活已删题；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
@@ -1414,6 +1444,11 @@ export function exportUnitMd(
   const packLine = teachingPackYamlLineOf(unit.teachingPackJson);
   if (packLine !== null) {
     lines.push(packLine);
+  }
+  // practice 推荐写回（M5-D1）：列内有有效推荐才写行，无推荐不写（老单元导出字节级不变）
+  const practiceLine = practiceYamlLineOf(unit.practiceDefaultsJson);
+  if (practiceLine !== null) {
+    lines.push(practiceLine);
   }
   lines.push("---", "");
   const deletedQuestionCount = db

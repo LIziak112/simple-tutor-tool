@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { practiceRecommendationSchema } from "./practice-workflow.ts";
 import { teachingPackSchema } from "./teaching-pack.ts";
 
 /**
@@ -192,6 +193,8 @@ export const questionSchema = z.object({
  * - hints 只暴露数量 hintCount，内容由 T2.11 分步接口按需下发。
  */
 export const questionPublicSchema = z.object({
+  /** 无参考答案的题不提供逐题提交，随整卷交卷；旧投影缺省沿用旧行为。 */
+  canSubmitQuestion: z.boolean().optional(),
   id: z.string().min(1),
   type: questionTypeSchema,
   difficulty: z.number().int().min(1).max(5),
@@ -210,6 +213,19 @@ export const questionPublicSchema = z.object({
  */
 export const assignmentDueAtSchema = z.iso.datetime({ offset: false });
 
+/**
+ * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，现状语义）；
+ * after_due=截止后公布——**必须设置截止时间**：create 选 after_due 而 dueAt 缺失、
+ * 或 PATCH 把 dueAt 置 null / 去掉截止时当前为 after_due，均 400 VALIDATION_ERROR
+ * （防死锁态：永不公布）。截止前学生结果视图只下发「已交卷」与本人答案，
+ * 截止后（now ≥ dueAt）读时自动恢复完整结果（无定时任务）。
+ * course 来源作答恒为交卷即公布（D11），不适用本字段。
+ * 原定义在 assignment.ts；2026-10-21 下移本文件——attempt.ts 草稿视图的
+ * answerRelease 字段与 assignment.ts 的创建/PATCH 共用同一份，且
+ * attempt ↔ assignment 不可互相导入（避免环，同 assignmentDueAtSchema 先例）。
+ */
+export const assignmentAnswerReleaseSchema = z.enum(["on_submit", "after_due"]);
+
 /** 练习单元（练习集）。id 来自 DSL（标题 slug，题目缺省 id `单元slug-序号` 中的"单元slug"即它）；数据库层的 courseId/order/updatedAt 与解析无关 */
 export const unitSchema = z.object({
   id: z.string().min(1),
@@ -217,6 +233,11 @@ export const unitSchema = z.object({
   topic: z.string().optional(),
   /** 关联讲义标题（frontmatter lecture），导入时解析为 §5.2 units.lectureId */
   lectureTitle: z.string().optional(),
+  /**
+   * 做题方式与反馈节奏推荐（frontmatter practice，M5-D1）：只推荐非权限，
+   * 可选且**禁止 z.default()**——缺省不注入键，老文档解析结果形状不变。
+   */
+  practice: practiceRecommendationSchema.optional(),
   questions: z.array(questionSchema),
 });
 
@@ -247,6 +268,12 @@ export const frontmatterSchema = z.object({
   topic: z.string().optional(),
   /** 教学包声明（T7.8 / 方案 §4.6，可选命名空间）：依赖声明非能力定义，无该字段即普通 MD */
   teachingPack: teachingPackSchema.optional(),
+  /**
+   * 练习推荐（M5-D1，可选命名空间）：做题方式与反馈节奏的展示/反馈推荐，
+   * 仅 practice/mixed 单元生效（lecture/lesson 带 practice 由 lint warning 提示）。
+   * 可选且禁止 z.default()——老 frontmatter 解析结果键集不变。
+   */
+  practice: practiceRecommendationSchema.optional(),
 });
 
 /** linter 输出的单个问题（§5.1）：line/column 均从 1 起；fix 为可选的修正建议文本 */

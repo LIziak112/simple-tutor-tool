@@ -3,12 +3,13 @@ import type { CourseProgressData } from "@tutor/contract";
 import { Table2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { fetchCourseProgressApi } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 
 /**
  * 课程「进度」页签（T2A.6）：成员 × 可见单元矩阵。
- * - 单元格：次数、首次分（教师侧统计优先口径，D10）、最近分、待批数；
+ * - 单元格：次数、首次表现（教师侧统计优先口径，D10）、最近表现、待批数；
  *   从未做过显示「—」；
  * - 点击单元格展开该生该单元的历次列表，每条历次可点击进入 attempt 详情
  *   （T3.1 D8 入口衔接：/t/data/attempts/:id）；
@@ -142,10 +143,9 @@ export function CourseProgressTab({ courseId }: { courseId: string }) {
                             )}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            首次 {cell.firstScore ?? "—"} · 最近{" "}
-                            {cell.latestScore ?? "—"}
-                            {cell.bestScore !== null &&
-                              ` · 最高 ${cell.bestScore}`}
+                            首次 {formatResultCounts(cell.firstResultCounts)} ·
+                            最近 {formatResultCounts(cell.latestResultCounts)} ·
+                            最佳 {formatResultCounts(cell.bestResultCounts)}
                           </span>
                         </button>
                         {/* 历次列表（D8：每条可点进 attempt 详情；放在 button 之外，
@@ -160,7 +160,8 @@ export function CourseProgressTab({ courseId }: { courseId: string }) {
                                   className="-mx-1 flex min-h-11 items-center rounded-md px-1 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
                                 >
                                   第 {h.attemptNo} 次 · {statusLabel(h.status)}
-                                  {h.score !== null && ` · ${h.score} 分`}
+                                  {h.status !== "draft" &&
+                                    ` · ${formatResultCounts(h.resultCounts)}`}
                                   {h.submittedAt !== null &&
                                     ` · ${formatCnTime(h.submittedAt)}`}
                                 </Link>
@@ -178,7 +179,7 @@ export function CourseProgressTab({ courseId }: { courseId: string }) {
         </tbody>
       </table>
       <p className="text-xs text-muted-foreground">
-        单元格只统计课程练习作答（作业作答不计入）。首次得分最能反映真实掌握
+        单元格只统计课程练习作答（作业作答不计入）。首次表现最能反映真实掌握
         程度；点击单元格可展开历次记录。
       </p>
     </div>

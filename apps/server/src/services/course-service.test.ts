@@ -12,7 +12,11 @@ import {
   students,
   units,
 } from "../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   addCourseItems,
@@ -21,6 +25,7 @@ import {
   courseHasAttempts,
   deleteCourseItem,
   getCourseDetail,
+  getCourseProgress,
   listCoursesForTeacher,
   listVisibleItems,
   removeCourseMembers,
@@ -767,6 +772,34 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
     expect(result.added.map((item) => item.order)).toEqual([0, 1]);
   });
 
+  it("withCompanionUnits 不为讲练页展开嵌入单元（2026-10-20）：普通配套照常展开", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId } = seed(db);
+    // 讲练页：kind=lesson 讲义 + 嵌入单元（数据地基，不是可独立布置的配套练习）
+    const { lectureId: lessonLectureId } = seedLessonWithEmbeddedUnit(db, {
+      lectureOrder: 2,
+      unitOrder: 3,
+    });
+
+    const result = appendCourseItems(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      [
+        { kind: "lecture", refId: lectureId },
+        { kind: "lecture", refId: lessonLectureId },
+      ],
+      { withCompanionUnits: true },
+    );
+    expect(
+      result.added.map((item) => [item.kind, item.refId, item.companion]),
+    ).toEqual([
+      ["lecture", lectureId, false],
+      ["unit", unitId, true],
+      ["lecture", lessonLectureId, false],
+    ]);
+  });
+
   it("已在课程的资源跳过并返回清单；被跳过的讲义不展开配套", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
@@ -973,5 +1006,70 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
         (row) => row.id === courseId,
       )?.archived,
     ).toBe(true);
+  });
+
+  it("讲练页嵌入单元的历史课程条目不进教师详情与列表计数（2026-10-20）", () => {
+    const db = createTestDb();
+    const { courseId } = seed(db);
+    // 模拟修复前的脏条目：讲练讲义 + 被 D8 展开写入的嵌入单元
+    const { lectureId: lessonLectureId, unitId: embeddedUnitId } =
+      seedLessonWithEmbeddedUnit(db, { lectureOrder: 2, unitOrder: 3 });
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "lecture", refId: lessonLectureId },
+      { kind: "unit", refId: embeddedUnitId },
+    ]);
+
+    const detail = getCourseDetail(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      new Date(NOW),
+    );
+    expect(detail.items.map((item) => [item.kind, item.refId])).toEqual([
+      ["lecture", lessonLectureId],
+    ]);
+    const summary = listCoursesForTeacher(db, TEST_TEACHER_ID, {
+      archived: false,
+    }).find((row) => row.id === courseId);
+    expect(summary?.itemCount).toBe(1);
+    expect(summary?.visibleItemCount).toBe(1);
+  });
+
+  it("进度矩阵不把讲练页嵌入单元列为单元列（2026-10-20）", () => {
+    const db = createTestDb();
+    const { courseId, unitId } = seed(db);
+    // 嵌入单元带存活题：否则会被「零题单元不计列」规则掩盖，测不到嵌入过滤
+    const { unitId: embeddedUnitId } = seedLessonWithEmbeddedUnit(db, {
+      lectureOrder: 2,
+      unitOrder: 3,
+    });
+    db.insert(questions)
+      .values({
+        id: "q-embedded",
+        teacherId: TEST_TEACHER_ID,
+        unitId: embeddedUnitId,
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "s",
+        hintsJson: "[]",
+        sourceMd: "x",
+        version: 1,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "unit", refId: unitId },
+      { kind: "unit", refId: embeddedUnitId },
+    ]);
+
+    const progress = getCourseProgress(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      new Date(NOW),
+    );
+    expect(progress.units.map((unit) => unit.unitId)).toEqual([unitId]);
   });
 });

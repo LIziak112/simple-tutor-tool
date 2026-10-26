@@ -827,3 +827,110 @@ unit: 单元"A"
     expect(parseDocument(LESSON_SAMPLE)).toEqual(lessonParsed);
   });
 });
+
+describe("frontmatter practice 推荐贯通（M5-D1）", () => {
+  const practiceMd = [
+    "---",
+    "kind: practice",
+    "unit: 推荐练习",
+    "practice:",
+    "  layout: single",
+    "  feedback: per_question",
+    "---",
+    "",
+    "::::question{type=judge}",
+    "[[正确]]",
+    "::::",
+  ].join("\n");
+
+  it("practice 文档：frontmatter.practice 原样解析并贯通进单元", () => {
+    const result = parseDocument(practiceMd);
+    expect(result.frontmatter?.practice).toEqual({
+      layout: "single",
+      feedback: "per_question",
+    });
+    expect(result.units[0]?.practice).toEqual({
+      layout: "single",
+      feedback: "per_question",
+    });
+    expect(result.issues).toEqual([]);
+  });
+
+  it("mixed 文档：单元同样贯通 practice 推荐（缺一也可）", () => {
+    const mixed = [
+      "---",
+      "kind: mixed",
+      "unit: 推荐混合",
+      "practice:",
+      "  layout: list",
+      "---",
+      "",
+      "# 第1讲 混合",
+      "",
+      "正文一段。",
+      "",
+      "::::question{type=judge}",
+      "[[正确]]",
+      "::::",
+    ].join("\n");
+    const result = parseDocument(mixed);
+    expect(result.units[0]?.practice).toEqual({ layout: "list" });
+    expect(result.issues).toEqual([]);
+  });
+
+  it("lesson/lecture 文档：单元不携带 practice（对讲练不生效，lint 另行提示）", () => {
+    const lesson = [
+      "---",
+      "kind: lesson",
+      "practice:",
+      "  layout: single",
+      "---",
+      "",
+      "# 第1讲 讲练",
+      "",
+      "::::question{type=judge}",
+      "[[正确]]",
+      "::::",
+    ].join("\n");
+    const result = parseDocument(lesson);
+    expect(result.frontmatter?.practice).toEqual({ layout: "single" });
+    expect(result.units[0]).toBeDefined();
+    expect(result.units[0]).not.toHaveProperty("practice");
+  });
+
+  it("老文档不带 practice：单元不含 practice 键（键不注入，形状与旧一致）", () => {
+    const result = parseDocument(
+      [
+        "---",
+        "kind: practice",
+        "unit: 老练习",
+        "---",
+        "",
+        "::::question{type=judge}",
+        "[[正确]]",
+        "::::",
+      ].join("\n"),
+    );
+    expect(result.units[0]).not.toHaveProperty("practice");
+  });
+
+  it("practice 值非法：走既有 frontmatter schema error 路径（INVALID_FRONTMATTER，message 含字段路径）", () => {
+    const result = parseDocument(
+      [
+        "---",
+        "kind: practice",
+        "practice:",
+        "  layout: grid",
+        "---",
+        "",
+        "::::question{type=judge}",
+        "[[正确]]",
+        "::::",
+      ].join("\n"),
+    );
+    const issue = result.issues.find((i) => i.code === "INVALID_FRONTMATTER");
+    expect(issue).toBeDefined();
+    expect(issue?.level).toBe("error");
+    expect(issue?.message).toContain("practice.layout");
+  });
+});

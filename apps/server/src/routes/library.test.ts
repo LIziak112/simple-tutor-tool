@@ -1628,3 +1628,134 @@ describe("资源库路由：export.md 保留教学包声明（T7.8）", () => {
     expect(text).toContain("content.md");
   });
 });
+
+// ---------- M5-D1：export.md 写回 practice 推荐 ----------
+
+/** 带 practice 推荐的练习文档 */
+const REC_MD = `---
+kind: practice
+unit: 推荐导出单元
+practice:
+  layout: single
+  feedback: per_question
+---
+
+::::question{type=judge difficulty=1 id="rec-export-q1"}
+$3>2$。[[正确]]
+::::
+`;
+
+/** 老式普通练习文档（无 practice，导出须与既有输出一致） */
+const PLAIN_UNIT_MD = `---
+kind: practice
+unit: 推荐导出单元
+---
+
+::::question{type=judge difficulty=1 id="rec-export-q1"}
+$3>2$。[[正确]]
+::::
+`;
+
+describe("资源库路由：export.md 写回 practice 推荐（M5-D1）", () => {
+  it("带推荐导出含确定性格式的 practice 行；导出→重导→再导出字节一致（幂等）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: REC_MD, filename: "推荐导出.md" },
+    );
+    expect(commit.status).toBe(200);
+
+    const first = await request(
+      app,
+      "GET",
+      "/api/teacher/units/推荐导出单元/export.md",
+      teacherCookie,
+    );
+    expect(first.status).toBe(200);
+    const firstMd = await first.text();
+    expect(firstMd).toContain(
+      'practice: {layout: "single", feedback: "per_question"}',
+    );
+
+    // 导出文本 0 error 且推荐解析一致（往返第一步）
+    const linted = lintDocument(firstMd);
+    expect(linted.issues.filter((i) => i.level === "error")).toHaveLength(0);
+    expect(linted.parsed.frontmatter?.practice).toEqual({
+      layout: "single",
+      feedback: "per_question",
+    });
+
+    // 重导（更新路径）→ 再导出逐字节一致
+    const reimport = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: firstMd, filename: "推荐导出.md" },
+    );
+    expect(reimport.status).toBe(200);
+    const second = await request(
+      app,
+      "GET",
+      "/api/teacher/units/推荐导出单元/export.md",
+      teacherCookie,
+    );
+    expect(await second.text()).toBe(firstMd);
+  });
+
+  it("无推荐不写 practice 行（老单元导出不含该字段）；重导无字段清除旧推荐（先存后清两步断言）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    // 老单元：无推荐导入 → 导出无 practice 行
+    const plainCommit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PLAIN_UNIT_MD, filename: "推荐导出.md" },
+    );
+    expect(plainCommit.status).toBe(200);
+    const plainExport = await request(
+      app,
+      "GET",
+      "/api/teacher/units/推荐导出单元/export.md",
+      teacherCookie,
+    );
+    expect(await plainExport.text()).not.toContain("practice:");
+
+    // 先存推荐（导出含行）→ 无字段重导（清除）→ 导出不再含行
+    const recCommit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: REC_MD, filename: "推荐导出.md" },
+    );
+    expect(recCommit.status).toBe(200);
+    const recExport = await request(
+      app,
+      "GET",
+      "/api/teacher/units/推荐导出单元/export.md",
+      teacherCookie,
+    );
+    expect(await recExport.text()).toContain("practice: {");
+
+    const clearedCommit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PLAIN_UNIT_MD, filename: "推荐导出.md" },
+    );
+    expect(clearedCommit.status).toBe(200);
+    const clearedExport = await request(
+      app,
+      "GET",
+      "/api/teacher/units/推荐导出单元/export.md",
+      teacherCookie,
+    );
+    expect(await clearedExport.text()).not.toContain("practice:");
+  });
+});

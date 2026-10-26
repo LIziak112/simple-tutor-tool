@@ -26,6 +26,7 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
+import { SelfReviewControl } from "@/features/attempt/SelfReviewControl";
 import {
   busyCloseGuard,
   DraftProblemAlert,
@@ -234,7 +235,11 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           {released.finalCorrect !== null && (
-            <VerdictBadge verdict={released.finalCorrect} toned />
+            <VerdictBadge
+              verdict={released.finalCorrect}
+              notDone={!released.answered}
+              toned
+            />
           )}
           <h3 className="text-base font-semibold">第 {index + 1} 题</h3>
           <span
@@ -250,6 +255,9 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         />
         <ResultOptions question={released} released />
         <ResultAnswerComparison question={released} released />
+        {released.selfReview && (
+          <SelfReviewControl attemptId={attemptId} question={released} />
+        )}
         {released.solutionMd !== null && (
           <div className="flex flex-col gap-2">
             <p className="text-sm font-medium">解析</p>
@@ -303,14 +311,20 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         assignmentTitle="讲练"
         aiTrigger={aiTrigger}
         footer={
-          <Button
-            type="button"
-            className="min-h-11 w-fit"
-            disabled={phase.kind === "busy"}
-            onClick={() => void revealAnswer(false)}
-          >
-            {phase.kind === "busy" ? "正在显示…" : "显示答案"}
-          </Button>
+          question.canSubmitQuestion === false ? (
+            <p className="text-xs text-muted-foreground">
+              暂无参考答案，请完成作答后统一交卷。
+            </p>
+          ) : (
+            <Button
+              type="button"
+              className="min-h-11 w-fit"
+              disabled={phase.kind === "busy"}
+              onClick={() => void revealAnswer(false)}
+            >
+              {phase.kind === "busy" ? "正在显示…" : "显示答案"}
+            </Button>
+          )
         }
       />
 

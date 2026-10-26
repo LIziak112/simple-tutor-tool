@@ -454,6 +454,79 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     );
   });
 
+  it("未做轮即使人工判对也打断攻克，不增加错次", async () => {
+    const env = await makeWrongEnv();
+    const first = await startCourseAttempt(env);
+    await saveAnswer(env, first, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, first, T1);
+    const next = await startCourseAttempt(env);
+    await submitAt(env, next, T2);
+    env.db
+      .update(responses)
+      .set({ finalCorrect: true, teacherMark: "correct" })
+      .where(
+        and(eq(responses.attemptId, next), eq(responses.questionId, Q.judge1)),
+      )
+      .run();
+    const result = await getWrongQuestions(env);
+    const card = result.data?.questions.find(
+      (question) => question.questionId === Q.judge1,
+    );
+    expect(card?.rounds).toHaveLength(2);
+    expect(card?.rounds.at(-1)?.answered).toBe(false);
+    expect(card?.resolved).toBe(false);
+    expect(card?.wrongCount).toBe(1);
+    assertNoLeak(result.body, { allow: ["answers", "solutionMd"] });
+  });
+
+  it("未做轮（#6980-3）：未做判错不入本、不计错次；rounds 带 answered；答了判错才入本", async () => {
+    const env = await makeWrongEnv();
+    // 第 1 次：judge1 答了判错；judge2 整题未做（D1 判错但 answered=false）
+    const a1 = await startCourseAttempt(env);
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, a1, T1);
+
+    // 未做判错的 judge2 不入本（includeResolved 也不出现——从没「答了判错」）
+    const first = await getWrongQuestions(env, "?includeResolved=true");
+    expect(first.data?.questions.map((card) => card.questionId)).toEqual([
+      Q.judge1,
+    ]);
+    const judge1 = first.data?.questions[0];
+    expect(judge1?.rounds).toHaveLength(1);
+    expect(judge1?.rounds[0]?.answered).toBe(true);
+    expect(judge1?.wrongCount).toBe(1);
+    expect(judge1?.correctCount).toBe(0);
+
+    // 第 2 次：judge2 答了判错 → 入本；rounds=[未做, 判错]，错次只计 1
+    // （judge2 参考答案是「错误」，答 true 才判错）
+    const a2 = await startCourseAttempt(env);
+    await saveAnswer(env, a2, Q.judge2, { kind: "judge", value: true });
+    await submitAt(env, a2, T2);
+
+    const second = await getWrongQuestions(env, "?includeResolved=true");
+    const judge2 = second.data?.questions.find(
+      (card) => card.questionId === Q.judge2,
+    );
+    expect(judge2).toBeDefined();
+    expect(judge2?.rounds.map((round) => round.answered)).toEqual([
+      false,
+      true,
+    ]);
+    expect(judge2?.rounds.map((round) => round.correct)).toEqual([
+      false,
+      false,
+    ]);
+    expect(judge2?.wrongCount).toBe(1);
+    expect(judge2?.correctCount).toBe(0);
+    // judge1 第二次未做也不计新错次
+    const judge1After = second.data?.questions.find(
+      (card) => card.questionId === Q.judge1,
+    );
+    expect(judge1After?.rounds).toHaveLength(2);
+    expect(judge1After?.wrongCount).toBe(1);
+    assertNoLeak(second.body, { allow: ["answers", "solutionMd"] });
+  });
+
   it("教师批改后的判定参与聚合：批错的手写题入本（默认列表），批对则只在 includeResolved 中出现", async () => {
     const env = await makeWrongEnv();
     const attemptId = await startCourseAttempt(env);
@@ -653,7 +726,10 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     ]);
     expect(judge1?.rounds[1]?.courseId).toBeNull();
     expect(judge1?.rounds[1]?.courseName).toBeNull();
-    expect(judge1?.rounds[1]?.sourceTitle).toBe("错题重练 · 第 1 次");
+    // #6980-2：历史卷（未存 scope）标题现算来源单元分布
+    expect(judge1?.rounds[1]?.sourceTitle).toBe(
+      "错题重练 · 第 1 次（来自 有理数课程练习 ×1，共 1 题）",
+    );
   });
 
   it("pendingCount：fill 待批轮计数——交卷待批计 1、老师批完归 0 并入 rounds；after_due 未公布与 draft 不计入（同一公布 gate）", async () => {

@@ -338,11 +338,12 @@ describe("SAI-25 学生工具实例独立构建（教师工具不可见 / 不可
     "describe_capabilities",
   ];
 
-  it("tools/list 精确等于学生四工具（学生实例独立构建，非注册后隐藏）", async () => {
+  it("tools/list 精确等于学生八工具（四逐题 + 四整体复盘；学生实例独立构建，非注册后隐藏）", async () => {
     const env = await makeEnv();
     const client = await connectStudentClient(env, env.token);
     // SAI-25 首发学生实例为零工具（tools 处理器随首个工具注册）；SAI-26
-    // 注册四类任务工具后收紧为精确清单——教师 14 工具一个都不在。
+    // 注册四类任务工具、任务 1ef854c7 增四类整体复盘工具后收紧为精确
+    // 清单——教师 14 工具一个都不在。
     const list = await client.listTools().catch(() => null);
     const names = (
       list === null ? [] : list.tools.map((tool) => tool.name)
@@ -350,9 +351,13 @@ describe("SAI-25 学生工具实例独立构建（教师工具不可见 / 不可
     expect(names).toEqual(
       [
         "claim_ai_task",
+        "claim_attempt_review",
         "list_my_ai_tasks",
+        "list_my_attempt_reviews",
         "renew_ai_lease",
+        "renew_attempt_review_lease",
         "submit_ai_reply",
+        "submit_attempt_review_result",
       ].sort(),
     );
     for (const name of TEACHER_TOOL_NAMES) {

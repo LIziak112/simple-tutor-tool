@@ -4,12 +4,10 @@ import { cn } from "cn";
 import {
   CheckCircle2,
   ChevronDown,
-  Clock,
   Lightbulb,
   PenLine,
   RotateCcw,
   TriangleAlert,
-  XCircle,
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -21,23 +19,31 @@ import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
+import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
+import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 import {
   attemptRoundLabel,
   attemptSourceLabel,
   HANDWRITTEN_TYPES,
-  letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+
+// 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
+// 把本重模块拖进作答页）；此处对外再导出，既有调用方不受影响。
+export { ResultOptions, VerdictBadge } from "./AttemptResultParts";
+
+import { PendingReleaseBanner } from "./PendingReleaseBanner";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
+import { SelfReviewControl } from "./SelfReviewControl";
 import { useResultReviewLocation } from "./use-result-review-location";
 
 /**
@@ -68,56 +74,6 @@ import { useResultReviewLocation } from "./use-result-review-location";
  */
 
 /**
- * 判定徽章组合（图标 + 文案 + 配色单一出处）：true=绿勾「答对」、false=
- * 红叉「答错」（D1 后含未作答客观题；D9 后最终判定 finalCorrect 优先——
- * 教师批注改判以批注为准）、null=琥珀时钟待批（文案可经 pendingLabel 覆盖，
- * 讲练页题卡用「待老师批改」）。toned=true 时文字套判定配色（讲练页题卡
- * 形态）；默认继承前景色（结果视图既有形态）。
- * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
- */
-export function VerdictBadge({
-  verdict,
-  pendingLabel = "待批改",
-  toned = false,
-}: {
-  verdict: boolean | null;
-  /** 待批（null）文案覆盖——讲练页用「待老师批改」 */
-  pendingLabel?: string;
-  /** 文字是否套判定配色（讲练页题卡带色；结果视图沿用默认前景色） */
-  toned?: boolean;
-}) {
-  const label =
-    verdict === true ? "答对" : verdict === false ? "答错" : pendingLabel;
-  const icon =
-    verdict === true ? (
-      <CheckCircle2
-        aria-label="答对"
-        className="size-5 shrink-0 text-emerald-600"
-      />
-    ) : verdict === false ? (
-      <XCircle aria-label="答错" className="size-5 shrink-0 text-red-600" />
-    ) : (
-      <Clock
-        aria-label={pendingLabel}
-        className="size-5 shrink-0 text-amber-500"
-      />
-    );
-  return (
-    <span
-      className={cn(
-        "flex items-center gap-1.5 text-sm font-semibold",
-        toned && verdict === true && "text-emerald-700 dark:text-emerald-300",
-        toned && verdict === false && "text-red-600 dark:text-red-400",
-        toned && verdict === null && "text-amber-700 dark:text-amber-300",
-      )}
-    >
-      {icon}
-      {label}
-    </span>
-  );
-}
-
-/**
  * 老师批改块（D9，显著展示）：有 teacherMark / teacherComment 任一时渲染。
  * teacherMark=null 且只有评语（清除判定保留评语）时标题显示「已评语」。
  * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
@@ -146,79 +102,6 @@ export function TeacherMarkBlock({
         </p>
       )}
     </div>
-  );
-}
-
-/** 选项行（含正确项与学生所选标记；仅 choice/multi）。2026-10 讲练页题卡
- *  结果态复用（导出；仍单一出处）。 */
-export function ResultOptions({
-  question,
-  released,
-}: {
-  question: AttemptResultQuestion;
-  released: boolean;
-}) {
-  const options = question.snapshot.options;
-  if (options === undefined) return null;
-  const picked =
-    question.answer?.kind === "choice"
-      ? [question.answer.index]
-      : question.answer?.kind === "multi"
-        ? question.answer.indexes
-        : [];
-  const correct =
-    question.answers?.kind === "choice"
-      ? [question.answers.index]
-      : question.answers?.kind === "multi"
-        ? question.answers.indexes
-        : [];
-  return (
-    <ol className="flex flex-col gap-1.5" aria-label="选项">
-      {options.map((option, index) => {
-        const isPicked = picked.includes(index);
-        const isCorrect = released && correct.includes(index);
-        return (
-          <li
-            key={option}
-            className={cn(
-              "flex min-h-11 flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-sm",
-              isCorrect
-                ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10"
-                : isPicked && released
-                  ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
-                  : isPicked
-                    ? "border-primary bg-primary/5"
-                    : "border-transparent",
-            )}
-          >
-            <span className="mt-0.5 w-5 shrink-0 font-semibold">
-              {letterOf(index)}
-            </span>
-            <RichMarkdown
-              source={option}
-              className="min-w-0 flex-1 text-base [&_p]:my-0"
-            />
-            {isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                {isPicked ? "正确项 · 你的选择" : "正确项"}
-              </span>
-            )}
-            {isPicked && !isCorrect && (
-              <span
-                className={cn(
-                  "shrink-0 text-xs font-medium",
-                  released
-                    ? "text-red-700 dark:text-red-300"
-                    : "text-foreground",
-                )}
-              >
-                你的选择
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 
@@ -354,9 +237,11 @@ function ResultQuestionCard({
 }) {
   // 手写题型判定走共享 HANDWRITTEN_TYPES（与答题卡/教师卡单一事实来源）
   const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
+  // 复算一次共享：verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源
+  const reviewState = reviewQuestionState(question, released);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
-  const verdict = reviewQuestionState(question, released).verdict;
+  const verdict = reviewState.verdict;
   const renderTools = (
     explanationTrigger?: ReactNode,
     explanationContent?: ReactNode,
@@ -435,18 +320,45 @@ function ResultQuestionCard({
         "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
         !released
-          ? "before:bg-muted"
+          ? reviewState.unanswered
+            ? "before:bg-muted"
+            : "before:bg-sky-400"
           : verdict === true
             ? "before:bg-emerald-500"
             : verdict === false
-              ? "before:bg-red-500"
+              ? question.answered
+                ? "before:bg-red-500"
+                : "before:bg-muted" // #6980-3：未做灰，不套判错红
               : "before:bg-amber-400",
       )}
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {/* T2A.8：未公布时不显示对错判定（finalCorrect/autoCorrect 已置 null） */}
-        {released && <VerdictBadge verdict={verdict} />}
+        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答。
+            「标过不会」是学生做题时的事实标注（#6980-4），不受公布 gate 与
+            自评分支影响——自评题与待公布卷同样显示（审查修复 P1-5） */}
+        {released ? (
+          !question.selfReview ? (
+            <VerdictBadge verdict={verdict} notDone={!question.answered} />
+          ) : null
+        ) : reviewState.unanswered ? (
+          <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+            未作答
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-sky-700 dark:text-sky-300">
+            <CheckCircle2
+              aria-hidden
+              className="size-4 shrink-0 text-sky-500"
+            />
+            答案已保存 · 待公布
+          </span>
+        )}
+        {question.studentFlag === "unsure" && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            标过不会
+          </span>
+        )}
         <h3
           data-review-heading
           tabIndex={-1}
@@ -496,6 +408,9 @@ function ResultQuestionCard({
       </AnnotationView>
 
       <ResultAnswerComparison question={question} released={released} />
+      {released && question.selfReview && (
+        <SelfReviewControl attemptId={attemptId} question={question} />
+      )}
 
       {released &&
         (question.teacherMark !== null || question.teacherComment !== null) && (
@@ -538,6 +453,7 @@ export function AttemptResultView({
   onSolutionToggle,
   annotationSealWarning = false,
   wrongPractice,
+  onRefresh,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
@@ -568,6 +484,8 @@ export function AttemptResultView({
    * （交卷已成事实），服务端读路径懒补封兜底最终一致。
    */
   annotationSealWarning?: boolean;
+  /** 到期自动刷新回调（由 PendingReleaseBanner 在截止到达时触发） */
+  onRefresh?: (() => void) | undefined;
 }) {
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
@@ -584,11 +502,16 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
-  // 圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为 0），
-  // 与 released 显隐判据双保险。
+  // 2026-10：本卷错题（finalCorrect === false 且已答，按本卷题序）——直达
+  // 重练的圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为
+  // 0），与 released 显隐判据双保险。#6980-3：未做题不圈入；#6980-4：标过
+  // 「不会」的题（含做对）也进本卷错题（标不会 = 按做错结算的主人口径）
   const wrongQuestionIds = flatQuestions
-    .filter((question) => question.finalCorrect === false)
+    .filter(
+      (question) =>
+        (question.finalCorrect === false && question.answered) ||
+        question.studentFlag === "unsure",
+    )
     .map((question) => question.questionId);
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;
@@ -654,7 +577,6 @@ export function AttemptResultView({
       }
       actions={
         <>
-          {aiCompanion.trigger}
           {/* SAI-31 批量复盘入口：勾选只进面板，创建走一次确认（B16） */}
           <AiBatchReviewEntry
             attemptId={attempt.id}
@@ -669,9 +591,13 @@ export function AttemptResultView({
             }))}
             released={released}
           />
+          {/* 整体复盘入口（任务 1ef854c7）：预览确认后创建一个 MCP 整体任务，
+              与逐题批量复盘互不混装 */}
+          <AiAttemptReviewEntry attemptId={attempt.id} released={released} />
           <AiQueueButton
             currentAttemptId={aiCompanion.send.attemptId}
             onOpenTask={aiCompanion.openTask}
+            onOpenQuestion={aiCompanion.openQuestion}
           />
         </>
       }
@@ -705,6 +631,22 @@ export function AttemptResultView({
                 </p>
               )}
             </div>
+            {/* M4-D3 §13.8 反馈节奏摘要：v1 新协议卷按 feedbackMode 呈现；
+            legacy/lesson 卷缺省不渲染（数据侧同样缺省）。纯呈现——反馈可见性
+            仍由 answersReleased gate 决定，本行不透露任何对错/答案 */}
+            {data.practiceWorkflow !== undefined && (
+              <p
+                data-slot="practice-rhythm"
+                className="text-sm leading-relaxed text-muted-foreground"
+              >
+                {`反馈节奏：${
+                  data.practiceWorkflow.feedbackMode === "per_question"
+                    ? "作答时逐题反馈，每题提交后即可查看该题反馈"
+                    : "交卷后反馈，交卷后统一查看"
+                }`}
+                {!released && "；参考答案与对错按教师公布时间公布"}
+              </p>
+            )}
             {released ? (
               <div className="grid min-w-0 gap-4 lg:grid-cols-[140px_minmax(0,1fr)] lg:items-start">
                 <div className="flex flex-col gap-1">
@@ -724,7 +666,11 @@ export function AttemptResultView({
                   </p>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {summary.scoreFinal !== null
-                      ? "含老师批改，满分 100"
+                      ? flatQuestions.some(
+                          (question) => question.selfReview?.source === "self",
+                        )
+                        ? "含学生自评，满分 100"
+                        : "含老师批改，满分 100"
                       : attempt.scoreAuto === null
                         ? "暂无可自动判分的题目"
                         : "满分 100"}
@@ -763,6 +709,11 @@ export function AttemptResultView({
                       {summary.pendingCount ?? summary.pending}
                       <span>题</span>
                     </dd>
+                    {(summary.pendingSelfReviewCount ?? 0) > 0 && (
+                      <dd className="text-xs">
+                        另有 {summary.pendingSelfReviewCount} 题待自评
+                      </dd>
+                    )}
                   </div>
                   {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
                   （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/
@@ -782,18 +733,12 @@ export function AttemptResultView({
                 )}
               </div>
             ) : (
-              <div className="flex flex-col gap-2 border-l-2 border-amber-400 pl-3 text-sm">
-                <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
-                  <Clock aria-hidden className="size-4 shrink-0" />
-                  已交卷，答案将在截止后公布
-                  {data.dueAt !== null &&
-                    `（截止时间：${formatCnTime(data.dueAt)}）`}
-                </p>
-                <p className="text-amber-800 dark:text-amber-300">
-                  截止前只显示你的作答内容；截止后将自动公布对错、参考答案与详解
-                  （已作答 {summary.answered} 题 / 共 {summary.total} 题）。
-                </p>
-              </div>
+              <PendingReleaseBanner
+                dueAt={data.dueAt}
+                submittedAt={attempt.submittedAt}
+                summary={summary}
+                onRefresh={onRefresh}
+              />
             )}
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">

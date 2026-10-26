@@ -33,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AttemptEditorNotice,
   AttemptEditorProvider,
   useAttemptEditor,
 } from "@/features/attempt/AttemptEditorContext";
@@ -64,6 +65,7 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
@@ -135,7 +137,7 @@ export default function StudentLessonPage() {
   );
 }
 
-/** 顶部工具栏：返回 + 标题 + 操作区 + 上下文行（sticky） */
+/** 顶部工具栏：所有尺寸随阅读收起，手写期间固定。 */
 function HeaderBar({
   title,
   backTo,
@@ -150,33 +152,51 @@ function HeaderBar({
   actions: ReactNode;
   context: ReactNode;
 }) {
+  const editor = useAttemptEditor();
+  const isDesktop = useDesktopViewport();
+  const toolbar = useReadingToolbar({
+    blocked: editor?.active != null || editor?.paper != null,
+  });
   return (
-    <nav
-      aria-label="讲练页工具栏"
-      className="sticky top-0 z-20 -mx-3 flex min-h-16 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2 sm:-mx-6 sm:px-6"
-    >
-      <Link
-        to={backTo}
-        aria-label={backLabel}
-        className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+    <>
+      <nav
+        ref={toolbar.ref}
+        data-reading-hidden={toolbar.hidden}
+        aria-label="讲练页工具栏"
+        className="reading-toolbar sticky top-0 z-20 -mx-3 flex min-h-14 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-1.5 sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2"
       >
-        <ArrowLeft aria-hidden className="size-5" />
-      </Link>
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-sm leading-relaxed font-semibold break-words sm:text-base">
-          <Sparkles aria-hidden className="size-4 shrink-0 text-primary" />
-          <span className="min-w-0 break-words">{title}</span>
-        </p>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <Link
+          to={backTo}
+          aria-label={backLabel}
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <ArrowLeft aria-hidden className="size-5" />
+        </Link>
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-2 text-sm leading-relaxed font-semibold break-words sm:text-base">
+            <Sparkles aria-hidden className="size-4 shrink-0 text-primary" />
+            <span className="min-w-0 truncate sm:whitespace-normal sm:break-words">
+              {title}
+            </span>
+          </p>
+          {isDesktop && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {context}
+            </div>
+          )}
+        </div>
+        {actions !== null && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {actions}
+          </div>
+        )}
+      </nav>
+      {!isDesktop && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {context}
         </div>
-      </div>
-      {actions !== null && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {actions}
-        </div>
       )}
-    </nav>
+    </>
   );
 }
 
@@ -568,22 +588,6 @@ function LessonAnswerInner({
     editor,
     materials: { annotation: false, paper: true },
   });
-  useEffect(() => {
-    const questionId = aiCompanion.send.boundQuestionId;
-    if (questionId === null) return;
-    const element = cardElements.current.get(questionId);
-    if (!element || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      ([entry]) =>
-        aiCompanion.setQuestionVisible(
-          questionId,
-          entry?.isIntersecting ?? false,
-        ),
-      { root: null, threshold: 0.01 },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [aiCompanion.send.boundQuestionId, aiCompanion.setQuestionVisible]);
 
   const renderCard = (
     question: AttemptQuestionPublic,
@@ -628,10 +632,12 @@ function LessonAnswerInner({
             <AiQueueButton
               currentAttemptId={aiCompanion.send.attemptId}
               onOpenTask={aiCompanion.openTask}
+              onOpenQuestion={aiCompanion.openQuestion}
             />
           }
         />
 
+        <AttemptEditorNotice />
         {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
         {total === 0 && (
           <p className="rounded-2xl border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
@@ -769,6 +775,7 @@ function LessonCompletedView({
               <AiQueueButton
                 currentAttemptId={aiCompanion.send.attemptId}
                 onOpenTask={aiCompanion.openTask}
+                onOpenQuestion={aiCompanion.openQuestion}
               />
               <Button asChild variant="outline" className="min-h-11">
                 <Link to={`/s/attempts/${attemptId}`}>查看结果</Link>

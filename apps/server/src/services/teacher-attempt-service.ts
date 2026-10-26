@@ -1,12 +1,15 @@
-import type {
-  Question,
-  TeacherAttemptCard,
-  TeacherAttemptDetailData,
-  TeacherAttemptDetailQuestion,
-  TeacherAttemptInkInfo,
-  TeacherAttemptListData,
-  TeacherAttemptListQuery,
-  TeacherAttemptSource,
+import {
+  type Question,
+  type TeacherAttemptCard,
+  type TeacherAttemptDetailData,
+  type TeacherAttemptDetailQuestion,
+  type TeacherAttemptInkInfo,
+  type TeacherAttemptListData,
+  type TeacherAttemptListQuery,
+  type TeacherAttemptSource,
+  type WrongScope,
+  wrongPracticeScopeSchema,
+  wrongScopeLabelOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
@@ -35,7 +38,9 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
-import { snapshotOfRow } from "./snapshot";
+import { attemptResultCounts } from "./result-counts";
+import { selfReviewStateOf } from "./review-state.ts";
+import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -98,6 +103,50 @@ export function inkInfoOf(
  * 作答记录不随作业删除消失，标题为布置时快照），异常缺失时兜底占位文案。
  * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
  */
+
+/**
+ * 错题重练范围展示形态（#6980-2，sourceOf 与师生两端标题单源共用）：
+ * label 取建卷存的 scope 快照（历史卷无存档为 null）；questionCount=卷内
+ * 冻结 responses 行数；originUnits=冻结 responses→questions→units 反查的
+ * 归属单元分布（题/单元已删除自然缺项；按次数倒序、同数次数字典序稳定）。
+ */
+export function wrongScopeOf(db: Db, attempt: Attempt): WrongScope {
+  const rows = db
+    .select({ id: responses.id })
+    .from(responses)
+    .where(eq(responses.attemptId, attempt.id))
+    .all();
+  const unitRows = db
+    .select({ title: units.title })
+    .from(responses)
+    .innerJoin(questions, eq(responses.questionId, questions.id))
+    .innerJoin(units, eq(questions.unitId, units.id))
+    .where(eq(responses.attemptId, attempt.id))
+    .all();
+  const unitCounts = new Map<string, number>();
+  for (const row of unitRows) {
+    unitCounts.set(row.title, (unitCounts.get(row.title) ?? 0) + 1);
+  }
+  const originUnits = [...unitCounts.entries()]
+    .map(([title, count]) => ({ title, count }))
+    .sort(
+      (a, b) =>
+        b.count - a.count || a.title.localeCompare(b.title, "zh-Hans-CN"),
+    );
+  let label: string | null = null;
+  if (attempt.practiceScopeJson !== null) {
+    try {
+      const parsed = wrongPracticeScopeSchema.safeParse(
+        JSON.parse(attempt.practiceScopeJson),
+      );
+      label = parsed.success ? wrongScopeLabelOf(parsed.data) : null;
+    } catch {
+      label = null;
+    }
+  }
+  return { label, questionCount: rows.length, originUnits };
+}
+
 export function sourceOf(
   db: Db,
   attempt: Attempt,
@@ -113,6 +162,7 @@ export function sourceOf(
       unitId: null,
       unitTitle: null,
       attemptNo: attempt.attemptNo,
+      wrongScope: wrongScopeOf(db, attempt),
     };
   }
   if (attempt.sourceType === "lesson") {
@@ -291,6 +341,10 @@ export function listTeacherAttempts(
     .offset(query.offset)
     .all();
 
+  const resultCounts = attemptResultCounts(
+    db,
+    rows.map((row) => row.attempt),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -317,6 +371,7 @@ export function listTeacherAttempts(
             .get()?.n ?? 0)
         : attemptQuestionRows(db, attempt).length,
     status: attempt.status,
+    resultCounts: resultCounts.get(attempt.id) ?? null,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
@@ -413,6 +468,11 @@ function detailItemOf(
     answer: answerOf(row.answerJson),
     autoCorrect: isDraft ? null : row.autoCorrect,
     finalCorrect: isDraft ? null : row.finalCorrect,
+    // #6980-3：是否有实际作答（draft 行恒默认 false，判定区仅已交卷消费）
+    answered: row.answered,
+    // #6980-4：做题时学生自标「不会」（draft 亦下发，教师可提前看到）
+    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
+    ...(!isDraft ? { selfReview: selfReviewStateOf(row, snapshot) } : {}),
     teacherMark: isDraft
       ? null
       : row.teacherMark === "correct" || row.teacherMark === "wrong"
@@ -423,12 +483,7 @@ function detailItemOf(
     hintsUsed: row.hintsUsed,
     changeCount: row.changeCount,
     ink: opts.ink,
-    ...(isDraft
-      ? {}
-      : {
-          answers: snapshot.answers ?? null,
-          solutionMd: snapshot.solutionMd ?? null,
-        }),
+    ...(isDraft ? {} : releaseOfSnapshot(snapshot)),
   };
 }
 
@@ -551,24 +606,50 @@ export function getTeacherAttemptDetail(
     }),
   );
 
-  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）
-  const judged =
+  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）。
+  // #6980-3：错次不含未做行——answered=false 的判错在详情里灰显「未做」，
+  // 与学生结果视图、错题本 wrongCount 同口径。人工显式判定（teacherMark /
+  // selfCorrect，审查修复 P0-1）不被「未做」掩盖：显式判错的行计入错次。
+  // 计数从 responses 原始行取——questionsOut 投影不含 selfCorrect，且 draft
+  // 投影会把判定置 null（isDraft 时 finalCorrect/autoCorrect 恒 null）。
+  const judgedRows =
     attempt.status === "draft"
       ? []
-      : questionsOut.map((item) =>
-          effectiveCorrect(item.finalCorrect, item.autoCorrect),
-        );
+      : db
+          .select({
+            finalCorrect: responses.finalCorrect,
+            autoCorrect: responses.autoCorrect,
+            answered: responses.answered,
+            teacherMark: responses.teacherMark,
+            selfCorrect: responses.selfCorrect,
+          })
+          .from(responses)
+          .where(eq(responses.attemptId, attempt.id))
+          .all()
+          .map((row) => ({
+            verdict: effectiveCorrect(row.finalCorrect, row.autoCorrect),
+            answered: row.answered,
+            marked: row.teacherMark !== null || row.selfCorrect !== null,
+          }));
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
     studentName,
     ...source,
+    resultCounts: attemptResultCounts(db, [attempt]).get(attempt.id) ?? null,
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
-    correctCount: judged.filter((value) => value === true).length,
-    wrongCount: judged.filter((value) => value === false).length,
-    pendingCount: judged.filter((value) => value === null).length,
+    correctCount: judgedRows.filter((row) => row.verdict === true).length,
+    wrongCount: judgedRows.filter(
+      (row) => row.verdict === false && (row.answered || row.marked),
+    ).length,
+    // #6980-3（审查修复 P1-4）：详情汇总补「未做」计数——判错但无实际作答且
+    // 无人工判定，此前不进任何计数，四数对不上总题数
+    notDoneCount: judgedRows.filter(
+      (row) => row.verdict === false && !row.answered && !row.marked,
+    ).length,
+    pendingCount: judgedRows.filter((row) => row.verdict === null).length,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,

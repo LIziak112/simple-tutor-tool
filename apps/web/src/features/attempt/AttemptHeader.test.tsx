@@ -1,8 +1,47 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "./AttemptEditorContext";
 import { AttemptHeader } from "./AttemptHeader";
 
-it("返回可用，长标题限制两行，更多可查看完整标题", () => {
+it("编辑失败提示属于标题正常布局，不在标题外悬浮覆盖", async () => {
+  function Switch() {
+    const editor = useAttemptEditor();
+    return (
+      <button
+        type="button"
+        onClick={async () => {
+          editor?.register("q1", async () => {
+            throw new Error("本机存储不可用");
+          });
+          await editor?.request({ questionId: "q1", kind: "annotation" });
+          await editor?.request({ questionId: "q2", kind: "annotation" });
+        }}
+      >
+        切题
+      </button>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <AttemptHeader title="练习标题" status={() => null} onBack={() => {}}>
+        课程信息
+      </AttemptHeader>
+      <Switch />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "切题" }));
+  const notice = await screen.findByRole("alert");
+  expect(notice.closest('[data-slot="attempt-header"]')).toBe(
+    screen.getByRole("banner"),
+  );
+  expect(notice.className).not.toMatch(/sticky|fixed/);
+  expect(screen.getByRole("heading", { name: "练习标题" })).toBeVisible();
+});
+
+it("返回可用，手机标题单行桌面最多两行，更多可查看完整标题", () => {
   const back = vi.fn();
   render(
     <AttemptHeader
@@ -20,7 +59,10 @@ it("返回可用，长标题限制两行，更多可查看完整标题", () => {
       课程信息
     </AttemptHeader>,
   );
-  expect(screen.getByRole("heading", { level: 1 })).toHaveClass("line-clamp-2");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveClass(
+    "truncate",
+    "sm:line-clamp-2",
+  );
   fireEvent.click(screen.getByRole("button", { name: "返回" }));
   expect(back).toHaveBeenCalledOnce();
   fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
@@ -58,4 +100,32 @@ it("actions 槽渲染在更多按钮左侧（SAI-19 AI 助教入口位）", () =
   // actions 在 DOM 顺序上先于更多按钮
   const buttons = within(header).getAllByRole("button");
   expect(buttons.indexOf(aiSlot)).toBeLessThan(buttons.indexOf(more));
+});
+
+// M3-D1：menuItems 槽插在「练习信息」前；不传时菜单维持原样
+it("menuItems 槽渲染在练习信息之前（做题方式切换挂点）", () => {
+  render(
+    <AttemptHeader
+      title="练习"
+      status={() => <p>全部已保存</p>}
+      onBack={() => undefined}
+      menuItems={
+        <div role="menuitem" tabIndex={0}>
+          做题方式：列表
+        </div>
+      }
+    >
+      课程信息
+    </AttemptHeader>,
+  );
+  fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  const menu = screen.getByRole("menu");
+  const items = within(menu).getAllByRole("menuitem");
+  expect(items.map((item) => item.textContent)).toEqual([
+    "做题方式：列表",
+    "练习信息",
+  ]);
 });

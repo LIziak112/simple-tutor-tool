@@ -672,3 +672,118 @@ function makeFixtureSync(): Fixture {
     },
   };
 }
+
+describe("M1b practice workflow 新列的备份恢复缺省", () => {
+  it("新列值随备份往返恢复，不丢失也不意外放宽", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const db = handle.db;
+    db.$client
+      .prepare(
+        "UPDATE teachers SET practice_feedback_policy = 'after_attempt' WHERE id = ?",
+      )
+      .run(TEST_TEACHER_ID);
+    db.$client
+      .prepare(
+        "INSERT INTO assignments (id, teacher_id, unit_id, course_id, title, due_at, answer_release, allow_per_question_feedback, deleted_at, created_at) VALUES ('asg-m1b', ?, NULL, NULL, '备份作业', NULL, 'on_submit', 1, NULL, '2026-10-22T00:00:00.000Z')",
+      )
+      .run(TEST_TEACHER_ID);
+    db.$client
+      .prepare(
+        "INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, attempt_no, status, started_at, practice_workflow_version, feedback_mode, workflow_revision) VALUES ('att-m1b', 'stu-backup-1', 'assignment', 'asg-m1b', NULL, NULL, 1, 'draft', '2026-10-22T00:00:00.000Z', 1, 'per_question', 3)",
+      )
+      .run();
+
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
+
+    // 备份后改值：教师策略放宽、作业撤授权、卷降级——恢复必须回到备份时点
+    db.$client
+      .prepare(
+        "UPDATE teachers SET practice_feedback_policy = NULL WHERE id = ?",
+      )
+      .run(TEST_TEACHER_ID);
+    db.$client
+      .prepare(
+        "UPDATE assignments SET allow_per_question_feedback = 0 WHERE id = 'asg-m1b'",
+      )
+      .run();
+    db.$client
+      .prepare(
+        "UPDATE attempts SET practice_workflow_version = NULL, feedback_mode = NULL, workflow_revision = 0 WHERE id = 'att-m1b'",
+      )
+      .run();
+
+    const result = await restoreFromBackup(
+      dataDir,
+      handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      new Uint8Array(zipBuffer),
+    );
+    expect(result).toBeTruthy();
+    expect(
+      db.$client
+        .prepare(
+          "SELECT practice_feedback_policy AS p FROM teachers WHERE id = ?",
+        )
+        .get(TEST_TEACHER_ID),
+    ).toMatchObject({ p: "after_attempt" });
+    expect(
+      db.$client
+        .prepare(
+          "SELECT answer_release, allow_per_question_feedback AS allowPq FROM assignments WHERE id = 'asg-m1b'",
+        )
+        .get(),
+    ).toMatchObject({ answer_release: "on_submit", allowPq: 1 });
+    expect(
+      db.$client
+        .prepare(
+          "SELECT practice_workflow_version AS v, feedback_mode, workflow_revision AS r FROM attempts WHERE id = 'att-m1b'",
+        )
+        .get(),
+    ).toMatchObject({ v: 1, feedback_mode: "per_question", r: 3 });
+  });
+});
+
+describe("M5-D1 practice 推荐列的备份恢复", () => {
+  it("units.practice_defaults_json 随备份往返恢复：推荐不丢（纯展示推荐，与权限面无关）", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const stored = '{"layout":"single","feedback":"per_question"}';
+    handle.db.$client
+      .prepare(
+        "INSERT INTO units (id, teacher_id, title, \"order\", updated_at, practice_defaults_json) VALUES ('unit-rec', ?, '推荐单元', 0, '2026-10-23T00:00:00.000Z', ?)",
+      )
+      .run(TEST_TEACHER_ID, stored);
+
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
+
+    // 备份后清掉推荐：恢复必须回到备份时点
+    handle.db.$client
+      .prepare(
+        "UPDATE units SET practice_defaults_json = NULL WHERE id = 'unit-rec'",
+      )
+      .run();
+
+    await restoreFromBackup(
+      dataDir,
+      handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      new Uint8Array(zipBuffer),
+    );
+    expect(
+      handle.db.$client
+        .prepare(
+          "SELECT practice_defaults_json AS p FROM units WHERE id = 'unit-rec'",
+        )
+        .get(),
+    ).toMatchObject({ p: stored });
+  });
+});

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { DEFAULT_QUICK_BUTTONS } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
+import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
 import StudentSettingsPage from "./StudentSettingsPage";
 
 vi.mock("@/features/auth/student-auth", () => ({
@@ -82,6 +83,20 @@ it("设置页包含连接 AI 入口,指向 /s/settings/ai（SAI-18）", () => {
     "href",
     "/s/settings/ai",
   );
+});
+
+// M3-D1：学习偏好分组包含「做题方式」配置行（默认布局 + 快捷键开关）。
+// 账号绑定由学生布局负责，此处直接绑定 store 验证配置行渲染。
+it("设置页学习偏好包含做题方式配置行（M3-D1）", () => {
+  bindPracticePreferenceAccount(null);
+  bindPracticePreferenceAccount("student-settings");
+  renderPage();
+  expect(screen.getByRole("radio", { name: /列表作答/ })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /单题专注/ })).toBeInTheDocument();
+  expect(
+    screen.getByRole("checkbox", { name: /键盘快捷键/ }),
+  ).toBeInTheDocument();
+  bindPracticePreferenceAccount(null);
 });
 
 it("收起快捷按钮仍提示未保存，重新展开保留输入", async () => {

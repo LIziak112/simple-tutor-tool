@@ -103,7 +103,7 @@ export function renderDrillReport(report: DrillReport): string {
       fails === 0 ? "——演练通过" : "——演练未通过"
     }`,
   );
-  return lines.join("\n") + "\n";
+  return `${lines.join("\n")}\n`;
 }
 
 /** CLI 收尾：渲染、可选落盘（--out）、fail 置退出码 1 */

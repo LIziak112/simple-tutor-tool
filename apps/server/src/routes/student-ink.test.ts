@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { ApiErr, InkDoc, InkWriteMeta } from "@tutor/contract";
 import { inkFetchOkSchema, inkUploadOkSchema } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
-import { ink as inkTable } from "../db/schema.ts";
+import { attempts, ink as inkTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { createSnapshot } from "../services/backup-service";
 import { safeInkFileName } from "../services/ink-service.ts";
@@ -825,4 +826,44 @@ describe("泄露（AGENTS.md 第 3 条）", () => {
       assertNoLeak(await res.json());
     }
   });
+});
+
+it("正式手写更新活动时间；重复正文、失败与重放不更新", async () => {
+  const { app, db, aCookie, attemptId } = await makeInkApp();
+  const body = gzipDoc(atramentDoc(2));
+  const mutationId = randomUUID();
+  const upload = (baseRevision: number, id: string, bytes = body) =>
+    putInk(app, aCookie, attemptId, Q.solve, bytes, makePng(), {
+      baseRevision,
+      mutationId: id,
+    });
+  const activity = () =>
+    db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+      ?.lastActivityAt;
+  expect((await upload(0, mutationId)).status).toBe(200);
+  expect(activity()).toBeTruthy();
+  const old = "2026-01-01T00:00:00.000Z";
+  db.update(attempts)
+    .set({ lastActivityAt: old })
+    .where(eq(attempts.id, attemptId))
+    .run();
+  expect((await upload(0, mutationId)).status).toBe(200);
+  expect(activity()).toBe(old);
+  const metadataOnly = new TextEncoder().encode(
+    JSON.stringify({
+      ...atramentDoc(2),
+      updatedAt: 1727392900000,
+      serverRevision: 1,
+    }),
+  );
+  expect((await upload(1, randomUUID(), metadataOnly)).status).toBe(200);
+  expect(activity()).toBe(old);
+  expect((await upload(0, randomUUID(), gzipDoc(atramentDoc(3)))).status).toBe(
+    409,
+  );
+  expect(activity()).toBe(old);
+  expect((await upload(2, randomUUID(), gzipDoc(atramentDoc(3)))).status).toBe(
+    200,
+  );
+  expect(activity()).not.toBe(old);
 });

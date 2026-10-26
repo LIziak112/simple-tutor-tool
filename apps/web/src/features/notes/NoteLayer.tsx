@@ -176,7 +176,7 @@ export function NoteLayer({
 
   // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions，scope 定在
   // scratch；图片维度逻辑留本组件）/ 补图重试 ----
-  const { resolveError, keepLocal, keepCloud, retryDenied } =
+  const { resolveError, keepLocal, keepCloud, retryDenied, adoptCloud } =
     useNoteSyncActions(session, {
       attemptId,
       questionId,
@@ -412,6 +412,7 @@ export function NoteLayer({
             onKeepLocal={keepLocal}
             onKeepCloud={keepCloud}
             onRetryDenied={retryDenied}
+            onAdoptCloud={adoptCloud}
             imageRetrying={imageRetrying}
             onRetryImages={retryImages}
           />

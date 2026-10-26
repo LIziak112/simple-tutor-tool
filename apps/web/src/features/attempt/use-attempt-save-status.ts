@@ -48,6 +48,9 @@ export function summarizeAttemptSaveStatus(input: SaveSummaryInput): string {
     views.some((view) => view.server === "conflict" || view.server === "denied")
   )
     return "有稿件同步需处理，本机稿已保留";
+  // retained 标画已裁决保留本机（不再自动同步）——不能谎称「正在同步」
+  if (views.some((view) => view.server === "retained"))
+    return "有标画已保留本机，不再自动同步";
   if (!input.online) return "离线，已存本机";
   if (input.answer.state === "offline") return "已存本机，等待同步";
   if (
@@ -82,6 +85,7 @@ function recordSaveLabel(view: SaveView | null): string {
   if (view.local === "failed") return "本机保存失败";
   if (view.local === "saving") return "正在存本机";
   if (view.server === "conflict") return "同步冲突，本机稿已保留";
+  if (view.server === "retained") return "已保留本机，不再同步";
   if (view.server === "denied") return "无权限同步，本机稿已保留";
   return view.server === "synced" ? "已保存" : "等待同步";
 }

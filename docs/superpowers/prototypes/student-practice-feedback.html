@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学生练习反馈 · 设计预览（示例数据，离线）</title>
+<style>
+*{box-sizing:border-box;max-width:100%}
+body{margin:0;padding:16px;font:16px/1.75 system-ui,"Microsoft YaHei",sans-serif;background:#f6f7f9;color:#1e293b}
+header{max-width:1200px;margin:0 auto 16px}
+header h1{font-size:1.1em;margin:0 0 12px}
+header label{display:block;margin-bottom:8px;font-size:.9em}
+header select{margin-left:8px;padding:4px;max-width:100%}
+main{max-width:1200px;margin:0 auto}
+article{width:100%;min-width:0;background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px}
+#stem{margin:0 0 12px}
+#answer{margin:0 0 12px}
+#answer textarea{width:100%;padding:8px;font:inherit}
+#stem input{padding:4px;font:inherit}
+#feedbackPanel{margin:0 0 12px;min-height:1em;padding:8px;background:#f2f8f2;border-radius:4px}
+#aiPanel{margin:0 0 12px;min-height:1em;padding:8px;background:#f2f4fa;border-radius:4px}
+button{min-height:44px;padding:0 16px;font:inherit}
+#submit{background:#2563eb;color:white;border:1px solid #2563eb;border-radius:8px}
+#aiPanel label{display:block}
+#aiPanel textarea{display:block;width:100%;font:inherit;padding:8px}
+#feedbackPanel:empty{display:none}
+#answer .option{display:flex;align-items:center;gap:4px;min-height:48px;margin:2px 0;padding:0 8px;cursor:pointer}
+#answer fieldset{border:0;padding:0;margin:0 0 8px}
+.dim{color:#888;font-size:.85em}
+#sideHost{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px}
+#sideHost:empty{display:none}
+main[data-ai="side"]{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+main[data-ai="side"] article{grid-column:1;grid-row:1}
+main[data-ai="side"] #sideHost{grid-column:2;grid-row:1}
+main[data-ai="side"] #inlineHost{grid-column:1/-1;grid-row:2}
+@media (max-width:1059px){ main[data-ai="side"]{grid-template-columns:minmax(0,1fr)} }
+dialog{border:1px solid #ddd;border-radius:8px;padding:16px;max-width:520px;width:90vw}
+</style>
+</head>
+<body>
+<header>
+<h1>学生练习反馈设计预览（示例数据）</h1>
+<label>布局<select id="layout"><option value="list">列表</option><option value="single">单题专注</option></select></label>
+<label>反馈时机<select id="feedback"><option value="per_question">每题提交后查看</option><option value="after_attempt">交卷后统一查看</option></select></label>
+<label>题型<select id="kind"><option value="judge">判断</option><option value="choice">单选</option><option value="multi">多选</option><option value="fill">填空</option><option value="solve">解答</option><option value="apply">应用</option><option value="find-error">找错</option></select></label>
+<label>AI 形式<select id="ai"><option value="inline">题下阅读</option><option value="side">侧边对照</option><option value="dialog">独立弹窗</option></select></label>
+<label>状态<select id="state"><option value="edit">作答中</option><option value="feedback">已反馈</option><option value="pending">待批改</option><option value="restricted">受限</option></select></label>
+</header>
+<main data-layout="list" id="main">
+<article>
+<p id="stem">示例题干：请阅读题目并作答。</p>
+<div id="answer"></div>
+<div id="feedbackPanel"></div>
+<div id="aiPanel"></div>
+<button type="button" id="aiOpen">打开AI示例</button>
+<button type="button" id="submit">提交</button>
+<p class="dim">本页为离线预览：提交/下一题/交卷只切换示例状态，不会发送任何请求。</p>
+</article>
+<div id="inlineHost"></div>
+<div id="sideHost"></div>
+</main>
+<dialog id="aiDialog">
+<div id="dialogHost"></div>
+<button type="button" id="dialogClose">关闭</button>
+</dialog>
+<script>
+const $ = (id)=> document.getElementById(id);
+
+function stemFor(kind){
+  if(kind==='fill') return '示例题干：1+1=【　】，2×3=【　】。（在题干空格内填写）';
+  return '示例题干：请阅读题目并作答。';
+}
+
+function renderAnswer(kind){
+  const a = $('answer');
+  a.innerHTML = '';
+  const opts = (list, type, name)=> {
+    const fs = document.createElement('fieldset');
+    list.forEach((t)=> {
+      const l = document.createElement('label');
+      l.className = 'option';
+      const inp = document.createElement('input');
+      inp.type = type; inp.name = name; inp.value = t;
+      l.appendChild(inp);
+      l.appendChild(document.createTextNode(` ${t}`));
+      fs.appendChild(l);
+    });
+    return fs;
+  };
+  const ta = (labelText, ph)=> {
+    const l = document.createElement('label');
+    l.textContent = labelText;
+    l.htmlFor = 'answerText';
+    const t = document.createElement('textarea');
+    t.id = 'answerText';
+    t.rows = 4; t.placeholder = ph; t.className = 'handoff';
+    a.appendChild(l); a.appendChild(t);
+  };
+  if(kind==='judge'){ a.appendChild(opts(['对','错'],'radio','judge')); }
+  else if(kind==='choice'){ a.appendChild(opts(['选项A','选项B','选项C','选项D'],'radio','choice')); }
+  else if(kind==='multi'){ a.appendChild(opts(['选项A','选项B','选项C','选项D'],'checkbox','multi')); }
+  else if(kind==='fill'){
+    $('stem').innerHTML = '示例题干：1+1=';
+    const b1 = document.createElement('input'); b1.placeholder='第一空'; b1.size=4; b1.setAttribute('aria-label','第1空');
+    $('stem').appendChild(b1);
+    $('stem').appendChild(document.createTextNode('，2×3='));
+    const b2 = document.createElement('input'); b2.placeholder='第二空'; b2.size=4; b2.setAttribute('aria-label','第2空');
+    $('stem').appendChild(b2);
+    $('stem').appendChild(document.createTextNode('。（在题干空格内填写）'));
+    return;
+  }
+  else if(kind==='solve'){ ta('解答过程（手写占位）','在此输入解答过程'); }
+  else if(kind==='apply'){ ta('应用作答','在此输入应用题作答'); }
+  else { ta('找错作答','指出错在哪一步、为什么错'); }
+}
+
+function setDisabled(dis){
+  const els = document.querySelectorAll('#answer input,#answer textarea,#stem input');
+  for(let i=0;i<els.length;i++) els[i].disabled = dis;
+}
+
+function renderFeedback(){
+  const f = $('feedbackPanel');
+  f.innerHTML = '';
+  const fb = $('feedback').value, st = $('state').value;
+  const show = fb==='per_question' && (st==='feedback' || st==='pending');
+  if(!show) return;
+  if(st==='pending'){
+    f.innerHTML = '<strong>待老师批改</strong><br>本人答案：已记录（主观题由老师人工批改）';
+    return;
+  }
+  const refOk = st!=='restricted' && fb!=='after_attempt';
+  f.innerHTML =
+    '<div>本人答案：示例作答</div>' +
+    (refOk ? '<div>参考答案：示例参考答案</div><div>详解示例：示例详解文字</div>'
+           : '<div class="dim">当前状态下不展示参考答案。</div>');
+}
+
+function renderSubmit(){
+  const b = $('submit'), st = $('state').value;
+  b.textContent = st==='restricted' ? '交卷' : st==='edit' && $('feedback').value==='per_question' ? '提交本题' : '下一题';
+}
+
+function applyState(dis){
+  setDisabled(dis);
+  renderFeedback();
+  renderSubmit();
+}
+
+document.querySelectorAll('header select').forEach((sel)=> {
+  sel.addEventListener('change', ()=> {
+    const k = sel.id;
+    if(k==='layout'){ $('main').dataset.layout = sel.value; return; }
+    if(k==='kind'){
+      $('stem').textContent = stemFor(sel.value);
+      renderAnswer(sel.value);
+      applyState($('state').value!=='edit');
+      return;
+    }
+    if(k==='state'){ applyState(sel.value!=='edit'); return; }
+    // feedback / ai：反馈时机影响反馈区展示，AI 形式仅保留内容位
+    if(k==='feedback'){ renderFeedback(); renderSubmit(); return; }
+    // ai 形式：AI 内容位搬迁下一步实现
+  });
+});
+
+$('submit').addEventListener('click', ()=> {
+  const s = $('state');
+  s.value = s.value==='edit' && $('feedback').value==='per_question' ? 'feedback' : 'edit';
+  applyState(s.value!=='edit');
+});
+
+// AI 预览：一个 aiPanel 在三个 host 间搬迁
+const p = $('aiPanel');
+const lbl = document.createElement('label');
+lbl.textContent = '追问AI助教';
+lbl.htmlFor = 'aiAsk';
+const ta2 = document.createElement('textarea');
+ta2.id = 'aiAsk'; ta2.rows = 3; ta2.placeholder = '向AI助教提问…';
+const body = document.createElement('div');
+body.textContent = 'AI示例：本题考查基础概念。你可以先回顾定义，再检查关键步骤是否遗漏。';
+p.appendChild(lbl); p.appendChild(ta2); p.appendChild(body);
+const hosts = { inline: $('inlineHost'), side: $('sideHost'), dialog: $('dialogHost') };
+function openAi(){
+  const mode = $('ai').value, dlg = $('aiDialog');
+  if(mode==='side' && $('main').getBoundingClientRect().width >= 1060){
+    hosts.side.appendChild(p);
+  } else if(mode==='dialog' || mode==='side'){
+    $('main').dataset.ai = 'dialog';
+    hosts.dialog.appendChild(p);
+    if(!dlg.open) dlg.showModal();
+    return;
+  } else {
+    hosts.inline.appendChild(p);
+  }
+  if(dlg.open) dlg.close();
+  $('main').dataset.ai = mode;
+}
+$('aiOpen').addEventListener('click', openAi);
+$('ai').addEventListener('change', openAi);
+$('dialogClose').addEventListener('click', ()=> {
+  $('aiDialog').close();
+  $('aiOpen').focus();
+});
+$('aiDialog').addEventListener('close', ()=> { $('aiOpen').focus(); });
+openAi();
+
+// 初次渲染
+$('stem').textContent = stemFor($('kind').value);
+renderAnswer($('kind').value);
+applyState($('state').value!=='edit');
+</script>
+</body>
+</html>

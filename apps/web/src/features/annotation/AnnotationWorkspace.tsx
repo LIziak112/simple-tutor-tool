@@ -28,6 +28,7 @@ import {
   useSessionInputPreference,
 } from "@/features/ink/input-preference";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import { studentAnnotationBasePngUrl } from "@/lib/api";
 import {
   getAnnotationRecord,
   settleAnnotationPersistence,
@@ -38,6 +39,7 @@ import {
   createAnnotationSurface,
 } from "./annotation-surface";
 import {
+  resolveAnnotationConflictKeepCloud,
   resolveAnnotationConflictKeepLocalAndUpload,
   retryAnnotationUpload,
 } from "./annotation-sync";
@@ -46,12 +48,42 @@ import {
   useAnnotationSessionRef,
 } from "./use-annotation-record";
 
+/**
+ * 工作台实际消费的最小底图结构（不携带服务器身份字段——续画场景由本机
+ * PNG 组装，禁止为 localBase 合成假 AnnotationBaseRef）。
+ */
+export interface AnnotationWorkspaceBase {
+  pixelWidth: number;
+  pixelHeight: number;
+  downloadUrl: string;
+}
+
+/** 契约底图引用 → 工作台底图（ready 且像素宽高非空才可用）。downloadUrl 缺失时按 attemptId 直构学生直出路由（与服务端同源单源）。 */
+export function annotationWorkspaceBaseOf(
+  ref: AnnotationBaseRef,
+  attemptId: string,
+): AnnotationWorkspaceBase | null {
+  if (
+    ref.state !== "ready" ||
+    ref.pixelWidth === null ||
+    ref.pixelHeight === null
+  ) {
+    return null;
+  }
+  return {
+    pixelWidth: ref.pixelWidth,
+    pixelHeight: ref.pixelHeight,
+    downloadUrl:
+      ref.downloadUrl ?? studentAnnotationBasePngUrl(attemptId, ref.baseId),
+  };
+}
+
 export interface AnnotationWorkspaceProps {
   attemptId: string;
   questionId: string;
   phase: "scratch" | "correction";
-  /** ready 底图引用（像素宽高＝坐标域；downloadUrl 为底图 img src） */
-  base: AnnotationBaseRef;
+  /** 底图（像素宽高＝坐标域；downloadUrl 为底图 img src） */
+  base: AnnotationWorkspaceBase;
   /** 无障碍标签前缀（拼「标注」） */
   ariaPrefix?: string;
 }
@@ -92,13 +124,17 @@ export function AnnotationWorkspace({
   const [penSize, setPenSize] = useState<InkPenSize>("medium");
   const [historyTick, setHistoryTick] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
+  /** 裁决/重试出口的异步失败就地呈现（网络错误等不让按钮静默失效） */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const runAction = (action: () => Promise<void>) => {
+    setActionError(null);
+    void action().catch((err: unknown) => {
+      setActionError(err instanceof Error ? err.message : "操作失败，请重试");
+    });
+  };
 
   const baseWidth = base.pixelWidth;
   const baseHeight = base.pixelHeight;
-  if (baseWidth === null || baseHeight === null) {
-    // 契约保证 ready 底图必带宽高（annotationBaseRefSchema superRefine）
-    throw new Error("ready 底图缺少像素宽高（契约不变量破坏）");
-  }
 
   // 记录未载入（null）时显示加载态；docVersion 用于自写自载守卫
   const doc = record?.doc ?? null;
@@ -230,11 +266,13 @@ export function AnnotationWorkspace({
                 variant="outline"
                 className="h-9 px-2.5 text-xs"
                 onClick={() =>
-                  void retryAnnotationUpload(session, {
-                    attemptId,
-                    questionId,
-                    phase,
-                  })
+                  runAction(() =>
+                    retryAnnotationUpload(session, {
+                      attemptId,
+                      questionId,
+                      phase,
+                    }),
+                  )
                 }
               >
                 重试同步
@@ -245,21 +283,105 @@ export function AnnotationWorkspace({
         {record !== null && server === "conflict" && (
           <span className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-400">
             <span>标注同步冲突：{record.conflict?.reason ?? "需要裁决"}</span>
+            {session !== null &&
+              (record.conflict?.kind === "layout" ? (
+                // 布局冲突双出口（批次三 P0-2）：重传必再撞 409，只有
+                // 「采用云端」（重绑底图续画）与「保留本机」（不再同步）两条终局
+                <>
+                  <Button
+                    variant="outline"
+                    className="h-9 px-2.5 text-xs"
+                    onClick={() =>
+                      runAction(() =>
+                        resolveAnnotationConflictKeepCloud(session, {
+                          attemptId,
+                          questionId,
+                          phase,
+                        }),
+                      )
+                    }
+                  >
+                    采用云端版本
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-9 px-2.5 text-xs"
+                    onClick={() =>
+                      runAction(() =>
+                        resolveAnnotationConflictKeepLocalAndUpload(session, {
+                          attemptId,
+                          questionId,
+                          phase,
+                        }),
+                      )
+                    }
+                  >
+                    保留本机（不再同步）
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  className="h-9 px-2.5 text-xs"
+                  onClick={() =>
+                    runAction(() =>
+                      resolveAnnotationConflictKeepLocalAndUpload(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      }),
+                    )
+                  }
+                >
+                  以本机为准并重传
+                </Button>
+              ))}
+          </span>
+        )}
+        {record !== null && server === "retained" && (
+          <span className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-400">
+            <span>
+              本机标注已保留本机，不再自动同步（云端存有另一布局的底图）
+            </span>
             {session !== null && (
-              <Button
-                variant="outline"
-                className="h-9 px-2.5 text-xs"
-                onClick={() =>
-                  void resolveAnnotationConflictKeepLocalAndUpload(session, {
-                    attemptId,
-                    questionId,
-                    phase,
-                  })
-                }
-              >
-                以本机为准并重传
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  className="h-9 px-2.5 text-xs"
+                  onClick={() =>
+                    runAction(() =>
+                      retryAnnotationUpload(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      }),
+                    )
+                  }
+                >
+                  重新尝试同步
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-9 px-2.5 text-xs"
+                  onClick={() =>
+                    runAction(() =>
+                      resolveAnnotationConflictKeepCloud(session, {
+                        attemptId,
+                        questionId,
+                        phase,
+                      }),
+                    )
+                  }
+                >
+                  采用云端版本
+                </Button>
+              </>
             )}
+          </span>
+        )}
+        {actionError !== null && (
+          <span role="alert" className="text-destructive">
+            {actionError}
           </span>
         )}
       </div>

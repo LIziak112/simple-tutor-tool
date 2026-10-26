@@ -83,6 +83,39 @@ it("自定义日期支持倒置区间提示，越界页码收敛", async () => {
   expect(screen.getAllByRole("link", { name: "开始练习" })).toHaveLength(1);
 });
 
+it("进行中 v1 作业显示「已提交 n/N 题」，legacy 缺省回落（M4-D3）", async () => {
+  mock.mockResolvedValue({
+    assignments: [
+      {
+        id: "assignment-v1",
+        title: "进行中新协议卷",
+        units: [],
+        unitCount: 0,
+        questionCount: 3,
+        dueAt: null,
+        createdAt: new Date(Date.UTC(2026, 9, 1)).toISOString(),
+        status: "in_progress",
+        practiceSubmittedCount: 1,
+      },
+      {
+        id: "assignment-legacy",
+        title: "进行中旧卷",
+        units: [],
+        unitCount: 0,
+        questionCount: 3,
+        dueAt: null,
+        createdAt: new Date(Date.UTC(2026, 9, 2)).toISOString(),
+        status: "in_progress",
+      },
+    ],
+  });
+  renderPage();
+  expect(await screen.findByText("已提交 1/3 题")).toBeInTheDocument();
+  // 只有携带计数的 v1 卷显示；legacy 卷只有「共 N 题」
+  expect(screen.getAllByText(/已提交 \d\/\d/)).toHaveLength(1);
+  expect(screen.getByText("进行中旧卷")).toBeInTheDocument();
+});
+
 it.each(["loading", "error", "empty"])(
   "%s 状态保留页头和导航",
   async (state) => {

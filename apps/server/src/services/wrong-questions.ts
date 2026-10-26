@@ -1,9 +1,10 @@
-import type {
-  TeacherAttemptSource,
-  WrongQuestionCard,
-  WrongQuestionRound,
-  WrongQuestionsData,
-  WrongQuestionsQuery,
+import {
+  type TeacherAttemptSource,
+  type WrongQuestionCard,
+  type WrongQuestionRound,
+  type WrongQuestionsData,
+  type WrongQuestionsQuery,
+  wrongAttemptTitleOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
@@ -18,7 +19,9 @@ import {
 } from "../db/schema";
 import { answerOf } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
-import { snapshotOfRow } from "./snapshot";
+import { createQuestionReviewReader } from "./review-access.ts";
+import { reviewSourceOf } from "./review-state.ts";
+import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
 
@@ -29,7 +32,8 @@ import { sourceOf } from "./teacher-attempt-service";
  *
  * - 只统计**已判定**作答：已交卷（status != draft）且 finalCorrect 非 null
  *   （待批题不参与——免得一道待批题把旧的「错」盖成未知）；
- * - 入本条件：任一次已判定作答判错（覆盖「首次对 → 中间错 → 最近对」这类
+ * - 入本条件：任一次已判定作答「答了且判错」（#6980-3：未做轮 answered=false
+ *   不入本；覆盖「首次对 → 中间错 → 最近对」这类
  *   首末皆对但曾错的题）；默认只显示「最近一次判定仍为错」（resolved=false）；
  *   includeResolved=true 额外列出「曾错、最近一次已做对」（resolved=true）；
  * - rounds：该题全部已判定作答按时间升序（同刻按 attemptId 升序兜底稳定），
@@ -69,12 +73,47 @@ import { sourceOf } from "./teacher-attempt-service";
  * 已交卷且 finalCorrect 非 null 的作答（公布 gate 过滤后）。
  */
 interface JudgedRoundRow {
+  reviewSource?: import("@tutor/contract").SelfReviewState["source"];
   questionId: string;
   attemptId: string;
   responseId: string;
   submittedAt: string | null;
   startedAt: string;
   finalCorrect: boolean | null;
+  /** #6980-3：该轮是否有实际作答（responses.answered，判分写点落库） */
+  answered: boolean;
+  /** #6980-4：该轮做题时学生是否标了「不会」（responses.student_flag） */
+  studentFlag: string | null;
+  /** #6980-3（审查修复 P0-1）：该轮的人工显式判定（批改/自评），不被「未做」掩盖 */
+  teacherMark: string | null;
+  selfCorrect: boolean | null;
+}
+
+/**
+ * 错题本入本谓词（#6980-3/#6980-4 单一出处）：任一次已判定作答「答了且判错」
+ * 或「标了不会」（studentFlag=unsure，无论对错与是否作答）——未做且未标不会
+ * 的轮（answered=false）不入本，但人工显式判定（teacherMark / selfCorrect，
+ * 审查修复 P0-1）不被「未做」掩盖：老师显式批错、学生自评「错了」的行照常
+ * 入本计错次。listWrongQuestions 聚合与 latestJudgedResponsesByQuestion
+ * （重练组卷成员校验 + 快照来源）共用本函数，防口径漂移。
+ */
+function enteredWrongBook(
+  rounds: readonly {
+    finalCorrect: boolean | null;
+    answered: boolean;
+    studentFlag: string | null;
+    teacherMark: string | null;
+    selfCorrect: boolean | null;
+  }[],
+): boolean {
+  return rounds.some(
+    (round) =>
+      (round.finalCorrect === false &&
+        (round.answered ||
+          round.teacherMark !== null ||
+          round.selfCorrect !== null)) ||
+      round.studentFlag === "unsure",
+  );
 }
 
 /**
@@ -117,9 +156,22 @@ function judgedRoundsByQuestion(
       questionId: responses.questionId,
       attemptId: sql<string>`${attempts.id}`.as("attempt_id"),
       responseId: sql<string>`${responses.id}`.as("response_id"),
-      submittedAt: attempts.submittedAt,
+      submittedAt: sql<
+        string | null
+      >`coalesce(${responses.submittedAt}, ${attempts.submittedAt})`.as(
+        "submitted_at",
+      ),
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
+      answered: responses.answered,
+      studentFlag: responses.studentFlag,
+      attempt: attempts,
+      response: {
+        submittedAt: responses.submittedAt,
+        teacherMark: responses.teacherMark,
+        selfCorrect: responses.selfCorrect,
+        autoCorrect: responses.autoCorrect,
+      },
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
@@ -130,19 +182,25 @@ function judgedRoundsByQuestion(
       and(
         eq(attempts.studentId, studentId),
         // 已判定作答谓词（D11）：已交卷 + finalCorrect 非 null（待批不参与）
-        ne(attempts.status, "draft"),
+        or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
         isNotNull(responses.finalCorrect),
         // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
         releaseGateSql(nowIso),
       ),
-    )
-    .as("ranked");
+    );
 
-  const rows = db.select().from(ranked).all();
+  const rows = ranked.all();
   const roundsByQuestion = new Map<string, JudgedRoundRow[]>();
+  const readable = createQuestionReviewReader(db, now);
   for (const row of rows) {
+    if (!readable(row.attempt, row.response)) continue;
     const list = roundsByQuestion.get(row.questionId) ?? [];
-    list.push(row);
+    list.push({
+      ...row,
+      reviewSource: reviewSourceOf(row.response),
+      teacherMark: row.response.teacherMark,
+      selfCorrect: row.response.selfCorrect,
+    });
     roundsByQuestion.set(row.questionId, list);
   }
   for (const list of roundsByQuestion.values()) {
@@ -173,7 +231,7 @@ export function latestJudgedResponsesByQuestion(
   // 候选（入本）= 任一次判错；每题取组内最后一轮（时间升序的尾元素）
   const lastResponseIdByQuestion = new Map<string, string>();
   for (const [questionId, rounds] of roundsByQuestion) {
-    if (!rounds.some((round) => round.finalCorrect === false)) continue;
+    if (!enteredWrongBook(rounds)) continue;
     const last = rounds[rounds.length - 1];
     if (last !== undefined) {
       lastResponseIdByQuestion.set(questionId, last.responseId);
@@ -218,6 +276,7 @@ function pendingCountByQuestion(
           eq(attempts.studentId, studentId),
           ne(attempts.status, "draft"),
           isNull(responses.finalCorrect),
+          eq(responses.reviewEligible, false),
           releaseGateSql(nowIso),
         ),
       )
@@ -249,12 +308,20 @@ export function listWrongQuestions(
   // pendingCountByQuestion 注释）；查出后按题取值 ?? 0
   const pendingCounts = pendingCountByQuestion(db, studentId, now);
 
-  // 候选：入本（任一次判错）+ 默认剔除已攻克（服务端口径=最近一次做对）
-  const candidates = [...roundsByQuestion.entries()].filter(
-    ([, rounds]) =>
-      rounds.some((round) => round.finalCorrect === false) &&
-      (includeResolved || rounds[rounds.length - 1]?.finalCorrect !== true),
-  );
+  // 候选：入本（任一次答了且判错，#6980-3 enteredWrongBook 单一出处）+
+  // 默认剔除已攻克（服务端口径=最近一次做对）
+  const candidates = [...roundsByQuestion.entries()].filter(([, rounds]) => {
+    if (!enteredWrongBook(rounds)) return false;
+    if (includeResolved) return true;
+    // 已攻克口径与端上 isConquered（宽松标准）同源：最近一轮做对且未标
+    // 「不会」才算攻克——标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
+    const last = rounds[rounds.length - 1];
+    return !(
+      last?.finalCorrect === true &&
+      last.answered &&
+      last.studentFlag !== "unsure"
+    );
+  });
 
   // 候选题涉及的 attempt 与最近一次判定的 response（轮次来源上下文与条目内容）
   const attemptIdSet = new Set<string>();
@@ -370,9 +437,12 @@ export function listWrongQuestions(
       const source = sourceOfAttempt(round.attemptId);
       if (source === null) continue; // 防御：轮次行必来自已加载 attempt
       roundsPayload.push({
+        reviewSource: round.reviewSource ?? null,
         attemptId: round.attemptId,
         sourceType: source.sourceType,
         correct: round.finalCorrect === true,
+        answered: round.answered,
+        studentFlag: round.studentFlag === "unsure" ? "unsure" : null,
         submittedAt: round.submittedAt ?? round.startedAt,
         sourceTitle: roundSourceTitle(source),
         // 与 courseName 同一处（sourceOf）取值：course=练习课程、assignment=
@@ -392,15 +462,27 @@ export function listWrongQuestions(
       ...(snapshot.options !== undefined
         ? { options: snapshot.options.map((option) => option.text) }
         : {}),
-      answers: snapshot.answers ?? null,
-      solutionMd: snapshot.solutionMd ?? null,
+      ...releaseOfSnapshot(snapshot),
       answerText: serializeStudentAnswer(answerOf(lastResponse.answerJson)),
       firstCorrect: first.finalCorrect === true,
-      resolved: last.finalCorrect === true,
+      // 已攻克（宽松口径，与默认过滤同源）：最近一轮做对且未标「不会」——
+      // 标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
+      resolved:
+        last.finalCorrect === true &&
+        last.answered &&
+        last.studentFlag !== "unsure",
       firstAt: first.submittedAt ?? first.startedAt,
       lastAt: last.submittedAt ?? last.startedAt,
       rounds: roundsPayload,
-      wrongCount: roundsPayload.filter((round) => !round.correct).length,
+      // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）；人工显式判定
+      // 的未做轮不被掩盖（审查修复 P0-1：老师批错/自评判错的行照常计错次）
+      wrongCount: rounds.filter(
+        (round) =>
+          round.finalCorrect === false &&
+          (round.answered ||
+            round.teacherMark !== null ||
+            round.selfCorrect !== null),
+      ).length,
       correctCount: roundsPayload.filter((round) => round.correct).length,
       pendingCount: pendingCounts.get(questionId) ?? 0,
       originUnitId: origin?.unitId ?? null,
@@ -421,7 +503,7 @@ export function listWrongQuestions(
  * 轮次来源标题（服务端算好的展示串）：作业=作业标题；课程练习=「单元标题 ·
  * 第 n 次」；错题重练=「错题重练 · 第 n 次」（2026-10，重练交卷后自动成为
  * 新一轮）。与前端 records-views.recordTitleOf 同口径（展示约定在
- * teacherAttemptSourceSchema 注释；跨端小格式化函数不进契约包，注释互指）。
+ * teacherAttemptSourceSchema 注释；#6980-2 起格式化收敛进契约包
  * T6R.15 起导出：note-service.getStudentQuestionNotebook 的 sourceLabel 与
  * 本函数同一实现（同一概念同一份定义，不复制粘贴）。
  */
@@ -430,7 +512,12 @@ export function roundSourceTitle(source: TeacherAttemptSource): string {
     return source.assignmentTitle ?? "（作业已删除）";
   }
   if (source.sourceType === "wrong") {
-    return `错题重练 · 第 ${source.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleOf）——label 来自建卷存的
+    // scope 快照，历史卷由 sourceOf 现算「来自 …」分布
+    return wrongAttemptTitleOf({
+      attemptNo: source.attemptNo,
+      wrongScope: source.wrongScope ?? null,
+    });
   }
   return `${source.unitTitle ?? ""} · 第 ${source.attemptNo} 次`;
 }

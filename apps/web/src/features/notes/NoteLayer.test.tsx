@@ -864,6 +864,55 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
     }
   });
 
+  it("denied(content) 采用云端版本：面板消失 + 引擎载入云端稿（圈画审查 P0-1 出口）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          stroke([
+            [1, 1],
+            [2, 2],
+          ]),
+        ],
+      },
+    });
+    await applyUploadDenied(
+      SESSION_A,
+      SCOPE,
+      "content",
+      "草稿文档不合法：坏字段",
+    );
+    const cloud = docOf([
+      stroke([
+        [5, 5],
+        [6, 6],
+      ]),
+      stroke([
+        [7, 7],
+        [8, 8],
+      ]),
+    ]);
+    docMock.mockResolvedValue(cloud);
+    headsMock.mockImplementation(
+      noteHeadsMockResponse({ [SCOPE.questionId]: rev3Head() }),
+    );
+    renderLayer({ initialOpen: true });
+    expect(screen.getByText("草稿内容被拒")).toBeInTheDocument();
+    const entry = await waitForEngine();
+    fireEvent.click(screen.getByRole("button", { name: "采用云端版本" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByText("草稿内容被拒")).toBeNull();
+    });
+    await vi.waitFor(() => {
+      const calls = entry.load.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | InkDoc<"atrament">
+        | undefined;
+      expect(last?.data.strokes.length).toBe(2);
+    });
+  });
+
   it("saving 文案：落盘挂起时显示本机保存中…", async () => {
     const inner = memoryNoteBackend();
     installNoteBackend({

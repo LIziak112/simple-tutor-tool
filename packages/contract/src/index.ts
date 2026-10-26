@@ -27,6 +27,7 @@ export * from "./capability.ts";
 export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
 export * from "./content-api.ts";
+export * from "./content-signature.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
@@ -52,11 +53,21 @@ export * from "./media-api.ts";
 /** 题目草稿契约（T6R.2 起为权威定义，依据 Phase6 方案 §5/§6.2/§7）：NoteDoc v1、
  *  四类正交状态、上传协议（CAS+幂等回执）、笔记/版本/图片/证据元信息、限额常量与错误码 */
 export * from "./note.ts";
+/** 学生端做题反馈 M2 逐题提交与题级反馈契约（2026-10-22 计划 §10.1–§10.4）：
+ *  新协议单题提交请求（strict、缺省拒绝）、提交回执与反馈读取共用的单题
+ *  授权投影（released/not_submitted/pending_attempt/restricted 判别二态）、
+ *  回执 data 与成功响应壳——无秘密态不携带答案/详解/判定 */
+export * from "./practice-question-submit.ts";
+/** 学生端做题方式与反馈节奏契约（M1a 起为权威定义，2026-10-22 计划 §6.1）：
+ *  布局/反馈枚举、strict v1 本设备偏好、practiceWorkflow 裁决投影、题级公开
+ *  进度白名单、教师反馈策略与节奏修改（CAS）请求——授权结论只能来自服务端 */
+export * from "./practice-workflow.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";
+export * from "./self-review.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
 export * from "./shared-api.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */
@@ -73,6 +84,13 @@ export * from "./student-ai.ts";
  *  MCP 工具载荷、公开票据读、批量复盘逐项结果、教师督学记录；学生请求全部 strict，
  *  分页游标为不透明字符串，明文凭证只在独立的首次凭证 schema 出现一次 */
 export * from "./student-ai-api.ts";
+/** 学生端 AI 伴学：本次练习整体复盘契约（任务 1ef854c7，实施依据《批量复盘
+ *  整体分析与实施交接.md》§3–§7）——作答态/判分态分离的互斥四桶、白名单
+ *  整体快照（内部视图）、结构化报告（不可信输入校验）、任务状态机与公开
+ *  视图、预览/创建/列表/详情/动作与 MCP 四工具载荷；与旧逐题批量复盘并行，
+ *  一个 attempt 一份整体上下文，逐题任务不受影响 */
+export * from "./student-ai-attempt-review.ts";
+export * from "./student-ai-display.ts";
 /** 学生端 AI 伴学：教学配置与预设契约（SAI-02 起为权威定义，依据 B00 技术方案 §2/§4.1/§9）——
  *  三模式与继承、有效裁决输出、教师三模板与默认值、学生/作业覆盖、快捷按钮与附件偏好、
  *  限额常量与错误码；裁决是服务端输出，学生请求携带越权字段一律 strict 拒绝 */
@@ -126,3 +144,5 @@ export type ErrorCode = z.infer<typeof errorCodeSchema>;
 export type ApiOk = z.infer<typeof apiOkSchema>;
 export type ApiErr = z.infer<typeof apiErrSchema>;
 export type ApiResponse = z.infer<typeof apiResponseSchema>;
+
+export * from "./result-counts.ts";

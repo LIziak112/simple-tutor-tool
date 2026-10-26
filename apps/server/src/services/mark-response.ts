@@ -6,7 +6,7 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -18,6 +18,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { answerOf, finalScoreOf } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { effectiveCorrect } from "./review-state.ts";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -76,18 +77,22 @@ export function serializeStudentAnswer(
         ? answer.value
           ? "正确"
           : "错误"
-        : answer.value;
+        : answer.value.trim() === ""
+          ? null
+          : answer.value;
     case "choice":
       return optionLabel(answer.index);
     case "multi":
+      if (answer.indexes.length === 0) return null;
       return [...new Set(answer.indexes)]
         .sort((a, b) => a - b)
         .map(optionLabel)
         .join("、");
     case "fill":
+      if (answer.values.every((value) => value.trim() === "")) return null;
       return answer.values.join("；");
     case "final":
-      return answer.finalAnswer;
+      return answer.finalAnswer.trim() === "" ? null : answer.finalAnswer;
   }
 }
 
@@ -128,8 +133,10 @@ export function markResponse(
   const attemptId = row.attempt.id;
   // D3 持久化口径：finalCorrect = teacherMark ?? autoCorrect（枚举转布尔；
   // mark=null 时回落 autoCorrect，手写题为 null 即重新待批）
-  const finalCorrect =
-    req.mark === null ? row.response.autoCorrect : req.mark === "correct";
+  const finalCorrect = effectiveCorrect({
+    ...row.response,
+    teacherMark: req.mark,
+  });
   db.transaction((tx) => {
     // 1. 写教师判定与评语；本题 finalCorrect 按上述口径同步写回
     tx.update(responses)
@@ -137,6 +144,9 @@ export function markResponse(
         teacherMark: req.mark,
         teacherComment: req.comment,
         finalCorrect,
+        reviewRevision: sql`${responses.reviewRevision} + 1`,
+        reviewMutationId: null,
+        reviewMutationHash: null,
       })
       .where(eq(responses.id, responseId))
       .run();
@@ -222,11 +232,12 @@ export function listPendingMarks(
     isNull(attempts.abandonedAt),
     // 共享谓词（pending-mark.ts 同口径，D4 2026-10 扩展）：题已「交」
     // （attempt 非 draft **或该行已单题提交**——lesson 进行中卷已提交的
-    // 手写/无答案题即时进队，课堂当场批改；只有 lesson 单题提交会写
-    // responses.submittedAt，非 lesson 行为零变化）+ finalCorrect IS NULL
+    // 手写/无答案题即时进队课堂当场批改，M2 起 v1 新协议逐题提交的行同样
+    // 即时进队；写 responses.submittedAt 的就这两处）+ finalCorrect IS NULL
     // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
     or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
     isNull(responses.finalCorrect),
+    eq(responses.reviewEligible, false),
     isNotNull(responses.questionSnapshotJson),
     query.studentId !== undefined
       ? eq(attempts.studentId, query.studentId)

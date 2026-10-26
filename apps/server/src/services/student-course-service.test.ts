@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
   courseItems,
@@ -15,6 +15,7 @@ import { expectHttpError } from "../test/expect-http-error.ts";
 import {
   getStudentCourseDetail,
   getStudentLecture,
+  getStudentUnitLanding,
   listStudentCourses,
   listStudentLectures,
 } from "./student-course-service.ts";
@@ -446,6 +447,19 @@ describe("getStudentCourseDetail（课程可见目录，D22 矩阵）", () => {
     );
     // 配套练习（lectureId 指向普通讲义 L1）不受影响
     expect(detail.items.some((item) => item.title === "有理数小练")).toBe(true);
+    // 按 URL 直达嵌入单元同样不可见（listVisibleItems 统一过滤，D22 不暴露存在性）
+    expectHttpError(
+      captureError(() =>
+        getStudentUnitLanding(
+          db,
+          ctx.memberId,
+          ctx.courseAId,
+          "u-lesson-embedded",
+        ),
+      ),
+      404,
+      "NOT_FOUND",
+    );
   });
 
   it("成员：只含可见条目（隐藏/未到发布零信息），单元带未删题数", () => {
@@ -816,5 +830,62 @@ describe("getStudentLecture（讲义详情 + D8 配套练习）", () => {
       403,
       "COURSE_ACCESS_DENIED",
     );
+  });
+});
+
+describe("getStudentUnitLanding：practice 推荐下发（M5-D2）", () => {
+  it("有推荐：units.practice_defaults_json 契约形态随落地页下发", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    db.update(units)
+      .set({
+        practiceDefaultsJson: JSON.stringify({
+          layout: "single",
+          feedback: "per_question",
+        }),
+      })
+      .where(eq(units.id, ctx.unitU1Id))
+      .run();
+    const landing = getStudentUnitLanding(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      ctx.unitU1Id,
+    );
+    expect(landing.practiceRecommendation).toEqual({
+      layout: "single",
+      feedback: "per_question",
+    });
+  });
+
+  it("无推荐：列 null → practiceRecommendation null（老单元行为不变）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    const landing = getStudentUnitLanding(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      ctx.unitU1Id,
+    );
+    expect(landing.practiceRecommendation).toBeNull();
+  });
+
+  it("坏 JSON：practiceRecommendation null + console.warn（不抛错、不把原文下发）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    db.update(units)
+      .set({ practiceDefaultsJson: "{broken json" })
+      .where(eq(units.id, ctx.unitU1Id))
+      .run();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const landing = getStudentUnitLanding(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      ctx.unitU1Id,
+    );
+    expect(landing.practiceRecommendation).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

@@ -2,10 +2,14 @@ import { z } from "zod";
 import {
   attemptSourceSchema,
   attemptStatusSchema,
+  studentFlagSchema,
   teacherMarkSchema,
+  wrongScopeSchema,
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { attemptResultCountsSchema } from "./result-counts.ts";
+import { selfReviewStateSchema } from "./self-review.ts";
 
 /**
  * 教师端作答数据页契约（T3.1，依据 Phase3 清单 D5–D8）：
@@ -101,6 +105,12 @@ export const teacherAttemptSourceSchema = z.object({
   unitTitle: z.string().min(1).nullable(),
   /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
   attemptNo: z.number().int().min(1),
+  /**
+   * 错题重练范围（2026-10-25 #6980-2）：wrong 来源携带——服务端 sourceOf
+   * 计算 label（建卷存的快照）/题数/来源单元分布，前端标题单源
+   * wrongAttemptTitleOf 消费；其余来源缺省（旧载荷兼容）。
+   */
+  wrongScope: wrongScopeSchema.nullable().optional(),
 });
 
 // 教师批改标记 teacherMarkSchema 定义在 attempt.ts（T3.5/D9 起学生端结果视图
@@ -108,10 +118,13 @@ export const teacherAttemptSourceSchema = z.object({
 /**
  * 列表的单张作答卡片（平铺；按最近活动时间倒序）。
  * 待批数口径（D4 共享谓词，T3.2a 起）：已交卷 responses 中
- * `finalCorrect IS NULL` 的题数（draft 恒 0，未交卷不构成待批；含只写笔迹
- * 未填最终答案的手写题）。由此「待批数 = 0 ⇔ status = graded」。
+ * `finalCorrect IS NULL` 的题数（未交卷不构成待批；含只写笔迹未填最终答案的
+ * 手写题；2026-10 扩展：lesson 单题提交与 M2 起 v1 新协议逐题提交会写行级
+ * submittedAt，进行中卷的已提交行也计数——卡片列表只发非 draft 卷，行为不变）。
+ * 「待批数 = 0 ⇔ status = graded」只对**已收尾卷**（非 draft）成立。
  */
 export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
+  resultCounts: attemptResultCountsSchema.nullable().optional(),
   /** attempts.id（crypto.randomUUID） */
   attemptId: z.uuid(),
   /** 作答学生 id */
@@ -200,6 +213,11 @@ export const teacherAttemptDetailQuestionSchema = z.object({
   autoCorrect: z.boolean().nullable(),
   /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null */
   finalCorrect: z.boolean().nullable(),
+  /** 是否有实际作答内容（#6980-3）：false 的判错行在教师作答详情灰显「未做」 */
+  answered: z.boolean(),
+  /** 做题时学生自标「不会」（#6980-4）：unsure / null，详情卡片灰显提示 */
+  studentFlag: studentFlagSchema.nullable(),
+  selfReview: selfReviewStateSchema.optional(),
   /** 教师批改标记（D3；本阶段恒 null） */
   teacherMark: teacherMarkSchema.nullable(),
   /** 教师评语（T3.2；未评为 null） */
@@ -226,6 +244,7 @@ export const teacherAttemptDetailQuestionSchema = z.object({
  */
 export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
   {
+    resultCounts: attemptResultCountsSchema.nullable().optional(),
     /** attempts.id */
     attemptId: z.uuid(),
     studentId: z.uuid(),
@@ -235,8 +254,10 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     scoreFinal: z.number().int().min(0).max(100).nullable(),
     /** 判对题数（effectiveCorrect = true） */
     correctCount: z.number().int().min(0),
-    /** 判错题数（effectiveCorrect = false） */
+    /** 判错题数（effectiveCorrect = false 且（有实际作答或人工显式判定）） */
     wrongCount: z.number().int().min(0),
+    /** 未做题数（#6980-3）：判错但无实际作答且无人工显式判定——详情灰显「未做」 */
+    notDoneCount: z.number().int().min(0),
     /** 待批数（effectiveCorrect = null；口径同列表卡片 pendingCount） */
     pendingCount: z.number().int().min(0),
     startedAt: z.string().min(1),

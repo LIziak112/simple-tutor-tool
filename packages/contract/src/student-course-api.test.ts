@@ -256,6 +256,7 @@ describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约"
       topic: "正数与负数",
       questionCount: 2,
       typeDistribution: { judge: 1, fill: 1 },
+      practiceRecommendation: null,
       attempts: [
         {
           attemptId,
@@ -301,5 +302,66 @@ describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约"
         data: withoutAttempts,
       }).success,
     ).toBe(false);
+  });
+
+  it("M5-D2：practiceRecommendation 推荐字段（null=无推荐；缺字段拒绝；非法/未知键拒绝）", async () => {
+    const { studentUnitLandingDataSchema } = await import(
+      "./student-course-api.ts"
+    );
+    const base = {
+      courseId,
+      courseName: "初一上",
+      unitId: "有理数小练",
+      title: "有理数小练",
+      topic: null,
+      questionCount: 1,
+      typeDistribution: { judge: 1 },
+      attempts: [],
+      summary: null,
+    };
+    // null = 该单元无推荐
+    expect(
+      studentUnitLandingDataSchema.safeParse({
+        ...base,
+        practiceRecommendation: null,
+      }).success,
+    ).toBe(true);
+    // 推荐对象：契约 practiceRecommendationSchema 形态（两字段均可选）
+    expect(
+      studentUnitLandingDataSchema.safeParse({
+        ...base,
+        practiceRecommendation: { feedback: "after_attempt" },
+      }).success,
+    ).toBe(true);
+    expect(
+      studentUnitLandingDataSchema.safeParse({
+        ...base,
+        practiceRecommendation: { layout: "single", feedback: "per_question" },
+      }).success,
+    ).toBe(true);
+    // 缺字段拒绝（必填 nullable，与 topic/summary 同风格）
+    expect(studentUnitLandingDataSchema.safeParse(base).success).toBe(false);
+    // 非法枚举与未知键拒绝
+    expect(
+      studentUnitLandingDataSchema.safeParse({
+        ...base,
+        practiceRecommendation: { feedback: "immediate" },
+      }).success,
+    ).toBe(false);
+    expect(
+      studentUnitLandingDataSchema.safeParse({
+        ...base,
+        practiceRecommendation: { autoCorrect: true },
+      }).success,
+    ).toBe(false);
+    // 解析产物保留推荐形状（不被剥掉）
+    expect(
+      studentUnitLandingDataSchema.parse({
+        ...base,
+        practiceRecommendation: { layout: "list", feedback: "per_question" },
+      }),
+    ).toMatchObject({
+      practiceRecommendation: { layout: "list", feedback: "per_question" },
+    });
   });
 });

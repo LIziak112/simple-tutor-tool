@@ -10,12 +10,18 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { Button } from "@/components/ui/button";
 import { rehypeMathFallback } from "@/features/markdown/rehype-math-fallback";
+import {
+  AiReplySection,
+  AiReplySectionActions,
+  AiReplySectionsProvider,
+} from "./AiReplySections";
 import { normalizeAiReplyMath, replyTextPage } from "./ai-reply-format";
 import {
   aiReplySanitizeSchema,
   inspectAiReplySafety,
   stripReplyImages,
 } from "./ai-reply-security";
+import { rehypeReplySections } from "./rehype-reply-sections";
 
 /**
  * SAI-21 AI 回复专用受限渲染（B11 实施步骤 5）：
@@ -32,6 +38,21 @@ import {
  */
 
 const aiReplyComponents: Components = {
+  details: ({ id, open, children }) => (
+    <AiReplySection id={id ?? "section"} initialOpen={Boolean(open)}>
+      {children}
+    </AiReplySection>
+  ),
+  summary: ({ children }) => (
+    <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 rounded-md py-3 font-semibold focus-visible:outline-2 focus-visible:outline-ring before:text-muted-foreground before:content-['›'] [&::-webkit-details-marker]:hidden">
+      {children}
+    </summary>
+  ),
+  nav: ({ node }) => (
+    <AiReplySectionActions
+      ids={String(node?.properties.dataSectionIds ?? "").split(",")}
+    />
+  ),
   a: ({ href, children }) =>
     href ? (
       <a
@@ -53,11 +74,13 @@ export interface AiReplyMarkdownProps {
   source: string;
   /** 追加到根容器的样式类 */
   className?: string;
+  readingKey?: string;
 }
 
 export const AiReplyMarkdown = memo(function AiReplyMarkdown({
   source,
   className,
+  readingKey,
 }: AiReplyMarkdownProps) {
   const [textOpen, setTextOpen] = useState(false);
   const [page, setPage] = useState(0);
@@ -118,23 +141,30 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
     );
   }
   return (
-    <div
-      className={cn(
-        "rich-markdown text-base leading-7 ai-reply-markdown",
-        className,
-      )}
+    <AiReplySectionsProvider
+      key={readingKey ?? source}
+      readingKey={readingKey ?? source}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[
-          rehypeMathFallback,
-          rehypeKatex,
-          [rehypeSanitize, aiReplySanitizeSchema],
-        ]}
-        components={aiReplyComponents}
+      <div
+        data-ai-reading-block={readingKey ?? "reply"}
+        className={cn(
+          "rich-markdown text-base leading-7 ai-reply-markdown",
+          className,
+        )}
       >
-        {stripReplyImages(normalized)}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          remarkPlugins={[remarkMath, remarkGfm]}
+          rehypePlugins={[
+            rehypeMathFallback,
+            rehypeKatex,
+            [rehypeSanitize, aiReplySanitizeSchema],
+            rehypeReplySections,
+          ]}
+          components={aiReplyComponents}
+        >
+          {stripReplyImages(normalized)}
+        </ReactMarkdown>
+      </div>
+    </AiReplySectionsProvider>
   );
 });

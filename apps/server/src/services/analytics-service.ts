@@ -53,7 +53,9 @@ import { answerOf } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
-import { pendingMarkCounts } from "./pending-mark";
+import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
+import { practiceProtocolOf } from "./practice-workflow-wiring";
+import { attemptResultCounts } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
@@ -172,6 +174,7 @@ function lastSubmittedOf(group: readonly Attempt[]): Attempt | undefined {
 
 /** 学情作用域：一次请求内装载的域内数据（教师域 + D3/D5 筛选后） */
 interface AnalyticsContext {
+  readonly resultCounts: ReturnType<typeof attemptResultCounts>;
   readonly teacherId: string;
   readonly query: AnalyticsQuery;
   readonly range: AnalyticsRange;
@@ -431,6 +434,7 @@ function buildContext(
   return {
     teacherId,
     query,
+    resultCounts: attemptResultCounts(db, allAttempts),
     range: { days: query.days, from: fromIso, to: nowIso },
     nowMs,
     studentRows,
@@ -571,10 +575,8 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
             ),
           )
           .all();
-  const { unitById, liveQuestionCountByUnit } = loadResourceContext(
-    db,
-    ctx.teacherId,
-  );
+  const { unitById, liveQuestionCountByUnit, embeddedUnitIds } =
+    loadResourceContext(db, ctx.teacherId);
   const unitColumns: AnalyticsUnitColumn[] = [];
   for (const course of scopedCourses) {
     const items = db
@@ -592,6 +594,8 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
       .all();
     for (const item of items) {
       if (item.refId === null) continue;
+      // 讲练页嵌入单元不单列（讲练页一件事）
+      if (embeddedUnitIds.has(item.refId)) continue;
       const unit = unitById.get(item.refId);
       if (unit === undefined || unit.deletedAt !== null) continue;
       if (!item.visible) continue;
@@ -657,9 +661,19 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
     return latest.status === "graded" ? "graded" : "submitted";
   };
 
-  // 待批数（D4 共享谓词，2026-10 扩展：lesson 进行中卷已单题提交的待批行
-  // 也计数——与教师待批队列同一口径；其余来源 draft 恒 0）
+  // 待批数（D4 共享谓词，2026-10 扩展：行级提交事实——lesson 单题提交与 v1
+  // 新协议逐题提交——所在的进行中卷已提交待批行也计数，与教师待批队列同一
+  // 口径；无行级提交事实的 legacy draft 恒 0）
   const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
+  // M4-D3 进行中进度（§13）：只对 v1 新协议 draft 卷批量聚合行级已提交 n/N
+  // （协议判定走 practiceProtocolOf 单一谓词；一次分组查询，与待批数同款模式）
+  const progressByAttempt = practiceSubmittedCounts(
+    db,
+    ctx.allAttempts.filter(
+      (attempt) =>
+        attempt.status === "draft" && practiceProtocolOf(attempt) === "v1",
+    ),
+  );
 
   const cells: Array<AnalyticsAssignmentCell | AnalyticsUnitCell> = [];
   for (const student of ctx.studentRows) {
@@ -699,6 +713,13 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
         continue;
       }
       const submitted = group.filter((attempt) => attempt.submittedAt !== null);
+      // M4-D3：格子为 in-progress 时取使格进行中的那份 draft（每 学生×单元
+      // 至多一份）；仅 v1 新协议卷在 progressByAttempt 中（legacy 缺省回落）
+      const draftAttempt = group.find((attempt) => attempt.status === "draft");
+      const progress =
+        draftAttempt === undefined
+          ? undefined
+          : progressByAttempt.get(draftAttempt.id);
       cells.push({
         kind: "course-unit",
         studentId: student.studentId,
@@ -710,11 +731,22 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
         redoCount: group.length - 1,
         firstScore:
           submitted[0] === undefined ? null : effectiveScore(submitted[0]),
+        firstResultCounts:
+          submitted[0] === undefined
+            ? null
+            : (ctx.resultCounts.get(submitted[0].id) ?? null),
         pendingCount: group.reduce(
           (sum, attempt) => sum + (pendingByAttempt.get(attempt.id) ?? 0),
           0,
         ),
         latestSubmittedAt: submitted[submitted.length - 1]?.submittedAt ?? null,
+        // M4-D3 进行中进度（§13）：白名单纯公开进度计数，不含对错/得分/答案
+        ...(progress !== undefined
+          ? {
+              practiceSubmittedCount: progress.submitted,
+              practiceQuestionCount: progress.total,
+            }
+          : {}),
       });
     }
   }
@@ -1159,6 +1191,10 @@ function buildRedoRows(
       redoCount: group.length - 1,
       firstScore:
         submitted[0] === undefined ? null : effectiveScore(submitted[0]),
+      firstResultCounts:
+        submitted[0] === undefined
+          ? null
+          : (ctx.resultCounts.get(submitted[0].id) ?? null),
       latestSubmittedAt: submitted[submitted.length - 1]?.submittedAt ?? null,
     });
   }

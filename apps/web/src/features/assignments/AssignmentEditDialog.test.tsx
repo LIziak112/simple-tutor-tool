@@ -395,12 +395,13 @@ describe("AssignmentEditDialog 标题/截止与关闭守卫", () => {
 });
 
 describe("AssignmentEditDialog 答案公布时机（T2A.8）", () => {
-  it("改为「截止后公布」保存 → PATCH 只带 answerRelease；改回 on_submit 同理", async () => {
+  it("改为「截止后公布」保存 → PATCH 成对带 answerRelease + allow=false（旧值 on_submit 兼容呈现为交卷后公布）", async () => {
     renderDialog();
     const select = (await screen.findByLabelText(
       /答案公布时机/,
     )) as HTMLSelectElement;
-    expect(select.value).toBe("on_submit");
+    // 旧作业（allow 缺省 false）按「交卷后公布」兼容呈现，不自动放宽
+    expect(select.value).toBe("after_submit");
 
     fireEvent.change(select, { target: { value: "after_due" } });
     expect(
@@ -411,6 +412,7 @@ describe("AssignmentEditDialog 答案公布时机（T2A.8）", () => {
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1));
     expect(mockedUpdate.mock.calls[0]?.[1]).toEqual({
       answerRelease: "after_due",
+      allowPerQuestionFeedback: false,
     });
   });
 
@@ -436,6 +438,7 @@ describe("AssignmentEditDialog 答案公布时机（T2A.8）", () => {
     expect(mockedUpdate.mock.calls[0]?.[1]).toEqual({
       dueAt: localInputToUtcIso("2026-10-02T20:00"),
       answerRelease: "after_due",
+      allowPerQuestionFeedback: false,
     });
   });
 });

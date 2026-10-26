@@ -1,4 +1,5 @@
 import { cn } from "cn";
+import { Check } from "lucide-react";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import type * as React from "react";
 
@@ -61,10 +62,37 @@ const DropdownMenuSeparator = ({
   />
 );
 
+/** 单选分组（M3-D1 做题方式切换）：value/onValueChange 控制，组内 RadioItem 由上下文标记选中 */
+const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
+
+/** 单选菜单项（M3-D1）：role=menuitemradio；须挂在 RadioGroup 内（选中态来自组 value） */
+const DropdownMenuRadioItem = ({
+  className,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) => (
+  <DropdownMenuPrimitive.RadioItem
+    data-slot="dropdown-menu-radio-item"
+    className={cn(
+      "relative flex min-h-11 cursor-default items-center gap-2 rounded-md py-2 pr-2 pl-8 text-sm outline-none select-none focus:bg-muted focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+      className,
+    )}
+    {...props}
+  >
+    <span className="pointer-events-none absolute left-2 flex size-4 items-center justify-center">
+      <DropdownMenuPrimitive.ItemIndicator>
+        <Check aria-hidden className="size-4" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </span>
+    {props.children}
+  </DropdownMenuPrimitive.RadioItem>
+);
+
 export {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 };

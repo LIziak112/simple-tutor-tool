@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import type { WrongQuestionCard } from "@tutor/contract";
+import type { WrongPracticeScope, WrongQuestionCard } from "@tutor/contract";
 import {
   BookX,
   Filter,
@@ -10,6 +10,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { workflowStartOptions } from "@/features/attempt/attempt-queries";
 import { useStudentCourses } from "@/features/student/student-queries";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
@@ -242,9 +243,18 @@ export default function StudentWrongQuestionsPage() {
     ids: string[];
   } | null>(null);
   const practice = useMutation({
-    mutationFn: (input: { scope: string; ids: string[] }) => {
+    mutationFn: (input: {
+      scope: string;
+      ids: string[];
+      scopePayload?: WrongPracticeScope | undefined;
+    }) => {
       lastPracticeRef.current = input;
-      return startWrongPracticeApi(input.ids);
+      // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
+      return startWrongPracticeApi(
+        input.ids,
+        workflowStartOptions(),
+        input.scopePayload,
+      );
     },
     onMutate: (input) => {
       setPracticeScope(input.scope);
@@ -256,11 +266,47 @@ export default function StudentWrongQuestionsPage() {
       setPracticeScope(null);
     },
   });
-  const practiceQuestions = (scope: string, list: WrongQuestionCard[]) => {
+  // #6980-2：三个重练入口随请求携带范围快照（all/group + 课程名），服务端
+  // 落 attempts.practice_scope_json，记录/轮次史标题据此说明「练的是什么」
+  const courseNameForScope =
+    state.courseId !== null
+      ? (courses.find((course) => course.id === state.courseId)?.name ??
+        undefined)
+      : undefined;
+  const scopePayloadFor = (
+    scopeKey: string,
+    groupTitle: string | null,
+  ): WrongPracticeScope | undefined => {
+    if (scopeKey === "all") {
+      return {
+        kind: "all",
+        ...(courseNameForScope !== undefined
+          ? { courseName: courseNameForScope }
+          : {}),
+      };
+    }
+    if (groupTitle !== null) {
+      return {
+        kind: "group",
+        dimension: state.group,
+        groupTitle,
+        ...(courseNameForScope !== undefined
+          ? { courseName: courseNameForScope }
+          : {}),
+      };
+    }
+    return undefined;
+  };
+  const practiceQuestions = (
+    scope: string,
+    list: WrongQuestionCard[],
+    groupTitle: string | null = null,
+  ) => {
     if (list.length === 0) return; // 空范围按钮本就禁用（防御）
     practice.mutate({
       scope,
       ids: list.map((question) => question.questionId),
+      scopePayload: scopePayloadFor(scope, groupTitle),
     });
   };
 
@@ -287,7 +333,7 @@ export default function StudentWrongQuestionsPage() {
             label="重练全部"
             count={tabQuestions.length}
             loading={practiceScope === "all"}
-            onPractice={() => practiceQuestions("all", tabQuestions)}
+            onPractice={() => practiceQuestions("all", tabQuestions, null)}
           />
         }
       />
@@ -420,7 +466,11 @@ export default function StudentWrongQuestionsPage() {
                   count={group.questions.length}
                   loading={practiceScope === `group:${group.key}`}
                   onPractice={() =>
-                    practiceQuestions(`group:${group.key}`, group.questions)
+                    practiceQuestions(
+                      `group:${group.key}`,
+                      group.questions,
+                      group.title,
+                    )
                   }
                 />
               </div>

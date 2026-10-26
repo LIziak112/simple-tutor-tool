@@ -1,133 +1,108 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  createContext,
+  type ReactNode,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 
-/** 专注阅读复用唯一正文与输入。题目和纸面始终留在原树内，草稿由上层持有。 */
-export function AiReadingWorkspace({ children }: { children: ReactNode }) {
-  const [focused, setFocused] = useState(false);
-  const [headings, setHeadings] = useState<
-    readonly { id: string; text: string }[]
-  >([]);
+interface ReadingState {
+  sections?: readonly string[];
+  anchor?: string | undefined;
+  offset?: number;
+}
+export const AiReadingMemoryContext = createContext<Map<
+  string,
+  ReadingState
+> | null>(null);
+export function useAiReadingMemory(attemptId: string) {
+  const client = useQueryClient();
+  return useMemo(() => {
+    const key = ["student", "ai-reading", attemptId];
+    let memory = client.getQueryData<Map<string, ReadingState>>(key);
+    if (!memory) {
+      memory = new Map();
+      client.setQueryDefaults(key, { gcTime: Infinity });
+      client.setQueryData(key, memory);
+    }
+    return memory;
+  }, [client, attemptId]);
+}
+
+/** 阅读状态留在学生角色内存；切换展示壳只更换滚动宿主，不复制正文与输入。 */
+export function AiReadingWorkspace({
+  children,
+  readingKey = "current",
+}: {
+  children: ReactNode;
+  readingKey?: string;
+}) {
+  const memory = useContext(AiReadingMemoryContext);
   const rootRef = useRef<HTMLDivElement>(null);
-  const entryRef = useRef<HTMLButtonElement>(null);
-  const readingTopRef = useRef(0);
-  const prefix = useId();
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = rootRef.current;
-    if (!root) return;
-    root.dataset.readingPresentation = focused ? "focused" : "inline";
-    const update = () => {
-      const next = Array.from(
-        root.querySelectorAll<HTMLElement>(
-          ".ai-reply-markdown h1, .ai-reply-markdown h2, .ai-reply-markdown h3",
-        ),
-      )
-        .slice(0, 30)
-        .map((heading, index) => {
-          heading.id = `${prefix}-heading-${index}`;
-          heading.style.scrollMarginTop = "6rem";
-          return { id: heading.id, text: heading.textContent ?? "" };
-        });
-      setHeadings((previous) =>
-        JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
+    if (!root || !memory) return;
+    const host = root.closest<HTMLElement>("[data-ai-scroll]");
+    const scroller = host ?? window;
+    const key = `position:${readingKey}`;
+    let restoring = false;
+    const top = () => (host ? host.getBoundingClientRect().top : 0);
+    const sections = () => {
+      const nodes = Array.from(
+        root.querySelectorAll<HTMLElement>("[data-ai-section]"),
       );
+      return nodes.length
+        ? nodes
+        : Array.from(
+            root.querySelectorAll<HTMLElement>("[data-ai-reading-block]"),
+          );
     };
-    update();
-    const observer = new MutationObserver(update);
-    observer.observe(root, {
-      childList: true,
-      subtree: true,
-      characterData: true,
+    const anchorKey = (node: HTMLElement) =>
+      node.dataset.aiSection ?? node.dataset.aiReadingBlock;
+    const restore = () => {
+      const state = memory.get(key);
+      const anchor = sections().find(
+        (node) => anchorKey(node) === state?.anchor,
+      );
+      if (!anchor || state?.offset === undefined) return;
+      restoring = true;
+      const delta = anchor.getBoundingClientRect().top - top() - state.offset;
+      if (host) host.scrollTop += delta;
+      else window.scrollBy({ top: delta, behavior: "instant" });
+      restoring = false;
+    };
+    const remember = () => {
+      if (restoring) return;
+      const nodes = sections();
+      const anchor =
+        nodes.find((node) => node.getBoundingClientRect().bottom > top()) ??
+        nodes.at(-1);
+      if (anchor)
+        memory.set(key, {
+          anchor: anchorKey(anchor),
+          offset: anchor.getBoundingClientRect().top - top(),
+        });
+    };
+    restore();
+    const observer = new MutationObserver(() => {
+      if (sections().length) {
+        restore();
+        observer.disconnect();
+      }
     });
-    return () => observer.disconnect();
-  }, [focused, prefix]);
-  const outline =
-    headings.length > 1 ? (
-      <details className="min-w-0 text-sm">
-        <summary className="flex min-h-11 cursor-pointer items-center text-primary focus-visible:outline-2 focus-visible:outline-ring">
-          按段落阅读（{headings.length}）
-        </summary>
-        <nav aria-label="回复目录" className="flex flex-col items-start">
-          {headings.map((heading) => (
-            <button
-              key={heading.id}
-              type="button"
-              className="min-h-11 max-w-full rounded px-2 text-left break-words text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-              onClick={() => {
-                const node = document.getElementById(heading.id);
-                node?.scrollIntoView?.({
-                  block: "start",
-                  behavior: "instant",
-                });
-                if (node) {
-                  node.tabIndex = -1;
-                  node.focus({ preventScroll: true });
-                }
-              }}
-            >
-              {heading.text}
-            </button>
-          ))}
-        </nav>
-      </details>
-    ) : null;
-  const content = (
-    <>
-      {focused && outline}
-      <div ref={rootRef} className="min-w-0">
-        {children}
-      </div>
-    </>
-  );
+    if (!sections().length)
+      observer.observe(root, { childList: true, subtree: true });
+    scroller.addEventListener("scroll", remember, { passive: true });
+    return () => {
+      observer.disconnect();
+      scroller.removeEventListener("scroll", remember);
+    };
+  }, [memory, readingKey]);
   return (
-    <>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        {!focused && outline}
-        <Button
-          ref={entryRef}
-          type="button"
-          variant="ghost"
-          className="min-h-11 self-end"
-          onClick={() => {
-            readingTopRef.current = window.scrollY;
-            setFocused(true);
-          }}
-        >
-          专注阅读
-        </Button>
-      </div>
-      {focused ? (
-        <Dialog open onOpenChange={setFocused}>
-          <DialogContent
-            className="flex h-[min(90dvh,60rem)] w-[calc(100%-1.5rem)] max-w-4xl flex-col gap-3 overflow-hidden p-4 sm:max-w-4xl sm:p-6"
-            onEscapeKeyDown={(event) => event.stopPropagation()}
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              if (!entryRef.current?.isConnected) return;
-              entryRef.current.focus({ preventScroll: true });
-              window.scrollTo({
-                top: readingTopRef.current,
-                behavior: "instant",
-              });
-            }}
-          >
-            <DialogTitle className="pr-10">本题 AI 回复</DialogTitle>
-            <DialogDescription>
-              读完后关闭阅读，回到原题继续尝试。
-            </DialogDescription>
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
-              {content}
-            </div>
-          </DialogContent>
-        </Dialog>
-      ) : (
-        content
-      )}
-    </>
+    <div ref={rootRef} className="min-w-0">
+      {children}
+    </div>
   );
 }

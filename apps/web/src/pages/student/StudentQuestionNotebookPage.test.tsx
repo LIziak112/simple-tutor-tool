@@ -54,12 +54,32 @@ function round(
     sourceLabel: `第 ${overrides.roundOrdinal} 轮来源`,
     submittedAt: "2026-10-06T02:30:00.000Z",
     questionVersion: null,
+    question: null,
+    release: null,
     evidence: null,
     corrections: [],
     supplements: [],
     ...overrides,
   };
 }
+
+/** 已冻结题面（attemptQuestionPublic 形态；stemMd 为脱敏后题干） */
+const QUESTION_VIEW: NonNullable<NotebookRound["question"]> = {
+  id: QUESTION_ID,
+  type: "choice",
+  difficulty: 3,
+  knowledge: ["一元一次方程"],
+  stemMd: "下列哪个选项正确？",
+  options: ["选项甲", "选项乙", "选项丙"],
+  hintCount: 2,
+  questionRevisionId: "qrev-view-1",
+};
+
+/** 已公布解析（notebookRoundRelease 形态） */
+const RELEASE_VIEW: NonNullable<NotebookRound["release"]> = {
+  answers: { kind: "choice", index: 2 },
+  solutionMd: "先移项，再合并同类项。",
+};
 
 function notebookOf(rounds: NotebookRound[]): StudentNotebookData {
   return { questionId: QUESTION_ID, rounds };
@@ -330,5 +350,88 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
     renderPage();
     await screen.findAllByText("第 1 次");
     expect(screen.queryByText(/Invalid Date/)).toBeNull();
+  });
+});
+
+describe("StudentQuestionNotebookPage：题面与解析区", () => {
+  it("题面渲染：脱敏题干 + A/B/C 选项列表；未公布时解析区显示占位", async () => {
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({ roundOrdinal: 1, question: QUESTION_VIEW, release: null }),
+      ]),
+    );
+    renderPage();
+    expect(await screen.findByText("下列哪个选项正确？")).toBeInTheDocument();
+    expect(screen.getByText("选项甲")).toBeInTheDocument();
+    expect(screen.getByText("选项丙")).toBeInTheDocument();
+    expect(screen.getByText("A.")).toBeInTheDocument();
+    expect(screen.getByText("C.")).toBeInTheDocument();
+    // 未公布占位：不渲染任何答案内容
+    expect(screen.getByText(/答案还未公布/)).toBeInTheDocument();
+    expect(screen.queryByText("正确答案：")).toBeNull();
+    expect(screen.queryByText(/先移项/)).toBeNull();
+  });
+
+  it("解析公布：正确答案行 + 查看详解折叠展开；占位消失", async () => {
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({
+          roundOrdinal: 1,
+          question: QUESTION_VIEW,
+          release: RELEASE_VIEW,
+        }),
+      ]),
+    );
+    renderPage();
+    expect(await screen.findByText("正确答案：")).toBeInTheDocument();
+    // choice index 2 → 字母 C（formatReferenceAnswers 契约口径）
+    expect(screen.getByText("C")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详解" }));
+    expect(await screen.findByText(/先移项/)).toBeInTheDocument();
+    expect(screen.queryByText(/答案还未公布/)).toBeNull();
+  });
+
+  it("快照缺失：占位引导到结果页，不渲染题面与解析区", async () => {
+    notebookMock.mockResolvedValue(notebookOf([round({ roundOrdinal: 1 })]));
+    renderPage();
+    expect(await screen.findByText(/历史题目快照缺失/)).toBeInTheDocument();
+    expect(screen.queryByText("正确答案：")).toBeNull();
+    expect(screen.queryByText("下列哪个选项正确？")).toBeNull();
+    // 快照缺失轮的解析永远无从下发：解析区整区不渲染（不是「还未公布」，
+    // 那会误导学生以为等截止就能看到）
+    expect(screen.queryByText(/答案还未公布/)).toBeNull();
+    expect(screen.queryByText("参考答案与解析")).toBeNull();
+  });
+
+  it("主观题解析：无标准答案文案 + 详解照常可折叠", async () => {
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({
+          roundOrdinal: 1,
+          question: QUESTION_VIEW,
+          release: { answers: null, solutionMd: "先移项，再合并同类项。" },
+        }),
+      ]),
+    );
+    renderPage();
+    expect(await screen.findByText(/本题无标准参考答案/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详解" }));
+    expect(await screen.findByText(/先移项/)).toBeInTheDocument();
+  });
+
+  it("有答案但题库无详解：SolutionFold 空态文案", async () => {
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({
+          roundOrdinal: 1,
+          question: QUESTION_VIEW,
+          release: { answers: { kind: "choice", index: 2 }, solutionMd: null },
+        }),
+      ]),
+    );
+    renderPage();
+    expect(await screen.findByText("正确答案：")).toBeInTheDocument();
+    // solutionMd=null 时 SolutionFold 直接渲染空态（无折叠按钮）
+    expect(await screen.findByText("这道题没有详解。")).toBeInTheDocument();
   });
 });

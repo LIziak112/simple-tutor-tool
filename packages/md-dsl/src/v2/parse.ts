@@ -504,6 +504,16 @@ function buildUnit(
   if (topic !== undefined) unit.topic = topic;
   const title = firstNonEmpty(lectureTitle);
   if (title !== undefined) unit.lectureTitle = title;
+  // practice 推荐（M5-D1）只对练习形态单元生效：kind practice/mixed 贯通进单元，
+  // lecture/lesson 不携带（lint 层 PRACTICE_NOT_APPLICABLE 另行提示作者）。
+  // 缺省不注入键（契约同口径）：老文档解析结果形状不变。
+  const kind = ctx.frontmatter?.kind ?? "practice";
+  if (
+    (kind === "practice" || kind === "mixed") &&
+    ctx.frontmatter?.practice !== undefined
+  ) {
+    unit.practice = ctx.frontmatter.practice;
+  }
   return unit;
 }
 

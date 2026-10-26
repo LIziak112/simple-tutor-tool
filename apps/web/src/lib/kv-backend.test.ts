@@ -1,3 +1,4 @@
+import { createStore, set } from "idb-keyval";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { idbKVBackend } from "./kv-backend";
 
@@ -48,28 +49,30 @@ vi.mock("idb-keyval", () => {
     k >= range.lower && k <= range.upper;
   return {
     // 按 idb-keyval 真实语义：customStore(mode, cb) = Promise<cb 的返回值>
-    createStore: () => (_mode: string, cb: (os: unknown) => unknown) =>
-      Promise.resolve().then(() =>
-        cb({
-          // 模拟真 IDB 的 range 语义：只回 [lower, upper] 内的键/值对
-          getAllKeys: (range: { lower: string; upper: string }) =>
-            fakeRequest(
-              ALL_KEYS.filter(
-                (k) => typeof k === "string" && inRange(k, range),
+    createStore: vi.fn(
+      () => (_mode: string, cb: (os: unknown) => unknown) =>
+        Promise.resolve().then(() =>
+          cb({
+            // 模拟真 IDB 的 range 语义：只回 [lower, upper] 内的键/值对
+            getAllKeys: (range: { lower: string; upper: string }) =>
+              fakeRequest(
+                ALL_KEYS.filter(
+                  (k) => typeof k === "string" && inRange(k, range),
+                ),
               ),
-            ),
-          getAll: (range: { lower: string; upper: string }) =>
-            fakeRequest(
-              ALL_KEYS.filter(
-                (k) => typeof k === "string" && inRange(k, range),
-              ).map((k) => VALUES[k] ?? null),
-            ),
-          get: (key: string) => fakeRequest(`value-of-${key}`),
-          put: () => fakeRequest(undefined),
-          delete: () => fakeRequest(undefined),
-          transaction: { oncomplete: null },
-        }),
-      ),
+            getAll: (range: { lower: string; upper: string }) =>
+              fakeRequest(
+                ALL_KEYS.filter(
+                  (k) => typeof k === "string" && inRange(k, range),
+                ).map((k) => VALUES[k] ?? null),
+              ),
+            get: (key: string) => fakeRequest(`value-of-${key}`),
+            put: () => fakeRequest(undefined),
+            delete: () => fakeRequest(undefined),
+            transaction: { oncomplete: null },
+          }),
+        ),
+    ),
     get: vi.fn(),
     set: vi.fn(),
     del: vi.fn(),
@@ -77,11 +80,32 @@ vi.mock("idb-keyval", () => {
 });
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("idbKVBackend 后端契约（真 IDB 语义）", () => {
+  it("事务返回 null 时提供可读错误，下次手动写入重新建立连接", async () => {
+    vi.mocked(set).mockRejectedValueOnce(null).mockResolvedValueOnce();
+    const backend = idbKVBackend("db", "store");
+    const connections = vi.mocked(createStore).mock.calls.length;
+    await expect(backend.set("稿件", "原稿")).rejects.toThrow("本机存储");
+    expect(set).toHaveBeenCalledTimes(1);
+    await backend.set("稿件", "原稿");
+    expect(vi.mocked(createStore).mock.calls.length).toBe(connections + 1);
+    expect(set).toHaveBeenCalledTimes(2);
+  });
+
+  it("空间不足明确报告，失败不能作为保存成功或自动重试", async () => {
+    vi.mocked(set).mockRejectedValueOnce(
+      new DOMException("quota", "QuotaExceededError"),
+    );
+    const backend = idbKVBackend("db", "store");
+    await expect(backend.set("稿件", "原稿")).rejects.toThrow("空间不足");
+    expect(set).toHaveBeenCalledTimes(1);
+  });
+
   it("getAll：单事务取前缀键值对（bind/flush 扫描不逐键 get）", async () => {
     vi.stubGlobal("IDBKeyRange", {
       bound: (lower: unknown, upper: unknown) => ({ lower, upper }),

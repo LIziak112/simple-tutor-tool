@@ -21,7 +21,7 @@ import {
  * 服务层矩阵——单测见 attempt-submit-evidence.test）。
  */
 
-test.describe("交卷固定原稿（T6R.10）", () => {
+test.describe("交卷固定原稿（T6R.10）", { tag: ["@annotation"] }, () => {
   test("交卷 → 证据固定 → 同题重练 → 原稿不变（全链）", async ({
     request,
     browser,

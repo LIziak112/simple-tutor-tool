@@ -227,6 +227,9 @@
     "questionPublic": {
       "type": "object",
       "properties": {
+        "canSubmitQuestion": {
+          "type": "boolean"
+        },
         "id": {
           "type": "string",
           "minLength": 1
@@ -296,6 +299,26 @@
         },
         "lectureTitle": {
           "type": "string"
+        },
+        "practice": {
+          "type": "object",
+          "properties": {
+            "layout": {
+              "type": "string",
+              "enum": [
+                "list",
+                "single"
+              ]
+            },
+            "feedback": {
+              "type": "string",
+              "enum": [
+                "per_question",
+                "after_attempt"
+              ]
+            }
+          },
+          "additionalProperties": false
         },
         "questions": {
           "type": "array",
@@ -608,6 +631,26 @@
                 "validators"
               ],
               "additionalProperties": false
+            },
+            "practice": {
+              "type": "object",
+              "properties": {
+                "layout": {
+                  "type": "string",
+                  "enum": [
+                    "list",
+                    "single"
+                  ]
+                },
+                "feedback": {
+                  "type": "string",
+                  "enum": [
+                    "per_question",
+                    "after_attempt"
+                  ]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [
@@ -686,6 +729,26 @@
               },
               "lectureTitle": {
                 "type": "string"
+              },
+              "practice": {
+                "type": "object",
+                "properties": {
+                  "layout": {
+                    "type": "string",
+                    "enum": [
+                      "list",
+                      "single"
+                    ]
+                  },
+                  "feedback": {
+                    "type": "string",
+                    "enum": [
+                      "per_question",
+                      "after_attempt"
+                    ]
+                  }
+                },
+                "additionalProperties": false
               },
               "questions": {
                 "type": "array",

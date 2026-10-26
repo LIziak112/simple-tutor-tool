@@ -1,11 +1,19 @@
 import { z } from "zod";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
+  assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
   questionAnswersSchema,
   questionPublicSchema,
 } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import {
+  practiceQuestionProgressSchema,
+  practiceWorkflowSchema,
+  practiceWorkflowStartOptionsFields,
+  rejectFeedbackModeWithoutVersion,
+} from "./practice-workflow.ts";
+import { selfReviewStateSchema } from "./self-review.ts";
 import {
   studentUnitAttemptRecordSchema,
   studentUnitAttemptSummarySchema,
@@ -90,6 +98,12 @@ export const attemptSourceSchema = z.enum([
  */
 export const teacherMarkSchema = z.enum(["correct", "wrong"]);
 
+/** 做题时学生自标「不会」（#6980-4）：值域当前只有 unsure（可扩展）。 */
+export const studentFlagSchema = z.literal("unsure");
+
+/** 学生做题时标注「不会」的取值类型（#6980-4；端上 setStudentFlagApi 复用）。 */
+export type StudentFlag = z.infer<typeof studentFlagSchema>;
+
 /**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
  * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
@@ -140,6 +154,10 @@ export const attemptSummarySchema = z
      * 两者分母相同、数值相等）。
      */
     scoreAuto: z.number().int().min(0).max(100).nullable(),
+    /** 错题重练范围标签（2026-10-25 #6980-2）：wrong 来源按建卷存的 scope
+     * 取 label（答题页/结果页来源行用）；其余来源与历史卷缺省（旧载荷
+     * 兼容，optional） */
+    wrongScopeLabel: z.string().min(1).nullable().optional(),
   })
   .superRefine((summary, ctx) => {
     // lectureId 是讲练开卷专属归属键（2026-10）：除 lesson 外的来源携带即拒绝
@@ -251,11 +269,106 @@ export const attemptStartDataSchema = attemptSummarySchema;
  *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
  *   WRONG_PRACTICE_EMPTY（附中文说明）。
  */
-export const wrongPracticeRequestSchema = z.object({
-  questionIds: z
-    .array(z.string().min(1, "题目 id 不能为空"))
-    .min(1, "至少选择一道错题"),
+/**
+ * 错题重练建卷范围（2026-10-25 #6980-2「我的记录要说明重练的是哪些错题」）：
+ * 前端组卷时随请求下发，服务端原样落 attempts.practice_scope_json（快照语义，
+ * 单元/考点改名不影响历史卷标题）。三种口径对应错题本的三个重练入口：
+ * - all：页头「重练全部」（当前 tab + 课程筛选圈定的全部题）；
+ * - group：组头「重练本组」（分组维度 + 组标题 + 可选课程名）；
+ * - result：结果页「练习本卷错题」（来源卷标题）。
+ */
+export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("group"),
+    /** 分组维度（错题本三种分组同词表） */
+    dimension: z.enum(["unit", "time", "knowledge"]),
+    /** 组标题（单元标题 /「本周」「较早」等时间桶 / 考点名） */
+    groupTitle: z.string().min(1).max(120),
+    /** 课程名（课程筛选激活时可携带） */
+    courseName: z.string().min(1).max(120).optional(),
+  }),
+  z.object({
+    kind: z.literal("result"),
+    /** 来源卷标题（结果页视角，如「周末加练 · 第 1 次」） */
+    sourceTitle: z.string().min(1).max(200),
+  }),
+  z.object({
+    kind: z.literal("all"),
+    /** 课程名（课程筛选激活时可携带） */
+    courseName: z.string().min(1).max(120).optional(),
+  }),
+]);
+export type WrongPracticeScope = z.infer<typeof wrongPracticeScopeSchema>;
+
+/** 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题 */
+export function wrongScopeLabelOf(scope: WrongPracticeScope): string {
+  if (scope.kind === "all")
+    return scope.courseName !== undefined
+      ? `全部错题（${scope.courseName}）`
+      : "全部错题";
+  if (scope.kind === "group") return scope.groupTitle;
+  return scope.sourceTitle;
+}
+
+/**
+ * wrongScope 展示形态（teacherAttemptSourceSchema.wrongScope 同源）：
+ * label=建卷时存的范围标签（历史卷无存档为 null）；questionCount=卷内题目数
+ * （冻结 responses 行数）；originUnits=题目归属单元分布（responses→
+ * questions→units 反查；题/单元已删除时自然缺项）。服务端 sourceOf 计算。
+ */
+export const wrongScopeSchema = z.object({
+  label: z.string().min(1).nullable(),
+  questionCount: z.number().int().min(0),
+  originUnits: z.array(
+    z.object({
+      title: z.string().min(1),
+      count: z.number().int().min(1),
+    }),
+  ),
 });
+export type WrongScope = z.infer<typeof wrongScopeSchema>;
+
+/**
+ * 错题重练标题（师生两端单源格式化；记录卡、答题页来源行、结果页、错题本
+ * 轮次史、教师端作答列表同取此处）：有范围标签 →「错题重练 · 第 n 次 ·
+ * {label}」；历史卷无存档 →「错题重练 · 第 n 次（来自 {u1} ×a、{u2} ×b，
+ * 共 N 题）」；都不可得 → 原样「错题重练 · 第 n 次」。
+ */
+/**
+ * 错题重练标题（label-only 便捷形态，答题页/结果页来源行用：摘要只携带
+ * label）：label 缺省 = 原样「错题重练 · 第 n 次」（历史卷）。
+ */
+export function wrongAttemptTitleWithLabel(
+  attemptNo: number,
+  label: string | null | undefined,
+): string {
+  const base = `错题重练 · 第 ${attemptNo} 次`;
+  return label !== null && label !== undefined ? `${base} · ${label}` : base;
+}
+
+export function wrongAttemptTitleOf(scope: {
+  attemptNo: number;
+  wrongScope: WrongScope | null | undefined;
+}): string {
+  const base = `错题重练 · 第 ${scope.attemptNo} 次`;
+  const s = scope.wrongScope;
+  if (!s) return base;
+  if (s.label !== null) return `${base} · ${s.label}`;
+  const units = s.originUnits.map((u) => `${u.title} ×${u.count}`).join("、");
+  return units ? `${base}（来自 ${units}，共 ${s.questionCount} 题）` : base;
+}
+
+export const wrongPracticeRequestSchema = z
+  .object({
+    questionIds: z
+      .array(z.string().min(1, "题目 id 不能为空"))
+      .min(1, "至少选择一道错题"),
+    /** 建卷范围（随卷快照，展示「练的是什么」；缺省=历史行为不变） */
+    scope: wrongPracticeScopeSchema.optional(),
+    /** 建卷可选工作流选项（M1b）：不带字段维持旧协议 */
+    ...practiceWorkflowStartOptionsFields,
+  })
+  .superRefine(rejectFeedbackModeWithoutVersion);
 
 /** POST /api/student/wrong-practice 响应（新建 wrong 来源 attempt；201） */
 export const wrongPracticeOkSchema = apiOkExtend(attemptStartDataSchema);
@@ -335,6 +448,14 @@ export const attemptDraftDataSchema = z.object({
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null，练习不限截止） */
   dueAt: assignmentDueAtSchema.nullable(),
+  /**
+   * 公布时机（2026-10-21 交卷前置预期）：assignment 来源 = 作业的 answerRelease
+   * 原值；course/wrong 恒 'on_submit'（D11 交卷即公布）；lesson 的 attempt 级
+   * 公布不适用（当题释放恒题级粒度），同样投影 'on_submit'。作答页据此在交卷
+   * 确认弹窗告知「截止后统一公布」的前置预期——只描述策略，不携带任何答案；
+   * 结果视图的权威 gate 仍是 answersReleased（读时判定，两者独立）。
+   */
+  answerRelease: assignmentAnswerReleaseSchema,
   /** 公开题目分组（与试卷同形态：按单元分节，题号全卷连续） */
   units: z.array(attemptDraftUnitSchema),
   /**
@@ -352,6 +473,12 @@ export const attemptDraftDataSchema = z.object({
    */
   hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
   /**
+   * 做题时学生自标「不会」（#6980-4）：questionId → "unsure"。草稿视图实时
+   * 下发，交卷后进结果视图单题与错题本轮次史；不是作答内容，无泄露面。
+   * 旧响应缺省按无标记处理。
+   */
+  studentFlags: z.record(z.string(), studentFlagSchema).optional(),
+  /**
    * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
    * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
    * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
@@ -364,6 +491,17 @@ export const attemptDraftDataSchema = z.object({
    * 与提交规则，也不是安全边界（投影与泄露守卫独立保证）。
    */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
+  /**
+   * 做题工作流裁决投影（M1a，2026-10-22 计划 §6.1，可选）：仅新协议卷携带，
+   * 旧响应缺失按整卷旧协议处理，不能默认授权。授权结论由服务端 resolver
+   * 产出；题面/答案仍走各自既有投影，本字段不混入题目秘密。
+   */
+  practiceWorkflow: practiceWorkflowSchema.optional(),
+  /**
+   * 题级公开进度（M1a，可选，白名单）：questionId / submittedAt / 反馈可读
+   * 标记——不含得分、对错、参考答案或教师批注；反馈本体经专用端点读取。
+   */
+  questionProgress: z.array(practiceQuestionProgressSchema).optional(),
 });
 
 /**
@@ -406,6 +544,21 @@ export const attemptResultQuestionSchema = z.object({
   teacherComment: z.string().nullable(),
   /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
   finalCorrect: z.boolean().nullable(),
+  /**
+   * 是否有实际作答内容（#6980-3）：整卷交卷按「非空答案或正式手写笔迹」判定；
+   * 单题主动提交恒 true（显式交锋，含「不会，提交并看解析」的空提交，2026-10-25
+   * 主人口径）。与判分正交——未做仍按 D1 判错进分母。finalCorrect=false 且
+   * answered=false 时端上按灰色「未做」展示而非红色「判错」；「练习本卷错题」
+   * 默认不含未做题。
+   */
+  answered: z.boolean(),
+  /**
+   * 做题时学生自标「不会」（#6980-4）：unsure / null。入错题本条件之一
+   * （标过不会的题无论对错都保留），不是作答内容、不受公布 gate 影响。
+   */
+  studentFlag: studentFlagSchema.nullable(),
+  /** 仅已授权公布的题携带；未公布时不下发自评与来源。 */
+  selfReview: selfReviewStateSchema.optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
@@ -417,21 +570,24 @@ export const attemptResultQuestionSchema = z.object({
  * 之外的整卷批改进度，且与「待公布」口径冲突，故一并不下发）。
  */
 export const attemptScoreSummarySchema = z.object({
+  /** 与教师待批分开计数，未公布不返回。 */
+  pendingSelfReviewCount: z.number().int().min(0).optional(),
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
-  /** 已作答题数（answer 非 null）。lesson 讲练页的现算汇总（开卷投影/单题提交
-   * 响应）只统计已单题提交的行——见 lessonLiveSummaryOf 口径与
-   * lessonQuestionSubmitDataSchema 注释；结果视图（整卷）计全部卷行 */
+  /** 已作答题数（responses.answered 口径：非空答案/正式笔迹/单题提交）。
+   * lesson 讲练页的现算汇总（开卷投影/单题提交响应）只统计已单题提交的行——
+   * 见 lessonLiveSummaryOf 口径与 lessonQuestionSubmitDataSchema 注释；
+   * 结果视图（整卷）计全部卷行 */
   answered: z.number().int().min(0),
   /** 自动判对数 */
   correct: z.number().int().min(0),
-  /** 自动判错数（D1 后含未作答客观题） */
+  /** 自动判错数（已答判错；未做行不计——#6980-3 口径统一） */
   wrong: z.number().int().min(0),
-  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题） */
+  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题；未做待批行计入） */
   pending: z.number().int().min(0),
-  /** 未作答题数（answer=null） */
+  /** 未作答题数（responses.answered=false：被动跳过/空结构答案） */
   unanswered: z.number().int().min(0),
-  /** 可自动判分题数（autoCorrect 非 null）= correct + wrong */
+  /** 可自动判分题数（autoCorrect 非 null）= correct + wrong + 未做可判分题（未做不计答错但进判分分母） */
   autoGradable: z.number().int().min(0),
   /**
    * 最终得分（D9，D2/D3 口径：round(finalCorrect=true 题数 ÷ 全部题数 × 100)；
@@ -494,6 +650,13 @@ export const attemptResultDataSchema = z.object({
    * 渲染同样遵循开关（steps 关闭时详解内 steps 完整展开）。
    */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
+  /**
+   * 练习工作流裁决投影（M4-D3 §13.8，与草稿视图同一 schema 单源）：v1 新协议
+   * 卷携带（feedbackMode 驱动结果页「反馈节奏」摘要行——作答时逐题反馈 /
+   * 交卷后反馈）；lesson / 历史旧协议卷缺省 = 前端不渲染该行。结论只能来自
+   * 服务端 resolver 读时裁决，本字段不作为任何授权依据。
+   */
+  practiceWorkflow: practiceWorkflowSchema.optional(),
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
@@ -896,7 +1059,16 @@ export const attemptDetailDataSchema = z
  *   D7+D22；403）——前端草稿同步与事件上报收到它（或 404）必须按终态停止重试；
  * - NOT_FOUND：课程来源作答的单元条目已隐藏/未到发布/资源删除（D22 的不暴露
  *   存在性口径，404）；
- * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
+ * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）；
+ * - WORKFLOW_LEGACY / WORKFLOW_REVISION_STALE / WORKFLOW_MODE_NOT_ALLOWED：
+ *   反馈节奏工作流 409 家族（M1 PATCH 更改节奏：旧协议/讲练卷不可变更、
+ *   revision 陈旧需刷新、当前规则不允许该模式）；
+ * - WORKFLOW_PROTOCOL_MISMATCH：提交请求的协议形态与该卷不符（M2 逐题提交：
+ *   新协议请求打到旧协议/讲练卷，或反之；409，前端提示刷新后按对应入口重试）；
+ * - WORKFLOW_MUTATION_CONFLICT：同一 submissionMutationId 的两次请求内容不一致
+ *   （幂等键复用冲突，M2；409，前端换新 mutationId 重试）；
+ * - WORKFLOW_RESTRICTED：当前教师规则不允许逐题提交（教师收紧立即生效，
+ *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）。
  */
 export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
@@ -914,9 +1086,26 @@ export const attemptErrorCodeSchema = z.enum([
   "NOT_FOUND",
   "UNAUTHORIZED",
   "VALIDATION_ERROR",
+  "WORKFLOW_LEGACY",
+  "WORKFLOW_REVISION_STALE",
+  "WORKFLOW_MODE_NOT_ALLOWED",
+  "WORKFLOW_PROTOCOL_MISMATCH",
+  "WORKFLOW_MUTATION_CONFLICT",
+  "WORKFLOW_RESTRICTED",
 ]);
 
 // ---------- 具体化的成功壳 ----------
+
+/** 标注「不会」的请求体（#6980-4）：flag=null 表示取消标记 */
+export const attemptFlagRequestSchema = z.object({
+  flag: studentFlagSchema.nullable(),
+});
+
+/** 标注「不会」的回执（#6980-4）：只回标志位，不含任何作答内容 */
+export const attemptFlagDataSchema = z.object({
+  questionId: z.string().min(1),
+  studentFlag: studentFlagSchema.nullable(),
+});
 
 /** 携带创建/取回 attempt 结果的成功响应壳 */
 export const attemptStartOkSchema = apiOkExtend(attemptStartDataSchema);
@@ -954,6 +1143,8 @@ export type QuestionRevisionId = z.infer<typeof questionRevisionIdSchema>;
 /** 试卷题目的可选版本形态（仅通用取卷携带 revisionId） */
 export type StudentPaperQuestion = z.infer<typeof studentPaperQuestionSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
+export type AttemptFlagRequest = z.infer<typeof attemptFlagRequestSchema>;
+export type AttemptFlagData = z.infer<typeof attemptFlagDataSchema>;
 export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
 export type AttemptResultData = z.infer<typeof attemptResultDataSchema>;

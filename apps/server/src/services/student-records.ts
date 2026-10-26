@@ -3,18 +3,29 @@ import type {
   StudentRecordsData,
   StudentRecordsQuery,
 } from "@tutor/contract";
-import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  isNull,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Assignment,
-  type Attempt,
   assignmentStudents,
   assignments,
   attempts,
 } from "../db/schema";
-import { answersReleased } from "./attempt-service";
+import { answersReleased, assignmentReleaseByIds } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { pendingMarkCounts } from "./pending-mark";
+import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
+import { practiceProtocolOf } from "./practice-workflow-wiring";
+import { recordAnswerProgress } from "./record-answer-progress";
+import { attemptResultCounts } from "./result-counts";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
 
@@ -38,9 +49,9 @@ import { sourceOf } from "./teacher-attempt-service";
  *       归属；lesson 作答永不失权（已开卷的作答记录恒可回看）——草稿照常
  *       列出、可续作（见 lostAccessDraftIds）。
  * - 筛选可任意组合：sourceType / courseId / assignmentId / status / from / to
- *   （时间范围按「最近活动时间」submittedAt ?? startedAt，与排序同一时间轴，
- *   D6/D10 同口径）；
- * - 排序：最近活动时间倒序（id 倒序兜底稳定）；分页 limit（默认 50，1–200）/
+ *   （时间范围按「最近活动时间」lastActivityAt / submittedAt / startedAt 的最大值，切换开始排序也不改变筛选含义，
+ *   只影响本人记录索引）；
+ * - 排序：默认最近有效作答倒序（开始时间、id 倒序兜底稳定），可按开始时间升降序；分页 limit（默认 50，1–200）/
  *   offset，total 为筛选后（且剔除失权草稿后）的总条数；
  * - after_due 未公布（D10/D9）：得分与待批数置 null、answersReleased=false
  *   （前端显示「待公布」）；draft 行恒 answersReleased=true（无结果可公布，
@@ -51,8 +62,8 @@ import { sourceOf } from "./teacher-attempt-service";
  * 内容列；泄露测试见 routes/student-records.test.ts（assertNoLeak）。
  */
 
-/** 最近活动时间排序/筛选键（D6/D10 同一口径：submittedAt ?? startedAt） */
-const lastActivitySql = sql`coalesce(${attempts.submittedAt}, ${attempts.startedAt})`;
+/** 最近活动时间排序/筛选键（D6/D10 同一口径：lastActivityAt / submittedAt / startedAt 的最大值） */
+const lastActivitySql = sql<string>`max(coalesce(${attempts.lastActivityAt}, ${attempts.startedAt}), coalesce(${attempts.submittedAt}, ${attempts.startedAt}))`;
 
 /**
  * assignment 来源 draft 是否仍可从正常入口到达（在册且作业未软删；
@@ -179,10 +190,20 @@ export function listStudentRecords(
     .where(where)
     .get();
   const rows = db
-    .select()
+    .select({ ...getTableColumns(attempts), lastActivityAt: lastActivitySql })
     .from(attempts)
     .where(where)
-    .orderBy(desc(lastActivitySql), desc(attempts.id))
+    .orderBy(
+      ...(query.sort === "started_asc"
+        ? [asc(attempts.startedAt), asc(attempts.id)]
+        : query.sort === "started_desc"
+          ? [desc(attempts.startedAt), desc(attempts.id)]
+          : [
+              desc(lastActivitySql),
+              desc(attempts.startedAt),
+              desc(attempts.id),
+            ]),
+    )
     .limit(query.limit)
     .offset(query.offset)
     .all();
@@ -190,6 +211,13 @@ export function listStudentRecords(
   // 来源上下文与公布 gate 的输入（teacherId 域内读单元/题目元信息，T2B.5 D10）
   const teacherId = studentTeacherIdOf(db, studentId);
   const pendingByAttempt = pendingMarkCounts(db, rows);
+  const resultCounts = attemptResultCounts(db, rows);
+  const answerProgress = recordAnswerProgress(db, rows);
+  const pendingSelfReviewByAttempt = pendingMarkCounts(db, rows, true);
+  // M4-D3 进行中进度（§13）：只对 v1 新协议卷批量聚合行级已提交 n/N（一次分组
+  // 查询，500 id 一块，与待批数同款模式）；协议判定走 practiceProtocolOf 单一谓词
+  const v1Rows = rows.filter((row) => practiceProtocolOf(row) === "v1");
+  const progressByAttempt = practiceSubmittedCounts(db, v1Rows);
   const assignmentIds = [
     ...new Set(
       rows
@@ -202,22 +230,9 @@ export function listStudentRecords(
         .map((row) => row.assignmentId as string),
     ),
   ];
-  const assignmentById = new Map(
-    assignmentIds.length > 0
-      ? db
-          .select({
-            id: assignments.id,
-            answerRelease: assignments.answerRelease,
-            dueAt: assignments.dueAt,
-          })
-          .from(assignments)
-          .where(inArray(assignments.id, assignmentIds))
-          .all()
-          .map((row) => [row.id, row] as const)
-      : [],
-  );
+  const assignmentById = assignmentReleaseByIds(db, assignmentIds);
 
-  const records: StudentRecordRow[] = rows.map((attempt: Attempt) => {
+  const records: StudentRecordRow[] = rows.map((attempt) => {
     // 公布 gate（T2A.8/D10）：只有 assignment 来源的已交卷记录可能受限；
     // course 恒交卷即公布，draft 无结果可公布（answersReleased=true，显示进行中）
     const assignmentRow =
@@ -226,19 +241,35 @@ export function listStudentRecords(
         : undefined;
     const released =
       assignmentRow === undefined || answersReleased(assignmentRow, now);
+    const progress = progressByAttempt.get(attempt.id);
     return {
       ...sourceOf(db, attempt, teacherId ?? ""),
       attemptId: attempt.id,
       status: attempt.status,
       // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）
       score: released ? (attempt.scoreFinal ?? attempt.scoreAuto) : null,
-      // D4 共享谓词（2026-10 扩展：draft 卷的已单题提交行也计数——lesson
-      // 进行中卷的待批数；非 lesson 的 draft 恒不在 Map 中 → 0）；
-      // 未公布置 null（与 D9 结果视图同法）
+      resultCounts: released ? (resultCounts.get(attempt.id) ?? null) : null,
+      answerProgress: answerProgress.get(attempt.id) ?? null,
+      // D4 共享谓词（2026-10 扩展：行级提交事实——lesson 单题提交与 M2 起
+      // v1 新协议逐题提交——都会写行级 submittedAt，进行中卷的已提交行也计数；
+      // 无行级提交事实的 legacy draft 不在 Map 中 → 0）；未公布置 null（与
+      // D9 结果视图同法）
       pendingCount: released ? (pendingByAttempt.get(attempt.id) ?? 0) : null,
+      pendingSelfReviewCount: released
+        ? (pendingSelfReviewByAttempt.get(attempt.id) ?? 0)
+        : null,
       answersReleased: released,
+      lastActivityAt: attempt.lastActivityAt,
       startedAt: attempt.startedAt,
       submittedAt: attempt.submittedAt,
+      // M4-D3 进行中进度（§13）：仅 v1 新协议卷携带（draft 行级 n/N；已收尾
+      // 卷整卷口径 n=N）；白名单纯公开进度计数，不含对错/得分/答案
+      ...(progress !== undefined
+        ? {
+            practiceSubmittedCount: progress.submitted,
+            practiceQuestionCount: progress.total,
+          }
+        : {}),
     };
   });
   return { records, total: totalRow?.n ?? 0 };

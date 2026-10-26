@@ -1,9 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import type { AnnotationDoc, Question, QuestionAnswers } from "@tutor/contract";
-import { annotationDocSchema } from "@tutor/contract";
+import type {
+  AnnotationDoc,
+  AnnotationSurfaceLayout,
+  Question,
+  QuestionAnswers,
+} from "@tutor/contract";
+import {
+  annotationDocSchema,
+  annotationSurfaceLayoutSchema,
+  stableContentHash64,
+} from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -11,6 +20,7 @@ import type { Db } from "../db/client.ts";
 import {
   annotationBases as annotationBasesTable,
   annotations as annotationsTable,
+  attempts,
   questions as questionsTable,
   responses as responsesTable,
 } from "../db/schema.ts";
@@ -28,6 +38,7 @@ import {
 import { expectHttpError } from "../test/expect-http-error.ts";
 import { gzipJson, makeNotePng, makeStudent } from "../test/note-fixtures.ts";
 import {
+  ANNOTATION_BASE_PENDING_TAKEOVER_MS,
   annotationBaseImageBytes,
   annotationBaseRelPath,
   annotationBodyRelPath,
@@ -35,6 +46,7 @@ import {
   assembleAnnotationPairs,
   canonicalAnnotationJson,
   getAnnotationView,
+  parseAnnotationBodyBytes,
   putAnnotationDoc,
   registerBaseImage,
   removeAnnotationBodyIfUnreferenced,
@@ -174,6 +186,183 @@ function readyBase(
 
 // ---------- assembleAnnotationBase ----------
 
+describe("旧圈画补齐续写证据", () => {
+  it.each(["sha256", "http-fnv"])(
+    "原设备严格命中 %s 旧签名后只补充几何，不改底图、正文和版本",
+    (algorithm) => {
+      const world = makeWorld();
+      const stemMd = "公开题目 [[]]";
+      const { attemptId, revisionId } = makePaper(world, { stemMd });
+      const blocks = [{ tag: "DIV", x: 0, y: 0, width: 300, height: 200 }];
+      const fonts = [
+        ["Geist Variable, sans-serif", "16px", "400", "28px", "normal"],
+      ];
+      const publicContent = { type: "fill", stemMd, options: [] };
+      const hash = (value: unknown) =>
+        algorithm === "sha256"
+          ? createHash("sha256").update(JSON.stringify(value)).digest("hex")
+          : stableContentHash64(value);
+      const legacy = annotationSurfaceLayoutSchema.parse({
+        renderVersion: 2,
+        questionRevisionId: revisionId,
+        cssWidth: 300,
+        cssHeight: 200,
+        pixelRatio: 2,
+        styleVersion: 1,
+        contentSignature: hash(publicContent),
+        geometrySignature: hash(blocks),
+        fontSignature: hash(fonts),
+      });
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        legacy,
+      );
+      registerBaseImage(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        makeNotePng(600, 400),
+        {
+          questionRevisionId: revisionId,
+          baseRenderVersion: 2,
+          phase: "scratch",
+        },
+      );
+      const doc = { ...annotationDoc(400, 2), baseWidth: 600 };
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        gzipJson(doc),
+        { baseRevision: 0, mutationId: randomUUID() },
+      );
+      const baseBefore = world.db.select().from(annotationBasesTable).get();
+      const inkBefore = world.db.select().from(annotationsTable).all();
+      const attemptBefore = world.db.select().from(attempts).all();
+      const upgraded = annotationSurfaceLayoutSchema.parse({
+        ...legacy,
+        compatibility: {
+          version: 1,
+          contentSignature: stableContentHash64(publicContent),
+          blocks,
+          fonts,
+          textRects: [{ x: 0, y: 2, width: 100, height: 22 }],
+        },
+      });
+      const proof = upgraded.compatibility;
+      if (!proof) throw new Error("缺少兼容证据夹具");
+      for (const invalid of [
+        {
+          ...upgraded,
+          compatibility: {
+            ...upgraded.compatibility,
+            contentSignature: "e".repeat(64),
+          },
+        },
+        {
+          ...upgraded,
+          compatibility: {
+            ...upgraded.compatibility,
+            blocks: [{ ...blocks[0], width: 301 }],
+          },
+        },
+        {
+          ...upgraded,
+          compatibility: {
+            ...upgraded.compatibility,
+            fonts: [["serif", "16px", "400", "28px", "normal"]],
+          },
+        },
+      ]) {
+        expect(() =>
+          assembleAnnotationBase(
+            world.db,
+            world.studentId,
+            attemptId,
+            Q,
+            "scratch",
+            annotationSurfaceLayoutSchema.parse(invalid),
+          ),
+        ).toThrow();
+        expect(world.db.select().from(annotationBasesTable).get()).toEqual(
+          baseBefore,
+        );
+      }
+      // 补证不能改变单题已提交或原稿已封存的事实。
+      for (const locked of ["submitted", "sealed"] as const) {
+        const at = "2026-10-24T13:00:00.000Z";
+        if (locked === "submitted")
+          world.db.update(responsesTable).set({ submittedAt: at }).run();
+        else world.db.update(annotationsTable).set({ sealedAt: at }).run();
+        expect(() =>
+          assembleAnnotationBase(
+            world.db,
+            world.studentId,
+            attemptId,
+            Q,
+            "scratch",
+            upgraded,
+          ),
+        ).toThrow();
+        expect(world.db.select().from(annotationBasesTable).get()).toEqual(
+          baseBefore,
+        );
+        world.db.update(responsesTable).set({ submittedAt: null }).run();
+        world.db.update(annotationsTable).set({ sealedAt: null }).run();
+      }
+      const preview = assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        upgraded,
+      );
+      assertNoLeak(preview);
+      for (const sentinel of Object.values(SENTINELS))
+        expect(JSON.stringify(preview)).not.toContain(JSON.stringify(sentinel));
+      expect(preview.base.layout).toEqual(upgraded);
+      expect(world.db.select().from(annotationBasesTable).get()).toEqual({
+        ...baseBefore,
+        layout: upgraded,
+      });
+      expect(world.db.select().from(annotationsTable).all()).toEqual(inkBefore);
+      expect(world.db.select().from(attempts).all()).toEqual(attemptBefore);
+      expect(
+        assembleAnnotationBase(
+          world.db,
+          world.studentId,
+          attemptId,
+          Q,
+          "scratch",
+          legacy,
+        ).base.layout,
+      ).toEqual(upgraded);
+      expect(() =>
+        assembleAnnotationBase(
+          world.db,
+          world.studentId,
+          attemptId,
+          Q,
+          "scratch",
+          {
+            ...upgraded,
+            compatibility: { ...proof, textRects: [] },
+          },
+        ),
+      ).toThrow();
+    },
+  );
+});
+
 describe("assembleAnnotationBase：载荷装配与泄露防线", () => {
   it("建 pending 行并返回学生 stem 投影载荷（不含 snapshotHash/答案哨兵）", () => {
     const world = makeWorld();
@@ -311,6 +500,177 @@ describe("assembleAnnotationBase：载荷装配与泄露防线", () => {
     } catch (err) {
       expectHttpError(err, 500, "EXPORT_ASSEMBLY_BROKEN");
     }
+  });
+});
+
+// ---------- 批次三（P0-2）：pending 行过期接管 ----------
+
+/** 服务端视角的布局夹具（cssWidth 可变＝不同核；几何 300×200 CSS＝600×400 像素） */
+function surfaceLayoutOf(
+  revisionId: string,
+  cssWidth: number,
+): AnnotationSurfaceLayout {
+  return annotationSurfaceLayoutSchema.parse({
+    renderVersion: 2,
+    questionRevisionId: revisionId,
+    cssWidth,
+    cssHeight: 200,
+    pixelRatio: 2,
+    styleVersion: 1,
+    contentSignature: "a".repeat(64),
+    geometrySignature: "b".repeat(64),
+    fontSignature: "c".repeat(64),
+  });
+}
+
+/** 把唯一底图行的 updatedAt 回拨到超过 TTL（模拟半途死亡后过了接管窗口） */
+function backdateBaseRow(world: World): void {
+  world.db
+    .update(annotationBasesTable)
+    .set({
+      updatedAt: new Date(
+        Date.now() - (ANNOTATION_BASE_PENDING_TAKEOVER_MS + 60_000),
+      ).toISOString(),
+    })
+    .run();
+}
+
+describe("assembleAnnotationBase：pending 行过期接管（批次三 P0-2）", () => {
+  it("半途死亡的 pending 行超 TTL：后来设备接管布局并完成两阶段上传", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    // 设备 A：preview 建了 pending 行（无 layout）后死亡，image 一直没回传
+    assembleAnnotationBase(world.db, world.studentId, attemptId, Q);
+    backdateBaseRow(world);
+    // 设备 B：携带自己的布局接管该行（行无 imagePath 无内容，不改写历史）
+    const layout = surfaceLayoutOf(revisionId, 300);
+    const preview = assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      layout,
+    );
+    expect(preview.base.state).toBe("pending");
+    expect(preview.base.layout).toEqual(layout);
+    const row = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    expect(row?.layout).toEqual(layout);
+    expect(row?.baseRenderVersion).toBe(2);
+    expect(row?.questionRevisionId).toBe(revisionId);
+    // 接管后两阶段照常走完
+    const receipt = registerBaseImage(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      makeNotePng(600, 400),
+      {
+        questionRevisionId: revisionId,
+        baseRenderVersion: 2,
+        phase: "scratch",
+      },
+    );
+    expect(receipt.state).toBe("ready");
+    const put = putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson({ ...annotationDoc(400), baseWidth: 600 }),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    expect(put.revision).toBe(1);
+  });
+
+  it("未超 TTL：维持 409 ANNOTATION_BASE_LAYOUT_CONFLICT 且行不被改写", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    assembleAnnotationBase(world.db, world.studentId, attemptId, Q);
+    const rowBefore = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    try {
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        surfaceLayoutOf(revisionId, 300),
+      );
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ANNOTATION_BASE_LAYOUT_CONFLICT");
+    }
+    expect(
+      world.db
+        .select()
+        .from(annotationBasesTable)
+        .where(eq(annotationBasesTable.attemptId, attemptId))
+        .get(),
+    ).toEqual(rowBefore);
+  });
+
+  it("ready 行永不接管：过期且不同核也 409，布局与时间不变（不变量回归）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    const layoutA = surfaceLayoutOf(revisionId, 300);
+    assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      layoutA,
+    );
+    registerBaseImage(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      makeNotePng(600, 400),
+      {
+        questionRevisionId: revisionId,
+        baseRenderVersion: 2,
+        phase: "scratch",
+      },
+    );
+    backdateBaseRow(world);
+    const rowBefore = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    try {
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "scratch",
+        surfaceLayoutOf(revisionId, 350),
+      );
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ANNOTATION_BASE_LAYOUT_CONFLICT");
+    }
+    expect(
+      world.db
+        .select()
+        .from(annotationBasesTable)
+        .where(eq(annotationBasesTable.attemptId, attemptId))
+        .get(),
+    ).toEqual(rowBefore);
   });
 });
 
@@ -548,6 +908,26 @@ describe("putAnnotationDoc：CAS/幂等/门槛", () => {
     } catch (err) {
       expectHttpError(err, 409, "ANNOTATION_BASE_NOT_READY");
     }
+  });
+
+  it("parseAnnotationBodyBytes：形状错误 400 错误体附 zod issue 路径（_issues，P0-1）", () => {
+    const doc = annotationDoc();
+    const stroke = doc.strokes[0];
+    if (stroke === undefined) throw new Error("夹具错误：无笔画");
+    stroke.points[0] = { x: -1, y: 20, p: 0.5, t: 0 };
+    let err: unknown = null;
+    try {
+      parseAnnotationBodyBytes(gzipJson(doc));
+      throw new Error("应当抛 400");
+    } catch (cause) {
+      err = cause;
+    }
+    expectHttpError(err, 400, "ANNOTATION_VALIDATION_FAILED");
+    const issues = (err as { extra?: { _issues?: Array<{ path: string }> } })
+      .extra?._issues;
+    expect(issues?.some((issue) => issue.path === "strokes.0.points.0.x")).toBe(
+      true,
+    );
   });
 
   it("文档坐标域与底图几何不一致 400", () => {
@@ -1629,4 +2009,42 @@ it("维护重置仅清理指定草稿标画，拒绝旧客户端重建并保留�
       expectedStrokes: 0,
     }),
   ).toThrow();
+});
+
+it("标画正文更新活动时间，底图读取、相同正文与幂等重放不更新", () => {
+  const world = makeWorld();
+  const { attemptId, revisionId } = makePaper(world);
+  const activity = () =>
+    world.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+      ?.lastActivityAt;
+  readyBase(world, attemptId, revisionId);
+  expect(activity()).toBeNull();
+  const doc = gzipJson(annotationDoc(900, 2));
+  const mutationId = randomUUID();
+  const put = (baseRevision: number, id: string, body = doc) =>
+    putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      body,
+      { baseRevision, mutationId: id },
+    );
+  put(0, mutationId);
+  expect(activity()).toBeTruthy();
+  const old = "2026-10-02T00:00:00.000Z";
+  world.db
+    .update(attempts)
+    .set({ lastActivityAt: old })
+    .where(eq(attempts.id, attemptId))
+    .run();
+  put(0, mutationId);
+  expect(activity()).toBe(old);
+  put(1, randomUUID());
+  expect(activity()).toBe(old);
+  expect(() => put(0, randomUUID(), gzipJson(annotationDoc(900, 3)))).toThrow();
+  expect(activity()).toBe(old);
+  put(2, randomUUID(), gzipJson(annotationDoc(900, 3)));
+  expect(activity()).not.toBe(old);
 });

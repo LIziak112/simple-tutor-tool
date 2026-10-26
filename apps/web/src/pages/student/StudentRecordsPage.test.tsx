@@ -90,6 +90,12 @@ function makeRow(overrides: Partial<StudentRecordRow> = {}): StudentRecordRow {
     attemptId: ATTEMPT_IDS[0] as string,
     status: "graded",
     score: 90,
+    resultCounts: {
+      correctCount: 9,
+      totalCount: 10,
+      pendingCount: 0,
+      pendingSelfReviewCount: 0,
+    },
     pendingCount: 0,
     answersReleased: true,
     startedAt: "2026-09-28T10:00:00.000Z",
@@ -147,7 +153,15 @@ describe("StudentRecordsPage 三态", () => {
   it("0分有效，未公布不展示得分或待批计数", async () => {
     mockedRecords.mockResolvedValue({
       records: [
-        makeRow({ score: 0 }),
+        makeRow({
+          score: 0,
+          resultCounts: {
+            correctCount: 0,
+            totalCount: 10,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+        }),
         makeRow({
           attemptId: "aaaaaaaa-0000-4000-8000-000000000001",
           assignmentTitle: "未公布卷",
@@ -162,8 +176,8 @@ describe("StudentRecordsPage 三态", () => {
     const zero = await screen.findByRole("link", {
       name: "查看结果：周末加练（已批改）",
     });
-    expect(within(zero).getByText("0")).toBeInTheDocument();
-    expect(zero).toHaveTextContent("/ 100");
+    expect(zero).toHaveTextContent("做对 0 / 10 题");
+    expect(zero).not.toHaveTextContent("/ 100");
     const restricted = screen.getByRole("link", {
       name: "查看结果：未公布卷（已批改）",
     });
@@ -263,7 +277,7 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
       `/s/attempts/${ATTEMPT_IDS[0]}?returnTo=%2Fs%2Frecords`,
     );
     expect(within(gradedCard).getByText("作业")).toBeInTheDocument();
-    expect(within(gradedCard).getByText("90")).toBeInTheDocument();
+    expect(gradedCard).toHaveTextContent("做对 9 / 10 题");
 
     // submitted 课程练习卡：课程练习徽章 + 已交卷 + 待批 2 + 课程名
     const submittedCard = screen.getByRole("link", {
@@ -295,10 +309,10 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
     // submittedAt 2026-09-28T10:05Z → 18:05:00（Asia/Shanghai）；draft 卡无
     // submittedAt 回落 startedAt 10:00Z → 18:00:00；不再出现相对时间文案
     expect(
-      within(gradedCard).getByText("2026年9月28日 18:05:00"),
+      within(gradedCard).getByText("最近作答 2026年9月28日 18:05:00"),
     ).toBeInTheDocument();
     expect(
-      within(draftCard).getByText("2026年9月28日 18:00:00"),
+      within(draftCard).getByText("最近作答 2026年9月28日 18:00:00"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/分钟前|小时前|天前|刚刚/),
@@ -378,4 +392,38 @@ describe("StudentRecordsPage 筛选与分页的 URL 同步", () => {
       screen.queryByRole("link", { name: /打开错题本|错题本/ }),
     ).not.toBeInTheDocument();
   });
+});
+
+it("排序切换回第一页并更新卡片时间和返回上下文，刷新保留", async () => {
+  mockedRecords.mockResolvedValue({
+    records: [makeRow({ lastActivityAt: "2026-10-24T01:00:00.000Z" })],
+    total: 60,
+  });
+  renderPage("/s/records?status=draft&offset=50");
+  await screen.findByText("最近作答 2026年10月24日 09:00:00");
+  fireEvent.change(screen.getByRole("combobox", { name: "排序" }), {
+    target: { value: "started_asc" },
+  });
+  await waitFor(() =>
+    expect(mockedRecords).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sort: "started_asc",
+        status: "draft",
+        offset: 0,
+      }),
+    ),
+  );
+  expect(screen.getByTestId("location-probe")).toHaveTextContent(
+    "sort=started_asc",
+  );
+  expect(screen.getByTestId("location-probe")).not.toHaveTextContent(
+    "offset=50",
+  );
+  expect(
+    await screen.findByText("开始于 2026年9月28日 18:00:00"),
+  ).toBeInTheDocument();
+  const link = screen.getByRole("link", { name: /查看结果：周末加练/ });
+  expect(decodeURIComponent(link.getAttribute("href") ?? "")).toContain(
+    "sort=started_asc",
+  );
 });

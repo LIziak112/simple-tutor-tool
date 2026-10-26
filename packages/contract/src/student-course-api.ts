@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { practiceRecommendationSchema } from "./practice-workflow.ts";
+import { attemptResultCountsSchema } from "./result-counts.ts";
 
 /**
  * 学生端课程契约（T2A.5 起为权威定义）：我的课程列表、课程可见目录（按 D5 过滤）
@@ -76,8 +78,11 @@ export const studentUnitAttemptSummarySchema = z.object({
   submittedCount: z.number().int().min(0),
   hasDraft: z.boolean(),
   firstScore: z.number().int().min(0).max(100).nullable(),
+  firstResultCounts: attemptResultCountsSchema.nullable().optional(),
   latestScore: z.number().int().min(0).max(100).nullable(),
+  latestResultCounts: attemptResultCountsSchema.nullable().optional(),
   bestScore: z.number().int().min(0).max(100).nullable(),
+  bestResultCounts: attemptResultCountsSchema.nullable().optional(),
   pendingCount: z.number().int().min(0),
 });
 
@@ -154,6 +159,7 @@ export const studentUnitAttemptRecordSchema = z.object({
   status: z.enum(["draft", "submitted", "graded"]),
   /** 得分（0–100 整数百分比；未交/无可判分为 null） */
   score: z.number().int().min(0).max(100).nullable(),
+  resultCounts: attemptResultCountsSchema.nullable().optional(),
   /** 开始时间：UTC ISO */
   startedAt: z.string().min(1),
   /** 交卷时间：UTC ISO；未交为 null */
@@ -179,6 +185,14 @@ export const studentUnitLandingDataSchema = z.object({
   questionCount: z.number().int().min(0),
   /** 题型分布：题型 → 题数（仅含有题数的题型） */
   typeDistribution: z.record(z.string(), z.number().int().min(1)),
+  /**
+   * 该单元的做题方式/反馈节奏**展示推荐**（M5-D2，frontmatter `practice:`
+   * 导入产物）：只推荐非权限——授权结论仍由服务端建卷 resolver 裁决；
+   * null = 该单元无推荐。layout 推荐只影响开始页预选呈现（非权限、不进
+   * 建卷列），feedback 推荐在学生未设置偏好时参与建卷裁决（学生显式选择
+   * 恒优先）。
+   */
+  practiceRecommendation: practiceRecommendationSchema.nullable(),
   /** 历次作答（attemptNo 降序） */
   attempts: z.array(studentUnitAttemptRecordSchema),
   /** 作答汇总；从未做为 null */

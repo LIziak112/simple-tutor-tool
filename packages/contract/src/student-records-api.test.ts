@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  studentRecordRowSchema,
+  studentRecordsQuerySchema,
   wrongQuestionCardSchema,
   wrongQuestionRoundSchema,
   wrongQuestionsOkSchema,
@@ -23,6 +25,8 @@ const roundFixture = {
   attemptId: UUID,
   sourceType: "course",
   correct: true,
+  answered: true,
+  studentFlag: null,
   submittedAt: "2026-10-01T02:00:00.000Z",
   sourceTitle: "有理数课程练习 · 第 2 次",
   courseId: UUID,
@@ -57,6 +61,8 @@ function cardFixture(): Record<string, unknown> {
         attemptId: UUID,
         sourceType: "course",
         correct: false,
+        answered: true,
+        studentFlag: null,
         submittedAt: "2026-09-28T02:00:00.000Z",
         sourceTitle: "有理数课程练习 · 第 1 次",
         courseId: UUID,
@@ -197,4 +203,69 @@ describe("wrongQuestionCardSchema（2026-10 新字段）", () => {
       }).success,
     ).toBe(true);
   });
+});
+
+describe("studentRecordRowSchema（M4-D3：v1 卷进行中进度计数）", () => {
+  /** 合法的记录行样例（课程练习草稿；缺省 = legacy/lesson 卷形态） */
+  function rowFixture(): Record<string, unknown> {
+    return {
+      sourceType: "course",
+      courseId: UUID,
+      courseName: "初一上",
+      assignmentId: null,
+      assignmentTitle: null,
+      unitId: "有理数课程练习",
+      unitTitle: "有理数课程练习",
+      attemptNo: 2,
+      attemptId: UUID,
+      status: "draft",
+      score: null,
+      pendingCount: 0,
+      answersReleased: true,
+      startedAt: "2026-10-01T01:00:00.000Z",
+      submittedAt: null,
+    };
+  }
+
+  it("缺省合法（legacy/lesson 卷不带该字段，前端回落既有呈现）", () => {
+    const parsed = studentRecordRowSchema.parse(rowFixture());
+    expect(parsed.practiceSubmittedCount).toBeUndefined();
+    expect(parsed.practiceQuestionCount).toBeUndefined();
+  });
+
+  it("携带 n/N 计数合法（v1 新协议卷；纯公开进度计数白名单）", () => {
+    const parsed = studentRecordRowSchema.parse({
+      ...rowFixture(),
+      practiceSubmittedCount: 1,
+      practiceQuestionCount: 3,
+    });
+    expect(parsed.practiceSubmittedCount).toBe(1);
+    expect(parsed.practiceQuestionCount).toBe(3);
+  });
+
+  it("计数必须为非负整数：负数 / 小数 / 字符串拒绝", () => {
+    for (const bad of [
+      { ...rowFixture(), practiceSubmittedCount: -1 },
+      { ...rowFixture(), practiceSubmittedCount: 1.5 },
+      { ...rowFixture(), practiceSubmittedCount: "1" },
+      { ...rowFixture(), practiceQuestionCount: -1 },
+      { ...rowFixture(), practiceQuestionCount: 0.5 },
+      { ...rowFixture(), practiceQuestionCount: true },
+    ] as const) {
+      expect(
+        studentRecordRowSchema.safeParse(bad).success,
+        JSON.stringify(bad),
+      ).toBe(false);
+    }
+  });
+});
+
+it("记录排序缺省最近作答，只接受约定的三种顺序", () => {
+  expect(studentRecordsQuerySchema.parse({}).sort).toBe("activity_desc");
+  for (const sort of ["activity_desc", "started_desc", "started_asc"]) {
+    expect(studentRecordsQuerySchema.parse({ sort }).sort).toBe(sort);
+  }
+  expect(studentRecordsQuerySchema.safeParse({ sort: "broken" }).success).toBe(
+    false,
+  );
 });

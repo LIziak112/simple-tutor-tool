@@ -121,6 +121,8 @@ const DATA: AttemptResultData = {
           answers: { kind: "judge", value: true },
           solutionMd: "分界点说明。",
           answer: { kind: "judge", value: false },
+          answered: true,
+          studentFlag: null,
           autoCorrect: false,
           teacherMark: null,
           teacherComment: null,
@@ -141,6 +143,8 @@ const DATA: AttemptResultData = {
           answers: { kind: "choice", index: 1 },
           solutionMd: null,
           answer: { kind: "choice", index: 1 },
+          answered: true,
+          studentFlag: null,
           autoCorrect: true,
           teacherMark: null,
           teacherComment: null,
@@ -212,9 +216,13 @@ beforeEach(() => {
 });
 
 describe("结果页 AI 复盘（SAI-22）", () => {
-  it("完成后入口为「AI 复盘」：打开绑定回看当前题并按完成态呈现复盘模式", async () => {
+  it("完成后题卡单题召唤：打开绑定对应题并按完成态呈现复盘模式（顶栏不冗余展示独立按钮）", async () => {
     renderView();
-    const trigger = screen.getByRole("button", { name: "AI 复盘" });
+    // 顶栏不冗余展示全局 AI 助教/复盘按钮（由具体题目卡片单独召唤）
+    expect(screen.queryByRole("button", { name: "AI 复盘" })).toBeNull();
+
+    const trigger = screen.getAllByRole("button", { name: "AI 助教" })[0];
+    if (!trigger) throw new Error("未找到第 1 题的 AI 助教入口");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(trigger);
     // 窄屏（jsdom）→ 独立面板（Sheet portal）
@@ -233,7 +241,9 @@ describe("结果页 AI 复盘（SAI-22）", () => {
 
   it("复盘不采集材料：输入区无随信材料勾选，发送创建空材料任务", async () => {
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
+    const trigger = screen.getAllByRole("button", { name: "AI 助教" })[0];
+    if (!trigger) throw new Error("未找到第 1 题的 AI 助教入口");
+    fireEvent.click(trigger);
     await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),
@@ -270,7 +280,9 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     const [firstCorrection] = correctionsBefore;
     if (firstOriginal === undefined || firstCorrection === undefined)
       throw new Error("测试前置失败：原稿/订正桩未渲染");
-    fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
+    const trigger = screen.getAllByRole("button", { name: "AI 助教" })[0];
+    if (!trigger) throw new Error("未找到第 1 题的 AI 助教入口");
+    fireEvent.click(trigger);
     await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),
@@ -286,11 +298,12 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     ).toBe(correctionsBefore.length);
   });
 
-  it("复盘追问语境：题号随回看定位题（切题后重开绑定新当前题）", async () => {
+  it("复盘追问语境：按题单独召唤直接绑定对应题目", async () => {
     renderView();
-    // 回看导航跳到第 2 题（底部操作条「下一题」）
-    fireEvent.click(screen.getByRole("button", { name: "下一题" }));
-    fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
+    // 直接点击第 2 题题卡上的 AI 助教入口
+    const trigger = screen.getAllByRole("button", { name: "AI 助教" })[1];
+    if (!trigger) throw new Error("未找到第 2 题的 AI 助教入口");
+    fireEvent.click(trigger);
     await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-2"),
@@ -313,7 +326,9 @@ describe("结果页 AI 复盘（SAI-22）", () => {
       }),
     );
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
+    const trigger = screen.getAllByRole("button", { name: "AI 助教" })[0];
+    if (!trigger) throw new Error("未找到第 1 题的 AI 助教入口");
+    fireEvent.click(trigger);
     const panel = await screen.findByRole("region", { name: /的 AI 助教/ });
     // 如实呈现：通道「未配置」+ 去设置连接入口 + 发送主动作禁用
     await waitFor(() =>

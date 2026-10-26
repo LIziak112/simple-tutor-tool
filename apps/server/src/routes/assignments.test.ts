@@ -921,14 +921,15 @@ describe("多单元取卷与作答（D12）", () => {
     // judgeB 不作答（未答也进 responses，D1 未作答客观题判错）
 
     const result = await submitAttempt(env.app, env.cookie, attemptId);
-    // 全卷口径：4 题、答 3、对 2、错 2（含未答的 judgeB——D1 未作答客观题判错）、
-    // 可判 4 → scoreAuto=50；全部 finalCorrect 非 null → 交卷即 graded（D2/D3）
+    // 全卷口径：4 题、答 3、对 2、错 1（未答的 judgeB 判错但未做，不计答错——
+    // #6980-3 口径统一）、可判 4（未做可判分题照进分母）→ scoreAuto=50；
+    // 全部 finalCorrect 非 null → 交卷即 graded（D2/D3）
     // （单元 MD 已随 2026-10-02 fill 全人工批改改为可自动判题型，保住本断言口径）
     expect(result.summary).toEqual({
       total: 4,
       answered: 3,
       correct: 2,
-      wrong: 2,
+      wrong: 1,
       pending: 0,
       unanswered: 1,
       autoGradable: 4,
@@ -2359,5 +2360,178 @@ describe("computeAssignmentStatus 纯函数", () => {
   it("批改后 → graded（优先级最高，覆盖 submitted/draft）", () => {
     expect(withAttempts(["submitted", "graded"])).toBe("graded");
     expect(withAttempts(["draft", "graded"])).toBe("graded");
+  });
+});
+
+describe("M1b 逐题反馈授权字段 allowPerQuestionFeedback", () => {
+  it("create：缺省 false（旧客户端不放宽）；显式 true 落库且恒显式返回 bool", async () => {
+    const { app, teacherCookie, db } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "M1b缺省单元");
+    const studentId = await createStudent(app, teacherCookie, "学生缺省");
+    const legacy = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+    });
+    expect(legacy.allowPerQuestionFeedback).toBe(false);
+    const granted = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+      allowPerQuestionFeedback: true,
+    });
+    expect(granted.allowPerQuestionFeedback).toBe(true);
+    const row = db
+      .select({ allow: assignments.allowPerQuestionFeedback })
+      .from(assignments)
+      .where(eq(assignments.id, granted.id as string))
+      .get();
+    expect(row?.allow).toBe(true);
+  });
+
+  it("create：after_due + true → 400（契约与服务端双层拒绝）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "M1b冲突单元");
+    const studentId = await createStudent(app, teacherCookie, "学生冲突");
+    const res = await request(
+      app,
+      "/api/teacher/assignments",
+      {
+        unitIds: [unitId],
+        studentIds: [studentId],
+        dueAt: DUE_AT,
+        answerRelease: "after_due",
+        allowPerQuestionFeedback: true,
+      },
+      teacherCookie,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("update：旧客户端仅改 answerRelease → allow 恒写 false；不碰公布字段保留当前 allow", async () => {
+    const { app, teacherCookie, db } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "M1b更新单元");
+    const studentId = await createStudent(app, teacherCookie, "学生更新");
+    const created = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+      allowPerQuestionFeedback: true,
+    });
+    const id = created.id as string;
+
+    // 不碰公布字段（只改标题）→ allow 保留 true
+    const titleOnly = await patchAssignment(app, teacherCookie, id, {
+      title: "仅改标题",
+    });
+    expect(titleOnly.status).toBe(200);
+    expect(
+      db
+        .select({ allow: assignments.allowPerQuestionFeedback })
+        .from(assignments)
+        .where(eq(assignments.id, id))
+        .get()?.allow,
+    ).toBe(true);
+
+    // 旧客户端仅改 answerRelease（不传 allow）→ 写 false
+    const releaseOnly = await patchAssignment(app, teacherCookie, id, {
+      answerRelease: "on_submit",
+    });
+    expect(releaseOnly.status).toBe(200);
+    expect(
+      db
+        .select({ allow: assignments.allowPerQuestionFeedback })
+        .from(assignments)
+        .where(eq(assignments.id, id))
+        .get()?.allow,
+    ).toBe(false);
+  });
+
+  it("update：合并后 after_due + true → 400（不能只校验请求内两字段）", async () => {
+    const { app, teacherCookie, db } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "M1b合并单元");
+    const studentId = await createStudent(app, teacherCookie, "学生合并");
+    // 先建成 on_submit + true 的授权作业
+    const created = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+      dueAt: DUE_AT,
+      allowPerQuestionFeedback: true,
+    });
+    const id = created.id as string;
+    // 请求只改 answerRelease=after_due（不传 allow）——旧客户端语义应写 false，
+    // 不应被视为冲突；显式保留 true 才拒绝
+    const legacySwitch = await patchAssignment(app, teacherCookie, id, {
+      answerRelease: "after_due",
+    });
+    expect(legacySwitch.status).toBe(200);
+    expect(
+      db
+        .select({
+          release: assignments.answerRelease,
+          allow: assignments.allowPerQuestionFeedback,
+        })
+        .from(assignments)
+        .where(eq(assignments.id, id))
+        .get(),
+    ).toEqual({ release: "after_due", allow: false });
+
+    // 恢复授权后再显式 true + 库内 after_due：请求内只带 true（合并后冲突）→ 400
+    const reopen = await patchAssignment(app, teacherCookie, id, {
+      answerRelease: "on_submit",
+      allowPerQuestionFeedback: true,
+    });
+    expect(reopen.status).toBe(200);
+    const mergedConflict = await patchAssignment(app, teacherCookie, id, {
+      allowPerQuestionFeedback: true,
+      answerRelease: "after_due",
+    });
+    expect(mergedConflict.status).toBe(400);
+    // 同请求显式 on_submit + true 合法
+    const ok = await patchAssignment(app, teacherCookie, id, {
+      answerRelease: "on_submit",
+      allowPerQuestionFeedback: true,
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("update：取截止后公布时合并校验（nextRelease 取改后状态）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "M1b截止单元");
+    const studentId = await createStudent(app, teacherCookie, "学生截止");
+    const created = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+      allowPerQuestionFeedback: true,
+    });
+    // 只显式 allow=true（库内 on_submit）→ 合法
+    const keep = await patchAssignment(
+      app,
+      teacherCookie,
+      created.id as string,
+      {
+        allowPerQuestionFeedback: true,
+      },
+    );
+    expect(keep.status).toBe(200);
+  });
+
+  it("跨教师：访问他师作业 PATCH → 404，不落库", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    db.insert(assignments)
+      .values({
+        id: "asg-other-m1b",
+        teacherId: "teacher-other-m1b",
+        unitId: null,
+        courseId: null,
+        title: "他师作业",
+        dueAt: null,
+        answerRelease: "on_submit",
+        allowPerQuestionFeedback: true,
+        deletedAt: null,
+        createdAt: "2026-10-22T00:00:00.000Z",
+      })
+      .run();
+    const foreign = await patchAssignment(app, teacherCookie, "asg-other-m1b", {
+      title: "越权改题",
+    });
+    expect(foreign.status).toBe(404);
   });
 });

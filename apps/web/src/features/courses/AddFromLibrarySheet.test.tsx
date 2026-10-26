@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { LibraryLectureList } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,20 @@ import { AddFromLibrarySheet } from "./AddFromLibrarySheet";
  * 讲义页签 kind=lesson 行显「讲练」徽标（教师知道加进课程的是讲练页）；
  * 纯讲义行无徽标。读取经 @/lib/api mock（hook 层零改动，后端行为由
  * routes/library.test.ts 覆盖）。
+ * 2026-10-20：没有可见配套练习时不发送 withCompanionUnits（避免服务端
+ * 静默展开讲练页嵌入单元）。
  */
+
+const { mutateMock } = vi.hoisted(() => ({ mutateMock: vi.fn() }));
+
+vi.mock("@/features/courses/course-queries", () => ({
+  useAddCourseItems: () => ({
+    mutate: mutateMock,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+}));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -71,7 +84,31 @@ function renderSheet(): void {
 beforeEach(() => {
   mockedFolders.mockReset();
   mockedLectures.mockReset();
+  mutateMock.mockReset();
   mockedFolders.mockResolvedValue({ folders: [] });
+});
+
+describe("AddFromLibrarySheet：无可见配套练习时不发送 withCompanionUnits（2026-10-20）", () => {
+  it("只选讲练页时请求只有讲义条目，不带 withCompanionUnits", async () => {
+    mockedLectures.mockResolvedValue(LECTURES);
+    renderSheet();
+
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /讲练 有理数热身/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /添加 1 项/ }));
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(mutateMock.mock.calls[0]?.[0]).toEqual({
+      items: [
+        {
+          kind: "lecture",
+          refId: "8a8a8a8a-8a8a-48a8-88a8-8a8a8a8a8a8a",
+        },
+      ],
+      visible: true,
+    });
+  });
 });
 
 describe("AddFromLibrarySheet：讲义「讲练」徽标（2026-10 讲练一体）", () => {

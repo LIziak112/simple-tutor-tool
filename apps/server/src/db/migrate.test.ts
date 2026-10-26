@@ -10,13 +10,9 @@ import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
 import {
   aiPolicyOverrides,
   aiTeacherSettings,
-  assignments,
-  attempts,
   courses,
   questions,
-  responses,
   students,
-  teachers,
 } from "./schema";
 import { createTestDb, makeMigrationsFolderUpTo } from "./test-utils.ts";
 
@@ -163,19 +159,14 @@ describe("T6R.2 迁移：空库与带存量库", () => {
       })
       .run();
     const assignmentId = randomUUID();
-    db.insert(assignments)
-      .values({
-        id: assignmentId,
-        teacherId,
-        unitId: null,
-        courseId,
-        title: "练习四",
-        dueAt: null,
-        answerRelease: "on_submit",
-        deletedAt: null,
-        createdAt: now,
-      })
-      .run();
+    // assignments 同走原生 SQL（M1b 0038 前的旧库没有 allow_per_question_feedback
+    // 列，Drizzle 表模型会给带默认值的新列显式赋值导致旧库插入失败）
+    db.$client
+      .prepare(
+        `INSERT INTO assignments (id, teacher_id, unit_id, course_id, title, due_at, answer_release, deleted_at, created_at)
+         VALUES (?, ?, NULL, ?, '练习四', NULL, 'on_submit', NULL, ?)`,
+      )
+      .run(assignmentId, teacherId, courseId, now);
     const attemptId = randomUUID();
     // T6R.3：attempts/responses 用原生 SQL（截断旧库没有 frozen_at/
     // legacy_unverified（attempts）与 unit_id（responses）等后续迁移列）
@@ -438,17 +429,14 @@ describe("SAI-05 迁移：学生端 AI 伴学九表（空库、存量库与临�
   } {
     const now = new Date().toISOString();
     const teacherId = randomUUID();
-    db.insert(teachers)
-      .values({
-        id: teacherId,
-        loginName: "teacher-ai",
-        isAdmin: false,
-        disabledAt: null,
-        passwordHash: null,
-        apiToken: null,
-        createdAt: now,
-      })
-      .run();
+    // teachers 走原生 SQL（M1b 0038 前的边界库没有 practice_feedback_policy
+    // 列，Drizzle 当前表模型会带上该列导致旧库插入失败）
+    db.$client
+      .prepare(
+        `INSERT INTO teachers (id, login_name, is_admin, disabled_at, password_hash, api_token, created_at)
+         VALUES (?, 'teacher-ai', 0, NULL, NULL, NULL, ?)`,
+      )
+      .run(teacherId, now);
     const studentId = randomUUID();
     db.insert(students)
       .values({
@@ -466,46 +454,32 @@ describe("SAI-05 迁移：学生端 AI 伴学九表（空库、存量库与临�
       })
       .run();
     const assignmentId = randomUUID();
-    db.insert(assignments)
-      .values({
-        id: assignmentId,
-        teacherId,
-        unitId: null,
-        courseId: null,
-        title: "练习四",
-        dueAt: null,
-        answerRelease: "on_submit",
-        deletedAt: null,
-        createdAt: now,
-      })
-      .run();
+    // assignments 同走原生 SQL（M1b 0038 前的边界库没有
+    // allow_per_question_feedback 列）
+    db.$client
+      .prepare(
+        `INSERT INTO assignments (id, teacher_id, unit_id, course_id, title, due_at, answer_release, deleted_at, created_at)
+         VALUES (?, ?, NULL, NULL, '练习四', NULL, 'on_submit', NULL, ?)`,
+      )
+      .run(assignmentId, teacherId, now);
     const attemptId = randomUUID();
-    db.insert(attempts)
-      .values({
-        id: attemptId,
-        studentId,
-        sourceType: "assignment",
-        assignmentId,
-        courseId: null,
-        unitId: null,
-        lectureId: null,
-        attemptNo: 1,
-        status: "draft",
-        startedAt: now,
-        submittedAt: null,
-        frozenAt: now,
-        legacyUnverified: false,
-      })
-      .run();
+    // attempts 同走原生 SQL（M1b 0038 前的边界库没有
+    // practice_workflow_version/feedback_mode/workflow_revision 三列）
+    db.$client
+      .prepare(
+        `INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, lecture_id, attempt_no, status, started_at, submitted_at, frozen_at, legacy_unverified)
+         VALUES (?, ?, 'assignment', ?, NULL, NULL, NULL, 1, 'draft', ?, NULL, ?, 0)`,
+      )
+      .run(attemptId, studentId, assignmentId, now, now);
     const responseId = randomUUID();
-    db.insert(responses)
-      .values({
-        id: responseId,
-        attemptId,
-        questionId: "练习四-1",
-        questionSnapshotJson: '{"id":"练习四-1"}',
-      })
-      .run();
+    // responses 同走原生 SQL（M1b 0038 前的边界库没有
+    // practice_mutation_id/practice_request_digest 两列）
+    db.$client
+      .prepare(
+        `INSERT INTO responses (id, attempt_id, question_id, question_snapshot_json)
+         VALUES (?, ?, '练习四-1', '{"id":"练习四-1"}')`,
+      )
+      .run(responseId, attemptId);
     return { teacherId, studentId, assignmentId, attemptId, responseId };
   }
 

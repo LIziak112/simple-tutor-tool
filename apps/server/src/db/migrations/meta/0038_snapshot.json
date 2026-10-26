@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "028f3d92-f093-4f07-9cb2-0889ec1efd7f",
+  "id": "9882225f-439a-4e8c-bace-08cf883fa331",
   "prevId": "773c9fce-81d6-4cae-93ec-bd968bd76fab",
   "tables": {
     "ai_connections": {
@@ -341,60 +341,6 @@
           "value": "\"ai_policy_overrides\".\"mode\" in ('open_study', 'guided_only', 'post_submit_only')"
         }
       }
-    },
-    "ai_prompt_overrides": {
-      "name": "ai_prompt_overrides",
-      "columns": {
-        "owner_type": {
-          "name": "owner_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slot_key": {
-          "name": "slot_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "ai_prompt_overrides_owner_type_owner_id_slot_key_pk": {
-          "columns": [
-            "owner_type",
-            "owner_id",
-            "slot_key"
-          ],
-          "name": "ai_prompt_overrides_owner_type_owner_id_slot_key_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
     },
     "ai_quick_buttons": {
       "name": "ai_quick_buttons",
@@ -1506,6 +1452,14 @@
           "autoincrement": false,
           "default": "'on_submit'"
         },
+        "allow_per_question_feedback": {
+          "name": "allow_per_question_feedback",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
         "deleted_at": {
           "name": "deleted_at",
           "type": "text",
@@ -1680,6 +1634,28 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "practice_workflow_version": {
+          "name": "practice_workflow_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "feedback_mode": {
+          "name": "feedback_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "workflow_revision": {
+          "name": "workflow_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         }
       },
       "indexes": {
@@ -3434,6 +3410,20 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "practice_mutation_id": {
+          "name": "practice_mutation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "practice_request_digest": {
+          "name": "practice_request_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -3769,6 +3759,13 @@
         },
         "capability_profile_json": {
           "name": "capability_profile_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "practice_feedback_policy": {
+          "name": "practice_feedback_policy",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

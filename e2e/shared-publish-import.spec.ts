@@ -14,11 +14,9 @@ import { teacherApiLogin, teacherLoginViaApi, uniqueSuffix } from "./helpers";
 /** 乙的固定密码（契约 ≥8 字符） */
 const YI_PASSWORD = "e2e-yi-shared-8";
 
-test("甲发布单元 → 乙共享页导入 → 乙建课使用该单元", async ({
-  page,
-  request,
-  browserName,
-}) => {
+test("甲发布单元 → 乙共享页导入 → 乙建课使用该单元", {
+  tag: ["@export"],
+}, async ({ page, request, browserName }) => {
   const suffix = `${browserName}-${uniqueSuffix()}`;
   const unitName = `共享单元-${suffix}`;
   const yiLoginName = `e2e乙共-${suffix}`;

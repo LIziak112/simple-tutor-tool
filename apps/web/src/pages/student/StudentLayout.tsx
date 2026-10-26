@@ -8,15 +8,17 @@ import {
   School,
   Settings2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
+import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
 
@@ -49,6 +51,15 @@ export function StudentLayout() {
   const [workspace, setWorkspace] = useState(false);
   useStudentTheme();
   const meQuery = useStudentMe();
+  useEffect(() => {
+    bindAiDisplayAccount(meQuery.data?.id ?? null);
+    return () => bindAiDisplayAccount(null);
+  }, [meQuery.data?.id]);
+  // M3-D1：做题方式偏好与 AI 显示偏好同一绑定时机（布局/快捷键按账号读取）
+  useEffect(() => {
+    bindPracticePreferenceAccount(meQuery.data?.id ?? null);
+    return () => bindPracticePreferenceAccount(null);
+  }, [meQuery.data?.id]);
   useBindInkProfiles("student", meQuery.data?.id);
   const logoutMutation = useLogoutStudent();
   const navigate = useNavigate();

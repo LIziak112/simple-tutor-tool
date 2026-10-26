@@ -441,6 +441,13 @@ describe("正文解析与限额分级", () => {
       ),
     );
     expect(bad2).toMatchObject({ status: 400, code: "NOTE_VALIDATION_FAILED" });
+    // P0-1：错误体附 zod issue 路径（不含正文），可定位坏字段
+    const issues = bad2.extra?._issues as
+      | Array<{ path: string; message: string }>
+      | undefined;
+    expect(
+      issues?.some((issue) => issue.path === "ink.strokes.0.points.0.x"),
+    ).toBe(true);
   });
 
   it("混合错误（坐标越界+单笔超点数并存）→ 413 且消息为限额 issue 文案（复审⑥）", () => {
@@ -2707,4 +2714,48 @@ describe("T6R.15 GC 回归（D11：封存头/补充稿头不被回收）", () =>
       ),
     ).toBe(true);
   });
+});
+
+it("草稿有效正文更新活动时间；相同正文新上传与幂等重试不更新，失败不落活动", () => {
+  const { db, dataDir, studentId, attemptId } = makeWorld();
+  const activity = () =>
+    db.select().from(attemptsTable).where(eq(attemptsTable.id, attemptId)).get()
+      ?.lastActivityAt;
+  expect(activity()).toBeNull();
+  const mutationId = randomUUID();
+  const args = {
+    studentId,
+    attemptId,
+    questionId: "q1",
+    body: noteDoc(1),
+    mutationId,
+  };
+  save(db, dataDir, args);
+  expect(activity()).toBeTruthy();
+  // 放回确定性旧时刻，检测后续操作是否真的写时间，避免同毫秒假通过。
+  const old = "2026-10-02T00:00:00.000Z";
+  db.update(attemptsTable)
+    .set({ lastActivityAt: old })
+    .where(eq(attemptsTable.id, attemptId))
+    .run();
+  save(db, dataDir, args);
+  expect(activity()).toBe(old);
+  save(db, dataDir, { ...args, baseRevision: 1, mutationId: randomUUID() });
+  expect(activity()).toBe(old);
+  expect(() =>
+    save(db, dataDir, {
+      ...args,
+      body: noteDoc(2),
+      baseRevision: 0,
+      mutationId: randomUUID(),
+    }),
+  ).toThrow();
+  expect(activity()).toBe(old);
+  save(db, dataDir, {
+    ...args,
+    body: noteDoc(2),
+    baseRevision: 2,
+    mutationId: randomUUID(),
+  });
+  expect(activity()).not.toBe(old);
 });

@@ -1,4 +1,5 @@
 import type {
+  AiAttemptReviewStatus,
   AiChannel,
   AiConnectionVerifyStatus,
   AiFactType,
@@ -18,7 +19,9 @@ import type {
   NoteImageState,
   NotePhase,
   NoteSubmissionEvidenceState,
+  PracticeFeedbackMode,
   QuestionType,
+  TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
 import { sql } from "drizzle-orm";
 import {
@@ -111,6 +114,15 @@ export const teachers = sqliteTable(
      * 安全边界。
      */
     capabilityProfileJson: text("capability_profile_json"),
+    /**
+     * 练习反馈默认策略（M1b，2026-10-22 计划 §5.2）：student_choice | after_attempt。
+     * NULL = 未配置，仅对新普通自由练习（course/wrong 建卷）按 student_choice
+     * 缺省处理；不混入 capabilityProfileJson（那是 steps/ink 辅助能力开关）。
+     * 异常持久化值读侧按保守的 after_attempt 处理（fail closed，不意外授权）。
+     */
+    practiceFeedbackPolicy: text(
+      "practice_feedback_policy",
+    ).$type<TeacherPracticeFeedbackPolicy>(),
     /** 创建时间：UTC ISO 字符串 */
     createdAt: text("created_at").notNull(),
   },
@@ -426,6 +438,13 @@ export const units = sqliteTable(
      * lectures.teachingPackJson（导入覆盖 / 编辑保留 / 普通 MD 重导清空）。
      */
     teachingPackJson: text("teaching_pack_json"),
+    /**
+     * practice 推荐 JSON（M5-D1，形态来自 contract practiceRecommendationSchema）：
+     * frontmatter `practice:` 的做题方式/反馈节奏**展示推荐**——只推荐非权限配置，
+     * 授权仍由服务端 resolver 裁决；NULL = 未声明。写读语义同 teachingPackJson
+     * （导入覆盖 / 不带 practice 的重导清空 / 导出原样写回）。
+     */
+    practiceDefaultsJson: text("practice_defaults_json"),
   },
   (table) => [primaryKey({ columns: [table.teacherId, table.id] })],
 );
@@ -656,6 +675,17 @@ export const assignments = sqliteTable(
       .$type<"on_submit" | "after_due">()
       .notNull()
       .default("on_submit"),
+    /**
+     * 逐题反馈授权（M1b，2026-10-22 计划 §5.2）：false 兼容默认（历史作业回填
+     * false，旧 on_submit 不自动解释成学生任选）；true 仅允许与 answerRelease
+     * ='on_submit' 组合（写入侧拒绝 after_due+true，读侧异常组合 fail closed
+     * 禁逐题）。两字段同事务更新；旧客户端仅改 answerRelease 时服务端恒写 false。
+     */
+    allowPerQuestionFeedback: integer("allow_per_question_feedback", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
     deletedAt: text("deleted_at"),
     /** 创建时间：UTC ISO 字符串 */
@@ -775,12 +805,20 @@ export const attempts = sqliteTable(
      * 已拆，域一致性由服务层保证）。
      */
     lectureId: text("lecture_id"),
+    /**
+     * 错题重练建卷范围快照（2026-10-25 #6980-2）：wrong 来源建卷时写入请求的
+     * scope JSON（wrongPracticeScopeSchema）；其余来源恒 NULL。历史卷为
+     * NULL，展示由 sourceOf 从冻结 responses→questions→units 反查现算。
+     */
+    practiceScopeJson: text("practice_scope_json"),
     /** 第几次作答（D10：course 来源从 1 递增；assignment 来源恒 1） */
     attemptNo: integer("attempt_no").notNull().default(1),
     /** 作答状态：draft | submitted | graded */
     status: text("status").$type<AttemptStatus>().notNull(),
     /** 开始作答时间：UTC ISO 字符串 */
     startedAt: text("started_at").notNull(),
+    /** 最近有效作答确认时间；历史缺省由查询回退，不推测历史编辑。 */
+    lastActivityAt: text("last_activity_at"),
     /** 交卷时间：UTC ISO 字符串；未交为 NULL */
     submittedAt: text("submitted_at"),
     /**
@@ -816,6 +854,23 @@ export const attempts = sqliteTable(
      * 事件/笔记）保留审计，不物理删除。
      */
     abandonedAt: text("abandoned_at"),
+    /**
+     * 做题工作流协议版本（M1b，2026-10-22 计划 §6.2）：1 = 新协议卷（建卷时
+     * 显式写入）；NULL = 升级前历史卷——恒整卷旧协议（resolver 恒 after_attempt /
+     * legacy_attempt），不回填不升级。lesson 来源不经本列（独立适配路径）。
+     */
+    practiceWorkflowVersion: integer("practice_workflow_version"),
+    /**
+     * 本卷反馈节奏（M1b）：per_question | after_attempt。仅新协议卷在建卷时
+     * 按教师规则 + 学生选择裁决写入；教师后续收紧不改写本值（读侧按当前规则
+     * 冻结 canSubmitQuestion），历史卷 NULL。
+     */
+    feedbackMode: text("feedback_mode").$type<PracticeFeedbackMode>(),
+    /**
+     * 工作流 CAS 版本（M1b）：新协议卷建卷写 0，反馈节奏修改（PATCH workflow）
+     * 与逐题提交（M2）事务内自增比对；历史卷恒 0 且不可变更。
+     */
+    workflowRevision: integer("workflow_revision").notNull().default(0),
   },
   (table) => [
     // 「一个作业一人一份进行中」的查询索引；唯一性由服务层保证（先查后插，
@@ -903,19 +958,50 @@ export const responses = sqliteTable(
     /** 最近一次有版本保存标识；建立新协议后拒绝无版本旧客户端覆盖。 */
     answerMutationId: text("answer_mutation_id"),
     /**
-     * 单题提交时刻（讲练一体 2026-10，lesson 逐题提交专用，后续任务实装）：
-     * UTC ISO；单题提交 = 该题提交时刻，整卷收尾对剩余行 = 交卷时刻；
-     * NULL = 未提交。既有整卷作答链路（assignment/course/wrong）不写本列。
+     * 单题提交时刻（讲练一体 2026-10 起写入；M2 新协议普通卷同写）：
+     * UTC ISO；单题提交 = 该题提交时刻，整卷收尾对剩余行 = 交卷时刻
+     * （lesson 独立适配 + M2 v1 普通卷，判定走 practiceProtocolOf 单一谓词）；
+     * NULL = 未提交。历史旧协议卷（无工作流版本的 assignment/course/wrong）
+     * 整卷链路不写本列，恒 null。
      */
     submittedAt: text("submitted_at"),
     /** 自动判分结果：true/false；NULL = 不能自动判定（D1 后不含未作答客观题） */
     autoCorrect: integer("auto_correct", { mode: "boolean" }),
     /** 最终判定（D3：交卷时写 = autoCorrect，教师批注后 teacherMark 优先）；未批为 NULL，即待批（D4） */
     finalCorrect: integer("final_correct", { mode: "boolean" }),
+    /**
+     * 是否有实际作答内容（#6980-3）：判分写点落库——整卷交卷按「非空答案或
+     * 正式手写笔迹（ink.strokeCount>0）」判定；单题主动提交
+     * （submitPracticeQuestion / submitLessonQuestion）恒 true（显式交锋，
+     * 含「不会，提交并看解析」的空提交）。历史行由 backfill.ts 回填（非空答案 /
+     * 正式笔迹 / 单题提交标记）。与判分正交——未做仍按 D1 判错进分母；错题本
+     * 入本（「答了且判错」或人工显式判定）、结果视图/教师详情「未做」灰显、
+     * 「练习本卷错题」默认圈题共用本事实。
+     */
+    answered: integer("answered", { mode: "boolean" }).notNull().default(false),
+    /**
+     * 做题时学生自标「不会」（#6980-4）：'unsure' / NULL。draft 时经
+     * PUT /attempts/:id/flags/:questionId 写入（交卷后 409）；随草稿/结果/
+     * 错题本轮次/教师详情下发。标过不会的题入错题本（无论对错与是否作答），
+     * 标过不会的做对轮不算攻克。不是作答内容，无泄露面。
+     */
+    studentFlag: text("student_flag"),
     /** 教师批注标记（T3.2：正确 | 错误 | null）；未批为 NULL */
     teacherMark: text("teacher_mark"),
     /** 教师评语（T3.2）；未评为 NULL */
     teacherComment: text("teacher_comment"),
+    /** 冻结时确定评判策略；迁移后的历史行保持原规则，不重判。 */
+    reviewPolicy: text("review_policy").notNull().default("legacy"),
+    /** 有参考答案且需对照自评的题，独立于是否已判断。 */
+    reviewEligible: integer("review_eligible", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    /** 学生本人对照声明，不能写入教师标记。 */
+    selfCorrect: integer("self_correct", { mode: "boolean" }),
+    reviewRevision: integer("review_revision").notNull().default(0),
+    reviewMutationId: text("review_mutation_id"),
+    reviewMutationHash: text("review_mutation_hash"),
+    reviewedAt: text("reviewed_at"),
     /** 每题有效用时（秒；T2.10 按事件计算回写）；未计算为 NULL */
     activeSec: integer("active_sec"),
     /** 已查看提示数（T2.11：去重后的已解锁序号集合大小；交卷时冻结保留） */
@@ -930,6 +1016,16 @@ export const responses = sqliteTable(
     changeCount: integer("change_count").notNull().default(0),
     /** 手写笔迹记录 id（ink 表，T2.8 启用）；无笔迹为 NULL */
     inkId: text("ink_id"),
+    /**
+     * 普通逐题提交幂等键（M1b 建列、M2 实装）：同 mutationId 同请求摘要重试
+     * 返回同一提交事实，不重复判分；未逐题提交为 NULL。
+     */
+    practiceMutationId: text("practice_mutation_id"),
+    /**
+     * 逐题提交请求摘要（M1b 建列、M2 实装）：与 practiceMutationId 配对校验，
+     * 同 id 不同摘要 → 409；未逐题提交为 NULL。
+     */
+    practiceRequestDigest: text("practice_request_digest"),
   },
   (table) => [
     // 草稿 upsert 与交卷整行重写的定位键
@@ -1862,6 +1958,204 @@ export const aiFacts = sqliteTable(
     ),
   ],
 );
+
+// ---------- 本次练习整体复盘（MCP；任务 1ef854c7）----------
+
+/**
+ * AI 整体复盘事实类型（独立于单题 aiFacts 的事实词表；append-only）。
+ * 不写入旧 aiHelpQuestionFacts 的按题统计——一次整体任务不虚增逐题求助记录。
+ */
+export type AiAttemptReviewFactType =
+  | "task_created"
+  | "claimed"
+  | "replied"
+  | "opened"
+  | "failed"
+  | "late_reply"
+  | "cancelled"
+  | "archived"
+  | "retried"
+  | "paused";
+
+/**
+ * AI 本次练习整体复盘任务表（任务 1ef854c7，《批量复盘整体分析与实施交接》
+ * §6.1）——一行 = 一个 attempt 的一次整体复盘任务，与逐题 ai_tasks 并行、
+ * 不复用单题表（不造占位 questionId，不破坏单题 FK/计数/教师督学事实）。
+ * - 快照：contextSnapshotJson 为建任务时冻结的整体白名单快照（契约
+ *   aiAttemptReviewSnapshotSchema 序列化，内部视图含允许的参考答案/解析；
+ *   存库列，进备份）；snapshotVersion 为其 HMAC 身份戳，范围/判分/公布态
+ *   变化即换值——旧报告永指原快照，不静默换新；
+ * - mutationId 全局唯一：同键同内容重放返回原任务，同键异内容 409；
+ * - 租约列仅 MCP 领取通道使用（初始 10 分钟，过期惰性回 created）；
+ * - 删除策略：任务行是证据锚点（facts/results 的锚），不物理删。
+ */
+export const aiAttemptReviewTasks = sqliteTable(
+  "ai_attempt_review_tasks",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 复盘学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    /** 所属作答（attempts.id；已交卷且答案公布门满足才可创建） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 客户端幂等键（全局唯一索引承载查重） */
+    mutationId: text("mutation_id").notNull(),
+    /** 请求摘要（purpose + expectedPreviewVersion 的 sha-256；同键异内容 409 判据） */
+    requestDigest: text("request_digest").notNull(),
+    /** 出站通道（MVP 仅 mcp：外部客户端领取，页内不出站） */
+    channel: text("channel").$type<"mcp">().notNull().default("mcp"),
+    /** 快照契约版本 */
+    schemaVersion: integer("schema_version").notNull().default(1),
+    /** 快照身份不透明戳（HMAC；与预览版本同源） */
+    snapshotVersion: text("snapshot_version").notNull(),
+    /** 冻结整体快照 JSON（内部视图；不在学生普通接口返回） */
+    contextSnapshotJson: text("context_snapshot_json").notNull(),
+    /** 固定整体分析提示词快照 sha-256 */
+    promptHash: text("prompt_hash").notNull(),
+    /** 学生复盘诉求（可编辑；只作分析诉求） */
+    purpose: text("purpose").notNull(),
+    /** 整体覆盖题数（= 本次练习完整范围） */
+    questionCount: integer("question_count").notNull(),
+    /** 四桶计数 JSON（创建时冻结的反规范化投影；公开视图免解整体快照） */
+    countsJson: text("counts_json").notNull(),
+    /** 处理状态（契约 aiAttemptReviewStatusSchema 六态） */
+    status: text("status")
+      .$type<AiAttemptReviewStatus>()
+      .notNull()
+      .default("created"),
+    /** 出站代次（0 = 未领取；每次领取 +1，写回 CAS 比对） */
+    generation: integer("generation").notNull().default(0),
+    /** MCP 租约截止：UTC ISO；非 claimed 为 NULL（过期惰性回 created） */
+    leaseUntil: text("lease_until"),
+    /** MCP 租约令牌（写回 CAS 凭证；迟到持有者仅记 late_reply 事实） */
+    leaseToken: text("lease_token"),
+    /** 最近失败摘要（failed 态）；无失败为 NULL */
+    errorText: text("error_text"),
+    /** 显式重试次数（学生显式重试 +1，绝不自动重发） */
+    retryCount: integer("retry_count").notNull().default(0),
+    /** 学生打开报告时刻：UTC ISO；null = 未查看 */
+    openedAt: text("opened_at"),
+    /** 学生归档时刻（队列整理；状态与事实不动）；null = 未归档 */
+    archivedAt: text("archived_at"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    // 学生任务列表（按创建时间倒序）
+    index("ai_attempt_review_tasks_student_created_idx").on(
+      table.studentId,
+      table.createdAt,
+    ),
+    // 同卷活动任务定位（每 attempt 活动任务最多 1 的判定与复用）
+    index("ai_attempt_review_tasks_attempt_status_idx").on(
+      table.attemptId,
+      table.status,
+    ),
+    // 租约惰性清理（claimed 且 leaseUntil < now → 回 created 可再领取）
+    index("ai_attempt_review_tasks_status_lease_idx").on(
+      table.status,
+      table.leaseUntil,
+    ),
+    // 幂等键全局唯一（同请求键第二任务被 DB 拒绝）
+    uniqueIndex("ai_attempt_review_tasks_mutation_id_uk").on(table.mutationId),
+    check(
+      "ai_attempt_review_tasks_channel_check",
+      sql`${table.channel} = 'mcp'`,
+    ),
+    check(
+      "ai_attempt_review_tasks_status_check",
+      sql`${table.status} in ('created', 'claimed', 'replied', 'failed', 'paused', 'cancelled')`,
+    ),
+  ],
+);
+
+/**
+ * AI 整体复盘结果表——一行 = 一次成功交付的结构化报告，唯一 (taskId,
+ * generation)：同代同内容重放按内容哈希幂等返回原回执，同代异内容 409；
+ * 学生显式重试后重新领取为新一代，新报告不覆盖旧代（历史版本保留）。
+ * 报告按不可信输入校验入库；渲染层走安全渲染。
+ */
+export const aiAttemptReviewResults = sqliteTable(
+  "ai_attempt_review_results",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属任务（ai_attempt_review_tasks.id） */
+    taskId: text("task_id")
+      .notNull()
+      .references(() => aiAttemptReviewTasks.id),
+    /** 出站代次（与任务行领取代次对应） */
+    generation: integer("generation").notNull(),
+    /** 结构化报告 JSON（契约 aiAttemptReviewReportSchema 序列化） */
+    reportJson: text("report_json").notNull(),
+    /** 报告内容 sha-256（幂等判定） */
+    contentHash: text("content_hash").notNull(),
+    /** 服务端收到时间：UTC ISO */
+    receivedAt: text("received_at").notNull(),
+  },
+  (table) => [
+    // 一代一结果：重试产生新代，旧报告不被覆盖
+    uniqueIndex("ai_attempt_review_results_task_generation_uk").on(
+      table.taskId,
+      table.generation,
+    ),
+  ],
+);
+
+/**
+ * AI 整体复盘审计事实表（append-only，永不 UPDATE/DELETE）——taskId 不建
+ * 外键（事实须在任务行任何形态下独立存在；任务行本就不物理删）；冗余列
+ * （studentId/attemptId）随任务行同源写入。不写入旧 ai_facts（按题督学
+ * 统计不受整体任务影响）。
+ */
+export const aiAttemptReviewFacts = sqliteTable(
+  "ai_attempt_review_facts",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属任务（ai_attempt_review_tasks.id；无外键，见表注释） */
+    taskId: text("task_id").notNull(),
+    /** 学生（students.id；冗余列） */
+    studentId: text("student_id").notNull(),
+    /** 所属作答（attempts.id；冗余列） */
+    attemptId: text("attempt_id").notNull(),
+    /** 事实类型（AiAttemptReviewFactType 10 种） */
+    type: text("type").$type<AiAttemptReviewFactType>().notNull(),
+    /** 事实详情 JSON（代次、原因摘要等；无详情为 NULL） */
+    detailJson: text("detail_json"),
+    /** 服务端时间：UTC ISO 字符串 */
+    serverTs: text("server_ts").notNull(),
+  },
+  (table) => [
+    // 任务时间线
+    index("ai_attempt_review_facts_task_ts_idx").on(
+      table.taskId,
+      table.serverTs,
+    ),
+    // 按卷查询
+    index("ai_attempt_review_facts_attempt_ts_idx").on(
+      table.attemptId,
+      table.serverTs,
+    ),
+    check(
+      "ai_attempt_review_facts_type_check",
+      sql`${table.type} in ('task_created', 'claimed', 'replied', 'opened', 'failed', 'late_reply', 'cancelled', 'archived', 'retried', 'paused')`,
+    ),
+  ],
+);
+
+export type AiAttemptReviewTaskRow = typeof aiAttemptReviewTasks.$inferSelect;
+export type NewAiAttemptReviewTaskRow =
+  typeof aiAttemptReviewTasks.$inferInsert;
+export type AiAttemptReviewResultRow =
+  typeof aiAttemptReviewResults.$inferSelect;
+export type AiAttemptReviewFactRow = typeof aiAttemptReviewFacts.$inferSelect;
 
 /**
  * AI 分享票据表（§5.1 表 8，方案 §7/§3.6）——上下文链接通道的读端点凭证。

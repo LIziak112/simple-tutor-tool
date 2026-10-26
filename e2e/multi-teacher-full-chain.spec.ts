@@ -23,7 +23,9 @@ import {
  * 用 10.239.1.x，互不占额）；开关竞态由 helper 内「等开放 + 重试」吸收。
  * 单元/课程/作业/学生名全部带唯一后缀：两个浏览器项目并行跑同一数据目录互不干扰。
  */
-test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入建课布置 → 学生作答 → 甲不可见", () => {
+test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入建课布置 → 学生作答 → 甲不可见", {
+  tag: ["@teacher"],
+}, () => {
   test("完整链路各环节串联，甲对乙的资源按 id 404 且列表互不可见", async ({
     page,
     request,
@@ -239,7 +241,9 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
 
-      await expect(studentPage.getByText("已填写 2 / 2 题")).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "答题卡", exact: true }),
+      ).toContainText("已填 2/2");
       await studentPage
         .getByRole("button", { name: "交卷", exact: true })
         .click();

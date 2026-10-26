@@ -23,6 +23,7 @@ import {
   freezeInputsOfAttempt,
   insertFrozenResponses,
   lessonLiveSummaryOf,
+  lessonQuestionSubmitted,
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
@@ -32,6 +33,7 @@ import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
 import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
+import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
 import {
   notFound,
@@ -205,7 +207,9 @@ function buildLessonStartData(
     if (answer !== null) drafts[row.questionId] = answer;
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
-    if (row.submittedAt === null) continue; // 未单题提交：不进 released、不计对错
+    if (!lessonQuestionSubmitted(row)) {
+      continue;
+    } // 未单题提交：不进 released、不计对错
     // 已单题提交 → 当题释放（读当前行值：进行中卷教师可能已批 teacherMark）；
     // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
     // 含 [[答案]] 标记的原文不下发）
@@ -229,7 +233,20 @@ function buildLessonStartData(
     draftRevisions,
     hintsOpened,
     released,
-    summary: lessonLiveSummaryOf(rows, attempt),
+    summary: lessonLiveSummaryOf(
+      // 开卷本就装载完整行（题目投影需要快照原文）；喂汇总前映射为存在性
+      // 布尔形态（LessonSummaryRow，不重复搬运快照列语义）
+      rows.map((row) => ({
+        hasSnapshot: row.questionSnapshotJson !== null,
+        answerJson: row.answerJson,
+        submittedAt: row.submittedAt,
+        autoCorrect: row.autoCorrect,
+        finalCorrect: row.finalCorrect,
+        answered: row.answered,
+        reviewEligible: row.reviewEligible,
+      })),
+      attempt,
+    ),
     enabledCapabilities: attemptEnabledCapabilities(db, attempt),
   };
 }
@@ -406,6 +423,7 @@ export function getLessonLanding(
   }
 
   const attemptRows = lessonAttemptsOf(db, studentId, lectureId);
+  const resultCounts = attemptResultCounts(db, attemptRows);
   const submittedRows = attemptRows.filter((row) => row.status !== "draft");
   const ascending = [...submittedRows].sort(
     (a, b) => a.attemptNo - b.attemptNo,
@@ -432,12 +450,17 @@ export function getLessonLanding(
       attemptNo: row.attemptNo,
       status: row.status,
       score: scoreOf(row),
+      resultCounts: resultCounts.get(row.id) ?? null,
       startedAt: row.startedAt,
       submittedAt: row.submittedAt,
     })),
     summary:
       attemptRows.length > 0
         ? {
+            ...resultCountsSummary(
+              ascending.map((row) => row.id),
+              resultCounts,
+            ),
             count: attemptRows.length,
             submittedCount: submittedRows.length,
             hasDraft: attemptRows.some((row) => row.status === "draft"),

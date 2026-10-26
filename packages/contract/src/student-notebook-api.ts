@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { attemptSourceSchema } from "./attempt.ts";
+import { attemptQuestionPublicSchema, attemptSourceSchema } from "./attempt.ts";
+import { questionAnswersSchema } from "./content.ts";
 import {
   noteRecordMetaSchema,
   noteSubmissionEvidenceMetaSchema,
@@ -12,10 +13,20 @@ import {
  *   （作业 + 课程练习 + 错题重练）历次作答轮次。
  *
  * 安全口径（AGENTS.md 第 3 条，硬性规则 3）：
- * - 本契约**不含答案/详解/提示内容**，也不含题干正文——题目侧内容只有
- *   questionVersion 一个**版本号数字**（冻结快照里的题目 version，供「题目
- *   改版了」对照提示），绝不返回题干/答案/解析文本；
+ * - 题面使用**冻结快照的公开白名单投影**（attemptQuestionPublicSchema，
+ *   stemMd 经 studentStemMd 脱敏——[[答案]] 剥标记、内嵌选项剥除），与取卷/
+ *   结果视图同一份投影（单一出处，不重定义）；快照缺失/损坏 → question:
+ *   null，绝不回填 live 题库；
+ * - 答案/详解按**各来源公布 gate 受控下发**（release 块，fail-closed）：
+ *   assignment 依 answersReleased（on_submit 交卷即公布 / after_due 到截止
+ *   才公布），course/wrong 恒交卷即公布，lesson 按题级 submittedAt；未公布
+ *   → release: null，服务端不输出该题答案/详解文本；
  * - 轮次聚合**仅收录已交卷 attempt**（draft 不进 rounds，防进行中状态侧漏）；
+ * - 教师评语（teacherComment）、批注（teacherMark）、判定（finalCorrect/
+ *   autoCorrect）与提示内容**结构性禁入**本契约；
+ * - 题干形态与错题本（wrongQuestionCardSchema 快照原文）**有意不同**：错题
+ *   本入口自带「已判定 + 公布 gate」双重上游过滤，本文用脱敏投影 + 独立
+ *   release——更严一档，勿向错题本口径「对齐」时连公布 gate 一起丢掉；
  * - 学生本人数据（归属由会话推定），无跨生内容。
  *
  * 约定（与 student-records-api.ts 一致）：
@@ -36,6 +47,18 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
     data: dataSchema,
   });
 }
+
+/**
+ * 该轮受控解析（release）：参考答案 + 详解，**只在所属来源公布 gate 放行时
+ * 非空**（fail-closed——未公布时整个 release 为 null，服务端不构造本对象）。
+ * - answers：快照 QuestionAnswers（与 wrongQuestionCardSchema.answers 同口径；
+ *   无标准答案的主观题为 null，由老师批改）；
+ * - solutionMd：快照详解 Markdown；题库未提供为 null。
+ */
+export const notebookRoundReleaseSchema = z.object({
+  answers: questionAnswersSchema.nullable(),
+  solutionMd: z.string().nullable(),
+});
 
 /**
  * 笔记本单轮（notebookRound）：该生该题的一次**已交卷**作答及其笔记材料。
@@ -63,11 +86,18 @@ export const notebookRoundSchema = z.object({
   roundOrdinal: z.number().int().min(1),
   /**
    * 冻结快照里的题目 version 号（questions.version 数字）；快照缺失或
-   * 无版本字段为 null。**只有版本号数字**——题干正文/答案/解析一律不进
-   * 本契约（AGENTS 第 3 条），改版对照由前端据数字提示，内容回源各自的
-   * 结果视图读取。
+   * 无版本字段为 null。改版对照由前端据数字提示；题面内容经下方 question
+   * 的脱敏投影下发，答案/详解按 release 的公布 gate 受控下发。
    */
   questionVersion: z.number().int().min(1).nullable(),
+  /**
+   * 该轮冻结题的公开题面（publicOfSnapshot 白名单投影，stemMd 已经
+   * studentStemMd 脱敏）；null = 遗留未冻结轮次或快照损坏，**不回填 live 题**
+   * （与 questionVersion 的注释口径一致：版本对照数字仍可独立成立）。
+   */
+  question: attemptQuestionPublicSchema.nullable(),
+  /** 该轮当题参考答案与详解；null = 未公布（fail-closed，见模块头安全口径） */
+  release: notebookRoundReleaseSchema.nullable(),
   /** 该轮提交证据行；null = 无证据行（旧客户端兼容交卷） */
   evidence: noteSubmissionEvidenceMetaSchema.nullable(),
   /** 该轮订正记录（phase='correction' 行，含已封存与未封存） */

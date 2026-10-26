@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { attemptQuestionPublicSchema } from "./attempt.ts";
 import {
+  notebookRoundReleaseSchema,
   notebookRoundSchema,
   studentNotebookDataSchema,
   studentNotebookOkSchema,
 } from "./student-notebook-api.ts";
 
 /**
- * 题目笔记本聚合契约自测（T6R.15）：锁定 GET /api/student/notebook/questions/
- * :questionId 的轮次聚合形状。对照派单失败测试清单：rounds 空/多轮、
- * questionVersion null 合法、evidence null 合法、零答案负向断言
- * （AGENTS.md 第 3 条：契约键集合结构上不含答案/详解/提示类字段）。
+ * 题目笔记本聚合契约自测（T6R.15；题面/解析扩展）：锁定 GET /api/student/
+ * notebook/questions/:questionId 的轮次聚合形状。对照派单失败测试清单：
+ * rounds 空/多轮、questionVersion null 合法、evidence null 合法、零答案负向
+ * 断言（AGENTS.md 第 3 条：答案/详解只在 release 白名单形态下受控出现，
+ * 教师侧字段全树禁入）。
  */
 
 const ATTEMPT_ID = "22222222-2222-4222-8222-222222222222";
@@ -53,6 +56,27 @@ const FROZEN_EVIDENCE = {
   recordedAt: "2026-10-06T03:00:00.000Z",
 };
 
+/**
+ * 轮次题面（attemptQuestionPublic 最小合法形态；与取卷/结果视图同一 schema，
+ * stemMd 为 studentStemMd 脱敏后的题干）
+ */
+const QUESTION_PUBLIC = {
+  id: "p4-q7",
+  type: "choice",
+  difficulty: 3,
+  knowledge: ["一元一次方程"],
+  stemMd: "下列哪个选项正确？",
+  options: ["选项一", "选项二", "选项三"],
+  hintCount: 2,
+  questionRevisionId: "resp-1",
+};
+
+/** 受控解析（notebookRoundRelease 最小合法形态：参考答案 + 详解） */
+const RELEASE = {
+  answers: { kind: "choice", index: 2 },
+  solutionMd: "先移项，再合并同类项。",
+};
+
 /** 轮次基座（第一轮：frozen 原稿 + 一条已封存订正） */
 const ROUND_BASE = {
   attemptId: ATTEMPT_ID,
@@ -61,6 +85,8 @@ const ROUND_BASE = {
   submittedAt: "2026-10-06T03:00:00.000Z",
   roundOrdinal: 1,
   questionVersion: 3,
+  question: QUESTION_PUBLIC,
+  release: RELEASE,
   evidence: FROZEN_EVIDENCE,
   corrections: [SEALED_CORRECTION, OPEN_CORRECTION],
   supplements: [],
@@ -87,6 +113,8 @@ describe("studentNotebookData：轮次聚合形状", () => {
           submittedAt: "2026-10-07T05:00:00.000Z",
           roundOrdinal: 2,
           questionVersion: null,
+          question: null,
+          release: null,
           evidence: {
             attemptId: "55555555-5555-4555-8555-555555555555",
             questionId: "p4-q7",
@@ -220,23 +248,25 @@ describe("notebook 零答案负向断言（AGENTS.md 第 3 条）", () => {
     return acc;
   }
 
-  it("契约键集合不含答案/详解/提示/题干/判定类字段；顶层键精确锁定", () => {
+  it("教师侧字段全树禁入；顶层与 release 形状精确锁定", () => {
     const keys = [...collectKeys(studentNotebookDataSchema)];
     const forbidden = [
-      "answer",
-      "answers",
-      "solution",
-      "solutionMd",
-      "hint",
-      "hints",
-      "stem",
-      "stemMd",
-      "options",
-      "answerText",
+      "teacherComment",
+      "teacherMark",
       "autoCorrect",
       "finalCorrect",
       "correct",
+      "sourceMd",
       "questionSnapshotJson",
+      "answersJson",
+      "answerJson",
+      "answer",
+      "stem",
+      "answerText",
+      "hint",
+      "hints",
+      "hintsJson",
+      "optionsJson",
     ];
     for (const name of forbidden) {
       expect(keys, `契约不得包含字段 ${name}`).not.toContain(name);
@@ -249,6 +279,8 @@ describe("notebook 零答案负向断言（AGENTS.md 第 3 条）", () => {
       "submittedAt",
       "roundOrdinal",
       "questionVersion",
+      "question",
+      "release",
       "evidence",
       "corrections",
       "supplements",
@@ -257,5 +289,54 @@ describe("notebook 零答案负向断言（AGENTS.md 第 3 条）", () => {
       "questionId",
       "rounds",
     ]);
+    // release 形状精确锁定：答案/详解只允许在此白名单形态下受控出现
+    expect(Object.keys(notebookRoundReleaseSchema.shape)).toEqual([
+      "answers",
+      "solutionMd",
+    ]);
+    // 顶层严禁平铺答案/详解/提示/题干——由上方 Object.keys 精确锁全数涵盖
+    // （精确表不含任何答案/详解/提示/题干键，嵌套白名单合法化不放宽顶层）
+    // question 复用 attemptQuestionPublicSchema 同一实例（白名单投影单一出处）
+    expect(notebookRoundSchema.shape.question.unwrap()).toBe(
+      attemptQuestionPublicSchema,
+    );
+  });
+
+  it("question/release 形状：null 合法；教师侧多余键剥除；release 答案 kind 非法拒", () => {
+    expect(
+      notebookRoundSchema.safeParse({
+        ...ROUND_BASE,
+        question: null,
+        release: null,
+      }).success,
+    ).toBe(true);
+    // question 经 attemptQuestionPublicSchema.parse：教师侧多余键剥除
+    // （fail closed——输入显式携带三个教师侧键，断言 parse 后确实不存在）
+    const stripped = notebookRoundSchema.parse({
+      ...ROUND_BASE,
+      question: {
+        ...QUESTION_PUBLIC,
+        teacherComment: "教师私注",
+        answers: { kind: "choice", index: 0 },
+        sourceMd: "原始片段",
+      },
+    }).question;
+    expect(stripped).not.toHaveProperty("teacherComment");
+    expect(stripped).not.toHaveProperty("answers");
+    expect(stripped).not.toHaveProperty("sourceMd");
+    // release.answers 走 questionAnswersSchema：kind 非法整体拒（不静默降级）
+    expect(
+      notebookRoundSchema.safeParse({
+        ...ROUND_BASE,
+        release: { answers: { kind: "bogus" }, solutionMd: null },
+      }).success,
+    ).toBe(false);
+    // 无标准答案题（主观题）：answers null 合法
+    expect(
+      notebookRoundSchema.safeParse({
+        ...ROUND_BASE,
+        release: { answers: null, solutionMd: null },
+      }).success,
+    ).toBe(true);
   });
 });

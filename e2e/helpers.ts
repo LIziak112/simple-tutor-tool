@@ -39,7 +39,8 @@ export async function expectResultCount(
     .getByText(label, { exact: true })
     .locator("..");
   await expect(metric).toBeVisible();
-  await expect(metric).toHaveText(`${label}${count}题`);
+  // 「待批」另有独立的待自评说明，数字断言只核对该统计项的主定义。
+  await expect(metric.locator("dd").first()).toHaveText(`${count}题`);
 }
 
 // ---------- 教师 API 会话 ----------
@@ -633,10 +634,98 @@ export async function handwriteOneStroke(
   }
 }
 
+// ---------- 练习反馈升级（2026-10）spec 共用链路 ----------
+
+/** 导入练习单元进课程并放开可见（D23-3 导入兼容路径默认隐藏） */
+export async function importUnitToCourse(
+  request: APIRequestContext,
+  courseId: string,
+  unitName: string,
+  markdown: string,
+): Promise<void> {
+  const res = await request.post("/api/teacher/import/commit", {
+    data: { markdown, filename: `${unitName}.md`, courseId },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `导入练习单元失败：HTTP ${res.status()} ${await res.text()}`,
+    );
+  }
+  await setCourseItemVisible(request, courseId, unitName, true);
+}
+
+/** 造一名专属学生并加入课程（登录名与显示名由调用方给定，便于各 spec 隔离），返回学生 id 与链接 token */
+export async function prepareCourseStudent(
+  request: APIRequestContext,
+  courseId: string,
+  loginName: string,
+  displayName: string,
+): Promise<{ id: string; linkToken: string }> {
+  await createStudentViaApi(request, displayName, loginName);
+  const student = await getStudentViaApi(request, loginName);
+  await addCourseMemberViaApi(request, courseId, student.id);
+  return student;
+}
+
+/** 学生链接登录并进入课程单元落地页（开始练习前） */
+export async function openUnitLanding(
+  page: Page,
+  linkToken: string,
+  courseId: string,
+  courseName: string,
+  unitName: string,
+): Promise<void> {
+  await page.goto(`/s/${linkToken}`);
+  await page.waitForURL("**/s/home");
+  await page.getByRole("link", { name: `打开课程 ${courseName}` }).click();
+  await page.waitForURL(`**/s/courses/${courseId}`);
+  await page
+    .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
+    .click();
+  await page.waitForURL(
+    `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
+  );
+}
+
+/** 选中某题的判断/单选选项（radio 祖先 label 点击） */
+export async function chooseAnswer(
+  page: Page,
+  questionNo: number,
+  optionName: string,
+  exact = false,
+): Promise<void> {
+  const card = page.locator(`article[aria-label="第 ${questionNo} 题"]`);
+  await card
+    .getByRole("radio", { name: optionName, exact })
+    .locator("xpath=ancestor::label[1]")
+    .click();
+}
+
+/**
+ * 等草稿离开在途态再触发提交类动作（防缺稿明确选择弹层）。
+ * 真实在途文案集出自 summarizeAttemptSaveStatus：正在保存到本机／正在同步／
+ * 正在恢复／等待同步；稳态失败文案（本机保存失败、冲突等）不在途、立即放行，
+ * 由后续断言暴露。勿改回 `.not.toContain("保存中")`——文案集里没有该串，恒真。
+ */
+export async function waitForDraftSaved(page: Page): Promise<void> {
+  await expect
+    .poll(async () => page.getByTestId("draft-status").textContent(), {
+      timeout: 15_000,
+    })
+    .not.toMatch(/正在保存|正在同步|正在恢复|等待同步/);
+}
+
+/** 等草稿进入稳态「全部已保存」（本机 + 服务端一致） */
+export async function waitForAllSaved(page: Page): Promise<void> {
+  await expect
+    .poll(async () => page.getByTestId("draft-status").textContent())
+    .toBe("全部已保存");
+}
+
 // ---------- 学生端响应泄露监控 ----------
 
-/** 与服务端 assert-no-leak 同口径的禁键集合（键名精确匹配） */
-const FORBIDDEN_EXACT_KEYS = new Set([
+/** 与服务端 assert-no-leak 同口径的禁键集合（键名精确匹配；供监控与各 spec 键级断言复用） */
+export const FORBIDDEN_EXACT_KEYS = new Set([
   "answer",
   "answers",
   "answerJson",
@@ -651,7 +740,7 @@ const FORBIDDEN_EXACT_KEYS = new Set([
 ]);
 
 /** 禁键前缀（solution / solutionMd / solutionJson …） */
-const FORBIDDEN_KEY_PREFIXES = ["solution"];
+export const FORBIDDEN_KEY_PREFIXES = ["solution"];
 
 /** 公开计数字段白名单（允许） */
 const ALLOWED_EXACT_KEYS = new Set(["hintCount", "hintsUsed"]);
@@ -672,12 +761,68 @@ const SECRET_EXCERPTS = [
 /** 泄露监控句柄：测试末尾取 violations 断言为空 */
 export interface LeakMonitor {
   violations: () => readonly string[];
+  /**
+   * 等在途响应体检查落定（有界：pending 清零即返回，最多等 2s）。
+   * 替代固定 waitForTimeout(800) 采样窗——慢响应体不再漏检，快场景不多等。
+   */
+  drain: () => Promise<void>;
+}
+
+/**
+ * 整卷交卷：POST /api/student/attempts/:id/submit（路径不含 /questions/，
+ * [^/]+ 不跨段，逐题提交 URL 不会误命中）——其后响应允许携带答案/详解。
+ */
+const WHOLE_ATTEMPT_SUBMIT_RE = /\/api\/student\/attempts\/[^/]+\/submit/;
+
+/**
+ * 逐题提交：POST /api/student/attempts/:id/questions/:questionId/submit
+ * （新协议与 lesson 旧协议共用同一 URL，按请求体分流）。
+ */
+const QUESTION_SUBMIT_RE =
+  /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/submit/;
+
+/**
+ * 题级反馈读取：GET /api/student/attempts/:id/questions/:questionId/feedback
+ * ——已提交题的当题反馈（含参考答案/详解）是设计内返回。
+ */
+const QUESTION_FEEDBACK_RE =
+  /\/api\/student\/attempts\/[^/]+\/questions\/[^/]+\/feedback/;
+
+/**
+ * 讲练开卷/重做：POST /api/student/lectures/:id/lesson/start|restart——
+ * released 只携带「已单题提交题」的当题结果（恒题级粒度，设计内返回）；
+ * 落地页 GET …/lesson/landing 只含计数与元信息，不在豁免之列。
+ */
+const LESSON_START_RE =
+  /\/api\/student\/lectures\/[^/]+\/lesson\/(?:start|restart)/;
+
+/** 从逐题提交回执里取 attempt 状态（新协议与 lesson 回执都携带 attempt 摘要） */
+function attemptStatusOf(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const { data } = parsed as { data?: unknown };
+    if (typeof data !== "object" || data === null) return undefined;
+    const { attempt } = data as { attempt?: unknown };
+    if (typeof attempt !== "object" || attempt === null) return undefined;
+    const { status } = attempt as { status?: unknown };
+    return typeof status === "string" ? status : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * 拦截 /api/student/* 响应做泄露检查（AGENTS.md 规则 3 的 E2E 层防线）：
- * - 交卷（POST …/submit）响应与其后的响应允许携带答案/详解（规则限制的是
- *   「未交卷题目」），用 submitted 标志切换；
+ * - 整卷交卷（POST /attempts/:id/submit，不含 /questions/）响应与其后的
+ *   响应允许携带答案/详解（规则限制的是「未交卷题目」），用 submitted 标志
+ *   切换；逐题提交不再误置 submitted——回执只释放「本题」反馈，之后的
+ *   草稿取卷等响应必须继续检查；仅当回执显示 attempt 已收尾（最后一题
+ *   提交在事务内自动收尾）才置 submitted；两处置位都只认 2xx 成功响应——
+ *   失败（409/5xx）时卷仍 draft，豁免不生效、响应体照常受检（fail-closed）；
+ * - 逐题提交回执、题级反馈读取（GET …/questions/:qid/feedback）与讲练
+ *   开卷/重做按端点豁免：三者都只携带「已提交题」的当题反馈，与服务端
+ *   授权投影同一口径；
  * - 键名级：JSON 递归遍历，对齐服务端 assert-no-leak 的禁键集合；
  * - 内容级：响应原文不含样例 md 的 hint/solution 片段（中文在 JSON 中不转义）。
  *   讲义详情（GET /api/student/lectures/:id）除外——讲义 markdown 是设计内的
@@ -693,20 +838,56 @@ export interface LeakMonitor {
 export function attachLeakMonitor(page: Page): LeakMonitor {
   const violations: string[] = [];
   let submitted = false;
+  // 在途响应体检查计数：drain() 等它清零，替代固定采样窗（欠检测竞态）
+  let pending = 0;
+  const drain = async (): Promise<void> => {
+    const deadline = Date.now() + 2_000;
+    while (pending > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
   page.on("response", (response) => {
     const url = response.url();
     if (!url.includes("/api/student/")) return;
-    if (url.includes("/submit")) {
+    const method = response.request().method();
+    // 整卷交卷成功：其后响应允许携带答案/详解（旧口径保留，URL 精确到不含
+    // /questions/）。仅 2xx 才置 submitted——失败响应（409 revision 冲突等）
+    // 时卷仍是 draft，停监会把该窗口的泄露变成不可见，fail-closed 继续走检查
+    if (
+      method === "POST" &&
+      response.ok() &&
+      WHOLE_ATTEMPT_SUBMIT_RE.test(url)
+    ) {
       submitted = true;
       return;
     }
     if (submitted) return;
+    // 逐题提交回执：本题反馈设计内返回，直接豁免；仅当回执显示 attempt 已
+    // 收尾（最后一题自动收尾）才置 submitted，进行中卷继续监控后续响应。
+    // 同样只豁免 2xx 成功回执——失败体（错误 JSON）走下方常规键级检查
+    if (method === "POST" && response.ok() && QUESTION_SUBMIT_RE.test(url)) {
+      pending++;
+      void response
+        .text()
+        .then((body) => {
+          const status = attemptStatusOf(body);
+          if (status !== undefined && status !== "draft") submitted = true;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          pending--;
+        });
+      return;
+    }
     const contentType = response.headers()["content-type"] ?? "";
     if (!contentType.includes("application/json")) return;
+    // 题级反馈读取 / 讲练开卷重做：只携带已提交题的当题反馈（设计内），豁免
+    if (QUESTION_FEEDBACK_RE.test(url) || LESSON_START_RE.test(url)) return;
     // 讲义详情响应：markdown 设计内全量下发，内容级片段检查豁免（见函数头注释）
     const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
     // 错题本响应：answers/solutionMd 设计内下发（豁免口径见函数头注释）
     const isWrongQuestions = /\/api\/student\/wrong-questions/.test(url);
+    pending++;
     void response
       .text()
       .then((body) => {
@@ -717,9 +898,12 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
             : undefined,
         });
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        pending--;
+      });
   });
-  return { violations: () => violations };
+  return { violations: () => violations, drain };
 }
 
 /** 错题本豁免键：对齐服务端 assertNoLeak({ allow: ["answers", "solutionMd"] }) */

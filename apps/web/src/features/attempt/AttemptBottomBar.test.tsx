@@ -33,6 +33,49 @@ function renderBar(
 }
 
 describe("AttemptBottomBar（离线交卷保护，T2.12）", () => {
+  it("手机列表将进度合并进唯一答题卡入口，底栏进度仅供桌面展示", () => {
+    const onOpenNavigator = vi.fn();
+    const { container } = renderBar({ answered: 2, total: 5, onOpenNavigator });
+    const navigator = screen.getByRole("button", { name: "答题卡" });
+    expect(navigator).toHaveTextContent("已填 2/5");
+    expect(navigator).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(navigator);
+    expect(onOpenNavigator).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector('[data-slot="attempt-desktop-progress"]'),
+    ).toHaveClass("hidden", "lg:flex");
+  });
+  it("单题末题主操作已是交卷时，不重复渲染全卷按钮", () => {
+    renderBar({
+      primaryActions: <button type="button">交卷</button>,
+      hideSubmit: true,
+    });
+    expect(screen.getAllByRole("button", { name: "交卷" })).toHaveLength(1);
+  });
+  it("单题紧凑布局：进度只出现一次，交卷降级为提前交卷", () => {
+    const { onOpenSubmit, container } = renderBar({
+      primaryActions: <button type="button">提交本题</button>,
+      progressLabel: "第 1 / 5 题 · 已提交 0 题",
+      progressValue: 0,
+      practiceSubmittedCount: 0,
+    });
+    expect(screen.getAllByText("第 1 / 5 题 · 已提交 0 题")).toHaveLength(1);
+    expect(screen.queryByText(/已填写/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "交卷" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "提前交卷" }));
+    expect(onOpenSubmit).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector('[data-slot="attempt-bottom-bar"]'),
+    ).toContainElement(screen.getByRole("button", { name: "提交本题" }));
+  });
+  it("单题紧凑布局离线时提前交卷同样禁用", () => {
+    renderBar({
+      primaryActions: <button type="button">提交本题</button>,
+      progressLabel: "第 1 / 5 题 · 已提交 0 题",
+      offline: true,
+    });
+    expect(screen.getByRole("button", { name: "提前交卷" })).toBeDisabled();
+  });
   it("在线：按钮可点击，无离线提示", () => {
     const { onOpenSubmit } = renderBar({
       answered: 2,

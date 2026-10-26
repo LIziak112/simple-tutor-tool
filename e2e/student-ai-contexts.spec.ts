@@ -166,7 +166,7 @@ async function connectInapp(
   expect(res.status()).toBe(201);
 }
 
-test.describe("SAI-33 四来源与结果页共存", () => {
+test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
   // 组内顺序运行；供应商状态按用例凭据隔离，跨文件可并行。
   test.describe.configure({ mode: "serial" });
 
@@ -239,8 +239,11 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
 
-      // —— 课程卷完成态：AI 复盘可用（attempt 已提交 → open_study）——
-      await page.getByRole("button", { name: "AI 复盘" }).click();
+      // —— 课程卷完成态：按题召唤 AI 助教（attempt 已提交 → open_study 复盘尺度）——
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
@@ -400,14 +403,17 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       await expect(page.getByText("已完成", { exact: true })).toBeVisible();
       await expect(page.getByText("答对 2 · 答错 0 · 待批 0")).toBeVisible();
 
-      // —— 结果页：来源「讲练」+ AI 复盘可用（两题均已 submittedAt）——
+      // —— 结果页：来源「讲练」+ 按题召唤 AI 助教（两题均已 submittedAt → 复盘尺度）——
       await page.getByRole("link", { name: "查看结果" }).click();
       await page.waitForURL("**/s/attempts/**");
       await expect(page.getByText("批改结果")).toBeVisible();
       await expect(
         page.getByText(`讲练：${lectureTitle} · 第 1 次`),
       ).toBeVisible();
-      await page.getByRole("button", { name: "AI 复盘" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
@@ -517,8 +523,11 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
 
-      // —— 结果页：AI 复盘开栏 + 单行操作栏逐项共存 ——
-      await page.getByRole("button", { name: "AI 复盘" }).click();
+      // —— 结果页：按题召唤 AI 助教开栏 + 单行操作栏逐项共存 ——
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
@@ -561,11 +570,13 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       ).toBeVisible();
       await page.getByRole("link", { name: "返回作答结果" }).click();
       await expect(resultCard).toBeInViewport();
-      // 历史返回后重开 AI 复盘仍可用（控制器持续挂载，不因导航丢状态）
-      await page.getByRole("button", { name: "AI 复盘" }).click();
+      // 历史返回后重开按题 AI 助教仍可用（控制器持续挂载，不因导航丢状态）
+      await resultCard
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
-        "历史返回后 AI 复盘仍可用",
+        "历史返回后 AI 助教仍可用",
       ).toBeEnabled();
 
       expect(leak.violations(), "全程学生端响应无禁键").toEqual([]);

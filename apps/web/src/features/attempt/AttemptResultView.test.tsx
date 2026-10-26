@@ -111,6 +111,8 @@ const DATA: AttemptResultData = {
           answers: { kind: "judge", value: true },
           solutionMd: "$0$ 是正数与负数的分界点。",
           answer: { kind: "judge", value: true },
+          answered: true,
+          studentFlag: null,
           autoCorrect: true,
           // D9：未批注 → null，finalCorrect 随 autoCorrect
           teacherMark: null,
@@ -132,6 +134,8 @@ const DATA: AttemptResultData = {
           answers: { kind: "choice", index: 1 },
           solutionMd: "故选 B。",
           answer: { kind: "choice", index: 0 },
+          answered: true,
+          studentFlag: null,
           autoCorrect: false,
           teacherMark: null,
           teacherComment: null,
@@ -156,6 +160,8 @@ const DATA: AttemptResultData = {
           },
           solutionMd: null,
           answer: { kind: "fill", values: ["1/2", ""] },
+          answered: true,
+          studentFlag: null,
           autoCorrect: false,
           teacherMark: null,
           teacherComment: null,
@@ -175,6 +181,8 @@ const DATA: AttemptResultData = {
           answers: null,
           solutionMd: null,
           answer: null,
+          answered: false,
+          studentFlag: null,
           autoCorrect: null,
           // D9：手写题未批 → 批注与最终判定全 null（待批）
           teacherMark: null,
@@ -496,9 +504,9 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
         : [{ ...baseUnit, questions: restrictedQuestions }],
   };
 
-  it("汇总卡替换为「已交卷，答案将在截止后公布」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
+  it("汇总卡替换为「PendingReleaseBanner」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
     render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
-    expect(screen.getByText(/已交卷，答案将在截止后公布/)).toBeInTheDocument();
+    expect(screen.getByText("🎉 作业已成功交卷！")).toBeInTheDocument();
     expect(screen.getByText(/截止时间：/)).toBeInTheDocument();
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     expect(screen.queryByText("60")).toBeNull();
@@ -506,7 +514,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(bodyText).not.toContain("答对");
     expect(bodyText).not.toContain("答错");
     expect(bodyText).not.toContain("待批");
-    expect(bodyText).toContain("已作答 3 题 / 共 4 题");
+    expect(bodyText).toContain("3 / 4 题");
     expect(
       screen.getByRole("heading", { name: "周末加练", level: 1 }),
     ).toBeInTheDocument();
@@ -515,12 +523,16 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     ).toBeInTheDocument();
   });
 
-  it("逐题卡只渲染本人作答内容：无对错图标、无参考答案、无详解；本人答案与已解锁提示保留", () => {
+  it("逐题卡只渲染本人作答内容：无对错图标、无详解、参考答案显示待公布提示；题头展示保存状态；本人答案与已解锁提示保留", () => {
     render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
     expect(screen.queryAllByLabelText("答对").length).toBe(0);
     expect(screen.queryAllByLabelText("答错").length).toBe(0);
     expect(screen.queryAllByLabelText("待批改").length).toBe(0);
-    expect(screen.queryAllByText("参考答案：").length).toBe(0);
+    expect(screen.getAllByText("答案已保存 · 待公布").length).toBe(3);
+    expect(screen.getAllByText("未作答").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("参考答案与详解将在截止后公布 🔒").length).toBe(
+      4,
+    );
     expect(screen.queryAllByRole("button", { name: /查看详解/ }).length).toBe(
       0,
     );
@@ -967,5 +979,68 @@ describe("订正区入口（T6R.15）", () => {
     const unreleased: AttemptResultData = { ...DATA, answersReleased: false };
     render(<AttemptResultView data={unreleased} onBackHome={vi.fn()} />);
     expect(correctionStubDatasets()).toHaveLength(4);
+  });
+});
+
+describe("练习反馈节奏摘要（M4-D3 §13.8）", () => {
+  const WORKFLOW_PER_QUESTION: NonNullable<
+    AttemptResultData["practiceWorkflow"]
+  > = {
+    version: 1,
+    feedbackMode: "per_question",
+    revision: 0,
+    canChangeFeedback: false,
+    allowedFeedbackModes: ["per_question"],
+    canSubmitQuestion: false,
+    restrictionReason: null,
+    releaseAt: null,
+  };
+  const WORKFLOW_AFTER_ATTEMPT: NonNullable<
+    AttemptResultData["practiceWorkflow"]
+  > = {
+    ...WORKFLOW_PER_QUESTION,
+    feedbackMode: "after_attempt",
+    allowedFeedbackModes: ["after_attempt"],
+  };
+
+  it("v1 逐题卷显示「作答时逐题反馈」", () => {
+    render(
+      <AttemptResultView
+        data={{ ...DATA, practiceWorkflow: WORKFLOW_PER_QUESTION }}
+        onBackHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/反馈节奏：作答时逐题反馈/)).toBeInTheDocument();
+  });
+
+  it("v1 整卷卷显示「交卷后反馈」", () => {
+    render(
+      <AttemptResultView
+        data={{ ...DATA, practiceWorkflow: WORKFLOW_AFTER_ATTEMPT }}
+        onBackHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/反馈节奏：交卷后反馈/)).toBeInTheDocument();
+    expect(screen.queryByText(/按教师公布时间/)).toBeNull();
+  });
+
+  it("legacy/lesson 卷（无 practiceWorkflow）不显示节奏摘要行", () => {
+    renderView();
+    expect(screen.queryByText(/反馈节奏：/)).toBeNull();
+  });
+
+  it("after_due 未公布时注明「按教师公布时间」", () => {
+    render(
+      <AttemptResultView
+        data={{
+          ...DATA,
+          answersReleased: false,
+          practiceWorkflow: WORKFLOW_AFTER_ATTEMPT,
+        }}
+        onBackHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/反馈节奏：交卷后反馈/)).toBeInTheDocument();
+    expect(screen.getByText(/按教师公布时间/)).toBeInTheDocument();
   });
 });

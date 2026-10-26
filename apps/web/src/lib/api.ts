@@ -9,6 +9,13 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
+  type AiAttemptReviewAction,
+  type AiAttemptReviewCreateData,
+  type AiAttemptReviewCreateRequest,
+  type AiAttemptReviewDetailData,
+  type AiAttemptReviewListData,
+  type AiAttemptReviewPreviewData,
+  type AiAttemptReviewTaskPublic,
   type AiBatchCreateData,
   type AiBatchReviewCreateRequest,
   type AiConnectionCreateData,
@@ -66,13 +73,16 @@ import {
   type AttemptAnswerSaveRequest,
   type AttemptDetailData,
   type AttemptEvent,
+  type AttemptFlagData,
   type AttemptMaterialRevisions,
   type AttemptSource,
   type AttemptStartData,
   type AttemptStatus,
   type AttemptSubmitRequest,
+  type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   apiResponseSchema,
+  attemptFlagDataSchema,
   attemptMaterialRevisionsSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
@@ -135,6 +145,11 @@ import {
   type NoteUploadMetaInput,
   type NoteVersionReceipt,
   type PendingMarkListData,
+  type PracticeQuestionFeedbackData,
+  type PracticeQuestionSubmitData,
+  type PracticeQuestionSubmitRequest,
+  type PracticeWorkflowStartOptions,
+  type PracticeWorkflowUpdateRequest,
   type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
@@ -144,6 +159,7 @@ import {
   type ReportListData,
   type ReviewPackPreviewData,
   type ReviewPackRole,
+  type SelfReviewRequest,
   type SharedFileList,
   type SharedImportRequest,
   type SharedPreviewData,
@@ -155,6 +171,7 @@ import {
   type StudentCourseListData,
   type StudentCreateData,
   type StudentCreateRequest,
+  type StudentFlag,
   type StudentLectureDetail,
   type StudentLectureListData,
   type StudentListData,
@@ -164,11 +181,13 @@ import {
   type StudentQuickButtonsData,
   type StudentQuickButtonsPutRequest,
   type StudentRecordsData,
+  type StudentRecordsQuery,
   type StudentResetLinkData,
   type StudentResetPasswordData,
   type StudentSummary,
   type StudentUnitLandingData,
   type StudentUpdateRequest,
+  selfReviewDataSchema,
   type TeacherApiTokenData,
   type TeacherApiTokenResetData,
   type TeacherAssignment,
@@ -177,11 +196,14 @@ import {
   type TeacherAttemptListData,
   type TeacherInfo,
   type TeacherLoginRequest,
+  type TeacherPracticeFeedbackSettings,
+  type TeacherPracticeFeedbackSettingsUpdateRequest,
   type TeacherRegisterRequest,
   type TeacherSetupRequest,
   type TeacherStatusData,
   type UnitMetaData,
   type UnitMetaUpdate,
+  type WrongPracticeScope,
   type WrongQuestionsData,
 } from "@tutor/contract";
 import { hc } from "hono/client";
@@ -836,13 +858,17 @@ export function fetchStudentLectureApi(
 /**
  * 创建或取回进行中的 attempt（幂等：一个作业一人一份进行中）。
  * 已交卷时返回已交的那份（status=submitted/graded，前端直接进结果视图）。
+ * M3-D1.5：options 缺省不发 body（旧协议）；携带 workflowVersion=1 时服务端
+ * 按新协议建卷（教师约束由服务端裁决，客户端只传学生偏好）。
  */
 export function startAttemptApi(
   assignmentId: string,
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.assignments[":id"].attempt.$post({
       param: { id: assignmentId },
+      ...(options !== undefined ? { json: { ...options } } : {}),
     }),
   );
 }
@@ -865,14 +891,18 @@ export function fetchStudentUnitLandingApi(
  * 课程练习入口（D10）：存在未交卷作答返回它（继续作答）；否则新建
  * attemptNo+1（再做一次，从空白开始）。每次调用服务端都校验 D5 可见性——
  * 移出成员 403 COURSE_ACCESS_DENIED / 条目不可见 404 NOT_FOUND。
+ * M3-D1.5：options 缺省不发 body（旧协议）；携带 workflowVersion=1 时服务端
+ * 按新协议建卷（教师约束由服务端裁决，客户端只传学生偏好）。
  */
 export function startCourseAttemptApi(
   courseId: string,
   unitId: string,
+  options?: PracticeWorkflowStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.courses[":id"].units[":unitId"].attempts.$post({
       param: { id: courseId, unitId },
+      ...(options !== undefined ? { json: { ...options } } : {}),
     }),
   );
 }
@@ -884,11 +914,21 @@ export function startCourseAttemptApi(
  * tab + 分组圈定（顺序即组卷题序）。服务端校验「∈ 错题本聚合且快照可用」，
  * 不在聚合内的题静默剔除；全部被剔 → 400 WRONG_PRACTICE_EMPTY（提示刷新）。
  * 返回新 wrong 来源 attempt 摘要（跳 /s/attempts/:id 走既有答题会话）。
+ * M3-D1.5：options 与 questionIds 同体下发；缺省维持旧协议。
  */
 export function startWrongPracticeApi(
   questionIds: string[],
+  options?: PracticeWorkflowStartOptions,
+  /** 建卷范围快照（#6980-2）：随卷落库，记录/轮次史标题「练的是什么」 */
+  scope?: WrongPracticeScope,
 ): Promise<AttemptStartData> {
-  const args = { json: { questionIds } };
+  const args = {
+    json: {
+      questionIds,
+      ...(options !== undefined ? { ...options } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+    },
+  };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
 }
 
@@ -938,6 +978,39 @@ export function submitAttemptApi(
   return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
 }
 
+/** 学生声明对照结果；参考答案仍由既有公布接口提供。 */
+export async function saveSelfReviewApi(
+  attemptId: string,
+  questionId: string,
+  request: SelfReviewRequest,
+) {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  const data = await callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"][
+      "self-review"
+    ].$post(args),
+  );
+  return selfReviewDataSchema.parse(data);
+}
+
+/**
+ * 做题时标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409）；
+ * 请求/回执只有标志位，不含任何作答内容。
+ */
+export function setStudentFlagApi(
+  attemptId: string,
+  questionId: string,
+  flag: StudentFlag | null,
+): Promise<AttemptFlagData> {
+  const args = {
+    param: { id: attemptId, questionId },
+    json: { flag },
+  };
+  return callApi(() =>
+    api.api.student.attempts[":id"].flags[":questionId"].$put(args),
+  ).then((data) => attemptFlagDataSchema.parse(data));
+}
+
 /**
  * attempt 详情：未交 = 草稿视图（公开题目 + 本人草稿 + 已解锁提示回显）；
  * 已交 = 结果视图（快照 + 参考答案 + 详解 + 判分 + 已解锁提示回看）。
@@ -947,6 +1020,27 @@ export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
   return callApi(() =>
     api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
   );
+}
+
+/**
+ * 更改反馈节奏（M5-D3，PATCH /attempts/:id/workflow）：首次任何提交前可改，
+ * 请求体按契约只含 feedbackMode + workflowRevision（CAS 基线，M1b strict
+ * 契约无 workflowVersion 字段）；返回更新后的裁决投影与题级进度白名单
+ * （无答案秘密）。409 WORKFLOW_REVISION_STALE = 节奏已在别处修改（调用方
+ * 重取详情后提示重试）；WORKFLOW_LEGACY / ALREADY_SUBMITTED /
+ * QUESTION_ALREADY_SUBMITTED / WORKFLOW_MODE_NOT_ALLOWED 等错误码由调用方
+ * 透传服务端 message 就地提示。
+ */
+export function updateAttemptWorkflowApi(
+  attemptId: string,
+  input: PracticeWorkflowUpdateRequest,
+): Promise<AttemptWorkflowUpdateData> {
+  // 沿用 updateCourseApi 等既有 $patch 模式：服务端路由为纯 handler（无
+  // zValidator），hc 静态输入不含 json，内联字面量会触发多余属性检查——
+  // 提为变量绕过（json 类型安全由入参 PracticeWorkflowUpdateRequest 契约
+  // 类型保证），运行时 hc 正常序列化 json 请求体。
+  const args = { param: { id: attemptId }, json: input };
+  return callApi(() => api.api.student.attempts[":id"].workflow.$patch(args));
 }
 
 export async function fetchAttemptMaterialRevisionsApi(
@@ -1052,6 +1146,43 @@ export function submitLessonQuestionApi(
   const args = { param: { id: attemptId, questionId }, json: request };
   return callApi(() =>
     api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
+}
+
+/**
+ * 新协议逐题提交（M2，POST /attempts/:id/questions/:questionId/submit 同一
+ * URL 按 workflowVersion 字段分流）：请求体为 practiceQuestionSubmitRequest
+ * strict 契约（协议门禁 workflowVersion=1 + workflowRevision CAS + 题目版本
+ * 引用 + 答案版本 CAS + 幂等键 + 必填证据声明）；回执四键白名单（本题反馈
+ * 投影 + 全卷题级进度 + 最新 attempt 摘要 + 工作流裁决投影），响应
+ * private,no-store。json 以独立变量传入的原因同 updateQuestion
+ * （parseJsonBody 服务端校验）。
+ */
+export function submitPracticeQuestionApi(
+  attemptId: string,
+  questionId: string,
+  request: PracticeQuestionSubmitRequest,
+): Promise<PracticeQuestionSubmitData> {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
+}
+
+/**
+ * 题级反馈读取（M2，GET /attempts/:id/questions/:questionId/feedback）：
+ * data 单键承载共用授权投影（与提交回执 feedback 同一 schema 对象）；按
+ * 读取时刻裁决四态，未授权形态零题目秘密。调用方须先按 questionProgress
+ * 的 submittedAt+feedbackReadable 确认可读（不为未提交/不可读题发请求）。
+ */
+export function fetchPracticeQuestionFeedbackApi(
+  attemptId: string,
+  questionId: string,
+): Promise<PracticeQuestionFeedbackData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].feedback.$get({
+      param: { id: attemptId, questionId },
+    }),
   );
 }
 
@@ -2234,16 +2365,9 @@ export async function downloadTeacherExportCsv(
  * limit / offset 恒发送（分页）。from / to 为带 Z 后缀的 UTC ISO（页面把
  * datetime-local 本地值经 lib/time.localInputToUtcIso 转换后传入）。
  */
-export interface StudentRecordsParams {
-  sourceType?: AttemptSource | undefined;
-  courseId?: string | undefined;
-  assignmentId?: string | undefined;
-  status?: AttemptStatus | undefined;
-  from?: string | undefined;
-  to?: string | undefined;
-  limit: number;
-  offset: number;
-}
+export type StudentRecordsParams = Omit<StudentRecordsQuery, "sort"> & {
+  sort?: StudentRecordsQuery["sort"] | undefined;
+};
 
 /**
  * 我的记录（GET /api/student/records，D10）：本人全部作答的时间倒序索引
@@ -2254,6 +2378,7 @@ export function fetchStudentRecordsApi(
   params: StudentRecordsParams,
 ): Promise<StudentRecordsData> {
   const query: Record<string, string> = {};
+  if (params.sort !== undefined) query.sort = params.sort;
   if (params.sourceType !== undefined) query.sourceType = params.sourceType;
   if (params.courseId !== undefined) query.courseId = params.courseId;
   if (params.assignmentId !== undefined) {
@@ -2530,6 +2655,25 @@ export function saveCapabilityProfile(
   );
 }
 
+// ---------- 教师练习反馈默认策略（M1b 设置页「教学」区） ----------
+
+/**
+ * 读取当前教师的练习反馈默认策略（null = 未配置——仅对新课程自由练习/错题
+ * 重练按「由学生选择」缺省生效；设置页据此展示有效默认值）。
+ */
+export function fetchPracticeFeedbackSettings(): Promise<TeacherPracticeFeedbackSettings> {
+  return callApi(() => api.api.teacher.settings["practice-feedback"].$get());
+}
+
+/** 覆盖写入策略（二选一；服务端按教师会话定位，域隔离） */
+export function savePracticeFeedbackSettings(
+  request: TeacherPracticeFeedbackSettingsUpdateRequest,
+): Promise<TeacherPracticeFeedbackSettings> {
+  return callApi(() =>
+    api.api.teacher.settings["practice-feedback"].$put({ json: request }),
+  );
+}
+
 // ---------- 学生端 AI 伴学教学配置（SAI-07；路由 SAI-06，契约 student-ai-policy.ts） ----------
 
 /** 覆盖对象（学生 / 作业二选一；服务端 AiPolicySubject 的 web 侧形状） */
@@ -2785,6 +2929,65 @@ export function createStudentAiTaskApi(
  * 新幂等键。路由用 parseJsonBodyWithCode 手动解析（同 share 口径），hc 推断
  * 不出 json 入参——走同构 fetch。
  */
+/**
+ * 整体复盘预览（GET /ai/attempt-reviews/preview，任务 1ef854c7）：范围题数、
+ * 四类计数与不透明预览版本——创建必须携带本版本，范围/判分变化后 409 重预览。
+ */
+export function fetchStudentAiAttemptReviewPreviewApi(
+  attemptId: string,
+): Promise<AiAttemptReviewPreviewData> {
+  return callApi(() =>
+    fetch(
+      `/api/student/ai/attempt-reviews/preview?attemptId=${encodeURIComponent(attemptId)}`,
+    ),
+  );
+}
+
+/** 整体复盘任务列表（GET /ai/attempt-reviews，按 attempt 过滤，取前 50 条） */
+export function listStudentAiAttemptReviewsApi(
+  attemptId: string,
+): Promise<AiAttemptReviewListData> {
+  return callApi(() =>
+    fetch(
+      `/api/student/ai/attempt-reviews?attemptId=${encodeURIComponent(attemptId)}&limit=50`,
+    ),
+  );
+}
+
+/** 整体复盘任务创建（POST /ai/attempt-reviews，channel 固定 mcp） */
+export function createStudentAiAttemptReviewApi(
+  request: AiAttemptReviewCreateRequest,
+): Promise<AiAttemptReviewCreateData> {
+  return callApi(() =>
+    fetch("/api/student/ai/attempt-reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+/** 整体复盘详情（GET /ai/attempt-reviews/:id）：任务 + 已收到的结构化报告 */
+export function fetchStudentAiAttemptReviewDetailApi(
+  taskId: string,
+): Promise<AiAttemptReviewDetailData> {
+  return callApi(() => fetch(`/api/student/ai/attempt-reviews/${taskId}`));
+}
+
+/** 整体复盘显式动作（POST /ai/attempt-reviews/:id/actions） */
+export function postStudentAiAttemptReviewActionApi(
+  taskId: string,
+  action: AiAttemptReviewAction,
+): Promise<AiAttemptReviewTaskPublic> {
+  return callApi(() =>
+    fetch(`/api/student/ai/attempt-reviews/${taskId}/actions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    }),
+  );
+}
+
 export function createStudentAiBatchReviewApi(
   request: AiBatchReviewCreateRequest,
 ): Promise<AiBatchCreateData> {

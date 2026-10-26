@@ -7,6 +7,8 @@ import type {
 import { displayStemMd } from "@tutor/md-dsl";
 import {
   CircleAlert,
+  CircleHelp,
+  CircleX,
   Eye,
   EyeOff,
   Flag,
@@ -54,6 +56,7 @@ import {
 } from "@/features/notes/note-layout";
 import { currentNoteSession } from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import {
   HANDWRITTEN_TYPES,
@@ -88,6 +91,8 @@ function QuestionMeta({
   answer,
   flagged,
   onToggleFlag,
+  unsure,
+  onToggleUnsure,
   formalInkPresence,
   tools,
 }: {
@@ -96,12 +101,17 @@ function QuestionMeta({
   answer: StudentAnswer | undefined;
   flagged: boolean;
   onToggleFlag: (() => void) | undefined;
+  /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
+  unsure: boolean;
+  onToggleUnsure: (() => void) | undefined;
   formalInkPresence: boolean;
   tools: {
     aiTrigger?: ReactNode;
     annotationOpen: boolean;
     paperOpen: boolean;
     paperEnabled: boolean;
+    /** 已提交只读：圈画与草稿/手写编辑入口一并隐藏（更多菜单保留） */
+    editLocked?: boolean;
     annotationCount: number;
     paperCount: number;
     annotationProblem: boolean;
@@ -140,6 +150,14 @@ function QuestionMeta({
             className="size-3.5 fill-primary text-primary"
           />
         )}
+        {/* #6980-4（审查 P2-7）：题卡头部琥珀问号——手机端/单题模式收起答题
+        卡时，点完菜单也能看到「标过不会」的即时反馈 */}
+        {unsure && (
+          <CircleHelp
+            aria-label="标过不会"
+            className="size-3.5 text-amber-600 dark:text-amber-400"
+          />
+        )}
         {detailsOpen && (
           <div className="contents">
             <span
@@ -164,7 +182,7 @@ function QuestionMeta({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {tools && (
+        {tools && !tools.editLocked && (
           <Button
             type="button"
             variant="ghost"
@@ -190,7 +208,7 @@ function QuestionMeta({
             )}
           </Button>
         )}
-        {tools?.paperEnabled && (
+        {tools?.paperEnabled && !tools.editLocked && (
           <Button
             type="button"
             variant="ghost"
@@ -266,6 +284,12 @@ function QuestionMeta({
                 </DropdownMenuItem>
               </>
             )}
+            {onToggleUnsure && (
+              <DropdownMenuItem onSelect={onToggleUnsure}>
+                {unsure ? <CircleX aria-hidden /> : <CircleHelp aria-hidden />}
+                {unsure ? "取消不会标记" : "标记不会（进错题本）"}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -288,11 +312,14 @@ export function AttemptQuestionCard({
   onHintUnlocked,
   flagged = false,
   onToggleFlag,
+  unsure = false,
+  onToggleUnsure,
   formalInkPresence = false,
   onInkPresenceChange,
   assignmentTitle = "练习",
   footer,
   aiTrigger,
+  readOnly = false,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -317,6 +344,9 @@ export function AttemptQuestionCard({
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
   flagged?: boolean;
   onToggleFlag?: () => void;
+  /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
+  unsure?: boolean;
+  onToggleUnsure?: () => void;
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
   assignmentTitle?: string;
@@ -324,6 +354,8 @@ export function AttemptQuestionCard({
   footer?: ReactNode;
   /** 本题 AI 助教入口；由作答会话按题绑定。 */
   aiTrigger?: ReactNode;
+  /** 已提交原位只读（M3-D2 §11-2）：同宿主同题干位置，隐藏编辑入口、输入只读 */
+  readOnly?: boolean;
 }) {
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
@@ -360,6 +392,9 @@ export function AttemptQuestionCard({
   const [exportOpen, setExportOpen] = useState(false);
   const layoutPreference = useNoteLayoutPreference();
   const sideUsable = useNoteSideUsable(articleRef, layoutPreference === "auto");
+  // AI 侧栏对照激活时「自动」回退上下排布（M4-D2 §12.1）：题干、草稿与
+  // AI 对照不成四列并排；显式布局偏好仍由学生自决，不被 AI 布局拉扯。
+  const compareActive = useAiCompareActive();
   const hasScratchLayout =
     inkEnabled &&
     attemptId !== undefined &&
@@ -367,7 +402,12 @@ export function AttemptQuestionCard({
   // 只有实际展开草稿才分栏；已有标画由固定逻辑画面整体缩放。
   const layout =
     hasScratchLayout && noteOpen
-      ? effectiveNoteLayout(layoutPreference, sideUsable)
+      ? effectiveNoteLayout(
+          layoutPreference === "auto" && compareActive
+            ? "below"
+            : layoutPreference,
+          sideUsable,
+        )
       : "below";
   const hasEditor = editor != null;
   // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。
@@ -392,6 +432,7 @@ export function AttemptQuestionCard({
   const noteLayer =
     inkEnabled &&
     attemptId !== undefined &&
+    !readOnly &&
     !HANDWRITTEN_TYPES.has(question.type) ? (
       <NoteLayer
         attemptId={attemptId}
@@ -420,6 +461,7 @@ export function AttemptQuestionCard({
             question={question}
             answer={answer}
             onAnswer={onAnswer}
+            readOnly={readOnly}
           />
         </QuestionAnnotationOverlay>
       ) : (
@@ -427,27 +469,30 @@ export function AttemptQuestionCard({
           question={question}
           answer={answer}
           onAnswer={onAnswer}
+          readOnly={readOnly}
         />
       )}
 
-      {HANDWRITTEN_TYPES.has(question.type) && attemptId !== undefined && (
-        <HandwrittenControls
-          ariaPrefix={`第 ${index + 1} 题`}
-          attemptId={attemptId}
-          questionId={question.id}
-          stemMd={question.stemMd}
-          answer={answer}
-          onAnswer={onAnswer}
-          registerController={registerInkController}
-          onInkStroke={onInkStroke}
-          onInkEdit={onInkEdit}
-          onInkFullscreen={onInkFullscreen}
-          onInkPresenceChange={onInkPresenceChange}
-          expanded={noteOpen}
-          onExpandedChange={setNoteOpen}
-          showExpandTrigger={false}
-        />
-      )}
+      {HANDWRITTEN_TYPES.has(question.type) &&
+        attemptId !== undefined &&
+        !readOnly && (
+          <HandwrittenControls
+            ariaPrefix={`第 ${index + 1} 题`}
+            attemptId={attemptId}
+            questionId={question.id}
+            stemMd={question.stemMd}
+            answer={answer}
+            onAnswer={onAnswer}
+            registerController={registerInkController}
+            onInkStroke={onInkStroke}
+            onInkEdit={onInkEdit}
+            onInkFullscreen={onInkFullscreen}
+            onInkPresenceChange={onInkPresenceChange}
+            expanded={noteOpen}
+            onExpandedChange={setNoteOpen}
+            showExpandTrigger={false}
+          />
+        )}
 
       {/* 分步提示（T2.11）：hintCount>0 且提供解锁回调（页面持有已解锁状态） */}
       {question.hintCount > 0 &&
@@ -465,6 +510,7 @@ export function AttemptQuestionCard({
       {/* T6R.20 题干标注（圈画题干）：所有题型的附加折叠区——标注模式外
           保留原作答控件（方案 §10）；base ready 才挂画布（层内 gate） */}
       {attemptId !== undefined &&
+        !readOnly &&
         (inlineQuestion === null || annotationOpen) && (
           <AnnotationLayer
             attemptId={attemptId}
@@ -520,6 +566,10 @@ export function AttemptQuestionCard({
         answer={answer}
         flagged={flagged}
         onToggleFlag={onToggleFlag}
+        unsure={unsure}
+        // 行级锁同步（#6980-4 审查 P1-3）：单题已提交（readOnly）后服务端
+        // 拒改标记，菜单项同步隐藏，不给「点了必失败」的入口
+        onToggleUnsure={readOnly ? undefined : onToggleUnsure}
         formalInkPresence={formalInkPresence}
         tools={
           attemptId === undefined
@@ -529,6 +579,7 @@ export function AttemptQuestionCard({
                 annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,
+                editLocked: readOnly,
                 annotationCount: annotationRecord?.doc?.strokes.length ?? 0,
                 paperCount: noteRecord?.doc?.ink.strokes.length ?? 0,
                 annotationProblem:

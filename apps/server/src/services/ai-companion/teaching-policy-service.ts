@@ -9,7 +9,15 @@ import type { Db } from "../../db/client.ts";
 import type { Attempt, ResponseRow } from "../../db/schema.ts";
 import { responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
-import { attemptTeacherId, requireUsableAttempt } from "../attempt-service.ts";
+import {
+  attemptTeacherId,
+  lessonQuestionSubmitted,
+  requireUsableAttempt,
+} from "../attempt-service.ts";
+import {
+  isPerQuestionV1Attempt,
+  practiceProtocolOf,
+} from "../practice-workflow-wiring.ts";
 
 /**
  * SAI-04 统一教学策略裁决（B02）：唯一 AI 权限口径，创建、领取、回信交付、
@@ -156,14 +164,25 @@ function requireAttemptResponse(
  * - lesson：题级 submittedAt ≠ null 即完成——邻题提交不解锁本题，
  *   整卷收尾对剩余行写交卷时刻（正常不存在 status=submitted 而行空值；
  *   口径按题级行值锁定，不回看 attempt 级状态）；
- * - assignment / course / wrong：attempt.status ∈ {submitted, graded} 即完成
- *   ——填完/交卷失败/收起纸面/到截止（draft 恒未完成）、以前做过同题
- *   （wrong 新卷按本次状态）均不算。
- * 不读时钟、不做归属校验（归属/作废/课程失权由 requireUsableAttempt 把关）。
+ * - v1 逐题卷（M4-D1，总计划 §12.2）：与 lesson 同语义，行级 submittedAt
+ *   ≠ null 即完成——本题真正单题提交（落库）才进入复盘；邻题提交、已选
+ *   选项、切题、网络提交未知都不算完成；整卷收尾同样对剩余行写交卷时刻
+ *   （同 lesson，见 attempt-service rowSubmittedAtPatch）。post_submit_only
+ *   下提交后本题开放复盘、邻题仍按作答中裁决；guided_only 完成后同样按
+ *   open_study 复盘尺度；
+ * - v1 after_attempt 卷与历史旧协议卷：attempt.status ∈ {submitted, graded}
+ *   即完成——填完/交卷失败/收起纸面/到截止（draft 恒未完成）、以前做过同题
+ *   （wrong 新卷按本次状态）均不算；行级残留值不改变整卷语义。
+ * 协议形态经 practiceProtocolOf / isPerQuestionV1Attempt 单一出处判别，
+ * 不在本模块另写 sourceType 分支；不读时钟、不做归属校验（归属/作废/课程
+ * 失权由 requireUsableAttempt 把关）。
  */
 function phaseOfRows(attempt: Attempt, response: ResponseRow): AiQuestionPhase {
-  if (attempt.sourceType === "lesson") {
-    return response.submittedAt !== null ? "completed" : "answering";
+  if (
+    practiceProtocolOf(attempt) === "lesson" ||
+    isPerQuestionV1Attempt(attempt)
+  ) {
+    return lessonQuestionSubmitted(response) ? "completed" : "answering";
   }
   return attempt.status === "submitted" || attempt.status === "graded"
     ? "completed"
@@ -171,9 +190,10 @@ function phaseOfRows(attempt: Attempt, response: ResponseRow): AiQuestionPhase {
 }
 
 /**
- * "本题完成"判定（服务端唯一口径，技术方案 §2.3 表逐行实现）。
- * 题目不在本卷 → 404 QUESTION_NOT_FOUND；作废卷（abandonedAt ≠ null）的一切
- * AI 读写拒绝由调用方经 requireUsableAttempt 前置把关（ATTEMPT_ABANDONED）。
+ * "本题完成"判定（服务端唯一口径，技术方案 §2.3 表逐行实现；M4-D1 起 v1
+ * 逐题卷按行级 submittedAt——见 phaseOfRows）。题目不在本卷 → 404
+ * QUESTION_NOT_FOUND；作废卷（abandonedAt ≠ null）的一切 AI 读写拒绝由
+ * 调用方经 requireUsableAttempt 前置把关（ATTEMPT_ABANDONED）。
  */
 export function questionPhaseOf(
   db: Db,

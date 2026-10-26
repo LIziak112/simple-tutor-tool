@@ -24,6 +24,8 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
+import { practiceDefaultsOf } from "./practice-workflow-service";
+import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -179,9 +181,11 @@ export function courseUnitAttemptSummaries(
 
   // 待批题数（按 attempt 聚合后归到单元；draft 恒 0）
   const pendingByAttempt = pendingMarkCounts(db, rows);
+  const resultCounts = attemptResultCounts(db, rows);
 
   interface CellState extends StudentUnitAttemptSummary {
     firstSubmittedSeen: boolean;
+    attemptIds: string[];
   }
   const byUnit = new Map<string, CellState>();
   for (const row of rows) {
@@ -197,7 +201,9 @@ export function courseUnitAttemptSummaries(
         bestScore: null,
         pendingCount: 0,
         firstSubmittedSeen: false,
+        attemptIds: [],
       } satisfies CellState);
+    cell.attemptIds.push(row.id);
     cell.count += 1;
     cell.pendingCount += pendingByAttempt.get(row.id) ?? 0;
     const score = row.scoreFinal ?? row.scoreAuto;
@@ -221,8 +227,11 @@ export function courseUnitAttemptSummaries(
 
   const result = new Map<string, StudentUnitAttemptSummary>();
   for (const [unitId, cell] of byUnit) {
-    const { firstSubmittedSeen: _omit, ...summary } = cell;
-    result.set(unitId, summary);
+    const { firstSubmittedSeen: _omit, attemptIds, ...summary } = cell;
+    result.set(unitId, {
+      ...summary,
+      ...resultCountsSummary(attemptIds, resultCounts),
+    });
   }
   return result;
 }
@@ -233,37 +242,6 @@ export function courseUnitAttemptSummaries(
  * 至少交卷 1 次的可见单元数（T2A.6 起接入课程练习作答；作业作答不计入）。
  * 归档课程与非成员课程完全不出现在列表（零信息）。
  */
-/**
- * lesson 讲练页的嵌入单元 id 集（units.lectureId 指向 kind='lesson' 且未删的
- * 讲义）。讲练页的题目在页内单题作答，嵌入单元不再作为课程目录/单元计数单列
- * （2026-10-16 修复，防「讲练页 + 随堂练习」重复入口）；普通讲义的配套练习
- * （lectureId 指向 kind='lecture'）不受影响。
- */
-function lessonEmbeddedUnitIds(
-  db: Db,
-  teacherId: string,
-  unitIds: readonly string[],
-): Set<string> {
-  if (unitIds.length === 0) return new Set();
-  return new Set(
-    db
-      .select({ id: units.id })
-      .from(units)
-      .innerJoin(lectures, eq(lectures.id, units.lectureId))
-      .where(
-        and(
-          eq(units.teacherId, teacherId),
-          inArray(units.id, unitIds),
-          isNull(units.deletedAt),
-          isNull(lectures.deletedAt),
-          eq(lectures.kind, "lesson"),
-        ),
-      )
-      .all()
-      .map((row) => row.id),
-  );
-}
-
 export function listStudentCourses(
   db: Db,
   studentId: string,
@@ -273,17 +251,8 @@ export function listStudentCourses(
   const courseSummaries: StudentCourseSummary[] = visibleCourses.map(
     (course) => {
       const items = listVisibleItems(db, studentId, course.id, now);
-      const unitItemsAll = items.filter((item) => item.kind === "unit");
-      // 讲练页嵌入单元不计入课程单元数（讲练页一件事——2026-10-16）
-      const embeddedUnitIds = lessonEmbeddedUnitIds(
-        db,
-        course.teacherId ?? "",
-        unitItemsAll.map((item) => item.refId ?? ""),
-      );
-      const unitItems = unitItemsAll.filter(
-        (item) =>
-          item.refId === null || !embeddedUnitIds.has(item.refId as string),
-      );
+      // 讲练页嵌入单元已由 listVisibleItems 过滤（讲练页一件事——2026-10-16）
+      const unitItems = items.filter((item) => item.kind === "unit");
       const summaries = courseUnitAttemptSummaries(db, studentId, course.id);
       return {
         id: course.id,
@@ -365,16 +334,7 @@ export function getStudentCourseDetail(
   const unitIds = items
     .filter((item) => item.kind === "unit")
     .map((item) => item.refId as string);
-  // 讲练页嵌入单元不进学生目录（讲练页一件事，防重复入口——2026-10-16）
-  const embeddedUnitIds = lessonEmbeddedUnitIds(db, course.teacherId, unitIds);
-  const shownItems = items.filter(
-    (item) =>
-      !(
-        item.kind === "unit" &&
-        item.refId !== null &&
-        embeddedUnitIds.has(item.refId)
-      ),
-  );
+  // 讲练页嵌入单元已由 listVisibleItems 过滤（讲练页一件事，防重复入口——2026-10-16）
   const counts = liveQuestionCounts(db, course.teacherId, unitIds);
   const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
   // 讲义条目的文档形态（2026-10 讲练一体）：lesson 行前端显「讲练」徽标并直达
@@ -396,7 +356,7 @@ export function getStudentCourseDetail(
     id: course.id,
     name: course.title,
     description: course.description,
-    items: shownItems.map((item) => ({
+    items: items.map((item) => ({
       id: item.id,
       kind: item.kind,
       docKind:
@@ -425,6 +385,8 @@ export function getStudentCourseDetail(
  * 访问权：requireVisibleCourseUnit（D5 + D22——非成员/归档 403、不可见 404）。
  * 安全：只读 questions 的 type 列做分布统计，不触碰任何内容列。
  * T2B.5：单元标题/题数/题型分布按课程根行 teacherId 域内读（D10，对外行为不变）。
+ * 推荐列解析统一走 practiceDefaultsOf（M5 simplify 收敛，坏数据不打挂落地页，
+ * 也不把原始 JSON 下发学生端）。
  */
 export function getStudentUnitLanding(
   db: Db,
@@ -444,7 +406,11 @@ export function getStudentUnitLanding(
     throw notFound(); // 防御：可见门通过后资源必存在（D9 异常行 fail closed）
   }
   const unit = db
-    .select({ title: units.title, topic: units.topic })
+    .select({
+      title: units.title,
+      topic: units.topic,
+      practiceDefaultsJson: units.practiceDefaultsJson,
+    })
     .from(units)
     .where(
       and(
@@ -491,6 +457,7 @@ export function getStudentUnitLanding(
     .orderBy(desc(attempts.attemptNo))
     .all();
   const attemptsByUnit = courseUnitAttemptSummaries(db, studentId, courseId);
+  const resultCounts = attemptResultCounts(db, attemptRows);
 
   return {
     courseId,
@@ -500,11 +467,14 @@ export function getStudentUnitLanding(
     topic: unit.topic,
     questionCount,
     typeDistribution,
+    // practice 展示推荐（M5-D2）：只推荐非权限，坏数据按无推荐处理
+    practiceRecommendation: practiceDefaultsOf(unit.practiceDefaultsJson),
     attempts: attemptRows.map((row) => ({
       attemptId: row.id,
       attemptNo: row.attemptNo,
       status: row.status,
       score: row.scoreFinal ?? row.scoreAuto,
+      resultCounts: resultCounts.get(row.id) ?? null,
       startedAt: row.startedAt,
       submittedAt: row.submittedAt,
     })),

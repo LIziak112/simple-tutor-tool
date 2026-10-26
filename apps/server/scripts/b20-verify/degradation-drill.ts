@@ -172,12 +172,14 @@ export async function runDegradationDrill(
       `健全对照失败（status=${tBRow?.status}）`,
     );
     const tBMaterials = loadAiTaskMaterialRows(db, tB.id);
-    if (options.skipFileDeletion !== true) {
-      unlinkSync(join(dataDir, tBMaterials[0]?.pngPath ?? ""));
+    const tBHead = tBMaterials[0];
+    if (tBHead === undefined) {
+      throw new Error("演练夹具异常：B 任务缺少材料行");
     }
-    const broken = captureHttpError(() =>
-      readMaterialBytes(dataDir, tBMaterials[0]!),
-    );
+    if (options.skipFileDeletion !== true) {
+      unlinkSync(join(dataDir, tBHead.pngPath));
+    }
+    const broken = captureHttpError(() => readMaterialBytes(dataDir, tBHead));
     recorder.assert(
       "B 引用文件缺失",
       broken !== undefined &&
@@ -238,11 +240,13 @@ export async function runDegradationDrill(
     writeFileSync(join(inkDir, "formal.png"), "formal-ink-evidence");
     // 备份引用保留：先拍快照（引用当前全部材料），再模拟行丢失
     createSnapshot(dataDir, db);
-    const tCPath = tCMaterials[0]?.pngPath ?? "";
+    const tCHead = tCMaterials[0];
+    if (tCHead === undefined) {
+      throw new Error("演练夹具异常：C 任务缺少材料行");
+    }
+    const tCPath = tCHead.pngPath;
     // 直接删第 0 行模拟「行丢失但备份仍引用」的保留场景（演练世界一次性）
-    db.delete(aiTaskMaterials)
-      .where(eq(aiTaskMaterials.id, tCMaterials[0]!.id))
-      .run();
+    db.delete(aiTaskMaterials).where(eq(aiTaskMaterials.id, tCHead.id)).run();
     const gc = gcAiMaterials(db, dataDir, {
       now: new Date(Date.now() + 1000),
       safetyWindowMs: 0,

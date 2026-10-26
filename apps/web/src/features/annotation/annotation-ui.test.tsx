@@ -70,11 +70,19 @@ it("原位回看自动读取封存笔迹，底图成功前保留题面，成功�
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("img", { name: "本题题干标注底图" }),
+      screen.getByRole("img", { name: "本题题干标注底图", hidden: true }),
     ).toBeInTheDocument(),
   );
   expect(screen.getByText("原位公开题面")).toBeVisible();
-  fireEvent.load(screen.getByRole("img", { name: "本题题干标注底图" }));
+  const image = screen.getByRole("img", {
+    name: "本题题干标注底图",
+    hidden: true,
+  });
+  Object.defineProperties(image, {
+    naturalWidth: { value: READY_BASE.pixelWidth },
+    naturalHeight: { value: READY_BASE.pixelHeight },
+  });
+  fireEvent.load(image);
   await waitFor(() =>
     expect(screen.getByText("原位公开题面").parentElement).toHaveClass(
       "sr-only",
@@ -167,6 +175,7 @@ import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
 import {
+  applyAnnotationConflict,
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
@@ -620,6 +629,10 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     const img = await screen.findByAltText("本题题干标注底图");
+    Object.defineProperties(img, {
+      naturalWidth: { value: READY_BASE.pixelWidth },
+      naturalHeight: { value: READY_BASE.pixelHeight },
+    });
     fireEvent.load(img);
     await waitFor(() => {
       expect(lastAtrament().begins.length).toBeGreaterThan(0);
@@ -652,6 +665,10 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     );
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     const img = await screen.findByAltText("本题题干标注底图");
+    Object.defineProperties(img, {
+      naturalWidth: { value: READY_BASE.pixelWidth },
+      naturalHeight: { value: READY_BASE.pixelHeight },
+    });
     fireEvent.load(img);
     await waitFor(() => {
       expect(lastAtrament().begins.length).toBeGreaterThan(0);
@@ -828,5 +845,95 @@ describe("AnnotationLayer：底图回传 409 自愈（审查修复 11）", () =>
     expect(baseImageMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/底图生成失败/)).toBeNull();
     expect(renderMock).toHaveBeenCalledTimes(1); // 不再重复栅格化
+  });
+});
+
+// ---------- 批次三（P0-2）：布局冲突双出口与 retained 常驻提示 ----------
+
+describe("AnnotationWorkspace：布局冲突裁决出口（批次三 P0-2）", () => {
+  const SCOPE = {
+    attemptId: "a1",
+    questionId: "q1",
+    phase: "scratch" as const,
+  };
+
+  async function openWorkspace(): Promise<void> {
+    viewMock.mockResolvedValue(emptyView(READY_BASE));
+    render(<AnnotationLayer attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+  }
+
+  it("layout 冲突：双出口「采用云端版本」「保留本机（不再同步）」；保留后常驻提示 + 重新尝试同步", async () => {
+    await openWorkspace();
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局，保留本机稿并查看原标画",
+    );
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "以本机为准并重传" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "保留本机（不再同步）" }),
+    );
+    expect(
+      await screen.findByText(/已保留本机，不再自动同步/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重新尝试同步" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "采用云端版本" }),
+    ).toBeInTheDocument();
+    expect(putDocMock).not.toHaveBeenCalled(); // 保留本机不重传
+  });
+
+  it("采用云端版本异步失败：错误就地呈现，冲突保留可重试（不静默失效）", async () => {
+    await openWorkspace();
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "layout",
+      null,
+      "服务器已有另一布局，保留本机稿并查看原标画",
+    );
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    viewMock.mockRejectedValue(new Error("网络中断，请稍后重试"));
+    fireEvent.click(screen.getByRole("button", { name: "采用云端版本" }));
+    expect(await screen.findByText("网络中断，请稍后重试")).toBeInTheDocument();
+    // 冲突仍在（未半途清态），按钮可再次点击
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "采用云端版本" }),
+    ).toBeInTheDocument();
+  });
+
+  it("revision 冲突：维持既有「以本机为准并重传」按钮", async () => {
+    await openWorkspace();
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "revision",
+      {
+        annotationId: "00000000-0000-4000-8000-000000000001",
+        revision: 7,
+        hash: "b".repeat(64),
+        savedAt: "2026-10-08T03:00:00Z",
+      },
+      "标注已在别处保存了更新的版本",
+    );
+    expect(await screen.findByText(/标注同步冲突/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "以本机为准并重传" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "保留本机（不再同步）" }),
+    ).toBeNull();
   });
 });

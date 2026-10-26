@@ -28,6 +28,10 @@ import {
 } from "@/lib/api";
 import StudentLessonPage from "./StudentLessonPage";
 
+// 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
+// 5s 默认超时随机击中本文件任意用例——统一 15s（仍保留挂死检测，真卡死 3 倍即报）。
+vi.setConfig({ testTimeout: 15_000 });
+
 /**
  * 讲练页 AI 伴学接入（SAI-22 四来源矩阵的讲练列）：作答页头部「AI 助教」
  * 入口、打开绑定当前作答题（初始为首个未提交题、作答交互跟随最近题）、
@@ -171,6 +175,8 @@ function releasedOf(question: AttemptQuestionPublic): AttemptResultQuestion {
     answers: question.type === "choice" ? { kind: "choice", index: 0 } : null,
     solutionMd: "解析内容。",
     answer: null,
+    answered: false,
+    studentFlag: null,
     autoCorrect: true,
     teacherMark: null,
     teacherComment: null,

@@ -10,6 +10,7 @@ import { lazy, Suspense, useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { useTeacherCourses } from "@/features/courses/course-queries";
 import {
   AnalyticsFilterBar,
@@ -19,10 +20,7 @@ import {
   parseAnalyticsUrl,
 } from "@/features/insights/analytics-filters";
 import { useAnalyticsStudent } from "@/features/insights/analytics-queries";
-import {
-  formatPercent,
-  formatScore,
-} from "@/features/insights/insights-format";
+import { formatPercent } from "@/features/insights/insights-format";
 import { LectureReadingMapView } from "@/features/insights/LectureReadingMapView";
 import { StudentReportsSection } from "@/features/insights/StudentReportsSection";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -432,7 +430,7 @@ export function InsightsStudentPage() {
                         重做
                       </th>
                       <th scope="col" className="px-3 py-2 font-medium">
-                        首次得分
+                        首次表现
                       </th>
                       <th scope="col" className="px-3 py-2 font-medium">
                         最近交卷
@@ -455,7 +453,7 @@ export function InsightsStudentPage() {
                         <td className="px-3 py-2">{row.attemptCount} 次</td>
                         <td className="px-3 py-2">{row.redoCount} 次</td>
                         <td className="px-3 py-2">
-                          {formatScore(row.firstScore)}
+                          {formatResultCounts(row.firstResultCounts)}
                         </td>
                         <td className="px-3 py-2">
                           {row.latestSubmittedAt === null

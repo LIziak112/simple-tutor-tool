@@ -9,6 +9,7 @@ import type { Db } from "../db/client";
 import { events, lectures, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireUsableAttempt } from "./attempt-service";
+import type { Tx } from "./question-sync";
 
 /**
  * EventService（T2.10）——学习痕迹事件的写入与读取（架构文档 §5.2/§5.5）。
@@ -35,7 +36,7 @@ import { requireUsableAttempt } from "./attempt-service";
 
 /** 事件行 → { events: [...] }（逐条校验后的合法输入）批量插入，返回落库条数 */
 function insertEvents(
-  db: Db,
+  db: Db | Tx,
   rows: readonly NewEventRow[],
 ): LearningEventBatchData {
   const now = new Date().toISOString();
@@ -186,9 +187,11 @@ export function recordAttemptStartEvent(
  * 事件只做行为埋点）；拒绝路径（409 幂等/错版/证据不符）不记。clientTs 用
  * 服务端时钟（§2.6-3 不同源注记；question_submit 不参与 focus/blur 区间
  * 计时，混排无影响）；前端若另报一条，events 追加语义可容忍。
+ * M2 起练习逐题提交在**主事务内**调用（提交与事件原子落库，better-sqlite3
+ * 单连接同步执行无嵌套事务问题）；lesson 路径仍在事务后调用（既有模式）。
  */
 export function recordQuestionSubmitEvent(
-  db: Db,
+  db: Db | Tx,
   studentId: string,
   attemptId: string,
   questionId: string,

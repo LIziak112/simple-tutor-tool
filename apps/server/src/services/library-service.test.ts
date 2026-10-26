@@ -12,7 +12,11 @@ import {
   students,
   units,
 } from "../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import type { HttpError } from "../lib/http-error.ts";
 import {
   createFolder,
@@ -179,6 +183,28 @@ describe("LibraryService：文件夹 CRUD", () => {
       unitCount: 1,
     });
     void unitId;
+  });
+
+  it("讲练页嵌入单元不参与文件夹计数（2026-10-20）：一篇讲练页只计 1；普通配套单元照常计", () => {
+    const db = createTestDb();
+    // seedBase：普通讲义 + 其配套单元（unit-a）
+    const { folderId } = seedBase(db);
+    // 讲练页：kind=lesson 讲义 + 嵌入单元（lectureId 指回自己，同一文件夹）
+    seedLessonWithEmbeddedUnit(db, {
+      folderId,
+      lectureOrder: 1,
+      unitOrder: 1,
+    });
+
+    // 讲义 2 篇；单元只计普通配套 1 个（嵌入单元随讲练页隐藏）
+    expect(listFolders(db, TEST_TEACHER_ID)[0]).toMatchObject({
+      lectureCount: 2,
+      unitCount: 1,
+    });
+    // rename 回包走同一计数口径
+    expect(
+      renameFolder(db, TEST_TEACHER_ID, folderId, { name: "有理数2" }),
+    ).toMatchObject({ lectureCount: 2, unitCount: 1 });
   });
 
   it("deleteFolder：内容移入未归类（folderId 置 NULL）并返回移动数量；行删除", () => {

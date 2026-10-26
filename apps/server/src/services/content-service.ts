@@ -59,6 +59,7 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
+import { lessonEmbeddedUnitIds } from "./lesson-embedded";
 import { softDeleteLecture } from "./library-service";
 import { missingMediaImageSrcs } from "./media-service";
 import {
@@ -690,6 +691,11 @@ export function commitImport(
         unit.lectureTitle !== undefined
           ? (lectureIdByTitle.get(unit.lectureTitle) ?? null)
           : null;
+      // practice 推荐（M5-D1）：按单元落库——文档带 practice 存契约形态 JSON，
+      // 不带置 null（同名重导清除旧推荐，与 teachingPackJson 覆盖语义同口径）。
+      // lecture/lesson 文档解析层不贯通 practice（对讲练不生效），这里恒 null。
+      const practiceDefaultsJson =
+        unit.practice === undefined ? null : JSON.stringify(unit.practice);
       if (existingUnitIds.has(unit.id)) {
         // 命中已有单元：保留其原文件夹（D18），软删行恢复；不写 courseId/folderId
         tx.update(units)
@@ -700,6 +706,7 @@ export function commitImport(
             updatedAt: now,
             deletedAt: null,
             teachingPackJson,
+            practiceDefaultsJson,
           })
           .where(and(eq(units.teacherId, teacherId), eq(units.id, unit.id)))
           .run();
@@ -721,6 +728,7 @@ export function commitImport(
             order: nextUnitOrder,
             updatedAt: now,
             teachingPackJson,
+            practiceDefaultsJson,
           })
           .run();
         nextUnitOrder += 1;
@@ -1024,6 +1032,8 @@ export function getContentTree(db: Db, teacherId: string): ContentTree {
       .map((row) => [row.id, row] as const),
   );
 
+  // 讲练页嵌入单元不单列（讲练页一件事；历史 D8 脏条目同样过滤）
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, teacherId);
   const treeCourses: ContentTreeCourse[] = allCourses.map((course) => {
     const items = db
       .select({ kind: courseItems.kind, refId: courseItems.refId })
@@ -1041,7 +1051,11 @@ export function getContentTree(db: Db, teacherId: string): ContentTree {
           row !== undefined,
       );
     const unitNodes = items
-      .filter((item) => item.kind === "unit")
+      // 讲练页嵌入单元不单列（历史 D8 脏条目同样过滤）
+      .filter(
+        (item) =>
+          item.kind === "unit" && !embeddedUnitIds.has(item.refId ?? ""),
+      )
       .map((item) =>
         item.refId === null ? undefined : unitById.get(item.refId),
       )

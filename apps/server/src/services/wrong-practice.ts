@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { AttemptStartData } from "@tutor/contract";
+import type { AttemptStartData, WrongPracticeScope } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  type AttemptWorkflowStartOptions,
   attemptSummaryOf,
   insertFrozenResponse,
   newDraftAttempt,
+  workflowStartColumns,
 } from "./attempt-service";
 import { snapshotOfRow } from "./snapshot";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
@@ -45,6 +47,9 @@ export function startWrongPractice(
   db: Db,
   studentId: string,
   questionIds: readonly string[],
+  options: AttemptWorkflowStartOptions = {},
+  /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
+  scope?: WrongPracticeScope | undefined,
 ): AttemptStartData {
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
@@ -94,9 +99,17 @@ export function startWrongPractice(
       unitId: null,
       attemptNo,
       startedAt: new Date().toISOString(),
+      // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议
+      ...workflowStartColumns(db, "wrong", studentId, null, options),
     });
     const id = attempt.id;
-    tx.insert(attempts).values(attempt).run();
+    // #6980-2：范围随卷快照落库（快照语义——之后单元/考点改名不影响历史卷标题）
+    tx.insert(attempts)
+      .values({
+        ...attempt,
+        practiceScopeJson: scope === undefined ? null : JSON.stringify(scope),
+      })
+      .run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
     // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
     // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）
@@ -105,6 +118,7 @@ export function startWrongPractice(
       if (snapshotJson === null) continue; // pickOf 已校验非空（坏快照剔除），防御性收敛
       insertFrozenResponse(tx, {
         attemptId: id,
+        reviewPolicy: "self_review",
         questionId: source.questionId,
         questionVersion: source.questionVersion,
         questionSnapshotJson: snapshotJson,

@@ -10,10 +10,9 @@ import {
   uniqueSuffix,
 } from "./helpers";
 
-test("快速填空交卷：等待被延迟的答案PUT成功，失败返回重试且不提交空答案", async ({
-  page,
-  request,
-}) => {
+test("快速填空交卷：等待被延迟的答案PUT成功，失败返回重试且不提交空答案", {
+  tag: ["@student"],
+}, async ({ page, request }) => {
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `快速交卷课${suffix}`;

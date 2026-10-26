@@ -1,13 +1,16 @@
-import type {
-  AttemptStatus,
-  StudentRecordRow,
-  TeacherAttemptSource,
+import {
+  type AttemptStatus,
+  type StudentRecordRow,
+  type StudentRecordsSort,
+  type TeacherAttemptSource,
+  wrongAttemptTitleOf,
 } from "@tutor/contract";
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
+import { formatResultCounts } from "@/features/attempt/result-counts";
 import { formatCnTime } from "@/lib/time";
 import { recordReviewHref } from "./record-review-navigation";
 
@@ -59,36 +62,41 @@ export function recordTitleOf(row: TeacherAttemptSource): string {
     return row.assignmentTitle ?? "（作业已删除）";
   }
   if (row.sourceType === "wrong") {
-    return `错题重练 · 第 ${row.attemptNo} 次`;
+    // #6980-2：标题单源（契约 wrongAttemptTitleOf）——label=建卷范围快照，
+    // 历史卷由服务端 wrongScope 现算「来自 …」
+    return wrongAttemptTitleOf({
+      attemptNo: row.attemptNo,
+      wrongScope: row.wrongScope ?? null,
+    });
   }
   return `${row.unitTitle ?? ""} · 第 ${row.attemptNo} 次`;
 }
 
-/**
- * 得分展示（D10）：服务端已按 scoreFinal ?? scoreAuto 口径算好 score——
- * - null 且未公布（answersReleased=false，after_due 未到截止）→ 「待公布」；
- * - null 且已公布 → 无可判分或全待批 → 「待批」；
- * - draft 不渲染得分（无结果可看）。
- */
-function RecordScore({ row }: { row: StudentRecordRow }) {
+/** 作答结果仅在已交且公布后展示；缺少计数的旧响应不从得分猜测。 */
+function RecordResult({ row }: { row: StudentRecordRow }) {
   if (row.status === "draft") return null;
   if (!row.answersReleased)
     return <span className="text-sm text-muted-foreground">待公布</span>;
-  if (row.score === null) {
-    return <span className="text-sm text-muted-foreground">得分 待批</span>;
-  }
   return (
-    <span className="text-sm text-muted-foreground">
-      得分 <b className="font-semibold text-foreground">{row.score}</b>
-      <span className="tabular-nums"> / 100</span>
+    <span className="text-sm text-muted-foreground tabular-nums">
+      {formatResultCounts(row.resultCounts, false)}
     </span>
   );
 }
 
 /** 单条记录卡片（整卡可点，触控目标 ≥44px） */
-export function RecordCard({ row }: { row: StudentRecordRow }) {
+export function RecordCard({
+  row,
+  sort = "activity_desc",
+}: {
+  row: StudentRecordRow;
+  sort?: StudentRecordsSort;
+}) {
   const [search] = useSearchParams();
-  const activityAt = row.submittedAt ?? row.startedAt;
+  const activityAt =
+    sort === "activity_desc"
+      ? (row.lastActivityAt ?? row.submittedAt ?? row.startedAt)
+      : row.startedAt;
   const isDraft = row.status === "draft";
   return (
     <li>
@@ -105,6 +113,7 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
           <SourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
           <span className="ml-auto text-xs text-muted-foreground">
+            {sort === "activity_desc" ? "最近作答 " : "开始于 "}
             {formatCnTime(activityAt)}
           </span>
         </p>
@@ -122,7 +131,22 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
           )}
         </p>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <RecordScore row={row} />
+          <RecordResult row={row} />
+          {/* 进行中优先显示通用已做进度；旧响应缺少字段时保留逐题已提交进度。 */}
+          {isDraft && row.answerProgress && (
+            <span className="text-sm tabular-nums text-muted-foreground">
+              已做 {row.answerProgress.answeredCount} /{" "}
+              {row.answerProgress.totalCount} 题
+            </span>
+          )}
+          {isDraft &&
+            !row.answerProgress &&
+            row.practiceSubmittedCount !== undefined &&
+            row.practiceQuestionCount !== undefined && (
+              <span className="text-xs tabular-nums text-sky-700 dark:text-sky-300">
+                {`已提交 ${row.practiceSubmittedCount}/${row.practiceQuestionCount} 题`}
+              </span>
+            )}
           {/* 待批徽章（D4 口径；未公布时服务端置 null，不显示） */}
           {row.answersReleased &&
             row.pendingCount !== null &&
@@ -132,6 +156,11 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
                 待批 {row.pendingCount}
               </span>
             )}
+          {row.answersReleased && (row.pendingSelfReviewCount ?? 0) > 0 && (
+            <span className="text-xs text-amber-700">
+              待自评 {row.pendingSelfReviewCount}
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-0.5 text-sm font-medium text-primary">
             {isDraft ? "继续作答" : "查看结果"}
             <ChevronRight

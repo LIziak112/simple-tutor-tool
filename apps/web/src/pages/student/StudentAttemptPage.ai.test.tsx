@@ -37,6 +37,10 @@ import {
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import StudentAttemptPage from "./StudentAttemptPage";
 
+// 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
+// 5s 默认超时随机击中本文件任意用例——统一 15s（仍保留挂死检测，真卡死 3 倍即报）。
+vi.setConfig({ testTimeout: 15_000 });
+
 /**
  * 四来源 AI 伴学参数化矩阵（SAI-22 完成条件①——集成用例，不只组件 mock）：
  * /s/attempts/:attemptId 通用作答页按 sourceType 参数化（assignment/course/
@@ -170,6 +174,7 @@ function draftOf(source: (typeof SOURCES)[number]): AttemptDraftData {
     drafts: {},
     hintsOpened: {},
     legacyUnverified: false,
+    answerRelease: "on_submit",
     enabledCapabilities: ["steps", "ink"],
   };
 }

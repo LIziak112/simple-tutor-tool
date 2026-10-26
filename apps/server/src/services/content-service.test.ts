@@ -21,6 +21,7 @@ import {
 import {
   createTestDb,
   createTestDir,
+  seedLessonWithEmbeddedUnit,
   TEST_TEACHER_ID,
   V1_LEGACY_MD,
 } from "../db/test-utils.ts";
@@ -29,6 +30,7 @@ import { createAssignment } from "./assignment-service.ts";
 import {
   commitImport,
   createCourse,
+  getContentTree,
   previewImport,
   previewImportBatch,
   updateLecture,
@@ -1535,5 +1537,218 @@ describe("导入图片存在性核对（IMAGE_SRC_NOT_FOUND，媒体管线第四
     // warning 不置 hasError（只有 error 级/跨文件冲突才标红）
     expect(batch.files.map((f) => f.hasError)).toEqual([false, false]);
     db.$client.close();
+  });
+});
+
+describe("getContentTree：讲练页嵌入单元不单列（2026-10-20）", () => {
+  it("课程的嵌入单元节点被过滤，普通配套单元照常输出", () => {
+    const db = createTestDb();
+    const T0 = "2026-09-01T00:00:00.000Z";
+    const courseId = crypto.randomUUID();
+    db.insert(courses)
+      .values({
+        id: courseId,
+        teacherId: TEST_TEACHER_ID,
+        title: "初一上",
+        order: 0,
+        createdAt: T0,
+      })
+      .run();
+    const normalLectureId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: normalLectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "普通讲义",
+        markdown: "# 普通讲义",
+        order: 0,
+        updatedAt: T0,
+      })
+      .run();
+    const { lectureId: lessonLectureId, unitId: embeddedUnitId } =
+      seedLessonWithEmbeddedUnit(db, {
+        lectureOrder: 1,
+        unitOrder: 1,
+        unitId: "u-embedded",
+        unitTitle: "随堂讲练",
+      });
+    db.insert(units)
+      .values({
+        id: "u-normal",
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        lectureId: normalLectureId,
+        title: "普通配套练习",
+        order: 0,
+        updatedAt: T0,
+      })
+      .run();
+    db.insert(courseItems)
+      .values([
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: normalLectureId,
+          title: null,
+          order: 0,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: "u-normal",
+          title: null,
+          order: 1,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: lessonLectureId,
+          title: null,
+          order: 2,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        // 模拟修复前的脏条目
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: embeddedUnitId,
+          title: null,
+          order: 3,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+      ])
+      .run();
+
+    const course = getContentTree(db, TEST_TEACHER_ID).courses.find(
+      (row) => row.id === courseId,
+    );
+    expect(course?.lectures.map((row) => row.id)).toEqual([
+      normalLectureId,
+      lessonLectureId,
+    ]);
+    expect(course?.units.map((row) => row.id)).toEqual(["u-normal"]);
+  });
+});
+
+// ---------- M5-D1：practice 推荐的导入保存 ----------
+
+/** 带 practice 推荐的 practice 文档（两字段齐全） */
+const REC_PRACTICE_MD = `---
+kind: practice
+unit: 推荐单元
+practice:
+  layout: single
+  feedback: per_question
+---
+
+::::question{type=judge difficulty=1 id=rec-q1}
+$1+1=2$。[[正确]]
+::::
+`;
+
+/** 同文档去掉 practice 三行（普通 MD 重导，应清除旧推荐） */
+const REC_PLAIN_MD = REC_PRACTICE_MD.split("\n")
+  .filter(
+    (line) =>
+      line !== "practice:" &&
+      line !== "  layout: single" &&
+      line !== "  feedback: per_question",
+  )
+  .join("\n");
+
+/** 只带 layout 的变体（重导覆盖旧推荐用） */
+const REC_LAYOUT_ONLY_MD = REC_PRACTICE_MD.replace(
+  "  layout: single\n  feedback: per_question",
+  "  layout: list",
+);
+
+describe("commitImport：practice 推荐保存（M5-D1）", () => {
+  it("带 practice 的文档导入：单元 practiceDefaultsJson 按契约形态落库", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PRACTICE_MD,
+      filename: "推荐.md",
+    });
+    const expected = JSON.stringify({
+      layout: "single",
+      feedback: "per_question",
+    });
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBe(
+      expected,
+    );
+  });
+
+  it("不带 practice 重导清除旧推荐（同名同口径，更新路径）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PRACTICE_MD,
+      filename: "推荐.md",
+    });
+    const second = commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PLAIN_MD,
+      filename: "推荐.md",
+    });
+    expect(second.units.every((u) => u.updated)).toBe(true);
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBeNull();
+  });
+
+  it("重导新推荐覆盖旧推荐（更新路径同口径）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_PRACTICE_MD,
+      filename: "推荐.md",
+    });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: REC_LAYOUT_ONLY_MD,
+      filename: "推荐.md",
+    });
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBe(
+      JSON.stringify({ layout: "list" }),
+    );
+  });
+
+  it("lesson 文档带 practice：嵌入单元不落推荐（对讲练不生效，lint 另行 warning）", () => {
+    const db = createTestDb();
+    const lessonMd = `---
+kind: lesson
+practice:
+  layout: single
+---
+
+# 第1讲 讲练推荐
+
+::::question{type=judge difficulty=1 id=lesson-rec-q1}
+$2>1$。[[正确]]
+::::
+`;
+    const preview = previewImport(db, TEST_TEACHER_ID, {
+      markdown: lessonMd,
+      filename: "讲练推荐.md",
+    });
+    expect(
+      preview.issues.some((i) => i.code === "PRACTICE_NOT_APPLICABLE"),
+    ).toBe(true);
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: lessonMd,
+      filename: "讲练推荐.md",
+    });
+    expect(db.select().from(units).all()[0]?.practiceDefaultsJson).toBeNull();
   });
 });

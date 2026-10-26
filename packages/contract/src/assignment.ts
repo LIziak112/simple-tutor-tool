@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { studentPaperQuestionSchema } from "./attempt.ts";
-import { assignmentDueAtSchema } from "./content.ts";
+import {
+  assignmentAnswerReleaseSchema,
+  assignmentDueAtSchema,
+} from "./content.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
@@ -62,15 +65,9 @@ export const assignmentTitleSchema = z
 // attempt.ts 视图与本文件共用同一份，attempt ↔ assignment 不可互导），
 // 本文件经顶部 import 使用；包级导出经 index.ts 的 content.ts 星号导出不变。
 
-/**
- * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，现状语义）；
- * after_due=截止后公布——**必须设置截止时间**：create 选 after_due 而 dueAt 缺失、
- * 或 PATCH 把 dueAt 置 null / 去掉截止时当前为 after_due，均 400 VALIDATION_ERROR
- * （防死锁态：永不公布）。截止前学生结果视图只下发「已交卷」与本人答案，
- * 截止后（now ≥ dueAt）读时自动恢复完整结果（无定时任务）。
- * course 来源作答恒为交卷即公布（D11），不适用本字段。
- */
-export const assignmentAnswerReleaseSchema = z.enum(["on_submit", "after_due"]);
+// 答案公布时机 assignmentAnswerReleaseSchema：同法下移 content.ts
+// （2026-10-21——attempt.ts 草稿视图的 answerRelease 字段与本文件共用同一份），
+// 本文件经顶部 import 使用；包级导出经 index.ts 的 content.ts 星号导出不变。
 
 /** 学生 id（crypto.randomUUID；studentIds 由服务端逐个校验存在性） */
 const studentIdSchema = z.uuid("studentId 必须是 UUID 格式");
@@ -103,6 +100,29 @@ export function defaultAssignmentTitle(unitTitles: readonly string[]): string {
 // ---------- 教师端：布置作业 CRUD（T2A.7 多单元 + 课程） ----------
 
 /**
+ * after_due + allowPerQuestionFeedback=true 同请求冲突拒绝（M1a）：
+ * create/update 两个 schema 共用（update 为 partial 语义，仅同请求显式冲突在此拒）。
+ */
+const rejectAfterDuePerQuestion = (
+  req: {
+    answerRelease?: AssignmentAnswerRelease | undefined;
+    allowPerQuestionFeedback?: boolean | undefined;
+  },
+  ctx: z.RefinementCtx,
+) => {
+  if (
+    req.answerRelease === "after_due" &&
+    req.allowPerQuestionFeedback === true
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "截止后公布（after_due）不能同时开启逐题反馈（allowPerQuestionFeedback）",
+    });
+  }
+};
+
+/**
  * POST /api/teacher/assignments 请求体（D12/D13）。
  * - unitIds：布置顺序即作业内单元顺序（assignment_units.order=0..n-1），
  *   至少 1 个；单元不存在 404 UNIT_NOT_FOUND；重复 400 DUPLICATE_UNIT；
@@ -116,15 +136,24 @@ export function defaultAssignmentTitle(unitTitles: readonly string[]): string {
  *   unitIds 顺序创建 N 份，courseId/studentIds/dueAt/answerRelease 共用），
  *   merged = 合并一份（现状行为，完全不因本字段变化）。
  */
-export const assignmentCreateRequestSchema = z.object({
-  title: assignmentTitleSchema.optional(),
-  courseId: z.uuid("courseId 必须是 UUID 格式").nullable().optional(),
-  unitIds: z.array(unitIdSchema).min(1, "作业必须至少包含一个练习单元"),
-  studentIds: z.array(studentIdSchema).min(1, "作业必须至少指派一名学生"),
-  dueAt: assignmentDueAtSchema.optional(),
-  answerRelease: assignmentAnswerReleaseSchema.optional(),
-  unitGrouping: assignmentUnitGroupingSchema.optional(),
-});
+export const assignmentCreateRequestSchema = z
+  .object({
+    title: assignmentTitleSchema.optional(),
+    courseId: z.uuid("courseId 必须是 UUID 格式").nullable().optional(),
+    unitIds: z.array(unitIdSchema).min(1, "作业必须至少包含一个练习单元"),
+    studentIds: z.array(studentIdSchema).min(1, "作业必须至少指派一名学生"),
+    dueAt: assignmentDueAtSchema.optional(),
+    answerRelease: assignmentAnswerReleaseSchema.optional(),
+    unitGrouping: assignmentUnitGroupingSchema.optional(),
+    /**
+     * 逐题反馈授权（M1a，2026-10-22 计划 §5.2）：可选布尔，缺省保持
+     * undefined——由服务端识别旧调用并按 false 落库，schema 层绝不默认 true。
+     * 语义：true 仅与 answerRelease='on_submit' 组合（由学生选择节奏）；
+     * 请求内显式 after_due + true 在此拒绝。
+     */
+    allowPerQuestionFeedback: z.boolean().optional(),
+  })
+  .superRefine(rejectAfterDuePerQuestion);
 
 /**
  * PATCH /api/teacher/assignments/:id 请求体（全部可选，缺省 = 不改；D13/D14）：
@@ -143,15 +172,23 @@ export const assignmentCreateRequestSchema = z.object({
  * - courseId 创建后不可改（本 schema 无该字段）——如需调整所属课程，
  *   删除后重新布置（D13 有意不支持改挂）。
  */
-export const assignmentUpdateRequestSchema = z.object({
-  title: assignmentTitleSchema.optional(),
-  dueAt: assignmentDueAtSchema.nullable().optional(),
-  answerRelease: assignmentAnswerReleaseSchema.optional(),
-  unitIds: z.array(unitIdSchema).min(1, "unitIds 不能为空数组").optional(),
-  addStudentIds: z.array(studentIdSchema).optional(),
-  removeStudentIds: z.array(studentIdSchema).optional(),
-  confirmStarted: z.boolean().optional(),
-});
+export const assignmentUpdateRequestSchema = z
+  .object({
+    title: assignmentTitleSchema.optional(),
+    dueAt: assignmentDueAtSchema.nullable().optional(),
+    answerRelease: assignmentAnswerReleaseSchema.optional(),
+    unitIds: z.array(unitIdSchema).min(1, "unitIds 不能为空数组").optional(),
+    addStudentIds: z.array(studentIdSchema).optional(),
+    removeStudentIds: z.array(studentIdSchema).optional(),
+    confirmStarted: z.boolean().optional(),
+    /**
+     * 逐题反馈授权（M1a）：partial PATCH 语义——只给 true 时请求内不视为与
+     * 既有 after_due 冲突（原值服务端合并后再验证）；仅当同一请求同时显式
+     * answerRelease='after_due' + true 时在此拒绝。
+     */
+    allowPerQuestionFeedback: z.boolean().optional(),
+  })
+  .superRefine(rejectAfterDuePerQuestion);
 
 /**
  * POST /api/teacher/assignments/check 请求体（D15 布置前「已做过」检查）：
@@ -238,6 +275,11 @@ export const teacherAssignmentSchema = z.object({
   dueAt: assignmentDueAtSchema.nullable(),
   /** 答案公布时机（T2A.8，D11）：交卷即公布（默认）/ 截止后公布（需截止时间） */
   answerRelease: assignmentAnswerReleaseSchema,
+  /**
+   * 逐题反馈授权（M1a，可选）：旧作业行与服务端旧版响应缺省为 undefined，
+   * 客户端按 false 处理；M1b 起服务端恒显式返回 true/false。
+   */
+  allowPerQuestionFeedback: z.boolean().optional(),
   /** 单元列表（按布置顺序；含软删单元） */
   units: z.array(teacherAssignmentUnitSchema),
   /** 全部单元 live 题数之和（学生答题页题数与此一致） */
@@ -342,6 +384,12 @@ export const studentAssignmentSchema = z.object({
   createdAt: z.string().min(1),
   /** 完成状态（服务端由该学生的 attempts 推导：graded > submitted > in_progress > not_started） */
   status: assignmentStatusSchema,
+  /**
+   * 逐题已提交行数（M4-D3，仅进行中的 v1 新协议卷携带；白名单纯公开进度
+   * 计数，绝不含对错/得分/答案，N 复用既有 questionCount）：draft 卷按
+   * responses.submittedAt 行级计数；legacy / lesson 卷缺省 = 前端回落既有呈现。
+   */
+  practiceSubmittedCount: z.number().int().min(0).optional(),
 });
 
 /** GET /api/student/assignments 响应 data（按布置时间倒序） */

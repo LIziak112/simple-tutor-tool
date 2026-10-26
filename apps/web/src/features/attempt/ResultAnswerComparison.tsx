@@ -60,7 +60,7 @@ export function ResultAnswerComparison({
           </p>
         )}
       </div>
-      {released && (
+      {released ? (
         <div className="min-w-0">
           <p className="mb-1 text-muted-foreground">参考答案：</p>
           {question.answers === null ? (
@@ -78,6 +78,13 @@ export function ResultAnswerComparison({
               className="min-w-0 font-medium [&_p]:my-0"
             />
           )}
+        </div>
+      ) : (
+        <div className="min-w-0">
+          <p className="mb-1 text-muted-foreground">参考答案：</p>
+          <p className="text-muted-foreground">
+            参考答案与详解将在截止后公布 🔒
+          </p>
         </div>
       )}
     </div>

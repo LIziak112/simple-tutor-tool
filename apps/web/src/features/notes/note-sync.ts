@@ -40,12 +40,14 @@ import type {
   NoteDocInput,
   NoteVersionReceipt,
 } from "@tutor/contract";
-import { noteConflictSummarySchema } from "@tutor/contract";
+import { noteConflictSummarySchema, noteDocSchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
+import { repairNoteDoc } from "@/features/notes/note-doc-repair.ts";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
+  fetchStudentNoteHeadsApi,
   putNoteDocumentApi,
 } from "@/lib/api";
 import {
@@ -68,9 +70,11 @@ import {
   peekNoteRecord,
   resetCorrectionSealed,
   resolveNoteConflict,
+  resolveNoteDeniedAdoptCloud,
   settleNotePersistence,
   setUploading,
   subscribeNoteStore,
+  writeNoteDoc,
 } from "./note-store.ts";
 
 // ---------- 调度常量（方案 §6.2 建议初值；非丢失窗口承诺） ----------
@@ -203,6 +207,25 @@ function uploadable(
   );
 }
 
+/**
+ * 上传前预检（圈画审查 P0-1）：pending 不合契约时先就地修复（夹紧坐标/
+ * 丢非法点等，见 note-doc-repair）——修复成功即物化为新 pending（writeNoteDoc
+ * 同款语义：清 denied(content)、docVersion+1），上传的是修复稿；不可修复
+ * 返回 false，原样上传交服务端裁决（400 → denied(content)，面板有
+ * 「采用云端版本」出口兜底）。修复只在本机进行，不触碰服务端数据。
+ */
+function preflightRepair(
+  session: NoteSessionRef,
+  scope: NoteScope,
+  record: NoteLocalRecord & { pending: NotePendingVersion },
+): boolean {
+  if (noteDocSchema.safeParse(record.pending.doc).success) return false;
+  const repaired = repairNoteDoc(record.pending.doc);
+  if (repaired === null) return false;
+  writeNoteDoc(session, scope, repaired);
+  return true;
+}
+
 /** 键是否属于当前会话（是→返回解析出的 session+scope；否→null） */
 function keyInSession(
   key: string,
@@ -333,8 +356,15 @@ async function runUpload(
     for (let attempt = 0; attempt < 2; attempt++) {
       const record = peekNoteRecord(session, scope);
       if (!uploadable(record)) return; // SEALED 重置期间被回执/终态清空：空跑退出
-      const { mutationId, doc } = record.pending;
-      const baseRevision = record.baseRevision;
+      let snapshot = record;
+      if (preflightRepair(session, scope, record)) {
+        // 修复写入后记录已换新（新 pending/新幂等键）——重取快照再传
+        const repaired = peekNoteRecord(session, scope);
+        if (!uploadable(repaired)) return;
+        snapshot = repaired;
+      }
+      const { mutationId, doc } = snapshot.pending;
+      const baseRevision = snapshot.baseRevision;
       let receipt: NoteVersionReceipt;
       try {
         // 同引用直接复用字节（退避重试不重复 gzip；SEALED 重置保留正文
@@ -710,6 +740,52 @@ export async function resolveNoteConflictKeepCloud(
     // 条件展开适配 exactOptionalPropertyTypes（不传≠传 undefined）
     ...(expectedMutationId !== undefined ? { expectedMutationId } : {}),
   });
+}
+
+/**
+ * denied(content) 的「采用云端版本」出口（圈画审查 P0-1）：拉云端最新
+ * head 与正文，物化为工作稿（清 denied/pending、对齐基线）。云端无可读
+ * 版本（此题从未同步成功）时明确报错、本地保留——不静默丢稿。仅支持
+ * scratch：订正/补充稿的 head 投影不在 note 字段（corrections/supplements
+ * 数组），需要另接，本批不做。
+ */
+export async function resolveNoteDeniedKeepCloud(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  if (scope.phase !== "scratch") {
+    throw new Error(
+      "订正与补充稿暂不支持采用云端版本，请继续书写或保留本机内容",
+    );
+  }
+  const record = peekNoteRecord(session, scope);
+  if (record?.denied?.kind !== "content") return; // 无被拒：幂等跳过
+  const [head] = await fetchStudentNoteHeadsApi(scope.attemptId, [
+    scope.questionId,
+  ]);
+  if (!sameSessionSafe(session))
+    throw new Error("账号已切换，请重新进入作答页");
+  const note = head?.note ?? null;
+  const versionId = note?.currentVersionId ?? null;
+  if (note === null || versionId === null) {
+    throw new Error(
+      "云端没有可读取的版本（此题可能从未同步成功），请保留本机内容",
+    );
+  }
+  const raw = await fetchStudentNoteDocumentApi(versionId);
+  if (!sameSessionSafe(session))
+    throw new Error("账号已切换，请重新进入作答页");
+  const cloudDoc = parseNoteDocOrThrow(
+    raw,
+    "云端草稿正文",
+    "，无法采用云端版本",
+  );
+  await resolveNoteDeniedAdoptCloud(session, scope, {
+    doc: cloudDoc,
+    revision: note.revision,
+    noteId: note.noteId,
+  });
+  await settleNotePersistence();
 }
 
 // ---------- 诊断 ----------

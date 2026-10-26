@@ -1,10 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
-import type { AttemptResultData } from "@tutor/contract";
+import type { AttemptResultData, WrongPracticeScope } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { AttemptResultView } from "./AttemptResultView";
+import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
 
 /**
@@ -22,12 +23,15 @@ export default function AttemptResultWithDraftCleanup({
   onBackHome,
   backLabel,
   annotationSealWarning = false,
+  onRefresh,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
   backLabel?: string | undefined;
   /** 交卷后标注 seal 失败的警示（AttemptSession 顶态；服务端懒补封兜底） */
   annotationSealWarning?: boolean;
+  /** 到期自动刷新回调 */
+  onRefresh?: (() => void) | undefined;
 }) {
   const attemptId = data.attempt.id;
   const navigate = useNavigate();
@@ -60,7 +64,14 @@ export default function AttemptResultWithDraftCleanup({
   ).current;
   // 练习本卷错题（2026-10）：组新重练卷 → 跳作答；失败留告警可重试
   const practice = useMutation({
-    mutationFn: (questionIds: string[]) => startWrongPracticeApi(questionIds),
+    // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
+    mutationFn: (questionIds: string[]) =>
+      // #6980-2：结果页重练范围 = 来源卷标题（data.title），随卷落库供记录
+      // 标题说明「练的是什么」
+      startWrongPracticeApi(questionIds, workflowStartOptions(), {
+        kind: "result",
+        sourceTitle: data.title,
+      } satisfies WrongPracticeScope),
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
     },
@@ -77,6 +88,7 @@ export default function AttemptResultWithDraftCleanup({
       backLabel={backLabel}
       onSolutionToggle={onSolutionToggle}
       annotationSealWarning={annotationSealWarning}
+      onRefresh={onRefresh}
       wrongPractice={{
         loading: practice.isPending,
         error: practiceErrorText,

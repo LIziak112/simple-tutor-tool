@@ -302,15 +302,42 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toBe(false);
     expect(wrongPracticeRequestSchema.safeParse({}).success).toBe(false);
   });
+
+  it("错题组卷请求携带建卷工作流选项（M1b）：旧请求合法；feedbackMode 必须伴随 workflowVersion=1", () => {
+    expect(
+      wrongPracticeRequestSchema.parse({
+        questionIds: ["练习四-1"],
+        workflowVersion: 1,
+        feedbackMode: "per_question",
+      }),
+    ).toMatchObject({ workflowVersion: 1, feedbackMode: "per_question" });
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["练习四-1"],
+        feedbackMode: "per_question",
+      }).success,
+    ).toBe(false);
+    // 旧 schema 非 strict：未知字段沿用既有宽松语义（strip），不为本任务改变
+    expect(
+      wrongPracticeRequestSchema.parse({
+        questionIds: ["练习四-1"],
+        workflowVersion: 1,
+        layout: "single",
+      }),
+    ).toEqual({ questionIds: ["练习四-1"], workflowVersion: 1 });
+  });
 });
 
 describe("attemptDraftDataSchema（草稿视图）", () => {
-  it("接受合法草稿视图：单元分组题目带 questionRevisionId + drafts 答案表 + hintsOpened 已解锁提示 + legacyUnverified", () => {
+  it("接受合法草稿视图：单元分组题目带 questionRevisionId + drafts 答案表 + hintsOpened 已解锁提示 + legacyUnverified + answerRelease", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
       courseName: null,
       dueAt: null,
+      // 2026-10-21 交卷前置预期：草稿视图携带公布时机（assignment 原值；
+      // course/wrong/lesson 恒 on_submit），交卷弹窗据此告知「截止后统一公布」
+      answerRelease: "on_submit",
       // T2A.7：题目按单元分组下发（题号全卷连续由 units 顺序保证）；
       // T6R.3：每题携带不透明 questionRevisionId（= responses 行 id）
       units: [
@@ -355,18 +382,20 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       enabledCapabilities: ["steps", "ink"],
     });
     expect(parsed.drafts["练习四-1"]).toEqual({ kind: "judge", value: true });
+    expect(parsed.answerRelease).toBe("on_submit");
     expect(parsed.hintsOpened["练习四-4"]?.[0]?.index).toBe(0);
     expect(parsed.units[0]?.questions[0]?.questionRevisionId).toBe(
       "11111111-1111-4111-8111-111111111111",
     );
   });
 
-  it("草稿视图缺 questionRevisionId 或 legacyUnverified → 整体拒绝（必填，防漏发）", () => {
+  it("草稿视图缺 questionRevisionId、legacyUnverified 或 answerRelease → 整体拒绝（必填，防漏发）", () => {
     const base = {
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
       courseName: null,
       dueAt: null,
+      answerRelease: "on_submit",
       drafts: {},
       hintsOpened: {},
       legacyUnverified: false,
@@ -401,6 +430,38 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
         units: [{ id: UNIT_ID, title: "练习四", questions: [question] }],
       }).success,
     ).toBe(false);
+    const { answerRelease: _omitRelease, ...withoutRelease } = base;
+    void _omitRelease;
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...withoutRelease,
+        units: [{ id: UNIT_ID, title: "练习四", questions: [question] }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("草稿视图 answerRelease 接受 after_due（截止后公布作业的交卷前置预期）；非法值拒绝", () => {
+    const base = {
+      attempt: SUMMARY_DRAFT,
+      title: "周末加练",
+      courseName: null,
+      dueAt: "2026-10-25T12:00:00.000Z",
+      drafts: {},
+      hintsOpened: {},
+      legacyUnverified: false,
+      enabledCapabilities: ["steps", "ink"],
+      units: [] as const,
+    };
+    expect(
+      attemptDraftDataSchema.parse({ ...base, answerRelease: "after_due" })
+        .answerRelease,
+    ).toBe("after_due");
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...base,
+        answerRelease: "immediately",
+      }).success,
+    ).toBe(false);
   });
 
   it("草稿视图里的题目携带教师侧字段会被剥离（strip 语义，与 QuestionPublic 一致）", () => {
@@ -409,6 +470,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       title: "周末加练",
       courseName: null,
       dueAt: null,
+      answerRelease: "on_submit",
       units: [
         {
           id: UNIT_ID,
@@ -484,6 +546,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
             teacherMark: null,
             teacherComment: null,
             finalCorrect: true,
+            answered: true,
+            studentFlag: null,
             hintsOpened: [],
           },
           {
@@ -504,6 +568,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
             teacherMark: "wrong",
             teacherComment: "第三空漏了，重算一遍异号相加。",
             finalCorrect: false,
+            answered: true,
+            studentFlag: null,
             // 做题时看过第 0 条提示 → 结果视图回显该条（其余不下发）
             hintsOpened: [{ index: 0, text: "同号相加，取相同的符号。" }],
           },
@@ -531,6 +597,36 @@ describe("attemptResultDataSchema（结果视图）", () => {
       kind: "fill",
       blanks: [["4"], ["-7"], ["0.5", "1/2"]],
     });
+  });
+
+  it("practiceWorkflow 裁决投影可选（M4-D3 §13.8 结果页节奏摘要）：缺省（legacy/lesson 卷）合法、携带合法、形态错误拒绝", () => {
+    const workflow = {
+      version: 1,
+      feedbackMode: "per_question",
+      revision: 0,
+      canChangeFeedback: false,
+      allowedFeedbackModes: ["per_question"],
+      canSubmitQuestion: false,
+      restrictionReason: null,
+      releaseAt: null,
+    };
+    // legacy/lesson 卷不携带 → 结果页不显示节奏摘要行
+    expect(
+      attemptResultDataSchema.parse(RESULT).practiceWorkflow,
+    ).toBeUndefined();
+    const parsed = attemptResultDataSchema.parse({
+      ...RESULT,
+      practiceWorkflow: workflow,
+    });
+    expect(parsed.practiceWorkflow?.feedbackMode).toBe("per_question");
+    expect(parsed.practiceWorkflow?.version).toBe(1);
+    // 形态错误拒绝（非法枚举值不是合法裁决投影）
+    expect(
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        practiceWorkflow: { ...workflow, feedbackMode: "immediately" },
+      }).success,
+    ).toBe(false);
   });
 
   it("快照携带提示内容字段会被剥离（strip 语义；hintCount 是唯一提示形态）", () => {
@@ -583,6 +679,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
                 teacherMark: null,
                 teacherComment: null,
                 finalCorrect: null,
+                answered: false,
+                studentFlag: null,
                 hintsOpened: [],
               },
             ],
@@ -851,6 +949,16 @@ describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () =>
       attemptErrorCodeSchema.safeParse("NOTE_EVIDENCE_MISMATCH").success,
     ).toBe(true);
   });
+
+  it("错误码集合包含 M2 逐题提交三码（均 409：协议不符/幂等键冲突/当前规则受限）", () => {
+    for (const code of [
+      "WORKFLOW_PROTOCOL_MISMATCH",
+      "WORKFLOW_MUTATION_CONFLICT",
+      "WORKFLOW_RESTRICTED",
+    ] as const) {
+      expect(attemptErrorCodeSchema.safeParse(code).success).toBe(true);
+    }
+  });
 });
 
 describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿）", () => {
@@ -1097,6 +1205,8 @@ describe("lessonStartDataSchema / lessonQuestionSubmit（2026-10 讲练一体）
         teacherMark: null,
         teacherComment: null,
         finalCorrect: true,
+        answered: true,
+        studentFlag: null,
         hintsOpened: [],
       },
       summary: {
@@ -1210,6 +1320,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         title: "周末加练",
         courseName: null,
         dueAt: null,
+        answerRelease: "on_submit",
         units: [],
         drafts: {},
         hintsOpened: {},
@@ -1305,5 +1416,81 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(
       false,
     );
+  });
+});
+
+describe("attemptDraftDataSchema（M1a 可选工作流与题级进度）", () => {
+  /** 草稿视图最小合法基底（不含新可选字段——旧响应缺省必须仍合法） */
+  const base = {
+    attempt: SUMMARY_DRAFT,
+    title: "周末加练",
+    courseName: null,
+    dueAt: null,
+    answerRelease: "on_submit",
+    units: [
+      {
+        id: UNIT_ID,
+        title: "练习四",
+        questions: [
+          {
+            id: "练习四-1",
+            type: "judge",
+            difficulty: 1,
+            knowledge: [],
+            stemMd: "[[]]",
+            hintCount: 0,
+            questionRevisionId: "11111111-1111-4111-8111-111111111111",
+          },
+        ],
+      },
+    ],
+    drafts: {},
+    hintsOpened: {},
+    legacyUnverified: false,
+    enabledCapabilities: ["steps", "ink"],
+  };
+
+  it("缺省不带 practiceWorkflow / questionProgress（旧响应兼容，不默认授权）", () => {
+    const parsed = attemptDraftDataSchema.parse(base);
+    expect(parsed.practiceWorkflow).toBeUndefined();
+    expect(parsed.questionProgress).toBeUndefined();
+  });
+
+  it("携带合法 practiceWorkflow + questionProgress 时透传", () => {
+    const workflow = {
+      version: 1,
+      feedbackMode: "per_question",
+      revision: 0,
+      canChangeFeedback: true,
+      allowedFeedbackModes: ["per_question", "after_attempt"],
+      canSubmitQuestion: true,
+      restrictionReason: null,
+      releaseAt: null,
+    };
+    const parsed = attemptDraftDataSchema.parse({
+      ...base,
+      practiceWorkflow: workflow,
+      questionProgress: [
+        { questionId: "练习四-1", submittedAt: null, feedbackReadable: false },
+      ],
+    });
+    expect(parsed.practiceWorkflow?.feedbackMode).toBe("per_question");
+    expect(parsed.questionProgress?.[0]?.questionId).toBe("练习四-1");
+  });
+
+  it("夹带答案字段的题级进度 → 整体拒绝（白名单，防答案混入题面）", () => {
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...base,
+        questionProgress: [
+          {
+            questionId: "练习四-1",
+            submittedAt: null,
+            feedbackReadable: false,
+            autoCorrect: true,
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });

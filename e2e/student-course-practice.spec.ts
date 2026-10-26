@@ -55,7 +55,9 @@ function practiceMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历次记录（T2A.6）", () => {
+test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历次记录（T2A.6）", {
+  tag: ["@smoke"],
+}, () => {
   test("学生在课程中完成单元两次，历次记录显示 2 次且得分独立", async ({
     request,
     browser,
@@ -120,6 +122,15 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(
         studentPage.getByText(`课程：${courseName} · 第 1 次`),
       ).toBeVisible();
+      const progressPage = await studentContext.newPage();
+      const progressLeak = attachLeakMonitor(progressPage);
+      await progressPage.goto("/s/records");
+      const progressCard = progressPage.getByRole("link", {
+        name: `继续作答：${unitName} · 第 1 次（进行中）`,
+      });
+      await expect(
+        progressCard.getByText("已做 0 / 2 题", { exact: true }),
+      ).toBeVisible();
       const first = studentPage.locator('article[aria-label="第 1 题"]');
       await first
         .getByRole("radio", { name: "对", exact: true })
@@ -133,6 +144,12 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
+      await progressPage.reload();
+      await expect(
+        progressCard.getByText("已做 2 / 2 题", { exact: true }),
+      ).toBeVisible();
+      expect(progressLeak.violations()).toEqual([]);
+      await progressPage.close();
       await studentPage
         .getByRole("button", { name: "交卷", exact: true })
         .click();
@@ -153,7 +170,9 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(studentPage.getByText(/历次记录（1）/)).toBeVisible();
       await expect(studentPage.getByText(/已做 1 次/)).toBeVisible();
       await expect(
-        studentPage.getByText(/首次 100 分 · 最近 100 分 · 最高 100 分/),
+        studentPage.getByText(
+          /首次 做对 2 \/ 2 题 · 最近 做对 2 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
+        ),
       ).toBeVisible();
 
       await studentPage.getByRole("button", { name: "再做一次" }).click();
@@ -205,7 +224,9 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       );
       await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
       await expect(
-        studentPage.getByText(/首次 100 分 · 最近 0 分 · 最高 100 分/),
+        studentPage.getByText(
+          /首次 做对 2 \/ 2 题 · 最近 做对 0 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
+        ),
       ).toBeVisible();
       // 历次列表：第 2 次（最近在前）与第 1 次都可进入回看
       await expect(

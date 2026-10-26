@@ -15,6 +15,7 @@ import {
   courses,
   dataMigrations,
   events,
+  ink,
   lectures,
   libraryFolders,
   responses,
@@ -285,6 +286,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         key: "t40a_events_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t6980_3_answered_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -338,10 +343,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
   });
 });
 
@@ -496,7 +501,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
     expect(
       db
         .select()
@@ -694,20 +699,62 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       delete row.frozen_at;
       delete row.legacy_unverified;
       if (table === "responses") delete row.unit_id;
+      // 未做维度列（0044 新增，#6980-3）：默认 false，不参与保真对比；新列
+      // 语义见 schema 测试与判分写点
+      if (table === "responses") delete row.answered;
+      // 「不会」标注列（0045 新增，#6980-4）：可空、存量行恒 NULL，不参与
+      // 保真对比；语义见 student-flags 路由测试
+      if (table === "responses") delete row.student_flag;
       // T7.8 教学包声明列（lectures/units，0029 新增，NULL=未声明）
       delete row.teaching_pack_json;
       // 讲练一体三列（0031 新增，2026-10）：lectures.kind 带默认值 'lecture'
       // （imports.kind 是 T1.10 既有列，保留在对比内）；attempts.lecture_id 与
       // responses.submitted_at 可空、存量行恒 NULL。新增列语义见 schema/migrate 测试
       if (table === "lectures") delete row.kind;
-      if (table === "attempts") delete row.lecture_id;
+      if (table === "attempts") {
+        delete row.lecture_id;
+        // 活动时间新列历史为空，不推测更早的保存事实。
+        expect(row.last_activity_at ?? null).toBeNull();
+        delete row.last_activity_at;
+        // 错题重练范围快照列（0043 新增，2026-10 #6980-2）：可空、存量行恒
+        // NULL，不参与保真对比；新列语义见 schema 测试与 wrong-practice 服务
+        delete row.practice_scope_json;
+      }
       // 0034 新增废弃时间，旧行默认NULL；原有业务字段仍逐项保真。
       if (table === "attempts") delete row.abandoned_at;
       if (table === "responses") delete row.submitted_at;
       if (table === "responses") {
         delete row.answer_revision;
         delete row.answer_mutation_id;
+        // 0040 自评列的兼容默认值单独核对，不改变旧业务字段。
+        for (const key of [
+          "review_policy",
+          "review_eligible",
+          "self_correct",
+          "review_revision",
+          "review_mutation_id",
+          "review_mutation_hash",
+          "reviewed_at",
+        ])
+          delete row[key];
       }
+      // 0038（M1b）新增列：assignments 逐题反馈授权默认 0；新列语义见
+      // practice-workflow 相关测试，此处只保真原有业务字段。
+      if (table === "assignments") delete row.allow_per_question_feedback;
+      // 0038（M1b）attempts 三列：旧协议卷 version NULL / mode NULL / revision 0
+      if (table === "attempts") {
+        delete row.practice_workflow_version;
+        delete row.feedback_mode;
+        delete row.workflow_revision;
+      }
+      // 0038（M1b）responses 两列：普通作答无逐题提交标记
+      if (table === "responses") {
+        delete row.practice_mutation_id;
+        delete row.practice_request_digest;
+      }
+      // 0039（M5-D1）units practice 推荐列：NULL=未声明，新列语义见
+      // migrate-practice-defaults / content-service 测试
+      delete row.practice_defaults_json;
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());
@@ -795,6 +842,18 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
     expect(revisions.length).toBeGreaterThan(0);
     for (const row of revisions)
       expect(row).toEqual({ answer_revision: 0, answer_mutation_id: null });
+    const reviews = db.$client
+      .prepare(
+        "SELECT review_policy, review_eligible, self_correct, review_revision FROM responses",
+      )
+      .all();
+    for (const row of reviews)
+      expect(row).toEqual({
+        review_policy: "legacy",
+        review_eligible: 0,
+        self_correct: null,
+        review_revision: 0,
+      });
     db.$client.close();
   });
 
@@ -813,6 +872,7 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
         passwordHash: "scrypt$模拟哈希",
         apiToken: null,
         capabilityProfileJson: null,
+        practiceFeedbackPolicy: null,
         createdAt: "2026-01-10T08:00:00.000Z",
       },
     ]);
@@ -1206,6 +1266,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t40a_events_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t6980_3_answered_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -1259,7 +1323,7 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
   });
 });
 
@@ -1801,5 +1865,175 @@ describe("T4.0a events 补列回填（pre-T4.0a 结构 fixture → 迁移 → �
     expect(timeline).toHaveLength(1);
     expect(timeline[0]).toMatchObject({ type: "lecture_expand" });
     db.$client.close();
+  });
+});
+
+/**
+ * 0044 responses.answered 存量回填测试（#6980-3，2026-10-25 审查修复）：
+ * 非空答案 / 正式手写笔迹 / 单题主动提交 → true；空结构答案、被动跳过、
+ * draft 卷草稿行 → false；重跑幂等。
+ */
+function runAnsweredBackfill(db: Db): void {
+  db.delete(dataMigrations)
+    .where(eq(dataMigrations.key, "t6980_3_answered_backfill"))
+    .run();
+  runBackfills(db, new Date("2026-09-30T00:00:00.000Z"));
+}
+
+function seedAnsweredAttempt(
+  db: Db,
+  attempt: { id: string; status: "draft" | "submitted" },
+  rows: {
+    id: string;
+    questionId: string;
+    answerJson: string | null;
+    submittedAt?: string | null;
+    practiceMutationId?: string | null;
+  }[],
+): void {
+  db.insert(attempts)
+    .values({
+      id: attempt.id,
+      studentId: "bg-s1",
+      sourceType: "course",
+      assignmentId: null,
+      courseId: null,
+      unitId: "bg-u1",
+      attemptNo: 1,
+      status: attempt.status,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      submittedAt:
+        attempt.status === "draft" ? null : "2026-09-01T00:10:00.000Z",
+      activeSec: null,
+      device: null,
+      scoreAuto: null,
+      scoreFinal: null,
+    })
+    .run();
+  for (const row of rows) {
+    db.insert(responses)
+      .values({
+        id: row.id,
+        attemptId: attempt.id,
+        questionId: row.questionId,
+        questionVersion: 1,
+        questionSnapshotJson: null,
+        answerJson: row.answerJson,
+        autoCorrect: null,
+        finalCorrect: null,
+        teacherMark: null,
+        teacherComment: null,
+        activeSec: null,
+        hintsUsed: 0,
+        changeCount: 0,
+        inkId: null,
+        submittedAt: row.submittedAt ?? null,
+        practiceMutationId: row.practiceMutationId ?? null,
+      })
+      .run();
+  }
+}
+
+function seedAnsweredInk(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  strokeCount: number,
+): void {
+  db.insert(ink)
+    .values({
+      id: `bg-ink-${attemptId}-${questionId}`,
+      attemptId,
+      questionId,
+      revision: 1,
+      mutationId: null,
+      bodyHash: null,
+      strokesPath: `blobs/ink/${attemptId}/${questionId}.json.gz`,
+      pngPath: `blobs/ink/${attemptId}/${questionId}.png`,
+      width: 10,
+      height: 10,
+      strokeCount,
+      updatedAt: "2026-09-01T00:01:00.000Z",
+    })
+    .run();
+}
+
+describe("0044 responses.answered 存量回填（#6980-3 审查修复）", () => {
+  it("非空答案/正式笔迹/单题提交 → true；空结构、被动跳过、draft 草稿行 → false；重跑幂等", () => {
+    const db = createTestDb();
+    seedBackfillFixture(db);
+    seedAnsweredAttempt(db, { id: "bg-at1", status: "submitted" }, [
+      {
+        id: "bg-r1",
+        questionId: "回填-1",
+        answerJson: '{"kind":"choice","index":0}',
+      },
+      {
+        id: "bg-r2",
+        questionId: "回填-2",
+        answerJson: '{"kind":"multi","indexes":[]}',
+      },
+      {
+        id: "bg-r3",
+        questionId: "回填-3",
+        answerJson: '{"kind":"fill","values":[""]}',
+      },
+      { id: "bg-r4", questionId: "回填-4", answerJson: null },
+      { id: "bg-r5", questionId: "回填-5", answerJson: null },
+      { id: "bg-r6", questionId: "回填-6", answerJson: null },
+      {
+        id: "bg-r7",
+        questionId: "回填-7",
+        answerJson: null,
+        practiceMutationId: "bg-mu-1",
+      },
+      {
+        id: "bg-r8",
+        questionId: "回填-8",
+        answerJson: null,
+        submittedAt: "2026-09-01T00:05:00.000Z",
+      },
+      {
+        id: "bg-r9",
+        questionId: "回填-9",
+        answerJson: null,
+        submittedAt: "2026-09-01T00:10:00.000Z",
+      },
+    ]);
+    seedAnsweredInk(db, "bg-at1", "回填-5", 3);
+    seedAnsweredInk(db, "bg-at1", "回填-6", 0);
+    // draft 卷：保存过草稿答案但未提交 → 不回填
+    seedAnsweredAttempt(db, { id: "bg-at2", status: "draft" }, [
+      {
+        id: "bg-r10",
+        questionId: "回填-10",
+        answerJson: '{"kind":"choice","index":0}',
+      },
+    ]);
+    runAnsweredBackfill(db);
+
+    const answeredOf = (rowId: string): boolean | null =>
+      db
+        .select({ answered: responses.answered })
+        .from(responses)
+        .where(eq(responses.id, rowId))
+        .get()?.answered ?? null;
+
+    expect(answeredOf("bg-r1")).toBe(true); // 非空答案
+    expect(answeredOf("bg-r2")).toBe(false); // 多选空选（空结构）
+    expect(answeredOf("bg-r3")).toBe(false); // 填空全空（空结构）
+    expect(answeredOf("bg-r4")).toBe(false); // 被动跳过
+    expect(answeredOf("bg-r5")).toBe(true); // 正式笔迹 strokeCount>0
+    expect(answeredOf("bg-r6")).toBe(false); // ink 行 strokeCount=0 不算
+    expect(answeredOf("bg-r7")).toBe(true); // 单题提交空答案（「不会」）
+    expect(answeredOf("bg-r8")).toBe(true); // 单题提交（submittedAt ≠ 整卷时刻）
+    expect(answeredOf("bg-r9")).toBe(false); // 整卷交卷行（时刻相同）不算单题提交
+    expect(answeredOf("bg-r10")).toBe(false); // draft 草稿行不污染
+
+    // 重跑幂等：结果不变
+    runAnsweredBackfill(db);
+    expect(answeredOf("bg-r1")).toBe(true);
+    expect(answeredOf("bg-r7")).toBe(true);
+    expect(answeredOf("bg-r2")).toBe(false);
   });
 });

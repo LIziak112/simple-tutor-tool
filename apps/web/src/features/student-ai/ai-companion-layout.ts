@@ -1,6 +1,8 @@
 import {
+  createContext,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -28,6 +30,30 @@ export const AI_COMPANION_NAV_EXPAND_MIN_WIDTH = 1280;
 /** 416px 对照栏 + 16px间距 + 44px折叠导航 + 24px间距 + 560px题列。 */
 export const AI_COMPANION_COMPARE_MIN_WIDTH = 1060;
 
+/**
+ * 侧栏对照激活态广播（M4-D2 §12.1）：AI 助教以侧栏对照呈现且面板打开时，
+ * rail 向题卡广播 true。草稿「自动」布局消费此信号回退上下排布——题干、
+ * 草稿与 AI 侧栏不形成四列并排；显式布局偏好仍由学生自决。无 Provider
+ * 时（题下/弹窗呈现、AI 关闭、非作答场景）默认 false，不改变既有布局。
+ */
+export const AiCompareActiveContext = createContext(false);
+
+/** 消费侧栏对照激活态（题卡草稿布局判定用） */
+export function useAiCompareActive(): boolean {
+  return useContext(AiCompareActiveContext);
+}
+
+/** 打开时同步读取当前容器，避免路由首帧测量尚未发布而误判为空间不足。 */
+export function hasAiCompareSpace(element: HTMLElement | null): boolean {
+  if (!element) return false;
+  const rect = element.getBoundingClientRect();
+  const scale =
+    element.offsetWidth > 0 && rect.width > 0
+      ? rect.width / element.offsetWidth
+      : 1;
+  return rect.width / scale >= AI_COMPANION_COMPARE_MIN_WIDTH;
+}
+
 /** 布局控制器对编辑器上下文的最小结构性依赖（AttemptEditorContext 满足） */
 export interface AiCompanionLayoutEditor {
   flush(
@@ -41,8 +67,6 @@ export interface AiCompanionLayoutController {
   open: boolean;
   /** 打开时的呈现模式：宽屏 dock / 窄屏独立面板（关闭时无意义） */
   mode: "dock" | "panel";
-  /** 题卡暂时离开可见作答区时隐藏栏，但保留会话状态 */
-  suspended: boolean;
   /** 现有答题卡折叠按钮应呈现的实效状态（用户选择 ∨ AI 覆盖） */
   navigatorCollapsed: boolean;
   /** 打开失败（本机落盘失败）时的如实提示；成功打开后清除 */
@@ -57,8 +81,6 @@ export interface AiCompanionLayoutController {
   closePanel(): void;
   /** 用户手动切换答题卡折叠（覆盖期间操作＝另行操作，取消恢复承诺） */
   toggleNavigator(): void;
-  /** 由题卡可见性观察器调用；不改变打开/绑定状态 */
-  setVisible(visible: boolean): void;
 }
 
 export function useAiCompanionLayout({
@@ -74,7 +96,6 @@ export function useAiCompanionLayout({
   dockEnabled?: boolean;
 }): AiCompanionLayoutController {
   const [open, setOpen] = useState(false);
-  const [visible, setVisibleState] = useState(true);
   const [width, setWidth] = useState<number | null>(null);
   const [userCollapsed, setUserCollapsed] = useState(false);
   /**
@@ -127,7 +148,6 @@ export function useAiCompanionLayout({
     width === null || width < AI_COMPANION_DOCK_MIN_WIDTH || yieldDock
       ? "panel"
       : "dock";
-  const suspended = open && !visible;
   const navFitsAlongDock =
     width !== null && width >= AI_COMPANION_NAV_EXPAND_MIN_WIDTH;
 
@@ -163,7 +183,6 @@ export function useAiCompanionLayout({
         }
       }
       setError(null);
-      setVisibleState(true);
       setOpen(true);
       return true;
     },
@@ -172,15 +191,10 @@ export function useAiCompanionLayout({
 
   const closePanel = useCallback(() => {
     setOpen(false);
-    setVisibleState(true);
     // 仅在用户未另行操作时恢复答题卡原状态（toggleNavigator 已取消覆盖）
     if (navOverride) setNavOverride(false);
     setYieldDock(false);
   }, [navOverride]);
-
-  const setVisible = useCallback((next: boolean) => {
-    setVisibleState(next);
-  }, []);
 
   const toggleNavigator = useCallback(() => {
     if (navOverride) {
@@ -203,7 +217,6 @@ export function useAiCompanionLayout({
   return {
     open,
     mode,
-    suspended,
     navigatorCollapsed: userCollapsed || navOverride,
     error,
     panelId,
@@ -211,6 +224,5 @@ export function useAiCompanionLayout({
     openPanel,
     closePanel,
     toggleNavigator,
-    setVisible,
   };
 }

@@ -277,9 +277,14 @@ export function WrongQuestionRow({
       >
         {QUESTION_TYPE_LABELS[question.type]}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm">
-        {stemSummaryOf(question.stemMd)}
-      </span>
+      <div title={stemSummaryOf(question.stemMd)} className="min-w-0 flex-1">
+        <span className="sr-only">{stemSummaryOf(question.stemMd)}</span>
+        <RichMarkdown
+          source={displayStemMd(question)}
+          compact
+          className="text-sm"
+        />
+      </div>
       <span className="shrink-0 text-xs text-muted-foreground">
         错 {question.wrongCount} · 对 {question.correctCount}
       </span>
@@ -289,10 +294,15 @@ export function WrongQuestionRow({
             aria-label="最近一轮做对"
             className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
           />
-        ) : (
+        ) : lastRound.answered ? (
           <XCircle
             aria-label="最近一轮做错"
             className="size-4 shrink-0 text-red-600 dark:text-red-400"
+          />
+        ) : (
+          <XCircle
+            aria-label="最近一轮未做"
+            className="size-4 shrink-0 text-muted-foreground"
           />
         ))}
       <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">
@@ -362,10 +372,20 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
                   <CheckCircle2 aria-hidden className="size-3.5" />
                   做对
                 </span>
-              ) : (
+              ) : round.answered ? (
                 <span className="flex shrink-0 items-center gap-1 font-medium text-red-700 dark:text-red-300">
                   <XCircle aria-hidden className="size-3.5" />
                   做错
+                </span>
+              ) : (
+                <span className="flex shrink-0 items-center gap-1 font-medium text-muted-foreground">
+                  <XCircle aria-hidden className="size-3.5" />
+                  未做
+                </span>
+              )}
+              {round.studentFlag === "unsure" && (
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  标过不会
                 </span>
               )}
               <span className="shrink-0 whitespace-nowrap tabular-nums">
@@ -440,6 +460,9 @@ export function WrongQuestionItem({
 }) {
   return (
     <article className="flex flex-col gap-4 rounded-2xl border border-primary/30 bg-card p-4 text-card-foreground shadow-xs sm:p-5">
+      {question.rounds.at(-1)?.reviewSource === "self" && (
+        <p className="text-xs text-muted-foreground">最近判定来自学生自评</p>
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <FirstCorrectMark firstCorrect={question.firstCorrect} />
         <span

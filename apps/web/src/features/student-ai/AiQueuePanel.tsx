@@ -109,6 +109,7 @@ function AiQueueItem({
   onNavigate: (
     task: AiTaskPublic,
     origin: AiTaskOriginSummary | undefined,
+    openReply?: boolean,
   ) => void;
   onAction: (taskId: string, action: AiQueueAction) => void;
   actionPending: boolean;
@@ -139,7 +140,7 @@ function AiQueueItem({
           type="button"
           className="flex min-h-11 min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg px-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           disabled={target === null}
-          onClick={() => onNavigate(task, origin)}
+          onClick={() => onNavigate(task, origin, true)}
         >
           <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
             <span
@@ -186,7 +187,7 @@ function AiQueueItem({
                 type="button"
                 variant="ghost"
                 className="min-h-11 px-3 text-sm"
-                onClick={() => onNavigate(task, origin)}
+                onClick={() => onNavigate(task, origin, true)}
               >
                 查看回复
               </Button>
@@ -218,11 +219,13 @@ function AiQueueItem({
 export interface AiQueueNavigationProps {
   currentAttemptId?: string | undefined;
   onOpenTask?: ((task: AiTaskPublic) => Promise<boolean>) | undefined;
+  onOpenQuestion?: ((task: AiTaskPublic) => Promise<boolean>) | undefined;
 }
 export function AiQueuePanel({
   onNavigated,
   currentAttemptId,
   onOpenTask,
+  onOpenQuestion,
 }: AiQueueNavigationProps & { onNavigated?: () => void }) {
   const [group, setGroup] = useState<"active" | "archived">("active");
   const [scope, setScope] = useState<"current" | "all">(
@@ -247,14 +250,16 @@ export function AiQueuePanel({
   const handleNavigate = async (
     task: AiTaskPublic,
     origin: AiTaskOriginSummary | undefined,
+    openReply = false,
   ) => {
     if (opening) return;
     const target = aiQueueTargetOf(task, origin);
     if (target === null) return;
-    if (task.attemptId === currentAttemptId && onOpenTask) {
+    const openInPlace = openReply ? onOpenTask : onOpenQuestion;
+    if (task.attemptId === currentAttemptId && openInPlace) {
       setOpening(true);
       try {
-        if (await onOpenTask(task)) onNavigated?.();
+        if (await openInPlace(task)) onNavigated?.();
         else
           setNavigationError(
             "暂时无法打开本题，请先完成材料恢复或重试保存，再点这条记录。",
@@ -271,15 +276,15 @@ export function AiQueuePanel({
       location.pathname + location.search,
       "https://student.invalid",
     );
-    for (const key of ["aiFrom", "aiTask", "aiQuestion"])
+    for (const key of ["aiFrom", "aiTask", "aiQuestion", "aiCompose"])
       source.searchParams.delete(key);
     const from = source.pathname + source.search;
     onNavigated?.();
     const targetParams = new URLSearchParams({
       aiFrom: from,
       aiQuestion: task.questionId,
-      aiTask: task.id,
     });
+    if (openReply) targetParams.set("aiTask", task.id);
     void navigate(`${target}?${targetParams}`);
   };
 

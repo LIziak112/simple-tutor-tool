@@ -22,7 +22,9 @@ import {
  */
 
 for (const natural of [false, true]) {
-  test.describe(`答题页草稿层（${natural ? "自然笔感" : "标准硬笔"}）`, () => {
+  test.describe(`答题页草稿层（${natural ? "自然笔感" : "标准硬笔"}）`, {
+    tag: ["@annotation"],
+  }, () => {
     test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", async ({
       request,
       browser,
@@ -176,10 +178,9 @@ for (const natural of [false, true]) {
   });
 }
 
-test("切换草稿后题干保持可见，正常打开不强制置顶", async ({
-  request,
-  page,
-}) => {
+test("切换草稿后题干保持可见，正常打开不强制置顶", {
+  tag: ["@annotation"],
+}, async ({ request, page }) => {
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const unitName = `草稿定位${suffix}`;
@@ -231,7 +232,10 @@ test("切换草稿后题干保持可见，正常打开不强制置顶", async ({
       second.evaluate((el) => {
         const top = el.getBoundingClientRect().top;
         const margin = Number.parseFloat(getComputedStyle(el).scrollMarginTop);
-        return top >= margin - 1 && top < 250;
+        // 断言语义为「题干保持可见」：不低于对齐下界（滚动边距=顶栏实测高+12，
+        // 由 --attempt-header-height 实时推导，恒高于顶栏底缘）且在视口内；原
+        // top < 250 是 PR #9 之前布局的标定，静止位置随字体度量横跨 250。
+        return top >= margin - 1 && top < innerHeight;
       }),
     )
     .toBe(true);

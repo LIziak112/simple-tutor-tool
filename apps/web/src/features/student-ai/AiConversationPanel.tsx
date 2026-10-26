@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiTaskPublic } from "@tutor/contract";
+import { ChevronDown, FileText } from "lucide-react";
 import {
   type ReactNode,
   useEffect,
@@ -17,6 +18,7 @@ import {
 import { randomUuid } from "@/lib/uuid";
 import { AiReadingWorkspace } from "./AiReadingWorkspace";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
+import { AiWorkspaceInput } from "./AiWorkspaceInput";
 import {
   studentAiQueueKey,
   studentAiQueueSummaryKey,
@@ -181,7 +183,11 @@ function ConversationMessages({
             </details>
           );
         const reply = (
-          <AiReplyMarkdown key={message.id} source={message.contentMd} />
+          <AiReplyMarkdown
+            key={message.id}
+            source={message.contentMd}
+            readingKey={`${taskId}:${message.id}:${updatedAt}`}
+          />
         );
         return index === latestAssistant ? (
           <div key={message.id} className="min-w-0">
@@ -268,41 +274,50 @@ function AiTaskCard({
   // 链接通道回信在外部：平台没有回信就如实说外部未知，不伪造完成
   const externalUnknown = task.channel === "link" && !task.hasReply;
   const fact = taskFactText(task);
+  const materialContext = (
+    <details className="group min-w-0 text-xs text-muted-foreground">
+      <summary className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 focus-visible:outline-2 focus-visible:outline-ring">
+        <FileText aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 break-words">
+          材料：{formatSnapshotTime(task.snapshotAt)} 的题目与作答
+        </span>
+        <ChevronDown
+          aria-hidden
+          className="size-3.5 shrink-0 group-open:rotate-180"
+        />
+      </summary>
+      <div className="space-y-2 rounded-md bg-muted/40 p-3 text-sm">
+        <p>
+          发送时：{AI_MODE_LABEL[task.modeAtSend]}。这份材料不会随新笔迹改变。
+        </p>
+        {task.materials.length === 0 ? (
+          <p>本次没有附加手写图片。</p>
+        ) : (
+          <ul>
+            {task.materials.map((material) => (
+              <li key={material.id}>
+                {material.kind === "annotation"
+                  ? "圈画"
+                  : material.kind === "draft"
+                    ? "草稿"
+                    : "正式手写"}{" "}
+                · 第 {material.pageIndex + 1} 页 ·{" "}
+                {material.state === "ready"
+                  ? "已上传"
+                  : (material.missingReason ?? "尚未就绪")}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </details>
+  );
   return (
     <article
       data-testid={`ai-task-card-${task.id}`}
       className="flex min-w-0 flex-col gap-3 py-2"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-        <span>依据：{formatSnapshotTime(task.snapshotAt)} 的题目与作答</span>
-        <details>
-          <summary className="flex min-h-11 cursor-pointer items-center text-primary focus-visible:outline-2 focus-visible:outline-ring">
-            查看材料
-          </summary>
-          <p>
-            发送时：{AI_MODE_LABEL[task.modeAtSend]}。这份材料不会随新笔迹改变。
-          </p>
-          {task.materials.length === 0 ? (
-            <p>本次没有附加手写图片。</p>
-          ) : (
-            <ul>
-              {task.materials.map((material) => (
-                <li key={material.id}>
-                  {material.kind === "annotation"
-                    ? "圈画"
-                    : material.kind === "draft"
-                      ? "草稿"
-                      : "正式手写"}{" "}
-                  · 第 {material.pageIndex + 1} 页 ·{" "}
-                  {material.state === "ready"
-                    ? "已上传"
-                    : (material.missingReason ?? "尚未就绪")}
-                </li>
-              ))}
-            </ul>
-          )}
-        </details>
-      </div>
+      {materialContext}
       {!expanded && <p className="line-clamp-2 text-sm">{task.question}</p>}
       {externalUnknown ? (
         <div className="flex flex-col gap-1">
@@ -376,7 +391,7 @@ function AiTaskCard({
         </p>
       )}
       {expanded && !externalUnknown && (
-        <AiReadingWorkspace>
+        <AiReadingWorkspace readingKey={`${task.id}:${viewedVersion}`}>
           <div
             data-task-reading={task.id}
             className="flex min-w-0 flex-col gap-4"
@@ -432,58 +447,60 @@ function AiTaskCard({
                   </Button>
                 </div>
                 {editing && (
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {FOLLOWUP_HINT}
-                    </p>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        继续问这份稿 · 材料{" "}
-                        {formatSnapshotTime(task.snapshotAt)}
-                      </span>
+                  <AiWorkspaceInput>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        {FOLLOWUP_HINT}
+                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          继续问这份稿 · 材料{" "}
+                          {formatSnapshotTime(task.snapshotAt)}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="min-h-11"
+                          onClick={onNewRequest}
+                        >
+                          带新稿另问
+                        </Button>
+                      </div>
+                      <textarea
+                        ref={followupInputRef}
+                        data-testid="followup-input"
+                        aria-label="继续追问本题"
+                        rows={2}
+                        className="max-h-40 min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                        placeholder="继续追问本题"
+                        value={followupDraft}
+                        disabled={followupSending || !followupAllowed}
+                        onChange={(event) => onFollowupText(event.target.value)}
+                      />
                       <Button
                         type="button"
-                        variant="ghost"
-                        className="min-h-11"
-                        onClick={onNewRequest}
+                        size="sm"
+                        className="min-h-11 self-start px-3"
+                        disabled={followupSending || !followupAllowed}
+                        onClick={onFollowup}
                       >
-                        带新稿另问
+                        {followupSending ? "追问中…" : "追问"}
                       </Button>
+                      {!followupAllowed && (
+                        <p
+                          role="status"
+                          className="text-xs text-muted-foreground"
+                        >
+                          {fact ?? "当前不可追问，请查看 AI 设置"}
+                        </p>
+                      )}
+                      {followupError !== null && (
+                        <p role="alert" className="text-sm text-destructive">
+                          {followupError}
+                        </p>
+                      )}
                     </div>
-                    <textarea
-                      ref={followupInputRef}
-                      data-testid="followup-input"
-                      aria-label="继续追问本题"
-                      rows={2}
-                      className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                      placeholder="继续追问本题"
-                      value={followupDraft}
-                      disabled={followupSending || !followupAllowed}
-                      onChange={(event) => onFollowupText(event.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="min-h-11 self-start px-3"
-                      disabled={followupSending || !followupAllowed}
-                      onClick={onFollowup}
-                    >
-                      {followupSending ? "追问中…" : "追问"}
-                    </Button>
-                    {!followupAllowed && (
-                      <p
-                        role="status"
-                        className="text-xs text-muted-foreground"
-                      >
-                        {fact ?? "当前不可追问，请查看 AI 设置"}
-                      </p>
-                    )}
-                    {followupError !== null && (
-                      <p role="alert" className="text-sm text-destructive">
-                        {followupError}
-                      </p>
-                    )}
-                  </div>
+                  </AiWorkspaceInput>
                 )}
               </div>
             )}
@@ -843,7 +860,7 @@ function AiConversationView({
           重试读取
         </Button>
         {quickButtons}
-        {composer}
+        <AiWorkspaceInput>{composer}</AiWorkspaceInput>
       </div>
     );
   const tasks = send.history?.tasks ?? [];
@@ -955,7 +972,7 @@ function AiConversationView({
       {showComposer && (
         <>
           {quickButtons}
-          {composer}
+          <AiWorkspaceInput>{composer}</AiWorkspaceInput>
         </>
       )}
       {!showComposer && selectedTask === undefined && (

@@ -13,6 +13,7 @@ import {
   notePhaseSchema,
   noteSubmissionEvidenceStateSchema,
 } from "./note.ts";
+import { selfReviewStateSchema } from "./self-review.ts";
 
 /**
  * AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19 与架构
@@ -424,6 +425,7 @@ export const learningPackResponseSchema = z.object({
   autoCorrect: z.boolean().nullable(),
   /** 最终判定（统计唯一口径；null=待批） */
   finalCorrect: z.boolean().nullable(),
+  reviewSource: selfReviewStateSchema.shape.source.optional(),
   teacherMark: z.enum(["correct", "wrong"]).nullable(),
   /** 教师评语原文（不改动；未评为 null） */
   teacherComment: z.string().nullable(),

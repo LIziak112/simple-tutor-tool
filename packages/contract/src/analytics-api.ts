@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { questionTypeSchema } from "./content.ts";
+import { attemptResultCountsSchema } from "./result-counts.ts";
 
 /**
  * 学情分析 API 契约（T4.1 起为权威定义，依据 Phase4 清单 §2 D1–D7 与架构
@@ -188,10 +189,20 @@ export const analyticsUnitCellSchema = z.object({
   redoCount: z.number().int().min(0),
   /** 首次得分（D1：首个已交卷的 scoreFinal ?? scoreAuto，0–100） */
   firstScore: z.number().int().min(0).max(100).nullable(),
+  firstResultCounts: attemptResultCountsSchema.nullable().optional(),
   /** 待批数（D4 共享谓词；含全部历次已交卷） */
   pendingCount: z.number().int().min(0),
   /** 最近一次交卷时间：UTC ISO；从未交卷为 null */
   latestSubmittedAt: z.string().nullable(),
+  /**
+   * 逐题已提交行数（M4-D3，仅 status=in-progress 的 v1 新协议草稿卷携带；
+   * 白名单纯公开进度计数，绝不含对错/得分/答案）：取使格子为进行中的那份
+   * draft 卷（每 学生×单元 至多一份），按 responses.submittedAt 行级计数；
+   * legacy 卷缺省 = 前端回落既有呈现。
+   */
+  practiceSubmittedCount: z.number().int().min(0).optional(),
+  /** 本卷题数（M4-D3，与 practiceSubmittedCount 成对出现；N=冻结行数） */
+  practiceQuestionCount: z.number().int().min(0).optional(),
 });
 
 /** 完成矩阵（D2）：行=学生、列=作业 + 可见课程单元，单元格稠密给出 */
@@ -378,6 +389,7 @@ export const analyticsRedoRowSchema = z.object({
   redoCount: z.number().int().min(0),
   /** 首次得分（D1；从未交卷为 null） */
   firstScore: z.number().int().min(0).max(100).nullable(),
+  firstResultCounts: attemptResultCountsSchema.nullable().optional(),
   /** 最近一次交卷时间：UTC ISO；从未交卷为 null */
   latestSubmittedAt: z.string().nullable(),
 });

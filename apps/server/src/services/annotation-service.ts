@@ -28,6 +28,8 @@ import {
   annotationConflictCurrentSchema,
   annotationDocSchema,
   annotationIssueIsLimit,
+  annotationSurfaceLayoutCore,
+  stableContentHash64,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
 import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
@@ -56,6 +58,7 @@ import {
   requireAnnotationResetVersion,
 } from "./annotation-reset";
 import { knowledgeNamesByQuestion } from "./assignment-service";
+import { touchAttemptActivity } from "./attempt-activity";
 import {
   attemptTeacherId,
   frozenRowsInDisplayOrder,
@@ -204,6 +207,14 @@ export function parseAnnotationBodyBytes(bytes: Uint8Array): AnnotationDoc {
       400,
       "ANNOTATION_VALIDATION_FAILED",
       `标注文档不合法：${first}`,
+      // 圈画审查 P0-1（同 note-service 口径）：错误体附 zod issue 路径与
+      // 文案（不含正文），线下可定位坏字段
+      {
+        _issues: parsed.error.issues.slice(0, 5).map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      },
     );
   }
   return parsed.data;
@@ -378,6 +389,24 @@ function requirePhaseWritable(attempt: Attempt, phase: AnnotationPhase): void {
 }
 
 /**
+ * pending 行过期接管阈值（批次三 P0-2）：设备半途死亡（preview 建行后 image
+ * 一直没回传）会把他端永久挡在 LAYOUT_CONFLICT 之外。权衡：TTL 短会误伤
+ * 「离线中断后本人回来续传」的设备（其 pending 行被后来者接管后只能重新绑定
+ * 或走裁决出口）；TTL 长则延长死锁窗口。取 24h 覆盖跨天离线场景，且客户端
+ * 已有「保留本机（不再同步）」「采用云端版本」「重新尝试同步」三个手动出口
+ * 兜底。ready 行**永不接管**（底图 ready 后永不重生成的不变量不变）。
+ */
+export const ANNOTATION_BASE_PENDING_TAKEOVER_MS = 24 * 60 * 60 * 1000;
+
+/** pending 行是否已过接管窗口（updatedAt 无法解析视为未过期，保守拒绝） */
+function pendingTakeoverDue(updatedAt: string): boolean {
+  const at = Date.parse(updatedAt);
+  return (
+    Number.isFinite(at) && Date.now() - at > ANNOTATION_BASE_PENDING_TAKEOVER_MS
+  );
+}
+
+/**
  * 取底图装配载荷（POST …/annotation/base）：幂等建 pending 行——已有行直接
  * 复用（ready 时载荷携带直出引用，客户端不再重生成）；无行则建（身份三要素
  * 服务端铸造）。载荷 = 学生 stem 级投影＋静态素材（不含学生答案节与任何
@@ -438,11 +467,92 @@ export function assembleAnnotationBase(
     layout !== undefined &&
     JSON.stringify(base.layout) !== JSON.stringify(layout)
   ) {
-    throw new HttpError(
-      409,
-      "ANNOTATION_BASE_LAYOUT_CONFLICT",
-      "服务器已有另一布局的底图，请保留本机稿并查看原标画",
-    );
+    const saved = base.layout;
+    const proof = layout.compatibility;
+    const sameCore =
+      saved !== null &&
+      JSON.stringify(annotationSurfaceLayoutCore(saved)) ===
+        JSON.stringify(annotationSurfaceLayoutCore(layout));
+    const conflict = () =>
+      new HttpError(
+        409,
+        "ANNOTATION_BASE_LAYOUT_CONFLICT",
+        "服务器已有另一布局的底图，请保留本机稿并查看原标画",
+      );
+    // 批次三 P0-2：半途死亡的 pending 行过期后允许后来请求**接管**（更新布局
+    // 与身份三要素；行无 imagePath 无内容，不构成改写历史）。ready 行永不接管。
+    if (
+      !sameCore &&
+      base.state === "pending" &&
+      pendingTakeoverDue(base.updatedAt)
+    ) {
+      const now = new Date().toISOString();
+      const takeover = {
+        layout,
+        questionRevisionId: row.id,
+        snapshotHash,
+        baseRenderVersion: layout.renderVersion,
+        updatedAt: now,
+      };
+      db.update(annotationBasesTable)
+        .set(takeover)
+        .where(eq(annotationBasesTable.id, base.id))
+        .run();
+      base = { ...base, ...takeover };
+    } else {
+      if (!sameCore || saved === null) throw conflict();
+      // 已补充证据的底图仍接受旧客户端原身份，但禁止替换既有证据。
+      if (proof !== undefined) {
+        if (
+          saved.compatibility !== undefined ||
+          base.state !== "ready" ||
+          base.snapshotHash !== snapshotHash
+        )
+          throw conflict();
+        if (
+          (phase === "scratch" && row.submittedAt !== null) ||
+          annotationRowOf(db, attempt.id, questionId, phase)?.sealedAt != null
+        )
+          throw conflict();
+        const material = materialOf(snapshot, true, "stem");
+        const content = {
+          type: material.type,
+          stemMd: material.stemMd,
+          options: material.options ?? [],
+        };
+        const matchesHash = (value: unknown, signature: string) =>
+          stableContentHash64(value) === signature ||
+          createHash("sha256").update(JSON.stringify(value)).digest("hex") ===
+            signature;
+        // 历史算法的字段顺序也是签名的一部分；Zod 输出顺序不充当历史测量顺序。
+        const blocks = proof.blocks.map(({ tag, x, y, width, height }) => ({
+          tag,
+          x,
+          y,
+          width,
+          height,
+        }));
+        const root = blocks[0];
+        if (
+          root?.tag !== "DIV" ||
+          root.x !== 0 ||
+          root.y !== 0 ||
+          Math.abs(root.width - layout.cssWidth) > 1 ||
+          Math.abs(root.height - layout.cssHeight) > 1 ||
+          !matchesHash(content, saved.contentSignature) ||
+          stableContentHash64(content) !== proof.contentSignature ||
+          !matchesHash(blocks, saved.geometrySignature) ||
+          !matchesHash(proof.fonts, saved.fontSignature)
+        )
+          throw conflict();
+        // 只补 JSON 元数据；原 PNG、旧签名、正文版本、封存证据与活动时间均不改。
+        db.update(annotationBasesTable)
+          .set({ layout })
+          .where(eq(annotationBasesTable.id, base.id))
+          .run();
+        base = { ...base, layout };
+      }
+    }
   }
 
   // 学生 stem 级投影＋静态素材（双哨兵：materialOf 500 / buildStatic 抛错）
@@ -928,6 +1038,8 @@ export function putAnnotationDoc(
           );
         }
       }
+      if (phase === "scratch" && existing?.hash !== hash)
+        touchAttemptActivity(tx, attemptId, now);
     });
   } catch (err) {
     // 唯一索引冲突（annotations_mutation_id_uk）兜底：单进程同步下不可达，

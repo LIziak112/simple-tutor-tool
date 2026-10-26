@@ -1,6 +1,8 @@
 import {
+  isSelfReviewQuestion,
   type Question,
   questionCapabilityBindings,
+  type ReviewPolicy,
   type StudentAnswer,
 } from "@tutor/contract";
 import { getValidator } from "./validator-registry.ts";
@@ -49,7 +51,9 @@ import { getValidator } from "./validator-registry.ts";
 export function grade(
   question: Question,
   answer?: StudentAnswer,
+  policy: ReviewPolicy = "legacy",
 ): boolean | null {
+  if (policy === "self_review" && isSelfReviewQuestion(question)) return null;
   if (question.answers === undefined) return null; // 题目无标准答案 → 不自动判分（优先级高于未作答判定）
   const binding = questionCapabilityBindings[question.type];
   if (binding.validation.shape !== "exact") return null; // rubric/unverifiable → 恒人工（fill）

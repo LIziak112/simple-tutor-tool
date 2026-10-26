@@ -7,7 +7,10 @@ import {
   annotationSealRequestSchema,
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
+  attemptFlagRequestSchema,
+  attemptStartOptionsRequestSchema,
   attemptSubmitRequestSchema,
+  attemptWorkflowUpdateDataSchema,
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
   hintOpenRequestSchema,
@@ -16,6 +19,12 @@ import {
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
   noteUploadMetaSchema,
+  practiceQuestionFeedbackDataSchema,
+  practiceQuestionSubmitDataSchema,
+  practiceQuestionSubmitRequestSchema,
+  practiceWorkflowUpdateRequestSchema,
+  selfReviewDataSchema,
+  selfReviewRequestSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
   studentRecordsQuerySchema,
@@ -50,6 +59,8 @@ import {
   HttpError,
   parseJsonBody,
   parseJsonBodyOrEmpty,
+  parseJsonValue,
+  readJsonBody,
 } from "../lib/http-error";
 import {
   annotationBaseImageBytes,
@@ -66,12 +77,15 @@ import {
 import {
   getAttemptDetail,
   getAttemptMaterialRevisions,
+  getPracticeQuestionFeedback,
   getStudentAttemptPaper,
   saveDraftAnswer,
+  setStudentFlag,
   startAttempt,
   startCourseAttempt,
   submitAttempt,
   submitLessonQuestion,
+  submitPracticeQuestion,
 } from "../services/attempt-service";
 import {
   appendAttemptEvents,
@@ -96,10 +110,12 @@ import {
   saveNoteVersion,
   sealCorrection,
 } from "../services/note-service";
+import { updateAttemptWorkflow } from "../services/practice-workflow-wiring";
 import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { saveSelfReview } from "../services/self-review-service.ts";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -284,10 +300,15 @@ export function createStudentRoutes(
           ),
         });
       })
-      .post("/assignments/:id/attempt", (c) => {
+      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1
+      // 与可选 feedbackMode，契约拒绝 mode 无版本）
+      .post("/assignments/:id/attempt", async (c) => {
+        const options =
+          (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
+          {};
         return c.json({
           ok: true,
-          data: startAttempt(db, c.var.student.id, c.req.param("id")),
+          data: startAttempt(db, c.var.student.id, c.req.param("id"), options),
         });
       })
       .put("/attempts/:id/answers/:questionId", async (c) => {
@@ -301,6 +322,21 @@ export function createStudentRoutes(
             c.req.param("questionId"),
             body.answer,
             body,
+          ),
+        });
+      })
+      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），
+      // 请求/回执只有标志位、不含任何答案内容（泄露测试 student-flags.test.ts）
+      .put("/attempts/:id/flags/:questionId", async (c) => {
+        const body = await parseJsonBody(c, attemptFlagRequestSchema);
+        return c.json({
+          ok: true,
+          data: setStudentFlag(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body.flag,
           ),
         });
       })
@@ -334,14 +370,43 @@ export function createStudentRoutes(
           ),
         });
       })
-      // 2026-10 讲练一体：单题提交（lesson 逐题即时反馈）——questionRevisionId
-      // CAS（错版 409 QUESTION_REVISION_STALE）+ 可选单题笔记证据声明（T6R.10
-      // 单题化：questionId 须与路径一致）；响应只含该题结果（提交即释放参考
-      // 答案/详解/判定）+ 现算汇总 + attempt 摘要，其他未提交题的答案/详解/
-      // 提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）。非 lesson
-      // 来源 404（讲练专属入口）；最后一题提交在事务内自动收尾整卷
+      // 2026-10 讲练一体 + M2 新协议分流（2026-10-22 计划 §5.3/§10.1）：
+      // 同一 URL 按请求形态分流——携带 workflowVersion 字段走新协议路径
+      //（practiceQuestionSubmitRequest strict 契约；仅普通来源新协议卷，
+      // 回执四键白名单 + private,no-store）；否则 lesson 旧协议形态沿用既有
+      // 契约与行为。两套契约互不放宽：新协议请求打到 lesson/历史卷、旧协议
+      // 形态打到新协议卷都被服务层 409 拒绝并提示刷新（§5.3 不退回整卷无
+      // 版本写入）；是否允许逐题提交由工作流与教师规则裁决（409
+      // WORKFLOW_RESTRICTED 等，详见 attempt-service.submitPracticeQuestion）
       .post("/attempts/:id/questions/:questionId/submit", async (c) => {
-        const body = await parseJsonBody(c, lessonQuestionSubmitRequestSchema);
+        const raw = await readJsonBody(c);
+        if (
+          typeof raw === "object" &&
+          raw !== null &&
+          "workflowVersion" in raw
+        ) {
+          const parsed = parseJsonValue(
+            raw,
+            practiceQuestionSubmitRequestSchema,
+          );
+          return c.json(
+            {
+              ok: true,
+              data: practiceQuestionSubmitDataSchema.parse(
+                submitPracticeQuestion(
+                  db,
+                  c.var.student.id,
+                  c.req.param("id"),
+                  c.req.param("questionId"),
+                  parsed,
+                ),
+              ),
+            },
+            200,
+            { "Cache-Control": "private, no-store" },
+          );
+        }
+        const legacy = parseJsonValue(raw, lessonQuestionSubmitRequestSchema);
         return c.json({
           ok: true,
           data: submitLessonQuestion(
@@ -349,9 +414,50 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("questionId"),
-            body,
+            legacy,
           ),
         });
+      })
+      // M2 题级反馈读取（新增，2026-10-22 计划 §10.1）：归属/作废/课程失权/
+      // 当前教师策略全查（与取卷同口径）；data 只承载共用授权投影（与提交回执
+      // 的 feedback 字段同一实现，practiceQuestionFeedbackOf）；四态按读取时刻
+      // 裁决，未授权形态零题目秘密；响应 no-store 不落 PWA/浏览器缓存
+      .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
+        const body = await parseJsonBody(c, selfReviewRequestSchema);
+        return c.json(
+          {
+            ok: true,
+            data: selfReviewDataSchema.parse(
+              saveSelfReview(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                c.req.param("questionId"),
+                body,
+              ),
+            ),
+          },
+          200,
+          { "Cache-Control": "private, no-store" },
+        );
+      })
+      .get("/attempts/:id/questions/:questionId/feedback", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: practiceQuestionFeedbackDataSchema.parse(
+              getPracticeQuestionFeedback(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                c.req.param("questionId"),
+                new Date(),
+              ),
+            ),
+          },
+          200,
+          { "Cache-Control": "private, no-store" },
+        );
       })
       // T2.11：分步提示——按需下发被请求的那一条并记录（hint_open 事件 + 已解锁集合）
       .post("/attempts/:id/hints", async (c) => {
@@ -378,6 +484,30 @@ export function createStudentRoutes(
             new Date(),
           ),
         });
+      })
+      // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
+      // 响应 no-store（不落 PWA/浏览器缓存）；拒绝 legacy/lesson/已交/首题已交/
+      // 失权/不允许模式（详见 practice-workflow-wiring.updateAttemptWorkflow）
+      .patch("/attempts/:id/workflow", async (c) => {
+        const body = await parseJsonBody(
+          c,
+          practiceWorkflowUpdateRequestSchema,
+        );
+        return c.json(
+          {
+            ok: true,
+            data: attemptWorkflowUpdateDataSchema.parse(
+              updateAttemptWorkflow(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                body,
+              ),
+            ),
+          },
+          200,
+          { "Cache-Control": "private, no-store" },
+        );
       })
       // T2A.6：通用取卷（两种来源共用；T5 鉴权口径——assignment 来源归属即
       // 权限，被移出/作业软删后已建作答仍可取卷；course 来源每次校验可见性与
@@ -857,7 +987,10 @@ export function createStudentRoutes(
       })
       // T2A.6：课程练习入口（存在未交卷作答返回它；否则新建 attemptNo+1，
       // 新一次从空白开始；事务保证并发只得一份 draft）
-      .post("/courses/:id/units/:unitId/attempts", (c) => {
+      .post("/courses/:id/units/:unitId/attempts", async (c) => {
+        const options =
+          (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
+          {};
         return c.json(
           {
             ok: true,
@@ -866,6 +999,7 @@ export function createStudentRoutes(
               c.var.student.id,
               c.req.param("id"),
               c.req.param("unitId"),
+              options,
             ),
           },
           201,
@@ -900,6 +1034,7 @@ export function createStudentRoutes(
       .get("/records", (c) => {
         // GET 无 JSON body：查询参数手工过契约 schema（数值字段经 coerce 解析）
         const parsed = studentRecordsQuerySchema.safeParse({
+          sort: c.req.query("sort"),
           sourceType: c.req.query("sourceType") ?? undefined,
           courseId: c.req.query("courseId") ?? undefined,
           assignmentId: c.req.query("assignmentId") ?? undefined,
@@ -968,7 +1103,17 @@ export function createStudentRoutes(
         return c.json(
           {
             ok: true,
-            data: startWrongPractice(db, c.var.student.id, body.questionIds),
+            data: startWrongPractice(
+              db,
+              c.var.student.id,
+              body.questionIds,
+              // M1b：显式 workflowVersion=1 才写新协议列（契约内建组合校验）
+              {
+                workflowVersion: body.workflowVersion,
+                feedbackMode: body.feedbackMode,
+              },
+              body.scope,
+            ),
           },
           201,
         );

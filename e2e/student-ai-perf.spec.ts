@@ -86,7 +86,9 @@ async function makeWorld(
   return { assignmentTitle, loginName };
 }
 
-test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存延迟）", () => {
+test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存延迟）", {
+  tag: ["@ai"],
+}, () => {
   // 两浏览器独立世界与供应商会话；同题内容谓词继续验证出站对应关系。
   test.describe.configure({ mode: "serial" });
 

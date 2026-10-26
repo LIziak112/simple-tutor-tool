@@ -271,8 +271,64 @@
     {
       "idx": 38,
       "version": "6",
+      "when": 1792658035719,
+      "tag": "0038_youthful_harrier",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1792716837680,
+      "tag": "0039_mean_doorman",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792814364329,
+      "tag": "0040_bizarre_fabian_cortez",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1792827896265,
+      "tag": "0041_fat_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1792836068879,
+      "tag": "0042_wealthy_donald_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1792907217889,
+      "tag": "0043_white_reptil",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1792912597972,
+      "tag": "0044_odd_bloodstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1792915800229,
+      "tag": "0045_lazy_iron_monger",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "6",
       "when": 1792935275845,
-      "tag": "0038_fancy_moon_knight",
+      "tag": "0046_brief_scourge",
       "breakpoints": true
     }
   ]
