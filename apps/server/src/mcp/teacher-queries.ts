@@ -111,7 +111,7 @@ function stemSummaryOf(stemMd: string | null): string | null {
     : stemMd.slice(0, SUMMARY_STEM_MAX);
 }
 
-/** 快照 JSON 对象列（answersJson 等）→ 解析结果（坏数据返回 null，不炸返回） */
+/** 快照 JSON 列（$.answers / $.options）→ 解析结果（坏数据返回 null，不炸返回） */
 function parseJsonObject(raw: string | null): unknown {
   if (raw === null) return null;
   try {
@@ -369,6 +369,9 @@ export function queryStudentResponses(
   const offset = decodeCursorOffset(args.cursor);
   const conditions = [
     eq(students.teacherId, teacherId),
+    // studentId 经 resolveToolStudent 解析后必达：缺这条会把「查学生 A」
+    // 放大成「名下全部学生」（多学生教师串档，评审 #11725 必改①）
+    eq(attempts.studentId, args.studentId),
     // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
     ...teacherVisibleResponsesWhere(),
     ...(args.attemptIds !== undefined && args.attemptIds.length > 0
@@ -457,7 +460,10 @@ export function queryStudentResponses(
       >`json_extract(${responses.questionSnapshotJson}, '$.knowledge')`,
       answersJson: sql<
         string | null
-      >`json_extract(${responses.questionSnapshotJson}, '$.answersJson')`,
+      >`json_extract(${responses.questionSnapshotJson}, '$.answers')`,
+      optionsJson: sql<
+        string | null
+      >`json_extract(${responses.questionSnapshotJson}, '$.options')`,
       solutionMd: sql<
         string | null
       >`json_extract(${responses.questionSnapshotJson}, '$.solutionMd')`,
@@ -517,10 +523,11 @@ export function queryStudentResponses(
         annotationIds: refs?.annotationIds ?? [],
         aiTaskIds: refs?.aiTaskIds ?? [],
       },
-      // full 面才带参考答案与解析（教师域允许；summary 恒不出现这两个键）
+      // full 面才带参考答案、选项与解析（教师域允许；summary 恒不出现这三个键）
       ...(full
         ? {
             answer: parseJsonObject(row.answersJson),
+            options: parseJsonObject(row.optionsJson),
             solutionMd: row.solutionMd,
           }
         : {}),

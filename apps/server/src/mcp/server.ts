@@ -811,7 +811,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         limit,
         cursor,
       }) => {
-        const query = teacherAttemptListQuerySchema.parse({
+        const parsed = teacherAttemptListQuerySchema.safeParse({
           studentId: resolveToolStudent(db, teacherId, studentId),
           ...(courseId !== undefined ? { courseId } : {}),
           ...(assignmentId !== undefined ? { assignmentId } : {}),
@@ -823,6 +823,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ...(limit !== undefined ? { limit } : {}),
           offset: decodeCursorOffset(cursor),
         });
+        // ZodError 不裸抛（guard 会落 INTERNAL），转 HttpError 400（本仓规矩）
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${firstIssueMessage(parsed.error)}`,
+          );
+        }
+        const query = parsed.data;
         const { attempts: cards, total } = listTeacherAttempts(
           db,
           teacherId,
@@ -876,7 +885,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     "query_student_responses",
     {
       description:
-        "按条件检索学生的逐题作答行（一行 = 一次作答，同题多次作答各自成行；已作废卷不返回，进行中卷只返回单题已提交的行）。筛选——归属：studentId（可省，同 query_student_attempts 约定）/ attemptIds / courseId / questionId / 提交时间 from-to；内容：knowledge（建卷冻结考点，精确等于）/ type（题型）；结果面：correct（true 判对 / false 判错 / pending 待批）/ flaggedUnsure / answered；过程面：minActiveSec / minChangeCount / usedHints / hasScratchOrInk（草稿笔记或正式笔迹）/ hasCorrection（订正）/ hasAiHelp（AI 求助）/ selfReview（自评）。summary 模式（默认）题干截 120 字且不含参考答案与解析；fields=full 返回题干全文与参考答案——自学者注意 full 含参考答案。每行带引用 id（refs.inkIds/noteVersionIds/annotationIds/aiTaskIds），内容按 id 另取不内联。limit（默认 50 上限 200）+ cursor 翻页。",
+        "按条件检索学生的逐题作答行（一行 = 一次作答，同题多次作答各自成行；已作废卷不返回，进行中卷只返回单题已提交的行）。筛选——归属：studentId（可省，同 query_student_attempts 约定）/ attemptIds / courseId / questionId / 提交时间 from-to；内容：knowledge（建卷冻结考点，精确等于）/ type（题型）；结果面：correct（true 判对 / false 判错 / pending 待批）/ flaggedUnsure / answered；过程面：minActiveSec / minChangeCount / usedHints / hasScratchOrInk（草稿笔记或正式笔迹）/ hasCorrection（订正）/ hasAiHelp（AI 求助）/ selfReview（自评）。summary 模式（默认）题干截 120 字且不含参考答案与解析；fields=full 返回题干全文、参考答案与选项——自学者注意 full 含参考答案。每行带引用 id（refs.inkIds/noteVersionIds/annotationIds/aiTaskIds），内容按 id 另取不内联。limit（默认 50 上限 200）+ cursor 翻页。",
       inputSchema: {
         studentId: z
           .string()
@@ -938,7 +947,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .enum(["summary", "full"])
           .optional()
           .describe(
-            "默认 summary（题干截 120 字、不含答案/解析）；full 含参考答案与解析（自学者注意 full 含参考答案）",
+            "默认 summary（题干截 120 字、不含答案/解析）；full 含参考答案、选项与解析（自学者注意 full 含参考答案）",
           ),
         limit: z
           .number()

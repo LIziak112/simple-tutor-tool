@@ -344,13 +344,13 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 18 个工具（14 个既有 + T-PR2 教师只读查询四件）", async () => {
+  it("tools/list 含既有 14 件与 T-PR2 教师只读查询四件（断名单不定长，后续 PR 增工具不破）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
-    const names = list.tools.map((t) => t.name).sort();
+    const names = list.tools.map((t) => t.name);
     expect(names).toEqual(
-      [
+      expect.arrayContaining([
         "get_dsl_spec",
         "lint_markdown",
         "import_markdown",
@@ -369,7 +369,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "query_student_responses",
         "search_questions",
         "get_report",
-      ].sort(),
+      ]),
     );
     await client.close();
   });
@@ -1974,6 +1974,80 @@ describe("query_student_responses（T-PR2 MCP-A ②）", () => {
       expect("answersJson" in row).toBe(false);
       expect("solutionMd" in row).toBe(false);
       expect(row.stemMd === null || row.stemMd.length <= 120).toBe(true);
+    }
+    await client.close();
+  });
+
+  it("studentId 过滤：同教师两名学生，查 A 不含 B 的行（评审 #11725 必改①）", async () => {
+    const { env, client, s1 } = await makeResponsesEnv();
+    const s2 = env.seed.students.s2.id;
+    // s2 名下有作答行（种子作业卷），查 s1 的结果不得混入
+    const s2RowIds = new Set(
+      env.db
+        .select({ id: responses.id })
+        .from(responses)
+        .innerJoin(attempts, eq(responses.attemptId, attempts.id))
+        .where(eq(attempts.studentId, s2))
+        .all()
+        .map((row) => row.id),
+    );
+    expect(s2RowIds.size).toBeGreaterThan(0);
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, limit: 200 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      total: number;
+      responses: { revisionId: string }[];
+    }>(result);
+    expect(data.total).toBeGreaterThan(0);
+    for (const row of data.responses) {
+      expect(s2RowIds.has(row.revisionId)).toBe(false);
+    }
+    // 反向同口径：查 s2 只回 s2 的行
+    const resultS2 = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s2, limit: 200 },
+    });
+    expect(resultS2.isError).toBeFalsy();
+    const dataS2 = parseToolJson<{
+      total: number;
+      responses: { revisionId: string }[];
+    }>(resultS2);
+    expect(dataS2.total).toBeGreaterThan(0);
+    for (const row of dataS2.responses) {
+      expect(data.responses.some((r) => r.revisionId === row.revisionId)).toBe(
+        false,
+      );
+    }
+    await client.close();
+  });
+
+  it("fields=full 返回参考答案与选项（快照 $.answers / $.options 路径，评审 #11725 必改②）", async () => {
+    const { client, s1 } = await makeResponsesEnv();
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, fields: "full", limit: 200 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      responses: {
+        type: string | null;
+        answer: unknown;
+        options: unknown;
+      }[];
+    }>(result);
+    expect(data.responses.length).toBeGreaterThan(0);
+    // 种子卷判定/选择/填空行快照 $.answers 非空（修复前取 $.answersJson 恒 null）
+    const withAnswer = data.responses.filter((row) => row.answer !== null);
+    expect(withAnswer.length).toBeGreaterThan(0);
+    // 选择题行 full 面带选项数组（没选项的参考答案没法用）
+    for (const row of data.responses) {
+      if (row.type === "choice") {
+        expect(Array.isArray(row.options)).toBe(true);
+        expect((row.options as unknown[]).length).toBeGreaterThan(0);
+      }
     }
     await client.close();
   });
