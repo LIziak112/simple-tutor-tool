@@ -185,6 +185,7 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
       aria-valuenow={ratio}
       aria-valuemin={minRatio}
       aria-valuemax={maxRatio}
+      aria-valuetext={`材料占比 ${ratio}%，题目占比 ${100 - ratio}%`}
       aria-label={ariaLabel}
       aria-disabled={disabled}
       data-slot="material-split-handle"
@@ -196,13 +197,13 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
       onPointerCancel={handlePointerUp}
       onKeyDown={handleKeyDown}
       style={{ touchAction: "none" }}
-      className={`group relative flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`group relative flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring before:absolute before:inset-y-0 before:-left-2 before:-right-2 before:content-[''] ${
         disabled ? "pointer-events-none opacity-40" : ""
       } ${className}`}
     >
       {/* 中间可见分割线 */}
       <div
-        className={`h-full w-[2px] rounded-full transition-colors ${
+        className={`h-full w-[2px] rounded-full transition-colors motion-reduce:transition-none ${
           isDragging
             ? "bg-primary"
             : "bg-border group-hover:bg-primary/60 group-focus-visible:bg-primary"
@@ -210,7 +211,7 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
       />
       {/* 拖拽 Handle 指示点胶囊 */}
       <div
-        className={`pointer-events-none absolute z-10 flex flex-col items-center justify-center gap-1 rounded-full border border-border bg-card px-0.5 py-2.5 shadow-xs transition-transform ${
+        className={`pointer-events-none absolute z-10 flex flex-col items-center justify-center gap-1 rounded-full border border-border bg-card px-0.5 py-2.5 shadow-xs transition-transform motion-reduce:transition-none ${
           isDragging
             ? "scale-110 border-primary bg-primary text-primary-foreground shadow-sm"
             : "text-muted-foreground group-hover:border-primary/50 group-hover:text-foreground"
