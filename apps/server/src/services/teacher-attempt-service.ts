@@ -12,7 +12,17 @@ import {
   wrongScopeLabelOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -381,6 +391,22 @@ export function listTeacherAttempts(
     activeSec: attempt.activeSec,
   }));
   return { attempts: cards, total: totalRow?.n ?? 0 };
+}
+
+/**
+ * 教师侧「可盘点作答行」共享谓词（教师迭代 T-PR2 抽出；T-PR3 已提交行放行与
+ * 学生主页聚合端点同用）：排作废卷（abandonedAt 非空）；进行中（draft）卷只纳入
+ * 单题已提交的行（responses.submittedAt 非空——讲练一体 2026-10 起的单题提交
+ * 时刻），整卷未交的 draft 行判定列不可信、不对外盘点；快照缺失的「历史题目
+ * 缺失」幽灵行（T6R.3）一并排除，与 D4 待批谓词同口径。使用方必须同时 join
+ * attempts 与 responses 两表。
+ */
+export function teacherVisibleResponsesWhere() {
+  return [
+    isNull(attempts.abandonedAt),
+    isNotNull(responses.questionSnapshotJson),
+    or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
+  ];
 }
 
 // ---------- GET /api/teacher/attempts/:id ----------
