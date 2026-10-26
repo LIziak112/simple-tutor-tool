@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useParams } from "react-router";
 import { HomePage } from "./pages/HomePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
@@ -72,9 +72,7 @@ const teacherRoutes = (() => {
   const InsightsOverviewPage = lazy(
     () => import("./pages/teacher/InsightsOverviewPage"),
   );
-  const InsightsStudentPage = lazy(
-    () => import("./pages/teacher/InsightsStudentPage"),
-  );
+  const StudentHomePage = lazy(() => import("./pages/teacher/StudentHomePage"));
   const InsightsQuestionsPage = lazy(
     () => import("./pages/teacher/InsightsQuestionsPage"),
   );
@@ -177,6 +175,15 @@ const teacherRoutes = (() => {
           }
         />
         <Route
+          // T-PR1：学生主页（原 T4.2 学生画像迁入；教师端以学生为导航单位）
+          path="students/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentHomePage />
+            </Suspense>
+          }
+        />
+        <Route
           path="assignments"
           element={
             <Suspense fallback={pageFallback}>
@@ -221,13 +228,9 @@ const teacherRoutes = (() => {
           }
         />
         <Route
-          // T4.2：学生画像（趋势/考点条形图/异常题/重做/阅读地图/AI 报告占位）
+          // T-PR1：旧画像路径保留并重定向到学生主页（T2A.2 /t/content 先例）
           path="insights/students/:id"
-          element={
-            <Suspense fallback={pageFallback}>
-              <InsightsStudentPage />
-            </Suspense>
-          }
+          element={<StudentHomeRedirect />}
         />
         <Route
           // T4.2：题目视角（正确率/用时/高频错误答案；与总览同筛选）
@@ -239,7 +242,7 @@ const teacherRoutes = (() => {
           }
         />
         <Route
-          // T4.4：导出中心（「导出给 AI」五步向导；学情页/画像页入口落点，
+          // T4.4：导出中心（「导出给 AI」五步向导；学情页/学生主页入口落点，
           // ?studentId= 预填该生；T4.7 起侧边栏「导出」同指此页）
           path="export"
           element={
@@ -270,6 +273,12 @@ const teacherRoutes = (() => {
     </>
   );
 })();
+
+/** 旧学生画像链接 → 学生主页（replace 重定向，外部书签与旧链接兼容） */
+function StudentHomeRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/t/students/${id ?? ""}`} replace />;
+}
 
 /** 教师端整页加载兜底（懒加载期间） */
 function TeacherRouteFallback() {
