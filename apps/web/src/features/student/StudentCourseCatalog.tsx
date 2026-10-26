@@ -112,16 +112,7 @@ export function StudentCourseCatalog({
   }
   return (
     <div className="flex flex-col gap-2">
-      <Input
-        aria-label="搜索讲义或练习名称"
-        placeholder="搜索名称或文件夹"
-        value={view.q}
-        onChange={(e) => patch({ q: e.target.value })}
-        onCompositionStart={() => setComposing(true)}
-        onCompositionEnd={() => setComposing(false)}
-        className="min-h-12 text-base"
-      />
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="flex flex-wrap items-center gap-2">
         <fieldset
           className="flex flex-wrap items-center gap-1"
           aria-label="内容类型"
@@ -134,7 +125,7 @@ export function StudentCourseCatalog({
             <Button
               key={value}
               variant={type === value ? "secondary" : "ghost"}
-              className="min-h-12 px-3"
+              className="min-h-11 px-2.5"
               aria-pressed={type === value}
               onClick={() => patch({ type: value ?? "all", status: "all" })}
             >
@@ -156,7 +147,7 @@ export function StudentCourseCatalog({
               <Button
                 key={value}
                 variant={status === value ? "secondary" : "ghost"}
-                className="min-h-12 px-3"
+                className="min-h-11 px-2.5"
                 aria-pressed={status === value}
                 onClick={() => patch({ status: value ?? "all" })}
               >
@@ -165,15 +156,25 @@ export function StudentCourseCatalog({
             ))}
           </fieldset>
         )}
-      </div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span role="status">
+        <Input
+          aria-label="搜索讲义或练习名称"
+          placeholder="搜索名称或文件夹"
+          value={view.q}
+          onChange={(e) => patch({ q: e.target.value })}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={() => setComposing(false)}
+          className="h-11 w-auto min-w-40 flex-1 basis-40 text-base"
+        />
+        <span
+          role="status"
+          className="whitespace-nowrap text-xs text-muted-foreground"
+        >
           {filtering ? "找到" : "共"} {matched.length} 项内容
         </span>
         {filtering && (
           <Button
             variant="ghost"
-            className="min-h-12"
+            className="min-h-11 px-2.5"
             onClick={() => patch({ q: "", type: "all", status: "all" })}
           >
             清除筛选
