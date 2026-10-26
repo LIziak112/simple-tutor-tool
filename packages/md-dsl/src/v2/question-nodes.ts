@@ -6,7 +6,7 @@ import {
 import type { Root } from "mdast";
 import type { Node } from "unist";
 import { visit } from "unist-util-visit";
-import { stripOptionListMd } from "./public-stem.ts";
+import { studentStemMd } from "./public-stem.ts";
 import { processor } from "./shared.ts";
 
 /**
@@ -18,10 +18,12 @@ import { processor } from "./shared.ts";
  * - 只枚举**块级**节点：root + 题干块（stem/<kind>/<n>）+ 选项
  *   （options/option/<n>）；行级/字级锚定留给后续版本（设计稿 §10-4）。
  *   n 为同类节点在预序中的 0 起序号。
- * - 输入先过 stripOptionListMd（幂等）：教师原文内嵌的选项任务列表剥除后，
- *   与学生公开投影的块结构一致——教师原文与学生投影枚举出**同一键序列**
- *   （锚点跨角色可互认的前提，question-nodes.test.ts 锁定）。[[…]] 标记只动
- *   行内文本（渲染侧 remark-blank 产 inline textDirective），不改块结构。
+ * - 输入先过学生端唯一投影 studentStemMd（publicStemMd∘displayStemMd，幂等）：
+ *   [[…]] 标记脱敏为 [[]] 空框 + 选项任务列表剥除（有 options 才剥，与渲染侧
+ *   一致）——nodes[].text 对任何调用方都是公开投影，不会把教师原文里的答案
+ *   原文带进学生/AI 载荷（评审 #11400 建议改条目）；标记替换只动行内文本
+ *   （渲染侧 remark-blank 产 inline textDirective），两角色键序列不变
+ *   （question-nodes.test.ts 锁定）。
  * - 渲染器（RichMarkdown 管线）将用同一枚举规则给块级元素打
  *   data-lr-node="<key>"（LR-PR2）。
  */
@@ -92,8 +94,12 @@ export function questionNodesOf(input: QuestionNodesInput): QuestionNode[] {
     return n;
   };
 
-  // 教师原文先剥选项任务列表（幂等；学生投影已剥则原样返回）——两角色块结构一致
-  const stem = stripOptionListMd(input.stemMd);
+  // 输入先过学生端唯一投影 studentStemMd（幂等；学生投影再入无变化）——
+  // nodes[].text 恒为公开投影，两角色键序列不变（见文件头注释）。
+  const stem = studentStemMd({
+    stemMd: input.stemMd,
+    options: input.options,
+  });
   const tree = processor.parse(stem) as Root;
   for (const child of tree.children) {
     // list 是包装节点：每个 listItem 自成一个块级节点（键按同类预序编号）

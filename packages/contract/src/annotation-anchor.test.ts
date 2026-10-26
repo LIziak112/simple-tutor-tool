@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANNOTATION_MAX_DELETED_POINTS,
   ANNOTATION_MAX_DELETED_STROKES,
   annotationDocSchema,
   annotationSurfaceCompatibilitySchema,
@@ -80,6 +81,46 @@ describe("annotation 契约 LR-2 擦除墓碑", () => {
     const over = annotationDocSchema.safeParse(
       build(ANNOTATION_MAX_DELETED_STROKES + 1),
     );
+    expect(over.success).toBe(false);
+    expect(isLimitIssue(over.error?.issues ?? [])).toBe(true);
+  });
+
+  it("墓碑单笔点数超 ANNOTATION_MAX_POINTS_PER_STROKE → params.limit 标记", () => {
+    const over = annotationDocSchema.safeParse({
+      ...legacyDoc,
+      deleted: [
+        {
+          ...tombstone("stroke-dead"),
+          points: Array.from({ length: 2001 }, (_, i) => ({
+            x: i % 1000,
+            y: i % 1000,
+            p: 0.5,
+            t: i,
+          })),
+        },
+      ],
+    });
+    expect(over.success).toBe(false);
+    expect(isLimitIssue(over.error?.issues ?? [])).toBe(true);
+  });
+
+  it("墓碑总点数恰在 ANNOTATION_MAX_DELETED_POINTS 内通过，超限拒绝并带 params.limit", () => {
+    const perStrokePoints = 2000;
+    const atLimit = ANNOTATION_MAX_DELETED_POINTS / perStrokePoints;
+    const build = (count: number) => ({
+      ...legacyDoc,
+      deleted: Array.from({ length: count }, (_, i) => ({
+        ...tombstone(`dead-${String(i).padStart(4, "0")}`),
+        points: Array.from({ length: perStrokePoints }, (_, j) => ({
+          x: j % 1000,
+          y: j % 800,
+          p: 0.5,
+          t: j,
+        })),
+      })),
+    });
+    expect(annotationDocSchema.safeParse(build(atLimit)).success).toBe(true);
+    const over = annotationDocSchema.safeParse(build(atLimit + 1));
     expect(over.success).toBe(false);
     expect(isLimitIssue(over.error?.issues ?? [])).toBe(true);
   });

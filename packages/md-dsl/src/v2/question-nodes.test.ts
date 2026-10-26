@@ -134,6 +134,23 @@ describe("questionNodesOf（LR-4 题面语义节点枚举）", () => {
     expect(teacherNodes).toHaveLength(2);
   });
 
+  it("nodes[].text 恒为公开投影：教师原文含 [[参考答案]] 时 text 不带答案原文", () => {
+    const teacher =
+      "填空题：一元二次方程 $x^2=4$ 的解是 [[2,-2]]，判断 $\\sqrt{2}$ 是否有理。";
+    const nodes = questionNodesOf({ stemMd: teacher });
+    const nonEmptyMarker = /\[\[[^[\]]+\]\]/;
+    for (const node of nodes) {
+      if (node.text === undefined) continue;
+      expect(nonEmptyMarker.test(node.text)).toBe(false);
+      expect(node.text.includes("2,-2")).toBe(false);
+    }
+    // 键序列与「先手工脱敏再枚举」完全一致（studentStemMd 幂等）
+    const manual = studentStemMd({ stemMd: teacher });
+    expect(nodes.map((node) => node.key)).toEqual(
+      questionNodesOf({ stemMd: manual }).map((node) => node.key),
+    );
+  });
+
   it("确定性：同输入两次枚举结果逐字段一致", () => {
     const first = questionNodesOf({ stemMd: TEACHER_STEM, options: OPTIONS });
     const second = questionNodesOf({ stemMd: TEACHER_STEM, options: OPTIONS });

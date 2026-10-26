@@ -282,9 +282,12 @@ export const learningRecordSchema = z
     grading: gradingFacetSchema,
   })
   .superRefine((record, ctx) => {
-    // P6：学生视角禁携清单（与 reviewPackSchema superRefine 同口径——
-    // attemptId/studentId/questionId/snapshotHash/answers/solutionMd/判定/评语；
-    // snapshotHash 本 schema 不设字段，天然不携带）。
+    // P6：学生视角禁携清单（attemptId/studentId/questionId/snapshotHash/
+    // answers/solutionMd/判定/评语；snapshotHash 本 schema 不设字段，天然
+    // 不携带）。与 reviewPackSchema superRefine **不是完全同口径**（评审
+    // #11400 提醒）：autoCorrect/finalCorrect 这里按 §3.7 公布 gate 在 schema
+    // 层放行（公布与否由装配层裁决），review-pack 则一律禁——LR-PR3 泄露
+    // 测试必须含「未公布不含判定」与「nodes[].text 为公开投影」两条。
     if (record.role !== "student") return;
     const forbidden: Array<[unknown, string[]]> = [
       [record.identity.attemptId, ["identity", "attemptId"]],

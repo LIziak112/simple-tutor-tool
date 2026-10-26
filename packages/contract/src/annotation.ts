@@ -80,6 +80,14 @@ export const ANNOTATION_MAX_TOTAL_POINTS = 40_000;
 export const ANNOTATION_MAX_DELETED_STROKES = 400;
 
 /**
+ * 墓碑总点数上限（LR-2；设计稿 §4.2 限额表补充行——评审 #11400：原表漏了
+ * 圈画墓碑总点数一行）。初值取活笔总点数（ANNOTATION_MAX_TOTAL_POINTS）的
+ * 2 倍，覆盖大改稿的擦除史；**暂定，真机定标后修订**。超限 params.limit →
+ * 服务端 413 分级，与笔数/单笔限额同口径。
+ */
+export const ANNOTATION_MAX_DELETED_POINTS = 80_000;
+
+/**
  * baseWidth/baseHeight 的防御上限（与 ANNOTATION_BASE_MAX_HEIGHT_PX 同值、
  * 语义独立：前者约束文档声明的坐标域上限，后者约束底图实际高度；服务端
  * 另校验文档几何与底图行 pixelWidth/pixelHeight 严格相等，不靠本上限兜底）。
@@ -199,9 +207,20 @@ export const annotationDocSchema = z
           params: { limit: true },
         });
       }
+      let deletedPoints = 0;
       for (let si = 0; si < doc.deleted.length; si++) {
         const stroke = doc.deleted[si];
         if (stroke === undefined) continue;
+        // 墓碑单笔与活笔画同上限（评审 #11400：与活笔 2000 点/笔对称）
+        if (stroke.points.length > ANNOTATION_MAX_POINTS_PER_STROKE) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["deleted", si, "points"],
+            message: `墓碑单笔点数超上限（${stroke.points.length} > ${ANNOTATION_MAX_POINTS_PER_STROKE}，暂定值）`,
+            params: { limit: true },
+          });
+        }
+        deletedPoints += stroke.points.length;
         for (let pi = 0; pi < stroke.points.length; pi++) {
           const point = stroke.points[pi];
           if (point === undefined) continue;
@@ -228,6 +247,15 @@ export const annotationDocSchema = z
             });
           }
         }
+      }
+      // 墓碑总点数预算（与活笔总点数分开，不计入 ANNOTATION_MAX_TOTAL_POINTS）
+      if (deletedPoints > ANNOTATION_MAX_DELETED_POINTS) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["deleted"],
+          message: `墓碑总点数超上限（${deletedPoints} > ${ANNOTATION_MAX_DELETED_POINTS}，暂定值）`,
+          params: { limit: true },
+        });
       }
     }
     // ---- LR-4：anchors 键必须指向 strokes ∪ deleted 的 id（悬空拒绝）；
