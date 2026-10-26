@@ -143,7 +143,9 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
             ) : null}
             {hasMaterials && (
               <span className="text-xs font-normal text-muted-foreground">
-                共用下方材料作答
+                {onSplitRatioChange !== undefined
+                  ? "共用材料作答"
+                  : "共用下方材料作答"}
               </span>
             )}
           </div>
@@ -177,6 +179,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                   material={material}
                   versionNote={versionNotes.get(materialVersionKey(material))}
                   attemptId={attemptId}
+                  associatedQuestionIds={group.questionIds}
                 />
               ))}
             </section>
@@ -193,7 +196,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                 <MaterialSplitHandle
                   ratio={splitRatio ?? 50}
                   onRatioChange={onSplitRatioChange}
-                  containerRef={containerRef ?? materialsRef}
+                  containerRef={containerRef}
                 />
               </div>
             )}

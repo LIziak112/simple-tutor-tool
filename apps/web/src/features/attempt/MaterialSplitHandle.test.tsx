@@ -155,4 +155,79 @@ describe("MaterialSplitHandle 中缝拖拽 Handle", () => {
     fireEvent.pointerUp(handle, { pointerId: 1 });
     expect(handle.releasePointerCapture).toHaveBeenCalledWith(1);
   });
+
+  it("拖拽期间设置全局 col-resize 与 user-select: none，并在 window 上平滑响应与清理", () => {
+    const containerRef = createRef<HTMLDivElement>();
+    const onRatioChange = vi.fn();
+
+    render(
+      <div ref={containerRef}>
+        <MaterialSplitHandle
+          ratio={50}
+          onRatioChange={onRatioChange}
+          containerRef={containerRef}
+        />
+      </div>,
+    );
+
+    const handle = screen.getByRole("separator");
+    if (containerRef.current) {
+      vi.spyOn(containerRef.current, "getBoundingClientRect").mockReturnValue({
+        left: 0,
+        top: 0,
+        right: 1000,
+        bottom: 800,
+        width: 1000,
+        height: 800,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      });
+    }
+
+    // 按下拖拽
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 500 });
+    expect(document.body.style.cursor).toBe("col-resize");
+    expect(document.body.style.userSelect).toBe("none");
+
+    // 窗口级指针移动（例如快速滑出 handle 边界）
+    fireEvent(window, new PointerEvent("pointermove", { clientX: 420 }));
+    expect(onRatioChange).toHaveBeenLastCalledWith(42);
+
+    // 窗口级释放
+    fireEvent(window, new PointerEvent("pointerup"));
+    expect(document.body.style.cursor).toBe("");
+    expect(document.body.style.userSelect).toBe("");
+  });
+
+  it("未传 containerRef 时自动寻径父级 [data-layout='compare'] 容器换算百分比", () => {
+    const onRatioChange = vi.fn();
+
+    render(
+      <ol data-layout="compare" style={{ width: 1000 }}>
+        <li>
+          <MaterialSplitHandle ratio={50} onRatioChange={onRatioChange} />
+        </li>
+      </ol>,
+    );
+
+    const compareContainer = screen.getByRole("list");
+    vi.spyOn(compareContainer, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 1000,
+      bottom: 800,
+      width: 1000,
+      height: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    const handle = screen.getByRole("separator");
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 500 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 580 });
+    expect(onRatioChange).toHaveBeenLastCalledWith(58);
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+  });
 });

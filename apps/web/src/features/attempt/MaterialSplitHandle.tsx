@@ -3,6 +3,7 @@ import {
   memo,
   type PointerEvent as ReactPointerEvent,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -17,7 +18,7 @@ export interface MaterialSplitHandleProps {
   /** 最大比例（默认 65） */
   maxRatio?: number;
   /** 分栏外层容器引用，用于换算指针像素到百分比 */
-  containerRef: React.RefObject<HTMLElement | null>;
+  containerRef?: React.RefObject<HTMLElement | null> | undefined;
   /** 是否禁用拖拽与键盘交互 */
   disabled?: boolean;
   /** 附加样式类 */
@@ -30,6 +31,7 @@ export interface MaterialSplitHandleProps {
  * 材料题型中缝拖拽 Handle（Fenbi / 公考 / 申论阅读题分栏中缝）：
  * - 允许学生自由调整材料与题目宽度占比在 35%~65% 之间；
  * - 支持指针拖拽（pointerdown + setPointerCapture + clientX 换算）；
+ * - 拖拽期间全局捕获指针，并施加 col-resize 与 user-select: none 防止文本跳选；
  * - 支持键盘无障碍微调（ArrowLeft/Right ±1%、Shift+Arrow ±5%、Home/End 极值）；
  * - role="separator" + aria-orientation="vertical" + aria-valuenow。
  */
@@ -45,10 +47,33 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
 }: MaterialSplitHandleProps) {
   const [isDragging, setIsDragging] = useState(false);
   const pointerIdRef = useRef<number | null>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
 
   const clamp = useCallback(
     (value: number) => Math.min(maxRatio, Math.max(minRatio, value)),
     [minRatio, maxRatio],
+  );
+
+  const resolveContainer = useCallback((): HTMLElement | null => {
+    return (
+      containerRef?.current ??
+      handleRef.current?.closest<HTMLElement>('[data-layout="compare"]') ??
+      handleRef.current?.parentElement ??
+      null
+    );
+  }, [containerRef]);
+
+  const updateRatioFromClientX = useCallback(
+    (clientX: number) => {
+      const container = resolveContainer();
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const relativeX = clientX - rect.left;
+      const rawPercent = (relativeX / rect.width) * 100;
+      onRatioChange(clamp(Math.round(rawPercent)));
+    },
+    [resolveContainer, clamp, onRatioChange],
   );
 
   const handlePointerDown = useCallback(
@@ -70,18 +95,9 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (!isDragging || disabled) return;
-      const container = containerRef.current;
-      if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      if (rect.width <= 0) return;
-
-      const relativeX = e.clientX - rect.left;
-      const rawPercent = (relativeX / rect.width) * 100;
-      const clamped = clamp(Math.round(rawPercent));
-      onRatioChange(clamped);
+      updateRatioFromClientX(e.clientX);
     },
-    [isDragging, disabled, containerRef, clamp, onRatioChange],
+    [isDragging, disabled, updateRatioFromClientX],
   );
 
   const handlePointerUp = useCallback(
@@ -99,6 +115,37 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
     },
     [isDragging],
   );
+
+  // 全局指针监听：在拖拽期间保障鼠标移出/失焦时的平滑响应与文本防选
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onWindowPointerMove = (e: PointerEvent) => {
+      updateRatioFromClientX(e.clientX);
+    };
+
+    const onWindowPointerUp = () => {
+      setIsDragging(false);
+      pointerIdRef.current = null;
+    };
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    window.addEventListener("pointercancel", onWindowPointerUp);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      window.removeEventListener("pointercancel", onWindowPointerUp);
+    };
+  }, [isDragging, updateRatioFromClientX]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
@@ -131,6 +178,7 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
   return (
     // biome-ignore lint/a11y/useSemanticElements: 垂直可拖拽中缝需遵循 WAI-ARIA separator 规范（不可用 hr 替代）
     <div
+      ref={handleRef}
       role="separator"
       tabIndex={disabled ? -1 : 0}
       aria-orientation="vertical"

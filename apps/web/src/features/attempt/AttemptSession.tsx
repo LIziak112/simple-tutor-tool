@@ -1662,7 +1662,9 @@ function AnswerView({
                                   key={`group:${segment.group.id}`}
                                   group={segment.group}
                                   materials={segment.materials}
-                                  questionCount={segment.questionIds.length}
+                                  questionCount={
+                                    singleMode ? 1 : segment.questionIds.length
+                                  }
                                   readingKey={`${attemptId}|${segment.group.id}`}
                                   revealSignal={
                                     materialReveal[segment.group.id] ?? 0

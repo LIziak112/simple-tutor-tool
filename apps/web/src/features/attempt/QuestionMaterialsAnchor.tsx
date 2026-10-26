@@ -116,6 +116,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
             material={material}
             versionNote={versionNotes.get(materialVersionKey(material))}
             attemptId={attemptId}
+            associatedQuestionIds={[questionId]}
           />
         ))}
       </section>
@@ -127,7 +128,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
           <MaterialSplitHandle
             ratio={splitRatio ?? 50}
             onRatioChange={onSplitRatioChange}
-            containerRef={containerRef ?? materialsRef}
+            containerRef={containerRef}
           />
         </div>
       )}

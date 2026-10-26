@@ -1,4 +1,9 @@
-import type { InkDoc, InkStroke, InkStrokePoint } from "@tutor/contract";
+import {
+  INK_LOGICAL_WIDTH,
+  type InkDoc,
+  type InkStroke,
+  type InkStrokePoint,
+} from "@tutor/contract";
 import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
@@ -8,6 +13,7 @@ import {
   useState,
 } from "react";
 import { useCoordinatedAnnotation } from "@/features/annotation/coordinated-annotation-context";
+import { fromLogical, toLogical } from "@/features/ink/engine/normalize";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import { draftStore } from "./draft-store";
 
@@ -17,6 +23,12 @@ export interface MaterialAnnotationOverlayProps {
   children: ReactNode;
   disabled?: boolean;
   className?: string;
+  /**
+   * 本材料关联的题目 ID 列表（QM-15/题组/solo 关联单源）：
+   * 仅当当前题卡处于标注态且属于本材料时，才激活手写圈画；
+   * 未传入时宽容降级为任意题目圈画时激活（兼容单测）。
+   */
+  associatedQuestionIds?: readonly string[] | undefined;
 }
 
 const COLOR_MAP: Record<string, string> = {
@@ -61,7 +73,7 @@ function strokeHits(
   stroke: InkStroke,
   x: number,
   y: number,
-  radius = 16,
+  radius: number,
 ): boolean {
   const points = stroke.points;
   if (!points || points.length === 0) return false;
@@ -82,9 +94,11 @@ function strokeHits(
 
 /**
  * 材料圈画手写图层（协同标画）：
- * - 当题卡点击「圈画」进入标注态时，材料区同步激活手写/圈画图层；
+ * - 当题卡点击「圈画」进入标注态时，仅关联题目的材料区同步激活手写/圈画图层；
  * - 与题目使用统一的画笔/橡皮/颜色/粗细（useCoordinatedAnnotation）；
+ * - 矢量笔迹一律按 INK_LOGICAL_WIDTH (1000) 归一化存储，分栏比例变化与屏幕缩放绝不变形；
  * - 笔迹采用统一合并存储（按 attemptId + materialId 存入 draftStore）；
+ * - 支持冷启动异步从 IndexedDB 加载已有笔迹；
  * - 非标注态时以只读形式呈现笔迹，支持学生在答题时随时对照材料标画。
  */
 export function MaterialAnnotationOverlay({
@@ -93,10 +107,18 @@ export function MaterialAnnotationOverlay({
   children,
   disabled = false,
   className = "",
+  associatedQuestionIds,
 }: MaterialAnnotationOverlayProps) {
   const editor = useAttemptEditor();
   const { tool, color, size } = useCoordinatedAnnotation();
-  const isAnnotationActive = !disabled && editor?.active?.kind === "annotation";
+
+  const isAssociated =
+    associatedQuestionIds === undefined ||
+    (editor?.active?.questionId !== undefined &&
+      associatedQuestionIds.includes(editor.active.questionId));
+
+  const isAnnotationActive =
+    !disabled && editor?.active?.kind === "annotation" && isAssociated;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -115,24 +137,46 @@ export function MaterialAnnotationOverlay({
   const currentStrokeRef = useRef<InkStroke | null>(null);
   const isDrawingRef = useRef(false);
 
-  // 同步材料草稿（换题或重载时恢复）
+  // 恢复材料草稿（内存命中立即读取；硬刷新冷启动时异步回源 IndexedDB）
   useEffect(() => {
-    const stored = draftStore.getMaterialInk(attemptId, materialId);
-    if (stored?.engine === "atrament") {
-      setStrokes(stored.data.strokes);
-    }
+    let active = true;
+    const load = async () => {
+      const fromMem = draftStore.getMaterialInk(attemptId, materialId);
+      if (fromMem?.engine === "atrament") {
+        if (active) setStrokes(fromMem.data.strokes);
+        return;
+      }
+      const record = await draftStore.loadDraft(attemptId);
+      if (!active) return;
+      const stored = record?.materialInks?.[materialId];
+      if (stored?.engine === "atrament") {
+        setStrokes(stored.data.strokes);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
   }, [attemptId, materialId]);
 
-  // 重绘全部笔迹
+  // 重绘全部笔迹（基于逻辑宽度 1000 动态映射到当前容器像素宽度，并支持 Retina HiDPI）
   const redrawAll = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const width = container.clientWidth || 300;
+    const height = container.clientHeight || 150;
+    const dpr =
+      typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
-    const allStrokes = [...strokes];
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const allStrokes = [...strokesRef.current];
     if (currentStrokeRef.current) {
       allStrokes.push(currentStrokeRef.current);
     }
@@ -146,41 +190,52 @@ export function MaterialAnnotationOverlay({
 
       ctx.save();
       ctx.strokeStyle = resolveColor(stroke.color);
-      ctx.lineWidth = resolveWeight(stroke.weight);
+      ctx.lineWidth = Math.max(1, fromLogical(width, stroke.weight));
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
 
       ctx.beginPath();
+      const firstX = fromLogical(width, firstPt.x);
+      const firstY = fromLogical(width, firstPt.y);
+
       if (pts.length === 1) {
-        ctx.arc(firstPt.x, firstPt.y, ctx.lineWidth / 2, 0, Math.PI * 2);
+        ctx.arc(firstX, firstY, ctx.lineWidth / 2, 0, Math.PI * 2);
         ctx.fillStyle = ctx.strokeStyle;
         ctx.fill();
       } else {
-        ctx.moveTo(firstPt.x, firstPt.y);
+        ctx.moveTo(firstX, firstY);
         for (let i = 1; i < pts.length; i++) {
           const pt = pts[i];
-          if (pt) ctx.lineTo(pt.x, pt.y);
+          if (pt) {
+            ctx.lineTo(fromLogical(width, pt.x), fromLogical(width, pt.y));
+          }
         }
         ctx.stroke();
       }
       ctx.restore();
     }
-  }, [strokes]);
+    ctx.restore();
+  }, []);
 
-  // 尺寸随内容自适应
+  // 尺寸随内容及分栏比例调整自适应
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
     const updateSize = () => {
-      const width = container.scrollWidth || container.clientWidth || 300;
-      const height = container.scrollHeight || container.clientHeight || 150;
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-        redrawAll();
+      const width = container.clientWidth || 300;
+      const height = container.clientHeight || 150;
+      const dpr =
+        typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+      const pixelWidth = Math.round(width * dpr);
+      const pixelHeight = Math.round(height * dpr);
+
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
       }
+      redrawAll();
     };
 
     updateSize();
@@ -199,7 +254,7 @@ export function MaterialAnnotationOverlay({
       const doc: InkDoc = {
         engine: "atrament",
         version: 1,
-        data: { width: 1000, strokes: newStrokes },
+        data: { width: INK_LOGICAL_WIDTH, strokes: newStrokes },
         updatedAt: Date.now(),
       };
       draftStore.saveMaterialInk(attemptId, materialId, doc);
@@ -212,7 +267,8 @@ export function MaterialAnnotationOverlay({
       if (!isAnnotationActive || e.button !== 0) return;
       e.preventDefault();
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      const container = containerRef.current;
+      if (!canvas || !container) return;
 
       try {
         canvas.setPointerCapture(e.pointerId);
@@ -221,12 +277,17 @@ export function MaterialAnnotationOverlay({
       }
 
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+      const width =
+        container.clientWidth || canvas.clientWidth || rect.width || 300;
+      const logicalX = toLogical(width, screenX);
+      const logicalY = toLogical(width, screenY);
 
       if (tool === "eraser") {
+        const logicalRadius = toLogical(width, 16);
         const remaining = strokesRef.current.filter(
-          (s) => !strokeHits(s, x, y, 16),
+          (s) => !strokeHits(s, logicalX, logicalY, logicalRadius),
         );
         if (remaining.length !== strokesRef.current.length) {
           strokesRef.current = remaining;
@@ -240,8 +301,8 @@ export function MaterialAnnotationOverlay({
 
       isDrawingRef.current = true;
       const newPoint: InkStrokePoint = {
-        x: Math.round(x * 10) / 10,
-        y: Math.round(y * 10) / 10,
+        x: logicalX,
+        y: logicalY,
         p: e.pressure || 0.5,
         t: Date.now(),
       };
@@ -249,7 +310,7 @@ export function MaterialAnnotationOverlay({
       currentStrokeRef.current = {
         tool: "pen",
         color,
-        weight: resolveWeight(size),
+        weight: toLogical(width, resolveWeight(size)),
         points: [newPoint],
       };
 
@@ -262,15 +323,21 @@ export function MaterialAnnotationOverlay({
     (e: ReactPointerEvent<HTMLCanvasElement>) => {
       if (!isDrawingRef.current || !isAnnotationActive) return;
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      const container = containerRef.current;
+      if (!canvas || !container) return;
 
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+      const width =
+        container.clientWidth || canvas.clientWidth || rect.width || 300;
+      const logicalX = toLogical(width, screenX);
+      const logicalY = toLogical(width, screenY);
 
       if (tool === "eraser") {
+        const logicalRadius = toLogical(width, 16);
         const remaining = strokesRef.current.filter(
-          (s) => !strokeHits(s, x, y, 16),
+          (s) => !strokeHits(s, logicalX, logicalY, logicalRadius),
         );
         if (remaining.length !== strokesRef.current.length) {
           strokesRef.current = remaining;
@@ -283,8 +350,8 @@ export function MaterialAnnotationOverlay({
 
       if (currentStrokeRef.current) {
         currentStrokeRef.current.points.push({
-          x: Math.round(x * 10) / 10,
-          y: Math.round(y * 10) / 10,
+          x: logicalX,
+          y: logicalY,
           p: e.pressure || 0.5,
           t: Date.now(),
         });
@@ -318,6 +385,29 @@ export function MaterialAnnotationOverlay({
     },
     [saveToDraftStore, redrawAll],
   );
+
+  // 全局 pointerup/pointercancel 兜底：防止快速画到画布外部松开导致绘画态残留
+  useEffect(() => {
+    const handleGlobalPointerUp = () => {
+      if (!isDrawingRef.current) return;
+      isDrawingRef.current = false;
+      if (currentStrokeRef.current) {
+        const nextStrokes = [...strokesRef.current, currentStrokeRef.current];
+        currentStrokeRef.current = null;
+        strokesRef.current = nextStrokes;
+        setStrokes(nextStrokes);
+        saveToDraftStore(nextStrokes);
+        redrawAll();
+      }
+    };
+
+    window.addEventListener("pointerup", handleGlobalPointerUp);
+    window.addEventListener("pointercancel", handleGlobalPointerUp);
+    return () => {
+      window.removeEventListener("pointerup", handleGlobalPointerUp);
+      window.removeEventListener("pointercancel", handleGlobalPointerUp);
+    };
+  }, [saveToDraftStore, redrawAll]);
 
   return (
     <div

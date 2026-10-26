@@ -70,6 +70,7 @@ export const MaterialPanel = memo(function MaterialPanel({
   variant = "block",
   versionNote,
   attemptId,
+  associatedQuestionIds,
 }: {
   material: AttemptContextMaterial;
   /**
@@ -84,6 +85,8 @@ export const MaterialPanel = memo(function MaterialPanel({
   versionNote?: string | undefined;
   /** 作答会话 attemptId（提供时挂载材料圈画图层；缺省不挂载） */
   attemptId?: string | undefined;
+  /** 本材料所属题目 ID 集合（仅关联题进入标注态时激活材料手写） */
+  associatedQuestionIds?: readonly string[] | undefined;
 }) {
   const title = material.title?.trim();
   const content = (
@@ -116,6 +119,7 @@ export const MaterialPanel = memo(function MaterialPanel({
         <MaterialAnnotationOverlay
           attemptId={attemptId}
           materialId={material.id}
+          associatedQuestionIds={associatedQuestionIds}
         >
           {content}
         </MaterialAnnotationOverlay>

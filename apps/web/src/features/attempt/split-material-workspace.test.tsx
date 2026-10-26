@@ -171,6 +171,18 @@ describe("分栏材料工作区与协同标画集成", () => {
     bindPracticePreferenceAccount(null);
     bindPracticePreferenceAccount("student-test");
     Element.prototype.scrollIntoView = () => {};
+    HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
+      save: vi.fn(),
+      restore: vi.fn(),
+      clearRect: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      setTransform: vi.fn(),
+    });
     savePracticePreference({
       layout: "single",
       keyboardShortcuts: false,
