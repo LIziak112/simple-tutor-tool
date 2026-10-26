@@ -331,12 +331,12 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
           break;
         }
         case "response":
-          // QM-09（TT-08b）转正：开放作答真实控件——可选标题 + 多行正文 +
+          // 开放作答统一多行正文（标题按需写在正文首行）+
           // 手写区入口（正式手写与正文并存，D14）；没有单行最终答案输入
           expect(
-            screen.getByRole("textbox", { name: "标题（可选）" }),
-            `${source} 开放作答应有可选标题输入`,
-          ).toBeInTheDocument();
+            screen.queryByRole("textbox", { name: "标题（可选）" }),
+            `${source} 开放作答不应有独立标题输入`,
+          ).not.toBeInTheDocument();
           expect(
             screen.getByRole("textbox", { name: "正文" }),
             `${source} 开放作答应有正文输入`,

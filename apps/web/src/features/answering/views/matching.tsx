@@ -90,14 +90,30 @@ export const matchingView: AnswerKindView<
           source={model.stemMd}
           className="text-base leading-[1.75]"
         />
+        <section
+          aria-label="完整选项"
+          className="min-w-0 rounded-md border border-border p-3"
+        >
+          <p className="mb-2 text-sm font-medium">完整选项</p>
+          <ol className="m-0 flex list-none flex-col gap-3 p-0">
+            {model.options.map((option, index) => (
+              <li key={option.key} className="flex min-w-0 gap-2">
+                <span aria-hidden className="shrink-0 text-muted-foreground">
+                  {index + 1}.
+                </span>
+                <RichMarkdown
+                  source={option.text}
+                  className="min-w-0 break-words [overflow-wrap:anywhere] [&_p]:my-0"
+                />
+              </li>
+            ))}
+          </ol>
+        </section>
         <div className="flex min-w-0 flex-col gap-2">
           {model.slots.map((slot) => {
             const selectId = `matching-${model.scopeId}-${slot.id}`;
             return (
-              <div
-                key={slot.id}
-                className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3"
-              >
+              <div key={slot.id} className="flex min-w-0 flex-col gap-1">
                 <label
                   htmlFor={selectId}
                   className="shrink-0 text-sm font-medium sm:w-16"
@@ -118,13 +134,14 @@ export const matchingView: AnswerKindView<
                   className="min-h-11 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="">未选择</option>
-                  {model.options.map((option) => (
+                  {model.options.map((option, index) => (
                     <option
                       key={option.key}
                       value={option.key}
+                      aria-label={option.text}
                       disabled={usedElsewhere(option.key, slot.id)}
                     >
-                      {option.text}
+                      {`选项 ${index + 1}`}
                     </option>
                   ))}
                 </select>

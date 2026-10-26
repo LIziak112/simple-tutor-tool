@@ -110,12 +110,15 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
           // reveal 滚入目标让出粘性顶栏（零材料组的回落目标；审查 P2-2）
           className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] xl:col-span-2"
         >
-          <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
             <Layers
               aria-hidden
               className="size-4 shrink-0 text-muted-foreground"
             />
-            {title && title.length > 0 ? title : "题组"}
+            <RichMarkdown
+              source={title && title.length > 0 ? title : "题组"}
+              className="min-w-0 flex-1 [&_p]:my-0"
+            />
             {label && label.length > 0 ? (
               <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
                 {label}
@@ -126,7 +129,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                 共用下方材料作答
               </span>
             )}
-          </p>
+          </div>
           {intro.length > 0 && (
             <div className="rich-markdown min-w-0 text-sm leading-7">
               <RichMarkdown source={intro} />

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { parseDocument } from "./parse.ts";
 import {
   displayStemMd,
+  stemMdLeaksAnswers,
   stripOptionListMd,
   studentStemMd,
 } from "./public-stem.ts";
@@ -118,7 +119,7 @@ describe("samples 语料属性测试（解析器为 oracle：投影后提取不�
     new URL("../../../../samples/", import.meta.url),
   );
   const files: Array<{ name: string; md: string }> = [];
-  for (const dir of ["v2", "lint"]) {
+  for (const dir of ["v2", "lint", "qm"]) {
     for (const entry of readdirSync(join(corpusRoot, dir))) {
       if (!entry.endsWith(".md")) continue;
       files.push({
@@ -169,5 +170,46 @@ describe("samples 语料属性测试（解析器为 oracle：投影后提取不�
       }
     }
     expect(violations).toEqual([]);
+  });
+});
+
+describe("行内材料引用的显示投影", () => {
+  it("二十空完形真实样例：题号、绑定与原题保留，二十道公开题干均无引用指令", () => {
+    const source = readFileSync(
+      new URL("../../../../samples/qm/valid-03-二十空完形.md", import.meta.url),
+      "utf8",
+    );
+    const questions = parseDocument(source).units.flatMap(
+      (unit) => unit.questions,
+    );
+    expect(questions).toHaveLength(20);
+    for (const [index, question] of questions.entries()) {
+      expect(question.materialRefs).toHaveLength(1);
+      expect(question.stemMd).toContain("::ref{");
+      const projected = studentStemMd(question);
+      expect(projected).toContain(`第 ${index + 1} 空`);
+      expect(projected).not.toContain("::ref{");
+      expect(stemMdLeaksAnswers(projected)).toBe(false);
+    }
+  });
+  it("实体与转义不影响原文偏移，多个引用和带引号的属性均可移除", () => {
+    const stemMd =
+      '前文 &amp; \\* 第 1 空。::ref{material="mat-1" slot=slot-1} 第 2 空。::ref{material=mat-1 slot=slot-2} 后文。';
+    expect(displayStemMd({ stemMd })).toBe(
+      "前文 &amp; \\* 第 1 空。 第 2 空。 后文。",
+    );
+  });
+  it("剥离合法引用但保留原文、编号与答案脱敏", () => {
+    const question = {
+      stemMd: "第 1 空。::ref{material=mat-1 slot=slot-1} 填 [[秘密]]。",
+    };
+    expect(displayStemMd(question)).toBe("第 1 空。 填 [[秘密]]。");
+    expect(studentStemMd(question)).toBe("第 1 空。 填 [[]]。");
+    expect(question.stemMd).toContain("::ref");
+  });
+  it("代码、公式、转义引用及不完整引用按正文保留", () => {
+    const stemMd =
+      "\u0060::ref{material=mat-1}\u0060\n\n$::ref{material=mat-2}$\n\n\\::ref{material=mat-3}\n\n文字 ::ref{slot=slot-1}";
+    expect(displayStemMd({ stemMd })).toBe(stemMd);
   });
 });

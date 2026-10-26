@@ -254,6 +254,20 @@ async function chooseRadio(
     .click();
 }
 
+/** 从全文可访问名称找到公开选项 ID，页面用编号选择以保持题面几何稳定。 */
+async function chooseMatching(
+  card: Locator,
+  ordinal: number,
+  text: string,
+): Promise<void> {
+  const select = card.getByRole("combobox", { name: `第 ${ordinal} 空的选项` });
+  const value = await select
+    .getByRole("option", { name: text, exact: true })
+    .getAttribute("value");
+  if (value === null) throw new Error("匹配选项缺少值");
+  await select.selectOption(value);
+}
+
 // ---------- 世界构造 ----------
 
 /**
@@ -729,30 +743,41 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
           page.getByText("Why We Sleep — Excerpt").first(),
         ).toBeVisible();
         const q1 = questionCard(page, 1);
-        await q1.getByRole("combobox", { name: "第 1 空的选项" }).selectOption({
-          label:
-            "During deep sleep, the brain's glymphatic system flushes waste proteins that accumulate during waking hours.",
-        });
-        await q1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({
-          label:
-            "Historians note that the eight-hour norm is itself an artefact of industrial shift scheduling.",
-        });
-        await q1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({
-          label:
-            "Pride in sleeplessness is, from the data's point of view, pride in degraded performance.",
-        });
-        await q1.getByRole("combobox", { name: "第 4 空的选项" }).selectOption({
-          label:
-            "Waking at the same time daily — even after a late night — rebuilds the rhythm faster than sleeping in.",
-        });
-        await q1.getByRole("combobox", { name: "第 5 空的选项" }).selectOption({
-          label:
-            "Respecting that tool means giving it a job description: sleep, and little else.",
-        });
+        await expect(
+          q1.getByRole("region", { name: "完整选项" }),
+        ).toBeVisible();
+        const heightBefore = (await q1.boundingBox())?.height;
+        await chooseMatching(
+          q1,
+          1,
+          "During deep sleep, the brain's glymphatic system flushes waste proteins that accumulate during waking hours.",
+        );
+
+        await chooseMatching(
+          q1,
+          2,
+          "Historians note that the eight-hour norm is itself an artefact of industrial shift scheduling.",
+        );
+        await chooseMatching(
+          q1,
+          3,
+          "Pride in sleeplessness is, from the data's point of view, pride in degraded performance.",
+        );
+        await chooseMatching(
+          q1,
+          4,
+          "Waking at the same time daily — even after a late night — rebuilds the rhythm faster than sleeping in.",
+        );
+        await chooseMatching(
+          q1,
+          5,
+          "Respecting that tool means giving it a job description: sleep, and little else.",
+        );
+        expect((await q1.boundingBox())?.height).toBe(heightBefore);
         // 不可重复约束（客户端面）：第 1 空的下拉中已占用的选项被禁用
         const occupied = await q1
           .getByRole("combobox", { name: "第 1 空的选项" })
-          .locator("option", { hasText: "Historians note" })
+          .getByRole("option", { name: /Historians note/ })
           .isDisabled();
         expect(occupied).toBeTruthy();
       },
@@ -794,17 +819,19 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
             "读书只能为心灵提供知识的材料，唯有思考才能把读到的变成自己的。记忆尤须着力锻炼，因为强健的记忆力与鲜活的想象力密不可分。",
           );
         const q3 = questionCard(page, 3);
-        await q3
-          .getByRole("textbox", { name: "标题（可选）" })
-          .fill("分歧是治理的起点");
+        await expect(q3.getByRole("textbox")).toHaveCount(1);
         await q3
           .getByRole("textbox", { name: "正文" })
           .fill(
-            "老旧小区的墙面可以刷新，埋在墙里的分歧刷不掉。S 市的试点给出相反的答案：把分歧摆上桌面，三十七个小项逐一议过，改造反而一次通过。这提示我们，分歧不是治理的失败，而是治理的起点。".repeat(
-              8,
-            ),
+            "分歧是治理的起点\n\n" +
+              "老旧小区的墙面可以刷新，埋在墙里的分歧刷不掉。S 市的试点给出相反的答案：把分歧摆上桌面，三十七个小项逐一议过，改造反而一次通过。这提示我们，分歧不是治理的失败，而是治理的起点。".repeat(
+                8,
+              ),
           );
         // valid-07 两问组（第 4/5 题）：zm-1 response 证明正文 + zm-2 solve 最终答案
+        const groupHeader = page.locator('[data-slot="question-group-header"]');
+        await expect(groupHeader.locator(".katex").first()).toBeVisible();
+        await expect(groupHeader.locator(".katex-error")).toHaveCount(0);
         await questionCard(page, 4)
           .getByRole("textbox", { name: "正文" })
           .fill(
@@ -855,17 +882,17 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       page.getByText("Cohesion in English Paragraphs — Excerpt").first(),
     ).toBeVisible();
     const lq1 = questionCard(page, 1);
-    await lq1
-      .getByRole("combobox", { name: "第 1 空的选项" })
-      .selectOption({ label: "a small, half-hidden signal" });
-    await lq1.getByRole("combobox", { name: "第 2 空的选项" }).selectOption({
-      label:
-        "The examiner is not testing memory but the ability to repair a broken chain of reasoning.",
-    });
-    await lq1.getByRole("combobox", { name: "第 3 空的选项" }).selectOption({
-      label:
-        "A repeated noun works the same way: it promises the reader that the topic has not changed.",
-    });
+    await chooseMatching(lq1, 1, "a small, half-hidden signal");
+    await chooseMatching(
+      lq1,
+      2,
+      "The examiner is not testing memory but the ability to repair a broken chain of reasoning.",
+    );
+    await chooseMatching(
+      lq1,
+      3,
+      "A repeated noun works the same way: it promises the reader that the topic has not changed.",
+    );
     await lq1.getByRole("button", { name: "显示答案" }).click();
     // reference_self：当题反馈 = 对照参考 + 待自评（无 auto 徽章）
     await expect(lq1.getByText("已完成，待自评").first()).toBeVisible();
@@ -998,6 +1025,8 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await card2.getByRole("link", { name: "开始练习" }).click();
     await robustPage.waitForURL("**/s/assignments/**");
     await expect(questionCard(robustPage, 20)).toBeVisible();
+    await expect(questionCard(robustPage, 1)).not.toContainText("::ref{");
+    await expect(questionCard(robustPage, 20)).not.toContainText("::ref{");
     await chooseRadio(questionCard(robustPage, 1), "uncomfortable");
     await waitForAllSaved(robustPage);
 

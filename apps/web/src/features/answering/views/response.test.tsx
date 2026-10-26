@@ -1,12 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { RESPONSE_TITLE_MAX_CHARS } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { responseView } from "./response";
 
 /**
  * response 开放作答呈现（QM-09 细项1/2）：
- * - Input：可选标题 + 多行正文（KaTeX 公式与分段经既有 RichMarkdown 只读
- *   呈现；输入面是纯文本 textarea，正文与标题都支持 $…$ 公式）；文本输入
+ * - Input：统一多行正文，兼容旧稿标题（KaTeX 公式与分段经既有 RichMarkdown 只读
+ *   呈现；输入面是纯文本 textarea，支持 $…$ 公式）；文本输入
  *   defer=true 防抖（I05 回调节奏与 fill 同款）；
  * - 字数口径：契约单源 countResponseWords（中文按字含中文标点、英文按词），
  *   UI 只显示不重算；word-min/max 是建议提示，超限不硬拦不截断（§5.4.1）；
@@ -27,67 +26,42 @@ const modelWithHints = {
 };
 
 describe("responseView.Input（开放作答输入面）", () => {
-  it("标题（可选）+ 正文多行输入；正文更新 defer=true（文本防抖，I05）", () => {
+  it("开放作答只有一个完整文本框，输入延迟保存", () => {
     const update = vi.fn();
     render(responseView.Input({ model, answer: undefined, update }));
-    const body = screen.getByRole("textbox", { name: "正文" });
-    fireEvent.change(body, { target: { value: "第一段……" } });
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    fireEvent.change(screen.getByRole("textbox", { name: "正文" }), {
+      target: { value: "标题\n\n正文" },
+    });
     expect(update).toHaveBeenCalledWith(
-      { kind: "response", body: "第一段……" },
-      true,
-    );
-    const title = screen.getByRole("textbox", { name: "标题（可选）" });
-    fireEvent.change(title, { target: { value: "治理的起点" } });
-    expect(update).toHaveBeenCalledWith(
-      { kind: "response", title: "治理的起点", body: "" },
+      { kind: "response", body: "标题\n\n正文" },
       true,
     );
   });
 
-  it("标题超限不截断：不设 maxLength 预拦，超长粘贴原样外发并可回显（§19.2-1 超限整体拒绝，审查 P2-1）", () => {
+  it("旧稿标题与正文完整并入一个输入框，仅编辑时写回合并正文", () => {
     const update = vi.fn();
-    const { rerender } = render(
-      responseView.Input({ model, answer: undefined, update }),
-    );
-    const title = screen.getByRole("textbox", { name: "标题（可选）" });
-    const overlong = "题".repeat(RESPONSE_TITLE_MAX_CHARS + 1);
-    // 输入框不携带 maxLength（jsdom 对原生 maxLength 会静默截断粘贴值）
-    expect(title).not.toHaveAttribute("maxlength");
-    // 超限标题完整进入保存通道——服务端 400 VALIDATION_ERROR 路径从 web 可达
-    // （拒绝不截断的契约语义已有服务级/契约级测试，此处只守 UI 不预拦）
-    fireEvent.change(title, { target: { value: overlong } });
-    expect(update).toHaveBeenCalledWith(
-      { kind: "response", title: overlong, body: "" },
-      true,
-    );
-    // 已有超限标题回填不被截断显示
-    rerender(
-      responseView.Input({
-        model,
-        update,
-        answer: { kind: "response", title: overlong, body: "" },
-      }),
-    );
-    expect(title).toHaveValue(overlong);
-  });
-
-  it("已有答案回填：title 与 body 原样进入输入框（含分段与公式源码）", () => {
+    const body = "分歧与治理\n\n第一段：$x^2$。\n\n第二段。";
     render(
       responseView.Input({
         model,
-        update: vi.fn(),
+        update,
         answer: {
           kind: "response",
           title: "分歧与治理",
-          body: "第一段：$x^2$ 的意义。\n\n第二段：结论。",
+          body: "第一段：$x^2$。\n\n第二段。",
         },
       }),
     );
-    expect(screen.getByRole("textbox", { name: "标题（可选）" })).toHaveValue(
-      "分歧与治理",
-    );
-    expect(screen.getByRole("textbox", { name: "正文" })).toHaveValue(
-      "第一段：$x^2$ 的意义。\n\n第二段：结论。",
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "正文" })).toHaveValue(body);
+    expect(update).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: "正文" }), {
+      target: { value: `${body}补充` },
+    });
+    expect(update).toHaveBeenCalledWith(
+      { kind: "response", body: `${body}补充` },
+      true,
     );
   });
 
@@ -145,8 +119,8 @@ describe("responseView.Input（开放作答输入面）", () => {
     );
     expect(screen.getByRole("textbox", { name: "正文" })).toBeDisabled();
     expect(
-      screen.getByRole("textbox", { name: "标题（可选）" }),
-    ).toBeDisabled();
+      screen.queryByRole("textbox", { name: "标题（可选）" }),
+    ).not.toBeInTheDocument();
   });
 });
 

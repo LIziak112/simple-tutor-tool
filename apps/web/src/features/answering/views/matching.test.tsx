@@ -190,3 +190,32 @@ describe("matching completion", () => {
     ).toEqual({ state: "filled", filledSlots: 2, expectedSlots: 2 });
   });
 });
+
+it("候选全文支持公式；选择不增删题面内容，编号与全文列表对应", () => {
+  const long = `${"很长的候选正文".repeat(15)} $x^2$`;
+  const model = { ...baseModel, options: [{ key: "long", text: long }] };
+  const { container, rerender } = render(
+    matchingView.Input({
+      model,
+      answer: undefined,
+      update: vi.fn(),
+    }),
+  );
+  const pool = screen.getByRole("region", { name: "完整选项" });
+  expect(pool).toHaveTextContent("很长的候选正文");
+  expect(pool.querySelector(".katex")).not.toBeNull();
+  const before = container.textContent;
+  rerender(
+    matchingView.Input({
+      model,
+      answer: { kind: "matching", pairs: { "slot-1": "long" } },
+      update: vi.fn(),
+    }),
+  );
+  expect(container.textContent).toBe(before);
+  expect(
+    within(screen.getByLabelText("第 1 空的选项")).getByRole("option", {
+      name: long,
+    }),
+  ).toHaveTextContent("选项 1");
+});

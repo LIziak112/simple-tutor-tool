@@ -10,13 +10,13 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
 
 /**
  * response 开放作答呈现（QM-09 细项1/2）：
- * - Input：可选标题（单行）+ 多行正文（textarea）；正文与标题都支持 $…$
+ * - Input：统一多行正文（textarea），旧稿标题与正文完整合并显示；支持 $…$
  *   公式与 Markdown 分段（学生按 DSL 语法书写，回看走 RichMarkdown 渲染）；
  *   文本输入 defer=true 防抖保存（I05 回调节奏与 fill 同款）；
  * - 字数口径单源契约 countResponseWords（中文按字含中文标点、英文按词），
  *   UI 只显示不重算；word-min/max 是建议提示，超限不硬拦不截断（§5.4.1）；
- *   title/body 契约上限同为防御性边界——超限整体拒绝（服务端 400），
- *   任何一层都不截断（§19.2-1，审查 P2-1：标题输入不设 maxLength 预拦）；
+ *   body 契约上限为防御性边界——超限整体拒绝（服务端 400），
+ *   任何一层都不截断（§19.2-1）；旧稿 title 保持可读；
  * - 输入面是原生受控 textarea：输入法组合输入（composition）中间态不被
  *   截断——受控值只在 change 事件同步，不对 composition 中间态做变换过滤；
  * - 与正式手写共存：本视图只管文字面，纸面控件区（HandwrittenControls）
@@ -42,7 +42,10 @@ export const responseView: AnswerKindView<
 > = {
   Input: ({ model, answer, update, disabled = false }) => {
     const title = answer?.title ?? "";
-    const body = answer?.body ?? "";
+    // 旧稿只在用户编辑时转为统一正文，挂载与读取不改写历史内容。
+    const body = [title, answer?.body ?? ""]
+      .filter((part) => part !== "")
+      .join("\n\n");
     const words = countResponseWords(body);
     const hint = wordHintOf(model.wordMin, model.wordMax);
     return (
@@ -51,35 +54,13 @@ export const responseView: AnswerKindView<
           source={model.stemMd}
           className="text-base leading-[1.75]"
         />
-        <input
-          type="text"
-          aria-label="标题（可选）"
-          placeholder="标题（可选）"
-          value={title}
-          disabled={disabled}
-          onChange={(event) =>
-            update(
-              // title 未填不携带（契约语义：缺省=没有标题）
-              event.target.value === ""
-                ? { kind: "response", body }
-                : { kind: "response", title: event.target.value, body },
-              true,
-            )
-          }
-          className="min-h-11 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
-        />
         <textarea
           aria-label="正文"
           value={body}
           disabled={disabled}
           rows={8}
           onChange={(event) =>
-            update(
-              title === ""
-                ? { kind: "response", body: event.target.value }
-                : { kind: "response", title, body: event.target.value },
-              true,
-            )
+            update({ kind: "response", body: event.target.value }, true)
           }
           className="min-h-44 w-full min-w-0 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-base leading-[1.75] shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
         />

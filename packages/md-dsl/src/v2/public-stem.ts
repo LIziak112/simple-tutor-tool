@@ -1,6 +1,7 @@
 import type { ListItem } from "mdast";
 import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
+import { materialRefOf, parseRefAttrs } from "./materials.ts";
 import { lineRange, processor } from "./shared.ts";
 
 /**
@@ -128,14 +129,42 @@ export interface StudentStemInput {
   readonly options?: readonly unknown[] | undefined;
 }
 
+/** 只移除文本节点中的结构引用，原文偏移避免转义与实体解码导致误删。 */
+function stripInlineMaterialRefsMd(source: string): string {
+  if (!source.includes("::ref{")) return source;
+  const ranges: Array<[number, number]> = [];
+  visit(processor.parse(source), (node): "skip" | undefined => {
+    if (["math", "inlineMath", "code", "inlineCode"].includes(node.type))
+      return SKIP;
+    if (node.type !== "text") return undefined;
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return undefined;
+    const raw = source.slice(start, end);
+    for (const match of raw.matchAll(/::ref\{([^{}]*)\}/g)) {
+      const index = match.index;
+      let slashes = 0;
+      for (let i = index - 1; i >= 0 && raw[i] === "\\"; i--) slashes++;
+      if (slashes % 2 !== 0 || raw[index - 1] === ":") continue;
+      if (materialRefOf(parseRefAttrs(match[1] ?? "")) === undefined) continue;
+      ranges.push([start + index, start + index + match[0].length]);
+    }
+    return undefined;
+  });
+  let result = source;
+  for (const [start, end] of ranges.sort((a, b) => b[0] - a[0])) {
+    result = result.slice(0, start) + result.slice(end);
+  }
+  return result;
+}
+
 /**
- * 显示侧题干（教师端与学生端 UI 共用）：选项另行渲染时剥掉题干内嵌列表，
- * 不做标记脱敏（[[答案]] 由 remark-blank 统一渲染为空框，原文语义留给教师侧）。
+ * 显示侧题干（教师端与学生端 UI 共用）：移除材料结构引用，选项另行
+ * 渲染时剥掉内嵌列表；原文与引用结构保留，不做答案标记脱敏。
  */
 export function displayStemMd(question: StudentStemInput): string {
-  return question.options === undefined
-    ? question.stemMd
-    : stripOptionListMd(question.stemMd);
+  const stem = stripInlineMaterialRefsMd(question.stemMd);
+  return question.options === undefined ? stem : stripOptionListMd(stem);
 }
 
 /**

@@ -272,3 +272,19 @@ describe("MaterialPanel", () => {
     expect(screen.getByText("材料")).toBeInTheDocument();
   });
 });
+
+it("题组标题的公共条件渲染公式与强调，不显示 Markdown 定界符", () => {
+  render(
+    <QuestionGroupAnchor
+      group={groupOf({
+        title: "**已知数列** $a_{n+1}=2a_n+1$，回答两问。",
+        label: "1–2",
+      })}
+      materials={[]}
+      questionCount={2}
+    />,
+  );
+  expect(document.querySelector("strong")).toHaveTextContent("已知数列");
+  expect(document.querySelector(".katex")).not.toBeNull();
+  expect(screen.getByText("1–2")).toBeInTheDocument();
+});
