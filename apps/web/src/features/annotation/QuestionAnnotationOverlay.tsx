@@ -45,6 +45,7 @@ import {
   annotationContinuationBaseSource,
 } from "./AnnotationContinuation";
 import { AnnotationOriginal } from "./AnnotationOriginal";
+import { blocksInBaseDomain } from "./annotation-anchor";
 import {
   getAnnotationRecord,
   retryAnnotationPersistence,
@@ -560,11 +561,17 @@ export const QuestionAnnotationOverlay = forwardRef<
       inputMode: getSessionInputPreference(),
       // LR-6：收笔锚定的布局证据——从 record 活引用取当前 layout（effect
       // 闭包里的 layout 会过期）；无 layout（旧底图）返回 undefined 不锚
-      anchorBlocks: () =>
-        (
+      anchorBlocks: () => {
+        const layout =
           recordRef.current?.localBase?.layout ??
-          recordRef.current?.base?.layout
-        )?.compatibility?.blocks,
+          recordRef.current?.base?.layout;
+        if (layout?.compatibility?.blocks === undefined) return undefined;
+        // 评审 #11750 必改①：measure 落盘 CSS 像素，先转底图像素域再锚定
+        return blocksInBaseDomain(
+          layout.compatibility.blocks,
+          layout.pixelRatio,
+        );
+      },
     });
     surface.current = current;
     const resetVersion = recordRef.current?.resetVersion ?? 0;

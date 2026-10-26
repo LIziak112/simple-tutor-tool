@@ -4,6 +4,25 @@ import type {
 } from "@tutor/contract";
 
 /**
+ * 布局证据块 → 底图像素域（评审 #11750 必改①）：measureQuestionSurface
+ * 落盘的 blocks 是 **CSS 像素**，而文档笔画点是底图像素（CSS × pixelRatio）——
+ * 锚定/重投影消费块矩形前必须先过本转换，否则锚键错位。存档 layout 里的
+ * blocks 原样保留 CSS 域（几何签名与兼容核验同域），本转换只在消费点做。
+ */
+export function blocksInBaseDomain(
+  blocks: AnnotationSurfaceCompatibility["blocks"],
+  pixelRatio: number,
+): AnnotationSurfaceCompatibility["blocks"] {
+  return blocks.map((block) => ({
+    ...block,
+    x: block.x * pixelRatio,
+    y: block.y * pixelRatio,
+    width: block.width * pixelRatio,
+    height: block.height * pixelRatio,
+  }));
+}
+
+/**
  * 圈画收笔锚定（LR-6，学习记录模型设计稿 §5.3）：纯几何计算，不碰 DOM、
  * 可脱离浏览器单测。收笔时对带键块（layout.compatibility.blocks[].node
  * 非空）按**重叠面积**取最大者为锚；全不相交取块心最近者；没有带键块
