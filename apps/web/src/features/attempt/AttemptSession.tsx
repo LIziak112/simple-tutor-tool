@@ -1506,9 +1506,6 @@ function AnswerView({
                           practiceProtocol === "v1" ? (
                             <PracticeQuestionFooter
                               attemptId={attemptId}
-                              referenceAvailable={
-                                question.canSubmitQuestion !== false
-                              }
                               mode={singleMode ? "single" : "list"}
                               submitted={practiceSubmitted}
                               readable={practiceRow?.feedbackReadable ?? false}
@@ -1522,17 +1519,7 @@ function AnswerView({
                               feedbackFailed={practiceSubmit.feedbackFailedOf(
                                 question.id,
                               )}
-                              workflow={
-                                practiceSubmit.workflow
-                                  ? {
-                                      ...practiceSubmit.workflow,
-                                      canSubmitQuestion:
-                                        practiceSubmit.workflow
-                                          .canSubmitQuestion &&
-                                        question.canSubmitQuestion !== false,
-                                    }
-                                  : undefined
-                              }
+                              workflow={practiceSubmit.workflow}
                               error={
                                 practiceSubmit.lastError?.questionId ===
                                 question.id
