@@ -98,6 +98,7 @@ export const SPEC_TAGS = {
   // 教师端
   "teacher-mark-flow.spec.ts": ["@teacher"],
   "teacher-navigation-settings.spec.ts": ["@teacher"],
+  "teacher-ai-settings.spec.ts": ["@teacher", "@ai"],
   "teaching-pack.spec.ts": ["@teacher"],
   "math-publication.spec.ts": ["@teacher"],
   "capability-profile.spec.ts": ["@teacher"],
