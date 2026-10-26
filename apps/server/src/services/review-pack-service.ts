@@ -10,6 +10,7 @@ import type {
 import {
   formatQuestionAnswers,
   HANDWRITTEN_QUESTION_TYPES,
+  learningRecordJsonSchema,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -41,6 +42,10 @@ import {
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
+import {
+  getStudentLearningRecord,
+  getTeacherLearningRecord,
+} from "./learning-record-service";
 import { serializeStudentAnswer } from "./mark-response";
 import {
   assembleQuestionEvidence,
@@ -132,8 +137,18 @@ export interface ReviewPackAssembly {
     readonly entry: string;
     readonly text: string;
     readonly bytes: number;
-    readonly ref: string;
   }>;
+  /** LR-PR3：record 装配产物（recordJson 为 null = 升级遗留未装配） */
+  readonly recordEntries: ReadonlyArray<{
+    readonly path: string;
+    readonly kind: "record";
+    readonly bytes: number;
+    readonly refs: readonly string[];
+  }>;
+  /** LR-PR3：按角色投影的学习记录文本（record.json；升级遗留装配失败如实缺席） */
+  readonly recordJson: string | null;
+  /** record.json 随包 JSON Schema（与契约同源运行时导出） */
+  readonly recordSchemaJson: string | null;
   readonly manifest: LearningPackManifest;
   /** 文件清单（含 pack.json 实测；预览与预检共用） */
   readonly files: readonly ReviewPackPreviewFile[];
@@ -495,7 +510,54 @@ export function assembleReviewPack(
     interactionNotes: staticMaterial.interactionNotes,
   });
 
-  // —— manifest（pack.json 同时为清单；pack.json 自身不列） ——
+  // —— LR-PR3：按角色投影的学习记录（学习记录模型设计稿 §7.2）——
+  // 复用装配服务入口（学生/教师各自门口同构）；升级遗留/快照缺失等无法
+  // 装配的行如实缺席（P1 不伪造），导出其余内容照常
+  let recordJson: string | null = null;
+  let recordSchemaJson: string | null = null;
+  try {
+    const learningRecord =
+      role === "teacher"
+        ? getTeacherLearningRecord(
+            db,
+            dataDir,
+            principal.id,
+            attemptId,
+            questionId,
+            nowDate,
+          )
+        : getStudentLearningRecord(
+            db,
+            dataDir,
+            principal.id,
+            attemptId,
+            questionId,
+            nowDate,
+          );
+    recordJson = `${JSON.stringify(learningRecord, null, 2)}\n`;
+    recordSchemaJson = `${JSON.stringify(learningRecordJsonSchema, null, 2)}\n`;
+  } catch {
+    // 装配失败不阻塞导出（遗留行如实无 record.json）
+  }
+  const recordEntries =
+    recordJson === null || recordSchemaJson === null
+      ? []
+      : [
+          {
+            path: "record.json",
+            kind: "record" as const,
+            bytes: Buffer.byteLength(recordJson, "utf8"),
+            refs: [qRef],
+          },
+          {
+            path: "record-schema.json",
+            kind: "record" as const,
+            bytes: Buffer.byteLength(recordSchemaJson, "utf8"),
+            refs: [qRef],
+          },
+        ];
+
+  // —— manifest（pack.json 同前同时为清单；pack.json 自身不列） ——
   const contextNotes: string[] = [];
   if (!revision.present) {
     contextNotes.push(
@@ -566,6 +628,12 @@ export function assembleReviewPack(
         kind: "annotation" as const,
         bytes: entry.bytes,
         refs: [qRef],
+      })),
+      ...recordEntries.map((entry) => ({
+        path: entry.path,
+        kind: "record" as const,
+        bytes: entry.bytes,
+        refs: [...entry.refs],
       })),
     ],
     missing,
@@ -664,7 +732,8 @@ export function assembleReviewPack(
     | "media"
     | "evidence"
     | "ink"
-    | "annotation",
+    | "annotation"
+    | "record",
     ReviewPackPreviewFile["kind"]
   > = {
     prompt: "review",
@@ -674,6 +743,7 @@ export function assembleReviewPack(
     evidence: "evidence",
     ink: "ink",
     annotation: "annotation",
+    record: "record",
   };
   const files: ReviewPackPreviewFile[] = [
     {
@@ -792,6 +862,9 @@ export function assembleReviewPack(
     packJson,
     reviewMd,
     schemaJson,
+    recordJson,
+    recordSchemaJson,
+    recordEntries,
     questionMd,
     questionEntry,
     mediaEntries,
@@ -853,6 +926,15 @@ export async function zipReviewPack(
       archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
         name: "schema.json",
       });
+      // LR-PR3：record 如实缺席时不写条目（遗留行）
+      if (assembly.recordJson !== null && assembly.recordSchemaJson !== null) {
+        archive.append(Buffer.from(assembly.recordJson, "utf8"), {
+          name: "record.json",
+        });
+        archive.append(Buffer.from(assembly.recordSchemaJson, "utf8"), {
+          name: "record-schema.json",
+        });
+      }
       archive.append(Buffer.from(assembly.questionMd, "utf8"), {
         name: assembly.questionEntry,
       });

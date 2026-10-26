@@ -174,7 +174,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     // pack.json 走共享件（只扫字符串值 + 剥 snapshotHash——数字计数与
     // hex 内容身份都可能与十进制哨兵子串相撞，是假阳性不是泄露）
     const textOf = (name: string, data: Buffer): string =>
-      name === "pack.json" ? packLeakTextOf(data) : data.toString("utf8");
+      name === "pack.json" || name === "record.json"
+        ? // 数字哨兵对时间戳/坐标必然假阳性——共享件只取字符串值并剥 ISO 时间戳
+          packLeakTextOf(data)
+        : data.toString("utf8");
     const textEntries = [...entries.entries()].filter(([name]) =>
       /\.(md|json)$/.test(name),
     );
