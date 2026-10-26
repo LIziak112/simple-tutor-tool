@@ -40,7 +40,14 @@ import {
   type QuestionAnnotationOverlayHandle,
 } from "@/features/annotation/QuestionAnnotationOverlay";
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
+import { ResponseAnswerField } from "@/features/answering";
+import { prepareQuestion } from "@/features/answering/prepare-question";
 import { questionBindings } from "@/features/answering/question-binding";
+import {
+  getScratchContextLabel,
+  renderScratchContext,
+} from "@/features/answering/scratch-context";
+import type { PreparedOf } from "@/features/answering/types";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import {
   exportMaterialsOfQuestion,
@@ -463,6 +470,8 @@ export function AttemptQuestionCard({
   }, [inlineQuestion, annotationOpen, drawing]);
   const annotationRecord = useAnnotationRecord(attemptId ?? "", question.id);
   const noteRecord = useNoteRecord(attemptId ?? "", question.id);
+  const scratchContext = renderScratchContext(question);
+  const scratchContextLabel = getScratchContextLabel(question);
   const noteLayer =
     inkEnabled &&
     attemptId !== undefined &&
@@ -473,6 +482,8 @@ export function AttemptQuestionCard({
         questionId={question.id}
         stemMd={displayStemMd(question)}
         options={question.options}
+        scratchContext={scratchContext}
+        contextLabel={scratchContextLabel}
         open={noteOpen}
         onOpenChange={setNoteOpen}
         ariaPrefix={`第 ${index + 1} 题`}
@@ -507,6 +518,22 @@ export function AttemptQuestionCard({
         />
       )}
 
+      {/* 开放题正文作答（text-below-stem）：挂在圈画覆盖层外部下方（与 final 同范式），
+          确保圈画底图几何绝对稳定且不盖住作答框；只读时以禁用态保留学生已提交正文 */}
+      {questionBindings[question.type].placement === "text-below-stem" && (
+        <ResponseAnswerField
+          model={
+            prepareQuestion(
+              question,
+              `${question.id}-answer`,
+            ) as PreparedOf<"response">
+          }
+          answer={answer?.kind === "response" ? answer : undefined}
+          update={(next, defer) => onAnswer(next, defer)}
+          disabled={readOnly}
+        />
+      )}
+
       {HANDWRITTEN_TYPES.has(question.type) &&
         attemptId !== undefined &&
         !readOnly && (
@@ -515,6 +542,8 @@ export function AttemptQuestionCard({
             attemptId={attemptId}
             questionId={question.id}
             stemMd={question.stemMd}
+            scratchContext={scratchContext}
+            contextLabel={scratchContextLabel}
             answer={answer}
             onAnswer={onAnswer}
             registerController={registerInkController}

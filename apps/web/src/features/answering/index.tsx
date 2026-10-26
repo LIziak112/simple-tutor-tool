@@ -18,7 +18,13 @@ import { finalView } from "./views/final";
 import { judgeView } from "./views/judge";
 import { matchingView } from "./views/matching";
 import { orderingView } from "./views/ordering";
-import { responseView } from "./views/response";
+import {
+  ResponseAnswerField,
+  ResponseStemSurface,
+  responseView,
+} from "./views/response";
+
+export { ResponseAnswerField, ResponseStemSurface };
 
 /**
  * 呈现登记表与唯一调度边界（方案 §4.4/§10，UA-03 落地）：
@@ -116,14 +122,10 @@ export function dispatchInput(
         />
       );
     case "response":
-      return (
-        <answerKindViews.response.Input
-          model={model}
-          answer={answer?.kind === "response" ? answer : undefined}
-          update={update}
-          disabled={disabled}
-        />
-      );
+      // response 题面（QuestionSurface）只渲染公开题干与字数要求提示（题面不含动态文本框与
+      // 动态计数，确保圈画底图几何绝对稳定且不盖住作答框；正文输入由答题卡在题面下
+      // 方托管 ResponseAnswerField，与 solve/final 的 FinalAnswerField 同范式）
+      return <ResponseStemSurface model={model} />;
     case "matching":
       return (
         <answerKindViews.matching.Input

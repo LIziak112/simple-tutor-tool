@@ -24,7 +24,7 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
  */
 
 /** 字数建议文案：word-min/max 任一存在即展示（只提示不硬校验，§5.4.1） */
-function wordHintOf(
+export function wordHintOf(
   wordMin: number | undefined,
   wordMax: number | undefined,
 ): string | null {
@@ -35,42 +35,87 @@ function wordHintOf(
   return null;
 }
 
+/**
+ * response 开放题公开题面（QuestionSurface 消费）：
+ * 只渲染题干与静态字数要求提示，不含动态文本框与计数，确保圈画底图几何
+ * 100% 绝对稳定（字数无论写多长底图不漂移），圈画画布仅覆盖题目要求本身。
+ */
+export function ResponseStemSurface({
+  model,
+}: {
+  model: PreparedOf<"response">;
+}) {
+  const hint = wordHintOf(model.wordMin, model.wordMax);
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <RichMarkdown
+        source={model.stemMd}
+        className="text-base leading-[1.75]"
+      />
+      {hint !== null && <p className="text-sm text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * response 开放作答正文输入控件（AttemptQuestionCard 消费，placement=text-below-stem）：
+ * 位于 QuestionAnnotationOverlay 外部下方（与 solve/final 的 FinalAnswerField 同范式），
+ * 避免圈画层遮挡作答框或笔迹画在正文框上。
+ */
+export function ResponseAnswerField({
+  model,
+  answer,
+  update,
+  disabled = false,
+}: {
+  model: PreparedOf<"response">;
+  answer: StudentAnswerOfKind<"response"> | undefined;
+  update: (answer: StudentAnswerOfKind<"response">, defer?: boolean) => void;
+  disabled?: boolean;
+}) {
+  const title = answer?.title ?? "";
+  // 旧稿只在用户编辑时转为统一正文，挂载与读取不改写历史内容。
+  const body = [title, answer?.body ?? ""]
+    .filter((part) => part !== "")
+    .join("\n\n");
+  const words = countResponseWords(body);
+  const hint = wordHintOf(model.wordMin, model.wordMax);
+  return (
+    <div
+      data-slot="response-answer-field"
+      className="flex min-w-0 flex-col gap-2"
+    >
+      <label
+        htmlFor={`response-${model.scopeId}`}
+        className="text-sm font-medium"
+      >
+        正文作答
+      </label>
+      <textarea
+        id={`response-${model.scopeId}`}
+        aria-label="正文"
+        value={body}
+        disabled={disabled}
+        rows={8}
+        onChange={(event) =>
+          update({ kind: "response", body: event.target.value }, true)
+        }
+        className="min-h-44 w-full min-w-0 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-base leading-[1.75] shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+      />
+      <p
+        aria-live="polite"
+        className="text-sm text-muted-foreground"
+      >{`正文已写 ${words} 字${hint === null ? "" : `（${hint}，超出建议不扣分也不拦截）`}`}</p>
+    </div>
+  );
+}
+
 export const responseView: AnswerKindView<
   StudentAnswerOfKind<"response">,
   PreparedOf<"response">,
   ReferenceOfKind<"response">
 > = {
-  Input: ({ model, answer, update, disabled = false }) => {
-    const title = answer?.title ?? "";
-    // 旧稿只在用户编辑时转为统一正文，挂载与读取不改写历史内容。
-    const body = [title, answer?.body ?? ""]
-      .filter((part) => part !== "")
-      .join("\n\n");
-    const words = countResponseWords(body);
-    const hint = wordHintOf(model.wordMin, model.wordMax);
-    return (
-      <div className="flex min-w-0 flex-col gap-3">
-        <RichMarkdown
-          source={model.stemMd}
-          className="text-base leading-[1.75]"
-        />
-        <textarea
-          aria-label="正文"
-          value={body}
-          disabled={disabled}
-          rows={8}
-          onChange={(event) =>
-            update({ kind: "response", body: event.target.value }, true)
-          }
-          className="min-h-44 w-full min-w-0 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-base leading-[1.75] shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
-        />
-        <p
-          aria-live="polite"
-          className="text-sm text-muted-foreground"
-        >{`正文已写 ${words} 字${hint === null ? "" : `（${hint}，超出建议不扣分也不拦截）`}`}</p>
-      </div>
-    );
-  },
+  Input: (props) => <ResponseAnswerField {...props} />,
   ReadOnly: ({ answer }) => {
     if (answer === undefined) {
       return (

@@ -100,6 +100,10 @@ export interface HandwrittenControlsProps {
    * （solve/apply/find-error 与既有测试不受影响）。
    */
   showFinalAnswer?: boolean;
+  /** 结构化题目参考内容（供全屏参考） */
+  scratchContext?: import("react").ReactNode;
+  /** 全屏参考展开标题（缺省「题干」） */
+  contextLabel?: string | undefined;
 }
 
 export function HandwrittenControls({
@@ -118,6 +122,8 @@ export function HandwrittenControls({
   showExpandTrigger = true,
   ariaPrefix = "本题",
   showFinalAnswer = true,
+  scratchContext,
+  contextLabel,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -539,7 +545,8 @@ export function HandwrittenControls({
             fullscreen={fullscreen}
             label="全屏作答"
             heading={`${ariaPrefix}手写作答`}
-            context={<RichMarkdown source={stemMd} />}
+            contextLabel={contextLabel ?? "题干"}
+            context={scratchContext ?? <RichMarkdown source={stemMd} />}
             onClose={closeFullscreen}
           >
             {paperError && (

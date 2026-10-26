@@ -318,15 +318,7 @@ const DISPATCH_INDEX_CASES: readonly BaselineEntry[] = (
 }));
 const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
   ...(
-    [
-      "judge",
-      "choice",
-      "multi",
-      "fill",
-      "response",
-      "matching",
-      "ordering",
-    ] as const
+    ["judge", "choice", "multi", "fill", "matching", "ordering"] as const
   ).map((literal) => ({
     file: "apps/web/src/features/answering/index.tsx",
     snippet: `answer?.kind === "${literal}"`,
@@ -336,6 +328,11 @@ const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
     file: "apps/web/src/features/answering/index.tsx",
     snippet: 'answer?.kind === "final"',
     count: 3, // final 的 Input 臂只渲染题干（§10 final 不重复），无收窄
+  },
+  {
+    file: "apps/web/src/features/answering/index.tsx",
+    snippet: 'answer?.kind === "response"',
+    count: 3, // response 的 Input 臂只渲染题面与字数要求（题面无动态文本框），无收窄
   },
 ];
 
@@ -393,15 +390,22 @@ const CHOICE_VIEW_NARROW: readonly BaselineEntry[] = [
 ];
 
 /**
- * D. final 输入宿主最小收窄：HandwrittenControls 两处 FinalAnswerField
- * 挂点把联合答案收窄到 final 后交给呈现层（§6.3 B 末行——UA-03 消费
- * final 呈现后保留的宿主侧最小收窄；纸面控制器所有权不变）。
+ * D. 题面外输入宿主最小收窄：
+ * 1. HandwrittenControls 两处 FinalAnswerField 挂点把联合答案收窄到 final 后交给呈现层
+ *    （§6.3 B 末行——UA-03 消费 final 呈现后保留的宿主侧最小收窄；纸面控制器所有权不变）。
+ * 2. AttemptQuestionCard 一处 ResponseAnswerField 挂点把联合答案收窄到 response 后交给呈现层
+ *    （圈画底图几何绝对稳定重构：placement === "text-below-stem" 作答框移至覆盖层下方）。
  */
-const HANDWRITTEN_FINAL_NARROW: readonly BaselineEntry[] = [
+const HOST_STANDALONE_INPUT_NARROW: readonly BaselineEntry[] = [
   {
     file: "apps/web/src/features/attempt/HandwrittenControls.tsx",
     snippet: 'answer?.kind === "final"',
     count: 2,
+  },
+  {
+    file: "apps/web/src/features/attempt/AttemptQuestionCard.tsx",
+    snippet: 'answer?.kind === "response"',
+    count: 1,
   },
 ];
 
@@ -458,7 +462,7 @@ const I16_BASELINE: readonly BaselineEntry[] = [
   ...DISPATCH_INDEX_NARROW,
   ...PREPARE_CASES,
   ...CHOICE_VIEW_NARROW,
-  ...HANDWRITTEN_FINAL_NARROW,
+  ...HOST_STANDALONE_INPUT_NARROW,
   ...DIALOG_STATE_NARROW,
 ];
 
