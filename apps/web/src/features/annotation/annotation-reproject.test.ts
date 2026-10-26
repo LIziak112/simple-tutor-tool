@@ -54,7 +54,7 @@ const TARGET: AnnotationSurfaceLayout = {
     contentSignature: "d".repeat(64),
     blocks: [
       { x: 0, y: 0, width: 1080, height: 60, tag: "p", node: "stem/p/0" },
-      { x: 0, y: 90, width: 1080, height: 65, tag: "p", node: "stem/p/1" },
+      { x: 0, y: 100, width: 1080, height: 65, tag: "p", node: "stem/p/1" },
     ],
     fonts: [
       ["16px", "16px", "16px", "sans-serif", "normal"],

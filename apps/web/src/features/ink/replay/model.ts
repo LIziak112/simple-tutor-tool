@@ -271,6 +271,13 @@ function buildAtramentModel(
       }
     }
   }
+  // 评审 #11771 顺手项：maxY 并入墓碑点——全擦光稿的墓碑不被裁掉
+  for (const tomb of deleted) {
+    for (const point of tomb.stroke.points) {
+      maxY = Math.max(maxY, point.y);
+      hasPoint = true;
+    }
+  }
   const contentHeight = hasPoint
     ? Math.min(
         CONTENT_MAX_HEIGHT,
@@ -295,17 +302,23 @@ function buildAtramentModel(
     // slots/strokes/时间轴三方对齐一致（approx 口径不排序——缺 startedAt
     // 的旧稿按数组序，排序键会全塌到 0 互相颠倒）
     normalized.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-    const tombsNormalized = deleted.map((tomb) => ({
-      stroke: tomb.stroke,
-      startedAt: tomb.startedAt,
-      deletedAt: tomb.deletedAt,
-      pointTimesMs: normalizePointTimes(tomb.rawTimes),
-      // 评审 #11750 必改②-C：书写终点用原始末点 t（单点 normalize 会塌成 0）
-      writingEnd:
-        tomb.startedAt !== null
-          ? tomb.startedAt + (tomb.rawTimes.at(-1) ?? 0)
-          : null,
-    }));
+    const tombsNormalized = deleted.map((tomb) => {
+      // 最后一个非空原始 t（书写进度终点；缺失塌 0 的场景由 ?? 0 兜底）
+      const lastRawT = [...tomb.rawTimes]
+        .reverse()
+        .find((t): t is number => typeof t === "number" && t >= 0);
+      const pointTimesMs = normalizePointTimes(tomb.rawTimes);
+      return {
+        stroke: tomb.stroke,
+        startedAt: tomb.startedAt,
+        deletedAt: tomb.deletedAt,
+        pointTimesMs,
+        // 评审 #11750 必改②-C：书写终点 = startedAt + 最后一个非空原始 t
+        //（normalizePointTimes 会把单点时刻塌成 0——这里用原始值，三态都对）
+        writingEnd:
+          tomb.startedAt !== null ? tomb.startedAt + (lastRawT ?? 0) : null,
+      };
+    });
     // t0 = min(strokes∪deleted 的 startedAt)（评审 #11768 必改②-B：墓碑早于
     // 首笔活笔的「先写→全擦→重写」主场景，rel 不得为负）
     const startsSeen: number[] = [];
@@ -435,11 +448,17 @@ function buildAtramentModel(
     // 墓碑时间轴（real 口径）：同一 compress——停顿前写并擦掉的墓碑不再归零
     for (const tomb of tombsNormalized) {
       if (tomb.startedAt === null || tomb.deletedAt === null) continue;
+      // 评审 #11771 顺手项：跨设备时钟偏差可能让 deletedAt 早于书写终点——
+      // 钳到 max(deletedAt, writingEnd)，时间轴不右移
+      const clampedDeletedAt = Math.max(
+        tomb.deletedAt,
+        tomb.writingEnd ?? tomb.deletedAt,
+      );
       deletedSlots.push({
         stroke: tomb.stroke,
         pointTimesMs: tomb.pointTimesMs,
         startMs: compress(tomb.startedAt),
-        deletedAtMs: compress(tomb.deletedAt),
+        deletedAtMs: compress(clampedDeletedAt),
       });
     }
     durationMs = mapped.length > 0 ? (mapped[mapped.length - 1] ?? 0) : 0;

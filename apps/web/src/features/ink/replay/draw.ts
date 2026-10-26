@@ -157,11 +157,14 @@ export function createAtramentReplayCanvas(
     ctx2d.restore();
   };
 
-  // 尺寸变化（iPad 旋转、窗口缩放）：重设位图并重画当前帧（归一化坐标保证比例正确）
+  // 尺寸变化（iPad 旋转、窗口缩放）：重设位图并重画当前帧（归一化坐标保证比例正确）。
+  // 评审 #11771 必改②：先取 lastDeleted 再 drawFrame——drawFrame 会清它，
+  // 顺序颠倒会让 resize 后墓碑消失到下一次播放头变化。
   const observer = new ResizeObserver(() => {
     sizeCanvas();
+    const deleted = lastDeleted;
     if (lastFrame) drawFrame(lastFrame.strokes, lastFrame.visiblePoints);
-    if (lastDeleted) drawDeleted(lastDeleted.tombstones, lastDeleted.timeMs);
+    if (deleted) drawDeleted(deleted.tombstones, deleted.timeMs);
   });
   observer.observe(container);
 

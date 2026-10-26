@@ -646,6 +646,7 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
   it("全笔带 startedAt：timing=real、真实空闲超上限被压缩并记 pauses 标记", () => {
     const model = parseInkReplayData(timedDoc());
     expect(model?.engine).toBe("atrament");
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     expect(model.timing).toBe("real");
     // 第二笔 +12000 落笔：真实空闲 = 12000 − 3000（首笔书写时长）= 9000 > 5000
@@ -660,6 +661,7 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     const second = doc.data.strokes[1] as { startedAt: number };
     second.startedAt = 1727392800000 + 4500;
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     expect(model.timing).toBe("real");
     expect(model.pauses).toEqual([]);
@@ -672,6 +674,7 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     const second = doc.data.strokes[1] as { startedAt?: number };
     delete second.startedAt;
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     expect(model.timing).toBe("approx");
     expect(model.pauses).toEqual([]);
@@ -692,6 +695,7 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
       points: [{ x: 20, y: 15, p: 0.5, t: 200 }],
     };
     const model = parseInkReplayData(timedDoc([tomb]));
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     expect(model.deletedSlots).toHaveLength(1);
     expect(model.deletedSlots[0]?.stroke.id).toBe("stroke-0");
@@ -723,6 +727,7 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
       },
     ]);
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     // 墓碑书写/消失都在停顿（3000→12000 段）之前：compress 保持原值，
     // 不得被段后总位移 4000 归零成 0/0（旧实现探针即此败）
@@ -766,14 +771,8 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
       updatedAt: 1748918400000,
     };
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
-    // 临时诊断（定位后删除）
-    console.log(
-      "[SHORT-DEBUG]",
-      JSON.stringify(model.deletedSlots),
-      JSON.stringify(model.pauses),
-      String(model.durationMs),
-    );
     expect(model.timing).toBe("real");
     expect(model.durationMs).toBe(2000);
     expect(model.deletedSlots[0]?.startMs).toBe(0);
@@ -798,6 +797,7 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
       },
     ]);
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     expect(model.deletedSlots[0]?.deletedAtMs).toBe(11000);
     expect(model.durationMs).toBe(11000);
@@ -844,6 +844,7 @@ describe("LR-PR4 必改② 探针（评审 #11768）", () => {
       updatedAt: 1748918400000,
     };
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     // 次笔在首笔写完（6000）后 500ms 才落笔：间隙 500 ≤ CAP → 不压缩不标记
     expect(model.pauses).toEqual([]);
@@ -888,6 +889,7 @@ describe("LR-PR4 必改② 探针（评审 #11768）", () => {
       updatedAt: 1748918400000,
     };
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     // t0 = 墓碑起点（并集最小值）：墓碑 [0,1000) 可见、活笔 2000 起画
     expect(model.timing).toBe("real");
@@ -934,6 +936,7 @@ describe("LR-PR4 必改② 探针（评审 #11768）", () => {
       updatedAt: 1748918400000,
     };
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     // 段 [0,1000] 落在墓碑书写内 → cap=gap；段 [1000,9000] 空闲 → 压缩到 5000
     expect(model.durationMs).toBeGreaterThan(0);
@@ -974,6 +977,7 @@ describe("LR-PR4 必改② 探针（评审 #11768）", () => {
       updatedAt: 1748918400000,
     };
     const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     // 墓碑书写时段（T..T+6000）的段落在书写区间内 → cap=gap → 无假停顿标记
     expect(model.pauses).toEqual([]);
