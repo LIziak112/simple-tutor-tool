@@ -3,10 +3,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ANALYTICS_DAYS_DEFAULT,
   ANALYTICS_FOCUS_DAYS_DEFAULT,
+  attemptSourceSchema,
+  attemptStatusSchema,
   type LearningPackExportRequest,
   learningPackExportRequestSchema,
   learningPackGoalSchema,
   notePhaseSchema,
+  questionTypeSchema,
+  teacherAttemptListQuerySchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -27,8 +31,13 @@ import {
 } from "../services/export-service";
 import { exportLectureMd, exportUnitMd } from "../services/library-service";
 import { saveMedia } from "../services/media-service";
-import { createReport } from "../services/report-service";
+import {
+  createReport,
+  getReportDetail,
+  listStudentReports,
+} from "../services/report-service";
 import { listStudents } from "../services/student-service";
+import { listTeacherAttempts } from "../services/teacher-attempt-service";
 import {
   commitZipImport,
   decodeImportZipBase64,
@@ -36,10 +45,20 @@ import {
   unpackImportZip,
 } from "../services/zip-import-service";
 import { readSpecFile } from "../spec-files";
+import {
+  attemptExtrasOf,
+  decodeCursorOffset,
+  queryStudentResponses,
+  resolveToolStudent,
+  searchQuestions,
+} from "./teacher-queries";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
- * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个）。
+ * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，
+ * 共 14 个；教师迭代 T-PR2 增只读查询四件 query_student_attempts /
+ * query_student_responses / search_questions / get_report，共 18 个——查询装配
+ * 见 ./teacher-queries.ts，本清单注释与 packages/contract/src/mcp-api.ts 同步）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -735,6 +754,290 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       // （同 mtime 缓存），HTTP 与 MCP 内容逐字节一致
       const manifest = await readSpecFile("capabilities.json", specDir);
       return textContent(manifest.content);
+    }),
+  );
+
+  // 15. query_student_attempts：学生历次作答卷盘点（T-PR2 MCP-A ①，薄封装
+  // listTeacherAttempts + 每卷增量计数，见 teacher-queries.attemptExtrasOf）
+  server.registerTool(
+    "query_student_attempts",
+    {
+      description:
+        "按学生查询历次作答卷（含进行中，排除已作废卷）。每卷返回：来源上下文（作业/课程/单元/第 n 次）、状态、开始与交卷时间、用时、单元数与题数、已提交题数、对/错/待批题数、自标「不会」数、得分（自动/最终）与是否有整卷 AI 复盘。studentId 可省：名下未归档学生恰 1 名时自动默认该生，否则返回结构化错误（附学生名单）。limit（默认 50 上限 200）+ cursor 翻页。",
+      inputSchema: {
+        studentId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("学生 id；缺省 = 名下唯一未归档学生（多名时报错附名单）"),
+        courseId: z.string().uuid().optional().describe("按课程筛选"),
+        assignmentId: z.string().uuid().optional().describe("按作业筛选"),
+        unitId: z.string().min(1).optional().describe("按单元筛选"),
+        sourceType: attemptSourceSchema
+          .optional()
+          .describe("按来源筛选：assignment | course | wrong | lesson"),
+        status: attemptStatusSchema
+          .optional()
+          .describe("按状态筛选：draft | submitted | graded"),
+        from: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("最近活动时间下界（UTC ISO）"),
+        to: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("最近活动时间上界（UTC ISO）"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("每页条数；默认 50，上限 200"),
+        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard(
+      ({
+        studentId,
+        courseId,
+        assignmentId,
+        unitId,
+        sourceType,
+        status,
+        from,
+        to,
+        limit,
+        cursor,
+      }) => {
+        const query = teacherAttemptListQuerySchema.parse({
+          studentId: resolveToolStudent(db, teacherId, studentId),
+          ...(courseId !== undefined ? { courseId } : {}),
+          ...(assignmentId !== undefined ? { assignmentId } : {}),
+          ...(unitId !== undefined ? { unitId } : {}),
+          ...(sourceType !== undefined ? { sourceType } : {}),
+          ...(status !== undefined ? { status } : {}),
+          ...(from !== undefined ? { from } : {}),
+          ...(to !== undefined ? { to } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+          offset: decodeCursorOffset(cursor),
+        });
+        const { attempts: cards, total } = listTeacherAttempts(
+          db,
+          teacherId,
+          query,
+        );
+        const extras = attemptExtrasOf(
+          db,
+          cards.map((card) => card.attemptId),
+        );
+        const offset = decodeCursorOffset(cursor);
+        const nextCursor =
+          offset + cards.length < total ? String(offset + cards.length) : null;
+        return jsonContent({
+          total,
+          nextCursor,
+          attempts: cards.map((card) => ({
+            attemptId: card.attemptId,
+            studentId: card.studentId,
+            studentName: card.studentName,
+            sourceType: card.sourceType,
+            courseId: card.courseId,
+            courseName: card.courseName,
+            assignmentId: card.assignmentId,
+            assignmentTitle: card.assignmentTitle,
+            unitId: card.unitId,
+            unitTitle: card.unitTitle,
+            attemptNo: card.attemptNo,
+            status: card.status,
+            startedAt: card.startedAt,
+            submittedAt: card.submittedAt,
+            activeSec: card.activeSec,
+            unitCount: card.unitCount,
+            questionCount: card.questionCount,
+            scoreAuto: card.scoreAuto,
+            scoreFinal: card.scoreFinal,
+            submittedCount: extras.get(card.attemptId)?.submittedCount ?? 0,
+            correctCount: extras.get(card.attemptId)?.correctCount ?? 0,
+            wrongCount: extras.get(card.attemptId)?.wrongCount ?? 0,
+            pendingCount: card.pendingCount,
+            unsureCount: extras.get(card.attemptId)?.unsureCount ?? 0,
+            hasAiReview: extras.get(card.attemptId)?.hasAiReview ?? false,
+          })),
+        });
+      },
+    ),
+  );
+
+  // 16. query_student_responses：逐题作答行检索（T-PR2 MCP-A ②；过程特征 +
+  // 存在性筛选 + 引用 id，查询装配见 teacher-queries.queryStudentResponses）
+  server.registerTool(
+    "query_student_responses",
+    {
+      description:
+        "按条件检索学生的逐题作答行（一行 = 一次作答，同题多次作答各自成行；已作废卷不返回，进行中卷只返回单题已提交的行）。筛选——归属：studentId（可省，同 query_student_attempts 约定）/ attemptIds / courseId / questionId / 提交时间 from-to；内容：knowledge（建卷冻结考点，精确等于）/ type（题型）；结果面：correct（true 判对 / false 判错 / pending 待批）/ flaggedUnsure / answered；过程面：minActiveSec / minChangeCount / usedHints / hasScratchOrInk（草稿笔记或正式笔迹）/ hasCorrection（订正）/ hasAiHelp（AI 求助）/ selfReview（自评）。summary 模式（默认）题干截 120 字且不含参考答案与解析；fields=full 返回题干全文与参考答案——自学者注意 full 含参考答案。每行带引用 id（refs.inkIds/noteVersionIds/annotationIds/aiTaskIds），内容按 id 另取不内联。limit（默认 50 上限 200）+ cursor 翻页。",
+      inputSchema: {
+        studentId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("学生 id；缺省 = 名下唯一未归档学生（多名时报错附名单）"),
+        attemptIds: z
+          .array(z.string().uuid())
+          .min(1)
+          .optional()
+          .describe("按卷筛选（attempts.id，可多个）"),
+        courseId: z.string().uuid().optional().describe("按课程筛选"),
+        questionId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("按题目 id 筛选（DSL 题 id，非 UUID）"),
+        from: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("单题提交时间下界（UTC ISO）"),
+        to: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("单题提交时间上界（UTC ISO）"),
+        knowledge: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("按考点筛选（精确等于；取建卷冻结快照值）"),
+        type: questionTypeSchema.optional().describe("按题型筛选（七种）"),
+        correct: z
+          .enum(["true", "false", "pending"])
+          .optional()
+          .describe("判定结果：true 判对 / false 判错 / pending 待批"),
+        flaggedUnsure: z.boolean().optional().describe("仅自标「不会」的行"),
+        answered: z.boolean().optional().describe("是否有实际作答内容"),
+        minActiveSec: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("最短有效用时（秒）"),
+        minChangeCount: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("最少改答次数"),
+        usedHints: z.boolean().optional().describe("仅用过提示的行"),
+        hasScratchOrInk: z
+          .boolean()
+          .optional()
+          .describe("仅有草稿笔记或正式笔迹的行"),
+        hasCorrection: z.boolean().optional().describe("仅有订正记录的行"),
+        hasAiHelp: z.boolean().optional().describe("仅有 AI 求助记录的行"),
+        selfReview: z.boolean().optional().describe("仅做过自评的行"),
+        fields: z
+          .enum(["summary", "full"])
+          .optional()
+          .describe(
+            "默认 summary（题干截 120 字、不含答案/解析）；full 含参考答案与解析（自学者注意 full 含参考答案）",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("每页条数；默认 50，上限 200"),
+        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard((args) => {
+      const studentId = resolveToolStudent(db, teacherId, args.studentId);
+      return jsonContent(
+        queryStudentResponses(db, teacherId, {
+          ...args,
+          studentId,
+          limit: args.limit ?? 50,
+        }),
+      );
+    }),
+  );
+
+  // 17. search_questions：题库检索（T-PR2 MCP-A ③；SQL 独立 teacher-queries.ts）
+  server.registerTool(
+    "search_questions",
+    {
+      description:
+        "在当前教师题库中检索题目（只搜未删除题）：题干关键字、考点名、题型、难度、单元 id 组合筛选；不按相关性排序，按单元与题序稳定排列。summary 模式（默认）题干截 120 字；fields=full 返回题干全文。本工具不返回答案/解析——需要答案时按卷与题号用 query_student_responses(fields=full) 或 get_unit。每页上限 100，limit（默认 50）+ cursor 翻页。",
+      inputSchema: {
+        q: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("题干关键字（包含匹配；%/_ 按字面处理）"),
+        knowledge: z.string().min(1).optional().describe("考点名（包含匹配）"),
+        type: questionTypeSchema.optional().describe("按题型筛选（七种）"),
+        difficulty: z
+          .number()
+          .int()
+          .min(1)
+          .max(5)
+          .optional()
+          .describe("按难度筛选（1–5）"),
+        unitId: z.string().min(1).optional().describe("按单元 id 筛选"),
+        fields: z.enum(["summary", "full"]).optional().describe("默认 summary"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("每页条数；默认 50，上限 100"),
+        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard((args) =>
+      jsonContent(
+        searchQuestions(db, teacherId, { ...args, limit: args.limit ?? 50 }),
+      ),
+    ),
+  );
+
+  // 18. get_report：报告列表 / 详情（T-PR2 MCP-A ④ ≈ listStudentReports /
+  // getReportDetail；reportId 省略即列表）
+  server.registerTool(
+    "get_report",
+    {
+      description:
+        "查询学情报告：带 reportId 返回单份详情（含 Markdown 正文）；省略 reportId 返回该学生的报告列表（createdAt 倒序，不含正文，按列表里的 id 再取详情）。studentId 可省（同约定：名下唯一未归档学生自动默认）。非本教师的学生 / 报告返回结构化「不存在」。",
+      inputSchema: {
+        studentId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("学生 id（列表模式必依；缺省 = 名下唯一未归档学生）"),
+        reportId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("报告 id（给出即返回详情，忽略 studentId）"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ studentId, reportId }) => {
+      if (reportId !== undefined) {
+        return jsonContent({
+          report: getReportDetail(db, teacherId, reportId),
+        });
+      }
+      return jsonContent(
+        listStudentReports(
+          db,
+          teacherId,
+          resolveToolStudent(db, teacherId, studentId),
+        ),
+      );
     }),
   );
 
