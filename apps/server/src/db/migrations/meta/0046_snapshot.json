@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b604629c-53bb-4b17-b95a-80c24fee1451",
+  "id": "c3314933-ad72-45f0-ac6e-ca60dd1ef1ff",
   "prevId": "5e99bdaf-4810-47ab-81b1-227b5ae786a3",
   "tables": {
     "ai_attempt_review_facts": {
@@ -741,6 +741,60 @@
           "value": "\"ai_policy_overrides\".\"mode\" in ('open_study', 'guided_only', 'post_submit_only')"
         }
       }
+    },
+    "ai_prompt_overrides": {
+      "name": "ai_prompt_overrides",
+      "columns": {
+        "owner_type": {
+          "name": "owner_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "slot_key": {
+          "name": "slot_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "ai_prompt_overrides_owner_type_owner_id_slot_key_pk": {
+          "columns": [
+            "owner_type",
+            "owner_id",
+            "slot_key"
+          ],
+          "name": "ai_prompt_overrides_owner_type_owner_id_slot_key_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "ai_quick_buttons": {
       "name": "ai_quick_buttons",
@@ -1903,95 +1957,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "attempt_context_snapshots": {
-      "name": "attempt_context_snapshots",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "attempt_id": {
-          "name": "attempt_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_id": {
-          "name": "source_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_version": {
-          "name": "source_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "snapshot_json": {
-          "name": "snapshot_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "frozen_at": {
-          "name": "frozen_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "attempt_context_snapshots_dedupe_uk": {
-          "name": "attempt_context_snapshots_dedupe_uk",
-          "columns": [
-            "attempt_id",
-            "kind",
-            "source_id",
-            "source_version"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "attempt_context_snapshots_attempt_id_attempts_id_fk": {
-          "name": "attempt_context_snapshots_attempt_id_attempts_id_fk",
-          "tableFrom": "attempt_context_snapshots",
-          "tableTo": "attempts",
-          "columnsFrom": [
-            "attempt_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "attempt_context_snapshots_kind_check": {
-          "name": "attempt_context_snapshots_kind_check",
-          "value": "\"attempt_context_snapshots\".\"kind\" in ('material', 'group')"
-        }
-      }
-    },
     "attempts": {
       "name": "attempts",
       "columns": {
@@ -3117,195 +3082,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "material_refs": {
-      "name": "material_refs",
-      "columns": {
-        "teacher_id": {
-          "name": "teacher_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_kind": {
-          "name": "owner_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "material_id": {
-          "name": "material_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "ref_order": {
-          "name": "ref_order",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "material_refs_teacher_material_idx": {
-          "name": "material_refs_teacher_material_idx",
-          "columns": [
-            "teacher_id",
-            "material_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "material_refs_teacher_id_owner_kind_owner_id_material_id_ref_order_pk": {
-          "columns": [
-            "teacher_id",
-            "owner_kind",
-            "owner_id",
-            "material_id",
-            "ref_order"
-          ],
-          "name": "material_refs_teacher_id_owner_kind_owner_id_material_id_ref_order_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "material_refs_owner_kind_check": {
-          "name": "material_refs_owner_kind_check",
-          "value": "\"material_refs\".\"owner_kind\" in ('group', 'question')"
-        }
-      }
-    },
-    "materials": {
-      "name": "materials",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "teacher_id": {
-          "name": "teacher_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "unit_id": {
-          "name": "unit_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_md": {
-          "name": "source_md",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_md": {
-          "name": "content_md",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "anchors_json": {
-          "name": "anchors_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slots_json": {
-          "name": "slots_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "media_paths_json": {
-          "name": "media_paths_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "order": {
-          "name": "order",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "materials_teacher_unit_idx": {
-          "name": "materials_teacher_unit_idx",
-          "columns": [
-            "teacher_id",
-            "unit_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "materials_teacher_id_id_pk": {
-          "columns": [
-            "teacher_id",
-            "id"
-          ],
-          "name": "materials_teacher_id_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "note_images": {
       "name": "note_images",
       "columns": {
@@ -3717,181 +3493,6 @@
         }
       }
     },
-    "question_group_members": {
-      "name": "question_group_members",
-      "columns": {
-        "teacher_id": {
-          "name": "teacher_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "group_id": {
-          "name": "group_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "question_id": {
-          "name": "question_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "order": {
-          "name": "order",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "question_group_members_teacher_question_idx": {
-          "name": "question_group_members_teacher_question_idx",
-          "columns": [
-            "teacher_id",
-            "question_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "question_group_members_teacher_id_group_id_question_id_pk": {
-          "columns": [
-            "teacher_id",
-            "group_id",
-            "question_id"
-          ],
-          "name": "question_group_members_teacher_id_group_id_question_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "question_groups": {
-      "name": "question_groups",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "teacher_id": {
-          "name": "teacher_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "unit_id": {
-          "name": "unit_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "label": {
-          "name": "label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_md": {
-          "name": "source_md",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "intro_md": {
-          "name": "intro_md",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "material_refs_json": {
-          "name": "material_refs_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "question_ids_json": {
-          "name": "question_ids_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "order": {
-          "name": "order",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "question_groups_teacher_unit_idx": {
-          "name": "question_groups_teacher_unit_idx",
-          "columns": [
-            "teacher_id",
-            "unit_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "question_groups_teacher_id_id_pk": {
-          "columns": [
-            "teacher_id",
-            "id"
-          ],
-          "name": "question_groups_teacher_id_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "question_knowledge": {
       "name": "question_knowledge",
       "columns": {
@@ -4031,13 +3632,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "material_refs_json": {
-          "name": "material_refs_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "version": {
@@ -4263,93 +3857,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "active_sec": {
-          "name": "active_sec",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "hints_used": {
-          "name": "hints_used",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "hints_opened_json": {
-          "name": "hints_opened_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "change_count": {
-          "name": "change_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "ink_id": {
-          "name": "ink_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "practice_mutation_id": {
-          "name": "practice_mutation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "practice_request_digest": {
-          "name": "practice_request_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "grading_policy": {
-          "name": "grading_policy",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "self_review_verdict": {
-          "name": "self_review_verdict",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "self_review_at": {
-          "name": "self_review_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "self_review_revision": {
-          "name": "self_review_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "self_review_mutation_id": {
-          "name": "self_review_mutation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "review_policy": {
           "name": "review_policy",
           "type": "text",
@@ -4397,6 +3904,57 @@
         },
         "reviewed_at": {
           "name": "reviewed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active_sec": {
+          "name": "active_sec",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "hints_used": {
+          "name": "hints_used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "hints_opened_json": {
+          "name": "hints_opened_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "change_count": {
+          "name": "change_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "ink_id": {
+          "name": "ink_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "practice_mutation_id": {
+          "name": "practice_mutation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "practice_request_digest": {
+          "name": "practice_request_digest",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

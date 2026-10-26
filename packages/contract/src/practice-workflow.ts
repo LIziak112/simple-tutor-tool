@@ -230,9 +230,6 @@ export type TeacherPracticeFeedbackPolicy = z.infer<
 export type PracticeRestrictionReason = z.infer<
   typeof practiceRestrictionReasonSchema
 >;
-export type StudentPracticePreference = z.infer<
-  typeof studentPracticePreferenceSchema
->;
 export type PracticeWorkflow = z.infer<typeof practiceWorkflowSchema>;
 export type PracticeQuestionProgress = z.infer<
   typeof practiceQuestionProgressSchema
@@ -245,9 +242,6 @@ export type TeacherPracticeFeedbackSettings = z.infer<
 >;
 export type TeacherPracticeFeedbackSettingsUpdateRequest = z.infer<
   typeof teacherPracticeFeedbackSettingsUpdateRequestSchema
->;
-export type AttemptStartOptionsRequest = z.infer<
-  typeof attemptStartOptionsRequestSchema
 >;
 export type AttemptWorkflowUpdateData = z.infer<
   typeof attemptWorkflowUpdateDataSchema

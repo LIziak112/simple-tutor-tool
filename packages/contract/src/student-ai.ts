@@ -427,9 +427,6 @@ export const aiConnectionFirstCredentialSchema = z
     token: z.string().min(1),
   })
   .strict();
-export type AiConnectionFirstCredential = z.infer<
-  typeof aiConnectionFirstCredentialSchema
->;
 
 // ---------- 连接管理常量（SAI-16；请求/响应 schema 在 student-ai-api.ts） ----------
 
@@ -542,7 +539,6 @@ export const aiMcpClaimMaterialSchema = z
     pixelHeight: z.number().int().positive(),
   })
   .strict();
-export type AiMcpClaimMaterial = z.infer<typeof aiMcpClaimMaterialSchema>;
 
 /** MCP 领取视图（claim_ai_task 的 context 载荷）：含答案解析 + 租约（写回必需） */
 export const aiMcpClaimViewSchema = z
@@ -563,7 +559,6 @@ export const aiMcpClaimViewSchema = z
     turnsUsed: z.number().int().min(0),
   })
   .strict();
-export type AiMcpClaimView = z.infer<typeof aiMcpClaimViewSchema>;
 
 // ---------- 分享视图（票据读端点，单快照只读） ----------
 
@@ -576,7 +571,6 @@ export const aiShareMaterialSchema = z
     byteSize: z.number().int().positive(),
   })
   .strict();
-export type AiShareMaterial = z.infer<typeof aiShareMaterialSchema>;
 
 /**
  * 分享视图（GET /api/public/ai/share/:ticket 响应 data）：
@@ -594,7 +588,6 @@ export const aiShareViewSchema = z
     materials: z.array(aiShareMaterialSchema),
   })
   .strict();
-export type AiShareView = z.infer<typeof aiShareViewSchema>;
 
 // ---------- 内部执行载荷（页内出站，服务端专用） ----------
 
@@ -618,7 +611,6 @@ export const aiDispatchPayloadSchema = z
     modeAtSend: aiTeachingModeSchema,
   })
   .strict();
-export type AiDispatchPayload = z.infer<typeof aiDispatchPayloadSchema>;
 
 // ---------- 错误码 ----------
 
@@ -675,4 +667,3 @@ export const aiErrorCodeSchema = z.enum([
   "NOT_FOUND",
   "VALIDATION_ERROR",
 ]);
-export type AiErrorCode = z.infer<typeof aiErrorCodeSchema>;

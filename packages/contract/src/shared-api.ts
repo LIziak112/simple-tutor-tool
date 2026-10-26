@@ -14,19 +14,10 @@ import {
  * 权限：发布者本人 / 管理员任意）。
  *
  * 约定（与 library-api.ts 一致）：
- * - 本文件只定义请求体与 data 部分；响应壳 { ok, data } 由 index.ts 统一描述，
- *   此处仅用局部 helper 具体化成功壳（避免循环依赖）；
+ * - 本文件只定义请求体与 data 部分；响应壳 { ok, data } 由 index.ts 统一描述；
  * - 教师端接口挂 requireTeacher，管理端挂 requireAdmin（401/403 见 auth.ts）；
  * - 目录内文件是独立快照（D16），与任何资源库无关联——列表/预览/导入都不回库。
  */
-
-/** 在本文件内把成功响应壳的 data 具体化（不从 index.ts 导入，避免循环依赖） */
-function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
-  return z.object({
-    ok: z.literal(true),
-    data: dataSchema,
-  });
-}
 
 // ---------- 共享文件（D15/D16） ----------
 
@@ -147,20 +138,11 @@ export const sharedErrorCodeSchema = z.enum([
 
 // ---------- 具体化的成功壳 ----------
 
-export const sharedFileListOkSchema = apiOkExtend(sharedFileListSchema);
-export const sharedPublishOkSchema = apiOkExtend(sharedPublishDataSchema);
-export const sharedPreviewOkSchema = apiOkExtend(sharedPreviewDataSchema);
-export const sharedImportOkSchema = apiOkExtend(sharedImportDataSchema);
-
 // ---------- 推断类型导出 ----------
 
-export type SharedFilename = z.infer<typeof sharedFilenameSchema>;
-export type SharedFileKind = z.infer<typeof sharedFileKindSchema>;
-export type SharedFileSource = z.infer<typeof sharedFileSourceSchema>;
 export type SharedFileSummary = z.infer<typeof sharedFileSummarySchema>;
 export type SharedFileList = z.infer<typeof sharedFileListSchema>;
 export type SharedPublishData = z.infer<typeof sharedPublishDataSchema>;
 export type SharedPreviewRequest = z.infer<typeof sharedPreviewRequestSchema>;
 export type SharedPreviewData = z.infer<typeof sharedPreviewDataSchema>;
 export type SharedImportRequest = z.infer<typeof sharedImportRequestSchema>;
-export type SharedErrorCode = z.infer<typeof sharedErrorCodeSchema>;

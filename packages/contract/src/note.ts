@@ -870,10 +870,8 @@ export type CorrectionCreateRequest = z.infer<
   typeof correctionCreateRequestSchema
 >;
 export type CorrectionSealRequest = z.infer<typeof correctionSealRequestSchema>;
-export type NoteErrorCode = z.infer<typeof noteErrorCodeSchema>;
 export type NoteHeadData = z.infer<typeof noteHeadDataSchema>;
 export type NoteImageUploadMeta = z.infer<typeof noteImageUploadMetaSchema>;
-export type NoteHeadsRequest = z.infer<typeof noteHeadsRequestSchema>;
 export type NoteHeadsData = z.infer<typeof noteHeadsDataSchema>;
 
 // ---------- 与后续任务的关系 ----------

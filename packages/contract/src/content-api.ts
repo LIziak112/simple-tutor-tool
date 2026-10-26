@@ -870,28 +870,18 @@ export const importBatchDataSchema = z.object({
 });
 
 /** 携带批量预览数据的成功响应壳 */
-export const importPreviewBatchOkSchema = apiOkExtend(
-  importPreviewBatchDataSchema,
-);
 
 /** 携带批次回看数据的成功响应壳 */
-export const importBatchOkSchema = apiOkExtend(importBatchDataSchema);
 
 export type ImportPreviewRequest = z.infer<typeof importPreviewRequestSchema>;
 export type ImportCommitRequest = z.infer<typeof importCommitRequestSchema>;
 export type ImportSummary = z.infer<typeof importSummarySchema>;
 export type ImportPreviewData = z.infer<typeof importPreviewDataSchema>;
-export type ImportActionKind = z.infer<typeof importActionKindSchema>;
 export type ImportAction = z.infer<typeof importActionSchema>;
-export type ImportUnitQuestionPlan = z.infer<
-  typeof importUnitQuestionPlanSchema
->;
 export type ImportPreviewWarning = z.infer<typeof importPreviewWarningSchema>;
 export type ImportUnitReport = z.infer<typeof importUnitReportSchema>;
 export type ImportLectureReport = z.infer<typeof importLectureReportSchema>;
-export type ImportQuestionsReport = z.infer<typeof importQuestionsReportSchema>;
 export type ImportCommitData = z.infer<typeof importCommitDataSchema>;
-export type ImportBatchFileInput = z.infer<typeof importBatchFileInputSchema>;
 export type ImportPreviewBatchRequest = z.infer<
   typeof importPreviewBatchRequestSchema
 >;
@@ -902,12 +892,8 @@ export type ImportBatchFilePreview = z.infer<
 export type ImportPreviewBatchData = z.infer<
   typeof importPreviewBatchDataSchema
 >;
-export type ImportBatchFileRecord = z.infer<typeof importBatchFileRecordSchema>;
 export type ImportBatchData = z.infer<typeof importBatchDataSchema>;
-export type ContentErrorCode = z.infer<typeof contentErrorCodeSchema>;
 export type ContentTreeQuestion = z.infer<typeof contentTreeQuestionSchema>;
-export type ContentTreeLecture = z.infer<typeof contentTreeLectureSchema>;
-export type ContentTreeUnit = z.infer<typeof contentTreeUnitSchema>;
 export type ContentTreeCourse = z.infer<typeof contentTreeCourseSchema>;
 export type ContentTree = z.infer<typeof contentTreeSchema>;
 export type QuestionDetail = z.infer<typeof questionDetailSchema>;
@@ -926,11 +912,5 @@ export type StudentLectureCourseGroup = z.infer<
 >;
 export type StudentLectureListData = z.infer<
   typeof studentLectureListDataSchema
->;
-export type StudentLectureDetailQuery = z.infer<
-  typeof studentLectureDetailQuerySchema
->;
-export type StudentLectureCompanionUnit = z.infer<
-  typeof studentLectureCompanionUnitSchema
 >;
 export type StudentLectureDetail = z.infer<typeof studentLectureDetailSchema>;

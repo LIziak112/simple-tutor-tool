@@ -669,26 +669,6 @@ export function removeCourseMembers(
   });
 }
 
-/** 成员名单（学生姓名排序稳定输出；课程须归属本教师，T2B.4） */
-export function listCourseMembers(
-  db: Db,
-  teacherId: string,
-  courseId: string,
-): { studentId: string; displayName: string; joinedAt: string }[] {
-  requireCourseRow(db, teacherId, courseId);
-  return db
-    .select({
-      studentId: students.id,
-      displayName: students.displayName,
-      joinedAt: courseStudents.joinedAt,
-    })
-    .from(courseStudents)
-    .innerJoin(students, eq(courseStudents.studentId, students.id))
-    .where(eq(courseStudents.courseId, courseId))
-    .orderBy(asc(students.displayName))
-    .all();
-}
-
 /** 某学生是否为某课程成员 */
 export function isCourseMember(
   db: Db,

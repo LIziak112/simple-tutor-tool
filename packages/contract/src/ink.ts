@@ -162,7 +162,6 @@ export const inkUploadOkSchema = apiOkExtend(inkUploadDataSchema);
 /** 携带 InkDoc 的取回成功响应壳 */
 export const inkFetchOkSchema = apiOkExtend(inkFetchDataSchema);
 /** 携带元数据的成功响应壳（教师端） */
-export const inkMetaOkSchema = apiOkExtend(inkMetaSchema);
 
 // ---------- 推断类型导出 ----------
 
@@ -174,7 +173,6 @@ export type InkExcalidrawData = z.infer<typeof inkExcalidrawDataSchema>;
 export type InkDoc = z.infer<typeof inkDocSchema>;
 export type InkUploadData = z.infer<typeof inkUploadDataSchema>;
 export type InkMeta = z.infer<typeof inkMetaSchema>;
-export type InkErrorCode = z.infer<typeof inkErrorCodeSchema>;
 
 // ---------- 与 web 引擎层的关系 ----------
 

@@ -34,11 +34,9 @@ export const directiveInputTypeSchema = z.enum([
   "match",
   "order",
 ]);
-export type DirectiveInputType = z.infer<typeof directiveInputTypeSchema>;
 
 /** 证据形式（evidence 面）：描述既有采集形态，不新增存储格式 */
 export const evidenceFormatSchema = z.enum(["snapshot", "ink-strokes", "none"]);
-export type EvidenceFormat = z.infer<typeof evidenceFormatSchema>;
 
 /** 校验方式（validation 面）：partial 仅保留词表，本阶段无实现无声明 */
 export const validationShapeSchema = z.enum([
@@ -47,7 +45,6 @@ export const validationShapeSchema = z.enum([
   "rubric",
   "unverifiable",
 ]);
-export type ValidationShape = z.infer<typeof validationShapeSchema>;
 
 /**
  * evidence / validation 面内形态（指令 capability 与题型桥接表共用）：
@@ -132,9 +129,6 @@ export const directiveCapabilityEntrySchema = z.strictObject({
   attrs: z.array(capabilityAttrSchema),
   capability: directiveCapabilitySchema.nullable(),
 });
-export type DirectiveCapabilityEntry = z.infer<
-  typeof directiveCapabilityEntrySchema
->;
 
 /**
  * 能力清单（capabilities.json）schema：formatVersion=1；directives 全量指令；

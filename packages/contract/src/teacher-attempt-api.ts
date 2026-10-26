@@ -449,17 +449,12 @@ export const exportCsvQuerySchema = z.object({
 // ---------- 具体化的成功壳 ----------
 
 /** 携带教师作答列表的成功响应壳 */
-export const teacherAttemptListOkSchema = apiOkExtend(
-  teacherAttemptListDataSchema,
-);
 /** 携带教师作答详情的成功响应壳 */
 export const teacherAttemptDetailOkSchema = apiOkExtend(
   teacherAttemptDetailDataSchema,
 );
 /** 携带批注结果的成功响应壳（T3.2b） */
-export const teacherMarkOkSchema = apiOkExtend(markResponseDataSchema);
 /** 携带待批队列的成功响应壳（T3.2b） */
-export const pendingMarkListOkSchema = apiOkExtend(pendingMarkListDataSchema);
 
 // ---------- 推断类型导出 ----------
 
@@ -478,13 +473,9 @@ export type TeacherAttemptDetailQuestion = z.infer<
 export type TeacherAttemptDetailData = z.infer<
   typeof teacherAttemptDetailDataSchema
 >;
-export type TeacherAttemptErrorCode = z.infer<
-  typeof teacherAttemptErrorCodeSchema
->;
 export type MarkRequest = z.output<typeof markRequestSchema>;
 export type MarkResponseData = z.infer<typeof markResponseDataSchema>;
 export type PendingMarkListQuery = z.infer<typeof pendingMarkListQuerySchema>;
 export type PendingMarkCard = z.infer<typeof pendingMarkCardSchema>;
 export type PendingMarkListData = z.infer<typeof pendingMarkListDataSchema>;
-export type TeacherMarkErrorCode = z.infer<typeof teacherMarkErrorCodeSchema>;
 export type ExportCsvQuery = z.infer<typeof exportCsvQuerySchema>;

@@ -331,11 +331,22 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     ).toBe(true);
 
     // 单元列口径为答对题数：陈小明 做过 3 次 · 首次 做对 10 / 10 题 + 重做 2；李小红 待批 2
+    // （作业列先渲染、单元统计切片随后；慢环境饥饿下可迟到数秒，等待窗 10s）
     expect(
-      screen.getByText("做过 3 次 · 首次 做对 10 / 10 题"),
+      await screen.findByText(
+        "做过 3 次 · 首次 做对 10 / 10 题",
+        {},
+        {
+          timeout: 10_000,
+        },
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText("重做 2")).toBeInTheDocument();
-    expect(screen.getByText("待批 2")).toBeInTheDocument();
+    expect(
+      await screen.findByText("重做 2", {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("待批 2", {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
   });
 
   it("作业格与学生名的跳转关系：格子→作答详情、学生名→画像、待批卡片→待批队列", async () => {

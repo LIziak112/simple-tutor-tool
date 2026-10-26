@@ -14,6 +14,8 @@ import {
  */
 
 class StubContext {
+  /** 累计 stroke 调用数（零尺寸挂载补绘测试的观察点；beforeEach 清零） */
+  static strokeCalls = 0;
   fillStyle = "";
   strokeStyle = "";
   lineWidth = 1;
@@ -25,7 +27,9 @@ class StubContext {
   moveTo(): void {}
   quadraticCurveTo(): void {}
   closePath(): void {}
-  stroke(): void {}
+  stroke(): void {
+    StubContext.strokeCalls += 1;
+  }
   fillRect(): void {}
   clearRect(): void {}
   save(): void {}
@@ -60,6 +64,7 @@ const activeSurfaces: Array<{
 
 beforeEach(() => {
   ResizeObserverStub.instances.length = 0;
+  StubContext.strokeCalls = 0;
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   getContextSpy = vi
     .spyOn(HTMLCanvasElement.prototype, "getContext")
@@ -596,5 +601,68 @@ describe("标注画布：历史与工具", () => {
     };
     const h = mountSurface(initial);
     expect(h.surface.getDoc().strokes).toHaveLength(1);
+  });
+});
+
+describe("标注画布：宿主零尺寸挂载的补绘", () => {
+  it("挂载时宿主未布局（底图未加载高/宽为 0）：初始重绘挂起，布局就绪后经 ResizeObserver 补绘一次", () => {
+    const initial: AnnotationDoc = {
+      version: 1,
+      baseWidth: BASE_W,
+      baseHeight: BASE_H,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#1f2328",
+          weight: 5.76,
+          points: [
+            { x: 100, y: 100, p: 0.5, t: 0 },
+            { x: 200, y: 120, p: 0.5, t: 16 },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const rect = {
+      left: 100,
+      top: 50,
+      width: 0,
+      height: 0,
+      right: 100,
+      bottom: 50,
+    } as DOMRect;
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect);
+    const surface = createAnnotationSurface({
+      baseWidth: BASE_W,
+      baseHeight: BASE_H,
+    });
+    surface.mount(container, initial);
+    const canvas = container.querySelector(
+      `canvas[data-slot="${ANNOTATION_CANVAS_DATA_SLOT}"]`,
+    );
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error("画布未挂载");
+    // jsdom 的 offsetWidth/offsetHeight 恒 0 = 零尺寸挂载：初始重绘挂起。
+    expect(StubContext.strokeCalls).toBe(0);
+    expect(surface.getDoc().strokes).toHaveLength(1);
+    // 布局就绪（底图加载撑起宿主）：mock 出非零尺寸并触发 ResizeObserver。
+    Object.defineProperty(canvas, "offsetWidth", {
+      get: () => CSS_W,
+      configurable: true,
+    });
+    Object.defineProperty(canvas, "offsetHeight", {
+      get: () => CSS_H,
+      configurable: true,
+    });
+    const last = ResizeObserverStub.instances.at(-1);
+    if (!last) throw new Error("ResizeObserver 未创建");
+    last.callback([], last);
+    expect(StubContext.strokeCalls).toBeGreaterThan(0);
+    // 补绘只发生一次：后续布局变化回到只收笔不重绘。
+    const afterFirst = StubContext.strokeCalls;
+    last.callback([], last);
+    expect(StubContext.strokeCalls).toBe(afterFirst);
+    surface.destroy();
+    container.remove();
   });
 });

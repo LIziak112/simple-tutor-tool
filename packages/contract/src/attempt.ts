@@ -1202,9 +1202,6 @@ export const attemptDraftOkSchema = apiOkExtend(attemptDraftDataSchema);
 /** 携带结果视图的成功响应壳 */
 export const attemptResultOkSchema = apiOkExtend(attemptResultDataSchema);
 /** 携带草稿保存回执的成功响应壳 */
-export const attemptAnswerSaveOkSchema = apiOkExtend(
-  attemptAnswerSaveDataSchema,
-);
 /** 携带提示解锁结果的成功响应壳（hint 是唯一放行的提示内容键） */
 export const hintOpenOkSchema = apiOkExtend(hintOpenDataSchema);
 /** 携带讲练开卷投影的成功响应壳（start/restart 共用；2026-10） */
@@ -1260,11 +1257,8 @@ export type AttemptDraftUnit = z.infer<typeof attemptDraftUnitSchema>;
 /** attempt 视图公开题目（QuestionPublic + questionRevisionId，T6R.3） */
 export type AttemptQuestionPublic = z.infer<typeof attemptQuestionPublicSchema>;
 /** 题目版本引用（T6R.3；随 schema 自 note.ts 移入本文件） */
-export type QuestionRevisionId = z.infer<typeof questionRevisionIdSchema>;
 /** 试卷题目的可选版本形态（仅通用取卷携带 revisionId） */
-export type StudentPaperQuestion = z.infer<typeof studentPaperQuestionSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
-export type AttemptFlagRequest = z.infer<typeof attemptFlagRequestSchema>;
 export type AttemptFlagData = z.infer<typeof attemptFlagDataSchema>;
 export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
@@ -1282,9 +1276,7 @@ export type SubmitEvidenceDeclaration = z.infer<
 /** 交卷请求体（T6R.3；T6R.10 增可选 evidence——缺省=旧客户端） */
 export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
-export type HintOpenRequest = z.infer<typeof hintOpenRequestSchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;
-export type AttemptErrorCode = z.infer<typeof attemptErrorCodeSchema>;
 /** 开卷上下文条目（材料/题组公开投影 + 来源版本，tt-07a/QM-06） */
 export type AttemptContextMaterial = z.infer<
   typeof attemptContextMaterialSchema
@@ -1292,7 +1284,6 @@ export type AttemptContextMaterial = z.infer<
 export type AttemptContextGroup = z.infer<typeof attemptContextGroupSchema>;
 export type AttemptContextData = z.infer<typeof attemptContextDataSchema>;
 /** 错题重练组卷请求（2026-10） */
-export type WrongPracticeRequest = z.infer<typeof wrongPracticeRequestSchema>;
 /** 详情响应 data：草稿视图或结果视图（服务端按 attempt.status 返回其一） */
 export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;
 /** 讲练页切段（2026-10：md 段 / 题目槽） */

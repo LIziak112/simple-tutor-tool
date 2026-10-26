@@ -80,7 +80,6 @@ export const aiStatusQuerySchema = z
     questionId: z.string().min(1),
   })
   .strict();
-export type AiStatusQuery = z.infer<typeof aiStatusQuerySchema>;
 
 /** 状态响应 data：有效裁决（policy 契约）+ 完成态 + 连接态 + 本题任务摘要 */
 export const aiStatusDataSchema = z
@@ -143,9 +142,6 @@ export const aiTaskUpdatePendingRequestSchema = z
     question: questionField("问题").optional(),
   })
   .strict();
-export type AiTaskUpdatePendingRequest = z.infer<
-  typeof aiTaskUpdatePendingRequestSchema
->;
 
 // ---------- POST /api/student/ai/tasks/:id/followup ----------
 
@@ -184,7 +180,6 @@ export const aiTaskShareRequestSchema = z
     validHours: shareValidHoursField().optional(),
   })
   .strict();
-export type AiTaskShareRequest = z.infer<typeof aiTaskShareRequestSchema>;
 
 /** 票据生成响应 data：URL + 快照时间 + 过期时刻 */
 export const aiTaskShareDataSchema = z
@@ -208,10 +203,6 @@ export const aiTaskShareRevokeDataSchema = z
     revokedCount: z.number().int().min(0),
   })
   .strict();
-export type AiTaskShareRevokeData = z.infer<typeof aiTaskShareRevokeDataSchema>;
-export const aiTaskShareRevokeOkSchema = apiOkExtend(
-  aiTaskShareRevokeDataSchema,
-);
 
 // ---------- GET /api/student/ai/tasks（分页） ----------
 
@@ -504,14 +495,12 @@ export const aiMcpTaskRefSchema = z
     createdAt: z.string().min(1),
   })
   .strict();
-export type AiMcpTaskRef = z.infer<typeof aiMcpTaskRefSchema>;
 
 export const aiMcpListMyTasksDataSchema = z
   .object({
     tasks: z.array(aiMcpTaskRefSchema),
   })
   .strict();
-export type AiMcpListMyTasksData = z.infer<typeof aiMcpListMyTasksDataSchema>;
 
 /**
  * submit_ai_reply 写回请求：taskId + leaseToken 必带（租约 CAS——过期或
@@ -525,16 +514,11 @@ export const aiMcpSubmitReplyRequestSchema = z
     replyMarkdown: z.string().min(1, "回信不能为空"),
   })
   .strict();
-export type AiMcpSubmitReplyRequest = z.infer<
-  typeof aiMcpSubmitReplyRequestSchema
->;
 
 // ---------- GET /api/public/ai/share/:ticket（无会话，票据即授权） ----------
 
 /** 票据读响应 data 即分享视图本体（与领域层 aiShareViewSchema 同源，非复制） */
 export const aiShareViewDataSchema = aiShareViewSchema;
-export type AiShareViewData = z.infer<typeof aiShareViewDataSchema>;
-export const aiShareOkSchema = apiOkExtend(aiShareViewDataSchema);
 
 // ---------- 批量复盘（B16 预留契约，错误码 AI_BATCH_LIMIT） ----------
 

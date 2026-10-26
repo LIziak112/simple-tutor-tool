@@ -30,6 +30,7 @@ import {
   LEARNING_PACK_GOAL_LABELS,
   LEARNING_PACK_MAX_BYTES,
   learningPackAliasOf,
+  learningPackGoalPromptSlotKeyOf,
   learningPackJsonSchema,
   learningPackSchema,
   learningPackV2JsonSchema,
@@ -69,6 +70,7 @@ import {
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write";
+import { promptOverrideBodyOf } from "./ai-companion/ai-prompt-settings-service";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
 import { frozenMaterialsFromRows } from "./attempt-question-materials";
@@ -1010,10 +1012,19 @@ export function assembleLearningPack(
 
   // —— 共享前置收口与版本派发（复审 B3：isV2 分支收编为 assembleV1/V2；
   // media 扫描/responses 过滤/packFilesOf 参数/renderSummaryMd 类型撑宽全消） ——
+  // AI 提示词设置（hall-9533）：教师自定义任务指令（null = 默认模板）；
+  // prompt.md 只进 zip（preview 不渲染）——装配时读一次，v1/v2 共用
+  const goalInstructionOverrideMd = promptOverrideBodyOf(
+    db,
+    "teacher",
+    teacherId,
+    learningPackGoalPromptSlotKeyOf(request.goal),
+  );
   const core: PackCore = {
     db,
     dataDir,
     teacherId,
+    goalInstructionOverrideMd,
     request,
     m,
     nowIso,
@@ -1050,6 +1061,8 @@ interface PackCore {
   readonly db: Db;
   readonly dataDir: string;
   readonly teacherId: string;
+  /** 教师自定义任务指令（AI 提示词设置；null = 默认模板，hall-9533） */
+  readonly goalInstructionOverrideMd: string | null;
   readonly request: LearningPackExportRequest;
   readonly m: LearningPackModules;
   /** 真实生成时刻（generatedAt / 映射.txt / summary.md；T6R.16 与 asOf 区分） */
@@ -1101,6 +1114,9 @@ function renderPromptMdOf(core: PackCore, mediaPresent: boolean): string {
   const m = core.m;
   return renderLearningPackPrompt({
     goal: core.request.goal,
+    ...(core.goalInstructionOverrideMd
+      ? { goalInstructionOverrideMd: core.goalInstructionOverrideMd }
+      : {}),
     lectures: m.lectures.length > 0,
     questionLevel: m.questions ?? null,
     responses: m.responses,

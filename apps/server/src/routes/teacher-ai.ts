@@ -1,9 +1,11 @@
 import type {
   AiPolicyOverridePutRequest,
+  AiPromptSettingsPutRequest,
   AiTeacherSettingsPutRequest,
 } from "@tutor/contract";
 import {
   aiPolicyOverridePutRequestSchema,
+  aiPromptSettingsPutRequestSchema,
   aiTeacherSettingsPutRequestSchema,
 } from "@tutor/contract";
 import type { Context } from "hono";
@@ -12,6 +14,10 @@ import type { TeacherEnv } from "../auth/require-teacher.ts";
 import type { Db } from "../db/client.ts";
 import { noStoreBinaryResponse } from "../lib/binary-response.ts";
 import { parseJsonBodyWithCode } from "../lib/http-error.ts";
+import {
+  getAiPromptSettings,
+  updateAiPromptSettings,
+} from "../services/ai-companion/ai-prompt-settings-service.ts";
 import {
   type AiPolicySubject,
   getAiPolicyOverride,
@@ -32,6 +38,8 @@ import {
  * - GET  /ai/settings：教师默认模式 + 三模板（未设置 → 默认值 + 锚点时刻）；
  * - PUT  /ai/settings：部分更新（缺省 = 不改；null = 恢复默认模板；
  *   baseUpdatedAt 过期 → 409 AI_SETTINGS_STALE 保留服务器值）；
+ * - GET/PUT /ai/prompts（hall-9533）：出题助手/学情包/复习包提示词槽位
+ *   （updates[].body null = 恢复该槽位默认；baseUpdatedAt 过期 → 409 同上）；
  * - GET/PUT /students/:id/ai-policy、/assignments/:id/ai-policy：覆盖读写
  *   （inherit = 删行回继承），响应携带保存后即刻有效裁决预览；
  * - GET /attempts/:id/ai-records（SAI-24）：按卷求助记录——每题事实摘要
@@ -65,6 +73,18 @@ async function parseSettingsBody(
       PROMPT_TEMPLATE_FIELDS.has(firstPath)
         ? "AI_PROMPT_INVALID"
         : "VALIDATION_ERROR",
+  );
+}
+
+/** 解析提示词设置请求体：槽位正文校验失败 → AI_PROMPT_INVALID，其余 → VALIDATION_ERROR */
+async function parsePromptsBody(
+  c: Context,
+): Promise<AiPromptSettingsPutRequest> {
+  return parseJsonBodyWithCode(
+    c,
+    aiPromptSettingsPutRequestSchema,
+    (firstPath) =>
+      firstPath === "updates" ? "AI_PROMPT_INVALID" : "VALIDATION_ERROR",
   );
 }
 
@@ -129,6 +149,19 @@ export function createTeacherAiRoutes(db: Db, dataDir: string) {
         return c.json({
           ok: true,
           data: updateTeacherAiSettings(db, c.var.teacher.id, body),
+        });
+      })
+      .get("/ai/prompts", (c) => {
+        return c.json({
+          ok: true,
+          data: getAiPromptSettings(db, "teacher", c.var.teacher.id),
+        });
+      })
+      .put("/ai/prompts", async (c) => {
+        const body = await parsePromptsBody(c);
+        return c.json({
+          ok: true,
+          data: updateAiPromptSettings(db, "teacher", c.var.teacher.id, body),
         });
       })
       .get("/students/:id/ai-policy", (c) => {

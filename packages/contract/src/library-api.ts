@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { questionTypeSchema } from "./content.ts";
 import { contentTreeQuestionSchema, lectureKindSchema } from "./content-api.ts";
 
 /**
@@ -281,7 +280,6 @@ export const libraryBatchDataSchema = z.object({
  *   DIRECTIVE_REF_NOT_FOUND / VALIDATOR_REF_NOT_FOUND）→ 422 LINT_ERROR
  *   （_issues 附明细），不生成包；无声明的资源也可导出（content.md + 快照）。
  */
-export const exportKindSchema = z.enum(["unit", "lecture"]);
 
 // ---------- 错误码 ----------
 
@@ -303,27 +301,19 @@ export const libraryErrorCodeSchema = z.enum([
 ]);
 
 /** 题型分布的键约束（与 questionTypeSchema 取值一致，供服务端输出自检复用） */
-export const libraryTypeDistributionKeySchema = questionTypeSchema;
 
 // ---------- 成功响应壳 ----------
 
 export const libraryFolderListOkSchema = apiOkExtend(libraryFolderListSchema);
-export const libraryFolderOkSchema = apiOkExtend(libraryFolderSchema);
-export const libraryLectureListOkSchema = apiOkExtend(libraryLectureListSchema);
 export const libraryUnitListOkSchema = apiOkExtend(libraryUnitListSchema);
-export const unitMetaOkSchema = apiOkExtend(unitMetaDataSchema);
-export const lectureMetaOkSchema = apiOkExtend(lectureMetaDataSchema);
 export const libraryUsageOkSchema = apiOkExtend(libraryUsageSchema);
-export const libraryBatchOkSchema = apiOkExtend(libraryBatchDataSchema);
 
 export type LibraryFolder = z.infer<typeof libraryFolderSchema>;
-export type LibraryFolderList = z.infer<typeof libraryFolderListSchema>;
 export type LibraryFolderCreate = z.infer<typeof libraryFolderCreateSchema>;
 export type LibraryFolderUpdate = z.infer<typeof libraryFolderUpdateSchema>;
 export type LibraryFolderReorder = z.infer<typeof libraryFolderReorderSchema>;
 export type LibraryLectureSummary = z.infer<typeof libraryLectureSummarySchema>;
 export type LibraryLectureList = z.infer<typeof libraryLectureListSchema>;
-export type LibraryUnitQuestion = z.infer<typeof libraryUnitQuestionSchema>;
 export type LibraryUnitSummary = z.infer<typeof libraryUnitSummarySchema>;
 export type LibraryUnitList = z.infer<typeof libraryUnitListSchema>;
 export type UnitMetaUpdate = z.infer<typeof unitMetaUpdateSchema>;
@@ -333,4 +323,3 @@ export type LectureMetaData = z.infer<typeof lectureMetaDataSchema>;
 export type LibraryUsage = z.infer<typeof libraryUsageSchema>;
 export type LibraryBatchRequest = z.infer<typeof libraryBatchRequestSchema>;
 export type LibraryBatchData = z.infer<typeof libraryBatchDataSchema>;
-export type LibraryErrorCode = z.infer<typeof libraryErrorCodeSchema>;

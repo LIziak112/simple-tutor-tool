@@ -443,6 +443,13 @@ describe("正文解析与限额分级", () => {
       ),
     );
     expect(bad2).toMatchObject({ status: 400, code: "NOTE_VALIDATION_FAILED" });
+    // P0-1：错误体附 zod issue 路径（不含正文），可定位坏字段
+    const issues = bad2.extra?._issues as
+      | Array<{ path: string; message: string }>
+      | undefined;
+    expect(
+      issues?.some((issue) => issue.path === "ink.strokes.0.points.0.x"),
+    ).toBe(true);
   });
 
   it("混合错误（坐标越界+单笔超点数并存）→ 413 且消息为限额 issue 文案（复审⑥）", () => {
