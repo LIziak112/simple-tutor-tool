@@ -85,3 +85,35 @@ describe("remark-lr-nodes（LR-5 data-lr-node 打键）", () => {
     expect(domKeys).toEqual(expected.filter((key) => key !== "stem/other/0"));
   });
 });
+
+/**
+ * fold 渲染探针（PR2 e2e 回归锁，评审 #11724 要求随 PR #24）：
+ * data-lr-node 会经 sanitize 白名单存活进 readDirective 的 attrs——fold 等
+ * container 指令的严格 attrs 校验曾因未知键降级为「未支持指令」。本用例锁定
+ * 「开 LR 节点 + fold 容器 → title 按钮真实渲染」这条线（键序列 parity
+ * 覆盖不到组件解析）。
+ */
+describe("fold 指令真实渲染探针（LR-5 回归锁）", () => {
+  it("开 LR 节点：fold 渲染 title 按钮，不降级为未支持指令", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <RichMarkdown
+        source={'阅读题干。\n\n:::fold{title="公开材料"}\n材料内容。\n:::'}
+        lrNodes
+      />,
+    );
+    expect(screen.queryByText("未支持指令：fold")).toBeNull();
+    expect(screen.getByText("公开材料")).toBeTruthy();
+  });
+
+  it("对照：不开 LR 节点同样正常渲染（守卫不得误伤既有路径）", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <RichMarkdown
+        source={'阅读题干。\n\n:::fold{title="公开材料"}\n材料内容。\n:::'}
+      />,
+    );
+    expect(screen.queryByText("未支持指令：fold")).toBeNull();
+    expect(screen.getByText("公开材料")).toBeTruthy();
+  });
+});
