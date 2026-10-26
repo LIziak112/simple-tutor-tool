@@ -144,15 +144,13 @@ describe("reprojectAnnotation（LR-6）", () => {
     // 墓碑同样往返无损（deletedAt/deletedBy 保留）
     expect(result.deleted).toHaveLength(1);
     expect(result.deleted[0]?.deletedBy).toBe("eraser");
-    const tombAnchor = DOC.anchors?.[result.deleted[0]?.id ?? ""];
-    const tombBack = inverseReproject(
-      result.deleted[0]!,
-      tombAnchor,
-      SAVED,
-      TARGET,
-    );
-    expect(Math.abs(tombBack.points[0]!.x - 200)).toBeLessThan(1);
-    expect(Math.abs(tombBack.points[0]!.y - 30)).toBeLessThan(1);
+    const mappedTomb = result.deleted[0];
+    const tombAnchor = DOC.anchors?.[mappedTomb?.id ?? ""];
+    if (mappedTomb === undefined) return;
+    const tombBack = inverseReproject(mappedTomb, tombAnchor, SAVED, TARGET);
+    const tombPoint = tombBack.points[0];
+    expect(tombPoint?.x).toBeCloseTo(200, 6);
+    expect(tombPoint?.y).toBeCloseTo(30, 6);
   });
 
   it("锚缺失（无锚旧稿 / 目标布局缺该键）→ root 兜底缩放 + approximate + unanchored 计数", () => {
@@ -170,11 +168,14 @@ describe("reprojectAnnotation（LR-6）", () => {
     expect(result.strokes[0]?.points[0]?.x).toBeCloseTo(1080, 6);
     expect(result.strokes[0]?.points[0]?.y).toBeCloseTo(600, 6);
     // 目标布局缺锚键同样走兜底
+    const targetCompatibility = TARGET.compatibility;
+    expect(targetCompatibility).toBeDefined();
+    if (targetCompatibility === undefined) return;
     const missingKeyTarget: AnnotationSurfaceLayout = {
       ...TARGET,
       compatibility: {
-        ...TARGET.compatibility!,
-        blocks: [TARGET.compatibility!.blocks[0]!],
+        ...targetCompatibility,
+        blocks: targetCompatibility.blocks.slice(0, 1),
       },
     };
     const partial = reprojectAnnotation(DOC, SAVED, missingKeyTarget);
