@@ -45,7 +45,6 @@ export const aiAttemptAnswerStateSchema = z.enum([
   "unanswered",
   "unknown",
 ]);
-export type AiAttemptAnswerState = z.infer<typeof aiAttemptAnswerStateSchema>;
 
 /** 判分态：只用最终判定 finalCorrect（教师判定优先；不使用自动判分或 AI 猜测） */
 export const aiAttemptGradingStateSchema = z.enum([
@@ -53,7 +52,6 @@ export const aiAttemptGradingStateSchema = z.enum([
   "incorrect",
   "pending",
 ]);
-export type AiAttemptGradingState = z.infer<typeof aiAttemptGradingStateSchema>;
 
 /** 互斥展示桶：正确 / 判错 / 未作答（判分待定且无作答）/ 待批（判分待定且有作答或无法核对） */
 export const aiAttemptDisplayStatusSchema = z.enum([
@@ -62,9 +60,6 @@ export const aiAttemptDisplayStatusSchema = z.enum([
   "unanswered",
   "pending",
 ]);
-export type AiAttemptDisplayStatus = z.infer<
-  typeof aiAttemptDisplayStatusSchema
->;
 
 // ---------- 每题白名单条目（整体快照的题目元素） ----------
 
@@ -262,9 +257,6 @@ export const aiAttemptReviewFindingSchema = z
     confidence: z.enum(["low", "medium", "high"]),
   })
   .strict();
-export type AiAttemptReviewFinding = z.infer<
-  typeof aiAttemptReviewFindingSchema
->;
 
 export const aiAttemptReviewPlanItemSchema = z
   .object({
@@ -277,9 +269,6 @@ export const aiAttemptReviewPlanItemSchema = z
     caveat: z.string().nullable(),
   })
   .strict();
-export type AiAttemptReviewPlanItem = z.infer<
-  typeof aiAttemptReviewPlanItemSchema
->;
 
 /**
  * 整体复盘报告：五个分析维度 + limitations。模型只解释服务端统计，
@@ -394,9 +383,6 @@ export const aiAttemptReviewPreviewQuerySchema = z
     attemptId: z.uuid(),
   })
   .strict();
-export type AiAttemptReviewPreviewQuery = z.infer<
-  typeof aiAttemptReviewPreviewQuerySchema
->;
 
 /**
  * 预览响应 data：范围题数、四类状态计数、发送字段说明与缺失边界说明、
@@ -473,9 +459,6 @@ export const aiAttemptReviewListQuerySchema = z
       .optional(),
   })
   .strict();
-export type AiAttemptReviewListQuery = z.infer<
-  typeof aiAttemptReviewListQuerySchema
->;
 
 export const aiAttemptReviewListDataSchema = z
   .object({
@@ -516,9 +499,6 @@ export const aiAttemptReviewActionRequestSchema = z
     action: aiAttemptReviewActionSchema,
   })
   .strict();
-export type AiAttemptReviewActionRequest = z.infer<
-  typeof aiAttemptReviewActionRequestSchema
->;
 
 // ---------- 学生 MCP 工具载荷（/mcp/student 新四工具） ----------
 //

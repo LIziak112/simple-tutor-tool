@@ -533,14 +533,7 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
 // ---------- 推断类型导出 ----------
 
 export type ReviewPackRole = z.infer<typeof reviewPackSchema>["role"];
-export type ReviewPackQuestion = z.infer<typeof reviewPackQuestionSchema>;
-export type ReviewPackResponse = z.infer<typeof reviewPackResponseSchema>;
-export type ReviewPackEvidenceImage = z.infer<
-  typeof reviewPackEvidenceImageSchema
->;
-export type ReviewPackEvidence = z.infer<typeof reviewPackEvidenceSchema>;
 export type ReviewPack = z.infer<typeof reviewPackSchema>;
 export type ReviewPackPreviewFile = z.infer<typeof reviewPackPreviewFileSchema>;
 export type ReviewPackAttachment = z.infer<typeof reviewPackAttachmentSchema>;
 export type ReviewPackPreviewData = z.infer<typeof reviewPackPreviewDataSchema>;
-export type ReviewPackErrorCode = z.infer<typeof reviewPackErrorCodeSchema>;

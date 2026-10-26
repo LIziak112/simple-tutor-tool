@@ -36,17 +36,8 @@ export const courseListQuerySchema = z.object({
 });
 
 /** 课程名（trim 后 1–100 字符；映射到 courses.title 列） */
-export const courseNameSchema = z
-  .string()
-  .trim()
-  .min(1, "课程名不能为空")
-  .max(100, "课程名最多 100 个字符");
 
 /** 课程简介（trim 后可空，空存 null；最多 500 字符） */
-export const courseDescriptionSchema = z
-  .string()
-  .trim()
-  .max(500, "课程简介最多 500 个字符");
 
 /**
  * 课程摘要（GET /api/teacher/courses 列表项）。
@@ -371,21 +362,16 @@ export const courseErrorCodeSchema = z.enum([
 
 export const courseListOkSchema = apiOkExtend(courseListDataSchema);
 export const courseDetailOkSchema = apiOkExtend(courseDetailDataSchema);
-export const courseItemsAddOkSchema = apiOkExtend(courseItemsAddDataSchema);
-export const courseItemOkSchema = apiOkExtend(courseItemDataSchema);
 export const courseStudentViewOkSchema = apiOkExtend(
   courseStudentViewDataSchema,
 );
-export const courseProgressOkSchema = apiOkExtend(courseProgressDataSchema);
 
 // ---------- 推断类型导出 ----------
 
 export type CourseListQuery = z.infer<typeof courseListQuerySchema>;
 export type CourseSummary = z.infer<typeof courseSummarySchema>;
 export type CourseListData = z.infer<typeof courseListDataSchema>;
-export type CourseItemStatus = z.infer<typeof courseItemStatusSchema>;
 export type CourseDetailItem = z.infer<typeof courseDetailItemSchema>;
-export type CourseMember = z.infer<typeof courseMemberSchema>;
 export type CourseDetailData = z.infer<typeof courseDetailDataSchema>;
 export type CourseItemInput = z.infer<typeof courseItemInputSchema>;
 export type CourseItemsAddRequest = z.infer<typeof courseItemsAddRequestSchema>;
@@ -395,17 +381,11 @@ export type CourseItemsAddData = z.infer<typeof courseItemsAddDataSchema>;
 export type CourseItemUpdateRequest = z.infer<
   typeof courseItemUpdateRequestSchema
 >;
-export type CourseItemData = z.infer<typeof courseItemDataSchema>;
 export type CourseItemsReorderRequest = z.infer<
   typeof courseItemsReorderRequestSchema
 >;
 export type CourseMembersRequest = z.infer<typeof courseMembersRequestSchema>;
-export type CourseStudentViewQuery = z.infer<
-  typeof courseStudentViewQuerySchema
->;
-export type CourseStudentViewItem = z.infer<typeof courseStudentViewItemSchema>;
 export type CourseStudentViewData = z.infer<typeof courseStudentViewDataSchema>;
 export type CourseProgressCell = z.infer<typeof courseProgressCellSchema>;
 export type CourseProgressUnit = z.infer<typeof courseProgressUnitSchema>;
 export type CourseProgressData = z.infer<typeof courseProgressDataSchema>;
-export type CourseErrorCode = z.infer<typeof courseErrorCodeSchema>;

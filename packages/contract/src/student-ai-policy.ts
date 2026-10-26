@@ -137,9 +137,6 @@ export type AiTeacherSettingsPutRequest = z.infer<
 >;
 
 /** 携带教师设置的成功响应壳 */
-export const aiTeacherSettingsOkSchema = apiOkExtend(
-  aiTeacherSettingsDataSchema,
-);
 
 /**
  * 默认提示词模板（需求 §5.1 默认模板意图表的契约单源；hall-9533 整理为
@@ -207,7 +204,6 @@ export const aiPolicyOverrideDataSchema = z
 export type AiPolicyOverrideData = z.infer<typeof aiPolicyOverrideDataSchema>;
 
 /** 携带覆盖结果的成功响应壳 */
-export const aiPolicyOverrideOkSchema = apiOkExtend(aiPolicyOverrideDataSchema);
 
 // ---------- 学生快捷按钮 ----------
 
@@ -372,4 +368,3 @@ export const aiPolicyErrorCodeSchema = z.enum([
   "NOT_FOUND",
   "VALIDATION_ERROR",
 ]);
-export type AiPolicyErrorCode = z.infer<typeof aiPolicyErrorCodeSchema>;

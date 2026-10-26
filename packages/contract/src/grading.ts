@@ -61,11 +61,4 @@ export const studentAnswerSchema = z.discriminatedUnion("kind", [
   handwrittenStudentAnswerSchema,
 ]);
 
-export type JudgeStudentAnswer = z.infer<typeof judgeStudentAnswerSchema>;
-export type ChoiceStudentAnswer = z.infer<typeof choiceStudentAnswerSchema>;
-export type MultiStudentAnswer = z.infer<typeof multiStudentAnswerSchema>;
-export type FillStudentAnswer = z.infer<typeof fillStudentAnswerSchema>;
-export type HandwrittenStudentAnswer = z.infer<
-  typeof handwrittenStudentAnswerSchema
->;
 export type StudentAnswer = z.infer<typeof studentAnswerSchema>;

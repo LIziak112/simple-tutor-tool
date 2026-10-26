@@ -1385,38 +1385,21 @@ export const learningPackPreviewOkSchema = apiOkExtend(
 // ---------- 推断类型导出 ----------
 
 export type LearningPackGoal = z.infer<typeof learningPackGoalSchema>;
-export type LearningPackLecturePick = z.infer<
-  typeof learningPackLecturePickSchema
->;
 export type LearningPackModules = z.infer<typeof learningPackModulesSchema>;
-export type LearningPackScope = z.infer<typeof learningPackScopeSchema>;
-export type LearningPackPrivacy = z.infer<typeof learningPackPrivacySchema>;
 export type LearningPackExportRequest = z.infer<
   typeof learningPackExportRequestSchema
 >;
-export type LearningPackMeta = z.infer<typeof learningPackMetaSchema>;
-export type LearningPackStudent = z.infer<typeof learningPackStudentSchema>;
-export type LearningPackOutlineItem = z.infer<
-  typeof learningPackOutlineItemSchema
->;
 export type LearningPackLecture = z.infer<typeof learningPackLectureSchema>;
 export type LearningPackQuestion = z.infer<typeof learningPackQuestionSchema>;
-export type LearningPackContent = z.infer<typeof learningPackContentSchema>;
 export type LearningPackResponse = z.infer<typeof learningPackResponseSchema>;
 export type LearningPackAttemptSummary = z.infer<
   typeof learningPackAttemptSummarySchema
->;
-export type LearningPackAttemptsSection = z.infer<
-  typeof learningPackAttemptsSectionSchema
 >;
 export type LearningPackQuestionTrace = z.infer<
   typeof learningPackQuestionTraceSchema
 >;
 export type LearningPackLectureTrace = z.infer<
   typeof learningPackLectureTraceSchema
->;
-export type LearningPackTracesSection = z.infer<
-  typeof learningPackTracesSectionSchema
 >;
 export type LearningPackStudentSummary = z.infer<
   typeof learningPackStudentSummarySchema
@@ -1434,29 +1417,17 @@ export type LearningPackPreviewData = z.infer<
 export type LearningPackPreviewEvidenceImage = z.infer<
   typeof learningPackPreviewEvidenceImageSchema
 >;
-export type LearningPackErrorCode = z.infer<typeof learningPackErrorCodeSchema>;
 // ---------- v2（T6R.12） ----------
-export type LearningPackV2Meta = z.infer<typeof learningPackV2MetaSchema>;
 export type LearningPackV2Question = z.infer<
   typeof learningPackV2QuestionSchema
 >;
-export type LearningPackV2Content = z.infer<typeof learningPackV2ContentSchema>;
 export type LearningPackV2Response = z.infer<
   typeof learningPackV2ResponseSchema
->;
-export type LearningPackAttemptsV2Section = z.infer<
-  typeof learningPackAttemptsV2SectionSchema
 >;
 export type LearningPackEvidenceState = z.infer<
   typeof learningPackEvidenceStateSchema
 >;
-export type LearningPackEvidenceImage = z.infer<
-  typeof learningPackEvidenceImageSchema
->;
 export type LearningPackEvidence = z.infer<typeof learningPackEvidenceSchema>;
-export type LearningPackManifestFile = z.infer<
-  typeof learningPackManifestFileSchema
->;
 export type LearningPackManifestMissing = z.infer<
   typeof learningPackManifestMissingSchema
 >;

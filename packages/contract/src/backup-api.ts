@@ -125,4 +125,3 @@ export const backupRestoreOkSchema = apiOkExtend(backupRestoreResultSchema);
 export type BackupSnapshot = z.infer<typeof backupSnapshotSchema>;
 export type BackupSnapshotList = z.infer<typeof backupSnapshotListDataSchema>;
 export type BackupRestoreResult = z.infer<typeof backupRestoreResultSchema>;
-export type BackupErrorCode = z.infer<typeof backupErrorCodeSchema>;
