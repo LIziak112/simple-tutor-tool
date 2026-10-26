@@ -416,15 +416,6 @@ function buildAtramentModel(
       momentRel.push(rel);
       mapped.push(thisMapped);
     }
-    // 临时诊断（定位后删除）
-    console.log(
-      "[SEG-DEBUG]",
-      JSON.stringify(moments),
-      JSON.stringify(segCaps),
-      JSON.stringify(momentRel),
-      JSON.stringify(mapped),
-      JSON.stringify(pauses),
-    );
     /** 分段映射 compress：与 segCap 表同式（段内 1:1、边界按 cap 跳变） */
     const compress = (realAbs: number): number => {
       const rel = Math.max(0, realAbs - t0);
@@ -462,16 +453,6 @@ function buildAtramentModel(
       });
     }
     durationMs = mapped.length > 0 ? (mapped[mapped.length - 1] ?? 0) : 0;
-    // 临时诊断（定位后删除）
-    console.log(
-      "[SEG-DEBUG]",
-      JSON.stringify(moments),
-      JSON.stringify(segCaps),
-      JSON.stringify(momentRel),
-      JSON.stringify(mapped),
-      JSON.stringify(pauses),
-      JSON.stringify(deletedSlots.map((d) => [d.startMs, d.deletedAtMs])),
-    );
   } else {
     let cursor = 0;
     for (const item of normalized) {
