@@ -23,6 +23,7 @@ import {
   ATTEMPT_PAGE_SIZE,
   useTeacherAttempts,
 } from "@/features/teacher-attempts/teacher-attempt-queries";
+import { StatsViewSwitcher } from "./StatsViewSwitcher";
 
 /**
  * /t/data 作答数据页（T3.1，D5/D6）：教师视角的全部学生作答。
@@ -34,29 +35,6 @@ import {
  * 下沉到此，「统计」即 /t/insights 学情总览（路由保留，页面自持筛选）。
  * - 三态齐全（加载骨架 / 空态指引 / 错误重试），触控目标 ≥44px。
  */
-
-/**
- * T-PR1：「作答记录 / 统计」次级切换（原侧边栏「学情分析」一级入口下沉至此）。
- * 「统计」是 /t/insights 学情总览，页面自持筛选，不携带作答列表的筛选参数。
- */
-function StatsViewSwitcher() {
-  return (
-    <fieldset className="flex flex-wrap gap-2">
-      <legend className="sr-only">数据视图</legend>
-      <Button variant="default" className="min-h-11" aria-pressed={true}>
-        作答记录
-      </Button>
-      <Button
-        variant="outline"
-        className="min-h-11"
-        aria-pressed={false}
-        asChild
-      >
-        <Link to="/t/insights">统计</Link>
-      </Button>
-    </fieldset>
-  );
-}
 
 /** 视图切换按钮（aria-pressed 表当前视图；触控 ≥44px） */
 function ViewSwitcher({
@@ -175,7 +153,7 @@ export function DataPage() {
           </p>
         </div>
         {/* T-PR1：「作答记录 / 统计」次级切换（原「学情分析」入口下沉） */}
-        <StatsViewSwitcher />
+        <StatsViewSwitcher active="attempts" />
         {/* T3.2b：待批队列入口（去 /t/data/pending 连续批改；未批徽章提示待处理） */}
         <div className="flex gap-2">
           <ExportCsvButton params={exportCsvParamsOf(state)} />

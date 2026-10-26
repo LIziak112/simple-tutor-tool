@@ -135,7 +135,7 @@ export function StudentHomePage() {
           学生不存在或已不属于你，无法查看主页。
         </p>
         <Button variant="outline" className="min-h-11" asChild>
-          <Link to="/t/insights">返回学情总览</Link>
+          <Link to="/t/students">返回学生列表</Link>
         </Button>
       </section>
     );

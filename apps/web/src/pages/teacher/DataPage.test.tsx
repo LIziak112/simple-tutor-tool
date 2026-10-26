@@ -121,6 +121,17 @@ beforeEach(() => {
 });
 
 describe("DataPage 三态", () => {
+  it("头部「作答记录 / 统计」切换：统计指向 /t/insights，作答记录为当前视图", () => {
+    renderPage();
+    expect(screen.getByRole("link", { name: "统计" })).toHaveAttribute(
+      "href",
+      "/t/insights",
+    );
+    expect(
+      screen.getByRole("button", { name: "作答记录" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("加载中显示骨架提示，不白屏", () => {
     mockedAttempts.mockReturnValue(new Promise(() => undefined));
     renderPage();

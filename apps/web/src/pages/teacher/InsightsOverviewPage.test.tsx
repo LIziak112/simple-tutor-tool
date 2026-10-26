@@ -375,6 +375,18 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     );
   });
 
+  it("头部「作答记录 / 统计」切换与 /t/data 对称：作答记录指向 /t/data，统计为当前视图", () => {
+    renderPage();
+    expect(screen.getByRole("link", { name: "作答记录" })).toHaveAttribute(
+      "href",
+      "/t/data",
+    );
+    expect(screen.getByRole("button", { name: "统计" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("头部「导出给 AI」入口指向导出中心 /t/export（T4.4）", async () => {
     mockedOverview.mockResolvedValue(makeOverview());
     renderPage();

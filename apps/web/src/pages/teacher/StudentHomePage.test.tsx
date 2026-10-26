@@ -323,15 +323,15 @@ describe("StudentHomePage 三态", () => {
     expect(await screen.findByText("讲义阅读地图")).toBeInTheDocument();
   });
 
-  it("404 STUDENT_NOT_FOUND 显示「找不到这名学生」错误页（带返回总览）", async () => {
+  it("404 STUDENT_NOT_FOUND 显示「找不到这名学生」错误页（带返回学生列表）", async () => {
     mockedStudent.mockRejectedValue(
       new ApiError("STUDENT_NOT_FOUND", "学生不存在或不属于该教师", 404),
     );
     renderPage();
     expect(await screen.findByText("找不到这名学生")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "返回学情总览" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回学生列表" })).toHaveAttribute(
       "href",
-      "/t/insights",
+      "/t/students",
     );
     // 404 是终态：不提供无意义的重试按钮
     expect(

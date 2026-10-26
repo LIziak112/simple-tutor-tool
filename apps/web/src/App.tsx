@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes, useParams } from "react-router";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { HomePage } from "./pages/HomePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
@@ -277,7 +277,9 @@ const teacherRoutes = (() => {
 /** 旧学生画像链接 → 学生主页（replace 重定向，外部书签与旧链接兼容） */
 function StudentHomeRedirect() {
   const { id } = useParams();
-  return <Navigate to={`/t/students/${id ?? ""}`} replace />;
+  const { search } = useLocation();
+  // 旧路径迁移重定向：时间范围 / 课程筛选在 query 里，原样带走（评审 #11725 顺手①）
+  return <Navigate to={`/t/students/${id ?? ""}${search}`} replace />;
 }
 
 /** 教师端整页加载兜底（懒加载期间） */
