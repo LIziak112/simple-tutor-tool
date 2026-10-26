@@ -357,7 +357,7 @@ export function InkPad({
       if (engineRef) engineRef.current = null;
     };
     // initial 经 initialRef 取值；engineRef 为父组件持有的稳定 ref 对象
-  }, [engine, retryKey, engineRef]);
+  }, [engine, retryKey, engineRef, maxDeletedPoints]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试重建后需恢复当前输入门
   useEffect(() => {
