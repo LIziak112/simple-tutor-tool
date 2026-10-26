@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   Dumbbell,
+  FileUp,
   Folder,
   MoreHorizontal,
   Plus,
@@ -565,15 +566,17 @@ export function CourseTreeItems({
           </DialogContent>
         </Dialog>
       )}
-      <p className="mt-2 text-xs text-muted-foreground">
-        文件夹隐藏或尚未到发布时间时，学生也看不到其中的内容。
-      </p>
-      <Link
-        className="mt-2 inline-flex min-h-11 items-center text-sm text-primary underline"
-        to={`/t/import?courseId=${courseId}`}
-      >
-        导入文件到课程
-      </Link>
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+          文件夹隐藏或尚未到发布时间时，学生也看不到其中的内容。
+        </p>
+        <Button asChild variant="outline" className="min-h-11">
+          <Link to={`/t/import?courseId=${courseId}`}>
+            <FileUp aria-hidden />
+            导入文件到课程
+          </Link>
+        </Button>
+      </div>
     </div>
   );
 }

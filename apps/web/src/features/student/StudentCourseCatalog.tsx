@@ -121,46 +121,51 @@ export function StudentCourseCatalog({
         onCompositionEnd={() => setComposing(false)}
         className="min-h-12 text-base"
       />
-      <fieldset
-        className="flex flex-wrap items-center gap-1"
-        aria-label="内容类型"
-      >
-        {[
-          ["all", "全部"],
-          ["lecture", "讲义"],
-          ["unit", "练习"],
-        ].map(([value, label]) => (
-          <Button
-            key={value}
-            variant={type === value ? "secondary" : "ghost"}
-            className="min-h-12 px-3"
-            aria-pressed={type === value}
-            onClick={() => patch({ type: value ?? "all", status: "all" })}
-          >
-            {label}
-          </Button>
-        ))}
-      </fieldset>
-      {type === "unit" && (
-        <fieldset className="flex flex-wrap gap-1" aria-label="练习状态">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <fieldset
+          className="flex flex-wrap items-center gap-1"
+          aria-label="内容类型"
+        >
           {[
-            ["all", "全部练习"],
-            ["new", "未开始"],
-            ["draft", "进行中"],
-            ["submitted", "已交卷"],
+            ["all", "全部"],
+            ["lecture", "讲义"],
+            ["unit", "练习"],
           ].map(([value, label]) => (
             <Button
               key={value}
-              variant={status === value ? "secondary" : "ghost"}
+              variant={type === value ? "secondary" : "ghost"}
               className="min-h-12 px-3"
-              aria-pressed={status === value}
-              onClick={() => patch({ status: value ?? "all" })}
+              aria-pressed={type === value}
+              onClick={() => patch({ type: value ?? "all", status: "all" })}
             >
               {label}
             </Button>
           ))}
         </fieldset>
-      )}
+        {type === "unit" && (
+          <fieldset
+            className="flex flex-wrap gap-1 border-s border-border ps-3"
+            aria-label="练习状态"
+          >
+            {[
+              ["all", "全部练习"],
+              ["new", "未开始"],
+              ["draft", "进行中"],
+              ["submitted", "已交卷"],
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                variant={status === value ? "secondary" : "ghost"}
+                className="min-h-12 px-3"
+                aria-pressed={status === value}
+                onClick={() => patch({ status: value ?? "all" })}
+              >
+                {label}
+              </Button>
+            ))}
+          </fieldset>
+        )}
+      </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span role="status">
           {filtering ? "找到" : "共"} {matched.length} 项内容
