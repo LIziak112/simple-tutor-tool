@@ -93,7 +93,7 @@ describe("annotation 契约 LR-2 擦除墓碑", () => {
           ...tombstone("stroke-dead"),
           points: Array.from({ length: 2001 }, (_, i) => ({
             x: i % 1000,
-            y: i % 1000,
+            y: i % 800,
             p: 0.5,
             t: i,
           })),
