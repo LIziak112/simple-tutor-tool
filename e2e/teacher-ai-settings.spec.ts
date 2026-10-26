@@ -1,11 +1,28 @@
 import { expect, test } from "@playwright/test";
-import { teacherApiLogin } from "./helpers";
+import {
+  isolateRegisterRateLimit,
+  registerTeacherViaUi,
+  TEACHER_PASSWORD,
+  teacherApiLogin,
+  uniqueSuffix,
+} from "./helpers";
 
 test(
   "AI 设置分类折叠编辑、统一保存及跨分类草稿保护",
   { tag: ["@teacher", "@ai"] },
-  async ({ page }, testInfo) => {
-    await teacherApiLogin(page.request);
+  async ({ page, request }, testInfo) => {
+    // 每个浏览器、每次重试使用独立教师，保存策略不得污染其他 AI 用例。
+    await teacherApiLogin(request);
+    await isolateRegisterRateLimit(
+      page,
+      testInfo.project.name === "webkit" ? "10.239.9.2" : "10.239.9.1",
+    );
+    await registerTeacherViaUi(
+      page,
+      request,
+      `ai-settings-${uniqueSuffix()}`,
+      TEACHER_PASSWORD,
+    );
     await page.goto("/t/settings");
     await expect(page.getByRole("radio", { name: "开放伴学" })).toBeHidden();
     await page.getByRole("link", { name: "AI 设置", exact: true }).click();
