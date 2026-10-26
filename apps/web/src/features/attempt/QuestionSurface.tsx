@@ -48,7 +48,7 @@ export const QuestionSurface = memo(function QuestionSurface({
       <div
         data-slot="question-surface"
         inert={isPublicBase}
-        className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
+        className="mx-auto flex w-full min-w-0 flex-col gap-3 text-base leading-[1.75]"
       >
         {dispatchInput(prepared, answer, update, readOnly)}
       </div>

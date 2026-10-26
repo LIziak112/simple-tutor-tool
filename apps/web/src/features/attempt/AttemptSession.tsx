@@ -1506,6 +1506,9 @@ function AnswerView({
                           practiceProtocol === "v1" ? (
                             <PracticeQuestionFooter
                               attemptId={attemptId}
+                              referenceAvailable={
+                                question.canSubmitQuestion !== false
+                              }
                               mode={singleMode ? "single" : "list"}
                               submitted={practiceSubmitted}
                               readable={practiceRow?.feedbackReadable ?? false}
@@ -1519,7 +1522,17 @@ function AnswerView({
                               feedbackFailed={practiceSubmit.feedbackFailedOf(
                                 question.id,
                               )}
-                              workflow={practiceSubmit.workflow}
+                              workflow={
+                                practiceSubmit.workflow
+                                  ? {
+                                      ...practiceSubmit.workflow,
+                                      canSubmitQuestion:
+                                        practiceSubmit.workflow
+                                          .canSubmitQuestion &&
+                                        question.canSubmitQuestion !== false,
+                                    }
+                                  : undefined
+                              }
                               error={
                                 practiceSubmit.lastError?.questionId ===
                                 question.id
@@ -1569,7 +1582,7 @@ function AnswerView({
                         className={
                           groupGrid
                             ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-                            : "flex flex-col gap-4"
+                            : "flex flex-col gap-3"
                         }
                       >
                         {/* flatMap 展平成单层题行数组：嵌套数组里元素的 key 会
