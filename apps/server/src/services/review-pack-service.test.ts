@@ -819,7 +819,6 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
   });
 });
 
-
 /**
  * LR-PR3（评审 #11695 必改②测试半边 / #11744 必补）：升级遗留行（快照缺
  * stemMd）导出时 record 如实缺席——manifest.contextNotes 含「record.json
@@ -863,9 +862,9 @@ describe("遗留行导出：record 如实缺席（LR-PR3）", () => {
         note.includes("record.json 未装配"),
       ),
     ).toBe(true);
-    expect(
-      assembly.files.some((file) => file.path.startsWith("record")),
-    ).toBe(false);
+    expect(assembly.files.some((file) => file.path.startsWith("record"))).toBe(
+      false,
+    );
     const zip = await buildReviewPackZip(
       db,
       dataDir,
