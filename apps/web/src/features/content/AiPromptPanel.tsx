@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useTeacherAiPrompts } from "@/features/student-ai/ai-prompt-queries";
 import {
   AI_PROMPT_KIND_OPTIONS,
   type AiPromptKind,
@@ -41,6 +42,11 @@ export function AiPromptPanel() {
 
   // 展开时才拉取规范文档（收起不发请求，按需加载）
   const spec = useSpecDocs(open);
+  // 开场指令：教师 AI 提示词槽位（hall-9533）；未加载完成先用契约默认正文
+  const promptsQuery = useTeacherAiPrompts();
+  const instructionBody = promptsQuery.data?.slots.find(
+    (slot) => slot.key === "content-ai-instruction",
+  )?.body;
 
   const prompt =
     spec.data !== undefined
@@ -50,6 +56,7 @@ export function AiPromptPanel() {
           rules: spec.data.rules,
           example: spec.data.example,
           promptTemplate: spec.data.prompt,
+          ...(instructionBody !== undefined ? { instructionBody } : {}),
         })
       : "";
 

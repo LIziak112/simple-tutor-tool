@@ -5,6 +5,7 @@ import type {
   AiFactType,
   AiMaterialKind,
   AiMessageRole,
+  AiPromptSlotKey,
   AiTaskStatus,
   AiTeachingMode,
   AnnotationBaseState,
@@ -2232,6 +2233,38 @@ export const aiQuickButtons = sqliteTable(
     ),
   ],
 );
+
+/**
+ * AI 提示词覆盖（hall-9533）：出题助手/学情数据包/单题复习包「复制给 AI」
+ * 提示词槽位的自定义正文。主键 (ownerType, ownerId, slotKey)——teacher /
+ * student 两个命名空间各挂各的设置端点；无行 = 用契约默认正文
+ * （DEFAULT_AI_PROMPT_BODIES 单源），恢复默认 = 删行，不回填默认行。
+ * 不建外键（ownerId 多态指向 teachers / students，教师数据永不连带删除
+ * 口径）；槽位键值域由契约 aiPromptSlotKeySchema 在服务层把关（DB 只存
+ * text 不设 check——键集随契约演进，不为加槽位出迁移）。
+ */
+export const aiPromptOverrides = sqliteTable(
+  "ai_prompt_overrides",
+  {
+    /** 主体类型（teacher | student 两命名空间，同 id 互不挤占） */
+    ownerType: text("owner_type").$type<"teacher" | "student">().notNull(),
+    /** 主体 id（teachers.id / students.id；无外键） */
+    ownerId: text("owner_id").notNull(),
+    /** 槽位键（契约 aiPromptSlotKeySchema；如 learning-pack.diagnose-weakness） */
+    slotKey: text("slot_key").$type<AiPromptSlotKey>().notNull(),
+    /** 覆盖正文（trim 后 1..8000 字符，契约 aiPromptTemplateBodySchema 限额） */
+    body: text("body").notNull(),
+    /** 最近更新时间：UTC ISO 字符串（PUT 回传 baseUpdatedAt 做冲突检测） */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ownerType, table.ownerId, table.slotKey] }),
+  ],
+);
+/** ai_prompt_overrides 表行类型（SELECT 结果；hall-9533 AI 提示词覆盖） */
+export type AiPromptOverrideRow = typeof aiPromptOverrides.$inferSelect;
+/** ai_prompt_overrides 表插入类型 */
+export type NewAiPromptOverrideRow = typeof aiPromptOverrides.$inferInsert;
 
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;

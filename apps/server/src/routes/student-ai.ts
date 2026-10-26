@@ -10,6 +10,7 @@ import {
   aiConnectionModelsRequestSchema,
   aiConnectionPatchRequestSchema,
   aiConnectionProbeRequestSchema,
+  aiPromptSettingsPutRequestSchema,
   aiStatusQuerySchema,
   aiTaskCreateRequestSchema,
   aiTaskFollowupRequestSchema,
@@ -31,6 +32,10 @@ import {
   parseJsonBody,
   parseJsonBodyWithCode,
 } from "../lib/http-error.ts";
+import {
+  getAiPromptSettings,
+  updateAiPromptSettings,
+} from "../services/ai-companion/ai-prompt-settings-service.ts";
 import {
   createStudentAiConnection,
   deleteStudentAiConnection,
@@ -306,6 +311,26 @@ export function createStudentAiRoutes(
         return c.json({
           ok: true,
           data: putStudentQuickButtons(db, c.var.student.id, body),
+        });
+      })
+      // —— AI 提示词设置（hall-9533）：复习包等「复制给 AI」槽位的读写
+      //    （updates[].body null = 恢复默认；baseUpdatedAt 过期 → 409 同款）——
+      .get("/ai/prompts", (c) => {
+        return c.json({
+          ok: true,
+          data: getAiPromptSettings(db, "student", c.var.student.id),
+        });
+      })
+      .put("/ai/prompts", async (c) => {
+        const body = await parseJsonBodyWithCode(
+          c,
+          aiPromptSettingsPutRequestSchema,
+          (firstPath) =>
+            firstPath === "updates" ? "AI_PROMPT_INVALID" : "VALIDATION_ERROR",
+        );
+        return c.json({
+          ok: true,
+          data: updateAiPromptSettings(db, "student", c.var.student.id, body),
         });
       })
       // —— 任务接口（SAI-13）——

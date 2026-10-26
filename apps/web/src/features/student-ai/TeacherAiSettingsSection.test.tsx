@@ -49,18 +49,20 @@ const UNSET_SETTINGS: AiTeacherSettingsData = {
   updatedAt: "1970-01-01T00:00:00.000Z",
 };
 
-function renderSection(
+async function renderSection(
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   }),
 ) {
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <TeacherAiSettingsSection />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  fireEvent.click(await screen.findByText("伴学提示词模板"));
+  return view;
 }
 
 beforeEach(() => {
@@ -70,7 +72,7 @@ beforeEach(() => {
 
 describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
   it("未设置时默认模式为开放伴学；模板显示默认正文；说明是常驻文本不依赖 hover", async () => {
-    renderSection();
+    await renderSection();
     expect(
       await screen.findByRole("radio", { name: "开放伴学" }),
     ).toBeChecked();
@@ -91,10 +93,10 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const first = renderSection(client);
+    const first = await renderSection(client);
     fireEvent.click(await screen.findByRole("radio", { name: "仅启发" }));
     first.unmount();
-    renderSection(client);
+    await renderSection(client);
     expect(await screen.findByRole("radio", { name: "仅启发" })).toBeChecked();
   });
 
@@ -102,7 +104,7 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    renderSection(client);
+    await renderSection(client);
     fireEvent.click(await screen.findByRole("radio", { name: "完成后可用" }));
     await waitFor(() =>
       client.setQueryData(["teacher", "ai-settings"], {
@@ -118,7 +120,7 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
 
   it("保存成功清脏；保存失败保留编辑与草稿", async () => {
     mockedSave.mockRejectedValueOnce(new Error("测试保存失败"));
-    renderSection();
+    await renderSection();
     fireEvent.click(await screen.findByRole("radio", { name: "仅启发" }));
     fireEvent.click(screen.getByRole("button", { name: "保存 AI 设置" }));
     await screen.findByRole("alert");
@@ -147,7 +149,7 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
       promptsGuided: "仅启发自定义原文",
       updatedAt: "2026-10-14T00:00:00.000Z",
     });
-    renderSection();
+    await renderSection();
     const openBox = await screen.findByRole("textbox", {
       name: "开放伴学模板正文",
     });
@@ -181,7 +183,7 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
   });
 
   it("版本冲突（AI_SETTINGS_STALE）不自动覆盖输入；显式放弃后才回到服务器值", async () => {
-    renderSection();
+    await renderSection();
     fireEvent.click(await screen.findByRole("radio", { name: "仅启发" }));
     // 另一页面已保存：服务器已是仅启发 + 新锚点
     const serverNow: AiTeacherSettingsData = {
@@ -208,7 +210,7 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
   });
 
   it("B17 ④模式文案纪律：启发是提示词约束不承诺绝不解题，严格项指向完成后", async () => {
-    renderSection();
+    await renderSection();
     await screen.findByRole("radio", { name: "仅启发" });
     // 仅启发描述 = 提示词输出约束口径（不是保密承诺）
     expect(screen.getByText(/不直接给最终答案/u)).toBeInTheDocument();
