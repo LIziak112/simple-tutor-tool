@@ -230,13 +230,13 @@ export function TeacherAiSettingsSection() {
   if (activeTab === undefined) throw new Error("模板 tab 常量缺失");
 
   return (
-    <div className="teacher-config-section">
+    <div className="flex flex-col gap-3 [&_h2]:text-lg [&_h2]:leading-snug">
       <div>
         <h2 className="font-semibold">AI 伴学</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+        <p className="mt-1 text-sm leading-5 text-muted-foreground">
           为你的学生设定 AI 伴学的默认策略与三套提示词模板。
         </p>
-        <p className="mt-2 flex items-start gap-2 text-[0.8125rem] leading-relaxed text-muted-foreground">
+        <p className="mt-1.5 flex items-start gap-2 text-[0.8125rem] leading-5 text-muted-foreground">
           <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
           <span>
             允许求助时，已有答案和解析会一起提供给 AI。
@@ -270,9 +270,9 @@ export function TeacherAiSettingsSection() {
             {MODE_OPTIONS.map(({ value, description }) => (
               <label
                 key={value}
-                className="flex min-h-11 cursor-pointer items-start gap-3 px-5 py-4 sm:px-7"
+                className="flex min-h-11 cursor-pointer items-center gap-3 px-4 py-2 sm:px-5"
               >
-                <span className="flex min-h-11 min-w-11 items-center justify-center">
+                <span className="flex size-6 shrink-0 items-center justify-center">
                   <input
                     type="radio"
                     name="ai-default-mode"
@@ -288,19 +288,19 @@ export function TeacherAiSettingsSection() {
                   <span className="block text-[0.9375rem] font-semibold">
                     {AI_INHERITABLE_MODE_LABELS[value]}
                   </span>
-                  <span className="mt-1 block max-w-[54ch] text-[0.8125rem] leading-relaxed text-muted-foreground">
+                  <span className="mt-0.5 block max-w-[54ch] text-[0.8125rem] leading-5 text-muted-foreground">
                     {description}
                   </span>
                 </span>
               </label>
             ))}
           </fieldset>
-          <p className="text-[0.8125rem] leading-relaxed text-muted-foreground">
+          <p className="text-[0.8125rem] leading-5 text-muted-foreground">
             保存后对后续操作生效；学生与作业可以单独覆盖这一默认。
             本题完成后一律按开放伴学复盘。
           </p>
 
-          <div className="group rounded-xl border border-border bg-card p-4 sm:p-5">
+          <div className="group rounded-xl border border-border bg-card px-4 py-2 sm:px-5">
             <button
               type="button"
               aria-controls="teacher-ai-template-editor"

@@ -94,7 +94,7 @@ export function SettingsPage() {
       </div>
       <div hidden={activeSection !== "ai"}>
         <TeacherAiSettingsPanel />
-        <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
           <div>
             <h2 className="text-sm font-semibold">让 AI 参与备课</h2>
             <p className="mt-1 text-[0.8125rem] text-muted-foreground">

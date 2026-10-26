@@ -45,13 +45,13 @@ export function TeacherAiSettingsPanel() {
     <AiSettingsSaveContext value={{ register }}>
       <fieldset
         disabled={saving}
-        className="m-0 min-w-0 space-y-7 border-0 p-0"
+        className="m-0 min-w-0 space-y-4 border-0 p-0"
       >
         <legend className="sr-only">AI 设置</legend>
         <TeacherAiSettingsSection />
         <TeacherAiPromptsSection />
       </fieldset>
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
         <p role="status" className="text-sm text-muted-foreground">
           {saving
             ? "正在保存…"

@@ -202,11 +202,11 @@ export function TeacherAiPromptsSection() {
       aria-labelledby="teacher-ai-prompts-title"
       className="rounded-xl border border-border bg-card"
     >
-      <div className="p-5 sm:p-6">
+      <div className="px-4 py-3 sm:px-5">
         <h2 id="teacher-ai-prompts-title" className="font-semibold">
           备课与复习提示词
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-sm leading-5 text-muted-foreground">
           出题助手、学情数据包与单题复习包交给 AI
           使用的提示词，可按场景自定义；保存后下一次复制或导出立即生效。
         </p>
@@ -218,7 +218,10 @@ export function TeacherAiPromptsSection() {
         ).length;
         const customCount = slots.filter((slot) => slot.isCustom).length;
         return (
-          <div key={group} className="group border-t border-border p-5 sm:p-6">
+          <div
+            key={group}
+            className="group border-t border-border px-4 py-2 sm:px-5"
+          >
             <button
               type="button"
               aria-controls={`teacher-ai-prompts-${group}`}
@@ -235,7 +238,7 @@ export function TeacherAiPromptsSection() {
                 <span className="block text-sm font-semibold">
                   {GROUP_LABELS[group]}
                 </span>
-                <span className="mt-1 block text-xs text-muted-foreground">
+                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
                   {changedCount > 0
                     ? `${changedCount} 项未保存`
                     : customCount > 0
@@ -311,7 +314,7 @@ export function TeacherAiPromptsSection() {
         hidden={
           sharedSave && !conflict && !saveMutation.isError && !blankChanged
         }
-        className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-5 sm:p-6"
+        className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 sm:px-5"
       >
         <div className="space-y-1 text-sm">
           {conflict ? (
