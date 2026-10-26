@@ -182,7 +182,7 @@ export function StudentCourseCatalog({
             : "老师还没有发布内容。"}
         </div>
       ) : (
-        <ol className="divide-y divide-border rounded-xl border border-border bg-card">
+        <ol className="flex flex-col gap-2">
           {rows
             .filter(
               (row) =>
@@ -202,7 +202,7 @@ export function StudentCourseCatalog({
                     aria-expanded={
                       filtering || !view.collapsed.includes(item.id)
                     }
-                    className="flex min-h-12 w-full items-center gap-2 rounded-lg px-3 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring"
+                    className="flex min-h-12 w-full items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-start focus-visible:outline-2 focus-visible:outline-ring"
                     onClick={() =>
                       patch({
                         collapsed: view.collapsed.includes(item.id)
@@ -239,32 +239,33 @@ export function StudentCourseCatalog({
                           ? lessonHref(String(item.refId), course.id)
                           : `/s/lectures/${item.refId}?courseId=${course.id}`
                     }
-                    className="flex min-h-14 items-center gap-2 rounded-lg px-3 py-2 transition-colors hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-ring"
+                    className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
-                    {item.kind === "lecture" ? (
-                      <BookOpen
-                        aria-hidden
-                        className="size-4 shrink-0 text-primary"
-                      />
-                    ) : (
-                      <Dumbbell
-                        aria-hidden
-                        className="size-4 shrink-0 text-primary"
-                      />
-                    )}
-                    <span className="flex min-w-0 flex-1 flex-col gap-1">
-                      <span className="break-words text-sm font-medium">
-                        {item.docKind === "lesson" && <LessonBadge />}
-                        {item.title}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {item.kind === "unit" ? (
-                          <>
-                            练习 · <span>{item.questionCount ?? 0} 题</span>
-                          </>
-                        ) : (
-                          `讲义${item.docKind === "lesson" ? " · 可边学边练" : ""}`
-                        )}
+                    <span
+                      aria-hidden
+                      className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${item.kind === "lecture" ? "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300" : "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"}`}
+                    >
+                      {item.kind === "lecture" ? (
+                        <BookOpen className="size-5" />
+                      ) : (
+                        <Dumbbell className="size-5" />
+                      )}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                      <span className="flex min-w-0 flex-1 flex-col gap-1">
+                        <span className="break-words text-sm font-medium">
+                          {item.docKind === "lesson" && <LessonBadge />}
+                          {item.title}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {item.kind === "unit" ? (
+                            <>
+                              练习 · <span>{item.questionCount ?? 0} 题</span>
+                            </>
+                          ) : (
+                            `讲义${item.docKind === "lesson" ? " · 可边学边练" : ""}`
+                          )}
+                        </span>
                       </span>
                       {item.kind === "unit" && renderStatus(item)}
                       {depth > 3 && (

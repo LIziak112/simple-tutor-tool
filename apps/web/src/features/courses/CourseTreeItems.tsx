@@ -4,14 +4,18 @@ import type {
   CourseDetailItem,
 } from "@tutor/contract";
 import {
+  ArrowDown,
+  ArrowUp,
   BookOpen,
   ChevronDown,
   ChevronRight,
   Dumbbell,
   Folder,
+  MoreHorizontal,
   Plus,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +26,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import {
+  DragHandle,
+  SortableItem,
+  SortableZone,
+} from "@/features/content/sortable";
 import { formatDueTime } from "@/lib/time";
 import { catalogTreeRows } from "./catalog-tree";
 import { useManageCourseCatalog } from "./course-queries";
@@ -79,7 +95,7 @@ export function CourseTreeItems({
     mutation.mutate(command, {
       onSuccess: () => {
         setEditor(null);
-        setSelected([]);
+        if (command.action !== "reorder") setSelected([]);
       },
     });
   }
@@ -94,15 +110,162 @@ export function CourseTreeItems({
     if (moved) ids.splice(next, 0, moved);
     send({ action: "reorder", ids, parentId: item.parentId ?? null });
   }
+  const selectedItems = detail.items.filter((item) =>
+    selected.includes(item.id),
+  );
+  const single = selectedItems.length === 1 ? selectedItems[0] : undefined;
+  const siblings = single
+    ? detail.items.filter(
+        (item) => (item.parentId ?? null) === (single.parentId ?? null),
+      )
+    : [];
+  const singleIndex = single
+    ? siblings.findIndex((item) => item.id === single.id)
+    : -1;
+  function renderGroup(parentId: string | null = null): ReactNode {
+    const group = rows.filter(
+      (row) => (row.ancestors.at(-1) ?? null) === parentId,
+    );
+    const visible = group.filter((row) => shown.has(row.item.id));
+    if (!visible.length) return null;
+    return (
+      <SortableZone
+        ids={group.map((row) => row.item.id)}
+        ariaLabel={
+          parentId
+            ? `文件夹 ${detail.items.find((item) => item.id === parentId)?.title} 的内容`
+            : `${detail.name} 的目录列表`
+        }
+        onReorder={(ids) => {
+          if (!q && !mutation.isPending)
+            send({ action: "reorder", ids, parentId });
+        }}
+      >
+        <ul className="flex flex-col gap-2">
+          {visible.map(({ item, depth, path }) => (
+            <SortableItem key={item.id} id={item.id}>
+              {({ rowProps, handleListeners }) => (
+                <li ref={rowProps.ref} style={rowProps.style}>
+                  <div
+                    className={`flex min-h-14 items-center gap-1 rounded-lg border px-2 py-1 ${selected.includes(item.id) ? "border-primary/40 bg-primary/5" : "border-border bg-card"}`}
+                  >
+                    {!q && !mutation.isPending && (
+                      <DragHandle
+                        label={`拖拽调整 ${item.title} 的同级顺序`}
+                        listeners={handleListeners}
+                      />
+                    )}
+                    <label className="flex size-11 shrink-0 items-center justify-center">
+                      <input
+                        type="checkbox"
+                        aria-label={`选择 ${item.title}`}
+                        checked={selected.includes(item.id)}
+                        onChange={(e) =>
+                          setSelected(
+                            e.target.checked
+                              ? [...selected, item.id]
+                              : selected.filter((id) => id !== item.id),
+                          )
+                        }
+                        className="size-4 accent-primary"
+                      />
+                    </label>
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      {item.kind === "section" ? (
+                        <button
+                          type="button"
+                          aria-label={`${collapsed.has(item.id) ? "展开" : "收起"} ${item.title}`}
+                          aria-expanded={!!q || !collapsed.has(item.id)}
+                          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded text-start focus-visible:outline-2 focus-visible:outline-ring"
+                          onClick={() =>
+                            setCollapsed((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(item.id)) next.delete(item.id);
+                              else next.add(item.id);
+                              return next;
+                            })
+                          }
+                        >
+                          {collapsed.has(item.id) && !q ? (
+                            <ChevronRight
+                              aria-hidden
+                              className="size-4 shrink-0"
+                            />
+                          ) : (
+                            <ChevronDown
+                              aria-hidden
+                              className="size-4 shrink-0"
+                            />
+                          )}
+                          <Folder
+                            aria-hidden
+                            className="size-4 shrink-0 text-primary"
+                          />
+                          <span className="min-w-0 break-words text-sm font-medium">
+                            {item.title}
+                          </span>
+                          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                            {childCounts.get(item.id) ?? 0} 项
+                          </span>
+                        </button>
+                      ) : (
+                        <>
+                          <span aria-hidden>
+                            {item.kind === "lecture" ? (
+                              <BookOpen className="size-4" />
+                            ) : (
+                              <Dumbbell className="size-4" />
+                            )}
+                          </span>
+                          <span className="min-w-0 break-words py-2 text-sm font-medium">
+                            {item.title}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {item.status !== "visible" && (
+                      <span className="max-w-32 break-words text-xs text-muted-foreground">
+                        {item.status === "scheduled"
+                          ? `定时（${formatDueTime(item.publishAt ?? "")} 发布）`
+                          : item.status === "hidden"
+                            ? "已隐藏"
+                            : item.status === "deleted"
+                              ? "资源已删除"
+                              : "无题目"}
+                      </span>
+                    )}
+                  </div>
+                  {depth > 3 && (
+                    <p className="break-words px-3 py-1 text-xs text-muted-foreground">
+                      {path}
+                    </p>
+                  )}
+                  {item.kind === "section" &&
+                    (q || !collapsed.has(item.id)) && (
+                      <div
+                        className="mt-2"
+                        style={{ paddingInlineStart: depth < 3 ? 16 : 0 }}
+                      >
+                        {renderGroup(item.id)}
+                      </div>
+                    )}
+                </li>
+              )}
+            </SortableItem>
+          ))}
+        </ul>
+      </SortableZone>
+    );
+  }
   return (
     <div className="min-w-0">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input
           aria-label="搜索课程目录"
           placeholder="搜索名称或文件夹路径"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="min-h-11 max-w-sm text-base sm:text-sm"
+          className="min-h-11 min-w-0 flex-1 basis-56 text-base sm:text-sm"
         />
         <Button
           variant="outline"
@@ -130,189 +293,128 @@ export function CourseTreeItems({
           {collapsed.size ? "全部展开" : "全部折叠"}
         </Button>
       </div>
-      {selected.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg bg-muted p-2 text-sm">
-          <span>已选 {selected.length} 项</span>
+      {selectedItems.length > 0 && (
+        <fieldset
+          aria-label="已选条目操作"
+          className="mb-3 flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
+        >
+          <span role="status" className="text-sm font-medium tabular-nums">
+            已选 {selectedItems.length} 项
+          </span>
           <Button
             variant="outline"
             className="min-h-11"
+            disabled={mutation.isPending}
             onClick={() => open("move", selected)}
           >
             移动到…
           </Button>
+          {single && (
+            <>
+              <Button
+                variant="ghost"
+                className="min-h-11"
+                disabled={mutation.isPending || singleIndex <= 0}
+                onClick={() => reorder(single, -1)}
+              >
+                <ArrowUp aria-hidden />
+                上移
+              </Button>
+              <Button
+                variant="ghost"
+                className="min-h-11"
+                disabled={
+                  mutation.isPending || singleIndex >= siblings.length - 1
+                }
+                onClick={() => reorder(single, 1)}
+              >
+                <ArrowDown aria-hidden />
+                下移
+              </Button>
+            </>
+          )}
           <Button
             variant="ghost"
             className="min-h-11"
+            disabled={mutation.isPending}
+            onClick={() =>
+              send({
+                action: "setVisibility",
+                ids: selected,
+                visible: !selectedItems.every((item) => item.visible),
+              })
+            }
+          >
+            {selectedItems.every((item) => item.visible) ? "隐藏" : "显示"}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={mutation.isPending}
+              >
+                <MoreHorizontal aria-hidden />
+                更多操作
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="motion-reduce:animate-none"
+            >
+              {single && (
+                <DropdownMenuItem onSelect={() => open("rename", [single.id])}>
+                  改名
+                </DropdownMenuItem>
+              )}
+              {single?.kind === "section" && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={() => open("createFolder", [], single.id)}
+                  >
+                    新建子文件夹
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onAdd(single.id)}>
+                    添加内容到文件夹
+                  </DropdownMenuItem>
+                </>
+              )}
+              {single && (
+                <DropdownMenuItem onSelect={() => onPublish(single)}>
+                  定时发布
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => open("remove", selected)}
+              >
+                从课程移除…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            aria-label="取消选择"
+            className="ms-auto min-h-11"
             onClick={() => setSelected([])}
           >
+            <X aria-hidden />
             取消选择
           </Button>
-        </div>
+        </fieldset>
       )}
       {mutation.isError && (
         <p role="alert" className="mb-2 text-sm text-destructive">
-          {mutation.error.message}
+          {mutation.error.message}。请重试，或刷新目录后再操作。
         </p>
       )}
       {detail.items.length === 0 && (
-        <p className="py-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">
           课程还没有内容。从资源库添加，或先新建文件夹。
         </p>
       )}
-      {detail.items.length > 0 && (
-        <ul
-          aria-label={`${detail.name} 的目录列表`}
-          className="divide-y divide-border rounded-lg border border-border bg-card"
-        >
-          {rows
-            .filter(
-              (row) =>
-                shown.has(row.item.id) &&
-                (q || !row.ancestors.some((id) => collapsed.has(id))),
-            )
-            .map(({ item, depth, path }) => (
-              <li
-                key={item.id}
-                className="flex min-h-12 flex-wrap items-center gap-1 px-2 py-1"
-              >
-                <label className="flex size-11 shrink-0 items-center justify-center">
-                  <input
-                    type="checkbox"
-                    aria-label={`选择 ${item.title}`}
-                    checked={selected.includes(item.id)}
-                    onChange={(e) =>
-                      setSelected(
-                        e.target.checked
-                          ? [...selected, item.id]
-                          : selected.filter((id) => id !== item.id),
-                      )
-                    }
-                    className="size-4"
-                  />
-                </label>
-                <div
-                  className="flex min-w-0 flex-1 items-center gap-2"
-                  style={{ paddingInlineStart: `${Math.min(depth, 4) * 16}px` }}
-                >
-                  {item.kind === "section" ? (
-                    <button
-                      type="button"
-                      aria-label={`${collapsed.has(item.id) ? "展开" : "收起"} ${item.title}`}
-                      aria-expanded={!!q || !collapsed.has(item.id)}
-                      className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded text-left focus-visible:outline-2 focus-visible:outline-ring"
-                      onClick={() =>
-                        setCollapsed((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(item.id)) next.delete(item.id);
-                          else next.add(item.id);
-                          return next;
-                        })
-                      }
-                    >
-                      {collapsed.has(item.id) && !q ? (
-                        <ChevronRight className="size-4 shrink-0" />
-                      ) : (
-                        <ChevronDown className="size-4 shrink-0" />
-                      )}
-                      <Folder
-                        aria-hidden
-                        className="size-4 shrink-0 text-primary"
-                      />
-                      <span className="min-w-0 break-words text-sm font-medium">
-                        {item.title}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {childCounts.get(item.id) ?? 0} 项
-                      </span>
-                    </button>
-                  ) : (
-                    <>
-                      <span aria-hidden>
-                        {item.kind === "lecture" ? (
-                          <BookOpen className="size-4" />
-                        ) : (
-                          <Dumbbell className="size-4" />
-                        )}
-                      </span>
-                      <span className="min-w-0 break-words text-sm">
-                        {item.title}
-                      </span>
-                    </>
-                  )}
-                </div>
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {item.status === "scheduled"
-                    ? `定时（${formatDueTime(item.publishAt ?? "")} 发布）`
-                    : item.status === "hidden"
-                      ? "隐藏"
-                      : item.status === "deleted"
-                        ? "资源已删除"
-                        : item.status === "no-questions"
-                          ? "无题目"
-                          : "可见"}
-                </span>
-                {item.kind === "section" && (
-                  <Button
-                    variant="ghost"
-                    className="min-h-11 px-2"
-                    aria-label={`向 ${item.title} 添加内容`}
-                    onClick={() => onAdd(item.id)}
-                  >
-                    <Plus aria-hidden className="size-4" />
-                  </Button>
-                )}
-                <select
-                  aria-label={`${item.title} 的操作`}
-                  value=""
-                  disabled={mutation.isPending}
-                  className="min-h-11 max-w-24 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
-                  onChange={(e) => {
-                    const action = e.target.value;
-                    if (action === "folder") open("createFolder", [], item.id);
-                    else if (action === "add") onAdd(item.id);
-                    else if (action === "up" || action === "down")
-                      reorder(item, action === "up" ? -1 : 1);
-                    else if (action === "visible")
-                      send({
-                        action: "setVisibility",
-                        ids: [item.id],
-                        visible: !item.visible,
-                      });
-                    else if (action === "publish") onPublish(item);
-                    else if (
-                      action === "rename" ||
-                      action === "move" ||
-                      action === "remove"
-                    )
-                      open(action, [item.id]);
-                  }}
-                >
-                  <option value="">更多</option>
-                  {item.kind === "section" && (
-                    <>
-                      <option value="folder">新建子文件夹</option>
-                      <option value="add">添加内容</option>
-                    </>
-                  )}
-                  <option value="rename">改名</option>
-                  <option value="move">移动到…</option>
-                  <option value="up">上移</option>
-                  <option value="down">下移</option>
-                  <option value="visible">
-                    {item.visible ? "隐藏" : "显示（保留定时）"}
-                  </option>
-                  <option value="publish">定时发布</option>
-                  <option value="remove">从课程移除…</option>
-                </select>
-                {depth > 4 && (
-                  <span className="w-full break-words pl-10 text-xs text-muted-foreground">
-                    {path}
-                  </span>
-                )}
-              </li>
-            ))}
-        </ul>
-      )}
+      {renderGroup()}
       {q && shown.size === 0 && (
         <p role="status" className="py-6 text-sm">
           没有匹配内容。

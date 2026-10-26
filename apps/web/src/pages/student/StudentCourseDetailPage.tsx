@@ -32,28 +32,28 @@ function UnitStatusBadge({ item }: { item: StudentCourseItem }) {
   const attempt = item.attempt;
   if (attempt === null || attempt.count === 0) {
     return (
-      <span className="w-fit shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+      <span className="max-w-full w-fit rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
         未做
       </span>
     );
   }
   if (attempt.pendingCount > 0) {
     return (
-      <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+      <span className="max-w-full w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
         有待批
       </span>
     );
   }
   if (attempt.hasDraft) {
     return (
-      <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+      <span className="flex max-w-full w-fit items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-foreground">
         <LoaderCircle aria-hidden className="size-3.5" />
         进行中
       </span>
     );
   }
   return (
-    <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+    <span className="flex max-w-full w-fit items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
       <CircleCheck aria-hidden className="size-3.5" />
       已完成（最近 {formatResultCounts(attempt.latestResultCounts)} · 共{" "}
       {attempt.count} 次）

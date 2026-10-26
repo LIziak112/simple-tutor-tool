@@ -74,6 +74,7 @@ export function CourseCatalogTab({
         }
       >
         <CourseTreeItems
+          key={courseId}
           courseId={courseId}
           detail={detail}
           onAdd={setAddTarget}

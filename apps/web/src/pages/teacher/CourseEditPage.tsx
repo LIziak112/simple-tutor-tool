@@ -177,8 +177,8 @@ function CourseHeader({
   const busy = updateMutation.isPending || deleteMutation.isPending;
 
   return (
-    <header className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-card px-3 py-2">
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+    <header className="grid grid-cols-1 items-start gap-3 rounded-xl border border-border bg-card p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Link
           to="/t/courses"
           className="flex min-h-11 items-center gap-1 rounded-md text-sm text-muted-foreground hover:text-foreground"
@@ -193,11 +193,6 @@ function CourseHeader({
           </span>
         )}
       </div>
-      {description && (
-        <p className="order-last w-full break-words text-sm text-muted-foreground">
-          {description}
-        </p>
-      )}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" className="min-h-11" onClick={onEdit}>
           <Pencil aria-hidden />
@@ -236,6 +231,13 @@ function CourseHeader({
             </>
           )}
         </Button>
+      </div>
+      {description && (
+        <p className="break-words text-sm text-muted-foreground lg:col-span-2">
+          {description}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-1 lg:col-span-2">
         <DeleteCourseButton
           courseId={courseId}
           name={name}
