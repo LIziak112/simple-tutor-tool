@@ -14,6 +14,7 @@ import {
   renderReviewPackPrompt,
   reviewPackJsonSchema,
   reviewPackPreviewDataSchema,
+  reviewPackPromptSlotKeyOf,
   reviewPackSchema,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
@@ -27,6 +28,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
+import { promptOverrideBodyOf } from "./ai-companion/ai-prompt-settings-service";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
 import {
@@ -266,6 +268,14 @@ export function assembleReviewPack(
     attemptId,
     questionId,
   );
+  // AI 提示词设置（hall-9533）：按主体注入「角色 + 任务」指令覆盖
+  // （teacher → 教师槽位、student → 学生槽位；null = 默认模板）
+  const instructionOverrideMd = promptOverrideBodyOf(
+    db,
+    principal.kind,
+    principal.id,
+    reviewPackPromptSlotKeyOf(principal.kind),
+  );
   const released = releasedOf(db, principal, attempt, nowDate);
 
   // —— 共享证据装配（单行 scope；教师取 solution 层全量、学生恒学生端投影） ——
@@ -464,6 +474,7 @@ export function assembleReviewPack(
   ];
   const reviewMd = renderReviewPackPrompt({
     role,
+    ...(instructionOverrideMd ? { instructionOverrideMd } : {}),
     questionNo: no,
     questionPresent: revision.present,
     handwritten,

@@ -2,6 +2,9 @@ import { z } from "zod";
 
 /** 管理端 API 契约（T2B.6 起为权威定义）：教师账号管理、注册开关、概览计数、错误码 */
 export * from "./admin-api.ts";
+/** AI 提示词设置契约（hall-9533）：出题助手/学情包/复习包提示词槽位注册表、
+ *  默认正文单源（引用各渲染器）、GET/PUT /ai/prompts 读写契约 */
+export * from "./ai-prompt-settings.ts";
 /** 学情分析 API 契约（T4.1 起为权威定义，依据 Phase4 清单 §2 D1–D7）：总览/画像/题目三接口 */
 export * from "./analytics-api.ts";
 /** 题干标注契约（T6R.20 起为权威定义）：固定底图＋独立矢量标注（AnnotationDoc、

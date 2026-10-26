@@ -6,7 +6,13 @@ import {
   type AiTeachingMode,
   DEFAULT_AI_PROMPT_TEMPLATES,
 } from "@tutor/contract";
-import { Info, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
+import {
+  ChevronDown,
+  Info,
+  Loader2,
+  RotateCcw,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +32,7 @@ import {
   useTeacherAiSettings,
 } from "./ai-policy-queries";
 import { AI_INHERITABLE_MODE_LABELS } from "./ai-policy-text";
+import { useAiSettingsSave } from "./ai-settings-save";
 
 /**
  * SAI-07 教师设置「AI 伴学」区（默认模式 + 三模板，需求 §3.1/§5.1/§11）：
@@ -116,6 +123,7 @@ export function TeacherAiSettingsSection() {
   );
   const [activeTemplate, setActiveTemplate] =
     useState<AiPromptTemplateKey>("open");
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const data = settingsQuery.data;
@@ -131,7 +139,8 @@ export function TeacherAiSettingsSection() {
 
   /** 模板正文空/纯空白：本地前置契约校验（空模板保存会被 400 拒绝） */
   const emptyTemplate =
-    checked !== null && checked.prompts[activeTemplate].trim().length === 0;
+    checked !== null &&
+    TEMPLATE_KEYS.some((key) => checked.prompts[key].trim().length === 0);
 
   const setNavigationDraft = navigation?.setDraft;
   useEffect(() => {
@@ -190,11 +199,19 @@ export function TeacherAiSettingsSection() {
     return changed ? request : null;
   }
 
-  function handleSave(): void {
+  async function handleSave(): Promise<void> {
     const request = buildRequest();
     if (request === null) return;
-    saveMutation.mutate(request, { onSuccess: () => setDraft(null) });
+    await saveMutation.mutateAsync(request, {
+      onSuccess: () => setDraft(null),
+    });
   }
+
+  const sharedSave = useAiSettingsSave("ai-settings", {
+    dirty,
+    blocked: baseline === null || settingsQuery.isError || emptyTemplate,
+    save: handleSave,
+  });
 
   /** 版本冲突（其他页面已保存）：显式放弃本地编辑，重新拉服务器值 */
   function discardAndReload(): void {
@@ -283,71 +300,101 @@ export function TeacherAiSettingsSection() {
             本题完成后一律按开放伴学复盘。
           </p>
 
-          <fieldset className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:p-5">
-            <legend className="px-1 text-sm font-semibold">提示词模板</legend>
-            <div
-              role="tablist"
-              aria-label="提示词模板"
-              className="flex flex-wrap gap-2"
-            >
-              {TEMPLATE_TABS.map(({ key, label }) => (
-                <Button
-                  key={key}
-                  type="button"
-                  variant="outline"
-                  aria-label={`模板：${label}`}
-                  aria-selected={activeTemplate === key}
-                  className="min-h-11"
-                  onClick={() => setActiveTemplate(key)}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span>
-                {activeTab.label}模板正文（
-                {activeTab.key === "review"
-                  ? "完成后复盘不按作答中求助处理"
-                  : "可描述教学方法、语言与详细程度"}
-                ）
-              </span>
-              <textarea
-                aria-label={`${activeTab.label}模板正文`}
-                className="min-h-44 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                maxLength={AI_PROMPT_TEMPLATE_MAX_CHARS}
-                value={checked.prompts[activeTemplate]}
-                onChange={(event) =>
-                  setDraft({
-                    ...checked,
-                    prompts: {
-                      ...checked.prompts,
-                      [activeTemplate]: event.target.value,
-                    },
-                  })
-                }
-              />
-              <span className="text-xs text-muted-foreground">
-                {checked.prompts[activeTemplate].length}/
-                {AI_PROMPT_TEMPLATE_MAX_CHARS} 字符；仅启发模式在模板外始终
-                保留模式要求，模板误删也不会失去约束。
-              </span>
-            </label>
-            {emptyTemplate && (
-              <p role="alert" className="text-xs text-destructive">
-                模板正文不能为空；要恢复默认请用「恢复默认模板」。
-              </p>
-            )}
-            <Button
+          <div className="group rounded-xl border border-border bg-card p-4 sm:p-5">
+            <button
               type="button"
-              variant="outline"
-              className="min-h-11 self-start"
-              onClick={() => setConfirmReset(true)}
+              aria-controls="teacher-ai-template-editor"
+              aria-expanded={templatesOpen}
+              onClick={() => {
+                setTemplatesOpen((open) => !open);
+              }}
+              className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-md text-start text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <RotateCcw aria-hidden />
-              恢复默认模板
-            </Button>
-          </fieldset>
+              <span>
+                伴学提示词模板
+                {checked &&
+                  TEMPLATE_KEYS.some(
+                    (key) => checked.prompts[key] !== baseline.prompts[key],
+                  ) && (
+                    <span className="ml-2 text-xs text-primary">
+                      有未保存更改
+                    </span>
+                  )}
+              </span>
+              <ChevronDown
+                aria-hidden
+                className={`size-4 shrink-0 transition-transform ${templatesOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            <div
+              id="teacher-ai-template-editor"
+              hidden={!templatesOpen}
+              className="mt-3 flex flex-col gap-3"
+            >
+              <div
+                role="tablist"
+                aria-label="提示词模板"
+                className="flex flex-wrap gap-2"
+              >
+                {TEMPLATE_TABS.map(({ key, label }) => (
+                  <Button
+                    key={key}
+                    type="button"
+                    variant="outline"
+                    aria-label={`模板：${label}`}
+                    aria-selected={activeTemplate === key}
+                    className="min-h-11"
+                    onClick={() => setActiveTemplate(key)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span>
+                  {activeTab.label}模板正文（
+                  {activeTab.key === "review"
+                    ? "完成后复盘不按作答中求助处理"
+                    : "可描述教学方法、语言与详细程度"}
+                  ）
+                </span>
+                <textarea
+                  aria-label={`${activeTab.label}模板正文`}
+                  className="min-h-44 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                  maxLength={AI_PROMPT_TEMPLATE_MAX_CHARS}
+                  value={checked.prompts[activeTemplate]}
+                  onChange={(event) =>
+                    setDraft({
+                      ...checked,
+                      prompts: {
+                        ...checked.prompts,
+                        [activeTemplate]: event.target.value,
+                      },
+                    })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  {checked.prompts[activeTemplate].length}/
+                  {AI_PROMPT_TEMPLATE_MAX_CHARS} 字符；仅启发模式在模板外始终
+                  保留模式要求，模板误删也不会失去约束。
+                </span>
+              </label>
+              {emptyTemplate && (
+                <p role="alert" className="text-xs text-destructive">
+                  模板正文不能为空；要恢复默认请用「恢复默认模板」。
+                </p>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 self-start"
+                onClick={() => setConfirmReset(true)}
+              >
+                <RotateCcw aria-hidden />
+                恢复默认模板
+              </Button>
+            </div>
+          </div>
 
           {saveMutation.isError && !staleConflict && (
             <p
@@ -384,27 +431,29 @@ export function TeacherAiSettingsSection() {
             </div>
           )}
 
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
-            <p role="status" className="text-xs text-muted-foreground">
-              {saveMutation.isPending
-                ? "正在保存…"
-                : dirty
-                  ? "有未保存的更改"
-                  : saveMutation.isSuccess
-                    ? "更改已保存"
-                    : "当前设置已保存"}
-            </p>
-            <Button
-              className="min-h-11 px-5"
-              disabled={saveMutation.isPending || !dirty || emptyTemplate}
-              onClick={handleSave}
-            >
-              {saveMutation.isPending && (
-                <Loader2 aria-hidden className="motion-safe:animate-spin" />
-              )}
-              保存 AI 设置
-            </Button>
-          </div>
+          {!sharedSave && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
+              <p role="status" className="text-xs text-muted-foreground">
+                {saveMutation.isPending
+                  ? "正在保存…"
+                  : dirty
+                    ? "有未保存的更改"
+                    : saveMutation.isSuccess
+                      ? "更改已保存"
+                      : "当前设置已保存"}
+              </p>
+              <Button
+                className="min-h-11 px-5"
+                disabled={saveMutation.isPending || !dirty || emptyTemplate}
+                onClick={() => void handleSave().catch(() => {})}
+              >
+                {saveMutation.isPending && (
+                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
+                )}
+                保存 AI 设置
+              </Button>
+            </div>
+          )}
         </>
       )}
 

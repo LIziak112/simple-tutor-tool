@@ -613,17 +613,17 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
     //    教师设置 UI 读写两条路径；默认即 open_study，先偏移再回正才有写请求） ——
     const teacherUi = await loginTeacherUi(browser);
     try {
-      await teacherUi.page.goto("/t/settings");
+      await teacherUi.page.goto("/t/settings?section=ai");
       await teacherUi.page.getByRole("radio", { name: "完成后可用" }).check();
       await teacherUi.page
         .getByRole("button", { name: "保存 AI 设置" })
         .click();
-      await expect(teacherUi.page.getByText("更改已保存")).toBeVisible();
+      await expect(teacherUi.page.getByText("AI 设置已保存")).toBeVisible();
       await teacherUi.page.getByRole("radio", { name: "开放伴学" }).check();
       await teacherUi.page
         .getByRole("button", { name: "保存 AI 设置" })
         .click();
-      await expect(teacherUi.page.getByText("更改已保存")).toBeVisible();
+      await expect(teacherUi.page.getByText("AI 设置已保存")).toBeVisible();
     } finally {
       await teacherUi.context.close();
     }

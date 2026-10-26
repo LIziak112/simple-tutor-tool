@@ -13,7 +13,8 @@ import {
   useLogoutTeacher,
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
-import { TeacherAiSettingsSection } from "@/features/student-ai/TeacherAiSettingsSection";
+import { teacherAiPromptsDraftKey } from "@/features/student-ai/ai-prompt-queries";
+import { TeacherAiSettingsPanel } from "@/features/student-ai/TeacherAiSettingsPanel";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
 import { PracticeFeedbackSection } from "@/features/teacher-settings/PracticeFeedbackSection";
@@ -24,6 +25,7 @@ import { AuthScreenLoading } from "./SetupPage";
 
 const SECTIONS = [
   { id: "teaching", label: "学生作答方式", shortLabel: "作答方式" },
+  { id: "ai", label: "AI 设置", shortLabel: "AI 设置" },
   { id: "backup", label: "备份与恢复", shortLabel: "备份恢复" },
   { id: "account", label: "账号与会话", shortLabel: "账号会话" },
 ] as const;
@@ -55,6 +57,7 @@ export function SettingsPage() {
           queryClient.removeQueries({
             queryKey: ["teacher", "practice-feedback-draft"],
           });
+          queryClient.removeQueries({ queryKey: teacherAiPromptsDraftKey });
           void queryClient.invalidateQueries({ queryKey: teacherMeKey });
           navigate("/t/login", { replace: true });
         },
@@ -89,14 +92,16 @@ export function SettingsPage() {
       </nav>
       <div hidden={activeSection !== "teaching"}>
         <CapabilityProfileSection
-          key={meQuery.data.id}
+          key={`capability:${meQuery.data.id}`}
           teacherId={meQuery.data.id}
         />
         <PracticeFeedbackSection
-          key={meQuery.data.id}
+          key={`practice-feedback:${meQuery.data.id}`}
           teacherId={meQuery.data.id}
         />
-        <TeacherAiSettingsSection />
+      </div>
+      <div hidden={activeSection !== "ai"}>
+        <TeacherAiSettingsPanel />
         <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
           <div>
             <h2 className="text-sm font-semibold">让 AI 参与备课</h2>

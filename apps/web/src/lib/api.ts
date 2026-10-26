@@ -32,6 +32,8 @@ import {
   type AiMaterialUploadReceiptData,
   type AiPolicyInheritableMode,
   type AiPolicyOverrideData,
+  type AiPromptSettingsData,
+  type AiPromptSettingsPutRequest,
   type AiQueueSummaryData,
   type AiShareAccessStatusData,
   type AiStatusData,
@@ -2690,6 +2692,30 @@ export function saveTeacherAiSettingsApi(
   request: AiTeacherSettingsPutRequest,
 ): Promise<AiTeacherSettingsData> {
   return callApi(() => api.api.teacher.ai.settings.$put({ json: request }));
+}
+
+/** 读教师 AI 提示词槽位（出题助手/学情包/复习包；hall-9533） */
+export function fetchTeacherAiPromptsApi(): Promise<AiPromptSettingsData> {
+  return callApi(() => api.api.teacher.ai.prompts.$get());
+}
+
+/** 保存教师 AI 提示词槽位（body null = 恢复默认；baseUpdatedAt 过期 → 409 AI_SETTINGS_STALE） */
+export function saveTeacherAiPromptsApi(
+  request: AiPromptSettingsPutRequest,
+): Promise<AiPromptSettingsData> {
+  return callApi(() => api.api.teacher.ai.prompts.$put({ json: request }));
+}
+
+/** 读学生 AI 提示词槽位（复习包学生指令；hall-9533） */
+export function fetchStudentAiPromptsApi(): Promise<AiPromptSettingsData> {
+  return callApi(() => api.api.student.ai.prompts.$get());
+}
+
+/** 保存学生 AI 提示词槽位（body null = 恢复默认；baseUpdatedAt 过期 → 409 AI_SETTINGS_STALE） */
+export function saveStudentAiPromptsApi(
+  request: AiPromptSettingsPutRequest,
+): Promise<AiPromptSettingsData> {
+  return callApi(() => api.api.student.ai.prompts.$put({ json: request }));
 }
 
 /** 读学生 / 作业的 AI 策略覆盖（含保存后即刻有效裁决预览） */
