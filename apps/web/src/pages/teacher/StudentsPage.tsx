@@ -15,6 +15,7 @@ import {
   UserRoundPlus,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -51,6 +52,7 @@ import { formatRelativeTime } from "@/lib/time";
  *   + 可选加入课程；
  * - 复制专属链接（`${origin}/s/${token}`，HTTP 环境降级复制）；
  * - 重置密码（一次性明文弹窗）/ 重置链接（旧链接立即失效）/ 归档与取消归档。
+ * T-PR1：学生名链接进学生主页 /t/students/:id（教师端以学生为导航单位）。
  * 三态齐全（加载骨架 / 空态指引 / 错误重试），触控目标 ≥44px。
  */
 
@@ -302,7 +304,13 @@ function StudentCard({
   return (
     <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-base font-semibold">{student.displayName}</p>
+        {/* T-PR1：学生名链接进学生主页 */}
+        <Link
+          to={`/t/students/${student.id}`}
+          className="rounded text-base font-semibold outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          {student.displayName}
+        </Link>
         <p className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
           登录名：{student.loginName}
         </p>
