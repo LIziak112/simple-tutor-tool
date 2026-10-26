@@ -137,13 +137,13 @@ describe("fold 指令真实渲染探针（e2e 回归）", () => {
   });
 });
 
-  it("对照：同一 fold 源文不开 lrNodes 时正常渲染（二分定位）", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    render(
-      <RichMarkdown
-        source={'阅读题干。\n\n:::fold{title="公开材料"}\n材料内容。\n:::'}
-      />,
-    );
-    expect(screen.queryByText("未支持指令：fold")).toBeNull();
-    expect(screen.getByText("公开材料")).toBeTruthy();
-  });
+it("对照：同一 fold 源文不开 lrNodes 时正常渲染（二分定位）", async () => {
+  const { render, screen } = await import("@testing-library/react");
+  render(
+    <RichMarkdown
+      source={'阅读题干。\n\n:::fold{title="公开材料"}\n材料内容。\n:::'}
+    />,
+  );
+  expect(screen.queryByText("未支持指令：fold")).toBeNull();
+  expect(screen.getByText("公开材料")).toBeTruthy();
+});
