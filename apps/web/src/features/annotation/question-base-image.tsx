@@ -118,6 +118,18 @@ function sameGeometry(left: SurfaceMeasure, right: SurfaceMeasure): boolean {
   );
 }
 
+/**
+ * 几何签名的块投影（LR-5 回归根因修复）：剥掉 blocks[].node 再哈希——
+ * node 是 PR2 新增的语义键，旧底图的 geometrySignature 是无 node 时代的块
+ * 哈希；把 node 计入会让旧设备核验永远失配、旧稿无法续写。存档证据里的
+ * blocks[].node 原样保留（锚点重投影要用），只影响签名输入。
+ */
+function geometryBlocksProjection(
+  blocks: AnnotationSurfaceCompatibility["blocks"],
+): unknown[] {
+  return blocks.map(({ node: _node, ...rect }) => rect);
+}
+
 /** 只测量公开题面；与建底图共享签名算法，不栅格化、不取表单值。 */
 export async function questionSurfaceMatchesLayout(
   question: AttemptQuestionPublic,
@@ -160,7 +172,12 @@ async function legacyCompatibility(
     (await contentHash64(value)) === saved;
   if (
     !(await matchesLegacyHash(publicContent, layout.contentSignature)) ||
-    !(await matchesLegacyHash(measure.blocks, layout.geometrySignature))
+    !(
+      await matchesLegacyHash(
+        geometryBlocksProjection(measure.blocks),
+        layout.geometrySignature,
+      )
+    )
   )
     return null;
   for (const candidate of legacySurfaceFontCandidates(measure.fonts)) {
@@ -360,7 +377,7 @@ export async function renderQuestionBaseImage(
           stemMd: question.stemMd,
           options: question.options ?? [],
         }),
-        contentHash64(before.blocks),
+        contentHash64(geometryBlocksProjection(before.blocks)),
         contentHash64(before.fonts),
       ]);
     const layout = annotationSurfaceLayoutSchema.parse({
