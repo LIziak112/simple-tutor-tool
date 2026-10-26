@@ -16,7 +16,7 @@ function judgeStemOf(stemMd: string): string {
 /** 选项按钮的公共外壳（单选/多选共用；触控 ≥44px；has-[:checked] 联动选中态） */
 function optionShellClass(selected: boolean): string {
   return cn(
-    "flex min-h-12 w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
+    "flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
     selected
       ? "border-primary bg-primary/5 ring-1 ring-primary"
       : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
@@ -25,14 +25,16 @@ function optionShellClass(selected: boolean): string {
 
 /** 单个选项的内容（字母 + Markdown/公式文本） */
 function OptionBody({ letter, text }: { letter: string; text: string }) {
+  // 独立的「0.」「1.」是选项正文，不能被 Markdown 解释成空的有序列表。
+  const source = text.replace(/^(\s*\d+)\.(\s*)$/, "$1\\.$2");
   return (
     <>
-      <span className="mt-0.5 w-5 shrink-0 text-sm font-semibold">
+      <span className="w-5 shrink-0 text-center text-sm leading-7 font-semibold">
         <span className="sr-only">选项</span> {letter}
       </span>
       <RichMarkdown
-        source={text}
-        className="min-w-0 flex-1 text-base leading-[1.75]"
+        source={source}
+        className="question-markdown min-w-0 flex-1 text-base leading-[1.75]"
       />
     </>
   );
@@ -121,7 +123,7 @@ function ChoiceControls({
   const picked = answer?.kind === "choice" ? answer.index : undefined;
   const groupName = `choice-${question.id}-${useId()}`;
   return (
-    <div className="flex flex-col gap-2" role="radiogroup" aria-label="选项">
+    <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="选项">
       {(question.options ?? []).map((option, index) => (
         <label key={option} className={optionShellClass(picked === index)}>
           <input
@@ -163,7 +165,7 @@ function MultiControls({
   return (
     <fieldset
       aria-label="多选题选项"
-      className="m-0 flex flex-col gap-2 border-0 p-0"
+      className="m-0 flex flex-col gap-1.5 border-0 p-0"
     >
       {(question.options ?? []).map((option, index) => (
         <label
@@ -209,13 +211,13 @@ export const QuestionSurface = memo(function QuestionSurface({
       <div
         data-slot="question-surface"
         inert={mode === "export"}
-        className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
+        className="mx-auto flex w-full min-w-0 flex-col gap-3 text-base leading-[1.75]"
       >
         {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
         {question.type === "judge" ? (
           <RichMarkdown
             source={judgeStemOf(question.stemMd)}
-            className="text-base leading-[1.75]"
+            className="question-markdown text-base leading-[1.75]"
           />
         ) : question.type === "fill" ? (
           <BlankAnswersProvider
@@ -238,7 +240,7 @@ export const QuestionSurface = memo(function QuestionSurface({
           >
             <RichMarkdown
               source={question.stemMd}
-              className="text-base leading-[1.75]"
+              className="question-markdown text-base leading-[1.75]"
             />
           </BlankAnswersProvider>
         ) : question.type === "choice" || question.type === "multi" ? (
@@ -246,12 +248,12 @@ export const QuestionSurface = memo(function QuestionSurface({
           // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
           <RichMarkdown
             source={displayStemMd(question)}
-            className="text-base leading-[1.75]"
+            className="question-markdown text-base leading-[1.75]"
           />
         ) : (
           <RichMarkdown
             source={question.stemMd}
-            className="text-base leading-[1.75]"
+            className="question-markdown text-base leading-[1.75]"
           />
         )}
 

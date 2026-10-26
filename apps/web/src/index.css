@@ -204,6 +204,13 @@
 .rich-markdown p {
   @apply my-2;
 }
+/* 题面由外层控制分组间距；保留内部段落间距，不裁剪长选项、图片或公式。 */
+.rich-markdown.question-markdown > :first-child {
+  margin-block-start: 0;
+}
+.rich-markdown.question-markdown > :last-child {
+  margin-block-end: 0;
+}
 .rich-markdown ul {
   @apply my-2 list-disc pl-6;
 }
