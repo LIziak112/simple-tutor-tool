@@ -2832,9 +2832,7 @@ describe("canonicalNoteJson 旧格式字节钉值（LR-PR3）", () => {
       paperHeightLogical: 800,
       background: "grid",
     } as const;
-    const parsed = JSON.parse(
-      canonicalNoteJson(noteDocSchema.parse(withNew)),
-    );
+    const parsed = JSON.parse(canonicalNoteJson(noteDocSchema.parse(withNew)));
     expect(parsed.ink.strokes[0].id).toBe("stroke-ab1");
     expect(parsed.ink.strokes[0].startedAt).toBe(7);
     expect(parsed.ink.deleted[0].deletedAt).toBe(9);

@@ -172,12 +172,10 @@ async function legacyCompatibility(
     (await contentHash64(value)) === saved;
   if (
     !(await matchesLegacyHash(publicContent, layout.contentSignature)) ||
-    !(
-      await matchesLegacyHash(
-        geometryBlocksProjection(measure.blocks),
-        layout.geometrySignature,
-      )
-    )
+    !(await matchesLegacyHash(
+      geometryBlocksProjection(measure.blocks),
+      layout.geometrySignature,
+    ))
   )
     return null;
   for (const candidate of legacySurfaceFontCandidates(measure.fonts)) {
