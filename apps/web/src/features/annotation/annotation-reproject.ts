@@ -36,15 +36,19 @@ interface Rect {
 }
 
 /** 布局证据里的块矩形表（node 键 → 矩形；无 node 的块不入表） */
+/** 布局证据里的块矩形表（node 键 → 底图像素域矩形；无 node 的块不入表）。
+ * 评审 #11750 必改①：measure 落盘的 blocks 是 CSS 像素，文档笔画点是底图
+ * 像素（CSS × pixelRatio）——消费前先做域转换，同布局恒等、跨布局不错位。 */
 function keyedBlocksOf(layout: AnnotationSurfaceLayout): Map<string, Rect> {
   const map = new Map<string, Rect>();
+  const ratio = layout.pixelRatio;
   for (const block of layout.compatibility?.blocks ?? []) {
     if (block.node !== undefined && map.has(block.node) === false) {
       map.set(block.node, {
-        x: block.x,
-        y: block.y,
-        width: block.width,
-        height: block.height,
+        x: block.x * ratio,
+        y: block.y * ratio,
+        width: block.width * ratio,
+        height: block.height * ratio,
       });
     }
   }

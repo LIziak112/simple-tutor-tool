@@ -607,13 +607,6 @@ describe("formatReplayTime", () => {
  * - 全笔带 startedAt → 真实间隙时间轴（timing:"real"），超限压缩 + pauses 标记；
  * - 任一笔缺 startedAt → 旧口径（approx）不变；
  * - 墓碑进 deletedSlots（绘制自 startedAt、deletedAt 消失），approx 口径不显示。
- */
-
-/**
- * LR-PR4 真实停顿与擦改可视化（学习记录模型设计稿 §7.1）：
- * - 全笔带 startedAt → 真实间隙时间轴（timing:"real"），超限压缩 + pauses 标记；
- * - 任一笔缺 startedAt → 旧口径（approx）不变；
- * - 墓碑进 deletedSlots（绘制自 startedAt、deletedAt 消失），approx 口径不显示。
  * 夹具首笔时长 3000ms ≥ 下限 2000ms，绝对时刻断言不触发拉伸（同既有口径）。
  */
 describe("LR-PR4 真实停顿与墓碑时间轴", () => {
@@ -714,5 +707,92 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     const legacy = parseInkReplayData(timedDoc([legacyTomb]));
     if (legacy?.engine !== "atrament") return;
     expect(legacy.deletedSlots).toEqual([]);
+  });
+
+  it("停顿前写并擦掉的墓碑：不被段后总位移归零（评审 #11750 必改②a）", () => {
+    const doc = timedDoc([
+      {
+        tool: "pen",
+        color: "#1f2328",
+        weight: 4,
+        id: "stroke-early",
+        startedAt: 1727392800000 + 1000,
+        pointer: "pen",
+        deletedAt: 1727392800000 + 2000,
+        points: [{ x: 20, y: 15, p: 0.5, t: 200 }],
+      },
+    ]);
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    // 墓碑书写/消失都在停顿（3000→12000 段）之前：compress 保持原值，
+    // 不得被段后总位移 4000 归零成 0/0（旧实现探针即此败）
+    expect(model.deletedSlots).toHaveLength(1);
+    expect(model.deletedSlots[0]?.startMs).toBe(1000);
+    expect(model.deletedSlots[0]?.deletedAtMs).toBe(2000);
+  });
+
+  it("短回放拉伸：墓碑时间轴随同一比例缩放（评审 #11750 必改②b）", () => {
+    // 单笔短文档（无 stroke-2）：总时长 100 < 下限 2000 → 整轴 ×20 拉伸，
+    // 墓碑 startMs/deletedAtMs/pointTimes 同比例（1 → 20、1500 → 30000）
+    const doc = {
+      engine: "atrament",
+      version: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-live",
+            startedAt: 1727392800000,
+            pointer: "pen",
+            points: [{ x: 10, y: 10, p: 0.5, t: 100 }],
+          },
+        ],
+        deleted: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-gone",
+            startedAt: 1727392800000,
+            pointer: "pen",
+            deletedAt: 1727392800000 + 1500,
+            points: [{ x: 20, y: 15, p: 0.5, t: 50 }],
+          },
+        ],
+      },
+      updatedAt: 1748918400000,
+    };
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    expect(model.timing).toBe("real");
+    expect(model.durationMs).toBe(2000);
+    expect(model.deletedSlots[0]?.startMs).toBe(0);
+    expect(model.deletedSlots[0]?.deletedAtMs).toBe(2000);
+    // 点时刻为墓碑内相对时刻（首点归零），拉伸后仍为 0
+    expect(model.deletedSlots[0]?.pointTimesMs).toEqual([0]);
+  });
+
+  it("擦除发生在末笔之后：durationMs 覆盖消失时刻（评审 #11750 必改②c）", () => {
+    // 墓碑 deletedAt（+15000）晚于末笔起点（+12000）：映射后 11000，
+    // durationMs 取映射后最大时刻——播放能到达墓碑消失点
+    const doc = timedDoc([
+      {
+        tool: "pen",
+        color: "#1f2328",
+        weight: 4,
+        id: "stroke-late",
+        startedAt: 1727392800000,
+        pointer: "pen",
+        deletedAt: 1727392800000 + 15000,
+        points: [{ x: 20, y: 15, p: 0.5, t: 100 }],
+      },
+    ]);
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    expect(model.deletedSlots[0]?.deletedAtMs).toBe(11000);
+    expect(model.durationMs).toBe(11000);
   });
 });

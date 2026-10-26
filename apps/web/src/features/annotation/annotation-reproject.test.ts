@@ -31,9 +31,10 @@ const SAVED: AnnotationSurfaceLayout = {
   compatibility: {
     version: 1,
     contentSignature: "a".repeat(64),
+    // blocks 是 CSS 像素（measure 落盘口径）：×pixelRatio 2 = 底图像素域
     blocks: [
-      { x: 0, y: 0, width: 1440, height: 80, tag: "p", node: "stem/p/0" },
-      { x: 0, y: 120, width: 1440, height: 80, tag: "p", node: "stem/p/1" },
+      { x: 0, y: 0, width: 720, height: 40, tag: "p", node: "stem/p/0" },
+      { x: 0, y: 60, width: 720, height: 40, tag: "p", node: "stem/p/1" },
     ],
     fonts: [
       ["16px", "16px", "16px", "sans-serif", "normal"],
@@ -52,8 +53,8 @@ const TARGET: AnnotationSurfaceLayout = {
     version: 1,
     contentSignature: "d".repeat(64),
     blocks: [
-      { x: 0, y: 0, width: 2160, height: 120, tag: "p", node: "stem/p/0" },
-      { x: 0, y: 180, width: 2160, height: 130, tag: "p", node: "stem/p/1" },
+      { x: 0, y: 0, width: 1080, height: 60, tag: "p", node: "stem/p/0" },
+      { x: 0, y: 90, width: 1080, height: 65, tag: "p", node: "stem/p/1" },
     ],
     fonts: [
       ["16px", "16px", "16px", "sans-serif", "normal"],

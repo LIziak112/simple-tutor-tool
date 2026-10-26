@@ -97,6 +97,9 @@ export function createAtramentReplayCanvas(
     visiblePoints: readonly number[],
   ): void => {
     lastFrame = { strokes, visiblePoints };
+    // 「看擦改」关掉后不再调 drawDeleted——清掉残留墓碑入参，防 ResizeObserver
+    // 重画时把过期墓碑叠回当前帧（评审 #11750 顺手项）
+    lastDeleted = null;
     // 清屏（transform 安全口径，同 adapter.redraw；随后恢复画笔状态）
     ctx2d.save();
     ctx2d.setTransform(1, 0, 0, 1, 0, 0);
@@ -119,7 +122,9 @@ export function createAtramentReplayCanvas(
   };
 
   // LR-PR4：墓碑淡色虚线（教师「看擦改」）。startMs ≤ t < deletedAtMs 可见，
-  // 点数按 pointTimesMs 截断到当前时刻；样式在 save/restore 内局部生效
+  // 点数按 pointTimesMs 截断到当前时刻；样式在 save/restore 内局部生效。
+  // 注意：freehand 渲染器（学生设置可选）走多边形填充，setLineDash 不生效、
+  // 只剩 alpha 淡化——虚线承诺仅对 atrament 主路径成立
   const drawDeleted = (
     tombstones: readonly {
       stroke: InkStroke;

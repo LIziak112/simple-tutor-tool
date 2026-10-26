@@ -289,39 +289,87 @@ function buildAtramentModel(
   const deletedSlots: AtramentReplayModel["deletedSlots"] = [];
   let durationMs = 0;
   if (allTimed) {
+    // 防御性排序（评审 #11750 顺手项）：同步为整文档 CAS 不乱序，排序保
+    // slots/strokes/时间轴三方对齐一致（approx 口径不排序——缺 startedAt
+    // 的旧稿按数组序，排序键会全塌到 0 互相颠倒）
+    normalized.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
     const t0 = Math.min(...normalized.map((item) => item.startedAt ?? 0));
-    let prevEnd = 0;
+    // 评审 #11750 必改②：对 strokes∪deleted 的全部时刻（起点/终点/删除时刻）
+    // 建一条分段压缩映射 compress(real)——slots 起点墓碑 startMs/deletedAtMs/
+    // pauses 都过同一映射，「停顿前写并擦掉的墓碑」不会被段后总位移归零；
+    // durationMs = 映射后最大时刻（擦除发生在末笔之后也播得到消失，②c）。
+    const realMoments: number[] = [];
+    for (const item of normalized) {
+      const start = item.startedAt ?? 0;
+      realMoments.push(start, start + (item.pointTimesMs.at(-1) ?? 0));
+    }
+    for (const tomb of deleted) {
+      if (tomb.startedAt !== null) realMoments.push(tomb.startedAt);
+      if (tomb.deletedAt !== null) realMoments.push(tomb.deletedAt);
+    }
+    const moments = [...new Set(realMoments)].sort((a, b) => a - b);
+    const momentReal: number[] = [];
+    const mapped: number[] = [];
     let shift = 0;
-    for (const [index, item] of normalized.entries()) {
-      const pointTimesMs = item.pointTimesMs;
-      let startMs = (item.startedAt ?? 0) - t0 - shift;
-      const last = pointTimesMs[pointTimesMs.length - 1] ?? 0;
-      if (index > 0) {
-        const gap = startMs - prevEnd;
+    for (let i = 0; i < moments.length; i++) {
+      const rel = (moments[i] ?? 0) - t0;
+      if (i > 0) {
+        const prevRel = momentReal[i - 1] ?? 0;
+        const gap = rel - prevRel;
         if (gap > REPLAY_PAUSE_CAP_MS) {
           // 压缩：显示等待封顶为上限，实际时长进「停顿」标记（§7.1）
-          const realGap = gap;
           shift += gap - REPLAY_PAUSE_CAP_MS;
-          startMs = prevEnd + REPLAY_PAUSE_CAP_MS;
-          pauses.push({ atMs: prevEnd + REPLAY_PAUSE_CAP_MS, realMs: realGap });
         }
       }
-      if (startMs < prevEnd) startMs = prevEnd;
-      slots.push({ startMs, pointTimesMs });
-      durationMs = startMs + last;
-      prevEnd = durationMs;
+      momentReal.push(rel);
+      const thisMapped = Math.max(
+        rel - shift,
+        i > 0 ? (mapped[i - 1] ?? 0) : 0,
+      );
+      if (i > 0) {
+        const prevRel = momentReal[i - 1] ?? 0;
+        const gap = rel - prevRel;
+        if (gap > REPLAY_PAUSE_CAP_MS) {
+          pauses.push({ atMs: thisMapped, realMs: gap });
+        }
+      }
+      mapped.push(thisMapped);
     }
-    // 墓碑时间轴（real 口径）：绘制自自身 startedAt 起、deletedAt 时刻消失；
-    // 时间轴压缩同样作用（shift 一致，标记与墓碑消失位置对齐）
+    /** 分段映射：real 绝对时刻 → 压缩后时间轴。压缩发生在段边界（间隙即
+     * 停顿）：段内 1:1 前进但封顶为 CAP——超长间隙内的任何时刻都映射到
+     * 「上一时刻 + CAP」，与 slots 起点同式。 */
+    const compress = (realAbs: number): number => {
+      const rel = Math.max(0, realAbs - t0);
+      for (let i = 0; i < momentReal.length; i++) {
+        const segStart = momentReal[i] ?? 0;
+        const segEnd =
+          i + 1 < momentReal.length
+            ? (momentReal[i + 1] ?? Number.POSITIVE_INFINITY)
+            : Number.POSITIVE_INFINITY;
+        if (rel <= segEnd) {
+          const cap = Math.min(segEnd - segStart, REPLAY_PAUSE_CAP_MS);
+          return (mapped[i] ?? 0) + Math.min(rel - segStart, cap);
+        }
+      }
+      return mapped[mapped.length - 1] ?? 0;
+    };
+    for (const item of normalized) {
+      slots.push({
+        startMs: compress(item.startedAt ?? t0),
+        pointTimesMs: item.pointTimesMs,
+      });
+    }
+    // 墓碑时间轴（real 口径）：同一 compress——停顿前写并擦掉的墓碑不再归零
     for (const tomb of deleted) {
       if (tomb.startedAt === null || tomb.deletedAt === null) continue;
       deletedSlots.push({
         stroke: tomb.stroke,
         pointTimesMs: normalizePointTimes(tomb.rawTimes),
-        startMs: Math.max(0, tomb.startedAt - t0 - shift),
-        deletedAtMs: Math.max(0, tomb.deletedAt - t0 - shift),
+        startMs: compress(tomb.startedAt),
+        deletedAtMs: compress(tomb.deletedAt),
       });
     }
+    durationMs = mapped.length > 0 ? (mapped[mapped.length - 1] ?? 0) : 0;
   } else {
     let cursor = 0;
     for (const item of normalized) {
@@ -400,6 +448,13 @@ function stretchToMinDuration(model: InkReplayModel): void {
       }
       const last = slot.pointTimesMs[slot.pointTimesMs.length - 1];
       if (last !== undefined) end = Math.max(end, slot.startMs + last);
+    }
+    // 评审 #11750 必改②b：停顿标记与墓碑时间轴随同一比例缩放
+    for (const pause of model.pauses) pause.atMs *= scale;
+    for (const tomb of model.deletedSlots) {
+      tomb.startMs *= scale;
+      tomb.deletedAtMs *= scale;
+      tomb.pointTimesMs = tomb.pointTimesMs.map((t) => t * scale);
     }
   } else {
     for (const slot of model.slots) {
