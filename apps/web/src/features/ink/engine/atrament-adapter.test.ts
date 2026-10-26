@@ -199,7 +199,17 @@ it("实验平滑调参保留撤销历史与输入面", () => {
   h.surface.setSmoothing(0.15);
   expect(h.surface.canUndo()).toBe(true);
   h.surface.undo();
-  expect(h.surface.getDoc().data).toEqual({ width: 1000, strokes: [] });
+  // LR-2：撤销新增会产墓碑（deletedBy "undo"）——过程信号随文档进出
+  expect(h.surface.getDoc().data).toEqual({
+    width: 1000,
+    strokes: [],
+    deleted: [
+      expect.objectContaining({
+        deletedBy: "undo",
+        points: expect.any(Array),
+      }),
+    ],
+  });
   expect(h.surface.canRedo()).toBe(true);
   h.surface.setSmoothing(0.4);
   h.surface.redo();

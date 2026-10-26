@@ -15,9 +15,11 @@
  */
 import type {
   InkAtramentData as ContractInkAtramentData,
+  InkDeletedStroke as ContractInkDeletedStroke,
   InkDoc as ContractInkDoc,
   InkEngineKind as ContractInkEngineKind,
   InkExcalidrawData as ContractInkExcalidrawData,
+  InkPointerKind as ContractInkPointerKind,
   InkStroke as ContractInkStroke,
   InkStrokePoint as ContractInkStrokePoint,
 } from "@tutor/contract";
@@ -32,6 +34,12 @@ export type InkDoc<E extends InkEngineKind = InkEngineKind> = Extract<
   ContractInkDoc,
   { engine: E }
 >;
+
+/** LR-2：擦除墓碑（契约 inkDeletedStrokeSchema 的推断类型，re-export 单源） */
+export type InkDeletedStroke = ContractInkDeletedStroke;
+
+/** LR-1：落笔输入来源（pointerType 直录） */
+export type InkPointerKind = ContractInkPointerKind;
 
 /** 一个笔迹点（契约形状：x/y 归一化坐标、p 压力 0–1、t 相对本笔毫秒） */
 export type InkStrokePoint = ContractInkStrokePoint;
