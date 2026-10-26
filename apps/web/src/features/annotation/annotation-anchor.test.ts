@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { anchorKeyForStroke, strokeBbox } from "./annotation-anchor";
+import {
+  anchorKeyForStroke,
+  blocksInBaseDomain,
+  strokeBbox,
+} from "./annotation-anchor";
 
 /**
  * 圈画收笔锚定单测（LR-6，学习记录模型设计稿 §5.3；LR-PR2 验收点
@@ -87,5 +91,25 @@ describe("annotation-anchor（LR-6 收笔锚定）", () => {
       points: [],
     });
     expect(bbox).toBeNull();
+  });
+});
+
+/**
+ * LR-5 域转换测试锁（评审 #11768，PR24 合入前置）：measure 落盘的 blocks 是
+ * CSS 像素、笔画包围盒是底图像素（CSS × pixelRatio）——消费方必须先经
+ * blocksInBaseDomain 转换；不转换时同一点会锚到错误的块。
+ */
+describe("blocksInBaseDomain 域转换（PR24 合入前置）", () => {
+  it("CSS 块转底图域后锚定正确：y 70→78 锚到 p/0（不转域会错锚 p/1）", () => {
+    const cssBlocks = [
+      { x: 0, y: 0, width: 720, height: 40, tag: "p", node: "stem/p/0" },
+      { x: 0, y: 60, width: 720, height: 40, tag: "p", node: "stem/p/1" },
+    ];
+    // 底图域笔画点 y 70→78：转域后落在 p/0（base [0,80]）内
+    const converted = blocksInBaseDomain(cssBlocks, 2);
+    const bbox = { minX: 10, minY: 70, maxX: 30, maxY: 78 };
+    expect(anchorKeyForStroke(bbox, converted)).toBe("stem/p/0");
+    // 反证：不转域（CSS 块直接消费）时同一点错锚 p/1
+    expect(anchorKeyForStroke(bbox, cssBlocks)).toBe("stem/p/1");
   });
 });
