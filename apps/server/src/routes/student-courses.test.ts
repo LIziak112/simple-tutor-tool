@@ -758,3 +758,79 @@ describe("GET /api/student/courses/:id/units/:unitId 单元落地页（M5-D2 推
     assertNoQuestionFields(body);
   });
 });
+
+it("嵌套目录的父级发布门同时约束目录与直达讲义；普通学生投影无答案", async () => {
+  const env = await makeEnv();
+  const items = await teacherItems(env);
+  const lecture = items.find((item) => item.kind === "lecture");
+  expect(lecture).toBeDefined();
+  const command = async (body: unknown) => {
+    const res = await env.app.request(
+      `/api/teacher/courses/${env.courseId}/catalog`,
+      {
+        method: "POST",
+        headers: {
+          cookie: env.teacherCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    expect(res.status).toBe(200);
+    return res.json() as Promise<{ data: { id: string } }>;
+  };
+  const folder = await command({
+    action: "createFolder",
+    title: "内部目录",
+    parentId: null,
+  });
+  await command({
+    action: "move",
+    ids: [lecture?.id],
+    parentId: folder.data.id,
+  });
+  await command({
+    action: "setVisibility",
+    ids: [folder.data.id],
+    visible: false,
+  });
+  const hidden = await env.app.request(`/api/student/courses/${env.courseId}`, {
+    headers: { cookie: env.memberCookie },
+  });
+  const hiddenBody = studentCourseDetailOkSchema.parse(await hidden.json());
+  expect(hiddenBody.data.items.some((item) => item.id === lecture?.id)).toBe(
+    false,
+  );
+  assertNoQuestionFields(hiddenBody);
+  const direct = await env.app.request(
+    `/api/student/lectures/${lecture?.refId}?courseId=${env.courseId}`,
+    { headers: { cookie: env.memberCookie } },
+  );
+  expect(direct.status).toBe(404);
+  await command({
+    action: "setVisibility",
+    ids: [folder.data.id],
+    visible: true,
+  });
+  const shown = await env.app.request(`/api/student/courses/${env.courseId}`, {
+    headers: { cookie: env.memberCookie },
+  });
+  const shownBody = studentCourseDetailOkSchema.parse(await shown.json());
+  expect(
+    shownBody.data.items.find((item) => item.id === lecture?.id)?.parentId,
+  ).toBe(folder.data.id);
+  assertNoQuestionFields(shownBody);
+  const forbidden = await env.app.request(
+    `/api/teacher/courses/${env.courseId}/catalog`,
+    {
+      method: "POST",
+      headers: { cookie: env.memberCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "createFolder",
+        title: "越权",
+        parentId: null,
+      }),
+    },
+  );
+  expect(forbidden.status).toBe(401);
+});

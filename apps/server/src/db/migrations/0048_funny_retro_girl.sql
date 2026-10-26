@@ -1,0 +1,1 @@
+ALTER TABLE `course_items` ADD `import_path` text;

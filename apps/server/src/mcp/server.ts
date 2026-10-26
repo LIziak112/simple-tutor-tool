@@ -3,6 +3,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ANALYTICS_DAYS_DEFAULT,
   ANALYTICS_FOCUS_DAYS_DEFAULT,
+  courseCatalogCommandSchema,
+  courseItemsAddRequestSchema,
   type LearningPackExportRequest,
   learningPackExportRequestSchema,
   learningPackGoalSchema,
@@ -20,12 +22,22 @@ import {
   previewImport,
   summarizeParsed,
 } from "../services/content-service";
-import { listCoursesForTeacher } from "../services/course-service";
+import { executeCatalogCommand } from "../services/course-catalog";
+import {
+  appendCourseItems,
+  getCourseDetail,
+  listCoursesForTeacher,
+} from "../services/course-service";
 import {
   assembleLearningPack,
   type LearningPackServiceOptions,
 } from "../services/export-service";
-import { exportLectureMd, exportUnitMd } from "../services/library-service";
+import {
+  exportLectureMd,
+  exportUnitMd,
+  listLibraryLectures,
+  listLibraryUnits,
+} from "../services/library-service";
 import { saveMedia } from "../services/media-service";
 import { createReport } from "../services/report-service";
 import { listStudents } from "../services/student-service";
@@ -39,7 +51,7 @@ import { readSpecFile } from "../spec-files";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
- * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个）。
+ * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个；嵌套目录增补四个课程整理工具，共 18 个）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -49,8 +61,8 @@ import { readSpecFile } from "../spec-files";
  *
  * 红线：除 import_markdown(confirm=true)、save_report、upload_image 与
  * import_zip(confirm=true)（后两者只落盘 DATA_DIR/blobs/media 内容寻址文件；
- * import_zip 另经 commitImport 写教师资源库）外无任何写操作；
- * 不提供任何删除类工具（D23）。
+ * import_zip 另经 commitImport 写教师资源库）以及显式确认的课程目录整理外无其他写操作；
+ * 目录整理工具仅管理课程引用，不删除资源或作答；预览默认不写库。
  */
 
 /** MCP 服务器名称与版本（客户端可见；version 对齐项目主版本） */
@@ -276,7 +288,7 @@ export function mcpLearningPackRequestOf(
 // ---------- 工具注册 ----------
 
 /**
- * 创建一台绑定单教师的 MCP 服务器实例（14 工具）。
+ * 创建一台绑定单教师的 MCP 服务器实例（18 工具）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
@@ -285,6 +297,95 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     name: MCP_SERVER_NAME,
     version: MCP_SERVER_VERSION,
   });
+
+  server.registerTool(
+    "get_course_catalog",
+    {
+      description:
+        "读取本教师课程的完整嵌套目录（parentId=null 为根），含目录条目 ID、资源引用 ID、名称及可见性。整理前先读取；课程目录名独立于资源原件。",
+      inputSchema: { courseId: z.uuid() },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ courseId }) => {
+      const { id, name, items } = getCourseDetail(db, teacherId, courseId);
+      return jsonContent({ id, name, items });
+    }),
+  );
+  server.registerTool(
+    "get_library_catalog",
+    {
+      description:
+        "列出本教师可加入课程的讲义和独立练习元信息；不包含讲练嵌入单元。kind 与 refId 可交给 add_course_content。",
+      inputSchema: { q: z.string().max(100).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ q }) =>
+      jsonContent({
+        lectures: listLibraryLectures(db, teacherId, {
+          deleted: false,
+          ...(q ? { q } : {}),
+        }).map((row) => ({
+          kind: "lecture",
+          refId: row.id,
+          title: row.title,
+          docKind: row.kind,
+        })),
+        units: listLibraryUnits(db, teacherId, {
+          deleted: false,
+          ...(q ? { q } : {}),
+        }).map((row) => ({ kind: "unit", refId: row.id, title: row.title })),
+      }),
+    ),
+  );
+  server.registerTool(
+    "manage_course_catalog",
+    {
+      description:
+        "整理本教师课程文件夹与内容：createFolder/rename/move/reorder/setVisibility/remove；支持嵌套，课程内名称唯一。默认仅预览，confirm=true 执行。move 不改变发布设置；隐藏文件夹会隐藏后代；显示保留原定时。remove 仅移除课程引用，keepChildren=true 解散到上一级，false 连同子树移出课程；资源与作答保留。",
+      inputSchema: {
+        courseId: z.uuid(),
+        command: courseCatalogCommandSchema,
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    guard(({ courseId, command, confirm }) => {
+      const current = getCourseDetail(db, teacherId, courseId);
+      if (!confirm)
+        return jsonContent({
+          preview: true,
+          command,
+          currentItems: current.items,
+        });
+      return jsonContent(
+        executeCatalogCommand(db, teacherId, courseId, command),
+      );
+    }),
+  );
+  server.registerTool(
+    "add_course_content",
+    {
+      description:
+        "把资源库内容加入课程指定文件夹，parentId=null 为根目录；重复资源跳过。默认隐藏，不隐式发布；缺省仅预览，confirm=true 执行。",
+      inputSchema: {
+        courseId: z.uuid(),
+        request: courseItemsAddRequestSchema,
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    guard(({ courseId, request, confirm }) => {
+      getCourseDetail(db, teacherId, courseId);
+      if (!confirm) return jsonContent({ preview: true, request });
+      return jsonContent(
+        appendCourseItems(db, teacherId, courseId, request.items, {
+          parentId: request.parentId,
+          visible: request.visible ?? false,
+          withCompanionUnits: request.withCompanionUnits,
+        }),
+      );
+    }),
+  );
 
   // 1. get_dsl_spec：DSL 规范 + 样例（复用 T1.13 spec 路由数据源）
   server.registerTool(

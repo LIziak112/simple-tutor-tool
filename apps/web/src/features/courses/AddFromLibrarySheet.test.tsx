@@ -107,6 +107,7 @@ describe("AddFromLibrarySheet：无可见配套练习时不发送 withCompanionU
         },
       ],
       visible: true,
+      parentId: null,
     });
   });
 });

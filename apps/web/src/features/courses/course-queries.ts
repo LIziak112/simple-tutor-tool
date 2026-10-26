@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  CourseCatalogCommand,
   CourseCreateRequest,
   CourseDetailData,
   CourseItemsAddData,
@@ -18,6 +19,7 @@ import {
   fetchCourseDetail,
   fetchCourseStudentView,
   fetchTeacherCourses,
+  manageCourseCatalogApi,
   removeCourseMembersApi,
   reorderCourseItemsApi,
   updateCourseApi,
@@ -218,6 +220,15 @@ export function useSyncStudentCourses() {
         await removeCourseMembersApi(courseId, { studentIds: [studentId] });
       }
     },
+    onSuccess: invalidate,
+  });
+}
+
+export function useManageCourseCatalog(courseId: string) {
+  const invalidate = useInvalidateCourses(courseId);
+  return useMutation({
+    mutationFn: (request: CourseCatalogCommand) =>
+      manageCourseCatalogApi(courseId, request),
     onSuccess: invalidate,
   });
 }

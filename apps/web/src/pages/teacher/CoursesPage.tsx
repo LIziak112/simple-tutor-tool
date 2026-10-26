@@ -42,8 +42,8 @@ export function CoursesPage() {
   const coursesQuery = useTeacherCourses(archived);
 
   return (
-    <section className="teacher-page flex flex-col gap-6">
-      <header className="mb-2 flex flex-wrap items-start justify-between gap-4">
+    <section className="teacher-page flex flex-col gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="teacher-page-title">课程</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -106,7 +106,7 @@ export function CoursesPage() {
             onCreate={() => setCreateOpen(true)}
           />
         ) : (
-          <ul className="grid gap-3 sm:grid-cols-2">
+          <ul className="grid gap-2">
             {coursesQuery.data.courses.map((course) => (
               <CourseCard key={course.id} course={course} />
             ))}
@@ -124,15 +124,11 @@ export function CoursesPage() {
 
 function CoursesSkeleton() {
   return (
-    <div
-      role="status"
-      aria-label="正在加载课程"
-      className="grid gap-3 sm:grid-cols-2"
-    >
+    <div role="status" aria-label="正在加载课程" className="grid gap-2">
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
-          className="h-44 animate-pulse rounded-xl border border-border bg-muted/50"
+          className="h-28 animate-pulse rounded-xl border border-border bg-muted/50"
         />
       ))}
       <p className="sr-only">正在加载课程…</p>
@@ -181,14 +177,16 @@ function CourseCard({ course }: { course: CourseSummary }) {
   const busy = updateMutation.isPending || deleteMutation.isPending;
 
   return (
-    <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-card px-3 py-2 text-card-foreground">
       <button
         type="button"
         className="flex min-h-11 flex-col items-start gap-1 rounded-lg text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50"
         onClick={() => void navigate(`/t/courses/${course.id}`)}
       >
         <span className="flex flex-wrap items-center gap-2">
-          <span className="text-base font-semibold">{course.name}</span>
+          <span className="min-w-0 break-words text-base font-semibold">
+            {course.name}
+          </span>
           {course.archived && (
             <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
               已归档
@@ -207,7 +205,7 @@ function CourseCard({ course }: { course: CourseSummary }) {
         )}
       </button>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+      <div className="col-start-1 row-start-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
         <span className="flex items-center gap-1">
           <Users aria-hidden className="size-4" />
           成员 {course.memberCount}
@@ -221,7 +219,7 @@ function CourseCard({ course }: { course: CourseSummary }) {
         </span>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="col-start-2 row-start-1 row-span-2 flex flex-wrap gap-1">
         <Button
           variant="outline"
           className="min-h-11"

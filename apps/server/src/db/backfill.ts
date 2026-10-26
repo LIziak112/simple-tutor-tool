@@ -2,6 +2,7 @@ import { questionSchema, studentAnswerSchema } from "@tutor/contract";
 import { grade, isUnanswered } from "@tutor/grading";
 import { and, asc, eq, gt, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { finalScoreOf } from "../services/attempt-service.ts";
+import { ensureCatalogTitles } from "../services/course-catalog";
 import type { Db } from "./client";
 import {
   appSettings,
@@ -194,6 +195,34 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
     });
   }
   backfillOrphans(db, now);
+  if (!appliedKeys.has("nested_course_catalog_v1")) {
+    db.transaction(() => {
+      for (const course of db.select().from(courses).all()) {
+        let parentId: string | null = null;
+        const rows = db
+          .select()
+          .from(courseItems)
+          .where(eq(courseItems.courseId, course.id))
+          .orderBy(asc(courseItems.order), asc(courseItems.id))
+          .all();
+        for (const row of rows) {
+          if (row.kind === "section") parentId = row.id;
+          else
+            db.update(courseItems)
+              .set({ parentId })
+              .where(eq(courseItems.id, row.id))
+              .run();
+        }
+        ensureCatalogTitles(db, course.id);
+      }
+      db.insert(dataMigrations)
+        .values({
+          key: "nested_course_catalog_v1",
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
 }
 
 /**

@@ -44,6 +44,8 @@ import {
   useContentTree,
 } from "@/features/content/content-queries";
 import { DeleteConfirmDialog } from "@/features/content/DeleteConfirmDialog";
+import { catalogTreeRows } from "@/features/courses/catalog-tree";
+import { useCourseDetail } from "@/features/courses/course-queries";
 import {
   type FolderSelection,
   FolderSidebar,
@@ -841,9 +843,10 @@ export function LibraryPage() {
           ids={batchCourse.ids}
           pending={batchMutation.isPending}
           onCancel={() => setBatchCourse(null)}
-          onConfirm={(courseId, visible) =>
+          onConfirm={(courseId, visible, parentId) =>
             batchMutation.mutate({
               action: "addToCourse",
+              parentId,
               kind: batchCourse.kind,
               ids: batchCourse.ids,
               courseId,
@@ -1497,13 +1500,19 @@ function BatchCourseDialog({
   ids: string[];
   pending: boolean;
   onCancel: () => void;
-  onConfirm: (courseId: string, visible: boolean) => void;
+  onConfirm: (
+    courseId: string,
+    visible: boolean,
+    parentId: string | null,
+  ) => void;
 }) {
   const coursesQuery = useContentTree();
   const [courseId, setCourseId] = useState("");
   const [visible, setVisible] = useState(true);
+  const [parentId, setParentId] = useState("");
   const courses = coursesQuery.data?.courses ?? [];
   const effectiveCourseId = courseId || courses[0]?.id || "";
+  const detailQuery = useCourseDetail(effectiveCourseId);
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onCancel())}>
       <DialogContent className="max-w-md">
@@ -1539,7 +1548,10 @@ function BatchCourseDialog({
               <select
                 id="batch-course"
                 value={effectiveCourseId}
-                onChange={(e) => setCourseId(e.target.value)}
+                onChange={(e) => {
+                  setCourseId(e.target.value);
+                  setParentId("");
+                }}
                 className="min-h-11 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 {courses.map((course) => (
@@ -1549,6 +1561,36 @@ function BatchCourseDialog({
                 ))}
               </select>
             </div>
+            <label className="flex flex-col gap-1 text-sm">
+              课程内位置
+              <select
+                aria-label="课程内位置"
+                value={parentId}
+                disabled={detailQuery.isPending || detailQuery.isError}
+                onChange={(e) => setParentId(e.target.value)}
+                className="min-h-11 rounded-md border border-input bg-background px-3 text-base"
+              >
+                <option value="">根目录（未分组）</option>
+                {catalogTreeRows(detailQuery.data?.items ?? [])
+                  .filter((row) => row.item.kind === "section")
+                  .map((row) => (
+                    <option key={row.item.id} value={row.item.id}>
+                      {row.path}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {detailQuery.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                目录加载失败，
+                <Button
+                  variant="ghost"
+                  onClick={() => void detailQuery.refetch()}
+                >
+                  重试
+                </Button>
+              </p>
+            )}
             <label className="flex min-h-11 items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -1573,8 +1615,15 @@ function BatchCourseDialog({
           <Button
             type="button"
             className="min-h-11 px-5"
-            disabled={pending || effectiveCourseId.length === 0}
-            onClick={() => onConfirm(effectiveCourseId, visible)}
+            disabled={
+              pending ||
+              effectiveCourseId.length === 0 ||
+              detailQuery.isPending ||
+              detailQuery.isError
+            }
+            onClick={() =>
+              onConfirm(effectiveCourseId, visible, parentId || null)
+            }
           >
             {pending ? "添加中…" : `加入（${ids.length} 项）`}
           </Button>

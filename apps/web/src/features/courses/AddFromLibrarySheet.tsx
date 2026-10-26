@@ -8,6 +8,7 @@ import {
   Square,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ import {
   useLibraryUnits,
 } from "@/features/library/library-queries";
 import { ApiError } from "@/lib/api";
+import { catalogTreeRows } from "./catalog-tree";
 
 /**
  * 「从资源库添加」侧边抽屉（T2A.4，§4-3/§4-9）：
@@ -48,12 +50,17 @@ export function refIdKeysOf(detail: CourseDetailData): Set<string> {
 export function AddFromLibrarySheet({
   courseId,
   existingKeys,
+  detail,
+  initialParentId = null,
   onClose,
 }: {
   courseId: string;
   existingKeys: Set<string>;
+  detail?: CourseDetailData;
+  initialParentId?: string | null;
   onClose: () => void;
 }) {
+  const [parentId, setParentId] = useState(initialParentId ?? "");
   const [tab, setTab] = useState<"lectures" | "units">("lectures");
   const [folderId, setFolderId] = useState<string | "all">("all");
   const [query, setQuery] = useState("");
@@ -157,6 +164,7 @@ export function AddFromLibrarySheet({
     addMutation.mutate(
       {
         items,
+        parentId: parentId || null,
         visible,
         ...(expandCompanions ? { withCompanionUnits: true } : {}),
       },
@@ -196,6 +204,32 @@ export function AddFromLibrarySheet({
             选择讲义或练习单元追加到课程目录末尾；资源仍归资源库，编辑即时生效。
           </SheetDescription>
         </SheetHeader>
+        {detail && (
+          <label className="mt-3 flex flex-col gap-1 text-sm">
+            课程内位置
+            <select
+              aria-label="课程内位置"
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value)}
+              className="min-h-11 rounded-md border border-input bg-background px-3 text-base"
+            >
+              <option value="">根目录（未分组）</option>
+              {catalogTreeRows(detail.items)
+                .filter((row) => row.item.kind === "section")
+                .map((row) => (
+                  <option key={row.item.id} value={row.item.id}>
+                    {row.path}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+        <Link
+          className="inline-flex min-h-11 items-center text-sm text-primary underline"
+          to={`/t/import?courseId=${courseId}${parentId ? `&parentId=${parentId}` : ""}`}
+        >
+          改为导入文件到这里
+        </Link>
 
         <div className="flex flex-col gap-3 overflow-y-auto px-4 py-3">
           {/* 页签 */}

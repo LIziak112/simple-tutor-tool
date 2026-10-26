@@ -54,7 +54,7 @@ export function CourseEditPage() {
       <div
         role="status"
         aria-label="正在加载课程"
-        className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8"
+        className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 md:px-6 md:py-4"
       >
         <div className="h-24 animate-pulse rounded-xl bg-muted/50" />
         <div className="h-96 animate-pulse rounded-xl bg-muted/50" />
@@ -100,7 +100,7 @@ export function CourseEditPage() {
   const detail = detailQuery.data;
 
   return (
-    <section className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
+    <section className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 md:px-6 md:py-4">
       <CourseHeader
         courseId={detail.id}
         name={detail.name}
@@ -177,8 +177,8 @@ function CourseHeader({
   const busy = updateMutation.isPending || deleteMutation.isPending;
 
   return (
-    <header className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <header className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-card px-3 py-2">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         <Link
           to="/t/courses"
           className="flex min-h-11 items-center gap-1 rounded-md text-sm text-muted-foreground hover:text-foreground"
@@ -186,7 +186,7 @@ function CourseHeader({
           <ChevronLeft aria-hidden className="size-4" />
           课程
         </Link>
-        <h1 className="text-xl font-semibold">{name}</h1>
+        <h1 className="min-w-0 break-words text-xl font-semibold">{name}</h1>
         {archived && (
           <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
             已归档（学生不可见）
@@ -194,7 +194,9 @@ function CourseHeader({
         )}
       </div>
       {description && (
-        <p className="text-sm text-muted-foreground">{description}</p>
+        <p className="order-last w-full break-words text-sm text-muted-foreground">
+          {description}
+        </p>
       )}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" className="min-h-11" onClick={onEdit}>
@@ -234,19 +236,19 @@ function CourseHeader({
             </>
           )}
         </Button>
+        <DeleteCourseButton
+          courseId={courseId}
+          name={name}
+          busy={busy}
+          onDeleted={onDeleted}
+          onError={setActionError}
+        />
       </div>
       {actionError && (
         <p role="alert" className="text-sm text-destructive">
           {actionError}
         </p>
       )}
-      <DeleteCourseButton
-        courseId={courseId}
-        name={name}
-        busy={busy}
-        onDeleted={onDeleted}
-        onError={setActionError}
-      />
     </header>
   );
 }
