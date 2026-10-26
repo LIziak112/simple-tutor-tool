@@ -515,6 +515,7 @@ export function assembleReviewPack(
   // 装配的行如实缺席（P1 不伪造），导出其余内容照常
   let recordJson: string | null = null;
   let recordSchemaJson: string | null = null;
+  let recordNote: string | null = null;
   try {
     const learningRecord =
       role === "teacher"
@@ -536,8 +537,15 @@ export function assembleReviewPack(
           );
     recordJson = `${JSON.stringify(learningRecord, null, 2)}\n`;
     recordSchemaJson = `${JSON.stringify(learningRecordJsonSchema, null, 2)}\n`;
-  } catch {
-    // 装配失败不阻塞导出（遗留行如实无 record.json）
+  } catch (err) {
+    // 评审 #11695：只吞已知遗留类错误（升级遗留/快照缺失/文件缺失），
+    // ZodError 等不变量破坏照常抛出（出口 fail-closed 不在导出路径失效）；
+    // 如实缺席要在 manifest.contextNotes 留痕
+    if (err instanceof HttpError) {
+      recordNote = `record.json 未装配：${err.message}`;
+    } else {
+      throw err;
+    }
   }
   const recordEntries =
     recordJson === null || recordSchemaJson === null
@@ -559,6 +567,8 @@ export function assembleReviewPack(
 
   // —— manifest（pack.json 同前同时为清单；pack.json 自身不列） ——
   const contextNotes: string[] = [];
+  // LR-PR3（评审 #11695）：record 如实缺席在清单留痕
+  if (recordNote !== null) contextNotes.push(recordNote);
   if (!revision.present) {
     contextNotes.push(
       "本题历史快照缺失（题目已删除或升级遗留）：题干为空，不回填当前题库内容。",

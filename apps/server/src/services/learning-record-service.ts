@@ -53,6 +53,7 @@ import {
   assignments,
   events,
   ink as inkTable,
+  noteImages,
   notes,
   noteVersions,
   type ResponseRow,
@@ -105,8 +106,19 @@ function responseRowOf(
 
 function snapshotOf(row: ResponseRow): Question {
   try {
-    return JSON.parse(row.questionSnapshotJson ?? "") as Question;
-  } catch {
+    const parsed = JSON.parse(row.questionSnapshotJson ?? "") as Question;
+    // 升级遗留/损坏快照可能缺 stemMd（backup-gc 的坏行夹具即此类）——
+    // 统一折算成 SNAPSHOT_BROKEN（HttpError），装配调用方按已知遗留类降级
+    if (typeof parsed?.stemMd !== "string") {
+      throw new HttpError(
+        500,
+        "SNAPSHOT_BROKEN",
+        "冻结题目快照损坏（数据问题，请联系老师）",
+      );
+    }
+    return parsed;
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
     throw new HttpError(
       500,
       "SNAPSHOT_BROKEN",
@@ -274,7 +286,24 @@ function draftMaterialOf(
     strokes,
     deleted,
     stats: inkStatsOf(strokes, deleted),
-    images: [],
+    // 评审 #11695 顺手项：draft 面图片映射 note_images（记录是投影事实源，
+    // 消费方不再各自查表）；ready→ready，其余一律 missing（如实）
+    images: db
+      .select()
+      .from(noteImages)
+      .where(eq(noteImages.noteVersionId, note.currentVersionId))
+      .all()
+      .map((image) => ({
+        kind:
+          image.spec === "thumbnail"
+            ? ("thumbnail" as const)
+            : ("analysis" as const),
+        pageIndex: image.pageIndex,
+        pixelWidth: image.pixelWidth,
+        pixelHeight: image.pixelHeight,
+        state:
+          image.state === "ready" ? ("ready" as const) : ("missing" as const),
+      })),
   };
 }
 
@@ -514,7 +543,9 @@ function timelineOf(
     });
   }
 
-  // ② 笔画与删除（三份文档的 startedAt / deletedAt——「过程」主体）
+  // ② 笔画与删除（三份文档的 startedAt / deletedAt——「过程」主体）。
+  // maxStrokeEnd 为 timelineOf 局部（评审 #11695：模块级可变状态是反模式）
+  let maxStrokeEnd = 0;
   for (const material of materials) {
     if (!material.present) continue;
     const source =
@@ -523,7 +554,9 @@ function timelineOf(
         : material.kind === "annotation"
           ? "annotation"
           : "ink";
-    for (const stroke of material.strokes) {
+    // 被擦笔画也在 strokes∪deleted 口径内（设计稿 §6.1）——「什么时候写的」
+    // 是被擦内容最有价值的一半，erase 条目只记「什么时候没的」
+    for (const stroke of [...material.strokes, ...material.deleted]) {
       if (stroke.startedAt === undefined) continue;
       push({
         at: stroke.startedAt,
@@ -667,6 +700,21 @@ function timelineOf(
   const serverSavedCandidates = [
     ...noteRows.map((note) => note.serverSavedAt),
     ...annotationRows.map((annotation) => annotation.updatedAt),
+    // 评审 #11695 顺手项：正式手写行的时间也要进 skew 候选（只有正式手写的
+    // 题最常见，漏了它 skew 恒 null）
+    (() => {
+      const inkRow = db
+        .select()
+        .from(inkTable)
+        .where(
+          and(
+            eq(inkTable.attemptId, attempt.id),
+            eq(inkTable.questionId, row.questionId),
+          ),
+        )
+        .get();
+      return inkRow?.updatedAt ?? null;
+    })(),
   ].filter((value): value is string => value !== null);
   let serverSkewMs: number | null = null;
   if (maxStrokeEnd > 0 && serverSavedCandidates.length > 0) {
@@ -683,8 +731,6 @@ function timelineOf(
   };
 }
 
-let maxStrokeEnd = 0; // timelineOf 与材料装配间共享（模块级可变状态是反模式——见下）
-
 // ---------- 判定面（§3.7）与装配入口 ----------
 
 /**
@@ -700,7 +746,9 @@ function releasedOf(db: Db, attempt: Attempt, now: Date): boolean {
     .from(assignments)
     .where(eq(assignments.id, attempt.assignmentId))
     .get();
-  if (assignmentRow === undefined) return true;
+  // fail-closed（全仓口径）：有 attempt 的作业理论上不可删（D14），行缺失
+  // 属数据异常——按未公布处理，不留口子
+  if (assignmentRow === undefined) return false;
   return answersReleased(assignmentRow, now);
 }
 
@@ -712,7 +760,6 @@ function assemble(
   role: "student" | "teacher",
   now: Date,
 ): LearningRecord {
-  maxStrokeEnd = 0;
   const teacher = role === "teacher";
   const snapshot = snapshotOf(row);
   const pub = publicOfSnapshot(snapshot, row.id);

@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import type {
   AssignmentCreateRequest,
   TeacherAssignment,
@@ -5,8 +9,12 @@ import type {
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
-import { questions, students, units } from "../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import { ink as inkTable, questions, students, units } from "../db/schema.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { createAssignment } from "./assignment-service.ts";
 import {
@@ -125,6 +133,166 @@ function makeSubmittedAttempt(
   submitAttempt(db, studentId, attempt.id, options.submitAt ?? BEFORE_DUE);
   return { studentId, assignmentId: assignment.id, attemptId: attempt.id };
 }
+
+/**
+ * LR-PR3（评审 #11695 测试缺口）：有材料的装配——正式手写行 + blob 文件自建：
+ * - 旧格式 ink（无 startedAt/deleted）→ timingCoverage "none" 不报错、skew 仍可估；
+ * - 新格式 ink（startedAt + 墓碑）→ pauses/erase 时间线条目、学生 version 无 versionId。
+ */
+describe("learning-record 有材料装配（LR-PR3）", () => {
+  function inkRowWith(
+    db: Db,
+    dataDir: string,
+    attemptId: string,
+    doc: unknown,
+    updatedAt: string,
+  ): void {
+    const relPath = `blobs/ink/${attemptId}/strokes.json.gz`;
+    mkdirSync(join(dataDir, `blobs/ink/${attemptId}`), { recursive: true });
+    writeFileSync(
+      join(dataDir, relPath),
+      gzipSync(Buffer.from(JSON.stringify(doc))),
+    );
+    db.insert(inkTable)
+      .values({
+        id: randomUUID(),
+        attemptId,
+        questionId: "lr-q1",
+        strokesPath: relPath,
+        pngPath: relPath.replace(".json.gz", ".png"),
+        width: 10,
+        height: 10,
+        strokeCount: 2,
+        updatedAt,
+      })
+      .run();
+  }
+
+  it("旧格式 ink（无 startedAt）：timingCoverage none 不报错；学生 version 无 versionId", () => {
+    const db = createTestDb();
+    const { studentId, attemptId } = makeSubmittedAttempt(db, {
+      answerRelease: "on_submit",
+    });
+    const dataDir = createTestDir();
+    inkRowWith(
+      db,
+      dataDir,
+      attemptId,
+      {
+        engine: "atrament",
+        version: 1,
+        updatedAt: Date.parse(T0),
+        data: {
+          width: 1000,
+          strokes: [
+            {
+              tool: "pen",
+              color: "#1f2328",
+              weight: 4,
+              points: [{ x: 10, y: 20, p: 0.5, t: 0 }],
+            },
+          ],
+        },
+      },
+      T0,
+    );
+    const record = getStudentLearningRecord(
+      db,
+      dataDir,
+      studentId,
+      attemptId,
+      "lr-q1",
+    );
+    const formal = record.ink.find(
+      (material) => material.kind === "formal_ink",
+    );
+    expect(formal?.present).toBe(true);
+    expect(formal?.stats.timingCoverage).toBe("none");
+    expect(formal?.stats.firstAt).toBeNull();
+    expect(formal?.version?.versionId).toBeUndefined();
+  });
+
+  it("新格式 ink（startedAt + 墓碑）：真实停顿/erase 条目/skew 非空；学生 version 剥 id 与时刻", () => {
+    const db = createTestDb();
+    const { studentId, attemptId } = makeSubmittedAttempt(db, {
+      answerRelease: "on_submit",
+    });
+    const dataDir = createTestDir();
+    const t0 = Date.parse(BEFORE_DUE) - 60_000;
+    inkRowWith(
+      db,
+      dataDir,
+      attemptId,
+      {
+        engine: "atrament",
+        version: 1,
+        updatedAt: t0 + 60_000,
+        data: {
+          width: 1000,
+          strokes: [
+            {
+              tool: "pen",
+              color: "#1f2328",
+              weight: 4,
+              id: "stroke-live",
+              startedAt: t0,
+              pointer: "pen",
+              points: [{ x: 10, y: 20, p: 0.5, t: 0 }],
+            },
+            {
+              tool: "pen",
+              color: "#1f2328",
+              weight: 4,
+              id: "stroke-live-2",
+              startedAt: t0 + 20_000,
+              pointer: "pen",
+              points: [{ x: 40, y: 40, p: 0.5, t: 300 }],
+            },
+          ],
+          deleted: [
+            {
+              tool: "pen",
+              color: "#1f2328",
+              weight: 4,
+              id: "stroke-gone",
+              startedAt: t0 + 10_000,
+              pointer: "pen",
+              deletedAt: t0 + 40_000,
+              deletedBy: "eraser",
+              points: [{ x: 30, y: 30, p: 0.5, t: 100 }],
+            },
+          ],
+        },
+      },
+      T0,
+    );
+    const record = getStudentLearningRecord(
+      db,
+      dataDir,
+      studentId,
+      attemptId,
+      "lr-q1",
+      new Date(BEFORE_DUE),
+    );
+    const formal = record.ink.find(
+      (material) => material.kind === "formal_ink",
+    );
+    expect(formal?.stats.timingCoverage).toBe("full");
+    // 活笔画 2（stroke-gone 进墓碑）；笔间空闲 20s−0 > 5s 阈值 → 停顿派生
+    expect(formal?.stats.strokeCount).toBe(2);
+    expect(formal?.stats.deletedCount).toBe(1);
+    expect(formal?.stats.pauses.length).toBeGreaterThan(0);
+    // 时间线：stroke 与 erase 条目都在（被擦笔画保留「什么时候写的」）
+    const kinds = record.timeline.entries.map((entry) => entry.kind);
+    expect(kinds).toContain("stroke");
+    expect(kinds).toContain("erase");
+    // skew：服务端确认(T0) − 最晚落笔结束(t0+20100) ≈ 39900ms
+    expect(record.timeline.clock.serverSkewMs).not.toBeNull();
+    // 学生 version 面剥 id 与时刻（教师才带）
+    expect(formal?.version?.versionId).toBeUndefined();
+    expect(formal?.version?.savedAt).toBeUndefined();
+  });
+});
 
 describe("learning-record 服务（LR-PR3 装配与泄露）", () => {
   it("学生记录：禁携清单 + 公开投影 + 已公布判定（on_submit）", () => {
