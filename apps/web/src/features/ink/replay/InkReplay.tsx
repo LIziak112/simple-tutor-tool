@@ -38,14 +38,19 @@ export function InkReplay({
   data,
   className,
   layout = "embed",
+  showEraserToggle = false,
 }: {
   data: InkReplayModel;
   className?: string;
   layout?: "embed" | "fill";
+  /** LR-PR4：显示「看擦改」开关（教师端回放传 true；学生侧不传） */
+  showEraserToggle?: boolean;
 }) {
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<ReplaySpeed>(1);
+  /** 看擦改开关（仅 real 口径且存在墓碑时可用；关 = 与旧回放画面一致） */
+  const [showDeleted, setShowDeleted] = useState(false);
   /** 时间轴刻度的镜像（rAF 循环闭包里读最新值，避免过期闭包） */
   const timeRef = useRef(0);
   /** atrament 画布句柄（excalidraw 分支为 null） */
@@ -108,11 +113,17 @@ export function InkReplay({
 
   useEffect(() => {
     if (data.engine !== "atrament") return;
-    canvasRef.current?.drawFrame(
+    const handle = canvasRef.current;
+    if (!handle) return;
+    handle.drawFrame(
       data.strokes,
       frame.engine === "atrament" ? frame.visiblePoints : [],
     );
-  }, [data, frame]);
+    // LR-PR4：看擦改开启时在当前帧之上叠加墓碑（淡色虚线，deletedAt 消失）
+    if (showDeleted && frame.engine === "atrament" && handle.drawDeleted) {
+      handle.drawDeleted(data.deletedSlots, timeMs);
+    }
+  }, [data, frame, showDeleted, timeMs]);
 
   function seek(next: number): void {
     const clamped = Math.min(Math.max(next, 0), durationMs);
@@ -182,6 +193,24 @@ export function InkReplay({
         </div>
       )}
 
+      {/* LR-PR4：长停顿标记（real 口径；显示等待已压缩到上限，此处如实标注实际时长） */}
+      {data.engine === "atrament" && data.pauses.length > 0 ? (
+        <ul
+          aria-label="长停顿标记"
+          className="m-0 flex list-none flex-wrap gap-1.5 p-0 text-xs text-muted-foreground"
+        >
+          {data.pauses.map((pause) => (
+            <li
+              key={`${pause.atMs}-${pause.realMs}`}
+              className="rounded bg-muted/50 px-2 py-1"
+              title={`进度 ${formatReplayTime(pause.atMs)} 处停顿`}
+            >
+              此处停顿 {Math.round(pause.realMs / 1000)} 秒
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {/* 控制条（触控目标 ≥44px） */}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Button
@@ -227,6 +256,19 @@ export function InkReplay({
             </Button>
           ))}
         </fieldset>
+        {showEraserToggle === true &&
+        data.engine === "atrament" &&
+        data.deletedSlots.length > 0 ? (
+          <Button
+            type="button"
+            variant={showDeleted ? "secondary" : "outline"}
+            aria-pressed={showDeleted}
+            className="min-h-11 px-3"
+            onClick={() => setShowDeleted((v) => !v)}
+          >
+            看擦改
+          </Button>
+        ) : null}
         <p className="flex min-h-11 items-center px-1 text-sm tabular-nums text-muted-foreground">
           {formatReplayTime(timeMs)} / {formatReplayTime(durationMs)}
         </p>

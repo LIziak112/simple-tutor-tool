@@ -27,6 +27,10 @@ import type { InkStroke, InkStrokePoint } from "../engine/index.ts";
 /** 相邻两笔之间的停顿时长近似（ms）。真实停顿未记录（t 相对本笔起点），取固定值 */
 export const REPLAY_INTER_STROKE_GAP_MS = 160;
 
+/** 真实停顿显示上限（ms，设计稿 §7.1）：笔间真实间隙超此值时时间轴压缩到
+ * 上限，实际时长记进 model.pauses（UI 在该处画「停顿 N 秒」标记） */
+export const REPLAY_PAUSE_CAP_MS = 5000;
+
 /** 缺时间戳数据退化为匀速时，每个点的固定时长（ms） */
 export const REPLAY_UNIFORM_POINT_MS = 12;
 
@@ -63,6 +67,17 @@ export interface AtramentReplayModel {
   durationMs: number;
   /** 内容逻辑高度（maxY + 留白，用于画布纵横比；无点给缺省值） */
   contentHeight: number;
+  /** 时间轴口径（LR-PR4）：real=全笔有 startedAt（真实间隙）；approx=固定拼接 */
+  timing: "real" | "approx";
+  /** real 口径下的长停顿标记（间隙超 REPLAY_PAUSE_CAP_MS 压缩后记录实际时长） */
+  pauses: Array<{ atMs: number; realMs: number }>;
+  /** 被删笔画时间轴（教师「看擦改」开关用）：绘制自 startedAt 起、deletedAt 消失 */
+  deletedSlots: Array<{
+    stroke: InkStroke;
+    startMs: number;
+    deletedAtMs: number;
+    pointTimesMs: number[];
+  }>;
 }
 
 /** excalidraw 回放模型：elements 与 slots 一一对应 */
@@ -100,10 +115,99 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 解析中的中间形态：笔画 + 每点原始时间戳（null=缺失/非法） */
+/** 解析中的中间形态：笔画 + 每点原始时间戳（null=缺失/非法）+ 落笔绝对时刻 */
 interface RawStroke {
   stroke: InkStroke;
   rawTimes: Array<number | null>;
+  startedAt: number | null;
+}
+
+/** 解析中的墓碑中间形态（宽松：坏条目跳过，不拖垮整份回放） */
+interface RawDeletedStroke {
+  stroke: InkStroke;
+  rawTimes: Array<number | null>;
+  startedAt: number | null;
+  deletedAt: number | null;
+}
+
+/**
+ * 单笔宽松解析（atrament 活笔画与墓碑共用）：points 结构坏返回 null；
+ * tool/color/weight/p/t 缺失或非法给缺省值；startedAt 正整数才采集。
+ */
+function parseSingleStroke(item: Record<string, unknown>): {
+  stroke: InkStroke;
+  rawTimes: Array<number | null>;
+  startedAt: number | null;
+} | null {
+  if (!Array.isArray(item.points)) return null;
+  const points: InkStrokePoint[] = [];
+  const rawTimes: Array<number | null> = [];
+  for (const p of item.points) {
+    if (!isPlainObject(p)) return null;
+    if (!isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null;
+    const pressure = isFiniteNumber(p.p) ? Math.min(1, Math.max(0, p.p)) : 0.5;
+    const t = isFiniteNumber(p.t) && p.t >= 0 ? p.t : null;
+    // t 先占位 0，buildAtramentModel 归一后回写（保证模型内 InkStroke 契约合法）
+    points.push({ x: p.x, y: p.y, p: pressure, t: 0 });
+    rawTimes.push(t);
+  }
+  return {
+    stroke: {
+      ...(item.rendering && inkRenderingSchema.safeParse(item.rendering).success
+        ? { rendering: inkRenderingSchema.parse(item.rendering) }
+        : {}),
+      tool: item.tool === "highlighter" ? "highlighter" : "pen",
+      color:
+        typeof item.color === "string" && item.color.length > 0
+          ? item.color
+          : "#1f2328",
+      weight: isFiniteNumber(item.weight) && item.weight > 0 ? item.weight : 4,
+      // LR-1/LR-2 字段透传（宽松校验）：id 供锚点/时间线引用；startedAt 供真实停顿
+      ...(typeof item.id === "string" &&
+      item.id.length >= 8 &&
+      item.id.length <= 40 &&
+      /^[0-9A-Za-z_-]+$/.test(item.id)
+        ? { id: item.id }
+        : {}),
+      ...(isFiniteNumber(item.startedAt) && item.startedAt > 0
+        ? { startedAt: item.startedAt }
+        : {}),
+      ...(item.pointer === "pen" ||
+      item.pointer === "touch" ||
+      item.pointer === "mouse"
+        ? { pointer: item.pointer }
+        : {}),
+      points,
+    },
+    rawTimes,
+    startedAt:
+      isFiniteNumber(item.startedAt) && item.startedAt > 0
+        ? item.startedAt
+        : null,
+  };
+}
+
+/** 墓碑宽松解析：几何沿用单笔解析；startedAt/deletedAt 至少其一有效才收 */
+function parseAtramentDeleted(raw: unknown): RawDeletedStroke[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RawDeletedStroke[] = [];
+  for (const item of raw) {
+    if (!isPlainObject(item)) continue;
+    const parsed = parseSingleStroke(item);
+    if (parsed === null) continue;
+    const deletedAt =
+      isFiniteNumber(item.deletedAt) && item.deletedAt > 0
+        ? item.deletedAt
+        : null;
+    if (parsed.startedAt === null && deletedAt === null) continue;
+    out.push({
+      stroke: parsed.stroke,
+      rawTimes: parsed.rawTimes,
+      startedAt: parsed.startedAt,
+      deletedAt,
+    });
+  }
+  return out;
 }
 
 /**
@@ -116,37 +220,9 @@ function parseAtramentStrokes(raw: unknown): RawStroke[] | null {
   const out: RawStroke[] = [];
   for (const item of raw) {
     if (!isPlainObject(item)) return null;
-    if (!Array.isArray(item.points)) return null;
-    const points: InkStrokePoint[] = [];
-    const rawTimes: Array<number | null> = [];
-    for (const p of item.points) {
-      if (!isPlainObject(p)) return null;
-      if (!isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null;
-      const pressure = isFiniteNumber(p.p)
-        ? Math.min(1, Math.max(0, p.p))
-        : 0.5;
-      const t = isFiniteNumber(p.t) && p.t >= 0 ? p.t : null;
-      // t 先占位 0，buildAtramentModel 归一后回写（保证模型内 InkStroke 契约合法）
-      points.push({ x: p.x, y: p.y, p: pressure, t: 0 });
-      rawTimes.push(t);
-    }
-    out.push({
-      stroke: {
-        ...(item.rendering &&
-        inkRenderingSchema.safeParse(item.rendering).success
-          ? { rendering: inkRenderingSchema.parse(item.rendering) }
-          : {}),
-        tool: item.tool === "highlighter" ? "highlighter" : "pen",
-        color:
-          typeof item.color === "string" && item.color.length > 0
-            ? item.color
-            : "#1f2328",
-        weight:
-          isFiniteNumber(item.weight) && item.weight > 0 ? item.weight : 4,
-        points,
-      },
-      rawTimes,
-    });
+    const parsed = parseSingleStroke(item);
+    if (parsed === null) return null;
+    out.push(parsed);
   }
   return out;
 }
@@ -171,30 +247,29 @@ function normalizePointTimes(rawTimes: Array<number | null>): number[] {
   });
 }
 
-/** 由解析结果组装 atrament 回放模型（时间轴拼接 + 纵横比近似） */
-function buildAtramentModel(raws: RawStroke[]): AtramentReplayModel {
-  const slots: AtramentReplayModel["slots"] = [];
-  let cursor = 0;
+/** 由解析结果组装 atrament 回放模型（双口径时间轴 + 纵横比近似；LR-PR4） */
+function buildAtramentModel(
+  raws: RawStroke[],
+  deleted: RawDeletedStroke[],
+): AtramentReplayModel {
+  const normalized = raws.map((r) => ({
+    stroke: r.stroke,
+    pointTimesMs: normalizePointTimes(r.rawTimes),
+    startedAt: r.startedAt,
+  }));
+  // 归一结果回写点的 t（模型内 InkStroke 契约合法且自洽）；顺带取内容高
   let maxY = 0;
   let hasPoint = false;
-  let durationMs = 0;
-  for (const { stroke, rawTimes } of raws) {
-    const pointTimesMs = normalizePointTimes(rawTimes);
-    // 归一结果回写点的 t（模型内 InkStroke 契约合法且自洽）
-    for (let i = 0; i < stroke.points.length; i++) {
-      const point = stroke.points[i];
-      const t = pointTimesMs[i];
+  for (const item of normalized) {
+    for (let i = 0; i < item.stroke.points.length; i++) {
+      const point = item.stroke.points[i];
+      const t = item.pointTimesMs[i];
       if (point && t !== undefined) point.t = t;
       if (point) {
         maxY = Math.max(maxY, point.y);
         hasPoint = true;
       }
     }
-    slots.push({ startMs: cursor, pointTimesMs });
-    const lastTime = pointTimesMs[pointTimesMs.length - 1] ?? 0;
-    // 只有含点的笔画才推进总时长（空笔画不占进度条）
-    if (pointTimesMs.length > 0) durationMs = cursor + lastTime;
-    cursor = cursor + lastTime + REPLAY_INTER_STROKE_GAP_MS;
   }
   const contentHeight = hasPoint
     ? Math.min(
@@ -202,12 +277,71 @@ function buildAtramentModel(raws: RawStroke[]): AtramentReplayModel {
         Math.max(CONTENT_MIN_HEIGHT, maxY + CONTENT_PADDING * 2),
       )
     : EMPTY_CONTENT_HEIGHT;
+
+  // 时间轴口径（LR-PR4，设计稿 §7.1）：全部笔画带 startedAt → 真实间隙
+  //（超 REPLAY_PAUSE_CAP_MS 压缩 + 记「停顿 N 秒」标记）；任一缺失 → 旧口径
+  //（固定 160ms 拼接）。墓碑无真实时刻（approx 口径或自身缺 startedAt）不显示——如实。
+  const allTimed =
+    normalized.length > 0 &&
+    normalized.every((item) => item.startedAt !== null);
+  const slots: AtramentReplayModel["slots"] = [];
+  const pauses: AtramentReplayModel["pauses"] = [];
+  const deletedSlots: AtramentReplayModel["deletedSlots"] = [];
+  let durationMs = 0;
+  if (allTimed) {
+    const t0 = Math.min(...normalized.map((item) => item.startedAt ?? 0));
+    let prevEnd = 0;
+    let shift = 0;
+    for (const [index, item] of normalized.entries()) {
+      const pointTimesMs = item.pointTimesMs;
+      let startMs = (item.startedAt ?? 0) - t0 - shift;
+      const last = pointTimesMs[pointTimesMs.length - 1] ?? 0;
+      if (index > 0) {
+        const gap = startMs - prevEnd;
+        if (gap > REPLAY_PAUSE_CAP_MS) {
+          // 压缩：显示等待封顶为上限，实际时长进「停顿」标记（§7.1）
+          const realGap = gap;
+          shift += gap - REPLAY_PAUSE_CAP_MS;
+          startMs = prevEnd + REPLAY_PAUSE_CAP_MS;
+          pauses.push({ atMs: prevEnd + REPLAY_PAUSE_CAP_MS, realMs: realGap });
+        }
+      }
+      if (startMs < prevEnd) startMs = prevEnd;
+      slots.push({ startMs, pointTimesMs });
+      durationMs = startMs + last;
+      prevEnd = durationMs;
+    }
+    // 墓碑时间轴（real 口径）：绘制自自身 startedAt 起、deletedAt 时刻消失；
+    // 时间轴压缩同样作用（shift 一致，标记与墓碑消失位置对齐）
+    for (const tomb of deleted) {
+      if (tomb.startedAt === null || tomb.deletedAt === null) continue;
+      deletedSlots.push({
+        stroke: tomb.stroke,
+        pointTimesMs: normalizePointTimes(tomb.rawTimes),
+        startMs: Math.max(0, tomb.startedAt - t0 - shift),
+        deletedAtMs: Math.max(0, tomb.deletedAt - t0 - shift),
+      });
+    }
+  } else {
+    let cursor = 0;
+    for (const item of normalized) {
+      const pointTimesMs = item.pointTimesMs;
+      slots.push({ startMs: cursor, pointTimesMs });
+      const lastTime = pointTimesMs[pointTimesMs.length - 1] ?? 0;
+      // 只有含点的笔画才推进总时长（空笔画不占进度条）
+      if (pointTimesMs.length > 0) durationMs = cursor + lastTime;
+      cursor = cursor + lastTime + REPLAY_INTER_STROKE_GAP_MS;
+    }
+  }
   return {
     engine: "atrament",
-    strokes: raws.map((r) => r.stroke),
+    strokes: normalized.map((item) => item.stroke),
     slots,
     durationMs,
     contentHeight,
+    timing: allTimed ? "real" : "approx",
+    pauses,
+    deletedSlots,
   };
 }
 
@@ -289,7 +423,10 @@ export function parseInkReplayData(raw: unknown): InkReplayModel | null {
     if (!isPlainObject(raw.data)) return null;
     const parsed = parseAtramentStrokes(raw.data.strokes);
     if (parsed === null) return null;
-    const model = buildAtramentModel(parsed);
+    const model = buildAtramentModel(
+      parsed,
+      parseAtramentDeleted(raw.data.deleted),
+    );
     stretchToMinDuration(model);
     return model;
   }

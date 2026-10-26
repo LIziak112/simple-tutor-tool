@@ -25,6 +25,20 @@ export interface AtramentReplayCanvas {
     strokes: readonly InkStroke[],
     visiblePoints: readonly number[],
   ): void;
+  /**
+   * LR-PR4：墓碑淡色虚线（教师「看擦改」开关）。可选方法——既有 mock/消费方
+   * 不实现时组件安全跳过。tombstones 来自 model.deletedSlots；startMs ≤ t <
+   * deletedAtMs 的墓碑按已走过点数绘制。
+   */
+  drawDeleted?(
+    tombstones: readonly {
+      stroke: InkStroke;
+      startMs: number;
+      deletedAtMs: number;
+      pointTimesMs: number[];
+    }[],
+    timeMs: number,
+  ): void;
   destroy(): void;
 }
 
@@ -46,6 +60,16 @@ export function createAtramentReplayCanvas(
   let lastFrame: {
     strokes: readonly InkStroke[];
     visiblePoints: readonly number[];
+  } | null = null;
+  /** 最近一次 drawDeleted 的入参（resize 后在 drawFrame 之上重画墓碑） */
+  let lastDeleted: {
+    tombstones: readonly {
+      stroke: InkStroke;
+      startMs: number;
+      deletedAtMs: number;
+      pointTimesMs: number[];
+    }[];
+    timeMs: number;
   } | null = null;
 
   function sizeCanvas(): void {
@@ -94,15 +118,51 @@ export function createAtramentReplayCanvas(
     }
   };
 
+  // LR-PR4：墓碑淡色虚线（教师「看擦改」）。startMs ≤ t < deletedAtMs 可见，
+  // 点数按 pointTimesMs 截断到当前时刻；样式在 save/restore 内局部生效
+  const drawDeleted = (
+    tombstones: readonly {
+      stroke: InkStroke;
+      startMs: number;
+      deletedAtMs: number;
+      pointTimesMs: number[];
+    }[],
+    timeMs: number,
+  ): void => {
+    lastDeleted = { tombstones, timeMs };
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = "source-over";
+    ctx2d.setLineDash([6, 6]);
+    ctx2d.globalAlpha = 0.35;
+    ctx2d.lineCap = "round";
+    ctx2d.lineJoin = "round";
+    for (const tomb of tombstones) {
+      if (timeMs < tomb.startMs || timeMs >= tomb.deletedAtMs) continue;
+      let visible = 0;
+      for (const t of tomb.pointTimesMs) {
+        if (t <= timeMs - tomb.startMs) visible += 1;
+        else break;
+      }
+      if (visible <= 0) continue;
+      replayAtramentStroke(atrament, cssWidth, {
+        ...tomb.stroke,
+        points: tomb.stroke.points.slice(0, visible),
+      });
+    }
+    ctx2d.restore();
+  };
+
   // 尺寸变化（iPad 旋转、窗口缩放）：重设位图并重画当前帧（归一化坐标保证比例正确）
   const observer = new ResizeObserver(() => {
     sizeCanvas();
     if (lastFrame) drawFrame(lastFrame.strokes, lastFrame.visiblePoints);
+    if (lastDeleted) drawDeleted(lastDeleted.tombstones, lastDeleted.timeMs);
   });
   observer.observe(container);
 
   return {
     drawFrame,
+    drawDeleted,
     destroy(): void {
       observer.disconnect();
       atrament.destroy();
