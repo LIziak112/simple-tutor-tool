@@ -1,7 +1,13 @@
 import type { ZodIssue } from "zod";
 import { z } from "zod";
 import { questionRevisionIdSchema } from "./attempt.ts";
-import { inkStrokeSchema } from "./ink.ts";
+import {
+  inkDeletedStrokeSchema,
+  inkDuplicateStrokeIds,
+  inkStrokeIdSchema,
+  inkStrokeSchema,
+} from "./ink.ts";
+import { questionNodeKeySchema } from "./question-node.ts";
 
 /**
  * 题干标注契约（T6R.20 起为权威定义）：固定底图＋独立矢量标注。
@@ -67,6 +73,13 @@ export const ANNOTATION_MAX_POINTS_PER_STROKE = 2000;
 export const ANNOTATION_MAX_TOTAL_POINTS = 40_000;
 
 /**
+ * 墓碑笔数上限（LR-2，学习记录模型设计稿 §4.2 限额表；独立常量不改旧值——
+ * 活笔上限 ANNOTATION_MAX_STROKES 不变）。**暂定**。超限 params.limit →
+ * 服务端 413 分级；客户端 FIFO 压实（设计稿 §10-1），服务端只拒不压。
+ */
+export const ANNOTATION_MAX_DELETED_STROKES = 400;
+
+/**
  * baseWidth/baseHeight 的防御上限（与 ANNOTATION_BASE_MAX_HEIGHT_PX 同值、
  * 语义独立：前者约束文档声明的坐标域上限，后者约束底图实际高度；服务端
  * 另校验文档几何与底图行 pixelWidth/pixelHeight 严格相等，不靠本上限兜底）。
@@ -104,6 +117,15 @@ export const annotationDocSchema = z
     baseWidth: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
     baseHeight: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
     strokes: z.array(inkStrokeSchema),
+    // ---- LR-2 新增（可选；旧文档不含）：擦除墓碑兄弟数组——语义与形状见
+    // ink.ts inkDeletedStrokeSchema 注。活笔画口径（strokeCount / answered /
+    // PNG 快照）零变化；墓碑点数不计入下方活笔总点数预算。
+    deleted: z.array(inkDeletedStrokeSchema).optional(),
+    // ---- LR-4 新增（可选；旧文档不含）：每笔语义锚点——键为笔画 id，值为
+    // 题面语义节点键（questionNodeKeySchema）。本 schema 只锁「键必须指向
+    // strokes∪deleted 的 id」（superRefine）；值 ∈ 该底图 layout.compatibility.
+    // blocks[].node 的校验在服务端（PR3，无 layout 的旧底图不接受 anchors）。
+    anchors: z.record(inkStrokeIdSchema, questionNodeKeySchema).optional(),
   })
   .superRefine((doc, ctx) => {
     let totalPoints = 0;
@@ -166,6 +188,77 @@ export const annotationDocSchema = z
         params: { limit: true },
       });
     }
+    // ---- LR-2：墓碑笔数限额 + 几何校验（墓碑几何沿用与活笔画同一坐标域，
+    // 为 LR-6 重投影保域；墓碑点数不计入活笔总点数预算）。
+    if (doc.deleted !== undefined) {
+      if (doc.deleted.length > ANNOTATION_MAX_DELETED_STROKES) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["deleted"],
+          message: `墓碑笔数超上限（${doc.deleted.length} > ${ANNOTATION_MAX_DELETED_STROKES}，暂定值）`,
+          params: { limit: true },
+        });
+      }
+      for (let si = 0; si < doc.deleted.length; si++) {
+        const stroke = doc.deleted[si];
+        if (stroke === undefined) continue;
+        for (let pi = 0; pi < stroke.points.length; pi++) {
+          const point = stroke.points[pi];
+          if (point === undefined) continue;
+          if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["deleted", si, "points", pi],
+              message: "坐标必须是有限数（拒绝 NaN/Infinity）",
+            });
+            continue;
+          }
+          if (point.x < 0 || point.x > doc.baseWidth) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["deleted", si, "points", pi, "x"],
+              message: `x 坐标越界（须 0≤x≤baseWidth=${doc.baseWidth}）`,
+            });
+          }
+          if (point.y < 0 || point.y > doc.baseHeight) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["deleted", si, "points", pi, "y"],
+              message: `y 坐标越界（须 0≤y≤baseHeight=${doc.baseHeight}）`,
+            });
+          }
+        }
+      }
+    }
+    // ---- LR-4：anchors 键必须指向 strokes ∪ deleted 的 id（悬空拒绝）；
+    // 值的键格式由 z.record 的 keySchema（questionNodeKeySchema）把关。
+    if (doc.anchors !== undefined) {
+      const known = new Set<string>();
+      for (const stroke of doc.strokes) {
+        if (stroke.id !== undefined) known.add(stroke.id);
+      }
+      if (doc.deleted !== undefined) {
+        for (const stroke of doc.deleted) known.add(stroke.id);
+      }
+      for (const strokeId of Object.keys(doc.anchors)) {
+        if (!known.has(strokeId)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["anchors", strokeId],
+            message: `悬空锚点：${strokeId} 不指向任何活笔画或墓碑 id`,
+          });
+        }
+      }
+    }
+    // ---- LR-1/LR-2：id 唯一性（活笔画 ∪ 墓碑）。
+    const duplicates = inkDuplicateStrokeIds(doc.strokes, doc.deleted);
+    if (duplicates.length > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["strokes"],
+        message: `笔画 id 重复：${duplicates.join("、")}（活笔画 ∪ 墓碑必须唯一）`,
+      });
+    }
   });
 
 /**
@@ -202,7 +295,14 @@ export const annotationSurfaceCompatibilitySchema = z
     contentSignature: annotationHashSchema,
     blocks: z
       .array(
-        annotationSurfaceRectSchema.extend({ tag: z.string().min(1).max(16) }),
+        annotationSurfaceRectSchema.extend({
+          tag: z.string().min(1).max(16),
+          // ---- LR-5 新增（可选；旧布局无 node 原样通过）：最近的
+          // data-lr-node 祖先（含自身）的题面语义节点键；surface 根为 "root"。
+          // measureQuestionSurface 同步采集（LR-PR2）；旧布局不补写（原 PNG、
+          // 签名与正文版本都不改——与「跨设备原位续写」约定一致）。
+          node: questionNodeKeySchema.optional(),
+        }),
       )
       .min(1)
       .max(2048),
