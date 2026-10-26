@@ -10,6 +10,7 @@ import {
   materialVersionKey,
   materialVersionNotesOf,
 } from "./MaterialPanel";
+import { MaterialSplitHandle } from "./MaterialSplitHandle";
 import {
   materialReadingOffsetOf,
   useMaterialReadingPosition,
@@ -41,6 +42,10 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   readingKey,
   revealSignal = 0,
   hidden = false,
+  attemptId,
+  splitRatio,
+  onSplitRatioChange,
+  containerRef,
 }: {
   group: AttemptContextGroup;
   /** 组引用解析后的冻结材料（attempt-context-view 单源） */
@@ -53,6 +58,14 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   revealSignal?: number;
   /** 单题模式等外层隐藏（隐藏不改 DOM 结构，控制器不卸载） */
   hidden?: boolean;
+  /** 作答 attemptId（透传给 MaterialPanel 用于协同标画） */
+  attemptId?: string | undefined;
+  /** 当前分栏比例（百分比，35~65） */
+  splitRatio?: number | undefined;
+  /** 分栏比例变更回调（提供时激活中缝 Handle） */
+  onSplitRatioChange?: ((ratio: number) => void) | undefined;
+  /** 分栏外层容器引用，用于指针距离换算 */
+  containerRef?: React.RefObject<HTMLElement | null> | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -108,7 +121,11 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
           ref={headerRef}
           data-slot="question-group-header"
           // reveal 滚入目标让出粘性顶栏（零材料组的回落目标；审查 P2-2）
-          className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] xl:col-span-2"
+          className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] ${
+            onSplitRatioChange !== undefined
+              ? "xl:col-span-full"
+              : "xl:col-span-2"
+          }`}
         >
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
             <Layers
@@ -137,30 +154,50 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
           )}
         </header>
         {hasMaterials && (
-          <section
-            ref={materialsRef}
-            data-slot="group-materials"
-            tabIndex={-1}
-            aria-label="本组共享材料"
-            // compare 网格材料列跨行数经 CSS 变量传入（Tailwind 任意属性在
-            // xl 才生效；非网格语境下 grid-row 声明无害）
-            style={
-              {
-                "--qg-row-span": String(Math.max(questionCount, 1)),
-              } as CSSProperties
-            }
-            className="flex min-w-0 max-w-full flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1 xl:[grid-row:span_var(--qg-row-span)]"
-          >
-            {materials.map((material) => (
-              <MaterialPanel
-                // QM-15 细项 4：键含冻结版本——同材料多版本分别保留（React
-                // key 按 materialId 会在双版本卷撞键丢面板）
-                key={materialVersionKey(material)}
-                material={material}
-                versionNote={versionNotes.get(materialVersionKey(material))}
-              />
-            ))}
-          </section>
+          <>
+            <section
+              ref={materialsRef}
+              data-slot="group-materials"
+              tabIndex={-1}
+              aria-label="本组共享材料"
+              // compare 网格材料列跨行数经 CSS 变量传入（Tailwind 任意属性在
+              // xl 才生效；非网格语境下 grid-row 声明无害）
+              style={
+                {
+                  "--qg-row-span": String(Math.max(questionCount, 1)),
+                } as CSSProperties
+              }
+              className="flex min-w-0 max-w-full flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1 xl:[grid-row:span_var(--qg-row-span)]"
+            >
+              {materials.map((material) => (
+                <MaterialPanel
+                  // QM-15 细项 4：键含冻结版本——同材料多版本分别保留（React
+                  // key 按 materialId 会在双版本卷撞键丢面板）
+                  key={materialVersionKey(material)}
+                  material={material}
+                  versionNote={versionNotes.get(materialVersionKey(material))}
+                  attemptId={attemptId}
+                />
+              ))}
+            </section>
+            {onSplitRatioChange !== undefined && (
+              <div
+                data-slot="group-split-handle-container"
+                style={
+                  {
+                    "--qg-row-span": String(Math.max(questionCount, 1)),
+                  } as CSSProperties
+                }
+                className="hidden xl:flex xl:col-start-2 xl:[grid-row:span_var(--qg-row-span)] xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:justify-center xl:self-stretch"
+              >
+                <MaterialSplitHandle
+                  ratio={splitRatio ?? 50}
+                  onRatioChange={onSplitRatioChange}
+                  containerRef={containerRef ?? materialsRef}
+                />
+              </div>
+            )}
+          </>
         )}
       </section>
     </li>

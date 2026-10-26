@@ -36,6 +36,8 @@ export interface AttemptDraftRecord {
   answers: Record<string, StudentAnswer>;
   /** questionId → 笔迹文档（本地最新，每笔结束写入） */
   inks: Record<string, InkDoc>;
+  /** materialId → 材料圈画/手写笔迹（合并存储于 attempt 上下文） */
+  materialInks?: Record<string, InkDoc>;
   /** 本地最后一次内容写入时间（epoch 毫秒） */
   savedAt: number;
   /** 最后一次全部成功同步到服务端的时间（epoch 毫秒；0=从未） */
@@ -94,6 +96,7 @@ function emptyRecord(): AttemptDraftRecord {
   return {
     answers: {},
     inks: {},
+    materialInks: {},
     savedAt: 0,
     syncedAt: 0,
     answerDigests: {},
@@ -189,6 +192,7 @@ async function safeGet(
     return {
       answers: raw.answers ?? {},
       inks: raw.inks ?? {},
+      materialInks: raw.materialInks ?? {},
       savedAt: raw.savedAt ?? 0,
       syncedAt: raw.syncedAt ?? 0,
       answerDigests: raw.answerDigests ?? {},
@@ -355,6 +359,26 @@ export const draftStore = {
       record.inks[questionId] = doc;
       record.savedAt = Date.now();
     });
+  },
+
+  /** 材料圈画手写笔迹：按 materialId 合并存储于本次 attempt 草稿 */
+  saveMaterialInk(attemptId: string, materialId: string, doc: InkDoc): void {
+    mutate(attemptId, (record) => {
+      record.materialInks ??= {};
+      record.materialInks[materialId] = doc;
+      record.savedAt = Date.now();
+    });
+  },
+
+  /** 读取材料笔迹（内存优先，未命中返回 null） */
+  getMaterialInk(attemptId: string, materialId: string): InkDoc | null {
+    return cache.get(attemptId)?.materialInks?.[materialId] ?? null;
+  },
+
+  /** 仅查询当前已载入内存的材料笔迹快照，供 UI 响应式渲染 */
+  peekMaterialInks(attemptId: string): Record<string, InkDoc> | null {
+    const record = cache.get(attemptId);
+    return record?.materialInks ? { ...record.materialInks } : null;
   },
 
   /** 某题答案已成功到达服务端：更新指纹（供增量同步去重） */

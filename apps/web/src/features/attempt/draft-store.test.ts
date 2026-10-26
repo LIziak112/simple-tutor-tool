@@ -276,4 +276,33 @@ describe("applyServerDrafts（进入答题页合并）", () => {
     const record = await draftStore.loadDraft("att-1");
     expect(record?.answerDigests.q1).toBe(digestOf(judge)); // 指纹=服务端内容
   });
+
+  it("材料手写笔迹存取与跨题共享（合并存储到 attempt 草稿）", async () => {
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    const inkDoc = doc(3);
+    draftStore.saveMaterialInk("att-mat", "mat-1", inkDoc);
+    expect(draftStore.getMaterialInk("att-mat", "mat-1")?.data).toEqual(
+      inkDoc.data,
+    );
+    expect(draftStore.peekMaterialInks("att-mat")?.["mat-1"]?.data).toEqual(
+      inkDoc.data,
+    );
+
+    await draftStore.flush("att-mat");
+    const loaded = await draftStore.loadDraft("att-mat");
+    expect(loaded?.materialInks?.["mat-1"]?.data).toEqual(inkDoc.data);
+
+    // 换账号隔离
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-other" });
+    expect(await draftStore.loadDraft("att-mat")).toBeNull();
+    expect(draftStore.getMaterialInk("att-mat", "mat-1")).toBeNull();
+
+    // 恢复原账号
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    const restored = await draftStore.loadDraft("att-mat");
+    expect(restored?.materialInks?.["mat-1"]?.data).toEqual(inkDoc.data);
+    expect(draftStore.getMaterialInk("att-mat", "mat-1")?.data).toEqual(
+      inkDoc.data,
+    );
+  });
 });

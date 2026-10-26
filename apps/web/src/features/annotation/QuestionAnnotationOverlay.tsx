@@ -55,6 +55,7 @@ import {
   type AnnotationSurface,
   createAnnotationSurface,
 } from "./annotation-surface";
+import { useCoordinatedAnnotation } from "./coordinated-annotation-context";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import { prepareQuestionAnnotationContinuation } from "./question-annotation-continuation";
 import {
@@ -131,9 +132,39 @@ export const QuestionAnnotationOverlay = forwardRef<
     setOriginalImage({ blob: originalBlob, url });
     return () => URL.revokeObjectURL(url);
   }, [originalBlob]);
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
-  const [color, setColor] = useState<InkPenColor>("red");
-  const [size, setSize] = useState<InkPenSize>("thin");
+  const coordinated = useCoordinatedAnnotation();
+  const [localTool, setLocalTool] = useState<"pen" | "eraser">("pen");
+  const [localColor, setLocalColor] = useState<InkPenColor>("red");
+  const [localSize, setLocalSize] = useState<InkPenSize>("thin");
+
+  const tool = coordinated.tool ?? localTool;
+  const color = coordinated.color ?? localColor;
+  const size = coordinated.size ?? localSize;
+
+  const setTool = useCallback(
+    (t: "pen" | "eraser") => {
+      setLocalTool(t);
+      coordinated.setTool(t);
+    },
+    [coordinated],
+  );
+
+  const setColor = useCallback(
+    (c: InkPenColor) => {
+      setLocalColor(c);
+      coordinated.setColor(c);
+    },
+    [coordinated],
+  );
+
+  const setSize = useCallback(
+    (s: InkPenSize) => {
+      setLocalSize(s);
+      coordinated.setSize(s);
+    },
+    [coordinated],
+  );
+
   const [, setHistory] = useState(0);
   const layout = record?.localBase?.layout ?? record?.base?.layout;
   const pixelGridKey = JSON.stringify([

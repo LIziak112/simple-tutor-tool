@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
+import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
 import { questionBindings } from "@/features/answering/question-binding";
 import {
   AttemptBottomBar,
@@ -197,13 +198,15 @@ export function AttemptSession({
         />
       ) : (
         <AttemptEditorProvider key={data.attempt.id}>
-          <AnswerView
-            key={data.attempt.id}
-            data={data}
-            attemptId={data.attempt.id}
-            onBackHome={onExit}
-            onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
-          />
+          <CoordinatedAnnotationProvider>
+            <AnswerView
+              key={data.attempt.id}
+              data={data}
+              attemptId={data.attempt.id}
+              onBackHome={onExit}
+              onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
+            />
+          </CoordinatedAnnotationProvider>
         </AttemptEditorProvider>
       )}
     </EnabledCapabilitiesProvider>
@@ -259,6 +262,8 @@ function AnswerView({
       attemptEvents.trackAnswerChange(questionId, answer);
     },
   });
+  // 材料与题目分栏比例（35%~65%，默认 50%）
+  const [splitRatio, setSplitRatio] = useState<number>(50);
   const [hintsOpened, setHintsOpened] = useState<
     Record<string, HintOpenedEntry[]>
   >(() => data.hintsOpened);
@@ -1433,13 +1438,33 @@ function AnswerView({
                     unit.questions.map((question) => question.id),
                     questionRefs,
                   );
-                  // compare 网格仅对确有题组的单元开启（AI 对照激活/单题态
-                  // 回退上下排布）；无组单元保持纯 flex 零变化
+                  // compare 网格：对确有材料的题组开启，或单题模式下当前题有材料（组材料/题级材料）时开启分栏
                   const unitHasGroups = segments.some(
                     (segment) => segment.kind === "group",
                   );
+                  const singleHasMaterials =
+                    singleMode &&
+                    resolvedSingleQuestionId !== null &&
+                    (() => {
+                      const q = questionById.get(resolvedSingleQuestionId);
+                      if (!q) return false;
+                      for (const segment of segments) {
+                        if (
+                          segment.kind === "group" &&
+                          segment.questionIds.includes(
+                            resolvedSingleQuestionId,
+                          ) &&
+                          segment.materials.length > 0
+                        ) {
+                          return true;
+                        }
+                      }
+                      const solo = questionMaterialsOf(contextQuery.data, q);
+                      return solo.length > 0;
+                    })();
                   const groupGrid =
-                    unitHasGroups && !singleMode && !compareActive;
+                    !compareActive &&
+                    (singleMode ? singleHasMaterials : unitHasGroups);
                   /** 单题行渲染（组行/独立行共用；onOpenMaterial 组内挂共享
                       材料、solo 题挂题级材料，openMaterialLabel 区分语义） */
                   const renderRow = (
@@ -1463,8 +1488,10 @@ function AnswerView({
                         className={
                           groupGrid
                             ? grouped
-                              ? "min-w-0 xl:col-start-2"
-                              : "min-w-0 xl:col-span-2"
+                              ? singleMode
+                                ? "min-w-0 xl:col-start-3 xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1"
+                                : "min-w-0 xl:col-start-3"
+                              : "min-w-0 xl:col-span-full"
                             : undefined
                         }
                         cardElements={cardElements}
@@ -1560,15 +1587,22 @@ function AnswerView({
                       )}
                       <ol
                         data-layout={
-                          unitHasGroups
+                          unitHasGroups || singleHasMaterials
                             ? groupGrid
                               ? "compare"
                               : "stack"
                             : undefined
                         }
+                        style={
+                          groupGrid
+                            ? ({
+                                "--split-mat-cols": `${splitRatio}% 12px calc(${100 - splitRatio}% - 12px)`,
+                              } as React.CSSProperties)
+                            : undefined
+                        }
                         className={
                           groupGrid
-                            ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                            ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))]"
                             : "flex flex-col gap-3"
                         }
                       >
@@ -1605,14 +1639,20 @@ function AnswerView({
                                         }
                                         className={
                                           groupGrid
-                                            ? "min-w-0 xl:col-span-2"
+                                            ? "min-w-0 xl:col-span-full"
                                             : undefined
                                         }
+                                        attemptId={attemptId}
+                                        splitRatio={splitRatio}
+                                        onSplitRatioChange={
+                                          groupGrid ? setSplitRatio : undefined
+                                        }
+                                        containerRef={singleWorkspaceRef}
                                       />,
                                       renderRow(
                                         question,
                                         () => openGroupMaterial(question.id),
-                                        false,
+                                        true,
                                         "查看本题材料",
                                       ),
                                     ];
@@ -1633,6 +1673,12 @@ function AnswerView({
                                       resolvedSingleQuestionId ?? "",
                                     )
                                   }
+                                  attemptId={attemptId}
+                                  splitRatio={splitRatio}
+                                  onSplitRatioChange={
+                                    groupGrid ? setSplitRatio : undefined
+                                  }
+                                  containerRef={singleWorkspaceRef}
                                 />,
                                 ...segment.questionIds.map((questionId) => {
                                   const question = questionById.get(questionId);

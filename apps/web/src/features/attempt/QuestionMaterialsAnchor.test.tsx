@@ -92,4 +92,25 @@ describe("QuestionMaterialsAnchor（题级材料锚）", () => {
     );
     expect(anchor?.className.includes("xl:col-span-2")).toBe(true);
   });
+
+  it("当提供 onSplitRatioChange 时渲染分栏拖拽 Handle 并支持分栏比例", () => {
+    const onSplitRatioChange = vi.fn();
+    render(
+      <QuestionMaterialsAnchor
+        questionId="q-9"
+        materials={[material("m-solo")]}
+        attemptId="att-1"
+        splitRatio={45}
+        onSplitRatioChange={onSplitRatioChange}
+      />,
+    );
+    const handleContainer = document.querySelector(
+      '[data-slot="question-split-handle-container"]',
+    );
+    expect(handleContainer).not.toBeNull();
+    const handle = screen.getByRole("separator", {
+      name: "调整材料与题目分栏比例",
+    });
+    expect(handle.getAttribute("aria-valuenow")).toBe("45");
+  });
 });

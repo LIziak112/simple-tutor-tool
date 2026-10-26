@@ -5,6 +5,7 @@ import {
   materialVersionKey,
   materialVersionNotesOf,
 } from "./MaterialPanel";
+import { MaterialSplitHandle } from "./MaterialSplitHandle";
 import {
   materialReadingOffsetOf,
   useMaterialReadingPosition,
@@ -32,6 +33,10 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   revealSignal = 0,
   hidden = false,
   className,
+  attemptId,
+  splitRatio,
+  onSplitRatioChange,
+  containerRef,
 }: {
   questionId: string;
   /** questionMaterialsOf 解析后的冻结材料（attempt-context-view 单源） */
@@ -44,6 +49,14 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   hidden?: boolean;
   /** 消费侧布局类（compare 网格跨列等；与默认流式类合并） */
   className?: string | undefined;
+  /** 作答 attemptId（透传给 MaterialPanel 用于协同标画） */
+  attemptId?: string | undefined;
+  /** 当前分栏比例（百分比，35~65） */
+  splitRatio?: number | undefined;
+  /** 分栏比例变更回调（提供时激活中缝 Handle） */
+  onSplitRatioChange?: ((ratio: number) => void) | undefined;
+  /** 分栏外层容器引用，用于指针距离换算 */
+  containerRef?: React.RefObject<HTMLElement | null> | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   // 同材料多版本才逐版标注（QM-15 细项 4；单版本零徽标零视觉噪音）
@@ -74,27 +87,50 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
       data-slot="question-materials-anchor"
       data-question-id={questionId}
       hidden={hidden}
-      className={`flex min-w-0 flex-col gap-3${className ? ` ${className}` : ""}`}
+      className={
+        hidden
+          ? `flex min-w-0 flex-col gap-3${className ? ` ${className}` : ""}`
+          : onSplitRatioChange !== undefined
+            ? `flex min-w-0 flex-col gap-3 xl:contents${className ? ` ${className}` : ""}`
+            : `flex min-w-0 flex-col gap-3${className ? ` ${className}` : ""}`
+      }
     >
-      <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        本题材料
-      </p>
       <section
         ref={materialsRef}
         data-slot="question-materials"
         tabIndex={-1}
         aria-label="本题材料"
-        className="flex min-w-0 max-w-full flex-col gap-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className={
+          onSplitRatioChange !== undefined
+            ? "flex min-w-0 max-w-full flex-col gap-3 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1"
+            : "flex min-w-0 max-w-full flex-col gap-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        }
       >
+        <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          本题材料
+        </p>
         {materials.map((material) => (
           <MaterialPanel
             // QM-15 细项 4：键含冻结版本（同 materialId 撞键丢面板）
             key={materialVersionKey(material)}
             material={material}
             versionNote={versionNotes.get(materialVersionKey(material))}
+            attemptId={attemptId}
           />
         ))}
       </section>
+      {onSplitRatioChange !== undefined && (
+        <div
+          data-slot="question-split-handle-container"
+          className="hidden xl:flex xl:col-start-2 xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:justify-center xl:self-stretch"
+        >
+          <MaterialSplitHandle
+            ratio={splitRatio ?? 50}
+            onRatioChange={onSplitRatioChange}
+            containerRef={containerRef ?? materialsRef}
+          />
+        </div>
+      )}
     </li>
   );
 });

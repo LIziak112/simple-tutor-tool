@@ -3,6 +3,7 @@ import { slotNumberedContentOf } from "@tutor/md-dsl";
 import { FileText } from "lucide-react";
 import { memo } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { MaterialAnnotationOverlay } from "./MaterialAnnotationOverlay";
 
 /**
  * 材料槽位标记 → 编号空位（QM-13 细项 1）：公共文章不使用带参考答案的
@@ -59,6 +60,7 @@ export function materialVersionNotesOf(
  * 与指令组件，共用数据解释）。材料正文是只读内容：无任何作答/选中态，
  * 导出与只读语境同形态。长表/长公式在 .material-reading 作用域内局部滚动
  * （index.css），图片放大/重试由 ::image 指令组件承担。
+ * 提供 attemptId 时挂载 MaterialAnnotationOverlay 协同标画层。
  *
  * memo 用 React 默认属性比较（AGENTS.md「作答圈画与草稿交互约定」）：
  * 不写仅比较 source 的自定义比较器——上下文回调或样式变化必须触发重渲染。
@@ -67,6 +69,7 @@ export const MaterialPanel = memo(function MaterialPanel({
   material,
   variant = "block",
   versionNote,
+  attemptId,
 }: {
   material: AttemptContextMaterial;
   /**
@@ -79,8 +82,16 @@ export const MaterialPanel = memo(function MaterialPanel({
    * 单版本不传（不渲染徽标）
    */
   versionNote?: string | undefined;
+  /** 作答会话 attemptId（提供时挂载材料圈画图层；缺省不挂载） */
+  attemptId?: string | undefined;
 }) {
   const title = material.title?.trim();
+  const content = (
+    <div className="material-reading min-w-0 text-base leading-[1.75]">
+      <RichMarkdown source={slotMarkedContentOf(material)} />
+    </div>
+  );
+
   return (
     <section
       data-slot="material-panel"
@@ -101,9 +112,16 @@ export const MaterialPanel = memo(function MaterialPanel({
           </span>
         )}
       </p>
-      <div className="material-reading min-w-0 text-base leading-[1.75]">
-        <RichMarkdown source={slotMarkedContentOf(material)} />
-      </div>
+      {attemptId ? (
+        <MaterialAnnotationOverlay
+          attemptId={attemptId}
+          materialId={material.id}
+        >
+          {content}
+        </MaterialAnnotationOverlay>
+      ) : (
+        content
+      )}
     </section>
   );
 });
