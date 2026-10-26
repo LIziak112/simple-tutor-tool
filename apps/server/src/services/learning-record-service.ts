@@ -589,7 +589,7 @@ function timelineOf(
       });
     }
     // maxStrokeEnd 供 skew 估算
-    for (const timing of strokeTimings(material.strokes)) {
+    for (const timing of strokeTimings([...material.strokes, ...material.deleted])) {
       if (timing.startedAt !== undefined && timing.endMs > maxStrokeEnd) {
         maxStrokeEnd = timing.endMs;
       }

@@ -542,7 +542,7 @@ export function assembleReviewPack(
     // ZodError 等不变量破坏照常抛出（出口 fail-closed 不在导出路径失效）；
     // 如实缺席要在 manifest.contextNotes 留痕
     if (err instanceof HttpError) {
-      recordNote = `record.json 未装配：${err.message}`;
+      recordNote = `record.json 未装配：${err.code}: ${err.message}`;
     } else {
       throw err;
     }

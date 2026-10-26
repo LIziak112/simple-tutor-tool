@@ -284,6 +284,14 @@ describe("learning-record 有材料装配（LR-PR3）", () => {
     expect(formal?.stats.pauses.length).toBeGreaterThan(0);
     // 时间线：stroke 与 erase 条目都在（被擦笔画保留「什么时候写的」）
     const kinds = record.timeline.entries.map((entry) => entry.kind);
+    // 评审 #11744 必改①测试锁：被擦笔画的 stroke 条目（含书写时刻与 id）
+    expect(record.timeline.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "stroke",
+        strokeIds: ["stroke-gone"],
+        at: t0 + 10_000,
+      }),
+    );
     expect(kinds).toContain("stroke");
     expect(kinds).toContain("erase");
     // skew：服务端确认(T0) − 最晚落笔结束(t0+20100) ≈ 39900ms
