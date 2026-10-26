@@ -4,7 +4,7 @@ import {
   type AiPromptSettingsData,
   type AiPromptSlotState,
 } from "@tutor/contract";
-import { Loader2, RotateCcw, TriangleAlert } from "lucide-react";
+import { ChevronDown, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
@@ -15,6 +15,7 @@ import {
   useSaveTeacherAiPrompts,
   useTeacherAiPrompts,
 } from "./ai-prompt-queries";
+import { useAiSettingsSave } from "./ai-settings-save";
 
 /**
  * 教师设置「AI 提示词」区（hall-9533）：出题助手开场指令、学情数据包五个
@@ -29,8 +30,8 @@ import {
 /** 分组展示顺序与标题（契约 group 枚举的中文文案，单源展示） */
 const GROUP_LABELS: Record<AiPromptSlotState["group"], string> = {
   "content-ai": "AI 出题助手",
-  "learning-pack": "学情数据包（导出给 AI 的 prompt.md）",
-  "review-pack": "单题复习包（教师域）",
+  "learning-pack": "学情数据包",
+  "review-pack": "单题复习包",
 };
 
 const GROUP_ORDER: ReadonlyArray<AiPromptSlotState["group"]> = [
@@ -64,6 +65,9 @@ export function TeacherAiPromptsSection() {
     () =>
       queryClient.getQueryData<PromptsDraft>(teacherAiPromptsDraftKey) ?? null,
   );
+  const [openGroups, setOpenGroups] = useState<
+    Partial<Record<AiPromptSlotState["group"], boolean>>
+  >({});
   const [conflict, setConflict] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -120,7 +124,7 @@ export function TeacherAiPromptsSection() {
     setSlotDraft(key, baseline.slotsByKey[key]?.defaultBody ?? "");
   }
 
-  function handleSave(): void {
+  async function handleSave(): Promise<void> {
     if (baseline === null || checked === null || data === undefined) return;
     const updates = Object.keys(baseline.bodies)
       .filter((key) => checked[key] !== baseline.bodies[key])
@@ -136,7 +140,7 @@ export function TeacherAiPromptsSection() {
         };
       });
     if (updates.length === 0) return;
-    saveMutation.mutate(
+    await saveMutation.mutateAsync(
       { updates, baseUpdatedAt: data.updatedAt },
       {
         onSuccess: () => {
@@ -152,6 +156,12 @@ export function TeacherAiPromptsSection() {
       },
     );
   }
+
+  const sharedSave = useAiSettingsSave("ai-prompts", {
+    dirty,
+    blocked: baseline === null || promptsQuery.isError || blankChanged,
+    save: handleSave,
+  });
 
   if (promptsQuery.isPending) {
     return (
@@ -192,25 +202,54 @@ export function TeacherAiPromptsSection() {
       aria-labelledby="teacher-ai-prompts-title"
       className="rounded-xl border border-border bg-card"
     >
-      <div className="border-b border-border p-5 sm:p-6">
-        <h2 id="teacher-ai-prompts-title" className="text-lg font-semibold">
-          AI 提示词（导出给 AI 的指令）
+      <div className="p-5 sm:p-6">
+        <h2 id="teacher-ai-prompts-title" className="font-semibold">
+          备课与复习提示词
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           出题助手、学情数据包与单题复习包交给 AI
           使用的提示词，可按场景自定义；保存后下一次复制或导出立即生效。
         </p>
       </div>
-      {GROUP_ORDER.map((group) => (
-        <div
-          key={group}
-          className="border-b border-border p-5 last:border-b-0 sm:p-6"
-        >
-          <h3 className="text-sm font-semibold">{GROUP_LABELS[group]}</h3>
-          {baseline.slotsByKey &&
-            data?.slots
-              .filter((slot) => slot.group === group)
-              .map((slot) => {
+      {GROUP_ORDER.map((group) => {
+        const slots = data?.slots.filter((slot) => slot.group === group) ?? [];
+        const changedCount = slots.filter(
+          (slot) => checked?.[slot.key] !== baseline.bodies[slot.key],
+        ).length;
+        const customCount = slots.filter((slot) => slot.isCustom).length;
+        return (
+          <div key={group} className="group border-t border-border p-5 sm:p-6">
+            <button
+              type="button"
+              aria-controls={`teacher-ai-prompts-${group}`}
+              aria-expanded={openGroups[group] ?? false}
+              onClick={() => {
+                setOpenGroups((previous) => ({
+                  ...previous,
+                  [group]: !previous[group],
+                }));
+              }}
+              className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-md text-start outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">
+                  {GROUP_LABELS[group]}
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {changedCount > 0
+                    ? `${changedCount} 项未保存`
+                    : customCount > 0
+                      ? `${customCount} 项已自定义`
+                      : "使用默认提示词"}
+                </span>
+              </span>
+              <ChevronDown
+                aria-hidden
+                className={`size-4 shrink-0 transition-transform ${openGroups[group] ? "rotate-180" : ""}`}
+              />
+            </button>
+            <div id={`teacher-ai-prompts-${group}`} hidden={!openGroups[group]}>
+              {slots.map((slot) => {
                 const isChanged =
                   checked !== null &&
                   checked[slot.key] !== baseline.bodies[slot.key];
@@ -264,9 +303,16 @@ export function TeacherAiPromptsSection() {
                   </div>
                 );
               })}
-        </div>
-      ))}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-5 sm:p-6">
+            </div>
+          </div>
+        );
+      })}
+      <div
+        hidden={
+          sharedSave && !conflict && !saveMutation.isError && !blankChanged
+        }
+        className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-5 sm:p-6"
+      >
         <div className="space-y-1 text-sm">
           {conflict ? (
             <p role="alert" className="text-destructive">
@@ -309,21 +355,23 @@ export function TeacherAiPromptsSection() {
             </p>
           ) : null}
         </div>
-        <Button
-          type="button"
-          className="min-h-11 px-5"
-          disabled={!dirty || blankChanged || saveMutation.isPending}
-          onClick={handleSave}
-        >
-          {saveMutation.isPending ? (
-            <>
-              <Loader2 aria-hidden className="animate-spin" />
-              正在保存…
-            </>
-          ) : (
-            "保存全部改动"
-          )}
-        </Button>
+        {!sharedSave && (
+          <Button
+            type="button"
+            className="min-h-11 px-5"
+            disabled={!dirty || blankChanged || saveMutation.isPending}
+            onClick={() => void handleSave().catch(() => {})}
+          >
+            {saveMutation.isPending ? (
+              <>
+                <Loader2 aria-hidden className="animate-spin" />
+                正在保存…
+              </>
+            ) : (
+              "保存全部改动"
+            )}
+          </Button>
+        )}
       </div>
     </section>
   );

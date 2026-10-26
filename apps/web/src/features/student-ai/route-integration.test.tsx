@@ -161,6 +161,7 @@ describe("SAI-07 真实路由联调", () => {
     expect(
       await screen.findByRole("radio", { name: "开放伴学" }),
     ).toBeChecked();
+    fireEvent.click(screen.getByText("伴学提示词模板"));
     expect(
       screen.getByRole("textbox", { name: "开放伴学模板正文" }),
     ).toHaveValue(

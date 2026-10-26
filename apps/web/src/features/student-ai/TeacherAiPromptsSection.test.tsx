@@ -75,18 +75,22 @@ function settingsData(
   };
 }
 
-function renderSection(
+async function renderSection(
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   }),
 ) {
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <TeacherAiPromptsSection />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  await screen.findByText("AI 出题助手");
+  for (const title of ["AI 出题助手", "学情数据包", "单题复习包"])
+    fireEvent.click(screen.getByText(title));
+  return view;
 }
 
 beforeEach(() => {
@@ -96,23 +100,15 @@ beforeEach(() => {
 
 describe("TeacherAiPromptsSection", () => {
   it("默认回显：正文=默认正文、无已自定义标记、分组标题齐全", async () => {
-    renderSection();
+    await renderSection();
     const intro = await screen.findByLabelText(
       "标题-content-ai-instruction提示词正文",
     );
     expect(intro).toHaveValue(DEFAULT_INTRO);
     expect(screen.queryByText("已自定义")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "AI 出题助手" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", {
-        name: "学情数据包（导出给 AI 的 prompt.md）",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "单题复习包（教师域）" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("AI 出题助手")).toBeInTheDocument();
+    expect(screen.getByText("学情数据包")).toBeInTheDocument();
+    expect(screen.getByText("单题复习包")).toBeInTheDocument();
   });
 
   it("编辑后保存只带变化槽位；成功后清脏并提示已保存", async () => {
@@ -128,7 +124,7 @@ describe("TeacherAiPromptsSection", () => {
         slot("review-pack-teacher", "review-pack", DEFAULT_PACK),
       ]),
     );
-    renderSection();
+    await renderSection();
     const intro = await screen.findByLabelText(
       "标题-content-ai-instruction提示词正文",
     );
@@ -158,7 +154,7 @@ describe("TeacherAiPromptsSection", () => {
       ]),
     );
     mockedSave.mockResolvedValue(settingsData());
-    renderSection();
+    await renderSection();
     const intro = await screen.findByLabelText(
       "标题-content-ai-instruction提示词正文",
     );
@@ -183,7 +179,7 @@ describe("TeacherAiPromptsSection", () => {
     mockedSave.mockRejectedValue(
       new ApiError("AI_SETTINGS_STALE", "已在其他页面被修改", 409),
     );
-    renderSection();
+    await renderSection();
     const intro = await screen.findByLabelText(
       "标题-content-ai-instruction提示词正文",
     );
@@ -203,7 +199,7 @@ describe("TeacherAiPromptsSection", () => {
 
   it("变化中的槽位正文为空 → 保存禁用并提示", async () => {
     mockedFetch.mockResolvedValue(settingsData());
-    renderSection();
+    await renderSection();
     const intro = await screen.findByLabelText(
       "标题-content-ai-instruction提示词正文",
     );
