@@ -767,6 +767,13 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     };
     const model = parseInkReplayData(doc);
     if (model?.engine !== "atrament") return;
+    // 临时诊断（定位后删除）
+    console.log(
+      "[SHORT-DEBUG]",
+      JSON.stringify(model.deletedSlots),
+      JSON.stringify(model.pauses),
+      String(model.durationMs),
+    );
     expect(model.timing).toBe("real");
     expect(model.durationMs).toBe(2000);
     expect(model.deletedSlots[0]?.startMs).toBe(0);
@@ -794,5 +801,184 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     if (model?.engine !== "atrament") return;
     expect(model.deletedSlots[0]?.deletedAtMs).toBe(11000);
     expect(model.durationMs).toBe(11000);
+  });
+});
+
+/**
+ * LR-PR4 必改② 探针（评审 #11768 逐条反证的回归锁）：
+ * - ②-A 书写段不得当停顿：一笔自身写 >5s 不压缩不标记；
+ * - ②-B 全擦重写主场景：t0 取并集、墓碑 [start, deletedAt) 可见、活笔/末点不丢；
+ * - ②-C 墓碑书写时段无假停顿标记：deletedAt 与 durationMs 覆盖书写与消失。
+ */
+describe("LR-PR4 必改② 探针（评审 #11768）", () => {
+  it("②-A 一笔自身写 >5s：不压缩不标记（书写段 cap=gap）", () => {
+    const doc = {
+      engine: "atrament",
+      version: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-1",
+            startedAt: 1727392800000,
+            pointer: "pen",
+            points: [
+              { x: 10, y: 10, p: 0.5, t: 0 },
+              { x: 50, y: 10, p: 0.5, t: 6000 },
+            ],
+          },
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-2",
+            startedAt: 1727392800000 + 6500,
+            pointer: "pen",
+            points: [{ x: 30, y: 20, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+      updatedAt: 1748918400000,
+    };
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    // 次笔在首笔写完（6000）后 500ms 才落笔：间隙 500 ≤ CAP → 不压缩不标记
+    expect(model.pauses).toEqual([]);
+    expect(model.slots[1]?.startMs).toBe(6500);
+    expect(model.durationMs).toBe(6500);
+  });
+
+  it("②-B 全擦重写：墓碑 [0,1000) 可见、活笔 startMs/durationMs 不丢", () => {
+    const T = 1727392800000;
+    const doc = {
+      engine: "atrament",
+      version: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-live",
+            startedAt: T + 2000,
+            pointer: "pen",
+            points: [
+              { x: 10, y: 10, p: 0.5, t: 0 },
+              { x: 50, y: 10, p: 0.5, t: 3000 },
+            ],
+          },
+        ],
+        deleted: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-gone",
+            startedAt: T,
+            pointer: "pen",
+            deletedAt: T + 1000,
+            points: [{ x: 5, y: 5, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+      updatedAt: 1748918400000,
+    };
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    // t0 = 墓碑起点（并集最小值）：墓碑 [0,1000) 可见、活笔 2000 起画
+    expect(model.timing).toBe("real");
+    expect(model.deletedSlots[0]?.startMs).toBe(0);
+    expect(model.deletedSlots[0]?.deletedAtMs).toBe(1000);
+    expect(model.slots[0]?.startMs).toBe(2000);
+    expect(model.durationMs).toBe(5000);
+  });
+
+  it("②-B 变体（+7s 空闲）：durationMs 非零、活笔可播放（不被钳成空白）", () => {
+    const T = 1727392800000;
+    const doc = {
+      engine: "atrament",
+      version: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-live",
+            startedAt: T + 9000,
+            pointer: "pen",
+            points: [
+              { x: 10, y: 10, p: 0.5, t: 0 },
+              { x: 50, y: 10, p: 0.5, t: 3000 },
+            ],
+          },
+        ],
+        deleted: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-gone",
+            startedAt: T,
+            pointer: "pen",
+            deletedAt: T + 1000,
+            points: [{ x: 5, y: 5, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+      updatedAt: 1748918400000,
+    };
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    // 段 [0,1000] 落在墓碑书写内 → cap=gap；段 [1000,9000] 空闲 → 压缩到 5000
+    expect(model.durationMs).toBeGreaterThan(0);
+    expect(model.slots[0]?.startMs).toBe(6000);
+  });
+
+  it("②-C 墓碑书写 6s 擦于 +6.5s：无假停顿标记、deletedAtMs 与 durationMs 覆盖", () => {
+    const T = 1727392800000;
+    const doc = {
+      engine: "atrament",
+      version: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-live",
+            startedAt: T,
+            pointer: "pen",
+            points: [{ x: 10, y: 10, p: 0.5, t: 100 }],
+          },
+        ],
+        deleted: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-gone",
+            startedAt: T,
+            pointer: "pen",
+            deletedAt: T + 6500,
+            points: [{ x: 20, y: 15, p: 0.5, t: 6000 }],
+          },
+        ],
+      },
+      updatedAt: 1748918400000,
+    };
+    const model = parseInkReplayData(doc);
+    if (model?.engine !== "atrament") return;
+    // 墓碑书写时段（T..T+6000）的段落在书写区间内 → cap=gap → 无假停顿标记
+    expect(model.pauses).toEqual([]);
+    expect(model.deletedSlots[0]?.deletedAtMs).toBe(6500);
+    // durationMs 覆盖到墓碑消失点（≥ 6500）
+    expect(model.durationMs).toBeGreaterThanOrEqual(6500);
   });
 });

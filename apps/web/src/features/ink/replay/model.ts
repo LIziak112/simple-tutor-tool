@@ -282,8 +282,10 @@ function buildAtramentModel(
   //（超 REPLAY_PAUSE_CAP_MS 压缩 + 记「停顿 N 秒」标记）；任一缺失 → 旧口径
   //（固定 160ms 拼接）。墓碑无真实时刻（approx 口径或自身缺 startedAt）不显示——如实。
   const allTimed =
-    normalized.length > 0 &&
-    normalized.every((item) => item.startedAt !== null);
+    // 评审 #11768 顺手新增：「全部擦光」的稿（strokes 空、墓碑全带时刻）也走
+    // real——看擦改的另一主场景；门槛 = 活笔全带时刻且 strokes∪deleted 非空
+    normalized.every((item) => item.startedAt !== null) &&
+    normalized.length + deleted.length > 0;
   const slots: AtramentReplayModel["slots"] = [];
   const pauses: AtramentReplayModel["pauses"] = [];
   const deletedSlots: AtramentReplayModel["deletedSlots"] = [];
@@ -293,63 +295,134 @@ function buildAtramentModel(
     // slots/strokes/时间轴三方对齐一致（approx 口径不排序——缺 startedAt
     // 的旧稿按数组序，排序键会全塌到 0 互相颠倒）
     normalized.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-    const t0 = Math.min(...normalized.map((item) => item.startedAt ?? 0));
-    // 评审 #11750 必改②：对 strokes∪deleted 的全部时刻（起点/终点/删除时刻）
-    // 建一条分段压缩映射 compress(real)——slots 起点墓碑 startMs/deletedAtMs/
-    // pauses 都过同一映射，「停顿前写并擦掉的墓碑」不会被段后总位移归零；
-    // durationMs = 映射后最大时刻（擦除发生在末笔之后也播得到消失，②c）。
+    const tombsNormalized = deleted.map((tomb) => ({
+      stroke: tomb.stroke,
+      startedAt: tomb.startedAt,
+      deletedAt: tomb.deletedAt,
+      pointTimesMs: normalizePointTimes(tomb.rawTimes),
+      // 评审 #11750 必改②-C：书写终点用原始末点 t（单点 normalize 会塌成 0）
+      writingEnd:
+        tomb.startedAt !== null
+          ? tomb.startedAt + (tomb.rawTimes.at(-1) ?? 0)
+          : null,
+    }));
+    // t0 = min(strokes∪deleted 的 startedAt)（评审 #11768 必改②-B：墓碑早于
+    // 首笔活笔的「先写→全擦→重写」主场景，rel 不得为负）
+    const startsSeen: number[] = [];
+    for (const item of normalized) {
+      if (item.startedAt !== null) startsSeen.push(item.startedAt);
+    }
+    for (const tomb of tombsNormalized) {
+      if (tomb.startedAt !== null) startsSeen.push(tomb.startedAt);
+    }
+    if (startsSeen.length === 0) {
+      return {
+        engine: "atrament",
+        strokes: [],
+        slots: [],
+        durationMs: 0,
+        contentHeight: EMPTY_CONTENT_HEIGHT,
+        timing: "approx",
+        pauses: [],
+        deletedSlots: [],
+      };
+    }
+    const t0 = Math.min(...startsSeen);
+    // moments = 活笔起点/终点 + 墓碑起点/墓碑终点（startedAt + 末点 t，②-C：
+    // 墓碑书写时段进 moments，删除时刻才不会被当空闲压缩）
     const realMoments: number[] = [];
     for (const item of normalized) {
       const start = item.startedAt ?? 0;
       realMoments.push(start, start + (item.pointTimesMs.at(-1) ?? 0));
     }
-    for (const tomb of deleted) {
-      if (tomb.startedAt !== null) realMoments.push(tomb.startedAt);
+    for (const tomb of tombsNormalized) {
+      if (tomb.startedAt === null || tomb.writingEnd === null) continue;
+      realMoments.push(tomb.startedAt, tomb.writingEnd);
+      // 评审 #11750 必改②-C：删除时刻也是时刻——擦在末笔之后要播得到消失
       if (tomb.deletedAt !== null) realMoments.push(tomb.deletedAt);
     }
     const moments = [...new Set(realMoments)].sort((a, b) => a - b);
-    const momentReal: number[] = [];
+    // segCap（评审 #11768 处方）：段落在任一笔（活或墓碑）的书写区间内 →
+    // cap = gap（书写不压缩不标记）；否则空闲 → cap = min(gap, 5000)。
+    // shift 累加与 compress() 用同一张 segCap 表。
+    const segCaps: number[] = [];
+    for (let i = 0; i + 1 < moments.length; i++) {
+      const from = moments[i] ?? 0;
+      const to = moments[i + 1] ?? from;
+      const gap = to - from;
+      let writing = false;
+      const overlaps = (wStart: number, wEnd: number): boolean =>
+        from < wEnd && to > wStart;
+      for (const item of normalized) {
+        if (item.startedAt === null) continue;
+        if (
+          overlaps(
+            item.startedAt,
+            item.startedAt + (item.pointTimesMs.at(-1) ?? 0),
+          )
+        ) {
+          writing = true;
+          break;
+        }
+      }
+      if (!writing) {
+        // 墓碑的书写区间 = [startedAt, startedAt + 原始末点 t]（处方 §11768：
+        // 段落在任一笔的书写区间内才 cap=gap；删除后的空闲段照常压缩）
+        for (const tomb of tombsNormalized) {
+          if (tomb.startedAt === null || tomb.writingEnd === null) continue;
+          if (overlaps(tomb.startedAt, tomb.writingEnd)) {
+            writing = true;
+            break;
+          }
+        }
+      }
+      segCaps.push(writing ? gap : Math.min(gap, REPLAY_PAUSE_CAP_MS));
+    }
+    const momentRel: number[] = [];
     const mapped: number[] = [];
-    let shift = 0;
     for (let i = 0; i < moments.length; i++) {
       const rel = (moments[i] ?? 0) - t0;
+      // 进入时刻 i 的段 = [moments[i-1], moments[i]]，cap = segCaps[i-1]
+      const cap =
+        i > 0 && i - 1 < segCaps.length
+          ? (segCaps[i - 1] ?? REPLAY_PAUSE_CAP_MS)
+          : REPLAY_PAUSE_CAP_MS;
+      let thisMapped: number;
       if (i > 0) {
-        const prevRel = momentReal[i - 1] ?? 0;
+        const prevRel = momentRel[i - 1] ?? 0;
+        const prevMapped = mapped[i - 1] ?? 0;
         const gap = rel - prevRel;
-        if (gap > REPLAY_PAUSE_CAP_MS) {
-          // 压缩：显示等待封顶为上限，实际时长进「停顿」标记（§7.1）
-          shift += gap - REPLAY_PAUSE_CAP_MS;
-        }
-      }
-      momentReal.push(rel);
-      const thisMapped = Math.max(
-        rel - shift,
-        i > 0 ? (mapped[i - 1] ?? 0) : 0,
-      );
-      if (i > 0) {
-        const prevRel = momentReal[i - 1] ?? 0;
-        const gap = rel - prevRel;
-        if (gap > REPLAY_PAUSE_CAP_MS) {
+        thisMapped = prevMapped + Math.min(gap, cap);
+        if (gap > cap) {
+          // 空闲段压缩：显示封顶为 cap，实际时长进「停顿」标记（§7.1）
           pauses.push({ atMs: thisMapped, realMs: gap });
         }
+      } else {
+        thisMapped = Math.max(0, rel);
       }
+      momentRel.push(rel);
       mapped.push(thisMapped);
     }
-    /** 分段映射：real 绝对时刻 → 压缩后时间轴。压缩发生在段边界（间隙即
-     * 停顿）：段内 1:1 前进但封顶为 CAP——超长间隙内的任何时刻都映射到
-     * 「上一时刻 + CAP」，与 slots 起点同式。 */
+    // 临时诊断（定位后删除）
+    console.log(
+      "[SEG-DEBUG]",
+      JSON.stringify(moments),
+      JSON.stringify(segCaps),
+      JSON.stringify(momentRel),
+      JSON.stringify(mapped),
+      JSON.stringify(pauses),
+    );
+    /** 分段映射 compress：与 segCap 表同式（段内 1:1、边界按 cap 跳变） */
     const compress = (realAbs: number): number => {
       const rel = Math.max(0, realAbs - t0);
-      for (let i = 0; i < momentReal.length; i++) {
-        const segStart = momentReal[i] ?? 0;
-        const segEnd =
-          i + 1 < momentReal.length
-            ? (momentReal[i + 1] ?? Number.POSITIVE_INFINITY)
-            : Number.POSITIVE_INFINITY;
-        if (rel <= segEnd) {
-          const cap = Math.min(segEnd - segStart, REPLAY_PAUSE_CAP_MS);
-          return (mapped[i] ?? 0) + Math.min(rel - segStart, cap);
-        }
+      for (let i = 0; i < momentRel.length; i++) {
+        const segStart = momentRel[i] ?? 0;
+        if (i + 1 < momentRel.length && rel > (momentRel[i + 1] ?? 0)) continue;
+        const cap =
+          i < segCaps.length
+            ? (segCaps[i] ?? REPLAY_PAUSE_CAP_MS)
+            : REPLAY_PAUSE_CAP_MS;
+        return (mapped[i] ?? 0) + Math.min(rel - segStart, cap);
       }
       return mapped[mapped.length - 1] ?? 0;
     };
@@ -360,16 +433,26 @@ function buildAtramentModel(
       });
     }
     // 墓碑时间轴（real 口径）：同一 compress——停顿前写并擦掉的墓碑不再归零
-    for (const tomb of deleted) {
+    for (const tomb of tombsNormalized) {
       if (tomb.startedAt === null || tomb.deletedAt === null) continue;
       deletedSlots.push({
         stroke: tomb.stroke,
-        pointTimesMs: normalizePointTimes(tomb.rawTimes),
+        pointTimesMs: tomb.pointTimesMs,
         startMs: compress(tomb.startedAt),
         deletedAtMs: compress(tomb.deletedAt),
       });
     }
     durationMs = mapped.length > 0 ? (mapped[mapped.length - 1] ?? 0) : 0;
+    // 临时诊断（定位后删除）
+    console.log(
+      "[SEG-DEBUG]",
+      JSON.stringify(moments),
+      JSON.stringify(segCaps),
+      JSON.stringify(momentRel),
+      JSON.stringify(mapped),
+      JSON.stringify(pauses),
+      JSON.stringify(deletedSlots.map((d) => [d.startMs, d.deletedAtMs])),
+    );
   } else {
     let cursor = 0;
     for (const item of normalized) {

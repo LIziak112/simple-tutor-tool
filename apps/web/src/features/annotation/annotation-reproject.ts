@@ -4,6 +4,7 @@ import type {
   InkDeletedStroke,
   InkStroke,
 } from "@tutor/contract";
+import { blocksInBaseDomain } from "./annotation-anchor";
 
 /**
  * 圈画重投影（LR-6，学习记录模型设计稿 §5.3）：纯几何函数，不碰 DOM、可
@@ -41,14 +42,17 @@ interface Rect {
  * 像素（CSS × pixelRatio）——消费前先做域转换，同布局恒等、跨布局不错位。 */
 function keyedBlocksOf(layout: AnnotationSurfaceLayout): Map<string, Rect> {
   const map = new Map<string, Rect>();
-  const ratio = layout.pixelRatio;
-  for (const block of layout.compatibility?.blocks ?? []) {
-    if (block.node !== undefined && map.has(block.node) === false) {
+  // 评审 #11768：复用 blocksInBaseDomain（与锚定同一份 ×ratio 转换，勿留两份）
+  for (const block of blocksInBaseDomain(
+    layout.compatibility?.blocks ?? [],
+    layout.pixelRatio,
+  )) {
+    if (block.node !== undefined && !map.has(block.node)) {
       map.set(block.node, {
-        x: block.x * ratio,
-        y: block.y * ratio,
-        width: block.width * ratio,
-        height: block.height * ratio,
+        x: block.x,
+        y: block.y,
+        width: block.width,
+        height: block.height,
       });
     }
   }
