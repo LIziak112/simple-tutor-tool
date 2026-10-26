@@ -44,8 +44,14 @@ export {
   stripOptionListMd,
   studentStemMd,
 } from "./v2/public-stem.ts";
-export type { QuestionNodesInput } from "./v2/question-nodes.ts";
-export { questionNodesOf } from "./v2/question-nodes.ts";
+export type {
+  QuestionBlockEntry,
+  QuestionNodesInput,
+} from "./v2/question-nodes.ts";
+export {
+  createQuestionBlockKeyer,
+  questionNodesOf,
+} from "./v2/question-nodes.ts";
 export { processor } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。

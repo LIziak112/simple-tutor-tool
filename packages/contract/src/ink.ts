@@ -53,6 +53,7 @@ export const inkStrokeIdSchema = z
 
 /** LR-1：落笔输入来源（PointerEvent.pointerType 直录；教师看「笔还是手指」） */
 export const inkPointerKindSchema = z.enum(["pen", "touch", "mouse"]);
+export type InkPointerKind = z.infer<typeof inkPointerKindSchema>;
 
 /** 一笔完整笔画（整笔橡皮删除笔画本身，不产生橡皮笔画） */
 export const inkStrokeSchema = z.object({

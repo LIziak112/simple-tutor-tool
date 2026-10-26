@@ -24,8 +24,9 @@ import { processor } from "./shared.ts";
  *   原文带进学生/AI 载荷（评审 #11400 建议改条目）；标记替换只动行内文本
  *   （渲染侧 remark-blank 产 inline textDirective），两角色键序列不变
  *   （question-nodes.test.ts 锁定）。
- * - 渲染器（RichMarkdown 管线）将用同一枚举规则给块级元素打
- *   data-lr-node="<key>"（LR-PR2）。
+ * - 渲染器（RichMarkdown 管线）用 createQuestionBlockKeyer 的同一套
+ *   分类/计数/键生成给块级元素打 data-lr-node="<key>"（LR-PR2，
+ *   apps/web/src/features/markdown/remark/remark-lr-nodes.ts）。
  */
 
 export { QUESTION_NODES_VERSION };
@@ -64,15 +65,35 @@ function nodeText(node: Node): string | undefined {
   return collapsed.slice(0, QUESTION_NODE_TEXT_MAX);
 }
 
-/** 选项字母：0 起 → A、B、…、Z、AA、AB（choice 判分「字母由顺序推导」同口径） */
-function optionLabel(index: number): string {
-  let label = "";
-  let n = index;
-  while (n >= 0) {
-    label = String.fromCharCode(65 + (n % 26)) + label;
-    n = Math.floor(n / 26) - 1;
-  }
-  return label;
+/** 单个块级节点的枚举结果：键 + kind + 可选人读摘要 */
+export interface QuestionBlockEntry {
+  key: string;
+  kind: QuestionNodeKind;
+  text?: string;
+}
+
+/**
+ * 块级节点分类计数器（stem/<token>/<n> 键的单一生成器）。
+ * questionNodesOf（本文件，文本输入）与 web 渲染器打 data-lr-node 的
+ * remark 插件（树输入）共用——键序列跨「枚举 / 渲染」一致的前提（LR-PR2）。
+ * 同类节点在预序中 0 起计数；「other」类不产 text 摘要。
+ */
+export function createQuestionBlockKeyer(): (
+  block: Node,
+) => QuestionBlockEntry {
+  const counters = new Map<string, number>();
+  return (block) => {
+    const mapped = BLOCK_KIND_BY_TYPE[block.type] ?? OTHER;
+    const token = mapped.token;
+    const n = counters.get(token) ?? 0;
+    counters.set(token, n + 1);
+    const key = `stem/${token}/${n}`;
+    if (mapped.kind === "other") return { key, kind: mapped.kind };
+    const text = nodeText(block);
+    return text === undefined
+      ? { key, kind: mapped.kind }
+      : { key, kind: mapped.kind, text };
+  };
 }
 
 /** questionNodesOf 的输入：题干源文本 + 选项纯文本数组（choice/multi 有） */
@@ -87,12 +108,7 @@ export interface QuestionNodesInput {
  */
 export function questionNodesOf(input: QuestionNodesInput): QuestionNode[] {
   const nodes: QuestionNode[] = [{ key: "root", kind: "root", order: 0 }];
-  const counters = new Map<string, number>();
-  const nextIndex = (token: string): number => {
-    const n = counters.get(token) ?? 0;
-    counters.set(token, n + 1);
-    return n;
-  };
+  const keyer = createQuestionBlockKeyer();
 
   // 输入先过学生端唯一投影 studentStemMd（幂等；学生投影再入无变化）——
   // nodes[].text 恒为公开投影，两角色键序列不变（见文件头注释）。
@@ -108,13 +124,12 @@ export function questionNodesOf(input: QuestionNodesInput): QuestionNode[] {
         ? ((child as { children?: Node[] }).children ?? [])
         : [child];
     for (const block of blocks) {
-      const mapped = BLOCK_KIND_BY_TYPE[block.type] ?? OTHER;
-      const token = mapped.token;
+      const entry = keyer(block);
       nodes.push({
-        key: `stem/${token}/${nextIndex(token)}`,
-        kind: mapped.kind,
+        key: entry.key,
+        kind: entry.kind,
         order: nodes.length,
-        ...(mapped.kind === "other" ? {} : { text: nodeText(block) }),
+        ...(entry.text === undefined ? {} : { text: entry.text }),
       });
     }
   }
@@ -133,4 +148,15 @@ export function questionNodesOf(input: QuestionNodesInput): QuestionNode[] {
     });
   }
   return nodes;
+}
+
+/** 选项字母：0 起 → A、B、…、Z、AA、AB（choice 判分「字母由顺序推导」同口径） */
+function optionLabel(index: number): string {
+  let label = "";
+  let n = index;
+  while (n >= 0) {
+    label = String.fromCharCode(65 + (n % 26)) + label;
+    n = Math.floor(n / 26) - 1;
+  }
+  return label;
 }
