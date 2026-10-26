@@ -663,9 +663,6 @@ export type AnalyticsAssignmentCell = z.infer<
 export type AnalyticsUnitCell = z.infer<typeof analyticsUnitCellSchema>;
 export type AnalyticsMatrix = z.infer<typeof analyticsMatrixSchema>;
 export type AnalyticsTrendPoint = z.infer<typeof analyticsTrendPointSchema>;
-export type AnalyticsFocusQuestion = z.infer<
-  typeof analyticsFocusQuestionSchema
->;
 export type AnalyticsFocusPoint = z.infer<typeof analyticsFocusPointSchema>;
 export type AnalyticsFocusCard = z.infer<typeof analyticsFocusCardSchema>;
 export type AnalyticsOffline = z.infer<typeof analyticsOfflineSchema>;
@@ -692,12 +689,6 @@ export type AnalyticsStepsStatus = z.infer<typeof analyticsStepsStatusSchema>;
 export type AnalyticsLectureStepsRow = z.infer<
   typeof analyticsLectureStepsRowSchema
 >;
-export type AnalyticsLectureMapSummary = z.infer<
-  typeof analyticsLectureMapSummarySchema
->;
-export type AnalyticsLectureReadingMap = z.infer<
-  typeof analyticsLectureReadingMapSchema
->;
 export type AnalyticsLectureMapEntry = z.infer<
   typeof analyticsLectureMapEntrySchema
 >;
@@ -707,4 +698,3 @@ export type AnalyticsQuestionRow = z.infer<typeof analyticsQuestionRowSchema>;
 export type AnalyticsQuestionsData = z.infer<
   typeof analyticsQuestionsDataSchema
 >;
-export type AnalyticsErrorCode = z.infer<typeof analyticsErrorCodeSchema>;

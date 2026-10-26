@@ -145,4 +145,3 @@ export type TeacherRegisterRequest = z.infer<
 >;
 export type TeacherStatusData = z.infer<typeof teacherStatusDataSchema>;
 export type TeacherInfo = z.infer<typeof teacherInfoSchema>;
-export type AuthErrorCode = z.infer<typeof authErrorCodeSchema>;

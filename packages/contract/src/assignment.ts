@@ -484,11 +484,8 @@ export const teacherAssignmentListOkSchema = apiOkExtend(
 /** 携带创建结果的成功响应壳 */
 export const assignmentCreateOkSchema = apiOkExtend(assignmentCreateDataSchema);
 /** 携带更新结果的成功响应壳 */
-export const assignmentUpdateOkSchema = apiOkExtend(assignmentUpdateDataSchema);
 /** 携带作业详情的成功响应壳（T2A.7） */
-export const assignmentDetailOkSchema = apiOkExtend(assignmentDetailDataSchema);
 /** 携带 D15 已做过检查结果的成功响应壳（T2A.7） */
-export const assignmentCheckOkSchema = apiOkExtend(assignmentCheckDataSchema);
 /** 携带学生作业列表的成功响应壳 */
 export const studentAssignmentListOkSchema = apiOkExtend(
   studentAssignmentListDataSchema,
@@ -503,9 +500,6 @@ export type AssignmentAnswerRelease = z.infer<
 export type AssignmentCreateRequest = z.infer<
   typeof assignmentCreateRequestSchema
 >;
-export type AssignmentUnitGrouping = z.infer<
-  typeof assignmentUnitGroupingSchema
->;
 export type AssignmentUpdateRequest = z.infer<
   typeof assignmentUpdateRequestSchema
 >;
@@ -514,24 +508,16 @@ export type AssignmentCheckRequest = z.infer<
 >;
 export type AssignmentCheckHint = z.infer<typeof assignmentCheckHintSchema>;
 export type AssignmentCheckData = z.infer<typeof assignmentCheckDataSchema>;
-export type AssignmentListQuery = z.infer<typeof assignmentListQuerySchema>;
 export type TeacherAssignmentUnit = z.infer<typeof teacherAssignmentUnitSchema>;
-export type AssignmentRosterStats = z.infer<typeof assignmentRosterStatsSchema>;
 export type TeacherAssignment = z.infer<typeof teacherAssignmentSchema>;
 export type AssignmentCreateData = z.infer<typeof assignmentCreateDataSchema>;
 export type TeacherAssignmentListData = z.infer<
   typeof teacherAssignmentListDataSchema
 >;
-export type AssignmentRosterEntry = z.infer<typeof assignmentRosterEntrySchema>;
-export type AssignmentCourseMember = z.infer<
-  typeof assignmentCourseMemberSchema
->;
 export type AssignmentDetailData = z.infer<typeof assignmentDetailDataSchema>;
-export type StudentAssignmentUnit = z.infer<typeof studentAssignmentUnitSchema>;
 export type StudentAssignment = z.infer<typeof studentAssignmentSchema>;
 export type StudentAssignmentListData = z.infer<
   typeof studentAssignmentListDataSchema
 >;
 export type StudentPaperUnit = z.infer<typeof studentPaperUnitSchema>;
 export type StudentPaperData = z.infer<typeof studentPaperDataSchema>;
-export type AssignmentErrorCode = z.infer<typeof assignmentErrorCodeSchema>;

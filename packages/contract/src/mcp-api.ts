@@ -95,7 +95,6 @@ export const reportCreateDataSchema = z.object({
  * MCP 鉴权 401 在协议层返回（无/错 token/教师已禁用同一文案，防探测，D22），
  * 不进统一壳错误码枚举。
  */
-export const mcpErrorCodeSchema = z.enum(["REPORT_NOT_FOUND"]);
 
 // ---------- 推断类型导出 ----------
 

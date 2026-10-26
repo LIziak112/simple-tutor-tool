@@ -491,19 +491,7 @@ export type AttemptEvent = z.infer<typeof attemptEventSchema>;
 export type LectureEvent = z.infer<typeof lectureEventSchema>;
 export type LearningEvent = z.infer<typeof learningEventSchema>;
 /** 讲义域 directive_interact（open/close 与 reveal 两形态的联合） */
-export type DirectiveInteractLectureEvent = z.infer<
-  typeof directiveInteractLectureEventSchema
->;
 /** directive_interact 全量事件（host=lecture|question|result） */
-export type DirectiveInteractEvent = z.infer<
-  typeof directiveInteractEventSchema
->;
-export type AttemptEventBatchRequest = z.infer<
-  typeof attemptEventBatchRequestSchema
->;
-export type LectureEventBatchRequest = z.infer<
-  typeof lectureEventBatchRequestSchema
->;
 export type LearningEventBatchData = z.infer<
   typeof learningEventBatchDataSchema
 >;

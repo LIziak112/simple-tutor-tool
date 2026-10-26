@@ -236,12 +236,6 @@ export type StudentCourseItem = z.infer<typeof studentCourseItemSchema>;
 export type StudentCourseDetailData = z.infer<
   typeof studentCourseDetailDataSchema
 >;
-export type StudentUnitAttemptRecord = z.infer<
-  typeof studentUnitAttemptRecordSchema
->;
 export type StudentUnitLandingData = z.infer<
   typeof studentUnitLandingDataSchema
->;
-export type StudentCourseErrorCode = z.infer<
-  typeof studentCourseErrorCodeSchema
 >;

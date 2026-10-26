@@ -1847,13 +1847,7 @@ export function fetchCourseProgressApi(
 }
 
 export type {
-  LectureMetaUpdate,
-  LibraryBatchRequest,
-  LibraryFolderCreate,
-  LibraryFolderReorder,
-  LibraryFolderUpdate,
   SharedImportRequest,
-  SharedPreviewRequest,
   UnitMetaUpdate,
 } from "@tutor/contract";
 
