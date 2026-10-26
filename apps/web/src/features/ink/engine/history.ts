@@ -84,6 +84,7 @@ export class InkStore {
   #maxEntries: number;
   #maxPoints: number;
   #maxDeletedPoints: number;
+  #maxDeletedStrokes: number;
   #onTrimmed: ((trimmed: InkDeletedStroke[]) => void) | undefined;
   #undoPoints = 0;
   #strokes: InkStroke[] = [];
@@ -106,6 +107,12 @@ export class InkStore {
       maxPoints?: number;
       /** 墓碑 FIFO 预算（点数）；缺省取最宽松的草稿链预算 NOTE_MAX_DELETED_POINTS */
       maxDeletedPoints?: number;
+      /**
+       * 墓碑 FIFO 预算（笔数）。缺省不设上限（点数预算兜底）；圈画链必须传
+       * ANNOTATION_MAX_DELETED_STROKES——圈画一笔几十点，400 笔才 2 万点，
+       * 只按点数压实时服务端 400 笔上限先撞，且 413 后圈画链无自愈路径。
+       */
+      maxDeletedStrokes?: number;
       /** 压实回调：丢最老墓碑时通知（消费方同步清理这些 id 的锚点等派生键） */
       onTombstonesTrimmed?: (trimmed: InkDeletedStroke[]) => void;
     } = {},
@@ -116,6 +123,8 @@ export class InkStore {
       1,
       budget.maxDeletedPoints ?? NOTE_MAX_DELETED_POINTS,
     );
+    this.#maxDeletedStrokes =
+      budget.maxDeletedStrokes ?? Number.MAX_SAFE_INTEGER;
     this.#onTrimmed = budget.onTombstonesTrimmed;
   }
 
@@ -382,9 +391,18 @@ export class InkStore {
   #trimDeleted(): void {
     let total = 0;
     for (const tomb of this.#deleted) total += tomb.points.length;
-    if (total <= this.#maxDeletedPoints) return;
+    if (
+      total <= this.#maxDeletedPoints &&
+      this.#deleted.length <= this.#maxDeletedStrokes
+    ) {
+      return;
+    }
     const trimmed: InkDeletedStroke[] = [];
-    while (total > this.#maxDeletedPoints && this.#deleted.length > 0) {
+    while (
+      (total > this.#maxDeletedPoints ||
+        this.#deleted.length > this.#maxDeletedStrokes) &&
+      this.#deleted.length > 0
+    ) {
       const oldest = this.#deleted.shift();
       if (!oldest) break;
       total -= oldest.points.length;

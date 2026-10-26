@@ -1,4 +1,5 @@
 import type { StudentAnswer } from "@tutor/contract";
+import { INK_MAX_DELETED_POINTS } from "@tutor/contract";
 import {
   ChevronDown,
   ChevronUp,
@@ -551,6 +552,7 @@ export function HandwrittenControls({
                 engine="atrament"
                 initial={masterDoc ?? undefined}
                 label="手写答题区"
+                maxDeletedPoints={INK_MAX_DELETED_POINTS}
                 onDocChange={handleDocChange}
                 engineRef={pageEngineRef}
                 inputEnabled={

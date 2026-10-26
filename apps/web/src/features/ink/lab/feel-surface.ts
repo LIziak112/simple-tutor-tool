@@ -29,6 +29,7 @@ import {
 } from "../engine/pointer-machine";
 import type { InkChangeReason, ToolAwareSurface } from "../engine/surface";
 import {
+  asPointerKind,
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
@@ -284,7 +285,7 @@ export function createFeelSurface(
       lastStamp = event.timeStamp;
       // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录）
       liveStartedAt = Date.now();
-      livePointerKind = event.pointerType as InkPointerKind;
+      livePointerKind = asPointerKind(event.pointerType);
       const first = point(event, rect);
       eraseActive = tool.type === "eraser";
       if (eraseActive) {

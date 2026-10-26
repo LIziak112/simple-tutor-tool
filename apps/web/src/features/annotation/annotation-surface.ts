@@ -24,6 +24,7 @@
 
 import {
   ANNOTATION_MAX_DELETED_POINTS,
+  ANNOTATION_MAX_DELETED_STROKES,
   type AnnotationDoc,
   type AnnotationSurfaceCompatibility,
 } from "@tutor/contract";
@@ -50,6 +51,7 @@ import {
 } from "@/features/ink/engine/pointer-machine.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface.ts";
 import {
+  asPointerKind,
   INK_ERASE_RADIUS,
   INK_LOGICAL_WIDTH,
   type InkInputMode,
@@ -153,6 +155,9 @@ export function createAnnotationSurface(
   const anchors: Record<string, string> = {};
   const store = new InkStore({
     maxDeletedPoints: ANNOTATION_MAX_DELETED_POINTS,
+    // LR-2：圈画链墓碑按「笔数」压实——400 笔上限先于 80k 点撞顶，
+    // 且 413 后 annotation-sync 判 denied 不再重试，客户端必须先压实
+    maxDeletedStrokes: ANNOTATION_MAX_DELETED_STROKES,
     onTombstonesTrimmed: (trimmed) => {
       for (const tomb of trimmed) delete anchors[tomb.id];
     },
@@ -181,7 +186,7 @@ export function createAnnotationSurface(
   let livePoints: InkStrokePoint[] = [];
   let liveStartStamp = 0;
   // LR-1：本笔绝对时刻与输入来源（pointerdown 捕获，收笔随笔画提交）
-  const liveStartedAt = 0;
+  let liveStartedAt = 0;
   let livePointerKind: InkPointerKind | undefined;
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
@@ -404,6 +409,9 @@ export function createAnnotationSurface(
       // 个别浏览器 canvas 未聚焦时可能抛错（同引擎口径）
     }
     liveStartStamp = e.timeStamp;
+    // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录，空串守卫）
+    liveStartedAt = Date.now();
+    livePointerKind = asPointerKind(e.pointerType);
     liveStrokeIsErase = tool.type === "eraser";
 
     if (liveStrokeIsErase) {

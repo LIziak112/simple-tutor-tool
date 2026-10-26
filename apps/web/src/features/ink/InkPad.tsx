@@ -115,6 +115,12 @@ export interface InkPadProps {
    * 陈旧，需按 store 现值重载正文）。
    */
   onEngineRebuild?: (() => void) | undefined;
+  /**
+   * LR-2：墓碑点数预算透传（InkStore）。正式手写链（HandwrittenControls）
+   * 传 INK_MAX_DELETED_POINTS（60k，与服务端 inkDocSchema 限额同值——413 后
+   * 无自愈路径，客户端先压实）；草稿链缺省 100k 不传。
+   */
+  maxDeletedPoints?: number;
 }
 
 /** 输入模式接入形态：auto=旧行为；session=会话共享偏好（新草稿） */
@@ -203,6 +209,7 @@ export function InkPad({
   compactToolbar = false,
   paperHeight,
   onEngineRebuild,
+  maxDeletedPoints,
   inputEnabled = true,
 }: InkPadProps) {
   const profile = useInkProfileSelection();
@@ -285,6 +292,7 @@ export function InkPad({
       const ink = create(container, {
         engine,
         ...(initial !== undefined ? { initial } : {}),
+        ...(maxDeletedPoints !== undefined ? { maxDeletedPoints } : {}),
         // T6R.9：受控纸高作为引擎高度提示；背景透传（缺省均不传=旧行为）
         ...(mount.height !== undefined ? { height: mount.height } : {}),
         ...(mount.background !== undefined

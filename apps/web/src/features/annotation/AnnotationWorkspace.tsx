@@ -155,6 +155,12 @@ export function AnnotationWorkspace({
       baseWidth,
       baseHeight,
       inputMode: getSessionInputPreference(),
+      // LR-6：收笔锚定布局证据（record 活引用取当前 layout；无 layout 不锚）
+      anchorBlocks: () =>
+        (
+          recordRef.current?.localBase?.layout ??
+          recordRef.current?.base?.layout
+        )?.compatibility?.blocks,
     });
     surfaceRef.current = surface;
     surface.mount(host, initialDoc);

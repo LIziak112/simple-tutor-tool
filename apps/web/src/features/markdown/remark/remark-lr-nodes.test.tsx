@@ -57,4 +57,31 @@ describe("remark-lr-nodes（LR-5 data-lr-node 打键）", () => {
       enabled.container.querySelector('[data-lr-node="stem/p/0"]'),
     ).not.toBeNull();
   });
+
+  it("指令容器锚点透明：宿主不携带键，DOM 键恒为枚举键的子集", () => {
+    const md = [
+      "段落甲。",
+      "",
+      "::::hint",
+      "折叠内容",
+      "::::",
+      "",
+      "![配图](media/pic.png)",
+      "",
+      "段落乙。",
+    ].join("\n");
+    const { container } = render(<RichMarkdown source={md} lrNodes />);
+    const domKeys = [...container.querySelectorAll("[data-lr-node]")].map(
+      (el) => el.getAttribute("data-lr-node"),
+    );
+    const expected = questionNodesOf({ stemMd: md })
+      .filter((node) => node.key.startsWith("stem/"))
+      .map((node) => node.key);
+    // 容器指令（::::hint）在枚举侧整体计 other/0，但宿主是自定义组件：
+    // LR-5 守卫禁止教师属性经 hProperties 透传（防伪造键混进布局证据），
+    // 宿主自身也不透传 data-* ——容器对锚点「透明」，其内部内容由
+    // measureQuestionSurface 的最近带键祖先（surface root）兜底。
+    expect(expected).toContain("stem/other/0");
+    expect(domKeys).toEqual(expected.filter((key) => key !== "stem/other/0"));
+  });
 });

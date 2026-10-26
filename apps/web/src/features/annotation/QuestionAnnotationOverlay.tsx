@@ -558,6 +558,13 @@ export const QuestionAnnotationOverlay = forwardRef<
       baseHeight,
       inputEnabled: false,
       inputMode: getSessionInputPreference(),
+      // LR-6：收笔锚定的布局证据——从 record 活引用取当前 layout（effect
+      // 闭包里的 layout 会过期）；无 layout（旧底图）返回 undefined 不锚
+      anchorBlocks: () =>
+        (
+          recordRef.current?.localBase?.layout ??
+          recordRef.current?.base?.layout
+        )?.compatibility?.blocks,
     });
     surface.current = current;
     const resetVersion = recordRef.current?.resetVersion ?? 0;

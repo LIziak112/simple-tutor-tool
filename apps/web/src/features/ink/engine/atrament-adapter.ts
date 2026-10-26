@@ -77,6 +77,7 @@ import {
 } from "./pointer-machine.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import {
+  asPointerKind,
   INK_DEFAULT_SMOOTHING,
   INK_ERASE_RADIUS,
   type InkDoc,
@@ -488,7 +489,7 @@ export function createAtramentSurface(
     liveStartStamp = e.timeStamp;
     // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录）
     liveStartedAt = Date.now();
-    livePointerKind = e.pointerType as InkPointerKind;
+    livePointerKind = asPointerKind(e.pointerType);
     // 落笔快照（复审③）：本笔的 move 采样与收笔提交都按此刻的工具分派
     liveStrokeIsErase = tool.type === "eraser";
 

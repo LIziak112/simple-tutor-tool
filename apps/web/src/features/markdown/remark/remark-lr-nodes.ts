@@ -35,7 +35,8 @@ interface HastChild {
   children?: unknown[];
 }
 
-/** 显示公式包装判定：KaTeX 把 math 节点原地替换为 .katex-display 包装 */
+/** 显示公式包装判定：KaTeX 原地替换 / 历史坏公式降级（rehype-math-fallback
+ * 整体重写 properties 丢键——降级包装也要识别为公式块，否则编号错位） */
 function isMathBlock(node: HastChild): boolean {
   const className = node.properties?.className;
   const classes = Array.isArray(className)
@@ -43,7 +44,12 @@ function isMathBlock(node: HastChild): boolean {
     : typeof className === "string"
       ? className
       : "";
-  return classes.includes("katex-display") || classes.includes("math-display");
+  return (
+    classes.includes("katex-display") ||
+    classes.includes("math-display") ||
+    classes.includes("math-fallback") ||
+    classes.includes("math-render-error")
+  );
 }
 
 /** hast 标签 → mdast 词表适配（喂给同一枚举器；其余一律 other 保计数对齐） */
@@ -119,6 +125,9 @@ export function rehypeLrNodesFill(): (tree: unknown) => void {
       }
     };
     for (const child of children) {
+      // 非 element 子节点（根级空白文本等，实践中不出现）：跳过不计数，
+      // 防 keyer 的 other 计数被推偏
+      if (child.type !== "element") continue;
       const type = hastBlockType(child);
       if (type === "list") {
         // list 包装自身不打键；每个 listItem 自成块级节点（与枚举同口径）
