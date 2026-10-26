@@ -11,6 +11,12 @@
  * - 冲突裁决只保留「以本机为准」路径（题干圈画是单人小稿：对齐服务端
  *   revision 后重传；「以云端为准」= 直接丢本地重开视图，无需专门入口）。
  *
+ * 底图 PNG 分键（批次五 P1-1）：PNG 字节不随正文记录落盘——每笔收笔只重写
+ * 小正文记录（localBase 以字节指纹引用底图键）；底图键 `["annotation-base",
+ * …六元, 指纹]` 内容寻址，同一内容只写一次、旧内容键永不删除（写序恒
+ * 「先底图后正文」，任何中断窗口下正文引用的底图键都完整存在，无需跨键
+ * 事务）。旧单键内嵌 PNG 的存量记录可读，并在下次落盘时顺带拆键。
+ *
  * 后端注入（lib/kv-backend 共享实现）：jsdom 无 indexedDB 时自动退化内存
  * 实现；单测注入干净内存后端。真实 IDB 事务语义由 E2E/真机覆盖。
  */
@@ -95,6 +101,44 @@ function sessionPrefix(session: AnnotationSessionRef): string {
   ]).slice(0, -1);
 }
 
+/**
+ * 底图 PNG 独立键（批次五 P1-1）：与正文键同规则派生（部署实例 + 学生 +
+ * attempt + 题 + phase，账号/作答隔离语义一致），尾元为 PNG 字节内容指纹。
+ * 内容寻址 ⇒ 同一字节序列天然只写一次；旧内容键永不删除，正文引用与底图
+ * 字节在任何写序中断窗口下都自洽（无需跨键事务）。
+ */
+export function annotationBaseKeyOf(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  digest: string,
+): string {
+  return JSON.stringify([
+    "annotation-base",
+    session.origin,
+    session.studentId,
+    scope.attemptId,
+    scope.questionId,
+    scope.phase,
+    digest,
+  ]);
+}
+
+/**
+ * PNG 字节内容指纹：双 32 位 FNV-1a 变体 + 字节数（本地缓存键用途，非密码学；
+ * crypto.subtle 在 http 部署不可用，不走该路）。碰撞后果止于底图缓存键撞车，
+ * 读取端另有指纹复核兜底。
+ */
+function pngBytesDigest(bytes: Uint8Array): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0xc2b2ae35;
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index] ?? 0;
+    h1 = Math.imul(h1 ^ byte, 0x01000193);
+    h2 = Math.imul(h2 ^ byte, 0x85ebca6b);
+  }
+  return `${bytes.byteLength.toString(16)}-${(h1 >>> 0).toString(16)}-${(h2 >>> 0).toString(16)}`;
+}
+
 /** 键 → 会话 + scope（sync 订阅回调里反查归属用） */
 export function parseAnnotationKey(
   key: string,
@@ -134,8 +178,16 @@ export interface AnnotationPendingVersion {
   doc: AnnotationDoc;
 }
 
-/** 冲突副本：云端摘要（null=服务端状态未知）+ 原因；本地稿即 record.doc */
+/**
+ * 冲突类别（批次三 P0-2）：revision=CAS 版本冲突（附云端摘要）；
+ * mutation=幂等键错配（无摘要，重铸后重传是正确行为）；
+ * layout=底图布局冲突（无摘要，重传必再撞 409——终局是本机保留或采用云端）。
+ */
+export type AnnotationConflictKind = "revision" | "mutation" | "layout";
+
+/** 冲突副本：类别 + 云端摘要（null=服务端状态未知）+ 原因；本地稿即 record.doc */
 export interface AnnotationConflictInfo {
+  kind: AnnotationConflictKind;
   reason: string;
   current: AnnotationConflictCurrent | null;
 }
@@ -170,6 +222,12 @@ export interface AnnotationLocalRecord {
   baseDisabledReason: string | null;
   /** 冲突副本（非 null 时停止自动上传，等用户裁决） */
   conflict: AnnotationConflictInfo | null;
+  /**
+   * 本机保留态（批次三 B）：layout 冲突「保留本机」＝本机保留、不再自动同步
+   * （uploadable 排除；本机 doc/localBase 照常可查看与导出）。清除路径：
+   * 采用云端版本（choice）/ 维护重置（resetVersion 推进）/ 手动「重新尝试同步」。
+   */
+  retained: { reason: string } | null;
   /** 被拒终态 */
   denied: AnnotationDeniedInfo | null;
   /** 本机持久化状态 */
@@ -192,6 +250,7 @@ function freshRecord(): AnnotationLocalRecord {
     base: null,
     baseDisabledReason: null,
     conflict: null,
+    retained: null,
     denied: null,
     local: "saved",
     localError: null,
@@ -200,8 +259,24 @@ function freshRecord(): AnnotationLocalRecord {
   };
 }
 
-/** 读取旧记录的防御性归一（缺字段补默认；doc 坏形弃壳重建） */
-function reviveRecord(raw: unknown): AnnotationLocalRecord | null {
+/**
+ * 持久化正文记录形态（批次五 P1-1）：localBase 不再内嵌 PNG 字节，改以
+ * `pngDigest` 指向独立底图键（annotationBaseKeyOf）。旧格式（localBase.png
+ * 内嵌 Blob/字节）仍在读取端兼容，见 reviveLocalBaseOf。
+ */
+type PersistedAnnotationRecord = Omit<AnnotationLocalRecord, "localBase"> & {
+  localBase:
+    | (Omit<NonNullable<AnnotationLocalRecord["localBase"]>, "png"> & {
+        pngDigest: string;
+      })
+    | null;
+};
+
+/** 读取旧记录的防御性归一（缺字段补默认；doc 坏形弃壳重建）。
+ *  localBase 不在此处装配（需异步取底图键），恒置 null 由调用方回填。 */
+function reviveRecord(
+  raw: unknown,
+): { record: AnnotationLocalRecord; rawLocalBase: unknown } | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Partial<AnnotationLocalRecord>;
   const doc = r.doc;
@@ -216,27 +291,144 @@ function reviveRecord(raw: unknown): AnnotationLocalRecord | null {
     return null;
   }
   return {
-    ...freshRecord(),
-    localBase: r.localBase ?? null,
-    resetVersion: typeof r.resetVersion === "number" ? r.resetVersion : 0,
-    doc,
-    pending:
-      r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
-        ? r.pending
-        : null,
-    baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
-    annotationId: typeof r.annotationId === "string" ? r.annotationId : null,
-    base: r.base ?? null,
-    baseDisabledReason:
-      typeof r.baseDisabledReason === "string" ? r.baseDisabledReason : null,
-    conflict: r.conflict ?? null,
-    denied: r.denied ?? null,
-    editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
-    docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
-    // 持久副本恒归一化（存在于 IDB 即已落盘）
-    local: "saved",
-    localError: null,
+    record: {
+      ...freshRecord(),
+      localBase: null,
+      resetVersion: typeof r.resetVersion === "number" ? r.resetVersion : 0,
+      doc,
+      pending:
+        r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
+          ? r.pending
+          : null,
+      baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
+      annotationId: typeof r.annotationId === "string" ? r.annotationId : null,
+      base: r.base ?? null,
+      baseDisabledReason:
+        typeof r.baseDisabledReason === "string" ? r.baseDisabledReason : null,
+      conflict:
+        r.conflict == null
+          ? null
+          : {
+              // 旧记录无 kind 的缺省推导：current 非空→revision（对齐重传）、
+              // 空→mutation（重铸重传）——完整保留旧裁决行为；确是 layout 冲突的
+              // 旧记录重撞一次后即带类别落库，自愈到新出口。
+              kind:
+                r.conflict.kind === "revision" ||
+                r.conflict.kind === "mutation" ||
+                r.conflict.kind === "layout"
+                  ? r.conflict.kind
+                  : r.conflict.current != null
+                    ? "revision"
+                    : "mutation",
+              reason:
+                typeof r.conflict.reason === "string" ? r.conflict.reason : "",
+              current: r.conflict.current ?? null,
+            },
+      retained:
+        r.retained && typeof r.retained.reason === "string"
+          ? { reason: r.retained.reason }
+          : null,
+      denied: r.denied ?? null,
+      editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
+      docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
+      // 持久副本恒归一化（存在于 IDB 即已落盘）
+      local: "saved",
+      localError: null,
+    },
+    rawLocalBase: (raw as { localBase?: unknown }).localBase,
   };
+}
+
+/**
+ * 装配完整 localBase（批次五 P1-1 读路径）：
+ * - 新格式：localBase.pngDigest → 取独立底图键字节 → 复核指纹 → Blob 回填；
+ * - 旧格式：localBase.png 内嵌 Blob/Uint8Array 直接使用（不迁移；下次落盘
+ *   时顺带拆键——persistAnnotationBase 见不到已知底图即写独立键）。
+ * 底图键缺失/字节损坏/指纹失配按坏字节纪律抛可读错误：正文记录保留在库，
+ * 不静默清稿（严格读路径因此拒绝，非严格路径回落无稿呈现但不删除数据）。
+ */
+async function reviveLocalBaseOf(
+  key: string,
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  rawLocalBase: unknown,
+): Promise<AnnotationLocalRecord["localBase"]> {
+  if (rawLocalBase === null || rawLocalBase === undefined) return null;
+  if (typeof rawLocalBase !== "object")
+    throw new Error("本机底图记录损坏（localBase 坏形），原记录已保留，请重试");
+  const base = rawLocalBase as {
+    png?: unknown;
+    pngDigest?: unknown;
+    layout: AnnotationSurfaceLayout;
+    boundBaseId?: unknown;
+  };
+  const boundBaseId =
+    typeof base.boundBaseId === "string" ? base.boundBaseId : undefined;
+  if (base.png !== undefined) {
+    // 旧单键内嵌格式
+    let png: Blob;
+    if (base.png instanceof Blob) {
+      png = base.png;
+    } else if (base.png instanceof Uint8Array) {
+      png = pngBlobOf(base.png);
+    } else {
+      throw new Error("本机底图记录损坏（PNG 坏形），原记录已保留，请重试");
+    }
+    if (png.size === 0 || png.size > ANNOTATION_BASE_PNG_MAX_BYTES)
+      throw new Error("本机圈画底图字节损坏或超限，原记录已保留，请重试");
+    return {
+      png,
+      layout: base.layout,
+      ...(boundBaseId ? { boundBaseId } : {}),
+    };
+  }
+  if (typeof base.pngDigest === "string") {
+    const bytes = await backend().get(
+      annotationBaseKeyOf(session, scope, base.pngDigest),
+    );
+    if (!(bytes instanceof Uint8Array))
+      throw new Error("本机底图引用失效（底图字节缺失），原记录已保留，请重试");
+    const png = pngBlobOf(bytes);
+    if (pngBytesDigest(bytes) !== base.pngDigest)
+      throw new Error("本机底图字节与引用不符，原记录已保留，请重试");
+    // 底图键已确认持有该字节：本会话后续每笔不再重写底图键
+    persistedBases.set(key, { png, digest: base.pngDigest });
+    return {
+      png,
+      layout: base.layout,
+      ...(boundBaseId ? { boundBaseId } : {}),
+    };
+  }
+  throw new Error("本机底图记录损坏（缺少PNG或引用），原记录已保留，请重试");
+}
+
+/** 底图字节 → PNG Blob（超限/空字节按坏字节纪律报错，不降级为空稿） */
+function pngBlobOf(bytes: Uint8Array): Blob {
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength > ANNOTATION_BASE_PNG_MAX_BYTES
+  )
+    throw new Error("本机圈画底图字节损坏或超限，原记录已保留，请重试");
+  // Uint8Array.from 拷贝出独立 ArrayBuffer（BlobPart 类型要求非共享缓冲）
+  return new Blob([Uint8Array.from(bytes)], { type: "image/png" });
+}
+
+/** 完整恢复：正文归一 + localBase 按键装配（见 reviveLocalBaseOf） */
+async function reviveRecordWithBase(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  raw: unknown,
+): Promise<AnnotationLocalRecord | null> {
+  const revived = reviveRecord(raw);
+  if (revived === null) return null;
+  const key = annotationKeyOf(session, scope);
+  const localBase = await reviveLocalBaseOf(
+    key,
+    session,
+    scope,
+    revived.rawLocalBase,
+  );
+  return { ...revived.record, localBase };
 }
 
 /** 持久化快照：local 归一化 */
@@ -268,6 +460,7 @@ function clearCaches(): void {
   for (const q of queues.values()) q.queued = false;
   queues.clear();
   records.clear();
+  persistedBases.clear();
   viewCache.clear();
   keyVersions.clear();
   uploadingKeys.clear();
@@ -297,6 +490,14 @@ function backend(): AnnotationStoreBackend {
 
 const records = new Map<string, AnnotationLocalRecord>();
 
+/**
+ * 本会话已知落盘底图（批次五 P1-1）：正文键 → { png 引用, 字节指纹 }。
+ * PNG 只写一次的判据——png 引用相同或字节指纹相同都视为「底图未变」，
+ * 跳过底图键重写（重渲染确定性输出、重下载同字节均命中）；恢复读取时
+ * 由底图键回填。clearCaches 随后端切换一并清空。
+ */
+const persistedBases = new Map<string, { png: Blob; digest: string }>();
+
 interface KeyQueue {
   writing: boolean;
   queued: boolean;
@@ -314,6 +515,62 @@ function queueOf(key: string): KeyQueue {
   return q;
 }
 
+/**
+ * 底图键写入（批次五 P1-1）：底图未变（png 引用或字节指纹与已知落盘一致）
+ * 时跳过；真正变化（首次落盘 / prepare 重建 / 云端重绑）才写独立底图键。
+ * 返回正文记录应携带的字节指纹（无底图为 null）。写序恒「先底图后正文」：
+ * 底图键写失败即整体落盘失败（不解除保存失败保护），正文旧引用指向的旧
+ * 底图键永不删除，任何中断窗口自洽。
+ */
+async function persistAnnotationBase(
+  key: string,
+  record: AnnotationLocalRecord,
+): Promise<string | null> {
+  const local = record.localBase;
+  if (local === null) return null;
+  const known = persistedBases.get(key);
+  if (known !== undefined && known.png === local.png) return known.digest;
+  const bytes = new Uint8Array(await local.png.arrayBuffer());
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength > ANNOTATION_BASE_PNG_MAX_BYTES
+  )
+    throw new Error("本机圈画底图字节损坏或超限，原记录已保留，请重试");
+  const digest = pngBytesDigest(bytes);
+  if (known !== undefined && known.digest === digest) {
+    // 新引用同字节（重渲染/重下载的确定性输出）：内容寻址键已持有该字节
+    persistedBases.set(key, { png: local.png, digest });
+    return digest;
+  }
+  const parsed = parseAnnotationKey(key);
+  if (parsed === null) throw new Error("标注记录键损坏，无法保存底图");
+  await backend().set(
+    annotationBaseKeyOf(parsed.session, parsed.scope, digest),
+    bytes,
+  );
+  persistedBases.set(key, { png: local.png, digest });
+  return digest;
+}
+
+/** 持久化正文副本：localBase 去掉 PNG 字节、写入底图指纹引用 */
+function persistedBodyCopy(
+  record: AnnotationLocalRecord,
+  pngDigest: string | null,
+): PersistedAnnotationRecord {
+  const local = record.localBase;
+  const localBase =
+    local === null || pngDigest === null
+      ? null
+      : {
+          layout: local.layout,
+          ...(local.boundBaseId !== undefined
+            ? { boundBaseId: local.boundBaseId }
+            : {}),
+          pngDigest,
+        };
+  return { ...persistedCopy(record), localBase };
+}
+
 async function drain(key: string): Promise<void> {
   const q = queueOf(key);
   const gen = backendGeneration;
@@ -324,7 +581,8 @@ async function drain(key: string): Promise<void> {
       const record = records.get(key);
       if (record === undefined) continue;
       try {
-        await backend().set(key, persistedCopy(record));
+        const pngDigest = await persistAnnotationBase(key, record);
+        await backend().set(key, persistedBodyCopy(record, pngDigest));
       } catch (err) {
         if (gen !== backendGeneration) continue;
         const current = records.get(key);
@@ -408,13 +666,14 @@ export function notifyAnnotationStoreAll(): void {
 
 // ---------- 状态派生 ----------
 
-/** 服务端维度派生：denied > conflict > uploading > dirty > synced（同 note-store） */
+/** 服务端维度派生：denied > conflict > retained > uploading > dirty > synced */
 export function deriveAnnotationServerState(
   record: AnnotationLocalRecord,
   uploading: boolean,
-): "denied" | "conflict" | "uploading" | "dirty" | "synced" {
+): "denied" | "conflict" | "retained" | "uploading" | "dirty" | "synced" {
   if (record.denied !== null) return "denied";
   if (record.conflict !== null) return "conflict";
+  if (record.retained !== null) return "retained";
   if (uploading) return "uploading";
   if (record.pending !== null) return "dirty";
   return "synced";
@@ -429,7 +688,7 @@ export interface AnnotationRecordView {
   doc: AnnotationDoc | null;
   local: "saving" | "saved" | "failed";
   localError: string | null;
-  server: "denied" | "conflict" | "uploading" | "dirty" | "synced";
+  server: "denied" | "conflict" | "retained" | "uploading" | "dirty" | "synced";
   baseRevision: number;
   annotationId: string | null;
   /** 底图引用缓存（挂画布 gate） */
@@ -437,6 +696,7 @@ export interface AnnotationRecordView {
   baseDisabledReason: string | null;
   pendingMutationId: string | null;
   conflict: AnnotationConflictInfo | null;
+  retained: { reason: string } | null;
   denied: AnnotationDeniedInfo | null;
   docVersion: number;
 }
@@ -450,9 +710,13 @@ export async function getAnnotationRecord(
   const key = annotationKeyOf(session, scope);
   const cached = records.get(key);
   if (cached !== undefined) return cached;
-  let raw: unknown;
+  let revived: AnnotationLocalRecord | null = null;
   try {
-    raw = await backend().get(key);
+    const raw = await backend().get(key);
+    if (raw !== undefined && raw !== null) {
+      // 含底图键装配（新格式取键复核指纹；旧格式内嵌直用；坏字节抛可读错误）
+      revived = await reviveRecordWithBase(session, scope, raw);
+    }
   } catch (err) {
     if (options?.strictRead) throw err;
     console.warn("标注本地记录读取失败（不影响作答）", err);
@@ -460,8 +724,6 @@ export async function getAnnotationRecord(
   }
   const written = records.get(key);
   if (written !== undefined) return written;
-  if (raw === undefined || raw === null) return null;
-  const revived = reviveRecord(raw);
   if (revived === null) return null;
   records.set(key, revived);
   return revived;
@@ -505,6 +767,7 @@ export function getAnnotationView(
     pendingMutationId: record.pending?.mutationId ?? null,
     localBase: record.localBase,
     conflict: record.conflict,
+    retained: record.retained,
     denied: record.denied,
     docVersion: record.docVersion,
   };
@@ -629,16 +892,20 @@ export async function applyBasePreview(
 ): Promise<void> {
   await mutateLoaded(session, scope, freshRecord, (record) => {
     if (confirmedLocalPng !== undefined) {
+      // 批次三 D：绑定校验放宽到同核（重渲染非确定性与兼容证据差异不阻断
+      // 重绑）；绑定同时采纳服务端布局（同核 ⇒ 同几何，证据更全）。
       if (
         record.localBase === null ||
         record.localBase.png !== confirmedLocalPng ||
         preview.base.state !== "ready" ||
-        JSON.stringify(record.localBase.layout) !==
-          JSON.stringify(preview.base.layout)
+        preview.base.layout === undefined ||
+        JSON.stringify(annotationSurfaceLayoutCore(record.localBase.layout)) !==
+          JSON.stringify(annotationSurfaceLayoutCore(preview.base.layout))
       )
         throw new Error("本机底图已更新，不能确认旧的布局绑定");
       record.localBase = {
-        ...record.localBase,
+        png: confirmedLocalPng,
+        layout: preview.base.layout,
         boundBaseId: preview.base.baseId,
       };
     }
@@ -646,6 +913,54 @@ export async function applyBasePreview(
     // 载荷到达即底图链路可用，此前缓存的禁用原因作废
     record.baseDisabledReason = null;
   });
+}
+
+/**
+ * 云端底图 PNG 内容校验（keep-cloud 采用前的预检与 adopt 内防御共用）：
+ * 空/超限/非 PNG 在采用云端正文**之前**拦截，避免「正文已换云端、底图未重绑」
+ * 的坐标域半态。
+ */
+export function assertAdoptableCloudBasePng(png: Blob): void {
+  if (
+    png.size === 0 ||
+    png.size > ANNOTATION_BASE_PNG_MAX_BYTES ||
+    png.type !== "image/png"
+  )
+    throw new Error("云端底图PNG为空、格式错误或超限");
+}
+
+/**
+ * 冲突裁决「采用云端版本」后的底图重绑（批次三 C）：把本机底图**替换**为
+ * 云端 ready 底图（云端 layout + boundBaseId）。与 writeLocalAnnotationBase
+ * 的「不能覆盖另一布局」守卫不同——本函数只在用户显式裁决采用云端后调用，
+ * 替换即目的；不产生编辑、不改待传正文与版本（正文已由 applyAnnotationView
+ * 采用），拉取期间的新笔画由调用方的 expectedMutationId 守卫保护。
+ */
+export async function adoptCloudAnnotationBase(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  cloud: { png: Blob; layout: AnnotationSurfaceLayout; boundBaseId: string },
+): Promise<void> {
+  const layout = annotationSurfaceLayoutSchema.parse(cloud.layout);
+  assertAdoptableCloudBasePng(cloud.png);
+  await mutateLoaded(session, scope, null, (record) => {
+    if (
+      record.base?.state !== "ready" ||
+      record.base.baseId !== cloud.boundBaseId ||
+      record.base.layout === undefined ||
+      JSON.stringify(record.base.layout) !== JSON.stringify(layout)
+    )
+      throw new Error("云端底图已变化，请重新选择");
+    record.localBase = {
+      png: cloud.png,
+      layout,
+      boundBaseId: cloud.boundBaseId,
+    };
+  });
+  await settleAnnotationRecordPersistence(session, scope);
+  const saved = peekAnnotationRecord(session, scope);
+  if (saved?.local !== "saved")
+    throw new Error(saved?.localError ?? "本机底图未保存，请重试");
 }
 
 /** 接收服务端核验的补充证据；不产生编辑、不改待传正文和版本。 */
@@ -741,6 +1056,7 @@ export async function applyAnnotationView(
     const meta = view.annotation;
     if (!choice && (meta?.revision ?? 0) < record.baseRevision) {
       record.conflict = {
+        kind: "revision",
         reason: "云端标画版本比本机已确认版本更旧，请重新核对并选择",
         current: {
           annotationId: meta?.annotationId ?? null,
@@ -765,6 +1081,7 @@ export async function applyAnnotationView(
       meta.revision > record.baseRevision
     ) {
       record.conflict = {
+        kind: "revision",
         reason: "当前设备与云端都修改了本题标画，请选择保留版本",
         current: {
           annotationId: meta.annotationId,
@@ -805,6 +1122,9 @@ export async function applyAnnotationView(
     record.doc = view.doc;
     record.docVersion += 1;
     record.conflict = null;
+    // 采用云端版本（用户显式裁决）清本机保留态：裁决后回到自动同步；
+    // 非 choice 播种不主动清（保留态稳定，不重启自动同步——重传必再撞冲突）
+    if (choice) record.retained = null;
   });
 }
 
@@ -836,15 +1156,16 @@ export async function applyAnnotationReceipt(
   });
 }
 
-/** 冲突落地（409 REVISION_CONFLICT 附 _current / MUTATION_MISMATCH 无摘要） */
+/** 冲突落地（409：REVISION_CONFLICT 附 _current；MUTATION_MISMATCH/LAYOUT_CONFLICT 无摘要） */
 export async function applyAnnotationConflict(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
+  kind: AnnotationConflictKind,
   current: AnnotationConflictCurrent | null,
   reason: string,
 ): Promise<void> {
   await mutateLoaded(session, scope, null, (record) => {
-    record.conflict = { reason, current };
+    record.conflict = { kind, reason, current };
   });
 }
 
@@ -860,19 +1181,31 @@ export async function applyAnnotationDenied(
   });
 }
 
+/** keep-local 结果：retained＝本机保留（不再自动同步）；rearm＝可立即重传；none＝无可裁决冲突 */
+export type AnnotationKeepLocalOutcome = "retained" | "rearm" | "none";
+
 /**
- * 冲突裁决「以本机为准」（题干圈画单人小稿的唯一裁决路径）：对齐云端摘要
- * revision（无摘要——MISMATCH——保持本地已知 base 并重铸 mutationId），
- * 清 conflict；重传编排由调用方（annotation-sync）负责。
+ * 冲突裁决「以本机为准」（批次三 B 按 kind 分叉）：
+ * - revision：对齐云端摘要 revision（CAS 重写后重传）；
+ * - mutation：无摘要——保持本地已知基线并重铸 mutationId（幂等键错配重传是正确行为）；
+ * - layout：**本机保留、不再自动同步**（置 retained；不重铸不重传——同一布局
+ *   差异重传必再撞 409，这是死锁出口；重传编排由 annotation-sync 按
+ *   返回值跳过）。清除路径见 retained 字段注释。
  */
 export async function resolveAnnotationConflictKeepLocal(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
-): Promise<void> {
+): Promise<AnnotationKeepLocalOutcome> {
+  let outcome: AnnotationKeepLocalOutcome = "none";
   await mutateLoaded(session, scope, null, (record) => {
     const conflict = record.conflict;
     if (conflict === null) return; // 无分歧（重复裁决）：幂等跳过
     record.conflict = null;
+    if (conflict.kind === "layout") {
+      record.retained = { reason: conflict.reason };
+      outcome = "retained";
+      return;
+    }
     if (conflict.current !== null) {
       record.baseRevision = conflict.current.revision;
       if (conflict.current.annotationId !== null) {
@@ -884,7 +1217,26 @@ export async function resolveAnnotationConflictKeepLocal(
         doc: record.pending.doc,
       };
     }
+    outcome = "rearm";
   });
+  return outcome;
+}
+
+/**
+ * retained 手动清除（「重新尝试同步」按钮）：服务端 pending 行过期接管后
+ * 这条路能真正成功。返回是否实际清除；补传编排由 annotation-sync 负责。
+ */
+export async function clearAnnotationRetained(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<boolean> {
+  let cleared = false;
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.retained === null) return;
+    record.retained = null;
+    cleared = true;
+  });
+  return cleared;
 }
 
 /** 在途上传标记（sync 维护；派生 uploading 维度） */
@@ -940,8 +1292,21 @@ export async function listPendingAnnotations(
     const parsed = parseAnnotationKey(key);
     if (parsed === null) continue;
     if (!records.has(key)) {
-      const revived = reviveRecord(raw);
-      if (revived !== null) records.set(key, revived);
+      try {
+        // 底图键不入前缀扫描（首元 "annotation-base" 与正文键天然隔离），
+        // 此处仅为正文记录装配完整 localBase（缓存供上传路径消费）。
+        const revived = await reviveRecordWithBase(
+          parsed.session,
+          parsed.scope,
+          raw,
+        );
+        if (revived !== null) records.set(key, revived);
+      } catch (err) {
+        // 坏底图不拖垮整批扫描（今日单键内嵌形态下一条坏字节会让 getAll
+        // 整体失败）；记录保留在库，严格读抛出、非严格跳过缓存。
+        if (options.strictRead) throw err;
+        console.warn("标注本地记录读取失败（无法补传待传版本）", err);
+      }
     }
   }
   const prefix =

@@ -36,7 +36,10 @@ import {
 } from "@/components/ui/dialog";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { AnnotationView } from "./AnnotationView";
-import { AnnotationWorkspace } from "./AnnotationWorkspace";
+import {
+  AnnotationWorkspace,
+  annotationWorkspaceBaseOf,
+} from "./AnnotationWorkspace";
 import { getAnnotationRecord } from "./annotation-store";
 import { catchUpAnnotations, retryAnnotationUpload } from "./annotation-sync";
 import { useAnnotationBase } from "./use-annotation-base";
@@ -142,6 +145,12 @@ export function AnnotationLayer({
 
   const strokeCount = record?.doc?.strokes.length ?? 0;
 
+  // base prop 已收窄为工作台最小结构：契约 ready 引用经适配函数过渡（不伪造身份字段）。
+  const workspaceBase =
+    flow.kind === "ready"
+      ? annotationWorkspaceBaseOf(flow.base, attemptId)
+      : null;
+
   const onRetryDenied = useCallback(() => {
     if (session !== null) {
       void retryAnnotationUpload(session, { attemptId, questionId, phase });
@@ -236,13 +245,13 @@ export function AnnotationLayer({
               正在生成题干底图…
             </div>
           )}
-          {flow.kind === "ready" && !sealed && (
+          {workspaceBase && !sealed && (
             <>
               <AnnotationWorkspace
                 attemptId={attemptId}
                 questionId={questionId}
                 phase={phase}
-                base={flow.base}
+                base={workspaceBase}
                 ariaPrefix={ariaPrefix}
               />
               {/* 保存订正标注检查点（审查修复 3①）：只有订正期编辑形态提供 */}

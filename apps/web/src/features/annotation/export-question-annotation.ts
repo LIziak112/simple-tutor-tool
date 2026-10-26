@@ -51,6 +51,8 @@ export async function exportQuestionAnnotationImage(
   guard();
   if (prepared.kind === "sealed")
     throw new Error("标画已随交卷固定，请到结果页导出");
+  if (prepared.kind === "legacy")
+    throw new Error("此题标画为旧版，仅可查看原圈画，暂不支持导出合成");
   const record = await getAnnotationRecord(session, scope);
   guard();
   if (!record?.localBase || record.local !== "saved")

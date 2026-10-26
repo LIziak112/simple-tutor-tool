@@ -227,20 +227,31 @@ for (const legacySource of [false, true]) {
         ).toEqual(updated.data.doc);
         before = updated;
         writes = 0;
-        // 简单题可能在两个内核恰好排版相同；模拟新版设备样式，明确覆盖不兼容查看分支。
+        // 简单题可能在两个内核恰好排版相同；模拟新版设备样式，明确覆盖不兼容续画分支。
         await other.addStyleTag({
           content:
             '[data-slot="question-surface"] { letter-spacing: 0.25px !important; }',
         });
         const restored = other.locator('article[aria-label="第 1 题"]');
         await restored.getByRole("button", { name: /圈画题干/ }).click();
-        const dialog = other.getByRole("dialog", { name: "第 1 题原圈画" });
-        await expect(dialog).toBeVisible();
-        const image = dialog.getByRole("img");
-        const replay = dialog.locator(
-          'canvas[data-slot="annotation-static-canvas"]',
+        // 布局不兼容且底图可读：不再自动弹只读弹窗，改为内联固定底图续画区块。
+        await expect(other.getByRole("dialog")).toHaveCount(0);
+        await expect(
+          restored.getByText(/题面已固定为保存时的底图/),
+        ).toBeVisible();
+        // 原位画布在 45 秒保活窗口内仍留在 DOM（容器 hidden 不卸载），
+        // 定位器必须收窄到续画容器，避免 strict mode 命中两张画布。
+        const continuation = restored.locator(
+          '[data-slot="annotation-continuation"]',
         );
-        await expect(image).toBeVisible();
+        const continuationImage = continuation.getByRole("img", {
+          name: /题干标注底图/,
+        });
+        const replay = continuation.locator(
+          'canvas[data-slot="annotation-canvas"]',
+        );
+        await expect(continuationImage).toBeVisible();
+        await expect(replay).toHaveAttribute("data-input-enabled", "true");
         await expect
           .poll(() =>
             replay.evaluate((element) => {
@@ -257,18 +268,21 @@ for (const legacySource of [false, true]) {
           )
           .toBeGreaterThan(10);
         await expect(async () => {
-          const picture = await image.boundingBox();
+          const picture = await continuationImage.boundingBox();
           const ink = await replay.boundingBox();
           expect(ink?.width).toBeCloseTo(picture?.width ?? 0, 0);
           expect(ink?.height).toBeCloseTo(picture?.height ?? 0, 0);
         }).toPass();
         await other.screenshot({
-          path: testInfo.outputPath("cross-engine-original.png"),
+          path: testInfo.outputPath("cross-engine-continuation.png"),
         });
-        await other.getByRole("button", { name: "关闭弹层" }).click();
+        // 仅打开/收起续画区块不算写入：保稿断言（零写入、服务端原稿不变）。
+        await restored
+          .getByRole("button", { name: "收起固定底图圈画" })
+          .click();
         await expect(
-          restored.getByRole("button", { name: /圈画题干/ }),
-        ).toBeFocused();
+          restored.getByRole("button", { name: "在固定底图上圈画" }),
+        ).toBeVisible();
         await expect(
           restored.locator('[data-slot="question-surface"]'),
         ).not.toHaveAttribute("inert", "");
@@ -278,6 +292,27 @@ for (const legacySource of [false, true]) {
         const after = await (await other.request.get(viewPath)).json();
         expect(after).toEqual(before);
         expect(writes).toBe(0);
+        // 续画一笔：笔迹落在保存底图坐标域并上传成功（baseId/布局不变、笔数 +1）。
+        await restored
+          .getByRole("button", { name: "在固定底图上圈画" })
+          .click();
+        await drawStrokeWithPointerEvents(replay);
+        await expect
+          .poll(
+            async () =>
+              (await (await other.request.get(viewPath)).json()).data.doc
+                .strokes.length,
+            { timeout: 30_000 },
+          )
+          .toBe(before.data.doc.strokes.length + 1);
+        const continued = await (await other.request.get(viewPath)).json();
+        expect(continued.data.base.baseId).toBe(before.data.base.baseId);
+        expect(continued.data.base.layout).toEqual(before.data.base.layout);
+        expect(continued.data.doc.strokes[0]).toEqual(
+          before.data.doc.strokes[0],
+        );
+        expect(writes).toBeGreaterThan(0);
+        before = continued;
         expect(leaks.violations()).toEqual([]);
         const storageState = await context.storageState();
 

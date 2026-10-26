@@ -29,6 +29,7 @@ import {
   type NoteStoreBackend,
   noteKeyOf,
   resetNoteStoreForTest,
+  resolveNoteDeniedAdoptCloud,
   retryNotePersistence,
   settleNotePersistence,
   setUploading,
@@ -1018,5 +1019,52 @@ describe("note-store：clearCorrectionRecord（T6R.15 新开订正行的本地�
     expect(revived.doc.ink.strokes).toEqual([]);
     expect(revived.baseRevision).toBe(0);
     expect(revived.pending).toBeNull();
+  });
+});
+
+describe("resolveNoteDeniedAdoptCloud：denied(content) 的「采用云端版本」出口（圈画审查 P0-1）", () => {
+  it("云端稿物化为工作稿：清 denied/pending、对齐 baseRevision/noteId、docVersion 推进", async () => {
+    resetNoteStoreForTest();
+    installNoteBackend(memoryNoteBackend());
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await applyUploadDenied(
+      SESSION_A,
+      SCOPE,
+      "content",
+      "草稿文档不合法：坏字段",
+    );
+    const before = await getNoteRecord(SESSION_A, SCOPE);
+    const versionBefore = before?.docVersion ?? 0;
+
+    await resolveNoteDeniedAdoptCloud(SESSION_A, SCOPE, {
+      doc: DOC_B,
+      revision: 21,
+      noteId: "22222222-2222-4222-8222-222222222222",
+    });
+
+    const record = await getNoteRecord(SESSION_A, SCOPE);
+    expect(record?.denied).toBeNull();
+    expect(record?.pending).toBeNull();
+    expect(record?.baseRevision).toBe(21);
+    expect(record?.noteId).toBe("22222222-2222-4222-8222-222222222222");
+    expect(record?.doc).toEqual(DOC_B);
+    expect(record?.docVersion ?? 0).toBeGreaterThan(versionBefore);
+  });
+
+  it("非 denied(content) 状态幂等跳过（不覆盖任何字段）", async () => {
+    resetNoteStoreForTest();
+    installNoteBackend(memoryNoteBackend());
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+
+    await resolveNoteDeniedAdoptCloud(SESSION_A, SCOPE, {
+      doc: DOC_B,
+      revision: 9,
+      noteId: "22222222-2222-4222-8222-222222222222",
+    });
+
+    const record = await getNoteRecord(SESSION_A, SCOPE);
+    expect(record?.doc).toEqual(DOC_A); // 未被动过
+    expect(record?.baseRevision).toBe(0);
+    expect(record?.pending).not.toBeNull();
   });
 });

@@ -1004,6 +1004,30 @@ export async function resolveNoteConflict(
 }
 
 /**
+ * denied(content) 的「采用云端版本」出口（圈画审查 P0-1）：云端稿物化为
+ * 工作稿——清 denied/pending、baseRevision/noteId 对齐云端 head、docVersion
+ * 推进（引擎换载新稿）。幂等：非 denied(content) 状态跳过不覆盖（与
+ * resolveNoteConflict 的重复裁决同口径）。云端 head/正文由调用方
+ * （note-sync.resolveNoteDeniedKeepCloud）拉取；被丢弃的本机未同步稿
+ * 保留在导出材料通道可达（服务端版本不可变）。
+ */
+export async function resolveNoteDeniedAdoptCloud(
+  session: NoteSessionRef,
+  scope: NoteScope,
+  input: { doc: NoteDocInput; revision: number; noteId: string | null },
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.denied?.kind !== "content") return; // 无被拒（重复裁决）：幂等跳过
+    record.denied = null;
+    record.pending = null;
+    record.baseRevision = input.revision;
+    if (input.noteId !== null) record.noteId = input.noteId;
+    replaceDoc(record, input.doc);
+    record.editedAt = Date.now();
+  });
+}
+
+/**
  * SEALED 分诊的「新开一行」重置（T6R.15 D2，note-sync 自动重试路径调用）：
  * 本地记录从「对既有订正行的续写」切换为「新行的首次上传」——baseRevision
  * 归零、noteId 清空（新行 id 由首传回执重新铸造）、pending **重铸幂等键**
