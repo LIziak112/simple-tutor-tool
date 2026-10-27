@@ -62,18 +62,18 @@ import {
 } from "../services/zip-import-service";
 import { readSpecFile } from "../spec-files";
 import {
+  assignmentDeletePreview,
+  assignmentToolInputSchema,
+  deleteUnstartedAssignment,
+  resolveAssignmentStudentIds,
+} from "./assignment-tools";
+import {
   attemptExtrasOf,
   decodeCursorOffset,
   queryStudentResponses,
   resolveToolStudent,
   searchQuestions,
 } from "./teacher-queries";
-import {
-  assignmentDeletePreview,
-  assignmentToolInputSchema,
-  deleteUnstartedAssignment,
-  resolveAssignmentStudentIds,
-} from "./assignment-tools";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
