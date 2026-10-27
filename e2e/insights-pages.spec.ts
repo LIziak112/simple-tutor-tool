@@ -18,7 +18,7 @@ import {
  * 依次验证：
  * - 总览：关键计数（总正确率 50%、对 1/已判定 2、待批 0）+ 完成矩阵
  *   （学生名 + 课程单元列「已批 / 做过 1 次 · 首次 50 分」），点学生名进画像；
- * - 画像：讲义阅读地图含该讲义、错题列表含判错的填空题与学生答案；
+ * - 画像：讲义阅读地图含该讲义、错题与存疑区含判错的填空题（T-PR4 聚合端点面不含学生答案文本）；
  * - 题目视角：行展开显示题干全文与高频错误答案（fill 题型聚合「6 × 1」）。
  *
  * **独立教师域**：总览是教师全域聚合（另一 worker 的共用教师数据会污染
@@ -185,7 +185,7 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     await page.fill("#login-name", teacherName);
     await page.fill("#login-password", INSIGHTS_TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
 
     const pending = await request.get("/api/teacher/pending-marks");
     expect(pending.ok()).toBe(true);
@@ -225,9 +225,11 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     const readingMap = page.locator('section[aria-label="讲义阅读地图"]');
     await expect(readingMap.getByText("第1讲 有理数")).toBeVisible();
 
-    // 错题列表：判错的填空题（学生答案 6）
-    const wrongList = page.locator('section[aria-label="错题列表"]');
-    await expect(wrongList.getByText("学生答案：6")).toBeVisible();
+    // 错题与存疑（T-PR4 Web-2②聚合端点）：判错的填空题入列；聚合面只给判定
+    // 与计数、不再展示学生答案文本（看全文走作答详情）
+    const reviewZone = page.locator('section[aria-label="错题与存疑"]');
+    await expect(reviewZone.getByText("计算：")).toBeVisible();
+    await expect(reviewZone.getByText("判错").first()).toBeVisible();
 
     // —— 题目视角：行展开（题干全文 + 高频错误答案「6 × 1」，fill 聚合口径） ——
     await page.goto("/t/insights/questions");
