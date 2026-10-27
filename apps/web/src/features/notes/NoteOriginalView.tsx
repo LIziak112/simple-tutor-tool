@@ -89,14 +89,23 @@ export function NoteOriginalView({
   /** 正文渲染核（T6R.15 抽共享）：按 versionId 取正文→渲染→URL 落地 */
   const body = useNoteVersionBody(viewer);
   const { openBody, closeBody, resetBody } = body;
-  /** 证据行段的加载代际：重试/收起/定位变化后迟到的 head 结果不再落地 */
+  /** 证据行段的加载代际：卸载/重试/收起/定位变化后迟到的 head 结果不再落地 */
   const epochRef = useRef(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
 
-  // 卸载不做 epoch 自增（2026-10 修正）：React 18 卸载后 setState 本就是
-  // 静默 no-op，而 StrictMode 开发态双挂载的清理段会作废挂载即读
-  // （defaultOpen）的在途结果且不再重发——面板永卡「正在读取」。
+  // 卸载拦截（2026-10 订正重构复审恢复）：卸载时自增作废在途 head 结果——
+  // 否则迟到的 load() 会继续调 openBody，在已卸载实例上发起正文下载、离屏
+  // 渲染并创建无人 revoke 的 object URL（use-note-version-view 的卸载清理
+  // 只拦它自己已在途的代际，拦不住卸载之后才启动的调用）。React 18 卸载后
+  // setState 虽是 no-op，但 blob 创建与渲染不是。StrictMode 双挂载曾因
+  // 「挂载即读被作废且不重发」永卡读取——由下方 defaultOpen 清理段重置
+  // initialOpenRef、第二次挂载重发补上，两个问题不再互斥。
+  useEffect(() => {
+    return () => {
+      epochRef.current += 1;
+    };
+  }, []);
 
   // 定位变化守卫（当前挂载全键控不可达，防御未来原位导航复用实例）：
   // attemptId/questionId/viewer 变化即回到折叠态并弃缓存（旧定位的渲染页
@@ -171,6 +180,11 @@ export function NoteOriginalView({
     if (!initialOpenRef.current) return;
     initialOpenRef.current = false;
     void loadRef.current();
+    // StrictMode 双挂载：清理段重置首开标记，第二次挂载重发挂载即读——
+    // 否则首开的在途结果被卸载代际作废后无人重发，面板永卡「正在读取」
+    return () => {
+      initialOpenRef.current = true;
+    };
   }, []);
 
   /**
