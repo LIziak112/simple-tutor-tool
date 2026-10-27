@@ -3,7 +3,7 @@ import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
  * 草稿编辑器的引擎接线核心（T6R.15 单3 从 NoteLayer 抽出，「抽共享而非
  * 复制」）：InkPad 会话 + note-store 写入 + 纸面几何（逻辑高持久化、CSS 高
  * 量化换算、触底自动加高）+ 自写自载守卫。NoteLayer（答题页草稿纸）与
- * CorrectionPanel（订正编辑器）共用——两处的 store/sync 原语（writeNoteDoc/
+ * CorrectionWorkspace（订正工作台）共用——两处的 store/sync 原语（writeNoteDoc/
  * useNoteRecord(phase 参数化)）为同一份，phase 差异经参数传入。
  *
  * 搬家不丢口径（T6R.9 复审结论随迁）：

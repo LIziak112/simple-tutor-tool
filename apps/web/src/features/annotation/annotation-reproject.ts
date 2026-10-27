@@ -1,0 +1,425 @@
+import type {
+  AnnotationDoc,
+  AnnotationSurfaceCompatibility,
+  AnnotationSurfaceLayout,
+  InkDeletedStroke,
+  InkStroke,
+} from "@tutor/contract";
+import { blocksInBaseDomain } from "./annotation-anchor";
+
+/**
+ * 圈画重投影（LR-6，学习记录模型设计稿 §5.3）：纯几何函数，不碰 DOM、可
+ * 完整单测。权威坐标 = 节点相对坐标（文档恒存底图像素坐标 + 锚键 + 块矩形，
+ * 与节点相对坐标**无损互转**——不升文档版本即拿到与渲染无关的坐标框）。
+ *
+ * - `reprojectAnnotation`：把保存底图坐标域的文档投影到目标布局（换设备/
+ *   换窗口阅读与续画）。锚块两侧都在 → 按块矩形平移+等比缩放（纵横比以宽
+ *   为基准，u、v 都除以块宽）；锚缺失（无锚旧稿 / 锚块在任一侧不存在）→
+ *   按 root 整体等比缩放并计入 unanchored、整批标 approximate；
+ * - `inverseReproject`：在目标布局上新画的笔画映射回保存底图坐标域（存盘
+ *   用；文档坐标域恒为底图，不因近似模式改变）；
+ * - `createLayoutMap`（LR-PR4 第二层）：逐笔域映射共享核心——近似原位垫片
+ *   在重绘（存储→视图）、收笔提交（视图→存储）、橡皮命中（指针逐点）三处
+ *   边界用同一份块表做同一套变换；
+ * - `approximateModePlan`（§5.4）：近似原位准入探针——签名不兼容但锚全在、
+ *   双布局都含键、同一修订版才进；否则仍走固定底图续画/只读。
+ */
+
+/** 重投影结果：目标布局坐标域的笔画/墓碑 + 如实标记 */
+export interface ReprojectedAnnotation {
+  strokes: InkStroke[];
+  deleted: InkDeletedStroke[];
+  /** 含任一 root 兜底缩放的笔画时为 true（UI 标「已按内容对齐」） */
+  approximate: boolean;
+  /** 走 root 兜底缩放的笔画数（锚缺失如实计数） */
+  unanchored: number;
+}
+
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 布局证据里的块矩形表（node 键 → 底图像素域矩形；无 node 的块不入表）。
+ * 评审 #11750 必改①：measure 落盘的 blocks 是 CSS 像素，文档笔画点是底图
+ * 像素（CSS × pixelRatio）——消费前先做域转换，同布局恒等、跨布局不错位。 */
+function keyedBlocksOf(
+  blocks: AnnotationSurfaceCompatibility["blocks"],
+  pixelRatio: number,
+): Map<string, Rect> {
+  const map = new Map<string, Rect>();
+  // 评审 #11768：复用 blocksInBaseDomain（与锚定同一份 ×ratio 转换，勿留两份）
+  for (const block of blocksInBaseDomain(blocks, pixelRatio)) {
+    if (block.node !== undefined && !map.has(block.node)) {
+      map.set(block.node, {
+        x: block.x,
+        y: block.y,
+        width: block.width,
+        height: block.height,
+      });
+    }
+  }
+  return map;
+}
+
+/** 保存侧的整域矩形（root 兜底缩放的源域；来自文档自身几何） */
+function docDomainOf(doc: AnnotationDoc): Rect {
+  return { x: 0, y: 0, width: doc.baseWidth, height: doc.baseHeight };
+}
+
+/** 布局的整域矩形（root 兜底缩放的宿主域；CSS × 像素比 = 底图像素） */
+function targetDomainOf(layout: {
+  cssWidth: number;
+  cssHeight: number;
+  pixelRatio: number;
+}): Rect {
+  return {
+    x: 0,
+    y: 0,
+    width: Math.ceil(layout.cssWidth * layout.pixelRatio),
+    height: Math.ceil(layout.cssHeight * layout.pixelRatio),
+  };
+}
+
+/** 点经块矩形映射：u、v 都除以源块宽、都乘目标块宽（设计稿 §5.3「都除以宽，
+ * 保纵横比」——x/y 同一比例，几何不变形；纵向落点随锚块重对齐；root 兜底同口径） */
+function mapPoint(
+  px: number,
+  py: number,
+  from: Rect,
+  to: Rect,
+): { x: number; y: number } {
+  const u = (px - from.x) / from.width;
+  const v = (py - from.y) / from.width;
+  return { x: to.x + u * to.width, y: to.y + v * to.width };
+}
+
+/** 单笔几何重投影（tool/color/rendering/id/startedAt/pointer/deletedAt/deletedBy
+ * 等字段经泛型原样保留；weight 同域等比） */
+function reprojectStroke<T extends InkStroke>(
+  stroke: T,
+  from: Rect,
+  to: Rect,
+  scale: number,
+): T {
+  return {
+    ...stroke,
+    weight: stroke.weight * scale,
+    points: stroke.points.map((point) => {
+      const mapped = mapPoint(point.x, point.y, from, to);
+      return { ...point, x: mapped.x, y: mapped.y };
+    }),
+  };
+}
+
+/** 布局兼容性证据完整（blocks 带键）才可做节点级重投影 */
+function hasKeyedBlocks(layout: AnnotationSurfaceLayout): boolean {
+  return (layout.compatibility?.blocks ?? []).some(
+    (block) => block.node !== undefined,
+  );
+}
+
+/**
+ * 把保存底图坐标域的文档投影到 target 布局。
+ * 锚块缺失（含 saved 无该键 / target 无该键 / 笔画无锚）→ 按 root 整体
+ * 等比缩放（宽比基准）并计入 unanchored；任一 root 兜底 → approximate。
+ */
+export function reprojectAnnotation(
+  doc: AnnotationDoc,
+  saved: AnnotationSurfaceLayout,
+  target: AnnotationSurfaceLayout,
+): ReprojectedAnnotation {
+  const savedBlocks = keyedBlocksOf(
+    saved.compatibility?.blocks ?? [],
+    saved.pixelRatio,
+  );
+  const targetBlocks = keyedBlocksOf(
+    target.compatibility?.blocks ?? [],
+    target.pixelRatio,
+  );
+  const docDomain = docDomainOf(doc);
+  const targetDomain = targetDomainOf(target);
+  const rootScale = targetDomain.width / docDomain.width;
+
+  const mapStroke = <T extends InkStroke>(
+    stroke: T,
+  ): { stroke: T; unanchored: boolean } => {
+    const anchorKey =
+      stroke.id === undefined ? undefined : doc.anchors?.[stroke.id];
+    const from =
+      anchorKey === undefined ? undefined : savedBlocks.get(anchorKey);
+    const to =
+      anchorKey === undefined ? undefined : targetBlocks.get(anchorKey);
+    if (
+      from === undefined ||
+      to === undefined ||
+      to.width === 0 ||
+      from.width === 0
+    ) {
+      return {
+        stroke: reprojectStroke(stroke, docDomain, targetDomain, rootScale),
+        unanchored: true,
+      };
+    }
+    return {
+      stroke: reprojectStroke(stroke, from, to, to.width / from.width),
+      unanchored: false,
+    };
+  };
+
+  let approximate = false;
+  let unanchored = 0;
+  const strokes: InkStroke[] = [];
+  for (const stroke of doc.strokes) {
+    const mapped = mapStroke(stroke);
+    strokes.push(mapped.stroke);
+    if (mapped.unanchored) {
+      approximate = true;
+      unanchored += 1;
+    }
+  }
+  const deleted: InkDeletedStroke[] = [];
+  for (const tomb of doc.deleted ?? []) {
+    const mapped = mapStroke(tomb);
+    deleted.push(mapped.stroke);
+    if (mapped.unanchored) {
+      approximate = true;
+      unanchored += 1;
+    }
+  }
+  return { strokes, deleted, approximate, unanchored };
+}
+
+/**
+ * 反向映射：把在 target 布局上新画的笔画（nodeKey = 该笔在目标布局收笔时
+ * 锚定的节点键，PR2 收笔即锚）映射回保存底图坐标域（存盘用）。锚块任一侧
+ * 缺失 → 按 root 整体缩放回退（与正向同口径，调用方照常锚定/压实）。
+ */
+export function inverseReproject(
+  stroke: InkStroke,
+  nodeKey: string | undefined,
+  saved: AnnotationSurfaceLayout,
+  target: AnnotationSurfaceLayout,
+): InkStroke {
+  const savedBlocks = keyedBlocksOf(
+    saved.compatibility?.blocks ?? [],
+    saved.pixelRatio,
+  );
+  const targetBlocks = keyedBlocksOf(
+    target.compatibility?.blocks ?? [],
+    target.pixelRatio,
+  );
+  const docDomain: Rect = {
+    x: 0,
+    y: 0,
+    width: Math.ceil(saved.cssWidth * saved.pixelRatio),
+    height: Math.ceil(saved.cssHeight * saved.pixelRatio),
+  };
+  const targetDomain = targetDomainOf(target);
+  const from = nodeKey === undefined ? undefined : targetBlocks.get(nodeKey);
+  const to = nodeKey === undefined ? undefined : savedBlocks.get(nodeKey);
+  if (
+    from === undefined ||
+    to === undefined ||
+    to.width === 0 ||
+    from.width === 0
+  ) {
+    return reprojectStroke(
+      stroke,
+      targetDomain,
+      docDomain,
+      docDomain.width / targetDomain.width,
+    );
+  }
+  return reprojectStroke(stroke, from, to, to.width / from.width);
+}
+
+// ---- LR-PR4 第二层：逐笔域映射与近似原位准入（§5.4） ----
+
+/** 布局证据块（CSS 像素域，node 键可选） */
+type CssBlocks = AnnotationSurfaceCompatibility["blocks"];
+
+/** 重投影消费的最小布局几何（AnnotationSurfaceLayout / 近似目标均满足） */
+export interface LayoutGeometryLike {
+  cssWidth: number;
+  cssHeight: number;
+  pixelRatio: number;
+  /** CSS 像素域的块证据（消费前经 blocksInBaseDomain 转底图像素域） */
+  blocks: CssBlocks;
+}
+
+/** 近似原位的目标布局（当前实测题面；只存内存，不落盘不入契约） */
+export interface ApproximateTargetLayout extends LayoutGeometryLike {
+  questionRevisionId: string;
+  /** 与 measureQuestionSurface 的 fonts/textRects 同域同形（进入后核对布局是否又变） */
+  fonts: AnnotationSurfaceCompatibility["fonts"];
+  textRects: AnnotationSurfaceCompatibility["textRects"];
+}
+
+/** 逐笔域映射（LR-PR4 第二层，近似原位垫片的共享核心）：一份块表服务三处
+ * 边界——重绘渲染（存储→视图）、收笔提交（视图→存储）、橡皮命中（指针逐点）。
+ * 键缺失 / 锚块任一侧缺失 / 零宽 → root 整域等比兜底（与 reprojectAnnotation
+ * 同口径），unanchored 如实上报。 */
+export interface LayoutMap {
+  /** 存储域（保存底图）笔画 → 目标布局域（渲染显示） */
+  strokeToTarget(
+    stroke: InkStroke,
+    anchorKey: string | undefined,
+  ): { stroke: InkStroke; unanchored: boolean };
+  /** 目标布局域笔画 → 存储域（收笔提交存盘） */
+  strokeToSaved(
+    stroke: InkStroke,
+    anchorKey: string | undefined,
+  ): { stroke: InkStroke; unanchored: boolean };
+  /** 目标布局域一点 → 存储域（橡皮指针命中；ratio = 局部「存储/视图」线比，半径同乘） */
+  pointToSaved(point: { x: number; y: number }): {
+    x: number;
+    y: number;
+    ratio: number;
+  };
+}
+
+export function createLayoutMap(
+  saved: LayoutGeometryLike,
+  target: LayoutGeometryLike,
+): LayoutMap {
+  const savedBlocks = keyedBlocksOf(saved.blocks, saved.pixelRatio);
+  const targetBlocks = keyedBlocksOf(target.blocks, target.pixelRatio);
+  // 橡皮逐点命中在 move 热路径上：目标域块表只转一次
+  const targetBaseBlocks = blocksInBaseDomain(target.blocks, target.pixelRatio);
+  const savedDomain = targetDomainOf(saved);
+  const targetDomain = targetDomainOf(target);
+
+  const pairMap = <T extends InkStroke>(
+    stroke: T,
+    anchorKey: string | undefined,
+    fromMap: Map<string, Rect>,
+    toMap: Map<string, Rect>,
+    fromDomain: Rect,
+    toDomain: Rect,
+  ): { stroke: T; unanchored: boolean } => {
+    const from = anchorKey === undefined ? undefined : fromMap.get(anchorKey);
+    const to = anchorKey === undefined ? undefined : toMap.get(anchorKey);
+    if (
+      from === undefined ||
+      to === undefined ||
+      to.width === 0 ||
+      from.width === 0
+    ) {
+      return {
+        stroke: reprojectStroke(
+          stroke,
+          fromDomain,
+          toDomain,
+          fromDomain.width === 0 ? 1 : toDomain.width / fromDomain.width,
+        ),
+        unanchored: true,
+      };
+    }
+    return {
+      stroke: reprojectStroke(stroke, from, to, to.width / from.width),
+      unanchored: false,
+    };
+  };
+
+  return {
+    strokeToTarget: (stroke, anchorKey) =>
+      pairMap(
+        stroke,
+        anchorKey,
+        savedBlocks,
+        targetBlocks,
+        savedDomain,
+        targetDomain,
+      ),
+    strokeToSaved: (stroke, anchorKey) =>
+      pairMap(
+        stroke,
+        anchorKey,
+        targetBlocks,
+        savedBlocks,
+        targetDomain,
+        savedDomain,
+      ),
+    pointToSaved: (point) => {
+      // 块内：用该块的矩形对做同一套 u/v 映射（与锚定逐笔口径同式）
+      for (const block of targetBaseBlocks) {
+        if (block.node === undefined || block.width <= 0) continue;
+        if (
+          point.x < block.x ||
+          point.x > block.x + block.width ||
+          point.y < block.y ||
+          point.y > block.y + block.height
+        )
+          continue;
+        const savedRect = savedBlocks.get(block.node);
+        if (savedRect === undefined || savedRect.width === 0) continue;
+        return {
+          ...mapPoint(point.x, point.y, block, savedRect),
+          ratio: savedRect.width / block.width,
+        };
+      }
+      // 块外（页边距/锚块缺失）：root 整域等比（同 reproject 兜底口径）
+      const ratio =
+        targetDomain.width === 0 ? 1 : savedDomain.width / targetDomain.width;
+      return {
+        ...mapPoint(point.x, point.y, targetDomain, savedDomain),
+        ratio,
+      };
+    },
+  };
+}
+
+/** 近似原位的准入探针结果（诊断字段供 UI 与日志如实展示） */
+export interface ApproximateModePlan {
+  eligible: boolean;
+  /** 活笔画 + 墓碑总数（空稿不进近似模式——无稿可投影，续画即可） */
+  totalCount: number;
+  /** 缺锚或锚键不在双布局块表内的条目数（>0 即不合格） */
+  unprojectable: number;
+}
+
+/**
+ * 近似原位准入探针（§5.4）：签名不兼容时是否可按节点重投影进原位编辑。
+ * 保守口径——全部活笔画与墓碑都有锚、锚键同时存在于保存与目标布局的带键
+ * 块表、且同一题面修订版，才合格；任一条不满足走既有固定底图续画/只读。
+ */
+export function approximateModePlan(
+  doc: AnnotationDoc,
+  saved: AnnotationSurfaceLayout,
+  target: ApproximateTargetLayout,
+): ApproximateModePlan {
+  const items = [...doc.strokes, ...(doc.deleted ?? [])];
+  const savedBlocks = keyedBlocksOf(
+    saved.compatibility?.blocks ?? [],
+    saved.pixelRatio,
+  );
+  const targetBlocks = keyedBlocksOf(target.blocks, target.pixelRatio);
+  let unprojectable = 0;
+  for (const item of items) {
+    const key = item.id === undefined ? undefined : doc.anchors?.[item.id];
+    if (key === undefined || !savedBlocks.has(key) || !targetBlocks.has(key)) {
+      unprojectable += 1;
+    }
+  }
+  return {
+    eligible:
+      items.length > 0 &&
+      unprojectable === 0 &&
+      saved.questionRevisionId === target.questionRevisionId &&
+      target.cssWidth > 0 &&
+      target.cssHeight > 0,
+    totalCount: items.length,
+    unprojectable,
+  };
+}
+
+/** 布局是否可用于节点级重投影（近似原位模式准入的一半：target 侧带键） */
+export function reprojectable(
+  saved: AnnotationSurfaceLayout,
+  target: AnnotationSurfaceLayout,
+): boolean {
+  return hasKeyedBlocks(saved) && hasKeyedBlocks(target);
+}

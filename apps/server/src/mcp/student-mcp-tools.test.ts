@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import {
   aiAttemptReviewCreateOkSchema,
   aiAttemptReviewMcpClaimViewSchema,
@@ -15,6 +20,8 @@ import {
   aiFacts,
   aiPolicyOverrides,
   aiTasks,
+  annotationBases,
+  annotations,
   attempts,
   responses,
 } from "../db/schema.ts";
@@ -98,6 +105,23 @@ async function makeEnv(): Promise<ToolsEnv> {
 /** 建立 SDK 客户端连接（Streamable HTTP + Bearer token；样板见 test/mcp-test-utils.ts） */
 const connectClient = (env: ToolsEnv, token = env.token) =>
   connectMcpClientViaApp(env.app, "/mcp/student", token, "sai26-tools-test");
+
+/** callTool + 取第一段 text 解析 JSON；isError 时返回解析后的错误对象 */
+async function callJson(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ data: Record<string, unknown>; isError: boolean }> {
+  const result = await client.callTool({ name, arguments: args });
+  const block = (result.content as TextContent[]).find(
+    (c) => c.type === "text",
+  );
+  if (block === undefined) throw new Error(`${name} 结果没有 text content`);
+  return {
+    data: JSON.parse(block.text) as Record<string, unknown>,
+    isError: result.isError === true,
+  };
+}
 
 /** 建 mcp 任务（channel=mcp；可指定题与创建时刻偏移毫秒——FIFO 顺序确定性） */
 function mkTask(
@@ -754,6 +778,92 @@ describe("SAI-26 伪造任务与页面闭环", () => {
       .where(eq(aiTasks.id, otherTask))
       .get();
     expect(otherStatus?.status).toBe("created");
+    await client.close();
+  });
+});
+
+/** 建带一笔 UUID 笔画+锚点的圈画材料（annotations 行 revision 1 → refs 漂移） */
+function seedAnnotationMaterial(env: ToolsEnv, questionId: string): void {
+  const strokeId = randomUUID();
+  const doc = {
+    version: 1,
+    baseWidth: 100,
+    baseHeight: 80,
+    strokes: [
+      {
+        tool: "pen",
+        color: "#1f2328",
+        weight: 4,
+        id: strokeId,
+        startedAt: 1,
+        pointer: "pen",
+        points: [{ x: 1, y: 2, p: 0.5, t: 0 }],
+      },
+    ],
+    anchors: { [strokeId]: "stem/p/0" },
+  };
+  const relBody = `blobs/annotation-bodies/${randomUUID()}.json.gz`;
+  mkdirSync(join(env.dataDir, "blobs/annotation-bodies"), {
+    recursive: true,
+  });
+  writeFileSync(
+    join(env.dataDir, relBody),
+    gzipSync(Buffer.from(JSON.stringify(doc))),
+  );
+  const baseId = randomUUID();
+  env.db
+    .insert(annotationBases)
+    .values({
+      id: baseId,
+      attemptId: env.world.attemptId,
+      questionId,
+      questionRevisionId: "rev-sai26",
+      phase: "scratch",
+      snapshotHash: "b".repeat(64),
+      baseRenderVersion: 2,
+      state: "ready",
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+    .run();
+  env.db
+    .insert(annotations)
+    .values({
+      id: randomUUID(),
+      attemptId: env.world.attemptId,
+      questionId,
+      phase: "scratch",
+      baseId,
+      revision: 1,
+      bodyPath: relBody,
+      hash: "a".repeat(64),
+      strokeCount: 1,
+      pointCount: 1,
+      sealedAt: null,
+      updatedAt: NOW,
+    })
+    .run();
+}
+
+describe("LR-PR5 材料钉住漂移（评审 #12249 必改③锁）", () => {
+  it("创建后材料漂移 → 该题任务 claim 无 record；未漂移任务照常带", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env);
+    // atMs 显式定序：同毫秒创建会让 FIFO 顺序不确定（全量负载下翻车过）
+    mkTask(env, { atMs: 1 });
+    mkTask(env, { questionId: env.world.q2, atMs: 2 });
+    mkTask(env, { atMs: 3 });
+    // 三个任务都创建完再让 q1 漂移：t1/t3（q1）现 refs ≠ 钉住，t2（q2）相等
+    seedAnnotationMaterial(env, env.world.q1);
+    const first = await callJson(client, "claim_ai_task", {});
+    expect(first.isError).toBe(false);
+    expect(first.data.record).toBeUndefined();
+    const second = await callJson(client, "claim_ai_task", {});
+    expect(second.isError).toBe(false);
+    expect(second.data.record).toBeDefined();
+    const third = await callJson(client, "claim_ai_task", {});
+    expect(third.isError).toBe(false);
+    expect(third.data.record).toBeUndefined();
     await client.close();
   });
 });

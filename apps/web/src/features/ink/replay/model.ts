@@ -27,6 +27,10 @@ import type { InkStroke, InkStrokePoint } from "../engine/index.ts";
 /** 相邻两笔之间的停顿时长近似（ms）。真实停顿未记录（t 相对本笔起点），取固定值 */
 export const REPLAY_INTER_STROKE_GAP_MS = 160;
 
+/** 真实停顿显示上限（ms，设计稿 §7.1）：笔间真实间隙超此值时时间轴压缩到
+ * 上限，实际时长记进 model.pauses（UI 在该处画「停顿 N 秒」标记） */
+export const REPLAY_PAUSE_CAP_MS = 5000;
+
 /** 缺时间戳数据退化为匀速时，每个点的固定时长（ms） */
 export const REPLAY_UNIFORM_POINT_MS = 12;
 
@@ -63,6 +67,17 @@ export interface AtramentReplayModel {
   durationMs: number;
   /** 内容逻辑高度（maxY + 留白，用于画布纵横比；无点给缺省值） */
   contentHeight: number;
+  /** 时间轴口径（LR-PR4）：real=全笔有 startedAt（真实间隙）；approx=固定拼接 */
+  timing: "real" | "approx";
+  /** real 口径下的长停顿标记（间隙超 REPLAY_PAUSE_CAP_MS 压缩后记录实际时长） */
+  pauses: Array<{ atMs: number; realMs: number }>;
+  /** 被删笔画时间轴（教师「看擦改」开关用）：绘制自 startedAt 起、deletedAt 消失 */
+  deletedSlots: Array<{
+    stroke: InkStroke;
+    startMs: number;
+    deletedAtMs: number;
+    pointTimesMs: number[];
+  }>;
 }
 
 /** excalidraw 回放模型：elements 与 slots 一一对应 */
@@ -100,10 +115,99 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 解析中的中间形态：笔画 + 每点原始时间戳（null=缺失/非法） */
+/** 解析中的中间形态：笔画 + 每点原始时间戳（null=缺失/非法）+ 落笔绝对时刻 */
 interface RawStroke {
   stroke: InkStroke;
   rawTimes: Array<number | null>;
+  startedAt: number | null;
+}
+
+/** 解析中的墓碑中间形态（宽松：坏条目跳过，不拖垮整份回放） */
+interface RawDeletedStroke {
+  stroke: InkStroke;
+  rawTimes: Array<number | null>;
+  startedAt: number | null;
+  deletedAt: number | null;
+}
+
+/**
+ * 单笔宽松解析（atrament 活笔画与墓碑共用）：points 结构坏返回 null；
+ * tool/color/weight/p/t 缺失或非法给缺省值；startedAt 正整数才采集。
+ */
+function parseSingleStroke(item: Record<string, unknown>): {
+  stroke: InkStroke;
+  rawTimes: Array<number | null>;
+  startedAt: number | null;
+} | null {
+  if (!Array.isArray(item.points)) return null;
+  const points: InkStrokePoint[] = [];
+  const rawTimes: Array<number | null> = [];
+  for (const p of item.points) {
+    if (!isPlainObject(p)) return null;
+    if (!isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null;
+    const pressure = isFiniteNumber(p.p) ? Math.min(1, Math.max(0, p.p)) : 0.5;
+    const t = isFiniteNumber(p.t) && p.t >= 0 ? p.t : null;
+    // t 先占位 0，buildAtramentModel 归一后回写（保证模型内 InkStroke 契约合法）
+    points.push({ x: p.x, y: p.y, p: pressure, t: 0 });
+    rawTimes.push(t);
+  }
+  return {
+    stroke: {
+      ...(item.rendering && inkRenderingSchema.safeParse(item.rendering).success
+        ? { rendering: inkRenderingSchema.parse(item.rendering) }
+        : {}),
+      tool: item.tool === "highlighter" ? "highlighter" : "pen",
+      color:
+        typeof item.color === "string" && item.color.length > 0
+          ? item.color
+          : "#1f2328",
+      weight: isFiniteNumber(item.weight) && item.weight > 0 ? item.weight : 4,
+      // LR-1/LR-2 字段透传（宽松校验）：id 供锚点/时间线引用；startedAt 供真实停顿
+      ...(typeof item.id === "string" &&
+      item.id.length >= 8 &&
+      item.id.length <= 40 &&
+      /^[0-9A-Za-z_-]+$/.test(item.id)
+        ? { id: item.id }
+        : {}),
+      ...(isFiniteNumber(item.startedAt) && item.startedAt > 0
+        ? { startedAt: item.startedAt }
+        : {}),
+      ...(item.pointer === "pen" ||
+      item.pointer === "touch" ||
+      item.pointer === "mouse"
+        ? { pointer: item.pointer }
+        : {}),
+      points,
+    },
+    rawTimes,
+    startedAt:
+      isFiniteNumber(item.startedAt) && item.startedAt > 0
+        ? item.startedAt
+        : null,
+  };
+}
+
+/** 墓碑宽松解析：几何沿用单笔解析；startedAt/deletedAt 至少其一有效才收 */
+function parseAtramentDeleted(raw: unknown): RawDeletedStroke[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RawDeletedStroke[] = [];
+  for (const item of raw) {
+    if (!isPlainObject(item)) continue;
+    const parsed = parseSingleStroke(item);
+    if (parsed === null) continue;
+    const deletedAt =
+      isFiniteNumber(item.deletedAt) && item.deletedAt > 0
+        ? item.deletedAt
+        : null;
+    if (parsed.startedAt === null && deletedAt === null) continue;
+    out.push({
+      stroke: parsed.stroke,
+      rawTimes: parsed.rawTimes,
+      startedAt: parsed.startedAt,
+      deletedAt,
+    });
+  }
+  return out;
 }
 
 /**
@@ -116,37 +220,9 @@ function parseAtramentStrokes(raw: unknown): RawStroke[] | null {
   const out: RawStroke[] = [];
   for (const item of raw) {
     if (!isPlainObject(item)) return null;
-    if (!Array.isArray(item.points)) return null;
-    const points: InkStrokePoint[] = [];
-    const rawTimes: Array<number | null> = [];
-    for (const p of item.points) {
-      if (!isPlainObject(p)) return null;
-      if (!isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null;
-      const pressure = isFiniteNumber(p.p)
-        ? Math.min(1, Math.max(0, p.p))
-        : 0.5;
-      const t = isFiniteNumber(p.t) && p.t >= 0 ? p.t : null;
-      // t 先占位 0，buildAtramentModel 归一后回写（保证模型内 InkStroke 契约合法）
-      points.push({ x: p.x, y: p.y, p: pressure, t: 0 });
-      rawTimes.push(t);
-    }
-    out.push({
-      stroke: {
-        ...(item.rendering &&
-        inkRenderingSchema.safeParse(item.rendering).success
-          ? { rendering: inkRenderingSchema.parse(item.rendering) }
-          : {}),
-        tool: item.tool === "highlighter" ? "highlighter" : "pen",
-        color:
-          typeof item.color === "string" && item.color.length > 0
-            ? item.color
-            : "#1f2328",
-        weight:
-          isFiniteNumber(item.weight) && item.weight > 0 ? item.weight : 4,
-        points,
-      },
-      rawTimes,
-    });
+    const parsed = parseSingleStroke(item);
+    if (parsed === null) return null;
+    out.push(parsed);
   }
   return out;
 }
@@ -171,30 +247,36 @@ function normalizePointTimes(rawTimes: Array<number | null>): number[] {
   });
 }
 
-/** 由解析结果组装 atrament 回放模型（时间轴拼接 + 纵横比近似） */
-function buildAtramentModel(raws: RawStroke[]): AtramentReplayModel {
-  const slots: AtramentReplayModel["slots"] = [];
-  let cursor = 0;
+/** 由解析结果组装 atrament 回放模型（双口径时间轴 + 纵横比近似；LR-PR4） */
+function buildAtramentModel(
+  raws: RawStroke[],
+  deleted: RawDeletedStroke[],
+): AtramentReplayModel {
+  const normalized = raws.map((r) => ({
+    stroke: r.stroke,
+    pointTimesMs: normalizePointTimes(r.rawTimes),
+    startedAt: r.startedAt,
+  }));
+  // 归一结果回写点的 t（模型内 InkStroke 契约合法且自洽）；顺带取内容高
   let maxY = 0;
   let hasPoint = false;
-  let durationMs = 0;
-  for (const { stroke, rawTimes } of raws) {
-    const pointTimesMs = normalizePointTimes(rawTimes);
-    // 归一结果回写点的 t（模型内 InkStroke 契约合法且自洽）
-    for (let i = 0; i < stroke.points.length; i++) {
-      const point = stroke.points[i];
-      const t = pointTimesMs[i];
+  for (const item of normalized) {
+    for (let i = 0; i < item.stroke.points.length; i++) {
+      const point = item.stroke.points[i];
+      const t = item.pointTimesMs[i];
       if (point && t !== undefined) point.t = t;
       if (point) {
         maxY = Math.max(maxY, point.y);
         hasPoint = true;
       }
     }
-    slots.push({ startMs: cursor, pointTimesMs });
-    const lastTime = pointTimesMs[pointTimesMs.length - 1] ?? 0;
-    // 只有含点的笔画才推进总时长（空笔画不占进度条）
-    if (pointTimesMs.length > 0) durationMs = cursor + lastTime;
-    cursor = cursor + lastTime + REPLAY_INTER_STROKE_GAP_MS;
+  }
+  // 评审 #11771 顺手项：maxY 并入墓碑点——全擦光稿的墓碑不被裁掉
+  for (const tomb of deleted) {
+    for (const point of tomb.stroke.points) {
+      maxY = Math.max(maxY, point.y);
+      hasPoint = true;
+    }
   }
   const contentHeight = hasPoint
     ? Math.min(
@@ -202,12 +284,200 @@ function buildAtramentModel(raws: RawStroke[]): AtramentReplayModel {
         Math.max(CONTENT_MIN_HEIGHT, maxY + CONTENT_PADDING * 2),
       )
     : EMPTY_CONTENT_HEIGHT;
+
+  // 时间轴口径（LR-PR4，设计稿 §7.1）：全部笔画带 startedAt → 真实间隙
+  //（超 REPLAY_PAUSE_CAP_MS 压缩 + 记「停顿 N 秒」标记）；任一缺失 → 旧口径
+  //（固定 160ms 拼接）。墓碑无真实时刻（approx 口径或自身缺 startedAt）不显示——如实。
+  const allTimed =
+    // 评审 #11768 顺手新增：「全部擦光」的稿（strokes 空、墓碑全带时刻）也走
+    // real——看擦改的另一主场景；门槛 = 活笔全带时刻且 strokes∪deleted 非空
+    normalized.every((item) => item.startedAt !== null) &&
+    normalized.length + deleted.length > 0;
+  const slots: AtramentReplayModel["slots"] = [];
+  const pauses: AtramentReplayModel["pauses"] = [];
+  const deletedSlots: AtramentReplayModel["deletedSlots"] = [];
+  let durationMs = 0;
+  if (allTimed) {
+    // 防御性排序（评审 #11750 顺手项）：同步为整文档 CAS 不乱序，排序保
+    // slots/strokes/时间轴三方对齐一致（approx 口径不排序——缺 startedAt
+    // 的旧稿按数组序，排序键会全塌到 0 互相颠倒）
+    normalized.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+    const tombsNormalized = deleted.map((tomb) => {
+      // 最后一个非空原始 t（书写进度终点；缺失塌 0 的场景由 ?? 0 兜底）
+      const lastRawT = [...tomb.rawTimes]
+        .reverse()
+        .find((t): t is number => typeof t === "number" && t >= 0);
+      const pointTimesMs = normalizePointTimes(tomb.rawTimes);
+      return {
+        stroke: tomb.stroke,
+        startedAt: tomb.startedAt,
+        deletedAt: tomb.deletedAt,
+        pointTimesMs,
+        // 评审 #11750 必改②-C：书写终点 = startedAt + 最后一个非空原始 t
+        //（normalizePointTimes 会把单点时刻塌成 0——这里用原始值，三态都对）
+        writingEnd:
+          tomb.startedAt !== null ? tomb.startedAt + (lastRawT ?? 0) : null,
+      };
+    });
+    // t0 = min(strokes∪deleted 的 startedAt)（评审 #11768 必改②-B：墓碑早于
+    // 首笔活笔的「先写→全擦→重写」主场景，rel 不得为负）
+    const startsSeen: number[] = [];
+    for (const item of normalized) {
+      if (item.startedAt !== null) startsSeen.push(item.startedAt);
+    }
+    for (const tomb of tombsNormalized) {
+      if (tomb.startedAt !== null) startsSeen.push(tomb.startedAt);
+    }
+    if (startsSeen.length === 0) {
+      return {
+        engine: "atrament",
+        strokes: [],
+        slots: [],
+        durationMs: 0,
+        contentHeight: EMPTY_CONTENT_HEIGHT,
+        timing: "approx",
+        pauses: [],
+        deletedSlots: [],
+      };
+    }
+    const t0 = Math.min(...startsSeen);
+    // moments = 活笔起点/终点 + 墓碑起点/墓碑终点（startedAt + 末点 t，②-C：
+    // 墓碑书写时段进 moments，删除时刻才不会被当空闲压缩）
+    const realMoments: number[] = [];
+    for (const item of normalized) {
+      const start = item.startedAt ?? 0;
+      realMoments.push(start, start + (item.pointTimesMs.at(-1) ?? 0));
+    }
+    for (const tomb of tombsNormalized) {
+      if (tomb.startedAt === null || tomb.writingEnd === null) continue;
+      realMoments.push(tomb.startedAt, tomb.writingEnd);
+      // 评审 #11750 必改②-C：删除时刻也是时刻——擦在末笔之后要播得到消失。
+      // 评审 #11771 顺手项另一半：跨设备时钟偏差可能让 deletedAt 早于书写
+      // 终点——与 deletedSlots 同一钳制 max(deletedAt, writingEnd)；钳后等于
+      // writingEnd 时由下方 Set 去重，不产生多余分段。
+      if (tomb.deletedAt !== null) {
+        realMoments.push(Math.max(tomb.deletedAt, tomb.writingEnd));
+      }
+    }
+    const moments = [...new Set(realMoments)].sort((a, b) => a - b);
+    // segCap（评审 #11768 处方）：段落在任一笔（活或墓碑）的书写区间内 →
+    // cap = gap（书写不压缩不标记）；否则空闲 → cap = min(gap, 5000)。
+    // shift 累加与 compress() 用同一张 segCap 表。
+    const segCaps: number[] = [];
+    for (let i = 0; i + 1 < moments.length; i++) {
+      const from = moments[i] ?? 0;
+      const to = moments[i + 1] ?? from;
+      const gap = to - from;
+      let writing = false;
+      const overlaps = (wStart: number, wEnd: number): boolean =>
+        from < wEnd && to > wStart;
+      for (const item of normalized) {
+        if (item.startedAt === null) continue;
+        if (
+          overlaps(
+            item.startedAt,
+            item.startedAt + (item.pointTimesMs.at(-1) ?? 0),
+          )
+        ) {
+          writing = true;
+          break;
+        }
+      }
+      if (!writing) {
+        // 墓碑的书写区间 = [startedAt, startedAt + 原始末点 t]（处方 §11768：
+        // 段落在任一笔的书写区间内才 cap=gap；删除后的空闲段照常压缩）
+        for (const tomb of tombsNormalized) {
+          if (tomb.startedAt === null || tomb.writingEnd === null) continue;
+          if (overlaps(tomb.startedAt, tomb.writingEnd)) {
+            writing = true;
+            break;
+          }
+        }
+      }
+      segCaps.push(writing ? gap : Math.min(gap, REPLAY_PAUSE_CAP_MS));
+    }
+    const momentRel: number[] = [];
+    const mapped: number[] = [];
+    for (let i = 0; i < moments.length; i++) {
+      const rel = (moments[i] ?? 0) - t0;
+      // 进入时刻 i 的段 = [moments[i-1], moments[i]]，cap = segCaps[i-1]
+      const cap =
+        i > 0 && i - 1 < segCaps.length
+          ? (segCaps[i - 1] ?? REPLAY_PAUSE_CAP_MS)
+          : REPLAY_PAUSE_CAP_MS;
+      let thisMapped: number;
+      if (i > 0) {
+        const prevRel = momentRel[i - 1] ?? 0;
+        const prevMapped = mapped[i - 1] ?? 0;
+        const gap = rel - prevRel;
+        thisMapped = prevMapped + Math.min(gap, cap);
+        if (gap > cap) {
+          // 空闲段压缩：显示封顶为 cap，实际时长进「停顿」标记（§7.1）
+          pauses.push({ atMs: thisMapped, realMs: gap });
+        }
+      } else {
+        thisMapped = Math.max(0, rel);
+      }
+      momentRel.push(rel);
+      mapped.push(thisMapped);
+    }
+    /** 分段映射 compress：与 segCap 表同式（段内 1:1、边界按 cap 跳变） */
+    const compress = (realAbs: number): number => {
+      const rel = Math.max(0, realAbs - t0);
+      for (let i = 0; i < momentRel.length; i++) {
+        const segStart = momentRel[i] ?? 0;
+        if (i + 1 < momentRel.length && rel > (momentRel[i + 1] ?? 0)) continue;
+        const cap =
+          i < segCaps.length
+            ? (segCaps[i] ?? REPLAY_PAUSE_CAP_MS)
+            : REPLAY_PAUSE_CAP_MS;
+        return (mapped[i] ?? 0) + Math.min(rel - segStart, cap);
+      }
+      return mapped[mapped.length - 1] ?? 0;
+    };
+    for (const item of normalized) {
+      slots.push({
+        startMs: compress(item.startedAt ?? t0),
+        pointTimesMs: item.pointTimesMs,
+      });
+    }
+    // 墓碑时间轴（real 口径）：同一 compress——停顿前写并擦掉的墓碑不再归零
+    for (const tomb of tombsNormalized) {
+      if (tomb.startedAt === null || tomb.deletedAt === null) continue;
+      // 评审 #11771 顺手项：跨设备时钟偏差可能让 deletedAt 早于书写终点——
+      // 钳到 max(deletedAt, writingEnd)，时间轴不右移
+      const clampedDeletedAt = Math.max(
+        tomb.deletedAt,
+        tomb.writingEnd ?? tomb.deletedAt,
+      );
+      deletedSlots.push({
+        stroke: tomb.stroke,
+        pointTimesMs: tomb.pointTimesMs,
+        startMs: compress(tomb.startedAt),
+        deletedAtMs: compress(clampedDeletedAt),
+      });
+    }
+    durationMs = mapped.length > 0 ? (mapped[mapped.length - 1] ?? 0) : 0;
+  } else {
+    let cursor = 0;
+    for (const item of normalized) {
+      const pointTimesMs = item.pointTimesMs;
+      slots.push({ startMs: cursor, pointTimesMs });
+      const lastTime = pointTimesMs[pointTimesMs.length - 1] ?? 0;
+      // 只有含点的笔画才推进总时长（空笔画不占进度条）
+      if (pointTimesMs.length > 0) durationMs = cursor + lastTime;
+      cursor = cursor + lastTime + REPLAY_INTER_STROKE_GAP_MS;
+    }
+  }
   return {
     engine: "atrament",
-    strokes: raws.map((r) => r.stroke),
+    strokes: normalized.map((item) => item.stroke),
     slots,
     durationMs,
     contentHeight,
+    timing: allTimed ? "real" : "approx",
+    pauses,
+    deletedSlots,
   };
 }
 
@@ -267,6 +537,13 @@ function stretchToMinDuration(model: InkReplayModel): void {
       const last = slot.pointTimesMs[slot.pointTimesMs.length - 1];
       if (last !== undefined) end = Math.max(end, slot.startMs + last);
     }
+    // 评审 #11750 必改②b：停顿标记与墓碑时间轴随同一比例缩放
+    for (const pause of model.pauses) pause.atMs *= scale;
+    for (const tomb of model.deletedSlots) {
+      tomb.startMs *= scale;
+      tomb.deletedAtMs *= scale;
+      tomb.pointTimesMs = tomb.pointTimesMs.map((t) => t * scale);
+    }
   } else {
     for (const slot of model.slots) {
       slot.startMs *= scale;
@@ -289,7 +566,10 @@ export function parseInkReplayData(raw: unknown): InkReplayModel | null {
     if (!isPlainObject(raw.data)) return null;
     const parsed = parseAtramentStrokes(raw.data.strokes);
     if (parsed === null) return null;
-    const model = buildAtramentModel(parsed);
+    const model = buildAtramentModel(
+      parsed,
+      parseAtramentDeleted(raw.data.deleted),
+    );
     stretchToMinDuration(model);
     return model;
   }

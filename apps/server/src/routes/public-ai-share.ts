@@ -21,6 +21,10 @@ import {
   recordShareTicketViewed,
   requireShareTicketByToken,
 } from "../services/ai-companion/student-ai-share.ts";
+import {
+  learningRecordAiViewForTask,
+  projectShareRecord,
+} from "../services/learning-record-ai.ts";
 
 /**
  * SAI-29 分享正文及附件（B15；需求规格 §10、技术方案 §4.2 公开读表）。
@@ -181,6 +185,41 @@ function buildShareBodyHtml(
   const questionNo = shareQuestionNo(db, task.attemptId, task.questionId);
   const materials = shareMaterialEntries(db, dataDir, task.id);
   const tokenPath = encodeURIComponent(token);
+  // LR-PR5：学习记录（结构化 JSON 段；失败省略——可选增强）。
+  // 直出 URL 绑定票据，与本页材料清单同一批行（行序即 /materials/:n.png 页序）。
+  // SAI-29 口径（评审 #12249 必改②）：按键定点投影——identity 的 responses
+  // 行 id 置占位、timeline detail 去 taskId；笔画 id / anchors 不动（锚语义）。
+  // 投影后契约 parse fail-closed：不过就整段省略，不发坏记录。
+  const materialRows = loadAiTaskMaterialRows(db, task.id);
+  const rawRecordView = learningRecordAiViewForTask(db, dataDir, task, {
+    resolveImageUrl: (kind, pageIndex) => {
+      const index = materialRows.findIndex(
+        (row) =>
+          row.kind === kind &&
+          row.pageIndex === pageIndex &&
+          row.state === "ready",
+      );
+      return index === -1
+        ? undefined
+        : `/api/public/ai/share/${tokenPath}/materials/${index}.png`;
+    },
+  });
+  const projected = (() => {
+    if (rawRecordView === undefined) return undefined;
+    try {
+      return projectShareRecord(rawRecordView);
+    } catch {
+      return undefined;
+    }
+  })();
+  const recordSection =
+    projected === undefined
+      ? ""
+      : `<section>
+<h2>学习记录（结构化数据）</h2>
+<p>点序列已经 RDP 压缩（compacted=true 表示超限按笔抽稀）；与下方材料图片互为印证。</p>
+<script type="application/json" id="learning-record">${JSON.stringify(projected).replaceAll("<", "\\u003c")}</script>
+</section>`;
 
   const items = materials
     .map((item) =>
@@ -259,6 +298,7 @@ ${solutionBlock}
 <h2>学生的问题</h2>
 ${mdBlock(question)}
 </section>
+${recordSection}
 <section>
 <h2>材料（仅本题选定附件）</h2>
 ${materialsSection}

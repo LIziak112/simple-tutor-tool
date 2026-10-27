@@ -40,6 +40,7 @@ import {
   assembleLearningPack,
   type LearningPackServiceOptions,
 } from "../services/export-service";
+import { getTeacherLearningRecord } from "../services/learning-record-service";
 import {
   exportLectureMd,
   exportUnitMd,
@@ -741,6 +742,32 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       );
       // 返回 pack.json 原文（JSON 文本，供 AI 直接阅读；不再二次包一层 JSON）
       return textContent(assembly.packJson);
+    }),
+  );
+
+  // 9b. get_question_learning_record（LR-PR5 §7.3）：单题学习记录（教师视角）
+  server.registerTool(
+    "get_question_learning_record",
+    {
+      description:
+        "获取单题学习记录（LearningRecord，教师视角 JSON 全文）：身份/题面（含语义节点）/作答史/三类书写材料（笔画、擦除墓碑、笔间停顿、时序覆盖度）/时间线/判定六面。笔迹为结构化点序列，与 get_student_learning_pack 的材料图片配合核对字形。范围内的作答不存在或不属于本教师时返回结构化错误。",
+      inputSchema: {
+        attemptId: z.string().uuid().describe("作答 id"),
+        questionId: z.string().min(1).describe("题目 id"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ attemptId, questionId }) => {
+      const now = deps.now === undefined ? undefined : new Date(deps.now);
+      const record = getTeacherLearningRecord(
+        db,
+        dataDir,
+        teacherId,
+        attemptId,
+        questionId,
+        ...(now !== undefined ? [now] : []),
+      );
+      return textContent(JSON.stringify(record));
     }),
   );
 

@@ -392,7 +392,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     ).toHaveLength(1);
     await client.close();
   });
-  it("tools/list 名单断言（既有 14 件 + 目录四件 + T-PR2 四件 + MCP-C 两件；不定长，后续增工具不再破）", async () => {
+  it("tools/list 名单断言（既有 14 件 + 目录四件 + T-PR2 四件 + MCP-C 两件 + LR-PR5 一件；不定长，后续增工具不再破）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
@@ -409,6 +409,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "get_unit",
         "get_student_learning_pack",
         "get_question_stats",
+        "get_question_learning_record",
         "save_report",
         "upload_image",
         "import_zip",

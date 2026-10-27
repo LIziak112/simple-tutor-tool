@@ -515,6 +515,63 @@ describe("NoteLayer：工具条与操作", () => {
   });
 });
 
+describe("NoteLayer：phase=correction（订正工作台草稿——与答题草稿同一套）", () => {
+  const CORR_SCOPE = {
+    attemptId: SCOPE.attemptId,
+    questionId: SCOPE.questionId,
+    phase: "correction" as const,
+  };
+
+  it("正文走 correction 行：播种订正稿回显笔数；新笔只写 correction 作用域", async () => {
+    await act(async () => {
+      await applyServerLoad(
+        SESSION_A,
+        CORR_SCOPE,
+        {
+          version: 1,
+          ink: {
+            width: 1000,
+            strokes: [
+              stroke([
+                [1, 1],
+                [2, 2],
+              ]),
+            ],
+          },
+        },
+        null,
+      );
+    });
+    renderLayer({ phase: "correction", initialOpen: true });
+    const entry = await waitForEngine();
+    expect(await screen.findByText("1 笔")).toBeInTheDocument();
+    emitStroke(entry, [
+      [5, 5],
+      [6, 6],
+    ]);
+    await vi.waitFor(() => {
+      const rec = peekNoteRecord(SESSION_A, CORR_SCOPE);
+      expect(rec?.doc.ink.strokes.length).toBe(1); // 新笔落 correction 行
+    });
+    // 订正不写答题草稿行（scratch 作用域未被触碰）
+    expect(peekNoteRecord(SESSION_A, SCOPE)).toBeNull();
+  });
+
+  it("清空确认按订正语境（菜单项「清空订正草稿」与弹层标题）", async () => {
+    renderLayer({ phase: "correction", initialOpen: true });
+    await waitForEngine();
+    const more = screen.getByRole("button", { name: /更多/ });
+    // jsdom 无 PointerEvent：走键盘开单（ArrowDown 打开并把焦点移入菜单）
+    fireEvent.keyDown(more, { key: "ArrowDown" });
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /清空订正草稿/ }),
+    );
+    expect(await screen.findByText("清空订正草稿？")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(mockClear).not.toHaveBeenCalled();
+  });
+});
+
 /** 与冲突摘要一致的服务端形态（rev3；notCreated 会与摘要矛盾触发回退守卫） */
 function rev3Head(): NoteHeadData {
   const base = headOf().note;

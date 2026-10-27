@@ -11,6 +11,8 @@ import { gzipSync } from "node:zlib";
 import type {
   CorrectionCreateRequest,
   CorrectionSealRequest,
+  InkDeletedStroke,
+  InkStroke,
   NoteImageUploadMeta,
   NoteRecordMeta,
   NoteSubmissionEvidenceMeta,
@@ -128,16 +130,38 @@ export function canonicalNoteJson(doc: NoteDoc): string {
     version: 1,
     ink: {
       width: INK_LOGICAL_WIDTH,
-      strokes: doc.ink.strokes.map((stroke) => ({
-        tool: stroke.tool,
-        color: stroke.color,
-        weight: stroke.weight,
-        points: stroke.points.map((p) => ({ x: p.x, y: p.y, p: p.p, t: p.t })),
-      })),
+      strokes: doc.ink.strokes.map(canonicalInkStroke),
+      // LR-2（学习记录模型设计稿 §4.2/§8）：墓碑纳入规范化——新字段只影响
+      // 新文档的 hash；旧稿无墓碑不写键，hash 与升级前逐字节一致
+      ...(doc.ink.deleted !== undefined && doc.ink.deleted.length > 0
+        ? { deleted: doc.ink.deleted.map(canonicalDeletedStroke) }
+        : {}),
     },
     paperHeightLogical: doc.paperHeightLogical,
     background: doc.background,
   });
+}
+
+/** LR-1 规范化笔画：固定键序；可选新字段（id/startedAt/pointer）缺席不写键 */
+function canonicalInkStroke(stroke: InkStroke): Record<string, unknown> {
+  return {
+    tool: stroke.tool,
+    color: stroke.color,
+    weight: stroke.weight,
+    ...(stroke.id !== undefined ? { id: stroke.id } : {}),
+    ...(stroke.startedAt !== undefined ? { startedAt: stroke.startedAt } : {}),
+    ...(stroke.pointer !== undefined ? { pointer: stroke.pointer } : {}),
+    points: stroke.points.map((p) => ({ x: p.x, y: p.y, p: p.p, t: p.t })),
+  };
+}
+
+/** LR-2 规范化墓碑：笔画规范化 + 删除时刻/来源（删除态的一部分，必入 hash） */
+function canonicalDeletedStroke(deleted: InkDeletedStroke): unknown {
+  return {
+    ...canonicalInkStroke(deleted),
+    deletedAt: deleted.deletedAt,
+    deletedBy: deleted.deletedBy,
+  };
 }
 
 /** 规范化正文 → sha-256（64 位小写 hex，契约 noteBodyHashSchema） */

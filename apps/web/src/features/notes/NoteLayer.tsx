@@ -10,10 +10,15 @@
  *   归属本工具条，T6R.7 衔接注记①定案；会话偏好 store 两侧共用不变）
  *   + 纸面（InkPad 隐藏工具条形态）+ 四维状态区。
  *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
- *   编辑器 CorrectionPanel 共用），冲突/被拒动作接线抽至 useNoteSyncActions
- *   （闸门修复 F4；CorrectionPanel/CorrectionSection 补充稿块共用），本组件
+ *   编辑器 CorrectionWorkspace 共用），冲突/被拒动作接线抽至 useNoteSyncActions
+ *   （闸门修复 F4；CorrectionSection 补充稿块共用），本组件
  *   保留答题页形态编排（用户展开/保活/布局 preference/答题页 head 接线/
  *   补图重试）。
+ * - phase=correction（2026-10 订正重构实测反馈）：订正工作台（CorrectionWorkspace）
+ *   直接挂本组件做草稿纸——与答题页同一套手感/自动加高/全屏/布局偏好/
+ *   保活（「弹出页与习题的草稿一致」）；差异仅：正文走 correction 行、
+ *   派生图片维度关闭（订正查看走本地确定性渲染，无服务端图片语义）、
+ *   不接答题页编辑协调器（结果页无 Provider，coordinator 恒 null）。
  *
  * 纸高（方案 §4.3 / T6R.7 衔接注记②定案）：逻辑高持久化在 NoteDoc，
  * CSS 高 = paperCssHeight(逻辑高, 纸宽) 每次换算；自动加高统一走
@@ -34,7 +39,7 @@ import {
   Maximize2,
   NotebookPen,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -95,6 +100,14 @@ export interface NoteLayerProps {
   ariaPrefix?: string;
   /** 题头已提供入口时隐藏重复按钮。 */
   showTrigger?: boolean;
+  /**
+   * 编辑 phase（2026-10 订正重构）：scratch=答题页草稿（缺省）；
+   * correction=订正工作台草稿——同一套编辑器/同步管线/形态，正文走
+   * correction 行、图片维度关闭、不接答题页协调器
+   */
+  phase?: "scratch" | "correction";
+  /** 全屏态外发（订正工作台持屏期间拦 Esc/遮罩关闭外层弹窗） */
+  onFullscreenChange?: (fullscreen: boolean) => void;
   stemMd?: string;
   /** 学生公开选项，用于全屏参考；不包含答案或解析。 */
   options?: readonly string[] | undefined;
@@ -107,6 +120,8 @@ export function NoteLayer({
   onOpenChange,
   ariaPrefix = "本题",
   showTrigger = true,
+  phase = "scratch",
+  onFullscreenChange,
   stemMd,
   options,
 }: NoteLayerProps) {
@@ -116,7 +131,7 @@ export function NoteLayer({
     session,
     attemptId,
     questionId,
-    phase: "scratch",
+    phase,
     active: open,
   });
   const { view } = editor;
@@ -128,17 +143,26 @@ export function NoteLayer({
       const saved = await getNoteRecord(session, {
         attemptId,
         questionId,
-        phase: "scratch",
+        phase,
       });
       if (saved?.local === "failed")
         throw new Error(saved.localError ?? "草稿本机保存失败");
     }
-  }, [editor.engineRef, session, attemptId, questionId]);
+  }, [editor.engineRef, session, attemptId, questionId, phase]);
+  // 编辑协调器（交卷 flush）只在答题页挂载；订正工作台无 Provider
+  // （coordinator 恒 null）且收笔/落盘语义已由 finish 自持，不注册
   useEffect(
-    () => coordinator?.register(questionId, finish, "scratch"),
-    [coordinator?.register, questionId, finish],
+    () =>
+      phase === "scratch"
+        ? coordinator?.register(questionId, finish, "scratch")
+        : undefined,
+    [coordinator?.register, questionId, finish, phase],
   );
-  const headQuery = useNoteHead(attemptId, questionId);
+  // scratch head 仅答题页草稿消费（补图重试）；订正工作台关闭查询——
+  // 不拉 scratch head、不触发其播种/补图副作用
+  const headQuery = useNoteHead(attemptId, questionId, {
+    enabled: phase === "scratch",
+  });
   const layoutPref = useNoteLayoutPreference();
 
   const doc = view?.doc ?? null;
@@ -146,11 +170,18 @@ export function NoteLayer({
 
   // 旧稿到达只回显笔数，不替用户展开纸面。
   const [fullscreen, setFullscreen] = useState(false);
+  // 全屏态外发（ref 转发：内联回调不重建 changeFullscreen）
+  const onFullscreenChangeRef = useRef(onFullscreenChange);
+  onFullscreenChangeRef.current = onFullscreenChange;
+  const changeFullscreen = useCallback((next: boolean) => {
+    setFullscreen(next);
+    onFullscreenChangeRef.current?.(next);
+  }, []);
   const [paperError, setPaperError] = useState<string | null>(null);
   const requestOpenChange = async (next: boolean) => {
     try {
       if (!next) await finish();
-      setFullscreen(false);
+      changeFullscreen(false);
       setPaperError(null);
       onOpenChange(next);
     } catch (cause) {
@@ -162,7 +193,7 @@ export function NoteLayer({
   const closeFullscreen = async () => {
     try {
       await finish();
-      setFullscreen(false);
+      changeFullscreen(false);
       setPaperError(null);
     } catch (cause) {
       setPaperError(
@@ -175,12 +206,12 @@ export function NoteLayer({
   const paperAlive = useRetainedPaper(open || fullscreen, finish);
 
   // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions，scope 定在
-  // scratch；图片维度逻辑留本组件）/ 补图重试 ----
+  // 编辑 phase；图片维度逻辑留本组件，仅 scratch 消费）/ 补图重试 ----
   const { resolveError, keepLocal, keepCloud, retryDenied, adoptCloud } =
     useNoteSyncActions(session, {
       attemptId,
       questionId,
-      phase: "scratch",
+      phase,
     });
   const [imageRetrying, setImageRetrying] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
@@ -301,7 +332,7 @@ export function NoteLayer({
                 aria-label={`${label}全屏`}
                 onClick={() => {
                   editor.engineRef.current?.finish?.();
-                  setFullscreen(true);
+                  changeFullscreen(true);
                 }}
               >
                 <Maximize2 aria-hidden />
@@ -334,7 +365,7 @@ export function NoteLayer({
             onUndo={() => editor.engineRef.current?.undo()}
             onRedo={() => editor.engineRef.current?.redo()}
             onClearRequest={() => setClearOpen(true)}
-            clearLabel="清空草稿纸"
+            clearLabel={phase === "correction" ? "清空订正草稿" : "清空草稿纸"}
             moreTitle="更多（重做/颜色/粗细/清空/布局）"
             menuExtras={(
               Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]
@@ -400,21 +431,23 @@ export function NoteLayer({
         </div>
 
         {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作）。
-          T6R.15：抽至共享 NoteStatusArea（CorrectionPanel 复用），本组件按
-          草稿语境接线（label=草稿、图片维度开） */}
+          T6R.15：抽至共享 NoteStatusArea（CorrectionWorkspace 复用），本组件按
+          草稿语境接线（label=草稿、图片维度随 phase：correction 无服务端
+          图片语义——查看走本地确定性渲染） */}
         {open && (
           <NoteStatusArea
             view={view}
             localLoaded={editor.localLoaded}
-            label="草稿"
-            images
+            label={phase === "correction" ? "订正" : "草稿"}
+            images={phase === "scratch"}
             resolveError={resolveError}
             onKeepLocal={keepLocal}
             onKeepCloud={keepCloud}
             onRetryDenied={retryDenied}
             onAdoptCloud={adoptCloud}
-            imageRetrying={imageRetrying}
-            onRetryImages={retryImages}
+            {...(phase === "scratch"
+              ? { imageRetrying, onRetryImages: retryImages }
+              : {})}
           />
         )}
 
@@ -422,10 +455,12 @@ export function NoteLayer({
         <Dialog open={clearOpen} onOpenChange={setClearOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>清空草稿纸？</DialogTitle>
+              <DialogTitle>
+                {phase === "correction" ? "清空订正草稿？" : "清空草稿纸？"}
+              </DialogTitle>
               <DialogDescription>
-                将清除本题草稿的全部笔迹，清空后可用「撤销」恢复；已同步到服务端
-                的旧版本不受影响。
+                将清除本题{phase === "correction" ? "订正草稿" : "草稿"}的全部
+                笔迹，清空后可用「撤销」恢复；已同步到服务端的旧版本不受影响。
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
