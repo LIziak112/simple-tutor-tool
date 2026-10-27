@@ -25,8 +25,12 @@ import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
-import { callToolJson, connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
+import {
+  callToolJson,
+  connectMcpClientViaApp,
+} from "../test/mcp-test-utils.ts";
 import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
+import { STUDENT_MCP_TOOL_NAMES } from "./student-server.ts";
 
 /**
  * SAI-26 学生 MCP 任务工具测试（B14 必测 6 组；真实 SDK Streamable HTTP
@@ -295,18 +299,7 @@ describe("SAI-26 只读列表与工具注解", () => {
     const list = await client.listTools();
     const byName = new Map(list.tools.map((tool) => [tool.name, tool]));
     expect(list.tools.map((t) => t.name).sort()).toEqual(
-      [
-        "claim_ai_task",
-        "claim_attempt_review",
-        "create_wrong_practice",
-        "list_my_ai_tasks",
-        "list_my_attempt_reviews",
-        "list_my_wrong_questions",
-        "renew_ai_lease",
-        "renew_attempt_review_lease",
-        "submit_ai_reply",
-        "submit_attempt_review_result",
-      ].sort(),
+      [...STUDENT_MCP_TOOL_NAMES].sort(),
     );
     expect(byName.get("list_my_ai_tasks")?.annotations?.readOnlyHint).toBe(
       true,

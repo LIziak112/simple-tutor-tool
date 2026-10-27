@@ -7,8 +7,12 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { shanghaiNaturalDayCutoffIso } from "../services/wrong-questions.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { callToolJson, connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
+import {
+  callToolJson,
+  connectMcpClientViaApp,
+} from "../test/mcp-test-utils.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -315,7 +319,11 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
     const env = await makeMcpWrongEnv();
     try {
       await answerAllWrong(env, RECENT_DAY);
-      const result = await callToolJson(env.client, "list_my_wrong_questions", {});
+      const result = await callToolJson(
+        env.client,
+        "list_my_wrong_questions",
+        {},
+      );
       expect(result.isError).toBe(false);
       const body = result.data as {
         total: number;
@@ -363,7 +371,11 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       });
       await submitAt(env, attemptId, RECENT_DAY_2);
 
-      const base = await callToolJson(env.client, "list_my_wrong_questions", {});
+      const base = await callToolJson(
+        env.client,
+        "list_my_wrong_questions",
+        {},
+      );
       const ids = (
         base.data as { questions: { questionId: string }[] }
       ).questions.map((item) => item.questionId);
@@ -382,9 +394,13 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
         ).questions.map((item) => item.questionId),
       ).toEqual([Q.concept2]);
 
-      const byCourse = await callToolJson(env.client, "list_my_wrong_questions", {
-        courseId: env.courseId,
-      });
+      const byCourse = await callToolJson(
+        env.client,
+        "list_my_wrong_questions",
+        {
+          courseId: env.courseId,
+        },
+      );
       expect((byCourse.data as { total: number }).total).toBe(2);
       const byUnknownCourse = await callToolJson(
         env.client,
@@ -393,18 +409,41 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       );
       expect((byUnknownCourse.data as { total: number }).total).toBe(0);
 
-      const conquered = await callToolJson(env.client, "list_my_wrong_questions", {
-        includeConquered: true,
-      });
+      const conquered = await callToolJson(
+        env.client,
+        "list_my_wrong_questions",
+        {
+          includeConquered: true,
+        },
+      );
       expect((conquered.data as { total: number }).total).toBe(3);
 
-      const limited = await callToolJson(env.client, "list_my_wrong_questions", {
-        limit: 1,
-      });
+      const limited = await callToolJson(
+        env.client,
+        "list_my_wrong_questions",
+        {
+          limit: 1,
+        },
+      );
       expect((limited.data as { total: number }).total).toBe(2);
       expect((limited.data as { questions: unknown[] }).questions).toHaveLength(
         1,
       );
+
+      // offset 翻页（2026-10 评审修复）：错题超 limit 上限时 AI 用 offset 取尾部，
+      // 最久未判定的题不再对 AI 不可见；includeConquered 全集同刻提交按
+      // questionId 升序兜底 → 全集序 [concept1, addition, concept2]
+      const page2 = await callToolJson(env.client, "list_my_wrong_questions", {
+        includeConquered: true,
+        limit: 1,
+        offset: 1,
+      });
+      expect((page2.data as { total: number }).total).toBe(3);
+      expect(
+        (page2.data as { questions: { questionId: string }[] }).questions.map(
+          (item) => item.questionId,
+        ),
+      ).toEqual([Q.addition]);
 
       // sinceDays：全部错题把最近判定写为 2026-10-21（now=真实时钟跑测会晚于
       // 该时刻），用大窗口 3650 天必然命中、极小窗口配合改库到远古验证排除
@@ -457,7 +496,11 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       );
       await submitAt(env, bAttempt, RECENT_DAY, env.bCookie);
 
-      const result = await callToolJson(env.client, "list_my_wrong_questions", {});
+      const result = await callToolJson(
+        env.client,
+        "list_my_wrong_questions",
+        {},
+      );
       const listed = (
         result.data as {
           questions: {
@@ -508,6 +551,10 @@ describe("create_wrong_practice（AI 组卷）", () => {
         .where(eq(attempts.id, body.attemptId))
         .get();
       expect(row?.sourceType).toBe("wrong");
+      // 评审修复：MCP 建卷与页面同一新协议起点（workflowVersion=1），反馈档由
+      // 教师策略/缺省裁决——不再恒落旧协议列
+      expect(row?.practiceWorkflowVersion).toBe(1);
+      expect(["per_question", "after_attempt"]).toContain(row?.feedbackMode);
       const scope = JSON.parse(row?.practiceScopeJson ?? "null") as {
         kind: string;
         label: string;
@@ -604,5 +651,26 @@ describe("create_wrong_practice（AI 组卷）", () => {
       await env.client.close();
       env.db.$client.close();
     }
+  });
+});
+
+describe("shanghaiNaturalDayCutoffIso（sinceDays 自然日口径单源）", () => {
+  it("北京自然日含今天，与页面「最近 N 天」筛选同语义（上海固定 +08:00）", () => {
+    // 北京 2026-10-27 12:00（UTC 04:00）→ 7 天窗口起点 = 北京 10-21 00:00
+    expect(
+      shanghaiNaturalDayCutoffIso(7, new Date("2026-10-27T04:00:00.000Z")),
+    ).toBe("2026-10-20T16:00:00.000Z");
+    // 跨日边界：UTC 10-26 17:00 = 北京 10-27 01:00，含今天 → 起点 10-27 00:00
+    expect(
+      shanghaiNaturalDayCutoffIso(1, new Date("2026-10-26T17:00:00.000Z")),
+    ).toBe("2026-10-26T16:00:00.000Z");
+    // 同一北京日的 7 天窗口与正午一致（按自然日而非滚动 24h×N）
+    expect(
+      shanghaiNaturalDayCutoffIso(7, new Date("2026-10-26T17:00:00.000Z")),
+    ).toBe("2026-10-20T16:00:00.000Z");
+    // days=30：北京 10-27 → 起点 09-28 00:00
+    expect(
+      shanghaiNaturalDayCutoffIso(30, new Date("2026-10-27T04:00:00.000Z")),
+    ).toBe("2026-09-27T16:00:00.000Z");
   });
 });

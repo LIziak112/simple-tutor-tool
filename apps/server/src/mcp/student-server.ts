@@ -61,6 +61,24 @@ export const STUDENT_MCP_SERVER_NAME = "simple-tutor-tool-student";
 export const STUDENT_MCP_SERVER_VERSION = "2.0.0";
 
 /**
+ * 学生 MCP 工具名单唯一清单（2026-10 评审修复：此前在服务端测试 ×2、e2e、
+ * B19 冒烟脚本四处手工拷贝，本批工具扩充时冒烟脚本漏更即漂移）。新增工具时
+ * 只改这里与注册处；各断言方 import 本常量。
+ */
+export const STUDENT_MCP_TOOL_NAMES = [
+  "claim_ai_task",
+  "claim_attempt_review",
+  "create_wrong_practice",
+  "list_my_ai_tasks",
+  "list_my_attempt_reviews",
+  "list_my_wrong_questions",
+  "renew_ai_lease",
+  "renew_attempt_review_lease",
+  "submit_ai_reply",
+  "submit_attempt_review_result",
+] as const;
+
+/**
  * 领取附图的字节预算（原始 PNG 字节合计；base64 膨胀 ×4/3 后约 5.3MiB）：
  * 超限不静默丢页——结构化 AI_MATERIAL_TOO_LARGE 并附租约信息，客户端可
  * 仅文字写回（includeImages=false 下次领取）或放任租约过期。
@@ -76,12 +94,17 @@ const REPLY_INPUT_MAX_CHARS = 40_000;
  */
 const WRONG_STEM_EXCERPT_MAX_CHARS = 200;
 
-/** stemMd（已脱敏）→ 单行短摘录：压缩空白后截断加省略号 */
+/**
+ * stemMd（已脱敏）→ 单行短摘录：压缩空白后截断加省略号。按码点（[...str]）
+ * 截断——评审修复：此前按 UTF-16 码元 slice，边界落在代理对（emoji 等）中间
+ * 会产生孤立代理项，摘录末尾乱码。
+ */
 function stemExcerptOf(stemMd: string): string {
   const compact = stemMd.replace(/\s+/g, " ").trim();
-  return compact.length <= WRONG_STEM_EXCERPT_MAX_CHARS
+  const chars = [...compact];
+  return chars.length <= WRONG_STEM_EXCERPT_MAX_CHARS
     ? compact
-    : `${compact.slice(0, WRONG_STEM_EXCERPT_MAX_CHARS)}…`;
+    : `${chars.slice(0, WRONG_STEM_EXCERPT_MAX_CHARS).join("")}…`;
 }
 
 /** createStudentMcpServer 的依赖注入 */
@@ -479,14 +502,15 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     "list_my_wrong_questions",
     {
       description:
-        "列出当前学生的错题本（只读，供挑选题目组卷）：每题含题型、难度、考点、错/对次数、轮次数、待批轮数、最近一轮是否做对、是否已攻克（服务端口径=最近一轮做对且未标「不会」；学生设备上更严格的「连续 2 次做对」标准可能把更多题算作待复习）、归属练习、来源课程、首错/最近判定时间与脱敏题干摘录（不含答案与解析）。筛选：knowledge=考点精确匹配任一考点；courseId=任一轮发生在该课程；sinceDays=最近 N 天内有判定；includeConquered=是否包含已攻克（默认 false 只列待复习）；limit=截取前 N 条（默认 100，total 仍为筛选后总数）。挑好题后用 create_wrong_practice 组卷。",
+        "列出当前学生的错题本（只读，供挑选题目组卷）：每题含题型、难度、考点、错/对次数、轮次数、待批轮数、最近一轮是否做对、是否已攻克（服务端口径=最近一轮做对且未标「不会」；学生设备上更严格的「连续 2 次做对」标准可能把更多题算作待复习）、归属练习、来源课程、首错/最近判定时间与脱敏题干摘录（不含答案与解析）。筛选：knowledge=考点精确匹配任一考点；courseId=任一轮发生在该课程；sinceDays=最近 N 个自然日（含今天，Asia/Shanghai）内有判定，与学生端「最近 N 天」筛选同一口径；includeConquered=是否包含已攻克（默认 false 只列待复习）。取数：limit=截取前 N 条（默认 100，total 仍为筛选后总数）+ offset=翻页偏移——错题超过 limit 上限时（如 total=350）用 offset 逐步取后续题，最久未判定的题在尾部，别漏掉它们。挑好题后用 create_wrong_practice 组卷。",
       inputSchema: {
         knowledge: z
           .string()
+          .trim()
           .min(1)
           .max(120)
           .optional()
-          .describe("考点精确匹配（题目任一考点命中即保留）"),
+          .describe("考点精确匹配（题目任一考点命中即保留；首尾空格归一）"),
         courseId: z
           .string()
           .min(1)
@@ -500,7 +524,9 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           .min(1)
           .max(3650)
           .optional()
-          .describe("只保留最近 N 天内有判定的题（按最近判定时间）"),
+          .describe(
+            "只保留最近 N 个自然日（含今天，Asia/Shanghai）内有判定的题（按最近判定时间；与学生端「最近 N 天」筛选同一口径）",
+          ),
         includeConquered: z
           .boolean()
           .optional()
@@ -512,57 +538,66 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           .max(200)
           .optional()
           .describe("截取前 N 条（默认 100；total 为筛选后总数）"),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .max(100_000)
+          .optional()
+          .describe(
+            "翻页偏移（0 起，配合 limit 使用；错题超过 limit 上限时用 offset 逐步取后续题，total 为全集数）",
+          ),
       },
       annotations: { readOnlyHint: true },
     },
-    guard(({ knowledge, courseId, sinceDays, includeConquered, limit }) => {
-      // knowledge 与已攻克过滤直接走服务层 query（与页面接口同一谓词，单一
-      // 出处）；courseId/sinceDays/limit 在内存做（服务层无此参数），D11 口径：
-      // 单学生错题规模有限
-      const cards = listWrongQuestions(db, studentId, {
-        includeResolved: includeConquered === true,
-        ...(knowledge !== undefined ? { knowledge } : {}),
-      }).questions;
-      const sinceIso =
-        sinceDays !== undefined
-          ? new Date(Date.now() - sinceDays * 24 * 3600 * 1000).toISOString()
-          : null;
-      const filtered = cards.filter((card) => {
-        if (
-          courseId !== undefined &&
-          !card.rounds.some((round) => round.courseId === courseId)
-        ) {
-          return false;
-        }
-        if (sinceIso !== null && card.lastAt < sinceIso) return false;
-        return true;
-      });
-      const questions = filtered.slice(0, limit ?? 100).map((card) => ({
-        questionId: card.questionId,
-        type: card.type,
-        difficulty: card.difficulty,
-        knowledge: card.knowledge,
-        stemExcerpt: stemExcerptOf(card.stemMd),
-        wrongCount: card.wrongCount,
-        correctCount: card.correctCount,
-        roundCount: card.rounds.length,
-        pendingCount: card.pendingCount,
-        lastCorrect: card.rounds.at(-1)?.correct ?? null,
-        resolved: card.resolved,
-        originUnitId: card.originUnitId,
-        originUnitTitle: card.originUnitTitle,
-        courseNames: [
-          ...new Set(
-            card.rounds.flatMap((round) =>
-              round.courseName !== null ? [round.courseName] : [],
-            ),
-          ),
-        ],
-        firstAt: card.firstAt,
-        lastAt: card.lastAt,
-      }));
-      return jsonContent({ total: filtered.length, questions });
-    }),
+    guard(
+      ({ knowledge, courseId, sinceDays, includeConquered, limit, offset }) => {
+        // 全部筛选走服务层单源谓词（与页面接口同一出处；courseId/sinceDays 为
+        // 2026-10 评审修复下沉——此前在 MCP 层内存过滤且 sinceDays 用滚动窗口，
+        // 与页面自然日口径分叉）；limit/offset 是展示层截取，留在本层
+        const cards = listWrongQuestions(
+          db,
+          studentId,
+          {
+            includeResolved: includeConquered === true,
+            ...(knowledge !== undefined ? { knowledge } : {}),
+          },
+          new Date(),
+          {
+            ...(courseId !== undefined ? { courseId } : {}),
+            ...(sinceDays !== undefined ? { sinceDays } : {}),
+          },
+        ).questions;
+        const start = offset ?? 0;
+        const questions = cards
+          .slice(start, start + (limit ?? 100))
+          .map((card) => ({
+            questionId: card.questionId,
+            type: card.type,
+            difficulty: card.difficulty,
+            knowledge: card.knowledge,
+            stemExcerpt: stemExcerptOf(card.stemMd),
+            wrongCount: card.wrongCount,
+            correctCount: card.correctCount,
+            roundCount: card.rounds.length,
+            pendingCount: card.pendingCount,
+            lastCorrect: card.rounds.at(-1)?.correct ?? null,
+            resolved: card.resolved,
+            originUnitId: card.originUnitId,
+            originUnitTitle: card.originUnitTitle,
+            courseNames: [
+              ...new Set(
+                card.rounds.flatMap((round) =>
+                  round.courseName !== null ? [round.courseName] : [],
+                ),
+              ),
+            ],
+            firstAt: card.firstAt,
+            lastAt: card.lastAt,
+          }));
+        return jsonContent({ total: cards.length, questions });
+      },
+    ),
   );
 
   // 10. create_wrong_practice：AI 组卷（2026-10）——走 wrong-practice 服务层
@@ -598,7 +633,10 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
         db,
         studentId,
         questionIds,
-        {},
+        // 与页面建卷同一新协议起点（评审修复：此前传 {} 恒落旧协议列，同一学生
+        // 两个入口建卷行为分叉）。学生设备偏好服务端无从得知——不传
+        // feedbackMode，由教师策略/缺省档裁决
+        { workflowVersion: 1 },
         {
           kind: "ai",
           label: scopeLabel,

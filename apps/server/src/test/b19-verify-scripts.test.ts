@@ -27,6 +27,7 @@ import {
   type MaterialCheckRow,
 } from "../../scripts/b19-verify/materials-check.ts";
 import { runMcpSmoke } from "../../scripts/b19-verify/mcp-smoke.ts";
+import { STUDENT_MCP_TOOL_NAMES } from "../mcp/student-server.ts";
 import {
   auditTrace,
   type TraceAuditInput,
@@ -540,12 +541,9 @@ describe("mcp-smoke（MCP 配对冒烟；node:http 假端点自证）", () => {
   let anonymousPasses: boolean;
 
   beforeEach(async () => {
-    tools = [
-      "claim_ai_task",
-      "list_my_ai_tasks",
-      "renew_ai_lease",
-      "submit_ai_reply",
-    ];
+    // 假端点工具清单单源（2026-10 评审修复：此前本地四工具字面量，服务端扩到
+    // 十工具后该脚本测试与真实清单脱节）
+    tools = [...STUDENT_MCP_TOOL_NAMES];
     anonymousPasses = false;
     server = createServer((req, res) => {
       const auth = req.headers.authorization;
@@ -606,7 +604,7 @@ describe("mcp-smoke（MCP 配对冒烟；node:http 假端点自证）", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it("配对成功路径：匿名 401 + initialize + 恰四工具 + 只读列表四步全过", async () => {
+  it("配对成功路径：匿名 401 + initialize + 工具清单一致 + 只读列表四步全过", async () => {
     const report = await runMcpSmoke(baseUrl, "good-token");
     expect(report.steps.map((s) => s.ok)).toEqual([true, true, true, true]);
     expect(report.steps[2]?.detail).toContain("claim_ai_task");

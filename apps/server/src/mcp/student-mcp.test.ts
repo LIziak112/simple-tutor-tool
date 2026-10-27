@@ -12,6 +12,7 @@ import {
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
 import { connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
+import { STUDENT_MCP_TOOL_NAMES } from "./student-server.ts";
 
 /**
  * SAI-25 学生 MCP 鉴权测试（B14 先测 5 组；SDK Streamable HTTP 全链路真实、
@@ -348,20 +349,7 @@ describe("SAI-25 学生工具实例独立构建（教师工具不可见 / 不可
     const names = (
       list === null ? [] : list.tools.map((tool) => tool.name)
     ).sort();
-    expect(names).toEqual(
-      [
-        "claim_ai_task",
-        "claim_attempt_review",
-        "create_wrong_practice",
-        "list_my_ai_tasks",
-        "list_my_attempt_reviews",
-        "list_my_wrong_questions",
-        "renew_ai_lease",
-        "renew_attempt_review_lease",
-        "submit_ai_reply",
-        "submit_attempt_review_result",
-      ].sort(),
-    );
+    expect(names).toEqual([...STUDENT_MCP_TOOL_NAMES].sort());
     for (const name of TEACHER_TOOL_NAMES) {
       expect(names).not.toContain(name);
     }
