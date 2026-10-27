@@ -47,6 +47,7 @@ export * from "./learning-pack.ts";
  *  grading）、角色投影与时间线形状、过程/AI 常量——渲染/导出/AI 上下文都是
  *  它的投影（P1：记录是事实源） */
 export * from "./learning-record.ts";
+export * from "./learning-record-ai.ts";
 /** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
 export * from "./library-api.ts";
 /** MCP 教师侧配套契约（T4.6 起为权威定义，依据 Phase4 清单 §2 D22/D24）：apiToken

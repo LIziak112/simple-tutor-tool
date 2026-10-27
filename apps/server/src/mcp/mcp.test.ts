@@ -340,7 +340,7 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 14 个工具（D23 定稿 11 个 + upload_image + import_zip + describe_capabilities）", async () => {
+  it("tools/list 列出 15 个工具（D23 定稿 11 个 + upload_image + import_zip + describe_capabilities + get_question_learning_record）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
@@ -357,6 +357,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "get_unit",
         "get_student_learning_pack",
         "get_question_stats",
+        "get_question_learning_record",
         "save_report",
         "upload_image",
         "import_zip",

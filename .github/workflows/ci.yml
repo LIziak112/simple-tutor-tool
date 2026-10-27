@@ -97,7 +97,7 @@ jobs:
     # 库随发行版走。Playwright 1.61 起官方支持 Ubuntu 26.04（本仓库 @playwright/test 1.63），
     # 后续可单独起分支跑一轮 e2e 验证后再切 ubuntu-26.04
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - name: 检出代码
         uses: actions/checkout@v5

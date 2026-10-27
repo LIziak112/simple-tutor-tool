@@ -1,6 +1,8 @@
 import {
+  ANNOTATION_SURFACE_PIXEL_RATIO,
   type AttemptQuestionPublic,
   annotationSurfaceLayoutCore,
+  type InkStroke,
 } from "@tutor/contract";
 import { Eraser, MoreHorizontal, PenLine, Redo2, Undo2 } from "lucide-react";
 import {
@@ -45,6 +47,13 @@ import {
   annotationContinuationBaseSource,
 } from "./AnnotationContinuation";
 import { AnnotationOriginal } from "./AnnotationOriginal";
+import { blocksInBaseDomain } from "./annotation-anchor";
+import { compatibleSurfaceEvidence } from "./annotation-layout-compatibility";
+import {
+  type ApproximateTargetLayout,
+  approximateModePlan,
+  createLayoutMap,
+} from "./annotation-reproject";
 import {
   getAnnotationRecord,
   retryAnnotationPersistence,
@@ -59,6 +68,7 @@ import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import { prepareQuestionAnnotationContinuation } from "./question-annotation-continuation";
 import {
   awaitQuestionSurfaceReady,
+  measureQuestionSurface,
   questionSurfaceMatchesLayout,
 } from "./question-base-image";
 import { scheduleQuestionBasePrewarm } from "./schedule-question-base-prewarm";
@@ -95,6 +105,10 @@ export const QuestionAnnotationOverlay = forwardRef<
   recordRef.current = record;
   const loadedVersion = useRef<number | null>(null);
   const [compatible, setCompatible] = useState<boolean | null>(null);
+  // LR-PR4 第二层（近似原位 §5.4）：签名不兼容但锚全在时，按节点重投影进
+  // 原位编辑；值 = 进入/持续近似模式时的目标布局（当前实测题面证据，仅存内存）
+  const [approximate, setApproximate] =
+    useState<ApproximateTargetLayout | null>(null);
   const [fitScale, setFitScale] = useState(1);
   const [expanded, setExpanded] = useState(false);
   const scale = expanded ? 1 : fitScale;
@@ -151,7 +165,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     canonical: usingCanonicalGrid,
   });
   pixelGridRef.current = { key: pixelGridKey, canonical: usingCanonicalGrid };
-  const rejectedLayout = compatible === false;
+  const rejectedLayout = compatible === false && approximate === null;
   // 校验失败也保留保存时的逻辑宽度，否则下次校验会在另一套排版上永久失败。
   const displayLayout = layout;
   const cssWidth = displayLayout?.cssWidth;
@@ -169,8 +183,11 @@ export const QuestionAnnotationOverlay = forwardRef<
   selectedRef.current = selected;
   const layoutChecking = useRef(false);
   const opening = useRef(false);
-  const active = selected && !hidden && compatible === true;
-  const visible = compatible === true && !hidden;
+  // 近似原位同样是「原位编辑」：native 题面 + 输入开启（compatible 仍为
+  // false——签名确实不兼容；两态 UI 互斥：approximate 优先）
+  const inPlace = compatible === true || approximate !== null;
+  const active = selected && !hidden && inPlace;
+  const visible = inPlace && !hidden;
   const [mountedOnce, setMountedOnce] = useState(false);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -278,7 +295,10 @@ export const QuestionAnnotationOverlay = forwardRef<
     attemptId,
   );
   const continuationVisible =
-    compatible === false && !hidden && continuationSource !== null;
+    compatible === false &&
+    approximate === null &&
+    !hidden &&
+    continuationSource !== null;
   const [continuationExpandSignal, setContinuationExpandSignal] = useState(0);
   const [continuationWorkspaceActive, setContinuationWorkspaceActive] =
     useState(false);
@@ -390,11 +410,32 @@ export const QuestionAnnotationOverlay = forwardRef<
             }
             if (signal.aborted) return false;
             setCompatible(matches);
+            if (matches) setApproximate(null);
             if (!matches) {
+              // LR-PR4 第二层（近似原位 §5.4）：签名不兼容但锚全在、双布局
+              // 都含键、同一修订版 → 按节点重投影进原位编辑（新笔反向映射回
+              // 原文档域）；否则维持固定底图续画/只读。
+              const saved = await getAnnotationRecord(session, scope);
+              const doc = saved?.doc;
+              if (doc && layout) {
+                const measure = measureQuestionSurface(element);
+                const target: ApproximateTargetLayout = {
+                  questionRevisionId: question.questionRevisionId,
+                  cssWidth: measure.cssWidth,
+                  cssHeight: measure.cssHeight,
+                  pixelRatio: ANNOTATION_SURFACE_PIXEL_RATIO,
+                  blocks: measure.blocks,
+                  fonts: measure.fonts,
+                  textRects: measure.textRects,
+                };
+                if (approximateModePlan(doc, layout, target).eligible) {
+                  setApproximate(target);
+                  return true;
+                }
+              }
               // 有可用冻结底图（本机 PNG 或云端 ready 底图）时不自动弹只读原稿
               // 弹窗，改为展开固定底图续画区块；不可续画（如 v1 底图无 layout，
               // 此处防御兜底）时维持只读弹窗现状。
-              const saved = await getAnnotationRecord(session, scope);
               if (annotationContinuationBaseSource(saved, attemptId) === null) {
                 setOriginalScope(originalScopeKey);
               } else {
@@ -444,9 +485,50 @@ export const QuestionAnnotationOverlay = forwardRef<
           15_000,
           "题面资源加载超时，请重试",
         )
-          .then(() => questionSurfaceMatchesLayout(question, element, layout))
-          .then((matches) => {
+          .then(async () => {
+            // 近似原位：不走签名核对，改核「进入时的实测布局是否仍然成立」；
+            // 变了就重估——新目标布局（surface 随依赖重建）或退回续画/只读。
+            if (!approximate) {
+              const matches = await questionSurfaceMatchesLayout(
+                question,
+                element,
+                layout,
+              );
+              return { matches, nextApprox: null };
+            }
+            const measure = measureQuestionSurface(element);
+            const unchanged =
+              Math.abs(measure.cssWidth - approximate.cssWidth) <= 1 &&
+              Math.abs(measure.cssHeight - approximate.cssHeight) <= 1 &&
+              compatibleSurfaceEvidence(approximate, measure);
+            if (unchanged) return { matches: false, nextApprox: approximate };
+            const next: ApproximateTargetLayout = {
+              questionRevisionId: question.questionRevisionId,
+              cssWidth: measure.cssWidth,
+              cssHeight: measure.cssHeight,
+              pixelRatio: ANNOTATION_SURFACE_PIXEL_RATIO,
+              blocks: measure.blocks,
+              fonts: measure.fonts,
+              textRects: measure.textRects,
+            };
+            // ?? undefined：record.doc 可空，探针只认 undefined 哨兵
+            const doc = recordRef.current?.doc ?? undefined;
+            const eligible =
+              doc !== undefined &&
+              layout !== undefined &&
+              approximateModePlan(doc, layout, next).eligible;
+            return { matches: false, nextApprox: eligible ? next : null };
+          })
+          .then(({ matches, nextApprox }) => {
             if (!alive || current !== generation) return;
+            if (approximate) {
+              layoutChecking.current = false;
+              if (nextApprox !== approximate) setApproximate(nextApprox);
+              if (selectedRef.current && !hidden) {
+                surface.current?.setInputEnabled(nextApprox !== null);
+              }
+              return;
+            }
             if (!matches && !usingCanonicalGrid) {
               setCanonicalGridKey(pixelGridKey);
               return;
@@ -486,7 +568,15 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, hidden, scale, pixelGridKey, usingCanonicalGrid]);
+  }, [
+    layout,
+    question,
+    hidden,
+    scale,
+    pixelGridKey,
+    usingCanonicalGrid,
+    approximate,
+  ]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -553,18 +643,67 @@ export const QuestionAnnotationOverlay = forwardRef<
       !recordRef.current?.doc
     )
       return;
+    // LR-PR4 第二层（近似原位）：画布建在当前实测布局域（视图域），文档恒在
+    // 保存底图域（存储域）——两域经逐笔垫片互转（createLayoutMap 同一份块表），
+    // 锚键为节点键两侧同键；approximate 为进入时快照（布局核不允许换核）
+    const approxWidth = approximate
+      ? Math.ceil(approximate.cssWidth * approximate.pixelRatio)
+      : baseWidth;
+    const approxHeight = approximate
+      ? Math.ceil(approximate.cssHeight * approximate.pixelRatio)
+      : baseHeight;
+    const reprojectedView = approximate
+      ? (() => {
+          // 保存布局证据从 record 活引用取（与 anchorBlocks 同源；不把
+          // layout 深层字段扩进 effect 依赖）
+          const savedNow =
+            recordRef.current?.localBase?.layout ??
+            recordRef.current?.base?.layout;
+          const map = createLayoutMap(
+            {
+              cssWidth,
+              cssHeight,
+              pixelRatio: ANNOTATION_SURFACE_PIXEL_RATIO,
+              blocks: savedNow?.compatibility?.blocks ?? [],
+            },
+            approximate,
+          );
+          return {
+            storedBaseWidth: baseWidth,
+            storedBaseHeight: baseHeight,
+            strokeToStored: (
+              stroke: InkStroke,
+              anchorKey: string | undefined,
+            ) => map.strokeToSaved(stroke, anchorKey),
+            strokeToView: (stroke: InkStroke, anchorKey: string | undefined) =>
+              map.strokeToTarget(stroke, anchorKey).stroke,
+            pointToStored: map.pointToSaved,
+          };
+        })()
+      : undefined;
     const current = createAnnotationSurface({
-      baseWidth,
-      baseHeight,
+      baseWidth: approxWidth,
+      baseHeight: approxHeight,
       inputEnabled: false,
       inputMode: getSessionInputPreference(),
       // LR-6：收笔锚定的布局证据——从 record 活引用取当前 layout（effect
-      // 闭包里的 layout 会过期）；无 layout（旧底图）返回 undefined 不锚
-      anchorBlocks: () =>
-        (
+      // 闭包里的 layout 会过期）；无 layout（旧底图）返回 undefined 不锚。
+      // 近似原位模式下供给**视图域**块（当前实测布局），锚键两侧同键
+      anchorBlocks: () => {
+        if (approximate) {
+          return blocksInBaseDomain(approximate.blocks, approximate.pixelRatio);
+        }
+        const savedLayout =
           recordRef.current?.localBase?.layout ??
-          recordRef.current?.base?.layout
-        )?.compatibility?.blocks,
+          recordRef.current?.base?.layout;
+        if (savedLayout?.compatibility?.blocks === undefined) return undefined;
+        // 评审 #11750 必改①：measure 落盘 CSS 像素，先转底图像素域再锚定
+        return blocksInBaseDomain(
+          savedLayout.compatibility.blocks,
+          savedLayout.pixelRatio,
+        );
+      },
+      ...(reprojectedView ? { reprojectedView } : {}),
     });
     surface.current = current;
     const resetVersion = recordRef.current?.resetVersion ?? 0;
@@ -597,6 +736,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     cssHeight,
     baseWidth,
     baseHeight,
+    approximate,
   ]);
   useEffect(() => {
     if (!mountedOnce) return;
@@ -660,6 +800,15 @@ export const QuestionAnnotationOverlay = forwardRef<
       data-slot="annotated-question"
       style={cssWidth ? { maxWidth: cssWidth } : undefined}
     >
+      {approximate !== null && !hidden && (
+        <p
+          role="note"
+          data-slot="annotation-approximate-note"
+          className="mb-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200"
+        >
+          当前浏览器排版与保存圈画时略有不同，笔迹已按内容对齐显示（已按内容对齐）；新画的笔迹会映射回原稿坐标保存。
+        </p>
+      )}
       <div
         ref={viewport}
         data-slot="annotation-viewport"
@@ -700,7 +849,11 @@ export const QuestionAnnotationOverlay = forwardRef<
               data-drawing={active}
               className="pointer-events-none absolute left-0 top-0 z-10"
               hidden={!visible}
-              style={{ width: cssWidth * scale, height: cssHeight * scale }}
+              data-annotation-approximate={approximate ? "true" : undefined}
+              style={{
+                width: cssWidth * scale,
+                height: (approximate?.cssHeight ?? cssHeight) * scale,
+              }}
             >
               <div
                 ref={host}

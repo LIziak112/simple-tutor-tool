@@ -23,8 +23,10 @@ import {
   submitAttempt,
 } from "./attempt-service.ts";
 import {
+  getAiLearningRecord,
   getStudentLearningRecord,
   getTeacherLearningRecord,
+  learningRecordMaterialRefs,
 } from "./learning-record-service.ts";
 
 /**
@@ -431,5 +433,46 @@ describe("learning-record 服务（LR-PR3 装配与泄露）", () => {
         "lr-q1",
       ),
     ).toThrow(/只能查看自己的作答/);
+  });
+});
+
+describe("AI 视角装配与版本钉住（LR-PR5）", () => {
+  it("ai 记录：学生投影 + 按快照授权携带答案/解析/提示；教师域键缺席", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const { studentId, attemptId } = makeSubmittedAttempt(db, {
+      answerRelease: "on_submit",
+    });
+    const record = getAiLearningRecord(
+      db,
+      dataDir,
+      studentId,
+      attemptId,
+      "lr-q1",
+    );
+    expect(record.role).toBe("ai");
+    expect(record.identity.attemptId).toBeUndefined();
+    expect(record.identity.studentId).toBeUndefined();
+    expect(record.question.answers).toBeDefined();
+    expect(record.question.solutionMd).toBeDefined();
+    expect(record.question.hints).toBeDefined();
+    // 题面公开投影口径（stemMd 不携带可判定答案内容）
+    expect(record.question.stemMd).not.toContain(ANSWER_TEXT);
+    expect(record.grading.teacherMark).toBeUndefined();
+    expect(record.grading.teacherComment).toBeUndefined();
+    db.$client.close();
+  });
+
+  it("learningRecordMaterialRefs：缺失材料 revision 0 / hash null，三类齐全", () => {
+    const db = createTestDb();
+    createTestDir();
+    const { attemptId } = makeSubmittedAttempt(db, {});
+    const refs = learningRecordMaterialRefs(db, attemptId, "lr-q1");
+    expect(refs).toEqual([
+      { kind: "draft", revision: 0, hash: null },
+      { kind: "formal_ink", revision: 0, hash: null },
+      { kind: "annotation", revision: 0, hash: null },
+    ]);
+    db.$client.close();
   });
 });

@@ -10,11 +10,15 @@ import { parseInkReplayData } from "./model.ts";
  * rAF 手动驱动（stub requestAnimationFrame + performance.now），不依赖真实计时。
  */
 
-const { drawFrameMock } = vi.hoisted(() => ({ drawFrameMock: vi.fn() }));
+const { drawFrameMock, drawDeletedMock } = vi.hoisted(() => ({
+  drawFrameMock: vi.fn(),
+  drawDeletedMock: vi.fn(),
+}));
 
 vi.mock("./draw.ts", () => ({
   createAtramentReplayCanvas: () => ({
     drawFrame: drawFrameMock,
+    drawDeleted: drawDeletedMock,
     destroy: vi.fn(),
   }),
 }));
@@ -83,6 +87,7 @@ function driveFrame(elapsedMs: number): void {
 
 beforeEach(() => {
   drawFrameMock.mockClear();
+  drawDeletedMock.mockClear();
   rafCb = null;
   now = 1_000;
   cancelMock = vi.fn();
@@ -248,5 +253,88 @@ describe("<InkReplay>：excalidraw 分支", () => {
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
     driveFrame(2400);
     expect(stub).toHaveAttribute("data-visible", "2");
+  });
+});
+
+describe("<InkReplay>：LR-PR4 长停顿标记与看擦改", () => {
+  /** 两笔带绝对时刻（12s 间隙触发压缩停顿）+ 一枚带 startedAt 的墓碑 */
+  function timedModelWithTomb() {
+    const now = 1_727_392_800_000;
+    const model = parseInkReplayData({
+      engine: "atrament",
+      version: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "s1",
+            startedAt: now,
+            pointer: "pen",
+            points: [
+              { x: 10, y: 10, p: 0.5, t: 0 },
+              { x: 50, y: 10, p: 0.5, t: 3000 },
+            ],
+          },
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "s2",
+            startedAt: now + 12_000,
+            pointer: "pen",
+            points: [{ x: 30, y: 20, p: 0.5, t: 0 }],
+          },
+        ],
+        deleted: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "gone",
+            startedAt: now - 5_000,
+            pointer: "pen",
+            // 删除时刻与末笔起点重合：不在空闲段中间再劈一段停顿（否则
+            // 「此处停顿 N 秒」的 N 随切口变化）
+            deletedAt: now + 12_000,
+            deletedBy: "eraser",
+            points: [
+              { x: 70, y: 30, p: 0.5, t: 0 },
+              { x: 90, y: 30, p: 0.5, t: 800 },
+            ],
+          },
+        ],
+      },
+      updatedAt: 1,
+    });
+    if (model === null || model.engine !== "atrament")
+      throw new Error("测试夹具应为合法 atrament 文档");
+    return model;
+  }
+
+  it("real 口径长停顿渲染「此处停顿 N 秒」标记；approx 口径没有", () => {
+    render(<InkReplay data={timedModelWithTomb()} />);
+    expect(screen.getByLabelText("长停顿标记")).toBeVisible();
+    expect(screen.getByText("此处停顿 9 秒")).toBeVisible();
+    cleanup();
+    render(<InkReplay data={atramentModel()} />);
+    expect(screen.queryByLabelText("长停顿标记")).toBeNull();
+  });
+
+  it("看擦改开关：有墓碑且 showEraserToggle 才出现，开启后随帧调用 drawDeleted", () => {
+    const model = timedModelWithTomb();
+    const { rerender } = render(<InkReplay data={model} layout="embed" />);
+    // 教师未开擦改可视化（showEraserToggle 缺省 false）：不出现开关
+    expect(screen.queryByRole("button", { name: "看擦改" })).toBeNull();
+    rerender(<InkReplay data={model} layout="embed" showEraserToggle />);
+    const toggle = screen.getByRole("button", { name: "看擦改" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(drawDeletedMock).not.toHaveBeenCalled();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(drawDeletedMock).toHaveBeenCalled();
+    expect(drawDeletedMock.mock.calls[0]?.[0]).toHaveLength(1);
   });
 });

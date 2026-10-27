@@ -760,7 +760,7 @@ function assemble(
   dataDir: string,
   attempt: Attempt,
   row: ResponseRow,
-  role: "student" | "teacher",
+  role: "student" | "teacher" | "ai",
   now: Date,
 ): LearningRecord {
   const teacher = role === "teacher";
@@ -855,7 +855,7 @@ function assemble(
               : (pub.options ?? []),
           }
         : {}),
-      ...(teacher
+      ...(role !== "student"
         ? {
             answers: snapshot.answers,
             solutionMd: snapshot.solutionMd ?? "",
@@ -945,4 +945,97 @@ export function getTeacherLearningRecord(
   const { attempt } = requireTeacherAttempt(db, teacherId, attemptId);
   const row = responseRowOf(db, attempt.id, questionId);
   return assemble(db, dataDir, attempt, row, "teacher", now);
+}
+
+/** AI 视图记录（学生上下文授权口径：学生投影 + 按快照授权携带答案/解析/提示） */
+export function getAiLearningRecord(
+  db: Db,
+  dataDir: string,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  now: Date = new Date(),
+): LearningRecord {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  const row = responseRowOf(db, attempt.id, questionId);
+  return assemble(db, dataDir, attempt, row, "ai", now);
+}
+
+/**
+ * 三类材料的版本钉住引用（LR-PR5 recordRefs，§7.3）：任务创建时把
+ * (revision, hash) 写进快照并并入 contextVersion 的 HMAC 输入。纯 DB 读取
+ * （note_versions.hash / annotations.hash 均为表列）；缺失材料 revision 0、
+ * hash null（formal_ink 行无 hash 列，恒 null——如实）。
+ */
+export function learningRecordMaterialRefs(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): Array<{
+  kind: "draft" | "formal_ink" | "annotation";
+  revision: number;
+  hash: string | null;
+}> {
+  const note = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attemptId),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "scratch"),
+      ),
+    )
+    .get();
+  const version =
+    note?.currentVersionId !== null && note?.currentVersionId !== undefined
+      ? db
+          .select()
+          .from(noteVersions)
+          .where(eq(noteVersions.id, note.currentVersionId))
+          .get()
+      : undefined;
+  const draftRef = {
+    kind: "draft" as const,
+    revision:
+      note === undefined || note.currentRevision === 0
+        ? 0
+        : note.currentRevision,
+    hash: version?.hash ?? null,
+  };
+  const inkRow = db
+    .select()
+    .from(inkTable)
+    .where(
+      and(
+        eq(inkTable.attemptId, attemptId),
+        eq(inkTable.questionId, questionId),
+      ),
+    )
+    .get();
+  const formalRef = {
+    kind: "formal_ink" as const,
+    revision: inkRow?.revision ?? 0,
+    hash: null,
+  };
+  const annotationRow = db
+    .select()
+    .from(annotations)
+    .where(
+      and(
+        eq(annotations.attemptId, attemptId),
+        eq(annotations.questionId, questionId),
+        eq(annotations.phase, "scratch"),
+      ),
+    )
+    .get();
+  const annotationRef = {
+    kind: "annotation" as const,
+    revision:
+      annotationRow === undefined || annotationRow.bodyPath === null
+        ? 0
+        : annotationRow.revision,
+    hash: annotationRow?.hash ?? null,
+  };
+  return [draftRef, formalRef, annotationRef];
 }
