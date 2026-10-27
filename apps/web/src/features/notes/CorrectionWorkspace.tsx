@@ -1,13 +1,17 @@
 /**
  * 订正工作台（2026-10 订正重构）：结果页「订正」直达的全屏重做空间——
  * 「按照最初做题那样重新做一遍」：
- * - 单独显示本题题面（公开投影快照：题干 + 选项**中性呈现**——不带对错
- *   判定、本人答案与参考答案标记，重做时先不被答案干扰；交卷已公布的
- *   结果材料仍在结果页对照）；
- * - 圈画：AnnotationLayer(phase=correction) 内嵌（独立「添加订正标画」入口
- *   已移除；已封存的上一份圈画转只读，草稿纸照常重做）；
- * - 草稿纸：use-note-editor(phase='correction') + NoteToolbar + InkPad，
- *   与答题草稿同一套手感与同步管线（订正复用草稿功能）；
+ * - 题面（公开投影快照：题干 + 选项**中性呈现**——不带对错判定、本人答案
+ *   与参考答案标记，重做时先不被答案干扰；交卷已公布的结果材料仍在结果页
+ *   对照）。题面即圈画面：AnnotationLayer 内嵌形态（embedded）挂载即走底图
+ *   流——未就绪/禁用/出错时渲染活题面（RichMarkdown）+ 状态，底图（题干
+ *   栅格，含选项）ready 后与画布接管题干显示，直接在题干上落墨（2026-10
+ *   实测反馈：独立「圈画题干」折叠区已移除）；已封存的上一份圈画转只读；
+ * - 草稿纸：直接挂答题页同款 NoteLayer（phase=correction）——同一套手感、
+ *   触底自动加高、全屏、布局偏好（左右分栏/上下排列，note-layout 同源）、
+ *   收起保活与同步状态（2026-10 实测反馈：「弹出页与习题的草稿一致」，
+ *   不再另写一套）；工作台按同一套布局常量排双列（1120px 宽行，题面 55% /
+ *   草稿 45%，窄屏自动上下排）；
  * - 「保存订正」= 一层检查点：确认弹层可选反思（我卡在哪里/我的错因，
  *   ≤NOTE_REFLECTION_MAX_LENGTH）→ 先封存订正草稿（catchUpNotes → record
  *   检查 → sealCorrectionApi CAS），再封存订正圈画（sealCorrectionAnnotation；
@@ -28,7 +32,7 @@ import {
   type NoteHeadData,
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
-import { ClipboardEdit, PenLine } from "lucide-react";
+import { ClipboardEdit } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,19 +49,20 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
-import { InkPad } from "@/features/ink/InkPad";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
-import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import { NoteLayer } from "@/features/notes/NoteLayer";
+import {
+  effectiveNoteLayout,
+  NOTE_PAPER_COLUMN_STYLE,
+  NOTE_QUESTION_COLUMN_STYLE,
+  NOTE_SIDE_ROW_STYLE,
+  NOTE_STACK_ROW_STYLE,
+  useNoteLayoutPreference,
+  useNoteSideUsable,
+} from "@/features/notes/note-layout";
 import { getNoteRecord } from "@/features/notes/note-store";
 import { catchUpNotes } from "@/features/notes/note-sync";
-import {
-  EMPTY_NOTE_DOC,
-  inkDocOf,
-  useNoteEditor,
-} from "@/features/notes/use-note-editor";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
-import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 import { sealCorrectionApi } from "@/lib/api";
 
 /** 反思输入按契约上限截断（jsdom 程序赋值绕过 maxLength，双保险） */
@@ -96,24 +101,18 @@ export function CorrectionWorkspace({
   onSealed,
 }: CorrectionWorkspaceProps) {
   const session = useNoteSessionRef();
-  const editor = useNoteEditor({
-    session,
-    attemptId,
-    questionId,
-    phase: "correction",
-    active: true,
-  });
-  const { view } = editor;
-  const doc = view?.doc ?? null;
-  const strokeCount = doc?.ink.strokes.length ?? 0;
 
-  // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions；scope 每渲染新
-  //      对象亦安全——hook 内部 ref 取最新值） ----
-  const { resolveError, keepLocal, keepCloud, retryDenied } =
-    useNoteSyncActions(session, { attemptId, questionId, phase: "correction" });
+  // ---- 草稿纸开合与全屏（NoteLayer 受控；全屏期间拦外层关闭） ----
+  const [noteOpen, setNoteOpen] = useState(true);
+  const [paperFullscreen, setPaperFullscreen] = useState(false);
 
-  // ---- 清空二次确认（清空=空稿作为新正文版本保存，覆盖语义同草稿纸） ----
-  const [clearOpen, setClearOpen] = useState(false);
+  // ---- 布局（与答题页同源：note-layout 偏好 + 两列可用宽度判定） ----
+  const rowRef = useRef<HTMLDivElement>(null);
+  const layoutPreference = useNoteLayoutPreference();
+  const sideUsable = useNoteSideUsable(rowRef, layoutPreference === "auto");
+  const layout = noteOpen
+    ? effectiveNoteLayout(layoutPreference, sideUsable)
+    : "below";
 
   // ---- 保存订正（一层检查点：草稿 + 圈画 + 反思） ----
   const [sealOpen, setSealOpen] = useState(false);
@@ -175,7 +174,9 @@ export function CorrectionWorkspace({
           return;
         }
         if (record.conflict !== null) {
-          setSealError("订正内容有同步冲突待处理，请先在上方选择保留哪一份。");
+          setSealError(
+            "订正内容有同步冲突待处理，请先在草稿纸的同步面板选择保留哪一份。",
+          );
           return;
         }
         if (record.denied !== null) {
@@ -221,19 +222,44 @@ export function CorrectionWorkspace({
     }
   }, [session, attemptId, questionId, stuckAt, errorCause, onSealed]);
 
-  const label = `${ariaPrefix}订正`;
-  const snapshot = question.snapshot;
   const correctionName =
     roundLabel !== null
       ? `${roundLabel} · 第 ${correctionNo} 次订正`
       : `第 ${correctionNo} 次订正`;
 
+  const snapshot = question.snapshot;
+  /** 活题面回退（底图未就绪/禁用/出错时的中性呈现——题干任一刻可读） */
+  const stemFallback = (
+    <div className="flex flex-col gap-3">
+      <RichMarkdown source={displayStemMd(snapshot)} className="text-base" />
+      {snapshot.options !== undefined && (
+        <ol className="flex flex-col gap-1.5" aria-label="选项">
+          {snapshot.options.map((option, index) => (
+            <li
+              key={option}
+              className="flex min-h-11 items-start gap-2 rounded-lg border border-transparent px-3 py-2 text-sm"
+            >
+              <span className="mt-0.5 w-5 shrink-0 font-semibold">
+                {lettersOf(index)}
+              </span>
+              <RichMarkdown
+                source={option}
+                className="min-w-0 flex-1 text-base [&_p]:my-0"
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        // 保存进行中不整层关闭：迟到的成败反馈/部分成功态不能丢
-        if (sealing) return;
+        // 保存进行中/草稿纸全屏中不整层关闭：迟到的成败反馈与全屏作答
+        // 不能被 Esc/遮罩误关（全屏退出由 NoteLayer 自己的退出按钮承接）
+        if (sealing || paperFullscreen) return;
         if (!open) onClose();
       }}
     >
@@ -249,19 +275,27 @@ export function CorrectionWorkspace({
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">
             {correctionName}
           </span>
-          {strokeCount > 0 && (
-            <span className="text-xs text-muted-foreground">
-              草稿 {strokeCount} 笔
-            </span>
-          )}
+          <span className="text-xs text-muted-foreground">
+            题干可直接圈画，重做写在草稿纸上
+          </span>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-            {/* 题面：公开投影中性呈现（无对错/答案标记——重做先不被答案干扰） */}
+          <div
+            ref={rowRef}
+            data-slot="correction-body-row"
+            data-layout={layout}
+            className="mx-auto flex w-full max-w-[1120px]"
+            style={
+              layout === "side" ? NOTE_SIDE_ROW_STYLE : NOTE_STACK_ROW_STYLE
+            }
+          >
+            {/* 题面：公开投影中性呈现（无对错/答案标记）+ 直接圈画
+                （内嵌标注层：底图就绪后题面即圈画面，不再是独立折叠区） */}
             <section
               aria-label={`${ariaPrefix}订正题面`}
-              className="flex flex-col gap-3 rounded-lg border border-border bg-card px-4 py-4 text-card-foreground"
+              className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-card px-4 py-4 text-card-foreground"
+              style={layout === "side" ? NOTE_QUESTION_COLUMN_STYLE : undefined}
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <span
@@ -288,114 +322,39 @@ export function CorrectionWorkspace({
                   </span>
                 ))}
               </div>
-              <RichMarkdown
-                source={displayStemMd(snapshot)}
-                className="text-base"
-              />
-              {snapshot.options !== undefined && (
-                <ol className="flex flex-col gap-1.5" aria-label="选项">
-                  {snapshot.options.map((option, index) => (
-                    <li
-                      key={option}
-                      className="flex min-h-11 items-start gap-2 rounded-lg border border-transparent px-3 py-2 text-sm"
-                    >
-                      <span className="mt-0.5 w-5 shrink-0 font-semibold">
-                        {lettersOf(index)}
-                      </span>
-                      <RichMarkdown
-                        source={option}
-                        className="min-w-0 flex-1 text-base [&_p]:my-0"
-                      />
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-
-            {/* 圈画题干（订正期；上一份已封存时只读展示） */}
-            <section
-              aria-label={`${ariaPrefix}订正圈画`}
-              className="flex flex-col gap-2"
-            >
               <AnnotationLayer
                 attemptId={attemptId}
                 questionId={questionId}
                 phase="correction"
                 ariaPrefix={ariaPrefix}
-                triggerLabel="圈画题干"
+                embedded
+                fallback={stemFallback}
               />
             </section>
 
-            {/* 草稿纸：与答题草稿同一套手感与同步管线 */}
-            <section
-              aria-label={`${ariaPrefix}订正草稿纸`}
-              className="flex flex-col gap-2"
+            {/* 草稿纸：答题页同款 NoteLayer（phase=correction——同一套
+                手感/自动加高/全屏/布局偏好/保活/同步状态） */}
+            <div
+              className="min-w-0"
+              style={layout === "side" ? NOTE_PAPER_COLUMN_STYLE : undefined}
             >
-              <p className="flex items-center gap-1.5 text-sm font-medium">
-                <PenLine aria-hidden className="size-4" />
-                草稿纸
-                <span className="font-normal text-muted-foreground">
-                  在草稿纸上重新做一遍
-                </span>
-              </p>
-              <NoteToolbar
-                label={label}
-                tool={editor.tool}
-                onToolChange={editor.setTool}
-                penColor={editor.penColor}
-                onPenColorChange={editor.setPenColor}
-                penSize={editor.penSize}
-                onPenSizeChange={editor.setPenSize}
-                canUndo={editor.canUndo}
-                canRedo={editor.canRedo}
-                onUndo={() => editor.engineRef.current?.undo()}
-                onRedo={() => editor.engineRef.current?.redo()}
-                onClearRequest={() => setClearOpen(true)}
-                clearLabel="清空订正草稿"
+              <NoteLayer
+                attemptId={attemptId}
+                questionId={questionId}
+                phase="correction"
+                ariaPrefix={ariaPrefix}
+                open={noteOpen}
+                onOpenChange={setNoteOpen}
+                onFullscreenChange={setPaperFullscreen}
+                stemMd={displayStemMd(snapshot)}
+                options={snapshot.options}
               />
-              <div
-                ref={editor.paperWrapRef}
-                data-slot="correction-paper"
-                className="w-full"
-              >
-                {editor.localLoaded ? (
-                  <InkPad
-                    engine="atrament"
-                    showToolbar={false}
-                    inputMode="session"
-                    label={label}
-                    engineRef={editor.engineRef}
-                    background={doc?.background ?? "grid"}
-                    paperHeight={editor.cssHeight}
-                    initial={inkDocOf(doc ?? EMPTY_NOTE_DOC)}
-                    onDocChange={editor.handleDocChange}
-                    onEngineRebuild={editor.onEngineRebuild}
-                  />
-                ) : (
-                  <div
-                    role="status"
-                    className="flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
-                  >
-                    正在打开订正草稿纸…
-                  </div>
-                )}
-              </div>
-              <NoteStatusArea
-                view={view}
-                localLoaded={editor.localLoaded}
-                label="订正"
-                images={false}
-                resolveError={resolveError}
-                onKeepLocal={keepLocal}
-                onKeepCloud={keepCloud}
-                onRetryDenied={retryDenied}
-              />
-            </section>
+            </div>
           </div>
         </div>
 
         <footer className="border-t border-border bg-card px-4 py-3 pb-[calc(env(safe-area-inset-bottom)+12px)] sm:px-5">
-          <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2">
+          <div className="mx-auto flex w-full max-w-[1120px] flex-wrap items-center gap-2">
             <Button
               type="button"
               className="min-h-11"
@@ -410,40 +369,6 @@ export function CorrectionWorkspace({
           </div>
         </footer>
       </DialogContent>
-
-      {/* 清空二次确认 */}
-      <Dialog open={clearOpen} onOpenChange={setClearOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>清空订正草稿？</DialogTitle>
-            <DialogDescription>
-              将清除本题订正草稿的全部笔迹，清空后可用「撤销」恢复；已同步到
-              服务端的旧版本不受影响。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={() => setClearOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="h-11"
-              onClick={() => {
-                editor.engineRef.current?.clear();
-                setClearOpen(false);
-              }}
-            >
-              清空
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* 保存订正 = 一层检查点（反思 + 定格确认；圈画随同一并封存） */}
       <Dialog
@@ -480,7 +405,7 @@ export function CorrectionWorkspace({
               <textarea
                 id="correction-reflection-stuck"
                 rows={3}
-                className="min-h-22 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base outline-none transition-colors select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="min-h-22 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 placeholder="比如：第二问不知道该设哪个未知数"
                 value={stuckAt}
                 maxLength={NOTE_REFLECTION_MAX_LENGTH}
@@ -500,7 +425,7 @@ export function CorrectionWorkspace({
               <textarea
                 id="correction-reflection-cause"
                 rows={3}
-                className="min-h-22 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base outline-none transition-colors select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="min-h-22 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 placeholder="比如：去括号时忘了变号"
                 value={errorCause}
                 maxLength={NOTE_REFLECTION_MAX_LENGTH}
@@ -526,7 +451,7 @@ export function CorrectionWorkspace({
                 {partialDetail !== null && <p>{partialDetail}</p>}
                 <p className="text-xs text-muted-foreground">
                   圈画会保留可编辑：可立即重试圈画封存；若提示冲突/被拒，请先
-                  按上方圈画区的指引处理后再试。
+                  按题面圈画区的指引处理后再试。
                 </p>
               </div>
             )}

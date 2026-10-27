@@ -226,7 +226,7 @@ export function AnnotationWorkspace({
       {/* 底图 + 笔迹画布：同一盒（img 定尺寸，画布铺满其上——同 scale 变换） */}
       <div
         data-slot="annotation-base-wrap"
-        className="relative w-full overflow-hidden rounded-lg border border-sky-200 bg-white outline outline-1 outline-sky-200"
+        className="relative w-full overflow-hidden rounded-xl border border-sky-200 bg-white outline outline-1 outline-sky-200"
       >
         <img
           src={base.downloadUrl}

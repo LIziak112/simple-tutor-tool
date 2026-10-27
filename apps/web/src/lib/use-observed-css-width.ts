@@ -24,18 +24,34 @@ export function useObservedCssValue<T>(
   projRef.current = project;
   useEffect(() => {
     if (!enabled) return;
-    const el = ref.current;
-    if (el === null) return;
-    if (typeof ResizeObserver === "undefined") {
-      setRef.current(projRef.current(el.offsetWidth)); // jsdom：一次性读数
-      return;
-    }
-    const ro = new ResizeObserver((entries) => {
-      const next = projRef.current(entries[0]?.contentRect.width ?? 0);
-      setValue((prev) => (Object.is(prev, next) ? prev : next));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+    let observer: ResizeObserver | null = null;
+    let frame = 0;
+    let cancelled = false;
+    const attach = () => {
+      const el = ref.current;
+      if (el === null) {
+        // 弹层（Portal）内容可比宿主组件晚一拍提交：ref 尚空时逐帧重试、
+        // 挂上即观察——此前空 ref 静默早退会让观察永不建立（订正工作台
+        // 实测：Dialog 内首帧挂 ref，宽度观察恒停初始值）；卸载即停
+        if (!cancelled) frame = requestAnimationFrame(attach);
+        return;
+      }
+      if (typeof ResizeObserver === "undefined") {
+        setRef.current(projRef.current(el.offsetWidth)); // jsdom：一次性读数
+        return;
+      }
+      observer = new ResizeObserver((entries) => {
+        const next = projRef.current(entries[0]?.contentRect.width ?? 0);
+        setValue((prev) => (Object.is(prev, next) ? prev : next));
+      });
+      observer.observe(el);
+    };
+    attach();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [ref, enabled]);
   return value;
 }

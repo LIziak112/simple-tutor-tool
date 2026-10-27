@@ -12,7 +12,7 @@ import type {
   NoteRecordMeta,
   NoteSubmissionEvidenceMeta,
 } from "@tutor/contract";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import {
   afterEach,
@@ -68,13 +68,19 @@ vi.mock("@/lib/note-endpoints", () => ({
 }));
 
 vi.mock("@/features/annotation/AnnotationLayer", () => ({
-  // 桩：把接线 props 落 data-*（层行为见 annotation-ui.test）
+  // 桩：把接线 props 落 data-*；内嵌形态回渲 fallback 活题面
+  //（层行为见 annotation-ui.test）
   AnnotationLayer: (props: Record<string, unknown>) =>
-    createElement("div", {
-      "data-testid": "annotation-layer-stub",
-      "data-phase": String(props.phase ?? "scratch"),
-      "data-trigger": String(props.triggerLabel ?? ""),
-    }),
+    createElement(
+      "div",
+      {
+        "data-testid": "annotation-layer-stub",
+        "data-phase": String(props.phase ?? "scratch"),
+        "data-embedded": props.embedded === true ? "true" : undefined,
+        "data-trigger": String(props.triggerLabel ?? ""),
+      },
+      props.fallback as ReactNode | undefined,
+    ),
 }));
 
 vi.mock("@/features/annotation/seal-correction-annotation", () => ({
@@ -554,13 +560,32 @@ describe("CorrectionWorkspace：题面与圈画/草稿（复用草稿功能）",
     expect(screen.queryByText("答错")).toBeNull();
   });
 
-  it("圈画层以订正期挂载（phase=correction、入口文案「圈画题干」）", async () => {
+  it("圈画内嵌题面挂载（phase=correction、embedded——无独立「圈画题干」入口，题面即圈画面）", async () => {
     await clickStartAndOpenWorkspace(headFixture({ corrections: [openRow()] }));
     const stub = document.querySelector(
       '[data-testid="annotation-layer-stub"]',
     );
     expect(stub?.getAttribute("data-phase")).toBe("correction");
-    expect(stub?.getAttribute("data-trigger")).toBe("圈画题干");
+    expect(stub?.getAttribute("data-embedded")).toBe("true");
+    // 独立「圈画题干」折叠区已移除——工作台内不再出现该入口按钮
+    expect(
+      screen.queryByRole("button", { name: /圈画题干/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("草稿纸挂答题页同款 NoteLayer（展开形态：标题行/全屏/收起齐备——与习题一致）", async () => {
+    await clickStartAndOpenWorkspace(headFixture({ corrections: [openRow()] }));
+    expect(screen.getByText("草稿纸")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "第 1 题草稿纸全屏" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "收起第 1 题草稿纸" }),
+    ).toBeInTheDocument();
+    // 布局偏好菜单随草稿工具条在场（更多 → 布局：…）
+    expect(
+      screen.getByRole("button", { name: /更多操作（第 1 题草稿纸）/ }),
+    ).toBeInTheDocument();
   });
 });
 
