@@ -3,7 +3,7 @@
  * （saving/saved/failed）、服务端正文（dirty/uploading/synced；conflict/
  * denied 走面板）、派生图片（仅 scratch 语境——订正/补充稿行不在任何 head
  * 图片投影里，查看走本地确定性渲染，无服务端图片语义）、本机落盘失败提示。
- * NoteLayer（答题页草稿纸）、CorrectionPanel（订正编辑器）与
+ * NoteLayer（答题页草稿纸）、CorrectionWorkspace（订正工作台）与
  * CorrectionSection 的「补充稿同步状态」块（闸门修复 F3）共用——名词经
  * label 参数化（「草稿」/「订正」/「补充稿」），图片维度经 images 开关。
  *
@@ -28,7 +28,7 @@ export interface NoteStatusAreaProps {
   label: string;
   /**
    * 是否展示派生图片维度与补图重试：scratch（NoteLayer）true；correction
-   * （CorrectionPanel）false——订正查看走本地确定性渲染，无服务端图片语义
+   * （CorrectionWorkspace）false——订正查看走本地确定性渲染，无服务端图片语义
    */
   images: boolean;
   /** 冲突裁决失败信息（保留本机/云端动作的中文报错） */

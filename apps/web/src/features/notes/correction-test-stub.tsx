@@ -1,7 +1,8 @@
 /**
- * 订正区（CorrectionSection）的共享测试桩（T6R.15，对齐 note-original-test-stub
- * 先例）：AttemptResultView 等页面/视图测试文件的 vi.mock 工厂 import 本文件
- * 取桩组件，断言侧直接调 correctionStubDatasets()（document 直查）。
+ * 订正区（CorrectionSection，2026-10 订正重构为直达入口）的共享测试桩
+ * （对齐 note-original-test-stub 先例）：AttemptResultView 等页面/视图测试
+ * 文件的 vi.mock 工厂 import 本文件取桩组件，断言侧直接调
+ * correctionStubDatasets()（document 直查）。
  *
  * 约束（对齐 note-test-utils 的决策）：只依赖 react + DOM，不依赖任何测试
  * 框架。
@@ -14,6 +15,8 @@ export function CorrectionTestStub(props: Record<string, unknown>) {
     "data-testid": "correction-stub",
     "data-attempt": String(props.attemptId),
     "data-question": String(props.questionId),
+    "data-no": String(props.questionNo ?? ""),
+    "data-round": String(props.roundLabel ?? ""),
     "data-prefix": String(props.ariaPrefix ?? ""),
   });
 }

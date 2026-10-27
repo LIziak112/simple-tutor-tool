@@ -65,6 +65,7 @@ export function NoteOriginalView({
   ariaPrefix = "本题",
   roundLabel = null,
   compact = false,
+  defaultOpen = false,
 }: {
   /** 查看角色（api 层 NoteRole：学生本人 / 教师域链授权） */
   viewer: NoteRole;
@@ -76,8 +77,15 @@ export function NoteOriginalView({
   roundLabel?: string | null;
   /** 紧凑工具行展开时占满一行，既有调用方保持原布局。 */
   compact?: boolean;
+  /**
+   * 挂载即展开（2026-10 订正重构）：结果页操作行「草稿」组的面板按需挂载，
+   * 本件随之直接进入展开态（一次点击直达，折叠零请求由外层保证）。
+   */
+  defaultOpen?: boolean;
 }) {
-  const [phase, setPhase] = useState<OriginalPhase>({ kind: "closed" });
+  const [phase, setPhase] = useState<OriginalPhase>(
+    defaultOpen ? { kind: "loading" } : { kind: "closed" },
+  );
   /** 正文渲染核（T6R.15 抽共享）：按 versionId 取正文→渲染→URL 落地 */
   const body = useNoteVersionBody(viewer);
   const { openBody, closeBody, resetBody } = body;
@@ -157,6 +165,17 @@ export function NoteOriginalView({
     closeBody();
     setPhase({ kind: "closed" });
   }, [closeBody]);
+
+  // defaultOpen：挂载即读取（结果页「草稿」面板按需挂载——一次点击直达，
+  // 折叠零请求由外层挂载时机保证）
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const initialOpenRef = useRef(defaultOpen);
+  useEffect(() => {
+    if (!initialOpenRef.current) return;
+    initialOpenRef.current = false;
+    void loadRef.current();
+  }, []);
 
   /**
    * 缺图重建：recoverNoteImages 自拉正文→渲染→上传，只挂既定版本（不改

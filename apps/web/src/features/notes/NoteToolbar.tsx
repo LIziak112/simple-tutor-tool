@@ -1,7 +1,7 @@
 /**
  * 草稿/订正编辑器的共享精简工具条（T6R.15 单3 从 NoteLayer 抽出）：笔/橡皮/
  * 撤销/手指书写/更多（重做/颜色/粗细/清空 + 场景特有菜单段）。NoteLayer（答题
- * 页草稿纸）与 CorrectionPanel（订正编辑器）共用——「手指书写」按钮经
+ * 页草稿纸）与 CorrectionWorkspace（订正工作台）共用——「手指书写」按钮经
  * InkPad.SessionPrefToggleButton 共用会话偏好 store（T6R.7 衔接注记①定案：
  * 按钮归属编辑器工具条，多画布共享同一状态，不另建）。
  * 触控目标 ≥44px（ui-conventions 硬性要求；toolButtonClass 同 InkPad 口径）。
@@ -49,11 +49,11 @@ export interface NoteToolbarProps {
   onRedo: () => void;
   /** 请求清空（打开调用方的二次确认弹层；清空=空稿版本上传的覆盖语义） */
   onClearRequest: () => void;
-  /** 清空菜单项文案（NoteLayer「清空草稿纸」/ CorrectionPanel「清空订正」） */
+  /** 清空菜单项文案（NoteLayer「清空草稿纸」/ CorrectionWorkspace「清空订正草稿」） */
   clearLabel?: string;
   /**
    * 「更多」触发器的悬停提示（闸门修复 F10 参数化）：菜单段随场景不同——
-   * NoteLayer 经 menuExtras 注入布局段（传「…/清空/布局」），CorrectionPanel
+   * NoteLayer 经 menuExtras 注入布局段（传「…/清空/布局」），订正工作台
    * 无布局项用缺省（不谎报不存在的菜单段）
    */
   moreTitle?: string;

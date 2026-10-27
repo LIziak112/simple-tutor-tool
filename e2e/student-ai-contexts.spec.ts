@@ -32,7 +32,7 @@ import {
  * - 讲练题级释放：已显示答案的题解析直出（无折叠按钮），未提交题页面文本
  *   仍无任何详解/题块原文；
  * - 共存：AI 开栏在场时圈画/草稿可正常落笔，交卷前保存保护（draft-status
- *   不停在「保存中」），结果页 查看详解/本次原稿/订正/本题历史 与 AI 复盘
+ *   不停在「保存中」），结果页 查看详解/草稿/订正/本题历史 与 AI 复盘
  *   可先后使用且互不破坏（历史返回后复盘面板仍可用）。
  */
 
@@ -548,20 +548,20 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
       await row.getByRole("button", { name: "查看详解", exact: true }).click();
       await expect(resultCard.getByText(/大于/)).toBeVisible();
 
-      // 原稿：切换到本次原稿视图（题卡持续挂载，AI 面板不受影响）
-      await row.getByRole("button", { name: "本次原稿", exact: true }).click();
-      await expect(
-        resultCard.getByRole("button", { name: "第 1 题查看草稿原稿" }),
-      ).toBeVisible();
+      // 草稿：切换到草稿视图（题卡持续挂载，AI 面板不受影响）
+      await row.getByRole("button", { name: "草稿", exact: true }).click();
+      await expect(resultCard.getByText("草稿原稿")).toBeVisible();
 
-      // 订正：原稿视图让位订正（互斥切换；AI 复盘面板仍开）
-      await row.getByRole("button", { name: "订正", exact: true }).click();
+      // 订正：直达动作打开全屏重做工作台（AI 复盘面板仍开）；关闭后草稿面板不动
+      await row
+        .getByRole("button", { name: "第 1 题订正", exact: true })
+        .click();
       await expect(
-        resultCard.getByRole("button", { name: "第 1 题查看草稿原稿" }),
-      ).toBeHidden();
-      await expect(
-        resultCard.getByRole("button", { name: "添加订正标画", exact: false }),
+        page.getByRole("dialog").getByText("订正 · 第 1 题"),
       ).toBeVisible();
+      await page.getByRole("button", { name: "关闭弹层" }).first().click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(resultCard.getByText("草稿原稿")).toBeVisible();
 
       // 历史返回：进本题历史 → 返回作答结果，AI 复盘面板仍可用
       await resultCard.getByRole("link", { name: "第 1 题本题历史" }).click();

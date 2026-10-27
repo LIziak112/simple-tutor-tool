@@ -1,95 +1,69 @@
 /**
- * 结果页订正区（T6R.15 C，挂 AttemptResultView 每题卡——NoteOriginalView/
- * InkThumbnail 之后，**所有题型**都有订正入口）：
- * - 折叠零请求（结果页 N 张题卡不自动拉头）；展开经 ② evidence 端点
- *   （本人历史权限、软删题可读）拉头投影，并就地播种未封存订正行进本地
- *   correction 记录（seedOpenCorrection）；
- * - 「添加订正」→ Dialog 二选一（默认空白 / 复制原稿——复制项仅该题证据
- *   frozen 可选，否则禁用并说明）→ createCorrectionApi → 清旧封存行残留
- *   （clearCorrectionRecord）→ 播种新行 → 打开 CorrectionPanel；
- * - 已封存订正列表：封存时间 + 反思分栏（「我卡在哪里」/「我的错因」，
- *   无则不显示）；点开 NoteVersionView 查看（笔数显示在查看面板就绪行
- *   ——契约 noteRecordMeta 无 strokeCount，列表行不显示笔数）；未封存行
- *   显示「编辑中」继续编辑入口；
- * - 「找回草稿为补充稿」（D8）：evidence∈{missing,none,legacy_unverified}
- *   且本地 scratch 有未同步内容 → 破坏性次级按钮 + 确认文案 → 本地复制到
- *   phase='supplement' 新记录并触发同步（scratch 本地记录保留不动）；展开态
- *   另有「补充稿同步状态」小区块（闸门修复 F3：仅本地存在 supplement 记录
- *   且非干净态时渲染——conflict 裁决 / denied 重试 / 等待同步的诚实出口，
- *   不再让「已开始同步」在静默停传时成为假话）；
- * - 「本题历史」链接携 questionId 跳题目笔记本（/s/notebook/:questionId）。
+ * 结果页订正入口（2026-10 订正重构，替代旧「展开订正区 → 添加订正弹窗
+ * 二选一 → 编辑面板」的三步流程）：
+ * - 「订正」是操作行上的直达按钮：点击 → 懒取证据头（折叠零请求不变）
+ *   → 已有未封存行则继续、否则自动创建空白行（createCorrectionApi
+ *   copyFromOriginal=false——不复制原稿，按最初做题那样重做）→ 打开
+ *   CorrectionWorkspace 全屏工作台（题面 + 圈画 + 草稿纸 + 一层保存）；
+ * - 命名自动：订正序号 = 已封存数 + 进行中这一份（第 N 次订正），轮次由
+ *   roundLabel 标注（第 X 轮练习 · 第 N 次订正），用户不命名；
+ * - 按钮态：未封存行存在 → 「继续订正」；已封存 N 份 → 计数徽标；
+ * - 历史订正查看走操作行「本题历史」（题目笔记本页含全部轮次与订正列表）；
+ * - D8「找回草稿为补充稿」与补充稿同步状态迁至草稿组
+ *   （DraftRecoverySection）——那是交卷草稿材料的找回语义，与订正无关。
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { NoteHeadData } from "@tutor/contract";
-import { ChevronDown, ClipboardEdit, Plus, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { AttemptResultQuestion, NoteHeadData } from "@tutor/contract";
+import { ClipboardEdit } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { CorrectionPanel } from "@/features/notes/CorrectionPanel";
-import {
-  ReflectionColumns,
-  sealedCorrectionsOf,
-} from "@/features/notes/correction-display";
+import { CorrectionWorkspace } from "@/features/notes/CorrectionWorkspace";
+import { sealedCorrectionsOf } from "@/features/notes/correction-display";
 import {
   correctionHeadKey,
-  hasRecoverableScratch,
   openCorrectionOf,
-  recoverScratchAsSupplement,
   seedOpenCorrection,
 } from "@/features/notes/correction-record";
-import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
-import { NoteVersionView } from "@/features/notes/NoteVersionView";
-import {
-  clearCorrectionRecord,
-  getNoteRecord,
-} from "@/features/notes/note-store";
+import { clearCorrectionRecord } from "@/features/notes/note-store";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
-import { useNoteRecord } from "@/features/notes/use-note-record";
-import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 import { ApiError, createCorrectionApi } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
-import { formatCnTime } from "@/lib/time";
-import { QuestionHistoryLink } from "./QuestionHistoryLink";
-
-/** D8 找回入口的证据状态集合（原稿未固定族） */
-const RECOVERABLE_EVIDENCE: ReadonlySet<string> = new Set([
-  "missing",
-  "none",
-  "legacy_unverified",
-]);
 
 export interface CorrectionSectionProps {
-  /** 并排呈现闭合工具，打开后恢复完整内容宽度。 */
-  compact?: boolean;
-  /** 统一操作栏已提供历史入口。 */
-  hideHistory?: boolean;
   attemptId: string;
   questionId: string;
+  /** 卷内题号（1 起，工作台标题用） */
+  questionNo: number;
   /** 无障碍标签前缀（如「第 3 题」） */
   ariaPrefix?: string;
+  /** 轮次标注（attemptRoundLabel 产物；工作台自动命名的一部分） */
+  roundLabel?: string | null;
+  /** 结果页题目快照（公开投影——工作台题面呈现；不读答案与判定字段） */
+  question: AttemptResultQuestion;
 }
 
 export function CorrectionSection({
   attemptId,
   questionId,
+  questionNo,
   ariaPrefix = "本题",
-  compact = false,
-  hideHistory = false,
+  roundLabel = null,
+  question,
 }: CorrectionSectionProps) {
   const session = useNoteSessionRef();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [workspace, setWorkspace] = useState<{
+    open: boolean;
+    /** 打开工作台时的自动命名序号（已封存数 + 进行中这份） */
+    correctionNo: number;
+  }>({ open: false, correctionNo: 1 });
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
-  // ---- 头投影（展开才拉；queryFn 内播种未封存行） ----
+  // ---- 头投影（点击「订正」才拉——结果页 N 张题卡折叠零请求；查询恒不
+  //      自动触发（enabled:false），由 start() 内 refetch 驱动；queryFn 内
+  //      播种未封存订正行进本地 correction 记录） ----
   const headKey = correctionHeadKey(
     session?.studentId ?? "standby",
     attemptId,
@@ -99,411 +73,131 @@ export function CorrectionSection({
     queryKey: headKey,
     queryFn: async () => {
       if (session === null) {
-        throw new Error("草稿会话未绑定（不应发生：展开守卫已拦）");
+        throw new Error("草稿会话未绑定（不应发生：点击守卫已拦）");
       }
       const head = await fetchNoteEvidenceApi("student", attemptId, questionId);
       await seedOpenCorrection(session, attemptId, questionId, head);
       return head;
     },
-    enabled: open && session !== null,
+    enabled: false,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: (count, err) => !(err instanceof ApiError) && count < 2,
   });
   const head = headQuery.data ?? null;
   const openRow = head === null ? null : openCorrectionOf(head);
-  const sealedRows = sealedCorrectionsOf(head?.corrections ?? []);
+  const sealedCount = sealedCorrectionsOf(head?.corrections ?? []).length;
 
-  // ---- D8：本地 scratch 是否有未同步内容（展开后异步复核；head 刷新不
-  // 改变本地 scratch 记录，无需随其重判） ----
-  const [scratchRecoverable, setScratchRecoverable] = useState(false);
-  useEffect(() => {
-    if (!open || session === null) return;
-    let cancelled = false;
-    void getNoteRecord(session, {
-      attemptId,
-      questionId,
-      phase: "scratch",
-    }).then((record) => {
-      if (!cancelled) setScratchRecoverable(hasRecoverableScratch(record));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, session, attemptId, questionId]);
-  const [recovered, setRecovered] = useState(false);
-  const recoverable =
-    !recovered &&
-    head?.evidence !== null &&
-    head?.evidence !== undefined &&
-    RECOVERABLE_EVIDENCE.has(head.evidence.state) &&
-    scratchRecoverable;
-
-  // ---- F3：补充稿同步状态（本地存在 supplement 记录且非干净态才渲染——
-  // D8 找回后双端二次找回撞 409 的 conflict 终态、denied(access) 停传，
-  // 此前全应用无任何 UI 消费者，内容静默困在本机） ----
-  const supplementView = useNoteRecord(attemptId, questionId, "supplement");
-  const supplementActions = useNoteSyncActions(session, {
-    attemptId,
-    questionId,
-    phase: "supplement",
-  });
-  const supplementNeedsUI =
-    supplementView !== null &&
-    (supplementView.server !== "synced" || supplementView.local === "failed");
-
-  // ---- 添加订正（Dialog 二选一） ----
-  const [createOpen, setCreateOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const create = async (copyFromOriginal: boolean) => {
-    if (session === null) return;
-    setCreating(true);
-    setCreateError(null);
+  // ---- 直达订正：懒取头 →（无未封存行则建空白行）→ 打开工作台 ----
+  const start = async () => {
+    if (session === null || starting) return;
+    setStartError(null);
+    setStarting(true);
     try {
-      const newHead = await createCorrectionApi(attemptId, questionId, {
-        copyFromOriginal,
-      });
-      // 新行起步：清旧封存行残留（stale pending/冲突/被拒不灌新行），再按
-      // 响应头播种（复制原稿时拉首版本正文；空白行只对齐 noteId/基线 0）
-      await clearCorrectionRecord(session, {
-        attemptId,
-        questionId,
-        phase: "correction",
-      });
-      await seedOpenCorrection(session, attemptId, questionId, newHead);
-      queryClient.setQueryData(headKey, newHead);
-      setCreateOpen(false);
-      setPanelOpen(true);
-    } catch (err) {
-      setCreateError(
-        err instanceof Error ? err.message : "创建订正失败，请稍后重试",
-      );
-      // 409（OPEN_EXISTS 等）时重拉头：列表形态可能已变为「继续编辑」
-      void headQuery.refetch();
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // ---- D8 找回确认 ----
-  const [recoverOpen, setRecoverOpen] = useState(false);
-  const [recovering, setRecovering] = useState(false);
-  const [recoverError, setRecoverError] = useState<string | null>(null);
-  const recover = async () => {
-    if (session === null) return;
-    setRecovering(true);
-    setRecoverError(null);
-    try {
-      const outcome = await recoverScratchAsSupplement(
-        session,
-        attemptId,
-        questionId,
-      );
-      if (outcome === "nothing") {
-        setRecoverError("没有找到可找回的草稿内容。");
-        return;
+      let current = headQuery.data ?? null;
+      if (current === null) {
+        const fetched = await headQuery.refetch();
+        current = fetched.data ?? null;
+        if (current === null) {
+          const detail =
+            fetched.error instanceof Error ? `：${fetched.error.message}` : "";
+          throw new Error(
+            detail !== ""
+              ? `订正信息读取失败${detail}`
+              : "订正信息读取失败，请重试",
+          );
+        }
       }
-      setRecovered(true);
-      setRecoverOpen(false);
+      if (openCorrectionOf(current) === null) {
+        try {
+          current = await createCorrectionApi(attemptId, questionId, {
+            copyFromOriginal: false,
+          });
+          // 新行起步：清旧封存行残留（stale pending/冲突/被拒不灌新行）
+          await clearCorrectionRecord(session, {
+            attemptId,
+            questionId,
+            phase: "correction",
+          });
+        } catch (err) {
+          // 409 OPEN_EXISTS（如另一标签页已建行）：重拉头，有未封存行则继续
+          const fetched = await headQuery.refetch();
+          const refreshed = fetched.data ?? null;
+          if (refreshed === null || openCorrectionOf(refreshed) === null) {
+            throw err;
+          }
+          current = refreshed;
+        }
+      }
+      await seedOpenCorrection(session, attemptId, questionId, current);
+      queryClient.setQueryData(headKey, current);
+      setWorkspace({
+        open: true,
+        correctionNo: sealedCorrectionsOf(current.corrections).length + 1,
+      });
     } catch (err) {
-      setRecoverError(
-        err instanceof Error ? err.message : "找回失败，请稍后重试",
+      setStartError(
+        err instanceof Error ? err.message : "打开订正失败，请稍后重试",
       );
     } finally {
-      setRecovering(false);
+      setStarting(false);
     }
   };
 
-  const onSealed = (sealedHead: NoteHeadData) => {
-    queryClient.setQueryData(headKey, sealedHead);
-    setPanelOpen(false);
-  };
-
-  const canCopyOriginal = head?.evidence?.state === "frozen";
+  const buttonLabel =
+    openRow !== null ? `${ariaPrefix}继续订正` : `${ariaPrefix}订正`;
 
   return (
     <div
       data-slot="correction-section"
-      className={`flex min-w-0 flex-col gap-2 ${compact ? (open || supplementNeedsUI ? "w-full" : "w-fit") : ""}`}
+      className="flex shrink-0 flex-col items-start gap-1"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          aria-expanded={open}
-          aria-label={`${ariaPrefix}订正`}
-          onClick={() => setOpen((prev) => !prev)}
-        >
-          <ClipboardEdit aria-hidden className="size-4" />
-          订正
-          <ChevronDown
-            aria-hidden
-            className={`size-4 transition-transform ${open ? "rotate-180" : ""}`}
-          />
-        </Button>
-        {!hideHistory && (
-          <QuestionHistoryLink
-            questionId={questionId}
-            ariaPrefix={ariaPrefix}
-          />
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11 shrink-0 whitespace-nowrap"
+        disabled={starting}
+        aria-label={
+          sealedCount > 0
+            ? `${buttonLabel}（已订正 ${sealedCount} 次）`
+            : buttonLabel
+        }
+        title={sealedCount > 0 ? `已订正 ${sealedCount} 次` : undefined}
+        onClick={() => void start()}
+      >
+        <ClipboardEdit aria-hidden className="size-4" />
+        {openRow !== null ? "继续订正" : "订正"}
+        {sealedCount > 0 && (
+          <span className="font-normal text-muted-foreground">
+            · {sealedCount}
+          </span>
         )}
-      </div>
-
-      {open && (
-        <div className="flex flex-col gap-2 rounded-lg bg-muted/30 px-3 py-3">
-          {headQuery.isPending && (
-            <p
-              role="status"
-              className="text-sm text-muted-foreground"
-              aria-label="正在读取订正信息"
-            >
-              正在读取订正信息…
-            </p>
-          )}
-
-          {headQuery.isError && (
-            <div
-              role="alert"
-              className="flex flex-col items-start gap-2 text-sm"
-            >
-              <p>订正信息读取失败：{headQuery.error.message}</p>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={() => void headQuery.refetch()}
-              >
-                重试
-              </Button>
-            </div>
-          )}
-
-          {head !== null && (
-            <div className="flex flex-col gap-2">
-              {/* 编辑入口：未封存行 → 继续编辑；否则添加（所有题型） */}
-              {!panelOpen &&
-                (openRow !== null ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">
-                      编辑中
-                    </span>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="min-h-11"
-                      onClick={() => setPanelOpen(true)}
-                    >
-                      继续编辑订正
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11 w-fit"
-                      onClick={() => {
-                        setCreateError(null);
-                        setCreateOpen(true);
-                      }}
-                    >
-                      <Plus aria-hidden className="size-4" />
-                      添加订正
-                    </Button>
-                    {sealedRows.length === 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        还没有保存过的订正。写完一稿点「保存订正」，会定格成一次
-                        检查点并留下你的反思。
-                      </p>
-                    )}
-                  </div>
-                ))}
-
-              {/* 已封存订正列表：封存时间 + 反思分栏 + 查看入口 */}
-              {sealedRows.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  {sealedRows.map((row, index) => (
-                    <div
-                      key={row.noteId}
-                      className="flex flex-col gap-2 rounded-lg border border-border bg-card px-3 py-2.5"
-                    >
-                      <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          订正 {index + 1}
-                        </span>
-                        <span>封存于 {formatCnTime(row.sealedAt)}</span>
-                      </p>
-                      <ReflectionColumns row={row} />
-                      <NoteVersionView
-                        viewer="student"
-                        versionId={row.currentVersionId}
-                        title="订正"
-                        openLabel="查看订正"
-                        savedAtLabel="封存于"
-                        savedAt={row.sealedAt}
-                        revision={row.revision}
-                        ariaPrefix={ariaPrefix}
-                        icon={ClipboardEdit}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* D8：找回草稿为补充稿（明确动作，不自动重传） */}
-              {recoverable && (
-                <div className="flex flex-col gap-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 w-fit border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => {
-                      setRecoverError(null);
-                      setRecoverOpen(true);
-                    }}
-                  >
-                    <TriangleAlert aria-hidden className="size-4" />
-                    找回草稿为补充稿
-                  </Button>
-                </div>
-              )}
-              {recovered && (
-                <p role="status" className="text-xs text-muted-foreground">
-                  已加入补充稿同步队列（同步异常时在此处处理）；补充稿不能证明
-                  交卷前已固定，可在「本题历史」查看。
-                </p>
-              )}
-
-              {/* 补充稿同步状态（闸门修复 F3）：conflict 给「保留本机/保留
-                  云端」裁决、denied(access) 给「重试同步」，复用共享
-                  NoteStatusArea（图片维度关——补充稿不在任何 head 图片投影） */}
-              {supplementNeedsUI && (
-                <div className="flex flex-col gap-1.5">
-                  <p className="text-sm font-medium">补充稿同步状态</p>
-                  <NoteStatusArea
-                    view={supplementView}
-                    localLoaded
-                    label="补充稿"
-                    images={false}
-                    resolveError={supplementActions.resolveError}
-                    onKeepLocal={supplementActions.keepLocal}
-                    onKeepCloud={supplementActions.keepCloud}
-                    onRetryDenied={supplementActions.retryDenied}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 编辑器（订正区展开态内嵌；闸门修复 F2：随区块收起一并卸载——
-              收起即收起编辑器，不用 setPanelOpen(false) 方案以免丢视口） */}
-          {panelOpen && (
-            <CorrectionPanel
-              attemptId={attemptId}
-              questionId={questionId}
-              ariaPrefix={ariaPrefix}
-              onClose={() => setPanelOpen(false)}
-              onSealed={onSealed}
-            />
-          )}
-        </div>
+      </Button>
+      {startError !== null && (
+        <p
+          role="alert"
+          className="max-w-64 text-left text-xs text-destructive [overflow-wrap:anywhere]"
+        >
+          {startError}
+        </p>
       )}
 
-      {/* 添加订正：二选一（默认空白；复制原稿仅 frozen 可选） */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>添加订正</DialogTitle>
-            <DialogDescription>
-              选择这份订正从哪里开始。保存后成为一次检查点，再修改会新开一份。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className="min-h-11 justify-start"
-              disabled={creating}
-              onClick={() => void create(false)}
-            >
-              <Plus aria-hidden className="size-4" />
-              空白订正
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="min-h-11 justify-start"
-              disabled={creating || !canCopyOriginal}
-              onClick={() => void create(true)}
-            >
-              <ClipboardEdit aria-hidden className="size-4" />
-              复制原稿开始订正
-            </Button>
-            {!canCopyOriginal && (
-              <p className="text-xs text-muted-foreground">
-                本次交卷没有可复制的原稿（缺稿或未固定），从空白开始。
-              </p>
-            )}
-            {createError !== null && (
-              <p role="alert" className="text-sm text-destructive">
-                {createError}
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              disabled={creating}
-              onClick={() => setCreateOpen(false)}
-            >
-              取消
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* D8 找回确认 */}
-      <Dialog open={recoverOpen} onOpenChange={setRecoverOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>找回草稿为补充稿？</DialogTitle>
-            <DialogDescription>
-              会把这道题在本机的未同步草稿复制成一份补充稿并开始同步；
-              找回的内容只能作为补充材料，不能变成交卷时的原稿。原草稿在本机
-              保留不动。
-            </DialogDescription>
-          </DialogHeader>
-          {recoverError !== null && (
-            <p role="alert" className="text-sm text-destructive">
-              {recoverError}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              disabled={recovering}
-              onClick={() => setRecoverOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="h-11"
-              disabled={recovering}
-              onClick={() => void recover()}
-            >
-              {recovering ? "正在找回…" : "确认找回"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {workspace.open && (
+        <CorrectionWorkspace
+          attemptId={attemptId}
+          questionId={questionId}
+          questionNo={questionNo}
+          ariaPrefix={ariaPrefix}
+          roundLabel={roundLabel}
+          correctionNo={workspace.correctionNo}
+          question={question}
+          onClose={() => setWorkspace((prev) => ({ ...prev, open: false }))}
+          onSealed={(sealedHead: NoteHeadData) => {
+            queryClient.setQueryData(headKey, sealedHead);
+            setWorkspace((prev) => ({ ...prev, open: false }));
+          }}
+        />
+      )}
     </div>
   );
 }

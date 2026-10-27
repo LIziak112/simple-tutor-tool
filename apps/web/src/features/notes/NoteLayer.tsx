@@ -10,8 +10,8 @@
  *   归属本工具条，T6R.7 衔接注记①定案；会话偏好 store 两侧共用不变）
  *   + 纸面（InkPad 隐藏工具条形态）+ 四维状态区。
  *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
- *   编辑器 CorrectionPanel 共用），冲突/被拒动作接线抽至 useNoteSyncActions
- *   （闸门修复 F4；CorrectionPanel/CorrectionSection 补充稿块共用），本组件
+ *   编辑器 CorrectionWorkspace 共用），冲突/被拒动作接线抽至 useNoteSyncActions
+ *   （闸门修复 F4；CorrectionSection 补充稿块共用），本组件
  *   保留答题页形态编排（用户展开/保活/布局 preference/答题页 head 接线/
  *   补图重试）。
  *
@@ -400,7 +400,7 @@ export function NoteLayer({
         </div>
 
         {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作）。
-          T6R.15：抽至共享 NoteStatusArea（CorrectionPanel 复用），本组件按
+          T6R.15：抽至共享 NoteStatusArea（CorrectionWorkspace 复用），本组件按
           草稿语境接线（label=草稿、图片维度开） */}
         {open && (
           <NoteStatusArea
