@@ -12,7 +12,17 @@ import {
   wrongScopeLabelOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -37,7 +47,11 @@ import {
   lessonSourceContextOf,
   unitGroupedRows,
 } from "./attempt-service";
-import { pendingMarkCount } from "./pending-mark";
+import {
+  pendingMarkCount,
+  pendingMarkCountsByStudent,
+  practiceSubmittedCounts,
+} from "./pending-mark";
 import { attemptResultCounts } from "./result-counts";
 import { selfReviewStateOf } from "./review-state.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
@@ -345,6 +359,12 @@ export function listTeacherAttempts(
     db,
     rows.map((row) => row.attempt),
   );
+  // T-PR4：行级已提交数（学生主页作答记录区「已提交 n / 共 m」用；与 v1 逐题
+  // 进度同一实现 practiceSubmittedCounts——draft 按行级事实、已收尾收敛整卷）
+  const submittedCounts = practiceSubmittedCounts(
+    db,
+    rows.map((row) => row.attempt),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -376,11 +396,28 @@ export function listTeacherAttempts(
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
     pendingCount: pendingMarkCount(db, attempt),
+    submittedCount: submittedCounts.get(attempt.id)?.submitted ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,
   }));
   return { attempts: cards, total: totalRow?.n ?? 0 };
+}
+
+/**
+ * 教师侧「可盘点作答行」共享谓词（教师迭代 T-PR2 抽出；T-PR3 已提交行放行与
+ * 学生主页聚合端点同用）：排作废卷（abandonedAt 非空）；进行中（draft）卷只纳入
+ * 单题已提交的行（responses.submittedAt 非空——讲练一体 2026-10 起的单题提交
+ * 时刻），整卷未交的 draft 行判定列不可信、不对外盘点；快照缺失的「历史题目
+ * 缺失」幽灵行（T6R.3）一并排除，与 D4 待批谓词同口径。使用方必须同时 join
+ * attempts 与 responses 两表。
+ */
+export function teacherVisibleResponsesWhere() {
+  return [
+    isNull(attempts.abandonedAt),
+    isNotNull(responses.questionSnapshotJson),
+    or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
+  ];
 }
 
 // ---------- GET /api/teacher/attempts/:id ----------
@@ -434,9 +471,22 @@ export function requireTeacherAttempt(
 // 读取，不再各自 safeParse。
 
 /**
+ * Web-3 / T-PR3 行级放行谓词（teacherVisibleResponsesWhere 的行级读法，同一口径）：
+ * draft 卷内学生已逐题提交（submitted_at 非空）的行按已交卷投影（判定 + 参考
+ * 答案 + 笔迹）；未提交行维持 D5 draft 口径；作废卷（abandonedAt 非空）整卷
+ * 不放行。非 draft 卷恒放行（判定下发本就不受 D5 约束）。
+ */
+function rowVisibleInDraftOf(attempt: Attempt) {
+  const draftOpen = attempt.status === "draft" && attempt.abandonedAt === null;
+  return (submittedAt: string | null): boolean =>
+    attempt.status !== "draft" || (draftOpen && submittedAt !== null);
+}
+
+/**
  * 详情单题条目组装（wrong 与非 wrong 分支共用——原两份 40 行孪生收敛）：
- * - draft：题干经 studentStemMd 学生端投影（详情不下发参考答案）、判定字段
- *   null（判定列显示「未交卷」）、不提供批注定位 responseId；
+ * - draft（未放行行，Web-3 起按行判定）：题干经 studentStemMd 学生端投影
+ *   （详情不下发参考答案）、判定字段 null（判定列显示「未交卷」）、不提供
+ *   批注定位 responseId；已逐题提交的放行行走已交卷分支；
  * - submitted/graded：快照题干原文 + 参考答案/详解，responseId=冻结行 id
  *   （详情页内联批改 POST /responses/:id/mark 定位用）；
  * - unitId/unitTitle 由调用方给（wrong=题目当前单元〔错题「来自哪个练习」的
@@ -492,8 +542,10 @@ function detailItemOf(
  * - draft：题目取该 attempt 的冻结快照行（与学生草稿视图同源——懒冻结兜底
  *   升级遗留草稿；教师改题库不影响学生当前这卷，教师看到的即学生看到的），
  *   题干经 studentStemMd 学生端投影（详情不下发参考答案，题干标记里的答案与
- *   [x] 正确项同样不外露）；判定字段整卷 null（判定列显示「未交卷」）；
- *   answers / solutionMd 字段缺省不发；快照缺失的历史行按「历史题目缺失」跳过；
+ *   [x] 正确项同样不外露）；未提交行判定字段 null（判定列显示「未交卷」；
+ *   Web-3/T-PR3 行级放行：已逐题提交的行按已交卷投影，见 rowVisibleInDraftOf）；
+ *   未放行行 answers / solutionMd 字段缺省不发；快照缺失的历史行按「历史题目
+ *   缺失」跳过；
  * - submitted / graded：逐题取 responses 冻结行（快照题干原文含 [[答案]] 标记、
  *   参考答案与详解照常下发——教师端不受泄露约束，改判与待批卡片都要用）；
  *   分组与排序经 unitGroupedRows 从冻结行自身重建（与学生结果视图同一实现；
@@ -517,6 +569,9 @@ export function getTeacherAttemptDetail(
   // unitGroupedRows 按 legacyUnverified 分派展示序，旧对象的标记是过期值；
   // 已交卷/已冻结时原样返回）
   const attempt = ensureAttemptFrozen(db, attemptRow);
+  // Web-3 / T-PR3：draft 卷内已逐题提交（submitted_at 非空）的行放行判定、
+  // 参考答案与笔迹；未提交行维持 D5 draft 口径；作废卷整卷不放行
+  const draftRowVisible = rowVisibleInDraftOf(attempt);
   const source = sourceOf(db, attempt, teacherId);
   const inkByQuestion = inkByQuestionOf(db, attemptId);
 
@@ -554,7 +609,7 @@ export function getTeacherAttemptDetail(
       const originUnitId = unitByQuestion.get(row.questionId) ?? row.questionId;
       items.push(
         detailItemOf(row, snapshot, {
-          isDraft: attempt.status === "draft",
+          isDraft: !draftRowVisible(row.submittedAt),
           unitId: originUnitId,
           unitTitle: originUnitId, // 占位，下方统一回填（题目行缺失回退 questionId）
           ink: inkInfoOf(inkByQuestion.get(row.questionId)),
@@ -567,18 +622,18 @@ export function getTeacherAttemptDetail(
     // 已交卷的遗留行沿用域内 join 口径。旧已交卷实现 inner join 会把 questions
     // 行缺失的响应行直接丢弃——统一为末尾兜底组展示（修正，不丢数据）。
     // draft 与学生草稿视图同源：题干经 studentStemMd 学生端投影（详情不下发
-    // 参考答案，题干标记里的答案与 [x] 正确项同样不外露）、判定字段整卷 null
-    // （判定列显示「未交卷」）；已交卷快照原文 + 参考答案/详解。快照缺失的
+    // 参考答案，题干标记里的答案与 [x] 正确项同样不外露）、未提交行判定字段
+    // null（判定列显示「未交卷」）；已逐题提交的行按已交卷投影（Web-3）。
+    // 已交卷快照原文 + 参考答案/详解。快照缺失的
     // 历史行按「历史题目缺失」跳过；draft 进门先懒冻结（教师路径不经
     // requireUsableAttempt）。
-    const isDraft = attempt.status === "draft";
     for (const group of unitGroupedRows(db, attempt)) {
       for (const row of group.rows) {
         const snapshot = snapshotOfRow(row);
         if (snapshot === null) continue; // 历史题目缺失跳过
         items.push(
           detailItemOf(row, snapshot, {
-            isDraft,
+            isDraft: !draftRowVisible(row.submittedAt),
             // 兜底组（unitId=null，正常不可达）：unitId 用 questionId 稳定占位，
             // 标题占位用组标题「未分组题目」（人文文案，不露 id）
             unitId: group.unitId ?? row.questionId,
@@ -606,14 +661,15 @@ export function getTeacherAttemptDetail(
     }),
   );
 
-  // 判定计数（effectiveCorrect 口径）；draft 未交卷无判定，对/错/待批全 0（D5）。
+  // 判定计数（effectiveCorrect 口径）；draft 卷只汇总已放行（逐题已提交）行、
+  // 作废卷全 0（Web-3/T-PR3，此前 D5 整卷全 0）。
   // #6980-3：错次不含未做行——answered=false 的判错在详情里灰显「未做」，
   // 与学生结果视图、错题本 wrongCount 同口径。人工显式判定（teacherMark /
   // selfCorrect，审查修复 P0-1）不被「未做」掩盖：显式判错的行计入错次。
   // 计数从 responses 原始行取——questionsOut 投影不含 selfCorrect，且 draft
   // 投影会把判定置 null（isDraft 时 finalCorrect/autoCorrect 恒 null）。
   const judgedRows =
-    attempt.status === "draft"
+    attempt.status === "draft" && attempt.abandonedAt !== null
       ? []
       : db
           .select({
@@ -624,7 +680,14 @@ export function getTeacherAttemptDetail(
             selfCorrect: responses.selfCorrect,
           })
           .from(responses)
-          .where(eq(responses.attemptId, attempt.id))
+          .where(
+            attempt.status === "draft"
+              ? and(
+                  eq(responses.attemptId, attempt.id),
+                  isNotNull(responses.submittedAt),
+                )
+              : eq(responses.attemptId, attempt.id),
+          )
           .all()
           .map((row) => ({
             verdict: effectiveCorrect(row.finalCorrect, row.autoCorrect),
@@ -655,4 +718,73 @@ export function getTeacherAttemptDetail(
     activeSec: attempt.activeSec,
     questions: questionsOut,
   };
+}
+
+// ---------- T-PR4 Web-4：学生列表「活动三列」聚合 ----------
+
+/** 学生活动三列（Web-4 学生列表）：最近作答时间 / 待批数 / 进行中讲练数 */
+export interface StudentActivitySummary {
+  /** 非作废 attempts 的最近活动时间（submittedAt ?? startedAt）；无作答为 null */
+  lastActivityAt: string | null;
+  /** D4 共享待批谓词计数（pendingMarkCountsByStudent，跨该生全部非作废卷） */
+  pendingCount: number;
+  /** draft 且非作废的 lesson（讲练）卷数 */
+  inProgressLessonCount: number;
+}
+
+/**
+ * 一批学生的活动三列聚合（listStudents 的数据源）：两条 attempt 级分组 SQL +
+ * 待批谓词一条（D4 单一口径 pendingMarkCountsByStudent），无逐学生 N+1；
+ * 无活动的学生补零值 / null。
+ */
+export function studentActivitySummaries(
+  db: Db,
+  studentIds: readonly string[],
+): Map<string, StudentActivitySummary> {
+  const map = new Map<string, StudentActivitySummary>();
+  for (const id of studentIds) {
+    map.set(id, {
+      lastActivityAt: null,
+      pendingCount: 0,
+      inProgressLessonCount: 0,
+    });
+  }
+  const ids = [...studentIds];
+  if (ids.length === 0) return map;
+  // 最近作答时间：max(coalesce(submittedAt, startedAt))，与作答列表排序同一时间轴
+  for (const row of db
+    .select({
+      studentId: attempts.studentId,
+      last: sql<string>`max(coalesce(${attempts.submittedAt}, ${attempts.startedAt}))`,
+    })
+    .from(attempts)
+    .where(and(inArray(attempts.studentId, ids), isNull(attempts.abandonedAt)))
+    .groupBy(attempts.studentId)
+    .all()) {
+    const entry = map.get(row.studentId);
+    if (entry !== undefined) entry.lastActivityAt = row.last;
+  }
+  // 进行中讲练数：draft 且非作废的 lesson 卷
+  for (const row of db
+    .select({ studentId: attempts.studentId, n: sql<number>`count(*)` })
+    .from(attempts)
+    .where(
+      and(
+        inArray(attempts.studentId, ids),
+        isNull(attempts.abandonedAt),
+        eq(attempts.status, "draft"),
+        eq(attempts.sourceType, "lesson"),
+      ),
+    )
+    .groupBy(attempts.studentId)
+    .all()) {
+    const entry = map.get(row.studentId);
+    if (entry !== undefined) entry.inProgressLessonCount = row.n;
+  }
+  // 待批数：D4 共享谓词（pending-mark 单一口径）
+  for (const [studentId, n] of pendingMarkCountsByStudent(db, ids)) {
+    const entry = map.get(studentId);
+    if (entry !== undefined) entry.pendingCount = n;
+  }
+  return map;
 }

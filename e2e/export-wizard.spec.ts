@@ -113,7 +113,7 @@ test.describe("导出向导全流程（T4.7：五步走到下载）", {
     await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
 
     await page.goto("/t/export");
     await expect(

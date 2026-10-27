@@ -233,7 +233,7 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await page.fill("#login-name", TEACHER_LOGIN_NAME);
       await page.fill("#login-password", TEACHER_PASSWORD);
       await page.getByRole("button", { name: "登录", exact: true }).click();
-      await page.waitForURL("**/t/library");
+      await page.waitForURL(/\/t\/students(\/|$)/);
 
       // 视图一（默认按课程）：课程分组头 + 卡片（课程练习 · 第 1 次 · 待批 1 ·
       // 得分 50 = scoreAuto 1/2，scoreFinal 未批为 null 的回退展示）

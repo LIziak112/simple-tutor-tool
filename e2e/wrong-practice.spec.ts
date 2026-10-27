@@ -272,7 +272,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
     await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
     await page.goto("/t/data?view=assignment&sourceType=wrong");
     await expect(page.getByRole("heading", { name: "错题重练" })).toBeVisible({
       timeout: 30_000,

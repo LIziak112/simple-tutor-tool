@@ -177,7 +177,7 @@ The project uses a pnpm workspace. Shared Zod schemas define content and API for
 
 | Area | Technology |
 | --- | --- |
-| Frontend | React 19, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand, React Router, CodeMirror, ECharts, KaTeX, MathLive. |
+| Frontend | React 19, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand, React Router, CodeMirror, KaTeX, MathLive. |
 | Handwriting and images | Atrament, Excalidraw, html-to-image. |
 | Backend | Node.js 24, Hono, SQLite, better-sqlite3, Drizzle ORM, pino, MCP SDK. |
 | Checks and tests | TypeScript strict, Vitest, Playwright (Chromium / WebKit), Biome, GitHub Actions. |

@@ -101,6 +101,7 @@ export const studentCourseItemSchema = z
   .object({
     /** course_items.id */
     id: z.uuid(),
+    parentId: z.uuid().nullable().optional(),
     kind: z.enum(["section", "lecture", "unit"]),
     /**
      * 讲义条目的文档形态（lectures.kind，2026-10 讲练一体）：

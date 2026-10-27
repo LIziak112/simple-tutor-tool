@@ -9,6 +9,7 @@ import {
   useRegisterTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
+import { resolveTeacherLanding } from "@/features/students/teacher-landing";
 import { ApiError } from "@/lib/api";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
@@ -19,7 +20,8 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
  * - 未设置教师（首启未做）→ 跳 /t/setup（注册不可用，409 TEACHER_NOT_EXISTS 同口径）；
  * - 注册开关关闭 → 显示「注册已关闭，请联系管理员」+ 返回登录；
  * - 开关开 → 两字段表单（登录名 + 密码，D2/D 密码策略前后端同一份契约校验）。
- * 成功即自动登录进入 /t（新教师名下无任何资源，各页为空态）。
+ * 成功即自动登录并按 Web-4 落点规则进入学生侧（T-PR4：恰 1 名未归档学生 →
+ * 该生主页，其余 → 学生列表；新教师 0 学生 → 学生列表）。
  * 服务端错误分支：REGISTRATION_DISABLED（开关刚被关）/ TEACHER_LOGIN_EXISTS（重名）/
  * LOCKED（同 IP 1 小时超过 5 次）/ TEACHER_NOT_EXISTS（首启被撤销的极端态）。
  */
@@ -72,7 +74,10 @@ export function RegisterPage() {
     setFormError(null);
     registerMutation.mutate(
       { loginName: parsedName.data, password },
-      { onSuccess: () => navigate("/t", { replace: true }) },
+      {
+        onSuccess: async () =>
+          navigate(await resolveTeacherLanding(), { replace: true }),
+      },
     );
   }
 
