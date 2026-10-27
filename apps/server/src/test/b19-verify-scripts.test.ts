@@ -27,7 +27,6 @@ import {
   type MaterialCheckRow,
 } from "../../scripts/b19-verify/materials-check.ts";
 import { runMcpSmoke } from "../../scripts/b19-verify/mcp-smoke.ts";
-import { STUDENT_MCP_TOOL_NAMES } from "../mcp/student-server.ts";
 import {
   auditTrace,
   type TraceAuditInput,
@@ -37,6 +36,7 @@ import { createDb, type Db } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import { teachers } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import { STUDENT_MCP_TOOL_NAMES } from "../mcp/student-server.ts";
 import { createStudentAiConnection } from "../services/ai-companion/connection-service.ts";
 import { attachAiTaskMaterials } from "../services/ai-companion/student-ai-materials.ts";
 import {
