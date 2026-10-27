@@ -14,6 +14,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
@@ -43,8 +44,8 @@ dayjs.extend(timezone);
  *   接口），选中课程 C 时保留 rounds 任一轮 courseId 命中 C 的题（错题重练
  *   轮恒 null 不参与命中）；课程选择同步 URL query（courseId）；
  * - 旧 URL 参数兼容：includeResolved=true 映射为 tab=conquered（旧「显示已
- *   攻克」开关的书签/深链不丢语义）；旧 knowledge 筛选被「按考点」分组取代，
- *   忽略不报错；
+ *   攻克」开关的书签/深链不丢语义）；knowledge 自 2026-10 综合筛选起恢复为
+ *   本地考点筛选参数（非法值回默认，见 parseWrongQuestionsUrl）；
  * - 条目默认紧凑行（题型徽章 + 题干单行真渲染 + 错 N · 对 M + 最近一轮 ✓/✗
  *   + 绝对时间），点击行展开完整卡片。题干走 InlineMarkdown（与展开卡同一
  *   解析管线的单行收敛形态：公式 KaTeX、[[答案]] 空框、图片/表格占位、
@@ -64,39 +65,84 @@ export type WrongTab = "pending" | "conquered";
 /** 分组维度 */
 export type WrongGroupMode = "unit" | "time" | "knowledge";
 
-/** 时间筛选项（最近 N 个自然日，含今天；按 lastAt，Asia/Shanghai 自然日）——词表单源，加档位只改这里 */
+/**
+ * 时间筛选（2026-10 实测反馈起支持自由输入）：最近 N 个自然日（含今天；按
+ * lastAt，Asia/Shanghai 自然日）。WRONG_DAYS_OPTIONS 只是 datalist 建议档位，
+ * 1–3650 内任意整数都合法。
+ */
 const WRONG_DAYS_OPTIONS = [7, 30, 90] as const;
-export type WrongDaysFilter = (typeof WRONG_DAYS_OPTIONS)[number];
-
-/** 错次筛选项（wrongCount ≥ N）——词表单源 */
-const WRONG_MIN_OPTIONS = [2, 3] as const;
-export type WrongMinFilter = (typeof WRONG_MIN_OPTIONS)[number];
-
-/** 时间筛选标签（下拉选项与活跃 chip 共用同一词表） */
-export const WRONG_DAYS_LABELS: Record<WrongDaysFilter, string> = {
+/** 预设时间档位词表（datalist 建议与 chip 标签单源；自定义值动态生成标签） */
+const WRONG_DAYS_LABELS: Record<(typeof WRONG_DAYS_OPTIONS)[number], string> = {
   7: "最近 7 天",
   30: "最近 30 天",
   90: "最近 90 天",
 };
+export type WrongDaysFilter = number;
 
-/** 错次筛选标签（下拉选项与活跃 chip 共用同一词表） */
-export const WRONG_MIN_LABELS: Record<WrongMinFilter, string> = {
+/** 时间筛选标签：预设档位用词表，自定义值动态生成 */
+export function wrongDaysLabel(days: number): string {
+  return (
+    WRONG_DAYS_LABELS[days as (typeof WRONG_DAYS_OPTIONS)[number]] ??
+    `最近 ${days} 天`
+  );
+}
+
+/**
+ * 错次筛选（wrongCount ≥ N；2026-10 实测反馈起支持自由输入 1–99）：
+ * WRONG_MIN_OPTIONS 只是 datalist 建议档位。
+ */
+const WRONG_MIN_OPTIONS = [2, 3] as const;
+/** 预设错次档位词表（datalist 建议与 chip 标签单源） */
+const WRONG_MIN_LABELS: Record<(typeof WRONG_MIN_OPTIONS)[number], string> = {
   2: "错 2 次及以上",
   3: "错 3 次及以上",
 };
+export type WrongMinFilter = number;
 
-/** URL/onChange 共用的时间筛选解析（非法值回 null） */
-export function parseWrongDaysFilter(value: string): WrongDaysFilter | null {
-  return (WRONG_DAYS_OPTIONS as readonly number[]).includes(Number(value))
-    ? (Number(value) as WrongDaysFilter)
+/** 错次筛选标签：预设档位用词表，自定义值动态生成 */
+export function wrongMinLabel(min: number): string {
+  return (
+    WRONG_MIN_LABELS[min as (typeof WRONG_MIN_OPTIONS)[number]] ??
+    `错 ${min} 次及以上`
+  );
+}
+
+/** [min, max] 内整数控件共用的解析（空/非法/越界回 null） */
+function parseBoundedInt(
+  value: string,
+  min: number,
+  max: number,
+): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max
+    ? parsed
     : null;
 }
 
-/** URL/onChange 共用的错次筛选解析（非法值回 null） */
+/** URL/onChange 共用的时间筛选解析（1–3650 整数；非法/空回 null） */
+export function parseWrongDaysFilter(value: string): WrongDaysFilter | null {
+  return parseBoundedInt(value, 1, 3650);
+}
+
+/** URL/onChange 共用的错次筛选解析（1–99 整数；非法/空回 null） */
 export function parseWrongMinFilter(value: string): WrongMinFilter | null {
-  return (WRONG_MIN_OPTIONS as readonly number[]).includes(Number(value))
-    ? (Number(value) as WrongMinFilter)
-    : null;
+  return parseBoundedInt(value, 1, 99);
+}
+
+/**
+ * URL/onChange 共用的考点多选解析（逗号分隔；逐项去空白、去重；空 = 全部
+ * 考点）。注意：考点名本身含逗号无法表达（teacher 内容约定考点为短标签）。
+ */
+export function parseWrongKnowledgeFilter(raw: string | null): string[] {
+  if (raw === null) return [];
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name !== ""),
+    ),
+  ];
 }
 
 /** 错题本页 URL 状态（单一事实来源是 URL query） */
@@ -105,11 +151,15 @@ export interface WrongQuestionsUrlState {
   group: WrongGroupMode;
   /** 课程筛选（2026-10）：null = 全部课程；选中时保留 rounds 任一轮 courseId 命中的题 */
   courseId: string | null;
-  /** 考点筛选（2026-10 综合）：null = 全部考点；题面任一考点命中即保留 */
-  knowledge: string | null;
-  /** 时间筛选（2026-10 综合）：null = 全部时间；最近 N 天内有判定 */
+  /**
+   * 考点筛选（2026-10 综合；实测反馈起多选 + 自由输入）：选中考点列表
+   * （URL 逗号分隔），题目任一考点命中任一所选即保留；可含不在建议列表里
+   * 的自定义考点名（按字面匹配）。空数组 = 全部考点。
+   */
+  knowledge: string[];
+  /** 时间筛选（2026-10 综合；实测反馈起自由输入）：null = 全部时间；最近 N 天内有判定 */
   days: WrongDaysFilter | null;
-  /** 错次筛选（2026-10 综合）：null = 全部；wrongCount ≥ N */
+  /** 错次筛选（2026-10 综合；实测反馈起自由输入）：null = 全部；wrongCount ≥ N */
   wrongMin: WrongMinFilter | null;
 }
 
@@ -118,7 +168,7 @@ export const DEFAULT_WRONG_QUESTIONS_URL_STATE: WrongQuestionsUrlState = {
   tab: "pending",
   group: "unit",
   courseId: null,
-  knowledge: null,
+  knowledge: [],
   days: null,
   wrongMin: null,
 };
@@ -126,16 +176,13 @@ export const DEFAULT_WRONG_QUESTIONS_URL_STATE: WrongQuestionsUrlState = {
 /**
  * URLSearchParams → 页面状态。
  * 兼容（2026-10 改版前的旧参数，见模块头注释）：includeResolved=true →
- * tab=conquered；旧 knowledge 忽略（被「按考点」分组取代）；非法值回默认。
+ * tab=conquered；knowledge 为综合筛选的考点参数（多选，逗号分隔；非法值回空）。
  */
 export function parseWrongQuestionsUrl(
   search: URLSearchParams,
 ): WrongQuestionsUrlState {
   const group = search.get("group");
   const courseId = search.get("courseId");
-  const knowledge = search.get("knowledge");
-  const days = search.get("days");
-  const wrongMin = search.get("wrongMin");
   return {
     tab:
       search.get("tab") === "conquered" ||
@@ -144,9 +191,9 @@ export function parseWrongQuestionsUrl(
         : "pending",
     group: group === "time" || group === "knowledge" ? group : "unit",
     courseId: courseId !== null && courseId !== "" ? courseId : null,
-    knowledge: knowledge !== null && knowledge !== "" ? knowledge : null,
-    days: parseWrongDaysFilter(days ?? ""),
-    wrongMin: parseWrongMinFilter(wrongMin ?? ""),
+    knowledge: parseWrongKnowledgeFilter(search.get("knowledge")),
+    days: parseWrongDaysFilter(search.get("days") ?? ""),
+    wrongMin: parseWrongMinFilter(search.get("wrongMin") ?? ""),
   };
 }
 
@@ -164,8 +211,8 @@ export function wrongQuestionsUrlQuery(
   if (state.courseId !== null) {
     params.set("courseId", state.courseId);
   }
-  if (state.knowledge !== null) {
-    params.set("knowledge", state.knowledge);
+  if (state.knowledge.length > 0) {
+    params.set("knowledge", state.knowledge.join(","));
   }
   if (state.days !== null) {
     params.set("days", String(state.days));
@@ -197,11 +244,11 @@ export function filterWrongQuestionsByCourse(
 /**
  * 综合筛选（2026-10）：课程 × 考点 × 时间 × 错次组合，逐条件收窄——
  * - 课程：rounds 任一轮 courseId 命中（filterWrongQuestionsByCourse 同口径）；
- * - 考点：knowledge 数组任一命中（与展示同源）；
+ * - 考点（多选）：题目任一考点命中任一所选考点即保留（OR 语义）；
  * - 时间：lastAt 落在最近 days 个自然日内（含今天，Asia/Shanghai 自然日；
  *   字符串 ISO 比较即可——双方都是 toISOString 的 UTC 形态）；
  * - 错次：wrongCount ≥ wrongMin。
- * 任一条件为 null 即跳过该条件。
+ * 考点空数组 / 其余条件为 null 即跳过该条件。
  */
 export function filterWrongQuestions(
   questions: WrongQuestionCard[],
@@ -214,9 +261,9 @@ export function filterWrongQuestions(
   // 解构成 const 局部量：属性收窄可进闭包，免 as 断言
   const { knowledge, days, wrongMin } = state;
   let result = filterWrongQuestionsByCourse(questions, state.courseId);
-  if (knowledge !== null) {
+  if (knowledge.length > 0) {
     result = result.filter((question) =>
-      question.knowledge.includes(knowledge),
+      question.knowledge.some((name) => knowledge.includes(name)),
     );
   }
   if (days !== null) {
@@ -807,50 +854,127 @@ export function WrongGroupSwitch({
 }
 
 /**
- * 筛选下拉（综合筛选条内同构三件套的收敛形态，与课程下拉同一观感）：
- * label + select + 首选项「全部X」；选项 children 由调用方给；触控 ≥44px。
+ * 筛选输入基础样式（与课程下拉同一观感）：label + 输入框；触控 ≥44px。
  */
-function FilterSelect({
+const FILTER_INPUT_CLASS =
+  "min-h-11 min-w-0 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
+
+/**
+ * 考点筛选输入（2026-10 实测反馈：下拉只可选 → 输入 + datalist 建议 + 多选）：
+ * 建议来自当前题目集合的考点分布（带计数，已选的不再建议）；回车或选中建议
+ * 即加入（中文输入法组词中的回车不提交——isComposing 守卫）；已选考点以
+ * chips 展示在下方 chips 行，可单清。自定义考点名按字面匹配照常生效。
+ */
+function KnowledgeFilterInput({
+  selected,
+  options,
+  onChange,
+}: {
+  selected: string[];
+  options: Array<{ name: string; count: number }>;
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const addSelected = (raw: string): void => {
+    const name = raw.trim();
+    setDraft("");
+    if (name === "" || selected.includes(name)) return;
+    onChange([...selected, name]);
+  };
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <label
+        htmlFor="wrong-knowledge-filter"
+        className="shrink-0 text-sm text-muted-foreground"
+      >
+        考点
+      </label>
+      <input
+        id="wrong-knowledge-filter"
+        list="wrong-knowledge-options"
+        type="text"
+        className={FILTER_INPUT_CLASS}
+        placeholder="输入考点，回车添加（可多个）"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            addSelected(draft);
+          }
+        }}
+      />
+      <datalist id="wrong-knowledge-options">
+        {options
+          .filter((option) => !selected.includes(option.name))
+          .map((option) => (
+            <option key={option.name} value={option.name}>
+              {option.name}（{option.count}）
+            </option>
+          ))}
+      </datalist>
+    </div>
+  );
+}
+
+/**
+ * 数字筛选输入（时间/错次共用，2026-10 实测反馈：预设档位 → 任意数字）：
+ * 数字输入 + datalist 预设建议；空 = 全部；越界/非法输入按 null（清除）处理。
+ */
+function FilterNumberInput({
   id,
   label,
+  placeholder,
   value,
-  allLabel,
+  min,
+  max,
+  listId,
+  presets,
   onChange,
-  children,
 }: {
   id: string;
   label: string;
-  /** 当前选中值（"" = 全部） */
-  value: string;
-  /** 首选项（清除该条件）文案 */
-  allLabel: string;
-  onChange: (value: string) => void;
-  children: React.ReactNode;
+  placeholder: string;
+  value: number | null;
+  min: number;
+  max: number;
+  listId: string;
+  presets: Array<{ value: string; label: string }>;
+  onChange: (value: number | null) => void;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
       <label htmlFor={id} className="shrink-0 text-sm text-muted-foreground">
         {label}
       </label>
-      <select
+      <input
         id={id}
-        className="min-h-11 min-w-0 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">{allLabel}</option>
-        {children}
-      </select>
+        type="number"
+        min={min}
+        max={max}
+        list={listId}
+        className={FILTER_INPUT_CLASS}
+        placeholder={placeholder}
+        value={value === null ? "" : String(value)}
+        onChange={(e) => onChange(parseBoundedInt(e.target.value, min, max))}
+      />
+      <datalist id={listId}>
+        {presets.map((preset) => (
+          <option key={preset.value} value={preset.value}>
+            {preset.label}
+          </option>
+        ))}
+      </datalist>
     </div>
   );
 }
 
 /**
- * 综合筛选条（2026-10）：考点 / 时间 / 错次三个下拉（与课程下拉同一形态），
- * 组合生效（综合筛选）；有活跃条件时展示可单清的 chips 与「清除全部筛选」。
- * 选项与标签单源：时间/错次词表 WRONG_DAYS_OPTIONS/WRONG_MIN_OPTIONS +
- * LABELS + parse 函数；考点选项由页面从当前题目集合算好传入（带计数），
- * 深链考点不在选项里时组件自算占位兜底（与 WrongCourseSelect 同约定）。
+ * 综合筛选条（2026-10；实测反馈改自由输入）：考点（输入 + 建议 + 多选 chips）/
+ * 时间（数字输入 + 预设建议）/ 错次（数字输入 + 预设建议）组合生效；有活跃
+ * 条件时展示可单清的 chips 与「清除全部筛选」。标签单源：预设词表
+ * WRONG_DAYS/WRONG_MIN + wrongDaysLabel/wrongMinLabel（自定义值动态生成）；
+ * 考点建议由页面从当前题目集合算好传入（带计数）。
  */
 export function WrongFilterBar({
   knowledge,
@@ -860,97 +984,86 @@ export function WrongFilterBar({
   onChange,
   onClearAll,
 }: {
-  /** 当前考点筛选（null = 全部考点） */
-  knowledge: string | null;
-  /** 当前时间筛选（null = 全部时间） */
+  /** 当前考点筛选（空数组 = 全部考点；可含自定义考点名） */
+  knowledge: string[];
+  /** 当前时间筛选（null = 全部时间；1–3650 自由输入） */
   days: WrongDaysFilter | null;
-  /** 当前错次筛选（null = 全部） */
+  /** 当前错次筛选（null = 全部；1–99 自由输入） */
   wrongMin: WrongMinFilter | null;
-  /** 考点下拉选项（当前题目集合的考点分布，带计数） */
+  /** 考点建议选项（当前题目集合的考点分布，带计数） */
   knowledgeOptions: Array<{ name: string; count: number }>;
-  /** 修改单个筛选条件（传 null 清除该条件） */
+  /** 修改单个筛选条件（knowledge 传 [] 清除；days/wrongMin 传 null 清除） */
   onChange: (patch: {
-    knowledge?: string | null;
+    knowledge?: string[];
     days?: WrongDaysFilter | null;
     wrongMin?: WrongMinFilter | null;
   }) => void;
-  /** 清除全部综合筛选（课程筛选由课程下拉自管，不在此清） */
+  /** 清除全部筛选（课程 + 综合——与空态按钮同一动作同一范围，评审修复统一） */
   onClearAll: () => void;
 }) {
-  const hasActive = knowledge !== null || days !== null || wrongMin !== null;
-  const unknownKnowledge =
-    knowledge !== null &&
-    !knowledgeOptions.some((option) => option.name === knowledge);
+  const hasActive = knowledge.length > 0 || days !== null || wrongMin !== null;
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <FilterSelect
-          id="wrong-knowledge-filter"
-          label="考点"
-          value={knowledge ?? ""}
-          allLabel="全部考点"
-          onChange={(value) =>
-            onChange({ knowledge: value === "" ? null : value })
-          }
-        >
-          {knowledgeOptions.map((option) => (
-            <option key={option.name} value={option.name}>
-              {option.name}（{option.count}）
-            </option>
-          ))}
-          {unknownKnowledge && knowledge !== null && (
-            <option value={knowledge}>{knowledge}（已不在当前列表）</option>
-          )}
-        </FilterSelect>
-        <FilterSelect
+        <KnowledgeFilterInput
+          selected={knowledge}
+          options={knowledgeOptions}
+          onChange={(next) => onChange({ knowledge: next })}
+        />
+        <FilterNumberInput
           id="wrong-days-filter"
           label="时间"
-          value={days === null ? "" : String(days)}
-          allLabel="全部时间"
-          onChange={(value) => onChange({ days: parseWrongDaysFilter(value) })}
-        >
-          {WRONG_DAYS_OPTIONS.map((d) => (
-            <option key={d} value={String(d)}>
-              {WRONG_DAYS_LABELS[d]}
-            </option>
-          ))}
-        </FilterSelect>
-        <FilterSelect
+          placeholder="全部时间"
+          value={days}
+          min={1}
+          max={3650}
+          listId="wrong-days-presets"
+          presets={WRONG_DAYS_OPTIONS.map((d) => ({
+            value: String(d),
+            label: WRONG_DAYS_LABELS[d],
+          }))}
+          onChange={(next) => onChange({ days: next })}
+        />
+        <FilterNumberInput
           id="wrong-wrong-min-filter"
           label="错次"
-          value={wrongMin === null ? "" : String(wrongMin)}
-          allLabel="全部错次"
-          onChange={(value) =>
-            onChange({ wrongMin: parseWrongMinFilter(value) })
-          }
-        >
-          {WRONG_MIN_OPTIONS.map((m) => (
-            <option key={m} value={String(m)}>
-              {WRONG_MIN_LABELS[m]}
-            </option>
-          ))}
-        </FilterSelect>
+          placeholder="全部错次"
+          value={wrongMin}
+          min={1}
+          max={99}
+          listId="wrong-wrong-min-presets"
+          presets={WRONG_MIN_OPTIONS.map((m) => ({
+            value: String(m),
+            label: WRONG_MIN_LABELS[m],
+          }))}
+          onChange={(next) => onChange({ wrongMin: next })}
+        />
       </div>
       {hasActive && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">已筛选：</span>
-          {knowledge !== null && (
+          {knowledge.map((name) => (
             <Chip
-              label={knowledge}
-              onClearLabel="清除考点筛选"
-              onClear={() => onChange({ knowledge: null })}
+              key={name}
+              label={name}
+              onClearLabel={`清除考点「${name}」`}
+              onClear={() =>
+                onChange({
+                  knowledge: knowledge.filter((item) => item !== name),
+                })
+              }
             />
-          )}
+          ))}
           {days !== null && (
             <Chip
-              label={WRONG_DAYS_LABELS[days]}
+              label={wrongDaysLabel(days)}
               onClearLabel="清除时间筛选"
               onClear={() => onChange({ days: null })}
             />
           )}
           {wrongMin !== null && (
             <Chip
-              label={WRONG_MIN_LABELS[wrongMin]}
+              label={wrongMinLabel(wrongMin)}
               onClearLabel="清除错次筛选"
               onClear={() => onChange({ wrongMin: null })}
             />
@@ -968,7 +1081,10 @@ export function WrongFilterBar({
   );
 }
 
-/** 活跃筛选 chip：标签 + 单清 ×（触控高度放宽到 36px——次级操作，主筛选控件 ≥44px） */
+/**
+ * 活跃筛选 chip：标签 + 单清 ×。视觉圆点 28px，伪元素外扩 8px 把命中区补到
+ * 44px（触控口径与项目主控件一致；视觉尺寸不变——better-ui 打磨 2026-10）。
+ */
 function Chip({
   label,
   onClearLabel,
@@ -984,7 +1100,7 @@ function Chip({
       <button
         type="button"
         aria-label={onClearLabel}
-        className="flex size-7 items-center justify-center rounded-full outline-none transition-colors hover:bg-muted-foreground/15 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="relative flex size-7 items-center justify-center rounded-full outline-none transition-colors after:absolute after:-inset-2 after:content-[''] hover:bg-muted-foreground/15 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         onClick={onClear}
       >
         <X aria-hidden className="size-3.5" />
@@ -994,6 +1110,15 @@ function Chip({
 }
 
 /** 组头全选按钮（选题模式）：全选本组 / 取消全选（aria-pressed 表当前；触控 ≥44px） */
+/** 全选图标交叉淡入层（better-ui 配方：双图标共存一格，300ms、缓动 0.2,0,0,1；reduced-motion 退化为纯透明度） */
+const selectAllIconLayer = cn(
+  "[grid-area:1/1] transition-[opacity,filter,scale] duration-300",
+  "ease-[cubic-bezier(0.2,0,0,1)]",
+  "motion-reduce:scale-100 motion-reduce:blur-[0px]",
+);
+const selectAllIconShown = "scale-100 opacity-100 blur-[0px]";
+const selectAllIconHidden = "scale-[0.25] opacity-0 blur-[4px]";
+
 export function WrongGroupSelectAll({
   count,
   allSelected,
@@ -1012,11 +1137,25 @@ export function WrongGroupSelectAll({
       aria-pressed={allSelected}
       onClick={onToggle}
     >
-      {allSelected ? (
-        <CheckCircle2 aria-hidden className="size-4" />
-      ) : (
-        <Circle aria-hidden className="size-4" />
-      )}
+      {/* 状态图标交换走交叉淡入（低频状态切换；静态文案随之变化，动效非唯一反馈） */}
+      <span aria-hidden className="grid place-items-center">
+        <span
+          className={cn(
+            selectAllIconLayer,
+            allSelected ? selectAllIconShown : selectAllIconHidden,
+          )}
+        >
+          <CheckCircle2 className="size-4" />
+        </span>
+        <span
+          className={cn(
+            selectAllIconLayer,
+            allSelected ? selectAllIconHidden : selectAllIconShown,
+          )}
+        >
+          <Circle className="size-4" />
+        </span>
+      </span>
       {allSelected ? `取消全选（${count} 题）` : `全选本组（${count} 题）`}
     </Button>
   );

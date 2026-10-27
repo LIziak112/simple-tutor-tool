@@ -62,11 +62,12 @@ import { startWrongPracticeApi } from "@/lib/api";
  * - 课程筛选（2026-10）：页头「课程」下拉（默认全部课程，选项 = 我的课程
  *   接口，与我的记录页同源；加载失败不阻塞列表）。筛选口径 = rounds 任一轮
  *   courseId 命中（错题重练轮恒 null 不参与；跨课程的题任一轮命中即保留）；
- * - 综合筛选（2026-10）：考点（当前集合的考点分布）/ 时间（最近 7/30/90 个
- *   自然日，按最近判定时间）/ 错次（wrongCount ≥2/≥3）三个下拉与课程筛选
- *   **组合收窄**（综合筛选），作用于两个 tab 的成员与计数、全部重练入口的
- *   范围；活跃条件显示 chips，可单清或一键清除；考点/时间/错次同步 URL
- *   query（knowledge/days/wrongMin，刷新/返回不丢）；
+ * - 综合筛选（2026-10；实测反馈起自由输入）：考点（输入 + datalist 建议，
+ *   可多选）/ 时间（数字输入，最近 N 个自然日含今天，按最近判定时间）/
+ *   错次（数字输入，wrongCount ≥N）三个输入与课程筛选**组合收窄**（综合
+ *   筛选），作用于两个 tab 的成员与计数、全部重练入口的范围；活跃条件显示
+ *   chips，可单清或一键清除；考点/时间/错次同步 URL query（knowledge 逗号
+ *   分隔多选 / days / wrongMin，刷新/返回不丢）；
  * - 条目默认紧凑行，点击展开完整卡片（含轮次史区块）；时间一律绝对时间
  *   （formatCnTime，Asia/Shanghai）；紧凑行示「错 N · 对 M」；轮次史尾部在
  *   pendingCount>0 时提示「另有 N 轮待老师批改」；
@@ -262,21 +263,25 @@ export default function StudentWrongQuestionsPage() {
   );
 
   const questions = listQuery.data?.questions ?? [];
+  // 课程筛选单算一次（评审修复：此前 filtered 与 knowledgeOptions 两个 useMemo
+  // 各自跑一遍课程过滤，重复遍历）；综合筛选在其上收窄
+  const courseFiltered = useMemo(
+    () => filterWrongQuestionsByCourse(questions, state.courseId),
+    [questions, state.courseId],
+  );
   // 综合筛选（课程 × 考点 × 时间 × 错次）在 tab 分流前生效：两个 tab 的成员
   // 与计数、全部重练入口的范围都跟随（state 是 URL 态快照，identity 随 query
-  // 变化——切 tab/分组会重算一次过滤，D11 规模下可忽略）
+  // 变化——切 tab/分组会重算一次过滤，D11 规模下可忽略；课程条件已在
+  // courseFiltered 应用，这里置 null 跳过）
   const filtered = useMemo(
-    () => filterWrongQuestions(questions, state),
-    [questions, state],
+    () => filterWrongQuestions(courseFiltered, { ...state, courseId: null }),
+    [courseFiltered, state],
   );
   // 考点下拉选项只随课程筛选收窄（不被已选考点自身缩死，方便换考点）；深链的
   // 考点不在选项里时由筛选条内自算占位选项兜底
   const knowledgeOptions = useMemo(
-    () =>
-      wrongKnowledgeOptions(
-        filterWrongQuestionsByCourse(questions, state.courseId),
-      ),
-    [questions, state.courseId],
+    () => wrongKnowledgeOptions(courseFiltered),
+    [courseFiltered],
   );
   const { pending, conquered } = useMemo(
     () => splitByMastery(filtered, standard),
@@ -303,7 +308,13 @@ export default function StudentWrongQuestionsPage() {
       return next;
     });
   }
-  const selectedCount = selectedIds.size;
+  // 有效选择 = selectedIds ∩ 当前数据（评审修复：refetch 后题目可能退出聚合
+  //——公布 gate 变化等——此时勾选计数若仍按 selectedIds 会虚高，且全部失效
+  // 时「重练已选」按钮可用、点击却静默无响应；计数与禁用一律按有效选择算）
+  const selectedCount = questions.reduce(
+    (count, question) => count + (selectedIds.has(question.questionId) ? 1 : 0),
+    0,
+  );
   const visibleSelectedCount = tabQuestions.filter((question) =>
     selectedIds.has(question.questionId),
   ).length;
@@ -372,8 +383,9 @@ export default function StudentWrongQuestionsPage() {
   const scopePayloadFor = (
     scopeKey: string,
     groupTitle: string | null,
-    /** selection 口径的实际提交题数（缺省回落勾选计数） */
-    count?: number,
+    /** selection 口径的实际提交题数（practiceQuestions 恒传 list.length——勾选
+     * 计数在 refetch 后可能失效，绝不能当题数写进随卷快照） */
+    count: number,
   ): WrongPracticeScope | undefined => {
     if (scopeKey === "all") {
       return {
@@ -386,11 +398,7 @@ export default function StudentWrongQuestionsPage() {
     if (scopeKey === "selection") {
       return {
         kind: "selection",
-        // 实际提交的题数（由 practiceQuestions 按列表长度传入——refetch 后
-        // 已选题可能失效，不能拿勾选计数当题数）
-        ...(count !== undefined
-          ? { questionCount: count }
-          : { questionCount: selectedCount }),
+        questionCount: count,
         ...(courseNameForScope !== undefined
           ? { courseName: courseNameForScope }
           : {}),
@@ -420,17 +428,16 @@ export default function StudentWrongQuestionsPage() {
       scopePayload: scopePayloadFor(scope, groupTitle, list.length),
     });
   };
-  // 选题重练：题序 = 当前列表序在前，不在当前列表的已选题按全量列表序垫后；
-  // 复用 practiceQuestions（同一 mutate 入口与范围快照组装）
+  // 选题重练：题序 = 当前列表（tab + 筛选后的可见列表）序在前，不在当前列表
+  // 的已选题（另一 tab 或被筛掉）按全量列表序垫后（评审修复：此前 inList 取自
+  // filtered〔两 tab 合集〕，跨 tab 已选题按 lastAt 插进队首，与操作条
+  // 「不在当前列表」的计数口径自相矛盾）；复用 practiceQuestions（同一 mutate
+  // 入口与范围快照组装）
   const practiceSelected = () => {
-    const inListIds = new Set(
-      filtered
-        .filter((question) => selectedIds.has(question.questionId))
-        .map((question) => question.questionId),
+    const inList = tabQuestions.filter((question) =>
+      selectedIds.has(question.questionId),
     );
-    const inList = filtered.filter((question) =>
-      inListIds.has(question.questionId),
-    );
+    const inListIds = new Set(inList.map((question) => question.questionId));
     const outOfList = questions.filter(
       (question) =>
         selectedIds.has(question.questionId) &&
@@ -448,14 +455,16 @@ export default function StudentWrongQuestionsPage() {
   function clearAllFilters(): void {
     applyPatch({
       courseId: null,
-      knowledge: null,
+      knowledge: [],
       days: null,
       wrongMin: null,
     });
   }
 
   const compositeFilterActive =
-    state.knowledge !== null || state.days !== null || state.wrongMin !== null;
+    state.knowledge.length > 0 ||
+    state.days !== null ||
+    state.wrongMin !== null;
 
   function changeStandard(next: WrongMasteryStandard): void {
     setStandard(next);
@@ -470,14 +479,11 @@ export default function StudentWrongQuestionsPage() {
         titleId="wrong-title"
         description="做错的题会自动收进来；做对了也不会删，攻克后随时可以回来翻看。"
         actions={
-          // 选题模式下常规入口让位给底部操作条
+          // 选题模式下常规入口让位给底部操作条（选题重练与重练全部同风格：
+          // 实测反馈统一为主按钮同规格，此前 outline 与主按钮观感差异大）
           !selecting && (
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                className="min-h-11 px-4"
-                onClick={enterSelecting}
-              >
+              <Button className="min-h-11 px-5" onClick={enterSelecting}>
                 <ListChecks aria-hidden className="size-4" />
                 选题重练
               </Button>
@@ -514,16 +520,16 @@ export default function StudentWrongQuestionsPage() {
             />
           </div>
         </div>
-        {/* 综合筛选（2026-10）：考点 × 时间 × 错次组合收窄，与课程筛选叠加 */}
+        {/* 综合筛选（2026-10）：考点 × 时间 × 错次组合收窄，与课程筛选叠加。
+            评审修复：onClearAll 与空态按钮同一动作、同一范围（课程 + 综合）——
+            此前只清综合不清课程，同名按钮两种行为 */}
         <WrongFilterBar
           knowledge={state.knowledge}
           days={state.days}
           wrongMin={state.wrongMin}
           knowledgeOptions={knowledgeOptions}
           onChange={(patch) => applyPatch(patch)}
-          onClearAll={() =>
-            applyPatch({ knowledge: null, days: null, wrongMin: null })
-          }
+          onClearAll={clearAllFilters}
         />
         <MasteryStandardPicker standard={standard} onChange={changeStandard} />
         {state.group === "knowledge" && (
