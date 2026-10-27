@@ -22,7 +22,7 @@ import {
 /** 与 playwright.config.ts 保持一致（server 直连地址） */
 const MCP_URL = "http://127.0.0.1:8899/mcp";
 
-/** 18 个工具名：D23 定稿 11 个 + upload_image + import_zip + describe_capabilities（与服务端 mcp.test.ts 同清单） */
+/** 既有工具名（不定长名单断言；D23 定稿 11 个 + upload_image + import_zip + describe_capabilities + 目录四件 + 作业两件，与服务端 mcp.test.ts 同清单） */
 const EXPECTED_TOOLS = [
   "get_dsl_spec",
   "lint_markdown",
@@ -42,6 +42,8 @@ const EXPECTED_TOOLS = [
   "get_library_catalog",
   "manage_course_catalog",
   "add_course_content",
+  "create_assignment",
+  "delete_assignment",
 ].sort();
 
 /** JSON-RPC 请求体构造 */

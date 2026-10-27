@@ -507,7 +507,7 @@ describe("SAI-25 传输生命周期与教师 MCP 冒烟", () => {
     await client.close();
   });
 
-  it("教师 /mcp 冒烟不回归（initialize 200 + 18 工具仍在）", async () => {
+  it("教师 /mcp 冒烟不回归（initialize 200 + 既有 14 件仍在）", async () => {
     const env = await makeEnv();
     const init = await env.app.request("/mcp", {
       method: "POST",

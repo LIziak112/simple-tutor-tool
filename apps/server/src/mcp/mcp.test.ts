@@ -19,6 +19,8 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import {
   aiTasks,
+  assignmentStudents,
+  assignments,
   attempts,
   imports,
   lectures,
@@ -419,9 +421,182 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "query_student_responses",
         "search_questions",
         "get_report",
+        "create_assignment",
+        "delete_assignment",
       ]),
     );
     await client.close();
+  });
+
+  describe("MCP-C 作业写删两件（T-PR5）", () => {
+    it("create_assignment：缺省仅预检零副作用，confirm 创建；studentIds 省略多名学生 → STUDENT_AMBIGUOUS", async () => {
+      const env = await makeEnv();
+      const client = await connectClient(env, env.tokenA);
+      const countAssignments = (): number =>
+        env.db.select({ id: assignments.id }).from(assignments).all().length;
+      const before = countAssignments();
+      const args = {
+        assignment: {
+          title: "Agent 作业",
+          unitIds: [env.seed.units.u1.id],
+          studentIds: [env.seed.students.s1.id],
+        },
+      };
+      const preview = await client.callTool({
+        name: "create_assignment",
+        arguments: args,
+      });
+      expect(JSON.parse(textOf(preview)).preview).toBe(true);
+      expect(countAssignments()).toBe(before);
+      const created = await client.callTool({
+        name: "create_assignment",
+        arguments: { ...args, confirm: true },
+      });
+      expect(created.isError).toBeFalsy();
+      const data = JSON.parse(textOf(created)) as {
+        assignments: { title: string }[];
+      };
+      expect(data.assignments[0]?.title).toBe("Agent 作业");
+      expect(countAssignments()).toBe(before + 1);
+      // 省略 studentIds：种子 3 名未归档学生 → STUDENT_AMBIGUOUS（附名单）
+      const ambiguous = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: { title: "歧义", unitIds: [env.seed.units.u1.id] },
+          confirm: true,
+        },
+      });
+      expect(ambiguous.isError).toBe(true);
+      expect(textOf(ambiguous)).toContain("STUDENT_AMBIGUOUS");
+      // 显式空名单：schema .min(1) 在 SDK 入参层即拒（REST 契约同口径），零副作用
+      const emptyRoster = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: {
+            title: "空名单",
+            unitIds: [env.seed.units.u1.id],
+            studentIds: [],
+          },
+          confirm: true,
+        },
+      });
+      expect(emptyRoster.isError).toBe(true);
+      expect(textOf(emptyRoster)).toContain("作业必须至少指派一名学生");
+      expect(countAssignments()).toBe(before + 1);
+      // 单学生默认正向路径：归档 s2 / s3 后省略 studentIds → 名单恰为 s1
+      for (const id of [env.seed.students.s2.id, env.seed.students.s3.id]) {
+        env.db
+          .update(students)
+          .set({ archivedAt: SEED_NOW })
+          .where(eq(students.id, id))
+          .run();
+      }
+      const defaulted = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: { title: "默认该生", unitIds: [env.seed.units.u1.id] },
+          confirm: true,
+        },
+      });
+      expect(defaulted.isError).toBeFalsy();
+      const defaultedId = (
+        JSON.parse(textOf(defaulted)) as { assignments: { id: string }[] }
+      ).assignments[0]?.id as string;
+      expect(
+        env.db
+          .select({ studentId: assignmentStudents.studentId })
+          .from(assignmentStudents)
+          .where(eq(assignmentStudents.assignmentId, defaultedId))
+          .all()
+          .map((row) => row.studentId),
+      ).toEqual([env.seed.students.s1.id]);
+      expect(countAssignments()).toBe(before + 2);
+      await client.close();
+    });
+
+    it("域隔离：乙 token 建作业 / 删甲作业 → 结构化 404", async () => {
+      const env = await makeEnv();
+      const clientB = await connectClient(env, TOKEN_B);
+      const deniedCreate = await clientB.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: {
+            title: "乙的作业",
+            unitIds: [env.seed.units.u1.id],
+            studentIds: [env.seed.students.s1.id],
+          },
+          confirm: true,
+        },
+      });
+      expect(deniedCreate.isError).toBe(true);
+      const deniedDelete = await clientB.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId: env.seed.assignments.a1.id, confirm: true },
+      });
+      expect(deniedDelete.isError).toBe(true);
+      expect(textOf(deniedDelete)).toContain("ASSIGNMENT_NOT_FOUND");
+      await clientB.close();
+    });
+
+    it("delete_assignment：未开答预览 → confirm 删除；已开答 → 409；预览如实给 hasAttempts", async () => {
+      const env = await makeEnv();
+      const client = await connectClient(env, env.tokenA);
+      // 造一份未开答作业（经 REST 教师接口，不走被测工具）
+      const createRes = await env.app.request("/api/teacher/assignments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.cookieA },
+        body: JSON.stringify({
+          title: "待删作业",
+          unitIds: [env.seed.units.u1.id],
+          studentIds: [env.seed.students.s1.id],
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const assignmentId = (
+        (await createRes.json()) as {
+          data: { assignments: { id: string }[] };
+        }
+      ).data.assignments[0]?.id as string;
+      const preview = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId },
+      });
+      const pv = JSON.parse(textOf(preview)) as {
+        preview: boolean;
+        title: string;
+        hasAttempts: boolean;
+      };
+      expect(pv.preview).toBe(true);
+      expect(pv.title).toBe("待删作业");
+      expect(pv.hasAttempts).toBe(false);
+      const deleted = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId, confirm: true },
+      });
+      expect(deleted.isError).toBeFalsy();
+      expect(JSON.parse(textOf(deleted)).deleted).toBe(true);
+      // 已开答：fixture 直插 attempt 改挂种子作业 a1——执行即 409，预览如实给事实
+      const started = frozenDraftAttempt(env.db, env.seed.students.s1.id, [
+        { questionId: "q-started", snapshotJson: null },
+      ]);
+      env.db
+        .update(attempts)
+        .set({ assignmentId: env.seed.assignments.a1.id })
+        .where(eq(attempts.id, started.attemptId))
+        .run();
+      const denied = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId: env.seed.assignments.a1.id, confirm: true },
+      });
+      expect(denied.isError).toBe(true);
+      expect(textOf(denied)).toContain("ASSIGNMENT_ATTEMPT_EXISTS");
+      const pv2 = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId: env.seed.assignments.a1.id },
+      });
+      expect(JSON.parse(textOf(pv2)).hasAttempts).toBe(true);
+      await client.close();
+    });
   });
 
   it("describe_capabilities 返回清单原文，与 HTTP /api/public/spec/capabilities.json 逐字节一致（T7.6）", async () => {
