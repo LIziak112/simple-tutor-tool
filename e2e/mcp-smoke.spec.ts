@@ -22,7 +22,7 @@ import {
 /** 与 playwright.config.ts 保持一致（server 直连地址） */
 const MCP_URL = "http://127.0.0.1:8899/mcp";
 
-/** 18 个工具名：D23 定稿 11 个 + upload_image + import_zip + describe_capabilities（与服务端 mcp.test.ts 同清单） */
+/** 既有工具名（不定长名单断言；D23 定稿 11 个 + upload_image + import_zip + describe_capabilities + 目录四件 + 作业两件，与服务端 mcp.test.ts 同清单） */
 const EXPECTED_TOOLS = [
   "get_dsl_spec",
   "lint_markdown",
@@ -141,7 +141,7 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
         ?.name,
     ).toBeTruthy();
 
-    // ③ tools/list → 恰好 18 个工具（D23 清单 + upload_image/import_zip + describe_capabilities）
+    // ③ tools/list → 既有 20 件仍在（不定长名单断言，后续增工具不再破）
     const listRes = await postRpc(request, rpc("tools/list", {}, 2), token);
     expect(listRes.status).toBe(200);
     const tools = (listRes.json.result as { tools: { name: string }[] }).tools

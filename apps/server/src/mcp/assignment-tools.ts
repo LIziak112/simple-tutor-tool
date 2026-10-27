@@ -36,7 +36,7 @@ export const assignmentToolInputSchema = z
     unitIds: z
       .array(z.string().min(1, "unitId 不能为空"))
       .min(1, "作业必须至少包含一个练习单元"),
-    studentIds: z.array(z.uuid()).optional(),
+    studentIds: z.array(z.uuid()).min(1, "作业必须至少指派一名学生").optional(),
     dueAt: assignmentDueAtSchema.optional(),
     answerRelease: assignmentAnswerReleaseSchema.optional(),
     unitGrouping: assignmentUnitGroupingSchema.optional(),

@@ -18,6 +18,7 @@ import { z } from "zod";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import {
+  assignmentStudents,
   assignments,
   attempts,
   imports,
@@ -460,6 +461,49 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
       });
       expect(ambiguous.isError).toBe(true);
       expect(textOf(ambiguous)).toContain("STUDENT_AMBIGUOUS");
+      // 显式空名单：schema .min(1) 在 SDK 入参层即拒（REST 契约同口径），零副作用
+      const emptyRoster = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: {
+            title: "空名单",
+            unitIds: [env.seed.units.u1.id],
+            studentIds: [],
+          },
+          confirm: true,
+        },
+      });
+      expect(emptyRoster.isError).toBe(true);
+      expect(textOf(emptyRoster)).toContain("作业必须至少指派一名学生");
+      expect(countAssignments()).toBe(before + 1);
+      // 单学生默认正向路径：归档 s2 / s3 后省略 studentIds → 名单恰为 s1
+      for (const id of [env.seed.students.s2.id, env.seed.students.s3.id]) {
+        env.db
+          .update(students)
+          .set({ archivedAt: SEED_NOW })
+          .where(eq(students.id, id))
+          .run();
+      }
+      const defaulted = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: { title: "默认该生", unitIds: [env.seed.units.u1.id] },
+          confirm: true,
+        },
+      });
+      expect(defaulted.isError).toBeFalsy();
+      const defaultedId = (
+        JSON.parse(textOf(defaulted)) as { assignments: { id: string }[] }
+      ).assignments[0]?.id as string;
+      expect(
+        env.db
+          .select({ studentId: assignmentStudents.studentId })
+          .from(assignmentStudents)
+          .where(eq(assignmentStudents.assignmentId, defaultedId))
+          .all()
+          .map((row) => row.studentId),
+      ).toEqual([env.seed.students.s1.id]);
+      expect(countAssignments()).toBe(before + 2);
       await client.close();
     });
 
