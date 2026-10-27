@@ -89,18 +89,14 @@ export function NoteOriginalView({
   /** 正文渲染核（T6R.15 抽共享）：按 versionId 取正文→渲染→URL 落地 */
   const body = useNoteVersionBody(viewer);
   const { openBody, closeBody, resetBody } = body;
-  /** 证据行段的加载代际：卸载/重试/收起后迟到的 head 结果不再落地 */
+  /** 证据行段的加载代际：重试/收起/定位变化后迟到的 head 结果不再落地 */
   const epochRef = useRef(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
 
-  // 卸载回收：正文核（URL/缓存/在途 epoch）由 useNoteVersionBody 自理；本
-  // 组件只拦自己证据行段的迟到结果（phase 随组件卸载消亡）
-  useEffect(() => {
-    return () => {
-      epochRef.current += 1;
-    };
-  }, []);
+  // 卸载不做 epoch 自增（2026-10 修正）：React 18 卸载后 setState 本就是
+  // 静默 no-op，而 StrictMode 开发态双挂载的清理段会作废挂载即读
+  // （defaultOpen）的在途结果且不再重发——面板永卡「正在读取」。
 
   // 定位变化守卫（当前挂载全键控不可达，防御未来原位导航复用实例）：
   // attemptId/questionId/viewer 变化即回到折叠态并弃缓存（旧定位的渲染页

@@ -550,7 +550,7 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
 
       // 草稿：切换到草稿视图（题卡持续挂载，AI 面板不受影响）
       await row.getByRole("button", { name: "草稿", exact: true }).click();
-      await expect(resultCard.getByText("草稿原稿")).toBeVisible();
+      await expect(resultCard.getByText("草稿原稿", { exact: true })).toBeVisible();
 
       // 订正：直达动作打开全屏重做工作台（AI 复盘面板仍开）；关闭后草稿面板不动
       await row
@@ -561,7 +561,7 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
       ).toBeVisible();
       await page.getByRole("button", { name: "关闭弹层" }).first().click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      await expect(resultCard.getByText("草稿原稿")).toBeVisible();
+      await expect(resultCard.getByText("草稿原稿", { exact: true })).toBeVisible();
 
       // 历史返回：进本题历史 → 返回作答结果，AI 复盘面板仍可用
       await resultCard.getByRole("link", { name: "第 1 题本题历史" }).click();

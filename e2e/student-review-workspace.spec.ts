@@ -223,7 +223,7 @@ test(
       document.documentElement.dir = "ltr";
     });
     await row.getByRole("button", { name: "草稿", exact: true }).click();
-    await expect(card.getByText("草稿原稿")).toBeVisible();
+    await expect(card.getByText("草稿原稿", { exact: true })).toBeVisible();
     // 订正是直达动作：打开全屏重做工作台（题面 + 圈画 + 草稿纸）
     await row.getByRole("button", { name: "第 2 题订正", exact: true }).click();
     await expect(
@@ -232,7 +232,7 @@ test(
     await page.getByRole("button", { name: "关闭弹层" }).first().click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     // 工作台关闭后草稿面板保持（控制器持续挂载）
-    await expect(card.getByText("草稿原稿")).toBeVisible();
+    await expect(card.getByText("草稿原稿", { exact: true })).toBeVisible();
     await row.getByRole("button", { name: "更多", exact: true }).click();
     await expect(
       card.getByRole("button", { name: "第 2 题 AI 复习包" }),
