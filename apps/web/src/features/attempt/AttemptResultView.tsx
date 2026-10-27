@@ -264,6 +264,17 @@ function ResultQuestionCard({
               roundLabel={roundLabel}
             />
           )}
+          {/* 题干标注回看 + 合成图导出（底图＋圈，粘贴给 AI/保存）——题面
+              原位直显之外的学生侧导出出口（2026-10 复审恢复：入口随组按需
+              挂载，compact 关闭态零请求） */}
+          <AnnotationView
+            compact
+            viewer="student"
+            attemptId={attemptId}
+            questionId={question.questionId}
+            questionNo={index + 1}
+            ariaPrefix={`第 ${index + 1} 题`}
+          />
           {/* D8 找回草稿/补充稿同步状态：草稿材料语义，随草稿组挂载 */}
           <DraftRecoverySection
             attemptId={attemptId}

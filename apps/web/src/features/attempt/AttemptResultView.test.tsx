@@ -850,6 +850,21 @@ describe("本次草稿原稿入口（T6R.11）", () => {
     }
   });
 
+  it("草稿组含题干标注回看/导出入口（全部题型；compact 关闭态零请求）", () => {
+    renderView();
+    // 折叠时零挂载：入口不存在
+    expect(
+      screen.queryByRole("button", { name: "查看第 1 题题干标注" }),
+    ).toBeNull();
+    openGroupAll("草稿");
+    // 全部题型（含手写题）都有标注导出出口——合成图导出/复制图片在展开态
+    for (const no of ["1", "2", "3", "4"]) {
+      expect(
+        screen.getByRole("button", { name: `查看第 ${no} 题题干标注` }),
+      ).toBeInTheDocument();
+    }
+  });
+
   // ---------- T6R.13：单题完整导出入口（每题一个，含手写题） ----------
 
   it("逐题渲染 AI 复习包入口：全部题型、学生角色、attempt/题目/全卷题号定位", () => {
