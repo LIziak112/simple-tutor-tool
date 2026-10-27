@@ -765,7 +765,7 @@ describe("QM-18：备份恢复后可续写、看旧卷、重练与导出（新�
     expect(
       (wrongList.questions ?? []).map((card) => card.questionId).sort(),
     ).toEqual([Q.judge, Q.matching].sort());
-    const practice = startWrongPractice(
+    const { attempt: practice } = startWrongPractice(
       restored,
       source.studentId,
       [Q.judge, Q.matching],

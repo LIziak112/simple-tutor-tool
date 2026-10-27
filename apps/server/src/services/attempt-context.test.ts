@@ -668,7 +668,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE materials SET source_md = source_md || char(10) || char(10) || '教师改稿。', version = version + 1 WHERE teacher_id = ? AND id = ?",
       )
       .run(TEST_TEACHER_ID, "mat-资料分析-1");
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1"],
@@ -712,7 +712,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       finalCorrect: false,
       materialSnapshots: [],
     });
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1"],
@@ -751,7 +751,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE materials SET deleted_at = ? WHERE teacher_id = ? AND id = ?",
       )
       .run(NOW, TEST_TEACHER_ID, "mat-资料分析-1");
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1", "资料分析-5"],
@@ -793,7 +793,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       snapshotMaterialRefs: [{ material: "mat-资料分析-1" }],
       materialSnapshots: [{ id: "mat-资料分析-1", version: 2 }],
     });
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1", "资料分析-5"],
@@ -829,7 +829,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'group' AND owner_id = ?",
       )
       .run("mat-资料分析-2", "grp-资料分析-1");
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1"],
@@ -876,7 +876,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         'INSERT INTO question_group_members (teacher_id, group_id, question_id, "order") VALUES (?, ?, ?, 0)',
       )
       .run(TEST_TEACHER_ID, "grp-post-hoc", "资料分析-1");
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1"],
@@ -909,7 +909,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'question' AND owner_id = ?",
       )
       .run("mat-资料分析-1", "资料分析-5");
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-5"],
@@ -936,7 +936,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       // 会冻入 mat-2，而来源卷题目快照表明学生作答时无此依赖）
       materialSnapshots: [{ id: "mat-资料分析-2", version: 1 }],
     });
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-5"],
@@ -995,7 +995,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       .get();
     if (sourceRow === undefined) throw new Error("来源行未种入");
 
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1"],
@@ -1072,7 +1072,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       })
       .run();
 
-    const started = startWrongPractice(
+    const { attempt: started } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1"],

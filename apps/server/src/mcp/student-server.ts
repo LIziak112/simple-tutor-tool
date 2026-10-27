@@ -641,6 +641,8 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
         // 两个入口建卷行为分叉）。学生设备偏好服务端无从得知——不传
         // feedbackMode，由教师策略/缺省档裁决
         { workflowVersion: 1 },
+        // newContentEnabled 缺省读部署 env（§5.8.4）；scope 为第 6 参
+        undefined,
         {
           kind: "ai",
           label: scopeLabel,
