@@ -1617,7 +1617,10 @@ function AnswerView({
                         }
                         className={
                           groupGrid
-                            ? "flex min-w-0 flex-col gap-4 lg:grid xl:grid lg:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))] xl:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))]"
+                            ? // 分栏网格列隙归零：列间距全部由中缝轨道（12px）承担——
+                              // gap-4 的两个 16px 列隙叠在百分比轨道上会使网格
+                              // 总宽超出容器 32px（行距仍由 gap-4 提供）
+                              "flex min-w-0 flex-col gap-4 lg:grid xl:grid lg:gap-x-0 xl:gap-x-0 lg:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))] xl:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))]"
                             : "flex flex-col gap-3"
                         }
                       >
@@ -1661,6 +1664,14 @@ function AnswerView({
                                           groupGrid ? setSplitRatio : undefined
                                         }
                                         containerRef={singleWorkspaceRef}
+                                        layoutMode={groupMaterialLayout}
+                                        onLayoutModeChange={
+                                          // AI 对照激活时布局强制上下排布，
+                                          // 不提供切换（控件状态恒与真实布局一致）
+                                          compareActive
+                                            ? undefined
+                                            : setGroupMaterialLayout
+                                        }
                                         singleMode={singleMode}
                                       />,
                                       renderRow(
@@ -1700,7 +1711,11 @@ function AnswerView({
                                   }
                                   containerRef={singleWorkspaceRef}
                                   layoutMode={groupMaterialLayout}
-                                  onLayoutModeChange={setGroupMaterialLayout}
+                                  onLayoutModeChange={
+                                    compareActive
+                                      ? undefined
+                                      : setGroupMaterialLayout
+                                  }
                                   singleMode={singleMode}
                                 />,
                                 ...segment.questionIds.map((questionId) => {

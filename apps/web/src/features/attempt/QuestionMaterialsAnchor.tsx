@@ -1,5 +1,7 @@
 import type { AttemptContextMaterial } from "@tutor/contract";
 import { memo, useEffect, useMemo, useRef } from "react";
+import type { GroupMaterialLayout } from "./group-material-layout-store";
+import { MaterialLayoutToggle } from "./MaterialLayoutToggle";
 import {
   MaterialPanel,
   materialVersionKey,
@@ -37,6 +39,8 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   splitRatio,
   onSplitRatioChange,
   containerRef,
+  layoutMode,
+  onLayoutModeChange,
   singleMode = false,
 }: {
   questionId: string;
@@ -54,10 +58,14 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   attemptId?: string | undefined;
   /** 当前分栏比例（百分比，35~65） */
   splitRatio?: number | undefined;
-  /** 分栏比例变更回调（提供时激活中缝 Handle） */
+  /** 分栏比例变更回调（提供时激活中缝 Handle 与网格分栏形态） */
   onSplitRatioChange?: ((ratio: number) => void) | undefined;
   /** 分栏外层容器引用，用于指针距离换算 */
   containerRef?: React.RefObject<HTMLElement | null> | undefined;
+  /** 当前排版模式（split=左右分栏，stack=列表形式） */
+  layoutMode?: GroupMaterialLayout | undefined;
+  /** 排版模式变更回调（提供时渲染切换控件——纯 solo 材料单元的切换入口） */
+  onLayoutModeChange?: ((mode: GroupMaterialLayout) => void) | undefined;
   /** 是否单题专注模式（单题模式下激活视口级粘性与独立滚动；整卷列表模式依靠网格跨行自然滚动） */
   singleMode?: boolean | undefined;
 }) {
@@ -67,6 +75,8 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
     () => materialVersionNotesOf(materials),
     [materials],
   );
+  // 关联题列表稳定引用：MaterialPanel memo 浅比较不因每次渲染的新数组失效
+  const associatedQuestionIds = useMemo(() => [questionId], [questionId]);
   useMaterialReadingPosition(materialsRef, readingKey);
 
   // reveal：滚入 + 恢复已读偏移 + 焦点落材料区（键盘可达；无组头回落目标）
@@ -111,9 +121,17 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
             : "flex min-w-0 max-w-full flex-col gap-3 isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         }
       >
-        <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          本题材料
-        </p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            本题材料
+          </p>
+          {onLayoutModeChange !== undefined && (
+            <MaterialLayoutToggle
+              layoutMode={layoutMode ?? "split"}
+              onLayoutModeChange={onLayoutModeChange}
+            />
+          )}
+        </div>
         {materials.map((material) => (
           <MaterialPanel
             // QM-15 细项 4：键含冻结版本（同 materialId 撞键丢面板）
@@ -121,7 +139,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
             material={material}
             versionNote={versionNotes.get(materialVersionKey(material))}
             attemptId={attemptId}
-            associatedQuestionIds={[questionId]}
+            associatedQuestionIds={associatedQuestionIds}
           />
         ))}
       </section>

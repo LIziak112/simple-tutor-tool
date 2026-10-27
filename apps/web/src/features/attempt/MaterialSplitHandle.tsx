@@ -92,31 +92,8 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
     [disabled],
   );
 
-  const handlePointerMove = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (!isDragging || disabled) return;
-      updateRatioFromClientX(e.clientX);
-    },
-    [isDragging, disabled, updateRatioFromClientX],
-  );
-
-  const handlePointerUp = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (!isDragging) return;
-      setIsDragging(false);
-      if (pointerIdRef.current !== null) {
-        try {
-          e.currentTarget.releasePointerCapture(pointerIdRef.current);
-        } catch {
-          // 防御忽略
-        }
-        pointerIdRef.current = null;
-      }
-    },
-    [isDragging],
-  );
-
-  // 全局指针监听：在拖拽期间保障鼠标移出/失焦时的平滑响应与文本防选
+  // 全局指针监听：拖拽期间唯一的 move/up 处理管线（元素级不再挂 move/up，
+  // 避免 pointer capture 下同一事件在元素与 window 各执行一次换算）
   useEffect(() => {
     if (!isDragging) return;
 
@@ -130,8 +107,17 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
     };
 
     const onWindowPointerUp = () => {
-      setIsDragging(false);
+      const pointerId = pointerIdRef.current;
       pointerIdRef.current = null;
+      const el = handleRef.current;
+      if (el && pointerId !== null) {
+        try {
+          el.releasePointerCapture(pointerId);
+        } catch {
+          // 防御忽略：捕获可能已随指针移出被浏览器释放
+        }
+      }
+      setIsDragging(false);
     };
 
     window.addEventListener("pointermove", onWindowPointerMove);
@@ -192,12 +178,9 @@ export const MaterialSplitHandle = memo(function MaterialSplitHandle({
       data-ratio={ratio}
       data-dragging={isDragging}
       onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
       onKeyDown={handleKeyDown}
       style={{ touchAction: "none" }}
-      className={`group relative flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring before:absolute before:inset-y-0 before:-left-2 before:-right-2 before:content-[''] ${
+      className={`group relative flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring before:absolute before:inset-y-0 before:-left-4 before:-right-4 before:content-[''] ${
         disabled ? "pointer-events-none opacity-40" : ""
       } ${className}`}
     >

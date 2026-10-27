@@ -74,12 +74,13 @@ describe("QuestionGroupAnchor", () => {
     expect(screen.queryByText("共用下方材料作答")).toBeNull();
   });
 
-  it("compare 分组呈现类：锚点 xl:contents 展开——组头跨两列、材料列占首列并跨本卷组题数（min-w-0 不溢出）", () => {
+  it("compare 分组呈现类：提供 onSplitRatioChange 时锚点 contents 展开——组头跨满列、材料列占首列并跨本卷组题数（min-w-0 不溢出）", () => {
     render(
       <QuestionGroupAnchor
         group={groupOf({ materialRefs: [{ material: "m1" }] })}
         materials={[material("m1")]}
         questionCount={3}
+        onSplitRatioChange={vi.fn()}
       />,
     );
     const anchor = document.querySelector(
@@ -89,7 +90,7 @@ describe("QuestionGroupAnchor", () => {
     const header = document.querySelector(
       '[data-slot="question-group-header"]',
     );
-    expect(header?.className.includes("xl:col-span-2")).toBe(true);
+    expect(header?.className.includes("xl:col-span-full")).toBe(true);
     const materials = document.querySelector('[data-slot="group-materials"]');
     // 窄容器不变量：材料列 min-w-0（不撑出整页横向溢出）；首列 + 跨行数经
     // CSS 变量传入（消费侧单元 ol 的 compare 网格项）
@@ -365,5 +366,25 @@ describe("QuestionGroupAnchor 题组材料排版模式切换（左右分栏 vs �
     );
     expect(header?.className).toContain("lg:col-span-full");
     expect(header?.className).toContain("xl:col-span-full");
+  });
+
+  it("分栏未实际生效（AI 对照等上下排布语境）时材料列退回流式，不残留 sticky", () => {
+    // 单题模式 + split 偏好，但外层未提供 onSplitRatioChange（网格未激活）
+    render(
+      <QuestionGroupAnchor
+        group={groupOf({ materialRefs: [{ material: "m1" }] })}
+        materials={[material("m1")]}
+        layoutMode="split"
+        singleMode={true}
+      />,
+    );
+    const groupMaterials = screen.getByLabelText("本组共享材料");
+    expect(groupMaterials.className).not.toContain("lg:sticky");
+    expect(groupMaterials.className).not.toContain("xl:sticky");
+    expect(groupMaterials.className).not.toContain("lg:col-start-1");
+    const anchor = document.querySelector(
+      '[data-slot="question-group-anchor"]',
+    );
+    expect(anchor?.className).not.toContain("lg:contents");
   });
 });

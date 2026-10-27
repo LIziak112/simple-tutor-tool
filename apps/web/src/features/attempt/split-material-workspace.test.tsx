@@ -10,7 +10,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchAttemptApi, fetchAttemptContextApi } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
 import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
-import { _resetGroupMaterialLayoutStoreForTest } from "./group-material-layout-store";
+import {
+  _resetGroupMaterialLayoutStoreForTest,
+  bindGroupMaterialLayoutAccount,
+} from "./group-material-layout-store";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,
@@ -41,6 +44,11 @@ const mockedFetch = vi.mocked(fetchAttemptApi);
 const mockedContext = vi.mocked(fetchAttemptContextApi);
 
 const ATTEMPT_ID = "88888888-8888-4888-8888-888888888888";
+
+/** 布局偏好的账号隔离存储键（与 group-material-layout-store 同式） */
+function layoutStorageKey(): string {
+  return `ownclass:group-material-layout:${JSON.stringify([location.origin, "student", "student-test"])}`;
+}
 
 const attemptOf = (): AttemptDraftData["attempt"] => ({
   id: ATTEMPT_ID,
@@ -172,6 +180,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     installDraftBackend(memoryBackend());
     bindPracticePreferenceAccount(null);
     bindPracticePreferenceAccount("student-test");
+    bindGroupMaterialLayoutAccount("student-test");
     Element.prototype.scrollIntoView = () => {};
     HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
       save: vi.fn(),
@@ -330,9 +339,14 @@ describe("分栏材料工作区与协同标画集成", () => {
       expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
     });
 
-    // 默认分栏模式：ol data-layout 为 compare，题组与 q3 独立材料均有中缝拖拽 Handle（共 2 个）
-    const splitButton = screen.getByRole("radio", { name: /左右分栏/ });
-    const stackButton = screen.getByRole("radio", { name: /列表形式/ });
+    // 默认分栏模式：ol data-layout 为 compare，题组与 q3 独立材料均有中缝拖拽 Handle（共 2 个）；
+    // 排版切换入口同时挂在题组锚与题级材料锚上（各一组单选）
+    const splitButtons = screen.getAllByRole("radio", { name: /左右分栏/ });
+    const stackButtons = screen.getAllByRole("radio", { name: /列表形式/ });
+    expect(splitButtons).toHaveLength(2);
+    expect(stackButtons).toHaveLength(2);
+    const splitButton = splitButtons[0] as HTMLElement;
+    const stackButton = stackButtons[0] as HTMLElement;
     expect(splitButton).toBeInTheDocument();
     expect(stackButton).toBeInTheDocument();
     expect(splitButton).toHaveAttribute("aria-checked", "true");
@@ -353,9 +367,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(splitButton).toHaveAttribute("aria-checked", "false");
     expect(stackButton).toHaveAttribute("aria-checked", "true");
     expect(ol).toHaveAttribute("data-layout", "stack");
-    expect(localStorage.getItem("ownclass:group-material-layout")).toBe(
-      "stack",
-    );
+    expect(localStorage.getItem(layoutStorageKey())).toBe("stack");
 
     // 列表形式下，中缝拖拽 Handle 不渲染（全卷切换为上下流式排布）
     expect(
@@ -370,9 +382,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(splitButton).toHaveAttribute("aria-checked", "true");
     expect(stackButton).toHaveAttribute("aria-checked", "false");
     expect(ol).toHaveAttribute("data-layout", "compare");
-    expect(localStorage.getItem("ownclass:group-material-layout")).toBe(
-      "split",
-    );
+    expect(localStorage.getItem(layoutStorageKey())).toBe("split");
     expect(
       screen.getAllByRole("separator", {
         name: "调整材料与题目分栏比例",
@@ -545,6 +555,14 @@ describe("分栏材料工作区与协同标画集成", () => {
     // 单元存在独立材料题时，列表分栏模式下依然正常开启 grid
     const ol = container.querySelector("ol.lg\\:grid");
     expect(ol).toBeInTheDocument();
+    // 回归：百分比轨道 + 中缝轨道总宽恰为 100%，列隙必须归零（gap-x-0），
+    // 否则 gap-4 的两个 16px 列隙使网格溢出容器 32px
+    expect(ol?.className).toContain("lg:gap-x-0");
+
+    // 纯 solo 材料单元同样提供排版切换入口（不依赖题组锚）
+    expect(
+      screen.getByRole("radiogroup", { name: "题组材料排版方式" }),
+    ).toBeInTheDocument();
 
     // 独立题材料与中缝 Handle 正常渲染
     const soloMaterials = container.querySelector(

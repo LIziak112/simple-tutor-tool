@@ -2,10 +2,11 @@ import type {
   AttemptContextGroup,
   AttemptContextMaterial,
 } from "@tutor/contract";
-import { Columns2, Layers, Rows3 } from "lucide-react";
+import { Layers } from "lucide-react";
 import { type CSSProperties, memo, useEffect, useMemo, useRef } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import type { GroupMaterialLayout } from "./group-material-layout-store";
+import { MaterialLayoutToggle } from "./MaterialLayoutToggle";
 import {
   MaterialPanel,
   materialVersionKey,
@@ -111,6 +112,9 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   const title = group.title?.trim();
   const label = group.label?.trim();
   const isSplit = layoutMode !== "stack";
+  // 分栏网格是否实际生效：排版偏好为 split 且外层提供了比例回调（AI 对照
+  // 激活等语境外层会停用网格，此时材料列必须退回流式，不得残留 sticky）
+  const gridActive = isSplit && onSplitRatioChange !== undefined;
 
   return (
     <li
@@ -121,7 +125,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
       // contents 展开让组头/材料列直接成为单元网格的项。hidden 的 UA
       // display:none 优先——单题态收起不被 lg:contents/xl:contents 抵消。
       className={
-        hidden || !isSplit
+        hidden || !gridActive
           ? "flex flex-col gap-4"
           : "flex flex-col gap-4 lg:contents xl:contents"
       }
@@ -130,7 +134,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
         aria-label={title && title.length > 0 ? `题组：${title}` : "题组"}
         // compare 时与外层 li 同为 contents——组头/材料列直接成为单元网格的项
         className={
-          isSplit
+          gridActive
             ? "flex min-w-0 flex-col gap-4 lg:contents xl:contents"
             : "flex min-w-0 flex-col gap-4"
         }
@@ -140,11 +144,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
           data-slot="question-group-header"
           // reveal 滚入目标让出粘性顶栏（零材料组的回落目标；审查 P2-2）
           className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] ${
-            isSplit
-              ? onSplitRatioChange !== undefined
-                ? "lg:col-span-full xl:col-span-full"
-                : "lg:col-span-2 xl:col-span-2"
-              : ""
+            gridActive ? "lg:col-span-full xl:col-span-full" : ""
           }`}
         >
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
@@ -163,57 +163,14 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
             ) : null}
             {hasMaterials && (
               <span className="text-xs font-normal text-muted-foreground">
-                {isSplit ? "共用材料作答" : "共用下方材料作答"}
+                {gridActive ? "共用材料作答" : "共用下方材料作答"}
               </span>
             )}
             {hasMaterials && onLayoutModeChange !== undefined && (
-              <div
-                role="radiogroup"
-                aria-label="题组材料排版方式"
-                className="inline-flex items-center rounded-md border border-border bg-background p-0.5 text-xs font-medium text-muted-foreground shadow-2xs"
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-                    e.preventDefault();
-                    onLayoutModeChange("stack");
-                  } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-                    e.preventDefault();
-                    onLayoutModeChange("split");
-                  }
-                }}
-              >
-                {/* biome-ignore lint/a11y/useSemanticElements: 分段单选控件遵循 WAI-ARIA radiogroup 规范 */}
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={isSplit}
-                  title="左右分栏：左材料，右题目"
-                  onClick={() => onLayoutModeChange("split")}
-                  className={`inline-flex min-h-[26px] select-none items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
-                    isSplit
-                      ? "bg-muted font-semibold text-foreground shadow-2xs"
-                      : "hover:text-foreground"
-                  }`}
-                >
-                  <Columns2 className="size-3.5 shrink-0" aria-hidden />
-                  <span>左右分栏</span>
-                </button>
-                {/* biome-ignore lint/a11y/useSemanticElements: 分段单选控件遵循 WAI-ARIA radiogroup 规范 */}
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={!isSplit}
-                  title="列表形式：材料置顶，题目在下方"
-                  onClick={() => onLayoutModeChange("stack")}
-                  className={`inline-flex min-h-[26px] select-none items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
-                    !isSplit
-                      ? "bg-muted font-semibold text-foreground shadow-2xs"
-                      : "hover:text-foreground"
-                  }`}
-                >
-                  <Rows3 className="size-3.5 shrink-0" aria-hidden />
-                  <span>列表形式</span>
-                </button>
-              </div>
+              <MaterialLayoutToggle
+                layoutMode={layoutMode ?? "split"}
+                onLayoutModeChange={onLayoutModeChange}
+              />
             )}
           </div>
           {intro.length > 0 && (
@@ -237,7 +194,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                 } as CSSProperties
               }
               className={
-                isSplit
+                gridActive
                   ? singleMode
                     ? "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
                     : "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:pr-1 xl:pr-1"
@@ -256,7 +213,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                 />
               ))}
             </section>
-            {isSplit && onSplitRatioChange !== undefined && (
+            {gridActive && (
               <div
                 data-slot="group-split-handle-container"
                 style={
