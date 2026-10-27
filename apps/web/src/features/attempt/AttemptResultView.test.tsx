@@ -269,9 +269,8 @@ describe("得分汇总卡", () => {
     expect(statistics).toHaveTextContent("总题数4题");
     expect(statistics).toHaveTextContent("答对1题");
     expect(statistics).toHaveTextContent("答错2题");
-    // QM-12 徽章链下该行经 autoCorrect=false 回落计错，不再入待判断桶；
-    // 未答行只进未答（#6980-3 口径统一）
-    expect(statistics).toHaveTextContent("待判断0题");
+    // 未答待批行同时进未答与待判断（只有答错过 answered 门，#6980-3 口径统一）
+    expect(statistics).toHaveTextContent("待判断1题");
     expect(statistics).toHaveTextContent("未答1题");
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });
@@ -309,6 +308,11 @@ describe("得分汇总卡", () => {
       screen.getByText("未答数单独统计，可能与判错或待判断重叠，不能相加。"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/已计入判错/)).toBeNull();
+    // 瓦片锁：未答待批行仍进「待判断」（只有答错过 answered 门，#6980-3），
+    // 不因未答而漏计
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("待判断4题");
+    expect(statistics).toHaveTextContent("未答4题");
   });
 
   it("返回首页按钮触发回调", () => {

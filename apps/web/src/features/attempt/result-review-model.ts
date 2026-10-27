@@ -42,14 +42,14 @@ export function reviewCounts(
   const counts = { correct: 0, wrong: 0, pending: 0, unanswered: 0 };
   for (const question of questions) {
     const state = reviewQuestionState(question, released);
-    if (state.unanswered) {
-      counts.unanswered++;
-      continue; // 未做只进「未作答」，不进判错/待批（#6980-3 口径统一）
-    }
+    // #6980-3：未做只与「答错」互斥（wrong 过 answered 门），待判断不过——
+    // 未答待批行同时进未答与待判断（与服务端 scoreSummaryCoreOf 同形）
+    if (state.unanswered) counts.unanswered++;
     if (!released) continue;
     if (state.verdict === true) counts.correct++;
-    else if (state.verdict === false) counts.wrong++;
-    else counts.pending++;
+    else if (state.verdict === false) {
+      if (!state.unanswered) counts.wrong++;
+    } else counts.pending++;
   }
   return counts;
 }

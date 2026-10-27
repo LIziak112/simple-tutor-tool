@@ -269,6 +269,27 @@ async function main() {
   );
   await page.screenshot({ path: join(SHOTS, "03a-window-scroll.png") });
 
+  // 探针：记录材料列上的每次 scrollTo/scrollTop 写入（谁在滚、滚到哪）
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-slot="group-materials"]');
+    if (el === null) return;
+    const log = [];
+    window.__scrollLog = log;
+    const orig = el.scrollTo.bind(el);
+    el.scrollTo = (...args) => {
+      log.push(`scrollTo(${JSON.stringify(args[0])})`);
+      return orig(...args);
+    };
+    let cur = el.scrollTop;
+    Object.defineProperty(el, "scrollTop", {
+      get: () => cur,
+      set: (v) => {
+        log.push(`scrollTop= ${v}`);
+        cur = Number(v);
+      },
+      configurable: true,
+    });
+  });
   const navButton = page.getByRole("button", { name: /答题卡/ }).first();
   if (await navButton.isVisible().catch(() => false)) {
     await navButton.click();
@@ -298,6 +319,8 @@ async function main() {
       );
     }
     const afterJump = await materials.evaluate((el) => el.scrollTop);
+    const scrollLog = await page.evaluate(() => window.__scrollLog ?? []);
+    console.log(`[verify] ③b scroll ops: ${JSON.stringify(scrollLog)}`);
     report(
       "③b 显式跳题材料回顶",
       afterJump <= 5,
