@@ -1,12 +1,18 @@
-import type { AnalyticsAnomalyQuestion } from "@tutor/contract";
+import type {
+  AnalyticsAnomalyQuestion,
+  QuestionReviewKind,
+  QuestionReviewRow,
+  TeacherAttemptCard,
+} from "@tutor/contract";
 import {
   ArrowLeft,
+  ChevronDown,
   Clock3,
   Lightbulb,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
@@ -19,33 +25,59 @@ import {
   analyticsUrlQuery,
   parseAnalyticsUrl,
 } from "@/features/insights/analytics-filters";
-import { useAnalyticsStudent } from "@/features/insights/analytics-queries";
+import {
+  useAnalyticsStudent,
+  useQuestionReview,
+} from "@/features/insights/analytics-queries";
 import { formatPercent } from "@/features/insights/insights-format";
 import { LectureReadingMapView } from "@/features/insights/LectureReadingMapView";
 import { StudentReportsSection } from "@/features/insights/StudentReportsSection";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
+import {
+  AttemptStatusBadge,
+  sourceContextOf,
+} from "@/features/teacher-attempts/attempt-views";
+import { useTeacherAttempts } from "@/features/teacher-attempts/teacher-attempt-queries";
 import { ApiError } from "@/lib/api";
 import { formatDueTime, formatRelativeTime } from "@/lib/time";
 
 /**
  * /t/students/:id 学生主页（T-PR1 路由归位：内容迁自原 T4.2 学生画像页，
  * 旧 /t/insights/students/:id 保留并重定向到此——教师端以「学生」为导航单位）：
+ * - T-PR4 Web-2 四区：① 作答记录（内嵌教师作答列表最近 10 卷；进行中讲练卷
+ *   显示「已提交 n / 共 m」）；② 错题与存疑（聚合端点 question-review 三档
+ *   kind 切换，一行 = 一题的最近代表作答，整行跳作答详情）；③ 讲义阅读地图；
+ *   ④ AI 报告（默认折叠、展开才取列表——主页首屏请求 ≤ 4，方案验收）；
  * - 薄弱考点前 5 文字表（数据 /analytics/student/:id 的 knowledge，按错误数
  *   降序，薄弱在前；原周趋势折线与考点条形图随路由归位移除，不加新图表）；
- * - 错题列表（qualifying 中 finalCorrect=false 的逐题行，待批不在列；整行点击
- *   跳 T3.1 作答详情 /t/data/attempts/:attemptId）；
  * - 用时异常题卡片（D6：slow/hints 两类，跳作答详情）；
  * - 重做概览（独立指标 D1，不受时间范围限制）、离线作答占比；
- * - 讲义阅读地图（T4.0 §4.4.4：目录树逐项状态 + 行为推断标注 + 含挂机时长）；
- * - AI 报告列表区（T4.7 接入实数据：列表 / 点开 Markdown 渲染 / 删除确认，
- *   数据来自 MCP save_report 与未来手动入口，见 StudentReportsSection）；
  * - 学生不存在 / 非本教师 → 接口 404 STUDENT_NOT_FOUND，页面呈现错误态。
- * 筛选（时间范围/课程）同步 URL，从总览矩阵点入时携带上下文。
+ * 筛选（时间范围/课程）同步 URL，从总览矩阵点入时携带上下文；错题与存疑的
+ * kind 档位也在 URL（?kind=unsure / corrected，缺省 wrong）。
  */
 
 /** 薄弱考点文字表行数上限（迭代方案 T-PR1：前 5） */
 const WEAK_KNOWLEDGE_LIMIT = 5;
+
+/** 「错题与存疑」三档 kind 与中文（T-PR4 Web-2②；档位走 URL ?kind=） */
+const REVIEW_KINDS = ["wrong", "unsure", "corrected"] as const;
+const REVIEW_KIND_LABELS: Record<QuestionReviewKind, string> = {
+  wrong: "判错",
+  unsure: "自标不会",
+  corrected: "已订正",
+};
+
+/** 错题与存疑单页行数（与服务端 limit 默认一致；更多给总数提示） */
+const REVIEW_PAGE_LIMIT = 50;
+
+/** 聚合行判定列文案（finalCorrect 三态） */
+function reviewVerdictLabel(finalCorrect: boolean | null): string {
+  if (finalCorrect === false) return "判错";
+  if (finalCorrect === true) return "判对";
+  return "待批";
+}
 
 /** D6 异常原因中文 */
 const ANOMALY_REASON_LABELS: Record<"slow" | "hints", string> = {
@@ -115,8 +147,45 @@ export function StudentHomePage() {
     analyticsApiParams(state, false),
   );
 
+  // T-PR4 Web-2②：错题与存疑（kind 走 URL ?kind=；时间下界随筛选 days 同步，
+  // days=all 不限时间。from 只依赖 days，避免每渲染生成新 key 打穿缓存）
+  const rawKind = searchParams.get("kind");
+  const kind: QuestionReviewKind =
+    rawKind === "unsure" || rawKind === "corrected" ? rawKind : "wrong";
+  const reviewFrom = useMemo(
+    () =>
+      state.days === "all"
+        ? undefined
+        : new Date(Date.now() - state.days * 86_400_000).toISOString(),
+    [state.days],
+  );
+  const reviewParams = useMemo(
+    () => ({
+      kind,
+      ...(state.courseId !== null ? { courseId: state.courseId } : {}),
+      ...(reviewFrom !== undefined ? { from: reviewFrom } : {}),
+      limit: REVIEW_PAGE_LIMIT,
+    }),
+    [kind, state.courseId, reviewFrom],
+  );
+  const reviewQuery = useQuestionReview(id, reviewParams);
+
+  // T-PR4 Web-2①：作答记录区（内嵌教师作答列表，最近 10 卷）
+  const attemptsQuery = useTeacherAttempts({
+    ...(id !== undefined && id !== "" ? { studentId: id } : {}),
+    limit: 10,
+    offset: 0,
+  });
+
   function applyPatch(patch: Partial<AnalyticsUrlState>): void {
     void setSearchParams(analyticsUrlQuery({ ...state, ...patch }));
+  }
+
+  /** 错题与存疑换档：写 URL ?kind=（默认档 wrong 不写，保持地址干净） */
+  function applyKind(next: QuestionReviewKind): void {
+    const query = analyticsUrlQuery(state);
+    if (next !== "wrong") query.set("kind", next);
+    void setSearchParams(query);
   }
 
   const data = studentQuery.data;
@@ -203,6 +272,46 @@ export function StudentHomePage() {
         onPatch={applyPatch}
         onReset={() => void setSearchParams(new URLSearchParams())}
       />
+
+      {/* Web-2① 作答记录 */}
+      <section aria-label="作答记录" className="flex flex-col gap-2">
+        <h2 className="text-sm font-semibold">
+          作答记录
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            最近 10 卷；点击查看作答详情
+          </span>
+        </h2>
+        {attemptsQuery.isPending && (
+          <p className="text-sm text-muted-foreground">正在加载作答记录…</p>
+        )}
+        {attemptsQuery.isError && (
+          <p
+            role="alert"
+            className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+          >
+            作答记录加载失败
+            <Button
+              variant="outline"
+              className="min-h-9"
+              onClick={() => void attemptsQuery.refetch()}
+            >
+              重试
+            </Button>
+          </p>
+        )}
+        {attemptsQuery.data !== undefined &&
+          (attemptsQuery.data.attempts.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+              该生还没有作答记录。
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {attemptsQuery.data.attempts.map((card) => (
+                <AttemptRow key={card.attemptId} card={card} />
+              ))}
+            </ul>
+          ))}
+      </section>
 
       {studentQuery.isPending && (
         <div
@@ -310,47 +419,65 @@ export function StudentHomePage() {
             )}
           </section>
 
-          <section aria-label="错题列表" className="flex flex-col gap-2">
+          {/* Web-2② 错题与存疑（聚合端点 question-review，三档 kind） */}
+          <section aria-label="错题与存疑" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">
-              错题列表
+              错题与存疑
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                当前范围内判错的题（同题多次判错取最近一次）；点击查看作答详情
+                按当前时间范围与课程筛选；同题多次取最近一次，点击行查看该次作答详情
               </span>
             </h2>
-            {data.wrongQuestions.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
-                该生在当前范围内没有判错的题目。
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {data.wrongQuestions.map((row) => (
-                  <li key={`${row.attemptId}:${row.questionId}`}>
-                    <Link
-                      to={`/t/data/attempts/${row.attemptId}`}
-                      aria-label={`查看错题 ${row.questionId} 的作答详情`}
-                      className="flex flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
-                    >
-                      <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <span className="rounded-full bg-muted px-2 py-0.5">
-                          {row.unitTitle ?? "（已移出单元）"}
-                        </span>
-                        <span>
-                          {QUESTION_TYPE_LABELS[row.type]} · 难度{" "}
-                          {row.difficulty}
-                        </span>
-                        <span className="ml-auto">
-                          {formatRelativeTime(row.submittedAt)}
-                        </span>
-                      </p>
-                      <RichMarkdown source={row.stemMd} className="text-sm" />
-                      <p className="text-xs text-muted-foreground">
-                        学生答案：{row.answerText ?? "未作答"}
-                      </p>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+            <div className="flex flex-wrap gap-2">
+              {REVIEW_KINDS.map((item) => (
+                <Button
+                  key={item}
+                  variant={item === kind ? "secondary" : "outline"}
+                  className="min-h-9"
+                  aria-pressed={item === kind}
+                  onClick={() => applyKind(item)}
+                >
+                  {REVIEW_KIND_LABELS[item]}
+                </Button>
+              ))}
+            </div>
+            {reviewQuery.isPending && (
+              <p className="text-sm text-muted-foreground">正在加载…</p>
             )}
+            {reviewQuery.isError && (
+              <p
+                role="alert"
+                className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+              >
+                错题与存疑加载失败
+                <Button
+                  variant="outline"
+                  className="min-h-9"
+                  onClick={() => void reviewQuery.refetch()}
+                >
+                  重试
+                </Button>
+              </p>
+            )}
+            {reviewQuery.data !== undefined &&
+              (reviewQuery.data.questions.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                  当前筛选下没有这一类题目。
+                </p>
+              ) : (
+                <>
+                  <ul className="flex flex-col gap-2">
+                    {reviewQuery.data.questions.map((row) => (
+                      <QuestionReviewRowCard key={row.questionId} row={row} />
+                    ))}
+                  </ul>
+                  {reviewQuery.data.nextCursor !== null && (
+                    <p className="text-xs text-muted-foreground">
+                      已显示前 {reviewQuery.data.questions.length} 题（共{" "}
+                      {reviewQuery.data.total} 题）
+                    </p>
+                  )}
+                </>
+              ))}
           </section>
 
           <section aria-label="用时异常题" className="flex flex-col gap-2">
@@ -466,10 +593,103 @@ export function StudentHomePage() {
             <LectureReadingMapView entries={data.lectures} />
           </section>
 
-          {/* T4.7：AI 报告实数据（T4.2 占位换实——列表/展开渲染/删除确认） */}
-          {id !== undefined && <StudentReportsSection studentId={id} />}
+          {/* T4.7：AI 报告实数据（T4.2 占位换实）；T-PR4 Web-2④ 起默认折叠、
+          展开才取列表——主页首屏请求 ≤ 4（方案验收） */}
+          {id !== undefined && <ReportsDisclosure studentId={id} />}
         </>
       )}
+    </section>
+  );
+}
+
+// ---------- Web-2①/②/④ 子组件 ----------
+
+/** 作答记录区的一行（Web-2①；进行中讲练卷显示「已提交 n / 共 m」） */
+function AttemptRow({ card }: { card: TeacherAttemptCard }) {
+  return (
+    <li>
+      <Link
+        to={`/t/data/attempts/${card.attemptId}`}
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-card px-4 py-3 text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {sourceContextOf(card)}
+        </span>
+        <AttemptStatusBadge status={card.status} />
+        {card.status === "draft" && (
+          <span className="text-xs text-muted-foreground">
+            已提交 {card.submittedCount ?? 0} / 共 {card.questionCount}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {formatRelativeTime(card.submittedAt ?? card.startedAt)}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+/** 「错题与存疑」聚合行卡片（Web-2②；整行点击跳代表作答详情） */
+function QuestionReviewRowCard({ row }: { row: QuestionReviewRow }) {
+  return (
+    <li>
+      <Link
+        to={`/t/data/attempts/${row.attemptId}`}
+        aria-label="查看该题最近一次作答详情"
+        className="flex flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="rounded-full bg-muted px-2 py-0.5">
+            {QUESTION_TYPE_LABELS[row.type]} · 难度 {row.difficulty}
+          </span>
+          {row.knowledge.slice(0, 3).map((item) => (
+            <span key={item} className="rounded-full bg-muted px-2 py-0.5">
+              {item}
+            </span>
+          ))}
+          <span className="ml-auto">{formatRelativeTime(row.lastAt)}</span>
+        </p>
+        <RichMarkdown source={row.stemMd} className="text-sm" />
+        <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span
+            className={
+              row.finalCorrect === false
+                ? "font-medium text-red-600"
+                : row.finalCorrect === true
+                  ? "font-medium text-emerald-600"
+                  : ""
+            }
+          >
+            {reviewVerdictLabel(row.finalCorrect)}
+          </span>
+          {row.studentFlag === "unsure" && <span>自标「不会」</span>}
+          {row.hasCorrection && <span>已订正</span>}
+          {row.hasAiHelp && <span>问过 AI</span>}
+          {row.redoCount > 0 && <span>重做 {row.redoCount} 次</span>}
+        </p>
+      </Link>
+    </li>
+  );
+}
+
+/** 报告区（Web-2④）：默认折叠、展开才请求列表——主页首屏请求 ≤ 4（方案验收） */
+function ReportsDisclosure({ studentId }: { studentId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section aria-label="报告" className="flex flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-h-11 w-fit items-center gap-1.5 rounded-lg text-sm font-semibold text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        AI 报告
+        <ChevronDown
+          aria-hidden
+          className={`size-4 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && <StudentReportsSection studentId={studentId} />}
     </section>
   );
 }

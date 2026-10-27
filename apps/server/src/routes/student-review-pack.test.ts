@@ -186,7 +186,11 @@ describe("学生单题 review-pack 路由", () => {
       if (/\.(md|json)$/.test(name)) {
         // pack.json 走共享件（字符串值 + 剥 snapshotHash——见 zip-assert 注释）
         const text =
-          name === "pack.json" ? packLeakTextOf(data) : data.toString("utf8");
+          name === "pack.json" || name === "record.json"
+            ? // 数字哨兵对时间戳/坐标必然假阳性——共享件只取字符串值并剥 ISO
+              // 时间戳（2026-10-08 事故同款豁免，语义见 zip-assert 注释）
+              packLeakTextOf(data)
+            : data.toString("utf8");
         expect(text, `${name} 泄露答案哨兵`).not.toContain(SECRET_ANSWER);
         expect(text, `${name} 泄露解析哨兵`).not.toContain(SECRET_SOLUTION);
         expect(text, `${name} 泄露提示哨兵`).not.toContain(SECRET_HINT);

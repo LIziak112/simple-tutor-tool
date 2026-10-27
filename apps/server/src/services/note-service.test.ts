@@ -2759,3 +2759,83 @@ it("草稿有效正文更新活动时间；相同正文新上传与幂等重试�
   });
   expect(activity()).not.toBe(old);
 });
+
+/**
+ * LR-PR3（评审 #11695 测试缺口）：canonicalNoteJson 旧格式逐字节钉值——
+ * 旧 InkDoc（无 id/startedAt/pointer/deleted）规范化输出与升级前逐字节一致；
+ * 新字段一旦出现即入规范化（deleted 数组整组在位）。
+ */
+describe("canonicalNoteJson 旧格式字节钉值（LR-PR3）", () => {
+  it("旧文档（无任何新字段）规范化输出与升级前逐字节一致", () => {
+    const legacyDoc = {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            points: [{ x: 10, y: 20, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+      paperHeightLogical: 800,
+      background: "grid",
+    } as const;
+    expect(canonicalNoteJson(noteDocSchema.parse(legacyDoc))).toBe(
+      JSON.stringify({
+        version: 1,
+        ink: {
+          width: 1000,
+          strokes: [
+            {
+              tool: "pen",
+              color: "#1f2328",
+              weight: 4,
+              points: [{ x: 10, y: 20, p: 0.5, t: 0 }],
+            },
+          ],
+        },
+        paperHeightLogical: 800,
+        background: "grid",
+      }),
+    );
+    // 新字段在位：id/startedAt/pointer 逐项、deleted 整组入规范化
+    const withNew = {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "stroke-ab1",
+            startedAt: 7,
+            pointer: "pen",
+            points: [{ x: 1, y: 2, p: 0.5, t: 0 }],
+          },
+        ],
+        deleted: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            id: "dead-0001",
+            deletedAt: 9,
+            deletedBy: "eraser",
+            points: [{ x: 3, y: 4, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+      paperHeightLogical: 800,
+      background: "grid",
+    } as const;
+    const parsed = JSON.parse(canonicalNoteJson(noteDocSchema.parse(withNew)));
+    expect(parsed.ink.strokes[0].id).toBe("stroke-ab1");
+    expect(parsed.ink.strokes[0].startedAt).toBe(7);
+    expect(parsed.ink.deleted[0].deletedAt).toBe(9);
+    expect(parsed.ink.deleted[0].deletedBy).toBe("eraser");
+  });
+});

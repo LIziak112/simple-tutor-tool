@@ -125,7 +125,11 @@ function ChoiceControls({
   return (
     <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="选项">
       {(question.options ?? []).map((option, index) => (
-        <label key={option} className={optionShellClass(picked === index)}>
+        <label
+          key={option}
+          className={optionShellClass(picked === index)}
+          data-lr-node={`options/option/${index}`}
+        >
           <input
             type="radio"
             name={groupName}
@@ -171,6 +175,7 @@ function MultiControls({
         <label
           key={option}
           className={optionShellClass(pickedIndexes.includes(index))}
+          data-lr-node={`options/option/${index}`}
         >
           <input
             type="checkbox"
@@ -210,6 +215,7 @@ export const QuestionSurface = memo(function QuestionSurface({
     <QuestionSurfaceFrame>
       <div
         data-slot="question-surface"
+        data-lr-node="root"
         inert={mode === "export"}
         className="mx-auto flex w-full min-w-0 flex-col gap-3 text-base leading-[1.75]"
       >
@@ -218,6 +224,7 @@ export const QuestionSurface = memo(function QuestionSurface({
           <RichMarkdown
             source={judgeStemOf(question.stemMd)}
             className="question-markdown text-base leading-[1.75]"
+            lrNodes
           />
         ) : question.type === "fill" ? (
           <BlankAnswersProvider
@@ -241,6 +248,7 @@ export const QuestionSurface = memo(function QuestionSurface({
             <RichMarkdown
               source={question.stemMd}
               className="question-markdown text-base leading-[1.75]"
+              lrNodes
             />
           </BlankAnswersProvider>
         ) : question.type === "choice" || question.type === "multi" ? (
@@ -249,11 +257,13 @@ export const QuestionSurface = memo(function QuestionSurface({
           <RichMarkdown
             source={displayStemMd(question)}
             className="question-markdown text-base leading-[1.75]"
+            lrNodes
           />
         ) : (
           <RichMarkdown
             source={question.stemMd}
             className="question-markdown text-base leading-[1.75]"
+            lrNodes
           />
         )}
 

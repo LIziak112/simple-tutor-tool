@@ -14,7 +14,7 @@ import { canvasToPngBlob } from "../engine/canvas-png";
 import { buildAtramentDoc, parseAtramentDoc } from "../engine/doc";
 import { eraseHit } from "../engine/erase";
 import { paintFreehandStroke } from "../engine/freehand-paint";
-import { InkStore } from "../engine/history";
+import { InkStore, mintStrokeId } from "../engine/history";
 import {
   NOTE_PAPER_GRID_SPACING_LOGICAL,
   paperBackgroundCss,
@@ -29,11 +29,13 @@ import {
 } from "../engine/pointer-machine";
 import type { InkChangeReason, ToolAwareSurface } from "../engine/surface";
 import {
+  asPointerKind,
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
   type InkPenColor,
   type InkPenSize,
+  type InkPointerKind,
   type InkToolConfig,
   resolveToolSpec,
 } from "../engine/types";
@@ -125,6 +127,9 @@ export function createFeelSurface(
   let predicted: InkStrokePoint[] = [];
   let startStamp = 0;
   let lastStamp = -Infinity;
+  // LR-1：本笔绝对时刻与输入来源（pointerdown 捕获，随笔画提交）
+  let liveStartedAt = 0;
+  let livePointerKind: InkPointerKind | undefined;
   let pendingErase = new Set<number>();
   let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
   let eraseActive = false;
@@ -278,6 +283,9 @@ export function createFeelSurface(
       if (decision.action !== "start") continue;
       startStamp = event.timeStamp;
       lastStamp = event.timeStamp;
+      // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录）
+      liveStartedAt = Date.now();
+      livePointerKind = asPointerKind(event.pointerType);
       const first = point(event, rect);
       eraseActive = tool.type === "eraser";
       if (eraseActive) {
@@ -293,6 +301,12 @@ export function createFeelSurface(
         live = {
           tool: tool.type === "highlighter" ? "highlighter" : "pen",
           ...resolved.brush,
+          // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（down 捕获）
+          id: mintStrokeId(),
+          ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+          ...(livePointerKind !== undefined
+            ? { pointer: livePointerKind }
+            : {}),
           rendering: {
             renderer: "freehand",
             smoothing: params.smoothing,
@@ -484,7 +498,14 @@ export function createFeelSurface(
         replayBrush = createProgrammaticAtrament(dry);
       wetCtx = wet.getContext("2d");
       if (!dryCtx || !wetCtx) throw new Error("浏览器无法创建手写画布");
-      if (initial) store.replace(parseAtramentDoc(initial), initial.updatedAt);
+      if (initial) {
+        const parsedInitial = parseAtramentDoc(initial);
+        store.replace(
+          parsedInitial.strokes,
+          initial.updatedAt,
+          parsedInitial.deleted,
+        );
+      }
       resize();
       redrawDry();
       touchAction();
@@ -498,7 +519,10 @@ export function createFeelSurface(
     getDoc: () => buildAtramentDoc(store),
     load(doc) {
       finish();
-      change("load", () => store.replace(parseAtramentDoc(doc), doc.updatedAt));
+      const parsedDoc = parseAtramentDoc(doc);
+      change("load", () =>
+        store.replace(parsedDoc.strokes, doc.updatedAt, parsedDoc.deleted),
+      );
       redrawDry();
     },
     finish: () => finish(),

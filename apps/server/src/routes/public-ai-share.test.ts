@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import { learningRecordAiViewSchema } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +12,8 @@ import {
   aiPolicyOverrides,
   aiShareTickets,
   aiTasks,
+  annotationBases,
+  annotations,
   responses,
   students,
   teachers,
@@ -562,5 +568,117 @@ describe("SAI-29 分享正文及附件（公开读端点）", () => {
     expect(((await material.json()) as { error: string }).error).toBe(
       "AI_MATERIAL_BROKEN",
     );
+  });
+});
+
+describe("LR-PR5 学习记录段（评审 #12249 必改②锁）", () => {
+  it("学习记录 JSON 过契约、anchors 键 ∈ 笔画 id、不携带 taskId 与 responses 行 id", async () => {
+    const w = world();
+    // 圈画材料在任务创建**之前**落（创建时钉进 recordRefs）：一笔 UUID 笔画 + 锚点
+    const strokeId = randomUUID();
+    const doc = {
+      version: 1,
+      baseWidth: 100,
+      baseHeight: 80,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#1f2328",
+          weight: 4,
+          id: strokeId,
+          startedAt: 1,
+          pointer: "pen",
+          points: [{ x: 1, y: 2, p: 0.5, t: 0 }],
+        },
+      ],
+      anchors: { [strokeId]: "stem/p/0" },
+    };
+    const relBody = `blobs/annotation-bodies/${randomUUID()}.json.gz`;
+    mkdirSync(join(w.dataDir, "blobs/annotation-bodies"), { recursive: true });
+    writeFileSync(
+      join(w.dataDir, relBody),
+      gzipSync(Buffer.from(JSON.stringify(doc))),
+    );
+    const baseId = randomUUID();
+    w.db
+      .insert(annotationBases)
+      .values({
+        id: baseId,
+        attemptId: w.attemptId,
+        questionId: "q-alpha",
+        questionRevisionId: w.responseId,
+        phase: "scratch",
+        snapshotHash: "c".repeat(64),
+        baseRenderVersion: 2,
+        state: "ready",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    w.db
+      .insert(annotations)
+      .values({
+        id: randomUUID(),
+        attemptId: w.attemptId,
+        questionId: "q-alpha",
+        phase: "scratch",
+        baseId,
+        revision: 1,
+        bodyPath: relBody,
+        hash: "d".repeat(64),
+        strokeCount: 1,
+        pointCount: 1,
+        sealedAt: null,
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    const { task } = createAiTask(
+      w.db,
+      {
+        studentId: w.studentId,
+        attemptId: w.attemptId,
+        questionId: "q-alpha",
+        question: "这道题第二问的思路是什么？SENTINEL_QUESTION",
+        channel: "link",
+        mutationId: randomUUID(),
+      },
+      { hmacSecret: SECRET },
+    );
+    const { token } = createAiShareTicket(w.db, {
+      studentId: w.studentId,
+      taskId: task.id,
+    });
+    const res = await w.app.request(`/api/public/ai/share/${token}`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const match =
+      /<script type="application\/json" id="learning-record">([\s\S]*?)<\/script>/.exec(
+        html,
+      );
+    expect(match).not.toBeNull();
+    const view = JSON.parse(match![1]!) as unknown;
+    expect(learningRecordAiViewSchema.safeParse(view).success).toBe(true);
+    const typed = view as {
+      record: {
+        ink: Array<{
+          strokes: Array<{ id?: string }>;
+          deleted: Array<{ id?: string }>;
+          anchors?: Record<string, string>;
+        }>;
+        timeline: { entries: Array<{ detail?: Record<string, unknown> }> };
+      };
+    };
+    const strokeIds = typed.record.ink.flatMap((facet) => [
+      ...facet.strokes.map((s) => s.id ?? ""),
+      ...facet.deleted.map((s) => s.id ?? ""),
+    ]);
+    for (const facet of typed.record.ink) {
+      for (const key of Object.keys(facet.anchors ?? {})) {
+        expect(strokeIds).toContain(key);
+      }
+    }
+    expect(JSON.stringify(typed.record.timeline)).not.toContain('"taskId"');
+    // responses 行 id（record identity 的 questionRevisionId）已投影为占位
+    expect(html).not.toContain(w.responseId);
   });
 });
