@@ -73,6 +73,8 @@ function targetDomainOf(layout: AnnotationSurfaceLayout): Rect {
   };
 }
 
+/** 点经块矩形映射：u、v 都除以源块宽、都乘目标块宽（设计稿 §5.3「都除以宽，
+ * 保纵横比」——x/y 同一比例，几何不变形；纵向落点随锚块重对齐；root 兜底同口径） */
 function mapPoint(
   px: number,
   py: number,

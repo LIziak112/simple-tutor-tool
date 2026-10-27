@@ -119,9 +119,9 @@ describe("reprojectAnnotation（LR-6）", () => {
     // u=(100−0)/1440、v=(10−0)/1440（都除块宽），目标 = u×2160=150、v×2160=15
     expect(p0?.x).toBeCloseTo(150, 6);
     expect(p0?.y).toBeCloseTo(15, 6);
-    // 评审 #11781：stroke-2（锚 p/1）并入本用例——×ratio 与否分叉
-    //（x' = 225；y' = 180 + ((150−120)/1440)×2160 = 245，
-    // 与王玄策 #11771 背书值一致；不转域（CSS 块直接消费）时 y = 120）
+    //（底图域 saved p/1 y=120、target p/1 y=100×2=200：x' = 225，
+    // y' = 200 + ((150−120)/1440)×2160 = 245；不转域（CSS 块直接消费）
+    // 则 y = 100 + ((150−60)/720)×1080 = 235，分叉 10px）
     const second = result.strokes.find((stroke) => stroke.id === "stroke-2");
     expect(second?.points[0]?.x).toBeCloseTo(225, 6);
     expect(second?.points[0]?.y).toBeCloseTo(245, 6);
