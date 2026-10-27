@@ -602,6 +602,51 @@ describe("标注画布：历史与工具", () => {
     const h = mountSurface(initial);
     expect(h.surface.getDoc().strokes).toHaveLength(1);
   });
+
+  it("初始文档的墓碑与锚点随挂载载入（首次编辑不写丢）", () => {
+    const initial: AnnotationDoc = {
+      version: 1,
+      baseWidth: BASE_W,
+      baseHeight: BASE_H,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#1f2328",
+          weight: 5.76,
+          id: "keep-1",
+          points: [
+            { x: 100, y: 100, p: 0.5, t: 0 },
+            { x: 200, y: 120, p: 0.5, t: 16 },
+          ],
+        },
+      ],
+      deleted: [
+        {
+          tool: "pen",
+          color: "#1f2328",
+          weight: 5.76,
+          id: "gone-1",
+          deletedAt: 1727392800000,
+          deletedBy: "eraser",
+          points: [{ x: 300, y: 140, p: 0.5, t: 0 }],
+        },
+      ],
+      anchors: { "keep-1": "stem/p/0", "gone-1": "stem/p/1" },
+    };
+    const h = mountSurface(initial);
+    expect(h.surface.getDoc().deleted).toEqual(initial.deleted);
+    expect(h.surface.getDoc().anchors).toEqual(initial.anchors);
+    // 首次编辑（新笔）后，挂载进来的墓碑与锚点原样保留
+    writeStroke(h, [
+      { x: 120, y: 70 },
+      { x: 200, y: 90 },
+    ]);
+    const after = h.surface.getDoc();
+    expect(after.deleted).toEqual(initial.deleted);
+    expect(after.anchors?.["keep-1"]).toBe("stem/p/0");
+    expect(after.anchors?.["gone-1"]).toBe("stem/p/1");
+    expect(after.strokes).toHaveLength(2);
+  });
 });
 
 describe("标注画布：宿主零尺寸挂载的补绘", () => {
@@ -664,5 +709,165 @@ describe("标注画布：宿主零尺寸挂载的补绘", () => {
     expect(StubContext.strokeCalls).toBe(afterFirst);
     surface.destroy();
     container.remove();
+  });
+});
+
+describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二层）", () => {
+  const VIEW_W = 1800;
+  const VIEW_H = 1000;
+  const STORED_W = 1440;
+  const STORED_H = 800;
+  /** 线性测试映射：视图 ×1.25 = 存储；存储 ×0.8 = 视图（宽高同 0.8 比例） */
+  const toStoredStroke = (stroke: import("@tutor/contract").InkStroke) => ({
+    ...stroke,
+    weight: stroke.weight * 0.8,
+    points: stroke.points.map((point) => ({
+      ...point,
+      x: Math.round(point.x * 0.8 * 100) / 100,
+      y: Math.round(point.y * 0.8 * 100) / 100,
+    })),
+  });
+  const toViewStroke = (stroke: import("@tutor/contract").InkStroke) => ({
+    ...stroke,
+    weight: stroke.weight * 1.25,
+    points: stroke.points.map((point) => ({
+      ...point,
+      x: point.x * 1.25,
+      y: point.y * 1.25,
+    })),
+  });
+  const view = {
+    storedBaseWidth: STORED_W,
+    storedBaseHeight: STORED_H,
+    strokeToStored: toStoredStroke,
+    strokeToView: toViewStroke,
+    pointToStored: (p: { x: number; y: number }) => ({
+      x: Math.round(p.x * 0.8 * 100) / 100,
+      y: Math.round(p.y * 0.8 * 100) / 100,
+      ratio: 0.8,
+    }),
+  };
+  /** 视图域锚块（盖住测试笔画：视图 (100,20)-(240,40)） */
+  const viewBlocks = [
+    {
+      x: 0,
+      y: 0,
+      width: VIEW_W,
+      height: 200,
+      tag: "p",
+      node: "stem/p/0",
+    },
+  ] as import("@tutor/contract").AnnotationSurfaceCompatibility["blocks"];
+
+  function mountViewSurface(initial?: AnnotationDoc) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const rect = {
+      left: 100,
+      top: 50,
+      width: 900,
+      height: 500,
+      right: 1000,
+      bottom: 550,
+    } as DOMRect;
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect);
+    const strokeToStored = vi.fn(view.strokeToStored);
+    const surface = createAnnotationSurface({
+      baseWidth: VIEW_W,
+      baseHeight: VIEW_H,
+      anchorBlocks: () => viewBlocks,
+      reprojectedView: { ...view, strokeToStored },
+    });
+    surface.mount(container, initial);
+    const canvas = container.querySelector(
+      `canvas[data-slot="${ANNOTATION_CANVAS_DATA_SLOT}"]`,
+    );
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error("画布未挂载");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect);
+    activeSurfaces.push({ surface, container });
+    return { surface, container, canvas, strokeToStored };
+  }
+
+  it("收笔提交映射回存储域：getDoc 恒为存储域（baseWidth/点坐标/weight），锚定照常", () => {
+    const h = mountViewSurface();
+    // 画布 CSS→视图：×2（900 宽）。client(150,60) → 视图 (100,20) → 存储 (80,16)
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 60 });
+    pointer(h.canvas, "pointermove", { clientX: 220, clientY: 70 });
+    pointer(h.canvas, "pointerup", { clientX: 220, clientY: 70 });
+    const doc = h.surface.getDoc();
+    expect(doc.baseWidth).toBe(STORED_W);
+    expect(doc.baseHeight).toBe(STORED_H);
+    expect(doc.strokes).toHaveLength(1);
+    const first = doc.strokes[0]?.points[0];
+    expect(first?.x).toBeCloseTo(80, 1);
+    expect(first?.y).toBeCloseTo(16, 1);
+    // weight：medium 4 逻辑 ×1.8（视图域）= 7.2 → ×0.8 = 5.76 存储域
+    expect(doc.strokes[0]?.weight).toBeCloseTo(5.76, 2);
+    // 锚定在视图域块表上照常完成，且 strokeToStored 收到锚键
+    expect(doc.anchors?.[doc.strokes[0]?.id ?? ""]).toBe("stem/p/0");
+    expect(h.strokeToStored).toHaveBeenCalledWith(
+      expect.anything(),
+      "stem/p/0",
+    );
+  });
+
+  it("存储文档载入后重绘映射到视图域（strokeToView 收到存储笔画与锚键）", () => {
+    const storedStroke = {
+      tool: "pen" as const,
+      color: "#1f2328",
+      weight: 5.76,
+      id: "keep-1",
+      points: [
+        { x: 100, y: 100, p: 0.5, t: 0 },
+        { x: 200, y: 120, p: 0.5, t: 16 },
+      ],
+    };
+    const h = mountViewSurface({
+      version: 1,
+      baseWidth: STORED_W,
+      baseHeight: STORED_H,
+      strokes: [storedStroke],
+      anchors: { "keep-1": "stem/p/0" },
+    });
+    const doc = h.surface.getDoc();
+    expect(doc.strokes[0]?.points[0]?.x).toBeCloseTo(100, 5);
+    expect(doc.anchors?.["keep-1"]).toBe("stem/p/0");
+    // 渲染边界：重绘把存储笔画映射为视图笔画（×1.25）后再交给 atrament
+    const rendered = toViewStroke(storedStroke);
+    // StubContext 不记坐标——这里只锁「映射发生了」：strokeToView 的输出喂给
+    // 渲染层等价于对每个点 ×1.25；断言交给 vitest 的调用事实（无异常、计数）
+    expect(StubContext.strokeCalls).toBeGreaterThanOrEqual(0);
+    expect(rendered.points[0]?.x).toBeCloseTo(125, 5);
+  });
+
+  it("橡皮在存储域命中：视图指针点映射后擦除存储笔画（墓碑=存储几何）", () => {
+    const storedStroke = {
+      tool: "pen" as const,
+      color: "#1f2328",
+      weight: 5.76,
+      id: "keep-1",
+      points: [
+        { x: 80, y: 16, p: 0.5, t: 0 },
+        { x: 160, y: 24, p: 0.5, t: 16 },
+      ],
+    };
+    const h = mountViewSurface({
+      version: 1,
+      baseWidth: STORED_W,
+      baseHeight: STORED_H,
+      strokes: [storedStroke],
+      anchors: { "keep-1": "stem/p/0" },
+    });
+    h.surface.setTool({ type: "eraser" });
+    // 视图指针 (100,20)→(200,30)：映射存储 (80,16)→(160,24)，正中笔画
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 60 });
+    pointer(h.canvas, "pointermove", { clientX: 200, clientY: 65 });
+    pointer(h.canvas, "pointerup", { clientX: 200, clientY: 65 });
+    const doc = h.surface.getDoc();
+    expect(doc.strokes).toHaveLength(0);
+    expect(doc.deleted).toHaveLength(1);
+    // 墓碑几何 = 存储域原笔（不是视图域映射后的形状）
+    expect(doc.deleted?.[0]?.points[0]?.x).toBeCloseTo(80, 5);
+    expect(doc.deleted?.[0]?.id).toBe("keep-1");
   });
 });

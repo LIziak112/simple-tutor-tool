@@ -106,6 +106,30 @@ export interface AnnotationSurfaceOptions {
   anchorBlocks?:
     | (() => AnnotationSurfaceCompatibility["blocks"] | undefined)
     | undefined;
+  /**
+   * LR-PR4 第二层（近似原位 §5.4）：画布坐标域（视图域 = 当前实测布局的
+   * 底图像素域）与文档存储域（保存底图域）不一致时的域视图垫片。存储域语义
+   * 不变——InkStore、getDoc()、撤销/墓碑/压实全在存储域运转；垫片只在两处
+   * 边界做整笔变换：重绘（存储→视图）与收笔提交（视图→存储，锚定后）。
+   * 橡皮命中先把指针点映射回存储域再整笔命中（ratio 供半径同乘换算）。
+   * 注意：anchorBlocks 在近似模式下须供给**视图域**块表（当前布局）；锚键
+   * 为布局无关的节点键，两侧同键。
+   */
+  reprojectedView?: {
+    /** 文档存储域尺寸（getDoc() 输出 baseWidth/baseHeight；= 保存底图域） */
+    storedBaseWidth: number;
+    storedBaseHeight: number;
+    /** 视图笔画 → 存储域（收笔提交；id/startedAt/pointer 等字段原样保留） */
+    strokeToStored(stroke: InkStroke, anchorKey: string | undefined): InkStroke;
+    /** 存储笔画 → 视图（重绘显示；锚缺失走 root 兜底） */
+    strokeToView(stroke: InkStroke, anchorKey: string | undefined): InkStroke;
+    /** 视图点 → 存储点（橡皮指针命中；ratio = 局部存储/视图线比，半径同乘） */
+    pointToStored(p: { x: number; y: number }): {
+      x: number;
+      y: number;
+      ratio: number;
+    };
+  };
 }
 
 /**
@@ -150,7 +174,12 @@ export function replayAnnotationStroke(
 export function createAnnotationSurface(
   options: AnnotationSurfaceOptions,
 ): AnnotationSurface {
-  const { baseWidth, baseHeight, anchorBlocks } = options;
+  const {
+    baseWidth,
+    baseHeight,
+    anchorBlocks,
+    reprojectedView: view,
+  } = options;
   // LR-2/LR-4：墓碑预算按圈画链（80k 点）；压实丢墓碑时同步清这些 id 的锚点
   const anchors: Record<string, string> = {};
   const store = new InkStore({
@@ -220,13 +249,25 @@ export function createAnnotationSurface(
   function getDoc(): AnnotationDoc {
     return {
       version: 1,
-      baseWidth,
-      baseHeight,
+      // 近似原位：文档恒在存储域（保存底图域），画布域（视图）只是显示
+      baseWidth: view?.storedBaseWidth ?? baseWidth,
+      baseHeight: view?.storedBaseHeight ?? baseHeight,
       strokes: store.getStrokes(),
       // LR-2/LR-4：墓碑与锚点非空才写键（空稿/旧稿字节兼容）
       ...(store.getDeleted().length > 0 ? { deleted: store.getDeleted() } : {}),
       ...(Object.keys(anchors).length > 0 ? { anchors: { ...anchors } } : {}),
     };
+  }
+
+  /**
+   * 外部文档整组载入：正文、墓碑、锚点一起换（mount 恢复与 load 同口径）。
+   * 修复：mount 原先只装 strokes——带墓碑/锚点的旧稿挂载后首次编辑会经
+   * getDoc() 把它们静默写丢（LR-2/LR-4 数据缺陷）。
+   */
+  function adoptDoc(doc: AnnotationDoc): void {
+    store.replace(doc.strokes, Date.now(), doc.deleted ?? []);
+    for (const key of Object.keys(anchors)) delete anchors[key];
+    Object.assign(anchors, doc.anchors ?? {});
   }
 
   // ---- 坐标换算（§4.1：不依赖 event.target——rect 取画布、坐标取 client） ----
@@ -302,7 +343,15 @@ export function createAnnotationSurface(
     const cssW = rect.width > 0 ? rect.width : baseWidth;
     const scale = cssW / baseWidth;
     store.peekStrokes().forEach((s, i) => {
-      if (!pendingErase.has(i)) replayAnnotationStroke(a, scale, s);
+      if (pendingErase.has(i)) return;
+      // 近似原位：重绘在视图域画——存储笔画经锚映射到当前布局（锚缺失走 root）
+      replayAnnotationStroke(
+        a,
+        scale,
+        view
+          ? view.strokeToView(s, s.id === undefined ? undefined : anchors[s.id])
+          : s,
+      );
     });
   }
 
@@ -335,36 +384,32 @@ export function createAnnotationSurface(
       const brush = liveBrush;
       const points = livePoints;
       const strokeId = mintStrokeId();
-      withReason("stroke", () =>
-        store.commitAdd([
-          {
-            tool: liveTool,
-            color: brush.color,
-            weight: brush.weight, // 底图像素域（契约：weight 与坐标同域）
-            // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
-            id: strokeId,
-            ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
-            ...(livePointerKind !== undefined
-              ? { pointer: livePointerKind }
-              : {}),
-            points,
-          },
-        ]),
-      );
-      // LR-6：收笔即锚——重叠面积最大的带键块为锚；全不相交取最近块；
-      // 无带键块（旧布局）不锚（P1 不伪造，anchoredRatio 如实降低）
-      const bbox = strokeBbox({
+      const rawStroke: InkStroke = {
         tool: liveTool,
         color: brush.color,
-        weight: brush.weight,
+        weight: brush.weight, // 画布（视图）域像素；近似模式提交前换算回存储域
+        // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
+        id: strokeId,
+        ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+        ...(livePointerKind !== undefined ? { pointer: livePointerKind } : {}),
         points,
-      });
+      };
+      // LR-6：收笔即锚——重叠面积最大的带键块为锚；全不相交取最近块；
+      // 无带键块（旧布局）不锚（P1 不伪造，anchoredRatio 如实降低）。
+      // 近似原位模式：anchorBlocks 供给**视图域**块（当前布局），锚键两侧同键。
+      const bbox = strokeBbox(rawStroke);
       if (bbox !== null) {
         const blocks = anchorBlocks?.();
         const key =
           blocks === undefined ? undefined : anchorKeyForStroke(bbox, blocks);
         if (key !== undefined) anchors[strokeId] = key;
       }
+      // 近似原位：锚定后整笔换算回存储域（与 inverseReproject 同式），存储域
+      // 语义（撤销/墓碑/压实/上传校验）零变化
+      const committed = view
+        ? view.strokeToStored(rawStroke, anchors[strokeId])
+        : rawStroke;
+      withReason("stroke", () => store.commitAdd([committed]));
     }
     livePoints = [];
     livePrev = null;
@@ -415,13 +460,15 @@ export function createAnnotationSurface(
     liveStrokeIsErase = tool.type === "eraser";
 
     if (liveStrokeIsErase) {
-      erasePrev = { x, y };
+      // 近似原位：橡皮命中在存储域做——指针点先映射回存储域（ratio 供半径换算）
+      const stored = view ? view.pointToStored({ x, y }) : { x, y, ratio: 1 };
+      erasePrev = { x: stored.x, y: stored.y };
       pendingErase = new Set(
         eraseHit(
           store.peekStrokes(),
-          x,
-          y,
-          logicalToBase(baseWidth, INK_ERASE_RADIUS),
+          stored.x,
+          stored.y,
+          logicalToBase(baseWidth, INK_ERASE_RADIUS) * stored.ratio,
         ),
       );
       redraw();
@@ -467,8 +514,17 @@ export function createAnnotationSurface(
     for (const ev of events) {
       const { x, y } = eventToBase(ev, rect);
       if (eraseView && eraseBoxes) {
-        const hits = eraseHit(eraseView, x, y, radius, eraseBoxes, erasePrev);
-        erasePrev = { x, y };
+        // 近似原位：逐采样映射回存储域再整笔命中（半径按局部线比换算）
+        const stored = view ? view.pointToStored({ x, y }) : { x, y, ratio: 1 };
+        const hits = eraseHit(
+          eraseView,
+          stored.x,
+          stored.y,
+          radius * stored.ratio,
+          eraseBoxes,
+          erasePrev,
+        );
+        erasePrev = { x: stored.x, y: stored.y };
         let changed = false;
         for (const h of hits) {
           if (!pendingErase.has(h)) {
@@ -626,7 +682,7 @@ export function createAnnotationSurface(
       applyTouchAction();
 
       if (initial) {
-        withReason("load", () => store.replace(initial.strokes));
+        withReason("load", () => adoptDoc(initial));
       }
       // 宿主零尺寸（固定底图工作台挂载时底图 img 尚未加载、宿主折叠）期间
       // atrament 的 CSS→位图换算会把整笔投出画布（÷0），初始重绘挂起，待
@@ -662,13 +718,8 @@ export function createAnnotationSurface(
 
     load(doc: AnnotationDoc): void {
       finishPointer({ kind: "layoutchange" });
-      // LR-2：墓碑随文档整组载入（load(getDoc()) 往返一致）
-      withReason("load", () =>
-        store.replace(doc.strokes, Date.now(), doc.deleted ?? []),
-      );
-      // LR-4：锚点整组载入（先清空再并入，防残留）
-      for (const key of Object.keys(anchors)) delete anchors[key];
-      Object.assign(anchors, doc.anchors ?? {});
+      // LR-2/LR-4：墓碑与锚点随文档整组载入（load(getDoc()) 往返一致）
+      withReason("load", () => adoptDoc(doc));
       redraw();
     },
 
