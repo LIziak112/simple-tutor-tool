@@ -848,6 +848,7 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
         ],
       }),
     );
+  });
 
   it("橡皮在存储域命中：视图指针点映射后擦除存储笔画（墓碑=存储几何）", () => {
     const storedStroke = {
