@@ -2,16 +2,13 @@ import type { StudentCourseItem } from "@tutor/contract";
 import {
   ArrowLeft,
   BookOpen,
-  ChevronRight,
   CircleCheck,
-  Dumbbell,
   LoaderCircle,
   School,
 } from "lucide-react";
 import { Link, useParams } from "react-router";
-import { LessonBadge } from "@/components/source-badge";
 import { formatResultCounts } from "@/features/attempt/result-counts";
-import { lessonHref } from "@/features/student/lesson-navigation";
+import { StudentCourseCatalog } from "@/features/student/StudentCourseCatalog";
 import { useStudentCourse } from "@/features/student/student-queries";
 import {
   StudentEmptyState,
@@ -35,28 +32,28 @@ function UnitStatusBadge({ item }: { item: StudentCourseItem }) {
   const attempt = item.attempt;
   if (attempt === null || attempt.count === 0) {
     return (
-      <span className="w-fit shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+      <span className="max-w-full w-fit rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
         未做
       </span>
     );
   }
   if (attempt.pendingCount > 0) {
     return (
-      <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+      <span className="max-w-full w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
         有待批
       </span>
     );
   }
   if (attempt.hasDraft) {
     return (
-      <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+      <span className="flex max-w-full w-fit items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-foreground">
         <LoaderCircle aria-hidden className="size-3.5" />
         进行中
       </span>
     );
   }
   return (
-    <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+    <span className="flex max-w-full w-fit items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
       <CircleCheck aria-hidden className="size-3.5" />
       已完成（最近 {formatResultCounts(attempt.latestResultCounts)} · 共{" "}
       {attempt.count} 次）
@@ -82,12 +79,12 @@ export default function StudentCourseDetailPage() {
           <ArrowLeft aria-hidden className="size-5" />
         </Link>
         <div className="min-w-0">
-          <h1 className="flex items-center gap-2 truncate text-lg font-semibold">
+          <h1 className="flex items-center gap-2 break-words text-lg font-semibold">
             <School aria-hidden className="size-5 shrink-0 text-primary" />
             {courseQuery.data?.name ?? "课程"}
           </h1>
           {courseQuery.data?.description && (
-            <p className="truncate text-xs text-muted-foreground">
+            <p className="break-words text-xs text-muted-foreground">
               {courseQuery.data.description}
             </p>
           )}
@@ -140,87 +137,11 @@ export default function StudentCourseDetailPage() {
             }
           />
         ) : (
-          <ol className="flex flex-col gap-2">
-            {courseQuery.data.items.map((item) =>
-              item.kind === "section" ? (
-                // 分节标题：仅文字分组（li 保持列表语义）
-                <li
-                  key={item.id}
-                  aria-label={`分节 ${item.title}`}
-                  className="flex items-center gap-2 pt-4 pb-1 text-sm font-semibold text-foreground first:pt-0 before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                >
-                  {item.title}
-                </li>
-              ) : item.kind === "lecture" ? (
-                <li key={item.id}>
-                  {/* kind=lesson（2026-10 讲练一体）：「讲练」徽标 + 直达讲练页
-                      （不经阅读页重定向，courseId 上下文保留）；纯讲义进阅读页 */}
-                  <Link
-                    to={
-                      item.docKind === "lesson"
-                        ? lessonHref(String(item.refId), courseQuery.data.id)
-                        : `/s/lectures/${item.refId}?courseId=${courseQuery.data.id}`
-                    }
-                    aria-label={`${item.docKind === "lesson" ? "打开讲练" : "阅读讲义"} ${item.title}`}
-                    className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
-                  >
-                    <span
-                      aria-hidden
-                      className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
-                    >
-                      <BookOpen className="size-5" />
-                    </span>
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="flex min-w-0 items-center gap-2">
-                        {item.docKind === "lesson" ? <LessonBadge /> : null}
-                        <span className="truncate text-sm font-medium">
-                          {item.title}
-                        </span>
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        讲义{item.docKind === "lesson" ? " · 可边学边练" : ""}
-                      </span>
-                    </span>
-                    <ChevronRight
-                      aria-hidden
-                      className="size-4 shrink-0 text-muted-foreground"
-                    />
-                  </Link>
-                </li>
-              ) : (
-                // 单元项：进入单元落地页（T2A.6：开始/继续/再做一次 + 历次记录）
-                <li key={item.id}>
-                  <Link
-                    to={`/s/courses/${courseQuery.data.id}/units/${item.refId}`}
-                    aria-label={`打开练习 ${item.title}（${item.questionCount ?? 0} 题）`}
-                    className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
-                  >
-                    <span
-                      aria-hidden
-                      className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
-                    >
-                      <Dumbbell className="size-5" />
-                    </span>
-                    <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm font-medium">
-                          {item.title}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          练习 · <span>{item.questionCount ?? 0} 题</span>
-                        </span>
-                      </span>
-                      <UnitStatusBadge item={item} />
-                    </span>
-                    <ChevronRight
-                      aria-hidden
-                      className="size-4 shrink-0 text-muted-foreground"
-                    />
-                  </Link>
-                </li>
-              ),
-            )}
-          </ol>
+          <StudentCourseCatalog
+            key={courseQuery.data.id}
+            course={courseQuery.data}
+            renderStatus={(item) => <UnitStatusBadge item={item} />}
+          />
         ))}
     </section>
   );

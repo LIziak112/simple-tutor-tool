@@ -22,7 +22,7 @@ import {
 /** 与 playwright.config.ts 保持一致（server 直连地址） */
 const MCP_URL = "http://127.0.0.1:8899/mcp";
 
-/** 14 个工具名：D23 定稿 11 个 + upload_image + import_zip + describe_capabilities（与服务端 mcp.test.ts 同清单） */
+/** 18 个工具名：D23 定稿 11 个 + upload_image + import_zip + describe_capabilities（与服务端 mcp.test.ts 同清单） */
 const EXPECTED_TOOLS = [
   "get_dsl_spec",
   "lint_markdown",
@@ -38,6 +38,10 @@ const EXPECTED_TOOLS = [
   "upload_image",
   "import_zip",
   "describe_capabilities",
+  "get_course_catalog",
+  "get_library_catalog",
+  "manage_course_catalog",
+  "add_course_content",
 ].sort();
 
 /** JSON-RPC 请求体构造 */
@@ -96,7 +100,7 @@ async function setupDedicatedTeacher(
 test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", {
   tag: ["@mcp"],
 }, () => {
-  test("教师 token 经 /mcp 完成 initialize → 13 工具清单 → list_students 见本域学生", async ({
+  test("教师 token 经 /mcp 完成 initialize → 18 工具清单 → list_students 见本域学生", async ({
     request,
   }) => {
     test.setTimeout(60_000);
@@ -135,7 +139,7 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
         ?.name,
     ).toBeTruthy();
 
-    // ③ tools/list → 恰好 14 个工具（D23 清单 + upload_image/import_zip + describe_capabilities）
+    // ③ tools/list → 恰好 18 个工具（D23 清单 + upload_image/import_zip + describe_capabilities）
     const listRes = await postRpc(request, rpc("tools/list", {}, 2), token);
     expect(listRes.status).toBe(200);
     const tools = (listRes.json.result as { tools: { name: string }[] }).tools

@@ -358,6 +358,7 @@ export function getStudentCourseDetail(
     description: course.description,
     items: items.map((item) => ({
       id: item.id,
+      parentId: item.parentId,
       kind: item.kind,
       docKind:
         item.kind === "lecture"

@@ -340,7 +340,53 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 14 个工具（D23 定稿 11 个 + upload_image + import_zip + describe_capabilities）", async () => {
+  it("教师 Agent 可整理嵌套目录，预览不写库，跨教师拒绝", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const list = await client.callTool({ name: "list_courses", arguments: {} });
+    const courseId = JSON.parse(textOf(list)).courses[0].id as string;
+    const command = {
+      action: "createFolder",
+      title: "Agent 分类",
+      parentId: null,
+    };
+    const preview = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: { courseId, command },
+    });
+    expect(JSON.parse(textOf(preview)).preview).toBe(true);
+    const created = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: { courseId, command, confirm: true },
+    });
+    expect(created.isError).toBeFalsy();
+    const id = JSON.parse(textOf(created)).id as string;
+    const nested = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: {
+        courseId,
+        command: { ...command, title: "子文件夹", parentId: id },
+        confirm: true,
+      },
+    });
+    expect(nested.isError).toBeFalsy();
+    const denied = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: { courseId: crypto.randomUUID(), command, confirm: true },
+    });
+    expect(denied.isError).toBe(true);
+    const catalog = await client.callTool({
+      name: "get_course_catalog",
+      arguments: { courseId },
+    });
+    expect(
+      JSON.parse(textOf(catalog)).items.filter(
+        (item: { title: string }) => item.title === "Agent 分类",
+      ),
+    ).toHaveLength(1);
+    await client.close();
+  });
+  it("tools/list 列出 18 个工具（D23 定稿 11 个 + upload_image + import_zip + describe_capabilities）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
@@ -361,6 +407,10 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "upload_image",
         "import_zip",
         "describe_capabilities",
+        "get_course_catalog",
+        "get_library_catalog",
+        "manage_course_catalog",
+        "add_course_content",
       ].sort(),
     );
     await client.close();
