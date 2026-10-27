@@ -127,9 +127,10 @@ describe("DataPage 三态", () => {
       "href",
       "/t/insights",
     );
-    expect(
-      screen.getByRole("button", { name: "作答记录" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "作答记录" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("加载中显示骨架提示，不白屏", () => {
