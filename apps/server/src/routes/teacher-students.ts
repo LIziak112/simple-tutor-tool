@@ -3,6 +3,7 @@ import type {
   StudentUpdateRequest,
 } from "@tutor/contract";
 import {
+  questionReviewQuerySchema,
   studentCreateRequestSchema,
   studentListQuerySchema,
   studentUpdateRequestSchema,
@@ -11,6 +12,7 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
+import { questionReviewOf } from "../mcp/teacher-queries";
 import {
   createStudent,
   listStudents,
@@ -29,7 +31,10 @@ import {
  * - PATCH /students/:id：改名/登录名/开关两种方式/归档/备注（T2B.5 起按归属教师，
  *   他人学生 404）；
  * - POST /students/:id/reset-password：重置密码（一次性明文）；
- * - POST /students/:id/reset-link：重置专属链接（旧链接立即失效）。
+ * - POST /students/:id/reset-link：重置专属链接（旧链接立即失效）；
+ * - GET /students/:id/question-review：学生主页「错题与存疑」聚合（T-PR4
+ *   Web-2②）——查询装配在 mcp/teacher-queries.ts，与 MCP-A query_student_
+ *   responses 共用同一构造器（方案 §Web-2② 口径同源要求）。
  *
  * 业务逻辑在 StudentService（api-endpoint 技能约定）。返回类型不显式标注 Hono：
  * 链式注册把路由签名累积进推断类型（AppType / hc 端到端类型前提）。
@@ -54,6 +59,33 @@ export function createStudentTeacherRoutes(db: Db) {
           db,
           c.var.teacher.id,
           parsed.data.includeArchived ?? false,
+        ),
+      });
+    })
+    .get("/students/:id/question-review", (c) => {
+      // GET 无 JSON body：查询参数手工过契约 schema（kind / limit 有契约默认）
+      const parsed = questionReviewQuerySchema.safeParse({
+        kind: c.req.query("kind") ?? undefined,
+        courseId: c.req.query("courseId") ?? undefined,
+        from: c.req.query("from") ?? undefined,
+        to: c.req.query("to") ?? undefined,
+        limit: c.req.query("limit") ?? undefined,
+        cursor: c.req.query("cursor") ?? undefined,
+      });
+      if (!parsed.success) {
+        throw new HttpError(
+          400,
+          "VALIDATION_ERROR",
+          `查询参数不合法：${parsed.error.issues[0]?.message ?? "格式不正确"}`,
+        );
+      }
+      return c.json({
+        ok: true,
+        data: questionReviewOf(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+          parsed.data,
         ),
       });
     })

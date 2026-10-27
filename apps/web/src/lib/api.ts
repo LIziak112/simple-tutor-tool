@@ -153,6 +153,8 @@ import {
   type PracticeWorkflowUpdateRequest,
   type PublicConfigData,
   type QuestionDetail,
+  type QuestionReviewData,
+  type QuestionReviewKind,
   type QuestionUpdateData,
   type QuestionUpdateRequest,
   type ReorderRequest,
@@ -2427,6 +2429,34 @@ export interface AnalyticsFetchParams {
   courseId?: string | undefined;
   days?: number | "all" | undefined;
   focusDays?: number | undefined;
+}
+
+/** 「错题与存疑」聚合查询参数（界面层形态；undefined 字段不发送） */
+export interface QuestionReviewParams {
+  kind: QuestionReviewKind;
+  courseId?: string | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+  limit: number;
+  cursor?: string | undefined;
+}
+
+/** 学生主页「错题与存疑」聚合（T-PR4 Web-2②；404 = 学生不存在或非本教师） */
+export function fetchQuestionReviewApi(
+  studentId: string,
+  params: QuestionReviewParams,
+): Promise<QuestionReviewData> {
+  const query: Record<string, string> = { kind: params.kind };
+  if (params.courseId !== undefined) query.courseId = params.courseId;
+  if (params.from !== undefined) query.from = params.from;
+  if (params.to !== undefined) query.to = params.to;
+  query.limit = String(params.limit);
+  if (params.cursor !== undefined) query.cursor = params.cursor;
+  // hc 对带 param 的路由只推断出 param 入参，query 以独立变量传入（同 fetchAnalyticsStudentApi）
+  const args = { param: { id: studentId }, query };
+  return callApi(() =>
+    api.api.teacher.students[":id"]["question-review"].$get(args),
+  );
 }
 
 /** 学情查询参数 → querystring（undefined 字段不发送；数值转字符串） */

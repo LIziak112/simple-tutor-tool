@@ -121,6 +121,22 @@ export const studentSummarySchema = z.object({
   archived: z.boolean(),
   /** 创建时间：UTC ISO 字符串 */
   createdAt: z.string().min(1),
+  /**
+   * 最近作答时间（T-PR4 Web-4）：该生非作废 attempts 的最近活动时间
+   * （submittedAt ?? startedAt）；无作答为 null。**仅列表接口分发**
+   * （创建 / PATCH 响应缺省）。
+   */
+  lastActivityAt: z.string().min(1).nullable().optional(),
+  /**
+   * 待批数（T-PR4 Web-4）：D4 共享待批谓词计数（见 pending-mark.ts）。
+   * **仅列表接口分发**。
+   */
+  pendingCount: z.number().int().min(0).optional(),
+  /**
+   * 进行中讲练数（T-PR4 Web-4）：该生 draft 且非作废的 lesson 卷数。
+   * **仅列表接口分发**。
+   */
+  inProgressLessonCount: z.number().int().min(0).optional(),
 });
 
 /** GET /api/teacher/students 响应 data */

@@ -112,7 +112,7 @@ export function StudentsPage() {
       <div className="flex items-center justify-between gap-3">
         <p aria-live="polite" className="text-sm text-muted-foreground">
           {studentsQuery.data
-            ? `共 ${studentsQuery.data.students.length} 名学生`
+            ? `共 ${studentsQuery.data.students.length} 名学生 · 按最近作答倒序`
             : "…"}
         </p>
         <Button
@@ -323,6 +323,18 @@ function StudentCard({
           {formatRelativeTime(student.createdAt)}创建
         </p>
       </div>
+
+      {/* T-PR4 Web-4：活动三列（最近作答 / 待批 / 进行中讲练；列表按最近作答倒序） */}
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          最近作答：
+          {student.lastActivityAt
+            ? formatRelativeTime(student.lastActivityAt)
+            : "暂无"}
+        </span>
+        <span>待批 {student.pendingCount ?? 0}</span>
+        <span>进行中讲练 {student.inProgressLessonCount ?? 0}</span>
+      </p>
 
       {/* 所在课程（T2A.4）：经课程列表 memberIds 聚合 */}
       <div className="flex flex-wrap items-center gap-1.5">

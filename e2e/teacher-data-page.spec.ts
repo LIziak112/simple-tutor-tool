@@ -136,7 +136,7 @@ test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大�
     await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
 
     await page.goto("/t/data");
     // 默认按课程视图：课程分组头 + 该练习卡片（学生名 + 来源上下文 + 已交卷 + 待批）

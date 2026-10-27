@@ -6,7 +6,7 @@ import { RegisterPage } from "./RegisterPage";
 
 /**
  * /t/register 注册页测试（T2B.6 验收：两字段与开关关闭文案）：
- * - 开关开：登录名 + 密码两字段、本地校验、成功注册自动进入 /t；
+ * - 开关开：登录名 + 密码两字段、本地校验、成功注册按 Web-4 落点进入学生侧；
  * - 开关关：显示「注册已关闭，请联系管理员」，不出表单；
  * - 未设置教师：跳 /t/setup；
  * - 服务端错误：重名（TEACHER_LOGIN_EXISTS）/ 锁定（LOCKED）文案。
@@ -30,6 +30,7 @@ const apiMocks = vi.hoisted(() => {
     registerTeacher: vi.fn(),
     logoutTeacher: vi.fn(),
     fetchTeacherMe: vi.fn(),
+    fetchStudentsApi: vi.fn(),
   };
 });
 
@@ -42,6 +43,7 @@ vi.mock("@/lib/api", () => ({
   registerTeacher: apiMocks.registerTeacher,
   logoutTeacher: apiMocks.logoutTeacher,
   fetchTeacherMe: apiMocks.fetchTeacherMe,
+  fetchStudentsApi: apiMocks.fetchStudentsApi,
 }));
 
 function renderRegisterPage() {
@@ -56,6 +58,14 @@ function renderRegisterPage() {
           <Route path="/t" element={<p data-testid="teacher-home">教师端</p>} />
           <Route path="/t/setup" element={<p data-testid="setup">初始化</p>} />
           <Route path="/t/login" element={<p data-testid="login">登录</p>} />
+          <Route
+            path="/t/students"
+            element={<p data-testid="students-list">学生列表</p>}
+          />
+          <Route
+            path="/t/students/:id"
+            element={<p data-testid="student-home">学生主页</p>}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -69,6 +79,8 @@ beforeEach(() => {
     hasTeacher: true,
     registrationOpen: true,
   });
+  // Web-4 落点解析的默认场景：新教师 0 学生 → 学生列表
+  apiMocks.fetchStudentsApi.mockResolvedValue({ students: [] });
 });
 
 describe("RegisterPage 表单（开关开）", () => {
@@ -113,7 +125,7 @@ describe("RegisterPage 表单（开关开）", () => {
     expect(apiMocks.registerTeacher).not.toHaveBeenCalled();
   });
 
-  it("成功注册自动进入教师端（/t）", async () => {
+  it("成功注册自动按 Web-4 落点进入学生侧（0 学生 → 学生列表）", async () => {
     apiMocks.registerTeacher.mockResolvedValue({
       id: "t-new",
       loginName: "王老师",
@@ -134,12 +146,46 @@ describe("RegisterPage 表单（开关开）", () => {
     fireEvent.click(screen.getByRole("button", { name: "注册并进入" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("teacher-home")).toBeInTheDocument();
+      expect(screen.getByTestId("students-list")).toBeInTheDocument();
     });
     // TanStack Query v5 的 mutationFn 会附带第二个 context 参数，只断言首个参数
     expect(apiMocks.registerTeacher.mock.calls[0]?.[0]).toEqual({
       loginName: "王老师",
       password: "self-pass-88",
+    });
+  });
+
+  it("成功注册落点：恰 1 名未归档学生 → 该生学生主页", async () => {
+    apiMocks.registerTeacher.mockResolvedValue({
+      id: "t-new",
+      loginName: "王老师",
+      isAdmin: false,
+      createdAt: "2026-09-30T00:00:00.000Z",
+    });
+    apiMocks.fetchStudentsApi.mockResolvedValue({
+      students: [
+        {
+          id: "student-1",
+          name: "学生甲",
+          archived: false,
+        },
+      ],
+    });
+    renderRegisterPage();
+    await waitFor(() => {
+      expect(screen.getByLabelText("登录名")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("登录名"), {
+      target: { value: "王老师" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "self-pass-88" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "注册并进入" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("student-home")).toBeInTheDocument();
     });
   });
 
