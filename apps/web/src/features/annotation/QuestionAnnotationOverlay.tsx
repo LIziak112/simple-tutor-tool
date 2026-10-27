@@ -674,7 +674,7 @@ export const QuestionAnnotationOverlay = forwardRef<
             strokeToStored: (
               stroke: InkStroke,
               anchorKey: string | undefined,
-            ) => map.strokeToSaved(stroke, anchorKey).stroke,
+            ) => map.strokeToSaved(stroke, anchorKey),
             strokeToView: (stroke: InkStroke, anchorKey: string | undefined) =>
               map.strokeToTarget(stroke, anchorKey).stroke,
             pointToStored: map.pointToSaved,
