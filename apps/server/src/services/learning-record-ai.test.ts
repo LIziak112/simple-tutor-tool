@@ -6,9 +6,14 @@ import type {
 import {
   AI_MAX_POINTS_PER_MATERIAL,
   AI_STROKE_EPSILON_RATIO,
+  learningRecordSchema,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { compactInkMaterial, rdpIndices } from "./learning-record-ai.ts";
+import {
+  compactInkMaterial,
+  learningRecordAiViewOf,
+  rdpIndices,
+} from "./learning-record-ai.ts";
 
 /** 直线上 n 个等距采样（全部共线） */
 function linePoints(n: number): InkStroke["points"] {
@@ -153,5 +158,81 @@ describe("compactInkMaterial（LR-PR5 §7.3）", () => {
     const based = compactInkMaterial(wide);
     expect(based.keptPoints).toBe(2);
     expect(AI_STROKE_EPSILON_RATIO).toBe(0.003);
+  });
+});
+
+describe("learningRecordAiViewOf（LR-PR5 §7.3）", () => {
+  function aiRecordFixture() {
+    return learningRecordSchema.parse({
+      recordVersion: 1,
+      role: "ai",
+      generatedAt: "2026-10-26T12:00:00Z",
+      identity: {
+        questionRevisionId: "rev-0001",
+        questionNo: 1,
+        attemptStatus: "draft",
+        source: "assignment",
+      },
+      question: {
+        snapshotPresent: true,
+        type: "choice",
+        stemMd: "选择正确答案。",
+        nodesVersion: 1,
+        nodes: [{ key: "root", kind: "root", order: 0 }],
+      },
+      answer: {
+        current: null,
+        answerText: null,
+        answerRevision: 0,
+        history: [],
+      },
+      ink: [
+        {
+          ...facetOf([strokeOf("stroke-s1", linePoints(50))], []),
+          images: [
+            {
+              kind: "snapshot" as const,
+              pageIndex: 0,
+              pixelWidth: 100,
+              pixelHeight: 80,
+              state: "ready" as const,
+            },
+          ],
+        },
+      ],
+      timeline: {
+        entries: [],
+        clock: { basis: "client", serverSkewMs: null },
+        truncated: false,
+      },
+      grading: { answered: false, hintsUsed: 0, hintsOpened: [] },
+    });
+  }
+
+  it("压缩进视图 + 台账 + resolveImageUrl 填充；契约 fail-closed", () => {
+    const record = aiRecordFixture();
+    const view = learningRecordAiViewOf(record, {
+      resolveImageUrl: (kind) =>
+        kind === "draft" ? "https://t.test/x.png" : undefined,
+    });
+    expect(view.record.role).toBe("ai");
+    expect(view.compaction.materials).toHaveLength(1);
+    expect(view.compaction.materials[0]).toMatchObject({
+      kind: "draft",
+      originalPoints: 50,
+      compacted: false,
+    });
+    // 共线笔 RDP 压到端点
+    expect(view.record.ink[0]?.strokes[0]?.points).toHaveLength(2);
+    expect(view.record.ink[0]?.images[0]?.downloadUrl).toBe(
+      "https://t.test/x.png",
+    );
+    // 非 ai 记录在 schema 层拒绝（防误投学生/教师记录）
+    expect(() =>
+      learningRecordAiViewOf({
+        ...record,
+        role: "student",
+      }),
+    ).toThrow();
   });
 });

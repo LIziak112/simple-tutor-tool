@@ -1085,3 +1085,29 @@ describe("SAI-09 边界", () => {
     db.$client.close();
   });
 });
+
+describe("LR-PR5 recordRefs 版本钉住", () => {
+  it("recordRefs 并入快照与 contextVersion 输入：内容变化即换标识、相同输入恒等", () => {
+    const db = createTestDb();
+    const world = setupWorld(db);
+    const a = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+    });
+    const refs = [{ kind: "draft" as const, revision: 2, hash: null }];
+    const b = buildAiContextBundle(db, world, {
+      now: NOW,
+      hmacSecret: SECRET_A,
+      recordRefs: refs,
+    });
+    expect(b.contextVersion).not.toBe(a.contextVersion);
+    expect(b.snapshot.recordRefs).toEqual(refs);
+    const c = buildAiContextBundle(db, world, {
+      now: LATER,
+      hmacSecret: SECRET_A,
+      recordRefs: refs,
+    });
+    expect(c.contextVersion).toBe(b.contextVersion);
+    db.$client.close();
+  });
+});
