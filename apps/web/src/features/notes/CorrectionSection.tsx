@@ -30,6 +30,13 @@ import { useNoteSessionRef } from "@/features/notes/use-note-head";
 import { ApiError, createCorrectionApi } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 
+/**
+ * 证据头缓存的可用窗口（与 staleTime 同源）：点击「订正」时缓存头超窗即
+ * 重拉——他端/他页可能已封存或建行，不沿陈旧快照续接（否则徽章编号错、
+ * 工作台挂到已封存行上撞 409）。
+ */
+const CORRECTION_HEAD_STALE_MS = 60_000;
+
 export interface CorrectionSectionProps {
   attemptId: string;
   questionId: string;
@@ -80,7 +87,7 @@ export function CorrectionSection({
       return head;
     },
     enabled: false,
-    staleTime: 60_000,
+    staleTime: CORRECTION_HEAD_STALE_MS,
     refetchOnWindowFocus: false,
     retry: (count, err) => !(err instanceof ApiError) && count < 2,
   });
@@ -94,7 +101,13 @@ export function CorrectionSection({
     setStartError(null);
     setStarting(true);
     try {
-      let current = headQuery.data ?? null;
+      const cachedHead = headQuery.data ?? null;
+      // 缓存头仅在新鲜窗口内直接用；超窗重拉（点击守卫下仍保折叠零请求）
+      let current =
+        cachedHead !== null &&
+        Date.now() - headQuery.dataUpdatedAt <= CORRECTION_HEAD_STALE_MS
+          ? cachedHead
+          : null;
       if (current === null) {
         const fetched = await headQuery.refetch();
         current = fetched.data ?? null;
@@ -109,24 +122,33 @@ export function CorrectionSection({
         }
       }
       if (openCorrectionOf(current) === null) {
+        let created: NoteHeadData | null = null;
         try {
-          current = await createCorrectionApi(attemptId, questionId, {
+          created = await createCorrectionApi(attemptId, questionId, {
             copyFromOriginal: false,
           });
-          // 新行起步：清旧封存行残留（stale pending/冲突/被拒不灌新行）
-          await clearCorrectionRecord(session, {
-            attemptId,
-            questionId,
-            phase: "correction",
-          });
         } catch (err) {
-          // 409 OPEN_EXISTS（如另一标签页已建行）：重拉头，有未封存行则继续
+          // 仅对 create 本身按「可能撞 409 OPEN_EXISTS（另一标签页已建行）」
+          // 分诊：重拉头，有未封存行则续接既有行；本地清理/播种异常不在
+          // 此分诊范围——上抛由外层中文告警，不带着未清理的旧记录开工作台
           const fetched = await headQuery.refetch();
           const refreshed = fetched.data ?? null;
           if (refreshed === null || openCorrectionOf(refreshed) === null) {
             throw err;
           }
           current = refreshed;
+        }
+        if (created !== null) {
+          current = created;
+          // 新行起步：清旧封存行残留（stale pending/冲突/被拒不灌新行）。
+          // 已知边界（沿袭行为）：本地若恰有未同步订正内容且其行已被他端
+          // 封存（note-sync 409 分诊尚未处理完），会连同未同步笔迹一并清掉
+          // ——窄窗口，修法涉及行生命周期设计决策，暂按旧流程接受并记录
+          await clearCorrectionRecord(session, {
+            attemptId,
+            questionId,
+            phase: "correction",
+          });
         }
       }
       await seedOpenCorrection(session, attemptId, questionId, current);

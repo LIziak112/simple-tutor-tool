@@ -16,6 +16,9 @@
  *   用户不命名；
  * - 封存后行不再接受写入——再编辑由服务端 409 NOTE_CORRECTION_SEALED +
  *   note-sync 自动「新开一行」重置承接（下一次订正重开工作台即可）。
+ * - 关闭工作台即卸载编辑器（与离开答题页同口径）：收笔落定的笔画均已
+ *   writeNoteDoc 本机落盘；收笔瞬间的在途一笔与页面导航同样不可恢复
+ *   （45 秒保活仅覆盖答题页收起场景，见 docs/约定/手写与同步）。
  */
 
 import {
@@ -104,15 +107,10 @@ export function CorrectionWorkspace({
   const doc = view?.doc ?? null;
   const strokeCount = doc?.ink.strokes.length ?? 0;
 
-  // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions） ----
-  const scopeRef = useRef({
-    attemptId,
-    questionId,
-    phase: "correction" as const,
-  });
-  scopeRef.current = { attemptId, questionId, phase: "correction" as const };
+  // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions；scope 每渲染新
+  //      对象亦安全——hook 内部 ref 取最新值） ----
   const { resolveError, keepLocal, keepCloud, retryDenied } =
-    useNoteSyncActions(session, scopeRef.current);
+    useNoteSyncActions(session, { attemptId, questionId, phase: "correction" });
 
   // ---- 清空二次确认（清空=空稿作为新正文版本保存，覆盖语义同草稿纸） ----
   const [clearOpen, setClearOpen] = useState(false);
@@ -124,14 +122,24 @@ export function CorrectionWorkspace({
   const [sealing, setSealing] = useState(false);
   const [sealError, setSealError] = useState<string | null>(null);
   /**
-   * 草稿检查点已保存但圈画封存失败（部分成功）：弹窗留在原地展示结果，
-   * 「知道了」再关闭——不能静默吞掉圈画未定格的事实，也不能因此关不掉。
+   * 草稿检查点已保存但圈画封存失败（部分成功）：弹窗留在原地展示结果与
+   * 具体原因，可就地「重试圈画封存」（只补圈画，不再封存草稿），「知道了」
+   * /X/Esc 关闭——不能静默吞掉圈画未定格的事实，也不能因此关不掉。
    */
   const [partialSealedHead, setPartialSealedHead] =
     useState<NoteHeadData | null>(null);
+  /** 部分成功的具体原因（sealCorrectionAnnotation 抛出的中文错误，就地展示） */
+  const [partialDetail, setPartialDetail] = useState<string | null>(null);
+  /**
+   * 本工作台会话内已成功的草稿封存（含部分成功）：行已定格，重试只补圈画
+   * ——再次 sealCorrectionApi 必 409，跳过。
+   */
+  const sealedHeadRef = useRef<NoteHeadData | null>(null);
 
   const openSealDialog = () => {
     setSealError(null);
+    setPartialSealedHead(null);
+    setPartialDetail(null);
     setSealOpen(true);
   };
 
@@ -140,41 +148,66 @@ export function CorrectionWorkspace({
     setSealing(true);
     setSealError(null);
     try {
-      // 先追平：本地落盘 → 上传队列 → 回执落地（seal 的 CAS 基线取追平后的
-      // 本地 baseRevision——权威判定以 record 状态为准，不采样摘要）
-      await catchUpNotes(attemptId);
-      const record = await getNoteRecord(session, scopeRef.current);
-      if (record === null) {
-        setSealError("还没有订正内容，请先在草稿纸上书写再保存。");
-        return;
+      let head = sealedHeadRef.current;
+      if (head === null) {
+        // 先追平：本地落盘 → 上传队列 → 回执落地（seal 的 CAS 基线取追平后的
+        // 本地 baseRevision——权威判定以 record 状态为准，不采样摘要）
+        await catchUpNotes(attemptId);
+        let record: Awaited<ReturnType<typeof getNoteRecord>>;
+        try {
+          // strictRead：读取失败≠无稿（硬性规则 6）——不得把 IDB 读错静默
+          // 报成「还没有订正内容」
+          record = await getNoteRecord(
+            session,
+            {
+              attemptId,
+              questionId,
+              phase: "correction",
+            },
+            { strictRead: true },
+          );
+        } catch {
+          setSealError("订正数据读取失败，请稍后重试");
+          return;
+        }
+        if (record === null) {
+          setSealError("还没有订正内容，请先在草稿纸上书写再保存。");
+          return;
+        }
+        if (record.conflict !== null) {
+          setSealError("订正内容有同步冲突待处理，请先在上方选择保留哪一份。");
+          return;
+        }
+        if (record.denied !== null) {
+          setSealError(`订正同步被拒：${record.denied.reason}`);
+          return;
+        }
+        if (record.pending !== null) {
+          setSealError("订正的最新修改还没同步完成，请稍候再试。");
+          return;
+        }
+        if (record.baseRevision === 0) {
+          setSealError("还没有订正内容，请先在草稿纸上书写再保存。");
+          return;
+        }
+        head = await sealCorrectionApi(attemptId, questionId, {
+          baseRevision: record.baseRevision,
+          ...(stuckAt.trim() !== "" ? { stuckAt: stuckAt.trim() } : {}),
+          ...(errorCause.trim() !== ""
+            ? { errorCause: errorCause.trim() }
+            : {}),
+        });
+        sealedHeadRef.current = head;
       }
-      if (record.conflict !== null) {
-        setSealError("订正内容有同步冲突待处理，请先在上方选择保留哪一份。");
-        return;
-      }
-      if (record.denied !== null) {
-        setSealError(`订正同步被拒：${record.denied.reason}`);
-        return;
-      }
-      if (record.pending !== null) {
-        setSealError("订正的最新修改还没同步完成，请稍候再试。");
-        return;
-      }
-      if (record.baseRevision === 0) {
-        setSealError("还没有订正内容，请先在草稿纸上书写再保存。");
-        return;
-      }
-      const head = await sealCorrectionApi(attemptId, questionId, {
-        baseRevision: record.baseRevision,
-        ...(stuckAt.trim() !== "" ? { stuckAt: stuckAt.trim() } : {}),
-        ...(errorCause.trim() !== "" ? { errorCause: errorCause.trim() } : {}),
-      });
       // 圈画检查点：有圈画正文才封存（无圈画返回 0 不算错误）；失败不回滚
-      // 草稿检查点——留在弹窗提示，圈画保留可编辑，下次保存订正时再尝试
+      // 草稿检查点——留在弹窗提示具体原因，可就地重试或稍后再说
       try {
         await sealCorrectionAnnotation({ attemptId, questionId });
-      } catch {
+      } catch (err) {
         setPartialSealedHead(head);
+        setPartialDetail(
+          err instanceof Error ? err.message : "圈画封存失败，请稍后重试",
+        );
         return;
       }
       setSealOpen(false);
@@ -196,7 +229,14 @@ export function CorrectionWorkspace({
       : `第 ${correctionNo} 次订正`;
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        // 保存进行中不整层关闭：迟到的成败反馈/部分成功态不能丢
+        if (sealing) return;
+        if (!open) onClose();
+      }}
+    >
       <DialogContent
         className="top-0 left-0 flex h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0"
         aria-describedby={undefined}
@@ -406,7 +446,21 @@ export function CorrectionWorkspace({
       </Dialog>
 
       {/* 保存订正 = 一层检查点（反思 + 定格确认；圈画随同一并封存） */}
-      <Dialog open={sealOpen} onOpenChange={setSealOpen}>
+      <Dialog
+        open={sealOpen}
+        onOpenChange={(open) => {
+          if (sealing) return; // 保存进行中不关弹层（在途结果仍会落地）
+          if (!open && partialSealedHead !== null) {
+            // 部分成功态的 X/Esc 等价「知道了」：订正已封存，head 缓存必须
+            // 更新——否则按钮恒显「继续订正」、计数不 +1
+            const head = partialSealedHead;
+            setSealOpen(false);
+            onSealed(head);
+            return;
+          }
+          setSealOpen(open);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>保存订正</DialogTitle>
@@ -462,13 +516,19 @@ export function CorrectionWorkspace({
               </p>
             )}
             {partialSealedHead !== null && (
-              <p
+              <div
                 role="status"
-                className="text-sm text-amber-700 dark:text-amber-400"
+                className="flex flex-col gap-1 text-sm text-amber-700 dark:text-amber-400"
               >
-                订正已保存为「{correctionName}」；但订正圈画还没同步完成，
-                暂未一并定格。圈画会保留可编辑，网络恢复后再保存一次订正即可。
-              </p>
+                <p>
+                  订正已保存为「{correctionName}」；但订正圈画暂未一并定格。
+                </p>
+                {partialDetail !== null && <p>{partialDetail}</p>}
+                <p className="text-xs text-muted-foreground">
+                  圈画会保留可编辑：可立即重试圈画封存；若提示冲突/被拒，请先
+                  按上方圈画区的指引处理后再试。
+                </p>
+              </div>
             )}
           </div>
           <DialogFooter>
@@ -493,17 +553,28 @@ export function CorrectionWorkspace({
                 </Button>
               </>
             ) : (
-              <Button
-                type="button"
-                className="h-11"
-                onClick={() => {
-                  const head = partialSealedHead;
-                  setSealOpen(false);
-                  onSealed(head);
-                }}
-              >
-                知道了
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11"
+                  disabled={sealing}
+                  onClick={() => void seal()}
+                >
+                  {sealing ? "正在重试…" : "重试圈画封存"}
+                </Button>
+                <Button
+                  type="button"
+                  className="h-11"
+                  onClick={() => {
+                    const head = partialSealedHead;
+                    setSealOpen(false);
+                    onSealed(head);
+                  }}
+                >
+                  知道了
+                </Button>
+              </>
             )}
           </DialogFooter>
         </DialogContent>

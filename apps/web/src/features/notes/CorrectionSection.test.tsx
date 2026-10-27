@@ -40,6 +40,7 @@ import {
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { DOC_A } from "@/features/notes/note-test-utils";
+import { correctionHeadKey } from "./correction-record";
 
 /**
  * CorrectionSection / CorrectionWorkspace（2026-10 订正重构）组件测试：
@@ -279,10 +280,10 @@ const RECEIPT_2 = {
 
 function renderSection(
   props: Partial<Parameters<typeof CorrectionSection>[0]> = {},
-) {
-  const client = new QueryClient({
+  client: QueryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
-  });
+  }),
+) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -466,6 +467,79 @@ describe("CorrectionSection：直达入口（自动建行与继续）", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.queryByText(/已有未保存完的订正/)).toBeNull();
   });
+
+  it("创建撞 409 且重拉仍无未封存行 → 原始错误中文告警，不开工作台", async () => {
+    evidenceMock.mockResolvedValue(headFixture()); // 恒无未封存行
+    createMock.mockRejectedValue(
+      new ApiError(
+        "NOTE_CORRECTION_OPEN_EXISTS",
+        "已有未保存完的订正，请继续编辑",
+        409,
+      ),
+    );
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: /^第 1 题订正/ }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(entries.length).toBe(0); // 工作台未打开
+  });
+
+  it("建行成功但本地清理读取失败 → 中文告警停在原地，不带着旧记录开工作台", async () => {
+    // fail-once 后端：第一次 store 读取失败（clearCorrectionRecord 的
+    // strictRead），之后恢复——若把清理失败误当 409 续接（重拉有行），
+    // 会带着未清理的旧记录开工作台
+    let failNext = true;
+    const mem = memoryNoteBackend();
+    installNoteBackend({
+      ...mem,
+      get: async (key: string) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("idb down");
+        }
+        return mem.get(key);
+      },
+    });
+    const created = headFixture({
+      corrections: [
+        openRow({ revision: 0, currentVersionId: null, serverSavedAt: null }),
+      ],
+    });
+    evidenceMock
+      .mockResolvedValueOnce(headFixture()) // 首拉：无未封存行
+      .mockResolvedValueOnce(created); // 若误走 409 分诊：重拉有行
+    createMock.mockResolvedValue(created);
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: /^第 1 题订正/ }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(entries.length).toBe(0); // 清理失败不得静默续接开工作台
+  });
+
+  it("缓存头超窗（他端可能已封存/建行）→ 点击订正先重拉，不沿用陈旧行", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    // 直接给共享缓存塞一份「陈旧」头（带未封存行，模拟他端封存前的快照）
+    client.setQueryData(
+      correctionHeadKey("student-a", "att-1", "p1-q1"),
+      headFixture({ corrections: [openRow()] }),
+      { updatedAt: Date.now() - 120_000 },
+    );
+    const refreshed = headFixture({ corrections: [sealedRow(1)] });
+    evidenceMock.mockResolvedValue(refreshed); // 重拉：他端已封存，无未封存行
+    const created = headFixture({
+      corrections: [
+        openRow({ revision: 0, currentVersionId: null, serverSavedAt: null }),
+      ],
+    });
+    createMock.mockResolvedValue(created);
+    renderSection({}, client);
+    // 缓存里是未封存行 → 按钮显「继续订正」；但点击必须重拉而不是沿用
+    fireEvent.click(screen.getByRole("button", { name: /^第 1 题继续订正/ }));
+    await waitForEngine();
+    // 重拉发生（而非直接沿用缓存里的陈旧未封存行）、建行走起
+    expect(evidenceMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("CorrectionWorkspace：题面与圈画/草稿（复用草稿功能）", () => {
@@ -626,5 +700,82 @@ describe("CorrectionWorkspace：保存订正（一层检查点）", () => {
     expect(
       screen.getByRole("button", { name: "第 1 题订正（已订正 1 次）" }),
     ).toBeInTheDocument();
+  });
+
+  it("圈画封存失败：部分成功提示带出具体错误（conflict 裁决指引不被吞）", async () => {
+    await openWorkspaceWithSeededRow();
+    annotationSealMock.mockRejectedValue(
+      new Error("订正圈画有同步冲突待处理，请先在圈画区选择保留哪一份。"),
+    );
+    sealMock.mockResolvedValue(headFixture({ corrections: [sealedRow(1)] }));
+    fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认保存" }));
+    expect(
+      await screen.findByText(/订正圈画有同步冲突待处理/),
+    ).toBeInTheDocument();
+    // 不再以「网络恢复后再保存一次」一刀切误导（conflict 需人工裁决）
+    expect(screen.queryByText(/网络恢复后再保存一次订正即可/)).toBeNull();
+  });
+
+  it("部分成功后可就地重试圈画封存：草稿不重复封存，成功即收口", async () => {
+    await openWorkspaceWithSeededRow();
+    annotationSealMock.mockRejectedValueOnce(
+      new Error("订正圈画的最新修改还没同步完成，请稍候再试。"),
+    );
+    sealMock.mockResolvedValue(headFixture({ corrections: [sealedRow(1)] }));
+    fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认保存" }));
+    await screen.findByText(/暂未一并定格/);
+    annotationSealMock.mockResolvedValue(1);
+    fireEvent.click(screen.getByRole("button", { name: "重试圈画封存" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    // 草稿封存只发生一次（行已封存，重试只补圈画）
+    expect(sealMock).toHaveBeenCalledTimes(1);
+    expect(annotationSealMock).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByRole("button", { name: "第 1 题订正（已订正 1 次）" }),
+    ).toBeInTheDocument();
+  });
+
+  it("部分成功弹层按 Esc 等价「知道了」：head 缓存更新、按钮计数到位", async () => {
+    await openWorkspaceWithSeededRow();
+    annotationSealMock.mockRejectedValue(
+      new Error("订正圈画的最新修改还没同步完成，请稍候再试。"),
+    );
+    sealMock.mockResolvedValue(headFixture({ corrections: [sealedRow(1)] }));
+    fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认保存" }));
+    await screen.findByText(/暂未一并定格/);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    // X/Esc 路径不得丢掉已封存 head 的缓存更新（否则按钮恒「继续订正」）
+    expect(
+      screen.getByRole("button", { name: "第 1 题订正（已订正 1 次）" }),
+    ).toBeInTheDocument();
+  });
+
+  it("保存进行中 Esc 不关工作台与弹层（在途结果落地后自行收口）", async () => {
+    await openWorkspaceWithSeededRow();
+    let resolveSeal!: (head: NoteHeadData) => void;
+    sealMock.mockReturnValue(
+      new Promise<NoteHeadData>((resolve) => {
+        resolveSeal = resolve;
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认保存" }));
+    expect(await screen.findByText("正在保存…")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    // 保存中：弹层与工作台都保持打开（迟到的成败反馈不丢）
+    expect(screen.getByText("正在保存…")).toBeInTheDocument();
+    expect(screen.getByText("订正 · 第 1 题")).toBeInTheDocument();
+    resolveSeal(headFixture({ corrections: [sealedRow(1)] }));
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
   });
 });
