@@ -23,6 +23,7 @@ import {
   ATTEMPT_PAGE_SIZE,
   useTeacherAttempts,
 } from "@/features/teacher-attempts/teacher-attempt-queries";
+import { StatsViewSwitcher } from "./StatsViewSwitcher";
 
 /**
  * /t/data 作答数据页（T3.1，D5/D6）：教师视角的全部学生作答。
@@ -30,6 +31,8 @@ import {
  *   query——刷新、返回、从详情页回来都不丢；
  * - 三视图（按课程默认 / 按作业 / 按学生）是同一份平铺列表的前端分组；
  * - 进行中（draft）作答也在列表中，徽章显著（D5）；分页作用于底层数据；
+ * T-PR1：头部「作答记录 / 统计」次级切换——原侧边栏「学情分析」一级入口
+ * 下沉到此，「统计」即 /t/insights 学情总览（路由保留，页面自持筛选）。
  * - 三态齐全（加载骨架 / 空态指引 / 错误重试），触控目标 ≥44px。
  */
 
@@ -149,6 +152,8 @@ export function DataPage() {
             点击卡片查看逐题详情。
           </p>
         </div>
+        {/* T-PR1：「作答记录 / 统计」次级切换（原「学情分析」入口下沉） */}
+        <StatsViewSwitcher active="attempts" />
         {/* T3.2b：待批队列入口（去 /t/data/pending 连续批改；未批徽章提示待处理） */}
         <div className="flex gap-2">
           <ExportCsvButton params={exportCsvParamsOf(state)} />

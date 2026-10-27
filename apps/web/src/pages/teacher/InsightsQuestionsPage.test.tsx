@@ -124,6 +124,19 @@ beforeEach(() => {
 });
 
 describe("InsightsQuestionsPage 三态", () => {
+  it("头部「作答记录 / 统计」切换与 /t/data 对称：作答记录指向 /t/data", () => {
+    mockedQuestions.mockReturnValue(new Promise(() => undefined));
+    renderPage();
+    expect(screen.getByRole("link", { name: "作答记录" })).toHaveAttribute(
+      "href",
+      "/t/data",
+    );
+    expect(screen.getByRole("button", { name: "统计" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("加载中显示骨架提示，不白屏", () => {
     mockedQuestions.mockReturnValue(new Promise(() => undefined));
     renderPage();

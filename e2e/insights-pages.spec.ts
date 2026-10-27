@@ -18,8 +18,7 @@ import {
  * 依次验证：
  * - 总览：关键计数（总正确率 50%、对 1/已判定 2、待批 0）+ 完成矩阵
  *   （学生名 + 课程单元列「已批 / 做过 1 次 · 首次 50 分」），点学生名进画像；
- * - 画像：周趋势与考点条形图容器（ECharts canvas）、讲义阅读地图含该讲义、
- *   错题列表含判错的填空题与学生答案；
+ * - 画像：讲义阅读地图含该讲义、错题列表含判错的填空题与学生答案；
  * - 题目视角：行展开显示题干全文与高频错误答案（fill 题型聚合「6 × 1」）。
  *
  * **独立教师域**：总览是教师全域聚合（另一 worker 的共用教师数据会污染
@@ -202,7 +201,7 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
       page.getByText("待批题").locator("..").getByText("0", { exact: true }),
     ).toBeVisible();
 
-    // 完成矩阵：学生名（链接画像）+ 课程单元列（已批 + 做过 1 次首次 50 分）
+    // 完成矩阵：学生名（链接学生主页）+ 课程单元列（已批 + 做过 1 次首次 50 分）
     const matrix = page.locator('section[aria-label="完成矩阵"]');
     await expect(matrix).toBeVisible();
     const studentCell = matrix.getByRole("link", { name: studentName });
@@ -212,20 +211,15 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
       matrix.getByText(/做过 1 次 · 首次 做对 1 \/ 2 题/),
     ).toBeVisible();
 
-    // 点学生名 → 画像页
+    // 点学生名 → 学生主页
     await studentCell.click();
-    await page.waitForURL(`**/t/insights/students/${student.id}*`);
+    await page.waitForURL(`**/t/students/${student.id}*`);
     await expect(
       page.getByRole("heading", { name: studentName }),
     ).toBeVisible();
 
-    // 画像：两张图表容器渲染出 ECharts canvas（种子数据非空 → 不落空态文案）
-    await expect(
-      page.locator('section[aria-label="正确率周趋势"] canvas'),
-    ).toBeVisible();
-    await expect(
-      page.locator('section[aria-label="考点正确率"] canvas'),
-    ).toBeVisible();
+    // T-PR1 起无图表：薄弱考点文字表可见
+    await expect(page.locator('section[aria-label="薄弱考点"]')).toBeVisible();
 
     // 阅读地图：该讲义出现在条目里
     const readingMap = page.locator('section[aria-label="讲义阅读地图"]');
