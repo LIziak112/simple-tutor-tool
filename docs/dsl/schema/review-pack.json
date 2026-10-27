@@ -468,7 +468,8 @@
                   "media",
                   "evidence",
                   "question",
-                  "annotation"
+                  "annotation",
+                  "record"
                 ]
               },
               "bytes": {

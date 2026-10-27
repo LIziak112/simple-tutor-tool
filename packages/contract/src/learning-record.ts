@@ -332,3 +332,6 @@ export const AI_MAX_POINTS_PER_MATERIAL = 6000;
 
 /** AI 视图 RDP 简化 ε（§7.3，按坐标域比例 0.3%：纸面逻辑宽 1000 → 3 逻辑单位） */
 export const AI_STROKE_EPSILON_RATIO = 0.003;
+
+/** record.json 随包的 JSON Schema（§7.2；zod v4 运行时导出，与契约同源） */
+export const learningRecordJsonSchema = z.toJSONSchema(learningRecordSchema);

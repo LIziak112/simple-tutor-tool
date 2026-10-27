@@ -34,7 +34,15 @@ export function packLeakTextOf(data: Buffer): string {
   const walk = (node: unknown): void => {
     if (typeof node === "string") {
       strings.push(
-        node.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, ""),
+        node
+          // ISO 时间戳：真实墙钟的十进制子串会与数字哨兵相撞（2026-10-08 事故）
+          .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "")
+          // LR-PR3：record.json 按设计携带 questionRevisionId 等随机 uuid——
+          // uuid 十六进制子串同样会与数字哨兵相撞（每次运行的随机假阳性）
+          .replace(
+            /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+            "",
+          ),
       );
       return;
     }

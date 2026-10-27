@@ -31,6 +31,7 @@ const EXPECTED_TOOLS = [
   "list_assignments",
   "list_courses",
   "get_lecture",
+  "get_question_learning_record",
   "get_unit",
   "get_student_learning_pack",
   "get_question_stats",
@@ -106,7 +107,7 @@ async function setupDedicatedTeacher(
 test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", {
   tag: ["@mcp"],
 }, () => {
-  test("教师 token 经 /mcp 完成 initialize → 既有 24 件工具在列 → list_students 见本域学生", async ({
+  test("教师 token 经 /mcp 完成 initialize → 既有 24 件 + LR-PR5 一件在列 → list_students 见本域学生", async ({
     request,
   }) => {
     test.setTimeout(60_000);
@@ -145,7 +146,7 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
         ?.name,
     ).toBeTruthy();
 
-    // ③ tools/list → 既有 24 件仍在（不定长名单断言，后续增工具不再破）
+    // ③ tools/list → 既有 24 件 + LR-PR5 一件在列（不定长名单断言，后续增工具不再破）
     const listRes = await postRpc(request, rpc("tools/list", {}, 2), token);
     expect(listRes.status).toBe(200);
     const tools = (listRes.json.result as { tools: { name: string }[] }).tools

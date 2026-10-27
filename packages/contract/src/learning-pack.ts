@@ -748,6 +748,9 @@ export const learningPackManifestFileSchema = z.object({
     // annotation/aNNN-strokes.json，二者原子成对——底图缺失时整体进缺失清单，
     // 不导出孤立的圈）；旧消费方遇未知 kind 按 manifest 通用口径忽略即可
     "annotation",
+    // LR-PR3 新增（只增不改，学习记录模型设计稿 §7.2）：按角色投影的
+    // LearningRecord（record.json；旧消费方遇未知 kind 按通用口径忽略）
+    "record",
   ]),
   bytes: z.number().int().min(0),
   /** 关联的包内编号（题目/证据条目；media 可关联多个 q 条目） */
