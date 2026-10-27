@@ -11,12 +11,12 @@ import {
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { HintEntryList } from "@/features/attempt/HintPanel";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
+import { DraftRecoverySection } from "@/features/notes/DraftRecoverySection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
 import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
@@ -49,9 +49,12 @@ import { useResultReviewLocation } from "./use-result-review-location";
 /**
  * 交卷后的结果视图（T2.6）：顶部得分汇总（scoreAuto/对错待批数/提交时间）+
  * 逐题结果卡（✓/✗/待批图标、题干快照、本人答案 vs 参考答案、详解默认折叠）。
- * T2.8：手写题（solve/apply/find-error）追加「我的手写笔迹」缩略图——学生本人
- * 笔迹 PNG 经 GET /api/student/attempts/:id/ink/:questionId.png 文件直出
- * （不进 base64/不进库）；无笔迹时该区块整体隐藏（img onerror 兜底）。
+ * T2.8：手写题（solve/apply/find-error）的手写原稿 PNG 在「草稿」组直接
+ * 展示——学生本人笔迹经 GET /api/student/attempts/:id/ink/:questionId.png
+ * 文件直出（不进 base64/不进库）；无笔迹时显示说明（img onerror 兜底）。
+ * 2026-10 订正重构：每题单行操作栏 = 查看详解｜草稿（草稿原稿/手写原稿 +
+ * D8 找回）｜订正（直达全屏重做工作台，见 CorrectionSection）｜本题历史｜
+ * 更多；题干标注恒由题面原位 AnnotationView 直显，不再提供独立标注组。
  * T2.11：做题时解锁过的提示在此回看（hintsOpened，只含学生自己请求过的条目；
  * 未解锁提示内容服务端从不下发）。详解只在交卷后由服务端下发
  * （AGENTS 第 3 条对「未交卷题目」的限制已解除）。
@@ -165,46 +168,32 @@ export function SolutionFold({
   );
 }
 
-/** 手写题的笔迹缩略图（学生本人 PNG 直出；无笔迹整块隐藏） */
-function InkThumbnail({
+/** 手写题的笔迹面板（学生本人 PNG 直出；无笔迹给出说明；挂载即加载） */
+function HandwrittenInkPanel({
   attemptId,
   questionId,
+  ariaPrefix,
 }: {
   attemptId: string;
   questionId: string;
+  ariaPrefix: string;
 }) {
   const [available, setAvailable] = useState(true);
-  const [open, setOpen] = useState(false);
   return (
-    <div
-      className={`flex min-w-0 flex-col gap-1.5 ${open ? "w-full" : "w-fit"}`}
-    >
-      <Button
-        variant="outline"
-        className="min-h-11 w-fit"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <PenLine aria-hidden className="size-4" />
-        查看手写原稿
-        <ChevronDown
-          aria-hidden
-          className={cn("size-4 transition-transform", open && "rotate-180")}
-        />
-      </Button>
-      {open && (
-        <p className="text-sm text-muted-foreground">
-          {available ? "我的手写笔迹" : "本次作答没有可查看的手写原稿。"}
-        </p>
-      )}
-      {open && available && (
+    <div className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-border bg-card px-3 py-3">
+      <p className="text-sm font-medium">手写原稿</p>
+      {available ? (
         <img
           src={studentInkPngUrl(attemptId, questionId)}
-          alt={`第 ${questionId} 题的手写笔迹`}
+          alt={`${ariaPrefix}的手写笔迹`}
           loading="lazy"
           className="w-full rounded-lg border border-border bg-white"
           onError={() => setAvailable(false)}
         />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          本次作答没有可查看的手写原稿。
+        </p>
       )}
     </div>
   );
@@ -256,11 +245,18 @@ function ResultQuestionCard({
           ariaPrefix={`第 ${index + 1} 题`}
         />
       }
-      original={
+      draft={
         <>
-          {!isHandwritten && (
+          {isHandwritten ? (
+            <HandwrittenInkPanel
+              attemptId={attemptId}
+              questionId={question.questionId}
+              ariaPrefix={`第 ${index + 1} 题`}
+            />
+          ) : (
             <NoteOriginalView
               compact
+              defaultOpen
               viewer="student"
               attemptId={attemptId}
               questionId={question.questionId}
@@ -268,12 +264,9 @@ function ResultQuestionCard({
               roundLabel={roundLabel}
             />
           )}
-          {isHandwritten && (
-            <InkThumbnail
-              attemptId={attemptId}
-              questionId={question.questionId}
-            />
-          )}
+          {/* 题干标注回看 + 合成图导出（底图＋圈，粘贴给 AI/保存）——题面
+              原位直显之外的学生侧导出出口（2026-10 复审恢复：入口随组按需
+              挂载，compact 关闭态零请求） */}
           <AnnotationView
             compact
             viewer="student"
@@ -282,25 +275,22 @@ function ResultQuestionCard({
             questionNo={index + 1}
             ariaPrefix={`第 ${index + 1} 题`}
           />
+          {/* D8 找回草稿/补充稿同步状态：草稿材料语义，随草稿组挂载 */}
+          <DraftRecoverySection
+            attemptId={attemptId}
+            questionId={question.questionId}
+          />
         </>
       }
       correction={
-        <>
-          <AnnotationLayer
-            attemptId={attemptId}
-            questionId={question.questionId}
-            phase="correction"
-            ariaPrefix={`第 ${index + 1} 题`}
-            triggerLabel="添加订正标画"
-          />
-          <CorrectionSection
-            hideHistory
-            compact
-            attemptId={attemptId}
-            questionId={question.questionId}
-            ariaPrefix={`第 ${index + 1} 题`}
-          />
-        </>
+        <CorrectionSection
+          attemptId={attemptId}
+          questionId={question.questionId}
+          questionNo={index + 1}
+          ariaPrefix={`第 ${index + 1} 题`}
+          roundLabel={roundLabel}
+          question={question}
+        />
       }
       more={
         <ReviewPackPanel

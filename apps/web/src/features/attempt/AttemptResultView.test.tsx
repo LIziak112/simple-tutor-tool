@@ -199,6 +199,14 @@ function renderView(onBackHome = vi.fn()) {
   return render(<AttemptResultView data={DATA} onBackHome={onBackHome} />);
 }
 
+/** 打开全部题卡的折叠组（2026-10 订正重构后组内容按需挂载：草稿/更多） */
+function openGroupAll(name: "草稿" | "更多") {
+  for (const card of screen.getAllByRole("article")) {
+    const trigger = within(card).queryByRole("button", { name });
+    if (trigger instanceof HTMLElement) fireEvent.click(trigger);
+  }
+}
+
 describe("得分汇总卡", () => {
   it("答案由待公布变为公布时，材料控制器保持挂载", () => {
     const ui = (released: boolean) => (
@@ -209,11 +217,12 @@ describe("得分汇总卡", () => {
     );
     const { rerender } = render(ui(false));
     const card = screen.getByRole("article", { name: "第 1 题" });
+    fireEvent.click(within(card).getByRole("button", { name: "草稿" }));
     const original = within(card).getByTestId("note-original-stub");
     rerender(ui(true));
     expect(within(card).getByTestId("note-original-stub")).toBe(original);
   });
-  it("先读答案与详解，再访问原稿和订正，定位范围不卸载正文", () => {
+  it("先读答案与详解，再访问草稿和订正，定位范围不卸载正文", () => {
     renderView();
     const card = screen.getByRole("article", { name: "第 1 题" });
     const answer = within(card).getByText("你的答案：");
@@ -226,6 +235,7 @@ describe("得分汇总卡", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(tools).toContainElement(solution);
+    fireEvent.click(within(card).getByRole("button", { name: "草稿" }));
     fireEvent.change(screen.getByRole("combobox", { name: "回看定位范围" }), {
       target: { value: "wrong" },
     });
@@ -410,17 +420,14 @@ describe("逐题结果卡", () => {
 
   it("手写原稿按需读取PNG，客观题不拉手写图片", () => {
     renderView();
-    expect(
-      screen.queryByAltText("第 p4-q7 题的手写笔迹"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByAltText("第 4 题的手写笔迹")).not.toBeInTheDocument();
     fireEvent.click(
       within(screen.getByRole("article", { name: "第 4 题" })).getByRole(
         "button",
-        { name: "本次原稿" },
+        { name: "草稿" },
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "查看手写原稿" }));
-    const img = screen.getByAltText("第 p4-q7 题的手写笔迹");
+    const img = screen.getByAltText("第 4 题的手写笔迹");
     expect(img).toHaveAttribute(
       "src",
       "/api/student/attempts/55555555-5555-4555-8555-555555555555/ink/p4-q7.png",
@@ -429,7 +436,7 @@ describe("逐题结果卡", () => {
     expect(document.querySelectorAll('img[alt$="题的手写笔迹"]').length).toBe(
       1,
     );
-    expect(screen.getByText("我的手写笔迹")).toBeInTheDocument();
+    expect(screen.getByText("手写原稿")).toBeInTheDocument();
   });
 
   it("选项正确项/你的选择有标记", () => {
@@ -827,8 +834,9 @@ describe("详解折叠开合回调（T4.0b）", () => {
 describe("本次草稿原稿入口（T6R.11）", () => {
   const stubsOf = noteOriginalStubDatasets;
 
-  it("非手写题逐题渲染入口（学生角色 + 本 attempt 定位 + 题目 id）；手写题不渲染", () => {
+  it("非手写题逐题渲染入口（学生角色 + 本 attempt 定位 + 题目 id）；手写题为手写原稿面板", () => {
     renderView();
+    openGroupAll("草稿");
     const stubs = stubsOf();
     // DATA 四题：判断/单选/填空非手写（有草稿层），solve 手写（不渲染）
     expect(stubs.map((s) => s.question)).toEqual([
@@ -842,10 +850,26 @@ describe("本次草稿原稿入口（T6R.11）", () => {
     }
   });
 
+  it("草稿组含题干标注回看/导出入口（全部题型；compact 关闭态零请求）", () => {
+    renderView();
+    // 折叠时零挂载：入口不存在
+    expect(
+      screen.queryByRole("button", { name: "查看第 1 题题干标注" }),
+    ).toBeNull();
+    openGroupAll("草稿");
+    // 全部题型（含手写题）都有标注导出出口——合成图导出/复制图片在展开态
+    for (const no of ["1", "2", "3", "4"]) {
+      expect(
+        screen.getByRole("button", { name: `查看第 ${no} 题题干标注` }),
+      ).toBeInTheDocument();
+    }
+  });
+
   // ---------- T6R.13：单题完整导出入口（每题一个，含手写题） ----------
 
   it("逐题渲染 AI 复习包入口：全部题型、学生角色、attempt/题目/全卷题号定位", () => {
     renderView();
+    openGroupAll("更多");
     const stubs = reviewPackStubDatasets();
     // DATA 四题全渲染（手写题也有复习包——原稿走笔迹/证据链）
     expect(stubs).toHaveLength(4);
@@ -865,6 +889,7 @@ describe("本次草稿原稿入口（T6R.11）", () => {
 
   it("轮次标注按来源：作业=本次作业、课程=第 n 次课程练习、错题重练=第 N 次组卷", () => {
     const assignmentView = renderView(); // DATA 作业来源
+    openGroupAll("草稿");
     expect(stubsOf()[0]?.round).toBe("本次作业");
     assignmentView.unmount();
 
@@ -887,6 +912,7 @@ describe("本次草稿原稿入口（T6R.11）", () => {
     const { unmount } = render(
       <AttemptResultView data={courseData} onBackHome={vi.fn()} />,
     );
+    openGroupAll("草稿");
     expect(stubsOf()[0]?.round).toBe("第 2 次课程练习");
     unmount();
 
@@ -902,6 +928,7 @@ describe("本次草稿原稿入口（T6R.11）", () => {
       },
     };
     render(<AttemptResultView data={wrongData} onBackHome={vi.fn()} />);
+    openGroupAll("草稿");
     // wrong 的 attemptNo=该生错题重练组卷计数（含废弃 draft），非每题轮次——
     // 文案不承诺「第 n 轮」
     expect(stubsOf()[0]?.round).toBe("错题重练 · 第 3 次组卷");
@@ -925,6 +952,7 @@ describe("本次草稿原稿入口（T6R.11）", () => {
       courseName: null,
     };
     render(<AttemptResultView data={lessonData} onBackHome={vi.fn()} />);
+    openGroupAll("草稿");
     expect(stubsOf()[0]?.round).toBe("第 2 次讲练");
     expect(
       screen.getByText("讲练：第1讲 有理数讲练 · 第 2 次"),
@@ -938,6 +966,7 @@ describe("本次草稿原稿入口（T6R.11）", () => {
 
   it("ariaPrefix 接线：各题桩带自己的题号前缀", () => {
     renderView();
+    openGroupAll("草稿");
     const prefixes = stubsOf().map((stub) => stub.prefix);
     expect(prefixes).toEqual(["第 1 题", "第 2 题", "第 3 题"]);
   });
@@ -945,15 +974,16 @@ describe("本次草稿原稿入口（T6R.11）", () => {
   it("未公布（answersReleased=false）入口仍在——学生看自己的草稿不受答案公布 gate 限制", () => {
     const unreleased: AttemptResultData = { ...DATA, answersReleased: false };
     render(<AttemptResultView data={unreleased} onBackHome={vi.fn()} />);
+    openGroupAll("草稿");
     // 三个非手写题照常渲染入口（不含手写题）
     expect(stubsOf()).toHaveLength(3);
   });
 });
 
-// ---------- T6R.15：结果页订正区入口 ----------
+// ---------- T6R.15：结果页订正入口（2026-10 订正重构：直达动作） ----------
 
-describe("订正区入口（T6R.15）", () => {
-  it("所有题型逐题渲染订正区（含手写题）+ 本 attempt/题目定位 + 题号前缀", () => {
+describe("订正入口（2026-10 直达）", () => {
+  it("所有题型逐题渲染订正入口（含手写题）+ 本 attempt/题目/题号/轮次定位 + 题号前缀", () => {
     renderView();
     const stubs = correctionStubDatasets();
     // DATA 四题全渲染（订正不依赖草稿层——手写题也有订正入口）
@@ -966,7 +996,9 @@ describe("订正区入口（T6R.15）", () => {
     ]);
     for (const stub of stubs) {
       expect(stub.attempt).toBe(DATA.attempt.id);
+      expect(stub.round).toBe("本次作业"); // DATA 为 assignment 来源
     }
+    expect(stubs.map((s) => s.no)).toEqual(["1", "2", "3", "4"]);
     expect(stubs.map((s) => s.prefix)).toEqual([
       "第 1 题",
       "第 2 题",

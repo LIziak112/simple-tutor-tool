@@ -90,14 +90,23 @@ export const QuestionAnnotationOverlay = forwardRef<
     label: string;
     children: ReactNode;
     hidden?: boolean;
+    /** 阶段（答题期 scratch；订正工作台 correction——结果页挂载，2026-10） */
+    phase?: "scratch" | "correction";
   }
 >((props, ref) => {
-  const { attemptId, question, label, children, hidden = false } = props;
+  const {
+    attemptId,
+    question,
+    label,
+    children,
+    hidden = false,
+    phase = "scratch",
+  } = props;
   const editor = useAttemptEditor(question.id);
   const recovery = useDraftSyncRecovery();
   const inputPreference = useSessionInputPreference();
   const session = useAnnotationSessionRef();
-  const record = useAnnotationRecord(attemptId, question.id);
+  const record = useAnnotationRecord(attemptId, question.id, phase);
   const root = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const surface = useRef<AnnotationSurface | null>(null);
@@ -195,7 +204,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   const scope = {
     attemptId,
     questionId: question.id,
-    phase: "scratch" as const,
+    phase,
   };
 
   const getActiveEditor = editor?.getActive;
@@ -205,9 +214,9 @@ export const QuestionAnnotationOverlay = forwardRef<
       void getAnnotationRecord(session, {
         attemptId,
         questionId: question.id,
-        phase: "scratch",
+        phase,
       });
-  }, [session, attemptId, question.id]);
+  }, [session, attemptId, question.id, phase]);
 
   const finish = useCallback(async () => {
     surface.current?.finish();
@@ -215,22 +224,22 @@ export const QuestionAnnotationOverlay = forwardRef<
       await settleAnnotationRecordPersistence(session, {
         attemptId,
         questionId: question.id,
-        phase: "scratch",
+        phase,
       });
       await retryAnnotationPersistence(session, {
         attemptId,
         questionId: question.id,
-        phase: "scratch",
+        phase,
       });
       const saved = await getAnnotationRecord(session, {
         attemptId,
         questionId: question.id,
-        phase: "scratch",
+        phase,
       });
       if (saved?.local === "failed")
         throw new Error(saved.localError ?? "本机标画未保存");
     }
-  }, [session, attemptId, question.id]);
+  }, [session, attemptId, question.id, phase]);
 
   useLayoutEffect(() => {
     const element = viewport.current;
@@ -269,7 +278,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       return;
     return scheduleQuestionBasePrewarm(
       session,
-      { attemptId, questionId: question.id, phase: "scratch" },
+      { attemptId, questionId: question.id, phase },
       question,
       element,
       () =>
@@ -284,6 +293,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     attemptId,
     question,
     hidden,
+    phase,
     record?.localBase,
     record?.base,
     recovery,
@@ -358,7 +368,11 @@ export const QuestionAnnotationOverlay = forwardRef<
             );
             if (signal.aborted) return false;
             if (prepared.kind === "sealed")
-              throw new Error("标画已随交卷固定，请刷新查看");
+              throw new Error(
+                phase === "correction"
+                  ? "订正圈画已随上次保存定格，仅供回看（再修改无新行，草稿纸不受影响）"
+                  : "标画已随交卷固定，请刷新查看",
+              );
             if (prepared.kind === "legacy") {
               // v1 旧版底图（无 layout）：直接转只读原圈画查看，不报错、
               // 不进原位编辑（不重建底图、不创建待传空稿）。
@@ -717,7 +731,7 @@ export const QuestionAnnotationOverlay = forwardRef<
         return;
       loadedVersion.current = writeAnnotationDoc(
         session,
-        { attemptId, questionId: question.id, phase: "scratch" },
+        { attemptId, questionId: question.id, phase },
         doc,
       );
       setHistory((value) => value + 1);
@@ -732,6 +746,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     session,
     attemptId,
     question.id,
+    phase,
     cssWidth,
     cssHeight,
     baseWidth,
@@ -905,7 +920,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       )}
       {loading && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
-          正在准备标画，仍可作答…
+          {phase === "correction" ? "正在准备圈画…" : "正在准备标画，仍可作答…"}
         </p>
       )}
       {error && (
@@ -935,8 +950,12 @@ export const QuestionAnnotationOverlay = forwardRef<
           <DialogTitle>{label}原圈画</DialogTitle>
           <DialogDescription>
             {layout
-              ? "按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。"
-              : "此题标画为旧版，仅供查看。关闭后可继续作答。"}
+              ? phase === "correction"
+                ? "按保存时的题面显示原圈画，仅供查看。关闭后可继续订正。"
+                : "按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。"
+              : phase === "correction"
+                ? "此题圈画为旧版，仅供查看。关闭后可继续订正。"
+                : "此题标画为旧版，仅供查看。关闭后可继续作答。"}
           </DialogDescription>
           {record?.local === "failed" && (
             <p role="alert">
@@ -1073,7 +1092,7 @@ export const QuestionAnnotationOverlay = forwardRef<
               className="h-11 w-16 shrink-0 px-2"
               onClick={() => void editor?.request(null)}
             >
-              作答
+              {phase === "correction" ? "完成" : "作答"}
             </Button>
           </div>
         </div>

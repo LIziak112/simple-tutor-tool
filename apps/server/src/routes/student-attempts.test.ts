@@ -975,6 +975,9 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       .all()
       .find((r) => r.questionId === Q.fill);
     expect(row?.questionVersion).toBe(1);
+    // 题目版本引用（responses 行 id）随结果视图下发——订正工作台原位圈画
+    // 建底图布局的身份要素（与作答视图同源；对学生不透明）
+    expect(fill?.questionRevisionId).toBe(row?.id);
     // 对照：库中题目当前版本确已 +1（编辑生效，仅历史行不变）
     const questionRow = db
       .select()

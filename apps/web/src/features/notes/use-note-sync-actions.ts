@@ -1,6 +1,6 @@
 /**
  * 冲突裁决 / 被拒重试的动作接线（T6R.15 闸门修复 F4 抽取）：NoteLayer
- * （scratch 草稿纸）与 CorrectionPanel（订正编辑器）曾整段同构的
+ * （scratch 草稿纸）与 CorrectionWorkspace（订正工作台）曾整段同构的
  * resolveError state + keepLocal/keepCloud/retryDenied 三回调的单一实现；
  * CorrectionSection 的补充稿同步状态块（闸门修复 F3）是第三个消费者。
  * scope 定在调用方（phase 三态 scratch/correction/supplement）；NoteLayer

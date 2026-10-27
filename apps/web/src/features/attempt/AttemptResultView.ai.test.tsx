@@ -265,9 +265,16 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     expect(mockedCapture).not.toHaveBeenCalled();
   });
 
-  it("打开 AI 面板不卸载原稿/订正控制器（DOM 身份稳定）", async () => {
+  it("打开 AI 面板不卸载草稿/订正控制器（DOM 身份稳定）", async () => {
     const { container } = renderView();
-    // 原稿/订正桩（每题一份，材质控制器挂载其中）
+    // 草稿面板按需挂载（2026-10 订正重构）：先打开第 1 题的草稿组
+    fireEvent.click(
+      within(screen.getByRole("article", { name: "第 1 题" })).getByRole(
+        "button",
+        { name: "草稿" },
+      ),
+    );
+    // 草稿/订正桩（每题一份，材质控制器挂载其中）
     const originalsBefore = container.querySelectorAll(
       '[data-testid="note-original-stub"]',
     );
