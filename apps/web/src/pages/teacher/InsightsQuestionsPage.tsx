@@ -18,6 +18,7 @@ import { formatPercent } from "@/features/insights/insights-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { formatDueTime } from "@/lib/time";
+import { StatsViewSwitcher } from "./StatsViewSwitcher";
 
 /**
  * /t/insights/questions 题目视角（T4.2）：
@@ -175,10 +176,14 @@ export function InsightsQuestionsPage() {
             点击行可展开题干全文。
           </p>
         </div>
-        <InsightsViewSwitcher
-          view="questions"
-          query={analyticsUrlQuery(state).toString()}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          {/* T-PR1 顺手④：与 /t/data 头部对称的「作答记录 / 统计」切换 */}
+          <StatsViewSwitcher active="stats" />
+          <InsightsViewSwitcher
+            view="questions"
+            query={analyticsUrlQuery(state).toString()}
+          />
+        </div>
       </header>
 
       <AnalyticsFilterBar

@@ -63,7 +63,7 @@ test("甲发布单元 → 乙共享页导入 → 乙建课使用该单元", {
   await page.fill("#login-name", yiLoginName);
   await page.fill("#login-password", YI_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.waitForURL("**/t/library");
+  await page.waitForURL(/\/t\/students(\/|$)/);
 
   await page.goto("/t/shared");
   // 乙的资源库为空，但共享页能看到甲发布的文件（发布者=teacher、在线发布）

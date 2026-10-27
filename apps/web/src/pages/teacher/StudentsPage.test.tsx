@@ -6,6 +6,7 @@ import type {
   StudentListData,
   StudentSummary,
 } from "@tutor/contract";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentApi,
@@ -78,9 +79,11 @@ function renderPage() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <StudentsPage />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={["/t/students"]}>
+      <QueryClientProvider client={client}>
+        <StudentsPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -159,9 +162,14 @@ describe("StudentsPage 列表与操作", () => {
     );
   });
 
-  it("渲染姓名、登录名、备注、归档标记与两种登录方式状态", async () => {
+  it("渲染姓名（链接进学生主页）、登录名、备注、归档标记与两种登录方式状态", async () => {
     renderPage();
     expect(await screen.findByText("张三")).toBeInTheDocument();
+    // T-PR1：学生名是链接，进学生主页
+    expect(screen.getByRole("link", { name: "张三" })).toHaveAttribute(
+      "href",
+      `/t/students/${STUDENT_A.id}`,
+    );
     expect(screen.getByText("李四")).toBeInTheDocument();
     expect(screen.getByText("登录名：张三")).toBeInTheDocument();
     expect(screen.getByText("登录名：李四2")).toBeInTheDocument();
@@ -170,7 +178,9 @@ describe("StudentsPage 列表与操作", () => {
     // 张三链接开启、李四链接关闭
     expect(screen.getAllByText("专属链接：已开启").length).toBe(1);
     expect(screen.getAllByText("专属链接：已关闭").length).toBe(1);
-    expect(screen.getByText("共 2 名学生")).toBeInTheDocument();
+    expect(
+      screen.getByText("共 2 名学生 · 按最近作答倒序"),
+    ).toBeInTheDocument();
   });
 
   it("T2A.4：所在课程列显示课程徽标，未加入显示提示", async () => {
@@ -395,5 +405,40 @@ describe("StudentsPage AI 伴学策略（SAI-07）", () => {
       type: "student",
       id: STUDENT_A.id,
     });
+  });
+});
+
+describe("StudentsPage 活动三列（T-PR4 Web-4）", () => {
+  it("行带最近作答 / 待批 / 进行中讲练统计", async () => {
+    vi.clearAllMocks();
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(emptyCourseList(archived)),
+    );
+    mockedFetch.mockResolvedValue({
+      students: [
+        {
+          ...STUDENT_A,
+          lastActivityAt: "2026-09-26T02:00:00.000Z",
+          pendingCount: 3,
+          inProgressLessonCount: 1,
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText(/最近作答：/)).toBeInTheDocument();
+    expect(screen.getByText("待批 3")).toBeInTheDocument();
+    expect(screen.getByText("进行中讲练 1")).toBeInTheDocument();
+  });
+
+  it("无作答学生显示「最近作答：暂无」", async () => {
+    vi.clearAllMocks();
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(emptyCourseList(archived)),
+    );
+    mockedFetch.mockResolvedValue({ students: [{ ...STUDENT_A }] });
+    renderPage();
+    expect(await screen.findByText(/最近作答：暂无/)).toBeInTheDocument();
+    expect(screen.getByText("待批 0")).toBeInTheDocument();
+    expect(screen.getByText("进行中讲练 0")).toBeInTheDocument();
   });
 });

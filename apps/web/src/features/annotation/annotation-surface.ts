@@ -22,15 +22,24 @@
  * 手感——决策矩阵在 pointer-machine.test.ts 锁定，手感不可静态审查替代。
  */
 
-import type { AnnotationDoc } from "@tutor/contract";
+import {
+  ANNOTATION_MAX_DELETED_POINTS,
+  ANNOTATION_MAX_DELETED_STROKES,
+  type AnnotationDoc,
+  type AnnotationSurfaceCompatibility,
+} from "@tutor/contract";
 import type Atrament from "atrament";
+import {
+  anchorKeyForStroke,
+  strokeBbox,
+} from "@/features/annotation/annotation-anchor";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import {
   type StrokeBounds,
   strokeBounds,
 } from "@/features/ink/engine/bounds.ts";
 import { eraseHit } from "@/features/ink/engine/erase.ts";
-import { InkStore } from "@/features/ink/engine/history.ts";
+import { InkStore, mintStrokeId } from "@/features/ink/engine/history.ts";
 import {
   advancePointerMachine,
   createPointerMachineState,
@@ -42,9 +51,11 @@ import {
 } from "@/features/ink/engine/pointer-machine.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface.ts";
 import {
+  asPointerKind,
   INK_ERASE_RADIUS,
   INK_LOGICAL_WIDTH,
   type InkInputMode,
+  type InkPointerKind,
   type InkStroke,
   type InkStrokePoint,
   type InkToolConfig,
@@ -87,6 +98,14 @@ export interface AnnotationSurfaceOptions {
   /** 输入模式（缺省 auto——笔/手指/鼠标都可圈画，同旧作答组件口径） */
   inputMode?: InkInputMode;
   inputEnabled?: boolean;
+  /**
+   * LR-6：收笔锚定的布局证据（layout.compatibility.blocks，含 node 键）。
+   * 由宿主（QuestionAnnotationOverlay）从底图行供给；缺省/无键块 → 不锚
+   * （旧布局不伪造锚点，P1）。
+   */
+  anchorBlocks?:
+    | (() => AnnotationSurfaceCompatibility["blocks"] | undefined)
+    | undefined;
 }
 
 /**
@@ -131,8 +150,18 @@ export function replayAnnotationStroke(
 export function createAnnotationSurface(
   options: AnnotationSurfaceOptions,
 ): AnnotationSurface {
-  const { baseWidth, baseHeight } = options;
-  const store = new InkStore();
+  const { baseWidth, baseHeight, anchorBlocks } = options;
+  // LR-2/LR-4：墓碑预算按圈画链（80k 点）；压实丢墓碑时同步清这些 id 的锚点
+  const anchors: Record<string, string> = {};
+  const store = new InkStore({
+    maxDeletedPoints: ANNOTATION_MAX_DELETED_POINTS,
+    // LR-2：圈画链墓碑按「笔数」压实——400 笔上限先于 80k 点撞顶，
+    // 且 413 后 annotation-sync 判 denied 不再重试，客户端必须先压实
+    maxDeletedStrokes: ANNOTATION_MAX_DELETED_STROKES,
+    onTombstonesTrimmed: (trimmed) => {
+      for (const tomb of trimmed) delete anchors[tomb.id];
+    },
+  });
 
   let container: HTMLElement | null = null;
   let canvas: HTMLCanvasElement | null = null;
@@ -156,6 +185,9 @@ export function createAnnotationSurface(
 
   let livePoints: InkStrokePoint[] = [];
   let liveStartStamp = 0;
+  // LR-1：本笔绝对时刻与输入来源（pointerdown 捕获，收笔随笔画提交）
+  let liveStartedAt = 0;
+  let livePointerKind: InkPointerKind | undefined;
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
   let liveStrokeIsErase = false;
@@ -191,6 +223,9 @@ export function createAnnotationSurface(
       baseWidth,
       baseHeight,
       strokes: store.getStrokes(),
+      // LR-2/LR-4：墓碑与锚点非空才写键（空稿/旧稿字节兼容）
+      ...(store.getDeleted().length > 0 ? { deleted: store.getDeleted() } : {}),
+      ...(Object.keys(anchors).length > 0 ? { anchors: { ...anchors } } : {}),
     };
   }
 
@@ -299,16 +334,37 @@ export function createAnnotationSurface(
       }
       const brush = liveBrush;
       const points = livePoints;
+      const strokeId = mintStrokeId();
       withReason("stroke", () =>
         store.commitAdd([
           {
             tool: liveTool,
             color: brush.color,
             weight: brush.weight, // 底图像素域（契约：weight 与坐标同域）
+            // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
+            id: strokeId,
+            ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+            ...(livePointerKind !== undefined
+              ? { pointer: livePointerKind }
+              : {}),
             points,
           },
         ]),
       );
+      // LR-6：收笔即锚——重叠面积最大的带键块为锚；全不相交取最近块；
+      // 无带键块（旧布局）不锚（P1 不伪造，anchoredRatio 如实降低）
+      const bbox = strokeBbox({
+        tool: liveTool,
+        color: brush.color,
+        weight: brush.weight,
+        points,
+      });
+      if (bbox !== null) {
+        const blocks = anchorBlocks?.();
+        const key =
+          blocks === undefined ? undefined : anchorKeyForStroke(bbox, blocks);
+        if (key !== undefined) anchors[strokeId] = key;
+      }
     }
     livePoints = [];
     livePrev = null;
@@ -353,6 +409,9 @@ export function createAnnotationSurface(
       // 个别浏览器 canvas 未聚焦时可能抛错（同引擎口径）
     }
     liveStartStamp = e.timeStamp;
+    // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录，空串守卫）
+    liveStartedAt = Date.now();
+    livePointerKind = asPointerKind(e.pointerType);
     liveStrokeIsErase = tool.type === "eraser";
 
     if (liveStrokeIsErase) {
@@ -603,7 +662,13 @@ export function createAnnotationSurface(
 
     load(doc: AnnotationDoc): void {
       finishPointer({ kind: "layoutchange" });
-      withReason("load", () => store.replace(doc.strokes));
+      // LR-2：墓碑随文档整组载入（load(getDoc()) 往返一致）
+      withReason("load", () =>
+        store.replace(doc.strokes, Date.now(), doc.deleted ?? []),
+      );
+      // LR-4：锚点整组载入（先清空再并入，防残留）
+      for (const key of Object.keys(anchors)) delete anchors[key];
+      Object.assign(anchors, doc.anchors ?? {});
       redraw();
     },
 

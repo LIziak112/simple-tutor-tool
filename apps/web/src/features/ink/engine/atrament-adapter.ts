@@ -58,7 +58,7 @@ import { type StrokeBounds, strokeBounds } from "./bounds.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
 import { eraseHit } from "./erase.ts";
-import { InkStore } from "./history.ts";
+import { InkStore, mintStrokeId } from "./history.ts";
 import {
   fromLogical,
   fromLogicalPoint,
@@ -77,12 +77,14 @@ import {
 } from "./pointer-machine.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import {
+  asPointerKind,
   INK_DEFAULT_SMOOTHING,
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
   type InkPenColor,
   type InkPenSize,
+  type InkPointerKind,
   type InkStroke,
   type InkStrokePoint,
   type InkToolConfig,
@@ -217,6 +219,9 @@ export function createAtramentSurface(
   /** 当前一笔的归一化点序列与计时起点 */
   let livePoints: InkStrokePoint[] = [];
   let liveStartStamp = 0;
+  // LR-1：本笔绝对时刻与输入来源（pointerdown 捕获，收笔随笔画提交）
+  let liveStartedAt = 0;
+  let livePointerKind: InkPointerKind | undefined;
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
   /**
@@ -418,6 +423,12 @@ export function createAtramentSurface(
             tool: liveTool,
             color: brush.color,
             weight: brush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
+            // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
+            id: mintStrokeId(),
+            ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+            ...(livePointerKind !== undefined
+              ? { pointer: livePointerKind }
+              : {}),
             ...(options.rendering
               ? {
                   rendering: {
@@ -436,6 +447,8 @@ export function createAtramentSurface(
     liveStrokeIsErase = false;
     pendingErase = new Set();
     erasePrev = undefined;
+    liveStartedAt = 0;
+    livePointerKind = undefined;
   }
 
   // ---- 事件处理 ----
@@ -474,6 +487,9 @@ export function createAtramentSurface(
       // 个别浏览器在 canvas 未聚焦时可能抛错，忽略（pointerup 仍会冒泡到 canvas/document）
     }
     liveStartStamp = e.timeStamp;
+    // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录）
+    liveStartedAt = Date.now();
+    livePointerKind = asPointerKind(e.pointerType);
     // 落笔快照（复审③）：本笔的 move 采样与收笔提交都按此刻的工具分派
     liveStrokeIsErase = tool.type === "eraser";
 
@@ -764,8 +780,13 @@ export function createAtramentSurface(
       applyTouchAction();
 
       if (initial) {
+        const parsedInitial = parseAtramentDoc(initial);
         withReason("load", () =>
-          store.replace(parseAtramentDoc(initial), initial.updatedAt),
+          store.replace(
+            parsedInitial.strokes,
+            initial.updatedAt,
+            parsedInitial.deleted,
+          ),
         );
       }
       redraw();
@@ -802,8 +823,9 @@ export function createAtramentSurface(
       // 事件由状态机丢弃（不粘笔）。若不先收笔：live 缓冲像素被 redraw
       // 清掉且 replace 后按下标提交的 erase 会删错新稿笔画。
       finishPointer({ kind: "layoutchange" });
+      const parsedDoc = parseAtramentDoc(data);
       withReason("load", () =>
-        store.replace(parseAtramentDoc(data), data.updatedAt),
+        store.replace(parsedDoc.strokes, data.updatedAt, parsedDoc.deleted),
       );
       redraw();
     },

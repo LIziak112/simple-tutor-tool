@@ -18,11 +18,15 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AiPromptPanel } from "@/features/content/AiPromptPanel";
-import { useTeacherCourses } from "@/features/courses/course-queries";
+import { catalogTreeRows } from "@/features/courses/catalog-tree";
+import {
+  useCourseDetail,
+  useTeacherCourses,
+} from "@/features/courses/course-queries";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { extractImageRefs } from "@/features/markdown/image-refs";
 import { ApiError, createLibraryFolderApi } from "@/lib/api";
@@ -87,7 +91,15 @@ export interface ImportOptions {
   /** 目标文件夹 id；null = 未归类 */
   readonly folderId: string | null;
   /** 同时加入课程（D17 快捷项）；undefined = 不加入 */
-  readonly addToCourse: { courseId: string; visible: boolean } | undefined;
+  readonly addToCourse:
+    | {
+        courseId: string;
+        visible: boolean;
+        parentId?: string | null;
+        folderPath?: string[];
+      }
+    | undefined;
+  readonly courseAutoSubdir?: boolean;
 }
 
 /** 预览/确认步骤展示的随行图片汇总（无图片参与时为 null，卡片自行为空不渲染） */
@@ -239,6 +251,11 @@ interface SingleInput {
 }
 
 export function ImportPage() {
+  const [initialParams] = useSearchParams();
+  const [courseParentId, setCourseParentId] = useState(
+    initialParams.get("parentId") ?? "",
+  );
+  const [courseAutoSubdir, setCourseAutoSubdir] = useState(false);
   const [stage, setStage] = useState<Stage>("select");
   const [pickedFiles, setPickedFiles] = useState<PickedFile[]>([]);
   // 粘贴输入区（展开式小面板）：内容与文件名只在「加入清单」那一刻转成清单条目
@@ -257,8 +274,13 @@ export function ImportPage() {
   // ---- 导入选项 ----
   const [folderSelection, setFolderSelection] = useState<string>("none");
   const [autoSubdir, setAutoSubdir] = useState(false);
-  const [addToCourseOn, setAddToCourseOn] = useState(false);
-  const [courseSelection, setCourseSelection] = useState<string>("");
+  const [addToCourseOn, setAddToCourseOn] = useState(
+    initialParams.has("courseId"),
+  );
+  const [courseSelection, setCourseSelection] = useState<string>(
+    initialParams.get("courseId") ?? "",
+  );
+  const targetCourse = useCourseDetail(courseSelection);
   const [courseVisible, setCourseVisible] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -280,9 +302,14 @@ export function ImportPage() {
 
   const options: ImportOptions = {
     folderId: folderSelection === "none" ? null : (folderSelection as string),
+    courseAutoSubdir,
     addToCourse:
       addToCourseOn && courseSelection !== ""
-        ? { courseId: courseSelection, visible: courseVisible }
+        ? {
+            courseId: courseSelection,
+            visible: courseVisible,
+            parentId: courseParentId || null,
+          }
         : undefined,
   };
 
@@ -494,7 +521,13 @@ export function ImportPage() {
       addToCourseOn &&
       (coursesQuery.isPending ||
         coursesQuery.isError ||
-        !courseOptions.some((course) => course.id === courseSelection))
+        !courseOptions.some((course) => course.id === courseSelection) ||
+        targetCourse.isPending ||
+        targetCourse.isError ||
+        (courseParentId !== "" &&
+          !targetCourse.data?.items.some(
+            (item) => item.id === courseParentId && item.kind === "section",
+          )))
     ) &&
     companion.uploadingCount === 0;
 
@@ -943,7 +976,7 @@ export function ImportPage() {
                     onChange={(e) => setAddToCourseOn(e.target.checked)}
                     className="size-5 accent-primary"
                   />
-                  同时加入课程（追加到目录末尾）
+                  同时加入课程
                 </label>
                 {addToCourseOn ? (
                   <div className="flex flex-wrap items-center gap-2">
@@ -951,7 +984,10 @@ export function ImportPage() {
                       aria-label="选择课程"
                       disabled={coursesQuery.isPending || coursesQuery.isError}
                       value={courseSelection}
-                      onChange={(e) => setCourseSelection(e.target.value)}
+                      onChange={(e) => {
+                        setCourseSelection(e.target.value);
+                        setCourseParentId("");
+                      }}
                       className="min-h-11 flex-1 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
                       <option value="">
@@ -963,6 +999,47 @@ export function ImportPage() {
                         </option>
                       ))}
                     </select>
+                    <label className="flex w-full flex-col gap-1 text-sm">
+                      课程内位置
+                      <select
+                        aria-label="课程内位置"
+                        value={courseParentId}
+                        onChange={(e) => setCourseParentId(e.target.value)}
+                        disabled={
+                          targetCourse.isPending || targetCourse.isError
+                        }
+                        className="min-h-11 rounded-md border border-input bg-background px-3 text-base"
+                      >
+                        <option value="">根目录（未分组）</option>
+                        {catalogTreeRows(targetCourse.data?.items ?? [])
+                          .filter((row) => row.item.kind === "section")
+                          .map((row) => (
+                            <option key={row.item.id} value={row.item.id}>
+                              {row.path}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="flex min-h-11 items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={courseAutoSubdir}
+                        onChange={(e) => setCourseAutoSubdir(e.target.checked)}
+                      />
+                      在目标位置按来源子目录创建嵌套文件夹
+                    </label>
+                    {targetCourse.isError && (
+                      <p role="alert" className="text-sm text-destructive">
+                        课程目录读取失败，
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => void targetCourse.refetch()}
+                        >
+                          重试
+                        </Button>
+                      </p>
+                    )}
                     {coursesQuery.isError && (
                       <p role="alert" className="text-sm text-destructive">
                         课程加载失败
@@ -1096,7 +1173,22 @@ export function ImportPage() {
       ) : stage === "single" && singleInput !== null ? (
         <SingleImportPreview
           input={singleInput}
-          options={options}
+          options={{
+            ...options,
+            addToCourse: options.addToCourse
+              ? {
+                  ...options.addToCourse,
+                  ...(courseAutoSubdir
+                    ? {
+                        folderPath: singleInput.path
+                          .replaceAll("\\", "/")
+                          .split("/")
+                          .slice(0, -1),
+                      }
+                    : {}),
+                }
+              : undefined,
+          }}
           mediaSummary={mediaSummary}
           onBack={() => {
             setStage("select");

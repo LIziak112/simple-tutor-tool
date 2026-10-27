@@ -187,7 +187,9 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
     await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
+    // Web-4 落点：恰 1 名学生落该生主页，资源库需显式前往
+    await page.goto("/t/library");
     await page.getByRole("tab", { name: "讲义库" }).click();
     const libraryRow = page.locator("li").filter({
       has: page.getByRole("checkbox", { name: `选择讲义 ${lectureTitle}` }),

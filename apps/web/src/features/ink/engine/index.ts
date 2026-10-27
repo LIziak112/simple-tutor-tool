@@ -67,6 +67,12 @@ export interface InkEngineOptions {
    * 纸张背景（T6R.7，仅 atrament 生效）：缺省 white=不设置任何背景样式。
    */
   background?: NoteBackground;
+  /**
+   * LR-2：墓碑点数预算（透传 InkStore）。正式手写链传 INK_MAX_DELETED_POINTS
+   * （60k，与 inkDocSchema 服务端限额同值——413 后无自愈路径，客户端先压实）；
+   * 草稿链缺省 NOTE_MAX_DELETED_POINTS（100k）。
+   */
+  maxDeletedPoints?: number;
   /** 引擎就绪回调（excalidraw 懒加载完成后触发；atrament 同步就绪） */
   onReady?: () => void;
   /** 懒加载失败回调（用于展示错误态与重试） */
@@ -114,7 +120,11 @@ export function create(
   opts: InkEngineOptions = {},
 ): InkEngine {
   // exactOptionalPropertyTypes：不把 undefined 显式传给可选属性
-  const store = new InkStore();
+  const store = new InkStore({
+    ...(opts.maxDeletedPoints !== undefined
+      ? { maxDeletedPoints: opts.maxDeletedPoints }
+      : {}),
+  });
   let config = getInkProfileSelection().config;
   let inputEnabled = true;
   let inputMode = opts.inputMode ?? config.inputMode;

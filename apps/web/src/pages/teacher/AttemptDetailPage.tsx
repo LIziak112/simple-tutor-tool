@@ -27,8 +27,8 @@ import { formatCnTime } from "@/lib/time";
  * - 逐题列表：连续题号 + 单元节标题、题型/难度/考点、题干快照（RichMarkdown）、
  *   学生答案、判定区（教师字段本阶段多为 null，正常显示空位）、学习行为统计、
  *   手写缩略图懒加载 + 点击放大（回放 T3.3 接入）；
- * - draft（D5）：判定区统一「未交卷」、无参考答案对比、不做自动刷新
- *   （刷新页面才更新）；
+ * - draft（D5）：未放行行判定区「未提交」（Web-3 已逐题提交的行按已交卷
+ *   渲染）、无参考答案对比（未放行行）、不做自动刷新（刷新页面才更新）；
  * - T3.2b（D3）：已交卷逐题判定区下有「改判 / 评语」内联编辑（含自动判过的
  *   题），保存后本题判定区与顶部得分汇总经缓存失效重取即时刷新；
  * - 数据全部来自服务端（快照 + responses），前端不拼判分；三态齐全；
@@ -104,6 +104,11 @@ function DetailSummary({
   answeredCount: number;
 }) {
   if (data.status === "draft") {
+    // 评审 #11960 顺手①：放行说明半句只在确有已逐题提交（行级放行）的行时渲染
+    //——responseId 是行级放行的代理（契约恒在），全部行未提交时不出现该半句
+    const hasReleasedRows = data.questions.some(
+      (question) => question.responseId !== null,
+    );
     return (
       <div className="flex flex-col gap-2 rounded-xl border border-sky-300/60 bg-sky-50 p-4 text-sm dark:border-sky-500/30 dark:bg-sky-500/10">
         <p className="flex items-center gap-2 font-medium text-sky-800 dark:text-sky-300">
@@ -112,8 +117,9 @@ function DetailSummary({
         </p>
         <p className="text-sky-800 dark:text-sky-300">
           以下展示当前已答内容与笔迹（已答 {answeredCount} / 共{" "}
-          {data.questions.length} 题）；交卷前不产生判定，页面不自动更新，
-          刷新后可看到最新草稿。
+          {data.questions.length} 题）
+          {hasReleasedRows ? "；逐题已提交的题目已显示判定与参考答案" : ""}，
+          页面不自动更新，刷新后可看到最新草稿。
         </p>
       </div>
     );
@@ -210,9 +216,10 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
                   {question.unitTitle}
                 </h2>
               )}
+              {/* Web-3：draft 卷内已逐题提交的行（responseId 非空）按已交卷渲染 */}
               <AttemptDetailQuestionCard
                 question={question}
-                isDraft={isDraft}
+                isDraft={isDraft && question.responseId === null}
                 attemptId={data.attemptId}
                 roundLabel={roundLabel}
               />

@@ -16,7 +16,9 @@ import { DirectiveSessionProvider } from "./directives/session-context";
 import {
   richMarkdownRehypePlugins,
   richMarkdownRehypePluginsCompact,
+  richMarkdownRehypePluginsWithLrNodes,
   richMarkdownRemarkPlugins,
+  richMarkdownRemarkPluginsWithLrNodes,
 } from "./pipeline";
 
 /**
@@ -80,6 +82,14 @@ export interface RichMarkdownProps {
    * 不产 MathML 副本），源文降级见 compact-inline.ts。
    */
   compact?: boolean | undefined;
+  /**
+   * LR-5：题面语义节点键形态——true 时 remark 管线追加 remarkLrNodes，给
+   * 块级元素打 data-lr-node（与 questionNodesOf 同一枚举器，键序列跨
+   * 「枚举 / 渲染」一致）。默认关闭：只有题面 stem 的顶层渲染显式开启
+   * （QuestionSurface），嵌套渲染（选项正文、指令宿主内部）不开启，避免
+   * 嵌套块重复计数撞出同名 stem 键。
+   */
+  lrNodes?: boolean | undefined;
 }
 
 /** 相同属性不重复解析；内部指令的上下文与交互状态仍独立更新。 */
@@ -90,6 +100,7 @@ export const RichMarkdown = memo(function RichMarkdown({
   onDirectiveExpand,
   questionPlaceholder,
   compact,
+  lrNodes,
 }: RichMarkdownProps) {
   // 兼容别名：旧回调只收 open 方向（收起/揭晓是 T4.0b 新增语义，旧回调不感知）
   const telemetry: ((event: DirectiveTelemetryInfo) => void) | null =
@@ -104,11 +115,17 @@ export const RichMarkdown = memo(function RichMarkdown({
   const body = (
     <DirectiveSessionProvider telemetry={telemetry}>
       <ReactMarkdown
-        remarkPlugins={richMarkdownRemarkPlugins}
+        remarkPlugins={
+          lrNodes === true
+            ? richMarkdownRemarkPluginsWithLrNodes
+            : richMarkdownRemarkPlugins
+        }
         rehypePlugins={
-          compact === true
-            ? richMarkdownRehypePluginsCompact
-            : richMarkdownRehypePlugins
+          lrNodes === true
+            ? richMarkdownRehypePluginsWithLrNodes
+            : compact === true
+              ? richMarkdownRehypePluginsCompact
+              : richMarkdownRehypePlugins
         }
         components={directiveHostComponents}
       >

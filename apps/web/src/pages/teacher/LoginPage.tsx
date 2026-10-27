@@ -8,6 +8,7 @@ import {
   useLoginTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
+import { resolveTeacherLanding } from "@/features/students/teacher-landing";
 import { ApiError } from "@/lib/api";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
@@ -20,6 +21,8 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
  * 错误提示区分：登录名或密码错误（INVALID_CREDENTIALS，统一口径防枚举）、
  * 账号停用（ACCOUNT_DISABLED，明示原因）、临时锁定（LOCKED）。
  * T2B.6：底部按 status.registrationOpen 显示「没有账号？注册」入口（开关关时不显示）。
+ * T-PR4 Web-4：登录成功后按学生数落点——名下未归档学生恰 1 名 → 该生学生主页，
+ * 其余 → 学生列表（resolveTeacherLanding；取列表失败回落学生列表不阻塞登录）。
  */
 
 /** localStorage 键：上次成功登录的教师登录名（预填用） */
@@ -79,7 +82,7 @@ export function LoginPage() {
     loginMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: (_teacher, request) => {
+        onSuccess: async (_teacher, request) => {
           // 记住登录名供下次预填（仅成功时记，避免把敲错的存下来）
           try {
             window.localStorage.setItem(
@@ -89,7 +92,8 @@ export function LoginPage() {
           } catch {
             // 存不进就算了，不影响登录
           }
-          navigate("/t", { replace: true });
+          // T-PR4 Web-4：登录后按学生数落点（恰 1 名未归档学生 → 该生学生主页）
+          navigate(await resolveTeacherLanding(), { replace: true });
         },
       },
     );

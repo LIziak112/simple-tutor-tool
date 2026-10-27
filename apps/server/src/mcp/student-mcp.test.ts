@@ -497,7 +497,7 @@ describe("SAI-25 传输生命周期与教师 MCP 冒烟", () => {
     await client.close();
   });
 
-  it("教师 /mcp 冒烟不回归（initialize 200 + 14 工具仍在）", async () => {
+  it("教师 /mcp 冒烟不回归（initialize 200 + 既有 14 件仍在）", async () => {
     const env = await makeEnv();
     const init = await env.app.request("/mcp", {
       method: "POST",
@@ -522,6 +522,24 @@ describe("SAI-25 传输生命周期与教师 MCP 冒烟", () => {
     const body = (await list.json()) as {
       result: { tools: { name: string }[] };
     };
-    expect(body.result.tools).toHaveLength(14);
+    // 冒烟只锁「既有 14 件仍在」，断名单不定长——后续 PR 增工具不再破这条
+    expect(body.result.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "get_dsl_spec",
+        "lint_markdown",
+        "import_markdown",
+        "list_students",
+        "list_assignments",
+        "list_courses",
+        "get_lecture",
+        "get_unit",
+        "get_student_learning_pack",
+        "get_question_stats",
+        "save_report",
+        "upload_image",
+        "import_zip",
+        "describe_capabilities",
+      ]),
+    );
   });
 });

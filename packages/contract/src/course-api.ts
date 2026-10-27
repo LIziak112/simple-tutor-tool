@@ -104,10 +104,11 @@ export const courseItemStatusSchema = z.enum([
 /** 课程详情中的目录条目（含资源摘要与状态标签数据） */
 export const courseDetailItemSchema = z.object({
   id: z.uuid(),
+  parentId: z.uuid().nullable().optional(),
   kind: z.enum(["section", "lecture", "unit"]),
   /** 引用资源 id；分节为 null */
   refId: z.string().nullable(),
-  /** 显示标题：分节 = 分节标题；讲义/单元 = 资源当前标题 */
+  /** 显示标题：文件夹名称或课程内资源别名 */
   title: z.string().min(1),
   /** 课程内排序（小在前；全 kind 共用一个序列） */
   order: z.number().int().min(0),
@@ -170,6 +171,7 @@ export const courseItemInputSchema = z.object({
  */
 export const courseItemsAddRequestSchema = z.object({
   items: z.array(courseItemInputSchema).min(1, "items 不能为空"),
+  parentId: z.uuid().nullable().optional(),
   visible: z.boolean().optional(),
   withCompanionUnits: z.boolean().optional(),
 });
@@ -220,6 +222,41 @@ export const courseItemUpdateRequestSchema = z.object({
 /** PATCH /api/teacher/course-items/:id 响应 data：更新后的条目（含状态标签数据） */
 export const courseItemDataSchema = courseDetailItemSchema;
 
+/** 网页与教师 MCP 共用的目录整理指令；根目录使用 null。 */
+export const courseCatalogCommandSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("createFolder"),
+    title: z.string().trim().min(1).max(100),
+    parentId: z.uuid().nullable(),
+  }),
+  z.object({
+    action: z.literal("rename"),
+    id: z.uuid(),
+    title: z.string().trim().min(1).max(100),
+  }),
+  z.object({
+    action: z.literal("move"),
+    ids: z.array(z.uuid()).min(1).max(500),
+    parentId: z.uuid().nullable(),
+  }),
+  z.object({
+    action: z.literal("reorder"),
+    ids: z.array(z.uuid()).max(500),
+    parentId: z.uuid().nullable(),
+  }),
+  z.object({
+    action: z.literal("setVisibility"),
+    ids: z.array(z.uuid()).min(1).max(500),
+    visible: z.boolean(),
+  }),
+  z.object({
+    action: z.literal("remove"),
+    ids: z.array(z.uuid()).min(1).max(500),
+    keepChildren: z.boolean(),
+  }),
+]);
+export type CourseCatalogCommand = z.infer<typeof courseCatalogCommandSchema>;
+
 /** PUT /api/teacher/courses/:id/items/order 请求体：该课程全部条目的完整新顺序 */
 export const courseItemsReorderRequestSchema = z.object({
   ids: z
@@ -248,6 +285,7 @@ export const courseStudentViewQuerySchema = z.object({
 /** 学生可见目录条目（listVisibleItems 按 D5 过滤后的形状） */
 export const courseStudentViewItemSchema = z.object({
   id: z.uuid(),
+  parentId: z.uuid().nullable().optional(),
   kind: z.enum(["section", "lecture", "unit"]),
   refId: z.string().nullable(),
   title: z.string().min(1),

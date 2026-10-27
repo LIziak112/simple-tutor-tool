@@ -231,7 +231,8 @@ describe("InkDoc 往返一致", () => {
     const doc1 = buildAtramentDoc(store);
 
     const store2 = new InkStore();
-    store2.replace(parseAtramentDoc(doc1), doc1.updatedAt);
+    const parsed1 = parseAtramentDoc(doc1);
+    store2.replace(parsed1.strokes, doc1.updatedAt, parsed1.deleted);
     const doc2 = buildAtramentDoc(store2);
 
     expect(doc2).toEqual(doc1); // 深比较整个 InkDoc
@@ -240,7 +241,8 @@ describe("InkDoc 往返一致", () => {
   it("空文档往返一致", () => {
     const empty = emptyAtramentDoc();
     const store = new InkStore();
-    store.replace(parseAtramentDoc(empty), empty.updatedAt);
+    const parsedEmpty = parseAtramentDoc(empty);
+    store.replace(parsedEmpty.strokes, empty.updatedAt, parsedEmpty.deleted);
     expect(buildAtramentDoc(store).data).toEqual(empty.data);
   });
 
@@ -252,5 +254,134 @@ describe("InkDoc 往返一致", () => {
       updatedAt: 1,
     } as unknown as Parameters<typeof parseAtramentDoc>[0];
     expect(() => parseAtramentDoc(wrong)).toThrow(/引擎不匹配/);
+  });
+});
+
+/** LR-2 墓碑（学习记录模型设计稿 §4；PR2 验收点「擦→撤→擦 产出正确 deleted」） */
+describe("InkStore 墓碑（LR-2）", () => {
+  it("擦→撤→擦：墓碑随操作正确产出/回收/再产出，最终态 = 过滤墓碑后的投影", () => {
+    const store = new InkStore();
+    store.commitAdd([stroke([[10, 10]])]);
+    store.commitAdd([stroke([[20, 20]])]);
+    expect(store.getDeleted()).toEqual([]);
+
+    // 擦：两笔全进墓碑（deletedBy "eraser"，必有 id）
+    store.commitErase([0, 1]);
+    const erased = store.getDeleted();
+    expect(erased).toHaveLength(2);
+    for (const tomb of erased) {
+      expect(tomb.id).toMatch(/^[0-9A-Za-z_-]{8,40}$/);
+      expect(tomb.deletedBy).toBe("eraser");
+      expect(typeof tomb.deletedAt).toBe("number");
+      expect(tomb.points).toHaveLength(1);
+    }
+    expect(store.getStrokes()).toHaveLength(0);
+
+    // 撤：墓碑全部回收（笔画回正文）
+    store.undo();
+    expect(store.getDeleted()).toEqual([]);
+    expect(store.getStrokes()).toHaveLength(2);
+
+    // 再擦：墓碑再产出（可接受与首轮 deletedAt 不同——表示「当前」删除态）
+    store.redo();
+    expect(store.getDeleted()).toHaveLength(2);
+    expect(store.getStrokes()).toHaveLength(0);
+  });
+
+  it("撤→擦的墓碑 deletedBy=undo；重做新增回收同一批（id 不变）", () => {
+    const store = new InkStore();
+    store.commitAdd([stroke([[1, 1]])]);
+    store.undo();
+    const undone = store.getDeleted();
+    expect(undone).toHaveLength(1);
+    expect(undone[0]?.deletedBy).toBe("undo");
+    const undoTombId = undone[0]?.id;
+    store.redo();
+    expect(store.getDeleted()).toEqual([]);
+    expect(store.getStrokes()[0]?.id).toBe(undefined); // 活笔画本体不带墓碑字段
+    // 再撤销：墓碑再次产出（id 可与上一轮不同——deletedAt 表示「当前」态）
+    store.undo();
+    expect(store.getDeleted()[0]?.id).toMatch(/^[0-9A-Za-z_-]{8,40}$/);
+    expect(undoTombId).toMatch(/^[0-9A-Za-z_-]{8,40}$/);
+  });
+
+  it("清空→撤销→重做：墓碑 deletedBy=clear 同批进出", () => {
+    const store = new InkStore();
+    store.commitAdd([stroke([[1, 1]]), stroke([[2, 2]])]);
+    store.commitClear();
+    const cleared = store.getDeleted();
+    expect(cleared).toHaveLength(2);
+    expect(new Set(cleared.map((t) => t.deletedBy))).toEqual(
+      new Set(["clear"]),
+    );
+    store.undo();
+    expect(store.getDeleted()).toEqual([]);
+    expect(store.getStrokes()).toHaveLength(2);
+    store.redo();
+    expect(store.getStrokes()).toHaveLength(0);
+    expect(store.getDeleted()).toHaveLength(2);
+  });
+
+  it("墓碑 FIFO 压实：超预算丢最老墓碑并触发回调（消费方清锚点）", () => {
+    const trimmedIds: string[] = [];
+    const store = new InkStore({
+      maxDeletedPoints: 5,
+      onTombstonesTrimmed: (trimmed) => {
+        for (const tomb of trimmed) trimmedIds.push(tomb.id);
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      store.commitAdd([stroke([[i, i]])]);
+      store.commitErase([0]);
+    }
+    // 每笔 1 点：预算 5，第 3 次擦除后总数 3 ≤ 5——不压实
+    expect(store.getDeleted()).toHaveLength(3);
+    // 追加大笔画擦除（6 点 > 预算）→ 丢最老直到达标
+    store.commitAdd([
+      stroke([
+        [0, 0],
+        [1, 1],
+        [2, 2],
+        [3, 3],
+        [4, 4],
+        [5, 5],
+      ]),
+    ]);
+    store.commitErase([0]);
+    const remaining = store.getDeleted();
+    expect(remaining.length).toBeLessThan(4);
+    expect(trimmedIds.length).toBeGreaterThan(0);
+    // 最老的先丢
+    expect(remaining.every((tomb) => !trimmedIds.includes(tomb.id))).toBe(true);
+  });
+
+  it("load 携带墓碑整组进出；旧稿（无 deleted、无 id）加载不补 id 不产墓碑", () => {
+    const source = new InkStore();
+    source.commitAdd([{ ...stroke([[5, 5]]), id: "stroke-live-1" }]);
+    source.commitAdd([stroke([[6, 6]])]);
+    source.commitErase([1]);
+    const doc = buildAtramentDoc(source);
+    expect(doc.data.deleted).toHaveLength(1);
+
+    const target = new InkStore();
+    const parsed = parseAtramentDoc(doc);
+    target.replace(parsed.strokes, doc.updatedAt, parsed.deleted);
+    expect(target.getDeleted()).toHaveLength(1);
+    expect(target.getStrokes()).toHaveLength(1);
+    // 往返一致（含墓碑）
+    expect(buildAtramentDoc(target)).toEqual(doc);
+
+    // 旧稿：无 id、无 deleted——加载后不补铸 id、不产生墓碑（补 id 不触发上传）
+    const legacyDoc = emptyAtramentDoc();
+    legacyDoc.data.strokes = [stroke([[7, 7]])];
+    const legacy = new InkStore();
+    const parsedLegacy = parseAtramentDoc(legacyDoc);
+    legacy.replace(
+      parsedLegacy.strokes,
+      legacyDoc.updatedAt,
+      parsedLegacy.deleted,
+    );
+    expect(legacy.getStrokes()[0]?.id).toBeUndefined();
+    expect(legacy.getDeleted()).toEqual([]);
   });
 });

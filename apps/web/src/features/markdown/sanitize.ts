@@ -163,6 +163,12 @@ export const richMarkdownSanitizeSchema: SanitizeSchema = {
       "style",
       "aria-hidden",
       "aria-label",
+      // 题面语义节点键（LR-5）：remark-lr-nodes 产出，measureQuestionSurface
+      // 采集进底图布局证据——值是 questionNodeKeySchema 格式的枚举键。
+      // 两种拼写都放行：hProperties 经 remark-rehype 原样合并（连字键），
+      // sanitize 白名单按 property-information 名匹配（驼峰键）
+      "data-lr-node",
+      "dataLrNode",
     ],
     ...buildMathmlAttributes(),
     "directive-container": [...DIRECTIVE_HOST_ATTRS],
