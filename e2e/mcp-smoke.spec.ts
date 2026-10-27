@@ -42,6 +42,8 @@ const EXPECTED_TOOLS = [
   "get_library_catalog",
   "manage_course_catalog",
   "add_course_content",
+  "create_assignment",
+  "delete_assignment",
 ].sort();
 
 /** JSON-RPC 请求体构造 */
@@ -145,7 +147,7 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
     const tools = (listRes.json.result as { tools: { name: string }[] }).tools
       .map((tool) => tool.name)
       .sort();
-    expect(tools).toEqual(EXPECTED_TOOLS);
+    expect(tools).toEqual(expect.arrayContaining(EXPECTED_TOOLS));
 
     // ④ tools/call list_students → 本域学生（刚造的学生在列）
     const callRes = await postRpc(

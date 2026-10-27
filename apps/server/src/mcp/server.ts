@@ -14,7 +14,11 @@ import { z } from "zod";
 import type { Db } from "../db/client";
 import { firstIssueMessage, HttpError } from "../lib/http-error";
 import { getAnalyticsQuestions } from "../services/analytics-service";
-import { listTeacherAssignments } from "../services/assignment-service";
+import {
+  checkAssignment,
+  createAssignment,
+  listTeacherAssignments,
+} from "../services/assignment-service";
 import { getCapabilityProfile } from "../services/capability-profile-service";
 import {
   analyzeImport,
@@ -48,10 +52,16 @@ import {
   unpackImportZip,
 } from "../services/zip-import-service";
 import { readSpecFile } from "../spec-files";
+import {
+  assignmentDeletePreview,
+  assignmentToolInputSchema,
+  deleteUnstartedAssignment,
+  resolveAssignmentStudentIds,
+} from "./assignment-tools";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
- * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个；嵌套目录增补四个课程整理工具，共 18 个）。
+ * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个；嵌套目录增补四个课程整理工具，共 18 个；MCP-C 增补作业创建 / 删除两件（T-PR5），共 20 个）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -61,7 +71,8 @@ import { readSpecFile } from "../spec-files";
  *
  * 红线：除 import_markdown(confirm=true)、save_report、upload_image 与
  * import_zip(confirm=true)（后两者只落盘 DATA_DIR/blobs/media 内容寻址文件；
- * import_zip 另经 commitImport 写教师资源库）以及显式确认的课程目录整理外无其他写操作；
+ * import_zip 另经 commitImport 写教师资源库）以及显式确认的课程目录整理、
+ * 作业的创建与删除（未开答；MCP-C / T-PR5）外无其他写操作；
  * 目录整理工具仅管理课程引用，不删除资源或作答；预览默认不写库。
  */
 
@@ -384,6 +395,57 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           withCompanionUnits: request.withCompanionUnits,
         }),
       );
+    }),
+  );
+
+  server.registerTool(
+    "create_assignment",
+    {
+      description:
+        "给名下学生布置作业（unitIds 顺序即作业内单元顺序；studentIds 可省略：名下未归档学生恰 1 名时默认该生，否则报 STUDENT_AMBIGUOUS 附名单）。缺省仅预检（D15「已做过」检查，零副作用），confirm=true 执行创建。",
+      inputSchema: {
+        assignment: assignmentToolInputSchema,
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    guard(({ assignment, confirm }) => {
+      const studentIds = resolveAssignmentStudentIds(
+        db,
+        teacherId,
+        assignment.studentIds,
+      );
+      if (!confirm)
+        return jsonContent({
+          preview: true,
+          check: checkAssignment(db, teacherId, {
+            unitIds: assignment.unitIds,
+            studentIds,
+          }),
+        });
+      return jsonContent(
+        createAssignment(db, teacherId, { ...assignment, studentIds }),
+      );
+    }),
+  );
+  server.registerTool(
+    "delete_assignment",
+    {
+      description:
+        "软删一份作业（作答保留，学生端立即不可见）：有人已开始作答则拒绝执行（409 ASSIGNMENT_ATTEMPT_EXISTS）。缺省仅预览（标题 / 名单 / 已开始人数 / 是否有人已开答），confirm=true 执行。",
+      inputSchema: {
+        assignmentId: z.uuid(),
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    guard(({ assignmentId, confirm }) => {
+      if (!confirm)
+        return jsonContent(
+          assignmentDeletePreview(db, teacherId, assignmentId),
+        );
+      deleteUnstartedAssignment(db, teacherId, assignmentId);
+      return jsonContent({ deleted: true, assignmentId });
     }),
   );
 
