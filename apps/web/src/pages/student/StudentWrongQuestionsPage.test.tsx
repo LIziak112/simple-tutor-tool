@@ -765,23 +765,43 @@ describe("wrong-questions-ui 纯函数", () => {
     const questions = [recent, weekAgo, old];
     // 仅时间 7 天：只剩今天判定的 recent（含今天零点起）
     expect(
-      filterWrongQuestions(questions, { courseId: null, knowledge: null, days: 7, wrongMin: null }, now).map((q) => q.questionId),
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: null, days: 7, wrongMin: null },
+        now,
+      ).map((q) => q.questionId),
     ).toEqual(["q-recent"]);
     // 仅错次 ≥3：只剩 old
     expect(
-      filterWrongQuestions(questions, { courseId: null, knowledge: null, days: null, wrongMin: 3 }, now).map((q) => q.questionId),
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: null, days: null, wrongMin: 3 },
+        now,
+      ).map((q) => q.questionId),
     ).toEqual(["q-old"]);
     // 考点 × 时间组合：数轴 ∩ 30 天 → week
     expect(
-      filterWrongQuestions(questions, { courseId: null, knowledge: "数轴", days: 30, wrongMin: null }, now).map((q) => q.questionId),
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: "数轴", days: 30, wrongMin: null },
+        now,
+      ).map((q) => q.questionId),
     ).toEqual(["q-week"]);
     // 全空条件：原样返回（同一引用）
     expect(
-      filterWrongQuestions(questions, { courseId: null, knowledge: null, days: null, wrongMin: null }, now),
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: null, days: null, wrongMin: null },
+        now,
+      ),
     ).toBe(questions);
     // 课程条件沿用 filterWrongQuestionsByCourse 口径（初一下 → 跨课程题）
     expect(
-      filterWrongQuestions(COURSE_FILTER_DATA.questions, { courseId: COURSE_B, knowledge: null, days: null, wrongMin: null }, now).map((q) => q.questionId),
+      filterWrongQuestions(
+        COURSE_FILTER_DATA.questions,
+        { courseId: COURSE_B, knowledge: null, days: null, wrongMin: null },
+        now,
+      ).map((q) => q.questionId),
     ).toEqual(["q-cross"]);
   });
 
@@ -1080,7 +1100,9 @@ describe("StudentWrongQuestionsPage 综合筛选（2026-10）", () => {
     });
     expect(await screen.findByText("错 2 · 对 0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "待复习 1 题" })).toBeTruthy();
-    expect(screen.getByTestId("location-probe")).toHaveTextContent("knowledge=");
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "knowledge=",
+    );
     // 重练全部范围跟随筛选（只提交筛后题）
     expect(
       screen.getByRole("button", { name: "重练全部（1 题）" }),
@@ -1104,7 +1126,9 @@ describe("StudentWrongQuestionsPage 综合筛选（2026-10）", () => {
     });
     expect(screen.getByRole("button", { name: "待复习 1 题" })).toBeTruthy();
     expect(screen.getByTestId("location-probe")).toHaveTextContent("days=30");
-    expect(screen.getByTestId("location-probe")).toHaveTextContent("wrongMin=2");
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "wrongMin=2",
+    );
 
     // 活跃筛选 chips（以单清按钮锚定）+ 一键清除：清掉时间后 q-old-2（错 2）回来
     expect(
@@ -1127,9 +1151,7 @@ describe("StudentWrongQuestionsPage 综合筛选（2026-10）", () => {
     mockedWrong.mockResolvedValue(filterData());
     renderPage("/s/wrong?knowledge=%E6%95%B0%E8%BD%B4&days=30&wrongMin=2");
     // 深链：数轴（q-old-1，2020 年 + 错 1 次）被时间与错次滤掉 → 空态
-    expect(
-      await screen.findByText("当前筛选下没有错题"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("当前筛选下没有错题")).toBeInTheDocument();
     // 筛选条与空态各有一个「清除全部筛选」，点空态里的那个
     fireEvent.click(
       screen.getAllByRole("button", { name: "清除全部筛选" })[0] as HTMLElement,
@@ -1248,9 +1270,10 @@ describe("StudentWrongQuestionsPage 选题重练（2026-10）", () => {
     expect(
       screen.getByRole("button", { name: "重练已选（2 题）" }),
     ).toBeEnabled();
-    expect(
-      screen.getByRole("checkbox", { name: /q-judge-1/ }),
-    ).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("checkbox", { name: /q-judge-1/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     fireEvent.click(screen.getByRole("button", { name: "取消全选（2 题）" }));
     expect(
       screen.getByRole("button", { name: "重练已选（0 题）" }),

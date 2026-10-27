@@ -353,19 +353,21 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toEqual({ kind: "ai", label: "最近一周 · 错 2 次以上" });
     // 非法形状：数量 0 / 标签空串 / 未知 kind 拒绝
     expect(
-      wrongPracticeScopeSchema.safeParse({ kind: "selection", questionCount: 0 })
-        .success,
+      wrongPracticeScopeSchema.safeParse({
+        kind: "selection",
+        questionCount: 0,
+      }).success,
     ).toBe(false);
     expect(
       wrongPracticeScopeSchema.safeParse({ kind: "ai", label: "" }).success,
     ).toBe(false);
-    expect(
-      wrongPracticeScopeSchema.safeParse({ kind: "custom" }).success,
-    ).toBe(false);
+    expect(wrongPracticeScopeSchema.safeParse({ kind: "custom" }).success).toBe(
+      false,
+    );
     // 标签单源：手选 =「手选 N 题」（课程后缀）；AI = 标签原文
-    expect(
-      wrongScopeLabelOf({ kind: "selection", questionCount: 5 }),
-    ).toBe("手选 5 题");
+    expect(wrongScopeLabelOf({ kind: "selection", questionCount: 5 })).toBe(
+      "手选 5 题",
+    );
     expect(
       wrongScopeLabelOf({
         kind: "selection",

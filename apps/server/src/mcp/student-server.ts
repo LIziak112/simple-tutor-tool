@@ -4,8 +4,8 @@ import {
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
 } from "@tutor/contract";
-import { z } from "zod";
 import { count, eq } from "drizzle-orm";
+import { z } from "zod";
 import type { Db } from "../db/client";
 import { responses } from "../db/schema";
 import { HttpError } from "../lib/http-error";
@@ -493,7 +493,9 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           .string()
           .min(1)
           .optional()
-          .describe("只保留任一轮发生在该课程的题（错题重练轮无课程不参与命中）"),
+          .describe(
+            "只保留任一轮发生在该课程的题（错题重练轮无课程不参与命中）",
+          ),
         sinceDays: z
           .number()
           .int()
@@ -581,7 +583,9 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           .array(z.string().min(1))
           .min(1, "至少选择一道错题")
           .max(200, "一次组卷最多 200 题")
-          .describe("题目 id 列表（来自 list_my_wrong_questions；顺序即组卷题序）"),
+          .describe(
+            "题目 id 列表（来自 list_my_wrong_questions；顺序即组卷题序）",
+          ),
         label: z
           .string()
           .min(1)
@@ -593,10 +597,16 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     },
     guard(({ questionIds, label }) => {
       const scopeLabel = label ?? "AI 组卷";
-      const attempt = startWrongPractice(db, studentId, questionIds, {}, {
-        kind: "ai",
-        label: scopeLabel,
-      });
+      const attempt = startWrongPractice(
+        db,
+        studentId,
+        questionIds,
+        {},
+        {
+          kind: "ai",
+          label: scopeLabel,
+        },
+      );
       // 剔除计数：建卷实际冻结的行数 vs 去重后的入参数（服务层已静默剔除）
       const includedRow = db
         .select({ n: count() })

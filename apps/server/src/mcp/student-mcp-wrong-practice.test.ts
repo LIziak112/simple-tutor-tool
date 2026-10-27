@@ -156,9 +156,7 @@ async function makeMcpWrongEnv(): Promise<McpWrongEnv> {
     detail.status,
     `DETAILBODY=${JSON.stringify(detailBody).slice(0, 400)}`,
   ).toBe(200);
-  const item = detailBody.data?.items.find(
-    (entry) => entry.refId === unitId,
-  );
+  const item = detailBody.data?.items.find((entry) => entry.refId === unitId);
   if (!item) throw new Error("课程目录中未找到单元条目");
   const patched = await app.request(`/api/teacher/course-items/${item.id}`, {
     method: "PATCH",
@@ -180,20 +178,16 @@ async function makeMcpWrongEnv(): Promise<McpWrongEnv> {
     const body = (await res.json()) as {
       data?: { student?: { id: string } };
     } & Record<string, unknown>;
-    expect(
-      res.status,
-      `STUBODY=${JSON.stringify(body).slice(0, 400)}`,
-    ).toBe(201);
+    expect(res.status, `STUBODY=${JSON.stringify(body).slice(0, 400)}`).toBe(
+      201,
+    );
     const studentId = body.data?.student?.id;
     if (studentId === undefined) throw new Error("学生创建失败");
-    const add = await app.request(
-      `/api/teacher/courses/${courseId}/members`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie: teacherCookie },
-        body: JSON.stringify({ studentIds: [studentId] }),
-      },
-    );
+    const add = await app.request(`/api/teacher/courses/${courseId}/members`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ studentIds: [studentId] }),
+    });
     expect(add.status).toBe(200);
     const login = await app.request("/api/public/student/login", {
       method: "POST",
@@ -235,12 +229,12 @@ async function makeMcpWrongEnv(): Promise<McpWrongEnv> {
   const connBody = (await conn.json()) as {
     data?: { credential?: { token: string } | null };
   } & Record<string, unknown>;
-  expect(
-    conn.status,
-    `CONN=${JSON.stringify(connBody).slice(0, 300)}`,
-  ).toBe(201);
+  expect(conn.status, `CONN=${JSON.stringify(connBody).slice(0, 300)}`).toBe(
+    201,
+  );
   const token = connBody.data?.credential?.token;
-  if (token === undefined || token === null) throw new Error("mcp token 创建失败");
+  if (token === undefined || token === null)
+    throw new Error("mcp token 创建失败");
 
   const client = await connectMcpClientViaApp(
     app,
@@ -261,7 +255,7 @@ async function startCourseAttempt(
     { method: "POST", headers: { cookie } },
   );
   expect([200, 201]).toContain(res.status);
-  return (((await res.json()) as { data: { id: string } }).data.id);
+  return ((await res.json()) as { data: { id: string } }).data.id;
 }
 
 /** PUT 答案 */
@@ -347,9 +341,7 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       };
       expect(body.total).toBe(3);
       expect(body.questions).toHaveLength(3);
-      const q = body.questions.find(
-        (item) => item.questionId === Q.addition,
-      );
+      const q = body.questions.find((item) => item.questionId === Q.addition);
       expect(q).toBeDefined();
       // 元数据齐备（组卷决策所需）
       expect(q?.type).toBe("judge");
@@ -383,18 +375,25 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
         kind: "judge",
         value: true,
       });
-      await saveAnswer(env, attemptId, Q.concept2, { kind: "judge", value: true });
+      await saveAnswer(env, attemptId, Q.concept2, {
+        kind: "judge",
+        value: true,
+      });
       await submitAt(env, attemptId, RECENT_DAY_2);
 
       const base = await callJson(env.client, "list_my_wrong_questions", {});
       const ids = (
-        (base.data as { questions: { questionId: string }[] }).questions
-      ).map((item) => item.questionId);
+        base.data as { questions: { questionId: string }[] }
+      ).questions.map((item) => item.questionId);
       expect(ids).toEqual([Q.addition, Q.concept2]); // concept1 已攻克剔除
 
-      const byKnowledge = await callJson(env.client, "list_my_wrong_questions", {
-        knowledge: "有理数的概念",
-      });
+      const byKnowledge = await callJson(
+        env.client,
+        "list_my_wrong_questions",
+        {
+          knowledge: "有理数的概念",
+        },
+      );
       expect(
         (
           byKnowledge.data as { questions: { questionId: string }[] }
@@ -404,9 +403,7 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       const byCourse = await callJson(env.client, "list_my_wrong_questions", {
         courseId: env.courseId,
       });
-      expect(
-        (byCourse.data as { total: number }).total,
-      ).toBe(2);
+      expect((byCourse.data as { total: number }).total).toBe(2);
       const byUnknownCourse = await callJson(
         env.client,
         "list_my_wrong_questions",
@@ -423,9 +420,9 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
         limit: 1,
       });
       expect((limited.data as { total: number }).total).toBe(2);
-      expect(
-        (limited.data as { questions: unknown[] }).questions,
-      ).toHaveLength(1);
+      expect((limited.data as { questions: unknown[] }).questions).toHaveLength(
+        1,
+      );
 
       // sinceDays：全部错题把最近判定写为 2026-10-21（now=真实时钟跑测会晚于
       // 该时刻），用大窗口 3650 天必然命中、极小窗口配合改库到远古验证排除
@@ -561,7 +558,11 @@ describe("create_wrong_practice（AI 组卷）", () => {
       });
       expect(first.isError).toBe(false);
       expect(second.isError).toBe(false);
-      const a = first.data as { attemptId: string; attemptNo: number; label: string };
+      const a = first.data as {
+        attemptId: string;
+        attemptNo: number;
+        label: string;
+      };
       const b = second.data as { attemptId: string; attemptNo: number };
       expect(a.attemptId).not.toBe(b.attemptId);
       expect(b.attemptNo).toBe(a.attemptNo + 1);

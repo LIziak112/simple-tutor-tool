@@ -241,8 +241,7 @@ export function wrongKnowledgeOptions(
   return [...countByName.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort(
-      (a, b) =>
-        b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"),
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"),
     );
 }
 
@@ -846,7 +845,9 @@ export function WrongFilterBar({
           className="min-h-11 min-w-0 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
           value={knowledge ?? ""}
           onChange={(e) =>
-            onChange({ knowledge: e.target.value === "" ? null : e.target.value })
+            onChange({
+              knowledge: e.target.value === "" ? null : e.target.value,
+            })
           }
         >
           <option value="">全部考点</option>
@@ -918,7 +919,11 @@ export function WrongFilterBar({
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">已筛选：</span>
           {knowledge !== null && (
-            <Chip label={knowledge} onClearLabel="清除考点筛选" onClear={() => onChange({ knowledge: null })} />
+            <Chip
+              label={knowledge}
+              onClearLabel="清除考点筛选"
+              onClear={() => onChange({ knowledge: null })}
+            />
           )}
           {days !== null && (
             <Chip

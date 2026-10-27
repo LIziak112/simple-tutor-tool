@@ -30,7 +30,6 @@ import {
   groupCountLabel,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
-  wrongKnowledgeOptions,
   WrongCourseSelect,
   WrongFilterBar,
   WrongGroupSelectAll,
@@ -38,9 +37,10 @@ import {
   WrongPracticeButton,
   WrongQuestionItem,
   WrongQuestionRow,
-  WrongSelectionBar,
   type WrongQuestionsUrlState,
+  WrongSelectionBar,
   WrongTabSwitch,
+  wrongKnowledgeOptions,
   wrongQuestionsUrlQuery,
 } from "@/features/student/wrong-questions-ui";
 import { startWrongPracticeApi } from "@/lib/api";
@@ -466,9 +466,7 @@ export default function StudentWrongQuestionsPage() {
   }
 
   const compositeFilterActive =
-    state.knowledge !== null ||
-    state.days !== null ||
-    state.wrongMin !== null;
+    state.knowledge !== null || state.days !== null || state.wrongMin !== null;
 
   function changeStandard(next: WrongMasteryStandard): void {
     setStandard(next);
@@ -684,9 +682,7 @@ export default function StudentWrongQuestionsPage() {
                         question={question}
                         expanded={expanded}
                         onToggle={() =>
-                          setExpandedId(
-                            expanded ? null : question.questionId,
-                          )
+                          setExpandedId(expanded ? null : question.questionId)
                         }
                         {...(selecting
                           ? {
