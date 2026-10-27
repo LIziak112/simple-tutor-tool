@@ -39,10 +39,13 @@ test.describe("T2B.6 教师自助注册", { tag: ["@admin"] }, () => {
     );
     const loginName = `e2e乙-${browserName}-${uniqueSuffix()}`;
 
-    // 注册（开关竞态的等待+重试在 helper 内）→ 成功自动登录进资源库
+    // 注册（开关竞态的等待+重试在 helper 内）→ 成功自动登录进学生侧（Web-4 落点）
     await registerTeacherViaUi(page, request, loginName, YI_PASSWORD);
 
     // 乙名下无任何资源：三页均为空态（甲并行用例导入的内容一概不可见）
+    // Web-4 落点：0 学生 → 学生列表（「还没有学生」），资源库空态需显式前往
+    await expect(page.getByText("还没有学生")).toBeVisible();
+    await page.goto("/t/library");
     await expect(page.getByText("这里还没有内容")).toBeVisible();
     await page.goto("/t/courses");
     await expect(page.getByText("还没有课程")).toBeVisible();

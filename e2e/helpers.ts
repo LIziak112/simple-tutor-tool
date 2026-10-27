@@ -140,7 +140,7 @@ export async function registerTeacherViaUi(
     await page.fill("#register-login-name", loginName);
     await page.fill("#register-password", password);
     await page.getByRole("button", { name: "注册并进入" }).click();
-    // 成功 → 自动登录进入 /t（重定向到资源库）；提交瞬间开关被关则重试
+    // 成功 → 自动登录按 Web-4 落点进入学生侧（0 学生 → /t/students 列表）；提交瞬间开关被关则重试
     try {
       await page.waitForURL(/\/t\/students(\/|$)/, { timeout: 10_000 });
       registered = true;
