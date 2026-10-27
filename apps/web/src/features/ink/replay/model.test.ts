@@ -682,6 +682,38 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     expect(model.slots[1]?.startMs).toBe(3000 + REPLAY_INTER_STROKE_GAP_MS);
   });
 
+  it("墓碑 deletedAt 早于书写终点（跨设备时钟偏差）：钳到 writingEnd，时间轴不前移", () => {
+    const now = 1_727_392_800_000;
+    const doc = timedDoc();
+    doc.data.deleted = [
+      {
+        tool: "pen",
+        color: "#1f2328",
+        weight: 4,
+        id: "tomb-skew",
+        startedAt: now + 4_000,
+        pointer: "pen",
+        // 书写 [now+4000, now+4800]，deletedAt 落在书写中段（早钟设备）：
+        // 与 deletedSlots 同一钳制 max(deletedAt, writingEnd) → now+4800
+        deletedAt: now + 4_500,
+        deletedBy: "eraser",
+        points: [
+          { x: 60, y: 20, p: 0.5, t: 0 },
+          { x: 70, y: 20, p: 0.5, t: 800 },
+        ],
+      },
+    ];
+    const model = parseInkReplayData(doc);
+    expect(model?.engine).toBe("atrament");
+    if (model?.engine !== "atrament") return;
+    expect(model.timing).toBe("real");
+    const tombSlot = model.deletedSlots[0];
+    expect(tombSlot).toBeDefined();
+    // 消失时刻 = 钳后的书写终点映射（不早于书写终点把时间轴右移/前移）
+    expect(tombSlot?.startMs).toBe(4_000);
+    expect(tombSlot?.deletedAtMs).toBe(4_800);
+  });
+
   it("墓碑进 deletedSlots：绘制自 startedAt、deletedAt 消失；坏条目跳过", () => {
     const tomb = {
       tool: "pen",

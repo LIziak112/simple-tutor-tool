@@ -772,11 +772,12 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
     } as DOMRect;
     vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect);
     const strokeToStored = vi.fn(view.strokeToStored);
+    const strokeToView = vi.fn(view.strokeToView);
     const surface = createAnnotationSurface({
       baseWidth: VIEW_W,
       baseHeight: VIEW_H,
       anchorBlocks: () => viewBlocks,
-      reprojectedView: { ...view, strokeToStored },
+      reprojectedView: { ...view, strokeToStored, strokeToView },
     });
     surface.mount(container, initial);
     const canvas = container.querySelector(
@@ -785,7 +786,7 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
     if (!(canvas instanceof HTMLCanvasElement)) throw new Error("画布未挂载");
     vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect);
     activeSurfaces.push({ surface, container });
-    return { surface, container, canvas, strokeToStored };
+    return { surface, container, canvas, strokeToStored, strokeToView };
   }
 
   it("收笔提交映射回存储域：getDoc 恒为存储域（baseWidth/点坐标/weight），锚定照常", () => {
@@ -832,13 +833,21 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
     const doc = h.surface.getDoc();
     expect(doc.strokes[0]?.points[0]?.x).toBeCloseTo(100, 5);
     expect(doc.anchors?.["keep-1"]).toBe("stem/p/0");
-    // 渲染边界：重绘把存储笔画映射为视图笔画（×1.25）后再交给 atrament
-    const rendered = toViewStroke(storedStroke);
-    // StubContext 不记坐标——这里只锁「映射发生了」：strokeToView 的输出喂给
-    // 渲染层等价于对每个点 ×1.25；断言交给 vitest 的调用事实（无异常、计数）
-    expect(StubContext.strokeCalls).toBeGreaterThanOrEqual(0);
-    expect(rendered.points[0]?.x).toBeCloseTo(125, 5);
-  });
+    // jsdom 零尺寸挂载时初始重绘挂起（见上方用例）：经 load 触发一次重绘
+    h.surface.load(doc);
+    // 渲染边界：重绘把存储笔画连同锚键交给 strokeToView（去掉垫片即红）
+    expect(h.strokeToView).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "keep-1" }),
+      "stem/p/0",
+    );
+    expect(h.strokeToView).toHaveReturnedWith(
+      expect.objectContaining({
+        points: [
+          expect.objectContaining({ x: 125, y: 125 }),
+          expect.objectContaining({ x: 250, y: 150 }),
+        ],
+      }),
+    );
 
   it("橡皮在存储域命中：视图指针点映射后擦除存储笔画（墓碑=存储几何）", () => {
     const storedStroke = {
