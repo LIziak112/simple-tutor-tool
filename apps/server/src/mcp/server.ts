@@ -78,9 +78,11 @@ import {
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
  * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个；
+ * 嵌套目录增补四个课程整理工具 get_course_catalog / get_library_catalog /
+ * manage_course_catalog / add_course_content（PR #26），共 18 个；
  * 教师迭代 T-PR2 增只读查询四件 query_student_attempts / query_student_responses /
- * search_questions / get_report，共 18 个——查询装配见 ./teacher-queries.ts；
- * 教师迭代 T-PR5 增作业创建 / 删除两件 create_assignment / delete_assignment（未开答才可删），共 20 个）。
+ * search_questions / get_report，共 22 个——查询装配见 ./teacher-queries.ts；
+ * 教师迭代 T-PR5 增作业创建 / 删除两件 create_assignment / delete_assignment（未开答才可删），共 24 个）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
