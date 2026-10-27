@@ -27,6 +27,7 @@ import {
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
+  resolveAnnotationConflictKeepLocal,
   settleAnnotationPersistence,
   writeAnnotationDoc,
 } from "./annotation-store";
@@ -96,8 +97,41 @@ describe("sealCorrectionAnnotation：订正圈画检查点", () => {
     await settleAnnotationPersistence();
     const strokes = await sealCorrectionAnnotation(SCOPE);
     expect(strokes).toBe(1);
-    expect(putDocMock).toHaveBeenCalled(); // 追平先于 seal
+    // 追平先于 seal（调用顺序，不只「都被调过」）
+    const [putOrder] = putDocMock.mock.invocationCallOrder;
+    const [sealOrder] = sealMock.mock.invocationCallOrder;
+    if (putOrder === undefined || sealOrder === undefined) {
+      throw new Error("测试前置失败：mock 调用序缺失");
+    }
+    expect(putOrder).toBeLessThan(sealOrder);
     expect(sealMock).toHaveBeenCalledWith("a1", "correction");
+  });
+
+  it("画过又全擦除（baseRevision>0 但 0 笔）→ 返回 0、不触发 attempt 级封存", async () => {
+    putDocMock.mockResolvedValue({
+      annotationId: "00000000-0000-4000-8000-000000000001",
+      revision: 2,
+      hash: "b".repeat(64),
+      savedAt: "2026-10-08T00:00:00Z",
+    });
+    writeAnnotationDoc(SESSION, SCOPE, DOC);
+    await settleAnnotationPersistence();
+    // 全擦除后再次落盘（空笔集随新版本上送）
+    writeAnnotationDoc(SESSION, SCOPE, { ...DOC, strokes: [] });
+    await settleAnnotationPersistence();
+    await expect(sealCorrectionAnnotation(SCOPE)).resolves.toBe(0);
+    expect(sealMock).not.toHaveBeenCalled();
+  });
+
+  it("同步异常先于无内容判定：0 笔但 pending 未清 → 报同步错误而非当无圈画", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, { ...DOC, strokes: [] });
+    await settleAnnotationPersistence();
+    // 追平时 PUT 失败 → pending 仍在（读取失败/上传失败不得静默当无内容）
+    putDocMock.mockRejectedValue(new Error("网络中断"));
+    await expect(sealCorrectionAnnotation(SCOPE)).rejects.toThrow(
+      /还没同步完成/,
+    );
+    expect(sealMock).not.toHaveBeenCalled();
   });
 
   it("conflict 终态 → 中文错误（先在圈画区裁决），不 seal", async () => {
@@ -131,6 +165,45 @@ describe("sealCorrectionAnnotation：订正圈画检查点", () => {
     putDocMock.mockRejectedValue(new Error("网络中断"));
     await expect(sealCorrectionAnnotation(SCOPE)).rejects.toThrow(
       /还没同步完成/,
+    );
+    expect(sealMock).not.toHaveBeenCalled();
+  });
+
+  it("retained 终态（布局冲突保留本机）→ 中文错误指向「重新尝试同步」，不 seal", async () => {
+    writeAnnotationDoc(SESSION, SCOPE, DOC);
+    await applyAnnotationConflict(
+      SESSION,
+      SCOPE,
+      "layout",
+      null,
+      "服务端存有另一布局的底图",
+    );
+    await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+    await expect(sealCorrectionAnnotation(SCOPE)).rejects.toThrow(
+      /保留本机（不再同步）.*重新尝试同步/s,
+    );
+    expect(sealMock).not.toHaveBeenCalled();
+  });
+
+  it("会话未绑定 → 中文错误（不静默跳过封存）", async () => {
+    resetAnnotationSession();
+    await expect(sealCorrectionAnnotation(SCOPE)).rejects.toThrow(
+      /标注会话未绑定，请刷新后重试/,
+    );
+    expect(sealMock).not.toHaveBeenCalled();
+  });
+
+  it("本地读取失败（strictRead）→ 报读取失败，不当无圈画静默跳过", async () => {
+    // 记录未入内存缓存（无写入）+ 后端读失败：读取失败≠无稿（硬性规则 6）
+    const mem = memoryAnnotationBackend();
+    installAnnotationBackend({
+      ...mem,
+      get: async () => {
+        throw new Error("idb down");
+      },
+    });
+    await expect(sealCorrectionAnnotation(SCOPE)).rejects.toThrow(
+      /订正圈画数据读取失败/,
     );
     expect(sealMock).not.toHaveBeenCalled();
   });
