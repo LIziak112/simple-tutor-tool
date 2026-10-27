@@ -11,6 +11,8 @@ import {
   type LearningRecordAiView,
   learningRecordAiViewSchema,
 } from "@tutor/contract";
+import type { Db } from "../db/client.ts";
+import { getAiLearningRecord } from "./learning-record-service.ts";
 
 /**
  * AI 学习记录视图的压缩装配（LR-PR5，学习记录模型设计稿 §7.3；纯函数、
@@ -232,4 +234,34 @@ export function learningRecordAiViewOf(
       materials: entries,
     },
   });
+}
+
+/**
+ * 任务行的 AI 视图装配（claim / dispatch / share 三视图共用）：装配失败返回
+ * undefined——record 是可选增强，不阻断既有领取/派发/分享链路（材料与上下文
+ * 照常交付）；钉住审计在任务快照 recordRefs。
+ */
+export function learningRecordAiViewForTask(
+  db: Db,
+  dataDir: string,
+  task: { attemptId: string; questionId: string; studentId: string },
+  options?: {
+    resolveImageUrl?: (
+      kind: "draft" | "formal_ink" | "annotation",
+      pageIndex: number,
+    ) => string | undefined;
+  },
+): LearningRecordAiView | undefined {
+  try {
+    const record = getAiLearningRecord(
+      db,
+      dataDir,
+      task.studentId,
+      task.attemptId,
+      task.questionId,
+    );
+    return learningRecordAiViewOf(record, options);
+  } catch {
+    return undefined;
+  }
 }

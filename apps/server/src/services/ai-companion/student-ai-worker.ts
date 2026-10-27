@@ -4,6 +4,7 @@ import { loadOrCreateSecretKey } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
 import type { AiTaskRow } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { learningRecordAiViewForTask } from "../learning-record-ai.ts";
 import { findDispatchInappConnection } from "./connection-service.ts";
 import type { ProviderTransport } from "./provider-client.ts";
 import {
@@ -384,6 +385,14 @@ async function dispatchOne(
     images = collectAiTaskMaterialBytes(db, ctx.dataDir, taskId).map(
       (item) => new Uint8Array(item.bytes),
     );
+    // LR-PR5：学习记录段（可选增强；失败省略，材料照常内联）
+    const recordView = learningRecordAiViewForTask(db, ctx.dataDir, task);
+    if (recordView !== undefined) {
+      assembly = {
+        ...assembly,
+        contextDataMd: `${assembly.contextDataMd}\n\n## 学习记录（结构化数据）\n\n以下 JSON 是本题学习过程的结构化记录（点序列已 RDP 压缩；compacted=true 表示超限按笔抽稀），与上方书写材料互为印证：\n\n\`\`\`json\n${JSON.stringify(recordView)}\n\`\`\``,
+      };
+    }
   } catch (error) {
     const message =
       error instanceof HttpError ? error.message : ASSEMBLY_BROKEN_MESSAGE;

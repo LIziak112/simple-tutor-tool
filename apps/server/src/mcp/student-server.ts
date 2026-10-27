@@ -24,6 +24,7 @@ import {
   submitMcpReply,
 } from "../services/ai-companion/student-ai-queue.ts";
 import { outboundAssemblyOfTask } from "../services/ai-companion/student-ai-worker.ts";
+import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
 import { guard, jsonContent } from "./server.js";
 
 /**
@@ -159,6 +160,8 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
       }
       // 装配（领取事务外；快照损坏 → AI_CONTEXT_BROKEN 不伪造题面）
       const assembly = outboundAssemblyOfTask(db, task);
+      // LR-PR5：学习记录视图（可选增强；装配失败省略 record，材料照常交付）
+      const recordView = learningRecordAiViewForTask(db, dataDir, task);
       const base = {
         claimed: true as const,
         taskId: claimed.taskId,
@@ -174,6 +177,7 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
         systemPromptMd: assembly.systemPromptMd,
         contextDataMd: assembly.contextDataMd,
         messages: assembly.messages,
+        ...(recordView !== undefined ? { record: recordView } : {}),
       };
       if (includeImages === false) {
         return jsonContent({ ...base, imagesIncluded: false, materials: [] });
