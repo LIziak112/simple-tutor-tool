@@ -428,41 +428,7 @@ export const QuestionAnnotationOverlay = forwardRef<
                   fonts: measure.fonts,
                   textRects: measure.textRects,
                 };
-                const plan = approximateModePlan(doc, layout, target);
-                // 临时诊断（定位 CI-only 探针拒绝，随后移除）：
-                console.info(
-                  "[lr4l2]",
-                  JSON.stringify({
-                    docStrokes: doc.strokes.length,
-                    docDeleted: doc.deleted?.length ?? 0,
-                    anchorCount: Object.keys(doc.anchors ?? {}).length,
-                    strokeAnchored: doc.strokes.map(
-                      (item) =>
-                        (item.id !== undefined
-                          ? (doc.anchors ?? {})[item.id]
-                          : undefined) ?? null,
-                    ),
-                    savedBlocks: layout.compatibility?.blocks?.length ?? -1,
-                    savedKeyed:
-                      layout.compatibility?.blocks?.filter(
-                        (block) => block.node !== undefined,
-                      ).length ?? -1,
-                    savedRev: layout.questionRevisionId,
-                    targetRev: target.questionRevisionId,
-                    measureCss: [
-                      Math.round(measure.cssWidth * 100) / 100,
-                      Math.round(measure.cssHeight * 100) / 100,
-                    ],
-                    savedCss: [layout.cssWidth, layout.cssHeight],
-                    targetBlocks: measure.blocks.length,
-                    targetKeyed: measure.blocks.filter(
-                      (block) => block.node !== undefined,
-                    ).length,
-                    eligible: plan.eligible,
-                    unprojectable: plan.unprojectable,
-                  }),
-                );
-                if (plan.eligible) {
+                if (approximateModePlan(doc, layout, target).eligible) {
                   setApproximate(target);
                   return true;
                 }
