@@ -188,6 +188,9 @@ export const reviewPackPreviewFileSchema = z.object({
     "ink",
     // T6R.20 新增（只增不改）：题干标注成对附件（底图 PNG＋笔迹 JSON）
     "annotation",
+    // LR-PR3 新增（只增不改，学习记录模型设计稿 §7.2）：按角色投影的
+    // LearningRecord（record.json + record-schema.json）
+    "record",
   ]),
   bytes: z.number().int().min(0),
   refs: z.array(z.string()).default([]),

@@ -14,7 +14,7 @@ import {
   stableContentHash64,
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
@@ -2047,4 +2047,218 @@ it("标画正文更新活动时间，底图读取、相同正文与幂等重放�
   expect(activity()).toBe(old);
   put(2, randomUUID(), gzipJson(annotationDoc(900, 3)));
   expect(activity()).not.toBe(old);
+});
+
+/**
+ * LR-PR3（评审 #11695 测试缺口）：canonical 旧格式逐字节钉值——
+ * 无 id/startedAt/pointer/deleted/anchors 的旧文档，规范化输出必须与升级前
+ * 逐字节一致（函数自比护不住这条；字节字面量直接锁定键序与缺席语义）。
+ */
+describe("canonicalAnnotationJson 旧格式字节钉值（LR-PR3）", () => {
+  it("旧文档（无任何新字段）规范化输出与升级前逐字节一致", () => {
+    const legacyDoc: AnnotationDoc = {
+      version: 1,
+      baseWidth: 1440,
+      baseHeight: 800,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#000000",
+          weight: 4,
+          points: [
+            { x: 10, y: 20, p: 0.5, t: 0 },
+            { x: 30, y: 40, p: 0.5, t: 16 },
+          ],
+        },
+      ],
+    };
+    expect(canonicalAnnotationJson(legacyDoc)).toBe(
+      JSON.stringify({
+        version: 1,
+        baseWidth: 1440,
+        baseHeight: 800,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#000000",
+            weight: 4,
+            points: [
+              { x: 10, y: 20, p: 0.5, t: 0 },
+              { x: 30, y: 40, p: 0.5, t: 16 },
+            ],
+          },
+        ],
+      }),
+    );
+    // 新字段一旦出现即入规范化（缺席语义反向锁定）：id/startedAt/pointer 逐项在位
+    const withNew: AnnotationDoc = {
+      ...legacyDoc,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#000000",
+          weight: 4,
+          id: "stroke-aa1",
+          startedAt: 1,
+          pointer: "pen",
+          points: [{ x: 10, y: 20, p: 0.5, t: 0 }],
+        },
+      ],
+    };
+    const parsed = JSON.parse(canonicalAnnotationJson(withNew));
+    expect(parsed.strokes[0].id).toBe("stroke-aa1");
+    expect(parsed.strokes[0].startedAt).toBe(1);
+    expect(parsed.strokes[0].pointer).toBe("pen");
+    // anchors 键字典序重建（客户端插入序不参与 hash）
+    const anchored = {
+      ...legacyDoc,
+      anchors: { b: "root", a: "stem/p/0" },
+    };
+    expect(JSON.parse(canonicalAnnotationJson(anchored)).anchors).toEqual({
+      a: "stem/p/0",
+      b: "root",
+    });
+  });
+});
+
+/**
+ * LR-PR3 anchors 服务端校验（评审 #11695 测试缺口；学习记录模型设计稿 §5.3）：
+ * - 值 ∈ 底图 layout blocks[].node → 接受；
+ * - 值不在布局证据内 → 400 ANNOTATION_VALIDATION_FAILED；
+ * - 无 layout 旧底图（无法验证节点域）带锚 → 400 fail closed。
+ * 悬空键（不指向 strokes∪deleted 的 id）已在契约 superRefine 拒绝，不重复。
+ */
+describe("putAnnotationDoc anchors 服务端校验（LR-PR3）", () => {
+  function layoutWithNodes(
+    revisionId: string,
+    nodes: string[],
+  ): AnnotationSurfaceLayout {
+    return annotationSurfaceLayoutSchema.parse({
+      ...surfaceLayoutOf(revisionId, 600),
+      compatibility: {
+        version: 1,
+        contentSignature: "a".repeat(64),
+        blocks: nodes.map((node, index) => ({
+          x: 0,
+          y: index * 100,
+          width: 1200,
+          height: 90,
+          tag: "p",
+          node,
+        })),
+        fonts: nodes.map(
+          () => ["16px", "16px", "16px", "sans-serif", "normal"] as const,
+        ),
+        textRects: [],
+      },
+    });
+  }
+
+  function anchoredDoc(anchorNode: string) {
+    return {
+      version: 1,
+      baseWidth: 1200,
+      baseHeight: 400,
+      strokes: [
+        {
+          tool: "pen" as const,
+          color: "#000000",
+          weight: 4,
+          id: "stroke-aa1",
+          points: [{ x: 10, y: 20, p: 0.5, t: 0 }],
+        },
+      ],
+      anchors: { "stroke-aa1": anchorNode },
+    };
+  }
+
+  /** 两阶段底图在本组测试聚焦 anchors 校验（不涉 PNG 字节）：直接置 ready */
+  function forceBaseReady(world: World, attemptId: string): void {
+    world.db
+      .update(annotationBasesTable)
+      // 像素尺寸与 layout（cssWidth 600 × pixelRatio 2）及文档几何同值：
+      // 两阶段底图的像素列本在 PNG 注册时落，本组测试聚焦 anchors 校验
+      .set({ state: "ready", pixelWidth: 1200, pixelHeight: 400 })
+      .where(
+        and(
+          eq(annotationBasesTable.attemptId, attemptId),
+          eq(annotationBasesTable.questionId, Q),
+        ),
+      )
+      .run();
+  }
+
+  it("anchors 值 ∈ 底图 layout blocks[].node：接受", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      layoutWithNodes(revisionId, ["stem/p/0", "stem/p/1"]),
+    );
+    forceBaseReady(world, attemptId);
+    const put = putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson(anchoredDoc("stem/p/0")),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    expect(put.revision).toBe(1);
+  });
+
+  it("anchors 值不在布局证据内：400", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      layoutWithNodes(revisionId, ["stem/p/0"]),
+    );
+    forceBaseReady(world, attemptId);
+    try {
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        gzipJson(anchoredDoc("stem/p/9")),
+        { baseRevision: 0, mutationId: randomUUID() },
+      );
+      throw new Error("应当抛 400");
+    } catch (err) {
+      expectHttpError(err, 400, "ANNOTATION_VALIDATION_FAILED");
+    }
+  });
+
+  it("无 layout 旧底图带 anchors：400 fail closed", () => {
+    const world = makeWorld();
+    const { attemptId } = makePaper(world);
+    // v1 旧底图：不带 layout（与既有首例同式）
+    assembleAnnotationBase(world.db, world.studentId, attemptId, Q);
+    forceBaseReady(world, attemptId);
+    try {
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        gzipJson(anchoredDoc("stem/p/0")),
+        { baseRevision: 0, mutationId: randomUUID() },
+      );
+      throw new Error("应当抛 400");
+    } catch (err) {
+      expectHttpError(err, 400, "ANNOTATION_VALIDATION_FAILED");
+    }
+  });
 });

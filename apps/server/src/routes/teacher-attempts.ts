@@ -19,6 +19,7 @@ import {
   CSV_UTF8_BOM,
   exportCsv,
 } from "../services/export-csv";
+import { getTeacherLearningRecord } from "../services/learning-record-service";
 import { listPendingMarks, markResponse } from "../services/mark-response";
 import { getTeacherNoteEvidence } from "../services/note-service";
 import {
@@ -151,6 +152,23 @@ export function createTeacherAttemptRoutes(
       // + 矢量正文；?phase= 缺省 scratch）。视图内容 = 学生 stem 投影底图 +
       // 学生自产笔迹，不含答案节（泄露测试见 routes/student-annotations.test.ts
       // 的教师半边）。授权经 requireTeacherAttempt（域外统一 404）。
+      // LR-PR3（学习记录模型设计稿 §7）：教师视角学习记录（域内只读）
+      .get("/attempts/:id/questions/:questionId/record", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: getTeacherLearningRecord(
+              db,
+              dataDir,
+              c.var.teacher.id,
+              c.req.param("id"),
+              c.req.param("questionId"),
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
       .get("/attempts/:id/questions/:questionId/annotation", (c) => {
         const phase = parseAnnotationPhaseParam(c.req.query("phase"));
         return c.json(
