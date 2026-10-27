@@ -160,6 +160,15 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
     );
   });
 
+  it("/t/insights（统计次级页）上「作答记录」保持高亮", async () => {
+    mockedMe.mockResolvedValue(TEACHER);
+    renderLayout("/t/insights");
+
+    expect(
+      await screen.findByRole("link", { name: "作答记录" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
   it("其他分区不与「资源库」同时高亮", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/library");

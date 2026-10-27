@@ -275,7 +275,7 @@ const teacherRoutes = (() => {
 })();
 
 /** 旧学生画像链接 → 学生主页（replace 重定向，外部书签与旧链接兼容） */
-function StudentHomeRedirect() {
+export function StudentHomeRedirect() {
   const { id } = useParams();
   const { search } = useLocation();
   // 旧路径迁移重定向：时间范围 / 课程筛选在 query 里，原样带走（评审 #11725 顺手①）

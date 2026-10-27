@@ -122,6 +122,7 @@ beforeEach(() => {
 
 describe("DataPage 三态", () => {
   it("头部「作答记录 / 统计」切换：统计指向 /t/insights，作答记录为当前视图", () => {
+    mockedAttempts.mockReturnValue(new Promise(() => undefined));
     renderPage();
     expect(screen.getByRole("link", { name: "统计" })).toHaveAttribute(
       "href",

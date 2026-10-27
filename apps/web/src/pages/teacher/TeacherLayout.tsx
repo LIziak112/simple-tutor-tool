@@ -58,7 +58,12 @@ const NAV_GROUPS: { label: string; items: NavItemSpec[] }[] = [
     items: [
       // T-PR1：「学情分析」一级入口下沉为作答记录页顶部「统计」次级切换
       //（/t/insights 与 /t/insights/questions 路由保留）
-      { to: "/t/data", label: "作答记录", icon: Database },
+      {
+        to: "/t/data",
+        label: "作答记录",
+        icon: Database,
+        matchPrefixes: ["/t/data", "/t/insights"],
+      },
       { to: "/t/export", label: "导出中心", icon: FileDown },
     ],
   },
