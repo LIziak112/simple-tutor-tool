@@ -509,7 +509,8 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await page.fill("#login-name", w1.teacherLogin);
     await page.fill("#login-password", w1.teacherPassword);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    // 合并树登录落点 = v2 行为（/t/students，学生详情直达）；不再等 PR 旧基线的 /t/library
+    await page.waitForURL(/\/t\/(library|students)/);
     await page.goto("/t/assignments");
     const card = page.locator("li", { hasText: w1.assignmentTitle });
     await expect(card).toHaveCount(1);
