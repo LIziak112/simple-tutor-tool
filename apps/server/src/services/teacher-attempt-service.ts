@@ -57,6 +57,19 @@ import { attemptResultCounts } from "./result-counts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
 /**
+ * 判定展示口径（D2/D3 前置约定）：`finalCorrect ?? autoCorrect`——教师批改
+ * （T3.2 落地）优先，否则回落自动判定。汇总计数（详情头对/错/待批）统一用它；
+ * 本阶段 finalCorrect 恒 null，等价于 autoCorrect。（合并移植自 v2——PR 侧
+ * 重写区吞掉了该本地导出，judgedRows 计数仍依赖）
+ */
+export function effectiveCorrect(
+  finalCorrect: boolean | null,
+  autoCorrect: boolean | null,
+): boolean | null {
+  return finalCorrect ?? autoCorrect;
+}
+
+/**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
  * - listTeacherAttempts：attempt → student → teacherId 归属过滤（乙教师查不到
  *   甲学生的作答）+ 筛选组合 + 按最近活动时间（submittedAt ?? startedAt）倒序
