@@ -7,6 +7,13 @@ import {
 } from "react";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
 
+/**
+ * 材料与原题协同标画的共享笔态（笔/橡皮、颜色、粗细）。
+ * 默认值恒为 null：消费方（如 QuestionAnnotationOverlay）必须以
+ * `coordinated?.tool ?? 本地 state` 回退——无 Provider 的挂载语境（讲练页、
+ * 单测）本地状态才真正生效，杜绝「默认值携带具体值导致回退永不命中」的
+ * 静默失效。
+ */
 export interface CoordinatedAnnotationState {
   tool: "pen" | "eraser";
   color: InkPenColor;
@@ -16,17 +23,8 @@ export interface CoordinatedAnnotationState {
   setSize: (size: InkPenSize) => void;
 }
 
-const DEFAULT_STATE: CoordinatedAnnotationState = {
-  tool: "pen",
-  color: "red",
-  size: "thin",
-  setTool: () => {},
-  setColor: () => {},
-  setSize: () => {},
-};
-
 const CoordinatedAnnotationContext =
-  createContext<CoordinatedAnnotationState>(DEFAULT_STATE);
+  createContext<CoordinatedAnnotationState | null>(null);
 
 export function CoordinatedAnnotationProvider({
   children,
@@ -62,6 +60,7 @@ export function CoordinatedAnnotationProvider({
   );
 }
 
-export function useCoordinatedAnnotation(): CoordinatedAnnotationState {
+/** 无 Provider 时返回 null，由消费方回退到自己的本地笔态 */
+export function useCoordinatedAnnotation(): CoordinatedAnnotationState | null {
   return useContext(CoordinatedAnnotationContext);
 }

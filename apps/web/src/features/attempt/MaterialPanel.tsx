@@ -119,6 +119,7 @@ export const MaterialPanel = memo(function MaterialPanel({
         <MaterialAnnotationOverlay
           attemptId={attemptId}
           materialId={material.id}
+          inkKey={materialVersionKey(material)}
           associatedQuestionIds={associatedQuestionIds}
         >
           {content}

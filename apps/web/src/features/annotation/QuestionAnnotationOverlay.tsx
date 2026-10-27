@@ -132,19 +132,21 @@ export const QuestionAnnotationOverlay = forwardRef<
     setOriginalImage({ blob: originalBlob, url });
     return () => URL.revokeObjectURL(url);
   }, [originalBlob]);
+  // 无 Provider（讲练页、单测）时 coordinated 为 null：本地笔态即唯一事实源，
+  // 切换照常生效；有 Provider 时（作答页）共享笔态优先，材料层同步跟随。
   const coordinated = useCoordinatedAnnotation();
   const [localTool, setLocalTool] = useState<"pen" | "eraser">("pen");
   const [localColor, setLocalColor] = useState<InkPenColor>("red");
   const [localSize, setLocalSize] = useState<InkPenSize>("thin");
 
-  const tool = coordinated.tool ?? localTool;
-  const color = coordinated.color ?? localColor;
-  const size = coordinated.size ?? localSize;
+  const tool = coordinated?.tool ?? localTool;
+  const color = coordinated?.color ?? localColor;
+  const size = coordinated?.size ?? localSize;
 
   const setTool = useCallback(
     (t: "pen" | "eraser") => {
       setLocalTool(t);
-      coordinated.setTool(t);
+      coordinated?.setTool(t);
     },
     [coordinated],
   );
@@ -152,7 +154,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   const setColor = useCallback(
     (c: InkPenColor) => {
       setLocalColor(c);
-      coordinated.setColor(c);
+      coordinated?.setColor(c);
     },
     [coordinated],
   );
@@ -160,7 +162,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   const setSize = useCallback(
     (s: InkPenSize) => {
       setLocalSize(s);
-      coordinated.setSize(s);
+      coordinated?.setSize(s);
     },
     [coordinated],
   );

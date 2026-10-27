@@ -360,6 +360,22 @@ it("题面变化时先收笔，核对期间切工具继续保持输入保护", a
     expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
   );
 });
+it("无 CoordinatedAnnotationProvider 的挂载语境（讲练页）工具切换仍生效", async () => {
+  // 回归：协同标画 Context 默认值曾携带具体值，导致无 Provider 时
+  // `coordinated.tool ?? localTool` 永不回退，橡皮/颜色/粗细切换全部失灵
+  render(<Harness />);
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() =>
+    expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
+  );
+  const eraser = screen.getByRole("button", { name: "橡皮" });
+  expect(eraser).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(eraser);
+  await waitFor(() => expect(eraser).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() =>
+    expect(engine.setTool).toHaveBeenLastCalledWith({ type: "eraser" }),
+  );
+});
 it("布局不匹配且有本机底图时内联固定底图续画，不弹只读弹窗且题面保持可作答", async () => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
   const before = await getAnnotationRecord(session, scope);
