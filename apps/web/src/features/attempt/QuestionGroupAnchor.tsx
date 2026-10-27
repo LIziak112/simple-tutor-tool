@@ -50,7 +50,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   containerRef,
   layoutMode,
   onLayoutModeChange,
-  activeQuestionId,
+  jumpSignal,
 }: {
   group: AttemptContextGroup;
   /** 组引用解析后的冻结材料（attempt-context-view 单源） */
@@ -75,8 +75,10 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   layoutMode?: GroupMaterialLayout | undefined;
   /** 排版模式变更回调（提供时激活切换控件） */
   onLayoutModeChange?: ((mode: GroupMaterialLayout) => void) | undefined;
-  /** 当前聚焦题（AttemptSession 滚动侦测/跳题单源）：切题时材料列平滑回顶（2026-10-27 联动需求） */
-  activeQuestionId?: string | null | undefined;
+  /** 显式跳题信号（AttemptSession jumpToQuestion 发出）：seq 变化且目标题
+   * 属于本组时材料列平滑回顶——滚动侦测改写的当前题不回顶，跳到其他
+   * 材料组的题本列不动（C 口径） */
+  jumpSignal?: { questionId: string; seq: number } | null | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -89,17 +91,20 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   // 阅读位置记录：材料列自身滚动（compare 模式）或窗口滚过材料顶（stack）
   useMaterialReadingPosition(materialsRef, readingKey);
 
-  // 切题联动（2026-10-27 需求）：当前聚焦题变化时材料列平滑回顶——独立
-  // 滚动端口内学生滚到中部后切到下一题，材料从顶部重新开始读；不可滚动
-  // （stack 流式/材料短于视口）时为无害空操作
-  const lastActiveQuestionRef = useRef(activeQuestionId);
+  // 切题联动（2026-10-27 需求，C 口径修正）：只有显式跳题信号且目标题属于
+  // 本组时材料列平滑回顶——纯滚动切题不回顶（列表模式滚动阅读不被拉回），
+  // 跳到其他材料组的题本列不动；不可滚动（stack 流式/材料短于视口）时为
+  // 无害空操作
+  const lastJumpSeqRef = useRef(0);
   useEffect(() => {
-    if (activeQuestionId === lastActiveQuestionRef.current) return;
-    lastActiveQuestionRef.current = activeQuestionId;
+    if (jumpSignal === null || jumpSignal === undefined) return;
+    if (jumpSignal.seq === lastJumpSeqRef.current) return;
+    lastJumpSeqRef.current = jumpSignal.seq;
+    if (!group.questionIds.includes(jumpSignal.questionId)) return;
     const node = materialsRef.current;
     if (node !== null && node.scrollHeight > node.clientHeight)
       node.scrollTo({ top: 0, behavior: "smooth" });
-  }, [activeQuestionId]);
+  }, [jumpSignal, group]);
 
   // reveal：滚入 + 恢复已读偏移 + 焦点落材料列（键盘可达）
   useEffect(() => {

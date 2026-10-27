@@ -414,7 +414,7 @@ describe("分栏材料独立滚动与切题联动（2026-10-27 需求）", () =>
     expect(handleContainer?.className).toContain("lg:sticky");
   });
 
-  it("activeQuestionId 切换且材料列可滚动时平滑回顶；同值不触发、不可滚动不触发", () => {
+  it("显式跳题信号且目标题属本组时平滑回顶；组外跳题/重复信号/不可滚动不触发", () => {
     const props = {
       group: groupOf({
         materialRefs: [{ material: "m1" }],
@@ -426,7 +426,10 @@ describe("分栏材料独立滚动与切题联动（2026-10-27 需求）", () =>
       onSplitRatioChange: () => {},
     };
     const { rerender } = render(
-      <QuestionGroupAnchor {...props} activeQuestionId="q1" />,
+      <QuestionGroupAnchor
+        {...props}
+        jumpSignal={{ questionId: "q1", seq: 1 }}
+      />,
     );
     const groupMaterials = screen.getByLabelText("本组共享材料") as HTMLElement;
     const scrollTo = vi.fn();
@@ -440,13 +443,33 @@ describe("分栏材料独立滚动与切题联动（2026-10-27 需求）", () =>
       configurable: true,
     });
 
-    // 切到组内另一题 → 平滑回顶
-    rerender(<QuestionGroupAnchor {...props} activeQuestionId="q2" />);
+    // 显式跳到组内另一题 → 平滑回顶
+    rerender(
+      <QuestionGroupAnchor
+        {...props}
+        jumpSignal={{ questionId: "q2", seq: 2 }}
+      />,
+    );
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
 
-    // 同值重渲染不重复触发
+    // 同 seq 信号重渲染不重复触发
     scrollTo.mockClear();
-    rerender(<QuestionGroupAnchor {...props} activeQuestionId="q2" />);
+    rerender(
+      <QuestionGroupAnchor
+        {...props}
+        jumpSignal={{ questionId: "q2", seq: 2 }}
+      />,
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    // 跳到组外题（其他材料的题）→ 本列不动（C 口径）
+    scrollTo.mockClear();
+    rerender(
+      <QuestionGroupAnchor
+        {...props}
+        jumpSignal={{ questionId: "q-other", seq: 3 }}
+      />,
+    );
     expect(scrollTo).not.toHaveBeenCalled();
 
     // 不可滚动（材料短于视口）时切题不动材料
@@ -454,7 +477,12 @@ describe("分栏材料独立滚动与切题联动（2026-10-27 需求）", () =>
       value: 100,
       configurable: true,
     });
-    rerender(<QuestionGroupAnchor {...props} activeQuestionId="q1" />);
+    rerender(
+      <QuestionGroupAnchor
+        {...props}
+        jumpSignal={{ questionId: "q1", seq: 4 }}
+      />,
+    );
     expect(scrollTo).not.toHaveBeenCalled();
   });
 });

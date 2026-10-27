@@ -41,7 +41,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   containerRef,
   layoutMode,
   onLayoutModeChange,
-  activeQuestionId,
+  jumpSignal,
 }: {
   questionId: string;
   /** questionMaterialsOf 解析后的冻结材料（attempt-context-view 单源） */
@@ -66,8 +66,10 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   layoutMode?: GroupMaterialLayout | undefined;
   /** 排版模式变更回调（提供时渲染切换控件——纯 solo 材料单元的切换入口） */
   onLayoutModeChange?: ((mode: GroupMaterialLayout) => void) | undefined;
-  /** 当前聚焦题（AttemptSession 滚动侦测/跳题单源）：切题时材料列平滑回顶（2026-10-27 联动需求） */
-  activeQuestionId?: string | null | undefined;
+  /** 显式跳题信号（AttemptSession jumpToQuestion 发出）：seq 变化且目标为
+   * 本题时材料列平滑回顶——滚动侦测改写的当前题不回顶，跳到其他题本列
+   * 不动（C 口径） */
+  jumpSignal?: { questionId: string; seq: number } | null | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   // 同材料多版本才逐版标注（QM-15 细项 4；单版本零徽标零视觉噪音）
@@ -95,16 +97,19 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
     element.focus();
   }, [revealSignal, readingKey]);
 
-  // 切题联动（2026-10-27 需求）：当前聚焦题变化时材料列平滑回顶；不可滚动
+  // 切题联动（2026-10-27 需求，C 口径修正）：只有显式跳题信号且目标为本题
+  // 时材料列平滑回顶——纯滚动切题不回顶，跳到其他题本列不动；不可滚动
   // （stack 流式/材料短于视口）时为无害空操作
-  const lastActiveQuestionRef = useRef(activeQuestionId);
+  const lastJumpSeqRef = useRef(0);
   useEffect(() => {
-    if (activeQuestionId === lastActiveQuestionRef.current) return;
-    lastActiveQuestionRef.current = activeQuestionId;
+    if (jumpSignal === null || jumpSignal === undefined) return;
+    if (jumpSignal.seq === lastJumpSeqRef.current) return;
+    lastJumpSeqRef.current = jumpSignal.seq;
+    if (jumpSignal.questionId !== questionId) return;
     const node = materialsRef.current;
     if (node !== null && node.scrollHeight > node.clientHeight)
       node.scrollTo({ top: 0, behavior: "smooth" });
-  }, [activeQuestionId]);
+  }, [jumpSignal, questionId]);
 
   return (
     <li

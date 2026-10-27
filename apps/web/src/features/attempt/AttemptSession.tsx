@@ -343,6 +343,15 @@ function AnswerView({
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
+  // 显式跳题信号（C 口径）：材料列回顶只认显式跳题——题号导航/上一题/
+  // 下一题/键盘切题统一走 jumpToQuestion 入口；滚动侦测
+  // （useReadingPosition）改写的 currentQuestionId 不发信号。seq 单调递增
+  // 供锚点去重，questionId 供锚点判断目标是否属于自己
+  const [jumpSignal, setJumpSignal] = useState<{
+    questionId: string;
+    seq: number;
+  } | null>(null);
+  const jumpSeqRef = useRef(0);
   /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题）；dock 装配
    *  在渲染期即调用 labelOf（绑定后 boundLabel 派生），必须先于装配声明 */
   const questionIndexById = useMemo(
@@ -678,6 +687,10 @@ function AnswerView({
     if (editor && !(await editor.request(null))) return;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
+    // 显式跳题信号（C 口径）：只有这条入口发材料回顶信号；seq 单调递增
+    // 供锚点去重
+    jumpSeqRef.current += 1;
+    setJumpSignal({ questionId: id, seq: jumpSeqRef.current });
     requestAnimationFrame(() => {
       const card = cardElements.current.get(id);
       const article = card?.querySelector<HTMLElement>("article");
@@ -1672,7 +1685,7 @@ function AnswerView({
                                             ? undefined
                                             : setGroupMaterialLayout
                                         }
-                                        activeQuestionId={currentQuestionId}
+                                        jumpSignal={jumpSignal}
                                       />,
                                       renderRow(
                                         question,
@@ -1716,7 +1729,7 @@ function AnswerView({
                                       ? undefined
                                       : setGroupMaterialLayout
                                   }
-                                  activeQuestionId={currentQuestionId}
+                                  jumpSignal={jumpSignal}
                                 />,
                                 ...segment.questionIds.map((questionId) => {
                                   const question = questionById.get(questionId);

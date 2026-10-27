@@ -139,7 +139,7 @@ describe("题级材料分栏独立滚动与切题联动（2026-10-27 需求）",
     expect(handleContainer?.className).toContain("lg:sticky");
   });
 
-  it("activeQuestionId 切换且材料列可滚动时平滑回顶；不可滚动不动", () => {
+  it("显式跳题信号且目标为本题时平滑回顶；他题信号/重复信号/不可滚动不触发", () => {
     const props = {
       questionId: "q-9",
       materials: [material("m-solo")],
@@ -147,7 +147,10 @@ describe("题级材料分栏独立滚动与切题联动（2026-10-27 需求）",
       onSplitRatioChange: () => {},
     };
     const { rerender } = render(
-      <QuestionMaterialsAnchor {...props} activeQuestionId="q-8" />,
+      <QuestionMaterialsAnchor
+        {...props}
+        jumpSignal={{ questionId: "q-8", seq: 1 }}
+      />,
     );
     const section = document.querySelector(
       '[data-slot="question-materials"]',
@@ -159,19 +162,40 @@ describe("题级材料分栏独立滚动与切题联动（2026-10-27 需求）",
       configurable: true,
     });
     Object.defineProperty(section, "clientHeight", {
-      value: 300,
+      value: 308,
       configurable: true,
     });
 
-    rerender(<QuestionMaterialsAnchor {...props} activeQuestionId="q-9" />);
+    // 显式跳到本题 → 平滑回顶
+    rerender(
+      <QuestionMaterialsAnchor
+        {...props}
+        jumpSignal={{ questionId: "q-9", seq: 2 }}
+      />,
+    );
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
 
+    // 跳到其他题 → 本列不动（C 口径）
     scrollTo.mockClear();
+    rerender(
+      <QuestionMaterialsAnchor
+        {...props}
+        jumpSignal={{ questionId: "q-8", seq: 3 }}
+      />,
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    // 不可滚动（材料短于视口）时跳题不动材料
     Object.defineProperty(section, "scrollHeight", {
       value: 120,
       configurable: true,
     });
-    rerender(<QuestionMaterialsAnchor {...props} activeQuestionId="q-8" />);
+    rerender(
+      <QuestionMaterialsAnchor
+        {...props}
+        jumpSignal={{ questionId: "q-9", seq: 4 }}
+      />,
+    );
     expect(scrollTo).not.toHaveBeenCalled();
   });
 });
