@@ -259,3 +259,23 @@ it("原生 select 的 option 清洗复杂 Markdown（链接、粗体下划线、
   );
   expect(options[3]).toHaveTextContent("选项 3");
 });
+
+it("保守清洗：货币 $、字面下划线、全角空格与含括号链接不被误改写", () => {
+  const model: PreparedOf<"matching"> = {
+    ...baseModel,
+    options: [
+      { key: "p1", text: "利润为 $5，成本 $3，求差" },
+      { key: "p2", text: "若 a_1 与 b_2 相等" },
+      { key: "p3", text: "宽（　）框" },
+      { key: "p4", text: "见 [维基](https://x.com/Foo_(bar)) 说明" },
+    ],
+  };
+  render(matchingView.Input({ model, answer: undefined, update: vi.fn() }));
+  const select = screen.getByLabelText("第 1 空的选项");
+  const options = within(select).getAllByRole("option");
+  expect(options[1]).toHaveTextContent("选项 1：利润为 $5，成本 $3，求差");
+  expect(options[2]).toHaveTextContent("选项 2：若 a_1 与 b_2 相等");
+  // 全角空格 U+3000 保留（toHaveTextContent 的空白归一会折叠它，直比原文）
+  expect(options[3]?.textContent).toBe("选项 3：宽（　）框");
+  expect(options[4]).toHaveTextContent("选项 4：见 维基 说明");
+});

@@ -25,6 +25,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
+import { plainInlineMdOf } from "@/features/markdown/plain-text";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
 import { recordTitleOf } from "./records-views";
@@ -241,15 +242,12 @@ export function groupCountLabel(tab: WrongTab, count: number): string {
  * 完整渲染看展开卡）。仅为行内预览口径。
  */
 export function stemSummaryOf(stemMd: string): string {
-  return (
+  // 纯文本清洗共享单源（链接/公式/装饰/空白折叠见 plain-text.ts 注释）；
+  // 题干专属步骤：选项列表剔除、[[答案]] 空框化、指令围栏剥除
+  return plainInlineMdOf(
     stripOptionListMd(stemMd)
       .replace(/\[\[[^\]]*\]\]/g, "（　）")
-      .replace(/:::+[a-zA-Z-]*/g, " ")
-      .replace(/\$\$?([^$]+)\$\$?/g, "$1")
-      .replace(/[*_`>#~]/g, "")
-      // 只折叠 ASCII 空白（\s 会把全角空格 U+3000 一并折叠，破坏「（　）」空框）
-      .replace(/[ \t\r\n]+/g, " ")
-      .trim()
+      .replace(/:::+[a-zA-Z-]*/g, " "),
   );
 }
 

@@ -1,3 +1,4 @@
+import { plainInlineMdOf } from "@/features/markdown/plain-text";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import type {
   AnswerKindView,
@@ -26,23 +27,6 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
 /** 槽位显示序号：材料槽位序 ordinal（服务端投影附送，材料文档位置 1 起） */
 function slotLabelOf(ordinal: number): string {
   return `第 ${ordinal} 空`;
-}
-
-/** 剥除 option 文本中的行内公式、图片、链接或 Markdown 装饰，供原生 <option> 纯文本呈现 */
-function plainOptionText(text: string): string {
-  return text
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/\$\$([\s\S]+?)\$\$/g, "$1")
-    .replace(/\$([^$]+?)\$/g, "$1")
-    .replace(/\*\*([^*]+?)\*\*/g, "$1")
-    .replace(/__([^_]+?)__/g, "$1")
-    .replace(/\*([^*]+?)\*/g, "$1")
-    .replace(/_([^_]+?)_/g, "$1")
-    .replace(/~~([^~]+?)~~/g, "$1")
-    .replace(/`([^`]+?)`/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 /** 槽位行文本（选项池缺该 id 回落裸 id——与契约 formatStudent 同口径） */
@@ -155,7 +139,7 @@ export const matchingView: AnswerKindView<
                 >
                   <option value="">未选择</option>
                   {model.options.map((option, index) => {
-                    const plain = plainOptionText(option.text);
+                    const plain = plainInlineMdOf(option.text);
                     const label = plain
                       ? `选项 ${index + 1}：${plain}`
                       : `选项 ${index + 1}`;
