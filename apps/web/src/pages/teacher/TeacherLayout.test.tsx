@@ -8,8 +8,8 @@ import TeacherLayout from "./TeacherLayout";
 
 /**
  * 教师端布局导航测试（2026-09-29 侧边栏去重简化；T4.7 起「学情」附近追加
- * 「导出」与「连接 AI」）：
- * 资源库 · 课程 · 学生 · 作业 · 数据 · 学情 · 导出 · 连接 AI · 设置；
+ * 「导出」与「连接 AI」；T-PR1 起「学情分析」入口下沉为作答记录页「统计」切换）：
+ * 资源库 · 课程 · 学生 · 作业 · 作答记录 · 导出 · 连接 AI · 设置；
  * 讲义库/题库/回收站由 /t/library 页内页签切换、导入经「导入内容」按钮，
  * 侧边栏不再单列（与页内导航去重）；资源库在 /t/library 任意页签与
  * /t/import（导入流程页）上均高亮（aria-current）。
@@ -87,7 +87,7 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
     );
   });
 
-  it("渲染九个分区入口（T4.7 增导出与连接 AI），讲义库/题库/导入不再单列", async () => {
+  it("渲染八个分区入口（T-PR1 起「学情分析」下沉到作答记录页「统计」切换），讲义库/题库/导入不再单列", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");
 
@@ -111,11 +111,11 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
       "href",
       "/t/data",
     );
-    expect(screen.getByRole("link", { name: "学情分析" })).toHaveAttribute(
-      "href",
-      "/t/insights",
-    );
-    // T4.7：导出中心与连接 AI（D26），放「学情」附近
+    // T-PR1：侧边栏不再有「学情分析」入口（下沉为作答记录页「统计」切换）
+    expect(
+      screen.queryByRole("link", { name: "学情分析" }),
+    ).not.toBeInTheDocument();
+    // T4.7：导出中心与连接 AI（D26）
     expect(screen.getByRole("link", { name: "导出中心" })).toHaveAttribute(
       "href",
       "/t/export",
@@ -158,6 +158,15 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("/t/insights（统计次级页）上「作答记录」保持高亮", async () => {
+    mockedMe.mockResolvedValue(TEACHER);
+    renderLayout("/t/insights");
+
+    expect(
+      await screen.findByRole("link", { name: "作答记录" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("其他分区不与「资源库」同时高亮", async () => {

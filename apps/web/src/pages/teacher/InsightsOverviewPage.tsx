@@ -16,6 +16,7 @@ import { FocusCard } from "@/features/insights/FocusCard";
 import { InsightsMatrix } from "@/features/insights/InsightsMatrix";
 import { formatPercent } from "@/features/insights/insights-format";
 import { formatDueTime } from "@/lib/time";
+import { StatsViewSwitcher } from "./StatsViewSwitcher";
 
 /**
  * /t/insights 学情总览（T4.2）：
@@ -102,6 +103,8 @@ export function InsightsOverviewPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* T-PR1 顺手④：与 /t/data 头部对称的「作答记录 / 统计」切换 */}
+          <StatsViewSwitcher active="stats" />
           <InsightsViewSwitcher view="overview" query={query} />
           {/* T4.4：导出给 AI 入口（/t/export 五步向导；侧边栏「导出」同指） */}
           <Button variant="outline" className="min-h-11" asChild>

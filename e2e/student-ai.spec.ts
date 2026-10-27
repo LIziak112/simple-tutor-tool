@@ -111,7 +111,7 @@ async function loginTeacherUi(browser: import("@playwright/test").Browser) {
   await page.fill("#login-name", TEACHER_LOGIN_NAME);
   await page.fill("#login-password", TEACHER_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.waitForURL("**/t/library");
+  await page.waitForURL(/\/t\/students(\/|$)/);
   return { context, page };
 }
 

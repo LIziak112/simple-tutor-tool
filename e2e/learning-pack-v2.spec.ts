@@ -32,7 +32,7 @@ async function teacherUiLogin(page: Page): Promise<void> {
   await page.fill("#login-name", TEACHER_LOGIN_NAME);
   await page.fill("#login-password", TEACHER_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.waitForURL("**/t/library");
+  await page.waitForURL(/\/t\/students(\/|$)/);
 }
 
 test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", {

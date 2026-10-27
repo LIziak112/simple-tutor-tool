@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import type { StudentCourseDetailData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchStudentCourseApi } from "@/lib/api";
@@ -271,5 +271,65 @@ describe("StudentCourseDetailPage", () => {
       screen.getByText("没有找到该内容（可能尚未发布或已被移除）"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+describe("目录查找与折叠", () => {
+  it("搜索文件夹路径时保留祖先；搜索不被折叠状态挡住", async () => {
+    mockedCourse.mockResolvedValue(DETAIL);
+    renderPage();
+    const folder = await screen.findByRole("button", { name: "第一章 有理数" });
+    fireEvent.click(folder);
+    expect(
+      screen.queryByRole("link", { name: "阅读讲义 第1讲 有理数" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "搜索讲义或练习名称" }),
+      { target: { value: "第一章" } },
+    );
+    expect(
+      screen.getByRole("link", { name: "阅读讲义 第1讲 有理数" }),
+    ).toBeVisible();
+    expect(screen.getByText("找到 3 项内容")).toBeVisible();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "搜索讲义或练习名称" }),
+      { target: { value: "" } },
+    );
+    expect(
+      screen.queryByRole("link", { name: "阅读讲义 第1讲 有理数" }),
+    ).not.toBeInTheDocument();
+  });
+  it("练习状态互斥：有草稿且交过卷只计入进行中，讲练不混入练习", async () => {
+    mockedCourse.mockResolvedValue({
+      ...DETAIL,
+      items: DETAIL.items.map((item) =>
+        item.kind === "unit"
+          ? {
+              ...item,
+              attempt: {
+                hasDraft: true,
+                submittedCount: 1,
+                count: 2,
+                firstScore: 80,
+                latestScore: 80,
+                bestScore: 80,
+                pendingCount: 0,
+              },
+            }
+          : item,
+      ),
+    });
+    renderPage();
+    await screen.findByText("初一上");
+    fireEvent.click(screen.getByRole("button", { name: "练习" }));
+    fireEvent.click(screen.getByRole("button", { name: "进行中" }));
+    expect(
+      screen.getByRole("link", { name: "打开练习 有理数小练（4 题）" }),
+    ).toBeVisible();
+    expect(screen.queryByText("讲练 数轴热身")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "已交卷" }));
+    expect(
+      screen.getByText("没有匹配的内容，试试其他名称或清除筛选。"),
+    ).toBeVisible();
   });
 });

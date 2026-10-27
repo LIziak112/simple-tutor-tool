@@ -89,15 +89,16 @@ jobs:
 
   # T2.13 E2E（架构 §7.2：E2E 全过才可合并；webkit 项目必须在 CI 中运行）。
   # 独立 job：浏览器安装与单测互不拖慢；失败时上传 html 报告 artifact。
-  # timeout 40 分钟：首跑浏览器缓存未命中时下载安装 + apt 系统库 + 测试本身，
-  # 25 分钟实测不够（首跑被 GitHub 超时取消表现为 completed cancelled）。
+  # timeout 55 分钟：测试本体约 30 分钟（globalTimeout 45m 含重试余量）+ 首跑浏览器
+  # 缓存未命中时下载安装 + apt 系统库；旧 40 分钟在套件涨到 262 项后余量归零
+  # （2026-10-27 全仓撞 1800s 墙，主人拍板按方案①抬预算：globalTimeout 45m + 本处 55m）。
   e2e:
     name: e2e (chromium + webkit, iPad 模拟)
     # 钉 24.04 而非跟随 ubuntu-latest 渐进迁移（2026-10-19 起）到 26.04：webkit 的 apt 系统
     # 库随发行版走。Playwright 1.61 起官方支持 Ubuntu 26.04（本仓库 @playwright/test 1.63），
     # 后续可单独起分支跑一轮 e2e 验证后再切 ubuntu-26.04
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 55
     steps:
       - name: 检出代码
         uses: actions/checkout@v5

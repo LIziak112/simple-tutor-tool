@@ -330,6 +330,20 @@
       "when": 1792935275845,
       "tag": "0046_brief_scourge",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1793032436201,
+      "tag": "0047_third_lifeguard",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1793032895705,
+      "tag": "0048_funny_retro_girl",
+      "breakpoints": true
     }
   ]
 }

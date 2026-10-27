@@ -155,7 +155,7 @@ test.describe("教师改判流：学生自评 → 教师判定优先", {
       await page.fill("#login-name", TEACHER_LOGIN_NAME);
       await page.fill("#login-password", TEACHER_PASSWORD);
       await page.getByRole("button", { name: "登录", exact: true }).click();
-      await page.waitForURL("**/t/library");
+      await page.waitForURL(/\/t\/students(\/|$)/);
 
       const pending = await request.get("/api/teacher/pending-marks");
       expect(pending.ok()).toBe(true);

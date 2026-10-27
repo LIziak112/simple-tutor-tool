@@ -57,6 +57,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
+import { ensureCatalogTitles, ensureCourseFolderPath } from "./course-catalog";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
 import { lessonEmbeddedUnitIds } from "./lesson-embedded";
@@ -836,6 +837,16 @@ export function commitImport(
         input.addToCourse.visible,
       );
     }
+    const targetParent =
+      input.addToCourse === undefined
+        ? null
+        : ensureCourseFolderPath(
+            db,
+            teacherId,
+            input.addToCourse.courseId,
+            input.addToCourse.parentId ?? null,
+            input.addToCourse.folderPath ?? [],
+          );
     // 各课程内 order 接在该课程现有条目末尾
     const nextOrderByCourse = new Map<string, number>();
     for (const append of appendByKey.values()) {
@@ -853,6 +864,10 @@ export function commitImport(
         .values({
           id: crypto.randomUUID(),
           courseId: append.courseId,
+          parentId:
+            append.courseId === input.addToCourse?.courseId
+              ? targetParent
+              : null,
           kind: append.kind,
           refId: append.refId,
           title: null,
@@ -868,6 +883,9 @@ export function commitImport(
         .run();
       nextOrderByCourse.set(append.courseId, nextOrder + 1);
     }
+
+    for (const courseId of nextOrderByCourse.keys())
+      ensureCatalogTitles(db, courseId);
 
     // ---- imports 留档（原文 = 老师提交的原文；T2A.3 起含
     //      sourcePath/batchId/folderId）----

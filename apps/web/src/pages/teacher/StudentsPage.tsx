@@ -15,6 +15,7 @@ import {
   UserRoundPlus,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -51,6 +52,7 @@ import { formatRelativeTime } from "@/lib/time";
  *   + 可选加入课程；
  * - 复制专属链接（`${origin}/s/${token}`，HTTP 环境降级复制）；
  * - 重置密码（一次性明文弹窗）/ 重置链接（旧链接立即失效）/ 归档与取消归档。
+ * T-PR1：学生名链接进学生主页 /t/students/:id（教师端以学生为导航单位）。
  * 三态齐全（加载骨架 / 空态指引 / 错误重试），触控目标 ≥44px。
  */
 
@@ -110,7 +112,7 @@ export function StudentsPage() {
       <div className="flex items-center justify-between gap-3">
         <p aria-live="polite" className="text-sm text-muted-foreground">
           {studentsQuery.data
-            ? `共 ${studentsQuery.data.students.length} 名学生`
+            ? `共 ${studentsQuery.data.students.length} 名学生 · 按最近作答倒序`
             : "…"}
         </p>
         <Button
@@ -302,7 +304,13 @@ function StudentCard({
   return (
     <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-base font-semibold">{student.displayName}</p>
+        {/* T-PR1：学生名链接进学生主页 */}
+        <Link
+          to={`/t/students/${student.id}`}
+          className="rounded text-base font-semibold outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          {student.displayName}
+        </Link>
         <p className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
           登录名：{student.loginName}
         </p>
@@ -315,6 +323,18 @@ function StudentCard({
           {formatRelativeTime(student.createdAt)}创建
         </p>
       </div>
+
+      {/* T-PR4 Web-4：活动三列（最近作答 / 待批 / 进行中讲练；列表按最近作答倒序） */}
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          最近作答：
+          {student.lastActivityAt
+            ? formatRelativeTime(student.lastActivityAt)
+            : "暂无"}
+        </span>
+        <span>待批 {student.pendingCount ?? 0}</span>
+        <span>进行中讲练 {student.inProgressLessonCount ?? 0}</span>
+      </p>
 
       {/* 所在课程（T2A.4）：经课程列表 memberIds 聚合 */}
       <div className="flex flex-wrap items-center gap-1.5">

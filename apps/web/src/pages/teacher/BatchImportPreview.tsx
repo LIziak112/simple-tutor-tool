@@ -164,7 +164,19 @@ export function BatchImportPreview({
           sourcePath: file.path,
           batchId,
           ...(options.addToCourse !== undefined
-            ? { addToCourse: options.addToCourse }
+            ? {
+                addToCourse: {
+                  ...options.addToCourse,
+                  ...(options.courseAutoSubdir
+                    ? {
+                        folderPath: file.path
+                          .replaceAll("\\", "/")
+                          .split("/")
+                          .slice(0, -1),
+                      }
+                    : {}),
+                },
+              }
             : {}),
         });
         setFileState(file.path, {
@@ -237,7 +249,9 @@ export function BatchImportPreview({
             批次 {batchId.slice(0, 8)}… ·
             {autoSubdir ? " 按子目录建文件夹 ·" : ""}
             {options.folderId !== null ? " 目标文件夹已选 ·" : " 目标未归类 ·"}
-            {options.addToCourse !== undefined ? " 同时加入课程" : ""}
+            {options.addToCourse !== undefined
+              ? ` 同时加入课程${options.courseAutoSubdir ? "（保留来源目录层级）" : ""}`
+              : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -387,6 +401,17 @@ export function BatchImportPreview({
                 <BatchFileRow
                   key={file.path}
                   file={file}
+                  coursePath={
+                    options.addToCourse
+                      ? options.courseAutoSubdir
+                        ? file.path
+                            .replaceAll("\\", "/")
+                            .split("/")
+                            .slice(0, -1)
+                            .join(" / ") || "所选目录"
+                        : "所选目录"
+                      : null
+                  }
                   markdown={markdownByPath.get(file.path) ?? ""}
                   state={commitStates[file.path] ?? { status: "pending" }}
                   expanded={expandedPath === file.path}
@@ -470,12 +495,14 @@ export function BatchImportPreview({
 function BatchFileRow({
   file,
   markdown,
+  coursePath,
   state,
   expanded,
   onToggle,
 }: {
   file: ImportBatchFilePreview;
   markdown: string;
+  coursePath: string | null;
   state: FileCommitState;
   expanded: boolean;
   onToggle: () => void;
@@ -556,6 +583,11 @@ function BatchFileRow({
           {file.folderName === null
             ? "未归类"
             : `${file.folderName}${file.folderToCreate ? "（将新建）" : ""}`}
+          {coursePath !== null && (
+            <p className="mt-1 break-words text-muted-foreground">
+              课程：{coursePath}
+            </p>
+          )}
         </td>
         <td className="px-2 py-2 align-top text-xs">
           <CommitStateBadge state={state} />
