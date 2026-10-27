@@ -74,7 +74,7 @@ test("未保存配置离开有确认，取消与浏览器返回均不丢编辑",
   await expect(steps).toBeChecked({ checked: !initial });
   await page.getByRole("link", { name: "资源库", exact: true }).click();
   await dialog.getByRole("button", { name: "放弃更改并离开" }).click();
-  await expect(page).toHaveURL(/\/t\/library/);
+  await expect(page).toHaveURL(/\/t\/students(\/|$)/);
   await page.getByRole("link", { name: "设置", exact: true }).click();
   await expect(steps).toBeChecked({ checked: initial });
 });
