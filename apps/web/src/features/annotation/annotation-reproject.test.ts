@@ -5,6 +5,9 @@ import type {
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
+  type ApproximateTargetLayout,
+  approximateModePlan,
+  createLayoutMap,
   inverseReproject,
   reprojectAnnotation,
   reprojectable,
@@ -198,5 +201,120 @@ describe("reprojectAnnotation（LR-6）", () => {
       compatibility: undefined,
     };
     expect(reprojectable(legacy, TARGET)).toBe(false);
+  });
+});
+
+describe("createLayoutMap（LR-PR4 第二层：近似原位垫片）", () => {
+  const SAVEDG = {
+    cssWidth: SAVED.cssWidth,
+    cssHeight: SAVED.cssHeight,
+    pixelRatio: SAVED.pixelRatio,
+    blocks: SAVED.compatibility?.blocks ?? [],
+  };
+  const TARGETG = {
+    cssWidth: TARGET.cssWidth,
+    cssHeight: TARGET.cssHeight,
+    pixelRatio: TARGET.pixelRatio,
+    blocks: TARGET.compatibility?.blocks ?? [],
+  };
+
+  it("strokeToTarget 按锚块矩形对映射；strokeToSaved 往返误差 < 0.01px", () => {
+    const map = createLayoutMap(SAVEDG, TARGETG);
+    const stroke = strokeAt("m-1", [
+      [100, 10],
+      [300, 60],
+    ]);
+    const forward = map.strokeToTarget(stroke, "stem/p/0");
+    expect(forward.unanchored).toBe(false);
+    // u=100/1440 ×2160 = 150；v=10/1440 ×2160 = 15；宽比 2160/1440 = 1.5
+    expect(forward.stroke.points[0]?.x).toBeCloseTo(150, 5);
+    expect(forward.stroke.points[0]?.y).toBeCloseTo(15, 5);
+    expect(forward.stroke.weight).toBeCloseTo(6, 5);
+    const back = map.strokeToSaved(forward.stroke, "stem/p/0");
+    expect(back.unanchored).toBe(false);
+    for (const [i, point] of stroke.points.entries()) {
+      const round = back.stroke.points[i];
+      expect(Math.abs((round?.x ?? 0) - point.x)).toBeLessThan(0.01);
+      expect(Math.abs((round?.y ?? 0) - point.y)).toBeLessThan(0.01);
+    }
+    expect(back.stroke.weight).toBeCloseTo(stroke.weight, 5);
+    // id/startedAt/pointer 等字段原样保留
+    expect(back.stroke.id).toBe("m-1");
+    expect(back.stroke.startedAt).toBe(stroke.startedAt);
+    expect(back.stroke.pointer).toBe("pen");
+  });
+
+  it("锚键缺失 → root 整域等比兜底（unanchored 如实）", () => {
+    const map = createLayoutMap(SAVEDG, TARGETG);
+    const stroke = strokeAt("m-2", [[100, 10]]);
+    const forward = map.strokeToTarget(stroke, undefined);
+    expect(forward.unanchored).toBe(true);
+    expect(forward.stroke.points[0]?.x).toBeCloseTo(150, 5);
+    expect(forward.stroke.points[0]?.y).toBeCloseTo(15, 5);
+  });
+
+  it("pointToSaved：块内按块对映射，块外 root 兜底；ratio 为局部存储/视图宽比", () => {
+    const map = createLayoutMap(SAVEDG, TARGETG);
+    // 目标域块 stem/p/0（底图域 0,0,2160,120）：块内点走块对（ratio = 1440/2160）
+    const inside = map.pointToSaved({ x: 150, y: 15 });
+    expect(inside.x).toBeCloseTo(100, 5);
+    expect(inside.y).toBeCloseTo(10, 5);
+    expect(inside.ratio).toBeCloseTo(1440 / 2160, 5);
+    // 块外（y=500 不在任一块内）走 root：y 按整域映射（若误走块对会是 200）
+    const outside = map.pointToSaved({ x: 2100, y: 500 });
+    expect(outside.x).toBeCloseTo(1400, 5);
+    expect(outside.y).toBeCloseTo((500 * 1440) / 2160, 5);
+    expect(outside.ratio).toBeCloseTo(1440 / 2160, 5);
+  });
+});
+
+describe("approximateModePlan（LR-PR4 第二层：近似原位准入）", () => {
+  const target: ApproximateTargetLayout = {
+    questionRevisionId: TARGET.questionRevisionId,
+    cssWidth: TARGET.cssWidth,
+    cssHeight: TARGET.cssHeight,
+    pixelRatio: TARGET.pixelRatio,
+    blocks: TARGET.compatibility?.blocks ?? [],
+    fonts: TARGET.compatibility?.fonts ?? [],
+    textRects: [],
+  };
+
+  it("全部笔画与墓碑有锚且双布局含键 → 合格", () => {
+    expect(approximateModePlan(DOC, SAVED, target)).toEqual({
+      eligible: true,
+      totalCount: 3,
+      unprojectable: 0,
+    });
+  });
+
+  it("任一笔缺锚 / 锚键不在目标块表内 / 空稿 / 修订版不同 → 不合格", () => {
+    const noAnchor: AnnotationDoc = {
+      ...DOC,
+      anchors: { "stroke-1": "stem/p/0", "stroke-3": "stem/p/0" },
+    };
+    const missing = approximateModePlan(noAnchor, SAVED, target);
+    expect(missing.eligible).toBe(false);
+    expect(missing.unprojectable).toBe(1);
+
+    const missingKey: ApproximateTargetLayout = {
+      ...target,
+      blocks: target.blocks.filter((block) => block.node !== "stem/p/1"),
+    };
+    const plan = approximateModePlan(DOC, SAVED, missingKey);
+    expect(plan.eligible).toBe(false);
+    expect(plan.unprojectable).toBe(1);
+
+    const empty: AnnotationDoc = {
+      version: 1,
+      baseWidth: 1440,
+      baseHeight: 800,
+      strokes: [],
+    };
+    const emptyPlan = approximateModePlan(empty, SAVED, target);
+    expect(emptyPlan.eligible).toBe(false);
+    expect(emptyPlan.totalCount).toBe(0);
+
+    const revised = { ...target, questionRevisionId: "rev-9" };
+    expect(approximateModePlan(DOC, SAVED, revised).eligible).toBe(false);
   });
 });
