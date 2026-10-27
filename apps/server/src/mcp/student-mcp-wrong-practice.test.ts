@@ -65,8 +65,9 @@ const Q = {
   concept2: "MCP组卷课程练习-3",
 } as const;
 
-/** 判断题正确答案（[[正确]] → true；[[错误]] → false） */
-const CORRECT: Record<string, { kind: "judge"; value: boolean }> = {
+/** 判断题正确答案（[[正确]] → true；[[错误]] → false）；键 = 三道题的 id 联合 */
+type QuestionKey = (typeof Q)[keyof typeof Q];
+const CORRECT: Record<QuestionKey, { kind: "judge"; value: boolean }> = {
   [Q.concept1]: { kind: "judge", value: true },
   [Q.addition]: { kind: "judge", value: false },
   [Q.concept2]: { kind: "judge", value: false },
@@ -323,7 +324,7 @@ async function callJson(
 /** 学生甲做一轮课程练习：三题全错入本 */
 async function answerAllWrong(env: McpWrongEnv, at: string): Promise<void> {
   const attemptId = await startCourseAttempt(env);
-  for (const questionId of [Q.concept1, Q.addition, Q.concept2]) {
+  for (const questionId of [Q.concept1, Q.addition, Q.concept2] as const) {
     const correct = CORRECT[questionId];
     await saveAnswer(env, attemptId, questionId, {
       kind: "judge",

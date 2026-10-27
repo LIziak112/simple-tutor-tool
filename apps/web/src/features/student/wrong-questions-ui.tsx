@@ -5,10 +5,13 @@ import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
 import {
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Circle,
   RotateCcw,
+  X,
   XCircle,
 } from "lucide-react";
 import { Link } from "react-router";
@@ -61,31 +64,49 @@ export type WrongTab = "pending" | "conquered";
 /** 分组维度 */
 export type WrongGroupMode = "unit" | "time" | "knowledge";
 
+/** 时间筛选项（最近 N 个自然日，含今天；按 lastAt，Asia/Shanghai 自然日） */
+export type WrongDaysFilter = 7 | 30 | 90;
+
+/** 错次筛选项（wrongCount ≥ N） */
+export type WrongMinFilter = 2 | 3;
+
 /** 错题本页 URL 状态（单一事实来源是 URL query） */
 export interface WrongQuestionsUrlState {
   tab: WrongTab;
   group: WrongGroupMode;
   /** 课程筛选（2026-10）：null = 全部课程；选中时保留 rounds 任一轮 courseId 命中的题 */
   courseId: string | null;
+  /** 考点筛选（2026-10 综合）：null = 全部考点；题面任一考点命中即保留 */
+  knowledge: string | null;
+  /** 时间筛选（2026-10 综合）：null = 全部时间；最近 N 天内有判定 */
+  days: WrongDaysFilter | null;
+  /** 错次筛选（2026-10 综合）：null = 全部；wrongCount ≥ N */
+  wrongMin: WrongMinFilter | null;
 }
 
-/** 默认状态（待复习 + 按练习分组 + 全部课程） */
+/** 默认状态（待复习 + 按练习分组 + 全部课程 + 无综合筛选） */
 export const DEFAULT_WRONG_QUESTIONS_URL_STATE: WrongQuestionsUrlState = {
   tab: "pending",
   group: "unit",
   courseId: null,
+  knowledge: null,
+  days: null,
+  wrongMin: null,
 };
 
 /**
  * URLSearchParams → 页面状态。
  * 兼容（2026-10 改版前的旧参数，见模块头注释）：includeResolved=true →
- * tab=conquered；knowledge 忽略（被「按考点」分组取代）；非法值回默认。
+ * tab=conquered；旧 knowledge 忽略（被「按考点」分组取代）；非法值回默认。
  */
 export function parseWrongQuestionsUrl(
   search: URLSearchParams,
 ): WrongQuestionsUrlState {
   const group = search.get("group");
   const courseId = search.get("courseId");
+  const knowledge = search.get("knowledge");
+  const days = search.get("days");
+  const wrongMin = search.get("wrongMin");
   return {
     tab:
       search.get("tab") === "conquered" ||
@@ -94,6 +115,15 @@ export function parseWrongQuestionsUrl(
         : "pending",
     group: group === "time" || group === "knowledge" ? group : "unit",
     courseId: courseId !== null && courseId !== "" ? courseId : null,
+    knowledge: knowledge !== null && knowledge !== "" ? knowledge : null,
+    days:
+      days === "7" || days === "30" || days === "90"
+        ? (Number(days) as WrongDaysFilter)
+        : null,
+    wrongMin:
+      wrongMin === "2" || wrongMin === "3"
+        ? (Number(wrongMin) as WrongMinFilter)
+        : null,
   };
 }
 
@@ -111,10 +141,32 @@ export function wrongQuestionsUrlQuery(
   if (state.courseId !== null) {
     params.set("courseId", state.courseId);
   }
+  if (state.knowledge !== null) {
+    params.set("knowledge", state.knowledge);
+  }
+  if (state.days !== null) {
+    params.set("days", String(state.days));
+  }
+  if (state.wrongMin !== null) {
+    params.set("wrongMin", String(state.wrongMin));
+  }
   return params;
 }
 
-// ---------- 课程筛选 ----------
+/** 时间筛选标签（下拉选项与活跃 chip 共用同一词表） */
+export const WRONG_DAYS_LABELS: Record<WrongDaysFilter, string> = {
+  7: "最近 7 天",
+  30: "最近 30 天",
+  90: "最近 90 天",
+};
+
+/** 错次筛选标签（下拉选项与活跃 chip 共用同一词表） */
+export const WRONG_MIN_LABELS: Record<WrongMinFilter, string> = {
+  2: "错 2 次及以上",
+  3: "错 3 次及以上",
+};
+
+// ---------- 筛选（2026-10 综合：课程 × 考点 × 时间 × 错次组合） ----------
 
 /**
  * 课程筛选（2026-10）：选中课程 C 时保留「任一轮发生在 C」的题（rounds 任一
@@ -130,6 +182,68 @@ export function filterWrongQuestionsByCourse(
   return questions.filter((question) =>
     question.rounds.some((round) => round.courseId === courseId),
   );
+}
+
+/**
+ * 综合筛选（2026-10）：课程 × 考点 × 时间 × 错次组合，逐条件收窄——
+ * - 课程：rounds 任一轮 courseId 命中（filterWrongQuestionsByCourse 同口径）；
+ * - 考点：knowledge 数组任一命中（与展示同源）；
+ * - 时间：lastAt 落在最近 days 个自然日内（含今天，Asia/Shanghai 自然日；
+ *   字符串 ISO 比较即可——双方都是 toISOString 的 UTC 形态）；
+ * - 错次：wrongCount ≥ wrongMin。
+ * 任一条件为 null 即跳过该条件。
+ */
+export function filterWrongQuestions(
+  questions: WrongQuestionCard[],
+  state: Pick<
+    WrongQuestionsUrlState,
+    "courseId" | "knowledge" | "days" | "wrongMin"
+  >,
+  now: Date = new Date(),
+): WrongQuestionCard[] {
+  let result = filterWrongQuestionsByCourse(questions, state.courseId);
+  if (state.knowledge !== null) {
+    result = result.filter((question) =>
+      question.knowledge.includes(state.knowledge as string),
+    );
+  }
+  if (state.days !== null) {
+    // 今天（展示时区）往前推 days-1 天的零点：最近 days 个自然日（含今天）
+    const cutoff = dayjs(now)
+      .tz(DISPLAY_TZ)
+      .startOf("day")
+      .subtract(state.days - 1, "day")
+      .utc()
+      .toISOString();
+    result = result.filter((question) => question.lastAt >= cutoff);
+  }
+  if (state.wrongMin !== null) {
+    result = result.filter(
+      (question) => question.wrongCount >= (state.wrongMin as number),
+    );
+  }
+  return result;
+}
+
+/**
+ * 考点下拉选项（来自当前题目集合）：按出现题数降序、同数按中文名稳定排序，
+ * 返回 { name, count }（多考点题在每个考点各计一次——下拉是「任一命中」语义）。
+ */
+export function wrongKnowledgeOptions(
+  questions: WrongQuestionCard[],
+): Array<{ name: string; count: number }> {
+  const countByName = new Map<string, number>();
+  for (const question of questions) {
+    for (const name of question.knowledge) {
+      countByName.set(name, (countByName.get(name) ?? 0) + 1);
+    }
+  }
+  return [...countByName.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort(
+      (a, b) =>
+        b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"),
+    );
 }
 
 // ---------- 分组 ----------
@@ -241,27 +355,57 @@ export function groupCountLabel(tab: WrongTab, count: number): string {
  * 题干用 InlineMarkdown 单行真渲染（与展开卡同一 displayStemMd 投影），
  * 行容器 truncate 截断；按钮内只允许短语内容，InlineMarkdown 保证不产出
  * 块级或交互元素。
+ * 选题模式（2026-10）：传 selection 后整行变为 checkbox（role="checkbox"，
+ * aria-checked 表勾态；点击切换勾选，不再展开卡片）——勾选圈 20px 视觉 +
+ * 行级 44px 触控目标，选中行主色描边。
  */
 export function WrongQuestionRow({
   question,
   expanded,
   onToggle,
+  selection,
 }: {
   question: WrongQuestionCard;
   expanded: boolean;
   onToggle: () => void;
+  /** 选题模式状态：checked=是否已选；onToggle=切换勾选 */
+  selection?: { checked: boolean; onToggle: () => void };
 }) {
   const lastRound = question.rounds[question.rounds.length - 1];
+  const selecting = selection !== undefined;
   return (
     <button
       type="button"
-      aria-expanded={expanded}
-      onClick={onToggle}
+      {...(selecting
+        ? {
+            role: "checkbox",
+            "aria-checked": selection.checked,
+            "aria-label": `选择题目 ${question.questionId}`,
+          }
+        : { "aria-expanded": expanded })}
+      onClick={selecting ? selection.onToggle : onToggle}
       className={cn(
         "flex min-h-12 w-full items-center gap-x-3 gap-y-1 rounded-2xl border bg-card px-4 py-2.5 text-left text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 focus-visible:ring-3 focus-visible:ring-ring/50",
-        expanded ? "border-primary/50 bg-accent/40" : "border-border",
+        selecting && selection.checked
+          ? "border-primary/60 bg-primary/5"
+          : expanded
+            ? "border-primary/50 bg-accent/40"
+            : "border-border",
       )}
     >
+      {selecting && (
+        <span
+          aria-hidden
+          className={cn(
+            "flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+            selection.checked
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-muted-foreground/40 text-transparent",
+          )}
+        >
+          <Check className="size-3.5" />
+        </span>
+      )}
       <span
         className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
       >
@@ -293,13 +437,15 @@ export function WrongQuestionRow({
       <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">
         {formatCnTime(question.lastAt)}
       </span>
-      <ChevronDown
-        aria-hidden
-        className={cn(
-          "size-4 shrink-0 text-muted-foreground transition-transform",
-          expanded && "rotate-180",
-        )}
-      />
+      {!selecting && (
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            expanded && "rotate-180",
+          )}
+        />
+      )}
     </button>
   );
 }
@@ -648,6 +794,290 @@ export function WrongGroupSwitch({
         </button>
       ))}
     </fieldset>
+  );
+}
+
+/**
+ * 综合筛选条（2026-10）：考点 / 时间 / 错次三个下拉（与课程下拉同一形态），
+ * 组合生效（综合筛选）；有活跃条件时展示可单清的 chips 与「清除全部筛选」。
+ * 选项与标签单源：时间/错次词表 WRONG_DAYS_LABELS / WRONG_MIN_LABELS，
+ * 考点选项由页面从当前题目集合算好传入（带计数）。触控 ≥44px。
+ */
+export function WrongFilterBar({
+  knowledge,
+  days,
+  wrongMin,
+  knowledgeOptions,
+  unknownKnowledge = false,
+  onChange,
+  onClearAll,
+}: {
+  /** 当前考点筛选（null = 全部考点） */
+  knowledge: string | null;
+  /** 当前时间筛选（null = 全部时间） */
+  days: WrongDaysFilter | null;
+  /** 当前错次筛选（null = 全部） */
+  wrongMin: WrongMinFilter | null;
+  /** 考点下拉选项（当前题目集合的考点分布，带计数） */
+  knowledgeOptions: Array<{ name: string; count: number }>;
+  /** 深链考点不在当前选项里（占位选项兜底，select 不显示空白） */
+  unknownKnowledge?: boolean;
+  /** 修改单个筛选条件（传 null 清除该条件） */
+  onChange: (patch: {
+    knowledge?: string | null;
+    days?: WrongDaysFilter | null;
+    wrongMin?: WrongMinFilter | null;
+  }) => void;
+  /** 清除全部综合筛选（课程筛选由课程下拉自管，不在此清） */
+  onClearAll: () => void;
+}) {
+  const hasActive = knowledge !== null || days !== null || wrongMin !== null;
+  return (
+    <div className="flex flex-col gap-2 border-t border-border pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label
+          htmlFor="wrong-knowledge-filter"
+          className="shrink-0 text-sm text-muted-foreground"
+        >
+          考点
+        </label>
+        <select
+          id="wrong-knowledge-filter"
+          className="min-h-11 min-w-0 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          value={knowledge ?? ""}
+          onChange={(e) =>
+            onChange({ knowledge: e.target.value === "" ? null : e.target.value })
+          }
+        >
+          <option value="">全部考点</option>
+          {knowledgeOptions.map((option) => (
+            <option key={option.name} value={option.name}>
+              {option.name}（{option.count}）
+            </option>
+          ))}
+          {unknownKnowledge && knowledge !== null && (
+            <option value={knowledge}>{knowledge}（已不在当前列表）</option>
+          )}
+        </select>
+        <label
+          htmlFor="wrong-days-filter"
+          className="shrink-0 text-sm text-muted-foreground"
+        >
+          时间
+        </label>
+        <select
+          id="wrong-days-filter"
+          className="min-h-11 min-w-0 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          value={days === null ? "" : String(days)}
+          onChange={(e) => {
+            const value = e.target.value;
+            onChange({
+              days:
+                value === "7" || value === "30" || value === "90"
+                  ? (Number(value) as WrongDaysFilter)
+                  : null,
+            });
+          }}
+        >
+          <option value="">全部时间</option>
+          {([7, 30, 90] as WrongDaysFilter[]).map((d) => (
+            <option key={d} value={String(d)}>
+              {WRONG_DAYS_LABELS[d]}
+            </option>
+          ))}
+        </select>
+        <label
+          htmlFor="wrong-wrong-min-filter"
+          className="shrink-0 text-sm text-muted-foreground"
+        >
+          错次
+        </label>
+        <select
+          id="wrong-wrong-min-filter"
+          className="min-h-11 min-w-0 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          value={wrongMin === null ? "" : String(wrongMin)}
+          onChange={(e) => {
+            const value = e.target.value;
+            onChange({
+              wrongMin:
+                value === "2" || value === "3"
+                  ? (Number(value) as WrongMinFilter)
+                  : null,
+            });
+          }}
+        >
+          <option value="">全部错次</option>
+          {([2, 3] as WrongMinFilter[]).map((m) => (
+            <option key={m} value={String(m)}>
+              {WRONG_MIN_LABELS[m]}
+            </option>
+          ))}
+        </select>
+      </div>
+      {hasActive && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">已筛选：</span>
+          {knowledge !== null && (
+            <Chip label={knowledge} onClearLabel="清除考点筛选" onClear={() => onChange({ knowledge: null })} />
+          )}
+          {days !== null && (
+            <Chip
+              label={WRONG_DAYS_LABELS[days]}
+              onClearLabel="清除时间筛选"
+              onClear={() => onChange({ days: null })}
+            />
+          )}
+          {wrongMin !== null && (
+            <Chip
+              label={WRONG_MIN_LABELS[wrongMin]}
+              onClearLabel="清除错次筛选"
+              onClear={() => onChange({ wrongMin: null })}
+            />
+          )}
+          <Button
+            variant="ghost"
+            className="min-h-9 px-2 text-xs text-muted-foreground"
+            onClick={onClearAll}
+          >
+            清除全部筛选
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 活跃筛选 chip：标签 + 单清 ×（触控高度放宽到 36px——次级操作，主筛选控件 ≥44px） */
+function Chip({
+  label,
+  onClearLabel,
+  onClear,
+}: {
+  label: string;
+  onClearLabel: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="flex items-center gap-1 rounded-full bg-muted py-0.5 pl-2.5 pr-1 text-xs text-muted-foreground">
+      {label}
+      <button
+        type="button"
+        aria-label={onClearLabel}
+        className="flex size-7 items-center justify-center rounded-full outline-none transition-colors hover:bg-muted-foreground/15 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        onClick={onClear}
+      >
+        <X aria-hidden className="size-3.5" />
+      </button>
+    </span>
+  );
+}
+
+/** 组头全选按钮（选题模式）：全选本组 / 取消全选（aria-pressed 表当前；触控 ≥44px） */
+export function WrongGroupSelectAll({
+  count,
+  allSelected,
+  onToggle,
+}: {
+  /** 组内在当前 tab 的题数 */
+  count: number;
+  /** 组内题目是否已全部选中 */
+  allSelected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      variant="outline"
+      className="min-h-11 px-3"
+      aria-pressed={allSelected}
+      onClick={onToggle}
+    >
+      {allSelected ? (
+        <CheckCircle2 aria-hidden className="size-4" />
+      ) : (
+        <Circle aria-hidden className="size-4" />
+      )}
+      {allSelected ? `取消全选（${count} 题）` : `全选本组（${count} 题）`}
+    </Button>
+  );
+}
+
+/**
+ * 选题模式底部操作条（sticky bottom）：已选计数（跨分区合计）+ 全选当前列表
+ * + 取消选题 + 重练已选（0 题禁用、提交中 loading 防重复建卷）。
+ */
+export function WrongSelectionBar({
+  selectedCount,
+  otherTabCount,
+  allVisibleSelected,
+  visibleCount,
+  loading = false,
+  onToggleSelectAllVisible,
+  onPractice,
+  onCancel,
+}: {
+  /** 已选题目总数（两个 tab 合计） */
+  selectedCount: number;
+  /** 已选中但不在当前分区可见列表里的题数（跨分区选题提示） */
+  otherTabCount: number;
+  /** 当前列表（tab + 筛选后）是否已全部选中 */
+  allVisibleSelected: boolean;
+  /** 当前列表题数（全选按钮示数） */
+  visibleCount: number;
+  /** 提交中（组卷请求进行时） */
+  loading?: boolean;
+  onToggleSelectAllVisible: () => void;
+  onPractice: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      role="region"
+      aria-label="选题重练操作栏"
+      className="sticky bottom-4 z-20 mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-primary/30 bg-card/95 p-3 shadow-lg backdrop-blur"
+    >
+      <p className="min-w-0 text-sm font-medium" role="status">
+        已选 {selectedCount} 题
+        {otherTabCount > 0 && (
+          <span className="ml-1 text-xs font-normal text-muted-foreground">
+            （另有 {otherTabCount} 题不在当前列表）
+          </span>
+        )}
+      </p>
+      <Button
+        variant="ghost"
+        className="min-h-11 px-3 text-muted-foreground"
+        aria-pressed={allVisibleSelected}
+        disabled={visibleCount === 0}
+        onClick={onToggleSelectAllVisible}
+      >
+        {allVisibleSelected ? "取消全选" : `全选当前列表（${visibleCount} 题）`}
+      </Button>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          className="min-h-11 px-4"
+          disabled={loading}
+          onClick={onCancel}
+        >
+          取消选题
+        </Button>
+        <Button
+          className="min-h-11 px-5"
+          disabled={selectedCount === 0 || loading}
+          onClick={onPractice}
+        >
+          <RotateCcw
+            aria-hidden
+            className={loading ? "size-4 animate-spin" : "size-4"}
+          />
+          {loading
+            ? "正在组卷…"
+            : selectedCount === 0
+              ? "重练已选（0 题）"
+              : `重练已选（${selectedCount} 题）`}
+        </Button>
+      </div>
+    </div>
   );
 }
 
