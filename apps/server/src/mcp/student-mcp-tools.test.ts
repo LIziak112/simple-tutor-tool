@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   aiAttemptReviewCreateOkSchema,
   aiAttemptReviewMcpClaimViewSchema,

@@ -145,8 +145,8 @@ export function parseWrongQuestionsUrl(
     group: group === "time" || group === "knowledge" ? group : "unit",
     courseId: courseId !== null && courseId !== "" ? courseId : null,
     knowledge: knowledge !== null && knowledge !== "" ? knowledge : null,
-    days: parseWrongDaysFilter(days),
-    wrongMin: parseWrongMinFilter(wrongMin),
+    days: parseWrongDaysFilter(days ?? ""),
+    wrongMin: parseWrongMinFilter(wrongMin ?? ""),
   };
 }
 
@@ -378,7 +378,7 @@ export function WrongQuestionRow({
   expanded: boolean;
   onToggle: () => void;
   /** 选题模式勾态（传入即进入复选形态；点击行为由 onToggle 承载） */
-  selection?: { checked: boolean };
+  selection?: { checked: boolean } | undefined;
 }) {
   const lastRound = question.rounds[question.rounds.length - 1];
   const selecting = selection !== undefined;
@@ -829,10 +829,7 @@ function FilterSelect({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <label
-        htmlFor={id}
-        className="shrink-0 text-sm text-muted-foreground"
-      >
+      <label htmlFor={id} className="shrink-0 text-sm text-muted-foreground">
         {label}
       </label>
       <select
@@ -923,7 +920,9 @@ export function WrongFilterBar({
           label="错次"
           value={wrongMin === null ? "" : String(wrongMin)}
           allLabel="全部错次"
-          onChange={(value) => onChange({ wrongMin: parseWrongMinFilter(value) })}
+          onChange={(value) =>
+            onChange({ wrongMin: parseWrongMinFilter(value) })
+          }
         >
           {WRONG_MIN_OPTIONS.map((m) => (
             <option key={m} value={String(m)}>

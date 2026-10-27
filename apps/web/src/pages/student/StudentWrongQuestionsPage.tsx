@@ -8,7 +8,7 @@ import {
   TriangleAlert,
   Trophy,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { workflowStartOptions } from "@/features/attempt/attempt-queries";
@@ -263,12 +263,11 @@ export default function StudentWrongQuestionsPage() {
 
   const questions = listQuery.data?.questions ?? [];
   // 综合筛选（课程 × 考点 × 时间 × 错次）在 tab 分流前生效：两个 tab 的成员
-  // 与计数、全部重练入口的范围都跟随；依赖钉到实际读取的四个筛选字段——
-  // 切 tab/分组不重跑过滤链
+  // 与计数、全部重练入口的范围都跟随（state 是 URL 态快照，identity 随 query
+  // 变化——切 tab/分组会重算一次过滤，D11 规模下可忽略）
   const filtered = useMemo(
     () => filterWrongQuestions(questions, state),
-    // biome-ignore lint/correctness/useExhaustiveDependencies: 只依赖 state 的四个筛选字段（URL 态快照），切 tab/分组不重跑过滤链
-    [questions, state.courseId, state.knowledge, state.days, state.wrongMin],
+    [questions, state],
   );
   // 考点下拉选项只随课程筛选收窄（不被已选考点自身缩死，方便换考点）；深链的
   // 考点不在选项里时由筛选条内自算占位选项兜底
@@ -311,6 +310,16 @@ export default function StudentWrongQuestionsPage() {
   const allVisibleSelected =
     tabQuestions.length > 0 && visibleSelectedCount === tabQuestions.length;
 
+  function enterSelecting(): void {
+    setExpandedId(null); // 收起展开卡，聚焦选择
+    setSelecting(true);
+  }
+  /** 退出选题模式并清空选择（「取消选题」与 Esc 共用；useCallback 稳定供 effect 依赖） */
+  const exitSelecting = useCallback(() => {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  }, []);
+
   // Esc 退出选题模式（与「取消选题」同一动作）
   useEffect(() => {
     if (!selecting) return;
@@ -319,17 +328,7 @@ export default function StudentWrongQuestionsPage() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: exitSelecting 是仅依赖 setState 的稳定函数声明
-  }, [selecting]);
-
-  function enterSelecting(): void {
-    setExpandedId(null); // 收起展开卡，聚焦选择
-    setSelecting(true);
-  }
-  function exitSelecting(): void {
-    setSelecting(false);
-    setSelectedIds(new Set());
-  }
+  }, [selecting, exitSelecting]);
 
   // 重练（2026-10）：范围 = 当前 tab 的题（组头按钮传该组子集）；题目顺序 =
   // 圈定顺序（列表序）即组卷题序。成功后跳答题页；失败留错误横幅可重试
