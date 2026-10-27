@@ -373,6 +373,8 @@ export default function StudentWrongQuestionsPage() {
   const scopePayloadFor = (
     scopeKey: string,
     groupTitle: string | null,
+    /** selection 口径的实际提交题数（缺省回落勾选计数） */
+    count?: number,
   ): WrongPracticeScope | undefined => {
     if (scopeKey === "all") {
       return {
@@ -385,7 +387,11 @@ export default function StudentWrongQuestionsPage() {
     if (scopeKey === "selection") {
       return {
         kind: "selection",
-        questionCount: selectedCount,
+        // 实际提交的题数（由 practiceQuestions 按列表长度传入——refetch 后
+        // 已选题可能失效，不能拿勾选计数当题数）
+        ...(count !== undefined
+          ? { questionCount: count }
+          : { questionCount: selectedCount }),
         ...(courseNameForScope !== undefined
           ? { courseName: courseNameForScope }
           : {}),
@@ -412,7 +418,7 @@ export default function StudentWrongQuestionsPage() {
     practice.mutate({
       scope,
       ids: list.map((question) => question.questionId),
-      scopePayload: scopePayloadFor(scope, groupTitle),
+      scopePayload: scopePayloadFor(scope, groupTitle, list.length),
     });
   };
   // 选题重练：题序 = 当前列表序在前，不在当前列表的已选题按全量列表序垫后；
@@ -471,7 +477,6 @@ export default function StudentWrongQuestionsPage() {
               <Button
                 variant="outline"
                 className="min-h-11 px-4"
-                aria-pressed={false}
                 onClick={enterSelecting}
               >
                 <ListChecks aria-hidden className="size-4" />

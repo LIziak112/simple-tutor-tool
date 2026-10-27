@@ -29,12 +29,14 @@ import {
 /** 与 playwright.config.ts 保持一致（server 直连地址；vite 代理不转发 /mcp） */
 const STUDENT_MCP_URL = "http://127.0.0.1:8899/mcp/student";
 
-/** 学生 MCP 八工具（四逐题 + 四整体复盘，任务 1ef854c7；与服务端 student-mcp 测试同清单） */
+/** 学生 MCP 十工具（四逐题 + 四整体复盘 + 两错题组卷〔2026-10 错题本迭代〕；与服务端 student-mcp 测试同清单） */
 const EXPECTED_STUDENT_TOOLS = [
   "claim_ai_task",
   "claim_attempt_review",
+  "create_wrong_practice",
   "list_my_ai_tasks",
   "list_my_attempt_reviews",
+  "list_my_wrong_questions",
   "renew_ai_lease",
   "renew_attempt_review_lease",
   "submit_ai_reply",
