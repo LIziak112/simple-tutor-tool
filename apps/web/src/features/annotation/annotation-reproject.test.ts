@@ -119,6 +119,12 @@ describe("reprojectAnnotation（LR-6）", () => {
     // u=(100−0)/1440、v=(10−0)/1440（都除块宽），目标 = u×2160=150、v×2160=15
     expect(p0?.x).toBeCloseTo(150, 6);
     expect(p0?.y).toBeCloseTo(15, 6);
+    // 评审 #11781：stroke-2（锚 p/1）并入本用例——×ratio 与否分叉
+    //（x' = 225；y' = 180 + ((150−120)/1440)×2160 = 245，
+    // 与王玄策 #11771 背书值一致；不转域（CSS 块直接消费）时 y = 120）
+    const second = result.strokes.find((stroke) => stroke.id === "stroke-2");
+    expect(second?.points[0]?.x).toBeCloseTo(225, 6);
+    expect(second?.points[0]?.y).toBeCloseTo(245, 6);
     // weight 随块宽等比：×(2160/1440)=×1.5
     expect(first?.weight).toBeCloseTo(6, 6);
   });
@@ -192,41 +198,5 @@ describe("reprojectAnnotation（LR-6）", () => {
       compatibility: undefined,
     };
     expect(reprojectable(legacy, TARGET)).toBe(false);
-  });
-});
-
-/**
- * LR-PR4 必改③ 测试锁（评审 #11771）：非等比位移下 ×ratio 才正确——
- * TARGET p/1 CSS y 100（非等比下移）：底图域 p/1 = [y 200, h 130]；
- * stroke-2 底图点 (150,150) → 转换后投影 (225, 248.75)（去掉 ×ratio
- * 则 y = 235，两值分叉 13.75px 即锁住）。
- */
-describe("keyedBlocksOf 非等比位移（LR-PR4 必改③）", () => {
-  const TARGET_NON_UNIFORM: AnnotationSurfaceLayout = {
-    ...TARGET,
-    compatibility: {
-      version: 1,
-      contentSignature: "e".repeat(64),
-      blocks: [
-        { x: 0, y: 0, width: 1080, height: 60, tag: "p", node: "stem/p/0" },
-        { x: 0, y: 100, width: 1080, height: 65, tag: "p", node: "stem/p/1" },
-      ],
-      fonts: [
-        ["16px", "16px", "16px", "sans-serif", "normal"],
-        ["16px", "16px", "16px", "sans-serif", "normal"],
-      ],
-      textRects: [],
-    },
-  };
-
-  it("非等比位移：×ratio 与否投影结果分叉（转换路径被锁定）", () => {
-    const result = reprojectAnnotation(DOC, SAVED, TARGET_NON_UNIFORM);
-    const mapped = result.strokes.find((stroke) => stroke.id === "stroke-2");
-    expect(mapped?.points[0]?.x).toBeCloseTo(225, 6);
-    // 245 与王玄策 #11771 背书的期望值一致（×ratio 路径）
-    expect(mapped?.points[0]?.y).toBeCloseTo(245, 6);
-    // 反证：不转域（CSS 块直接消费）时同一点 y = 235，两者分叉 13.75px
-    const unconvertedY = 100 + ((150 - 120) / 80) * 130;
-    expect(Math.abs(unconvertedY - 248.75)).toBeGreaterThan(10);
   });
 });
