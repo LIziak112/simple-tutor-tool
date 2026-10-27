@@ -558,11 +558,24 @@ export const draftStore = {
       clearTimeout(timer);
       writeTimers.delete(attemptId);
     }
+    // 材料圈画笔迹目前仅有本机稿（无服务端同步链路）：交卷清稿时保留，
+    // 供结果页只读回看——「清缓存不得删除未同步材料」的保稿纪律
+    const materialInks = cache.get(attemptId)?.materialInks;
+    const keepMaterialInks =
+      materialInks !== undefined && Object.keys(materialInks).length > 0;
     cache.delete(attemptId);
     writeVersions.delete(attemptId);
     setPersistenceState(attemptId, "saved");
     try {
-      await backend().del(keyOf(attemptId));
+      if (keepMaterialInks && materialInks) {
+        const record = emptyRecord();
+        record.materialInks = materialInks;
+        record.savedAt = Date.now();
+        cache.set(attemptId, record);
+        await writeNow(attemptId);
+      } else {
+        await backend().del(keyOf(attemptId));
+      }
     } catch (err) {
       console.warn("草稿清除失败（不影响交卷）", err);
     }

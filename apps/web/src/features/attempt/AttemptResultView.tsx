@@ -925,6 +925,7 @@ export function AttemptResultView({
                                     materials={soloMaterials}
                                     readingKey={`${attempt.id}|q:${question.questionId}`}
                                     className="min-w-0"
+                                    attemptId={attempt.id}
                                   />,
                                   renderRow(questionId),
                                 ];
@@ -937,6 +938,7 @@ export function AttemptResultView({
                               questionCount={segment.questionIds.length}
                               readingKey={`${attempt.id}|${segment.group.id}`}
                               layoutMode="stack"
+                              attemptId={attempt.id}
                             />,
                             ...segment.questionIds.map((questionId) =>
                               renderRow(questionId),

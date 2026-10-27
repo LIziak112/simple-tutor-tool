@@ -305,4 +305,22 @@ describe("applyServerDrafts（进入答题页合并）", () => {
       inkDoc.data,
     );
   });
+
+  it("clearDraft 保留材料圈画笔迹（本机唯一稿，供结果页只读回看）", async () => {
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    draftStore.saveMaterialInk("att-keep", "mat-1", doc(1));
+    await draftStore.flush("att-keep");
+
+    await draftStore.clearDraft("att-keep");
+
+    // 答案/题面笔迹清空，材料笔迹保留
+    const record = await draftStore.loadDraft("att-keep");
+    expect(record?.materialInks?.["mat-1"]?.data).toEqual(doc(1).data);
+    expect(record?.answers).toEqual({});
+    expect(record?.inks).toEqual({});
+
+    // 无材料笔迹时行为不变：整记录删除
+    await draftStore.clearDraft("att-plain");
+    expect(await draftStore.loadDraft("att-plain")).toBeNull();
+  });
 });
