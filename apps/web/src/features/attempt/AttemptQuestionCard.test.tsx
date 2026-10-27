@@ -173,6 +173,27 @@ describe("题头元信息", () => {
     );
     expect(container.textContent).toContain("（　）");
   });
+
+  it("窄列防坍塌：题号/题型徽标禁逐字换行，状态可截断，工具栏文字随题卡容器宽折叠", () => {
+    const { container } = renderStatefulCard(baseQuestion({ type: "choice" }), {
+      attemptId: "attempt-narrow",
+    });
+    const article = container.querySelector("article");
+    // 题卡声明命名容器：工具栏随「题卡自身宽度」而非视口断点折叠
+    expect(article?.className).toContain("@container/question-card");
+    const no = screen.getByText("第 3 题");
+    expect(no.closest("p")?.className).toContain("whitespace-nowrap");
+    const badge = screen.getByText("单选");
+    expect(badge.className).toContain("whitespace-nowrap");
+    const status = screen.getByText("未填写");
+    expect(status.className).toContain("whitespace-nowrap");
+    // 工具栏文字改挂容器查询变体（窄列图标-only，aria-label 恒可访问）
+    const annotateText = screen
+      .getByRole("button", { name: "第 3 题圈画题干" })
+      .querySelector("span");
+    expect(annotateText?.className).toContain("/question-card:");
+    expect(annotateText?.className).not.toContain("lg:inline");
+  });
 });
 
 describe("判断题控件", () => {

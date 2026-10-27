@@ -148,18 +148,20 @@ function QuestionMeta({
   return (
     <div
       data-slot="question-header"
-      className="flex min-h-11 items-start justify-between gap-2 sm:items-center"
+      className="flex min-h-11 flex-wrap items-start justify-between gap-2 sm:items-center"
     >
+      {/* 窄列防坍塌（2026-10-27）：题号/徽标/状态禁逐字换行（CJK 逐字竖排
+          缺陷），状态可截断；行内换行交给 flex-wrap 按整项换行 */}
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-        <p className="flex items-center gap-2 text-sm font-semibold">
+        <p className="flex items-center gap-2 text-sm font-semibold whitespace-nowrap">
           <span>第 {index + 1} 题</span>
         </p>
         <span
-          className={`rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
+          className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
         >
           {QUESTION_TYPE_LABELS[question.type]}
         </span>
-        <span className="text-xs text-muted-foreground">
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
           {completionLabel(
             getQuestionCompletion(question, answer, formalInkPresence),
           )}
@@ -201,7 +203,9 @@ function QuestionMeta({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      {/* 极窄列（分栏 65% 拖拽在 1024 视口）下 5×44px 触控钮去间距才能放下：
+          间距随题卡容器宽折叠恢复，触控目标恒 ≥44px */}
+      <div className="flex shrink-0 items-center gap-0 @min-[26rem]/question-card:gap-1">
         {tools && !tools.editLocked && (
           <Button
             type="button"
@@ -222,7 +226,9 @@ function QuestionMeta({
                 className={`size-4 ${tools.annotationOpen || tools.annotationCount > 0 ? "text-primary" : ""}`}
               />
             )}
-            <span className="hidden lg:inline">圈画</span>
+            <span className="hidden @min-[27rem]/question-card:inline">
+              圈画
+            </span>
             {tools.annotationCount > 0 && (
               <span aria-hidden className="size-1.5 rounded-full bg-current" />
             )}
@@ -239,7 +245,9 @@ function QuestionMeta({
             onClick={tools.openMaterial}
           >
             <FileText aria-hidden className="size-4" />
-            <span className="hidden lg:inline">材料</span>
+            <span className="hidden @min-[27rem]/question-card:inline">
+              材料
+            </span>
           </Button>
         )}
         {tools?.paperEnabled && !tools.editLocked && (
@@ -261,7 +269,7 @@ function QuestionMeta({
                 className={`size-4 ${tools.paperOpen || tools.paperCount > 0 || formalInkPresence ? "text-primary" : ""}`}
               />
             )}
-            <span className="hidden lg:inline">
+            <span className="hidden @min-[27rem]/question-card:inline">
               {HANDWRITTEN_TYPES.has(question.type) ? "手写" : "草稿"}
             </span>
             {(tools.paperCount > 0 || formalInkPresence) && (
@@ -610,7 +618,7 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className="flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-2 rounded-[8px] border border-border bg-card px-4 py-3 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-5 isolate"
+      className="@container/question-card flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-2 rounded-[8px] border border-border bg-card px-4 py-3 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-5 isolate"
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (
