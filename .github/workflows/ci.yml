@@ -137,14 +137,14 @@ jobs:
       # chromium 用 --only-shell 只装 headless shell：E2E 全程 headless，完整 chromium
       # （带 headed 支持的 ~170MB build）用不上，headless shell 体积约为其一半。
       - name: 安装 chromium headless shell（含系统库）
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           start=$(date +%s)
           npx playwright install --with-deps --only-shell chromium
           echo "chromium 安装耗时 $(( $(date +%s) - start ))s"
 
       - name: 安装 webkit（含系统库）
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           start=$(date +%s)
           npx playwright install --with-deps webkit
