@@ -306,6 +306,40 @@ describe("applyServerDrafts（进入答题页合并）", () => {
     );
   });
 
+  it("材料笔迹冻结基准随稿存取，交卷保稿同样保留；空稿清除基准", async () => {
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    draftStore.saveMaterialInk("att-base", "m1|1", doc(1));
+    draftStore.saveMaterialInkBase("att-base", "m1|1", {
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+    expect(draftStore.getMaterialInkBase("att-base", "m1|1")).toEqual({
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+    expect(draftStore.getMaterialInkBase("att-base", "m9")).toBeNull();
+
+    await draftStore.flush("att-base");
+    const loaded = await draftStore.loadDraft("att-base");
+    expect(loaded?.materialInkBases?.["m1|1"]).toEqual({
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+
+    // 交卷保稿：冻结基准与笔迹一并保留（结果页按基准挂冻结框对齐回看）
+    await draftStore.clearDraft("att-base");
+    const kept = await draftStore.loadDraft("att-base");
+    expect(kept?.materialInkBases?.["m1|1"]).toEqual({
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+    expect(kept?.materialInks?.["m1|1"]?.data).toEqual(doc(1).data);
+
+    // 空稿清除：下次首笔按当前列宽重冻（空稿无对齐负担）
+    draftStore.removeMaterialInkBase("att-base", "m1|1");
+    expect(draftStore.getMaterialInkBase("att-base", "m1|1")).toBeNull();
+  });
+
   it("clearDraft 保留材料圈画笔迹（本机唯一稿，供结果页只读回看）", async () => {
     bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
     draftStore.saveMaterialInk("att-keep", "mat-1", doc(1));
