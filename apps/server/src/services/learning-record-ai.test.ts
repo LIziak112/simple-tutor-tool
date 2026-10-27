@@ -207,7 +207,14 @@ describe("learningRecordAiViewOf（LR-PR5 §7.3）", () => {
         },
       ],
       timeline: {
-        entries: [],
+        entries: [
+          {
+            at: 1727392800000,
+            kind: "ai_task",
+            source: "ai",
+            detail: { taskId: "task-uuid-x", beforeSubmit: true },
+          },
+        ],
         clock: { basis: "client", serverSkewMs: null },
         truncated: false,
       },
@@ -233,6 +240,9 @@ describe("learningRecordAiViewOf（LR-PR5 §7.3）", () => {
     expect(view.record.ink[0]?.images[0]?.downloadUrl).toBe(
       "https://t.test/x.png",
     );
+    // timeline detail 的 taskId 全通道剥离（对账标识不进模型载荷）
+    expect(view.record.timeline.entries[0]?.detail?.taskId).toBeUndefined();
+    expect(view.record.timeline.entries[0]?.detail?.beforeSubmit).toBe(true);
     // 非 ai 记录在 schema 层拒绝（防误投学生/教师记录）
     expect(() =>
       learningRecordAiViewOf({

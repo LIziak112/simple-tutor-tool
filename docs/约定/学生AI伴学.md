@@ -27,4 +27,4 @@
 
 - 三个受控 AI 出口（学生 MCP 领取视图 / 页内出站载荷 / 分享票据读端点）在原字段旁新增可选 `record`：以 `role:"ai"` 的 LearningRecord 为底——题面语义节点全量、三类书写材料的过程数据（笔画/擦除/停顿/时序覆盖）、时间线与判定面；答案与解析仍按任务快照的 missingNote 授权口径，教师私注/标记在契约层拒绝（P6）。
 - 压缩：点序列 RDP 简化（ε=坐标域宽×0.3%），单材料超 `AI_MAX_POINTS_PER_MATERIAL=6000` 再按笔均匀抽稀并置 `compacted:true`；保留每笔 id/startedAt/pointer，anchors 按笔对应不受影响。图仍是附件（PNG），过程以结构化数据为准。
-- 版本钉住：任务创建把三类材料的 `(revision, hash)` 写进快照 `recordRefs` 并入 contextVersion 的 HMAC 输入——钉住内容变化即换任务上下文版本。分享页序列化时清洗 UUID 形态字符串（SAI-29：不落内部标识）。
+- 版本钉住：任务创建把三类材料的 `(revision, hash)` 写进快照 `recordRefs` 并入 contextVersion 的 HMAC 输入——钉住内容变化即换任务上下文版本。分享页按 SAI-29 按键定点投影（identity 行 id 占位、timeline detail 去 taskId），投影后契约 parse fail-closed；笔画 id 与 anchors 保留。

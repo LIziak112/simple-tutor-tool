@@ -12,7 +12,10 @@ import {
   learningRecordAiViewSchema,
 } from "@tutor/contract";
 import type { Db } from "../db/client.ts";
-import { getAiLearningRecord } from "./learning-record-service.ts";
+import {
+  getAiLearningRecord,
+  learningRecordMaterialRefs,
+} from "./learning-record-service.ts";
 
 /**
  * AI 学习记录视图的压缩装配（LR-PR5，学习记录模型设计稿 §7.3；纯函数、
@@ -227,8 +230,18 @@ export function learningRecordAiViewOf(
       images,
     };
   });
+  // 对账标识不进模型载荷：timeline detail 的 taskId 全通道剥离（dispatch
+  // 载荷断言 body 不含 taskId——评审 #12249 必改①的伴随口径）
+  const timeline = {
+    ...record.timeline,
+    entries: record.timeline.entries.map((entry) => {
+      if (entry.detail?.taskId === undefined) return entry;
+      const { taskId: _taskId, ...detail } = entry.detail;
+      return { ...entry, detail };
+    }),
+  };
   return learningRecordAiViewSchema.parse({
-    record: { ...record, ink },
+    record: { ...record, ink, timeline },
     compaction: {
       epsilonRatio: options?.epsilonRatio ?? AI_STROKE_EPSILON_RATIO,
       maxPointsPerMaterial:
@@ -239,14 +252,24 @@ export function learningRecordAiViewOf(
 }
 
 /**
- * 任务行的 AI 视图装配（claim / dispatch / share 三视图共用）：装配失败返回
- * undefined——record 是可选增强，不阻断既有领取/派发/分享链路（材料与上下文
- * 照常交付）；钉住审计在任务快照 recordRefs。
+ * 任务行的 AI 视图装配（claim / dispatch / share 三视图共用）：装配失败或
+ * 材料钉住漂移返回 undefined——record 是可选增强，不阻断既有链路（行为回到
+ * 无 record，与 PNG 同源）。
+ *
+ * 评审 #12249 必改③：读端按钉住版本 fail-closed——现算 refs 与创建时钉进
+ * 快照的 recordRefs 逐项比（kind/revision/hash）；不一致（含旧任务未钉住）
+ * 不挂 record 并 warn 一行带 taskId。钉住审计在任务快照 recordRefs。
  */
 export function learningRecordAiViewForTask(
   db: Db,
   dataDir: string,
-  task: { attemptId: string; questionId: string; studentId: string },
+  task: {
+    id: string;
+    attemptId: string;
+    questionId: string;
+    studentId: string;
+    contextSnapshotJson: string;
+  },
   options?: {
     resolveImageUrl?: (
       kind: "draft" | "formal_ink" | "annotation",
@@ -255,6 +278,18 @@ export function learningRecordAiViewForTask(
   },
 ): LearningRecordAiView | undefined {
   try {
+    const pinned = pinnedRecordRefsOf(task.contextSnapshotJson);
+    const current = learningRecordMaterialRefs(
+      db,
+      task.attemptId,
+      task.questionId,
+    );
+    if (JSON.stringify(pinned) !== JSON.stringify(current)) {
+      console.warn(
+        `[lr5] refs_drift taskId=${task.id} pinned=${JSON.stringify(pinned)} current=${JSON.stringify(current)}`,
+      );
+      return undefined;
+    }
     const record = getAiLearningRecord(
       db,
       dataDir,
@@ -263,7 +298,54 @@ export function learningRecordAiViewForTask(
       task.questionId,
     );
     return learningRecordAiViewOf(record, options);
-  } catch {
+  } catch (error) {
+    console.warn(`[lr5] record_assembly_failed taskId=${task.id}`, error);
     return undefined;
   }
+}
+
+/** 从任务快照 JSON 提取 recordRefs（未钉住/损坏 → null，比对恒不相等） */
+function pinnedRecordRefsOf(contextSnapshotJson: string): unknown {
+  try {
+    const parsed = JSON.parse(contextSnapshotJson) as {
+      recordRefs?: unknown;
+    };
+    return Array.isArray(parsed.recordRefs) ? parsed.recordRefs : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 学习记录段（claim/dispatch 共用；追加进数据段尾部） */
+export function learningRecordSectionMd(view: LearningRecordAiView): string {
+  return `\n\n## 学习记录（结构化数据）\n\n以下 JSON 是本题学习过程的结构化记录（点序列已 RDP 压缩；compacted=true 表示超限按笔抽稀），与上方书写材料互为印证：\n\n\`\`\`json\n${JSON.stringify(view)}\n\`\`\``;
+}
+
+/**
+ * 分享通道投影（评审 #12249 必改②）：按键定点隐去内部标识——identity 的
+ * responses 行 id 置占位、timeline detail 去 taskId 键；笔画 id / anchors
+ * 不动（锚语义：afterStrokeId 与 strokeIds 都要可回指）。投影后契约 parse
+ * fail-closed——不过就抛，调用方整段省略，不发坏记录。
+ */
+export function projectShareRecord(
+  view: LearningRecordAiView,
+): LearningRecordAiView {
+  return learningRecordAiViewSchema.parse({
+    ...view,
+    record: {
+      ...view.record,
+      identity: {
+        ...view.record.identity,
+        questionRevisionId: "（内部标识已隐藏）",
+      },
+      timeline: {
+        ...view.record.timeline,
+        entries: view.record.timeline.entries.map((entry) => {
+          if (entry.detail?.taskId === undefined) return entry;
+          const { taskId: _taskId, ...detail } = entry.detail;
+          return { ...entry, detail };
+        }),
+      },
+    },
+  });
 }

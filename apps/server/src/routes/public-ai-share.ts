@@ -21,7 +21,10 @@ import {
   recordShareTicketViewed,
   requireShareTicketByToken,
 } from "../services/ai-companion/student-ai-share.ts";
-import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
+import {
+  learningRecordAiViewForTask,
+  projectShareRecord,
+} from "../services/learning-record-ai.ts";
 
 /**
  * SAI-29 分享正文及附件（B15；需求规格 §10、技术方案 §4.2 公开读表）。
@@ -184,10 +187,11 @@ function buildShareBodyHtml(
   const tokenPath = encodeURIComponent(token);
   // LR-PR5：学习记录（结构化 JSON 段；失败省略——可选增强）。
   // 直出 URL 绑定票据，与本页材料清单同一批行（行序即 /materials/:n.png 页序）。
-  // SAI-29 口径：本页不落任何内部标识——序列化时把 UUID 形态的字符串统一
-  // 清洗为占位文本（identity 的 responses 行 id、ai 事实的任务 id 等）。
+  // SAI-29 口径（评审 #12249 必改②）：按键定点投影——identity 的 responses
+  // 行 id 置占位、timeline detail 去 taskId；笔画 id / anchors 不动（锚语义）。
+  // 投影后契约 parse fail-closed：不过就整段省略，不发坏记录。
   const materialRows = loadAiTaskMaterialRows(db, task.id);
-  const recordView = learningRecordAiViewForTask(db, dataDir, task, {
+  const rawRecordView = learningRecordAiViewForTask(db, dataDir, task, {
     resolveImageUrl: (kind, pageIndex) => {
       const index = materialRows.findIndex(
         (row) =>
@@ -200,13 +204,21 @@ function buildShareBodyHtml(
         : `/api/public/ai/share/${tokenPath}/materials/${index}.png`;
     },
   });
+  const projected = (() => {
+    if (rawRecordView === undefined) return undefined;
+    try {
+      return projectShareRecord(rawRecordView);
+    } catch {
+      return undefined;
+    }
+  })();
   const recordSection =
-    recordView === undefined
+    projected === undefined
       ? ""
       : `<section>
 <h2>学习记录（结构化数据）</h2>
 <p>点序列已经 RDP 压缩（compacted=true 表示超限按笔抽稀）；与下方材料图片互为印证。</p>
-<script type="application/json" id="learning-record">${JSON.stringify(recordView, (_key, value) => (typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? "（内部标识已隐藏）" : value)).replaceAll("<", "\u003c")}</script>
+<script type="application/json" id="learning-record">${JSON.stringify(projected).replaceAll("<", "\\u003c")}</script>
 </section>`;
 
   const items = materials
