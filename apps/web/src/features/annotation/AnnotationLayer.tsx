@@ -11,11 +11,6 @@
  *   - error（网络/栅格化瞬时失败）：原因 + 重试按钮；
  *   - sealed（审查修复 3①）：该 phase 已封存——只读固定态（AnnotationView
  *     回看：底图＋静态笔迹层），不挂编辑器；
- * - **内嵌形态（embedded，2026-10 订正重构实测反馈）**：无入口按钮/标题行/
- *   收起——挂载即走底图流，供订正工作台把「题干直接可圈画」嵌进题面卡：
- *   未就绪/禁用/出错时渲染调用方的 fallback 活题面（RichMarkdown）+ 状态，
- *   ready/sealed 后由底图（题干栅格，含选项）+ 画布接管题干显示——题面即
- *   圈画面，不再是独立折叠区；
  * - phase=correction 的封存检查点（2026-10 订正重构）：独立「添加订正标画」
  *   入口已移除，本层只作为订正工作台（CorrectionWorkspace）内的圈画面挂载；
  *   「保存订正」由工作台统一触发（seal-correction-annotation），本层不再
@@ -29,7 +24,7 @@ import {
   Lock,
   PenLine,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "./AnnotationView";
 import {
@@ -55,17 +50,6 @@ export interface AnnotationLayerProps {
   showTrigger?: boolean;
   /** 结果回看可明确区分本次原标画与新订正。 */
   triggerLabel?: string;
-  /**
-   * 内嵌形态（订正工作台题面）：恒展开、无入口/标题/收起——挂载即走底图流。
-   * 与 open/onOpenChange/showTrigger 互斥（内嵌不消费受控开合）。
-   */
-  embedded?: boolean;
-  /**
-   * 内嵌形态的活题面回退（RichMarkdown 题干+选项）：loading/idle/disabled/
-   * error 时渲染（附带对应状态），底图 ready/sealed 后由底图+画布接管——
-   * 题干任一刻可读，就绪后题面即圈画面。
-   */
-  fallback?: ReactNode;
 }
 
 export function AnnotationLayer({
@@ -77,8 +61,6 @@ export function AnnotationLayer({
   onOpenChange,
   showTrigger = true,
   triggerLabel = "圈画题干",
-  embedded = false,
-  fallback,
 }: AnnotationLayerProps) {
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, questionId, phase);
@@ -89,7 +71,7 @@ export function AnnotationLayer({
     phase,
   });
   const [internalOpen, setInternalOpen] = useState(false);
-  const open = embedded ? true : (controlledOpen ?? internalOpen);
+  const open = controlledOpen ?? internalOpen;
   const setOpen = (next: boolean) => {
     if (controlledOpen === undefined) setInternalOpen(next);
     onOpenChange?.(next);
@@ -118,15 +100,12 @@ export function AnnotationLayer({
   return (
     <div
       data-slot="annotation-layer"
-      data-embedded={embedded ? "true" : undefined}
       className={
-        !embedded && !showTrigger && !open
-          ? "hidden"
-          : "flex min-w-0 flex-col gap-2"
+        !showTrigger && !open ? "hidden" : "flex min-w-0 flex-col gap-2"
       }
     >
-      {/* 收起形态：入口按钮（标注模式切换明确——显式开/收；内嵌形态无入口） */}
-      {!embedded && !open && showTrigger && (
+      {/* 收起形态：入口按钮（标注模式切换明确——显式开/收） */}
+      {!open && showTrigger && (
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
@@ -164,8 +143,8 @@ export function AnnotationLayer({
         </div>
       )}
 
-      {/* 展开形态：标题行 + 收起按钮（内嵌形态无标题/收起——题面即圈画面） */}
-      {!embedded && open && (
+      {/* 展开形态：标题行 + 收起按钮 */}
+      {open && (
         <div className="flex items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-sm font-medium">
             <PenLine aria-hidden className="size-4" />
@@ -197,27 +176,15 @@ export function AnnotationLayer({
       {/* 展开体：base 生命周期 gate——ready 才挂画布（没有可靠底图不能落墨） */}
       {open && (
         <>
-          {flow.kind === "loading" &&
-            (embedded ? (
-              <>
-                {fallback}
-                <p
-                  role="status"
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                >
-                  <LoaderCircle aria-hidden className="size-3.5 animate-spin" />
-                  正在准备题干圈画…
-                </p>
-              </>
-            ) : (
-              <div
-                role="status"
-                className="flex min-h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
-              >
-                <LoaderCircle aria-hidden className="size-4 animate-spin" />
-                正在生成题干底图…
-              </div>
-            ))}
+          {flow.kind === "loading" && (
+            <div
+              role="status"
+              className="flex min-h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
+            >
+              <LoaderCircle aria-hidden className="size-4 animate-spin" />
+              正在生成题干底图…
+            </div>
+          )}
           {workspaceBase && flow.kind !== "sealed" && (
             <AnnotationWorkspace
               attemptId={attemptId}
@@ -247,83 +214,39 @@ export function AnnotationLayer({
               />
             </div>
           )}
-          {flow.kind === "disabled" &&
-            (embedded ? (
-              <>
-                {fallback}
-                <div
-                  role="note"
-                  className="flex items-start gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-                >
-                  <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-                  <span>{flow.reason}</span>
-                </div>
-              </>
-            ) : (
-              <div
-                role="note"
-                className="flex items-start gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+          {flow.kind === "disabled" && (
+            <div
+              role="note"
+              className="flex items-start gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+            >
+              <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+              <span>{flow.reason}</span>
+            </div>
+          )}
+          {flow.kind === "error" && (
+            <div
+              role="alert"
+              className="flex flex-col items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm"
+            >
+              <p className="text-destructive">底图生成失败：{flow.message}</p>
+              <Button
+                variant="outline"
+                className="h-10 px-3 text-xs"
+                onClick={() => void ensureBase()}
               >
-                <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-                <span>{flow.reason}</span>
-              </div>
-            ))}
-          {flow.kind === "error" &&
-            (embedded ? (
-              <>
-                {fallback}
-                <div
-                  role="alert"
-                  className="flex flex-col items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm"
-                >
-                  <p className="text-destructive">
-                    题干圈画准备失败：{flow.message}
-                  </p>
-                  <Button
-                    variant="outline"
-                    className="h-10 px-3 text-xs"
-                    onClick={() => void ensureBase()}
-                  >
-                    重试
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <div
-                role="alert"
-                className="flex flex-col items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm"
-              >
-                <p className="text-destructive">底图生成失败：{flow.message}</p>
-                <Button
-                  variant="outline"
-                  className="h-10 px-3 text-xs"
-                  onClick={() => void ensureBase()}
-                >
-                  重试
-                </Button>
-              </div>
-            ))}
-          {flow.kind === "idle" &&
-            (embedded ? (
-              <>
-                {fallback}
-                <p
-                  role="status"
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                >
-                  <LoaderCircle aria-hidden className="size-3.5 animate-spin" />
-                  正在准备题干圈画…
-                </p>
-              </>
-            ) : (
-              <div
-                role="status"
-                className="flex min-h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
-              >
-                <LoaderCircle aria-hidden className="size-4 animate-spin" />
-                正在准备题干标注…
-              </div>
-            ))}
+                重试
+              </Button>
+            </div>
+          )}
+          {flow.kind === "idle" && (
+            <div
+              role="status"
+              className="flex min-h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
+            >
+              <LoaderCircle aria-hidden className="size-4 animate-spin" />
+              正在准备题干标注…
+            </div>
+          )}
         </>
       )}
     </div>

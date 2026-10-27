@@ -12,7 +12,6 @@ import type {
   NoteRecordMeta,
   NoteSubmissionEvidenceMeta,
 } from "@tutor/contract";
-import { createElement, type ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import {
   afterEach,
@@ -65,22 +64,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
 vi.mock("@/lib/note-endpoints", () => ({
   fetchNoteEvidenceApi: vi.fn(),
   fetchNoteDocumentApi: vi.fn(),
-}));
-
-vi.mock("@/features/annotation/AnnotationLayer", () => ({
-  // 桩：把接线 props 落 data-*；内嵌形态回渲 fallback 活题面
-  //（层行为见 annotation-ui.test）
-  AnnotationLayer: (props: Record<string, unknown>) =>
-    createElement(
-      "div",
-      {
-        "data-testid": "annotation-layer-stub",
-        "data-phase": String(props.phase ?? "scratch"),
-        "data-embedded": props.embedded === true ? "true" : undefined,
-        "data-trigger": String(props.triggerLabel ?? ""),
-      },
-      props.fallback as ReactNode | undefined,
-    ),
 }));
 
 vi.mock("@/features/annotation/seal-correction-annotation", () => ({
@@ -200,6 +183,8 @@ const SESSION_A = { origin: "https://tutor.example", studentId: "student-a" };
 function questionFixture(): AttemptResultQuestion {
   return {
     questionId: "p1-q1",
+    // 题目版本引用（responses 行 id）——原位圈画建底图布局的身份要素
+    questionRevisionId: "qrev-1",
     snapshot: {
       id: "p1-q1",
       type: "choice",
@@ -560,17 +545,21 @@ describe("CorrectionWorkspace：题面与圈画/草稿（复用草稿功能）",
     expect(screen.queryByText("答错")).toBeNull();
   });
 
-  it("圈画内嵌题面挂载（phase=correction、embedded——无独立「圈画题干」入口，题面即圈画面）", async () => {
+  it("圈画与做题同款：原位 overlay 挂题面卡（phase=correction），「圈画」按钮触发，题面即圈画面（无底图折叠区）", async () => {
     await clickStartAndOpenWorkspace(headFixture({ corrections: [openRow()] }));
-    const stub = document.querySelector(
-      '[data-testid="annotation-layer-stub"]',
-    );
-    expect(stub?.getAttribute("data-phase")).toBe("correction");
-    expect(stub?.getAttribute("data-embedded")).toBe("true");
-    // 独立「圈画题干」折叠区已移除——工作台内不再出现该入口按钮
+    // 原位 overlay 在场，活题面（QuestionSurface）就是它的圈画范围
+    const overlay = document.querySelector('[data-slot="annotated-question"]');
+    expect(overlay).not.toBeNull();
     expect(
-      screen.queryByRole("button", { name: /圈画题干/ }),
-    ).not.toBeInTheDocument();
+      overlay?.querySelector('[data-slot="question-surface"]'),
+    ).not.toBeNull();
+    // 画布只叠在原题上：初始无栅格底图、无独立折叠区（AnnotationLayer 不挂）
+    expect(document.querySelector('[data-slot="annotation-layer"]')).toBeNull();
+    expect(overlay?.querySelector("img")).toBeNull();
+    // 「圈画」按钮（与答题页题头同款）触发进入标画模式
+    expect(
+      screen.getByRole("button", { name: /^第 1 题圈画题干/ }),
+    ).toBeInTheDocument();
   });
 
   it("草稿纸挂答题页同款 NoteLayer（展开形态：标题行/全屏/收起齐备——与习题一致）", async () => {
