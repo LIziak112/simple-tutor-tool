@@ -29,6 +29,7 @@ const apiMocks = vi.hoisted(() => {
     loginTeacher: vi.fn(),
     logoutTeacher: vi.fn(),
     fetchTeacherMe: vi.fn(),
+    fetchStudentsApi: vi.fn(),
   };
 });
 
@@ -40,6 +41,7 @@ vi.mock("@/lib/api", () => ({
   loginTeacher: apiMocks.loginTeacher,
   logoutTeacher: apiMocks.logoutTeacher,
   fetchTeacherMe: apiMocks.fetchTeacherMe,
+  fetchStudentsApi: apiMocks.fetchStudentsApi,
 }));
 
 function renderLoginPage() {
@@ -52,6 +54,14 @@ function renderLoginPage() {
         <Routes>
           <Route path="/t/login" element={<LoginPage />} />
           <Route path="/t" element={<p data-testid="teacher-home">教师端</p>} />
+          <Route
+            path="/t/students"
+            element={<p data-testid="students-list">学生列表</p>}
+          />
+          <Route
+            path="/t/students/:id"
+            element={<p data-testid="student-home">学生主页</p>}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -66,6 +76,8 @@ beforeEach(() => {
     hasTeacher: true,
     registrationOpen: false,
   });
+  // Web-4 落点解析的默认场景：空学生名单 → 学生列表
+  apiMocks.fetchStudentsApi.mockResolvedValue({ students: [] });
 });
 
 describe("LoginPage 表单校验", () => {
@@ -189,8 +201,9 @@ describe("LoginPage 记住登录名（localStorage 预填）", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
+    // Web-4：空学生名单 → 落学生列表（不再落 /t 首页）
     await waitFor(() => {
-      expect(screen.getByTestId("teacher-home")).toBeInTheDocument();
+      expect(screen.getByTestId("students-list")).toBeInTheDocument();
     });
     // TanStack Query v5 的 mutationFn 会附带第二个 context 参数，只断言首个参数
     expect(apiMocks.loginTeacher.mock.calls[0]?.[0]).toEqual({
@@ -231,6 +244,64 @@ describe("LoginPage 记住登录名（localStorage 预填）", () => {
       expect(screen.getByLabelText("登录名")).toBeInTheDocument();
     });
     expect(screen.getByLabelText("登录名")).toHaveValue("王老师");
+  });
+});
+
+describe("LoginPage 登录后落点（T-PR4 Web-4）", () => {
+  async function submitLogin(): Promise<void> {
+    await waitFor(() => {
+      expect(screen.getByLabelText("登录名")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("登录名"), {
+      target: { value: "王老师" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "1234abcd" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  }
+
+  function mockSuccessfulLogin(): void {
+    apiMocks.loginTeacher.mockResolvedValue({
+      id: "t1",
+      loginName: "王老师",
+      isAdmin: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+  }
+
+  it("名下恰 1 名未归档学生 → 登录后直接落到该生学生主页", async () => {
+    mockSuccessfulLogin();
+    apiMocks.fetchStudentsApi.mockResolvedValue({
+      students: [
+        {
+          id: "stu-solo",
+          displayName: "独苗",
+          loginName: "solo",
+          linkEnabled: true,
+          passwordEnabled: true,
+          hasPassword: false,
+          linkToken: "tok",
+          note: null,
+          archived: false,
+          createdAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    });
+    renderLoginPage();
+    await submitLogin();
+    expect(await screen.findByTestId("student-home")).toBeInTheDocument();
+  });
+
+  it("学生列表取失败 → 回落学生列表（不阻塞登录，localStorage 照常记住）", async () => {
+    mockSuccessfulLogin();
+    apiMocks.fetchStudentsApi.mockRejectedValue(new Error("network"));
+    renderLoginPage();
+    await submitLogin();
+    expect(await screen.findByTestId("students-list")).toBeInTheDocument();
+    expect(window.localStorage.getItem("tutor:teacher-login-name")).toBe(
+      "王老师",
+    );
   });
 });
 

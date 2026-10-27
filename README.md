@@ -177,7 +177,7 @@ docker compose up -d --build
 
 | 部分 | 使用的技术 |
 | --- | --- |
-| 前端 | React 19、Vite、Tailwind CSS v4、shadcn/ui、TanStack Query、Zustand、React Router、CodeMirror、ECharts、KaTeX、MathLive。 |
+| 前端 | React 19、Vite、Tailwind CSS v4、shadcn/ui、TanStack Query、Zustand、React Router、CodeMirror、KaTeX、MathLive。 |
 | 手写与图片 | Atrament、Excalidraw、html-to-image。 |
 | 后端 | Node.js 24、Hono、SQLite、better-sqlite3、Drizzle ORM、pino、MCP SDK。 |
 | 检查与测试 | TypeScript strict、Vitest、Playwright（Chromium / WebKit）、Biome、GitHub Actions。 |

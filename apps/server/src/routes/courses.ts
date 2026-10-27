@@ -6,6 +6,7 @@ import type {
   CourseMembersRequest,
 } from "@tutor/contract";
 import {
+  courseCatalogCommandSchema,
   courseItemsAddRequestSchema,
   courseItemsReorderRequestSchema,
   courseItemUpdateRequestSchema,
@@ -17,6 +18,7 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
+import { executeCatalogCommand } from "../services/course-catalog";
 import {
   addCourseMembers,
   appendCourseItems,
@@ -124,6 +126,7 @@ export function createCourseRoutes(db: Db) {
               c.req.param("id"),
               body.items,
               {
+                parentId: body.parentId,
                 visible: body.visible,
                 withCompanionUnits: body.withCompanionUnits,
               },
@@ -131,6 +134,18 @@ export function createCourseRoutes(db: Db) {
           },
           201,
         );
+      })
+      .post("/courses/:id/catalog", async (c) => {
+        const command = await parseJsonBody(c, courseCatalogCommandSchema);
+        return c.json({
+          ok: true,
+          data: executeCatalogCommand(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            command,
+          ),
+        });
       })
       .put("/courses/:id/items/order", async (c) => {
         const body: CourseItemsReorderRequest = await parseJsonBody(

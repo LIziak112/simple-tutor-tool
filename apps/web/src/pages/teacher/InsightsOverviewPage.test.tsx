@@ -349,7 +349,7 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     ).toBeInTheDocument();
   });
 
-  it("作业格与学生名的跳转关系：格子→作答详情、学生名→画像、待批卡片→待批队列", async () => {
+  it("作业格与学生名的跳转关系：格子→作答详情、学生名→学生主页、待批卡片→待批队列", async () => {
     mockedOverview.mockResolvedValue(makeOverview());
     renderPage();
     await screen.findByText("开学摸底练习");
@@ -360,7 +360,7 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     expect(cellLink).toHaveAttribute("href", `/t/data/attempts/${ATT_S1_A1}`);
 
     const studentLink = screen.getByRole("link", { name: "陈小明" });
-    expect(studentLink).toHaveAttribute("href", `/t/insights/students/${S1}`);
+    expect(studentLink).toHaveAttribute("href", `/t/students/${S1}`);
 
     const pendingLink = screen.getByRole("link", { name: /去待批队列/ });
     expect(pendingLink).toHaveAttribute("href", "/t/data/pending");
@@ -372,6 +372,18 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     expect(screen.getByRole("link", { name: "题目视角" })).toHaveAttribute(
       "href",
       "/t/insights/questions",
+    );
+  });
+
+  it("头部「作答记录 / 统计」切换与 /t/data 对称：作答记录指向 /t/data，统计为当前视图", () => {
+    renderPage();
+    expect(screen.getByRole("link", { name: "作答记录" })).toHaveAttribute(
+      "href",
+      "/t/data",
+    );
+    expect(screen.getByRole("button", { name: "统计" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
   });
 

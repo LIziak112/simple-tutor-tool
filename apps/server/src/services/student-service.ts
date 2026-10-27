@@ -23,6 +23,7 @@ import { createStudentSession, pruneExpiredSessions } from "../auth/session";
 import type { Db } from "../db/client";
 import { type Student, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { studentActivitySummaries } from "./teacher-attempt-service";
 
 /**
  * StudentService（T2.1）——学生账号与两种登录的业务层。
@@ -166,6 +167,9 @@ function normalizeNote(note: string | undefined): string | null | undefined {
 /**
  * GET /api/teacher/students：默认只列本人未归档学生；includeArchived=true 时全部
  * （含归档标记）。T2B.5：按归属教师过滤（乙视角甲的学生零出现，列表为空）。
+ * T-PR4 Web-4：行带活动三列（最近作答 / 待批 / 进行中讲练，聚合见
+ * studentActivitySummaries），并按最近作答时间倒序（无活动排最后，同刻按
+ * 创建序稳定）。
  */
 export function listStudents(
   db: Db,
@@ -181,7 +185,32 @@ export function listStudents(
   const filtered = includeArchived
     ? rows
     : rows.filter((row) => row.archivedAt == null);
-  return { students: filtered.map(toSummary) };
+  const activity = studentActivitySummaries(
+    db,
+    filtered.map((row) => row.id),
+  );
+  const sorted = filtered
+    .map((row) => {
+      const item = activity.get(row.id);
+      return {
+        ...toSummary(row),
+        lastActivityAt: item?.lastActivityAt ?? null,
+        pendingCount: item?.pendingCount ?? 0,
+        inProgressLessonCount: item?.inProgressLessonCount ?? 0,
+      };
+    })
+    .sort((a, b) => {
+      const left = a.lastActivityAt;
+      const right = b.lastActivityAt;
+      if (left !== null && right !== null && left !== right) {
+        return left < right ? 1 : -1;
+      }
+      if (left === null && right !== null) return 1;
+      if (right === null && left !== null) return -1;
+      // 同刻 / 均无活动：按创建时间升序兜底稳定
+      return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0;
+    });
+  return { students: sorted };
 }
 
 /**

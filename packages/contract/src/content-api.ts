@@ -86,6 +86,8 @@ export const importCommitRequestSchema = importPreviewRequestSchema.extend({
     .object({
       courseId: z.uuid("courseId 必须是 UUID 格式"),
       visible: z.boolean(),
+      parentId: z.uuid().nullable().optional(),
+      folderPath: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
     })
     .optional(),
 });

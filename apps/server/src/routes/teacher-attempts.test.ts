@@ -1,13 +1,13 @@
 import { gzipSync } from "node:zlib";
 import type { ApiErr } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
-import { attempts, teachers } from "../db/schema.ts";
+import { attempts, responses, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { fetchSubmitRevisions } from "../test/submit-revisions";
 
@@ -16,7 +16,8 @@ import { fetchSubmitRevisions } from "../test/submit-revisions";
  * - 列表与筛选组合（studentId / courseId / assignmentId / unitId / sourceType /
  *   status / from / to）与最近活动时间倒序；
  * - D5：draft attempt 出现在列表（status=draft）；draft 详情含草稿答案与笔迹，
- *   判定字段全 null、不下发参考答案/详解、题干公开化（与学生草稿视图同源）；
+ *   未提交行判定字段全 null、不下发参考答案/详解、题干公开化（与学生草稿视图
+ *   同源）；Web-3/T-PR3：draft 卷内已逐题提交的行放行判定与参考答案（行级）；
  * - D7 已交卷详情：快照题干（含 [[答案]] 标记）、参考答案、详解、判定字段、
  *   手写信息按 ink 表关联（只写笔迹未填最终答案 → hasStrokes true）、
  *   多单元作业全卷连续题号（单元顺序 × 题序）；
@@ -718,6 +719,67 @@ describe("T3.1 详情：draft（D5 进行中可查）", () => {
         hasStrokes: true,
         pngUrl: expect.stringMatching(/^\/api\/teacher\/ink\/.+\.png$/),
       },
+    });
+    expect("answers" in solve).toBe(false);
+    expect("solutionMd" in solve).toBe(false);
+  });
+
+  it("Web-3 行级放行：draft 卷内已逐题提交的行带判定与参考答案，未提交行维持 draft 口径", async () => {
+    const env = await makeEnv();
+    // 造「已逐题提交」行：judge 已存答（value=false → 判错），单题提交事务在
+    // 真实链路里写的正是 submitted_at + 自动判定——此处直写同状态验证读侧
+    // 放行投影（本文件夹具直写库先例：setAttemptTimes）
+    env.db
+      .update(responses)
+      .set({
+        submittedAt: new Date().toISOString(),
+        autoCorrect: false,
+        finalCorrect: false,
+        answered: true,
+      })
+      .where(
+        and(
+          eq(responses.attemptId, env.courseDraftId),
+          eq(responses.questionId, Q.courseJudge),
+        ),
+      )
+      .run();
+
+    const { status, body } = await teacherDetail(
+      env.app,
+      env.cookieA,
+      env.courseDraftId,
+    );
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      status: "draft",
+      correctCount: 0,
+      wrongCount: 1,
+      pendingCount: 0,
+    });
+
+    const questions = body.questions as Record<string, unknown>[];
+    const judge = questions.find(
+      (q) => q.questionId === Q.courseJudge,
+    ) as Record<string, unknown>;
+    // 已提交行：按已交卷投影——判定 + 参考答案 + 详解 + 批注定位 id + 题干原文
+    expect(judge).toMatchObject({
+      autoCorrect: false,
+      finalCorrect: false,
+      responseId: expect.any(String),
+    });
+    expect("answers" in judge).toBe(true);
+    expect("solutionMd" in judge).toBe(true);
+    expect(judge.stemMd).toContain("[[正确]]");
+
+    const solve = questions.find(
+      (q) => q.questionId === Q.courseSolve,
+    ) as Record<string, unknown>;
+    // 未提交行：维持 D5 draft 口径（无判定、无参考答案、题干公开化）
+    expect(solve).toMatchObject({
+      autoCorrect: null,
+      finalCorrect: null,
+      responseId: null,
     });
     expect("answers" in solve).toBe(false);
     expect("solutionMd" in solve).toBe(false);

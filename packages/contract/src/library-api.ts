@@ -233,6 +233,7 @@ export const libraryBatchRequestSchema = z.object({
   folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
   /** addToCourse 目标课程 */
   courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
+  parentId: z.uuid().nullable().optional(),
   /** addToCourse 添加后是否对学生可见（缺省 true，D6） */
   visible: z.boolean().optional(),
 });

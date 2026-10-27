@@ -346,7 +346,7 @@ export function StudentCourseCard({
       <Link
         to={`/s/courses/${course.id}`}
         aria-label={`打开课程 ${course.name}`}
-        className="group flex min-h-14 items-start gap-3 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="group flex min-h-14 items-start gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <span
           aria-hidden
@@ -354,7 +354,7 @@ export function StudentCourseCard({
         >
           <School className="size-5" />
         </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center justify-between gap-2">
             <p className="min-w-0 truncate text-base font-semibold">
               {course.name}
