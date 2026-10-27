@@ -269,7 +269,9 @@ describe("得分汇总卡", () => {
     expect(statistics).toHaveTextContent("总题数4题");
     expect(statistics).toHaveTextContent("答对1题");
     expect(statistics).toHaveTextContent("答错2题");
-    expect(statistics).toHaveTextContent("待判断1题");
+    // QM-12 徽章链下该行经 autoCorrect=false 回落计错，不再入待判断桶；
+    // 未答行只进未答（#6980-3 口径统一）
+    expect(statistics).toHaveTextContent("待判断0题");
     expect(statistics).toHaveTextContent("未答1题");
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });

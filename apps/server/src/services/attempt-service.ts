@@ -2835,6 +2835,7 @@ export function scoreSummaryCoreOf(
   let wrong = 0;
   let pending = 0;
   let pendingCount = 0;
+  let judged = 0;
   for (const row of rows) {
     if (!row.hasSnapshot) continue;
     total += 1;
@@ -2844,8 +2845,13 @@ export function scoreSummaryCoreOf(
     if (row.answered) answered += 1;
     const effective = effectiveVerdictOfRow(row);
     if (effective === null) pending += 1;
-    else if (effective.value) correct += 1;
-    else wrong += 1;
+    else {
+      // 可判分分母与答错门正交（v2 口径）：未做判错仍进分母，不计错次
+      judged += 1;
+      if (effective.value) correct += 1;
+      // #6980-3：未做不计错次，留在 unanswered（与教师详情/错题本同口径）
+      else if (row.answered) wrong += 1;
+    }
     // D4 教师待批：finalCorrect IS NULL 且非 reference_self 行（pending-mark.ts
     // 谓词同口径；null 策略旧行不受影响）
     if (row.finalCorrect === null && row.gradingPolicy !== "reference_self") {
@@ -2859,7 +2865,7 @@ export function scoreSummaryCoreOf(
     wrong,
     pending,
     unanswered: total - answered,
-    autoGradable: correct + wrong,
+    autoGradable: judged,
     pendingCount,
   };
 }
@@ -3927,6 +3933,7 @@ function scoreSummaryOf(
   let correct = 0;
   let wrong = 0;
   let pending = 0;
+  let judged = 0;
   for (const item of rows) {
     // 有效判定（公布 gate 已过：selfReview/teacherMark/autoCorrect 均为真实值；
     // 未公布形态的覆写在 buildResultData）
@@ -3936,10 +3943,15 @@ function scoreSummaryOf(
       item.selfReview?.record ?? null,
     );
     if (effective === null) pending += 1;
-    else if (effective.value) correct += 1;
-    else wrong += 1;
+    else {
+      // 可判分分母与答错门正交（v2 口径）：未做判错仍进分母，不计错次
+      judged += 1;
+      if (effective.value) correct += 1;
+      // #6980-3：未做不计错次，留在 unanswered（与教师详情/错题本同口径）
+      else if (item.answered) wrong += 1;
+    }
   }
-  const autoGradable = correct + wrong;
+  const autoGradable = judged;
   return {
     total,
     answered,

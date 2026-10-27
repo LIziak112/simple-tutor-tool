@@ -975,11 +975,9 @@ describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
       scoreAuto: 83,
       scoreFinal: null,
       correctCount: 5,
-      // QM-12：wrongCount 为有效判定口径（含未做，未做仍进分母）；
-      // #6980-3：批错的 solve 只交正式手写笔迹（strokeCount>0）= 已答 →
-      // 「答了且判错」= wrongCount - notDoneCount；未作答单选判错但未做 →
-      // 进 notDoneCount（详情灰显「未做」，wrongCount - notDoneCount 不计）
-      wrongCount: 2,
+      // #6980-3：批错的 solve 只交正式手写笔迹（strokeCount>0）= 已答 → 计错次；
+      // 未作答单选判错但未做 → 不计错次，进 notDoneCount（详情灰显「未做」）
+      wrongCount: 1,
       notDoneCount: 1,
       pendingCount: 1,
     });

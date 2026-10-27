@@ -42,10 +42,10 @@ export function reviewCounts(
   const counts = { correct: 0, wrong: 0, pending: 0, unanswered: 0 };
   for (const question of questions) {
     const state = reviewQuestionState(question, released);
-    // 未答与判定两维度正交（#6980-3 × QM-12）：未答行同时计入未答与它的
-    // 有效判定桶（未做判错进答错、未做待批进待判断——与服务端 summary 的
-    // 「未做仍进分母」同口径，瓦片与徽章、服务端计数不漂移）
-    if (state.unanswered) counts.unanswered++;
+    if (state.unanswered) {
+      counts.unanswered++;
+      continue; // 未做只进「未作答」，不进判错/待批（#6980-3 口径统一）
+    }
     if (!released) continue;
     if (state.verdict === true) counts.correct++;
     else if (state.verdict === false) counts.wrong++;

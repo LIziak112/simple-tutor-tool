@@ -43,6 +43,7 @@ import {
   attemptQuestionRows,
   attemptResponseRows,
   attemptUnitIds,
+  effectiveVerdictOfRow,
   ensureAttemptFrozen,
   lessonSourceContextOf,
   selfReviewRecordOf,
@@ -55,19 +56,6 @@ import {
 } from "./pending-mark";
 import { attemptResultCounts } from "./result-counts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
-
-/**
- * 判定展示口径（D2/D3 前置约定）：`finalCorrect ?? autoCorrect`——教师批改
- * （T3.2 落地）优先，否则回落自动判定。汇总计数（详情头对/错/待批）统一用它；
- * 本阶段 finalCorrect 恒 null，等价于 autoCorrect。（合并移植自 v2——PR 侧
- * 重写区吞掉了该本地导出，judgedRows 计数仍依赖）
- */
-export function effectiveCorrect(
-  finalCorrect: boolean | null,
-  autoCorrect: boolean | null,
-): boolean | null {
-  return finalCorrect ?? autoCorrect;
-}
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -682,12 +670,12 @@ export function getTeacherAttemptDetail(
     }),
   );
 
-  // 判定计数（合并口径：v2 judgedRows SQL——#6980-3/Web-3 作废 draft 全 0、
-  // 只汇总已放行（逐题已提交）行、selfCorrect 显式判定不被「未做」掩盖；
-  // 叠加 QM-12 待自评单独分列）。计数从 responses 原始行取——questionsOut
-  // 投影不含 selfCorrect，且 draft 投影会把判定置 null（isDraft 时
-  // finalCorrect/autoCorrect 恒 null）；待批数走 D4 共享谓词
-  // pendingMarkCount（不含待自评行——两队列分开）
+  // 判定计数（合并口径：v2 的 Web-3 draft 规则——作废卷全 0、draft 只汇总
+  // 已放行（submittedAt 非空）行；v2 的错次规则——#6980-3 错次不含未做，
+  // wrongCount 与 notDoneCount 互斥；QM-12 的判定链（教师判 > 自评 > 自动，
+  // effectiveVerdictOfRow 单源）与待自评单独分列）。计数从 responses 原始
+  // 行取——questionsOut 投影不含 selfCorrect，且 draft 投影会把判定置 null；
+  // 待批数走 D4 共享谓词 pendingMarkCount（不含待自评行——两队列分开）
   const judgedRows =
     attempt.status === "draft" && attempt.abandonedAt !== null
       ? []
@@ -700,6 +688,8 @@ export function getTeacherAttemptDetail(
             selfCorrect: responses.selfCorrect,
             gradingPolicy: responses.gradingPolicy,
             selfReviewVerdict: responses.selfReviewVerdict,
+            selfReviewAt: responses.selfReviewAt,
+            selfReviewRevision: responses.selfReviewRevision,
           })
           .from(responses)
           .where(
@@ -712,7 +702,9 @@ export function getTeacherAttemptDetail(
           )
           .all()
           .map((row) => ({
-            verdict: effectiveCorrect(row.finalCorrect, row.autoCorrect),
+            // QM-12 有效判定：教师判 > 自评 > 自动（effectiveVerdictOfRow
+            // 单源——与列表卡片/错题本/学情同一出处）
+            verdict: effectiveVerdictOfRow(row)?.value ?? null,
             answered: row.answered,
             marked: row.teacherMark !== null || row.selfCorrect !== null,
             gradingPolicy: row.gradingPolicy,
@@ -720,12 +712,20 @@ export function getTeacherAttemptDetail(
             teacherMark: row.teacherMark,
           }));
   const correctCount = judgedRows.filter((row) => row.verdict === true).length;
+  // v2 #6980-3 口径：判错且（有实际作答或人工显式判定：教师批 / 自评标记
+  // 任一非空，或学生自评已出 verdict）才计错次
   const wrongCount = judgedRows.filter(
-    (row) => row.verdict === false && (row.answered || row.marked),
+    (row) =>
+      row.verdict === false &&
+      (row.answered || row.marked || row.selfReviewVerdict !== null),
   ).length;
-  // #6980-3（审查修复 P1-4）：判错但无实际作答且无人工判定，灰显「未做」
+  // 未做判错单列（与 wrongCount 互斥）：详情灰显「未做」
   const notDoneCount = judgedRows.filter(
-    (row) => row.verdict === false && !row.answered && !row.marked,
+    (row) =>
+      row.verdict === false &&
+      !row.answered &&
+      !row.marked &&
+      row.selfReviewVerdict === null,
   ).length;
   // QM-12：待自评 = reference_self 行且教师未判、学生未自评、自动也未判
   // （读侧现算，自评后即归零）——与 pending-mark.pendingSelfReviewCounts

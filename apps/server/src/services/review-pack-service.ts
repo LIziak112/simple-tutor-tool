@@ -10,8 +10,8 @@ import type {
 import {
   formatQuestionAnswers,
   HANDWRITTEN_QUESTION_TYPES,
-  lettersOf,
   learningRecordJsonSchema,
+  lettersOf,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -49,12 +49,12 @@ import {
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
-import { serializeStudentAnswerOfRow } from "./mark-response";
-import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
 import {
   getStudentLearningRecord,
   getTeacherLearningRecord,
 } from "./learning-record-service";
+import { serializeStudentAnswerOfRow } from "./mark-response";
+import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
 import {
   assembleQuestionEvidence,
   evidenceMissingRowsOf,

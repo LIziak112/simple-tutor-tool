@@ -269,10 +269,9 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     scoreFinal: z.number().int().min(0).max(100).nullable(),
     /** 判对题数（有效判定 = true：教师判 > 自评 > 自动） */
     correctCount: z.number().int().min(0),
-    /** 判错题数（有效判定 = false：教师判 > 自评 > 自动——含未做题，未做仍进分母） */
+    /** 判错题数（effectiveCorrect = false 且（有实际作答或人工显式判定）） */
     wrongCount: z.number().int().min(0),
-    /** 未做题数（#6980-3）：判错行中 answered=false 且无教师显式判定的子集
-     *  ——详情灰显「未做」（wrongCount - notDoneCount 即「答了且判错」展示数） */
+    /** 未做题数（#6980-3）：判错但无实际作答且无人工显式判定——详情灰显「未做」 */
     notDoneCount: z.number().int().min(0),
     /** 待教师批改数（D4 共享谓词——与列表卡片/矩阵同一口径；不含待自评行） */
     pendingCount: z.number().int().min(0),

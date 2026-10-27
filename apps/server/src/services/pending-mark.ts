@@ -57,6 +57,10 @@ function pendingMarkBaseConditions(selfReview = false): (SQL | undefined)[] {
     isNull(responses.finalCorrect),
     eq(responses.reviewEligible, selfReview),
     isNotNull(responses.questionSnapshotJson),
+    // QM-12 合并并集：策略排除（reference_self 行永不进教师必批）——v2 列
+    // 门控之外补 PR 侧谓词；reference_self 行即便 review_eligible 误标也
+    // 不进教师队列，两线口径（pendingSelfReviewCounts 分列）不漂移
+    notSelfReviewPendingRow(),
   ];
 }
 
