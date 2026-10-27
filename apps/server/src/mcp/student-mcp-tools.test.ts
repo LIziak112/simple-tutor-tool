@@ -317,8 +317,10 @@ describe("SAI-26 只读列表与工具注解", () => {
       [
         "claim_ai_task",
         "claim_attempt_review",
+        "create_wrong_practice",
         "list_my_ai_tasks",
         "list_my_attempt_reviews",
+        "list_my_wrong_questions",
         "renew_ai_lease",
         "renew_attempt_review_lease",
         "submit_ai_reply",
@@ -353,6 +355,16 @@ describe("SAI-26 只读列表与工具注解", () => {
     expect(
       byName.get("renew_attempt_review_lease")?.annotations?.readOnlyHint,
     ).toBeFalsy();
+    // 错题组卷两工具（2026-10）：list 只读；create 非幂等、显式标 destructive=false
+    expect(
+      byName.get("list_my_wrong_questions")?.annotations?.readOnlyHint,
+    ).toBe(true);
+    expect(
+      byName.get("create_wrong_practice")?.annotations?.idempotentHint,
+    ).toBe(false);
+    expect(
+      byName.get("create_wrong_practice")?.annotations?.destructiveHint,
+    ).toBe(false);
     await client.close();
   });
 });

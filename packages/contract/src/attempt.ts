@@ -272,10 +272,12 @@ export const attemptStartDataSchema = attemptSummarySchema;
 /**
  * 错题重练建卷范围（2026-10-25 #6980-2「我的记录要说明重练的是哪些错题」）：
  * 前端组卷时随请求下发，服务端原样落 attempts.practice_scope_json（快照语义，
- * 单元/考点改名不影响历史卷标题）。三种口径对应错题本的三个重练入口：
+ * 单元/考点改名不影响历史卷标题）。五种口径对应错题本的全部重练入口：
  * - all：页头「重练全部」（当前 tab + 课程筛选圈定的全部题）；
  * - group：组头「重练本组」（分组维度 + 组标题 + 可选课程名）；
- * - result：结果页「练习本卷错题」（来源卷标题）。
+ * - result：结果页「练习本卷错题」（来源卷标题）；
+ * - selection：选题重练（2026-10 手选 N 题跨组组卷，可选课程名）；
+ * - ai：AI 组卷（2026-10 学生 MCP create_wrong_practice，AI 给出的组卷说明）。
  */
 export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -297,16 +299,36 @@ export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
     /** 课程名（课程筛选激活时可携带） */
     courseName: z.string().min(1).max(120).optional(),
   }),
+  z.object({
+    kind: z.literal("selection"),
+    /** 手选题数（展示「手选 N 题」） */
+    questionCount: z.number().int().min(1),
+    /** 课程名（课程筛选激活时可携带） */
+    courseName: z.string().min(1).max(120).optional(),
+  }),
+  z.object({
+    kind: z.literal("ai"),
+    /** AI 给出的组卷说明（如「最近一周 · 错 2 次以上 · 10 题」），随卷快照展示 */
+    label: z.string().min(1).max(120),
+  }),
 ]);
 export type WrongPracticeScope = z.infer<typeof wrongPracticeScopeSchema>;
 
-/** 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题 */
+/**
+ * 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题；
+ * selection=「手选 N 题」；ai=AI 组卷说明原文
+ */
 export function wrongScopeLabelOf(scope: WrongPracticeScope): string {
   if (scope.kind === "all")
     return scope.courseName !== undefined
       ? `全部错题（${scope.courseName}）`
       : "全部错题";
   if (scope.kind === "group") return scope.groupTitle;
+  if (scope.kind === "selection")
+    return scope.courseName !== undefined
+      ? `手选 ${scope.questionCount} 题（${scope.courseName}）`
+      : `手选 ${scope.questionCount} 题`;
+  if (scope.kind === "ai") return scope.label;
   return scope.sourceTitle;
 }
 
