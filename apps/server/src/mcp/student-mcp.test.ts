@@ -507,7 +507,7 @@ describe("SAI-25 传输生命周期与教师 MCP 冒烟", () => {
     await client.close();
   });
 
-  it("教师 /mcp 冒烟不回归（initialize 200 + 14 工具仍在）", async () => {
+  it("教师 /mcp 冒烟不回归（initialize 200 + 15 工具仍在）", async () => {
     const env = await makeEnv();
     const init = await env.app.request("/mcp", {
       method: "POST",
@@ -532,6 +532,6 @@ describe("SAI-25 传输生命周期与教师 MCP 冒烟", () => {
     const body = (await list.json()) as {
       result: { tools: { name: string }[] };
     };
-    expect(body.result.tools).toHaveLength(14);
+    expect(body.result.tools).toHaveLength(15);
   });
 });

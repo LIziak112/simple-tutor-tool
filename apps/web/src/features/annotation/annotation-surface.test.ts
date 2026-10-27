@@ -739,7 +739,10 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
   const view = {
     storedBaseWidth: STORED_W,
     storedBaseHeight: STORED_H,
-    strokeToStored: toStoredStroke,
+    strokeToStored: (stroke: import("@tutor/contract").InkStroke) => ({
+      stroke: toStoredStroke(stroke),
+      unanchored: false,
+    }),
     strokeToView: toViewStroke,
     pointToStored: (p: { x: number; y: number }) => ({
       x: Math.round(p.x * 0.8 * 100) / 100,
@@ -848,6 +851,24 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
         ],
       }),
     );
+  });
+
+  it("映射走 root 兜底（unanchored）时不写 anchors——服务端锚校验防 400", () => {
+    const h = mountViewSurface();
+    h.strokeToStored.mockImplementation(
+      (stroke: import("@tutor/contract").InkStroke) => ({
+        stroke: toStoredStroke(stroke),
+        unanchored: true,
+      }),
+    );
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 60 });
+    pointer(h.canvas, "pointermove", { clientX: 220, clientY: 70 });
+    pointer(h.canvas, "pointerup", { clientX: 220, clientY: 70 });
+    const doc = h.surface.getDoc();
+    expect(doc.strokes).toHaveLength(1);
+    // 几何照常落存储域（root 兜底），只是不带锚
+    expect(doc.strokes[0]?.points[0]?.x).toBeCloseTo(80, 1);
+    expect(doc.anchors).toBeUndefined();
   });
 
   it("橡皮在存储域命中：视图指针点映射后擦除存储笔画（墓碑=存储几何）", () => {

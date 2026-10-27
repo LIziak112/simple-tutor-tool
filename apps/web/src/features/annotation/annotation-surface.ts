@@ -119,8 +119,15 @@ export interface AnnotationSurfaceOptions {
     /** 文档存储域尺寸（getDoc() 输出 baseWidth/baseHeight；= 保存底图域） */
     storedBaseWidth: number;
     storedBaseHeight: number;
-    /** 视图笔画 → 存储域（收笔提交；id/startedAt/pointer 等字段原样保留） */
-    strokeToStored(stroke: InkStroke, anchorKey: string | undefined): InkStroke;
+    /**
+     * 视图笔画 → 存储域（收笔提交；id/startedAt/pointer 等字段原样保留）。
+     * unanchored=true 表示锚键不在保存块表（走了 root 兜底）——调用方不写
+     * anchors（服务端锚校验会整次 400，评审 #12019 顺手项）。
+     */
+    strokeToStored(
+      stroke: InkStroke,
+      anchorKey: string | undefined,
+    ): { stroke: InkStroke; unanchored: boolean };
     /** 存储笔画 → 视图（重绘显示；锚缺失走 root 兜底） */
     strokeToView(stroke: InkStroke, anchorKey: string | undefined): InkStroke;
     /** 视图点 → 存储点（橡皮指针命中；ratio = 局部存储/视图线比，半径同乘） */
@@ -398,18 +405,23 @@ export function createAnnotationSurface(
       // 无带键块（旧布局）不锚（P1 不伪造，anchoredRatio 如实降低）。
       // 近似原位模式：anchorBlocks 供给**视图域**块（当前布局），锚键两侧同键。
       const bbox = strokeBbox(rawStroke);
+      let anchorKey: string | undefined;
       if (bbox !== null) {
         const blocks = anchorBlocks?.();
-        const key =
+        anchorKey =
           blocks === undefined ? undefined : anchorKeyForStroke(bbox, blocks);
-        if (key !== undefined) anchors[strokeId] = key;
       }
       // 近似原位：锚定后整笔换算回存储域（与 inverseReproject 同式），存储域
       // 语义（撤销/墓碑/压实/上传校验）零变化
-      const committed = view
-        ? view.strokeToStored(rawStroke, anchors[strokeId])
-        : rawStroke;
-      withReason("stroke", () => store.commitAdd([committed]));
+      const mapped = view
+        ? view.strokeToStored(rawStroke, anchorKey)
+        : { stroke: rawStroke, unanchored: false };
+      // 评审 #12019 顺手项：映射走 root 兜底（锚键不在保存块表）时不写
+      // anchors——否则服务端锚校验把整次上传 400 掉；anchoredRatio 如实降低
+      if (anchorKey !== undefined && !mapped.unanchored) {
+        anchors[strokeId] = anchorKey;
+      }
+      withReason("stroke", () => store.commitAdd([mapped.stroke]));
     }
     livePoints = [];
     livePrev = null;

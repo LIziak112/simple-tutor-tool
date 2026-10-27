@@ -70,10 +70,10 @@ export default defineConfig({
   // 单用例超时：本机主流程 ~15s，CI 2 核 runner + vite 冷编译约 40-60s，120s 已足余量。
   // 收紧（原 180s）：失败时更快暴露（4 用例 × 重试 1 次吃满 180s 会把 job 拖到 12 分钟+）。
   timeout: 120_000,
-  // 212 项双浏览器回归在 CI 的两路并发下保留 30 分钟，外层 job 上限为 40 分钟。
+  // 256 项双浏览器回归在 CI 的两路并发下保留 45 分钟，外层 job 上限为 60 分钟（2026-10-27：套件涨到 256 项后 30 分钟墙把队尾用例截死，PR #33 连续三轮同型红）。
   // 整个 run 的硬上限（含所有 worker）：防止 worker/浏览器卡死时无限等待
   // （CI job 层面还有 workflow 的 timeout-minutes 双保险）。
-  globalTimeout: 30 * 60_000,
+  globalTimeout: 45 * 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: true,
   forbidOnly: IS_CI,
