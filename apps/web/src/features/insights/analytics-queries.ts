@@ -4,6 +4,8 @@ import {
   fetchAnalyticsOverviewApi,
   fetchAnalyticsQuestionsApi,
   fetchAnalyticsStudentApi,
+  fetchQuestionReviewApi,
+  type QuestionReviewParams,
 } from "@/lib/api";
 
 /**
@@ -56,6 +58,26 @@ export function useAnalyticsQuestions(params: AnalyticsFetchParams) {
   return useQuery({
     queryKey: analyticsQuestionsKey(params),
     queryFn: () => fetchAnalyticsQuestionsApi(params),
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** 「错题与存疑」key（kind / 筛选参数进入 key） */
+export const questionReviewKey = (
+  studentId: string,
+  params: QuestionReviewParams,
+) => ["teacher", "question-review", studentId, params] as const;
+
+/** 学生主页「错题与存疑」（T-PR4 Web-2②；id 为空〔路由未就绪〕不查） */
+export function useQuestionReview(
+  studentId: string | undefined,
+  params: QuestionReviewParams,
+) {
+  return useQuery({
+    queryKey: questionReviewKey(studentId ?? "pending", params),
+    queryFn: () => fetchQuestionReviewApi(studentId ?? "", params),
+    enabled: studentId !== undefined && studentId.length > 0,
     staleTime: 15_000,
     refetchOnWindowFocus: false,
   });

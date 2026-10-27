@@ -6,13 +6,19 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { AnalyticsStudentData } from "@tutor/contract";
+import type {
+  AnalyticsStudentData,
+  QuestionReviewRow,
+  TeacherAttemptCard,
+} from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   fetchAnalyticsStudentApi,
+  fetchQuestionReviewApi,
   fetchStudentReports,
+  fetchTeacherAttemptsApi,
   fetchTeacherCourses,
 } from "@/lib/api";
 import StudentHomePage from "./StudentHomePage";
@@ -33,12 +39,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchTeacherCourses: vi.fn(),
     // T4.7 报告区（列表默认空；报告区自身行为在 StudentReportsSection.test 覆盖）
     fetchStudentReports: vi.fn(),
+    // T-PR4 Web-2：作答记录区与「错题与存疑」聚合（区域行为在本文件覆盖）
+    fetchTeacherAttemptsApi: vi.fn(),
+    fetchQuestionReviewApi: vi.fn(),
   };
 });
 
 const mockedStudent = vi.mocked(fetchAnalyticsStudentApi);
 const mockedCourses = vi.mocked(fetchTeacherCourses);
 const mockedReports = vi.mocked(fetchStudentReports);
+const mockedAttempts = vi.mocked(fetchTeacherAttemptsApi);
+const mockedReview = vi.mocked(fetchQuestionReviewApi);
 
 const S2 = "22222222-2222-4222-8222-222222222222";
 const COURSE_A = "44444444-4444-4444-8444-444444444444";
@@ -266,6 +277,57 @@ function makeStudent(
   };
 }
 
+/** 作答卡片工厂（Web-2① 作答记录区行；来源=未挂课程作业） */
+function makeAttemptCard(
+  overrides: Partial<TeacherAttemptCard> = {},
+): TeacherAttemptCard {
+  return {
+    sourceType: "assignment",
+    courseId: null,
+    courseName: null,
+    assignmentId: "eeeeeeee-0000-4000-8000-000000000001",
+    assignmentTitle: "第一次周测",
+    unitId: null,
+    unitTitle: null,
+    attemptNo: 1,
+    attemptId: ATT_WRONG_1,
+    studentId: S2,
+    studentName: "李小红",
+    unitCount: 1,
+    questionCount: 5,
+    status: "submitted",
+    scoreAuto: 80,
+    scoreFinal: null,
+    pendingCount: 0,
+    submittedCount: 5,
+    startedAt: NOW,
+    submittedAt: NOW,
+    activeSec: 600,
+    ...overrides,
+  };
+}
+
+/** 「错题与存疑」聚合行工厂（Web-2②） */
+function makeReviewRow(
+  overrides: Partial<QuestionReviewRow> = {},
+): QuestionReviewRow {
+  return {
+    questionId: "unit-u2-2",
+    attemptId: ATT_WRONG_1,
+    type: "choice",
+    difficulty: 2,
+    knowledge: ["绝对值"],
+    stemMd: "数轴上到原点的距离等于 $3$ 的点表示的数是（　）",
+    finalCorrect: false,
+    studentFlag: null,
+    hasCorrection: false,
+    hasAiHelp: false,
+    redoCount: 0,
+    lastAt: NOW,
+    ...overrides,
+  };
+}
+
 /** 路由地址探针 */
 function LocationProbe() {
   const location = useLocation();
@@ -305,6 +367,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedCourses.mockResolvedValue({ courses: [] });
   mockedReports.mockResolvedValue({ reports: [] });
+  // T-PR4 Web-2 新区默认空（区域行为在各自用例里覆盖）
+  mockedAttempts.mockResolvedValue({ attempts: [], total: 0 });
+  mockedReview.mockResolvedValue({ total: 0, nextCursor: null, questions: [] });
 });
 
 describe("StudentHomePage 三态", () => {
@@ -407,34 +472,126 @@ describe("StudentHomePage 指标区", () => {
     ]);
   });
 
-  it("错题列表：判错行渲染（单元/题型/学生答案）与整行跳作答详情；空列表空态", async () => {
+  it("作答记录区（Web-2①）：最近卷列表、进行中卷「已提交 n / 共 m」、整行跳详情", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    mockedAttempts.mockResolvedValue({
+      attempts: [
+        makeAttemptCard({
+          attemptId: ATT_WRONG_1,
+          status: "draft",
+          submittedAt: null,
+          scoreAuto: null,
+          submittedCount: 3,
+          questionCount: 5,
+        }),
+        makeAttemptCard({ attemptId: ATT_WRONG_2, status: "submitted" }),
+      ],
+      total: 2,
+    });
+    renderPage();
+    await screen.findByText(/已提交 3 \/ 共 5/);
+
+    const section = screen.getByRole("region", { name: "作答记录" });
+    const rowLinks = within(section)
+      .getAllByRole("link")
+      .filter((link) =>
+        (link.getAttribute("href") ?? "").startsWith("/t/data/attempts/"),
+      );
+    expect(rowLinks.map((link) => link.getAttribute("href"))).toEqual([
+      `/t/data/attempts/${ATT_WRONG_1}`,
+      `/t/data/attempts/${ATT_WRONG_2}`,
+    ]);
+    expect(within(section).getByText(/已提交 3 \/ 共 5/)).toBeInTheDocument();
+  });
+
+  it("作答记录区空态", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("用时异常题");
+    await screen.findByText("该生还没有作答记录。");
+    const section = screen.getByRole("region", { name: "作答记录" });
+    expect(
+      within(section).getByText("该生还没有作答记录。"),
+    ).toBeInTheDocument();
+  });
 
-    // 两行判错题，整行 Link 跳对应 attempt 详情（aria-label 按题定位）
-    const choiceLink = screen.getByRole("link", {
-      name: "查看错题 unit-u2-2 的作答详情",
+  it("错题与存疑（Web-2②）：聚合行判定/自标/订正/AI/重做徽记与跳代表作答详情", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    mockedReview.mockResolvedValue({
+      total: 2,
+      nextCursor: null,
+      questions: [
+        makeReviewRow({
+          questionId: "q-choice",
+          studentFlag: "unsure",
+          hasCorrection: true,
+          hasAiHelp: true,
+          redoCount: 2,
+        }),
+        makeReviewRow({
+          questionId: "q-fill",
+          attemptId: ATT_WRONG_2,
+          finalCorrect: null,
+          stemMd: "计算：$(-3)+7=$ [[4]]。",
+        }),
+      ],
     });
-    expect(choiceLink).toHaveAttribute(
-      "href",
+    renderPage();
+    await screen.findByText("重做 2 次");
+
+    const section = screen.getByRole("region", { name: "错题与存疑" });
+    const links = within(section).getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
       `/t/data/attempts/${ATT_WRONG_1}`,
+      `/t/data/attempts/${ATT_WRONG_2}`,
+    ]);
+    expect(within(section).getAllByText("判错").length).toBeGreaterThanOrEqual(
+      1,
     );
-    expect(within(choiceLink).getByText("数轴练习")).toBeInTheDocument();
-    expect(within(choiceLink).getByText("学生答案：A")).toBeInTheDocument();
+    expect(within(section).getByText("待批")).toBeInTheDocument();
+    expect(within(section).getByText("自标「不会」")).toBeInTheDocument();
+    expect(
+      within(section).getAllByText("已订正").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(within(section).getByText("问过 AI")).toBeInTheDocument();
+    expect(within(section).getByText("重做 2 次")).toBeInTheDocument();
+  });
 
-    const fillLink = screen.getByRole("link", {
-      name: "查看错题 unit-u1-3 的作答详情",
+  it("错题与存疑换档：点「自标不会」写 URL ?kind=unsure 并按新 kind 重查", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    renderPage();
+    await screen.findByText("当前筛选下没有这一类题目。");
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "错题与存疑" })).getByRole(
+        "button",
+        { name: "自标不会" },
+      ),
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "?kind=unsure",
+      );
     });
-    expect(fillLink).toHaveAttribute("href", `/t/data/attempts/${ATT_WRONG_2}`);
-    // 未作答的判错行 answerText=null →「未作答」（Phase3 D1 口径）
-    expect(within(fillLink).getByText("学生答案：未作答")).toBeInTheDocument();
+    const lastCall = mockedReview.mock.calls.at(-1);
+    expect(lastCall?.[0]).toBe(S2);
+    expect(lastCall?.[1].kind).toBe("unsure");
+  });
 
-    // 空列表空态
-    mockedStudent.mockResolvedValue(makeStudent({ wrongQuestions: [] }));
+  it("错题与存疑空态与超出单页时的总数提示", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    renderPage();
+    await screen.findByText("错题与存疑");
+    expect(screen.getByText("当前筛选下没有这一类题目。")).toBeInTheDocument();
+
+    mockedReview.mockResolvedValue({
+      total: 60,
+      nextCursor: "50",
+      questions: Array.from({ length: 50 }, (_, i) =>
+        makeReviewRow({ questionId: `q-${i}` }),
+      ),
+    });
     renderPage();
     expect(
-      await screen.findByText("该生在当前范围内没有判错的题目。"),
+      await screen.findByText(/已显示前 50 题（共 60 题）/),
     ).toBeInTheDocument();
   });
 
@@ -512,11 +669,16 @@ describe("StudentHomePage 讲义阅读地图（T4.0 §4.4.4）", () => {
   });
 });
 
-describe("StudentHomePage AI 报告区（T4.7 接入实数据，详见 StudentReportsSection.test）", () => {
-  it("空态文案说明报告来源与连接入口（不再说「将在连接 AI 后出现」）", async () => {
+describe("StudentHomePage AI 报告区（T4.7 实数据；T-PR4 起默认折叠）", () => {
+  it("默认折叠不取列表（首屏请求 ≤ 4）；展开后才出现报告区", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
+    await screen.findByText("讲义阅读地图");
+    // 首屏只发 4 个请求：画像 / 课程 / 作答记录 / 错题与存疑——报告列表不取
+    expect(mockedReports).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /AI 报告/ }));
     expect(await screen.findByText("还没有 AI 报告")).toBeInTheDocument();
+    expect(mockedReports).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("link", { name: "连接 AI" })).toHaveAttribute(
       "href",
       "/t/connect",

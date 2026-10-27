@@ -25,7 +25,7 @@ import AttemptDetailPage from "./AttemptDetailPage";
 /**
  * /t/data/attempts/:id 详情页组件测试（T3.1，D5/D7）：三态（含 404 口径）、
  * 已交卷详情（来源头/得分汇总/连续题号与单元节标题/判定区/参考答案）、
- * draft 详情（判定区「未交卷」、无参考答案对比、进行中横幅）、
+ * draft 详情（未放行行判定区「未提交」、无参考答案对比、进行中横幅）、
  * 手写缩略图与 lightbox、得分回退展示。API 层 mock。
  * T3.2b（D3）：每题「改判 / 评语」内联编辑——draft 不显示、对自动判过的题
  * 可改判、保存调用 mark 接口并经缓存失效刷新判定区与顶部汇总。
@@ -340,7 +340,7 @@ describe("AttemptDetailPage 已交卷详情（D7）", () => {
 });
 
 describe("AttemptDetailPage draft 详情（D5）", () => {
-  it("判定区统一「未交卷」、进行中横幅含已答计数、无参考答案对比与详解", async () => {
+  it("未放行行判定区「未提交」、进行中横幅含已答计数、无参考答案对比与详解", async () => {
     mockedDetail.mockResolvedValue(
       makeDetail({
         status: "draft",
@@ -377,8 +377,14 @@ describe("AttemptDetailPage draft 详情（D5）", () => {
     // 不出现已交卷的得分汇总字段
     expect(screen.queryByText(/最终得分/)).not.toBeInTheDocument();
 
-    // 每题判定区统一「未交卷」
-    expect(screen.getAllByText(/未交卷——学生交卷前不产生判定/).length).toBe(2);
+    // 每题判定区统一「未提交」（未放行行；T-PR4 顺手② 单题语义文案）
+    expect(screen.getAllByText(/未提交——学生提交该题前不产生判定/).length).toBe(
+      2,
+    );
+    // 顺手①：本卷没有任何已逐题提交的行，横幅不放行说明半句
+    expect(
+      screen.queryByText(/逐题已提交的题目已显示判定与参考答案/),
+    ).not.toBeInTheDocument();
     // T3.2b（D3）：draft 不渲染「改判 / 评语」内联编辑
     expect(screen.queryByText("改判 / 评语")).not.toBeInTheDocument();
     // 无参考答案对比（服务端整卷不下发，前端不渲染）
@@ -584,7 +590,7 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
     expect(stubs[0]?.round).toBe("第 2 次课程练习");
   });
 
-  it("Web-3 行级放行：draft 卷内 responseId 非空的行按已交卷渲染（判定 + 参考答案 + 改判入口），responseId 空的行维持「未交卷」", async () => {
+  it("Web-3 行级放行：draft 卷内 responseId 非空的行按已交卷渲染（判定 + 参考答案 + 改判入口），responseId 空的行维持「未提交」", async () => {
     mockedDetail.mockResolvedValue(
       makeDetail({
         status: "draft",
@@ -617,20 +623,24 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
     renderPage();
     await screen.findByRole("heading", { name: "张三" });
     expect(screen.getByText("进行中", { exact: true })).toBeInTheDocument();
+    // 顺手①：有已逐题提交的行，横幅出现放行说明半句
+    expect(
+      screen.getByText(/逐题已提交的题目已显示判定与参考答案/),
+    ).toBeInTheDocument();
 
-    // 放行行：判定区「答对」×2（自动 / 最终）、参考答案对比、改判入口，不再「未交卷」
+    // 放行行：判定区「答对」×2（自动 / 最终）、参考答案对比、改判入口，不再「未提交」
     const q1 = screen.getByRole("article", { name: "第 1 题" });
     expect(within(q1).getAllByText("答对").length).toBe(2);
     expect(within(q1).getByText("参考答案：")).toBeInTheDocument();
     expect(within(q1).getByText("改判 / 评语")).toBeInTheDocument();
     expect(
-      within(q1).queryByText(/未交卷——学生交卷前不产生判定/),
+      within(q1).queryByText(/未提交——学生提交该题前不产生判定/),
     ).not.toBeInTheDocument();
 
-    // 未放行行：仍「未交卷」，无参考答案与改判入口
+    // 未放行行：仍「未提交」，无参考答案与改判入口
     const q2 = screen.getByRole("article", { name: "第 2 题" });
     expect(
-      within(q2).getByText(/未交卷——学生交卷前不产生判定/),
+      within(q2).getByText(/未提交——学生提交该题前不产生判定/),
     ).toBeInTheDocument();
     expect(within(q2).queryByText("参考答案：")).not.toBeInTheDocument();
     expect(within(q2).queryByText("改判 / 评语")).not.toBeInTheDocument();
