@@ -47,7 +47,11 @@ import {
   lessonSourceContextOf,
   unitGroupedRows,
 } from "./attempt-service";
-import { pendingMarkCount } from "./pending-mark";
+import {
+  pendingMarkCount,
+  pendingMarkCountsByStudent,
+  practiceSubmittedCounts,
+} from "./pending-mark";
 import { attemptResultCounts } from "./result-counts";
 import { selfReviewStateOf } from "./review-state.ts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
@@ -355,6 +359,12 @@ export function listTeacherAttempts(
     db,
     rows.map((row) => row.attempt),
   );
+  // T-PR4：行级已提交数（学生主页作答记录区「已提交 n / 共 m」用；与 v1 逐题
+  // 进度同一实现 practiceSubmittedCounts——draft 按行级事实、已收尾收敛整卷）
+  const submittedCounts = practiceSubmittedCounts(
+    db,
+    rows.map((row) => row.attempt),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -386,6 +396,7 @@ export function listTeacherAttempts(
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
     pendingCount: pendingMarkCount(db, attempt),
+    submittedCount: submittedCounts.get(attempt.id)?.submitted ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,
@@ -707,4 +718,73 @@ export function getTeacherAttemptDetail(
     activeSec: attempt.activeSec,
     questions: questionsOut,
   };
+}
+
+// ---------- T-PR4 Web-4：学生列表「活动三列」聚合 ----------
+
+/** 学生活动三列（Web-4 学生列表）：最近作答时间 / 待批数 / 进行中讲练数 */
+export interface StudentActivitySummary {
+  /** 非作废 attempts 的最近活动时间（submittedAt ?? startedAt）；无作答为 null */
+  lastActivityAt: string | null;
+  /** D4 共享待批谓词计数（pendingMarkCountsByStudent，跨该生全部非作废卷） */
+  pendingCount: number;
+  /** draft 且非作废的 lesson（讲练）卷数 */
+  inProgressLessonCount: number;
+}
+
+/**
+ * 一批学生的活动三列聚合（listStudents 的数据源）：两条 attempt 级分组 SQL +
+ * 待批谓词一条（D4 单一口径 pendingMarkCountsByStudent），无逐学生 N+1；
+ * 无活动的学生补零值 / null。
+ */
+export function studentActivitySummaries(
+  db: Db,
+  studentIds: readonly string[],
+): Map<string, StudentActivitySummary> {
+  const map = new Map<string, StudentActivitySummary>();
+  for (const id of studentIds) {
+    map.set(id, {
+      lastActivityAt: null,
+      pendingCount: 0,
+      inProgressLessonCount: 0,
+    });
+  }
+  const ids = [...studentIds];
+  if (ids.length === 0) return map;
+  // 最近作答时间：max(coalesce(submittedAt, startedAt))，与作答列表排序同一时间轴
+  for (const row of db
+    .select({
+      studentId: attempts.studentId,
+      last: sql<string>`max(coalesce(${attempts.submittedAt}, ${attempts.startedAt}))`,
+    })
+    .from(attempts)
+    .where(and(inArray(attempts.studentId, ids), isNull(attempts.abandonedAt)))
+    .groupBy(attempts.studentId)
+    .all()) {
+    const entry = map.get(row.studentId);
+    if (entry !== undefined) entry.lastActivityAt = row.last;
+  }
+  // 进行中讲练数：draft 且非作废的 lesson 卷
+  for (const row of db
+    .select({ studentId: attempts.studentId, n: sql<number>`count(*)` })
+    .from(attempts)
+    .where(
+      and(
+        inArray(attempts.studentId, ids),
+        isNull(attempts.abandonedAt),
+        eq(attempts.status, "draft"),
+        eq(attempts.sourceType, "lesson"),
+      ),
+    )
+    .groupBy(attempts.studentId)
+    .all()) {
+    const entry = map.get(row.studentId);
+    if (entry !== undefined) entry.inProgressLessonCount = row.n;
+  }
+  // 待批数：D4 共享谓词（pending-mark 单一口径）
+  for (const [studentId, n] of pendingMarkCountsByStudent(db, ids)) {
+    const entry = map.get(studentId);
+    if (entry !== undefined) entry.pendingCount = n;
+  }
+  return map;
 }

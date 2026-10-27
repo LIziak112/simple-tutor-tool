@@ -4,11 +4,13 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
+  or,
   type SQL,
   sql,
 } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, responses } from "../db/schema";
+import { type Attempt, attempts, responses } from "../db/schema";
 
 /**
  * 共享待批谓词（D4，T3.2a）——全站唯一口径：
@@ -47,14 +49,21 @@ export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
  * 「已交」，保持既有口径不加条件——设计依据详见模块头注释）。两函数（单卷/
  * 批量）共用本构造器，口径永不漂移。
  */
+/** D4 待批行的公共条件（draft 与非 draft 批次共享；draft 差异见 pendingMarkConditions） */
+function pendingMarkBaseConditions(selfReview = false): (SQL | undefined)[] {
+  return [
+    isNull(responses.finalCorrect),
+    eq(responses.reviewEligible, selfReview),
+    isNotNull(responses.questionSnapshotJson),
+  ];
+}
+
 function pendingMarkConditions(
   draft: boolean,
   selfReview = false,
 ): (SQL | undefined)[] {
   return [
-    isNull(responses.finalCorrect),
-    eq(responses.reviewEligible, selfReview),
-    isNotNull(responses.questionSnapshotJson),
+    ...pendingMarkBaseConditions(selfReview),
     draft ? isNotNull(responses.submittedAt) : undefined,
   ];
 }
@@ -161,6 +170,40 @@ export function practiceSubmittedCounts(
         total,
       });
     }
+  }
+  return map;
+}
+
+/**
+ * 按学生聚合的待批数（T-PR4 Web-4 学生列表「待批」列数据源）。与
+ * pendingMarkCounts 的两批查询同一口径（公共条件 pendingMarkBaseConditions ×
+ * draft/非 draft 的并集：非 draft 整卷恒「已交」，draft 批次只数行级已提交），
+ * join attempts 后按 attempts.studentId 聚合；学生域筛选由调用方传本人名下
+ * 学生 id；作废卷排除（与作答列表的 abandonedAt 口径一致）。
+ * 结果 Map 只含有命中的学生；无待批行的学生不出现（调用方 `map.get(id) ?? 0`）。
+ */
+export function pendingMarkCountsByStudent(
+  db: Db,
+  studentIds: readonly string[],
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (studentIds.length === 0) return map;
+  for (const row of db
+    .select({ studentId: attempts.studentId, n: sql<number>`count(*)` })
+    .from(responses)
+    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
+    .where(
+      and(
+        inArray(attempts.studentId, [...studentIds]),
+        isNull(attempts.abandonedAt),
+        // draft / 非 draft 两批的并集口径：整卷已交恒「已交」，draft 只数行级已提交
+        or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
+        ...pendingMarkBaseConditions(false),
+      ),
+    )
+    .groupBy(attempts.studentId)
+    .all()) {
+    map.set(row.studentId, row.n);
   }
   return map;
 }

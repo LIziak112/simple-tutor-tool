@@ -11,7 +11,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
-import { loginFailures, sessions } from "../db/schema.ts";
+import { attempts, loginFailures, responses, sessions } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
@@ -869,5 +869,158 @@ describe("GET /api/student/me 响应契约", () => {
     });
     const body = (await list.json()) as unknown;
     expect(studentListOkSchema.safeParse(body).success).toBe(true);
+  });
+});
+
+describe("T-PR4 Web-4：学生列表活动三列与排序", () => {
+  it("行带最近作答/待批/进行中讲练计数，并按最近作答倒序（无活动排最后）", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+
+    async function createStudentViaApi(
+      name: string,
+      login: string,
+    ): Promise<string> {
+      const res = await jsonRequest(
+        app,
+        "/api/teacher/students",
+        { displayName: name, loginName: login },
+        teacherCookie,
+      );
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        data: { student: { id: string } };
+      };
+      return body.data.student.id;
+    }
+
+    const s1 = await createStudentViaApi("学生一", "s1-web4");
+    const s2 = await createStudentViaApi("学生二", "s2-web4");
+    const s3 = await createStudentViaApi("学生三", "s3-web4");
+
+    const T2 = "2026-09-10T08:00:00.000Z";
+    const T3 = "2026-09-11T08:00:00.000Z";
+    // s1：已交卷（最近活动 T2）+ 进行中讲练 draft + 已批卷带 2 行待批
+    db.insert(attempts)
+      .values({
+        id: "wa-1",
+        studentId: s1,
+        sourceType: "course",
+        assignmentId: null,
+        courseId: null,
+        unitId: "unit-x",
+        attemptNo: 1,
+        status: "submitted",
+        startedAt: T2,
+        submittedAt: T2,
+        activeSec: null,
+        device: null,
+        scoreAuto: 60,
+        scoreFinal: null,
+      })
+      .run();
+    db.insert(attempts)
+      .values({
+        id: "wa-2",
+        studentId: s1,
+        sourceType: "lesson",
+        assignmentId: null,
+        courseId: null,
+        unitId: "unit-x",
+        attemptNo: 1,
+        status: "draft",
+        startedAt: "2026-09-09T08:00:00.000Z",
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    db.insert(attempts)
+      .values({
+        id: "wa-3",
+        studentId: s1,
+        sourceType: "assignment",
+        assignmentId: null,
+        courseId: null,
+        unitId: null,
+        attemptNo: 1,
+        status: "graded",
+        startedAt: T2,
+        submittedAt: T2,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: 50,
+      })
+      .run();
+    for (const qid of ["q-pending-1", "q-pending-2"]) {
+      db.insert(responses)
+        .values({
+          id: `wresp-${qid}`,
+          attemptId: "wa-3",
+          questionId: qid,
+          unitId: null,
+          questionVersion: 1,
+          questionSnapshotJson: JSON.stringify({
+            type: "choice",
+            difficulty: 2,
+            stemMd: "待批题",
+            knowledge: [],
+          }),
+          answerJson: null,
+          submittedAt: T2,
+          autoCorrect: null,
+          finalCorrect: null,
+          answered: true,
+          teacherMark: null,
+          teacherComment: null,
+        })
+        .run();
+    }
+    // s2：已交卷 T3（比 s1 更新）→ 排最前；s3 无任何作答 → 排最后
+    db.insert(attempts)
+      .values({
+        id: "wa-4",
+        studentId: s2,
+        sourceType: "course",
+        assignmentId: null,
+        courseId: null,
+        unitId: "unit-x",
+        attemptNo: 1,
+        status: "submitted",
+        startedAt: T3,
+        submittedAt: T3,
+        activeSec: null,
+        device: null,
+        scoreAuto: 90,
+        scoreFinal: null,
+      })
+      .run();
+
+    const res = await app.request("/api/teacher/students", {
+      headers: { cookie: teacherCookie },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        students: Array<{
+          id: string;
+          lastActivityAt: string | null;
+          pendingCount: number;
+          inProgressLessonCount: number;
+        }>;
+      };
+    };
+    expect(body.data.students.map((s) => s.id)).toEqual([s2, s1, s3]);
+    const byId = new Map(body.data.students.map((s) => [s.id, s]));
+    expect(byId.get(s1)?.lastActivityAt).toBe(T2);
+    expect(byId.get(s1)?.pendingCount).toBe(2);
+    expect(byId.get(s1)?.inProgressLessonCount).toBe(1);
+    expect(byId.get(s2)?.lastActivityAt).toBe(T3);
+    expect(byId.get(s2)?.pendingCount).toBe(0);
+    expect(byId.get(s2)?.inProgressLessonCount).toBe(0);
+    expect(byId.get(s3)?.lastActivityAt).toBeNull();
+    expect(byId.get(s3)?.pendingCount).toBe(0);
   });
 });
