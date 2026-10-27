@@ -313,4 +313,94 @@ describe("分栏材料工作区与协同标画集成", () => {
     );
     expect(reloadedInk).toEqual(sampleDoc);
   });
+
+  it("整卷列表模式下题组支持在'左右分栏'与'列表形式'之间切换并持久化", async () => {
+    savePracticePreference({
+      layout: "list",
+      keyboardShortcuts: false,
+      feedback: null,
+    });
+    mockedFetch.mockResolvedValue(draftOf());
+    mockedContext.mockResolvedValue(contextOf());
+
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
+    });
+
+    // 默认分栏模式：ol data-layout 为 compare，题组与 q3 独立材料均有中缝拖拽 Handle（共 2 个）
+    const splitButton = screen.getByRole("radio", { name: /左右分栏/ });
+    const stackButton = screen.getByRole("radio", { name: /列表形式/ });
+    expect(splitButton).toBeInTheDocument();
+    expect(stackButton).toBeInTheDocument();
+    expect(splitButton).toHaveAttribute("aria-checked", "true");
+    expect(stackButton).toHaveAttribute("aria-checked", "false");
+
+    expect(
+      screen.getAllByRole("separator", {
+        name: "调整材料与题目分栏比例",
+      }),
+    ).toHaveLength(2);
+
+    const ol = container.querySelector("ol[data-layout]");
+    expect(ol).toHaveAttribute("data-layout", "compare");
+
+    // 点击切换为“列表形式”
+    fireEvent.click(stackButton);
+
+    expect(splitButton).toHaveAttribute("aria-checked", "false");
+    expect(stackButton).toHaveAttribute("aria-checked", "true");
+    expect(ol).toHaveAttribute("data-layout", "stack");
+    expect(localStorage.getItem("ownclass:group-material-layout")).toBe(
+      "stack",
+    );
+
+    // 列表形式下，中缝拖拽 Handle 不渲染（全卷切换为上下流式排布）
+    expect(
+      screen.queryAllByRole("separator", {
+        name: "调整材料与题目分栏比例",
+      }),
+    ).toHaveLength(0);
+
+    // 点击切换回“左右分栏”
+    fireEvent.click(splitButton);
+
+    expect(splitButton).toHaveAttribute("aria-checked", "true");
+    expect(stackButton).toHaveAttribute("aria-checked", "false");
+    expect(ol).toHaveAttribute("data-layout", "compare");
+    expect(localStorage.getItem("ownclass:group-material-layout")).toBe(
+      "split",
+    );
+    expect(
+      screen.getAllByRole("separator", {
+        name: "调整材料与题目分栏比例",
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("单题模式下题组材料在 stack 模式下同样转为上下流式排布", async () => {
+    savePracticePreference({
+      layout: "single",
+      keyboardShortcuts: false,
+      feedback: null,
+    });
+    mockedFetch.mockResolvedValue(draftOf());
+    mockedContext.mockResolvedValue(contextOf());
+
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
+    });
+
+    const stackButton = screen.getByRole("radio", { name: /列表形式/ });
+    fireEvent.click(stackButton);
+
+    const ol = container.querySelector("ol[data-layout]");
+    expect(ol).toHaveAttribute("data-layout", "stack");
+    expect(
+      screen.queryAllByRole("separator", {
+        name: "调整材料与题目分栏比例",
+      }),
+    ).toHaveLength(0);
+  });
 });

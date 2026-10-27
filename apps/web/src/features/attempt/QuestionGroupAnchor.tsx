@@ -2,9 +2,10 @@ import type {
   AttemptContextGroup,
   AttemptContextMaterial,
 } from "@tutor/contract";
-import { Layers } from "lucide-react";
+import { Columns2, Layers, Rows3 } from "lucide-react";
 import { type CSSProperties, memo, useEffect, useMemo, useRef } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import type { GroupMaterialLayout } from "./group-material-layout-store";
 import {
   MaterialPanel,
   materialVersionKey,
@@ -46,6 +47,8 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   splitRatio,
   onSplitRatioChange,
   containerRef,
+  layoutMode,
+  onLayoutModeChange,
 }: {
   group: AttemptContextGroup;
   /** 组引用解析后的冻结材料（attempt-context-view 单源） */
@@ -66,6 +69,10 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   onSplitRatioChange?: ((ratio: number) => void) | undefined;
   /** 分栏外层容器引用，用于指针距离换算 */
   containerRef?: React.RefObject<HTMLElement | null> | undefined;
+  /** 当前排版模式：split（左右分栏）或 stack（列表形式） */
+  layoutMode?: GroupMaterialLayout | undefined;
+  /** 排版模式变更回调（提供时激活切换控件） */
+  onLayoutModeChange?: ((mode: GroupMaterialLayout) => void) | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -100,31 +107,41 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   const intro = group.introMd.trim();
   const title = group.title?.trim();
   const label = group.label?.trim();
+  const isSplit = layoutMode !== "stack";
+
   return (
     <li
       data-slot="question-group-anchor"
       data-group-id={group.id}
       hidden={hidden}
-      // 非 compare（stack/窄屏/单题态）锚点自身是流式块；compare 时 xl 起
+      // 非 compare（stack/窄屏/单题态）锚点自身是流式块；compare 时 lg/xl 起
       // contents 展开让组头/材料列直接成为单元网格的项。hidden 的 UA
-      // display:none 优先——单题态收起不被 xl:contents 抵消。
+      // display:none 优先——单题态收起不被 lg:contents/xl:contents 抵消。
       className={
-        hidden ? "flex flex-col gap-4" : "flex flex-col gap-4 xl:contents"
+        hidden || !isSplit
+          ? "flex flex-col gap-4"
+          : "flex flex-col gap-4 lg:contents xl:contents"
       }
     >
       <section
         aria-label={title && title.length > 0 ? `题组：${title}` : "题组"}
         // compare 时与外层 li 同为 contents——组头/材料列直接成为单元网格的项
-        className="flex min-w-0 flex-col gap-4 xl:contents"
+        className={
+          isSplit
+            ? "flex min-w-0 flex-col gap-4 lg:contents xl:contents"
+            : "flex min-w-0 flex-col gap-4"
+        }
       >
         <header
           ref={headerRef}
           data-slot="question-group-header"
           // reveal 滚入目标让出粘性顶栏（零材料组的回落目标；审查 P2-2）
           className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] ${
-            onSplitRatioChange !== undefined
-              ? "xl:col-span-full"
-              : "xl:col-span-2"
+            isSplit
+              ? onSplitRatioChange !== undefined
+                ? "lg:col-span-full xl:col-span-full"
+                : "lg:col-span-2 xl:col-span-2"
+              : ""
           }`}
         >
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
@@ -143,10 +160,57 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
             ) : null}
             {hasMaterials && (
               <span className="text-xs font-normal text-muted-foreground">
-                {onSplitRatioChange !== undefined
-                  ? "共用材料作答"
-                  : "共用下方材料作答"}
+                {isSplit ? "共用材料作答" : "共用下方材料作答"}
               </span>
+            )}
+            {hasMaterials && onLayoutModeChange !== undefined && (
+              <div
+                role="radiogroup"
+                aria-label="题组材料排版方式"
+                className="inline-flex items-center rounded-md border border-border bg-background p-0.5 text-xs font-medium text-muted-foreground shadow-2xs"
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                    e.preventDefault();
+                    onLayoutModeChange("stack");
+                  } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    onLayoutModeChange("split");
+                  }
+                }}
+              >
+                {/* biome-ignore lint/a11y/useSemanticElements: 分段单选控件遵循 WAI-ARIA radiogroup 规范 */}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={isSplit}
+                  title="左右分栏：左材料，右题目"
+                  onClick={() => onLayoutModeChange("split")}
+                  className={`inline-flex min-h-[26px] select-none items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
+                    isSplit
+                      ? "bg-muted font-semibold text-foreground shadow-2xs"
+                      : "hover:text-foreground"
+                  }`}
+                >
+                  <Columns2 className="size-3.5 shrink-0" aria-hidden />
+                  <span>左右分栏</span>
+                </button>
+                {/* biome-ignore lint/a11y/useSemanticElements: 分段单选控件遵循 WAI-ARIA radiogroup 规范 */}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!isSplit}
+                  title="列表形式：材料置顶，题目在下方"
+                  onClick={() => onLayoutModeChange("stack")}
+                  className={`inline-flex min-h-[26px] select-none items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
+                    !isSplit
+                      ? "bg-muted font-semibold text-foreground shadow-2xs"
+                      : "hover:text-foreground"
+                  }`}
+                >
+                  <Rows3 className="size-3.5 shrink-0" aria-hidden />
+                  <span>列表形式</span>
+                </button>
+              </div>
             )}
           </div>
           {intro.length > 0 && (
@@ -163,13 +227,17 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
               tabIndex={-1}
               aria-label="本组共享材料"
               // compare 网格材料列跨行数经 CSS 变量传入（Tailwind 任意属性在
-              // xl 才生效；非网格语境下 grid-row 声明无害）
+              // lg/xl 才生效；非网格语境下 grid-row 声明无害）
               style={
                 {
                   "--qg-row-span": String(Math.max(questionCount, 1)),
                 } as CSSProperties
               }
-              className="flex min-w-0 max-w-full flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:col-start-1 xl:[grid-row:span_var(--qg-row-span)]"
+              className={
+                isSplit
+                  ? "flex min-w-0 max-w-full flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
+                  : "flex min-w-0 max-w-full flex-col gap-4 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              }
             >
               {materials.map((material) => (
                 <MaterialPanel
@@ -183,7 +251,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                 />
               ))}
             </section>
-            {onSplitRatioChange !== undefined && (
+            {isSplit && onSplitRatioChange !== undefined && (
               <div
                 data-slot="group-split-handle-container"
                 style={
@@ -191,7 +259,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                     "--qg-row-span": String(Math.max(questionCount, 1)),
                   } as CSSProperties
                 }
-                className="hidden xl:flex xl:col-start-2 xl:[grid-row:span_var(--qg-row-span)] xl:sticky xl:top-[calc(var(--attempt-header-height,64px)+16px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:justify-center xl:self-stretch"
+                className="hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch"
               >
                 <MaterialSplitHandle
                   ratio={splitRatio ?? 50}

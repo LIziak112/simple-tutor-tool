@@ -85,6 +85,7 @@ import {
 } from "./attempt-queries";
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
+import { useGroupMaterialLayout } from "./group-material-layout-store";
 import {
   type PracticeProblemPhase,
   PracticeQuestionFooter,
@@ -264,6 +265,8 @@ function AnswerView({
   });
   // 材料与题目分栏比例（35%~65%，默认 50%）
   const [splitRatio, setSplitRatio] = useState<number>(50);
+  const [groupMaterialLayout, setGroupMaterialLayout] =
+    useGroupMaterialLayout();
   const [hintsOpened, setHintsOpened] = useState<
     Record<string, HintOpenedEntry[]>
   >(() => data.hintsOpened);
@@ -1462,8 +1465,10 @@ function AnswerView({
                       const solo = questionMaterialsOf(contextQuery.data, q);
                       return solo.length > 0;
                     })();
+                  const isSplit = groupMaterialLayout === "split";
                   const groupGrid =
                     !compareActive &&
+                    isSplit &&
                     (singleMode ? singleHasMaterials : unitHasGroups);
                   /** 单题行渲染（组行/独立行共用；onOpenMaterial 组内挂共享
                       材料、solo 题挂题级材料，openMaterialLabel 区分语义） */
@@ -1489,9 +1494,9 @@ function AnswerView({
                           groupGrid
                             ? grouped
                               ? singleMode
-                                ? "min-w-0 xl:col-start-3 xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1"
-                                : "min-w-0 xl:col-start-3"
-                              : "min-w-0 xl:col-span-full"
+                                ? "min-w-0 lg:col-start-3 xl:col-start-3 lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1"
+                                : "min-w-0 lg:col-start-3 xl:col-start-3"
+                              : "min-w-0 lg:col-span-full xl:col-span-full"
                             : undefined
                         }
                         cardElements={cardElements}
@@ -1602,7 +1607,7 @@ function AnswerView({
                         }
                         className={
                           groupGrid
-                            ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))]"
+                            ? "flex min-w-0 flex-col gap-4 lg:grid xl:grid lg:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))] xl:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))]"
                             : "flex flex-col gap-3"
                         }
                       >
@@ -1639,7 +1644,7 @@ function AnswerView({
                                         }
                                         className={
                                           groupGrid
-                                            ? "min-w-0 xl:col-span-full"
+                                            ? "min-w-0 lg:col-span-full xl:col-span-full"
                                             : undefined
                                         }
                                         attemptId={attemptId}
@@ -1681,6 +1686,8 @@ function AnswerView({
                                     groupGrid ? setSplitRatio : undefined
                                   }
                                   containerRef={singleWorkspaceRef}
+                                  layoutMode={groupMaterialLayout}
+                                  onLayoutModeChange={setGroupMaterialLayout}
                                 />,
                                 ...segment.questionIds.map((questionId) => {
                                   const question = questionById.get(questionId);

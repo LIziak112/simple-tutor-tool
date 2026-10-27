@@ -28,6 +28,23 @@ function slotLabelOf(ordinal: number): string {
   return `第 ${ordinal} 空`;
 }
 
+/** 剥除 option 文本中的行内公式、图片、链接或 Markdown 装饰，供原生 <option> 纯文本呈现 */
+function plainOptionText(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\$\$([\s\S]+?)\$\$/g, "$1")
+    .replace(/\$([^$]+?)\$/g, "$1")
+    .replace(/\*\*([^*]+?)\*\*/g, "$1")
+    .replace(/__([^_]+?)__/g, "$1")
+    .replace(/\*([^*]+?)\*/g, "$1")
+    .replace(/_([^_]+?)_/g, "$1")
+    .replace(/~~([^~]+?)~~/g, "$1")
+    .replace(/`([^`]+?)`/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** 槽位行文本（选项池缺该 id 回落裸 id——与契约 formatStudent 同口径） */
 function slotRowTextOf(
   model: PreparedOf<"matching">,
@@ -113,10 +130,13 @@ export const matchingView: AnswerKindView<
           {model.slots.map((slot) => {
             const selectId = `matching-${model.scopeId}-${slot.id}`;
             return (
-              <div key={slot.id} className="flex min-w-0 flex-col gap-1">
+              <div
+                key={slot.id}
+                className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3"
+              >
                 <label
                   htmlFor={selectId}
-                  className="shrink-0 text-sm font-medium sm:w-16"
+                  className="shrink-0 text-sm font-medium sm:w-20"
                 >
                   {slotLabelOf(slot.ordinal)}
                 </label>
@@ -134,16 +154,22 @@ export const matchingView: AnswerKindView<
                   className="min-h-11 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="">未选择</option>
-                  {model.options.map((option, index) => (
-                    <option
-                      key={option.key}
-                      value={option.key}
-                      aria-label={option.text}
-                      disabled={usedElsewhere(option.key, slot.id)}
-                    >
-                      {`选项 ${index + 1}`}
-                    </option>
-                  ))}
+                  {model.options.map((option, index) => {
+                    const plain = plainOptionText(option.text);
+                    const label = plain
+                      ? `选项 ${index + 1}：${plain}`
+                      : `选项 ${index + 1}`;
+                    return (
+                      <option
+                        key={option.key}
+                        value={option.key}
+                        aria-label={option.text}
+                        disabled={usedElsewhere(option.key, slot.id)}
+                      >
+                        {label}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             );

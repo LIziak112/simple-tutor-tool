@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type {
   AttemptContextGroup,
   AttemptContextMaterial,
@@ -287,4 +287,83 @@ it("题组标题的公共条件渲染公式与强调，不显示 Markdown 定界
   expect(document.querySelector("strong")).toHaveTextContent("已知数列");
   expect(document.querySelector(".katex")).not.toBeNull();
   expect(screen.getByText("1–2")).toBeInTheDocument();
+});
+
+describe("QuestionGroupAnchor 题组材料排版模式切换（左右分栏 vs 列表形式）", () => {
+  it("提供 onLayoutModeChange 且有材料时，渲染排版单选按钮组并支持交互切换", () => {
+    const onLayoutModeChange = vi.fn();
+    render(
+      <QuestionGroupAnchor
+        group={groupOf({ materialRefs: [{ material: "m1" }] })}
+        materials={[material("m1")]}
+        layoutMode="split"
+        onLayoutModeChange={onLayoutModeChange}
+        onSplitRatioChange={vi.fn()}
+      />,
+    );
+    const radioGroup = screen.getByRole("radiogroup", {
+      name: "题组材料排版方式",
+    });
+    expect(radioGroup).toBeInTheDocument();
+
+    const splitRadio = screen.getByRole("radio", { name: "左右分栏" });
+    const stackRadio = screen.getByRole("radio", { name: "列表形式" });
+    expect(splitRadio).toHaveAttribute("aria-checked", "true");
+    expect(stackRadio).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(stackRadio);
+    expect(onLayoutModeChange).toHaveBeenCalledWith("stack");
+  });
+
+  it("layoutMode 为 stack 时，锚点降级为普通流布局且不渲染中缝拖拽 Handle", () => {
+    render(
+      <QuestionGroupAnchor
+        group={groupOf({ materialRefs: [{ material: "m1" }] })}
+        materials={[material("m1")]}
+        layoutMode="stack"
+        onLayoutModeChange={vi.fn()}
+        onSplitRatioChange={vi.fn()}
+      />,
+    );
+    const anchor = document.querySelector(
+      '[data-slot="question-group-anchor"]',
+    );
+    expect(anchor?.className.includes("xl:contents")).toBe(false);
+    expect(anchor?.className.includes("lg:contents")).toBe(false);
+
+    // 中缝 Handle 容器不渲染
+    expect(
+      document.querySelector('[data-slot="group-split-handle-container"]'),
+    ).toBeNull();
+
+    // 文案更新为材料在下方
+    expect(screen.getByText("共用下方材料作答")).toBeInTheDocument();
+  });
+
+  it("排版单选组支持键盘方向键无障碍切换模式，且 split 模式下 header 恒跨满列", () => {
+    const onLayoutModeChange = vi.fn();
+    render(
+      <QuestionGroupAnchor
+        group={groupOf({ materialRefs: [{ material: "m1" }] })}
+        materials={[material("m1")]}
+        layoutMode="split"
+        onLayoutModeChange={onLayoutModeChange}
+        onSplitRatioChange={vi.fn()}
+      />,
+    );
+    const radioGroup = screen.getByRole("radiogroup", {
+      name: "题组材料排版方式",
+    });
+    fireEvent.keyDown(radioGroup, { key: "ArrowRight" });
+    expect(onLayoutModeChange).toHaveBeenCalledWith("stack");
+
+    fireEvent.keyDown(radioGroup, { key: "ArrowLeft" });
+    expect(onLayoutModeChange).toHaveBeenCalledWith("split");
+
+    const header = document.querySelector(
+      '[data-slot="question-group-header"]',
+    );
+    expect(header?.className).toContain("lg:col-span-full");
+    expect(header?.className).toContain("xl:col-span-full");
+  });
 });

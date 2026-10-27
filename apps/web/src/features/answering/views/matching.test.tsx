@@ -219,3 +219,43 @@ it("候选全文支持公式；选择不增删题面内容，编号与全文列�
     }),
   ).toHaveTextContent("选项 1");
 });
+
+it("原生 select 的 option 同时显示选项编号与选项正文（公式剔除标记为纯文本），便于作答直观识别", () => {
+  const model: PreparedOf<"matching"> = {
+    ...baseModel,
+    options: [
+      { key: "p1", text: "TCP 80 端口（明文传输）" },
+      { key: "p2", text: "函数 $f(x)=x^2$ 单调递增" },
+    ],
+  };
+  render(matchingView.Input({ model, answer: undefined, update: vi.fn() }));
+  const select = screen.getByLabelText("第 1 空的选项");
+  const options = within(select).getAllByRole("option");
+  expect(options[0]).toHaveTextContent("未选择");
+  expect(options[1]).toHaveTextContent("选项 1：TCP 80 端口（明文传输）");
+  expect(options[2]).toHaveTextContent("选项 2：函数 f(x)=x^2 单调递增");
+});
+
+it("原生 select 的 option 清洗复杂 Markdown（链接、粗体下划线、删除线、换行折叠）为紧凑单行纯文本", () => {
+  const model: PreparedOf<"matching"> = {
+    ...baseModel,
+    options: [
+      {
+        key: "p1",
+        text: "请参考 [HTTP 协议](https://example.com) 说明\n\n多余换行",
+      },
+      { key: "p2", text: "这是 __重点__ 且 ~~作废~~ 的 `代码` 说明" },
+      { key: "p3", text: "   " },
+    ],
+  };
+  render(matchingView.Input({ model, answer: undefined, update: vi.fn() }));
+  const select = screen.getByLabelText("第 1 空的选项");
+  const options = within(select).getAllByRole("option");
+  expect(options[1]).toHaveTextContent(
+    "选项 1：请参考 HTTP 协议 说明 多余换行",
+  );
+  expect(options[2]).toHaveTextContent(
+    "选项 2：这是 重点 且 作废 的 代码 说明",
+  );
+  expect(options[3]).toHaveTextContent("选项 3");
+});
