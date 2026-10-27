@@ -416,7 +416,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     ).toHaveLength(0);
   });
 
-  it("整卷列表模式下题组材料与独立题材料不泄漏 sticky 定位，且各材料与无材料题保持绝对几何隔离", async () => {
+  it("整卷列表分栏下题组材料与独立题材料获得粘性独立滚动端口，且各材料与无材料题保持绝对几何隔离", async () => {
     savePracticePreference({
       layout: "list",
       keyboardShortcuts: false,
@@ -440,7 +440,8 @@ describe("分栏材料工作区与协同标画集成", () => {
       expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
     });
 
-    // 1. 题组共享材料：在列表分栏模式下拥有网格跨行与 isolate，但绝不泄漏 sticky 定位导致穿透
+    // 1. 题组共享材料：列表分栏（网格生效）下拥有视口级粘性独立滚动端口与
+    //    overscroll 隔离（2026-10-27 需求：长材料独立滚动不穿透、边界裁剪）
     const groupMaterials = container.querySelector(
       '[data-slot="group-materials"]',
     );
@@ -450,10 +451,12 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(groupMaterials?.className).toContain(
       "lg:[grid-row:span_var(--qg-row-span)]",
     );
-    expect(groupMaterials?.className).not.toContain("lg:sticky");
-    expect(groupMaterials?.className).not.toContain("xl:sticky");
+    expect(groupMaterials?.className).toContain("lg:sticky");
+    expect(groupMaterials?.className).toContain("lg:overflow-y-auto");
+    expect(groupMaterials?.className).toContain("lg:overscroll-contain");
+    expect(groupMaterials?.className).toContain("lg:max-h-");
 
-    // 2. 独立题材料：拥有独立单行约束 [grid-row:span_1] 与 isolate，同样不泄漏 sticky
+    // 2. 独立题材料：独立单行约束 + 同款粘性滚动端口与隔离
     const soloMaterials = container.querySelector(
       '[data-slot="question-materials"]',
     );
@@ -461,17 +464,17 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(soloMaterials?.className).toContain("isolate");
     expect(soloMaterials?.className).toContain("lg:col-start-1");
     expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
-    expect(soloMaterials?.className).not.toContain("lg:sticky");
-    expect(soloMaterials?.className).not.toContain("xl:sticky");
+    expect(soloMaterials?.className).toContain("lg:sticky");
+    expect(soloMaterials?.className).toContain("lg:overflow-y-auto");
+    expect(soloMaterials?.className).toContain("lg:overscroll-contain");
 
-    // 3. 中缝 Handle 容器：在列表模式下同样不使用 sticky
+    // 3. 中缝 Handle 容器：同栏粘性（随材料列钉在视口内可达）
     const handleContainers = container.querySelectorAll(
       '[data-slot="group-split-handle-container"], [data-slot="question-split-handle-container"]',
     );
     expect(handleContainers).toHaveLength(2);
     for (const handle of handleContainers) {
-      expect(handle.className).not.toContain("lg:sticky");
-      expect(handle.className).not.toContain("xl:sticky");
+      expect(handle.className).toContain("lg:sticky");
     }
 
     // 4. 无材料普通题：整行跨列 (lg:col-span-full)，各卡片均有 isolate 隔离层叠上下文
@@ -564,14 +567,15 @@ describe("分栏材料工作区与协同标画集成", () => {
       screen.getByRole("radiogroup", { name: "题组材料排版方式" }),
     ).toBeInTheDocument();
 
-    // 独立题材料与中缝 Handle 正常渲染
+    // 独立题材料与中缝 Handle 正常渲染（列表分栏生效 → 粘性滚动端口）
     const soloMaterials = container.querySelector(
       '[data-slot="question-materials"]',
     );
     expect(soloMaterials).toBeInTheDocument();
     expect(soloMaterials?.className).toContain("lg:col-start-1");
     expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
-    expect(soloMaterials?.className).not.toContain("lg:sticky");
+    expect(soloMaterials?.className).toContain("lg:sticky");
+    expect(soloMaterials?.className).toContain("lg:overflow-y-auto");
 
     const soloHandle = container.querySelector(
       '[data-slot="question-split-handle-container"]',
@@ -579,7 +583,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(soloHandle).toBeInTheDocument();
     expect(soloHandle?.className).toContain("lg:col-start-2");
     expect(soloHandle?.className).toContain("lg:[grid-row:span_1]");
-    expect(soloHandle?.className).not.toContain("lg:sticky");
+    expect(soloHandle?.className).toContain("lg:sticky");
 
     // 无材料普通题整行跨列 (lg:col-span-full)
     const q4Card = container.querySelector('article[data-question-id="q4"]');
@@ -587,7 +591,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(q4Card?.closest("li")?.className).toContain("lg:col-span-full");
   });
 
-  it("连续多题组与独立材料并存时，各材料按各自网格行严格隔离且绝不泄漏 sticky", async () => {
+  it("连续多题组与独立材料并存时，各材料按各自网格行严格隔离并同享粘性滚动端口", async () => {
     savePracticePreference({
       layout: "list",
       keyboardShortcuts: false,
@@ -644,7 +648,7 @@ describe("分栏材料工作区与协同标画集成", () => {
       expect(screen.getByText("题组 2：材料二第 5～6 题")).toBeInTheDocument();
     });
 
-    // 两个题组材料均有网格跨行，且绝不泄漏 sticky
+    // 两个题组材料均有网格跨行 + 粘性滚动端口（分栏生效）
     const groupMaterials = container.querySelectorAll(
       '[data-slot="group-materials"]',
     );
@@ -653,23 +657,24 @@ describe("分栏材料工作区与协同标画集成", () => {
       expect(mat.className).toContain("isolate");
       expect(mat.className).toContain("lg:col-start-1");
       expect(mat.className).toContain("lg:[grid-row:span_var(--qg-row-span)]");
-      expect(mat.className).not.toContain("lg:sticky");
+      expect(mat.className).toContain("lg:sticky");
+      expect(mat.className).toContain("lg:overscroll-contain");
     }
 
-    // 独立题材料保持单行绑定
+    // 独立题材料保持单行绑定 + 同款滚动端口
     const soloMaterials = container.querySelector(
       '[data-slot="question-materials"]',
     );
     expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
-    expect(soloMaterials?.className).not.toContain("lg:sticky");
+    expect(soloMaterials?.className).toContain("lg:sticky");
 
-    // 所有中缝 Handle 绝不泄漏 sticky
+    // 所有中缝 Handle 同栏粘性
     const handles = container.querySelectorAll(
       '[data-slot="group-split-handle-container"], [data-slot="question-split-handle-container"]',
     );
     expect(handles).toHaveLength(3);
     for (const h of handles) {
-      expect(h.className).not.toContain("lg:sticky");
+      expect(h.className).toContain("lg:sticky");
     }
   });
 });

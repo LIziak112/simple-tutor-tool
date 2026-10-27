@@ -369,13 +369,12 @@ describe("QuestionGroupAnchor 题组材料排版模式切换（左右分栏 vs �
   });
 
   it("分栏未实际生效（AI 对照等上下排布语境）时材料列退回流式，不残留 sticky", () => {
-    // 单题模式 + split 偏好，但外层未提供 onSplitRatioChange（网格未激活）
+    // split 偏好，但外层未提供 onSplitRatioChange（网格未激活）
     render(
       <QuestionGroupAnchor
         group={groupOf({ materialRefs: [{ material: "m1" }] })}
         materials={[material("m1")]}
         layoutMode="split"
-        singleMode={true}
       />,
     );
     const groupMaterials = screen.getByLabelText("本组共享材料");
@@ -386,5 +385,76 @@ describe("QuestionGroupAnchor 题组材料排版模式切换（左右分栏 vs �
       '[data-slot="question-group-anchor"]',
     );
     expect(anchor?.className).not.toContain("lg:contents");
+  });
+});
+
+describe("分栏材料独立滚动与切题联动（2026-10-27 需求）", () => {
+  it("分栏网格生效（列表模式）时材料列获得视口级独立滚动端口与滚动隔离，中缝把手同栏粘性", () => {
+    render(
+      <QuestionGroupAnchor
+        group={groupOf({
+          materialRefs: [{ material: "m1" }],
+          questionIds: ["q1", "q2"],
+        })}
+        materials={[material("m1")]}
+        questionCount={2}
+        splitRatio={50}
+        onSplitRatioChange={() => {}}
+      />,
+    );
+    const groupMaterials = screen.getByLabelText("本组共享材料");
+    expect(groupMaterials.className).toContain("lg:sticky");
+    expect(groupMaterials.className).toContain("lg:max-h-");
+    expect(groupMaterials.className).toContain("lg:overflow-y-auto");
+    expect(groupMaterials.className).toContain("lg:overscroll-contain");
+    expect(groupMaterials.className).toContain("isolate");
+    const handleContainer = document.querySelector(
+      '[data-slot="group-split-handle-container"]',
+    );
+    expect(handleContainer?.className).toContain("lg:sticky");
+  });
+
+  it("activeQuestionId 切换且材料列可滚动时平滑回顶；同值不触发、不可滚动不触发", () => {
+    const props = {
+      group: groupOf({
+        materialRefs: [{ material: "m1" }],
+        questionIds: ["q1", "q2"],
+      }),
+      materials: [material("m1")],
+      questionCount: 2,
+      splitRatio: 50,
+      onSplitRatioChange: () => {},
+    };
+    const { rerender } = render(
+      <QuestionGroupAnchor {...props} activeQuestionId="q1" />,
+    );
+    const groupMaterials = screen.getByLabelText("本组共享材料") as HTMLElement;
+    const scrollTo = vi.fn();
+    groupMaterials.scrollTo = scrollTo;
+    Object.defineProperty(groupMaterials, "scrollHeight", {
+      value: 800,
+      configurable: true,
+    });
+    Object.defineProperty(groupMaterials, "clientHeight", {
+      value: 300,
+      configurable: true,
+    });
+
+    // 切到组内另一题 → 平滑回顶
+    rerender(<QuestionGroupAnchor {...props} activeQuestionId="q2" />);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+
+    // 同值重渲染不重复触发
+    scrollTo.mockClear();
+    rerender(<QuestionGroupAnchor {...props} activeQuestionId="q2" />);
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    // 不可滚动（材料短于视口）时切题不动材料
+    Object.defineProperty(groupMaterials, "scrollHeight", {
+      value: 100,
+      configurable: true,
+    });
+    rerender(<QuestionGroupAnchor {...props} activeQuestionId="q1" />);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });

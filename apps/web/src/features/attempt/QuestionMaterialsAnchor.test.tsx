@@ -114,3 +114,64 @@ describe("QuestionMaterialsAnchor（题级材料锚）", () => {
     expect(handle.getAttribute("aria-valuenow")).toBe("45");
   });
 });
+
+describe("题级材料分栏独立滚动与切题联动（2026-10-27 需求）", () => {
+  it("分栏网格生效（列表模式）时题级材料列获得视口级独立滚动端口与滚动隔离，把手容器同栏粘性", () => {
+    render(
+      <QuestionMaterialsAnchor
+        questionId="q-9"
+        materials={[material("m-solo")]}
+        splitRatio={50}
+        onSplitRatioChange={() => {}}
+      />,
+    );
+    const section = document.querySelector(
+      '[data-slot="question-materials"]',
+    ) as HTMLElement;
+    expect(section.className).toContain("lg:sticky");
+    expect(section.className).toContain("lg:max-h-");
+    expect(section.className).toContain("lg:overflow-y-auto");
+    expect(section.className).toContain("lg:overscroll-contain");
+    expect(section.className).toContain("isolate");
+    const handleContainer = document.querySelector(
+      '[data-slot="question-split-handle-container"]',
+    );
+    expect(handleContainer?.className).toContain("lg:sticky");
+  });
+
+  it("activeQuestionId 切换且材料列可滚动时平滑回顶；不可滚动不动", () => {
+    const props = {
+      questionId: "q-9",
+      materials: [material("m-solo")],
+      splitRatio: 50,
+      onSplitRatioChange: () => {},
+    };
+    const { rerender } = render(
+      <QuestionMaterialsAnchor {...props} activeQuestionId="q-8" />,
+    );
+    const section = document.querySelector(
+      '[data-slot="question-materials"]',
+    ) as HTMLElement;
+    const scrollTo = vi.fn();
+    section.scrollTo = scrollTo;
+    Object.defineProperty(section, "scrollHeight", {
+      value: 900,
+      configurable: true,
+    });
+    Object.defineProperty(section, "clientHeight", {
+      value: 300,
+      configurable: true,
+    });
+
+    rerender(<QuestionMaterialsAnchor {...props} activeQuestionId="q-9" />);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+
+    scrollTo.mockClear();
+    Object.defineProperty(section, "scrollHeight", {
+      value: 120,
+      configurable: true,
+    });
+    rerender(<QuestionMaterialsAnchor {...props} activeQuestionId="q-8" />);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+});

@@ -1672,7 +1672,7 @@ function AnswerView({
                                             ? undefined
                                             : setGroupMaterialLayout
                                         }
-                                        singleMode={singleMode}
+                                        activeQuestionId={currentQuestionId}
                                       />,
                                       renderRow(
                                         question,
@@ -1716,7 +1716,7 @@ function AnswerView({
                                       ? undefined
                                       : setGroupMaterialLayout
                                   }
-                                  singleMode={singleMode}
+                                  activeQuestionId={currentQuestionId}
                                 />,
                                 ...segment.questionIds.map((questionId) => {
                                   const question = questionById.get(questionId);

@@ -50,7 +50,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   containerRef,
   layoutMode,
   onLayoutModeChange,
-  singleMode = false,
+  activeQuestionId,
 }: {
   group: AttemptContextGroup;
   /** 组引用解析后的冻结材料（attempt-context-view 单源） */
@@ -75,8 +75,8 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   layoutMode?: GroupMaterialLayout | undefined;
   /** 排版模式变更回调（提供时激活切换控件） */
   onLayoutModeChange?: ((mode: GroupMaterialLayout) => void) | undefined;
-  /** 是否单题专注模式（单题模式下激活视口级粘性与独立滚动；整卷列表模式依靠网格跨行自然滚动，避免材料跨行穿透） */
-  singleMode?: boolean | undefined;
+  /** 当前聚焦题（AttemptSession 滚动侦测/跳题单源）：切题时材料列平滑回顶（2026-10-27 联动需求） */
+  activeQuestionId?: string | null | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -88,6 +88,18 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
 
   // 阅读位置记录：材料列自身滚动（compare 模式）或窗口滚过材料顶（stack）
   useMaterialReadingPosition(materialsRef, readingKey);
+
+  // 切题联动（2026-10-27 需求）：当前聚焦题变化时材料列平滑回顶——独立
+  // 滚动端口内学生滚到中部后切到下一题，材料从顶部重新开始读；不可滚动
+  // （stack 流式/材料短于视口）时为无害空操作
+  const lastActiveQuestionRef = useRef(activeQuestionId);
+  useEffect(() => {
+    if (activeQuestionId === lastActiveQuestionRef.current) return;
+    lastActiveQuestionRef.current = activeQuestionId;
+    const node = materialsRef.current;
+    if (node !== null && node.scrollHeight > node.clientHeight)
+      node.scrollTo({ top: 0, behavior: "smooth" });
+  }, [activeQuestionId]);
 
   // reveal：滚入 + 恢复已读偏移 + 焦点落材料列（键盘可达）
   useEffect(() => {
@@ -193,11 +205,13 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                   "--qg-row-span": String(Math.max(questionCount, 1)),
                 } as CSSProperties
               }
+              // 分栏网格生效（列表/单题同口径）：材料列视口级粘性 + 独立
+              // 滚动端口 + overscroll 隔离 + isolate 层叠上下文（2026-10-27
+              // 需求：长材料独立滚动、滚动不穿透、边界裁剪不侵入相邻题卡；
+              // 此前仅单题模式享有，整卷列表分栏被留在流式随页滚）
               className={
                 gridActive
-                  ? singleMode
-                    ? "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
-                    : "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:pr-1 xl:pr-1"
+                  ? "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
                   : "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               }
             >
@@ -221,11 +235,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
                     "--qg-row-span": String(Math.max(questionCount, 1)),
                   } as CSSProperties
                 }
-                className={
-                  singleMode
-                    ? "hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch"
-                    : "hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch"
-                }
+                className="hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch"
               >
                 <MaterialSplitHandle
                   ratio={splitRatio ?? 50}
