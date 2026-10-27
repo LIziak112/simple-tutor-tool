@@ -40,3 +40,26 @@ export async function connectMcpClientViaApp(
   );
   return client;
 }
+
+/**
+ * callTool + 取第一段 text 解析 JSON；isError 时返回解析后的错误对象
+ * （guard 的错误载荷也是 JSON text；SDK 层形状校验错误不是 JSON，勿用本函数）。
+ * 学生 MCP 测试（student-mcp-tools / student-mcp-wrong-practice）共用。
+ */
+export async function callToolJson(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ data: Record<string, unknown>; isError: boolean }> {
+  const result = await client.callTool({ name, arguments: args });
+  const block = (result.content as { type: string; text?: string }[]).find(
+    (content) => content.type === "text",
+  );
+  if (block === undefined || block.text === undefined) {
+    throw new Error(`${name} 结果没有 text content`);
+  }
+  return {
+    data: JSON.parse(block.text) as Record<string, unknown>,
+    isError: result.isError === true,
+  };
+}

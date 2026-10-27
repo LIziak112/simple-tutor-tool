@@ -16,8 +16,9 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
 
 /**
  * 错题重练组卷（2026-10 学生端闭环的最后一块）——POST /api/student/wrong-practice
- * 的业务层。产品口径：**重练范围由前端圈定**（错题本当前 tab + 分组的题目 id，
- * 顺序即组卷题序），服务端只做校验与组卷：
+ * 与学生 MCP create_wrong_practice 共用的业务层。产品口径：**重练范围由前端/AI
+ * 圈定**（错题本当前 tab + 分组的题目 id，顺序即组卷题序），服务端只做校验与
+ * 组卷：
  *
  * - 校验：每个 questionId ∈ 该生错题本聚合（latestJudgedResponsesByQuestion，
  *   入本条件与 listWrongQuestions 完全一致——任一次已判定作答判错；includeResolved
@@ -39,6 +40,10 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
  *   队列）：wrong 来源的填空待批题照常进教师队列，全部判定后 status=graded；
  *   交卷后自动成为错题本新一轮（聚合按 (学生, 题目) 自然纳入）。
  *
+ * 返回 { attempt, includedCount }：includedCount = 实际冻结进卷的题数（去重后
+ * 剔除无效 id 的 picked.length）——MCP 组卷工具用它算 excludedCount 反馈给 AI；
+ * 页面路由只取 attempt。
+ *
  * 安全口径（AGENTS 第 3 条）：新卷只携带题目快照（服务端行内数据），响应本体是
  * attempt 摘要（无任何题目内容）；未交卷详情/试卷照旧走 attempt-service 的
  * 公开投影（publicOfSnapshot），泄露测试见 routes/student-wrong-practice.test.ts。
@@ -50,7 +55,7 @@ export function startWrongPractice(
   options: AttemptWorkflowStartOptions = {},
   /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
   scope?: WrongPracticeScope | undefined,
-): AttemptStartData {
+): { attempt: AttemptStartData; includedCount: number } {
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
 
@@ -129,6 +134,6 @@ export function startWrongPractice(
     if (row === undefined) {
       throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");
     }
-    return attemptSummaryOf(row);
+    return { attempt: attemptSummaryOf(row), includedCount: picked.length };
   });
 }

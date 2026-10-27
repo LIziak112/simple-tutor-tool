@@ -3,11 +3,12 @@ import type { WrongPracticeScope, WrongQuestionCard } from "@tutor/contract";
 import {
   BookX,
   Filter,
+  ListChecks,
   PartyPopper,
   TriangleAlert,
   Trophy,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { workflowStartOptions } from "@/features/attempt/attempt-queries";
@@ -24,27 +25,33 @@ import {
   type WrongMasteryStandard,
 } from "@/features/student/wrong-mastery";
 import {
+  filterWrongQuestions,
   filterWrongQuestionsByCourse,
   groupCountLabel,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
   WrongCourseSelect,
+  WrongFilterBar,
+  WrongGroupSelectAll,
   WrongGroupSwitch,
   WrongPracticeButton,
   WrongQuestionItem,
   WrongQuestionRow,
   type WrongQuestionsUrlState,
+  WrongSelectionBar,
   WrongTabSwitch,
+  wrongKnowledgeOptions,
   wrongQuestionsUrlQuery,
 } from "@/features/student/wrong-questions-ui";
 import { startWrongPracticeApi } from "@/lib/api";
 
 /**
  * /s/wrong 错题本（T3.5，D11；2026-10 IA 调整升为一级路由；2026-10 轮次史
- * 改版；2026-10 补重练）：按 (学生, 题目) 跨作业 + 课程练习聚合。
+ * 改版；2026-10 补重练；2026-10 补综合筛选与选题重练）：按 (学生, 题目) 跨
+ * 作业 + 课程练习聚合。
  * - 数据策略：页面统一拉**全量形态**（includeResolved=true）一次，tab 归属、
- *   分组、攻克标准全部本地计算（服务端 knowledge/includeResolved 参数保留
- *   兼容，本页不再使用）；
+ *   分组、攻克标准、综合筛选全部本地计算（服务端 knowledge/includeResolved
+ *   参数保留兼容，本页不再使用）；
  * - 顶部两 tab：「待复习」（默认）/「已攻克」——做对的题永远不删，进已攻克
  *   分区随时可翻看；成员由本地攻克标准从轮次史（rounds）计算；
  * - 攻克标准学生自选（宽松=做对 1 次即攻克；严格=连续 2 次做对，默认），
@@ -54,9 +61,13 @@ import { startWrongPracticeApi } from "@/lib/api";
  *   按考点；组内按最近判定时间倒序；
  * - 课程筛选（2026-10）：页头「课程」下拉（默认全部课程，选项 = 我的课程
  *   接口，与我的记录页同源；加载失败不阻塞列表）。筛选口径 = rounds 任一轮
- *   courseId 命中（错题重练轮恒 null 不参与；跨课程的题任一轮命中即保留），
- *   作用于两个 tab 的成员与计数、页头「重练全部」的范围（组头「重练本组」
- *   随列表天然跟随）；不自动切换分组维度（用户自己点「按练习」等）；
+ *   courseId 命中（错题重练轮恒 null 不参与；跨课程的题任一轮命中即保留）；
+ * - 综合筛选（2026-10；实测反馈起自由输入）：考点（输入 + datalist 建议，
+ *   可多选）/ 时间（数字输入，最近 N 个自然日含今天，按最近判定时间）/
+ *   错次（数字输入，wrongCount ≥N）三个输入与课程筛选**组合收窄**（综合
+ *   筛选），作用于两个 tab 的成员与计数、全部重练入口的范围；活跃条件显示
+ *   chips，可单清或一键清除；考点/时间/错次同步 URL query（knowledge 逗号
+ *   分隔多选 / days / wrongMin，刷新/返回不丢）；
  * - 条目默认紧凑行，点击展开完整卡片（含轮次史区块）；时间一律绝对时间
  *   （formatCnTime，Asia/Shanghai）；紧凑行示「错 N · 对 M」；轮次史尾部在
  *   pendingCount>0 时提示「另有 N 轮待老师批改」；
@@ -65,7 +76,11 @@ import { startWrongPracticeApi } from "@/lib/api";
  *   tab 的题；点击 POST /wrong-practice（题目顺序 = 圈定顺序）→ 跳
  *   /s/attempts/:attemptId 走既有答题会话；交卷后回本页自然看到轮次史新增
  *   一轮与攻克状态更新（聚合自动纳入）；
- * - tab、分组维度与课程筛选同步 URL query（刷新/返回不丢；旧参数兼容映射见
+ * - **选题重练（2026-10）**：页头「选题重练」进入选择模式——行变复选、组头
+ *   「全选本组」、底部 sticky 操作条「重练已选（N 题）」；选择跨分区、跨
+ *   筛选保留（操作条提示不在当前列表的题数），取消选题/Esc 退出并清空；
+ *   组卷范围快照 kind=selection（手选 N 题）；题序 = 列表序；
+ * - tab、分组维度与全部筛选同步 URL query（刷新/返回不丢；旧参数兼容映射见
  *   wrong-questions-ui.parseWrongQuestionsUrl）；三态齐全，触控目标 ≥44px。
  */
 
@@ -94,18 +109,24 @@ function WrongSkeleton() {
   );
 }
 
-/** 空态（区分「还没有错题」/「当前分区为空」/「课程筛选后为空」并给出解释） */
+/** 空态（区分「还没有错题」/「筛选后为空」/「当前分区为空」并给出下一步动作） */
 function WrongEmpty({
   tab,
   standard,
   hasAnyQuestion,
   courseFilterActive,
+  compositeFilterActive,
+  onClearAllFilters,
 }: {
   tab: "pending" | "conquered";
   standard: WrongMasteryStandard;
   hasAnyQuestion: boolean;
-  /** 课程筛选生效中（空列表优先归因筛选，给下一步动作） */
+  /** 课程筛选生效中 */
   courseFilterActive: boolean;
+  /** 综合筛选（考点/时间/错次）生效中 */
+  compositeFilterActive: boolean;
+  /** 清除全部筛选（课程 + 综合） */
+  onClearAllFilters: () => void;
 }) {
   const standardText = standard === "lenient" ? "做对 1 次" : "连续做对 2 次";
   if (!hasAnyQuestion) {
@@ -117,16 +138,35 @@ function WrongEmpty({
       />
     );
   }
-  if (courseFilterActive) {
+  // 仅课程筛选时空态归因课程（既有口径与文案）；叠加综合筛选后按组合筛选归因
+  if (courseFilterActive || compositeFilterActive) {
+    if (!compositeFilterActive) {
+      return (
+        <StudentEmptyState
+          icon={<Filter />}
+          title={
+            tab === "pending"
+              ? "这门课暂无待复习的错题"
+              : "这门课暂无已攻克的错题"
+          }
+          description="可以换一门课程试试，或改选「全部课程」。"
+        />
+      );
+    }
     return (
       <StudentEmptyState
         icon={<Filter />}
-        title={
-          tab === "pending"
-            ? "这门课暂无待复习的错题"
-            : "这门课暂无已攻克的错题"
+        title="当前筛选下没有错题"
+        description="换一组筛选条件试试，或清除全部筛选看完整错题本。"
+        action={
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={onClearAllFilters}
+          >
+            清除全部筛选
+          </Button>
         }
-        description="可以换一门课程试试，或改选「全部课程」。"
       />
     );
   }
@@ -204,8 +244,12 @@ export default function StudentWrongQuestionsPage() {
   );
   // 展开的紧凑行（同屏单开；切 tab/分组后目标不在列表则自然收起）
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 选题模式（2026-10）：selecting=模式开关；selected=已选题目 id 集合
+  // （跨分区、跨筛选保留——筛选只影响可见性，不清选择）
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
-  // 全量形态一次拉取：tab/分组/课程筛选/攻克标准全在本地算（D11 口径：单学生
+  // 全量形态一次拉取：tab/分组/全部筛选/攻克标准全在本地算（D11 口径：单学生
   // 错题规模有限；含已攻克条目——做对的题永远不删）
   const listQuery = useStudentWrongQuestions({ includeResolved: true });
 
@@ -219,20 +263,83 @@ export default function StudentWrongQuestionsPage() {
   );
 
   const questions = listQuery.data?.questions ?? [];
-  // 课程筛选在 tab 分流前生效：两个 tab 的成员与计数、「重练全部」范围都跟随
+  // 课程筛选单算一次（评审修复：此前 filtered 与 knowledgeOptions 两个 useMemo
+  // 各自跑一遍课程过滤，重复遍历）；综合筛选在其上收窄
   const courseFiltered = useMemo(
     () => filterWrongQuestionsByCourse(questions, state.courseId),
     [questions, state.courseId],
   );
+  // 综合筛选（课程 × 考点 × 时间 × 错次）在 tab 分流前生效：两个 tab 的成员
+  // 与计数、全部重练入口的范围都跟随（state 是 URL 态快照，identity 随 query
+  // 变化——切 tab/分组会重算一次过滤，D11 规模下可忽略；课程条件已在
+  // courseFiltered 应用，这里置 null 跳过）
+  const filtered = useMemo(
+    () => filterWrongQuestions(courseFiltered, { ...state, courseId: null }),
+    [courseFiltered, state],
+  );
+  // 考点下拉选项只随课程筛选收窄（不被已选考点自身缩死，方便换考点）；深链的
+  // 考点不在选项里时由筛选条内自算占位选项兜底
+  const knowledgeOptions = useMemo(
+    () => wrongKnowledgeOptions(courseFiltered),
+    [courseFiltered],
+  );
   const { pending, conquered } = useMemo(
-    () => splitByMastery(courseFiltered, standard),
-    [courseFiltered, standard],
+    () => splitByMastery(filtered, standard),
+    [filtered, standard],
   );
   const tabQuestions = state.tab === "pending" ? pending : conquered;
   const groups = useMemo(
     () => groupWrongQuestions(tabQuestions, state.group),
     [tabQuestions, state.group],
   );
+
+  /** 选题勾选（单题与整组共用）：整组已全选则全部移除，否则全部补上 */
+  function toggleSelectedIds(ids: readonly string[]): void {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (allSelected) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  }
+  // 有效选择 = selectedIds ∩ 当前数据（评审修复：refetch 后题目可能退出聚合
+  //——公布 gate 变化等——此时勾选计数若仍按 selectedIds 会虚高，且全部失效
+  // 时「重练已选」按钮可用、点击却静默无响应；计数与禁用一律按有效选择算）
+  const selectedCount = questions.reduce(
+    (count, question) => count + (selectedIds.has(question.questionId) ? 1 : 0),
+    0,
+  );
+  const visibleSelectedCount = tabQuestions.filter((question) =>
+    selectedIds.has(question.questionId),
+  ).length;
+  const allVisibleSelected =
+    tabQuestions.length > 0 && visibleSelectedCount === tabQuestions.length;
+
+  function enterSelecting(): void {
+    setExpandedId(null); // 收起展开卡，聚焦选择
+    setSelecting(true);
+  }
+  /** 退出选题模式并清空选择（「取消选题」与 Esc 共用；useCallback 稳定供 effect 依赖） */
+  const exitSelecting = useCallback(() => {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  // Esc 退出选题模式（与「取消选题」同一动作）
+  useEffect(() => {
+    if (!selecting) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") exitSelecting();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selecting, exitSelecting]);
 
   // 重练（2026-10）：范围 = 当前 tab 的题（组头按钮传该组子集）；题目顺序 =
   // 圈定顺序（列表序）即组卷题序。成功后跳答题页；失败留错误横幅可重试
@@ -276,10 +383,22 @@ export default function StudentWrongQuestionsPage() {
   const scopePayloadFor = (
     scopeKey: string,
     groupTitle: string | null,
+    /** selection 口径的实际提交题数（practiceQuestions 恒传 list.length——勾选
+     * 计数在 refetch 后可能失效，绝不能当题数写进随卷快照） */
+    count: number,
   ): WrongPracticeScope | undefined => {
     if (scopeKey === "all") {
       return {
         kind: "all",
+        ...(courseNameForScope !== undefined
+          ? { courseName: courseNameForScope }
+          : {}),
+      };
+    }
+    if (scopeKey === "selection") {
+      return {
+        kind: "selection",
+        questionCount: count,
         ...(courseNameForScope !== undefined
           ? { courseName: courseNameForScope }
           : {}),
@@ -306,14 +425,46 @@ export default function StudentWrongQuestionsPage() {
     practice.mutate({
       scope,
       ids: list.map((question) => question.questionId),
-      scopePayload: scopePayloadFor(scope, groupTitle),
+      scopePayload: scopePayloadFor(scope, groupTitle, list.length),
     });
   };
+  // 选题重练：题序 = 当前列表（tab + 筛选后的可见列表）序在前，不在当前列表
+  // 的已选题（另一 tab 或被筛掉）按全量列表序垫后（评审修复：此前 inList 取自
+  // filtered〔两 tab 合集〕，跨 tab 已选题按 lastAt 插进队首，与操作条
+  // 「不在当前列表」的计数口径自相矛盾）；复用 practiceQuestions（同一 mutate
+  // 入口与范围快照组装）
+  const practiceSelected = () => {
+    const inList = tabQuestions.filter((question) =>
+      selectedIds.has(question.questionId),
+    );
+    const inListIds = new Set(inList.map((question) => question.questionId));
+    const outOfList = questions.filter(
+      (question) =>
+        selectedIds.has(question.questionId) &&
+        !inListIds.has(question.questionId),
+    );
+    practiceQuestions("selection", [...inList, ...outOfList], null);
+  };
 
-  /** tab/分组变化：合并补丁写回 URL */
+  /** tab/分组/筛选变化：合并补丁写回 URL */
   function applyPatch(patch: Partial<WrongQuestionsUrlState>): void {
     void setSearchParams(wrongQuestionsUrlQuery({ ...state, ...patch }));
   }
+
+  /** 清除全部筛选（课程 + 考点 + 时间 + 错次） */
+  function clearAllFilters(): void {
+    applyPatch({
+      courseId: null,
+      knowledge: [],
+      days: null,
+      wrongMin: null,
+    });
+  }
+
+  const compositeFilterActive =
+    state.knowledge.length > 0 ||
+    state.days !== null ||
+    state.wrongMin !== null;
 
   function changeStandard(next: WrongMasteryStandard): void {
     setStandard(next);
@@ -328,13 +479,23 @@ export default function StudentWrongQuestionsPage() {
         titleId="wrong-title"
         description="做错的题会自动收进来；做对了也不会删，攻克后随时可以回来翻看。"
         actions={
-          // 重练全部：范围 = 当前 tab 且课程筛选后的全部题（数据未到时 0 题禁用）
-          <WrongPracticeButton
-            label="重练全部"
-            count={tabQuestions.length}
-            loading={practiceScope === "all"}
-            onPractice={() => practiceQuestions("all", tabQuestions, null)}
-          />
+          // 选题模式下常规入口让位给底部操作条（选题重练与重练全部同风格：
+          // 实测反馈统一为主按钮同规格，此前 outline 与主按钮观感差异大）
+          !selecting && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button className="min-h-11 px-5" onClick={enterSelecting}>
+                <ListChecks aria-hidden className="size-4" />
+                选题重练
+              </Button>
+              {/* 重练全部：范围 = 当前 tab 且全部筛选后的题（数据未到时 0 题禁用） */}
+              <WrongPracticeButton
+                label="重练全部"
+                count={tabQuestions.length}
+                loading={practiceScope === "all"}
+                onPractice={() => practiceQuestions("all", tabQuestions, null)}
+              />
+            </div>
+          )
         }
       />
 
@@ -359,6 +520,17 @@ export default function StudentWrongQuestionsPage() {
             />
           </div>
         </div>
+        {/* 综合筛选（2026-10）：考点 × 时间 × 错次组合收窄，与课程筛选叠加。
+            评审修复：onClearAll 与空态按钮同一动作、同一范围（课程 + 综合）——
+            此前只清综合不清课程，同名按钮两种行为 */}
+        <WrongFilterBar
+          knowledge={state.knowledge}
+          days={state.days}
+          wrongMin={state.wrongMin}
+          knowledgeOptions={knowledgeOptions}
+          onChange={(patch) => applyPatch(patch)}
+          onClearAll={clearAllFilters}
+        />
         <MasteryStandardPicker standard={standard} onChange={changeStandard} />
         {state.group === "knowledge" && (
           <p className="text-xs text-muted-foreground">
@@ -440,6 +612,8 @@ export default function StudentWrongQuestionsPage() {
             standard={standard}
             hasAnyQuestion={questions.length > 0}
             courseFilterActive={state.courseId !== null}
+            compositeFilterActive={compositeFilterActive}
+            onClearAllFilters={clearAllFilters}
           />
         ) : (
           groups.map((group) => (
@@ -459,24 +633,40 @@ export default function StudentWrongQuestionsPage() {
                     {groupCountLabel(state.tab, group.questions.length)}
                   </span>
                 </h2>
-                {/* 重练本组：范围 = 该组在当前 tab 的题（空组不渲染——上方已分流） */}
-                <WrongPracticeButton
-                  compact
-                  label="重练本组"
-                  count={group.questions.length}
-                  loading={practiceScope === `group:${group.key}`}
-                  onPractice={() =>
-                    practiceQuestions(
-                      `group:${group.key}`,
-                      group.questions,
-                      group.title,
-                    )
-                  }
-                />
+                {/* 组头动作：选题模式 = 全选本组；常规 = 重练本组（空组不渲染——上方已分流） */}
+                {selecting ? (
+                  <WrongGroupSelectAll
+                    count={group.questions.length}
+                    allSelected={group.questions.every((question) =>
+                      selectedIds.has(question.questionId),
+                    )}
+                    onToggle={() =>
+                      toggleSelectedIds(
+                        group.questions.map((question) => question.questionId),
+                      )
+                    }
+                  />
+                ) : (
+                  <WrongPracticeButton
+                    compact
+                    label="重练本组"
+                    count={group.questions.length}
+                    loading={practiceScope === `group:${group.key}`}
+                    onPractice={() =>
+                      practiceQuestions(
+                        `group:${group.key}`,
+                        group.questions,
+                        group.title,
+                      )
+                    }
+                  />
+                )}
               </div>
               <ul className="flex flex-col gap-2">
                 {group.questions.map((question) => {
-                  const expanded = expandedId === question.questionId;
+                  const checked = selectedIds.has(question.questionId);
+                  const expanded =
+                    !selecting && expandedId === question.questionId;
                   return (
                     <li
                       key={question.questionId}
@@ -485,9 +675,15 @@ export default function StudentWrongQuestionsPage() {
                       <WrongQuestionRow
                         question={question}
                         expanded={expanded}
-                        onToggle={() =>
-                          setExpandedId(expanded ? null : question.questionId)
+                        onToggle={
+                          selecting
+                            ? () => toggleSelectedIds([question.questionId])
+                            : () =>
+                                setExpandedId(
+                                  expanded ? null : question.questionId,
+                                )
                         }
+                        selection={selecting ? { checked } : undefined}
                       />
                       {expanded && <WrongQuestionItem question={question} />}
                     </li>
@@ -497,6 +693,24 @@ export default function StudentWrongQuestionsPage() {
             </section>
           ))
         ))}
+
+      {/* 选题模式底部操作条（sticky bottom）：计数 + 全选当前列表 + 取消 + 重练已选 */}
+      {selecting && (
+        <WrongSelectionBar
+          selectedCount={selectedCount}
+          otherTabCount={selectedCount - visibleSelectedCount}
+          allVisibleSelected={allVisibleSelected}
+          visibleCount={tabQuestions.length}
+          loading={practiceScope === "selection"}
+          onToggleSelectAllVisible={() =>
+            toggleSelectedIds(
+              tabQuestions.map((question) => question.questionId),
+            )
+          }
+          onPractice={practiceSelected}
+          onCancel={exitSelecting}
+        />
+      )}
     </section>
   );
 }

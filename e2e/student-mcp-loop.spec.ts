@@ -1,4 +1,5 @@
 import { devices, expect, test } from "@playwright/test";
+import { STUDENT_MCP_TOOL_NAMES } from "../apps/server/src/mcp/student-server.ts";
 import {
   addCourseMemberViaApi,
   choiceJudgePracticeMarkdown,
@@ -29,17 +30,8 @@ import {
 /** 与 playwright.config.ts 保持一致（server 直连地址；vite 代理不转发 /mcp） */
 const STUDENT_MCP_URL = "http://127.0.0.1:8899/mcp/student";
 
-/** 学生 MCP 八工具（四逐题 + 四整体复盘，任务 1ef854c7；与服务端 student-mcp 测试同清单） */
-const EXPECTED_STUDENT_TOOLS = [
-  "claim_ai_task",
-  "claim_attempt_review",
-  "list_my_ai_tasks",
-  "list_my_attempt_reviews",
-  "renew_ai_lease",
-  "renew_attempt_review_lease",
-  "submit_ai_reply",
-  "submit_attempt_review_result",
-].sort();
+/** 学生 MCP 工具清单（2026-10 评审修复：单源 STUDENT_MCP_TOOL_NAMES，与服务端测试/B19 冒烟脚本共用） */
+const EXPECTED_STUDENT_TOOLS = [...STUDENT_MCP_TOOL_NAMES].sort();
 
 /** JSON-RPC 请求体构造 */
 function rpc(

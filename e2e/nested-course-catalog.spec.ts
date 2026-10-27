@@ -62,10 +62,21 @@ test(
     const beforeOrder = detail.items
       .filter((item) => item.parentId === null)
       .map((item) => item.id);
-    await handle.focus();
-    await handle.press("Space");
-    await handle.press("ArrowDown");
-    await handle.press("Space");
+    // 键盘拖拽节奏：慢环境（CI 2 核）里 Space→ArrowDown→Space 连发会抢在
+    // dnd-kit 完成拾起渲染与 droppable 测量之前——位移为零、放下时 over 为
+    // 自身，reorder 永不发出（announcer 已播「已放下」但无 reorder 请求）。
+    // 以拾起播报同步拾起完成，方向键后留一帧余量，贴近真实键盘节奏。
+    const dragDownByKeyboard = async (): Promise<void> => {
+      await handle.focus();
+      await handle.press("Space");
+      await expect(
+        page.getByText("已拾起，按上下方向键移动，空格放下"),
+      ).toBeVisible();
+      await handle.press("ArrowDown");
+      await page.waitForTimeout(150); // 等 transform 应用与碰撞矩形更新，无 DOM 信号
+      await handle.press("Space");
+    };
+    await dragDownByKeyboard();
     await expect
       .poll(async () => {
         const result = courseDetailOkSchema.parse(
@@ -89,10 +100,7 @@ test(
     });
     await page.reload();
     // 嵌套同级拖拽与按钮排序都必须保留文件夹归属。
-    await handle.focus();
-    await handle.press("Space");
-    await handle.press("ArrowDown");
-    await handle.press("Space");
+    await dragDownByKeyboard();
     const childOrder = async () => {
       const result = courseDetailOkSchema.parse(
         await (

@@ -290,11 +290,44 @@ function pendingCountByQuestion(
  * 错题本聚合（D11 + 2026-10 轮次史）。now 可注入（after_due gate 的定时测试；
  * 默认当前时刻——读时比较，截止后下一次请求自动把该作业的作答纳入聚合）。
  */
+/**
+ * Asia/Shanghai 自然日截点（含今天，往前 days-1 天的当天零点，转 UTC ISO）：
+ * 页面「最近 N 天」筛选（wrong-questions-ui.filterWrongQuestions 的 days 口径）
+ * 与学生 MCP list_my_wrong_questions 的 sinceDays 共用本语义——上海无夏令时、
+ * 固定 +08:00，可直接算术（评审修复：此前 MCP 用 now−N×24h 滚动窗口，与页面
+ * 自然日同词不同义，最多差约 24 小时）。
+ */
+export function shanghaiNaturalDayCutoffIso(
+  days: number,
+  now: Date = new Date(),
+): string {
+  const shifted = new Date(now.getTime() + 8 * 3_600_000);
+  const todayStartUtc = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+  );
+  // Date.UTC 得到的是北京日期的 UTC 零点，再减 8h 才是北京当天零点
+  return new Date(
+    todayStartUtc - 8 * 3_600_000 - (days - 1) * 86_400_000,
+  ).toISOString();
+}
+
+/** listWrongQuestions 的组卷配套过滤（MCP list_my_wrong_questions 专用；HTTP 查询参数面不变） */
+export interface WrongQuestionsListFilters {
+  /** 只保留任一轮发生在该课程的题（与页面 filterWrongQuestionsByCourse 同谓词） */
+  readonly courseId?: string;
+  /** 只保留最近 N 个自然日（含今天，Asia/Shanghai）内有判定的题 */
+  readonly sinceDays?: number;
+}
+
 export function listWrongQuestions(
   db: Db,
   studentId: string,
   query: WrongQuestionsQuery,
   now: Date | string = new Date(),
+  /** 2026-10 评审修复：courseId/sinceDays 下沉服务层单源谓词（此前在 MCP 层第三套实现） */
+  filters?: WrongQuestionsListFilters,
 ): WrongQuestionsData {
   const includeResolved = query.includeResolved ?? false;
 
@@ -490,13 +523,29 @@ export function listWrongQuestions(
     });
   }
 
+  // 组卷配套过滤（服务层单源谓词；页面同口径在端上本地过滤，语义以本处为准）
+  let visible = cards;
+  if (filters?.courseId !== undefined) {
+    const courseId = filters.courseId;
+    visible = visible.filter((card) =>
+      card.rounds.some((round) => round.courseId === courseId),
+    );
+  }
+  if (filters?.sinceDays !== undefined) {
+    const cutoff = shanghaiNaturalDayCutoffIso(
+      filters.sinceDays,
+      typeof now === "string" ? new Date(now) : now,
+    );
+    visible = visible.filter((card) => card.lastAt >= cutoff);
+  }
+
   // 最近判定时间倒序（questionId 升序兜底稳定）
-  cards.sort(
+  visible.sort(
     (a, b) =>
       b.lastAt.localeCompare(a.lastAt) ||
       a.questionId.localeCompare(b.questionId),
   );
-  return { questions: cards };
+  return { questions: visible };
 }
 
 /**

@@ -272,10 +272,12 @@ export const attemptStartDataSchema = attemptSummarySchema;
 /**
  * 错题重练建卷范围（2026-10-25 #6980-2「我的记录要说明重练的是哪些错题」）：
  * 前端组卷时随请求下发，服务端原样落 attempts.practice_scope_json（快照语义，
- * 单元/考点改名不影响历史卷标题）。三种口径对应错题本的三个重练入口：
+ * 单元/考点改名不影响历史卷标题）。五种口径对应错题本的全部重练入口：
  * - all：页头「重练全部」（当前 tab + 课程筛选圈定的全部题）；
  * - group：组头「重练本组」（分组维度 + 组标题 + 可选课程名）；
- * - result：结果页「练习本卷错题」（来源卷标题）。
+ * - result：结果页「练习本卷错题」（来源卷标题）；
+ * - selection：选题重练（2026-10 手选 N 题跨组组卷，可选课程名）；
+ * - ai：AI 组卷（2026-10 学生 MCP create_wrong_practice，AI 给出的组卷说明）。
  */
 export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -297,16 +299,40 @@ export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
     /** 课程名（课程筛选激活时可携带） */
     courseName: z.string().min(1).max(120).optional(),
   }),
+  z.object({
+    kind: z.literal("selection"),
+    /** 手选题数（展示「手选 N 题」） */
+    questionCount: z.number().int().min(1),
+    /** 课程名（课程筛选激活时可携带） */
+    courseName: z.string().min(1).max(120).optional(),
+  }),
+  z.object({
+    kind: z.literal("ai"),
+    /**
+     * AI 给出的组卷说明（如「最近一周 · 错 2 次以上 · 10 题」），随卷快照展示。
+     * 只由学生 MCP create_wrong_practice 在服务端构造；页面建卷请求契约
+     * （wrongPracticeRequestSchema）拒绝 kind=ai，防伪造「AI 组卷」出处。
+     */
+    label: z.string().min(1).max(120),
+  }),
 ]);
 export type WrongPracticeScope = z.infer<typeof wrongPracticeScopeSchema>;
 
-/** 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题 */
+/**
+ * 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题；
+ * selection=「手选 N 题」；ai=AI 组卷说明原文。课程名后缀单源 withCourse
+ * （all/selection 两口径共用；group 的 courseName 仅存快照不进标签——历史行为）
+ */
+function withCourse(base: string, courseName: string | undefined): string {
+  return courseName !== undefined ? `${base}（${courseName}）` : base;
+}
+
 export function wrongScopeLabelOf(scope: WrongPracticeScope): string {
-  if (scope.kind === "all")
-    return scope.courseName !== undefined
-      ? `全部错题（${scope.courseName}）`
-      : "全部错题";
+  if (scope.kind === "all") return withCourse("全部错题", scope.courseName);
   if (scope.kind === "group") return scope.groupTitle;
+  if (scope.kind === "selection")
+    return withCourse(`手选 ${scope.questionCount} 题`, scope.courseName);
+  if (scope.kind === "ai") return scope.label;
   return scope.sourceTitle;
 }
 
@@ -358,6 +384,39 @@ export function wrongAttemptTitleOf(scope: {
   return units ? `${base}（来自 ${units}，共 ${s.questionCount} 题）` : base;
 }
 
+/**
+ * 页面建卷请求的范围一致性（2026-10 评审修复）：
+ * - selection：questionCount 必须等于去重后的实际题数——scope 是随卷冻结的
+ *   展示快照，放行不一致值会把「手选 999 题」永久写进卷标题；
+ * - ai：范围只由学生 MCP create_wrong_practice 在服务端构造，页面接口
+ *   拒绝——防止把手动建的卷伪装成 AI 组卷（教师端看到的出处标签可信）。
+ */
+const rejectInconsistentWrongScope = (
+  body: { questionIds: string[]; scope?: WrongPracticeScope | undefined },
+  ctx: z.RefinementCtx,
+): void => {
+  const scope = body.scope;
+  if (scope === undefined) return;
+  if (scope.kind === "ai") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scope", "kind"],
+      message: "kind=ai 范围仅由学生 MCP 组卷通道产生，页面接口不接受",
+    });
+    return;
+  }
+  if (scope.kind === "selection") {
+    const uniqueCount = new Set(body.questionIds).size;
+    if (scope.questionCount !== uniqueCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scope", "questionCount"],
+        message: `questionCount 必须等于去重后的题目数（实际 ${uniqueCount}）`,
+      });
+    }
+  }
+};
+
 export const wrongPracticeRequestSchema = z
   .object({
     questionIds: z
@@ -368,7 +427,8 @@ export const wrongPracticeRequestSchema = z
     /** 建卷可选工作流选项（M1b）：不带字段维持旧协议 */
     ...practiceWorkflowStartOptionsFields,
   })
-  .superRefine(rejectFeedbackModeWithoutVersion);
+  .superRefine(rejectFeedbackModeWithoutVersion)
+  .superRefine(rejectInconsistentWrongScope);
 
 /** POST /api/student/wrong-practice 响应（新建 wrong 来源 attempt；201） */
 export const wrongPracticeOkSchema = apiOkExtend(attemptStartDataSchema);

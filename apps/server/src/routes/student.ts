@@ -1118,20 +1118,21 @@ export function createStudentRoutes(
       // 照旧走公开投影，泄露测试见 routes/student-wrong-practice.test.ts）
       .post("/wrong-practice", async (c) => {
         const body = await parseJsonBody(c, wrongPracticeRequestSchema);
+        const { attempt } = startWrongPractice(
+          db,
+          c.var.student.id,
+          body.questionIds,
+          // M1b：显式 workflowVersion=1 才写新协议列（契约内建组合校验）
+          {
+            workflowVersion: body.workflowVersion,
+            feedbackMode: body.feedbackMode,
+          },
+          body.scope,
+        );
         return c.json(
           {
             ok: true,
-            data: startWrongPractice(
-              db,
-              c.var.student.id,
-              body.questionIds,
-              // M1b：显式 workflowVersion=1 才写新协议列（契约内建组合校验）
-              {
-                workflowVersion: body.workflowVersion,
-                feedbackMode: body.feedbackMode,
-              },
-              body.scope,
-            ),
+            data: attempt,
           },
           201,
         );
