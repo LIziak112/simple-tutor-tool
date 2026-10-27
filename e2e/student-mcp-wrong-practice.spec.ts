@@ -285,9 +285,24 @@ test.describe("学生 MCP 组卷两工具（list_my_wrong_questions + create_wro
 
       const records = await studentApi.get("/api/student/records");
       expect(records.ok()).toBe(true);
-      const recordsText = JSON.stringify(await records.json());
-      expect(recordsText).toContain("错题重练 · 第 1 次");
-      expect(recordsText).toContain("e2e AI 精选");
+      // 记录卡的标题串是前端 recordTitleOf 拼的，服务端给的是 wrongScope 快照
+      const recordsData = (
+        (await records.json()) as {
+          data: {
+            records: {
+              sourceType: string;
+              attemptNo: number;
+              wrongScope: { label: string; questionCount: number } | null;
+            }[];
+          };
+        }
+      ).data;
+      const wrongRecord = recordsData.records.find(
+        (record) => record.sourceType === "wrong",
+      );
+      expect(wrongRecord?.attemptNo).toBe(1);
+      expect(wrongRecord?.wrongScope?.label).toBe("e2e AI 精选");
+      expect(wrongRecord?.wrongScope?.questionCount).toBe(1);
     } finally {
       await context.close();
     }
