@@ -54,7 +54,7 @@ test.describe("T2B.6 教师自助注册", { tag: ["@admin"] }, () => {
     await page.fill("#login-name", loginName);
     await page.fill("#login-password", YI_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
   });
 });
 
