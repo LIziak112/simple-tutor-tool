@@ -1265,6 +1265,15 @@ describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context 
     expect(
       screen.getByRole("article", { name: "第 3 题" }),
     ).toBeInTheDocument();
+    // 结果回看单元列表采用天然流式排布（stack），无 sticky 漂移且题卡与材料绝对隔离
+    const ol = document.querySelector('ol[data-layout="stack"]');
+    expect(ol).toBeInTheDocument();
+    expect(groupMaterials.className).not.toContain("sticky");
+    expect(groupMaterials.className).toContain("isolate");
+    const anchor = document.querySelector(
+      '[data-slot="question-group-anchor"]',
+    );
+    expect(anchor?.className).not.toContain("contents");
     mockedContext.mockReset();
     mockedContext.mockResolvedValue({
       attemptId: "",

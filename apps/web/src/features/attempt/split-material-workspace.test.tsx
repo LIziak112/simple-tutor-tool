@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchAttemptApi, fetchAttemptContextApi } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
 import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
+import { _resetGroupMaterialLayoutStoreForTest } from "./group-material-layout-store";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,
@@ -167,6 +168,7 @@ function renderPage() {
 describe("分栏材料工作区与协同标画集成", () => {
   beforeEach(() => {
     localStorage.clear();
+    _resetGroupMaterialLayoutStoreForTest();
     installDraftBackend(memoryBackend());
     bindPracticePreferenceAccount(null);
     bindPracticePreferenceAccount("student-test");
@@ -402,5 +404,254 @@ describe("分栏材料工作区与协同标画集成", () => {
         name: "调整材料与题目分栏比例",
       }),
     ).toHaveLength(0);
+  });
+
+  it("整卷列表模式下题组材料与独立题材料不泄漏 sticky 定位，且各材料与无材料题保持绝对几何隔离", async () => {
+    savePracticePreference({
+      layout: "list",
+      keyboardShortcuts: false,
+      feedback: null,
+    });
+    const draft = draftOf();
+    draft.units[0]?.questions.push({
+      id: "q4",
+      type: "judge",
+      difficulty: 1,
+      knowledge: ["自测"],
+      stemMd: "无材料普通题题面[[]]",
+      hintCount: 0,
+      questionRevisionId: "rev-q4",
+    });
+    mockedFetch.mockResolvedValue(draft);
+    mockedContext.mockResolvedValue(contextOf());
+
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
+    });
+
+    // 1. 题组共享材料：在列表分栏模式下拥有网格跨行与 isolate，但绝不泄漏 sticky 定位导致穿透
+    const groupMaterials = container.querySelector(
+      '[data-slot="group-materials"]',
+    );
+    expect(groupMaterials).toBeInTheDocument();
+    expect(groupMaterials?.className).toContain("isolate");
+    expect(groupMaterials?.className).toContain("lg:col-start-1");
+    expect(groupMaterials?.className).toContain(
+      "lg:[grid-row:span_var(--qg-row-span)]",
+    );
+    expect(groupMaterials?.className).not.toContain("lg:sticky");
+    expect(groupMaterials?.className).not.toContain("xl:sticky");
+
+    // 2. 独立题材料：拥有独立单行约束 [grid-row:span_1] 与 isolate，同样不泄漏 sticky
+    const soloMaterials = container.querySelector(
+      '[data-slot="question-materials"]',
+    );
+    expect(soloMaterials).toBeInTheDocument();
+    expect(soloMaterials?.className).toContain("isolate");
+    expect(soloMaterials?.className).toContain("lg:col-start-1");
+    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.className).not.toContain("lg:sticky");
+    expect(soloMaterials?.className).not.toContain("xl:sticky");
+
+    // 3. 中缝 Handle 容器：在列表模式下同样不使用 sticky
+    const handleContainers = container.querySelectorAll(
+      '[data-slot="group-split-handle-container"], [data-slot="question-split-handle-container"]',
+    );
+    expect(handleContainers).toHaveLength(2);
+    for (const handle of handleContainers) {
+      expect(handle.className).not.toContain("lg:sticky");
+      expect(handle.className).not.toContain("xl:sticky");
+    }
+
+    // 4. 无材料普通题：整行跨列 (lg:col-span-full)，各卡片均有 isolate 隔离层叠上下文
+    const q4Card = container.querySelector('article[data-question-id="q4"]');
+    expect(q4Card).toBeInTheDocument();
+    expect(q4Card?.className).toContain("isolate");
+    const q4Row = q4Card?.closest("li");
+    expect(q4Row?.className).toContain("lg:col-span-full");
+  });
+
+  it("单题模式下题组材料与中缝 Handle 保持视口级粘性与独立滚动区", async () => {
+    savePracticePreference({
+      layout: "single",
+      keyboardShortcuts: false,
+      feedback: null,
+    });
+    mockedFetch.mockResolvedValue(draftOf());
+    mockedContext.mockResolvedValue(contextOf());
+
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
+    });
+
+    const groupMaterials = container.querySelector(
+      '[data-slot="group-materials"]',
+    );
+    expect(groupMaterials).toBeInTheDocument();
+    expect(groupMaterials?.className).toContain("lg:sticky");
+    expect(groupMaterials?.className).toContain("xl:sticky");
+    expect(groupMaterials?.className).toContain("lg:overflow-y-auto");
+
+    const groupHandle = container.querySelector(
+      '[data-slot="group-split-handle-container"]',
+    );
+    expect(groupHandle).toBeInTheDocument();
+    expect(groupHandle?.className).toContain("lg:sticky");
+  });
+
+  it("无题组但包含独立材料题的单元，列表模式下依然正常激活分栏网格与中缝 Handle", async () => {
+    savePracticePreference({
+      layout: "list",
+      keyboardShortcuts: false,
+      feedback: null,
+    });
+    const draft = draftOf();
+    // 移除题组内的题目，仅保留独立材料题 q3 与无材料题 q4
+    const unit0 = draft.units[0];
+    if (unit0) {
+      unit0.questions = [
+        {
+          id: "q3",
+          type: "judge",
+          difficulty: 1,
+          knowledge: ["独立分析"],
+          stemMd: "这是一道独立的材料题。[[]]",
+          hintCount: 0,
+          questionRevisionId: "rev-q3",
+          materialRefs: [{ material: "mat-solo" }],
+        },
+        {
+          id: "q4",
+          type: "judge",
+          difficulty: 1,
+          knowledge: ["自测"],
+          stemMd: "无材料普通题题面[[]]",
+          hintCount: 0,
+          questionRevisionId: "rev-q4",
+        },
+      ];
+    }
+    mockedFetch.mockResolvedValue(draft);
+    // contextOf 中组不匹配任何本卷题目，因此仅存在 solo 段
+    mockedContext.mockResolvedValue(contextOf());
+
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(screen.getByLabelText("本题材料")).toBeInTheDocument();
+    });
+
+    // 单元存在独立材料题时，列表分栏模式下依然正常开启 grid
+    const ol = container.querySelector("ol.lg\\:grid");
+    expect(ol).toBeInTheDocument();
+
+    // 独立题材料与中缝 Handle 正常渲染
+    const soloMaterials = container.querySelector(
+      '[data-slot="question-materials"]',
+    );
+    expect(soloMaterials).toBeInTheDocument();
+    expect(soloMaterials?.className).toContain("lg:col-start-1");
+    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.className).not.toContain("lg:sticky");
+
+    const soloHandle = container.querySelector(
+      '[data-slot="question-split-handle-container"]',
+    );
+    expect(soloHandle).toBeInTheDocument();
+    expect(soloHandle?.className).toContain("lg:col-start-2");
+    expect(soloHandle?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloHandle?.className).not.toContain("lg:sticky");
+
+    // 无材料普通题整行跨列 (lg:col-span-full)
+    const q4Card = container.querySelector('article[data-question-id="q4"]');
+    expect(q4Card).toBeInTheDocument();
+    expect(q4Card?.closest("li")?.className).toContain("lg:col-span-full");
+  });
+
+  it("连续多题组与独立材料并存时，各材料按各自网格行严格隔离且绝不泄漏 sticky", async () => {
+    savePracticePreference({
+      layout: "list",
+      keyboardShortcuts: false,
+      feedback: null,
+    });
+    const draft = draftOf();
+    // 增加第 2 个题组题目 q5, q6
+    draft.units[0]?.questions.push(
+      {
+        id: "q5",
+        type: "judge",
+        difficulty: 1,
+        knowledge: ["组2"],
+        stemMd: "题组2子题1[[]]",
+        hintCount: 0,
+        questionRevisionId: "rev-q5",
+      },
+      {
+        id: "q6",
+        type: "judge",
+        difficulty: 1,
+        knowledge: ["组2"],
+        stemMd: "题组2子题2[[]]",
+        hintCount: 0,
+        questionRevisionId: "rev-q6",
+      },
+    );
+    const ctx = contextOf();
+    ctx.materials.push({
+      id: "mat-group-2",
+      title: "阅读材料二",
+      contentMd: "第二份长材料正文。",
+      anchors: [],
+      slots: [],
+      mediaPaths: [],
+      sourceVersion: 1,
+    });
+    ctx.groups.push({
+      id: "grp-2",
+      title: "题组 2：材料二第 5～6 题",
+      label: "5～6",
+      introMd: "阅读材料二回答问题。",
+      materialRefs: [{ material: "mat-group-2" }],
+      questionIds: ["q5", "q6"],
+      sourceVersion: 1,
+    });
+
+    mockedFetch.mockResolvedValue(draft);
+    mockedContext.mockResolvedValue(ctx);
+
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("阅读理解第 1～2 题")).toBeInTheDocument();
+      expect(screen.getByText("题组 2：材料二第 5～6 题")).toBeInTheDocument();
+    });
+
+    // 两个题组材料均有网格跨行，且绝不泄漏 sticky
+    const groupMaterials = container.querySelectorAll(
+      '[data-slot="group-materials"]',
+    );
+    expect(groupMaterials).toHaveLength(2);
+    for (const mat of groupMaterials) {
+      expect(mat.className).toContain("isolate");
+      expect(mat.className).toContain("lg:col-start-1");
+      expect(mat.className).toContain("lg:[grid-row:span_var(--qg-row-span)]");
+      expect(mat.className).not.toContain("lg:sticky");
+    }
+
+    // 独立题材料保持单行绑定
+    const soloMaterials = container.querySelector(
+      '[data-slot="question-materials"]',
+    );
+    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.className).not.toContain("lg:sticky");
+
+    // 所有中缝 Handle 绝不泄漏 sticky
+    const handles = container.querySelectorAll(
+      '[data-slot="group-split-handle-container"], [data-slot="question-split-handle-container"]',
+    );
+    expect(handles).toHaveLength(3);
+    for (const h of handles) {
+      expect(h.className).not.toContain("lg:sticky");
+    }
   });
 });

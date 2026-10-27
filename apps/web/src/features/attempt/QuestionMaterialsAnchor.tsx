@@ -37,6 +37,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   splitRatio,
   onSplitRatioChange,
   containerRef,
+  singleMode = false,
 }: {
   questionId: string;
   /** questionMaterialsOf 解析后的冻结材料（attempt-context-view 单源） */
@@ -57,6 +58,8 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   onSplitRatioChange?: ((ratio: number) => void) | undefined;
   /** 分栏外层容器引用，用于指针距离换算 */
   containerRef?: React.RefObject<HTMLElement | null> | undefined;
+  /** 是否单题专注模式（单题模式下激活视口级粘性与独立滚动；整卷列表模式依靠网格跨行自然滚动） */
+  singleMode?: boolean | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   // 同材料多版本才逐版标注（QM-15 细项 4；单版本零徽标零视觉噪音）
@@ -102,8 +105,10 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
         aria-label="本题材料"
         className={
           onSplitRatioChange !== undefined
-            ? "flex min-w-0 max-w-full flex-col gap-3 self-start scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1"
-            : "flex min-w-0 max-w-full flex-col gap-3 scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            ? singleMode
+              ? "flex min-w-0 max-w-full flex-col gap-3 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_1] xl:[grid-row:span_1]"
+              : "flex min-w-0 max-w-full flex-col gap-3 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:col-start-1 xl:col-start-1 lg:[grid-row:span_1] xl:[grid-row:span_1] lg:pr-1 xl:pr-1"
+            : "flex min-w-0 max-w-full flex-col gap-3 isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         }
       >
         <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -123,7 +128,11 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
       {onSplitRatioChange !== undefined && (
         <div
           data-slot="question-split-handle-container"
-          className="hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch"
+          className={
+            singleMode
+              ? "hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch lg:[grid-row:span_1] xl:[grid-row:span_1]"
+              : "hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch lg:[grid-row:span_1] xl:[grid-row:span_1]"
+          }
         >
           <MaterialSplitHandle
             ratio={splitRatio ?? 50}

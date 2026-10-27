@@ -610,7 +610,7 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className="flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-2 rounded-[8px] border border-border bg-card px-4 py-3 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-5"
+      className="flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-2 rounded-[8px] border border-border bg-card px-4 py-3 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-5 isolate"
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (

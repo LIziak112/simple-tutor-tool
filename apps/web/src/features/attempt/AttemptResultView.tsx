@@ -34,7 +34,6 @@ import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
@@ -335,7 +334,7 @@ function ResultQuestionCard({
     <article
       data-review-question={question.questionId}
       className={cn(
-        "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6",
+        "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6 isolate",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
         !released
           ? reviewState.unanswered
@@ -524,8 +523,6 @@ export function AttemptResultView({
   // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
   // （材料缺省不阻断回看；服务端对坏快照已 fail-closed 409）
   const contextQuery = useAttemptContext(attempt.id);
-  // AI 侧栏对照激活 → 组段呈现回退上下排布（与作答视图同款信号）
-  const compareActive = useAiCompareActive();
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
   // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）
@@ -875,27 +872,13 @@ export function AttemptResultView({
                 unit.questions.map((question) => question.questionId),
                 questionRefs,
               );
-              // compare 网格仅对确有题组的单元开启（AI 对照激活回退上下排布）
-              const unitHasGroups = segments.some(
-                (segment) => segment.kind === "group",
-              );
-              const groupGrid = unitHasGroups && !compareActive;
               /** 单题行（组行/独立行共用；组行不挂「查看材料」——回看布局
                   上下排布自然阅读，无需 reveal 跳转） */
-              const renderRow = (questionId: string, grouped: boolean) => {
+              const renderRow = (questionId: string) => {
                 const question = questionById.get(questionId);
                 if (question === undefined) return null;
                 return (
-                  <li
-                    key={question.questionId}
-                    className={
-                      groupGrid
-                        ? grouped
-                          ? "min-w-0 xl:col-start-2"
-                          : "min-w-0 xl:col-span-2"
-                        : undefined
-                    }
-                  >
+                  <li key={question.questionId} className="min-w-0">
                     <ResultQuestionCard
                       aiTrigger={aiCompanion.triggerForQuestion(
                         question.questionId,
@@ -921,20 +904,7 @@ export function AttemptResultView({
                       {unit.title}
                     </h2>
                   )}
-                  <ol
-                    data-layout={
-                      unitHasGroups
-                        ? groupGrid
-                          ? "compare"
-                          : "stack"
-                        : undefined
-                    }
-                    className={
-                      groupGrid
-                        ? "flex min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-                        : "flex flex-col gap-4"
-                    }
-                  >
+                  <ol data-layout="stack" className="flex flex-col gap-4">
                     {segments.flatMap((segment) =>
                       segment.kind === "solo"
                         ? segment.questionIds.flatMap((questionId) => {
@@ -947,20 +917,16 @@ export function AttemptResultView({
                               question.snapshot,
                             );
                             return soloMaterials.length === 0
-                              ? [renderRow(questionId, false)]
+                              ? [renderRow(questionId)]
                               : [
                                   <QuestionMaterialsAnchor
                                     key={`qmat:${question.questionId}`}
                                     questionId={question.questionId}
                                     materials={soloMaterials}
                                     readingKey={`${attempt.id}|q:${question.questionId}`}
-                                    className={
-                                      groupGrid
-                                        ? "min-w-0 xl:col-span-2"
-                                        : undefined
-                                    }
+                                    className="min-w-0"
                                   />,
-                                  renderRow(questionId, false),
+                                  renderRow(questionId),
                                 ];
                           })
                         : [
@@ -970,9 +936,10 @@ export function AttemptResultView({
                               materials={segment.materials}
                               questionCount={segment.questionIds.length}
                               readingKey={`${attempt.id}|${segment.group.id}`}
+                              layoutMode="stack"
                             />,
                             ...segment.questionIds.map((questionId) =>
-                              renderRow(questionId, true),
+                              renderRow(questionId),
                             ),
                           ],
                     )}

@@ -1441,9 +1441,19 @@ function AnswerView({
                     unit.questions.map((question) => question.id),
                     questionRefs,
                   );
-                  // compare 网格：对确有材料的题组开启，或单题模式下当前题有材料（组材料/题级材料）时开启分栏
-                  const unitHasGroups = segments.some(
-                    (segment) => segment.kind === "group",
+                  // compare 网格：对确有材料的题组/独立材料开启，或单题模式下当前题有材料（组材料/题级材料）时开启分栏
+                  const unitHasMaterials = segments.some(
+                    (segment) =>
+                      (segment.kind === "group" &&
+                        segment.materials.length > 0) ||
+                      (segment.kind === "solo" &&
+                        segment.questionIds.some((qid) => {
+                          const q = questionById.get(qid);
+                          return (
+                            q !== undefined &&
+                            questionMaterialsOf(contextQuery.data, q).length > 0
+                          );
+                        })),
                   );
                   const singleHasMaterials =
                     singleMode &&
@@ -1469,7 +1479,7 @@ function AnswerView({
                   const groupGrid =
                     !compareActive &&
                     isSplit &&
-                    (singleMode ? singleHasMaterials : unitHasGroups);
+                    (singleMode ? singleHasMaterials : unitHasMaterials);
                   /** 单题行渲染（组行/独立行共用；onOpenMaterial 组内挂共享
                       材料、solo 题挂题级材料，openMaterialLabel 区分语义） */
                   const renderRow = (
@@ -1592,7 +1602,7 @@ function AnswerView({
                       )}
                       <ol
                         data-layout={
-                          unitHasGroups || singleHasMaterials
+                          unitHasMaterials || singleHasMaterials
                             ? groupGrid
                               ? "compare"
                               : "stack"
@@ -1643,9 +1653,7 @@ function AnswerView({
                                             resolvedSingleQuestionId
                                         }
                                         className={
-                                          groupGrid
-                                            ? "min-w-0 lg:col-span-full xl:col-span-full"
-                                            : undefined
+                                          groupGrid ? "min-w-0" : undefined
                                         }
                                         attemptId={attemptId}
                                         splitRatio={splitRatio}
@@ -1653,6 +1661,7 @@ function AnswerView({
                                           groupGrid ? setSplitRatio : undefined
                                         }
                                         containerRef={singleWorkspaceRef}
+                                        singleMode={singleMode}
                                       />,
                                       renderRow(
                                         question,
@@ -1668,7 +1677,11 @@ function AnswerView({
                                   group={segment.group}
                                   materials={segment.materials}
                                   questionCount={
-                                    singleMode ? 1 : segment.questionIds.length
+                                    singleMode
+                                      ? 1
+                                      : segment.questionIds.filter((qid) =>
+                                          questionById.has(qid),
+                                        ).length
                                   }
                                   readingKey={`${attemptId}|${segment.group.id}`}
                                   revealSignal={
@@ -1688,6 +1701,7 @@ function AnswerView({
                                   containerRef={singleWorkspaceRef}
                                   layoutMode={groupMaterialLayout}
                                   onLayoutModeChange={setGroupMaterialLayout}
+                                  singleMode={singleMode}
                                 />,
                                 ...segment.questionIds.map((questionId) => {
                                   const question = questionById.get(questionId);

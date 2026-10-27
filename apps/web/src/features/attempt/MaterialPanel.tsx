@@ -102,8 +102,8 @@ export const MaterialPanel = memo(function MaterialPanel({
       aria-label={title && title.length > 0 ? `共享材料：${title}` : "共享材料"}
       className={
         variant === "compact"
-          ? "flex min-w-0 flex-col gap-3 rounded-[8px] border border-border bg-card p-3 text-card-foreground"
-          : "flex min-w-0 flex-col gap-4 rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-5"
+          ? "flex min-w-0 flex-col gap-3 rounded-[8px] border border-border bg-card p-3 text-card-foreground isolate"
+          : "flex min-w-0 flex-col gap-4 rounded-lg border border-border bg-card p-4 text-card-foreground sm:p-5 isolate"
       }
     >
       <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-semibold text-muted-foreground">
