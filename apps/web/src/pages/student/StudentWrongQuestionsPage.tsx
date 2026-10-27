@@ -263,13 +263,15 @@ export default function StudentWrongQuestionsPage() {
 
   const questions = listQuery.data?.questions ?? [];
   // 综合筛选（课程 × 考点 × 时间 × 错次）在 tab 分流前生效：两个 tab 的成员
-  // 与计数、全部重练入口的范围都跟随
+  // 与计数、全部重练入口的范围都跟随；依赖钉到实际读取的四个筛选字段——
+  // 切 tab/分组不重跑过滤链
   const filtered = useMemo(
     () => filterWrongQuestions(questions, state),
-    [questions, state],
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 只依赖 state 的四个筛选字段（URL 态快照），切 tab/分组不重跑过滤链
+    [questions, state.courseId, state.knowledge, state.days, state.wrongMin],
   );
   // 考点下拉选项只随课程筛选收窄（不被已选考点自身缩死，方便换考点）；深链的
-  // 考点不在选项里时由占位选项兜底
+  // 考点不在选项里时由筛选条内自算占位选项兜底
   const knowledgeOptions = useMemo(
     () =>
       wrongKnowledgeOptions(
@@ -277,9 +279,6 @@ export default function StudentWrongQuestionsPage() {
       ),
     [questions, state.courseId],
   );
-  const unknownKnowledge =
-    state.knowledge !== null &&
-    !knowledgeOptions.some((option) => option.name === state.knowledge);
   const { pending, conquered } = useMemo(
     () => splitByMastery(filtered, standard),
     [filtered, standard],
@@ -290,19 +289,8 @@ export default function StudentWrongQuestionsPage() {
     [tabQuestions, state.group],
   );
 
-  // 选题模式的勾选操作（不可变更新，跨分区/筛选不清除既有选择）
-  function toggleSelected(questionId: string): void {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(questionId)) {
-        next.delete(questionId);
-      } else {
-        next.add(questionId);
-      }
-      return next;
-    });
-  }
-  function toggleSelectedGroup(ids: readonly string[]): void {
+  /** 选题勾选（单题与整组共用）：整组已全选则全部移除，否则全部补上 */
+  function toggleSelectedIds(ids: readonly string[]): void {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       const allSelected = ids.every((id) => next.has(id));
@@ -327,13 +315,11 @@ export default function StudentWrongQuestionsPage() {
   useEffect(() => {
     if (!selecting) return;
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        setSelecting(false);
-        setSelectedIds(new Set());
-      }
+      if (event.key === "Escape") exitSelecting();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: exitSelecting 是仅依赖 setState 的稳定函数声明
   }, [selecting]);
 
   function enterSelecting(): void {
@@ -429,25 +415,23 @@ export default function StudentWrongQuestionsPage() {
       scopePayload: scopePayloadFor(scope, groupTitle),
     });
   };
-  // 选题重练：题序 = 当前列表序在前，不在当前列表的已选题按全量列表序垫后
+  // 选题重练：题序 = 当前列表序在前，不在当前列表的已选题按全量列表序垫后；
+  // 复用 practiceQuestions（同一 mutate 入口与范围快照组装）
   const practiceSelected = () => {
-    const inList = filtered
-      .filter((question) => selectedIds.has(question.questionId))
-      .map((question) => question.questionId);
-    const outOfList = questions
-      .filter(
-        (question) =>
-          selectedIds.has(question.questionId) &&
-          !inList.includes(question.questionId),
-      )
-      .map((question) => question.questionId);
-    const ids = [...inList, ...outOfList];
-    if (ids.length === 0) return;
-    practice.mutate({
-      scope: "selection",
-      ids,
-      scopePayload: scopePayloadFor("selection", null),
-    });
+    const inListIds = new Set(
+      filtered
+        .filter((question) => selectedIds.has(question.questionId))
+        .map((question) => question.questionId),
+    );
+    const inList = filtered.filter((question) =>
+      inListIds.has(question.questionId),
+    );
+    const outOfList = questions.filter(
+      (question) =>
+        selectedIds.has(question.questionId) &&
+        !inListIds.has(question.questionId),
+    );
+    practiceQuestions("selection", [...inList, ...outOfList], null);
   };
 
   /** tab/分组/筛选变化：合并补丁写回 URL */
@@ -532,7 +516,6 @@ export default function StudentWrongQuestionsPage() {
           days={state.days}
           wrongMin={state.wrongMin}
           knowledgeOptions={knowledgeOptions}
-          unknownKnowledge={unknownKnowledge}
           onChange={(patch) => applyPatch(patch)}
           onClearAll={() =>
             applyPatch({ knowledge: null, days: null, wrongMin: null })
@@ -648,7 +631,7 @@ export default function StudentWrongQuestionsPage() {
                       selectedIds.has(question.questionId),
                     )}
                     onToggle={() =>
-                      toggleSelectedGroup(
+                      toggleSelectedIds(
                         group.questions.map((question) => question.questionId),
                       )
                     }
@@ -671,6 +654,7 @@ export default function StudentWrongQuestionsPage() {
               </div>
               <ul className="flex flex-col gap-2">
                 {group.questions.map((question) => {
+                  const checked = selectedIds.has(question.questionId);
                   const expanded =
                     !selecting && expandedId === question.questionId;
                   return (
@@ -681,18 +665,15 @@ export default function StudentWrongQuestionsPage() {
                       <WrongQuestionRow
                         question={question}
                         expanded={expanded}
-                        onToggle={() =>
-                          setExpandedId(expanded ? null : question.questionId)
+                        onToggle={
+                          selecting
+                            ? () => toggleSelectedIds([question.questionId])
+                            : () =>
+                                setExpandedId(
+                                  expanded ? null : question.questionId,
+                                )
                         }
-                        {...(selecting
-                          ? {
-                              selection: {
-                                checked: selectedIds.has(question.questionId),
-                                onToggle: () =>
-                                  toggleSelected(question.questionId),
-                              },
-                            }
-                          : {})}
+                        selection={selecting ? { checked } : undefined}
                       />
                       {expanded && <WrongQuestionItem question={question} />}
                     </li>
@@ -712,7 +693,7 @@ export default function StudentWrongQuestionsPage() {
           visibleCount={tabQuestions.length}
           loading={practiceScope === "selection"}
           onToggleSelectAllVisible={() =>
-            toggleSelectedGroup(
+            toggleSelectedIds(
               tabQuestions.map((question) => question.questionId),
             )
           }

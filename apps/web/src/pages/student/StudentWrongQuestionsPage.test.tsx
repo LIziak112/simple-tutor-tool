@@ -277,6 +277,50 @@ function LocationProbe() {
   );
 }
 
+/** 组卷成功响应（wrong 来源 attempt 摘要；id 由各用例覆盖）——重练入口与选题重练共用 */
+const PRACTICE_NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
+const PRACTICE_SUMMARY: AttemptStartData = {
+  id: PRACTICE_NEW_ATTEMPT_ID,
+  sourceType: "wrong",
+  assignmentId: null,
+  lectureId: null,
+  courseId: null,
+  unitId: null,
+  attemptNo: 1,
+  status: "draft",
+  startedAt: "2020-09-30T02:00:00.000Z",
+  submittedAt: null,
+  scoreAuto: null,
+};
+
+/** 带答题页路由的渲染（组卷成功后断言跳 /s/attempts/:id；mutation 不重试）——两 describe 共用 */
+function renderPageWithAttemptRoute(initialEntry = "/s/wrong") {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/s/wrong"
+            element={
+              <>
+                <StudentWrongQuestionsPage />
+                <LocationProbe />
+              </>
+            }
+          />
+          <Route path="/s/attempts/:attemptId" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 function renderPage(initialEntry = "/s/wrong") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -883,50 +927,9 @@ describe("wrong-questions-ui 纯函数", () => {
 });
 
 describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
-  const NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
-
-  /** 组卷成功响应（wrong 来源 attempt 摘要；id 由各用例覆盖） */
-  const PRACTICE_SUMMARY: AttemptStartData = {
-    id: NEW_ATTEMPT_ID,
-    sourceType: "wrong",
-    assignmentId: null,
-    lectureId: null,
-    courseId: null,
-    unitId: null,
-    attemptNo: 1,
-    status: "draft",
-    startedAt: "2020-09-30T02:00:00.000Z",
-    submittedAt: null,
-    scoreAuto: null,
-  };
-
-  /** 带答题页路由的渲染（组卷成功后断言跳 /s/attempts/:id；mutation 不重试） */
-  function renderPageWithAttemptRoute(initialEntry = "/s/wrong") {
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[initialEntry]}>
-          <Routes>
-            <Route
-              path="/s/wrong"
-              element={
-                <>
-                  <StudentWrongQuestionsPage />
-                  <LocationProbe />
-                </>
-              }
-            />
-            <Route path="/s/attempts/:attemptId" element={<LocationProbe />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  }
+  // NEW_ATTEMPT_ID / PRACTICE_SUMMARY / renderPageWithAttemptRoute 提升在文件
+  // 顶层（与「选题重练」describe 共用）
+  const NEW_ATTEMPT_ID = PRACTICE_NEW_ATTEMPT_ID;
 
   it("按钮示数：页头「重练全部」= 当前 tab 题数；组头「重练本组」= 组内题数；空 tab 禁用", async () => {
     // 只有待复习一题（错-错）：已攻克为空 → 切过去后重练全部（0 题）禁用
@@ -1163,47 +1166,8 @@ describe("StudentWrongQuestionsPage 综合筛选（2026-10）", () => {
 });
 
 describe("StudentWrongQuestionsPage 选题重练（2026-10）", () => {
-  const NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
-  const PRACTICE_SUMMARY: AttemptStartData = {
-    id: NEW_ATTEMPT_ID,
-    sourceType: "wrong",
-    assignmentId: null,
-    lectureId: null,
-    courseId: null,
-    unitId: null,
-    attemptNo: 1,
-    status: "draft",
-    startedAt: "2020-09-30T02:00:00.000Z",
-    submittedAt: null,
-    scoreAuto: null,
-  };
-
-  function renderPageWithAttemptRoute(initialEntry = "/s/wrong") {
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[initialEntry]}>
-          <Routes>
-            <Route
-              path="/s/wrong"
-              element={
-                <>
-                  <StudentWrongQuestionsPage />
-                  <LocationProbe />
-                </>
-              }
-            />
-            <Route path="/s/attempts/:attemptId" element={<LocationProbe />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  }
+  // NEW_ATTEMPT_ID / PRACTICE_SUMMARY / renderPageWithAttemptRoute 复用文件顶层定义
+  const NEW_ATTEMPT_ID = PRACTICE_NEW_ATTEMPT_ID;
 
   /** 同单元两题 + 另一单元一题（全在待复习）：组头全选用 */
   function selectionData(): WrongQuestionsData {

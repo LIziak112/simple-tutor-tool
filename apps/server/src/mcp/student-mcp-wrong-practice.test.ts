@@ -1,5 +1,4 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -9,7 +8,7 @@ import type { Db } from "../db/client";
 import { attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
+import { callToolJson, connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -298,23 +297,6 @@ async function submitAt(
     .run();
 }
 
-/** callTool + 解析首段 text 为 JSON */
-async function callJson(
-  client: Client,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<{ data: Record<string, unknown>; isError: boolean }> {
-  const result = await client.callTool({ name, arguments: args });
-  const block = (result.content as TextContent[]).find(
-    (c) => c.type === "text",
-  );
-  if (block === undefined) throw new Error(`${name} 结果没有 text content`);
-  return {
-    data: JSON.parse(block.text) as Record<string, unknown>,
-    isError: result.isError === true,
-  };
-}
-
 /** 学生甲做一轮课程练习：三题全错入本 */
 async function answerAllWrong(env: McpWrongEnv, at: string): Promise<void> {
   const attemptId = await startCourseAttempt(env);
@@ -333,7 +315,7 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
     const env = await makeMcpWrongEnv();
     try {
       await answerAllWrong(env, RECENT_DAY);
-      const result = await callJson(env.client, "list_my_wrong_questions", {});
+      const result = await callToolJson(env.client, "list_my_wrong_questions", {});
       expect(result.isError).toBe(false);
       const body = result.data as {
         total: number;
@@ -381,13 +363,13 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       });
       await submitAt(env, attemptId, RECENT_DAY_2);
 
-      const base = await callJson(env.client, "list_my_wrong_questions", {});
+      const base = await callToolJson(env.client, "list_my_wrong_questions", {});
       const ids = (
         base.data as { questions: { questionId: string }[] }
       ).questions.map((item) => item.questionId);
       expect(ids).toEqual([Q.addition, Q.concept2]); // concept1 已攻克剔除
 
-      const byKnowledge = await callJson(
+      const byKnowledge = await callToolJson(
         env.client,
         "list_my_wrong_questions",
         {
@@ -400,23 +382,23 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
         ).questions.map((item) => item.questionId),
       ).toEqual([Q.concept2]);
 
-      const byCourse = await callJson(env.client, "list_my_wrong_questions", {
+      const byCourse = await callToolJson(env.client, "list_my_wrong_questions", {
         courseId: env.courseId,
       });
       expect((byCourse.data as { total: number }).total).toBe(2);
-      const byUnknownCourse = await callJson(
+      const byUnknownCourse = await callToolJson(
         env.client,
         "list_my_wrong_questions",
         { courseId: "77777777-7777-4777-8777-777777777777" },
       );
       expect((byUnknownCourse.data as { total: number }).total).toBe(0);
 
-      const conquered = await callJson(env.client, "list_my_wrong_questions", {
+      const conquered = await callToolJson(env.client, "list_my_wrong_questions", {
         includeConquered: true,
       });
       expect((conquered.data as { total: number }).total).toBe(3);
 
-      const limited = await callJson(env.client, "list_my_wrong_questions", {
+      const limited = await callToolJson(env.client, "list_my_wrong_questions", {
         limit: 1,
       });
       expect((limited.data as { total: number }).total).toBe(2);
@@ -426,7 +408,7 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
 
       // sinceDays：全部错题把最近判定写为 2026-10-21（now=真实时钟跑测会晚于
       // 该时刻），用大窗口 3650 天必然命中、极小窗口配合改库到远古验证排除
-      const wide = await callJson(env.client, "list_my_wrong_questions", {
+      const wide = await callToolJson(env.client, "list_my_wrong_questions", {
         sinceDays: 3650,
         includeConquered: true,
       });
@@ -436,7 +418,7 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
         .set({ submittedAt: OLD_DAY })
         .where(eq(responses.questionId, Q.concept2))
         .run();
-      const narrow = await callJson(env.client, "list_my_wrong_questions", {
+      const narrow = await callToolJson(env.client, "list_my_wrong_questions", {
         sinceDays: 30,
       });
       expect((narrow.data as { total: number }).total).toBeLessThan(2);
@@ -475,7 +457,7 @@ describe("list_my_wrong_questions（只读错题列表）", () => {
       );
       await submitAt(env, bAttempt, RECENT_DAY, env.bCookie);
 
-      const result = await callJson(env.client, "list_my_wrong_questions", {});
+      const result = await callToolJson(env.client, "list_my_wrong_questions", {});
       const listed = (
         result.data as {
           questions: {
@@ -501,7 +483,7 @@ describe("create_wrong_practice（AI 组卷）", () => {
     const env = await makeMcpWrongEnv();
     try {
       await answerAllWrong(env, RECENT_DAY);
-      const result = await callJson(env.client, "create_wrong_practice", {
+      const result = await callToolJson(env.client, "create_wrong_practice", {
         questionIds: [Q.concept1, "不存在的题"],
         label: "最近一周 · 高频错题",
       });
@@ -550,10 +532,10 @@ describe("create_wrong_practice（AI 组卷）", () => {
     const env = await makeMcpWrongEnv();
     try {
       await answerAllWrong(env, RECENT_DAY);
-      const first = await callJson(env.client, "create_wrong_practice", {
+      const first = await callToolJson(env.client, "create_wrong_practice", {
         questionIds: [Q.concept1],
       });
-      const second = await callJson(env.client, "create_wrong_practice", {
+      const second = await callToolJson(env.client, "create_wrong_practice", {
         questionIds: [Q.concept1],
       });
       expect(first.isError).toBe(false);
@@ -595,14 +577,14 @@ describe("create_wrong_practice（AI 组卷）", () => {
       await submitAt(env, bAttempt, RECENT_DAY, env.bCookie);
 
       // 甲聚合只有 concept1：传入乙错过的 addition → 全部无效 → 400
-      const empty = await callJson(env.client, "create_wrong_practice", {
+      const empty = await callToolJson(env.client, "create_wrong_practice", {
         questionIds: [Q.addition],
       });
       expect(empty.isError).toBe(true);
       expect(empty.data.error).toBe("WRONG_PRACTICE_EMPTY");
 
       // 混合：concept1 命中 + addition（乙的错题）剔除 → included=1/excluded=1
-      const result = await callJson(env.client, "create_wrong_practice", {
+      const result = await callToolJson(env.client, "create_wrong_practice", {
         questionIds: [Q.concept1, Q.addition],
         label: "混合卷",
       });

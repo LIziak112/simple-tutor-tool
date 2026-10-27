@@ -316,18 +316,19 @@ export type WrongPracticeScope = z.infer<typeof wrongPracticeScopeSchema>;
 
 /**
  * 展示用范围标签：all=「全部错题」；group=组标题；result=来源卷标题；
- * selection=「手选 N 题」；ai=AI 组卷说明原文
+ * selection=「手选 N 题」；ai=AI 组卷说明原文。课程名后缀单源 withCourse
+ * （all/selection 两口径共用；group 的 courseName 仅存快照不进标签——历史行为）
  */
+function withCourse(base: string, courseName: string | undefined): string {
+  return courseName !== undefined ? `${base}（${courseName}）` : base;
+}
+
 export function wrongScopeLabelOf(scope: WrongPracticeScope): string {
   if (scope.kind === "all")
-    return scope.courseName !== undefined
-      ? `全部错题（${scope.courseName}）`
-      : "全部错题";
+    return withCourse("全部错题", scope.courseName);
   if (scope.kind === "group") return scope.groupTitle;
   if (scope.kind === "selection")
-    return scope.courseName !== undefined
-      ? `手选 ${scope.questionCount} 题（${scope.courseName}）`
-      : `手选 ${scope.questionCount} 题`;
+    return withCourse(`手选 ${scope.questionCount} 题`, scope.courseName);
   if (scope.kind === "ai") return scope.label;
   return scope.sourceTitle;
 }

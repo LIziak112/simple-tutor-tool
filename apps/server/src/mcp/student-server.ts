@@ -4,10 +4,8 @@ import {
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
 } from "@tutor/contract";
-import { count, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { responses } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   claimAttemptReviewTask,
@@ -518,19 +516,18 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
       annotations: { readOnlyHint: true },
     },
     guard(({ knowledge, courseId, sinceDays, includeConquered, limit }) => {
-      // 全量形态一次聚合（D11 口径：单学生错题规模有限），筛选在内存做
+      // knowledge 与已攻克过滤直接走服务层 query（与页面接口同一谓词，单一
+      // 出处）；courseId/sinceDays/limit 在内存做（服务层无此参数），D11 口径：
+      // 单学生错题规模有限
       const cards = listWrongQuestions(db, studentId, {
-        includeResolved: true,
+        includeResolved: includeConquered === true,
+        ...(knowledge !== undefined ? { knowledge } : {}),
       }).questions;
       const sinceIso =
         sinceDays !== undefined
           ? new Date(Date.now() - sinceDays * 24 * 3600 * 1000).toISOString()
           : null;
       const filtered = cards.filter((card) => {
-        if (includeConquered !== true && card.resolved) return false;
-        if (knowledge !== undefined && !card.knowledge.includes(knowledge)) {
-          return false;
-        }
         if (
           courseId !== undefined &&
           !card.rounds.some((round) => round.courseId === courseId)
@@ -597,7 +594,7 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     },
     guard(({ questionIds, label }) => {
       const scopeLabel = label ?? "AI 组卷";
-      const attempt = startWrongPractice(
+      const { attempt, includedCount } = startWrongPractice(
         db,
         studentId,
         questionIds,
@@ -607,13 +604,7 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           label: scopeLabel,
         },
       );
-      // 剔除计数：建卷实际冻结的行数 vs 去重后的入参数（服务层已静默剔除）
-      const includedRow = db
-        .select({ n: count() })
-        .from(responses)
-        .where(eq(responses.attemptId, attempt.id))
-        .get();
-      const includedCount = includedRow?.n ?? 0;
+      // 剔除计数：服务层返回实际冻结题数 vs 去重后的入参数（已静默剔除）
       return jsonContent({
         created: true,
         attemptId: attempt.id,
