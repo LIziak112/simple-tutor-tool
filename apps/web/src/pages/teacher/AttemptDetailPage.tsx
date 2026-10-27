@@ -112,8 +112,8 @@ function DetailSummary({
         </p>
         <p className="text-sky-800 dark:text-sky-300">
           以下展示当前已答内容与笔迹（已答 {answeredCount} / 共{" "}
-          {data.questions.length} 题）；交卷前不产生判定，页面不自动更新，
-          刷新后可看到最新草稿。
+          {data.questions.length} 题）；逐题已提交的题目已显示判定与参考答案，
+          页面不自动更新，刷新后可看到最新草稿。
         </p>
       </div>
     );
@@ -210,9 +210,10 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
                   {question.unitTitle}
                 </h2>
               )}
+              {/* Web-3：draft 卷内已逐题提交的行（responseId 非空）按已交卷渲染 */}
               <AttemptDetailQuestionCard
                 question={question}
-                isDraft={isDraft}
+                isDraft={isDraft && question.responseId === null}
                 attemptId={data.attemptId}
                 roundLabel={roundLabel}
               />
