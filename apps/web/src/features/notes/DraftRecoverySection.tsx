@@ -77,9 +77,14 @@ export function DraftRecoverySection({
       attemptId,
       questionId,
       phase: "scratch",
-    }).then((record) => {
-      if (!cancelled) setScratchRecoverable(hasRecoverableScratch(record));
-    });
+    })
+      .then((record) => {
+        if (!cancelled) setScratchRecoverable(hasRecoverableScratch(record));
+      })
+      .catch(() => {
+        // 读取失败≠可找回：保守不显示入口；也不留 unhandled rejection
+        if (!cancelled) setScratchRecoverable(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -91,6 +96,11 @@ export function DraftRecoverySection({
     head?.evidence !== undefined &&
     RECOVERABLE_EVIDENCE.has(head.evidence.state) &&
     scratchRecoverable;
+  /**
+   * 本机有未同步草稿但证据头拉取失败：找回入口的存在性无从判断——不能
+   * 静默消失（待找回内容的唯一发现入口），给出提示与重试
+   */
+  const headFailed = scratchRecoverable && headQuery.isError;
 
   // ---- F3：补充稿同步状态（本地存在 supplement 记录且非干净态才渲染） ----
   const supplementView = useNoteRecord(attemptId, questionId, "supplement");
@@ -132,13 +142,34 @@ export function DraftRecoverySection({
     }
   };
 
-  if (!recoverable && !supplementNeedsUI && !recovered) return null;
+  if (!recoverable && !supplementNeedsUI && !recovered && !headFailed) {
+    return null;
+  }
 
   return (
     <div
       data-slot="draft-recovery-section"
       className="flex flex-col gap-2 border-t border-border pt-2"
     >
+      {/* 头拉取失败（本地有未同步草稿）：不能静默消失——提示 + 重试 */}
+      {headFailed && (
+        <div className="flex flex-col gap-1">
+          <p
+            role="alert"
+            className="text-left text-xs text-destructive [overflow-wrap:anywhere]"
+          >
+            本机有未同步的草稿，但草稿信息读取失败，暂时无法判断找回选项。
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 w-fit"
+            onClick={() => void headQuery.refetch()}
+          >
+            重试
+          </Button>
+        </div>
+      )}
       {/* D8：找回草稿为补充稿（明确动作，不自动重传） */}
       {recoverable && (
         <div className="flex flex-col gap-1">

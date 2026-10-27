@@ -33,7 +33,7 @@ vi.mock("@/lib/note-endpoints", () => ({
   fetchNoteEvidenceApi: vi.fn(),
 }));
 
-import { putNoteDocumentApi } from "@/lib/api";
+import { ApiError, putNoteDocumentApi } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 import { DraftRecoverySection } from "./DraftRecoverySection";
 
@@ -127,6 +127,47 @@ describe("DraftRecoverySection：找回草稿为补充稿（D8）", () => {
     expect(supplement?.pending).not.toBeNull();
     const scratch = await getNoteRecord(SESSION_A, SCRATCH_SCOPE);
     expect(scratch?.pending).not.toBeNull(); // scratch 本地记录保留不动
+  });
+
+  it("头拉取失败且本地有未同步草稿 → 不静默消失：提示读取失败可重试", async () => {
+    writeNoteDoc(SESSION_A, SCRATCH_SCOPE, DOC_A);
+    evidenceMock
+      .mockRejectedValueOnce(
+        new ApiError("EVIDENCE_READ_FAILED", "evidence read failed", 500),
+      )
+      .mockResolvedValue(headFixture({ evidence: evidenceFixture("missing") }));
+    renderSection();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText(/草稿信息读取失败/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByRole("button", { name: "找回草稿为补充稿" });
+  });
+
+  it("头拉取失败但本地无可找回内容 → 保持静默（读取失败不制造噪音）", async () => {
+    evidenceMock.mockRejectedValue(new Error("网络中断"));
+    renderSection();
+    await vi.waitFor(() => expect(evidenceMock).toHaveBeenCalled());
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+  });
+
+  it("本地 scratch 读取失败 → 静默保守（不炸、不当可找回）", async () => {
+    evidenceMock.mockResolvedValue(
+      headFixture({ evidence: evidenceFixture("missing") }),
+    );
+    const mem = memoryNoteBackend();
+    installNoteBackend({
+      ...mem,
+      get: async () => {
+        throw new Error("idb down");
+      },
+    });
+    renderSection();
+    await vi.waitFor(() => expect(evidenceMock).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("button", { name: "找回草稿为补充稿" }),
+    ).toBeNull();
   });
 
   it("evidence frozen 或 scratch 已全同步 → 不显示找回入口", async () => {
