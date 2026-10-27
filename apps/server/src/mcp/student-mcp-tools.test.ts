@@ -32,8 +32,12 @@ import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
-import { connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
+import {
+  callToolJson,
+  connectMcpClientViaApp,
+} from "../test/mcp-test-utils.ts";
 import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
+import { STUDENT_MCP_TOOL_NAMES } from "./student-server.ts";
 
 /**
  * SAI-26 学生 MCP 任务工具测试（B14 必测 6 组；真实 SDK Streamable HTTP
@@ -179,7 +183,7 @@ describe("SAI-26 领取与写回竞争", () => {
       .data.task;
     const client = await connectClient(env);
     try {
-      const result = await callJson(client, "claim_attempt_review", {
+      const result = await callToolJson(client, "claim_attempt_review", {
         taskId: task.id,
       });
       expect(result.isError).toBe(false);
@@ -195,7 +199,7 @@ describe("SAI-26 领取与写回竞争", () => {
         .set({ abandonedAt: NOW })
         .where(eq(attempts.id, env.world.attemptId))
         .run();
-      const reply = await callJson(client, "submit_attempt_review_result", {
+      const reply = await callToolJson(client, "submit_attempt_review_result", {
         taskId: task.id,
         leaseToken: view.lease.leaseToken,
         generation: view.generation,
@@ -230,22 +234,22 @@ describe("SAI-26 领取与写回竞争", () => {
     const a = await connectClient(env);
     const b = await connectClient(env);
 
-    const claimA = await callJson(a, "claim_ai_task", {});
+    const claimA = await callToolJson(a, "claim_ai_task", {});
     expect(claimA.isError).toBe(false);
     expect(claimA.data.claimed).toBe(true);
     expect(claimA.data.taskId).toBe(t1); // createdAt FIFO
     const leaseA = claimA.data.leaseToken as string;
 
-    const claimB = await callJson(b, "claim_ai_task", {});
+    const claimB = await callToolJson(b, "claim_ai_task", {});
     expect(claimB.data.taskId).toBe(t2);
 
     // 重放同 claim（指定 taskId）：已领取 → 409 稳定错误，不悄悄改抢新任务
-    const replay = await callJson(a, "claim_ai_task", { taskId: t1 });
+    const replay = await callToolJson(a, "claim_ai_task", { taskId: t1 });
     expect(replay.isError).toBe(true);
     expect(replay.data.error).toBe("AI_STATE_CONFLICT");
 
     // 竞争：B 用自己的 lease 试图写回 A 领取的 t1 → 409（late_reply 事实）
-    const steal = await callJson(b, "submit_ai_reply", {
+    const steal = await callToolJson(b, "submit_ai_reply", {
       taskId: t1,
       leaseToken: claimB.data.leaseToken,
       replyMarkdown: "B 的抢写回信",
@@ -254,7 +258,7 @@ describe("SAI-26 领取与写回竞争", () => {
     expect(steal.data.error).toBe("AI_STATE_CONFLICT");
 
     // 唯一有效持有者 A 写回成功
-    const ok = await callJson(a, "submit_ai_reply", {
+    const ok = await callToolJson(a, "submit_ai_reply", {
       taskId: t1,
       leaseToken: leaseA,
       replyMarkdown: "A 的正式回信",
@@ -269,13 +273,13 @@ describe("SAI-26 领取与写回竞争", () => {
   it("无可领取任务：claimed:false（正常状态不是错误）；空队列领取后再领下一题", async () => {
     const env = await makeEnv();
     const client = await connectClient(env);
-    const empty = await callJson(client, "claim_ai_task", {});
+    const empty = await callToolJson(client, "claim_ai_task", {});
     expect(empty.isError).toBe(false);
     expect(empty.data.claimed).toBe(false);
     const t1 = mkTask(env);
-    const first = await callJson(client, "claim_ai_task", {});
+    const first = await callToolJson(client, "claim_ai_task", {});
     expect(first.data.taskId).toBe(t1);
-    const second = await callJson(client, "claim_ai_task", {});
+    const second = await callToolJson(client, "claim_ai_task", {});
     expect(second.data.claimed).toBe(false);
     await client.close();
   });
@@ -289,12 +293,12 @@ describe("SAI-26 只读列表与工具注解", () => {
     const t1 = mkTask(env);
     mkTask(env, { questionId: env.world.q2 });
     const client = await connectClient(env);
-    const list1 = await callJson(client, "list_my_ai_tasks", { limit: 1 });
+    const list1 = await callToolJson(client, "list_my_ai_tasks", { limit: 1 });
     expect(list1.isError).toBe(false);
     const tasks1 = list1.data.tasks as { id: string; status: string }[];
     expect(tasks1).toHaveLength(1);
     expect(typeof list1.data.nextCursor).toBe("string");
-    const list2 = await callJson(client, "list_my_ai_tasks", {
+    const list2 = await callToolJson(client, "list_my_ai_tasks", {
       limit: 1,
       cursor: list1.data.nextCursor,
     });
@@ -319,16 +323,7 @@ describe("SAI-26 只读列表与工具注解", () => {
     const list = await client.listTools();
     const byName = new Map(list.tools.map((tool) => [tool.name, tool]));
     expect(list.tools.map((t) => t.name).sort()).toEqual(
-      [
-        "claim_ai_task",
-        "claim_attempt_review",
-        "list_my_ai_tasks",
-        "list_my_attempt_reviews",
-        "renew_ai_lease",
-        "renew_attempt_review_lease",
-        "submit_ai_reply",
-        "submit_attempt_review_result",
-      ].sort(),
+      [...STUDENT_MCP_TOOL_NAMES].sort(),
     );
     expect(byName.get("list_my_ai_tasks")?.annotations?.readOnlyHint).toBe(
       true,
@@ -358,6 +353,16 @@ describe("SAI-26 只读列表与工具注解", () => {
     expect(
       byName.get("renew_attempt_review_lease")?.annotations?.readOnlyHint,
     ).toBeFalsy();
+    // 错题组卷两工具（2026-10）：list 只读；create 非幂等、显式标 destructive=false
+    expect(
+      byName.get("list_my_wrong_questions")?.annotations?.readOnlyHint,
+    ).toBe(true);
+    expect(
+      byName.get("create_wrong_practice")?.annotations?.idempotentHint,
+    ).toBe(false);
+    expect(
+      byName.get("create_wrong_practice")?.annotations?.destructiveHint,
+    ).toBe(false);
     await client.close();
   });
 });
@@ -396,7 +401,7 @@ describe("SAI-26 模式裁决（pending 提交后 / 教师关闭）", () => {
       .where(eq(responses.attemptId, env.world.attemptId))
       .run();
     const client = await connectClient(env);
-    const claim = await callJson(client, "claim_ai_task", {});
+    const claim = await callToolJson(client, "claim_ai_task", {});
     expect(claim.isError).toBe(false);
     expect(claim.data.taskId).toBe(t1);
     expect(claim.data.modeAtSend).toBe("open_study"); // 完成后恒复盘尺度
@@ -413,7 +418,7 @@ describe("SAI-26 模式裁决（pending 提交后 / 教师关闭）", () => {
     const t1 = mkTask(env);
     const t2 = mkTask(env, { questionId: env.world.q2, atMs: 1000 });
     const client = await connectClient(env);
-    const claim = await callJson(client, "claim_ai_task", {});
+    const claim = await callToolJson(client, "claim_ai_task", {});
     expect(claim.data.taskId).toBe(t1);
     env.db
       .insert(aiPolicyOverrides)
@@ -425,20 +430,20 @@ describe("SAI-26 模式裁决（pending 提交后 / 教师关闭）", () => {
       })
       .run();
     // 未完成的新任务：指定领取 → 403 AI_POLICY_DISABLED（教师刚改立即生效）
-    const blocked = await callJson(client, "claim_ai_task", { taskId: t2 });
+    const blocked = await callToolJson(client, "claim_ai_task", { taskId: t2 });
     expect(blocked.isError).toBe(true);
     expect(blocked.data.error).toBe("AI_POLICY_DISABLED");
     // FIFO 领取：无可领取 → claimed:false（不报错、不半领取）
-    const fifo = await callJson(client, "claim_ai_task", {});
+    const fifo = await callToolJson(client, "claim_ai_task", {});
     expect(fifo.isError).toBe(false);
     expect(fifo.data.claimed).toBe(false);
     // 已持有租约：续租与写回仍按队列语义（回信作为事实入库，交付由页面侧裁决）
-    const renew = await callJson(client, "renew_ai_lease", {
+    const renew = await callToolJson(client, "renew_ai_lease", {
       taskId: t1,
       leaseToken: claim.data.leaseToken,
     });
     expect(renew.isError).toBe(false);
-    const submit = await callJson(client, "submit_ai_reply", {
+    const submit = await callToolJson(client, "submit_ai_reply", {
       taskId: t1,
       leaseToken: claim.data.leaseToken,
       replyMarkdown: "关闭后的迟到但有效的写回",
@@ -456,23 +461,23 @@ describe("SAI-26 稳定错误与幂等", () => {
     const env = await makeEnv();
     const t1 = mkTask(env);
     const client = await connectClient(env);
-    const claim = await callJson(client, "claim_ai_task", {});
+    const claim = await callToolJson(client, "claim_ai_task", {});
     const reply = { taskId: t1, leaseToken: claim.data.leaseToken as string };
-    const first = await callJson(client, "submit_ai_reply", {
+    const first = await callToolJson(client, "submit_ai_reply", {
       ...reply,
       replyMarkdown: "唯一首次回信",
       contextVersion: claim.data.contextVersion,
     });
     expect(first.data.duplicate).toBe(false);
     // 同内容重放 → duplicate（幂等，不重复入库）
-    const again = await callJson(client, "submit_ai_reply", {
+    const again = await callToolJson(client, "submit_ai_reply", {
       ...reply,
       replyMarkdown: "唯一首次回信",
     });
     expect(again.isError).toBe(false);
     expect(again.data.duplicate).toBe(true);
     // 不同正文 → 409，首次成功不被覆盖
-    const overwrite = await callJson(client, "submit_ai_reply", {
+    const overwrite = await callToolJson(client, "submit_ai_reply", {
       ...reply,
       replyMarkdown: "试图覆盖的第二次回信",
     });
@@ -484,7 +489,7 @@ describe("SAI-26 稳定错误与幂等", () => {
       .set({ leaseUntil: "2026-06-01T00:00:01.000Z" })
       .where(eq(aiTasks.id, t1))
       .run();
-    const stale = await callJson(client, "submit_ai_reply", {
+    const stale = await callToolJson(client, "submit_ai_reply", {
       taskId: t1,
       leaseToken: "00000000-0000-4000-8000-000000000000",
       replyMarkdown: "旧租约的迟到回信",
@@ -501,8 +506,8 @@ describe("SAI-26 稳定错误与幂等", () => {
     const env = await makeEnv();
     const t1 = mkTask(env);
     const client = await connectClient(env);
-    const claim = await callJson(client, "claim_ai_task", {});
-    const stale = await callJson(client, "submit_ai_reply", {
+    const claim = await callToolJson(client, "claim_ai_task", {});
+    const stale = await callToolJson(client, "submit_ai_reply", {
       taskId: t1,
       leaseToken: claim.data.leaseToken,
       replyMarkdown: "基于旧上下文的回信",
@@ -619,13 +624,13 @@ describe("SAI-26 材料图像边界", () => {
       })),
     });
     const client = await connectClient(env);
-    const over = await callJson(client, "claim_ai_task", {});
+    const over = await callToolJson(client, "claim_ai_task", {});
     expect(over.isError).toBe(true);
     expect(over.data.error).toBe("AI_MATERIAL_TOO_LARGE");
     // 不静默丢页：领取已发生，租约信息随错误交付（客户端可仅文字写回或放任过期）
     expect(typeof over.data.leaseToken).toBe("string");
     expect(over.data.taskId).toBe(t1);
-    const textOnly = await callJson(client, "submit_ai_reply", {
+    const textOnly = await callToolJson(client, "submit_ai_reply", {
       taskId: t1,
       leaseToken: over.data.leaseToken,
       replyMarkdown: "未见图的文字回信",
@@ -673,14 +678,14 @@ describe("SAI-26 伪造任务与页面闭环", () => {
     ).task.id;
 
     const client = await connectClient(env);
-    const forged = await callJson(client, "submit_ai_reply", {
+    const forged = await callToolJson(client, "submit_ai_reply", {
       taskId: randomUUID(),
       leaseToken: "any",
       replyMarkdown: "伪造任务的回信",
     });
     expect(forged.isError).toBe(true);
     expect(forged.data.error).toBe("NOT_FOUND");
-    const cross = await callJson(client, "submit_ai_reply", {
+    const cross = await callToolJson(client, "submit_ai_reply", {
       taskId: otherTask,
       leaseToken: "any",
       replyMarkdown: "跨学生写回",
@@ -690,8 +695,8 @@ describe("SAI-26 伪造任务与页面闭环", () => {
 
     // 完整闭环：领取 → 写回 → 学生页面 API 可读、平台事实正确
     const t1 = mkTask(env);
-    const claim = await callJson(client, "claim_ai_task", { taskId: t1 });
-    const submit = await callJson(client, "submit_ai_reply", {
+    const claim = await callToolJson(client, "claim_ai_task", { taskId: t1 });
+    const submit = await callToolJson(client, "submit_ai_reply", {
       taskId: t1,
       leaseToken: claim.data.leaseToken,
       replyMarkdown: "## 讲解\n先看条件……",
@@ -753,12 +758,12 @@ describe("SAI-26 伪造任务与页面闭环", () => {
 
     const client = await connectClient(env);
     // claim / list 入参全部塞他学生 id：zod 剥离未知字段，域仍是 token 绑定学生
-    const claim = await callJson(client, "claim_ai_task", {
+    const claim = await callToolJson(client, "claim_ai_task", {
       studentId: otherStudent,
     });
     expect(claim.isError).toBe(false);
     expect(claim.data.taskId).toBe(mine); // FIFO 领到的是本人任务，不是更早的他学生任务
-    const listed = await callJson(client, "list_my_ai_tasks", {
+    const listed = await callToolJson(client, "list_my_ai_tasks", {
       studentId: otherStudent,
     });
     const listedIds = ((listed.data.tasks as { id: string }[]) ?? []).map(

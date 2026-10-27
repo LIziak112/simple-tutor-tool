@@ -12,6 +12,16 @@
       "url": "http://localhost:5173"
     },
     {
+      "name": "dev-pr35",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set PORT=8788&& set DEV_API_PROXY_TARGET=http://127.0.0.1:8788&& set DATA_DIR=%CD%\\data&& pnpm dev < NUL"
+      ],
+      "port": 5174,
+      "url": "http://localhost:5174"
+    },
+    {
       "name": "phase3-opus-web",
       "runtimeExecutable": "cmd",
       "runtimeArgs": [

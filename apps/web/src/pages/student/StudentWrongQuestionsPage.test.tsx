@@ -19,9 +19,11 @@ import {
   getPracticePreference,
 } from "@/features/attempt/practice-preference-store";
 import {
+  filterWrongQuestions,
   filterWrongQuestionsByCourse,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
+  wrongKnowledgeOptions,
 } from "@/features/student/wrong-questions-ui";
 import {
   fetchStudentCoursesApi,
@@ -275,6 +277,50 @@ function LocationProbe() {
   );
 }
 
+/** 组卷成功响应（wrong 来源 attempt 摘要；id 由各用例覆盖）——重练入口与选题重练共用 */
+const PRACTICE_NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
+const PRACTICE_SUMMARY: AttemptStartData = {
+  id: PRACTICE_NEW_ATTEMPT_ID,
+  sourceType: "wrong",
+  assignmentId: null,
+  lectureId: null,
+  courseId: null,
+  unitId: null,
+  attemptNo: 1,
+  status: "draft",
+  startedAt: "2020-09-30T02:00:00.000Z",
+  submittedAt: null,
+  scoreAuto: null,
+};
+
+/** 带答题页路由的渲染（组卷成功后断言跳 /s/attempts/:id；mutation 不重试）——两 describe 共用 */
+function renderPageWithAttemptRoute(initialEntry = "/s/wrong") {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/s/wrong"
+            element={
+              <>
+                <StudentWrongQuestionsPage />
+                <LocationProbe />
+              </>
+            }
+          />
+          <Route path="/s/attempts/:attemptId" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 function renderPage(initialEntry = "/s/wrong") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -520,7 +566,7 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(localStorage.getItem("tutor.wrong-mastery-standard")).toBe("strict");
   });
 
-  it("旧 URL 参数兼容：includeResolved=true 映射已攻克 tab；knowledge 忽略不报错", async () => {
+  it("旧 URL 参数兼容：includeResolved=true 映射已攻克 tab；knowledge 现为综合筛选参数（2026-10）直接生效", async () => {
     mockedWrong.mockResolvedValue(ALL_DATA);
     renderPage("/s/wrong?includeResolved=true&knowledge=有理数的概念");
     expect(
@@ -528,6 +574,7 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
         name: "已攻克 1 题",
       }),
     ).toHaveAttribute("aria-pressed", "true");
+    // 已攻克成员 CONQUERED_TWO 的考点即「有理数的概念」→ 筛选不改变该分区视图
     expect(
       screen.getByRole("heading", { name: /有理数 · 已攻克 1 题/ }),
     ).toBeInTheDocument();
@@ -664,29 +711,182 @@ describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
 });
 
 describe("wrong-questions-ui 纯函数", () => {
-  it("parseWrongQuestionsUrl：默认待复习+按练习+全部课程；tab/group/courseId 解析；旧参数映射/忽略", () => {
+  it("parseWrongQuestionsUrl：默认待复习+按练习+全部课程+无筛选；tab/group/courseId 解析；旧参数映射；综合筛选（多选考点 + 自由输入数字）解析与非法回默认", () => {
     expect(parseWrongQuestionsUrl(new URLSearchParams(""))).toEqual({
       tab: "pending",
       group: "unit",
       courseId: null,
+      knowledge: [],
+      days: null,
+      wrongMin: null,
     });
     expect(
       parseWrongQuestionsUrl(
         new URLSearchParams("tab=conquered&group=time&courseId=abc"),
       ),
-    ).toEqual({ tab: "conquered", group: "time", courseId: "abc" });
+    ).toEqual({
+      tab: "conquered",
+      group: "time",
+      courseId: "abc",
+      knowledge: [],
+      days: null,
+      wrongMin: null,
+    });
     expect(
       parseWrongQuestionsUrl(new URLSearchParams("includeResolved=true")),
-    ).toEqual({ tab: "conquered", group: "unit", courseId: null });
+    ).toEqual({
+      tab: "conquered",
+      group: "unit",
+      courseId: null,
+      knowledge: [],
+      days: null,
+      wrongMin: null,
+    });
     expect(
       parseWrongQuestionsUrl(new URLSearchParams("tab=what&group=nope")),
-    ).toEqual({ tab: "pending", group: "unit", courseId: null });
+    ).toEqual({
+      tab: "pending",
+      group: "unit",
+      courseId: null,
+      knowledge: [],
+      days: null,
+      wrongMin: null,
+    });
     // courseId 空串 = 未选（全部课程）
     expect(parseWrongQuestionsUrl(new URLSearchParams("courseId="))).toEqual({
       tab: "pending",
       group: "unit",
       courseId: null,
+      knowledge: [],
+      days: null,
+      wrongMin: null,
     });
+    // 综合筛选（2026-10）：knowledge 逗号分隔多选（去空白/去重），days/wrongMin
+    // 支持自由输入整数（不再只认预设档位）
+    expect(
+      parseWrongQuestionsUrl(
+        new URLSearchParams(
+          "knowledge=数轴, 有理数加法,数轴&days=30&wrongMin=2",
+        ),
+      ),
+    ).toEqual({
+      tab: "pending",
+      group: "unit",
+      courseId: null,
+      knowledge: ["数轴", "有理数加法"],
+      days: 30,
+      wrongMin: 2,
+    });
+    // 自定义档位：days=45 / wrongMin=5 照常生效
+    expect(
+      parseWrongQuestionsUrl(new URLSearchParams("days=45&wrongMin=5")),
+    ).toEqual({
+      tab: "pending",
+      group: "unit",
+      courseId: null,
+      knowledge: [],
+      days: 45,
+      wrongMin: 5,
+    });
+    // 越界/非整数回默认（深链手改不报错）
+    expect(
+      parseWrongQuestionsUrl(
+        new URLSearchParams("days=0&wrongMin=abc&knowledge=,,"),
+      ),
+    ).toEqual({
+      tab: "pending",
+      group: "unit",
+      courseId: null,
+      knowledge: [],
+      days: null,
+      wrongMin: null,
+    });
+  });
+
+  it("filterWrongQuestions（2026-10 综合）：课程 × 考点（多选 OR）× 时间 × 错次逐条件收窄；时间按北京自然日含今天", () => {
+    const now = new Date("2026-10-27T04:00:00.000Z"); // 北京 10-27 12:00
+    const recent = makeQuestion({
+      questionId: "q-recent",
+      lastAt: "2026-10-26T20:00:00.000Z", // 北京 10-27 04:00（今天凌晨）
+      wrongCount: 2,
+    });
+    const weekAgo = makeQuestion({
+      questionId: "q-week",
+      knowledge: ["数轴"],
+      lastAt: "2026-10-19T02:00:00.000Z", // 北京 10-19，30 天内、7 天外
+      wrongCount: 2,
+    });
+    const old = makeQuestion({
+      questionId: "q-old",
+      knowledge: ["有理数加法"],
+      lastAt: "2026-09-01T02:00:00.000Z", // 30 天外
+      wrongCount: 3,
+    });
+    const questions = [recent, weekAgo, old];
+    // 仅时间 7 天：只剩今天判定的 recent（含今天零点起）
+    expect(
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: [], days: 7, wrongMin: null },
+        now,
+      ).map((q) => q.questionId),
+    ).toEqual(["q-recent"]);
+    // 仅错次 ≥3：只剩 old
+    expect(
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: [], days: null, wrongMin: 3 },
+        now,
+      ).map((q) => q.questionId),
+    ).toEqual(["q-old"]);
+    // 单考点 × 时间组合：数轴 ∩ 30 天 → week
+    expect(
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: ["数轴"], days: 30, wrongMin: null },
+        now,
+      ).map((q) => q.questionId),
+    ).toEqual(["q-week"]);
+    // 考点多选（OR 语义）：数轴 ∪ 有理数加法 → week + old（不受时间条件）
+    expect(
+      filterWrongQuestions(
+        questions,
+        {
+          courseId: null,
+          knowledge: ["数轴", "有理数加法"],
+          days: null,
+          wrongMin: null,
+        },
+        now,
+      ).map((q) => q.questionId),
+    ).toEqual(["q-week", "q-old"]);
+    // 全空条件：原样返回（同一引用）
+    expect(
+      filterWrongQuestions(
+        questions,
+        { courseId: null, knowledge: [], days: null, wrongMin: null },
+        now,
+      ),
+    ).toBe(questions);
+    // 课程条件沿用 filterWrongQuestionsByCourse 口径（初一下 → 跨课程题）
+    expect(
+      filterWrongQuestions(
+        COURSE_FILTER_DATA.questions,
+        { courseId: COURSE_B, knowledge: [], days: null, wrongMin: null },
+        now,
+      ).map((q) => q.questionId),
+    ).toEqual(["q-cross"]);
+  });
+
+  it("wrongKnowledgeOptions：按题数降序、同数中文名稳定排序；多考点题每个考点各计一次", () => {
+    const q1 = makeQuestion({ knowledge: ["有理数的概念"] });
+    const q2 = makeQuestion({ knowledge: ["有理数的概念", "数轴"] });
+    const q3 = makeQuestion({ knowledge: ["数轴"] });
+    // 同为 2 题：中文排序「数轴」在前（localeCompare zh-Hans-CN 拼音序）
+    expect(wrongKnowledgeOptions([q1, q2, q3])).toEqual([
+      { name: "数轴", count: 2 },
+      { name: "有理数的概念", count: 2 },
+    ]);
   });
 
   it("filterWrongQuestionsByCourse：rounds 任一轮命中即保留；null 轮不参与命中；全部课程原样返回", () => {
@@ -756,50 +956,9 @@ describe("wrong-questions-ui 纯函数", () => {
 });
 
 describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
-  const NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
-
-  /** 组卷成功响应（wrong 来源 attempt 摘要；id 由各用例覆盖） */
-  const PRACTICE_SUMMARY: AttemptStartData = {
-    id: NEW_ATTEMPT_ID,
-    sourceType: "wrong",
-    assignmentId: null,
-    lectureId: null,
-    courseId: null,
-    unitId: null,
-    attemptNo: 1,
-    status: "draft",
-    startedAt: "2020-09-30T02:00:00.000Z",
-    submittedAt: null,
-    scoreAuto: null,
-  };
-
-  /** 带答题页路由的渲染（组卷成功后断言跳 /s/attempts/:id；mutation 不重试） */
-  function renderPageWithAttemptRoute(initialEntry = "/s/wrong") {
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[initialEntry]}>
-          <Routes>
-            <Route
-              path="/s/wrong"
-              element={
-                <>
-                  <StudentWrongQuestionsPage />
-                  <LocationProbe />
-                </>
-              }
-            />
-            <Route path="/s/attempts/:attemptId" element={<LocationProbe />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  }
+  // NEW_ATTEMPT_ID / PRACTICE_SUMMARY / renderPageWithAttemptRoute 提升在文件
+  // 顶层（与「选题重练」describe 共用）
+  const NEW_ATTEMPT_ID = PRACTICE_NEW_ATTEMPT_ID;
 
   it("按钮示数：页头「重练全部」= 当前 tab 题数；组头「重练本组」= 组内题数；空 tab 禁用", async () => {
     // 只有待复习一题（错-错）：已攻克为空 → 切过去后重练全部（0 题）禁用
@@ -920,5 +1079,340 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
         `/s/attempts/${NEW_ATTEMPT_ID}`,
       );
     });
+  });
+});
+
+describe("StudentWrongQuestionsPage 综合筛选（2026-10）", () => {
+  /** 近期题（最近 2 天内判定；错 2 次）与古题（2020-09；错 2 / 错 1 次） */
+  function filterData(): WrongQuestionsData {
+    const recent = makeQuestion({
+      questionId: "q-recent",
+      knowledge: ["有理数的概念"],
+      lastAt: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
+      rounds: [
+        round(
+          ATTEMPT_A,
+          false,
+          new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+        ),
+        round(
+          ATTEMPT_B,
+          false,
+          new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
+        ),
+      ],
+      wrongCount: 2,
+      correctCount: 0,
+    });
+    const oldWrong2 = makeQuestion({
+      questionId: "q-old-2",
+      knowledge: ["有理数加法"],
+      wrongCount: 2,
+    });
+    const oldWrong1 = makeQuestion({
+      questionId: "q-old-1",
+      knowledge: ["数轴"],
+      wrongCount: 1,
+    });
+    return { questions: [recent, oldWrong2, oldWrong1] };
+  }
+
+  it("考点筛选（输入 + 建议多选）：datalist 建议来自当前列表（带计数），回车添加后列表/计数收窄并写 URL，chips 可单清", async () => {
+    mockedWrong.mockResolvedValue(filterData());
+    renderPage();
+    const knowledgeInput = await screen.findByLabelText("考点");
+    // datalist 建议：当前列表的三个考点（计数各 1，按频次/名称稳定排序）——
+    // 输入框随页面先渲染，建议随数据到达（waitFor 等齐）
+    const datalist = document.getElementById("wrong-knowledge-options");
+    expect(datalist).not.toBeNull();
+    await waitFor(() => {
+      expect(datalist?.children).toHaveLength(3);
+    });
+    expect(datalist?.children[0]?.getAttribute("value")).toBe("数轴");
+    // 输入「有理数的概念」回车添加 → 只剩 q-recent（错 2 · 对 0）
+    fireEvent.change(knowledgeInput, {
+      target: { value: "有理数的概念" },
+    });
+    fireEvent.keyDown(knowledgeInput, { key: "Enter" });
+    expect(await screen.findByText("错 2 · 对 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "待复习 1 题" })).toBeTruthy();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "knowledge=",
+    );
+    expect(knowledgeInput).toHaveValue("");
+    // 再添加「数轴」（多选 OR）→ q-old-1 也回来（数轴、2020 年、错 1 次）
+    fireEvent.change(knowledgeInput, { target: { value: "数轴" } });
+    fireEvent.keyDown(knowledgeInput, { key: "Enter" });
+    expect(
+      await screen.findByRole("button", { name: "待复习 2 题" }),
+    ).toBeTruthy();
+    // 多选 chips 可单清：清掉「数轴」→ 回到 1 题
+    fireEvent.click(screen.getByRole("button", { name: "清除考点「数轴」" }));
+    expect(
+      await screen.findByRole("button", { name: "待复习 1 题" }),
+    ).toBeTruthy();
+    // 重练全部范围跟随筛选（只提交筛后题）
+    expect(
+      screen.getByRole("button", { name: "重练全部（1 题）" }),
+    ).toBeTruthy();
+  });
+
+  it("时间 + 错次组合（综合筛选）：最近 30 天 × 错 2 次及以上只剩近期题；URL 同步、chips 可单清；筛选条清除全部连课程一起清", async () => {
+    mockedWrong.mockResolvedValue(filterData());
+    // 带课程深链（filterData 全部 rounds 都在 COURSE_A，课程不收窄但 URL 携带）
+    renderPage(`/s/wrong?courseId=${COURSE_A}`);
+    await screen.findByLabelText("考点");
+    fireEvent.change(screen.getByLabelText("时间"), {
+      target: { value: "30" },
+    });
+    // 最近 30 天：只剩 q-recent（2020 年的题全部排除）
+    expect(await screen.findByText("错 2 · 对 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "待复习 1 题" })).toBeTruthy();
+
+    // 叠加错次 ≥2：q-old-2（时间外）不回来；q-old-1（错 1 次）被错次排除
+    fireEvent.change(screen.getByLabelText("错次"), {
+      target: { value: "2" },
+    });
+    expect(screen.getByRole("button", { name: "待复习 1 题" })).toBeTruthy();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("days=30");
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "wrongMin=2",
+    );
+
+    // 自定义档位（实测反馈）：时间改 45 天照样生效，chip 标签动态生成
+    fireEvent.change(screen.getByLabelText("时间"), {
+      target: { value: "45" },
+    });
+    expect(await screen.findByText("最近 45 天")).toBeTruthy();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("days=45");
+
+    // 活跃筛选 chips（以单清按钮锚定）+ 一键清除：清掉时间后 q-old-2（错 2）回来
+    expect(
+      screen.getByRole("button", { name: "清除时间筛选" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "清除错次筛选" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除时间筛选" }));
+    expect(screen.getByRole("button", { name: "待复习 2 题" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "清除全部筛选" }));
+    expect(screen.getByRole("button", { name: "待复习 3 题" })).toBeTruthy();
+    expect(screen.getByTestId("location-probe")).not.toHaveTextContent("days=");
+    expect(screen.getByTestId("location-probe")).not.toHaveTextContent(
+      "wrongMin=",
+    );
+    // 评审修复：筛选条「清除全部筛选」与空态按钮同一范围——课程也一并清
+    expect(screen.getByTestId("location-probe")).not.toHaveTextContent(
+      "courseId=",
+    );
+  });
+
+  it("筛选后空态归因筛选并给「清除全部筛选」；深链参数直接生效", async () => {
+    mockedWrong.mockResolvedValue(filterData());
+    renderPage(
+      `/s/wrong?courseId=${COURSE_A}&knowledge=%E6%95%B0%E8%BD%B4&days=30&wrongMin=2`,
+    );
+    // 深链：数轴（q-old-1，2020 年 + 错 1 次）被时间与错次滤掉 → 空态
+    expect(await screen.findByText("当前筛选下没有错题")).toBeInTheDocument();
+    // 筛选条与空态各有一个「清除全部筛选」；点**空态**里的那个（DOM 靠后，
+    // 索引 [1]——评审修复：此前点成筛选条按钮，空态按钮路径零覆盖）
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "清除全部筛选" })[1] as HTMLElement,
+    );
+    expect(
+      await screen.findByRole("button", { name: "待复习 3 题" }),
+    ).toBeInTheDocument();
+    // 空态按钮清全部（课程 + 综合）
+    expect(screen.getByTestId("location-probe")).not.toHaveTextContent(
+      "courseId=",
+    );
+  });
+});
+
+describe("StudentWrongQuestionsPage 选题重练（2026-10）", () => {
+  // NEW_ATTEMPT_ID / PRACTICE_SUMMARY / renderPageWithAttemptRoute 复用文件顶层定义
+  const NEW_ATTEMPT_ID = PRACTICE_NEW_ATTEMPT_ID;
+
+  /** 同单元两题 + 另一单元一题（全在待复习）：组头全选用 */
+  function selectionData(): WrongQuestionsData {
+    const sameUnitA = makeQuestion();
+    const sameUnitB = makeQuestion({
+      questionId: "q-judge-2",
+      stemMd: "$-2$ 是正数。[[错误]]",
+    });
+    const otherUnit = makeQuestion({
+      questionId: "q-cross-unit",
+      knowledge: ["数轴"],
+      originUnitId: "unit-数轴",
+      originUnitTitle: "数轴",
+      lastAt: "2020-09-25T02:00:00.000Z",
+    });
+    return { questions: [sameUnitA, sameUnitB, otherUnit] };
+  }
+
+  it("进入选题模式：行变复选、点选两题、底部操作条示数、重练已选按列表序提交并带 selection 范围", async () => {
+    mockedWrong.mockResolvedValue(selectionData());
+    mockedPractice.mockResolvedValue(PRACTICE_SUMMARY);
+    renderPageWithAttemptRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "选题重练" }));
+    // 行变为 checkbox（aria-checked=false）
+    const cb1 = screen.getByRole("checkbox", { name: /q-judge-1/ });
+    expect(cb1).toHaveAttribute("aria-checked", "false");
+    // 选题模式下隐藏常规重练入口，出现操作条（0 题禁用）
+    expect(
+      screen.queryByRole("button", { name: /重练全部/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("已选 0 题")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "重练已选（0 题）" }),
+    ).toBeDisabled();
+    // 点选两题（列表序 q-judge-1、q-judge-2）
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-1/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-2/ }));
+    expect(
+      screen.getByRole("button", { name: "重练已选（2 题）" }),
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重练已选（2 题）" }));
+    await waitFor(() => {
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-judge-1", "q-judge-2"],
+        { workflowVersion: 1 },
+        { kind: "selection", questionCount: 2 },
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/s/attempts/${NEW_ATTEMPT_ID}`,
+      );
+    });
+  });
+
+  it("组头「全选本组」勾满该组再点取消全选；跨分区选题计数与提交顺序正确", async () => {
+    mockedWrong.mockResolvedValue(selectionData());
+    mockedPractice.mockResolvedValue(PRACTICE_SUMMARY);
+    renderPageWithAttemptRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "选题重练" }));
+    // 有理数组两题：全选本组 → 两行勾上、操作条 2 题
+    fireEvent.click(screen.getByRole("button", { name: "全选本组（2 题）" }));
+    expect(screen.getByText("已选 2 题")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "重练已选（2 题）" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: /q-judge-1/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "取消全选（2 题）" }));
+    expect(
+      screen.getByRole("button", { name: "重练已选（0 题）" }),
+    ).toBeDisabled();
+
+    // 跨分区：待复习选 q-judge-1 → 切已攻克（空）→ 操作条仍计 1；回来再选一题
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "已攻克 0 题" }));
+    expect(screen.getByText("已选 1 题")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "重练已选（1 题）" }),
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "待复习 3 题" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-2/ }));
+    expect(screen.getByText("已选 2 题")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重练已选（2 题）" }));
+    await waitFor(() => {
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-judge-1", "q-judge-2"],
+        { workflowVersion: 1 },
+        { kind: "selection", questionCount: 2 },
+      );
+    });
+  });
+
+  it("取消退出选题模式并清空选择；Esc 等效退出", async () => {
+    mockedWrong.mockResolvedValue(selectionData());
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "选题重练" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-1/ }));
+    expect(screen.getByText("已选 1 题")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "取消选题" }));
+    // 退出：常规入口回归、复选行消失、无残留操作条
+    expect(
+      await screen.findByRole("button", { name: "重练全部（3 题）" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("checkbox", { name: /q-judge-1/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/已选 \d+ 题/)).not.toBeInTheDocument();
+    // 再入模式：上次选择已清空；Esc 退出
+    fireEvent.click(screen.getByRole("button", { name: "选题重练" }));
+    expect(
+      screen.getByRole("button", { name: "重练已选（0 题）" }),
+    ).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(
+      screen.getByRole("button", { name: "重练全部（3 题）" }),
+    ).toBeEnabled();
+  });
+
+  it("跨 tab 选题提交顺序（评审修复）：当前 tab 列表序在前，另一 tab 的已选题垫后", async () => {
+    // 已攻克题排数组最前（错→对→对，严格标准下攻克）
+    const ATTEMPT_C = "88888888-8888-4888-8888-888888888888";
+    const conquered = makeQuestion({
+      questionId: "q-conquered",
+      rounds: [
+        round(ATTEMPT_A, false, "2020-09-10T02:00:00.000Z"),
+        round(ATTEMPT_B, true, "2020-09-18T02:00:00.000Z"),
+        round(ATTEMPT_C, true, "2020-09-25T02:00:00.000Z"),
+      ],
+      wrongCount: 1,
+      correctCount: 2,
+      lastAt: "2020-09-25T02:00:00.000Z",
+    });
+    mockedWrong.mockResolvedValue({
+      questions: [conquered, ...selectionData().questions],
+    });
+    mockedPractice.mockResolvedValue(PRACTICE_SUMMARY);
+    renderPageWithAttemptRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "选题重练" }));
+    // 待复习选 q-judge-1 → 切已攻克选 q-conquered（数组序在前）→ 回待复习
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "已攻克 1 题" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-conquered/ }));
+    fireEvent.click(screen.getByRole("button", { name: "待复习 3 题" }));
+    expect(screen.getByText("已选 2 题")).toBeTruthy();
+    expect(screen.getByText(/另有 1 题不在当前列表/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重练已选（2 题）" }));
+    await waitFor(() => {
+      // 当前 tab（待复习）列表序在前：q-judge-1 先于另一 tab 的 q-conquered
+      // ——修复前按两 tab 合集数组序提交 [q-conquered, q-judge-1]
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["q-judge-1", "q-conquered"],
+        { workflowVersion: 1 },
+        { kind: "selection", questionCount: 2 },
+      );
+    });
+  });
+
+  it("重练失败后刷新错题本致已选题退出聚合（评审修复）：计数按有效选择归零并禁用，不再静默死端", async () => {
+    const data = selectionData();
+    mockedWrong.mockResolvedValueOnce(data);
+    // 首次组卷网络失败 → 错误横幅提供「刷新错题本」手动 refetch（真实触发路径）
+    mockedPractice.mockRejectedValueOnce(new Error("网络异常"));
+    renderPageWithAttemptRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "选题重练" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /q-judge-1/ }));
+    expect(screen.getByText("已选 1 题")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重练已选（1 题）" }));
+    expect(await screen.findByText("重练组卷失败")).toBeTruthy();
+    // 刷新后 q-judge-1 已不在聚合（如公布 gate 变化）：勾选集合保留但有效选择为 0
+    mockedWrong.mockResolvedValue({
+      questions: data.questions.filter(
+        (question) => question.questionId !== "q-judge-1",
+      ),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "刷新错题本" }));
+    expect(await screen.findByText("已选 0 题")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "重练已选（0 题）" }),
+    ).toBeDisabled();
   });
 });

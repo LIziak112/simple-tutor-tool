@@ -21,6 +21,8 @@ import {
   lessonQuestionSubmitRequestSchema,
   lessonStartDataSchema,
   wrongPracticeRequestSchema,
+  wrongPracticeScopeSchema,
+  wrongScopeLabelOf,
 } from "./attempt.ts";
 
 /**
@@ -327,6 +329,91 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
         layout: "single",
       }),
     ).toEqual({ questionIds: ["练习四-1"], workflowVersion: 1 });
+  });
+
+  it("建卷请求范围一致性（2026-10 评审修复）：selection 题数须与去重题数一致；页面接口拒绝 kind=ai", () => {
+    // 手选题数 = 去重后题数（重复 id 收敛后计数）
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["题1", "题2", "题1"],
+        scope: { kind: "selection", questionCount: 2 },
+      }).success,
+    ).toBe(true);
+    // 题数不符 → 拒绝（防「手选 999 题」伪造快照落库）
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["题1"],
+        scope: { kind: "selection", questionCount: 999 },
+      }).success,
+    ).toBe(false);
+    // kind=ai 仅由学生 MCP 服务端构造，页面请求拒绝（防伪造 AI 组卷出处）
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["题1"],
+        scope: { kind: "ai", label: "伪造的 AI 组卷" },
+      }).success,
+    ).toBe(false);
+    // 其余 kind 与不带 scope 照常（历史行为不变）
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["题1"],
+        scope: { kind: "all" },
+      }).success,
+    ).toBe(true);
+    expect(
+      wrongPracticeRequestSchema.safeParse({ questionIds: ["题1"] }).success,
+    ).toBe(true);
+  });
+
+  it("错题重练建卷范围（wrongPracticeScopeSchema）：手选与 AI 组卷两种新口径合法，非法形状拒绝", () => {
+    // 手选（2026-10 选题重练）：数量必填 ≥1，课程名可选拼进标签
+    expect(
+      wrongPracticeScopeSchema.parse({
+        kind: "selection",
+        questionCount: 5,
+      }),
+    ).toEqual({ kind: "selection", questionCount: 5 });
+    expect(
+      wrongPracticeScopeSchema.parse({
+        kind: "selection",
+        questionCount: 5,
+        courseName: "初一上",
+      }),
+    ).toEqual({ kind: "selection", questionCount: 5, courseName: "初一上" });
+    // AI 组卷：标签必填非空（≤120），随卷快照展示「练的是什么」
+    expect(
+      wrongPracticeScopeSchema.parse({
+        kind: "ai",
+        label: "最近一周 · 错 2 次以上",
+      }),
+    ).toEqual({ kind: "ai", label: "最近一周 · 错 2 次以上" });
+    // 非法形状：数量 0 / 标签空串 / 未知 kind 拒绝
+    expect(
+      wrongPracticeScopeSchema.safeParse({
+        kind: "selection",
+        questionCount: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      wrongPracticeScopeSchema.safeParse({ kind: "ai", label: "" }).success,
+    ).toBe(false);
+    expect(wrongPracticeScopeSchema.safeParse({ kind: "custom" }).success).toBe(
+      false,
+    );
+    // 标签单源：手选 =「手选 N 题」（课程后缀）；AI = 标签原文
+    expect(wrongScopeLabelOf({ kind: "selection", questionCount: 5 })).toBe(
+      "手选 5 题",
+    );
+    expect(
+      wrongScopeLabelOf({
+        kind: "selection",
+        questionCount: 5,
+        courseName: "初一上",
+      }),
+    ).toBe("手选 5 题（初一上）");
+    expect(wrongScopeLabelOf({ kind: "ai", label: "高频错题" })).toBe(
+      "高频错题",
+    );
   });
 });
 

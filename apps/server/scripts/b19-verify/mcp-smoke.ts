@@ -6,8 +6,8 @@
  * 做只读冒烟，核对平台侧行为与外部客户端实际看到的一致：
  *   ① 无 Bearer → 401（防探测口径，与错 token 同文案）；
  *   ② 持学生 mcp Token initialize → 200 且无 error；
- *   ③ tools/list → 恰好四工具（claim_ai_task / list_my_ai_tasks /
- *      renew_ai_lease / submit_ai_reply）——外部客户端应看到同一清单；
+ *   ③ tools/list → 精确等于服务端注册的学生工具清单（STUDENT_MCP_TOOL_NAMES
+ *      单源导入；2026-10 已十工具）——外部客户端应看到同一清单；
  *   ④ list_my_ai_tasks（只读）→ 打印任务清单，供与网页队列/外部客户端
  *      领取结果对账。
  * 只读不领取不写回——真实客户端的 claim/submit 是人工步骤，本脚本不代替。
@@ -19,14 +19,13 @@
  *   脚本请求 <BASE_URL>/mcp/student。Token 只从环境变量读，不进参数与文档。
  *   JSON-RPC 形态与 B14 协议客户端 e2e（student-mcp-loop.spec.ts）同款。
  */
+import { STUDENT_MCP_TOOL_NAMES } from "../../src/mcp/student-server.ts";
 import { type Finding, finishReport } from "./common.ts";
 
-/** SAI-26 定稿的学生四工具（与 e2e/服务端测试同清单） */
-const EXPECTED_STUDENT_TOOLS = [
-  "claim_ai_task",
-  "list_my_ai_tasks",
-  "renew_ai_lease",
-  "submit_ai_reply",
+/** 学生工具清单（单源：与服务端测试 / e2e 共用 STUDENT_MCP_TOOL_NAMES；
+ * 2026-10 评审修复——此前本地四工具拷贝漏更，冒烟对新服务误报缺工具） */
+const EXPECTED_STUDENT_TOOLS: readonly string[] = [
+  ...STUDENT_MCP_TOOL_NAMES,
 ].sort();
 
 /** 单步核对结论（name 供对账清单引用；ok=false 计入 FAIL） */
@@ -185,13 +184,13 @@ export async function runMcpSmoke(
       (name) => !EXPECTED_STUDENT_TOOLS.includes(name),
     );
     toolsDetail = toolsOk
-      ? `四工具齐全：${tools.join(" / ")}`
+      ? `工具清单一致（${EXPECTED_STUDENT_TOOLS.length} 个）：${tools.join(" / ")}`
       : `工具清单不符——缺少 ${missing.join("、") || "（无）"}；多出 ${extra.join("、") || "（无）"}；实际 HTTP ${list.status}`;
   } else {
     toolsDetail = "initialize 未通过，跳过";
   }
   steps.push({
-    name: "tools/list 恰好四工具",
+    name: "tools/list 精确等于服务端注册清单",
     ok: toolsOk,
     detail: toolsDetail,
   });
