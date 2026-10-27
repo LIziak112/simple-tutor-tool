@@ -166,8 +166,8 @@ export function MaterialAnnotationOverlay({
     editor?.active?.kind === "annotation" && isAssociated;
 
   const inputRef = useRef<HTMLDivElement>(null);
-  // 输入层元素进 state：冻结框切换会改变其在树中的位置（重挂），画布创建
-  // effect 需感知新元素重建
+  // 输入层元素进 state：画布创建 effect 感知元素更替（结构常驻后通常只在
+  // 挂载时建立一次——冻结/活排版切换不再重挂输入层）
   const [inputElement, setInputElement] = useState<HTMLDivElement | null>(null);
   const setInputLayer = useCallback((el: HTMLDivElement | null) => {
     inputRef.current = el;
@@ -175,6 +175,8 @@ export function MaterialAnnotationOverlay({
   }, []);
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  /** 活排版壳（children+输入层）：匹配量高/首笔捕获/就绪门控的测量面 */
+  const liveSurfaceRef = useRef<HTMLDivElement>(null);
 
   // 冻结基准（首笔落笔时的活排版矩形；空稿清除后下次首笔重冻）
   const [frozen, setFrozen] = useState<MaterialInkBaseMeta | null>(() =>
@@ -182,10 +184,12 @@ export function MaterialAnnotationOverlay({
   );
   const frozenRef = useRef(frozen);
   frozenRef.current = frozen;
-  /** 根（活排版/冻结框占位）的观察尺寸：宽用于框缩放，宽高用于排版匹配 */
-  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const liveSizeRef = useRef(containerSize);
-  liveSizeRef.current = containerSize;
+  /** 活排版壳实测尺寸：宽高用于排版匹配与首笔捕获兜底（辅助按钮在壳外） */
+  const [liveSize, setLiveSize] = useState({ width: 0, height: 0 });
+  const liveSizeRef = useRef(liveSize);
+  liveSizeRef.current = liveSize;
+  /** 根节点列宽：框缩放比、放大复位与只读回看自动退出的观察源 */
+  const [columnSize, setColumnSize] = useState({ width: 0, height: 0 });
   /** 冻结框内容高（未缩放布局高，transform 不参与布局须显式占位） */
   const [frameHeight, setFrameHeight] = useState(0);
   /** 只读回看态（「按圈画时排版查看」；圈画态本身也走冻结框渲染） */
@@ -196,6 +200,8 @@ export function MaterialAnnotationOverlay({
   const [surfaceReady, setSurfaceReady] = useState(false);
   const surfaceReadyRef = useRef(false);
   surfaceReadyRef.current = surfaceReady;
+  /** 圈画态挂框就绪（有基准挂框后材料表面仍需稳定——晚到图片会推高内容） */
+  const [frameSurfaceReady, setFrameSurfaceReady] = useState(false);
   const replayRef = useRef<AtramentReplayCanvas | null>(null);
 
   const [strokes, setStrokes] = useState<InkStroke[]>(() => {
@@ -226,26 +232,51 @@ export function MaterialAnnotationOverlay({
   const rafRef = useRef<number | null>(null);
 
   // ── 派生态（渲染分支与匹配自显） ──
-  // 活排版匹配：±1px 口径与题面 questionSurfaceMatchesLayout 一致；宽高任一
-  // 漂移（拖中缝回流、晚到图片下推）都视为不匹配，撤下笔迹不静默叠
-  const layoutMatch =
-    frozen !== null &&
-    containerSize.width > 0 &&
-    Math.abs(containerSize.width - frozen.cssWidth) <= 1 &&
-    (frozen.cssHeight === undefined ||
-      Math.abs(containerSize.height - frozen.cssHeight) <= 1);
+  // 冻结框形态门：圈画态或只读回看时挂框（固定逻辑宽 + transform 等比
+  // 适配）；sizer/frame 壳常驻（进出圈画态只切样式不切树，材料子树不重挂）
   const frameMode = frozen !== null && (isAnnotationActive || reviewMode);
+  const frameMounted = frameMode && frozen !== null;
+  // 活排版匹配：量的是活排版壳（children+输入层），「按圈画时排版查看」
+  // 等辅助按钮在壳外，量高不被按钮污染（失配一次不再永久失配）。±1px 口径
+  // 与题面 questionSurfaceMatchesLayout 一致；宽高任一漂移（拖中缝回流、
+  // 晚到图片下推）都视为不匹配，撤下笔迹不静默叠。只在活排版态判定——
+  // 框内量出的恒等于基准，无判定意义
+  const layoutMatch =
+    !frameMode &&
+    frozen !== null &&
+    liveSize.width > 0 &&
+    Math.abs(liveSize.width - frozen.cssWidth) <= 1 &&
+    (frozen.cssHeight === undefined ||
+      Math.abs(liveSize.height - frozen.cssHeight) <= 1);
   const showInk = frameMode || layoutMatch || isAnnotationActive;
   const showInkRef = useRef(showInk);
   showInkRef.current = showInk;
+  // 缩放比按根列宽（中缝拖动即反映）；只读回看自动退出也看列宽（框内量
+  // 不到活排版）
   const fitScale =
     frozen !== null &&
     frozen.cssWidth > 0 &&
-    containerSize.width > 0 &&
-    containerSize.width < frozen.cssWidth
-      ? containerSize.width / frozen.cssWidth
+    columnSize.width > 0 &&
+    columnSize.width < frozen.cssWidth
+      ? columnSize.width / frozen.cssWidth
       : 1;
   const scale = expanded ? 1 : fitScale;
+  // 挂框高度漂移：冻结框内容高与基准高差 >1px（晚到图片/材料改版下推）
+  const heightDrift =
+    frozen !== null &&
+    frameMounted &&
+    frozen.cssHeight !== undefined &&
+    frameHeight > 0 &&
+    Math.abs(frameHeight - frozen.cssHeight) > 1;
+  // 输入门控：无基准等首笔就绪；有基准等挂框就绪且无高度漂移（D：
+  // 挂框后同样禁墨至稳定，与「不匹配禁墨」口径一致）
+  const inputEnabled =
+    isAnnotationActive &&
+    (frozen === null ? surfaceReady : frameSurfaceReady && !heightDrift);
+  const frameSurfaceReadyRef = useRef(false);
+  frameSurfaceReadyRef.current = frameSurfaceReady;
+  const heightDriftRef = useRef(false);
+  heightDriftRef.current = heightDrift;
 
   // 恢复材料草稿（内存命中立即读取；硬刷新冷启动时异步回源 IndexedDB）；
   // 冻结基准随笔迹一并恢复
@@ -288,27 +319,25 @@ export function MaterialAnnotationOverlay({
       setFrozen(base);
       return;
     }
-    if (strokes.length > 0 && containerSize.width > 0) {
+    if (strokes.length > 0 && liveSize.width > 0) {
       const adopted: MaterialInkBaseMeta = {
-        cssWidth: containerSize.width,
-        ...(containerSize.height > 0
-          ? { cssHeight: containerSize.height }
-          : {}),
+        cssWidth: liveSize.width,
+        ...(liveSize.height > 0 ? { cssHeight: liveSize.height } : {}),
       };
       frozenRef.current = adopted;
       setFrozen(adopted);
       draftStore.saveMaterialInkBase(attemptId, storeKey, adopted);
     }
-  }, [isAnnotationActive, attemptId, storeKey, strokes.length, containerSize]);
+  }, [isAnnotationActive, attemptId, storeKey, strokes.length, liveSize]);
 
   // 首笔就绪门控：无基准材料的圈画态等材料表面稳定（字体/图片/连续 3 帧），
-  // 未就绪禁墨并提示；有基准（冻结框强制几何）不门控
+  // 未就绪禁墨并提示；量活排版壳而非根（辅助按钮不进测量面）
   useEffect(() => {
     if (!isAnnotationActive || frozen !== null) return;
     let active = true;
     setSurfaceReady(false);
     void (async () => {
-      const el = rootRef.current;
+      const el = liveSurfaceRef.current;
       const ready = el
         ? await awaitMaterialSurfaceReady(el, () => !active)
         : false;
@@ -458,9 +487,15 @@ export function MaterialAnnotationOverlay({
 
   const beginInteraction = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      // 就绪门控：无基准首笔前材料表面未稳定不落墨（晚到图片会把内容
-      // 下推，冻结基准与笔迹一起错位）
+      // 就绪门控：无基准等首笔就绪；有基准等挂框就绪且无高度漂移（晚到
+      // 图片会把内容下推，冻结基准与笔迹一起错位）
       if (frozenRef.current === null && !surfaceReadyRef.current) return;
+      if (
+        frozenRef.current !== null &&
+        (!frameSurfaceReadyRef.current || heightDriftRef.current)
+      ) {
+        return;
+      }
       // 同键双实例（同 materialId 被两个锚渲染）兜底：落笔前对齐草稿仓最新
       const latest = draftStore.getMaterialInk(attemptId, storeKey);
       if (
@@ -615,9 +650,12 @@ export function MaterialAnnotationOverlay({
     [applyDecisions],
   );
 
-  // 窗口失焦与根尺寸变化（分栏拖拽/排版切换/窗口缩放/晚到图片下推）：
+  // 窗口失焦与尺寸变化（分栏拖拽/排版切换/窗口缩放/晚到图片下推）：
   // 在途一笔按已采样收笔——指针→逻辑的换算矩形随布局变化，一笔不混用
-  // 两个排版基准（「布局变化先收笔」约定）；宽度变化同时复位 1:1 放大
+  // 两个排版基准（「布局变化先收笔」约定）；列宽变化同时复位 1:1 放大。
+  // 双观察：根节点=列宽（缩放比/放大复位/回看自动退出）；活排版壳=材料
+  // 正文实测（匹配自显/首笔捕获兜底/就绪门控）——辅助按钮在壳外，
+  // 量高不被按钮污染
   useEffect(() => {
     const feedInterrupt = () => {
       const result = advancePointerMachine(machineRef.current, {
@@ -627,29 +665,45 @@ export function MaterialAnnotationOverlay({
       applyDecisions(result.decisions);
     };
     window.addEventListener("blur", feedInterrupt);
-    const el = rootRef.current;
-    const initial = el?.getBoundingClientRect();
-    let lastWidth = initial?.width ?? 0;
-    let lastHeight = initial?.height ?? 0;
-    if (lastWidth > 0)
-      setContainerSize({ width: lastWidth, height: lastHeight });
+    const rootEl = rootRef.current;
+    const liveEl = liveSurfaceRef.current;
+    const initRoot = rootEl?.getBoundingClientRect();
+    const initLive = liveEl?.getBoundingClientRect();
+    let lastRootW = initRoot && initRoot.width > 0 ? initRoot.width : 0;
+    let lastRootH = initRoot && initRoot.width > 0 ? initRoot.height : 0;
+    let lastLiveW = initLive && initLive.width > 0 ? initLive.width : 0;
+    let lastLiveH = initLive && initLive.width > 0 ? initLive.height : 0;
+    if (lastRootW > 0) setColumnSize({ width: lastRootW, height: lastRootH });
+    if (lastLiveW > 0) setLiveSize({ width: lastLiveW, height: lastLiveH });
     const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      const width = rect?.width || el?.getBoundingClientRect().width || 0;
-      const height = rect?.height || el?.getBoundingClientRect().height || 0;
-      if (width === lastWidth && height === lastHeight) return;
-      const widthChanged = width !== lastWidth;
-      lastWidth = width;
-      lastHeight = height;
-      if (width > 0) setContainerSize({ width, height });
-      if (widthChanged) setExpanded(false);
-      const result = advancePointerMachine(machineRef.current, {
-        kind: "layoutchange",
-      });
-      machineRef.current = result.state;
-      applyDecisions(result.decisions);
+      for (const entry of entries) {
+        const isRoot = entry.target === rootEl;
+        const rect = entry.contentRect;
+        const width = rect?.width || 0;
+        const height = rect?.height || 0;
+        const prevW = isRoot ? lastRootW : lastLiveW;
+        const prevH = isRoot ? lastRootH : lastLiveH;
+        if (width === prevW && height === prevH) continue;
+        const widthChanged = width !== prevW;
+        if (isRoot) {
+          lastRootW = width;
+          lastRootH = height;
+          if (width > 0) setColumnSize({ width, height });
+        } else {
+          lastLiveW = width;
+          lastLiveH = height;
+          if (width > 0) setLiveSize({ width, height });
+        }
+        if (widthChanged) setExpanded(false);
+        const result = advancePointerMachine(machineRef.current, {
+          kind: "layoutchange",
+        });
+        machineRef.current = result.state;
+        applyDecisions(result.decisions);
+      }
     });
-    if (el) observer.observe(el);
+    if (rootEl) observer.observe(rootEl);
+    if (liveEl) observer.observe(liveEl);
     return () => {
       window.removeEventListener("blur", feedInterrupt);
       observer.disconnect();
@@ -673,6 +727,38 @@ export function MaterialAnnotationOverlay({
     return () => observer.disconnect();
   }, [frameMode]);
 
+  // 挂框就绪门控（D）：有基准挂框后材料表面仍需稳定——晚到图片会把冻结
+  // 框内容推高（先量到的高度作废）；稳定前与高度漂移期间禁墨，与「不匹配
+  // 禁墨」口径一致
+  useEffect(() => {
+    if (!frameMounted || !isAnnotationActive) return;
+    let active = true;
+    setFrameSurfaceReady(false);
+    void (async () => {
+      const el = liveSurfaceRef.current;
+      const ready = el
+        ? await awaitMaterialSurfaceReady(el, () => !active)
+        : false;
+      if (active) setFrameSurfaceReady(ready);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [frameMounted, isAnnotationActive]);
+
+  // 只读回看自动退出（E）：框内量不到活排版，用列宽回冻结宽（±1px）作
+  // 信号——列宽回到基准宽即活排版与基准一致，自动回活排版不滞留
+  useEffect(() => {
+    if (!reviewMode || isAnnotationActive) return;
+    if (
+      frozen !== null &&
+      columnSize.width > 0 &&
+      Math.abs(columnSize.width - frozen.cssWidth) <= 1
+    ) {
+      setReviewMode(false);
+    }
+  }, [reviewMode, isAnnotationActive, columnSize.width, frozen]);
+
   // 会话输入偏好切换（笔写/手指书写）：在途笔先收，再按新模式重建状态机
   useEffect(() => {
     const result = advancePointerMachine(machineRef.current, {
@@ -693,7 +779,9 @@ export function MaterialAnnotationOverlay({
       onPointerCancel={(e) => handlePointerEnd(e, "pointercancel")}
       onLostPointerCapture={(e) => handlePointerEnd(e, "lostpointercapture")}
       style={{
-        pointerEvents: isAnnotationActive ? "auto" : "none",
+        // 输入门控：非标注态不拦截；标注态下未就绪（首笔/挂框门控）或
+        // 挂框高度漂移期间不拦截（与「不匹配禁墨」同口径）
+        pointerEvents: inputEnabled ? "auto" : "none",
         // 会话输入偏好：pen=手指滚动（pan-y）、finger=手指书写（none），
         // 与题面圈画 touchActionForInput 同源
         touchAction: touchActionForInput(inputMode, true, false),
@@ -709,13 +797,6 @@ export function MaterialAnnotationOverlay({
     />
   );
 
-  const frameMounted = frameMode && frozen !== null;
-  const heightDrift =
-    frameMounted &&
-    frozen.cssHeight !== undefined &&
-    frameHeight > 0 &&
-    Math.abs(frameHeight - frozen.cssHeight) > 1;
-
   return (
     <div
       ref={rootRef}
@@ -724,88 +805,94 @@ export function MaterialAnnotationOverlay({
       data-material-id={materialId}
       data-stroke-count={strokes.length}
       data-ink-visible={showInk}
-      data-ink-ready={frozen !== null || surfaceReady}
+      data-ink-ready={inputEnabled || !isAnnotationActive}
       className={`relative min-w-0 ${frameMode ? "overflow-x-auto" : ""}`}
     >
-      {frameMounted ? (
-        <>
+      <div
+        data-slot="material-ink-frame-sizer"
+        className="relative mx-auto min-w-0"
+        style={
+          frameMounted
+            ? {
+                width: frozen.cssWidth * scale,
+                height: frameHeight > 0 ? frameHeight * scale : undefined,
+              }
+            : undefined
+        }
+      >
+        <div
+          ref={frameRef}
+          data-slot="material-ink-frame"
+          className="relative min-w-0"
+          style={
+            frameMounted
+              ? {
+                  width: frozen.cssWidth,
+                  transform: scale !== 1 ? `scale(${scale})` : undefined,
+                  transformOrigin: "top left",
+                }
+              : undefined
+          }
+        >
           <div
-            data-slot="material-ink-frame-sizer"
-            className="relative mx-auto min-w-0"
-            style={{
-              width: frozen.cssWidth * scale,
-              height: frameHeight > 0 ? frameHeight * scale : undefined,
-            }}
+            ref={liveSurfaceRef}
+            data-slot="material-live-surface"
+            className="relative min-w-0"
           >
-            <div
-              ref={frameRef}
-              data-slot="material-ink-frame"
-              className="relative min-w-0"
-              style={{
-                width: frozen.cssWidth,
-                transform: scale !== 1 ? `scale(${scale})` : undefined,
-                transformOrigin: "top left",
-              }}
-            >
-              {children}
-              {inputLayer}
-            </div>
+            {children}
+            {inputLayer}
           </div>
-          {heightDrift && (
-            <p
-              role="note"
-              className="mt-2 text-xs text-amber-600 dark:text-amber-400"
+        </div>
+      </div>
+      {heightDrift && (
+        <p
+          role="note"
+          className="mt-2 text-xs text-amber-600 dark:text-amber-400"
+        >
+          材料排版与圈画时略有差异，笔迹位置可能偏移
+        </p>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {frameMounted && fitScale < 0.85 && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11"
+            aria-pressed={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "适应宽度" : "放大材料"}
+          </Button>
+        )}
+        {reviewMode && !isAnnotationActive && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11"
+            onClick={() => setReviewMode(false)}
+          >
+            回到当前排版查看
+          </Button>
+        )}
+        {frozen !== null &&
+          !isAnnotationActive &&
+          !frameMode &&
+          !layoutMatch &&
+          liveSize.width > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-11"
+              onClick={() => setReviewMode(true)}
             >
-              材料排版与圈画时略有差异，笔迹位置可能偏移
-            </p>
+              按圈画时排版查看
+            </Button>
           )}
-          <div className="mt-2 flex flex-wrap gap-2">
-            {fitScale < 0.85 && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-11"
-                aria-pressed={expanded}
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "适应宽度" : "放大材料"}
-              </Button>
-            )}
-            {reviewMode && !isAnnotationActive && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-11"
-                onClick={() => setReviewMode(false)}
-              >
-                回到当前排版查看
-              </Button>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          {children}
-          {inputLayer}
-          {frozen !== null &&
-            !isAnnotationActive &&
-            containerSize.width > 0 &&
-            !layoutMatch && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="mt-2 h-11"
-                onClick={() => setReviewMode(true)}
-              >
-                按圈画时排版查看
-              </Button>
-            )}
-          {isAnnotationActive && frozen === null && !surfaceReady && (
-            <p role="status" className="mt-2 text-xs text-muted-foreground">
-              正在准备圈画…
-            </p>
-          )}
-        </>
+      </div>
+      {isAnnotationActive && frozen === null && !surfaceReady && (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          正在准备圈画…
+        </p>
       )}
     </div>
   );
