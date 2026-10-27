@@ -646,7 +646,6 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
   it("全笔带 startedAt：timing=real、真实空闲超上限被压缩并记 pauses 标记", () => {
     const model = parseInkReplayData(timedDoc());
     expect(model?.engine).toBe("atrament");
-    expect(model?.engine).toBe("atrament");
     if (model?.engine !== "atrament") return;
     expect(model.timing).toBe("real");
     // 第二笔 +12000 落笔：真实空闲 = 12000 − 3000（首笔书写时长）= 9000 > 5000

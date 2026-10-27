@@ -351,8 +351,13 @@ function buildAtramentModel(
     for (const tomb of tombsNormalized) {
       if (tomb.startedAt === null || tomb.writingEnd === null) continue;
       realMoments.push(tomb.startedAt, tomb.writingEnd);
-      // 评审 #11750 必改②-C：删除时刻也是时刻——擦在末笔之后要播得到消失
-      if (tomb.deletedAt !== null) realMoments.push(tomb.deletedAt);
+      // 评审 #11750 必改②-C：删除时刻也是时刻——擦在末笔之后要播得到消失。
+      // 评审 #11771 顺手项另一半：跨设备时钟偏差可能让 deletedAt 早于书写
+      // 终点——与 deletedSlots 同一钳制 max(deletedAt, writingEnd)；钳后等于
+      // writingEnd 时由下方 Set 去重，不产生多余分段。
+      if (tomb.deletedAt !== null) {
+        realMoments.push(Math.max(tomb.deletedAt, tomb.writingEnd));
+      }
     }
     const moments = [...new Set(realMoments)].sort((a, b) => a - b);
     // segCap（评审 #11768 处方）：段落在任一笔（活或墓碑）的书写区间内 →
