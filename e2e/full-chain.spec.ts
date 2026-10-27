@@ -181,7 +181,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
     await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/library");
+    await page.waitForURL(/\/t\/students(\/|$)/);
 
     await page.goto("/t/courses");
     // 空态会渲染第二个同名按钮，此处固定点页头常驻按钮（布局顶栏 header 无按钮，

@@ -538,6 +538,13 @@ export const attemptDraftDataSchema = z.object({
  */
 export const attemptResultQuestionSchema = z.object({
   questionId: z.string().min(1),
+  /**
+   * 题目版本引用（与作答视图 AttemptQuestionPublic 同源——该题 responses 行
+   * id，对学生不透明）：订正工作台用答题页同款 QuestionAnnotationOverlay
+   * 在原题上直接圈画，客户端建底图布局需携带此身份（服务端 POST base 严格
+   * 校验）。旧响应缺失按「无原位圈画」优雅降级，只渲染题面。
+   */
+  questionRevisionId: questionRevisionIdSchema.optional(),
   snapshot: z.object({
     id: z.string().min(1),
     type: questionPublicSchema.shape.type,

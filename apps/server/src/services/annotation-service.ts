@@ -14,6 +14,8 @@ import type {
   AnnotationSurfaceLayout,
   AnnotationUploadMetaInput,
   AnnotationViewData,
+  InkDeletedStroke,
+  InkStroke,
 } from "@tutor/contract";
 import {
   ANNOTATION_BASE_MAX_HEIGHT_PX,
@@ -109,19 +111,51 @@ import { requireTeacherAttempt } from "./teacher-attempt-service";
  * 规范化序列化（固定键序重建对象树，同 canonicalNoteJson 口径）：
  * 顶层 {version, baseWidth, baseHeight}；每笔 {tool, color, weight, points}；
  * 每点 {x, y, p, t}。hash 与落盘字节都基于它——客户端 gzip 字节/键序不参与。
+ * LR-2/LR-4（学习记录模型设计稿 §4.2/§8）：墓碑与锚点纳入规范化——可选新
+ * 字段缺席不写键（旧稿 hash 与升级前逐字节一致）；anchors 键按字典序重建
+ * （客户端插入序不参与 hash）。
  */
 export function canonicalAnnotationJson(doc: AnnotationDoc): string {
   return JSON.stringify({
     version: 1,
     baseWidth: doc.baseWidth,
     baseHeight: doc.baseHeight,
-    strokes: doc.strokes.map((stroke) => ({
-      tool: stroke.tool,
-      color: stroke.color,
-      weight: stroke.weight,
-      points: stroke.points.map((p) => ({ x: p.x, y: p.y, p: p.p, t: p.t })),
-    })),
+    strokes: doc.strokes.map(canonicalAnnotationStroke),
+    ...(doc.deleted !== undefined && doc.deleted.length > 0
+      ? { deleted: doc.deleted.map(canonicalAnnotationDeleted) }
+      : {}),
+    ...(doc.anchors !== undefined && Object.keys(doc.anchors).length > 0
+      ? {
+          anchors: Object.fromEntries(
+            Object.entries(doc.anchors).sort(([a], [b]) =>
+              a < b ? -1 : a > b ? 1 : 0,
+            ),
+          ),
+        }
+      : {}),
   });
+}
+
+/** LR-1 规范化笔画：固定键序；可选新字段（id/startedAt/pointer）缺席不写键 */
+function canonicalAnnotationStroke(stroke: InkStroke): Record<string, unknown> {
+  return {
+    tool: stroke.tool,
+    color: stroke.color,
+    weight: stroke.weight,
+    ...(stroke.id !== undefined ? { id: stroke.id } : {}),
+    ...(stroke.startedAt !== undefined ? { startedAt: stroke.startedAt } : {}),
+    ...(stroke.pointer !== undefined ? { pointer: stroke.pointer } : {}),
+    points: stroke.points.map((p) => ({ x: p.x, y: p.y, p: p.p, t: p.t })),
+  };
+}
+
+/** LR-2 规范化墓碑：笔画规范化 + 删除时刻/来源（删除态的一部分，必入 hash） */
+function canonicalAnnotationDeleted(deleted: InkDeletedStroke): unknown {
+  return {
+    ...canonicalAnnotationStroke(deleted),
+    deletedAt: deleted.deletedAt,
+    deletedBy: deleted.deletedBy,
+  };
 }
 
 /** 底图 PNG 相对路径（DATA_DIR 内）：blobs/annotations/<sha256>.png（内容寻址） */
@@ -913,6 +947,27 @@ export function putAnnotationDoc(
       "ANNOTATION_VALIDATION_FAILED",
       `标注坐标域与底图几何不一致（文档 ${doc.baseWidth}×${doc.baseHeight}，底图 ${base.pixelWidth}×${base.pixelHeight}）`,
     );
+  }
+
+  // LR-4（学习记录模型设计稿 §5.3）：anchors 服务端校验——值必须 ∈ 该底图
+  // layout blocks[].node；无 layout（旧底图）不接受锚点（无法验证节点域，
+  // fail closed）。悬空键（不指向 strokes∪deleted 的 id）已在契约 superRefine 拒绝。
+  if (doc.anchors !== undefined && Object.keys(doc.anchors).length > 0) {
+    const layout = base.layout;
+    const validNodes = new Set(
+      layout?.compatibility?.blocks
+        .map((block) => block.node)
+        .filter((node) => node !== undefined) ?? [],
+    );
+    for (const [strokeId, nodeKey] of Object.entries(doc.anchors)) {
+      if (!validNodes.has(nodeKey)) {
+        throw new HttpError(
+          400,
+          "ANNOTATION_VALIDATION_FAILED",
+          `锚点指向的题面节点不在底图布局证据中（${strokeId} → ${nodeKey}）；旧底图或布局证据缺失时不接受锚点`,
+        );
+      }
+    }
   }
 
   const existing = annotationRowOf(db, attempt.id, questionId, phase);

@@ -3,7 +3,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { reviewPackSchema } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
@@ -175,7 +175,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     // pack.json 走共享件（只扫字符串值 + 剥 snapshotHash——数字计数与
     // hex 内容身份都可能与十进制哨兵子串相撞，是假阳性不是泄露）
     const textOf = (name: string, data: Buffer): string =>
-      name === "pack.json" ? packLeakTextOf(data) : data.toString("utf8");
+      name === "pack.json" || name === "record.json"
+        ? // 数字哨兵对时间戳/坐标必然假阳性——共享件只取字符串值并剥 ISO 时间戳
+          packLeakTextOf(data)
+        : data.toString("utf8");
     const textEntries = [...entries.entries()].filter(([name]) =>
       /\.(md|json)$/.test(name),
     );
@@ -980,5 +983,78 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     );
     expect(preview.missing.some((miss) => miss.path === media.src)).toBe(true);
     expect(preview.complete).toBe(false);
+  });
+});
+
+/**
+ * LR-PR3（评审 #11695 必改②测试半边 / #11744 必补）：升级遗留行（快照缺
+ * stemMd）导出时 record 如实缺席——manifest.contextNotes 含「record.json
+ * 未装配」，preview 与 zip 均无 record.json / record-schema.json；教师视角
+ * 同口径（降级不带角色豁免）。
+ */
+describe("遗留行导出：record 如实缺席（LR-PR3）", () => {
+  it("快照缺 stemMd：contextNotes 留痕、preview 与 zip 均无 record 条目", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const world = makeWorld(db, dataDir, { studentId: s1, mark: true });
+    // 模拟升级遗留的缩形快照：合法 JSON 但缺 stemMd（snapshotOf 折算
+    // SNAPSHOT_BROKEN → record 装配走已知遗留类降级，其余导出照常）
+    db.update(responsesTable)
+      .set({
+        questionSnapshotJson: JSON.stringify({
+          id: QUESTION_ID,
+          type: "fill",
+        }),
+      })
+      .where(
+        and(
+          eq(responsesTable.attemptId, world.attemptId),
+          eq(responsesTable.questionId, QUESTION_ID),
+        ),
+      )
+      .run();
+    // 断言层用装配体：contextNotes 在 manifest 上（preview 数据面无此字段）
+    const assembly = assembleReviewPack(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      QUESTION_ID,
+      { now: NOW },
+    );
+    expect(assembly.recordJson).toBeNull();
+    expect(
+      assembly.manifest.contextNotes.some((note) =>
+        note.includes("record.json 未装配"),
+      ),
+    ).toBe(true);
+    expect(assembly.files.some((file) => file.path.startsWith("record"))).toBe(
+      false,
+    );
+    const zip = await buildReviewPackZip(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      QUESTION_ID,
+      { now: NOW },
+    );
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
+    expect(entries.has("record.json")).toBe(false);
+    expect(entries.has("record-schema.json")).toBe(false);
+    const teacherAssembly = assembleReviewPack(
+      db,
+      dataDir,
+      TEACHER,
+      world.attemptId,
+      QUESTION_ID,
+      { now: NOW },
+    );
+    expect(
+      teacherAssembly.manifest.contextNotes.some((note) =>
+        note.includes("record.json 未装配"),
+      ),
+    ).toBe(true);
   });
 });

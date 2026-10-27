@@ -76,10 +76,13 @@ export async function applyNoteHeadSideEffects(
 /**
  * 答题页每题的笔记头接线（NoteLayer 内部调用）。返回 useQuery 句柄供
  * UI 刷新图片状态（补图重试成功后 refetch 更新 images 维度）。
+ * opts.enabled=false 关闭查询（phase=correction 的 NoteLayer：订正工作台
+ * 不消费 scratch head/补图，也不触发 scratch 播种副作用）。
  */
 export function useNoteHead(
   attemptId: string,
   questionId: string,
+  opts: { enabled?: boolean } = {},
 ): UseQueryResult<NoteHeadData, Error> {
   const session = useNoteSessionRef();
   return useQuery({
@@ -106,7 +109,7 @@ export function useNoteHead(
       );
       return head;
     },
-    enabled: session !== null,
+    enabled: session !== null && (opts.enabled ?? true),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     // ApiError（403/404/401 等）不重试：终态或需登录干预；网络错误重试 2 次

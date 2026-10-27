@@ -1268,7 +1268,7 @@ export function batchLibrary(
         teacherId,
         input.courseId as string,
         [{ kind: input.kind, refId: id }],
-        { visible: input.visible ?? true },
+        { visible: input.visible ?? true, parentId: input.parentId ?? null },
       );
     }),
   );

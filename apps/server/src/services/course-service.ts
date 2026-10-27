@@ -27,6 +27,12 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  catalogAncestorsVisible,
+  ensureCatalogTitles,
+  executeCatalogCommand,
+  requireCatalogParent,
+} from "./course-catalog";
+import {
   embeddedUnitIdsFrom,
   isEmbeddedUnitItem,
   lessonEmbeddedUnitIds,
@@ -66,9 +72,10 @@ export interface VisibleCourseItem {
   readonly id: string;
   readonly kind: CourseItemKind;
   readonly refId: string | null;
-  /** section = 分节标题；lecture/unit = 资源当前标题 */
+  /** 课程内显示别名；历史空值回落资源标题。 */
   readonly title: string;
   readonly order: number;
+  readonly parentId: string | null;
 }
 
 /**
@@ -139,9 +146,10 @@ export function addCourseItems(
   teacherId: string,
   courseId: string,
   items: readonly CourseItemInput[],
-  options: { visible?: boolean } = {},
+  options: { visible?: boolean; parentId?: string | null } = {},
 ): CourseItem[] {
   requireCourseRow(db, teacherId, courseId);
+  requireCatalogParent(db, courseId, options.parentId ?? null);
   for (const item of items) validateItemInput(item);
 
   // 同批内重复先拦（避免只靠库级约束报生硬错误）
@@ -249,6 +257,8 @@ export function addCourseItems(
       const row: CourseItem = {
         id: crypto.randomUUID(),
         courseId,
+        parentId: options.parentId ?? null,
+        importPath: null,
         kind: item.kind,
         refId: item.kind === "section" ? null : (item.refId as string),
         title: item.kind === "section" ? (item.title as string).trim() : null,
@@ -261,8 +271,13 @@ export function addCourseItems(
       tx.insert(courseItems).values(row).run();
       inserted.push(row);
     }
+    ensureCatalogTitles(db, courseId);
   });
-  return inserted;
+  return inserted.map(
+    (row) =>
+      db.select().from(courseItems).where(eq(courseItems.id, row.id)).get() ??
+      row,
+  );
 }
 
 /**
@@ -286,9 +301,11 @@ export function appendCourseItems(
   options: {
     visible?: boolean | undefined;
     withCompanionUnits?: boolean | undefined;
+    parentId?: string | null | undefined;
   } = {},
 ): { added: CourseItemAdded[]; skipped: CourseItemSkipped[] } {
   requireCourseRow(db, teacherId, courseId);
+  requireCatalogParent(db, courseId, options.parentId ?? null);
   for (const item of items) validateItemInput(item);
 
   const skipped: CourseItemSkipped[] = [];
@@ -441,7 +458,7 @@ export function appendCourseItems(
       .all()
       .reduce((max, row) => Math.max(max, row.order), -1) + 1;
 
-  // 显示标题：lecture/unit 取资源当前标题（引用而非复制，D1；域内读，T2B.4）
+  // 首次加入以资源标题生成课程别名，内容仍引用原件（域内读，T2B.4）。
   const lectureTitles = new Map(
     db
       .select({ id: lectures.id, title: lectures.title })
@@ -473,6 +490,7 @@ export function appendCourseItems(
         .values({
           id,
           courseId,
+          parentId: options.parentId ?? null,
           kind: item.kind,
           refId: item.kind === "section" ? null : (item.refId as string),
           title: item.kind === "section" ? (item.title as string).trim() : null,
@@ -493,6 +511,7 @@ export function appendCourseItems(
       });
       nextOrder += 1;
     }
+    ensureCatalogTitles(db, courseId);
   });
 
   // 跳过清单补全显示标题（尽力：资源可能仍在库）
@@ -506,6 +525,13 @@ export function appendCourseItems(
           : null;
   }
 
+  for (const entry of added)
+    entry.title =
+      db
+        .select({ title: courseItems.title })
+        .from(courseItems)
+        .where(eq(courseItems.id, entry.id))
+        .get()?.title ?? entry.title;
   return { added, skipped };
 }
 
@@ -536,17 +562,21 @@ export function updateCourseItem(
   if (input.visible !== undefined) patch.visible = input.visible;
   if (input.publishAt !== undefined) patch.publishAt = input.publishAt;
   if (input.title !== undefined) {
-    if (row.kind !== "section") {
+    if (row.kind !== "section")
       throw new HttpError(
         422,
         "VALIDATION_ERROR",
-        "只有分节标题可以修改标题（讲义/单元标题取资源当前值）",
+        "原条目更新接口仅支持分节改名，请使用目录整理操作",
       );
-    }
     const title = input.title.trim();
     if (title.length === 0) {
       throw new HttpError(422, "VALIDATION_ERROR", "分节标题不能为空");
     }
+    executeCatalogCommand(db, teacherId, row.courseId, {
+      action: "rename",
+      id,
+      title,
+    });
     patch.title = title;
   }
   if (Object.keys(patch).length > 0) {
@@ -561,15 +591,17 @@ export function updateCourseItem(
  */
 export function deleteCourseItem(db: Db, teacherId: string, id: string): void {
   const row = db
-    .select({ id: courseItems.id })
+    .select({ courseId: courseItems.courseId })
     .from(courseItems)
     .innerJoin(courses, eq(courseItems.courseId, courses.id))
     .where(and(eq(courseItems.id, id), eq(courses.teacherId, teacherId)))
     .get();
-  if (row === undefined) {
-    throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
-  }
-  db.delete(courseItems).where(eq(courseItems.id, id)).run();
+  if (!row) throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
+  executeCatalogCommand(db, teacherId, row.courseId, {
+    action: "remove",
+    ids: [id],
+    keepChildren: true,
+  });
 }
 
 /**
@@ -591,7 +623,11 @@ export function reorderCourseItems(
     .all();
   const liveIds = new Set(rows.map((row) => row.id));
   const missing = ids.find((id) => !liveIds.has(id));
-  if (missing !== undefined || ids.length !== liveIds.size) {
+  if (
+    missing !== undefined ||
+    ids.length !== liveIds.size ||
+    new Set(ids).size !== ids.length
+  ) {
     throw new HttpError(
       404,
       "COURSE_ITEM_NOT_FOUND",
@@ -739,7 +775,9 @@ export function listVisibleItems(
     .all();
 
   const visibleItems: VisibleCourseItem[] = [];
+  const byId = new Map(items.map((item) => [item.id, item]));
   for (const item of items) {
+    if (!catalogAncestorsVisible(item, byId, now)) continue;
     let title: string;
     let resourceDeleted: boolean;
     let unitLiveQuestionCount: number | null;
@@ -780,7 +818,8 @@ export function listVisibleItems(
         id: item.id,
         kind: item.kind,
         refId: item.refId,
-        title,
+        title: item.title ?? title,
+        parentId: item.parentId,
         order: item.order,
       });
     }
@@ -1128,6 +1167,7 @@ export function getCourseDetail(
     if (item.kind === "section") {
       return {
         id: item.id,
+        parentId: item.parentId,
         kind: item.kind,
         refId: null,
         title: item.title ?? "",
@@ -1145,9 +1185,10 @@ export function getCourseDetail(
       const deleted = lecture === undefined || lecture.deletedAt !== null;
       return {
         id: item.id,
+        parentId: item.parentId,
         kind: item.kind,
         refId: item.refId,
-        title: lecture?.title ?? "（讲义已删除）",
+        title: item.title ?? lecture?.title ?? "（讲义已删除）",
         order: item.order,
         visible: item.visible,
         publishAt: item.publishAt,
@@ -1162,9 +1203,10 @@ export function getCourseDetail(
     const liveCount = liveQuestionCountByUnit.get(item.refId ?? "") ?? 0;
     return {
       id: item.id,
+      parentId: item.parentId,
       kind: item.kind,
       refId: item.refId,
-      title: unit?.title ?? "（单元已删除）",
+      title: item.title ?? unit?.title ?? "（单元已删除）",
       order: item.order,
       visible: item.visible,
       publishAt: item.publishAt,

@@ -95,6 +95,7 @@ import {
 } from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
+import { getStudentLearningRecord } from "../services/learning-record-service";
 import {
   getLessonLanding,
   restartLessonAttempt,
@@ -599,6 +600,23 @@ export function createStudentRoutes(
         });
       })
       // T2.8：取回矢量文档（JSON）或本人 PNG（.png 后缀分流，见文件头说明）
+      // LR-PR3（学习记录模型设计稿 §7）：按角色投影的学习记录（服务端现算）
+      .get("/attempts/:id/questions/:questionId/record", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: getStudentLearningRecord(
+              db,
+              dataDir,
+              c.var.student.id,
+              c.req.param("id"),
+              c.req.param("questionId"),
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
       .get("/attempts/:id/ink/:questionId", (c) => {
         const raw = c.req.param("questionId");
         if (raw.endsWith(".png")) {

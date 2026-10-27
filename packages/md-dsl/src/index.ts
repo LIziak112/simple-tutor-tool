@@ -6,6 +6,9 @@
  * （解析器/转换/版本检测一并移除，见架构文档 §10 决策 10）。
  */
 
+// 题面语义节点枚举（LR-4）：公开投影 → 块级语义节点（键 schema / kind 词表 /
+// 版本常量单源在 @tutor/contract question-node.ts；渲染器 data-lr-node 共用）。
+export { QUESTION_NODES_VERSION } from "@tutor/contract";
 export type { LintOptions, LintResult } from "./lint/lint.ts";
 export { lintDocument } from "./lint/lint.ts";
 export {
@@ -60,6 +63,14 @@ export {
 // 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
 // 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
 export { expandSelectionIds } from "./v2/references.ts";
+export type {
+  QuestionBlockEntry,
+  QuestionNodesInput,
+} from "./v2/question-nodes.ts";
+export {
+  createQuestionBlockKeyer,
+  questionNodesOf,
+} from "./v2/question-nodes.ts";
 export { processor } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。

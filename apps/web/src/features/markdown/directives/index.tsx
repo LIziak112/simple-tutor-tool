@@ -186,6 +186,10 @@ function readDirective(node: HastElementLike | undefined): {
     ) {
       continue;
     }
+    // LR-5 守卫（PR2 e2e 回归根因）：data-lr-* 是渲染器自有键
+    //（questionNodeKeySchema 域），不进 attrs——指令组件的严格 attrs 校验
+    // 会拒绝未知键而降级为「未支持指令」
+    if (key === "data-lr-node" || key.startsWith("data-lr-")) continue;
     if (typeof value === "string") attrs[key] = value;
     else if (typeof value === "number") attrs[key] = String(value);
   }

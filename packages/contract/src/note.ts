@@ -47,6 +47,14 @@ export const NOTE_BODY_DECOMPRESSED_MAX_BYTES = 32 * 1024 * 1024;
 /** 全稿总点数上限（所有笔画 points 之和）。**暂定，真机定标后修订** */
 export const NOTE_MAX_TOTAL_POINTS = 300_000;
 
+/**
+ * 草稿墓碑总点数上限（LR-2，学习记录模型设计稿 §4.2 限额表；独立常量不改
+ * 旧值）：ink.deleted 数组全部笔画的 points 之和，不计入活笔画总点数预算
+ * （避免擦除吃掉活笔画预算）。**暂定**。超限 params.limit → 服务端 413 分级；
+ * 客户端 FIFO 压实（设计稿 §10-1），服务端只拒不压。
+ */
+export const NOTE_MAX_DELETED_POINTS = 100_000;
+
 /** 单笔（单 stroke）点数上限。**暂定，真机定标后修订** */
 export const NOTE_MAX_POINTS_PER_STROKE = 2000;
 
@@ -195,6 +203,23 @@ export const noteDocSchema = z
         path: ["ink", "strokes"],
         message: `全稿总点数超上限（${totalPoints} > ${NOTE_MAX_TOTAL_POINTS}，暂定值）`,
         // 同上：结构化限额标记（服务端 413/400 分级依据，勿随措辞改动丢失）
+        params: { limit: true },
+      });
+    }
+    // LR-2：草稿墓碑点数独立预算（与 NOTE_MAX_TOTAL_POINTS 分开）；id 唯一性
+    // 由 inkAtramentDataSchema 的 superRefine 统一守（嵌套 schema 先行校验）。
+    let deletedPoints = 0;
+    if (doc.ink.deleted !== undefined) {
+      for (const stroke of doc.ink.deleted) {
+        deletedPoints += stroke.points.length;
+      }
+    }
+    if (deletedPoints > NOTE_MAX_DELETED_POINTS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ink", "deleted"],
+        message: `墓碑总点数超上限（${deletedPoints} > ${NOTE_MAX_DELETED_POINTS}，暂定值）`,
+        // 结构化限额标记（服务端 413/400 分级依据，勿随措辞改动丢失）
         params: { limit: true },
       });
     }

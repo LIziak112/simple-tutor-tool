@@ -3793,6 +3793,9 @@ export function resultQuestionOf(
   const structure = effectiveStructureOfSnapshot(snapshot, row.unitId);
   return {
     questionId: row.questionId,
+    // 题目版本引用（responses 行 id）：订正工作台原位圈画建底图布局的身份
+    // 三要素之一（与作答视图同源；对学生不透明，旧客户端忽略）
+    questionRevisionId: row.id,
     snapshot: {
       id: snapshot.id,
       type: snapshot.type,

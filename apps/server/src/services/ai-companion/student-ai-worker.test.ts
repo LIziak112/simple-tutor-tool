@@ -337,6 +337,20 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
       expect(body).toContain("请帮我讲解本题");
       expect(provider.requests[0]?.headers["user-agent"]).toContain(taskId);
       expect(body).not.toContain(taskId);
+      // LR-PR5 评审 #12249 必改①锁：学习记录段进首个 user 消息（适配器只读
+      // messages——只改 contextDataMd 是发不出去的死字符串）
+      const outbound = JSON.parse(provider.requests[0]?.body ?? "{}") as {
+        messages?: Array<{ role: string; content: unknown }>;
+      };
+      const firstUser = outbound.messages?.find(
+        (message) => message.role === "user",
+      );
+      const userText =
+        typeof firstUser?.content === "string"
+          ? firstUser.content
+          : JSON.stringify(firstUser?.content);
+      expect(userText).toContain("学习记录（结构化数据）");
+      expect(userText).toContain("compaction");
       // 完成条件②：模型结果不能改变 answerJson / 判分 / 提交状态
       const response = db
         .select()

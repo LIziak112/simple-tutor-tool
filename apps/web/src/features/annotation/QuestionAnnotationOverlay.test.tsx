@@ -10,7 +10,7 @@ import type {
   AttemptQuestionPublic,
 } from "@tutor/contract";
 import { useRef } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AttemptEditorNotice,
   AttemptEditorProvider,
@@ -52,11 +52,12 @@ const engine = vi.hoisted(() => ({
   canRedo: vi.fn(() => false),
 }));
 vi.mock("./annotation-surface", () => ({
-  createAnnotationSurface: () => engine,
+  createAnnotationSurface: vi.fn(() => engine),
 }));
 vi.mock("./question-base-image", () => ({
   awaitQuestionSurfaceReady: vi.fn(async () => ({})),
   questionSurfaceMatchesLayout: vi.fn(async () => true),
+  measureQuestionSurface: vi.fn(),
 }));
 vi.mock("./question-annotation-base", () => ({
   prepareQuestionAnnotationBase: vi.fn(),
@@ -72,9 +73,11 @@ vi.mock("./annotation-store", async (importOriginal) => {
   };
 });
 
+import { createAnnotationSurface } from "./annotation-surface";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import {
   awaitQuestionSurfaceReady,
+  measureQuestionSurface,
   questionSurfaceMatchesLayout,
 } from "./question-base-image";
 
@@ -144,6 +147,19 @@ beforeEach(async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:annotation-test");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(true);
+  vi.mocked(measureQuestionSurface).mockReturnValue({
+    cssWidth: 300,
+    cssHeight: 200,
+    textRects: [],
+    blocks: [
+      { tag: "P", x: 0, y: 0, width: 300, height: 40, node: "stem/p/0" },
+      { tag: "P", x: 0, y: 60, width: 300, height: 60, node: "stem/p/1" },
+    ],
+    fonts: [
+      ["16px", "16px", "400", "16px", "0px"],
+      ["16px", "16px", "400", "16px", "0px"],
+    ],
+  });
   vi.mocked(prepareQuestionAnnotationBase).mockResolvedValue({
     kind: "surface",
     localBase: { png: new Blob(["png"], { type: "image/png" }), layout },
@@ -704,4 +720,123 @@ it("撤销快捷键只归活动标画，不能夺取输入框或输入法的撤�
   expect(engine.undo).toHaveBeenCalledOnce();
   fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
   expect(engine.redo).toHaveBeenCalledOnce();
+});
+
+describe("LR-PR4 第二层：近似原位模式（§5.4）", () => {
+  const compatLayout = {
+    ...layout,
+    compatibility: {
+      version: 1 as const,
+      contentSignature: "a".repeat(64),
+      blocks: [
+        { x: 0, y: 0, width: 300, height: 40, tag: "p", node: "stem/p/0" },
+        { x: 0, y: 60, width: 300, height: 60, tag: "p", node: "stem/p/1" },
+      ],
+      fonts: [
+        ["16px", "16px", "400", "16px", "0px"],
+        ["16px", "16px", "400", "16px", "0px"],
+      ] as [string, string, string, string, string][],
+      textRects: [],
+    },
+  };
+  const anchoredDoc = {
+    version: 1 as const,
+    baseWidth: 600,
+    baseHeight: 400,
+    strokes: [
+      {
+        tool: "pen" as const,
+        color: "#1f2328",
+        weight: 5.76,
+        id: "stroke-s1",
+        startedAt: 1727392800000,
+        pointer: "pen" as const,
+        points: [
+          { x: 100, y: 20, p: 0.5, t: 9 },
+          { x: 200, y: 30, p: 0.5, t: 16 },
+        ],
+      },
+    ],
+    anchors: { "stroke-s1": "stem/p/0" } as Record<string, string>,
+  };
+  async function seedCompatRecord(doc: typeof anchoredDoc) {
+    resetAnnotationStoreForTest();
+    installAnnotationBackend(memoryAnnotationBackend());
+    bindAnnotationSession(session);
+    await writeLocalAnnotationBase(
+      session,
+      scope,
+      { png: new Blob(["png"], { type: "image/png" }), layout: compatLayout },
+      doc,
+    );
+    vi.mocked(prepareQuestionAnnotationBase).mockResolvedValue({
+      kind: "surface",
+      localBase: {
+        png: new Blob(["png"], { type: "image/png" }),
+        layout: compatLayout,
+      },
+    });
+  }
+  /** 近似模式的目标实测布局：同宽（300）、更高（210，行高漂移），块随内容挪动 */
+  function mockMeasureDrifted() {
+    vi.mocked(measureQuestionSurface).mockReturnValue({
+      cssWidth: 300,
+      cssHeight: 210,
+      textRects: [],
+      blocks: [
+        { tag: "P", x: 0, y: 0, width: 300, height: 40, node: "stem/p/0" },
+        { tag: "P", x: 0, y: 70, width: 300, height: 70, node: "stem/p/1" },
+      ],
+      fonts: [
+        ["16px", "16px", "400", "16px", "0px"],
+        ["16px", "16px", "400", "16px", "0px"],
+      ],
+    });
+  }
+
+  it("布局不匹配但锚全在 → 进近似原位：徽标出现、surface 建在当前布局域、不出续画区块", async () => {
+    vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+    mockMeasureDrifted();
+    await seedCompatRecord(anchoredDoc);
+    render(<Harness />);
+    fireEvent.click(screen.getByText("标画"));
+    expect(await screen.findByText(/已按内容对齐/)).toBeVisible();
+    expect(
+      await screen.findByRole("toolbar", { name: "第1题标画工具栏" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/题面已固定为保存时的底图/)).toBeNull();
+    // surface 建在视图域（210×2=420 高），垫片带存储域尺寸（600×400）
+    expect(vi.mocked(createAnnotationSurface)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseWidth: 600,
+        baseHeight: 420,
+        reprojectedView: expect.objectContaining({
+          storedBaseWidth: 600,
+          storedBaseHeight: 400,
+        }),
+      }),
+    );
+    // anchorBlocks 供给视图域块表（CSS×2）
+    const options = vi.mocked(createAnnotationSurface).mock.calls[0]?.[0];
+    const blocks = options?.anchorBlocks?.();
+    expect(blocks?.[0]).toMatchObject({ node: "stem/p/0", width: 600 });
+    expect(
+      document
+        .querySelector('[data-slot="question-annotation-overlay"]')
+        ?.getAttribute("data-annotation-approximate"),
+    ).toBe("true");
+  });
+
+  it("锚缺失（旧稿）→ 仍走固定底图续画，不进近似原位", async () => {
+    vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+    mockMeasureDrifted();
+    await seedCompatRecord({ ...anchoredDoc, anchors: {} });
+    render(<Harness />);
+    fireEvent.click(screen.getByText("标画"));
+    expect(await screen.findByText(/题面已固定为保存时的底图/)).toBeVisible();
+    expect(screen.queryByText(/已按内容对齐/)).toBeNull();
+    expect(vi.mocked(createAnnotationSurface)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reprojectedView: expect.anything() }),
+    );
+  });
 });

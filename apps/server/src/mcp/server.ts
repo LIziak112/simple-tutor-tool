@@ -3,16 +3,26 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ANALYTICS_DAYS_DEFAULT,
   ANALYTICS_FOCUS_DAYS_DEFAULT,
+  attemptSourceSchema,
+  attemptStatusSchema,
+  courseCatalogCommandSchema,
+  courseItemsAddRequestSchema,
   type LearningPackExportRequest,
   learningPackExportRequestSchema,
   learningPackGoalSchema,
   notePhaseSchema,
+  questionTypeSchema,
+  teacherAttemptListQuerySchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
 import { firstIssueMessage, HttpError } from "../lib/http-error";
 import { getAnalyticsQuestions } from "../services/analytics-service";
-import { listTeacherAssignments } from "../services/assignment-service";
+import {
+  checkAssignment,
+  createAssignment,
+  listTeacherAssignments,
+} from "../services/assignment-service";
 import { getCapabilityProfile } from "../services/capability-profile-service";
 import {
   analyzeImport,
@@ -20,15 +30,31 @@ import {
   previewImport,
   summarizeParsed,
 } from "../services/content-service";
-import { listCoursesForTeacher } from "../services/course-service";
+import { executeCatalogCommand } from "../services/course-catalog";
+import {
+  appendCourseItems,
+  getCourseDetail,
+  listCoursesForTeacher,
+} from "../services/course-service";
 import {
   assembleLearningPack,
   type LearningPackServiceOptions,
 } from "../services/export-service";
-import { exportLectureMd, exportUnitMd } from "../services/library-service";
+import { getTeacherLearningRecord } from "../services/learning-record-service";
+import {
+  exportLectureMd,
+  exportUnitMd,
+  listLibraryLectures,
+  listLibraryUnits,
+} from "../services/library-service";
 import { saveMedia } from "../services/media-service";
-import { createReport } from "../services/report-service";
+import {
+  createReport,
+  getReportDetail,
+  listStudentReports,
+} from "../services/report-service";
 import { listStudents } from "../services/student-service";
+import { listTeacherAttempts } from "../services/teacher-attempt-service";
 import {
   commitZipImport,
   decodeImportZipBase64,
@@ -36,10 +62,28 @@ import {
   unpackImportZip,
 } from "../services/zip-import-service";
 import { readSpecFile } from "../spec-files";
+import {
+  assignmentDeletePreview,
+  assignmentToolInputSchema,
+  deleteUnstartedAssignment,
+  resolveAssignmentStudentIds,
+} from "./assignment-tools";
+import {
+  attemptExtrasOf,
+  decodeCursorOffset,
+  queryStudentResponses,
+  resolveToolStudent,
+  searchQuestions,
+} from "./teacher-queries";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
- * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个）。
+ * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个；
+ * 嵌套目录增补四个课程整理工具 get_course_catalog / get_library_catalog /
+ * manage_course_catalog / add_course_content（PR #26），共 18 个；
+ * 教师迭代 T-PR2 增只读查询四件 query_student_attempts / query_student_responses /
+ * search_questions / get_report，共 22 个——查询装配见 ./teacher-queries.ts；
+ * 教师迭代 T-PR5 增作业创建 / 删除两件 create_assignment / delete_assignment（未开答才可删），共 24 个）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -49,8 +93,9 @@ import { readSpecFile } from "../spec-files";
  *
  * 红线：除 import_markdown(confirm=true)、save_report、upload_image 与
  * import_zip(confirm=true)（后两者只落盘 DATA_DIR/blobs/media 内容寻址文件；
- * import_zip 另经 commitImport 写教师资源库）外无任何写操作；
- * 不提供任何删除类工具（D23）。
+ * import_zip 另经 commitImport 写教师资源库）以及显式确认的课程目录整理、
+ * 作业的创建与删除（未开答；MCP-C / T-PR5）外无其他写操作；
+ * 目录整理工具仅管理课程引用，不删除资源或作答；预览默认不写库。
  */
 
 /** MCP 服务器名称与版本（客户端可见；version 对齐项目主版本） */
@@ -276,7 +321,7 @@ export function mcpLearningPackRequestOf(
 // ---------- 工具注册 ----------
 
 /**
- * 创建一台绑定单教师的 MCP 服务器实例（14 工具）。
+ * 创建一台绑定单教师的 MCP 服务器实例（18 工具）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
@@ -285,6 +330,146 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     name: MCP_SERVER_NAME,
     version: MCP_SERVER_VERSION,
   });
+
+  server.registerTool(
+    "get_course_catalog",
+    {
+      description:
+        "读取本教师课程的完整嵌套目录（parentId=null 为根），含目录条目 ID、资源引用 ID、名称及可见性。整理前先读取；课程目录名独立于资源原件。",
+      inputSchema: { courseId: z.uuid() },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ courseId }) => {
+      const { id, name, items } = getCourseDetail(db, teacherId, courseId);
+      return jsonContent({ id, name, items });
+    }),
+  );
+  server.registerTool(
+    "get_library_catalog",
+    {
+      description:
+        "列出本教师可加入课程的讲义和独立练习元信息；不包含讲练嵌入单元。kind 与 refId 可交给 add_course_content。",
+      inputSchema: { q: z.string().max(100).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ q }) =>
+      jsonContent({
+        lectures: listLibraryLectures(db, teacherId, {
+          deleted: false,
+          ...(q ? { q } : {}),
+        }).map((row) => ({
+          kind: "lecture",
+          refId: row.id,
+          title: row.title,
+          docKind: row.kind,
+        })),
+        units: listLibraryUnits(db, teacherId, {
+          deleted: false,
+          ...(q ? { q } : {}),
+        }).map((row) => ({ kind: "unit", refId: row.id, title: row.title })),
+      }),
+    ),
+  );
+  server.registerTool(
+    "manage_course_catalog",
+    {
+      description:
+        "整理本教师课程文件夹与内容：createFolder/rename/move/reorder/setVisibility/remove；支持嵌套，课程内名称唯一。默认仅预览，confirm=true 执行。move 不改变发布设置；隐藏文件夹会隐藏后代；显示保留原定时。remove 仅移除课程引用，keepChildren=true 解散到上一级，false 连同子树移出课程；资源与作答保留。",
+      inputSchema: {
+        courseId: z.uuid(),
+        command: courseCatalogCommandSchema,
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    guard(({ courseId, command, confirm }) => {
+      const current = getCourseDetail(db, teacherId, courseId);
+      if (!confirm)
+        return jsonContent({
+          preview: true,
+          command,
+          currentItems: current.items,
+        });
+      return jsonContent(
+        executeCatalogCommand(db, teacherId, courseId, command),
+      );
+    }),
+  );
+  server.registerTool(
+    "add_course_content",
+    {
+      description:
+        "把资源库内容加入课程指定文件夹，parentId=null 为根目录；重复资源跳过。默认隐藏，不隐式发布；缺省仅预览，confirm=true 执行。",
+      inputSchema: {
+        courseId: z.uuid(),
+        request: courseItemsAddRequestSchema,
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    guard(({ courseId, request, confirm }) => {
+      getCourseDetail(db, teacherId, courseId);
+      if (!confirm) return jsonContent({ preview: true, request });
+      return jsonContent(
+        appendCourseItems(db, teacherId, courseId, request.items, {
+          parentId: request.parentId,
+          visible: request.visible ?? false,
+          withCompanionUnits: request.withCompanionUnits,
+        }),
+      );
+    }),
+  );
+
+  server.registerTool(
+    "create_assignment",
+    {
+      description:
+        "给名下学生布置作业（unitIds 顺序即作业内单元顺序；studentIds 可省略：名下未归档学生恰 1 名时默认该生，否则报 STUDENT_AMBIGUOUS 附名单）。缺省仅预检（D15「已做过」检查，零副作用），confirm=true 执行创建。",
+      inputSchema: {
+        assignment: assignmentToolInputSchema,
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    guard(({ assignment, confirm }) => {
+      const studentIds = resolveAssignmentStudentIds(
+        db,
+        teacherId,
+        assignment.studentIds,
+      );
+      if (!confirm)
+        return jsonContent({
+          preview: true,
+          check: checkAssignment(db, teacherId, {
+            unitIds: assignment.unitIds,
+            studentIds,
+          }),
+        });
+      return jsonContent(
+        createAssignment(db, teacherId, { ...assignment, studentIds }),
+      );
+    }),
+  );
+  server.registerTool(
+    "delete_assignment",
+    {
+      description:
+        "软删一份作业（作答保留，学生端立即不可见）：有人已开始作答则拒绝执行（409 ASSIGNMENT_ATTEMPT_EXISTS）。缺省仅预览（标题 / 名单 / 已开始人数 / 是否有人已开答），confirm=true 执行。",
+      inputSchema: {
+        assignmentId: z.uuid(),
+        confirm: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    guard(({ assignmentId, confirm }) => {
+      if (!confirm)
+        return jsonContent(
+          assignmentDeletePreview(db, teacherId, assignmentId),
+        );
+      deleteUnstartedAssignment(db, teacherId, assignmentId);
+      return jsonContent({ deleted: true, assignmentId });
+    }),
+  );
 
   // 1. get_dsl_spec：DSL 规范 + 样例（复用 T1.13 spec 路由数据源）
   server.registerTool(
@@ -560,6 +745,32 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
   );
 
+  // 9b. get_question_learning_record（LR-PR5 §7.3）：单题学习记录（教师视角）
+  server.registerTool(
+    "get_question_learning_record",
+    {
+      description:
+        "获取单题学习记录（LearningRecord，教师视角 JSON 全文）：身份/题面（含语义节点）/作答史/三类书写材料（笔画、擦除墓碑、笔间停顿、时序覆盖度）/时间线/判定六面。笔迹为结构化点序列，与 get_student_learning_pack 的材料图片配合核对字形。范围内的作答不存在或不属于本教师时返回结构化错误。",
+      inputSchema: {
+        attemptId: z.string().uuid().describe("作答 id"),
+        questionId: z.string().min(1).describe("题目 id"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ attemptId, questionId }) => {
+      const now = deps.now === undefined ? undefined : new Date(deps.now);
+      const record = getTeacherLearningRecord(
+        db,
+        dataDir,
+        teacherId,
+        attemptId,
+        questionId,
+        ...(now !== undefined ? [now] : []),
+      );
+      return textContent(JSON.stringify(record));
+    }),
+  );
+
   // 10. get_question_stats：复用 T4.1 questions 接口口径
   server.registerTool(
     "get_question_stats",
@@ -735,6 +946,299 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       // （同 mtime 缓存），HTTP 与 MCP 内容逐字节一致
       const manifest = await readSpecFile("capabilities.json", specDir);
       return textContent(manifest.content);
+    }),
+  );
+
+  // 15. query_student_attempts：学生历次作答卷盘点（T-PR2 MCP-A ①，薄封装
+  // listTeacherAttempts + 每卷增量计数，见 teacher-queries.attemptExtrasOf）
+  server.registerTool(
+    "query_student_attempts",
+    {
+      description:
+        "按学生查询历次作答卷（含进行中，排除已作废卷）。每卷返回：来源上下文（作业/课程/单元/第 n 次）、状态、开始与交卷时间、用时、单元数与题数、已提交题数、对/错/待批题数、自标「不会」数、得分（自动/最终）与是否有整卷 AI 复盘。studentId 可省：名下未归档学生恰 1 名时自动默认该生，否则返回结构化错误（附学生名单）。limit（默认 50 上限 200）+ cursor 翻页。",
+      inputSchema: {
+        studentId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("学生 id；缺省 = 名下唯一未归档学生（多名时报错附名单）"),
+        courseId: z.string().uuid().optional().describe("按课程筛选"),
+        assignmentId: z.string().uuid().optional().describe("按作业筛选"),
+        unitId: z.string().min(1).optional().describe("按单元筛选"),
+        sourceType: attemptSourceSchema
+          .optional()
+          .describe("按来源筛选：assignment | course | wrong | lesson"),
+        status: attemptStatusSchema
+          .optional()
+          .describe("按状态筛选：draft | submitted | graded"),
+        from: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("最近活动时间下界（UTC ISO）"),
+        to: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("最近活动时间上界（UTC ISO）"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("每页条数；默认 50，上限 200"),
+        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard(
+      ({
+        studentId,
+        courseId,
+        assignmentId,
+        unitId,
+        sourceType,
+        status,
+        from,
+        to,
+        limit,
+        cursor,
+      }) => {
+        const parsed = teacherAttemptListQuerySchema.safeParse({
+          studentId: resolveToolStudent(db, teacherId, studentId),
+          ...(courseId !== undefined ? { courseId } : {}),
+          ...(assignmentId !== undefined ? { assignmentId } : {}),
+          ...(unitId !== undefined ? { unitId } : {}),
+          ...(sourceType !== undefined ? { sourceType } : {}),
+          ...(status !== undefined ? { status } : {}),
+          ...(from !== undefined ? { from } : {}),
+          ...(to !== undefined ? { to } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+          offset: decodeCursorOffset(cursor),
+        });
+        // ZodError 不裸抛（guard 会落 INTERNAL），转 HttpError 400（本仓规矩）
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${firstIssueMessage(parsed.error)}`,
+          );
+        }
+        const query = parsed.data;
+        const { attempts: cards, total } = listTeacherAttempts(
+          db,
+          teacherId,
+          query,
+        );
+        const extras = attemptExtrasOf(
+          db,
+          cards.map((card) => card.attemptId),
+        );
+        const offset = decodeCursorOffset(cursor);
+        const nextCursor =
+          offset + cards.length < total ? String(offset + cards.length) : null;
+        return jsonContent({
+          total,
+          nextCursor,
+          attempts: cards.map((card) => ({
+            attemptId: card.attemptId,
+            studentId: card.studentId,
+            studentName: card.studentName,
+            sourceType: card.sourceType,
+            courseId: card.courseId,
+            courseName: card.courseName,
+            assignmentId: card.assignmentId,
+            assignmentTitle: card.assignmentTitle,
+            unitId: card.unitId,
+            unitTitle: card.unitTitle,
+            attemptNo: card.attemptNo,
+            status: card.status,
+            startedAt: card.startedAt,
+            submittedAt: card.submittedAt,
+            activeSec: card.activeSec,
+            unitCount: card.unitCount,
+            questionCount: card.questionCount,
+            scoreAuto: card.scoreAuto,
+            scoreFinal: card.scoreFinal,
+            submittedCount: extras.get(card.attemptId)?.submittedCount ?? 0,
+            correctCount: extras.get(card.attemptId)?.correctCount ?? 0,
+            wrongCount: extras.get(card.attemptId)?.wrongCount ?? 0,
+            pendingCount: card.pendingCount,
+            unsureCount: extras.get(card.attemptId)?.unsureCount ?? 0,
+            hasAiReview: extras.get(card.attemptId)?.hasAiReview ?? false,
+          })),
+        });
+      },
+    ),
+  );
+
+  // 16. query_student_responses：逐题作答行检索（T-PR2 MCP-A ②；过程特征 +
+  // 存在性筛选 + 引用 id，查询装配见 teacher-queries.queryStudentResponses）
+  server.registerTool(
+    "query_student_responses",
+    {
+      description:
+        "按条件检索学生的逐题作答行（一行 = 一次作答，同题多次作答各自成行；已作废卷不返回，进行中卷只返回单题已提交的行）。筛选——归属：studentId（可省，同 query_student_attempts 约定）/ attemptIds / courseId / questionId / 提交时间 from-to；内容：knowledge（建卷冻结考点，精确等于）/ type（题型）；结果面：correct（true 判对 / false 判错 / pending 待批）/ flaggedUnsure / answered；过程面：minActiveSec / minChangeCount / usedHints / hasScratchOrInk（草稿笔记或正式笔迹）/ hasCorrection（订正）/ hasAiHelp（AI 求助）/ selfReview（自评）。summary 模式（默认）题干截 120 字且不含参考答案与解析；fields=full 返回题干全文、参考答案与选项——自学者注意 full 含参考答案。每行带引用 id（refs.inkIds/noteVersionIds/annotationIds/aiTaskIds），内容按 id 另取不内联。limit（默认 50 上限 200）+ cursor 翻页。",
+      inputSchema: {
+        studentId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("学生 id；缺省 = 名下唯一未归档学生（多名时报错附名单）"),
+        attemptIds: z
+          .array(z.string().uuid())
+          .min(1)
+          .optional()
+          .describe("按卷筛选（attempts.id，可多个）"),
+        courseId: z.string().uuid().optional().describe("按课程筛选"),
+        questionId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("按题目 id 筛选（DSL 题 id，非 UUID）"),
+        from: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("单题提交时间下界（UTC ISO）"),
+        to: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("单题提交时间上界（UTC ISO）"),
+        knowledge: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("按考点筛选（精确等于；取建卷冻结快照值）"),
+        type: questionTypeSchema.optional().describe("按题型筛选（七种）"),
+        correct: z
+          .enum(["true", "false", "pending"])
+          .optional()
+          .describe("判定结果：true 判对 / false 判错 / pending 待批"),
+        flaggedUnsure: z.boolean().optional().describe("仅自标「不会」的行"),
+        answered: z.boolean().optional().describe("是否有实际作答内容"),
+        minActiveSec: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("最短有效用时（秒）"),
+        minChangeCount: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("最少改答次数"),
+        usedHints: z.boolean().optional().describe("仅用过提示的行"),
+        hasScratchOrInk: z
+          .boolean()
+          .optional()
+          .describe("仅有草稿笔记或正式笔迹的行"),
+        hasCorrection: z.boolean().optional().describe("仅有订正记录的行"),
+        hasAiHelp: z.boolean().optional().describe("仅有 AI 求助记录的行"),
+        selfReview: z.boolean().optional().describe("仅做过自评的行"),
+        fields: z
+          .enum(["summary", "full"])
+          .optional()
+          .describe(
+            "默认 summary（题干截 120 字、不含答案/解析）；full 含参考答案、选项与解析（自学者注意 full 含参考答案）",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("每页条数；默认 50，上限 200"),
+        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard((args) => {
+      const studentId = resolveToolStudent(db, teacherId, args.studentId);
+      return jsonContent(
+        queryStudentResponses(db, teacherId, {
+          ...args,
+          studentId,
+          limit: args.limit ?? 50,
+        }),
+      );
+    }),
+  );
+
+  // 17. search_questions：题库检索（T-PR2 MCP-A ③；SQL 独立 teacher-queries.ts）
+  server.registerTool(
+    "search_questions",
+    {
+      description:
+        "在当前教师题库中检索题目（只搜未删除题）：题干关键字、考点名、题型、难度、单元 id 组合筛选；不按相关性排序，按单元与题序稳定排列。summary 模式（默认）题干截 120 字；fields=full 返回题干全文。本工具不返回答案/解析——需要答案时按卷与题号用 query_student_responses(fields=full) 或 get_unit。每页上限 100，limit（默认 50）+ cursor 翻页。",
+      inputSchema: {
+        q: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("题干关键字（包含匹配；%/_ 按字面处理）"),
+        knowledge: z.string().min(1).optional().describe("考点名（包含匹配）"),
+        type: questionTypeSchema.optional().describe("按题型筛选（七种）"),
+        difficulty: z
+          .number()
+          .int()
+          .min(1)
+          .max(5)
+          .optional()
+          .describe("按难度筛选（1–5）"),
+        unitId: z.string().min(1).optional().describe("按单元 id 筛选"),
+        fields: z.enum(["summary", "full"]).optional().describe("默认 summary"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("每页条数；默认 50，上限 100"),
+        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard((args) =>
+      jsonContent(
+        searchQuestions(db, teacherId, { ...args, limit: args.limit ?? 50 }),
+      ),
+    ),
+  );
+
+  // 18. get_report：报告列表 / 详情（T-PR2 MCP-A ④ ≈ listStudentReports /
+  // getReportDetail；reportId 省略即列表）
+  server.registerTool(
+    "get_report",
+    {
+      description:
+        "查询学情报告：带 reportId 返回单份详情（含 Markdown 正文）；省略 reportId 返回该学生的报告列表（createdAt 倒序，不含正文，按列表里的 id 再取详情）。studentId 可省（同约定：名下唯一未归档学生自动默认）。非本教师的学生 / 报告返回结构化「不存在」。",
+      inputSchema: {
+        studentId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("学生 id（列表模式必依；缺省 = 名下唯一未归档学生）"),
+        reportId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("报告 id（给出即返回详情，忽略 studentId）"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guard(({ studentId, reportId }) => {
+      if (reportId !== undefined) {
+        return jsonContent({
+          report: getReportDetail(db, teacherId, reportId),
+        });
+      }
+      return jsonContent(
+        listStudentReports(
+          db,
+          teacherId,
+          resolveToolStudent(db, teacherId, studentId),
+        ),
+      );
     }),
   );
 

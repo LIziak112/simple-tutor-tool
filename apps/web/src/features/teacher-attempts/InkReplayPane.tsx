@@ -98,5 +98,6 @@ export function InkReplayPane({
     );
   }
 
-  return <InkReplay data={model} layout={layout} />;
+  // LR-PR4：教师端回放带「看擦改」开关（墓碑淡色虚线 + 长停顿标记）
+  return <InkReplay data={model} layout={layout} showEraserToggle />;
 }

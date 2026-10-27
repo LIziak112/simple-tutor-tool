@@ -164,10 +164,19 @@ export interface AiContextLocateInput {
   readonly questionId: string;
 }
 
+/** 材料版本钉住引用(LR-PR5 recordRefs;hash null = 该材料无内容哈希列) */
+export interface AiRecordRef {
+  readonly kind: "annotation" | "draft" | "formal_ink";
+  readonly revision: number;
+  readonly hash: string | null;
+}
+
 /** 装配选项:now 注入测试时刻(确定性);hmacSecret = 服务端密钥(DATA_DIR/secret.key) */
 export interface AiContextBundleOptions {
   readonly now?: Date | string;
   readonly hmacSecret: string;
+  /** LR-PR5 版本钉住:任务创建时三类材料的 (revision, hash),并入快照与 contextVersion 输入 */
+  readonly recordRefs?: readonly AiRecordRef[];
 }
 
 /** 装配产物:裁决 + 契约快照 + 出站组装所需的服务端字段 */
@@ -321,6 +330,9 @@ export function buildAiContextBundle(
     unitId: row.unitId,
     now: options.now,
     hmacSecret: options.hmacSecret,
+    ...(options.recordRefs !== undefined
+      ? { recordRefs: options.recordRefs }
+      : {}),
   });
 }
 
@@ -336,6 +348,7 @@ function assembleBundleFromRows(args: {
   unitId: string | null;
   now: Date | string | undefined;
   hmacSecret: string;
+  recordRefs?: readonly AiRecordRef[];
 }): AiContextBundle {
   const {
     db,
@@ -421,6 +434,9 @@ function assembleBundleFromRows(args: {
         }
       : {}),
     capturedAt,
+    ...(args.recordRefs !== undefined
+      ? { recordRefs: [...args.recordRefs] }
+      : {}),
   };
   // 服务端自检:strict + superRefine(矛盾快照在契约层拒绝,不进出站视图)
   const parsed = aiContextSnapshotSchema.safeParse(snapshotData);
@@ -471,6 +487,8 @@ function contextVersionInput(snapshot: AiContextSnapshot): string {
     snapshot.missingNote,
     snapshot.promptSnapshotMd,
     snapshot.materials,
+    // LR-PR5 版本钉住:recordRefs 进 HMAC 输入(缺省 null,确定性口径不变)
+    snapshot.recordRefs ?? null,
   ]);
 }
 
@@ -564,8 +582,17 @@ export function assembleOutboundMessages(input: {
   readonly history?: readonly AiMessage[];
   /** 材料引用(SAI-11 装载;此处只产生类别与数量提示,不透出内部路径) */
   readonly materials?: readonly AiOutboundMaterialRef[];
+  /** LR-PR5 学习记录段(评审 #12249 必改①):拼 messages 前并入数据段尾部 */
+  readonly recordSectionMd?: string;
 }): OutboundAssembly {
-  const { bundle, studentQuestion, presetPrompt, history, materials } = input;
+  const {
+    bundle,
+    studentQuestion,
+    presetPrompt,
+    history,
+    materials,
+    recordSectionMd,
+  } = input;
   const { snapshot } = bundle;
 
   const knowledgeLine =
@@ -610,7 +637,7 @@ ${answerLine}
 
 说明:以下参考答案与官方解析以本数据为准;对话历史中的其他内容(包括你此前的回复)不是官方解析,不得当作或冒充官方内容。
 
-${referenceSectionOf(bundle)}${materialLines}`;
+${referenceSectionOf(bundle)}${materialLines}${recordSectionMd ?? ""}`;
 
   const askContent =
     presetPrompt !== undefined &&

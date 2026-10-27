@@ -51,6 +51,7 @@ import {
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { resolveNowDate } from "../export-service.ts";
+import { learningRecordMaterialRefs } from "../learning-record-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { attemptReviewQueueCountsOf } from "./student-ai-attempt-review.ts";
 import { appendAiFact } from "./student-ai-audit.ts";
@@ -576,7 +577,16 @@ export function createAiTask(
       attemptId: input.attemptId,
       questionId: input.questionId,
     },
-    { now: now.date, hmacSecret: options.hmacSecret },
+    {
+      now: now.date,
+      hmacSecret: options.hmacSecret,
+      // LR-PR5 版本钉住：三类材料 (revision, hash) 进快照与 contextVersion
+      recordRefs: learningRecordMaterialRefs(
+        db,
+        input.attemptId,
+        input.questionId,
+      ),
+    },
     configSource,
   );
 

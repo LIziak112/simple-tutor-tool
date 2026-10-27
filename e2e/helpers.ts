@@ -105,7 +105,7 @@ export async function isolateRegisterRateLimit(
 }
 
 /**
- * 教师经 /t/register UI 自助注册并自动登录进 /t/library（成功后 page 会话即该
+ * 教师经 /t/register UI 自助注册并自动登录进学生侧着陆页（T-PR4 Web-4；成功后 page 会话即该
  * 教师）。注册开关短暂被其他用例关闭时，以「先等开放 + 表单/提交撞上关闭窗口
  * 就重试」吸收竞态（三次内完成，否则抛错）。
  */
@@ -140,9 +140,9 @@ export async function registerTeacherViaUi(
     await page.fill("#register-login-name", loginName);
     await page.fill("#register-password", password);
     await page.getByRole("button", { name: "注册并进入" }).click();
-    // 成功 → 自动登录进入 /t（重定向到资源库）；提交瞬间开关被关则重试
+    // 成功 → 自动登录按 Web-4 落点进入学生侧（0 学生 → /t/students 列表）；提交瞬间开关被关则重试
     try {
-      await page.waitForURL("**/t/library", { timeout: 10_000 });
+      await page.waitForURL(/\/t\/students(\/|$)/, { timeout: 10_000 });
       registered = true;
     } catch {
       const closedShown = await closedVisible.isVisible().catch(() => false);

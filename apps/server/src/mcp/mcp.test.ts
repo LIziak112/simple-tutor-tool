@@ -10,7 +10,7 @@ import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ApiErr, ReportListData } from "@tutor/contract";
 import { learningPackGoalSchema, notePhaseSchema } from "@tutor/contract";
 import { ZipArchive } from "archiver";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -18,9 +18,15 @@ import { z } from "zod";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import {
+  aiTasks,
+  assignmentStudents,
+  assignments,
+  attempts,
   imports,
   lectures,
+  notes,
   questions,
+  responses,
   students,
   teachers,
   units,
@@ -340,13 +346,59 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 14 个工具（D23 定稿 11 个 + upload_image + import_zip + describe_capabilities）", async () => {
+  it("教师 Agent 可整理嵌套目录，预览不写库，跨教师拒绝", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const list = await client.callTool({ name: "list_courses", arguments: {} });
+    const courseId = JSON.parse(textOf(list)).courses[0].id as string;
+    const command = {
+      action: "createFolder",
+      title: "Agent 分类",
+      parentId: null,
+    };
+    const preview = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: { courseId, command },
+    });
+    expect(JSON.parse(textOf(preview)).preview).toBe(true);
+    const created = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: { courseId, command, confirm: true },
+    });
+    expect(created.isError).toBeFalsy();
+    const id = JSON.parse(textOf(created)).id as string;
+    const nested = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: {
+        courseId,
+        command: { ...command, title: "子文件夹", parentId: id },
+        confirm: true,
+      },
+    });
+    expect(nested.isError).toBeFalsy();
+    const denied = await client.callTool({
+      name: "manage_course_catalog",
+      arguments: { courseId: crypto.randomUUID(), command, confirm: true },
+    });
+    expect(denied.isError).toBe(true);
+    const catalog = await client.callTool({
+      name: "get_course_catalog",
+      arguments: { courseId },
+    });
+    expect(
+      JSON.parse(textOf(catalog)).items.filter(
+        (item: { title: string }) => item.title === "Agent 分类",
+      ),
+    ).toHaveLength(1);
+    await client.close();
+  });
+  it("tools/list 名单断言（既有 14 件 + 目录四件 + T-PR2 四件 + MCP-C 两件 + LR-PR5 一件；不定长，后续增工具不再破）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
-    const names = list.tools.map((t) => t.name).sort();
+    const names = list.tools.map((t) => t.name);
     expect(names).toEqual(
-      [
+      expect.arrayContaining([
         "get_dsl_spec",
         "lint_markdown",
         "import_markdown",
@@ -357,13 +409,195 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "get_unit",
         "get_student_learning_pack",
         "get_question_stats",
+        "get_question_learning_record",
         "save_report",
         "upload_image",
         "import_zip",
         "describe_capabilities",
-      ].sort(),
+        "get_course_catalog",
+        "get_library_catalog",
+        "manage_course_catalog",
+        "add_course_content",
+        "query_student_attempts",
+        "query_student_responses",
+        "search_questions",
+        "get_report",
+        "create_assignment",
+        "delete_assignment",
+      ]),
     );
     await client.close();
+  });
+
+  describe("MCP-C 作业写删两件（T-PR5）", () => {
+    it("create_assignment：缺省仅预检零副作用，confirm 创建；studentIds 省略多名学生 → STUDENT_AMBIGUOUS", async () => {
+      const env = await makeEnv();
+      const client = await connectClient(env, env.tokenA);
+      const countAssignments = (): number =>
+        env.db.select({ id: assignments.id }).from(assignments).all().length;
+      const before = countAssignments();
+      const args = {
+        assignment: {
+          title: "Agent 作业",
+          unitIds: [env.seed.units.u1.id],
+          studentIds: [env.seed.students.s1.id],
+        },
+      };
+      const preview = await client.callTool({
+        name: "create_assignment",
+        arguments: args,
+      });
+      expect(JSON.parse(textOf(preview)).preview).toBe(true);
+      expect(countAssignments()).toBe(before);
+      const created = await client.callTool({
+        name: "create_assignment",
+        arguments: { ...args, confirm: true },
+      });
+      expect(created.isError).toBeFalsy();
+      const data = JSON.parse(textOf(created)) as {
+        assignments: { title: string }[];
+      };
+      expect(data.assignments[0]?.title).toBe("Agent 作业");
+      expect(countAssignments()).toBe(before + 1);
+      // 省略 studentIds：种子 3 名未归档学生 → STUDENT_AMBIGUOUS（附名单）
+      const ambiguous = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: { title: "歧义", unitIds: [env.seed.units.u1.id] },
+          confirm: true,
+        },
+      });
+      expect(ambiguous.isError).toBe(true);
+      expect(textOf(ambiguous)).toContain("STUDENT_AMBIGUOUS");
+      // 显式空名单：schema .min(1) 在 SDK 入参层即拒（REST 契约同口径），零副作用
+      const emptyRoster = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: {
+            title: "空名单",
+            unitIds: [env.seed.units.u1.id],
+            studentIds: [],
+          },
+          confirm: true,
+        },
+      });
+      expect(emptyRoster.isError).toBe(true);
+      expect(textOf(emptyRoster)).toContain("作业必须至少指派一名学生");
+      expect(countAssignments()).toBe(before + 1);
+      // 单学生默认正向路径：归档 s2 / s3 后省略 studentIds → 名单恰为 s1
+      for (const id of [env.seed.students.s2.id, env.seed.students.s3.id]) {
+        env.db
+          .update(students)
+          .set({ archivedAt: SEED_NOW })
+          .where(eq(students.id, id))
+          .run();
+      }
+      const defaulted = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: { title: "默认该生", unitIds: [env.seed.units.u1.id] },
+          confirm: true,
+        },
+      });
+      expect(defaulted.isError).toBeFalsy();
+      const defaultedId = (
+        JSON.parse(textOf(defaulted)) as { assignments: { id: string }[] }
+      ).assignments[0]?.id as string;
+      expect(
+        env.db
+          .select({ studentId: assignmentStudents.studentId })
+          .from(assignmentStudents)
+          .where(eq(assignmentStudents.assignmentId, defaultedId))
+          .all()
+          .map((row) => row.studentId),
+      ).toEqual([env.seed.students.s1.id]);
+      expect(countAssignments()).toBe(before + 2);
+      await client.close();
+    });
+
+    it("域隔离：乙 token 建作业 / 删甲作业 → 结构化 404", async () => {
+      const env = await makeEnv();
+      const clientB = await connectClient(env, TOKEN_B);
+      const deniedCreate = await clientB.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: {
+            title: "乙的作业",
+            unitIds: [env.seed.units.u1.id],
+            studentIds: [env.seed.students.s1.id],
+          },
+          confirm: true,
+        },
+      });
+      expect(deniedCreate.isError).toBe(true);
+      const deniedDelete = await clientB.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId: env.seed.assignments.a1.id, confirm: true },
+      });
+      expect(deniedDelete.isError).toBe(true);
+      expect(textOf(deniedDelete)).toContain("ASSIGNMENT_NOT_FOUND");
+      await clientB.close();
+    });
+
+    it("delete_assignment：未开答预览 → confirm 删除；已开答 → 409；预览如实给 hasAttempts", async () => {
+      const env = await makeEnv();
+      const client = await connectClient(env, env.tokenA);
+      // 造一份未开答作业（经 REST 教师接口，不走被测工具）
+      const createRes = await env.app.request("/api/teacher/assignments", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.cookieA },
+        body: JSON.stringify({
+          title: "待删作业",
+          unitIds: [env.seed.units.u1.id],
+          studentIds: [env.seed.students.s1.id],
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const assignmentId = (
+        (await createRes.json()) as {
+          data: { assignments: { id: string }[] };
+        }
+      ).data.assignments[0]?.id as string;
+      const preview = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId },
+      });
+      const pv = JSON.parse(textOf(preview)) as {
+        preview: boolean;
+        title: string;
+        hasAttempts: boolean;
+      };
+      expect(pv.preview).toBe(true);
+      expect(pv.title).toBe("待删作业");
+      expect(pv.hasAttempts).toBe(false);
+      const deleted = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId, confirm: true },
+      });
+      expect(deleted.isError).toBeFalsy();
+      expect(JSON.parse(textOf(deleted)).deleted).toBe(true);
+      // 已开答：fixture 直插 attempt 改挂种子作业 a1——执行即 409，预览如实给事实
+      const started = frozenDraftAttempt(env.db, env.seed.students.s1.id, [
+        { questionId: "q-started", snapshotJson: null },
+      ]);
+      env.db
+        .update(attempts)
+        .set({ assignmentId: env.seed.assignments.a1.id })
+        .where(eq(attempts.id, started.attemptId))
+        .run();
+      const denied = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId: env.seed.assignments.a1.id, confirm: true },
+      });
+      expect(denied.isError).toBe(true);
+      expect(textOf(denied)).toContain("ASSIGNMENT_ATTEMPT_EXISTS");
+      const pv2 = await client.callTool({
+        name: "delete_assignment",
+        arguments: { assignmentId: env.seed.assignments.a1.id },
+      });
+      expect(JSON.parse(textOf(pv2)).hasAttempts).toBe(true);
+      await client.close();
+    });
   });
 
   it("describe_capabilities 返回清单原文，与 HTTP /api/public/spec/capabilities.json 逐字节一致（T7.6）", async () => {
@@ -1712,5 +1946,543 @@ describe("MCP get_student_learning_pack v2 与 UI 等价（T6R.16）", () => {
     expect(
       toolJson.properties.modules.properties.evidencePhases.items.enum,
     ).toEqual([...notePhaseSchema.options]);
+  });
+});
+
+// ---------- T-PR2：MCP-A 教师只读查询四件 ----------
+
+/** 解析工具 JSON 结果（textOf 后 JSON.parse；形状不符会在断言处暴露） */
+function parseToolJson<T>(result: unknown): T {
+  return JSON.parse(textOf(result)) as T;
+}
+
+/** 取非空值（biome noNonNullAssertion 的替代写法，与既有测试同款） */
+function mustDefined<T>(value: T | undefined | null, what: string): T {
+  if (value === undefined || value === null) {
+    throw new Error(`测试前置条件不满足：${what}`);
+  }
+  return value;
+}
+
+/**
+ * 找某学生一份已交卷（graded）且行数 ≥ minRows 的卷（seed-demo 的作业卷，
+ * 全卷判定已写），供逐题 fixture 改数用。
+ */
+function gradedAttemptWithRows(
+  db: Db,
+  studentId: string,
+  minRows: number,
+): string {
+  const rows = db
+    .select({ id: attempts.id, status: attempts.status })
+    .from(attempts)
+    .where(eq(attempts.studentId, studentId))
+    .all();
+  for (const row of rows) {
+    if (row.status !== "graded") continue;
+    const count =
+      db
+        .select({ n: sql<number>`count(*)` })
+        .from(responses)
+        .where(eq(responses.attemptId, row.id))
+        .get()?.n ?? 0;
+    if (count >= minRows) return row.id;
+  }
+  throw new Error(
+    `fixture 前置不满足：${studentId} 没有 ≥${minRows} 行的 graded 卷`,
+  );
+}
+
+describe("query_student_attempts（T-PR2 MCP-A ①）", () => {
+  it("主路径：graded 卷返回已提交题数与对/错/待批计数，hasAiReview 缺省 false", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const attemptId = gradedAttemptWithRows(env.db, env.seed.students.s1.id, 3);
+    const result = await client.callTool({
+      name: "query_student_attempts",
+      arguments: { studentId: env.seed.students.s1.id },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      total: number;
+      nextCursor: string | null;
+      attempts: {
+        attemptId: string;
+        status: string;
+        questionCount: number;
+        submittedCount: number;
+        correctCount: number;
+        wrongCount: number;
+        pendingCount: number;
+        hasAiReview: boolean;
+      }[];
+    }>(result);
+    const card = mustDefined(
+      data.attempts.find((item) => item.attemptId === attemptId),
+      "s1 的 graded 卷在结果里",
+    );
+    expect(card.status).toBe("graded");
+    // seed 走旧协议整卷交卷：responses.submittedAt 恒 null（列语义），
+    // submittedCount 不作等值断言；对/错/待批三计数覆盖全部有快照的题
+    expect(card.correctCount + card.wrongCount + card.pendingCount).toBe(
+      card.questionCount,
+    );
+    expect(card.hasAiReview).toBe(false);
+    await client.close();
+  });
+
+  it("域隔离：乙传甲的学生 id → STUDENT_NOT_FOUND", async () => {
+    const env = await makeEnv();
+    const clientB = await connectClient(env, TOKEN_B);
+    const result = await clientB.callTool({
+      name: "query_student_attempts",
+      arguments: { studentId: env.seed.students.s1.id },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("STUDENT_NOT_FOUND");
+    await clientB.close();
+  });
+
+  it("studentId 省略：乙名下唯一学生自动默认；甲多学生 → STUDENT_AMBIGUOUS 附名单", async () => {
+    const env = await makeEnv();
+    // 乙固定学生 id 是非 UUID 的 fixture 值（无作答行，改 id 无外键牵连）——
+    // 换成合法 UUID 才能过 teacherAttemptListQuerySchema 的 z.uuid() 校验
+    const B_STUDENT_UUID = "3b333333-3333-4333-8333-333333333301";
+    env.db
+      .update(students)
+      .set({ id: B_STUDENT_UUID })
+      .where(eq(students.id, "student-b-t46-mcp-0001"))
+      .run();
+    // 乙：唯一未归档学生 → 不带 studentId 可调用（乙学生无作答，total=0 即可）
+    const clientB = await connectClient(env, TOKEN_B);
+    const okB = await clientB.callTool({
+      name: "query_student_attempts",
+      arguments: {},
+    });
+    expect(okB.isError).toBeFalsy();
+    expect(parseToolJson<{ total: number }>(okB).total).toBe(0);
+    await clientB.close();
+    // 甲：3 名学生 → 结构化错误附 [{studentId, displayName}]
+    const clientA = await connectClient(env, env.tokenA);
+    const badA = await clientA.callTool({
+      name: "query_student_attempts",
+      arguments: {},
+    });
+    expect(badA.isError).toBe(true);
+    const err = parseToolJson<{
+      error: string;
+      message: string;
+      _students: { studentId: string; displayName: string }[];
+    }>(badA);
+    expect(err.error).toBe("STUDENT_AMBIGUOUS");
+    expect(err._students).toHaveLength(3);
+    expect(
+      mustDefined(err._students[0], "名单首项").displayName.length,
+    ).toBeGreaterThan(0);
+    await clientA.close();
+  });
+
+  it("cursor 翻页：limit=1 连续取齐不重不漏，末页 nextCursor 为 null", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const collected: string[] = [];
+    let cursor: string | undefined;
+    let total = -1;
+    for (let page = 0; page < 50; page++) {
+      const pageResult = await client.callTool({
+        name: "query_student_attempts",
+        arguments: {
+          studentId: env.seed.students.s1.id,
+          limit: 1,
+          ...(cursor !== undefined ? { cursor } : {}),
+        },
+      });
+      expect(pageResult.isError).toBeFalsy();
+      const data = parseToolJson<{
+        total: number;
+        nextCursor: string | null;
+        attempts: { attemptId: string }[];
+      }>(pageResult);
+      total = data.total;
+      collected.push(...data.attempts.map((item) => item.attemptId));
+      if (data.nextCursor === null) break;
+      cursor = data.nextCursor;
+    }
+    expect(total).toBeGreaterThanOrEqual(0);
+    expect(new Set(collected).size).toBe(collected.length);
+    expect(collected.length).toBe(total);
+    await client.close();
+  });
+});
+
+describe("query_student_responses（T-PR2 MCP-A ②）", () => {
+  /** 造数：graded 卷前三行分别满足「错+改答≥2」「unsure+订正」「AI 求助」 */
+  async function makeResponsesEnv() {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const attemptId = gradedAttemptWithRows(env.db, env.seed.students.s1.id, 3);
+    const rows = env.db
+      .select({ id: responses.id, questionId: responses.questionId })
+      .from(responses)
+      .where(eq(responses.attemptId, attemptId))
+      .all();
+    const r1 = mustDefined(rows[0], "行 1");
+    const r2 = mustDefined(rows[1], "行 2");
+    const r3 = mustDefined(rows[2], "行 3");
+    // r1：判错 + 改答 3 次
+    env.db
+      .update(responses)
+      .set({ finalCorrect: false, changeCount: 3 })
+      .where(eq(responses.id, r1.id))
+      .run();
+    // r2：自标「不会」+ 订正笔记行（phase=correction）
+    env.db
+      .update(responses)
+      .set({ studentFlag: "unsure" })
+      .where(eq(responses.id, r2.id))
+      .run();
+    env.db
+      .insert(notes)
+      .values({
+        id: randomUUID(),
+        attemptId,
+        questionId: r2.questionId,
+        questionRevisionId: r2.id,
+        phase: "correction",
+        currentRevision: 1,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+      })
+      .run();
+    // r3：AI 求助任务（inapp / created）
+    env.db
+      .insert(aiTasks)
+      .values({
+        id: randomUUID(),
+        studentId: env.seed.students.s1.id,
+        attemptId,
+        questionId: r3.questionId,
+        questionRevisionId: r3.id,
+        channel: "inapp",
+        modeAtSend: "open_study",
+        promptHash: "t-pr2-fixture-prompt",
+        contextSnapshotJson: "{}",
+        status: "created",
+        beforeSubmit: true,
+        mutationId: `t-pr2-${randomUUID()}`,
+        createdAt: "2026-10-02T00:00:00.000Z",
+        updatedAt: "2026-10-02T00:00:00.000Z",
+      })
+      .run();
+    return {
+      env,
+      client,
+      s1: env.seed.students.s1.id,
+      r1: r1.questionId,
+      r2: r2.questionId,
+      r3: r3.questionId,
+    };
+  }
+
+  it("summary 行不含答案/解析键，题干 ≤120 字", async () => {
+    const { client, s1 } = await makeResponsesEnv();
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, limit: 200 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      total: number;
+      responses: (Record<string, unknown> & { stemMd: string | null })[];
+    }>(result);
+    expect(data.total).toBeGreaterThan(0);
+    for (const row of data.responses) {
+      expect("answer" in row).toBe(false);
+      expect("answersJson" in row).toBe(false);
+      expect("solutionMd" in row).toBe(false);
+      expect(row.stemMd === null || row.stemMd.length <= 120).toBe(true);
+    }
+    await client.close();
+  });
+
+  it("studentId 过滤：同教师两名学生，查 A 不含 B 的行（评审 #11725 必改①）", async () => {
+    const { env, client, s1 } = await makeResponsesEnv();
+    const s2 = env.seed.students.s2.id;
+    // s2 名下有作答行（种子作业卷），查 s1 的结果不得混入
+    const s2RowIds = new Set(
+      env.db
+        .select({ id: responses.id })
+        .from(responses)
+        .innerJoin(attempts, eq(responses.attemptId, attempts.id))
+        .where(eq(attempts.studentId, s2))
+        .all()
+        .map((row) => row.id),
+    );
+    expect(s2RowIds.size).toBeGreaterThan(0);
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, limit: 200 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      total: number;
+      responses: { revisionId: string }[];
+    }>(result);
+    expect(data.total).toBeGreaterThan(0);
+    for (const row of data.responses) {
+      expect(s2RowIds.has(row.revisionId)).toBe(false);
+    }
+    // 反向同口径：查 s2 只回 s2 的行
+    const resultS2 = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s2, limit: 200 },
+    });
+    expect(resultS2.isError).toBeFalsy();
+    const dataS2 = parseToolJson<{
+      total: number;
+      responses: { revisionId: string }[];
+    }>(resultS2);
+    expect(dataS2.total).toBeGreaterThan(0);
+    for (const row of dataS2.responses) {
+      expect(data.responses.some((r) => r.revisionId === row.revisionId)).toBe(
+        false,
+      );
+    }
+    await client.close();
+  });
+
+  it("fields=full 返回参考答案与选项（快照 $.answers / $.options 路径，评审 #11725 必改②）", async () => {
+    const { client, s1 } = await makeResponsesEnv();
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, fields: "full", limit: 200 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      responses: {
+        type: string | null;
+        answer: unknown;
+        options: unknown;
+      }[];
+    }>(result);
+    expect(data.responses.length).toBeGreaterThan(0);
+    // 种子卷判定/选择/填空行快照 $.answers 非空（修复前取 $.answersJson 恒 null）
+    const withAnswer = data.responses.filter((row) => row.answer !== null);
+    expect(withAnswer.length).toBeGreaterThan(0);
+    // 选择题行 full 面带选项数组（没选项的参考答案没法用）
+    for (const row of data.responses) {
+      if (row.type === "choice") {
+        expect(Array.isArray(row.options)).toBe(true);
+        expect((row.options as unknown[]).length).toBeGreaterThan(0);
+      }
+    }
+    await client.close();
+  });
+
+  it("「错 + 改答 ≥2」筛选命中唯一行（changeCount=3 的 fixture 行）", async () => {
+    const { client, r1, s1 } = await makeResponsesEnv();
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, correct: "false", minChangeCount: 2 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      responses: { questionId: string; changeCount: number }[];
+    }>(result);
+    expect(data.responses).toHaveLength(1);
+    expect(mustDefined(data.responses[0], "命中行").questionId).toBe(r1);
+    expect(mustDefined(data.responses[0], "命中行").changeCount).toBe(3);
+    await client.close();
+  });
+
+  it("「unsure + 有订正」筛选命中唯一行", async () => {
+    const { client, r2, s1 } = await makeResponsesEnv();
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, flaggedUnsure: true, hasCorrection: true },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      responses: {
+        questionId: string;
+        flaggedUnsure: boolean;
+        hasCorrection: boolean;
+      }[];
+    }>(result);
+    expect(data.responses).toHaveLength(1);
+    const row = mustDefined(data.responses[0], "命中行");
+    expect(row.questionId).toBe(r2);
+    expect(row.flaggedUnsure).toBe(true);
+    expect(row.hasCorrection).toBe(true);
+    await client.close();
+  });
+
+  it("hasAiHelp 命中并回带 aiTaskIds 引用", async () => {
+    const { client, r3, s1 } = await makeResponsesEnv();
+    const result = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, hasAiHelp: true },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parseToolJson<{
+      responses: {
+        questionId: string;
+        hasAiHelp: boolean;
+        refs: { aiTaskIds: string[] };
+      }[];
+    }>(result);
+    expect(data.responses).toHaveLength(1);
+    const row = mustDefined(data.responses[0], "命中行");
+    expect(row.questionId).toBe(r3);
+    expect(row.hasAiHelp).toBe(true);
+    expect(row.refs.aiTaskIds).toHaveLength(1);
+    await client.close();
+  });
+
+  it("limit=201 被 200 上限拦下；limit=1 翻页不重不漏", async () => {
+    const { client, s1 } = await makeResponsesEnv();
+    const tooMany = await client.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1, limit: 201 },
+    });
+    expect(tooMany.isError).toBe(true);
+
+    const collected: string[] = [];
+    let cursor: string | undefined;
+    let total = -1;
+    for (let page = 0; page < 500; page++) {
+      const pageResult = await client.callTool({
+        name: "query_student_responses",
+        arguments: {
+          studentId: s1,
+          limit: 1,
+          ...(cursor !== undefined ? { cursor } : {}),
+        },
+      });
+      expect(pageResult.isError).toBeFalsy();
+      const data = parseToolJson<{
+        total: number;
+        nextCursor: string | null;
+        responses: { revisionId: string }[];
+      }>(pageResult);
+      total = data.total;
+      collected.push(...data.responses.map((row) => row.revisionId));
+      if (data.nextCursor === null) break;
+      cursor = data.nextCursor;
+    }
+    expect(total).toBeGreaterThan(0);
+    expect(new Set(collected).size).toBe(collected.length);
+    expect(collected.length).toBe(total);
+    await client.close();
+  });
+
+  it("域隔离：乙查甲学生 → STUDENT_NOT_FOUND；乙缺省查自己学生为空集", async () => {
+    const { env, s1 } = await makeResponsesEnv();
+    const clientB = await connectClient(env, TOKEN_B);
+    const bad = await clientB.callTool({
+      name: "query_student_responses",
+      arguments: { studentId: s1 },
+    });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("STUDENT_NOT_FOUND");
+    const empty = await clientB.callTool({
+      name: "query_student_responses",
+      arguments: {},
+    });
+    expect(empty.isError).toBeFalsy();
+    expect(parseToolJson<{ total: number }>(empty).total).toBe(0);
+    await clientB.close();
+  });
+});
+
+describe("search_questions（T-PR2 MCP-A ③）", () => {
+  it("主路径：考点与题干关键字命中种子题；考点+题型收窄到唯一", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const byKnowledge = await client.callTool({
+      name: "search_questions",
+      arguments: { knowledge: "绝对值" },
+    });
+    expect(byKnowledge.isError).toBeFalsy();
+    const data = parseToolJson<{
+      total: number;
+      questions: { id: string; type: string; stemMd: string | null }[];
+    }>(byKnowledge);
+    expect(data.total).toBeGreaterThanOrEqual(2);
+    for (const row of data.questions) {
+      expect(row.stemMd === null || row.stemMd.length <= 120).toBe(true);
+    }
+    const narrowed = await client.callTool({
+      name: "search_questions",
+      arguments: { knowledge: "绝对值", type: "choice" },
+    });
+    const narrowedData = parseToolJson<{ total: number }>(narrowed);
+    expect(narrowedData.total).toBe(1);
+    const byKeyword = await client.callTool({
+      name: "search_questions",
+      arguments: { q: "相反数" },
+    });
+    expect(
+      parseToolJson<{ total: number }>(byKeyword).total,
+    ).toBeGreaterThanOrEqual(1);
+    await client.close();
+  });
+
+  it("域隔离：乙域搜甲的种子关键字为空集", async () => {
+    const env = await makeEnv();
+    const clientB = await connectClient(env, TOKEN_B);
+    const result = await clientB.callTool({
+      name: "search_questions",
+      arguments: { q: "相反数" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(parseToolJson<{ total: number }>(result).total).toBe(0);
+    await clientB.close();
+  });
+});
+
+describe("get_report（T-PR2 MCP-A ④）", () => {
+  it("列表与详情：save_report 后列表可见、reportId 取详情含正文；乙查甲报告 REPORT_NOT_FOUND", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const saved = await client.callTool({
+      name: "save_report",
+      arguments: {
+        studentId: env.seed.students.s1.id,
+        title: "T-PR2 报告",
+        markdown: "# 正文\nT-PR2 内容",
+      },
+    });
+    expect(saved.isError).toBeFalsy();
+    const reportId = mustDefined(
+      parseToolJson<{ report: { id: string } }>(saved).report,
+      "save_report 回执",
+    ).id;
+    const list = await client.callTool({
+      name: "get_report",
+      arguments: { studentId: env.seed.students.s1.id },
+    });
+    const listData = parseToolJson<{
+      reports: { id: string; title: string }[];
+    }>(list);
+    expect(
+      listData.reports.some(
+        (row) => row.id === reportId && row.title === "T-PR2 报告",
+      ),
+    ).toBe(true);
+    const detail = await client.callTool({
+      name: "get_report",
+      arguments: { reportId },
+    });
+    const detailData = parseToolJson<{ report: { markdown: string } }>(detail);
+    expect(detailData.report.markdown).toContain("T-PR2 内容");
+    const clientB = await connectClient(env, TOKEN_B);
+    const foreign = await clientB.callTool({
+      name: "get_report",
+      arguments: { reportId },
+    });
+    expect(foreign.isError).toBe(true);
+    expect(textOf(foreign)).toContain("REPORT_NOT_FOUND");
+    await client.close();
+    await clientB.close();
   });
 });

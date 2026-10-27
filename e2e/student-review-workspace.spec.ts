@@ -222,17 +222,17 @@ test(
       document.documentElement.style.zoom = "";
       document.documentElement.dir = "ltr";
     });
-    await row.getByRole("button", { name: "本次原稿", exact: true }).click();
+    await row.getByRole("button", { name: "草稿", exact: true }).click();
+    await expect(card.getByText("草稿原稿", { exact: true })).toBeVisible();
+    // 订正是直达动作：打开全屏重做工作台（题面 + 圈画 + 草稿纸）
+    await row.getByRole("button", { name: "第 2 题订正", exact: true }).click();
     await expect(
-      card.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+      page.getByRole("dialog").getByText("订正 · 第 2 题"),
     ).toBeVisible();
-    await row.getByRole("button", { name: "订正", exact: true }).click();
-    await expect(
-      card.getByRole("button", { name: "第 2 题查看草稿原稿" }),
-    ).toBeHidden();
-    await expect(
-      card.getByRole("button", { name: "添加订正标画", exact: false }),
-    ).toBeVisible();
+    await page.getByRole("button", { name: "关闭弹层" }).first().click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    // 工作台关闭后草稿面板保持（控制器持续挂载）
+    await expect(card.getByText("草稿原稿", { exact: true })).toBeVisible();
     await row.getByRole("button", { name: "更多", exact: true }).click();
     await expect(
       card.getByRole("button", { name: "第 2 题 AI 复习包" }),
@@ -464,18 +464,9 @@ test(
         2,
       ),
     );
-    await last.getByRole("button", { name: "本次原稿", exact: true }).click();
-    await last
-      .getByRole("button", { name: "第 130 题查看草稿原稿", exact: true })
-      .click();
+    await last.getByRole("button", { name: "草稿", exact: true }).click();
     await expect(
       last.getByText("本次交卷没有采集到草稿", { exact: false }),
-    ).toBeVisible();
-    await last
-      .getByRole("button", { name: "查看第 130 题题干标注", exact: true })
-      .click();
-    await expect(
-      last.getByText("本题未使用题干标注", { exact: true }),
     ).toBeVisible();
     expect(materialRequests.length).toBeGreaterThan(0);
     await page.setViewportSize({ width: 1110, height: 668 });

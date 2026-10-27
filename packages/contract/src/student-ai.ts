@@ -126,6 +126,16 @@ export const aiContextMissingNoteSchema = z.enum([
 ]);
 export type AiContextMissingNote = z.infer<typeof aiContextMissingNoteSchema>;
 
+// ---------- 材料类别（快照 recordRefs 与材料行共用；先于快照定义避免同模块前向引用） ----------
+
+/** 附件类别：题面圈画 / 草稿 / 正式手写 */
+export const aiMaterialKindSchema = z.enum([
+  "annotation",
+  "draft",
+  "formal_ink",
+]);
+export type AiMaterialKind = z.infer<typeof aiMaterialKindSchema>;
+
 /**
  * 单题文字快照（服务端装配，读 questionSnapshotJson 与 responses 行，不读当前题库）。
  * 教师私注不是 AI 合法内容：strict 拒绝 teacherComment 等任何教师内部字段。
@@ -172,6 +182,25 @@ export const aiContextSnapshotSchema = z
       .optional(),
     /** 快照时间（UTC ISO） */
     capturedAt: z.string().min(1),
+    /**
+     * LR-PR5 版本钉住：任务创建时三类材料的 (revision, hash)（§7.3）。
+     * 并入 contextVersion 的 HMAC 输入——钉住内容变化即换任务上下文版本。
+     * 旧快照缺省（undefined），解析零变化。
+     */
+    recordRefs: z
+      .array(
+        z
+          .object({
+            kind: aiMaterialKindSchema,
+            revision: z.number().int().min(0),
+            hash: z
+              .string()
+              .regex(/^[0-9a-f]{64}$/)
+              .nullable(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -195,14 +224,6 @@ export const aiContextSnapshotSchema = z
 export type AiContextSnapshot = z.infer<typeof aiContextSnapshotSchema>;
 
 // ---------- 材料行 ----------
-
-/** 附件类别：题面圈画 / 草稿 / 正式手写 */
-export const aiMaterialKindSchema = z.enum([
-  "annotation",
-  "draft",
-  "formal_ink",
-]);
-export type AiMaterialKind = z.infer<typeof aiMaterialKindSchema>;
 
 /**
  * 材料行（学生可见视图）：类别/页序/尺寸/字节/内容哈希/状态/缺失原因。

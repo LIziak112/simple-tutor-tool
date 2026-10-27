@@ -49,6 +49,12 @@ export * from "./learning-event.ts";
 /** AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19）：导出请求（范围×模块×目标×隐私）、
  *  LearningPack 模块化 schema（content/attempts/traces/summary）、preview 响应、prompt.md 模板单一来源 */
 export * from "./learning-pack.ts";
+/** 学习记录模型契约（LR-PR1，学习记录模型设计稿 §3 起为权威定义）：服务端
+ *  装配的只读聚合 LearningRecord 六面（identity/question/answer/ink/timeline/
+ *  grading）、角色投影与时间线形状、过程/AI 常量——渲染/导出/AI 上下文都是
+ *  它的投影（P1：记录是事实源） */
+export * from "./learning-record.ts";
+export * from "./learning-record-ai.ts";
 /** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
 export * from "./library-api.ts";
 /** 共享材料与题组契约（TT-05a 域①起为权威定义，决策记录 §5.2 定稿）：材料/题组
@@ -76,6 +82,17 @@ export * from "./practice-question-submit.ts";
 export * from "./practice-workflow.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
+
+/** 题面语义节点契约（LR-4，学习记录模型设计稿 §5.1 起为权威定义）：节点键
+ *  格式、kind 词表与枚举算法版本——md-dsl questionNodesOf 与渲染器
+ *  data-lr-node（LR-PR2）的单源形状 */
+export * from "./question-node.ts";
+
+/** 学生主页「错题与存疑」聚合端点契约（T-PR4 Web-2② 起为权威定义，教师端迭代
+ *  方案 §3）：GET /api/teacher/students/:id/question-review 查询参数与聚合行
+ *  （一行 = questionId × 该 kind 口径下最新代表作答；口径与 MCP-A 同一构造器） */
+export * from "./question-review-api.ts";
+
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";

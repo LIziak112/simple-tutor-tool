@@ -1,9 +1,14 @@
+import type { LearningRecordAiView } from "@tutor/contract";
 import { aiContextSnapshotSchema } from "@tutor/contract";
 import type { Logger } from "pino";
 import { loadOrCreateSecretKey } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
 import type { AiTaskRow } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import {
+  learningRecordAiViewForTask,
+  learningRecordSectionMd,
+} from "../learning-record-ai.ts";
 import { findDispatchInappConnection } from "./connection-service.ts";
 import type { ProviderTransport } from "./provider-client.ts";
 import {
@@ -160,6 +165,7 @@ const ASSEMBLY_BROKEN_MESSAGE =
 export function outboundAssemblyOfTask(
   db: Db,
   task: AiTaskRow,
+  options?: { recordView?: LearningRecordAiView | undefined },
 ): OutboundAssembly {
   let parsedJson: unknown;
   try {
@@ -185,6 +191,11 @@ export function outboundAssemblyOfTask(
     studentQuestion: last.contentMd,
     history: history.filter((message) => message.id !== last.id),
     materials: loadOutboundMaterialRefs(db, task.id),
+    // LR-PR5 评审 #12249 必改①：学习记录段在拼 messages 前并入数据段
+    // （claim 与 dispatch 同源），不再是提交后才改 contextDataMd 的死字符串
+    ...(options?.recordView !== undefined
+      ? { recordSectionMd: learningRecordSectionMd(options.recordView) }
+      : {}),
   });
 }
 
@@ -380,7 +391,10 @@ async function dispatchOne(
   try {
     const task = taskOf(db, taskId);
     if (task === undefined) return "skipped";
-    assembly = outboundAssemblyOfTask(db, task);
+    // LR-PR5：学习记录视图（可选增强；失败省略——refs 漂移/装配异常时
+    // 行为回到无 record，与 PNG 同源）
+    const recordView = learningRecordAiViewForTask(db, ctx.dataDir, task);
+    assembly = outboundAssemblyOfTask(db, task, { recordView });
     images = collectAiTaskMaterialBytes(db, ctx.dataDir, taskId).map(
       (item) => new Uint8Array(item.bytes),
     );

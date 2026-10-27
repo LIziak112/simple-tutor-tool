@@ -25,6 +25,20 @@ export interface AtramentReplayCanvas {
     strokes: readonly InkStroke[],
     visiblePoints: readonly number[],
   ): void;
+  /**
+   * LR-PR4：墓碑淡色虚线（教师「看擦改」开关）。可选方法——既有 mock/消费方
+   * 不实现时组件安全跳过。tombstones 来自 model.deletedSlots；startMs ≤ t <
+   * deletedAtMs 的墓碑按已走过点数绘制。
+   */
+  drawDeleted?(
+    tombstones: readonly {
+      stroke: InkStroke;
+      startMs: number;
+      deletedAtMs: number;
+      pointTimesMs: number[];
+    }[],
+    timeMs: number,
+  ): void;
   destroy(): void;
 }
 
@@ -46,6 +60,16 @@ export function createAtramentReplayCanvas(
   let lastFrame: {
     strokes: readonly InkStroke[];
     visiblePoints: readonly number[];
+  } | null = null;
+  /** 最近一次 drawDeleted 的入参（resize 后在 drawFrame 之上重画墓碑） */
+  let lastDeleted: {
+    tombstones: readonly {
+      stroke: InkStroke;
+      startMs: number;
+      deletedAtMs: number;
+      pointTimesMs: number[];
+    }[];
+    timeMs: number;
   } | null = null;
 
   function sizeCanvas(): void {
@@ -73,6 +97,9 @@ export function createAtramentReplayCanvas(
     visiblePoints: readonly number[],
   ): void => {
     lastFrame = { strokes, visiblePoints };
+    // 「看擦改」关掉后不再调 drawDeleted——清掉残留墓碑入参，防 ResizeObserver
+    // 重画时把过期墓碑叠回当前帧（评审 #11750 顺手项）
+    lastDeleted = null;
     // 清屏（transform 安全口径，同 adapter.redraw；随后恢复画笔状态）
     ctx2d.save();
     ctx2d.setTransform(1, 0, 0, 1, 0, 0);
@@ -94,15 +121,56 @@ export function createAtramentReplayCanvas(
     }
   };
 
-  // 尺寸变化（iPad 旋转、窗口缩放）：重设位图并重画当前帧（归一化坐标保证比例正确）
+  // LR-PR4：墓碑淡色虚线（教师「看擦改」）。startMs ≤ t < deletedAtMs 可见，
+  // 点数按 pointTimesMs 截断到当前时刻；样式在 save/restore 内局部生效。
+  // 注意：freehand 渲染器（学生设置可选）走多边形填充，setLineDash 不生效、
+  // 只剩 alpha 淡化——虚线承诺仅对 atrament 主路径成立
+  const drawDeleted = (
+    tombstones: readonly {
+      stroke: InkStroke;
+      startMs: number;
+      deletedAtMs: number;
+      pointTimesMs: number[];
+    }[],
+    timeMs: number,
+  ): void => {
+    lastDeleted = { tombstones, timeMs };
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = "source-over";
+    ctx2d.setLineDash([6, 6]);
+    ctx2d.globalAlpha = 0.35;
+    ctx2d.lineCap = "round";
+    ctx2d.lineJoin = "round";
+    for (const tomb of tombstones) {
+      if (timeMs < tomb.startMs || timeMs >= tomb.deletedAtMs) continue;
+      let visible = 0;
+      for (const t of tomb.pointTimesMs) {
+        if (t <= timeMs - tomb.startMs) visible += 1;
+        else break;
+      }
+      if (visible <= 0) continue;
+      replayAtramentStroke(atrament, cssWidth, {
+        ...tomb.stroke,
+        points: tomb.stroke.points.slice(0, visible),
+      });
+    }
+    ctx2d.restore();
+  };
+
+  // 尺寸变化（iPad 旋转、窗口缩放）：重设位图并重画当前帧（归一化坐标保证比例正确）。
+  // 评审 #11771 必改②：先取 lastDeleted 再 drawFrame——drawFrame 会清它，
+  // 顺序颠倒会让 resize 后墓碑消失到下一次播放头变化。
   const observer = new ResizeObserver(() => {
     sizeCanvas();
+    const deleted = lastDeleted;
     if (lastFrame) drawFrame(lastFrame.strokes, lastFrame.visiblePoints);
+    if (deleted) drawDeleted(deleted.tombstones, deleted.timeMs);
   });
   observer.observe(container);
 
   return {
     drawFrame,
+    drawDeleted,
     destroy(): void {
       observer.disconnect();
       atrament.destroy();

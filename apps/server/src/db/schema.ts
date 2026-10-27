@@ -462,7 +462,7 @@ export const units = sqliteTable(
  * 课程目录条目表（T2A.1，D6）——课程的有序目录：分节标题 / 讲义引用 / 练习单元引用。
  * - 引用而非复制（D1）：只存 refId，资源库改动全课程即时生效；
  * - kind='section' 时 refId 为 NULL、title 必填；lecture/unit 时 refId 必填、
- *   title 为 NULL（标题取资源当前值）；
+ *   title 保存课程内显示别名（历史 NULL 回落资源标题）；
  * - 唯一约束 (courseId, kind, refId)：同一资源在同一课程只能出现一次。
  *   SQLite 对含 NULL 的唯一键不判重 → section（refId=NULL）多条合法（期望行为，
  *   同名分节如需限制在应用层校验）；重复添加 lecture/unit 由服务层返回
@@ -482,10 +482,14 @@ export const courseItems = sqliteTable(
     kind: text("kind").$type<"section" | "lecture" | "unit">().notNull(),
     /** 引用资源 id（lectures.id / units.id）；section 为 NULL */
     refId: text("ref_id"),
-    /** 分节标题（仅 kind='section' 使用）；其余为 NULL */
+    /** 课程内唯一显示名：文件夹名称或资源别名；历史行可空。 */
     title: text("title"),
     /** 课程内排序（小在前；同课程内全 kind 共用一个序列） */
     order: integer("order").notNull(),
+    /** 父文件夹条目 ID；null 为根目录，归属与循环由服务层校验。 */
+    parentId: text("parent_id"),
+    /** 自动导入的来源目录键；改名或移动后重试仍复用同一文件夹。 */
+    importPath: text("import_path"),
     /** 是否对学生可见（D5 条件之一；新添加默认 true，D6） */
     visible: integer("visible", { mode: "boolean" }).notNull().default(true),
     /** 定时发布时间：UTC ISO 字符串；NULL = 不定时（D5：publishAt ≤ 现在才可见） */

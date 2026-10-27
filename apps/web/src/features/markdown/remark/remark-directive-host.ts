@@ -86,6 +86,9 @@ function annotate(
 
   for (const [key, value] of Object.entries(node.attributes ?? {})) {
     if (key === "class" || key === "id") continue; // class 走 dclass；id 被 sanitize 视为 clobber 属性，不透传
+    // LR-5 守卫：data-lr-* 是渲染器自有键（questionNodeKeySchema 域），不接受
+    // 教师 authored 指令属性透传（防伪造键经 measure 混进布局证据炸掉 schema）
+    if (key.startsWith("data-lr-")) continue;
     if (typeof value === "string") props[key] = value;
   }
   const klass = node.attributes?.class;

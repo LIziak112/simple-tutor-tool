@@ -1556,3 +1556,24 @@ describe("SAI-15 重装配快照形状回归（B14 发现）", () => {
     expect(aiContextSnapshotSchema.safeParse(after).success).toBe(true);
   });
 });
+
+describe("LR-PR5 recordRefs 版本钉住", () => {
+  it("任务创建把三类材料版本写进快照 recordRefs（缺失材料 revision 0 / hash null）", () => {
+    const db = createTestDb();
+    const world = setupWorld(db);
+    const { task } = mkMcpTask(db, world);
+    const snapshot = JSON.parse(task.contextSnapshotJson) as {
+      recordRefs?: Array<{
+        kind: string;
+        revision: number;
+        hash: string | null;
+      }>;
+    };
+    expect(snapshot.recordRefs).toEqual([
+      { kind: "draft", revision: 0, hash: null },
+      { kind: "formal_ink", revision: 0, hash: null },
+      { kind: "annotation", revision: 0, hash: null },
+    ]);
+    db.$client.close();
+  });
+});

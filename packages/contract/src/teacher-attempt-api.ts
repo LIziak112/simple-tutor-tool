@@ -142,6 +142,12 @@ export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
   scoreFinal: z.number().int().min(0).max(100).nullable(),
   /** 待批数（口径见本 schema 头注释） */
   pendingCount: z.number().int().min(0),
+  /**
+   * 行级已提交数（T-PR4）：进行中（draft）卷已逐题提交的行数——学生主页作答
+   * 记录区「已提交 n / 共 m」用；非 draft 卷收敛为冻结行数（与
+   * practiceSubmittedCounts 同一实现）。
+   */
+  submittedCount: z.number().int().min(0).optional(),
   /** 开始作答时间：UTC ISO */
   startedAt: z.string().min(1),
   /** 交卷时间：UTC ISO；未交为 null（D5：draft 也出现在列表，前端标「进行中」） */

@@ -290,6 +290,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         key: "t6980_3_answered_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "nested_course_catalog_v1",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -343,10 +347,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
   });
 });
 
@@ -501,7 +505,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
     expect(
       db
         .select()
@@ -687,6 +691,26 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       >
     ).map((row) => {
       delete row.teacher_id; // 新增归属列不参与保真对比
+      if (table === "course_items") {
+        // 此夹具没有嵌套；新别名必须等于原资源标题，而非忽略标题变化。
+        expect(row.parent_id ?? null).toBeNull();
+        expect(row.import_path ?? null).toBeNull();
+        delete row.parent_id;
+        delete row.import_path;
+        if (
+          row.title === null &&
+          (row.kind === "lecture" || row.kind === "unit")
+        ) {
+          const resource = db.$client
+            .prepare(
+              row.kind === "lecture"
+                ? "SELECT title FROM lectures WHERE id = ?"
+                : "SELECT title FROM units WHERE id = ?",
+            )
+            .get(row.ref_id) as { title: string } | undefined;
+          row.title = resource?.title ?? "内容已移除";
+        }
+      }
       if (table === "ink") {
         delete row.revision;
         delete row.mutation_id;
@@ -1308,6 +1332,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t6980_3_answered_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "nested_course_catalog_v1",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -1361,7 +1389,7 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(8);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
   });
 });
 

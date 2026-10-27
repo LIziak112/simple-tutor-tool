@@ -29,6 +29,25 @@ export const verdictSourceSchema = z.enum(["auto", "teacher", "self"]);
 export type VerdictSource = z.infer<typeof verdictSourceSchema>;
 
 /**
+ * 自评状态（合并基线共享 schema：v2 学习记录 learning-record 的 reviewSource
+ * 复用其 source 三值；QM-11 重写侧未再使用，按 LR 合并基线保留）。
+ */
+export const selfReviewStateSchema = z
+  .object({
+    mark: z.boolean().nullable(),
+    revision: z.number().int().min(0),
+    reviewedAt: z.string().nullable(),
+    source: z
+      .enum(["teacher", "self", "automatic"])
+      .nullable()
+      .describe("判定来源；学生自评不能作为独立完成或客观能力的证明"),
+    canReview: z.boolean(),
+    awaitingSelfReview: z.boolean(),
+  })
+  .strict();
+export type SelfReviewState = z.infer<typeof selfReviewStateSchema>;
+
+/**
  * 自评 verdict：correct/wrong 是判断；undecided = 撤回自评（回到暂不判断）。
  * 「暂不判断」不是一次写入——undecided 是清除自评记录的幂等写（revision
  * 递增）；从未自评的行天然处于暂不判断。

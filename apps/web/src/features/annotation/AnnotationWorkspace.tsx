@@ -29,6 +29,7 @@ import {
 } from "@/features/ink/input-preference";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { studentAnnotationBasePngUrl } from "@/lib/api";
+import { blocksInBaseDomain } from "./annotation-anchor";
 import {
   getAnnotationRecord,
   settleAnnotationPersistence,
@@ -155,6 +156,18 @@ export function AnnotationWorkspace({
       baseWidth,
       baseHeight,
       inputMode: getSessionInputPreference(),
+      // LR-6：收笔锚定布局证据（record 活引用取当前 layout；无 layout 不锚）
+      anchorBlocks: () => {
+        const layout =
+          recordRef.current?.localBase?.layout ??
+          recordRef.current?.base?.layout;
+        if (layout?.compatibility?.blocks === undefined) return undefined;
+        // 评审 #11750 必改①：先转底图像素域再锚定
+        return blocksInBaseDomain(
+          layout.compatibility.blocks,
+          layout.pixelRatio,
+        );
+      },
     });
     surfaceRef.current = surface;
     surface.mount(host, initialDoc);
@@ -226,7 +239,7 @@ export function AnnotationWorkspace({
       {/* 底图 + 笔迹画布：同一盒（img 定尺寸，画布铺满其上——同 scale 变换） */}
       <div
         data-slot="annotation-base-wrap"
-        className="relative w-full overflow-hidden rounded-lg border border-sky-200 bg-white outline outline-1 outline-sky-200"
+        className="relative w-full overflow-hidden rounded-xl border border-sky-200 bg-white outline outline-1 outline-sky-200"
       >
         <img
           src={base.downloadUrl}

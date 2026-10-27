@@ -85,8 +85,15 @@ export function measureQuestionSurface(surface: HTMLElement) {
     textRects,
     blocks: nodes.map((node) => {
       const rect = node === surface ? root : node.getBoundingClientRect();
+      // LR-5：最近的 data-lr-node 祖先（含自身）的语义节点键；QuestionSurface
+      // 根带 "root"，新底图每块都有键；裸 DOM（无键）时缺省省略
+      const nodeKey =
+        node.getAttribute("data-lr-node") ??
+        node.closest("[data-lr-node]")?.getAttribute("data-lr-node") ??
+        undefined;
       return {
         tag: node.tagName,
+        ...(nodeKey !== undefined ? { node: nodeKey } : {}),
         x: rounded(rect.left - root.left),
         y: rounded(rect.top - root.top),
         width: rounded(rect.width),
@@ -132,6 +139,18 @@ export function publicContentSignatureOf(question: AttemptQuestionPublic) {
     ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
     ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
   };
+}
+
+/**
+ * 几何签名的块投影（LR-5 回归根因修复）：剥掉 blocks[].node 再哈希——
+ * node 是 PR2 新增的语义键，旧底图的 geometrySignature 是无 node 时代的块
+ * 哈希；把 node 计入会让旧设备核验永远失配、旧稿无法续写。存档证据里的
+ * blocks[].node 原样保留（锚点重投影要用），只影响签名输入。
+ */
+function geometryBlocksProjection(
+  blocks: AnnotationSurfaceCompatibility["blocks"],
+): unknown[] {
+  return blocks.map(({ node: _node, ...rect }) => rect);
 }
 
 /** 只测量公开题面；与建底图共享签名算法，不栅格化、不取表单值。 */
@@ -182,7 +201,10 @@ async function legacyCompatibility(
     (await contentHash64(value)) === saved;
   if (
     !(await matchesLegacyHash(publicContent, layout.contentSignature)) ||
-    !(await matchesLegacyHash(measure.blocks, layout.geometrySignature))
+    !(await matchesLegacyHash(
+      geometryBlocksProjection(measure.blocks),
+      layout.geometrySignature,
+    ))
   )
     return null;
   for (const candidate of legacySurfaceFontCandidates(measure.fonts)) {
@@ -390,7 +412,7 @@ export async function renderQuestionBaseImage(
     const [contentSignature, geometrySignature, fontSignature] =
       await Promise.all([
         contentHash64(publicContent),
-        contentHash64(before.blocks),
+        contentHash64(geometryBlocksProjection(before.blocks)),
         contentHash64(before.fonts),
       ]);
     const layout = annotationSurfaceLayoutSchema.parse({

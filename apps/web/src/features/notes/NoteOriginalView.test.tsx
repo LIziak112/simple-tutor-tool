@@ -1,5 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { NoteDoc, NoteHeadData } from "@tutor/contract";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { denseStroke, docOf } from "@/features/notes/note-fixtures";
@@ -583,5 +590,65 @@ describe("object URL 生命周期（无堆积）", () => {
     });
     expect(createdCount).toBe(2);
     expect(revokedCount).toBe(1);
+  });
+});
+
+describe("卸载守卫与 StrictMode 挂载即读（2026-10 订正重构复审）", () => {
+  it("卸载时在途 head 迟到：不再取正文、不渲染、不创建 object URL", async () => {
+    let resolveHead!: (head: NoteHeadData) => void;
+    evidenceMock.mockReturnValue(
+      new Promise<NoteHeadData>((resolve) => {
+        resolveHead = resolve;
+      }),
+    );
+    const view = renderView({ defaultOpen: true });
+    view.unmount();
+    // 卸载后 head 迟到返回：旧版卸载 epoch 自增在此拦截——迟到链不得继续
+    // 调 openBody（正文下载 + 离屏渲染 + 无人回收的 blob URL）
+    await act(async () => {
+      resolveHead(frozenHead());
+    });
+    expect(docMock).not.toHaveBeenCalled();
+    expect(renderMock).not.toHaveBeenCalled();
+    expect(createdCount).toBe(0);
+  });
+
+  it("点击打开的在途读取同样被卸载拦截（守卫不分触发来源）", async () => {
+    let resolveHead!: (head: NoteHeadData) => void;
+    evidenceMock.mockReturnValue(
+      new Promise<NoteHeadData>((resolve) => {
+        resolveHead = resolve;
+      }),
+    );
+    const view = renderView();
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
+    view.unmount();
+    await act(async () => {
+      resolveHead(frozenHead());
+    });
+    expect(docMock).not.toHaveBeenCalled();
+    expect(createdCount).toBe(0);
+  });
+
+  it("StrictMode 双挂载挂载即读：第二次挂载重发，面板可达就绪（不永卡读取）", async () => {
+    evidenceMock.mockResolvedValue(frozenHead());
+    docMock.mockResolvedValue(SHORT_DOC);
+    render(
+      <StrictMode>
+        <NoteOriginalView
+          viewer="student"
+          attemptId={SCOPE.attemptId}
+          questionId={SCOPE.questionId}
+          ariaPrefix="第 2 题"
+          roundLabel="第 1 次课程练习"
+          defaultOpen
+        />
+      </StrictMode>,
+    );
+    await waitFor(() => {
+      expect(screen.getAllByAltText(/草稿原稿 第/).length).toBeGreaterThan(0);
+    });
   });
 });

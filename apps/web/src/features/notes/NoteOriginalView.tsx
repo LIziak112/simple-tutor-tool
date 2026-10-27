@@ -65,6 +65,7 @@ export function NoteOriginalView({
   ariaPrefix = "本题",
   roundLabel = null,
   compact = false,
+  defaultOpen = false,
 }: {
   /** 查看角色（api 层 NoteRole：学生本人 / 教师域链授权） */
   viewer: NoteRole;
@@ -76,18 +77,30 @@ export function NoteOriginalView({
   roundLabel?: string | null;
   /** 紧凑工具行展开时占满一行，既有调用方保持原布局。 */
   compact?: boolean;
+  /**
+   * 挂载即展开（2026-10 订正重构）：结果页操作行「草稿」组的面板按需挂载，
+   * 本件随之直接进入展开态（一次点击直达，折叠零请求由外层保证）。
+   */
+  defaultOpen?: boolean;
 }) {
-  const [phase, setPhase] = useState<OriginalPhase>({ kind: "closed" });
+  const [phase, setPhase] = useState<OriginalPhase>(
+    defaultOpen ? { kind: "loading" } : { kind: "closed" },
+  );
   /** 正文渲染核（T6R.15 抽共享）：按 versionId 取正文→渲染→URL 落地 */
   const body = useNoteVersionBody(viewer);
   const { openBody, closeBody, resetBody } = body;
-  /** 证据行段的加载代际：卸载/重试/收起后迟到的 head 结果不再落地 */
+  /** 证据行段的加载代际：卸载/重试/收起/定位变化后迟到的 head 结果不再落地 */
   const epochRef = useRef(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
 
-  // 卸载回收：正文核（URL/缓存/在途 epoch）由 useNoteVersionBody 自理；本
-  // 组件只拦自己证据行段的迟到结果（phase 随组件卸载消亡）
+  // 卸载拦截（2026-10 订正重构复审恢复）：卸载时自增作废在途 head 结果——
+  // 否则迟到的 load() 会继续调 openBody，在已卸载实例上发起正文下载、离屏
+  // 渲染并创建无人 revoke 的 object URL（use-note-version-view 的卸载清理
+  // 只拦它自己已在途的代际，拦不住卸载之后才启动的调用）。React 18 卸载后
+  // setState 虽是 no-op，但 blob 创建与渲染不是。StrictMode 双挂载曾因
+  // 「挂载即读被作废且不重发」永卡读取——由下方 defaultOpen 清理段重置
+  // initialOpenRef、第二次挂载重发补上，两个问题不再互斥。
   useEffect(() => {
     return () => {
       epochRef.current += 1;
@@ -157,6 +170,22 @@ export function NoteOriginalView({
     closeBody();
     setPhase({ kind: "closed" });
   }, [closeBody]);
+
+  // defaultOpen：挂载即读取（结果页「草稿」面板按需挂载——一次点击直达，
+  // 折叠零请求由外层挂载时机保证）
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const initialOpenRef = useRef(defaultOpen);
+  useEffect(() => {
+    if (!initialOpenRef.current) return;
+    initialOpenRef.current = false;
+    void loadRef.current();
+    // StrictMode 双挂载：清理段重置首开标记，第二次挂载重发挂载即读——
+    // 否则首开的在途结果被卸载代际作废后无人重发，面板永卡「正在读取」
+    return () => {
+      initialOpenRef.current = true;
+    };
+  }, []);
 
   /**
    * 缺图重建：recoverNoteImages 自拉正文→渲染→上传，只挂既定版本（不改

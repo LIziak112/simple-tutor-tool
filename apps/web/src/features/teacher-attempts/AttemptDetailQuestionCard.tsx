@@ -210,7 +210,7 @@ function VerdictSection({
     return (
       <p className="inline-flex w-fit items-center gap-1.5 rounded-lg bg-sky-500/10 px-3 py-2 text-sm text-sky-700 dark:text-sky-300">
         <Clock3 aria-hidden className="size-4" />
-        未交卷——学生交卷前不产生判定
+        未提交——学生提交该题前不产生判定
       </p>
     );
   }
@@ -306,7 +306,8 @@ export function AttemptDetailQuestionCard({
   roundLabel,
 }: {
   question: TeacherAttemptDetailQuestion;
-  /** draft（进行中）：判定区统一「未交卷」，不渲染参考答案与详解（D5） */
+  /** draft 且该行未放行（responseId 空）：判定区「未提交」，不渲染参考答案与
+   *  详解（D5）；Web-3 已逐题提交的行（responseId 非空）由调用方传 false */
   isDraft: boolean;
   /** 所属 attempt（T6R.11 原稿查看按 (attemptId, questionId) 定位证据行） */
   attemptId: string;
