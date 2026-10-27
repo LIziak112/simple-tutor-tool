@@ -171,12 +171,14 @@ export function compactInkMaterial(
     Math.max(2, Math.round(c * scale)),
   );
   const targets = balanceTargets(rough, maxPoints);
-  const decimated = [...strokes, ...deleted].map((stroke, i) =>
-    decimateStroke(stroke, targets[i] ?? 2),
+  const liveTargets = targets.slice(0, strokes.length);
+  const goneTargets = targets.slice(strokes.length);
+  const finalStrokes = strokes.map((stroke, i) =>
+    decimateStroke(stroke, liveTargets[i] ?? 2),
   );
-  const split = strokes.length;
-  const finalStrokes = decimated.slice(0, split);
-  const finalDeleted = decimated.slice(split);
+  const finalDeleted = deleted.map((tomb, i) =>
+    decimateStroke(tomb, goneTargets[i] ?? 2),
+  );
   return {
     strokes: finalStrokes,
     deleted: finalDeleted,

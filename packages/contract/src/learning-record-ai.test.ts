@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { learningRecordSchema } from "./learning-record.ts";
 import {
   aiDispatchPayloadWithRecordSchema,
   aiMcpClaimViewWithRecordSchema,

@@ -385,7 +385,9 @@ function assembleBundleFromRows(args: {
     missingNote,
     promptSnapshotMd: rules.promptSnapshotMd,
     capturedAt,
-    ...(args.recordRefs !== undefined ? { recordRefs: args.recordRefs } : {}),
+    ...(args.recordRefs !== undefined
+      ? { recordRefs: [...args.recordRefs] }
+      : {}),
   };
   // 服务端自检:strict + superRefine(矛盾快照在契约层拒绝,不进出站视图)
   const parsed = aiContextSnapshotSchema.safeParse(snapshotData);

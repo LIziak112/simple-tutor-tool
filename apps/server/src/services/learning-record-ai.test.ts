@@ -125,9 +125,15 @@ describe("compactInkMaterial（LR-PR5 §7.3）", () => {
 
   it("墓碑计入总点数与预算；anchors 语义不受影响（id 原样）", () => {
     const tomb: InkDeletedStroke = {
-      ...strokeOf("gone", jaggedPoints(7000)),
+      tool: "pen",
+      color: "#1f2328",
+      weight: 4,
+      id: "gone",
+      startedAt: 1727392800000,
+      pointer: "pen",
       deletedAt: 1727392900000,
       deletedBy: "eraser",
+      points: jaggedPoints(7000),
     };
     const result = compactInkMaterial(facetOf([], [tomb]));
     expect(result.originalPoints).toBe(7000);
