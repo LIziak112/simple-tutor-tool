@@ -1,13 +1,7 @@
 import type { CourseDetailData, LibraryUnitSummary } from "@tutor/contract";
-import {
-  BookOpen,
-  CheckSquare,
-  Dumbbell,
-  Loader2,
-  Search,
-  Square,
-} from "lucide-react";
+import { BookOpen, Dumbbell, Loader2, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +19,7 @@ import {
   useLibraryUnits,
 } from "@/features/library/library-queries";
 import { ApiError } from "@/lib/api";
+import { catalogTreeRows } from "./catalog-tree";
 
 /**
  * 「从资源库添加」侧边抽屉（T2A.4，§4-3/§4-9）：
@@ -48,12 +43,17 @@ export function refIdKeysOf(detail: CourseDetailData): Set<string> {
 export function AddFromLibrarySheet({
   courseId,
   existingKeys,
+  detail,
+  initialParentId = null,
   onClose,
 }: {
   courseId: string;
   existingKeys: Set<string>;
+  detail?: CourseDetailData;
+  initialParentId?: string | null;
   onClose: () => void;
 }) {
+  const [parentId, setParentId] = useState(initialParentId ?? "");
   const [tab, setTab] = useState<"lectures" | "units">("lectures");
   const [folderId, setFolderId] = useState<string | "all">("all");
   const [query, setQuery] = useState("");
@@ -157,6 +157,7 @@ export function AddFromLibrarySheet({
     addMutation.mutate(
       {
         items,
+        parentId: parentId || null,
         visible,
         ...(expandCompanions ? { withCompanionUnits: true } : {}),
       },
@@ -189,15 +190,44 @@ export function AddFromLibrarySheet({
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="sm:max-w-[min(90vw,40rem)]">
-        <SheetHeader>
+      <SheetContent className="overflow-hidden sm:max-w-[min(90vw,40rem)]">
+        <SheetHeader className="shrink-0">
           <SheetTitle>从资源库添加</SheetTitle>
           <SheetDescription>
-            选择讲义或练习单元追加到课程目录末尾；资源仍归资源库，编辑即时生效。
+            选择讲义或练习加入所选位置，资源原件保留在资源库。
           </SheetDescription>
         </SheetHeader>
+        <div
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-3"
+          data-testid="course-resource-scroll"
+        >
+          {detail && (
+            <label className="flex flex-col gap-1 text-sm">
+              课程内位置
+              <select
+                aria-label="课程内位置"
+                value={parentId}
+                onChange={(e) => setParentId(e.target.value)}
+                className="min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 text-base"
+              >
+                <option value="">根目录（未分组）</option>
+                {catalogTreeRows(detail.items)
+                  .filter((row) => row.item.kind === "section")
+                  .map((row) => (
+                    <option key={row.item.id} value={row.item.id}>
+                      {row.path}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+          <Link
+            className="inline-flex min-h-11 items-center text-sm text-primary underline"
+            to={`/t/import?courseId=${courseId}${parentId ? `&parentId=${parentId}` : ""}`}
+          >
+            改为导入文件到这里
+          </Link>
 
-        <div className="flex flex-col gap-3 overflow-y-auto px-4 py-3">
           {/* 页签 */}
           <div role="tablist" aria-label="资源类型" className="flex gap-2">
             <Button
@@ -251,7 +281,7 @@ export function AddFromLibrarySheet({
               </label>
               <Input
                 id="add-search"
-                className="min-h-11 pl-9"
+                className="min-h-11 pl-9 text-base sm:text-sm"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={
@@ -276,6 +306,7 @@ export function AddFromLibrarySheet({
                   : null
               }
               emptyText="资源库还没有讲义，或没有符合筛选的结果。可先到「导入」添加内容。"
+              onRetry={() => void lecturesQuery.refetch()}
             >
               {filteredLectures.map((lecture) => {
                 const inCourse = existingKeys.has(`lecture:${lecture.id}`);
@@ -305,6 +336,7 @@ export function AddFromLibrarySheet({
                   : null
               }
               emptyText="资源库还没有练习单元，或没有符合筛选的结果。可先到「导入」添加内容。"
+              onRetry={() => void unitsQuery.refetch()}
             >
               {filteredUnits.map((unit) => {
                 const inCourse = existingKeys.has(`unit:${unit.id}`);
@@ -323,35 +355,6 @@ export function AddFromLibrarySheet({
             </ResourceList>
           )}
 
-          {/* D8 配套练习提示 */}
-          {tab === "lectures" && companionUnits.length > 0 && (
-            <label className="flex min-h-11 items-center gap-2 rounded-lg bg-muted/60 px-3 text-sm">
-              <input
-                type="checkbox"
-                className="size-5 accent-[var(--color-primary)]"
-                checked={withCompanions}
-                onChange={(e) => setWithCompanions(e.target.checked)}
-              />
-              一并添加配套练习（{companionUnits.length} 个：
-              {companionUnits
-                .slice(0, 3)
-                .map((unit) => unit.title)
-                .join("、")}
-              {companionUnits.length > 3 ? " 等" : ""}）
-            </label>
-          )}
-
-          {/* 可见开关（D6） */}
-          <label className="flex min-h-11 items-center gap-2 rounded-lg bg-muted/60 px-3 text-sm">
-            <input
-              type="checkbox"
-              className="size-5 accent-[var(--color-primary)]"
-              checked={visible}
-              onChange={(e) => setVisible(e.target.checked)}
-            />
-            添加后对学生可见（{visible ? "立即可见" : "先隐藏，稍后手动开放"}）
-          </label>
-
           {result && (
             <p
               aria-live="polite"
@@ -367,30 +370,71 @@ export function AddFromLibrarySheet({
           )}
         </div>
 
-        <div className="mt-auto flex items-center justify-between gap-3 border-t border-border p-4">
-          <p className="text-sm text-muted-foreground">
-            {totalToAdd > 0
-              ? `将添加 ${totalToAdd} 项到目录末尾`
-              : "在上方选择资源"}
-          </p>
-          <div className="flex gap-2">
-            <Button variant="outline" className="min-h-11" onClick={onClose}>
-              完成
-            </Button>
-            <Button
-              className="min-h-11 px-4"
-              disabled={addMutation.isPending || totalToAdd === 0}
-              onClick={handleSubmit}
-            >
-              {addMutation.isPending ? (
-                <>
-                  <Loader2 aria-hidden className="animate-spin" />
-                  正在添加…
-                </>
-              ) : (
-                `添加${totalToAdd > 0 ? ` ${totalToAdd} 项` : ""}`
-              )}
-            </Button>
+        <div
+          className="shrink-0 border-t border-border bg-background p-4"
+          data-testid="course-add-footer"
+        >
+          {/* D8 配套练习提示 */}
+          {tab === "lectures" && companionUnits.length > 0 && (
+            <label className="flex min-h-11 items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-5 shrink-0 accent-primary"
+                checked={withCompanions}
+                onChange={(e) => setWithCompanions(e.target.checked)}
+              />
+              一并添加配套练习（{companionUnits.length} 个：
+              {companionUnits
+                .slice(0, 3)
+                .map((unit) => unit.title)
+                .join("、")}
+              {companionUnits.length > 3 ? " 等" : ""}）
+            </label>
+          )}
+
+          {/* 可见开关（D6） */}
+          <label className="flex min-h-11 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="size-5 shrink-0 accent-primary"
+              checked={visible}
+              onChange={(e) => setVisible(e.target.checked)}
+            />
+            <span>
+              添加后对学生可见
+              <span className="block text-xs text-muted-foreground">
+                {visible
+                  ? "仍遵循所在文件夹的隐藏与定时设置"
+                  : "先隐藏，稍后手动开放"}
+              </span>
+            </span>
+          </label>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {totalToAdd > 0
+                ? `将添加 ${totalToAdd} 项到目录末尾`
+                : "在上方选择资源"}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="min-h-11" onClick={onClose}>
+                完成
+              </Button>
+              <Button
+                className="min-h-11 px-4"
+                disabled={addMutation.isPending || totalToAdd === 0}
+                onClick={handleSubmit}
+              >
+                {addMutation.isPending ? (
+                  <>
+                    <Loader2 aria-hidden className="animate-spin" />
+                    正在添加…
+                  </>
+                ) : (
+                  `添加${totalToAdd > 0 ? ` ${totalToAdd} 项` : ""}`
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </SheetContent>
@@ -408,12 +452,14 @@ function ResourceList({
   pending,
   error,
   emptyText,
+  onRetry,
   children,
 }: {
   count: number;
   pending: boolean;
   error: string | null;
   emptyText: string;
+  onRetry: () => void;
   children: React.ReactNode;
 }) {
   if (pending) {
@@ -436,6 +482,9 @@ function ResourceList({
         className="rounded-lg border border-border p-3 text-sm text-destructive"
       >
         {error}
+        <Button variant="outline" className="mt-2 min-h-11" onClick={onRetry}>
+          重试加载资源
+        </Button>
       </div>
     );
   }
@@ -446,7 +495,7 @@ function ResourceList({
       </p>
     );
   }
-  return <ul className="flex min-h-0 flex-col gap-2">{children}</ul>;
+  return <ul className="flex shrink-0 flex-col gap-2">{children}</ul>;
 }
 
 function ResourceRow({
@@ -485,25 +534,17 @@ function ResourceRow({
           checked={checked}
           onChange={onToggle}
         />
-        {checked ? (
-          <CheckSquare aria-hidden className="size-4 shrink-0 text-primary" />
-        ) : (
-          <Square
-            aria-hidden
-            className="size-4 shrink-0 text-muted-foreground"
-          />
-        )}
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             {docKind === "lesson" ? <LessonBadge /> : null}
-            <span className="min-w-0 truncate font-medium">{title}</span>
+            <span className="min-w-0 break-words font-medium">{title}</span>
           </span>
-          <span className="block truncate text-xs text-muted-foreground">
+          <span className="block break-words text-xs text-muted-foreground">
             {meta}
           </span>
         </span>
         {badge && (
-          <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs">
+          <span className="max-w-20 shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs">
             {badge}
           </span>
         )}

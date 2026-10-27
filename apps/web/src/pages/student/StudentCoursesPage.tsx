@@ -57,7 +57,7 @@ export default function StudentCoursesPage() {
             description="请联系老师把你加入课程，课程里的讲义和练习会出现在这里。"
           />
         ) : (
-          <ul className="flex flex-col gap-3">
+          <ul className="flex flex-col gap-2">
             {coursesQuery.data.courses.map((course) => (
               <StudentCourseCard key={course.id} course={course} />
             ))}

@@ -355,9 +355,16 @@ describe("AttemptDetailPage draft 详情（D5）", () => {
             no: 1,
             answer: { kind: "judge", value: true },
             answered: true,
-            // draft 服务端不下发 answers/solutionMd（缺省字段）
+            // draft 服务端不下发 answers/solutionMd（缺省字段）；未放行行
+            // responseId 为 null（Web-3 行级门控依据）
+            responseId: null,
           }),
-          makeQuestion({ questionId: "q2", no: 2, answer: null }),
+          makeQuestion({
+            questionId: "q2",
+            no: 2,
+            answer: null,
+            responseId: null,
+          }),
         ],
       }),
     );
@@ -576,12 +583,72 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
     // makeDetail：course 来源 attemptNo=2
     expect(stubs[0]?.round).toBe("第 2 次课程练习");
   });
+
+  it("Web-3 行级放行：draft 卷内 responseId 非空的行按已交卷渲染（判定 + 参考答案 + 改判入口），responseId 空的行维持「未交卷」", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        status: "draft",
+        submittedAt: null,
+        scoreAuto: null,
+        scoreFinal: null,
+        correctCount: 1,
+        wrongCount: 0,
+        pendingCount: 0,
+        questions: [
+          // 已逐题提交的放行行：服务端按已交卷投影下发 responseId / 判定 / answers
+          makeQuestion({
+            no: 1,
+            answer: { kind: "judge", value: true },
+            answered: true,
+            autoCorrect: true,
+            finalCorrect: true,
+            answers: { kind: "judge", value: true },
+          }),
+          // 未提交行：维持 D5 draft 口径（responseId null、无判定、无 answers）
+          makeQuestion({
+            questionId: "q2",
+            no: 2,
+            answer: null,
+            responseId: null,
+          }),
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "张三" });
+    expect(screen.getByText("进行中", { exact: true })).toBeInTheDocument();
+
+    // 放行行：判定区「答对」×2（自动 / 最终）、参考答案对比、改判入口，不再「未交卷」
+    const q1 = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(q1).getAllByText("答对").length).toBe(2);
+    expect(within(q1).getByText("参考答案：")).toBeInTheDocument();
+    expect(within(q1).getByText("改判 / 评语")).toBeInTheDocument();
+    expect(
+      within(q1).queryByText(/未交卷——学生交卷前不产生判定/),
+    ).not.toBeInTheDocument();
+
+    // 未放行行：仍「未交卷」，无参考答案与改判入口
+    const q2 = screen.getByRole("article", { name: "第 2 题" });
+    expect(
+      within(q2).getByText(/未交卷——学生交卷前不产生判定/),
+    ).toBeInTheDocument();
+    expect(within(q2).queryByText("参考答案：")).not.toBeInTheDocument();
+    expect(within(q2).queryByText("改判 / 评语")).not.toBeInTheDocument();
+  });
 });
 
 describe("AttemptDetailPage 草稿原稿入口（T6R.11）补充", () => {
   it("draft（进行中）：证据行定义性不存在，不渲染原稿查看入口", async () => {
     mockedDetail.mockResolvedValue(
-      makeDetail({ status: "draft", submittedAt: null }),
+      makeDetail({
+        status: "draft",
+        submittedAt: null,
+        // 未放行行 responseId 为 null（Web-3 行级门控依据）
+        questions: makeDetail().questions.map((q) => ({
+          ...q,
+          responseId: null,
+        })),
+      }),
     );
     renderPage();
     await screen.findByText("进行中：学生尚未交卷");
@@ -614,7 +681,15 @@ describe("AttemptDetailPage 单题完整导出入口（T6R.13）", () => {
 
   it("draft（进行中）也渲染入口（证据按 not_collected 呈现）", async () => {
     mockedDetail.mockResolvedValue(
-      makeDetail({ status: "draft", submittedAt: null }),
+      makeDetail({
+        status: "draft",
+        submittedAt: null,
+        // 未放行行 responseId 为 null（Web-3 行级门控依据）
+        questions: makeDetail().questions.map((q) => ({
+          ...q,
+          responseId: null,
+        })),
+      }),
     );
     renderPage();
     await screen.findByText("进行中：学生尚未交卷");

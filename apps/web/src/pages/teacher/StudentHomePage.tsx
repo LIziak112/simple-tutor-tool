@@ -6,7 +6,7 @@ import {
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import { lazy, Suspense, useMemo } from "react";
+import { useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
@@ -29,11 +29,12 @@ import { ApiError } from "@/lib/api";
 import { formatDueTime, formatRelativeTime } from "@/lib/time";
 
 /**
- * /t/insights/students/:id 学生画像（T4.2）：
- * - 正确率周趋势折线（ECharts 按需 chunk，D5 自然周）；
- * - 考点正确率横向条形图（D25：升序 top N、薄弱在上）+ 全量考点表（薄弱在前）；
- * - 错题列表（T4.2 契约补齐：qualifying 中 finalCorrect=false 的逐题行，待批
- *   不在列；整行点击跳 T3.1 作答详情 /t/data/attempts/:attemptId）；
+ * /t/students/:id 学生主页（T-PR1 路由归位：内容迁自原 T4.2 学生画像页，
+ * 旧 /t/insights/students/:id 保留并重定向到此——教师端以「学生」为导航单位）：
+ * - 薄弱考点前 5 文字表（数据 /analytics/student/:id 的 knowledge，按错误数
+ *   降序，薄弱在前；原周趋势折线与考点条形图随路由归位移除，不加新图表）；
+ * - 错题列表（qualifying 中 finalCorrect=false 的逐题行，待批不在列；整行点击
+ *   跳 T3.1 作答详情 /t/data/attempts/:attemptId）；
  * - 用时异常题卡片（D6：slow/hints 两类，跳作答详情）；
  * - 重做概览（独立指标 D1，不受时间范围限制）、离线作答占比；
  * - 讲义阅读地图（T4.0 §4.4.4：目录树逐项状态 + 行为推断标注 + 含挂机时长）；
@@ -43,22 +44,8 @@ import { formatDueTime, formatRelativeTime } from "@/lib/time";
  * 筛选（时间范围/课程）同步 URL，从总览矩阵点入时携带上下文。
  */
 
-// 图表按需 chunk：echarts 注册与渲染全部在独立异步模块内（禁全量 import "echarts"）
-const TrendLineChart = lazy(() =>
-  import("@/features/insights/charts").then((m) => ({
-    default: m.TrendLineChart,
-  })),
-);
-const KnowledgeBarChart = lazy(() =>
-  import("@/features/insights/charts").then((m) => ({
-    default: m.KnowledgeBarChart,
-  })),
-);
-
-/** 图表懒加载兜底（骨架级提示） */
-const chartFallback = (
-  <p className="py-8 text-center text-sm text-muted-foreground">图表加载中…</p>
-);
+/** 薄弱考点文字表行数上限（迭代方案 T-PR1：前 5） */
+const WEAK_KNOWLEDGE_LIMIT = 5;
 
 /** D6 异常原因中文 */
 const ANOMALY_REASON_LABELS: Record<"slow" | "hints", string> = {
@@ -117,7 +104,7 @@ function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
   );
 }
 
-export function InsightsStudentPage() {
+export function StudentHomePage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const state = useMemo(() => parseAnalyticsUrl(searchParams), [searchParams]);
@@ -145,10 +132,10 @@ export function InsightsStudentPage() {
         <TriangleAlert aria-hidden className="size-10 text-muted-foreground" />
         <h1 className="text-lg font-semibold">找不到这名学生</h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          学生不存在或已不属于你，无法查看画像。
+          学生不存在或已不属于你，无法查看主页。
         </p>
         <Button variant="outline" className="min-h-11" asChild>
-          <Link to="/t/insights">返回学情总览</Link>
+          <Link to="/t/students">返回学生列表</Link>
         </Button>
       </section>
     );
@@ -159,7 +146,7 @@ export function InsightsStudentPage() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold">
-            {data?.studentName ?? "学生画像"}
+            {data?.studentName ?? "学生主页"}
             {data?.archived && (
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
                 已归档
@@ -220,7 +207,7 @@ export function InsightsStudentPage() {
       {studentQuery.isPending && (
         <div
           role="status"
-          aria-label="正在加载学生画像"
+          aria-label="正在加载学生主页"
           className="flex flex-col gap-3"
         >
           {[0, 1, 2].map((i) => (
@@ -229,7 +216,7 @@ export function InsightsStudentPage() {
               className="h-32 animate-pulse rounded-xl border border-border bg-muted/50"
             />
           ))}
-          <p className="text-sm text-muted-foreground">正在加载学生画像…</p>
+          <p className="text-sm text-muted-foreground">正在加载学生主页…</p>
         </div>
       )}
 
@@ -240,7 +227,7 @@ export function InsightsStudentPage() {
         >
           <p className="flex items-center gap-2 text-sm font-medium text-destructive">
             <TriangleAlert aria-hidden className="size-4 shrink-0" />
-            学生画像加载失败
+            学生主页加载失败
           </p>
           <p className="text-sm text-muted-foreground">
             {studentQuery.error instanceof Error
@@ -259,33 +246,22 @@ export function InsightsStudentPage() {
 
       {data !== undefined && (
         <>
-          <section aria-label="正确率周趋势" className="flex flex-col gap-2">
+          <section aria-label="薄弱考点" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">
-              正确率周趋势
+              薄弱考点前 5
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                自然周（北京周一起算，按提交时间）
+                按错误数降序，薄弱在前
               </span>
             </h2>
-            <Suspense fallback={chartFallback}>
-              <TrendLineChart points={data.trend} />
-            </Suspense>
-          </section>
-
-          <section aria-label="考点正确率" className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">
-              考点正确率
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                条形图为最薄弱的前几项（正确率升序，薄弱在上）
-              </span>
-            </h2>
-            <Suspense fallback={chartFallback}>
-              <KnowledgeBarChart rows={data.knowledge} />
-            </Suspense>
-            {data.knowledge.length > 0 && (
+            {data.knowledge.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                时间范围内还没有已判定的作答，暂无考点统计。
+              </p>
+            ) : (
               <div className="overflow-x-auto rounded-xl border border-border bg-card">
                 <table className="w-full border-collapse text-sm">
                   <caption className="sr-only">
-                    考点正确率明细（按错误数降序，薄弱在前）
+                    薄弱考点前 5（按错误数降序，薄弱在前）
                   </caption>
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -307,25 +283,27 @@ export function InsightsStudentPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.knowledge.map((row) => (
-                      <tr
-                        key={row.knowledge}
-                        className="border-b border-border last:border-b-0"
-                      >
-                        <th
-                          scope="row"
-                          className="px-3 py-2 text-left font-normal"
+                    {data.knowledge
+                      .slice(0, WEAK_KNOWLEDGE_LIMIT)
+                      .map((row) => (
+                        <tr
+                          key={row.knowledge}
+                          className="border-b border-border last:border-b-0"
                         >
-                          {row.knowledge}
-                        </th>
-                        <td className="px-3 py-2">{row.correctCount}</td>
-                        <td className="px-3 py-2">{row.wrongCount}</td>
-                        <td className="px-3 py-2">{row.pendingCount}</td>
-                        <td className="px-3 py-2 font-medium">
-                          {formatPercent(row.correctRate)}
-                        </td>
-                      </tr>
-                    ))}
+                          <th
+                            scope="row"
+                            className="px-3 py-2 text-left font-normal"
+                          >
+                            {row.knowledge}
+                          </th>
+                          <td className="px-3 py-2">{row.correctCount}</td>
+                          <td className="px-3 py-2">{row.wrongCount}</td>
+                          <td className="px-3 py-2">{row.pendingCount}</td>
+                          <td className="px-3 py-2 font-medium">
+                            {formatPercent(row.correctRate)}
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -497,4 +475,4 @@ export function InsightsStudentPage() {
 }
 
 // 供 App.tsx 路由级懒加载
-export default InsightsStudentPage;
+export default StudentHomePage;

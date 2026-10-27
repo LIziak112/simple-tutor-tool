@@ -6,6 +6,7 @@ import type {
   StudentListData,
   StudentSummary,
 } from "@tutor/contract";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentApi,
@@ -78,9 +79,11 @@ function renderPage() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <StudentsPage />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={["/t/students"]}>
+      <QueryClientProvider client={client}>
+        <StudentsPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -159,9 +162,14 @@ describe("StudentsPage 列表与操作", () => {
     );
   });
 
-  it("渲染姓名、登录名、备注、归档标记与两种登录方式状态", async () => {
+  it("渲染姓名（链接进学生主页）、登录名、备注、归档标记与两种登录方式状态", async () => {
     renderPage();
     expect(await screen.findByText("张三")).toBeInTheDocument();
+    // T-PR1：学生名是链接，进学生主页
+    expect(screen.getByRole("link", { name: "张三" })).toHaveAttribute(
+      "href",
+      `/t/students/${STUDENT_A.id}`,
+    );
     expect(screen.getByText("李四")).toBeInTheDocument();
     expect(screen.getByText("登录名：张三")).toBeInTheDocument();
     expect(screen.getByText("登录名：李四2")).toBeInTheDocument();

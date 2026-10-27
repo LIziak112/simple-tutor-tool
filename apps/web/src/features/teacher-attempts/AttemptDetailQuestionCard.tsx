@@ -274,7 +274,8 @@ export function AttemptDetailQuestionCard({
   roundLabel,
 }: {
   question: TeacherAttemptDetailQuestion;
-  /** draft（进行中）：判定区统一「未交卷」，不渲染参考答案与详解（D5） */
+  /** draft 且该行未放行（responseId 空）：判定区「未交卷」，不渲染参考答案与
+   *  详解（D5）；Web-3 已逐题提交的行（responseId 非空）由调用方传 false */
   isDraft: boolean;
   /** 所属 attempt（T6R.11 原稿查看按 (attemptId, questionId) 定位证据行） */
   attemptId: string;

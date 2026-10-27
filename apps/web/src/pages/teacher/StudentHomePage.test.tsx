@@ -15,58 +15,15 @@ import {
   fetchStudentReports,
   fetchTeacherCourses,
 } from "@/lib/api";
-import InsightsStudentPage from "./InsightsStudentPage";
+import StudentHomePage from "./StudentHomePage";
 
 /**
- * /t/insights/students/:id 学生画像组件测试（T4.2）：三态（含 404 STUDENT_NOT_
- * FOUND 错误页）、考点/异常题/重做/离线口径、讲义阅读地图中文渲染（含挂机与
- * 行为推断标注）、AI 报告占位。
- *
- * ECharts 在 jsdom 无法渲染 canvas——mock echarts/core（自有 EChart 封装
- * 直连 echarts/core）：init 桩返回 setOption/resize/dispose 实例，setOption
- * 把 option 的类目/序列落到容器 data-* 属性上供断言
- * （「断言容器与数据装配而非像素」，装配口径另由 chart-options.test 锁定）；
- * 注册源模块（charts/components/renderers）一并置空桩，不拖入真实 echarts。
+ * /t/students/:id 学生主页组件测试（T-PR1，自 T4.2 画像页迁移改名）：三态
+ * （含 404 STUDENT_NOT_FOUND 错误页）、薄弱考点前 5 文字表、异常题/重做/离线
+ * 口径、讲义阅读地图中文渲染、AI 报告区、筛选联动。
+ * T-PR1 起页面无 ECharts（周趋势/考点条形图随路由归位移除，图表装配口径的
+ * 测试随之删除；不再需要 echarts 桩）。
  */
-
-/** 桩可见的 option 形状（chart-options 构造结果的子集） */
-interface StubOption {
-  xAxis?: { data?: string[] };
-  yAxis?: { data?: string[] };
-  series?: { data?: unknown[] }[];
-}
-
-vi.mock("echarts/core", () => {
-  // 条形图的数据项是 { value, itemStyle }——统一抽成纯数值便于断言
-  const plainData = (series: { data?: unknown[] }): unknown[] =>
-    (series.data ?? []).map((item) =>
-      typeof item === "object" && item !== null && "value" in item
-        ? (item as { value: unknown }).value
-        : item,
-    );
-  // init 桩：setOption 把 option 的类目/序列写回容器 data-* 供断言
-  const init = vi.fn((el: HTMLElement) => ({
-    setOption: vi.fn((option: StubOption) => {
-      el.setAttribute(
-        "data-categories",
-        JSON.stringify(option.yAxis?.data ?? option.xAxis?.data),
-      );
-      el.setAttribute(
-        "data-series",
-        JSON.stringify(option.series?.map((series) => plainData(series))),
-      );
-    }),
-    resize: vi.fn(),
-    dispose: vi.fn(),
-  }));
-  return { use: vi.fn(), init };
-});
-vi.mock("echarts/charts", () => ({ LineChart: {}, BarChart: {} }));
-vi.mock("echarts/components", () => ({
-  GridComponent: {},
-  TooltipComponent: {},
-}));
-vi.mock("echarts/renderers", () => ({ CanvasRenderer: {} }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -92,7 +49,7 @@ const ATT_WRONG_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const ATT_WRONG_2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
 const NOW = "2026-09-24T04:00:00.000Z";
 
-/** 画像数据工厂（对齐 seed-demo 李小红构成：异常×2、待批、阅读地图） */
+/** 学生主页数据工厂（对齐 seed-demo 李小红构成：异常×2、待批、阅读地图） */
 function makeStudent(
   overrides: Partial<AnalyticsStudentData> = {},
 ): AnalyticsStudentData {
@@ -320,7 +277,7 @@ function LocationProbe() {
   );
 }
 
-function renderPage(initialEntry = `/t/insights/students/${S2}`) {
+function renderPage(initialEntry = `/t/students/${S2}`) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -329,10 +286,10 @@ function renderPage(initialEntry = `/t/insights/students/${S2}`) {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route
-            path="/t/insights/students/:id"
+            path="/t/students/:id"
             element={
               <>
-                <InsightsStudentPage />
+                <StudentHomePage />
                 <LocationProbe />
               </>
             }
@@ -350,31 +307,31 @@ beforeEach(() => {
   mockedReports.mockResolvedValue({ reports: [] });
 });
 
-describe("InsightsStudentPage 三态", () => {
+describe("StudentHomePage 三态", () => {
   it("加载中显示骨架提示，不白屏", () => {
     mockedStudent.mockReturnValue(new Promise(() => undefined));
     renderPage();
-    expect(screen.getByText("正在加载学生画像…")).toBeInTheDocument();
+    expect(screen.getByText("正在加载学生主页…")).toBeInTheDocument();
   });
 
   it("加载失败显示错误与重试，重试后恢复", async () => {
     mockedStudent.mockRejectedValueOnce(new Error("连不上服务器"));
     renderPage();
-    expect(await screen.findByText("学生画像加载失败")).toBeInTheDocument();
+    expect(await screen.findByText("学生主页加载失败")).toBeInTheDocument();
     mockedStudent.mockResolvedValue(makeStudent());
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("讲义阅读地图")).toBeInTheDocument();
   });
 
-  it("404 STUDENT_NOT_FOUND 显示「找不到这名学生」错误页（带返回总览）", async () => {
+  it("404 STUDENT_NOT_FOUND 显示「找不到这名学生」错误页（带返回学生列表）", async () => {
     mockedStudent.mockRejectedValue(
       new ApiError("STUDENT_NOT_FOUND", "学生不存在或不属于该教师", 404),
     );
     renderPage();
     expect(await screen.findByText("找不到这名学生")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "返回学情总览" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回学生列表" })).toHaveAttribute(
       "href",
-      "/t/insights",
+      "/t/students",
     );
     // 404 是终态：不提供无意义的重试按钮
     expect(
@@ -383,8 +340,8 @@ describe("InsightsStudentPage 三态", () => {
   });
 });
 
-describe("InsightsStudentPage 指标区", () => {
-  it("头部汇总 + 考点表（薄弱在前，待批单列）+ 图表数据装配", async () => {
+describe("StudentHomePage 指标区", () => {
+  it("头部汇总 + 薄弱考点前 5 文字表（按错误数降序，待批单列）", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
     await screen.findByText("讲义阅读地图");
@@ -394,30 +351,9 @@ describe("InsightsStudentPage 指标区", () => {
       screen.getByText(/正确率 50%（对 3 \/ 已判定 6 题）· 待批 2 题/),
     ).toBeInTheDocument();
 
-    // 图表数据装配（mock echarts/core 后走真实 option 构造）：
-    // 趋势两周 [66.7, null]（第二周无已判定题断线）；考点条形最薄弱（null）在上
-    const trend = await screen.findByTestId("analytics-trend-chart");
-    expect(trend).toHaveAttribute(
-      "data-categories",
-      JSON.stringify(["9/14", "9/21"]),
-    );
-    expect(trend).toHaveAttribute(
-      "data-series",
-      JSON.stringify([[66.7, null]]),
-    );
-    const knowledge = await screen.findByTestId("analytics-knowledge-chart");
-    expect(knowledge).toHaveAttribute(
-      "data-categories",
-      JSON.stringify(["有理数加法", "数轴"]),
-    );
-    expect(knowledge).toHaveAttribute(
-      "data-series",
-      JSON.stringify([[null, 50]]),
-    );
-
-    // 考点表：数轴 50%、有理数加法无已判定（—）且待批 2
+    // 薄弱考点文字表（数据按错误数降序，页面取前 5；无已判定显示「—」）
     const knowledgeTable = screen.getByRole("table", {
-      name: /考点正确率明细/,
+      name: /薄弱考点前 5/,
     });
     expect(knowledgeTable).toHaveTextContent("数轴");
     expect(knowledgeTable).toHaveTextContent("有理数加法");
@@ -425,36 +361,32 @@ describe("InsightsStudentPage 指标区", () => {
     expect(knowledgeTable).toHaveTextContent("—");
   });
 
-  it("全部考点无已判定题时图表显示空态文案（不渲染 canvas）", async () => {
+  it("考点超过 5 项时只显示前 5 行（数据按错误数降序传入）", async () => {
     mockedStudent.mockResolvedValue(
       makeStudent({
-        trend: [
-          {
-            weekStart: "2026-09-21",
-            attemptCount: 0,
-            judgedCount: 0,
-            correctCount: 0,
-            correctRate: null,
-          },
-        ],
-        knowledge: [
-          {
-            knowledge: "全是待批",
-            correctCount: 0,
-            wrongCount: 0,
-            pendingCount: 3,
-            judgedCount: 0,
-            correctRate: null,
-          },
-        ],
+        knowledge: Array.from({ length: 6 }, (_, i) => ({
+          knowledge: `考点${i + 1}`,
+          correctCount: 0,
+          wrongCount: 10 - i,
+          pendingCount: 0,
+          judgedCount: 10 - i,
+          correctRate: 0,
+        })),
       }),
     );
     renderPage();
+    const table = await screen.findByRole("table", { name: /薄弱考点前 5/ });
+    for (let i = 1; i <= 5; i++) {
+      expect(within(table).getByText(`考点${i}`)).toBeInTheDocument();
+    }
+    expect(within(table).queryByText("考点6")).not.toBeInTheDocument();
+  });
+
+  it("考点列表为空时显示空态文案（T-PR1 起无图表，不再有图表空态）", async () => {
+    mockedStudent.mockResolvedValue(makeStudent({ knowledge: [] }));
+    renderPage();
     expect(
-      await screen.findByText("时间范围内还没有已判定的作答，暂无趋势可看。"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("时间范围内还没有已判定的作答，暂无考点统计。"),
+      await screen.findByText("时间范围内还没有已判定的作答，暂无考点统计。"),
     ).toBeInTheDocument();
   });
 
@@ -540,7 +472,7 @@ describe("InsightsStudentPage 指标区", () => {
   });
 });
 
-describe("InsightsStudentPage 讲义阅读地图（T4.0 §4.4.4）", () => {
+describe("StudentHomePage 讲义阅读地图（T4.0 §4.4.4）", () => {
   it("目录树逐项状态中文渲染：节三态 + 折叠两态 + steps 连点跳过", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
@@ -580,7 +512,7 @@ describe("InsightsStudentPage 讲义阅读地图（T4.0 §4.4.4）", () => {
   });
 });
 
-describe("InsightsStudentPage AI 报告区（T4.7 接入实数据，详见 StudentReportsSection.test）", () => {
+describe("StudentHomePage AI 报告区（T4.7 接入实数据，详见 StudentReportsSection.test）", () => {
   it("空态文案说明报告来源与连接入口（不再说「将在连接 AI 后出现」）", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
@@ -592,10 +524,10 @@ describe("InsightsStudentPage AI 报告区（T4.7 接入实数据，详见 Stude
   });
 });
 
-describe("InsightsStudentPage 筛选联动", () => {
+describe("StudentHomePage 筛选联动", () => {
   it("URL 初始化的筛选透传接口（days/courseId）；切换天数重查", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
-    renderPage(`/t/insights/students/${S2}?days=7&courseId=${COURSE_A}`);
+    renderPage(`/t/students/${S2}?days=7&courseId=${COURSE_A}`);
     await screen.findByText("讲义阅读地图");
     expect(mockedStudent).toHaveBeenLastCalledWith(S2, {
       days: 7,

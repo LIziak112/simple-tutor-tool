@@ -55,6 +55,7 @@ export const ALL_TAGS = [
 
 /** e2e/<文件名> → 标签。每个 spec 至少一个；未登记的 spec 变动按全量兜底 */
 export const SPEC_TAGS = {
+  "nested-course-catalog.spec.ts": ["@teacher", "@student"],
   // 冒烟（任何选测都随基线跑）
   "full-chain.spec.ts": ["@smoke"],
   "student-course-practice.spec.ts": ["@smoke"],

@@ -1,3 +1,4 @@
+import type { CourseCatalogCommand } from "@tutor/contract";
 import {
   type AdminOverviewData,
   type AdminSettingsData,
@@ -3231,4 +3232,13 @@ export function restoreBackupApi(
   return callApi(() =>
     fetch("/api/teacher/backup/restore", { method: "POST", body: form }),
   );
+}
+
+/** 课程目录的事务操作。 */
+export function manageCourseCatalogApi(
+  courseId: string,
+  request: CourseCatalogCommand,
+): Promise<{ id: string | null }> {
+  const args = { param: { id: courseId }, json: request };
+  return callApi(() => api.api.teacher.courses[":id"].catalog.$post(args));
 }

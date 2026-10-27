@@ -13,6 +13,11 @@ import { z } from "zod";
  *   报告列表区「点开渲染」按需取，正文不进列表行——列表见 reportSummarySchema）；
  * - DELETE /api/teacher/reports/:id：删除报告（他人报告 → 404；不做编辑，D24）。
  *
+ * MCP get_report（教师迭代 T-PR2，只读）：reportId 给出 → getReportDetail 详情；
+ * 省略 → studentId 可省约定（名下唯一未归档学生自动默认）后 listStudentReports
+ * 列表。工具注册在 apps/server/src/mcp/server.ts（查询装配见同目录
+ * teacher-queries.ts）；本文件契约 schema 无变化（gen:spec diff 为空）。
+ *
  * MCP 端点 /mcp 本身不走 HTTP 统一壳（SDK 协议格式原样，Phase4 清单 §3 已注明
  * 「MCP 无契约变化」）；save_report 工具的写入参数复用本文件的
  * reportCreateRequestSchema 做同一份校验（服务层 createReport 入口）。
