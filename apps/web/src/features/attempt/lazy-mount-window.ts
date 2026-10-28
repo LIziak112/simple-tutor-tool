@@ -105,6 +105,8 @@ export class LazyMountWindow {
     this.wireScroll();
     this.mountObserver?.observe(element);
     if (this.mountedIds.has(id)) this.unloadObserver?.observe(element);
+    // 首挂不等观察器：kick 出的 pump 会按几何把带内的行补齐。
+    this.kick();
   }
 
   /** 订阅某题的挂载状态变化（行组件用 useSyncExternalStore 接入）。 */
@@ -135,6 +137,9 @@ export class LazyMountWindow {
   /** 行内滚动监听上报：任何 scroll（含嵌套容器，capture）都算「滚动中」。 */
   noteScroll(): void {
     this.lastScrollAt = this.now();
+    // 滚动静默本身就是自愈时钟：停稳后 pump→reconcile 按几何核对缺口，
+    // 不依赖观察器是否可靠投递。
+    this.kick();
   }
 
   isScrolling(): boolean {
@@ -182,13 +187,11 @@ export class LazyMountWindow {
 
   private kick(): void {
     if (this.pumpTimer !== null || this.chainActive) return;
-    this.pumpTimer = setTimeout(
-      () => {
-        this.pumpTimer = null;
-        this.pump();
-      },
-      this.isScrolling() ? SCROLL_QUIET_MS : 0,
-    );
+    const delay = this.isScrolling() ? SCROLL_QUIET_MS : 0;
+    this.pumpTimer = setTimeout(() => {
+      this.pumpTimer = null;
+      this.pump();
+    }, delay);
   }
 
   private pump(): void {
@@ -201,6 +204,9 @@ export class LazyMountWindow {
       if (this.pending.size > 0) this.kick();
       return;
     }
+    // IO 只是提示，几何才是权威：静默后按当前几何核对带内未挂的行，
+    // 观察器漏报/陈旧通知造成的缺口在这里自愈。
+    this.reconcile();
     if (this.pending.size > 0) {
       const viewportHeight =
         typeof window === "undefined" ? 800 : window.innerHeight;
@@ -223,6 +229,24 @@ export class LazyMountWindow {
     if (this.chainActive) return;
     this.chainActive = true;
     this.step();
+  }
+
+  /** 带内核对：MOUNT_MARGIN 对应视口上方半屏、下方一屏；几何与 IO 不一致的缺口在这里补齐。 */
+  private reconcile(): void {
+    if (typeof window === "undefined") return;
+    const viewportHeight = window.innerHeight;
+    const bandTop = -viewportHeight * 0.5;
+    const bandBottom = viewportHeight * 2;
+    for (const [id, element] of this.elements) {
+      if (this.mountedIds.has(id)) continue;
+      const rect = element.getBoundingClientRect();
+      if (
+        rect.top < bandBottom &&
+        rect.bottom > bandTop &&
+        !this.pending.has(id)
+      )
+        this.pending.add(id);
+    }
   }
 
   /** 挂载链：每个宏任务最多挂一张卡，卡片之间浏览器有机会绘制。 */
@@ -277,10 +301,29 @@ export class LazyMountWindow {
       return;
     }
     if (this.unloadQueue.size === 0) return;
+    const viewportHeight =
+      typeof window === "undefined" ? 800 : window.innerHeight;
+    const windowTop = -viewportHeight * 2.5;
+    const windowBottom = viewportHeight * 3.5;
     const candidates: Id[] = [];
     let retained = false;
     for (const id of this.unloadQueue) {
-      if (!this.mountedIds.has(id)) continue;
+      if (!this.mountedIds.has(id)) {
+        this.unloadQueue.delete(id);
+        continue;
+      }
+      // IO 的穿越可能是陈旧快照（WebKit 对快速滚动后新 observe 的目标发过
+      // 陈旧的「不可见」初始通知）：落手前按当前几何复核，仍在窗口内的直接
+      // 出队——绝不卸载当前看得见/够得着的卡。
+      const rect = this.elements.get(id)?.getBoundingClientRect();
+      if (
+        rect !== undefined &&
+        rect.bottom > windowTop &&
+        rect.top < windowBottom
+      ) {
+        this.unloadQueue.delete(id);
+        continue;
+      }
       if (this.retain(id)) {
         retained = true;
         continue;
@@ -309,6 +352,8 @@ export class LazyMountWindow {
     for (const id of settled) this.notify(id);
     this.onSettle();
     if (this.unloadQueue.size > 0) this.scheduleUnload();
+    // 卸载若误伤（IO 陈旧通知），静默后的 reconcile 会把带内的行补回来。
+    this.kick();
   }
 
   // ---------- 观察器与事件 ----------

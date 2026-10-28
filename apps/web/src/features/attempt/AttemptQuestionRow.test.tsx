@@ -171,7 +171,7 @@ it("视口懒挂载：未进入视口只渲染等高占位，进入后挂载；�
   // 窗口化卸载：整行完全离开卸载窗口后卸回占位，占位回填实测卡高
   // （实测读的是 li 的首个子元素——挂载的题卡根节点）。
   const card = li?.firstElementChild as HTMLElement | null;
-  expect(card).not.toBeNull();
+  if (card === null) throw new Error("挂载后 li 首子元素（题卡）不存在");
   card.getBoundingClientRect = () => ({ height: 623 }) as DOMRect;
   Object.defineProperty(li, "getBoundingClientRect", {
     value: () => ({ top: -30000, bottom: -29500, height: 500 }) as DOMRect,
