@@ -402,6 +402,12 @@ export const questionGroupDeleteDataSchema = z.object({
  * - LESSON_QUESTION_BLOCK_MISSING：讲练页正文未找到该题的题块（422，讲练文档
  *   SSOT P1a）——存储正文被手工改动等数据异常，嵌入题编辑被拒（事务回滚），
  *   引导整页重导修正。
+ * - LECTURE_BLOCKS_MISMATCH：讲练页整页编辑的题块 id 集合与嵌入单元 live 题
+ *   id 集合不一致（422，审查修复 2）——整页编辑不能增删题块或改题号，题块
+ *   增删/改 id 请走重新导入或题库编辑（SSOT 双向防漂移的整页侧闸门）。
+ * - LESSON_BLOCK_DIVERGED：题库单题编辑回写前发现讲义正文中该题块文本已被
+ *   整页编辑修改、与题库 sourceMd 不一致（422，审查修复 2）——直接回写会
+ *   冲掉整页修改，请先恢复题块或重新导入整页（SSOT 双向防漂移的题库侧闸门）。
  * - REPLACE_LECTURE_NOT_FOUND / REPLACE_REQUIRES_SINGLE_LECTURE /
  *   REPLACE_TITLE_CONFLICT：导入显式替换入口（replaceLectureId，讲练文档
  *   SSOT P2a）的三项前置校验——目标域内不存在 404（不暴露存在性）、文档
@@ -435,6 +441,17 @@ export const contentErrorCodeSchema = z.enum([
    * 整页重导修正。
    */
   "LESSON_QUESTION_BLOCK_MISSING",
+  /**
+   * 讲练页整页编辑的题块 id 集合与该页嵌入单元 live 题 id 集合不一致（422，
+   * 审查修复 2）：正文中缺失或多出了题块（或题号被改）——整页编辑只允许改
+   * 讲义正文与题块内容，增删题块/改题号请走重新导入或题库编辑。
+   */
+  "LECTURE_BLOCKS_MISMATCH",
+  /**
+   * 讲义正文中该题块已被整页编辑修改、与题库 sourceMd 不一致（422，审查
+   * 修复 2）：嵌入题回写会静默冲掉整页修改，先恢复题块或重新导入整页。
+   */
+  "LESSON_BLOCK_DIVERGED",
   /**
    * 显式替换目标讲练页/讲义在教师域内不存在（404，讲练文档 SSOT P2a）——
    * 目标 id 无效或指向他人讲义统一按不存在处理，不暴露存在性。

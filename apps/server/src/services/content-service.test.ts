@@ -237,10 +237,12 @@ describe("updateQuestion：讲练嵌入题回写讲义正文（讲练文档 SSOT
   it("讲义正文缺该题块 → 422 LESSON_QUESTION_BLOCK_MISSING，题目不更新", () => {
     const db = createTestDb();
     const lectureId = commitLesson(db);
-    // 模拟存储正文被手工改动：编辑抽屉保存的正文丢掉了题块
-    updateLecture(db, TEST_TEACHER_ID, lectureId, {
-      markdown: "# 第1讲 有理数\n\n题块被手工删掉的正文。\n",
-    });
+    // 模拟存储正文被手工改动：正文丢掉了题块（整页编辑入口已被
+    // LECTURE_BLOCKS_MISMATCH 守卫拦截，直写库模拟守卫上线前的存量数据异常）
+    db.update(lectures)
+      .set({ markdown: "# 第1讲 有理数\n\n题块被手工删掉的正文。\n" })
+      .where(and(eq(lectures.teacherId, TEST_TEACHER_ID), eq(lectures.id, lectureId)))
+      .run();
     const before = db
       .select()
       .from(questions)
@@ -290,6 +292,132 @@ describe("updateQuestion：讲练嵌入题回写讲义正文（讲练文档 SSOT
     expect(data.lessonSynced).toBe(false);
     expect(data.version).toBe(2);
     expect(db.select().from(lectures).all()).toEqual(lecturesBefore);
+  });
+});
+
+describe("updateLecture / updateQuestion：讲练页双向防漂移守卫（审查修复 2）", () => {
+  /** 导入最小讲练页（与上一 describe 同款：题块原位保留、嵌入单元已关联） */
+  function commitLesson(db: Db): string {
+    const report = commitImport(db, TEST_TEACHER_ID, {
+      markdown: LESSON_SYNC_MD,
+      filename: "随堂讲练.md",
+    });
+    const lectureId = report.lectures[0]?.id ?? "";
+    expect(lectureId).not.toBe("");
+    return lectureId;
+  }
+
+  it("整页编辑删掉题块 → 422 LECTURE_BLOCKS_MISMATCH，讲义行不更新", () => {
+    const db = createTestDb();
+    const lectureId = commitLesson(db);
+    const before = getLectureDetail(db, TEST_TEACHER_ID, lectureId);
+
+    const error = captureError(() =>
+      updateLecture(db, TEST_TEACHER_ID, lectureId, {
+        markdown: "# 第1讲 有理数\n\n题块被删掉的正文。\n",
+      }),
+    );
+    expect(error).toMatchObject({
+      status: 422,
+      code: "LECTURE_BLOCKS_MISMATCH",
+    });
+    expect((error as HttpError).message).toContain("重新导入");
+    // 守卫在写入前拦截：讲义行与题目行都保持原状
+    expect(getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown).toBe(
+      before.markdown,
+    );
+    expect(
+      db
+        .select()
+        .from(questions)
+        .where(eq(questions.id, "随堂讲练-1"))
+        .get()?.deletedAt,
+    ).toBeNull();
+  });
+
+  it("整页编辑改题块 id → 422 LECTURE_BLOCKS_MISMATCH（缺一多一并报）", () => {
+    const db = createTestDb();
+    const lectureId = commitLesson(db);
+    const md = getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown;
+    const renamed = md.replace('id="随堂讲练-1"', 'id="q-renamed"');
+    expect(renamed).not.toBe(md);
+
+    const error = captureError(() =>
+      updateLecture(db, TEST_TEACHER_ID, lectureId, { markdown: renamed }),
+    );
+    expect(error).toMatchObject({
+      status: 422,
+      code: "LECTURE_BLOCKS_MISMATCH",
+    });
+  });
+
+  it("整页编辑只改讲义正文（题块集合与题块文本不变）→ 正常保存", () => {
+    const db = createTestDb();
+    const lectureId = commitLesson(db);
+    const md = getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown;
+    const edited = md.replace("引入段。", "改过的引入段。");
+
+    const data = updateLecture(db, TEST_TEACHER_ID, lectureId, {
+      markdown: edited,
+    });
+    expect(data.title).toBe("第1讲 有理数");
+    expect(
+      getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown,
+    ).toContain("改过的引入段。");
+  });
+
+  it("整页编辑改了题块文本后，题库单题编辑 → 422 LESSON_BLOCK_DIVERGED，题目不更新", () => {
+    const db = createTestDb();
+    const lectureId = commitLesson(db);
+    const md = getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown;
+    // 整页编辑改题块内文本：题块 id 集合不变（守卫 ① 放行），但正文题块与
+    // 题库 sourceMd 已经漂移——此时题库编辑若直接回写会冲掉整页修改
+    const edited = md.replace("计算 [[3]]。", "整页编辑改过的题干 [[3]]。");
+    updateLecture(db, TEST_TEACHER_ID, lectureId, { markdown: edited });
+    const before = db
+      .select()
+      .from(questions)
+      .where(eq(questions.id, "随堂讲练-1"))
+      .get();
+
+    const error = captureError(() =>
+      updateQuestion(db, TEST_TEACHER_ID, "随堂讲练-1", {
+        sourceMd: NEW_FILL_MD,
+      }),
+    );
+    expect(error).toMatchObject({
+      status: 422,
+      code: "LESSON_BLOCK_DIVERGED",
+    });
+    expect((error as HttpError).message).toContain("重新导入整页");
+    // 题目行与讲义行都不被改动（整页编辑的结果保持权威）
+    const after = db
+      .select()
+      .from(questions)
+      .where(eq(questions.id, "随堂讲练-1"))
+      .get();
+    expect(after?.version).toBe(before?.version);
+    expect(after?.sourceMd).toBe(before?.sourceMd);
+    expect(
+      getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown,
+    ).toContain("整页编辑改过的题干");
+  });
+
+  it("整页编辑换行风格（CRLF 保存）不构成漂移：题库编辑照常回写", () => {
+    const db = createTestDb();
+    const lectureId = commitLesson(db);
+    const md = getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown;
+    // 编辑器以 CRLF 重存整页（题块文本逻辑内容未变）——比对按行归一，
+    // 不能把行尾风格差异当成题块漂移
+    updateLecture(db, TEST_TEACHER_ID, lectureId, {
+      markdown: md.replace(/\n/g, "\r\n"),
+    });
+
+    const data = updateQuestion(db, TEST_TEACHER_ID, "随堂讲练-1", {
+      sourceMd: NEW_FILL_MD,
+    });
+    expect(data.lessonSynced).toBe(true);
+    expect(data.version).toBe(2);
   });
 });
 

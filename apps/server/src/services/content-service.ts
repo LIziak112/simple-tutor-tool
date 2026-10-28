@@ -32,6 +32,7 @@ import {
 } from "@tutor/contract";
 import {
   LECTURE_PREFIX_LINES,
+  lessonQuestionBlockOf,
   type LintOptions,
   type LintResult,
   lintDocument,
@@ -42,7 +43,7 @@ import {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
-import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
 import {
@@ -1639,11 +1640,37 @@ export function updateQuestion(
       })
       .from(units)
       .innerJoin(lectures, eq(units.lectureId, lectures.id))
-      .where(and(eq(units.teacherId, teacherId), eq(units.id, row.unitId)))
+      .where(
+        and(
+          eq(units.teacherId, teacherId),
+          eq(units.id, row.unitId),
+          // 对称过滤（审查随批加固）：lectureId 理论上恒指本域讲义，此处同滤
+          // 防御跨域脏数据把他人讲义行读进嵌入判定
+          eq(lectures.teacherId, teacherId),
+        ),
+      )
       .get();
     // 嵌入题：题库行与讲义正文题块同一事务替换——正文未找到该题块（存储正文
     // 被手工改动等数据异常）时整体拒绝并回滚，题目行不落半截更新
     if (lectureRow?.kind === "lesson") {
+      // 双源漂移守卫（审查修复 ②）：整页编辑改过正文题块后，正文题块与题库
+      // sourceMd 已不一致——此时回写会静默冲掉整页修改，先拒绝并指引恢复/
+      // 重导（比对按行归一，行尾风格差异不算漂移）
+      const block = lessonQuestionBlockOf(lectureRow.markdown, id);
+      if (block === undefined) {
+        throw new HttpError(
+          422,
+          "LESSON_QUESTION_BLOCK_MISSING",
+          blockMissingMessage,
+        );
+      }
+      if (normalizedLinesOf(block) !== normalizedLinesOf(row.sourceMd)) {
+        throw new HttpError(
+          422,
+          "LESSON_BLOCK_DIVERGED",
+          "讲义正文中该题块已被整页编辑修改，与题库不一致；请先恢复题块或重新导入整页",
+        );
+      }
       const { markdown, replaced } = replaceLessonQuestionBlock(
         lectureRow.markdown,
         id,
@@ -1751,12 +1778,80 @@ export function getLectureDetail(
   };
 }
 
+/** 行尾归一比对（CRLF/LF 逻辑同文）：讲练题块漂移判定用，行尾风格差异不算漂移 */
+function normalizedLinesOf(text: string): string {
+  return text.split(/\r?\n/).join("\n");
+}
+
+/**
+ * 讲练页整页编辑的题块集合守卫（审查修复 ①）：提交 markdown 解析出的题块
+ * id 集合必须与该页嵌入单元的 live 题 id 集合一致。整页编辑只允许改讲义
+ * 正文与题块内容——增删题块/改题号会使讲义正文与题库两份存储漂移（SSOT
+ * 不变量被破坏，重导接管语义也随之失准），须走重新导入或题库编辑。
+ * 与 updateQuestion 的 LESSON_BLOCK_DIVERGED 构成双向防漂移闸门。
+ */
+function assertLessonBlocksMatch(
+  db: Db,
+  teacherId: string,
+  lectureId: string,
+  parsed: ParsedDocument,
+): void {
+  const embeddedUnitRows = db
+    .select({ id: units.id })
+    .from(units)
+    .where(
+      and(
+        eq(units.teacherId, teacherId),
+        eq(units.lectureId, lectureId),
+        isNull(units.deletedAt),
+      ),
+    )
+    .all();
+  const liveIds = new Set(
+    embeddedUnitRows.length === 0
+      ? []
+      : db
+          .select({ id: questions.id })
+          .from(questions)
+          .where(
+            and(
+              eq(questions.teacherId, teacherId),
+              inArray(
+                questions.unitId,
+                embeddedUnitRows.map((row) => row.id),
+              ),
+              isNull(questions.deletedAt),
+            ),
+          )
+          .all()
+          .map((row) => row.id),
+  );
+  const parsedIds = new Set(
+    parsed.units.flatMap((unit) =>
+      unit.questions.map((question) => question.id),
+    ),
+  );
+  const missing = [...liveIds].filter((id) => !parsedIds.has(id));
+  const extra = [...parsedIds].filter((id) => !liveIds.has(id));
+  if (missing.length === 0 && extra.length === 0) return;
+  const describeIds = (ids: readonly string[]): string =>
+    ids.length === 0 ? "无" : ids.join("、");
+  throw new HttpError(
+    422,
+    "LECTURE_BLOCKS_MISMATCH",
+    `讲练页题块与随堂练习题库不一致（正文缺少题块：${describeIds(missing)}；正文多出题块：${describeIds(extra)}）：整页编辑不能增删题块或修改题号，题块增删/改 id 请走重新导入或题库编辑`,
+  );
+}
+
 /**
  * 讲义编辑（PUT /api/teacher/lectures/:id）：整篇 markdown 提交，title 从 H1 重取，
  * 讲义 id（数据库 uuid）保持不变。解析语境 wrapLectureMd 按**存储的 kind** 包装
  * （讲练一体 2026-10：lesson 讲练讲义正文含题块合法，markdown 原样保存；
  * 编辑不改 kind 列——形态只能由重导覆盖）；多个 H1 → 422（一篇讲义只能有一个
  * H1）；error 级 lint issue → 422 LINT_ERROR。
+ * kind='lesson' 另有题块集合守卫（审查修复 ①）：解析出的题块 id 集合须与嵌入
+ * 单元 live 题一致，否则 422 LECTURE_BLOCKS_MISMATCH（题块增删/改 id 走重导
+ * 或题库编辑——正文里的题块不是加题入口）。
  */
 export function updateLecture(
   db: Db,
@@ -1808,6 +1903,11 @@ export function updateLecture(
       "VALIDATION_ERROR",
       "讲义必须以「# 标题」开头（title 从 H1 重取）",
     );
+  }
+
+  // 讲练页题块集合守卫（审查修复 ①）：题块 id 集合与嵌入单元 live 题一致才放行
+  if (row.kind === "lesson") {
+    assertLessonBlocksMatch(db, teacherId, id, parsed);
   }
 
   const updatedAt = new Date().toISOString();
