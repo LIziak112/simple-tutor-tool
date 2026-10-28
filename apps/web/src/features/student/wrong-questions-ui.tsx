@@ -857,7 +857,7 @@ export function WrongGroupSwitch({
  * 筛选输入基础样式（与课程下拉同一观感）：label + 输入框；触控 ≥44px。
  */
 const FILTER_INPUT_CLASS =
-  "min-h-11 min-w-0 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
+  "min-h-11 min-w-28 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 /**
  * 考点筛选输入（2026-10 实测反馈：下拉只可选 → 输入 + datalist 建议 + 多选）：

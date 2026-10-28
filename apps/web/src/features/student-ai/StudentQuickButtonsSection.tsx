@@ -252,7 +252,7 @@ export function StudentQuickButtonsSection({
                       >
                         <ArrowUp aria-hidden className="size-4" />
                       </Button>
-                      <label className="flex min-w-24 cursor-pointer items-center gap-1.5 text-sm">
+                      <label className="flex min-h-11 min-w-24 cursor-pointer items-center gap-1.5 text-sm">
                         <input
                           type="checkbox"
                           aria-label={`第 ${number} 项启用`}
@@ -308,7 +308,7 @@ export function StudentQuickButtonsSection({
                       <span className="text-muted-foreground">
                         发送时附带：
                       </span>
-                      <label className="flex cursor-pointer items-center gap-1.5">
+                      <label className="flex min-h-11 cursor-pointer items-center gap-1.5">
                         <input
                           type="checkbox"
                           aria-label={`第 ${number} 项附圈画`}
@@ -324,7 +324,7 @@ export function StudentQuickButtonsSection({
                         />
                         圈画
                       </label>
-                      <label className="flex cursor-pointer items-center gap-1.5">
+                      <label className="flex min-h-11 cursor-pointer items-center gap-1.5">
                         <input
                           type="checkbox"
                           aria-label={`第 ${number} 项附草稿`}
@@ -340,7 +340,7 @@ export function StudentQuickButtonsSection({
                         />
                         草稿
                       </label>
-                      <label className="flex cursor-pointer items-center gap-1.5">
+                      <label className="flex min-h-11 cursor-pointer items-center gap-1.5">
                         <input
                           type="checkbox"
                           aria-label={`第 ${number} 项附正式手写`}
