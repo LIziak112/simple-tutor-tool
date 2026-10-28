@@ -92,6 +92,7 @@ import {
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
 import { useGroupMaterialLayout } from "./group-material-layout-store";
+import { LazyMountWindow } from "./lazy-mount-window";
 import {
   type PracticeProblemPhase,
   PracticeQuestionFooter,
@@ -483,6 +484,9 @@ function AnswerView({
       next.add(questionId);
       return next;
     });
+    // 窗口化卸载的目标题立即直挂（跳题/阅读位置恢复），同时被 retain 钉住
+    // 不再卸载（forcedMountIds）。
+    mountWindowRef.current?.forceMount(questionId);
   }, []);
   // 新挂载的题卡编号版本：判分反馈观察器按它重建观察列表（rAF 合帧——
   // 滚动时一批题同时挂载只触发一次重建）。
@@ -499,6 +503,66 @@ function AnswerView({
     () => () => {
       if (cardMountFrame.current !== 0)
         cancelAnimationFrame(cardMountFrame.current);
+    },
+    [],
+  );
+  // ---------- 窗口化虚拟列表（性能第三步，2026-10-28） ----------
+  // 懒挂载第一版只挂不卸；窗口控制器补两件事：进视口挂载走调度（滚动静默
+  // 后就近逐卡挂载、滚动一来让位——首卡关键路径只付一张卡的解析成本，滚动
+  // 帧留给浏览器），整行完全离开视口 ±2.5 屏后卸回实测等高占位（Markdown
+  // 渲染缓存让重挂免解析，实测高度回填让重挂零位移）。绘制中不卸载等守卫
+  // 集中在 retainQuestion。单题模式行不启用懒挂载，控制器闲置无副作用。
+  const editorRef = useRef(editor);
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+  const forcedMountIdsRef = useRef(forcedMountIds);
+  useEffect(() => {
+    forcedMountIdsRef.current = forcedMountIds;
+  }, [forcedMountIds]);
+  const retainQuestion = useCallback((questionId: string): boolean => {
+    if (forcedMountIdsRef.current.has(questionId)) return true;
+    const editorStore = editorRef.current;
+    if (
+      editorStore !== null &&
+      (editorStore.getActive()?.questionId === questionId ||
+        editorStore.getPaper()?.questionId === questionId)
+    )
+      return true;
+    const element = cardElements.current.get(questionId);
+    if (element !== undefined) {
+      const active = document.activeElement;
+      if (
+        active !== null &&
+        active !== document.body &&
+        element.contains(active)
+      )
+        return true;
+      // 卡内有展开的 UI（对话框/下拉/原生 details/AI 面板内容）不卸载，
+      // 不收走用户正看着的面板。
+      if (
+        element.querySelector(
+          '[data-state="open"],details[open],[role="dialog"],[data-ai-question]:not(:empty)',
+        ) !== null
+      )
+        return true;
+    }
+    return false;
+  }, []);
+  const mountWindowRef = useRef<LazyMountWindow | null>(null);
+  if (
+    mountWindowRef.current === null &&
+    questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
+  ) {
+    mountWindowRef.current = new LazyMountWindow({
+      retain: retainQuestion,
+      onSettle: handleCardMounted,
+    });
+  }
+  useEffect(
+    () => () => {
+      mountWindowRef.current?.dispose();
+      mountWindowRef.current = null;
     },
     [],
   );
@@ -1619,6 +1683,7 @@ function AnswerView({
                           !singleMode &&
                           questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
                         }
+                        mountWindow={mountWindowRef.current ?? undefined}
                         forceMount={forcedMountIds.has(question.id)}
                         onCardMounted={handleCardMounted}
                         question={question}

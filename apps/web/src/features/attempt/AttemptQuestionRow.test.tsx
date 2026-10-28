@@ -1,7 +1,7 @@
 import { act, render } from "@testing-library/react";
 import type { QuestionPublic } from "@tutor/contract";
 import type { ComponentProps } from "react";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { AttemptQuestionRow } from "./AttemptQuestionRow";
 
@@ -105,39 +105,91 @@ function rowProps(overrides: Partial<RowTestProps> = {}): RowTestProps {
   };
 }
 
-it("视口懒挂载：未进入视口只渲染等高占位，进入视口后挂载题卡", () => {
-  const callbacks: Array<
-    (entries: Array<{ isIntersecting: boolean }>) => void
-  > = [];
-  class FakeObserver {
-    constructor(
-      callback: (entries: Array<{ isIntersecting: boolean }>) => void,
-    ) {
-      callbacks.push(callback);
-    }
-    observe() {}
-    unobserve() {}
-    disconnect() {}
+type Entry = { target: Element; isIntersecting: boolean };
+
+/**
+ * 行级懒挂载走窗口控制器（mountWindow 未传时行内自建实例），观察器由
+ * 控制器按 rootMargin 区分挂载带/卸载窗口；这里用假观察器驱动时序。
+ */
+class FakeObserver {
+  static instances: FakeObserver[] = [];
+  callback: (entries: Entry[]) => void;
+  options: IntersectionObserverInit;
+  constructor(
+    callback: (entries: Entry[]) => void,
+    options: IntersectionObserverInit = {},
+  ) {
+    this.callback = callback;
+    this.options = options;
+    FakeObserver.instances.push(this);
   }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+function observerByMargin(rootMargin: string): FakeObserver {
+  const found = FakeObserver.instances.find(
+    (instance) => instance.options.rootMargin === rootMargin,
+  );
+  if (found === undefined) throw new Error(`no observer for ${rootMargin}`);
+  return found;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it("视口懒挂载：未进入视口只渲染等高占位，进入后挂载；整行远离后卸回实测等高占位", async () => {
+  vi.useFakeTimers();
+  FakeObserver.instances = [];
   vi.stubGlobal("IntersectionObserver", FakeObserver);
   vi.mocked(AttemptQuestionCard).mockClear();
   const view = render(
     <AttemptQuestionRow {...rowProps({ lazyMount: true })} />,
   );
   expect(vi.mocked(AttemptQuestionCard)).not.toHaveBeenCalled();
-  const placeholder = view.container.querySelector(
-    '[data-slot="question-placeholder"]',
-  );
-  expect(placeholder).not.toBeNull();
+  expect(
+    view.container.querySelector('[data-slot="question-placeholder"]'),
+  ).not.toBeNull();
   expect(view.container.querySelector("li")?.hidden).toBe(false);
+  const li = view.container.querySelector("li");
+  expect(li).not.toBeNull();
   act(() => {
-    for (const callback of callbacks) callback([{ isIntersecting: true }]);
+    observerByMargin("50% 0px 100% 0px").callback([
+      { target: li as Element, isIntersecting: true },
+    ]);
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
   });
   expect(vi.mocked(AttemptQuestionCard)).toHaveBeenCalledTimes(1);
   expect(
     view.container.querySelector('[data-slot="question-placeholder"]'),
   ).toBeNull();
-  vi.unstubAllGlobals();
+  // 窗口化卸载：整行完全离开卸载窗口后卸回占位，占位回填实测卡高
+  // （实测读的是 li 的首个子元素——挂载的题卡根节点）。
+  const card = li?.firstElementChild as HTMLElement | null;
+  expect(card).not.toBeNull();
+  card.getBoundingClientRect = () => ({ height: 623 }) as DOMRect;
+  Object.defineProperty(li, "getBoundingClientRect", {
+    value: () => ({ top: -30000, bottom: -29500, height: 500 }) as DOMRect,
+    configurable: true,
+  });
+  act(() => {
+    observerByMargin("250% 0px 250% 0px").callback([
+      { target: li as Element, isIntersecting: false },
+    ]);
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(300);
+  });
+  const placeholder = view.container.querySelector<HTMLElement>(
+    '[data-slot="question-placeholder"]',
+  );
+  expect(placeholder).not.toBeNull();
+  expect(placeholder?.style.minHeight).toBe("623px");
 });
 
 it("视口懒挂载：forceMount 跳过视口判断直接挂载", () => {
@@ -163,4 +215,30 @@ it("视口懒挂载：挂载完成回调只报一次", () => {
     <AttemptQuestionRow {...rowProps({ lazyMount: false, onCardMounted })} />,
   );
   expect(onCardMounted).toHaveBeenCalledWith("q1");
+});
+
+it("视口懒挂载：会话级共享控制器驱动挂载与卸载", async () => {
+  vi.useFakeTimers();
+  FakeObserver.instances = [];
+  vi.stubGlobal("IntersectionObserver", FakeObserver);
+  vi.mocked(AttemptQuestionCard).mockClear();
+  const { LazyMountWindow } = await import("./lazy-mount-window");
+  const shared = new LazyMountWindow();
+  const view = render(
+    <AttemptQuestionRow
+      {...rowProps({ lazyMount: true, mountWindow: shared })}
+    />,
+  );
+  expect(vi.mocked(AttemptQuestionCard)).not.toHaveBeenCalled();
+  const li = view.container.querySelector("li");
+  act(() => {
+    observerByMargin("50% 0px 100% 0px").callback([
+      { target: li as Element, isIntersecting: true },
+    ]);
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(vi.mocked(AttemptQuestionCard)).toHaveBeenCalledTimes(1);
+  shared.dispose();
 });
