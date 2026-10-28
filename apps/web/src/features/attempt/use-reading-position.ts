@@ -232,5 +232,5 @@ export function useReadingPosition(
       captureRef.current?.(true);
     }, 150);
     return () => clearTimeout(timer);
-  }, [cardMountVersion]);
+  }, [cardMountVersion, cards]);
 }

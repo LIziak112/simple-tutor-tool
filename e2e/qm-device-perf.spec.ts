@@ -438,14 +438,14 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       // 题 4（fill）打开草稿纸面：AI 面板与纸面并存不塌
       // 题 4 可能在视口外（懒挂载只有占位）：article 与占位任一定位后滚动
       // 触发挂载，再等 article 出现（已挂载时滚动为 no-op）。
-      const q4Article = page.getByRole("article", { name: "第 4 题", exact: true });
+      const q4Article = page.getByRole("article", {
+        name: "第 4 题",
+        exact: true,
+      });
       const q4Placeholder = page
         .locator('[data-slot="question-placeholder"]')
         .filter({ hasText: "第 4 题，滚动到此处后显示" });
-      await q4Article
-        .or(q4Placeholder)
-        .first()
-        .scrollIntoViewIfNeeded();
+      await q4Article.or(q4Placeholder).first().scrollIntoViewIfNeeded();
       await expect(q4Article).toBeVisible();
       const q4 = q4Article;
       await q4

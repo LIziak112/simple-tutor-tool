@@ -39,7 +39,9 @@ describe("学生阅读位置恢复", () => {
       JSON.stringify({ questionId: "q2", offset: -20 }),
     );
     const onCurrent = vi.fn();
-    renderHook(() => useReadingPosition("attempt", cards, onCurrent, vi.fn(), 0));
+    renderHook(() =>
+      useReadingPosition("attempt", cards, onCurrent, vi.fn(), 0),
+    );
     expect(scroll).not.toHaveBeenCalled();
     advance();
     expect(scroll).toHaveBeenCalledExactlyOnceWith({
@@ -57,7 +59,9 @@ describe("学生阅读位置恢复", () => {
         key(),
         JSON.stringify({ questionId: "q2", offset: 0 }),
       );
-      renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0));
+      renderHook(() =>
+        useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0),
+      );
       act(() => window.dispatchEvent(new Event(event)));
       advance();
       expect(scroll).not.toHaveBeenCalled();
@@ -130,7 +134,9 @@ describe("学生阅读位置恢复", () => {
       throw new Error("不可用");
     });
     expect(() =>
-      renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0)),
+      renderHook(() =>
+        useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0),
+      ),
     ).not.toThrow();
     act(() => window.dispatchEvent(new Event("scroll")));
     expect(advance).not.toThrow();
