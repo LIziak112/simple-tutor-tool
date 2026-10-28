@@ -675,7 +675,10 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await expect(
       page.getByText("按增量贡献从大到小排序").first(),
     ).toBeVisible();
-    await expect(page.getByText("语句排序").first()).toBeVisible();
+    // #35/#38 综合筛选后「语句排序」先命中题型筛选的隐藏 option，改用该题题干片段定位卡片
+    await expect(
+      page.getByText("将下列段落排成一段语意连贯的文字").first(),
+    ).toBeVisible();
 
     // —— 泄露检查：交卷前响应无禁键、无详解哨兵 ——
     await leak.drain();
