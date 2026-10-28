@@ -2,7 +2,7 @@ import type { StudentAnswer } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   type AttemptEditor,
-  useAttemptEditor,
+  useAttemptEditorStore,
 } from "@/features/attempt/AttemptEditorContext";
 import {
   parseNoteKey,
@@ -231,41 +231,46 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
     };
   }, [focusTo, track]);
 
-  // 编辑器开合埋点（2026-10-28 使用数据补缺，hall-15077）：订阅编辑器协调器
-  // 全局态（questionId 传 undefined 取全局），标画/草稿/正式手写三类编辑器
-  // 激活/退出各报一条 editor_toggle；卸载时未落 off 事件（正常退出都走
-  // request(null) 会先落 off，硬刷新场景接受为已知极限）。
-  const activeEditor = useAttemptEditor(undefined)?.active ?? null;
+  // 编辑器开合埋点（2026-10-28 使用数据补缺，hall-15077）：命令式订阅编辑器
+  // 协调器 store（useAttemptEditorStore，**不走组件级 React 订阅**——组件级
+  // 订阅会让 AnswerView 全量重渲染进入编辑器开合热路径，PR #47 判别实测构成
+  // 130 题暖开尾部尖峰），标画/草稿/正式手写三类编辑器激活/退出各报一条
+  // editor_toggle；卸载时未落 off 事件（正常退出都走 request(null) 会先落
+  // off，硬刷新场景接受为已知极限）。
+  const editorStore = useAttemptEditorStore();
   const prevEditorRef = useRef<AttemptEditor | null>(null);
   useEffect(() => {
-    const prev = prevEditorRef.current;
-    if (
-      prev?.kind === activeEditor?.kind &&
-      prev?.questionId === activeEditor?.questionId
-    ) {
-      return;
-    }
-    prevEditorRef.current = activeEditor;
-    const now = Date.now();
-    if (prev !== null) {
-      track({
-        type: "editor_toggle",
-        clientTs: now,
-        questionId: prev.questionId,
-        editor: prev.kind,
-        on: false,
-      });
-    }
-    if (activeEditor !== null) {
-      track({
-        type: "editor_toggle",
-        clientTs: now,
-        questionId: activeEditor.questionId,
-        editor: activeEditor.kind,
-        on: true,
-      });
-    }
-  }, [activeEditor, track]);
+    if (editorStore === null) return;
+    const diff = (): void => {
+      const prev = prevEditorRef.current;
+      const next = editorStore.getActive();
+      if (prev?.kind === next?.kind && prev?.questionId === next?.questionId) {
+        return;
+      }
+      prevEditorRef.current = next;
+      const now = Date.now();
+      if (prev !== null) {
+        track({
+          type: "editor_toggle",
+          clientTs: now,
+          questionId: prev.questionId,
+          editor: prev.kind,
+          on: false,
+        });
+      }
+      if (next !== null) {
+        track({
+          type: "editor_toggle",
+          clientTs: now,
+          questionId: next.questionId,
+          editor: next.kind,
+          on: true,
+        });
+      }
+    };
+    diff();
+    return editorStore.subscribe(diff);
+  }, [editorStore, track]);
 
   // 草稿同步埋点（2026-10-28 使用数据补缺，hall-15077）：订阅草稿 store，本
   // attempt 的草稿（含订正 phase=correction）baseRevision 前进（一次成功

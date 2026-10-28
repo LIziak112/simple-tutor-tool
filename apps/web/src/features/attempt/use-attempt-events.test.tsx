@@ -250,6 +250,40 @@ describe("useAttemptEvents：编辑器开合 / 草稿同步（2026-10-28 使用�
     return { api, editor, unmount };
   }
 
+  it("editor_toggle 走命令式订阅：埋点宿主组件不因编辑器开合重渲染（暖开尾部尖峰回归锁）", async () => {
+    const holder: {
+      renders: number;
+      editor: ReturnType<typeof useAttemptEditor> | null;
+    } = { renders: 0, editor: null };
+    function Probe() {
+      holder.renders += 1;
+      useAttemptEvents("att-1");
+      return null;
+    }
+    function Driver() {
+      holder.editor = useAttemptEditor(undefined);
+      return null;
+    }
+    const { unmount } = render(
+      <AttemptEditorProvider>
+        <Probe />
+        <Driver />
+      </AttemptEditorProvider>,
+    );
+    const editor = holder.editor;
+    if (editor === null) throw new Error("Driver 未渲染");
+    const renderCount = holder.renders;
+    await act(async () => {
+      await editor.request({ questionId: "q1", kind: "scratch" });
+    });
+    await act(async () => {
+      await editor.request(null);
+    });
+    // 编辑器 store 已 publish 两次（开/关），埋点走命令式订阅——埋点宿主不重渲染
+    expect(holder.renders).toBe(renderCount);
+    unmount();
+  });
+
   it("编辑器激活/退出报 editor_toggle；切换产生一关一开，成对可读", async () => {
     const { editor, unmount } = renderWithEditor("att-1");
     await act(async () => {
