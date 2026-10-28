@@ -628,6 +628,35 @@ describe("T2A.3 导入请求扩展（folderId/folderName/batchId/addToCourse）"
       }).success,
     ).toBe(false);
   });
+
+  it("replaceLectureId（P2a）preview/commit 同字段：合法 UUID 可选通过，非 UUID 被拒", () => {
+    // preview 与 commit 是同一入口语义（commit 经 extend 继承同名字段）
+    expect(
+      importPreviewRequestSchema.safeParse({
+        ...base,
+        replaceLectureId: "0b6f18ae-6d9a-4d0e-8b7c-9b1b1b1b1b1b",
+      }).success,
+    ).toBe(true);
+    expect(
+      importCommitRequestSchema.safeParse({
+        ...base,
+        replaceLectureId: "0b6f18ae-6d9a-4d0e-8b7c-9b1b1b1b1b1b",
+      }).success,
+    ).toBe(true);
+    expect(importPreviewRequestSchema.safeParse(base).success).toBe(true);
+    expect(
+      importPreviewRequestSchema.safeParse({
+        ...base,
+        replaceLectureId: "lec-2",
+      }).success,
+    ).toBe(false);
+    expect(
+      importCommitRequestSchema.safeParse({
+        ...base,
+        replaceLectureId: "lec-2",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("T2A.3 preview 响应扩展（动作清单 + warning）", () => {

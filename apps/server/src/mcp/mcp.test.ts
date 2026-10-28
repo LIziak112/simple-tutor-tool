@@ -120,6 +120,22 @@ unit: mcp-import-unit
 ::::
 `;
 
+/** 单题讲练页文档（P2a replaceLectureId 透传测试：标题/单元/显式题号可定制） */
+const lessonMdOf = (title: string, unit: string, questionId: string): string =>
+  `---
+kind: lesson
+unit: ${unit}
+---
+
+# ${title}
+
+导语。
+
+::::question{type=judge difficulty=1 id=${questionId}}
+命题。[[正确]]
+::::
+`;
+
 /** MCP 测试环境 */
 interface McpEnv {
   app: ReturnType<typeof createApp>;
@@ -733,6 +749,106 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     expect(rowsB.length).toBe(2); // 甲乙各一行（复合主键 (teacherId, id)）
     expect(rowsB.map((r) => r.teacherId)).toContain(TEACHER_B_ID);
     await clientB.close();
+  });
+
+  it("import_markdown：dry-run 与 confirm 均透传 replaceLectureId（改名重导绑定既有讲练页，P2a）", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    // 先造一页甲域讲练页（旧页：第 2 讲 / 单元 lec2 / 题 lec2-1）
+    const seeded = await client.callTool({
+      name: "import_markdown",
+      arguments: {
+        markdown: lessonMdOf(
+          "第 2 讲 有理数",
+          "mcp-p2a-lec2",
+          "mcp-p2a-lec2-1",
+        ),
+        confirm: true,
+      },
+    });
+    expect(seeded.isError).toBeFalsy();
+    const targetId = (
+      JSON.parse(textOf(seeded)) as {
+        report: { lectures: { id: string }[] };
+      }
+    ).report.lectures[0]?.id;
+
+    // dry-run：改名文档带 replaceLectureId → 动作=updateLecture（新标题）+ 接管 warning
+    const dry = await client.callTool({
+      name: "import_markdown",
+      arguments: {
+        markdown: lessonMdOf(
+          "第 02 讲 有理数",
+          "mcp-p2a-lec02",
+          "mcp-p2a-lec02-1",
+        ),
+        replaceLectureId: targetId,
+      },
+    });
+    expect(dry.isError).toBeFalsy();
+    const dryData = JSON.parse(textOf(dry)) as {
+      dryRun: boolean;
+      preview: {
+        actions: { kind: string; title: string }[];
+        warnings: { code: string }[];
+      };
+    };
+    expect(dryData.dryRun).toBe(true);
+    expect(dryData.preview.actions).toContainEqual(
+      expect.objectContaining({
+        kind: "updateLecture",
+        title: "第 02 讲 有理数",
+      }),
+    );
+    expect(
+      dryData.preview.warnings.some(
+        (w) => w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+      ),
+    ).toBe(true);
+    // dry-run 零写入：旧页标题仍在
+    expect(
+      env.db
+        .select()
+        .from(lectures)
+        .where(eq(lectures.title, "第 2 讲 有理数"))
+        .all(),
+    ).toHaveLength(1);
+
+    // confirm：透传到 commitImport，绑定目标行（id 不变、title 更新）
+    const confirmed = await client.callTool({
+      name: "import_markdown",
+      arguments: {
+        markdown: lessonMdOf(
+          "第 02 讲 有理数",
+          "mcp-p2a-lec02",
+          "mcp-p2a-lec02-1",
+        ),
+        replaceLectureId: targetId,
+        confirm: true,
+      },
+    });
+    expect(confirmed.isError).toBeFalsy();
+    const confirmedData = JSON.parse(textOf(confirmed)) as {
+      confirmed: boolean;
+      report: {
+        lectures: {
+          id: string;
+          title: string;
+          inserted: boolean;
+          updated: boolean;
+        }[];
+      };
+    };
+    expect(confirmedData.confirmed).toBe(true);
+    expect(confirmedData.report.lectures).toEqual([
+      {
+        id: targetId,
+        title: "第 02 讲 有理数",
+        inserted: false,
+        updated: true,
+      },
+    ]);
+    await client.close();
   });
 
   it("list_students 只见本域：甲见种子 3 名学生；乙只见乙的学生", async () => {
@@ -1409,6 +1525,98 @@ describe("MCP import_zip（AI 侧 zip 打包上传导入）", () => {
     expect(importRows.some((row) => row.sourcePath === "zip:练习.md")).toBe(
       true,
     );
+    await client.close();
+  });
+
+  it("replaceLectureId 透传（P2a）：dry-run 文件预览动作=updateLecture + 接管 warning；confirm 绑定目标行", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    // 先经 import_markdown 造甲域旧页（与 zip 导入同一服务层）
+    const seeded = await client.callTool({
+      name: "import_markdown",
+      arguments: {
+        markdown: lessonMdOf(
+          "第 2 讲 有理数",
+          "mcp-zip-lec2",
+          "mcp-zip-lec2-1",
+        ),
+        confirm: true,
+      },
+    });
+    expect(seeded.isError).toBeFalsy();
+    const targetId = (
+      JSON.parse(textOf(seeded)) as {
+        report: { lectures: { id: string }[] };
+      }
+    ).report.lectures[0]?.id;
+    const zip = await zipOf([
+      {
+        name: "第02讲.md",
+        data: Buffer.from(
+          lessonMdOf("第 02 讲 有理数", "mcp-zip-lec02", "mcp-zip-lec02-1"),
+          "utf8",
+        ),
+      },
+    ]);
+    const dataBase64 = zip.toString("base64");
+
+    // dry-run：单 md zip 带 replaceLectureId → 该文件预览动作=updateLecture + 顶替提示
+    const dry = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64, replaceLectureId: targetId },
+    });
+    expect(dry.isError).toBeFalsy();
+    const dryData = JSON.parse(textOf(dry)) as {
+      dryRun: boolean;
+      files: Array<{
+        path: string;
+        actions: { kind: string; title: string }[];
+        warnings: { code: string }[];
+      }>;
+    };
+    expect(dryData.dryRun).toBe(true);
+    const dryFile = dryData.files[0];
+    expect(dryFile?.actions).toContainEqual(
+      expect.objectContaining({
+        kind: "updateLecture",
+        title: "第 02 讲 有理数",
+      }),
+    );
+    expect(
+      dryFile?.warnings.some(
+        (w) => w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+      ),
+    ).toBe(true);
+
+    // confirm：逐份 commitImport 透传，绑定目标行（id 不变、title 更新）
+    const confirmed = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64, replaceLectureId: targetId, confirm: true },
+    });
+    expect(confirmed.isError).toBeFalsy();
+    const confirmedData = JSON.parse(textOf(confirmed)) as {
+      files: Array<{
+        ok: boolean;
+        report: {
+          lectures: {
+            id: string;
+            title: string;
+            inserted: boolean;
+            updated: boolean;
+          }[];
+        };
+      }>;
+    };
+    const fileReport = confirmedData.files[0];
+    expect(fileReport?.ok).toBe(true);
+    expect(fileReport?.report.lectures).toEqual([
+      {
+        id: targetId,
+        title: "第 02 讲 有理数",
+        inserted: false,
+        updated: true,
+      },
+    ]);
     await client.close();
   });
 

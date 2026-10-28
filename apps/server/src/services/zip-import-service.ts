@@ -297,6 +297,12 @@ export interface ZipImportRunInput {
   readonly folderId: string | null;
   /** zip 展示名（缺省 mcp-import.zip），报告回显用 */
   readonly zipName: string;
+  /**
+   * 显式替换目标讲练页 id（P2a）：逐份 md 透传给 previewImport / commitImport
+   * （每份都要求单讲义文档——多讲义文件会被 REPLACE_REQUIRES_SINGLE_LECTURE
+   * 拒绝；适用「单讲练页 + 配图」的 zip）。缺省 / null = 不替换。
+   */
+  readonly replaceLectureId?: string | null;
 }
 
 /** 配对的中间产物：配对结果 + 按条目聚合的引用清单 + 条目字节索引 */
@@ -420,6 +426,9 @@ export function previewZipImport(
         markdown: file.markdown,
         filename: basenameOf(file.path),
         folderId,
+        ...(input.replaceLectureId != null
+          ? { replaceLectureId: input.replaceLectureId }
+          : {}),
       },
       undefined,
     );
@@ -574,6 +583,9 @@ export function commitZipImport(
           filename: basenameOf(file.path),
           folderId,
           sourcePath: `zip:${file.path}`,
+          ...(input.replaceLectureId != null
+            ? { replaceLectureId: input.replaceLectureId }
+            : {}),
         },
         dataDir,
         enabledCapabilities,

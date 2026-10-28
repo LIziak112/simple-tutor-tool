@@ -19,6 +19,7 @@ import {
   lectures,
   libraryFolders,
   questions,
+  teachers,
   units,
 } from "../db/schema.ts";
 import {
@@ -1707,5 +1708,552 @@ describe("图片存在性核对（IMAGE_SRC_NOT_FOUND，dataDir 贯通 createImp
       ),
     ).toBe(false);
     db.$client.close();
+  });
+});
+
+// ---------- 讲练文档 SSOT P2a：显式替换入口 replaceLectureId ----------
+
+/** 单题讲练页文档（标题/单元/题号可定制，题号显式写进围栏 id 属性） */
+function replaceableLessonDoc(
+  title: string,
+  unit: string,
+  questionId: string,
+): string {
+  return `---
+kind: lesson
+unit: ${unit}
+---
+
+# ${title}
+
+导语。
+
+::::question{type=judge difficulty=1 id=${questionId}}
+命题。[[正确]]
+::::
+`;
+}
+
+/** 直插资源库文件夹行，返回 id（P2a：目标所在文件夹与请求文件夹区分用） */
+function insertFolder(db: Db, name: string): string {
+  const id = crypto.randomUUID();
+  db.insert(libraryFolders)
+    .values({
+      id,
+      teacherId: TEST_TEACHER_ID,
+      name,
+      order: 0,
+      createdAt: new Date().toISOString(),
+    })
+    .run();
+  return id;
+}
+
+/** 直插他域教师与其讲义行（404 不暴露存在性对照），返回讲义 id */
+function insertForeignLecture(db: Db): string {
+  const otherTeacherId = crypto.randomUUID();
+  db.insert(teachers)
+    .values({
+      id: otherTeacherId,
+      loginName: "teacher-b-p2a",
+      isAdmin: false,
+      disabledAt: null,
+      passwordHash: "scrypt$p2a-fixture",
+      apiToken: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })
+    .run();
+  const lectureId = crypto.randomUUID();
+  db.insert(lectures)
+    .values({
+      id: lectureId,
+      teacherId: otherTeacherId,
+      courseId: null,
+      folderId: null,
+      title: "他域讲练页",
+      markdown: "# 他域讲练页\n\n正文。\n",
+      kind: "lesson",
+      order: 0,
+      updatedAt: new Date().toISOString(),
+      deletedAt: null,
+      teachingPackJson: null,
+    })
+    .run();
+  return lectureId;
+}
+
+describe("显式替换入口 replaceLectureId（P2a：改名重导绑定既有讲练页，接管复用 #40）", () => {
+  it("改名重导接管同一页（PR#40 事故场景）：讲义总数不变、id 不变、title 更新、旧嵌入单元软删、新单元挂载目标页；再换题号重导 → 挂载单元旧题软删新题 live", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const folderA = insertFolder(db, "目标文件夹");
+    const folderB = insertFolder(db, "请求文件夹");
+
+    // 旧页（落 folderA）：第 2 讲 / 单元 lec2 / 题 lec2-1
+    const first = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+        filename: "a.md",
+        folderId: folderA,
+      },
+      cookie,
+    );
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as {
+      data: { lectures: { id: string }[] };
+    };
+    const targetId = firstBody.data.lectures[0]?.id ?? "";
+    expect(targetId).not.toBe("");
+
+    // 教师本地文件改名（H1/单元/题号全换），显式指认替换旧页；
+    // 请求文件夹 B 只管其余新资源——本文档新单元应落目标所在文件夹 A
+    const second = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 02 讲 有理数", "lec02", "lec02-1"),
+        filename: "b.md",
+        folderId: folderB,
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as {
+      data: { lectures: unknown[] };
+    };
+    expect(secondBody.data.lectures).toEqual([
+      {
+        id: targetId,
+        title: "第 02 讲 有理数",
+        inserted: false,
+        updated: true,
+      },
+    ]);
+
+    // 讲义总数不变（无重复页）、id 不变、title 更新、目标所在文件夹不动
+    const lectureRows = db.select().from(lectures).all();
+    expect(lectureRows).toHaveLength(1);
+    const target = lectureRows[0];
+    expect(target?.id).toBe(targetId);
+    expect(target?.title).toBe("第 02 讲 有理数");
+    expect(target?.kind).toBe("lesson");
+    expect(target?.folderId).toBe(folderA);
+    // 显式题号原样保留（引号形态不重写；缺省派生 id 才由导入注入带引号形态）
+    expect(target?.markdown).toContain("id=lec02-1");
+
+    // 旧嵌入单元软删进回收站；新单元唯一 live、挂载目标页且落目标文件夹（非 folderB）
+    const stale = db.select().from(units).where(eq(units.id, "lec2")).get();
+    expect(stale?.deletedAt).not.toBeNull();
+    const fresh = db.select().from(units).where(eq(units.id, "lec02")).get();
+    expect(fresh?.deletedAt).toBeNull();
+    expect(fresh?.lectureId).toBe(targetId);
+    expect(fresh?.folderId).toBe(folderA);
+
+    // 旧单元题行保留（#40 口径：题级清退只作用于本次挂载的单元——作答历史是快照）；新题 live
+    expect(
+      db.select().from(questions).where(eq(questions.id, "lec2-1")).get()
+        ?.deletedAt,
+    ).toBeNull();
+    expect(
+      db.select().from(questions).where(eq(questions.id, "lec02-1")).get()
+        ?.deletedAt,
+    ).toBeNull();
+
+    // 再经替换入口换题号重导（单元 id 不动、只换题号）：挂载单元缺席旧题软删、新题 live
+    const third = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc(
+          "第 002 讲 有理数",
+          "lec02",
+          "lec02001-1",
+        ),
+        filename: "c.md",
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(third.status).toBe(200);
+    expect(
+      db.select().from(lectures).where(eq(lectures.id, targetId)).get()?.title,
+    ).toBe("第 002 讲 有理数");
+    expect(
+      db.select().from(units).where(eq(units.id, "lec02")).get()?.deletedAt,
+    ).toBeNull();
+    expect(
+      db.select().from(questions).where(eq(questions.id, "lec02-1")).get()
+        ?.deletedAt,
+    ).not.toBeNull();
+    expect(
+      db.select().from(questions).where(eq(questions.id, "lec02001-1")).get()
+        ?.deletedAt,
+    ).toBeNull();
+  });
+
+  it("目标不存在 / 他域讲义 → 404 REPLACE_LECTURE_NOT_FOUND（不暴露存在性，零写入）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const foreignId = insertForeignLecture(db);
+    for (const replaceLectureId of [crypto.randomUUID(), foreignId]) {
+      const res = await postJson(
+        app,
+        "/api/teacher/import/commit",
+        {
+          markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+          filename: "a.md",
+          replaceLectureId,
+        },
+        cookie,
+      );
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as ApiErr).error).toBe(
+        "REPLACE_LECTURE_NOT_FOUND",
+      );
+    }
+    // 零写入：本域无任何讲义/单元/留档，他域行原样
+    expect(
+      db
+        .select()
+        .from(lectures)
+        .where(eq(lectures.teacherId, TEST_TEACHER_ID))
+        .all(),
+    ).toHaveLength(0);
+    expect(db.select().from(units).all()).toHaveLength(0);
+    expect(db.select().from(imports).all()).toHaveLength(0);
+    expect(
+      db.select().from(lectures).where(eq(lectures.id, foreignId)).all(),
+    ).toHaveLength(1);
+  });
+
+  it("多讲义文档 / 无讲义文档 → 422 REPLACE_REQUIRES_SINGLE_LECTURE（零写入）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const seed = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+        filename: "a.md",
+      },
+      cookie,
+    );
+    expect(seed.status).toBe(200);
+    const targetId = (
+      (await seed.json()) as { data: { lectures: { id: string }[] } }
+    ).data.lectures[0]?.id;
+
+    // 多讲义（MIXED_MD 解析出两讲）与无讲义（practice）文档都换不了「该页」
+    for (const markdown of [MIXED_MD, judgeDoc("单元A")]) {
+      const res = await postJson(
+        app,
+        "/api/teacher/import/commit",
+        {
+          markdown,
+          filename: "multi.md",
+          replaceLectureId: targetId,
+        },
+        cookie,
+      );
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as ApiErr).error).toBe(
+        "REPLACE_REQUIRES_SINGLE_LECTURE",
+      );
+    }
+    // 零写入：讲义/单元/题目/留档都只有首次种子导入
+    expect(db.select().from(lectures).all()).toHaveLength(1);
+    expect(db.select().from(units).all()).toHaveLength(1);
+    expect(db.select().from(questions).all()).toHaveLength(1);
+    expect(db.select().from(imports).all()).toHaveLength(1);
+  });
+
+  it("目标文件夹已有同名另一讲义 → 422 REPLACE_TITLE_CONFLICT（提示换标题或先处理同名页）；同名页软删后放行", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const folderA = insertFolder(db, "目标文件夹");
+    const seed = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+        filename: "a.md",
+        folderId: folderA,
+      },
+      cookie,
+    );
+    const targetId =
+      ((await seed.json()) as { data: { lectures: { id: string }[] } }).data
+        .lectures[0]?.id ?? "";
+    // 同文件夹另一 live 讲义，标题恰为替换文档的新标题
+    const other = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: lectureDoc("第 02 讲 有理数"),
+        filename: "dup.md",
+        folderId: folderA,
+      },
+      cookie,
+    );
+    expect(other.status).toBe(200);
+
+    const res = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 02 讲 有理数", "lec02", "lec02-1"),
+        filename: "b.md",
+        folderId: folderA,
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as ApiErr;
+    expect(body.error).toBe("REPLACE_TITLE_CONFLICT");
+    expect(body.message).toContain("第 02 讲 有理数");
+    // 零写入：目标行未被改名（仍是旧标题），无新单元
+    expect(
+      db.select().from(lectures).where(eq(lectures.id, targetId)).get()?.title,
+    ).toBe("第 2 讲 有理数");
+    expect(db.select().from(units).all()).toHaveLength(1);
+
+    // 冲突只看未软删讲义：同名页进回收站后同一请求放行
+    db.update(lectures)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(lectures.title, "第 02 讲 有理数"))
+      .run();
+    const retry = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 02 讲 有理数", "lec02", "lec02-1"),
+        filename: "b2.md",
+        folderId: folderA,
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(retry.status).toBe(200);
+    expect(
+      db.select().from(lectures).where(eq(lectures.id, targetId)).get()?.title,
+    ).toBe("第 02 讲 有理数");
+  });
+
+  it("替换后 course_items.refId 引用不动（课程目录不断链）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const courseId = crypto.randomUUID();
+    db.insert(courses)
+      .values({
+        id: courseId,
+        teacherId: TEST_TEACHER_ID,
+        title: "目录课程",
+        order: 0,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    const first = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+        filename: "a.md",
+        addToCourse: { courseId, visible: true },
+      },
+      cookie,
+    );
+    const targetId =
+      ((await first.json()) as { data: { lectures: { id: string }[] } }).data
+        .lectures[0]?.id ?? "";
+    const itemsBefore = db
+      .select()
+      .from(courseItems)
+      .where(eq(courseItems.courseId, courseId))
+      .all();
+    expect(itemsBefore).toHaveLength(1);
+    expect(itemsBefore[0]).toMatchObject({ kind: "lecture", refId: targetId });
+
+    const second = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 02 讲 有理数", "lec02", "lec02-1"),
+        filename: "b.md",
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(second.status).toBe(200);
+    // 条目行逐字段不动（id/refId/order/visible），讲义行 id 不变——引用与可见性不断链
+    expect(
+      db
+        .select()
+        .from(courseItems)
+        .where(eq(courseItems.courseId, courseId))
+        .all(),
+    ).toEqual(itemsBefore);
+    expect(
+      db.select().from(lectures).where(eq(lectures.id, targetId)).get()?.title,
+    ).toBe("第 02 讲 有理数");
+  });
+
+  it("kind=lecture 目标被 lesson 文档替换：讲义更新为 lesson，不触发接管（原挂载配套单元保留 live）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const folderA = insertFolder(db, "目标文件夹");
+    // 普通讲义目标 + 一个挂到它上面的配套练习单元
+    const seed = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: lectureDoc("第A讲"), filename: "l.md", folderId: folderA },
+      cookie,
+    );
+    const targetId =
+      ((await seed.json()) as { data: { lectures: { id: string }[] } }).data
+        .lectures[0]?.id ?? "";
+    const companion = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: `---
+kind: practice
+unit: 配套练习
+lecture: 第A讲
+---
+
+::::question{type=judge difficulty=1}
+$1>0$。[[正确]]
+::::
+`,
+        filename: "p.md",
+        folderId: folderA,
+      },
+      cookie,
+    );
+    expect(companion.status).toBe(200);
+    const companionUnit = db
+      .select()
+      .from(units)
+      .where(eq(units.id, "配套练习"))
+      .get();
+    expect(companionUnit?.lectureId).toBe(targetId);
+
+    const res = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第A讲练", "lecA", "lecA-1"),
+        filename: "b.md",
+        folderId: folderA,
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const target = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, targetId))
+      .get();
+    expect(target?.kind).toBe("lesson"); // 更新为 lesson（导入是权威）
+    expect(target?.title).toBe("第A讲练");
+    // 目标更新前不是 lesson：不触发接管，原挂载配套单元保留 live、指针不动
+    expect(
+      db.select().from(units).where(eq(units.id, "配套练习")).get()?.deletedAt,
+    ).toBeNull();
+    expect(
+      db.select().from(units).where(eq(units.id, "配套练习")).get()?.lectureId,
+    ).toBe(targetId);
+  });
+
+  it("preview 带 replaceLectureId：动作 = updateLecture（新标题 + 目标所在文件夹）且接管 warning 亮出；软删目标标注 restore", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const folderA = insertFolder(db, "目标文件夹");
+    const seed = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+        filename: "a.md",
+        folderId: folderA,
+      },
+      cookie,
+    );
+    const targetId =
+      ((await seed.json()) as { data: { lectures: { id: string }[] } }).data
+        .lectures[0]?.id ?? "";
+
+    // 预览不带 folderId（未归类）：替换动作仍显示目标所在文件夹
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      {
+        markdown: replaceableLessonDoc("第 02 讲 有理数", "lec02", "lec02-1"),
+        filename: "b.md",
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const previewRaw = (await preview.json()) as object;
+    expect(importPreviewOkSchema.safeParse(previewRaw).success).toBe(true);
+    const previewBody = previewRaw as {
+      data: {
+        actions: {
+          kind: string;
+          title: string;
+          unitId: string | null;
+          folderName: string | null;
+          restore: boolean;
+        }[];
+        warnings: { code: string; message: string }[];
+      };
+    };
+    expect(previewBody.data.actions).toEqual([
+      {
+        kind: "updateLecture",
+        title: "第 02 讲 有理数",
+        unitId: null,
+        folderName: "目标文件夹",
+        restore: false,
+      },
+      {
+        kind: "createUnit",
+        title: "lec02",
+        unitId: "lec02",
+        folderName: "目标文件夹",
+        restore: false,
+      },
+    ]);
+    // #40 接管预览：旧随堂练习单元将被顶替（dry-run 与 MCP dry-run 同一入口）
+    expect(
+      previewBody.data.warnings.some(
+        (w) => w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+      ),
+    ).toBe(true);
+    expect(
+      previewBody.data.warnings.some((w) => w.message.includes("lec2")),
+    ).toBe(true);
+
+    // 目标软删后预览标注将从回收站恢复
+    db.update(lectures)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(lectures.id, targetId))
+      .run();
+    const restored = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      {
+        markdown: replaceableLessonDoc("第 02 讲 有理数", "lec02", "lec02-1"),
+        filename: "b.md",
+        replaceLectureId: targetId,
+      },
+      cookie,
+    );
+    const restoredBody = (await restored.json()) as {
+      data: { actions: { kind: string; restore: boolean }[] };
+    };
+    expect(restoredBody.data.actions[0]).toMatchObject({
+      kind: "updateLecture",
+      restore: true,
+    });
   });
 });

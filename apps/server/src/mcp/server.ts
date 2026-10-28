@@ -547,10 +547,17 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .nullable()
           .optional()
           .describe("目标资源库文件夹 id；null / 缺省 = 未归类"),
+        replaceLectureId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            "显式替换目标讲练页 id：绑定该页更新（改名重导不断链），旧随堂练习接管软删",
+          ),
       },
       annotations: { destructiveHint: true },
     },
-    guard(({ markdown, filename, confirm, folderId }) => {
+    guard(({ markdown, filename, confirm, folderId, replaceLectureId }) => {
       if (confirm === true) {
         // 复用既有导入服务：写 token 教师的资源库（域内匹配/落库/留档一体）；
         // dataDir 贯通：::image 图片存在性核对（IMAGE_SRC_NOT_FOUND warning 不阻断）
@@ -561,6 +568,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             markdown,
             filename: filename ?? "mcp-import.md",
             folderId: folderId ?? null,
+            ...(replaceLectureId !== undefined ? { replaceLectureId } : {}),
           },
           dataDir,
         );
@@ -573,6 +581,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           markdown,
           filename: filename ?? "mcp-import.md",
           folderId: folderId ?? null,
+          ...(replaceLectureId !== undefined ? { replaceLectureId } : {}),
         },
         dataDir,
       );
@@ -911,16 +920,28 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .nullable()
           .optional()
           .describe("目标资源库文件夹 id；null / 缺省 = 未归类"),
+        replaceLectureId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            "显式替换目标讲练页 id：绑定该页更新（改名重导不断链），旧随堂练习接管软删；zip 内每份 md 都按此目标绑定（适用单讲练页 zip）",
+          ),
       },
       annotations: { destructiveHint: true },
     },
-    guard(({ dataBase64, filename, confirm, folderId }) => {
+    guard(({ dataBase64, filename, confirm, folderId, replaceLectureId }) => {
       const zipName = filename ?? "mcp-import.zip";
       // base64 解码与解包校验（限额 / 损坏 / 危险条目名 → 结构化中文错误）；
       // 配对、改写与 dry-run/confirm 编排在 zip-import-service（口径注释见该文件头）
       const zipBytes = decodeImportZipBase64(dataBase64, zipName);
       const bundle = unpackImportZip(zipBytes);
-      const runInput = { bundle, folderId: folderId ?? null, zipName };
+      const runInput = {
+        bundle,
+        folderId: folderId ?? null,
+        zipName,
+        replaceLectureId: replaceLectureId ?? null,
+      };
       if (confirm === true) {
         // 写路径：上传被引用图片（saveMedia 魔数/5MB 校验）→ 改写 src → 逐份
         // commitImport（带 dataDir，图片存在性核对真实生效；sourcePath=zip:<路径>）

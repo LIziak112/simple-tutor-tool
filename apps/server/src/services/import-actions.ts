@@ -17,6 +17,7 @@ import {
   questions,
   units,
 } from "../db/schema";
+import { HttpError } from "../lib/http-error";
 
 /**
  * 导入动作清单（D19）与预览 warning（D18/D19）的计算模块（T2A.3）。
@@ -103,6 +104,73 @@ export interface ImportPlanInput {
   /** 本次导入的目标文件夹 id；null = 未归类（新资源落这里；已有单元保留原文件夹） */
   readonly folderId: string | null;
   readonly snapshot: LibrarySnapshot;
+  /**
+   * 显式替换目标讲练页/讲义 id（讲练文档 SSOT P2a）：教师指认「本文档替换该
+   * 讲练页/讲义」——绑定篇跳过标题匹配，动作恒为 updateLecture（title=文档
+   * 标题、folderName=目标所在文件夹、软删目标将恢复）；新建单元随目标走
+   * （预览标注目标所在文件夹）；#40 接管预检按「同名命中或显式目标」判定。
+   * 前置校验与 commit 同口径（assertReplaceLectureAllowed 单源）。
+   */
+  readonly replaceLectureId?: string;
+}
+
+/** 显式替换目标的行形状（commit 的 db 查询行与 preview 的快照行同构子集） */
+export interface ReplaceLectureRow {
+  readonly id: string;
+  readonly title: string;
+  /** 所在文件夹；null = 未归类 */
+  readonly folderId: string | null;
+  /** 软删时间；null = 未删除（同文件夹标题冲突只看未软删行） */
+  readonly deletedAt: string | null;
+}
+
+/**
+ * 显式替换入口（replaceLectureId，P2a）的三项前置校验——preview（buildImportPlan
+ * 内以快照行判定）与 commit（事务外 db 查询行判定）共用同一口径，返回通过
+ * 校验的目标行：
+ * 1. 域内不存在（含指向他人讲义）→ 404 REPLACE_LECTURE_NOT_FOUND（不暴露存在性）；
+ * 2. 文档解析讲义篇数 ≠ 1 → 422 REPLACE_REQUIRES_SINGLE_LECTURE；
+ * 3. 目标所在文件夹内另一未软删讲义与文档新标题同名 → 422 REPLACE_TITLE_CONFLICT
+ *    （替换会把目标改名为文档标题，造成同文件夹同名冲突）。
+ */
+export function assertReplaceLectureAllowed<T extends ReplaceLectureRow>(
+  replaceLectureId: string,
+  /** 目标所在文件夹内的全部讲义行（教师域，含目标自身与软删行；目标不在其中 = 不存在） */
+  folderLectures: readonly T[],
+  /** 文档解析出的讲义篇数 */
+  lectureCount: number,
+  /** 文档唯一讲义的新标题（篇数 = 1 时由调用方传入） */
+  newTitle: string | undefined,
+): T {
+  const target = folderLectures.find((row) => row.id === replaceLectureId);
+  if (target === undefined) {
+    throw new HttpError(
+      404,
+      "REPLACE_LECTURE_NOT_FOUND",
+      "替换目标讲练页不存在（或不在当前账号的资源库内），请确认 id 后重试",
+    );
+  }
+  if (lectureCount !== 1) {
+    throw new HttpError(
+      422,
+      "REPLACE_REQUIRES_SINGLE_LECTURE",
+      `显式替换要求文档恰好包含一篇讲义（本次解析出 ${lectureCount} 篇），请拆分文档后再替换`,
+    );
+  }
+  const title = newTitle ?? "";
+  if (
+    folderLectures.some(
+      (row) =>
+        row.deletedAt === null && row.id !== target.id && row.title === title,
+    )
+  ) {
+    throw new HttpError(
+      422,
+      "REPLACE_TITLE_CONFLICT",
+      `目标文件夹内已有另一讲义「${title}」与本文档标题同名：请为文档换一个不同的标题，或先重命名/删除同名讲义后再替换`,
+    );
+  }
+  return target;
 }
 
 /** buildImportPlan 的输出（对应契约 importPreviewDataSchema 的 actions/warnings） */
@@ -130,10 +198,47 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
   const warnings: ImportPreviewWarning[] = [];
   const targetFolderName = folderNameOf(snapshot, folderId);
 
-  // ---- 讲义：按 (目标文件夹, 标题) 匹配（D18） ----
+  // ---- 显式替换目标（P2a）：快照域内解析 + 三项前置校验（与 commit 事务外同口径）----
+  let replaceTarget: SnapshotLecture | undefined;
+  const replaceLectureId = input.replaceLectureId ?? null;
+  if (replaceLectureId !== null) {
+    const found = snapshot.lectures.find((row) => row.id === replaceLectureId);
+    replaceTarget = assertReplaceLectureAllowed(
+      replaceLectureId,
+      // 目标所在文件夹的同域讲义行（含软删；目标不在域内时无从谈文件夹，传空
+      // 由校验统一走 404，错误面与存在时一致）
+      found === undefined
+        ? []
+        : snapshot.lectures.filter((row) => row.folderId === found.folderId),
+      parsed.lectures.length,
+      parsed.lectures[0]?.title,
+    );
+  }
+  // 新建单元（及材料/组动作展示）的落点文件夹：替换时随目标走，其余按请求目标
+  const newResourceFolderName =
+    replaceTarget === undefined
+      ? targetFolderName
+      : folderNameOf(snapshot, replaceTarget.folderId);
+
+  // ---- 讲义：按 (目标文件夹, 标题) 匹配（D18）；显式替换绑定目标行（P2a）----
   /** 命中的快照讲义（title → 行）：接管预检复用同一匹配，不再二次扫描 */
   const matchedLectureByTitle = new Map<string, SnapshotLecture>();
   for (const lecture of parsed.lectures) {
+    // 显式替换：跳过标题匹配，唯一讲义绑定目标行（title 更新为文档标题、
+    // 动作恒为 updateLecture）；目标记入标题匹配表，使单元挂载与 #40 接管
+    // 预检按「显式目标」命中（与 commit 的键替换同口径）
+    if (replaceTarget !== undefined) {
+      matchedLectureByTitle.set(lecture.title, replaceTarget);
+      actions.push({
+        kind: "updateLecture",
+        title: lecture.title,
+        unitId: null,
+        // 目标所在文件夹（与 newResourceFolderName 同值：替换时二者都随目标走）
+        folderName: newResourceFolderName,
+        restore: replaceTarget.deletedAt !== null,
+      });
+      continue;
+    }
     const existing = snapshot.lectures.find(
       (row) => row.folderId === folderId && row.title === lecture.title,
     );
@@ -168,9 +273,11 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
   }
 
   // ---- 讲练页嵌入单元接管预检（2026-10-28 修复；与 commitImport 接管段同口径）----
-  // lesson 文档重导命中同名讲练页（快照 kind=lesson）时：未挂载的旧嵌入单元将
-  // 软删、挂载单元内缺席题将移出——warning 亮给教师与 MCP AI（dry-run 可见）。
-  // 嵌入单元不发 KEPT_QUESTIONS（「保留」与实际「移出」矛盾，计数由接管 warning 承载）。
+  // lesson 文档重导命中同名讲练页（快照 kind=lesson），或显式替换目标（P2a，
+  // replaceTarget 经 matchedLectureByTitle 按新标题记入——「同名命中或显式目标」）
+  // 时：未挂载的旧嵌入单元将软删、挂载单元内缺席题将移出——warning 亮给教师
+  // 与 MCP AI（dry-run 可见）。嵌入单元不发 KEPT_QUESTIONS（「保留」与实际
+  // 「移出」矛盾，计数由接管 warning 承载）。
   const embeddedTakeoverUnitIds = new Set<string>();
   if (parsed.frontmatter?.kind === "lesson") {
     for (const lecture of parsed.lectures) {
@@ -242,7 +349,7 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
           kind: "createMaterial",
           title: displayTitle,
           unitId: unit.id,
-          folderName: targetFolderName,
+          folderName: newResourceFolderName,
           restore: false,
         });
         continue;
@@ -278,7 +385,7 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
           kind: "createGroup",
           title: displayTitle,
           unitId: unit.id,
-          folderName: targetFolderName,
+          folderName: newResourceFolderName,
           restore: false,
         });
         continue;
@@ -310,7 +417,8 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
         kind: "createUnit",
         title: unit.title,
         unitId: unit.id,
-        folderName: targetFolderName,
+        // 新建单元落点：显式替换时随目标讲义所在文件夹（P2a），其余按请求目标
+        folderName: newResourceFolderName,
         restore: false,
       });
       continue;

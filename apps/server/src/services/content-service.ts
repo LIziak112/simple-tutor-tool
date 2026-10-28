@@ -63,7 +63,11 @@ import { HttpError } from "../lib/http-error";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { ensureCatalogTitles, ensureCourseFolderPath } from "./course-catalog";
 import { courseHasAttempts } from "./course-service";
-import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
+import {
+  assertReplaceLectureAllowed,
+  buildImportPlan,
+  loadLibrarySnapshot,
+} from "./import-actions";
 import {
   assertNewContentAllowed,
   liveMaterialIdsOf,
@@ -230,6 +234,8 @@ function buildPreview(
   dataDir?: string,
   /** tt-06b：发布开关（缺省读部署 env NEW_CONTENT_ENABLED） */
   newContentEnabled?: boolean,
+  /** 显式替换目标讲练页 id（P2a）：预览动作改道 + 前置校验（与 commit 同口径） */
+  replaceLectureId?: string,
 ): ImportPreviewData {
   // tt-06b / QM-05：新内容闸门（§5.8.4）+ 导入规范化回写（§5.2.3）先于 lint
   assertNewContentAllowed(
@@ -244,7 +250,12 @@ function buildPreview(
       .enabledCapabilities,
   });
   const snapshot = loadLibrarySnapshot(db, new Date().toISOString(), teacherId);
-  const plan = buildImportPlan({ parsed, folderId, snapshot });
+  const plan = buildImportPlan({
+    parsed,
+    folderId,
+    snapshot,
+    ...(replaceLectureId !== undefined ? { replaceLectureId } : {}),
+  });
   return {
     summary: summarizeParsed(parsed),
     issues: [
@@ -310,6 +321,7 @@ export function previewImport(
     fallbackUnitIdOf(input.filename),
     dataDir,
     newContentEnabled,
+    input.replaceLectureId,
   );
 }
 
@@ -519,6 +531,64 @@ export function previewImportBatch(
 // ---------- commit：lint 拒绝 + 事务落库 ----------
 
 /**
+ * 显式替换目标（P2a）的域内查询与三项前置校验（事务外 db 查询，失败即抛、
+ * 零写入）。校验口径与 preview 的 buildImportPlan 共用 assertReplaceLectureAllowed
+ * 单源；返回目标行（绑定更新与 #40 接管判定用其 id / 所在文件夹 / 更新前 kind）。
+ */
+function loadReplaceLecture(
+  db: Db,
+  teacherId: string,
+  replaceLectureId: string,
+  lectureCount: number,
+  newTitle: string | undefined,
+): {
+  id: string;
+  title: string;
+  folderId: string | null;
+  kind: "lecture" | "lesson";
+} {
+  // 目标行与同文件夹行的查询列（assertReplaceLectureAllowed 的 ReplaceLectureRow
+  // 形状 + 接管判定用的更新前 kind）
+  const lectureRowColumns = {
+    id: lectures.id,
+    title: lectures.title,
+    folderId: lectures.folderId,
+    deletedAt: lectures.deletedAt,
+    kind: lectures.kind,
+  };
+  const target = db
+    .select(lectureRowColumns)
+    .from(lectures)
+    .where(
+      and(eq(lectures.teacherId, teacherId), eq(lectures.id, replaceLectureId)),
+    )
+    .get();
+  // 同文件夹（目标所在文件夹）讲义行：标题冲突判定；目标不在域内时无从谈
+  // 文件夹，传空由校验统一走 404（与他域/不存在同一错误面，不暴露存在性）
+  const folderLectures =
+    target === undefined
+      ? []
+      : db
+          .select(lectureRowColumns)
+          .from(lectures)
+          .where(
+            and(
+              eq(lectures.teacherId, teacherId),
+              target.folderId === null
+                ? isNull(lectures.folderId)
+                : eq(lectures.folderId, target.folderId),
+            ),
+          )
+          .all();
+  return assertReplaceLectureAllowed(
+    replaceLectureId,
+    folderLectures,
+    lectureCount,
+    newTitle,
+  );
+}
+
+/**
  * 导入提交（单文件单事务）。有 error 级 issue 时抛 422 LINT_ERROR（extra._issues
  * 附错误列表，响应体为统一错误壳的超集）。
  *
@@ -536,6 +606,12 @@ export function previewImportBatch(
  *    创建分支已随 resolveCourseId 删除，防止与 D23-7 冲突）。
  * addToCourse（D17 快捷项）独立于归属：追加 course_items 到目标课程末尾
  * （visible 统一生效、幂等跳过），响应 courseId 返回该课程 id。
+ * 显式替换入口（讲练文档 SSOT P2a）：replaceLectureId 携带时先经三项前置
+ * 校验（loadReplaceLecture：域内不存在 404 / 讲义篇数 ≠ 1 422 / 目标文件夹
+ * 同名冲突 422，均在事务外、零写入），再绑定目标行更新——id 不变、title 更新
+ * 为文档标题、markdown/kind 按导入是权威覆盖、软删恢复；接管复用 #40
+ * （lessonSupersedeLectureIds），新建单元落目标所在文件夹（请求 folderId
+ * 只管其余新资源）。
  * 成功返回导入统计报告（同时序列化进 imports.reportJson 留档，含
  * sourcePath/batchId/folderId）。
  */
@@ -629,6 +705,19 @@ export function commitImport(
     }
   }
 
+  // ---- 显式替换入口（P2a）：三项前置校验（事务外 db 查询，失败即抛零写入）
+  //      + 目标行快照（绑定更新 / 新单元落点 / #40 接管判定用） ----
+  const replaceLecture =
+    input.replaceLectureId === undefined
+      ? undefined
+      : loadReplaceLecture(
+          db,
+          teacherId,
+          input.replaceLectureId,
+          parsed.lectures.length,
+          parsed.lectures[0]?.title,
+        );
+
   return db.transaction((tx) => {
     const now = new Date().toISOString();
     const importId = crypto.randomUUID();
@@ -693,6 +782,45 @@ export function commitImport(
     let nextLectureOrder = folderLectures.length;
 
     for (const lecture of parsed.lectures) {
+      // 显式替换（P2a）：绑定篇跳过标题匹配，直接 update 目标行——id 不变、
+      // title 更新为文档标题、markdown/kind 按导入是权威覆盖、软删恢复；
+      // 目标更新前 kind='lesson' 且本次仍 lesson 时进 lessonSupersedeLectureIds
+      // （后续 #40 接管段零改动复用：旧嵌入单元软删、挂载单元缺席题软退）
+      if (replaceLecture !== undefined) {
+        if (replaceLecture.kind === "lesson" && lectureKind === "lesson") {
+          lessonSupersedeLectureIds.push(replaceLecture.id);
+        }
+        tx.update(lectures)
+          .set({
+            markdown: lecture.markdown,
+            kind: lectureKind,
+            title: lecture.title,
+            updatedAt: now,
+            deletedAt: null,
+            teachingPackJson,
+          })
+          .where(eq(lectures.id, replaceLecture.id))
+          .run();
+        // 标题匹配表换键：目标旧 title 若仍指向目标则删键、新 title → 目标 id——
+        // 后续单元挂载（unit.lectureTitle）与接管判定经新键自然命中目标
+        if (
+          folderLectureByTitle.get(replaceLecture.title)?.id ===
+          replaceLecture.id
+        ) {
+          folderLectureByTitle.delete(replaceLecture.title);
+        }
+        folderLectureByTitle.set(lecture.title, {
+          id: replaceLecture.id,
+          kind: lectureKind,
+        });
+        lectureReports.push({
+          id: replaceLecture.id,
+          title: lecture.title,
+          inserted: false,
+          updated: true,
+        });
+        continue;
+      }
       const existing = folderLectureByTitle.get(lecture.title);
       if (existing !== undefined) {
         if (existing.kind === "lesson" && lectureKind === "lesson") {
@@ -753,15 +881,18 @@ export function commitImport(
         .all()
         .map((row) => row.id),
     );
+    // 新建单元的落库文件夹（P2a 替换：随目标讲义所在文件夹——本文档的新单元
+    // 属于该页；其余导入按请求目标文件夹）。已有单元匹配语义不变（保留原文件夹）
+    const newUnitFolderId = replaceLecture?.folderId ?? folderId;
     let nextUnitOrder = tx
       .select({ id: units.id })
       .from(units)
       .where(
         and(
           eq(units.teacherId, teacherId),
-          folderId === null
+          newUnitFolderId === null
             ? isNull(units.folderId)
-            : eq(units.folderId, folderId),
+            : eq(units.folderId, newUnitFolderId),
         ),
       )
       .all().length;
@@ -808,7 +939,7 @@ export function commitImport(
           .values({
             id: unit.id,
             teacherId,
-            folderId,
+            folderId: newUnitFolderId,
             lectureId,
             title: unit.title,
             topic: unit.topic ?? null,

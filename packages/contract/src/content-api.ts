@@ -55,6 +55,18 @@ export const importPreviewRequestSchema = z.object({
   folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
   /** 批量导入的文件相对路径（如 "chapter1/练习.md"）；粘贴内容无路径 */
   sourcePath: z.string().max(512, "sourcePath 过长").optional(),
+  /**
+   * 显式替换目标讲练页/讲义 id（讲练文档 SSOT P2a）：教师指认「本文档替换该
+   * 讲练页/讲义」——跳过标题匹配，绑定目标行更新（id 不变、title 更新为文档
+   * 标题、markdown/kind 按导入是权威覆盖、软删恢复），旧随堂练习接管软删
+   * （复用 LESSON_EMBEDDED_*_SUPERSEDED 语义）；新建单元落目标所在文件夹。
+   * preview 与 commit 同字段（commit 请求经 importCommitRequestSchema =
+   * importPreviewRequestSchema.extend 自动获得）。前置校验错误码：
+   * REPLACE_LECTURE_NOT_FOUND（404，域内不存在不暴露存在性）、
+   * REPLACE_REQUIRES_SINGLE_LECTURE（422，文档解析讲义篇数 ≠ 1）、
+   * REPLACE_TITLE_CONFLICT（422，目标文件夹内另一未软删讲义与文档新标题同名）。
+   */
+  replaceLectureId: z.uuid("replaceLectureId 必须是 UUID 格式").optional(),
 });
 
 /**
@@ -390,6 +402,10 @@ export const questionGroupDeleteDataSchema = z.object({
  * - LESSON_QUESTION_BLOCK_MISSING：讲练页正文未找到该题的题块（422，讲练文档
  *   SSOT P1a）——存储正文被手工改动等数据异常，嵌入题编辑被拒（事务回滚），
  *   引导整页重导修正。
+ * - REPLACE_LECTURE_NOT_FOUND / REPLACE_REQUIRES_SINGLE_LECTURE /
+ *   REPLACE_TITLE_CONFLICT：导入显式替换入口（replaceLectureId，讲练文档
+ *   SSOT P2a）的三项前置校验——目标域内不存在 404（不暴露存在性）、文档
+ *   讲义篇数 ≠ 1 422、目标文件夹内另一未软删讲义与文档新标题同名 422。
  */
 export const contentErrorCodeSchema = z.enum([
   "LINT_ERROR",
@@ -419,6 +435,22 @@ export const contentErrorCodeSchema = z.enum([
    * 整页重导修正。
    */
   "LESSON_QUESTION_BLOCK_MISSING",
+  /**
+   * 显式替换目标讲练页/讲义在教师域内不存在（404，讲练文档 SSOT P2a）——
+   * 目标 id 无效或指向他人讲义统一按不存在处理，不暴露存在性。
+   */
+  "REPLACE_LECTURE_NOT_FOUND",
+  /**
+   * 显式替换要求文档恰好包含一篇讲义（422，讲练文档 SSOT P2a）——多讲义或
+   * 无讲义文档无法指认「本文档替换该页」，请拆分文档后再替换。
+   */
+  "REPLACE_REQUIRES_SINGLE_LECTURE",
+  /**
+   * 目标所在文件夹内已有另一未软删讲义与文档新标题同名（422，讲练文档 SSOT
+   * P2a）——替换会把目标改名为文档标题、造成同文件夹同名冲突；请改回不同
+   * 标题，或先处理（重命名/删除）同名讲义。
+   */
+  "REPLACE_TITLE_CONFLICT",
 ]);
 
 /**
