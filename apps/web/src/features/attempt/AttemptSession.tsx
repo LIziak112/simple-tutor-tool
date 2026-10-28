@@ -18,7 +18,7 @@ import {
   useState,
 } from "react";
 import { useSearchParams } from "react-router";
-import { Button } from "@/components/ui/button";
+
 import {
   Dialog,
   DialogContent,
@@ -130,6 +130,16 @@ import {
   evidenceProblemViewsOf,
   useSubmitEvidenceConfirm,
 } from "./use-submit-evidence-confirm";
+
+/**
+ * 题卡视口懒挂载的启用阈值（性能：大量习题加载卡顿，2026-10-28）。
+ * 大卷（>20 题）才按视口懒挂载：小卷保持全量挂载语义——题卡 DOM 完整，
+ * 页内查找、外部锚点滚动、既有全链 e2e 的「开卷全量可见」前提都不变；
+ * 懒挂载的收益本来就集中在百题级长卷（首卡 7.0s→1.7s）。
+ */
+const ATTEMPT_LAZY_MOUNT_THRESHOLD = 20;
+
+import { Button } from "@/components/ui/button";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
@@ -1581,7 +1591,10 @@ function AnswerView({
                         cardElements={cardElements}
                         events={attemptEvents}
                         index={index}
-                        lazyMount={!singleMode}
+                        lazyMount={
+                          !singleMode &&
+                          questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
+                        }
                         forceMount={forcedMountIds.has(question.id)}
                         onCardMounted={handleCardMounted}
                         question={question}

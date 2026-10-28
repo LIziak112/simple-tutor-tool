@@ -54,7 +54,9 @@ export function useReadingPosition(
   cardMountVersion: number,
 ) {
   const session = useAnnotationSessionRef();
-  const captureRef = useRef<((save: boolean) => void) | null>(null);
+  const captureRef = useRef<
+    ((save: boolean, notifyCurrent?: boolean) => void) | null
+  >(null);
   const alignedRef = useRef<ReadingPosition | null>(null);
   const interaction = useRef({ attemptId, started: false });
   const key =
@@ -78,7 +80,7 @@ export function useReadingPosition(
         // 只降级阅读恢复，不影响答案和草稿保存。
       }
     };
-    const capture = (save: boolean) => {
+    const capture = (save: boolean, notifyCurrent = true) => {
       frame = 0;
       const header = headerHeightOf();
       let best: ReadingPosition | null = null;
@@ -93,7 +95,9 @@ export function useReadingPosition(
         }
       }
       if (best === null) return;
-      onCurrent(best.questionId);
+      // 挂载版本驱动的重捕不通知 currentQuestionId：视口内就近题号只是
+      // 落盘口径，翻动 current 会连带收起当前题的浮层面板（AI 助教等）。
+      if (notifyCurrent) onCurrent(best.questionId);
       if (save && pending === null) {
         latest = best;
         clearTimeout(saveTimer);
@@ -229,7 +233,7 @@ export function useReadingPosition(
           }
         }
       }
-      captureRef.current?.(true);
+      captureRef.current?.(true, false);
     }, 150);
     return () => clearTimeout(timer);
   }, [cardMountVersion, cards]);
