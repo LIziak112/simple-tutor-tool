@@ -1382,6 +1382,75 @@ describe("资源库路由：export.md 往返", () => {
       countBefore,
     );
   });
+
+  it("导出 title 转义钉：标题含双引号与反斜杠 → frontmatter 按 JSON.stringify 口径转义，导出原样重导命中同一讲义行", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    // 标题同时含 YAML 双引号标量中必须转义的两种字符（双引号 / 反斜杠）
+    const title = '第"1"讲\\反斜杠';
+    // 导入侧 frontmatter 同样按该转义口径书写（导出产物的镜像，转义可互换）
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      {
+        markdown: `---\nkind: lecture\ntitle: ${JSON.stringify(title)}\n---\n\n# 第1讲 转义钉\n\n正文一段。\n`,
+        filename: "转义钉.md",
+      },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(eq(lectures.title, title))
+      .get()?.id;
+    if (lectureId === undefined) throw new Error("讲义未入库");
+    const countBefore = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .all().length;
+
+    // 导出 frontmatter title 行 = JSON.stringify 直接转义（引号与反斜杠不丢不变形）
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    const markdown = await res.text();
+    expect(
+      markdown.startsWith(
+        `---\nkind: lecture\ntitle: ${JSON.stringify(title)}\n---\n\n`,
+      ),
+    ).toBe(true);
+
+    // 导出产物原样重导 → frontmatter title 命中同一讲义行（转义可逆，身份不断链）
+    const reimport = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown, filename: "转义钉-重导.md" },
+    );
+    expect(reimport.status).toBe(200);
+    const body = (await reimport.json()) as {
+      data: {
+        lectures: {
+          id: string;
+          title: string;
+          inserted: boolean;
+          updated: boolean;
+        }[];
+      };
+    };
+    expect(body.data.lectures).toEqual([
+      { id: lectureId, title, inserted: false, updated: true },
+    ]);
+    expect(db.select({ id: lectures.id }).from(lectures).all()).toHaveLength(
+      countBefore,
+    );
+  });
 });
 
 // ---------- 讲练一体（2026-10，kind: lesson）：export.md 讲练页往返 ----------

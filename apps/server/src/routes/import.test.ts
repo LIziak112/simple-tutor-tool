@@ -1908,9 +1908,10 @@ describe("显式替换入口 replaceLectureId（P2a：改名重导绑定既有�
         cookie,
       );
       expect(res.status).toBe(404);
-      expect(((await res.json()) as ApiErr).error).toBe(
-        "REPLACE_LECTURE_NOT_FOUND",
-      );
+      const body = (await res.json()) as ApiErr;
+      expect(body.error).toBe("REPLACE_LECTURE_NOT_FOUND");
+      // 中文 message 关键词：指认目标不存在（钉实现文案，防止壳里只剩错误码）
+      expect(body.message).toContain("不存在");
     }
     // 零写入：本域无任何讲义/单元/留档，他域行原样
     expect(
@@ -1956,15 +1957,45 @@ describe("显式替换入口 replaceLectureId（P2a：改名重导绑定既有�
         cookie,
       );
       expect(res.status).toBe(422);
-      expect(((await res.json()) as ApiErr).error).toBe(
-        "REPLACE_REQUIRES_SINGLE_LECTURE",
-      );
+      const body = (await res.json()) as ApiErr;
+      expect(body.error).toBe("REPLACE_REQUIRES_SINGLE_LECTURE");
+      // 中文 message 关键词：恰好一篇讲义的口径（钉实现文案，防止壳里只剩错误码）
+      expect(body.message).toContain("恰好包含一篇讲义");
     }
     // 零写入：讲义/单元/题目/留档都只有首次种子导入
     expect(db.select().from(lectures).all()).toHaveLength(1);
     expect(db.select().from(units).all()).toHaveLength(1);
     expect(db.select().from(questions).all()).toHaveLength(1);
     expect(db.select().from(imports).all()).toHaveLength(1);
+  });
+
+  it("preview 带 replaceLectureId 指向不存在讲义 → 404 REPLACE_LECTURE_NOT_FOUND（与 commit 同源校验；零写入）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const res = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      {
+        markdown: replaceableLessonDoc("第 2 讲 有理数", "lec2", "lec2-1"),
+        filename: "a.md",
+        replaceLectureId: crypto.randomUUID(),
+      },
+      cookie,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as ApiErr;
+    expect(body.error).toBe("REPLACE_LECTURE_NOT_FOUND");
+    // 与 commit 同源校验（assertReplaceLectureAllowed）：文案同为「不存在」口径
+    expect(body.message).toContain("不存在");
+    // 零写入：preview 本就不写库，本域无任何讲义/单元/留档
+    expect(
+      db
+        .select()
+        .from(lectures)
+        .where(eq(lectures.teacherId, TEST_TEACHER_ID))
+        .all(),
+    ).toHaveLength(0);
+    expect(db.select().from(units).all()).toHaveLength(0);
+    expect(db.select().from(imports).all()).toHaveLength(0);
   });
 
   it("目标文件夹已有同名另一讲义 → 422 REPLACE_TITLE_CONFLICT（提示换标题或先处理同名页）；同名页软删后放行", async () => {

@@ -865,6 +865,35 @@ describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QU
     });
   });
 
+  it("错位组合形态（事故画像）：首位插全新缺省题 + 改原第 1 题 → inserted 与 updatedDerived 并存且警告照发", () => {
+    // 事故画像（历轮审查建议钉）：库内 u1 已有缺省 id 题 u1-1 / u1-2，教师在新
+    // 文件第 1 位插入一道全新缺省题并顺手改了原第 1 题——三题缺省 id 整体后移
+    // 一位：新题错位顶掉 u1-1、改后的原第 1 题错位顶掉 u1-2、原第 2 题错位成
+    // 「全新题」u1-3 走插入。inserted 与 updatedDerived 在同一次导入里同时出现，
+    // 预警不能因「有插入」而漏报（这正是学情张冠李戴的组合形态）
+    const plan = buildImportPlan({
+      parsed: parsedUnitFences("u1", [
+        { id: "u1-1" }, // 首位新插入的题（缺省派生 id 占了 u1-1）
+        { id: "u1-2" }, // 被修改的原第 1 题（缺省派生 id 错位到 u1-2）
+        { id: "u1-3" }, // 原第 2 题（缺省派生 id 错位成全新 u1-3 → 插入）
+      ]),
+      folderId: null,
+      snapshot: unitSnapshotOf("u1", ["u1-1", "u1-2"]),
+    });
+    const action = plan.actions.find((a) => a.unitId === "u1");
+    // 动作 questions 同时含两者：1 道按插入计（u1-3）、2 道按更新计且均为缺省派生
+    expect(action?.questions).toMatchObject({
+      inserted: 1,
+      updated: 2,
+      updatedDerived: 2,
+    });
+    expect(plan.warnings).toContainEqual({
+      code: "DERIVED_ID_UPDATED_QUESTIONS",
+      message:
+        "单元「u1」有 2 道题使用缺省题号且将更新既有题：文件中插题/删题会使题号错位、学情张冠李戴；建议先导出一次（自动注入题号）再修改，或为题容器补显式 id",
+    });
+  });
+
   it("显式 id 更新 / 全新插入 / lesson 注入 id → updatedDerived 均 0 且不出该警告", () => {
     // ① 显式 id 更新：围栏带 id=，命中既有题 → updated 但不计 derived
     const explicit = buildImportPlan({

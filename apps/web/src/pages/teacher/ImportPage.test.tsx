@@ -907,6 +907,70 @@ describe("ImportPage 讲练页替换指认（P2a：改名重导显式绑定目�
     });
   });
 
+  it("清除指认往返：选中后清空选择 → 第三次 preview 请求体不含 replaceLectureId 字段且动作回到新建讲练页", async () => {
+    mockedPreview
+      .mockResolvedValueOnce(lessonPreviewData({}))
+      // 选中后的第二次预览：动作变 updateLecture + 接管 warning
+      .mockResolvedValueOnce(
+        lessonPreviewData({
+          actions: [
+            {
+              kind: "updateLecture",
+              title: "第 01 讲 有理数",
+              unitId: null,
+              folderName: "第一章",
+              restore: false,
+            },
+          ],
+          warnings: [
+            {
+              code: "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+              message:
+                "讲练页「第 2 讲 数轴」的旧随堂练习「练习一」将进回收站（被本文档的练习接管）",
+            },
+          ],
+        }),
+      )
+      // 清除指认后的第三次预览：动作回到 createLecture（服务端视角 = 不带目标的新建）
+      .mockResolvedValueOnce(lessonPreviewData({}));
+    mockedLectures.mockResolvedValue({
+      lectures: [
+        libraryLectureRow(LEC_A, { title: "第 1 讲 有理数" }),
+        libraryLectureRow(LEC_B, { title: "第 2 讲 数轴", folderId: "f-1" }),
+      ],
+    });
+    renderImportPage();
+    addPasteEntry(LESSON_MD, "第 01 讲.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    // 1) 选中候选 → 第二次 preview 带 replaceLectureId、动作变更新讲练页
+    const select = await screen.findByLabelText("替换目标");
+    fireEvent.change(select, { target: { value: LEC_B } });
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(2), {
+      timeout: 2000,
+    });
+    expect(mockedPreview.mock.calls[1]?.[0]).toMatchObject({
+      replaceLectureId: LEC_B,
+    });
+    expect(
+      await screen.findByText(/更新讲练页「第 01 讲 有理数」/),
+    ).toBeInTheDocument();
+
+    // 2) 清空选择（回到「不替换（新建讲练页）」）→ 第三次 preview 不携带该字段
+    fireEvent.change(select, { target: { value: "" } });
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(3), {
+      timeout: 2000,
+    });
+    // 字段级缺席（不是 undefined 占位）：清除后请求体与从未指认时完全一致
+    expect(mockedPreview.mock.calls[2]?.[0]).not.toHaveProperty(
+      "replaceLectureId",
+    );
+    // 3) 动作回到「新增讲练页」（清除指认后按新建处理，接管 warning 消失）
+    expect(
+      await screen.findByText(/新增讲练页「第 01 讲 有理数」/),
+    ).toBeInTheDocument();
+  });
+
   it("非 lesson 文档（practice）不显示替换选择器", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     renderImportPage();
