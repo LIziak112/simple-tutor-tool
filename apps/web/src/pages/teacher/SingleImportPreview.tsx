@@ -1,6 +1,17 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { ImportPreviewData, LintIssue } from "@tutor/contract";
-import { ArrowLeft, CircleAlert, Images, Loader2 } from "lucide-react";
+import type {
+  ImportCommitRequest,
+  ImportPreviewData,
+  LintIssue,
+} from "@tutor/contract";
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  CircleAlert,
+  Images,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -14,9 +25,14 @@ import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
 import { QUESTION_TYPE_LABELS } from "@/features/content/question-meta";
-import { libraryInvalidations } from "@/features/library/library-queries";
+import {
+  libraryInvalidations,
+  useLibraryFolders,
+  useLibraryLectures,
+} from "@/features/library/library-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { ApiError, commitImport, previewImport } from "@/lib/api";
+import { formatRelativeTime } from "@/lib/time";
 import type { ImportMediaSummary, ImportOptions } from "./ImportPage";
 import { MarkdownEditor } from "./MarkdownEditor";
 
@@ -30,6 +46,10 @@ import { MarkdownEditor } from "./MarkdownEditor";
  * - 编辑即校验：预览态下改动 400ms debounce 重新调 preview；
  * - 有 error 时「确认导入」禁用并显示错误面板（「复制错误给 AI」按 D21 新格式）；
  *   commit 422 的 _issues 也进同一面板；成功跳 /t/library（带成功提示）。
+ * - 替换指认（讲练文档 SSOT P2a）：lesson 文档将新建讲练页时，下方提供「替换
+ *   既有讲练页」选择器（候选 = 讲义库 kind=lesson 行）；选中即带 replaceLectureId
+ *   沿同一条 debounce 链路重新 preview（动作变 updateLecture + 接管 warning，由
+ *   服务端计算），commit 复用同值，提交前弹层明示后果。批量导入不提供此入口。
  */
 
 /** 编辑后自动重新预览的防抖时长 */
@@ -65,6 +85,11 @@ export function SingleImportPreview({
   // 文件名预览态可改（2026-10 审核修复：此前只读，选错名只能回磁盘改文件重选）；
   // 改名触发 debounce 重新预览（与内容编辑同一条 400ms 链路）
   const [filename, setFilename] = useState(input.filename);
+  // 替换指认（P2a）：教师指认的替换目标讲练页 id；选中即随同一条 debounce 链路
+  // 重新 preview（服务端把动作改为 updateLecture 并亮接管 warning），commit 复用
+  const [replaceLectureId, setReplaceLectureId] = useState<string | null>(null);
+  // 已指认替换时的提交确认弹层（明示后果：旧随堂练习进回收站等）
+  const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
 
   const seqRef = useRef(0);
   const queryClient = useQueryClient();
@@ -87,6 +112,7 @@ export function SingleImportPreview({
           filename: name,
           ...(options.folderId !== null ? { folderId: options.folderId } : {}),
           ...(input.path.length > 0 ? { sourcePath: input.path } : {}),
+          ...(replaceLectureId !== null ? { replaceLectureId } : {}),
         });
         if (seq !== seqRef.current) return;
         setPreview(data);
@@ -102,7 +128,7 @@ export function SingleImportPreview({
         if (seq === seqRef.current) setPreviewPending(false);
       }
     },
-    [input.path, options.folderId],
+    [input.path, options.folderId, replaceLectureId],
   );
 
   // 初次进入即预览；编辑/改文件名 → 400ms debounce 重新预览（输入即校验）
@@ -160,6 +186,30 @@ export function SingleImportPreview({
     !commitMutation.isPending &&
     text.trim().length > 0 &&
     filename.trim().length > 0;
+
+  // 替换指认入口（P2a）的可见性：lesson 文档且动作含 createLecture（将新建讲练页）
+  // 时展示；已指认（replaceLectureId 非空）时保持可见——重新预览后动作已变
+  // updateLecture，用户仍可换目标或清除；带目标重新预览失败（REPLACE_* 错误走
+  // 通用错误面板）时也保留，便于改选/清除后自动重试
+  const createsLecture =
+    preview !== null &&
+    (preview.summary.kind ?? "practice") === "lesson" &&
+    preview.actions.some((action) => action.kind === "createLecture");
+  const showReplaceSelector = createsLecture || replaceLectureId !== null;
+
+  /** commit 请求体（与 preview 同字段；replaceLectureId 只在已指认时携带） */
+  function buildCommitRequest(): ImportCommitRequest {
+    return {
+      markdown: text,
+      filename,
+      ...(options.folderId !== null ? { folderId: options.folderId } : {}),
+      ...(input.path.length > 0 ? { sourcePath: input.path } : {}),
+      ...(options.addToCourse !== undefined
+        ? { addToCourse: options.addToCourse }
+        : {}),
+      ...(replaceLectureId !== null ? { replaceLectureId } : {}),
+    };
+  }
 
   return (
     <div className="mt-4">
@@ -237,6 +287,14 @@ export function SingleImportPreview({
       {/* 动作清单 + 注意事项（D18/D19） */}
       {preview !== null ? <ActionsPanel preview={preview} /> : null}
 
+      {/* 替换既有讲练页指认（P2a）：lesson 新建讲练页时出现（见可见性注释） */}
+      {showReplaceSelector ? (
+        <ReplaceLectureSelector
+          selectedId={replaceLectureId}
+          onSelect={setReplaceLectureId}
+        />
+      ) : null}
+
       {/* lint 问题面板 + 复制错误给 AI（D21 新格式） */}
       {displayedIssues.length > 0 ? (
         <ErrorPanel
@@ -267,17 +325,12 @@ export function SingleImportPreview({
           disabled={!canCommit}
           onClick={() => {
             setCommitError(null);
-            commitMutation.mutate({
-              markdown: text,
-              filename,
-              ...(options.folderId !== null
-                ? { folderId: options.folderId }
-                : {}),
-              ...(input.path.length > 0 ? { sourcePath: input.path } : {}),
-              ...(options.addToCourse !== undefined
-                ? { addToCourse: options.addToCourse }
-                : {}),
-            });
+            // 已指认替换：先弹层明示后果，确认后才提交（P2a）
+            if (replaceLectureId !== null) {
+              setReplaceConfirmOpen(true);
+              return;
+            }
+            commitMutation.mutate(buildCommitRequest());
           }}
         >
           {commitMutation.isPending ? (
@@ -300,6 +353,55 @@ export function SingleImportPreview({
           </p>
         ) : null}
       </div>
+
+      {/* 替换确认弹层（P2a：与就地新建文件夹同款形态；明示替换后果） */}
+      {replaceConfirmOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="replace-confirm-heading"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        >
+          <div className="flex w-full max-w-md flex-col rounded-xl border border-border bg-card p-4 shadow-lg">
+            <h3
+              id="replace-confirm-heading"
+              className="flex items-center gap-2 text-sm font-semibold"
+            >
+              <ArrowLeftRight
+                aria-hidden
+                className="size-4 text-muted-foreground"
+              />
+              确认替换讲练页
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed">
+              将替换所选讲练页：旧随堂练习进回收站、已交卷与进行中作答不受影响、课程目录引用保留。
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              替换后该页标题与正文以本文档为准（对应上方「更新讲练页」动作）。
+            </p>
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 px-4"
+                onClick={() => setReplaceConfirmOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11 px-4"
+                onClick={() => {
+                  setReplaceConfirmOpen(false);
+                  commitMutation.mutate(buildCommitRequest());
+                }}
+              >
+                确认替换
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -456,6 +558,138 @@ export function ImportMediaSummaryCard({
           ? `未配对或上传失败的引用 ${summary.unresolvedCount} 处将保持原样；预览时服务端会逐条核对引用的图片，缺失的将以警告提示（不影响导入其余内容）。`
           : "全部引用已替换为服务器路径。"}
       </p>
+    </section>
+  );
+}
+
+/**
+ * 「替换既有讲练页」指认（讲练文档 SSOT P2a）：单文件导入 lesson 文档将新建
+ * 讲练页时，教师可指认要替换的既有讲练页（改名重导 / 换页重导场景）。选中即由
+ * 父组件带 replaceLectureId 重新 preview（动作变 updateLecture + 接管 warning，
+ * 服务端计算，前端不自行判定），提交前另有后果确认弹层。
+ * 候选来自讲义库列表（GET /api/teacher/library/lectures，前端过滤 kind=lesson），
+ * 展示 标题 / 所在文件夹 / 更新时间（相对时间）。批量导入不提供此入口。
+ */
+function ReplaceLectureSelector({
+  selectedId,
+  onSelect,
+}: {
+  /** 已指认的目标 id；null = 未指认（缺省选项） */
+  readonly selectedId: string | null;
+  /** 选中目标（空串清除指认 → null） */
+  readonly onSelect: (id: string | null) => void;
+}) {
+  const lecturesQuery = useLibraryLectures({});
+  const foldersQuery = useLibraryFolders();
+  /** 文件夹 id → 名（未归类与文件夹行缺失都兜底「未归类」，与服务端同口径） */
+  const folderNameById = useMemo(
+    () =>
+      new Map(
+        (foldersQuery.data?.folders ?? []).map((folder) => [
+          folder.id,
+          folder.name,
+        ]),
+      ),
+    [foldersQuery.data],
+  );
+  const lessons = useMemo(
+    () =>
+      (lecturesQuery.data?.lectures ?? []).filter(
+        (row) => row.kind === "lesson",
+      ),
+    [lecturesQuery.data],
+  );
+  const loadError = lecturesQuery.isError
+    ? lecturesQuery.error
+    : foldersQuery.error;
+
+  // 三态齐全（加载 / 错误可重试 / 空态），不许白屏或缺出口
+  if (lecturesQuery.isPending || foldersQuery.isPending) {
+    return (
+      <section
+        aria-label="替换既有讲练页"
+        className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
+      >
+        <span className="flex items-center gap-2">
+          <Loader2 aria-hidden className="size-4 animate-spin" />
+          正在加载讲练页列表…
+        </span>
+      </section>
+    );
+  }
+  if (lecturesQuery.isError || foldersQuery.isError) {
+    return (
+      <section
+        aria-label="替换既有讲练页"
+        className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm"
+      >
+        <p role="alert" className="text-destructive">
+          讲练页列表加载失败：
+          {loadError instanceof Error ? loadError.message : "请稍后重试"}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-2 min-h-11 w-fit px-3 text-xs"
+          onClick={() => {
+            void lecturesQuery.refetch();
+            void foldersQuery.refetch();
+          }}
+        >
+          <RefreshCw aria-hidden />
+          重试
+        </Button>
+      </section>
+    );
+  }
+  if (lessons.length === 0) {
+    return (
+      <section
+        aria-label="替换既有讲练页"
+        className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
+      >
+        库中还没有讲练页，本次将新建讲练页。
+      </section>
+    );
+  }
+  return (
+    <section
+      aria-labelledby="replace-lecture-heading"
+      className="mt-3 rounded-xl border border-border bg-card p-4"
+    >
+      <h2
+        id="replace-lecture-heading"
+        className="flex items-center gap-2 text-sm font-semibold"
+      >
+        <ArrowLeftRight aria-hidden className="size-4 shrink-0 text-primary" />
+        替换既有讲练页
+      </h2>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        本文档将新建讲练页。若它是某页讲练页改名或调整后的重导，可指认要替换的
+        既有讲练页：预览将变为「更新讲练页」并提示接管影响，提交时绑定该页更新
+        （标题与正文以本文档为准）。
+      </p>
+      <label
+        htmlFor="replace-lecture-select"
+        className="mt-2 block text-sm font-medium"
+      >
+        替换目标
+      </label>
+      <select
+        id="replace-lecture-select"
+        value={selectedId ?? ""}
+        onChange={(e) =>
+          onSelect(e.target.value === "" ? null : e.target.value)
+        }
+        className="min-h-11 w-full max-w-md rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        <option value="">不替换（新建讲练页）</option>
+        {lessons.map((row) => (
+          <option key={row.id} value={row.id}>
+            {`${row.title} · ${row.folderId === null ? "未归类" : (folderNameById.get(row.folderId) ?? "未归类")} · ${formatRelativeTime(row.updatedAt)}`}
+          </option>
+        ))}
+      </select>
     </section>
   );
 }
