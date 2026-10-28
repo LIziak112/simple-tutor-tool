@@ -62,6 +62,60 @@ export function defaultQuestionIdOf(unitId: string, ordinal: number): string {
   return `${unitId}-${ordinal}`;
 }
 
+// ---------- 围栏 id 注入与判定（自 library-service 私有 ensureQuestionId 上移收敛，
+// 2026-10 讲练文档 SSOT；导出回写、题库回写讲义与导入预览错位预警共用） ----------
+
+/** question 容器开围栏行：`::::question` 或 `::::question{属性}`（解析器提取口径） */
+const QUESTION_FENCE_LINE_RE = /^(:{4}question)(\{.*)?$/;
+/** 开围栏属性串中已声明 id=（含 id 排首位紧跟左花括号的形态——tt-07b P2-4 修复：
+ *  漏掉 { 形态会重复注入；与 normalize-ids.ts FENCE_ATTR_ID_RE 同口径） */
+const QUESTION_FENCE_ID_RE = /(^|[\s{])id\s*=/;
+
+/**
+ * 给题目 sourceMd 的容器开始行注入显式 id 属性（无 id 时），与原 library-service
+ * 私有 ensureQuestionId 语义逐字一致。为什么：缺省题目 id 按「单元id-序号」由
+ * 文档内位置推导——单元删过题后导出，剩余题的缺省 id 会整体前移（练习四-2 变成
+ * 练习四-1），「导出→再导入」会错位更新到别的题目、破坏学情统计的 id 延续；
+ * 注入显式 id 让往返后题目身份完全稳定。
+ * 已带 id= 属性则原样返回；首行非题容器、属性未闭合（不以 } 结尾）等异常形态
+ * 不改动，交给 lint。
+ */
+export function withQuestionId(sourceMd: string, id: string): string {
+  const newlineIndex = sourceMd.indexOf("\n");
+  const firstLine =
+    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
+  const rest = newlineIndex === -1 ? "" : sourceMd.slice(newlineIndex);
+  const match = QUESTION_FENCE_LINE_RE.exec(firstLine);
+  if (match === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
+  const [, prefix, attrs = ""] = match;
+  if (QUESTION_FENCE_ID_RE.test(attrs)) return sourceMd;
+  // 注入进属性花括号内：{type=judge …} → {type=judge … id="…"}；
+  // 无属性则补 {id="…"}（JSON 字符串转义，id 含引号/反斜杠也安全）。
+  let injected: string;
+  if (attrs.length === 0) {
+    injected = `${prefix}{id=${JSON.stringify(id)}}`;
+  } else if (attrs.endsWith("}")) {
+    injected = `${prefix}${attrs.slice(0, -1)} id=${JSON.stringify(id)}}`;
+  } else {
+    return sourceMd;
+  }
+  return `${injected}${rest}`;
+}
+
+/**
+ * 题目 sourceMd 首行围栏是否已带显式 id= 属性（正则与 withQuestionId 同源）。
+ * 导入预览用它区分「缺省派生 id 且命中更新」的题——文档内插题/删题会使这类题
+ * 错位更新到别的题（P2b 标红预警的判定面）。
+ */
+export function hasExplicitQuestionId(sourceMd: string): boolean {
+  const newlineIndex = sourceMd.indexOf("\n");
+  const firstLine =
+    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
+  const match = QUESTION_FENCE_LINE_RE.exec(firstLine);
+  if (match === null) return false;
+  return QUESTION_FENCE_ID_RE.test(match[2] ?? "");
+}
+
 /** 从文档顶层子级中解析全部 question 容器（按出现顺序），供三条 kind 路径共用 */
 export function extractQuestions(
   children: readonly RootContent[],

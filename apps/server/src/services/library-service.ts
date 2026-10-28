@@ -4,6 +4,7 @@ import type {
   TeachingPack,
 } from "@tutor/contract";
 import { teachingPackSchema } from "@tutor/contract";
+import { withQuestionId } from "@tutor/md-dsl";
 import {
   and,
   asc,
@@ -1377,37 +1378,13 @@ function yamlString(value: string): string {
 }
 
 /**
- * 给题目 sourceMd 的容器开始行注入显式 id 属性（无 id 时）。
- * 为什么：缺省题目 id 按「单元slug-序号」由文档内位置推导——单元删过题后导出，
- * 剩余题的缺省 id 会整体前移（练习四-2 变成练习四-1），「导出→再导入」会错位更新
- * 到别的题目、破坏学情统计的 id 延续。注入显式 id 让往返后题目身份完全稳定。
- * sourceMd 第一行必为 `::::question{…}` 或 `::::question`（解析器提取口径），
- * 已带 id= 属性则原样返回。
+ * 给题目 sourceMd 的容器开始行注入显式 id 属性（无 id 时）——实现已上移收敛到
+ * md-dsl 的 withQuestionId（2026-10 讲练文档 SSOT，单一出处：导出回写、题库
+ * 回写讲义与导入预览预警共用），本地别名保持既有调用点命名不变。
+ * 注入动机（缺省 id 按位置推导，删题后导出会整体前移、重导错位更新）与
+ * 「异常形态不改动交给 lint」的语义详见 md-dsl v2/question.ts。
  */
-function ensureQuestionId(sourceMd: string, id: string): string {
-  const newlineIndex = sourceMd.indexOf("\n");
-  const firstLine =
-    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
-  const rest = newlineIndex === -1 ? "" : sourceMd.slice(newlineIndex);
-  const match = /^(:{4}question)(\{.*)?$/.exec(firstLine);
-  if (match === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
-  const [, prefix, attrs = ""] = match;
-  // 已有显式 id（含 id 为首属性、紧跟左花括号的形态）——tt-07b P2-4 修复：
-  // 原正则漏了 { 紧邻形态，id 排首位时导出会重复注入（{id=… type=… id=…}），
-  // 与 md-dsl FENCE_ATTR_ID_RE（[\s{]）对齐
-  if (/(^|[\s{])id\s*=/.test(attrs)) return sourceMd;
-  // 注入进属性花括号内：{type=judge …} → {type=judge … id="…"}；
-  // 无属性则补 {id="…"}。属性未闭合（不以 } 结尾）属异常形态，不改动交给 lint。
-  let injected: string;
-  if (attrs.length === 0) {
-    injected = `${prefix}{id=${JSON.stringify(id)}}`;
-  } else if (attrs.endsWith("}")) {
-    injected = `${prefix}${attrs.slice(0, -1)} id=${JSON.stringify(id)}}`;
-  } else {
-    return sourceMd;
-  }
-  return `${injected}${rest}`;
-}
+const ensureQuestionId = withQuestionId;
 
 /**
  * 教学包声明 → frontmatter YAML 行（T7.8）：确定性格式——固定键序 + JSON 字符串值
