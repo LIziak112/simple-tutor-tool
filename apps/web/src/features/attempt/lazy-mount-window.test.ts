@@ -267,7 +267,7 @@ describe("LazyMountWindow 结算与退化", () => {
     instance.subscribe("other", other);
     instance.forceMount("other");
     expect(other).toHaveBeenCalled();
-    expect(listener).not.toHaveBeenCalled();
+    expect(listener).toHaveBeenCalledTimes(1);
     instance.dispose();
     instance.forceMount("q3");
     expect(instance.isMounted("q3")).toBe(false);
