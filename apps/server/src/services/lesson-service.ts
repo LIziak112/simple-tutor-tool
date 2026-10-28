@@ -127,11 +127,6 @@ function embeddedUnitOf(
   teacherId: string,
   lecture: { id: string; markdown: string },
 ): { id: string; topic: string | null } | undefined {
-  const slotQuestionIds = new Set(
-    splitLessonBlocks(lecture.markdown).flatMap((block) =>
-      block.type === "question" ? [block.questionId] : [],
-    ),
-  );
   const unitRows = db
     .select({
       id: units.id,
@@ -148,7 +143,16 @@ function embeddedUnitOf(
       ),
     )
     .all();
-  if (unitRows.length === 0) return undefined;
+  // 健康常态（唯一 live 嵌入单元）早退：canonical 单候选恒返回，题槽解析
+  // 与题集查询都不参与决策（开卷/落地是学生端热路径，免掉 md 解析）
+  const [sole, second] = unitRows;
+  if (sole === undefined) return undefined;
+  if (second === undefined) return { id: sole.id, topic: sole.topic };
+  const slotQuestionIds = new Set(
+    splitLessonBlocks(lecture.markdown).flatMap((block) =>
+      block.type === "question" ? [block.questionId] : [],
+    ),
+  );
   // live 题集：一次查询取全部候选单元的未软删题，按 unitId 分组
   const liveQuestionRows = db
     .select({ unitId: questions.unitId, id: questions.id })

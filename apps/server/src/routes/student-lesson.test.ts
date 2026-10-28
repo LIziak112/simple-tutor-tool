@@ -916,6 +916,56 @@ describe("多 live 嵌入单元择主（教师重导改名残留陈旧单元，�
       restartSlotIds,
     );
   });
+
+  it("端到端：教师改名单元重导（接管软删旧单元）后学生立即开卷，冻结题与 md 题槽全对齐", async () => {
+    const env = await makeEnv();
+    // 与 LESSON_MD 同标题、单元改名、题号前缀随之变化——导入接管应软删旧单元
+    await importDoc(
+      env.app,
+      env.teacherCookie,
+      `---
+kind: lesson
+unit: 随堂讲练0
+topic: 有理数
+---
+
+# 第1讲 有理数
+
+改写后的导语。
+
+::::question{type=choice difficulty=1}
+新单选题干
+
+- [ ] 甲
+- [x] 乙
+::::
+
+::::question{type=judge difficulty=1}
+新判断题。[[正确]]
+::::
+`,
+      "随堂讲练0.md",
+      env.courseId,
+    );
+    // 旧单元已被接管软删（唯一 live 嵌入单元 = 新单元）
+    const liveUnits = env.db
+      .select()
+      .from(units)
+      .all()
+      .filter(
+        (row) => row.lectureId === env.lectureId && row.deletedAt === null,
+      );
+    expect(liveUnits.map((row) => row.id)).toEqual(["随堂讲练0"]);
+
+    const body = await startOk(env);
+    const slotIds = new Set(
+      body.data.blocks
+        .filter((b) => b.type === "question")
+        .map((b) => b.questionId),
+    );
+    expect(slotIds).toEqual(new Set(["随堂讲练0-1", "随堂讲练0-2"]));
+    expect(new Set(body.data.questions.map((q) => q.id))).toEqual(slotIds);
+  });
 });
 
 describe("零题讲练页（LESSON_WITHOUT_QUESTION）开卷合法", () => {

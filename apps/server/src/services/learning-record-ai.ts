@@ -137,7 +137,9 @@ function balanceTargets(counts: number[], maxTotal: number): number[] {
   const targets = counts.map((c) => Math.max(2, c));
   let excess = targets.reduce((sum, t) => sum + t, 0) - maxTotal;
   if (excess <= 0) return targets;
-  const order = counts.map((_, i) => i).sort((a, b) => counts[b] - counts[a]);
+  const order = counts
+    .map((_, i) => i)
+    .sort((a, b) => elementAt(counts, b) - elementAt(counts, a));
   for (const i of order) {
     if (excess <= 0) break;
     const reducible = elementAt(targets, i) - 2;
