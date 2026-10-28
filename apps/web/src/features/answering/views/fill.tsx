@@ -61,6 +61,7 @@ function FillControls({
       <RichMarkdown
         source={model.stemMd}
         className="text-base leading-[1.75]"
+        lrNodes
       />
     </DirectiveSessionProvider>
   );

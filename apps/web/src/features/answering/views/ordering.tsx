@@ -217,6 +217,7 @@ export const orderingView: AnswerKindView<
           <RichMarkdown
             source={model.stemMd}
             className="text-base leading-[1.75]"
+            lrNodes
           />
           <p role="alert" className="text-sm text-destructive">
             这道排序题的排序项信息不完整，请联系老师重新检查题目。
@@ -241,6 +242,7 @@ export const orderingView: AnswerKindView<
         <RichMarkdown
           source={model.stemMd}
           className="text-base leading-[1.75]"
+          lrNodes
         />
         <div className="flex min-w-0 flex-col gap-2">
           <p className="text-sm font-semibold text-muted-foreground">

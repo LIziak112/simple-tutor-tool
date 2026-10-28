@@ -93,6 +93,7 @@ function ChoiceControls({
         <label
           key={option.key}
           className={optionShellClass(picked === option.index)}
+          data-lr-node={`options/option/${option.index}`}
         >
           <input
             type="radio"
@@ -141,6 +142,7 @@ function MultiControls({
         <label
           key={option.key}
           className={optionShellClass(pickedIndexes.includes(option.index))}
+          data-lr-node={`options/option/${option.index}`}
         >
           <input
             type="checkbox"
@@ -339,6 +341,7 @@ export const choiceView: AnswerKindView<
       <RichMarkdown
         source={choiceStemSourceOf(model)}
         className="question-markdown text-base leading-[1.75]"
+        lrNodes
       />
       <ChoiceControls
         model={model}
@@ -382,6 +385,7 @@ export const multiView: AnswerKindView<
       <RichMarkdown
         source={choiceStemSourceOf(model)}
         className="question-markdown text-base leading-[1.75]"
+        lrNodes
       />
       <MultiControls
         model={model}

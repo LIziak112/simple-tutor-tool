@@ -71,6 +71,7 @@ export const matchingView: AnswerKindView<
           <RichMarkdown
             source={model.stemMd}
             className="text-base leading-[1.75]"
+            lrNodes
           />
           <p role="alert" className="text-sm text-destructive">
             这道配对题的选项池或槽位信息不完整，请联系老师重新检查题目。
@@ -90,6 +91,7 @@ export const matchingView: AnswerKindView<
         <RichMarkdown
           source={model.stemMd}
           className="text-base leading-[1.75]"
+          lrNodes
         />
         <section
           aria-label="完整选项"

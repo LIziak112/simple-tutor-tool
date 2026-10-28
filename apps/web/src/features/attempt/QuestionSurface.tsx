@@ -47,6 +47,7 @@ export const QuestionSurface = memo(function QuestionSurface({
     <QuestionSurfaceFrame>
       <div
         data-slot="question-surface"
+        data-lr-node="root"
         inert={isPublicBase}
         className="mx-auto flex w-full min-w-0 flex-col gap-3 text-base leading-[1.75]"
       >

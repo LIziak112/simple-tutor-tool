@@ -103,6 +103,7 @@ export const judgeView: AnswerKindView<
       <RichMarkdown
         source={judgeDisplayStemOf(model.stemMd)}
         className="text-base leading-[1.75]"
+        lrNodes
       />
       <JudgeControls
         model={model}
