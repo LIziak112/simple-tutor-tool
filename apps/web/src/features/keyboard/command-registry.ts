@@ -126,12 +126,12 @@ export function findConflicts(
   const owner = new Map<string, string>();
   for (const command of commands) {
     if (command.customizable) continue;
-    for (const spec of resolved[command.id]) owner.set(spec, command.label);
+    for (const spec of resolved[command.id] ?? []) owner.set(spec, command.label);
   }
   const conflicts: KeyboardBindingConflict[] = [];
   for (const command of commands) {
     if (!command.customizable) continue;
-    for (const spec of resolved[command.id]) {
+    for (const spec of resolved[command.id] ?? []) {
       const existing = owner.get(spec);
       if (existing !== undefined) {
         conflicts.push({ commandId: command.id, spec, otherLabel: existing });
@@ -148,7 +148,11 @@ export function findConflicts(
  * 以「 / 」连接。帮助面板与设置页行共用。
  */
 export function formatKeys(keys: readonly string[]): string {
-  if (keys.length >= 3)
-    return `${formatKeySpec(keys[0])}–${formatKeySpec(keys[keys.length - 1])}`;
-  return keys.map(formatKeySpec).join(" / ");
+  const parts = keys.map(formatKeySpec);
+  if (parts.length >= 3) {
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    if (first !== undefined && last !== undefined) return `${first}–${last}`;
+  }
+  return parts.join(" / ");
 }
