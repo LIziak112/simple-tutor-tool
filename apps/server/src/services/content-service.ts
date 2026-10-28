@@ -600,8 +600,18 @@ export function commitImport(
       parsed.frontmatter?.kind === "lesson" ? "lesson" : "lecture";
     const lectureReports: ImportLectureReport[] = [];
     const lectureIdByTitle = new Map<string, string>();
+    /** 命中讲义的更新前 kind（嵌入单元接管只对「更新前已是 lesson」的讲义生效） */
+    const lectureKindById = new Map<string, "lecture" | "lesson">();
+    /** 本次重导接管的讲练页（更新前 kind=lesson 且本次仍以 lesson 覆盖） */
+    const lessonSupersedeLectureIds: string[] = [];
+    /** 讲练页 → 本次导入挂载到该页的单元 id 集（接管判定与题级清退都用） */
+    const attachedUnitIdsByLecture = new Map<string, Set<string>>();
     const folderLectures = tx
-      .select({ id: lectures.id, title: lectures.title })
+      .select({
+        id: lectures.id,
+        title: lectures.title,
+        kind: lectures.kind,
+      })
       .from(lectures)
       .where(
         and(
@@ -612,12 +622,21 @@ export function commitImport(
         ),
       )
       .all();
-    for (const row of folderLectures) lectureIdByTitle.set(row.title, row.id);
+    for (const row of folderLectures) {
+      lectureIdByTitle.set(row.title, row.id);
+      lectureKindById.set(row.id, row.kind);
+    }
     let nextLectureOrder = folderLectures.length;
 
     for (const lecture of parsed.lectures) {
       const existingId = lectureIdByTitle.get(lecture.title);
       if (existingId !== undefined) {
+        if (
+          lectureKindById.get(existingId) === "lesson" &&
+          lectureKind === "lesson"
+        ) {
+          lessonSupersedeLectureIds.push(existingId);
+        }
         // 命中即替换 markdown；软删行同时恢复（与题目「同 id 再导入即恢复」同口径）
         tx.update(lectures)
           .set({
@@ -692,6 +711,12 @@ export function commitImport(
         unit.lectureTitle !== undefined
           ? (lectureIdByTitle.get(unit.lectureTitle) ?? null)
           : null;
+      if (lectureId !== null) {
+        const attached = attachedUnitIdsByLecture.get(lectureId);
+        if (attached === undefined)
+          attachedUnitIdsByLecture.set(lectureId, new Set([unit.id]));
+        else attached.add(unit.id);
+      }
       // practice 推荐（M5-D1）：按单元落库——文档带 practice 存契约形态 JSON，
       // 不带置 null（同名重导清除旧推荐，与 teachingPackJson 覆盖语义同口径）。
       // lecture/lesson 文档解析层不贯通 practice（对讲练不生效），这里恒 null。
@@ -786,6 +811,73 @@ export function commitImport(
           updatedQuestions += 1;
         }
         syncQuestionKnowledge(tx, question, knowledgeIdByName, teacherId);
+      }
+    }
+
+    // ---- 讲练页嵌入单元接管（2026-10-28 修复：重导改名单元双嵌入单元事故）----
+    // lesson 文档重导命中同名讲练页（更新前 kind 已是 lesson）时，本次导入接管
+    // 该页嵌入单元集合：未挂载的旧嵌入单元软删进回收站（题行保留——历史作答
+    // 全是快照，不受影响；restoreUnit 对已有其他 live 嵌入单元的页 409 防复活）；
+    // 挂载单元内不在本次文件里的 live 题同样软删——嵌入单元的题恒经讲义 md 题槽
+    // 存在，独立单元的 kept 保留语义（D18）不适用，题号改名/删题不再产生幽灵
+    // 双份题。kind 翻转（更新前非 lesson，或本次非 lesson 覆盖）不触发：其挂载
+    // 单元是配套练习语义，不归本节接管。
+    if (lessonSupersedeLectureIds.length > 0) {
+      const fileQuestionIdsByUnit = new Map<string, Set<string>>();
+      for (const unit of parsed.units) {
+        fileQuestionIdsByUnit.set(
+          unit.id,
+          new Set(unit.questions.map((question) => question.id)),
+        );
+      }
+      for (const supersedeLectureId of lessonSupersedeLectureIds) {
+        const attached =
+          attachedUnitIdsByLecture.get(supersedeLectureId) ?? new Set<string>();
+        const staleUnits = tx
+          .select({ id: units.id })
+          .from(units)
+          .where(
+            and(
+              eq(units.teacherId, teacherId),
+              eq(units.lectureId, supersedeLectureId),
+              isNull(units.deletedAt),
+            ),
+          )
+          .all()
+          .filter((row) => !attached.has(row.id));
+        for (const row of staleUnits) {
+          tx.update(units)
+            .set({ deletedAt: now })
+            .where(and(eq(units.teacherId, teacherId), eq(units.id, row.id)))
+            .run();
+        }
+        for (const unitId of attached) {
+          const fileQuestionIds = fileQuestionIdsByUnit.get(unitId);
+          if (fileQuestionIds === undefined) continue;
+          const staleQuestions = tx
+            .select({ id: questions.id })
+            .from(questions)
+            .where(
+              and(
+                eq(questions.teacherId, teacherId),
+                eq(questions.unitId, unitId),
+                isNull(questions.deletedAt),
+              ),
+            )
+            .all()
+            .filter((row) => !fileQuestionIds.has(row.id));
+          for (const row of staleQuestions) {
+            tx.update(questions)
+              .set({ deletedAt: now })
+              .where(
+                and(
+                  eq(questions.teacherId, teacherId),
+                  eq(questions.id, row.id),
+                ),
+              )
+              .run();
+          }
+        }
       }
     }
 
