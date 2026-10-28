@@ -147,6 +147,19 @@
   html {
     @apply font-sans;
   }
+  /* 触屏基础（学生端 iPad/手机为主）：交互元素禁用双击缩放延迟、去掉系统点按高亮；
+     手写画布等自管 touch-action 的元素由自身类覆盖（类选择器优先级更高）。 */
+  a,
+  button,
+  label,
+  input,
+  select,
+  summary,
+  textarea,
+  [role="button"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
 /* ---- RichMarkdown 正文排版（T1.8）：Markdown 基础元素 ----

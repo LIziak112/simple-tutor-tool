@@ -199,8 +199,8 @@ export function StudentLayout() {
         <main
           className={
             workspace
-              ? "mx-auto w-full max-w-[1120px] flex-1 px-3 sm:px-6"
-              : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-5xl lg:py-8"
+              ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6"
+              : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 pb-[env(safe-area-inset-bottom)] lg:max-w-5xl lg:py-8"
           }
         >
           <Outlet />
