@@ -85,6 +85,7 @@ export const SPEC_TAGS = {
   // MCP
   "mcp-smoke.spec.ts": ["@mcp"],
   "student-mcp-loop.spec.ts": ["@mcp"],
+  "student-mcp-wrong-practice.spec.ts": ["@mcp"],
   // 导出
   "export-wizard.spec.ts": ["@export"],
   "ongoing-question-export.spec.ts": ["@export"],

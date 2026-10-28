@@ -488,3 +488,148 @@ test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点�
     }
   });
 });
+
+test.describe("选题重练（2026-10）：复选 + 跨筛选保留 + 只练已选", {
+  tag: ["@student"],
+}, () => {
+  test("勾选跨考点筛选保留（操作条差额提示），重练已选只建对应题数的卷且标题带「手选 N 题」", async ({
+    request,
+    browser,
+  }) => {
+    test.setTimeout(240_000);
+
+    // —— 造数（教师 API）：课程 + 两题判断（考点互异）+ 学生入成员 ——
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const courseName = `e2e选题课程${suffix}`;
+    const unitName = `选题小练${suffix}`;
+    const courseId = await createCourseViaApi(request, courseName);
+    const importRes = await request.post("/api/teacher/import/commit", {
+      data: {
+        markdown: practiceMarkdown(unitName),
+        filename: `${unitName}.md`,
+        courseId,
+      },
+    });
+    if (!importRes.ok()) {
+      throw new Error(`导入课程练习失败：HTTP ${importRes.status()}`);
+    }
+    await setCourseItemVisible(request, courseId, unitName, true);
+
+    const loginName = `e2e-select-${suffix}`;
+    await request.post("/api/teacher/students", {
+      data: { displayName: `e2e选题生${suffix}`, loginName },
+    });
+    const student = await getStudentViaApi(request, loginName);
+    await addCourseMemberViaApi(request, courseId, student.id);
+
+    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+    const studentPage = await studentContext.newPage();
+    try {
+      const leak = attachLeakMonitor(studentPage);
+      await studentPage.goto(`/s/${student.linkToken}`);
+      await studentPage.waitForURL("**/s/home");
+      const unitPath = `/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`;
+
+      /** 做一轮课程练习：q1/q2 各按入参作答并交卷 */
+      const doRound = async (
+        q1Answer: string,
+        q2Answer: string,
+        round: number,
+      ) => {
+        await studentPage.goto(unitPath);
+        if (round === 1) {
+          await studentPage.getByRole("button", { name: "开始练习" }).click();
+        } else {
+          await studentPage.getByRole("button", { name: "再做一次" }).click();
+          await studentPage.getByRole("button", { name: "开始新一次" }).click();
+        }
+        await studentPage.waitForURL("**/s/attempts/**");
+        await expect(
+          studentPage.getByText(`课程：${courseName} · 第 ${round} 次`),
+        ).toBeVisible();
+        const q1 = studentPage.locator('article[aria-label="第 1 题"]');
+        await q1
+          .getByRole("radio", { name: q1Answer, exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        const q2 = studentPage.locator('article[aria-label="第 2 题"]');
+        await q2
+          .getByRole("radio", { name: q2Answer, exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        await expect
+          .poll(async () =>
+            studentPage.getByTestId("draft-status").textContent(),
+          )
+          .not.toContain("保存中");
+        await studentPage
+          .getByRole("button", { name: "交卷", exact: true })
+          .click();
+        await studentPage
+          .getByRole("button", { name: "确认交卷" })
+          .first()
+          .click();
+        await expect(studentPage.getByText("批改结果")).toBeVisible({
+          timeout: 30_000,
+        });
+      };
+
+      // 一轮两题都做错 → 错题本待复习 2 题
+      await doRound("错", "错", 1);
+
+      await studentPage.goto("/s/wrong");
+      await expect(
+        studentPage.getByRole("heading", {
+          name: `${unitName} · 待复习 2 题`,
+        }),
+      ).toBeVisible({ timeout: 30_000 });
+
+      // —— 进入选题模式：紧凑行变 checkbox ——
+      await studentPage.getByRole("button", { name: "选题重练" }).click();
+      const boxes = studentPage.getByRole("checkbox");
+      await expect(boxes).toHaveCount(2);
+
+      // 两题都勾上 → 操作条计数
+      await boxes.nth(0).click();
+      await expect(boxes.nth(0)).toHaveAttribute("aria-checked", "true");
+      await boxes.nth(1).click();
+      await expect(boxes.nth(1)).toHaveAttribute("aria-checked", "true");
+      await expect(studentPage.getByText("已选 2 题")).toBeVisible();
+
+      // —— 勾选跨筛选保留：考点筛选藏起一题，操作条给差额提示 ——
+      const knowledgeInput = studentPage.getByLabel("考点", { exact: true });
+      await knowledgeInput.fill("正数与负数");
+      await knowledgeInput.press("Enter");
+      await expect(boxes).toHaveCount(1);
+      await expect(boxes.nth(0)).toHaveAttribute("aria-checked", "true");
+      await expect(
+        studentPage.getByText(/另有 1 题不在当前列表/),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "重练已选（2 题）" }),
+      ).toBeEnabled();
+
+      // 清除筛选恢复全列表（勾选保留）→ 组卷建卷
+      await studentPage.getByRole("button", { name: "清除全部筛选" }).click();
+      await expect(boxes).toHaveCount(2);
+      await expect(boxes.nth(0)).toHaveAttribute("aria-checked", "true");
+      await expect(boxes.nth(1)).toHaveAttribute("aria-checked", "true");
+
+      await studentPage
+        .getByRole("button", { name: "重练已选（2 题）" })
+        .click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      await expect(studentPage.getByText("手选 2 题")).toBeVisible();
+      await expect(
+        studentPage.locator('article[aria-label^="第 "]'),
+      ).toHaveCount(2);
+
+      // 泄露检查：全程 /api/student/* 响应无禁用键
+      await studentPage.waitForTimeout(800);
+      expect(leak.violations().join("\n")).toBe("");
+    } finally {
+      await studentContext.close();
+    }
+  });
+});

@@ -1,4 +1,4 @@
-import type { ApiErr } from "@tutor/contract";
+import type { ApiErr, WrongPracticeScope } from "@tutor/contract";
 import {
   attemptDetailDataSchema,
   wrongPracticeOkSchema,
@@ -217,6 +217,7 @@ async function postWrongPractice(
   env: PracticeEnv,
   questionIds: string[],
   cookie: string | null = env.aCookie,
+  scope?: WrongPracticeScope,
 ): Promise<Response> {
   return env.app.request("/api/student/wrong-practice", {
     method: "POST",
@@ -224,7 +225,9 @@ async function postWrongPractice(
       cookie === null
         ? { "content-type": "application/json" }
         : { "content-type": "application/json", cookie },
-    body: JSON.stringify({ questionIds }),
+    body: JSON.stringify(
+      scope === undefined ? { questionIds } : { questionIds, scope },
+    ),
   });
 }
 
@@ -447,6 +450,56 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
     // 未登录 401
     const anon = await postWrongPractice(env, [Q.judge1], null);
     expect(anon.status).toBe(401);
+  });
+
+  it("范围快照：selection.questionCount 以服务端实际冻结题数覆写（页面状态过期时不把虚标 N 永久冻结进卷标题）", async () => {
+    const env = await makePracticeEnv();
+    const a1 = await startCourseAttempt(env);
+    // 仅 judge1 错入本；judge2 保持不在聚合（模拟页面状态过期的差额来源）
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, a1, T1);
+
+    // scope 声称手选 2 题，服务端静默剔除 judge2 后只冻结 1 题——
+    // 随卷快照必须记 1（契约只校验请求一致性，覆写是服务层职责）
+    const res = await postWrongPractice(
+      env,
+      [Q.judge1, Q.judge2],
+      env.aCookie,
+      {
+        kind: "selection",
+        questionCount: 2,
+      },
+    );
+    expect(res.status).toBe(201);
+    const created = ((await res.json()) as { data: { id: string } }).data;
+    const row = env.db
+      .select({ scopeJson: attempts.practiceScopeJson })
+      .from(attempts)
+      .where(eq(attempts.id, created.id))
+      .get();
+    expect(JSON.parse(row?.scopeJson ?? "null")).toEqual({
+      kind: "selection",
+      questionCount: 1,
+    });
+
+    // 一致的 scope 原样保留（courseName 等附加字段不动）
+    const exact = await postWrongPractice(env, [Q.judge1], env.aCookie, {
+      kind: "selection",
+      questionCount: 1,
+      courseName: "初一上",
+    });
+    expect(exact.status).toBe(201);
+    const exactId = ((await exact.json()) as { data: { id: string } }).data.id;
+    const exactRow = env.db
+      .select({ scopeJson: attempts.practiceScopeJson })
+      .from(attempts)
+      .where(eq(attempts.id, exactId))
+      .get();
+    expect(JSON.parse(exactRow?.scopeJson ?? "null")).toEqual({
+      kind: "selection",
+      questionCount: 1,
+      courseName: "初一上",
+    });
   });
 
   it("attemptNo 递增 + 多张未交卷卷并存；交卷后成为错题本新一轮（sourceType=wrong、来源标题「错题重练 · 第 n 次」）；交卷后结果视图照常携带答案（allow 放行）", async () => {
