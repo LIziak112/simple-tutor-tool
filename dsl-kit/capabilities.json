@@ -7,9 +7,9 @@
       "attrs": [
         {
           "name": "type",
-          "type": "judge / choice / multi / fill / solve / apply / find-error",
+          "type": "judge / choice / multi / fill / solve / apply / find-error / response / matching / ordering",
           "required": true,
-          "description": "题型，必填。七种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错；写其他值会在 lint 报错"
+          "description": "题型，必填。十种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错 / response 开放 / matching 配对 / ordering 排序（新三型的完整作答语法 TT-06 注册、导入入口受发布开关控制）；写其他值会在 lint 报错"
         },
         {
           "name": "difficulty",
@@ -23,6 +23,18 @@
           "type": "string",
           "required": false,
           "description": "考点（单个字符串），用于学情统计；解析时归一为数组入库"
+        },
+        {
+          "name": "word-min",
+          "type": "number",
+          "required": false,
+          "description": "response 开放题的字数提示下限（正整数，可选）：仅作答时展示提示，不硬校验、不截断"
+        },
+        {
+          "name": "word-max",
+          "type": "number",
+          "required": false,
+          "description": "response 开放题的字数提示上限（正整数，可选）：仅展示提示，不硬校验"
         }
       ],
       "capability": null
@@ -248,6 +260,128 @@
         }
       ],
       "capability": null
+    },
+    {
+      "name": "material",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "description": "材料显示标题，可选（如「给定资料一」）"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "group",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "description": "组标题，可选（公共说明的标题行；说明正文写在容器内）"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": false,
+          "description": "组级显示编号说明，可选（如「1～5」「1–20」）"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "seg",
+      "kind": "container",
+      "attrs": [],
+      "capability": null
+    },
+    {
+      "name": "ref",
+      "kind": "leaf",
+      "attrs": [
+        {
+          "name": "material",
+          "type": "string",
+          "required": false,
+          "description": "被引用的材料 id（材料引用时写，与 question 互斥）"
+        },
+        {
+          "name": "question",
+          "type": "string",
+          "required": false,
+          "description": "被引用的子题 id（组内子题引用时写，与 material 互斥）"
+        },
+        {
+          "name": "segs",
+          "type": "string",
+          "required": false,
+          "description": "片段选择，可选：seg-2 单个 / seg-1..seg-3 区间 / seg-1,seg-4 列表；缺省为材料全文"
+        },
+        {
+          "name": "slot",
+          "type": "string",
+          "required": false,
+          "description": "单个槽位绑定，可选：子题绑定该材料的某个槽位作答（完形逐空绑定）"
+        },
+        {
+          "name": "slots",
+          "type": "string",
+          "required": false,
+          "description": "槽位集合，可选：matching 题声明其槽位区间/列表（如 slot-1..slot-5）"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "options",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "allow-repeat",
+          "type": "string",
+          "required": false,
+          "default": false,
+          "description": "同一选项可否被多个槽位占用，缺省 false；写 allow-repeat=true 开启（字符串布尔）"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "option",
+      "kind": "container",
+      "attrs": [],
+      "capability": null
+    },
+    {
+      "name": "item",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "fixed",
+          "type": "string",
+          "required": false,
+          "default": false,
+          "description": "固定项标记，缺省 false：写 fixed=true 锁定该项显示位置（位置由参考答案行序定义）"
+        },
+        {
+          "name": "distractor",
+          "type": "string",
+          "required": false,
+          "default": false,
+          "description": "干扰项标记，缺省 false：写 distractor=true 声明该项不属于正确序列；未显式声明时解析从参考序列推导（不在序列即干扰项）"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "variant",
+      "kind": "container",
+      "attrs": [],
+      "capability": null
     }
   ],
   "questionTypes": {
@@ -319,6 +453,36 @@
       "validatorId": "find-error",
       "validation": {
         "shape": "exact"
+      }
+    },
+    "response": {
+      "inputType": "text",
+      "evidence": {
+        "format": "ink-strokes"
+      },
+      "validatorId": "response",
+      "validation": {
+        "shape": "rubric"
+      }
+    },
+    "matching": {
+      "inputType": "match",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "matching",
+      "validation": {
+        "shape": "rubric"
+      }
+    },
+    "ordering": {
+      "inputType": "order",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "ordering",
+      "validation": {
+        "shape": "rubric"
       }
     }
   }

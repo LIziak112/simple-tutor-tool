@@ -276,4 +276,85 @@ describe("applyServerDrafts（进入答题页合并）", () => {
     const record = await draftStore.loadDraft("att-1");
     expect(record?.answerDigests.q1).toBe(digestOf(judge)); // 指纹=服务端内容
   });
+
+  it("材料手写笔迹存取与跨题共享（合并存储到 attempt 草稿）", async () => {
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    const inkDoc = doc(3);
+    draftStore.saveMaterialInk("att-mat", "mat-1", inkDoc);
+    expect(draftStore.getMaterialInk("att-mat", "mat-1")?.data).toEqual(
+      inkDoc.data,
+    );
+    expect(draftStore.peekMaterialInks("att-mat")?.["mat-1"]?.data).toEqual(
+      inkDoc.data,
+    );
+
+    await draftStore.flush("att-mat");
+    const loaded = await draftStore.loadDraft("att-mat");
+    expect(loaded?.materialInks?.["mat-1"]?.data).toEqual(inkDoc.data);
+
+    // 换账号隔离
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-other" });
+    expect(await draftStore.loadDraft("att-mat")).toBeNull();
+    expect(draftStore.getMaterialInk("att-mat", "mat-1")).toBeNull();
+
+    // 恢复原账号
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    const restored = await draftStore.loadDraft("att-mat");
+    expect(restored?.materialInks?.["mat-1"]?.data).toEqual(inkDoc.data);
+    expect(draftStore.getMaterialInk("att-mat", "mat-1")?.data).toEqual(
+      inkDoc.data,
+    );
+  });
+
+  it("材料笔迹冻结基准随稿存取，交卷保稿同样保留；空稿清除基准", async () => {
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    draftStore.saveMaterialInk("att-base", "m1|1", doc(1));
+    draftStore.saveMaterialInkBase("att-base", "m1|1", {
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+    expect(draftStore.getMaterialInkBase("att-base", "m1|1")).toEqual({
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+    expect(draftStore.getMaterialInkBase("att-base", "m9")).toBeNull();
+
+    await draftStore.flush("att-base");
+    const loaded = await draftStore.loadDraft("att-base");
+    expect(loaded?.materialInkBases?.["m1|1"]).toEqual({
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+
+    // 交卷保稿：冻结基准与笔迹一并保留（结果页按基准挂冻结框对齐回看）
+    await draftStore.clearDraft("att-base");
+    const kept = await draftStore.loadDraft("att-base");
+    expect(kept?.materialInkBases?.["m1|1"]).toEqual({
+      cssWidth: 432.5,
+      cssHeight: 600,
+    });
+    expect(kept?.materialInks?.["m1|1"]?.data).toEqual(doc(1).data);
+
+    // 空稿清除：下次首笔按当前列宽重冻（空稿无对齐负担）
+    draftStore.removeMaterialInkBase("att-base", "m1|1");
+    expect(draftStore.getMaterialInkBase("att-base", "m1|1")).toBeNull();
+  });
+
+  it("clearDraft 保留材料圈画笔迹（本机唯一稿，供结果页只读回看）", async () => {
+    bindDraftSession({ origin: "https://tutor.test", studentId: "s-mat" });
+    draftStore.saveMaterialInk("att-keep", "mat-1", doc(1));
+    await draftStore.flush("att-keep");
+
+    await draftStore.clearDraft("att-keep");
+
+    // 答案/题面笔迹清空，材料笔迹保留
+    const record = await draftStore.loadDraft("att-keep");
+    expect(record?.materialInks?.["mat-1"]?.data).toEqual(doc(1).data);
+    expect(record?.answers).toEqual({});
+    expect(record?.inks).toEqual({});
+
+    // 无材料笔迹时行为不变：整记录删除
+    await draftStore.clearDraft("att-plain");
+    expect(await draftStore.loadDraft("att-plain")).toBeNull();
+  });
 });

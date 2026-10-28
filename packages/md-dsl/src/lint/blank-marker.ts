@@ -1,8 +1,8 @@
-import type { LintIssue } from "@tutor/contract";
-import type { Root } from "mdast";
+import type { DocumentKind, LintIssue } from "@tutor/contract";
+import type { Root, Text } from "mdast";
 import type { Node } from "unist";
 import { visit } from "unist-util-visit";
-import { makeIssue } from "../v2/shared.ts";
+import { canonicalName, isContainer, makeIssue } from "../v2/shared.ts";
 
 /**
  * 填空标记内 $ 检查（BLANK_MARKER_CONTAINS_DOLLAR，error 级——泄露红线）。
@@ -135,4 +135,78 @@ export function lintBlankMarkerDollar(tree: Root): LintIssue[] {
     }
   });
   return issues;
+}
+
+/**
+ * 讲义正文裸 [[…]] 检查（BLANK_MARKER_OUTSIDE_QUESTION，error 级——泄露红线，
+ * TT-10b 审查 P2，与 MATERIAL/GROUP 嵌套红线同族「md 段答案文本防线」）。
+ *
+ * 动机：lesson 的 md 段与 mixed 的讲义段落都是原文直传（splitLessonBlocks /
+ * splitLectures 只剔题块与材料/组容器行），教师在题块外正文直接写 [[参考答案]]
+ * 时，学生端 API 载荷原样携带答案文本（UI 渲染为空填空框只是显示面缓解，
+ * AGENTS 规则 3 是 API 级口径）；[[…]] 只在题目内才有判分语义。
+ *
+ * 判定（AST 层，text 节点取值扫描完整标记，与 lintBlankMarkerDollar 同款纪律：
+ * math/code/inlineCode 不是 text 节点天然跳过）：
+ * - 只裁 lesson 与 mixed——两 kind 有题目共存语境，题块外标记是从题目逃逸的
+ *   答案文本；lecture 无题目语境（不构成未交卷答案泄露，显示层空框属渲染
+ *   降级）、practice 无讲义正文学生下发面，不加严（DSL 只增不改）；
+ * - question 内合法（判分标记）；material 内由 MATERIAL_CONTAINS_ANSWER
+ *   单报 error，本规则跳过避免双报；组头公共说明（introMd 直下学生投影）
+ *   无专属规则，不豁免、照报。
+ */
+export function lintBlankMarkerOutsideQuestion(
+  tree: Root,
+  kind: DocumentKind,
+): LintIssue[] {
+  if (kind !== "lesson" && kind !== "mixed") return [];
+  const issues: LintIssue[] = [];
+  scanMarkerText(tree, false, issues);
+  return issues;
+}
+
+/** [[…]] 在其中有自身规则、本规则跳过的容器（question 合法 / material 另有单报） */
+const MARKER_EXEMPT_CONTAINERS = new Set(["question", "material"]);
+
+/** 递归扫描：不在豁免容器内的 text 节点找完整 [[…]] 标记 */
+function scanMarkerText(
+  node: Node,
+  exempt: boolean,
+  issues: LintIssue[],
+): void {
+  for (const child of childNodes(node)) {
+    const childExempt =
+      exempt ||
+      (isContainer(child) &&
+        MARKER_EXEMPT_CONTAINERS.has(canonicalName(child)));
+    if (!childExempt && child.type === "text") {
+      const value = (child as Text).value;
+      const startLine = child.position?.start.line ?? 1;
+      const startColumn = child.position?.start.column ?? 1;
+      for (const match of value.matchAll(MARKER_RE)) {
+        const { line, column } = positionOf(
+          value,
+          match.index ?? 0,
+          startLine,
+          startColumn,
+        );
+        issues.push(
+          makeIssue(
+            "error",
+            line,
+            column,
+            "BLANK_MARKER_OUTSIDE_QUESTION",
+            `讲义正文出现填空/判断标记 ${match[0]}（第 ${line} 行）：[[…]] 只能写在 ::::question 题目内——正文里的标记会渲染成空填空框，且标记内的答案原文会随讲义段落原样下发学生端；请把该题写进题块（或把标记移进题干），或删掉标记`,
+          ),
+        );
+      }
+    }
+    scanMarkerText(child, childExempt, issues);
+  }
+}
+
+/** 子节点只读访问（children 缺失的节点视为叶子） */
+function childNodes(node: Node): readonly Node[] {
+  const children = (node as { readonly children?: readonly Node[] }).children;
+  return children ?? [];
 }

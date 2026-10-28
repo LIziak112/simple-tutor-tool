@@ -34,17 +34,20 @@ describe("题目填写完整度", () => {
       getQuestionCompletion(q, { kind: "fill", values: ["1", "2"] }),
     ).toEqual({ state: "filled", filledSlots: 2, expectedSlots: 2 });
   });
-  it("false判断有效，草稿不计答案，只有正式过程显示部分完成", () => {
+  it("false判断有效，草稿不计答案；QM-09：仅正式手写即已作答（旧题型不强制再填单行最终答案）", () => {
     expect(
       getQuestionCompletion(
         { ...question, type: "judge" },
         { kind: "judge", value: false },
       ).state,
     ).toBe("filled");
+    // QM-09 细项2：solve/apply/find-error 有正式笔迹未填最终答案 = filled
+    //（决策记录 §5.7.3 response 行「或正式笔迹」口径对称放宽，I06 旧注随
+    // 本单作废——见 TT-08b 决策小节）
     expect(
       getQuestionCompletion({ ...question, type: "solve" }, undefined, true)
         .state,
-    ).toBe("partial");
+    ).toBe("filled");
     expect(
       getQuestionCompletion({ ...question, type: "solve" }, undefined).state,
     ).toBe("empty");
@@ -55,6 +58,33 @@ describe("题目填写完整度", () => {
         true,
       ).state,
     ).toBe("filled");
+  });
+
+  it("response 完整度：正文非空白或正式笔迹任一即 filled（QM-09；仅手写合法）", () => {
+    const resp = { ...question, type: "response" as const };
+    // 正文非空白（无笔迹）
+    expect(
+      getQuestionCompletion(resp, { kind: "response", body: "概括主要特点。" }),
+    ).toEqual({ state: "filled", filledSlots: 1, expectedSlots: 1 });
+    // 仅手写：body 空串 + 正式笔迹（决策记录 §5.7.3「或正式笔迹」口径）
+    expect(
+      getQuestionCompletion(resp, { kind: "response", body: "" }, true).state,
+    ).toBe("filled");
+    // 混合：正文 + 笔迹
+    expect(
+      getQuestionCompletion(resp, { kind: "response", body: "草稿" }, true)
+        .state,
+    ).toBe("filled");
+    // 空白正文不计（纯空白字符等同未写）
+    expect(
+      getQuestionCompletion(resp, { kind: "response", body: "  \n " }).state,
+    ).toBe("empty");
+    // 什么都没有
+    expect(getQuestionCompletion(resp, undefined).state).toBe("empty");
+    // I02 错配答案按未作答
+    expect(
+      getQuestionCompletion(resp, { kind: "final", finalAnswer: "0" }).state,
+    ).toBe("empty");
   });
   it("多余答案不能补足空位，无空位的坏题不能虚报完成", () => {
     expect(

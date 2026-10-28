@@ -225,7 +225,7 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       // 答对 1（判断）+ 答错 1（判断）+ 待批 1（手写只写笔迹）
       await expectResultCount(studentPage, "答对", 1);
       await expectResultCount(studentPage, "答错", 1);
-      await expectResultCount(studentPage, "待批", 1);
+      await expectResultCount(studentPage, "待判断", 1);
       expect(leak.violations().join("\n")).toBe("");
 
       // —— 教师端 UI：登录 → 数据页三视图各切换一次 ——
@@ -406,24 +406,18 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(
         studentPage.getByText("含老师批改，满分 100", { exact: true }),
       ).toBeVisible();
-      await expectResultCount(studentPage, "待批", 0);
-      // 手写题（第 3 题）：老师批改块「判对」+ 评语与教师评判状态
+      await expectResultCount(studentPage, "待判断", 0);
+      // 手写题（第 3 题）：老师批改块「判对」+ 评语；图标答对
       const q3Result = studentPage.locator('article[aria-label="第 3 题"]');
       await expect(q3Result.getByText(/老师批改：判对/)).toBeVisible();
       await expect(q3Result.getByText(commentText)).toBeVisible();
-      await expect(
-        q3Result.getByRole("region", { name: "本题评判" }).getByRole("status"),
-      ).toHaveText("教师判定：正确");
+      await expect(q3Result.getByLabel("答对")).toBeVisible();
       // 判断题：第 1 题答对、第 2 题答错（均无批改块）
       const q1Result = studentPage.locator('article[aria-label="第 1 题"]');
-      await expect(
-        q1Result.getByRole("region", { name: "本题评判" }).getByRole("status"),
-      ).toHaveText("回答正确");
+      await expect(q1Result.getByLabel("答对")).toBeVisible();
       await expect(q1Result.getByText(/老师批改/)).toHaveCount(0);
       const q2Result = studentPage.locator('article[aria-label="第 2 题"]');
-      await expect(
-        q2Result.getByRole("region", { name: "本题评判" }).getByRole("status"),
-      ).toHaveText("回答有误");
+      await expect(q2Result.getByLabel("答错")).toBeVisible();
       await expect(q2Result.getByText(/老师批改/)).toHaveCount(0);
 
       // —— 教师导出 CSV（D13）：API request 下载响应体并逐列断言 ——

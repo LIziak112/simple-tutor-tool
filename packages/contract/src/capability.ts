@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { type QuestionType, questionTypeSchema } from "./content.ts";
+import type { StudentAnswer } from "./grading.ts";
 
 /**
  * 指令能力三面与题型桥接表（T7.4 / 方案 §4.3）。
@@ -18,13 +19,20 @@ import { type QuestionType, questionTypeSchema } from "./content.ts";
  * 对外分发（T7.6）：capabilities.json 由 gen:spec 从本文件与指令注册表生成。
  */
 
-/** 指令的输入/操作类型（interaction 面）：none 表示无作答输入，不等于不能点击展开 */
+/**
+ * 指令的输入/操作类型（interaction 面）：none 表示无作答输入，不等于不能点击
+ * 展开。text/match/order 为 TT-01 D13 新词（response/matching/ordering 题型
+ * 桥接表专用；无指令实际使用 match/order 的 inputType，仅题型面消费）。
+ */
 export const directiveInputTypeSchema = z.enum([
   "choice",
   "fill",
   "steps",
   "ink",
   "none",
+  "text",
+  "match",
+  "order",
 ]);
 
 /** 证据形式（evidence 面）：描述既有采集形态，不新增存储格式 */
@@ -239,4 +247,111 @@ export const questionCapabilityBindings: Record<
     validatorId: "find-error",
     validation: { shape: "exact" },
   },
+  // TT-05a 域②（§5.7.1 表 D12/D13）：新题型恒 null 判分器（沿 gradeFill 先例，
+  // packages/grading validator-registry 登记同名恒 null 实现）；shape=rubric
+  // （grade 路由第 2 步即短路人工）；response 的 evidence=ink-strokes 是
+  // 「正文+笔迹双材料」形态（与 solve 同款双证据，正文走答案快照）。
+  response: {
+    inputType: "text",
+    evidence: { format: "ink-strokes" },
+    validatorId: "response",
+    validation: { shape: "rubric" },
+  },
+  matching: {
+    inputType: "match",
+    evidence: { format: "snapshot" },
+    validatorId: "matching",
+    validation: { shape: "rubric" },
+  },
+  ordering: {
+    inputType: "order",
+    evidence: { format: "snapshot" },
+    validatorId: "ordering",
+    validation: { shape: "rubric" },
+  },
 });
+
+// ---------- 跨端证据角色绑定（统一作答适配层方案 §4.1，UA-01 落地） ----------
+
+/**
+ * 纸面角色（D14）：scratch=草稿纸（非正式作答面）；answerInk=正式纸面资格
+ * （正式手写笔迹属作答本体）。挂在题型绑定上、**与 answer kind 正交**——
+ * 后续 response（正文+正式手写并存，answerInk）证明 paperRole 不能从
+ * answer kind 推导。placement（输入位置）仍仅属 web（UA-02/03 的
+ * question-binding.ts），不进本契约。
+ */
+export const paperRoleSchema = z.enum(["scratch", "answerInk"]);
+export type PaperRole = z.infer<typeof paperRoleSchema>;
+
+/** 答案 kind 全集（与 StudentAnswer 判别联合互证，不手抄漂移） */
+const answerKindLiterals = [
+  "judge",
+  "choice",
+  "multi",
+  "fill",
+  "final",
+  "response",
+  "matching",
+  "ordering",
+] as const;
+// 双向互证：漏登记 StudentAnswer 新增 kind 时该行编译失败
+type _AnswerKindExhaustive = [
+  Exclude<StudentAnswer["kind"], (typeof answerKindLiterals)[number]>,
+] extends [never]
+  ? true
+  : "answerKindLiterals 漏登记 StudentAnswer kind";
+const _answerKindCheck: _AnswerKindExhaustive = true;
+void _answerKindCheck;
+
+/** 题型 → 答案 kind + 纸面角色（跨端证据角色绑定项） */
+export const questionEvidenceBindingSchema = z.strictObject({
+  answerKind: z.enum(answerKindLiterals),
+  paperRole: paperRoleSchema,
+});
+export type QuestionEvidenceBinding = z.infer<
+  typeof questionEvidenceBindingSchema
+>;
+
+/**
+ * 跨端证据角色绑定表（方案 §4.1 七旧型定稿；response/matching/ordering 三新
+ * 型按 D2/D14 在 TT-05 落地枚举后补键）。zod v4 穷尽 Record：缺键/多键都解析
+ * 失败，模块加载期 parse fail fast——与上方 questionCapabilityBindings 同款
+ * 风格。正式纸面资格由本表单源派生（HANDWRITTEN_QUESTION_TYPES），旧七型
+ * 资格逐字不变（I12：不改能力词表与 capabilities.json 语义，不进 gen:spec
+ * 消费面）。
+ */
+export const questionEvidenceBindingsSchema = z.record(
+  questionTypeSchema,
+  questionEvidenceBindingSchema,
+);
+
+export const questionEvidenceBindings: Record<
+  QuestionType,
+  QuestionEvidenceBinding
+> = questionEvidenceBindingsSchema.parse({
+  judge: { answerKind: "judge", paperRole: "scratch" },
+  choice: { answerKind: "choice", paperRole: "scratch" },
+  multi: { answerKind: "multi", paperRole: "scratch" },
+  fill: { answerKind: "fill", paperRole: "scratch" },
+  solve: { answerKind: "final", paperRole: "answerInk" },
+  apply: { answerKind: "final", paperRole: "answerInk" },
+  "find-error": { answerKind: "final", paperRole: "answerInk" },
+  // TT-05a（D14 表）：response = answerInk 且与正文并存（证明 paperRole 不能
+  // 从 answer kind/inputType 推导）；matching/ordering 的纸面角色 = scratch。
+  response: { answerKind: "response", paperRole: "answerInk" },
+  matching: { answerKind: "matching", paperRole: "scratch" },
+  ordering: { answerKind: "ordering", paperRole: "scratch" },
+});
+
+/**
+ * 可书写（手写）题型：正式纸面资格（paperRole=answerInk）的兼容入口，由
+ * questionEvidenceBindings 单源派生（原为 content.ts 字面量数组，UA-01 起
+ * 迁移并派生；消费方 AttemptSession/StudentLessonPage/export-csv/
+ * review-pack 经包入口导入不受影响）。顺序随 questionTypeSchema 枚举序；
+ * TT-05a 起 response 新进集合（D14 预期新增：CSV 手写笔迹列、复习包笔迹
+ * 材料对新题型成立——新题型数据在 TT-06/07 前无自然下发路径，现网行为不变）。
+ */
+export const HANDWRITTEN_QUESTION_TYPES: readonly QuestionType[] =
+  questionTypeSchema.options.filter(
+    (type) => questionEvidenceBindings[type].paperRole === "answerInk",
+  );

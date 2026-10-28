@@ -26,11 +26,12 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
-import { SelfReviewControl } from "@/features/attempt/SelfReviewControl";
+import { SelfReviewSection } from "@/features/attempt/SelfReviewSection";
 import {
   busyCloseGuard,
   DraftProblemAlert,
 } from "@/features/attempt/SubmitConfirmDialog";
+import { verdictBadgeDisplayOf } from "@/features/attempt/self-review-display";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import type {
   LessonQuestionHandlers,
@@ -219,7 +220,14 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
   // 教师演示形态（2026-10）：只留判定徽章（有自动判定才显示）+ 题干与选项
   // 标记 + 参考答案 + 解析直接展示；不做待批刷新/批改块/提示回显/历史与
   // 结果页链接（讲练是老师展示给学生用的轻工具，回看工具在作业结果页）。
+  // QM-11：reference_self 行按自评三态显示徽章，对照后挂自评动作（讲练
+  // 恒当题释放，教师未判时学生自评即时生效——TT-09a 口径）。
   if (released !== undefined) {
+    // 徽章显示参数（单一出处）：reference_self 未评/已评带自评文案；旧行
+    // finalCorrect=null 且无自评态 → 不渲染徽章（既有行为）
+    const badge = verdictBadgeDisplayOf(released);
+    const showBadge =
+      badge.verdict !== null || badge.pendingLabel !== undefined;
     return (
       <article
         ref={registerCard}
@@ -229,16 +237,25 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         className={cn(
           "relative flex scroll-mt-24 flex-col gap-3 overflow-hidden rounded-2xl border border-border bg-card p-4 pl-5 text-card-foreground shadow-xs sm:p-5 sm:pl-6",
           "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
-          released.finalCorrect === true && "before:bg-emerald-500",
-          released.finalCorrect === false && "before:bg-red-500",
+          badge.verdict === true && "before:bg-emerald-500",
+          badge.verdict === false && "before:bg-red-500",
         )}
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          {released.finalCorrect !== null && (
+          {showBadge && (
             <VerdictBadge
-              verdict={released.finalCorrect}
-              notDone={!released.answered}
+              verdict={badge.verdict}
               toned
+              notDone={badge.notDone ?? false}
+              {...(badge.pendingLabel !== undefined && {
+                pendingLabel: badge.pendingLabel,
+              })}
+              {...(badge.correctLabel !== undefined && {
+                correctLabel: badge.correctLabel,
+              })}
+              {...(badge.wrongLabel !== undefined && {
+                wrongLabel: badge.wrongLabel,
+              })}
             />
           )}
           <h3 className="text-base font-semibold">第 {index + 1} 题</h3>
@@ -255,9 +272,8 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         />
         <ResultOptions question={released} released />
         <ResultAnswerComparison question={released} released />
-        {released.selfReview && (
-          <SelfReviewControl attemptId={attemptId} question={released} />
-        )}
+        {/* QM-11：对照后挂自评动作（reference_self 行；教师判定时整块不渲染） */}
+        <SelfReviewSection attemptId={attemptId} question={released} />
         {released.solutionMd !== null && (
           <div className="flex flex-col gap-2">
             <p className="text-sm font-medium">解析</p>
@@ -311,20 +327,14 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         assignmentTitle="讲练"
         aiTrigger={aiTrigger}
         footer={
-          question.canSubmitQuestion === false ? (
-            <p className="text-xs text-muted-foreground">
-              暂无参考答案，请完成作答后统一交卷。
-            </p>
-          ) : (
-            <Button
-              type="button"
-              className="min-h-11 w-fit"
-              disabled={phase.kind === "busy"}
-              onClick={() => void revealAnswer(false)}
-            >
-              {phase.kind === "busy" ? "正在显示…" : "显示答案"}
-            </Button>
-          )
+          <Button
+            type="button"
+            className="min-h-11 w-fit"
+            disabled={phase.kind === "busy"}
+            onClick={() => void revealAnswer(false)}
+          >
+            {phase.kind === "busy" ? "正在显示…" : "显示答案"}
+          </Button>
         }
       />
 

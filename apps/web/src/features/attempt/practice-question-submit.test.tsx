@@ -63,10 +63,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
       annotation: null,
     })),
     fetchAttemptApi: vi.fn(),
+    // 材料恢复清单与 QM-08 冻结上下文投影并行消费（recovery 走 materials
+    // 版本核对、题面渲染走 context）——本用例无材料/组，两者都空投影
     fetchAttemptMaterialRevisionsApi: vi.fn(async () => ({
       notes: {},
       annotations: {},
       ink: {},
+    })),
+    fetchAttemptContextApi: vi.fn(async (attemptId: string) => ({
+      attemptId,
+      materials: [],
+      groups: [],
     })),
     submitPracticeQuestionApi: vi.fn(),
     fetchPracticeQuestionFeedbackApi: vi.fn(),

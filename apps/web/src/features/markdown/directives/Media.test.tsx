@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GraphDirective } from "./Media";
+import { GraphDirective, ImageDirective } from "./Media";
 
 /**
  * GraphDirective 的 function-plot 动态导入互操作测试（T6R.23 P2-3）：
@@ -111,5 +111,51 @@ describe("GraphDirective：function-plot 模块形态互操作", () => {
       "函数图像渲染失败",
     );
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+describe("ImageDirective：放大查看与加载重试（QM-08 长内容细项）", () => {
+  function renderImage(src = "blobs/media/ab.png", alt = "统计图") {
+    return render(
+      <ImageDirective
+        name="image"
+        attrs={{ src, alt }}
+        index={0}
+        docIndex={0}
+      />,
+    );
+  }
+
+  it("成功态：缩略图可点击放大（弹层内同 src 全尺寸图）", async () => {
+    const view = renderImage();
+    const trigger = screen.getByRole("button", { name: "放大查看：统计图" });
+    expect(view.container.querySelector("img")?.getAttribute("src")).toBe(
+      "/blobs/media/ab.png",
+    );
+    await act(async () => {
+      trigger.click();
+    });
+    // Dialog 打开：弹层内出现全尺寸图（背景被 Radix aria-hidden，唯一可达
+    // img 在弹层中）
+    const dialog = screen.getByRole("dialog");
+    const zoomed = dialog.querySelector("img");
+    expect(zoomed?.getAttribute("src")).toBe("/blobs/media/ab.png");
+  });
+
+  it("失败态：占位含重试按钮；点击重试重挂 img 重新请求", async () => {
+    const view = renderImage("blobs/media/broken.png", "示意图");
+    const img = view.container.querySelector("img") as HTMLImageElement;
+    // jsdom 不自动触发网络失败：手动派发 onError（act 内 flush 状态更新）
+    act(() => {
+      img.dispatchEvent(new Event("error"));
+    });
+    expect(screen.getByRole("alert").textContent).toContain("图片加载失败");
+    const retry = screen.getByRole("button", { name: "重新加载" });
+    await act(async () => {
+      retry.click();
+    });
+    // 重试后回到图片形态（key 变化的重挂由 React key 机制保证）
+    expect(view.container.querySelector("img")).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

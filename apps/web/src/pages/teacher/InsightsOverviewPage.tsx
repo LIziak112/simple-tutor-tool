@@ -204,6 +204,8 @@ export function InsightsOverviewPage() {
                 <p className="text-xs text-muted-foreground">
                   对 {data.overall.correctCount} / 已判定{" "}
                   {data.overall.judgedCount} 题
+                  {(data.overall.selfJudgedCount ?? 0) > 0 &&
+                    ` · 含自评 ${data.overall.selfJudgedCount ?? 0} 题（学生本人判定）`}
                 </p>
               </div>
             </div>

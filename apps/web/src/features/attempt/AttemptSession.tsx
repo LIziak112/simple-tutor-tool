@@ -3,9 +3,9 @@ import type {
   AttemptDraftData,
   AttemptResultData,
   HintOpenedEntry,
+  MaterialRef,
   PracticeLayout,
 } from "@tutor/contract";
-import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -28,12 +28,18 @@ import {
 } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
+import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
+import { questionBindings } from "@/features/answering/question-binding";
 import {
   AttemptBottomBar,
   AttemptNavigatorButton,
 } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
+import {
+  groupSegmentsOfUnit,
+  questionMaterialsOf,
+} from "@/features/attempt/attempt-context-view";
 import {
   attemptMaterialsEditable,
   recoverAttemptMaterials,
@@ -59,6 +65,7 @@ import {
 } from "@/features/notes/submit-evidence";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { sealAttemptAnnotationsApi, setStudentFlagApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -71,9 +78,14 @@ import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
-import { useSubmitAttempt, useUpdateAttemptWorkflow } from "./attempt-queries";
+import {
+  useAttemptContext,
+  useSubmitAttempt,
+  useUpdateAttemptWorkflow,
+} from "./attempt-queries";
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
+import { useGroupMaterialLayout } from "./group-material-layout-store";
 import {
   type PracticeProblemPhase,
   PracticeQuestionFooter,
@@ -102,6 +114,8 @@ import {
   firstUnsubmittedQuestionId,
   practiceProtocolOfDraft,
 } from "./practice-protocol";
+import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
+import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
@@ -185,13 +199,15 @@ export function AttemptSession({
         />
       ) : (
         <AttemptEditorProvider key={data.attempt.id}>
-          <AnswerView
-            key={data.attempt.id}
-            data={data}
-            attemptId={data.attempt.id}
-            onBackHome={onExit}
-            onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
-          />
+          <CoordinatedAnnotationProvider>
+            <AnswerView
+              key={data.attempt.id}
+              data={data}
+              attemptId={data.attempt.id}
+              onBackHome={onExit}
+              onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
+            />
+          </CoordinatedAnnotationProvider>
         </AttemptEditorProvider>
       )}
     </EnabledCapabilitiesProvider>
@@ -247,6 +263,10 @@ function AnswerView({
       attemptEvents.trackAnswerChange(questionId, answer);
     },
   });
+  // 材料与题目分栏比例（35%~65%，默认 50%）
+  const [splitRatio, setSplitRatio] = useState<number>(50);
+  const [groupMaterialLayout, setGroupMaterialLayout] =
+    useGroupMaterialLayout();
   const [hintsOpened, setHintsOpened] = useState<
     Record<string, HintOpenedEntry[]>
   >(() => data.hintsOpened);
@@ -292,6 +312,21 @@ function AnswerView({
   );
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
+  // QM-08：冻结上下文（材料/组快照）——共享材料渲染数据源；错误非阻断（题面
+  // 不依赖本载荷），就地提示 + 重试
+  const contextQuery = useAttemptContext(attemptId);
+  /** AI 侧栏对照激活 → 组段呈现回退上下排布（与题卡草稿「自动」布局同款信号） */
+  const compareActive = useAiCompareActive();
+  /** 「查看材料」reveal 信号（组 id / 题级材料的题 id → 递增计数；锚点滚入恢复） */
+  const [materialReveal, setMaterialReveal] = useState<Record<string, number>>(
+    {},
+  );
+  const openGroupMaterial = useCallback((groupId: string) => {
+    setMaterialReveal((previous) => ({
+      ...previous,
+      [groupId]: (previous[groupId] ?? 0) + 1,
+    }));
+  }, []);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const navigatorTrigger = useRef<HTMLElement | null>(null);
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
@@ -308,6 +343,15 @@ function AnswerView({
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
+  // 显式跳题信号（C 口径）：材料列回顶只认显式跳题——题号导航/上一题/
+  // 下一题/键盘切题统一走 jumpToQuestion 入口；滚动侦测
+  // （useReadingPosition）改写的 currentQuestionId 不发信号。seq 单调递增
+  // 供锚点去重，questionId 供锚点判断目标是否属于自己
+  const [jumpSignal, setJumpSignal] = useState<{
+    questionId: string;
+    seq: number;
+  } | null>(null);
+  const jumpSeqRef = useRef(0);
   /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题）；dock 装配
    *  在渲染期即调用 labelOf（绑定后 boundLabel 派生），必须先于装配声明 */
   const questionIndexById = useMemo(
@@ -329,9 +373,11 @@ function AnswerView({
     questions: flatQuestions,
     isHandwritten: (questionId) =>
       flatQuestions.some(
+        // UA-03：纸面角色经题型绑定（paperRole=answerInk ≡ 旧七型手写资格，
+        // question-binding.test 三方一致性锁死，I09 资格逐字不变）
         (question) =>
           question.id === questionId &&
-          HANDWRITTEN_QUESTION_TYPES.includes(question.type),
+          questionBindings[question.type].paperRole === "answerInk",
       ),
     surfaceOf: (questionId) =>
       cardElements.current
@@ -641,6 +687,10 @@ function AnswerView({
     if (editor && !(await editor.request(null))) return;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
+    // 显式跳题信号（C 口径）：只有这条入口发材料回顶信号；seq 单调递增
+    // 供锚点去重
+    jumpSeqRef.current += 1;
+    setJumpSignal({ questionId: id, seq: jumpSeqRef.current });
     requestAnimationFrame(() => {
       const card = cardElements.current.get(id);
       const article = card?.querySelector<HTMLElement>("article");
@@ -759,10 +809,9 @@ function AnswerView({
       void (async () => {
         try {
           if (!submitted) {
-            if (
-              !practiceWorkflow?.canSubmitQuestion ||
-              flatQuestions[currentIndex]?.canSubmitQuestion === false
-            ) {
+            // 工作流收紧时 Enter 退为切题/交卷（与主操作位同链）；题目级
+            // 参考答案门控已随 v2 自评实现移除（QM 判分框架下逐题提交恒可用）
+            if (!practiceWorkflow?.canSubmitQuestion) {
               const next = questionIds[currentIndex + 1];
               if (next !== undefined) await goSingleQuestion(next);
               else if (online && !denied) await openSubmitDialog();
@@ -1021,11 +1070,9 @@ function AnswerView({
           feedbackBusy: feedbackUpdate.isPending,
           feedbackError: feedbackUpdate.notice,
         };
-  // 单题吸底进度：题号 + 逐题提交进度（整卷反馈不可逐题提交时报已填写）
-  const singleCanSubmit =
-    practiceWorkflow?.canSubmitQuestion === true &&
-    flatQuestions.find((question) => question.id === resolvedSingleQuestionId)
-      ?.canSubmitQuestion !== false;
+  // 单题吸底进度：题号 + 逐题提交进度（整卷反馈不可逐题提交时报已填写）；
+  // canSubmitQuestion 只取工作流级开关——题目级参考答案门控已随 v2 自评实现移除
+  const singleCanSubmit = practiceWorkflow?.canSubmitQuestion === true;
   const singleProgressCount = singleCanSubmit
     ? submittedPracticeCount
     : answered;
@@ -1258,6 +1305,26 @@ function AnswerView({
             </Button>
           </div>
         )}
+        {/* QM-08：共享材料上下文读取失败——题面照常可答，材料恢复独立重试 */}
+        {contextQuery.isError && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-4"
+          >
+            <p className="min-w-0 text-sm">
+              {contextQuery.error instanceof Error
+                ? contextQuery.error.message
+                : "共享材料加载失败，不影响作答题目。"}
+            </p>
+            <Button
+              variant="outline"
+              disabled={contextQuery.isFetching}
+              onClick={() => void contextQuery.refetch()}
+            >
+              重试加载共享材料
+            </Button>
+          </div>
+        )}
 
         {/* SAI-19：AI 伴学栏与主区共栖（dock 右栏/窄屏独立面板），主区
             （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定。
@@ -1359,132 +1426,329 @@ function AnswerView({
               {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
               T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续。
               M3-D1 单题专注：同一 keyed 序列仅隐藏非当前题（不卸载不搬卡），
-              单元节头在单题态不显示（紧凑结构，§7.2） */}
+              单元节头在单题态不显示（紧凑结构，§7.2）。
+              QM-08：题目序经 groupSegmentsOfUnit 解释成独立题段/题组段——组段
+              的共享材料按组渲染一份（数据解释单源）。审查 P1 修复：题组只是
+              题行 ol 里的兄弟锚点（QuestionGroupAnchor），题行永不进组子树，
+              context 后到/重试成功不重挂题卡（控制器随行存活）。
+              P1-2：solo 题的题级 ::ref 材料挂题级锚（QuestionMaterialsAnchor，
+              同为兄弟项不包裹题行）；组段材料并入成员题级引用（组∪题级单源）。 */}
               <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
-                {data.units.map((unit) => (
-                  <li
-                    key={unit.id}
-                    hidden={
-                      singleMode &&
-                      !unit.questions.some(
-                        (question) => question.id === resolvedSingleQuestionId,
-                      )
-                    }
-                    className="flex flex-col gap-4"
-                  >
-                    {showUnitHeaders && !singleMode && (
-                      <h2
-                        data-slot="attempt-unit-heading"
-                        className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                {data.units.map((unit) => {
+                  const questionById = new Map(
+                    unit.questions.map(
+                      (question) => [question.id, question] as const,
+                    ),
+                  );
+                  // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 锚共用
+                  const questionRefs = new Map<string, readonly MaterialRef[]>(
+                    [],
+                  );
+                  for (const question of unit.questions) {
+                    const refs = question.materialRefs;
+                    if (refs !== undefined && refs.length > 0)
+                      questionRefs.set(question.id, refs);
+                  }
+                  const segments = groupSegmentsOfUnit(
+                    contextQuery.data,
+                    unit.questions.map((question) => question.id),
+                    questionRefs,
+                  );
+                  // compare 网格：对确有材料的题组/独立材料开启，或单题模式下当前题有材料（组材料/题级材料）时开启分栏
+                  const unitHasMaterials = segments.some(
+                    (segment) =>
+                      (segment.kind === "group" &&
+                        segment.materials.length > 0) ||
+                      (segment.kind === "solo" &&
+                        segment.questionIds.some((qid) => {
+                          const q = questionById.get(qid);
+                          return (
+                            q !== undefined &&
+                            questionMaterialsOf(contextQuery.data, q).length > 0
+                          );
+                        })),
+                  );
+                  const singleHasMaterials =
+                    singleMode &&
+                    resolvedSingleQuestionId !== null &&
+                    (() => {
+                      const q = questionById.get(resolvedSingleQuestionId);
+                      if (!q) return false;
+                      for (const segment of segments) {
+                        if (
+                          segment.kind === "group" &&
+                          segment.questionIds.includes(
+                            resolvedSingleQuestionId,
+                          ) &&
+                          segment.materials.length > 0
+                        ) {
+                          return true;
+                        }
+                      }
+                      const solo = questionMaterialsOf(contextQuery.data, q);
+                      return solo.length > 0;
+                    })();
+                  const isSplit = groupMaterialLayout === "split";
+                  const groupGrid =
+                    !compareActive &&
+                    isSplit &&
+                    (singleMode ? singleHasMaterials : unitHasMaterials);
+                  /** 单题行渲染（组行/独立行共用；onOpenMaterial 组内挂共享
+                      材料、solo 题挂题级材料，openMaterialLabel 区分语义） */
+                  const renderRow = (
+                    question: (typeof unit.questions)[number],
+                    onOpenMaterial?: () => void,
+                    grouped = false,
+                    openMaterialLabel?: string,
+                  ) => {
+                    const index = flatQuestions.indexOf(question);
+                    // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
+                    // 并在 footer 槽追加反馈区；legacy/lesson 完全不挂
+                    const practiceRow =
+                      practiceProtocol === "v1"
+                        ? progressById.get(question.id)
+                        : undefined;
+                    const practiceSubmitted =
+                      (practiceRow?.submittedAt ?? null) !== null;
+                    return (
+                      <AttemptQuestionRow
+                        key={question.id}
+                        className={
+                          groupGrid
+                            ? grouped
+                              ? singleMode
+                                ? "min-w-0 lg:col-start-3 xl:col-start-3 lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1"
+                                : "min-w-0 lg:col-start-3 xl:col-start-3"
+                              : "min-w-0 lg:col-span-full xl:col-span-full"
+                            : undefined
+                        }
+                        cardElements={cardElements}
+                        events={attemptEvents}
+                        index={index}
+                        question={question}
+                        assignmentTitle={data.title}
+                        answer={answers?.[question.id]}
+                        onAnswer={setAnswer}
+                        attemptId={attemptId}
+                        flagged={flaggedQuestions.has(question.id)}
+                        onToggleFlag={toggleFlag}
+                        unsure={studentFlags.has(question.id)}
+                        onToggleUnsure={toggleUnsure}
+                        formalInkPresence={
+                          formalInkPresence.get(question.id) ?? false
+                        }
+                        onInkPresenceChange={onInkPresenceChange}
+                        registerInkController={registerInkController}
+                        hints={hintsOpened[question.id]}
+                        onHintUnlocked={unlockHint}
+                        {...(onOpenMaterial !== undefined
+                          ? {
+                              onOpenMaterial,
+                              ...(openMaterialLabel !== undefined
+                                ? { openMaterialLabel }
+                                : {}),
+                            }
+                          : {})}
+                        aiTrigger={aiCompanion.triggerForQuestion(question.id)}
+                        aiContent={aiCompanion.inlineForQuestion(question.id)}
+                        hidden={
+                          singleMode && question.id !== resolvedSingleQuestionId
+                        }
+                        readOnly={
+                          practiceProtocol === "v1" && practiceSubmitted
+                        }
+                        footer={
+                          practiceProtocol === "v1" ? (
+                            <PracticeQuestionFooter
+                              attemptId={attemptId}
+                              mode={singleMode ? "single" : "list"}
+                              submitted={practiceSubmitted}
+                              readable={practiceRow?.feedbackReadable ?? false}
+                              answered={
+                                navigationItems[index]?.completion.state ===
+                                "filled"
+                              }
+                              busy={practiceSubmit.submittingId === question.id}
+                              anyBusy={practiceSubmit.submittingId !== null}
+                              feedback={practiceSubmit.feedbackOf(question.id)}
+                              feedbackFailed={practiceSubmit.feedbackFailedOf(
+                                question.id,
+                              )}
+                              workflow={practiceSubmit.workflow}
+                              error={
+                                practiceSubmit.lastError?.questionId ===
+                                question.id
+                                  ? practiceSubmit.lastError.message
+                                  : null
+                              }
+                              onSubmit={(opts) =>
+                                void runPracticeSubmit(question.id, opts)
+                              }
+                              onRetryFeedback={() =>
+                                practiceSubmit.retryFeedback(question.id)
+                              }
+                            />
+                          ) : undefined
+                        }
+                      />
+                    );
+                  };
+                  return (
+                    <li
+                      key={unit.id}
+                      hidden={
+                        singleMode &&
+                        !unit.questions.some(
+                          (question) =>
+                            question.id === resolvedSingleQuestionId,
+                        )
+                      }
+                      className="flex flex-col gap-4"
+                    >
+                      {showUnitHeaders && !singleMode && (
+                        <h2
+                          data-slot="attempt-unit-heading"
+                          className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                        >
+                          {unit.title}
+                        </h2>
+                      )}
+                      <ol
+                        data-layout={
+                          unitHasMaterials || singleHasMaterials
+                            ? groupGrid
+                              ? "compare"
+                              : "stack"
+                            : undefined
+                        }
+                        style={
+                          groupGrid
+                            ? ({
+                                "--split-mat-cols": `${splitRatio}% 12px calc(${100 - splitRatio}% - 12px)`,
+                              } as React.CSSProperties)
+                            : undefined
+                        }
+                        className={
+                          groupGrid
+                            ? // 分栏网格列隙归零：列间距全部由中缝轨道（12px）承担——
+                              // gap-4 的两个 16px 列隙叠在百分比轨道上会使网格
+                              // 总宽超出容器 32px（行距仍由 gap-4 提供）
+                              "flex min-w-0 flex-col gap-4 lg:grid xl:grid lg:gap-x-0 xl:gap-x-0 lg:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))] xl:grid-cols-[var(--split-mat-cols,minmax(0,1fr)_12px_minmax(0,1fr))]"
+                            : "flex flex-col gap-3"
+                        }
                       >
-                        {unit.title}
-                      </h2>
-                    )}
-                    <ol className="flex flex-col gap-3">
-                      {unit.questions.map((question) => {
-                        const index = flatQuestions.indexOf(question);
-                        // v1 卷本题提交态（overlay 即时口径）：已提交行原位只读
-                        // 并在 footer 槽追加反馈区；legacy/lesson 完全不挂
-                        const practiceRow =
-                          practiceProtocol === "v1"
-                            ? progressById.get(question.id)
-                            : undefined;
-                        const practiceSubmitted =
-                          (practiceRow?.submittedAt ?? null) !== null;
-                        return (
-                          <AttemptQuestionRow
-                            key={question.id}
-                            cardElements={cardElements}
-                            events={attemptEvents}
-                            index={index}
-                            question={question}
-                            assignmentTitle={data.title}
-                            answer={answers?.[question.id]}
-                            onAnswer={setAnswer}
-                            attemptId={attemptId}
-                            flagged={flaggedQuestions.has(question.id)}
-                            onToggleFlag={toggleFlag}
-                            unsure={studentFlags.has(question.id)}
-                            onToggleUnsure={toggleUnsure}
-                            formalInkPresence={
-                              formalInkPresence.get(question.id) ?? false
-                            }
-                            onInkPresenceChange={onInkPresenceChange}
-                            registerInkController={registerInkController}
-                            hints={hintsOpened[question.id]}
-                            onHintUnlocked={unlockHint}
-                            aiTrigger={aiCompanion.triggerForQuestion(
-                              question.id,
-                            )}
-                            aiContent={aiCompanion.inlineForQuestion(
-                              question.id,
-                            )}
-                            hidden={
-                              singleMode &&
-                              question.id !== resolvedSingleQuestionId
-                            }
-                            readOnly={
-                              practiceProtocol === "v1" && practiceSubmitted
-                            }
-                            footer={
-                              practiceProtocol === "v1" ? (
-                                <PracticeQuestionFooter
-                                  attemptId={attemptId}
-                                  referenceAvailable={
-                                    question.canSubmitQuestion !== false
-                                  }
-                                  mode={singleMode ? "single" : "list"}
-                                  submitted={practiceSubmitted}
-                                  readable={
-                                    practiceRow?.feedbackReadable ?? false
-                                  }
-                                  answered={
-                                    navigationItems[index]?.completion.state ===
-                                    "filled"
-                                  }
-                                  busy={
-                                    practiceSubmit.submittingId === question.id
-                                  }
-                                  anyBusy={practiceSubmit.submittingId !== null}
-                                  feedback={practiceSubmit.feedbackOf(
-                                    question.id,
-                                  )}
-                                  feedbackFailed={practiceSubmit.feedbackFailedOf(
-                                    question.id,
-                                  )}
-                                  workflow={
-                                    practiceSubmit.workflow
-                                      ? {
-                                          ...practiceSubmit.workflow,
-                                          canSubmitQuestion:
-                                            practiceSubmit.workflow
-                                              .canSubmitQuestion &&
-                                            question.canSubmitQuestion !==
-                                              false,
+                        {/* flatMap 展平成单层题行数组：嵌套数组里元素的 key 会
+                            带外层段位前缀（.0/q3 → .1/q3），context 后到段位
+                            变化会重挂后续 solo 题卡（审查 P1 树位不变量的漏网
+                            形态——控制器随段位漂移销毁）；展平后 key 与段位无关 */}
+                        {segments.flatMap((segment) =>
+                          segment.kind === "solo"
+                            ? segment.questionIds.flatMap((questionId) => {
+                                const question = questionById.get(questionId);
+                                if (question === undefined) return [];
+                                // P1-2：solo 题的题级 ::ref 材料——兄弟锚点
+                                // 常驻渲染 + 题卡「查看本题材料」入口
+                                const soloMaterials = questionMaterialsOf(
+                                  contextQuery.data,
+                                  question,
+                                );
+                                return soloMaterials.length === 0
+                                  ? [renderRow(question, undefined, false)]
+                                  : [
+                                      <QuestionMaterialsAnchor
+                                        key={`qmat:${question.id}`}
+                                        questionId={question.id}
+                                        materials={soloMaterials}
+                                        readingKey={`${attemptId}|q:${question.id}`}
+                                        revealSignal={
+                                          materialReveal[question.id] ?? 0
                                         }
-                                      : undefined
+                                        hidden={
+                                          singleMode &&
+                                          question.id !==
+                                            resolvedSingleQuestionId
+                                        }
+                                        className={
+                                          groupGrid ? "min-w-0" : undefined
+                                        }
+                                        attemptId={attemptId}
+                                        splitRatio={splitRatio}
+                                        onSplitRatioChange={
+                                          groupGrid ? setSplitRatio : undefined
+                                        }
+                                        containerRef={singleWorkspaceRef}
+                                        layoutMode={groupMaterialLayout}
+                                        onLayoutModeChange={
+                                          // AI 对照激活时布局强制上下排布，
+                                          // 不提供切换（控件状态恒与真实布局一致）
+                                          compareActive
+                                            ? undefined
+                                            : setGroupMaterialLayout
+                                        }
+                                        jumpSignal={jumpSignal}
+                                      />,
+                                      renderRow(
+                                        question,
+                                        () => openGroupMaterial(question.id),
+                                        true,
+                                        "查看本题材料",
+                                      ),
+                                    ];
+                              })
+                            : [
+                                <QuestionGroupAnchor
+                                  key={`group:${segment.group.id}`}
+                                  group={segment.group}
+                                  materials={segment.materials}
+                                  questionCount={
+                                    singleMode
+                                      ? 1
+                                      : segment.questionIds.filter((qid) =>
+                                          questionById.has(qid),
+                                        ).length
                                   }
-                                  error={
-                                    practiceSubmit.lastError?.questionId ===
-                                    question.id
-                                      ? practiceSubmit.lastError.message
-                                      : null
+                                  readingKey={`${attemptId}|${segment.group.id}`}
+                                  revealSignal={
+                                    materialReveal[segment.group.id] ?? 0
                                   }
-                                  onSubmit={(opts) =>
-                                    void runPracticeSubmit(question.id, opts)
+                                  hidden={
+                                    singleMode &&
+                                    !segment.questionIds.includes(
+                                      resolvedSingleQuestionId ?? "",
+                                    )
                                   }
-                                  onRetryFeedback={() =>
-                                    practiceSubmit.retryFeedback(question.id)
+                                  attemptId={attemptId}
+                                  splitRatio={splitRatio}
+                                  onSplitRatioChange={
+                                    groupGrid ? setSplitRatio : undefined
                                   }
-                                />
-                              ) : undefined
-                            }
-                          />
-                        );
-                      })}
-                    </ol>
-                  </li>
-                ))}
+                                  containerRef={singleWorkspaceRef}
+                                  layoutMode={groupMaterialLayout}
+                                  onLayoutModeChange={
+                                    compareActive
+                                      ? undefined
+                                      : setGroupMaterialLayout
+                                  }
+                                  jumpSignal={jumpSignal}
+                                />,
+                                ...segment.questionIds.map((questionId) => {
+                                  const question = questionById.get(questionId);
+                                  if (question === undefined) return null;
+                                  return renderRow(
+                                    question,
+                                    segment.materials.length > 0
+                                      ? () =>
+                                          openGroupMaterial(segment.group.id)
+                                      : undefined,
+                                    true,
+                                  );
+                                }),
+                              ],
+                        )}
+                      </ol>
+                    </li>
+                  );
+                })}
               </ol>
 
               {/* 切题保护提示（M3-D3 §11-5）：本机落盘失败停留本题，重试成功继续切题 */}

@@ -30,6 +30,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
       annotation: null,
     })),
     fetchAttemptApi: vi.fn(),
+    // QM-08：作答会话消费冻结上下文投影——本用例无材料/组，空投影即可
+    fetchAttemptContextApi: vi.fn(async (attemptId: string) => ({
+      attemptId,
+      materials: [],
+      groups: [],
+    })),
     startWrongPracticeApi: vi.fn(),
     // T6R.15 泄露断言（F）：答题/草稿渲染不得发起订正与笔记本请求——
     // 重练页不自动展示历史答案；一并 mock 批量头避免 jsdom 真出网噪音

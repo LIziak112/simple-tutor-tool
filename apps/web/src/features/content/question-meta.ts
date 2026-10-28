@@ -10,7 +10,7 @@ import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT } from "@tutor/co
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
   QUESTION_TYPE_LABELS_CONTRACT;
 
-/** 题型徽章的配色（区分客观题/主观题两档即可，避免七色花哨） */
+/** 题型徽章的配色（区分客观题/主观题两档即可，避免七色花哨；新三型归主观档，TT-05a 编译期强制补键） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
   judge: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
   choice: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
@@ -19,6 +19,9 @@ export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
   solve: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   apply: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   "find-error": "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  response: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  matching: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  ordering: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
 };
 
 /**

@@ -26,6 +26,8 @@ import {
   knowledgePoints,
   lectures,
   libraryFolders,
+  materials,
+  questionGroups,
   questionKnowledge,
   questions,
   responses,
@@ -36,6 +38,7 @@ import { HttpError } from "../lib/http-error";
 import { addCourseItems } from "./course-service.ts";
 import { lessonEmbeddedUnitIds } from "./lesson-embedded.ts";
 import { practiceDefaultsOf } from "./practice-workflow-service";
+import { assembleQmBlocks } from "./qm-edit-service.ts";
 
 /**
  * LibraryService（T2A.1 服务层 + T2A.2 资源库页面业务）——文件夹 CRUD、讲义/单元
@@ -1316,7 +1319,10 @@ function ensureQuestionId(sourceMd: string, id: string): string {
   const match = /^(:{4}question)(\{.*)?$/.exec(firstLine);
   if (match === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
   const [, prefix, attrs = ""] = match;
-  if (/(^|\s)id\s*=/.test(attrs)) return sourceMd; // 已有显式 id
+  // 已有显式 id（含 id 为首属性、紧跟左花括号的形态）——tt-07b P2-4 修复：
+  // 原正则漏了 { 紧邻形态，id 排首位时导出会重复注入（{id=… type=… id=…}），
+  // 与 md-dsl FENCE_ATTR_ID_RE（[\s{]）对齐
+  if (/(^|[\s{])id\s*=/.test(attrs)) return sourceMd;
   // 注入进属性花括号内：{type=judge …} → {type=judge … id="…"}；
   // 无属性则补 {id="…"}。属性未闭合（不以 } 结尾）属异常形态，不改动交给 lint。
   let injected: string;
@@ -1401,9 +1407,10 @@ function practiceYamlLineOf(column: string | null): string | null {
  * frontmatter（kind: practice、unit、lecture（配套讲义标题，若有）、topic（若有）、
  * teachingPack（列内有声明时回写，T7.8）、practice（列内有推荐时回写，M5-D1，
  * 无推荐不写行））
- * + 未删除各题 sourceMd 按题序拼接（空行分隔；缺省 id 的题注入显式 id，见
- * ensureQuestionId）。已删题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则
- * 复活已删题；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
+ * + 未删除各实体 sourceMd 按导入规范序拼接（材料 → 组 → 各题；tt-06b / QM-05
+ * 起材料/组一并导出，空行分隔；缺省 id 的题注入显式 id，见 ensureQuestionId）。
+ * 已删材料/组/题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则复活已删
+ * 实体；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
  * error/warning，往返测试覆盖）。单元不存在 → 404。
  */
 export function exportUnitMd(
@@ -1481,7 +1488,43 @@ export function exportUnitMd(
     .orderBy(asc(questions.order), asc(questions.id))
     .all()
     .map((row) => ensureQuestionId(row.sourceMd, row.id));
-  lines.push(liveQuestions.join("\n\n"), "");
+  // tt-06b / QM-05：材料/组源文按导入规范序（材料 → 组 → 题目，各自 order）
+  // 一并导出——「导出重导覆盖材料正文」；无 QM 实体的单元导出字节级不变。
+  // 已删材料/组不导出（与已删题同款防复活口径）
+  const unitMaterials = db
+    .select({ sourceMd: materials.sourceMd })
+    .from(materials)
+    .where(
+      and(
+        eq(materials.teacherId, teacherId),
+        eq(materials.unitId, id),
+        isNull(materials.deletedAt),
+      ),
+    )
+    .orderBy(asc(materials.order), asc(materials.id))
+    .all();
+  const unitGroups = db
+    .select({ sourceMd: questionGroups.sourceMd })
+    .from(questionGroups)
+    .where(
+      and(
+        eq(questionGroups.teacherId, teacherId),
+        eq(questionGroups.unitId, id),
+        isNull(questionGroups.deletedAt),
+      ),
+    )
+    .orderBy(asc(questionGroups.order), asc(questionGroups.id))
+    .all();
+  // tt-07b P2-4：实体块拼装复用 assembleQmBlocks 单源（与编辑重建/重导同一
+  // 规范序与分隔符）；exportUnitMd 自身只保留 frontmatter 回写等导出专属语义
+  lines.push(
+    assembleQmBlocks({
+      materials: unitMaterials.map((row) => row.sourceMd),
+      groups: unitGroups.map((row) => row.sourceMd),
+      questions: liveQuestions,
+    }),
+    "",
+  );
   return {
     markdown: lines.join("\n"),
     filename: `${safeFilename(unit.id)}.md`,

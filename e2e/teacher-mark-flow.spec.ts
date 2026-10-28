@@ -11,14 +11,23 @@ import {
 } from "./helpers";
 
 /**
- * 新冻结填空题先对照自评，不进入教师待批；学生自评后，教师仍可从作答详情
- * 改判。验证教师判定优先、最终得分联动、公式化参考答案与网络层防泄露。
+ * T3.2b 批注与待批队列（D3/D4）：学生作答（判断对 + 手写题只写笔迹不填最终
+ * 答案）交卷 → 教师打开 /t/data/pending 按学生筛出该手写题卡片（参考答案/
+ * 未作答（仅笔迹）/笔迹缩略图/来源上下文）→ 评语框填评语后键盘 1 标对 →
+ * 队列清空、进度 1/1、刷新后空态「没有待批题」→ 详情页见教师判定与评语、
+ * 状态已批改 → 学生端刷新作业状态「已批改」。全程学生端网络层泄露拦截不变。
+ *
+ * 2026-10-02 fill 改全人工批改（防回归核心流，第二用例）：学生答含 LaTeX
+ * 等价答案的填空题（[[\frac{1}{2}|0.5]] 型）交卷 → 学生端该题「待批改」、
+ * 汇总「待批 1 题」（fill 不再自动判对错）→ 教师队列键盘 1 批对 → 学生端
+ * 「我的记录」查看结果见判对、最终得分与渲染成公式的参考答案（.katex 节点
+ * 存在、无裸 \frac 文本——参考答案显示侧 LaTeX 启发式的端到端防线）。
  */
 
 /**
- * 两题小作业：判断（自动判分）+ fill（LaTeX 等价答案
+ * 第二用例的两题小作业：判断（自动判分）+ fill（LaTeX 等价答案
  * [[\frac{1}{2}|0.5]] 型——标记内禁 $ 是 lint 红线，答案存为裸 LaTeX，由
- * 显示侧 mathifyAnswerText 包 $ 走 KaTeX；交卷后对照自评，教师可改判）。
+ * 显示侧 mathifyAnswerText 包 $ 走 KaTeX；全人工批改 → 交卷进待批）。
  */
 function fillPracticeMarkdown(unitName: string): string {
   return [
@@ -47,10 +56,10 @@ function fillPracticeMarkdown(unitName: string): string {
   ].join("\n");
 }
 
-test.describe("教师改判流：学生自评 → 教师判定优先", {
+test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
   tag: ["@teacher"],
 }, () => {
-  test("填空题对照自评后教师仍可改判，学生端保留公式化参考答案", async ({
+  test("学生填空题（LaTeX 等价答案）交卷进待批，教师批对后学生端见判对与公式化参考答案", async ({
     page,
     request,
     browser,
@@ -134,49 +143,45 @@ test.describe("教师改判流：学生自评 → 教师判定优先", {
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      // 新冻结行的填空先待学生自评，不混入教师待批；教师随后仍可改判。
+      // 判断题自动判对；fill 全人工批改 → 不自动判对错：该题「待批改」、
+      // 汇总「待批 1 题」（未批完不显示最终得分）
       await expectResultCount(studentPage, "答对", 1);
-      await expectResultCount(studentPage, "待批", 0);
-      await expect(studentPage.getByText("另有 1 题待自评")).toBeVisible();
+      await expectResultCount(studentPage, "待判断", 1);
       const q2Pending = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(
-        q2Pending.getByText("已完成，待自评", { exact: true }),
-      ).toBeVisible();
-      await q2Pending
-        .getByRole("button", { name: "错了", exact: true })
-        .click();
-      await expect(
-        q2Pending.getByText("自评错误", { exact: true }),
+        q2Pending.getByText("待批改", { exact: true }),
       ).toBeVisible();
       expect(leak.violations().join("\n")).toBe("");
 
-      // —— 教师端 UI：登录 → 作答详情改判，教师判定覆盖学生自评 ——
+      // —— 教师端 UI：登录 → 待批队列按学生筛出该填空题 → 键盘 1 批对 ——
       await page.goto("/t/login");
       await page.fill("#login-name", TEACHER_LOGIN_NAME);
       await page.fill("#login-password", TEACHER_PASSWORD);
       await page.getByRole("button", { name: "登录", exact: true }).click();
       await page.waitForURL(/\/t\/students(\/|$)/);
 
-      const pending = await request.get("/api/teacher/pending-marks");
-      expect(pending.ok()).toBe(true);
-      expect(JSON.stringify(await pending.json())).not.toContain(studentName);
-      await page.goto(`/t/data?view=student&studentId=${student.id}`);
+      await page.goto("/t/data/pending");
       await page
-        .getByRole("link", { name: `查看 ${studentName} 的作答详情` })
-        .click();
-      await page.waitForURL("**/t/data/attempts/**");
-      const card = page.locator('article[aria-label="第 2 题"]');
+        .locator("#pending-student-filter option", { hasText: studentName })
+        .waitFor({ state: "attached" });
+      await page.selectOption("#pending-student-filter", {
+        label: studentName,
+      });
+      const card = page.locator(
+        `article[aria-label="待批卡片：${studentName}"]`,
+      );
       await expect(card).toBeVisible();
       // 学生最终答案 0.5 在卡；参考答案（\frac{1}{2} 或 0.5）走显示侧 LaTeX
       // 启发式包 $ 渲染成公式——教师侧卡片同样以 .katex 呈现
-      await expect(card.getByText("学生答案：").first()).toBeVisible();
+      await expect(card.getByText("学生最终答案：")).toBeVisible();
       await expect(card.getByText("0.5").first()).toBeVisible();
       await expect(card.locator(".katex").first()).toBeVisible();
-      await card.getByRole("button", { name: "判对", exact: true }).click();
-      await card
-        .getByRole("button", { name: "保存判定与评语", exact: true })
-        .click();
-      await expect(card.getByText("已保存", { exact: true })).toBeVisible();
+      // 点卡内非交互文本把焦点移出筛选 select（快捷键守卫跳过 SELECT 上的按键），
+      // 再按 1 批对
+      await card.getByText("学生最终答案：").click();
+      await page.keyboard.press("1");
+      await expect(card).toHaveCount(0);
+      await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
 
       // —— 学生端「我的记录」→ 查看结果：判对 + 最终得分 + 公式化参考答案 ——
       await studentPage.goto("/s/records");
@@ -194,11 +199,10 @@ test.describe("教师改判流：学生自评 → 教师判定优先", {
         studentPage.getByText("含老师批改，满分 100", { exact: true }),
       ).toBeVisible();
       await expect(studentPage.locator("span.text-4xl")).toHaveText("100");
-      await expectResultCount(studentPage, "待批", 0);
+      await expectResultCount(studentPage, "待判断", 0);
       const q2Final = studentPage.locator('article[aria-label="第 2 题"]');
-      await expect(
-        q2Final.getByRole("region", { name: "本题评判" }).getByRole("status"),
-      ).toHaveText("教师判定：正确");
+      await expect(q2Final.getByText(/老师批改：判对/)).toBeVisible();
+      await expect(q2Final.getByLabel("答对")).toBeVisible();
       // 参考答案容器：等价答案「\frac{1}{2}（裸 LaTeX 显示侧包 $ 走 KaTeX）
       // 或 0.5」——公式节点恰 1 个；除 KaTeX 的 mathml 注释（TeX 源，辅助技术
       // 用）外无裸 \frac 文本，即答案确以公式呈现而非明文

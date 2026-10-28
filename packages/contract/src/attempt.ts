@@ -3,17 +3,25 @@ import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
+  matchingOptionsStudentSchema,
+  matchingSlotSchema,
+  orderingItemStudentSchema,
   questionAnswersSchema,
   questionPublicSchema,
 } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { materialPublicSchema, questionGroupPublicSchema } from "./material.ts";
 import {
   practiceQuestionProgressSchema,
   practiceWorkflowSchema,
   practiceWorkflowStartOptionsFields,
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
-import { selfReviewStateSchema } from "./self-review.ts";
+import {
+  effectiveVerdictSchema,
+  gradingPolicySchema,
+  selfReviewRecordSchema,
+} from "./self-review.ts";
 import {
   studentUnitAttemptRecordSchema,
   studentUnitAttemptSummarySchema,
@@ -97,6 +105,7 @@ export const attemptSourceSchema = z.enum([
  * 全站仍只有这一份定义（AGENTS 第 1 条）。
  */
 export const teacherMarkSchema = z.enum(["correct", "wrong"]);
+export type TeacherMark = z.infer<typeof teacherMarkSchema>;
 
 /** 做题时学生自标「不会」（#6980-4）：值域当前只有 unsure（可扩展）。 */
 export const studentFlagSchema = z.literal("unsure");
@@ -468,6 +477,13 @@ export const questionRevisionIdSchema = z
  */
 export const attemptQuestionPublicSchema = questionPublicSchema.extend({
   questionRevisionId: questionRevisionIdSchema,
+  /**
+   * 组内序号（TT-05a 域④ §5.2.3/§5.8.1）：开卷冻结时按组的子题引用顺序写入
+   * attempt 上下文快照的公开投影；**不在组内的题不携带**（旧快照缺省 = 独立
+   * 题，§5.8.3 缺省兼容）。显示编号是展示派生，不进主键。组实体与材料正文
+   * 的草稿视图投影随 QM-03/QM-08 接线定稿（材料公开投影见 material.ts）。
+   */
+  groupOrdinal: z.number().int().min(1).optional(),
 });
 
 /**
@@ -600,6 +616,26 @@ export const attemptResultQuestionSchema = z.object({
     options: z.array(z.string()).optional(),
     /** 提示数量（未解锁的提示内容不在此下发） */
     hintCount: z.number().int().min(0),
+    /** 组内序号（TT-05a 域④：开卷冻结写入；不在组内的题不携带，旧快照缺省=独立题） */
+    groupOrdinal: z.number().int().min(1).optional(),
+    /**
+     * QM-13：matching/ordering 作答面公开结构（与 questionPublicSchema 同
+     * 字段——结果视图/题级反馈的对照呈现需要槽位/选项/项；旧载荷缺省合法）。
+     * 2026-10-25 审查 P1 收紧起为学生面变体：逐项剥离 distractor 键（干扰项
+     * 身份属答案侧信息），ordering 以 sortableCount 计数替代；fixedPosition
+     * 属公开结构（§6.1 调整 3）保留。
+     */
+    matchingOptions: matchingOptionsStudentSchema.optional(),
+    matchingSlots: z.array(matchingSlotSchema).min(1).optional(),
+    orderingItems: z.array(orderingItemStudentSchema).optional(),
+    sortableCount: z.number().int().min(0).optional(),
+    /**
+     * 题级材料引用（P1-2，2026-10-25）：材料 id 与选择串属题面公开内容、
+     * 无泄露面（正文投影经 materialPublicSchema 白名单）——结果回看的题级
+     * 材料锚据此解析（questionMaterialsOf，与作答视图同口径）；可选——
+     * 无题级引用/旧载荷不携带（缺省合法，零变化）。
+     */
+    materialRefs: questionPublicSchema.shape.materialRefs.optional(),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),
@@ -624,8 +660,26 @@ export const attemptResultQuestionSchema = z.object({
    * （标过不会的题无论对错都保留），不是作答内容、不受公布 gate 影响。
    */
   studentFlag: studentFlagSchema.nullable(),
-  /** 仅已授权公布的题携带；未公布时不下发自评与来源。 */
-  selfReview: selfReviewStateSchema.optional(),
+  /**
+   * QM-11（TT-09b）行级自评状态（公布 gate 截止前置 null 投影；旧载荷缺省
+   * = 无自评信息，读侧按 null 处理）：record=null 表示未自评或已撤回
+   * （undecided 清除记录），revision 是 CAS 基线（清除亦递增——record=null
+   * 时不能从 record 推出，故单独下发）；与 gradingPolicy 组合经
+   * resolveSelfReviewState 单一出处推导 self_pending/self_reviewed 等展示态。
+   */
+  selfReview: z
+    .object({
+      record: selfReviewRecordSchema.nullable(),
+      revision: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+  /**
+   * QM-11（TT-09b）行级判分策略（开卷冻结；null=旧行或公布前投影——旧行
+   * 历史不开放自评）。reference_self 行公布后开放自评入口；auto/manual_only
+   * 与旧行的展示沿用既有判定徽章路径。
+   */
+  gradingPolicy: gradingPolicySchema.nullable().optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
@@ -637,8 +691,6 @@ export const attemptResultQuestionSchema = z.object({
  * 之外的整卷批改进度，且与「待公布」口径冲突，故一并不下发）。
  */
 export const attemptScoreSummarySchema = z.object({
-  /** 与教师待批分开计数，未公布不返回。 */
-  pendingSelfReviewCount: z.number().int().min(0).optional(),
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
   /** 已作答题数（responses.answered 口径：非空答案/正式笔迹/单题提交）。
@@ -646,15 +698,19 @@ export const attemptScoreSummarySchema = z.object({
    * 见 lessonLiveSummaryOf 口径与 lessonQuestionSubmitDataSchema 注释；
    * 结果视图（整卷）计全部卷行 */
   answered: z.number().int().min(0),
-  /** 自动判对数 */
+  /** 判对数（QM-12 有效判定口径：教师判 > 自评 > 自动——reference_self 行
+   *  按学生自评计入；来源在逐题徽章可见，不以计数冒充客观独立完成） */
   correct: z.number().int().min(0),
-  /** 自动判错数（已答判错；未做行不计——#6980-3 口径统一） */
+  /** 判错数（QM-12 有效判定口径同上；D1 后含未作答客观题。v2 #6980-3 起
+   *  端上「未做」以 answered 维度另行展示，不以此计数区分） */
   wrong: z.number().int().min(0),
-  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题；未做待批行计入） */
+  /** 未判断数（有效判定=null：待教师批改 + 待自评——与 pendingCount 的
+   *  D4 教师待批口径区分；公布 gate 未公布形态按 answered 口径投影） */
   pending: z.number().int().min(0),
-  /** 未作答题数（responses.answered=false：被动跳过/空结构答案） */
+  /** 未作答题数（responses.answered=false：被动跳过/空结构答案——与判分
+   *  维度正交，#6980-3：未做仍进判分分母，仅不计入 answered） */
   unanswered: z.number().int().min(0),
-  /** 可自动判分题数（autoCorrect 非 null）= correct + wrong + 未做可判分题（未做不计答错但进判分分母） */
+  /** 已判定题数 = correct + wrong（QM-12 起为有效判定计数；字段名沿用） */
   autoGradable: z.number().int().min(0),
   /**
    * 最终得分（D9，D2/D3 口径：round(finalCorrect=true 题数 ÷ 全部题数 × 100)；
@@ -668,6 +724,19 @@ export const attemptScoreSummarySchema = z.object({
    */
   pendingCount: z.number().int().min(0).nullable(),
 });
+
+/**
+ * 自评响应 data（QM-10 路由回执；TT-09b 自 self-review.ts 移驻本文件以消除
+ * 循环导入——attempt.ts 反向值引用 self-review.ts 的记录 schema）：本题有效
+ * 判定投影 + 卷汇总刷新（汇总口径沿 attemptScoreSummary；公布 gate 已过，
+ * 无受限形态投影需求）。
+ */
+export const selfReviewDataSchema = z.object({
+  selfReview: selfReviewRecordSchema.nullable(),
+  effective: effectiveVerdictSchema.nullable(),
+  summary: attemptScoreSummarySchema,
+});
+export type SelfReviewData = z.infer<typeof selfReviewDataSchema>;
 
 /** 结果视图的单元分组（T2A.7）：逐题结果按交卷时的单元归属分节（单元序+题序） */
 export const attemptResultUnitSchema = z.object({
@@ -1135,13 +1204,27 @@ export const attemptDetailDataSchema = z
  * - WORKFLOW_MUTATION_CONFLICT：同一 submissionMutationId 的两次请求内容不一致
  *   （幂等键复用冲突，M2；409，前端换新 mutationId 重试）；
  * - WORKFLOW_RESTRICTED：当前教师规则不允许逐题提交（教师收紧立即生效，
- *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）。
+ *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）；
+ * - SELF_REVIEW_NOT_RELEASED：自评时公布 gate 非 released（未提交/未公布/受限；
+ *   403，决策记录 §5.8.2——不泄露「已提交未公布」之外的答案状态）；
+ * - SELF_REVIEW_TEACHER_MARKED：教师已判，自评被拒（教师优先；409）；
+ * - SELF_REVIEW_REVISION_CONFLICT：自评 baseRevision 过期（409，附 _current
+ *   最新自评与 revision）；
+ * - SELF_REVIEW_NOT_ALLOWED：行 gradingPolicy 非 reference_self（auto 行无自评
+ *   入口；manual_only 无参考不可自评；403）；
+ * - ANSWER_SHAPE_INVALID：新 kind 结构校验失败（未知 slotId/optionId/itemId、
+ *   重复占用、干扰项入序、固定项错位；422，保存与提交同码，草稿部分填充
+ *   **不**触发）。路由与校验链 TT-09（QM-10）落地，契约层先定码。
+ * - ATTEMPT_CONTEXT_BROKEN：开卷依赖的材料/题组已变动（缺失/软删，409 fail
+ *   closed——不静默跳过、不拿 live 资源替补），或已冻结上下文快照损坏不可
+ *   解析（读路径同码，tt-07a/QM-06）；前端提示联系老师重新检查。
  */
 export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
   "ATTEMPT_ABANDONED",
+  "ATTEMPT_CONTEXT_BROKEN",
   "QUESTION_ALREADY_SUBMITTED",
   "QUESTION_REVISION_STALE",
   "NOTE_EVIDENCE_MISMATCH",
@@ -1159,6 +1242,11 @@ export const attemptErrorCodeSchema = z.enum([
   "WORKFLOW_PROTOCOL_MISMATCH",
   "WORKFLOW_MUTATION_CONFLICT",
   "WORKFLOW_RESTRICTED",
+  "SELF_REVIEW_NOT_RELEASED",
+  "SELF_REVIEW_TEACHER_MARKED",
+  "SELF_REVIEW_REVISION_CONFLICT",
+  "SELF_REVIEW_NOT_ALLOWED",
+  "ANSWER_SHAPE_INVALID",
 ]);
 
 // ---------- 具体化的成功壳 ----------
@@ -1192,6 +1280,39 @@ export const lessonQuestionSubmitOkSchema = apiOkExtend(
   lessonQuestionSubmitDataSchema,
 );
 
+// ---------- 开卷上下文读取（冻结快照的公开投影，tt-07a / QM-06） ----------
+
+/**
+ * 材料/题组的冻结上下文条目：公开投影（materialPublicSchema /
+ * questionGroupPublicSchema 白名单——contentMd/introMd 等学生作答所需）+
+ * 冻结时来源版本。**显式白名单扩展而非快照行透传**（三投影纪律，设计方案
+ * §8.1）：教师侧 sourceMd 等字段在 parse 时被 strip，答案/详解/提示键绝无
+ * 携带通道（材料正文不含答案型内容另由 lint MATERIAL_CONTAINS_ANSWER 保证，
+ * 双防线）。
+ */
+export const attemptContextMaterialSchema = materialPublicSchema.extend({
+  /** 冻结时的 materials.version（与去重键/快照身份同源） */
+  sourceVersion: z.number().int().min(1),
+});
+export const attemptContextGroupSchema = questionGroupPublicSchema.extend({
+  /** 冻结时的 question_groups.version */
+  sourceVersion: z.number().int().min(1),
+});
+
+/**
+ * GET /attempts/:id/context 的响应 data：该卷全部冻结上下文（作答期渲染与
+ * 结果回看只读快照——教师改材料/软删不影响已开卷）。排序 (kind, sourceId,
+ * sourceVersion) 稳定（不依赖 live order，TT-06b P2-3 记账）。
+ */
+export const attemptContextDataSchema = z.object({
+  attemptId: z.string().min(1),
+  materials: z.array(attemptContextMaterialSchema),
+  groups: z.array(attemptContextGroupSchema),
+});
+
+/** 携带开卷上下文的成功响应壳 */
+export const attemptContextOkSchema = apiOkExtend(attemptContextDataSchema);
+
 // ---------- 推断类型导出 ----------
 
 export type AttemptStatus = z.infer<typeof attemptStatusSchema>;
@@ -1223,6 +1344,12 @@ export type SubmitEvidenceDeclaration = z.infer<
 export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;
+/** 开卷上下文条目（材料/题组公开投影 + 来源版本，tt-07a/QM-06） */
+export type AttemptContextMaterial = z.infer<
+  typeof attemptContextMaterialSchema
+>;
+export type AttemptContextGroup = z.infer<typeof attemptContextGroupSchema>;
+export type AttemptContextData = z.infer<typeof attemptContextDataSchema>;
 /** 错题重练组卷请求（2026-10） */
 /** 详情响应 data：草稿视图或结果视图（服务端按 attempt.status 返回其一） */
 export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;

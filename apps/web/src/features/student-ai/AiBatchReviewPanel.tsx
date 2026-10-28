@@ -48,7 +48,8 @@ export interface AiBatchReviewQuestion {
   readonly questionId: string;
   /** 展示题号（「第 N 题」） */
   readonly label: string;
-  /** 最终判定（null = 待批）；未公布时服务端恒置 null */
+  /** 有效判定（QM-12：教师判 > 自评 > 自动，verdictBadgeDisplayOf 同口径；
+   *  null = 未判断）；未公布时服务端恒置 null */
   readonly finalCorrect: boolean | null;
 }
 
@@ -58,7 +59,7 @@ export interface AiBatchReviewGroups {
   readonly correct: readonly AiBatchReviewQuestion[];
 }
 
-/** 按最终判定三分组（未公布时服务端已把 finalCorrect 置 null → 全进待批组） */
+/** 按有效判定三分组（未公布时调用方已把判定置 null → 全进待判断组） */
 export function batchReviewGroupsOf(
   questions: readonly AiBatchReviewQuestion[],
 ): AiBatchReviewGroups {

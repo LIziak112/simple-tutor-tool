@@ -124,13 +124,18 @@ function DetailSummary({
       </div>
     );
   }
+  // QM 口径的待自评兜底（旧载荷无 resultCounts 时从行级字段现算）：
+  // reference_self 行且教师未判且学生未自评——与 pending-mark 批量谓词同语义
   const pendingSelfReviewCount = data.questions.filter(
-    (question) => question.selfReview?.awaitingSelfReview,
+    (question) =>
+      (question.gradingPolicy ?? null) === "reference_self" &&
+      question.teacherMark === null &&
+      question.selfReview === null,
   ).length;
   const counts = data.resultCounts ?? {
     correctCount: data.correctCount,
     totalCount: data.questions.length,
-    pendingCount: Math.max(0, data.pendingCount - pendingSelfReviewCount),
+    pendingCount: data.pendingCount,
     pendingSelfReviewCount,
   };
   return (
@@ -153,7 +158,10 @@ function DetailSummary({
           </span>
         )}
         {counts.pendingSelfReviewCount > 0 && (
-          <span>待自评 {counts.pendingSelfReviewCount} 题</span>
+          <span>
+            待自评{" "}
+            <b className="text-sky-600">{counts.pendingSelfReviewCount}</b> 题
+          </span>
         )}
       </p>
       <p className="text-lg font-semibold text-primary">

@@ -10,6 +10,12 @@ export * from "./analytics-api.ts";
 /** 题干标注契约（T6R.20 起为权威定义）：固定底图＋独立矢量标注（AnnotationDoc、
  *  底图装配载荷、CAS 上传协议、回看视图、限额常量与错误码；与 note/ink 链隔离） */
 export * from "./annotation.ts";
+/** 作答纯行为登记表（统一作答适配层 UA-01 起为权威定义，方案 §4.3/§10）：
+ *  答案 kind 推导类型（AnswerOf/ReferenceOf）、三文本口径（display/teacher-queue/
+ *  ai-context）、answerKindBehaviors 登记表与唯一调度边界 dispatchBehavior/
+ *  dispatchIsAnswered、公开结构映射（选项/槽位）；无 React/DOM 依赖，server/web
+ *  共用；与 formatQuestionAnswers（参考文本唯一入口）不互相导入 */
+export * from "./answer-kinds/index.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
@@ -27,6 +33,7 @@ export * from "./capability.ts";
 export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
 export * from "./content-api.ts";
+/** 非加密内容签名（v2 圈画跨设备续写）：FNV-1a 八轮，浏览器与服务端共用 */
 export * from "./content-signature.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
@@ -50,6 +57,11 @@ export * from "./learning-record.ts";
 export * from "./learning-record-ai.ts";
 /** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
 export * from "./library-api.ts";
+/** 共享材料与题组契约（TT-05a 域①起为权威定义，决策记录 §5.2 定稿）：材料/题组
+ *  完整形态与公开投影白名单、::ref 引用产物、槽位种类词表、稳定 ID 缺省生成
+ *  规则（TT-06 解析器/导入规范化的单一出处）；unit.materials/groups 的挂载在
+ *  content.ts unitSchema */
+export * from "./material.ts";
 /** MCP 教师侧配套契约（T4.6 起为权威定义，依据 Phase4 清单 §2 D22/D24）：apiToken
  *  查看/生成重置、reports 列表/删除、save_report 写入参数；/mcp 端点本身无契约变化 */
 export * from "./mcp-api.ts";
@@ -84,6 +96,10 @@ export * from "./question-review-api.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";
+/** 自评与判定状态契约（TT-05a 域③起为权威定义，决策记录 §5.5 定稿）：判断来源
+ *  三值、自评请求/记录/响应（CAS+幂等）、有效判定投影与 finalCorrect 持久语义、
+ *  单题三态推导（self_pending/teacher_pending 区分）与教师待处理谓词——
+ *  服务端 TT-09 消费的契约层单一出处 */
 export * from "./self-review.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
 export * from "./shared-api.ts";

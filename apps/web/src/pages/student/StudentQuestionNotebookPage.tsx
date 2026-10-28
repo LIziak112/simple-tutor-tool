@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { NotebookRound } from "@tutor/contract";
+import type { NotebookRound, NotebookRoundContext } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import {
   ArrowLeft,
@@ -7,8 +7,9 @@ import {
   ChevronLeft,
   ChevronRight,
   History,
+  Layers,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
@@ -16,6 +17,11 @@ import {
   formatReferenceAnswers,
   letterOf,
 } from "@/features/attempt/answer-format";
+import {
+  MaterialPanel,
+  materialVersionKey,
+  materialVersionNotesOf,
+} from "@/features/attempt/MaterialPanel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
   ReflectionColumns,
@@ -220,6 +226,77 @@ function NotebookRounds({
   );
 }
 
+/**
+ * 该轮来源材料/题组（QM-15 细项 1/4）：开卷时冻结的依赖闭包投影——材料
+ * 子题从历史再次打开可独立理解的数据源。内容恒来自该轮冻结快照（服务端
+ * 纯读 attempt_context_snapshots，零 live 回退），老师之后改稿/删除不影响
+ * 这里展示；同材料多版本并存时逐版标注（materialVersionNotesOf）。
+ * 组头说明在前、材料面板随后（单列只读阅读，与讲练组块同理由不挂跳转）。
+ */
+function RoundContextSection({ context }: { context: NotebookRoundContext }) {
+  const versionNotes = useMemo(
+    () => materialVersionNotesOf(context.materials),
+    // 组多版本徽标同构（TT-11 P3-③顺手修）：materialVersionNotesOf 按
+    // {id, sourceVersion} 泛化工作，组的双版本题头同样可分辨——不另写一套
+    [context.materials],
+  );
+  const groupVersionNotes = useMemo(
+    () => materialVersionNotesOf(context.groups),
+    [context],
+  );
+  return (
+    <section aria-label="来源材料与题组" className="flex flex-col gap-2">
+      <p className="text-sm font-medium">来源材料与题组</p>
+      <p className="text-xs text-muted-foreground">
+        这一轮作答时看到的材料与题组（开卷时冻结），老师后来的改动不影响这里的展示。
+      </p>
+      <div className="flex flex-col gap-3">
+        {context.groups.map((group) => {
+          const title = group.title?.trim();
+          const label = group.label?.trim();
+          const intro = group.introMd.trim();
+          const groupVersionNote = groupVersionNotes.get(
+            materialVersionKey(group),
+          );
+          return (
+            <header
+              key={`${group.id}|${group.sourceVersion}`}
+              className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3"
+            >
+              <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold">
+                <Layers aria-hidden className="size-4 shrink-0" />
+                {title && title.length > 0 ? title : "题组"}
+                {label && label.length > 0 && (
+                  <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+                    {label}
+                  </span>
+                )}
+                {groupVersionNote !== undefined && (
+                  <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+                    {groupVersionNote}
+                  </span>
+                )}
+              </p>
+              {intro.length > 0 && (
+                <div className="rich-markdown min-w-0 text-sm leading-7">
+                  <RichMarkdown source={intro} />
+                </div>
+              )}
+            </header>
+          );
+        })}
+        {context.materials.map((material) => (
+          <MaterialPanel
+            key={materialVersionKey(material)}
+            material={material}
+            versionNote={versionNotes.get(materialVersionKey(material))}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** 单轮卡片：徽标/来源/时间/题目版本 + 原稿区 + 订正列表 + 补充稿列表 */
 function RoundCard({
   round,
@@ -261,6 +338,11 @@ function RoundCard({
           查看这一轮
         </Link>
       </header>
+
+      {/* 来源材料/题组（该轮冻结闭包投影；无冻结依赖不渲染整区） */}
+      {round.context !== null && (
+        <RoundContextSection context={round.context} />
+      )}
 
       {/* 题目区（冻结快照脱敏投影；快照缺失占位引导回完整结果页） */}
       <section aria-label="题目" className="flex flex-col gap-2">

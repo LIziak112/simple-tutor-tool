@@ -16,6 +16,7 @@ import {
 import {
   ApiError,
   fetchAttemptApi,
+  fetchAttemptContextApi,
   fetchStudentUnitLandingApi,
   saveAttemptAnswerApi,
   startAttemptApi,
@@ -36,6 +37,31 @@ import { getPracticePreference } from "./practice-preference-store";
 /** 单个 attempt 详情 key */
 export const studentAttemptKey = (attemptId: string) =>
   ["student", "attempt", attemptId] as const;
+
+/**
+ * 冻结上下文（材料/组快照投影）查询 key：挂在 attempt key 前缀下（交卷等
+ * 失效详情时一并失效；数据本身随卷冻结不可变，重取幂等）。
+ */
+export const studentAttemptContextKey = (attemptId: string) =>
+  ["student", "attempt", attemptId, "context"] as const;
+
+/**
+ * 冻结上下文（QM-08 前端消费）：材料/组共享渲染的数据源。快照随卷冻结
+ * 不可变——staleTime ∞、不随焦点重取；错误（网络/409 坏快照）**非阻断**：
+ * 题面渲染不依赖本载荷，调用方就地提示 + 重试。legacy 卷（无 QM 快照）
+ * 返回空 materials/groups，渲染零变化。
+ */
+export function useAttemptContext(attemptId: string) {
+  return useQuery({
+    queryKey: studentAttemptContextKey(attemptId),
+    queryFn: () => fetchAttemptContextApi(attemptId),
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    retry: false,
+  });
+}
 
 /** 课程单元落地页 key（题数/历次作答/汇总） */
 export const studentUnitLandingKey = (courseId: string, unitId: string) =>

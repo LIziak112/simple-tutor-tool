@@ -111,6 +111,10 @@ export interface NoteLayerProps {
   stemMd?: string;
   /** 学生公开选项，用于全屏参考；不包含答案或解析。 */
   options?: readonly string[] | undefined;
+  /** 结构化题目参考内容（供新题型全屏草稿参考） */
+  scratchContext?: import("react").ReactNode;
+  /** 全屏参考展开标题（缺省按是否有选项/备选池推导） */
+  contextLabel?: string | undefined;
 }
 
 export function NoteLayer({
@@ -124,6 +128,8 @@ export function NoteLayer({
   onFullscreenChange,
   stemMd,
   options,
+  scratchContext,
+  contextLabel,
 }: NoteLayerProps) {
   const recovery = useDraftSyncRecovery();
   const session = useNoteSessionRef();
@@ -251,23 +257,30 @@ export function NoteLayer({
         fullscreen={fullscreen}
         label={`${label}全屏`}
         heading={label}
-        contextLabel={options?.length ? "题目（含选项）" : "题干"}
+        contextLabel={
+          contextLabel ?? (options?.length ? "题目（含选项）" : "题干")
+        }
         context={
-          <>
-            {stemMd ? <RichMarkdown source={stemMd} /> : label}
-            {options && options.length > 0 && (
-              <ol aria-label="参考选项" className="mt-2 flex flex-col gap-2">
-                {options.map((option, index) => (
-                  <li key={option} className="flex items-baseline gap-2">
-                    <span className="shrink-0 font-medium">
-                      {String.fromCharCode(65 + index)}
-                    </span>
-                    <RichMarkdown source={option} className="min-w-0 flex-1" />
-                  </li>
-                ))}
-              </ol>
-            )}
-          </>
+          scratchContext ?? (
+            <>
+              {stemMd ? <RichMarkdown source={stemMd} /> : label}
+              {options && options.length > 0 && (
+                <ol aria-label="参考选项" className="mt-2 flex flex-col gap-2">
+                  {options.map((option, index) => (
+                    <li key={option} className="flex items-baseline gap-2">
+                      <span className="shrink-0 font-medium">
+                        {String.fromCharCode(65 + index)}
+                      </span>
+                      <RichMarkdown
+                        source={option}
+                        className="min-w-0 flex-1"
+                      />
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </>
+          )
         }
         onClose={closeFullscreen}
       >

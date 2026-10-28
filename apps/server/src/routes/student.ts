@@ -74,11 +74,13 @@ import {
   getStudentAssignmentPaper,
   listStudentAssignments,
 } from "../services/assignment-service";
+import { studentAttemptContext } from "../services/attempt-context";
 import {
   getAttemptDetail,
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
   getStudentAttemptPaper,
+  requireUsableAttempt,
   saveDraftAnswer,
   setStudentFlag,
   startAttempt,
@@ -116,7 +118,7 @@ import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
-import { saveSelfReview } from "../services/self-review-service.ts";
+import { submitSelfReview } from "../services/self-review-service";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -423,25 +425,6 @@ export function createStudentRoutes(
       // 当前教师策略全查（与取卷同口径）；data 只承载共用授权投影（与提交回执
       // 的 feedback 字段同一实现，practiceQuestionFeedbackOf）；四态按读取时刻
       // 裁决，未授权形态零题目秘密；响应 no-store 不落 PWA/浏览器缓存
-      .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
-        const body = await parseJsonBody(c, selfReviewRequestSchema);
-        return c.json(
-          {
-            ok: true,
-            data: selfReviewDataSchema.parse(
-              saveSelfReview(
-                db,
-                c.var.student.id,
-                c.req.param("id"),
-                c.req.param("questionId"),
-                body,
-              ),
-            ),
-          },
-          200,
-          { "Cache-Control": "private, no-store" },
-        );
-      })
       .get("/attempts/:id/questions/:questionId/feedback", (c) => {
         return c.json(
           {
@@ -453,6 +436,29 @@ export function createStudentRoutes(
                 c.req.param("id"),
                 c.req.param("questionId"),
                 new Date(),
+              ),
+            ),
+          },
+          200,
+          { "Cache-Control": "private, no-store" },
+        );
+      })
+      // QM-10（TT-09a）学生自评：已提交且公布后对了/错了/暂不判断，即时生效
+      // 无需教师确认；校验链与幂等/CAS/教师优先见 self-review-service（契约层
+      // packages/contract self-review.ts TT-05a 定稿）；自评不写 teacherMark/
+      // finalCorrect、不推动 graded；响应 no-store 不落缓存
+      .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
+        const body = await parseJsonBody(c, selfReviewRequestSchema);
+        return c.json(
+          {
+            ok: true,
+            data: selfReviewDataSchema.parse(
+              submitSelfReview(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                c.req.param("questionId"),
+                body,
               ),
             ),
           },
@@ -484,6 +490,18 @@ export function createStudentRoutes(
             c.req.param("id"),
             new Date(),
           ),
+        });
+      })
+      // tt-07a（QM-06）：冻结上下文公开投影（材料/组快照）读取——作答期渲染与
+      // 结果回看共用，只读快照不查 live 库（教师改材料/软删不影响已开卷）；坏
+      // 快照 409 ATTEMPT_CONTEXT_BROKEN 显式报错。归属校验复用
+      // requireUsableAttempt（TT-05b 审查 P2-2 记账：快照读取按 attemptId 直查
+      // 不过滤 teacherId，归属防线在路由层——跨域同 attempt id 不可见）
+      .get("/attempts/:id/context", (c) => {
+        requireUsableAttempt(db, c.var.student.id, c.req.param("id"));
+        return c.json({
+          ok: true,
+          data: studentAttemptContext(db, c.req.param("id")),
         });
       })
       // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
@@ -1033,8 +1051,9 @@ export function createStudentRoutes(
       // T6R.15 D7：题目笔记本——本人该题的跨来源已交卷轮次聚合（GET
       // /notebook/questions/:qid，聚合查询不建全局表）。service
       // getStudentQuestionNotebook 内 join responses 定题目成员、按 submittedAt
-      // 升序编轮；零答案零题干（题目侧只有 questionVersion 版本号数字，
-      // AGENTS 第 3 条）；无轮次 200 空数组（不探测题目存在性）。
+      // 升序编轮；题目侧携带 question/release（QM-11 公布 gate 投影）与
+      // context（QM-15 来源材料/组冻结投影）——三者均按公布规则受控，答案
+      // 键恒无（AGENTS 第 3 条）；无轮次 200 空数组（不探测题目存在性）。
       .get("/notebook/questions/:questionId", (c) => {
         return c.json({
           ok: true,
@@ -1127,6 +1146,8 @@ export function createStudentRoutes(
             workflowVersion: body.workflowVersion,
             feedbackMode: body.feedbackMode,
           },
+          // newContentEnabled 缺省读部署 env（§5.8.4）；scope 为第 6 参
+          undefined,
           body.scope,
         );
         return c.json(

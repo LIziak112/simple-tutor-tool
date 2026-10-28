@@ -1,4 +1,8 @@
-import type { AttemptResultData, AttemptResultQuestion } from "@tutor/contract";
+import type {
+  AttemptResultData,
+  AttemptResultQuestion,
+  MaterialRef,
+} from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import {
@@ -12,7 +16,14 @@ import {
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
+import {
+  groupSegmentsOfUnit,
+  questionMaterialsOf,
+} from "@/features/attempt/attempt-context-view";
+import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { HintEntryList } from "@/features/attempt/HintPanel";
+import { QuestionGroupAnchor } from "@/features/attempt/QuestionGroupAnchor";
+import { QuestionMaterialsAnchor } from "@/features/attempt/QuestionMaterialsAnchor";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
@@ -43,7 +54,8 @@ import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
-import { SelfReviewControl } from "./SelfReviewControl";
+import { SelfReviewSection } from "./SelfReviewSection";
+import { verdictBadgeDisplayOf } from "./self-review-display";
 import { useResultReviewLocation } from "./use-result-review-location";
 
 /**
@@ -65,9 +77,11 @@ import { useResultReviewLocation } from "./use-result-review-location";
  * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect——教师批注
  * 后以批注为准）与老师批改块（teacherMark/teacherComment 显著展示，未批且
  * 已交维持既有待批态）；汇总区大数字改 scoreFinal ?? scoreAuto（全部批完显示
- * 「最终得分」），待批计数改用 pendingCount（D4 权威口径——批注后 autoCorrect
- * 仍空而 finalCorrect 已定，summary.pending 会虚高）。公布 gate 截止前服务端
- * 已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
+ * 「最终得分」）。QM-12（TT-09c）：待判断计数与对/错计数统一走有效判定口径
+ * （reviewCounts → verdictBadgeDisplayOf：教师判 > 自评 > 自动——自评行按
+ * 自评三态计数，与逐题徽章同出处不漂移；原 D9 的 pendingCount（教师待批
+ * 权威计数）不再顶「待批」瓦片——自评卷会漏计待自评行）。公布 gate 截止前
+ * 服务端已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
  * 2026-10（学生端闭环补完）：汇总卡操作区新增「练习本卷错题（N 题）」次级
  * 按钮——N = 本卷已判定为错的题数（逐题 finalCorrect === false，不含待批
  * finalCorrect=null；公布前已被 gate 置 null，天然不参与计数）。未公布
@@ -229,8 +243,11 @@ function ResultQuestionCard({
   // 复算一次共享：verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源
   const reviewState = reviewQuestionState(question, released);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
-  // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
-  const verdict = reviewState.verdict;
+  // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）。
+  // QM-11：reference_self 行（教师未判）按自评三态显示（待自评/自评正确/
+  // 自评错误，verdictBadgeDisplayOf 单一出处）；徽章与左边框共用其 verdict
+  const badge = verdictBadgeDisplayOf(question);
+  const verdict = released ? badge.verdict : reviewState.verdict;
   const renderTools = (
     explanationTrigger?: ReactNode,
     explanationContent?: ReactNode,
@@ -307,7 +324,7 @@ function ResultQuestionCard({
     <article
       data-review-question={question.questionId}
       className={cn(
-        "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6",
+        "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6 isolate",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
         !released
           ? reviewState.unanswered
@@ -328,9 +345,19 @@ function ResultQuestionCard({
             「标过不会」是学生做题时的事实标注（#6980-4），不受公布 gate 与
             自评分支影响——自评题与待公布卷同样显示（审查修复 P1-5） */}
         {released ? (
-          !question.selfReview ? (
-            <VerdictBadge verdict={verdict} notDone={!question.answered} />
-          ) : null
+          <VerdictBadge
+            verdict={badge.verdict}
+            notDone={badge.notDone ?? false}
+            {...(badge.pendingLabel !== undefined && {
+              pendingLabel: badge.pendingLabel,
+            })}
+            {...(badge.correctLabel !== undefined && {
+              correctLabel: badge.correctLabel,
+            })}
+            {...(badge.wrongLabel !== undefined && {
+              wrongLabel: badge.wrongLabel,
+            })}
+          />
         ) : reviewState.unanswered ? (
           <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
             未作答
@@ -398,8 +425,11 @@ function ResultQuestionCard({
       </AnnotationView>
 
       <ResultAnswerComparison question={question} released={released} />
-      {released && question.selfReview && (
-        <SelfReviewControl attemptId={attemptId} question={question} />
+
+      {/* QM-11：对照后挂自评动作（reference_self 行；教师已判时整块不渲染，
+          判定显示走下方批改块——教师优先） */}
+      {released && (
+        <SelfReviewSection attemptId={attemptId} question={question} />
       )}
 
       {released &&
@@ -478,6 +508,11 @@ export function AttemptResultView({
   onRefresh?: (() => void) | undefined;
 }) {
   const { attempt, summary } = data;
+  // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
+  // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
+  // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
+  // （材料缺省不阻断回看；服务端对坏快照已 fail-closed 409）
+  const contextQuery = useAttemptContext(attempt.id);
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
   // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）
@@ -492,17 +527,31 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷错题（finalCorrect === false 且已答，按本卷题序）——直达
-  // 重练的圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为
-  // 0），与 released 显隐判据双保险。#6980-3：未做题不圈入；#6980-4：标过
-  // 「不会」的题（含做对）也进本卷错题（标不会 = 按做错结算的主人口径）
+  // 2026-10：本卷错题——直达重练的圈题范围与示数。QM-12 起判错按有效判定
+  // （教师判 > 自评 > 自动，verdictBadgeDisplayOf 同口径）：自评「错」同样
+  // 可重练；#6980-3：未做轮不圈入（人工显式判定的未做行不被掩盖——与
+  // 错题本 enteredWrongBook 同口径）；#6980-4：标过「不会」的题（含做对）
+  // 也进本卷错题（标不会 = 按做错结算的主人口径）。未公布时服务端已把判定键
+  // 整键 null 投影（数出来必为 0），与 released 显隐判据双保险。
   const wrongQuestionIds = flatQuestions
-    .filter(
-      (question) =>
-        (question.finalCorrect === false && question.answered) ||
-        question.studentFlag === "unsure",
-    )
+    .filter((question) => {
+      const badge = verdictBadgeDisplayOf(question);
+      if (question.studentFlag === "unsure") return true;
+      if (badge.verdict !== false) return false;
+      return (
+        question.answered ||
+        question.teacherMark !== null ||
+        (question.selfReview?.record?.verdict ?? null) !== null
+      );
+    })
     .map((question) => question.questionId);
+  // QM-12：含自评行时注明口径（自评是本人判定；得分只按自动判定与教师
+  // 批改计算——不把自评冒充客观独立完成证据）
+  const hasSelfReviewRows =
+    released &&
+    flatQuestions.some(
+      (question) => (question.gradingPolicy ?? null) === "reference_self",
+    );
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;
   // SAI-22 结果页 AI 复盘：完成后按 §7.5 入口变「AI 复盘」，绑定回看当前题；
@@ -575,9 +624,13 @@ export function AttemptResultView({
               label: indexOfQuestion.has(question.questionId)
                 ? `第 ${indexOfQuestion.get(question.questionId)} 题`
                 : question.questionId,
+              // QM-12：喂有效判定（教师判 > 自评 > 自动，verdictBadgeDisplayOf
+              // 同口径）——自评「错」进错题组（与服务端批量过滤同口径）；
               // 未公布时服务端已置 null，这里再按 released 收口（双保险，
               // 与上方错题重练同款显隐判据）
-              finalCorrect: released ? question.finalCorrect : null,
+              finalCorrect: released
+                ? verdictBadgeDisplayOf(question).verdict
+                : null,
             }))}
             released={released}
           />
@@ -656,11 +709,7 @@ export function AttemptResultView({
                   </p>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {summary.scoreFinal !== null
-                      ? flatQuestions.some(
-                          (question) => question.selfReview?.source === "self",
-                        )
-                        ? "含学生自评，满分 100"
-                        : "含老师批改，满分 100"
+                      ? "含老师批改，满分 100"
                       : attempt.scoreAuto === null
                         ? "暂无可自动判分的题目"
                         : "满分 100"}
@@ -692,18 +741,16 @@ export function AttemptResultView({
                     </dd>
                   </div>
                   <div className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                    <dt>待批</dt>
+                    <dt>待判断</dt>
                     <dd>
-                      {/* D9：pendingCount 为 D4 权威计数（批注后 autoCorrect 仍空而
-                      finalCorrect 已定；公布态下恒非 null，回退仅兜底） */}
-                      {summary.pendingCount ?? summary.pending}
+                      {/* QM-12：有效判定口径（教师判 > 自评 > 自动）的未判断数
+                      （含待教师批改与待自评，逐题徽章区分两态）；与徽章同出处
+                      （reviewCounts→verdictBadgeDisplayOf），公布态下与答对/答错
+                      三分互补。D9 的 pendingCount（教师待批权威计数）另在
+                      「有 X 题待批」提示位消费 */}
+                      {counts.pending}
                       <span>题</span>
                     </dd>
-                    {(summary.pendingSelfReviewCount ?? 0) > 0 && (
-                      <dd className="text-xs">
-                        另有 {summary.pendingSelfReviewCount} 题待自评
-                      </dd>
-                    )}
                   </div>
                   {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
                   （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/
@@ -718,7 +765,13 @@ export function AttemptResultView({
                 </dl>
                 {summary.unanswered > 0 && (
                   <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
-                    未答数单独统计，可能与判错或待批重叠，不能相加。
+                    未答数单独统计，可能与判错或待判断重叠，不能相加。
+                  </p>
+                )}
+                {hasSelfReviewRows && (
+                  <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
+                    含对照自评的题目按你的自评计入答对/答错；得分只按自动判定
+                    与老师批改计算，自评不是客观测评成绩。
                   </p>
                 )}
               </div>
@@ -782,38 +835,110 @@ export function AttemptResultView({
             </p>
           )}
 
-          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
+          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续）。
+              QM-08：题目序经 groupSegmentsOfUnit 解释成组段——组段共享材料
+              按组渲染一份（与作答视图同一数据解释单源）。审查 P1 修复：与
+              作答视图同构——题组只是题行 ol 里的兄弟锚点，题行永不进组子树，
+              context 后到不重挂题卡（回看本无控制器，与作答侧共享一份结构）。
+              P1-2：solo 题的题级 ::ref 材料挂题级锚（与作答视图同口径）；
+              segments 展平成单层题行数组（嵌套数组 key 带段位前缀会重挂行，
+              与作答侧同修复）。 */}
           <ol className="flex flex-col gap-4">
-            {data.units.map((unit) => (
-              <li key={unit.id} className="flex flex-col gap-4">
-                {showUnitHeaders && (
-                  <h2
-                    data-review-unit={unit.id}
-                    className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                  >
-                    {unit.title}
-                  </h2>
-                )}
-                <ol className="flex flex-col gap-4">
-                  {unit.questions.map((question) => (
-                    <li key={question.questionId}>
-                      <ResultQuestionCard
-                        aiTrigger={aiCompanion.triggerForQuestion(
-                          question.questionId,
-                        )}
-                        index={flatQuestions.indexOf(question)}
-                        question={question}
-                        attemptId={attempt.id}
-                        released={released}
-                        roundLabel={roundLabel}
-                        onSolutionToggle={onSolutionToggle}
-                      />
-                      {aiCompanion.inlineForQuestion(question.questionId)}
-                    </li>
-                  ))}
-                </ol>
-              </li>
-            ))}
+            {data.units.map((unit) => {
+              const questionById = new Map(
+                unit.questions.map(
+                  (question) => [question.questionId, question] as const,
+                ),
+              );
+              // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 锚共用
+              const questionRefs = new Map<string, readonly MaterialRef[]>([]);
+              for (const question of unit.questions) {
+                const refs = question.snapshot.materialRefs;
+                if (refs !== undefined && refs.length > 0)
+                  questionRefs.set(question.questionId, refs);
+              }
+              const segments = groupSegmentsOfUnit(
+                contextQuery.data,
+                unit.questions.map((question) => question.questionId),
+                questionRefs,
+              );
+              /** 单题行（组行/独立行共用；组行不挂「查看材料」——回看布局
+                  上下排布自然阅读，无需 reveal 跳转） */
+              const renderRow = (questionId: string) => {
+                const question = questionById.get(questionId);
+                if (question === undefined) return null;
+                return (
+                  <li key={question.questionId} className="min-w-0">
+                    <ResultQuestionCard
+                      aiTrigger={aiCompanion.triggerForQuestion(
+                        question.questionId,
+                      )}
+                      index={flatQuestions.indexOf(question)}
+                      question={question}
+                      attemptId={attempt.id}
+                      released={released}
+                      roundLabel={roundLabel}
+                      onSolutionToggle={onSolutionToggle}
+                    />
+                    {aiCompanion.inlineForQuestion(question.questionId)}
+                  </li>
+                );
+              };
+              return (
+                <li key={unit.id} className="flex flex-col gap-4">
+                  {showUnitHeaders && (
+                    <h2
+                      data-review-unit={unit.id}
+                      className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                    >
+                      {unit.title}
+                    </h2>
+                  )}
+                  <ol data-layout="stack" className="flex flex-col gap-4">
+                    {segments.flatMap((segment) =>
+                      segment.kind === "solo"
+                        ? segment.questionIds.flatMap((questionId) => {
+                            const question = questionById.get(questionId);
+                            if (question === undefined) return [];
+                            // P1-2：solo 题级材料锚（回看自然阅读，无 reveal
+                            // 跳转——与组材料列同理由）
+                            const soloMaterials = questionMaterialsOf(
+                              contextQuery.data,
+                              question.snapshot,
+                            );
+                            return soloMaterials.length === 0
+                              ? [renderRow(questionId)]
+                              : [
+                                  <QuestionMaterialsAnchor
+                                    key={`qmat:${question.questionId}`}
+                                    questionId={question.questionId}
+                                    materials={soloMaterials}
+                                    readingKey={`${attempt.id}|q:${question.questionId}`}
+                                    className="min-w-0"
+                                    attemptId={attempt.id}
+                                  />,
+                                  renderRow(questionId),
+                                ];
+                          })
+                        : [
+                            <QuestionGroupAnchor
+                              key={`group:${segment.group.id}`}
+                              group={segment.group}
+                              materials={segment.materials}
+                              questionCount={segment.questionIds.length}
+                              readingKey={`${attempt.id}|${segment.group.id}`}
+                              layoutMode="stack"
+                              attemptId={attempt.id}
+                            />,
+                            ...segment.questionIds.map((questionId) =>
+                              renderRow(questionId),
+                            ),
+                          ],
+                    )}
+                  </ol>
+                </li>
+              );
+            })}
           </ol>
         </div>,
       )}

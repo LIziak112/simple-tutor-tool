@@ -1,4 +1,4 @@
-import type { LintIssue } from "@tutor/contract";
+import type { LessonBlock, LintIssue } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import { parseDocument } from "./parse.ts";
 import { splitLessonBlocks } from "./split-lesson.ts";
@@ -161,5 +161,144 @@ $|-5|=$ [[5]]
         expect(block.md).not.toContain("::::question");
       }
     }
+  });
+});
+
+/**
+ * 讲练页材料/组切段（QM-14 讲练原位适配）：材料/组容器是单元结构（与题块
+ * 同规则），学生侧不随 md 段下发原文——正文经冻结上下文投影
+ * （/attempts/:id/context → MaterialPanel）按组呈现。切段层只负责把容器
+ * 行区间从 md 段剔除，槽位标记（{{slot-id}}）与 ::ref 指令文本不得外漏。
+ */
+describe("splitLessonBlocks：材料/组容器剔除（QM-14）", () => {
+  const MATERIAL_LESSON_MD = `# 第1讲 资料分析
+
+讲解段一。
+
+::::material{id=mat-1 title="某省粮食生产"}
+粮食总产量 $3{,}096.2$ 万吨。第 {{slot-1}} 空在句中。
+::::
+
+::::group{id=grp-1 title="根据以下资料回答" label="1–2"}
+::ref{material=mat-1}
+::ref{question=q-m}
+::ref{question=q-o}
+::::
+
+:::::question{id=q-m type=matching difficulty=3}
+为空位选择内容 ::ref{material=mat-1 slots=slot-1}
+
+::::options
+:::option{id=opt-1}
+增产
+:::
+:::option{id=opt-2}
+减产
+:::
+::::
+:::::
+
+讲解段二。
+
+::::question{id=q-o type=ordering difficulty=3}
+题干二。
+::::
+
+结尾段。`;
+
+  it("材料/组容器整块剔除：md 段不含容器围栏、槽位标记与 ::ref 指令文本", () => {
+    const blocks = splitLessonBlocks(MATERIAL_LESSON_MD);
+    for (const block of blocks) {
+      if (block.type !== "md") continue;
+      expect(block.md).not.toContain("::::material");
+      expect(block.md).not.toContain("::::group");
+      expect(block.md).not.toContain("{{slot-1}}");
+      expect(block.md).not.toContain("::ref{");
+      expect(block.md).not.toContain("某省粮食生产");
+    }
+  });
+
+  it("题槽对位不受影响：材料/组两侧的题目 id 按原顺序保留", () => {
+    const blocks = splitLessonBlocks(MATERIAL_LESSON_MD);
+    expect(blocks).toEqual([
+      { type: "md", md: "# 第1讲 资料分析\n\n讲解段一。" },
+      { type: "question", questionId: "q-m" },
+      { type: "md", md: "讲解段二。" },
+      { type: "question", questionId: "q-o" },
+      { type: "md", md: "结尾段。" },
+    ]);
+  });
+
+  it("解析 → 切段闭环：parseDocument 产物讲义正文切段后题槽与单元题目对位", () => {
+    const doc = `---
+kind: lesson
+unit: 讲练材料单元
+---
+
+${MATERIAL_LESSON_MD}
+`;
+    const parsed = parseDocument(doc);
+    expect(parsed.issues).toEqual([]);
+    const lectureMd = parsed.lectures[0]?.markdown ?? "";
+    const blocks = splitLessonBlocks(lectureMd);
+    const questionIds = blocks.flatMap((block) =>
+      block.type === "question" ? [block.questionId] : [],
+    );
+    expect(questionIds).toEqual(parsed.units[0]?.questions.map((q) => q.id));
+    for (const block of blocks) {
+      if (block.type === "md") {
+        expect(block.md).not.toContain("::::material");
+        expect(block.md).not.toContain("{{slot-1}}");
+      }
+    }
+  });
+
+  it("旧讲练页（无材料/组）切段零变化", () => {
+    const blocks = splitLessonBlocks(LESSON_BODY_MD);
+    expect(blocks).toHaveLength(5);
+    expect(blocks.filter((b) => b.type === "question")).toHaveLength(2);
+  });
+
+  it("嵌套材料/组（版式容器内）同样从 md 段剔除：lint 红线的切段兜底（legacy 存量/手工改动的存储正文），答案文本与槽位标记不外漏", () => {
+    const md = `# 第1讲 资料分析
+
+讲解段一。
+
+:::::box
+边栏里的长材料。
+
+::::material{id=mat-1 title="嵌套材料"}
+正文含答案。第 {{slot-1}} 空。[[参考答案甲]]
+::::
+
+::::group{id=grp-1}
+::ref{question=q1}
+::::
+:::::
+
+::::question{type=judge id=q1}
+$0$ 是最小的正整数。[[错误]]
+::::
+
+结尾段。`;
+    const blocks = splitLessonBlocks(md);
+    // 嵌套容器行整块剔除：md 段不含围栏、槽位标记与 [[答案]] 文本（QM_SECRETS 哨兵含 "[["）
+    for (const block of blocks) {
+      if (block.type !== "md") continue;
+      expect(block.md).not.toContain("::::material");
+      expect(block.md).not.toContain("::::group");
+      expect(block.md).not.toContain("{{slot-1}}");
+      expect(block.md).not.toContain("[[");
+      expect(block.md).not.toContain("参考答案甲");
+    }
+    // 顶层题块照常切槽、box 边栏文字保留（只剔容器行，不殃及周围正文）
+    expect(blocks.filter((b) => b.type === "question")).toEqual([
+      { type: "question", questionId: "q1" },
+    ]);
+    const boxMd = blocks.find(
+      (b): b is Extract<LessonBlock, { type: "md" }> =>
+        b.type === "md" && b.md.includes("边栏里的长材料"),
+    );
+    expect(boxMd?.md).toContain(":::box");
   });
 });

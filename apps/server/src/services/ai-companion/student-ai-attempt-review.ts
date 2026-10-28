@@ -23,7 +23,9 @@ import {
   aiAttemptReviewCountsSchema,
   aiAttemptReviewReportSchema,
   aiAttemptReviewSnapshotSchema,
+  dispatchIsAnswered,
   formatQuestionAnswers,
+  optionsPublicStructureOf,
 } from "@tutor/contract";
 import {
   and,
@@ -49,7 +51,9 @@ import { HttpError } from "../../lib/http-error.ts";
 import {
   answerOf,
   frozenRowsInDisplayOrder,
+  materialSlotOrderOf,
   requireUsableAttempt,
+  structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { jsonOf, snapshotOfRow } from "../snapshot.ts";
@@ -321,21 +325,11 @@ function requireAttemptReviewAccess(
   return { attempt, rows, released };
 }
 
-/** 内容存在性独立于答案对象存在性；空对象形态不能证明学生已作答。 */
+/** 内容存在性独立于答案对象存在性；空对象形态不能证明学生已作答。
+ * v2 同步合入后走契约登记表 isAnswered 调度（I16 纪律：不手写 kind 分支，
+ * 完整度口径全平台单源——judge 空串边缘以登记表为准）。 */
 function hasAnswerContent(answer: StudentAnswer | null): boolean {
-  if (answer === null) return false;
-  switch (answer.kind) {
-    case "judge":
-      return typeof answer.value === "boolean" || answer.value.trim() !== "";
-    case "choice":
-      return true;
-    case "multi":
-      return answer.indexes.length > 0;
-    case "fill":
-      return answer.values.some((value) => value.trim() !== "");
-    case "final":
-      return answer.finalAnswer.trim() !== "";
-  }
+  return answer !== null && dispatchIsAnswered(answer);
 }
 
 function attemptReviewRangeOf(
@@ -425,7 +419,19 @@ function attemptReviewRangeOf(
       studentAnswerText:
         answerState === "unanswered"
           ? null
-          : studentAnswerTextOf(snapshot, answer),
+          : // UA-01 收窄签名：选项正文经公开结构、新题型结构经
+            // structuresOfSnapshot 装配（同 student-ai-context 生产形态）
+            studentAnswerTextOf(
+              optionsPublicStructureOf(
+                (snapshot.options ?? []).map((option) => option.text),
+              ),
+              answer,
+              structuresOfSnapshot(
+                snapshot,
+                materialSlotOrderOf(asDb(db), attempt.id),
+                attempt.unitId,
+              ),
+            ),
       referenceAnswerMd:
         snapshot.answers !== undefined
           ? formatQuestionAnswers(snapshot.answers)

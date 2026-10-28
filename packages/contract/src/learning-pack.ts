@@ -13,7 +13,11 @@ import {
   notePhaseSchema,
   noteSubmissionEvidenceStateSchema,
 } from "./note.ts";
-import { selfReviewStateSchema } from "./self-review.ts";
+import {
+  gradingPolicySchema,
+  selfReviewRecordSchema,
+  verdictSourceSchema,
+} from "./self-review.ts";
 
 /**
  * AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19 与架构
@@ -423,12 +427,18 @@ export const learningPackResponseSchema = z.object({
   answerText: z.string().nullable(),
   /** 自动判定（null=不能自动判定） */
   autoCorrect: z.boolean().nullable(),
-  /** 最终判定（统计唯一口径；null=待批） */
+  /** 最终判定（教师权威线 teacherMark ?? autoCorrect；null=未判）。QM-12 起展示
+   *  口径的有效判定 = 教师判 > 自评 > 自动，来源见 selfReview/gradingPolicy 两键 */
   finalCorrect: z.boolean().nullable(),
-  reviewSource: selfReviewStateSchema.shape.source.optional(),
+  /** 判定来源（v2 两线收敛：v2 错题闭环的来源标注接线 QM 有效判定口径） */
+  reviewSource: verdictSourceSchema.optional(),
   teacherMark: z.enum(["correct", "wrong"]).nullable(),
   /** 教师评语原文（不改动；未评为 null） */
   teacherComment: z.string().nullable(),
+  /** 学生自评记录（QM-12：reference_self 行的自评事实；未评/撤回/非自评行为 null） */
+  selfReview: selfReviewRecordSchema.nullable().optional(),
+  /** 行判分策略（QM-12：待自评/待批的行级判别依据） */
+  gradingPolicy: gradingPolicySchema.nullable().optional(),
   /** zip 内笔迹文件路径（ink/…；勾选 ink 且该题有笔迹才出现） */
   inkFile: z.string().optional(),
 });
@@ -455,11 +465,13 @@ export const learningPackAttemptSummarySchema = z.object({
   scoreAuto: z.number().int().min(0).max(100).nullable(),
   scoreFinal: z.number().int().min(0).max(100).nullable(),
   questionCount: z.number().int().min(0),
-  /** finalCorrect=true 题数（统计唯一口径） */
+  /** 有效判定=true 题数（QM-12：教师判 > 自评 > 自动） */
   correctCount: z.number().int().min(0),
   wrongCount: z.number().int().min(0),
-  /** 待批数（finalCorrect=null，D4） */
+  /** 未判断数（有效判定=null：待教师批改 + 待自评） */
   pendingCount: z.number().int().min(0),
+  /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
 });
 
 /** attempts section：逐题作答或汇总任一勾选才出现（D19） */
@@ -532,8 +544,11 @@ export const learningPackStudentSummarySchema = z.object({
   attemptCount: z.number().int().min(0),
   judgedCount: z.number().int().min(0),
   correctCount: z.number().int().min(0),
+  /** 未判断数（有效判定=null：待教师批改 + 待自评） */
   pendingCount: z.number().int().min(0),
-  /** 正确率 = 判对 ÷ 已判定（D4）；无已判定为 null */
+  /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
+  /** 正确率 = 判对 ÷ 已判定（含自评判定）；无已判定为 null */
   correctRate: z.number().min(0).max(1).nullable(),
   /** 有效作答总时长（秒） */
   activeSecTotal: z.number().int().min(0),
@@ -552,6 +567,8 @@ export const learningPackSummarySectionSchema = z.object({
     judgedCount: z.number().int().min(0),
     correctCount: z.number().int().min(0),
     pendingCount: z.number().int().min(0),
+    /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+    selfJudgedCount: z.number().int().min(0).optional(),
     correctRate: z.number().min(0).max(1).nullable(),
     activeSecTotal: z.number().int().min(0),
     offlineShare: z.number().min(0).max(1),
@@ -585,6 +602,8 @@ export const learningPackSchema = z.object({
  */
 export const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
 export const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
+/** 材料条目编号（m001…；TT-13 学情包材料节） */
+export const PACK_REF_MATERIAL_RE = /^m\d{3,}$/;
 
 /**
  * 快照内容身份（64 位小写 hex sha-256）：对快照对象做**递归键序排序的
@@ -638,6 +657,15 @@ export const learningPackV2QuestionSchema = learningPackQuestionSchema.extend({
       }),
     )
     .default([]),
+  /**
+   * 引用的材料条目编号（TT-13 材料节）：指向 content.materials 条目——
+   * 组材料 ∪ 题级 materialRefs 闭包、按 (materialId, sourceVersion) 整组
+   * 去重后的包内条目。材料节缺席（questions 模块未勾选）时不得出现；
+   * 无材料闭包的题缺省不携带。
+   */
+  materialRefs: z
+    .array(z.string().regex(PACK_REF_MATERIAL_RE, "材料条目编号形如 m001"))
+    .optional(),
 });
 
 /**
@@ -801,9 +829,33 @@ export const learningPackV2MetaSchema = learningPackMetaSchema.extend({
   }),
 });
 
+/**
+ * v2 材料条目（TT-13 学情包材料节）：题目材料闭包（组材料 ∪ 题级
+ * materialRefs）的**公开投影**——按 (materialId, sourceVersion) 整组去重，
+ * 同材料多版本并存时逐版成条（不同轮次冻结不同版本可分辨）；contentMd 为
+ * 槽位编号后形态（{{slot-id}} → **（N）**，与学生面板/单题包/AI 出口同一
+ * 实现）。材料正文按导入 lint 不含答案型内容且非空（MATERIAL_CONTAINS_
+ * ANSWER / MATERIAL_EMPTY；存量空材料由装配侧跳过并显式记缺失），公开投影
+ * 白名单无答案键通道（materialPublicSchema——sourceMd/教师域键不进包）。
+ * ::image 配图随包 media 附件附上（缺失进 manifest.missing）。
+ */
+export const learningPackMaterialSchema = z.object({
+  ref: z.string().regex(PACK_REF_MATERIAL_RE, "材料条目编号形如 m001"),
+  /** 材料 id（教师域定位键，与题目条目的 questionId 同口径） */
+  materialId: z.string().min(1),
+  /** 冻结时的材料版本（materials.version；同 id 多版本并存时逐版成条） */
+  sourceVersion: z.number().int().min(1),
+  /** 解析后标题（缺省「材料」；不附版本徽标——sourceVersion 显式可辨） */
+  title: z.string().min(1),
+  /** 槽位编号后正文（::image 引用的配图随包 media 节附上） */
+  contentMd: z.string().min(1),
+});
+
 /** v2 content section：题目条目换 v2 形状（ref/present/snapshotHash/media） */
 export const learningPackV2ContentSchema = learningPackContentSchema.extend({
   questions: z.array(learningPackV2QuestionSchema).optional(),
+  /** 材料节（TT-13）：随 questions 模块装配，题目经 materialRefs 引用 */
+  materials: z.array(learningPackMaterialSchema).optional(),
 });
 
 /** v2 attempts section：逐题作答行换 v2 形状（快照关联三字段） */
@@ -1424,6 +1476,7 @@ export type LearningPackPreviewEvidenceImage = z.infer<
 export type LearningPackV2Question = z.infer<
   typeof learningPackV2QuestionSchema
 >;
+export type LearningPackMaterial = z.infer<typeof learningPackMaterialSchema>;
 export type LearningPackV2Response = z.infer<
   typeof learningPackV2ResponseSchema
 >;

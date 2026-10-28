@@ -7,9 +7,12 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, questions, responses, students } from "../db/schema";
 import { knowledgeNamesByQuestion } from "./assignment-service";
-import { answerOf, unitGroupedRows } from "./attempt-service";
-import { serializeStudentAnswer } from "./mark-response";
-import { reviewSourceOf } from "./review-state.ts";
+import {
+  answerOf,
+  effectiveVerdictOfRow,
+  unitGroupedRows,
+} from "./attempt-service";
+import { batchSerializeStudentAnswerOfRow } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -171,24 +174,26 @@ function autoCorrectText(autoCorrect: boolean | null): string {
   return autoCorrect ? "答对" : "答错";
 }
 
-function finalCorrectText(
-  finalCorrect: boolean | null,
-  row?: import("../db/schema.ts").ResponseRow,
+/**
+ * 有效判定的展示文本（QM-12：教师判 > 自评 > 自动；原 finalCorrect 快捷口径
+ * 对自评行恒「待批」，与详情/错题本/学情不一致）。「未判断」区分待教师批改
+ * 与待自评（来源列同步给出），不再用「待批」一概而论。
+ */
+function effectiveVerdictText(
+  effective: ReturnType<typeof effectiveVerdictOfRow>,
 ): string {
-  if (finalCorrect === null) return row?.reviewEligible ? "待学生自评" : "待批";
-  const label = finalCorrect ? "答对" : "答错";
-  return row && reviewSourceOf(row) === "self" ? `学生自评：${label}` : label;
+  if (effective === null) return "未判断";
+  return effective.value ? "答对" : "答错";
 }
 
-function reviewSourceText(row: import("../db/schema.ts").ResponseRow): string {
-  const source = reviewSourceOf(row);
-  return source === "teacher"
-    ? "教师"
-    : source === "self"
-      ? "学生自评"
-      : row.reviewEligible && row.finalCorrect === null
-        ? "待学生自评"
-        : "自动";
+/** 判定来源列：教师/自评/自动；未判断行如实标注（原口径对未判行标「自动」） */
+function verdictSourceText(
+  effective: ReturnType<typeof effectiveVerdictOfRow>,
+): string {
+  if (effective === null) return "未判断";
+  if (effective.source === "teacher") return "教师";
+  if (effective.source === "self") return "自评";
+  return "自动";
 }
 
 /**
@@ -238,6 +243,8 @@ export function exportCsv(
   const lines: string[] = [CSV_COLUMNS.map(csvCell).join(",")];
   // 考点兜底表（快照缺失时按题目 id 从当前库关联；懒加载一次，正常数据不触发）
   let knowledgeFallback: Map<string, string[]> | null = null;
+  // 审查 P3-3：两处行循环共用批量出口（attemptId 请求内记忆化槽位序，一处 Map）
+  const answerTextOf = batchSerializeStudentAnswerOfRow(db);
 
   for (const { attempt, studentName } of attemptRows) {
     const source = sourceOf(db, attempt, teacherId);
@@ -291,7 +298,11 @@ export function exportCsv(
         const knowledge =
           snapshot?.knowledge ?? fallbackKnowledgeOf(row.response.questionId);
         const answerText =
-          serializeStudentAnswer(answerOf(row.response.answerJson)) ?? "";
+          answerTextOf(
+            attempt.id,
+            row.response,
+            answerOf(row.response.answerJson),
+          ) ?? "";
         const inkRow = inkByQuestion.get(row.response.questionId);
         const inkUrl =
           type !== null &&
@@ -315,8 +326,14 @@ export function exportCsv(
             knowledge.join("；"),
             answerText,
             autoCorrectText(row.response.autoCorrect),
-            finalCorrectText(row.response.finalCorrect, row.response),
-            reviewSourceText(row.response),
+            // QM-12：最终判定/来源按有效判定（教师判 > 自评 > 自动）
+            ...((): string[] => {
+              const effective = effectiveVerdictOfRow(row.response);
+              return [
+                effectiveVerdictText(effective),
+                verdictSourceText(effective),
+              ];
+            })(),
             row.response.activeSec === null
               ? ""
               : String(row.response.activeSec),
@@ -397,7 +414,8 @@ export function exportCsv(
           knowledge = knowledgeFallback.get(response.questionId) ?? [];
         }
         const answerText =
-          serializeStudentAnswer(answerOf(response.answerJson)) ?? "";
+          answerTextOf(attempt.id, response, answerOf(response.answerJson)) ??
+          "";
         const inkRow = inkByQuestion.get(response.questionId);
         const inkUrl =
           type !== null &&
@@ -405,6 +423,8 @@ export function exportCsv(
           inkRow !== undefined
             ? `${base}/api/teacher/ink/${inkRow.id}.png`
             : "";
+        // QM-12：最终判定/来源按有效判定（教师判 > 自评 > 自动）
+        const effective = effectiveVerdictOfRow(response);
         const cells = [
           studentName,
           sourceTypeText,
@@ -418,8 +438,8 @@ export function exportCsv(
           knowledge.join("；"),
           answerText,
           autoCorrectText(response.autoCorrect),
-          finalCorrectText(response.finalCorrect, response),
-          reviewSourceText(response),
+          effectiveVerdictText(effective),
+          verdictSourceText(effective),
           response.activeSec === null ? "" : String(response.activeSec),
           String(response.hintsUsed),
           String(response.changeCount),

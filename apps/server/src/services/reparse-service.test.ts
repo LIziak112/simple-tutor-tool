@@ -3,9 +3,15 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
+  attemptContextSnapshots,
+  attempts,
   lectures,
+  materials,
+  questionGroupMembers,
+  questionGroups,
   questionKnowledge,
   questions,
+  students,
   teachers,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
@@ -536,5 +542,253 @@ $1>0$。[[正确]]
       .get();
     expect(rowA).toMatchObject({ difficulty: 1, version: 2 });
     expect(rowB).toMatchObject({ difficulty: 1, version: 2 });
+  });
+});
+
+// ---------- tt-06b / QM-05：材料/题组/题级引用重解析 ----------
+
+const QM_REPARSE_MD = [
+  "---",
+  "kind: practice",
+  "unit: 资料分析",
+  "---",
+  "",
+  "# 资料分析练习",
+  "",
+  "::::material{id=mat-资料分析-1}",
+  "给定资料正文，含槽位 {{slot-1}}。",
+  "",
+  ":::seg{id=seg-1}",
+  "首段。",
+  ":::",
+  "::::",
+  "",
+  "::::group{id=grp-资料分析-1 label=1～1}",
+  "::ref{material=mat-资料分析-1 slot=slot-1}",
+  "::ref{question=资料分析-1}",
+  "::::",
+  "",
+  "::::question{type=choice difficulty=2}",
+  "根据材料回答。",
+  "",
+  "- [ ] 甲",
+  "- [x] 乙",
+  "::::",
+  "",
+].join("\n");
+
+function commitQmForReparse(db: Db): void {
+  commitImport(
+    db,
+    TEST_TEACHER_ID,
+    { markdown: QM_REPARSE_MD, filename: "资料分析.md" },
+    undefined,
+    undefined,
+    true,
+  );
+}
+
+describe("reparseAll：材料/题组（tt-06b / QM-05）", () => {
+  it("抽取副本被篡改 → 按当前解析器恢复；sourceMd 与 version 不动", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    // 模拟旧版抽取输出：槽位清空、组引用索引丢一行成员
+    db.update(materials)
+      .set({ slotsJson: "[]" })
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .run();
+    db.update(questionGroups)
+      .set({ questionIdsJson: "[]" })
+      .where(eq(questionGroups.id, "grp-资料分析-1"))
+      .run();
+
+    const report = reparseAll(db, { dryRun: false });
+
+    const material = report.materials.find((r) => r.id === "mat-资料分析-1");
+    expect(material?.status).toBe("updated");
+    expect(material?.changes.some((c) => c.field === "slots")).toBe(true);
+    const group = report.groups.find((r) => r.id === "grp-资料分析-1");
+    expect(group?.status).toBe("updated");
+    expect(group?.changes.some((c) => c.field === "questionIds")).toBe(true);
+
+    const materialRow = db
+      .select()
+      .from(materials)
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .get();
+    expect(JSON.parse(materialRow?.slotsJson ?? "[]")).toEqual([
+      { id: "slot-1", slotKind: "choice", order: 0 },
+    ]);
+    // sourceMd 不变 → version 不动（抽取副本刷新不升版）
+    expect(materialRow?.version).toBe(1);
+    expect(materialRow?.sourceMd).toContain("给定资料正文");
+    const groupRow = db
+      .select()
+      .from(questionGroups)
+      .where(eq(questionGroups.id, "grp-资料分析-1"))
+      .get();
+    expect(JSON.parse(groupRow?.questionIdsJson ?? "[]")).toEqual([
+      "资料分析-1",
+    ]);
+    // 成员索引随组保存同事务重建
+    const members = db
+      .select()
+      .from(questionGroupMembers)
+      .where(eq(questionGroupMembers.groupId, "grp-资料分析-1"))
+      .all();
+    expect(members.map((m) => m.questionId)).toEqual(["资料分析-1"]);
+  });
+
+  it("QM-07 P2-3：updated 保持行内 order（0,1,5 不重排为 0,1,2）", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    // 模拟历史库的非连续 order（中间实体被清理后留下空洞）
+    db.update(materials)
+      .set({ order: 5, slotsJson: "[]" })
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .run();
+    db.update(questionGroups)
+      .set({ order: 5, questionIdsJson: "[]" })
+      .where(eq(questionGroups.id, "grp-资料分析-1"))
+      .run();
+
+    const report = reparseAll(db, { dryRun: false });
+
+    // 两实体均走 updated 分支（抽取副本被篡改触发恢复）
+    expect(
+      report.materials.find((r) => r.id === "mat-资料分析-1")?.status,
+    ).toBe("updated");
+    expect(report.groups.find((r) => r.id === "grp-资料分析-1")?.status).toBe(
+      "updated",
+    );
+    // reparse 只刷新抽取副本：order 维持行内原值，不按数组下标重排
+    expect(
+      db
+        .select()
+        .from(materials)
+        .where(eq(materials.id, "mat-资料分析-1"))
+        .get()?.order,
+    ).toBe(5);
+    expect(
+      db
+        .select()
+        .from(questionGroups)
+        .where(eq(questionGroups.id, "grp-资料分析-1"))
+        .get()?.order,
+    ).toBe(5);
+  });
+
+  it("干净 QM 库：材料/组全部 unchanged；报告含材料/题组两段且渲染四行统计", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    const report = reparseAll(db, { dryRun: false });
+    expect(report.materials.every((r) => r.status === "unchanged")).toBe(true);
+    expect(report.groups.every((r) => r.status === "unchanged")).toBe(true);
+    const text = renderReparseReport(report);
+    expect(text).toContain("材料：检查 1 份");
+    expect(text).toContain("题组：检查 1 组");
+  });
+
+  it("--dry-run：报告材料变更但不写库", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    db.update(materials)
+      .set({ slotsJson: "[]" })
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .run();
+    const report = reparseAll(db, { dryRun: true });
+    expect(report.dryRun).toBe(true);
+    expect(report.materials[0]?.status).toBe("updated");
+    const row = db
+      .select()
+      .from(materials)
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .get();
+    expect(row?.slotsJson).toBe("[]");
+  });
+
+  it("题外材料丢失（旧库）：组与题级引用明确要求原文件重导，不从相邻文本猜测恢复", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    // 模拟旧库丢失：材料行被外力删除，组/题引用悬垂
+    db.delete(materials).where(eq(materials.id, "mat-资料分析-1")).run();
+
+    const report = reparseAll(db, { dryRun: false });
+
+    const group = report.groups.find((r) => r.id === "grp-资料分析-1");
+    expect(group?.status).toBe("skipped");
+    expect(group?.reason).toContain("原文件重新导入恢复");
+    expect(group?.reason).toContain("不从相邻文本猜测恢复");
+    // 组行原样保留（未猜测恢复材料）
+    const groupRow = db
+      .select()
+      .from(questionGroups)
+      .where(eq(questionGroups.id, "grp-资料分析-1"))
+      .get();
+    expect(groupRow?.sourceMd).toContain("::ref{material=mat-资料分析-1");
+  });
+
+  it("历史作答快照（attempt_context_snapshots）不受 reparse 影响", () => {
+    const db = createTestDb();
+    commitQmForReparse(db);
+    // 造最小作答链：学生 → attempt → 冻结快照（材料公开投影形态）
+    db.insert(students)
+      .values({
+        id: "stu-reparse",
+        teacherId: TEST_TEACHER_ID,
+        displayName: "重解析学生",
+        loginName: "stu-reparse",
+        linkToken: "tok-reparse",
+        createdAt: "2026-10-24T08:00:00.000Z",
+      })
+      .run();
+    db.insert(attempts)
+      .values({
+        id: "att-reparse",
+        studentId: "stu-reparse",
+        sourceType: "course",
+        status: "draft",
+        startedAt: "2026-10-24T08:00:00.000Z",
+      })
+      .run();
+    db.insert(attemptContextSnapshots)
+      .values({
+        id: "snap-reparse-1",
+        attemptId: "att-reparse",
+        kind: "material",
+        sourceId: "mat-资料分析-1",
+        sourceVersion: 1,
+        snapshotJson: JSON.stringify({
+          id: "mat-资料分析-1",
+          contentMd: "冻结时的材料正文",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+        }),
+        frozenAt: "2026-10-24T08:00:00.000Z",
+      })
+      .run();
+    // 篡改当前材料抽取副本诱导 reparse 写材料行
+    db.update(materials)
+      .set({ contentMd: "被篡改的正文" })
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .run();
+
+    reparseAll(db, { dryRun: false });
+
+    const snapshot = db
+      .select()
+      .from(attemptContextSnapshots)
+      .where(eq(attemptContextSnapshots.id, "snap-reparse-1"))
+      .get();
+    expect(snapshot?.snapshotJson).toContain("冻结时的材料正文");
+    expect(snapshot?.sourceVersion).toBe(1);
+    // 材料行本身恢复（抽取副本刷新），快照不动——两个事实互不覆盖
+    const materialRow = db
+      .select()
+      .from(materials)
+      .where(eq(materials.id, "mat-资料分析-1"))
+      .get();
+    expect(materialRow?.contentMd).not.toContain("被篡改");
   });
 });

@@ -12,6 +12,8 @@ import {
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { expectHttpError } from "../test/expect-http-error.ts";
+import { commitImport } from "./content-service.ts";
+import { listLibraryUnits } from "./library-service.ts";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -380,6 +382,136 @@ describe("listStudentCourses（我的课程）", () => {
     const ctx = seed(db);
     expect(listStudentCourses(db, ctx.outsiderId).courses).toEqual([]);
     expect(listStudentCourses(db, ctx.archivedStudentId).courses).toEqual([]);
+  });
+});
+
+describe("QM-07：教师与学生计数一致（材料/组不重复计题，两侧同谓词）", () => {
+  it("QM 语料单元：资源库题数 === 学生目录题数 === 可答子题数", () => {
+    const db = createTestDb();
+    // 两材料 + 一组（引用材料 1、含 2 子题）+ 1 独立题 → 可答子题 3
+    const committed = commitImport(
+      db,
+      TEST_TEACHER_ID,
+      {
+        markdown: [
+          "---",
+          "kind: practice",
+          "unit: 计数一致",
+          "---",
+          "",
+          "# 计数一致练习",
+          "",
+          "::::material",
+          "材料一正文。",
+          "::::",
+          "",
+          "::::material",
+          "材料二正文。",
+          "::::",
+          "",
+          "::::group{title=资料组}",
+          "::ref{material=mat-计数一致-1}",
+          "::ref{question=计数一致-1}",
+          "::ref{question=计数一致-2}",
+          "::::",
+          "",
+          "::::question{type=choice difficulty=2}",
+          "组内题一。",
+          "",
+          "- [ ] 甲",
+          "- [x] 乙",
+          "::::",
+          "",
+          "::::question{type=judge difficulty=1}",
+          "组内题二。[[正确]]",
+          "::::",
+          "",
+          "::::question{type=fill difficulty=2}",
+          "独立题：[[42]]。",
+          "::::",
+          "",
+        ].join("\n"),
+        filename: "计数一致.md",
+      },
+      undefined,
+      undefined,
+      true,
+    );
+    const unitId = committed.units[0]?.id ?? "";
+    expect(unitId).not.toBe("");
+    // 学生侧环境：课程 + 可见单元条目 + 成员
+    const courseId = crypto.randomUUID();
+    db.insert(courses)
+      .values({
+        id: courseId,
+        teacherId: TEST_TEACHER_ID,
+        title: "计数课程",
+        order: 0,
+        description: null,
+        archivedAt: null,
+        createdAt: T0,
+      })
+      .run();
+    insertItem(db, courseId, {
+      kind: "unit",
+      refId: unitId,
+      order: 0,
+      visible: true,
+    });
+    const memberId = crypto.randomUUID();
+    db.insert(students)
+      .values({
+        id: memberId,
+        teacherId: TEST_TEACHER_ID,
+        displayName: "计数学生",
+        loginName: "count-stu",
+        passwordHash: null,
+        linkToken: `link-${memberId}`,
+        linkEnabled: true,
+        passwordEnabled: false,
+        note: null,
+        archivedAt: null,
+        createdAt: T0,
+      })
+      .run();
+    db.insert(courseStudents)
+      .values({ courseId, studentId: memberId, joinedAt: T0 })
+      .run();
+
+    // 教师侧：资源库题库列表（teacherId + 未软删 questions）
+    const teacherCount = listLibraryUnits(db, TEST_TEACHER_ID, {
+      deleted: false,
+    }).find((unit) => unit.id === unitId)?.questionCount;
+    // 学生侧：课程可见目录（同谓词 liveQuestionCounts）
+    const studentCount = getStudentCourseDetail(
+      db,
+      memberId,
+      courseId,
+    ).items.find(
+      (item) => item.kind === "unit" && item.refId === unitId,
+    )?.questionCount;
+    // 两侧一致且等于可答子题数（材料/组不产生题行、组不重复计题）
+    expect(teacherCount).toBe(3);
+    expect(studentCount).toBe(3);
+
+    // §17.5 P2-2 软删判别：软删独立题后两侧计数同步 3→2——判别「未软删」
+    // 谓词在教师与学生两侧都实际过滤（语料全未软删时该半边不被测到）
+    db.update(questions)
+      .set({ deletedAt: T0 })
+      .where(eq(questions.id, "计数一致-3"))
+      .run();
+    const teacherAfterDelete = listLibraryUnits(db, TEST_TEACHER_ID, {
+      deleted: false,
+    }).find((unit) => unit.id === unitId)?.questionCount;
+    const studentAfterDelete = getStudentCourseDetail(
+      db,
+      memberId,
+      courseId,
+    ).items.find(
+      (item) => item.kind === "unit" && item.refId === unitId,
+    )?.questionCount;
+    expect(teacherAfterDelete).toBe(2);
+    expect(studentAfterDelete).toBe(2);
   });
 });
 

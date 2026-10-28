@@ -30,12 +30,30 @@ import {
  * 所有底层操作吞错（Safari 隐私模式可能配额报错）：本地仓故障绝不阻塞作答。
  */
 
+/**
+ * 材料圈画冻结基准元数据：cssWidth/cssHeight=首笔落笔时的活排版宽高
+ * （CSS px，可为小数）。cssHeight 缺省=仅按宽匹配（早期数据）。活排版
+ * 与基准宽高 ±1px 匹配时笔迹才叠显（questionSurfaceMatchesLayout 同口径）。
+ */
+export interface MaterialInkBaseMeta {
+  readonly cssWidth: number;
+  readonly cssHeight?: number;
+}
+
 /** 一份 attempt 的本地草稿记录（IndexedDB 值形态） */
 export interface AttemptDraftRecord {
   /** questionId → 学生答案（本地最新） */
   answers: Record<string, StudentAnswer>;
   /** questionId → 笔迹文档（本地最新，每笔结束写入） */
   inks: Record<string, InkDoc>;
+  /** materialId → 材料圈画/手写笔迹（合并存储于 attempt 上下文） */
+  materialInks?: Record<string, InkDoc>;
+  /**
+   * materialId → 材料圈画冻结基准元数据（首笔落笔时的活排版宽高）：
+   * 笔迹逻辑坐标按该排版归一化，圈画态/只读回看按同一基准挂冻结框对齐。
+   * 客户端本地形态，不随服务端同步。
+   */
+  materialInkBases?: Record<string, MaterialInkBaseMeta>;
   /** 本地最后一次内容写入时间（epoch 毫秒） */
   savedAt: number;
   /** 最后一次全部成功同步到服务端的时间（epoch 毫秒；0=从未） */
@@ -94,6 +112,7 @@ function emptyRecord(): AttemptDraftRecord {
   return {
     answers: {},
     inks: {},
+    materialInks: {},
     savedAt: 0,
     syncedAt: 0,
     answerDigests: {},
@@ -189,6 +208,8 @@ async function safeGet(
     return {
       answers: raw.answers ?? {},
       inks: raw.inks ?? {},
+      materialInks: raw.materialInks ?? {},
+      materialInkBases: raw.materialInkBases ?? {},
       savedAt: raw.savedAt ?? 0,
       syncedAt: raw.syncedAt ?? 0,
       answerDigests: raw.answerDigests ?? {},
@@ -355,6 +376,57 @@ export const draftStore = {
       record.inks[questionId] = doc;
       record.savedAt = Date.now();
     });
+  },
+
+  /** 材料圈画手写笔迹：按 materialId 合并存储于本次 attempt 草稿 */
+  saveMaterialInk(attemptId: string, materialId: string, doc: InkDoc): void {
+    mutate(attemptId, (record) => {
+      record.materialInks ??= {};
+      record.materialInks[materialId] = doc;
+      record.savedAt = Date.now();
+    });
+  },
+
+  /** 读取材料笔迹（内存优先，未命中返回 null） */
+  getMaterialInk(attemptId: string, materialId: string): InkDoc | null {
+    return cache.get(attemptId)?.materialInks?.[materialId] ?? null;
+  },
+
+  /** 材料圈画冻结基准元数据：与 materialInks 同键合存（键=materialVersionKey） */
+  saveMaterialInkBase(
+    attemptId: string,
+    materialId: string,
+    meta: MaterialInkBaseMeta,
+  ): void {
+    mutate(attemptId, (record) => {
+      record.materialInkBases ??= {};
+      record.materialInkBases[materialId] = meta;
+      record.savedAt = Date.now();
+    });
+  },
+
+  /** 读取材料冻结基准（未命中返回 null） */
+  getMaterialInkBase(
+    attemptId: string,
+    materialId: string,
+  ): MaterialInkBaseMeta | null {
+    return cache.get(attemptId)?.materialInkBases?.[materialId] ?? null;
+  },
+
+  /** 清除材料冻结基准（笔迹全清空时随稿一并清除：空稿无对齐负担） */
+  removeMaterialInkBase(attemptId: string, materialId: string): void {
+    mutate(attemptId, (record) => {
+      if (record.materialInkBases?.[materialId] !== undefined) {
+        delete record.materialInkBases[materialId];
+        record.savedAt = Date.now();
+      }
+    });
+  },
+
+  /** 仅查询当前已载入内存的材料笔迹快照，供 UI 响应式渲染 */
+  peekMaterialInks(attemptId: string): Record<string, InkDoc> | null {
+    const record = cache.get(attemptId);
+    return record?.materialInks ? { ...record.materialInks } : null;
   },
 
   /** 某题答案已成功到达服务端：更新指纹（供增量同步去重） */
@@ -534,11 +606,28 @@ export const draftStore = {
       clearTimeout(timer);
       writeTimers.delete(attemptId);
     }
+    // 材料圈画笔迹目前仅有本机稿（无服务端同步链路）：交卷清稿时保留，
+    // 供结果页只读回看——「清缓存不得删除未同步材料」的保稿纪律；
+    // 冻结底宽元数据随笔迹一并保留（结果页按冻结宽重挂对齐回看）
+    const keepSource = cache.get(attemptId);
+    const materialInks = keepSource?.materialInks;
+    const materialInkBases = keepSource?.materialInkBases;
+    const keepMaterialInks =
+      materialInks !== undefined && Object.keys(materialInks).length > 0;
     cache.delete(attemptId);
     writeVersions.delete(attemptId);
     setPersistenceState(attemptId, "saved");
     try {
-      await backend().del(keyOf(attemptId));
+      if (keepMaterialInks && materialInks) {
+        const record = emptyRecord();
+        record.materialInks = materialInks;
+        if (materialInkBases) record.materialInkBases = materialInkBases;
+        record.savedAt = Date.now();
+        cache.set(attemptId, record);
+        await writeNow(attemptId);
+      } else {
+        await backend().del(keyOf(attemptId));
+      }
     } catch (err) {
       console.warn("草稿清除失败（不影响交卷）", err);
     }

@@ -14,6 +14,13 @@ import {
   importPreviewRequestSchema,
   importSummarySchema,
   lectureDetailSchema,
+  materialDeleteDataSchema,
+  materialDetailSchema,
+  materialUpdateDataSchema,
+  materialUpdateRequestSchema,
+  questionGroupDeleteDataSchema,
+  questionGroupDetailSchema,
+  questionGroupUpdateDataSchema,
   studentLectureDetailOkSchema,
   studentLectureDetailQuerySchema,
   studentLectureDetailSchema,
@@ -835,5 +842,159 @@ describe("importSummary/importCommitData 的 kind 字段（可选增量）", () 
       importCommitDataSchema.safeParse({ ...base, kind: "lesson" }).success,
     ).toBe(true);
     expect(importCommitDataSchema.safeParse(base).success).toBe(true);
+  });
+});
+
+// ---------- tt-06b / QM-05：导入预览材料/组增量 + 材料/组编辑契约 ----------
+
+describe("QM-05 导入预览与材料/组编辑契约增量", () => {
+  const summaryBase = {
+    unitCount: 1,
+    lectureCount: 0,
+    questionCount: 5,
+    typeDistribution: { choice: 5 },
+  };
+
+  it("summary 携带 materialCount/groupCount（可选增量；缺省兼容旧载荷）", () => {
+    expect(
+      importSummarySchema.safeParse({
+        ...summaryBase,
+        materialCount: 1,
+        groupCount: 1,
+      }).success,
+    ).toBe(true);
+    expect(importSummarySchema.safeParse(summaryBase).success).toBe(true);
+    expect(
+      importSummarySchema.safeParse({ ...summaryBase, materialCount: -1 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("动作枚举含材料/组四 kind；材料动作 title 用 id 兜底（min(1) 不放宽）", () => {
+    const action = {
+      kind: "updateMaterial",
+      title: "材料 mat-u1-1",
+      unitId: "u1",
+      folderName: null,
+      restore: false,
+    };
+    expect(
+      importPreviewDataSchema.safeParse({
+        summary: summaryBase,
+        issues: [],
+        actions: [action],
+        warnings: [],
+      }).success,
+    ).toBe(true);
+    expect(
+      importPreviewDataSchema.safeParse({
+        summary: summaryBase,
+        issues: [],
+        actions: [{ ...action, kind: "createGroup", title: "题组 grp-u1-1" }],
+        warnings: [],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("预览 warning 枚举新增 REF_QUESTION_IN_QUESTION / MATERIAL_MOVED_ACROSS_UNITS", () => {
+    const data = {
+      summary: summaryBase,
+      issues: [],
+      actions: [],
+      warnings: [
+        {
+          code: "REF_QUESTION_IN_QUESTION",
+          message:
+            "题内 ::ref{question=q1} 是无效写法：子题引用只能写在组内；该行不会进入题干也不会建立引用",
+        },
+        {
+          code: "MATERIAL_MOVED_ACROSS_UNITS",
+          message:
+            "材料「mat-1」将从单元「甲」移动到单元「乙」，3 处引用仍指向该材料",
+        },
+      ],
+    };
+    expect(importPreviewDataSchema.safeParse(data).success).toBe(true);
+    expect(
+      importPreviewDataSchema.safeParse({
+        ...data,
+        warnings: [{ code: "NOT_A_CODE", message: "x" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("材料/组详情、编辑请求与受影响引用契约", () => {
+    const detail = materialDetailSchema.safeParse({
+      id: "mat-u1-1",
+      unitId: "u1",
+      title: "给定资料",
+      sourceMd: "::::material{id=mat-u1-1}\n正文\n::::",
+      version: 2,
+      updatedAt: "2026-10-24T08:00:00.000Z",
+    });
+    expect(detail.success).toBe(true);
+    // title 可缺省（材料无 title 属性）
+    expect(
+      materialDetailSchema.safeParse({
+        id: "mat-u1-1",
+        unitId: "u1",
+        sourceMd: "…",
+        version: 1,
+        updatedAt: "2026-10-24T08:00:00.000Z",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      materialUpdateRequestSchema.safeParse({ sourceMd: "::::material{…}" })
+        .success,
+    ).toBe(true);
+    expect(
+      materialUpdateRequestSchema.safeParse({ sourceMd: "" }).success,
+    ).toBe(false);
+
+    const update = materialUpdateDataSchema.safeParse({
+      id: "mat-u1-1",
+      version: 3,
+      updatedAt: "2026-10-24T09:00:00.000Z",
+      affectedRefs: [
+        { ownerKind: "group", ownerId: "grp-u1-1", refOrder: 0 },
+        { ownerKind: "question", ownerId: "u1-2", refOrder: 0 },
+      ],
+    });
+    expect(update.success).toBe(true);
+
+    expect(
+      materialDeleteDataSchema.safeParse({
+        id: "mat-u1-1",
+        deletedAt: "2026-10-24T09:00:00.000Z",
+        affectedRefs: [],
+      }).success,
+    ).toBe(true);
+
+    const groupDetail = questionGroupDetailSchema.safeParse({
+      id: "grp-u1-1",
+      unitId: "u1",
+      label: "1～5",
+      sourceMd: "::::group{id=grp-u1-1}\n…\n::::",
+      version: 1,
+      updatedAt: "2026-10-24T08:00:00.000Z",
+    });
+    expect(groupDetail.success).toBe(true);
+
+    expect(
+      questionGroupUpdateDataSchema.safeParse({
+        id: "grp-u1-1",
+        version: 2,
+        updatedAt: "2026-10-24T09:00:00.000Z",
+        affectedQuestionIds: ["u1-1", "u1-2"],
+      }).success,
+    ).toBe(true);
+    expect(
+      questionGroupDeleteDataSchema.safeParse({
+        id: "grp-u1-1",
+        deletedAt: "2026-10-24T09:00:00.000Z",
+        affectedQuestionIds: [],
+      }).success,
+    ).toBe(true);
   });
 });

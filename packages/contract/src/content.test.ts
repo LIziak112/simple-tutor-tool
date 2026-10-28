@@ -4,7 +4,9 @@ import {
   frontmatterSchema,
   lectureSchema,
   lintIssueSchema,
+  NEW_QUESTION_TYPES,
   parsedDocumentSchema,
+  type QuestionType,
   questionAnswersSchema,
   questionPublicSchema,
   questionSchema,
@@ -27,8 +29,8 @@ const fullChoiceQuestion = {
     '::::question{type=choice difficulty=1 knowledge="相反数"}\n$-5$ 的相反数是（ ）\n\n- [ ] $-5$\n- [x] $5$\n- [ ] $\\frac{1}{5}$\n::::',
 };
 
-describe("QuestionType：七种题型（§5.1）", () => {
-  it("恰为七种题型，逐一可解析", () => {
+describe("QuestionType：旧七型 + 三新底层交互型（§5.1 / TT-01 D2，TT-05a 落地）", () => {
+  it("恰为十种题型，逐一可解析；旧七型枚举序逐字保持（前缀）", () => {
     expect(questionTypeSchema.options).toEqual([
       "judge",
       "choice",
@@ -37,6 +39,9 @@ describe("QuestionType：七种题型（§5.1）", () => {
       "solve",
       "apply",
       "find-error",
+      "response",
+      "matching",
+      "ordering",
     ]);
     for (const type of questionTypeSchema.options) {
       expect(questionTypeSchema.safeParse(type).success).toBe(true);
@@ -46,6 +51,12 @@ describe("QuestionType：七种题型（§5.1）", () => {
   it("未知题型被拒绝（lint 由 T1.5 报错，契约层不允许入库）", () => {
     expect(questionTypeSchema.safeParse("essay").success).toBe(false);
     expect(questionTypeSchema.safeParse("single-choice").success).toBe(false);
+  });
+
+  it("NEW_QUESTION_TYPES 恰为枚举尾三项（§12.2-8 开关检测单源的漂移守卫）", () => {
+    expect(NEW_QUESTION_TYPES).toEqual(
+      questionTypeSchema.options.slice(-3) as QuestionType[],
+    );
   });
 });
 
@@ -283,6 +294,32 @@ describe("LintIssue：linter 输出（§5.1）", () => {
     ]) {
       expect(lintIssueSchema.safeParse(bad).success).toBe(false);
     }
+  });
+
+  it("target 可选结构化定位（tt-07b P2-1）：可选携带、缺省不注入键", () => {
+    const valid = {
+      level: "error",
+      line: 2,
+      column: 3,
+      code: "UNKNOWN_MATERIAL_REF",
+      message: "m",
+    };
+    // 可选携带：键值为字符串的结构化目标
+    const withTarget = lintIssueSchema.parse({
+      ...valid,
+      target: { material: "mat-404" },
+    });
+    expect(withTarget.target).toEqual({ material: "mat-404" });
+    // 缺省不注入键（与 materials/groups 同款键集纪律）
+    const withoutTarget = lintIssueSchema.parse(valid);
+    expect("target" in withoutTarget).toBe(false);
+    // 值类型收窄：非字符串值拒绝
+    expect(
+      lintIssueSchema.safeParse({
+        ...valid,
+        target: { material: 42 },
+      }).success,
+    ).toBe(false);
   });
 });
 

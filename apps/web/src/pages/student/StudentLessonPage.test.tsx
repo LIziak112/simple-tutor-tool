@@ -10,6 +10,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  fetchAttemptContextApi,
   fetchStudentNoteHeadsApi,
   restartLessonAttemptApi,
   startLessonAttemptApi,
@@ -33,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     restartLessonAttemptApi: vi.fn(),
     submitLessonQuestionApi: vi.fn(),
     fetchStudentNoteHeadsApi: vi.fn(),
+    fetchAttemptContextApi: vi.fn(),
   };
 });
 
@@ -40,6 +42,7 @@ const mockedStart = vi.mocked(startLessonAttemptApi);
 const mockedRestart = vi.mocked(restartLessonAttemptApi);
 const mockedSubmitQuestion = vi.mocked(submitLessonQuestionApi);
 const mockedNoteHeads = vi.mocked(fetchStudentNoteHeadsApi);
+const mockedAttemptContext = vi.mocked(fetchAttemptContextApi);
 
 const LECTURE_ID = "44444444-4444-4444-8444-444444444444";
 const COURSE_ID = "12121212-1212-4121-8121-121212121212";
@@ -243,6 +246,10 @@ beforeEach(() => {
       async (_attemptId: string, questionIds: readonly string[]) =>
         questionIds.map(() => NONE_HEAD),
     );
+  // QM-14：冻结上下文缺省空投影（legacy 卷口径——无组段、渲染零变化）
+  mockedAttemptContext
+    .mockReset()
+    .mockResolvedValue({ attemptId: ATTEMPT_ID, materials: [], groups: [] });
   // jsdom 无 matchMedia/scrollIntoView：目录桌面态与滚动桩（同讲义阅读页测试）
   vi.stubGlobal(
     "matchMedia",
@@ -277,6 +284,120 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     expect(
       screen.queryByRole("button", { name: "完成练习" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("QM-14 组段呈现：冻结上下文的组在首个成员题卡前渲染组头与共享材料", async () => {
+    mockedStart.mockResolvedValue(lessonStart());
+    mockedAttemptContext.mockResolvedValue({
+      attemptId: ATTEMPT_ID,
+      materials: [
+        {
+          id: "mat-1",
+          title: "某省粮食生产",
+          contentMd: "粮食总产量 3096.2 万吨，实现 {{slot-1}} 十二年增产。",
+          anchors: [],
+          slots: [{ id: "slot-1", slotKind: "choice", order: 0 }],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [
+        {
+          id: "grp-1",
+          title: "根据以下资料回答第 1～2 题",
+          label: "1–2",
+          introMd: "先读材料，再作答。",
+          materialRefs: [{ material: "mat-1" }],
+          questionIds: [Q1.id, Q2.id],
+          sourceVersion: 1,
+        },
+      ],
+    });
+    renderPage();
+    // 组头与材料面板出现（材料槽位标记渲染为编号空位）
+    expect(
+      await screen.findByText("根据以下资料回答第 1～2 题"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "共享材料：某省粮食生产" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("（1）")).toBeInTheDocument();
+    // DOM 序：组块在首个成员（第 1 题）题卡之前
+    const groupBlock = screen
+      .getByText("根据以下资料回答第 1～2 题")
+      .closest('[data-slot="lesson-group-block"]');
+    const firstCard = screen.getByText("第 1 题").closest("article,div");
+    expect(groupBlock).not.toBeNull();
+    expect(firstCard).not.toBeNull();
+    expect(
+      (groupBlock?.compareDocumentPosition(firstCard as Node) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 题卡照常渲染（组不改变题卡树位）
+    expect(screen.getByText("第 2 题")).toBeInTheDocument();
+  });
+
+  it("QM-14 上下文失败非阻断：材料列缺失但题卡照常作答，提供重试", async () => {
+    mockedStart.mockResolvedValue(lessonStart());
+    mockedAttemptContext.mockRejectedValue(new Error("网络异常"));
+    renderPage();
+    expect(await screen.findByText("第 1 题")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重试加载共享材料" }),
+    ).toBeInTheDocument();
+    // 固定文案面向学生，不透出技术异常文本（error.message 如 fetch failed）
+    expect(
+      screen.getByText("共享材料加载失败，不影响作答题目。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("网络异常")).not.toBeInTheDocument();
+  });
+
+  // P1-2：solo 题的题级 ::ref 材料随题卡之前自然阅读（讲练单列排版与组块
+  // 同纪律，不挂跳转按钮）。
+  it("P1-2 题级材料：solo 题材料块在题卡前渲染；组不误挂题级材料", async () => {
+    mockedStart.mockResolvedValue(
+      lessonStart({
+        questions: [
+          Q1,
+          { ...Q2, materialRefs: [{ material: "mat-solo" }] },
+          Q3,
+        ],
+      }),
+    );
+    mockedAttemptContext.mockResolvedValue({
+      attemptId: ATTEMPT_ID,
+      materials: [
+        {
+          id: "mat-solo",
+          title: "给定资料一",
+          contentMd: "题级引用材料正文。",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [],
+    });
+    renderPage();
+    expect(
+      await screen.findByRole("region", { name: "共享材料：给定资料一" }),
+    ).toBeInTheDocument();
+    const soloBlock = screen.getByLabelText("本题材料");
+    // DOM 序：材料块在第 2 题（引用题）题卡之前
+    const secondCard = screen.getByText("第 2 题").closest("article,div");
+    expect(secondCard).not.toBeNull();
+    expect(
+      (soloBlock.compareDocumentPosition(secondCard as Node) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 第 1 题（无题级引用）前无材料块：材料块在第一题之后（属于第 2 题）
+    const firstCard = screen.getByText("第 1 题").closest("article,div");
+    expect(firstCard).not.toBeNull();
+    expect(
+      (firstCard?.compareDocumentPosition(soloBlock) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("md 段拼接目录：桌面侧栏展示全部 H2 标题", async () => {
@@ -503,8 +624,9 @@ describe("StudentLessonPage：已完成卷视图", () => {
     expect(
       await screen.findByRole("button", { name: "再做一次" }),
     ).toBeInTheDocument();
-    // 汇总行（graded：答对 1 · 答错 1 · 待批 1）
-    expect(screen.getByText("答对 1 · 答错 1 · 待批 1")).toBeInTheDocument();
+    // 汇总行（graded：答对 1 · 答错 1 · 待判断 1——QM-12 有效判定口径的
+    // 未判断数，与逐题徽章同出处）
+    expect(screen.getByText("答对 1 · 答错 1 · 待判断 1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "再做一次" }));
     fireEvent.click(await screen.findByRole("button", { name: "开始新一轮" }));
     await waitFor(() => expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID));

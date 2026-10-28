@@ -1,8 +1,12 @@
 import type { AttemptResultQuestion } from "@tutor/contract";
+import { optionsPublicStructureOf } from "@tutor/contract";
 import { cn } from "cn";
 import { CheckCircle2, Clock, XCircle } from "lucide-react";
-import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { letterOf } from "./answer-format";
+import {
+  OptionComparisonList,
+  optionCorrectOf,
+  optionPickedOf,
+} from "@/features/answering/views/choice";
 
 /**
  * 结果呈现的轻量共用件（从 AttemptResultView 拆出，M3-D2）：逐题反馈区
@@ -90,7 +94,8 @@ export function VerdictBadge({
 }
 
 /** 选项行（含正确项与学生所选标记；仅 choice/multi）。讲练页题卡结果态、
- *  逐题反馈与结果视图共用（单一出处）。 */
+ *  逐题反馈与结果视图共用（单一出处）。UA-03 起内部委托呈现层选项对照
+ *  （answering/views/choice，三处重复实现的合并单源）；DOM/文案逐字不变。 */
 export function ResultOptions({
   question,
   released,
@@ -100,64 +105,13 @@ export function ResultOptions({
 }) {
   const options = question.snapshot.options;
   if (options === undefined) return null;
-  const picked =
-    question.answer?.kind === "choice"
-      ? [question.answer.index]
-      : question.answer?.kind === "multi"
-        ? question.answer.indexes
-        : [];
-  const correct =
-    question.answers?.kind === "choice"
-      ? [question.answers.index]
-      : question.answers?.kind === "multi"
-        ? question.answers.indexes
-        : [];
   return (
-    <ol className="flex flex-col gap-1.5" aria-label="选项">
-      {options.map((option, index) => {
-        const isPicked = picked.includes(index);
-        const isCorrect = released && correct.includes(index);
-        return (
-          <li
-            key={option}
-            className={cn(
-              "flex min-h-11 flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-sm",
-              isCorrect
-                ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10"
-                : isPicked && released
-                  ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
-                  : isPicked
-                    ? "border-primary bg-primary/5"
-                    : "border-transparent",
-            )}
-          >
-            <span className="mt-0.5 w-5 shrink-0 font-semibold">
-              {letterOf(index)}
-            </span>
-            <RichMarkdown
-              source={option}
-              className="min-w-0 flex-1 text-base [&_p]:my-0"
-            />
-            {isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                {isPicked ? "正确项 · 你的选择" : "正确项"}
-              </span>
-            )}
-            {isPicked && !isCorrect && (
-              <span
-                className={cn(
-                  "shrink-0 text-xs font-medium",
-                  released
-                    ? "text-red-700 dark:text-red-300"
-                    : "text-foreground",
-                )}
-              >
-                你的选择
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <OptionComparisonList
+      options={optionsPublicStructureOf(options).options}
+      picked={optionPickedOf(question.answer)}
+      correct={optionCorrectOf(question.answers)}
+      variant="student"
+      released={released}
+    />
   );
 }

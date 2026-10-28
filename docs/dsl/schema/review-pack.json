@@ -35,7 +35,10 @@
             "fill",
             "solve",
             "apply",
-            "find-error"
+            "find-error",
+            "response",
+            "matching",
+            "ordering"
           ]
         },
         "difficulty": {
@@ -160,6 +163,78 @@
                 "answer"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "response"
+                },
+                "referenceMd": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "variantsMd": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "referenceMd"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "matching"
+                },
+                "pairs": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "pairs"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "ordering"
+                },
+                "sequence": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "sequence"
+              ],
+              "additionalProperties": false
             }
           ]
         },
@@ -183,6 +258,13 @@
               "type": "null"
             }
           ]
+        },
+        "materialRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^m\\d{3,}$"
+          }
         },
         "no": {
           "type": "integer",
@@ -242,20 +324,12 @@
           ]
         },
         "reviewSource": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "teacher",
-                "self",
-                "automatic"
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "判定来源；学生自评不能作为独立完成或客观能力的证明"
+          "type": "string",
+          "enum": [
+            "auto",
+            "teacher",
+            "self"
+          ]
         },
         "teacherMark": {
           "anyOf": [

@@ -9,7 +9,7 @@ import {
   attemptAnswerProgressSchema,
   attemptResultCountsSchema,
 } from "./result-counts.ts";
-import { selfReviewStateSchema } from "./self-review.ts";
+import { verdictSourceSchema } from "./self-review.ts";
 import { teacherAttemptSourceSchema } from "./teacher-attempt-api.ts";
 
 /**
@@ -156,18 +156,19 @@ export const wrongQuestionsQuerySchema = z.object({
 
 /**
  * 错题本单轮作答（wrongQuestionCardSchema.rounds 的元素，2026-10 轮次史）：
- * 该题的一次**已判定**作答（已交卷且 finalCorrect 非 null；待批轮不出现）。
+ * 该题的一次**已判定**作答（已交卷且有效判定非 null——QM-12 起 reference_self
+ * 行按学生自评计为已判定轮；未判断轮不出现）。
  * 来源标题为服务端算好的展示串（作业=作业标题；课程练习=「单元标题 · 第 n 次」，
  * 与前端 records-views.recordTitleOf 同口径），无教师侧敏感键。
  */
 export const wrongQuestionRoundSchema = z.object({
   /** 历史轮次缺省未记录来源，不能冒充客观判断。 */
-  reviewSource: selfReviewStateSchema.shape.source.optional(),
+  reviewSource: verdictSourceSchema.optional(),
   /** 该轮作答 id（attempts.id） */
   attemptId: z.uuid(),
   /** 该轮作答来源 */
   sourceType: attemptSourceSchema,
-  /** 该轮最终判定是否做对 */
+  /** 该轮有效判定是否做对（QM-12：教师判 > 自评 > 自动——自评「错」即错轮） */
   correct: z.boolean(),
   /**
    * 该轮是否有实际作答内容（#6980-3，@tutor/grading isUnanswered 口径）：
