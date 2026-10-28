@@ -1265,7 +1265,9 @@ describe("资源库路由：export.md 往返", () => {
     );
     expect(res.status).toBe(200);
     const markdown = await res.text();
-    expect(markdown.startsWith("---\nkind: lecture\n---\n\n")).toBe(true);
+    expect(
+      markdown.startsWith('---\nkind: lecture\ntitle: "第1讲 有理数"\n---\n\n'),
+    ).toBe(true);
     // 内容部分与库内讲义原文一致（讲义样例按 H1 切两篇，库中只存本篇）
     const storedMarkdown = db
       .select({ markdown: lectures.markdown })
@@ -1294,6 +1296,160 @@ describe("资源库路由：export.md 往返", () => {
       previewBody.data.issues.filter((i) => i.level === "error"),
     ).toHaveLength(0);
     expect(previewBody.data.summary.lectureCount).toBe(1);
+  });
+
+  it("导出讲义含 title 行：本地改 H1 后重导命中同一讲义行（title 列不变）", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      {
+        markdown:
+          "---\nkind: lecture\n---\n\n# 第1讲 导出钉身份\n\n正文一段。\n",
+        filename: "导出钉身份.md",
+      },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 导出钉身份"))
+      .get()?.id;
+    if (lectureId === undefined) throw new Error("讲义未入库");
+    const countBefore = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .all().length;
+
+    // 导出 frontmatter 含 title 行（frontmatter title 是既有讲义身份键）
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    const markdown = await res.text();
+    expect(
+      markdown.startsWith(
+        '---\nkind: lecture\ntitle: "第1讲 导出钉身份"\n---\n\n',
+      ),
+    ).toBe(true);
+
+    // 教师本地只改 H1（frontmatter title 行原样保留）→ 重导命中同一讲义行
+    const renamed = markdown.replace(
+      "# 第1讲 导出钉身份",
+      "# 第1讲 导出钉身份（修订）",
+    );
+    const reimport = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: renamed, filename: "导出钉身份-修订.md" },
+    );
+    expect(reimport.status).toBe(200);
+    const body = (await reimport.json()) as {
+      data: {
+        lectures: {
+          id: string;
+          title: string;
+          inserted: boolean;
+          updated: boolean;
+        }[];
+      };
+    };
+    expect(body.data.lectures).toEqual([
+      {
+        id: lectureId,
+        title: "第1讲 导出钉身份",
+        inserted: false,
+        updated: true,
+      },
+    ]);
+
+    // 同一行被更新：title 列保持 frontmatter 值、正文为新文件正文；无新讲义行
+    const row = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, lectureId))
+      .get();
+    expect(row?.title).toBe("第1讲 导出钉身份");
+    expect(row?.markdown).toContain("（修订）");
+    expect(db.select({ id: lectures.id }).from(lectures).all()).toHaveLength(
+      countBefore,
+    );
+  });
+
+  it("导出 title 转义钉：标题含双引号与反斜杠 → frontmatter 按 JSON.stringify 口径转义，导出原样重导命中同一讲义行", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    // 标题同时含 YAML 双引号标量中必须转义的两种字符（双引号 / 反斜杠）
+    const title = '第"1"讲\\反斜杠';
+    // 导入侧 frontmatter 同样按该转义口径书写（导出产物的镜像，转义可互换）
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      {
+        markdown: `---\nkind: lecture\ntitle: ${JSON.stringify(title)}\n---\n\n# 第1讲 转义钉\n\n正文一段。\n`,
+        filename: "转义钉.md",
+      },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(eq(lectures.title, title))
+      .get()?.id;
+    if (lectureId === undefined) throw new Error("讲义未入库");
+    const countBefore = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .all().length;
+
+    // 导出 frontmatter title 行 = JSON.stringify 直接转义（引号与反斜杠不丢不变形）
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    const markdown = await res.text();
+    expect(
+      markdown.startsWith(
+        `---\nkind: lecture\ntitle: ${JSON.stringify(title)}\n---\n\n`,
+      ),
+    ).toBe(true);
+
+    // 导出产物原样重导 → frontmatter title 命中同一讲义行（转义可逆，身份不断链）
+    const reimport = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown, filename: "转义钉-重导.md" },
+    );
+    expect(reimport.status).toBe(200);
+    const body = (await reimport.json()) as {
+      data: {
+        lectures: {
+          id: string;
+          title: string;
+          inserted: boolean;
+          updated: boolean;
+        }[];
+      };
+    };
+    expect(body.data.lectures).toEqual([
+      { id: lectureId, title, inserted: false, updated: true },
+    ]);
+    expect(db.select({ id: lectures.id }).from(lectures).all()).toHaveLength(
+      countBefore,
+    );
   });
 });
 
@@ -1358,7 +1514,11 @@ describe("资源库路由：export.md 讲练页往返（kind: lesson，导出→
     );
     expect(res.status).toBe(200);
     const exported = await res.text();
-    expect(exported.startsWith("---\nkind: lesson\n---\n\n")).toBe(true);
+    expect(
+      exported.startsWith(
+        '---\nkind: lesson\ntitle: "第1讲 有理数讲练"\n---\n\n',
+      ),
+    ).toBe(true);
     expect(exported).toContain('id="讲练导出单元-1"'); // 缺省 id 已显式化
     expect(exported).toContain('id="lesson-choice-1"');
     expect(exported.endsWith(before?.markdown ?? "")).toBe(true);
@@ -1422,6 +1582,41 @@ describe("资源库路由：export.md 讲练页往返（kind: lesson，导出→
       teacherCookie,
     );
     expect(await second.text()).toBe(exported);
+  });
+
+  it("导出 lesson 讲义同规则：kind: lesson + title 行 + 含注入 id 的题块原文", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: LESSON_EXPORT_MD, filename: "讲练导出.md" },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 有理数讲练"))
+      .get()?.id;
+    if (lectureId === undefined) throw new Error("讲练讲义未入库");
+
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    const exported = await res.text();
+    expect(
+      exported.startsWith(
+        '---\nkind: lesson\ntitle: "第1讲 有理数讲练"\n---\n\n',
+      ),
+    ).toBe(true);
+    // 题块原文含注入的显式 id（导出后重导题号稳定的前提）
+    expect(exported).toContain('id="讲练导出单元-1"');
+    expect(exported).toContain('id="lesson-choice-1"');
   });
 });
 
@@ -1532,6 +1727,47 @@ describe("资源库路由：export.md 保留教学包声明（T7.8）", () => {
       teacherCookie,
     );
     expect(await cleared.text()).not.toContain("teachingPack:");
+  });
+
+  it("讲义导出含教学包声明时行序固定 kind → title → teachingPack", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PACK_MD, filename: "导出声明.md" },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = (
+      (
+        (await (
+          await request(
+            app,
+            "GET",
+            "/api/teacher/library/lectures",
+            teacherCookie,
+          )
+        ).json()) as { data: { lectures: { id: string; title: string }[] } }
+      ).data.lectures.find((l) => l.title === "第1讲 导出声明") ?? {
+        id: "",
+      }
+    ).id;
+
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    const md = await res.text();
+    // 行序固定：kind → title → teachingPack（字节级钉住，title 行插在声明行之前）
+    expect(
+      md.startsWith(
+        '---\nkind: lecture\ntitle: "第1讲 导出声明"\nteachingPack: {formatVersion: 1, name: "导出测试包", version: "2", directives: ["steps"], validators: ["judge"]}\n---\n',
+      ),
+    ).toBe(true);
   });
 
   it("export-pack.zip：文件直出 application/zip 附件；未知单元 404；引用失效 422 LINT_ERROR", async () => {

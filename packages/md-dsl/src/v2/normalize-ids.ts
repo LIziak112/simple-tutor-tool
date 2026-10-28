@@ -16,6 +16,7 @@ import { defaultQuestionIdOf, isQuestionContainer } from "./question.ts";
 import {
   canonicalName,
   FALLBACK_UNIT_ID,
+  FENCE_ATTR_ID_RE,
   firstNonEmpty,
   isContainer,
   isYaml,
@@ -54,11 +55,14 @@ export interface NormalizedQmIds {
   readonly changed: boolean;
 }
 
-/** 围栏开栏行（::+名字 + 可选属性行；结束围栏不含名字段，不匹配） */
+/**
+ * 围栏开栏行（::+名字 + 可选属性行；结束围栏不含名字段，不匹配）。
+ * 与 question 围栏专用正则（shared.ts QUESTION_FENCE_RE，question.ts 与
+ * lecture.ts 共用）非同一正则，不合并——通用版匹配任意名字围栏且属组必须
+ * 闭合 }，题容器版另认 [标签] 与 question 名，两处职责不同。id 判定正则
+ * 两处共用 shared.ts 的 FENCE_ATTR_ID_RE。
+ */
 const FENCE_LINE_RE = /^(\s*:::+[a-zA-Z][a-zA-Z0-9-]*)(\{.*\})?$/;
-
-/** 属性行内是否已声明 id=（键前是行首/空白/左花括号） */
-const FENCE_ATTR_ID_RE = /(^|[\s{])id\s*=/;
 
 /** 槽位标记（与 materials.ts SLOT_MARKER_RE 同形态类；字面量求值避免共享 lastIndex） */
 const SLOT_MARKER_RE = /\{\{([^{}]*)\}\}/g;

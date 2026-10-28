@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import type { LibraryBatchData, SharedFileSummary } from "@tutor/contract";
+import { QUESTION_FENCE_RE } from "@tutor/md-dsl";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { lectures, units } from "../db/schema";
@@ -313,14 +314,14 @@ function unquoteYaml(value: string | undefined): string | undefined {
   return value;
 }
 
-/** 题目容器开始行（与 exportUnitMd/ensureQuestionId 同一形态口径） */
-const QUESTION_OPEN_RE = /^:{4}question(\{.*)?$/;
-
 /**
  * 轻量提取类型 / 标题 / 题数（D15：解析 frontmatter/标题级信息，不做完整 lint）：
  * - kind：frontmatter `kind: lecture` → lecture、`kind: lesson` → lesson，其余（缺省/mixed/practice）→ practice；
  * - title：讲义与讲练页取首个 H1；练习取 frontmatter unit；兜底文件名去 .md 扩展名；
- * - questionCount：`::::question` 行数。
+ * - questionCount：`::::question` 行数——围栏判定直接 import md-dsl 的
+ *   QUESTION_FENCE_RE（解析器宽口径：任意冒号数 + `[标签]` + `{属性}`），与
+ *   withQuestionId / hasExplicitQuestionId / lecture 切段注入同一出处，不再
+ *   手抄窄口径正则（旧本地拷贝认「恰四冒号」，`:::question[标签]` 形态会漏计）。
  */
 function extractSummaryInfo(
   filename: string,
@@ -350,7 +351,7 @@ function extractSummaryInfo(
   }
   let questionCount = 0;
   for (const line of lines) {
-    if (QUESTION_OPEN_RE.test(line)) questionCount += 1;
+    if (QUESTION_FENCE_RE.test(line)) questionCount += 1;
   }
   return { kind, title, questionCount };
 }

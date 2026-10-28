@@ -28,6 +28,13 @@ export {
   analyzeLectureStructure,
   weightedCharCounts,
 } from "./v2/lecture-structure.ts";
+// 讲练页正文题块定位替换（讲练文档 SSOT P1a）：题库单题编辑回写讲义正文的
+// 唯一实现——只认显式 id、恰一命中才替换，缺块/重复拒绝（replaced:false）。
+export type { ReplacedLessonBlock } from "./v2/lesson-block.ts";
+export {
+  lessonQuestionBlockOf,
+  replaceLessonQuestionBlock,
+} from "./v2/lesson-block.ts";
 // ::ref 属性串解析（行内式 ::ref 的属性抽取单源，materials.ts 单一出处）：
 // 服务端导入层（P2-2 题内块式 ::ref{question=} 告警）复用，不另写一份。
 // 槽位编号正文（QM-16 单源）：{{slot-id}} → **（N）——学生端材料面板、
@@ -60,6 +67,10 @@ export {
   stripOptionListMd,
   studentStemMd,
 } from "./v2/public-stem.ts";
+// 题块围栏 id 注入与显式判定（自 library-service 私有 ensureQuestionId 上移收敛，
+// 2026-10 讲练文档 SSOT）：library 导出回写、题库回写讲义（lesson-block）与
+// 导入预览缺省题号错位预警（hasExplicitQuestionId）共用，语义与解析器提取口径一致。
+export { hasExplicitQuestionId, withQuestionId } from "./v2/question.ts";
 export type {
   QuestionBlockEntry,
   QuestionNodesInput,
@@ -71,7 +82,10 @@ export {
 // 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
 // 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
 export { expandSelectionIds } from "./v2/references.ts";
-export { processor } from "./v2/shared.ts";
+// 题容器开围栏行正则（shared.ts 单一出处）：除包内注入/判定/切段共用外，
+// 服务端 shared-service 的 D15 轻量题数提取也 import 本常量——围栏口径全仓
+// 单源，不再允许各处手抄第三份窄口径（恰四冒号）漂移。
+export { processor, QUESTION_FENCE_RE } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。
 export type { SplitLessonBlocksOptions } from "./v2/split-lesson.ts";

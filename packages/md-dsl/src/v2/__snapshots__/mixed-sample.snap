@@ -75,6 +75,7 @@ $|a|$ 是数轴上表示 $a$ 的点到原点的距离，因此 $|a|\geq 0$；互
           "difficulty": 1,
           "hints": [],
           "id": "随堂练习-1",
+          "idExplicit": false,
           "knowledge": [
             "有理数的概念",
           ],
@@ -97,6 +98,7 @@ $0$ 既不是正数也不是负数；最小的正整数是 $1$。
           "difficulty": 2,
           "hints": [],
           "id": "随堂练习-2",
+          "idExplicit": false,
           "knowledge": [
             "数轴",
           ],
@@ -150,6 +152,7 @@ $-2<-1.5$，$-1.6<-1.5$，$-\dfrac{7}{4}=-1.75<-1.5$，只有 $0>-1.5$。故选 
           "difficulty": 2,
           "hints": [],
           "id": "随堂练习-3",
+          "idExplicit": false,
           "knowledge": [
             "绝对值",
           ],

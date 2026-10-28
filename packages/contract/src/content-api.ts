@@ -55,6 +55,18 @@ export const importPreviewRequestSchema = z.object({
   folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
   /** 批量导入的文件相对路径（如 "chapter1/练习.md"）；粘贴内容无路径 */
   sourcePath: z.string().max(512, "sourcePath 过长").optional(),
+  /**
+   * 显式替换目标讲练页/讲义 id（讲练文档 SSOT P2a）：教师指认「本文档替换该
+   * 讲练页/讲义」——跳过标题匹配，绑定目标行更新（id 不变、title 更新为文档
+   * 标题、markdown/kind 按导入是权威覆盖、软删恢复），旧随堂练习接管软删
+   * （复用 LESSON_EMBEDDED_*_SUPERSEDED 语义）；新建单元落目标所在文件夹。
+   * preview 与 commit 同字段（commit 请求经 importCommitRequestSchema =
+   * importPreviewRequestSchema.extend 自动获得）。前置校验错误码：
+   * REPLACE_LECTURE_NOT_FOUND（404，域内不存在不暴露存在性）、
+   * REPLACE_REQUIRES_SINGLE_LECTURE（422，文档解析讲义篇数 ≠ 1）、
+   * REPLACE_TITLE_CONFLICT（422，目标文件夹内另一未软删讲义与文档新标题同名）。
+   */
+  replaceLectureId: z.uuid("replaceLectureId 必须是 UUID 格式").optional(),
 });
 
 /**
@@ -145,6 +157,12 @@ export const importUnitQuestionPlanSchema = z.object({
   inserted: z.number().int().min(0),
   /** 文件中出现、库中已存在（含回收站软删，将恢复）的题目数（version+1） */
   updated: z.number().int().min(0),
+  /**
+   * updated 中「文件里未写显式 id（缺省派生）」的题数。缺省 id 按位置派生
+   * （单元id-序号），文件内插题/删题会使后续题错位更新到别的题、学情张冠李戴；
+   * 预览据此标红预警。仅 updateUnit 携带，0 / 未携带 = 无此风险。
+   */
+  updatedDerived: z.number().int().min(0).optional(),
   /** 库中已有未删除题目中未出现在文件里的数量（保留不删，D18） */
   kept: z.number().int().min(0),
 });
@@ -200,6 +218,12 @@ export const importPreviewWarningSchema = z.object({
      * 不受影响，但单元局部性变化，预览提示受影响引用数。
      */
     "MATERIAL_MOVED_ACROSS_UNITS",
+    /**
+     * 单元内 N 道题使用缺省派生题号且将更新既有题（缺省 id 按位置派生，文件内
+     * 插题/删题会使题号错位、学情张冠李戴）；建议先导出一次（自动注入题号）
+     * 再修改，或为题容器补显式 id
+     */
+    "DERIVED_ID_UPDATED_QUESTIONS",
   ]),
   message: z.string().min(1),
 });
@@ -374,7 +398,20 @@ export const questionGroupDeleteDataSchema = z.object({
  * - COURSE_HAS_ATTEMPTS：课程有作答记录或按课程布置的作业时拒绝删除（409，D4；提示改用归档）；
  * - FOLDER_NOT_FOUND：导入目标文件夹不存在（404，T2A.3；与 library-api 同码同义）；
  * - IMPORT_TOO_LARGE：批量导入超规模上限（413，D20；也用于 preview-batch 的
- *   content-length 粗防线）。
+ *   content-length 粗防线）；
+ * - LESSON_QUESTION_BLOCK_MISSING：讲练页正文未找到该题的题块（422，讲练文档
+ *   SSOT P1a）——存储正文被手工改动等数据异常，嵌入题编辑被拒（事务回滚），
+ *   引导整页重导修正。
+ * - LECTURE_BLOCKS_MISMATCH：讲练页整页编辑的题块 id 集合与嵌入单元 live 题
+ *   id 集合不一致（422，审查修复 2）——整页编辑不能增删题块或改题号，题块
+ *   增删/改 id 请走重新导入或题库编辑（SSOT 双向防漂移的整页侧闸门）。
+ * - LESSON_BLOCK_DIVERGED：题库单题编辑回写前发现讲义正文中该题块文本已被
+ *   整页编辑修改、与题库 sourceMd 不一致（422，审查修复 2）——直接回写会
+ *   冲掉整页修改，请先恢复题块或重新导入整页（SSOT 双向防漂移的题库侧闸门）。
+ * - REPLACE_LECTURE_NOT_FOUND / REPLACE_REQUIRES_SINGLE_LECTURE /
+ *   REPLACE_TITLE_CONFLICT：导入显式替换入口（replaceLectureId，讲练文档
+ *   SSOT P2a）的三项前置校验——目标域内不存在 404（不暴露存在性）、文档
+ *   讲义篇数 ≠ 1 422、目标文件夹内另一未软删讲义与文档新标题同名 422。
  */
 export const contentErrorCodeSchema = z.enum([
   "LINT_ERROR",
@@ -398,6 +435,39 @@ export const contentErrorCodeSchema = z.enum([
    * QM-05 落地，契约层先定码。
    */
   "NEW_CONTENT_DISABLED",
+  /**
+   * 讲练页正文未找到该题的题块——存储正文被手工改动等数据异常（422，讲练文档
+   * SSOT P1a）：嵌入题编辑在题库回写前被拒（同一事务，回滚不动题目行），引导
+   * 整页重导修正。
+   */
+  "LESSON_QUESTION_BLOCK_MISSING",
+  /**
+   * 讲练页整页编辑的题块 id 集合与该页嵌入单元 live 题 id 集合不一致（422，
+   * 审查修复 2）：正文中缺失或多出了题块（或题号被改）——整页编辑只允许改
+   * 讲义正文与题块内容，增删题块/改题号请走重新导入或题库编辑。
+   */
+  "LECTURE_BLOCKS_MISMATCH",
+  /**
+   * 讲义正文中该题块已被整页编辑修改、与题库 sourceMd 不一致（422，审查
+   * 修复 2）：嵌入题回写会静默冲掉整页修改，先恢复题块或重新导入整页。
+   */
+  "LESSON_BLOCK_DIVERGED",
+  /**
+   * 显式替换目标讲练页/讲义在教师域内不存在（404，讲练文档 SSOT P2a）——
+   * 目标 id 无效或指向他人讲义统一按不存在处理，不暴露存在性。
+   */
+  "REPLACE_LECTURE_NOT_FOUND",
+  /**
+   * 显式替换要求文档恰好包含一篇讲义（422，讲练文档 SSOT P2a）——多讲义或
+   * 无讲义文档无法指认「本文档替换该页」，请拆分文档后再替换。
+   */
+  "REPLACE_REQUIRES_SINGLE_LECTURE",
+  /**
+   * 目标所在文件夹内已有另一未软删讲义与文档新标题同名（422，讲练文档 SSOT
+   * P2a）——替换会把目标改名为文档标题、造成同文件夹同名冲突；请改回不同
+   * 标题，或先处理（重命名/删除）同名讲义。
+   */
+  "REPLACE_TITLE_CONFLICT",
 ]);
 
 /**
@@ -518,6 +588,12 @@ export const questionUpdateDataSchema = z.object({
   difficulty: z.number().int().min(1).max(5),
   knowledge: z.array(z.string().min(1)),
   issues: z.array(lintIssueSchema),
+  /**
+   * 讲练嵌入题编辑已同步回讲义正文题块（同一事务内回写 lectures.markdown
+   * 对应题块，题库与正文不再双源漂移；讲练文档 SSOT P1a）；普通题为 false。
+   * 服务端恒写该字段（契约 optional 仅为兼容既有消费者）。
+   */
+  lessonSynced: z.boolean().optional(),
 });
 
 /**

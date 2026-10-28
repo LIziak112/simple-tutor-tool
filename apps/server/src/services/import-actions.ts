@@ -16,6 +16,7 @@ import {
   questions,
   units,
 } from "../db/schema";
+import { HttpError } from "../lib/http-error";
 
 /**
  * 导入动作清单（D19）与预览 warning（D18/D19）的计算模块（T2A.3）。
@@ -102,6 +103,73 @@ export interface ImportPlanInput {
   /** 本次导入的目标文件夹 id；null = 未归类（新资源落这里；已有单元保留原文件夹） */
   readonly folderId: string | null;
   readonly snapshot: LibrarySnapshot;
+  /**
+   * 显式替换目标讲练页/讲义 id（讲练文档 SSOT P2a）：教师指认「本文档替换该
+   * 讲练页/讲义」——绑定篇跳过标题匹配，动作恒为 updateLecture（title=文档
+   * 标题、folderName=目标所在文件夹、软删目标将恢复）；新建单元随目标走
+   * （预览标注目标所在文件夹）；#40 接管预检按「同名命中或显式目标」判定。
+   * 前置校验与 commit 同口径（assertReplaceLectureAllowed 单源）。
+   */
+  readonly replaceLectureId?: string;
+}
+
+/** 显式替换目标的行形状（commit 的 db 查询行与 preview 的快照行同构子集） */
+export interface ReplaceLectureRow {
+  readonly id: string;
+  readonly title: string;
+  /** 所在文件夹；null = 未归类 */
+  readonly folderId: string | null;
+  /** 软删时间；null = 未删除（同文件夹标题冲突只看未软删行） */
+  readonly deletedAt: string | null;
+}
+
+/**
+ * 显式替换入口（replaceLectureId，P2a）的三项前置校验——preview（buildImportPlan
+ * 内以快照行判定）与 commit（事务外 db 查询行判定）共用同一口径，返回通过
+ * 校验的目标行：
+ * 1. 域内不存在（含指向他人讲义）→ 404 REPLACE_LECTURE_NOT_FOUND（不暴露存在性）；
+ * 2. 文档解析讲义篇数 ≠ 1 → 422 REPLACE_REQUIRES_SINGLE_LECTURE；
+ * 3. 目标所在文件夹内另一未软删讲义与文档新标题同名 → 422 REPLACE_TITLE_CONFLICT
+ *    （替换会把目标改名为文档标题，造成同文件夹同名冲突）。
+ */
+export function assertReplaceLectureAllowed<T extends ReplaceLectureRow>(
+  replaceLectureId: string,
+  /** 目标所在文件夹内的全部讲义行（教师域，含目标自身与软删行；目标不在其中 = 不存在） */
+  folderLectures: readonly T[],
+  /** 文档解析出的讲义篇数 */
+  lectureCount: number,
+  /** 文档唯一讲义的新标题（篇数 = 1 时由调用方传入） */
+  newTitle: string | undefined,
+): T {
+  const target = folderLectures.find((row) => row.id === replaceLectureId);
+  if (target === undefined) {
+    throw new HttpError(
+      404,
+      "REPLACE_LECTURE_NOT_FOUND",
+      "替换目标讲练页不存在（或不在当前账号的资源库内），请确认 id 后重试",
+    );
+  }
+  if (lectureCount !== 1) {
+    throw new HttpError(
+      422,
+      "REPLACE_REQUIRES_SINGLE_LECTURE",
+      `显式替换要求文档恰好包含一篇讲义（本次解析出 ${lectureCount} 篇），请拆分文档后再替换`,
+    );
+  }
+  const title = newTitle ?? "";
+  if (
+    folderLectures.some(
+      (row) =>
+        row.deletedAt === null && row.id !== target.id && row.title === title,
+    )
+  ) {
+    throw new HttpError(
+      422,
+      "REPLACE_TITLE_CONFLICT",
+      `目标文件夹内已有另一讲义「${title}」与本文档标题同名：请为文档换一个不同的标题，或先重命名/删除同名讲义后再替换`,
+    );
+  }
+  return target;
 }
 
 /** buildImportPlan 的输出（对应契约 importPreviewDataSchema 的 actions/warnings） */
@@ -129,10 +197,64 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
   const warnings: ImportPreviewWarning[] = [];
   const targetFolderName = folderNameOf(snapshot, folderId);
 
-  // ---- 讲义：按 (目标文件夹, 标题) 匹配（D18） ----
+  // ---- 显式替换目标（P2a）：快照域内解析 + 三项前置校验（与 commit 事务外同口径）----
+  let replaceTarget: SnapshotLecture | undefined;
+  if (input.replaceLectureId !== undefined) {
+    const found = snapshot.lectures.find(
+      (row) => row.id === input.replaceLectureId,
+    );
+    replaceTarget = assertReplaceLectureAllowed(
+      input.replaceLectureId,
+      // 目标所在文件夹的同域讲义行（含软删；目标不在域内时无从谈文件夹，传空
+      // 由校验统一走 404，错误面与存在时一致）
+      found === undefined
+        ? []
+        : snapshot.lectures.filter((row) => row.folderId === found.folderId),
+      parsed.lectures.length,
+      parsed.lectures[0]?.title,
+    );
+  }
+  // 新建单元（及材料/组动作展示）的落点文件夹：替换时随目标走，其余按请求目标
+  const newResourceFolderName =
+    replaceTarget === undefined
+      ? targetFolderName
+      : folderNameOf(snapshot, replaceTarget.folderId);
+
+  // ---- 讲义：按 (目标文件夹, 标题) 匹配（D18）；显式替换绑定目标行（P2a）----
   /** 命中的快照讲义（title → 行）：接管预检复用同一匹配，不再二次扫描 */
   const matchedLectureByTitle = new Map<string, SnapshotLecture>();
   for (const lecture of parsed.lectures) {
+    // 显式替换：跳过标题匹配，唯一讲义绑定目标行（title 更新为文档标题、
+    // 动作恒为 updateLecture）；目标记入标题匹配表，使单元挂载与 #40 接管
+    // 预检按「显式目标」命中（与 commit 的键替换同口径）
+    if (replaceTarget !== undefined) {
+      matchedLectureByTitle.set(lecture.title, replaceTarget);
+      actions.push({
+        kind: "updateLecture",
+        title: lecture.title,
+        unitId: null,
+        // 目标所在文件夹（与 newResourceFolderName 同值：替换时二者都随目标走）
+        folderName: newResourceFolderName,
+        restore: replaceTarget.deletedAt !== null,
+      });
+      // 替换改名后与其他文件夹同名 → 重复导入提醒（审查修复 5：与下方
+      // createLecture 路径同款跨文件夹扫描，排除目标行自身与目标所在文件夹）
+      for (const other of snapshot.lectures) {
+        if (
+          other.id === replaceTarget.id ||
+          other.folderId === replaceTarget.folderId ||
+          other.title !== lecture.title
+        ) {
+          continue;
+        }
+        const otherName = folderNameOf(snapshot, other.folderId);
+        warnings.push({
+          code: "DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER",
+          message: `资源库「${otherName ?? "未归类"}」已有同名讲义「${lecture.title}」，确认不是重复导入`,
+        });
+      }
+      continue;
+    }
     const existing = snapshot.lectures.find(
       (row) => row.folderId === folderId && row.title === lecture.title,
     );
@@ -167,9 +289,11 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
   }
 
   // ---- 讲练页嵌入单元接管预检（2026-10-28 修复；与 commitImport 接管段同口径）----
-  // lesson 文档重导命中同名讲练页（快照 kind=lesson）时：未挂载的旧嵌入单元将
-  // 软删、挂载单元内缺席题将移出——warning 亮给教师与 MCP AI（dry-run 可见）。
-  // 嵌入单元不发 KEPT_QUESTIONS（「保留」与实际「移出」矛盾，计数由接管 warning 承载）。
+  // lesson 文档重导命中同名讲练页（快照 kind=lesson），或显式替换目标（P2a，
+  // replaceTarget 经 matchedLectureByTitle 按新标题记入——「同名命中或显式目标」）
+  // 时：未挂载的旧嵌入单元将软删、挂载单元内缺席题将移出——warning 亮给教师
+  // 与 MCP AI（dry-run 可见）。嵌入单元不发 KEPT_QUESTIONS（「保留」与实际
+  // 「移出」矛盾，计数由接管 warning 承载）。
   const embeddedTakeoverUnitIds = new Set<string>();
   if (parsed.frontmatter?.kind === "lesson") {
     for (const lecture of parsed.lectures) {
@@ -241,7 +365,7 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
           kind: "createMaterial",
           title: displayTitle,
           unitId: unit.id,
-          folderName: targetFolderName,
+          folderName: newResourceFolderName,
           restore: false,
         });
         continue;
@@ -277,7 +401,7 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
           kind: "createGroup",
           title: displayTitle,
           unitId: unit.id,
-          folderName: targetFolderName,
+          folderName: newResourceFolderName,
           restore: false,
         });
         continue;
@@ -309,7 +433,8 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
         kind: "createUnit",
         title: unit.title,
         unitId: unit.id,
-        folderName: targetFolderName,
+        // 新建单元落点：显式替换时随目标讲义所在文件夹（P2a），其余按请求目标
+        folderName: newResourceFolderName,
         restore: false,
       });
       continue;
@@ -318,9 +443,20 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
     // 更新单元：题目细分（与 commit 的 inserted/updated 判定同口径——含软删）
     let inserted = 0;
     let updated = 0;
+    // updated 中「文件里未写显式 id（缺省派生）」的题数（P2b 错位预警面）：
+    // 缺省 id 按 单元id-序号 由文档内位置推导，文件里插题/删题会使后续题错位
+    // 更新到别的题、学情张冠李戴——围栏带 id=（显式或 lesson 导出注入）不算。
+    // 判定用解析期注入**前**的 idExplicit（审查修复 4）：lesson 解析会把缺省
+    // id 注进 sourceMd，看注入后的围栏会把「手写无 id 讲练页重导」误判为
+    // 显式而漏报（PR#40 事故类别——正是该预警要抓的形态）
+    let updatedDerived = 0;
     for (const question of unit.questions) {
-      if (existing.allQuestionIds.has(question.id)) updated += 1;
-      else inserted += 1;
+      if (existing.allQuestionIds.has(question.id)) {
+        updated += 1;
+        if (question.idExplicit !== true) updatedDerived += 1;
+      } else {
+        inserted += 1;
+      }
     }
     // kept：库中未删除、文件中未出现的题目数（保留不删，D18）。讲练页挂载单元
     // 走接管语义（缺席题移出回收站）——kept 记 0，移出计数由接管 warning 承载
@@ -337,8 +473,19 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
       // 命中已有单元保留其原文件夹（D18），预览标注「更新（位于文件夹 X）」
       folderName: folderNameOf(snapshot, existing.folderId),
       restore: existing.deletedAt !== null,
-      questions: { inserted, updated, kept: embeddedTakeover ? 0 : kept },
+      questions: {
+        inserted,
+        updated,
+        kept: embeddedTakeover ? 0 : kept,
+        ...(updatedDerived > 0 ? { updatedDerived } : {}),
+      },
     });
+    if (updatedDerived > 0) {
+      warnings.push({
+        code: "DERIVED_ID_UPDATED_QUESTIONS",
+        message: `单元「${unit.title}」有 ${updatedDerived} 道题使用缺省题号且将更新既有题：文件中插题/删题会使题号错位、学情张冠李戴；建议先导出一次（自动注入题号）再修改，或为题容器补显式 id`,
+      });
+    }
     if (kept > 0 && !embeddedTakeover) {
       warnings.push({
         code: "KEPT_QUESTIONS",

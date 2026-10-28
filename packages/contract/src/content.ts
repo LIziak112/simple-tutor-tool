@@ -350,6 +350,15 @@ export const questionSchema = z.object({
   solutionMd: z.string().optional(),
   sourceMd: z.string(),
   /**
+   * 题目 id 的显式性（解析期 id 注入**前**的围栏形态：带显式 id= 或 {#id}
+   * 简写为 true，缺省派生为 false）。供导入预览判定「缺省题号错位」风险——
+   * lesson 解析（keep 模式）会把缺省 id 注进 sourceMd，注入后再看围栏会误判
+   * 为显式而漏报警（PR#40 事故类别）。仅在解析产物内存中携带：不落库
+   * （questions 表无此列，questionFields 显式列组装）、不进作答快照
+   * （questionOfRow 按行字段重建，见 attempt-service）。
+   */
+  idExplicit: z.boolean().optional(),
+  /**
    * 以下新字段全部可选（§5.8.1 全量可选策略；旧快照键集不变）：matching
    * 选项池与 ordering 项是题面抽取副本（仅对应题型携带）；word-min/word-max
    * 是 response 类字数提示（仅展示提示，不硬校验不截断，§5.4.1）。

@@ -13,6 +13,7 @@ import {
   firstNonEmpty,
   lineRange,
   makeIssue,
+  QUESTION_FENCE_RE,
   sliceLines,
   sliceRangeExcluding,
 } from "./shared.ts";
@@ -252,8 +253,8 @@ function injectQuestionFenceIds(
   return { lines: next, questions: updated };
 }
 
-/** question 开围栏行：`::::question` 可带 `[标签]` 与 `{属性}`（前后可有空白） */
-const QUESTION_FENCE_RE = /^(\s*:+question(?:\[[^\]]*\])?)(\{.*\})?(\s*)$/;
+// question 开围栏行正则与 question.ts（withQuestionId / hasExplicitQuestionId）
+// 共用 shared.ts QUESTION_FENCE_RE 单一出处（审查修复 1），本文件不再自持副本。
 
 /** 往开围栏行追加一个属性（无属性括号则补上）；形态不匹配返回 undefined（调用方跳过） */
 function appendFenceAttr(

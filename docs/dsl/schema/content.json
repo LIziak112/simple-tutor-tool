@@ -296,6 +296,9 @@
         "sourceMd": {
           "type": "string"
         },
+        "idExplicit": {
+          "type": "boolean"
+        },
         "matchingOptions": {
           "type": "object",
           "properties": {
@@ -1053,6 +1056,9 @@
               },
               "sourceMd": {
                 "type": "string"
+              },
+              "idExplicit": {
+                "type": "boolean"
               },
               "matchingOptions": {
                 "type": "object",
@@ -1829,6 +1835,9 @@
                     },
                     "sourceMd": {
                       "type": "string"
+                    },
+                    "idExplicit": {
+                      "type": "boolean"
                     },
                     "matchingOptions": {
                       "type": "object",
