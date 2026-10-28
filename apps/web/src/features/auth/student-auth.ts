@@ -7,6 +7,7 @@ import {
 import { bindDraftSession } from "@/features/attempt/draft-store";
 import { bindGroupMaterialLayoutAccount } from "@/features/attempt/group-material-layout-store";
 import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
+import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
 import {
   currentNoteSession,
   resetNoteSession,
@@ -52,6 +53,7 @@ function useApplyStudentAuthed() {
     await clearAccountQueries(queryClient, "student");
     bindAiDisplayAccount(student.id);
     bindPracticePreferenceAccount(student.id);
+    bindKeyboardBindingsAccount(student.id);
     bindGroupMaterialLayoutAccount(student.id);
     bindDraftSession({ origin: window.location.origin, studentId: student.id });
     // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
@@ -114,6 +116,7 @@ export function useLogoutStudent() {
       bindDraftSession(null);
       bindAiDisplayAccount(null);
       bindPracticePreferenceAccount(null);
+      bindKeyboardBindingsAccount(null);
       bindGroupMaterialLayoutAccount(null);
       resetNoteSession();
       resetAnnotationSession();

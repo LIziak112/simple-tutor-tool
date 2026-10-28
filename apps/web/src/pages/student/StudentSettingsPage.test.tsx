@@ -4,6 +4,11 @@ import { DEFAULT_QUICK_BUTTONS } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
+import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
+import {
+  detectKeyboardDeviceForTest,
+  resetKeyboardDeviceForTest,
+} from "@/features/keyboard/keyboard-device";
 import StudentSettingsPage from "./StudentSettingsPage";
 
 vi.mock("@/features/auth/student-auth", () => ({
@@ -88,6 +93,8 @@ it("设置页包含连接 AI 入口,指向 /s/settings/ai（SAI-18）", () => {
 // M3-D1：学习偏好分组包含「做题方式」配置行（默认布局 + 快捷键开关）。
 // 账号绑定由学生布局负责，此处直接绑定 store 验证配置行渲染。
 it("设置页学习偏好包含做题方式配置行（M3-D1）", () => {
+  // 快捷键开关仅键盘设备渲染（2026-10-28 快捷键体系）：先模拟键盘设备接入
+  detectKeyboardDeviceForTest();
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("student-settings");
   renderPage();
@@ -97,6 +104,27 @@ it("设置页学习偏好包含做题方式配置行（M3-D1）", () => {
     screen.getByRole("checkbox", { name: /键盘快捷键/ }),
   ).toBeInTheDocument();
   bindPracticePreferenceAccount(null);
+});
+
+// 2026-10-28 快捷键体系：键位自定义分区按设备形态显隐
+it("纯触屏设备设置页不出现快捷键开关与「自定义键位」分区", () => {
+  resetKeyboardDeviceForTest();
+  renderPage();
+  expect(screen.queryByRole("checkbox", { name: /键盘快捷键/ })).toBeNull();
+  expect(screen.queryByText("自定义键位")).toBeNull();
+});
+
+it("键盘设备设置页出现「自定义键位」分区，展开可见命令行", () => {
+  detectKeyboardDeviceForTest();
+  bindKeyboardBindingsAccount(null);
+  bindKeyboardBindingsAccount("student-settings");
+  renderPage();
+  const summary = screen.getByText("自定义键位").closest("summary");
+  if (!summary) throw new Error("缺少展开入口");
+  fireEvent.click(summary);
+  expect(screen.getByText("提交本题 / 下一题")).toBeInTheDocument();
+  expect(screen.queryByText(/登录后可修改键位/)).toBeNull();
+  bindKeyboardBindingsAccount(null);
 });
 
 it("收起快捷按钮仍提示未保存，重新展开保留输入", async () => {
