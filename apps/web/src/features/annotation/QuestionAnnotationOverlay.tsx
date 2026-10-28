@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -1039,97 +1040,105 @@ export const QuestionAnnotationOverlay = forwardRef<
           )}
         </DialogContent>
       </Dialog>
-      {active && (
-        <div
-          data-slot="attempt-bottom-bar"
-          className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
-        >
+      {active &&
+        createPortal(
           <div
-            role="toolbar"
-            aria-label={`${label}标画工具栏`}
-            className="mx-auto flex min-h-16 max-w-[1120px] items-center justify-center gap-1 px-2 py-2"
+            data-slot="attempt-bottom-bar"
+            className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
           >
-            <Button
-              title="画笔"
-              aria-label="画笔"
-              aria-pressed={tool === "pen"}
-              variant={tool === "pen" ? "secondary" : "ghost"}
-              className="size-11 shrink-0 p-0"
-              onClick={() => setTool("pen")}
+            <div
+              role="toolbar"
+              aria-label={`${label}标画工具栏`}
+              className="mx-auto flex min-h-16 max-w-[1120px] items-center justify-center gap-1 px-2 py-2"
             >
-              <PenLine />
-            </Button>
-            <Button
-              title="橡皮"
-              aria-label="橡皮"
-              aria-pressed={tool === "eraser"}
-              variant={tool === "eraser" ? "secondary" : "ghost"}
-              className="size-11 shrink-0 p-0"
-              onClick={() => setTool("eraser")}
-            >
-              <Eraser />
-            </Button>
-            <Button
-              title="撤销"
-              aria-label="撤销"
-              variant="ghost"
-              className="size-11 shrink-0 p-0"
-              disabled={!surface.current?.canUndo()}
-              onClick={() => surface.current?.undo()}
-            >
-              <Undo2 />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label="更多标画操作"
-                title="颜色、粗细、清空"
-                className="flex size-11 shrink-0 items-center justify-center rounded-md"
+              <Button
+                title="画笔"
+                aria-label="画笔"
+                aria-pressed={tool === "pen"}
+                variant={tool === "pen" ? "secondary" : "ghost"}
+                className="size-11 shrink-0 p-0"
+                onClick={() => setTool("pen")}
               >
-                <MoreHorizontal />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuItem
-                  disabled={!surface.current?.canRedo()}
-                  onSelect={() => surface.current?.redo()}
+                <PenLine />
+              </Button>
+              <Button
+                title="橡皮"
+                aria-label="橡皮"
+                aria-pressed={tool === "eraser"}
+                variant={tool === "eraser" ? "secondary" : "ghost"}
+                className="size-11 shrink-0 p-0"
+                onClick={() => setTool("eraser")}
+              >
+                <Eraser />
+              </Button>
+              <Button
+                title="撤销"
+                aria-label="撤销"
+                variant="ghost"
+                className="size-11 shrink-0 p-0"
+                disabled={!surface.current?.canUndo()}
+                onClick={() => surface.current?.undo()}
+              >
+                <Undo2 />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label="更多标画操作"
+                  title="颜色、粗细、清空"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-md"
                 >
-                  <Redo2 aria-hidden />
-                  重做
-                </DropdownMenuItem>
-                {(["red", "blue", "black"] as const).map((value) => (
-                  <DropdownMenuItem key={value} onClick={() => setColor(value)}>
-                    <span
-                      aria-hidden
-                      className="size-3 rounded-full"
-                      style={{ backgroundColor: value }}
-                    />
-                    {{ red: "红色", blue: "蓝色", black: "黑色" }[value]}
-                    {color === value ? "（当前）" : ""}
+                  <MoreHorizontal />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem
+                    disabled={!surface.current?.canRedo()}
+                    onSelect={() => surface.current?.redo()}
+                  >
+                    <Redo2 aria-hidden />
+                    重做
                   </DropdownMenuItem>
-                ))}
-                {(["thin", "medium", "thick"] as const).map((value) => (
-                  <DropdownMenuItem key={value} onClick={() => setSize(value)}>
-                    {{ thin: "细笔", medium: "中笔", thick: "粗笔" }[value]}
-                    {size === value ? "（当前）" : ""}
+                  {(["red", "blue", "black"] as const).map((value) => (
+                    <DropdownMenuItem
+                      key={value}
+                      onClick={() => setColor(value)}
+                    >
+                      <span
+                        aria-hidden
+                        className="size-3 rounded-full"
+                        style={{ backgroundColor: value }}
+                      />
+                      {{ red: "红色", blue: "蓝色", black: "黑色" }[value]}
+                      {color === value ? "（当前）" : ""}
+                    </DropdownMenuItem>
+                  ))}
+                  {(["thin", "medium", "thick"] as const).map((value) => (
+                    <DropdownMenuItem
+                      key={value}
+                      onClick={() => setSize(value)}
+                    >
+                      {{ thin: "细笔", medium: "中笔", thick: "粗笔" }[value]}
+                      {size === value ? "（当前）" : ""}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuItem onSelect={() => surface.current?.clear()}>
+                    清空标画（可撤销）
                   </DropdownMenuItem>
-                ))}
-                <DropdownMenuItem onSelect={() => surface.current?.clear()}>
-                  清空标画（可撤销）
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <SessionPrefToggleButton
-              iconOnly
-              className="size-11 shrink-0 p-0"
-            />
-            <Button
-              className="h-11 w-16 shrink-0 px-2"
-              onClick={() => void editor?.request(null)}
-            >
-              {phase === "correction" ? "完成" : "作答"}
-            </Button>
-          </div>
-        </div>
-      )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <SessionPrefToggleButton
+                iconOnly
+                className="size-11 shrink-0 p-0"
+              />
+              <Button
+                className="h-11 w-16 shrink-0 px-2"
+                onClick={() => void editor?.request(null)}
+              >
+                {phase === "correction" ? "完成" : "作答"}
+              </Button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 });
