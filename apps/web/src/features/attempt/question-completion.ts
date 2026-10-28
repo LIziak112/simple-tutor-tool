@@ -1,9 +1,6 @@
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
-import { processor } from "@tutor/md-dsl";
-import type { MdNode } from "@/features/markdown/remark/mdast-interop";
-import { remarkBlank } from "@/features/markdown/remark/remark-blank";
-import { remarkDirectiveHost } from "@/features/markdown/remark/remark-directive-host";
-import { HANDWRITTEN_TYPES } from "./answer-format";
+import { dispatchCompletion } from "../answering";
+import { prepareQuestion } from "../answering/prepare-question";
 
 export interface QuestionCompletion {
   state: "empty" | "partial" | "filled";
@@ -11,84 +8,25 @@ export interface QuestionCompletion {
   expectedSlots: number;
 }
 
-const slotsByQuestion = new WeakMap<QuestionPublic, number>();
-
-/** 按实际题面渲染管线识别空位，答案变化不重复解析题干。 */
-function countSlots(question: QuestionPublic): number {
-  const cached = slotsByQuestion.get(question);
-  if (cached !== undefined) return cached;
-  // 渲染器使用最小AST结构；remark扩展节点的data类型通过此边界适配。
-  const tree = processor.parse(question.stemMd) as unknown as MdNode;
-  remarkBlank()(tree);
-  remarkDirectiveHost()(tree);
-  let count = 0;
-  function visit(node: MdNode): void {
-    if (
-      node.name === "blank" &&
-      typeof node.data?.hProperties?.index === "number"
-    ) {
-      count = Math.max(count, node.data.hProperties.index);
-    }
-    node.children?.forEach(visit);
-  }
-  visit(tree);
-  slotsByQuestion.set(question, count);
-  return count;
-}
-
-/** 填写完整度不判分，也不改变历史 isAnswered 的统计含义。 */
+/**
+ * 填写完整度不判分，也不改变历史 isAnswered 的统计含义。
+ * UA-02 起槽位统计经 analyzeSlots 同源（I07：与真实渲染同一节点语义、
+ * 缓存按对象身份）；final 的手写资格经 questionBindings 的纸面角色判定
+ * （paperRole=answerInk ≡ 旧 HANDWRITTEN_TYPES 集合，一致性测试锁死）。
+ */
 export function getQuestionCompletion(
   question: QuestionPublic,
   answer: StudentAnswer | undefined,
   formalInkPresence = false,
 ): QuestionCompletion {
-  if (question.type === "fill") {
-    const expectedSlots = countSlots(question);
-    const values = answer?.kind === "fill" ? answer.values : [];
-    let filledSlots = 0;
-    for (let i = 0; i < expectedSlots; i++) {
-      if ((values[i] ?? "").trim() !== "") filledSlots++;
-    }
-    return {
-      state:
-        filledSlots === 0
-          ? "empty"
-          : filledSlots === expectedSlots
-            ? "filled"
-            : "partial",
-      filledSlots,
-      expectedSlots,
-    };
-  }
-  let filled = false;
-  switch (answer?.kind) {
-    case "judge":
-      filled = question.type === "judge";
-      break;
-    case "choice":
-      filled =
-        question.type === "choice" &&
-        answer.index >= 0 &&
-        answer.index < (question.options?.length ?? 0);
-      break;
-    case "multi":
-      filled =
-        question.type === "multi" &&
-        answer.indexes.some(
-          (index) => index >= 0 && index < (question.options?.length ?? 0),
-        );
-      break;
-    case "final":
-      filled =
-        HANDWRITTEN_TYPES.has(question.type) &&
-        answer.finalAnswer.trim() !== "";
-      break;
-  }
-  return {
-    state: filled ? "filled" : formalInkPresence ? "partial" : "empty",
-    filledSlots: filled ? 1 : 0,
-    expectedSlots: 1,
-  };
+  // UA-03 起为呈现登记表的兼容代理：完整度口径（fill 按有效空位计、final
+  // 有笔迹未填为 partial、choice/multi 越界不算已填写、I02 错配按未作答）
+  // 收进各 kind 视图的 completion（answering/views）；本入口只准备模型并派发
+  return dispatchCompletion(
+    prepareQuestion(question, question.id),
+    answer,
+    formalInkPresence,
+  );
 }
 
 export function completionLabel(completion: QuestionCompletion): string {

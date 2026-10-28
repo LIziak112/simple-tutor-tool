@@ -41,6 +41,15 @@ export function formatImportAction(
       return `新增${lectureNoun}「${action.title}」（${where}）${restore}`;
     case "updateLecture":
       return `更新${lectureNoun}「${action.title}」（位于${where}）${restore}`;
+    // tt-06b / QM-05：材料/组动作（title 无值时服务端已用 id 兜底；材料/组不产生题行）
+    case "createMaterial":
+      return `新增材料「${action.title}」（${where}）${restore}`;
+    case "updateMaterial":
+      return `更新材料「${action.title}」（位于${where}）${restore}`;
+    case "createGroup":
+      return `新增题组「${action.title}」（${where}）${restore}`;
+    case "updateGroup":
+      return `更新题组「${action.title}」（位于${where}）${restore}`;
   }
 }
 

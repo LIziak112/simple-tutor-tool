@@ -17,10 +17,12 @@ import {
   responses,
   units,
 } from "../db/schema";
-import { answerOf } from "./attempt-service";
-import { serializeStudentAnswer } from "./mark-response";
-import { createQuestionReviewReader } from "./review-access.ts";
-import { reviewSourceOf } from "./review-state.ts";
+import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
+import { serializeStudentAnswerOfRow } from "./mark-response";
+import { notSelfReviewPendingRow } from "./pending-mark";
+// 两线收敛接线：v2 错题闭环的轮次可见性守卫（公布/可见性单一出处，note-service
+// 同款复用）——不将 AI 出口授权当成学生读答案权限
+import { createQuestionReviewReader } from "./review-access";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
@@ -30,12 +32,18 @@ import { sourceOf } from "./teacher-attempt-service";
  * 按 (studentId, questionId) 跨全部来源（作业 + 课程练习）聚合，取该题**全部**
  * 已判定作答行构造轮次史：
  *
- * - 只统计**已判定**作答：已交卷（status != draft）且 finalCorrect 非 null
- *   （待批题不参与——免得一道待批题把旧的「错」盖成未知）；
- * - 入本条件：任一次已判定作答「答了且判错」（#6980-3：未做轮 answered=false
- *   不入本；覆盖「首次对 → 中间错 → 最近对」这类
- *   首末皆对但曾错的题）；默认只显示「最近一次判定仍为错」（resolved=false）；
- *   includeResolved=true 额外列出「曾错、最近一次已做对」（resolved=true）；
+ * - 只统计**已判定**作答：已交卷（status != draft）且有效判定非 null
+ *   （QM-12 起统一有效判定投影：教师判 > 自评 > 自动——reference_self 行
+ *   按学生自评计为已判定轮；未判断题不参与——免得一道待评题把旧的「错」
+ *   盖成未知）；
+ * - 入本条件：任一次已判定作答「答了且判错」或「标了不会」（enteredWrongBook
+ *   单一出处，#6980-3/#6980-4：未做轮 answered=false 不入本，但人工显式判定
+ *   〔teacherMark / 自评 verdict〕不被「未做」掩盖——老师显式批错、自评「错」
+ *   的行照常入本；标过「不会」的轮无论对错与是否作答都保留；覆盖「首次对 →
+ *   中间错 → 最近对」这类首末皆对但曾错的题）；默认只显示「最近一次有效
+ *   判定仍为错或标了不会」（resolved=false）；includeResolved=true 额外列出
+ *   「曾错、最近一次已做对」（resolved=true）；
+
  * - rounds：该题全部已判定作答按时间升序（同刻按 attemptId 升序兜底稳定），
  *   每轮带来源标题/课程名（服务端算好展示串）与 courseId（与 courseName 同一
  *   处 sourceOf 取值：course=练习课程、assignment=作业所属课程〔attempt 冗余
@@ -53,8 +61,9 @@ import { sourceOf } from "./teacher-attempt-service";
  * - 条目内容（题干/题型/难度/考点/参考答案/详解）取**最近一次判定作答**的
  *   questionSnapshotJson 快照（含 [[答案]] 标记原文——已交卷内容允许下发，
  *   与结果视图同一口径；坏快照按缺失计跳过并留痕，snapshotOfRow 同口径）；
- * - answerText：本人最近答案的序列化文本（serializeStudentAnswer，与教师端
- *   待批卡片/CSV 导出同一口径）；来源上下文取最近一次判定作答所属 attempt；
+ * - answerText：本人最近答案的序列化文本（serializeStudentAnswerOfRow，
+ *   与教师端待批卡片/CSV 导出/学情包同一单源）；来源上下文取最近一次判定
+ *   作答所属 attempt；
  * - originUnitId/originUnitTitle：题目**归属单元**（questions.unitId join
  *   units 取标题，按练习分组的依据——历史合并作业里的错题按题挂回各自单元）。
  *   软删题目/单元行仍在、标题照常可读；题目行缺失的防御为 null；
@@ -70,48 +79,52 @@ import { sourceOf } from "./teacher-attempt-service";
 
 /**
  * 已判定作答的轮次行（judgedRoundsByQuestion 的值元素）：该生某题的一次
- * 已交卷且 finalCorrect 非 null 的作答（公布 gate 过滤后）。
+ * 已交卷且有效判定非 null 的作答（公布 gate 过滤后；QM-12 起 reference_self
+ * 行按学生自评计为已判定轮——携带自评/教师/自动全列，有效判定经
+ * effectiveVerdictOfRow 单一出处计算，不再各写 finalCorrect 回落）。
  */
 interface JudgedRoundRow {
-  reviewSource?: import("@tutor/contract").SelfReviewState["source"];
+  /** 判定来源（两线收敛：v2 错题闭环来源标注接线 QM 有效判定口径） */
+  reviewSource?: import("@tutor/contract").VerdictSource;
   questionId: string;
   attemptId: string;
   responseId: string;
   submittedAt: string | null;
   startedAt: string;
   finalCorrect: boolean | null;
+  autoCorrect: boolean | null;
+  teacherMark: string | null;
+  selfReviewVerdict: "correct" | "wrong" | null;
+  selfReviewAt: string | null;
+  selfReviewRevision: number;
   /** #6980-3：该轮是否有实际作答（responses.answered，判分写点落库） */
   answered: boolean;
   /** #6980-4：该轮做题时学生是否标了「不会」（responses.student_flag） */
   studentFlag: string | null;
-  /** #6980-3（审查修复 P0-1）：该轮的人工显式判定（批改/自评），不被「未做」掩盖 */
-  teacherMark: string | null;
-  selfCorrect: boolean | null;
+}
+
+/** 轮次行的有效判定（教师判 > 自评 > 自动；教师清除后回落自评，§5.5.4 ✱ 行） */
+function effectiveOfRound(round: JudgedRoundRow) {
+  return effectiveVerdictOfRow(round);
 }
 
 /**
  * 错题本入本谓词（#6980-3/#6980-4 单一出处）：任一次已判定作答「答了且判错」
- * 或「标了不会」（studentFlag=unsure，无论对错与是否作答）——未做且未标不会
- * 的轮（answered=false）不入本，但人工显式判定（teacherMark / selfCorrect，
- * 审查修复 P0-1）不被「未做」掩盖：老师显式批错、学生自评「错了」的行照常
- * 入本计错次。listWrongQuestions 聚合与 latestJudgedResponsesByQuestion
- * （重练组卷成员校验 + 快照来源）共用本函数，防口径漂移。
+ * 或「标了不会」（studentFlag=unsure，无论对错与是否作答）——判错走 QM-12
+ * 有效判定（教师判 > 自评 > 自动，effectiveOfRound 单源）；未做且未标不会的
+ * 轮（answered=false 且无人工显式判定）不入本，但人工显式判定（teacherMark /
+ * 自评 verdict，审查修复 P0-1）不被「未做」掩盖：老师显式批错、学生自评
+ * 「错了」的行照常入本计错次。listWrongQuestions 聚合与
+ * latestJudgedResponsesByQuestion（重练组卷成员校验 + 快照来源）共用本函数，
+ * 防口径漂移。
  */
-function enteredWrongBook(
-  rounds: readonly {
-    finalCorrect: boolean | null;
-    answered: boolean;
-    studentFlag: string | null;
-    teacherMark: string | null;
-    selfCorrect: boolean | null;
-  }[],
-): boolean {
+function enteredWrongBook(rounds: readonly JudgedRoundRow[]): boolean {
   return rounds.some(
     (round) =>
-      (round.finalCorrect === false &&
+      (effectiveOfRound(round)?.value === false &&
         (round.answered ||
           round.teacherMark !== null ||
-          round.selfCorrect !== null)) ||
+          round.selfReviewVerdict !== null)) ||
       round.studentFlag === "unsure",
   );
 }
@@ -163,15 +176,17 @@ function judgedRoundsByQuestion(
       ),
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
+      autoCorrect: responses.autoCorrect,
+      teacherMark: responses.teacherMark,
+      selfReviewVerdict: responses.selfReviewVerdict,
+      selfReviewAt: responses.selfReviewAt,
+      selfReviewRevision: responses.selfReviewRevision,
       answered: responses.answered,
       studentFlag: responses.studentFlag,
+      // 两线收敛接线（v2 错题闭环）：轮次可见性守卫按 attempt + 行级提交事实
+      // 裁决（逐题提交的进行中卷已释放行可入轮次；受限行不可见不装配）
       attempt: attempts,
-      response: {
-        submittedAt: responses.submittedAt,
-        teacherMark: responses.teacherMark,
-        selfCorrect: responses.selfCorrect,
-        autoCorrect: responses.autoCorrect,
-      },
+      rowSubmittedAt: responses.submittedAt,
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
@@ -181,9 +196,24 @@ function judgedRoundsByQuestion(
     .where(
       and(
         eq(attempts.studentId, studentId),
-        // 已判定作答谓词（D11）：已交卷 + finalCorrect 非 null（待批不参与）
+        // 已判定作答谓词（D11，QM-12 有效判定口径）：已交卷 + 有效判定非
+        // null（教师判 finalCorrect / 自评 selfReviewVerdict 任一即可；未判断
+        // 轮不参与——免得一道待评题把旧的「错」盖成未知）。两线收敛：逐题
+        // 语义卷进行中（draft）的已单题提交行同样构成轮次（行级 submittedAt
+        // 非空——lesson/v1 逐题提交在公布后即可判定）
         or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
-        isNotNull(responses.finalCorrect),
+        or(
+          isNotNull(responses.finalCorrect),
+          // 自评分支与读侧 selfReviewRecordOf 脏行降级成对（TT-09c 审查
+          // P2-2）：verdict 非空且 at 非空才算已判定轮——at 与 verdict 恒成对
+          // 写入是 D3 同款不变量，单看 verdict 会放进「verdict 非空而 at
+          // 缺失」的脏行，读侧 effectiveVerdictOfRow 降级为未判断后 correct
+          // =false 冒充错轮、wrongCount 虚增
+          and(
+            isNotNull(responses.selfReviewVerdict),
+            isNotNull(responses.selfReviewAt),
+          ),
+        ),
         // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
         releaseGateSql(nowIso),
       ),
@@ -193,13 +223,14 @@ function judgedRoundsByQuestion(
   const roundsByQuestion = new Map<string, JudgedRoundRow[]>();
   const readable = createQuestionReviewReader(db, now);
   for (const row of rows) {
-    if (!readable(row.attempt, row.response)) continue;
+    if (!readable(row.attempt, { submittedAt: row.rowSubmittedAt })) continue;
     const list = roundsByQuestion.get(row.questionId) ?? [];
+    // 来源标注走有效判定单一出处（教师判 > 自评 > 自动；无有效判定的防御
+    // 行省略键——契约 optional，历史载荷缺省不冒充客观判断）
+    const effective = effectiveOfRound(row);
     list.push({
       ...row,
-      reviewSource: reviewSourceOf(row.response),
-      teacherMark: row.response.teacherMark,
-      selfCorrect: row.response.selfCorrect,
+      ...(effective !== null ? { reviewSource: effective.source } : {}),
     });
     roundsByQuestion.set(row.questionId, list);
   }
@@ -228,7 +259,7 @@ export function latestJudgedResponsesByQuestion(
   now: Date | string = new Date(),
 ): Map<string, ResponseRow> {
   const roundsByQuestion = judgedRoundsByQuestion(db, studentId, now);
-  // 候选（入本）= 任一次判错；每题取组内最后一轮（时间升序的尾元素）
+  // 候选（入本）= 任一次有效判定为错；每题取组内最后一轮（时间升序的尾元素）
   const lastResponseIdByQuestion = new Map<string, string>();
   for (const [questionId, rounds] of roundsByQuestion) {
     if (!enteredWrongBook(rounds)) continue;
@@ -253,11 +284,13 @@ export function latestJudgedResponsesByQuestion(
  * 该生各题的待批轮数（卡片 pendingCount 的数据源）：已交卷
  * （status != 'draft'）且 `responses.finalCorrect IS NULL` 的作答次数按
  * questionId 分组计数——D4 共享谓词逐题跨 attempt 版（不叠加 answerJson 非空
- * 条件，只写笔迹未填最终答案的手写题正是最需要批的）。
+ * 条件，只写笔迹未填最终答案的手写题正是最需要批的）。QM-12 起与 D4 同步
+ * 两条件：排除 reference_self 行（待自评不进教师批改队列——pending-mark.ts
+ * 同口径）与快照缺失的幽灵行（不可批的空卡片不计数）。
  * 与 rounds 用同一公布 gate（releaseGateSql 共用片段）：after_due 未公布的
  * 作业作答不计入——数字会泄露「有一轮在等老师判定」，与题目整体消失的口径
- * 一致，防侧漏；course/wrong 来源恒公布。待批轮与已判定轮按 finalCorrect
- * 互斥，两查询合起来恰为该题全部应计作答。
+ * 一致，防侧漏；course/wrong 来源恒公布。待批轮与已判定轮按有效判定互斥，
+ * 两查询合起来恰为该题全部应计作答。
  */
 function pendingCountByQuestion(
   db: Db,
@@ -276,7 +309,10 @@ function pendingCountByQuestion(
           eq(attempts.studentId, studentId),
           ne(attempts.status, "draft"),
           isNull(responses.finalCorrect),
-          eq(responses.reviewEligible, false),
+          // QM-12：与 D4 谓词同步——reference_self 行待自评不算教师待批；
+          // 幽灵行（快照缺失）不可批不计数
+          notSelfReviewPendingRow(),
+          isNotNull(responses.questionSnapshotJson),
           releaseGateSql(nowIso),
         ),
       )
@@ -341,16 +377,18 @@ export function listWrongQuestions(
   // pendingCountByQuestion 注释）；查出后按题取值 ?? 0
   const pendingCounts = pendingCountByQuestion(db, studentId, now);
 
-  // 候选：入本（任一次答了且判错，#6980-3 enteredWrongBook 单一出处）+
-  // 默认剔除已攻克（服务端口径=最近一次做对）
+  // 候选：入本（enteredWrongBook 单一出处——答了且判错 / 标了不会）+
+  // 默认剔除已攻克（服务端口径=最近一次有效判定做对）
   const candidates = [...roundsByQuestion.entries()].filter(([, rounds]) => {
     if (!enteredWrongBook(rounds)) return false;
     if (includeResolved) return true;
-    // 已攻克口径与端上 isConquered（宽松标准）同源：最近一轮做对且未标
-    // 「不会」才算攻克——标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
+    // 已攻克口径与端上 isConquered（宽松标准）同源：最近一轮有效判定做对且
+    // 实际作答且未标「不会」才算攻克——标过不会的做对轮不算攻克
+    // （#6980-4 审查 P1-4）；QM-12 起做对走有效判定（教师判 > 自评 > 自动）
     const last = rounds[rounds.length - 1];
     return !(
-      last?.finalCorrect === true &&
+      last !== undefined &&
+      effectiveOfRound(last)?.value === true &&
       last.answered &&
       last.studentFlag !== "unsure"
     );
@@ -470,10 +508,13 @@ export function listWrongQuestions(
       const source = sourceOfAttempt(round.attemptId);
       if (source === null) continue; // 防御：轮次行必来自已加载 attempt
       roundsPayload.push({
-        reviewSource: round.reviewSource ?? null,
+        ...(round.reviewSource !== undefined
+          ? { reviewSource: round.reviewSource }
+          : {}),
         attemptId: round.attemptId,
         sourceType: source.sourceType,
-        correct: round.finalCorrect === true,
+        // 有效判定（教师判 > 自评 > 自动）——自评「错」即错轮（QM-12）
+        correct: effectiveOfRound(round)?.value === true,
         answered: round.answered,
         studentFlag: round.studentFlag === "unsure" ? "unsure" : null,
         submittedAt: round.submittedAt ?? round.startedAt,
@@ -496,25 +537,33 @@ export function listWrongQuestions(
         ? { options: snapshot.options.map((option) => option.text) }
         : {}),
       ...releaseOfSnapshot(snapshot),
-      answerText: serializeStudentAnswer(answerOf(lastResponse.answerJson)),
-      firstCorrect: first.finalCorrect === true,
-      // 已攻克（宽松口径，与默认过滤同源）：最近一轮做对且未标「不会」——
-      // 标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
+      // P3-5：与待批队列/CSV/学情包/单题包同走行级序列化单源（matching/ordering
+      // 按冻结结构装配「第 N 空 = 选项正文」/项正文串联；旧七型输出逐字不变）
+      answerText: serializeStudentAnswerOfRow(
+        db,
+        last.attemptId,
+        lastResponse,
+        answerOf(lastResponse.answerJson),
+      ),
+      firstCorrect: effectiveOfRound(first)?.value === true,
+      // 已攻克（宽松口径，与默认过滤同源）：最近一轮有效判定做对且实际作答且
+      // 未标「不会」——标过不会的做对轮不算攻克（#6980-4 审查 P1-4）
       resolved:
-        last.finalCorrect === true &&
+        effectiveOfRound(last)?.value === true &&
         last.answered &&
         last.studentFlag !== "unsure",
       firstAt: first.submittedAt ?? first.startedAt,
       lastAt: last.submittedAt ?? last.startedAt,
       rounds: roundsPayload,
-      // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）；人工显式判定
-      // 的未做轮不被掩盖（审查修复 P0-1：老师批错/自评判错的行照常计错次）
+      // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）；判错走 QM-12
+      // 有效判定；人工显式判定的未做轮不被掩盖（审查修复 P0-1：老师批错/
+      // 自评判错的行照常计错次）
       wrongCount: rounds.filter(
         (round) =>
-          round.finalCorrect === false &&
+          effectiveOfRound(round)?.value === false &&
           (round.answered ||
             round.teacherMark !== null ||
-            round.selfCorrect !== null),
+            round.selfReviewVerdict !== null),
       ).length,
       correctCount: roundsPayload.filter((round) => round.correct).length,
       pendingCount: pendingCounts.get(questionId) ?? 0,

@@ -225,8 +225,9 @@ export const analyticsMatrixSchema = z.object({
  * 总正确率周趋势的一个自然周桶（Asia/Shanghai、周一起算、按 submittedAt）：
  * - weekStart：该周周一的北京日期（YYYY-MM-DD，日历日本地时区语义）；
  * - attemptCount：该周提交的作答份数（D1：作业全部 + 课程练习仅首次）；
- * - judgedCount/correctCount：该周全部作答中已判定/判对的**题数**（D4：待批
- *   不进分母）；correctRate = correct ÷ judged，无已判定题为 null；
+ * - judgedCount/correctCount：该周全部作答中已判定/判对的**题数**（QM-12 起
+ *   判定=有效判定投影：教师判 > 自评 > 自动；未判断不进分母）；
+ *   correctRate = correct ÷ judged，无已判定题为 null；
  * - 桶按周连续生成（无数据的周也出现，attemptCount=0），便于折线图绘制。
  */
 export const analyticsTrendPointSchema = z.object({
@@ -235,7 +236,9 @@ export const analyticsTrendPointSchema = z.object({
   attemptCount: z.number().int().min(0),
   judgedCount: z.number().int().min(0),
   correctCount: z.number().int().min(0),
-  /** 正确率（D4 口径：判对 ÷ 已判定）；无已判定题为 null */
+  /** 其中学生自评判定的题数（QM-12：正确率含自评时的来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
+  /** 正确率（判对 ÷ 已判定；含自评判定）；无已判定题为 null */
   correctRate: z.number().min(0).max(1).nullable(),
 });
 
@@ -265,11 +268,13 @@ export const analyticsFocusQuestionSchema = z.object({
 /** 重点考点行（周期内错误最多的考点，最多 3 行） */
 export const analyticsFocusPointSchema = z.object({
   knowledge: z.string().min(1),
-  /** 周期内该考点的判错题次（D1 口径作答） */
+  /** 周期内该考点的判错题次（有效判定口径：教师判 > 自评 > 自动） */
   wrongCount: z.number().int().min(0),
   /** 周期内该考点的已判定题次 */
   judgedCount: z.number().int().min(0),
-  /** 正确率（D4 口径）；judgedCount=0 为 null */
+  /** 其中学生自评判定的题次（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
+  /** 正确率（判对 ÷ 已判定；含自评判定）；judgedCount=0 为 null */
   correctRate: z.number().min(0).max(1).nullable(),
   /** 代表错题（wrongCount=0 的考点不会出现，故恒非空） */
   representative: analyticsFocusQuestionSchema,
@@ -325,26 +330,30 @@ export const analyticsOverviewDataSchema = z.object({
   /** 周期内发生的课程练习重做次数（D1） */
   redoCount: z.number().int().min(0),
   offline: analyticsOfflineSchema,
-  /** 周期内全域汇总（D4 口径） */
+  /** 周期内全域汇总（有效判定口径：教师判 > 自评 > 自动；未判断不进分母） */
   overall: z.object({
     judgedCount: z.number().int().min(0),
     correctCount: z.number().int().min(0),
+    /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+    selfJudgedCount: z.number().int().min(0).optional(),
     correctRate: z.number().min(0).max(1).nullable(),
   }),
 });
 
 // ---------- 学生画像 ----------
 
-/** 学生 × 考点正确率行（D1 口径作答；D4：待批单独计数不进分母） */
+/** 学生 × 考点正确率行（D1 口径作答；有效判定口径：未判断单独计数不进分母） */
 export const analyticsKnowledgeRowSchema = z.object({
   knowledge: z.string().min(1),
   correctCount: z.number().int().min(0),
   wrongCount: z.number().int().min(0),
-  /** 待批数（finalCorrect=null 的题次；不计入正确率分母，D4） */
+  /** 未判断数（有效判定=null：待教师批改 + 待自评；不计入正确率分母） */
   pendingCount: z.number().int().min(0),
   /** 已判定题次（correct + wrong） */
   judgedCount: z.number().int().min(0),
-  /** 正确率 = correct ÷ judged；无已判定题为 null */
+  /** 其中学生自评判定的题次（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
+  /** 正确率 = correct ÷ judged（含自评判定）；无已判定题为 null */
   correctRate: z.number().min(0).max(1).nullable(),
 });
 
@@ -397,8 +406,9 @@ export const analyticsRedoRowSchema = z.object({
 /**
  * 学生画像页的错题行（T4.2 起随学生画像下发，编排在 T4.1 契约内）：
  * - 口径（D1/D4/D5）：该生在 qualifying 作答（D1：作业全部 + 课程练习首次，
- *   且 submittedAt 落 days 窗口）中 finalCorrect=**false** 的逐题行——待批
- *   （null）**不在列表**（待批经 totals.pendingCount 与矩阵展示）；
+ *   且 submittedAt 落 days 窗口）中有效判定=**false**（教师判 > 自评 > 自动，
+ *   QM-12 统一有效判定投影——学生自评「错」同样进入错题行）的逐题行——
+ *   未判断（null）**不在列表**（未判断经 totals.pendingCount 与矩阵展示）；
  * - 同一题多次判错（如多次作业引用同一单元）取**最新一次** qualifying 作答为
  *   代表：attemptId 即该次作答（点击跳 T3.1 作答详情），answerText 为该次
  *   错误答案（未作为 null——Phase3 D1 未作答判错）；
@@ -541,11 +551,14 @@ export const analyticsStudentDataSchema = z.object({
   trend: z.array(analyticsTrendPointSchema),
   /** 考点行按错误数降序（薄弱在前；同数按考点名升序兜底稳定） */
   knowledge: z.array(analyticsKnowledgeRowSchema),
-  /** 周期内该生汇总（D4 口径） */
+  /** 周期内该生汇总（有效判定口径：教师判 > 自评 > 自动；未判断不进分母） */
   totals: z.object({
     judgedCount: z.number().int().min(0),
     correctCount: z.number().int().min(0),
+    /** 未判断数（有效判定=null：待教师批改 + 待自评） */
     pendingCount: z.number().int().min(0),
+    /** 其中学生自评判定的题数（QM-12 来源标注；无自评为缺省 0） */
+    selfJudgedCount: z.number().int().min(0).optional(),
     correctRate: z.number().min(0).max(1).nullable(),
   }),
   /** 用时异常题（D6；按提交时间倒序） */
@@ -595,12 +608,14 @@ export const analyticsQuestionRowSchema = z.object({
   knowledge: z.array(z.string().min(1)),
   /** 题干 Markdown（最近一次提交的快照原文，含 [[答案]] 标记） */
   stemMd: z.string(),
-  /** 统计范围内的提交题次（含待批） */
+  /** 统计范围内的提交题次（含未判断） */
   submittedCount: z.number().int().min(0),
   judgedCount: z.number().int().min(0),
   correctCount: z.number().int().min(0),
-  /** 待批数（D4） */
+  /** 未判断数（有效判定=null：待教师批改 + 待自评） */
   pendingCount: z.number().int().min(0),
+  /** 其中学生自评判定的题次（QM-12 来源标注；无自评为缺省 0） */
+  selfJudgedCount: z.number().int().min(0).optional(),
   correctRate: z.number().min(0).max(1).nullable(),
   avgSec: z.number().min(0).nullable(),
   /** 页面统计口径的中位数（受 days/D1 限制；D6 异常判定另用全域口径） */

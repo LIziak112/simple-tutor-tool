@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  materialRefSchema,
+  materialSchema,
+  questionGroupSchema,
+  unitGroupSchema,
+} from "./material.ts";
 import { practiceRecommendationSchema } from "./practice-workflow.ts";
 import { teachingPackSchema } from "./teaching-pack.ts";
 
@@ -14,7 +20,15 @@ import { teachingPackSchema } from "./teaching-pack.ts";
  *    学生端接口（T2.4 起）必须经它过滤输出，并有泄露测试兜底（AGENTS.md 硬性规则 3）。
  */
 
-/** 题型（§5.1 规则要点表，共七种）：判断 / 单选 / 多选 / 填空 / 计算 / 应用 / 找错 */
+/**
+ * 题型（§5.1 规则要点表，旧七种 + TT-01 D2 三底层交互枚举）：判断 / 单选 /
+ * 多选 / 填空 / 计算 / 应用 / 找错 / 开放作答 / 配对 / 排序。
+ * response/matching/ordering（TT-05a 落地，追加在枚举尾——旧七型枚举序不变，
+ * 字母派生/派生集合等既有顺序敏感消费零扰动）：是底层交互类型而非教学名称，
+ * 阅读理解/完形/多问解答等场景由材料+题组组合表达（设计方案 §3 题型表），
+ * 不再按考试领域扩枚举。新题型 DSL 书写与导入入口由发布开关控制（决策记录
+ * §5.8.4，TT-06 注册后生效）。
+ */
 export const questionTypeSchema = z.enum([
   "judge",
   "choice",
@@ -23,12 +37,28 @@ export const questionTypeSchema = z.enum([
   "solve",
   "apply",
   "find-error",
+  "response",
+  "matching",
+  "ordering",
 ]);
 
 /**
+ * 新题型（TT-05a 追加的枚举尾三项）：NEW_CONTENT_DISABLED 触发条件的单源
+ * （决策记录 §12.2-8——纯旧语法文档写 type=response/matching/ordering 必须
+ * 触发发布开关检测，不得只按新指令判）。检测实现在 md-dsl new-content.ts，
+ * 导入层（QM-05）调用。追加新题型时同步更新本清单与该检测。
+ */
+export const NEW_QUESTION_TYPES: readonly QuestionType[] = [
+  "response",
+  "matching",
+  "ordering",
+];
+
+/**
  * 题型中文名（UI 徽章与 T3.4 CSV 导出共用；前后端共用同一份，禁止各自手写）。
- * 手写题集合（solve/apply/find-error，答案 kind=final 的题型）也由此推导：
- * 供 CSV 手写笔迹列等处判断题型是否可书写。
+ * 手写题集合（solve/apply/find-error，答案 kind=final 的题型）自 UA-01 起由
+ * capability.ts 的跨端证据角色绑定派生（HANDWRITTEN_QUESTION_TYPES，正式纸面
+ * 资格单源），不再在本文件维护字面量。
  */
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   judge: "判断",
@@ -38,14 +68,10 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   solve: "计算",
   apply: "应用",
   "find-error": "找错",
+  response: "开放",
+  matching: "配对",
+  ordering: "排序",
 };
-
-/** 可书写（手写）题型：答案为 final 文本 + 可上传笔迹的三种 */
-export const HANDWRITTEN_QUESTION_TYPES: readonly QuestionType[] = [
-  "solve",
-  "apply",
-  "find-error",
-];
 
 /** 化名编号（学生A/学生B…，按名单顺序编号）：字母列号核心算法单一来源 */
 export function lettersOf(index: number): string {
@@ -72,9 +98,20 @@ export function formatQuestionAnswers(
   answers: QuestionAnswers,
   options: {
     readonly mathify?: (text: string) => string;
+    /**
+     * QM-16 细项 3：matching/ordering 的 id → 可读标签（受控出口/单题包
+     * 用材料槽位序与选项/项正文替换裸 id——教师与 AI 才能对照阅读）；缺省
+     * 或未命中回落裸 id（缺结构不猜位置，与登记表口径一致）。
+     */
+    readonly labels?: {
+      readonly slot?: (id: string) => string;
+      readonly option?: (id: string) => string;
+      readonly item?: (id: string) => string;
+    };
   } = {},
 ): string {
   const mathify = options.mathify ?? ((text: string) => text);
+  const labels = options.labels ?? {};
   switch (answers.kind) {
     case "judge":
       return answers.value ? "对" : "错";
@@ -91,6 +128,25 @@ export function formatQuestionAnswers(
         .join("；");
     case "final":
       return mathify(answers.answer);
+    case "response":
+      // 参考正文已是完整 Markdown（含公式/列表），不做 mathify 包裹
+      return answers.referenceMd;
+    case "matching":
+      // 与 DSL :::answer 行式书写对称（§5.4.2）；键排序保证确定性输出；
+      // QM-16 labels 在场时槽位/选项换可读标签（第 N 空 = 选项正文）
+      return Object.entries(answers.pairs)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(
+          ([slot, option]) =>
+            `${labels.slot?.(slot) ?? slot} = ${labels.option?.(option) ?? option}`,
+        )
+        .join("；");
+    case "ordering":
+      // 行序即正确顺序（§5.4.2）；「 → 」连接为单行可读形态（QM-16 labels
+      // 在场时换项正文）
+      return answers.sequence
+        .map((item) => labels.item?.(item) ?? item)
+        .join(" → ");
   }
 }
 
@@ -117,6 +173,89 @@ export const documentKindSchema = z.enum([
 export const optionSchema = z.object({
   text: z.string(),
 });
+
+/**
+ * matching 选项池（TT-05a 域②，§5.4.1 ::::options/:::option 容器的抽取副本；
+ * 正文即题面，结构化字段只是抽取副本）。干扰项标记是**公开结构**（§6.1 调整 6：
+ * matching 干扰选项在池内、学生可选，选错是答案错误而非形状错误）；allowRepeat
+ * 缺省 false（同一选项不得被多槽占用，七选五默认即够）。
+ */
+export const matchingOptionSchema = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  distractor: z.boolean().default(false),
+});
+
+export const matchingOptionsSchema = z.object({
+  allowRepeat: z.boolean().default(false),
+  options: z.array(matchingOptionSchema).min(1),
+});
+
+/**
+ * ordering 项（§5.4.1 :::item 容器的抽取副本）。fixedPosition 为固定项的
+ * 锁定显示位置（1 起，来自参考序列的声明位——对学生可见的既定位置提示，属
+ * 公开结构而非答案秘密，§6.1 调整 3）；distractor 标记公开但形状检查口径与
+ * matching 相反（干扰项不得进入序列，§6.1 调整 6）。语料未显式声明 distractor
+ * 属性，TT-06 解析从参考序列推导（不在序列 ⇒ 干扰项）。
+ */
+export const orderingItemSchema = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  fixedPosition: z.number().int().min(1).nullable().default(null),
+  distractor: z.boolean().default(false),
+});
+
+/**
+ * matching 选项池（学生面变体，2026-10-25 TT-10a 审查 P1 收紧）：逐项不含
+ * distractor 键——干扰项身份属答案侧信息（「哪些选项必然错误」的分类），
+ * 随学生载荷下发与未公布答案的口径冲突；matching 呈现对标记零消费（池内
+ * 一律可选，选错是答案错误），剥离无功能损失。教师侧全量结构（导入/lint/
+ * 保存校验用）见 matchingOptionsSchema；parse 对混入的 distractor 键 strip。
+ */
+export const matchingOptionsStudentSchema = z.object({
+  allowRepeat: z.boolean().default(false),
+  options: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        text: z.string(),
+      }),
+    )
+    .min(1),
+});
+
+/**
+ * ordering 项（学生面变体，2026-10-25 TT-10a 审查 P1 收紧）：不含 distractor
+ * 键——TT-06 解析的 distractor 由「是否在参考序列」推导，逐项下发等于公布前
+ * 枚举参考序列成员（触 AGENTS 第 3 条底线）；fixedPosition 是题面既定位置
+ * 提示（§6.1 调整 3），学生面保留。板行数/完成度由 sortableCount 计数派生
+ * （见 questionPublicSchema.sortableCount），呈现层不再需要逐项标记。
+ */
+export const orderingItemStudentSchema = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  fixedPosition: z.number().int().min(1).nullable().default(null),
+});
+
+/**
+ * matching 槽位行（2026-10-25 TT-10a 审查 P2-2）：id 为题内 ::ref{slots=…}
+ * 声明、按材料槽位序服务端展开后的 slotId；ordinal 为该槽在所属材料中的
+ * 1 起序号——子集选择（slots=slot-3..slot-5）沿用材料编号 3/4/5，题内
+ * 「第 N 空」标签与材料面板编号空位（N）对齐，不用题内重排的 1/2/3。
+ */
+export const matchingSlotSchema = z.object({
+  id: z.string().min(1),
+  ordinal: z.number().int().min(1),
+});
+
+/** matching 学生面选项池（教师全量 matchingOptionsSchema 的剥离变体） */
+export type MatchingOptionsStudent = z.infer<
+  typeof matchingOptionsStudentSchema
+>;
+/** ordering 学生面排序项（教师全量 orderingItemSchema 的剥离变体） */
+export type OrderingItemStudent = z.infer<typeof orderingItemStudentSchema>;
+/** matching 槽位行（id + 材料槽位序 ordinal，审查 P2-2） */
+export type MatchingSlot = z.infer<typeof matchingSlotSchema>;
 
 /**
  * 各题型答案形态（存入 §5.2 questions.answersJson）：
@@ -151,12 +290,40 @@ export const finalAnswersSchema = z.object({
   answer: z.string(),
 });
 
+/**
+ * response 参考答案（TT-05a 域②，§5.3.2）：referenceMd 与 variantsMd 均为
+ * Markdown 原文（KaTeX、分段、列表合法，公布后走 RichMarkdown 管线）；主参考
+ * 来自题内 :::answer，备选表达来自若干 :::variant（有序数组，无 id）。**整个
+ * answers 允许缺省**（无参考答案题：reference_self 不成立，行策略落 manual_only，
+ * §5.6）。word-min/word-max 只是作答提示，不进参考结构。
+ */
+export const responseAnswersSchema = z.object({
+  kind: z.literal("response"),
+  referenceMd: z.string().min(1),
+  variantsMd: z.array(z.string().min(1)).optional(),
+});
+
+/** matching 参考答案：纯 ID 映射（slotId→optionId，与 DSL 行式书写对称）；提供时可发布校验要求覆盖全部槽位（TT-06 发布层） */
+export const matchingAnswersSchema = z.object({
+  kind: z.literal("matching"),
+  pairs: z.record(z.string().min(1), z.string().min(1)),
+});
+
+/** ordering 参考答案：完整序列（固定项也列出；可发布校验=非干扰项恰一次、固定项在位） */
+export const orderingAnswersSchema = z.object({
+  kind: z.literal("ordering"),
+  sequence: z.array(z.string().min(1)).min(1),
+});
+
 export const questionAnswersSchema = z.discriminatedUnion("kind", [
   fillAnswersSchema,
   choiceAnswersSchema,
   multiAnswersSchema,
   judgeAnswersSchema,
   finalAnswersSchema,
+  responseAnswersSchema,
+  matchingAnswersSchema,
+  orderingAnswersSchema,
 ]);
 
 /**
@@ -182,6 +349,23 @@ export const questionSchema = z.object({
   hints: z.array(z.string()).default([]),
   solutionMd: z.string().optional(),
   sourceMd: z.string(),
+  /**
+   * 以下新字段全部可选（§5.8.1 全量可选策略；旧快照键集不变）：matching
+   * 选项池与 ordering 项是题面抽取副本（仅对应题型携带）；word-min/word-max
+   * 是 response 类字数提示（仅展示提示，不硬校验不截断，§5.4.1）。
+   */
+  matchingOptions: matchingOptionsSchema.optional(),
+  orderingItems: z.array(orderingItemSchema).optional(),
+  wordMin: z.number().int().min(1).optional(),
+  wordMax: z.number().int().min(1).optional(),
+  /**
+   * 题级 ::ref 产物（§5.2.2：::ref allowedIn group/**question**——完形子题逐空
+   * 绑定 slot、matching 槽位集合 slots、多材料题内引用累加）。QM-02 语料对撞
+   * 补齐域①遗漏：可选且缺省不注入键（旧题目键集不变，§5.8.1 同款纪律）。
+   * 2026-10-25 审查 P2-2 起学生端公开投影携带（材料 id 与选择串属题面公开
+   * 内容、无泄露面；导出闭包组∪题级同源所需，见 questionPublicSchema）。
+   */
+  materialRefs: z.array(materialRefSchema).optional(),
 });
 
 /**
@@ -193,8 +377,6 @@ export const questionSchema = z.object({
  * - hints 只暴露数量 hintCount，内容由 T2.11 分步接口按需下发。
  */
 export const questionPublicSchema = z.object({
-  /** 无参考答案的题不提供逐题提交，随整卷交卷；旧投影缺省沿用旧行为。 */
-  canSubmitQuestion: z.boolean().optional(),
   id: z.string().min(1),
   type: questionTypeSchema,
   difficulty: z.number().int().min(1).max(5),
@@ -202,6 +384,43 @@ export const questionPublicSchema = z.object({
   stemMd: z.string(),
   options: z.array(z.string()).optional(),
   hintCount: z.number().int().min(0),
+  /**
+   * 新题型作答面公开结构（TT-05a 域②）：matching 选项池与 ordering 项随题
+   * 下发（学生作答必需）；2026-10-25 审查 P1 收紧起为**学生面变体**——逐项
+   * 剥离 distractor 键（干扰项身份属答案侧，教师侧全量另见
+   * matchingOptionsSchema/orderingItemSchema）；fixedPosition 属公开结构
+   * （§6.1 调整 3）保留；word-min/word-max 字数提示。全部可选——旧七型不携带。
+   */
+  matchingOptions: matchingOptionsStudentSchema.optional(),
+  orderingItems: z.array(orderingItemStudentSchema).optional(),
+  /**
+   * ordering 学生需自行放置的项数（2026-10-25 审查 P1 随附计数）：非干扰且
+   * 非固定项数——学生面剥离 distractor 后，排序板行数（sortableCount + 固定
+   * 项数）与完成度期望由本计数派生。仅 ordering 携带，服务端从快照全量结构
+   * 计算（固定项恒非干扰：fixedPosition 声明自参考序列）。
+   */
+  sortableCount: z.number().int().min(0).optional(),
+  /**
+   * matching 槽位集合（QM-13 细项 2）：题内 ::ref{slots=…} 声明的槽位按
+   * 材料槽位序**服务端展开**后的有序槽位行（区间的展开依赖材料文档
+   * 顺序，学生端不重复解析 DSL 选择串）。仅 matching 题携带；展开失败
+   * （材料快照缺失等防御形态）不注入键。与 matchingOptions 分开下发——
+   * 选项池是题面抽取副本，槽位集合是题级引用的展开产物，两者来源独立。
+   * 2026-10-25 审查 P2-2 起行附材料槽位序 ordinal（1 起）：子集选择
+   * （slots=slot-3..slot-5）沿用材料编号 3/4/5，题内「第 N 空」标签与
+   * 材料面板编号空位（N）对齐，不用题内重排的 1/2/3。
+   */
+  matchingSlots: z.array(matchingSlotSchema).min(1).optional(),
+  wordMin: z.number().int().min(1).optional(),
+  wordMax: z.number().int().min(1).optional(),
+  /**
+   * 题级材料引用（2026-10-25 审查 P2-2）：材料为题面公开内容、无泄露面
+   * （正文投影经 materialPublicSchema 白名单，另由导入 lint
+   * MATERIAL_CONTAINS_ANSWER 双防线）。只含材料 id 与 DSL 原始选择串；
+   * web 单题导出闭包据此并入题级材料（与服务端 frozenMaterialsForQuestion
+   * 组∪题级同源）。可选——无题级引用的题不注入键（旧载荷键集不变）。
+   */
+  materialRefs: z.array(materialRefSchema).optional(),
 });
 
 /**
@@ -238,6 +457,17 @@ export const unitSchema = z.object({
    * 可选且**禁止 z.default()**——缺省不注入键，老文档解析结果形状不变。
    */
   practice: practiceRecommendationSchema.optional(),
+  /**
+   * 文档顶层材料声明（TT-05a 域①，§5.2.1 引用式布局）：解析抽取副本。可选且
+   * 禁止 z.default()——旧文档解析结果键集不变（practice 字段同款纪律，§5.8.1）；
+   * 新代码读旧形态按「无材料」处理（§5.8.3 旧快照读取兼容）。
+   */
+  materials: z.array(materialSchema).optional(),
+  /**
+   * 题组叠加元数据（§5.2.4 定稿）：组不产生题行、不进 questions 平铺数组；
+   * questionIds 必须是 questions 顺序的子序列（lint 校验）。缺省不注入键。
+   */
+  groups: z.array(unitGroupSchema).optional(),
   questions: z.array(questionSchema),
 });
 
@@ -284,6 +514,13 @@ export const lintIssueSchema = z.object({
   code: z.string().min(1),
   message: z.string().min(1),
   fix: z.string().optional(),
+  /**
+   * 结构化目标定位（tt-07b / QM-07，可选增量）：按 code 约定键集的目标实体
+   * id——消费方（导入降级等）不得从 message 文本反提取。当前使用：
+   * UNKNOWN_MATERIAL_REF → { material: 引用目标材料 id }。可选、禁止
+   * z.default()——不带 target 的 issue 键集不变（旧消费方按保守保留处理）。
+   */
+  target: z.record(z.string(), z.string()).optional(),
 });
 
 /**
@@ -295,6 +532,19 @@ export const parsedDocumentSchema = z.object({
   frontmatter: frontmatterSchema.optional(),
   lectures: z.array(lectureSchema).default([]),
   units: z.array(unitSchema).default([]),
+  /**
+   * 文档顶层材料实体（完整形态含 sourceMd，tt-06b / QM-05）：unit.materials
+   * 与本数组同源（同对象）；导入落库读这里（单一事实来源，§5.2.5-2）。
+   * 可选、禁止 z.default()——旧文档（无材料）解析结果键集不变。
+   */
+  materials: z.array(materialSchema).optional(),
+  /**
+   * 文档顶层题组实体（完整形态含 sourceMd/introMd，tt-06b / QM-05）。注意
+   * unit.groups 是 §5.2.4 定稿的**索引形态**（unitGroupSchema，不带组源文），
+   * 落库需要源文——导入层从这里取完整实体（同源抽取，两处视图）。
+   * 可选、禁止 z.default()——旧文档解析结果键集不变。
+   */
+  groups: z.array(questionGroupSchema).optional(),
   issues: z.array(lintIssueSchema).default([]),
 });
 

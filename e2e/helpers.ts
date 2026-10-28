@@ -31,7 +31,7 @@ export function uniqueSuffix(): string {
 /** 按统计标签核对结果页数字，不依赖旧横排文案或样式类。 */
 export async function expectResultCount(
   page: Page,
-  label: "总题数" | "答对" | "答错" | "待批" | "未答",
+  label: "总题数" | "答对" | "答错" | "待判断" | "未答",
   count: number,
 ): Promise<void> {
   const metric = page

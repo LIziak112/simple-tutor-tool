@@ -16,6 +16,10 @@ import type { Db } from "../db/client";
 import { type Attempt, attempts, questions, units } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  contextEntriesOf,
+  liveAttemptContextClosure,
+} from "./attempt-context.ts";
+import {
   answerOf,
   attemptEnabledCapabilities,
   attemptResponseRows,
@@ -24,6 +28,7 @@ import {
   insertFrozenResponses,
   lessonLiveSummaryOf,
   lessonQuestionSubmitted,
+  materialSlotOrderOf,
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
@@ -32,6 +37,7 @@ import {
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
 import { canonicalEmbeddedUnitOf } from "./lesson-embedded";
+import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
 import { attemptResultCounts, resultCountsSummary } from "./result-counts";
@@ -220,9 +226,30 @@ function createLessonAttempt(
   });
   // 冻结输入的读走外层 db（better-sqlite3 同连接同步执行，事务内读取与写入
   // 口径一致，startCourseAttempt 同款）；写走 tx 与 attempt 行同事务落库
-  const { liveRows, knowledgeByQuestion } = freezeInputsOfAttempt(db, attempt);
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+    db,
+    attempt,
+  );
+  // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（嵌入单元 live 题的依赖；
+  // 讲练具体混排渲染留 QM-14，本处只保证冻结闭包与四来源统一）
+  const entries =
+    teacherId === null
+      ? []
+      : contextEntriesOf(
+          liveAttemptContextClosure(
+            db,
+            teacherId,
+            liveRows.map((row) => row.id),
+          ),
+        );
   tx.insert(attempts).values(attempt).run();
   insertFrozenResponses(tx, attempt.id, liveRows, knowledgeByQuestion);
+  freezeAttemptContextSnapshotsWithin(
+    tx,
+    attempt.id,
+    entries,
+    attempt.startedAt,
+  );
   return attempt;
 }
 
@@ -243,6 +270,8 @@ function buildLessonStartData(
 ): LessonStartData {
   const blocks: LessonBlock[] = splitLessonBlocks(lecture.markdown);
 
+  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  const materialSlots = materialSlotOrderOf(db, attempt.id);
   const questions: AttemptQuestionPublic[] = [];
   const drafts: Record<string, StudentAnswer> = {};
   const draftRevisions: Record<string, number> = {};
@@ -252,7 +281,13 @@ function buildLessonStartData(
   for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
-    questions.push(publicOfSnapshot(snapshot, row.id));
+    questions.push(
+      publicOfSnapshot(snapshot, row.id, {
+        materialSlots,
+        // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
+        unitId: row.unitId,
+      }),
+    );
     const answer = answerOf(row.answerJson);
     draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;
@@ -265,7 +300,7 @@ function buildLessonStartData(
     // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
     // 含 [[答案]] 标记的原文不下发）
     released[row.questionId] = studentFacingResultOf(
-      resultQuestionOf(row, snapshot),
+      resultQuestionOf(row, snapshot, { materialSlots }),
     );
   }
   return {
@@ -286,15 +321,20 @@ function buildLessonStartData(
     released,
     summary: lessonLiveSummaryOf(
       // 开卷本就装载完整行（题目投影需要快照原文）；喂汇总前映射为存在性
-      // 布尔形态（LessonSummaryRow，不重复搬运快照列语义）
+      // 布尔形态（ScoreSummaryRow，不重复搬运快照列语义；QM-12 起补自评
+      // 三列——汇总核心的有效判定需要）
       rows.map((row) => ({
         hasSnapshot: row.questionSnapshotJson !== null,
         answerJson: row.answerJson,
         submittedAt: row.submittedAt,
         autoCorrect: row.autoCorrect,
         finalCorrect: row.finalCorrect,
+        gradingPolicy: row.gradingPolicy,
+        teacherMark: row.teacherMark,
+        selfReviewVerdict: row.selfReviewVerdict,
+        selfReviewAt: row.selfReviewAt,
+        selfReviewRevision: row.selfReviewRevision,
         answered: row.answered,
-        reviewEligible: row.reviewEligible,
       })),
       attempt,
     ),

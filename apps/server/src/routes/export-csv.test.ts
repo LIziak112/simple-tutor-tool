@@ -718,16 +718,17 @@ describe("T3.4 CSV 导出（D13）：列内容", () => {
       "答对",
     ]);
 
-    // 两空填空（题号 4）：按空序以「；」拼接；2026-10-02 起 fill 全人工批改 →
-    // 自动判定「—」（不自动判）、最终判定「待批」、来源「自动」（尚无教师批注）
+    // 两空填空（题号 4）：按空序以「；」拼接；fill 全人工批改 →
+    // 自动判定「—」（不自动判）、最终判定与来源均「未判断」（QM-12 有效判定
+    // 口径：无任何判定来源，不再把未判行标成「自动」）
     const fillRow = rowOf(rows, COURSE_LABEL, 4);
     expect(fillRow.slice(7, 11)).toEqual(["填空", "2", "计算", "3；4"]);
-    expect(fillRow.slice(11, 14)).toEqual(["—", "待批", "自动"]);
+    expect(fillRow.slice(11, 14)).toEqual(["—", "未判断", "未判断"]);
 
     // 手写题（题号 6）：只写笔迹未填最终答案 → 学生答案空、自动判定「—」、
-    // 最终判定「待批」、判定来源「自动」；链接 = publicUrl 前缀的教师端绝对 URL
+    // 最终判定与来源均「未判断」；链接 = publicUrl 前缀的教师端绝对 URL
     const solve = rowOf(rows, COURSE_LABEL, 6);
-    expect(solve.slice(10, 14)).toEqual(["", "—", "待批", "自动"]);
+    expect(solve.slice(10, 14)).toEqual(["", "—", "未判断", "未判断"]);
     expect(solve[18]).toBe(
       `${PUBLIC_URL}/api/teacher/ink/${inkIdOf(env.db, env.courseSubmittedId, Q.solve)}.png`,
     );
@@ -735,8 +736,8 @@ describe("T3.4 CSV 导出（D13）：列内容", () => {
     // 开放题（题号 7）：无标准答案 → 自动「—」；最终答案原文进「学生答案」列
     expect(rowOf(rows, COURSE_LABEL, 7).slice(11, 14)).toEqual([
       "—",
-      "待批",
-      "自动",
+      "未判断",
+      "未判断",
     ]);
     // 非手写题的笔迹链接列为空（判断/单选/多选/填空）
     for (const no of [1, 2, 3, 4, 5, 7]) {
@@ -785,7 +786,7 @@ describe("T3.4 CSV 导出（D13）：列内容", () => {
     expect(solve.slice(11, 14)).toEqual(["—", "答对", "教师"]);
     expect(solve[17]).toBe("很好，继续努力");
 
-    // 清除批注 → teacherMark 回 null，判定来源回落「自动」、最终判定回「待批」
+    // 清除批注 → teacherMark 回 null，无其他判定来源 → 最终判定与来源均回「未判断」
     const cleared = await request(
       app,
       `/api/teacher/responses/${responseIdOf(db, courseSubmittedId, Q.solve)}/mark`,
@@ -796,8 +797,8 @@ describe("T3.4 CSV 导出（D13）：列内容", () => {
     rows = await exportRows(app, cookieA);
     expect(rowOf(rows, COURSE_LABEL, 6).slice(11, 14)).toEqual([
       "—",
-      "待批",
-      "自动",
+      "未判断",
+      "未判断",
     ]);
     // 其间对自动判过的判断题改判一次：来源列变「教师」
     await request(

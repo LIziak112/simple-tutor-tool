@@ -88,7 +88,7 @@ function GreetingBanner({
   return (
     <section
       aria-label="今日概览"
-      className="flex items-center gap-4 rounded-2xl bg-gradient-to-r from-primary to-sky-500 px-5 py-5 text-primary-foreground shadow-sm sm:px-6"
+      className="flex items-center gap-4 rounded-2xl bg-gradient-to-r from-primary to-sky-700 px-5 py-5 text-primary-foreground shadow-sm sm:px-6"
     >
       <span
         aria-hidden

@@ -706,3 +706,90 @@ describe("AttemptDetailPage 单题完整导出入口（T6R.13）", () => {
     expect(reviewPackStubDatasets()).toHaveLength(3);
   });
 });
+
+// ---------- QM-12（TT-09c）：教师详情有效判定与自评行消费 ----------
+
+describe("AttemptDetailPage 有效判定与自评行（QM-12）", () => {
+  it("自评错：最终判定按自评答错并注明来源；待自评行区别于待批且不进教师待批计数", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        correctCount: 0,
+        wrongCount: 1,
+        pendingCount: 0,
+        selfReviewPendingCount: 1,
+        questions: [
+          makeQuestion({
+            no: 1,
+            gradingPolicy: "reference_self",
+            selfReview: {
+              verdict: "wrong",
+              at: "2026-10-24T00:00:00.000Z",
+              revision: 1,
+            },
+          }),
+          makeQuestion({
+            questionId: "q2",
+            no: 2,
+            gradingPolicy: "reference_self",
+            selfReview: null,
+          }),
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("article", { name: "第 1 题" });
+
+    // 第 1 题：学生自评错误 → 最终判定按自评（教师判 > 自评 > 自动）
+    const q1 = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(q1).getByText("自评错误")).toBeInTheDocument();
+    expect(within(q1).getByText(/最终判定按学生自评/)).toBeInTheDocument();
+    // 第 2 题：reference_self 未自评 → 「待自评」（不是「待批」——不进教师队列）
+    const q2 = screen.getByRole("article", { name: "第 2 题" });
+    expect(within(q2).getAllByText("待自评").length).toBe(2);
+    expect(within(q2).queryByText("待批")).toBeNull();
+    // 头部计数：教师待批与待自评分列（D4 口径不含待自评）
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.textContent === "待批 0 题" && element.tagName === "SPAN",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.textContent === "待自评 1 题" && element.tagName === "SPAN",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("教师改判优先于自评：批改块照常、最终判定随教师（回落自评不残留）", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        correctCount: 1,
+        wrongCount: 0,
+        pendingCount: 0,
+        questions: [
+          makeQuestion({
+            no: 1,
+            gradingPolicy: "reference_self",
+            teacherMark: "correct",
+            selfReview: {
+              verdict: "wrong",
+              at: "2026-10-24T00:00:00.000Z",
+              revision: 1,
+            },
+          }),
+        ],
+      }),
+    );
+    renderPage();
+    const q1 = await screen.findByRole("article", { name: "第 1 题" });
+    // 教师已判：以教师为准（自评记录保留展示，但不再标注「按学生自评」）
+    expect(within(q1).getByText("自评错误")).toBeInTheDocument();
+    expect(within(q1).queryByText(/最终判定按学生自评/)).toBeNull();
+    // 最终判定 = 答对（教师；自动判定恒 —）；「判对」两处——教师判定行 dd
+    // 与批改按钮选中态（aria-pressed=true，教师已判可改判）
+    expect(within(q1).getAllByText("答对", { exact: true }).length).toBe(1);
+    expect(within(q1).getAllByText("判对").length).toBe(2);
+  });
+});

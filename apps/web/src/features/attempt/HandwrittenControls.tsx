@@ -29,10 +29,12 @@ import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
+// UA-03：最终答案输入接入 final 呈现（answering/views/final，FinalAnswerInput
+// 的唯一消费出口收归呈现层；控制器所有权不变——本组件仍管辖纸面引擎）
+import { FinalAnswerField } from "../answering/views/final";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import { digestOf, mergeInkDocs } from "./draft-merge";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
-import { FinalAnswerInput } from "./FinalAnswerInput";
 import { useDraftSyncActions } from "./use-draft-sync";
 import {
   type InkUploadController,
@@ -92,6 +94,17 @@ export interface HandwrittenControlsProps {
   onExpandedChange?: (expanded: boolean) => void;
   showExpandTrigger?: boolean;
   ariaPrefix?: string;
+  /**
+   * 是否挂载单行最终答案输入（final 呈现，FinalAnswerField）。QM-09（D14）：
+   * response 的纸面角色同为 answerInk 但输入面是正文——最终答案输入是
+   * final kind 专属，宿主按 questionBindings 的 answerKind 传入；缺省 true
+   * （solve/apply/find-error 与既有测试不受影响）。
+   */
+  showFinalAnswer?: boolean;
+  /** 结构化题目参考内容（供全屏参考） */
+  scratchContext?: import("react").ReactNode;
+  /** 全屏参考展开标题（缺省「题干」） */
+  contextLabel?: string | undefined;
 }
 
 export function HandwrittenControls({
@@ -109,6 +122,9 @@ export function HandwrittenControls({
   onExpandedChange,
   showExpandTrigger = true,
   ariaPrefix = "本题",
+  showFinalAnswer = true,
+  scratchContext,
+  contextLabel,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -342,8 +358,6 @@ export function HandwrittenControls({
     // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
   }, [attemptId, questionId, inkEnabled, externallyControlled, restoreRetry]);
 
-  const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
-
   // T4.0b ink_fullscreen：挂现成 fullscreen state 的翻转处（§5.0-C14）——
   // 初始 false 不报（挂载即进入答题页不是全屏动作），此后每次进出各报一次
   const onInkFullscreenRef = useRef(onInkFullscreen);
@@ -465,12 +479,14 @@ export function HandwrittenControls({
               />
             </div>
           )}
-        <FinalAnswerInput
-          value={finalAnswer}
-          onChange={(value) =>
-            onAnswer({ kind: "final", finalAnswer: value }, true)
-          }
-        />
+        {showFinalAnswer && (
+          <FinalAnswerField
+            questionId={questionId}
+            stemMd={stemMd}
+            answer={answer?.kind === "final" ? answer : undefined}
+            onAnswer={onAnswer}
+          />
+        )}
       </div>
     );
   }
@@ -530,7 +546,8 @@ export function HandwrittenControls({
             fullscreen={fullscreen}
             label="全屏作答"
             heading={`${ariaPrefix}手写作答`}
-            context={<RichMarkdown source={stemMd} />}
+            contextLabel={contextLabel ?? "题干"}
+            context={scratchContext ?? <RichMarkdown source={stemMd} />}
             onClose={closeFullscreen}
           >
             {paperError && (
@@ -615,12 +632,14 @@ export function HandwrittenControls({
       )}
 
       {/* 最终答案（普通输入 / 数学键盘，T2.6 输入框保留 + MathLive 切换） */}
-      <FinalAnswerInput
-        value={finalAnswer}
-        onChange={(value) =>
-          onAnswer({ kind: "final", finalAnswer: value }, true)
-        }
-      />
+      {showFinalAnswer && (
+        <FinalAnswerField
+          questionId={questionId}
+          stemMd={stemMd}
+          answer={answer?.kind === "final" ? answer : undefined}
+          onAnswer={onAnswer}
+        />
+      )}
 
       {/* 引擎切换确认：全屏 → 清空回页内 */}
       <Dialog open={confirmReset} onOpenChange={setConfirmReset}>

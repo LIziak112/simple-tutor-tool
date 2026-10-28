@@ -401,3 +401,58 @@ function TestProviders({ children }: { children: ReactNode }) {
     </QueryClientProvider>
   );
 }
+
+// ---------- QM-11（TT-09b）：reference_self 行当题释放后的自评三态与动作 ----------
+
+/** solve 型 reference_self 行（讲练当题释放、教师未判） */
+const RELEASED_SELF: AttemptResultQuestion = {
+  ...RELEASED_Q1,
+  questionId: "lesson-q3",
+  snapshot: {
+    ...RELEASED_Q1.snapshot,
+    id: "lesson-q3",
+    type: "solve",
+    stemMd: "计算 $1+1$。",
+    options: undefined,
+  },
+  answers: { kind: "final", answer: "2" },
+  solutionMd: "1+1=2。",
+  answer: { kind: "final", finalAnswer: "2" },
+  autoCorrect: null,
+  finalCorrect: null,
+  gradingPolicy: "reference_self",
+  selfReview: { record: null, revision: 0 },
+};
+
+it("QM-11 讲练 reference_self 释放态：徽章「已完成、待自评」+ 对照后挂对了/错了/暂不判断", () => {
+  renderCard({ released: RELEASED_SELF });
+  expect(screen.getByText("已完成、待自评")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "对了" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "错了" })).toBeEnabled();
+  // 旧协议客观题释放态不受影响（auto 行不渲染自评）
+  expect(screen.queryByRole("button", { name: "暂不判断" })).toBeDisabled();
+});
+
+it("QM-11 讲练已自评：徽章「自评正确」；教师已判时不渲染自评动作（教师优先）", () => {
+  const { unmount } = renderCard({
+    released: {
+      ...RELEASED_SELF,
+      selfReview: {
+        record: { verdict: "correct", at: "t", revision: 1 },
+        revision: 1,
+      },
+    },
+  });
+  expect(screen.getAllByText("自评正确").length).toBeGreaterThanOrEqual(1);
+  unmount();
+
+  renderCard({
+    released: {
+      ...RELEASED_SELF,
+      teacherMark: "wrong",
+      finalCorrect: false,
+    },
+  });
+  expect(screen.queryByRole("button", { name: "对了" })).toBeNull();
+  expect(screen.queryByText("已完成、待自评")).toBeNull();
+});

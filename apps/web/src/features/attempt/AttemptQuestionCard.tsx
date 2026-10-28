@@ -11,6 +11,7 @@ import {
   CircleX,
   Eye,
   EyeOff,
+  FileText,
   Flag,
   FlagOff,
   ImageDown,
@@ -39,7 +40,19 @@ import {
   type QuestionAnnotationOverlayHandle,
 } from "@/features/annotation/QuestionAnnotationOverlay";
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
+import { ResponseAnswerField } from "@/features/answering";
+import { prepareQuestion } from "@/features/answering/prepare-question";
+import { questionBindings } from "@/features/answering/question-binding";
+import {
+  getScratchContextLabel,
+  renderScratchContext,
+} from "@/features/answering/scratch-context";
+import type { PreparedOf } from "@/features/answering/types";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
+import {
+  exportMaterialsOfQuestion,
+  renderMaterialExportPages,
+} from "@/features/export/material-export-pages";
 import {
   createOngoingQuestionImages,
   loadOngoingPaper,
@@ -57,6 +70,7 @@ import {
 import { currentNoteSession } from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
+import { fetchAttemptContextApi } from "@/lib/api";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import {
   HANDWRITTEN_TYPES,
@@ -107,6 +121,12 @@ function QuestionMeta({
   formalInkPresence: boolean;
   tools: {
     aiTrigger?: ReactNode;
+    /** QM-08：组内共享材料的「查看材料」入口（组段装配注入；组外题为空）。
+     *  P1-2：solo 题的题级 ::ref 材料同入口挂载（组装配传「共享」、题级
+     *  装配传「本题」，openMaterialLabel 区分语义） */
+    openMaterial?: () => void;
+    /** 材料入口按钮文案（缺省「查看共享材料」；题级装配传「查看本题材料」） */
+    openMaterialLabel?: string;
     annotationOpen: boolean;
     paperOpen: boolean;
     paperEnabled: boolean;
@@ -128,18 +148,20 @@ function QuestionMeta({
   return (
     <div
       data-slot="question-header"
-      className="flex min-h-11 items-start justify-between gap-2 sm:items-center"
+      className="flex min-h-11 flex-wrap items-start justify-between gap-2 sm:items-center"
     >
+      {/* 窄列防坍塌（2026-10-27）：题号/徽标/状态禁逐字换行（CJK 逐字竖排
+          缺陷），状态可截断；行内换行交给 flex-wrap 按整项换行 */}
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-        <p className="flex items-center gap-2 text-sm font-semibold">
+        <p className="flex items-center gap-2 text-sm font-semibold whitespace-nowrap">
           <span>第 {index + 1} 题</span>
         </p>
         <span
-          className={`rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
+          className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
         >
           {QUESTION_TYPE_LABELS[question.type]}
         </span>
-        <span className="text-xs text-muted-foreground">
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
           {completionLabel(
             getQuestionCompletion(question, answer, formalInkPresence),
           )}
@@ -181,7 +203,9 @@ function QuestionMeta({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      {/* 极窄列（分栏 65% 拖拽在 1024 视口）下 5×44px 触控钮去间距才能放下：
+          间距随题卡容器宽折叠恢复，触控目标恒 ≥44px */}
+      <div className="flex shrink-0 items-center gap-0 @min-[26rem]/question-card:gap-1">
         {tools && !tools.editLocked && (
           <Button
             type="button"
@@ -202,10 +226,28 @@ function QuestionMeta({
                 className={`size-4 ${tools.annotationOpen || tools.annotationCount > 0 ? "text-primary" : ""}`}
               />
             )}
-            <span className="hidden lg:inline">圈画</span>
+            <span className="hidden @min-[27rem]/question-card:inline">
+              圈画
+            </span>
             {tools.annotationCount > 0 && (
               <span aria-hidden className="size-1.5 rounded-full bg-current" />
             )}
+          </Button>
+        )}
+        {tools?.openMaterial && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11 min-w-11 gap-1.5 px-2"
+            title={tools.openMaterialLabel ?? "查看共享材料"}
+            aria-label={`第 ${index + 1} 题${tools.openMaterialLabel ?? "查看共享材料"}`}
+            data-material-trigger
+            onClick={tools.openMaterial}
+          >
+            <FileText aria-hidden className="size-4" />
+            <span className="hidden @min-[27rem]/question-card:inline">
+              材料
+            </span>
           </Button>
         )}
         {tools?.paperEnabled && !tools.editLocked && (
@@ -227,7 +269,7 @@ function QuestionMeta({
                 className={`size-4 ${tools.paperOpen || tools.paperCount > 0 || formalInkPresence ? "text-primary" : ""}`}
               />
             )}
-            <span className="hidden lg:inline">
+            <span className="hidden @min-[27rem]/question-card:inline">
               {HANDWRITTEN_TYPES.has(question.type) ? "手写" : "草稿"}
             </span>
             {(tools.paperCount > 0 || formalInkPresence) && (
@@ -312,6 +354,8 @@ export function AttemptQuestionCard({
   onHintUnlocked,
   flagged = false,
   onToggleFlag,
+  onOpenMaterial,
+  openMaterialLabel,
   unsure = false,
   onToggleUnsure,
   formalInkPresence = false,
@@ -344,6 +388,11 @@ export function AttemptQuestionCard({
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
   flagged?: boolean;
   onToggleFlag?: () => void;
+  /** QM-08：组内带共享材料时的「查看材料」入口（滚动到组材料列并恢复已读位置）；
+   *  P1-2：solo 题级材料同入口（滚动到题级材料锚），label 由调用方区分语义 */
+  onOpenMaterial?: () => void;
+  /** 材料入口按钮文案（缺省「查看共享材料」；题级装配传「查看本题材料」） */
+  openMaterialLabel?: string;
   /** #6980-4：做题时标了「不会」（服务端保存，进错题本） */
   unsure?: boolean;
   onToggleUnsure?: () => void;
@@ -429,6 +478,8 @@ export function AttemptQuestionCard({
   }, [inlineQuestion, annotationOpen, drawing]);
   const annotationRecord = useAnnotationRecord(attemptId ?? "", question.id);
   const noteRecord = useNoteRecord(attemptId ?? "", question.id);
+  const scratchContext = renderScratchContext(question);
+  const scratchContextLabel = getScratchContextLabel(question);
   const noteLayer =
     inkEnabled &&
     attemptId !== undefined &&
@@ -439,6 +490,8 @@ export function AttemptQuestionCard({
         questionId={question.id}
         stemMd={displayStemMd(question)}
         options={question.options}
+        scratchContext={scratchContext}
+        contextLabel={scratchContextLabel}
         open={noteOpen}
         onOpenChange={setNoteOpen}
         ariaPrefix={`第 ${index + 1} 题`}
@@ -473,6 +526,22 @@ export function AttemptQuestionCard({
         />
       )}
 
+      {/* 开放题正文作答（text-below-stem）：挂在圈画覆盖层外部下方（与 final 同范式），
+          确保圈画底图几何绝对稳定且不盖住作答框；只读时以禁用态保留学生已提交正文 */}
+      {questionBindings[question.type].placement === "text-below-stem" && (
+        <ResponseAnswerField
+          model={
+            prepareQuestion(
+              question,
+              `${question.id}-answer`,
+            ) as PreparedOf<"response">
+          }
+          answer={answer?.kind === "response" ? answer : undefined}
+          update={(next, defer) => onAnswer(next, defer)}
+          disabled={readOnly}
+        />
+      )}
+
       {HANDWRITTEN_TYPES.has(question.type) &&
         attemptId !== undefined &&
         !readOnly && (
@@ -481,6 +550,8 @@ export function AttemptQuestionCard({
             attemptId={attemptId}
             questionId={question.id}
             stemMd={question.stemMd}
+            scratchContext={scratchContext}
+            contextLabel={scratchContextLabel}
             answer={answer}
             onAnswer={onAnswer}
             registerController={registerInkController}
@@ -491,6 +562,11 @@ export function AttemptQuestionCard({
             expanded={noteOpen}
             onExpandedChange={setNoteOpen}
             showExpandTrigger={false}
+            // QM-09（D14）：单行最终答案输入是 final kind 专属——response 的
+            // 手写纸面与正文并存，不挂最终答案行（中央绑定派生，不写字面量）
+            showFinalAnswer={
+              questionBindings[question.type].answerKind === "final"
+            }
           />
         )}
 
@@ -542,7 +618,7 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className="flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-2 rounded-[8px] border border-border bg-card px-4 py-3 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-5"
+      className="@container/question-card flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-2 rounded-[8px] border border-border bg-card px-4 py-3 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-5 isolate"
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (
@@ -553,7 +629,7 @@ export function AttemptQuestionCard({
           return;
         if (
           event.target.closest(
-            '[data-annotation-trigger], [data-paper-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"], [data-slot="note-layer"], [data-slot="handwritten-controls"]',
+            '[data-annotation-trigger], [data-paper-trigger], [data-material-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"], [data-slot="note-layer"], [data-slot="handwritten-controls"]',
           )
         )
           return;
@@ -576,6 +652,14 @@ export function AttemptQuestionCard({
             ? null
             : {
                 aiTrigger,
+                ...(onOpenMaterial !== undefined
+                  ? {
+                      openMaterial: onOpenMaterial,
+                      ...(openMaterialLabel !== undefined
+                        ? { openMaterialLabel }
+                        : {}),
+                    }
+                  : {}),
                 annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,
@@ -694,13 +778,35 @@ export function AttemptQuestionCard({
               phase: "scratch",
             });
             guard();
-            return createOngoingQuestionImages(
+            const questionPages = await createOngoingQuestionImages(
               questionImage,
               paper,
               `${assignmentTitle} · 第 ${index + 1} 题`,
               guard,
               (record?.doc?.strokes.length ?? 0) > 0,
             );
+            guard();
+            // QM-16 细项 1：材料页前置（材料来自冻结上下文投影与题目公开
+            // 投影的题级引用——组∪题级与服务端闭包同源；与隐藏标画/收起
+            // 纸面无关）；读取/渲染失败显式抛错（对话框可重试），不静默
+            // 省略材料
+            const context = await fetchAttemptContextApi(attemptId);
+            guard();
+            const materialPages = await renderMaterialExportPages(
+              exportMaterialsOfQuestion(
+                context,
+                question.id,
+                question.materialRefs,
+              ),
+            );
+            guard();
+            return [
+              ...materialPages.map((page) => ({
+                blob: page.blob,
+                label: page.label,
+              })),
+              ...questionPages,
+            ];
           }}
         />
       )}

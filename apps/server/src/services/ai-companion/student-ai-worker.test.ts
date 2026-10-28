@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import {
   aiMessages,
   aiPolicyOverrides,
   aiTasks,
+  attemptContextSnapshots,
   attempts,
   responses,
   teachers,
@@ -428,6 +430,88 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
           },
         },
       ]);
+    } finally {
+      await provider.close();
+    }
+  });
+
+  it("多图 × 共享材料（审查 P1）：附件在场时共享材料正文仍在出站文本（fake provider 捕获双断言）", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const world = setupWorld(db);
+    addInappConnection(db, world.studentId);
+    // 冻结上下文（材料 + 组含 q1）须在创建任务前注入——创建时快照冻结材料
+    db.insert(attemptContextSnapshots)
+      .values([
+        {
+          id: randomUUID(),
+          attemptId: world.attemptId,
+          kind: "material",
+          sourceId: "mat-worker-1",
+          sourceVersion: 1,
+          snapshotJson: JSON.stringify({
+            id: "mat-worker-1",
+            title: "共享材料标题哨兵",
+            contentMd: "共享材料正文哨兵：一段不可独立缺省的上下文。",
+            anchors: [],
+            slots: [],
+            mediaPaths: [],
+          }),
+          frozenAt: new Date(T0).toISOString(),
+        },
+        {
+          id: randomUUID(),
+          attemptId: world.attemptId,
+          kind: "group",
+          sourceId: "grp-worker-1",
+          sourceVersion: 1,
+          snapshotJson: JSON.stringify({
+            id: "grp-worker-1",
+            title: "阅读组",
+            introMd: "",
+            materialRefs: [{ material: "mat-worker-1" }],
+            questionIds: [world.questionId],
+          }),
+          frozenAt: new Date(T0).toISOString(),
+        },
+      ])
+      .run();
+    const taskId = mkInappTask(db, world);
+    attachAiTaskMaterials(db, dataDir, {
+      studentId: world.studentId,
+      taskId,
+      pages: [
+        {
+          kind: "annotation",
+          pageIndex: 0,
+          pixelWidth: 320,
+          pixelHeight: 200,
+          png: makeNotePng(320, 200),
+        },
+      ],
+    });
+    const provider = await startFakeProvider(respondJson);
+    try {
+      await runStudentAiDispatchOnce(db, {
+        dataDir,
+        rootSecret: ROOT_SECRET,
+        transport: provider.transport,
+        now: () => new Date(T0 + 1000),
+      });
+      expect(taskStatus(db, taskId)).toBe("replied");
+      const parsed = JSON.parse(provider.requests[0]?.body ?? "{}") as {
+        messages?: Array<{ role: string; content: unknown }>;
+      };
+      const context = parsed.messages?.[1]?.content as Array<
+        Record<string, unknown>
+      >;
+      const textPart = context[0] as { type: string; text?: string };
+      // 双断言之允许侧：附件提示行与共享材料正文同时进外发载荷
+      expect(textPart.text).toContain("随本消息附带 1 张书写材料图片");
+      expect(textPart.text).toContain("## 共享材料");
+      expect(textPart.text).toContain(
+        "共享材料正文哨兵：一段不可独立缺省的上下文。",
+      );
     } finally {
       await provider.close();
     }

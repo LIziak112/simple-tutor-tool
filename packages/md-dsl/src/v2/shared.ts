@@ -104,6 +104,8 @@ export function makeIssue(
   column: number,
   code: string,
   message: string,
+  /** 结构化目标定位（可选，按 code 约定键集；tt-07b P2-1：消费方不从 message 反提取） */
+  target?: Readonly<Record<string, string>>,
 ): LintIssue {
   return {
     level,
@@ -111,6 +113,7 @@ export function makeIssue(
     column: Math.max(1, Math.trunc(column) || 1),
     code,
     message,
+    ...(target !== undefined ? { target: { ...target } } : {}),
   };
 }
 
@@ -144,7 +147,9 @@ export function isContainer(node: Node): node is ContainerDirective {
   return node.type === "containerDirective";
 }
 
-/** 指令名经注册表归一到主名（改名走 aliases，AGENTS.md 规则 11） */
-export function canonicalName(node: ContainerDirective): string {
+/** 指令名经注册表归一到主名（改名走 aliases，AGENTS.md 规则 11）。
+ *  参数取结构化最小面：容器/叶子/行内指令节点都有 name（TT-06 起叶子与
+ *  行内指令也按主名归一，不再各处手写收窄）。 */
+export function canonicalName(node: { readonly name: string }): string {
   return getDirective(node.name)?.name ?? node.name;
 }

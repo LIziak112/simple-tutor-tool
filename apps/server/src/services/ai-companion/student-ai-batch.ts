@@ -14,7 +14,11 @@ import {
   responses,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
-import { answersReleased, requireUsableAttempt } from "../attempt-service.ts";
+import {
+  answersReleased,
+  effectiveVerdictOfRow,
+  requireUsableAttempt,
+} from "../attempt-service.ts";
 import { createAiTask } from "./student-ai-queue.ts";
 
 /**
@@ -22,10 +26,11 @@ import { createAiTask } from "./student-ai-queue.ts";
  *
  * 复用单题装配与任务创建（createAiTask 单源：快照/策略/配额/幂等全在既有
  * 路径），批量层只做三件事：
- * 1. 可选题裁决：从**本人本次结果**的 responses 行取最终判定——判对逐项
- *    拒绝（不默认选也不接受伪造，请求结构上就没有 correct 字段）；待批
- *    （finalCorrect=null）可加入（学生主动勾选由前端分组把关）；答案未
- *    公布的卷整卷条目统一拒绝（判对判错同文案，不借批量结果泄露对错）；
+ * 1. 可选题裁决：从**本人本次结果**的 responses 行取有效判定（QM-12：教师
+ *    判 > 自评 > 自动——自评「对」同样逐项拒绝）；拒绝不默认选也不接受
+ *    伪造（请求结构上就没有 correct 字段）；未判断可加入（学生主动勾选由
+ *    前端分组把关）；答案未公布的卷整卷条目统一拒绝（判对判错同文案，不
+ *    借批量结果泄露对错）；
  *    未交卷拒绝。归属/作废/失权由 requireUsableAttempt 单源把关。
  * 2. 幂等键派生：每题 mutationId = `${batchMutationId}:${attemptId}:
  *    ${questionId}`——同批重放/网络重试命中既有任务（already_exists），
@@ -148,7 +153,9 @@ function createOneBatchItem(
     if (response === undefined) {
       return failedItem(item, "题目不存在或不属于这次练习");
     }
-    if (response.finalCorrect === true) {
+    // QM-12 有效判定口径：自评「对」同样无需复盘（教师判 > 自评 > 自动；
+    // 原 finalCorrect 快捷过滤对自评行恒放行）
+    if (effectiveVerdictOfRow(response)?.value === true) {
       return failedItem(item, "该题已判对，无需复盘");
     }
     // 幂等重放优先于「同题进行中」复用：同批重放报告 already_exists

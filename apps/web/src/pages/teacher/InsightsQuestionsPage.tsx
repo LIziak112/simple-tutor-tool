@@ -87,7 +87,7 @@ function QuestionRow({
         <td className="px-3 py-1.5">
           {row.pendingCount > 0 ? (
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
-              待批 {row.pendingCount}
+              未判断 {row.pendingCount}
             </span>
           ) : (
             <span className="text-muted-foreground">—</span>
@@ -276,7 +276,7 @@ export function InsightsQuestionsPage() {
                     对率
                   </th>
                   <th scope="col" className="px-3 py-2 font-medium">
-                    待批
+                    未判断
                   </th>
                   <th scope="col" className="px-3 py-2 font-medium">
                     均时

@@ -34,6 +34,11 @@ type RowProps = Omit<
    * 离开可访问树且不可聚焦），不卸载题卡、不动 key——切回列表原 DOM 复用。
    */
   hidden?: boolean | undefined;
+  /**
+   * 行 li 的附加类（QM-08 审查 P1 修复：题组单元 compare 网格里组行落次列、
+   * 组外行跨两列）。只改 className 不改树位，绝不用它承载重挂语义。
+   */
+  className?: string | undefined;
   events: Pick<
     ReturnType<typeof useAttemptEvents>,
     | "registerCard"
@@ -56,6 +61,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   events,
   aiContent,
   hidden = false,
+  className,
   ...props
 }: RowProps) {
   const register = useCallback(
@@ -72,7 +78,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
     [onAnswer, question.id],
   );
   return (
-    <li ref={register} hidden={hidden}>
+    <li ref={register} hidden={hidden} className={className}>
       <AttemptQuestionCard
         {...props}
         aiTrigger={props.aiTrigger}

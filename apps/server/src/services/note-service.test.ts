@@ -26,6 +26,7 @@ import { runMigrations } from "../db/migrate.ts";
 import {
   type Attempt,
   assignments as assignmentsTable,
+  attemptContextSnapshots,
   attempts as attemptsTable,
   noteImages as noteImagesTable,
   notes as notesTable,
@@ -33,6 +34,7 @@ import {
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { gzipJson, makeStudent, noteDoc } from "../test/note-fixtures.ts";
 import { insertEvidence } from "../test/note-world.ts";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service.ts";
@@ -2668,6 +2670,230 @@ describe("T6R.15 题目笔记本聚合（getStudentQuestionNotebook）", () => {
     expect(getStudentQuestionNotebook(db, mine, "never-seen").rounds).toEqual(
       [],
     );
+  });
+});
+
+describe("QM-15 笔记本来源材料/组投影（round.context，快照不可侵犯）", () => {
+  /**
+   * 种一轮「组内材料子题」作答：真实题目快照（携 materialRefs）+ 该卷冻结
+   * context 快照（材料/组）。零 live 行——材料/组/题库表都不建，投影必须
+   * 纯读冻结行成立（live 回退在此形态下必然拿不到内容）。
+   */
+  function seedMaterialRound(
+    db: Db,
+    studentId: string,
+    opts: {
+      attemptId?: string;
+      questionId?: string;
+      submittedAt?: string;
+      /** 题目快照的题级 materialRefs（缺省 [{ material: "mat-1" }]） */
+      questionMaterialRefs?: ReadonlyArray<Record<string, unknown>>;
+      /** 该卷冻结的材料条目 (id, version, 正文) */
+      materials?: ReadonlyArray<{
+        id: string;
+        version: number;
+        contentMd?: string;
+      }>;
+      /** 该卷冻结的组条目 */
+      group?: {
+        id: string;
+        version: number;
+        questionIds: string[];
+        materialRefs?: ReadonlyArray<Record<string, unknown>>;
+      };
+    } = {},
+  ): string {
+    const questionId = opts.questionId ?? "q1";
+    const attemptId = opts.attemptId ?? randomUUID();
+    const base = newDraftAttempt({
+      id: attemptId,
+      studentId,
+      sourceType: "assignment",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+      startedAt: "2026-10-01T00:00:00.000Z",
+    });
+    db.transaction((tx) => {
+      tx.insert(attemptsTable)
+        .values({
+          ...base,
+          status: "submitted",
+          submittedAt: opts.submittedAt ?? "2026-10-01T01:00:00.000Z",
+        })
+        .run();
+      insertFrozenResponse(tx, {
+        attemptId,
+        questionId,
+        questionVersion: 2,
+        questionSnapshotJson: JSON.stringify({
+          id: questionId,
+          type: "matching",
+          difficulty: 3,
+          knowledge: ["资料分析"],
+          stemMd: `根据材料回答（${questionId}）`,
+          sourceMd: "题块原文",
+          hints: [],
+          materialRefs:
+            opts.questionMaterialRefs === undefined
+              ? [{ material: "mat-1" }]
+              : opts.questionMaterialRefs,
+        }),
+        unitId: null,
+      });
+    });
+    for (const material of opts.materials ?? [
+      { id: "mat-1", version: 2, contentMd: "冻结版材料正文（v2）" },
+    ]) {
+      db.insert(attemptContextSnapshots)
+        .values({
+          id: randomUUID(),
+          attemptId,
+          kind: "material",
+          sourceId: material.id,
+          sourceVersion: material.version,
+          snapshotJson: JSON.stringify({
+            id: material.id,
+            title: "给定资料",
+            contentMd: material.contentMd ?? `材料正文 v${material.version}`,
+            anchors: [],
+            slots: [],
+            mediaPaths: [],
+          }),
+          frozenAt: "2026-10-01T00:00:00.000Z",
+        })
+        .run();
+    }
+    if (opts.group !== undefined) {
+      db.insert(attemptContextSnapshots)
+        .values({
+          id: randomUUID(),
+          attemptId,
+          kind: "group",
+          sourceId: opts.group.id,
+          sourceVersion: opts.group.version,
+          snapshotJson: JSON.stringify({
+            id: opts.group.id,
+            title: "资料组",
+            introMd: "根据以下资料回答。",
+            materialRefs: opts.group.materialRefs ?? [],
+            questionIds: opts.group.questionIds,
+          }),
+          frozenAt: "2026-10-01T00:00:00.000Z",
+        })
+        .run();
+    }
+    return attemptId;
+  }
+
+  it("组内材料子题：context 携带该轮冻结的组与材料（含组级引用与题级引用并集）", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    seedMaterialRound(db, studentId, {
+      // 题级引用 mat-2 + 组级引用 mat-1：闭包 = 两份材料 + 组
+      questionMaterialRefs: [{ material: "mat-2" }],
+      materials: [
+        { id: "mat-1", version: 1, contentMd: "组级材料正文" },
+        { id: "mat-2", version: 3, contentMd: "题级材料正文" },
+      ],
+      group: {
+        id: "grp-1",
+        version: 1,
+        questionIds: ["q0", "q1", "q2"],
+        materialRefs: [{ material: "mat-1" }],
+      },
+    });
+    const data = getStudentQuestionNotebook(db, studentId, "q1");
+    const only = sole(data.rounds, "唯一轮次");
+    expect(only.context).not.toBeNull();
+    expect(only.context?.groups).toHaveLength(1);
+    expect(only.context?.groups[0]).toMatchObject({
+      id: "grp-1",
+      sourceVersion: 1,
+      questionIds: ["q0", "q1", "q2"],
+    });
+    expect(only.context?.materials.map((m) => [m.id, m.sourceVersion])).toEqual(
+      [
+        ["mat-1", 1],
+        ["mat-2", 3],
+      ],
+    );
+    expect(only.context?.materials[0]?.contentMd).toBe("组级材料正文");
+    // 泄露断言（AGENTS 第 3 条）：context 子树无教师侧键（组快照仅成员 id 与
+    // 引用，兄弟题内容/答案不在任何通道）
+    assertNoLeak({ context: only.context });
+  });
+
+  it("快照不可侵犯：库里从无 live 行（材料/组/题库表空）也照常出冻结内容；改库不存在的实体无从影响", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const attemptId = seedMaterialRound(db, studentId);
+    // 两次读取一致；材料/组/题库表全程零行——任何 live 回退都会得 null
+    const first = getStudentQuestionNotebook(db, studentId, "q1");
+    const again = getStudentQuestionNotebook(db, studentId, "q1");
+    expect(again).toEqual(first);
+    const only = sole(again.rounds, "唯一轮次");
+    expect(only.context?.materials[0]).toMatchObject({
+      id: "mat-1",
+      sourceVersion: 2,
+      contentMd: "冻结版材料正文（v2）",
+    });
+    expect(only.attemptId).toBe(attemptId);
+  });
+
+  it("同材料不同历史版本并存（wrong 双版本卷）→ context 两版分别保留，不按 materialId 覆盖", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    seedMaterialRound(db, studentId, {
+      materials: [
+        { id: "mat-1", version: 1, contentMd: "v1 正文" },
+        { id: "mat-1", version: 2, contentMd: "v2 正文" },
+      ],
+    });
+    const data = getStudentQuestionNotebook(db, studentId, "q1");
+    const only = sole(data.rounds, "唯一轮次");
+    expect(
+      only.context?.materials.map((m) => [m.sourceVersion, m.contentMd]),
+    ).toEqual([
+      [1, "v1 正文"],
+      [2, "v2 正文"],
+    ]);
+  });
+
+  it("题不在任何组且无题级引用 → context 为 null（与「空数组」区分）", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    seedMaterialRound(db, studentId, {
+      questionMaterialRefs: [],
+      materials: [{ id: "mat-x", version: 1 }],
+    });
+    const data = getStudentQuestionNotebook(db, studentId, "q1");
+    const only = sole(data.rounds, "唯一轮次");
+    expect(only.context).toBeNull();
+  });
+
+  it("单条坏快照跳过不整体失败：组快照 JSON 损坏时材料仍出、组缺失（409 属 /context 显式读路径）", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const attemptId = seedMaterialRound(db, studentId, {
+      group: {
+        id: "grp-1",
+        version: 1,
+        questionIds: ["q1"],
+        materialRefs: [{ material: "mat-1" }],
+      },
+    });
+    db.$client
+      .prepare(
+        "UPDATE attempt_context_snapshots SET snapshot_json = '{oops' WHERE attempt_id = ? AND kind = 'group'",
+      )
+      .run(attemptId);
+    const data = getStudentQuestionNotebook(db, studentId, "q1");
+    const only = sole(data.rounds, "唯一轮次");
+    // 坏组跳过：组级引用随之失联，题级引用（缺省 mat-1）仍解析出材料
+    expect(only.context?.groups).toEqual([]);
+    expect(only.context?.materials.map((m) => m.id)).toEqual(["mat-1"]);
   });
 });
 

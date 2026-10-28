@@ -9,6 +9,7 @@ import type {
   LearningPackLecture,
   LearningPackLectureTrace,
   LearningPackManifest,
+  LearningPackMaterial,
   LearningPackModules,
   LearningPackPreviewData,
   LearningPackPreviewEvidenceImage,
@@ -22,8 +23,10 @@ import type {
   LearningPackV2Question,
   LearningPackV2Response,
   NotePhase,
+  SelfReviewRecord,
 } from "@tutor/contract";
 import {
+  effectiveVerdictOf,
   LEARNING_PACK_GOAL_LABELS,
   LEARNING_PACK_MAX_BYTES,
   learningPackAliasOf,
@@ -70,7 +73,13 @@ import { zipBufferOf } from "../lib/zip-write";
 import { promptOverrideBodyOf } from "./ai-companion/ai-prompt-settings-service";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
-import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
+import { frozenMaterialsFromRows } from "./attempt-question-materials";
+import {
+  answerOf,
+  effectiveVerdictOfRow,
+  frozenRowsInDisplayOrder,
+  selfReviewRecordOf,
+} from "./attempt-service";
 import {
   beijingDateTimeOf,
   beijingExportStampOf,
@@ -78,7 +87,8 @@ import {
 } from "./export-csv";
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
-import { serializeStudentAnswer } from "./mark-response";
+import { batchSerializeStudentAnswerOfRow } from "./mark-response";
+import { listAttemptContextSnapshots } from "./material-repository";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 import {
   assembleQuestionEvidence,
@@ -87,7 +97,6 @@ import {
   normalizeEvidencePhases,
   readyEvidenceImagesOf,
 } from "./question-evidence";
-import { reviewSourceOf } from "./review-state.ts";
 import { snapshotOfRow } from "./snapshot";
 import { sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
@@ -750,10 +759,14 @@ export function assembleLearningPack(
       let correct = 0;
       let wrong = 0;
       let pending = 0;
+      let selfJudged = 0;
       for (const row of rows) {
-        if (row.finalCorrect === null) pending += 1;
-        else if (row.finalCorrect) correct += 1;
+        // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单列
+        const effective = effectiveVerdictOfRow(row);
+        if (effective === null) pending += 1;
+        else if (effective.value) correct += 1;
         else wrong += 1;
+        if (effective?.source === "self") selfJudged += 1;
       }
       summaryRows.push({
         attemptId: attempt.id,
@@ -776,6 +789,7 @@ export function assembleLearningPack(
         correctCount: correct,
         wrongCount: wrong,
         pendingCount: pending,
+        selfJudgedCount: selfJudged,
       });
     }
   }
@@ -898,13 +912,17 @@ export function assembleLearningPack(
       let judged = 0;
       let correct = 0;
       let pending = 0;
+      let selfJudged = 0;
       let activeTotal = 0;
       for (const attempt of mine) {
         for (const row of responsesByAttempt.get(attempt.id) ?? []) {
-          if (row.finalCorrect === null) pending += 1;
+          // QM-12 有效判定口径：教师判 > 自评 > 自动；未判断单列不进分母
+          const effective = effectiveVerdictOfRow(row);
+          if (effective === null) pending += 1;
           else {
             judged += 1;
-            if (row.finalCorrect) correct += 1;
+            if (effective.source === "self") selfJudged += 1;
+            if (effective.value) correct += 1;
           }
           if (row.activeSec !== null) activeTotal += row.activeSec;
         }
@@ -920,6 +938,7 @@ export function assembleLearningPack(
         judgedCount: judged,
         correctCount: correct,
         pendingCount: pending,
+        selfJudgedCount: selfJudged,
         correctRate: judged > 0 ? correct / judged : null,
         activeSecTotal: activeTotal,
         offlineShare: activeTotal > 0 ? Math.min(1, offline / activeTotal) : 0,
@@ -931,6 +950,7 @@ export function assembleLearningPack(
         judgedCount: acc.judgedCount + row.judgedCount,
         correctCount: acc.correctCount + row.correctCount,
         pendingCount: acc.pendingCount + row.pendingCount,
+        selfJudgedCount: acc.selfJudgedCount + (row.selfJudgedCount ?? 0),
         activeSecTotal: acc.activeSecTotal + row.activeSecTotal,
       }),
       {
@@ -938,6 +958,7 @@ export function assembleLearningPack(
         judgedCount: 0,
         correctCount: 0,
         pendingCount: 0,
+        selfJudgedCount: 0,
         activeSecTotal: 0,
       },
     );
@@ -959,6 +980,7 @@ export function assembleLearningPack(
         judgedCount: overall.judgedCount,
         correctCount: overall.correctCount,
         pendingCount: overall.pendingCount,
+        selfJudgedCount: overall.selfJudgedCount,
         correctRate:
           overall.judgedCount > 0
             ? overall.correctCount / overall.judgedCount
@@ -1024,6 +1046,7 @@ export function assembleLearningPack(
     mappingTxt,
     // 闸门 F6：单次规范化（v1 也算——evidence 恒 false 不消费，成本可忽略）
     normalizedEvidencePhases: normalizeEvidencePhases(m.evidencePhases),
+    answerTextOf: batchSerializeStudentAnswerOfRow(db),
   };
   if (isV2) {
     return assembleV2(core);
@@ -1076,6 +1099,11 @@ interface PackCore {
    * normalizeEvidencePhases 重复收敛）
    */
   readonly normalizedEvidencePhases: readonly NotePhase[];
+  /**
+   * 学生答案行级序列化（审查 P3-3：v1/v2 的 responseBaseOf 行循环共用批量
+   * 出口，attemptId 请求内记忆化槽位序，一处 Map 覆盖整个导出请求）
+   */
+  readonly answerTextOf: ReturnType<typeof batchSerializeStudentAnswerOfRow>;
 }
 
 /**
@@ -1202,9 +1230,15 @@ function packSectionsOf<Q, R>(
     readonly questions: Q[] | null;
     readonly responses: R[] | null;
     readonly evidence: LearningPackEvidence[] | null;
+    /** v2 材料节（TT-13）：null = questions 模块未勾选（section 缺席） */
+    readonly materials?: LearningPackMaterial[] | null;
   },
 ): {
-  content?: { lectures?: LearningPackLecture[]; questions?: Q[] };
+  content?: {
+    lectures?: LearningPackLecture[];
+    questions?: Q[];
+    materials?: LearningPackMaterial[];
+  };
   attempts?: {
     responses?: R[];
     summaries?: LearningPackAttemptSummary[];
@@ -1224,6 +1258,9 @@ function packSectionsOf<Q, R>(
             ...(m.lectures.length > 0 ? { lectures: core.lectureItems } : {}),
             ...(sections.questions !== null
               ? { questions: sections.questions }
+              : {}),
+            ...(sections.materials != null && sections.materials.length > 0
+              ? { materials: sections.materials }
               : {}),
           },
         }
@@ -1264,20 +1301,27 @@ function responseBaseOf(
   const inkFile = core.inkEntryByAttemptQuestion.get(
     `${attempt.id}:${row.questionId}`,
   );
+  const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
     questionId: row.questionId,
     no,
-    answerText: serializeStudentAnswer(answerOf(row.answerJson)),
+    answerText: core.answerTextOf(attempt.id, row, answerOf(row.answerJson)),
     autoCorrect: row.autoCorrect,
     finalCorrect: row.finalCorrect,
-    ...(row.selfCorrect !== null ? { reviewSource: reviewSourceOf(row) } : {}),
+    // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
+    ...(effectiveSourceOfRow !== undefined
+      ? { reviewSource: effectiveSourceOfRow }
+      : {}),
     teacherMark:
       row.teacherMark === "correct" || row.teacherMark === "wrong"
         ? row.teacherMark
         : null,
     teacherComment: row.teacherComment,
+    // QM-12：自评记录与行策略（教师面数据包——判定来源可见，与教师详情同形）
+    selfReview: selfReviewRecordOf(row),
+    gradingPolicy: row.gradingPolicy,
     ...(inkFile !== undefined ? { inkFile } : {}),
   };
 }
@@ -1511,16 +1555,17 @@ function assembleV2(core: PackCore): LearningPackAssembly {
    * （assembleMedia，「未选模块不夹带内容」）。
    */
   const needsAssembly = m.questions !== undefined || m.evidence || m.responses;
+  const scopeItems = needsAssembly
+    ? core.orderedAttempts.map((attempt) => ({
+        attempt,
+        rows: core.displayRowsOf(attempt),
+      }))
+    : [];
   const evidenceAsm = assembleQuestionEvidence(
     db,
     dataDir,
     teacherId,
-    needsAssembly
-      ? core.orderedAttempts.map((attempt) => ({
-          attempt,
-          rows: core.displayRowsOf(attempt),
-        }))
-      : [],
+    scopeItems,
     {
       role: "teacher",
       // 题目模块未勾选时 material 不进包，层级取最小权限层
@@ -1542,7 +1587,147 @@ function assembleV2(core: PackCore): LearningPackAssembly {
    * 都不携带未选模块的关系，refs 不悬空、不外泄。
    */
   const mediaRefsBySrc = new Map<string, string[]>();
+  /**
+   * 材料配图（TT-13 材料节）：材料正文 ::image 引用的落盘核对结果
+   * （present 附 absPath/bytes；refs = 引用该材料的 q 条目——与题目媒体
+   * 的 manifest refs 同口径）。下方 media 合并段与讲义/题目媒体同 src 去重。
+   */
+  let materialMedia: ReadonlyArray<
+    | {
+        readonly src: string;
+        readonly present: true;
+        readonly absPath: string;
+        readonly bytes: number;
+        readonly refs: string[];
+      }
+    | {
+        readonly src: string;
+        readonly present: false;
+        readonly reason: string;
+        readonly refs: string[];
+      }
+  > = [];
+  /** 材料条目（m001…；TT-13：questions 模块勾选才装配） */
+  const materialItems: LearningPackMaterial[] = [];
+  /** q 条目 → 材料条目编号（顺序 = materialItems 全局序，确定性） */
+  const materialRefsByQuestionRef = new Map<string, string[]>();
+  // 空正文材料（materialId|sourceVersion 去重键）显式缺失登记（TT-13 审查
+  // P2-1）：MATERIAL_EMPTY 红线前导入的存量空材料冻结快照 contentMd 为空，
+  // 违反材料条目契约 min(1)——跳过条目不编号、manifest.contextNotes 计数
+  // （与坏快照行「缺失即显式缺失」同口径），重导即修复
+  const skippedEmptyMaterials = new Set<string>();
   if (m.questions !== undefined) {
+    // —— content.materials（TT-13）：组材料 ∪ 题级引用闭包按
+    // (materialId, sourceVersion) 整组去重——单源 frozenMaterialsFromRows
+    // （versionBadge=false：包内条目显式携带 sourceVersion，不重复标注）；
+    // 逐题 materialRefs 引用该轮实际冻结的版本（多版本并存逐版成条）。
+    // TT-14 细项 5：快照行按 attemptId 预取缓存——此前逐题调
+    // frozenMaterialsForQuestion 每题重查快照表（O(行×快照查询)，130 题
+    // = 130 次全表读），收敛为每 attempt 一次 ——
+    const snapshotRowsByAttempt = new Map<
+      string,
+      ReturnType<typeof listAttemptContextSnapshots>
+    >();
+    const snapshotRowsOf = (attemptId: string) => {
+      const cached = snapshotRowsByAttempt.get(attemptId);
+      if (cached !== undefined) return cached;
+      const loaded = listAttemptContextSnapshots(db, attemptId);
+      snapshotRowsByAttempt.set(attemptId, loaded);
+      return loaded;
+    };
+    const collected: Array<{
+      materialId: string;
+      sourceVersion: number;
+      title: string;
+      contentMd: string;
+      questionRefs: Set<string>;
+    }> = [];
+    const collectedByKey = new Map<string, number>();
+    for (const { attempt, rows } of scopeItems) {
+      const attemptSnapshotRows = snapshotRowsOf(attempt.id);
+      for (const row of rows) {
+        const qRef = evidenceAsm.refByResponseRowId.get(row.id);
+        if (qRef === undefined) continue;
+        const snapshot = snapshotOfRow(row);
+        if (snapshot === null) continue; // 坏快照行无材料闭包（缺失即显式缺失）
+        for (const material of frozenMaterialsFromRows(
+          attemptSnapshotRows,
+          row.questionId,
+          snapshot,
+          { versionBadge: false },
+        )) {
+          const key = `${material.id}|${material.sourceVersion}`;
+          // 空正文：契约 min(1) 前置不满足，跳过条目显式记缺失（见上注）
+          if (material.contentMd.trim().length === 0) {
+            skippedEmptyMaterials.add(key);
+            continue;
+          }
+          let index = collectedByKey.get(key);
+          if (index === undefined) {
+            index = collected.length;
+            collectedByKey.set(key, index);
+            collected.push({
+              materialId: material.id,
+              sourceVersion: material.sourceVersion,
+              title: material.title,
+              contentMd: material.contentMd,
+              questionRefs: new Set<string>(),
+            });
+          }
+          collected[index]?.questionRefs.add(qRef);
+        }
+      }
+    }
+    // 排序后编号（(materialId, sourceVersion) 稳定序 → m001… 可复现；
+    // 与 frozenMaterialsForQuestion 单题闭包的排序口径一致）
+    collected.sort(
+      (a, b) =>
+        a.materialId.localeCompare(b.materialId) ||
+        a.sourceVersion - b.sourceVersion,
+    );
+    const mediaQRefsBySrc = new Map<string, Set<string>>();
+    collected.forEach((material, index) => {
+      const ref = `m${String(index + 1).padStart(3, "0")}`;
+      materialItems.push({
+        ref,
+        materialId: material.materialId,
+        sourceVersion: material.sourceVersion,
+        title: material.title,
+        contentMd: material.contentMd,
+      });
+      for (const qRef of material.questionRefs) {
+        const refs = materialRefsByQuestionRef.get(qRef);
+        if (refs === undefined) materialRefsByQuestionRef.set(qRef, [ref]);
+        else refs.push(ref);
+      }
+      // 材料配图核对（不静默缺图：缺失进 manifest.missing）
+      for (const src of extractMediaImageSrcs([material.contentMd])) {
+        let qRefs = mediaQRefsBySrc.get(src);
+        if (qRefs === undefined) {
+          qRefs = new Set<string>();
+          mediaQRefsBySrc.set(src, qRefs);
+        }
+        for (const qRef of material.questionRefs) qRefs.add(qRef);
+      }
+    });
+    materialMedia = [...mediaQRefsBySrc].map(([src, qRefs]) => {
+      const refs = [...qRefs];
+      const stat = statMediaSrc(dataDir, src);
+      return "absPath" in stat
+        ? {
+            src,
+            present: true as const,
+            absPath: stat.absPath,
+            bytes: stat.bytes,
+            refs,
+          }
+        : {
+            src,
+            present: false as const,
+            reason: stat.reason,
+            refs,
+          };
+    });
     const mediaByRef = new Map<
       string,
       Array<{ src: string; present: boolean }>
@@ -1567,6 +1752,9 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       registerQuestionMedia(miss.src, false, miss.questionRefs);
     }
     for (const revision of evidenceAsm.revisions) {
+      // 一次查表（审查 P3-3：此前同 Map 连查两次，外层判非 undefined 后内层
+      // ?? [] 恒不触发）
+      const matRefs = materialRefsByQuestionRef.get(revision.ref);
       questionItemsV2.push({
         ref: revision.ref,
         questionId: revision.questionId,
@@ -1579,6 +1767,8 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         present: revision.present,
         snapshotHash: revision.snapshotHash,
         media: mediaByRef.get(revision.ref) ?? [],
+        // TT-13 材料节引用：该题条目（按内容身份去重后）引用的全部材料版本
+        ...(matRefs !== undefined ? { materialRefs: [...matRefs] } : {}),
         ...(revision.material.options !== undefined
           ? { options: [...revision.material.options] }
           : {}),
@@ -1650,6 +1840,32 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       }
       for (const miss of evidenceAsm.missingMedia) {
         upsertMissingMedia(miss.src, miss.reason, miss.questionRefs);
+      }
+      // TT-13 材料配图：材料正文引用的图片并入（同 src 与讲义/题目媒体去重；
+      // manifest refs 与题目媒体同口径合并，不覆盖已登记的 q 条目关联）
+      for (const medium of materialMedia) {
+        if (medium.present) {
+          if (seenEntry.has(medium.src)) {
+            const registered = mediaRefsBySrc.get(medium.src);
+            if (registered !== undefined) {
+              for (const ref of medium.refs) {
+                if (!registered.includes(ref)) registered.push(ref);
+              }
+            } else {
+              mediaRefsBySrc.set(medium.src, [...medium.refs]);
+            }
+            continue;
+          }
+          seenEntry.add(medium.src);
+          mediaEntries.push({
+            entry: medium.src,
+            absPath: medium.absPath,
+            bytes: medium.bytes,
+          });
+          mediaRefsBySrc.set(medium.src, [...medium.refs]);
+        } else {
+          upsertMissingMedia(medium.src, medium.reason, medium.refs);
+        }
       }
     }
   }
@@ -1872,6 +2088,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       questions: m.questions !== undefined ? questionItemsV2 : null,
       responses: m.responses ? responseRowsV2 : null,
       evidence: m.evidence ? evidenceSection : null,
+      materials: m.questions !== undefined ? materialItems : null,
     }),
   };
 
@@ -1908,6 +2125,31 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   if (missingSnapshotCount > 0) {
     contextNotes.push(
       `${missingSnapshotCount} 个题目版本的历史快照缺失（题目已删除或升级遗留），对应作答无题干内容，不回填当前题库。`,
+    );
+  }
+  // TT-13 材料节口径：同材料多版本并存时逐版成条（不同轮次冻结不同版本可
+  // 分辨「当时看到的是哪一版」）；材料正文为公开投影（不含答案型内容）
+  if (materialItems.length > 0) {
+    const multiVersion = new Set(
+      materialItems
+        .filter((material, index) =>
+          materialItems.some(
+            (other, otherIndex) =>
+              otherIndex !== index && other.materialId === material.materialId,
+          ),
+        )
+        .map((material) => material.materialId),
+    );
+    if (multiVersion.size > 0) {
+      contextNotes.push(
+        `${multiVersion.size} 份材料存在多个历史版本并存（各轮开卷冻结的版本不同），逐版成条；题目条目的 materialRefs 指向该轮实际冻结的版本。`,
+      );
+    }
+  }
+  // TT-13 审查 P2-1：存量空材料（MATERIAL_EMPTY 红线前导入）跳过不静默
+  if (skippedEmptyMaterials.size > 0) {
+    contextNotes.push(
+      `${skippedEmptyMaterials.size} 份冻结材料正文为空（历史导入的空材料），材料节未收录对应条目，相关题目的 materialRefs 不含其编号；重新导入文档可修复。`,
     );
   }
   // T6R.16 多阶段口径说明（evidence 勾选才谈；阶段以装配端规范化序列判断；
@@ -2142,8 +2384,12 @@ interface SummaryMdInput {
   }>;
   readonly summaryRows: readonly LearningPackAttemptSummary[];
   /** 逐题行（v1/v2 形状皆可——只消费 finalCorrect） */
+  /** 逐题行（v1/v2 形状皆可——QM-12 起按有效判定统计：教师判 > 自评 > 自动；
+   *  selfReview 可选（旧包缺省）与 null（未评）同作无记录处理） */
   readonly responseRows: ReadonlyArray<{
-    readonly finalCorrect: boolean | null;
+    readonly autoCorrect: boolean | null;
+    readonly teacherMark: "correct" | "wrong" | null;
+    readonly selfReview?: SelfReviewRecord | null | undefined;
   }>;
   readonly traceRows: readonly LearningPackQuestionTrace[];
   readonly lectureTraceRows: readonly LearningPackLectureTrace[];
@@ -2285,21 +2531,36 @@ function renderSummaryMd(input: SummaryMdInput): string {
   }
 
   if (m.responses) {
-    const judged = input.responseRows.filter(
-      (r) => r.finalCorrect !== null,
-    ).length;
-    const correct = input.responseRows.filter(
-      (r) => r.finalCorrect === true,
-    ).length;
-    const pending = input.responseRows.filter(
-      (r) => r.finalCorrect === null,
-    ).length;
+    // QM-12 有效判定口径（教师判 > 自评 > 自动）：未判断单列；自评数注明
+    // 来源（自评是学生本人判定，不能冒充客观独立完成证据）
+    let judged = 0;
+    let correct = 0;
+    let pending = 0;
+    let selfJudged = 0;
+    for (const row of input.responseRows) {
+      const effective = effectiveVerdictOf(
+        row.autoCorrect,
+        row.teacherMark,
+        row.selfReview ?? null,
+      );
+      if (effective === null) {
+        pending += 1;
+        continue;
+      }
+      judged += 1;
+      if (effective.source === "self") selfJudged += 1;
+      if (effective.value) correct += 1;
+    }
     lines.push("## 逐题作答");
     lines.push("");
     lines.push(
       `- 共 ${input.responseRows.length} 个逐题行（全部历次）；判定：对 ${correct} / 错 ${
         judged - correct
-      } / 待批 ${pending}（正确率分母不含待批）。`,
+      } / 未判断 ${pending}（正确率分母不含未判断）${
+        selfJudged > 0
+          ? `；其中学生自评 ${selfJudged} 题为学生本人判定，非客观测评`
+          : ""
+      }。`,
     );
     lines.push(
       "- 明细见 pack.json 的 attempts.responses（no 为该次作答内的连续题号）。",

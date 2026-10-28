@@ -106,6 +106,13 @@ export const importSummarySchema = z.object({
   lectureCount: z.number().int().min(0),
   /** 题目总数 */
   questionCount: z.number().int().min(0),
+  /**
+   * 材料数（tt-06b / QM-05 可选增量：材料/组不重复计题——questionCount 只数
+   * 可答子题，材料与组在此单列）。缺省兼容旧载荷（视为 0）。
+   */
+  materialCount: z.number().int().min(0).optional(),
+  /** 题组数（同上，可选增量；父组不产生题行） */
+  groupCount: z.number().int().min(0).optional(),
   /** 题型 → 题数（键为 questionTypeSchema 取值；只含出现过的题型） */
   typeDistribution: z.record(z.string(), z.number().int().min(0)),
 });
@@ -122,6 +129,14 @@ export const importActionKindSchema = z.enum([
   "createLecture",
   /** 更新讲义（同 (目标文件夹, 标题) 命中，替换 markdown，D18） */
   "updateLecture",
+  /** 新增材料（tt-06b / QM-05：::::material 按 (teacherId, id) 匹配；title 无值时以 id 兜底展示） */
+  "createMaterial",
+  /** 更新材料（同 id 命中；sourceMd 变更 version+1，抽取字段重建不升版） */
+  "updateMaterial",
+  /** 新增题组（::::group 按 (teacherId, id) 匹配） */
+  "createGroup",
+  /** 更新题组（同 id 命中；版本策略同材料） */
+  "updateGroup",
 ]);
 
 /** 更新单元的题目细分（D19）：新增题 / 更新题（version+1）/ 保留题（文件中未出现） */
@@ -164,6 +179,7 @@ export const importPreviewWarningSchema = z.object({
      */
     "LECTURE_LINK_UNRESOLVED",
     /**
+    /**
      * 讲练页（kind=lesson）重导命中同名讲义：本次导入接管该页嵌入单元，未挂载的
      * 旧随堂练习单元将软删进回收站（题行与作答历史保留）
      */
@@ -173,6 +189,18 @@ export const importPreviewWarningSchema = z.object({
      * 单元的题恒经讲义 md 题槽存在，独立单元的 kept 保留语义不适用
      */
     "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
+    /**
+     * 题内块式 ::ref{question=}（tt-06b / QM-04 审查 P2-2）：题内的子题引用属
+     * 无效写法——该行不进题干也不建立引用（从 stemMd 排除），预览必须可见、
+     * 不许静默吞。子题引用只能写在 ::::group 内。
+     */
+    "REF_QUESTION_IN_QUESTION",
+    /**
+     * 材料/组跨单元移动（tt-06b / QM-05）：同 id 资源已在其他单元，本次导入
+     * 将移动到本文档单元（unitId 随之更新，questions 同款）；引用按 id 解析
+     * 不受影响，但单元局部性变化，预览提示受影响引用数。
+     */
+    "MATERIAL_MOVED_ACROSS_UNITS",
   ]),
   message: z.string().min(1),
 });
@@ -228,6 +256,110 @@ export const importCommitDataSchema = z.object({
   units: z.array(importUnitReportSchema),
   lectures: z.array(importLectureReportSchema),
   questions: importQuestionsReportSchema,
+  /**
+   * 材料/组导入统计（tt-06b / QM-05 可选增量，形状同题目统计；缺省兼容
+   * 历史留档 JSON）。材料/组不产生题行——题目统计只数可答子题。
+   */
+  materials: importQuestionsReportSchema.optional(),
+  groups: importQuestionsReportSchema.optional(),
+});
+
+// ---------- tt-06b / QM-05：材料/题组编辑与删除（教师端，片段原文提交） ----------
+
+/** 材料被引用处摘要（修改/删除/跨单元移动的受影响引用报告） */
+export const materialAffectedRefSchema = z.object({
+  /** 引用方类型（material_refs.ownerKind 值域） */
+  ownerKind: z.enum(["group", "question"]),
+  /** 引用方 id（组 id 或题 id，教师域 DSL id） */
+  ownerId: z.string().min(1),
+  /** 引用序（owner 的 materialRefs 数组下标） */
+  refOrder: z.number().int().min(0),
+});
+export type MaterialAffectedRef = z.infer<typeof materialAffectedRefSchema>;
+
+/** GET /api/teacher/materials/:id 响应 data（编辑抽屉用；教师侧完整形态含 sourceMd） */
+export const materialDetailSchema = z.object({
+  id: z.string().min(1),
+  unitId: z.string().min(1),
+  title: z.string().optional(),
+  sourceMd: z.string(),
+  version: z.number().int().min(1),
+  updatedAt: z.string(),
+});
+export type MaterialDetail = z.infer<typeof materialDetailSchema>;
+
+/** PUT /api/teacher/materials/:id 请求体：材料容器片段原文（::::material 围栏完整） */
+export const materialUpdateRequestSchema = z.object({
+  sourceMd: z.string().min(1, "sourceMd 不能为空"),
+});
+
+/** PUT /api/teacher/materials/:id 响应 data：新版本 + 受影响引用（编辑后仍指向本材料） */
+export const materialUpdateDataSchema = z.object({
+  id: z.string().min(1),
+  version: z.number().int().min(1),
+  updatedAt: z.string(),
+  /** 仍引用本材料的组/题（引用按 id 解析，编辑内容不断链；供教师确认影响面） */
+  affectedRefs: z.array(materialAffectedRefSchema),
+});
+
+/** DELETE /api/teacher/materials/:id 响应 data：软删 + 删除前仍存活的引用清单 */
+export const materialDeleteDataSchema = z.object({
+  id: z.string().min(1),
+  deletedAt: z.string(),
+  /** 软删后悬垂的引用方（组/题仍引用本材料——删除影响报告） */
+  affectedRefs: z.array(materialAffectedRefSchema),
+});
+
+/** GET /api/teacher/groups/:id 响应 data */
+export const questionGroupDetailSchema = z.object({
+  id: z.string().min(1),
+  unitId: z.string().min(1),
+  title: z.string().optional(),
+  label: z.string().optional(),
+  sourceMd: z.string(),
+  version: z.number().int().min(1),
+  updatedAt: z.string(),
+});
+export type QuestionGroupDetail = z.infer<typeof questionGroupDetailSchema>;
+/** PUT /api/teacher/materials/:id 请求体（材料容器片段原文） */
+export type MaterialUpdateRequest = z.infer<typeof materialUpdateRequestSchema>;
+/** PUT /api/teacher/materials/:id 响应 data */
+export type MaterialUpdateData = z.infer<typeof materialUpdateDataSchema>;
+/** DELETE /api/teacher/materials/:id 响应 data */
+export type MaterialDeleteData = z.infer<typeof materialDeleteDataSchema>;
+/** PUT /api/teacher/groups/:id 请求体（组容器片段原文） */
+export type QuestionGroupUpdateRequest = z.infer<
+  typeof questionGroupUpdateRequestSchema
+>;
+/** PUT /api/teacher/groups/:id 响应 data */
+export type QuestionGroupUpdateData = z.infer<
+  typeof questionGroupUpdateDataSchema
+>;
+/** DELETE /api/teacher/groups/:id 响应 data */
+export type QuestionGroupDeleteData = z.infer<
+  typeof questionGroupDeleteDataSchema
+>;
+
+/** PUT /api/teacher/groups/:id 请求体：组容器片段原文 */
+export const questionGroupUpdateRequestSchema = z.object({
+  sourceMd: z.string().min(1, "sourceMd 不能为空"),
+});
+
+/** PUT /api/teacher/groups/:id 响应 data：新版本 + 受影响子题（组编辑后仍收录的成员） */
+export const questionGroupUpdateDataSchema = z.object({
+  id: z.string().min(1),
+  version: z.number().int().min(1),
+  updatedAt: z.string(),
+  /** 本次保存后组内仍引用的子题 id（成员增减的影响面） */
+  affectedQuestionIds: z.array(z.string().min(1)),
+});
+
+/** DELETE /api/teacher/groups/:id 响应 data：软删 + 删除前收录的子题清单 */
+export const questionGroupDeleteDataSchema = z.object({
+  id: z.string().min(1),
+  deletedAt: z.string(),
+  /** 软删前组内收录的子题 id（这些题失去组归置，独立作答不受影响） */
+  affectedQuestionIds: z.array(z.string().min(1)),
 });
 
 /**
@@ -256,6 +388,17 @@ export const contentErrorCodeSchema = z.enum([
   "COURSE_HAS_ATTEMPTS",
   "FOLDER_NOT_FOUND",
   "IMPORT_TOO_LARGE",
+  /** 材料/题组不存在（含软删后按不存在处理）（404，tt-06b / QM-05 编辑与删除入口） */
+  "MATERIAL_NOT_FOUND",
+  "GROUP_NOT_FOUND",
+  /**
+   * 发布开关关闭（TT-05a 域④，决策记录 §5.8.4/D15）：导入含新指令/新属性
+   * （material/group/seg/ref/options/option/item/variant/{{slot}}/word-min 等）
+   * 的文档 → 403，明确提示所需开关与版本；旧七型文档导入不受影响。开关为
+   * 部署级环境变量 NEW_CONTENT_ENABLED（缺省 false），服务端 env 读取在
+   * QM-05 落地，契约层先定码。
+   */
+  "NEW_CONTENT_DISABLED",
 ]);
 
 /**

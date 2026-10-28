@@ -6,6 +6,7 @@ import {
   type Question,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import { lintDocument } from "../lint/lint.ts";
 import { parseDocument } from "./parse";
 
 /** 官方练习样例（兼容性回归夹具，AGENTS.md 规则 12）：覆盖全部七种题型 */
@@ -825,6 +826,168 @@ unit: 单元"A"
 
   it("纯函数：同输入重复调用结果一致", () => {
     expect(parseDocument(LESSON_SAMPLE)).toEqual(lessonParsed);
+  });
+});
+
+/**
+ * 讲练页材料/组与新题型（QM-14 讲练原位适配）：lesson 文档与 practice 同构
+ * 地声明材料/组（allowedIn=document，组用 ::ref 表达、不物理包含子题——
+ * 设计方案「组声明引用子题，不在 question 中直接嵌 question，因此不破坏
+ * lesson 的既有安全前提」）。此前 lesson 解析不抽取材料/组（题级 ::ref 索引
+ * 已入库而实体缺失 → 讲练开卷闭包 409），本组用例锁定抽取、引用校验与
+ * 防泄露切段三条边界。
+ */
+describe("parseDocument：讲练页材料/组与新题型（QM-14）", () => {
+  const QM_LESSON_MD = `---
+kind: lesson
+unit: 讲练材料单元
+topic: 资料分析与排序
+---
+
+# 第1讲 资料分析
+
+讲解段一：先读材料再作答。
+
+::::material{id=mat-1 title="某省粮食生产"}
+粮食总产量 $3{,}096.2$ 万吨，比上年增加 $56.4$ 万吨。第 {{slot-1}} 空在句中。
+
+:::seg{id=seg-1}
+分品种看，稻谷产量 $1{,}542.3$ 万吨。
+:::
+::::
+
+::::group{id=grp-1 title="根据以下资料回答第 1～2 题" label="1–2"}
+::ref{material=mat-1}
+::ref{question=q-m}
+::ref{question=q-o}
+::::
+
+:::::question{id=q-m type=matching difficulty=3}
+为文中空位选择合适的内容 ::ref{material=mat-1 slots=slot-1}
+
+::::options
+:::option{id=opt-1}
+增产 $56.4$ 万吨
+:::
+:::option{id=opt-2}
+减产 $56.4$ 万吨
+:::
+::::
+
+:::answer
+slot-1 = opt-1
+:::
+:::::
+
+讲解段二：排序题在组内。
+
+::::question{id=q-o type=ordering difficulty=3}
+按语意连贯排列下列语句（it-2 已固定）。
+
+:::item{id=it-1}
+也就是说，评价要指向作品本身。
+:::
+
+:::item{id=it-2 fixed=true}
+如何评价一部作品？
+:::
+
+:::answer
+it-2
+it-1
+:::
+::::
+
+讲解段三：组外还有独立新题型。
+
+::::question{id=q-r type=response difficulty=2}
+结合材料写一段 80 字左右的分析。
+:::
+
+:::answer
+参考分析：粮食总产量连续增产。
+:::
+::::
+
+结尾段。
+`;
+
+  it("材料/组抽取与单元挂载（与 practice 同构）：顶层 materials/groups、unit.materials/unit.groups 同源", () => {
+    const result = parseDocument(QM_LESSON_MD);
+    expect(result.issues).toEqual([]);
+    expect(parsedDocumentSchema.safeParse(result).success).toBe(true);
+    expect(result.materials?.map((m) => m.id)).toEqual(["mat-1"]);
+    expect(result.groups?.map((g) => g.id)).toEqual(["grp-1"]);
+    const lessonUnit = result.units[0];
+    expect(lessonUnit?.id).toBe("讲练材料单元");
+    expect(lessonUnit?.materials?.map((m) => m.id)).toEqual(["mat-1"]);
+    expect(lessonUnit?.groups?.map((g) => g.id)).toEqual(["grp-1"]);
+    // 新题型题目照常入题库（matching/ordering/response）
+    expect(lessonUnit?.questions.map((q) => q.id)).toEqual([
+      "q-m",
+      "q-o",
+      "q-r",
+    ]);
+    // 题级 ::ref 绑定随题抽取（materialRefs 进快照，matchingSlots 依赖）
+    expect(lessonUnit?.questions[0]?.materialRefs?.[0]).toMatchObject({
+      material: "mat-1",
+    });
+  });
+
+  it("讲义正文 keep 模式保留材料/组容器（存储原文是真相：位置即 markdown，切段只发生在学生投影）", () => {
+    const result = parseDocument(QM_LESSON_MD);
+    const markdown = result.lectures[0]?.markdown ?? "";
+    expect(markdown).toContain("::::material{id=mat-1");
+    expect(markdown).toContain("::::group{id=grp-1");
+    // 显式 id 无引号原样保留（注入只补缺失 id）
+    expect(markdown).toContain("::::question{id=q-m type=matching");
+  });
+
+  it("引用校验在 lesson 语境同样生效：未知材料 → UNKNOWN_MATERIAL_REF（error）", () => {
+    const md = QM_LESSON_MD.replace(
+      "::ref{material=mat-1}",
+      "::ref{material=mat-9}",
+    );
+    const result = parseDocument(md);
+    const codesOfErrors = result.issues
+      .filter((i) => i.level === "error")
+      .map((i) => i.code);
+    expect(codesOfErrors).toContain("UNKNOWN_MATERIAL_REF");
+  });
+
+  it("材料含答案指令 → MATERIAL_CONTAINS_ANSWER（error，防泄露边界不因 lesson 放宽）", () => {
+    const md = QM_LESSON_MD.replace(
+      "粮食总产量 $3{,}096.2$ 万吨",
+      ":::answer\n材料内答案:::\n粮食总产量 $3{,}096.2$ 万吨",
+    );
+    const result = parseDocument(md);
+    const codesOfErrors = result.issues
+      .filter((i) => i.level === "error")
+      .map((i) => i.code);
+    expect(codesOfErrors).toContain("MATERIAL_CONTAINS_ANSWER");
+  });
+
+  it("题目嵌套进材料容器 → QUESTION_NESTED_IN_LESSON 仍为 error（细项 5 安全红线；嵌套规则在 lint 层）", () => {
+    const md = `---
+kind: lesson
+unit: 嵌套单元
+---
+
+# 第1讲
+
+::::material{id=mat-1 title="材料"}
+材料正文。
+
+::::question{type=judge id="nested"}
+[[正确]]
+::::
+::::
+`;
+    const result = lintDocument(md);
+    const issue = result.issues.find(
+      (i) => i.code === "QUESTION_NESTED_IN_LESSON",
+    );
+    expect(issue?.level).toBe("error");
   });
 });
 

@@ -904,3 +904,515 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     expect(anon.status).toBe(401);
   });
 });
+
+// ---------- QM-12（TT-09c）：自评行错题集合口径 ----------
+
+/** 自评夹具：judge（auto）+ 带参考 fill（reference_self）+ 带参考 solve（reference_self） */
+const SELF_REVIEW_PRACTICE_MD = `---
+kind: practice
+unit: 自评错题练习
+topic: 对照自评
+---
+
+::::question{type=judge difficulty=1 knowledge="有理数的概念"}
+$1$ 是正数。[[正确]]
+::::
+
+::::question{type=fill difficulty=2 knowledge="填空对照"}
+把二分之一化成小数：[[0.5|1/2]]
+::::
+
+::::question{type=solve difficulty=3 knowledge="解答对照"}
+计算 $\\frac{1}{2}+\\frac{1}{2}$，写出结果。
+
+:::answer
+1
+:::
+::::
+`;
+
+const SR = {
+  judge: "自评错题练习-1",
+  fill: "自评错题练习-2",
+  solve: "自评错题练习-3",
+} as const;
+
+/** 自评环境（独立单元导入 + 开关开启开卷——行冻结 auto/reference_self） */
+async function makeSelfReviewEnv(): Promise<WrongEnv & { srUnitId: string }> {
+  const env = await makeWrongEnv();
+  const imported = await env.app.request("/api/teacher/import/commit", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: env.teacherCookie },
+    body: JSON.stringify({
+      markdown: SELF_REVIEW_PRACTICE_MD,
+      filename: "自评错题练习.md",
+      courseId: env.courseId,
+    }),
+  });
+  expect(imported.status).toBe(200);
+  const srUnitId = (
+    (await imported.json()) as { data: { units: { id: string }[] } }
+  ).data.units[0]?.id;
+  if (!srUnitId) throw new Error("自评夹具导入未产出单元");
+  const detail = await env.app.request(`/api/teacher/courses/${env.courseId}`, {
+    headers: { cookie: env.teacherCookie },
+  });
+  const item = (
+    (await detail.json()) as {
+      data: { items: { id: string; refId: string | null }[] };
+    }
+  ).data.items.find((entry) => entry.refId === srUnitId);
+  if (!item) throw new Error("课程目录中未找到自评单元条目");
+  const patched = await env.app.request(
+    `/api/teacher/course-items/${item.id}`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ visible: true }),
+    },
+  );
+  expect(patched.status).toBe(200);
+  return { ...env, srUnitId };
+}
+
+/** 开关开启下开课程练习卷（gradingPolicy 冻结 auto / reference_self） */
+async function startSelfReviewAttempt(
+  env: WrongEnv & { srUnitId: string },
+): Promise<string> {
+  const previous = process.env.NEW_CONTENT_ENABLED;
+  process.env.NEW_CONTENT_ENABLED = "true";
+  let attemptId: string;
+  try {
+    const res = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${encodeURIComponent(
+        env.srUnitId,
+      )}/attempts`,
+      { method: "POST", headers: { cookie: env.aCookie } },
+    );
+    expect([200, 201]).toContain(res.status);
+    attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+  } finally {
+    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+    else process.env.NEW_CONTENT_ENABLED = previous;
+  }
+  return attemptId;
+}
+
+/** POST 自评（fill/solve 为 reference_self 行；course 来源恒公布） */
+async function selfReview(
+  env: WrongEnv,
+  attemptId: string,
+  questionId: string,
+  verdict: "correct" | "wrong" | "undecided",
+  baseRevision = 0,
+): Promise<Response> {
+  return env.app.request(
+    `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(
+      questionId,
+    )}/self-review`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: env.aCookie },
+      body: JSON.stringify({
+        verdict,
+        baseRevision,
+        mutationId: crypto.randomUUID(),
+      }),
+    },
+  );
+}
+
+/** 教师批注（mark=null 清除） */
+async function teacherMark(
+  env: WrongEnv,
+  responseId: string,
+  mark: "correct" | "wrong" | null,
+): Promise<Response> {
+  return env.app.request(`/api/teacher/responses/${responseId}/mark`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: env.teacherCookie },
+    body: JSON.stringify({ mark, comment: null }),
+  });
+}
+
+describe("GET /api/student/wrong-questions（QM-12：自评行错题集合）", () => {
+  it("自评「错」入本（轮次 correct=false）；未自评行不入本、不产生待批计数；自评「对」后出默认集合（includeResolved 列 resolved）", async () => {
+    const env = await makeSelfReviewEnv();
+    const a1 = await startSelfReviewAttempt(env);
+    // 冻结策略断言：judge=auto、fill/solve=reference_self
+    expect(
+      env.db
+        .select({ policy: responses.gradingPolicy })
+        .from(responses)
+        .where(eq(responses.attemptId, a1))
+        .all()
+        .map((r) => r.policy),
+    ).toEqual(["auto", "reference_self", "reference_self"]);
+
+    await saveAnswer(env, a1, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a1, SR.fill, { kind: "fill", values: ["3"] });
+    await saveAnswer(env, a1, SR.solve, { kind: "final", finalAnswer: "1" });
+    await submitAt(env, a1, T1);
+
+    // 未自评：两道 reference_self 行均未判断 → 不入本（也不能当成待批泄露）
+    const before = await getWrongQuestions(env);
+    expect(before.data?.questions).toEqual([]);
+
+    // 自评 fill=wrong（错）→ 入本；solve 保持未自评 → 不入本
+    const wrongRes = await selfReview(env, a1, SR.fill, "wrong");
+    expect(wrongRes.status).toBe(200);
+    const wrongList = await getWrongQuestions(env);
+    expect(wrongList.data?.questions.map((c) => c.questionId)).toEqual([
+      SR.fill,
+    ]);
+    const fillCard = wrongList.data?.questions[0];
+    expect(fillCard?.firstCorrect).toBe(false);
+    expect(fillCard?.resolved).toBe(false);
+    expect(fillCard?.rounds).toHaveLength(1);
+    expect(fillCard?.rounds[0]).toMatchObject({ correct: false });
+    expect(fillCard?.pendingCount).toBe(0); // reference_self 行不进教师待批
+    expect(fillCard?.wrongCount).toBe(1);
+    // 泄露面不放宽（自评卡片与既有卡片同形）
+    assertNoLeak(wrongList.body, { allow: ["answers", "solutionMd"] });
+
+    // 改自评「对」→ 更新当前集合（出默认集合）。同轮改判不留「曾错」标记
+    //（与教师同轮重判同语义——rounds 按作答轮次聚合，「曾错」只跨轮次成立，
+    // 行内判定历史不另存）；includeResolved 亦不再列出
+    const correctRes = await selfReview(env, a1, SR.fill, "correct", 1);
+    expect(correctRes.status).toBe(200);
+    const defaultAfter = await getWrongQuestions(env);
+    expect(defaultAfter.data?.questions).toEqual([]);
+    const resolvedList = await getWrongQuestions(env, "?includeResolved=true");
+    expect(resolvedList.data?.questions).toEqual([]);
+  });
+
+  it("撤回自评（undecided）→ 回到未判断、不入本；教师判定优先，清除后回落自评（改判/清除同步刷新错题集合）", async () => {
+    const env = await makeSelfReviewEnv();
+    const a1 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a1, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a1, SR.fill, { kind: "fill", values: ["3"] });
+    await submitAt(env, a1, T1);
+    expect((await selfReview(env, a1, SR.fill, "wrong")).status).toBe(200);
+
+    // 撤回：undecided 清除记录 → 未判断 → 不入本（未判断不作为错题）
+    const withdraw = await selfReview(env, a1, SR.fill, "undecided", 1);
+    expect(withdraw.status).toBe(200);
+    expect((await getWrongQuestions(env)).data?.questions).toEqual([]);
+
+    // 重新自评「错」入本 → 教师改判「对」→ 出默认集合（教师优先；同轮改判
+    // 与教师重判同语义——includeResolved 亦不列「曾错」）
+    expect((await selfReview(env, a1, SR.fill, "wrong", 2)).status).toBe(200);
+    expect(
+      (await getWrongQuestions(env)).data?.questions.map((c) => c.questionId),
+    ).toEqual([SR.fill]);
+    const fillRow = env.db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)),
+      )
+      .get();
+    if (fillRow === undefined) throw new Error("夹具缺 fill 行");
+    expect((await teacherMark(env, fillRow.id, "correct")).status).toBe(200);
+    expect(
+      (await getWrongQuestions(env)).data?.questions.map((c) => c.questionId),
+    ).toEqual([]);
+    expect(
+      (await getWrongQuestions(env, "?includeResolved=true")).data?.questions,
+    ).toEqual([]);
+
+    // 教师清除 → 回落学生自评（错）→ 回到默认集合（§5.5.4 ✱ 行）
+    expect((await teacherMark(env, fillRow.id, null)).status).toBe(200);
+    expect(
+      (await getWrongQuestions(env)).data?.questions.map((c) => c.questionId),
+    ).toEqual([SR.fill]);
+  });
+
+  it("自评脏行（verdict 非空而 at 缺失）不冒充错轮：SQL 预筛与读侧 selfReviewRecordOf 降级同口径，wrongCount 不虚增", async () => {
+    const env = await makeSelfReviewEnv();
+    // 第 1 轮：自评「错」→ 入本 1 轮（有效错轮基线）
+    const a1 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a1, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a1, SR.fill, { kind: "fill", values: ["3"] });
+    await submitAt(env, a1, T1);
+    await selfReview(env, a1, SR.fill, "wrong");
+    const first = await getWrongQuestions(env);
+    expect(first.data?.questions.map((c) => c.questionId)).toEqual([SR.fill]);
+    expect(first.data?.questions[0]?.rounds).toHaveLength(1);
+    expect(first.data?.questions[0]?.wrongCount).toBe(1);
+
+    // 第 2 轮：自评「对」后直写库构造脏行（at 置 null，模拟异常/历史写入）。
+    // 修复前：SQL 预筛只看 verdict 非空放行该轮，读侧 effectiveOfRound 又按
+    // selfReviewRecordOf 脏行降级为未判断 → rounds 里 correct=false 冒充错轮
+    // （wrongCount 虚增为 2，且「对」轮被顶成未判断盖住攻克态）
+    const a2 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a2, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a2, SR.fill, { kind: "fill", values: ["3"] });
+    await submitAt(env, a2, T2);
+    expect((await selfReview(env, a2, SR.fill, "correct")).status).toBe(200);
+    env.db
+      .update(responses)
+      .set({ selfReviewAt: null })
+      .where(
+        and(eq(responses.attemptId, a2), eq(responses.questionId, SR.fill)),
+      )
+      .run();
+
+    const after = await getWrongQuestions(env);
+    const card = after.data?.questions.find((c) => c.questionId === SR.fill);
+    // 脏行不入轮次（未判断轮不参与，模块头注释口径）——轮次与计数回到
+    // 仅有效错轮的事实
+    expect(card?.rounds).toHaveLength(1);
+    expect(card?.wrongCount).toBe(1);
+  });
+});
+
+describe("GET /api/teacher/attempts/:id（QM-12：教师详情有效判定与两队列计数）", () => {
+  it("自评行携带 selfReview/gradingPolicy；对/错按有效判定计数，待批与待自评分开；教师改判/清除回落同序", async () => {
+    const env = await makeSelfReviewEnv();
+    const a1 = await startSelfReviewAttempt(env);
+    await saveAnswer(env, a1, SR.judge, { kind: "judge", value: true });
+    await saveAnswer(env, a1, SR.fill, { kind: "fill", values: ["3"] });
+    await saveAnswer(env, a1, SR.solve, { kind: "final", finalAnswer: "1" });
+    await submitAt(env, a1, T1);
+    expect((await selfReview(env, a1, SR.fill, "wrong")).status).toBe(200);
+
+    const detailRes = await env.app.request(`/api/teacher/attempts/${a1}`, {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(detailRes.status).toBe(200);
+    const detail = (await detailRes.json()) as {
+      data: {
+        correctCount: number;
+        wrongCount: number;
+        pendingCount: number;
+        selfReviewPendingCount: number;
+        questions: Array<{
+          questionId: string;
+          gradingPolicy: string | null;
+          selfReview: { verdict: string } | null;
+        }>;
+      };
+    };
+    // 对/错按有效判定：judge 自动对 + fill 自评错；solve 待自评不计对错
+    expect(detail.data.correctCount).toBe(1);
+    expect(detail.data.wrongCount).toBe(1);
+    // 两队列分开：无 manual_only 行 → 教师待批 0；solve 待自评 1
+    expect(detail.data.pendingCount).toBe(0);
+    expect(detail.data.selfReviewPendingCount).toBe(1);
+    const byId = new Map(detail.data.questions.map((q) => [q.questionId, q]));
+    expect(byId.get(SR.judge)).toMatchObject({
+      gradingPolicy: "auto",
+      selfReview: null,
+    });
+    expect(byId.get(SR.fill)).toMatchObject({
+      gradingPolicy: "reference_self",
+      selfReview: { verdict: "wrong" },
+    });
+    expect(byId.get(SR.solve)).toMatchObject({
+      gradingPolicy: "reference_self",
+      selfReview: null,
+    });
+
+    // 教师改判 fill=对 → 教师优先：对 2 / 错 0；清除后回落自评（错）→ 对 1 / 错 1
+    const fillRow = env.db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(eq(responses.attemptId, a1), eq(responses.questionId, SR.fill)),
+      )
+      .get();
+    if (fillRow === undefined) throw new Error("夹具缺 fill 行");
+    expect((await teacherMark(env, fillRow.id, "correct")).status).toBe(200);
+    const marked = (await (
+      await env.app.request(`/api/teacher/attempts/${a1}`, {
+        headers: { cookie: env.teacherCookie },
+      })
+    ).json()) as { data: { correctCount: number; wrongCount: number } };
+    expect(marked.data).toMatchObject({ correctCount: 2, wrongCount: 0 });
+    expect((await teacherMark(env, fillRow.id, null)).status).toBe(200);
+    const cleared = (await (
+      await env.app.request(`/api/teacher/attempts/${a1}`, {
+        headers: { cookie: env.teacherCookie },
+      })
+    ).json()) as { data: { correctCount: number; wrongCount: number } };
+    expect(cleared.data).toMatchObject({ correctCount: 1, wrongCount: 1 });
+  });
+});
+
+// ---------- P3-5（TT-13 携带留项）：matching/ordering 的 answerText 走冻结结构单源 ----------
+
+/**
+ * 材料配对 + 排序夹具（错题本序列化口径回归）：matching 答案在旧路径
+ * serializeStudentAnswer（空结构）下回退为「slot-1 = opt-2」裸 id——修复后
+ * 与待批队列/CSV/学情包/单题包四出口同走 serializeStudentAnswerOfRow
+ * （材料槽位序「第 N 空」标签 + 真实选项/项正文）。
+ */
+const QM_MATCHING_WRONG_MD = `---
+kind: practice
+unit: 配对错题单元
+---
+
+::::material{id=wmat-1 title="配对材料"}
+第一空 {{w-1}}；第二空 {{w-2}}。
+::::
+
+::::group{id=wgrp-1 title="为空白选择内容。" label="1"}
+::ref{material=wmat-1}
+::ref{question=wq-1}
+::::
+
+:::::question{id=wq-1 type=matching difficulty=2 knowledge="配对"}
+为空白选择内容。
+
+::ref{material=wmat-1 slots=w-1,w-2}
+
+::::options
+:::option{id=wo-1}
+选项甲正文。
+:::
+:::option{id=wo-2}
+选项乙正文。
+:::
+::::
+
+:::answer
+w-1 = wo-1
+w-2 = wo-2
+:::
+:::::
+
+:::::question{id=wo-1 type=ordering difficulty=2 knowledge="语句排序"}
+把两句排成通顺的话。
+
+:::item{id=wi-1}
+首句正文。
+:::
+
+:::item{id=wi-2}
+次句正文。
+:::
+
+:::answer
+wi-1
+wi-2
+:::
+:::::
+`;
+
+/** QM 夹具题目 id（md 内显式声明） */
+const WM = { matching: "wq-1", ordering: "wo-1" } as const;
+
+/** 导入配对/排序单元并置课程可见（NEW_CONTENT_ENABLED 包裹导入），开课程卷 */
+async function makeQmMatchingEnv(): Promise<WrongEnv & { qmUnitId: string }> {
+  const env = await makeWrongEnv();
+  const previous = process.env.NEW_CONTENT_ENABLED;
+  process.env.NEW_CONTENT_ENABLED = "true";
+  let qmUnitId: string;
+  try {
+    const imported = await env.app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({
+        markdown: QM_MATCHING_WRONG_MD,
+        filename: "配对错题练习.md",
+        courseId: env.courseId,
+      }),
+    });
+    if (imported.status !== 200) {
+      throw new Error(
+        `配对夹具导入失败：${JSON.stringify(await imported.json())}`,
+      );
+    }
+    qmUnitId =
+      ((await imported.json()) as { data: { units: { id: string }[] } }).data
+        .units[0]?.id ?? "";
+  } finally {
+    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+    else process.env.NEW_CONTENT_ENABLED = previous;
+  }
+  if (!qmUnitId) throw new Error("配对夹具导入未产出单元");
+
+  const detail = await env.app.request(`/api/teacher/courses/${env.courseId}`, {
+    headers: { cookie: env.teacherCookie },
+  });
+  const item = (
+    (await detail.json()) as {
+      data: { items: { id: string; refId: string | null }[] };
+    }
+  ).data.items.find((entry) => entry.refId === qmUnitId);
+  if (!item) throw new Error("课程目录中未找到配对单元条目");
+  const patched = await env.app.request(
+    `/api/teacher/course-items/${item.id}`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ visible: true }),
+    },
+  );
+  expect(patched.status).toBe(200);
+  return { ...env, qmUnitId };
+}
+
+describe("GET /api/student/wrong-questions（P3-5：matching/ordering 序列化走冻结结构单源）", () => {
+  it("matching=「第 N 空 = 选项正文」、ordering=项正文串联（与待批队列/CSV/学情包同口径）；assertNoLeak 通过", async () => {
+    const env = await makeQmMatchingEnv();
+    // 开卷仍需开关（gradingPolicy 冻结走开卷时点）
+    const previous = process.env.NEW_CONTENT_ENABLED;
+    process.env.NEW_CONTENT_ENABLED = "true";
+    let attemptId: string;
+    try {
+      const res = await env.app.request(
+        `/api/student/courses/${env.courseId}/units/${encodeURIComponent(
+          env.qmUnitId,
+        )}/attempts`,
+        { method: "POST", headers: { cookie: env.aCookie } },
+      );
+      expect([200, 201]).toContain(res.status);
+      attemptId = ((await res.json()) as { data: { id: string } }).data.id;
+    } finally {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    }
+
+    // 两题均答错（matching 整对调换、ordering 倒序）；matching/ordering 冻结
+    // 策略为 reference_self（无 auto 判定）——自评「错」入本（QM-12 口径）
+    await saveAnswer(env, attemptId, WM.matching, {
+      kind: "matching",
+      pairs: { "w-1": "wo-2", "w-2": "wo-1" },
+    });
+    await saveAnswer(env, attemptId, WM.ordering, {
+      kind: "ordering",
+      sequence: ["wi-2", "wi-1"],
+    });
+    await submitAt(env, attemptId, T1);
+    expect(
+      (await selfReview(env, attemptId, WM.matching, "wrong")).status,
+    ).toBe(200);
+    expect(
+      (await selfReview(env, attemptId, WM.ordering, "wrong")).status,
+    ).toBe(200);
+
+    const list = await getWrongQuestions(env);
+    expect(list.status).toBe(200);
+    const byId = new Map(
+      (list.data?.questions ?? []).map((card) => [card.questionId, card]),
+    );
+    // 修复前：裸 id 形态「w-1 = wo-2；w-2 = wo-1」/「wi-2 → wi-1」
+    expect(byId.get(WM.matching)?.answerText).toBe(
+      "第 1 空 = 选项乙正文。；第 2 空 = 选项甲正文。",
+    );
+    expect(byId.get(WM.ordering)?.answerText).toBe("次句正文。 → 首句正文。");
+    // 学生答案不是秘密，但答案键/详解仍不得出现（选项正文属公开投影）
+    assertNoLeak(list.body, { allow: ["answers", "solutionMd"] });
+  });
+});

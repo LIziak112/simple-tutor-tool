@@ -10,6 +10,9 @@ import {
   assignmentUnits,
   lectures,
   libraryFolders,
+  materialRefs,
+  materials,
+  questionGroups,
   questions,
   units,
 } from "../db/schema";
@@ -70,6 +73,26 @@ export interface LibrarySnapshot {
   readonly folderNameById: ReadonlyMap<string, string>;
   /** 单元 id → 未截止（未删除且 dueAt 为空或未到）的作业数 */
   readonly openAssignmentCountByUnitId: ReadonlyMap<string, number>;
+  /**
+   * 材料 id → 快照（tt-06b / QM-05：同 id 匹配 + 跨单元移动警告 +
+   * UNKNOWN_MATERIAL_REF 教师域解析）。含软删行（重导恢复判定）。
+   */
+  readonly materials: ReadonlyMap<string, SnapshotQmEntity>;
+  /** 题组 id → 快照（同上） */
+  readonly groups: ReadonlyMap<string, SnapshotQmEntity>;
+  /** 材料 id → 引用它的 owner 清单（跨单元移动的受影响引用数；含全部 ownerKind） */
+  readonly materialRefOwners: ReadonlyMap<
+    string,
+    ReadonlyArray<{ ownerKind: "group" | "question"; ownerId: string }>
+  >;
+  /** 教师域存活（未软删）材料 id 集（UNKNOWN_MATERIAL_REF 降级判定） */
+  readonly liveMaterialIds: ReadonlySet<string>;
+}
+
+/** 材料/组的库内快照（QM 实体；unitId 供跨单元移动判定） */
+export interface SnapshotQmEntity {
+  readonly unitId: string;
+  readonly deletedAt: string | null;
 }
 
 /** buildImportPlan 的输入 */
@@ -209,6 +232,78 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
         warnings.push({
           code: "LECTURE_LINK_UNRESOLVED",
           message: `配套讲义「${lectureTitle}」在目标文件夹与本文件中都未找到：练习将暂不关联讲义；若讲义在其他文件夹或尚未导入，请调整后再试`,
+        });
+      }
+    }
+
+    // ---- 材料/组动作（tt-06b / QM-05：按 (teacherId, id) 匹配，单元内文档序；
+    //      新建与既有单元都产出——材料/组是单元的叠加元数据，不随单元新建跳过） ----
+    for (const material of unit.materials ?? []) {
+      const existingMaterial = snapshot.materials.get(material.id);
+      const displayTitle = material.title ?? `材料 ${material.id}`;
+      if (existingMaterial === undefined) {
+        actions.push({
+          kind: "createMaterial",
+          title: displayTitle,
+          unitId: unit.id,
+          folderName: targetFolderName,
+          restore: false,
+        });
+        continue;
+      }
+      actions.push({
+        kind: "updateMaterial",
+        title: displayTitle,
+        unitId: unit.id,
+        // 材料/组按单元归属展示所在文件夹（其所属单元的当前文件夹）
+        folderName: folderNameOf(
+          snapshot,
+          snapshot.units.get(existingMaterial.unitId)?.folderId ?? null,
+        ),
+        restore: existingMaterial.deletedAt !== null,
+      });
+      // 跨单元移动：同 id 材料已在其他单元（§4.3 预览必须提示移动及引用影响）
+      if (
+        existingMaterial.unitId !== unit.id &&
+        existingMaterial.deletedAt === null
+      ) {
+        const owners = snapshot.materialRefOwners.get(material.id) ?? [];
+        warnings.push({
+          code: "MATERIAL_MOVED_ACROSS_UNITS",
+          message: `材料「${material.id}」当前在单元「${existingMaterial.unitId}」，本次导入将移动到单元「${unit.id}」；${owners.length} 处组/题引用仍指向该材料（引用按 id 解析不断链，但请确认移动符合预期）`,
+        });
+      }
+    }
+    for (const group of unit.groups ?? []) {
+      const existingGroup = snapshot.groups.get(group.id);
+      const displayTitle = group.title ?? `题组 ${group.id}`;
+      if (existingGroup === undefined) {
+        actions.push({
+          kind: "createGroup",
+          title: displayTitle,
+          unitId: unit.id,
+          folderName: targetFolderName,
+          restore: false,
+        });
+        continue;
+      }
+      actions.push({
+        kind: "updateGroup",
+        title: displayTitle,
+        unitId: unit.id,
+        folderName: folderNameOf(
+          snapshot,
+          snapshot.units.get(existingGroup.unitId)?.folderId ?? null,
+        ),
+        restore: existingGroup.deletedAt !== null,
+      });
+      if (
+        existingGroup.unitId !== unit.id &&
+        existingGroup.deletedAt === null
+      ) {
+        warnings.push({
+          code: "MATERIAL_MOVED_ACROSS_UNITS",
+          message: `题组「${group.id}」当前在单元「${existingGroup.unitId}」，本次导入将移动到单元「${unit.id}」；组内子题引用按 id 解析不受影响，请确认移动符合预期`,
         });
       }
     }
@@ -371,10 +466,66 @@ export function loadLibrarySnapshot(
     );
   }
 
+  // tt-06b / QM-05：材料/组快照（同 id 匹配与跨单元移动）、引用反查、存活材料集
+  const materialSnapshot = new Map<string, SnapshotQmEntity>();
+  const liveMaterialIds = new Set<string>();
+  for (const row of db
+    .select({
+      id: materials.id,
+      unitId: materials.unitId,
+      deletedAt: materials.deletedAt,
+    })
+    .from(materials)
+    .where(eq(materials.teacherId, teacherId))
+    .all()) {
+    materialSnapshot.set(row.id, {
+      unitId: row.unitId,
+      deletedAt: row.deletedAt,
+    });
+    if (row.deletedAt === null) liveMaterialIds.add(row.id);
+  }
+  const groupSnapshot = new Map<string, SnapshotQmEntity>();
+  for (const row of db
+    .select({
+      id: questionGroups.id,
+      unitId: questionGroups.unitId,
+      deletedAt: questionGroups.deletedAt,
+    })
+    .from(questionGroups)
+    .where(eq(questionGroups.teacherId, teacherId))
+    .all()) {
+    groupSnapshot.set(row.id, {
+      unitId: row.unitId,
+      deletedAt: row.deletedAt,
+    });
+  }
+  const materialRefOwners = new Map<
+    string,
+    Array<{ ownerKind: "group" | "question"; ownerId: string }>
+  >();
+  for (const row of db
+    .select({
+      materialId: materialRefs.materialId,
+      ownerKind: materialRefs.ownerKind,
+      ownerId: materialRefs.ownerId,
+    })
+    .from(materialRefs)
+    .where(eq(materialRefs.teacherId, teacherId))
+    .all()) {
+    const list = materialRefOwners.get(row.materialId);
+    const entry = { ownerKind: row.ownerKind, ownerId: row.ownerId };
+    if (list === undefined) materialRefOwners.set(row.materialId, [entry]);
+    else list.push(entry);
+  }
+
   return {
     units: unitSnapshot,
     lectures: lectureRows,
     folderNameById,
     openAssignmentCountByUnitId,
+    materials: materialSnapshot,
+    groups: groupSnapshot,
+    materialRefOwners,
+    liveMaterialIds,
   };
 }

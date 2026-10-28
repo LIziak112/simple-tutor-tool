@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { attemptQuestionPublicSchema } from "./attempt.ts";
 import {
+  attemptContextGroupSchema,
+  attemptContextMaterialSchema,
+  attemptQuestionPublicSchema,
+} from "./attempt.ts";
+import {
+  notebookRoundContextSchema,
   notebookRoundReleaseSchema,
   notebookRoundSchema,
   studentNotebookDataSchema,
@@ -77,6 +82,30 @@ const RELEASE = {
   solutionMd: "先移项，再合并同类项。",
 };
 
+/** 该轮冻结上下文（notebookRoundContext 最小合法形态：1 材料 + 1 组） */
+const ROUND_CONTEXT = {
+  materials: [
+    {
+      id: "mat-1",
+      title: "2025 年产量",
+      contentMd: "给定资料正文。",
+      anchors: [],
+      slots: [],
+      mediaPaths: [],
+      sourceVersion: 2,
+    },
+  ],
+  groups: [
+    {
+      id: "grp-1",
+      introMd: "根据以下资料回答。",
+      materialRefs: [{ material: "mat-1" }],
+      questionIds: ["p4-q7"],
+      sourceVersion: 1,
+    },
+  ],
+};
+
 /** 轮次基座（第一轮：frozen 原稿 + 一条已封存订正） */
 const ROUND_BASE = {
   attemptId: ATTEMPT_ID,
@@ -90,6 +119,7 @@ const ROUND_BASE = {
   evidence: FROZEN_EVIDENCE,
   corrections: [SEALED_CORRECTION, OPEN_CORRECTION],
   supplements: [],
+  context: ROUND_CONTEXT,
 };
 
 describe("studentNotebookData：轮次聚合形状", () => {
@@ -124,6 +154,7 @@ describe("studentNotebookData：轮次聚合形状", () => {
           },
           corrections: [],
           supplements: [SUPPLEMENT],
+          context: null,
         },
       ],
     });
@@ -284,6 +315,7 @@ describe("notebook 零答案负向断言（AGENTS.md 第 3 条）", () => {
       "evidence",
       "corrections",
       "supplements",
+      "context",
     ]);
     expect(Object.keys(studentNotebookDataSchema.shape)).toEqual([
       "questionId",
@@ -338,5 +370,60 @@ describe("notebook 零答案负向断言（AGENTS.md 第 3 条）", () => {
         release: { answers: null, solutionMd: null },
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("notebookRoundContext：该轮来源材料/组投影（QM-15 细项 1/4）", () => {
+  it("null 合法（legacy 卷未冻结依赖）；缺键拒（服务端恒写，fail-closed）", () => {
+    expect(
+      notebookRoundSchema.safeParse({ ...ROUND_BASE, context: null }).success,
+    ).toBe(true);
+    const { context: _c, ...noContext } = ROUND_BASE;
+    expect(notebookRoundSchema.safeParse(noContext).success).toBe(false);
+  });
+
+  it("materials/groups 与 /attempts/:id/context 同一实例（白名单单一出处）", () => {
+    const shape = notebookRoundContextSchema.shape;
+    expect(shape.materials.element).toBe(attemptContextMaterialSchema);
+    expect(shape.groups.element).toBe(attemptContextGroupSchema);
+    // 同材料不同历史版本并存合法（细项 4：按 (id, sourceVersion) 分别保留）
+    const parsed = notebookRoundContextSchema.parse({
+      materials: [
+        { ...ROUND_CONTEXT.materials[0], sourceVersion: 1 },
+        { ...ROUND_CONTEXT.materials[0], sourceVersion: 2 },
+      ],
+      groups: [],
+    });
+    expect(parsed.materials).toHaveLength(2);
+  });
+
+  it("教师侧键剥除：材料投影混入 sourceMd/answers 经 parse strip（fail closed）", () => {
+    const stripped = notebookRoundContextSchema.parse({
+      materials: [
+        {
+          ...ROUND_CONTEXT.materials[0],
+          sourceMd: "教师侧原文",
+          answers: { kind: "fill", blanks: [["秘密"]] },
+        },
+      ],
+      groups: [
+        {
+          ...ROUND_CONTEXT.groups[0],
+          sourceMd: "组容器原文",
+          answers: { kind: "judge", value: true },
+        },
+      ],
+    });
+    expect(stripped.materials[0]).not.toHaveProperty("sourceMd");
+    expect(stripped.materials[0]).not.toHaveProperty("answers");
+    expect(stripped.groups[0]).not.toHaveProperty("sourceMd");
+    expect(stripped.groups[0]).not.toHaveProperty("answers");
+    // sourceVersion ≥1（快照身份进键）
+    expect(
+      notebookRoundContextSchema.safeParse({
+        materials: [{ ...ROUND_CONTEXT.materials[0], sourceVersion: 0 }],
+        groups: [],
+      }).success,
+    ).toBe(false);
   });
 });

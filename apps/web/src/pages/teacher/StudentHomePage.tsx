@@ -227,7 +227,14 @@ export function StudentHomePage() {
               <>
                 正确率 {formatPercent(data.totals.correctRate)}（对{" "}
                 {data.totals.correctCount} / 已判定 {data.totals.judgedCount}{" "}
-                题）· 待批 {data.totals.pendingCount} 题
+                题）· 未判断 {data.totals.pendingCount} 题
+                {(data.totals.selfJudgedCount ?? 0) > 0 && (
+                  <span>
+                    {" "}
+                    · 含自评 {data.totals.selfJudgedCount ?? 0}{" "}
+                    题（学生本人判定）
+                  </span>
+                )}
               </>
             )}
           </p>
@@ -384,7 +391,7 @@ export function StudentHomePage() {
                         答错
                       </th>
                       <th scope="col" className="px-3 py-2 font-medium">
-                        待批
+                        未判断
                       </th>
                       <th scope="col" className="px-3 py-2 font-medium">
                         正确率

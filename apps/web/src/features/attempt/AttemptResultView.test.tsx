@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub";
 import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
+import { fetchAttemptContextApi } from "@/lib/api";
 import { AttemptResultView } from "./AttemptResultView";
 
 // SAI-22 起结果视图接 AI 复盘装配（查询客户端必需）；每次渲染独立 client，
@@ -58,6 +59,24 @@ vi.mock("@/features/export/review-pack-panel", async () => {
     "@/features/export/review-pack-test-stub"
   );
   return { ReviewPackPanel: ReviewPackTestStub };
+});
+
+// QM-08：只读题面消费 /attempts/:id/context 冻结投影（组段数据解释）——
+// 缺省空投影（legacy 卷）；组段用例在测试内覆写返回值
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    fetchAttemptContextApi: vi.fn(async (attemptId: string) => ({
+      attemptId,
+      materials: [],
+      groups: [],
+    })),
+    // QM-11：自评动作存在（组件行为见 SelfReviewSection.test），此处只测呈现
+    saveSelfReviewApi: vi.fn(async () => {
+      throw new Error("测试不应出站");
+    }),
+  };
 });
 
 const DATA: AttemptResultData = {
@@ -250,7 +269,8 @@ describe("得分汇总卡", () => {
     expect(statistics).toHaveTextContent("总题数4题");
     expect(statistics).toHaveTextContent("答对1题");
     expect(statistics).toHaveTextContent("答错2题");
-    expect(statistics).toHaveTextContent("待批1题");
+    // 未答待批行同时进未答与待判断（只有答错过 answered 门，#6980-3 口径统一）
+    expect(statistics).toHaveTextContent("待判断1题");
     expect(statistics).toHaveTextContent("未答1题");
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });
@@ -285,9 +305,14 @@ describe("得分汇总卡", () => {
       />,
     );
     expect(
-      screen.getByText("未答数单独统计，可能与判错或待批重叠，不能相加。"),
+      screen.getByText("未答数单独统计，可能与判错或待判断重叠，不能相加。"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/已计入判错/)).toBeNull();
+    // 瓦片锁：未答待批行仍进「待判断」（只有答错过 answered 门，#6980-3），
+    // 不因未答而漏计
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("待判断4题");
+    expect(statistics).toHaveTextContent("未答4题");
   });
 
   it("返回首页按钮触发回调", () => {
@@ -622,10 +647,11 @@ describe("D9（T3.5）老师批改后的展示", () => {
     // 回归：不再显示旧口径的自动判分标签
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     // pendingCount=0（summary.pending 仍为 1，展示以权威计数为准；
-    // 数字与标签组成独立统计项，采用服务端权威计数。
+    // 数字与标签组成独立统计项，采用服务端权威计数（QM-12：待判断=有效
+    // 判定 null 数，与逐题徽章同口径）。
     const statistics = screen.getByLabelText("题目数量统计");
-    expect(statistics).toHaveTextContent("待批0题");
-    expect(statistics).not.toHaveTextContent("待批1题");
+    expect(statistics).toHaveTextContent("待判断0题");
+    expect(statistics).not.toHaveTextContent("待判断1题");
   });
 
   it("批过的题显著展示「老师批改：判对/判错」与评语", () => {
@@ -1074,5 +1100,455 @@ describe("练习反馈节奏摘要（M4-D3 §13.8）", () => {
     );
     expect(screen.getByText(/反馈节奏：交卷后反馈/)).toBeInTheDocument();
     expect(screen.getByText(/按教师公布时间/)).toBeInTheDocument();
+  });
+});
+
+describe("QM-08 组段：只读题面共用数据解释（/attempts/:id/context → groupSegmentsOfUnit）", () => {
+  const mockedContext = vi.mocked(fetchAttemptContextApi);
+
+  /** 三题单单元：gq-1/gq-2 入组、gq-3 独立（题面刻意不含数学） */
+  const GROUP_DATA: AttemptResultData = {
+    ...DATA,
+    units: [
+      {
+        id: "材料小练",
+        title: "材料小练",
+        questions: ["gq-1", "gq-2", "gq-3"].map((questionId, i) => ({
+          questionId,
+          snapshot: {
+            id: questionId,
+            type: "judge" as const,
+            difficulty: 1,
+            knowledge: ["读表"],
+            stemMd: `第${i + 1}题判断：表内数字为正。[[正确]]`,
+            hintCount: 0,
+          },
+          answers: { kind: "judge" as const, value: true },
+          solutionMd: null,
+          answer: { kind: "judge" as const, value: true },
+          answered: true,
+          studentFlag: null,
+          autoCorrect: true,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: true,
+          hintsOpened: [],
+        })),
+      },
+    ],
+  };
+
+  it("组段渲染：组头一次、共享材料一份、组内/组外题行都齐全", async () => {
+    mockedContext.mockResolvedValue({
+      attemptId: DATA.attempt.id,
+      materials: [
+        {
+          id: "mat-1",
+          title: "四天气温表",
+          contentMd:
+            "| 日期 | 最高 | 最低 |\n| --- | --- | --- |\n| 周一 | 1 | -3 |",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [
+        {
+          id: "grp-1",
+          title: "根据材料回答第 1～2 题",
+          label: "1～2",
+          introMd: "先读表，再判断。",
+          materialRefs: [{ material: "mat-1" }],
+          questionIds: ["gq-1", "gq-2"],
+          sourceVersion: 1,
+        },
+      ],
+    });
+    const { findByText } = render(
+      <AttemptResultView data={GROUP_DATA} onBackHome={vi.fn()} />,
+    );
+    // 材料标题出现（等待 context 查询落地）
+    expect(await findByText("四天气温表")).toBeInTheDocument();
+    const groupBlock = screen.getByLabelText("题组：根据材料回答第 1～2 题");
+    expect(
+      within(groupBlock).getByText("先读表，再判断。"),
+    ).toBeInTheDocument();
+    // 共享材料一份（组块外无第二份）
+    expect(screen.getAllByText("四天气温表")).toHaveLength(1);
+    // 三题行齐全（题号全卷连续）
+    expect(
+      screen.getByRole("article", { name: "第 1 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 2 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "第 3 题" }),
+    ).toBeInTheDocument();
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: "",
+      materials: [],
+      groups: [],
+    });
+  });
+
+  it("上下文读取失败非阻断：全部按独立题段渲染，回看零变化", async () => {
+    mockedContext.mockReset();
+    mockedContext.mockRejectedValue(new Error("上下文不可用"));
+    const { findAllByRole } = render(
+      <AttemptResultView data={GROUP_DATA} onBackHome={vi.fn()} />,
+    );
+    const cards = await findAllByRole("article");
+    expect(cards).toHaveLength(3);
+    expect(screen.queryByLabelText(/题组：/)).toBeNull();
+    expect(screen.queryByText("四天气温表")).toBeNull();
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: "",
+      materials: [],
+      groups: [],
+    });
+  });
+
+  // P1-2：solo 题的题级 ::ref 材料在回看挂题级锚（自然阅读、与组材料列
+  // 同口径）；组员题级引用并入组材料列（组∪题级单源）。
+  it("P1-2 题级材料锚：solo 题材料可见；组员题级引用并入组材料列", async () => {
+    const unit = GROUP_DATA.units[0];
+    if (unit === undefined) throw new Error("夹具缺首单元");
+    const soloRefData: AttemptResultData = {
+      ...GROUP_DATA,
+      units: [
+        {
+          ...unit,
+          questions: unit.questions.map((question, i) =>
+            i === 1
+              ? {
+                  ...question,
+                  snapshot: {
+                    ...question.snapshot,
+                    materialRefs: [{ material: "mat-q2" }],
+                  },
+                }
+              : i === 2
+                ? {
+                    ...question,
+                    snapshot: {
+                      ...question.snapshot,
+                      materialRefs: [{ material: "mat-solo" }],
+                    },
+                  }
+                : question,
+          ),
+        },
+      ],
+    };
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: DATA.attempt.id,
+      materials: [
+        {
+          id: "mat-1",
+          title: "四天气温表",
+          contentMd: "| 日期 | 周一 |",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+        {
+          id: "mat-q2",
+          title: "题级补充材料",
+          contentMd: "第二题补充材料正文。",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+        {
+          id: "mat-solo",
+          title: "给定资料一",
+          contentMd: "申论给定资料一正文。",
+          anchors: [],
+          slots: [],
+          mediaPaths: [],
+          sourceVersion: 1,
+        },
+      ],
+      groups: [
+        {
+          id: "grp-1",
+          title: "根据材料回答第 1～2 题",
+          label: "1～2",
+          introMd: "",
+          materialRefs: [{ material: "mat-1" }],
+          questionIds: ["gq-1", "gq-2"],
+          sourceVersion: 1,
+        },
+      ],
+    });
+    const { findByText } = render(
+      <AttemptResultView data={soloRefData} onBackHome={vi.fn()} />,
+    );
+    // solo 锚（本题材料）+ 组材料列并集都在（等待 context 落地）
+    expect(await findByText("申论给定资料一正文。")).toBeInTheDocument();
+    expect(screen.getByLabelText("本题材料")).toBeInTheDocument();
+    const groupMaterials = screen.getByLabelText("本组共享材料");
+    expect(within(groupMaterials).getByText("四天气温表")).toBeInTheDocument();
+    expect(
+      within(groupMaterials).getByText("题级补充材料"),
+    ).toBeInTheDocument();
+    // 三题行仍齐全
+    expect(
+      screen.getByRole("article", { name: "第 3 题" }),
+    ).toBeInTheDocument();
+    // 结果回看单元列表采用天然流式排布（stack），无 sticky 漂移且题卡与材料绝对隔离
+    const ol = document.querySelector('ol[data-layout="stack"]');
+    expect(ol).toBeInTheDocument();
+    expect(groupMaterials.className).not.toContain("sticky");
+    expect(groupMaterials.className).toContain("isolate");
+    const anchor = document.querySelector(
+      '[data-slot="question-group-anchor"]',
+    );
+    expect(anchor?.className).not.toContain("contents");
+    mockedContext.mockReset();
+    mockedContext.mockResolvedValue({
+      attemptId: "",
+      materials: [],
+      groups: [],
+    });
+  });
+});
+
+// ---------- QM-11（TT-09b）：reference_self 行的自评三态与动作挂载 ----------
+
+describe("QM-11 自评三态与动作（结果视图）", () => {
+  const selfAttemptData = (
+    selfReview: AttemptResultData["units"][number]["questions"][number]["selfReview"],
+    teacherMark: "correct" | "wrong" | null = null,
+  ): AttemptResultData => ({
+    ...DATA,
+    units: [
+      {
+        id: "练习四",
+        title: "练习四",
+        questions: [
+          {
+            questionId: "练习四-9",
+            snapshot: {
+              id: "练习四-9",
+              type: "solve",
+              difficulty: 2,
+              knowledge: ["解答"],
+              stemMd: "计算 $1+1$。",
+              hintCount: 0,
+            },
+            answers: { kind: "final", answer: "2" },
+            solutionMd: "1+1=2。",
+            answer: { kind: "final", finalAnswer: "2" },
+            answered: true,
+            studentFlag: null,
+            autoCorrect: null,
+            teacherMark,
+            teacherComment: null,
+            finalCorrect: null,
+            gradingPolicy: "reference_self",
+            selfReview,
+            hintsOpened: [],
+          },
+        ],
+      },
+    ],
+  });
+
+  it("待自评：徽章「已完成、待自评」（不是待批改）、左边框琥珀、对照后挂对了/错了/暂不判断", () => {
+    render(
+      <AttemptResultView
+        data={selfAttemptData({ record: null, revision: 0 })}
+        onBackHome={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).getByText("已完成、待自评")).toBeInTheDocument();
+    expect(within(card).queryByText("待批改")).toBeNull();
+    expect(within(card).getByRole("button", { name: "对了" })).toBeEnabled();
+    expect(within(card).getByRole("button", { name: "错了" })).toBeEnabled();
+    expect(
+      within(card).getByRole("button", { name: "暂不判断" }),
+    ).toBeDisabled();
+    // 未自评不自动替学生选：对了/错了均无高亮态 aria-pressed=true
+    expect(
+      within(card)
+        .getByRole("button", { name: "错了" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("已自评错：徽章「自评错误」、左边框红；可修正（按钮保持可用）", () => {
+    render(
+      <AttemptResultView
+        data={selfAttemptData({
+          record: {
+            verdict: "wrong",
+            at: "2026-10-24T00:00:00.000Z",
+            revision: 1,
+          },
+          revision: 1,
+        })}
+        onBackHome={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).getAllByText("自评错误").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(within(card).getByRole("button", { name: "对了" })).toBeEnabled();
+  });
+
+  it("教师已判：自评动作不渲染（教师优先），批改块照常展示", () => {
+    render(
+      <AttemptResultView
+        data={selfAttemptData(
+          {
+            record: {
+              verdict: "wrong",
+              at: "2026-10-24T00:00:00.000Z",
+              revision: 1,
+            },
+            revision: 1,
+          },
+          "correct",
+        )}
+        onBackHome={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).queryByRole("button", { name: "对了" })).toBeNull();
+    expect(within(card).queryByRole("region", { name: "本题自评" })).toBeNull();
+    expect(within(card).getByText(/判对/)).toBeInTheDocument();
+  });
+});
+
+// ---------- QM-12（TT-09c）：汇总瓦片有效判定口径 + 自评来源注明 ----------
+
+describe("QM-12 得分汇总卡有效判定口径（结果视图）", () => {
+  const selfRow = (
+    questionId: string,
+    selfReview: AttemptResultData["units"][number]["questions"][number]["selfReview"],
+    teacherMark: "correct" | "wrong" | null = null,
+  ): AttemptResultData["units"][number]["questions"][number] => ({
+    questionId,
+    snapshot: {
+      id: questionId,
+      type: "solve",
+      difficulty: 2,
+      knowledge: ["解答"],
+      stemMd: `计算 ${questionId}。`,
+      hintCount: 0,
+    },
+    answers: { kind: "final", answer: "2" },
+    solutionMd: "过程略。",
+    answer: { kind: "final", finalAnswer: "2" },
+    autoCorrect: null,
+    teacherMark,
+    teacherComment: null,
+    finalCorrect: null,
+    gradingPolicy: "reference_self",
+    selfReview,
+    answered: true,
+    studentFlag: null,
+    hintsOpened: [],
+  });
+
+  const mixedData = (answersReleased: boolean): AttemptResultData => ({
+    ...DATA,
+    answersReleased,
+    summary: {
+      ...DATA.summary,
+      total: 2,
+      answered: 2,
+      correct: 1,
+      wrong: 1,
+      pending: 1,
+      unanswered: 0,
+      autoGradable: 1,
+      scoreFinal: null,
+      pendingCount: 1,
+    },
+    units: [
+      {
+        id: "练习四",
+        title: "练习四",
+        questions: [
+          // 自评「错」→ 答错（不冒充客观判定，来源在逐题徽章可见）
+          selfRow("练习四-9", {
+            record: {
+              verdict: "wrong",
+              at: "2026-10-24T00:00:00.000Z",
+              revision: 1,
+            },
+            revision: 1,
+          }),
+          // 已完成、待自评 → 待判断（不是待批改）
+          selfRow("练习四-10", { record: null, revision: 0 }),
+        ],
+      },
+    ],
+  });
+
+  it("汇总瓦片按有效判定计数：自评错入答错、待自评入待判断，并注明口径", () => {
+    render(<AttemptResultView data={mixedData(true)} onBackHome={vi.fn()} />);
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("答对0题");
+    expect(statistics).toHaveTextContent("答错1题");
+    expect(statistics).toHaveTextContent("待判断1题");
+    // 逐题徽章与瓦片同出处：同一题自评错在题卡与瓦片口径一致
+    const wrongCard = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(wrongCard).getAllByText("自评错误").length).toBeGreaterThan(
+      0,
+    );
+    const pendingCard = screen.getByRole("article", { name: "第 2 题" });
+    expect(within(pendingCard).getByText("已完成、待自评")).toBeInTheDocument();
+    // 含自评行 → 口径注明（自评不是客观测评成绩）
+    expect(
+      screen.getByText(/含对照自评的题目按你的自评计入答对\/答错/),
+    ).toBeInTheDocument();
+  });
+
+  it("教师判优先：教师改判对后该题入答对、瓦片与批改块一致", () => {
+    const data = mixedData(true);
+    // noUncheckedIndexedAccess 下先收窄再展开（同文件既有 idiom）
+    const unit = data.units[0];
+    const first = unit?.questions[0];
+    if (unit === undefined || first === undefined) {
+      throw new Error("测试夹具缺少首题");
+    }
+    unit.questions[0] = {
+      ...first,
+      // markResponse D3 口径：教师改判同步写 finalCorrect（教师已判行走
+      // finalCorrect 徽章路径）；自评「错」保留但不再参与计数
+      teacherMark: "correct",
+      finalCorrect: true,
+    };
+    render(<AttemptResultView data={data} onBackHome={vi.fn()} />);
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("答对1题");
+    expect(statistics).toHaveTextContent("答错0题");
+    expect(statistics).toHaveTextContent("待判断1题");
+    // 批改块照常展示教师判定（教师优先，自评动作整块不渲染）
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    expect(within(card).getByText(/判对/)).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "对了" })).toBeNull();
+  });
+
+  it("未公布：自评键 null 投影——瓦片全零、无自评口径注、无徽章三态", () => {
+    render(<AttemptResultView data={mixedData(false)} onBackHome={vi.fn()} />);
+    expect(screen.queryByLabelText("题目数量统计")).toBeNull();
+    expect(
+      screen.queryByText(/含对照自评的题目按你的自评计入答对\/答错/),
+    ).toBeNull();
+    expect(screen.queryByText("已完成、待自评")).toBeNull();
+    expect(screen.queryByText("自评错误")).toBeNull();
   });
 });

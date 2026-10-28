@@ -14,7 +14,7 @@ import type { DirectiveProps } from "./types";
  * difficulty 已是 1–5 数字（缺省 2），组件不再自行解析字符串。
  */
 
-/** 题型的中文徽章文案（键类型锁死七种题型的穷尽性；文案与 contract 的共用短版不同，属展示层口径） */
+/** 题型的中文徽章文案（键类型锁死题型穷尽性；文案与 contract 的共用短版不同，属展示层口径。新三型 TT-05a 编译期强制补键） */
 const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
   judge: "判断题",
   choice: "单选题",
@@ -23,6 +23,9 @@ const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
   solve: "计算题",
   apply: "应用题",
   "find-error": "找错题",
+  response: "开放作答题",
+  matching: "配对题",
+  ordering: "排序题",
 };
 
 export function QuestionDirective({

@@ -72,6 +72,7 @@ import {
   type AssignmentUpdateRequest,
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
+  type AttemptContextData,
   type AttemptDetailData,
   type AttemptEvent,
   type AttemptFlagData,
@@ -83,6 +84,7 @@ import {
   type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   apiResponseSchema,
+  attemptContextDataSchema,
   attemptFlagDataSchema,
   attemptMaterialRevisionsSchema,
   type BackupRestoreResult,
@@ -162,6 +164,7 @@ import {
   type ReportListData,
   type ReviewPackPreviewData,
   type ReviewPackRole,
+  type SelfReviewData,
   type SelfReviewRequest,
   type SharedFileList,
   type SharedImportRequest,
@@ -190,7 +193,6 @@ import {
   type StudentSummary,
   type StudentUnitLandingData,
   type StudentUpdateRequest,
-  selfReviewDataSchema,
   type TeacherApiTokenData,
   type TeacherApiTokenResetData,
   type TeacherAssignment,
@@ -981,21 +983,6 @@ export function submitAttemptApi(
   return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
 }
 
-/** 学生声明对照结果；参考答案仍由既有公布接口提供。 */
-export async function saveSelfReviewApi(
-  attemptId: string,
-  questionId: string,
-  request: SelfReviewRequest,
-) {
-  const args = { param: { id: attemptId, questionId }, json: request };
-  const data = await callApi(() =>
-    api.api.student.attempts[":id"].questions[":questionId"][
-      "self-review"
-    ].$post(args),
-  );
-  return selfReviewDataSchema.parse(data);
-}
-
 /**
  * 做题时标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409）；
  * 请求/回执只有标志位，不含任何作答内容。
@@ -1055,6 +1042,23 @@ export async function fetchAttemptMaterialRevisionsApi(
     }),
   );
   return attemptMaterialRevisionsSchema.parse(data);
+}
+
+/**
+ * 冻结上下文公开投影（tt-07a / QM-06 → TT-08a 前端消费）：GET
+ * /attempts/:id/context——本卷全部材料/组快照（作答期渲染与结果回看共用，
+ * 只读快照不查 live）。数据随卷冻结不可变，坏快照 409 ATTEMPT_CONTEXT_BROKEN
+ * （服务端中文 message 由调用方非阻断透出——题面渲染不依赖本载荷）。
+ */
+export async function fetchAttemptContextApi(
+  attemptId: string,
+): Promise<AttemptContextData> {
+  const data = await callApi(() =>
+    api.api.student.attempts[":id"].context.$get({
+      param: { id: attemptId },
+    }),
+  );
+  return attemptContextDataSchema.parse(data);
 }
 
 /**
@@ -1186,6 +1190,26 @@ export function fetchPracticeQuestionFeedbackApi(
     api.api.student.attempts[":id"].questions[":questionId"].feedback.$get({
       param: { id: attemptId, questionId },
     }),
+  );
+}
+
+/**
+ * 学生自评（QM-10/11，POST /attempts/:id/questions/:questionId/self-review）：
+ * verdict 三值（correct/wrong/undecided=撤回清除记录）+ baseRevision CAS +
+ * mutationId 幂等键；服务端校验链（公布 gate/策略/教师优先）拒绝时 403/409，
+ * REVISION_CONFLICT 附 _current（最新自评与 revision）。响应含本题有效判定
+ * 投影与卷汇总；private,no-store。json 以独立变量传入的原因同 updateQuestion。
+ */
+export function saveSelfReviewApi(
+  attemptId: string,
+  questionId: string,
+  request: SelfReviewRequest,
+): Promise<SelfReviewData> {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"][
+      "self-review"
+    ].$post(args),
   );
 }
 

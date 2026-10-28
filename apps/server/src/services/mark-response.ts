@@ -4,9 +4,15 @@ import type {
   PendingMarkCard,
   PendingMarkListData,
   PendingMarkListQuery,
+  Question,
   StudentAnswer,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import {
+  dispatchBehavior,
+  emptyPublicStructure,
+  NEW_QUESTION_TYPES,
+} from "@tutor/contract";
+import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -16,9 +22,13 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { answerOf, finalScoreOf } from "./attempt-service";
-import { pendingMarkCount } from "./pending-mark";
-import { effectiveCorrect } from "./review-state.ts";
+import {
+  answerOf,
+  attemptFinalOutcomeOf,
+  materialSlotOrderOf,
+  structuresOfSnapshot,
+} from "./attempt-service";
+import { notSelfReviewPendingRow, pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -50,50 +60,100 @@ import {
  * 完成（trim 后空串 → null），服务层不做二次处理。
  */
 
-/** 选项下标 → 展示字母（A=0；超出 26 个选项兜底用数字本身；SAI-09 AI 上下文同口径复用） */
-export function optionLabel(index: number): string {
-  return index >= 0 && index < 26
-    ? String.fromCharCode(65 + index)
-    : String(index);
-}
-
 /**
  * 学生答案 → 人类可读文本（待批卡片与 D13 CSV 导出共用同一序列化口径）：
  * - judge：布尔 →「正确/错误」；字符串（旧版判断题写法）原样保留——待批队列里
  *   正是写法无法归一化的题，教师需要看到学生原文；
- * - choice：选项字母（A=0）；
+ * - choice：选项字母（A=0；≥26 兜底数字本身）；
  * - multi：所选下标升序去重拼接（「A、C」）；空选=未作答语义，序列化为空串；
  * - fill：按空序拼接，空与空用「；」分隔（每空文本可能含「、」，不与其混用）；
  * - final（手写题）：最终答案原文（可空串=只写笔迹未填）；
  * - null（answerJson 缺失）→ null（未作答）。
+ *
+ * UA-01 起为契约纯行为登记表 teacher-queue 口径的兼容代理（原 kind switch
+ * 与 optionLabel 已删——选项字母唯一实现收归契约 answer-kinds
+ * queueOptionLabel；输出逐字不变，差分锁定见 packages/contract 差分测试）。
  */
 export function serializeStudentAnswer(
   answer: StudentAnswer | null,
 ): string | null {
   if (answer === null) return null;
-  switch (answer.kind) {
-    case "judge":
-      return typeof answer.value === "boolean"
-        ? answer.value
-          ? "正确"
-          : "错误"
-        : answer.value.trim() === ""
-          ? null
-          : answer.value;
-    case "choice":
-      return optionLabel(answer.index);
-    case "multi":
-      if (answer.indexes.length === 0) return null;
-      return [...new Set(answer.indexes)]
-        .sort((a, b) => a - b)
-        .map(optionLabel)
-        .join("、");
-    case "fill":
-      if (answer.values.every((value) => value.trim() === "")) return null;
-      return answer.values.join("；");
-    case "final":
-      return answer.finalAnswer.trim() === "" ? null : answer.finalAnswer;
+  return dispatchBehavior(answer, "teacher-queue", emptyPublicStructure);
+}
+
+/**
+ * 行级序列化（QM-16 细项 3）：待批队列/CSV/单题包/AI 受控出口共用——
+ * 新题型按冻结快照装配完整公开结构（matching 选项池+槽位序 ordinal、
+ * ordering 项正文），配对/排序答案以**真实选项/项正文**与「第 N 空」标签
+ * 序列化（与材料面板（N）编号同口径）；旧七型结构恒空，输出逐字不变。
+ * 快照缺失/坏行回落裸序列化（emptyPublicStructure——id 回落路径，不抛错）。
+ */
+/** 行级序列化主体（单题/批量两出口共用一条路径，不复制装配） */
+function serializeRowWithStructures(
+  answer: StudentAnswer | null,
+  snapshot: Question | null,
+  slotOrder: ReadonlyMap<string, readonly string[]>,
+  unitId: string | null,
+): string | null {
+  if (answer === null) return null;
+  if (snapshot === null || !NEW_QUESTION_TYPES.includes(snapshot.type)) {
+    return serializeStudentAnswer(answer);
   }
+  return dispatchBehavior(
+    answer,
+    "teacher-queue",
+    structuresOfSnapshot(snapshot, slotOrder, unitId),
+  );
+}
+
+export function serializeStudentAnswerOfRow(
+  db: Db,
+  attemptId: string,
+  row: Pick<
+    ResponseRow,
+    "attemptId" | "questionId" | "questionSnapshotJson" | "unitId"
+  >,
+  answer: StudentAnswer | null,
+): string | null {
+  return serializeRowWithStructures(
+    answer,
+    snapshotOfRow(row),
+    materialSlotOrderOf(db, attemptId),
+    row.unitId,
+  );
+}
+
+/**
+ * serializeStudentAnswerOfRow 的批量消费点出口（审查 P3-3）：原函数逐行调用
+ * 都全量重扫 attempt_context_snapshots 并逐条 JSON.parse——130 题全待批即
+ * 130 次全卷扫描。本工厂按 attemptId 请求内记忆化槽位序（一处 Map，行循环
+ * 外建一次），待批队列/错题重练 CSV/学情包导出（v1+v2 经 PackCore）共用；
+ * 行为与逐行原函数逐字一致。单题调用点（单题包）无循环收益，直接用原函数。
+ */
+export function batchSerializeStudentAnswerOfRow(
+  db: Db,
+): (
+  attemptId: string,
+  row: Pick<
+    ResponseRow,
+    "attemptId" | "questionId" | "questionSnapshotJson" | "unitId"
+  >,
+  answer: StudentAnswer | null,
+) => string | null {
+  const slotOrders = new Map<string, Map<string, readonly string[]>>();
+  return (attemptId, row, answer) => {
+    let slotOrder = slotOrders.get(attemptId);
+    if (slotOrder === undefined) {
+      slotOrder = materialSlotOrderOf(db, attemptId);
+      slotOrders.set(attemptId, slotOrder);
+    }
+    return serializeRowWithStructures(
+      answer,
+      snapshotOfRow(row),
+      slotOrder,
+      row.unitId,
+    );
+  };
 }
 
 // ---------- POST /api/teacher/responses/:id/mark ----------
@@ -133,10 +193,8 @@ export function markResponse(
   const attemptId = row.attempt.id;
   // D3 持久化口径：finalCorrect = teacherMark ?? autoCorrect（枚举转布尔；
   // mark=null 时回落 autoCorrect，手写题为 null 即重新待批）
-  const finalCorrect = effectiveCorrect({
-    ...row.response,
-    teacherMark: req.mark,
-  });
+  const finalCorrect =
+    req.mark === null ? row.response.autoCorrect : req.mark === "correct";
   db.transaction((tx) => {
     // 1. 写教师判定与评语；本题 finalCorrect 按上述口径同步写回
     tx.update(responses)
@@ -144,20 +202,24 @@ export function markResponse(
         teacherMark: req.mark,
         teacherComment: req.comment,
         finalCorrect,
-        reviewRevision: sql`${responses.reviewRevision} + 1`,
-        reviewMutationId: null,
-        reviewMutationHash: null,
       })
       .where(eq(responses.id, responseId))
       .run();
     // 已离开 draft 的卷才重算整卷状态（lesson 进行中卷的 D2 状态机由收尾
     // 链路驱动——课中批改只落本题判定，不提前收卷）
     if (row.attempt.status === "draft") return;
-    // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）。
-    //    与待批谓词同口径过滤幽灵行（快照空的历史题目缺失行不进重算——
-    //    它们永远 null finalCorrect，计入会让 attempt 永卡 submitted）
-    const finalCorrects = tx
-      .select({ finalCorrect: responses.finalCorrect })
+    // 2. 整卷重算（attemptFinalOutcomeOf 与交卷链路同一实现，D2 状态机不复制
+    //    公式；QM-10 细项7：§5.5.5 新行口径——reference_self 行不阻塞 graded，
+    //    manual_only 未判行阻塞）。与待批谓词同口径过滤幽灵行（快照空的历史
+    //    题目缺失行不进重算——它们永远 null finalCorrect，计入会让 attempt
+    //    永卡 submitted）
+    const outcomeRows = tx
+      .select({
+        gradingPolicy: responses.gradingPolicy,
+        submittedAt: responses.submittedAt,
+        teacherMark: responses.teacherMark,
+        finalCorrect: responses.finalCorrect,
+      })
       .from(responses)
       .where(
         and(
@@ -165,9 +227,12 @@ export function markResponse(
           isNotNull(responses.questionSnapshotJson),
         ),
       )
-      .all()
-      .map((r) => r.finalCorrect);
-    const { status, scoreFinal } = finalScoreOf(finalCorrects);
+      .all();
+    const { status, scoreFinal } = attemptFinalOutcomeOf(outcomeRows, {
+      // 到达重算的卷恒已收尾（上方 draft 早退）——legacy 协议行不写行级
+      // submittedAt，按收尾事实归一（审查 P1，口径对齐四态 gate）
+      finalized: true,
+    });
     // 3. 写回 attempt（scoreAuto/submittedAt 等其余列不动）
     tx.update(attempts)
       .set({ status, scoreFinal })
@@ -237,8 +302,10 @@ export function listPendingMarks(
     // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
     or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
     isNull(responses.finalCorrect),
-    eq(responses.reviewEligible, false),
     isNotNull(responses.questionSnapshotJson),
+    // QM-10 / §5.5.3 D9：reference_self 行走学生自评，不进教师必批队列
+    //（与 pending-mark.ts D4 谓词同一实现，不复制口径）
+    notSelfReviewPendingRow(),
     query.studentId !== undefined
       ? eq(attempts.studentId, query.studentId)
       : undefined,
@@ -289,6 +356,8 @@ export function listPendingMarks(
   }
 
   const marks: PendingMarkCard[] = [];
+  // 审查 P3-3：行循环用批量出口（attemptId 请求内记忆化槽位序，一处 Map）
+  const answerTextOf = batchSerializeStudentAnswerOfRow(db);
   for (const [attemptId, group] of byAttempt) {
     const source = sourceOf(db, group.attempt, teacherId);
     const inkByQuestion = inkByQuestionOf(db, attemptId);
@@ -310,7 +379,11 @@ export function listPendingMarks(
           ? { options: snapshot.options.map((option) => option.text) }
           : {}),
         answers: snapshot.answers ?? null,
-        answerText: serializeStudentAnswer(answerOf(response.answerJson)),
+        answerText: answerTextOf(
+          attemptId,
+          response,
+          answerOf(response.answerJson),
+        ),
         ink: inkInfoOf(inkByQuestion.get(response.questionId)),
         activeSec: response.activeSec,
         hintsUsed: response.hintsUsed,

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
   assignments,
+  attemptContextSnapshots,
   attempts as attemptsTable,
   responses as responsesTable,
 } from "../db/schema.ts";
@@ -816,6 +817,172 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       ?.toString("utf8");
     expect(stem).toContain("判定");
     expect(stem).toContain(SECRET_COMMENT);
+  });
+
+  it("终审 P2-1：reference_self 已自评行教师包判定走 effectiveVerdictOfRow 单源（对/错而非待批；pack.json reviewSource=self 同包同口径）", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const world = makeWorld(db, dataDir, { studentId: s1 });
+    // reference_self 行冻结形态：教师未判（finalCorrect 恒 null，D7 自评不写
+    // 教师权威线）、无自动判定、学生已自评——旧口径 finalCorrect ?? autoCorrect
+    // 恒 null，stem.md 误显「待批」
+    const selfReviewedRow = (
+      verdict: "correct" | "wrong" | null,
+    ): Partial<typeof responsesTable.$inferInsert> => ({
+      gradingPolicy: "reference_self",
+      autoCorrect: null,
+      finalCorrect: null,
+      teacherMark: null,
+      ...(verdict === null
+        ? { selfReviewVerdict: null, selfReviewAt: null, selfReviewRevision: 1 }
+        : {
+            selfReviewVerdict: verdict,
+            selfReviewAt: "2026-10-03T00:00:00.000Z",
+            selfReviewRevision: 1,
+          }),
+    });
+    const buildStem = async (): Promise<string> => {
+      const zip = await buildReviewPackZip(
+        db,
+        dataDir,
+        TEACHER,
+        world.attemptId,
+        QUESTION_ID,
+        { now: NOW },
+      );
+      return (
+        readZipEntriesMap(Buffer.from(zip.bytes))
+          .get("questions/q001/stem.md")
+          ?.toString("utf8") ?? ""
+      );
+    };
+    const buildPack = async () => {
+      const zip = await buildReviewPackZip(
+        db,
+        dataDir,
+        TEACHER,
+        world.attemptId,
+        QUESTION_ID,
+        { now: NOW },
+      );
+      return packEntryOf(
+        readZipEntriesMap(Buffer.from(zip.bytes)),
+        reviewPackSchema,
+      );
+    };
+
+    // 学生自评「对了」：stem.md 判定=对（旧口径此处误显待批）
+    db.update(responsesTable)
+      .set(selfReviewedRow("correct"))
+      .where(eq(responsesTable.attemptId, world.attemptId))
+      .run();
+    expect(await buildStem()).toContain("**判定**：对");
+    const selfPack = await buildPack();
+    // 同包自洽：reviewSource 已是有效判定口径（self），与 stem.md 同源
+    expect(selfPack.response.reviewSource).toBe("self");
+    expect(selfPack.response.finalCorrect).toBeNull();
+
+    // 学生自评「错了」：判定=错
+    db.update(responsesTable)
+      .set(selfReviewedRow("wrong"))
+      .where(eq(responsesTable.attemptId, world.attemptId))
+      .run();
+    expect(await buildStem()).toContain("**判定**：错");
+
+    // 撤回自评（undecided 清除记录）：三源全空 → 待批（不伪造判定）
+    db.update(responsesTable)
+      .set(selfReviewedRow(null))
+      .where(eq(responsesTable.attemptId, world.attemptId))
+      .run();
+    expect(await buildStem()).toContain("**判定**：待批");
+  });
+
+  // —— QM-16 细项 1/5：材料闭包进单题包（学生/教师双角色同节）；材料媒体 ——
+  it("QM-16 题级材料闭包：材料节进题面（先材料后题干、字母编号、槽位编号正文）、材料配图随包、缺失显式登记；学生包无答案哨兵不放宽", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const media = saveMedia(
+      dataDir,
+      makeNotePng(40, 40).slice() as Uint8Array<ArrayBuffer>,
+    );
+    const world = makeWorld(db, dataDir, { studentId: s1, mark: true });
+    // 冻结材料 + 组快照（组 questionIds 含本题；直接插行——闭包单源已另有
+    // 建卷链路测试，此处锁定导出消费面）
+    db.insert(attemptContextSnapshots)
+      .values([
+        {
+          id: randomUUID(),
+          attemptId: world.attemptId,
+          kind: "material",
+          sourceId: "mat-rp-1",
+          sourceVersion: 1,
+          snapshotJson: JSON.stringify({
+            id: "mat-rp-1",
+            title: "阅读材料",
+            contentMd: `Passage with {{rp-slot-1}} and ::image{src="${media.src}"}`,
+            anchors: [],
+            slots: [{ id: "rp-slot-1", slotKind: "match", order: 0 }],
+            mediaPaths: [media.src],
+          }),
+          frozenAt: NOW,
+        },
+        {
+          id: randomUUID(),
+          attemptId: world.attemptId,
+          kind: "group",
+          sourceId: "grp-rp-1",
+          sourceVersion: 1,
+          snapshotJson: JSON.stringify({
+            id: "grp-rp-1",
+            title: "阅读组",
+            introMd: "",
+            materialRefs: [{ material: "mat-rp-1" }],
+            questionIds: [QUESTION_ID],
+          }),
+          frozenAt: NOW,
+        },
+      ])
+      .run();
+    const zip = await buildReviewPackZip(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      QUESTION_ID,
+      { now: NOW },
+    );
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
+    const stem = entries.get("questions/q001/stem.md")?.toString("utf8") ?? "";
+    // 材料节在题面之前、字母编号、槽位编号与媒体引用保留
+    expect(stem.indexOf("## 材料 A：阅读材料")).toBeGreaterThanOrEqual(0);
+    expect(stem.indexOf("## 材料 A：阅读材料")).toBeLessThan(
+      stem.indexOf("计算"),
+    );
+    expect(stem).toContain("**（1）**");
+    expect(stem).toContain(media.src);
+    // 材料配图随包（manifest 条目与 zip 条目一致）
+    expect(entries.has(media.src)).toBe(true);
+    // 学生包防泄露不放宽：答案/解析/评语哨兵仍不得出现（材料节是公开投影）
+    expect(stem).not.toContain(REVIEW_SENTINELS.answer);
+    expect(stem).not.toContain(REVIEW_SENTINELS.solution);
+    expect(stem).not.toContain(REVIEW_SENTINELS.comment);
+    const pack = packEntryOf(entries, reviewPackSchema);
+    expect(pack.manifest.contextNotes.join("\n")).toContain("共享材料 1 份");
+
+    // 材料配图缺失：显式登记 + complete=false（不谎报完整成功）
+    rmSync(join(dataDir, ...media.src.split("/")));
+    const preview = previewReviewPack(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      QUESTION_ID,
+      { now: NOW },
+    );
+    expect(preview.missing.some((miss) => miss.path === media.src)).toBe(true);
+    expect(preview.complete).toBe(false);
   });
 });
 

@@ -165,19 +165,19 @@ describe("InsightsQuestionsPage 三态", () => {
 });
 
 describe("InsightsQuestionsPage 表格口径", () => {
-  it("对率/待批/异常计数按契约数值展示；行序保持服务端稳定序", async () => {
+  it("对率/未判断/异常计数按契约数值展示；行序保持服务端稳定序", async () => {
     mockedQuestions.mockResolvedValue(makeQuestions());
     renderPage();
     const table = await screen.findByRole("table", {
       name: /题目统计：正确率、用时与高频错误答案/,
     });
 
-    // 第一行（fill 题）：对率 50%、异常 2；第二行（judge 题）：对率 33%、待批 2
+    // 第一行（fill 题）：对率 50%、异常 2；第二行（judge 题）：对率 33%、未判断 2
     const rows = screen.getAllByRole("row");
     expect(rows.length).toBe(3); // 表头 + 2 数据行
     expect(table).toHaveTextContent("50%");
     expect(table).toHaveTextContent("33%");
-    expect(table).toHaveTextContent("待批 2");
+    expect(table).toHaveTextContent("未判断 2");
     expect(table).toHaveTextContent("2");
 
     // 题干截断（数学标记粗略拍平：[[4]] → ____）

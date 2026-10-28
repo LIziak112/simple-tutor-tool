@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   attemptAnswerSaveDataSchema,
   attemptAnswerSaveRequestSchema,
+  attemptContextGroupSchema,
+  attemptContextMaterialSchema,
   attemptDetailDataSchema,
   attemptDraftDataSchema,
   attemptErrorCodeSchema,
@@ -587,6 +589,49 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
     expect(question && "answers" in question).toBe(false);
     expect(question && "solutionMd" in question).toBe(false);
   });
+
+  it("题目组上下文 groupOrdinal（TT-05a 域④ §5.2.3/§5.8.1）：在组内题开卷冻结携带、非 1 起正整数拒绝；组实体与材料投影随 QM-03/QM-08 接线", () => {
+    const draftWith = (groupOrdinal: number) =>
+      attemptDraftDataSchema.safeParse({
+        attempt: SUMMARY_DRAFT,
+        title: "周末加练",
+        courseName: null,
+        dueAt: null,
+        answerRelease: "on_submit",
+        units: [
+          {
+            id: UNIT_ID,
+            title: "练习四",
+            questions: [
+              {
+                id: "练习四-1",
+                type: "judge",
+                difficulty: 1,
+                knowledge: [],
+                stemMd: "[[]]",
+                hintCount: 0,
+                questionRevisionId: "11111111-1111-4111-8111-111111111111",
+                groupOrdinal,
+              },
+            ],
+          },
+        ],
+        drafts: {},
+        hintsOpened: {},
+        legacyUnverified: false,
+        enabledCapabilities: ["steps", "ink"],
+      });
+    // 在组内的题：开卷冻结写入组内序号（§5.2.3 展示派生：不进主键，仅公开投影）
+    const inGroup = draftWith(3);
+    expect(inGroup.success).toBe(true);
+    if (inGroup.success) {
+      expect(inGroup.data.units[0]?.questions[0]?.groupOrdinal).toBe(3);
+    }
+    // 0/负数/非整数不是合法组内序（1 起）
+    expect(draftWith(0).success).toBe(false);
+    expect(draftWith(-1).success).toBe(false);
+    expect(draftWith(1.5).success).toBe(false);
+  });
 });
 
 describe("attemptResultDataSchema（结果视图）", () => {
@@ -684,6 +729,121 @@ describe("attemptResultDataSchema（结果视图）", () => {
       kind: "fill",
       blanks: [["4"], ["-7"], ["0.5", "1/2"]],
     });
+  });
+
+  it("结果快照组上下文 groupOrdinal（TT-05a 域④ §5.2.3/§5.8.1/§5.8.3）：旧快照缺省=独立题不拒绝、在组内题携带、非 1 起正整数拒绝", () => {
+    // 旧快照（RESULT 固件无 groupOrdinal）→ 按「不在组内的独立题」处理（§5.8.3）
+    const legacy = attemptResultDataSchema.parse(RESULT);
+    expect(
+      legacy.units[0]?.questions[0]?.snapshot.groupOrdinal,
+    ).toBeUndefined();
+    const withOrdinal = (groupOrdinal: number) =>
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        units: [
+          {
+            ...RESULT.units[0],
+            questions: [
+              {
+                ...RESULT.units[0].questions[0],
+                snapshot: {
+                  ...RESULT.units[0].questions[0].snapshot,
+                  groupOrdinal,
+                },
+              },
+              RESULT.units[0].questions[1],
+            ],
+          },
+        ],
+      });
+    const inGroup = withOrdinal(1);
+    expect(inGroup.success).toBe(true);
+    if (inGroup.success) {
+      expect(inGroup.data.units[0]?.questions[0]?.snapshot.groupOrdinal).toBe(
+        1,
+      );
+    }
+    expect(withOrdinal(0).success).toBe(false);
+    expect(withOrdinal(2.5).success).toBe(false);
+  });
+
+  it("QM-11 自评状态两键可选：旧载荷缺省合法、携带（record/revision + gradingPolicy）合法、公布前 null 投影合法、形态错误拒绝", () => {
+    const base = RESULT.units[0]?.questions[0];
+    if (base === undefined) throw new Error("测试固件缺题");
+    const withSelfReview = (selfReview: unknown, gradingPolicy: unknown) =>
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        units: [
+          {
+            ...RESULT.units[0],
+            questions: [
+              { ...base, selfReview, gradingPolicy },
+              RESULT.units[0].questions[1],
+            ],
+          },
+        ],
+      });
+    // 旧载荷（升级前缓存/旧服务端响应）缺省合法——optional 兼容
+    expect(
+      attemptResultDataSchema.parse(RESULT).units[0]?.questions[0],
+    ).not.toHaveProperty("selfReview");
+    // 携带合法：未自评（record=null 但 revision 推进过——undecided 清除后）
+    const cleared = withSelfReview(
+      { record: null, revision: 2 },
+      "reference_self",
+    );
+    expect(cleared.success).toBe(true);
+    if (cleared.success) {
+      expect(cleared.data.units[0]?.questions[0]?.selfReview).toEqual({
+        record: null,
+        revision: 2,
+      });
+      expect(cleared.data.units[0]?.questions[0]?.gradingPolicy).toBe(
+        "reference_self",
+      );
+    }
+    // 已自评：record 三键完整
+    const reviewed = withSelfReview(
+      {
+        record: {
+          verdict: "wrong",
+          at: "2026-10-24T01:00:00.000Z",
+          revision: 1,
+        },
+        revision: 1,
+      },
+      "reference_self",
+    );
+    expect(reviewed.success).toBe(true);
+    // 公布前受限形态：整键 null 投影（读侧按「无自评信息」处理）
+    const gated = withSelfReview(null, null);
+    expect(gated.success).toBe(true);
+    if (gated.success) {
+      expect(gated.data.units[0]?.questions[0]?.selfReview).toBeNull();
+      expect(gated.data.units[0]?.questions[0]?.gradingPolicy).toBeNull();
+    }
+    // 旧行与 manual_only/auto 策略值合法；非法策略枚举 / record 非法 verdict 拒绝
+    expect(withSelfReview({ record: null, revision: 0 }, null).success).toBe(
+      true,
+    );
+    expect(
+      withSelfReview({ record: null, revision: 0 }, "manual_only").success,
+    ).toBe(true);
+    expect(withSelfReview({ record: null, revision: 0 }, "auto").success).toBe(
+      true,
+    );
+    expect(withSelfReview({ record: null, revision: 0 }, "magic").success).toBe(
+      false,
+    );
+    expect(
+      withSelfReview(
+        { record: { verdict: "undecided", at: "x", revision: 1 }, revision: 1 },
+        "reference_self",
+      ).success,
+    ).toBe(false);
+    expect(withSelfReview({ record: null, revision: -1 }, "auto").success).toBe(
+      false,
+    );
   });
 
   it("practiceWorkflow 裁决投影可选（M4-D3 §13.8 结果页节奏摘要）：缺省（legacy/lesson 卷）合法、携带合法、形态错误拒绝", () => {
@@ -1045,6 +1205,59 @@ describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () =>
     ] as const) {
       expect(attemptErrorCodeSchema.safeParse(code).success).toBe(true);
     }
+  });
+
+  it("错误码集合包含 ATTEMPT_CONTEXT_BROKEN（开卷缺依赖/上下文快照损坏，409 fail closed——tt-07a/QM-06）", () => {
+    expect(
+      attemptErrorCodeSchema.safeParse("ATTEMPT_CONTEXT_BROKEN").success,
+    ).toBe(true);
+  });
+
+  it("attemptContext 条目投影 strip 教师侧/答案类键，键集 = 公开白名单 + sourceVersion（tt-07a/QM-06 三投影纪律）", () => {
+    const material = attemptContextMaterialSchema.safeParse({
+      id: "mat-1",
+      title: "给定资料",
+      contentMd: "正文",
+      anchors: [],
+      slots: [],
+      mediaPaths: [],
+      sourceVersion: 2,
+      // 教师侧/答案类多余键：parse 后 strip（白名单防线）
+      sourceMd: "::::material{id=mat-1}\n正文\n::::",
+      answers: { kind: "choice", index: 1 },
+      solutionMd: "详解哨兵",
+      hints: ["提示哨兵"],
+    });
+    expect(material.success).toBe(true);
+    expect(Object.keys(material.data ?? {}).sort()).toEqual([
+      "anchors",
+      "contentMd",
+      "id",
+      "mediaPaths",
+      "slots",
+      "sourceVersion",
+      "title",
+    ]);
+    const group = attemptContextGroupSchema.safeParse({
+      id: "grp-1",
+      title: "资料组",
+      label: "1～2",
+      introMd: "",
+      materialRefs: [],
+      questionIds: ["q-1"],
+      sourceVersion: 1,
+      sourceMd: "::::group\n::::",
+    });
+    expect(group.success).toBe(true);
+    expect(Object.keys(group.data ?? {}).sort()).toEqual([
+      "id",
+      "introMd",
+      "label",
+      "materialRefs",
+      "questionIds",
+      "sourceVersion",
+      "title",
+    ]);
   });
 });
 

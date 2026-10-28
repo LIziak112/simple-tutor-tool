@@ -755,17 +755,6 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       if (table === "responses") {
         delete row.answer_revision;
         delete row.answer_mutation_id;
-        // 0040 自评列的兼容默认值单独核对，不改变旧业务字段。
-        for (const key of [
-          "review_policy",
-          "review_eligible",
-          "self_correct",
-          "review_revision",
-          "review_mutation_id",
-          "review_mutation_hash",
-          "reviewed_at",
-        ])
-          delete row[key];
       }
       // 0038（M1b）新增列：assignments 逐题反馈授权默认 0；新列语义见
       // practice-workflow 相关测试，此处只保真原有业务字段。
@@ -784,6 +773,43 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // 0039（M5-D1）units practice 推荐列：NULL=未声明，新列语义见
       // migrate-practice-defaults / content-service 测试
       delete row.practice_defaults_json;
+      // 0044（tt-05b / QM-03，同步 v2 时由 0040 重编号）新增列：questions 题级
+      // ::ref 抽取副本（NULL=无引用）；responses 行级判分策略（NULL=旧行旧语
+      // 义）与自评四列（NULL/0=从未自评）。新列语义见 migrate-qm-materials /
+      // material-repository 测试
+      if (table === "questions") delete row.material_refs_json;
+      if (table === "responses") {
+        delete row.grading_policy;
+        delete row.self_review_verdict;
+        delete row.self_review_at;
+        delete row.self_review_revision;
+        delete row.self_review_mutation_id;
+        // 0040_bizarre（v2 链正主，2026-10-25 迁移对齐后并入本链）自评列族
+        // 的兼容默认值单独核对，不改变旧业务字段；与上方 QM 族（0044）并存
+        for (const key of [
+          "review_policy",
+          "review_eligible",
+          "self_correct",
+          "review_revision",
+          "review_mutation_id",
+          "review_mutation_hash",
+          "reviewed_at",
+        ])
+          delete row[key];
+      }
+      // 0040（v2 线自评闭环 e0e60af2，同步合入）新增列：responses 自评七列
+      // （默认 legacy/0/NULL=从未自评）。本测试断言的是 T2B 存量数据不丢不
+      // 坏，新列语义由 v2 线自评测试族持有；同步合入时漏登剔除清单曾使本
+      // 断言误报（TT-14 终验发现，基点 ce1490d1 即红，与本分支 diff 无关）。
+      if (table === "responses") {
+        delete row.review_policy;
+        delete row.review_eligible;
+        delete row.self_correct;
+        delete row.review_revision;
+        delete row.review_mutation_id;
+        delete row.review_mutation_hash;
+        delete row.reviewed_at;
+      }
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());
@@ -873,10 +899,22 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
       expect(row).toEqual({ answer_revision: 0, answer_mutation_id: null });
     const reviews = db.$client
       .prepare(
-        "SELECT review_policy, review_eligible, self_correct, review_revision FROM responses",
+        "SELECT grading_policy, self_review_verdict, self_review_revision FROM responses",
       )
       .all();
     for (const row of reviews)
+      expect(row).toEqual({
+        grading_policy: null,
+        self_review_verdict: null,
+        self_review_revision: 0,
+      });
+    // 0040_bizarre（v2 链）自评列族兼容默认值（迁移对齐后两族并存）
+    const reviewFamily = db.$client
+      .prepare(
+        "SELECT review_policy, review_eligible, self_correct, review_revision FROM responses",
+      )
+      .all();
+    for (const row of reviewFamily)
       expect(row).toEqual({
         review_policy: "legacy",
         review_eligible: 0,

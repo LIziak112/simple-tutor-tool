@@ -68,12 +68,14 @@ export default function StudentLoginPage() {
             </label>
             <Input
               id="student-login-name"
+              name="loginName"
               value={loginName}
               onChange={(e) => setLoginName(e.target.value)}
               placeholder="如：张三"
               required
               maxLength={32}
               autoComplete="username"
+              spellCheck={false}
               className="min-h-11"
             />
           </div>
@@ -83,6 +85,7 @@ export default function StudentLoginPage() {
             </label>
             <Input
               id="student-password"
+              name="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

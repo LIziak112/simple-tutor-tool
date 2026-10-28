@@ -1,8 +1,11 @@
 import type { LessonBlock, LintIssue } from "@tutor/contract";
+import { visit } from "unist-util-visit";
+import { isGroupContainer, isMaterialContainer } from "./materials.ts";
 import { defaultQuestionIdOf, isQuestionContainer } from "./question.ts";
 import {
   FALLBACK_UNIT_ID,
   firstNonEmpty,
+  lineRange,
   makeIssue,
   processor,
   sliceRangeExcluding,
@@ -49,16 +52,42 @@ export function splitLessonBlocks(
   const lines = markdown.split(/\r?\n/);
   const unitId = firstNonEmpty(options.unitId) ?? FALLBACK_UNIT_ID;
 
+  // QM-14 审查 P1 兜底：非顶层材料/组（如 :::box 内）不进下面的顶层剔除循环，
+  // lint 红线（MATERIAL/GROUP_NESTED_IN_CONTAINER）拦新文档，但 legacy 存量/
+  // 手工改动的存储正文仍会走到这里——其行区间一并剔除，防泄露不押单道防线。
+  // 顶层容器区间由 cursor 跳过，与这里的行过滤天然无交集。
+  const nestedContainerRanges: Array<[number, number]> = [];
+  visit(tree, (node, _index, parent) => {
+    if (parent === undefined || parent.type === "root") return;
+    if (isMaterialContainer(node) || isGroupContainer(node)) {
+      nestedContainerRanges.push(lineRange(node));
+    }
+  });
+
   const blocks: LessonBlock[] = [];
   let cursor = 1; // 下一个 md 段的起始行（1 起）
   let ordinal = 0; // 题块序号（按全部题块计，与解析器缺省 id 占号一致）
   for (const child of tree.children) {
-    if (!isQuestionContainer(child)) continue;
-    const [startLine, endLine] = [
-      child.position?.start.line ?? 1,
-      child.position?.end.line ?? 1,
-    ];
-    pushMdBlock(blocks, lines, cursor, startLine - 1);
+    // 行区间先取（谓词负向收窄不影响 position 访问）
+    const startLine = child.position?.start.line ?? 1;
+    const endLine = child.position?.end.line ?? 1;
+    if (!isQuestionContainer(child)) {
+      // QM-14：材料/组容器是单元结构（与题块同规则剔除）——学生侧正文经
+      // 冻结上下文投影（MaterialPanel）按组呈现，容器原文（含 {{slot}} 槽位
+      // 标记与 ::ref 指令文本）不随 md 段下发
+      if (isMaterialContainer(child) || isGroupContainer(child)) {
+        pushMdBlock(
+          blocks,
+          lines,
+          cursor,
+          startLine - 1,
+          nestedContainerRanges,
+        );
+        cursor = endLine + 1;
+      }
+      continue;
+    }
+    pushMdBlock(blocks, lines, cursor, startLine - 1, nestedContainerRanges);
     ordinal += 1;
     const id = firstNonEmpty(child.attributes?.id ?? undefined);
     if (id !== undefined) {
@@ -82,17 +111,18 @@ export function splitLessonBlocks(
     }
     cursor = endLine + 1;
   }
-  pushMdBlock(blocks, lines, cursor, lines.length);
+  pushMdBlock(blocks, lines, cursor, lines.length, nestedContainerRanges);
   return blocks;
 }
 
-/** 追加一个 md 段（行区间原文，去首尾空白行）；空段跳过（不产出空 md 段） */
+/** 追加一个 md 段（行区间原文，跳过嵌套容器行，去首尾空白行）；空段跳过（不产出空 md 段） */
 function pushMdBlock(
   blocks: LessonBlock[],
   lines: readonly string[],
   startLine: number,
   endLine: number,
+  excluded: ReadonlyArray<readonly [number, number]>,
 ): void {
-  const md = sliceRangeExcluding(lines, startLine, endLine, []);
+  const md = sliceRangeExcluding(lines, startLine, endLine, excluded);
   if (md.length > 0) blocks.push({ type: "md", md });
 }

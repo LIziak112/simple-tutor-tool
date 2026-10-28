@@ -43,11 +43,13 @@ export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
 
 /**
  * D4 待批行的共享条件（不含 attempt 归属筛选——单卷 eq / 批量 inArray 各自给）：
- * finalCorrect IS NULL + 快照非空（排幽灵行）+ draft 批次叠加行级已提交
- * （lesson 单题提交与 v1 新协议逐题提交都会写行级 submittedAt——进行中卷只数
- * 已单题提交的行；无行级提交事实的 legacy draft 恒 0。非 draft 批次整卷恒
- * 「已交」，保持既有口径不加条件——设计依据详见模块头注释）。两函数（单卷/
- * 批量）共用本构造器，口径永不漂移。
+ * finalCorrect IS NULL + 快照非空（排幽灵行）+ **排除 reference_self 行**
+ * （QM-10 / §5.5.3 D9：有参考答案的新策略行走学生自评，永不进教师必批
+ * 队列——教师可选批改走全部已交列表；NULL 策略旧行不受影响）+ draft 批次
+ * 叠加行级已提交（lesson 单题提交与 v1 新协议逐题提交都会写行级
+ * submittedAt——进行中卷只数已单题提交的行；无行级提交事实的 legacy draft
+ * 恒 0。非 draft 批次整卷恒「已交」，保持既有口径不加条件——设计依据详见
+ * 模块头注释）。两函数（单卷/批量）共用本构造器，口径永不漂移。
  */
 /** D4 待批行的公共条件（draft 与非 draft 批次共享；draft 差异见 pendingMarkConditions） */
 function pendingMarkBaseConditions(selfReview = false): (SQL | undefined)[] {
@@ -55,6 +57,10 @@ function pendingMarkBaseConditions(selfReview = false): (SQL | undefined)[] {
     isNull(responses.finalCorrect),
     eq(responses.reviewEligible, selfReview),
     isNotNull(responses.questionSnapshotJson),
+    // QM-12 合并并集：策略排除（reference_self 行永不进教师必批）——v2 列
+    // 门控之外补 PR 侧谓词；reference_self 行即便 review_eligible 误标也
+    // 不进教师队列，两线口径（pendingSelfReviewCounts 分列）不漂移
+    notSelfReviewPendingRow(),
   ];
 }
 
@@ -66,6 +72,18 @@ function pendingMarkConditions(
     ...pendingMarkBaseConditions(selfReview),
     draft ? isNotNull(responses.submittedAt) : undefined,
   ];
+}
+
+/**
+ * 「非 reference_self 行」条件（D4 谓词与 mark-response 待批队列共用）：
+ * grading_policy 列可空（旧行 NULL = 旧语义），SQL 三值逻辑下 `!= 'x'` 对
+ * NULL 行求值为 NULL 会被 and 吞掉——必须显式 isNull OR ne。
+ */
+export function notSelfReviewPendingRow(): SQL {
+  return or(
+    isNull(responses.gradingPolicy),
+    ne(responses.gradingPolicy, "reference_self"),
+  ) as SQL;
 }
 
 /**
@@ -96,7 +114,6 @@ export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
 export function pendingMarkCounts(
   db: Db,
   attempts: readonly PendingMarkAttempt[],
-  selfReview = false,
 ): Map<string, number> {
   const map = new Map<string, number>();
   const idsOf = (draft: boolean) =>
@@ -117,7 +134,53 @@ export function pendingMarkCounts(
         .where(
           and(
             inArray(responses.attemptId, chunk),
-            ...pendingMarkConditions(draft, selfReview),
+            ...pendingMarkConditions(draft),
+          ),
+        )
+        .groupBy(responses.attemptId)
+        .all()) {
+        map.set(row.attemptId, row.n);
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * 批量待自评数（两线收敛接线，v2 记录行「待自评」徽章的数据源）：attemptId →
+ * 该 attempt 的待自评行数（分组查询，500 id 一块，与 pendingMarkCounts 同款
+ * 模式）。QM 口径 = reference_self 行且教师未判（teacherMark null）且学生未
+ * 自评（selfReviewVerdict null）——与 teacher-attempt-service 详情的
+ * selfReviewPendingCount 读侧循环同一语义（有判定来源即归零，注释互指、口径
+ * 不漂移；路由投影锁见 routes/student-records.test.ts QM-12 节），draft 批次
+ * 同样叠加行级已提交（未提交行无自评入口）。
+ */
+export function pendingSelfReviewCounts(
+  db: Db,
+  attempts: readonly PendingMarkAttempt[],
+): Map<string, number> {
+  const map = new Map<string, number>();
+  const idsOf = (draft: boolean) =>
+    attempts
+      .filter((attempt) => (attempt.status === "draft") === draft)
+      .map((attempt) => attempt.id);
+  for (const [draft, ids] of [
+    [false, idsOf(false)],
+    [true, idsOf(true)],
+  ] as const) {
+    for (let start = 0; start < ids.length; start += 500) {
+      const chunk = ids.slice(start, start + 500);
+      for (const row of db
+        .select({ attemptId: responses.attemptId, n: sql<number>`count(*)` })
+        .from(responses)
+        .where(
+          and(
+            inArray(responses.attemptId, chunk),
+            eq(responses.gradingPolicy, "reference_self"),
+            isNull(responses.teacherMark),
+            isNull(responses.selfReviewVerdict),
+            isNotNull(responses.questionSnapshotJson),
+            draft ? isNotNull(responses.submittedAt) : undefined,
           ),
         )
         .groupBy(responses.attemptId)

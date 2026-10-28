@@ -118,6 +118,29 @@ function sameGeometry(left: SurfaceMeasure, right: SurfaceMeasure): boolean {
   );
 }
 
+/** 提取公开题面内容指纹数据源（新旧题型统一完整口径） */
+export function publicContentSignatureOf(question: AttemptQuestionPublic) {
+  return {
+    type: question.type,
+    stemMd: question.stemMd,
+    options: question.options ?? [],
+    ...(question.matchingOptions
+      ? { matchingOptions: question.matchingOptions }
+      : {}),
+    ...(question.matchingSlots
+      ? { matchingSlots: question.matchingSlots }
+      : {}),
+    ...(question.orderingItems
+      ? { orderingItems: question.orderingItems }
+      : {}),
+    ...(question.sortableCount !== undefined
+      ? { sortableCount: question.sortableCount }
+      : {}),
+    ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
+    ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
+  };
+}
+
 /**
  * 几何签名的块投影（LR-5 回归根因修复）：剥掉 blocks[].node 再哈希——
  * node 是 PR2 新增的语义键，旧底图的 geometrySignature 是无 node 时代的块
@@ -143,11 +166,7 @@ export async function questionSurfaceMatchesLayout(
     Math.abs(measure.cssHeight - layout.cssHeight) > 1
   )
     return false;
-  const publicContent = {
-    type: question.type,
-    stemMd: question.stemMd,
-    options: question.options ?? [],
-  };
+  const publicContent = publicContentSignatureOf(question);
   if (layout.compatibility) {
     return (
       stableContentHash64(publicContent) ===
@@ -155,7 +174,17 @@ export async function questionSurfaceMatchesLayout(
       compatibleSurfaceEvidence(layout.compatibility, measure)
     );
   }
-  return (await legacyCompatibility(publicContent, measure, layout)) !== null;
+  return (
+    (await legacyCompatibility(
+      {
+        type: question.type,
+        stemMd: question.stemMd,
+        options: question.options ?? [],
+      },
+      measure,
+      layout,
+    )) !== null
+  );
 }
 
 async function legacyCompatibility(
@@ -216,8 +245,19 @@ export async function verifiedLegacySurfaceCompatibility(
   );
 }
 
-function assertPublicQuestion(question: AttemptQuestionPublic): void {
-  for (const md of [question.stemMd, ...(question.options ?? [])]) {
+export function assertPublicQuestion(question: AttemptQuestionPublic): void {
+  const texts: string[] = [question.stemMd, ...(question.options ?? [])];
+  if (question.matchingOptions?.options) {
+    for (const opt of question.matchingOptions.options) {
+      texts.push(opt.text);
+    }
+  }
+  if (question.orderingItems) {
+    for (const item of question.orderingItems) {
+      texts.push(item.text);
+    }
+  }
+  for (const md of texts) {
     if (
       stemMdLeaksAnswers(md) ||
       TEACHER_SECTION_MARKERS.some((marker) => md.includes(marker))
@@ -368,13 +408,10 @@ export async function renderQuestionBaseImage(
       !sameGeometry(before, measureQuestionSurface(reference))
     )
       throw new Error("题面布局已变化或与底图不一致，请恢复原布局后重试");
+    const publicContent = publicContentSignatureOf(question);
     const [contentSignature, geometrySignature, fontSignature] =
       await Promise.all([
-        contentHash64({
-          type: question.type,
-          stemMd: question.stemMd,
-          options: question.options ?? [],
-        }),
+        contentHash64(publicContent),
         contentHash64(geometryBlocksProjection(before.blocks)),
         contentHash64(before.fonts),
       ]);
@@ -390,11 +427,7 @@ export async function renderQuestionBaseImage(
       fontSignature,
       compatibility: {
         version: 1,
-        contentSignature: stableContentHash64({
-          type: question.type,
-          stemMd: question.stemMd,
-          options: question.options ?? [],
-        }),
+        contentSignature: stableContentHash64(publicContent),
         blocks: before.blocks,
         fonts: before.fonts.map(normalizeSurfaceFont),
         textRects: before.textRects,

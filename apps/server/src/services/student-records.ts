@@ -22,7 +22,11 @@ import {
 } from "../db/schema";
 import { answersReleased, assignmentReleaseByIds } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
+import {
+  pendingMarkCounts,
+  pendingSelfReviewCounts,
+  practiceSubmittedCounts,
+} from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { recordAnswerProgress } from "./record-answer-progress";
 import { attemptResultCounts } from "./result-counts";
@@ -211,9 +215,10 @@ export function listStudentRecords(
   // 来源上下文与公布 gate 的输入（teacherId 域内读单元/题目元信息，T2B.5 D10）
   const teacherId = studentTeacherIdOf(db, studentId);
   const pendingByAttempt = pendingMarkCounts(db, rows);
+  // 待自评徽章（两线收敛接线：v2 记录行来源，改走 QM 口径批量谓词）
+  const pendingSelfReviewByAttempt = pendingSelfReviewCounts(db, rows);
   const resultCounts = attemptResultCounts(db, rows);
   const answerProgress = recordAnswerProgress(db, rows);
-  const pendingSelfReviewByAttempt = pendingMarkCounts(db, rows, true);
   // M4-D3 进行中进度（§13）：只对 v1 新协议卷批量聚合行级已提交 n/N（一次分组
   // 查询，500 id 一块，与待批数同款模式）；协议判定走 practiceProtocolOf 单一谓词
   const v1Rows = rows.filter((row) => practiceProtocolOf(row) === "v1");

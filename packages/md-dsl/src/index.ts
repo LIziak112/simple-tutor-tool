@@ -28,10 +28,26 @@ export {
   analyzeLectureStructure,
   weightedCharCounts,
 } from "./v2/lecture-structure.ts";
+// ::ref 属性串解析（行内式 ::ref 的属性抽取单源，materials.ts 单一出处）：
+// 服务端导入层（P2-2 题内块式 ::ref{question=} 告警）复用，不另写一份。
+// 槽位编号正文（QM-16 单源）：{{slot-id}} → **（N）——学生端材料面板、
+// 服务端导出与受控 AI 出口共用，编号口径不散落各处。
+export { parseRefAttrs, slotNumberedContentOf } from "./v2/materials.ts";
 export {
   simplifySizedMathDelimiters,
   sizedMathDelimiters,
 } from "./v2/math-delimiters.ts";
+// TT-06 新内容检测（决策记录 §5.8.4 触发清单）：NEW_CONTENT_DISABLED 的判定面，
+// 导入层（QM-05）消费——本包只检测，不产 lint issue。无解析器核心改动。
+export type { NewContentUsage } from "./v2/new-content.ts";
+export { detectNewContent } from "./v2/new-content.ts";
+// 导入规范化回写（tt-06b / QM-05，§5.2.3）：缺省 id 生成后写回源文——
+// 导入层（content-service）在 lint/落库前调用；编辑器/导出不追加改写。
+export type {
+  NormalizedQmIds,
+  NormalizeQmIdsOptions,
+} from "./v2/normalize-ids.ts";
+export { normalizeQmIds } from "./v2/normalize-ids.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
 // 题干形态变换唯一公开面：学生端 payload 用 studentStemMd（脱敏 + 剥选项），
@@ -52,6 +68,9 @@ export {
   createQuestionBlockKeyer,
   questionNodesOf,
 } from "./v2/question-nodes.ts";
+// 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
+// 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
+export { expandSelectionIds } from "./v2/references.ts";
 export { processor } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。

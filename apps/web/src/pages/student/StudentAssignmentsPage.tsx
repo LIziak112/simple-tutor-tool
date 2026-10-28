@@ -176,7 +176,10 @@ export default function StudentAssignmentsPage() {
         />
       ) : (
         <>
-          <p role="status" className="text-sm text-muted-foreground">
+          <p
+            role="status"
+            className="text-sm text-muted-foreground tabular-nums"
+          >
             共 {page.total} 份作业
             {page.total > 0 && ` · 第 ${page.page} / ${page.pages} 页`}
           </p>
@@ -234,7 +237,7 @@ export default function StudentAssignmentsPage() {
                 >
                   上一页
                 </Button>
-                <span className="text-sm text-muted-foreground">
+                <span className="text-sm text-muted-foreground tabular-nums">
                   第 {page.page} / {page.pages} 页
                 </span>
                 <Button

@@ -594,7 +594,7 @@ function TrialPaper({ config }: { config: InkProfileConfig }) {
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
             <Button
-              className="h-11"
+              className="h-11 min-w-11"
               variant={tool === "pen" ? "default" : "outline"}
               onClick={() => {
                 surface.current?.setTool({

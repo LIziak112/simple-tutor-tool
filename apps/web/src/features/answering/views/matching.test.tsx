@@ -1,0 +1,281 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import type { PreparedOf } from "../types";
+import { matchingView } from "./matching";
+
+/**
+ * matching 视图测试（QM-13 细项 2/5）：槽位行 + 原生 select、不可重复约束的
+ * 客户端面（被占选项禁用）、部分配对草稿合法、只读/参考/对照/完成度。
+ * 防泄露：视图不渲染参考答案（Reference/Comparison 只消费宿主授权材料）；
+ * 2026-10-25 审查 P1 收紧起模型选项不含 distractor 标记（池内一律可选）。
+ */
+
+const baseModel: PreparedOf<"matching"> = {
+  kind: "matching",
+  scopeId: "scope-m",
+  stemMd: "从选项中为空白处选择内容。",
+  options: [
+    { key: "opt-1", text: "选项甲" },
+    { key: "opt-2", text: "选项乙" },
+    { key: "opt-8", text: "干扰项" },
+  ],
+  slots: [
+    { id: "slot-1", ordinal: 1 },
+    { id: "slot-2", ordinal: 2 },
+  ],
+  allowRepeat: false,
+};
+
+function modelOf(model: PreparedOf<"matching"> = baseModel) {
+  return model;
+}
+
+describe("matching Input", () => {
+  it("每槽位一行原生 select（键盘/触摸原生语义）；选择即时回调不 defer", () => {
+    const update = vi.fn();
+    render(matchingView.Input({ model: modelOf(), answer: undefined, update }));
+    const first = screen.getByLabelText("第 1 空的选项");
+    expect(first).toBeInTheDocument();
+    expect(screen.getByLabelText("第 2 空的选项")).toBeInTheDocument();
+    fireEvent.change(first, { target: { value: "opt-1" } });
+    expect(update).toHaveBeenCalledWith(
+      { kind: "matching", pairs: { "slot-1": "opt-1" } },
+      undefined,
+    );
+  });
+
+  it("不可重复：已占选项在其他槽位下拉中禁用；选回空值清除该槽（部分草稿合法）", () => {
+    const update = vi.fn();
+    render(
+      matchingView.Input({
+        model: modelOf(),
+        answer: { kind: "matching", pairs: { "slot-1": "opt-1" } },
+        update,
+      }),
+    );
+    const second = screen.getByLabelText("第 2 空的选项");
+    const secondOptions = within(second);
+    expect(
+      (
+        secondOptions.getByRole("option", {
+          name: "选项甲",
+        }) as HTMLOptionElement
+      ).disabled,
+    ).toBe(true);
+    // 干扰项在池内可选（§6.1 调整 6：选错是答案错误而非形状错误）
+    expect(
+      (
+        secondOptions.getByRole("option", {
+          name: "干扰项",
+        }) as HTMLOptionElement
+      ).disabled,
+    ).toBe(false);
+    // 选回空值清除该槽（部分配对 → 清除 → 空 pairs = 未作答清除态，保存合法）
+    fireEvent.change(screen.getByLabelText("第 1 空的选项"), {
+      target: { value: "" },
+    });
+    expect(update).toHaveBeenCalledWith(
+      { kind: "matching", pairs: {} },
+      undefined,
+    );
+  });
+
+  it("disabled 透传禁用；结构不可用显式报错不静默降级", () => {
+    const { unmount } = render(
+      matchingView.Input({
+        model: modelOf(),
+        answer: undefined,
+        update: () => {},
+        disabled: true,
+      }),
+    );
+    expect(
+      (screen.getByLabelText("第 1 空的选项") as HTMLSelectElement).disabled,
+    ).toBe(true);
+    unmount();
+    render(
+      matchingView.Input({
+        model: modelOf({ ...baseModel, slots: [] }),
+        answer: undefined,
+        update: () => {},
+      }),
+    );
+    expect(screen.getByRole("alert").textContent).toContain("不完整");
+  });
+
+  it("审查 P2-2：子集选择（材料第 3–5 空）标签沿用材料序，不按题内重排 1/2/3", () => {
+    const subset: PreparedOf<"matching"> = {
+      ...baseModel,
+      slots: [
+        { id: "slot-3", ordinal: 3 },
+        { id: "slot-4", ordinal: 4 },
+        { id: "slot-5", ordinal: 5 },
+      ],
+    };
+    const update = vi.fn();
+    render(matchingView.Input({ model: subset, answer: undefined, update }));
+    // 标签是材料面板编号空位（N）的第 3/4/5 空，不是题内 1/2/3
+    expect(screen.getByLabelText("第 3 空的选项")).toBeInTheDocument();
+    expect(screen.getByLabelText("第 4 空的选项")).toBeInTheDocument();
+    expect(screen.getByLabelText("第 5 空的选项")).toBeInTheDocument();
+    expect(screen.queryByLabelText("第 1 空的选项")).not.toBeInTheDocument();
+    // 作答键仍是槽位 id（答案不因标签口径变化）
+    fireEvent.change(screen.getByLabelText("第 4 空的选项"), {
+      target: { value: "opt-2" },
+    });
+    expect(update).toHaveBeenCalledWith(
+      { kind: "matching", pairs: { "slot-4": "opt-2" } },
+      undefined,
+    );
+  });
+});
+
+describe("matching ReadOnly / Reference / Comparison", () => {
+  it("ReadOnly：按槽位序逐行；未作答与部分作答各自如实呈现", () => {
+    const model = modelOf();
+    const { container, rerender } = render(
+      matchingView.ReadOnly({ model, answer: undefined }),
+    );
+    expect(container.textContent).toContain("未作答");
+    rerender(
+      matchingView.ReadOnly({
+        model,
+        answer: { kind: "matching", pairs: { "slot-2": "opt-8" } },
+      }),
+    );
+    expect(container.textContent).toContain("第 2 空：干扰项");
+    expect(container.textContent).toContain("第 1 空：未选择");
+  });
+
+  it("Comparison：两栏对照（本人行 vs 参考行），公布三态由宿主携带", () => {
+    const model = modelOf();
+    const { container } = render(
+      matchingView.Comparison({
+        model,
+        answer: { kind: "matching", pairs: { "slot-1": "opt-1" } },
+        reference: {
+          status: "available",
+          reference: { kind: "matching", pairs: { "slot-1": "opt-2" } },
+        },
+      }),
+    );
+    expect(container.textContent).toContain("你的答案：");
+    expect(container.textContent).toContain("第 1 空：选项甲");
+    expect(container.textContent).toContain("参考答案：");
+    expect(container.textContent).toContain("第 1 空：选项乙");
+  });
+});
+
+describe("matching completion", () => {
+  it("分项未填=partial 草稿合法；全部槽位配对=filled；无配对=empty", () => {
+    const model = modelOf();
+    expect(matchingView.completion(model, undefined, false)).toEqual({
+      state: "empty",
+      filledSlots: 0,
+      expectedSlots: 2,
+    });
+    expect(
+      matchingView.completion(
+        model,
+        { kind: "matching", pairs: { "slot-1": "opt-1" } },
+        false,
+      ),
+    ).toEqual({ state: "partial", filledSlots: 1, expectedSlots: 2 });
+    expect(
+      matchingView.completion(
+        model,
+        { kind: "matching", pairs: { "slot-1": "opt-1", "slot-2": "opt-2" } },
+        false,
+      ),
+    ).toEqual({ state: "filled", filledSlots: 2, expectedSlots: 2 });
+  });
+});
+
+it("候选全文支持公式；选择不增删题面内容，编号与全文列表对应", () => {
+  const long = `${"很长的候选正文".repeat(15)} $x^2$`;
+  const model = { ...baseModel, options: [{ key: "long", text: long }] };
+  const { container, rerender } = render(
+    matchingView.Input({
+      model,
+      answer: undefined,
+      update: vi.fn(),
+    }),
+  );
+  const pool = screen.getByRole("region", { name: "完整选项" });
+  expect(pool).toHaveTextContent("很长的候选正文");
+  expect(pool.querySelector(".katex")).not.toBeNull();
+  const before = container.textContent;
+  rerender(
+    matchingView.Input({
+      model,
+      answer: { kind: "matching", pairs: { "slot-1": "long" } },
+      update: vi.fn(),
+    }),
+  );
+  expect(container.textContent).toBe(before);
+  expect(
+    within(screen.getByLabelText("第 1 空的选项")).getByRole("option", {
+      name: long,
+    }),
+  ).toHaveTextContent("选项 1");
+});
+
+it("原生 select 的 option 同时显示选项编号与选项正文（公式剔除标记为纯文本），便于作答直观识别", () => {
+  const model: PreparedOf<"matching"> = {
+    ...baseModel,
+    options: [
+      { key: "p1", text: "TCP 80 端口（明文传输）" },
+      { key: "p2", text: "函数 $f(x)=x^2$ 单调递增" },
+    ],
+  };
+  render(matchingView.Input({ model, answer: undefined, update: vi.fn() }));
+  const select = screen.getByLabelText("第 1 空的选项");
+  const options = within(select).getAllByRole("option");
+  expect(options[0]).toHaveTextContent("未选择");
+  expect(options[1]).toHaveTextContent("选项 1：TCP 80 端口（明文传输）");
+  expect(options[2]).toHaveTextContent("选项 2：函数 f(x)=x^2 单调递增");
+});
+
+it("原生 select 的 option 清洗复杂 Markdown（链接、粗体下划线、删除线、换行折叠）为紧凑单行纯文本", () => {
+  const model: PreparedOf<"matching"> = {
+    ...baseModel,
+    options: [
+      {
+        key: "p1",
+        text: "请参考 [HTTP 协议](https://example.com) 说明\n\n多余换行",
+      },
+      { key: "p2", text: "这是 __重点__ 且 ~~作废~~ 的 `代码` 说明" },
+      { key: "p3", text: "   " },
+    ],
+  };
+  render(matchingView.Input({ model, answer: undefined, update: vi.fn() }));
+  const select = screen.getByLabelText("第 1 空的选项");
+  const options = within(select).getAllByRole("option");
+  expect(options[1]).toHaveTextContent(
+    "选项 1：请参考 HTTP 协议 说明 多余换行",
+  );
+  expect(options[2]).toHaveTextContent(
+    "选项 2：这是 重点 且 作废 的 代码 说明",
+  );
+  expect(options[3]).toHaveTextContent("选项 3");
+});
+
+it("保守清洗：货币 $、字面下划线、全角空格与含括号链接不被误改写", () => {
+  const model: PreparedOf<"matching"> = {
+    ...baseModel,
+    options: [
+      { key: "p1", text: "利润为 $5，成本 $3，求差" },
+      { key: "p2", text: "若 a_1 与 b_2 相等" },
+      { key: "p3", text: "宽（　）框" },
+      { key: "p4", text: "见 [维基](https://x.com/Foo_(bar)) 说明" },
+    ],
+  };
+  render(matchingView.Input({ model, answer: undefined, update: vi.fn() }));
+  const select = screen.getByLabelText("第 1 空的选项");
+  const options = within(select).getAllByRole("option");
+  expect(options[1]).toHaveTextContent("选项 1：利润为 $5，成本 $3，求差");
+  expect(options[2]).toHaveTextContent("选项 2：若 a_1 与 b_2 相等");
+  // 全角空格 U+3000 保留（toHaveTextContent 的空白归一会折叠它，直比原文）
+  expect(options[3]?.textContent).toBe("选项 3：宽（　）框");
+  expect(options[4]).toHaveTextContent("选项 4：见 维基 说明");
+});

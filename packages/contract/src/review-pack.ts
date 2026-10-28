@@ -14,7 +14,7 @@ import {
   NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   notePhaseSchema,
 } from "./note.ts";
-import { selfReviewStateSchema } from "./self-review.ts";
+import { verdictSourceSchema } from "./self-review.ts";
 
 /**
  * 单题完整导出（review-pack）契约（T6R.13，方案 §8/§9.1）：
@@ -55,6 +55,10 @@ export const REVIEW_PACK_MAX_BYTES = LEARNING_PACK_MAX_BYTES;
  * 题目条目：已按角色投影的素材（学生角色经 studentStemMd + 哨兵；选项为
  * 纯文本）。教师域键（questionId/answers/solutionMd）只出现在教师包——
  * 学生包由 superRefine 结构性拒绝。
+ *
+ * materialRefs 系 v2 题目 schema 单源继承的键（TT-13 审查 P3-2 记档）：
+ * 单题包装配侧不产出（材料以「材料 A/B…」文本行内嵌），包内亦无 materials
+ * 节可解析 m 编号——消费方不得依赖该键。
  */
 export const reviewPackQuestionSchema = learningPackV2QuestionSchema
   .omit({
@@ -96,7 +100,7 @@ export const reviewPackResponseSchema = z.object({
   autoCorrect: z.boolean().nullable().optional(),
   /** 最终判定（统计唯一口径；null=待批） */
   finalCorrect: z.boolean().nullable().optional(),
-  reviewSource: selfReviewStateSchema.shape.source.optional(),
+  reviewSource: verdictSourceSchema.optional(),
   teacherMark: z.enum(["correct", "wrong"]).nullable().optional(),
   /** 教师评语原文（不改动；未评为 null） */
   teacherComment: z.string().nullable().optional(),

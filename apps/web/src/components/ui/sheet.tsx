@@ -59,7 +59,7 @@ const SheetContent = ({
       <SheetPrimitive.Close
         data-slot="sheet-close"
         aria-label={closeLabel}
-        className="absolute top-3 right-3 flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="absolute top-3 right-3 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <X aria-hidden className="size-4" />
       </SheetPrimitive.Close>
@@ -71,7 +71,7 @@ const SheetHeader = ({ className, ...props }: React.ComponentProps<"div">) => (
   <div
     data-slot="sheet-header"
     className={cn(
-      "flex flex-col gap-1 border-b border-border p-4 pr-12",
+      "flex flex-col gap-1 border-b border-border p-4 pr-14",
       className,
     )}
     {...props}

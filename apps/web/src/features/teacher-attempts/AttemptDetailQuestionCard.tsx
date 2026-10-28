@@ -1,4 +1,5 @@
 import type { TeacherAttemptDetailQuestion } from "@tutor/contract";
+import { optionsPublicStructureOf } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
@@ -6,10 +7,14 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
+  OptionComparisonList,
+  optionCorrectOf,
+  optionPickedOf,
+} from "@/features/answering/views/choice";
+import {
   formatReferenceAnswers,
   formatStudentAnswer,
   HANDWRITTEN_TYPES,
-  letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
@@ -55,7 +60,9 @@ function verdictOf(
   return { text: "—", className: "text-muted-foreground" };
 }
 
-/** 选项列表（choice/multi）：标记正确项（仅已交卷下发 answers）与学生所选 */
+/** 选项列表（choice/multi）：标记正确项（仅已交卷下发 answers）与学生所选。
+ * UA-03 起内部委托呈现层选项对照（answering/views/choice teacher 形态，
+ * 与学生结果视图/错题本同一实现）；DOM/文案逐字不变。 */
 function DetailOptions({
   question,
 }: {
@@ -63,51 +70,13 @@ function DetailOptions({
 }) {
   const options = question.options;
   if (options === undefined) return null;
-  const picked =
-    question.answer?.kind === "choice"
-      ? [question.answer.index]
-      : question.answer?.kind === "multi"
-        ? question.answer.indexes
-        : [];
-  const correct =
-    question.answers?.kind === "choice"
-      ? [question.answers.index]
-      : question.answers?.kind === "multi"
-        ? question.answers.indexes
-        : [];
   return (
-    <ol className="flex flex-col gap-1.5" aria-label="选项">
-      {options.map((option, index) => {
-        const isPicked = picked.includes(index);
-        const isCorrect = correct.includes(index);
-        return (
-          <li
-            key={option}
-            className={cn(
-              "flex min-h-11 items-start gap-2 rounded-lg border px-3 py-2 text-sm",
-              isPicked
-                ? "border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10"
-                : "border-border",
-            )}
-          >
-            <span className="mt-0.5 w-5 shrink-0 font-semibold">
-              {letterOf(index)}
-            </span>
-            <RichMarkdown source={option} className="min-w-0 flex-1 text-sm" />
-            {isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                正确项
-              </span>
-            )}
-            {isPicked && (
-              <span className="shrink-0 text-xs font-medium text-sky-700 dark:text-sky-300">
-                学生选择
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <OptionComparisonList
+      options={optionsPublicStructureOf(options).options}
+      picked={optionPickedOf(question.answer)}
+      correct={optionCorrectOf(question.answers)}
+      variant="teacher"
+    />
   );
 }
 
@@ -203,8 +172,33 @@ function SolutionFold({ solutionMd }: { solutionMd: string }) {
   );
 }
 
-/** 判定区：未放行的 draft 行显示「未提交」（D5/Web-3：单题语义——该题提交
- * 前不产生判定）；已交卷展示四行判定/评语 */
+/**
+ * 教师端单题有效判定（QM-12：与结果视图/错题本/学情同一口径——教师判 >
+ * 自评 > 自动；未判断行按行策略区分「待自评/待批」）。
+ */
+function teacherEffectiveOf(question: TeacherAttemptDetailQuestion): {
+  value: boolean | null;
+  source: "teacher" | "self" | "auto" | null;
+} {
+  if (question.teacherMark === "correct") {
+    return { value: true, source: "teacher" };
+  }
+  if (question.teacherMark === "wrong") {
+    return { value: false, source: "teacher" };
+  }
+  if (question.selfReview?.verdict === "correct") {
+    return { value: true, source: "self" };
+  }
+  if (question.selfReview?.verdict === "wrong") {
+    return { value: false, source: "self" };
+  }
+  if (question.autoCorrect !== null) {
+    return { value: question.autoCorrect, source: "auto" };
+  }
+  return { value: null, source: null };
+}
+
+/** 判定区：draft 一律「未交卷」（D5）；已交卷展示五项判定/评语（QM-12 增自评行） */
 function VerdictSection({
   question,
   isDraft,
@@ -221,10 +215,20 @@ function VerdictSection({
     );
   }
   const auto = verdictOf(question.autoCorrect, question.answered);
-  const final = verdictOf(question.finalCorrect, question.answered);
+  const effective = teacherEffectiveOf(question);
+  // #6980-3：判错且未做灰显「未做」——但人工显式判定（教师判/自评）不被
+  // 「未做」掩盖，照常红显「答错」
+  const explicit =
+    effective.source === "teacher" || effective.source === "self";
+  const final = verdictOf(effective.value, explicit ? true : question.answered);
   const teacher =
     question.teacherMark === null ? null : question.teacherMark === "correct";
   const byTeacher = verdictOf(teacher);
+  // 待自评行单独提示（与教师待批区分——不进教师批改队列）
+  const isSelfReviewPending =
+    effective.value === null &&
+    (question.gradingPolicy ?? null) === "reference_self" &&
+    question.teacherMark === null;
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:grid-cols-2">
       {question.studentFlag === "unsure" && (
@@ -242,7 +246,29 @@ function VerdictSection({
       <div className="flex gap-2">
         <dt className="shrink-0 text-muted-foreground">最终判定：</dt>
         <dd className={cn("font-medium", final.className)}>
-          {question.finalCorrect === null ? "待批" : final.text}
+          {effective.value === null
+            ? isSelfReviewPending
+              ? "待自评"
+              : "待批"
+            : final.text}
+        </dd>
+      </div>
+      <div className="flex gap-2">
+        <dt className="shrink-0 text-muted-foreground">学生自评：</dt>
+        <dd
+          className={cn(
+            "font-medium",
+            question.selfReview?.verdict === "correct" && "text-emerald-600",
+            question.selfReview?.verdict === "wrong" && "text-red-600",
+          )}
+        >
+          {question.selfReview?.verdict === "correct"
+            ? "自评正确"
+            : question.selfReview?.verdict === "wrong"
+              ? "自评错误"
+              : isSelfReviewPending
+                ? "待自评"
+                : "—"}
         </dd>
       </div>
       <div className="flex gap-2">
@@ -255,7 +281,7 @@ function VerdictSection({
               : "判错"}
         </dd>
       </div>
-      <div className="flex min-w-0 gap-2">
+      <div className="flex min-w-0 gap-2 sm:col-span-1">
         <dt className="shrink-0 text-muted-foreground">教师评语：</dt>
         <dd className="min-w-0">
           {question.teacherComment === null || question.teacherComment === ""
@@ -263,6 +289,11 @@ function VerdictSection({
             : question.teacherComment}
         </dd>
       </div>
+      {effective.source === "self" && (
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          最终判定按学生自评（自评是本人对照答案的判断，教师可随时改判）。
+        </p>
+      )}
     </dl>
   );
 }
@@ -395,17 +426,22 @@ export function AttemptDetailQuestionCard({
         <span>改答 {question.changeCount} 次</span>
       </p>
 
-      {/* SAI-24 教师督学标签（B13）：旁置呈现 AI 求助事实——只消费服务端
-          事实记录，不改写对错/待批/分数/评语原值；记录抽屉按题过滤本卷任务 */}
-      {question.selfReview?.source === "self" && (
+      {/* 两线收敛接线（v2 错题闭环旁注）：教师侧自评提示改走 QM record 形状
+          （verdict 三值 + 教师优先语义；判定区 VerdictSection 另有完整行展示） */}
+      {question.teacherMark === null && question.selfReview?.verdict ? (
         <p className="text-sm text-muted-foreground">
-          学生自评：{question.selfReview.mark ? "正确" : "错误"}
+          学生自评：
+          {question.selfReview.verdict === "correct" ? "正确" : "错误"}
           （无需再次确认，可由教师改判）
         </p>
-      )}
-      {question.selfReview?.awaitingSelfReview && (
-        <p className="text-sm text-muted-foreground">待学生对照参考答案自评</p>
-      )}
+      ) : null}
+      {question.teacherMark === null &&
+        (question.gradingPolicy ?? null) === "reference_self" &&
+        question.selfReview === null && (
+          <p className="text-sm text-muted-foreground">
+            待学生对照参考答案自评
+          </p>
+        )}
       <AiHelpQuestionSection
         attemptId={attemptId}
         questionId={question.questionId}

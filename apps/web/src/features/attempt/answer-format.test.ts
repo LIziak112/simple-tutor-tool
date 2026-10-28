@@ -4,14 +4,25 @@ import {
   attemptSourceLabel,
   formatReferenceAnswers,
   formatStudentAnswer,
+  HANDWRITTEN_TYPES,
   isAnswered,
-  judgeLabelOf,
   letterOf,
   mathifyAnswerText,
   withBlankValue,
 } from "./answer-format";
 
 /** 作答展示纯函数测试（T2.6）：题型徽章口径见组件测试，这里锁文本化行为。 */
+
+describe("HANDWRITTEN_TYPES（UA-01 起由契约 paperRole 派生）", () => {
+  it("旧七型资格逐字不变（solve/apply/find-error 前缀），response 自 TT-05a 新进集合（D14 预期新增）", () => {
+    expect([...HANDWRITTEN_TYPES].sort()).toEqual([
+      "apply",
+      "find-error",
+      "response",
+      "solve",
+    ]);
+  });
+});
 
 describe("attemptRoundLabel（轮次标注按来源）", () => {
   it("course/wrong/assignment 既有文案 + lesson=第 n 次讲练（2026-10 讲练一体）", () => {
@@ -62,16 +73,10 @@ describe("attemptSourceLabel（学生端来源行文案，2026-10 收口单源�
   });
 });
 
-describe("letterOf / judgeLabelOf", () => {
+describe("letterOf", () => {
   it("下标转字母（0→A、2→C）", () => {
     expect(letterOf(0)).toBe("A");
     expect(letterOf(2)).toBe("C");
-  });
-
-  it("判断题布尔 → 对/错；字符串写法原样", () => {
-    expect(judgeLabelOf(true)).toBe("对");
-    expect(judgeLabelOf(false)).toBe("错");
-    expect(judgeLabelOf("√")).toBe("√");
   });
 });
 
