@@ -217,9 +217,7 @@ describe("阅读位置死线兜底", () => {
       height: 400,
     } as DOMRect);
     cards.current = new Map([["q2", li]]);
-    renderHook(() =>
-      useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0),
-    );
+    renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0));
     expect(scroll).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(6000));
     // 5s 死线到点：按最后几何立即对齐（300 - 64 - 20 = 216），不再晾在顶部
