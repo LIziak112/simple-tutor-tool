@@ -1009,3 +1009,91 @@ describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QU
     });
   });
 });
+
+describe("buildImportPlan：显式替换分支的跨文件夹同名提醒（审查修复 5）", () => {
+  /** 替换目标（文件夹 A 的讲练页）+ 其他文件夹的同名/不同名行 */
+  function replaceSnapshot(): LibrarySnapshot {
+    return snapshot({
+      folderNameById: new Map([
+        [FOLDER_A, "目标夹"],
+        [FOLDER_B, "别处夹"],
+      ]),
+      lectures: [
+        {
+          id: "l-target",
+          title: "旧标题",
+          folderId: FOLDER_A,
+          deletedAt: null,
+          kind: "lesson",
+        },
+        // 文件夹 B 已有与文档新标题同名的讲义 → 应出提醒
+        {
+          id: "l-other",
+          title: "新标题",
+          folderId: FOLDER_B,
+          deletedAt: null,
+          kind: "lecture",
+        },
+        // 目标文件夹内不同名讲义 → 不出
+        {
+          id: "l-sibling",
+          title: "别的标题",
+          folderId: FOLDER_A,
+          deletedAt: null,
+          kind: "lecture",
+        },
+      ],
+      units: new Map(),
+    });
+  }
+
+  /** 单讲义（新标题）讲练文档（显式替换用） */
+  function parsedRenamed(): ParsedDocument {
+    return {
+      frontmatter: { kind: "lesson" as const, dsl: 2, unit: "随堂讲练" },
+      units: [],
+      lectures: [{ title: "新标题", markdown: "# 新标题", headings: [] }],
+      issues: [],
+    };
+  }
+
+  it("替换改名后与其他文件夹已有同名讲义 → DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER", () => {
+    const plan = buildImportPlan({
+      parsed: parsedRenamed(),
+      folderId: null,
+      snapshot: replaceSnapshot(),
+      replaceLectureId: "l-target",
+    });
+    // 动作仍是绑定目标行的 updateLecture（新标题）
+    expect(plan.actions).toContainEqual({
+      kind: "updateLecture",
+      title: "新标题",
+      unitId: null,
+      folderName: "目标夹",
+      restore: false,
+    });
+    expect(plan.warnings).toContainEqual({
+      code: "DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER",
+      message: "资源库「别处夹」已有同名讲义「新标题」，确认不是重复导入",
+    });
+  });
+
+  it("其他文件夹无同名（仅目标文件夹不同名行）→ 不出该提醒", () => {
+    const base = replaceSnapshot();
+    const noDup: LibrarySnapshot = {
+      ...base,
+      lectures: base.lectures.filter((row) => row.id !== "l-other"),
+    };
+    const plan = buildImportPlan({
+      parsed: parsedRenamed(),
+      folderId: null,
+      snapshot: noDup,
+      replaceLectureId: "l-target",
+    });
+    expect(
+      plan.warnings.some(
+        (w) => w.code === "DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER",
+      ),
+    ).toBe(false);
+  });
+});

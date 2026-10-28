@@ -237,6 +237,22 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
         folderName: newResourceFolderName,
         restore: replaceTarget.deletedAt !== null,
       });
+      // 替换改名后与其他文件夹同名 → 重复导入提醒（审查修复 5：与下方
+      // createLecture 路径同款跨文件夹扫描，排除目标行自身与目标所在文件夹）
+      for (const other of snapshot.lectures) {
+        if (
+          other.id === replaceTarget.id ||
+          other.folderId === replaceTarget.folderId ||
+          other.title !== lecture.title
+        ) {
+          continue;
+        }
+        const otherName = folderNameOf(snapshot, other.folderId);
+        warnings.push({
+          code: "DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER",
+          message: `资源库「${otherName ?? "未归类"}」已有同名讲义「${lecture.title}」，确认不是重复导入`,
+        });
+      }
       continue;
     }
     const existing = snapshot.lectures.find(
