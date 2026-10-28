@@ -7,7 +7,6 @@ import {
   type QuestionUpdateData,
   questionUpdateDataSchema,
 } from "@tutor/contract";
-import { withQuestionId } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -271,8 +270,20 @@ describe("PUT /api/teacher/questions/:id 单题编辑", () => {
     expect(row?.version).toBe(2);
     expect(row?.stemMd).toContain("正负数的分界点");
     // 讲练文档 SSOT P1a：编辑落库文本规范化为带显式 id 的围栏（withQuestionId
-    // 与导入注入/导出回写同源）——缺省 id 题编辑后存储 sourceMd 也带显式 id，往返身份稳定
-    expect(row?.sourceMd).toBe(withQuestionId(edited, "练习四-1"));
+    // 与导入注入/导出回写同源）——缺省 id 题编辑后存储 sourceMd 也带显式 id，往返身份稳定。
+    // 期望串用字面量而非 withQuestionId(edited) 自算：注入形态（id 追加在属性串
+    // 尾部、JSON 引号转义）一旦漂移，字面量断言会红；自引用写法两侧同变测不出
+    expect(row?.sourceMd).toBe(
+      [
+        '::::question{type=judge difficulty=1 knowledge="有理数的概念" id="练习四-1"}',
+        "$0$ 既不是正数，也不是负数（正负数的分界点）。[[正确]]",
+        "",
+        ":::solution",
+        "$0$ 是整数，但既不是正数也不是负数，它是正数与负数的分界点。",
+        ":::",
+        "::::",
+      ].join("\n"),
+    );
 
     // 内容树：version 显示 2
     const tree = await getTree(app, cookie);

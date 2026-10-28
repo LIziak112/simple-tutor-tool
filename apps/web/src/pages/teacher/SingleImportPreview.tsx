@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   ImportCommitRequest,
   ImportPreviewData,
+  ImportPreviewRequest,
   LintIssue,
 } from "@tutor/contract";
 import {
@@ -16,7 +17,14 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   ActionsPanel,
@@ -97,6 +105,22 @@ export function SingleImportPreview({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  /**
+   * preview / commit 公共请求体（单一构造，P2a 不变量由构造保证：两个接口的
+   * 公共可选字段 markdown/filename/folderId/sourcePath/replaceLectureId 恒同值）。
+   * md/name 作参数传入——debounce 链路里调用时值可能落后于当前 state 一步。
+   */
+  const buildSharedBody = useCallback(
+    (md: string, name: string): ImportPreviewRequest => ({
+      markdown: md,
+      filename: name,
+      ...(options.folderId !== null ? { folderId: options.folderId } : {}),
+      ...(input.path.length > 0 ? { sourcePath: input.path } : {}),
+      ...(replaceLectureId !== null ? { replaceLectureId } : {}),
+    }),
+    [input.path, options.folderId, replaceLectureId],
+  );
+
   /** 调 preview 接口（带序号防抖竞态：过期响应直接丢弃）；folderId 只在有值时携带 */
   const runPreview = useCallback(
     async (md: string, name: string) => {
@@ -109,13 +133,7 @@ export function SingleImportPreview({
       const seq = seqRef.current;
       setPreviewPending(true);
       try {
-        const data = await previewImport({
-          markdown: md,
-          filename: name,
-          ...(options.folderId !== null ? { folderId: options.folderId } : {}),
-          ...(input.path.length > 0 ? { sourcePath: input.path } : {}),
-          ...(replaceLectureId !== null ? { replaceLectureId } : {}),
-        });
+        const data = await previewImport(buildSharedBody(md, name));
         if (seq !== seqRef.current) return;
         setPreview(data);
         setPreviewError(null);
@@ -130,7 +148,7 @@ export function SingleImportPreview({
         if (seq === seqRef.current) setPreviewPending(false);
       }
     },
-    [input.path, options.folderId, replaceLectureId],
+    [buildSharedBody],
   );
 
   // 初次进入即预览；编辑/改文件名 → 400ms debounce 重新预览（输入即校验）
@@ -199,17 +217,16 @@ export function SingleImportPreview({
     preview.actions.some((action) => action.kind === "createLecture");
   const showReplaceSelector = createsLecture || replaceLectureId !== null;
 
-  /** commit 请求体（与 preview 同字段；replaceLectureId 只在已指认时携带） */
+  /**
+   * commit 请求体：公共字段复用 buildSharedBody（与 preview 恒同值），叠加
+   * addToCourse 等 commit 独有项——公共可选字段不在此处二次手拼。
+   */
   function buildCommitRequest(): ImportCommitRequest {
     return {
-      markdown: text,
-      filename,
-      ...(options.folderId !== null ? { folderId: options.folderId } : {}),
-      ...(input.path.length > 0 ? { sourcePath: input.path } : {}),
+      ...buildSharedBody(text, filename),
       ...(options.addToCourse !== undefined
         ? { addToCourse: options.addToCourse }
         : {}),
-      ...(replaceLectureId !== null ? { replaceLectureId } : {}),
     };
   }
 
@@ -356,30 +373,27 @@ export function SingleImportPreview({
         ) : null}
       </div>
 
-      {/* 替换确认弹层（P2a：迁 Dialog 基座，Esc 关闭与焦点管理由 Radix 提供；
+      {/* 替换确认弹层（P2a：Dialog 基座 + DialogHeader/Title/Description/Footer
+          原语——标题与描述的 aria 关联由 Radix 自动接线，不再手写 id/aria-labelledby；
           关闭（含 × 与 Esc）＝ 取消不提交；文案与按钮语义与原手写弹层逐字一致） */}
       <Dialog open={replaceConfirmOpen} onOpenChange={setReplaceConfirmOpen}>
-        <DialogContent
-          aria-labelledby="replace-confirm-heading"
-          className="max-w-md gap-0 p-4"
-        >
-          <h3
-            id="replace-confirm-heading"
-            className="flex items-center gap-2 text-sm font-semibold"
-          >
-            <ArrowLeftRight
-              aria-hidden
-              className="size-4 text-muted-foreground"
-            />
-            确认替换讲练页
-          </h3>
-          <p className="mt-2 text-sm leading-relaxed">
+        <DialogContent className="max-w-md gap-0 p-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <ArrowLeftRight
+                aria-hidden
+                className="size-4 text-muted-foreground"
+              />
+              确认替换讲练页
+            </DialogTitle>
+          </DialogHeader>
+          <DialogDescription className="mt-2 leading-relaxed">
             将替换所选讲练页：旧随堂练习进回收站、已交卷与进行中作答不受影响、课程目录引用保留。
-          </p>
+          </DialogDescription>
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
             替换后该页标题与正文以本文档为准（对应上方「更新讲练页」动作）。
           </p>
-          <div className="mt-3 flex justify-end gap-2">
+          <DialogFooter className="mt-3">
             <Button
               type="button"
               variant="outline"
@@ -398,7 +412,7 @@ export function SingleImportPreview({
             >
               确认替换
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

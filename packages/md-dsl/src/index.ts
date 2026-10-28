@@ -82,7 +82,10 @@ export {
 // 选择串展开（QM-13）：题级 ::ref{slots=…} → 有序 slotId 的单源展开——
 // 服务端 matchingSlots 投影与保存校验共用（lint 第二遍同语义，不另写一份）。
 export { expandSelectionIds } from "./v2/references.ts";
-export { processor } from "./v2/shared.ts";
+// 题容器开围栏行正则（shared.ts 单一出处）：除包内注入/判定/切段共用外，
+// 服务端 shared-service 的 D15 轻量题数提取也 import 本常量——围栏口径全仓
+// 单源，不再允许各处手抄第三份窄口径（恰四冒号）漂移。
+export { processor, QUESTION_FENCE_RE } from "./v2/shared.ts";
 // 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
 // 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。
 export type { SplitLessonBlocksOptions } from "./v2/split-lesson.ts";

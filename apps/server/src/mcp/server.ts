@@ -694,7 +694,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     "get_lecture",
     {
       description:
-        "按讲义 id 返回可原样重新导入的 Markdown 原文（含 kind: lecture frontmatter）。非本教师的讲义返回「未找到」结构化结果（不暴露存在性）。",
+        "按讲义 id 返回可原样重新导入的 Markdown 原文。输出以 kind 与 title frontmatter 开头（title 为讲义身份键：重新导入按 title 命中同一讲义行更新，改 title 则视为新讲义）；kind 为 lecture（普通讲义）或 lesson（讲练页——正文段落与带显式 id 的随堂练习题块交错，题块即学生作答题）。非本教师的讲义返回「未找到」结构化结果（不暴露存在性）。",
       inputSchema: {
         id: z
           .string()

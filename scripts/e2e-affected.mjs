@@ -106,6 +106,7 @@ export const SPEC_TAGS = {
   "capability-profile.spec.ts": ["@teacher"],
   "course-cache.spec.ts": ["@teacher"],
   "multi-teacher-full-chain.spec.ts": ["@teacher"],
+  "lesson-replace-reimport.spec.ts": ["@teacher"],
   // 学生端
   "student-course.spec.ts": ["@student"],
   "student-lecture-reading.spec.ts": ["@student"],
