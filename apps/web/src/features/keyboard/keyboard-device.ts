@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
-import { isTextEditingEvent } from "@/features/attempt/practice-keyboard";
+import {
+  isImeComposing,
+  isTextEditingEvent,
+} from "@/features/attempt/practice-keyboard";
 import { createExternalPrefStore } from "@/lib/create-external-pref-store";
 
 /**
@@ -29,8 +32,7 @@ function attachProbe(): void {
   listener = (event: KeyboardEvent) => {
     if (
       !isTextEditingEvent(event) &&
-      !event.isComposing &&
-      event.keyCode !== 229 &&
+      !isImeComposing(event) &&
       event.key !== "Unidentified"
     ) {
       detect();
@@ -42,11 +44,15 @@ function attachProbe(): void {
   });
 }
 
-function detect(): void {
+function detachProbe(): void {
   if (listener !== null) {
     window.removeEventListener("keydown", listener, { capture: true });
     listener = null;
   }
+}
+
+function detect(): void {
+  detachProbe();
   store.set(true);
 }
 
@@ -82,10 +88,15 @@ export function useKeyboardDevice(): boolean {
 
 /** 仅测试用：复位为未探测态并重新走初始判定（模块单例跨用例共享） */
 export function resetKeyboardDeviceForTest(): void {
-  if (listener !== null) {
-    window.removeEventListener("keydown", listener, { capture: true });
-    listener = null;
-  }
+  detachProbe();
   store.set(false);
   initDevice();
+}
+
+/** 仅测试用：派发一个合格 keydown 模拟键盘设备接入（jsdom 恒走懒探测分支，
+ *  键盘设备语境的用例统一调它，探测合格口径不散落各测试文件） */
+export function detectKeyboardDeviceForTest(): void {
+  document.body.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
 }

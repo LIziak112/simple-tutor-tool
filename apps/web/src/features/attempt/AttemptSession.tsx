@@ -814,7 +814,7 @@ function AnswerView({
       (progressById.get(currentId)?.submittedAt ?? null) !== null;
     const spec = specOf(native);
     if (spec === null) return;
-    if (/^[1-9]$/.test(spec)) {
+    if (keyBindings["practice.select-option"].includes(spec)) {
       // 已提交只读题不响应；文本编辑区内数字保持输入语义
       if (submitted || isTextEditingEvent(native)) return;
       const card = cardElements.current.get(currentId);
@@ -831,7 +831,7 @@ function AnswerView({
       singleWorkspaceRef.current?.focus();
       return;
     }
-    if (keyBindings["practice.submit-or-next"]?.includes(spec)) {
+    if (keyBindings["practice.submit-or-next"].includes(spec)) {
       if (isTextEditingEvent(native) || isActivatingTarget(native)) return;
       event.preventDefault();
       if (practiceKeyActionRef.current) return;
@@ -868,22 +868,21 @@ function AnswerView({
       })();
       return;
     }
-    if (keyBindings["practice.prev-question"]?.includes(spec)) {
-      // 仅工作区容器自身持有焦点时切题；题面/输入/按钮内的按键保持原生
+    // ←→ 切题（可分别改键）：仅工作区容器自身持有焦点时生效，题面/输入/
+    // 按钮内的按键保持原生；prev 命中优先于 next（冲突检测拦住同时改同键）
+    const step = keyBindings["practice.prev-question"].includes(spec)
+      ? -1
+      : keyBindings["practice.next-question"].includes(spec)
+        ? 1
+        : 0;
+    if (step !== 0) {
       if (document.activeElement !== event.currentTarget) return;
       event.preventDefault();
-      const prev = questionIds[currentIndex - 1];
-      if (prev !== undefined) void goSingleQuestion(prev);
+      const target = questionIds[currentIndex + step];
+      if (target !== undefined) void goSingleQuestion(target);
       return;
     }
-    if (keyBindings["practice.next-question"]?.includes(spec)) {
-      if (document.activeElement !== event.currentTarget) return;
-      event.preventDefault();
-      const next = questionIds[currentIndex + 1];
-      if (next !== undefined) void goSingleQuestion(next);
-      return;
-    }
-    if (keyBindings["practice.open-help"]?.includes(spec)) {
+    if (keyBindings["practice.open-help"].includes(spec)) {
       if (isTextEditingEvent(native)) return;
       event.preventDefault();
       setKeyboardHelpOpen(true);

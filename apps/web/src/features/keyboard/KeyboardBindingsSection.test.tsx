@@ -5,21 +5,20 @@ import {
   bindKeyboardBindingsAccount,
   saveKeyboardBindings,
 } from "./keyboard-binding-store";
-import { resetKeyboardDeviceForTest } from "./keyboard-device";
+import {
+  detectKeyboardDeviceForTest,
+  resetKeyboardDeviceForTest,
+} from "./keyboard-device";
 
 /**
  * 设置页「自定义键位」分区（2026-10-28 快捷键体系）：仅键盘设备渲染；录制式
  * 改键（Esc 取消、Ctrl/Alt/Cmd 拒绝并给原因）；冲突（含撞固定键 1–9）标红并
  * 禁存；暂存-保存与恢复默认；未绑定账号提示登录。jsdom 恒走懒探测分支，
- * 用 body 合格按键模拟键盘设备。
+ * detectKeyboardDeviceForTest 模拟键盘设备接入。
  */
 
 const storageKeyOf = (id: string) =>
   `ownclass:keyboard-bindings:${JSON.stringify([location.origin, "student", id])}`;
-
-function detectKeyboard() {
-  fireEvent.keyDown(document.body, { key: "Escape" });
-}
 
 function openEditor() {
   render(<KeyboardBindingsSection />);
@@ -51,7 +50,7 @@ describe("自定义键位分区", () => {
   });
 
   it("键盘设备展开可见全部命令：默认键位展示、固定项标注", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     bindKeyboardBindingsAccount("kbd-section");
     openEditor();
     expect(screen.getByText("提交本题 / 下一题")).toBeInTheDocument();
@@ -68,7 +67,7 @@ describe("自定义键位分区", () => {
   });
 
   it("录制改键并保存：行内键位更新、写入契约 v1 形态、提示已保存", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     bindKeyboardBindingsAccount("kbd-section");
     openEditor();
     const row = startRecording("下一题");
@@ -88,7 +87,7 @@ describe("自定义键位分区", () => {
   });
 
   it("Esc 取消录制；Ctrl 组合与不可绑定键给拒绝文案且不退出录制", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     bindKeyboardBindingsAccount("kbd-section");
     openEditor();
     const row = startRecording("下一题");
@@ -105,7 +104,7 @@ describe("自定义键位分区", () => {
   });
 
   it("两个命令改到同键：后到者标红冲突并禁存；撞固定键（1–9）同样拒绝", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     bindKeyboardBindingsAccount("kbd-section");
     openEditor();
     startRecording("上一题");
@@ -122,7 +121,7 @@ describe("自定义键位分区", () => {
   });
 
   it("恢复默认键位：草稿置空并保存后 storage 留痕空覆盖表", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     bindKeyboardBindingsAccount("kbd-section");
     saveKeyboardBindings({ "practice.next-question": ["j"] });
     openEditor();
@@ -136,14 +135,14 @@ describe("自定义键位分区", () => {
   });
 
   it("未绑定账号提示需要登录状态", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     openEditor();
     expect(screen.getByText(/登录后可修改键位/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "保存键位" })).toBeNull();
   });
 
   it("跨标签保存后提示并可显式载入已保存值（本地草稿保留）", () => {
-    detectKeyboard();
+    detectKeyboardDeviceForTest();
     bindKeyboardBindingsAccount("kbd-section");
     openEditor();
     const row = startRecording("下一题");

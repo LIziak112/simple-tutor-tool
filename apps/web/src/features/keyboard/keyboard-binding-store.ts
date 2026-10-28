@@ -49,6 +49,8 @@ function read(raw: string | null): Readonly<Record<string, readonly string[]>> {
 
 function commit(state: KeyboardBindingState): void {
   const current = store.get();
+  // 换账号重绑（bind）即使覆盖表相同（如两账号都未自定义）也必须发布；
+  // 同账号且覆盖表相同才可跳过
   if (
     current.accountId === state.accountId &&
     JSON.stringify(current.bindings) === JSON.stringify(state.bindings)
@@ -72,7 +74,6 @@ export function bindKeyboardBindingsAccount(accountId: string | null) {
   commit({ accountId, bindings });
 }
 
-export const getKeyboardBindings = store.get;
 export const subscribeKeyboardBindings = (cb: () => void) =>
   store.subscribe(cb);
 

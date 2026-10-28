@@ -429,7 +429,7 @@ export function PracticeKeyboardHelpDialog({
           {PRACTICE_KEYBOARD_COMMANDS.map((command) => (
             <HelpKeyRow
               key={command.id}
-              keys={formatKeys(bindings[command.id] ?? command.defaultKeys)}
+              keys={formatKeys(bindings[command.id])}
               action={`${command.description}${command.customizable ? "" : "（固定）"}`}
             />
           ))}

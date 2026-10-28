@@ -1,6 +1,7 @@
 import { ChevronDown, Keyboard, RotateCcw } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { isImeComposing } from "@/features/attempt/practice-keyboard";
 import {
   findConflicts,
   formatKeys,
@@ -55,10 +56,6 @@ function KeyboardBindingsEditor(): ReactNode {
     () => findConflicts(PRACTICE_KEYBOARD_COMMANDS, selected),
     [selected],
   );
-  const conflictByCommand = useMemo(
-    () => new Map(conflicts.map((conflict) => [conflict.commandId, conflict])),
-    [conflicts],
-  );
   const resolvedDraft = useMemo(
     () => resolveBindings(PRACTICE_KEYBOARD_COMMANDS, selected),
     [selected],
@@ -78,7 +75,7 @@ function KeyboardBindingsEditor(): ReactNode {
         return;
       }
       // IME 合成中间态：不退出录制也不改键，等下一次真实按键
-      if (event.isComposing || event.keyCode === 229) return;
+      if (isImeComposing(event)) return;
       const spec = specOf(event);
       if (spec === null) {
         setRecordError(
@@ -140,7 +137,9 @@ function KeyboardBindingsEditor(): ReactNode {
           <>
             <ul className="space-y-2">
               {PRACTICE_KEYBOARD_COMMANDS.map((command) => {
-                const conflict = conflictByCommand.get(command.id);
+                const conflict = conflicts.find(
+                  (item) => item.commandId === command.id,
+                );
                 const isRecording = recording === command.id;
                 return (
                   <li
@@ -178,9 +177,7 @@ function KeyboardBindingsEditor(): ReactNode {
                       <kbd className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
                         {isRecording
                           ? "…"
-                          : formatKeys(
-                              resolvedDraft[command.id] ?? command.defaultKeys,
-                            )}
+                          : formatKeys(resolvedDraft[command.id])}
                       </kbd>
                       {command.customizable && (
                         <Button

@@ -1,7 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   bindKeyboardBindingsAccount,
-  getKeyboardBindings,
   getResolvedKeyboardBindings,
   saveKeyboardBindings,
   subscribeKeyboardBindings,
@@ -24,7 +23,7 @@ beforeEach(() => {
 
 it("未保存时生效键位 = 注册表默认（Enter/←→/? 与固定 1–9）", () => {
   bindKeyboardBindingsAccount("a");
-  expect(getKeyboardBindings()).toEqual({ accountId: "a", bindings: {} });
+  expect(localStorage.getItem(storageKeyOf("a"))).toBeNull();
   expect(getResolvedKeyboardBindings()["practice.submit-or-next"]).toEqual([
     "Enter",
   ]);

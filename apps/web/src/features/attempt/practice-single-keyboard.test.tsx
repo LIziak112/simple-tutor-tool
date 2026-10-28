@@ -10,7 +10,10 @@ import {
   bindKeyboardBindingsAccount,
   saveKeyboardBindings,
 } from "@/features/keyboard/keyboard-binding-store";
-import { resetKeyboardDeviceForTest } from "@/features/keyboard/keyboard-device";
+import {
+  detectKeyboardDeviceForTest,
+  resetKeyboardDeviceForTest,
+} from "@/features/keyboard/keyboard-device";
 import {
   fetchAttemptApi,
   fetchPracticeQuestionFeedbackApi,
@@ -443,9 +446,8 @@ it("快捷键关闭后 Enter、←→、1-9 全部不生效", async () => {
 
 it("「更多」菜单提供快捷键帮助入口，弹层列出键位", async () => {
   await renderSingle();
-  // 设备门控（2026-10-28 快捷键体系）：jsdom 恒走懒探测，先派发一个合格
-  // 按键让键盘设备探测成功，菜单入口才渲染
-  fireEvent.keyDown(document.body, { key: "Escape" });
+  // 设备门控（2026-10-28 快捷键体系）：模拟键盘设备接入后菜单入口才渲染
+  detectKeyboardDeviceForTest();
   fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
     button: 0,
     ctrlKey: false,
@@ -510,8 +512,8 @@ it("键盘设备未探测时「快捷键」入口不出现；探测成功当次�
     ctrlKey: false,
   });
   expect(screen.queryByRole("menuitem", { name: /快捷键/ })).toBeNull();
-  // 关菜单并探测：body 上首个合格 keydown（等价 iPad 接入实体键盘首键）
-  fireEvent.keyDown(document.body, { key: "Escape" });
+  // 探测：派发合格 keydown（等价 iPad 接入实体键盘首键，同时关掉菜单）
+  detectKeyboardDeviceForTest();
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
     button: 0,

@@ -13,14 +13,32 @@ import { z } from "zod";
  */
 
 /**
+ * 可绑定命名键白名单（单源）：keySpecPattern 由它拼接，web 端 key-spec 的
+ * 归一 Set 也从同一元组构造——命名键集只在这一处定义，两侧不各自手抄。
+ */
+export const KEYBOARD_NAMED_KEYS = [
+  "Enter",
+  "Space",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+] as const;
+
+/**
  * 单键位序列化文法（单源，web 端录制/解析/展示共用）：
  * 「Shift+命名键」或裸「单字符 / 命名键」——字符键的 Shift 已编码在字符本身
  * （"?" 不写作 "Shift+/"，"A" 即 Shift+a）；空格恒写作 "Space"（裸空白在
  * 序列化/展示层易被破坏）；Ctrl/Alt/Cmd 组合一律不合法（与作答页守门链
  * isSuppressedKeyEvent 同口径：修饰组合让位浏览器/系统语义）。
  */
-export const keySpecPattern =
-  /^(?:(?:Shift\+)?(?:Enter|Space|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)|\S)$/;
+export const keySpecPattern = new RegExp(
+  `^(?:(?:Shift\\+)?(?:${KEYBOARD_NAMED_KEYS.join("|")})|\\S)$`,
+);
 
 /** 命令 id：小写命名空间点分层（如 practice.submit-or-next），讲练页等后续
  *  接入用独立命名空间（lesson.*） */

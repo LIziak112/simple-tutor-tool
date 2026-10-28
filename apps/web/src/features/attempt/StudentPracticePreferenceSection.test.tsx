@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resetKeyboardDeviceForTest } from "@/features/keyboard/keyboard-device";
+import {
+  detectKeyboardDeviceForTest,
+  resetKeyboardDeviceForTest,
+} from "@/features/keyboard/keyboard-device";
 import {
   bindPracticePreferenceAccount,
   getPracticePreference,
@@ -20,8 +23,8 @@ beforeEach(() => {
   // 模块级 store 跨用例残留：先解绑再绑定，确保从持久化重新读取
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("student-1");
-  // jsdom 恒懒探测：body 合格按键让键盘设备探测成功（开关可见语境）
-  fireEvent.keyDown(document.body, { key: "Escape" });
+  // jsdom 恒懒探测：模拟键盘设备接入（快捷键开关可见语境）
+  detectKeyboardDeviceForTest();
 });
 
 describe("做题方式设置区（M3-D1）", () => {

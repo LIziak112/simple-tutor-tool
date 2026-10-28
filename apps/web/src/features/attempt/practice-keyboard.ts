@@ -101,13 +101,17 @@ export function isActivatingTarget(event: KeyboardEvent): boolean {
   );
 }
 
+/** 输入法合成态（isComposing 与 keyCode 229 双口径——部分浏览器只置其一） */
+export function isImeComposing(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
 /** 默认抑制状态：已被处理 / 合成中 / 长按 repeat / IME keyCode 229 / 修饰键 */
 export function isSuppressedKeyEvent(event: KeyboardEvent): boolean {
   return (
     event.defaultPrevented ||
-    event.isComposing ||
+    isImeComposing(event) ||
     event.repeat ||
-    event.keyCode === 229 ||
     event.altKey ||
     event.ctrlKey ||
     event.metaKey

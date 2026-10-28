@@ -82,19 +82,26 @@ export const PRACTICE_KEYBOARD_COMMANDS = [
 export type PracticeKeyboardCommandId =
   (typeof PRACTICE_KEYBOARD_COMMANDS)[number]["id"];
 
-/** 解析后的全命令键位（含固定命令；派发与展示的单源形态） */
-export type ResolvedKeyBindings = Record<string, readonly string[]>;
+/**
+ * 解析后的全命令键位（含固定命令；派发与展示的单源形态）。键型为命令 id
+ * 联合：索引写错是编译错，消费处无需防御性回退。
+ */
+export type ResolvedKeyBindings = Record<
+  PracticeKeyboardCommandId,
+  readonly string[]
+>;
 
 /**
  * 默认键位 + 用户覆盖：仅 customizable 命令可覆盖，整组替换（无部分合并）；
  * 未知 commandId 丢弃（注册表版本演进）；覆盖键位形状由契约读侧保证，
- * 空数组防御性回落默认。返回对象每次新建，仅在 store 发布时计算一次。
+ * 空数组防御性回落默认（第二调用方设置页草稿不经 parse）。返回对象每次
+ * 新建，仅在 store 发布时计算一次。
  */
-export function resolveBindings(
-  commands: readonly KeyboardCommand[],
+export function resolveBindings<C extends KeyboardCommand>(
+  commands: readonly C[],
   saved: Readonly<Record<string, readonly string[]>> | null,
-): ResolvedKeyBindings {
-  const resolved: Record<string, readonly string[]> = {};
+): Record<C["id"], readonly string[]> {
+  const resolved = {} as Record<C["id"], readonly string[]>;
   for (const command of commands) {
     const override = saved?.[command.id];
     resolved[command.id] =
@@ -118,21 +125,20 @@ export interface KeyboardBindingConflict {
  * ——改键到 1–9 会抢占选项数字，而派发固定先匹配，可定制命令永不触发）；
  * 可定制命令按注册表顺序登记，后到者记冲突（与派发占先顺序一致）。
  */
-export function findConflicts(
-  commands: readonly KeyboardCommand[],
+export function findConflicts<C extends KeyboardCommand>(
+  commands: readonly C[],
   draft: Readonly<Record<string, readonly string[]>>,
 ): KeyboardBindingConflict[] {
   const resolved = resolveBindings(commands, draft);
   const owner = new Map<string, string>();
   for (const command of commands) {
     if (command.customizable) continue;
-    for (const spec of resolved[command.id] ?? [])
-      owner.set(spec, command.label);
+    for (const spec of resolved[command.id]) owner.set(spec, command.label);
   }
   const conflicts: KeyboardBindingConflict[] = [];
   for (const command of commands) {
     if (!command.customizable) continue;
-    for (const spec of resolved[command.id] ?? []) {
+    for (const spec of resolved[command.id]) {
       const existing = owner.get(spec);
       if (existing !== undefined) {
         conflicts.push({ commandId: command.id, spec, otherLabel: existing });

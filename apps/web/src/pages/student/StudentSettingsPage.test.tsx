@@ -5,7 +5,10 @@ import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
 import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
-import { resetKeyboardDeviceForTest } from "@/features/keyboard/keyboard-device";
+import {
+  detectKeyboardDeviceForTest,
+  resetKeyboardDeviceForTest,
+} from "@/features/keyboard/keyboard-device";
 import StudentSettingsPage from "./StudentSettingsPage";
 
 vi.mock("@/features/auth/student-auth", () => ({
@@ -90,8 +93,8 @@ it("设置页包含连接 AI 入口,指向 /s/settings/ai（SAI-18）", () => {
 // M3-D1：学习偏好分组包含「做题方式」配置行（默认布局 + 快捷键开关）。
 // 账号绑定由学生布局负责，此处直接绑定 store 验证配置行渲染。
 it("设置页学习偏好包含做题方式配置行（M3-D1）", () => {
-  // 快捷键开关仅键盘设备渲染（2026-10-28 快捷键体系）：先探测键盘设备
-  fireEvent.keyDown(document.body, { key: "Escape" });
+  // 快捷键开关仅键盘设备渲染（2026-10-28 快捷键体系）：先模拟键盘设备接入
+  detectKeyboardDeviceForTest();
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("student-settings");
   renderPage();
@@ -112,7 +115,7 @@ it("纯触屏设备设置页不出现快捷键开关与「自定义键位」分�
 });
 
 it("键盘设备设置页出现「自定义键位」分区，展开可见命令行", () => {
-  fireEvent.keyDown(document.body, { key: "Escape" });
+  detectKeyboardDeviceForTest();
   bindKeyboardBindingsAccount(null);
   bindKeyboardBindingsAccount("student-settings");
   renderPage();

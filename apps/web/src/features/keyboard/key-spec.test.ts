@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatKeySpec, keyEventMatches, specOf } from "./key-spec";
+import { formatKeySpec, specOf } from "./key-spec";
 
 /** 最小按键事件构造（specOf 只读五个布尔与 key） */
 const key = (
@@ -62,16 +62,6 @@ describe("specOf", () => {
     ]) {
       expect(specOf(key(k))).toBeNull();
     }
-  });
-});
-
-describe("keyEventMatches", () => {
-  it("精确比较、字母大小写敏感（录 a 不匹配 A）", () => {
-    expect(keyEventMatches(key("a"), "a")).toBe(true);
-    expect(keyEventMatches(key("A", { shiftKey: true }), "a")).toBe(false);
-    expect(keyEventMatches(key("A", { shiftKey: true }), "A")).toBe(true);
-    expect(keyEventMatches(key(" "), "Space")).toBe(true);
-    expect(keyEventMatches(key("ArrowLeft"), "ArrowLeft")).toBe(true);
   });
 });
 
