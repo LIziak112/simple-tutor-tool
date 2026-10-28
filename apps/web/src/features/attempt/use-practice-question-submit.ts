@@ -103,6 +103,11 @@ export function usePracticeQuestionSubmit(input: {
   questionIds: readonly string[];
   /** 题卡元素注册表（列表模式视口观察用） */
   cardElements: RefObject<Map<string, HTMLLIElement>>;
+  /**
+   * 题卡挂载版本号（视口懒挂载，2026-10-28）：观察列表只在版本变化时重建，
+   * 新挂载的已提交题才能被观察、按需拉反馈。
+   */
+  cardMountVersion?: number | undefined;
   /** 单题模式当前题（列表模式传 null：只用视口观察取反馈） */
   singleQuestionId: string | null;
   singleMode: boolean;
@@ -430,6 +435,7 @@ export function usePracticeQuestionSubmit(input: {
   ]);
 
   // 列表模式：已提交可读卡的反馈按视口惰性获取（不预取全部）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cardMountVersion 是观察列表的重建键（懒挂载后新题卡才进注册表），effect 体只读注册表
   useEffect(() => {
     if (!isV1 || singleMode) return;
     if (typeof IntersectionObserver === "undefined") return;
@@ -464,6 +470,7 @@ export function usePracticeQuestionSubmit(input: {
     ensureFeedback,
     feedbacks,
     input.cardElements,
+    input.cardMountVersion,
     isV1,
     progress,
     questionIds,

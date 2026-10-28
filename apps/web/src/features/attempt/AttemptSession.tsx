@@ -454,7 +454,44 @@ function AnswerView({
     [],
   );
   const cardElements = useRef(new Map<string, HTMLLIElement>());
-  useReadingPosition(attemptId, cardElements, setCurrentQuestionId);
+  // ---------- 题卡视口懒挂载（性能：大量习题加载卡顿，2026-10-28） ----------
+  // 列表模式只挂载视口上下各一屏的题卡；跳题与阅读位置恢复的目标题需要
+  // 越过视口判断立即挂载，走 forcedMountIds。
+  const [forcedMountIds, setForcedMountIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const forceMountQuestion = useCallback((questionId: string) => {
+    setForcedMountIds((previous) => {
+      if (previous.has(questionId)) return previous;
+      const next = new Set(previous);
+      next.add(questionId);
+      return next;
+    });
+  }, []);
+  // 新挂载的题卡编号版本：判分反馈观察器按它重建观察列表（rAF 合帧——
+  // 滚动时一批题同时挂载只触发一次重建）。
+  const [cardMountVersion, setCardMountVersion] = useState(0);
+  const cardMountFrame = useRef(0);
+  const handleCardMounted = useCallback(() => {
+    if (cardMountFrame.current !== 0) return;
+    cardMountFrame.current = requestAnimationFrame(() => {
+      cardMountFrame.current = 0;
+      setCardMountVersion((version) => version + 1);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (cardMountFrame.current !== 0)
+        cancelAnimationFrame(cardMountFrame.current);
+    },
+    [],
+  );
+  useReadingPosition(
+    attemptId,
+    cardElements,
+    setCurrentQuestionId,
+    forceMountQuestion,
+  );
 
   // ---------- 做题方式（M3-D1）：v1 新协议卷的列表/单题呈现 ----------
   // 协议形态只信服务端投影：legacy/lesson（无 practiceWorkflow）恒列表，
@@ -543,6 +580,7 @@ function AnswerView({
     attemptId,
     questionIds,
     cardElements,
+    cardMountVersion,
     singleQuestionId: singleMode ? resolvedSingleQuestionId : null,
     singleMode,
     syncNow: draftSync.syncNow,
@@ -691,30 +729,47 @@ function AnswerView({
     // 供锚点去重
     jumpSeqRef.current += 1;
     setJumpSignal({ questionId: id, seq: jumpSeqRef.current });
+    // 懒挂载：目标题通常不在视口附近、题卡还没挂载。li 常驻，先滚到占位，
+    // 强制挂载后等 `<article>` 出现再对齐滚动与落焦（上限 3 秒，超时退回
+    // 原有兜底焦点；跳跃过程中占位会先到视口，观察器本身也会触发挂载）。
+    forceMountQuestion(id);
     requestAnimationFrame(() => {
-      const card = cardElements.current.get(id);
-      const article = card?.querySelector<HTMLElement>("article");
-      article?.scrollIntoView?.({ block: "start", behavior: "auto" });
-      const fields = card?.querySelectorAll<HTMLInputElement>(
-        'input:not([type="radio"]):not([type="checkbox"])',
-      );
-      const target = focusAnswer
-        ? (Array.from(fields ?? []).find(
-            (field) => field.value.trim() === "",
-          ) ?? fields?.[0])
-        : null;
-      const answerControl = card?.querySelector<HTMLElement>(
-        'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
-      );
-      // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
-      // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
-      // focusElement：调用方指定的落焦点（单题模式=工作区容器），优先于题卡。
-      focusWhenReachable(
-        target ??
-          (focusAnswer ? answerControl : null) ??
-          focusElement ??
-          article,
-      );
+      const deadline = performance.now() + 3000;
+      const align = () => {
+        const card = cardElements.current.get(id);
+        const article = card?.querySelector<HTMLElement>("article");
+        if (article === null || article === undefined) {
+          card?.scrollIntoView?.({ block: "start", behavior: "auto" });
+          if (performance.now() < deadline) {
+            requestAnimationFrame(align);
+            return;
+          }
+          focusWhenReachable(focusElement ?? card ?? null);
+          return;
+        }
+        article.scrollIntoView?.({ block: "start", behavior: "auto" });
+        const fields = card?.querySelectorAll<HTMLInputElement>(
+          'input:not([type="radio"]):not([type="checkbox"])',
+        );
+        const target = focusAnswer
+          ? (Array.from(fields ?? []).find(
+              (field) => field.value.trim() === "",
+            ) ?? fields?.[0])
+          : null;
+        const answerControl = card?.querySelector<HTMLElement>(
+          'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
+        );
+        // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
+        // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
+        // focusElement：调用方指定的落焦点（单题模式=工作区容器），优先于题卡。
+        focusWhenReachable(
+          target ??
+            (focusAnswer ? answerControl : null) ??
+            focusElement ??
+            article,
+        );
+      };
+      align();
     });
   };
   // 单题跳题（M3-D1）：与列表跳题同一收笔/滚动/聚焦链，另更新单题态与
@@ -1525,6 +1580,9 @@ function AnswerView({
                         cardElements={cardElements}
                         events={attemptEvents}
                         index={index}
+                        lazyMount={!singleMode}
+                        forceMount={forcedMountIds.has(question.id)}
+                        onCardMounted={handleCardMounted}
                         question={question}
                         assignmentTitle={data.title}
                         answer={answers?.[question.id]}

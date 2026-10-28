@@ -39,7 +39,7 @@ describe("学生阅读位置恢复", () => {
       JSON.stringify({ questionId: "q2", offset: -20 }),
     );
     const onCurrent = vi.fn();
-    renderHook(() => useReadingPosition("attempt", cards, onCurrent));
+    renderHook(() => useReadingPosition("attempt", cards, onCurrent, vi.fn()));
     expect(scroll).not.toHaveBeenCalled();
     advance();
     expect(scroll).toHaveBeenCalledExactlyOnceWith({
@@ -57,7 +57,7 @@ describe("学生阅读位置恢复", () => {
         key(),
         JSON.stringify({ questionId: "q2", offset: 0 }),
       );
-      renderHook(() => useReadingPosition("attempt", cards, vi.fn()));
+      renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn()));
       act(() => window.dispatchEvent(new Event(event)));
       advance();
       expect(scroll).not.toHaveBeenCalled();
@@ -66,7 +66,7 @@ describe("学生阅读位置恢复", () => {
   it("只保存可见题和相对偏移，学生、部署、练习及未绑定身份不串记录", () => {
     const onCurrent = vi.fn();
     const { rerender } = renderHook(
-      ({ id }) => useReadingPosition(id, cards, onCurrent),
+      ({ id }) => useReadingPosition(id, cards, onCurrent, vi.fn()),
       {
         initialProps: { id: "attempt" },
       },
@@ -102,7 +102,7 @@ describe("学生阅读位置恢复", () => {
       JSON.stringify({ questionId: "q2", offset: 0 }),
     );
     const { unmount } = renderHook(() =>
-      useReadingPosition("attempt", cards, vi.fn()),
+      useReadingPosition("attempt", cards, vi.fn(), vi.fn()),
     );
     act(() => vi.advanceTimersByTime(6000));
     element?.querySelector("span")?.remove();
@@ -118,7 +118,7 @@ describe("学生阅读位置恢复", () => {
       JSON.stringify({ questionId: "removed", offset: 0 }),
     );
     const { unmount } = renderHook(() =>
-      useReadingPosition("attempt", cards, vi.fn()),
+      useReadingPosition("attempt", cards, vi.fn(), vi.fn()),
     );
     advance();
     expect(scroll).not.toHaveBeenCalled();
@@ -130,7 +130,7 @@ describe("学生阅读位置恢复", () => {
       throw new Error("不可用");
     });
     expect(() =>
-      renderHook(() => useReadingPosition("attempt", cards, vi.fn())),
+      renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn())),
     ).not.toThrow();
     act(() => window.dispatchEvent(new Event("scroll")));
     expect(advance).not.toThrow();
@@ -146,12 +146,12 @@ describe("学生阅读位置恢复", () => {
       key(),
       JSON.stringify({ questionId: "q2", offset: 0 }),
     );
-    renderHook(() => useReadingPosition("attempt", cards, vi.fn()));
+    renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn()));
     advance();
     expect(scroll).toHaveBeenCalledTimes(1);
   });
   it("关闭页面立即保存最新滚动位置，不等待防抖计时", () => {
-    renderHook(() => useReadingPosition("attempt", cards, vi.fn()));
+    renderHook(() => useReadingPosition("attempt", cards, vi.fn(), vi.fn()));
     const element = cards.current.get("q2");
     if (!element) throw new Error("缺少题卡夹具");
     vi.mocked(element.getBoundingClientRect).mockReturnValue({
@@ -176,7 +176,7 @@ describe("学生阅读位置恢复", () => {
     session = null;
     const onCurrent = vi.fn();
     const { rerender } = renderHook(() =>
-      useReadingPosition("attempt", cards, onCurrent),
+      useReadingPosition("attempt", cards, onCurrent, vi.fn()),
     );
     act(() => window.dispatchEvent(new Event("wheel")));
     session = { origin: "http://test", studentId: "a" };

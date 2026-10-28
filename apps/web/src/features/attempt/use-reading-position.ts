@@ -34,6 +34,11 @@ export function useReadingPosition(
   attemptId: string,
   cards: RefObject<Map<string, HTMLLIElement>>,
   onCurrent: (id: string) => void,
+  /**
+   * 请求立即挂载某题（题卡视口懒挂载，2026-10-28）：恢复目标题常常不在
+   * 视口附近、尚未挂载，此时不能放弃恢复，而要强制挂载后再对齐。
+   */
+  requestMount: (questionId: string) => void,
 ) {
   const session = useAnnotationSessionRef();
   const interaction = useRef({ attemptId, started: false });
@@ -119,6 +124,13 @@ export function useReadingPosition(
         }
       }
       if (target === undefined) {
+        // 目标题还没挂载：请求强制挂载并继续等（懒挂载前这里直接放弃恢复，
+        // 学生会回到顶部而不是上次读到的位置）。
+        requestMount(pending.questionId);
+        if (performance.now() < deadline) {
+          restoreTimer = setTimeout(tryRestore, 100);
+          return;
+        }
         pending = null;
         capture(false);
         return;
@@ -177,5 +189,5 @@ export function useReadingPosition(
       for (const event of INTERRUPT_EVENTS)
         window.removeEventListener(event, interrupt);
     };
-  }, [key, cards, onCurrent, attemptId]);
+  }, [key, cards, onCurrent, attemptId, requestMount]);
 }
