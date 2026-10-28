@@ -1,6 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { splitLessonBlocks } from "@tutor/md-dsl";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { lectures, units } from "../db/schema.ts";
+import { lectures, questions, units } from "../db/schema.ts";
+import type { Tx } from "./question-sync.ts";
 
 /**
  * 讲练嵌入单元的唯一判定（讲练一体 2026-10 的「讲练页一件事」）：
@@ -134,4 +136,86 @@ export function canonicalEmbeddedUnitOf<
     }
   }
   return incumbent;
+}
+
+/** pickEmbeddedUnits 的结果：canonical 即胜者，stale 为落选 live 单元 */
+export interface EmbeddedUnitPick {
+  readonly canonical: CanonicalEmbeddedUnitCandidate;
+  /** 与 md 题槽一致性落败的 live 嵌入单元（健康态为空；backfill 软删这些） */
+  readonly stale: readonly CanonicalEmbeddedUnitCandidate[];
+}
+
+/**
+ * 装配某讲练页的全部 live 嵌入单元候选并择主（开卷侧 lesson-service 的
+ * embeddedUnitOf 与 backfill 的 lesson_embedded_unit_dedupe **同一出处**——
+ * 题槽收集、题集查询分组与比较不可分家，防止两侧择主口径漂移）。单 live
+ * 单元健康态早退：不解析 md、不查题集（学生端开卷热路径），liveQuestionIds
+ * 为空集（两调用方在单候选分支都不消费它）。
+ */
+export function pickEmbeddedUnits(
+  db: Db | Tx,
+  teacherId: string,
+  lecture: { id: string; markdown: string },
+): EmbeddedUnitPick | undefined {
+  const unitRows = db
+    .select({
+      id: units.id,
+      topic: units.topic,
+      order: units.order,
+      updatedAt: units.updatedAt,
+    })
+    .from(units)
+    .where(
+      and(
+        eq(units.teacherId, teacherId),
+        eq(units.lectureId, lecture.id),
+        isNull(units.deletedAt),
+      ),
+    )
+    .all();
+  const [sole, second] = unitRows;
+  if (sole === undefined) return undefined;
+  if (second === undefined)
+    return {
+      canonical: { ...sole, liveQuestionIds: new Set<string>() },
+      stale: [],
+    };
+  const slotQuestionIds = new Set(
+    splitLessonBlocks(lecture.markdown).flatMap((block) =>
+      block.type === "question" ? [block.questionId] : [],
+    ),
+  );
+  // live 题集：一次查询取全部候选单元的未软删题，按 unitId 分组
+  const liveQuestionIdsByUnit = new Map<string, Set<string>>();
+  for (const row of db
+    .select({ unitId: questions.unitId, id: questions.id })
+    .from(questions)
+    .where(
+      and(
+        eq(questions.teacherId, teacherId),
+        inArray(
+          questions.unitId,
+          unitRows.map((row) => row.id),
+        ),
+        isNull(questions.deletedAt),
+      ),
+    )
+    .all()) {
+    const ids = liveQuestionIdsByUnit.get(row.unitId);
+    if (ids === undefined) {
+      liveQuestionIdsByUnit.set(row.unitId, new Set([row.id]));
+    } else {
+      ids.add(row.id);
+    }
+  }
+  const candidates = unitRows.map((row) => ({
+    ...row,
+    liveQuestionIds: liveQuestionIdsByUnit.get(row.id) ?? new Set<string>(),
+  }));
+  const canonical = canonicalEmbeddedUnitOf(candidates, slotQuestionIds);
+  if (canonical === undefined) return undefined; // 不可达（候选非空恒有结果），类型收窄
+  return {
+    canonical,
+    stale: candidates.filter((candidate) => candidate.id !== canonical.id),
+  };
 }

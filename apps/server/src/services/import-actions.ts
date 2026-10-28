@@ -130,11 +130,14 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
   const targetFolderName = folderNameOf(snapshot, folderId);
 
   // ---- 讲义：按 (目标文件夹, 标题) 匹配（D18） ----
+  /** 命中的快照讲义（title → 行）：接管预检复用同一匹配，不再二次扫描 */
+  const matchedLectureByTitle = new Map<string, SnapshotLecture>();
   for (const lecture of parsed.lectures) {
     const existing = snapshot.lectures.find(
       (row) => row.folderId === folderId && row.title === lecture.title,
     );
     if (existing !== undefined) {
+      matchedLectureByTitle.set(lecture.title, existing);
       actions.push({
         kind: "updateLecture",
         title: lecture.title,
@@ -170,18 +173,13 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
   const embeddedTakeoverUnitIds = new Set<string>();
   if (parsed.frontmatter?.kind === "lesson") {
     for (const lecture of parsed.lectures) {
-      const existing = snapshot.lectures.find(
-        (row) =>
-          row.folderId === folderId &&
-          row.title === lecture.title &&
-          row.kind === "lesson",
+      const existing = matchedLectureByTitle.get(lecture.title);
+      if (existing === undefined || existing.kind !== "lesson") continue;
+      // 本文件挂载到该讲练页的单元（一次过滤取对象，id 集与文件题集都从对象直接取）
+      const attachedUnits = parsed.units.filter(
+        (unit) => unit.lectureTitle === lecture.title,
       );
-      if (existing === undefined) continue;
-      const attachedUnitIds = new Set(
-        parsed.units
-          .filter((unit) => unit.lectureTitle === lecture.title)
-          .map((unit) => unit.id),
-      );
+      const attachedUnitIds = new Set(attachedUnits.map((unit) => unit.id));
       for (const [unitId, unit] of snapshot.units) {
         if (unit.deletedAt !== null || unit.lectureId !== existing.id) continue;
         if (attachedUnitIds.has(unitId)) continue;
@@ -190,14 +188,11 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
           message: `讲练页「${lecture.title}」的旧随堂练习单元「${unit.title}」将被替换（移入回收站，作答历史保留）`,
         });
       }
-      for (const attachedUnitId of attachedUnitIds) {
-        const existingUnit = snapshot.units.get(attachedUnitId);
+      for (const attachedUnit of attachedUnits) {
+        const existingUnit = snapshot.units.get(attachedUnit.id);
         if (existingUnit === undefined) continue; // 新单元无既有题可移出
         const fileQuestionIds = new Set(
-          (
-            parsed.units.find((unit) => unit.id === attachedUnitId)
-              ?.questions ?? []
-          ).map((question) => question.id),
+          attachedUnit.questions.map((question) => question.id),
         );
         let removed = 0;
         for (const id of existingUnit.liveQuestionIds) {
@@ -208,7 +203,7 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
             code: "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
             message: `随堂练习单元「${existingUnit.title}」中 ${removed} 道不在本次讲练页的题目将移出（移入回收站）`,
           });
-          embeddedTakeoverUnitIds.add(attachedUnitId);
+          embeddedTakeoverUnitIds.add(attachedUnit.id);
         }
       }
     }

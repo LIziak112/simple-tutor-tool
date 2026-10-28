@@ -40,7 +40,7 @@ import {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
 import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
 import {
@@ -660,9 +660,11 @@ export function commitImport(
     const lectureKind: "lecture" | "lesson" =
       parsed.frontmatter?.kind === "lesson" ? "lesson" : "lecture";
     const lectureReports: ImportLectureReport[] = [];
-    const lectureIdByTitle = new Map<string, string>();
-    /** 命中讲义的更新前 kind（嵌入单元接管只对「更新前已是 lesson」的讲义生效） */
-    const lectureKindById = new Map<string, "lecture" | "lesson">();
+    /** 文件夹内讲义 title → {id, 更新前 kind}（kind 供嵌入单元接管判定） */
+    const folderLectureByTitle = new Map<
+      string,
+      { id: string; kind: "lecture" | "lesson" }
+    >();
     /** 本次重导接管的讲练页（更新前 kind=lesson 且本次仍以 lesson 覆盖） */
     const lessonSupersedeLectureIds: string[] = [];
     /** 讲练页 → 本次导入挂载到该页的单元 id 集（接管判定与题级清退都用） */
@@ -684,19 +686,15 @@ export function commitImport(
       )
       .all();
     for (const row of folderLectures) {
-      lectureIdByTitle.set(row.title, row.id);
-      lectureKindById.set(row.id, row.kind);
+      folderLectureByTitle.set(row.title, { id: row.id, kind: row.kind });
     }
     let nextLectureOrder = folderLectures.length;
 
     for (const lecture of parsed.lectures) {
-      const existingId = lectureIdByTitle.get(lecture.title);
-      if (existingId !== undefined) {
-        if (
-          lectureKindById.get(existingId) === "lesson" &&
-          lectureKind === "lesson"
-        ) {
-          lessonSupersedeLectureIds.push(existingId);
+      const existing = folderLectureByTitle.get(lecture.title);
+      if (existing !== undefined) {
+        if (existing.kind === "lesson" && lectureKind === "lesson") {
+          lessonSupersedeLectureIds.push(existing.id);
         }
         // 命中即替换 markdown；软删行同时恢复（与题目「同 id 再导入即恢复」同口径）
         tx.update(lectures)
@@ -707,10 +705,10 @@ export function commitImport(
             deletedAt: null,
             teachingPackJson,
           })
-          .where(eq(lectures.id, existingId))
+          .where(eq(lectures.id, existing.id))
           .run();
         lectureReports.push({
-          id: existingId,
+          id: existing.id,
           title: lecture.title,
           inserted: false,
           updated: true,
@@ -732,7 +730,7 @@ export function commitImport(
           })
           .run();
         nextLectureOrder += 1;
-        lectureIdByTitle.set(lecture.title, id);
+        folderLectureByTitle.set(lecture.title, { id, kind: lectureKind });
         lectureReports.push({
           id,
           title: lecture.title,
@@ -770,7 +768,7 @@ export function commitImport(
       // lectureTitle 按文件夹内标题匹配讲义；匹配不到不关联（lectureId=null，不报错）
       const lectureId =
         unit.lectureTitle !== undefined
-          ? (lectureIdByTitle.get(unit.lectureTitle) ?? null)
+          ? (folderLectureByTitle.get(unit.lectureTitle)?.id ?? null)
           : null;
       if (lectureId !== null) {
         const attached = attachedUnitIdsByLecture.get(lectureId);
@@ -902,50 +900,37 @@ export function commitImport(
       for (const supersedeLectureId of lessonSupersedeLectureIds) {
         const attached =
           attachedUnitIdsByLecture.get(supersedeLectureId) ?? new Set<string>();
-        const staleUnits = tx
-          .select({ id: units.id })
-          .from(units)
+        // 未挂载的旧 live 嵌入单元软删（notInArray 单语句批量；空集时不加条件）
+        tx.update(units)
+          .set({ deletedAt: now })
           .where(
             and(
               eq(units.teacherId, teacherId),
               eq(units.lectureId, supersedeLectureId),
               isNull(units.deletedAt),
+              attached.size > 0
+                ? notInArray(units.id, [...attached])
+                : undefined,
             ),
           )
-          .all()
-          .filter((row) => !attached.has(row.id));
-        for (const row of staleUnits) {
-          tx.update(units)
-            .set({ deletedAt: now })
-            .where(and(eq(units.teacherId, teacherId), eq(units.id, row.id)))
-            .run();
-        }
+          .run();
         for (const unitId of attached) {
           const fileQuestionIds = fileQuestionIdsByUnit.get(unitId);
           if (fileQuestionIds === undefined) continue;
-          const staleQuestions = tx
-            .select({ id: questions.id })
-            .from(questions)
+          // 挂载单元内缺席题软删（同款批量单语句）
+          tx.update(questions)
+            .set({ deletedAt: now })
             .where(
               and(
                 eq(questions.teacherId, teacherId),
                 eq(questions.unitId, unitId),
                 isNull(questions.deletedAt),
+                fileQuestionIds.size > 0
+                  ? notInArray(questions.id, [...fileQuestionIds])
+                  : undefined,
               ),
             )
-            .all()
-            .filter((row) => !fileQuestionIds.has(row.id));
-          for (const row of staleQuestions) {
-            tx.update(questions)
-              .set({ deletedAt: now })
-              .where(
-                and(
-                  eq(questions.teacherId, teacherId),
-                  eq(questions.id, row.id),
-                ),
-              )
-              .run();
-          }
+            .run();
         }
       }
     }

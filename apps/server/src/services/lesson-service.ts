@@ -11,9 +11,9 @@ import type {
 // 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, attempts, questions, units } from "../db/schema";
+import { type Attempt, attempts, questions } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   contextEntriesOf,
@@ -36,7 +36,7 @@ import {
 } from "./attempt-service";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
-import { canonicalEmbeddedUnitOf } from "./lesson-embedded";
+import { pickEmbeddedUnits } from "./lesson-embedded";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
@@ -122,77 +122,20 @@ function lessonAttemptsOf(
 }
 
 /**
- * 讲练页的嵌入单元（units.lectureId = 本讲义、域内未软删）。多个 live 嵌入
- * 单元并存（教师重导改名残留的陈旧单元）时不再按 order 取最前，改经
- * canonicalEmbeddedUnitOf 按「与讲义 md 题槽一致性」择主——题槽 id 由
- * splitLessonBlocks 切段收集（与开卷 blocks 同一解析器）。零题讲练页
- * （LESSON_WITHOUT_QUESTION）不产出单元 → undefined。
+ * 讲练页的嵌入单元（units.lectureId = 本讲义、域内未软删）。装配与择主走
+ * lesson-embedded 的 pickEmbeddedUnits（与 backfill 存量去重同一出处）：多 live
+ * 单元时按「与讲义 md 题槽一致性」择主，单 live 单元健康态早退（不解析 md）。
+ * 零题讲练页（LESSON_WITHOUT_QUESTION）不产出单元 → undefined。
  */
 function embeddedUnitOf(
   db: Db,
   teacherId: string,
   lecture: { id: string; markdown: string },
 ): { id: string; topic: string | null } | undefined {
-  const unitRows = db
-    .select({
-      id: units.id,
-      topic: units.topic,
-      order: units.order,
-      updatedAt: units.updatedAt,
-    })
-    .from(units)
-    .where(
-      and(
-        eq(units.teacherId, teacherId),
-        eq(units.lectureId, lecture.id),
-        isNull(units.deletedAt),
-      ),
-    )
-    .all();
-  // 健康常态（唯一 live 嵌入单元）早退：canonical 单候选恒返回，题槽解析
-  // 与题集查询都不参与决策（开卷/落地是学生端热路径，免掉 md 解析）
-  const [sole, second] = unitRows;
-  if (sole === undefined) return undefined;
-  if (second === undefined) return { id: sole.id, topic: sole.topic };
-  const slotQuestionIds = new Set(
-    splitLessonBlocks(lecture.markdown).flatMap((block) =>
-      block.type === "question" ? [block.questionId] : [],
-    ),
-  );
-  // live 题集：一次查询取全部候选单元的未软删题，按 unitId 分组
-  const liveQuestionRows = db
-    .select({ unitId: questions.unitId, id: questions.id })
-    .from(questions)
-    .where(
-      and(
-        eq(questions.teacherId, teacherId),
-        inArray(
-          questions.unitId,
-          unitRows.map((row) => row.id),
-        ),
-        isNull(questions.deletedAt),
-      ),
-    )
-    .all();
-  const liveQuestionIdsByUnit = new Map<string, Set<string>>();
-  for (const row of liveQuestionRows) {
-    const ids = liveQuestionIdsByUnit.get(row.unitId);
-    if (ids === undefined) {
-      liveQuestionIdsByUnit.set(row.unitId, new Set([row.id]));
-    } else {
-      ids.add(row.id);
-    }
-  }
-  const canonical = canonicalEmbeddedUnitOf(
-    unitRows.map((row) => ({
-      ...row,
-      liveQuestionIds: liveQuestionIdsByUnit.get(row.id) ?? new Set<string>(),
-    })),
-    slotQuestionIds,
-  );
-  return canonical === undefined
+  const pick = pickEmbeddedUnits(db, teacherId, lecture);
+  return pick === undefined
     ? undefined
-    : { id: canonical.id, topic: canonical.topic };
+    : { id: pick.canonical.id, topic: pick.canonical.topic };
 }
 
 /**
