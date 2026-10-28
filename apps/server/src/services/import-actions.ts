@@ -3,7 +3,6 @@ import type {
   ImportPreviewWarning,
   ParsedDocument,
 } from "@tutor/contract";
-import { hasExplicitQuestionId } from "@tutor/md-dsl";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -430,12 +429,15 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
     let updated = 0;
     // updated 中「文件里未写显式 id（缺省派生）」的题数（P2b 错位预警面）：
     // 缺省 id 按 单元id-序号 由文档内位置推导，文件里插题/删题会使后续题错位
-    // 更新到别的题、学情张冠李戴——围栏带 id=（显式或 lesson 导出注入）不算
+    // 更新到别的题、学情张冠李戴——围栏带 id=（显式或 lesson 导出注入）不算。
+    // 判定用解析期注入**前**的 idExplicit（审查修复 4）：lesson 解析会把缺省
+    // id 注进 sourceMd，看注入后的围栏会把「手写无 id 讲练页重导」误判为
+    // 显式而漏报（PR#40 事故类别——正是该预警要抓的形态）
     let updatedDerived = 0;
     for (const question of unit.questions) {
       if (existing.allQuestionIds.has(question.id)) {
         updated += 1;
-        if (!hasExplicitQuestionId(question.sourceMd)) updatedDerived += 1;
+        if (question.idExplicit !== true) updatedDerived += 1;
       } else {
         inserted += 1;
       }

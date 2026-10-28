@@ -617,6 +617,13 @@ describe("parseDocument：讲练页样例（kind: lesson）", () => {
     expect(reParsed.units[0]?.questions[0]?.id).toBe("随堂讲练-1");
   });
 
+  it("idExplicit 记录解析期注入**前**的显式性（缺省题为 false，导入预览错位预警判定面）", () => {
+    // 样例两题均为缺省 id：keep 模式注入后 sourceMd 已带 id=，但 idExplicit
+    // 反映注入前的围栏形态（无显式 id）——预警据此把「解析期注入的重导命中
+    // 更新」计为缺省题号风险（PR#40 事故类别）
+    expect(questions.map((q) => q.idExplicit)).toEqual([false, false]);
+  });
+
   it("stemMd 不受注入影响（开围栏行本就不在题干行区间内）", () => {
     expect(questions[0]?.stemMd).toBe("$0$ 是最小的正整数。[[错误]]");
   });
@@ -650,6 +657,10 @@ unit: 讲练单元
     expect(markdown.match(/id=/g)).toHaveLength(1);
     expect(result.units[0]?.questions.map((q) => q.id)).toEqual(["p1", "p2"]);
     expect(result.units[0]?.questions[0]?.sourceMd).toContain('id="p1"');
+    // 显式 id 与 {#id} 简写的 idExplicit 恒 true（导出件重导不计缺省题号风险）
+    expect(
+      result.units[0]?.questions.map((q) => q.idExplicit),
+    ).toEqual([true, true]);
   });
 
   it("零题：记 LESSON_WITHOUT_QUESTION（warning 不阻断），讲义照常产出、无单元", () => {

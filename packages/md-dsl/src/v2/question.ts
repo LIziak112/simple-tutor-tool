@@ -387,6 +387,11 @@ function extractQuestion(
     stemMd,
     hints,
     sourceMd: sliceLines(lines, startLine, endLine),
+    // 解析期 id 注入**前**的显式性（契约可选字段）：lesson keep 模式随后把
+    // 缺省 id 注进 sourceMd/讲义正文，注入后的围栏看不出原本有无显式 id——
+    // 导入预览的缺省题号错位预警以此为准（注入后判定会漏报，PR#40 事故类别）。
+    // 仅随解析产物内存携带，不落库、不进作答快照（见契约字段注释）。
+    idExplicit: explicitId !== undefined && explicitId.length > 0,
   };
   if (
     scan.taskItems.length > 0 &&

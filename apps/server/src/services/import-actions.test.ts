@@ -65,6 +65,8 @@ function parsedLecture(title: string): ParsedDocument {
 function makeJudgeQuestion(
   id: string,
   sourceMd = "::::question\n::::",
+  /** 解析期 id 注入**前**的显式性（审查修复 4：缺省不携带 = 解析期注入形态） */
+  idExplicit?: boolean,
 ): ParsedDocument["units"][number]["questions"][number] {
   return {
     id,
@@ -75,13 +77,15 @@ function makeJudgeQuestion(
     knowledge: [],
     hints: [],
     sourceMd,
+    ...(idExplicit !== undefined ? { idExplicit } : {}),
   };
 }
 
 /**
  * 练习文档（题块围栏形态可逐题定制，P2b 缺省题号错位预警用）：
  * explicitId 缺省 = 围栏无 id=（缺省派生 id，hasExplicitQuestionId=false）；
- * explicitId: true = 围栏带 id=（显式 id / lesson 导出注入形态）。
+ * explicitId: true = 围栏带 id=（显式 id / lesson 导出注入形态，解析产物
+ * 携带 idExplicit: true——审查修复 4 起判定以该字段为准）。
  */
 function parsedUnitFences(
   unitId: string,
@@ -99,6 +103,7 @@ function parsedUnitFences(
             q.explicitId === true
               ? `::::question{id="${q.id}" type=judge}\n::::`
               : "::::question\n::::",
+            q.explicitId === true ? true : undefined,
           ),
         ),
       },
@@ -894,7 +899,7 @@ describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QU
     });
   });
 
-  it("显式 id 更新 / 全新插入 / lesson 注入 id → updatedDerived 均 0 且不出该警告", () => {
+  it("显式 id 更新 / 全新插入 / lesson 文件显式 id（导出件）→ 均 0 不警告；手写无 id 讲练页（解析期注入）→ 计入并警告", () => {
     // ① 显式 id 更新：围栏带 id=，命中既有题 → updated 但不计 derived
     const explicit = buildImportPlan({
       parsed: parsedUnitFences("练习四", [
@@ -926,8 +931,8 @@ describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QU
       fresh.warnings.some((w) => w.code === "DERIVED_ID_UPDATED_QUESTIONS"),
     ).toBe(false);
 
-    // ③ lesson 注入 id：讲练文档题块围栏带 id=（lesson 导出恒注入形态），
-    //    命中更新既有题也不告警（Review Focus 5：预警不误报）
+    // ③ lesson 文件本身已带显式 id（导出件恒注入形态）：命中更新既有题也不
+    //    告警（Review Focus 5：预警不误报）
     const lesson = buildImportPlan({
       parsed: {
         frontmatter: { kind: "lesson" as const, dsl: 2, unit: "随堂讲练" },
@@ -940,6 +945,7 @@ describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QU
               makeJudgeQuestion(
                 "随堂讲练-1",
                 '::::question{id="随堂讲练-1" type=judge}\n::::',
+                true,
               ),
             ],
           },
@@ -958,5 +964,48 @@ describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QU
     expect(
       lesson.warnings.some((w) => w.code === "DERIVED_ID_UPDATED_QUESTIONS"),
     ).toBe(false);
+
+    // ④ 手写无 id 讲练页（解析期注入 id）：sourceMd 围栏已带注入的 id=，但
+    //    idExplicit 记录注入前形态（false）——重导命中更新必须计入
+    //    updatedDerived 并出警告（审查修复 4：PR#40 事故类别——文件内插题/
+    //    删题使缺省题号错位，此前看注入后的 sourceMd 会漏报）
+    const handwritten = buildImportPlan({
+      parsed: {
+        frontmatter: { kind: "lesson" as const, dsl: 2, unit: "随堂讲练" },
+        units: [
+          {
+            id: "随堂讲练",
+            title: "随堂讲练",
+            lectureTitle: "第1讲 有理数",
+            questions: [
+              // sourceMd 呈解析期注入后的形态（带 id=），idExplicit 缺省 false
+              makeJudgeQuestion(
+                "随堂讲练-1",
+                '::::question{type=judge id="随堂讲练-1"}\n::::',
+              ),
+            ],
+          },
+        ],
+        lectures: [
+          { title: "第1讲 有理数", markdown: "# 第1讲 有理数", headings: [] },
+        ],
+        issues: [],
+      },
+      folderId: null,
+      snapshot: unitSnapshotOf("随堂讲练", ["随堂讲练-1"]),
+    });
+    const handwrittenAction = handwritten.actions.find(
+      (a) => a.unitId === "随堂讲练",
+    );
+    expect(handwrittenAction?.questions).toMatchObject({
+      inserted: 0,
+      updated: 1,
+      updatedDerived: 1,
+    });
+    expect(handwritten.warnings).toContainEqual({
+      code: "DERIVED_ID_UPDATED_QUESTIONS",
+      message:
+        "单元「随堂讲练」有 1 道题使用缺省题号且将更新既有题：文件中插题/删题会使题号错位、学情张冠李戴；建议先导出一次（自动注入题号）再修改，或为题容器补显式 id",
+    });
   });
 });
