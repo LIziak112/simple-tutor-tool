@@ -31,7 +31,7 @@ app 本身就是练习站：不搭新站、不重写渲染器。四步：出 md 
 
 - 学生链接即登录：`GET /s/<token>`（apps/server/src/routes/public.ts，写 90 天会话 Cookie）。
 - token 从教师端来：`GET /api/teacher/students` 响应带 linkToken；`POST /api/teacher/students/:id/reset-link` 重置（重置即旧链失效）。
-- 二维码：`node scripts/lecture-qr.mjs --student <姓名|id|登录名片段>`（缺省 port 8787 / db ./data/tutor.db；--out 出 SVG/PNG；token 不落文件）。
+- 二维码：`node .claude/skills/lecture-practice/scripts/lecture-qr.mjs --student <姓名|id|登录名片段>`（仓库根运行；缺省 port 8787 / db ./data/tutor.db；--out 出 SVG/PNG；token 不落文件）。
 
 ### 4) 数据口径（硬规则）
 
