@@ -628,6 +628,22 @@ topic: 有理数
 新命题。[[正确]]
 ::::
 `;
+    // dry-run 预览亮出接管动作（教师与 MCP import_markdown dry-run 同一 previewImport）
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: renamedMd, filename: "随堂讲练0.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: { warnings: { code: string; message: string }[] };
+    };
+    expect(
+      previewBody.data.warnings.some(
+        (w) => w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+      ),
+    ).toBe(true);
     const reimport = await postJson(
       app,
       "/api/teacher/import/commit",

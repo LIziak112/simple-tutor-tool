@@ -35,10 +35,13 @@ import {
 
 /** 库内单元快照 */
 export interface SnapshotUnit {
-  /** 单元当前所在文件夹；null = 未归类 */
   readonly folderId: string | null;
   /** 软删时间；null = 未删除（回收站中的单元命中导入即恢复） */
   readonly deletedAt: string | null;
+  /** 挂载讲义（units.lectureId）；讲练页嵌入单元接管预检用 */
+  readonly lectureId: string | null;
+  /** 单元标题（warning 文案用） */
+  readonly title: string;
   /** 全部题目 id（含软删；inserted/updated 判定与 commit 的全量查询同口径） */
   readonly allQuestionIds: ReadonlySet<string>;
   /** 未删除题目 id（kept 计数：文件中未出现的未删题保留不删） */
@@ -53,6 +56,8 @@ export interface SnapshotLecture {
   readonly folderId: string | null;
   /** 软删时间；null = 未删除 */
   readonly deletedAt: string | null;
+  /** 讲义形态（讲练页嵌入单元接管只对 kind='lesson' 讲义生效） */
+  readonly kind: "lecture" | "lesson";
 }
 
 /** 库内资源快照（buildImportPlan 的输入；loadLibrarySnapshot 产出） */
@@ -135,6 +140,56 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
     }
   }
 
+  // ---- 讲练页嵌入单元接管预检（2026-10-28 修复；与 commitImport 接管段同口径）----
+  // lesson 文档重导命中同名讲练页（快照 kind=lesson）时：未挂载的旧嵌入单元将
+  // 软删、挂载单元内缺席题将移出——warning 亮给教师与 MCP AI（dry-run 可见）。
+  // 嵌入单元不发 KEPT_QUESTIONS（「保留」与实际「移出」矛盾，计数由接管 warning 承载）。
+  const embeddedTakeoverUnitIds = new Set<string>();
+  if (parsed.frontmatter?.kind === "lesson") {
+    for (const lecture of parsed.lectures) {
+      const existing = snapshot.lectures.find(
+        (row) =>
+          row.folderId === folderId &&
+          row.title === lecture.title &&
+          row.kind === "lesson",
+      );
+      if (existing === undefined) continue;
+      const attachedUnitIds = new Set(
+        parsed.units
+          .filter((unit) => unit.lectureTitle === lecture.title)
+          .map((unit) => unit.id),
+      );
+      for (const [unitId, unit] of snapshot.units) {
+        if (unit.deletedAt !== null || unit.lectureId !== existing.id) continue;
+        if (attachedUnitIds.has(unitId)) continue;
+        warnings.push({
+          code: "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+          message: `讲练页「${lecture.title}」的旧随堂练习单元「${unit.title}」将被替换（移入回收站，作答历史保留）`,
+        });
+      }
+      for (const attachedUnitId of attachedUnitIds) {
+        const existingUnit = snapshot.units.get(attachedUnitId);
+        if (existingUnit === undefined) continue; // 新单元无既有题可移出
+        const fileQuestionIds = new Set(
+          (parsed.units.find((unit) => unit.id === attachedUnitId)?.questions ??
+            []
+          ).map((question) => question.id),
+        );
+        let removed = 0;
+        for (const id of existingUnit.liveQuestionIds) {
+          if (!fileQuestionIds.has(id)) removed += 1;
+        }
+        if (removed > 0) {
+          warnings.push({
+            code: "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
+            message: `随堂练习单元「${existingUnit.title}」中 ${removed} 道不在本次讲练页的题目将移出（移入回收站）`,
+          });
+          embeddedTakeoverUnitIds.add(attachedUnitId);
+        }
+      }
+    }
+  }
+
   // ---- 单元：按 DSL unit id 全局匹配（D18） ----
   for (const unit of parsed.units) {
     // 配套讲义指针解析（内容模型与导入规范化方案 §4）：按最终讲义名匹配
@@ -176,12 +231,14 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
       if (existing.allQuestionIds.has(question.id)) updated += 1;
       else inserted += 1;
     }
-    // kept：库中未删除、文件中未出现的题目数（保留不删，D18）
+    // kept：库中未删除、文件中未出现的题目数（保留不删，D18）。讲练页挂载单元
+    // 走接管语义（缺席题移出回收站）——kept 记 0，移出计数由接管 warning 承载
     const fileQuestionIds = new Set(unit.questions.map((q) => q.id));
     let kept = 0;
     for (const id of existing.liveQuestionIds) {
       if (!fileQuestionIds.has(id)) kept += 1;
     }
+    const embeddedTakeover = embeddedTakeoverUnitIds.has(unit.id);
     actions.push({
       kind: "updateUnit",
       title: unit.title,
@@ -189,9 +246,9 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
       // 命中已有单元保留其原文件夹（D18），预览标注「更新（位于文件夹 X）」
       folderName: folderNameOf(snapshot, existing.folderId),
       restore: existing.deletedAt !== null,
-      questions: { inserted, updated, kept },
+      questions: { inserted, updated, kept: embeddedTakeover ? 0 : kept },
     });
-    if (kept > 0) {
+    if (kept > 0 && !embeddedTakeover) {
       warnings.push({
         code: "KEPT_QUESTIONS",
         message: `单元「${unit.title}」文件中未出现的 ${kept} 道已有题目将保留`,
@@ -262,14 +319,18 @@ export function loadLibrarySnapshot(
   for (const row of db
     .select({
       id: units.id,
+      title: units.title,
       folderId: units.folderId,
+      lectureId: units.lectureId,
       deletedAt: units.deletedAt,
     })
     .from(units)
     .where(eq(units.teacherId, teacherId))
     .all()) {
     unitSnapshot.set(row.id, {
+      title: row.title,
       folderId: row.folderId,
+      lectureId: row.lectureId,
       deletedAt: row.deletedAt,
       allQuestionIds: allByUnit.get(row.id) ?? new Set<string>(),
       liveQuestionIds: liveByUnit.get(row.id) ?? new Set<string>(),
@@ -282,6 +343,7 @@ export function loadLibrarySnapshot(
       title: lectures.title,
       folderId: lectures.folderId,
       deletedAt: lectures.deletedAt,
+      kind: lectures.kind,
     })
     .from(lectures)
     .where(eq(lectures.teacherId, teacherId))

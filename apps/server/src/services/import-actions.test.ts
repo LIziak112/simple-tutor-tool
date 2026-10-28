@@ -173,6 +173,8 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
             {
               folderId: FOLDER_A,
               deletedAt: null,
+              lectureId: null,
+              title: "练习四",
               allQuestionIds: new Set(["练习四-1", "练习四-2", "练习四-3"]),
               liveQuestionIds: new Set(["练习四-1", "练习四-2", "练习四-3"]),
             },
@@ -210,6 +212,8 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
             {
               folderId: null,
               deletedAt: "2026-09-01T00:00:00.000Z", // 回收站中
+              lectureId: null,
+              title: "练习四",
               allQuestionIds: new Set(["练习四-1", "练习四-2"]),
               liveQuestionIds: new Set(["练习四-1"]), // -2 已软删
             },
@@ -241,6 +245,8 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
             {
               folderId: null,
               deletedAt: null,
+              lectureId: null,
+              title: "练习四",
               allQuestionIds: new Set(["练习四-1"]),
               liveQuestionIds: new Set(["练习四-1"]),
             },
@@ -269,6 +275,7 @@ describe("buildImportPlan：讲义动作（D18）", () => {
             title: "第1讲",
             folderId: FOLDER_A,
             deletedAt: null,
+            kind: "lecture",
           },
         ],
       }),
@@ -296,12 +303,14 @@ describe("buildImportPlan：讲义动作（D18）", () => {
             title: "第1讲",
             folderId: FOLDER_B, // 其他文件夹
             deletedAt: null,
+            kind: "lecture",
           },
           {
             id: "l2",
             title: "第1讲（回收站）",
             folderId: null,
             deletedAt: "2026-09-01T00:00:00.000Z",
+            kind: "lecture",
           },
         ],
       }),
@@ -333,6 +342,7 @@ describe("buildImportPlan：讲义动作（D18）", () => {
             title: "第1讲（回收站）",
             folderId: null,
             deletedAt: "2026-09-01T00:00:00.000Z",
+            kind: "lecture",
           },
         ],
       }),
@@ -386,6 +396,7 @@ describe("buildImportPlan：配套讲义悬空提示（LECTURE_LINK_UNRESOLVED�
             title: "第4讲 有理数",
             folderId: FOLDER_A,
             deletedAt: null,
+            kind: "lecture",
           },
         ],
       }),
@@ -403,6 +414,7 @@ describe("buildImportPlan：配套讲义悬空提示（LECTURE_LINK_UNRESOLVED�
             title: "第4讲 有理数",
             folderId: FOLDER_B,
             deletedAt: null,
+            kind: "lecture",
           },
         ],
       }),
@@ -422,6 +434,7 @@ describe("buildImportPlan：配套讲义悬空提示（LECTURE_LINK_UNRESOLVED�
             title: "第4讲 有理数",
             folderId: FOLDER_A,
             deletedAt: "2026-09-01T00:00:00.000Z",
+            kind: "lecture",
           },
         ],
       }),
@@ -565,7 +578,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     ]);
     expect([...(unit?.liveQuestionIds ?? [])]).toEqual(["练习四-1"]);
     expect(snapshotLoaded.lectures).toEqual([
-      { id: "l1", title: "第1讲", folderId: null, deletedAt: null },
+      { id: "l1", title: "第1讲", folderId: null, deletedAt: null, kind: "lecture" },
     ]);
     expect(snapshotLoaded.folderNameById.get(FOLDER_A)).toBe("第一章");
     expect(snapshotLoaded.openAssignmentCountByUnitId.get("练习四")).toBe(2);
@@ -624,5 +637,135 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
         .where(eq(units.id, "练习四"))
         .all(),
     ).toHaveLength(1);
+  });
+});
+
+describe("buildImportPlan：讲练页嵌入单元接管预检（2026-10-28 修复）", () => {
+  /** 最小讲练文档：单讲 + 单元（lectureTitle 挂本讲），题 id 可定制 */
+  function parsedLesson(
+    unitId: string,
+    lectureTitle: string,
+    questionIds: string[],
+  ): ParsedDocument {
+    return {
+      frontmatter: { kind: "lesson" as const, dsl: 2, unit: unitId },
+      units: [
+        {
+          id: unitId,
+          title: unitId,
+          lectureTitle,
+          questions: questionIds.map(makeJudgeQuestion),
+        },
+      ],
+      lectures: [
+        { title: lectureTitle, markdown: `# ${lectureTitle}`, headings: [] },
+      ],
+      issues: [],
+    };
+  }
+
+  /** 快照里的讲练页 + 一个 live 嵌入单元（挂该页，题集可定制） */
+  function lessonSnapshot(
+    unitId: string,
+    questionIds: string[],
+    overrides: Partial<LibrarySnapshot> = {},
+  ): LibrarySnapshot {
+    return snapshot({
+      lectures: [
+        {
+          id: "l-lesson",
+          title: "第1讲 有理数",
+          folderId: null,
+          deletedAt: null,
+          kind: "lesson",
+        },
+      ],
+      units: new Map([
+        [
+          unitId,
+          {
+            title: unitId,
+            folderId: null,
+            deletedAt: null,
+            lectureId: "l-lesson",
+            allQuestionIds: new Set(questionIds),
+            liveQuestionIds: new Set(questionIds),
+          },
+        ],
+      ]),
+      ...overrides,
+    });
+  }
+
+  it("改名单元重导：LESSON_EMBEDDED_UNIT_SUPERSEDED（含旧单元名），新单元不误报 KEPT", () => {
+    const plan = buildImportPlan({
+      parsed: parsedLesson("随堂讲练0", "第1讲 有理数", ["随堂讲练0-1"]),
+      folderId: null,
+      snapshot: lessonSnapshot("随堂讲练", ["随堂讲练-1"]),
+    });
+    expect(
+      plan.warnings.filter((w) => w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED"),
+    ).toEqual([
+      {
+        code: "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+        message:
+          "讲练页「第1讲 有理数」的旧随堂练习单元「随堂讲练」将被替换（移入回收站，作答历史保留）",
+      },
+    ]);
+    // 旧单元不在文件里 → 无 updateUnit 动作，也不产生 KEPT_QUESTIONS
+    expect(plan.warnings.some((w) => w.code === "KEPT_QUESTIONS")).toBe(false);
+  });
+
+  it("同单元改题号：LESSON_EMBEDDED_QUESTIONS_SUPERSEDED 计数 + updateUnit kept=0、无 KEPT warning", () => {
+    const plan = buildImportPlan({
+      parsed: parsedLesson("随堂讲练", "第1讲 有理数", ["q-renamed"]),
+      folderId: null,
+      snapshot: lessonSnapshot("随堂讲练", ["随堂讲练-1", "随堂讲练-2"]),
+    });
+    expect(
+      plan.warnings.filter(
+        (w) => w.code === "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
+      ),
+    ).toEqual([
+      {
+        code: "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
+        message:
+          "随堂练习单元「随堂讲练」中 2 道不在本次讲练页的题目将移出（移入回收站）",
+      },
+    ]);
+    expect(plan.warnings.some((w) => w.code === "KEPT_QUESTIONS")).toBe(false);
+    expect(plan.actions).toContainEqual({
+      kind: "updateUnit",
+      title: "随堂讲练",
+      unitId: "随堂讲练",
+      folderName: null,
+      restore: false,
+      questions: { inserted: 1, updated: 0, kept: 0 },
+    });
+  });
+
+  it("快照讲义非 lesson（普通配套练习）：不触发接管，KEPT 语义照常", () => {
+    const plan = buildImportPlan({
+      parsed: parsedMixedWithSelfLecture("随堂讲练", "第1讲 有理数"),
+      folderId: null,
+      snapshot: lessonSnapshot("随堂讲练", ["随堂讲练-1", "随堂讲练-2"]),
+    });
+    expect(
+      plan.warnings.some(
+        (w) =>
+          w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED" ||
+          w.code === "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
+      ),
+    ).toBe(false);
+    expect(plan.warnings.some((w) => w.code === "KEPT_QUESTIONS")).toBe(true);
+  });
+
+  it("新讲练页（快照无同名）：无接管 warning", () => {
+    const plan = buildImportPlan({
+      parsed: parsedLesson("随堂讲练", "第2讲 新页", ["随堂讲练-1"]),
+      folderId: null,
+      snapshot: lessonSnapshot("别的单元", ["别的单元-1"]),
+    });
+    expect(plan.warnings).toEqual([]);
   });
 });
