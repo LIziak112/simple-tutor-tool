@@ -12,8 +12,10 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
+import { LazyMountWindow } from "./lazy-mount-window";
 import type { AttemptAnswersState } from "./use-attempt-answers";
 import type { useAttemptEvents } from "./use-attempt-events";
 
@@ -47,14 +49,21 @@ type RowProps = Omit<
    */
   className?: string | undefined;
   /**
-   * 视口懒挂载（性能：大量习题加载卡顿，2026-10-28）：true 时题卡按视口
-   * 挂载——先只渲染等高占位，进入视口上下各一屏才挂真卡。li 本身常驻
-   * （跳题滚动、阅读位置恢复、题卡元素注册表都不依赖卡片是否已挂载）。
-   * 单题专注模式传 false：非当前题只是 hidden，切题要求同步可见。
+   * 视口懒挂载 + 窗口化虚拟列表（性能：大量习题加载卡顿，2026-10-28）：
+   * true 时题卡挂载/卸载由窗口控制器（mountWindow）调度——先只渲染等高
+   * 占位，进入视口带经调度挂真卡；整行离开卸载窗口后卸回实测等高占位
+   * （绘制中不卸载等守卫在控制器）。li 本身常驻（跳题滚动、阅读位置恢复、
+   * 题卡元素注册表都不依赖卡片是否已挂载）。单题专注模式传 false。
    */
   lazyMount?: boolean | undefined;
   /** 外部强制挂载（跳题、阅读位置恢复的目标题）：true 时跳过视口判断 */
   forceMount?: boolean | undefined;
+  /**
+   * 窗口控制器（性能第三步，2026-10-28）：会话层为懒挂载列表提供共享实例
+   * （进视口调度 + 远端卸载 + 守卫都在控制器）。undefined（独立使用/单测）
+   * 时行内自建实例，行为退化为第一版懒挂载（只挂不卸）。
+   */
+  mountWindow?: LazyMountWindow | undefined;
   /** 题卡首次挂载回调（判分反馈观察器按新挂载的题重建观察列表） */
   onCardMounted?: ((questionId: string) => void) | undefined;
   events: Pick<
@@ -83,43 +92,60 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   lazyMount = false,
   forceMount = false,
   onCardMounted,
+  mountWindow,
   ...props
 }: RowProps) {
   const liRef = useRef<HTMLLIElement | null>(null);
-  const [mounted, setMounted] = useState(false);
+  // 会话层未提供共享控制器（独立使用/单测）时行内自建：第一版懒挂载语义。
+  // 回调经 ref 取最新值，实例只建一次不随 props 翻新。
+  const onCardMountedRef = useRef(onCardMounted);
+  useEffect(() => {
+    onCardMountedRef.current = onCardMounted;
+  }, [onCardMounted]);
+  const [fallbackWindow] = useState<LazyMountWindow | undefined>(() =>
+    lazyMount && mountWindow === undefined
+      ? new LazyMountWindow({
+          onSettle: () => onCardMountedRef.current?.(question.id),
+        })
+      : undefined,
+  );
+  useEffect(
+    () => () => {
+      fallbackWindow?.dispose();
+    },
+    [fallbackWindow],
+  );
+  const mountCtl = mountWindow ?? fallbackWindow;
   const register = useCallback(
     (element: HTMLLIElement | null) => {
       liRef.current = element;
       events.registerCard(question.id, element);
       if (element) cardElements.current.set(question.id, element);
       else cardElements.current.delete(question.id);
+      mountCtl?.attach(question.id, element);
     },
-    [events, cardElements, question.id],
+    [events, cardElements, question.id, mountCtl],
   );
-  // 视口观察：进入视口（上下各留一屏）即挂载，挂载后不再回退——
-  // 回退卸载会丢圈画/草稿的就地状态（切回列表的 DOM 复用收益已在
-  // singleMode 之外的懒挂载中由 Markdown 渲染缓存承担）。
+  const subscribeMounted = useCallback(
+    (listener: () => void) =>
+      mountCtl?.subscribe(question.id, listener) ?? (() => {}),
+    [mountCtl, question.id],
+  );
+  const readMounted = useCallback(
+    () => mountCtl?.isMounted(question.id) ?? false,
+    [mountCtl, question.id],
+  );
+  const controllerMounted = useSyncExternalStore(
+    subscribeMounted,
+    readMounted,
+    readMounted,
+  );
+  const showCard = lazyMount === false || controllerMounted || forceMount;
+  // 常驻行（单题模式/小卷）保留首次挂载上报；懒挂载行的挂载/卸载结算由
+  // 控制器统一触发（挂载版本号 rAF 合帧，驱动判分反馈观察列表与阅读位置重捕）。
   useEffect(() => {
-    if (!lazyMount || mounted) return;
-    const element = liRef.current;
-    if (element === null) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setMounted(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) setMounted(true);
-      },
-      { rootMargin: "50% 0px 100% 0px" },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [lazyMount, mounted]);
-  const showCard = lazyMount === false || mounted || forceMount;
-  useEffect(() => {
-    if (showCard) onCardMounted?.(question.id);
-  }, [showCard, onCardMounted, question.id]);
+    if (!lazyMount) onCardMounted?.(question.id);
+  }, [lazyMount, onCardMounted, question.id]);
   const handleAnswer = useCallback(
     (value: StudentAnswer, defer?: boolean) =>
       onAnswer(question.id, value, defer ?? false),
@@ -151,12 +177,16 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
           }}
         />
       ) : (
-        // 等高占位：估算高度按题干长度与选项数取整，挂载后由真实高度替换。
-        // 估算偏小会带来一次下方内容位移（浏览器滚动锚定兜底），偏大则空白。
+        // 等高占位：首挂前按题干/选项数估算；窗口化卸载后回填实测高度，
+        // 重挂零位移（估算偏小带来的一次位移仍由浏览器滚动锚定兜底）。
         <div
           data-slot="question-placeholder"
           className="rounded-[8px] border border-dashed border-border/70 bg-card/40"
-          style={{ minHeight: placeholderHeight(question) }}
+          style={{
+            minHeight:
+              mountCtl?.measuredHeight(question.id) ??
+              placeholderHeight(question),
+          }}
         >
           <span className="sr-only">
             第 {props.index + 1} 题，滚动到此处后显示

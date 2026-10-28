@@ -126,11 +126,6 @@ export function useReadingPosition(
     let stable = 0;
     const tryRestore = () => {
       if (pending === null) return;
-      if (performance.now() >= deadline) {
-        pending = null;
-        capture(false);
-        return;
-      }
       const preceding: HTMLLIElement[] = [];
       let target: HTMLLIElement | undefined;
       for (const [id, element] of cards.current) {
@@ -142,14 +137,14 @@ export function useReadingPosition(
       }
       if (target === undefined) {
         // 目标题还没挂载：请求强制挂载并继续等（懒挂载前这里直接放弃恢复，
-        // 学生会回到顶部而不是上次读到的位置）。
+        // 学生会回到顶部而不是上次读到的位置）；死线到点仍未挂载才放弃。
         requestMount(pending.questionId);
-        if (performance.now() < deadline) {
-          restoreTimer = setTimeout(tryRestore, 100);
+        if (performance.now() >= deadline) {
+          pending = null;
+          capture(false);
           return;
         }
-        pending = null;
-        capture(false);
+        restoreTimer = setTimeout(tryRestore, 100);
         return;
       }
       const ready =
@@ -172,10 +167,13 @@ export function useReadingPosition(
       ]);
       stable = ready && geometry === previous ? stable + 1 : 0;
       previous = geometry;
-      if (stable < 3) {
+      if (stable < 3 && performance.now() < deadline) {
         restoreTimer = setTimeout(tryRestore, 100);
         return;
       }
+      // 稳定即对齐；死线到点不再弃恢复：稳定门只是防 mid-reflow 对位，负载
+      // 下 5s 内稳定窗口凑不满时也立即对齐（后续内容膨胀由 alignedRef 重对齐
+      // 环兜底），不再把学生晾在顶部、坐丢阅读位置。
       const saved = pending;
       pending = null;
       window.scrollTo({
