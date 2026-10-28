@@ -3,7 +3,6 @@ import "katex/dist/katex.min.css";
 import { cn } from "cn";
 import { memo } from "react";
 import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
 import { compactInlineSource } from "./compact-inline";
 import {
   DirectiveContainerHost,
@@ -13,13 +12,7 @@ import {
 import { QuestionViewProvider } from "./directives/question-view";
 import type { DirectiveTelemetryInfo } from "./directives/session-context";
 import { DirectiveSessionProvider } from "./directives/session-context";
-import {
-  richMarkdownRehypePlugins,
-  richMarkdownRehypePluginsCompact,
-  richMarkdownRehypePluginsWithLrNodes,
-  richMarkdownRemarkPlugins,
-  richMarkdownRemarkPluginsWithLrNodes,
-} from "./pipeline";
+import { renderMarkdownCached } from "./render-cache";
 
 /**
  * <RichMarkdown source>（T1.8）：Markdown/DSL v2 统一渲染入口。
@@ -112,25 +105,15 @@ export const RichMarkdown = memo(function RichMarkdown({
           }
         }
       : null);
+  // 渲染结果按（管线变体 + 源文）缓存：题卡懒挂载后滚动反复挂载同一题面时
+  // 不再重跑 remark→rehype→KaTeX→sanitize（见 render-cache.ts）。
   const body = (
     <DirectiveSessionProvider telemetry={telemetry}>
-      <ReactMarkdown
-        remarkPlugins={
-          lrNodes === true
-            ? richMarkdownRemarkPluginsWithLrNodes
-            : richMarkdownRemarkPlugins
-        }
-        rehypePlugins={
-          lrNodes === true
-            ? richMarkdownRehypePluginsWithLrNodes
-            : compact === true
-              ? richMarkdownRehypePluginsCompact
-              : richMarkdownRehypePlugins
-        }
-        components={directiveHostComponents}
-      >
-        {compact === true ? compactInlineSource(source) : source}
-      </ReactMarkdown>
+      {renderMarkdownCached(
+        compact === true ? compactInlineSource(source) : source,
+        { lrNodes: lrNodes === true, compact: compact === true },
+        directiveHostComponents,
+      )}
     </DirectiveSessionProvider>
   );
   return (
