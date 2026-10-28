@@ -3,6 +3,7 @@ import { grade, isUnanswered } from "@tutor/grading";
 import { and, asc, eq, gt, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { finalScoreOf } from "../services/attempt-service.ts";
 import { ensureCatalogTitles } from "../services/course-catalog";
+import { pickEmbeddedUnits } from "../services/lesson-embedded";
 import type { Db } from "./client";
 import {
   appSettings,
@@ -93,6 +94,14 @@ const T40A_EVENTS_STUDENT_LECTURE_BACKFILL_KEY = "t40a_events_backfill";
  * 0044 responses.answered 存量回填的完成标记 key（#6980-3，2026-10-25 审查修复）。
  */
 const ANSWERED_COLUMN_BACKFILL_KEY = "t6980_3_answered_backfill";
+
+/**
+ * 讲练页嵌入单元存量去重（2026-10-28 演示站事故治理）的完成标记 key：教师重导
+ * 改名单元曾在同一讲练页留下新旧两个 live 嵌入单元。读侧择主（pickEmbeddedUnits）
+ * 与写入侧接管已合入，本回填把存量收敛为每页至多 1 个 live 嵌入单元。
+ */
+const LESSON_EMBEDDED_UNIT_DEDUPE_BACKFILL_KEY =
+  "lesson_embedded_unit_dedupe_20261028";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -189,6 +198,17 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
       tx.insert(dataMigrations)
         .values({
           key: ANSWERED_COLUMN_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
+  if (!appliedKeys.has(LESSON_EMBEDDED_UNIT_DEDUPE_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillLessonEmbeddedUnitDedupe(tx, now);
+      tx.insert(dataMigrations)
+        .values({
+          key: LESSON_EMBEDDED_UNIT_DEDUPE_BACKFILL_KEY,
           appliedAt: now.toISOString(),
         })
         .run();
@@ -950,6 +970,52 @@ function backfill6980Answered(tx: Tx): void {
       tx.update(responses)
         .set({ answered: true })
         .where(eq(responses.id, row.id))
+        .run();
+    }
+  }
+}
+
+// ---------- 讲练页嵌入单元存量去重（2026-10-28 演示站事故治理） ----------
+
+/**
+ * 讲练页嵌入单元存量去重（一次性，标记 lesson_embedded_unit_dedupe_20261028
+ * 防重跑）：教师重导改名单元曾在同一讲练页（kind='lesson' 讲义）留下新旧两个
+ * live 嵌入单元（units.lectureId 指向该讲义）。读侧择主与写入侧接管已合入，
+ * 本回填把存量收敛为每页至多 1 个 live 嵌入单元。
+ *
+ * 口径：
+ * - 只处理未软删讲义（软删讲义无学生入口）；teacherId 为 null 的讲义不猜域（跳过）；
+ * - 择主与读侧同一出处：lesson-embedded 的 pickEmbeddedUnits（题槽收集、题集
+ *   分组与比较一体，防止与开卷侧口径漂移）；
+ * - 非主单元软删（deleted_at = now），**不做题级清理**：md 可能缺注入 id、
+ *   交集为零时无法区分脏题与兜底槽，题目行保守原样保留（读侧孤儿题口径不变）；
+ * - 幂等：收敛后每页至多 1 个 live 单元，标记丢失后重入也自然 no-op（其余
+ *   候选已带 deleted_at，被 isNull 过滤）。
+ */
+function backfillLessonEmbeddedUnitDedupe(tx: Tx, now: Date): void {
+  const nowIso = now.toISOString();
+  const lessonRows = tx
+    .select({
+      id: lectures.id,
+      teacherId: lectures.teacherId,
+      markdown: lectures.markdown,
+    })
+    .from(lectures)
+    .where(and(eq(lectures.kind, "lesson"), isNull(lectures.deletedAt)))
+    .all();
+  for (const lecture of lessonRows) {
+    const teacherId = lecture.teacherId;
+    if (teacherId === null) continue; // 无归属讲义无从圈域（D9 前不可能出现），不猜
+    const pick = pickEmbeddedUnits(tx, teacherId, {
+      id: lecture.id,
+      markdown: lecture.markdown,
+    });
+    if (pick === undefined || pick.stale.length === 0) continue;
+    // 复合主键 (teacherId, id) 定位；软删保留题目行与后续恢复余地（D3）
+    for (const staleUnit of pick.stale) {
+      tx.update(units)
+        .set({ deletedAt: nowIso })
+        .where(and(eq(units.teacherId, teacherId), eq(units.id, staleUnit.id)))
         .run();
     }
   }

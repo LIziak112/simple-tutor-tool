@@ -21,8 +21,13 @@ import {
   questions,
   responses,
   submissionEvidence,
+  units,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 import {
@@ -837,6 +842,129 @@ describe("POST /api/student/lectures/:id/lesson/restart（再做一次/重新开
     //（start 带 courseId 才走 403 分支，见上方访问控制用例）
     expect(denied.status).toBe(404);
     expect(denied.error).toBe("NOT_FOUND");
+  });
+});
+
+describe("多 live 嵌入单元择主（教师重导改名残留陈旧单元，读侧按 md 题槽一致性择主）", () => {
+  /** 直插「陈旧」第二 live 嵌入单元（order 更小、updatedAt 更早——旧读侧按
+   * order ASC 会选中它的事故形态）+ 两道旧题挂它名下（live、与 md 题槽零交集） */
+  function insertStaleEmbeddedUnit(env: TestEnv, staleUnitId: string): void {
+    const staleUpdatedAt = "2020-01-01T00:00:00.000Z";
+    env.db
+      .insert(units)
+      .values({
+        id: staleUnitId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        lectureId: env.lectureId,
+        title: "随堂讲练（旧名）",
+        order: -1,
+        updatedAt: staleUpdatedAt,
+      })
+      .run();
+    env.db
+      .insert(questions)
+      .values(
+        [1, 2].map((n) => ({
+          id: `旧讲练题-${n}`,
+          teacherId: TEST_TEACHER_ID,
+          unitId: staleUnitId,
+          order: n - 1,
+          type: "judge" as const,
+          difficulty: 1,
+          stemMd: `旧题 ${n}：1+1=2。[[正确]]`,
+          optionsJson: null,
+          answersJson: null,
+          hintsJson: JSON.stringify([]),
+          solutionMd: null,
+          sourceMd: `旧题 ${n} 原文`,
+          version: 1,
+          updatedAt: staleUpdatedAt,
+          deletedAt: null,
+        })),
+      )
+      .run();
+  }
+
+  it("start 冻结题 = 与 md 题槽对齐的原单元（陈旧单元零交集落选，无孤儿题堆页尾）；restart 同断言", async () => {
+    const env = await makeEnv();
+    insertStaleEmbeddedUnit(env, "stale-embedded-unit");
+
+    const body = await startOk(env);
+    // 择主选中与 md 对齐的原单元：blocks 题槽 id 集 == 冻结题 id 集（无孤儿）
+    const slotIds = new Set(
+      body.data.blocks
+        .filter((b) => b.type === "question")
+        .map((b) => b.questionId),
+    );
+    expect(slotIds).toEqual(new Set([Q.choice, Q.judge]));
+    expect(new Set(body.data.questions.map((q) => q.id))).toEqual(slotIds);
+
+    // restart 同断言（进行中随时重开 → 201 新卷，冻结题同样来自对齐单元）
+    const restarted = await restartLesson(env);
+    expect(restarted.status).toBe(201);
+    const restartBody = (await restarted.json()) as StartBody;
+    expect(lessonStartOkSchema.safeParse(restartBody).success).toBe(true);
+    const restartSlotIds = new Set(
+      restartBody.data.blocks
+        .filter((b) => b.type === "question")
+        .map((b) => b.questionId),
+    );
+    expect(restartSlotIds).toEqual(new Set([Q.choice, Q.judge]));
+    expect(new Set(restartBody.data.questions.map((q) => q.id))).toEqual(
+      restartSlotIds,
+    );
+  });
+
+  it("端到端：教师改名单元重导（接管软删旧单元）后学生立即开卷，冻结题与 md 题槽全对齐", async () => {
+    const env = await makeEnv();
+    // 与 LESSON_MD 同标题、单元改名、题号前缀随之变化——导入接管应软删旧单元
+    await importDoc(
+      env.app,
+      env.teacherCookie,
+      `---
+kind: lesson
+unit: 随堂讲练0
+topic: 有理数
+---
+
+# 第1讲 有理数
+
+改写后的导语。
+
+::::question{type=choice difficulty=1}
+新单选题干
+
+- [ ] 甲
+- [x] 乙
+::::
+
+::::question{type=judge difficulty=1}
+新判断题。[[正确]]
+::::
+`,
+      "随堂讲练0.md",
+      env.courseId,
+    );
+    // 旧单元已被接管软删（唯一 live 嵌入单元 = 新单元）
+    const liveUnits = env.db
+      .select()
+      .from(units)
+      .all()
+      .filter(
+        (row) => row.lectureId === env.lectureId && row.deletedAt === null,
+      );
+    expect(liveUnits.map((row) => row.id)).toEqual(["随堂讲练0"]);
+
+    const body = await startOk(env);
+    const slotIds = new Set(
+      body.data.blocks
+        .filter((b) => b.type === "question")
+        .map((b) => b.questionId),
+    );
+    expect(slotIds).toEqual(new Set(["随堂讲练0-1", "随堂讲练0-2"]));
+    expect(new Set(body.data.questions.map((q) => q.id))).toEqual(slotIds);
   });
 });
 

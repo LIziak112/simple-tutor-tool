@@ -12,6 +12,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
   notInArray,
   sql,
 } from "drizzle-orm";
@@ -372,15 +373,77 @@ export function softDeleteUnit(db: Db, teacherId: string, id: string): void {
     .run();
 }
 
-/** 单元从回收站恢复（幂等）。行不存在或不属本教师 → 404 */
+/**
+ * 讲练页唯一 live 嵌入单元守卫（导入接管的手工路径补丁）：同一讲练页
+ * （kind='lesson' 讲义）只允许一个未软删的嵌入单元。重导接管会自动软删旧单元，
+ * 但「回收站恢复旧单元」「改挂单元到讲练页」两条手工路径会复活/制造双单元，
+ * 在此统一拦 409。普通讲义（kind='lecture'）的配套单元不设限；目标讲义不存在
+ * （更新路径已在先前的 404 校验拦截）同样放行。
+ * excludeUnitId 排除操作对象自身——幂等恢复与原挂载单元改其他字段不会误伤。
+ */
+function assertNoOtherLiveEmbeddedUnit(
+  db: Db,
+  teacherId: string,
+  lectureId: string,
+  excludeUnitId: string,
+  message: string, // 两处入口话术不同（恢复 vs 挂载），由调用方传入
+): void {
+  // 目标必须指向本教师域内 kind='lesson' 讲义（判定与 lesson-embedded.ts 同口径，
+  // 不看讲义软删——判定不随 deletedAt 漂移）
+  const lecture = db
+    .select({ id: lectures.id })
+    .from(lectures)
+    .where(
+      and(
+        eq(lectures.teacherId, teacherId),
+        eq(lectures.id, lectureId),
+        eq(lectures.kind, "lesson"),
+      ),
+    )
+    .get();
+  if (lecture === undefined) return; // 非讲练页不设限
+  const other = db
+    .select({ id: units.id })
+    .from(units)
+    .where(
+      and(
+        eq(units.teacherId, teacherId),
+        eq(units.lectureId, lectureId),
+        isNull(units.deletedAt),
+        ne(units.id, excludeUnitId),
+      ),
+    )
+    .get();
+  if (other !== undefined) {
+    throw new HttpError(409, "LESSON_EMBEDDED_UNIT_CONFLICT", message);
+  }
+}
+
+/** 单元从回收站恢复（幂等）。行不存在或不属本教师 → 404；
+ *  挂在讲练页上且页内已有其他 live 嵌入单元 → 409 LESSON_EMBEDDED_UNIT_CONFLICT */
 export function restoreUnit(db: Db, teacherId: string, id: string): void {
   const row = db
-    .select({ id: units.id })
+    .select({
+      id: units.id,
+      lectureId: units.lectureId,
+      deletedAt: units.deletedAt,
+    })
     .from(units)
     .where(and(eq(units.teacherId, teacherId), eq(units.id, id)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
+  }
+  // 仅对「删除 → 恢复」的真实状态迁移设守卫：已 live 的幂等恢复不检查，
+  // 与旧行为一致（守卫只拦新增的双单元，不拦存量状态的重复调用）
+  if (row.deletedAt !== null && row.lectureId !== null) {
+    assertNoOtherLiveEmbeddedUnit(
+      db,
+      teacherId,
+      row.lectureId,
+      id,
+      "该讲练页已有随堂练习单元，恢复旧单元会出现两份随堂练习；如需回退内容请重导旧版讲练文档",
+    );
   }
   db.update(units)
     .set({ deletedAt: null })
@@ -950,6 +1013,16 @@ export function updateUnitMeta(
           "配套讲义不存在（可能已被删除）",
         );
       }
+      // 讲练页唯一 live 嵌入单元守卫：改挂目标为讲练页时，页上已有其他 live
+      // 嵌入单元 → 409（排除自身：原挂载单元重复提交同值不误判）；解除挂载
+      // （lectureId 置 null）与其他字段编辑不经过这里，行为不变
+      assertNoOtherLiveEmbeddedUnit(
+        db,
+        teacherId,
+        input.lectureId,
+        id,
+        "该讲练页已有随堂练习单元，不能再挂载第二份随堂练习；如需更换请先移出或删除现有随堂练习单元",
+      );
     }
     patch.lectureId = input.lectureId;
   }

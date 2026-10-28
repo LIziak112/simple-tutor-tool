@@ -18,6 +18,7 @@ import {
   ink,
   lectures,
   libraryFolders,
+  questions,
   responses,
   students,
   teachers,
@@ -291,6 +292,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
       {
+        key: "lesson_embedded_unit_dedupe_20261028",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
         key: "nested_course_catalog_v1",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
@@ -347,10 +352,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
   });
 });
 
@@ -505,7 +510,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
     expect(
       db
         .select()
@@ -1333,6 +1338,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
       {
+        key: "lesson_embedded_unit_dedupe_20261028",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
         key: "nested_course_catalog_v1",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
@@ -1389,7 +1398,7 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(9);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
   });
 });
 
@@ -2101,5 +2110,288 @@ describe("0044 responses.answered 存量回填（#6980-3 审查修复）", () =>
     expect(answeredOf("bg-r1")).toBe(true);
     expect(answeredOf("bg-r7")).toBe(true);
     expect(answeredOf("bg-r2")).toBe(false);
+  });
+});
+
+/** 全新结构库（只跑迁移、未跑任何回填）：回填标记为空，runBackfills 首跑即全量搬迁 */
+function createFreshMigratedDb(): Db {
+  const db = createDb(":memory:");
+  runMigrations(db);
+  return db;
+}
+
+/**
+ * 讲练页嵌入单元存量去重回填（2026-10-28 演示站事故治理）的造数与用例。
+ * 造数走「全新结构库」（只 runMigrations、未跑任何回填）+ 手工插入事故形态
+ * （同一讲练页挂新旧两个 live 嵌入单元），runBackfills 一次执行顺带完成本
+ * 回填；既有回填对这份造数（无课程/学生/作业/作答）均为 no-op。
+ */
+describe("讲练页嵌入单元存量去重回填（2026-10-28 事故治理）", () => {
+  const NOW = "2026-10-28T00:00:00.000Z";
+
+  /** 讲练页 md：H1 + 单个带 id 的 judge 题块（题槽 q-a） */
+  const LESSON_DEDUPE_MD = `# 讲练 去重样例
+
+::::question{type=judge difficulty=1 id="q-a"}
+判断：$1+1=2$。[[正确]]
+::::
+`;
+
+  /** 事故形态造数：教师行 + 讲练页 + 新旧两个 live 嵌入单元 + 各挂一题 */
+  function seedLessonDedupeFixture(db: Db): void {
+    const t = "2026-10-20T00:00:00.000Z";
+    db.insert(teachers)
+      .values({
+        id: "teacher-dedupe",
+        loginName: "teacher",
+        isAdmin: true,
+        disabledAt: null,
+        passwordHash: null,
+        apiToken: null,
+        createdAt: t,
+      })
+      .run();
+    db.insert(lectures)
+      .values({
+        id: "lesson-dedupe",
+        teacherId: "teacher-dedupe",
+        courseId: null,
+        folderId: null,
+        title: "讲练 去重样例",
+        markdown: LESSON_DEDUPE_MD,
+        kind: "lesson",
+        order: 0,
+        updatedAt: t,
+      })
+      .run();
+    // 旧单元：order 更小、updatedAt 更早，题 q-old 挂名下（题槽交集为零）
+    db.insert(units)
+      .values({
+        id: "unit-old",
+        teacherId: "teacher-dedupe",
+        courseId: null,
+        folderId: null,
+        lectureId: "lesson-dedupe",
+        title: "旧单元",
+        order: 0,
+        updatedAt: "2026-10-10T00:00:00.000Z",
+      })
+      .run();
+    // 新单元：order 更大、updatedAt 更新，题 q-a 挂名下（= 讲义 md 题槽 → 择主胜出）
+    db.insert(units)
+      .values({
+        id: "unit-new",
+        teacherId: "teacher-dedupe",
+        courseId: null,
+        folderId: null,
+        lectureId: "lesson-dedupe",
+        title: "新单元",
+        order: 1,
+        updatedAt: "2026-10-25T00:00:00.000Z",
+      })
+      .run();
+    // 题行：旧题挂旧单元、新题挂新单元（均为 live，回填不做题级清理）
+    db.insert(questions)
+      .values([
+        {
+          id: "q-old",
+          teacherId: "teacher-dedupe",
+          unitId: "unit-old",
+          order: 0,
+          type: "judge",
+          difficulty: 1,
+          stemMd: "旧题干",
+          optionsJson: null,
+          answersJson: '{"kind":"judge","value":true}',
+          hintsJson: "[]",
+          solutionMd: null,
+          sourceMd: "::::question\n::::",
+          version: 1,
+          updatedAt: t,
+          deletedAt: null,
+        },
+        {
+          id: "q-a",
+          teacherId: "teacher-dedupe",
+          unitId: "unit-new",
+          order: 0,
+          type: "judge",
+          difficulty: 1,
+          stemMd: "判断：$1+1=2$。",
+          optionsJson: null,
+          answersJson: '{"kind":"judge","value":true}',
+          hintsJson: "[]",
+          solutionMd: null,
+          sourceMd: "::::question\n::::",
+          version: 1,
+          updatedAt: t,
+          deletedAt: null,
+        },
+      ])
+      .run();
+  }
+
+  it("新旧两个 live 嵌入单元：题槽一致的新单元留 live，旧单元软删、题行全保留", () => {
+    const db = createFreshMigratedDb();
+    seedLessonDedupeFixture(db);
+    runBackfills(db, new Date(NOW));
+
+    const unitById = new Map(
+      db
+        .select()
+        .from(units)
+        .all()
+        .map((row) => [row.id, row] as const),
+    );
+    // 旧单元（交集为零、updatedAt 又早）：软删，时刻 = 回填 now
+    expect(unitById.get("unit-old")?.deletedAt).toBe(NOW);
+    // 新单元（题 q-a 与 md 题槽一致）：仍 live
+    expect(unitById.get("unit-new")?.deletedAt).toBeNull();
+    // 题行全保留（保守不做题级清理）：旧单元的 q-old 也不动
+    expect(
+      db
+        .select()
+        .from(questions)
+        .all()
+        .map((row) => [row.id, row.unitId, row.deletedAt]),
+    ).toEqual([
+      ["q-old", "unit-old", null],
+      ["q-a", "unit-new", null],
+    ]);
+    // 完成标记写入
+    expect(
+      db
+        .select()
+        .from(dataMigrations)
+        .all()
+        .some((row) => row.key === "lesson_embedded_unit_dedupe_20261028"),
+    ).toBe(true);
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+  });
+
+  it("幂等：重跑 runBackfills（标记命中跳过 + 删标记后函数级重入）均无变化", () => {
+    const db = createFreshMigratedDb();
+    seedLessonDedupeFixture(db);
+    runBackfills(db, new Date(NOW));
+
+    const unitState = (): [string | null, string | null][] =>
+      db
+        .select()
+        .from(units)
+        .all()
+        .map(
+          (row) => [row.id, row.deletedAt] as [string | null, string | null],
+        );
+    const snapshotAfterFirst = unitState();
+
+    // 标记命中：正常重跑（不同 now）整体跳过，不触碰任何行
+    runBackfills(db, new Date("2026-10-29T00:00:00.000Z"));
+    expect(unitState()).toEqual(snapshotAfterFirst);
+
+    // 函数级重入：删标记后整组回填重跑——每页只剩 1 个 live 单元，自然 no-op
+    //（旧单元已软删被 isNull 过滤，软删时刻不被第二次 now 改写）
+    db.delete(dataMigrations)
+      .where(eq(dataMigrations.key, "lesson_embedded_unit_dedupe_20261028"))
+      .run();
+    runBackfills(db, new Date("2026-10-30T00:00:00.000Z"));
+    expect(unitState()).toEqual(snapshotAfterFirst);
+    // 标记恢复（appliedAt = 第二次执行时刻）
+    expect(
+      db
+        .select()
+        .from(dataMigrations)
+        .all()
+        .some(
+          (row) =>
+            row.key === "lesson_embedded_unit_dedupe_20261028" &&
+            row.appliedAt === "2026-10-30T00:00:00.000Z",
+        ),
+    ).toBe(true);
+  });
+
+  it("无重复（单 live 嵌入单元）no-op：不写任何 deleted_at，标记照常写入", () => {
+    const db = createFreshMigratedDb();
+    seedLessonDedupeFixture(db);
+    // 撤掉旧单元及其旧题，恢复为「单 live 嵌入单元」的正常形态
+    db.delete(questions).where(eq(questions.id, "q-old")).run();
+    db.delete(units).where(eq(units.id, "unit-old")).run();
+    runBackfills(db, new Date(NOW));
+
+    // 无重复可收敛：不写任何 deleted_at
+    expect(
+      db
+        .select()
+        .from(units)
+        .all()
+        .every((row) => row.deletedAt === null),
+    ).toBe(true);
+    // 标记照常写入（回填执行过，只是无行可软删）
+    expect(
+      db
+        .select()
+        .from(dataMigrations)
+        .all()
+        .some((row) => row.key === "lesson_embedded_unit_dedupe_20261028"),
+    ).toBe(true);
+  });
+
+  it("普通讲义（kind='lecture'）挂两个 live 配套单元：守卫只对 lesson，不软删", () => {
+    const db = createFreshMigratedDb();
+    seedLessonDedupeFixture(db);
+    const t = "2026-10-20T00:00:00.000Z";
+    db.insert(lectures)
+      .values({
+        id: "lecture-plain",
+        teacherId: "teacher-dedupe",
+        courseId: null,
+        folderId: null,
+        title: "普通讲义",
+        markdown: "# 普通讲义",
+        kind: "lecture",
+        order: 1,
+        updatedAt: t,
+      })
+      .run();
+    // 普通讲义挂两个 live 配套单元（历史合法形态：一对多配套练习）
+    db.insert(units)
+      .values([
+        {
+          id: "plain-unit-1",
+          teacherId: "teacher-dedupe",
+          courseId: null,
+          folderId: null,
+          lectureId: "lecture-plain",
+          title: "配套一",
+          order: 0,
+          updatedAt: t,
+        },
+        {
+          id: "plain-unit-2",
+          teacherId: "teacher-dedupe",
+          courseId: null,
+          folderId: null,
+          lectureId: "lecture-plain",
+          title: "配套二",
+          order: 1,
+          updatedAt: t,
+        },
+      ])
+      .run();
+
+    runBackfills(db, new Date(NOW));
+
+    // 普通讲义的两个配套单元原样 live（守卫只对 kind='lesson'）
+    expect(
+      db
+        .select()
+        .from(units)
+        .all()
+        .map((row) => [row.id, row.deletedAt] as const),
+    ).toEqual([
+      ["unit-old", NOW],
+      ["unit-new", null],
+      ["plain-unit-1", null],
+      ["plain-unit-2", null],
+    ]);
   });
 });

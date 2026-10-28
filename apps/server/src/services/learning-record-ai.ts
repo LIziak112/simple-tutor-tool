@@ -89,6 +89,14 @@ function domainWidthOf(facet: InkMaterialFacet): number {
     : facet.frame.pixelWidth;
 }
 
+/**
+ * 索引取元素（索引均由同一数组派生——rdp/抽稀/配平的下标恒在界内，越界即上游
+ * bug）：以 as 断言收窄代替 biome 禁用的非空断言 `!`，语义等价。
+ */
+function elementAt<T>(xs: readonly T[], index: number): T {
+  return xs[index] as T;
+}
+
 function simplifyStroke<S extends { points: InkStroke["points"] }>(
   stroke: S,
   epsilon: number,
@@ -97,7 +105,7 @@ function simplifyStroke<S extends { points: InkStroke["points"] }>(
   if (indices.length === stroke.points.length) return stroke;
   return {
     ...stroke,
-    points: indices.map((i) => stroke.points[i]!),
+    points: indices.map((i) => elementAt(stroke.points, i)),
   };
 }
 
@@ -109,12 +117,12 @@ function decimateStroke<S extends { points: InkStroke["points"] }>(
   const n = stroke.points.length;
   const keepCount = Math.max(2, Math.min(n, Math.round(target)));
   if (keepCount >= n) return stroke;
-  const out = [stroke.points[0]!];
+  const out = [elementAt(stroke.points, 0)];
   const step = (n - 1) / (keepCount - 1);
   for (let k = 1; k < keepCount - 1; k++) {
-    out.push(stroke.points[Math.round(k * step)]!);
+    out.push(elementAt(stroke.points, Math.round(k * step)));
   }
-  out.push(stroke.points[n - 1]!);
+  out.push(elementAt(stroke.points, n - 1));
   return { ...stroke, points: out };
 }
 
@@ -129,12 +137,14 @@ function balanceTargets(counts: number[], maxTotal: number): number[] {
   const targets = counts.map((c) => Math.max(2, c));
   let excess = targets.reduce((sum, t) => sum + t, 0) - maxTotal;
   if (excess <= 0) return targets;
-  const order = counts.map((_, i) => i).sort((a, b) => counts[b]! - counts[a]!);
+  const order = counts
+    .map((_, i) => i)
+    .sort((a, b) => elementAt(counts, b) - elementAt(counts, a));
   for (const i of order) {
     if (excess <= 0) break;
-    const reducible = targets[i]! - 2;
+    const reducible = elementAt(targets, i) - 2;
     const cut = Math.min(reducible, excess);
-    targets[i] = targets[i]! - cut;
+    targets[i] = elementAt(targets, i) - cut;
     excess -= cut;
   }
   return targets;

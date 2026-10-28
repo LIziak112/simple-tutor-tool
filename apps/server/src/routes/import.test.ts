@@ -602,6 +602,200 @@ lecture: 第1讲 言语高频词语辨析（第1~10组）
     expect(after[0]?.id).toBe(before[0]?.id); // 讲义 id 不变（匹配键替换）
     expect(after[0]?.markdown).toContain('id="随堂讲练-1"');
   });
+
+  it("重导改名单元（演示站 2026-10-28 事故回归）：本次导入接管嵌入单元——旧单元软删、新单元唯一 live，旧题保留不软删", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const first = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: LESSON_MD, filename: "随堂讲练.md" },
+      cookie,
+    );
+    expect(first.status).toBe(200);
+
+    // 教师在源文件里改了单元名（第2讲→第02讲事故同构）：题号前缀随缺省派生一起变
+    const renamedMd = `---
+kind: lesson
+unit: 随堂讲练0
+topic: 有理数
+---
+
+# 第1讲 有理数
+
+改写后的导语。
+
+::::question{type=judge difficulty=1}
+新命题。[[正确]]
+::::
+`;
+    // dry-run 预览亮出接管动作（教师与 MCP import_markdown dry-run 同一 previewImport）
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: renamedMd, filename: "随堂讲练0.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: { warnings: { code: string; message: string }[] };
+    };
+    expect(
+      previewBody.data.warnings.some(
+        (w) => w.code === "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+      ),
+    ).toBe(true);
+    const reimport = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: renamedMd, filename: "随堂讲练0.md" },
+      cookie,
+    );
+    expect(reimport.status).toBe(200);
+
+    const lecture = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 有理数"))
+      .get();
+    expect(lecture?.kind).toBe("lesson");
+    expect(lecture?.markdown).toContain('id="随堂讲练0-1"');
+
+    // 旧嵌入单元软删进回收站；新单元唯一 live 且接管讲练页
+    const stale = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
+    expect(stale?.deletedAt).not.toBeNull();
+    const fresh = db
+      .select()
+      .from(units)
+      .where(eq(units.id, "随堂讲练0"))
+      .get();
+    expect(fresh?.deletedAt).toBeNull();
+    expect(fresh?.lectureId).toBe(lecture?.id);
+
+    // 跨单元旧题保留（题级清退只作用于本次挂载的单元）；新题 live
+    expect(
+      db.select().from(questions).where(eq(questions.id, "随堂讲练-1")).get()
+        ?.deletedAt,
+    ).toBeNull();
+    expect(
+      db.select().from(questions).where(eq(questions.id, "随堂讲练0-1")).get()
+        ?.deletedAt,
+    ).toBeNull();
+  });
+
+  it("重导同单元改题号：缺席的旧 live 题软删（嵌入单元的题恒经 md 题槽存在），新题 live", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const first = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: LESSON_MD, filename: "随堂讲练.md" },
+      cookie,
+    );
+    expect(first.status).toBe(200);
+
+    const reimport = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: `---
+kind: lesson
+unit: 随堂讲练
+---
+
+# 第1讲 有理数
+
+导语。
+
+::::question{type=judge difficulty=1 id=q-renamed}
+新命题。[[正确]]
+::::
+`,
+        filename: "随堂讲练.md",
+      },
+      cookie,
+    );
+    expect(reimport.status).toBe(200);
+
+    // 单元 live、仍挂讲练页；旧题软删、新题 live——不再产生「幽灵双份题」
+    const unit = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
+    expect(unit?.deletedAt).toBeNull();
+    expect(
+      db.select().from(questions).where(eq(questions.id, "随堂讲练-1")).get()
+        ?.deletedAt,
+    ).not.toBeNull();
+    expect(
+      db.select().from(questions).where(eq(questions.id, "q-renamed")).get()
+        ?.deletedAt,
+    ).toBeNull();
+  });
+
+  it("kind 翻转（lesson 重导为 lecture）不触发嵌入单元接管：旧单元保留 live（既有语义另案）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const first = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: LESSON_MD, filename: "随堂讲练.md" },
+      cookie,
+    );
+    expect(first.status).toBe(200);
+
+    const flip = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: "---\nkind: lecture\n---\n\n# 第1讲 有理数\n\n纯讲义正文。\n",
+        filename: "完整讲义.md",
+      },
+      cookie,
+    );
+    expect(flip.status).toBe(200);
+    expect(
+      db.select().from(lectures).where(eq(lectures.title, "第1讲 有理数")).get()
+        ?.kind,
+    ).toBe("lecture");
+    const unit = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
+    expect(unit?.deletedAt).toBeNull();
+  });
+
+  it("独立练习单元 kept 语义回归：重导缺题的 practice 单元，缺席题保留不软删", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const first = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: judgeDoc("独立练习"), filename: "练习.md" },
+      cookie,
+    );
+    expect(first.status).toBe(200);
+    expect(
+      db.select().from(questions).where(eq(questions.unitId, "独立练习")).all(),
+    ).toHaveLength(1);
+
+    const reimport = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: `---
+kind: practice
+unit: 独立练习
+---
+
+::::question{type=judge difficulty=1 id=standalone-new}
+新题。[[正确]]
+::::
+`,
+        filename: "练习.md",
+      },
+      cookie,
+    );
+    expect(reimport.status).toBe(200);
+    // D18：文件中未出现的已有题目保留（跨文件攒题库是既有用法）
+    const rows = db
+      .select()
+      .from(questions)
+      .where(eq(questions.unitId, "独立练习"))
+      .all();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.deletedAt === null)).toBe(true);
+  });
 });
 
 // ---------- T2A.3：导入只进资源库 + 动作清单 + 批量导入 ----------

@@ -11,9 +11,9 @@ import type {
 // 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, attempts, questions, units } from "../db/schema";
+import { type Attempt, attempts, questions } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   contextEntriesOf,
@@ -36,6 +36,7 @@ import {
 } from "./attempt-service";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
+import { pickEmbeddedUnits } from "./lesson-embedded";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
@@ -121,27 +122,20 @@ function lessonAttemptsOf(
 }
 
 /**
- * 讲练页的嵌入单元（units.lectureId = 本讲义、域内未软删；多个时取 order
- * 最前者——讲练文档导入天然只产出一个嵌入单元）。零题讲练页
- * （LESSON_WITHOUT_QUESTION）不产出单元 → undefined。
+ * 讲练页的嵌入单元（units.lectureId = 本讲义、域内未软删）。装配与择主走
+ * lesson-embedded 的 pickEmbeddedUnits（与 backfill 存量去重同一出处）：多 live
+ * 单元时按「与讲义 md 题槽一致性」择主，单 live 单元健康态早退（不解析 md）。
+ * 零题讲练页（LESSON_WITHOUT_QUESTION）不产出单元 → undefined。
  */
 function embeddedUnitOf(
   db: Db,
   teacherId: string,
-  lectureId: string,
+  lecture: { id: string; markdown: string },
 ): { id: string; topic: string | null } | undefined {
-  return db
-    .select({ id: units.id, topic: units.topic })
-    .from(units)
-    .where(
-      and(
-        eq(units.teacherId, teacherId),
-        eq(units.lectureId, lectureId),
-        isNull(units.deletedAt),
-      ),
-    )
-    .orderBy(asc(units.order), asc(units.id))
-    .get();
+  const pick = pickEmbeddedUnits(db, teacherId, lecture);
+  return pick === undefined
+    ? undefined
+    : { id: pick.canonical.id, topic: pick.canonical.topic };
 }
 
 /**
@@ -314,7 +308,7 @@ function requireLessonContext(
     // student-course-service.notFound）
     throw notFound();
   }
-  const unit = embeddedUnitOf(db, course.teacherId, lecture.id);
+  const unit = embeddedUnitOf(db, course.teacherId, lecture);
   return {
     lecture,
     course,

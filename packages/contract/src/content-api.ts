@@ -179,6 +179,16 @@ export const importPreviewWarningSchema = z.object({
      */
     "LECTURE_LINK_UNRESOLVED",
     /**
+     * 讲练页（kind=lesson）重导命中同名讲义：本次导入接管该页嵌入单元，未挂载的
+     * 旧随堂练习单元将软删进回收站（题行与作答历史保留）
+     */
+    "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+    /**
+     * 讲练页挂载的随堂练习单元中，不在本次文件里的 live 题将软删进回收站——嵌入
+     * 单元的题恒经讲义 md 题槽存在，独立单元的 kept 保留语义不适用
+     */
+    "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
+    /**
      * 题内块式 ::ref{question=}（tt-06b / QM-04 审查 P2-2）：题内的子题引用属
      * 无效写法——该行不进题干也不建立引用（从 stemMd 排除），预览必须可见、
      * 不许静默吞。子题引用只能写在 ::::group 内。
