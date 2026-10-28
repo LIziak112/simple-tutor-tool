@@ -1,6 +1,6 @@
 import { act, render } from "@testing-library/react";
-import type { ComponentProps } from "react";
 import type { QuestionPublic } from "@tutor/contract";
+import type { ComponentProps } from "react";
 import { expect, it, vi } from "vitest";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { AttemptQuestionRow } from "./AttemptQuestionRow";
@@ -143,9 +143,7 @@ it("视口懒挂载：未进入视口只渲染等高占位，进入视口后挂�
 it("视口懒挂载：forceMount 跳过视口判断直接挂载", () => {
   vi.mocked(AttemptQuestionCard).mockClear();
   const view = render(
-    <AttemptQuestionRow
-      {...rowProps({ lazyMount: true, forceMount: true })}
-    />,
+    <AttemptQuestionRow {...rowProps({ lazyMount: true, forceMount: true })} />,
   );
   expect(vi.mocked(AttemptQuestionCard)).toHaveBeenCalled();
   expect(
@@ -162,9 +160,7 @@ it("视口懒挂载：关闭懒挂载时始终渲染题卡（单题模式口径�
 it("视口懒挂载：挂载完成回调只报一次", () => {
   const onCardMounted = vi.fn();
   render(
-    <AttemptQuestionRow
-      {...rowProps({ lazyMount: false, onCardMounted })}
-    />,
+    <AttemptQuestionRow {...rowProps({ lazyMount: false, onCardMounted })} />,
   );
   expect(onCardMounted).toHaveBeenCalledWith("q1");
 });

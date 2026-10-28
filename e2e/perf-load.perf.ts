@@ -61,18 +61,22 @@ function lectureMarkdown(sections: number): string {
     "",
     `# ${title}`,
     "",
-    ...Array.from({ length: sections }, (_, i) => [
-      `## 第 ${i + 1} 讲：绝对值与分类讨论`,
-      "",
-      ...Array.from({ length: 8 }, () =>
-        "阅读正文：判断数量与符号，结合数轴理解绝对值。先明确条件，再按步骤推理，最后回到原题检验。\n",
-      ),
-      "用 $|x|$ 表示距离，$\\sqrt{a^2}=|a|$。",
-      "",
-      "- 要点一：先定符号，再算数值。",
-      "- 要点二：分类讨论要穷尽。",
-      "",
-    ].join("\n")),
+    ...Array.from({ length: sections }, (_, i) =>
+      [
+        `## 第 ${i + 1} 讲：绝对值与分类讨论`,
+        "",
+        ...Array.from(
+          { length: 8 },
+          () =>
+            "阅读正文：判断数量与符号，结合数轴理解绝对值。先明确条件，再按步骤推理，最后回到原题检验。\n",
+        ),
+        "用 $|x|$ 表示距离，$\\sqrt{a^2}=|a|$。",
+        "",
+        "- 要点一：先定符号，再算数值。",
+        "- 要点二：分类讨论要穷尽。",
+        "",
+      ].join("\n"),
+    ),
   ].join("\n");
 }
 
@@ -85,7 +89,12 @@ type LoadMetrics = {
   nowMs: number;
   nav: { ttfb: number; domContentLoaded: number; load: number };
   longTasks: { count: number; totalMs: number; maxMs: number };
-  api: Array<{ url: string; status: number; bytes: number; durationMs: number }>;
+  api: Array<{
+    url: string;
+    status: number;
+    bytes: number;
+    durationMs: number;
+  }>;
   apiTotalBytes: number;
   apiTotalMs: number;
   domNodes: number;
@@ -123,7 +132,10 @@ async function measureLoad(
   };
   page.on("response", onResponse);
   await page.addInitScript(() => {
-    const w = window as unknown as { __long: number[]; __perfInstalled?: boolean };
+    const w = window as unknown as {
+      __long: number[];
+      __perfInstalled?: boolean;
+    };
     // 同一文档只装一次：多次 addInitScript 会在每次导航后各挂一个 observer，
     // 造成 longtask 重复计数（首版实测踩过）。
     if (w.__perfInstalled === true) return;
@@ -131,7 +143,8 @@ async function measureLoad(
     w.__long = [];
     try {
       new PerformanceObserver((list) => {
-        for (const e of list.getEntries()) w.__long.push(Math.round(e.duration));
+        for (const e of list.getEntries())
+          w.__long.push(Math.round(e.duration));
       }).observe({ type: "longtask", buffered: true });
     } catch {
       /* 不支持 longtask 时留空 */
@@ -147,7 +160,10 @@ async function measureLoad(
   let attachNowMs: number | null = null;
   let firstScreenDomNodes: number | null = null;
   if (waitSelector !== undefined) {
-    await page.locator(waitSelector).first().waitFor({ state: "visible", timeout: 180_000 });
+    await page
+      .locator(waitSelector)
+      .first()
+      .waitFor({ state: "visible", timeout: 180_000 });
   }
   if (lastLabel !== null) {
     const first = page.locator('article[aria-label="第 1 题"]');
@@ -351,8 +367,14 @@ test("perf: 习题与讲义加载", async ({ request, page }, testInfo) => {
       );
       if (vp.width === 390 && scenario.rich) {
         const scrollMobile = await measureScroll(page);
-        runs.push({ kind: "scroll", scenario: `${scenario.name}@390`, ...scrollMobile });
-        console.log(`SCROLL ${scenario.name}@390 p50=${scrollMobile.p50}ms p95=${scrollMobile.p95}ms max=${scrollMobile.max}ms`);
+        runs.push({
+          kind: "scroll",
+          scenario: `${scenario.name}@390`,
+          ...scrollMobile,
+        });
+        console.log(
+          `SCROLL ${scenario.name}@390 p50=${scrollMobile.p50}ms p95=${scrollMobile.p95}ms max=${scrollMobile.max}ms`,
+        );
       }
       if (vp.width === 1280) {
         const scroll = await measureScroll(page);
@@ -397,6 +419,9 @@ test("perf: 习题与讲义加载", async ({ request, page }, testInfo) => {
 
   const out = `/workspace/output/perf-load-${suffix}.json`;
   writeFileSync(out, JSON.stringify(results, null, 2), "utf8");
-  await testInfo.attach("perf-load", { path: out, contentType: "application/json" });
+  await testInfo.attach("perf-load", {
+    path: out,
+    contentType: "application/json",
+  });
   console.log(`WROTE ${out}`);
 });
