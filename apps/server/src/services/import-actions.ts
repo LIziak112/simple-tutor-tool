@@ -3,6 +3,7 @@ import type {
   ImportPreviewWarning,
   ParsedDocument,
 } from "@tutor/contract";
+import { hasExplicitQuestionId } from "@tutor/md-dsl";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -318,9 +319,17 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
     // 更新单元：题目细分（与 commit 的 inserted/updated 判定同口径——含软删）
     let inserted = 0;
     let updated = 0;
+    // updated 中「文件里未写显式 id（缺省派生）」的题数（P2b 错位预警面）：
+    // 缺省 id 按 单元id-序号 由文档内位置推导，文件里插题/删题会使后续题错位
+    // 更新到别的题、学情张冠李戴——围栏带 id=（显式或 lesson 导出注入）不算
+    let updatedDerived = 0;
     for (const question of unit.questions) {
-      if (existing.allQuestionIds.has(question.id)) updated += 1;
-      else inserted += 1;
+      if (existing.allQuestionIds.has(question.id)) {
+        updated += 1;
+        if (!hasExplicitQuestionId(question.sourceMd)) updatedDerived += 1;
+      } else {
+        inserted += 1;
+      }
     }
     // kept：库中未删除、文件中未出现的题目数（保留不删，D18）。讲练页挂载单元
     // 走接管语义（缺席题移出回收站）——kept 记 0，移出计数由接管 warning 承载
@@ -337,8 +346,19 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
       // 命中已有单元保留其原文件夹（D18），预览标注「更新（位于文件夹 X）」
       folderName: folderNameOf(snapshot, existing.folderId),
       restore: existing.deletedAt !== null,
-      questions: { inserted, updated, kept: embeddedTakeover ? 0 : kept },
+      questions: {
+        inserted,
+        updated,
+        kept: embeddedTakeover ? 0 : kept,
+        ...(updatedDerived > 0 ? { updatedDerived } : {}),
+      },
     });
+    if (updatedDerived > 0) {
+      warnings.push({
+        code: "DERIVED_ID_UPDATED_QUESTIONS",
+        message: `单元「${unit.title}」有 ${updatedDerived} 道题使用缺省题号且将更新既有题：文件中插题/删题会使题号错位、学情张冠李戴；建议先导出一次（自动注入题号）再修改，或为题容器补显式 id`,
+      });
+    }
     if (kept > 0 && !embeddedTakeover) {
       warnings.push({
         code: "KEPT_QUESTIONS",

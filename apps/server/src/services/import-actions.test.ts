@@ -61,9 +61,10 @@ function parsedLecture(title: string): ParsedDocument {
   };
 }
 
-/** 最小判断题（id 参与 buildImportPlan，其余填最小合法值） */
+/** 最小判断题（id 参与 buildImportPlan，其余填最小合法值；sourceMd 可定制围栏形态） */
 function makeJudgeQuestion(
   id: string,
+  sourceMd = "::::question\n::::",
 ): ParsedDocument["units"][number]["questions"][number] {
   return {
     id,
@@ -73,7 +74,37 @@ function makeJudgeQuestion(
     answers: { kind: "judge", value: true },
     knowledge: [],
     hints: [],
-    sourceMd: "::::question\n::::",
+    sourceMd,
+  };
+}
+
+/**
+ * 练习文档（题块围栏形态可逐题定制，P2b 缺省题号错位预警用）：
+ * explicitId 缺省 = 围栏无 id=（缺省派生 id，hasExplicitQuestionId=false）；
+ * explicitId: true = 围栏带 id=（显式 id / lesson 导出注入形态）。
+ */
+function parsedUnitFences(
+  unitId: string,
+  questions: ReadonlyArray<{ id: string; explicitId?: boolean }>,
+): ParsedDocument {
+  return {
+    frontmatter: { kind: "practice", dsl: 2, unit: unitId },
+    units: [
+      {
+        id: unitId,
+        title: unitId,
+        questions: questions.map((q) =>
+          makeJudgeQuestion(
+            q.id,
+            q.explicitId === true
+              ? `::::question{id="${q.id}" type=judge}\n::::`
+              : "::::question\n::::",
+          ),
+        ),
+      },
+    ],
+    lectures: [],
+    issues: [],
   };
 }
 
@@ -169,7 +200,11 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
 
   it("命中同 id 单元：updateUnit，保留原文件夹（D18），题目细分 inserted/updated/kept", () => {
     const plan = buildImportPlan({
-      parsed: parsedUnit("练习四", ["练习四-1", "练习四-9"]),
+      // 题块围栏带显式 id：不触发缺省题号错位预警（P2b），本用例专注细分计数口径
+      parsed: parsedUnitFences("练习四", [
+        { id: "练习四-1", explicitId: true },
+        { id: "练习四-9", explicitId: true },
+      ]),
       folderId: FOLDER_B, // 目标文件夹与单元原文件夹不同 → 仍标注原文件夹
       snapshot: snapshot({
         units: new Map([
@@ -208,7 +243,10 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
 
   it("软删题目不算 kept（再导入即恢复）；软删单元 restore=true（回收站恢复）", () => {
     const plan = buildImportPlan({
-      parsed: parsedUnit("练习四", ["练习四-1"]),
+      // 显式 id 围栏：不触发缺省题号错位预警（P2b），保持本用例原断言口径
+      parsed: parsedUnitFences("练习四", [
+        { id: "练习四-1", explicitId: true },
+      ]),
       folderId: null,
       snapshot: snapshot({
         units: new Map([
@@ -665,7 +703,7 @@ describe("buildImportPlan：讲练页嵌入单元接管预检（2026-10-28 修�
           id: unitId,
           title: unitId,
           lectureTitle,
-          questions: questionIds.map(makeJudgeQuestion),
+          questions: questionIds.map((id) => makeJudgeQuestion(id)),
         },
       ],
       lectures: [
@@ -778,5 +816,118 @@ describe("buildImportPlan：讲练页嵌入单元接管预检（2026-10-28 修�
       snapshot: lessonSnapshot("别的单元", ["别的单元-1"]),
     });
     expect(plan.warnings).toEqual([]);
+  });
+});
+
+describe("buildImportPlan：缺省题号错位预警（P2b DERIVED_ID_UPDATED_QUESTIONS）", () => {
+  /** 库内单元快照（folderId/挂载缺省形态；题集可定制，all 与 live 同集） */
+  function unitSnapshotOf(
+    unitId: string,
+    questionIds: string[],
+  ): LibrarySnapshot {
+    return snapshot({
+      units: new Map([
+        [
+          unitId,
+          {
+            folderId: null,
+            deletedAt: null,
+            lectureId: null,
+            title: unitId,
+            allQuestionIds: new Set(questionIds),
+            liveQuestionIds: new Set(questionIds),
+          },
+        ],
+      ]),
+    });
+  }
+
+  it("缺省 id 命中更新 → updatedDerived 计数 + DERIVED_ID_UPDATED_QUESTIONS 警告", () => {
+    // 文件两题均未写显式 id（缺省派生 练习四-1 / 练习四-2），库中已有同 id 题
+    const plan = buildImportPlan({
+      parsed: parsedUnitFences("练习四", [
+        { id: "练习四-1" },
+        { id: "练习四-2" },
+      ]),
+      folderId: null,
+      snapshot: unitSnapshotOf("练习四", ["练习四-1", "练习四-2"]),
+    });
+    const action = plan.actions.find((a) => a.unitId === "练习四");
+    expect(action?.questions).toMatchObject({
+      inserted: 0,
+      updated: 2,
+      updatedDerived: 2,
+    });
+    expect(plan.warnings).toContainEqual({
+      code: "DERIVED_ID_UPDATED_QUESTIONS",
+      message:
+        "单元「练习四」有 2 道题使用缺省题号且将更新既有题：文件中插题/删题会使题号错位、学情张冠李戴；建议先导出一次（自动注入题号）再修改，或为题容器补显式 id",
+    });
+  });
+
+  it("显式 id 更新 / 全新插入 / lesson 注入 id → updatedDerived 均 0 且不出该警告", () => {
+    // ① 显式 id 更新：围栏带 id=，命中既有题 → updated 但不计 derived
+    const explicit = buildImportPlan({
+      parsed: parsedUnitFences("练习四", [
+        { id: "练习四-1", explicitId: true },
+      ]),
+      folderId: null,
+      snapshot: unitSnapshotOf("练习四", ["练习四-1"]),
+    });
+    const explicitAction = explicit.actions.find((a) => a.unitId === "练习四");
+    expect(explicitAction?.questions).toMatchObject({
+      inserted: 0,
+      updated: 1,
+    });
+    expect(explicitAction?.questions?.updatedDerived ?? 0).toBe(0);
+    expect(
+      explicit.warnings.some((w) => w.code === "DERIVED_ID_UPDATED_QUESTIONS"),
+    ).toBe(false);
+
+    // ② 全新插入：缺省派生 id 但库中无此题 → inserted，不涉及更新
+    const fresh = buildImportPlan({
+      parsed: parsedUnitFences("练习五", [{ id: "练习五-9" }]),
+      folderId: null,
+      snapshot: unitSnapshotOf("练习五", ["练习五-1"]),
+    });
+    const freshAction = fresh.actions.find((a) => a.unitId === "练习五");
+    expect(freshAction?.questions).toMatchObject({ inserted: 1, updated: 0 });
+    expect(freshAction?.questions?.updatedDerived ?? 0).toBe(0);
+    expect(
+      fresh.warnings.some((w) => w.code === "DERIVED_ID_UPDATED_QUESTIONS"),
+    ).toBe(false);
+
+    // ③ lesson 注入 id：讲练文档题块围栏带 id=（lesson 导出恒注入形态），
+    //    命中更新既有题也不告警（Review Focus 5：预警不误报）
+    const lesson = buildImportPlan({
+      parsed: {
+        frontmatter: { kind: "lesson" as const, dsl: 2, unit: "随堂讲练" },
+        units: [
+          {
+            id: "随堂讲练",
+            title: "随堂讲练",
+            lectureTitle: "第1讲 有理数",
+            questions: [
+              makeJudgeQuestion(
+                "随堂讲练-1",
+                '::::question{id="随堂讲练-1" type=judge}\n::::',
+              ),
+            ],
+          },
+        ],
+        lectures: [
+          { title: "第1讲 有理数", markdown: "# 第1讲 有理数", headings: [] },
+        ],
+        issues: [],
+      },
+      folderId: null,
+      snapshot: unitSnapshotOf("随堂讲练", ["随堂讲练-1"]),
+    });
+    const lessonAction = lesson.actions.find((a) => a.unitId === "随堂讲练");
+    expect(lessonAction?.questions).toMatchObject({ inserted: 0, updated: 1 });
+    expect(lessonAction?.questions?.updatedDerived ?? 0).toBe(0);
+    expect(
+      lesson.warnings.some((w) => w.code === "DERIVED_ID_UPDATED_QUESTIONS"),
+    ).toBe(false);
   });
 });

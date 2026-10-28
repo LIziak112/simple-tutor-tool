@@ -976,7 +976,8 @@ describe("T2A.3 preview 动作清单（D19）与 warning（D18/D19）", () => {
         unitId: "单元A",
         folderName: null,
         restore: false,
-        questions: { inserted: 0, updated: 1, kept: 0 },
+        // 文件题未写显式 id（缺省派生 单元A-1）且命中更新 → updatedDerived=1（P2b）
+        questions: { inserted: 0, updated: 1, kept: 0, updatedDerived: 1 },
       },
     ]);
 
@@ -1044,7 +1045,8 @@ describe("T2A.3 preview 动作清单（D19）与 warning（D18/D19）", () => {
         unitId: "单元A",
         folderName: null,
         restore: true,
-        questions: { inserted: 0, updated: 1, kept: 0 },
+        // 缺省派生 id 命中更新（P2b）：同 preview 口径携带 updatedDerived=1
+        questions: { inserted: 0, updated: 1, kept: 0, updatedDerived: 1 },
       },
     ]);
 

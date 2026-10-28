@@ -145,6 +145,12 @@ export const importUnitQuestionPlanSchema = z.object({
   inserted: z.number().int().min(0),
   /** 文件中出现、库中已存在（含回收站软删，将恢复）的题目数（version+1） */
   updated: z.number().int().min(0),
+  /**
+   * updated 中「文件里未写显式 id（缺省派生）」的题数。缺省 id 按位置派生
+   * （单元id-序号），文件内插题/删题会使后续题错位更新到别的题、学情张冠李戴；
+   * 预览据此标红预警。仅 updateUnit 携带，0 / 未携带 = 无此风险。
+   */
+  updatedDerived: z.number().int().min(0).optional(),
   /** 库中已有未删除题目中未出现在文件里的数量（保留不删，D18） */
   kept: z.number().int().min(0),
 });
@@ -200,6 +206,12 @@ export const importPreviewWarningSchema = z.object({
      * 不受影响，但单元局部性变化，预览提示受影响引用数。
      */
     "MATERIAL_MOVED_ACROSS_UNITS",
+    /**
+     * 单元内 N 道题使用缺省派生题号且将更新既有题（缺省 id 按位置派生，文件内
+     * 插题/删题会使题号错位、学情张冠李戴）；建议先导出一次（自动注入题号）
+     * 再修改，或为题容器补显式 id
+     */
+    "DERIVED_ID_UPDATED_QUESTIONS",
   ]),
   message: z.string().min(1),
 });

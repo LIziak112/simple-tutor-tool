@@ -584,6 +584,29 @@ describe("ImportPage 单文件预览态", () => {
     ).toBeInTheDocument();
   });
 
+  it("updateUnit 且 updatedDerived>0：动作行渲染「N 题缺省题号，可能错位」警示徽标（P2b）", async () => {
+    mockedPreview.mockResolvedValue(
+      previewData({
+        actions: [
+          {
+            kind: "updateUnit",
+            title: "练习四",
+            unitId: "练习四",
+            folderName: null,
+            restore: false,
+            questions: { inserted: 0, updated: 2, kept: 0, updatedDerived: 2 },
+          },
+        ],
+      }),
+    );
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "练习四.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText(/更新单元「练习四」/)).toBeInTheDocument();
+    expect(screen.getByText("2 题缺省题号，可能错位")).toBeInTheDocument();
+  });
+
   it("编辑器内容变化后 400ms debounce 重新调 preview", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     renderImportPage();
