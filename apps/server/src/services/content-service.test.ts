@@ -241,7 +241,12 @@ describe("updateQuestion：讲练嵌入题回写讲义正文（讲练文档 SSOT
     // LECTURE_BLOCKS_MISMATCH 守卫拦截，直写库模拟守卫上线前的存量数据异常）
     db.update(lectures)
       .set({ markdown: "# 第1讲 有理数\n\n题块被手工删掉的正文。\n" })
-      .where(and(eq(lectures.teacherId, TEST_TEACHER_ID), eq(lectures.id, lectureId)))
+      .where(
+        and(
+          eq(lectures.teacherId, TEST_TEACHER_ID),
+          eq(lectures.id, lectureId),
+        ),
+      )
       .run();
     const before = db
       .select()
@@ -327,11 +332,8 @@ describe("updateLecture / updateQuestion：讲练页双向防漂移守卫（审�
       before.markdown,
     );
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.id, "随堂讲练-1"))
-        .get()?.deletedAt,
+      db.select().from(questions).where(eq(questions.id, "随堂讲练-1")).get()
+        ?.deletedAt,
     ).toBeNull();
   });
 
@@ -361,9 +363,9 @@ describe("updateLecture / updateQuestion：讲练页双向防漂移守卫（审�
       markdown: edited,
     });
     expect(data.title).toBe("第1讲 有理数");
-    expect(
-      getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown,
-    ).toContain("改过的引入段。");
+    expect(getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown).toContain(
+      "改过的引入段。",
+    );
   });
 
   it("整页编辑改了题块文本后，题库单题编辑 → 422 LESSON_BLOCK_DIVERGED，题目不更新", () => {
@@ -398,9 +400,9 @@ describe("updateLecture / updateQuestion：讲练页双向防漂移守卫（审�
       .get();
     expect(after?.version).toBe(before?.version);
     expect(after?.sourceMd).toBe(before?.sourceMd);
-    expect(
-      getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown,
-    ).toContain("整页编辑改过的题干");
+    expect(getLectureDetail(db, TEST_TEACHER_ID, lectureId).markdown).toContain(
+      "整页编辑改过的题干",
+    );
   });
 
   it("整页编辑换行风格（CRLF 保存）不构成漂移：题库编辑照常回写", () => {

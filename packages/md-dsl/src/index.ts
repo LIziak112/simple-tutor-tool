@@ -31,7 +31,10 @@ export {
 // 讲练页正文题块定位替换（讲练文档 SSOT P1a）：题库单题编辑回写讲义正文的
 // 唯一实现——只认显式 id、恰一命中才替换，缺块/重复拒绝（replaced:false）。
 export type { ReplacedLessonBlock } from "./v2/lesson-block.ts";
-export { replaceLessonQuestionBlock, lessonQuestionBlockOf } from "./v2/lesson-block.ts";
+export {
+  lessonQuestionBlockOf,
+  replaceLessonQuestionBlock,
+} from "./v2/lesson-block.ts";
 // ::ref 属性串解析（行内式 ::ref 的属性抽取单源，materials.ts 单一出处）：
 // 服务端导入层（P2-2 题内块式 ::ref{question=} 告警）复用，不另写一份。
 // 槽位编号正文（QM-16 单源）：{{slot-id}} → **（N）——学生端材料面板、

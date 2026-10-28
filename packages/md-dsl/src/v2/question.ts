@@ -91,7 +91,11 @@ function matchQuestionFence(sourceMd: string): QuestionFenceMatch | null {
   ).replace(/\r$/, "");
   const match = QUESTION_FENCE_RE.exec(firstLine);
   if (match === null) return null;
-  return { prefix: match[1] ?? "", attrs: match[2] ?? null, trailing: match[3] ?? "" };
+  return {
+    prefix: match[1] ?? "",
+    attrs: match[2] ?? null,
+    trailing: match[3] ?? "",
+  };
 }
 
 /**
@@ -100,7 +104,9 @@ function matchQuestionFence(sourceMd: string): QuestionFenceMatch | null {
  * 左花括号，解析时归一到 attributes.id——注入与判定必须同认，漏认会重复注入）。
  */
 function fenceAttrsHaveExplicitId(attrs: string | null): boolean {
-  return attrs !== null && (FENCE_ATTR_ID_RE.test(attrs) || attrs.startsWith("{#"));
+  return (
+    attrs !== null && (FENCE_ATTR_ID_RE.test(attrs) || attrs.startsWith("{#"))
+  );
 }
 
 /**

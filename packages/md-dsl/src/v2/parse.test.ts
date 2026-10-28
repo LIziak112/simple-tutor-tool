@@ -658,9 +658,10 @@ unit: 讲练单元
     expect(result.units[0]?.questions.map((q) => q.id)).toEqual(["p1", "p2"]);
     expect(result.units[0]?.questions[0]?.sourceMd).toContain('id="p1"');
     // 显式 id 与 {#id} 简写的 idExplicit 恒 true（导出件重导不计缺省题号风险）
-    expect(
-      result.units[0]?.questions.map((q) => q.idExplicit),
-    ).toEqual([true, true]);
+    expect(result.units[0]?.questions.map((q) => q.idExplicit)).toEqual([
+      true,
+      true,
+    ]);
   });
 
   it("零题：记 LESSON_WITHOUT_QUESTION（warning 不阻断），讲义照常产出、无单元", () => {

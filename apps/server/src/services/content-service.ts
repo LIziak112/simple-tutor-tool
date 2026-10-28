@@ -32,9 +32,9 @@ import {
 } from "@tutor/contract";
 import {
   LECTURE_PREFIX_LINES,
-  lessonQuestionBlockOf,
   type LintOptions,
   type LintResult,
+  lessonQuestionBlockOf,
   lintDocument,
   replaceLessonQuestionBlock,
   SINGLE_QUESTION_PREFIX_LINES,
