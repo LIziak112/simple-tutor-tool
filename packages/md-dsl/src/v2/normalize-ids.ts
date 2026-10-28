@@ -57,9 +57,10 @@ export interface NormalizedQmIds {
 
 /**
  * 围栏开栏行（::+名字 + 可选属性行；结束围栏不含名字段，不匹配）。
- * 与 question.ts QUESTION_FENCE_LINE_RE 非同一正则，不合并——通用版匹配任意
- * 名字围栏且属组必须闭合 }，题容器版限定恰四冒号 + question 名且属组允许
- * 未闭合，两处职责不同。id 判定正则两处共用 shared.ts 的 FENCE_ATTR_ID_RE。
+ * 与 question 围栏专用正则（shared.ts QUESTION_FENCE_RE，question.ts 与
+ * lecture.ts 共用）非同一正则，不合并——通用版匹配任意名字围栏且属组必须
+ * 闭合 }，题容器版另认 [标签] 与 question 名，两处职责不同。id 判定正则
+ * 两处共用 shared.ts 的 FENCE_ATTR_ID_RE。
  */
 const FENCE_LINE_RE = /^(\s*:::+[a-zA-Z][a-zA-Z0-9-]*)(\{.*\})?$/;
 

@@ -52,6 +52,54 @@ describe("withQuestionId / hasExplicitQuestionId", () => {
   });
 });
 
+describe("withQuestionId / hasExplicitQuestionId：围栏口径对齐解析器（审查修复 1）", () => {
+  it("{#id} 简写视为显式 id：原样返回、判定为 true", () => {
+    // remark-directive 把 {#q1} 归一到 attributes.id——注入与判定必须同认
+    const shorthand = "::::question{#q1}\n题\n::::";
+    expect(withQuestionId(shorthand, "q-9")).toBe(shorthand);
+    expect(hasExplicitQuestionId("::::question{#q1}")).toBe(true);
+    expect(hasExplicitQuestionId("::::question[标签]{id=q1}")).toBe(true);
+  });
+
+  it("[标签] 形态：无花括号把 {id=…} 注入标签后；有花括号在属性串尾部追加", () => {
+    expect(withQuestionId("::::question[标签]\n题\n::::", "q-9")).toBe(
+      '::::question[标签]{id="q-9"}\n题\n::::',
+    );
+    expect(
+      withQuestionId("::::question[标签]{type=judge}\n题\n::::", "q-9"),
+    ).toBe('::::question[标签]{type=judge id="q-9"}\n题\n::::');
+    expect(hasExplicitQuestionId("::::question[标签]")).toBe(false);
+  });
+
+  it("三/五冒号围栏与解析器同口径识别，冒号前缀原样保留", () => {
+    expect(withQuestionId(":::question\n题\n:::", "q-9")).toBe(
+      ':::question{id="q-9"}\n题\n:::',
+    );
+    expect(
+      withQuestionId(":::::question{type=judge}\n题\n:::::", "q-9"),
+    ).toContain(':::::question{type=judge id="q-9"}');
+    expect(hasExplicitQuestionId(":::::question")).toBe(false);
+  });
+
+  it("CRLF 首行：剥离尾随 \\r 后判定，注入不再被行尾吞掉", () => {
+    expect(withQuestionId("::::question\r\n题干\r\n::::", "q-9")).toBe(
+      '::::question{id="q-9"}\n题干\r\n::::',
+    );
+    expect(
+      hasExplicitQuestionId('::::question{id="q-1"}\r\n题干\r\n::::'),
+    ).toBe(true);
+    expect(
+      hasExplicitQuestionId("::::question{type=judge}\r\n题干\r\n::::"),
+    ).toBe(false);
+  });
+
+  it("行首缩进围栏（解析器容忍 ≤3 空格）同口径识别，缩进保留", () => {
+    expect(withQuestionId("  ::::question\n题\n::::", "q-9")).toBe(
+      '  ::::question{id="q-9"}\n题\n::::',
+    );
+  });
+});
+
 describe("replaceLessonQuestionBlock", () => {
   const NEW_BLOCK =
     "::::question{type=fill difficulty=2}\n新题干 [[7]]\n:::\n::::";
