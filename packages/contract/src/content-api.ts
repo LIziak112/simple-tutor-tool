@@ -163,6 +163,16 @@ export const importPreviewWarningSchema = z.object({
      * 练习将暂不关联讲义（内容模型与导入规范化方案 §4，warning 级不阻断导入）
      */
     "LECTURE_LINK_UNRESOLVED",
+    /**
+     * 讲练页（kind=lesson）重导命中同名讲义：本次导入接管该页嵌入单元，未挂载的
+     * 旧随堂练习单元将软删进回收站（题行与作答历史保留）
+     */
+    "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+    /**
+     * 讲练页挂载的随堂练习单元中，不在本次文件里的 live 题将软删进回收站——嵌入
+     * 单元的题恒经讲义 md 题槽存在，独立单元的 kept 保留语义不适用
+     */
+    "LESSON_EMBEDDED_QUESTIONS_SUPERSEDED",
   ]),
   message: z.string().min(1),
 });
