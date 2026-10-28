@@ -1620,31 +1620,30 @@ export function updateQuestion(
   // 既落 questions.sourceMd 也回写讲义正文题块——两者字节一致是讲练文档 SSOT
   // 的核心不变量（题库与讲义正文不再各自漂移，重导不再冲掉单题修正）。
   const storedSourceMd = withQuestionId(next.sourceMd, id);
-  // 嵌入归属（与 lesson-embedded.ts 谓词同一出处：units.lectureId 指向
-  // kind='lesson' 讲义即嵌入；判定不看讲义软删——软删恢复后仍是嵌入题）
-  const embedded = lessonEmbeddedUnitIds(db, teacherId).has(row.unitId);
   // 嵌入题正文定位失败的统一拒绝文案（缺块或异常形态，按「异常形态不改动」纪律）
   const blockMissingMessage =
     "讲练页正文中未找到该题的题块（数据异常）：请重新导入整页讲练文档修正";
   let lessonSynced = false;
   db.transaction((tx) => {
+    // 嵌入归属与讲义正文同源一次单行查询（simplify 收敛，替代原事务外
+    // lessonEmbeddedUnitIds 域级全量扫描 + 事务内二次 join 的两趟查询）：
+    // units⋈lectures 行存在且 kind='lesson' 即嵌入——与 lesson-embedded.ts
+    // 谓词同一出处（units.lectureId 指向 kind='lesson' 讲义即嵌入；不筛
+    // deletedAt，软删讲义恢复后仍是嵌入题）；join 行缺失（lectureId 为空或
+    // 指向普通讲义）＝ 非嵌入，题库行照常更新、不触碰讲义行。
+    const lectureRow = tx
+      .select({
+        id: lectures.id,
+        markdown: lectures.markdown,
+        kind: lectures.kind,
+      })
+      .from(units)
+      .innerJoin(lectures, eq(units.lectureId, lectures.id))
+      .where(and(eq(units.teacherId, teacherId), eq(units.id, row.unitId)))
+      .get();
     // 嵌入题：题库行与讲义正文题块同一事务替换——正文未找到该题块（存储正文
     // 被手工改动等数据异常）时整体拒绝并回滚，题目行不落半截更新
-    if (embedded) {
-      const lectureRow = tx
-        .select({ id: lectures.id, markdown: lectures.markdown })
-        .from(units)
-        .innerJoin(lectures, eq(units.lectureId, lectures.id))
-        .where(and(eq(units.teacherId, teacherId), eq(units.id, row.unitId)))
-        .get();
-      if (lectureRow === undefined) {
-        // 不可达防御（嵌入判定已成立而 join 行缺失，如并发删行）：按缺块同码拒绝
-        throw new HttpError(
-          422,
-          "LESSON_QUESTION_BLOCK_MISSING",
-          blockMissingMessage,
-        );
-      }
+    if (lectureRow?.kind === "lesson") {
       const { markdown, replaced } = replaceLessonQuestionBlock(
         lectureRow.markdown,
         id,

@@ -200,11 +200,12 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
 
   // ---- 显式替换目标（P2a）：快照域内解析 + 三项前置校验（与 commit 事务外同口径）----
   let replaceTarget: SnapshotLecture | undefined;
-  const replaceLectureId = input.replaceLectureId ?? null;
-  if (replaceLectureId !== null) {
-    const found = snapshot.lectures.find((row) => row.id === replaceLectureId);
+  if (input.replaceLectureId !== undefined) {
+    const found = snapshot.lectures.find(
+      (row) => row.id === input.replaceLectureId,
+    );
     replaceTarget = assertReplaceLectureAllowed(
-      replaceLectureId,
+      input.replaceLectureId,
       // 目标所在文件夹的同域讲义行（含软删；目标不在域内时无从谈文件夹，传空
       // 由校验统一走 404，错误面与存在时一致）
       found === undefined

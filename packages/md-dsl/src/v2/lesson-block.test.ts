@@ -115,4 +115,13 @@ describe("replaceLessonQuestionBlock", () => {
       replaced: false,
     });
   });
+  it("孤立 \\r（无配对 \\n）→ replaced:false 且原文逐字不变", () => {
+    // 解析器把孤立 \r 也计作换行（行号比 split 多计一行），同样落错行——拒绝
+    const loneCr =
+      '# 第 1 讲 有理数\r引入段。\n\n::::question{id="q-1"}\n计算 [[3]]。\n::::\n\n收尾段。';
+    expect(replaceLessonQuestionBlock(loneCr, "q-1", NEW_BLOCK)).toEqual({
+      markdown: loneCr,
+      replaced: false,
+    });
+  });
 });

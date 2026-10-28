@@ -12,9 +12,11 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   ActionsPanel,
@@ -354,54 +356,51 @@ export function SingleImportPreview({
         ) : null}
       </div>
 
-      {/* 替换确认弹层（P2a：与就地新建文件夹同款形态；明示替换后果） */}
-      {replaceConfirmOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
+      {/* 替换确认弹层（P2a：迁 Dialog 基座，Esc 关闭与焦点管理由 Radix 提供；
+          关闭（含 × 与 Esc）＝ 取消不提交；文案与按钮语义与原手写弹层逐字一致） */}
+      <Dialog open={replaceConfirmOpen} onOpenChange={setReplaceConfirmOpen}>
+        <DialogContent
           aria-labelledby="replace-confirm-heading"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="max-w-md gap-0 p-4"
         >
-          <div className="flex w-full max-w-md flex-col rounded-xl border border-border bg-card p-4 shadow-lg">
-            <h3
-              id="replace-confirm-heading"
-              className="flex items-center gap-2 text-sm font-semibold"
+          <h3
+            id="replace-confirm-heading"
+            className="flex items-center gap-2 text-sm font-semibold"
+          >
+            <ArrowLeftRight
+              aria-hidden
+              className="size-4 text-muted-foreground"
+            />
+            确认替换讲练页
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed">
+            将替换所选讲练页：旧随堂练习进回收站、已交卷与进行中作答不受影响、课程目录引用保留。
+          </p>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+            替换后该页标题与正文以本文档为准（对应上方「更新讲练页」动作）。
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 px-4"
+              onClick={() => setReplaceConfirmOpen(false)}
             >
-              <ArrowLeftRight
-                aria-hidden
-                className="size-4 text-muted-foreground"
-              />
-              确认替换讲练页
-            </h3>
-            <p className="mt-2 text-sm leading-relaxed">
-              将替换所选讲练页：旧随堂练习进回收站、已交卷与进行中作答不受影响、课程目录引用保留。
-            </p>
-            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-              替换后该页标题与正文以本文档为准（对应上方「更新讲练页」动作）。
-            </p>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 px-4"
-                onClick={() => setReplaceConfirmOpen(false)}
-              >
-                取消
-              </Button>
-              <Button
-                type="button"
-                className="min-h-11 px-4"
-                onClick={() => {
-                  setReplaceConfirmOpen(false);
-                  commitMutation.mutate(buildCommitRequest());
-                }}
-              >
-                确认替换
-              </Button>
-            </div>
+              取消
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11 px-4"
+              onClick={() => {
+                setReplaceConfirmOpen(false);
+                commitMutation.mutate(buildCommitRequest());
+              }}
+            >
+              确认替换
+            </Button>
           </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -603,26 +602,19 @@ function ReplaceLectureSelector({
     ? lecturesQuery.error
     : foldersQuery.error;
 
-  // 三态齐全（加载 / 错误可重试 / 空态），不许白屏或缺出口
+  // 三态齐全（加载 / 错误可重试 / 空态），不许白屏或缺出口；四个分支只产出
+  // 内容节点，section 壳在返回处统一渲染一次（simplify 归一，文案与行为不变）
+  let content: ReactNode;
   if (lecturesQuery.isPending || foldersQuery.isPending) {
-    return (
-      <section
-        aria-label="替换既有讲练页"
-        className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
-      >
-        <span className="flex items-center gap-2">
-          <Loader2 aria-hidden className="size-4 animate-spin" />
-          正在加载讲练页列表…
-        </span>
-      </section>
+    content = (
+      <span className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 aria-hidden className="size-4 animate-spin" />
+        正在加载讲练页列表…
+      </span>
     );
-  }
-  if (lecturesQuery.isError || foldersQuery.isError) {
-    return (
-      <section
-        aria-label="替换既有讲练页"
-        className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm"
-      >
+  } else if (lecturesQuery.isError || foldersQuery.isError) {
+    content = (
+      <>
         <p role="alert" className="text-destructive">
           讲练页列表加载失败：
           {loadError instanceof Error ? loadError.message : "请稍后重试"}
@@ -639,57 +631,59 @@ function ReplaceLectureSelector({
           <RefreshCw aria-hidden />
           重试
         </Button>
-      </section>
+      </>
     );
-  }
-  if (lessons.length === 0) {
-    return (
-      <section
-        aria-label="替换既有讲练页"
-        className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
-      >
+  } else if (lessons.length === 0) {
+    content = (
+      <p className="text-muted-foreground">
         库中还没有讲练页，本次将新建讲练页。
-      </section>
+      </p>
+    );
+  } else {
+    content = (
+      <>
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <ArrowLeftRight
+            aria-hidden
+            className="size-4 shrink-0 text-primary"
+          />
+          替换既有讲练页
+        </h2>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          本文档将新建讲练页。若它是某页讲练页改名或调整后的重导，可指认要替换的
+          既有讲练页：预览将变为「更新讲练页」并提示接管影响，提交时绑定该页更新
+          （标题与正文以本文档为准）。
+        </p>
+        <label
+          htmlFor="replace-lecture-select"
+          className="mt-2 block text-sm font-medium"
+        >
+          替换目标
+        </label>
+        <select
+          id="replace-lecture-select"
+          value={selectedId ?? ""}
+          onChange={(e) =>
+            onSelect(e.target.value === "" ? null : e.target.value)
+          }
+          className="min-h-11 w-full max-w-md rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <option value="">不替换（新建讲练页）</option>
+          {lessons.map((row) => (
+            <option key={row.id} value={row.id}>
+              {`${row.title} · ${row.folderId === null ? "未归类" : (folderNameById.get(row.folderId) ?? "未归类")} · ${formatRelativeTime(row.updatedAt)}`}
+            </option>
+          ))}
+        </select>
+      </>
     );
   }
   return (
     <section
-      aria-labelledby="replace-lecture-heading"
-      className="mt-3 rounded-xl border border-border bg-card p-4"
+      aria-label="替换既有讲练页"
+      className="mt-3 rounded-xl border border-border bg-card p-4 text-sm"
     >
-      <h2
-        id="replace-lecture-heading"
-        className="flex items-center gap-2 text-sm font-semibold"
-      >
-        <ArrowLeftRight aria-hidden className="size-4 shrink-0 text-primary" />
-        替换既有讲练页
-      </h2>
-      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        本文档将新建讲练页。若它是某页讲练页改名或调整后的重导，可指认要替换的
-        既有讲练页：预览将变为「更新讲练页」并提示接管影响，提交时绑定该页更新
-        （标题与正文以本文档为准）。
-      </p>
-      <label
-        htmlFor="replace-lecture-select"
-        className="mt-2 block text-sm font-medium"
-      >
-        替换目标
-      </label>
-      <select
-        id="replace-lecture-select"
-        value={selectedId ?? ""}
-        onChange={(e) =>
-          onSelect(e.target.value === "" ? null : e.target.value)
-        }
-        className="min-h-11 w-full max-w-md rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        <option value="">不替换（新建讲练页）</option>
-        {lessons.map((row) => (
-          <option key={row.id} value={row.id}>
-            {`${row.title} · ${row.folderId === null ? "未归类" : (folderNameById.get(row.folderId) ?? "未归类")} · ${formatRelativeTime(row.updatedAt)}`}
-          </option>
-        ))}
-      </select>
+      {content}
     </section>
   );
 }

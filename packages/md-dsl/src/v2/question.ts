@@ -17,6 +17,7 @@ import { materialRefOf, parseRefAttrs } from "./materials.ts";
 import type { QmRefSite } from "./references.ts";
 import {
   canonicalName,
+  FENCE_ATTR_ID_RE,
   isContainer,
   isText,
   lineRange,
@@ -65,11 +66,24 @@ export function defaultQuestionIdOf(unitId: string, ordinal: number): string {
 // ---------- 围栏 id 注入与判定（自 library-service 私有 ensureQuestionId 上移收敛，
 // 2026-10 讲练文档 SSOT；导出回写、题库回写讲义与导入预览错位预警共用） ----------
 
-/** question 容器开围栏行：`::::question` 或 `::::question{属性}`（解析器提取口径） */
+/** question 容器开围栏行：`::::question` 或 `::::question{属性}`（解析器提取口径；
+ *  与 normalize-ids.ts FENCE_LINE_RE 非同一正则，不合并——本题专用版限定恰四冒号
+ *  + question 名且属组允许未闭合（未闭合交由后续分支拒绝），通用版匹配任意名字
+ *  围栏且属组必须闭合 }，两处职责不同） */
 const QUESTION_FENCE_LINE_RE = /^(:{4}question)(\{.*)?$/;
-/** 开围栏属性串中已声明 id=（含 id 排首位紧跟左花括号的形态——tt-07b P2-4 修复：
- *  漏掉 { 形态会重复注入；与 normalize-ids.ts FENCE_ATTR_ID_RE 同口径） */
-const QUESTION_FENCE_ID_RE = /(^|[\s{])id\s*=/;
+
+/**
+ * 题目 sourceMd 首行（容器开栏行）的属性串（含花括号；无属性为 ""）；
+ * 首行不是 question 开围栏时 null。withQuestionId / hasExplicitQuestionId
+ * 共用同一「提首行 + 围栏正则」口径，注入与判定的形态基线不漂移。
+ */
+function questionFenceAttrs(sourceMd: string): string | null {
+  const newlineIndex = sourceMd.indexOf("\n");
+  const firstLine =
+    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
+  const match = QUESTION_FENCE_LINE_RE.exec(firstLine);
+  return match === null ? null : (match[2] ?? "");
+}
 
 /**
  * 给题目 sourceMd 的容器开始行注入显式 id 属性（无 id 时），与原 library-service
@@ -82,20 +96,18 @@ const QUESTION_FENCE_ID_RE = /(^|[\s{])id\s*=/;
  */
 export function withQuestionId(sourceMd: string, id: string): string {
   const newlineIndex = sourceMd.indexOf("\n");
-  const firstLine =
-    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
   const rest = newlineIndex === -1 ? "" : sourceMd.slice(newlineIndex);
-  const match = QUESTION_FENCE_LINE_RE.exec(firstLine);
-  if (match === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
-  const [, prefix, attrs = ""] = match;
-  if (QUESTION_FENCE_ID_RE.test(attrs)) return sourceMd;
+  const attrs = questionFenceAttrs(sourceMd);
+  if (attrs === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
+  if (FENCE_ATTR_ID_RE.test(attrs)) return sourceMd;
   // 注入进属性花括号内：{type=judge …} → {type=judge … id="…"}；
   // 无属性则补 {id="…"}（JSON 字符串转义，id 含引号/反斜杠也安全）。
+  // 开栏行前缀恒为 ::::question（QUESTION_FENCE_LINE_RE 第一捕获组的字面量）
   let injected: string;
   if (attrs.length === 0) {
-    injected = `${prefix}{id=${JSON.stringify(id)}}`;
+    injected = `::::question{id=${JSON.stringify(id)}}`;
   } else if (attrs.endsWith("}")) {
-    injected = `${prefix}${attrs.slice(0, -1)} id=${JSON.stringify(id)}}`;
+    injected = `::::question${attrs.slice(0, -1)} id=${JSON.stringify(id)}}`;
   } else {
     return sourceMd;
   }
@@ -103,17 +115,14 @@ export function withQuestionId(sourceMd: string, id: string): string {
 }
 
 /**
- * 题目 sourceMd 首行围栏是否已带显式 id= 属性（正则与 withQuestionId 同源）。
+ * 题目 sourceMd 首行围栏是否已带显式 id= 属性（正则与 withQuestionId 同源，
+ * 经 shared.ts FENCE_ATTR_ID_RE 单一出处）。
  * 导入预览用它区分「缺省派生 id 且命中更新」的题——文档内插题/删题会使这类题
  * 错位更新到别的题（P2b 标红预警的判定面）。
  */
 export function hasExplicitQuestionId(sourceMd: string): boolean {
-  const newlineIndex = sourceMd.indexOf("\n");
-  const firstLine =
-    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
-  const match = QUESTION_FENCE_LINE_RE.exec(firstLine);
-  if (match === null) return false;
-  return QUESTION_FENCE_ID_RE.test(match[2] ?? "");
+  const attrs = questionFenceAttrs(sourceMd);
+  return attrs !== null && FENCE_ATTR_ID_RE.test(attrs);
 }
 
 /** 从文档顶层子级中解析全部 question 容器（按出现顺序），供三条 kind 路径共用 */

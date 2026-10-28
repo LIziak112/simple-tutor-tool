@@ -39,15 +39,16 @@ export function replaceLessonQuestionBlock(
 
   const [start, end] = lineRange(hit);
   // 行尾齐一性：解析器把 \r\n / \n / 孤立 \r 一律计作换行，而下面 split 只按单一
-  // eol 切行——两种行尾并存时 split 行号与 AST position 行号错位，按纪律整体拒绝
-  const lfCount = [...markdown.matchAll(/\n/g)].length;
-  const crlfCount = [...markdown.matchAll(/\r\n/g)].length;
-  const loneCrCount = [...markdown.matchAll(/\r/g)].length - crlfCount;
-  const loneLfCount = lfCount - crlfCount;
-  if (loneCrCount > 0 || (crlfCount > 0 && loneLfCount > 0)) {
+  // eol 切行——两种行尾并存时 split 行号与 AST position 行号错位，按纪律整体拒绝。
+  // 短路判定与原 matchAll 计数逐项等价（Vite 基线目标 Safari 16.4+ 支持后行断言）：
+  // 孤立 \r = 存在不后随 \n 的 \r；孤立 \n = 存在前非 \r 的 \n
+  const hasCrlf = /\r\n/.test(markdown);
+  const hasLoneCr = /\r(?!\n)/.test(markdown);
+  const hasLoneLf = /(?<!\r)\n/.test(markdown);
+  if (hasLoneCr || (hasCrlf && hasLoneLf)) {
     return { markdown, replaced: false };
   }
-  const eol = crlfCount > 0 ? "\r\n" : "\n";
+  const eol = hasCrlf ? "\r\n" : "\n";
   const lines = markdown.split(eol);
   // 新题块可能来自不同行尾的编辑器输入，统一按全文 eol 拼回
   const replacement = withQuestionId(newSourceMd, questionId).split(/\r?\n/);

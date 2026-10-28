@@ -1378,15 +1378,6 @@ function yamlString(value: string): string {
 }
 
 /**
- * 给题目 sourceMd 的容器开始行注入显式 id 属性（无 id 时）——实现已上移收敛到
- * md-dsl 的 withQuestionId（2026-10 讲练文档 SSOT，单一出处：导出回写、题库
- * 回写讲义与导入预览预警共用），本地别名保持既有调用点命名不变。
- * 注入动机（缺省 id 按位置推导，删题后导出会整体前移、重导错位更新）与
- * 「异常形态不改动交给 lint」的语义详见 md-dsl v2/question.ts。
- */
-const ensureQuestionId = withQuestionId;
-
-/**
  * 教学包声明 → frontmatter YAML 行（T7.8）：确定性格式——固定键序 + JSON 字符串值
  * （合法 YAML flow 映射，frontmatter 解析可原样读回；server 不依赖 yaml 包，硬性规则 5）。
  * 列 NULL/坏 JSON/不合契约（写侧恒过契约，此处兜底异常存量）一律视为未声明，不导出。
@@ -1458,7 +1449,7 @@ function practiceYamlLineOf(column: string | null): string | null {
  * teachingPack（列内有声明时回写，T7.8）、practice（列内有推荐时回写，M5-D1，
  * 无推荐不写行））
  * + 未删除各实体 sourceMd 按导入规范序拼接（材料 → 组 → 各题；tt-06b / QM-05
- * 起材料/组一并导出，空行分隔；缺省 id 的题注入显式 id，见 ensureQuestionId）。
+ * 起材料/组一并导出，空行分隔；缺省 id 的题经 md-dsl withQuestionId 注入显式 id）。
  * 已删材料/组/题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则复活已删
  * 实体；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
  * error/warning，往返测试覆盖）。单元不存在 → 404。
@@ -1537,7 +1528,7 @@ export function exportUnitMd(
     )
     .orderBy(asc(questions.order), asc(questions.id))
     .all()
-    .map((row) => ensureQuestionId(row.sourceMd, row.id));
+    .map((row) => withQuestionId(row.sourceMd, row.id));
   // tt-06b / QM-05：材料/组源文按导入规范序（材料 → 组 → 题目，各自 order）
   // 一并导出——「导出重导覆盖材料正文」；无 QM 实体的单元导出字节级不变。
   // 已删材料/组不导出（与已删题同款防复活口径）
