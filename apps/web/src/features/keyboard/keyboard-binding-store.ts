@@ -92,6 +92,15 @@ export function useKeyboardBindings(): ResolvedKeyBindings {
   );
 }
 
+/** 覆盖表原样订阅式读（设置页草稿基底与 dirty/baseChanged 比较用） */
+export function useKeyboardBindingState(): KeyboardBindingState {
+  return useSyncExternalStore(
+    subscribeKeyboardBindings,
+    store.get,
+    store.get,
+  );
+}
+
 /**
  * 保存覆盖表（整组替换）：写入成功才发布；expectedAccountId 供设置草稿防
  * 迟到保存串号。冲突检测不在此处（UI 职责），但 schema 仍兜底拒绝非法键位。
