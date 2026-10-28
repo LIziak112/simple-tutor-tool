@@ -180,11 +180,10 @@ async function openAssignmentAttempt(
     .getByRole("link", { name: /^(开始练习|继续作答)$/ })
     .click({ timeout: 15_000 });
   await page.waitForURL("**/s/assignments/**");
+  // 题卡按视口懒挂载后，视口外题目只有占位没有 article——就绪信号改为
+  // 首题（恒在视口内、必已挂载）的 article 可见。
   await expect(
-    page.getByRole("article", {
-      name: `第 ${world.questionCount} 题`,
-      exact: true,
-    }),
+    page.getByRole("article", { name: "第 1 题", exact: true }),
   ).toBeVisible();
   return page;
 }
@@ -437,7 +436,18 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       const aiPanel = page.getByRole("region", { name: "第 1 题的 AI 助教" });
       await expect(aiPanel).toBeVisible();
       // 题 4（fill）打开草稿纸面：AI 面板与纸面并存不塌
-      const q4 = page.getByRole("article", { name: "第 4 题", exact: true });
+      // 题 4 可能在视口外（懒挂载只有占位）：article 与占位任一定位后滚动
+      // 触发挂载，再等 article 出现（已挂载时滚动为 no-op）。
+      const q4Article = page.getByRole("article", { name: "第 4 题", exact: true });
+      const q4Placeholder = page
+        .locator('[data-slot="question-placeholder"]')
+        .filter({ hasText: "第 4 题，滚动到此处后显示" });
+      await q4Article
+        .or(q4Placeholder)
+        .first()
+        .scrollIntoViewIfNeeded();
+      await expect(q4Article).toBeVisible();
+      const q4 = q4Article;
       await q4
         .getByRole("button", { name: "第 4 题草稿纸", exact: true })
         .click();
