@@ -57,7 +57,7 @@ import { assembleQmBlocks } from "./qm-edit-service.ts";
  * - 使用情况（D3 删除确认弹层数据源）：被哪些课程引用（条目级可见性）、
  *   被哪些未删除作业使用、关联作答数；
  * - 导出（T2A.2）：单元 = frontmatter + 未软删各题 sourceMd 按序拼接（已删题不导出，
- *   防止「导出→再导入」经 D18 同 id 恢复规则复活）；讲义 = kind: lecture 头 + markdown 原文。
+ *   防止「导出→再导入」经 D18 同 id 恢复规则复活）；讲义 = kind/title 头 + markdown 原文。
  */
 
 /** 文件夹数据（含资源计数；HTTP 契约 libraryFolderSchema 同形） */
@@ -1583,10 +1583,13 @@ export function exportUnitMd(
 
 /**
  * 导出讲义（GET /api/teacher/lectures/:id/export.md）：域内取讲义（D12，越权 404）：
- * `---\nkind: <kind>\n---\n\n` + markdown 原文（可原样重新导入；文件名 = 讲义标题）；
- * kind 按存储列写（讲练一体 2026-10：lesson 讲练讲义导出 kind: lesson + 含注入
- * id 的题块原文，再导入 id 稳定）；列内有教学包声明时 frontmatter 回写声明行
- * （T7.8）。讲义不存在 → 404。
+ * `---\nkind: <kind>\ntitle: <yamlString(title)>\n---\n\n` + markdown 原文（可原样
+ * 重新导入；文件名 = 讲义标题）；kind 按存储列写（讲练一体 2026-10：lesson 讲练讲义
+ * 导出 kind: lesson + 含注入 id 的题块原文，再导入 id 稳定）；列内有教学包声明时
+ * frontmatter 回写声明行（T7.8），行序固定 kind → title → teachingPack。title 行
+ * 钉住讲义身份（2026-10 讲练文档 SSOT P1b）：frontmatter title 是既有讲义身份键
+ * （单讲义文件覆盖 H1 命名；导出恒单讲义，不受多讲义 title 忽略告警影响），教师
+ * 「导出→本地改 H1→重导」按 title 命中同一讲义行，不再新建断链。讲义不存在 → 404。
  */
 export function exportLectureMd(
   db: Db,
@@ -1607,10 +1610,11 @@ export function exportLectureMd(
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
   const packLine = teachingPackYamlLineOf(row.teachingPackJson);
+  const titleLine = `title: ${yamlString(row.title)}`;
   const frontmatter =
     packLine === null
-      ? `---\nkind: ${row.kind}\n---\n`
-      : `---\nkind: ${row.kind}\n${packLine}\n---\n`;
+      ? `---\nkind: ${row.kind}\n${titleLine}\n---\n`
+      : `---\nkind: ${row.kind}\n${titleLine}\n${packLine}\n---\n`;
   const markdown = `${frontmatter}\n${row.markdown}`;
   return { markdown, filename: `${safeFilename(row.title)}.md` };
 }
