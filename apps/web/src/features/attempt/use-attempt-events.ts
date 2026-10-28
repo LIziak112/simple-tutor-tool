@@ -1,5 +1,14 @@
 import type { StudentAnswer } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  type AttemptEditor,
+  useAttemptEditor,
+} from "@/features/attempt/AttemptEditorContext";
+import {
+  parseNoteKey,
+  peekNoteRecord,
+  subscribeNoteStore,
+} from "@/features/notes/note-store";
 import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
 
 /**
@@ -23,6 +32,12 @@ import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
  *     与笔迹上传同一 2 秒防抖窗口批量出队（§4.3.3）；load 不在此列（引擎间
  *     笔迹移交不是编辑，§5.0-C14）；交卷/卸载前把未到期的批次冲出；
  *   - trackInkFullscreen：全屏进出报 ink_fullscreen{on}；
+ *   - editor_toggle（2026-10-28 使用数据补缺，hall-15077）：订阅编辑器协调器
+ *     全局态，标画/草稿/主人正式手写三类编辑器激活/退出各报一条（切换产生的
+ *     一关一开天然成对；纸面维度不重报——已有 ink_fullscreen 信号）；
+ *   - note_sync（2026-10-28 使用数据补缺，hall-15077）：订阅草稿 store，本
+ *     attempt 的 baseRevision 前进（一次成功同步）报一条，把草稿链对齐到
+ *     事件时间轴；首次观察到某键只记基线——打开旧页 head 回读不算同步；
  * - page_hidden / page_visible：事件队列内部自动注入（attempt scope）；
  * - submit：finalizeSubmit 在 POST submit 前补 blur + submit 事件并 flush，
  *   确保服务端交卷计算时事件序列已入库（flush 失败不阻塞交卷，宽松口径兜底）。
@@ -215,6 +230,73 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
       observerRef.current = null;
     };
   }, [focusTo, track]);
+
+  // 编辑器开合埋点（2026-10-28 使用数据补缺，hall-15077）：订阅编辑器协调器
+  // 全局态（questionId 传 undefined 取全局），标画/草稿/正式手写三类编辑器
+  // 激活/退出各报一条 editor_toggle；卸载时未落 off 事件（正常退出都走
+  // request(null) 会先落 off，硬刷新场景接受为已知极限）。
+  const activeEditor = useAttemptEditor(undefined)?.active ?? null;
+  const prevEditorRef = useRef<AttemptEditor | null>(null);
+  useEffect(() => {
+    const prev = prevEditorRef.current;
+    if (
+      prev?.kind === activeEditor?.kind &&
+      prev?.questionId === activeEditor?.questionId
+    ) {
+      return;
+    }
+    prevEditorRef.current = activeEditor;
+    const now = Date.now();
+    if (prev !== null) {
+      track({
+        type: "editor_toggle",
+        clientTs: now,
+        questionId: prev.questionId,
+        editor: prev.kind,
+        on: false,
+      });
+    }
+    if (activeEditor !== null) {
+      track({
+        type: "editor_toggle",
+        clientTs: now,
+        questionId: activeEditor.questionId,
+        editor: activeEditor.kind,
+        on: true,
+      });
+    }
+  }, [activeEditor, track]);
+
+  // 草稿同步埋点（2026-10-28 使用数据补缺，hall-15077）：订阅草稿 store，本
+  // attempt 的草稿（含订正 phase=correction）baseRevision 前进（一次成功
+  // 同步）报一条 note_sync；首次观察到某键只记基线——打开旧页 head 回读、
+  // 首次载入不算同步。卸载即停止监听（重进后从新基线继续）。
+  useEffect(() => {
+    const seen = new Map<string, number>();
+    return subscribeNoteStore((key) => {
+      const parsed = parseNoteKey(key);
+      if (parsed === null || parsed.scope.attemptId !== attemptId) return;
+      const record = peekNoteRecord(parsed.session, parsed.scope);
+      if (record === null) return;
+      const revision = record.baseRevision;
+      if (revision < 1) return;
+      const baseline = seen.get(key);
+      if (baseline === undefined) {
+        seen.set(key, revision);
+        return;
+      }
+      if (revision <= baseline) return;
+      seen.set(key, revision);
+      track({
+        type: "note_sync",
+        clientTs: Date.now(),
+        questionId: parsed.scope.questionId,
+        phase: parsed.scope.phase,
+        revision,
+        strokes: record.doc.ink?.strokes.length ?? 0,
+      });
+    });
+  }, [attemptId, track]);
 
   const noteInteraction = useCallback(
     (questionId: string) => {

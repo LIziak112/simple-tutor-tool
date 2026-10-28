@@ -1,6 +1,17 @@
 import { act, render } from "@testing-library/react";
 import type { StudentAnswer } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "@/features/attempt/AttemptEditorContext";
+import {
+  bumpNoteBaseRevisionForTest,
+  installNoteBackend,
+  memoryNoteBackend,
+  resetNoteStoreForTest,
+  writeNoteDoc,
+} from "@/features/notes/note-store";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { useAttemptEvents } from "./use-attempt-events";
 
@@ -201,5 +212,131 @@ describe("useAttemptEvents：ink_fullscreen / hint 解锁（T4.0b）", () => {
       action: "open",
     });
     unmount();
+  });
+});
+
+// ---------- 2026-10-28 使用数据补缺（hall-15077）：editor_toggle / note_sync ----------
+
+describe("useAttemptEvents：编辑器开合 / 草稿同步（2026-10-28 使用数据补缺）", () => {
+  beforeEach(() => {
+    installNoteBackend(memoryNoteBackend());
+    resetNoteStoreForTest();
+  });
+  afterEach(() => {
+    resetNoteStoreForTest();
+  });
+
+  /** 编辑器协调器 Provider 下的探针：同时拿埋点 API 与全局编辑器态
+   *  （经 holder 属性访问，避开 TS 对「仅闭包内赋值」变量的过紧收窄） */
+  function renderWithEditor(attemptId: string) {
+    const holder: {
+      api: ReturnType<typeof useAttemptEvents> | null;
+      editor: ReturnType<typeof useAttemptEditor> | null;
+    } = { api: null, editor: null };
+    function Probe() {
+      holder.api = useAttemptEvents(attemptId);
+      holder.editor = useAttemptEditor(undefined);
+      return null;
+    }
+    const { unmount } = render(
+      <AttemptEditorProvider>
+        <Probe />
+      </AttemptEditorProvider>,
+    );
+    if (holder.api === null || holder.editor === null) {
+      throw new Error("Probe 未渲染");
+    }
+    const { api, editor } = holder;
+    return { api, editor, unmount };
+  }
+
+  it("编辑器激活/退出报 editor_toggle；切换产生一关一开，成对可读", async () => {
+    const { editor, unmount } = renderWithEditor("att-1");
+    await act(async () => {
+      await editor.request({ questionId: "q1", kind: "scratch" });
+    });
+    await act(async () => {
+      await editor.request({ questionId: "q2", kind: "annotation" });
+    });
+    await act(async () => {
+      await editor.request(null);
+    });
+    unmount();
+    const toggles = (await flushedEvents()).filter(
+      (e) => e.type === "editor_toggle",
+    );
+    expect(toggles).toEqual([
+      {
+        type: "editor_toggle",
+        clientTs: expect.any(Number),
+        questionId: "q1",
+        editor: "scratch",
+        on: true,
+      },
+      {
+        type: "editor_toggle",
+        clientTs: expect.any(Number),
+        questionId: "q1",
+        editor: "scratch",
+        on: false,
+      },
+      {
+        type: "editor_toggle",
+        clientTs: expect.any(Number),
+        questionId: "q2",
+        editor: "annotation",
+        on: true,
+      },
+      {
+        type: "editor_toggle",
+        clientTs: expect.any(Number),
+        questionId: "q2",
+        editor: "annotation",
+        on: false,
+      },
+    ]);
+  });
+
+  it("note_sync：首次观察只记基线；baseRevision 前进报一条；同版本不重报", async () => {
+    const session = { origin: "http://test", studentId: "stu-1" };
+    const scope = {
+      attemptId: "att-1",
+      questionId: "q1",
+      phase: "scratch" as const,
+    };
+    const { unmount } = renderHook("att-1");
+    writeNoteDoc(session, scope, {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [0, 1].map((i) => ({
+          tool: "pen" as const,
+          color: "#000000",
+          weight: 4,
+          points: [{ x: i, y: i, p: 0.5, t: i }],
+        })),
+      },
+    });
+    bumpNoteBaseRevisionForTest(session, scope, 1); // 首次观察 ≥1：只记基线
+    bumpNoteBaseRevisionForTest(session, scope, 2); // 前进：报一条
+    bumpNoteBaseRevisionForTest(session, scope, 2); // 同版本：不重报
+    // 他题（attempt 不匹配）不报
+    bumpNoteBaseRevisionForTest(
+      session,
+      { attemptId: "att-other", questionId: "q9", phase: "scratch" },
+      5,
+    );
+    unmount();
+    const syncs = (await flushedEvents()).filter((e) => e.type === "note_sync");
+    expect(syncs).toEqual([
+      {
+        type: "note_sync",
+        clientTs: expect.any(Number),
+        questionId: "q1",
+        phase: "scratch",
+        revision: 2,
+        strokes: 2,
+      },
+    ]);
   });
 });

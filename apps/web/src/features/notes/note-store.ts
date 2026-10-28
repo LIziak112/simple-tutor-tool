@@ -1246,6 +1246,22 @@ export function resetNoteStoreForTest(): void {
 }
 
 /**
+ * 仅测试使用：直接推进某键的服务端基线并广播（note_sync 埋点用例——
+ * 模拟一次成功同步后的 baseRevision 前进；生产不调用）。
+ */
+export function bumpNoteBaseRevisionForTest(
+  session: NoteSessionRef,
+  scope: NoteScope,
+  revision: number,
+): void {
+  const key = noteKeyOf(session, scope);
+  const record = records.get(key);
+  if (record === undefined) return;
+  record.baseRevision = revision;
+  notify(key);
+}
+
+/**
  * 等待当前全部本地落盘事务完成（T6R.10 交卷第一步「等本地事务」——
  * flushNoteStore 已删，此为随用随进的等待原语）：收集此刻各键串行队列的
  * 尾部 Promise 一并 await。调用之后的新写入属新一轮（交卷确认弹层为模态
