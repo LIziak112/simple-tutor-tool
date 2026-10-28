@@ -35,8 +35,10 @@ import {
   type LintOptions,
   type LintResult,
   lintDocument,
+  replaceLessonQuestionBlock,
   SINGLE_QUESTION_PREFIX_LINES,
   shiftLintIssuesToFragment,
+  withQuestionId,
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
@@ -1386,7 +1388,10 @@ function knowledgeNamesOf(
  * - 0 题 / 多题 → 422 VALIDATION_ERROR；解析出 id ≠ 原 id → 422 ID_IMMUTABLE
  *   （id 不可变，学情统计跨版本延续，§5.1）；
  * - error 级 lint issue → 422 LINT_ERROR（_issues 行号已平移回 sourceMd 坐标）；
- * - 通过 → 结构化字段 + sourceMd 全量更新、version+1，id/unitId/order 不变。
+ * - 通过 → 结构化字段 + sourceMd 全量更新、version+1，id/unitId/order 不变；
+ * - 讲练嵌入题（单元挂 kind='lesson' 讲义）另在同一事务内把新题块回写讲义正文
+ *   （lessonSynced:true，讲练文档 SSOT P1a）；正文缺该题块 → 422
+ *   LESSON_QUESTION_BLOCK_MISSING 整体回滚；普通题 lessonSynced:false 不触讲义。
  */
 export function updateQuestion(
   db: Db,
@@ -1480,10 +1485,66 @@ export function updateQuestion(
 
   const now = new Date().toISOString();
   const version = row.version + 1;
+  // 讲练嵌入题的存储文本单一出处：withQuestionId 注入显式 id 后，同一份文本
+  // 既落 questions.sourceMd 也回写讲义正文题块——两者字节一致是讲练文档 SSOT
+  // 的核心不变量（题库与讲义正文不再各自漂移，重导不再冲掉单题修正）。
+  const storedSourceMd = withQuestionId(next.sourceMd, id);
+  // 嵌入归属（与 lesson-embedded.ts 谓词同一出处：units.lectureId 指向
+  // kind='lesson' 讲义即嵌入；判定不看讲义软删——软删恢复后仍是嵌入题）
+  const embedded = lessonEmbeddedUnitIds(db, teacherId).has(row.unitId);
+  // 嵌入题正文定位失败的统一拒绝文案（缺块或异常形态，按「异常形态不改动」纪律）
+  const blockMissingMessage =
+    "讲练页正文中未找到该题的题块（数据异常）：请重新导入整页讲练文档修正";
+  let lessonSynced = false;
   db.transaction((tx) => {
+    // 嵌入题：题库行与讲义正文题块同一事务替换——正文未找到该题块（存储正文
+    // 被手工改动等数据异常）时整体拒绝并回滚，题目行不落半截更新
+    if (embedded) {
+      const lectureRow = tx
+        .select({ id: lectures.id, markdown: lectures.markdown })
+        .from(units)
+        .innerJoin(lectures, eq(units.lectureId, lectures.id))
+        .where(and(eq(units.teacherId, teacherId), eq(units.id, row.unitId)))
+        .get();
+      if (lectureRow === undefined) {
+        // 不可达防御（嵌入判定已成立而 join 行缺失，如并发删行）：按缺块同码拒绝
+        throw new HttpError(
+          422,
+          "LESSON_QUESTION_BLOCK_MISSING",
+          blockMissingMessage,
+        );
+      }
+      const { markdown, replaced } = replaceLessonQuestionBlock(
+        lectureRow.markdown,
+        id,
+        storedSourceMd,
+      );
+      if (!replaced) {
+        throw new HttpError(
+          422,
+          "LESSON_QUESTION_BLOCK_MISSING",
+          blockMissingMessage,
+        );
+      }
+      tx.update(lectures)
+        .set({ markdown, updatedAt: now })
+        .where(
+          and(
+            eq(lectures.teacherId, teacherId),
+            eq(lectures.id, lectureRow.id),
+          ),
+        )
+        .run();
+      lessonSynced = true;
+    }
     tx.update(questions)
       .set({
-        ...questionFields(next, row.unitId, row.order, now),
+        ...questionFields(
+          { ...next, sourceMd: storedSourceMd },
+          row.unitId,
+          row.order,
+          now,
+        ),
         version,
       })
       .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
@@ -1506,6 +1567,7 @@ export function updateQuestion(
     type: next.type,
     difficulty: next.difficulty,
     knowledge: next.knowledge,
+    lessonSynced,
     issues: [
       ...shiftLintIssuesToFragment(issues, SINGLE_QUESTION_PREFIX_LINES),
       // P2-2（tt-06b）：题内块式 ::ref{question=} 的可见警告（不静默吞；

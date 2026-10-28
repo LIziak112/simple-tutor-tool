@@ -7,6 +7,7 @@ import {
   type QuestionUpdateData,
   questionUpdateDataSchema,
 } from "@tutor/contract";
+import { withQuestionId } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -269,7 +270,9 @@ describe("PUT /api/teacher/questions/:id 单题编辑", () => {
     expect(row?.order).toBe(0);
     expect(row?.version).toBe(2);
     expect(row?.stemMd).toContain("正负数的分界点");
-    expect(row?.sourceMd).toBe(edited);
+    // 讲练文档 SSOT P1a：编辑落库文本规范化为带显式 id 的围栏（withQuestionId
+    // 与导入注入/导出回写同源）——缺省 id 题编辑后存储 sourceMd 也带显式 id，往返身份稳定
+    expect(row?.sourceMd).toBe(withQuestionId(edited, "练习四-1"));
 
     // 内容树：version 显示 2
     const tree = await getTree(app, cookie);

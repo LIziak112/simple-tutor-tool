@@ -374,7 +374,10 @@ export const questionGroupDeleteDataSchema = z.object({
  * - COURSE_HAS_ATTEMPTS：课程有作答记录或按课程布置的作业时拒绝删除（409，D4；提示改用归档）；
  * - FOLDER_NOT_FOUND：导入目标文件夹不存在（404，T2A.3；与 library-api 同码同义）；
  * - IMPORT_TOO_LARGE：批量导入超规模上限（413，D20；也用于 preview-batch 的
- *   content-length 粗防线）。
+ *   content-length 粗防线）；
+ * - LESSON_QUESTION_BLOCK_MISSING：讲练页正文未找到该题的题块（422，讲练文档
+ *   SSOT P1a）——存储正文被手工改动等数据异常，嵌入题编辑被拒（事务回滚），
+ *   引导整页重导修正。
  */
 export const contentErrorCodeSchema = z.enum([
   "LINT_ERROR",
@@ -398,6 +401,12 @@ export const contentErrorCodeSchema = z.enum([
    * QM-05 落地，契约层先定码。
    */
   "NEW_CONTENT_DISABLED",
+  /**
+   * 讲练页正文未找到该题的题块——存储正文被手工改动等数据异常（422，讲练文档
+   * SSOT P1a）：嵌入题编辑在题库回写前被拒（同一事务，回滚不动题目行），引导
+   * 整页重导修正。
+   */
+  "LESSON_QUESTION_BLOCK_MISSING",
 ]);
 
 /**
@@ -518,6 +527,12 @@ export const questionUpdateDataSchema = z.object({
   difficulty: z.number().int().min(1).max(5),
   knowledge: z.array(z.string().min(1)),
   issues: z.array(lintIssueSchema),
+  /**
+   * 讲练嵌入题编辑已同步回讲义正文题块（同一事务内回写 lectures.markdown
+   * 对应题块，题库与正文不再双源漂移；讲练文档 SSOT P1a）；普通题为 false。
+   * 服务端恒写该字段（契约 optional 仅为兼容既有消费者）。
+   */
+  lessonSynced: z.boolean().optional(),
 });
 
 /**
