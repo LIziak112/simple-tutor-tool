@@ -58,6 +58,12 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { specOf } from "@/features/keyboard/key-spec";
+import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
+import {
+  isKeyboardDevice,
+  useKeyboardDevice,
+} from "@/features/keyboard/keyboard-device";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import {
   prepareSubmitEvidence,
@@ -536,6 +542,9 @@ function AnswerView({
   }, []);
   const { accountId: boundAccountId, keyboardShortcuts } =
     usePracticePreference();
+  // 快捷键体系（2026-10-28）：生效键位（默认 + 设置页自定义）与键盘设备形态
+  const keyBindings = useKeyboardBindings();
+  const keyboardDevice = useKeyboardDevice();
   const prevBoundAccountRef = useRef(boundAccountId);
   useEffect(() => {
     const previous = prevBoundAccountRef.current;
@@ -841,8 +850,10 @@ function AnswerView({
   };
   const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
 
-  // ---------- 单题专注键盘（M3-D3 §9.2）：Enter 主动作 / ←→ 切题 / 1-9 选项 ----------
-  // 仅 v1 新协议 + 单题模式挂载（legacy/lesson 零变化）；偏好开关关闭全失效。
+  // ---------- 单题专注键盘（M3-D3 §9.2 → 2026-10-28 快捷键体系） ----------
+  // 仅 v1 新协议 + 单题模式 + 键盘设备挂载（legacy/lesson 零变化，纯触屏
+  // 设备整体静默）；偏好开关关闭全失效。键位来自注册表 + 设置页自定义
+  // （keyBindings），固定命令（1–9 选选项）先匹配——改键抢不走选项数字。
   // 守门链：默认抑制态（合成/repeat/修饰键/已被处理）→ 任一弹层打开 → busy →
   // 书写中/纸面展开 → 答案冲突 → 切题保护拦截。一次 keydown 至多一个动作；
   // 键盘发起的提交持同步锁（submit 串行守卫在收笔 await 之后才置位，微任务
@@ -850,7 +861,7 @@ function AnswerView({
   // MathLive/AI 输入宿主），按钮/链接保留自身 Enter，查看结果永不入键。
   const practiceKeyActionRef = useRef(false);
   const onWorkspaceKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!singleMode || !keyboardShortcuts) return;
+    if (!singleMode || !keyboardShortcuts || !isKeyboardDevice()) return;
     const native = event.nativeEvent;
     if (isSuppressedKeyEvent(native) || isOverlayOpen()) return;
     const currentId = resolvedSingleQuestionId;
@@ -867,7 +878,26 @@ function AnswerView({
     const currentIndex = questionIds.indexOf(currentId);
     const submitted =
       (progressById.get(currentId)?.submittedAt ?? null) !== null;
-    if (event.key === "Enter") {
+    const spec = specOf(native);
+    if (spec === null) return;
+    if (keyBindings["practice.select-option"].includes(spec)) {
+      // 已提交只读题不响应；文本编辑区内数字保持输入语义
+      if (submitted || isTextEditingEvent(native)) return;
+      const card = cardElements.current.get(currentId);
+      const options = card?.querySelectorAll<HTMLInputElement>(
+        '[data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"]',
+      );
+      const option = options?.[Number(spec) - 1];
+      if (option === undefined || option.disabled) return;
+      event.preventDefault();
+      // 复用既有选项控件链（React onChange → setAnswer → 草稿防丢），不另写
+      // 一套答案拼装；原生 click 会把焦点移到选项上，连续键盘导航要求焦点
+      // 留在工作区容器
+      option.click();
+      singleWorkspaceRef.current?.focus();
+      return;
+    }
+    if (keyBindings["practice.submit-or-next"].includes(spec)) {
       if (isTextEditingEvent(native) || isActivatingTarget(native)) return;
       event.preventDefault();
       if (practiceKeyActionRef.current) return;
@@ -904,32 +934,24 @@ function AnswerView({
       })();
       return;
     }
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      // 仅工作区容器自身持有焦点时切题；题面/输入/按钮内的方向键保持原生
+    // ←→ 切题（可分别改键）：仅工作区容器自身持有焦点时生效，题面/输入/
+    // 按钮内的按键保持原生；prev 命中优先于 next（冲突检测拦住同时改同键）
+    const step = keyBindings["practice.prev-question"].includes(spec)
+      ? -1
+      : keyBindings["practice.next-question"].includes(spec)
+        ? 1
+        : 0;
+    if (step !== 0) {
       if (document.activeElement !== event.currentTarget) return;
       event.preventDefault();
-      const next =
-        event.key === "ArrowRight"
-          ? questionIds[currentIndex + 1]
-          : questionIds[currentIndex - 1];
-      if (next !== undefined) void goSingleQuestion(next);
+      const target = questionIds[currentIndex + step];
+      if (target !== undefined) void goSingleQuestion(target);
       return;
     }
-    if (/^[1-9]$/.test(event.key)) {
-      // 已提交只读题不响应；文本编辑区内数字保持输入语义
-      if (submitted || isTextEditingEvent(native)) return;
-      const card = cardElements.current.get(currentId);
-      const options = card?.querySelectorAll<HTMLInputElement>(
-        '[data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"]',
-      );
-      const option = options?.[Number(event.key) - 1];
-      if (option === undefined || option.disabled) return;
+    if (keyBindings["practice.open-help"].includes(spec)) {
+      if (isTextEditingEvent(native)) return;
       event.preventDefault();
-      // 复用既有选项控件链（React onChange → setAnswer → 草稿防丢），不另写
-      // 一套答案拼装；原生 click 会把焦点移到选项上，连续键盘导航要求焦点
-      // 留在工作区容器
-      option.click();
-      singleWorkspaceRef.current?.focus();
+      setKeyboardHelpOpen(true);
     }
   };
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
@@ -1248,9 +1270,11 @@ function AnswerView({
                   >
                     做题方式
                   </DropdownMenuItem>
-                  <PracticeKeyboardHelpMenuItem
-                    onOpen={() => setKeyboardHelpOpen(true)}
-                  />
+                  {keyboardDevice && (
+                    <PracticeKeyboardHelpMenuItem
+                      onOpen={() => setKeyboardHelpOpen(true)}
+                    />
+                  )}
                 </>
               )}
             </>
@@ -1907,8 +1931,9 @@ function AnswerView({
           </DialogContent>
         </Dialog>
 
-        {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外 */}
-        {practiceWorkflow !== undefined && (
+        {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外。
+            仅键盘设备渲染（纯触屏不出现快捷键 UI，探测成功当次会话即出现） */}
+        {practiceWorkflow !== undefined && keyboardDevice && (
           <PracticeKeyboardHelpDialog
             open={keyboardHelpOpen}
             onOpenChange={setKeyboardHelpOpen}

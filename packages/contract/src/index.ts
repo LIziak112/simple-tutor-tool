@@ -44,6 +44,10 @@ export * from "./grading.ts";
 /** 手写笔迹契约（T2.8 起为权威定义）：InkDoc 矢量文档 + 上传/取回/元数据响应、限额与错误码 */
 export * from "./ink.ts";
 export * from "./ink-profile.ts";
+/** 学生端键盘快捷键键位契约（2026-10-28 快捷键体系升级起为权威定义）：
+ *  KeySpec 单键文法、命令 id 分层与本设备 localStorage 键位覆盖表（strict v1，
+ *  只校验形状；命令词表与冲突规则归 apps/web 命令注册表） */
+export * from "./keyboard.ts";
 /** 学习痕迹事件契约（T2.10 起为权威定义）：事件类型枚举（现 23 种）、批量上报请求/响应、上限常量 */
 export * from "./learning-event.ts";
 /** AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19）：导出请求（范围×模块×目标×隐私）、

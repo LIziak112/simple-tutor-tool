@@ -12,6 +12,7 @@ import { Link, useLocation, useSearchParams } from "react-router";
 import { StudentPracticePreferenceSection } from "@/features/attempt/StudentPracticePreferenceSection";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
+import { KeyboardBindingsSection } from "@/features/keyboard/KeyboardBindingsSection";
 import { aiDisplayReturnTo } from "@/features/student-ai/ai-display-return";
 import { StudentAiDisplaySection } from "@/features/student-ai/StudentAiDisplaySection";
 import { StudentAiPromptsSection } from "@/features/student-ai/StudentAiPromptsSection";
@@ -111,6 +112,10 @@ export default function StudentSettingsPage() {
           <div className="p-5 sm:p-6">
             <StudentPracticePreferenceSection key={student?.id} />
           </div>
+
+          {/* 2026-10-28 快捷键体系：键位自定义分区（组件内按键盘设备门控，
+              纯触控设备不渲染该行） */}
+          <KeyboardBindingsSection key={student?.id} />
 
           <Link
             to="/s/settings/ai"

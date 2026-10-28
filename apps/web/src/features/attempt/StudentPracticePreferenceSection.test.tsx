@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  detectKeyboardDeviceForTest,
+  resetKeyboardDeviceForTest,
+} from "@/features/keyboard/keyboard-device";
+import {
   bindPracticePreferenceAccount,
   getPracticePreference,
 } from "./practice-preference-store";
@@ -8,8 +12,10 @@ import { StudentPracticePreferenceSection } from "./StudentPracticePreferenceSec
 
 /**
  * 设置区「做题方式」配置行（M3-D1）：默认布局二选一 + 快捷键开关，暂存-保存
- * 模式（选择暂存、保存生效、后台重取不覆盖本地编辑、重新渲染不清空）；
- * 快捷键开关 D1 仅存储不生效，文案不得谎称已生效。
+ * 模式（选择暂存、保存生效、后台重取不覆盖本地编辑、重新渲染不清空）。
+ * 快捷键开关仅键盘设备渲染（2026-10-28 快捷键体系）：本文件多数用例在键盘
+ * 设备语境下断言开关，beforeEach 先派发合格按键完成探测；纯触屏用例单独
+ * reset 验证隐藏与载荷透传。
  */
 
 beforeEach(() => {
@@ -17,6 +23,8 @@ beforeEach(() => {
   // 模块级 store 跨用例残留：先解绑再绑定，确保从持久化重新读取
   bindPracticePreferenceAccount(null);
   bindPracticePreferenceAccount("student-1");
+  // jsdom 恒懒探测：模拟键盘设备接入（快捷键开关可见语境）
+  detectKeyboardDeviceForTest();
 });
 
 describe("做题方式设置区（M3-D1）", () => {
@@ -120,6 +128,17 @@ describe("做题方式设置区（M3-D1）", () => {
     render(<StudentPracticePreferenceSection />);
     expect(screen.getByText(/登录后可设置/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存做题方式" })).toBeDisabled();
+  });
+
+  it("纯触屏设备（未探测键盘）不渲染快捷键开关，保存其他偏好不丢开关值", () => {
+    resetKeyboardDeviceForTest();
+    render(<StudentPracticePreferenceSection />);
+    expect(screen.queryByRole("checkbox", { name: /键盘快捷键/ })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /单题/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存做题方式" }));
+    expect(getPracticePreference().layout).toBe("single");
+    // 隐藏的开关沿已存值透传，保存载荷不受设备形态影响
+    expect(getPracticePreference().keyboardShortcuts).toBe(true);
   });
 
   // ---------- M5-D3 反馈节奏三选 ----------

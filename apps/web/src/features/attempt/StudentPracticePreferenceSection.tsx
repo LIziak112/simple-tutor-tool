@@ -2,6 +2,7 @@ import type { PracticeFeedbackMode, PracticeLayout } from "@tutor/contract";
 import { ListChecks, SquareKanban } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useKeyboardDevice } from "@/features/keyboard/keyboard-device";
 import {
   savePracticePreference,
   usePracticePreference,
@@ -63,6 +64,9 @@ const feedbackOptions: {
 
 export function StudentPracticePreferenceSection() {
   const saved = usePracticePreference();
+  // 快捷键开关仅键盘设备渲染（纯触控设备无快捷键可开关）；隐藏时
+  // keyboardShortcuts 保留已存值透传，保存载荷不受设备形态影响
+  const keyboardDevice = useKeyboardDevice();
   const [draft, setDraft] = useState<{
     layout: PracticeLayout | null;
     keyboardShortcuts: boolean;
@@ -186,23 +190,25 @@ export function StudentPracticePreferenceSection() {
               </label>
             ))}
           </fieldset>
-          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border p-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50">
-            <input
-              className="size-4 shrink-0 accent-primary"
-              type="checkbox"
-              checked={selected.keyboardShortcuts}
-              onChange={(event) =>
-                update({ keyboardShortcuts: event.target.checked })
-              }
-            />
-            <span className="min-w-0 space-y-0.5">
-              <span className="block text-sm font-medium">键盘快捷键</span>
-              <span className="block text-xs leading-5 text-muted-foreground">
-                单题专注时可用：数字键选项、方向键切题，Enter
-                提交或下一题；输入文字时不触发。
+          {keyboardDevice && (
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border p-3 outline-none has-focus-visible:ring-3 has-focus-visible:ring-ring/50">
+              <input
+                className="size-4 shrink-0 accent-primary"
+                type="checkbox"
+                checked={selected.keyboardShortcuts}
+                onChange={(event) =>
+                  update({ keyboardShortcuts: event.target.checked })
+                }
+              />
+              <span className="min-w-0 space-y-0.5">
+                <span className="block text-sm font-medium">键盘快捷键</span>
+                <span className="block text-xs leading-5 text-muted-foreground">
+                  单题专注时可用：数字键选项、方向键切题，Enter
+                  提交或下一题；输入文字时不触发。键位可在下方「自定义键位」修改。
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          )}
         </>
       )}
       {baseChanged && (
