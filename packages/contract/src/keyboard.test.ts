@@ -62,6 +62,9 @@ describe("keySpecSchema", () => {
       "Shift+/",
       "Shift+a",
       "Ctrl+Enter",
+      // Space 不可带 Shift 前缀（web 端把 Shift+Space 归一为 Space，IME
+      // 切换键组合不做独立键位——可存不可触发的死键位在文法层拒绝）
+      "Shift+Space",
     ]) {
       expect(() => keySpecSchema.parse(spec)).toThrow();
     }

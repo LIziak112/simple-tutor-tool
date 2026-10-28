@@ -1,9 +1,11 @@
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   bindKeyboardBindingsAccount,
   getResolvedKeyboardBindings,
   saveKeyboardBindings,
   subscribeKeyboardBindings,
+  useKeyboardBindings,
 } from "./keyboard-binding-store";
 
 /**
@@ -26,9 +28,11 @@ it("未保存时生效键位 = 注册表默认（Enter/←→/? 与固定 1–9�
   expect(localStorage.getItem(storageKeyOf("a"))).toBeNull();
   expect(getResolvedKeyboardBindings()["practice.submit-or-next"]).toEqual([
     "Enter",
+    "Shift+Enter",
   ]);
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
   expect(getResolvedKeyboardBindings()["practice.select-option"]).toHaveLength(
     9,
@@ -86,6 +90,7 @@ it("账号隔离：换账号读默认，旧账号的迟到保存被拒绝", () =
   bindKeyboardBindingsAccount("b");
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
   expect(() => saveKeyboardBindings({}, "a")).toThrow(/账号/);
 });
@@ -95,6 +100,7 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   bindKeyboardBindingsAccount("a");
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
   bindKeyboardBindingsAccount(null);
   localStorage.setItem(
@@ -107,6 +113,7 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   bindKeyboardBindingsAccount("a");
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
   bindKeyboardBindingsAccount(null);
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
@@ -115,6 +122,7 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   expect(() => bindKeyboardBindingsAccount("a")).not.toThrow();
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
 });
 
@@ -128,6 +136,7 @@ it("非法键位（Ctrl 组合 / 3 键）保存时被契约兜底拒绝", () => 
   ).toThrow();
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
 });
 
@@ -147,6 +156,7 @@ it("跨标签事件同步当前账号；写入失败抛错且不发布", () => {
   expect(getResolvedKeyboardBindings()["practice.open-help"]).toEqual(["h"]);
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
   window.dispatchEvent(
     new StorageEvent("storage", {
@@ -183,5 +193,24 @@ it("存储清空事件（key null）→ 回默认键位", () => {
   );
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
+    "Shift+ArrowRight",
   ]);
+});
+
+it("跨标签保存后 useKeyboardBindings 订阅方当场拿到新键位（缓存先于通知换新）", () => {
+  bindKeyboardBindingsAccount("a");
+  const { result } = renderHook(() => useKeyboardBindings());
+  expect(result.current["practice.open-help"]).toEqual(["?"]);
+  // React 订阅回调在 store.set 通知当场读快照比对——若 resolvedCache 在通知
+  // 之后才换新，会被判「无变化」而漏掉这次键位更新（作答页/帮助弹层不刷新）
+  act(() => {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: storageKeyOf("a"),
+        newValue: '{"version":1,"bindings":{"practice.open-help":["h"]}}',
+        storageArea: localStorage,
+      }),
+    );
+  });
+  expect(result.current["practice.open-help"]).toEqual(["h"]);
 });

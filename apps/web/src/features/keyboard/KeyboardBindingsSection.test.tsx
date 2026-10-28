@@ -59,7 +59,7 @@ describe("自定义键位分区", () => {
     expect(screen.getByText("快捷键帮助")).toBeInTheDocument();
     expect(screen.getByText("选择第 1–9 个选项")).toBeInTheDocument();
     expect(screen.getByText("退出 / 关闭")).toBeInTheDocument();
-    expect(screen.getByText("Enter")).toBeInTheDocument();
+    expect(screen.getByText("Enter / Shift+Enter")).toBeInTheDocument();
     expect(screen.getByText("?")).toBeInTheDocument();
     expect(screen.getByText("1–9")).toBeInTheDocument();
     expect(screen.getByText("Esc")).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe("自定义键位分区", () => {
     expect(screen.getByText(/该键不可绑定/)).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(screen.queryByText(/按下新快捷键/)).toBeNull();
-    expect(within(row).getByText("→")).toBeInTheDocument();
+    expect(within(row).getByText("→ / Shift+→")).toBeInTheDocument();
   });
 
   it("两个命令改到同键：后到者标红冲突并禁存；撞固定键（1–9）同样拒绝", () => {
@@ -159,7 +159,7 @@ describe("自定义键位分区", () => {
     expect(screen.getByText(/其他页面已修改键位/)).toBeInTheDocument();
     expect(within(row).getByText("j")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "载入已保存值" }));
-    expect(within(row).getByText("→")).toBeInTheDocument();
+    expect(within(row).getByText("→ / Shift+→")).toBeInTheDocument();
     expect(screen.getByText("h")).toBeInTheDocument();
   });
 });

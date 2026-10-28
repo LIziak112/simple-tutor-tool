@@ -28,7 +28,9 @@ export function specOf(event: KeyEventLike): string | null {
   if (event.ctrlKey || event.altKey || event.metaKey) return null;
   const { key } = event;
   if (key === " ") return "Space";
-  if (key.length === 1) return key;
+  // 单字符须同时通过契约的 \S 文法（全角空格/U+00A0 等空白类字符可录不可存，
+  // 在归一层拦下并让录制 UI 给「该键不可绑定」）
+  if (key.length === 1) return /\S/.test(key) ? key : null;
   if (NAMED_KEYS.has(key)) return event.shiftKey ? `Shift+${key}` : key;
   return null;
 }

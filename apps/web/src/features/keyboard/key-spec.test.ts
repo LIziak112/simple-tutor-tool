@@ -26,6 +26,12 @@ describe("specOf", () => {
     expect(specOf(key("5"))).toBe("5");
   });
 
+  it("空白类单字符（全角空格/U+00A0/BOM）不可绑定——与契约空白文法同口径", () => {
+    expect(specOf(key("　"))).toBeNull();
+    expect(specOf(key(" "))).toBeNull();
+    expect(specOf(key("﻿"))).toBeNull();
+  });
+
   it("空格归一为 Space；命名键带 Shift 时加前缀", () => {
     expect(specOf(key(" "))).toBe("Space");
     expect(specOf(key("ArrowLeft"))).toBe("ArrowLeft");

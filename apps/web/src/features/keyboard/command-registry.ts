@@ -32,7 +32,9 @@ export const PRACTICE_KEYBOARD_COMMANDS = [
     label: "提交本题 / 下一题",
     description:
       "未提交时提交本题；已提交时切下一题（不打扰查看结果）；最后一题提交后跳首个未提交",
-    defaultKeys: ["Enter"],
+    // Shift 变体沿用升级前行为（event.key 匹配不看 Shift）——中文输入法
+    // 切换后 Shift 未松开时按键不静默失效
+    defaultKeys: ["Enter", "Shift+Enter"],
     scope: "practice-single",
     customizable: true,
   },
@@ -40,7 +42,7 @@ export const PRACTICE_KEYBOARD_COMMANDS = [
     id: "practice.prev-question",
     label: "上一题",
     description: "工作区获得焦点时切上一题",
-    defaultKeys: ["ArrowLeft"],
+    defaultKeys: ["ArrowLeft", "Shift+ArrowLeft"],
     scope: "practice-single",
     customizable: true,
   },
@@ -48,7 +50,7 @@ export const PRACTICE_KEYBOARD_COMMANDS = [
     id: "practice.next-question",
     label: "下一题",
     description: "工作区获得焦点时切下一题",
-    defaultKeys: ["ArrowRight"],
+    defaultKeys: ["ArrowRight", "Shift+ArrowRight"],
     scope: "practice-single",
     customizable: true,
   },
@@ -92,6 +94,26 @@ export type ResolvedKeyBindings = Record<
 >;
 
 /**
+ * 键位解析实现（宽键型）：泛型体内 `command.id` 被约束宽化为 string，直接
+ * 索引 `Record<C["id"],…>` 过不了 strict 检查，故实现层按 string 键累积，
+ * 由导出的泛型包装在出口一次性收窄——调用方仍拿到命令 id 联合键型。
+ */
+function resolveToRecord(
+  commands: readonly KeyboardCommand[],
+  saved: Readonly<Record<string, readonly string[]>> | null,
+): Record<string, readonly string[]> {
+  const resolved: Record<string, readonly string[]> = {};
+  for (const command of commands) {
+    const override = saved?.[command.id];
+    resolved[command.id] =
+      command.customizable && override !== undefined && override.length > 0
+        ? override
+        : command.defaultKeys;
+  }
+  return resolved;
+}
+
+/**
  * 默认键位 + 用户覆盖：仅 customizable 命令可覆盖，整组替换（无部分合并）；
  * 未知 commandId 丢弃（注册表版本演进）；覆盖键位形状由契约读侧保证，
  * 空数组防御性回落默认（第二调用方设置页草稿不经 parse）。返回对象每次
@@ -101,15 +123,7 @@ export function resolveBindings<C extends KeyboardCommand>(
   commands: readonly C[],
   saved: Readonly<Record<string, readonly string[]>> | null,
 ): Record<C["id"], readonly string[]> {
-  const resolved = {} as Record<C["id"], readonly string[]>;
-  for (const command of commands) {
-    const override = saved?.[command.id];
-    resolved[command.id] =
-      command.customizable && override !== undefined && override.length > 0
-        ? override
-        : command.defaultKeys;
-  }
-  return resolved;
+  return resolveToRecord(commands, saved) as Record<C["id"], readonly string[]>;
 }
 
 export interface KeyboardBindingConflict {
@@ -129,16 +143,17 @@ export function findConflicts<C extends KeyboardCommand>(
   commands: readonly C[],
   draft: Readonly<Record<string, readonly string[]>>,
 ): KeyboardBindingConflict[] {
-  const resolved = resolveBindings(commands, draft);
+  const resolved = resolveToRecord(commands, draft);
   const owner = new Map<string, string>();
   for (const command of commands) {
     if (command.customizable) continue;
-    for (const spec of resolved[command.id]) owner.set(spec, command.label);
+    for (const spec of resolved[command.id] ?? [])
+      owner.set(spec, command.label);
   }
   const conflicts: KeyboardBindingConflict[] = [];
   for (const command of commands) {
     if (!command.customizable) continue;
-    for (const spec of resolved[command.id]) {
+    for (const spec of resolved[command.id] ?? []) {
       const existing = owner.get(spec);
       if (existing !== undefined) {
         conflicts.push({ commandId: command.id, spec, otherLabel: existing });

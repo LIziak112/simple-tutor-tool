@@ -34,12 +34,15 @@ describe("PRACTICE_KEYBOARD_COMMANDS", () => {
 });
 
 describe("resolveBindings", () => {
-  it("无保存/空覆盖表时全默认", () => {
+  it("无保存/空覆盖表时全默认（含 Shift 变体——沿用升级前不看 Shift 的行为）", () => {
     expect(resolveBindings(PRACTICE_KEYBOARD_COMMANDS, null)).toEqual(
       resolveBindings(PRACTICE_KEYBOARD_COMMANDS, {}),
     );
     const resolved = resolveBindings(PRACTICE_KEYBOARD_COMMANDS, {});
-    expect(resolved["practice.submit-or-next"]).toEqual(["Enter"]);
+    expect(resolved["practice.submit-or-next"]).toEqual([
+      "Enter",
+      "Shift+Enter",
+    ]);
     expect(resolved["practice.select-option"]).toHaveLength(9);
   });
 

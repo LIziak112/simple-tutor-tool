@@ -219,6 +219,9 @@ beforeEach(() => {
   bindPracticePreferenceAccount(null);
   bindKeyboardBindingsAccount(null);
   bindPracticePreferenceAccount("m3d3-kbd");
+  // 键盘设备语境：统一先探测，避免依赖「首个按键顺带探测」的隐式副作用；
+  // 需要未探测态的用例自行 reset
+  detectKeyboardDeviceForTest();
   mockedFetch.mockReset();
   mockedSubmit.mockReset();
   mockedFeedbackGet.mockReset();
@@ -502,6 +505,20 @@ it("固定命令先匹配：open-help 改到 1 也不抢选项数字（1 仍选�
   press(container, "1");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("radio", { name: "对" })).toBeChecked();
+});
+
+it("默认键位沿用 Shift 变体：Shift+Enter 提交本题、Shift+→ 切下一题", async () => {
+  const { container } = await renderSingle("?q=q2");
+  const input = screen.getByRole("textbox", { name: "第1空" });
+  fireEvent.change(input, { target: { value: "4" } });
+  container.focus();
+  press(container, "Enter", { shiftKey: true });
+  await screen.findByText(/已提交 1 题/);
+  expect(mockedSubmit.mock.calls[0]?.[1]).toBe("q2");
+  press(container, "ArrowRight", { shiftKey: true });
+  await waitFor(() =>
+    expect(progressRow().textContent).toContain("第 3 / 4 题"),
+  );
 });
 
 it("键盘设备未探测时「快捷键」入口不出现；探测成功当次会话出现", async () => {

@@ -56,8 +56,11 @@ function commit(state: KeyboardBindingState): void {
     JSON.stringify(current.bindings) === JSON.stringify(state.bindings)
   )
     return;
-  store.set(state);
+  // 先换缓存再通知：store.set 同步触发订阅回调，React 的 useSyncExternalStore
+  // 订阅会在通知当场调 getSnapshot 与旧值比对——若此刻 resolvedCache 仍是
+  // 旧引用会被判「无变化」而漏掉这次键位更新（跨标签改键后作答页不刷新）
   resolvedCache = resolveBindings(PRACTICE_KEYBOARD_COMMANDS, state.bindings);
+  store.set(state);
 }
 
 /** 登录/身份变化时绑定账号并读取该账号的持久化键位（存储不可用回默认） */

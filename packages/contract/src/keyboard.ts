@@ -33,11 +33,16 @@ export const KEYBOARD_NAMED_KEYS = [
  * 单键位序列化文法（单源，web 端录制/解析/展示共用）：
  * 「Shift+命名键」或裸「单字符 / 命名键」——字符键的 Shift 已编码在字符本身
  * （"?" 不写作 "Shift+/"，"A" 即 Shift+a）；空格恒写作 "Space"（裸空白在
- * 序列化/展示层易被破坏）；Ctrl/Alt/Cmd 组合一律不合法（与作答页守门链
- * isSuppressedKeyEvent 同口径：修饰组合让位浏览器/系统语义）。
+ * 序列化/展示层易被破坏）且**不可带 Shift 前缀**（web 端 specOf 把 Shift+Space
+ * 归一为 Space——该组合是输入法切换键，不做独立键位）；Ctrl/Alt/Cmd 组合
+ * 一律不合法（与作答页守门链 isSuppressedKeyEvent 同口径：修饰组合让位
+ * 浏览器/系统语义）。
  */
+const SHIFTABLE_NAMED_KEYS = KEYBOARD_NAMED_KEYS.filter(
+  (key) => key !== "Space",
+);
 export const keySpecPattern = new RegExp(
-  `^(?:(?:Shift\\+)?(?:${KEYBOARD_NAMED_KEYS.join("|")})|\\S)$`,
+  `^(?:(?:Shift\\+)?(?:${SHIFTABLE_NAMED_KEYS.join("|")})|Space|\\S)$`,
 );
 
 /** 命令 id：小写命名空间点分层（如 practice.submit-or-next），讲练页等后续
