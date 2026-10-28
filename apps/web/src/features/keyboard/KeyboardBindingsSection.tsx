@@ -2,17 +2,17 @@ import { ChevronDown, Keyboard, RotateCcw } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  PRACTICE_KEYBOARD_COMMANDS,
   findConflicts,
   formatKeys,
+  PRACTICE_KEYBOARD_COMMANDS,
   resolveBindings,
 } from "./command-registry";
+import { specOf } from "./key-spec";
 import {
   saveKeyboardBindings,
   useKeyboardBindingState,
 } from "./keyboard-binding-store";
 import { useKeyboardDevice } from "./keyboard-device";
-import { specOf } from "./key-spec";
 
 /**
  * 学生设置「学习偏好 → 自定义键位」分区（2026-10-28 快捷键体系）：
@@ -113,7 +113,10 @@ function KeyboardBindingsEditor(): ReactNode {
   return (
     <details className="group">
       <summary className="flex min-h-16 cursor-pointer list-none items-center gap-4 p-5 focus-visible:outline-2 focus-visible:outline-ring sm:p-6 [&::-webkit-details-marker]:hidden">
-        <Keyboard aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+        <Keyboard
+          aria-hidden
+          className="size-5 shrink-0 text-muted-foreground"
+        />
         <span className="min-w-0 flex-1 space-y-1">
           <span className="block font-medium">自定义键位</span>
           {dirty && (
@@ -143,9 +146,7 @@ function KeyboardBindingsEditor(): ReactNode {
                   <li
                     key={command.id}
                     className={`flex min-h-11 items-center justify-between gap-3 rounded-lg border p-3 ${
-                      conflict
-                        ? "border-destructive"
-                        : "border-border"
+                      conflict ? "border-destructive" : "border-border"
                     }`}
                   >
                     <div className="min-w-0 space-y-0.5">
@@ -175,7 +176,11 @@ function KeyboardBindingsEditor(): ReactNode {
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <kbd className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                        {isRecording ? "…" : formatKeys(resolvedDraft[command.id] ?? command.defaultKeys)}
+                        {isRecording
+                          ? "…"
+                          : formatKeys(
+                              resolvedDraft[command.id] ?? command.defaultKeys,
+                            )}
                       </kbd>
                       {command.customizable && (
                         <Button
@@ -197,7 +202,11 @@ function KeyboardBindingsEditor(): ReactNode {
             {baseChanged && (
               <p className="mt-3 text-sm text-muted-foreground">
                 其他页面已修改键位，你的选择已保留。
-                <Button variant="link" className="min-h-11" onClick={resetDraft}>
+                <Button
+                  variant="link"
+                  className="min-h-11"
+                  onClick={resetDraft}
+                >
                   载入已保存值
                 </Button>
               </p>
@@ -223,7 +232,11 @@ function KeyboardBindingsEditor(): ReactNode {
                 保存键位
               </Button>
               {dirty && (
-                <Button variant="outline" className="min-h-11" onClick={resetDraft}>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={resetDraft}
+                >
                   取消更改
                 </Button>
               )}
@@ -245,7 +258,9 @@ function KeyboardBindingsEditor(): ReactNode {
                 恢复默认键位
               </Button>
               {dirty && (
-                <span className="text-sm text-muted-foreground">有未保存更改</span>
+                <span className="text-sm text-muted-foreground">
+                  有未保存更改
+                </span>
               )}
             </div>
             {notice && (

@@ -130,9 +130,7 @@ describe("做题方式设置区（M3-D1）", () => {
   it("纯触屏设备（未探测键盘）不渲染快捷键开关，保存其他偏好不丢开关值", () => {
     resetKeyboardDeviceForTest();
     render(<StudentPracticePreferenceSection />);
-    expect(
-      screen.queryByRole("checkbox", { name: /键盘快捷键/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /键盘快捷键/ })).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: /单题/ }));
     fireEvent.click(screen.getByRole("button", { name: "保存做题方式" }));
     expect(getPracticePreference().layout).toBe("single");

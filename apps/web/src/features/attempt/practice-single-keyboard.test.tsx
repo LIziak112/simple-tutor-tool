@@ -7,6 +7,11 @@ import type {
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
+  bindKeyboardBindingsAccount,
+  saveKeyboardBindings,
+} from "@/features/keyboard/keyboard-binding-store";
+import { resetKeyboardDeviceForTest } from "@/features/keyboard/keyboard-device";
+import {
   fetchAttemptApi,
   fetchPracticeQuestionFeedbackApi,
   fetchStudentNoteHeadsApi,
@@ -19,11 +24,6 @@ import {
   bindPracticePreferenceAccount,
   savePracticePreference,
 } from "./practice-preference-store";
-import {
-  bindKeyboardBindingsAccount,
-  saveKeyboardBindings,
-} from "@/features/keyboard/keyboard-binding-store";
-import { resetKeyboardDeviceForTest } from "@/features/keyboard/keyboard-device";
 import { workflowOf } from "./practice-test-fixtures";
 
 // 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
@@ -512,9 +512,7 @@ it("键盘设备未探测时「快捷键」入口不出现；探测成功当次�
   expect(screen.queryByRole("menuitem", { name: /快捷键/ })).toBeNull();
   // 关菜单并探测：body 上首个合格 keydown（等价 iPad 接入实体键盘首键）
   fireEvent.keyDown(document.body, { key: "Escape" });
-  await waitFor(() =>
-    expect(screen.queryByRole("menu")).toBeNull(),
-  );
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
     button: 0,
     ctrlKey: false,

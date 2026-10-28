@@ -38,9 +38,7 @@ const storageKey = (id: string) =>
   `ownclass:keyboard-bindings:${JSON.stringify([location.origin, "student", id])}`;
 
 /** 唯一 schema 解析入口：坏 JSON / 未来 version / 形态不符整体回空覆盖表 */
-function read(
-  raw: string | null,
-): Readonly<Record<string, readonly string[]>> {
+function read(raw: string | null): Readonly<Record<string, readonly string[]>> {
   if (raw === null) return {};
   try {
     return studentKeyboardBindingsSchema.parse(JSON.parse(raw)).bindings;
@@ -94,11 +92,7 @@ export function useKeyboardBindings(): ResolvedKeyBindings {
 
 /** 覆盖表原样订阅式读（设置页草稿基底与 dirty/baseChanged 比较用） */
 export function useKeyboardBindingState(): KeyboardBindingState {
-  return useSyncExternalStore(
-    subscribeKeyboardBindings,
-    store.get,
-    store.get,
-  );
+  return useSyncExternalStore(subscribeKeyboardBindings, store.get, store.get);
 }
 
 /**

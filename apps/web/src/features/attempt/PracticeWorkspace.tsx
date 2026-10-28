@@ -26,8 +26,8 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import {
-  PRACTICE_KEYBOARD_COMMANDS,
   formatKeys,
+  PRACTICE_KEYBOARD_COMMANDS,
 } from "@/features/keyboard/command-registry";
 import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
 import {

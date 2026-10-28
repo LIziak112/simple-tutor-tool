@@ -58,6 +58,12 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { specOf } from "@/features/keyboard/key-spec";
+import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
+import {
+  isKeyboardDevice,
+  useKeyboardDevice,
+} from "@/features/keyboard/keyboard-device";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import {
   prepareSubmitEvidence,
@@ -109,12 +115,6 @@ import {
   currentLayout,
   usePracticePreference,
 } from "./practice-preference-store";
-import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
-import {
-  isKeyboardDevice,
-  useKeyboardDevice,
-} from "@/features/keyboard/keyboard-device";
-import { specOf } from "@/features/keyboard/key-spec";
 import {
   countSubmittedQuestions,
   firstUnsubmittedQuestionId,

@@ -117,9 +117,7 @@ describe("自定义键位分区", () => {
     // 撞固定键：快捷键帮助改到 2（选项数字）
     startRecording("快捷键帮助");
     fireEvent.keyDown(document.body, { key: "2" });
-    expect(
-      screen.getByText(/与『选择第 1–9 个选项』冲突/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/与『选择第 1–9 个选项』冲突/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存键位" })).toBeDisabled();
   });
 
@@ -141,9 +139,7 @@ describe("自定义键位分区", () => {
     detectKeyboard();
     openEditor();
     expect(screen.getByText(/登录后可修改键位/)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "保存键位" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存键位" })).toBeNull();
   });
 
   it("跨标签保存后提示并可显式载入已保存值（本地草稿保留）", () => {
@@ -157,8 +153,7 @@ describe("自定义键位分区", () => {
       window,
       new StorageEvent("storage", {
         key: storageKeyOf("kbd-section"),
-        newValue:
-          '{"version":1,"bindings":{"practice.open-help":["h"]}}',
+        newValue: '{"version":1,"bindings":{"practice.open-help":["h"]}}',
         storageArea: localStorage,
       }),
     );

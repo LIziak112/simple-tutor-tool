@@ -1,9 +1,9 @@
 import { keySpecSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
-  PRACTICE_KEYBOARD_COMMANDS,
   findConflicts,
   formatKeys,
+  PRACTICE_KEYBOARD_COMMANDS,
   resolveBindings,
 } from "./command-registry";
 
@@ -59,9 +59,7 @@ describe("resolveBindings", () => {
 
 describe("findConflicts", () => {
   it("默认键位无冲突", () => {
-    expect(
-      findConflicts(PRACTICE_KEYBOARD_COMMANDS, {}),
-    ).toEqual([]);
+    expect(findConflicts(PRACTICE_KEYBOARD_COMMANDS, {})).toEqual([]);
   });
 
   it("两个可定制命令改到同键：注册表顺序后到者记冲突", () => {

@@ -108,7 +108,9 @@ describe("keyboardCommandIdSchema", () => {
 
 describe("studentKeyboardBindingsSchema", () => {
   it("接受空覆盖表（= 全默认键位）与合法覆盖（含 Shift 组合与 ? 单字符）", () => {
-    expect(studentKeyboardBindingsSchema.parse({ version: 1, bindings: {} })).toEqual({
+    expect(
+      studentKeyboardBindingsSchema.parse({ version: 1, bindings: {} }),
+    ).toEqual({
       version: 1,
       bindings: {},
     });
@@ -178,16 +180,17 @@ describe("studentKeyboardBindingsSchema", () => {
   it("round-trip：JSON 序列化往返稳定，产物再 parse 等值", () => {
     const sample = {
       version: 1,
-      bindings: { "practice.open-help": ["?"], "practice.prev-question": ["k"] },
+      bindings: {
+        "practice.open-help": ["?"],
+        "practice.prev-question": ["k"],
+      },
     };
     const parsed = studentKeyboardBindingsSchema.parse(
       JSON.parse(JSON.stringify(sample)),
     );
     expect(parsed).toEqual(sample);
     expect(
-      studentKeyboardBindingsSchema.parse(
-        JSON.parse(JSON.stringify(parsed)),
-      ),
+      studentKeyboardBindingsSchema.parse(JSON.parse(JSON.stringify(parsed))),
     ).toEqual(parsed);
   });
 });

@@ -126,7 +126,8 @@ export function findConflicts(
   const owner = new Map<string, string>();
   for (const command of commands) {
     if (command.customizable) continue;
-    for (const spec of resolved[command.id] ?? []) owner.set(spec, command.label);
+    for (const spec of resolved[command.id] ?? [])
+      owner.set(spec, command.label);
   }
   const conflicts: KeyboardBindingConflict[] = [];
   for (const command of commands) {

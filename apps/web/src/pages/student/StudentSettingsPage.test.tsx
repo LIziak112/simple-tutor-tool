@@ -107,9 +107,7 @@ it("设置页学习偏好包含做题方式配置行（M3-D1）", () => {
 it("纯触屏设备设置页不出现快捷键开关与「自定义键位」分区", () => {
   resetKeyboardDeviceForTest();
   renderPage();
-  expect(
-    screen.queryByRole("checkbox", { name: /键盘快捷键/ }),
-  ).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /键盘快捷键/ })).toBeNull();
   expect(screen.queryByText("自定义键位")).toBeNull();
 });
 

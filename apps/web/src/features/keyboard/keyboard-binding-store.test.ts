@@ -100,7 +100,10 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   bindKeyboardBindingsAccount(null);
   localStorage.setItem(
     storageKeyOf("a"),
-    JSON.stringify({ version: 2, bindings: { "practice.next-question": ["j"] } }),
+    JSON.stringify({
+      version: 2,
+      bindings: { "practice.next-question": ["j"] },
+    }),
   );
   bindKeyboardBindingsAccount("a");
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
@@ -147,11 +150,19 @@ it("跨标签事件同步当前账号；写入失败抛错且不发布", () => {
     "ArrowRight",
   ]);
   window.dispatchEvent(
-    new StorageEvent("storage", { key: "other", newValue: "x", storageArea: localStorage }),
+    new StorageEvent("storage", {
+      key: "other",
+      newValue: "x",
+      storageArea: localStorage,
+    }),
   );
   expect(getResolvedKeyboardBindings()["practice.open-help"]).toEqual(["h"]);
   window.dispatchEvent(
-    new StorageEvent("storage", { key, newValue: "broken", storageArea: localStorage }),
+    new StorageEvent("storage", {
+      key,
+      newValue: "broken",
+      storageArea: localStorage,
+    }),
   );
   expect(getResolvedKeyboardBindings()["practice.open-help"]).toEqual(["?"]);
   expect(notify).toHaveBeenCalled();
