@@ -171,8 +171,9 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
         const existingUnit = snapshot.units.get(attachedUnitId);
         if (existingUnit === undefined) continue; // 新单元无既有题可移出
         const fileQuestionIds = new Set(
-          (parsed.units.find((unit) => unit.id === attachedUnitId)?.questions ??
-            []
+          (
+            parsed.units.find((unit) => unit.id === attachedUnitId)
+              ?.questions ?? []
           ).map((question) => question.id),
         );
         let removed = 0;

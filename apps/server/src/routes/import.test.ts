@@ -661,11 +661,7 @@ topic: 有理数
     expect(lecture?.markdown).toContain('id="随堂讲练0-1"');
 
     // 旧嵌入单元软删进回收站；新单元唯一 live 且接管讲练页
-    const stale = db
-      .select()
-      .from(units)
-      .where(eq(units.id, "随堂讲练"))
-      .get();
+    const stale = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
     expect(stale?.deletedAt).not.toBeNull();
     const fresh = db
       .select()
@@ -677,18 +673,12 @@ topic: 有理数
 
     // 跨单元旧题保留（题级清退只作用于本次挂载的单元）；新题 live
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.id, "随堂讲练-1"))
-        .get()?.deletedAt,
+      db.select().from(questions).where(eq(questions.id, "随堂讲练-1")).get()
+        ?.deletedAt,
     ).toBeNull();
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.id, "随堂讲练0-1"))
-        .get()?.deletedAt,
+      db.select().from(questions).where(eq(questions.id, "随堂讲练0-1")).get()
+        ?.deletedAt,
     ).toBeNull();
   });
 
@@ -726,25 +716,15 @@ unit: 随堂讲练
     expect(reimport.status).toBe(200);
 
     // 单元 live、仍挂讲练页；旧题软删、新题 live——不再产生「幽灵双份题」
-    const unit = db
-      .select()
-      .from(units)
-      .where(eq(units.id, "随堂讲练"))
-      .get();
+    const unit = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
     expect(unit?.deletedAt).toBeNull();
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.id, "随堂讲练-1"))
-        .get()?.deletedAt,
+      db.select().from(questions).where(eq(questions.id, "随堂讲练-1")).get()
+        ?.deletedAt,
     ).not.toBeNull();
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.id, "q-renamed"))
-        .get()?.deletedAt,
+      db.select().from(questions).where(eq(questions.id, "q-renamed")).get()
+        ?.deletedAt,
     ).toBeNull();
   });
 
@@ -769,17 +749,10 @@ unit: 随堂讲练
     );
     expect(flip.status).toBe(200);
     expect(
-      db
-        .select()
-        .from(lectures)
-        .where(eq(lectures.title, "第1讲 有理数"))
-        .get()?.kind,
+      db.select().from(lectures).where(eq(lectures.title, "第1讲 有理数")).get()
+        ?.kind,
     ).toBe("lecture");
-    const unit = db
-      .select()
-      .from(units)
-      .where(eq(units.id, "随堂讲练"))
-      .get();
+    const unit = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
     expect(unit?.deletedAt).toBeNull();
   });
 
@@ -793,11 +766,7 @@ unit: 随堂讲练
     );
     expect(first.status).toBe(200);
     expect(
-      db
-        .select()
-        .from(questions)
-        .where(eq(questions.unitId, "独立练习"))
-        .all(),
+      db.select().from(questions).where(eq(questions.unitId, "独立练习")).all(),
     ).toHaveLength(1);
 
     const reimport = await postJson(

@@ -656,7 +656,9 @@ describe("LR-PR5 学习记录段（评审 #12249 必改②锁）", () => {
         html,
       );
     expect(match).not.toBeNull();
-    const view = JSON.parse(match![1]!) as unknown;
+    const raw = match?.[1];
+    if (raw === undefined) throw new Error("页面未内嵌 learning-record JSON");
+    const view = JSON.parse(raw) as unknown;
     expect(learningRecordAiViewSchema.safeParse(view).success).toBe(true);
     const typed = view as {
       record: {

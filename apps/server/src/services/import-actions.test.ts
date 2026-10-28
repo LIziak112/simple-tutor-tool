@@ -578,7 +578,13 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     ]);
     expect([...(unit?.liveQuestionIds ?? [])]).toEqual(["练习四-1"]);
     expect(snapshotLoaded.lectures).toEqual([
-      { id: "l1", title: "第1讲", folderId: null, deletedAt: null, kind: "lecture" },
+      {
+        id: "l1",
+        title: "第1讲",
+        folderId: null,
+        deletedAt: null,
+        kind: "lecture",
+      },
     ]);
     expect(snapshotLoaded.folderNameById.get(FOLDER_A)).toBe("第一章");
     expect(snapshotLoaded.openAssignmentCountByUnitId.get("练习四")).toBe(2);
