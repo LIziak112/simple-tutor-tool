@@ -1,7 +1,10 @@
 import { ChevronDown, Keyboard, RotateCcw } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { isImeComposing } from "@/features/attempt/practice-keyboard";
+import {
+  isImeComposing,
+  isTextEditingEvent,
+} from "@/features/attempt/practice-keyboard";
 import {
   findConflicts,
   formatKeys,
@@ -14,6 +17,17 @@ import {
   useKeyboardBindingState,
 } from "./keyboard-binding-store";
 import { useKeyboardDevice } from "./keyboard-device";
+
+/** 键序无关的覆盖表序列化（跨标签保存的键序由对方录制先后决定） */
+function stableBindingsJson(
+  bindings: Readonly<Record<string, readonly string[]>>,
+): string {
+  return JSON.stringify(
+    Object.keys(bindings)
+      .sort()
+      .map((id) => [id, [...(bindings[id] ?? [])]]),
+  );
+}
 
 /**
  * 学生设置「学习偏好 → 自定义键位」分区（2026-10-28 快捷键体系）：
@@ -48,10 +62,10 @@ function KeyboardBindingsEditor(): ReactNode {
   const selected = draft?.bindings ?? saved.bindings;
   const dirty =
     draft !== null &&
-    JSON.stringify(draft.bindings) !== JSON.stringify(saved.bindings);
+    stableBindingsJson(draft.bindings) !== stableBindingsJson(saved.bindings);
   const baseChanged =
     draft !== null &&
-    JSON.stringify(draft.base) !== JSON.stringify(saved.bindings);
+    stableBindingsJson(draft.base) !== stableBindingsJson(saved.bindings);
   const conflicts = useMemo(
     () => findConflicts(PRACTICE_KEYBOARD_COMMANDS, selected),
     [selected],
@@ -63,19 +77,23 @@ function KeyboardBindingsEditor(): ReactNode {
   const bound = saved.accountId !== null;
 
   // 录制监听：window 捕获阶段消费按键（preventDefault 防浏览器快捷键如 /
-  // 快速查找；stopPropagation 防页面级监听把录制键当业务输入）
+  // 快速查找；stopPropagation 防页面级监听把录制键当业务输入）。文本编辑区
+  // 内的按键是别处的输入意图——不吞不改；收起分区（onToggle）自动取消录制，
+  // 不留不可见的全页吞键监听
   useEffect(() => {
     if (recording === null) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         setRecording(null);
         setRecordError(null);
         return;
       }
-      // IME 合成中间态：不退出录制也不改键，等下一次真实按键
-      if (isImeComposing(event)) return;
+      // 文本编辑区与 IME 合成中间态：不退出录制也不改键，更不吞按键
+      if (isTextEditingEvent(event) || isImeComposing(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
       const spec = specOf(event);
       if (spec === null) {
         setRecordError(
@@ -108,7 +126,16 @@ function KeyboardBindingsEditor(): ReactNode {
   };
 
   return (
-    <details className="group">
+    <details
+      className="group"
+      onToggle={(event) => {
+        // 收起即离开编辑语境：取消进行中的录制，不留全页吞键监听
+        if (!event.currentTarget.open) {
+          setRecording(null);
+          setRecordError(null);
+        }
+      }}
+    >
       <summary className="flex min-h-16 cursor-pointer list-none items-center gap-4 p-5 focus-visible:outline-2 focus-visible:outline-ring sm:p-6 [&::-webkit-details-marker]:hidden">
         <Keyboard
           aria-hidden

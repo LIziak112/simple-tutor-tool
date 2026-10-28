@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyboardBindingsSection } from "./KeyboardBindingsSection";
 import {
@@ -161,5 +167,57 @@ describe("自定义键位分区", () => {
     fireEvent.click(screen.getByRole("button", { name: "载入已保存值" }));
     expect(within(row).getByText("→ / Shift+→")).toBeInTheDocument();
     expect(screen.getByText("h")).toBeInTheDocument();
+  });
+
+  it("收起分区自动取消录制：不留全页吞键监听、不静默改键", async () => {
+    detectKeyboardDeviceForTest();
+    bindKeyboardBindingsAccount("kbd-section");
+    const summary = openEditor();
+    startRecording("下一题");
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.queryByText(/按下新快捷键/)).toBeNull());
+    // 收起后页面按键不再被录制吞掉/改键
+    fireEvent.keyDown(document.body, { key: "h" });
+    fireEvent.click(summary);
+    expect(screen.getByText("→ / Shift+→")).toBeInTheDocument();
+  });
+
+  it("录制不吞文本编辑区按键：他处输入不改键、不拦截", () => {
+    detectKeyboardDeviceForTest();
+    bindKeyboardBindingsAccount("kbd-section");
+    openEditor();
+    const row = startRecording("下一题");
+    const input = document.createElement("input");
+    input.type = "text";
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: "h", bubbles: true });
+    // 仍在录制（kbd 为占位 …）、键位未被改掉：编辑区按键不退出录制也不被消费
+    expect(screen.getByText(/按下新快捷键/)).toBeInTheDocument();
+    expect(within(row).getByText("…")).toBeInTheDocument();
+    input.remove();
+    fireEvent.keyDown(document.body, { key: "j" });
+    expect(within(row).getByText("j")).toBeInTheDocument();
+  });
+
+  it("键序不同但内容相同的跨标签保存不误报未保存", () => {
+    detectKeyboardDeviceForTest();
+    bindKeyboardBindingsAccount("kbd-section");
+    openEditor();
+    startRecording("下一题");
+    fireEvent.keyDown(document.body, { key: "j" });
+    startRecording("快捷键帮助");
+    fireEvent.keyDown(document.body, { key: "h" });
+    // 其他标签以相反键序保存了相同内容
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key: storageKeyOf("kbd-section"),
+        newValue:
+          '{"version":1,"bindings":{"practice.open-help":["h"],"practice.next-question":["j"]}}',
+        storageArea: localStorage,
+      }),
+    );
+    expect(screen.queryByText("有未保存更改")).toBeNull();
+    expect(screen.getByRole("button", { name: "保存键位" })).toBeDisabled();
   });
 });
