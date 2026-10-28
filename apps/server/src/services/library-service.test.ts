@@ -31,6 +31,7 @@ import {
   restoreUnit,
   softDeleteLecture,
   softDeleteUnit,
+  updateUnitMeta,
 } from "./library-service.ts";
 
 /**
@@ -333,6 +334,129 @@ describe("LibraryService：资源软删与恢复（D3）", () => {
       restoreUnit(db, TEST_TEACHER_ID, "no-such"),
     );
     expect((missing as HttpError).code).toBe("UNIT_NOT_FOUND");
+  });
+
+  it("restoreUnit 讲练页唯一嵌入守卫：页内已有 live 嵌入单元时恢复旧单元 409；移除后可恢复", () => {
+    const db = createTestDb();
+    // 讲练页 + live 嵌入单元 A（重导接管后的现役单元）
+    const { lectureId } = seedLessonWithEmbeddedUnit(db, {
+      unitId: "unit-live",
+    });
+    // 重导前的旧单元 B：同挂该讲练页、软删态（导入接管后的存置形态）
+    db.insert(units)
+      .values({
+        id: "unit-old",
+        teacherId: TEST_TEACHER_ID,
+        lectureId,
+        title: "旧随堂练习",
+        order: 1,
+        updatedAt: T0,
+        deletedAt: T0,
+      })
+      .run();
+
+    const conflict = captureError(() =>
+      restoreUnit(db, TEST_TEACHER_ID, "unit-old"),
+    );
+    expect((conflict as HttpError).status).toBe(409);
+    expect((conflict as HttpError).code).toBe("LESSON_EMBEDDED_UNIT_CONFLICT");
+    // 守卫先于写入：B 仍是软删态
+    expect(
+      db
+        .select({ deletedAt: units.deletedAt })
+        .from(units)
+        .where(eq(units.id, "unit-old"))
+        .get()?.deletedAt,
+    ).not.toBeNull();
+
+    // A 移除（软删）后恢复 B 成功；幂等恢复照旧不抛
+    softDeleteUnit(db, TEST_TEACHER_ID, "unit-live");
+    restoreUnit(db, TEST_TEACHER_ID, "unit-old");
+    expect(
+      db
+        .select({ deletedAt: units.deletedAt })
+        .from(units)
+        .where(eq(units.id, "unit-old"))
+        .get()?.deletedAt,
+    ).toBeNull();
+    restoreUnit(db, TEST_TEACHER_ID, "unit-old"); // 幂等
+  });
+
+  it("updateUnitMeta 讲练页唯一嵌入守卫：改挂到已有 live 嵌入单元的讲练页 409；裸讲练页与解挂不受限", () => {
+    const db = createTestDb();
+    const { lectureId } = seedLessonWithEmbeddedUnit(db, {
+      unitId: "unit-live",
+    });
+    // 未挂载单元 C（live，lectureId 为空）
+    db.insert(units)
+      .values({
+        id: "unit-c",
+        teacherId: TEST_TEACHER_ID,
+        lectureId: null,
+        title: "待挂载单元",
+        order: 2,
+        updatedAt: T0,
+      })
+      .run();
+
+    const conflict = captureError(() =>
+      updateUnitMeta(db, TEST_TEACHER_ID, "unit-c", { lectureId }),
+    );
+    expect((conflict as HttpError).status).toBe(409);
+    expect((conflict as HttpError).code).toBe("LESSON_EMBEDDED_UNIT_CONFLICT");
+
+    // 改挂到无其他 live 嵌入单元的讲练页（裸讲练页，kind='lesson' 无单元）→ 成功
+    const bareLessonId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: bareLessonId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "裸讲练页",
+        markdown: "# 裸讲练页",
+        kind: "lesson",
+        order: 1,
+        updatedAt: T0,
+      })
+      .run();
+    expect(
+      updateUnitMeta(db, TEST_TEACHER_ID, "unit-c", {
+        lectureId: bareLessonId,
+      }).lectureId,
+    ).toBe(bareLessonId);
+    // 解除挂载（lectureId 置 null）→ 成功
+    expect(
+      updateUnitMeta(db, TEST_TEACHER_ID, "unit-c", { lectureId: null })
+        .lectureId,
+    ).toBeNull();
+  });
+
+  it("普通讲义（kind='lecture'）配套单元不受唯一嵌入守卫影响（回归）", () => {
+    const db = createTestDb();
+    // seedBase：kind 默认 'lecture' 的讲义 + live 配套单元 unit-a
+    const { lectureId } = seedBase(db);
+    // 旧配套单元 B：软删态，同挂普通讲义
+    db.insert(units)
+      .values({
+        id: "unit-b",
+        teacherId: TEST_TEACHER_ID,
+        lectureId,
+        title: "旧配套练习",
+        order: 1,
+        updatedAt: T0,
+        deletedAt: T0,
+      })
+      .run();
+    // 普通讲义允许多份配套单元并存：unit-a 仍 live 时恢复 unit-b 不拦
+    restoreUnit(db, TEST_TEACHER_ID, "unit-b");
+    expect(
+      db
+        .select({ deletedAt: units.deletedAt })
+        .from(units)
+        .where(eq(units.id, "unit-b"))
+        .get()?.deletedAt,
+    ).toBeNull();
   });
 });
 
