@@ -446,9 +446,20 @@ export default function StudentWrongQuestionsPage() {
     practiceQuestions("selection", [...inList, ...outOfList], null);
   };
 
-  /** tab/分组/筛选变化：合并补丁写回 URL */
-  function applyPatch(patch: Partial<WrongQuestionsUrlState>): void {
-    void setSearchParams(wrongQuestionsUrlQuery({ ...state, ...patch }));
+  /**
+   * tab/分组/筛选变化：合并补丁写回 URL。
+   * replace（2026-10-28 P2 修复）：时间/错次是数字输入，逐键触发写回——每敲
+   * 一位 push 一条历史会把浏览器历史污染成 365→36→3 的回退链；这两路（含
+   * 对应 chip 单清）用 replace 不进历史栈。考点/课程/tab/分组是离散操作，
+   * 仍 push 保留「返回」逐步回退的既有体验。
+   */
+  function applyPatch(
+    patch: Partial<WrongQuestionsUrlState>,
+    options?: { replace?: boolean },
+  ): void {
+    void setSearchParams(wrongQuestionsUrlQuery({ ...state, ...patch }), {
+      replace: options?.replace === true,
+    });
   }
 
   /** 清除全部筛选（课程 + 考点 + 时间 + 错次） */
@@ -528,7 +539,11 @@ export default function StudentWrongQuestionsPage() {
           days={state.days}
           wrongMin={state.wrongMin}
           knowledgeOptions={knowledgeOptions}
-          onChange={(patch) => applyPatch(patch)}
+          onChange={(patch) =>
+            applyPatch(patch, {
+              replace: patch.days !== undefined || patch.wrongMin !== undefined,
+            })
+          }
           onClearAll={clearAllFilters}
         />
         <MasteryStandardPicker standard={standard} onChange={changeStandard} />

@@ -420,3 +420,187 @@ test.describe("错题本：课程筛选（2026-10）", { tag: ["@student"] }, ()
     }
   });
 });
+
+test.describe("错题本：综合筛选（2026-10；考点多选 / 时间 / 错次自由输入）", {
+  tag: ["@student"],
+}, () => {
+  test("考点多选与错次组合收窄、chips 单清与清除全部、深链与空态清除、数字输入逐键 replace 不污染历史", async ({
+    request,
+    browser,
+  }) => {
+    test.setTimeout(240_000);
+
+    // —— 造数（教师 API）：课程 + 两题判断（考点互异）+ 学生入成员 ——
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const courseName = `e2e综筛课程${suffix}`;
+    const unitName = `综筛小练${suffix}`;
+    const courseId = await createCourseViaApi(request, courseName);
+    const importRes = await request.post("/api/teacher/import/commit", {
+      data: {
+        markdown: practiceMarkdown(unitName),
+        filename: `${unitName}.md`,
+        courseId,
+      },
+    });
+    if (!importRes.ok()) {
+      throw new Error(`导入课程练习失败：HTTP ${importRes.status()}`);
+    }
+    await setCourseItemVisible(request, courseId, unitName, true);
+
+    const loginName = `e2e-wrongfilter-${suffix}`;
+    await request.post("/api/teacher/students", {
+      data: { displayName: `e2e综筛生${suffix}`, loginName },
+    });
+    const student = await getStudentViaApi(request, loginName);
+    await addCourseMemberViaApi(request, courseId, student.id);
+
+    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+    const studentPage = await studentContext.newPage();
+    try {
+      const leak = attachLeakMonitor(studentPage);
+      await studentPage.goto(`/s/${student.linkToken}`);
+      await studentPage.waitForURL("**/s/home");
+      const unitPath = `/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`;
+
+      /** 做一轮课程练习：q1/q2 各按入参作答并交卷 */
+      const doRound = async (
+        q1Answer: string,
+        q2Answer: string,
+        round: number,
+      ) => {
+        await studentPage.goto(unitPath);
+        if (round === 1) {
+          await studentPage.getByRole("button", { name: "开始练习" }).click();
+        } else {
+          await studentPage.getByRole("button", { name: "再做一次" }).click();
+          await studentPage.getByRole("button", { name: "开始新一次" }).click();
+        }
+        await studentPage.waitForURL("**/s/attempts/**");
+        await expect(
+          studentPage.getByText(`课程：${courseName} · 第 ${round} 次`),
+        ).toBeVisible();
+        const q1 = studentPage.locator('article[aria-label="第 1 题"]');
+        await q1
+          .getByRole("radio", { name: q1Answer, exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        const q2 = studentPage.locator('article[aria-label="第 2 题"]');
+        await q2
+          .getByRole("radio", { name: q2Answer, exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        await expect
+          .poll(async () =>
+            studentPage.getByTestId("draft-status").textContent(),
+          )
+          .not.toContain("保存中");
+        await studentPage
+          .getByRole("button", { name: "交卷", exact: true })
+          .click();
+        await studentPage
+          .getByRole("button", { name: "确认交卷" })
+          .first()
+          .click();
+        await expect(studentPage.getByText("批改结果")).toBeVisible({
+          timeout: 30_000,
+        });
+      };
+
+      // 两轮：q1 错→错（错 2 次，待复习）；q2 错→对（错 1 次、只连对 1 次，
+      // 严格标准仍在待复习）——错次 ≥2 的收窄对比就靠这条 1/2 差额
+      await doRound("错", "错", 1);
+      await doRound("错", "对", 2);
+
+      await studentPage.goto("/s/wrong");
+      await expect(
+        studentPage.getByRole("heading", {
+          name: `${unitName} · 待复习 2 题`,
+        }),
+      ).toBeVisible({ timeout: 30_000 });
+
+      // —— 考点多选（OR 语义）：选「正数与负数」→ 只剩 q2 ——
+      const knowledgeInput = studentPage.getByLabel("考点", { exact: true });
+      await knowledgeInput.fill("正数与负数");
+      await knowledgeInput.press("Enter");
+      await expect(studentPage).toHaveURL(/knowledge=/);
+      const q2Row = studentPage.getByRole("button", { name: /−1 是负数/ });
+      await expect(q2Row).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toHaveCount(0);
+
+      // 追加「有理数的概念」→ 两考点并集恢复两题
+      await knowledgeInput.fill("有理数的概念");
+      await knowledgeInput.press("Enter");
+      await expect(q2Row).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toBeVisible();
+
+      // —— 叠加错次 ≥2 → 组合收窄只剩 q1（q1 错 2 次、q2 错 1 次）——
+      const minInput = studentPage.getByLabel("错次", { exact: true });
+      await minInput.fill("2");
+      await expect(q2Row).toHaveCount(0);
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toBeVisible();
+      await expect(studentPage.getByText("已筛选：")).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "清除考点「正数与负数」" }),
+      ).toBeVisible();
+
+      // —— chips 单清：清掉错次 → 两题回来 ——
+      await studentPage.getByRole("button", { name: "清除错次筛选" }).click();
+      await expect(q2Row).toBeVisible();
+
+      // —— 清除全部筛选 → chips 与 URL 参数全清 ——
+      await studentPage.getByRole("button", { name: "清除全部筛选" }).click();
+      await expect(studentPage).toHaveURL(/\/s\/wrong$/);
+      await expect(studentPage.getByText("已筛选：")).toHaveCount(0);
+
+      // —— 深链：wrongMin=2 只剩 q1；未知考点按字面匹配 → 空态给清除动作 ——
+      await studentPage.goto("/s/wrong?wrongMin=2");
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: /−1 是负数/ }),
+      ).toHaveCount(0);
+
+      await studentPage.goto("/s/wrong?knowledge=不存在的考点");
+      await expect(
+        studentPage.getByRole("button", { name: "清除考点「不存在的考点」" }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toHaveCount(0);
+      await studentPage
+        .getByRole("button", { name: "清除全部筛选" })
+        .first()
+        .click();
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toBeVisible();
+
+      // —— 时间逐键输入 replace（P2：此前每敲一位 push 一条历史，
+      //     回退会逐位退成 36、3；修复后回退直接回到无 days 的上一条）——
+      await studentPage.goto("/s/wrong?wrongMin=2");
+      const daysInput = studentPage.getByLabel("时间", { exact: true });
+      await daysInput.fill("365");
+      await expect(studentPage).toHaveURL(/days=365/);
+      await studentPage.goBack();
+      await expect(studentPage).toHaveURL(/\/s\/wrong/);
+      await expect(studentPage).not.toHaveURL(/days=/);
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toBeVisible();
+
+      // 泄露检查：全程 /api/student/* 响应无禁用键
+      await studentPage.waitForTimeout(800); // 等最后一批响应体读完
+      expect(leak.violations().join("\n")).toBe("");
+    } finally {
+      await studentContext.close();
+    }
+  });
+});

@@ -103,6 +103,18 @@ export function startWrongPractice(
   }
 
   const freezePolicy = newContentEnabled ?? newContentEnabledFromEnv();
+  // P2（2026-10-28 #38）：selection 范围快照的 questionCount 以服务端实际冻结
+  // 题数覆写——契约只校验 questionCount = 去重入参 id 数，服务层静默剔除不在
+  // 聚合/快照损坏的题后，客户端的 N 与实际不符，原样落库会把「手选 5 题」和
+  // 4 道题一起永久冻结进卷标题（页面勾选状态过期时即可复现）。picked.length
+  // ≥ 1（上方空卷已抛 WRONG_PRACTICE_EMPTY），覆写不破契约 min(1)；
+  // kind=ai 的 label 是自由文本无计数，不涉及。
+  const effectiveScope =
+    scope === undefined
+      ? undefined
+      : scope.kind === "selection" && scope.questionCount !== picked.length
+        ? { ...scope, questionCount: picked.length }
+        : scope;
 
   return db.transaction((tx) => {
     const countRow = tx
@@ -136,7 +148,8 @@ export function startWrongPractice(
     tx.insert(attempts)
       .values({
         ...attempt,
-        practiceScopeJson: scope === undefined ? null : JSON.stringify(scope),
+        practiceScopeJson:
+          effectiveScope === undefined ? null : JSON.stringify(effectiveScope),
       })
       .run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
