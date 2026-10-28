@@ -1620,6 +1620,74 @@ describe("MCP import_zip（AI 侧 zip 打包上传导入）", () => {
     await client.close();
   });
 
+  it("replaceLectureId + 多份 md zip → dry-run 与 confirm 均 422 REPLACE_REQUIRES_SINGLE_LECTURE（审查修复 3：zip 替换仅支持单份 markdown）", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    // 造一个真实替换目标（域内 lesson 页）
+    const seeded = await client.callTool({
+      name: "import_markdown",
+      arguments: {
+        markdown: lessonMdOf(
+          "第 3 讲 分数",
+          "mcp-zip-multi",
+          "mcp-zip-multi-1",
+        ),
+        confirm: true,
+      },
+    });
+    expect(seeded.isError).toBeFalsy();
+    const targetId = (
+      JSON.parse(textOf(seeded)) as {
+        report: { lectures: { id: string }[] };
+      }
+    ).report.lectures[0]?.id;
+    // 两份 md 的 zip：一份改名讲练页 + 一份普通练习
+    const zip = await zipOf([
+      {
+        name: "第03讲.md",
+        data: Buffer.from(
+          lessonMdOf("第 03 讲 分数", "mcp-zip-multi-b", "mcp-zip-multi-b-1"),
+          "utf8",
+        ),
+      },
+      { name: "练习.md", data: Buffer.from(CLEAN_MD, "utf8") },
+    ]);
+    const dataBase64 = zip.toString("base64");
+    const importsBefore = env.db
+      .select({ id: imports.id })
+      .from(imports)
+      .where(eq(imports.teacherId, TEST_TEACHER_ID))
+      .all().length;
+
+    // dry-run 与 confirm 两路径同拦（服务层单一收口点）
+    for (const confirm of [false, true]) {
+      const res = await client.callTool({
+        name: "import_zip",
+        arguments: {
+          dataBase64,
+          replaceLectureId: targetId,
+          ...(confirm ? { confirm: true } : {}),
+        },
+      });
+      expect(res.isError).toBe(true);
+      const body = JSON.parse(textOf(res)) as {
+        error: string;
+        message: string;
+      };
+      expect(body.error).toBe("REPLACE_REQUIRES_SINGLE_LECTURE");
+      expect(body.message).toContain("单份");
+    }
+    // 零写入：imports 无新行（种子那一次之外），两份 md 都没进库
+    expect(
+      env.db
+        .select({ id: imports.id })
+        .from(imports)
+        .where(eq(imports.teacherId, TEST_TEACHER_ID))
+        .all().length,
+    ).toBe(importsBefore);
+    await client.close();
+  });
+
   it("confirm：同图多 md 只传一次；未配对引用原样保留进 unresolvedRefs（不阻断导入）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);

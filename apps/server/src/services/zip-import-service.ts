@@ -290,6 +290,25 @@ export function rewriteImageSrcs(
 
 // ---------- 编排：dry-run 预览与 confirm 执行 ----------
 
+/**
+ * zip 显式替换的单文件守卫（审查修复 3，dry-run 与 confirm 的单一收口点）：
+ * replaceLectureId 会透传给每一份 md 的 preview/commit——多份 md 意味着同一
+ * 目标页被逐份绑定替换（后一份覆盖前一份），语义上不可接受，入口直接 422。
+ */
+function assertZipReplaceSingleMarkdown(
+  bundle: ZipImportBundle,
+  replaceLectureId: string | null | undefined,
+): void {
+  if (replaceLectureId == null) return;
+  if (bundle.mdFiles.length > 1) {
+    throw new HttpError(
+      422,
+      "REPLACE_REQUIRES_SINGLE_LECTURE",
+      `zip 显式替换仅支持单份 markdown（当前 ${bundle.mdFiles.length} 份）：请只保留一份讲练文档，或去掉 replaceLectureId 逐份导入`,
+    );
+  }
+}
+
 /** 一次 zip 导入的公共输入（解码与解包产物 + 目标文件夹 + zip 留档名） */
 export interface ZipImportRunInput {
   readonly bundle: ZipImportBundle;
@@ -298,9 +317,11 @@ export interface ZipImportRunInput {
   /** zip 展示名（缺省 mcp-import.zip），报告回显用 */
   readonly zipName: string;
   /**
-   * 显式替换目标讲练页 id（P2a）：逐份 md 透传给 previewImport / commitImport
-   * （每份都要求单讲义文档——多讲义文件会被 REPLACE_REQUIRES_SINGLE_LECTURE
-   * 拒绝；适用「单讲练页 + 配图」的 zip）。缺省 / null = 不替换。
+   * 显式替换目标讲练页 id（P2a）：逐份 md 透传给 previewImport / commitImport。
+   * zip 层单文件守卫（审查修复 3）：md 文件数 >1 直接 422
+   * REPLACE_REQUIRES_SINGLE_LECTURE（多份 md 绑定同一目标页会逐份覆盖，
+   * 语义不可接受）；单份 md 内多讲义同样被服务层拒绝。适用「单讲练页 +
+   * 配图」的 zip。缺省 / null = 不替换。
    */
   readonly replaceLectureId?: string | null;
 }
@@ -416,6 +437,7 @@ export function previewZipImport(
   input: ZipImportRunInput,
 ): ZipImportDryRunReport {
   const { bundle, folderId, zipName } = input;
+  assertZipReplaceSingleMarkdown(bundle, input.replaceLectureId);
   const plan = planZipImages(bundle);
 
   const files: ZipImportDryRunFile[] = bundle.mdFiles.map((file) => {
@@ -527,6 +549,7 @@ export function commitZipImport(
   input: ZipImportRunInput,
 ): ZipImportConfirmReport {
   const { bundle, folderId, zipName } = input;
+  assertZipReplaceSingleMarkdown(bundle, input.replaceLectureId);
   const plan = planZipImages(bundle);
 
   // ① 上传被引用图片（逐张独立；saveMedia 魔数白名单 / 5MB 校验自然生效）
