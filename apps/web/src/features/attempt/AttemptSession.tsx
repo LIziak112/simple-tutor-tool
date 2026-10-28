@@ -491,6 +491,7 @@ function AnswerView({
     cardElements,
     setCurrentQuestionId,
     forceMountQuestion,
+    cardMountVersion,
   );
 
   // ---------- 做题方式（M3-D1）：v1 新协议卷的列表/单题呈现 ----------
