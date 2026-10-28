@@ -19,6 +19,11 @@ import {
   bindPracticePreferenceAccount,
   savePracticePreference,
 } from "./practice-preference-store";
+import {
+  bindKeyboardBindingsAccount,
+  saveKeyboardBindings,
+} from "@/features/keyboard/keyboard-binding-store";
+import { resetKeyboardDeviceForTest } from "@/features/keyboard/keyboard-device";
 import { workflowOf } from "./practice-test-fixtures";
 
 // 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
@@ -209,6 +214,7 @@ beforeEach(() => {
   localStorage.clear();
   installDraftBackend(memoryBackend());
   bindPracticePreferenceAccount(null);
+  bindKeyboardBindingsAccount(null);
   bindPracticePreferenceAccount("m3d3-kbd");
   mockedFetch.mockReset();
   mockedSubmit.mockReset();
@@ -437,6 +443,9 @@ it("快捷键关闭后 Enter、←→、1-9 全部不生效", async () => {
 
 it("「更多」菜单提供快捷键帮助入口，弹层列出键位", async () => {
   await renderSingle();
+  // 设备门控（2026-10-28 快捷键体系）：jsdom 恒走懒探测，先派发一个合格
+  // 按键让键盘设备探测成功，菜单入口才渲染
+  fireEvent.keyDown(document.body, { key: "Escape" });
   fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
     button: 0,
     ctrlKey: false,
@@ -448,4 +457,69 @@ it("「更多」菜单提供快捷键帮助入口，弹层列出键位", async (
   expect(dialog).toHaveTextContent(/Enter/);
   expect(dialog).toHaveTextContent(/←/);
   expect(dialog).toHaveTextContent(/1–9/);
+});
+
+// ---------- 键位自定义与设备门控（2026-10-28 快捷键体系） ----------
+
+it("自定义键位即时生效：j 切下一题、默认 → 失效；帮助面板显示当前键位与固定标注", async () => {
+  bindKeyboardBindingsAccount("m3d3-kbd");
+  saveKeyboardBindings({ "practice.next-question": ["j"] });
+  const { container } = await renderSingle("?q=q1");
+  container.focus();
+  press(container, "ArrowRight");
+  expect(progressRow().textContent).toContain("第 1 / 4 题");
+  press(container, "j");
+  await waitFor(() =>
+    expect(progressRow().textContent).toContain("第 2 / 4 题"),
+  );
+  fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  const help = await screen.findByRole("menuitem", { name: /快捷键/ });
+  fireEvent.click(help);
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("j");
+  expect(dialog).toHaveTextContent("固定");
+});
+
+it("? 打开快捷键帮助（默认键位）", async () => {
+  const { container } = await renderSingle("?q=q2");
+  container.focus();
+  press(container, "?", { shiftKey: true });
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("键盘快捷键");
+});
+
+it("固定命令先匹配：open-help 改到 1 也不抢选项数字（1 仍选第 1 项）", async () => {
+  bindKeyboardBindingsAccount("m3d3-kbd");
+  // 键位撞固定键由设置页冲突检测拒存；此处直接写 store 验证派发优先级兜底
+  saveKeyboardBindings({ "practice.open-help": ["1"] });
+  const { container } = await renderSingle("?q=q1");
+  container.focus();
+  press(container, "1");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("radio", { name: "对" })).toBeChecked();
+});
+
+it("键盘设备未探测时「快捷键」入口不出现；探测成功当次会话出现", async () => {
+  resetKeyboardDeviceForTest();
+  await renderSingle();
+  fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  expect(screen.queryByRole("menuitem", { name: /快捷键/ })).toBeNull();
+  // 关菜单并探测：body 上首个合格 keydown（等价 iPad 接入实体键盘首键）
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).toBeNull(),
+  );
+  fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  expect(
+    await screen.findByRole("menuitem", { name: /快捷键/ }),
+  ).toBeInTheDocument();
 });

@@ -118,11 +118,3 @@ export function isSuppressedKeyEvent(event: KeyboardEvent): boolean {
 export function isOverlayOpen(): boolean {
   return document.querySelector('[role="dialog"][data-state="open"]') !== null;
 }
-
-/** 当前设备是否有粗指针主输入（触屏）：快捷键需要实体键盘，帮助层提示用 */
-export function hasCoarsePointer(): boolean {
-  return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(pointer: coarse)").matches
-  );
-}
