@@ -95,11 +95,11 @@ describe("学生阅读位置恢复", () => {
     advance();
     expect(localStorage.length).toBe(2);
   });
-  it("资源未就绪不恢复；超时或卸载后不突然跳页", () => {
+  it("资源未就绪不提前恢复；死线到点按现状对齐一次", () => {
     const element = cards.current.get("q2");
     element?.insertAdjacentHTML(
       "beforeend",
-      '<div data-slot="question-surface"><span role="status">加载中</span></div>',
+      '<div data-slot="question-surface"><span role="status">加载同</span></div>',
     );
     localStorage.setItem(
       key(),
@@ -108,13 +108,23 @@ describe("学生阅读位置恢复", () => {
     const { unmount } = renderHook(() =>
       useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0),
     );
-    act(() => vi.advanceTimersByTime(6000));
+    act(() => vi.advanceTimersByTime(4000));
+    // 死线前资源未就绪：不提前对位（稳定门仍生效）
+    expect(scroll).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(2000));
+    // 死线到点仍未就绪：按当前几何立即对齐一次（300 - 64 - 0 = 236），
+    // 不再弃恢复把学生晾在顶部
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({
+      top: 236,
+      behavior: "instant",
+    });
     element?.querySelector("span")?.remove();
     advance();
-    expect(scroll).not.toHaveBeenCalled();
+    // 资源此后就绪：不再第二次跳页
+    expect(scroll).toHaveBeenCalledTimes(1);
     unmount();
     advance();
-    expect(scroll).not.toHaveBeenCalled();
+    expect(scroll).toHaveBeenCalledTimes(1);
   });
   it("过期题号、损坏存储和存储失败不影响作答", () => {
     localStorage.setItem(
@@ -189,5 +199,33 @@ describe("学生阅读位置恢复", () => {
     rerender();
     advance();
     expect(scroll).not.toHaveBeenCalled();
+  });
+});
+
+describe("阅读位置死线兜底", () => {
+  it("死线到点仍未稳定也完成对齐，不再弃恢复", () => {
+    localStorage.setItem(
+      key(),
+      JSON.stringify({ questionId: "q2", offset: 20 }),
+    );
+    const li = document.createElement("li");
+    // 永不完的图（jsdom 不加载）：ready 恒 false → 稳定门恒不满足
+    li.innerHTML = '<article tabindex="-1"></article><img src="pending.png" />';
+    vi.spyOn(li, "getBoundingClientRect").mockReturnValue({
+      top: 300,
+      bottom: 700,
+      height: 400,
+    } as DOMRect);
+    cards.current = new Map([["q2", li]]);
+    renderHook(() =>
+      useReadingPosition("attempt", cards, vi.fn(), vi.fn(), 0),
+    );
+    expect(scroll).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(6000));
+    // 5s 死线到点：按最后几何立即对齐（300 - 64 - 20 = 216），不再晾在顶部
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({
+      top: 216,
+      behavior: "instant",
+    });
   });
 });
