@@ -42,11 +42,30 @@ describe("withQuestionId / hasExplicitQuestionId", () => {
     const broken = "::::question{type=judge\n题\n::::";
     expect(withQuestionId(broken, "q-9")).toBe(broken);
   });
+
+  it("id 排首位紧跟 { 的形态判定为已有 id、不重复注入（tt-07b P2-4 回归位）", () => {
+    const idFirst = '::::question{id="q-1" type=judge}\n题\n::::';
+    expect(withQuestionId(idFirst, "q-9")).toBe(idFirst);
+    expect(hasExplicitQuestionId('::::question{id="q-1" type=judge}')).toBe(
+      true,
+    );
+  });
 });
 
 describe("replaceLessonQuestionBlock", () => {
   const NEW_BLOCK =
     "::::question{type=fill difficulty=2}\n新题干 [[7]]\n:::\n::::";
+  // 整文期望（LF）：钉住容器 endLine 边界——闭合围栏行整段换掉，不漏出不并吞
+  const EXPECTED_LF = `# 第 1 讲 有理数
+
+引入段。
+
+::::question{type=fill difficulty=2 id="q-1"}
+新题干 [[7]]
+:::
+::::
+
+收尾段。`;
   it("命中替换：注入 id、保留相邻段落与 H1", () => {
     const r = replaceLessonQuestionBlock(LESSON_MD, "q-1", NEW_BLOCK);
     expect(r.replaced).toBe(true);
@@ -58,6 +77,7 @@ describe("replaceLessonQuestionBlock", () => {
     expect(r.markdown).toContain("引入段。");
     expect(r.markdown).toContain("收尾段。");
     expect(r.markdown).not.toContain("计算 [[3]]");
+    expect(r.markdown).toBe(EXPECTED_LF);
   });
   it("id 不存在 → replaced:false 且原文逐字返回", () => {
     const r = replaceLessonQuestionBlock(LESSON_MD, "q-404", NEW_BLOCK);
@@ -83,5 +103,16 @@ describe("replaceLessonQuestionBlock", () => {
     );
     expect(r.replaced).toBe(true);
     expect(r.markdown.includes("\r\n")).toBe(true);
+    expect(r.markdown).toBe(EXPECTED_LF.replace(/\n/g, "\r\n"));
+  });
+  it("混合行尾（\\r\\n 与 \\n 并存）→ replaced:false 且原文逐字不变", () => {
+    // split 只按单一 eol 切行，与解析器的 position 行号错位，splice 会落错行
+    // （旧开围栏残留、相邻段被并吞）——按「异常形态不改动」纪律整体拒绝
+    const mixed =
+      '# 第 1 讲\r\n\n引入段。\n\n::::question{id="q-1"}\n计算 [[3]]。\n::::\n\n收尾段。';
+    expect(replaceLessonQuestionBlock(mixed, "q-1", NEW_BLOCK)).toEqual({
+      markdown: mixed,
+      replaced: false,
+    });
   });
 });
