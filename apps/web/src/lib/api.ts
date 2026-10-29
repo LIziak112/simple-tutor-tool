@@ -199,6 +199,7 @@ import {
   type TeacherAssignmentListData,
   type TeacherAttemptDetailData,
   type TeacherAttemptListData,
+  type TeacherAttemptReplayData,
   type TeacherInfo,
   type TeacherLoginRequest,
   type TeacherPracticeFeedbackSettings,
@@ -2280,6 +2281,18 @@ export function fetchTeacherAttemptDetailApi(
 ): Promise<TeacherAttemptDetailData> {
   return callApi(() =>
     api.api.teacher.attempts[":id"].$get({ param: { id: attemptId } }),
+  );
+}
+
+/**
+ * 做题复现载荷（hall-15077；GET /api/teacher/attempts/:id/replay）：
+ * events 时间轴 + 草稿/手写/逐题提交事实，全部元信息（无题面内容）。
+ */
+export function fetchTeacherAttemptReplayApi(
+  attemptId: string,
+): Promise<TeacherAttemptReplayData> {
+  return callApi(() =>
+    api.api.teacher.attempts[":id"].replay.$get({ param: { id: attemptId } }),
   );
 }
 

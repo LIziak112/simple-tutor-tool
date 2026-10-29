@@ -12,7 +12,8 @@ import {
 
 /**
  * 学习痕迹事件契约测试（T2.10 + T4.0a + 2026-10 讲练一体）：
- * - 事件类型枚举（既有 11 种零变化 + T4.0a 新增 11 种 + question_submit，共 23 种）；
+ * - 事件类型枚举（既有 11 种零变化 + T4.0a 新增 11 种 + question_submit +
+ *   note_sync/editor_toggle，共 25 种）；
  * - 单条事件：合法/非法 type、缺 questionId、answer_change 的 from/to 形态；
  * - 批量请求：200 条通过 / 201 条拒绝（任务验收：超 200 → 400 的契约层依据）；
  * - attempt 事件联合不含 lecture_expand、lecture 联合只含讲义域事件组；
@@ -60,6 +61,9 @@ describe("learningEventTypeSchema", () => {
       "ink_fullscreen",
       // 2026-10 讲练一体：逐题提交埋点（attempt 域）
       "question_submit",
+      // 2026-10-28 使用数据补缺（attempt 域）
+      "note_sync",
+      "editor_toggle",
     ]);
   });
 });
@@ -513,6 +517,116 @@ describe("question_submit（2026-10 讲练一体逐题提交埋点）", () => {
   });
 });
 
+// ---------- 2026-10-28 使用数据补缺（hall-15077）：note_sync / editor_toggle ----------
+
+describe("note_sync / editor_toggle（2026-10-28 使用数据补缺）", () => {
+  it("note_sync：questionId+phase+revision+strokes 全必填；phase 限 scratch/correction", () => {
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("note_sync", {
+          questionId: "练习四-2",
+          phase: "scratch",
+          revision: 3,
+          strokes: 12,
+        }),
+      ).success,
+    ).toBe(true);
+    // 订正阶段草稿纸与恢复稿同收
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("note_sync", {
+          questionId: "练习四-2",
+          phase: "correction",
+          revision: 1,
+          strokes: 0,
+        }),
+      ).success,
+    ).toBe(true);
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("note_sync", {
+          questionId: "练习四-2",
+          phase: "supplement",
+          revision: 1,
+          strokes: 0,
+        }),
+      ).success,
+    ).toBe(true);
+    // revision=0（尚未同步）拒绝
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("note_sync", {
+          questionId: "练习四-2",
+          phase: "scratch",
+          revision: 0,
+          strokes: 0,
+        }),
+      ).success,
+    ).toBe(false);
+    // 缺 strokes 拒绝
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("note_sync", {
+          questionId: "练习四-2",
+          phase: "scratch",
+          revision: 1,
+        }),
+      ).success,
+    ).toBe(false);
+    // 讲义域联合不收（草稿只存在于 attempt 语境）
+    expect(
+      lectureEventSchema.safeParse(
+        eventOf("note_sync", {
+          questionId: "练习四-2",
+          phase: "scratch",
+          revision: 1,
+          strokes: 0,
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("editor_toggle：questionId+editor+on 全必填；editor 限三类编辑器", () => {
+    for (const editor of ["annotation", "scratch", "answerInk"] as const) {
+      expect(
+        attemptEventSchema.safeParse(
+          eventOf("editor_toggle", {
+            questionId: "练习四-1",
+            editor,
+            on: true,
+          }),
+        ).success,
+      ).toBe(true);
+    }
+    // 未知编辑器种类拒绝
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("editor_toggle", {
+          questionId: "练习四-1",
+          editor: "paper",
+          on: true,
+        }),
+      ).success,
+    ).toBe(false);
+    // 缺 editor 拒绝
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("editor_toggle", { questionId: "练习四-1", on: true }),
+      ).success,
+    ).toBe(false);
+    // 讲义域联合不收
+    expect(
+      lectureEventSchema.safeParse(
+        eventOf("editor_toggle", {
+          questionId: "练习四-1",
+          editor: "scratch",
+          on: true,
+        }),
+      ).success,
+    ).toBe(false);
+  });
+});
+
 describe("learningEventSchema：payload 字段白名单守护（T6R.17 辅助信息纪律）", () => {
   /**
    * 纪律出处（T6R.17 辅助信息纪律，承接 learning-event.ts 文件头安全口径
@@ -546,10 +660,14 @@ describe("learningEventSchema：payload 字段白名单守护（T6R.17 辅助信
       "step",
       // 计数
       "strokes",
+      "revision",
       "erase",
       "undo",
       "redo",
       "clear",
+      // 2026-10-28 使用数据补缺：阶段/编辑器枚举引用（非内容）
+      "phase",
+      "editor",
       // 布尔
       "on",
       // 学生自报答案值（from/to 是学生自己的输入，非标准答案）
@@ -577,10 +695,10 @@ describe("learningEventSchema：payload 字段白名单守护（T6R.17 辅助信
         }
       }
     }
-    // 守护自检：分支数须与现行 23 种事件的 schema 分支数一致（directive_interact
+    // 守护自检：分支数须与现行 25 种事件的 schema 分支数一致（directive_interact
     // 按 host/action 拆 4 分支、net/idle 两 scope 共用同一 schema）——新增事件
     // 此数必然 +1，白名单须同步审视，这正是守护点
-    expect(branches.length).toBe(26);
+    expect(branches.length).toBe(28);
     expect(violations).toEqual([]);
   });
 });

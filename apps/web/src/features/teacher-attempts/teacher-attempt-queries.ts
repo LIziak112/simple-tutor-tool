@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   fetchTeacherAttemptDetailApi,
+  fetchTeacherAttemptReplayApi,
   fetchTeacherAttemptsApi,
   fetchTeacherInkStrokesApi,
   type TeacherAttemptListParams,
@@ -61,6 +62,25 @@ export function useTeacherInkReplay(inkId: string | undefined) {
     enabled: inkId !== undefined,
     staleTime: 60_000,
     retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** 做题复现 key（hall-15077） */
+export const teacherAttemptReplayKey = (attemptId: string) =>
+  ["teacher", "attempt-replay", attemptId] as const;
+
+/**
+ * 做题复现载荷（hall-15077；GET /attempts/:id/replay）：
+ * events 时间轴 + 草稿/手写/逐题提交事实的只读投影，重放解析在 replay-model；
+ * 不自动刷新（与详情页同「刷新才更新」口径）。
+ */
+export function useTeacherAttemptReplay(attemptId: string | undefined) {
+  return useQuery({
+    queryKey: teacherAttemptReplayKey(attemptId ?? "pending"),
+    queryFn: () => fetchTeacherAttemptReplayApi(attemptId ?? ""),
+    enabled: attemptId !== undefined,
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
 }

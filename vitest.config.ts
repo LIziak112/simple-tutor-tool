@@ -36,6 +36,9 @@ export default defineConfig({
             // 分层脚本的单测（e2e-affected 决策函数等）：node 环境纯函数，无 jsdom 需求；
             // ** 以防未来脚本分子目录
             "scripts/**/*.test.mjs",
+            // 仓库内 skill 的运行时脚本单测（lecture-practice 局域网二维码）：
+            // 同为 node 环境纯逻辑，放 .claude 下与脚本同目录维护
+            ".claude/skills/**/scripts/**/*.test.mjs",
           ],
           // 覆盖率（§7.2：md-dsl 与 grading 单测覆盖率 ≥90% 硬门槛）：
           // 开关由 CLI --coverage 传入（如 packages/grading 的 test:coverage 脚本），

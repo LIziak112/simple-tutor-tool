@@ -26,6 +26,7 @@ import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { getTeacherAttemptReplay } from "../services/teacher-attempt-replay";
 import {
   getTeacherAttemptDetail,
   listTeacherAttempts,
@@ -96,6 +97,18 @@ export function createTeacherAttemptRoutes(
         return c.json({
           ok: true,
           data: getTeacherAttemptDetail(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+          ),
+        });
+      })
+      // hall-15077：做题复现——events 时间轴 + 草稿/手写/逐题提交事实一次取齐
+      // （只读投影，业务在 teacher-attempt-replay；权限同详情 requireTeacherAttempt）
+      .get("/attempts/:id/replay", (c) => {
+        return c.json({
+          ok: true,
+          data: getTeacherAttemptReplay(
             db,
             c.var.teacher.id,
             c.req.param("id"),

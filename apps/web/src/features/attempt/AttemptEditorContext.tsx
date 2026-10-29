@@ -81,6 +81,16 @@ export function AttemptEditorNotice() {
   );
 }
 const noSubscribe = () => () => {};
+/**
+ * 非响应式访问编辑器协调器 store（埋点等旁路订阅用）：拿到 subscribe/
+ * getActive 原语但不经 useSyncExternalStore 挂 React 订阅——订阅方自身不
+ * 因此重渲染。埋点场景必须用它：组件级订阅会把 AnswerView 重渲染加进
+ * 编辑器开启热路径（PR #47 实测构成 130 题暖开尾部尖峰，warmMax 判别见
+ * 大厅 #15115）。
+ */
+export function useAttemptEditorStore() {
+  return useContext(Context);
+}
 /** undefined订阅全局，题号只订阅本题，null只取稳定操作而不订阅模式。 */
 export function useAttemptEditor(
   questionId?: string | null,
