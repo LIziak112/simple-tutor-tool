@@ -16,7 +16,7 @@ app 本身就是练习站：不搭新站、不重写渲染器。四步：出 md 
 
 ### 1) 出 md
 
-- 三形态 frontmatter `kind`：lecture / practice / mixed（语法权威 `dsl-kit/规范.md`）。
+- 四形态 frontmatter `kind`：lecture / practice / mixed / lesson（lesson 为 2026-10 讲练一体第四形态；契约权威 `packages/contract/src/content.ts` 的 documentKindSchema，语法细则 `dsl-kit/规范.md`）。
 - 题型枚举：唯一来源 `packages/contract/src/content.ts`，七基础题型 judge/choice/multi/fill/solve/apply/find-error 恒可导，response/matching/ordering 受 NEW_CONTENT_ENABLED 发布开关裁决（只裁决新导入；已开卷按冻结快照作答，见坑位 2）。
 - `[[答案]]` 标记内禁 `$`：公式定界符会把标记从中间切开导致答案泄露（`dsl-kit/规范.md`「标记内禁止 $」）。
 
