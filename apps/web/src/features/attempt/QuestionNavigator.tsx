@@ -74,22 +74,11 @@ export function QuestionNavigator({
   );
   const hasPractice = items.some((item) => item.practice !== undefined);
   return (
-    <nav aria-label="答题卡" className="min-w-0">
-      <Button
-        type="button"
-        variant="outline"
-        className="mb-4 min-h-11 w-full justify-between px-3"
-        disabled={locked || !next}
-        onClick={() => next && onJump(next.id)}
-      >
-        {next ? "下一道未答" : items.length === 0 ? "暂无题目" : "全部已填写"}
-        {next ? (
-          <ArrowRight aria-hidden className="size-4" />
-        ) : (
-          <Check aria-hidden className="size-4" />
-        )}
-      </Button>
-      <div className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+    <nav
+      aria-label="答题卡"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
+      <div className="mb-3 flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span>○ 未填写</span>
         <span>◐ 部分填写</span>
         <span>● 已填写</span>
@@ -107,7 +96,7 @@ export function QuestionNavigator({
         )}
       </div>
       {/* 为向外延伸 4px 的选中框和键盘焦点框留出空间，避免滚动容器裁切。 */}
-      <ol className="grid grid-cols-[repeat(auto-fill,44px)] justify-start gap-2 p-1">
+      <ol className="grid min-h-0 grid-cols-[repeat(auto-fill,44px)] justify-start gap-2 overflow-y-auto overscroll-contain p-1">
         {items.map((item) => (
           <li key={item.id}>
             <button
@@ -146,6 +135,20 @@ export function QuestionNavigator({
           </li>
         ))}
       </ol>
+      <Button
+        type="button"
+        variant="outline"
+        className="mt-3 shrink-0 min-h-11 w-full justify-between px-3"
+        disabled={locked || !next}
+        onClick={() => next && onJump(next.id)}
+      >
+        {next ? "下一道未答" : items.length === 0 ? "暂无题目" : "全部已填写"}
+        {next ? (
+          <ArrowRight aria-hidden className="size-4" />
+        ) : (
+          <Check aria-hidden className="size-4" />
+        )}
+      </Button>
     </nav>
   );
 }
