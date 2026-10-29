@@ -73,3 +73,18 @@ it("空卷不声称全部已填写", () => {
   render(<QuestionNavigator items={[]} currentId={null} onJump={vi.fn()} />);
   expect(screen.getByRole("button", { name: "暂无题目" })).toBeDisabled();
 });
+
+it("题号列表独立滚动，未答按钮固定在滚动区域外的底部", () => {
+  render(<QuestionNavigator items={items} currentId="a" onJump={vi.fn()} />);
+  const nav = screen.getByRole("navigation", { name: "答题卡" });
+  const list = screen.getByRole("list");
+  const action = screen.getByRole("button", { name: "下一道未答" });
+  expect(nav).toHaveClass("flex", "min-h-0", "flex-col", "overflow-hidden");
+  expect(list).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-contain");
+  expect(list.contains(action)).toBe(false);
+  expect(action.parentElement).toBe(nav);
+  expect(list.nextElementSibling).toBe(action);
+  expect(action).toHaveClass("shrink-0");
+  fireEvent.scroll(list, { target: { scrollTop: 200 } });
+  expect(list.nextElementSibling).toBe(action);
+});

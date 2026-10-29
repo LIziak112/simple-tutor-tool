@@ -1490,9 +1490,9 @@ function AnswerView({
           >
             <aside
               aria-label="答题定位"
-              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto overscroll-contain lg:block"
+              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start flex-col overflow-hidden lg:flex"
             >
-              <h2 className="sticky top-0 z-10 mb-3">
+              <h2 className="mb-3 shrink-0">
                 <Button
                   variant="outline"
                   className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
@@ -1522,7 +1522,11 @@ function AnswerView({
                   )}
                 </Button>
               </h2>
-              <div id={navigationId} hidden={navigatorCollapsed}>
+              <div
+                id={navigationId}
+                hidden={navigatorCollapsed}
+                className="min-h-0 flex-1 flex-col overflow-hidden not-hidden:flex"
+              >
                 <QuestionNavigator
                   items={navigationItems}
                   currentId={currentQuestionId}
@@ -1961,7 +1965,7 @@ function AnswerView({
                 )}
               </DialogDescription>
             </DialogHeader>
-            <div className="min-h-0 overflow-y-auto overscroll-contain p-1">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-1">
               <QuestionNavigator
                 items={navigationItems}
                 currentId={currentQuestionId}
