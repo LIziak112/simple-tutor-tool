@@ -149,7 +149,7 @@ export const attemptSummarySchema = z
      * （题号全卷连续），不再落在单个单元上。两条口径由下方 superRefine 强制。
      */
     unitId: z.string().min(1).nullable(),
-    /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
+    /** 第几次作答（course 来源从 1 递增；assignment 来源缺省 1、显式重做开新卷后按 (学生, 作业) 递增，hall-15313） */
     attemptNo: z.number().int().min(1),
     status: attemptStatusSchema,
     /** 开始作答时间：UTC ISO */
@@ -167,8 +167,26 @@ export const attemptSummarySchema = z
      * 取 label（答题页/结果页来源行用）；其余来源与历史卷缺省（旧载荷
      * 兼容，optional） */
     wrongScopeLabel: z.string().min(1).nullable().optional(),
+    /**
+     * 是否允许重做（hall-15313）：仅 assignment 来源携带（其余来源恒 undefined，
+     * 由 superRefine 强制）；结果页据此渲染「再做一次」。旧版响应缺省 undefined，
+     * 客户端按 true 处理（存量作业即允许重做）。
+     */
+    allowRedo: z.boolean().optional(),
   })
   .superRefine((summary, ctx) => {
+    // allowRedo 仅 assignment 来源携带（hall-15313）：重做是作业语义，其余来源
+    // 携带即拒绝（与 lectureId 同款来源不变式）
+    if (
+      summary.sourceType !== "assignment" &&
+      summary.allowRedo !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["allowRedo"],
+        message: `来源不变式冲突：${summary.sourceType} 来源不得携带 allowRedo（仅 assignment 来源携带）`,
+      });
+    }
     // lectureId 是讲练开卷专属归属键（2026-10）：除 lesson 外的来源携带即拒绝
     if (summary.sourceType !== "lesson" && summary.lectureId !== null) {
       ctx.addIssue({
@@ -1170,6 +1188,8 @@ export const attemptDetailDataSchema = z
  * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
+ * - REDO_NOT_ALLOWED：作业不允许重做（allowRedo=false）且无进行中卷时，显式
+ *   redo:true 开新卷被拒（409，hall-15313）——前端渲染重做入口的兜底门；
  * - ATTEMPT_ABANDONED：作答已作废（2026-10 讲练随时重开：进行中卷被「重新开始」
  *   放弃后，其上一切读写——详情/存草稿/单题提交/提示解锁——都被拒绝；409，
  *   前端提示重新进入）；
@@ -1223,6 +1243,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
+  "REDO_NOT_ALLOWED",
   "ATTEMPT_ABANDONED",
   "ATTEMPT_CONTEXT_BROKEN",
   "QUESTION_ALREADY_SUBMITTED",

@@ -1,0 +1,1 @@
+ALTER TABLE `assignments` ADD `allow_redo` integer DEFAULT true NOT NULL;

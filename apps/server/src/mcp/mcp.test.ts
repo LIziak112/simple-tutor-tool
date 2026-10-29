@@ -474,6 +474,10 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         assignments: { title: string }[];
       };
       expect(data.assignments[0]?.title).toBe("Agent 作业");
+      // hall-15313：MCP 创建与 REST 同口径——缺省 allowRedo=true（存量兼容）
+      expect(
+        (data.assignments[0] as unknown as { allowRedo?: boolean }).allowRedo,
+      ).toBe(true);
       expect(countAssignments()).toBe(before + 1);
       // 省略 studentIds：种子 3 名未归档学生 → STUDENT_AMBIGUOUS（附名单）
       const ambiguous = await client.callTool({
@@ -528,6 +532,24 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
           .map((row) => row.studentId),
       ).toEqual([env.seed.students.s1.id]);
       expect(countAssignments()).toBe(before + 2);
+      // hall-15313：显式 allowRedo=false 透传落库（计数断言之后追加，不扰上方口径）
+      const denied = await client.callTool({
+        name: "create_assignment",
+        arguments: {
+          assignment: {
+            title: "不允许重做",
+            unitIds: [env.seed.units.u1.id],
+            studentIds: [env.seed.students.s1.id],
+            allowRedo: false,
+          },
+          confirm: true,
+        },
+      });
+      expect(denied.isError).toBeFalsy();
+      const deniedData = JSON.parse(textOf(denied)) as {
+        assignments: { allowRedo: boolean }[];
+      };
+      expect(deniedData.assignments[0]?.allowRedo).toBe(false);
       await client.close();
     });
 

@@ -443,6 +443,34 @@ describe("AssignmentEditDialog 答案公布时机（T2A.8）", () => {
   });
 });
 
+describe("AssignmentEditDialog 学生重做（hall-15313）", () => {
+  it("旧作业（allowRedo 缺省）按「允许」呈现（打开不收紧）；改为不允许 → PATCH 仅带 allowRedo=false", async () => {
+    renderDialog();
+    const select = (await screen.findByLabelText(
+      /学生重做/,
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("allowed");
+
+    fireEvent.change(select, { target: { value: "denied" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存标题与截止/ }));
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1));
+    expect(mockedUpdate.mock.calls[0]?.[1]).toEqual({ allowRedo: false });
+  });
+
+  it("显式 false 的作业按「不允许」呈现；改回允许 → PATCH 带 allowRedo=true", async () => {
+    renderDialog(makeAssignment({ allowRedo: false }));
+    const select = (await screen.findByLabelText(
+      /学生重做/,
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("denied");
+
+    fireEvent.change(select, { target: { value: "allowed" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存标题与截止/ }));
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1));
+    expect(mockedUpdate.mock.calls[0]?.[1]).toEqual({ allowRedo: true });
+  });
+});
+
 describe("AssignmentEditDialog AI 伴学策略（SAI-07）", () => {
   it("AI 策略区与答案公布时机同表单可见，含复盘早于公布的关联说明", async () => {
     renderDialog();

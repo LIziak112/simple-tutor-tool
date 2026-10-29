@@ -1552,11 +1552,14 @@ export function getAnalyticsOverview(
   let pendingMarkCount = 0;
   for (const count of pendingByAttempt.values()) pendingMarkCount += count;
 
-  // 周期内发生的课程练习重做次数（D1 独立指标；attemptNo>1 且交卷落窗）
+  // 周期内发生的重做次数（D1 独立指标；course/assignment 来源 attemptNo>1
+  // 且交卷落窗，hall-15313 起作业重做同计入）
   const fromIso = ctx.range.from;
   const redoCount = ctx.allAttempts.filter(
     (attempt) =>
-      attempt.sourceType === "course" &&
+      // hall-15313：作业重做卷同计入（course/assignment 来源 attemptNo>1）
+      (attempt.sourceType === "course" ||
+        attempt.sourceType === "assignment") &&
       attempt.attemptNo > 1 &&
       attempt.submittedAt !== null &&
       (fromIso === null || attempt.submittedAt >= fromIso) &&

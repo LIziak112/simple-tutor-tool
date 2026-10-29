@@ -378,6 +378,137 @@ describe("POST /api/student/assignments/:id/attempt：创建与幂等", () => {
   });
 });
 
+describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
+  /** 带请求体的开卷 POST（redo / 空 body 回归锁用） */
+  function postAttemptWithBody(
+    app: App,
+    cookie: string,
+    assignmentId: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> {
+    return Promise.resolve(
+      app.request(`/api/student/assignments/${assignmentId}/attempt`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it("已交卷后显式 redo:true 开新卷：新 id、attemptNo=2、从空白开始、库里两行", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const first = await startAttemptOk(app, aCookie, assignmentId);
+    const firstId = first.id as string;
+    await postSubmit(app, aCookie, firstId);
+
+    const res = await postAttemptWithBody(app, aCookie, assignmentId, {
+      redo: true,
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as {
+      data: { id: string; attemptNo: number; status: string };
+    };
+    expect(data.id).not.toBe(firstId);
+    expect(data.attemptNo).toBe(2);
+    expect(data.status).toBe("draft");
+    expect(db.select().from(attempts).all().length).toBe(2);
+
+    // 新卷从空白开始（不预填上次答案与笔迹，与课程练习 D10 同口径）
+    const detail = await getAttempt(app, aCookie, data.id);
+    expect(detail.res.status).toBe(200);
+    const drafts = (
+      detail.body as { data: { drafts: Record<string, unknown> } }
+    ).data.drafts;
+    expect(Object.keys(drafts)).toHaveLength(0);
+
+    // 详情响应随卷下发 allowRedo（缺省 true——重做入口的渲染依据）
+    expect(
+      (detail.body as { data: { attempt: { allowRedo?: boolean } } }).data
+        .attempt.allowRedo,
+    ).toBe(true);
+  });
+
+  it("不允许重做：有 draft 时 redo:true 恒返回进行中卷（先 draft 后策略位）；交卷后 409 REDO_NOT_ALLOWED；改回允许即恢复", async () => {
+    const { app, aCookie, teacherCookie, assignmentId } =
+      await makeAttemptApp();
+    const patch = async (allowRedo: boolean) =>
+      app.request(`/api/teacher/assignments/${assignmentId}`, {
+        method: "PATCH",
+        headers: { cookie: teacherCookie, "content-type": "application/json" },
+        body: JSON.stringify({ allowRedo }),
+      });
+
+    // 教师关掉重做（PATCH 即时生效，同时覆盖 PATCH 通路）
+    expect((await patch(false)).status).toBe(200);
+
+    // 进行中：redo:true 仍返回该 draft（先 draft 后策略位，关开关不掐进行中卷）
+    const draft = await startAttemptOk(app, aCookie, assignmentId);
+    const inFlight = await postAttemptWithBody(app, aCookie, assignmentId, {
+      redo: true,
+    });
+    expect(inFlight.status).toBe(200);
+    expect(((await inFlight.json()) as { data: { id: string } }).data.id).toBe(
+      draft.id,
+    );
+
+    // 交卷后：redo:true 被拒；缺省 POST 回看不受影响
+    await postSubmit(app, aCookie, draft.id as string);
+    const denied = await postAttemptWithBody(app, aCookie, assignmentId, {
+      redo: true,
+    });
+    expect(denied.status).toBe(409);
+    expect(((await denied.json()) as { error: string }).error).toBe(
+      "REDO_NOT_ALLOWED",
+    );
+    const review = await startAttemptOk(app, aCookie, assignmentId);
+    expect(review.status).toBe("submitted");
+
+    // 教师改回允许 → 即时可重做（attemptNo 继续 +1）
+    expect((await patch(true)).status).toBe(200);
+    const redo = await postAttemptWithBody(app, aCookie, assignmentId, {
+      redo: true,
+    });
+    expect(redo.status).toBe(200);
+    expect(
+      ((await redo.json()) as { data: { attemptNo: number } }).data.attemptNo,
+    ).toBe(2);
+  });
+
+  it("缺省 POST（空 body / 无 redo 字段）在可重做作业上不开新卷（回归锁）", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const first = await startAttemptOk(app, aCookie, assignmentId);
+    await postSubmit(app, aCookie, first.id as string);
+    const empty = await postAttemptWithBody(app, aCookie, assignmentId, {});
+    expect(empty.status).toBe(200);
+    expect(((await empty.json()) as { data: { id: string } }).data.id).toBe(
+      first.id,
+    );
+    expect(db.select().from(attempts).all().length).toBe(1);
+  });
+
+  it("学生列表回传 allowRedo（缺省 true；教师关闭后 false）", async () => {
+    const { app, aCookie, teacherCookie, assignmentId } =
+      await makeAttemptApp();
+    const patch = async (allowRedo: boolean) =>
+      app.request(`/api/teacher/assignments/${assignmentId}`, {
+        method: "PATCH",
+        headers: { cookie: teacherCookie, "content-type": "application/json" },
+        body: JSON.stringify({ allowRedo }),
+      });
+
+    let list = await listAssignments(app, aCookie);
+    expect(
+      list.assignments.find((row) => row.id === assignmentId)?.allowRedo,
+    ).toBe(true);
+
+    expect((await patch(false)).status).toBe(200);
+    list = await listAssignments(app, aCookie);
+    expect(
+      list.assignments.find((row) => row.id === assignmentId)?.allowRedo,
+    ).toBe(false);
+  });
+});
+
 describe("学生侧 attempt 接口鉴权口径（T5：入口类查可见性 / 续作类归属即权限）", () => {
   /**
    * 口径（attempt-service 文件头注释为权威）：

@@ -1552,3 +1552,46 @@ describe("QM-12 得分汇总卡有效判定口径（结果视图）", () => {
     expect(screen.queryByText("自评错误")).toBeNull();
   });
 });
+
+describe("AttemptResultView 作业重做（hall-15313）", () => {
+  it("作业来源 + 传入 redo 槽 → 渲染「再做一次」；确认弹层确认后回调 onStart", async () => {
+    const onStart = vi.fn();
+    render(
+      <AttemptResultView
+        data={DATA}
+        onBackHome={() => {}}
+        redo={{ loading: false, error: null, onStart }}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /再做一次/ }));
+    expect(await screen.findByText("再做一次吗？")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /开始第 2 次/ }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("allowRedo=false 不渲染重做入口（教师显式关闭 → 只读回看）", async () => {
+    const data: AttemptResultData = {
+      ...DATA,
+      attempt: { ...DATA.attempt, allowRedo: false },
+    };
+    render(
+      <AttemptResultView
+        data={data}
+        onBackHome={() => {}}
+        redo={{ loading: false, error: null, onStart: vi.fn() }}
+      />,
+    );
+    await screen.findByText("周末加练");
+    expect(
+      screen.queryByRole("button", { name: /再做一次/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("未传 redo 槽（旧页面层 / 其他来源）不渲染重做入口", async () => {
+    render(<AttemptResultView data={DATA} onBackHome={() => {}} />);
+    await screen.findByText("周末加练");
+    expect(
+      screen.queryByRole("button", { name: /再做一次/ }),
+    ).not.toBeInTheDocument();
+  });
+});

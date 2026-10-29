@@ -332,6 +332,8 @@ describe("teacherAssignmentSchema（T2A.7 列表行字段集合）", () => {
       "answerRelease",
       // M1a：逐题反馈授权（可选；M1b 起服务端恒显式返回）
       "allowPerQuestionFeedback",
+      // hall-15313：允许重做（可选；旧响应缺省按允许处理）
+      "allowRedo",
       "units",
       "totalQuestionCount",
       "containsDeletedUnit",
@@ -361,6 +363,8 @@ describe("studentAssignmentSchema（学生端无泄露约束，T2A.7 多单元�
       "status",
       // M4-D3：进行中 v1 卷的行级已提交数（可选；纯公开进度计数）
       "practiceSubmittedCount",
+      // hall-15313：允许重做（可选；结果页「再做一次」入口的渲染依据）
+      "allowRedo",
     ]);
     for (const forbidden of [
       "answers",

@@ -157,8 +157,10 @@ import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
  * 交卷快照。**冻结内容不冻结权限**：作业到期/课程撤权/学生停用仍按既有守卫。
  *
  * - startAttempt：创建或取回作业来源的 attempt（幂等：一个作业一人一份进行中，
- *   仅对 assignment 来源生效）；已交卷后再 POST 返回已交的那份（前端据此直接进
- *   结果视图，不另开新卷）；新建时建卷冻结（assignment 单元序 × 题序）；
+ *   仅对 assignment 来源生效）；已交卷后再 POST 返回最近已交的那份（前端据此直接
+ *   进结果视图，不另开新卷）；显式 redo:true（hall-15313，作业 allowRedo 才放行）
+ *   开新卷 attemptNo 递增、从空白开始、历次保留可回看；新建时建卷冻结
+ *   （assignment 单元序 × 题序）；
  * - startCourseAttempt（T2A.6）：课程练习入口——存在未交卷作答则返回它；否则
  *   新建（attemptNo+1，从空白开始，建卷冻结）。每次调用都校验 D5 可见性；
  *   「(学生, 课程, 单元) 同时最多 1 份未交卷」由事务先查后插保证（D10）；
@@ -1801,30 +1803,115 @@ export function startAttempt(
     )
     .orderBy(desc(attempts.startedAt), desc(attempts.id))
     .all();
-  // 进行中的那份优先（一人一份进行中）；没有 draft 则回最近一份已交的
+  // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft
+  // 再判策略位，教师关「允许重做」不追溯进行中的重做卷（hall-15313）
   const draft = existing.find((row) => row.status === "draft");
-  if (draft !== undefined) return attemptSummaryOf(draft);
+  if (draft !== undefined) {
+    return withAllowRedo(attemptSummaryOf(draft), assignment.allowRedo);
+  }
+
+  // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、
+  // 历次保留可回看）；不允许重做且无进行中卷 → 409 REDO_NOT_ALLOWED。
+  // 「查最近卷 + 插新卷」同事务（D10 课程口径；better-sqlite3 单写者，事务
+  // 串行化并发，防重复开卷/重复 attemptNo），冻结输入读走外层 db 与课程同款
+  if (options.redo === true) {
+    if (assignment.allowRedo === false) {
+      throw new HttpError(
+        409,
+        "REDO_NOT_ALLOWED",
+        "这份作业不允许重做，只能回看已交的作答",
+      );
+    }
+    return db.transaction((tx): AttemptStartData => {
+      const rows = tx
+        .select()
+        .from(attempts)
+        .where(
+          and(
+            eq(attempts.studentId, studentId),
+            eq(attempts.assignmentId, assignmentId),
+          ),
+        )
+        .orderBy(desc(attempts.startedAt), desc(attempts.id))
+        .all();
+      const inFlight = rows.find((row) => row.status === "draft");
+      if (inFlight !== undefined) {
+        return withAllowRedo(attemptSummaryOf(inFlight), assignment.allowRedo);
+      }
+      return withAllowRedo(
+        createAssignmentAttempt(
+          db,
+          tx,
+          assignment,
+          studentId,
+          rows.reduce((max, row) => Math.max(max, row.attemptNo), 0) + 1,
+          options,
+          newContentEnabled,
+        ),
+        assignment.allowRedo,
+      );
+    });
+  }
+
+  // 缺省语义不变（幂等 create-or-return）：已交卷后再 POST 返回最近已交那份，
+  // 不因已交而开新卷——开新卷只能走显式 redo:true（hall-15313）
   const latest = existing[0];
   if (latest !== undefined) return attemptSummaryOf(latest);
 
+  return withAllowRedo(
+    db.transaction((tx) =>
+      createAssignmentAttempt(
+        db,
+        tx,
+        assignment,
+        studentId,
+        1,
+        options,
+        newContentEnabled,
+      ),
+    ),
+    assignment.allowRedo,
+  );
+}
+
+/**
+ * 作业来源建卷（T6R.3 冻结；attemptNo 由调用方按既有卷裁决——首卷 1、重做 =
+ * 既有最大值 +1，hall-15313）。冻结输入读走外层 db，写走同事务 tx
+ * （better-sqlite3 同连接同步执行，事务内外读写口径一致，课程
+ * startCourseAttempt 同款）。
+ */
+function createAssignmentAttempt(
+  db: Db,
+  tx: Tx,
+  assignment: Pick<Assignment, "id" | "courseId">,
+  studentId: string,
+  attemptNo: number,
+  options: AttemptWorkflowStartOptions,
+  newContentEnabled?: boolean,
+): AttemptStartData {
   const attempt = newDraftAttempt({
     id: randomUUID(),
     studentId,
     sourceType: "assignment",
-    assignmentId,
+    assignmentId: assignment.id,
     // T2A.7：courseId 取作业所属课程（可空，D9/D13）；unitId 恒 null——
     // 多单元作业题目集合走 assignment_units（attemptUnitIds），不再落单单元
     courseId: assignment.courseId,
     unitId: null,
-    attemptNo: 1,
+    attemptNo,
     startedAt: new Date().toISOString(),
     // M1b：仅显式 workflowVersion=1 走新协议（服务端按作业授权裁决）；
-    // 省略维持旧协议（version/mode NULL），已有 draft 走上文 create-or-return
-    ...workflowStartColumns(db, "assignment", studentId, assignmentId, options),
+    // 省略维持旧协议（version/mode NULL）
+    ...workflowStartColumns(
+      db,
+      "assignment",
+      studentId,
+      assignment.id,
+      options,
+    ),
   });
   // T6R.3：建卷冻结——题目集合/题序/完整快照/单元归属逐题预插 responses 行
-  //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷。
-  // 冻结输入的读在建卷事务前完成（better-sqlite3 同步单进程，同线程无竞态）
+  //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷
   const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
     db,
     attempt,
@@ -1840,23 +1927,53 @@ export function startAttempt(
             liveRows.map((row) => row.id),
           ),
         );
-  db.transaction((tx) => {
-    tx.insert(attempts).values(attempt).run();
-    insertFrozenResponses(
-      tx,
-      attempt.id,
-      liveRows,
-      knowledgeByQuestion,
-      newContentEnabled,
-    );
-    freezeAttemptContextSnapshotsWithin(
-      tx,
-      attempt.id,
-      entries,
-      attempt.startedAt,
-    );
-  });
+  tx.insert(attempts).values(attempt).run();
+  insertFrozenResponses(
+    tx,
+    attempt.id,
+    liveRows,
+    knowledgeByQuestion,
+    newContentEnabled,
+  );
+  freezeAttemptContextSnapshotsWithin(
+    tx,
+    attempt.id,
+    entries,
+    attempt.startedAt,
+  );
   return attemptSummaryOf(attempt);
+}
+
+/** 作业开卷摘要补 allowRedo（hall-15313）——作业行在手，零额外查询 */
+function withAllowRedo(
+  data: AttemptStartData,
+  allowRedo: boolean,
+): AttemptStartData {
+  return { ...data, allowRedo };
+}
+
+/**
+ * 详情响应补 allowRedo（hall-15313）：重做入口的渲染依据随卷下发——开卷响应
+ * （withAllowRedo，作业行在手）与详情响应（本处，作业主键单查）两处盖章；
+ * 其余来源保持 undefined（契约来源不变式拒绝携带）。
+ */
+function stampedAllowRedo(
+  db: Db,
+  attempt: Pick<Attempt, "sourceType" | "assignmentId">,
+  data: AttemptDraftData | AttemptResultData,
+): AttemptDetailData {
+  if (attempt.sourceType !== "assignment" || attempt.assignmentId === null) {
+    return data;
+  }
+  const row = db
+    .select({ allowRedo: assignments.allowRedo })
+    .from(assignments)
+    .where(eq(assignments.id, attempt.assignmentId))
+    .get();
+  return {
+    ...data,
+    attempt: { ...data.attempt, allowRedo: row?.allowRedo ?? true },
+  };
 }
 
 // ---------- POST /api/student/courses/:cid/units/:uid/attempts（T2A.6） ----------
@@ -3653,9 +3770,9 @@ export function getAttemptDetail(
 ): AttemptDetailData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status === "draft") {
-    return buildDraftData(db, attempt);
+    return stampedAllowRedo(db, attempt, buildDraftData(db, attempt));
   }
-  return buildResultData(db, attempt, now);
+  return stampedAllowRedo(db, attempt, buildResultData(db, attempt, now));
 }
 
 /**
