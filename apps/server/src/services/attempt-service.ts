@@ -1801,7 +1801,10 @@ export function startAttempt(
         eq(attempts.assignmentId, assignmentId),
       ),
     )
-    .orderBy(desc(attempts.startedAt), desc(attempts.id))
+    // 选卷 tie-break = attemptNo（hall-15658 F2）：随机 UUID 的 id 不表达卷次，
+    // 同 startedAt 双卷时会与 latestAttemptOf（完成态/名单代表卷，attemptNo
+    // tie-break）选出不同卷
+    .orderBy(desc(attempts.startedAt), desc(attempts.attemptNo))
     .all();
   // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft
   // 再判策略位，教师关「允许重做」不追溯进行中的重做卷（hall-15313）
@@ -1832,7 +1835,8 @@ export function startAttempt(
             eq(attempts.assignmentId, assignmentId),
           ),
         )
-        .orderBy(desc(attempts.startedAt), desc(attempts.id))
+        // 同款 tie-break（hall-15658 F2）：与外层查询 / latestAttemptOf 同序
+        .orderBy(desc(attempts.startedAt), desc(attempts.attemptNo))
         .all();
       const inFlight = rows.find((row) => row.status === "draft");
       if (inFlight !== undefined) {

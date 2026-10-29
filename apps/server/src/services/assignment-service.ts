@@ -102,10 +102,14 @@ export function computeAssignmentStatus(
   return latest.status === "draft" ? "in_progress" : latest.status;
 }
 
-/** 最新卷（hall-15313）：startedAt desc、attemptNo desc，与开卷入口取最近同序 */
-function latestAttemptOf<T extends { startedAt: string; attemptNo: number }>(
-  attempts: readonly T[],
-): T | undefined {
+/**
+ * 最新卷（hall-15313）：startedAt desc、attemptNo desc，与开卷入口取最近同序。
+ * 导出（hall-15658 F1/F2）：analytics 矩阵格子与开卷入口共用同一选卷单一出处，
+ * 防止「状态按一套、点击/回看按另一套」的分叉再现。
+ */
+export function latestAttemptOf<
+  T extends { startedAt: string; attemptNo: number },
+>(attempts: readonly T[]): T | undefined {
   return [...attempts].sort(
     (a, b) =>
       b.startedAt.localeCompare(a.startedAt) || b.attemptNo - a.attemptNo,

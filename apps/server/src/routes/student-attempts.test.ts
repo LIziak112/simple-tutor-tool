@@ -488,6 +488,101 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
     expect(db.select().from(attempts).all().length).toBe(1);
   });
 
+  it("同 startedAt 双卷按 attemptNo 取最新（与名单代表卷同口径；hall-15658 F2）", async () => {
+    // 旧实现缺省回看按 (startedAt desc, id desc) 选卷：随机 UUID 的 id 不表达
+    // 卷次，同 startedAt 双卷时可能与 latestAttemptOf（完成态/名单代表卷，
+    // attemptNo tie-break）选出不同卷。夹具让 attemptNo=1 的 id 字典序更大，
+    // 锁定 tie-break 不走 id 序。
+    const { app, db, aCookie, aId, teacherCookie, assignmentId } =
+      await makeAttemptApp();
+    const TIE = "2026-10-20T08:00:00.000Z";
+    const idNo1 = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const idNo2 = "00000000-0000-4000-8000-000000000001";
+    db.insert(attempts)
+      .values([
+        {
+          id: idNo1,
+          studentId: aId,
+          sourceType: "assignment",
+          assignmentId,
+          courseId: null,
+          unitId: null,
+          lectureId: null,
+          attemptNo: 1,
+          status: "graded",
+          startedAt: TIE,
+          lastActivityAt: null,
+          submittedAt: TIE,
+          activeSec: null,
+          device: null,
+          scoreAuto: 8,
+          scoreFinal: null,
+          frozenAt: TIE,
+          legacyUnverified: false,
+          abandonedAt: null,
+          practiceScopeJson: null,
+          practiceWorkflowVersion: null,
+          feedbackMode: null,
+          workflowRevision: 0,
+        },
+        {
+          id: idNo2,
+          studentId: aId,
+          sourceType: "assignment",
+          assignmentId,
+          courseId: null,
+          unitId: null,
+          lectureId: null,
+          attemptNo: 2,
+          status: "submitted",
+          startedAt: TIE,
+          lastActivityAt: null,
+          submittedAt: TIE,
+          activeSec: null,
+          device: null,
+          scoreAuto: 9,
+          scoreFinal: null,
+          frozenAt: TIE,
+          legacyUnverified: false,
+          abandonedAt: null,
+          practiceScopeJson: null,
+          practiceWorkflowVersion: null,
+          feedbackMode: null,
+          workflowRevision: 0,
+        },
+      ])
+      .run();
+
+    // 缺省 POST（回看）：取 attemptNo 最大的一份（修复前会按 id 倒序错取 idNo1）
+    const review = await startAttemptOk(app, aCookie, assignmentId);
+    expect(review.id).toBe(idNo2);
+
+    // 同库的教师详情名单代表卷 = 同一份（两个口径不再分叉）
+    const detail = await app.request(
+      `/api/teacher/assignments/${assignmentId}`,
+      {
+        headers: { cookie: teacherCookie },
+      },
+    );
+    expect(detail.status).toBe(200);
+    const roster = (
+      (await detail.json()) as {
+        data: { roster: { studentId: string; attemptId: string | null }[] };
+      }
+    ).data.roster;
+    expect(roster.find((row) => row.studentId === aId)?.attemptId).toBe(idNo2);
+
+    // redo 事务内同款排序：重做新卷 attemptNo 继续 +1（库里三行）
+    const redo = await postAttemptWithBody(app, aCookie, assignmentId, {
+      redo: true,
+    });
+    expect(redo.status).toBe(200);
+    expect(
+      ((await redo.json()) as { data: { attemptNo: number } }).data.attemptNo,
+    ).toBe(3);
+    expect(db.select().from(attempts).all().length).toBe(3);
+  });
+
   it("学生列表回传 allowRedo（缺省 true；教师关闭后 false）", async () => {
     const { app, aCookie, teacherCookie, assignmentId } =
       await makeAttemptApp();

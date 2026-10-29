@@ -2,7 +2,13 @@ import { analyticsQuerySchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
-import { attempts, lectures, teachers } from "../db/schema";
+import {
+  assignmentStudents,
+  assignments,
+  attempts,
+  lectures,
+  teachers,
+} from "../db/schema";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import {
@@ -1024,5 +1030,128 @@ describe("查询默认值（直接调 service 的归一化）", () => {
     expect(overview.range.days).toBe(30);
     expect(overview.focusDays).toBe(14);
     expect(overview.matrix.assignmentColumns).toHaveLength(4);
+  });
+});
+
+// ---------- hall-15658 F1：矩阵选卷一致性（旧已交 + 新 draft） ----------
+
+describe("完成矩阵选卷一致性（hall-15658 F1：旧已交 + 新 draft）", () => {
+  /**
+   * 旧实现：格子状态按「存在 draft」判 in-progress，attemptId 却取
+   * submittedAt 升序的组末位（SQLite ASC 把 NULL 排在前）——旧已交 A + 新
+   * draft B 时显示进行中、点击仍跳旧卷 A。修复后状态与点击目标同取最新卷
+   * （latestAttemptOf：startedAt desc + attemptNo desc，与完成态/代表卷同源）。
+   * 独立库夹具：不污染文件级共享种子（前序数值断言不受影响）；attemptId
+   * 故意与卷次字典序相反，锁定选卷不走 id 序。
+   */
+  let localDb: Db;
+  let localSeed: SeedDemoResult;
+  const assignmentId = "aaaa0000-0000-4000-8000-00000000000c";
+  const OLD_SUBMITTED_ID = "ffffff00-0000-4000-8000-00000000000a";
+  const NEW_DRAFT_ID = "000000aa-0000-4000-8000-00000000000b";
+
+  beforeAll(async () => {
+    localDb = createTestDb();
+    localSeed = await seedDemoData(localDb, TEST_TEACHER_ID, {
+      now: SEED_NOW,
+    });
+    localDb
+      .insert(assignments)
+      .values({
+        id: assignmentId,
+        teacherId: TEST_TEACHER_ID,
+        unitId: null,
+        courseId: null,
+        title: "重做选卷一致性夹具",
+        dueAt: null,
+        answerRelease: "on_submit",
+        allowPerQuestionFeedback: false,
+        allowRedo: true,
+        deletedAt: null,
+        createdAt: "2026-09-15T00:00:00.000Z",
+      })
+      .run();
+    localDb
+      .insert(assignmentStudents)
+      .values({
+        assignmentId,
+        studentId: localSeed.students.s1.id,
+        addedAt: SEED_NOW,
+        removedAt: null,
+      })
+      .run();
+    localDb
+      .insert(attempts)
+      .values([
+        {
+          id: OLD_SUBMITTED_ID,
+          studentId: localSeed.students.s1.id,
+          sourceType: "assignment",
+          assignmentId,
+          courseId: null,
+          unitId: null,
+          lectureId: null,
+          attemptNo: 1,
+          status: "submitted",
+          startedAt: "2026-09-20T02:00:00.000Z",
+          lastActivityAt: null,
+          submittedAt: "2026-09-20T03:00:00.000Z",
+          activeSec: null,
+          device: null,
+          scoreAuto: null,
+          scoreFinal: null,
+          frozenAt: "2026-09-20T02:00:00.000Z",
+          legacyUnverified: false,
+          abandonedAt: null,
+          practiceScopeJson: null,
+          practiceWorkflowVersion: null,
+          feedbackMode: null,
+          workflowRevision: 0,
+        },
+        {
+          id: NEW_DRAFT_ID,
+          studentId: localSeed.students.s1.id,
+          sourceType: "assignment",
+          assignmentId,
+          courseId: null,
+          unitId: null,
+          lectureId: null,
+          attemptNo: 2,
+          status: "draft",
+          startedAt: "2026-09-25T02:00:00.000Z",
+          lastActivityAt: null,
+          submittedAt: null,
+          activeSec: null,
+          device: null,
+          scoreAuto: null,
+          scoreFinal: null,
+          frozenAt: "2026-09-25T02:00:00.000Z",
+          legacyUnverified: false,
+          abandonedAt: null,
+          practiceScopeJson: null,
+          practiceWorkflowVersion: null,
+          feedbackMode: null,
+          workflowRevision: 0,
+        },
+      ])
+      .run();
+  });
+
+  it("格子 in-progress 且点击目标指向新 draft（与完成态/代表卷同一选卷口径）", () => {
+    const overview = getAnalyticsOverview(
+      localDb,
+      TEST_TEACHER_ID,
+      q,
+      SEED_NOW,
+    );
+    const cell = assignmentCell(
+      overview,
+      localSeed.students.s1.id,
+      assignmentId,
+    );
+    expect(cell.status).toBe("in-progress");
+    expect(cell.attemptId).toBe(NEW_DRAFT_ID);
+    // submittedAt 展示口径独立于选卷：仍为最近一次已交卷时刻
+    expect(cell.submittedAt).toBe("2026-09-20T03:00:00.000Z");
   });
 });
