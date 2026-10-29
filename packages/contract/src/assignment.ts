@@ -338,11 +338,11 @@ export const assignmentUpdateDataSchema = teacherAssignmentSchema;
 export const assignmentRosterEntrySchema = z.object({
   studentId: z.uuid(),
   displayName: z.string().min(1),
-  /** 该学生在本作业下的完成状态（graded > submitted > in_progress > not_started） */
+  /** 该学生在本作业下的完成状态（hall-15313 起按最新一卷推导：startedAt desc, attemptNo desc） */
   status: assignmentStatusSchema,
   /**
-   * 该生在本作业下的 attempt id（一人一份：draft 幂等、交卷后不再新建）。
-   * status 取同优先级（graded > submitted > draft）的代表行；未开始为 null。
+   * 该生在本作业下的 attempt id（代表行 = 最新一卷，hall-15313 重做语义；
+   * 未开始为 null）。
    * T3.1（D8）：名单状态徽章点击 → attempt 详情 /t/data/attempts/:id 的定位 id。
    */
   attemptId: z.uuid().nullable(),

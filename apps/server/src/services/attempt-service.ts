@@ -1778,7 +1778,7 @@ export function newDraftAttempt(config: {
  * - 已有进行中（draft）attempt → 直接返回它（一个作业一人一份进行中——
  *   本规则仅对 assignment 来源生效，D10）；
  * - 已交卷/已批 → 返回最近一份（status 告知前端直接进结果视图，不另开新卷；
- *   作业不重做，attemptNo 恒 1）；
+ *   attemptNo 缺省 1、显式 redo:true 开新卷后递增，hall-15313）；
  * - 否则插入新 draft attempt（courseId=作业所属课程、unitId=null——多单元
  *   题目集合走 assignment_units；sourceType=assignment）。
  */
@@ -1856,7 +1856,9 @@ export function startAttempt(
   // 缺省语义不变（幂等 create-or-return）：已交卷后再 POST 返回最近已交那份，
   // 不因已交而开新卷——开新卷只能走显式 redo:true（hall-15313）
   const latest = existing[0];
-  if (latest !== undefined) return attemptSummaryOf(latest);
+  if (latest !== undefined) {
+    return withAllowRedo(attemptSummaryOf(latest), assignment.allowRedo);
+  }
 
   return withAllowRedo(
     db.transaction((tx) =>

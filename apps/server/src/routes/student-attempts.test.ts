@@ -462,6 +462,8 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
     );
     const review = await startAttemptOk(app, aCookie, assignmentId);
     expect(review.status).toBe("submitted");
+    // 缺省回看路径同样随卷下发 allowRedo=false（与 UI 渲染依据一致）
+    expect(review.allowRedo).toBe(false);
 
     // 教师改回允许 → 即时可重做（attemptNo 继续 +1）
     expect((await patch(true)).status).toBe(200);
