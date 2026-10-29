@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { HomePage } from "./pages/HomePage";
+import { PersonalStudyPage } from "./pages/PersonalStudyPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 /**
@@ -615,7 +616,9 @@ function StudentRouteFallback() {
 export function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route path="/" element={import.meta.env.VITE_PERSONAL_MODE === "true"
+        ? <PersonalStudyPage /> : <HomePage />} />
+      <Route path="/personal" element={<PersonalStudyPage />} />
       {devOnlyRoutes}
 
       <Route
