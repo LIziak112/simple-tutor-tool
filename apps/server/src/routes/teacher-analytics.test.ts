@@ -132,8 +132,11 @@ describe("GET /api/teacher/analytics/*（T4.1 路由层）", () => {
     expect(studentBody.data.studentName).toBe("陈小明");
     expect(studentBody.data.range.days).toBe("all");
 
+    // 数据量断言用 days=all（不随真实时钟漂移：seed 锚定 SEED_NOW，days=30
+    // 窗口按真实 now 计算，seed 边界一过 realNow-30d 就永久翻红——2026-10-29
+    // 实测，hall-15313 顺手去时钟化）；days=30 路由层只验 200 + 契约形状
     const questions = await app.request(
-      `/api/teacher/analytics/questions?courseId=${seed.courses.b.id}&days=30`,
+      `/api/teacher/analytics/questions?courseId=${seed.courses.b.id}&days=all`,
       { headers: { cookie: cookieA } },
     );
     expect(questions.status).toBe(200);
@@ -142,6 +145,12 @@ describe("GET /api/teacher/analytics/*（T4.1 路由层）", () => {
     );
     // 课程 B 只有数轴练习 3 题
     expect(questionsBody.data.questions).toHaveLength(3);
+    const windowed = await app.request(
+      `/api/teacher/analytics/questions?courseId=${seed.courses.b.id}&days=30`,
+      { headers: { cookie: cookieA } },
+    );
+    expect(windowed.status).toBe(200);
+    analyticsQuestionsOkSchema.parse(await windowed.json());
   });
 
   it("教师乙查甲的学情 → 空集且不泄露计数；乙访问甲学生 → 404（D7 红线）", async () => {
