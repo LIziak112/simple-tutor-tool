@@ -7,7 +7,8 @@ import { CircleAlert, ListChecks } from "lucide-react";
 
 /**
  * 导入动作清单面板（T2A.3，D19：预览必须展示「将发生什么」）：
- * - 动作清单：新增/更新单元（含题目细分：新增 n、更新 n（version+1）、保留 n）、
+ * - 动作清单：新增/更新单元（含题目细分：新增 n、更新 n（version+1）、保留 n；
+ *   缺省题号命中更新时行内附「N 题缺省题号，可能错位」警示徽标，P2b）、
  *   新增/更新讲义、从回收站恢复标注；
  * - 注意事项：D18/D19 的导入 warning（其他文件夹同名讲义、保留题、未截止作业、
  *   配套讲义悬空 LECTURE_LINK_UNRESOLVED）；
@@ -69,6 +70,18 @@ export interface ImportStorageNames {
   readonly lecture: string | null;
   /** 单元段（如 `单元「练习四」`）；null = 无单元动作（lesson 时恒 null——单元不单独呈现） */
   readonly unit: string | null;
+}
+
+/**
+ * 缺省题号错位警示徽标（P2b）：updateUnit 动作行内联展示「N 题缺省题号，可能错位」。
+ * 服务端仅在 N>0 时携带 updatedDerived；配色与注意事项区 warning 同源（琥珀警示）。
+ */
+function DerivedIdRiskBadge({ count }: { count: number }) {
+  return (
+    <span className="ml-1.5 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+      {count} 题缺省题号，可能错位
+    </span>
+  );
 }
 
 /**
@@ -141,6 +154,14 @@ export function ActionsPanel({ preview }: { preview: ImportPreviewData }) {
                   className="text-sm"
                 >
                   {formatImportAction(action, docKind)}
+                  {/* P2b：缺省派生 id 命中更新 → 行内标红错位风险（字段仅 N>0 携带） */}
+                  {action.kind === "updateUnit" &&
+                  action.questions?.updatedDerived !== undefined &&
+                  action.questions.updatedDerived > 0 ? (
+                    <DerivedIdRiskBadge
+                      count={action.questions.updatedDerived}
+                    />
+                  ) : null}
                 </li>
               ),
             )}

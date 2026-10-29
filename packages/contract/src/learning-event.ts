@@ -27,8 +27,8 @@ import { studentAnswerSchema } from "./grading.ts";
  */
 
 /**
- * 事件类型（§5.5 既有 11 种零变化 + T4.0a 新增 11 种 + 2026-10 讲练一体 1 种，
- * 共 23 种）：
+ * 事件类型（§5.5 既有 11 种零变化 + T4.0a 新增 11 种 + 2026-10 讲练一体 1 种
+ * + 2026-10-28 使用数据补缺 2 种，共 25 种）：
  * - attempt 上下文（既有 10 种 + T4.0a 的交互族 question/result 宿主、
  *   ink_edit_batch / ink_fullscreen、环境族 net / idle + 2026-10 的
  *   question_submit 逐题提交埋点）；
@@ -63,6 +63,9 @@ export const learningEventTypeSchema = z.enum([
   "ink_fullscreen",
   // ---------- 2026-10 讲练一体新增（逐题提交埋点） ----------
   "question_submit",
+  // ---------- 2026-10-28 使用数据补缺（hall-15077：草稿链/编辑器开合进时间轴） ----------
+  "note_sync",
+  "editor_toggle",
 ]);
 
 /** 客户端毫秒时间戳（epoch ms 正整数） */
@@ -393,12 +396,52 @@ export const inkFullscreenEventSchema = z.object({
   on: z.boolean(),
 });
 
+// ---------- 2026-10-28 使用数据补缺（hall-15077）：草稿链与编辑器开合进时间轴 ----------
+
+/**
+ * 草稿一次成功同步（attempt 域，前端订阅草稿 store 注入）：服务端 head
+ * revision 前进报一条，把草稿链对齐到 events 时间轴——草稿版本表虽有服务端
+ * 保存时间，但时间轴消费方按事件聚合。phase 与草稿五元键的 phase 同义；
+ * strokes 为同步后正文笔画数（只存计数，不存笔迹本体——同 ink_stroke_batch
+ * 口径）；首版前 revision=0 的「尚未同步」不构成事件。
+ */
+export const noteSyncEventSchema = z.object({
+  type: z.literal("note_sync"),
+  clientTs: clientTsSchema,
+  questionId: questionIdSchema,
+  /** 草稿阶段：作答阶段草稿纸恒 scratch；订正工作台为 correction；恢复稿为 supplement */
+  phase: z.enum(["scratch", "correction", "supplement"]),
+  /** 本次同步成功后的服务端 head revision（CAS baseRevision 口径） */
+  revision: z.number().int().min(1),
+  /** 同步后正文笔画数（图片维度等非笔画内容不计） */
+  strokes: z.number().int().min(0),
+});
+
+/**
+ * 答题页三类编辑器（标画/草稿/正式手写）激活与退出（attempt 域，前端订阅
+ * 编辑器协调器注入）：一条事件带布尔（同 ink_fullscreen 口径，不拆 enter/
+ * exit 两种 type）。切换编辑器产生的一关一开天然成对，时间轴按
+ * questionId+editor 即可读出使用区间；整页纸面（paper）维度不重报——其进出
+ * 已有 ink_fullscreen 信号。
+ */
+export const editorToggleEventSchema = z.object({
+  type: z.literal("editor_toggle"),
+  clientTs: clientTsSchema,
+  questionId: questionIdSchema,
+  /** 编辑器种类：与协调器 AttemptEditor.kind 同一枚举 */
+  editor: z.enum(["annotation", "scratch", "answerInk"]),
+  /** true=激活，false=退出 */
+  on: z.boolean(),
+});
+
 /**
  * attempt 上下文事件（POST /api/student/attempts/:id/events 的元素）：
  * 既有 10 种 + T4.0a 增收（方案 §4.2）：交互族 host=question/result、
  * ink_edit_batch、ink_fullscreen、环境族 net / idle（lecture_visible/hidden
  * 与 host=lecture 的 directive_interact 不在本端点——讲义域走 POST /events）
- * + 2026-10 的 question_submit（讲练页逐题提交埋点）。
+ * + 2026-10 的 question_submit（讲练页逐题提交埋点）
+ * + 2026-10-28 的 note_sync（草稿同步进时间轴）/ editor_toggle（编辑器开合，
+ *   均由 useAttemptEvents 订阅注入，见 apps/web use-attempt-events.ts）。
  *
  * 外层用 z.union 而非 discriminatedUnion：directive_interact 的 question /
  * result 两形态共用同一 type 字面量（Zod 4 判别联合不允许重复判别值），
@@ -420,6 +463,8 @@ export const attemptEventSchema = z.union([
   directiveInteractResultEventSchema,
   inkEditBatchEventSchema,
   inkFullscreenEventSchema,
+  noteSyncEventSchema,
+  editorToggleEventSchema,
   netOfflineEventSchema,
   netOnlineEventSchema,
   idleStartEventSchema,
@@ -447,7 +492,7 @@ export const lectureEventSchema = z.union([
   idleEndEventSchema,
 ]);
 
-/** 全部 23 种事件的联合（供服务端入库与计算层使用） */
+/** 全部 25 种事件的联合（供服务端入库与计算层使用） */
 export const learningEventSchema = z.union([
   ...attemptEventSchema.options,
   ...lectureEventSchema.options,

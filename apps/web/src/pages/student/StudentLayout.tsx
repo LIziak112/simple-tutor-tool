@@ -14,6 +14,7 @@ import { useBindAnnotationSession } from "@/features/annotation/use-annotation-s
 import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
+import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
@@ -59,6 +60,11 @@ export function StudentLayout() {
   useEffect(() => {
     bindPracticePreferenceAccount(meQuery.data?.id ?? null);
     return () => bindPracticePreferenceAccount(null);
+  }, [meQuery.data?.id]);
+  // 键位绑定偏好同口径（2026-10-28 快捷键体系：本设备键位按账号隔离读取）
+  useEffect(() => {
+    bindKeyboardBindingsAccount(meQuery.data?.id ?? null);
+    return () => bindKeyboardBindingsAccount(null);
   }, [meQuery.data?.id]);
   useBindInkProfiles("student", meQuery.data?.id);
   const logoutMutation = useLogoutStudent();

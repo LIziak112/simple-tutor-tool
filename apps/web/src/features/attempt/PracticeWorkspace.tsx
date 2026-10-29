@@ -25,7 +25,11 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
-import { hasCoarsePointer } from "./practice-keyboard";
+import {
+  formatKeys,
+  PRACTICE_KEYBOARD_COMMANDS,
+} from "@/features/keyboard/command-registry";
+import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
 import {
   practiceLayoutLabel,
   practiceLayoutOptions,
@@ -399,8 +403,9 @@ export function PracticeKeyboardHelpMenuItem({
 }
 
 /**
- * 快捷键帮助小弹层：v1 卷单题专注键位一览；粗指针（触屏）设备提示需要
- * 实体键盘。仅 v1 卷挂菜单入口（调用方控制）。
+ * 快捷键帮助小弹层（2026-10-28 起注册表驱动）：列出全部命令的中文含义与
+ * 当前生效键位（含用户自定义），固定项标注「固定」。入口与弹层仅键盘设备
+ * 渲染（调用方门控）——纯触控设备不出现任何快捷键 UI。
  */
 export function PracticeKeyboardHelpDialog({
   open,
@@ -409,35 +414,30 @@ export function PracticeKeyboardHelpDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }): ReactNode {
+  const bindings = useKeyboardBindings();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md rounded-lg">
         <DialogHeader>
           <DialogTitle>键盘快捷键</DialogTitle>
           <DialogDescription>
-            单题专注作答时可用；列表作答不响应这些按键。
+            单题专注作答时可用；列表作答不响应这些按键。可在「设置 → 学习
+            偏好」修改键位。
           </DialogDescription>
         </DialogHeader>
         <dl className="space-y-2 text-sm">
-          <HelpKeyRow
-            keys="Enter"
-            action="未提交时提交本题；已提交时切下一题（不打扰查看结果）"
-          />
-          <HelpKeyRow keys="← / →" action="工作区获得焦点时切上一题 / 下一题" />
-          <HelpKeyRow
-            keys="1–9"
-            action="选择对应可见选项：判断 1 对 2 错；单选第 n 项；多选切换第 n 项"
-          />
+          {PRACTICE_KEYBOARD_COMMANDS.map((command) => (
+            <HelpKeyRow
+              key={command.id}
+              keys={formatKeys(bindings[command.id])}
+              action={`${command.description}${command.customizable ? "" : "（固定）"}`}
+            />
+          ))}
         </dl>
         <p className="text-xs text-muted-foreground">
           输入答案、书写纸面和弹层打开时快捷键自动让位；Esc 与 Tab 保持系统
           行为。
         </p>
-        {hasCoarsePointer() && (
-          <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-            需要实体键盘才能使用快捷键。
-          </p>
-        )}
       </DialogContent>
     </Dialog>
   );

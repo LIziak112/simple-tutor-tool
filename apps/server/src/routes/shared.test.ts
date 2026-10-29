@@ -683,7 +683,9 @@ describe("T2B.7 规模防线（D15）与文件形态", () => {
     // 文件名标题段 = 讲义标题（safeFilename 后）
     expect(filename).toMatch(/^第1讲 有理数-甲老师-\d{8}-\d{6}\.md$/);
     const content = readFileSync(join(dataDir, "shared", filename), "utf8");
-    expect(content.startsWith("---\nkind: lecture\n---\n")).toBe(true);
+    expect(
+      content.startsWith('---\nkind: lecture\ntitle: "第1讲 有理数"\n---\n'),
+    ).toBe(true);
 
     const list = await fetchSharedList(app, cookieB);
     const entry = list.data.files.find((f) => f.filename === filename);

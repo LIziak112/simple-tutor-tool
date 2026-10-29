@@ -106,6 +106,7 @@ export const SPEC_TAGS = {
   "capability-profile.spec.ts": ["@teacher"],
   "course-cache.spec.ts": ["@teacher"],
   "multi-teacher-full-chain.spec.ts": ["@teacher"],
+  "lesson-replace-reimport.spec.ts": ["@teacher"],
   // 学生端
   "student-course.spec.ts": ["@student"],
   "student-lecture-reading.spec.ts": ["@student"],
@@ -122,6 +123,7 @@ export const SPEC_TAGS = {
   "question-base.spec.ts": ["@student"],
   "practice-feedback.spec.ts": ["@student"],
   "practice-single-workspace.spec.ts": ["@student"],
+  "attempt-window.spec.ts": ["@student"],
   // 跨师生两端
   "lesson.spec.ts": ["@teacher", "@student"],
   "dual-role-session.spec.ts": ["@teacher", "@student"],

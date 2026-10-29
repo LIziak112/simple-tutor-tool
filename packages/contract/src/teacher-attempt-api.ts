@@ -8,6 +8,7 @@ import {
 } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { notePhaseSchema } from "./note.ts";
 import { attemptResultCountsSchema } from "./result-counts.ts";
 import { gradingPolicySchema, selfReviewRecordSchema } from "./self-review.ts";
 
@@ -450,6 +451,91 @@ export const exportCsvQuerySchema = z.object({
   from: z.iso.datetime({ offset: false }).optional(),
   to: z.iso.datetime({ offset: false }).optional(),
 });
+
+// ---------- 做题复现（hall-15077） ----------
+
+/**
+ * GET /api/teacher/attempts/:id/replay 响应 data——做题复现：把一次作答的原始
+ * 行为事实按时间轴交给前端重放（教师端只读投影，不新增持久化面；学习包导出
+ * D13 红线不动）。载荷全部为元信息（事件契约同款红线：不含题目侧内容；题干/
+ * 答案由既有详情接口下发）。前向兼容：事件类型放开为 string、payload 透传——
+ * 采集侧新增事件无需改本接口，未知类型由前端忽略。
+ *
+ * 时间口径：events 用客户端毫秒（clientTs）；草稿/手写/逐题提交是服务端时钟
+ * ISO——两类时钟不同源（§2.6-3），window 为全部来源换算后的联合窗口，前端
+ * 重放按换算时刻定位并对窗口两端钳制（见 web replay-model）。
+ */
+
+/** 复现事件条目：events 表行投影（payloadJson 已解析；未知键原样保留） */
+export const teacherAttemptReplayEventSchema = z.object({
+  /** 事件类型（learning-event 契约枚举之一；放开为 string 做前向兼容） */
+  type: z.string().min(1),
+  /** 客户端事件时间（epoch ms） */
+  clientTs: z.number().int().positive(),
+  /** 服务端接收时间（UTC ISO） */
+  serverTs: z.iso.datetime({ offset: false }),
+  /** 题目 id；无题目语义的事件为 null */
+  questionId: z.string().min(1).nullable(),
+  /** 载荷（元信息；透传） */
+  payload: z.record(z.string(), z.unknown()),
+});
+
+/** 草稿版本定位点：时间轴上「草稿第 N 版」（元信息，不含正文） */
+export const teacherAttemptReplayNoteVersionSchema = z.object({
+  questionId: z.string().min(1),
+  /** note_versions.revision（1 起） */
+  revision: z.number().int().min(1),
+  /** 服务端确认时间（UTC ISO） */
+  savedAt: z.iso.datetime({ offset: false }),
+  /** 笔记阶段（scratch / correction / supplement） */
+  phase: notePhaseSchema,
+});
+
+/** 手写更新点：一次笔迹上传（同题幂等覆盖）在时间轴上的投影 */
+export const teacherAttemptReplayInkPointSchema = z.object({
+  questionId: z.string().min(1),
+  /** 上传时间（UTC ISO） */
+  updatedAt: z.iso.datetime({ offset: false }),
+  strokeCount: z.number().int().min(0),
+  revision: z.number().int().min(1),
+});
+
+/** 逐题提交点：responses 行的提交时刻（冻结事实） */
+export const teacherAttemptReplaySubmitPointSchema = z.object({
+  questionId: z.string().min(1),
+  /** 提交时刻（UTC ISO） */
+  submittedAt: z.iso.datetime({ offset: false }),
+});
+
+export const teacherAttemptReplayDataSchema = z.object({
+  attemptId: z.uuid(),
+  /** 整卷交卷时刻（UTC ISO；未交为 null。旧协议卷逐题行不写提交时刻，
+   *  交卷时间轴语义由本字段承担；新协议卷与 submitPoints 互补） */
+  submittedAt: z.iso.datetime({ offset: false }).nullable(),
+  /** 联合时间窗（epoch ms；空卷为 null） */
+  windowStartMs: z.number().int().nullable(),
+  windowEndMs: z.number().int().nullable(),
+  events: z.array(teacherAttemptReplayEventSchema),
+  noteVersions: z.array(teacherAttemptReplayNoteVersionSchema),
+  inkPoints: z.array(teacherAttemptReplayInkPointSchema),
+  submitPoints: z.array(teacherAttemptReplaySubmitPointSchema),
+});
+
+export type TeacherAttemptReplayEvent = z.infer<
+  typeof teacherAttemptReplayEventSchema
+>;
+export type TeacherAttemptReplayNoteVersion = z.infer<
+  typeof teacherAttemptReplayNoteVersionSchema
+>;
+export type TeacherAttemptReplayInkPoint = z.infer<
+  typeof teacherAttemptReplayInkPointSchema
+>;
+export type TeacherAttemptReplaySubmitPoint = z.infer<
+  typeof teacherAttemptReplaySubmitPointSchema
+>;
+export type TeacherAttemptReplayData = z.infer<
+  typeof teacherAttemptReplayDataSchema
+>;
 
 // ---------- 具体化的成功壳 ----------
 

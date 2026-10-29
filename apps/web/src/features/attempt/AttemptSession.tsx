@@ -18,7 +18,7 @@ import {
   useState,
 } from "react";
 import { useSearchParams } from "react-router";
-import { Button } from "@/components/ui/button";
+
 import {
   Dialog,
   DialogContent,
@@ -58,6 +58,12 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { specOf } from "@/features/keyboard/key-spec";
+import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
+import {
+  isKeyboardDevice,
+  useKeyboardDevice,
+} from "@/features/keyboard/keyboard-device";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import {
   prepareSubmitEvidence,
@@ -86,6 +92,7 @@ import {
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
 import { focusWhenReachable } from "./focus-when-reachable";
 import { useGroupMaterialLayout } from "./group-material-layout-store";
+import { LazyMountWindow } from "./lazy-mount-window";
 import {
   type PracticeProblemPhase,
   PracticeQuestionFooter,
@@ -130,6 +137,16 @@ import {
   evidenceProblemViewsOf,
   useSubmitEvidenceConfirm,
 } from "./use-submit-evidence-confirm";
+
+/**
+ * 题卡视口懒挂载的启用阈值（性能：大量习题加载卡顿，2026-10-28）。
+ * 大卷（>20 题）才按视口懒挂载：小卷保持全量挂载语义——题卡 DOM 完整，
+ * 页内查找、外部锚点滚动、既有全链 e2e 的「开卷全量可见」前提都不变；
+ * 懒挂载的收益本来就集中在百题级长卷（首卡 7.0s→1.7s）。
+ */
+const ATTEMPT_LAZY_MOUNT_THRESHOLD = 20;
+
+import { Button } from "@/components/ui/button";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
@@ -454,7 +471,108 @@ function AnswerView({
     [],
   );
   const cardElements = useRef(new Map<string, HTMLLIElement>());
-  useReadingPosition(attemptId, cardElements, setCurrentQuestionId);
+  // ---------- 题卡视口懒挂载（性能：大量习题加载卡顿，2026-10-28） ----------
+  // 列表模式只挂载视口上下各一屏的题卡；跳题与阅读位置恢复的目标题需要
+  // 越过视口判断立即挂载，走 forcedMountIds。
+  const [forcedMountIds, setForcedMountIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const forceMountQuestion = useCallback((questionId: string) => {
+    setForcedMountIds((previous) => {
+      if (previous.has(questionId)) return previous;
+      const next = new Set(previous);
+      next.add(questionId);
+      return next;
+    });
+    // 窗口化卸载的目标题立即直挂（跳题/阅读位置恢复），同时被 retain 钉住
+    // 不再卸载（forcedMountIds）。
+    mountWindowRef.current?.forceMount(questionId);
+  }, []);
+  // 新挂载的题卡编号版本：判分反馈观察器按它重建观察列表（rAF 合帧——
+  // 滚动时一批题同时挂载只触发一次重建）。
+  const [cardMountVersion, setCardMountVersion] = useState(0);
+  const cardMountFrame = useRef(0);
+  const handleCardMounted = useCallback(() => {
+    if (cardMountFrame.current !== 0) return;
+    cardMountFrame.current = requestAnimationFrame(() => {
+      cardMountFrame.current = 0;
+      setCardMountVersion((version) => version + 1);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (cardMountFrame.current !== 0)
+        cancelAnimationFrame(cardMountFrame.current);
+    },
+    [],
+  );
+  // ---------- 窗口化虚拟列表（性能第三步，2026-10-28） ----------
+  // 懒挂载第一版只挂不卸；窗口控制器补两件事：进视口挂载走调度（滚动静默
+  // 后就近逐卡挂载、滚动一来让位——首卡关键路径只付一张卡的解析成本，滚动
+  // 帧留给浏览器），整行完全离开视口 ±2.5 屏后卸回实测等高占位（Markdown
+  // 渲染缓存让重挂免解析，实测高度回填让重挂零位移）。绘制中不卸载等守卫
+  // 集中在 retainQuestion。单题模式行不启用懒挂载，控制器闲置无副作用。
+  const editorRef = useRef(editor);
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+  const forcedMountIdsRef = useRef(forcedMountIds);
+  useEffect(() => {
+    forcedMountIdsRef.current = forcedMountIds;
+  }, [forcedMountIds]);
+  const retainQuestion = useCallback((questionId: string): boolean => {
+    if (forcedMountIdsRef.current.has(questionId)) return true;
+    const editorStore = editorRef.current;
+    if (
+      editorStore !== null &&
+      (editorStore.getActive()?.questionId === questionId ||
+        editorStore.getPaper()?.questionId === questionId)
+    )
+      return true;
+    const element = cardElements.current.get(questionId);
+    if (element !== undefined) {
+      const active = document.activeElement;
+      if (
+        active !== null &&
+        active !== document.body &&
+        element.contains(active)
+      )
+        return true;
+      // 卡内有展开的 UI（对话框/下拉/原生 details/AI 面板内容）不卸载，
+      // 不收走用户正看着的面板。
+      if (
+        element.querySelector(
+          '[data-state="open"],details[open],[role="dialog"],[data-ai-question]:not(:empty)',
+        ) !== null
+      )
+        return true;
+    }
+    return false;
+  }, []);
+  const mountWindowRef = useRef<LazyMountWindow | null>(null);
+  if (
+    mountWindowRef.current === null &&
+    questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
+  ) {
+    mountWindowRef.current = new LazyMountWindow({
+      retain: retainQuestion,
+      onSettle: handleCardMounted,
+    });
+  }
+  useEffect(
+    () => () => {
+      mountWindowRef.current?.dispose();
+      mountWindowRef.current = null;
+    },
+    [],
+  );
+  useReadingPosition(
+    attemptId,
+    cardElements,
+    setCurrentQuestionId,
+    forceMountQuestion,
+    cardMountVersion,
+  );
 
   // ---------- 做题方式（M3-D1）：v1 新协议卷的列表/单题呈现 ----------
   // 协议形态只信服务端投影：legacy/lesson（无 practiceWorkflow）恒列表，
@@ -488,6 +606,9 @@ function AnswerView({
   }, []);
   const { accountId: boundAccountId, keyboardShortcuts } =
     usePracticePreference();
+  // 快捷键体系（2026-10-28）：生效键位（默认 + 设置页自定义）与键盘设备形态
+  const keyBindings = useKeyboardBindings();
+  const keyboardDevice = useKeyboardDevice();
   const prevBoundAccountRef = useRef(boundAccountId);
   useEffect(() => {
     const previous = prevBoundAccountRef.current;
@@ -543,6 +664,7 @@ function AnswerView({
     attemptId,
     questionIds,
     cardElements,
+    cardMountVersion,
     singleQuestionId: singleMode ? resolvedSingleQuestionId : null,
     singleMode,
     syncNow: draftSync.syncNow,
@@ -691,30 +813,47 @@ function AnswerView({
     // 供锚点去重
     jumpSeqRef.current += 1;
     setJumpSignal({ questionId: id, seq: jumpSeqRef.current });
+    // 懒挂载：目标题通常不在视口附近、题卡还没挂载。li 常驻，先滚到占位，
+    // 强制挂载后等 `<article>` 出现再对齐滚动与落焦（上限 3 秒，超时退回
+    // 原有兜底焦点；跳跃过程中占位会先到视口，观察器本身也会触发挂载）。
+    forceMountQuestion(id);
     requestAnimationFrame(() => {
-      const card = cardElements.current.get(id);
-      const article = card?.querySelector<HTMLElement>("article");
-      article?.scrollIntoView?.({ block: "start", behavior: "auto" });
-      const fields = card?.querySelectorAll<HTMLInputElement>(
-        'input:not([type="radio"]):not([type="checkbox"])',
-      );
-      const target = focusAnswer
-        ? (Array.from(fields ?? []).find(
-            (field) => field.value.trim() === "",
-          ) ?? fields?.[0])
-        : null;
-      const answerControl = card?.querySelector<HTMLElement>(
-        'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
-      );
-      // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
-      // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
-      // focusElement：调用方指定的落焦点（单题模式=工作区容器），优先于题卡。
-      focusWhenReachable(
-        target ??
-          (focusAnswer ? answerControl : null) ??
-          focusElement ??
-          article,
-      );
+      const deadline = performance.now() + 3000;
+      const align = () => {
+        const card = cardElements.current.get(id);
+        const article = card?.querySelector<HTMLElement>("article");
+        if (article === null || article === undefined) {
+          card?.scrollIntoView?.({ block: "start", behavior: "auto" });
+          if (performance.now() < deadline) {
+            requestAnimationFrame(align);
+            return;
+          }
+          focusWhenReachable(focusElement ?? card ?? null);
+          return;
+        }
+        article.scrollIntoView?.({ block: "start", behavior: "auto" });
+        const fields = card?.querySelectorAll<HTMLInputElement>(
+          'input:not([type="radio"]):not([type="checkbox"])',
+        );
+        const target = focusAnswer
+          ? (Array.from(fields ?? []).find(
+              (field) => field.value.trim() === "",
+            ) ?? fields?.[0])
+          : null;
+        const answerControl = card?.querySelector<HTMLElement>(
+          'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
+        );
+        // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
+        // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
+        // focusElement：调用方指定的落焦点（单题模式=工作区容器），优先于题卡。
+        focusWhenReachable(
+          target ??
+            (focusAnswer ? answerControl : null) ??
+            focusElement ??
+            article,
+        );
+      };
+      align();
     });
   };
   // 单题跳题（M3-D1）：与列表跳题同一收笔/滚动/聚焦链，另更新单题态与
@@ -775,8 +914,10 @@ function AnswerView({
   };
   const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
 
-  // ---------- 单题专注键盘（M3-D3 §9.2）：Enter 主动作 / ←→ 切题 / 1-9 选项 ----------
-  // 仅 v1 新协议 + 单题模式挂载（legacy/lesson 零变化）；偏好开关关闭全失效。
+  // ---------- 单题专注键盘（M3-D3 §9.2 → 2026-10-28 快捷键体系） ----------
+  // 仅 v1 新协议 + 单题模式 + 键盘设备挂载（legacy/lesson 零变化，纯触屏
+  // 设备整体静默）；偏好开关关闭全失效。键位来自注册表 + 设置页自定义
+  // （keyBindings），固定命令（1–9 选选项）先匹配——改键抢不走选项数字。
   // 守门链：默认抑制态（合成/repeat/修饰键/已被处理）→ 任一弹层打开 → busy →
   // 书写中/纸面展开 → 答案冲突 → 切题保护拦截。一次 keydown 至多一个动作；
   // 键盘发起的提交持同步锁（submit 串行守卫在收笔 await 之后才置位，微任务
@@ -784,7 +925,7 @@ function AnswerView({
   // MathLive/AI 输入宿主），按钮/链接保留自身 Enter，查看结果永不入键。
   const practiceKeyActionRef = useRef(false);
   const onWorkspaceKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!singleMode || !keyboardShortcuts) return;
+    if (!singleMode || !keyboardShortcuts || !isKeyboardDevice()) return;
     const native = event.nativeEvent;
     if (isSuppressedKeyEvent(native) || isOverlayOpen()) return;
     const currentId = resolvedSingleQuestionId;
@@ -801,7 +942,26 @@ function AnswerView({
     const currentIndex = questionIds.indexOf(currentId);
     const submitted =
       (progressById.get(currentId)?.submittedAt ?? null) !== null;
-    if (event.key === "Enter") {
+    const spec = specOf(native);
+    if (spec === null) return;
+    if (keyBindings["practice.select-option"].includes(spec)) {
+      // 已提交只读题不响应；文本编辑区内数字保持输入语义
+      if (submitted || isTextEditingEvent(native)) return;
+      const card = cardElements.current.get(currentId);
+      const options = card?.querySelectorAll<HTMLInputElement>(
+        '[data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"]',
+      );
+      const option = options?.[Number(spec) - 1];
+      if (option === undefined || option.disabled) return;
+      event.preventDefault();
+      // 复用既有选项控件链（React onChange → setAnswer → 草稿防丢），不另写
+      // 一套答案拼装；原生 click 会把焦点移到选项上，连续键盘导航要求焦点
+      // 留在工作区容器
+      option.click();
+      singleWorkspaceRef.current?.focus();
+      return;
+    }
+    if (keyBindings["practice.submit-or-next"].includes(spec)) {
       if (isTextEditingEvent(native) || isActivatingTarget(native)) return;
       event.preventDefault();
       if (practiceKeyActionRef.current) return;
@@ -838,32 +998,24 @@ function AnswerView({
       })();
       return;
     }
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      // 仅工作区容器自身持有焦点时切题；题面/输入/按钮内的方向键保持原生
+    // ←→ 切题（可分别改键）：仅工作区容器自身持有焦点时生效，题面/输入/
+    // 按钮内的按键保持原生；prev 命中优先于 next（冲突检测拦住同时改同键）
+    const step = keyBindings["practice.prev-question"].includes(spec)
+      ? -1
+      : keyBindings["practice.next-question"].includes(spec)
+        ? 1
+        : 0;
+    if (step !== 0) {
       if (document.activeElement !== event.currentTarget) return;
       event.preventDefault();
-      const next =
-        event.key === "ArrowRight"
-          ? questionIds[currentIndex + 1]
-          : questionIds[currentIndex - 1];
-      if (next !== undefined) void goSingleQuestion(next);
+      const target = questionIds[currentIndex + step];
+      if (target !== undefined) void goSingleQuestion(target);
       return;
     }
-    if (/^[1-9]$/.test(event.key)) {
-      // 已提交只读题不响应；文本编辑区内数字保持输入语义
-      if (submitted || isTextEditingEvent(native)) return;
-      const card = cardElements.current.get(currentId);
-      const options = card?.querySelectorAll<HTMLInputElement>(
-        '[data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"]',
-      );
-      const option = options?.[Number(event.key) - 1];
-      if (option === undefined || option.disabled) return;
+    if (keyBindings["practice.open-help"].includes(spec)) {
+      if (isTextEditingEvent(native)) return;
       event.preventDefault();
-      // 复用既有选项控件链（React onChange → setAnswer → 草稿防丢），不另写
-      // 一套答案拼装；原生 click 会把焦点移到选项上，连续键盘导航要求焦点
-      // 留在工作区容器
-      option.click();
-      singleWorkspaceRef.current?.focus();
+      setKeyboardHelpOpen(true);
     }
   };
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
@@ -1182,9 +1334,11 @@ function AnswerView({
                   >
                     做题方式
                   </DropdownMenuItem>
-                  <PracticeKeyboardHelpMenuItem
-                    onOpen={() => setKeyboardHelpOpen(true)}
-                  />
+                  {keyboardDevice && (
+                    <PracticeKeyboardHelpMenuItem
+                      onOpen={() => setKeyboardHelpOpen(true)}
+                    />
+                  )}
                 </>
               )}
             </>
@@ -1525,6 +1679,13 @@ function AnswerView({
                         cardElements={cardElements}
                         events={attemptEvents}
                         index={index}
+                        lazyMount={
+                          !singleMode &&
+                          questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
+                        }
+                        mountWindow={mountWindowRef.current ?? undefined}
+                        forceMount={forcedMountIds.has(question.id)}
+                        onCardMounted={handleCardMounted}
                         question={question}
                         assignmentTitle={data.title}
                         answer={answers?.[question.id]}
@@ -1835,8 +1996,9 @@ function AnswerView({
           </DialogContent>
         </Dialog>
 
-        {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外 */}
-        {practiceWorkflow !== undefined && (
+        {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外。
+            仅键盘设备渲染（纯触屏不出现快捷键 UI，探测成功当次会话即出现） */}
+        {practiceWorkflow !== undefined && keyboardDevice && (
           <PracticeKeyboardHelpDialog
             open={keyboardHelpOpen}
             onOpenChange={setKeyboardHelpOpen}

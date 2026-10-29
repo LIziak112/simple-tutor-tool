@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   ImportBatchFilePreview,
   ImportPreviewData,
+  LibraryLectureSummary,
   LintIssue,
   MediaUploadResult,
 } from "@tutor/contract";
@@ -13,6 +14,7 @@ import {
   commitImport,
   createLibraryFolderApi,
   fetchLibraryFolders,
+  fetchLibraryLectures,
   fetchSpecFile,
   postTeacherMediaApi,
   previewImport,
@@ -72,6 +74,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchLibraryFolders: vi
       .fn()
       .mockResolvedValue({ folders: [{ id: "f-1", name: "第一章" }] }),
+    fetchLibraryLectures: vi.fn(),
   };
 });
 
@@ -96,6 +99,7 @@ const mockedPreviewBatch = vi.mocked(previewImportBatch);
 const mockedCommit = vi.mocked(commitImport);
 const mockedCreateFolder = vi.mocked(createLibraryFolderApi);
 const mockedUpload = vi.mocked(postTeacherMediaApi);
+const mockedLectures = vi.mocked(fetchLibraryLectures);
 
 /** /t/library 的替身：显示成功提示 state，便于断言跳转参数（T2A.2 起导入跳资源库） */
 function LibraryStub() {
@@ -164,6 +168,67 @@ const ERRORS: LintIssue[] = [
     fix: "在题干中用 [[答案]] 标记空位",
   },
 ];
+
+/** 讲练页文档原文（P2a 替换指认用例；frontmatter kind=lesson + 单篇讲义 + 一题） */
+const LESSON_MD = `---
+kind: lesson
+---
+
+# 第 01 讲 有理数
+
+::::question{type=judge difficulty=1}
+判断题。[[正确]]
+::::
+`;
+
+/** 讲练页文档的预览数据（kind=lesson + createLecture 动作 = 将新建讲练页） */
+function lessonPreviewData(
+  overrides: Partial<ImportPreviewData>,
+): ImportPreviewData {
+  return {
+    summary: {
+      kind: "lesson",
+      unitCount: 1,
+      lectureCount: 1,
+      questionCount: 1,
+      typeDistribution: { judge: 1 },
+    },
+    issues: [],
+    actions: [
+      {
+        kind: "createLecture",
+        title: "第 01 讲 有理数",
+        unitId: null,
+        folderName: null,
+        restore: false,
+      },
+    ],
+    warnings: [],
+    ...overrides,
+  };
+}
+
+/** 替换候选的固定 UUID（讲练页两页 + 普通讲义一页） */
+const LEC_A = "11111111-1111-1111-1111-111111111111";
+const LEC_B = "22222222-2222-2222-2222-222222222222";
+const LEC_C = "33333333-3333-3333-3333-333333333333";
+
+/** 讲义库列表行（libraryLectureSummarySchema 形状；替换指认候选数据源） */
+function libraryLectureRow(
+  id: string,
+  overrides: Partial<LibraryLectureSummary> = {},
+): LibraryLectureSummary {
+  return {
+    id,
+    kind: "lesson",
+    title: `讲练页 ${id}`,
+    folderId: null,
+    updatedAt: "2026-10-20T08:00:00.000Z",
+    deletedAt: null,
+    courseCount: 0,
+    ...overrides,
+  };
+}
 
 /** 批量预览的单文件条目夹具 */
 function batchFile(
@@ -584,6 +649,29 @@ describe("ImportPage 单文件预览态", () => {
     ).toBeInTheDocument();
   });
 
+  it("updateUnit 且 updatedDerived>0：动作行渲染「N 题缺省题号，可能错位」警示徽标（P2b）", async () => {
+    mockedPreview.mockResolvedValue(
+      previewData({
+        actions: [
+          {
+            kind: "updateUnit",
+            title: "练习四",
+            unitId: "练习四",
+            folderName: null,
+            restore: false,
+            questions: { inserted: 0, updated: 2, kept: 0, updatedDerived: 2 },
+          },
+        ],
+      }),
+    );
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "练习四.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText(/更新单元「练习四」/)).toBeInTheDocument();
+    expect(screen.getByText("2 题缺省题号，可能错位")).toBeInTheDocument();
+  });
+
   it("编辑器内容变化后 400ms debounce 重新调 preview", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     renderImportPage();
@@ -723,6 +811,236 @@ describe("ImportPage 单文件预览态", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("第 5 行")).toBeInTheDocument();
     expect(screen.getByText("FILL_NO_BLANK")).toBeInTheDocument();
+  });
+});
+
+describe("ImportPage 讲练页替换指认（P2a：改名重导显式绑定目标页）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lesson 文档新建讲练页时提供「替换既有讲练页」指认；选中后重新预览变更新动作，commit 带 replaceLectureId 且提交前有后果确认", async () => {
+    mockedPreview
+      .mockResolvedValueOnce(lessonPreviewData({}))
+      // 选中后的第二次预览：动作变 updateLecture（目标所在文件夹）+ 接管 warning
+      .mockResolvedValueOnce(
+        lessonPreviewData({
+          actions: [
+            {
+              kind: "updateLecture",
+              title: "第 01 讲 有理数",
+              unitId: null,
+              folderName: "第一章",
+              restore: false,
+            },
+          ],
+          warnings: [
+            {
+              code: "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+              message:
+                "讲练页「第 2 讲 数轴」的旧随堂练习「练习一」将进回收站（被本文档的练习接管）",
+            },
+          ],
+        }),
+      );
+    mockedLectures.mockResolvedValue({
+      lectures: [
+        libraryLectureRow(LEC_A, { title: "第 1 讲 有理数" }),
+        libraryLectureRow(LEC_B, { title: "第 2 讲 数轴", folderId: "f-1" }),
+        // 普通讲义（kind=lecture）不是替换候选：前端过滤 kind === "lesson"
+        libraryLectureRow(LEC_C, { kind: "lecture", title: "普通讲义" }),
+      ],
+    });
+    mockedCommit.mockResolvedValue({
+      importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c68",
+      courseId: null,
+      folderId: null,
+      units: [],
+      lectures: [
+        { id: LEC_B, title: "第 01 讲 有理数", inserted: false, updated: true },
+      ],
+      questions: { inserted: 1, updated: 0 },
+    });
+    renderImportPage();
+    addPasteEntry(LESSON_MD, "第 01 讲.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    // 1) 选择器渲染并列出候选（标题 / 所在文件夹；kind=lecture 不进候选）
+    const select = await screen.findByLabelText("替换目标");
+    expect(
+      await screen.findByRole("option", { name: /第 1 讲 有理数 · 未归类/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /第 2 讲 数轴 · 第一章/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /普通讲义/ }),
+    ).not.toBeInTheDocument();
+
+    // 2) 选中 → 带 replaceLectureId 重新 preview；动作变「更新讲练页」+ 接管 warning 亮出
+    fireEvent.change(select, { target: { value: LEC_B } });
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(2), {
+      timeout: 2000,
+    });
+    expect(mockedPreview.mock.calls[1]?.[0]).toMatchObject({
+      replaceLectureId: LEC_B,
+    });
+    expect(
+      await screen.findByText(/更新讲练页「第 01 讲 有理数」/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/旧随堂练习「练习一」将进回收站/),
+    ).toBeInTheDocument();
+
+    // 3) 提交前出现后果确认文案；确认替换后 commit 请求体含 replaceLectureId
+    fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
+    expect(
+      await screen.findByText(
+        /将替换所选讲练页：旧随堂练习进回收站、已交卷与进行中作答不受影响、课程目录引用保留/,
+      ),
+    ).toBeInTheDocument();
+    expect(mockedCommit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认替换" }));
+    await waitFor(() => expect(mockedCommit).toHaveBeenCalled());
+    expect(mockedCommit.mock.calls[0]?.[0]).toMatchObject({
+      replaceLectureId: LEC_B,
+    });
+  });
+
+  it("清除指认往返：选中后清空选择 → 第三次 preview 请求体不含 replaceLectureId 字段且动作回到新建讲练页", async () => {
+    mockedPreview
+      .mockResolvedValueOnce(lessonPreviewData({}))
+      // 选中后的第二次预览：动作变 updateLecture + 接管 warning
+      .mockResolvedValueOnce(
+        lessonPreviewData({
+          actions: [
+            {
+              kind: "updateLecture",
+              title: "第 01 讲 有理数",
+              unitId: null,
+              folderName: "第一章",
+              restore: false,
+            },
+          ],
+          warnings: [
+            {
+              code: "LESSON_EMBEDDED_UNIT_SUPERSEDED",
+              message:
+                "讲练页「第 2 讲 数轴」的旧随堂练习「练习一」将进回收站（被本文档的练习接管）",
+            },
+          ],
+        }),
+      )
+      // 清除指认后的第三次预览：动作回到 createLecture（服务端视角 = 不带目标的新建）
+      .mockResolvedValueOnce(lessonPreviewData({}));
+    mockedLectures.mockResolvedValue({
+      lectures: [
+        libraryLectureRow(LEC_A, { title: "第 1 讲 有理数" }),
+        libraryLectureRow(LEC_B, { title: "第 2 讲 数轴", folderId: "f-1" }),
+      ],
+    });
+    renderImportPage();
+    addPasteEntry(LESSON_MD, "第 01 讲.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    // 1) 选中候选 → 第二次 preview 带 replaceLectureId、动作变更新讲练页
+    const select = await screen.findByLabelText("替换目标");
+    fireEvent.change(select, { target: { value: LEC_B } });
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(2), {
+      timeout: 2000,
+    });
+    expect(mockedPreview.mock.calls[1]?.[0]).toMatchObject({
+      replaceLectureId: LEC_B,
+    });
+    expect(
+      await screen.findByText(/更新讲练页「第 01 讲 有理数」/),
+    ).toBeInTheDocument();
+
+    // 2) 清空选择（回到「不替换（新建讲练页）」）→ 第三次 preview 不携带该字段
+    fireEvent.change(select, { target: { value: "" } });
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(3), {
+      timeout: 2000,
+    });
+    // 字段级缺席（不是 undefined 占位）：清除后请求体与从未指认时完全一致
+    expect(mockedPreview.mock.calls[2]?.[0]).not.toHaveProperty(
+      "replaceLectureId",
+    );
+    // 3) 动作回到「新增讲练页」（清除指认后按新建处理，接管 warning 消失）
+    expect(
+      await screen.findByText(/新增讲练页「第 01 讲 有理数」/),
+    ).toBeInTheDocument();
+  });
+
+  it("非 lesson 文档（practice）不显示替换选择器", async () => {
+    mockedPreview.mockResolvedValue(previewData({}));
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD);
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText("将执行的动作")).toBeInTheDocument();
+    expect(screen.queryByLabelText("替换目标")).not.toBeInTheDocument();
+  });
+
+  it("lesson 文档已命中同名更新（updateLecture）时不显示替换选择器", async () => {
+    mockedPreview.mockResolvedValue(
+      lessonPreviewData({
+        actions: [
+          {
+            kind: "updateLecture",
+            title: "第 01 讲 有理数",
+            unitId: null,
+            folderName: null,
+            restore: false,
+          },
+        ],
+      }),
+    );
+    renderImportPage();
+    addPasteEntry(LESSON_MD);
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(
+      await screen.findByText(/更新讲练页「第 01 讲 有理数」/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("替换目标")).not.toBeInTheDocument();
+  });
+
+  it("候选列表加载中显示加载提示；无讲练页给空态说明（不渲染选择器）", async () => {
+    let release!: (value: { lectures: LibraryLectureSummary[] }) => void;
+    mockedLectures.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    mockedPreview.mockResolvedValue(lessonPreviewData({}));
+    renderImportPage();
+    addPasteEntry(LESSON_MD);
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText(/正在加载讲练页列表/)).toBeInTheDocument();
+    release({ lectures: [] });
+    expect(await screen.findByText(/库中还没有讲练页/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("替换目标")).not.toBeInTheDocument();
+  });
+
+  it("候选列表加载失败：错误提示与重试入口可见，重试重新拉取", async () => {
+    mockedPreview.mockResolvedValue(lessonPreviewData({}));
+    mockedLectures.mockRejectedValue(new Error("网络中断，请稍后重试"));
+    renderImportPage();
+    addPasteEntry(LESSON_MD);
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText(/讲练页列表加载失败/)).toBeInTheDocument();
+    expect(screen.getByText(/网络中断，请稍后重试/)).toBeInTheDocument();
+    mockedLectures.mockResolvedValue({
+      lectures: [libraryLectureRow(LEC_A, { title: "第 1 讲 有理数" })],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(mockedLectures).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findByRole("option", { name: /第 1 讲 有理数 · 未归类/ }),
+    ).toBeInTheDocument();
   });
 });
 

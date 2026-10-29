@@ -28,6 +28,25 @@ export const FALLBACK_UNIT_ID = "unit";
 /** 同上场景的兜底单元标题 */
 export const FALLBACK_UNIT_TITLE = "未命名单元";
 
+/**
+ * 围栏属性行内是否已声明 id=（键前是行首/空白/左花括号）。
+ * question.ts 的题容器 id 注入/判定与 normalize-ids.ts 的通用围栏注入共用
+ * 同一出处（tt-07b P2-4 的「id 排首位紧跟 {」形态两处同判，漏判会重复注入），
+ * 不得各自复制。
+ */
+export const FENCE_ATTR_ID_RE = /(^|[\s{])id\s*=/;
+
+/**
+ * question 开围栏行的解析器宽口径（单一出处）：`::…:question` 任意冒号数 +
+ * 可选 `[标签]` + 可选 `{属性}`（前后可有空白）。与 remark-directive 对容器
+ * 围栏的真实识别同构（lecture.ts 切段注入与 question.ts 的
+ * withQuestionId / hasExplicitQuestionId 共用，注入与判定的形态基线不漂移——
+ * 审查修复 1：此前 question.ts 自持「恰四冒号、无标签」窄口径，导出/题库
+ * 回写遇到 `:::question[标签]{…}` 形态会静默不注入）。
+ */
+export const QUESTION_FENCE_RE =
+  /^(\s*:+question(?:\[[^\]]*\])?)(\{.*\})?(\s*)$/;
+
 // ---------- 原文切分工具（「原文是真相」：按行号切原始文本，不重新序列化） ----------
 
 /** 取 [startLine, endLine]（含端点，1 起）的原文行并拼接 */

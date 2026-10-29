@@ -4,6 +4,7 @@ import type {
   TeachingPack,
 } from "@tutor/contract";
 import { teachingPackSchema } from "@tutor/contract";
+import { withQuestionId } from "@tutor/md-dsl";
 import {
   and,
   asc,
@@ -56,7 +57,7 @@ import { assembleQmBlocks } from "./qm-edit-service.ts";
  * - 使用情况（D3 删除确认弹层数据源）：被哪些课程引用（条目级可见性）、
  *   被哪些未删除作业使用、关联作答数；
  * - 导出（T2A.2）：单元 = frontmatter + 未软删各题 sourceMd 按序拼接（已删题不导出，
- *   防止「导出→再导入」经 D18 同 id 恢复规则复活）；讲义 = kind: lecture 头 + markdown 原文。
+ *   防止「导出→再导入」经 D18 同 id 恢复规则复活）；讲义 = kind/title 头 + markdown 原文。
  */
 
 /** 文件夹数据（含资源计数；HTTP 契约 libraryFolderSchema 同形） */
@@ -1377,39 +1378,6 @@ function yamlString(value: string): string {
 }
 
 /**
- * 给题目 sourceMd 的容器开始行注入显式 id 属性（无 id 时）。
- * 为什么：缺省题目 id 按「单元slug-序号」由文档内位置推导——单元删过题后导出，
- * 剩余题的缺省 id 会整体前移（练习四-2 变成练习四-1），「导出→再导入」会错位更新
- * 到别的题目、破坏学情统计的 id 延续。注入显式 id 让往返后题目身份完全稳定。
- * sourceMd 第一行必为 `::::question{…}` 或 `::::question`（解析器提取口径），
- * 已带 id= 属性则原样返回。
- */
-function ensureQuestionId(sourceMd: string, id: string): string {
-  const newlineIndex = sourceMd.indexOf("\n");
-  const firstLine =
-    newlineIndex === -1 ? sourceMd : sourceMd.slice(0, newlineIndex);
-  const rest = newlineIndex === -1 ? "" : sourceMd.slice(newlineIndex);
-  const match = /^(:{4}question)(\{.*)?$/.exec(firstLine);
-  if (match === null) return sourceMd; // 结构异常（不应发生）：不改动，交给 lint
-  const [, prefix, attrs = ""] = match;
-  // 已有显式 id（含 id 为首属性、紧跟左花括号的形态）——tt-07b P2-4 修复：
-  // 原正则漏了 { 紧邻形态，id 排首位时导出会重复注入（{id=… type=… id=…}），
-  // 与 md-dsl FENCE_ATTR_ID_RE（[\s{]）对齐
-  if (/(^|[\s{])id\s*=/.test(attrs)) return sourceMd;
-  // 注入进属性花括号内：{type=judge …} → {type=judge … id="…"}；
-  // 无属性则补 {id="…"}。属性未闭合（不以 } 结尾）属异常形态，不改动交给 lint。
-  let injected: string;
-  if (attrs.length === 0) {
-    injected = `${prefix}{id=${JSON.stringify(id)}}`;
-  } else if (attrs.endsWith("}")) {
-    injected = `${prefix}${attrs.slice(0, -1)} id=${JSON.stringify(id)}}`;
-  } else {
-    return sourceMd;
-  }
-  return `${injected}${rest}`;
-}
-
-/**
  * 教学包声明 → frontmatter YAML 行（T7.8）：确定性格式——固定键序 + JSON 字符串值
  * （合法 YAML flow 映射，frontmatter 解析可原样读回；server 不依赖 yaml 包，硬性规则 5）。
  * 列 NULL/坏 JSON/不合契约（写侧恒过契约，此处兜底异常存量）一律视为未声明，不导出。
@@ -1481,7 +1449,7 @@ function practiceYamlLineOf(column: string | null): string | null {
  * teachingPack（列内有声明时回写，T7.8）、practice（列内有推荐时回写，M5-D1，
  * 无推荐不写行））
  * + 未删除各实体 sourceMd 按导入规范序拼接（材料 → 组 → 各题；tt-06b / QM-05
- * 起材料/组一并导出，空行分隔；缺省 id 的题注入显式 id，见 ensureQuestionId）。
+ * 起材料/组一并导出，空行分隔；缺省 id 的题经 md-dsl withQuestionId 注入显式 id）。
  * 已删材料/组/题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则复活已删
  * 实体；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
  * error/warning，往返测试覆盖）。单元不存在 → 404。
@@ -1560,7 +1528,7 @@ export function exportUnitMd(
     )
     .orderBy(asc(questions.order), asc(questions.id))
     .all()
-    .map((row) => ensureQuestionId(row.sourceMd, row.id));
+    .map((row) => withQuestionId(row.sourceMd, row.id));
   // tt-06b / QM-05：材料/组源文按导入规范序（材料 → 组 → 题目，各自 order）
   // 一并导出——「导出重导覆盖材料正文」；无 QM 实体的单元导出字节级不变。
   // 已删材料/组不导出（与已删题同款防复活口径）
@@ -1606,10 +1574,13 @@ export function exportUnitMd(
 
 /**
  * 导出讲义（GET /api/teacher/lectures/:id/export.md）：域内取讲义（D12，越权 404）：
- * `---\nkind: <kind>\n---\n\n` + markdown 原文（可原样重新导入；文件名 = 讲义标题）；
- * kind 按存储列写（讲练一体 2026-10：lesson 讲练讲义导出 kind: lesson + 含注入
- * id 的题块原文，再导入 id 稳定）；列内有教学包声明时 frontmatter 回写声明行
- * （T7.8）。讲义不存在 → 404。
+ * `---\nkind: <kind>\ntitle: <yamlString(title)>\n---\n\n` + markdown 原文（可原样
+ * 重新导入；文件名 = 讲义标题）；kind 按存储列写（讲练一体 2026-10：lesson 讲练讲义
+ * 导出 kind: lesson + 含注入 id 的题块原文，再导入 id 稳定）；列内有教学包声明时
+ * frontmatter 回写声明行（T7.8），行序固定 kind → title → teachingPack。title 行
+ * 钉住讲义身份（2026-10 讲练文档 SSOT P1b）：frontmatter title 是既有讲义身份键
+ * （单讲义文件覆盖 H1 命名；导出恒单讲义，不受多讲义 title 忽略告警影响），教师
+ * 「导出→本地改 H1→重导」按 title 命中同一讲义行，不再新建断链。讲义不存在 → 404。
  */
 export function exportLectureMd(
   db: Db,
@@ -1630,10 +1601,11 @@ export function exportLectureMd(
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
   const packLine = teachingPackYamlLineOf(row.teachingPackJson);
+  const titleLine = `title: ${yamlString(row.title)}`;
   const frontmatter =
     packLine === null
-      ? `---\nkind: ${row.kind}\n---\n`
-      : `---\nkind: ${row.kind}\n${packLine}\n---\n`;
+      ? `---\nkind: ${row.kind}\n${titleLine}\n---\n`
+      : `---\nkind: ${row.kind}\n${titleLine}\n${packLine}\n---\n`;
   const markdown = `${frontmatter}\n${row.markdown}`;
   return { markdown, filename: `${safeFilename(row.title)}.md` };
 }

@@ -11,6 +11,7 @@ import {
   AttemptDetailQuestionCard,
   formatActiveSec,
 } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
+import { AttemptReplay } from "@/features/teacher-attempts/AttemptReplay";
 import {
   AttemptStatusBadge,
   sourceLineOf,
@@ -235,6 +236,9 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
           );
         })}
       </ol>
+
+      {/* hall-15077：做题复现（只读重放；题面与判定以上方逐题列表为准） */}
+      <AttemptReplay attemptId={data.attemptId} detail={data} />
     </section>
   );
 }
