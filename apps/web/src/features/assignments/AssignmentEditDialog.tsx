@@ -96,6 +96,12 @@ export function AssignmentEditDialog({
   const [feedbackChoice, setFeedbackChoice] = useState<
     "student_choice" | "after_submit" | "after_due"
   >(initialChoice);
+  /**
+   * 重做策略（hall-15313）：策略位可随时改（不受内容锁定、即时生效、不追溯
+   * 已有卷）；旧作业行 allowRedo 缺省按 true（存量即允许重做），打开即反映当前值。
+   */
+  const initialAllowRedo = assignment.allowRedo ?? true;
+  const [allowRedo, setAllowRedo] = useState(initialAllowRedo);
   /** 名单中勾选待移出的学生（多选批量，§4-2） */
   const [selectedRemove, setSelectedRemove] = useState<ReadonlySet<string>>(
     new Set(),
@@ -120,7 +126,8 @@ export function AssignmentEditDialog({
     title !== assignment.title ||
     dueLocal !==
       (assignment.dueAt !== null ? utcIsoToLocalInput(assignment.dueAt) : "") ||
-    feedbackChoice !== initialChoice;
+    feedbackChoice !== initialChoice ||
+    allowRedo !== initialAllowRedo;
 
   /**
    * T2A.8：「截止后公布」必须有截止时间。改后状态的截止 = 表单值非空则新值，
@@ -165,6 +172,8 @@ export function AssignmentEditDialog({
             allowPerQuestionFeedback: feedbackChoice === "student_choice",
           }
         : {}),
+      // 重做策略位（hall-15313）：仅变化时携带；不受内容锁定，即时生效
+      ...(allowRedo !== initialAllowRedo ? { allowRedo } : {}),
     };
   }
 
@@ -379,6 +388,21 @@ export function AssignmentEditDialog({
                     「截止后公布」需要截止时间：请先填写截止时间，或改回其他公布方式。
                   </p>
                 )}
+              </div>
+              {/* 重做策略（hall-15313）：策略位即时生效，不影响已交作答的回看 */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="edit-redo" className="text-sm">
+                  学生重做
+                </label>
+                <select
+                  id="edit-redo"
+                  value={allowRedo ? "allowed" : "denied"}
+                  onChange={(e) => setAllowRedo(e.target.value === "allowed")}
+                  className="flex h-11 w-full rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                >
+                  <option value="allowed">允许重做（做完可重新开始）</option>
+                  <option value="denied">不允许重做（只能回看）</option>
+                </select>
               </div>
               {/* SAI-07 作业 AI 策略：与公布时机相邻展示（AI 复盘可能早于普通公布），
                   独立暂存与保存（PUT /assignments/:id/ai-policy），dirty 并入关闭守卫 */}

@@ -565,6 +565,8 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       studentIds: [STUDENT_A_ID, STUDENT_C_ID],
       courseId: COURSE_ID,
       allowPerQuestionFeedback: true,
+      // hall-15313：重做默认允许，payload 恒携带
+      allowRedo: true,
       answerRelease: "on_submit",
       unitGrouping: "separate",
     });
@@ -612,6 +614,8 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       title: "国庆专项",
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
       allowPerQuestionFeedback: true,
+      // hall-15313：重做默认允许，payload 恒携带
+      allowRedo: true,
       answerRelease: "on_submit",
       unitGrouping: "merged",
     });
@@ -680,6 +684,29 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     });
   });
 
+  it("hall-15313 重做默认允许：payload 恒带 allowRedo=true；选「不允许重做」提交 false", async () => {
+    await openStep2();
+    clickCourseUnit(UNIT_TITLES.A);
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("③ 确认");
+    fireEvent.click(
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
+    );
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
+      allowRedo: true,
+    });
+    mockedCreate.mockClear();
+    fireEvent.click(screen.getByRole("radio", { name: /^不允许重做/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
+    );
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
+      allowRedo: false,
+    });
+  });
+
   it("D15 已做过提示逐条渲染，仅提示不阻止提交", async () => {
     mockedCheck.mockResolvedValue({
       hints: [
@@ -743,6 +770,8 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       unitIds: [UNIT_A_ID],
       studentIds: [STUDENT_B_ID],
       allowPerQuestionFeedback: true,
+      // hall-15313：重做默认允许，payload 恒携带
+      allowRedo: true,
       answerRelease: "on_submit",
       unitGrouping: "merged",
     });

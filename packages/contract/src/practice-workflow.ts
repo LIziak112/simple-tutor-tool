@@ -175,6 +175,11 @@ export const practiceWorkflowStartOptionsFields = {
 export interface PracticeWorkflowStartOptions {
   workflowVersion?: 1 | undefined;
   feedbackMode?: PracticeFeedbackMode | undefined;
+  /**
+   * 重做（hall-15313）：显式动作位，仅作业来源生效——已交卷后开新卷
+   * （attemptNo 递增、从空白开始、历次保留可回看）；缺省 = 幂等开卷语义不变。
+   */
+  redo?: boolean | undefined;
 }
 
 /** feedbackMode 无 workflowVersion=1 拒绝（不得暗中按新协议授权） */
@@ -198,10 +203,21 @@ export const rejectFeedbackModeWithoutVersion = (
 /**
  * POST /api/student/assignments/:id/attempt 与
  * POST /api/student/courses/:cid/units/:uid/attempts 的可选请求体（M1b）：
- * 空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode。
+ * 空 body / 空对象 = 旧协议；仅接受 workflowVersion=1、可选 feedbackMode 与
+ * 可选 redo（重做，hall-15313：仅作业来源生效的显式开新卷动作位）。
  */
 export const attemptStartOptionsRequestSchema = z
-  .object(practiceWorkflowStartOptionsFields)
+  .object({
+    ...practiceWorkflowStartOptionsFields,
+    /**
+     * 重做（hall-15313）：显式动作位——作业已交卷后开新卷（attemptNo 递增、
+     * 从空白开始、历次保留可回看）。缺省 = 幂等开卷语义不变（已交返回最近
+     * 一份，回看依赖此语义）。仅作业来源生效：作业 allowRedo=false 且无进行中
+     * 卷 → 409 REDO_NOT_ALLOWED；有进行中卷恒返回该卷（先 draft 后策略位，
+     * 教师关开关不掐进行中卷）。
+     */
+    redo: z.boolean().optional(),
+  })
   .strict()
   .superRefine(rejectFeedbackModeWithoutVersion);
 

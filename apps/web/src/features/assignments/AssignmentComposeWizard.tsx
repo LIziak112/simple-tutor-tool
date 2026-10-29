@@ -146,6 +146,11 @@ export function AssignmentComposeWizard({
   const [feedbackChoice, setFeedbackChoice] = useState<
     "student_choice" | "after_submit" | "after_due"
   >("student_choice");
+  /**
+   * 是否允许重做（hall-15313）：默认允许（存量兼容口径——教师未显式禁止即
+   * 允许学生重做）；payload 恒携带本字段。
+   */
+  const [allowRedo, setAllowRedo] = useState(true);
   const answerRelease =
     feedbackChoice === "after_due" ? "after_due" : "on_submit";
   const allowPerQuestionFeedback = feedbackChoice === "student_choice";
@@ -306,6 +311,7 @@ export function AssignmentComposeWizard({
         ...(dueLocal.length > 0 ? { dueAt: localInputToUtcIso(dueLocal) } : {}),
         answerRelease,
         allowPerQuestionFeedback,
+        allowRedo,
         unitGrouping,
       },
       { onSuccess: onClose },
@@ -413,6 +419,8 @@ export function AssignmentComposeWizard({
             dueLocal={dueLocal}
             unitGrouping={unitGrouping}
             feedbackChoice={feedbackChoice}
+            allowRedo={allowRedo}
+            onAllowRedoChange={setAllowRedo}
             checkPending={checkMutation.isPending}
             checkError={
               checkMutation.isError
@@ -1012,6 +1020,8 @@ function StepConfirm({
   dueLocal,
   unitGrouping,
   feedbackChoice,
+  allowRedo,
+  onAllowRedoChange,
   checkPending,
   checkError,
   checkHints,
@@ -1031,6 +1041,9 @@ function StepConfirm({
   dueLocal: string;
   unitGrouping: "separate" | "merged";
   feedbackChoice: "student_choice" | "after_submit" | "after_due";
+  /** 是否允许重做（hall-15313）：默认允许，显式选不允许才只读回看 */
+  allowRedo: boolean;
+  onAllowRedoChange: (allowRedo: boolean) => void;
   checkPending: boolean;
   checkError: string | null;
   checkHints: AssignmentCheckHint[];
@@ -1113,6 +1126,44 @@ function StepConfirm({
                 <span className="font-medium">合并为一份作业</span>
                 <span className="text-xs text-muted-foreground">
                   所有单元合成一份试卷，一次作答一次交卷
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        {/* 是否允许重做（hall-15313）：默认允许（存量兼容），显式选不允许
+            才降为只读回看；策略位布置后仍可在编辑弹窗改，不影响已交作答回看 */}
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="text-sm">学生重做</legend>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className={optionClass(allowRedo)}>
+              <input
+                type="radio"
+                name="wizard-allow-redo"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={allowRedo}
+                onChange={() => onAllowRedoChange(true)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">允许重做（默认）</span>
+                <span className="text-xs text-muted-foreground">
+                  学生做完后可以重新开始一次新的作答，历次成绩都保留
+                </span>
+              </span>
+            </label>
+            <label className={optionClass(!allowRedo)}>
+              <input
+                type="radio"
+                name="wizard-allow-redo"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={!allowRedo}
+                onChange={() => onAllowRedoChange(false)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">不允许重做</span>
+                <span className="text-xs text-muted-foreground">
+                  学生只能回看已交的作答，不能重新开始
                 </span>
               </span>
             </label>

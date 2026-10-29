@@ -875,6 +875,15 @@ export const assignments = sqliteTable(
     })
       .notNull()
       .default(false),
+    /**
+     * 是否允许重做（2026-10-29 hall-15313）：true（缺省，存量零回填）= 学生可在
+     * 交卷后重开新卷（attemptNo 递增、历次保留可回看）；false = 仅回看，显式
+     * redo 开新卷 409 REDO_NOT_ALLOWED。策略位非内容：不受 D14 锁定，PATCH
+     * 即时生效、不追溯已有作答（先查 draft 再判本位，进行中卷不受影响）。
+     */
+    allowRedo: integer("allow_redo", { mode: "boolean" })
+      .notNull()
+      .default(true),
     /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
     deletedAt: text("deleted_at"),
     /** 创建时间：UTC ISO 字符串 */
@@ -955,7 +964,8 @@ export const assignmentStudents = sqliteTable(
  *   unitId 仍记录作答期间的题目来源单元（course 必填；assignment 来源保留布置
  *   时作业的历史值，D23-6 原值不改）；
  * - attemptNo（D10）：course 来源同一 (学生, 课程, 单元) 从 1 递增；
- *   assignment 来源恒 1（一个作业一人一份，不重做）；wrong 来源按该生已有
+ *   assignment 来源缺省 1（hall-15313 起显式重做开新卷后按 (学生, 作业) 递增，
+ *   历次保留可回看；不允许重做的作业仍一人一份）；wrong 来源按该生已有
  *   wrong 来源 attempt 数从 1 递增（每次重练都是新卷）；
  * - activeSec / device / scoreFinal 为 T2.10 / T2.10 / T3.2 预留列（建列不启用）。
  */
@@ -1000,7 +1010,7 @@ export const attempts = sqliteTable(
      * NULL，展示由 sourceOf 从冻结 responses→questions→units 反查现算。
      */
     practiceScopeJson: text("practice_scope_json"),
-    /** 第几次作答（D10：course 来源从 1 递增；assignment 来源恒 1） */
+    /** 第几次作答（D10：course 来源从 1 递增；assignment 来源缺省 1、显式重做开新卷后按 (学生, 作业) 递增，hall-15313） */
     attemptNo: integer("attempt_no").notNull().default(1),
     /** 作答状态：draft | submitted | graded */
     status: text("status").$type<AttemptStatus>().notNull(),

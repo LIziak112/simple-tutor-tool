@@ -2,7 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import type { AttemptResultData, WrongPracticeScope } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
-import { startWrongPracticeApi } from "@/lib/api";
+import { startAttemptApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { AttemptResultView } from "./AttemptResultView";
 import { workflowStartOptions } from "./attempt-queries";
@@ -76,6 +76,24 @@ export default function AttemptResultWithDraftCleanup({
       void navigate(`/s/attempts/${attempt.id}`);
     },
   });
+  // 作业重做（hall-15313）：显式 redo:true 开新卷（attemptNo+1、从空白开始）
+  // → 跳新卷作答；本卷保留，可随时在「我的记录」回看。服务端拒绝（教师已关
+  // 允许重做）时中文信息回传结果视图告警展示
+  const redo = useMutation({
+    mutationFn: () =>
+      startAttemptApi(data.attempt.assignmentId ?? "", {
+        ...workflowStartOptions(),
+        redo: true,
+      }),
+    onSuccess: (attempt) => {
+      void navigate(`/s/attempts/${attempt.id}`);
+    },
+  });
+  const redoErrorText = redo.isError
+    ? redo.error instanceof Error
+      ? redo.error.message
+      : "网络异常，请稍后重试"
+    : null;
   const practiceErrorText = practice.isError
     ? practice.error instanceof Error
       ? practice.error.message
@@ -96,6 +114,11 @@ export default function AttemptResultWithDraftCleanup({
           if (questionIds.length === 0) return; // 判错 0 题按钮本就不渲染（防御）
           practice.mutate(questionIds);
         },
+      }}
+      redo={{
+        loading: redo.isPending,
+        error: redoErrorText,
+        onStart: () => redo.mutate(),
       }}
     />
   );

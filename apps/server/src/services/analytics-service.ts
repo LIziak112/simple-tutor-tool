@@ -49,6 +49,7 @@ import {
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
+import { latestAttemptOf } from "./assignment-service";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
@@ -489,8 +490,10 @@ function effectiveScore(attempt: Attempt): number | null {
  * - 作业列：本教师未软删的作业（courseId 筛选时只留挂该课程者），createdAt 升序；
  * - 单元列：域内未归档课程的可见单元条目（可见性判定与 T2A.6 进度矩阵一致，
  *   复用 loadResourceContext：visible 且已到 publishAt 且单元未删且有未删题）；
- * - 单元格状态：不在名单/不是课程成员 → not-assigned；无 attempt → not-started；
- *   有 draft → in-progress；否则取最近一次已交卷的 status（submitted/graded）。
+ * - 单元格状态与点击目标同一选卷口径（hall-15658 F1）：不在名单/不是课程
+ *   成员 → not-assigned；无 attempt → not-started；否则取最新卷
+ *   （latestAttemptOf：startedAt desc + attemptNo desc，与完成态/代表卷同源）
+ *   ——draft → in-progress，已交 → submitted/graded。
  * 矩阵不受 days 影响（D5：当下状态一览——「谁没做」不受时间范围筛选）。
  */
 function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
@@ -649,15 +652,19 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
     }
   }
 
-  /** 该格作答的展示状态（draft 优先 in-progress；否则最近一次已交卷的 status） */
+  /**
+   * 该格作答的展示状态——与点击目标（attemptId）同一选卷口径（hall-15658 F1）：
+   * 取最新卷（latestAttemptOf：startedAt desc + attemptNo desc，与
+   * computeAssignmentStatus / representativeAttemptId 同源），最新卷为 draft →
+   * in-progress，否则按其 status 呈现 submitted/graded。旧实现「存在 draft 即
+   * in-progress + attemptId 取组末位」在旧已交 + 新 draft 时会指向旧已交卷。
+   */
   const cellStateOf = (
     group: readonly Attempt[],
   ): AnalyticsAssignmentCell["status"] => {
-    if (group.some((attempt) => attempt.status === "draft")) {
-      return "in-progress";
-    }
-    const latest = group[group.length - 1];
+    const latest = latestAttemptOf(group);
     if (latest === undefined) return "not-started";
+    if (latest.status === "draft") return "in-progress";
     return latest.status === "graded" ? "graded" : "submitted";
   };
 
@@ -688,7 +695,9 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
           group.length === 0 && !roster.has(key)
             ? "not-assigned"
             : cellStateOf(group),
-        attemptId: group[group.length - 1]?.id ?? null,
+        // 点击目标与 status 同取最新卷（hall-15658 F1；lastSubmittedOf 的
+        // submittedAt 是独立展示口径——最近一次提交时刻，不受选卷影响）
+        attemptId: latestAttemptOf(group)?.id ?? null,
         submittedAt: lastSubmittedOf(group)?.submittedAt ?? null,
       });
     }
@@ -1552,11 +1561,14 @@ export function getAnalyticsOverview(
   let pendingMarkCount = 0;
   for (const count of pendingByAttempt.values()) pendingMarkCount += count;
 
-  // 周期内发生的课程练习重做次数（D1 独立指标；attemptNo>1 且交卷落窗）
+  // 周期内发生的重做次数（D1 独立指标；course/assignment 来源 attemptNo>1
+  // 且交卷落窗，hall-15313 起作业重做同计入）
   const fromIso = ctx.range.from;
   const redoCount = ctx.allAttempts.filter(
     (attempt) =>
-      attempt.sourceType === "course" &&
+      // hall-15313：作业重做卷同计入（course/assignment 来源 attemptNo>1）
+      (attempt.sourceType === "course" ||
+        attempt.sourceType === "assignment") &&
       attempt.attemptNo > 1 &&
       attempt.submittedAt !== null &&
       (fromIso === null || attempt.submittedAt >= fromIso) &&

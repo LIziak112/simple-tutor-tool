@@ -82,7 +82,7 @@ export const teacherAttemptListQuerySchema = z.object({
  * - assignment 来源：assignmentId / assignmentTitle 非空（标题为布置时快照），
  *   courseId / courseName 取作业所属课程（未挂课程为 null）；展示「作业标题」
  *   （挂课程时配课程名）；unitId / unitTitle 为 null（多单元题目集合在
- *   assignment_units），attemptNo 恒 1；
+ *   assignment_units），attemptNo 缺省 1、显式重做开新卷后递增（hall-15313）；
  * - course 来源：courseId / courseName / unitId / unitTitle 非空、attemptNo
  *   从 1 递增；展示「单元标题 · 第 n 次」；assignmentId / assignmentTitle 为 null；
  * - wrong / lesson 来源（枚举随 attemptSourceSchema，2026-10）：wrong 三组键全
@@ -104,7 +104,7 @@ export const teacherAttemptSourceSchema = z.object({
   unitId: z.string().min(1).nullable(),
   /** 单元标题（当前值；course 来源展示「单元标题 · 第 n 次」）；assignment 来源为 null */
   unitTitle: z.string().min(1).nullable(),
-  /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
+  /** 第几次作答（course 来源从 1 递增；assignment 来源缺省 1、显式重做后递增，hall-15313） */
   attemptNo: z.number().int().min(1),
   /**
    * 错题重练范围（2026-10-25 #6980-2）：wrong 来源携带——服务端 sourceOf

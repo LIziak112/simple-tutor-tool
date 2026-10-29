@@ -455,7 +455,7 @@ export const learningPackAttemptSummarySchema = z.object({
   courseName: z.string().nullable(),
   unitId: z.string().min(1).nullable(),
   unitTitle: z.string().min(1).nullable(),
-  /** 第几次作答（course 来源从 1 递增；assignment 恒 1） */
+  /** 第几次作答（course 来源从 1 递增；assignment 缺省 1、显式重做后递增，hall-15313） */
   attemptNo: z.number().int().min(1),
   /** 是否首次作答（attemptNo=1；D15「首次」标记） */
   isFirst: z.boolean(),

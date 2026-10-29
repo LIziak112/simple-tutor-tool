@@ -41,6 +41,8 @@ export const assignmentToolInputSchema = z
     answerRelease: assignmentAnswerReleaseSchema.optional(),
     unitGrouping: assignmentUnitGroupingSchema.optional(),
     allowPerQuestionFeedback: z.boolean().optional(),
+    // hall-15313：与 REST create 对齐——缺省落 true（允许重做），显式 false 才禁
+    allowRedo: z.boolean().optional(),
   })
   .strict();
 

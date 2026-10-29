@@ -117,6 +117,8 @@ async function createAssignmentViaApi(
     unitName: string;
     studentId: string;
     allowPerQuestionFeedback: boolean;
+    /** hall-15313：省略 = 允许重做（存量兼容口径） */
+    allowRedo?: boolean;
   },
 ): Promise<string> {
   const res = await request.post("/api/teacher/assignments", {
@@ -125,6 +127,7 @@ async function createAssignmentViaApi(
       unitIds: [input.unitName],
       studentIds: [input.studentId],
       allowPerQuestionFeedback: input.allowPerQuestionFeedback,
+      ...(input.allowRedo !== undefined ? { allowRedo: input.allowRedo } : {}),
     },
   });
   if (!res.ok()) {
@@ -598,6 +601,197 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await expectResultCount(studentPage, "答对", 2);
 
       // 等在途响应体检查落定（替代固定 800ms 采样窗，慢响应体不漏检）
+      await leak.drain();
+      expect(leak.violations().join("\n")).toBe("");
+    } finally {
+      await studentContext.close();
+    }
+  });
+
+  test("作业重做：默认允许 → 交卷后「再做一次」开新卷（attemptNo+1、从空白开始、名单落最新卷）", async ({
+    request,
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+
+    // —— 造数：默认作业（不显式传 allowRedo = 允许重做，存量兼容口径）——
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const unitName = `作业重做单元${suffix}`;
+    const importRes = await request.post("/api/teacher/import/commit", {
+      data: {
+        markdown: perQuestionPracticeMarkdown(unitName),
+        filename: `${unitName}.md`,
+      },
+    });
+    if (!importRes.ok()) {
+      throw new Error(
+        `导入作业单元失败：HTTP ${importRes.status()} ${await importRes.text()}`,
+      );
+    }
+    const loginName = `e2e-redo-a${suffix}`;
+    await createStudentViaApi(request, `e2e重做生${suffix}`, loginName);
+    const student = await getStudentViaApi(request, loginName);
+    const assignmentId = await createAssignmentViaApi(request, {
+      title: `e2e重做作业${suffix}`,
+      unitName,
+      studentId: student.id,
+      allowPerQuestionFeedback: false,
+    });
+
+    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+    const studentPage = await studentContext.newPage();
+    try {
+      const leak = attachLeakMonitor(studentPage);
+      await studentPage.goto(`/s/${student.linkToken}`);
+      await studentPage.waitForURL("**/s/home");
+      await studentPage.goto(`/s/assignments/${assignmentId}`);
+
+      // —— 第一次作答：整卷节奏两题 → 交卷出结果 ——
+      await expect(
+        studentPage.getByText("做题方式：列表 · 交卷后查看"),
+      ).toBeVisible();
+      await chooseAnswer(studentPage, 1, "对", true);
+      await waitForDraftSaved(studentPage);
+      await chooseAnswer(studentPage, 2, "选项 B");
+      await waitForDraftSaved(studentPage);
+      await studentPage
+        .getByRole("button", { name: "交卷", exact: true })
+        .click();
+      await studentPage
+        .getByRole("button", { name: "确认交卷" })
+        .first()
+        .click();
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expectResultCount(studentPage, "答对", 2);
+
+      // —— 结果页「再做一次」：显式确认 → 开新卷（attemptNo=2、从空白开始）——
+      const redoRespPromise = studentPage.waitForResponse(
+        (r) =>
+          /\/api\/student\/assignments\/[^/]+\/attempt/.test(r.url()) &&
+          r.request().method() === "POST" &&
+          (r.request().postData() ?? "").includes('"redo":true'),
+      );
+      await studentPage
+        .getByRole("button", { name: "再做一次", exact: true })
+        .click();
+      await expect(studentPage.getByText("再做一次吗？")).toBeVisible();
+      await expect(
+        studentPage.getByText(/将开始第\s*2\s*次作答/),
+      ).toBeVisible();
+      await studentPage.getByRole("button", { name: /开始第 2 次/ }).click();
+      const redoResp = await redoRespPromise;
+      const redoBody = (await redoResp.json()) as {
+        data?: { id?: string; attemptNo?: number };
+      };
+      const redoAttemptId = redoBody.data?.id ?? "";
+      expect(redoBody.data?.attemptNo).toBe(2);
+      expect(redoAttemptId).not.toBe("");
+      await studentPage.waitForURL(`**/s/attempts/${redoAttemptId}`);
+
+      // —— 新卷从空白开始：第 1 题可作答（无锁定、无预填）——
+      await expect(
+        studentPage.getByText("做题方式：列表 · 交卷后查看"),
+      ).toBeVisible();
+      await expect(
+        studentPage
+          .locator('article[aria-label="第 1 题"]')
+          .getByRole("radio", { name: "对", exact: true }),
+      ).toBeEnabled();
+
+      // —— 名单与卡片状态落最新卷（教师详情 roster + 学生列表）——
+      const detail = await request.get(
+        `/api/teacher/assignments/${assignmentId}`,
+      );
+      expect(detail.ok()).toBeTruthy();
+      const detailBody = (await detail.json()) as {
+        data?: { roster?: { status?: string; attemptId?: string | null }[] };
+      };
+      expect(detailBody.data?.roster?.[0]?.status).toBe("in_progress");
+      expect(detailBody.data?.roster?.[0]?.attemptId).toBe(redoAttemptId);
+      // 学生列表用页面自带 request（共享学生会话 cookie；教师上下文 401）
+      const list = await studentPage.request.get("/api/student/assignments");
+      expect(list.ok()).toBeTruthy();
+      const listBody = (await list.json()) as {
+        data?: { assignments?: { id?: string; status?: string }[] };
+      };
+      expect(
+        listBody.data?.assignments?.find((row) => row.id === assignmentId)
+          ?.status,
+      ).toBe("in_progress");
+
+      await leak.drain();
+      expect(leak.violations().join("\n")).toBe("");
+    } finally {
+      await studentContext.close();
+    }
+  });
+
+  test("作业重做：教师显式不允许 → 结果页无「再做一次」，只能回看", async ({
+    request,
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const unitName = `作业禁重做单元${suffix}`;
+    const importRes = await request.post("/api/teacher/import/commit", {
+      data: {
+        markdown: perQuestionPracticeMarkdown(unitName),
+        filename: `${unitName}.md`,
+      },
+    });
+    if (!importRes.ok()) {
+      throw new Error(
+        `导入作业单元失败：HTTP ${importRes.status()} ${await importRes.text()}`,
+      );
+    }
+    const loginName = `e2e-redo-d${suffix}`;
+    await createStudentViaApi(request, `e2e禁重做生${suffix}`, loginName);
+    const student = await getStudentViaApi(request, loginName);
+    const assignmentId = await createAssignmentViaApi(request, {
+      title: `e2e禁重做作业${suffix}`,
+      unitName,
+      studentId: student.id,
+      allowPerQuestionFeedback: false,
+      allowRedo: false,
+    });
+
+    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+    const studentPage = await studentContext.newPage();
+    try {
+      const leak = attachLeakMonitor(studentPage);
+      await studentPage.goto(`/s/${student.linkToken}`);
+      await studentPage.waitForURL("**/s/home");
+      await studentPage.goto(`/s/assignments/${assignmentId}`);
+      await expect(
+        studentPage.getByText("做题方式：列表 · 交卷后查看"),
+      ).toBeVisible();
+      await chooseAnswer(studentPage, 1, "对", true);
+      await waitForDraftSaved(studentPage);
+      await chooseAnswer(studentPage, 2, "选项 B");
+      await waitForDraftSaved(studentPage);
+      await studentPage
+        .getByRole("button", { name: "交卷", exact: true })
+        .click();
+      await studentPage
+        .getByRole("button", { name: "确认交卷" })
+        .first()
+        .click();
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expectResultCount(studentPage, "答对", 2);
+
+      // 显式不允许：结果页无重做入口（纯回看），结果视图不受影响
+      await expect(
+        studentPage.getByRole("button", { name: "再做一次", exact: true }),
+      ).toHaveCount(0);
+      await expect(studentPage.getByText("批改结果")).toBeVisible();
+
       await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
     } finally {

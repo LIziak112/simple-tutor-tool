@@ -2335,31 +2335,102 @@ describe("会话隔离", () => {
   });
 });
 
-describe("computeAssignmentStatus 纯函数", () => {
+describe("computeAssignmentStatus 纯函数（hall-15313 起按最新卷推导）", () => {
   const assignment = { id: "a1", dueAt: null as string | null };
 
-  function withAttempts(statuses: AssignmentAttemptSummary["status"][]) {
-    return computeAssignmentStatus(
-      assignment,
-      statuses.map((status, index) => ({ status, attemptId: `a-${index}` })),
+  function withAttempts(
+    rows: {
+      status: AssignmentAttemptSummary["status"];
+      startedAt: string;
+      attemptNo: number;
+    }[],
+  ) {
+    return computeAssignmentStatus(assignment, rows);
+  }
+
+  /** 便利构造：startedAt 随 attemptNo 递增（与真实建卷时序一致） */
+  function withStatuses(statuses: AssignmentAttemptSummary["status"][]) {
+    return withAttempts(
+      statuses.map((status, index) => ({
+        status,
+        attemptId: `a-${index}`,
+        startedAt: `2026-10-29T00:00:0${index}.000Z`,
+        attemptNo: index + 1,
+      })),
     );
   }
 
   it("无作答记录 → not_started", () => {
-    expect(withAttempts([])).toBe("not_started");
+    expect(withStatuses([])).toBe("not_started");
   });
 
   it("仅草稿 → in_progress", () => {
-    expect(withAttempts(["draft"])).toBe("in_progress");
+    expect(withStatuses(["draft"])).toBe("in_progress");
   });
 
-  it("交卷后 → submitted（草稿与已交并存仍算已交）", () => {
-    expect(withAttempts(["draft", "submitted"])).toBe("submitted");
+  it("重做进行中：已批后重开草稿 → in_progress（不再卡在已批）", () => {
+    expect(withStatuses(["graded", "draft"])).toBe("in_progress");
   });
 
-  it("批改后 → graded（优先级最高，覆盖 submitted/draft）", () => {
-    expect(withAttempts(["submitted", "graded"])).toBe("graded");
-    expect(withAttempts(["draft", "graded"])).toBe("graded");
+  it("重交待批：已批后重交 → submitted", () => {
+    expect(withStatuses(["graded", "submitted"])).toBe("submitted");
+  });
+
+  it("startedAt 并列时 attemptNo 大者优先（同毫秒建卷兜底）", () => {
+    expect(
+      withAttempts([
+        {
+          status: "submitted",
+          startedAt: "2026-10-29T00:00:00.000Z",
+          attemptNo: 1,
+        },
+        {
+          status: "graded",
+          startedAt: "2026-10-29T00:00:00.000Z",
+          attemptNo: 2,
+        },
+      ]),
+    ).toBe("graded");
+  });
+
+  it("回归锁：旧「graded 优先级最高」不再适用——较早的已批不掩盖较新的重交", () => {
+    expect(withStatuses(["graded", "submitted"])).toBe("submitted");
+    expect(withStatuses(["graded", "draft"])).toBe("in_progress");
+  });
+});
+
+describe("重做策略 allowRedo（hall-15313）", () => {
+  it("create 缺省 true（存量兼容零回填）；显式 false 落库；PATCH 即时改回", async () => {
+    const { app, teacherCookie, db } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "重做缺省单元");
+    const studentId = await createStudent(app, teacherCookie, "学生重做");
+    const created = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+    });
+    expect(created.allowRedo).toBe(true);
+    const denied = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+      allowRedo: false,
+    });
+    expect(denied.allowRedo).toBe(false);
+    const row = db
+      .select({ allowRedo: assignments.allowRedo })
+      .from(assignments)
+      .where(eq(assignments.id, denied.id as string))
+      .get();
+    expect(row?.allowRedo).toBe(false);
+
+    const patched = await patchAssignment(
+      app,
+      teacherCookie,
+      denied.id as string,
+      { allowRedo: true },
+    );
+    expect(patched.status).toBe(200);
+    const body = (await patched.json()) as { data: { allowRedo: boolean } };
+    expect(body.data.allowRedo).toBe(true);
   });
 });
 

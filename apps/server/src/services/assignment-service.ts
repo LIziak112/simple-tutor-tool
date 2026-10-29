@@ -77,6 +77,10 @@ export interface AssignmentAttemptSummary {
   status: "draft" | "submitted" | "graded";
   /** attempts.id：详情名单行的 attemptId（D8 点击状态跳 attempt 详情的定位 id） */
   attemptId: string;
+  /** attempts.startedAt：重做语义下的最新卷排序键（hall-15313，与开卷取最近同序） */
+  startedAt: string;
+  /** attempts.attemptNo：startedAt 并列时的次序兜底（重做卷 > 1） */
+  attemptNo: number;
 }
 
 /**
@@ -85,36 +89,42 @@ export interface AssignmentAttemptSummary {
  */
 export function computeAssignmentStatus(
   _assignment: Pick<Assignment, "id" | "dueAt">,
-  attemptsOfStudent: ReadonlyArray<Pick<AssignmentAttemptSummary, "status">>,
+  attemptsOfStudent: ReadonlyArray<
+    Pick<AssignmentAttemptSummary, "status" | "startedAt" | "attemptNo">
+  >,
 ): AssignmentStatus {
-  // 优先级：已批 > 已交 > 进行中 > 未开始（先交后批时以批改结果为准）
-  if (attemptsOfStudent.some((attempt) => attempt.status === "graded")) {
-    return "graded";
-  }
-  if (attemptsOfStudent.some((attempt) => attempt.status === "submitted")) {
-    return "submitted";
-  }
-  if (attemptsOfStudent.some((attempt) => attempt.status === "draft")) {
-    return "in_progress";
-  }
-  return "not_started";
+  // 最新卷推导（hall-15313 重做语义）：排序与开卷入口取最近同序
+  //（startedAt desc, attemptNo desc）——重做进行中 → in_progress、重交待批 →
+  // submitted；旧「graded > submitted > draft」优先级在重做后卡在已批，
+  // 不再反映最新一卷
+  const latest = latestAttemptOf(attemptsOfStudent);
+  if (latest === undefined) return "not_started";
+  return latest.status === "draft" ? "in_progress" : latest.status;
 }
 
 /**
- * 名单行 attemptId（T3.1，D8）：取与 computeAssignmentStatus 同优先级
- * （graded > submitted > draft）的代表 attempt——一人一份（draft 幂等、交卷后
- * 不再新建），通常只有一行；无记录（未开始）为 null。
+ * 最新卷（hall-15313）：startedAt desc、attemptNo desc，与开卷入口取最近同序。
+ * 导出（hall-15658 F1/F2）：analytics 矩阵格子与开卷入口共用同一选卷单一出处，
+ * 防止「状态按一套、点击/回看按另一套」的分叉再现。
+ */
+export function latestAttemptOf<
+  T extends { startedAt: string; attemptNo: number },
+>(attempts: readonly T[]): T | undefined {
+  return [...attempts].sort(
+    (a, b) =>
+      b.startedAt.localeCompare(a.startedAt) || b.attemptNo - a.attemptNo,
+  )[0];
+}
+
+/**
+ * 名单行 attemptId（T3.1，D8）：代表 attempt = 最新一卷（hall-15313 重做语义，
+ * 与 computeAssignmentStatus 同排序 startedAt desc, attemptNo desc）——教师从
+ * 名单点击进详情落在学生当前卷；无记录（未开始）为 null。
  */
 function representativeAttemptId(
   attemptsOfStudent: readonly AssignmentAttemptSummary[],
 ): string | null {
-  for (const status of ["graded", "submitted", "draft"] as const) {
-    const found = attemptsOfStudent.find(
-      (attempt) => attempt.status === status,
-    );
-    if (found !== undefined) return found.attemptId;
-  }
-  return null;
+  return latestAttemptOf(attemptsOfStudent)?.attemptId ?? null;
 }
 
 /**
@@ -339,6 +349,8 @@ function attemptGroupsByAssignment(
       studentId: attempts.studentId,
       attemptId: attempts.id,
       status: attempts.status,
+      startedAt: attempts.startedAt,
+      attemptNo: attempts.attemptNo,
     })
     .from(attempts)
     .where(isNotNull(attempts.assignmentId))
@@ -347,7 +359,12 @@ function attemptGroupsByAssignment(
     if (assignmentId === null) continue;
     const byStudent = map.get(assignmentId) ?? new Map();
     const list = byStudent.get(row.studentId) ?? [];
-    list.push({ status: row.status, attemptId: row.attemptId });
+    list.push({
+      status: row.status,
+      attemptId: row.attemptId,
+      startedAt: row.startedAt,
+      attemptNo: row.attemptNo,
+    });
     byStudent.set(row.studentId, list);
     map.set(assignmentId, byStudent);
   }
@@ -430,6 +447,8 @@ function toTeacherAssignment(
     answerRelease: row.answerRelease,
     // M1b：服务端恒显式输出 bool（旧行迁移后已有默认 false，客户端不需猜测）
     allowPerQuestionFeedback: row.allowPerQuestionFeedback,
+    // hall-15313：服务端恒显式输出 bool（迁移 DEFAULT true，存量零回填即允许）
+    allowRedo: row.allowRedo,
     units: unitsOf,
     totalQuestionCount: unitsOf.reduce(
       (sum, unit) => sum + unit.questionCount,
@@ -577,6 +596,8 @@ export function createAssignment(
           dueAt: request.dueAt ?? null,
           answerRelease: effectiveRelease,
           allowPerQuestionFeedback: allowPerQuestion,
+          // hall-15313：缺省允许重做（存量兼容），显式 false 才禁
+          allowRedo: request.allowRedo ?? true,
           deletedAt: null,
           createdAt: stamp,
         })
@@ -771,6 +792,11 @@ export function updateAssignment(
     // M1b：与 answerRelease 同 patch（同事务）成对写入；见上文合并校验
     if (nextAllowPerQuestion !== undefined) {
       patch.allowPerQuestionFeedback = nextAllowPerQuestion;
+    }
+    // 重做策略位（hall-15313）：策略非内容，不受 D14 锁定；仅显式提供时更新，
+    // 即时生效、不追溯已有卷
+    if (request.allowRedo !== undefined) {
+      patch.allowRedo = request.allowRedo;
     }
     if (Object.keys(patch).length > 0) {
       tx.update(assignments).set(patch).where(eq(assignments.id, id)).run();
@@ -1054,6 +1080,7 @@ export function listStudentAssignments(
       title: assignments.title,
       dueAt: assignments.dueAt,
       createdAt: assignments.createdAt,
+      allowRedo: assignments.allowRedo,
     })
     .from(assignments)
     .innerJoin(
@@ -1076,7 +1103,10 @@ export function listStudentAssignments(
   const teacherId = rows[0]?.teacherId ?? null;
 
   // 该学生的全部作业 attempt 摘要按 assignmentId 归组（course 来源不关联作业）
-  const attemptsByAssignment = new Map<string, Pick<Attempt, "status">[]>();
+  const attemptsByAssignment = new Map<
+    string,
+    Pick<Attempt, "status" | "startedAt" | "attemptNo">[]
+  >();
   // M4-D3 进行中进度（§13）：v1 新协议 draft 卷按作业归集，统一批量聚合 n/N
   const v1DraftByAssignment = new Map<string, Pick<Attempt, "id" | "status">>();
   for (const attempt of db
@@ -1084,6 +1114,8 @@ export function listStudentAssignments(
       id: attempts.id,
       assignmentId: attempts.assignmentId,
       status: attempts.status,
+      startedAt: attempts.startedAt,
+      attemptNo: attempts.attemptNo,
       sourceType: attempts.sourceType,
       practiceWorkflowVersion: attempts.practiceWorkflowVersion,
       feedbackMode: attempts.feedbackMode,
@@ -1095,10 +1127,18 @@ export function listStudentAssignments(
     const list = attemptsByAssignment.get(attempt.assignmentId);
     if (list === undefined) {
       attemptsByAssignment.set(attempt.assignmentId, [
-        { status: attempt.status },
+        {
+          status: attempt.status,
+          startedAt: attempt.startedAt,
+          attemptNo: attempt.attemptNo,
+        },
       ]);
     } else {
-      list.push({ status: attempt.status });
+      list.push({
+        status: attempt.status,
+        startedAt: attempt.startedAt,
+        attemptNo: attempt.attemptNo,
+      });
     }
     // 协议判定走 practiceProtocolOf 单一谓词；每份作业取进行中的那份草稿
     //（每 学生×作业 至多一份 draft，computeAssignmentStatus 的 in_progress 同源）
@@ -1147,6 +1187,7 @@ export function listStudentAssignments(
         ),
         dueAt: row.dueAt,
         createdAt: row.createdAt,
+        allowRedo: row.allowRedo,
         status: computeAssignmentStatus(
           { id: row.id, dueAt: row.dueAt },
           attemptsByAssignment.get(row.id) ?? [],

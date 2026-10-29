@@ -521,7 +521,7 @@ export type AiTaskPublic = z.infer<typeof aiTaskPublicSchema>;
 export const aiTaskOriginSummarySchema = z
   .object({
     sourceType: attemptSourceSchema,
-    /** 第几次作答（course/wrong/lesson 递增；assignment 恒 1） */
+    /** 第几次作答（course/wrong/lesson 递增；assignment 缺省 1、显式重做后递增，hall-15313） */
     attemptNo: z.number().int().min(1),
     /** 卷内题号（1 起全卷连续）；null = 题已不在本卷 */
     questionNo: z.number().int().min(1).nullable(),

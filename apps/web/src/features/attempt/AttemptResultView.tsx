@@ -11,10 +11,19 @@ import {
   Lightbulb,
   PenLine,
   RotateCcw,
+  RotateCw,
   TriangleAlert,
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
   groupSegmentsOfUnit,
@@ -473,6 +482,7 @@ export function AttemptResultView({
   onSolutionToggle,
   annotationSealWarning = false,
   wrongPractice,
+  redo,
   onRefresh,
 }: {
   data: AttemptResultData;
@@ -498,6 +508,20 @@ export function AttemptResultView({
     error: string | null;
     /** 点击按钮（questionIds = 本卷判错题按本卷题序） */
     onStart: (questionIds: string[]) => void;
+  };
+  /**
+   * 作业重做「再做一次」入口（hall-15313）：页面层传入开新卷动作与状态；
+   * 缺省不渲染（课程/错题/讲练来源、测试场景）。可见性由本视图按数据判定：
+   * attempt.sourceType === "assignment" 且 allowRedo 为 true（旧响应缺省
+   * undefined 按 true 处理——存量作业即允许重做）。
+   */
+  redo?: {
+    /** 开新卷请求进行中（按钮 loading 禁用，防重复开卷） */
+    loading: boolean;
+    /** 开新卷失败的中文提示（null = 无失败；含教师关闭重做后的兜底提示） */
+    error: string | null;
+    /** 确认「再做一次」（页面层 POST redo:true 并跳新卷） */
+    onStart: () => void;
   };
   /**
    * T6R.20 审查修复 2：交卷后的标注封存（seal）失败警示——非阻断
@@ -554,6 +578,13 @@ export function AttemptResultView({
     );
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;
+  // 作业重做（hall-15313）：再做一次入口——仅作业来源且允许重做（旧响应
+  // 缺省按允许处理）；确认弹层防误触（新卷从空白开始、本卷保留可回看）
+  const [redoOpen, setRedoOpen] = useState(false);
+  const showRedo =
+    attempt.sourceType === "assignment" &&
+    (attempt.allowRedo ?? true) &&
+    redo !== undefined;
   // SAI-22 结果页 AI 复盘：完成后按 §7.5 入口变「AI 复盘」，绑定回看当前题；
   // 复盘态不采集材料（结果页无作答会话——纯文字求助，题面与答案解析由
   // 服务端快照携带）。rail 包住回看列表，原稿/订正控制器不因面板卸载。
@@ -806,6 +837,19 @@ export function AttemptResultView({
                       : `练习本卷错题（${wrongQuestionIds.length} 题）`}
                   </Button>
                 )}
+                {showRedo && (
+                  <Button
+                    className="min-h-11"
+                    disabled={redo.loading}
+                    onClick={() => setRedoOpen(true)}
+                  >
+                    <RotateCw
+                      aria-hidden
+                      className={cn("size-4", redo.loading && "animate-spin")}
+                    />
+                    再做一次
+                  </Button>
+                )}
               </div>
               {/* 组卷失败（网络/题目状态变化含 400 WRONG_PRACTICE_EMPTY 极端
               情况）：中文告警，可重试（再点按钮）或刷新本页 */}
@@ -821,6 +865,50 @@ export function AttemptResultView({
                     ；题目状态可能有变化，请稍后重试或刷新本页。
                   </p>
                 )}
+              {showRedo && redo.error !== null && (
+                <p
+                  role="alert"
+                  className="flex items-center gap-1.5 text-sm text-destructive"
+                >
+                  <TriangleAlert aria-hidden className="size-4 shrink-0" />
+                  再做一次失败：{redo.error}
+                  ；请稍后重试或刷新本页。
+                </p>
+              )}
+              {/* 再做一次确认（hall-15313）：显式动作——新卷从空白开始，本卷
+              保留可回看（文案与讲练「再做一次」先例同口径） */}
+              {showRedo && (
+                <Dialog open={redoOpen} onOpenChange={setRedoOpen}>
+                  <DialogContent className="w-[calc(100%-24px)] max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>再做一次吗？</DialogTitle>
+                      <DialogDescription className="text-sm leading-6">
+                        将开始第 {attempt.attemptNo + 1}
+                        次作答，全部题目从空白开始；这一次的作答会保留，可随时在「我的记录」回看。
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        className="min-h-11"
+                        onClick={() => setRedoOpen(false)}
+                      >
+                        先不用
+                      </Button>
+                      <Button
+                        className="min-h-11"
+                        disabled={redo.loading}
+                        onClick={() => {
+                          setRedoOpen(false);
+                          redo.onStart();
+                        }}
+                      >
+                        开始第 {attempt.attemptNo + 1} 次
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
             </div>
           </section>
 

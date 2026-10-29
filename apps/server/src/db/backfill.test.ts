@@ -759,6 +759,8 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // 0038（M1b）新增列：assignments 逐题反馈授权默认 0；新列语义见
       // practice-workflow 相关测试，此处只保真原有业务字段。
       if (table === "assignments") delete row.allow_per_question_feedback;
+      // hall-15313：allow_redo 迁移加列（DEFAULT true），不参与数据保真比对
+      if (table === "assignments") delete row.allow_redo;
       // 0038（M1b）attempts 三列：旧协议卷 version NULL / mode NULL / revision 0
       if (table === "attempts") {
         delete row.practice_workflow_version;

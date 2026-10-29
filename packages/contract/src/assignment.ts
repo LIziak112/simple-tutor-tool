@@ -152,6 +152,12 @@ export const assignmentCreateRequestSchema = z
      * 请求内显式 after_due + true 在此拒绝。
      */
     allowPerQuestionFeedback: z.boolean().optional(),
+    /**
+     * 是否允许重做（hall-15313）：可选布尔，缺省 = 允许（存量兼容：教师未显式
+     * 禁止即允许，服务端按 request.allowRedo ?? true 落库）。策略位非内容：
+     * 不受 D14 锁定，PATCH 即时生效、不追溯已有作答。
+     */
+    allowRedo: z.boolean().optional(),
   })
   .superRefine(rejectAfterDuePerQuestion);
 
@@ -187,6 +193,11 @@ export const assignmentUpdateRequestSchema = z
      * answerRelease='after_due' + true 时在此拒绝。
      */
     allowPerQuestionFeedback: z.boolean().optional(),
+    /**
+     * 是否允许重做（hall-15313）：partial PATCH 语义——仅显式提供时更新；
+     * 策略位不受 D14 内容锁定，改后即时生效、不追溯已有作答。
+     */
+    allowRedo: z.boolean().optional(),
   })
   .superRefine(rejectAfterDuePerQuestion);
 
@@ -280,6 +291,11 @@ export const teacherAssignmentSchema = z.object({
    * 客户端按 false 处理；M1b 起服务端恒显式返回 true/false。
    */
   allowPerQuestionFeedback: z.boolean().optional(),
+  /**
+   * 是否允许重做（hall-15313）：教师可改的策略位。optional 同 M1b 先例——
+   * 旧版响应缺省 undefined，客户端按 true 处理（存量作业即允许重做）。
+   */
+  allowRedo: z.boolean().optional(),
   /** 单元列表（按布置顺序；含软删单元） */
   units: z.array(teacherAssignmentUnitSchema),
   /** 全部单元 live 题数之和（学生答题页题数与此一致） */
@@ -322,11 +338,11 @@ export const assignmentUpdateDataSchema = teacherAssignmentSchema;
 export const assignmentRosterEntrySchema = z.object({
   studentId: z.uuid(),
   displayName: z.string().min(1),
-  /** 该学生在本作业下的完成状态（graded > submitted > in_progress > not_started） */
+  /** 该学生在本作业下的完成状态（hall-15313 起按最新一卷推导：startedAt desc, attemptNo desc） */
   status: assignmentStatusSchema,
   /**
-   * 该生在本作业下的 attempt id（一人一份：draft 幂等、交卷后不再新建）。
-   * status 取同优先级（graded > submitted > draft）的代表行；未开始为 null。
+   * 该生在本作业下的 attempt id（代表行 = 最新一卷，hall-15313 重做语义；
+   * 未开始为 null）。
    * T3.1（D8）：名单状态徽章点击 → attempt 详情 /t/data/attempts/:id 的定位 id。
    */
   attemptId: z.uuid().nullable(),
@@ -390,6 +406,11 @@ export const studentAssignmentSchema = z.object({
    * responses.submittedAt 行级计数；legacy / lesson 卷缺省 = 前端回落既有呈现。
    */
   practiceSubmittedCount: z.number().int().min(0).optional(),
+  /**
+   * 是否允许重做（hall-15313）：学生结果页「再做一次」入口的渲染依据；
+   * 旧版响应缺省 undefined，客户端按 true 处理（存量作业即允许重做）。
+   */
+  allowRedo: z.boolean().optional(),
 });
 
 /** GET /api/student/assignments 响应 data（按布置时间倒序） */
