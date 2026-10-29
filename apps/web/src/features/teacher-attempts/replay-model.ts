@@ -245,7 +245,9 @@ export function replayStateAt(
     consumedEvents: 0,
   };
 
-  // 服务端事实先落（钳制后 ≤ t 的生效），事件流再覆盖——同一时刻事件优先
+  // 服务端事实先落（钳制后 ≤ t 的生效），事件流随后叠加：提交时刻等已有
+  // 服务端事实的字段以事实为准（先落者胜——事件仅在无事实时补位 clientTs）；
+  // 作答/聚焦/环境等纯事件状态与事实字段互补，不互相覆盖
   for (const fact of factsOf(data, window.startMs, window.endMs)) {
     if (fact.atMs > t) continue;
     const question = questionStateOf(state.questions, fact.questionId);

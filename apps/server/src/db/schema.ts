@@ -1386,8 +1386,9 @@ export const events = sqliteTable(
      * JSON.parse。环境族 net/idle 无讲义语义，为 NULL。
      */
     lectureId: text("lecture_id"),
-    /** 事件类型（learningEventTypeSchema 23 种之一：T2.10 既有 11 + T4.0a 11 +
-     *  2026-10 question_submit；改用契约类型单一出处，消除手抄枚举漂移） */
+    /** 事件类型（learningEventTypeSchema 25 种之一：T2.10 既有 11 + T4.0a 11 +
+     *  2026-10 question_submit + 2026-10-28 note_sync/editor_toggle；
+     *  改用契约类型单一出处，消除手抄枚举漂移） */
     type: text("type").$type<LearningEventType>().notNull(),
     /** 事件载荷 JSON（契约各事件 schema 的序列化，不含题目侧内容） */
     payloadJson: text("payload_json").notNull(),

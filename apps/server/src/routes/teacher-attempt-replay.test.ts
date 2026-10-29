@@ -3,6 +3,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { events } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { fetchSubmitRevisions } from "../test/submit-revisions";
 
@@ -245,6 +246,41 @@ describe("GET /api/teacher/attempts/:id/replay", () => {
     expect(data.windowStartMs).toBeNull();
     expect(data.events).toEqual([]);
     expect(data.submitPoints).toEqual([]);
+  });
+
+  it("坏行（payloadJson 非法 JSON 或非对象）跳过，不中断其余事件投影", async () => {
+    const { app, db, teacherCookie, attemptId, questionId } = await makeEnv();
+    const now = Date.now();
+    // 直插一条合法行 + 三类坏行（非法 JSON / 数组 / null）——正常链路有契约
+    // 校验进不来，只有坏库会出现；坏行应与解析失败同口径跳过
+    const rowOf = (id: string, payloadJson: string, clientTs: number) => ({
+      id,
+      attemptId,
+      questionId,
+      studentId: null,
+      lectureId: null,
+      type: "question_focus" as const,
+      payloadJson,
+      clientTs,
+      serverTs: "2026-10-28T00:00:00.000Z",
+    });
+    db.insert(events)
+      .values([
+        rowOf("ev-ok", JSON.stringify({ some: "payload" }), now),
+        rowOf("ev-bad-json", "不是 JSON", now + 1),
+        rowOf("ev-bad-array", "[1,2]", now + 2),
+        rowOf("ev-bad-null", "null", now + 3),
+      ])
+      .run();
+
+    const res = await app.request(`/api/teacher/attempts/${attemptId}/replay`, {
+      headers: { cookie: teacherCookie },
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: Record<string, unknown> };
+    const eventList = data.events as { clientTs: number }[];
+    expect(eventList).toHaveLength(1);
+    expect(eventList[0]?.clientTs).toBe(now);
   });
 
   it("不存在的 attempt 返回 404", async () => {
