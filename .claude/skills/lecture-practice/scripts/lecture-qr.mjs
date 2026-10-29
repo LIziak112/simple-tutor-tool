@@ -252,7 +252,9 @@ function printHelp() {
   -h, --help        显示本帮助
 
 示例：
-  # 项目根目录、服务已起着
+  # 项目根目录、服务已起着（一对一场景默认零参数：库里只有一名在册学生自动选）
+  node .claude/skills/lecture-practice/scripts/lecture-qr.mjs
+  # 库里多名学生时指定其一（姓名 / id / 登录名片段）
   node .claude/skills/lecture-practice/scripts/lecture-qr.mjs --student 张三
   # 开发态（Vite 5173），顺带存一张 SVG
   node .claude/skills/lecture-practice/scripts/lecture-qr.mjs --port 5173 --out ./qr.svg

@@ -31,7 +31,8 @@ app 本身就是练习站：不搭新站、不重写渲染器。四步：出 md 
 
 - 学生链接即登录：`GET /s/<token>`（apps/server/src/routes/public.ts，写 90 天会话 Cookie）。
 - token 从教师端来：`GET /api/teacher/students` 响应带 linkToken；`POST /api/teacher/students/:id/reset-link` 重置（重置即旧链失效）。
-- 二维码：`node .claude/skills/lecture-practice/scripts/lecture-qr.mjs --student <姓名|id|登录名片段>`（仓库根运行；缺省 port 8787 / db ./data/tutor.db；--out 出 SVG/PNG；token 不落文件）。
+- 二维码：`node .claude/skills/lecture-practice/scripts/lecture-qr.mjs`（仓库根运行；缺省 port 8787 / db ./data/tutor.db；--out 出 SVG/PNG；token 不落文件）。
+- 选人顺序（一对一工具，默认零参数）：不带 `--student` 直接跑——库里只有一名在册学生时自动就是 ta；多名时脚本列出候选并以退出码 2 结束，先看会话上下文能否确定，能则带 `--student <姓名|id|登录名片段>` 重跑，仍不明确才问老师。出码即发登录凭据，宁可多问一次，不可猜错人。
 
 ### 4) 数据口径（硬规则）
 
