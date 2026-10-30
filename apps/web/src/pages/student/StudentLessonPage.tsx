@@ -64,12 +64,14 @@ import {
   type LessonQuestionHandlers,
   useLessonAttempt,
 } from "@/features/lesson/use-lesson-attempt";
+import { useLessonReadingPosition } from "@/features/lesson/use-lesson-reading-position";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
-import { extractOutline } from "@/features/markdown/outline";
+import { extractOutline, type OutlineItem } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
   LESSON_HEADING_SELECTOR,
   scrollToHeadingAt,
+  useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
@@ -159,6 +161,8 @@ function HeaderBar({
   backLabel,
   actions,
   context,
+  toc,
+  readingBlocked = false,
 }: {
   title: string;
   /** 返回目标（落地页 /s/lectures/:id/lesson） */
@@ -166,16 +170,38 @@ function HeaderBar({
   backLabel: string;
   actions: ReactNode;
   context: ReactNode;
+  /** 目录入口（讲练页正文视图传入；加载/错误态不传） */
+  toc?: ReactNode;
+  /** 阅读态工具栏锁定（窄屏目录弹层打开时不随滚动收起） */
+  readingBlocked?: boolean;
 }) {
   const editor = useAttemptEditor();
   const isDesktop = useDesktopViewport();
   const toolbar = useReadingToolbar({
-    blocked: editor?.active != null || editor?.paper != null,
+    blocked: readingBlocked || editor?.active != null || editor?.paper != null,
   });
+  // 目录跳转的滚动锚点：按实际工具栏高度预留，标题不被 sticky 头遮住。
+  useEffect(() => {
+    const element = toolbar.ref.current;
+    if (!element) return;
+    const root = document.documentElement;
+    const previousPadding = root.style.scrollPaddingTop;
+    const updateHeight = () => {
+      root.style.scrollPaddingTop = `${element.getBoundingClientRect().height + 16}px`;
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      root.style.scrollPaddingTop = previousPadding;
+    };
+  }, [toolbar.ref]);
   return (
     <>
       <nav
         ref={toolbar.ref}
+        data-slot="lesson-header"
         data-reading-hidden={toolbar.hidden}
         aria-label="讲练页工具栏"
         className="reading-toolbar sticky top-0 z-20 -mx-3 flex min-h-14 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-1.5 sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2"
@@ -200,6 +226,7 @@ function HeaderBar({
             </div>
           )}
         </div>
+        {toc}
         {actions !== null && (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             {actions}
@@ -333,6 +360,107 @@ const EMPTY_SOLO_MATERIALS: ReadonlyMap<
 /** 空锚点映射（模块级稳定引用：无 context 时 useMemo 返回同一实例） */
 const EMPTY_ANCHORS: ReadonlyMap<string, GroupContextSegment> = new Map();
 
+/** 讲练目录状态（页面顶部工具栏与正文共用一份：入口在顶部，目录在侧栏/弹层） */
+interface LessonOutlineState {
+  items: OutlineItem[];
+  /** 目录重建键（md 段内容变化时重挂观察器与目录） */
+  contentKey: string;
+  /** 当前阅读节（与目录下标同源；null = 尚未确立） */
+  currentIndex: number | null;
+  open: boolean;
+  setOpen: (value: boolean) => void;
+  mobileOpen: boolean;
+  setMobileOpen: (value: boolean) => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  pendingHeadingRef: RefObject<number | null>;
+  navigate: (index: number) => void;
+}
+
+/**
+ * 讲练目录与当前阅读节（2026-10-30，#16910）：目录入口从「正文最底部的按钮」
+ * 上移到页面顶部工具栏（对齐讲义阅读页），桌面侧栏与窄屏弹层共用同一份状态；
+ * 分节观察用讲练选择器（[data-lesson-md]，题干里的标题既不进目录也不改高亮）。
+ */
+function useLessonOutline(data: LessonStartData): LessonOutlineState {
+  const isDesktop = useDesktopViewport();
+  const items = useMemo(
+    () =>
+      extractOutline(
+        data.blocks
+          .filter((block) => block.type === "md")
+          .map((block) => (block.type === "md" ? block.md : ""))
+          .join("\n\n"),
+      ),
+    [data.blocks],
+  );
+  const contentKey = useMemo(
+    () => data.blocks.map((b) => (b.type === "md" ? b.md : "q")).join("¦"),
+    [data.blocks],
+  );
+  const [open, setOpen] = useState(true);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const pendingHeadingRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isDesktop) setMobileOpen(false);
+  }, [isDesktop]);
+  useLectureSectionFocus({
+    enabled: items.length > 0,
+    selector: LESSON_HEADING_SELECTOR,
+    sourceKey: contentKey,
+    onSectionFocus: setCurrentIndex,
+  });
+  const navigate = useCallback(
+    (index: number) => {
+      if (!isDesktop) {
+        // Radix 完成弹层关闭后再聚焦正文，避免焦点被模态圈闭抢回。
+        pendingHeadingRef.current = index;
+        setMobileOpen(false);
+        return;
+      }
+      scrollToHeadingAt(LESSON_HEADING_SELECTOR, index);
+    },
+    [isDesktop],
+  );
+  return {
+    items,
+    contentKey,
+    currentIndex,
+    open,
+    setOpen,
+    mobileOpen,
+    setMobileOpen,
+    triggerRef,
+    pendingHeadingRef,
+    navigate,
+  };
+}
+
+/** 顶部工具栏目录入口（与讲义阅读页同文案/同交互：桌面收起侧栏，窄屏开弹层） */
+function LessonOutlineTrigger({ outline }: { outline: LessonOutlineState }) {
+  const isDesktop = useDesktopViewport();
+  if (outline.items.length === 0) return null;
+  return (
+    <button
+      ref={outline.triggerRef}
+      type="button"
+      aria-expanded={isDesktop ? outline.open : outline.mobileOpen}
+      aria-haspopup={isDesktop ? undefined : "dialog"}
+      aria-controls={
+        isDesktop ? "lesson-desktop-outline" : "lesson-mobile-outline"
+      }
+      onClick={() =>
+        isDesktop ? outline.setOpen(!outline.open) : outline.setMobileOpen(true)
+      }
+      className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+    >
+      <ListTree aria-hidden className="size-4" />
+      {isDesktop && outline.open ? "收起目录" : "展开目录"}
+    </button>
+  );
+}
+
 /**
  * 正文：目录（md 段拼接）+ blocks 交替渲染 + 孤儿题分组。
  * renderCard 由两个视图注入（作答卡带 handlers / 完成卡只读）；order 由
@@ -347,6 +475,7 @@ function LessonBody({
   contextError,
   contextRetry,
   contextFetching,
+  outline,
 }: {
   data: LessonStartData;
   order: {
@@ -366,31 +495,13 @@ function LessonBody({
   contextError?: string | null;
   contextRetry?: () => void;
   contextFetching?: boolean;
+  /** 目录与当前阅读节（页面顶部工具栏共用同一份状态） */
+  outline: LessonOutlineState;
 }) {
   const isDesktop = useDesktopViewport();
-  const [outlineOpen, setOutlineOpen] = useState(true);
-  const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false);
-  const outlineTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileOutlineScrollRef = useRef<HTMLDivElement>(null);
   const desktopOutlineScrollRef = useRef<HTMLDivElement>(null);
-  const pendingHeadingRef = useRef<number | null>(null);
-
-  // 目录：全部 md 段拼接抽取（H2/H3；data-lesson-md 限定采集与滚动范围）
-  const outline = useMemo(
-    () =>
-      extractOutline(
-        data.blocks
-          .filter((block) => block.type === "md")
-          .map((block) => (block.type === "md" ? block.md : ""))
-          .join("\n\n"),
-      ),
-    [data.blocks],
-  );
   const orphans = order.ordered.filter((slot) => slot.orphan);
-  const outlineKey = useMemo(
-    () => data.blocks.map((b) => (b.type === "md" ? b.md : "q")).join("¦"),
-    [data.blocks],
-  );
   /** blocks 渲染键：md 段按内容（同名去重）、题槽按 questionId（不用数组下标） */
   const blockKeys = useMemo(() => {
     const seen = new Map<string, number>();
@@ -403,33 +514,21 @@ function LessonBody({
     });
   }, [data.blocks]);
 
-  useEffect(() => {
-    if (isDesktop) setMobileOutlineOpen(false);
-  }, [isDesktop]);
-
-  const navigateOutline = (headingIndex: number) => {
-    if (!isDesktop) {
-      pendingHeadingRef.current = headingIndex;
-      setMobileOutlineOpen(false);
-      return;
-    }
-    scrollToHeadingAt(LESSON_HEADING_SELECTOR, headingIndex);
-  };
-
   const outlineNode = (scrollRef: RefObject<HTMLDivElement | null>) => (
     <LectureOutline
-      key={outlineKey}
-      items={outline}
-      currentIndex={null}
+      key={outline.contentKey}
+      items={outline.items}
+      currentIndex={outline.currentIndex}
       scrollContainerRef={scrollRef}
-      onNavigate={navigateOutline}
+      onNavigate={outline.navigate}
     />
   );
 
   return (
     <div className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-start">
-      {isDesktop && outlineOpen && outline.length > 0 && (
+      {isDesktop && outline.open && outline.items.length > 0 && (
         <nav
+          id="lesson-desktop-outline"
           aria-label="讲练目录"
           className="sticky top-20 w-64 shrink-0 rounded-xl border border-border bg-card p-3"
         >
@@ -556,59 +655,36 @@ function LessonBody({
         )}
       </div>
 
-      {/* 目录入口（窄屏按钮 + 弹层；桌面收起后的展开按钮） */}
-      {outline.length > 0 && (
-        <>
-          <Button
-            type="button"
-            ref={outlineTriggerRef}
-            variant="outline"
-            className="min-h-11 w-fit lg:hidden"
-            aria-expanded={mobileOutlineOpen}
-            onClick={() => setMobileOutlineOpen(true)}
+      {/* 窄屏目录弹层（入口在页面顶部工具栏；关闭后聚焦正文标题） */}
+      {outline.items.length > 0 && (
+        <Dialog
+          open={!isDesktop && outline.mobileOpen}
+          onOpenChange={outline.setMobileOpen}
+        >
+          <DialogContent
+            id="lesson-mobile-outline"
+            className="w-[calc(100%-2rem)] max-w-md overflow-hidden p-4"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              const index = outline.pendingHeadingRef.current;
+              outline.pendingHeadingRef.current = null;
+              if (index !== null)
+                scrollToHeadingAt(LESSON_HEADING_SELECTOR, index);
+              else outline.triggerRef.current?.focus({ preventScroll: true });
+            }}
           >
-            <ListTree aria-hidden className="size-4" />
-            展开目录
-          </Button>
-          {isDesktop && !outlineOpen && (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 w-fit"
-              onClick={() => setOutlineOpen(true)}
+            <DialogHeader className="pr-11">
+              <DialogTitle className="leading-normal">讲练目录</DialogTitle>
+              <DialogDescription>选择章节，跳转到正文</DialogDescription>
+            </DialogHeader>
+            <div
+              ref={mobileOutlineScrollRef}
+              className="min-h-0 overflow-y-auto overscroll-contain"
             >
-              <ListTree aria-hidden className="size-4" />
-              展开目录
-            </Button>
-          )}
-          <Dialog
-            open={!isDesktop && mobileOutlineOpen}
-            onOpenChange={setMobileOutlineOpen}
-          >
-            <DialogContent
-              className="w-[calc(100%-2rem)] max-w-md overflow-hidden p-4"
-              onCloseAutoFocus={(event) => {
-                event.preventDefault();
-                const index = pendingHeadingRef.current;
-                pendingHeadingRef.current = null;
-                if (index !== null)
-                  scrollToHeadingAt(LESSON_HEADING_SELECTOR, index);
-                else outlineTriggerRef.current?.focus({ preventScroll: true });
-              }}
-            >
-              <DialogHeader className="pr-11">
-                <DialogTitle className="leading-normal">讲练目录</DialogTitle>
-                <DialogDescription>选择章节，跳转到正文</DialogDescription>
-              </DialogHeader>
-              <div
-                ref={mobileOutlineScrollRef}
-                className="min-h-0 overflow-y-auto overscroll-contain"
-              >
-                {outlineNode(mobileOutlineScrollRef)}
-              </div>
-            </DialogContent>
-          </Dialog>
-        </>
+              {outlineNode(mobileOutlineScrollRef)}
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
@@ -697,9 +773,12 @@ function LessonAnswerInner({
   );
   const total = data.questions.length;
 
+  const outline = useLessonOutline(data);
   // ---- SAI-22 讲练 AI 伴学 ----
   const editor = useAttemptEditor(null);
   const cardElements = useRef(new Map<string, HTMLElement>());
+  // 阅读位置：按作答卷保存「读到哪一节/哪道题」，重进本页自动回到原位。
+  useLessonReadingPosition({ attemptId, cards: cardElements });
   const onCardElement = useCallback(
     (questionId: string, el: HTMLElement | null) => {
       if (el === null) cardElements.current.delete(questionId);
@@ -798,6 +877,8 @@ function LessonAnswerInner({
               <span aria-live="polite">{session.saveStatus}</span>
             </>
           }
+          toc={<LessonOutlineTrigger outline={outline} />}
+          readingBlocked={outline.mobileOpen}
           actions={
             <AiQueueButton
               currentAttemptId={aiCompanion.send.attemptId}
@@ -851,6 +932,7 @@ function LessonAnswerInner({
             contextError={contextError}
             contextRetry={contextRetry}
             contextFetching={contextFetching}
+            outline={outline}
           />,
         )}
       </article>
@@ -873,6 +955,17 @@ function LessonCompletedView({
   const summary = data.summary;
   const attemptId = data.attempt.id;
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
+  const outline = useLessonOutline(data);
+  const cardElements = useRef(new Map<string, HTMLElement>());
+  const onCardElement = useCallback(
+    (questionId: string, el: HTMLElement | null) => {
+      if (el === null) cardElements.current.delete(questionId);
+      else cardElements.current.set(questionId, el);
+    },
+    [],
+  );
+  // 回看同样记住读到哪一节/哪道题：重进已完成卷回到原位。
+  useLessonReadingPosition({ attemptId, cards: cardElements });
   // QM-14：完成回看同样呈现组段（材料随冻结上下文可见，回看不依赖当前讲义）
   const {
     anchors,
@@ -921,6 +1014,7 @@ function LessonCompletedView({
         hints={EMPTY_HINTS}
         released={data.released[question.id]}
         handlers={undefined}
+        onCardElement={onCardElement}
         aiTrigger={aiCompanion.triggerForQuestion(question.id)}
       />
       {aiCompanion.inlineForQuestion(question.id)}
@@ -958,6 +1052,8 @@ function LessonCompletedView({
               )}
             </>
           }
+          toc={<LessonOutlineTrigger outline={outline} />}
+          readingBlocked={outline.mobileOpen}
           actions={
             <>
               <AiQueueButton
@@ -994,6 +1090,7 @@ function LessonCompletedView({
             contextError={contextError}
             contextRetry={contextRetry}
             contextFetching={contextFetching}
+            outline={outline}
           />,
         )}
 
