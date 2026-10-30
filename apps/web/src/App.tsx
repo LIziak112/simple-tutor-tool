@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { HomePage } from "./pages/HomePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { PersonalStudyPage } from "./pages/PersonalStudyPage";
 
 /**
  * 开发环境专属路由（T1.8 渲染开发页）。
@@ -615,7 +616,17 @@ function StudentRouteFallback() {
 export function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route
+        path="/"
+        element={
+          import.meta.env.VITE_PERSONAL_MODE === "true" ? (
+            <PersonalStudyPage />
+          ) : (
+            <HomePage />
+          )
+        }
+      />
+      <Route path="/personal" element={<PersonalStudyPage />} />
       {devOnlyRoutes}
 
       <Route
