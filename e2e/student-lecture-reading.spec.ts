@@ -238,6 +238,25 @@ test(
         });
         if (await expand.count()) await expand.click();
       }
+      if (width === 390) {
+        // 目录列表自身可滚（回归 #16969：弹层 inner 无高度上限时用户滚不动）
+        const list = dialog.locator("div.overflow-y-auto").first();
+        const metrics = await list.evaluate((element) => ({
+          clientHeight: element.clientHeight,
+          scrollHeight: element.scrollHeight,
+        }));
+        expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+        const dialogBox = await dialog.boundingBox();
+        if (dialogBox === null) throw new Error("讲义目录弹层缺少几何信息");
+        await page.mouse.move(
+          dialogBox.x + dialogBox.width / 2,
+          dialogBox.y + dialogBox.height / 2,
+        );
+        await page.mouse.wheel(0, 400);
+        await expect
+          .poll(() => list.evaluate((element) => element.scrollTop))
+          .toBeGreaterThan(0);
+      }
       const lastChapter = dialog.getByRole("button", {
         name: chapters[4],
         exact: true,

@@ -181,3 +181,101 @@ test("讲练目录在顶部工具栏，阅读位置重进恢复", { tag: ["@stud
   await page.waitForTimeout(500);
   expect(leak.violations().join("\n")).toBe("");
 });
+
+function longLessonMarkdown(title: string, unit: string): string {
+  const sections = Array.from(
+    { length: 24 },
+    (_, index) => `第${index + 1}节 目录滚动测试`,
+  );
+  return [
+    "---",
+    "kind: lesson",
+    `unit: ${unit}`,
+    "topic: 目录滚动",
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    ...sections.flatMap((section) => [
+      `## ${section}`,
+      "",
+      "阅读正文：判断数量与符号，结合数轴理解相反数。先明确条件，再按步骤推理。",
+      "",
+    ]),
+  ].join("\n");
+}
+
+test("移动端长目录可在弹层内下滑到最后一节", { tag: ["@student"] }, async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  await teacherApiLogin(request);
+  const suffix = uniqueSuffix();
+  const courseId = await createCourseViaApi(request, `长目录课程${suffix}`);
+  const title = `长目录测试${suffix}`;
+  const imported = await request.post("/api/teacher/import/commit", {
+    data: {
+      markdown: longLessonMarkdown(title, `长目录单元${suffix}`),
+      filename: `${title}.md`,
+      courseId,
+    },
+  });
+  expect(imported.ok(), await imported.text()).toBe(true);
+  const loginName = `lesson-long-outline-${suffix}`;
+  const created = await request.post("/api/teacher/students", {
+    data: { displayName: "长目录学生", loginName },
+  });
+  expect(created.ok()).toBe(true);
+  const student = await getStudentViaApi(request, loginName);
+  await addCourseMemberViaApi(request, courseId, student.id);
+
+  await page.goto(`/s/${student.linkToken}`);
+  await page.waitForURL("**/s/home");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/s/lectures");
+  await page.getByRole("link", { name: `打开讲练 ${title}` }).click();
+  await expect(
+    page.getByRole("heading", { name: title, level: 1 }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: `开始练习 ${title}` }).click();
+  await page.waitForURL(/\/s\/lectures\/[^/]+\/lesson\/run/);
+
+  const toolbar = page.getByRole("navigation", { name: "讲练页工具栏" });
+  await toolbar.getByRole("button", { name: "展开目录", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "讲练目录" });
+  await expect(dialog).toBeVisible();
+  const list = dialog.locator("div.overflow-y-auto").first();
+  const metrics = await list.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  // 目录比弹层可视高度长：列表自身可滚（回归 #16969 目录无法下滑）
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  const documentScrollY = await page.evaluate(() => window.scrollY);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const box = await dialog.boundingBox();
+  if (box === null) throw new Error("目录弹层缺少几何信息");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let index = 0; index < 4; index += 1) {
+    await page.mouse.wheel(0, 400);
+    await page.waitForTimeout(100);
+  }
+  // 滚轮只滚目录列表，正文不动
+  expect(await list.evaluate((element) => element.scrollTop)).toBeGreaterThan(
+    0,
+  );
+  expect(await page.evaluate(() => window.scrollY)).toBe(documentScrollY);
+
+  const lastSection = dialog.getByRole("button", {
+    name: "第24节 目录滚动测试",
+    exact: true,
+  });
+  await expect(lastSection).toBeInViewport();
+  await lastSection.click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("heading", { name: "第24节 目录滚动测试", exact: true }),
+  ).toBeInViewport();
+});

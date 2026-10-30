@@ -287,7 +287,7 @@ export default function StudentLectureViewPage() {
             </DialogHeader>
             <div
               ref={mobileOutlineScrollRef}
-              className="min-h-0 overflow-y-auto overscroll-contain"
+              className="min-h-0 max-h-[calc(88vh-8rem)] overflow-y-auto overscroll-contain"
             >
               <LectureOutline
                 key={lectureQuery.data?.markdown}
