@@ -110,6 +110,7 @@ export const SPEC_TAGS = {
   // 学生端
   "student-course.spec.ts": ["@student"],
   "student-lecture-reading.spec.ts": ["@student"],
+  "lesson-outline-reading.spec.ts": ["@student"],
   "student-settings.spec.ts": ["@student"],
   "student-workspace.spec.ts": ["@student"],
   "student-records.spec.ts": ["@student"],
