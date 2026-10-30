@@ -53,6 +53,7 @@ function readAnchor(key: string): ReadingAnchor | null {
       raw !== null &&
       "anchor" in raw &&
       typeof raw.anchor === "string" &&
+      /^(?:h:\d+|q:.+)$/.test(raw.anchor) &&
       "offset" in raw &&
       typeof raw.offset === "number" &&
       Number.isFinite(raw.offset)

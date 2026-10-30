@@ -93,6 +93,7 @@ test("讲练目录在顶部工具栏，阅读位置重进恢复", { tag: ["@stud
   ).toBeVisible();
   await page.getByRole("button", { name: `开始练习 ${title}` }).click();
   await page.waitForURL(/\/s\/lectures\/[^/]+\/lesson\/run/);
+  const lessonUrl = page.url();
   await expect(
     page.getByRole("heading", { name: title, level: 1 }),
   ).toBeVisible();
@@ -117,6 +118,8 @@ test("讲练目录在顶部工具栏，阅读位置重进恢复", { tag: ["@stud
   ).toHaveCount(1);
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
 
+  // 目录跳转用即时滚动（减少动态效果）：位置断言不吃平滑动画的中间态
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await tocTrigger.click();
   const dialog = page.getByRole("dialog", { name: "讲练目录" });
   await expect(dialog).toBeVisible();
@@ -140,11 +143,12 @@ test("讲练目录在顶部工具栏，阅读位置重进恢复", { tag: ["@stud
     })
     .toBeGreaterThanOrEqual(-1);
 
-  // —— 阅读位置：刷新后回到第 4 节（同一作答卷） ——
+  // —— 阅读位置：离开再回来（新导航，排除浏览器原生滚动恢复）回到第 4 节 ——
   await page.waitForTimeout(400);
   const scrolled = await page.evaluate(() => window.scrollY);
   expect(scrolled).toBeGreaterThan(400);
-  await page.reload();
+  await page.goto("/s/home");
+  await page.goto(lessonUrl);
   await expect(
     page.getByRole("heading", { name: title, level: 1 }),
   ).toBeVisible();

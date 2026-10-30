@@ -112,6 +112,16 @@ describe("讲练阅读位置恢复", () => {
     advance(6000);
     expect(scroll).not.toHaveBeenCalled();
   });
+
+  it("非法锚点格式直接忽略，不空转恢复死线", () => {
+    localStorage.setItem(
+      key(),
+      JSON.stringify({ anchor: "javascript:alert(1)", offset: 0 }),
+    );
+    renderHook(() => useLessonReadingPosition({ attemptId: "attempt", cards }));
+    advance(100);
+    expect(scroll).not.toHaveBeenCalled();
+  });
 });
 
 describe("讲练阅读位置保存", () => {
