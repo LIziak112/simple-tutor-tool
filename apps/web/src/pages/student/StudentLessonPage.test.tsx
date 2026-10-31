@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
   AttemptResultQuestion,
@@ -236,6 +242,7 @@ function firstSubmitButton(): HTMLElement {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   mockedStart.mockReset();
   mockedRestart.mockReset();
   mockedSubmitQuestion.mockReset();
@@ -459,6 +466,75 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
       screen.queryByRole("button", { name: "显示答案" }),
     ).not.toBeInTheDocument();
   });
+});
+
+it("窄屏目录入口在顶部工具栏：打开弹层、跳转后关闭并聚焦正文", async () => {
+  vi.stubGlobal(
+    "matchMedia",
+    (query: string) =>
+      ({
+        matches: false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }) as unknown as MediaQueryList,
+  );
+  mockedStart.mockResolvedValue(lessonStart());
+  renderPage();
+  const toolbar = await screen.findByRole("navigation", {
+    name: "讲练页工具栏",
+  });
+  const trigger = within(toolbar).getByRole("button", {
+    name: "展开目录",
+  });
+  expect(
+    screen.queryByRole("navigation", { name: "讲练目录" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: "讲练目录" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "二、练一练" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(document.querySelectorAll("[data-lesson-md] h2")[1]).toHaveFocus();
+});
+
+it("桌面目录入口在顶部工具栏：收起/展开侧栏", async () => {
+  mockedStart.mockResolvedValue(lessonStart());
+  renderPage();
+  const toolbar = await screen.findByRole("navigation", {
+    name: "讲练页工具栏",
+  });
+  fireEvent.click(within(toolbar).getByRole("button", { name: "收起目录" }));
+  expect(
+    screen.queryByRole("navigation", { name: "讲练目录" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(within(toolbar).getByRole("button", { name: "展开目录" }));
+  expect(
+    screen.getByRole("navigation", { name: "讲练目录" }),
+  ).toBeInTheDocument();
+});
+
+it("重新进入讲练页：按作答卷恢复上次阅读位置", async () => {
+  localStorage.setItem(
+    `lesson-reading:${ATTEMPT_ID}`,
+    JSON.stringify({ anchor: "h:0", offset: 0 }),
+  );
+  const scrollTo = vi
+    .spyOn(window, "scrollTo")
+    .mockImplementation(() => undefined);
+  mockedStart.mockResolvedValue(lessonStart());
+  renderPage();
+  await screen.findByText("第 1 题");
+  await waitFor(
+    () =>
+      expect(scrollTo).toHaveBeenCalledWith({
+        top: 0,
+        behavior: "instant",
+      }),
+    { timeout: 3000 },
+  );
+  scrollTo.mockRestore();
 });
 
 describe("StudentLessonPage：显示答案（单题）", () => {

@@ -55,6 +55,7 @@ class MockIntersectionObserver {
 function Harness(props: {
   enabled: boolean;
   sourceKey: string;
+  selector?: string;
   onSectionFocus: (index: number) => void;
 }) {
   useLectureSectionFocus(props);
@@ -111,6 +112,27 @@ describe("useLectureSectionFocus（§5.0-C13）", () => {
     const observed = observer?.observed() ?? [];
     expect(observed).toEqual([...rich.querySelectorAll("h2, h3")]);
     expect(observed).toHaveLength(3);
+  });
+
+  it("自定义选择器：讲练页只观察 [data-lesson-md] 内的标题", () => {
+    const md = document.createElement("section");
+    md.dataset.lessonMd = "";
+    const inside = document.createElement("h2");
+    inside.textContent = "讲练节";
+    md.appendChild(inside);
+    const stemHeading = document.createElement("h2");
+    stemHeading.textContent = "题干标题";
+    document.body.append(md, stemHeading);
+    render(
+      <Harness
+        enabled
+        sourceKey="md"
+        selector="[data-lesson-md] h2, [data-lesson-md] h3"
+        onSectionFocus={() => undefined}
+      />,
+    );
+    const observer = MockIntersectionObserver.last();
+    expect(observer?.observed()).toEqual([inside]);
   });
 
   it("首个可见标题即上报为起始节（进入讲义页=到达第 0 节）", () => {

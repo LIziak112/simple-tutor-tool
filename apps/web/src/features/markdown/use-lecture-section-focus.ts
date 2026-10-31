@@ -8,8 +8,9 @@ import { useEffect, useRef } from "react";
  * （threshold [0, 0.1, 0.25, 0.5, 1]，占比最大者为当前节），**去掉答题页的
  * 聚焦兜底耦合**（§2.6-2）。细节红线（§5.0-C13）：
  * - root 用默认视口（讲义滚动在文档层，正文非内部 overflow 容器）；
- * - 选择器写死 `.rich-markdown h2, .rich-markdown h3`，与 scrollToHeading
- *   同源（目录点击与聚焦观察永不漂移）；
+ * - 选择器缺省 `.rich-markdown h2, .rich-markdown h3`（讲练页显式传
+ *   LESSON_HEADING_SELECTOR），与 scrollToHeading 同源（目录点击与聚焦观察
+ *   永不漂移）；
  * - 判定「在视口内」显式 ratio > 0（ratio===0 且 isIntersecting===true 是
  *   W3C 合法状态；占比比较可行，但高于视口的节 ratio 永远到不了 1）；
  * - 不用 rootMargin 百分比做中线法（百分比按 root 宽度解析，iPad 横竖屏
@@ -61,6 +62,8 @@ export interface UseLectureSectionFocusOptions {
   readonly enabled: boolean;
   /** 观察目标集合的重建键（讲义 markdown；内容变化时重挂观察器） */
   readonly sourceKey: string;
+  /** 观察目标选择器（缺省讲义页；讲练页传 LESSON_HEADING_SELECTOR） */
+  readonly selector?: string;
   /** 「当前阅读节」切换时回调（headingIndex 与目录列表下标同源，0 起） */
   readonly onSectionFocus: (headingIndex: number) => void;
 }
@@ -72,7 +75,12 @@ export interface UseLectureSectionFocusOptions {
 export function useLectureSectionFocus(
   options: UseLectureSectionFocusOptions,
 ): void {
-  const { enabled, sourceKey, onSectionFocus } = options;
+  const {
+    enabled,
+    sourceKey,
+    selector = LECTURE_HEADING_SELECTOR,
+    onSectionFocus,
+  } = options;
   // onSectionFocus 经 ref 取最新：页面回调内联时观察器不因引用变化重挂
   const callbackRef = useRef(onSectionFocus);
   callbackRef.current = onSectionFocus;
@@ -81,7 +89,7 @@ export function useLectureSectionFocus(
   useEffect(() => {
     if (!enabled || typeof IntersectionObserver === "undefined") return;
     const headings = Array.from(
-      document.querySelectorAll<HTMLElement>(LECTURE_HEADING_SELECTOR),
+      document.querySelectorAll<HTMLElement>(selector),
     );
     if (headings.length === 0) return;
     const indexByElement = new Map<Element, number>(
@@ -161,5 +169,5 @@ export function useLectureSectionFocus(
       if (candidateTimer !== null) clearTimeout(candidateTimer);
     };
     // sourceKey 变化 = 讲义内容变化，重挂观察器重置当前节
-  }, [enabled, sourceKey, callbackRef]);
+  }, [enabled, sourceKey, selector, callbackRef]);
 }
