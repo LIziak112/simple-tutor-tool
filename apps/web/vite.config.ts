@@ -114,7 +114,7 @@ function pwa() {
       globIgnores: ["**/excalidraw-assets/**"],
       navigateFallback: "index.html",
       // 注意：denylist 正则匹配的是完整 URL（http://host/api/...），不能锚定行首
-      navigateFallbackDenylist: [/\/api\//],
+      navigateFallbackDenylist: [/\/api\//, /\/tingxie\//],
       cleanupOutdatedCaches: true,
       runtimeCaching: [
         {
