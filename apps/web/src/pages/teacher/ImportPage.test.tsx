@@ -1019,6 +1019,8 @@ describe("ImportPage 讲练页替换指认（P2a：改名重导显式绑定目�
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
 
     expect(await screen.findByText(/正在加载讲练页列表/)).toBeInTheDocument();
+    // pending 可先于查询 effect 渲染，等请求建立后才能释放受控响应。
+    await waitFor(() => expect(mockedLectures).toHaveBeenCalledTimes(1));
     release({ lectures: [] });
     expect(await screen.findByText(/库中还没有讲练页/)).toBeInTheDocument();
     expect(screen.queryByLabelText("替换目标")).not.toBeInTheDocument();
