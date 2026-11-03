@@ -255,7 +255,7 @@ export function AiCompanionPanelBody({
           data-slot="ai-reply-workspace"
           className={
             flow
-              ? "mx-auto w-full min-w-0 max-w-[43rem] px-4 py-3 sm:px-6"
+              ? "w-full min-w-0 px-4 py-3 sm:px-6"
               : `min-h-0 flex-1 overflow-y-auto ${replyOverscroll.overscrollClass} bg-muted/20 px-3 py-3`
           }
         >
