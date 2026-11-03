@@ -2484,6 +2484,8 @@ describe("ink 路径目录边界（T6R.14：同前缀相邻目录/向上逃逸/�
           modules: { ink: true, summaries: true },
           goal: "diagnose-weakness",
         }),
+        // 已交卷夹具在 10 月 2 日；不能随运行日期滑出默认 30 天窗口。
+        { now: "2026-10-03T00:00:00.000Z" },
       );
       return null; // 未抛错
     } catch (err: unknown) {

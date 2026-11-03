@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AnnotationSurfaceLayout, QuestionAnswers } from "@tutor/contract";
 import {
   learningPackExportRequestSchema,
+  learningPackSchema,
   learningPackV2Schema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
@@ -48,6 +49,8 @@ const SENTINELS = {
 } as const;
 const Q = "标注导出题-1";
 const UNIT = "unit-ann";
+// 与 10 月 2 日交卷的夹具配套，避免真实时钟让附件用例变成空卷断言。
+const EXPORT_NOW = "2026-10-03T00:00:00.000Z";
 
 /** 建世界＋单题卷（draft）——makeWorld 后必须先调用本函数 */
 function makePaper(
@@ -202,6 +205,7 @@ describe("review-pack 的 annotation 成对附件", () => {
             modules: { responses: true, evidence: true },
             goal: "diagnose-weakness",
           }),
+          { now: EXPORT_NOW },
         )
       ).bytes,
     );
@@ -379,6 +383,7 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
       world.dataDir,
       TEST_TEACHER_ID,
       v2Request(world.studentId),
+      { now: EXPORT_NOW },
     );
     const entries = unzipEntries(zip.bytes);
     const packText = entries.get("pack.json")?.toString("utf8") ?? "";
@@ -423,6 +428,7 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
       v2Request(world.studentId, {
         modules: { questions: "stem", responses: true, evidence: true },
       }),
+      { now: EXPORT_NOW },
     );
     const packText =
       unzipEntries(zip.bytes).get("pack.json")?.toString("utf8") ?? "";
@@ -452,12 +458,16 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
       world.dataDir,
       TEST_TEACHER_ID,
       request,
+      { now: EXPORT_NOW },
     );
     const entries = unzipEntries(zip.bytes);
     expect(
       [...entries.keys()].some((name) => name.startsWith("annotation/")),
     ).toBe(false);
     const packText = entries.get("pack.json")?.toString("utf8") ?? "";
+    expect(
+      learningPackSchema.parse(JSON.parse(packText)).attempts?.responses,
+    ).toHaveLength(1);
     expect(packText).not.toContain('"annotation"');
   });
 
@@ -468,8 +478,13 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
       world.dataDir,
       TEST_TEACHER_ID,
       v2Request(world.studentId, { modules: { summaries: true } }),
+      { now: EXPORT_NOW },
     );
     const entries = unzipEntries(zip.bytes);
+    const pack = learningPackV2Schema.parse(
+      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "null"),
+    );
+    expect(pack.summary?.overall.attemptCount).toBe(1);
     expect(
       [...entries.keys()].some((name) => name.startsWith("annotation/")),
     ).toBe(false);
