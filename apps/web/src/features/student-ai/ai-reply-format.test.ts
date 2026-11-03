@@ -42,6 +42,12 @@ describe("AI数学定界符兼容与有界原文", () => {
       normalizeAiReplyMath(String.raw`先看 \(x+2\)，再看 \[x+2=5\]。`),
     ).toBe("先看 $x+2$，再看 \n$$\nx+2=5\n$$\n。");
   });
+  it("不改变已有的多行公式块", () => {
+    const source = ["$$", String.fromCharCode(92) + "frac{1}{2}", "$$"].join(
+      String.fromCharCode(10),
+    );
+    expect(normalizeAiReplyMath(source)).toBe(source);
+  });
   it("保留代码、链接和普通方括号，避免猜测数学", () => {
     const source =
       "`\\(code\\)`\n\n```tex\n\\[code\\]\n```\n\n[资料](https://example.com) [x+2=5]";

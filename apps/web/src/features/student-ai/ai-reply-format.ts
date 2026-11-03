@@ -1,17 +1,18 @@
 /** 兼容常见定界符和独占行的裸公式；代码与普通正文原样保留。 */
 export function normalizeAiReplyMath(source: string): string {
   return source.replace(
-    /(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1[^\n]*(?=\n|$)|$)|(`+)[^\n]*?\2|\\\[([\s\S]*?)\\\]|\\\(([^\n]*?)\\\)|^( {0,3}(?:>\s*)?)(\\(?:frac|lim|int|sum|prod|sqrt|begin|left|operatorname)(?![a-zA-Z])[^\n$`]*)$/gm,
+    /(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1[^\n]*(?=\n|$)|$)|(`+)[^\n]*?\2|\\\[([\s\S]*?)\\\]|\\\(([^\n]*?)\\\)|(^ {0,3}(?:> ?)?\$\$[^\n]*\n[\s\S]*?^ {0,3}(?:> ?)?\$\$[ \t]*$)|^( {0,3}(?:>\s*)?)(\\(?:frac|lim|int|sum|prod|sqrt|begin|left|operatorname)(?![a-zA-Z])[^\n$`]*)$/gm,
     (
       whole: string,
       fence: string | undefined,
       code: string | undefined,
       display: string | undefined,
       inline: string | undefined,
+      existingBlock: string | undefined,
       prefix: string | undefined,
       bare: string | undefined,
     ) => {
-      if (fence || code) return whole;
+      if (fence || code || existingBlock) return whole;
       if (display !== undefined) return `\n$$\n${display.trim()}\n$$\n`;
       if (bare !== undefined) {
         const container = prefix?.includes(">") ? prefix : "";
