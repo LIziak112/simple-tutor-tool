@@ -237,6 +237,9 @@ export function InkPad({
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [height, setHeight] = useState(initialHeight);
+  useEffect(() => {
+    setHeight((current) => Math.max(current, initialHeight));
+  }, [initialHeight]);
   const [clearOpen, setClearOpen] = useState(false);
   const [ready, setReady] = useState(engine === "atrament");
   const [loadError, setLoadError] = useState<string | null>(null);

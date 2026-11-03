@@ -243,6 +243,14 @@ describe("<InkPad> 输入模式（T6R.7：会话共享偏好）", () => {
 });
 
 describe("<InkPad> 新草稿形态 props（T6R.9：NoteLayer 接入）", () => {
+  it("首次布局后增大的初始高度生效，后续缩小不会裁掉纸面", () => {
+    const view = render(<InkPad initialHeight={320} />);
+    const box = screen.getByRole("img", { name: "手写答题区" });
+    view.rerender(<InkPad initialHeight={640} />);
+    expect(box.style.height).toBe("640px");
+    view.rerender(<InkPad initialHeight={400} />);
+    expect(box.style.height).toBe("640px");
+  });
   it("background 透传引擎 create 选项；缺省不传（旧作答零变化）", () => {
     const first = render(<InkPad />);
     expect(lastCreateOpts).not.toHaveProperty("background");

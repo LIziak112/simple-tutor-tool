@@ -53,7 +53,7 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
-import { InkPad } from "@/features/ink/InkPad";
+import { PaperEditor } from "@/features/ink/PaperEditor";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import {
   PAPER_KEEPALIVE_MS,
@@ -62,7 +62,6 @@ import {
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
-import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import {
   type NoteLayoutPreference,
   setNoteLayoutPreference,
@@ -363,41 +362,6 @@ export function NoteLayer({
             </div>
           </div>
         )}
-        {open && (
-          <NoteToolbar
-            compact={coordinator !== null}
-            label={label}
-            tool={editor.tool}
-            onToolChange={editor.setTool}
-            penColor={editor.penColor}
-            onPenColorChange={editor.setPenColor}
-            penSize={editor.penSize}
-            onPenSizeChange={editor.setPenSize}
-            canUndo={editor.canUndo}
-            canRedo={editor.canRedo}
-            onUndo={() => editor.engineRef.current?.undo()}
-            onRedo={() => editor.engineRef.current?.redo()}
-            onClearRequest={() => setClearOpen(true)}
-            clearLabel={phase === "correction" ? "清空订正草稿" : "清空草稿纸"}
-            moreTitle="更多（重做/颜色/粗细/清空/布局）"
-            menuExtras={(
-              Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]
-            ).map((p) => (
-              <DropdownMenuItem
-                key={p}
-                aria-checked={layoutPref === p}
-                onSelect={() => setNoteLayoutPreference(p)}
-              >
-                <Check
-                  aria-hidden
-                  className={layoutPref === p ? "visible" : "invisible"}
-                />
-                布局：{LAYOUT_LABEL[p]}
-              </DropdownMenuItem>
-            ))}
-          />
-        )}
-
         {/* 纸面（位置与宽度恒定；保活期后卸载；不在未恢复的纸面上起笔）。
           收起用 **visibility + 高度塌缩**而非 display:none（复审⑤）：宽度
           保持满幅——引擎的 ResizeObserver 不触发 0 宽报告，重开不再全量
@@ -413,33 +377,51 @@ export function NoteLayer({
               : { height: 0, visibility: "hidden", overflow: "hidden" }
           }
         >
-          {paperReady ? (
-            editor.localLoaded &&
-            (!recovery || attemptMaterialsEditable(recovery)) ? (
-              <InkPad
-                engine="atrament"
-                showToolbar={false}
-                inputMode="session"
-                label={label}
-                engineRef={editor.engineRef}
-                background={doc?.background ?? "grid"}
-                paperHeight={editor.cssHeight}
-                initial={inkDocOf(doc ?? EMPTY_NOTE_DOC)}
-                onDocChange={editor.handleDocChange}
-                onEngineRebuild={editor.onEngineRebuild}
-                inputEnabled={open}
-              />
-            ) : (
-              <div
-                role="status"
-                className="flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
-              >
-                <LoaderCircle aria-hidden className="size-4 animate-spin" />
-                {recovery?.state === "failed"
-                  ? "草稿恢复失败，请在顶部重试"
-                  : "正在恢复草稿…"}
-              </div>
-            )
+          {editor.localLoaded &&
+          (!recovery || attemptMaterialsEditable(recovery)) ? (
+            <PaperEditor
+              mountPad={paperReady}
+              showToolbar={open}
+              compact={coordinator !== null}
+              moreTitle="更多（重做/颜色/粗细/清空/布局）"
+              clearLabel={
+                phase === "correction" ? "清空订正草稿" : "清空草稿纸"
+              }
+              onClearRequest={() => setClearOpen(true)}
+              menuExtras={(
+                Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]
+              ).map((p) => (
+                <DropdownMenuItem
+                  key={p}
+                  aria-checked={layoutPref === p}
+                  onSelect={() => setNoteLayoutPreference(p)}
+                >
+                  <Check
+                    aria-hidden
+                    className={layoutPref === p ? "visible" : "invisible"}
+                  />
+                  布局：{LAYOUT_LABEL[p]}
+                </DropdownMenuItem>
+              ))}
+              label={label}
+              engineRef={editor.engineRef}
+              background={doc?.background ?? "grid"}
+              paperHeight={editor.cssHeight}
+              initial={inkDocOf(doc ?? EMPTY_NOTE_DOC)}
+              onDocChange={editor.handleDocChange}
+              onEngineRebuild={editor.onEngineRebuild}
+              inputEnabled={open}
+            />
+          ) : paperReady ? (
+            <div
+              role="status"
+              className="flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
+            >
+              <LoaderCircle aria-hidden className="size-4 animate-spin" />
+              {recovery?.state === "failed"
+                ? "草稿恢复失败，请在顶部重试"
+                : "正在恢复草稿…"}
+            </div>
           ) : null}
         </div>
 

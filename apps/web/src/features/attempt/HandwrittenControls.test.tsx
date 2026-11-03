@@ -41,7 +41,8 @@ vi.mock("mathlive", () => {
 vi.mock("mathlive/fonts.css", () => ({}));
 
 // InkPad mock：触发笔迹变化的测试钩子（data-testid 区分引擎）
-vi.mock("@/features/ink/InkPad", () => ({
+vi.mock("@/features/ink/InkPad", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/ink/InkPad")>()),
   InkPad: (props: {
     engine?: string;
     initial?: InkDoc | undefined;
@@ -177,6 +178,10 @@ it("时钟领先的陈旧本机稿也须显式裁决，使用云端稿不会补�
   fetchInkMock.mockResolvedValue({ ...atramentDoc(2), serverRevision: 2 });
   renderControls();
   await screen.findByText(/云端笔迹已变化/);
+  fireEvent.click(screen.getByRole("button", { name: "展开手写区" }));
+  expect(
+    screen.getByRole("toolbar", { hidden: true }).closest("[inert]"),
+  ).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "使用云端稿" }));
   await waitFor(() => expect(screen.queryByText(/云端笔迹已变化/)).toBeNull());
   const record = await draftStore.loadDraft("att-1");

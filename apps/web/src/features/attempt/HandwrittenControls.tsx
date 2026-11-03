@@ -1,5 +1,8 @@
 import type { StudentAnswer } from "@tutor/contract";
-import { INK_MAX_DELETED_POINTS } from "@tutor/contract";
+import {
+  INK_MAX_DELETED_POINTS,
+  NOTE_PAPER_HEIGHT_DEFAULT,
+} from "@tutor/contract";
 import {
   ChevronDown,
   ChevronUp,
@@ -25,10 +28,13 @@ import {
   type InkEngine,
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
+import { PaperEditor } from "@/features/ink/PaperEditor";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { paperCssHeight } from "@/features/notes/paper-geometry";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
+import { useObservedCssWidth } from "@/lib/use-observed-css-width";
 // UA-03：最终答案输入接入 final 呈现（answering/views/final，FinalAnswerInput
 // 的唯一消费出口收归呈现层；控制器所有权不变——本组件仍管辖纸面引擎）
 import { FinalAnswerField } from "../answering/views/final";
@@ -158,6 +164,7 @@ export function HandwrittenControls({
   const baseRevision = useRef(0);
   /** 从 excalidraw 清空回页内手写的确认弹层 */
   const [confirmReset, setConfirmReset] = useState(false);
+  const [clearPaperOpen, setClearPaperOpen] = useState(false);
   /**
    * T7.7 手写辅助开关：关闭时隐藏「展开手写区/全屏作答」入口、不自动展开、
    * 已有笔迹只读查看（PNG）；最终答案输入始终保留（正式作答不受影响）。
@@ -167,6 +174,8 @@ export function HandwrittenControls({
 
   /** 页内引擎与全屏引擎的 ref（上传导 PNG 时取当前激活的那个） */
   const pageEngineRef = useRef<InkEngine | null>(null);
+  const paperWidthRef = useRef<HTMLDivElement>(null);
+  const paperWidth = useObservedCssWidth(paperWidthRef);
   /** 草稿同步联动（T2.9；题卡单测无 Provider 时为 null，各回调空值保护） */
   const draftSync = useDraftSyncActions();
   /** 联动对象存 ref：状态对象每次渲染都是新引用，挂载合并 effect 与
@@ -565,19 +574,25 @@ export function HandwrittenControls({
               </p>
             )}
             {masterDoc !== undefined && !masterIsExcalidraw && (
-              <InkPad
-                engine="atrament"
-                initial={masterDoc ?? undefined}
-                label="手写答题区"
-                maxDeletedPoints={INK_MAX_DELETED_POINTS}
-                onDocChange={handleDocChange}
-                engineRef={pageEngineRef}
-                inputEnabled={
-                  (expanded || fullscreen) && !restoreFailed && !conflict
-                }
-                compactToolbar
-                inputMode="session"
-              />
+              <div ref={paperWidthRef}>
+                <PaperEditor
+                  initial={masterDoc ?? undefined}
+                  label="手写答题区"
+                  maxDeletedPoints={INK_MAX_DELETED_POINTS}
+                  onDocChange={handleDocChange}
+                  engineRef={pageEngineRef}
+                  inputEnabled={
+                    (expanded || fullscreen) && !restoreFailed && !conflict
+                  }
+                  clearLabel="清空作答纸"
+                  onClearRequest={() => setClearPaperOpen(true)}
+                  initialHeight={
+                    paperWidth > 0
+                      ? paperCssHeight(NOTE_PAPER_HEIGHT_DEFAULT, paperWidth)
+                      : 320
+                  }
+                />
+              </div>
             )}{" "}
             {masterIsExcalidraw && (
               <>
@@ -640,6 +655,36 @@ export function HandwrittenControls({
           onAnswer={onAnswer}
         />
       )}
+
+      <Dialog open={clearPaperOpen} onOpenChange={setClearPaperOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>清空作答纸？</DialogTitle>
+            <DialogDescription>
+              将清除本题手写笔迹，清空后可用「撤销」恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setClearPaperOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                pageEngineRef.current?.clear();
+                setClearPaperOpen(false);
+              }}
+            >
+              清空
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 引擎切换确认：全屏 → 清空回页内 */}
       <Dialog open={confirmReset} onOpenChange={setConfirmReset}>
