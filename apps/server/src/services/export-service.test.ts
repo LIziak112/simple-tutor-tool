@@ -2479,7 +2479,7 @@ describe("ink 路径目录边界（T6R.14：同前缀相邻目录/向上逃逸/�
         world.dataDir,
         TEST_TEACHER_ID,
         learningPackExportRequestSchema.parse({
-          scope: { studentIds: [world.studentId] },
+          scope: { studentIds: [world.studentId], days: "all" },
           // ink 是附件开关，须伴一个内容模块（summaries 最轻）才过契约
           modules: { ink: true, summaries: true },
           goal: "diagnose-weakness",

@@ -198,7 +198,7 @@ describe("review-pack 的 annotation 成对附件", () => {
           TEST_TEACHER_ID,
           learningPackExportRequestSchema.parse({
             packVersion: 2,
-            scope: { studentIds: [studentId] },
+            scope: { studentIds: [studentId], days: "all" },
             modules: { responses: true, evidence: true },
             goal: "diagnose-weakness",
           }),
@@ -365,7 +365,7 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
   ) {
     return learningPackExportRequestSchema.parse({
       packVersion: 2,
-      scope: { studentIds: [studentId] },
+      scope: { studentIds: [studentId], days: "all" },
       modules: { responses: true, evidence: true },
       goal: "diagnose-weakness",
       ...overrides,
