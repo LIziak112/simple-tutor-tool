@@ -50,7 +50,8 @@ vi.mock("mathlive", () => {
 });
 vi.mock("mathlive/fonts.css", () => ({}));
 
-vi.mock("@/features/ink/InkPad", () => ({
+vi.mock("@/features/ink/InkPad", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/ink/InkPad")>()),
   InkPad: () => <div data-slot="ink-pad" data-engine="atrament" />,
 }));
 

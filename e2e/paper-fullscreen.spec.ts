@@ -113,6 +113,8 @@ test(
         .click();
       const canvas = card.locator('[data-slot="ink-pad-canvas"] canvas');
       await expect(canvas).toBeVisible();
+      await expect(canvas).toHaveCSS("background-image", /gradient/);
+      await expect(card.locator('[data-slot="paper-editor"]')).toHaveCount(1);
       const identity = await canvas.elementHandle();
       const openFullscreen = async () => {
         await card

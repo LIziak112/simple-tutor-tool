@@ -55,7 +55,8 @@ import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
  */
 
 // InkPad mock：暴露触发 onDocChange 的按钮 + 填充可 exportPng 的引擎 stub
-vi.mock("@/features/ink/InkPad", () => ({
+vi.mock("@/features/ink/InkPad", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/ink/InkPad")>()),
   InkPad: (props: {
     engine?: string;
     onDocChange?: ((doc: InkDoc) => void) | undefined;
@@ -63,6 +64,9 @@ vi.mock("@/features/ink/InkPad", () => ({
   }) => {
     if (props.engineRef && props.engineRef.current === null) {
       props.engineRef.current = {
+        setTool: () => undefined,
+        canUndo: () => false,
+        canRedo: () => false,
         getData: () => {
           throw new Error("测试未使用");
         },

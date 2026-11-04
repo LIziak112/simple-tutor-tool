@@ -270,7 +270,7 @@ describe("NoteLayer：收起/展开形态", () => {
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     expect(onOpenChange).toHaveBeenCalledWith(true);
     // Harness 已回写 open → 工具条出现
-    expect(screen.getByRole("toolbar")).toBeInTheDocument();
+    expect(await screen.findByRole("toolbar")).toBeInTheDocument();
     for (const name of ["笔", "橡皮", "撤销", "手指书写", "更多"]) {
       expect(
         screen.getByRole("button", { name: new RegExp(name) }),
@@ -309,6 +309,7 @@ describe("NoteLayer：收起/展开形态", () => {
     try {
       renderLayer({ initialOpen: true });
       const first = await waitForEngine();
+      fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
       emitStroke(first, [
         [10, 10],
         [40, 40],
@@ -324,6 +325,7 @@ describe("NoteLayer：收起/展开形态", () => {
       // （复审①⑥——新引擎 initial 可能陈旧，幂等重载保证引擎=store）
       fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
       const second = await waitForEngine(2);
+      expect(mockSetTool).toHaveBeenLastCalledWith({ type: "eraser" });
       const initial = (second.opts as { initial?: InkDoc<"atrament"> }).initial;
       expect(initial?.data.strokes.length).toBe(1);
       expect(second.load).toHaveBeenCalledTimes(1);

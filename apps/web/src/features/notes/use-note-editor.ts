@@ -1,4 +1,3 @@
-import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
 /**
  * 草稿编辑器的引擎接线核心（T6R.15 单3 从 NoteLayer 抽出，「抽共享而非
  * 复制」）：InkPad 会话 + note-store 写入 + 纸面几何（逻辑高持久化、CSS 高
@@ -27,8 +26,6 @@ import type {
   InkChangeReason,
   InkDoc,
   InkEngine,
-  InkPenColor,
-  InkPenSize,
 } from "@/features/ink/engine/index.ts";
 import { docOf } from "@/features/notes/note-fixtures";
 import {
@@ -87,14 +84,6 @@ export interface NoteEditorHandle {
   onEngineRebuild: () => void;
   /** InkPad onDocChange 接线（写入 store + 触底加高） */
   handleDocChange: (inkDoc: InkDoc, reason: InkChangeReason) => void;
-  canUndo: boolean;
-  canRedo: boolean;
-  tool: "pen" | "eraser";
-  setTool: (tool: "pen" | "eraser") => void;
-  penColor: InkPenColor;
-  setPenColor: (color: InkPenColor) => void;
-  penSize: InkPenSize;
-  setPenSize: (size: InkPenSize) => void;
 }
 
 export function useNoteEditor({
@@ -104,11 +93,6 @@ export function useNoteEditor({
   phase,
   active,
 }: UseNoteEditorOptions): NoteEditorHandle {
-  const profile = useInkProfileSelection();
-  useEffect(() => {
-    setPenColor(profile.config.color);
-    setPenSize(profile.config.size);
-  }, [profile.config]);
   const view = useNoteRecord(attemptId, questionId, phase);
 
   // ---- 本地载入（刷新/重进的恢复路径；区分「尚未加载」与「无记录」） ----
@@ -156,12 +140,6 @@ export function useNoteEditor({
   const lastWriteVersionRef = useRef<number | null>(null);
   /** 触底包围盒底（逻辑，含半线宽；复审⑥：每笔增量，载入/挂载重算） */
   const bottomLogicalRef = useRef<number | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
-  const [penColor, setPenColor] = useState<InkPenColor>("black");
-  const [penSize, setPenSize] = useState<InkPenSize>("medium");
-
   // 本地写入 + 逻辑口径自动加高（注记②定案；load 不写回——reason 过滤）
   const scopeRef = useRef<NoteScope>({ attemptId, questionId, phase });
   scopeRef.current = { attemptId, questionId, phase };
@@ -210,8 +188,6 @@ export function useNoteEditor({
         paperHeightLogical: logical,
         background,
       });
-      setCanUndo(engineRef.current?.canUndo() ?? false);
-      setCanRedo(engineRef.current?.canRedo() ?? false);
     },
     [session],
   );
@@ -236,27 +212,13 @@ export function useNoteEditor({
       engine.load(inkDocOf(target));
       lastWriteVersionRef.current = version;
       bottomLogicalRef.current = strokesBottomLogical(target.ink.strokes);
-      setCanUndo(engine.canUndo());
-      setCanRedo(engine.canRedo());
       return;
     }
     if (version === lastWriteVersionRef.current) return; // 最新变化是我们自己的写
     engine.load(inkDocOf(target));
     lastWriteVersionRef.current = version;
     bottomLogicalRef.current = strokesBottomLogical(target.ink.strokes);
-    setCanUndo(engine.canUndo());
-    setCanRedo(engine.canRedo());
   }, [active, view, session, engineTick]);
-
-  // 工具下发（挂载与切换时；InkPad 挂载后父 effect 晚于子 effect——引擎已就绪）
-  // biome-ignore lint/correctness/useExhaustiveDependencies(active): active 变化=纸面隐藏/显示切换，需重发当前工具
-  useEffect(() => {
-    engineRef.current?.setTool(
-      tool === "pen"
-        ? { type: "pen", color: penColor, size: penSize }
-        : { type: "eraser" },
-    );
-  }, [tool, penColor, penSize, active]);
 
   const onEngineRebuild = useCallback(() => {
     setEngineTick((t) => t + 1);
@@ -270,13 +232,5 @@ export function useNoteEditor({
     engineRef,
     onEngineRebuild,
     handleDocChange,
-    canUndo,
-    canRedo,
-    tool,
-    setTool,
-    penColor,
-    setPenColor,
-    penSize,
-    setPenSize,
   };
 }
