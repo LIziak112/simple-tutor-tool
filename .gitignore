@@ -15,6 +15,9 @@ deploy/
 *.local
 .zcode/tmp/
 
+# 本机开发工具、第三方下载及调试日志（入口见 docs/iPad真机调试.md）
+/.tools/
+
 # 本机调试采集工件（含学生专属链接令牌，不入库）
 .claude/phase3-capture/
 
