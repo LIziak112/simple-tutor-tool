@@ -1349,6 +1349,32 @@ export function settleAnnotationPersistence(): Promise<void> {
   return Promise.all(tails).then(() => undefined);
 }
 
+/** 更新末轮排干已加载标画；传会话时核验同步，省略时只保证各账号本机落盘。 */
+export async function assertLoadedAnnotationsForPwaUpdate(
+  session?: AnnotationSessionRef,
+): Promise<void> {
+  const prefix = session ? sessionPrefix(session) : null;
+  const generation = backendGeneration;
+  for (;;) {
+    const pending = [...queues].filter(
+      ([key]) => !prefix || key.startsWith(prefix),
+    );
+    if (pending.length === 0) break;
+    await Promise.all(pending.map(([, queue]) => queue.tail));
+    if (generation !== backendGeneration)
+      throw new Error("标画存储会话已变化，请重新更新");
+  }
+  for (const [key, record] of records) {
+    if (prefix && !key.startsWith(prefix)) continue;
+    if (record.local !== "saved")
+      throw new Error(record.localError ?? "标画本机保存未完成，请重试更新");
+    if (session && (record.conflict || record.denied || record.retained))
+      throw new Error("仍有标画同步冲突、权限问题或保留本机稿，请先处理后更新");
+    if (session && record.pending)
+      throw new Error("仍有标画未同步，请返回对应练习完成保存后更新");
+  }
+}
+
 /** 单题打开与收笔只等待本题；交卷仍使用整卷等待入口。 */
 export async function settleAnnotationRecordPersistence(
   session: AnnotationSessionRef,

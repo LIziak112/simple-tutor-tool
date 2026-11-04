@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
+import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import { StableQuestionPixelGridContext } from "@/features/attempt/QuestionSurfaceFrame";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
@@ -43,6 +44,7 @@ import {
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { withTimeout } from "@/features/notes/rasterize-utils";
 import { measureStage } from "@/lib/performance-stages";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import {
   AnnotationContinuation,
   annotationContinuationBaseSource,
@@ -251,6 +253,25 @@ export const QuestionAnnotationOverlay = forwardRef<
         phase,
       });
   }, [session, attemptId, question.id, phase]);
+  usePwaUpdateGuard(
+    async () => {
+      if (loading || (recovery && recovery.state !== "ready"))
+        throw new Error("标画恢复尚未完成，请先处理后更新");
+      await prepareAnnotationForPwaUpdate(
+        session,
+        { attemptId, questionId: question.id, phase },
+        finish,
+      );
+    },
+    JSON.stringify([
+      session?.origin,
+      session?.studentId,
+      attemptId,
+      question.id,
+      phase,
+      "annotation",
+    ]),
+  );
 
   const finish = useCallback(async () => {
     surface.current?.finish();

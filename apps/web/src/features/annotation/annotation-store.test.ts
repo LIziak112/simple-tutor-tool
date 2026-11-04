@@ -18,6 +18,7 @@ import {
   applyAnnotationView,
   applyBaseDisabled,
   applyBasePreview,
+  assertLoadedAnnotationsForPwaUpdate,
   clearAnnotationRetained,
   deriveAnnotationServerState,
   getAnnotationRecord,
@@ -50,6 +51,18 @@ const SCOPE = {
   questionId: "q-0001",
   phase: "scratch" as const,
 };
+
+it("更新末轮复核保留本机的标画，不能因为没有待传任务而直接放行", async () => {
+  resetAnnotationStoreForTest();
+  installAnnotationBackend(memoryAnnotationBackend());
+  writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(10, 10)]));
+  await settleAnnotationPersistence();
+  await applyAnnotationConflict(SESSION, SCOPE, "layout", null, "布局不同");
+  await resolveAnnotationConflictKeepLocal(SESSION, SCOPE);
+  await expect(assertLoadedAnnotationsForPwaUpdate(SESSION)).rejects.toThrow(
+    "保留本机",
+  );
+});
 
 it("交卷扫描保留仅在内存的待传标画，严格读失败不能误报无附件", async () => {
   const storage = memoryAnnotationBackend();

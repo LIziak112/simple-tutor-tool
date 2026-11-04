@@ -11,6 +11,7 @@ import {
   CoordinatedAnnotationProvider,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
+import { preparePwaUpdate } from "@/lib/pwa-update-safety";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
@@ -225,6 +226,76 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
   beforeEach(() => {
     installDraftBackend(memoryBackend());
     drawFrameMock.mockClear();
+  });
+
+  it("更新前收下最后一笔真实采样并等材料稿落盘，即使输入层漏收pointerup", async () => {
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>更新前材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    await waitInkReady(overlayRootOf(container));
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    fireEvent.pointerDown(layer, {
+      pointerId: 1,
+      button: 0,
+      pointerType: "pen",
+      clientX: 50,
+      clientY: 50,
+      pressure: 0.5,
+    });
+    fireEvent.pointerMove(layer, {
+      pointerId: 1,
+      pointerType: "pen",
+      clientX: 80,
+      clientY: 60,
+      pressure: 0.5,
+    });
+    fireEvent.pointerUp(document, { pointerId: 1, pointerType: "pen" });
+    expect(draftStore.getMaterialInk("att-1", "mat-1")).toBeNull();
+    await act(async () => {
+      const prepared = await preparePwaUpdate();
+      prepared.assertReady();
+      prepared.release();
+    });
+    const stored = draftStore.getMaterialInk("att-1", "mat-1");
+    if (stored?.engine !== "atrament")
+      throw new Error("更新前必须保留材料最后一笔");
+    expect(stored.data.strokes).toHaveLength(1);
+    expect(stored.data.strokes[0]?.points).toHaveLength(2);
+  });
+
+  it("材料本机落盘失败时拒绝更新并保留已有笔迹", async () => {
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>故障材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    await waitInkReady(overlayRootOf(container));
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    installDraftBackend({
+      ...memoryBackend(),
+      set: async () => {
+        throw new Error("材料无法写入");
+      },
+    });
+    await drawStroke(layer, 50);
+    await expect(preparePwaUpdate()).rejects.toThrow("本机");
+    expect(draftStore.getMaterialInk("att-1", "mat-1")).not.toBeNull();
   });
 
   it("非标注态时输入层不拦截指针（pointer-events: none），内容可读", () => {

@@ -30,8 +30,14 @@ import {
   type AtramentReplayCanvas,
   createAtramentReplayCanvas,
 } from "@/features/ink/replay/draw.ts";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useAttemptEditor } from "./AttemptEditorContext";
-import { draftStore, type MaterialInkBaseMeta } from "./draft-store";
+import {
+  draftStore,
+  getDraftSessionEpoch,
+  type MaterialInkBaseMeta,
+} from "./draft-store";
+import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 
 /** 首笔前材料就绪等待上限（同题面 STEP_TIMEOUT_MS 口径） */
 const MATERIAL_READY_TIMEOUT_MS = 15_000;
@@ -583,6 +589,14 @@ export function MaterialAnnotationOverlay({
     setStrokesBoth(next);
     saveToDraftStore(next);
   }, [releaseCapture, saveToDraftStore, setStrokesBoth]);
+
+  usePwaUpdateGuard(
+    () =>
+      prepareDraftForPwaUpdate(attemptId, async () => {
+        finishInteraction();
+      }),
+    `${getDraftSessionEpoch()}:${attemptId}:material:${storeKey}`,
+  );
 
   const applyDecisions = useCallback(
     (

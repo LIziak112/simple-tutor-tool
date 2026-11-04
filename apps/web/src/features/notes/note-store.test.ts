@@ -12,6 +12,7 @@ import {
   applyUploadConflict,
   applyUploadDenied,
   applyUploadReceipt,
+  assertLoadedNotesForPwaUpdate,
   clearCorrectionRecord,
   clearNoteDeniedAccess,
   deriveNoteStatusOverview,
@@ -59,6 +60,66 @@ import {
  */
 
 const RECEIPT_1 = receiptOf(1);
+
+it("更新末轮复核订正与已卸载草稿，待传或落盘失败不得放行，旧账号不阻塞当前账号", async () => {
+  resetNoteStoreForTest();
+  const backend = memoryNoteBackend();
+  const getAll = vi.fn(backend.getAll);
+  installNoteBackend({ ...backend, getAll });
+  const correction = { ...SCOPE, phase: "correction" as const };
+  writeNoteDoc(SESSION_A, correction, DOC_A);
+  await expect(assertLoadedNotesForPwaUpdate(SESSION_A)).rejects.toThrow(
+    "同步",
+  );
+  await expect(
+    assertLoadedNotesForPwaUpdate(SESSION_B),
+  ).resolves.toBeUndefined();
+  const pending = (await getNoteRecord(SESSION_A, correction))?.pending;
+  if (!pending) throw new Error("应有待传订正稿");
+  await applyUploadReceipt(
+    SESSION_A,
+    correction,
+    pending.mutationId,
+    RECEIPT_1,
+  );
+  await expect(
+    assertLoadedNotesForPwaUpdate(SESSION_A),
+  ).resolves.toBeUndefined();
+  expect(getAll).not.toHaveBeenCalled();
+});
+
+it("更新末轮等待期间新增的另一题落盘队列也必须完成", async () => {
+  resetNoteStoreForTest();
+  const backend = memoryNoteBackend();
+  const releases: Array<() => void> = [];
+  installNoteBackend({
+    ...backend,
+    set: async (key, value) => {
+      await new Promise<void>((resolve) => releases.push(resolve));
+      await backend.set(key, value);
+    },
+  });
+  writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+  let completed = false;
+  const preparing = assertLoadedNotesForPwaUpdate(SESSION_A).then(
+    () => {
+      completed = true;
+      return null;
+    },
+    (error: unknown) => {
+      completed = true;
+      return error;
+    },
+  );
+  writeNoteDoc(SESSION_A, { ...SCOPE, questionId: "later-question" }, DOC_B);
+  expect(releases).toHaveLength(2);
+  releases[0]?.();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(completed).toBe(false);
+  releases[1]?.();
+  expect(await preparing).toBeInstanceOf(Error);
+});
 
 it("读取另一设备的新草稿不能推进本机待传稿基线，必须等待裁决", async () => {
   resetNoteStoreForTest();

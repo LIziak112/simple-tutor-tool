@@ -1275,6 +1275,32 @@ export function settleNotePersistence(): Promise<void> {
   return Promise.all(tails).then(() => undefined);
 }
 
+/** 更新末轮排干已加载稿；传会话时核验该账号同步，省略时只保证各账号本机落盘。 */
+export async function assertLoadedNotesForPwaUpdate(
+  session?: NoteSessionRef,
+): Promise<void> {
+  const prefix = session ? sessionPrefix(session) : null;
+  const generation = backendGeneration;
+  for (;;) {
+    const pending = [...queues].filter(
+      ([key]) => !prefix || key.startsWith(prefix),
+    );
+    if (pending.length === 0) break;
+    await Promise.all(pending.map(([, queue]) => queue.tail));
+    if (generation !== backendGeneration)
+      throw new Error("草稿存储会话已变化，请重新更新");
+  }
+  for (const [key, record] of records) {
+    if (prefix && !key.startsWith(prefix)) continue;
+    if (record.local !== "saved")
+      throw new Error(record.localError ?? "草稿本机保存未完成，请重试更新");
+    if (session && (record.conflict || record.denied))
+      throw new Error("仍有草稿同步冲突或权限问题，请先处理后更新");
+    if (session && record.pending)
+      throw new Error("仍有草稿未同步，请返回对应练习完成保存后更新");
+  }
+}
+
 /** 只重写原记录，保留草稿版本与同步标识。 */
 export async function retryNotePersistence(
   session: NoteSessionRef,

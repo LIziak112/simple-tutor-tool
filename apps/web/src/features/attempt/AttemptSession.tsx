@@ -45,7 +45,10 @@ import {
   recoverAttemptMaterials,
   useAttemptMaterialRecovery,
 } from "@/features/attempt/attempt-material-recovery";
-import { draftStore } from "@/features/attempt/draft-store";
+import {
+  draftStore,
+  getDraftSessionEpoch,
+} from "@/features/attempt/draft-store";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
@@ -73,6 +76,7 @@ import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { sealAttemptAnnotationsApi, setStudentFlagApi } from "@/lib/api";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import {
@@ -121,6 +125,7 @@ import {
   firstUnsubmittedQuestionId,
   practiceProtocolOfDraft,
 } from "./practice-protocol";
+import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
 import { QuestionNavigator } from "./QuestionNavigator";
@@ -329,6 +334,25 @@ function AnswerView({
   );
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
+  usePwaUpdateGuard(
+    () =>
+      prepareDraftForPwaUpdate(
+        attemptId,
+        async () => {
+          if (
+            answers === null ||
+            draftSync.recoveryError ||
+            materialRecovery.state !== "ready"
+          )
+            throw new Error("作答与材料恢复尚未完成，请先处理后更新");
+          if (draftSync.status.state === "denied")
+            throw new Error("作答保存权限已变化，请先处理后更新");
+          await flushAnswers();
+        },
+        true,
+      ),
+    `${getDraftSessionEpoch()}:attempt:${attemptId}`,
+  );
   // QM-08：冻结上下文（材料/组快照）——共享材料渲染数据源；错误非阻断（题面
   // 不依赖本载荷），就地提示 + 重试
   const contextQuery = useAttemptContext(attemptId);

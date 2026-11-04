@@ -107,9 +107,13 @@ function excalidrawAssets(): Plugin {
 function pwa() {
   return VitePWA({
     injectRegister: false,
-    registerType: "autoUpdate",
+    registerType: "prompt",
     manifest: { ...pwaManifest },
     workbox: {
+      // 必须经页面保稿和唯一窗口核验，不能安装完成后自动替换正在作答的版本。
+      skipWaiting: false,
+      clientsClaim: false,
+      importScripts: ["pwa-update-worker.js"],
       globPatterns: ["**/*.{js,css,html,svg,png,webmanifest,woff2}"],
       globIgnores: ["**/excalidraw-assets/**"],
       navigateFallback: "index.html",
