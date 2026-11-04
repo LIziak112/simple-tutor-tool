@@ -123,18 +123,15 @@ test(
       ),
     ).toBeLessThanOrEqual(generatedBeforeOpen + 1);
     await page.setViewportSize({ width: 1300, height: 1000 });
-    await expect(
-      first.locator('[data-slot="question-surface"]'),
-    ).toHaveAttribute("inert", "");
+    const frozen = first.getByRole("img", { name: "第 1 题冻结原稿" });
+    await expect(frozen).toBeVisible();
+    await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
+      0,
+    );
     await expect(
       first.locator('[data-slot="annotation-workspace"]'),
     ).toHaveCount(0);
-    await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
-      1,
-    );
-    const after = await first
-      .locator('[data-slot="question-surface"]')
-      .boundingBox();
+    const after = await frozen.boundingBox();
     const afterScroll = await page.evaluate(() => window.scrollY);
     expect(after?.width).toBeCloseTo(before?.width ?? 0, 0);
     expect(after?.height).toBeCloseTo(before?.height ?? 0, 0);
@@ -166,13 +163,17 @@ test(
     await page.screenshot({ path: testInfo.outputPath("inline-drawing.png") });
     await page.getByRole("button", { name: "作答", exact: true }).click();
     await expect(
-      first.locator('[data-slot="question-surface"]'),
-    ).not.toHaveAttribute("inert", "");
+      first.locator(
+        '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
+      ),
+    ).toHaveCount(1);
+    await expect(canvas).toBeHidden();
+    await expect(first.getByRole("radio")).toHaveCount(2);
     await first.getByText("错", { exact: true }).click();
     await expect(
       first.getByRole("radio", { name: "错", exact: true }),
     ).toBeChecked();
-    await expect(canvas).toBeVisible();
+    await expect(canvas).toBeHidden();
     await first.getByRole("button", { name: "第 1 题更多" }).click();
     await page.getByRole("menuitem", { name: "导出本题" }).click();
     const preview = page.getByRole("img", { name: "本题导出预览" });
@@ -302,9 +303,10 @@ test(
     await expect(page.getByRole("toolbar", { name: /标画工具栏/ })).toHaveCount(
       0,
     );
-    await expect(
-      first.locator('[data-slot="question-surface"]'),
-    ).not.toHaveAttribute("inert", "");
+    await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
+      0,
+    );
+    await expect(frozen).toBeVisible();
     // 新浏览器没有本机底图：仅靠云端恢复就必须自动原位显示。
     const otherDevice = await browser.newContext({
       baseURL: new URL(page.url()).origin,
@@ -387,9 +389,9 @@ test(
     await expect(page.locator('canvas[data-input-enabled="true"]')).toHaveCount(
       1,
     );
-    await expect(
-      first.locator('[data-slot="question-surface"]'),
-    ).not.toHaveAttribute("inert", "");
+    await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
+      0,
+    );
     await page.setViewportSize({ width: 320, height: 800 });
     await expect(
       page.getByRole("toolbar", { name: "第 2 题标画工具栏" }),
@@ -405,15 +407,24 @@ test(
     await expect(page.getByRole("toolbar", { name: /标画工具栏/ })).toHaveCount(
       0,
     );
+    await second.getByRole("button", { name: "进入作答" }).click();
+    await expect(
+      second.locator(
+        '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
+      ),
+    ).toHaveCount(1);
+    await second
+      .getByRole("radio", { name: "选项 B" })
+      .locator("xpath=ancestor::label[1]")
+      .click();
+    await expect(second.getByRole("radio", { name: "选项 B" })).toBeChecked();
     await page.setViewportSize({ width: 320, height: 800 });
     await expect(first.getByRole("button", { name: "查看原标画" })).toHaveCount(
       0,
     );
     await expect(first.getByRole("img", { name: /原标画底图/ })).toHaveCount(0);
     await expect(canvas).toBeVisible();
-    const scaled = await first
-      .locator('[data-slot="question-surface"]')
-      .boundingBox();
+    const scaled = await frozen.boundingBox();
     const scaledCanvas = await canvas.boundingBox();
     expect(scaled).not.toBeNull();
     expect(scaledCanvas).not.toBeNull();
@@ -431,11 +442,7 @@ test(
     ).toBeLessThan(0.01);
     await first.getByRole("button", { name: "放大题面" }).click();
     await expect
-      .poll(
-        async () =>
-          (await first.locator('[data-slot="question-surface"]').boundingBox())
-            ?.width,
-      )
+      .poll(async () => (await frozen.boundingBox())?.width)
       .toBeCloseTo(before?.width ?? 0, 0);
     expect(
       await first
@@ -446,11 +453,6 @@ test(
     await expect
       .poll(async () => (await canvas.boundingBox())?.width)
       .toBeCloseTo(scaledCanvas?.width ?? 0, 0);
-    await second
-      .getByRole("radio", { name: "选项 B" })
-      .locator("xpath=ancestor::label[1]")
-      .click();
-    await expect(second.getByRole("radio", { name: "选项 B" })).toBeChecked();
     await page.screenshot({
       path: testInfo.outputPath("inline-layout-fallback.png"),
     });

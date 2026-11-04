@@ -740,6 +740,9 @@ describe("CorrectionWorkspace：保存订正（一层检查点）", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
     fireEvent.click(screen.getByRole("button", { name: "确认保存" }));
     await screen.findByText(/暂未一并定格/);
+    expect(
+      document.querySelector('[data-slot="annotated-question"]'),
+    ).toHaveAttribute("data-annotation-readonly", "false");
     annotationSealMock.mockResolvedValue(1);
     fireEvent.click(screen.getByRole("button", { name: "重试圈画封存" }));
     await vi.waitFor(() => {

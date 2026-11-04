@@ -11,6 +11,7 @@ import {
   type AnnotationScope,
   type AnnotationSessionRef,
   applyAnnotationView,
+  canRebuildUnboundAnnotationBase,
   getAnnotationRecord,
   retryAnnotationPersistence,
   settleAnnotationRecordPersistence,
@@ -86,15 +87,26 @@ export async function prepareQuestionAnnotationBase(
   guard();
   cancelOtherQuestionBasePrewarm(session, scope);
   if (scope.questionId !== question.id) throw new Error("标画题目标识不匹配");
-  const cached = await getAnnotationRecord(session, scope);
+  const cached = await getAnnotationRecord(session, scope, {
+    strictRead: true,
+  });
   guard();
-  if (cached?.localBase != null) {
+  if (cached?.sealedAt != null) return { kind: "sealed" };
+  const rebuildEmptyBase =
+    cached?.localBase != null &&
+    cached.localBase.layout.questionRevisionId !==
+      question.questionRevisionId &&
+    canRebuildUnboundAnnotationBase(cached);
+  if (cached?.localBase != null && !rebuildEmptyBase) {
     await settleAnnotationRecordPersistence(session, scope);
     guard();
     await retryAnnotationPersistence(session, scope);
     guard();
-    const saved = await getAnnotationRecord(session, scope);
+    const saved = await getAnnotationRecord(session, scope, {
+      strictRead: true,
+    });
     guard();
+    if (saved?.sealedAt != null) return { kind: "sealed" };
     if (saved?.local !== "saved" || !saved.localBase)
       throw new Error(saved?.localError ?? "本机底图未保存，请重试");
     return { kind: "surface", localBase: saved.localBase };
@@ -110,6 +122,7 @@ export async function prepareQuestionAnnotationBase(
       : takePrewarmedQuestionBase(session, scope, question, surface);
   let remoteDoc = cached?.pending?.doc ?? null;
   let base = cached?.base ?? null;
+  let receivedView = false;
   try {
     const view = await measureStage("annotation:base-state", () =>
       withTimeout(
@@ -118,6 +131,7 @@ export async function prepareQuestionAnnotationBase(
         "底图状态加载超时，改为本机保存",
       ),
     );
+    receivedView = true;
     guard();
     if (view.annotation?.sealedAt != null) return { kind: "sealed" };
     if ((view.resetVersion ?? 0) > (cached?.resetVersion ?? 0))
@@ -128,6 +142,7 @@ export async function prepareQuestionAnnotationBase(
     remoteDoc ??= view.doc;
   } catch (error) {
     guard();
+    if (receivedView) throw error;
     if (
       error instanceof ApiError &&
       (error.status < 500 || error.code === "EXPORT_ASSEMBLY_BROKEN")
@@ -203,7 +218,7 @@ export async function prepareQuestionAnnotationBase(
     );
   }
   guard();
-  const saved = await getAnnotationRecord(session, scope);
+  const saved = await getAnnotationRecord(session, scope, { strictRead: true });
   guard();
   if (!saved?.localBase || saved.local !== "saved")
     throw new Error("本机底图未保存，请重试");

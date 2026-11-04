@@ -431,6 +431,9 @@ function CorrectionWorkspaceInner({
                   question={inlineQuestion}
                   label={ariaPrefix}
                   phase="correction"
+                  annotationReadOnly={
+                    sealing || annotationRecord?.sealedAt != null
+                  }
                 >
                   <QuestionSurface question={inlineQuestion} readOnly />
                 </QuestionAnnotationOverlay>

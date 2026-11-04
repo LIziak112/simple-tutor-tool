@@ -1767,6 +1767,8 @@ export function putAnnotationDocApi(
     form.append(F.resetVersion, String(meta.resetVersion));
   form.append(F.baseRevision, String(meta.baseRevision));
   form.append(F.mutationId, meta.mutationId);
+  if (meta.protocolVersion !== undefined)
+    form.append(F.protocolVersion, String(meta.protocolVersion));
   if (meta.phase !== undefined) form.append(F.phase, meta.phase);
   return callApi(() =>
     fetch(

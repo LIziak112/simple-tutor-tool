@@ -52,6 +52,7 @@ import {
   parseAnnotationKey,
   peekAnnotationRecord,
   resolveAnnotationConflictKeepLocal,
+  retainAnnotationForProtocolUpgrade,
   settleAnnotationPersistence,
   setUploading,
   subscribeAnnotationStore,
@@ -192,6 +193,7 @@ type PutVerdict =
       reason: string;
     }
   | { kind: "denied"; deniedKind: "access" | "content"; reason: string }
+  | { kind: "upgrade" }
   /** 本地视图已过期（ALREADY_READY/STALE，审查修复 11）：重取视图对齐后重传 */
   | { kind: "refetch-view"; reason: string }
   | { kind: "retry" };
@@ -202,6 +204,8 @@ function classifyPutError(err: unknown): PutVerdict {
   }
   if (!(err instanceof ApiError)) return { kind: "retry" };
   const { status, code, message } = err;
+  if (status === 403 && code === "ANNOTATION_PROTOCOL_UPGRADE_REQUIRED")
+    return { kind: "upgrade" };
   if (status === 409 && code === "ANNOTATION_REVISION_CONFLICT") {
     const parsed = annotationConflictSummarySchema.safeParse({
       current: err.extra?._current ?? null,
@@ -414,6 +418,10 @@ async function runUpload(
         {
           baseRevision,
           mutationId,
+          ...((record.localBase?.layout.renderVersion ??
+            record.base?.layout?.renderVersion) === 3
+            ? { protocolVersion: 3 as const }
+            : {}),
           ...(record.resetVersion ? { resetVersion: record.resetVersion } : {}),
           ...(scope.phase !== "scratch" ? { phase: scope.phase } : {}),
         },
@@ -440,6 +448,10 @@ async function runUpload(
           verdict.deniedKind,
           verdict.reason,
         );
+        return;
+      }
+      if (verdict.kind === "upgrade") {
+        await retainAnnotationForProtocolUpgrade(session, scope);
         return;
       }
       // 本地视图过期自愈（审查修复 11）：重取视图对齐 baseRevision/底图引用

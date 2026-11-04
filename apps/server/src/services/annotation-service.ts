@@ -24,6 +24,7 @@ import {
   ANNOTATION_BASE_WIDTH_PX,
   ANNOTATION_BODY_DECOMPRESSED_MAX_BYTES,
   ANNOTATION_BODY_GZIP_MAX_BYTES,
+  ANNOTATION_FROZEN_RENDER_VERSION,
   ANNOTATION_SURFACE_RENDER_VERSION,
   annotationBaseImageUrl,
   annotationBasePreviewDataSchema,
@@ -668,7 +669,8 @@ export function registerBaseImage(
     base.questionRevisionId !== row.id ||
     base.snapshotHash !== currentHash ||
     (base.baseRenderVersion !== ANNOTATION_BASE_RENDER_VERSION &&
-      base.baseRenderVersion !== ANNOTATION_SURFACE_RENDER_VERSION)
+      base.baseRenderVersion !== ANNOTATION_SURFACE_RENDER_VERSION &&
+      base.baseRenderVersion !== ANNOTATION_FROZEN_RENDER_VERSION)
   ) {
     throw new HttpError(
       409,
@@ -936,6 +938,16 @@ export function putAnnotationDoc(
       409,
       "ANNOTATION_BASE_NOT_READY",
       "没有可靠的底图不能落墨（底图未生成或未就绪），请先生成并保存底图",
+    );
+  }
+  if (
+    base.baseRenderVersion === ANNOTATION_FROZEN_RENDER_VERSION &&
+    meta.protocolVersion !== ANNOTATION_FROZEN_RENDER_VERSION
+  ) {
+    throw new HttpError(
+      403,
+      "ANNOTATION_PROTOCOL_UPGRADE_REQUIRED",
+      "此圈画原稿需要新版客户端，请刷新后重试",
     );
   }
   if (

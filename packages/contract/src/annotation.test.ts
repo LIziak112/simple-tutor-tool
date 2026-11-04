@@ -522,6 +522,7 @@ describe("错误码与 multipart 字段名单一来源", () => {
       baseRevision: "baseRevision",
       mutationId: "mutationId",
       phase: "phase",
+      protocolVersion: "protocolVersion",
     });
     expect(ANNOTATION_BASE_IMAGE_FORM_FIELDS).toEqual({
       resetVersion: "resetVersion",
