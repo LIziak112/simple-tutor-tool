@@ -2,6 +2,10 @@ import type { AttemptQuestionPublic, StudentAnswer } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
 import { renderQuestionBaseImage } from "@/features/annotation/question-base-image";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import FrozenMaterialExperiment from "./test-support/FrozenMaterialExperiment";
+import FrozenSurfaceExperiment, {
+  prototypeMatchingQuestion,
+} from "./test-support/FrozenSurfaceExperiment";
 
 const common = {
   id: "geometry-fixture",
@@ -70,6 +74,8 @@ const fixtures: Readonly<Record<string, AttemptQuestionPublic>> = {
 
 /** 仅开发环境的几何准入夹具，不进入学生导航与生产构建。 */
 export default function QuestionBaseDevPage() {
+  const showFrozenExperiment =
+    new URLSearchParams(window.location.search).get("frozenExperiment") === "1";
   const [fixture, setFixture] = useState("fill");
   const [width, setWidth] = useState(304.25);
   const [answer, setAnswer] = useState<StudentAnswer | undefined>();
@@ -167,6 +173,12 @@ export default function QuestionBaseDevPage() {
         </pre>
       )}
       {url && <img src={url} alt="题面底图" style={{ width }} />}
+      {showFrozenExperiment && (
+        <>
+          <FrozenSurfaceExperiment />
+          <FrozenMaterialExperiment question={prototypeMatchingQuestion} />
+        </>
+      )}
     </main>
   );
 }
