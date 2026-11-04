@@ -437,6 +437,10 @@ test(
     await desktopNavigation
       .getByRole("button", { name: "收起答题卡" })
       .press("Enter");
+    // 先确认相邻占位题已换成真实题卡，再验证位置，避免只测到开合的首帧。
+    await expect(
+      page.getByRole("article", { name: "第 64 题", exact: true }),
+    ).toBeAttached();
     await expect
       .poll(async () => (await middle.boundingBox())?.y ?? Infinity)
       .toBeCloseTo(middleTop, 0);

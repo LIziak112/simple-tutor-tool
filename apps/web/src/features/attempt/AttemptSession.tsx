@@ -566,7 +566,7 @@ function AnswerView({
     },
     [],
   );
-  useReadingPosition(
+  const preserveReadingPosition = useReadingPosition(
     attemptId,
     cardElements,
     setCurrentQuestionId,
@@ -1506,11 +1506,13 @@ function AnswerView({
                     const element = currentQuestionId
                       ? cardElements.current.get(currentQuestionId)
                       : undefined;
-                    if (element)
+                    if (element && currentQuestionId) {
+                      preserveReadingPosition(currentQuestionId);
                       navigationAnchor.current = {
                         element,
                         top: element.getBoundingClientRect().top,
                       };
+                    }
                     aiCompanion.controller.toggleNavigator();
                   }}
                 >

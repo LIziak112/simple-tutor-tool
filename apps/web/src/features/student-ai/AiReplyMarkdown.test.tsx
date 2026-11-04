@@ -17,6 +17,15 @@ import {
  */
 
 describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
+  it("裸公式渲染且不完整回复可查看原文", () => {
+    const source = "推导：\n\\frac{1}{2}\n\n当 \\to 0$ 时";
+    const { container } = render(<AiReplyMarkdown source={source} />);
+    expect(container.querySelector(".katex")).not.toBeNull();
+    fireEvent.click(screen.getByText("部分公式格式不完整，查看回复原文"));
+    expect(container.querySelector("details p")).toHaveTextContent(
+      "当 \\to 0$ 时",
+    );
+  });
   it("模型的LaTeX定界符能排版，兼容后仍受公式预算限制", () => {
     const view = render(
       <AiReplyMarkdown

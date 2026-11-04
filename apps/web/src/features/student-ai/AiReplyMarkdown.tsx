@@ -15,7 +15,11 @@ import {
   AiReplySectionActions,
   AiReplySectionsProvider,
 } from "./AiReplySections";
-import { normalizeAiReplyMath, replyTextPage } from "./ai-reply-format";
+import {
+  hasIncompleteAiReplyMath,
+  normalizeAiReplyMath,
+  replyTextPage,
+} from "./ai-reply-format";
 import {
   aiReplySanitizeSchema,
   inspectAiReplySafety,
@@ -152,6 +156,14 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
           className,
         )}
       >
+        {hasIncompleteAiReplyMath(source) && (
+          <details className="mb-3 rounded-md border border-border p-3 text-sm">
+            <summary className="cursor-pointer">
+              部分公式格式不完整，查看回复原文
+            </summary>
+            <p className="mt-2 whitespace-pre-wrap break-words">{source}</p>
+          </details>
+        )}
         <ReactMarkdown
           remarkPlugins={[remarkMath, remarkGfm]}
           rehypePlugins={[

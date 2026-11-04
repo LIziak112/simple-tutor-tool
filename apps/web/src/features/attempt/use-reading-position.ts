@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useRef } from "react";
 import { useAnnotationSessionRef } from "@/features/annotation/use-annotation-record";
 
 function headerHeightOf(): number {
@@ -198,6 +198,7 @@ export function useReadingPosition(
     capture(pending === null);
     if (pending !== null) restoreTimer = setTimeout(tryRestore, 100);
     return () => {
+      alignedRef.current = null;
       pending = null;
       clearTimeout(restoreTimer);
       cancelAnimationFrame(frame);
@@ -235,4 +236,17 @@ export function useReadingPosition(
     }, 150);
     return () => clearTimeout(timer);
   }, [cardMountVersion, cards]);
+
+  // 答题卡开合后仍可能有占位题卡挂载，沿用恢复位置的补偿与用户接管规则。
+  return useCallback(
+    (questionId: string) => {
+      const element = cards.current.get(questionId);
+      if (element)
+        alignedRef.current = {
+          questionId,
+          offset: element.getBoundingClientRect().top - headerHeightOf(),
+        };
+    },
+    [cards],
+  );
 }

@@ -33,6 +33,66 @@ afterEach(() => {
 });
 const advance = () => act(() => vi.advanceTimersByTime(1000));
 describe("学生阅读位置恢复", () => {
+  it("普通挂载与切换练习不沿用答题卡开合的锚点", () => {
+    const onCurrent = vi.fn();
+    const requestMount = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ id, version }) =>
+        useReadingPosition(id, cards, onCurrent, requestMount, version),
+      { initialProps: { id: "attempt", version: 0 } },
+    );
+    rerender({ id: "attempt", version: 1 });
+    advance();
+    expect(scroll).not.toHaveBeenCalled();
+    act(() => result.current("q2"));
+    const element = cards.current.get("q2");
+    if (!element) throw new Error("缺少题卡夹具");
+    vi.mocked(element.getBoundingClientRect).mockReturnValue({
+      top: 370,
+      bottom: 770,
+      height: 400,
+    } as DOMRect);
+    rerender({ id: "other", version: 2 });
+    advance();
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "wheel", "touchstart", "pointerdown", "keydown"])(
+    "答题卡开合后补偿延迟挂载；后续 %s 操作取消补偿",
+    (interrupt) => {
+      const onCurrent = vi.fn();
+      const requestMount = vi.fn();
+      const { result, rerender } = renderHook(
+        ({ version }) =>
+          useReadingPosition(
+            "attempt",
+            cards,
+            onCurrent,
+            requestMount,
+            version,
+          ),
+        { initialProps: { version: 0 } },
+      );
+      act(() => result.current("q2"));
+      if (interrupt) act(() => window.dispatchEvent(new Event(interrupt)));
+      const element = cards.current.get("q2");
+      if (!element) throw new Error("缺少题卡夹具");
+      vi.mocked(element.getBoundingClientRect).mockReturnValue({
+        top: 370,
+        bottom: 770,
+        height: 400,
+      } as DOMRect);
+      rerender({ version: 1 });
+      advance();
+      if (interrupt) expect(scroll).not.toHaveBeenCalled();
+      else
+        expect(scroll).toHaveBeenCalledExactlyOnceWith({
+          top: 70,
+          behavior: "instant",
+        });
+    },
+  );
+
   it("稳定后按相对题头偏移恢复一次，不抢输入焦点", () => {
     localStorage.setItem(
       key(),
