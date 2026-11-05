@@ -432,6 +432,16 @@ test(
     await middleNumber.click();
     await expect(middleNumber).toHaveAttribute("aria-current", "location");
     const middle = page.getByRole("article", { name: "第 65 题", exact: true });
+    // 跳题先等前邻题从占位变成真实题卡，并回到题头锚点；之后才测试开合保位。
+    await expect(
+      page.getByRole("article", { name: "第 64 题", exact: true }),
+    ).toBeAttached();
+    const expectedTop = await page
+      .locator('[data-slot="attempt-header"]')
+      .evaluate((header) => header.getBoundingClientRect().height + 12);
+    await expect
+      .poll(async () => (await middle.boundingBox())?.y ?? Infinity)
+      .toBeCloseTo(expectedTop, 0);
     const middleTop = (await middle.boundingBox())?.y;
     if (middleTop === undefined) throw new Error("无法测量当前题位置");
     await desktopNavigation

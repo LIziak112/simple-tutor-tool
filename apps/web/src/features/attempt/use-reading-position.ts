@@ -58,6 +58,9 @@ export function useReadingPosition(
     ((save: boolean, notifyCurrent?: boolean) => void) | null
   >(null);
   const alignedRef = useRef<ReadingPosition | null>(null);
+  const mountCorrectionTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const interaction = useRef({ attemptId, started: false });
   const key =
     session === null
@@ -198,6 +201,9 @@ export function useReadingPosition(
     capture(pending === null);
     if (pending !== null) restoreTimer = setTimeout(tryRestore, 100);
     return () => {
+      if (mountCorrectionTimer.current !== null)
+        clearTimeout(mountCorrectionTimer.current);
+      mountCorrectionTimer.current = null;
       alignedRef.current = null;
       pending = null;
       clearTimeout(restoreTimer);
@@ -209,11 +215,13 @@ export function useReadingPosition(
         window.removeEventListener(event, interrupt);
     };
   }, [key, cards, onCurrent, attemptId, requestMount]);
-  // 懒挂载引发的布局位移没有 scroll 事件：挂载版本变化（rAF 合帧）后等
-  // 布局 settle 再重捕一次；restore 进行中由 capture 的 pending 守卫挡住。
+  // 懒挂载引发的布局位移没有 scroll 事件。连续挂载时保留首个 150ms
+  // 定时器，不能每次版本变化都往后推，导致用户开合答题卡前从未补偿。
+  // restore 进行中由 capture 的 pending 守卫挡住。
   useEffect(() => {
-    if (cardMountVersion === 0) return;
-    const timer = setTimeout(() => {
+    if (cardMountVersion === 0 || mountCorrectionTimer.current !== null) return;
+    mountCorrectionTimer.current = setTimeout(() => {
+      mountCorrectionTimer.current = null;
       const aligned = alignedRef.current;
       if (aligned !== null) {
         const element = cards.current.get(aligned.questionId);
@@ -234,7 +242,6 @@ export function useReadingPosition(
       }
       captureRef.current?.(true, false);
     }, 150);
-    return () => clearTimeout(timer);
   }, [cardMountVersion, cards]);
 
   // 答题卡开合后仍可能有占位题卡挂载，沿用恢复位置的补偿与用户接管规则。
