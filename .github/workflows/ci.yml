@@ -39,6 +39,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          # 范围判定只运行 Node，不安装 pnpm，不能自动探测包管理器缓存。
+          package-manager-cache: false
       - name: 验证范围决策回归
         run: node --test scripts/ci-scope.spec.mjs
       - id: scope
