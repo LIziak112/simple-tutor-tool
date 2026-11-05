@@ -713,10 +713,11 @@ export function AttemptQuestionCard({
             const session = currentAnnotationSession();
             const noteSession = currentNoteSession();
             const draftEpoch = getDraftSessionEpoch();
-            const surface = articleRef.current?.querySelector<HTMLElement>(
-              '[data-slot="question-surface"]',
-            );
-            if (!session || !noteSession || !surface)
+            const surface =
+              articleRef.current?.querySelector<HTMLElement>(
+                '[data-slot="question-surface"]',
+              ) ?? null;
+            if (!session || !noteSession)
               throw new Error("题面尚未就绪，请重试");
             const guard = () => {
               if (
