@@ -623,6 +623,8 @@ export const attemptResultQuestionSchema = z.object({
    * 校验）。旧响应缺失按「无原位圈画」优雅降级，只渲染题面。
    */
   questionRevisionId: questionRevisionIdSchema.optional(),
+  /** 原生整题回看复用作答时的公开冻结投影；旧响应可缺省。 */
+  publicQuestion: attemptQuestionPublicSchema.optional(),
   snapshot: z.object({
     id: z.string().min(1),
     type: questionPublicSchema.shape.type,

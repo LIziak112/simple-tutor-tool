@@ -350,6 +350,8 @@ export function AttemptDetailQuestionCard({
           选择题选项另由 DetailOptions 渲染——displayStemMd 剥掉题干内嵌的
           选项任务列表，避免选项显示两遍（[x] 还会渲染成打勾框） */}
       <AnnotationView
+        question={question.publicQuestion}
+        answer={question.answer ?? undefined}
         viewer="teacher"
         attemptId={attemptId}
         questionId={question.questionId}
@@ -359,6 +361,8 @@ export function AttemptDetailQuestionCard({
         <RichMarkdown source={displayStemMd(question)} className="text-base" />
         <DetailOptions question={question} />
       </AnnotationView>
+
+      {question.publicQuestion && <DetailOptions question={question} />}
 
       {/* 手写笔迹（懒加载 + 点击放大） */}
       <InkThumbnail question={question} />
@@ -382,6 +386,7 @@ export function AttemptDetailQuestionCard({
           两阶段切换（scratch=作答期圈画；correction=订正检查点圈画——
           无数据时回看视图自呈空态） */}
       <TeacherAnnotationSection
+        question={question}
         attemptId={attemptId}
         questionId={question.questionId}
         questionNo={question.no}
@@ -474,11 +479,13 @@ export function AttemptDetailQuestionCard({
 
 /** 教师侧标注回看（审查修复 3②）：scratch/correction 两阶段切换 */
 function TeacherAnnotationSection({
+  question,
   attemptId,
   questionId,
   questionNo,
   ariaPrefix,
 }: {
+  question: TeacherAttemptDetailQuestion;
   attemptId: string;
   questionId: string;
   questionNo: number;
@@ -514,6 +521,8 @@ function TeacherAnnotationSection({
         </Button>
       </div>
       <AnnotationView
+        question={question.publicQuestion}
+        answer={question.answer ?? undefined}
         viewer="teacher"
         attemptId={attemptId}
         questionId={questionId}

@@ -68,26 +68,9 @@ it("原位回看自动读取封存笔迹，底图成功前保留题面，成功�
       <p>原位公开题面</p>
     </AnnotationView>,
   );
-  await waitFor(() =>
-    expect(
-      screen.getByRole("img", { name: "本题题干标注底图", hidden: true }),
-    ).toBeInTheDocument(),
-  );
+  await screen.findByText(/缺少公开冻结题面信息/);
   expect(screen.getByText("原位公开题面")).toBeVisible();
-  const image = screen.getByRole("img", {
-    name: "本题题干标注底图",
-    hidden: true,
-  });
-  Object.defineProperties(image, {
-    naturalWidth: { value: READY_BASE.pixelWidth },
-    naturalHeight: { value: READY_BASE.pixelHeight },
-  });
-  fireEvent.load(image);
-  await waitFor(() =>
-    expect(screen.getByText("原位公开题面").parentElement).toHaveClass(
-      "sr-only",
-    ),
-  );
+  expect(screen.queryByRole("img")).toBeNull();
   expect(screen.queryByRole("button", { name: "查看本题题干标注" })).toBeNull();
 });
 
@@ -172,6 +155,7 @@ import {
 } from "@/lib/api";
 import { copyPngBlobToClipboard } from "@/lib/copy";
 import { AnnotationLayer } from "./AnnotationLayer";
+import { AnnotationStaticCanvas } from "./AnnotationStaticCanvas";
 import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
 import {
@@ -517,11 +501,11 @@ describe("AnnotationView：回看状态", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
-      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /导出合成图/ }),
+      ).toBeInTheDocument(),
     );
-    expect(
-      document.querySelector('canvas[data-slot="annotation-static-canvas"]'),
-    ).not.toBeNull();
+    expect(screen.getByText(/缺少公开冻结题面信息/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /导出合成图/ }));
     await waitFor(() =>
       expect(screen.getByText(/已导出合成图/)).toBeInTheDocument(),
@@ -547,7 +531,9 @@ describe("AnnotationView：回看状态", () => {
     render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
-      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /导出合成图/ }),
+      ).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByRole("button", { name: /导出合成图/ }));
     await waitFor(() =>
@@ -568,7 +554,9 @@ describe("AnnotationView：回看状态", () => {
     render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
-      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /导出合成图/ }),
+      ).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByRole("button", { name: /导出合成图/ }));
     await waitFor(() =>
@@ -607,36 +595,24 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     return result.value as unknown as InstanceType<typeof FakeAtrament>;
   }
 
-  it("底图 img 未加载（布局未就绪）不重放——无 NaN 坐标", async () => {
+  it("几何未就绪不重放", () => {
     const spy = rectSpy();
-    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
-    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
-    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
-    await waitFor(() =>
-      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    render(
+      <AnnotationStaticCanvas doc={DOC} base={READY_BASE} ready={false} />,
     );
-    // img 未触发 load：布局未就绪门控——静态画布连 atrament 都不创建
-    // （杜绝 offsetHeight=0 产 Infinity/NaN 坐标的重放）
     expect(atramentMock.mock.results.length).toBe(0);
     spy.mockRestore();
   });
 
-  it("CSS 显示宽 ≠ 位图宽时按 rect.width/baseWidth 换算（atrament 收到 CSS 坐标）", async () => {
+  it("CSS 宽度按位图比例换算，重渲染不重复回放", async () => {
     const spy = rectSpy();
-    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
-    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
-    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
-    const img = await screen.findByAltText("本题题干标注底图");
-    Object.defineProperties(img, {
-      naturalWidth: { value: READY_BASE.pixelWidth },
-      naturalHeight: { value: READY_BASE.pixelHeight },
-    });
-    fireEvent.load(img);
-    await waitFor(() => {
-      expect(lastAtrament().begins.length).toBeGreaterThan(0);
-    });
+    const { rerender } = render(
+      <AnnotationStaticCanvas doc={DOC} base={READY_BASE} ready />,
+    );
+    await waitFor(() =>
+      expect(lastAtrament().begins.length).toBeGreaterThan(0),
+    );
     const atrament = lastAtrament();
-    // DOC 笔迹（底图像素域）：(100,100) → (200,140)；cssPerBase=720/1440=0.5
     expect(atrament.begins[0]?.[0]).toBeCloseTo(50);
     expect(atrament.begins[0]?.[1]).toBeCloseTo(50);
     expect(
@@ -644,39 +620,9 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
         ([x, y]) => Math.abs(x - 100) < 0.01 && Math.abs(y - 70) < 0.01,
       ),
     ).toBe(true);
-    // 线宽同比例（5.76 × 0.5 = 2.88）
     expect(atrament.weight).toBeCloseTo(2.88);
-    spy.mockRestore();
-  });
-
-  it("导出状态刷新不触发重放（依赖收窄——同一 doc 只重放一次）", async () => {
-    const spy = rectSpy();
-    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
-    compositeMock.mockResolvedValue({ ok: true, blob: fakePngBlob() });
-    render(
-      <AnnotationView
-        viewer="student"
-        attemptId="a1"
-        questionId="q1"
-        questionNo={3}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
-    const img = await screen.findByAltText("本题题干标注底图");
-    Object.defineProperties(img, {
-      naturalWidth: { value: READY_BASE.pixelWidth },
-      naturalHeight: { value: READY_BASE.pixelHeight },
-    });
-    fireEvent.load(img);
-    await waitFor(() => {
-      expect(lastAtrament().begins.length).toBeGreaterThan(0);
-    });
     const replayCount = atramentMock.mock.results.length;
-    // 触发一次导出状态刷新（exporting → 结果文案两次重渲染）
-    fireEvent.click(screen.getByRole("button", { name: /导出合成图/ }));
-    await waitFor(() =>
-      expect(screen.getByText(/已导出合成图/)).toBeInTheDocument(),
-    );
+    rerender(<AnnotationStaticCanvas doc={DOC} base={READY_BASE} ready />);
     expect(atramentMock.mock.results.length).toBe(replayCount);
     spy.mockRestore();
   });

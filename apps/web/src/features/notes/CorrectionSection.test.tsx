@@ -194,6 +194,16 @@ function questionFixture(): AttemptResultQuestion {
       options: ["x = 2", "x = 4", "x = 6", "x = 8"],
       hintCount: 1,
     },
+    publicQuestion: {
+      id: "p1-q1",
+      questionRevisionId: "qrev-1",
+      type: "choice",
+      difficulty: 2,
+      knowledge: ["一元一次方程"],
+      stemMd: "解方程：$2x + 6 = 14$，求 $x$。",
+      options: ["x = 2", "x = 4", "x = 6", "x = 8"],
+      hintCount: 1,
+    },
     answers: { kind: "choice", index: 1 },
     solutionMd: "移项后 $2x = 8$，故 $x = 4$。",
     answer: { kind: "choice", index: 0 },
@@ -328,6 +338,10 @@ it("订正工作台保留配对公开结构和本人选择，仍使用唯一只�
     },
     matchingSlots: [{ id: "slot-3", ordinal: 3 }],
   };
+  question.publicQuestion = {
+    ...question.snapshot,
+    questionRevisionId: "qrev-1",
+  };
   question.answer = { kind: "matching", pairs: { "slot-3": "opt-b" } };
   renderSection({ question });
   fireEvent.click(screen.getByRole("button", { name: /^第 1 题订正/ }));
@@ -338,6 +352,16 @@ it("订正工作台保留配对公开结构和本人选择，仍使用唯一只�
   expect(
     document.querySelectorAll('[data-slot="question-surface"]'),
   ).toHaveLength(1);
+});
+
+it("旧结果缺冻结公开模型时保留题面并提示保稿，不启用圈画", async () => {
+  evidenceMock.mockResolvedValue(headFixture({ corrections: [openRow()] }));
+  const question = questionFixture();
+  delete question.publicQuestion;
+  renderSection({ question });
+  fireEvent.click(screen.getByRole("button", { name: /^第 1 题订正/ }));
+  await screen.findByText(/缺少公开冻结题面信息/);
+  expect(document.querySelector('[data-slot="annotated-question"]')).toBeNull();
 });
 
 beforeEach(() => {

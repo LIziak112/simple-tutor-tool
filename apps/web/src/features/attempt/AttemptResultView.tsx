@@ -295,6 +295,8 @@ function ResultQuestionCard({
               挂载，compact 关闭态零请求） */}
           <AnnotationView
             compact
+            question={question.publicQuestion}
+            answer={question.answer ?? undefined}
             viewer="student"
             attemptId={attemptId}
             questionId={question.questionId}
@@ -420,6 +422,8 @@ function ResultQuestionCard({
 
       {/* 题干快照（服务端已 studentStemMd 投影；displayStemMd 兜底剥内嵌选项列表） */}
       <AnnotationView
+        question={question.publicQuestion}
+        answer={question.answer ?? undefined}
         viewer="student"
         attemptId={attemptId}
         questionId={question.questionId}
@@ -432,6 +436,9 @@ function ResultQuestionCard({
         />
         <ResultOptions question={question} released={released} />
       </AnnotationView>
+      {question.publicQuestion && released && (
+        <ResultOptions question={question} released={released} />
+      )}
 
       <ResultAnswerComparison question={question} released={released} />
 

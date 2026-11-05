@@ -155,6 +155,35 @@ describe("teacherAttemptDetailQuestionSchema（D7：draft 不带答案详解）"
     ink: null,
   };
 
+  it("原生回看携带完整公开冻结题与独立 revision，剥离教师字段", () => {
+    const publicQuestion = {
+      id: draftQuestion.questionId,
+      questionRevisionId: UUID,
+      type: "response",
+      difficulty: 1,
+      knowledge: [],
+      stemMd: "公开要求",
+      hintCount: 0,
+      wordMin: 20,
+      wordMax: 80,
+    };
+    const parsed = teacherAttemptDetailQuestionSchema.parse({
+      ...draftQuestion,
+      publicQuestion: {
+        ...publicQuestion,
+        sourceMd: "教师原文",
+        answers: { kind: "response", body: "秘密" },
+      },
+    });
+    expect(parsed).toHaveProperty("publicQuestion", publicQuestion);
+    expect(
+      teacherAttemptDetailQuestionSchema.safeParse({
+        ...draftQuestion,
+        publicQuestion: { ...publicQuestion, questionRevisionId: "" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("draft 逐题（无 answers/solutionMd，responseId=null）可解析", () => {
     expect(
       teacherAttemptDetailQuestionSchema.safeParse(draftQuestion).success,

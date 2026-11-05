@@ -46,6 +46,8 @@ import {
   effectiveVerdictOfRow,
   ensureAttemptFrozen,
   lessonSourceContextOf,
+  materialSlotOrderOf,
+  publicOfSnapshot,
   selfReviewRecordOf,
   unitGroupedRows,
 } from "./attempt-service";
@@ -498,12 +500,17 @@ function detailItemOf(
     unitId: string;
     unitTitle: string;
     ink: TeacherAttemptInkInfo | null;
+    materialSlots: ReadonlyMap<string, readonly string[]>;
   },
 ): Omit<TeacherAttemptDetailQuestion, "no"> {
   const isDraft = opts.isDraft;
   return {
     questionId: row.questionId,
     responseId: isDraft ? null : row.id,
+    publicQuestion: publicOfSnapshot(snapshot, row.id, {
+      materialSlots: opts.materialSlots,
+      unitId: row.unitId,
+    }),
     unitId: opts.unitId,
     unitTitle: opts.unitTitle,
     type: snapshot.type,
@@ -579,6 +586,7 @@ export function getTeacherAttemptDetail(
   const draftRowVisible = rowVisibleInDraftOf(attempt);
   const source = sourceOf(db, attempt, teacherId);
   const inkByQuestion = inkByQuestionOf(db, attemptId);
+  const materialSlots = materialSlotOrderOf(db, attemptId);
 
   // 逐题条目（先按单元归属排序，再统一编号）；行同步收集（判定计数用——
   // 有效判定的输入是行事实，不经过投影条目反推）
@@ -621,6 +629,7 @@ export function getTeacherAttemptDetail(
           unitId: originUnitId,
           unitTitle: originUnitId, // 占位，下方统一回填（题目行缺失回退 questionId）
           ink: inkInfoOf(inkByQuestion.get(row.questionId)),
+          materialSlots,
         }),
       );
     }
@@ -648,6 +657,7 @@ export function getTeacherAttemptDetail(
             unitId: group.unitId ?? row.questionId,
             unitTitle: group.unitId ?? group.title,
             ink: inkInfoOf(inkByQuestion.get(row.questionId)),
+            materialSlots,
           }),
         );
       }
