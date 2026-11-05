@@ -174,6 +174,37 @@ describe("生产模式静态托管与 SPA 回退", () => {
     }
   });
 
+  it("Service Worker 与固定更新协作脚本每次请求都校验版本", async () => {
+    const dist = await makeFakeDist();
+    try {
+      await writeFile(
+        join(dist, "sw.js"),
+        "self.addEventListener('install', () => {})",
+        "utf8",
+      );
+      await writeFile(
+        join(dist, "pwa-update-worker.js"),
+        "self.addEventListener('message', () => {})",
+        "utf8",
+      );
+      const app = makeApp({
+        isProduction: true,
+        logger: silentLogger,
+        webDistDir: dist,
+      });
+      for (const path of ["/sw.js", "/pwa-update-worker.js"]) {
+        const response = await app.request(path);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain(
+          "text/javascript",
+        );
+        expect(response.headers.get("cache-control")).toBe("no-cache");
+      }
+    } finally {
+      await rm(dist, { recursive: true, force: true });
+    }
+  });
+
   it("根路径返回 index.html；/api 不受静态托管影响（health 正常、未知 /api 仍是统一 404）", async () => {
     const dist = await makeFakeDist();
     try {

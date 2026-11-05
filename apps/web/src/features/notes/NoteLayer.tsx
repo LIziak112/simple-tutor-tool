@@ -52,6 +52,7 @@ import {
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
+import { prepareNoteForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { PaperEditor } from "@/features/ink/PaperEditor";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
@@ -74,6 +75,7 @@ import {
 } from "@/features/notes/use-note-editor";
 import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
 import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { getNoteRecord, settleNotePersistence } from "./note-store";
 
 /**
@@ -154,6 +156,25 @@ export function NoteLayer({
         throw new Error(saved.localError ?? "草稿本机保存失败");
     }
   }, [editor.engineRef, session, attemptId, questionId, phase]);
+  usePwaUpdateGuard(
+    async () => {
+      if (!editor.localLoaded || (recovery && recovery.state !== "ready"))
+        throw new Error("草稿恢复尚未完成，请先处理后更新");
+      await prepareNoteForPwaUpdate(
+        session,
+        { attemptId, questionId, phase },
+        finish,
+      );
+    },
+    JSON.stringify([
+      session?.origin,
+      session?.studentId,
+      attemptId,
+      questionId,
+      phase,
+      "note",
+    ]),
+  );
   // 编辑协调器（交卷 flush）只在答题页挂载；订正工作台无 Provider
   // （coordinator 恒 null）且收笔/落盘语义已由 finish 自持，不注册
   useEffect(

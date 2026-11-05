@@ -10,7 +10,9 @@ import { aiQueueReturnTarget } from "@/features/student/record-review-navigation
 import {
   StudentErrorPanel,
   StudentListSkeleton,
+  StudentRefreshWarning,
 } from "@/features/student/student-ui";
+import { ApiError } from "@/lib/api";
 
 /**
  * /s/assignments/:id 作业答题入口（T2.6；T2A.6 通用化改造）：
@@ -66,10 +68,23 @@ export default function StudentAssignmentAttemptPage() {
       />
     );
   }
+  const denied =
+    detailQuery.isError &&
+    detailQuery.error instanceof ApiError &&
+    [401, 403, 404].includes(detailQuery.error.status);
+  if (detailQuery.data === undefined && detailQuery.fetchStatus === "paused") {
+    return (
+      <StudentErrorPanel
+        title="题目加载失败"
+        message="当前网络不可用，请连接网络后重试。"
+        onRetry={() => void detailQuery.refetch()}
+      />
+    );
+  }
   if (detailQuery.isPending) {
     return <StudentListSkeleton label="正在加载题目" />;
   }
-  if (detailQuery.isError || detailQuery.data === undefined) {
+  if (denied || detailQuery.data === undefined) {
     return (
       <StudentErrorPanel
         title="题目加载失败"
@@ -84,13 +99,21 @@ export default function StudentAssignmentAttemptPage() {
   }
 
   return (
-    <AttemptSession
-      data={detailQuery.data}
-      onExit={() => void navigate(returnTo ?? queueTarget ?? "/s/home")}
-      exitLabel={
-        returnTo ? "返回我的作业" : queueTarget ? "返回原页面" : undefined
-      }
-      onRefresh={() => void detailQuery.refetch()}
-    />
+    <>
+      {detailQuery.isError && (
+        <StudentRefreshWarning
+          title="题目信息刷新失败"
+          onRetry={() => void detailQuery.refetch()}
+        />
+      )}
+      <AttemptSession
+        data={detailQuery.data}
+        onExit={() => void navigate(returnTo ?? queueTarget ?? "/s/home")}
+        exitLabel={
+          returnTo ? "返回我的作业" : queueTarget ? "返回原页面" : undefined
+        }
+        onRefresh={() => void detailQuery.refetch()}
+      />
+    </>
   );
 }

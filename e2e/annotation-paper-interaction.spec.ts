@@ -108,14 +108,14 @@ for (const preference of ["auto", "side", "below"] as const) {
       await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
       const snapshot = async () =>
         card.evaluate((article) => {
-          const question = article.querySelector(
-            '[data-slot="question-surface"]',
+          const source = article.querySelector(
+            '[data-slot="annotation-frozen-surface"] img',
           );
           const canvas = article.querySelector(
             'canvas[data-slot="annotation-canvas"]',
           );
-          if (!question || !(canvas instanceof HTMLCanvasElement))
-            throw new Error("题面或标画画布未就绪");
+          if (!source || !(canvas instanceof HTMLCanvasElement))
+            throw new Error("冻结原稿或标画画布未就绪");
           const context = canvas.getContext("2d");
           if (!context) throw new Error("无法检查标画像素");
           const pixels = context.getImageData(
@@ -138,7 +138,7 @@ for (const preference of ["auto", "side", "below"] as const) {
             );
           };
           return {
-            question: geometry(question),
+            surface: geometry(source),
             canvas: geometry(canvas),
             width: canvas.width,
             height: canvas.height,
@@ -176,8 +176,8 @@ for (const preference of ["auto", "side", "below"] as const) {
           if (opened && preference !== "below") {
             await expect(row).toHaveAttribute("data-layout", "side");
             await expect
-              .poll(async () => (await snapshot()).question[2] ?? 0)
-              .toBeLessThan(original.question[2] ?? 0);
+              .poll(async () => (await snapshot()).surface[2] ?? 0)
+              .toBeLessThan(original.surface[2] ?? 0);
             const current = await snapshot();
             expect(current.width).toBe(original.width);
             expect(current.height).toBe(original.height);
@@ -185,12 +185,12 @@ for (const preference of ["auto", "side", "below"] as const) {
             expect(current.painted).toBe(original.painted);
             for (let i = 0; i < 4; i++)
               expect(
-                Math.abs((current.question[i] ?? 0) - (current.canvas[i] ?? 0)),
+                Math.abs((current.surface[i] ?? 0) - (current.canvas[i] ?? 0)),
               ).toBeLessThan(1);
             expect(
               Math.abs(
-                (current.question[2] ?? 0) / (current.question[3] ?? 1) -
-                  (original.question[2] ?? 0) / (original.question[3] ?? 1),
+                (current.surface[2] ?? 0) / (current.surface[3] ?? 1) -
+                  (original.surface[2] ?? 0) / (original.surface[3] ?? 1),
               ),
             ).toBeLessThan(0.01);
           } else {
@@ -214,6 +214,23 @@ for (const preference of ["auto", "side", "below"] as const) {
       };
       await cycle(true);
       await page.getByRole("button", { name: "作答", exact: true }).click();
+      await expect(
+        card.locator('[data-slot="annotation-answer-view"]'),
+      ).toBeVisible();
+      await expect(
+        card.locator(
+          '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
+        ),
+      ).toHaveCount(1);
+      await expect(card.getByRole("radio")).toHaveCount(4);
+      await expect(canvas).toBeHidden();
+      await card.getByRole("button", { name: "返回原稿" }).click();
+      await expect(
+        card.locator('[data-slot="annotation-answer-view"]'),
+      ).toHaveCount(0);
+      await expect(
+        card.locator('[data-slot="annotation-frozen-surface"] img'),
+      ).toBeVisible();
       await cycle(false);
       await page.screenshot({
         path: testInfo.outputPath(`paper-geometry-${preference}.png`),
@@ -239,11 +256,13 @@ test("题卡扩宽后题面居中且保留标画原尺寸与像素", {
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
   const geometry = async () =>
     card.evaluate((article) => {
-      const question = article.querySelector('[data-slot="question-surface"]');
+      const source = article.querySelector(
+        '[data-slot="annotation-frozen-surface"] img',
+      );
       const canvas = article.querySelector(
         'canvas[data-slot="annotation-canvas"]',
       );
-      if (!question || !(canvas instanceof HTMLCanvasElement))
+      if (!source || !(canvas instanceof HTMLCanvasElement))
         throw new Error("标画尚未就绪");
       const context = canvas.getContext("2d");
       if (!context) throw new Error("无法读取标画");
@@ -261,7 +280,7 @@ test("题卡扩宽后题面居中且保留标画原尺寸与像素", {
           (value) => Math.round(value * 100) / 100,
         );
       };
-      return { question: box(question), canvas: box(canvas), hash };
+      return { surface: box(source), canvas: box(canvas), hash };
     });
   const original = await geometry();
   const width = await card.evaluate(
@@ -279,16 +298,21 @@ test("题卡扩宽后题面居中且保留标画原尺寸与像素", {
     .poll(async () => {
       const current = await geometry();
       return {
-        question: current.question.slice(2),
+        surface: current.surface.slice(2),
         canvas: current.canvas.slice(2),
         hash: current.hash,
       };
     })
     .toEqual({
-      question: original.question.slice(2),
+      surface: original.surface.slice(2),
       canvas: original.canvas.slice(2),
       hash: original.hash,
     });
+  const current = await geometry();
+  for (let index = 0; index < 4; index++)
+    expect(
+      Math.abs((current.surface[index] ?? 0) - (current.canvas[index] ?? 0)),
+    ).toBeLessThan(1);
   await expect(card.locator('[data-slot="note-body-row"]')).toHaveAttribute(
     "data-layout",
     "below",
@@ -398,6 +422,13 @@ test("圈画再次点击与双击取消，不丢已有笔迹", { tag: ["@annotat
   await trigger.dblclick();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  await card.getByRole("button", { name: "进入作答" }).click();
+  await expect(
+    card.locator(
+      '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
+    ),
+  ).toHaveCount(1);
+  await expect(card.getByRole("radio")).toHaveCount(4);
   await card.locator('[role="radiogroup"] label').nth(1).click();
   await expect(card.getByRole("radio").nth(1)).toBeChecked();
 });

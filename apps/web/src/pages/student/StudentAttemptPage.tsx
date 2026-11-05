@@ -9,6 +9,7 @@ import {
 import {
   StudentErrorPanel,
   StudentListSkeleton,
+  StudentRefreshWarning,
 } from "@/features/student/student-ui";
 import { ApiError } from "@/lib/api";
 
@@ -28,14 +29,24 @@ export default function StudentAttemptPage() {
   // 队列入口只在无回看上下文时改写返回目标
   const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
+  const denied =
+    detailQuery.isError &&
+    detailQuery.error instanceof ApiError &&
+    [401, 403, 404].includes(detailQuery.error.status);
 
+  if (detailQuery.data === undefined && detailQuery.fetchStatus === "paused") {
+    return (
+      <StudentErrorPanel
+        title="练习加载失败"
+        message="当前网络不可用，请连接网络后重试。"
+        onRetry={() => void detailQuery.refetch()}
+      />
+    );
+  }
   if (detailQuery.isPending) {
     return <StudentListSkeleton label="正在打开练习" />;
   }
-  if (detailQuery.isError || detailQuery.data === undefined) {
-    const denied =
-      detailQuery.error instanceof ApiError &&
-      (detailQuery.error.status === 403 || detailQuery.error.status === 404);
+  if (denied || detailQuery.data === undefined) {
     if (denied) {
       return (
         <div
@@ -85,13 +96,25 @@ export default function StudentAttemptPage() {
           ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
           : "/s/home";
   return (
-    <AttemptSession
-      data={data}
-      exitLabel={
-        recordsTarget ? "返回我的记录" : queueTarget ? "返回原页面" : undefined
-      }
-      onExit={() => void navigate(recordsTarget ?? queueTarget ?? exitTarget)}
-      onRefresh={() => void detailQuery.refetch()}
-    />
+    <>
+      {detailQuery.isError && (
+        <StudentRefreshWarning
+          title="练习信息刷新失败"
+          onRetry={() => void detailQuery.refetch()}
+        />
+      )}
+      <AttemptSession
+        data={data}
+        exitLabel={
+          recordsTarget
+            ? "返回我的记录"
+            : queueTarget
+              ? "返回原页面"
+              : undefined
+        }
+        onExit={() => void navigate(recordsTarget ?? queueTarget ?? exitTarget)}
+        onRefresh={() => void detailQuery.refetch()}
+      />
+    </>
   );
 }

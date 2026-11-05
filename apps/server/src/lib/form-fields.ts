@@ -206,6 +206,7 @@ export async function parseAnnotationUploadForm(
     baseRevision: strictFormInt(form, F.baseRevision),
     mutationId: formString(form, F.mutationId),
     resetVersion: resetVersionOf(form, F.resetVersion),
+    protocolVersion: strictFormInt(form, F.protocolVersion),
     phase: formString(form, F.phase),
   });
   if (!parsed.success) {

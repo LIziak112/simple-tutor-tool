@@ -308,6 +308,39 @@ async function loadDraft(
   return stored;
 }
 
+/** 更新只复核当前会话已加载稿，不扫描历史记录，也不删除未同步材料。 */
+export function hasLoadedDraftsForPwaUpdate(): boolean {
+  return cache.size > 0;
+}
+
+export async function assertLoadedDraftsForPwaUpdate(): Promise<void> {
+  const generation = backendGeneration;
+  for (;;) {
+    const versions = new Map(writeVersions);
+    await Promise.all(
+      [...cache.keys()].map((attemptId) => writeNow(attemptId)),
+    );
+    if (generation !== backendGeneration)
+      throw new Error("作答会话已切换，请重新更新");
+    if (
+      [...writeVersions].some(([id, version]) => versions.get(id) !== version)
+    )
+      continue;
+    for (const [attemptId, record] of cache) {
+      if (getDraftPersistenceState(attemptId) !== "saved")
+        throw new Error("仍有作答或手写未存入本机，请保持页面打开并重试更新");
+      if (Object.keys(record.answerConflicts ?? {}).length > 0)
+        throw new Error("仍有作答同步冲突，请先处理后更新");
+      if (
+        unsyncedAnswerIds(record).length > 0 ||
+        unsyncedInkIds(record).length > 0
+      )
+        throw new Error("仍有作答或手写未同步，请返回对应练习完成保存后更新");
+    }
+    return;
+  }
+}
+
 export const draftStore = {
   /** 仅在服务端已验证本人作答归属后调用；旧稿迁入新键，原键继续保留。 */
   async recoverLegacyDraft(

@@ -564,6 +564,10 @@ test(
           'button[aria-label*="圈画题干"]',
         );
         if (!button) throw new Error("缺少标画入口");
+        // 全页保稿也会监听失焦；标画只应在既有监听上增加一个，关闭后归还。
+        const beforeOpenListeners = (
+          window as unknown as { workspaceBlurListenerCount(): number }
+        ).workspaceBlurListenerCount();
         const start = performance.now();
         return await new Promise<number>((resolve, reject) => {
           let frame = 0;
@@ -579,7 +583,8 @@ test(
               ) &&
               (
                 window as unknown as { workspaceBlurListenerCount(): number }
-              ).workspaceBlurListenerCount() === 1
+              ).workspaceBlurListenerCount() ===
+                beforeOpenListeners + 1
             )
               readyFrames++;
             else readyFrames = 0;

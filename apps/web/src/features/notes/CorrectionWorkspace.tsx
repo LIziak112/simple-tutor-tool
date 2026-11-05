@@ -77,6 +77,7 @@ import { getNoteRecord } from "@/features/notes/note-store";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
 import { sealCorrectionApi } from "@/lib/api";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 
 /** 反思输入按契约上限截断（jsdom 程序赋值绕过 maxLength，双保险） */
 function clampReflection(value: string): string {
@@ -195,6 +196,19 @@ function CorrectionWorkspaceInner({
   const [stuckAt, setStuckAt] = useState("");
   const [errorCause, setErrorCause] = useState("");
   const [sealing, setSealing] = useState(false);
+  usePwaUpdateGuard(
+    async () => {
+      if (sealing || stuckAt.trim() || errorCause.trim())
+        throw new Error("订正说明尚未保存，请先完成保存订正后再更新");
+    },
+    JSON.stringify([
+      session?.origin,
+      session?.studentId,
+      attemptId,
+      questionId,
+      "correction-reflection",
+    ]),
+  );
   const [sealError, setSealError] = useState<string | null>(null);
   /**
    * 草稿检查点已保存但圈画封存失败（部分成功）：弹窗留在原地展示结果与
@@ -431,6 +445,9 @@ function CorrectionWorkspaceInner({
                   question={inlineQuestion}
                   label={ariaPrefix}
                   phase="correction"
+                  annotationReadOnly={
+                    sealing || annotationRecord?.sealedAt != null
+                  }
                 >
                   <QuestionSurface question={inlineQuestion} readOnly />
                 </QuestionAnnotationOverlay>

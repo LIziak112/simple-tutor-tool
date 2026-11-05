@@ -3,6 +3,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { App } from "./App";
+import { PwaDraftSafety } from "./components/PwaDraftSafety";
+import { PwaUpdateNotice } from "./components/PwaUpdateNotice";
 import { fetchPublicConfig } from "./lib/api";
 import { setupEruda } from "./lib/debug";
 import { maybeRegisterServiceWorker, registerServiceWorker } from "./lib/pwa";
@@ -38,6 +40,8 @@ createRoot(rootEl).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <App />
+        <PwaDraftSafety />
+        <PwaUpdateNotice />
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

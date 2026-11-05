@@ -34,13 +34,19 @@ import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { paperCssHeight } from "@/features/notes/paper-geometry";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useObservedCssWidth } from "@/lib/use-observed-css-width";
 // UA-03：最终答案输入接入 final 呈现（answering/views/final，FinalAnswerInput
 // 的唯一消费出口收归呈现层；控制器所有权不变——本组件仍管辖纸面引擎）
 import { FinalAnswerField } from "../answering/views/final";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import { digestOf, mergeInkDocs } from "./draft-merge";
-import { draftStore, getDraftPersistenceState } from "./draft-store";
+import {
+  draftStore,
+  getDraftPersistenceState,
+  getDraftSessionEpoch,
+} from "./draft-store";
+import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { useDraftSyncActions } from "./use-draft-sync";
 import {
   type InkUploadController,
@@ -215,6 +221,20 @@ export function HandwrittenControls({
   /** 上传 controller 存 ref（controller 对象每次渲染都是新引用） */
   const controllerRef = useRef(uploadController);
   controllerRef.current = uploadController;
+  usePwaUpdateGuard(
+    () =>
+      prepareDraftForPwaUpdate(attemptId, async () => {
+        if (restoreFailed || conflict)
+          throw new Error("手写恢复失败或有同步冲突，请先处理后更新");
+        await finish();
+        if (
+          !(await controllerRef.current.flush()) ||
+          controllerRef.current.isDirty()
+        )
+          throw new Error("手写尚未同步完成，请检查网络后重试更新");
+      }),
+    `${getDraftSessionEpoch()}:${attemptId}:${questionId}:answerInk`,
+  );
 
   // controller 注册（页面交卷 flush 收集）
   useEffect(() => {

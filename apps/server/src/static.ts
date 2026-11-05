@@ -125,10 +125,12 @@ async function lookupFile(
   return {
     body,
     contentType,
-    // 缓存策略：index.html 必须协商（保证发版后拿到新哈希资源名）；
+    // 入口与固定更新控制脚本必须协商，保证发布后能发现新资源及更新策略；
     // Vite 带 内容哈希 的产物在 assets/ 下，可永久缓存；其余（favicon、字体等）短缓存
     cacheControl:
-      relative === "index.html"
+      relative === "index.html" ||
+      relative === "sw.js" ||
+      relative === "pwa-update-worker.js"
         ? "no-cache"
         : relative.startsWith("assets/")
           ? "public, max-age=31536000, immutable"

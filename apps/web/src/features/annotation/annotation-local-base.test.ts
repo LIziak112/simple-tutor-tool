@@ -156,7 +156,8 @@ it("PNG、布局、矢量、同步状态分键落地，重启恢复且不伪造b
   expect(restored?.localBase?.layout).toEqual(layout);
   expect(restored?.localBase?.png.size).toBe(png.size);
   expect(restored?.doc).toEqual(doc);
-  expect(restored?.pending?.doc).toEqual(doc);
+  expect(restored?.pending).toBeNull();
+  expect(restored?.editedAt).toBe(0);
   expect(restored?.base).toBeNull();
   expect(
     await getAnnotationRecord({ ...session, studentId: "student-b" }, scope),
@@ -176,7 +177,15 @@ it("本地写失败不得冒称已保存，失败仍保留内存稿可重试", a
   expect((await getAnnotationRecord(session, scope))?.local).toBe("failed");
 });
 it("不同布局或不匹配的矢量不得覆盖已有本机底图", async () => {
-  await writeLocalAnnotationBase(session, scope, { png, layout }, doc);
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    {
+      ...doc,
+      strokes: [strokeAt(1)],
+    },
+  );
   await expect(
     writeLocalAnnotationBase(
       session,
@@ -184,7 +193,7 @@ it("不同布局或不匹配的矢量不得覆盖已有本机底图", async () =
       { png, layout: { ...layout, geometrySignature: "d".repeat(64) } },
       doc,
     ),
-  ).rejects.toThrow("布局");
+  ).rejects.toThrow("不可变原稿");
   await expect(
     writeLocalAnnotationBase(
       session,
@@ -196,6 +205,34 @@ it("不同布局或不匹配的矢量不得覆盖已有本机底图", async () =
   expect(
     (await getAnnotationRecord(session, scope))?.localBase?.layout,
   ).toEqual(layout);
+});
+
+it("未知正文版本、坏布局与坏 pending 保留原始记录并拒绝当空稿重建", async () => {
+  const backend = memoryAnnotationBackend();
+  installAnnotationBackend(backend);
+  for (const invalid of [
+    { doc: { ...doc, version: 2 }, localBase: null, pending: null },
+    {
+      doc,
+      localBase: { png, layout: { ...layout, renderVersion: 99 } },
+      pending: null,
+    },
+    {
+      doc,
+      localBase: null,
+      pending: { mutationId: "old", doc: { ...doc, version: 2 } },
+    },
+  ]) {
+    await backend.set(annotationKeyOf(session, scope), invalid);
+    resetAnnotationStoreForTest();
+    await expect(
+      getAnnotationRecord(session, scope, { strictRead: true }),
+    ).rejects.toThrow();
+    await expect(
+      writeLocalAnnotationBase(session, scope, { png, layout }, doc),
+    ).rejects.toThrow();
+    expect(await backend.get(annotationKeyOf(session, scope))).toEqual(invalid);
+  }
 });
 
 it("重试原子落盘保留同一底图、文档版本和待传标识", async () => {
@@ -507,6 +544,7 @@ describe("分键持久化（批次五 P1-1）", () => {
     );
     const { storage } = countingStorage();
     await writeLocalAnnotationBase(session, scope, { png, layout }, doc);
+    writeAnnotationDoc(session, scope, { ...doc, strokes: [strokeAt(1)] });
     await settleAnnotationPersistence();
     const keys = (await storage.getAll("")).map(([key]) => key);
     const baseKey = keys.find((key) => key.startsWith(BASE_KEY_PREFIX));

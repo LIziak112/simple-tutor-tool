@@ -13,6 +13,53 @@ const layout = {
   fontSignature: "c".repeat(64),
 };
 describe("原位题面布局契约", () => {
+  it("v3 冻结表面只接受有限且不重复的已定位填空槽位", () => {
+    const frozen = {
+      ...layout,
+      renderVersion: 3,
+      controls: [
+        {
+          slotId: "slot-1",
+          kind: "text",
+          x: 30,
+          y: 40,
+          width: 112,
+          height: 44,
+        },
+      ],
+    };
+    expect(annotationSurfaceLayoutSchema.parse(frozen)).toEqual(frozen);
+    expect(
+      annotationSurfaceLayoutSchema.parse({
+        ...frozen,
+        controls: [{ ...frozen.controls[0], slotId: "gap.alpha" }],
+      }).renderVersion,
+    ).toBe(3);
+    for (const controls of [
+      [],
+      [frozen.controls[0], frozen.controls[0]],
+      [{ ...frozen.controls[0], x: Infinity }],
+      [{ ...frozen.controls[0], x: 290 }],
+      [{ ...frozen.controls[0], kind: "unknown" }],
+    ]) {
+      expect(
+        annotationSurfaceLayoutSchema.safeParse({ ...frozen, controls })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      annotationSurfaceLayoutSchema.safeParse({
+        ...frozen,
+        controls: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      annotationSurfaceLayoutSchema.safeParse({
+        ...layout,
+        controls: frozen.controls,
+      }).success,
+    ).toBe(false);
+  });
   it("可选兼容证据保留旧签名，并限制几何数量、坐标与字体长度", () => {
     const compatibility = {
       version: 1,

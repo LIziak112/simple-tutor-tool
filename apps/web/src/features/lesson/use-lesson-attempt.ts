@@ -7,6 +7,8 @@ import type {
   StudentAnswer,
 } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptSaveStatus } from "@/features/attempt/use-attempt-save-status";
@@ -18,6 +20,7 @@ import {
   type SubmitEvidenceProblem,
 } from "@/features/notes/submit-evidence";
 import { ApiError, submitLessonQuestionApi } from "@/lib/api";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useOnlineStatus } from "@/lib/use-online-status";
 
 /**
@@ -165,6 +168,20 @@ export function useLessonAttempt(
     inkControllers,
   );
   const denied = draftSync.status.state === "denied";
+  usePwaUpdateGuard(
+    () =>
+      prepareDraftForPwaUpdate(
+        attemptId,
+        async () => {
+          if (answers === null || draftSync.recoveryError)
+            throw new Error("讲练作答恢复尚未完成，请先处理后更新");
+          if (denied) throw new Error("讲练作答保存权限已变化，请先处理后更新");
+          await flushAnswers();
+        },
+        true,
+      ),
+    `${getDraftSessionEpoch()}:lesson:${attemptId}`,
+  );
 
   // 已解锁提示：初值取开卷回显，解锁成功本地追加；start 数据刷新以服务端为准
   const [hintsOpened, setHintsOpened] = useState<

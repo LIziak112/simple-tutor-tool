@@ -295,9 +295,9 @@ interface BaselineEntry {
 }
 
 /**
- * A. 呈现登记表唯一调度边界：answering/index.tsx 四个显式 switch
+ * A. 呈现登记表唯一调度边界：answering/index.tsx 四个完整派发 switch
  * （dispatchInput / dispatchReadOnly / dispatchComparison /
- * dispatchCompletion）+ assertNever 收尾，是 §4.4 允许的中央扩展点；
+ * dispatchCompletion）+ 冻结原稿填空能力分支，是 §4.4 允许的中央扩展点；
  * 窄化三元是 switch case 臂内把联合 answer 收窄到该 kind 视图的传参。
  */
 const DISPATCH_INDEX_CASES: readonly BaselineEntry[] = (
@@ -314,7 +314,7 @@ const DISPATCH_INDEX_CASES: readonly BaselineEntry[] = (
 ).map((literal) => ({
   file: "apps/web/src/features/answering/index.tsx",
   snippet: `case "${literal}":`,
-  count: 4,
+  count: literal === "fill" ? 5 : 4,
 }));
 const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
   ...(
@@ -322,7 +322,7 @@ const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
   ).map((literal) => ({
     file: "apps/web/src/features/answering/index.tsx",
     snippet: `answer?.kind === "${literal}"`,
-    count: 4, // Input/ReadOnly/Comparison/Completion 四调度臂内收窄
+    count: literal === "fill" ? 5 : 4, // 四调度臂；fill 另有冻结原稿真实控件
   })),
   {
     file: "apps/web/src/features/answering/index.tsx",

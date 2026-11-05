@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
+import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
 import {
@@ -29,6 +30,7 @@ import {
 } from "@/features/ink/input-preference";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { studentAnnotationBasePngUrl } from "@/lib/api";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { blocksInBaseDomain } from "./annotation-anchor";
 import {
   getAnnotationRecord,
@@ -102,6 +104,25 @@ export function AnnotationWorkspace({
   const label = `${ariaPrefix}题干标注`;
 
   const surfaceRef = useRef<AnnotationSurface | null>(null);
+  usePwaUpdateGuard(
+    () =>
+      prepareAnnotationForPwaUpdate(
+        session,
+        { attemptId, questionId, phase },
+        async () => {
+          surfaceRef.current?.finish();
+          await settleAnnotationPersistence();
+        },
+      ),
+    JSON.stringify([
+      session?.origin,
+      session?.studentId,
+      attemptId,
+      questionId,
+      phase,
+      "annotation-workspace",
+    ]),
+  );
   const coordinator = useAttemptEditor(null);
   useEffect(() => {
     if (phase !== "scratch") return;
