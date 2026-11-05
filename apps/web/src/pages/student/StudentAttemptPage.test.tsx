@@ -1,7 +1,9 @@
 import { onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { AttemptDraftData, AttemptResultData } from "@tutor/contract";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import {
   ApiError,
   AttemptDetailReadTimeoutError,
@@ -13,6 +15,21 @@ import {
 } from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAttemptPage from "./StudentAttemptPage";
+
+const cardRender = vi.hoisted(() => vi.fn());
+vi.mock("@/features/attempt/AttemptQuestionCard", async (original) => {
+  const actual =
+    await original<typeof import("@/features/attempt/AttemptQuestionCard")>();
+  return {
+    ...actual,
+    AttemptQuestionCard: (
+      props: ComponentProps<typeof AttemptQuestionCard>,
+    ) => {
+      cardRender(props.question.id);
+      return <actual.AttemptQuestionCard {...props} />;
+    },
+  };
+});
 
 /**
  * /s/attempts/:attemptId 通用答题页组件测试（T2A.6）：按 attemptId 直接加载
@@ -156,6 +173,17 @@ describe("草稿渲染不发起订正/笔记本请求（T6R.15 F）", () => {
 });
 
 describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
+  it("真实页面打开交卷确认时，重建的 AI 槽位不重复执行题卡", async () => {
+    mockedFetch.mockResolvedValue(COURSE_DRAFT);
+    renderPage();
+    const submit = await screen.findByRole("button", { name: "交卷" });
+    await act(async () => {});
+    const before = cardRender.mock.calls.length;
+    fireEvent.click(submit);
+    await screen.findByRole("dialog");
+    expect(cardRender.mock.calls.length).toBe(before);
+  });
+
   it("课程来源草稿：渲染答题会话与来源行「课程：xx · 第 n 次」+ 返回单元落地页", async () => {
     mockedFetch.mockResolvedValue(COURSE_DRAFT);
     renderPage();

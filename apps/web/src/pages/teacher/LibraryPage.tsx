@@ -35,10 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  LectureEditSheet,
-  QuestionEditSheet,
-} from "@/features/content/ContentEditSheet";
+import { ContentEditLoader } from "@/features/content/ContentEditLoader";
 import {
   contentTreeKey,
   useContentTree,
@@ -51,7 +48,6 @@ import {
   FolderSidebar,
 } from "@/features/library/FolderSidebar";
 import {
-  libraryFoldersKey,
   useLibraryFolders,
   useLibraryLectures,
   useLibraryUnits,
@@ -262,9 +258,10 @@ export function LibraryPage() {
   );
 
   const invalidateAll = async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: ["teacher", "library"] });
-    await queryClient.invalidateQueries({ queryKey: libraryFoldersKey });
-    await queryClient.invalidateQueries({ queryKey: contentTreeKey });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["teacher", "library"] }),
+      queryClient.invalidateQueries({ queryKey: contentTreeKey }),
+    ]);
   };
 
   /** 删除类 toast：带撤销（§4-6） */
@@ -731,14 +728,16 @@ export function LibraryPage() {
 
       {/* ---------- 弹层与抽屉（同一时刻至多一个主要弹层） ---------- */}
       {editingQuestionId !== null ? (
-        <QuestionEditSheet
-          questionId={editingQuestionId}
+        <ContentEditLoader
+          kind="question"
+          id={editingQuestionId}
           onClose={() => setEditingQuestionId(null)}
         />
       ) : null}
       {editingLectureId !== null ? (
-        <LectureEditSheet
-          lectureId={editingLectureId}
+        <ContentEditLoader
+          kind="lecture"
+          id={editingLectureId}
           onClose={() => setEditingLectureId(null)}
         />
       ) : null}

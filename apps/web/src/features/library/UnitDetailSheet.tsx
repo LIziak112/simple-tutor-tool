@@ -27,7 +27,6 @@ import {
   type UnitMetaUpdate,
   updateUnitMetaApi,
 } from "@/lib/api";
-import { libraryFoldersKey } from "./library-queries";
 
 /**
  * 单元详情面板（T2A.2）：改标题 / 主题 / 文件夹 / 配套讲义（D8）、使用情况、
@@ -99,11 +98,10 @@ export function UnitDetailSheet({
     onSuccess: async () => {
       setError(null);
       setSavedHint("已保存");
-      await queryClient.invalidateQueries({
-        queryKey: ["teacher", "library"],
-      });
-      await queryClient.invalidateQueries({ queryKey: libraryFoldersKey });
-      await queryClient.invalidateQueries({ queryKey: ["teacher", "content"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["teacher", "library"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "content"] }),
+      ]);
     },
     onError: (err) => {
       setSavedHint(null);

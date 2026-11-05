@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { QuestionPublic } from "@tutor/contract";
 import type { ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -6,8 +6,49 @@ import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { AttemptQuestionRow } from "./AttemptQuestionRow";
 
 vi.mock("./AttemptQuestionCard", () => ({
-  AttemptQuestionCard: vi.fn(() => <div>题面</div>),
+  AttemptQuestionCard: vi.fn(
+    ({ aiTrigger, footer }: ComponentProps<typeof AttemptQuestionCard>) => (
+      <div>
+        题面{aiTrigger}
+        {footer}
+      </div>
+    ),
+  ),
 }));
+
+it("页面重建 AI 和提交槽位时不重复执行题卡，槽位及材料动作仍使用最新值", () => {
+  const props = rowProps();
+  const first = vi.fn();
+  const latest = vi.fn();
+  const view = (label: string, action: () => void) => (
+    <AttemptQuestionRow
+      {...props}
+      aiTrigger={
+        <button type="button" onClick={action}>
+          {label}助教
+        </button>
+      }
+      aiContent={<p>{label}回复</p>}
+      footer={
+        <button type="button" onClick={action}>
+          {label}提交
+        </button>
+      }
+      onOpenMaterial={action}
+    />
+  );
+  const { rerender } = render(view("首次", first));
+  const before = vi.mocked(AttemptQuestionCard).mock.calls.length;
+  rerender(view("当前", latest));
+  expect(vi.mocked(AttemptQuestionCard).mock.calls.length).toBe(before);
+  expect(screen.queryByText("首次助教")).not.toBeInTheDocument();
+  expect(screen.getByText("当前回复")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "当前助教" }));
+  fireEvent.click(screen.getByRole("button", { name: "当前提交" }));
+  vi.mocked(AttemptQuestionCard).mock.lastCall?.[0].onOpenMaterial?.();
+  expect(latest).toHaveBeenCalledTimes(3);
+  expect(first).not.toHaveBeenCalled();
+});
 it("仅顶栏保存状态更新时不重渲染题面；答案或待检查变化必须更新", () => {
   const question: QuestionPublic = {
     id: "q",

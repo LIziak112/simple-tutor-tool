@@ -5,11 +5,14 @@ import type {
 } from "@tutor/contract";
 import {
   type ComponentProps,
+  createContext,
   memo,
   type ReactNode,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -77,6 +80,18 @@ type RowProps = Omit<
 };
 const emptyHints: readonly HintOpenedEntry[] = [];
 
+// 槽位单独订阅：页面重建 JSX 时更新按钮与反馈，不穿透题卡的默认属性比较。
+const SlotsContext = createContext<Pick<CardProps, "aiTrigger" | "footer">>({});
+function AiTriggerSlot() {
+  return useContext(SlotsContext).aiTrigger;
+}
+function FooterSlot() {
+  return useContext(SlotsContext).footer;
+}
+const aiTriggerSlot = <AiTriggerSlot />;
+const footerSlot = <FooterSlot />;
+const MemoizedQuestionCard = memo(AttemptQuestionCard);
+
 /** 按题绑定稳定操作；顶栏同步状态不重跑整卷Markdown和版式核对。 */
 export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   question,
@@ -87,6 +102,9 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   cardElements,
   events,
   aiContent,
+  aiTrigger,
+  footer,
+  onOpenMaterial,
   hidden = false,
   className,
   lazyMount = false,
@@ -151,50 +169,88 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
       onAnswer(question.id, value, defer ?? false),
     [onAnswer, question.id],
   );
+  const toggleFlag = useCallback(
+    () => onToggleFlag(question.id),
+    [onToggleFlag, question.id],
+  );
+  const toggleUnsure = useCallback(
+    () => onToggleUnsure(question.id),
+    [onToggleUnsure, question.id],
+  );
+  const unlockHint = useCallback(
+    (entry: HintOpenedEntry) => onHintUnlocked(question.id, entry),
+    [onHintUnlocked, question.id],
+  );
+  const trackInkStroke = useCallback<NonNullable<CardProps["onInkStroke"]>>(
+    (strokes) => {
+      events.noteInteraction(question.id);
+      events.trackInkStrokes(question.id, strokes);
+    },
+    [events, question.id],
+  );
+  const trackInkEdit = useCallback<NonNullable<CardProps["onInkEdit"]>>(
+    (reason) => {
+      events.noteInteraction(question.id);
+      events.trackInkEdit(question.id, reason);
+    },
+    [events, question.id],
+  );
+  const trackInkFullscreen = useCallback<
+    NonNullable<CardProps["onInkFullscreen"]>
+  >(
+    (on) => {
+      events.noteInteraction(question.id);
+      events.trackInkFullscreen(question.id, on);
+    },
+    [events, question.id],
+  );
+  // 组材料入口由页面逐题装配；稳定代理只转发提交后的最新动作。
+  const openMaterialRef = useRef(onOpenMaterial);
+  useLayoutEffect(() => {
+    openMaterialRef.current = onOpenMaterial;
+  }, [onOpenMaterial]);
+  const openMaterial = useCallback(() => openMaterialRef.current?.(), []);
   return (
-    <li ref={register} hidden={hidden} className={className}>
-      {showCard ? (
-        <AttemptQuestionCard
-          {...props}
-          aiTrigger={props.aiTrigger}
-          question={question}
-          hints={props.hints ?? emptyHints}
-          onAnswer={handleAnswer}
-          onToggleFlag={() => onToggleFlag(question.id)}
-          onToggleUnsure={() => onToggleUnsure(question.id)}
-          onHintUnlocked={(entry) => onHintUnlocked(question.id, entry)}
-          onInkStroke={(strokes) => {
-            events.noteInteraction(question.id);
-            events.trackInkStrokes(question.id, strokes);
-          }}
-          onInkEdit={(reason) => {
-            events.noteInteraction(question.id);
-            events.trackInkEdit(question.id, reason);
-          }}
-          onInkFullscreen={(on) => {
-            events.noteInteraction(question.id);
-            events.trackInkFullscreen(question.id, on);
-          }}
-        />
-      ) : (
-        // 等高占位：首挂前按题干/选项数估算；窗口化卸载后回填实测高度，
-        // 重挂零位移（估算偏小带来的一次位移仍由浏览器滚动锚定兜底）。
-        <div
-          data-slot="question-placeholder"
-          className="rounded-[8px] border border-dashed border-border/70 bg-card/40"
-          style={{
-            minHeight:
-              mountCtl?.measuredHeight(question.id) ??
-              placeholderHeight(question),
-          }}
-        >
-          <span className="sr-only">
-            第 {props.index + 1} 题，滚动到此处后显示
-          </span>
-        </div>
-      )}
-      {aiContent}
-    </li>
+    <SlotsContext value={{ aiTrigger, footer }}>
+      <li ref={register} hidden={hidden} className={className}>
+        {showCard ? (
+          <MemoizedQuestionCard
+            {...props}
+            aiTrigger={aiTrigger == null ? aiTrigger : aiTriggerSlot}
+            footer={footer == null ? footer : footerSlot}
+            {...(onOpenMaterial === undefined
+              ? {}
+              : { onOpenMaterial: openMaterial })}
+            question={question}
+            hints={props.hints ?? emptyHints}
+            onAnswer={handleAnswer}
+            onToggleFlag={toggleFlag}
+            onToggleUnsure={toggleUnsure}
+            onHintUnlocked={unlockHint}
+            onInkStroke={trackInkStroke}
+            onInkEdit={trackInkEdit}
+            onInkFullscreen={trackInkFullscreen}
+          />
+        ) : (
+          // 等高占位：首挂前按题干/选项数估算；窗口化卸载后回填实测高度，
+          // 重挂零位移（估算偏小带来的一次位移仍由浏览器滚动锚定兜底）。
+          <div
+            data-slot="question-placeholder"
+            className="rounded-[8px] border border-dashed border-border/70 bg-card/40"
+            style={{
+              minHeight:
+                mountCtl?.measuredHeight(question.id) ??
+                placeholderHeight(question),
+            }}
+          >
+            <span className="sr-only">
+              第 {props.index + 1} 题，滚动到此处后显示
+            </span>
+          </div>
+        )}
+        {aiContent}
+      </li>
+    </SlotsContext>
   );
 });
 

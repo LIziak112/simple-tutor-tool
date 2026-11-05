@@ -1,5 +1,5 @@
 import { ArrowLeft, Dumbbell, ListTree } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router";
 import {
   Dialog,
@@ -131,51 +131,57 @@ export default function StudentLectureViewPage() {
   // T4.0b 交互族：折叠开/合、steps 揭晓 → directive_interact（host=lecture）。
   // index=文档全局指令序号（docIndex）；reveal 额外带容器内步序号 step
   //（契约按 action 判别联合，分支构造让 TS 精确收窄）。
-  const onDirectiveTelemetry = useRef((event: DirectiveTelemetryInfo): void => {
-    const queue = queueRef.current;
-    if (queue === null) return;
-    const version = lectureUpdatedAtRef.current;
-    if (event.action === "reveal" && event.step !== undefined) {
-      queue.track({
-        type: "directive_interact",
-        clientTs: Date.now(),
-        host: "lecture",
-        lectureId: id,
-        name: event.name,
-        index: event.index,
-        action: "reveal",
-        step: event.step,
-        ...(version !== null ? { lectureUpdatedAt: version } : {}),
-      });
-      return;
-    }
-    if (event.action === "open" || event.action === "close") {
-      queue.track({
-        type: "directive_interact",
-        clientTs: Date.now(),
-        host: "lecture",
-        lectureId: id,
-        name: event.name,
-        index: event.index,
-        action: event.action,
-        ...(version !== null ? { lectureUpdatedAt: version } : {}),
-      });
-    }
-  }).current;
+  const onDirectiveTelemetry = useCallback(
+    (event: DirectiveTelemetryInfo): void => {
+      const queue = queueRef.current;
+      if (queue === null) return;
+      const version = lectureUpdatedAtRef.current;
+      if (event.action === "reveal" && event.step !== undefined) {
+        queue.track({
+          type: "directive_interact",
+          clientTs: Date.now(),
+          host: "lecture",
+          lectureId: id,
+          name: event.name,
+          index: event.index,
+          action: "reveal",
+          step: event.step,
+          ...(version !== null ? { lectureUpdatedAt: version } : {}),
+        });
+        return;
+      }
+      if (event.action === "open" || event.action === "close") {
+        queue.track({
+          type: "directive_interact",
+          clientTs: Date.now(),
+          host: "lecture",
+          lectureId: id,
+          name: event.name,
+          index: event.index,
+          action: event.action,
+          ...(version !== null ? { lectureUpdatedAt: version } : {}),
+        });
+      }
+    },
+    [id],
+  );
 
   // T4.0b 位置族：「当前阅读节」切换 → lecture_section_focus（迟滞防抖 §5.0-C13）
-  const trackSectionFocus = useRef((headingIndex: number): void => {
-    setCurrentIndex(headingIndex);
-    queueRef.current?.track({
-      type: "lecture_section_focus",
-      clientTs: Date.now(),
-      lectureId: id,
-      headingIndex,
-      ...(lectureUpdatedAtRef.current !== null
-        ? { lectureUpdatedAt: lectureUpdatedAtRef.current }
-        : {}),
-    });
-  }).current;
+  const trackSectionFocus = useCallback(
+    (headingIndex: number): void => {
+      setCurrentIndex(headingIndex);
+      queueRef.current?.track({
+        type: "lecture_section_focus",
+        clientTs: Date.now(),
+        lectureId: id,
+        headingIndex,
+        ...(lectureUpdatedAtRef.current !== null
+          ? { lectureUpdatedAt: lectureUpdatedAtRef.current }
+          : {}),
+      });
+    },
+    [id],
+  );
   useLectureSectionFocus({
     enabled: lectureQuery.data !== undefined,
     sourceKey: lectureQuery.data?.markdown ?? "",

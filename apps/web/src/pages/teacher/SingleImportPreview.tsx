@@ -14,7 +14,14 @@ import {
   RefreshCw,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,6 +93,8 @@ export function SingleImportPreview({
   onBack,
 }: SingleImportPreviewProps) {
   const [text, setText] = useState(input.markdown);
+  // 只延后昂贵的展示解析；校验请求与提交始终读取当前原文。
+  const previewText = useDeferredValue(text);
   const [preview, setPreview] = useState<ImportPreviewData | null>(null);
   const [previewPending, setPreviewPending] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -296,8 +305,8 @@ export function SingleImportPreview({
             渲染预览
           </p>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="mx-auto max-w-3xl">
-              <RichMarkdown source={text} />
+            <div className="mx-auto max-w-3xl" aria-busy={previewText !== text}>
+              <RichMarkdown source={previewText} />
             </div>
           </div>
         </div>
