@@ -1,0 +1,503 @@
+{
+  "sourceReport": "docs/审查报告/固定逻辑题面跨设备实测-20261105.md",
+  "desktop": {
+    "cssWidth": 720,
+    "cssHeight": 152.546875,
+    "textRects": [
+      {
+        "x": 0,
+        "y": 3,
+        "width": 461.3125,
+        "height": 21
+      },
+      {
+        "x": 461.3125,
+        "y": 5,
+        "width": 9.5,
+        "height": 18
+      },
+      {
+        "x": 472.890625,
+        "y": 2,
+        "width": 7.53125,
+        "height": 22
+      },
+      {
+        "x": 480.421875,
+        "y": 5,
+        "width": 11.078125,
+        "height": 18
+      },
+      {
+        "x": 491.5,
+        "y": 2,
+        "width": 7.53125,
+        "height": 22
+      },
+      {
+        "x": 504.40625,
+        "y": 2,
+        "width": 15.0625,
+        "height": 22
+      },
+      {
+        "x": 524.84375,
+        "y": 5,
+        "width": 11.078125,
+        "height": 18
+      },
+      {
+        "x": 535.921875,
+        "y": -0.03125,
+        "width": 6.78125,
+        "height": 16
+      },
+      {
+        "x": 547.953125,
+        "y": 2,
+        "width": 15.0625,
+        "height": 22
+      },
+      {
+        "x": 569.625,
+        "y": 13.6875,
+        "width": 6.78125,
+        "height": 16
+      },
+      {
+        "x": 569.625,
+        "y": -0.625,
+        "width": 6.78125,
+        "height": 16
+      },
+      {
+        "x": 578.71875,
+        "y": 3,
+        "width": 128,
+        "height": 21
+      },
+      {
+        "x": 0,
+        "y": 31,
+        "width": 96,
+        "height": 21
+      },
+      {
+        "x": 0,
+        "y": 74.234375,
+        "width": 52,
+        "height": 21
+      },
+      {
+        "x": 172,
+        "y": 74.234375,
+        "width": 68,
+        "height": 21
+      },
+      {
+        "x": 360,
+        "y": 74.234375,
+        "width": 16,
+        "height": 21
+      },
+      {
+        "x": 0,
+        "y": 119.546875,
+        "width": 9.140625,
+        "height": 23
+      },
+      {
+        "x": 9.140625,
+        "y": 130.4375,
+        "width": 6.78125,
+        "height": 16
+      },
+      {
+        "x": 12.890625,
+        "y": 112.75,
+        "width": 6.78125,
+        "height": 16
+      },
+      {
+        "x": 23.84375,
+        "y": 118.546875,
+        "width": 9.6875,
+        "height": 22
+      },
+      {
+        "x": 33.53125,
+        "y": 121.546875,
+        "width": 11.078125,
+        "height": 18
+      },
+      {
+        "x": 44.609375,
+        "y": 116.515625,
+        "width": 6.78125,
+        "height": 16
+      },
+      {
+        "x": 55.5625,
+        "y": 121.546875,
+        "width": 10.078125,
+        "height": 18
+      },
+      {
+        "x": 65.640625,
+        "y": 121.546875,
+        "width": 11.078125,
+        "height": 18
+      },
+      {
+        "x": 82.09375,
+        "y": 118.546875,
+        "width": 15.0625,
+        "height": 22
+      },
+      {
+        "x": 102.53125,
+        "y": 118.546875,
+        "width": 9.6875,
+        "height": 22
+      }
+    ],
+    "blocks": [
+      {
+        "tag": "DIV",
+        "node": "root",
+        "x": 0,
+        "y": 0,
+        "width": 720,
+        "height": 152.546875
+      },
+      {
+        "tag": "P",
+        "node": "stem/p/0",
+        "x": 0,
+        "y": 0,
+        "width": 720,
+        "height": 56
+      },
+      {
+        "tag": "SPAN",
+        "node": "stem/p/0",
+        "x": 461.3125,
+        "y": 2,
+        "width": 117.40625,
+        "height": 22
+      },
+      {
+        "tag": "P",
+        "node": "stem/p/1",
+        "x": 0,
+        "y": 64,
+        "width": 720,
+        "height": 44
+      },
+      {
+        "tag": "INPUT",
+        "node": "stem/p/1",
+        "x": 56,
+        "y": 65.59375,
+        "width": 112,
+        "height": 44
+      },
+      {
+        "tag": "INPUT",
+        "node": "stem/p/1",
+        "x": 244,
+        "y": 65.59375,
+        "width": 112,
+        "height": 44
+      },
+      {
+        "tag": "P",
+        "node": "stem/p/2",
+        "x": 0,
+        "y": 116,
+        "width": 720,
+        "height": 28.546875
+      },
+      {
+        "tag": "SPAN",
+        "node": "stem/p/2",
+        "x": 0,
+        "y": 118.546875,
+        "width": 112.21875,
+        "height": 22
+      }
+    ],
+    "fonts": [
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      [
+        "KaTeX_Main, \"Times New Roman\", serif",
+        "19.36px",
+        "400",
+        "23.232px",
+        "normal"
+      ],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      [
+        "KaTeX_Main, \"Times New Roman\", serif",
+        "19.36px",
+        "400",
+        "23.232px",
+        "normal"
+      ]
+    ]
+  },
+  "ipad": {
+    "cssWidth": 720,
+    "cssHeight": 152,
+    "textRects": [
+      {
+        "x": 0,
+        "y": 3,
+        "width": 461.3125,
+        "height": 22
+      },
+      {
+        "x": 461.296875,
+        "y": 6,
+        "width": 9.484375,
+        "height": 19
+      },
+      {
+        "x": 472.859375,
+        "y": 2,
+        "width": 7.53125,
+        "height": 24
+      },
+      {
+        "x": 480.390625,
+        "y": 6,
+        "width": 11.078125,
+        "height": 19
+      },
+      {
+        "x": 491.46875,
+        "y": 2,
+        "width": 7.53125,
+        "height": 24
+      },
+      {
+        "x": 504.375,
+        "y": 2,
+        "width": 15.0625,
+        "height": 24
+      },
+      {
+        "x": 524.84375,
+        "y": 6,
+        "width": 11.078125,
+        "height": 19
+      },
+      {
+        "x": 535.90625,
+        "y": -0.546875,
+        "width": 6.78125,
+        "height": 17
+      },
+      {
+        "x": 547.953125,
+        "y": 2,
+        "width": 15.0625,
+        "height": 24
+      },
+      {
+        "x": 569.65625,
+        "y": 13.96875,
+        "width": 6.78125,
+        "height": 17
+      },
+      {
+        "x": 569.65625,
+        "y": -0.34375,
+        "width": 6.78125,
+        "height": 17
+      },
+      {
+        "x": 578.765625,
+        "y": 3,
+        "width": 128,
+        "height": 22
+      },
+      {
+        "x": 0,
+        "y": 31,
+        "width": 96,
+        "height": 22
+      },
+      {
+        "x": 0,
+        "y": 73,
+        "width": 52,
+        "height": 22
+      },
+      {
+        "x": 172,
+        "y": 73,
+        "width": 68,
+        "height": 22
+      },
+      {
+        "x": 360,
+        "y": 73,
+        "width": 16,
+        "height": 22
+      },
+      {
+        "x": 0,
+        "y": 119,
+        "width": 9.140625,
+        "height": 24
+      },
+      {
+        "x": 9.125,
+        "y": 129.15625,
+        "width": 6.78125,
+        "height": 17
+      },
+      {
+        "x": 12.875,
+        "y": 111.46875,
+        "width": 6.78125,
+        "height": 17
+      },
+      {
+        "x": 23.84375,
+        "y": 118,
+        "width": 9.6875,
+        "height": 24
+      },
+      {
+        "x": 33.515625,
+        "y": 122,
+        "width": 11.078125,
+        "height": 19
+      },
+      {
+        "x": 44.59375,
+        "y": 115.453125,
+        "width": 6.78125,
+        "height": 17
+      },
+      {
+        "x": 55.546875,
+        "y": 122,
+        "width": 10.0625,
+        "height": 19
+      },
+      {
+        "x": 65.609375,
+        "y": 122,
+        "width": 11.078125,
+        "height": 19
+      },
+      {
+        "x": 82.0625,
+        "y": 118,
+        "width": 15.0625,
+        "height": 24
+      },
+      {
+        "x": 102.578125,
+        "y": 118,
+        "width": 9.6875,
+        "height": 24
+      }
+    ],
+    "blocks": [
+      {
+        "tag": "DIV",
+        "node": "root",
+        "x": 0,
+        "y": 0,
+        "width": 720,
+        "height": 152
+      },
+      {
+        "tag": "P",
+        "node": "stem/p/0",
+        "x": 0,
+        "y": 0,
+        "width": 720,
+        "height": 56
+      },
+      {
+        "tag": "SPAN",
+        "node": "stem/p/0",
+        "x": 461.3125,
+        "y": 2,
+        "width": 117.453125,
+        "height": 24
+      },
+      {
+        "tag": "P",
+        "node": "stem/p/1",
+        "x": 0,
+        "y": 64,
+        "width": 720,
+        "height": 44
+      },
+      {
+        "tag": "INPUT",
+        "node": "stem/p/1",
+        "x": 56,
+        "y": 65.59375,
+        "width": 112,
+        "height": 44
+      },
+      {
+        "tag": "INPUT",
+        "node": "stem/p/1",
+        "x": 244,
+        "y": 65.59375,
+        "width": 112,
+        "height": 44
+      },
+      {
+        "tag": "P",
+        "node": "stem/p/2",
+        "x": 0,
+        "y": 116,
+        "width": 720,
+        "height": 28
+      },
+      {
+        "tag": "SPAN",
+        "node": "stem/p/2",
+        "x": 0,
+        "y": 118,
+        "width": 112.265625,
+        "height": 24
+      }
+    ],
+    "fonts": [
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      [
+        "KaTeX_Main, \"Times New Roman\", serif",
+        "19.360001px",
+        "400",
+        "23.232002px",
+        "normal"
+      ],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      ["\"Geist Variable\", sans-serif", "16px", "400", "28px", "normal"],
+      [
+        "KaTeX_Main, \"Times New Roman\", serif",
+        "19.360001px",
+        "400",
+        "23.232002px",
+        "normal"
+      ]
+    ]
+  }
+}
