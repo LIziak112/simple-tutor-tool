@@ -51,7 +51,6 @@ import {
   FolderSidebar,
 } from "@/features/library/FolderSidebar";
 import {
-  libraryFoldersKey,
   useLibraryFolders,
   useLibraryLectures,
   useLibraryUnits,
@@ -262,9 +261,10 @@ export function LibraryPage() {
   );
 
   const invalidateAll = async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: ["teacher", "library"] });
-    await queryClient.invalidateQueries({ queryKey: libraryFoldersKey });
-    await queryClient.invalidateQueries({ queryKey: contentTreeKey });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["teacher", "library"] }),
+      queryClient.invalidateQueries({ queryKey: contentTreeKey }),
+    ]);
   };
 
   /** 删除类 toast：带撤销（§4-6） */

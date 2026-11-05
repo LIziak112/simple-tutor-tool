@@ -230,6 +230,10 @@ describe("资源库页面", () => {
     await waitFor(() => {
       expect(mockedDeleteUnit).toHaveBeenCalledWith(UNIT_ID);
     });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(mockedFolders).toHaveBeenCalledTimes(2);
   });
 
   it("批量移动：选中两个单元 → 选目标文件夹 → batchLibraryApi(action=move)", async () => {

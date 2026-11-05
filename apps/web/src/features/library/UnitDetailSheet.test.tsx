@@ -1,4 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { LibraryUnitSummary, LibraryUsage } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -82,6 +86,63 @@ function renderSheet() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+it("保存单元只刷新文件夹一次，并与内容树并行刷新", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  let finishFolders: (() => void) | undefined;
+  const folders = vi.fn(
+    () =>
+      new Promise<never[]>((resolve) => {
+        finishFolders = () => resolve([]);
+      }),
+  );
+  const content = vi.fn(async () => []);
+  const folderObserver = new QueryObserver(client, {
+    queryKey: ["teacher", "library", "folders"],
+    queryFn: folders,
+    initialData: [],
+  });
+  const contentObserver = new QueryObserver(client, {
+    queryKey: ["teacher", "content"],
+    queryFn: content,
+    initialData: [],
+  });
+  const stops = [
+    folderObserver.subscribe(() => {}),
+    contentObserver.subscribe(() => {}),
+  ];
+  apiMocks.updateUnitMetaApi.mockResolvedValue({});
+  render(
+    <QueryClientProvider client={client}>
+      <UnitDetailSheet
+        unit={UNIT}
+        options={{ folders: [], lectures: [] }}
+        usage={USAGE}
+        usagePending={false}
+        usageError={null}
+        onDelete={() => undefined}
+        onClose={() => undefined}
+      />
+    </QueryClientProvider>,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(folders).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(content).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "保存中…" })).toBeDisabled();
+    finishFolders?.();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "保存" })).not.toBeDisabled(),
+    );
+    expect(folders).toHaveBeenCalledTimes(1);
+  } finally {
+    finishFolders?.();
+    for (const stop of stops) stop();
+    client.clear();
+  }
 });
 
 describe("UnitDetailSheet 发布到共享（确认弹层说明快照语义）", () => {
