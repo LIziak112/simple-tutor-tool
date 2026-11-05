@@ -93,6 +93,70 @@ describe("学生阅读位置恢复", () => {
     },
   );
 
+  it("邻题连续挂载不应反复延期对齐；用户接管后仍停止补偿", () => {
+    const onCurrent = vi.fn();
+    const requestMount = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ version }) =>
+        useReadingPosition("attempt", cards, onCurrent, requestMount, version),
+      { initialProps: { version: 0 } },
+    );
+    act(() => result.current("q2"));
+    const element = cards.current.get("q2");
+    if (!element) throw new Error("缺少题卡夹具");
+    vi.mocked(element.getBoundingClientRect).mockReturnValue({
+      top: 370,
+      bottom: 770,
+      height: 400,
+    } as DOMRect);
+    for (const version of [1, 2, 3]) {
+      rerender({ version });
+      act(() => vi.advanceTimersByTime(51));
+    }
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({
+      top: 70,
+      behavior: "instant",
+    });
+    act(() => window.dispatchEvent(new Event("keydown")));
+    vi.mocked(element.getBoundingClientRect).mockReturnValue({
+      top: 440,
+      bottom: 840,
+      height: 400,
+    } as DOMRect);
+    rerender({ version: 4 });
+    advance();
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it("待执行挂载补偿在切换练习和卸载时取消", () => {
+    const onCurrent = vi.fn();
+    const requestMount = vi.fn();
+    const element = cards.current.get("q2");
+    if (!element) throw new Error("缺少题卡夹具");
+    const rect = vi.mocked(element.getBoundingClientRect);
+    const { result, rerender, unmount } = renderHook(
+      ({ id, version }) =>
+        useReadingPosition(id, cards, onCurrent, requestMount, version),
+      { initialProps: { id: "attempt", version: 0 } },
+    );
+    act(() => result.current("q2"));
+    rerender({ id: "attempt", version: 1 });
+    act(() => vi.advanceTimersByTime(50));
+    rerender({ id: "other", version: 0 });
+    const afterSwitch = rect.mock.calls.length;
+    act(() => vi.advanceTimersByTime(200));
+    expect(rect).toHaveBeenCalledTimes(afterSwitch);
+    expect(scroll).not.toHaveBeenCalled();
+    act(() => result.current("q2"));
+    rerender({ id: "other", version: 1 });
+    act(() => vi.advanceTimersByTime(50));
+    unmount();
+    const afterUnmount = rect.mock.calls.length;
+    act(() => vi.advanceTimersByTime(200));
+    expect(rect).toHaveBeenCalledTimes(afterUnmount);
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
   it("稳定后按相对题头偏移恢复一次，不抢输入焦点", () => {
     localStorage.setItem(
       key(),
