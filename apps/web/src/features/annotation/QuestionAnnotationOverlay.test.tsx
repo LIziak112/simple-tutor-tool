@@ -296,20 +296,58 @@ it("v3 填空使用原生唯一空位，不从历史 controls 坐标恢复输入
   expect(screen.getByRole("textbox", { name: "第1空" })).toBe(input);
   expect(input).toHaveValue("中文 2x");
 });
-it("几何无法匹配时明确保稿，不显墨、不开笔也不换图片", async () => {
-  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
-  const before = await getAnnotationRecord(session, scope);
-  render(<Harness />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("10px");
-  fireEvent.click(screen.getByText("标画"));
-  await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
-  expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
-  expect(screen.queryByRole("img")).toBeNull();
-  expect((await getAnnotationRecord(session, scope))?.localBase).toEqual(
-    before?.localBase,
-  );
-  expect((await getAnnotationRecord(session, scope))?.doc).toEqual(before?.doc);
-});
+it.each(["区域证据", "仅哈希"] as const)(
+  "几何无法匹配时明确保稿，不显墨、不开笔也不换图片（%s）",
+  async (evidence) => {
+    vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+    if (evidence === "区域证据") {
+      await writeLocalAnnotationBase(
+        session,
+        scope,
+        {
+          png: new Blob(["png"], { type: "image/png" }),
+          layout: {
+            ...layout,
+            renderVersion: 4,
+            renderProfile: "whole-question-v1",
+            compatibility: {
+              version: 1,
+              contentSignature: "d".repeat(64),
+              blocks: [
+                {
+                  tag: "P",
+                  x: 0,
+                  y: 0,
+                  width: 300,
+                  height: 40,
+                  node: "stem/p/0",
+                },
+              ],
+              fonts: [["16px", "16px", "400", "16px", "0px"]],
+              textRects: [],
+            },
+          },
+        },
+        { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+      );
+    }
+    const before = await getAnnotationRecord(session, scope);
+    render(<Harness />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      evidence === "区域证据" ? "10px" : "缺少位置证据",
+    );
+    fireEvent.click(screen.getByText("标画"));
+    await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
+    expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
+    expect(screen.queryByRole("img")).toBeNull();
+    expect((await getAnnotationRecord(session, scope))?.localBase).toEqual(
+      before?.localBase,
+    );
+    expect((await getAnnotationRecord(session, scope))?.doc).toEqual(
+      before?.doc,
+    );
+  },
+);
 it("每笔正文更新不重新核验或卸载画布，完成与复开保留撤销历史", async () => {
   render(<Harness />);
   await settleGeometry();
