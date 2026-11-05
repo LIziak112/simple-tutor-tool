@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import type { StudentLectureDetail } from "@tutor/contract";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
@@ -511,6 +511,102 @@ const STEPS_LECTURE: StudentLectureDetail = {
 };
 
 describe("StudentLectureViewPage：指令交互埋点（T4.0b directive_interact）", () => {
+  it("同一路由往返讲义后，详解与逐步揭晓使用当前讲义身份和版本", async () => {
+    let notify: IntersectionObserverCallback | undefined;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          notify = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const secondId = "44444444-4444-4444-8444-444444444444";
+    const secondVersion = "2026-10-01T10:00:00.000Z";
+    mockedLecture.mockImplementation(async (id) => ({
+      ...LECTURE,
+      id,
+      updatedAt: id === secondId ? secondVersion : LECTURE.updatedAt,
+      markdown: `${LECTURE.markdown}\n${STEPS_LECTURE.markdown}`,
+    }));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/s/lectures/${LECTURE_ID}`]}>
+          <Link to={`/s/lectures/${secondId}`}>第二篇</Link>
+          <Link to={`/s/lectures/${LECTURE_ID}`}>第一篇</Link>
+          <Routes>
+            <Route
+              path="/s/lectures/:id"
+              element={<StudentLectureViewPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("button", { name: /详解/ });
+    fireEvent.click(screen.getByRole("link", { name: "第二篇" }));
+    await waitFor(() =>
+      expect(mockedLecture).toHaveBeenCalledWith(secondId, undefined),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /详解/ }));
+    fireEvent.click(screen.getByRole("button", { name: /显示下一步/ }));
+    const target = screen.getByRole("heading", { name: "二、有理数的分类" });
+    act(() =>
+      notify?.(
+        [
+          {
+            target,
+            intersectionRatio: 1,
+            isIntersecting: true,
+            boundingClientRect: target.getBoundingClientRect(),
+            intersectionRect: target.getBoundingClientRect(),
+            rootBounds: null,
+            time: 0,
+          },
+        ],
+        {} as IntersectionObserver,
+      ),
+    );
+    fireEvent.click(screen.getByRole("link", { name: "第一篇" }));
+    await screen.findByRole("button", { name: /详解/ });
+    fireEvent.click(screen.getByRole("button", { name: /详解/ }));
+    view.unmount();
+    await waitFor(() => {
+      const events = mockedPostEvents.mock.calls.flatMap(([batch]) => batch);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "lecture_section_focus",
+          lectureId: secondId,
+          lectureUpdatedAt: secondVersion,
+        }),
+      );
+      expect(
+        events.filter((event) => event.type === "directive_interact"),
+      ).toEqual([
+        expect.objectContaining({
+          lectureId: secondId,
+          lectureUpdatedAt: secondVersion,
+          action: "open",
+        }),
+        expect.objectContaining({
+          lectureId: secondId,
+          lectureUpdatedAt: secondVersion,
+          action: "reveal",
+        }),
+        expect.objectContaining({
+          lectureId: LECTURE_ID,
+          lectureUpdatedAt: LECTURE.updatedAt,
+        }),
+      ]);
+    });
+    client.clear();
+  });
+
   it("详解折叠开/合双向上报 directive_interact（host=lecture，带版本定位）", async () => {
     mockedLecture.mockResolvedValue(LECTURE);
     const { unmount } = renderPage();
