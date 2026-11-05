@@ -24,6 +24,7 @@ import {
 import { contentHash64, stableContentHash64 } from "@/lib/content-hash";
 import { measureStage } from "@/lib/performance-stages";
 import {
+  ANNOTATION_SURFACE_TOLERANCE_CSS_PX,
   compatibleSurfaceEvidence,
   legacySurfaceFontCandidates,
   normalizeSurfaceFont,
@@ -41,7 +42,10 @@ const FONT_PROPERTIES = [
 ] as const;
 
 /** 几何不含表单值、选中态和焦点；适用于正常题面与脱敏副本。 */
-export function measureQuestionSurface(surface: HTMLElement) {
+export function measureQuestionSurface(
+  surface: HTMLElement,
+  options?: { precise?: boolean },
+) {
   const root = surface.getBoundingClientRect();
   const declaredScale = Number(
     surface.closest<HTMLElement>("[data-annotation-scale]")?.dataset
@@ -49,7 +53,9 @@ export function measureQuestionSurface(surface: HTMLElement) {
   );
   const scale =
     Number.isFinite(declaredScale) && declaredScale > 0 ? declaredScale : 1;
-  const rounded = (value: number) => Math.round((value / scale) * 64) / 64;
+  // 旧签名保留 1/64px 序列化；准入比较保留小数，避免吞掉 10.001px 越界。
+  const rounded = (value: number) =>
+    options?.precise ? value / scale : Math.round((value / scale) * 64) / 64;
   const nodes = [
     surface,
     ...[...surface.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)].filter(
@@ -161,11 +167,16 @@ export async function questionSurfaceMatchesLayout(
   surface: HTMLElement,
   layout: AnnotationSurfaceLayout,
 ): Promise<boolean> {
-  const measure = measureQuestionSurface(surface);
+  if (!annotationSurfaceLayoutSchema.safeParse(layout).success) return false;
+  const measure = measureQuestionSurface(surface, {
+    precise: layout.compatibility !== undefined,
+  });
   if (
     question.questionRevisionId !== layout.questionRevisionId ||
-    Math.abs(measure.cssWidth - layout.cssWidth) > 1 ||
-    Math.abs(measure.cssHeight - layout.cssHeight) > 1
+    Math.abs(measure.cssWidth - layout.cssWidth) >
+      ANNOTATION_SURFACE_TOLERANCE_CSS_PX ||
+    Math.abs(measure.cssHeight - layout.cssHeight) >
+      ANNOTATION_SURFACE_TOLERANCE_CSS_PX
   )
     return false;
   const publicContent = publicContentSignatureOf(question);
@@ -228,6 +239,12 @@ export async function verifiedLegacySurfaceCompatibility(
   surface: HTMLElement,
   layout: AnnotationSurfaceLayout,
 ): Promise<AnnotationSurfaceCompatibility | null> {
+  if (
+    !annotationSurfaceLayoutSchema.safeParse(layout).success ||
+    (layout.renderVersion !== ANNOTATION_SURFACE_RENDER_VERSION &&
+      layout.renderVersion !== ANNOTATION_FROZEN_RENDER_VERSION)
+  )
+    return null;
   const measure = measureQuestionSurface(surface);
   if (
     layout.compatibility ||

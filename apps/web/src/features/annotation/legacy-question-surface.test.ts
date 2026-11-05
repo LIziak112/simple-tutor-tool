@@ -354,7 +354,7 @@ describe("阶段 0：旧稿来源与 PNG 门禁现状", () => {
 });
 
 describe("阶段 0：真实题面几何兼容现状", () => {
-  it("现状：实测填空稿字体相同、26 个行框、最大边界差 2px，旧判定仍拒绝", () => {
+  it("实测填空稿字体相同、26 个行框、最大边界差 2px，按批准容差放行", () => {
     expect(measuredFill.desktop.fonts.map(normalizeSurfaceFont)).toEqual(
       measuredFill.ipad.fonts.map(normalizeSurfaceFont),
     );
@@ -383,7 +383,6 @@ describe("阶段 0：真实题面几何兼容现状", () => {
       }),
     );
     expect(maxEdgeDelta).toBe(2);
-    // 批准的 10px 标准应返回 true；阶段 0 仅刻画旧实现，需求 red 另存日志。
     expect(
       compatibleSurfaceEvidence(
         {
@@ -395,7 +394,7 @@ describe("阶段 0：真实题面几何兼容现状", () => {
           fonts: measuredFill.ipad.fonts.map(normalizeSurfaceFont),
         },
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("只有哈希的 v2：原几何可命中，0.5px 改变后不能从哈希恢复旧边界", async () => {
