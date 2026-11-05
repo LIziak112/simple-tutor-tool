@@ -109,13 +109,13 @@ for (const preference of ["auto", "side", "below"] as const) {
       const snapshot = async () =>
         card.evaluate((article) => {
           const source = article.querySelector(
-            '[data-slot="annotation-frozen-surface"] img',
+            '[data-slot="question-surface"]',
           );
           const canvas = article.querySelector(
             'canvas[data-slot="annotation-canvas"]',
           );
           if (!source || !(canvas instanceof HTMLCanvasElement))
-            throw new Error("冻结原稿或标画画布未就绪");
+            throw new Error("题面或标画画布未就绪");
           const context = canvas.getContext("2d");
           if (!context) throw new Error("无法检查标画像素");
           const pixels = context.getImageData(
@@ -213,24 +213,16 @@ for (const preference of ["auto", "side", "below"] as const) {
         }
       };
       await cycle(true);
-      await page.getByRole("button", { name: "作答", exact: true }).click();
-      await expect(
-        card.locator('[data-slot="annotation-answer-view"]'),
-      ).toBeVisible();
-      await expect(
-        card.locator(
-          '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-        ),
-      ).toHaveCount(1);
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
+      await expect(card.locator('[data-slot="question-surface"]')).toHaveCount(
+        1,
+      );
       await expect(card.getByRole("radio")).toHaveCount(4);
-      await expect(canvas).toBeHidden();
-      await card.getByRole("button", { name: "返回原稿" }).click();
-      await expect(
-        card.locator('[data-slot="annotation-answer-view"]'),
-      ).toHaveCount(0);
-      await expect(
-        card.locator('[data-slot="annotation-frozen-surface"] img'),
-      ).toBeVisible();
+      await expect(canvas).toBeVisible();
+      await expect(canvas).toHaveAttribute("data-input-enabled", "false");
+      await card.locator('[role="radiogroup"] label').nth(1).click();
+      await expect(card.getByRole("radio").nth(1)).toBeChecked();
+      await expect.poll(snapshot).toEqual(original);
       await cycle(false);
       await page.screenshot({
         path: testInfo.outputPath(`paper-geometry-${preference}.png`),
@@ -256,9 +248,7 @@ test("题卡扩宽后题面居中且保留标画原尺寸与像素", {
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
   const geometry = async () =>
     card.evaluate((article) => {
-      const source = article.querySelector(
-        '[data-slot="annotation-frozen-surface"] img',
-      );
+      const source = article.querySelector('[data-slot="question-surface"]');
       const canvas = article.querySelector(
         'canvas[data-slot="annotation-canvas"]',
       );
@@ -368,7 +358,7 @@ test(
       await expect(page.getByTestId("draft-status")).toContainText(
         "本机保存失败",
       );
-      await page.getByRole("button", { name: "作答", exact: true }).click();
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
       const notice = page.locator(
         '[data-slot="attempt-header"] [role="alert"]',
       );
@@ -422,15 +412,13 @@ test("圈画再次点击与双击取消，不丢已有笔迹", { tag: ["@annotat
   await trigger.dblclick();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
-  await card.getByRole("button", { name: "进入作答" }).click();
-  await expect(
-    card.locator(
-      '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-    ),
-  ).toHaveCount(1);
+  await expect(card.locator('[data-slot="question-surface"]')).toHaveCount(1);
+  await expect(canvas).toBeVisible();
   await expect(card.getByRole("radio")).toHaveCount(4);
   await card.locator('[role="radiogroup"] label').nth(1).click();
   await expect(card.getByRole("radio").nth(1)).toBeChecked();
+  await expect(canvas).toBeVisible();
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
 });
 
 test(
@@ -550,7 +538,7 @@ test(
     await paperTrigger.click();
     await expect(paper).toBeVisible();
     await expect(annotationTrigger).toHaveAttribute("aria-expanded", "true");
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await expect(paper).toBeVisible();
     await paper
       .getByRole("button", { name: "更多操作（第 1 题草稿纸）" })

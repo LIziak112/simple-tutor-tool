@@ -512,12 +512,8 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
         .not.toContain("保存中");
 
       // 答对两题 → 交卷
-      await q1.getByRole("button", { name: "进入作答" }).click();
-      await expect(
-        q1.locator(
-          '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-        ),
-      ).toHaveCount(1);
+      await expect(q1.locator('[data-slot="question-surface"]')).toHaveCount(1);
+      await expect(annotationCanvas).toBeVisible();
       for (const no of [1, 2]) {
         await page
           .locator(`article[aria-label="第 ${no} 题"]`)
@@ -525,6 +521,8 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
           .locator("xpath=ancestor::label[1]")
           .click();
       }
+      await expect(annotationCanvas).toBeVisible();
+      await expect(annotationTrigger).toHaveAccessibleName(/已有 1 笔/);
       await page.getByRole("button", { name: "交卷", exact: true }).click();
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
