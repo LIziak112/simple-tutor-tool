@@ -198,7 +198,9 @@ e2e/                Browser tests
 | Command | Purpose |
 | --- | --- |
 | `pnpm dev` / `pnpm build` | Start development / build. |
-| `pnpm test` / `pnpm e2e` | Unit tests / browser end-to-end tests. |
+| `pnpm test:quick` / `pnpm test:affected` | Select unit tests for development checkpoints / final validation. |
+| `pnpm e2e:affected` | Local Chromium feature tests plus smoke coverage. |
+| `pnpm test` / `pnpm e2e` | Full unit / dual-browser end-to-end suites, run by PR CI. |
 | `pnpm lint` / `pnpm typecheck` / `pnpm format` | Code checks / type checks / formatting. |
 | `pnpm db:generate` | Generate database migrations. |
 | `pnpm schema:export` | Export JSON Schema. |
@@ -207,7 +209,7 @@ e2e/                Browser tests
 | `pnpm reparse [--dry-run]` | Extract question and lecture fields using the current parser; `--dry-run` previews the result. |
 | `pnpm seed:demo` | Generate demo data. |
 
-Development starts with shared contracts. Grading runs on the server, student content follows submission and release rules, and AI requests follow the teaching policy. Existing samples provide compatibility coverage. Before merging, run lint, type checks, unit tests, generated-spec checks, builds, and browser tests. See [AGENTS.md](AGENTS.md) for the project workflow.
+Development starts with shared contracts. Grading runs on the server, student content follows submission and release rules, and AI requests follow the teaching policy. Existing samples provide compatibility coverage. Follow the [verification guide](docs/约定/工程验证说明.md) for local test selection, including automatic full-suite fallbacks. Full regression and builds belong to PR CI; do not duplicate them locally. Required generated-spec checks still apply. See [AGENTS.md](AGENTS.md) for agent execution and handoff rules.
 
 ## Documentation
 

@@ -16,15 +16,21 @@ pnpm dev              # 并行启动 server(8787）与 web(5173,/api 自动转�
 
 浏览器打开 `http://localhost:5173`，首次进入教师端设置向导（设置登录名 + 密码，首位教师即管理员）。不灌演示数据也可以，导入 `samples/` 里的样例文档同样能跑通全流程。
 
-## 提交前请跑
+## 开发与提交前验证
 
 ```bash
-pnpm lint        # Biome 检查
-pnpm typecheck   # 类型检查
-pnpm test        # 单元测试
+# 开发 / 修复检查点
+pnpm test:quick
+pnpm typecheck:affected
+pnpm lint:changed
+# 实现收口（已有有效结果不重复）
+pnpm test:affected
+pnpm e2e:affected
 ```
 
-三条都绿再提 PR。另外有一条硬约定：**涉及解析器（packages/md-dsl）或判分逻辑（packages/grading）的改动，必须先补测试用例、再改实现**——先有测试锁住行为，再动代码。
+按阶段选择适用命令，不每轮全部重跑；命中兜底时遵循选测脚本自动升级。完整单测、双浏览器 E2E 与构建由 PR CI 执行，本机不手动重复。纯文档检查链接、命令口径和 `git diff --check`，无需应用全量测试。基线、例外、结果复用和失败处理见 [工程验证说明](docs/约定/工程验证说明.md)。
+
+**涉及解析器（packages/md-dsl）或判分逻辑（packages/grading）的改动，必须先补失败测试、再改实现**。代理执行和交接参见 [代理协作与执行](docs/约定/代理协作与执行.md)。
 
 ## 几条最重要的红线
 
