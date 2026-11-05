@@ -14,6 +14,38 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it("排序本人 sequence 只用于唯一编号答案区，公开底图不携带本人答案", () => {
+    const ordering: QuestionPublic = {
+      ...question,
+      type: "ordering",
+      stemMd: "排序",
+      options: undefined,
+      orderingItems: [
+        { id: "one", text: "原文一", fixedPosition: null },
+        { id: "two", text: "原文二", fixedPosition: null },
+      ],
+      sortableCount: 2,
+    };
+    const own = { kind: "ordering" as const, sequence: ["two", "one"] };
+    const { container, rerender } = render(
+      <QuestionSurface question={ordering} answer={own} />,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "第 1 位的选项编号" }),
+    ).toHaveValue("2");
+    const original = screen.getByText("原文一");
+    rerender(
+      <QuestionSurface question={ordering} answer={own} mode="export" />,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "第 1 位的选项编号", hidden: true }),
+    ).toHaveValue("");
+    expect(screen.getByText("原文一")).toBe(original);
+    expect(screen.getAllByText("原文二")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-ordering-position]")).toHaveLength(
+      2,
+    );
+  });
   it.each(["choice", "multi"] as const)(
     "%s 的独立数字句点选项按正文显示，真实列表仍保留",
     (type) => {

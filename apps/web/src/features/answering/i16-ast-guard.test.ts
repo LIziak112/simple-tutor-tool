@@ -314,7 +314,7 @@ const DISPATCH_INDEX_CASES: readonly BaselineEntry[] = (
 ).map((literal) => ({
   file: "apps/web/src/features/answering/index.tsx",
   snippet: `case "${literal}":`,
-  count: literal === "fill" ? 5 : 4,
+  count: 4,
 }));
 const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
   ...(
@@ -322,7 +322,7 @@ const DISPATCH_INDEX_NARROW: readonly BaselineEntry[] = [
   ).map((literal) => ({
     file: "apps/web/src/features/answering/index.tsx",
     snippet: `answer?.kind === "${literal}"`,
-    count: literal === "fill" ? 5 : 4, // 四调度臂；fill 另有冻结原稿真实控件
+    count: 4, // 四调度臂；图片控件恢复已移除
   })),
   {
     file: "apps/web/src/features/answering/index.tsx",

@@ -4,6 +4,8 @@ import {
   ANNOTATION_MAX_PIXEL_DIM,
   ANNOTATION_SURFACE_PIXEL_RATIO,
   ANNOTATION_SURFACE_RENDER_VERSION,
+  ANNOTATION_WHOLE_QUESTION_RENDER_PROFILE,
+  ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
   type AnnotationSurfaceCompatibility,
   type AnnotationSurfaceLayout,
   type AttemptQuestionPublic,
@@ -12,7 +14,6 @@ import {
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { toBlob } from "html-to-image";
 import { createRoot } from "react-dom/client";
-import { captureFrozenControls } from "@/features/answering";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   collectFontEmbedCss,
@@ -59,7 +60,10 @@ export function measureQuestionSurface(
   const nodes = [
     surface,
     ...[...surface.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)].filter(
-      (node) => !node.closest('[data-slot="question-annotation-overlay"]'),
+      (node) =>
+        !node.closest(
+          '[data-slot="question-annotation-overlay"], [data-annotation-answer-control="ordering"]',
+        ),
     ),
   ];
   const textRects: AnnotationSurfaceCompatibility["textRects"] = [];
@@ -69,7 +73,7 @@ export function measureQuestionSurface(
     if (
       !node.textContent?.trim() ||
       node.parentElement?.closest(
-        '.sr-only, .katex-mathml, input, textarea, select, [data-slot="question-annotation-overlay"]',
+        '.sr-only, .katex-mathml, input, textarea, select, [data-slot="question-annotation-overlay"], [data-annotation-answer-control="ordering"]',
       )
     )
       continue;
@@ -427,7 +431,6 @@ export async function renderQuestionBaseImage(
       !sameGeometry(before, measureQuestionSurface(reference))
     )
       throw new Error("题面布局已变化或与底图不一致，请恢复原布局后重试");
-    const controls = captureFrozenControls(question, exported);
     const publicContent = publicContentSignatureOf(question);
     const [contentSignature, geometrySignature, fontSignature] =
       await Promise.all([
@@ -436,10 +439,8 @@ export async function renderQuestionBaseImage(
         contentHash64(before.fonts),
       ]);
     const layout = annotationSurfaceLayoutSchema.parse({
-      renderVersion:
-        controls === null
-          ? ANNOTATION_SURFACE_RENDER_VERSION
-          : ANNOTATION_FROZEN_RENDER_VERSION,
+      renderVersion: ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
+      renderProfile: ANNOTATION_WHOLE_QUESTION_RENDER_PROFILE,
       questionRevisionId: question.questionRevisionId,
       cssWidth: before.cssWidth,
       cssHeight: before.cssHeight,
@@ -455,7 +456,6 @@ export async function renderQuestionBaseImage(
         fonts: before.fonts.map(normalizeSurfaceFont),
         textRects: before.textRects,
       },
-      ...(controls !== null ? { controls } : {}),
     });
     const fontCss = await measureStage("annotation:font-css", () =>
       withTimeout(
@@ -504,9 +504,7 @@ export async function renderQuestionBaseImage(
       throw new Error("底图实际像素尺寸不符，不采用错位图片");
     if (
       !sameGeometry(before, measureQuestionSurface(reference)) ||
-      !sameGeometry(exportedSnapshot, measureQuestionSurface(exported)) ||
-      JSON.stringify(controls) !==
-        JSON.stringify(captureFrozenControls(question, exported))
+      !sameGeometry(exportedSnapshot, measureQuestionSurface(exported))
     )
       throw new Error("生成期间题面布局变化，请重试");
     return { blob, layout, pixelWidth, pixelHeight };

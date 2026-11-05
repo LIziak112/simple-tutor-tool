@@ -83,6 +83,15 @@ it("底图复用稳定快照减少两次即时重复测量，保留最终真实�
     7,
   );
 });
+it("新底图使用 v4 整题协议，不生产图片控件清单", async () => {
+  const { question, reference } = mountedSurface();
+  const result = await renderQuestionBaseImage(question, reference);
+  expect(result.layout).toMatchObject({
+    renderVersion: 4,
+    renderProfile: "whole-question-v1",
+  });
+  expect(result.layout).not.toHaveProperty("controls");
+});
 it("字体处理后发生取消时不再栅格化，并释放导出副本", async () => {
   const { question, reference } = mountedSurface();
   const controller = new AbortController();

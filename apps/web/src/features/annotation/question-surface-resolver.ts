@@ -9,8 +9,12 @@ import type { AnnotationLocalRecord } from "./annotation-store";
 
 type QuestionSurfaceRecord = Pick<
   AnnotationLocalRecord,
-  "localBase" | "base" | "sealedAt" | "conflict" | "retained" | "pending"
-> & { doc: AnnotationLocalRecord["doc"] | null };
+  "localBase" | "base" | "sealedAt" | "conflict" | "retained"
+> & {
+  doc: AnnotationLocalRecord["doc"] | null;
+  pending?: AnnotationLocalRecord["pending"];
+  pendingMutationId?: string | null;
+};
 
 export interface QuestionSurfaceSource {
   kind: "local" | "cloud";
@@ -59,7 +63,7 @@ export function resolveQuestionSurface(
     return result("blocked", null, "原稿协议版本未知或布局损坏，原记录已保留");
 
   const hasLocalEdits =
-    record.pending !== null ||
+    (record.pending?.mutationId ?? record.pendingMutationId ?? null) !== null ||
     record.conflict !== null ||
     record.retained !== null;
   if (local === null && hasLocalEdits)

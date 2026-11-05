@@ -1,6 +1,13 @@
 import type { AnnotationSurfaceLayout } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import type { AnnotationLocalRecord } from "./annotation-store";
+import {
+  type AnnotationLocalRecord,
+  getAnnotationView,
+  installAnnotationBackend,
+  memoryAnnotationBackend,
+  resetAnnotationStoreForTest,
+  writeLocalAnnotationBase,
+} from "./annotation-store";
 import { resolveQuestionSurface } from "./question-surface-resolver";
 
 const revision = "11111111-1111-4111-8111-111111111111";
@@ -56,6 +63,49 @@ function record(): AnnotationLocalRecord {
 }
 
 describe("真实题面原位来源判定", () => {
+  it("消费实际公开视图：无 pending 字段不误判待传，pendingMutationId 缺本机布局须阻断", async () => {
+    resetAnnotationStoreForTest();
+    installAnnotationBackend(memoryAnnotationBackend());
+    const session = { origin: "https://test.example", studentId: "student" };
+    const scope = {
+      attemptId: "attempt",
+      questionId: "q",
+      phase: "scratch" as const,
+    };
+    const local = record();
+    if (!local.localBase) throw new Error("缺少夹具");
+    await writeLocalAnnotationBase(
+      session,
+      scope,
+      { ...local.localBase, png: new Blob(["png"], { type: "image/png" }) },
+      local.doc,
+    );
+    const view = getAnnotationView(session, scope);
+    if (!view) throw new Error("视图未读取");
+    expect(
+      resolveQuestionSurface(
+        { ...view, localBase: null, base: local.base },
+        revision,
+      ).status,
+    ).toBe("metadata-ready");
+    expect(
+      resolveQuestionSurface(
+        {
+          ...view,
+          localBase: null,
+          base: local.base,
+          pendingMutationId: "pending",
+        },
+        revision,
+      ).status,
+    ).toBe("blocked");
+    expect(
+      resolveQuestionSurface(
+        { ...view, pendingMutationId: "pending" },
+        revision,
+      ).source?.kind,
+    ).toBe("local");
+  });
   it("元数据和正文恢复独立于 PNG 存在/解码，尚未准入几何或开笔", () => {
     const local = record();
     expect(resolveQuestionSurface(local, revision)).toMatchObject({

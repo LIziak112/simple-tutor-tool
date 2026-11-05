@@ -1,4 +1,4 @@
-import type { AttemptQuestionPublic, StudentAnswer } from "@tutor/contract";
+import type { AttemptQuestionPublic } from "@tutor/contract";
 import { Eraser, MoreHorizontal, PenLine, Redo2, Undo2 } from "lucide-react";
 import {
   forwardRef,
@@ -6,29 +6,20 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { dispatchFrozenInput } from "@/features/answering";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
 import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
-import { StableQuestionPixelGridContext } from "@/features/attempt/QuestionSurfaceFrame";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
@@ -40,7 +31,6 @@ import {
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { measureStage } from "@/lib/performance-stages";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
-import { AnnotationOriginal } from "./AnnotationOriginal";
 import { blocksInBaseDomain } from "./annotation-anchor";
 import {
   getAnnotationRecord,
@@ -54,10 +44,14 @@ import {
 } from "./annotation-surface";
 import { useCoordinatedAnnotation } from "./coordinated-annotation-context";
 import {
-  type FrozenQuestionSource,
-  resolveFrozenQuestionSurface,
-} from "./frozen-surface-resolver";
+  QuestionAnnotationFrame,
+  type QuestionAnnotationFrameHandle,
+  type QuestionFrameGeometry,
+  questionFrameIdentity,
+} from "./QuestionAnnotationFrame";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
+import { prepareQuestionAnnotationContinuation } from "./question-annotation-continuation";
+import { resolveQuestionSurface } from "./question-surface-resolver";
 import { scheduleQuestionBasePrewarm } from "./schedule-question-base-prewarm";
 import {
   useAnnotationRecord,
@@ -76,8 +70,6 @@ export const QuestionAnnotationOverlay = forwardRef<
     question: AttemptQuestionPublic;
     label: string;
     children: ReactNode;
-    answer?: StudentAnswer | undefined;
-    onAnswer?: ((answer: StudentAnswer, defer?: boolean) => void) | undefined;
     hidden?: boolean;
     /** 上层题级锁定或订正封存事实；不依赖可过期的本机底图缓存。 */
     annotationReadOnly?: boolean;
@@ -90,8 +82,6 @@ export const QuestionAnnotationOverlay = forwardRef<
     question,
     label,
     children,
-    answer,
-    onAnswer,
     hidden = false,
     annotationReadOnly = false,
     phase = "scratch",
@@ -111,6 +101,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     session?.studentId,
     attemptId,
     question.id,
+    question.questionRevisionId,
     phase,
     record?.resetVersion ?? 0,
   ]);
@@ -125,43 +116,10 @@ export const QuestionAnnotationOverlay = forwardRef<
     identity: openIdentity,
   };
   const loadedVersion = useRef<number | null>(null);
-  const [fitScale, setFitScale] = useState(1);
-  const [expanded, setExpanded] = useState(false);
-  const [answerMode, setAnswerMode] = useState(false);
-  const scale = expanded ? 1 : fitScale;
-  const viewport = useRef<HTMLDivElement>(null);
+  const frame = useRef<QuestionAnnotationFrameHandle>(null);
+  const [geometry, setGeometry] = useState<QuestionFrameGeometry | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [originalScope, setOriginalScope] = useState<string | null>(null);
-  const originalScopeKey = JSON.stringify([
-    session?.origin,
-    session?.studentId,
-    attemptId,
-    question.id,
-    record?.resetVersion ?? 0,
-  ]);
-  const originalOpen = originalScope === originalScopeKey && !hidden;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 会话与显示范围变化必须清除旧弹窗，不能在返回旧题或账号时复开
-  useEffect(() => {
-    // 换题、换账号、维护重置或隐藏后，不恢复前一会话的查看弹窗。
-    setOriginalScope(null);
-  }, [session, originalScopeKey, hidden]);
-  const originalBlob = originalOpen ? record?.localBase?.png : undefined;
-  const [originalImage, setOriginalImage] = useState<{
-    blob: Blob;
-    url: string;
-  } | null>(null);
-  const originalBlobUrl =
-    originalImage?.blob === originalBlob ? originalImage?.url : null;
-  useEffect(() => {
-    if (!originalBlob) {
-      setOriginalImage(null);
-      return;
-    }
-    const url = URL.createObjectURL(originalBlob);
-    setOriginalImage({ blob: originalBlob, url });
-    return () => URL.revokeObjectURL(url);
-  }, [originalBlob]);
   // 无 Provider（讲练页、单测）时 coordinated 为 null：本地笔态即唯一事实源，
   // 切换照常生效；有 Provider 时（作答页）共享笔态优先，材料层同步跟随。
   const coordinated = useCoordinatedAnnotation();
@@ -198,70 +156,36 @@ export const QuestionAnnotationOverlay = forwardRef<
   );
 
   const [, setHistory] = useState(0);
-  const sourceResolution = resolveFrozenQuestionSurface(
-    record,
-    { sourceUrl: null, decoded: null },
+  const resolution = resolveQuestionSurface(
+    record ?? null,
+    question.questionRevisionId,
     annotationReadOnly,
   );
-  const frozenSource = sourceResolution.source;
-  const layout = frozenSource?.layout;
-  const frozenBlob = frozenSource?.kind === "local" ? frozenSource.blob : null;
-  const [frozenImage, setFrozenImage] = useState<{
-    blob: Blob;
-    url: string;
-  } | null>(null);
-  useEffect(() => {
-    if (!frozenBlob) {
-      setFrozenImage(null);
-      return;
-    }
-    const url = URL.createObjectURL(frozenBlob);
-    setFrozenImage({ blob: frozenBlob, url });
-    return () => URL.revokeObjectURL(url);
-  }, [frozenBlob]);
-  const frozenUrl =
-    frozenSource?.kind === "cloud"
-      ? frozenSource.downloadUrl
-      : frozenImage?.blob === frozenBlob
-        ? frozenImage.url
-        : null;
-  const frozenUrlRef = useRef(frozenUrl);
-  frozenUrlRef.current = frozenUrl;
-  const [decodedImage, setDecodedImage] = useState<{
-    url: string;
-    blob: Blob | null;
-    width: number;
-    height: number;
-    failed: boolean;
-  } | null>(null);
-  const decodedRef = useRef<{
-    url: string;
-    blob: Blob | null;
-    width: number;
-    height: number;
-    failed: boolean;
-  } | null>(null);
-  const imageWaiters = useRef(new Set<() => void>());
-  const resolution = resolveFrozenQuestionSurface(
-    record,
-    { sourceUrl: frozenUrl, decoded: decodedImage },
-    annotationReadOnly,
-  );
-  const frozenReady = resolution.canReadInk;
-  // 校验失败也保留保存时的逻辑宽度，否则下次校验会在另一套排版上永久失败。
-  const displayLayout = layout;
-  const cssWidth = displayLayout?.cssWidth;
-  const cssHeight = displayLayout?.cssHeight;
-  const baseWidth = displayLayout
-    ? Math.ceil(displayLayout.cssWidth * displayLayout.pixelRatio)
-    : 0;
-  const baseHeight = displayLayout
-    ? Math.ceil(displayLayout.cssHeight * displayLayout.pixelRatio)
-    : 0;
+  const layout = resolution.source?.layout ?? null;
+  const frameIdentity = questionFrameIdentity(question, layout, openIdentity);
+  const sameGeometryIdentity = geometry?.identity === frameIdentity;
+  const geometryReady = sameGeometryIdentity && geometry.status === "ready";
+  const frozenReady =
+    sameGeometryIdentity &&
+    (geometryReady || geometry.preserveInk === true) &&
+    resolution.source !== null &&
+    resolution.status !== "blocked";
+  const cssWidth = layout?.cssWidth;
+  const cssHeight = layout?.cssHeight;
+  const baseWidth = resolution.source?.pixelWidth ?? 0;
+  const baseHeight = resolution.source?.pixelHeight ?? 0;
+  const localPng = record?.localBase?.png ?? null;
+  const cloudBaseId =
+    localPng === null ? (resolution.source?.baseId ?? null) : null;
   const selected =
     editor?.active?.questionId === question.id &&
     editor.active.kind === "annotation";
   const opening = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 新作用域独立准备，旧请求的迟到 finally 不得覆盖新会话
+  useEffect(() => {
+    opening.current = false;
+    setLoading(false);
+  }, [openIdentity]);
   const sealedFinalization = useRef(false);
   const finishSurface = useCallback((target?: AnnotationSurface | null) => {
     const current = target ?? surface.current;
@@ -273,19 +197,9 @@ export const QuestionAnnotationOverlay = forwardRef<
       sealedFinalization.current = false;
     }
   }, []);
-  const active = selected && !hidden && !answerMode && resolution.canWrite;
-  const visible = frozenReady && !hidden && !answerMode;
-  const frozenInput =
-    frozenReady && displayLayout && onAnswer
-      ? dispatchFrozenInput(
-          question,
-          displayLayout,
-          answer,
-          onAnswer,
-          annotationReadOnly || record?.sealedAt != null || active,
-        )
-      : null;
-  const hasFrozenInput = frozenInput !== null;
+  const active =
+    selected && !hidden && geometryReady && frozenReady && !resolution.readOnly;
+  const visible = frozenReady && !hidden;
   const [mountedOnce, setMountedOnce] = useState(false);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -295,13 +209,6 @@ export const QuestionAnnotationOverlay = forwardRef<
     questionId: question.id,
     phase,
   };
-  // 换题、账号或重置后回到保存原稿，避免沿用上一题的作答视图。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scope 身份变化时重置视图，不跟随每笔 record 变化
-  useEffect(
-    () => setAnswerMode(false),
-    [session, attemptId, question.id, phase, record?.resetVersion],
-  );
-
   const getActiveEditor = editor?.getActive;
   const getPaperEditor = editor?.getPaper;
   useEffect(() => {
@@ -371,38 +278,6 @@ export const QuestionAnnotationOverlay = forwardRef<
     }
   }, [session, attemptId, question.id, phase, finishSurface]);
 
-  const enterAnswerView = useCallback(async () => {
-    setError(null);
-    try {
-      if ((await editor?.request(null)) === false) return;
-      await finish();
-      setAnswerMode(true);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "本机标画未保存，请重试",
-      );
-    }
-  }, [editor, finish]);
-
-  useLayoutEffect(() => {
-    const element = viewport.current;
-    if (!element || !cssWidth) return;
-    let previousWidth = 0;
-    const resize = () => {
-      const width = element.getBoundingClientRect().width;
-      if (width <= 0 || width === previousWidth) return;
-      finishSurface();
-      // 分栏或容器宽度变化后重新适配，不能沿用上一列宽下的放大状态。
-      if (previousWidth > 0) setExpanded(false);
-      previousWidth = width;
-      setFitScale(Math.min(1, width / cssWidth));
-    };
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [cssWidth, finishSurface]);
-
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
       '[data-slot="question-surface"]',
@@ -445,73 +320,9 @@ export const QuestionAnnotationOverlay = forwardRef<
     return editor?.register(question.id, finish);
   }, [editor?.register, question.id, finish]);
 
-  const waitForFrozenImage = useCallback(
-    (source: FrozenQuestionSource, signal: AbortSignal) =>
-      new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const finishWait = (cause?: Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          imageWaiters.current.delete(check);
-          signal.removeEventListener("abort", abort);
-          if (cause) reject(cause);
-          else resolve();
-        };
-        const check = () => {
-          if (openingFacts.current.readOnly || openingFacts.current.hidden) {
-            finishWait(new Error("本题圈画已封存，仅供查看"));
-            return;
-          }
-          const decoded = decodedRef.current;
-          if (
-            !decoded ||
-            decoded.url !== frozenUrlRef.current ||
-            (source.kind === "local"
-              ? decoded.blob !== source.blob
-              : decoded.url !== source.downloadUrl || decoded.blob !== null)
-          )
-            return;
-          if (
-            decoded.failed ||
-            decoded.width !== source.pixelWidth ||
-            decoded.height !== source.pixelHeight
-          )
-            finishWait(
-              new Error("原稿图片尺寸与保存的圈画坐标不符，笔迹已保留"),
-            );
-          else finishWait();
-        };
-        const abort = () => finishWait(new Error("标画打开已取消"));
-        const timer = setTimeout(
-          () => finishWait(new Error("原稿图片读取超时，请重试")),
-          15_000,
-        );
-        imageWaiters.current.add(check);
-        signal.addEventListener("abort", abort, { once: true });
-        check();
-      }),
-    [],
-  );
-  useEffect(() => {
-    if (annotationReadOnly || hidden)
-      imageWaiters.current.forEach((notify) => {
-        notify();
-      });
-  }, [annotationReadOnly, hidden]);
-
   useImperativeHandle(ref, () => ({
     async start() {
       if (!editor || !session || loading) return;
-      // v1 没有可编辑的布局证据；封存只限制写入，不限制查看原稿。
-      if (sourceResolution.status === "legacy") {
-        if (await editor.request(null)) {
-          setAnswerMode(false);
-          setError(null);
-          setOriginalScope(originalScopeKey);
-        }
-        return;
-      }
       if (
         openingFacts.current.readOnly ||
         recordRef.current?.sealedAt != null
@@ -527,9 +338,8 @@ export const QuestionAnnotationOverlay = forwardRef<
         );
         return;
       }
-      setAnswerMode(false);
-      if (sourceResolution.status === "blocked") {
-        setError(sourceResolution.reason);
+      if (resolution.status === "blocked") {
+        setError(resolution.reason);
         return;
       }
       opening.current = true;
@@ -582,26 +392,48 @@ export const QuestionAnnotationOverlay = forwardRef<
                   ? "订正圈画已随上次保存定格，仅供回看（再修改无新行，草稿纸不受影响）"
                   : "标画已随交卷固定，请刷新查看",
               );
-            if (prepared.kind === "legacy") {
-              // v1 旧版底图（无 layout）：直接转只读原圈画查看，不报错、
-              // 不进原位编辑（不重建底图、不创建待传空稿）。
-              setOriginalScope(originalScopeKey);
+            if (prepared.kind === "legacy")
+              throw new Error("旧版 v1 原稿缺少真实题面位置证据，原记录已保留");
+            if (!element) throw new Error("题面尚未就绪，请重试");
+            await prepareQuestionAnnotationContinuation(
+              session,
+              scope,
+              question,
+              element,
+              prepared.localBase,
+              signal,
+            );
+            if (
+              signal.aborted ||
+              openingFacts.current.identity !== openIdentity ||
+              openingFacts.current.readOnly ||
+              openingFacts.current.hidden
+            )
               return false;
-            }
             const saved = await getAnnotationRecord(session, scope, {
               strictRead: true,
             });
-            const candidate = resolveFrozenQuestionSurface(
+            const candidate = resolveQuestionSurface(
               saved,
-              { sourceUrl: frozenUrlRef.current, decoded: decodedRef.current },
+              question.questionRevisionId,
               openingFacts.current.readOnly,
             );
-            const candidateSource = candidate.source;
-            if (candidate.status === "blocked" || candidateSource === null)
-              throw new Error(candidate.reason ?? "原稿尚未就绪，请重试");
-            await measureStage("annotation:surface-ready", () =>
-              waitForFrozenImage(candidateSource, signal),
+            if (
+              !candidate.source ||
+              candidate.status === "blocked" ||
+              candidate.readOnly
+            )
+              throw new Error(
+                candidate.reason ?? "原稿尚未就绪或已封存，请重试",
+              );
+            const matches = await frame.current?.verify(
+              candidate.source.layout,
+              signal,
             );
+            if (!matches)
+              throw new Error(
+                "题面与保存基准偏差超过 10px 或区域不符，原稿已保留，请恢复原排版后重试",
+              );
             if (
               signal.aborted ||
               openingFacts.current.identity !== openIdentity ||
@@ -612,27 +444,35 @@ export const QuestionAnnotationOverlay = forwardRef<
             const latest = await getAnnotationRecord(session, scope, {
               strictRead: true,
             });
-            const ready = resolveFrozenQuestionSurface(
+            const ready = resolveQuestionSurface(
               latest,
-              { sourceUrl: frozenUrlRef.current, decoded: decodedRef.current },
+              question.questionRevisionId,
               openingFacts.current.readOnly,
             );
             if (
-              !ready.canWrite ||
-              openingFacts.current.identity !== openIdentity ||
-              openingFacts.current.hidden
+              !ready.source ||
+              ready.status === "blocked" ||
+              ready.readOnly ||
+              latest?.local !== "saved" ||
+              JSON.stringify(ready.source.layout) !==
+                JSON.stringify(candidate.source.layout)
             )
-              throw new Error(ready.reason ?? "原稿尚未就绪或已封存，请重试");
+              throw new Error(
+                ready.reason ?? "原稿尚未可靠保存或已变化，请重试",
+              );
             return true;
           },
         );
       } catch (cause) {
-        setError(
-          cause instanceof Error ? cause.message : "标画准备失败，请重试",
-        );
+        if (openingFacts.current.identity === openIdentity)
+          setError(
+            cause instanceof Error ? cause.message : "标画准备失败，请重试",
+          );
       } finally {
-        opening.current = false;
-        setLoading(false);
+        if (openingFacts.current.identity === openIdentity) {
+          opening.current = false;
+          setLoading(false);
+        }
       }
     },
   }));
@@ -739,8 +579,13 @@ export const QuestionAnnotationOverlay = forwardRef<
     current.mount(host.current, recordRef.current.doc);
     loadedVersion.current = recordRef.current.docVersion;
     current.onChange((doc, reason) => {
+      const latest = recordRef.current;
       if (
         reason === "load" ||
+        openingFacts.current.identity !== openIdentity ||
+        (latest?.localBase?.png ?? null) !== localPng ||
+        (localPng === null ? (latest?.base?.baseId ?? null) : null) !==
+          cloudBaseId ||
         (recordRef.current?.resetVersion ?? 0) !== resetVersion
       )
         return;
@@ -762,11 +607,14 @@ export const QuestionAnnotationOverlay = forwardRef<
     session,
     attemptId,
     question.id,
+    openIdentity,
     phase,
     cssWidth,
     cssHeight,
     baseWidth,
     baseHeight,
+    localPng,
+    cloudBaseId,
     frozenReady,
     finishSurface,
   ]);
@@ -834,166 +682,49 @@ export const QuestionAnnotationOverlay = forwardRef<
       data-annotation-readonly={annotationReadOnly || record?.sealedAt != null}
       style={cssWidth ? { maxWidth: cssWidth } : undefined}
     >
-      <div
-        ref={viewport}
-        data-slot="annotation-viewport"
-        hidden={frozenSource !== null && answerMode}
-        className={`relative mx-auto w-full min-w-0 overflow-x-auto ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`}
-        style={cssWidth ? { maxWidth: cssWidth } : undefined}
-      >
-        <div
-          className="relative overflow-clip"
-          style={
-            cssWidth && cssHeight
-              ? {
-                  width: cssWidth * scale,
-                  height: cssHeight * scale,
-                }
-              : undefined
-          }
-        >
+      <QuestionAnnotationFrame
+        ref={frame}
+        question={question}
+        layout={layout}
+        scopeKey={openIdentity}
+        active={active}
+        onBeforeResize={finishSurface}
+        onGeometryChange={setGeometry}
+        inkLayer={
           <div
-            data-slot="annotation-logical-frame"
-            data-annotation-scale={cssWidth ? scale : 1}
-            style={
-              cssWidth
-                ? {
-                    width: cssWidth,
-                    transform: `scale(${scale})`,
-                    transformOrigin: "top left",
-                  }
-                : undefined
-            }
+            data-slot="question-annotation-overlay"
+            data-drawing={active}
+            className="absolute inset-0"
+            hidden={!visible}
           >
-            {frozenSource !== null ? (
-              !answerMode && (
-                <div data-slot="annotation-frozen-surface" className="relative">
-                  {frozenUrl && (
-                    <img
-                      src={frozenUrl}
-                      alt={`${label}冻结原稿`}
-                      className="block select-none"
-                      style={
-                        cssWidth && cssHeight
-                          ? { width: cssWidth, height: cssHeight }
-                          : undefined
-                      }
-                      draggable={false}
-                      onLoad={(event) => {
-                        const image = event.currentTarget;
-                        const decoded = {
-                          url: frozenUrl,
-                          blob: frozenBlob,
-                          width: image.naturalWidth,
-                          height: image.naturalHeight,
-                          failed: false,
-                        };
-                        decodedRef.current = decoded;
-                        setDecodedImage(decoded);
-                        imageWaiters.current.forEach((notify) => {
-                          notify();
-                        });
-                      }}
-                      onError={() => {
-                        const decoded = {
-                          url: frozenUrl,
-                          blob: frozenBlob,
-                          width: 0,
-                          height: 0,
-                          failed: true,
-                        };
-                        decodedRef.current = decoded;
-                        setDecodedImage(decoded);
-                        imageWaiters.current.forEach((notify) => {
-                          notify();
-                        });
-                      }}
-                    />
-                  )}
-                  {hasFrozenInput && frozenInput}
-                </div>
-              )
-            ) : (
-              <StableQuestionPixelGridContext value>
-                {children}
-              </StableQuestionPixelGridContext>
+            <div
+              ref={host}
+              className="absolute inset-0"
+              hidden={hidden}
+              style={{ pointerEvents: active ? "auto" : "none" }}
+            />
+            {!hidden && !mountedOnce && previewUrl && (
+              <img
+                src={previewUrl}
+                alt="本题标画笔迹"
+                className="pointer-events-none absolute inset-0 h-full w-full"
+              />
             )}
           </div>
-          {cssWidth && cssHeight && (
-            <div
-              data-slot="question-annotation-overlay"
-              data-drawing={active}
-              className="pointer-events-none absolute left-0 top-0 z-10"
-              hidden={!visible}
-              style={{
-                width: cssWidth * scale,
-                height: cssHeight * scale,
-              }}
-            >
-              <div
-                ref={host}
-                className="absolute inset-0"
-                hidden={hidden}
-                style={{ pointerEvents: active ? "auto" : "none" }}
-              />
-              {!hidden && !mountedOnce && previewUrl && (
-                <img
-                  src={previewUrl}
-                  alt="本题标画笔迹"
-                  className="pointer-events-none absolute inset-0 h-full w-full"
-                />
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-      {frozenSource !== null && answerMode && (
-        <div data-slot="annotation-answer-view" className="mt-3">
-          {children}
-        </div>
-      )}
-      {frozenSource !== null && !hasFrozenInput && (
-        <Button
-          type="button"
-          variant="outline"
-          className="mt-2 h-11"
-          onClick={async () => {
-            setError(null);
-            if (answerMode) {
-              setAnswerMode(false);
-              return;
-            }
-            await enterAnswerView();
-          }}
-        >
-          {answerMode ? "返回原稿" : "进入作答"}
-        </Button>
-      )}
+        }
+      >
+        {children}
+      </QuestionAnnotationFrame>
+      {geometry?.identity === frameIdentity &&
+        geometry.status === "blocked" && (
+          <p role="alert" className="mt-2 text-sm text-destructive">
+            {geometry.reason}
+          </p>
+        )}
       {resolution.status === "blocked" && (
         <p role="alert" className="mt-2 text-sm text-destructive">
           {resolution.reason}
         </p>
-      )}
-      {(fitScale < 0.85 || (hasFrozenInput && fitScale < 1)) && (
-        <Button
-          variant="ghost"
-          className="mt-2 h-11"
-          aria-pressed={expanded}
-          onClick={async () => {
-            try {
-              await finish();
-              setExpanded((value) => !value);
-            } catch (cause) {
-              setError(
-                cause instanceof Error
-                  ? cause.message
-                  : "本机标画未保存，请重试",
-              );
-            }
-          }}
-        >
-          {expanded ? "适应宽度" : "放大题面"}
-        </Button>
       )}
       {loading && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
@@ -1010,84 +741,6 @@ export const QuestionAnnotationOverlay = forwardRef<
           {record.retained.reason}
         </p>
       )}
-      <Dialog
-        open={originalOpen}
-        onOpenChange={(open) => {
-          if (!open) setOriginalScope(null);
-        }}
-      >
-        <DialogContent
-          className="max-w-4xl"
-          onCloseAutoFocus={(event) => {
-            // 入口由题卡通过 ref 调用，关闭时恢复真实的圈画按钮。
-            const button = root.current
-              ?.closest("article")
-              ?.querySelector<HTMLButtonElement>("[data-annotation-trigger]");
-            if (button) {
-              event.preventDefault();
-              button.focus();
-            }
-          }}
-        >
-          <DialogTitle>{label}原圈画</DialogTitle>
-          <DialogDescription>
-            {layout
-              ? phase === "correction"
-                ? "按保存时的题面显示原圈画，仅供查看。关闭后可继续订正。"
-                : "按保存时的题面显示原圈画，仅供查看。关闭后可继续作答。"
-              : phase === "correction"
-                ? "此题圈画为旧版，仅供查看。关闭后可继续订正。"
-                : "此题标画为旧版，仅供查看。关闭后可继续作答。"}
-          </DialogDescription>
-          {record?.local === "failed" && (
-            <p role="alert">
-              本机保存失败，当前原稿仍保留在本设备，请恢复保存后再离开。
-            </p>
-          )}
-          {record?.pendingMutationId && (
-            <p className="text-sm text-muted-foreground">
-              本设备有尚未同步的圈画。
-            </p>
-          )}
-          {record?.conflict && (
-            <p role="note">圈画存在同步冲突，当前显示本设备保留的原稿。</p>
-          )}
-          {record?.base?.stale && (
-            <p role="note">这是旧版本题面的原圈画，笔迹保持在保存时的位置。</p>
-          )}
-          {record?.doc &&
-          (originalBlobUrl ||
-            (!record.localBase && record.base?.downloadUrl)) ? (
-            <AnnotationOriginal
-              src={originalBlobUrl ?? record.base?.downloadUrl ?? ""}
-              pixelWidth={
-                record.localBase
-                  ? Math.ceil(
-                      record.localBase.layout.cssWidth *
-                        record.localBase.layout.pixelRatio,
-                    )
-                  : (record.base?.pixelWidth ?? 0)
-              }
-              pixelHeight={
-                record.localBase
-                  ? Math.ceil(
-                      record.localBase.layout.cssHeight *
-                        record.localBase.layout.pixelRatio,
-                    )
-                  : (record.base?.pixelHeight ?? 0)
-              }
-              doc={record.doc}
-              label={`${label}原圈画`}
-            />
-          ) : (
-            <p role={record?.localBase ? "status" : "alert"}>
-              {record?.localBase
-                ? "正在读取本机原圈画…"
-                : "原圈画底图尚未就绪，请重新加载材料；笔迹已保留。"}
-            </p>
-          )}
-        </DialogContent>
-      </Dialog>
       {active &&
         createPortal(
           <div
@@ -1180,12 +833,10 @@ export const QuestionAnnotationOverlay = forwardRef<
               <Button
                 className="h-11 w-16 shrink-0 px-2"
                 onClick={() => {
-                  if (phase === "correction" || hasFrozenInput)
-                    void editor?.request(null);
-                  else void enterAnswerView();
+                  void editor?.request(null);
                 }}
               >
-                {phase === "correction" ? "完成" : "作答"}
+                完成标画
               </Button>
             </div>
           </div>,

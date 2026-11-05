@@ -312,6 +312,34 @@ function correctionPuts() {
   });
 }
 
+it("订正工作台保留配对公开结构和本人选择，仍使用唯一只读真实题面", async () => {
+  evidenceMock.mockResolvedValue(headFixture({ corrections: [openRow()] }));
+  const question = questionFixture();
+  question.snapshot = {
+    ...question.snapshot,
+    type: "matching",
+    options: undefined,
+    matchingOptions: {
+      options: [
+        { id: "opt-a", text: "原文甲" },
+        { id: "opt-b", text: "原文乙" },
+      ],
+      allowRepeat: false,
+    },
+    matchingSlots: [{ id: "slot-3", ordinal: 3 }],
+  };
+  question.answer = { kind: "matching", pairs: { "slot-3": "opt-b" } };
+  renderSection({ question });
+  fireEvent.click(screen.getByRole("button", { name: /^第 1 题订正/ }));
+  await waitForEngine();
+  const control = screen.getByRole("combobox", { name: "第 3 空的选项" });
+  expect(control).toHaveValue("opt-b");
+  expect(control).toBeDisabled();
+  expect(
+    document.querySelectorAll('[data-slot="question-surface"]'),
+  ).toHaveLength(1);
+});
+
 beforeEach(() => {
   installNoteBackend(memoryNoteBackend());
   resetNoteSession();

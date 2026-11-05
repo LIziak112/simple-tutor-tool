@@ -156,6 +156,18 @@ function CorrectionWorkspaceInner({
       stemMd: snapshot.stemMd,
       ...(snapshot.options !== undefined ? { options: snapshot.options } : {}),
       hintCount: snapshot.hintCount,
+      ...(snapshot.matchingOptions !== undefined
+        ? { matchingOptions: snapshot.matchingOptions }
+        : {}),
+      ...(snapshot.matchingSlots !== undefined
+        ? { matchingSlots: snapshot.matchingSlots }
+        : {}),
+      ...(snapshot.orderingItems !== undefined
+        ? { orderingItems: snapshot.orderingItems }
+        : {}),
+      ...(snapshot.sortableCount !== undefined
+        ? { sortableCount: snapshot.sortableCount }
+        : {}),
     }),
     [snapshot],
   );
@@ -449,11 +461,19 @@ function CorrectionWorkspaceInner({
                     sealing || annotationRecord?.sealedAt != null
                   }
                 >
-                  <QuestionSurface question={inlineQuestion} readOnly />
+                  <QuestionSurface
+                    question={inlineQuestion}
+                    answer={question.answer ?? undefined}
+                    readOnly
+                  />
                 </QuestionAnnotationOverlay>
               ) : (
                 // 旧结果视图响应无 questionRevisionId：题面照常，圈画不可用
-                <QuestionSurface question={surfaceQuestion} readOnly />
+                <QuestionSurface
+                  question={surfaceQuestion}
+                  answer={question.answer ?? undefined}
+                  readOnly
+                />
               )}
             </section>
 

@@ -5,7 +5,6 @@ import {
   stableContentHash64,
 } from "@tutor/contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureFrozenControls } from "@/features/answering";
 import {
   measureQuestionSurface,
   questionSurfaceMatchesLayout,
@@ -26,37 +25,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("新题面底图准入", () => {
-  it("填空槽位来自导出副本同一次布局框，缺槽位或错位不得推测位置", () => {
-    const exported = document.createElement("div");
-    const first = document.createElement("input");
-    const second = document.createElement("input");
-    first.dataset.answerSlotId = "slot-1";
-    second.dataset.answerSlotId = "slot-2";
-    exported.append(first, second);
-    vi.spyOn(exported, "getBoundingClientRect").mockReturnValue({
-      left: 100,
-      top: 200,
-      width: 300,
-      height: 160,
-    } as DOMRect);
-    vi.spyOn(first, "getBoundingClientRect").mockReturnValue({
-      left: 112,
-      top: 220,
-      width: 112,
-      height: 44,
-    } as DOMRect);
-    vi.spyOn(second, "getBoundingClientRect").mockReturnValue({
-      left: 150,
-      top: 260,
-      width: 112,
-      height: 44,
-    } as DOMRect);
-    expect(captureFrozenControls(question, exported)).toEqual([
-      { slotId: "slot-1", kind: "text", x: 12, y: 20, width: 112, height: 44 },
-      { slotId: "slot-2", kind: "text", x: 50, y: 60, width: 112, height: 44 },
-    ]);
-    second.remove();
-    expect(() => captureFrozenControls(question, exported)).toThrow("槽位");
+  it("排序编号操作不进入公开几何，原文池和题干缺项仍不可忽略", () => {
+    const surface = document.createElement("div");
+    const original = document.createElement("p");
+    original.textContent = "完整原文";
+    const controls = document.createElement("div");
+    controls.dataset.annotationAnswerControl = "ordering";
+    const input = document.createElement("input");
+    controls.append(input);
+    surface.append(original, controls);
+    const before = measureQuestionSurface(surface);
+    input.value = "本人序列";
+    expect(measureQuestionSurface(surface)).toEqual(before);
+    expect(before.blocks.map((block) => block.tag)).toEqual(["DIV", "P"]);
+    original.remove();
+    expect(measureQuestionSurface(surface).blocks).toHaveLength(1);
   });
   it("固定题面整体缩放后仍以逻辑坐标测量，不能把缩放当成重排", () => {
     const frame = document.createElement("div");
