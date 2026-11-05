@@ -377,12 +377,15 @@ test(
         .getByTestId("prototype-snapshot")
         .fill(JSON.stringify(undone));
       await prototype.getByRole("button", { name: "导入原稿" }).click();
-      expect(
-        JSON.parse(
-          (await prototype.getByTestId("prototype-points").textContent()) ??
-            "null",
-        ),
-      ).toEqual(undone.doc.strokes);
+      // 导入需先完成图片 decode，再把同 PNG 的新 doc 装入真实画布。
+      await expect
+        .poll(async () =>
+          JSON.parse(
+            (await prototype.getByTestId("prototype-points").textContent()) ??
+              "null",
+          ),
+        )
+        .toEqual(undone.doc.strokes);
       await expect(
         prototype.getByRole("img", { name: "冻结题面" }),
       ).toHaveAttribute("src", original.dataUrl);
