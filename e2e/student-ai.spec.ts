@@ -210,7 +210,7 @@ test(
       const control = fakeAiControl(request);
       await control.script({
         body: chatCompletionJson(
-          "# 一起看这道题\n\n先看条件。\n\n## 观察\n先试一个例子。\n\n## 计算\n然后计算 $1+1=2$。\n\n## 检查\n回题检查新步骤。",
+          "# 一起看这道题\n\n先看条件。\n\n## 观察\n先试一个例子。\n\n\\frac{1}{2}\n\n当 \\to 0$ 时。\n\n## 计算\n然后计算 $1+1=2$。\n\n## 检查\n回题检查新步骤。",
         ),
       });
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -219,6 +219,17 @@ test(
         .click({ timeout: 30_000 });
       const sections = workspace.locator("details[data-ai-section]");
       await expect(sections).toHaveCount(3);
+      await expect(
+        workspace.getByText("部分公式格式不完整，查看回复原文"),
+      ).toBeVisible();
+      const inlineWidth = await workspace
+        .locator('[data-slot="ai-reply-workspace"]')
+        .evaluate((el) => ({
+          width: el.clientWidth,
+          maxWidth: getComputedStyle(el).maxWidth,
+        }));
+      expect(inlineWidth.maxWidth).toBe("none");
+      expect(inlineWidth.width).toBeGreaterThan(688);
       await expect(sections.nth(1)).not.toHaveAttribute("open");
       const title = sections.nth(1).locator("summary");
       await title.scrollIntoViewIfNeeded();
@@ -232,7 +243,7 @@ test(
       await expect(
         page.getByRole("dialog").locator("details[data-ai-section][open]"),
       ).toHaveCount(2);
-      await expect(page.locator(".ai-reply-markdown .katex")).toHaveCount(1);
+      await expect(page.locator(".ai-reply-markdown .katex")).toHaveCount(2);
       // 正文使用弹窗内容区全宽，不能再叠加固定阅读列限宽。
       await expect
         .poll(() =>
