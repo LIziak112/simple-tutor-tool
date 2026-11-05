@@ -1,6 +1,7 @@
 import type { FoldDirectiveAttrs, StepDirectiveAttrs } from "@tutor/contract";
 import { BookOpen, ChevronDown, KeyRound, Lightbulb } from "lucide-react";
 import { Children, createContext, useContext, useState } from "react";
+import { QuestionDslContext } from "@/features/answering/question-render-context";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import { useDirectiveTelemetry } from "./expand-context";
 import { LabeledFold } from "./LabeledFold";
@@ -35,9 +36,14 @@ function useFoldTelemetry(
 export function StepsDirective({ children, docIndex }: DirectiveBaseProps) {
   const [revealedCount, setRevealedCount] = useState(1);
   const { steps: stepsEnabled } = useEnabledCapabilities();
+  const questionVersion = useContext(QuestionDslContext);
   const total = Children.count(children);
-  const revealed = stepsEnabled ? revealedCount : Number.POSITIVE_INFINITY;
-  const remaining = stepsEnabled ? total - revealedCount : 0;
+  const revealed =
+    questionVersion === 4 || !stepsEnabled
+      ? Number.POSITIVE_INFINITY
+      : revealedCount;
+  const remaining =
+    questionVersion !== 4 && stepsEnabled ? total - revealedCount : 0;
   const reportTelemetry = useDirectiveTelemetry();
   const reveal = (): void => {
     // T4.0b（§4.3.3 修订）：reveal 的 payload 带容器身份 + 步序号两套编号
@@ -60,6 +66,7 @@ export function StepsDirective({ children, docIndex }: DirectiveBaseProps) {
       {remaining > 0 ? (
         <button
           type="button"
+          disabled={questionVersion !== null}
           onClick={reveal}
           className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 text-sm font-medium outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
         >
@@ -103,8 +110,19 @@ export function FoldDirective({
   children,
 }: DirectiveProps<FoldDirectiveAttrs>) {
   const onToggle = useFoldTelemetry("fold", docIndex);
+  const questionVersion = useContext(QuestionDslContext);
   return (
-    <LabeledFold label={attrs.title.trim() || "详情"} onToggle={onToggle}>
+    <LabeledFold
+      label={attrs.title.trim() || "详情"}
+      onToggle={onToggle}
+      fixed={
+        questionVersion === null
+          ? undefined
+          : questionVersion === 4
+            ? "open"
+            : "closed"
+      }
+    >
       {children}
     </LabeledFold>
   );
@@ -117,11 +135,13 @@ export function HintDirective({
   children,
 }: DirectiveBaseProps) {
   const onToggle = useFoldTelemetry("hint", docIndex);
+  const questionVersion = useContext(QuestionDslContext);
   return (
     <LabeledFold
       label={index > 0 ? `提示 ${index}` : "提示"}
       icon={<Lightbulb aria-hidden className="size-4 shrink-0 text-sky-500" />}
       onToggle={onToggle}
+      fixed={questionVersion === null ? undefined : "closed"}
     >
       {children}
     </LabeledFold>
@@ -130,10 +150,12 @@ export function HintDirective({
 
 /** :::answer 手写题最终答案（教师侧机密）：预览折叠 + 琥珀色标识（不上报，机密内容学生端不下发） */
 export function AnswerDirective({ children }: DirectiveBaseProps) {
+  const questionVersion = useContext(QuestionDslContext);
   return (
     <LabeledFold
       label="最终答案"
       tone="secret"
+      fixed={questionVersion === null ? undefined : "closed"}
       icon={<KeyRound aria-hidden className="size-4 shrink-0 text-amber-600" />}
     >
       {children}
@@ -144,6 +166,7 @@ export function AnswerDirective({ children }: DirectiveBaseProps) {
 /** :::solution 详解：预览折叠，交卷后才下发属学生端语义（本层不处理） */
 export function SolutionDirective({ docIndex, children }: DirectiveBaseProps) {
   const onToggle = useFoldTelemetry("solution", docIndex);
+  const questionVersion = useContext(QuestionDslContext);
   return (
     <LabeledFold
       label="详解"
@@ -154,6 +177,7 @@ export function SolutionDirective({ docIndex, children }: DirectiveBaseProps) {
         />
       }
       onToggle={onToggle}
+      fixed={questionVersion === null ? undefined : "closed"}
     >
       {children}
     </LabeledFold>

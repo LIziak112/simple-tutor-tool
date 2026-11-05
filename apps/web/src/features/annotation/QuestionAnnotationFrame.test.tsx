@@ -12,6 +12,7 @@ vi.mock("./question-base-image", async (original) => ({
   ...(await original<typeof import("./question-base-image")>()),
   awaitQuestionSurfaceReady: vi.fn(async () => ({})),
   questionSurfaceMatchesLayout: vi.fn(async () => true),
+  resolveLegacyQuestionProfile: vi.fn(async () => "horizontal"),
 }));
 const question: AttemptQuestionPublic = {
   id: "q",
@@ -151,4 +152,31 @@ it("旧 scope 的迟到几何成功不能放行新题", async () => {
   expect(changed).toHaveBeenLastCalledWith(
     expect.objectContaining({ status: "blocked" }),
   );
+});
+
+it("旧题模板按离屏证据选择横排并核验可见题面", async () => {
+  const { renderProfile: _profile, ...old } = layout;
+  const legacy = { ...old, renderVersion: 2 as const, cssWidth: 430 };
+  const matching = { ...question, type: "matching" as const };
+  const { resolveLegacyQuestionProfile } = await import(
+    "./question-base-image"
+  );
+  vi.mocked(resolveLegacyQuestionProfile).mockResolvedValueOnce("horizontal");
+  const changed = vi.fn();
+  render(
+    <QuestionAnnotationFrame
+      question={matching}
+      layout={legacy}
+      scopeKey="legacy"
+      onGeometryChange={changed}
+    >
+      <QuestionSurface question={question} />
+    </QuestionAnnotationFrame>,
+  );
+  await waitFor(() =>
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "ready" }),
+    ),
+  );
+  expect(resolveLegacyQuestionProfile).toHaveBeenCalled();
 });

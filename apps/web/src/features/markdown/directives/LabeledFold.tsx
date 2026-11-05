@@ -33,6 +33,7 @@ interface LabeledFoldProps {
    */
   onToggle?: ((action: "open" | "close") => void) | undefined;
   children?: ReactNode;
+  fixed?: "open" | "closed" | undefined;
 }
 
 export function LabeledFold({
@@ -42,14 +43,17 @@ export function LabeledFold({
   onExpand,
   onToggle,
   children,
+  fixed,
 }: LabeledFoldProps) {
   const [open, setOpen] = useState(false);
+  const visible = fixed ? fixed === "open" : open;
   return (
     <div className={cn("my-3 rounded-xl border", TONE_CLASSES[tone])}>
       {/* min-h-11 保证触控目标不小于 44px（UI 约定） */}
       <button
         type="button"
-        aria-expanded={open}
+        aria-expanded={visible}
+        disabled={fixed !== undefined}
         onClick={() => {
           // 回调放在 state updater 外执行（StrictMode 会双调 updater，内嵌会双发事件）
           const next = !open;
@@ -63,13 +67,13 @@ export function LabeledFold({
           aria-hidden
           className={cn(
             "size-4 shrink-0 text-muted-foreground transition-transform",
-            open && "rotate-90",
+            visible && "rotate-90",
           )}
         />
         {icon}
         <span>{label}</span>
       </button>
-      {open ? (
+      {visible ? (
         <div className="border-t border-border/60 px-3 py-2 text-sm leading-7">
           {children}
         </div>

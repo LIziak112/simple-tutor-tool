@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
 import { StableQuestionPixelGridContext } from "@/features/attempt/QuestionSurfaceFrame";
@@ -19,6 +20,7 @@ import {
   awaitQuestionSurfaceReady,
   publicContentSignatureOf,
   questionSurfaceMatchesLayout,
+  resolveLegacyQuestionProfile,
 } from "./question-base-image";
 
 export type QuestionFrameGeometry = {
@@ -76,6 +78,14 @@ export const QuestionAnnotationFrame = forwardRef<
     const viewport = useRef<HTMLDivElement>(null);
     const [fitScale, setFitScale] = useState(1);
     const [expanded, setExpanded] = useState(false);
+    const [legacyProfile, setLegacyProfile] = useState<{
+      identity: string;
+      direction: "horizontal" | "vertical";
+    } | null>(null);
+    const legacyResolution = useRef<{
+      identity: string;
+      promise: Promise<"horizontal" | "vertical" | null>;
+    } | null>(null);
     // 不含正文版本或云端绑定回执；相同逻辑基准在每笔保存后仍是同一工作区。
     const identity = questionFrameIdentity(question, layout, scopeKey);
     const scopeIdentity = questionFrameIdentity(question, null, scopeKey);
@@ -125,8 +135,37 @@ export const QuestionAnnotationFrame = forwardRef<
           if (signal?.aborted || expected !== facts.current.identity)
             throw new DOMException("题面核验已取消", "AbortError");
         };
+        if (
+          candidate.renderVersion !== 4 &&
+          (facts.current.question.type === "matching" ||
+            facts.current.question.type === "ordering")
+        ) {
+          await Promise.resolve();
+          check();
+          if (legacyResolution.current?.identity !== expected) {
+            const promise = resolveLegacyQuestionProfile(
+              facts.current.question,
+              surface,
+              candidate,
+              signal,
+            );
+            legacyResolution.current = { identity: expected, promise };
+            promise.catch(() => {
+              if (legacyResolution.current?.promise === promise)
+                legacyResolution.current = null;
+            });
+          }
+          const direction = await legacyResolution.current.promise;
+          check();
+          if (!direction) {
+            legacyResolution.current = null;
+            return false;
+          }
+          flushSync(() => setLegacyProfile({ identity: expected, direction }));
+          check();
+        }
         facts.current.onBeforeResize?.();
-        await awaitQuestionSurfaceReady(surface, check);
+        await awaitQuestionSurfaceReady(surface, check, signal);
         check();
         const matches = await questionSurfaceMatchesLayout(
           facts.current.question,
@@ -268,6 +307,9 @@ export const QuestionAnnotationFrame = forwardRef<
                 value={{
                   renderVersion: layout?.renderVersion ?? 4,
                   ...(cssWidth ? { logicalWidth: cssWidth } : {}),
+                  ...(legacyProfile?.identity === identity
+                    ? { legacyDirection: legacyProfile.direction }
+                    : {}),
                 }}
               >
                 <StableQuestionPixelGridContext value>

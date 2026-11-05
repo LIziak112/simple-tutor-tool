@@ -72,7 +72,10 @@ function MatchingInput({
 }) {
   const profile = useContext(QuestionRenderContext);
   const horizontal =
-    profile.renderVersion === 4 || (profile.logicalWidth ?? 640) >= 640;
+    profile.renderVersion === 4 ||
+    profile.legacyDirection === "horizontal" ||
+    (profile.legacyDirection === undefined &&
+      (profile.logicalWidth ?? 640) >= 640);
   const pairs = answer?.pairs ?? {};
   // 结构不可用防御态：显式报错不静默降级（§7.1）
   if (model.slots.length === 0 || model.options.length === 0) {

@@ -351,8 +351,10 @@ function OrderingInput({
           .map((item) => (
             <li
               key={item.key}
-              data-lr-node={legacy ? undefined : `ordering-item/${item.key}`}
-              className={`flex min-w-0 gap-2 rounded-lg border border-dashed border-border bg-card/50 p-3 ${legacy && (profile.logicalWidth ?? 640) < 640 ? "flex-col" : "flex-row items-center"}`}
+              data-lr-node={
+                legacy ? undefined : `options/item/${model.items.indexOf(item)}`
+              }
+              className={`flex min-w-0 gap-2 rounded-lg border border-dashed border-border bg-card/50 p-3 ${legacy && (profile.legacyDirection === "vertical" || (profile.legacyDirection === undefined && (profile.logicalWidth ?? 640) < 640)) ? "flex-col" : "flex-row items-center"}`}
             >
               <div className="min-w-0 flex-1">
                 <RichMarkdown

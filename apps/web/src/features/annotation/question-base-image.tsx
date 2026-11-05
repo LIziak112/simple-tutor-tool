@@ -13,7 +13,9 @@ import {
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { toBlob } from "html-to-image";
+import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { QuestionRenderContext } from "@/features/answering/question-render-context";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   collectFontEmbedCss,
@@ -204,6 +206,60 @@ export async function questionSurfaceMatchesLayout(
   );
 }
 
+/** 以原始证据选择旧版断点形态，离屏试错不移动可见题面和笔迹。 */
+export async function resolveLegacyQuestionProfile(
+  question: AttemptQuestionPublic,
+  reference: HTMLElement,
+  layout: AnnotationSurfaceLayout,
+  signal?: AbortSignal,
+): Promise<"horizontal" | "vertical" | null> {
+  if (layout.renderVersion === 4) return null;
+  const host = document.createElement("div");
+  const inherited = getComputedStyle(reference);
+  Object.assign(host.style, {
+    position: "fixed",
+    left: "-10000px",
+    top: "0",
+    width: `${layout.cssWidth}px`,
+    pointerEvents: "none",
+  });
+  for (const property of FONT_PROPERTIES)
+    host.style.setProperty(property, inherited.getPropertyValue(property));
+  host.setAttribute("aria-hidden", "true");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    for (const direction of ["horizontal", "vertical"] as const) {
+      if (signal?.aborted)
+        throw new DOMException("题面核验已取消", "AbortError");
+      flushSync(() =>
+        root.render(
+          <QuestionRenderContext
+            value={{
+              renderVersion: layout.renderVersion as 2 | 3,
+              logicalWidth: layout.cssWidth,
+              legacyDirection: direction,
+            }}
+          >
+            <QuestionSurface question={question} mode="export" />
+          </QuestionRenderContext>,
+        ),
+      );
+      const surface = host.querySelector<HTMLElement>(
+        '[data-slot="question-surface"]',
+      );
+      if (!surface) throw new Error("题面尚未就绪，请重试");
+      await awaitQuestionSurfaceReady(surface, () => {}, signal);
+      if (await questionSurfaceMatchesLayout(question, surface, layout))
+        return direction;
+    }
+    return null;
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
+
 async function legacyCompatibility(
   publicContent: {
     type: AttemptQuestionPublic["type"];
@@ -310,10 +366,45 @@ function assertSize(surface: HTMLElement): void {
 export async function awaitQuestionSurfaceReady(
   surface: HTMLElement,
   check: () => void = () => {},
+  signal?: AbortSignal,
+): Promise<SurfaceMeasure> {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  const guardedCheck = () => {
+    if (!active || signal?.aborted)
+      throw new DOMException("题面核验已取消", "AbortError");
+    check();
+  };
+  try {
+    return await Promise.race([
+      waitForQuestionSurface(surface, guardedCheck),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("题面布局稳定等待超时")),
+          STEP_TIMEOUT_MS,
+        );
+        abort = () => reject(new DOMException("题面核验已取消", "AbortError"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
+    ]);
+  } finally {
+    active = false;
+    if (timer !== undefined) clearTimeout(timer);
+    if (abort) signal?.removeEventListener("abort", abort);
+  }
+}
+
+async function waitForQuestionSurface(
+  surface: HTMLElement,
+  check: () => void,
 ): Promise<SurfaceMeasure> {
   const deadline = performance.now() + STEP_TIMEOUT_MS;
   if (document.fonts) await document.fonts.ready;
+  check();
   const images = [...surface.querySelectorAll<HTMLImageElement>("img")];
+  for (const image of images) image.loading = "eager";
   await Promise.all(images.map((image) => image.decode()));
   check();
   let previous = "";
@@ -364,7 +455,7 @@ export async function renderQuestionBaseImage(
   assertSize(reference);
   const before = await measureStage("annotation:reference-ready", () =>
     withTimeout(
-      awaitQuestionSurfaceReady(reference, check),
+      awaitQuestionSurfaceReady(reference, check, options.signal),
       STEP_TIMEOUT_MS,
       "题面资源或布局未稳定，请稍后重试",
     ),
@@ -419,7 +510,7 @@ export async function renderQuestionBaseImage(
       image.loading = "eager";
     const exportedSnapshot = await measureStage("annotation:copy-ready", () =>
       withTimeout(
-        awaitQuestionSurfaceReady(exported, check),
+        awaitQuestionSurfaceReady(exported, check, options.signal),
         STEP_TIMEOUT_MS,
         "导出题面资源未稳定，请重试",
       ),
