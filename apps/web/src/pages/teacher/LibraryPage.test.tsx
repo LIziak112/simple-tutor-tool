@@ -21,6 +21,41 @@ import {
 } from "@/lib/api";
 import LibraryPage from "./LibraryPage";
 
+const editorModule = vi.hoisted(() => ({ loaded: false }));
+vi.mock("@/features/content/ContentEditSheet", () => {
+  editorModule.loaded = true;
+  return {
+    QuestionEditSheet: ({
+      questionId,
+      onClose,
+    }: {
+      questionId: string;
+      onClose: () => void;
+    }) => (
+      <div role="dialog" aria-label="题目编辑">
+        <p>{questionId}</p>
+        <button type="button" onClick={onClose}>
+          关闭编辑
+        </button>
+      </div>
+    ),
+    LectureEditSheet: ({
+      lectureId,
+      onClose,
+    }: {
+      lectureId: string;
+      onClose: () => void;
+    }) => (
+      <div role="dialog" aria-label="讲义编辑">
+        <p>{lectureId}</p>
+        <button type="button" onClick={onClose}>
+          关闭编辑
+        </button>
+      </div>
+    ),
+  };
+});
+
 /**
  * 资源库页面组件测试（T2A.2 验收项）：
  * - 删除确认弹层列出使用情况（课程名 + 作业名 + 作答数）；
@@ -180,6 +215,7 @@ describe("资源库页面", () => {
     expect(
       await screen.findByRole("checkbox", { name: "选择单元 练习四" }),
     ).toBeInTheDocument();
+    expect(editorModule.loaded).toBe(false);
     expect(
       screen.getByText(/2 题 · 被 1 个课程引用 · 1 个作业使用/),
     ).toBeInTheDocument();
@@ -377,6 +413,27 @@ describe("资源库页面", () => {
     expect(
       screen.getByRole("button", { name: "编辑讲义 第1讲 有理数" }),
     ).toBeInTheDocument();
+  });
+
+  it("点击后才加载编辑模块，关闭重开与切换讲义均定位当前目标", async () => {
+    mockDataLoaded();
+    mockedLectures.mockResolvedValue(LECTURES);
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: "讲义库" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "编辑讲义 第1讲 有理数" }),
+    );
+    const first = await screen.findByRole("dialog", { name: "讲义编辑" });
+    expect(first).toHaveTextContent(LECTURES.lectures[0]?.id ?? "缺失目标");
+    expect(editorModule.loaded).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "关闭编辑" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "编辑讲义 讲练 有理数热身" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "讲义编辑" }),
+    ).toHaveTextContent(LECTURES.lectures[1]?.id ?? "缺失目标");
   });
 
   it("显式 ?tab=recycle 直达回收站，记忆随之更新", async () => {
