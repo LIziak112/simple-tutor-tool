@@ -209,7 +209,7 @@ e2e/                Browser tests
 | `pnpm reparse [--dry-run]` | Extract question and lecture fields using the current parser; `--dry-run` previews the result. |
 | `pnpm seed:demo` | Generate demo data. |
 
-Development starts with shared contracts. Grading runs on the server, student content follows submission and release rules, and AI requests follow the teaching policy. Existing samples provide compatibility coverage. Follow the [verification guide](docs/约定/工程验证说明.md) for local test selection, including automatic full-suite fallbacks. Full regression and builds belong to PR CI; do not duplicate them locally. Required generated-spec checks still apply. See [AGENTS.md](AGENTS.md) for agent execution and handoff rules.
+Development starts with shared contracts. Grading runs on the server, student content follows submission and release rules, and AI requests follow the teaching policy. Existing samples provide compatibility coverage. Follow the [verification guide](docs/约定/工程验证说明.md) for local test selection, including automatic full-suite fallbacks. PR CI selects affected tests and builds application changes; infrastructure changes, main pushes, scheduled and manual runs retain full regression. Documentation-only PRs skip application jobs. Do not duplicate CI locally. Required generated-spec checks still apply. See [AGENTS.md](AGENTS.md) for agent execution and handoff rules.
 
 ## Documentation
 

@@ -59,7 +59,7 @@ simple-tutor-tool v2（品牌 OwnClass）：一对一辅导老师的自部署、
 | --- | --- |
 | 开发/修复循环 | `pnpm test:quick`（HEAD）、`pnpm typecheck:affected`、`pnpm lint:changed`（后两者相对 origin/main） |
 | 验证 | `pnpm test:affected`（origin/main）、`pnpm e2e:affected`（默认 v2，可追加基线，如 HEAD） |
-| 全量 | `pnpm test` / `test:full`、`pnpm e2e` / `e2e:full`、`pnpm lint`、`pnpm typecheck`、`pnpm build`；全量回归与构建归 PR CI，本机不手动重复全量 |
+| 全量 | `pnpm test` / `test:full`、`pnpm e2e` / `e2e:full`、`pnpm lint`、`pnpm typecheck`、`pnpm build`；构建与按范围回归归 PR CI，高风险兜底及定时/手动运行全量，本机不手动重复全量 |
 | 开发与格式化 | `pnpm dev`、`pnpm format` |
 | 数据库迁移生成 | `pnpm db:generate` |
 | 内容校验/重抽取 | `pnpm tutor-lint <文件或目录>`；`pnpm reparse --dry-run` 先检查，实际重抽取用 `pnpm reparse`（复用 DATA_DIR，题目 ID 不变） |
@@ -68,5 +68,5 @@ simple-tutor-tool v2（品牌 OwnClass）：一对一辅导老师的自部署、
 - 不手工直跑全套 Vitest、无文件/标签过滤的 Playwright、双浏览器全量或整仓构建来重复 CI；改用工具底层命令也不构成例外。选测脚本自动升级、用户明确要求全量、具体故障需扩大复现范围时按 [工程验证说明](docs/约定/工程验证说明.md)执行并记录原因。
 - 选测脚本会把迁移、契约、样例、基础设施等变动升级为全量，须执行其决策，不手动绕过。规则以 `scripts/affected-lib.mjs` 和 `scripts/e2e-affected.mjs` 为准。
 - E2E 选测只跑 chromium，恒含冒烟；全量 E2E 包含 chromium/webkit。测试使用独立临时数据库和 8899/5199 端口，不复用用户开发服务；模拟设备不能替代 Pencil 手感或原生系统缩放验收。
-- CI 在 PR 全量运行，push 仅 main 触发；定时回归跑默认分支 main，不保证覆盖未发布的 v2。直接 push v2 不触发该 CI。
+- CI 的 PR 按实际基点选测：说明文档仅轻量判定，代码保留静态检查与构建，单测/双浏览器 E2E 按范围执行，高风险改动兜底全量。push 仅 main 触发全量；定时回归跑默认分支 main，不保证覆盖未发布的 v2，手动运行可选目标分支。直接 push v2 不触发该 CI。
 - 修改 contract 后须重新导出并提交 JSON Schema（`pnpm schema:export`）；修改注册表、lint 规则、契约、linter 或 CLI 后须跑 `pnpm gen:spec` 并提交全部产物（已包含 schema 导出）。规范与对外校验固定入口为 `dsl-kit/`，不得手改生成产物；CI 要求生成后 `git diff` 为空。
