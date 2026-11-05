@@ -15,6 +15,7 @@ import {
 } from "@/features/student/student-queries";
 import {
   ApiError,
+  AttemptDetailReadTimeoutError,
   fetchAttemptApi,
   fetchAttemptContextApi,
   fetchStudentUnitLandingApi,
@@ -110,24 +111,32 @@ export function useAttemptDetail(attemptId: string | undefined) {
   );
   return useQuery({
     queryKey: studentAttemptKey(attemptId ?? "pending"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const previous = queryClient.getQueryData<
         Awaited<ReturnType<typeof fetchAttemptApi>>
       >(studentAttemptKey(attemptId ?? "pending"));
       // 暂停期间不出站；已在途的详情也不能覆盖末题阅读现场。
       if (previous && detailPollingPaused.has(attemptId ?? "")) return previous;
       try {
-        const next = await fetchAttemptApi(attemptId ?? "");
+        const next = await fetchAttemptApi(attemptId ?? "", signal);
         return previous && detailPollingPaused.has(attemptId ?? "")
           ? previous
           : next;
       } catch (error) {
-        if (previous && detailPollingPaused.has(attemptId ?? ""))
+        if (
+          previous &&
+          detailPollingPaused.has(attemptId ?? "") &&
+          !(error instanceof ApiError && [401, 403, 404].includes(error.status))
+        )
           return previous;
         throw error;
       }
     },
     enabled: attemptId !== undefined && !paused,
+    retry: (failureCount, error) =>
+      !(error instanceof AttemptDetailReadTimeoutError) &&
+      !(error instanceof ApiError && [401, 403, 404].includes(error.status)) &&
+      failureCount < 1,
     staleTime: 0,
     refetchOnMount: "always",
     // 窗口焦点重取同样尊重收尾暂停（闸门修复）：否则最后一题自动收尾后

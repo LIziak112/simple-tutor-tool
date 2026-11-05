@@ -15,6 +15,7 @@ import {
   putAnnotationDocApi,
 } from "@/lib/api";
 import {
+  applyAnnotationView,
   applyBasePreview,
   getAnnotationRecord,
   installAnnotationBackend,
@@ -93,9 +94,191 @@ async function createLocal() {
     session,
     scope,
     { png, layout },
-    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+    {
+      version: 1,
+      baseWidth: 600,
+      baseHeight: 400,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#dc2626",
+          weight: 4,
+          points: [{ x: 1, y: 1, p: 0.5, t: 0 }],
+        },
+      ],
+    },
   );
 }
+
+it("封存到达时最后已收一笔只保留本机，不写已封存云稿或自动重试", async () => {
+  const empty = {
+    version: 1 as const,
+    baseWidth: 600,
+    baseHeight: 400,
+    strokes: [],
+  };
+  await writeLocalAnnotationBase(session, scope, { png, layout }, empty);
+  const sealedAt = "2026-11-05T00:00:00Z";
+  await applyAnnotationView(session, scope, {
+    base: {
+      ...base,
+      state: "ready",
+      pixelWidth: 600,
+      pixelHeight: 400,
+      downloadUrl: "/image.png",
+    },
+    maxWidthPx: 600,
+    doc: empty,
+    annotation: {
+      annotationId: base.baseId,
+      revision: 1,
+      hash: "a".repeat(64),
+      savedAt: sealedAt,
+      sealedAt,
+      strokeCount: 0,
+      pointCount: 0,
+    },
+  });
+  const sampled = {
+    ...empty,
+    strokes: [
+      {
+        tool: "pen" as const,
+        color: "#dc2626",
+        weight: 4,
+        points: [{ x: 20, y: 30, p: 0.5, t: 0 }],
+      },
+    ],
+  };
+  writeAnnotationDoc(session, scope, sampled, "sealed-finalization");
+  const pendingId = (await getAnnotationRecord(session, scope))?.pending
+    ?.mutationId;
+  await flushAnnotationSync(scope.attemptId);
+  const saved = await getAnnotationRecord(session, scope, { strictRead: true });
+  expect(saved?.sealedAt).toBe(sealedAt);
+  expect(saved?.doc).toEqual(sampled);
+  expect(saved?.pending?.mutationId).toBe(pendingId);
+  expect(saved?.retained?.reason).toContain("封存");
+  expect(postAnnotationBaseApi).not.toHaveBeenCalled();
+  expect(postAnnotationBaseImageApi).not.toHaveBeenCalled();
+  expect(putAnnotationDocApi).not.toHaveBeenCalled();
+  expect(() => writeAnnotationDoc(session, scope, sampled)).toThrow(/已封存/);
+});
+
+it("空原稿预备只落本机，打开关闭零上传；首笔后才按底图再正文顺序上传", async () => {
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  );
+  await flushAnnotationSync(scope.attemptId);
+  expect(postAnnotationBaseApi).not.toHaveBeenCalled();
+  expect(postAnnotationBaseImageApi).not.toHaveBeenCalled();
+  expect(putAnnotationDocApi).not.toHaveBeenCalled();
+  expect((await getAnnotationRecord(session, scope))?.pending).toBeNull();
+  expect((await getAnnotationRecord(session, scope))?.editedAt).toBe(0);
+  writeAnnotationDoc(session, scope, {
+    version: 1,
+    baseWidth: 600,
+    baseHeight: 400,
+    strokes: [
+      {
+        tool: "pen",
+        color: "#dc2626",
+        weight: 4,
+        points: [{ x: 10, y: 10, p: 0.5, t: 0 }],
+      },
+    ],
+  });
+  await flushAnnotationSync(scope.attemptId);
+  expect(postAnnotationBaseApi).toHaveBeenCalledOnce();
+  expect(postAnnotationBaseImageApi).toHaveBeenCalledOnce();
+  expect(putAnnotationDocApi).toHaveBeenCalledOnce();
+  expect(
+    vi.mocked(postAnnotationBaseImageApi).mock.invocationCallOrder[0],
+  ).toBeLessThan(
+    vi.mocked(putAnnotationDocApi).mock.invocationCallOrder[0] ?? 0,
+  );
+});
+
+it("v3 能力升级拒写时保留原 pending 与 PNG，并提示刷新而非无限重传", async () => {
+  const frozenLayout = {
+    ...layout,
+    renderVersion: 3 as const,
+    controls: [
+      {
+        slotId: "slot-1",
+        kind: "text" as const,
+        x: 10,
+        y: 10,
+        width: 112,
+        height: 44,
+      },
+    ],
+  };
+  vi.mocked(postAnnotationBaseApi).mockResolvedValue({
+    base: { ...base, layout: frozenLayout },
+    baseRenderVersion: 3,
+    maxWidthPx: 600,
+    questionRevisionId: frozenLayout.questionRevisionId,
+    questionNo: 1,
+    questionMd: "公开题面",
+    mediaSrcs: [],
+    graphFigures: [],
+    interactionNotes: [],
+  });
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout: frozenLayout },
+    {
+      version: 1,
+      baseWidth: 600,
+      baseHeight: 400,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#dc2626",
+          weight: 4,
+          points: [{ x: 10, y: 10, p: 0.5, t: 0 }],
+        },
+      ],
+    },
+  );
+  const before = await getAnnotationRecord(session, scope);
+  vi.mocked(putAnnotationDocApi).mockRejectedValue(
+    new ApiError("ANNOTATION_PROTOCOL_UPGRADE_REQUIRED", "请更新客户端", 403),
+  );
+  await flushAnnotationSync(scope.attemptId);
+  const after = await getAnnotationRecord(session, scope);
+  expect(putAnnotationDocApi).toHaveBeenCalledWith(
+    scope.attemptId,
+    scope.questionId,
+    expect.any(Blob),
+    expect.objectContaining({ protocolVersion: 3 }),
+    expect.any(AbortSignal),
+  );
+  expect(after?.pending?.mutationId).toBe(before?.pending?.mutationId);
+  expect(after?.localBase?.png).toBe(png);
+  expect(after?.retained?.reason).toContain("刷新");
+  await flushAnnotationSync(scope.attemptId);
+  expect(putAnnotationDocApi).toHaveBeenCalledOnce();
+});
+
+it("旧分类器已有的通用 403 口径停止重试并保留待传身份", async () => {
+  await createLocal();
+  const before = await getAnnotationRecord(session, scope);
+  vi.mocked(putAnnotationDocApi).mockRejectedValue(
+    new ApiError("OTHER_ACCESS_BLOCK", "访问已拒绝", 403),
+  );
+  await flushAnnotationSync(scope.attemptId);
+  const after = await getAnnotationRecord(session, scope);
+  expect(after?.pending?.mutationId).toBe(before?.pending?.mutationId);
+  expect(after?.denied?.kind).toBe("access");
+  await flushAnnotationSync(scope.attemptId);
+  expect(putAnnotationDocApi).toHaveBeenCalledOnce();
+});
 
 it("底图身份→PNG ready→矢量的顺序固定，恢复后无假身份", async () => {
   await createLocal();

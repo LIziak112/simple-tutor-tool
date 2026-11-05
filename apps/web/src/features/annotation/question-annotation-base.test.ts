@@ -15,11 +15,14 @@ vi.mock("./question-base-image", () => ({
 
 import { ApiError, fetchAnnotationViewApi } from "@/lib/api";
 import {
+  annotationKeyOf,
   applyAnnotationView,
+  canRebuildUnboundAnnotationBase,
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
+  writeAnnotationDoc,
   writeLocalAnnotationBase,
 } from "./annotation-store";
 import {
@@ -108,6 +111,154 @@ it("本机已ready不等待网络或重复栅格化", async () => {
       .kind,
   ).toBe("surface");
   expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
+
+it("云端返回未知原稿协议不能当网络失败按空稿重建", async () => {
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base: {
+      baseId: "22222222-2222-4222-8222-222222222222",
+      state: "ready",
+      stale: false,
+      pixelWidth: 600,
+      pixelHeight: 400,
+      layout: {
+        ...layout,
+        renderVersion: 99,
+      } as unknown as AnnotationSurfaceLayout,
+      downloadUrl: "/unknown.png",
+    },
+    maxWidthPx: 600,
+    doc: { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+    annotation: null,
+  });
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).rejects.toThrow("布局版本未知");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+  expect(await getAnnotationRecord(session, scope)).toBeNull();
+});
+
+it("直接调用 prepare 首读未知本机协议即退出，不先请求或栅格化", async () => {
+  const backend = memoryAnnotationBackend();
+  await backend.set(annotationKeyOf(session, scope), {
+    doc: { version: 2, baseWidth: 600, baseHeight: 400, strokes: [] },
+    localBase: null,
+    pending: null,
+  });
+  resetAnnotationStoreForTest();
+  installAnnotationBackend(backend);
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).rejects.toThrow("正文版本未知");
+  expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+  expect(await backend.get(annotationKeyOf(session, scope))).toMatchObject({
+    doc: { version: 2 },
+  });
+});
+
+it("未编辑且未绑定的空预备在公开题目 revision 变化后重建，不制造待传", async () => {
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  );
+  const nextRevision = "44444444-4444-4444-8444-444444444444";
+  const nextLayout = { ...layout, questionRevisionId: nextRevision };
+  const nextPng = new Blob(["next"], { type: "image/png" });
+  vi.mocked(renderQuestionBaseImage).mockResolvedValue({
+    blob: nextPng,
+    layout: nextLayout,
+    pixelWidth: 600,
+    pixelHeight: 400,
+  });
+  const result = await prepareQuestionAnnotationBase(
+    session,
+    scope,
+    { ...question, questionRevisionId: nextRevision },
+    surface,
+  );
+  expect(result.kind).toBe("surface");
+  if (result.kind !== "surface") return;
+  expect(result.localBase.png).toBe(nextPng);
+  expect(result.localBase.layout.questionRevisionId).toBe(nextRevision);
+  expect((await getAnnotationRecord(session, scope))?.pending).toBeNull();
+  expect(renderQuestionBaseImage).toHaveBeenCalledOnce();
+});
+
+it("画后擦除到零笔、已 ready 身份都不具备空预备重建资格", async () => {
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  );
+  writeAnnotationDoc(session, scope, {
+    version: 1,
+    baseWidth: 600,
+    baseHeight: 400,
+    strokes: [
+      {
+        tool: "pen",
+        color: "#dc2626",
+        weight: 4,
+        points: [{ x: 1, y: 1, p: 0.5, t: 0 }],
+      },
+    ],
+  });
+  writeAnnotationDoc(session, scope, {
+    version: 1,
+    baseWidth: 600,
+    baseHeight: 400,
+    strokes: [],
+  });
+  const erased = await getAnnotationRecord(session, scope);
+  if (!erased) throw new Error("缺少擦除稿");
+  expect(canRebuildUnboundAnnotationBase(erased)).toBe(false);
+  const result = await prepareQuestionAnnotationBase(
+    session,
+    scope,
+    { ...question, questionRevisionId: "44444444-4444-4444-8444-444444444444" },
+    null,
+  );
+  expect(result.kind).toBe("surface");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
+
+it("已有本机底图但已收到封存事实时，缓存快路径拒绝重启圈画", async () => {
+  const doc = {
+    version: 1 as const,
+    baseWidth: 600,
+    baseHeight: 400,
+    strokes: [],
+  };
+  await writeLocalAnnotationBase(session, scope, { png, layout }, doc);
+  await applyAnnotationView(session, scope, {
+    base: {
+      baseId: "22222222-2222-4222-8222-222222222222",
+      state: "ready",
+      stale: false,
+      pixelWidth: 600,
+      pixelHeight: 400,
+      layout,
+    },
+    maxWidthPx: 600,
+    doc,
+    annotation: {
+      annotationId: "33333333-3333-4333-8333-333333333333",
+      revision: 1,
+      hash: "a".repeat(64),
+      savedAt: "2026-11-05T00:00:00.000Z",
+      sealedAt: "2026-11-05T01:00:00.000Z",
+      strokeCount: 0,
+      pointCount: 0,
+    },
+  });
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, null)).kind,
+  ).toBe("sealed");
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
 

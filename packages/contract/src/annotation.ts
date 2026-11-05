@@ -307,6 +307,8 @@ export const annotationHashSchema = z
 
 /** 原位题面布局身份；旧底图缺省layout时仍按固定宽v1处理。 */
 export const ANNOTATION_SURFACE_RENDER_VERSION = 2;
+/** 冻结原稿与已定位控件的协议版本；旧 v2 原稿保持原样。 */
+export const ANNOTATION_FROZEN_RENDER_VERSION = 3;
 export const ANNOTATION_SURFACE_PIXEL_RATIO = 2;
 const annotationSurfaceRectSchema = z.strictObject({
   x: z.number().min(-ANNOTATION_MAX_PIXEL_DIM).max(ANNOTATION_MAX_PIXEL_DIM),
@@ -355,7 +357,7 @@ export const annotationSurfaceCompatibilitySchema = z
 export type AnnotationSurfaceCompatibility = z.infer<
   typeof annotationSurfaceCompatibilitySchema
 >;
-export const annotationSurfaceLayoutSchema = z.strictObject({
+const annotationSurfaceLayoutV2Schema = z.strictObject({
   renderVersion: z.literal(ANNOTATION_SURFACE_RENDER_VERSION),
   questionRevisionId: questionRevisionIdSchema,
   cssWidth: z
@@ -374,14 +376,56 @@ export const annotationSurfaceLayoutSchema = z.strictObject({
   fontSignature: annotationHashSchema,
   compatibility: annotationSurfaceCompatibilitySchema.optional(),
 });
+export const annotationFrozenControlSchema = z.strictObject({
+  slotId: z.string().min(1).max(128),
+  kind: z.literal("text"),
+  x: z.number().finite().nonnegative(),
+  y: z.number().finite().nonnegative(),
+  width: z.number().finite().positive(),
+  height: z.number().finite().positive(),
+});
+export type AnnotationFrozenControl = z.infer<
+  typeof annotationFrozenControlSchema
+>;
+const annotationSurfaceLayoutV3Schema = annotationSurfaceLayoutV2Schema.extend({
+  renderVersion: z.literal(ANNOTATION_FROZEN_RENDER_VERSION),
+  controls: z.array(annotationFrozenControlSchema).min(1).max(64),
+});
+export const annotationSurfaceLayoutSchema = z
+  .discriminatedUnion("renderVersion", [
+    annotationSurfaceLayoutV2Schema,
+    annotationSurfaceLayoutV3Schema,
+  ])
+  .superRefine((layout, ctx) => {
+    if (layout.renderVersion !== ANNOTATION_FROZEN_RENDER_VERSION) return;
+    const seen = new Set<string>();
+    layout.controls.forEach((control, index) => {
+      if (seen.has(control.slotId))
+        ctx.addIssue({
+          code: "custom",
+          path: ["controls", index, "slotId"],
+          message: "槽位键重复",
+        });
+      seen.add(control.slotId);
+      if (
+        control.x + control.width > layout.cssWidth ||
+        control.y + control.height > layout.cssHeight
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["controls", index],
+          message: "槽位超出原稿边界",
+        });
+    });
+  });
 export type AnnotationSurfaceLayout = z.infer<
   typeof annotationSurfaceLayoutSchema
 >;
 
 /** 底图不可变身份；兼容证据只允许经原签名核验后补充一次。 */
-export function annotationSurfaceLayoutCore(
-  layout: AnnotationSurfaceLayout,
-): Omit<AnnotationSurfaceLayout, "compatibility"> {
+export function annotationSurfaceLayoutCore<T extends AnnotationSurfaceLayout>(
+  layout: T,
+): Omit<T, "compatibility"> {
   const { compatibility: _compatibility, ...core } = layout;
   return core;
 }
@@ -412,6 +456,7 @@ export const annotationBaseCreateRequestSchema = z.strictObject({
  */
 export const annotationUploadMetaSchema = z.object({
   resetVersion: annotationResetVersionSchema.optional(),
+  protocolVersion: z.literal(ANNOTATION_FROZEN_RENDER_VERSION).optional(),
   baseRevision: z.number().int().min(0).max(1_000_000),
   mutationId: z.uuid(),
   phase: annotationPhaseSchema.default("scratch"),
@@ -576,6 +621,11 @@ export const annotationBasePreviewDataSchema = z
       baseRenderVersion: z.literal(ANNOTATION_SURFACE_RENDER_VERSION),
       maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
     }),
+    z.object({
+      ...annotationBasePreviewShape,
+      baseRenderVersion: z.literal(ANNOTATION_FROZEN_RENDER_VERSION),
+      maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
+    }),
   ])
   .superRefine((preview, ctx) => {
     const layout = preview.base.layout;
@@ -588,6 +638,7 @@ export const annotationBasePreviewDataSchema = z
         });
     } else if (
       layout === undefined ||
+      layout.renderVersion !== preview.baseRenderVersion ||
       layout.questionRevisionId !== preview.questionRevisionId ||
       Math.ceil(layout.cssWidth * layout.pixelRatio) !== preview.maxWidthPx
     ) {
@@ -676,6 +727,7 @@ export const annotationSealDataSchema = z.object({
  * - ANNOTATION_BASE_IMAGE_INVALID：底图上传字节不是完整 PNG、宽度≠maxWidthPx 或高超上限（400）；
  * - ANNOTATION_BASE_ALREADY_READY：对已 ready 底图再上传不同内容的 PNG（409；同内容重传幂等返回原回执）；
  * - ANNOTATION_BASE_STALE：底图身份三要素与服务端当前不一致（409；防御态——快照冻结后正常不可达）；
+ * - ANNOTATION_PROTOCOL_UPGRADE_REQUIRED：v3 冻结原稿拒绝未声明能力的旧客户端 PUT（403）；
  * - ANNOTATION_SEALED：对已封存标注写入（409，交卷/检查点后只读；订正=新开 correction 记录）；
  * - ANNOTATION_NOT_SUBMITTED：attempt 尚未交卷就写 correction 标注、或 draft 期
  *   调 scratch seal（409，语义同 note.ts NOTE_NOT_SUBMITTED；审查修复 2 起
@@ -697,6 +749,7 @@ export const annotationErrorCodeSchema = z.enum([
   "ANNOTATION_BASE_ALREADY_READY",
   "ANNOTATION_BASE_LAYOUT_CONFLICT",
   "ANNOTATION_BASE_STALE",
+  "ANNOTATION_PROTOCOL_UPGRADE_REQUIRED",
   "ANNOTATION_SEALED",
   "ANNOTATION_NOT_SUBMITTED",
   "ATTEMPT_NOT_FOUND",
@@ -730,6 +783,7 @@ export type AnnotationBaseImageMeta = z.infer<
  */
 export const ANNOTATION_FORM_FIELDS = {
   resetVersion: "resetVersion",
+  protocolVersion: "protocolVersion",
   body: "body",
   baseRevision: "baseRevision",
   mutationId: "mutationId",

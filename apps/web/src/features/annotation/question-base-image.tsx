@@ -1,5 +1,6 @@
 import {
   ANNOTATION_BASE_PNG_MAX_BYTES,
+  ANNOTATION_FROZEN_RENDER_VERSION,
   ANNOTATION_MAX_PIXEL_DIM,
   ANNOTATION_SURFACE_PIXEL_RATIO,
   ANNOTATION_SURFACE_RENDER_VERSION,
@@ -11,6 +12,7 @@ import {
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { toBlob } from "html-to-image";
 import { createRoot } from "react-dom/client";
+import { captureFrozenControls } from "@/features/answering";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   collectFontEmbedCss,
@@ -408,6 +410,7 @@ export async function renderQuestionBaseImage(
       !sameGeometry(before, measureQuestionSurface(reference))
     )
       throw new Error("题面布局已变化或与底图不一致，请恢复原布局后重试");
+    const controls = captureFrozenControls(question, exported);
     const publicContent = publicContentSignatureOf(question);
     const [contentSignature, geometrySignature, fontSignature] =
       await Promise.all([
@@ -416,7 +419,10 @@ export async function renderQuestionBaseImage(
         contentHash64(before.fonts),
       ]);
     const layout = annotationSurfaceLayoutSchema.parse({
-      renderVersion: ANNOTATION_SURFACE_RENDER_VERSION,
+      renderVersion:
+        controls === null
+          ? ANNOTATION_SURFACE_RENDER_VERSION
+          : ANNOTATION_FROZEN_RENDER_VERSION,
       questionRevisionId: question.questionRevisionId,
       cssWidth: before.cssWidth,
       cssHeight: before.cssHeight,
@@ -432,6 +438,7 @@ export async function renderQuestionBaseImage(
         fonts: before.fonts.map(normalizeSurfaceFont),
         textRects: before.textRects,
       },
+      ...(controls !== null ? { controls } : {}),
     });
     const fontCss = await measureStage("annotation:font-css", () =>
       withTimeout(
@@ -478,7 +485,12 @@ export async function renderQuestionBaseImage(
       header.getUint32(20) !== pixelHeight
     )
       throw new Error("底图实际像素尺寸不符，不采用错位图片");
-    if (!sameGeometry(before, measureQuestionSurface(reference)))
+    if (
+      !sameGeometry(before, measureQuestionSurface(reference)) ||
+      !sameGeometry(exportedSnapshot, measureQuestionSurface(exported)) ||
+      JSON.stringify(controls) !==
+        JSON.stringify(captureFrozenControls(question, exported))
+    )
       throw new Error("生成期间题面布局变化，请重试");
     return { blob, layout, pixelWidth, pixelHeight };
   } finally {

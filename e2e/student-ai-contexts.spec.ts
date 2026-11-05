@@ -512,6 +512,12 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
         .not.toContain("保存中");
 
       // 答对两题 → 交卷
+      await q1.getByRole("button", { name: "进入作答" }).click();
+      await expect(
+        q1.locator(
+          '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
+        ),
+      ).toHaveCount(1);
       for (const no of [1, 2]) {
         await page
           .locator(`article[aria-label="第 ${no} 题"]`)

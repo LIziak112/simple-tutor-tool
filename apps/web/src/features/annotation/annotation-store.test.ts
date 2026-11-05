@@ -36,6 +36,7 @@ import {
   writeAnnotationDoc,
   writeLocalAnnotationBase,
 } from "./annotation-store";
+import { resolveFrozenQuestionSurface } from "./frozen-surface-resolver";
 
 /**
  * T6R.20 标注本地仓测试（IDB 键风格同 note-store、串行落盘、状态派生、
@@ -205,6 +206,56 @@ describe("writeAnnotationDoc（本地写入）", () => {
 });
 
 describe("applyBasePreview / applyAnnotationView（服务端事实播种）", () => {
+  it("API 返回未知 layout 版本时不采纳正文或覆盖已有原稿", async () => {
+    const original = docOf([strokeAt(3, 3)]);
+    await applyAnnotationView(SESSION, SCOPE, viewOf({ doc: original }));
+    const before = peekAnnotationRecord(SESSION, SCOPE);
+    const incoming = viewOf({ doc: docOf([strokeAt(8, 8)]) });
+    if (!incoming.base) throw new Error("测试需要底图引用");
+    incoming.base = {
+      ...incoming.base,
+      layout: {
+        renderVersion: 99,
+        questionRevisionId: "11111111-1111-4111-8111-111111111111",
+      } as unknown as AnnotationSurfaceLayout,
+    };
+    await expect(applyAnnotationView(SESSION, SCOPE, incoming)).rejects.toThrow(
+      "布局版本",
+    );
+    expect(peekAnnotationRecord(SESSION, SCOPE)).toEqual(before);
+  });
+
+  it("本机待传与已封存云稿冲突时仍采纳封存，只读且保留本机正文和 mutationId", async () => {
+    const local = docOf([strokeAt(1, 1)]);
+    writeAnnotationDoc(SESSION, SCOPE, local);
+    const pendingId = peekAnnotationRecord(SESSION, SCOPE)?.pending?.mutationId;
+    const sealed = viewOf({ doc: docOf([strokeAt(9, 9)]) });
+    if (!sealed.annotation) throw new Error("测试需要服务端圈画元数据");
+    sealed.annotation.sealedAt = "2026-11-05T10:00:00Z";
+    await applyAnnotationView(SESSION, SCOPE, sealed);
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.sealedAt).toBe("2026-11-05T10:00:00Z");
+    expect(record?.doc).toEqual(local);
+    expect(record?.pending?.mutationId).toBe(pendingId);
+    expect(record?.conflict?.kind).toBe("revision");
+    expect(() => writeAnnotationDoc(SESSION, SCOPE, docOf())).toThrow("已封存");
+  });
+
+  it("封存后迟到的同代次旧 GET 不能清掉已确认只读事实", async () => {
+    const doc = docOf([strokeAt(4, 4)]);
+    const sealed = viewOf({ doc });
+    if (!sealed.annotation) throw new Error("测试需要服务端圈画元数据");
+    sealed.annotation.sealedAt = "2026-11-05T10:00:00Z";
+    await applyAnnotationView(SESSION, SCOPE, sealed);
+    const version = peekAnnotationRecord(SESSION, SCOPE)?.docVersion;
+    await applyAnnotationView(SESSION, SCOPE, viewOf({ doc }));
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.sealedAt).toBe(
+      "2026-11-05T10:00:00Z",
+    );
+    expect(peekAnnotationRecord(SESSION, SCOPE)?.docVersion).toBe(version);
+    expect(() => writeAnnotationDoc(SESSION, SCOPE, docOf())).toThrow("已封存");
+  });
+
   it("迟到旧视图或云端回退不得降低已确认版本与替换正文", async () => {
     const cloud = docOf([strokeAt(8, 8)]);
     await applyAnnotationView(SESSION, SCOPE, viewOf({ doc: cloud }));
@@ -689,6 +740,54 @@ describe("adoptCloudAnnotationBase 与同核重绑（批次三 C/D）", () => {
       { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
     );
   }
+
+  it("云 B 只有 ready 基底无正文时，待传 A 的 PNG 与正文继续同域显示", async () => {
+    await seedLocalBase();
+    const localDoc = docOf([strokeAt(12, 20)], {
+      baseWidth: 600,
+      baseHeight: 400,
+    });
+    writeAnnotationDoc(SESSION, SCOPE, localDoc);
+    await applyAnnotationView(
+      SESSION,
+      SCOPE,
+      viewOf({
+        doc: null,
+        base: {
+          baseId: "55555555-5555-4555-8555-555555555555",
+          state: "ready",
+          stale: false,
+          pixelWidth: 600,
+          pixelHeight: 400,
+          layout: { ...LAYOUT, geometrySignature: "d".repeat(64) },
+          downloadUrl: "/cloud-b.png",
+        },
+      }),
+    );
+    const saved = await getAnnotationRecord(SESSION, SCOPE);
+    expect(saved?.pending?.doc).toEqual(localDoc);
+    expect(saved?.base?.baseId).toBe("55555555-5555-4555-8555-555555555555");
+    expect(
+      resolveFrozenQuestionSurface(
+        saved,
+        {
+          sourceUrl: "blob:local-a",
+          decoded: {
+            url: "blob:local-a",
+            blob: saved?.localBase?.png ?? null,
+            width: 600,
+            height: 400,
+            failed: false,
+          },
+        },
+        false,
+      ),
+    ).toMatchObject({
+      status: "ready",
+      source: { kind: "local" },
+      canReadInk: true,
+    });
+  });
 
   function preview(
     base: AnnotationBaseRef,

@@ -478,6 +478,12 @@ describe("annotation-sync：底图布局冲突死锁出口（批次三 P0-2）",
     );
     putMock.mockResolvedValue(receiptOf(1));
     await createLocalBase();
+    // 空预备不上传；首笔才检验云端已有 ready 底图的采纳路径。
+    writeAnnotationDoc(SESSION_A, SCOPE, {
+      ...docWithStrokes(1),
+      baseWidth: 600,
+      baseHeight: 400,
+    });
     await flushAnnotationSync(SCOPE.attemptId);
     expect(baseImageMock).not.toHaveBeenCalled(); // 不再回传 PNG
     expect(putMock).toHaveBeenCalledTimes(1);
@@ -501,6 +507,11 @@ describe("annotation-sync：底图布局冲突死锁出口（批次三 P0-2）",
       }),
     );
     await createLocalBase();
+    writeAnnotationDoc(SESSION_A, SCOPE, {
+      ...docWithStrokes(1),
+      baseWidth: 600,
+      baseHeight: 400,
+    });
     await flushAnnotationSync(SCOPE.attemptId);
     expect(baseImageMock).not.toHaveBeenCalled();
     expect(putMock).not.toHaveBeenCalled();

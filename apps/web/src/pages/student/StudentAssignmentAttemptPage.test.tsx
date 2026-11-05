@@ -1,4 +1,11 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { onlineManager } from "@tanstack/react-query";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   AttemptDraftData,
   AttemptResultData,
@@ -27,6 +34,7 @@ import {
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
 import {
+  ApiError,
   fetchAttemptApi,
   openAttemptHintApi,
   postAttemptEventsApi,
@@ -356,6 +364,61 @@ beforeEach(() => {
 afterEach(() => {
   resetNoteSession();
   resetAnnotationSession();
+  onlineManager.setOnline(true);
+});
+
+describe("作业详情读取恢复出口", () => {
+  it("建卷完成后离线暂停详情读取时给出重试入口", async () => {
+    mockedStart.mockImplementation(async () => {
+      onlineManager.setOnline(false);
+      return START_DRAFT;
+    });
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    renderPage();
+    expect(await screen.findByText("题目加载失败")).toBeInTheDocument();
+    expect(mockedFetch).not.toHaveBeenCalled();
+    await act(async () => onlineManager.setOnline(true));
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByText("周末加练")).toBeInTheDocument();
+  });
+
+  it("后台暂时失败保留同一作答会话并可重试", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValueOnce(DRAFT_DATA);
+    const { client } = renderPage();
+    const submitButton = await screen.findByRole("button", { name: "交卷" });
+    mockedFetch.mockRejectedValue(new Error("读取练习超时"));
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: ["student", "attempt", ATTEMPT_ID],
+      });
+    });
+    expect(await screen.findByText("题目信息刷新失败")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "交卷" })).toBe(submitButton);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    fireEvent.click(screen.getByRole("button", { name: "重试读取" }));
+    await waitFor(() =>
+      expect(screen.queryByText("题目信息刷新失败")).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "交卷" })).toBe(submitButton);
+  });
+
+  it("后台权限撤销不继续展示可写的旧卷", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValueOnce(DRAFT_DATA);
+    const { client } = renderPage();
+    await screen.findByRole("button", { name: "交卷" });
+    mockedFetch.mockRejectedValue(
+      new ApiError("COURSE_ACCESS_DENIED", "无法访问该课程", 403),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: ["student", "attempt", ATTEMPT_ID],
+      });
+    });
+    expect(await screen.findByText("题目加载失败")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "交卷" })).toBeNull();
+  });
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", {
@@ -405,7 +468,10 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     expect(mockedStart).toHaveBeenCalledWith(ASSIGNMENT_ID, {
       workflowVersion: 1,
     });
-    expect(mockedFetch).toHaveBeenCalledWith(ATTEMPT_ID);
+    expect(mockedFetch).toHaveBeenCalledWith(
+      ATTEMPT_ID,
+      expect.any(AbortSignal),
+    );
     expect(screen.getByText("第 1 题")).toBeInTheDocument();
     expect(screen.getByText("第 2 题")).toBeInTheDocument();
     // 进度条文本含 <b> 强调，用整页文本断言
@@ -509,7 +575,10 @@ describe("StudentAssignmentAttemptPage：已交卷直接结果视图", () => {
       await screen.findByText(/批改结果/, {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();
-    expect(mockedFetch).toHaveBeenCalledWith(ATTEMPT_ID);
+    expect(mockedFetch).toHaveBeenCalledWith(
+      ATTEMPT_ID,
+      expect.any(AbortSignal),
+    );
     // 答题控件不出现
     expect(screen.queryByRole("radio", { name: /对/ })).toBeNull();
   });

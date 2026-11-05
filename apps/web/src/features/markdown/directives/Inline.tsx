@@ -75,6 +75,7 @@ export function BlankDirective({ index }: DirectiveBaseProps) {
         type="text"
         inputMode="text"
         data-testid={`blank-${blankIndex + 1}`}
+        data-answer-slot-id={blankSlotIdOf(blankIndex)}
         aria-label={`第${blankIndex + 1}空`}
         value={binding.value}
         disabled={binding.disabled}

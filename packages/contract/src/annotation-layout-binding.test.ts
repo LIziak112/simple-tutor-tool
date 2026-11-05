@@ -70,6 +70,42 @@ it("新版预览往返保留布局且宽度必须匹配，不放宽旧1440规则
     }).success,
   ).toBe(false);
 });
+it("v2/v3 预览版本必须与所带原稿布局版本一致", () => {
+  const frozen = {
+    ...layout,
+    renderVersion: 3,
+    controls: [
+      {
+        slotId: "gap.alpha",
+        kind: "text",
+        x: 20,
+        y: 30,
+        width: 112,
+        height: 44,
+      },
+    ],
+  };
+  expect(
+    annotationBasePreviewDataSchema.safeParse({
+      ...preview,
+      base: { ...base, layout: frozen },
+      baseRenderVersion: 3,
+    }).success,
+  ).toBe(true);
+  expect(
+    annotationBasePreviewDataSchema.safeParse({
+      ...preview,
+      base: { ...base, layout: frozen },
+      baseRenderVersion: 2,
+    }).success,
+  ).toBe(false);
+  expect(
+    annotationBasePreviewDataSchema.safeParse({
+      ...preview,
+      baseRenderVersion: 3,
+    }).success,
+  ).toBe(false);
+});
 it("ready底图实际像素几何必须与布局相符", () => {
   expect(
     annotationBaseRefSchema.parse({

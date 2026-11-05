@@ -51,3 +51,11 @@
 5. 切到教师页面后检查学生后台保存未完成的情况；教师自身仍有未保存设置或编辑弹窗时同样不得更新。
 
 本次实现与测试不包含生产部署。新流程首次上线后的真实 iPad/Pencil 验收仍待进行。
+
+## PR #63 / #64 整合（2026-11-05）
+
+- 同步最新 v2 后合入 #64 的完整提交历史；两份约定文档同时保留纸面、阅读位置与更新保稿规则。
+- 冻结原稿组件保留 `usePwaUpdateGuard`，删除已退役 `AnnotationContinuation` 的引用。新增整合回归确认开笔后更新先收笔并检查本机落盘。
+- 按用户要求仅定向验证：PWA/圈画/存储等 8 文件 116 项通过；新增回归后 Overlay 33/33；阅读位置 20/20；Web 类型检查、4 个相关源码/测试文件 Biome 与差异空白检查通过。
+- 浏览器定向运行 `pnpm exec playwright test e2e/annotation-native-surface.spec.ts e2e/annotation-cross-device-view.spec.ts --project=chromium --workers=2`：3/3 通过，包含跨内核恢复与 v3 槽位几何。
+- 简化、正确性及保稿安全检查覆盖手动解决和自动合并的交叉文件：保留原会话校验、严格读取、收笔落盘、封存与待传保护；未增加学生出口。未运行本地全量；两 PR 原 head CI 均成功。本轮不宣称真实 iPad/Pencil 已验收。

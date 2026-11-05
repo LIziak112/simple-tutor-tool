@@ -32,6 +32,7 @@ import type {
 } from "@tutor/contract";
 import {
   ANNOTATION_BASE_PNG_MAX_BYTES,
+  annotationBaseRefSchema,
   annotationDocSchema,
   annotationSurfaceLayoutCore,
   annotationSurfaceLayoutSchema,
@@ -216,6 +217,8 @@ export interface AnnotationLocalRecord {
   baseRevision: number;
   /** 服务端标注 id（首传回执铸造后记录） */
   annotationId: string | null;
+  /** 已知的圈画封存事实；草稿检查点与此字段无关。 */
+  sealedAt: string | null;
   /** 底图引用缓存（两阶段 gate；null=从未建底图） */
   base: AnnotationBaseRef | null;
   /** 底图不可用原因（too-tall/装配失败等；入口禁用文案单一来源） */
@@ -247,6 +250,7 @@ function freshRecord(): AnnotationLocalRecord {
     pending: null,
     baseRevision: 0,
     annotationId: null,
+    sealedAt: null,
     base: null,
     baseDisabledReason: null,
     conflict: null,
@@ -272,36 +276,50 @@ type PersistedAnnotationRecord = Omit<AnnotationLocalRecord, "localBase"> & {
     | null;
 };
 
-/** 读取旧记录的防御性归一（缺字段补默认；doc 坏形弃壳重建）。
+/** 读取旧记录的防御性归一（缺字段补默认；非空坏形必须保留并报错）。
  *  localBase 不在此处装配（需异步取底图键），恒置 null 由调用方回填。 */
 function reviveRecord(
   raw: unknown,
 ): { record: AnnotationLocalRecord; rawLocalBase: unknown } | null {
-  if (typeof raw !== "object" || raw === null) return null;
+  if (typeof raw !== "object" || raw === null)
+    throw new Error("本机标画记录损坏，原记录已保留，请重试");
   const r = raw as Partial<AnnotationLocalRecord>;
   const doc = r.doc;
+  if (!doc) throw new Error("本机圈画正文缺失，原记录已保留，请重试");
+  const emptySentinel =
+    doc?.version === 1 &&
+    doc.baseWidth === 0 &&
+    doc.baseHeight === 0 &&
+    Array.isArray(doc.strokes) &&
+    doc.strokes.length === 0 &&
+    doc.deleted === undefined &&
+    doc.anchors === undefined;
+  if (!emptySentinel && !annotationDocSchema.safeParse(doc).success)
+    throw new Error(
+      "本机圈画正文版本未知或内容损坏，原记录已保留，请更新后重试",
+    );
   if (
-    doc === undefined ||
-    typeof doc !== "object" ||
-    doc.version !== 1 ||
-    !Array.isArray(doc.strokes) ||
-    typeof doc.baseWidth !== "number" ||
-    typeof doc.baseHeight !== "number"
-  ) {
-    return null;
-  }
+    r.pending != null &&
+    (typeof r.pending.mutationId !== "string" ||
+      !annotationDocSchema.safeParse(r.pending.doc).success)
+  )
+    throw new Error(
+      "本机待传圈画版本未知或内容损坏，原记录已保留，请更新后重试",
+    );
+  if (r.base != null && !annotationBaseRefSchema.safeParse(r.base).success)
+    throw new Error(
+      "本机圈画底图引用版本未知或内容损坏，原记录已保留，请更新后重试",
+    );
   return {
     record: {
       ...freshRecord(),
       localBase: null,
       resetVersion: typeof r.resetVersion === "number" ? r.resetVersion : 0,
       doc,
-      pending:
-        r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
-          ? r.pending
-          : null,
+      pending: r.pending ?? null,
       baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
       annotationId: typeof r.annotationId === "string" ? r.annotationId : null,
+      sealedAt: typeof r.sealedAt === "string" ? r.sealedAt : null,
       base: r.base ?? null,
       baseDisabledReason:
         typeof r.baseDisabledReason === "string" ? r.baseDisabledReason : null,
@@ -362,6 +380,10 @@ async function reviveLocalBaseOf(
     layout: AnnotationSurfaceLayout;
     boundBaseId?: unknown;
   };
+  if (!annotationSurfaceLayoutSchema.safeParse(base.layout).success)
+    throw new Error(
+      "本机底图布局版本未知或内容损坏，原记录已保留，请更新后重试",
+    );
   const boundBaseId =
     typeof base.boundBaseId === "string" ? base.boundBaseId : undefined;
   if (base.png !== undefined) {
@@ -691,6 +713,7 @@ export interface AnnotationRecordView {
   server: "denied" | "conflict" | "retained" | "uploading" | "dirty" | "synced";
   baseRevision: number;
   annotationId: string | null;
+  sealedAt: string | null;
   /** 底图引用缓存（挂画布 gate） */
   base: AnnotationBaseRef | null;
   baseDisabledReason: string | null;
@@ -762,6 +785,7 @@ export function getAnnotationView(
     server: deriveAnnotationServerState(record, uploading),
     baseRevision: record.baseRevision,
     annotationId: record.annotationId,
+    sealedAt: record.sealedAt,
     base: record.base,
     baseDisabledReason: record.baseDisabledReason,
     pendingMutationId: record.pending?.mutationId ?? null,
@@ -806,16 +830,54 @@ export function writeAnnotationDoc(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
   doc: AnnotationDoc,
+  mode?: "sealed-finalization",
 ): number {
   const key = annotationKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
+    if (record.sealedAt !== null && mode !== "sealed-finalization")
+      throw new Error("本题圈画已封存，仅供查看");
     record.doc = doc;
     record.docVersion += 1;
     record.pending = { mutationId: randomUuid(), doc };
     record.editedAt = Date.now();
+    if (record.sealedAt !== null) {
+      // 封存 GET 可在一笔开始后到达；已收采样只保留本机，不再写已封存云稿。
+      record.retained = {
+        reason: "本题圈画已封存，在途笔迹已保留在本机，云端封存稿未改动。",
+      };
+      return;
+    }
     if (record.denied?.kind === "content") record.denied = null;
   });
   return records.get(key)?.docVersion ?? 0;
+}
+
+function emptyAnnotationDoc(doc: AnnotationDoc): boolean {
+  return (
+    doc.strokes.length === 0 &&
+    (doc.deleted?.length ?? 0) === 0 &&
+    Object.keys(doc.anchors ?? {}).length === 0
+  );
+}
+
+/** 只有从未编辑、未传、未绑定且无裁决事实的本机空预备可随题目版本重建。 */
+export function canRebuildUnboundAnnotationBase(
+  record: AnnotationLocalRecord,
+): boolean {
+  return (
+    record.localBase !== null &&
+    record.localBase.boundBaseId === undefined &&
+    record.base === null &&
+    record.pending === null &&
+    record.annotationId === null &&
+    record.baseRevision === 0 &&
+    record.sealedAt === null &&
+    record.conflict === null &&
+    record.retained === null &&
+    record.denied === null &&
+    record.editedAt === 0 &&
+    emptyAnnotationDoc(record.doc)
+  );
 }
 
 /** 新原位底图首次本地落盘：一条IDB记录承载PNG、布局和待传矢量。 */
@@ -840,10 +902,19 @@ export async function writeLocalAnnotationBase(
   )
     throw new Error("本机笔迹尺寸与布局不匹配");
   await mutateLoaded(session, scope, freshRecord, (record) => {
+    if (!downloaded && record.sealedAt !== null)
+      throw new Error("本题圈画已封存，仅供查看");
+    if (
+      !downloaded &&
+      record.localBase !== null &&
+      !canRebuildUnboundAnnotationBase(record)
+    )
+      throw new Error("已有不可变原稿，不能覆盖");
     const previous = record.localBase?.layout ?? record.base?.layout;
     if (
       previous !== undefined &&
-      JSON.stringify(previous) !== JSON.stringify(layout)
+      JSON.stringify(previous) !== JSON.stringify(layout) &&
+      !canRebuildUnboundAnnotationBase(record)
     )
       throw new Error("已有另一布局的本机稿，不能覆盖");
     if (record.base !== null && record.base.layout === undefined)
@@ -866,11 +937,22 @@ export async function writeLocalAnnotationBase(
       }
       return;
     }
+    if (record.base?.state === "ready")
+      throw new Error("已有云端原稿，不能覆盖");
+    if (
+      record.pending !== null &&
+      !annotationDocsEqual(record.pending.doc, doc)
+    )
+      throw new Error("已有待传笔迹，不能覆盖");
+    if (record.editedAt > 0 && !annotationDocsEqual(record.doc, doc))
+      throw new Error("已有本机笔迹，不能覆盖");
     record.localBase = { png: base.png, layout };
     record.doc = doc;
     record.docVersion += 1;
-    record.pending = { mutationId: randomUuid(), doc };
-    record.editedAt = Date.now();
+    if (!emptyAnnotationDoc(doc) && record.pending === null) {
+      record.pending = { mutationId: randomUuid(), doc };
+      record.editedAt = Date.now();
+    }
   });
   await settleAnnotationRecordPersistence(session, scope);
   const saved = peekAnnotationRecord(session, scope);
@@ -890,6 +972,11 @@ export async function applyBasePreview(
   preview: AnnotationBasePreviewData,
   confirmedLocalPng?: Blob,
 ): Promise<void> {
+  if (
+    preview.base.layout !== undefined &&
+    !annotationSurfaceLayoutSchema.safeParse(preview.base.layout).success
+  )
+    throw new Error("云端底图布局版本未知，原记录已保留，请更新后重试");
   await mutateLoaded(session, scope, freshRecord, (record) => {
     if (confirmedLocalPng !== undefined) {
       // 批次三 D：绑定校验放宽到同核（重渲染非确定性与兼容证据差异不阻断
@@ -1017,6 +1104,13 @@ export async function applyAnnotationView(
   view: AnnotationViewData,
   choice?: { expectedMutationId: string | null },
 ): Promise<void> {
+  if (
+    view.base?.layout !== undefined &&
+    !annotationSurfaceLayoutSchema.safeParse(view.base.layout).success
+  )
+    throw new Error("云端底图布局版本未知，原记录已保留，请更新后重试");
+  if (view.doc !== null && !annotationDocSchema.safeParse(view.doc).success)
+    throw new Error("云端圈画正文版本未知，原记录已保留，请更新后重试");
   const incomingVersion = view.resetVersion ?? 0;
   const existing = await getAnnotationRecord(session, scope, {
     strictRead: true,
@@ -1054,6 +1148,9 @@ export async function applyAnnotationView(
     }
 
     const meta = view.annotation;
+    // 同一代次内封存是单调事实：即使正文冲突提前返回，仍须立即阻止续写。
+    if (record.sealedAt === null && meta?.sealedAt)
+      record.sealedAt = meta.sealedAt;
     if (!choice && (meta?.revision ?? 0) < record.baseRevision) {
       record.conflict = {
         kind: "revision",
@@ -1119,6 +1216,11 @@ export async function applyAnnotationView(
       return; // 本地未同步且内容不同：保留
     }
     record.pending = null;
+    if (annotationDocsEqual(record.doc, view.doc)) {
+      record.conflict = null;
+      if (choice) record.retained = null;
+      return;
+    }
     record.doc = view.doc;
     record.docVersion += 1;
     record.conflict = null;
@@ -1237,6 +1339,20 @@ export async function clearAnnotationRetained(
     cleared = true;
   });
   return cleared;
+}
+
+/** 协议升级拒写：冻结重试，原待传身份与本机原稿均不变。 */
+export async function retainAnnotationForProtocolUpgrade(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.pending === null) return;
+    record.retained = {
+      reason:
+        "当前页面版本无法同步此圈画原稿。请刷新页面完成更新后，重新尝试同步；本机待传笔迹已保留。",
+    };
+  });
 }
 
 /** 在途上传标记（sync 维护；派生 uploading 维度） */

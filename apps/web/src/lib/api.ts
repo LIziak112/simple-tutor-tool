@@ -1007,10 +1007,48 @@ export function setStudentFlagApi(
  * 已交 = 结果视图（快照 + 参考答案 + 详解 + 判分 + 已解锁提示回看）。
  * 前端按 data.attempt.status 分支渲染。
  */
-export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
-  return callApi(() =>
-    api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
+/** 详情单轮读取的上界；超时直接给出重试入口，避免自动重试再等待一轮。 */
+const ATTEMPT_DETAIL_READ_TIMEOUT_MS = 30_000;
+
+export class AttemptDetailReadTimeoutError extends Error {
+  constructor() {
+    super("读取练习超时，请检查网络后重试");
+    this.name = "AttemptDetailReadTimeoutError";
+  }
+}
+
+export function fetchAttemptApi(
+  attemptId: string,
+  signal?: AbortSignal,
+): Promise<AttemptDetailData> {
+  if (signal?.aborted)
+    return Promise.reject(new DOMException("练习读取已取消", "AbortError"));
+  const controller = new AbortController();
+  let rejectStopped: (reason: Error) => void = () => undefined;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    rejectStopped = reject;
+  });
+  const stop = (reason: Error) => {
+    if (controller.signal.aborted) return;
+    rejectStopped(reason);
+    controller.abort();
+  };
+  const onAbort = () => stop(new DOMException("练习读取已取消", "AbortError"));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(
+    () => stop(new AttemptDetailReadTimeoutError()),
+    ATTEMPT_DETAIL_READ_TIMEOUT_MS,
   );
+  const read = callApi<AttemptDetailData>(() =>
+    api.api.student.attempts[":id"].$get(
+      { param: { id: attemptId } },
+      { init: { signal: controller.signal } },
+    ),
+  );
+  return Promise.race([read, stopped]).finally(() => {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  });
 }
 
 /**
@@ -1767,6 +1805,8 @@ export function putAnnotationDocApi(
     form.append(F.resetVersion, String(meta.resetVersion));
   form.append(F.baseRevision, String(meta.baseRevision));
   form.append(F.mutationId, meta.mutationId);
+  if (meta.protocolVersion !== undefined)
+    form.append(F.protocolVersion, String(meta.protocolVersion));
   if (meta.phase !== undefined) form.append(F.phase, meta.phase);
   return callApi(() =>
     fetch(

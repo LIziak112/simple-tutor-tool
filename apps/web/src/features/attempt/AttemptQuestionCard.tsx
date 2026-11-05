@@ -507,8 +507,11 @@ export function AttemptQuestionCard({
           ref={annotationOverlay}
           attemptId={attemptId}
           question={inlineQuestion}
+          answer={answer}
+          onAnswer={onAnswer}
           label={`第 ${index + 1} 题`}
           hidden={annotationHidden}
+          annotationReadOnly={readOnly}
         >
           <QuestionSurface
             question={question}
