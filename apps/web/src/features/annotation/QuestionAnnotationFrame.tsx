@@ -218,7 +218,9 @@ export const QuestionAnnotationFrame = forwardRef<
             matches ? "ready" : "blocked",
             matches
               ? null
-              : "题面与保存基准偏差超过 10px 或区域不符，原稿已保留，请恢复原排版后重试",
+              : savedLayout.compatibility
+                ? "题面与保存基准偏差超过 10px 或区域不符，原稿已保留，请恢复原排版后重试"
+                : "旧稿缺少位置证据且原签名未匹配，无法核验对齐，原稿已保留，请在原设备继续或导出原稿",
           );
         } catch (cause) {
           publish(

@@ -458,6 +458,17 @@ const DIALOG_STATE_NARROW: readonly BaselineEntry[] = [
 
 /** 基线全集（§6.3 A 的 contract/grading 中央触点在 packages/，扫描范围外） */
 const I16_BASELINE: readonly BaselineEntry[] = [
+  // 旧版视口模板选择，仅测量公开题面，不派发或修改答案；决策记录「整题缩放」说明。
+  {
+    file: "apps/web/src/features/annotation/QuestionAnnotationFrame.tsx",
+    snippet: 'facts.current.question.type === "matching"',
+    count: 1,
+  },
+  {
+    file: "apps/web/src/features/annotation/QuestionAnnotationFrame.tsx",
+    snippet: 'facts.current.question.type === "ordering"',
+    count: 1,
+  },
   ...DISPATCH_INDEX_CASES,
   ...DISPATCH_INDEX_NARROW,
   ...PREPARE_CASES,

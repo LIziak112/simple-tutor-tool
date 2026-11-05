@@ -180,3 +180,27 @@ it("旧题模板按离屏证据选择横排并核验可见题面", async () => {
   );
   expect(resolveLegacyQuestionProfile).toHaveBeenCalled();
 });
+it("仅哈希旧稿失配说明缺定位证据，不伪称已测得超过10px", async () => {
+  const { renderProfile: _profile, compatibility: _evidence, ...old } = layout;
+  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+  const changed = vi.fn();
+  render(
+    <QuestionAnnotationFrame
+      question={question}
+      layout={{ ...old, renderVersion: 2 }}
+      scopeKey="hash-mismatch"
+      onGeometryChange={changed}
+    >
+      <QuestionSurface question={question} />
+    </QuestionAnnotationFrame>,
+  );
+  await waitFor(() =>
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: "blocked",
+        reason: expect.stringContaining("原签名未匹配"),
+      }),
+    ),
+  );
+  expect(changed.mock.lastCall?.[0].reason).not.toContain("超过 10px");
+});
