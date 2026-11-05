@@ -24,6 +24,73 @@ const WARM_OPEN_BUDGET_MS = 300;
  * 避免单次调度停顿干扰。原始样本始终写入附件，无关题卡的 DOM 变更恒硬断言。 */
 const PERF_GATE = !!process.env.CI || process.env.E2E_PERF_GATE === "1";
 
+test("桌面长卷答题卡可滚动且操作按钮始终可见", { tag: ["@student"] }, async ({
+  request,
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await teacherApiLogin(request);
+  const suffix = uniqueSuffix();
+  const courseName = `答题卡课程${suffix}`;
+  const unitName = `答题卡长卷${suffix}`;
+  const courseId = await createCourseViaApi(request, courseName);
+  const questions = Array.from(
+    { length: 50 },
+    (_, i) =>
+      `::::question{type=judge difficulty=1 knowledge="判断"}\n第 ${i + 1} 题是测试题。[[正确]]\n::::`,
+  );
+  const markdown = [
+    "---",
+    "kind: practice",
+    `unit: ${unitName}`,
+    "---",
+    "",
+    ...questions,
+  ].join("\n\n");
+  const imported = await request.post("/api/teacher/import/commit", {
+    data: { markdown, filename: `${unitName}.md`, courseId },
+  });
+  expect(imported.ok(), await imported.text()).toBe(true);
+  await setCourseItemVisible(request, courseId, unitName, true);
+  const loginName = `navigator-${suffix}`;
+  await request.post("/api/teacher/students", {
+    data: { displayName: "答题卡测试生", loginName },
+  });
+  const student = await getStudentViaApi(request, loginName);
+  await addCourseMemberViaApi(request, courseId, student.id);
+  const leak = attachLeakMonitor(page);
+  await page.goto(`/s/${student.linkToken}`);
+  await page.waitForURL("**/s/home");
+  await openChoicePractice(page, courseId, courseName, unitName, 50);
+  const sidebar = page.getByRole("complementary", { name: "答题定位" });
+  const list = sidebar.locator("ol");
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
+  await list.evaluate((el) => {
+    el.scrollTop = 300;
+  });
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
+  const bounds = await sidebar.evaluate((el) => {
+    const button = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("下一道未答"),
+    );
+    if (!button) throw new Error("找不到下一道未答按钮");
+    return {
+      bottom: el.getBoundingClientRect().bottom,
+      buttonBottom: button.getBoundingClientRect().bottom,
+    };
+  });
+  expect(bounds.buttonBottom).toBeLessThanOrEqual(bounds.bottom + 1);
+  await sidebar.getByRole("button", { name: "收起答题卡" }).click();
+  await expect(sidebar.getByRole("navigation")).toBeHidden();
+  await sidebar.getByRole("button", { name: "展开答题卡" }).click();
+  await expect(sidebar.getByRole("navigation")).toBeVisible();
+  expect(leak.violations()).toEqual([]);
+});
+
 test(
   "学生工作区：部分填写、遗漏定位、答题卡与响应式布局",
   { tag: ["@student"] },
@@ -370,6 +437,10 @@ test(
     await desktopNavigation
       .getByRole("button", { name: "收起答题卡" })
       .press("Enter");
+    // 先确认相邻占位题已换成真实题卡，再验证位置，避免只测到开合的首帧。
+    await expect(
+      page.getByRole("article", { name: "第 64 题", exact: true }),
+    ).toBeAttached();
     await expect
       .poll(async () => (await middle.boundingBox())?.y ?? Infinity)
       .toBeCloseTo(middleTop, 0);

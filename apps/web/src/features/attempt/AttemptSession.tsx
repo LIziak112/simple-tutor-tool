@@ -566,7 +566,7 @@ function AnswerView({
     },
     [],
   );
-  useReadingPosition(
+  const preserveReadingPosition = useReadingPosition(
     attemptId,
     cardElements,
     setCurrentQuestionId,
@@ -1506,11 +1506,13 @@ function AnswerView({
                     const element = currentQuestionId
                       ? cardElements.current.get(currentQuestionId)
                       : undefined;
-                    if (element)
+                    if (element && currentQuestionId) {
+                      preserveReadingPosition(currentQuestionId);
                       navigationAnchor.current = {
                         element,
                         top: element.getBoundingClientRect().top,
                       };
+                    }
                     aiCompanion.controller.toggleNavigator();
                   }}
                 >
@@ -1525,7 +1527,7 @@ function AnswerView({
               <div
                 id={navigationId}
                 hidden={navigatorCollapsed}
-                className="min-h-0 flex-1 flex-col overflow-hidden not-hidden:flex"
+                className={`min-h-0 flex-1 flex-col overflow-hidden ${navigatorCollapsed ? "hidden" : "flex"}`}
               >
                 <QuestionNavigator
                   items={navigationItems}
