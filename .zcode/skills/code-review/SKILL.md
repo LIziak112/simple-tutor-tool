@@ -20,7 +20,7 @@ description: 代码审查（code review / PR review）。审查代码变更、�
 
 1. 读 PR / 任务描述与关联 issue
 2. 看 diff 规模（>400 行建议拆分审查）
-3. 确认 `pnpm test / lint / typecheck` 已通过（未通过先修）
+3. 按 [工程验证说明](../../../docs/约定/工程验证说明.md)核对当前版本的分层验证证据；已有有效结果不重跑，不把整仓测试/构建作为本机审查前置条件。纯文档按文档检查处理。
 4. 理解业务需求与相关架构决策
 
 ### 阶段 2：高层审查
@@ -82,6 +82,6 @@ description: 代码审查（code review / PR review）。审查代码变更、�
 ## 交给快速模型做初审
 
 - 单批小范围粗审：用 [prompts/flash-first-pass.md](prompts/flash-first-pass.md)（自包含，直接粘贴代码即可）。
-- 大范围并行审查：用 [prompts/orchestrator.md](prompts/orchestrator.md)——编排者（Flash Max）只负责拆单、派单、验收（证据逐字比对防幻觉）、汇总去重，不亲自审查；审查由多个 Flash Max 子 Agent 并发执行，并发数受 MAX_CONCURRENT 约束。在 ZCode 中即由主会话按该提示词用 Agent 工具并行 spawn flash 子代理。
+- 已选择大范围并行审查时用 [prompts/orchestrator.md](prompts/orchestrator.md)；不是每次审查的默认步骤。编排者拆单、验收证据并汇总，独立审查者按本次指定的可用模型执行；遵循 [代理协作与执行](../../../docs/约定/代理协作与执行.md)，不再硬编码 Flash Max 或重复同角度审查。
 
 粗审结果由主模型复核后再定性。

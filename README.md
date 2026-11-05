@@ -198,7 +198,9 @@ e2e/                浏览器自动化测试
 | 命令 | 用途 |
 | --- | --- |
 | `pnpm dev` / `pnpm build` | 开发启动 / 构建。 |
-| `pnpm test` / `pnpm e2e` | 单元测试 / 浏览器端到端测试。 |
+| `pnpm test:quick` / `pnpm test:affected` | 开发检查点 / 收口单测选测。 |
+| `pnpm e2e:affected` | 本机 Chromium 功能面与冒烟选测。 |
+| `pnpm test` / `pnpm e2e` | 全量单测 / 双浏览器端到端测试，由 PR CI 执行。 |
 | `pnpm lint` / `pnpm typecheck` / `pnpm format` | 代码检查 / 类型检查 / 格式化。 |
 | `pnpm db:generate` | 生成数据库迁移。 |
 | `pnpm schema:export` | 导出 JSON Schema。 |
@@ -207,7 +209,7 @@ e2e/                浏览器自动化测试
 | `pnpm reparse [--dry-run]` | 按当前解析规则重新提取题目和讲义内容，`--dry-run` 用于预览。 |
 | `pnpm seed:demo` | 生成演示数据。 |
 
-开发时先更新共享契约，判分由服务端执行；学生可见内容按作答进度与答案公布规则生成，AI 出站按教学策略授权。现存样例承担兼容性回归检查。合并前执行 lint、类型检查、单测、规范生成校验、构建和浏览器测试，具体约定见 [AGENTS.md](AGENTS.md)。
+开发时先更新共享契约，判分由服务端执行；学生可见内容按作答进度与答案公布规则生成，AI 出站按教学策略授权。现存样例承担兼容性回归检查。本机按 [工程验证说明](docs/约定/工程验证说明.md)分层选测，自动命中兜底时遵循脚本决策；全量回归与构建归 PR CI，不在本机重复。适用的规范生成校验仍须完成。代理编排与交接见 [AGENTS.md](AGENTS.md) 的必读入口。
 
 ## 文档
 
