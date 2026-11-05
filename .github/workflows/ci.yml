@@ -1,8 +1,12 @@
 # CI：install → lint → typecheck → test → build + 独立 e2e job（chromium/webkit）（开发任务清单 T0.6）
 name: CI
 
-# PR：先判定范围，说明文档仅跑轻量判定；代码按基点选测，基础设施改动兜底全量。
-# main 推送、定时与手动运行：完整回归。定时仍只覆盖默认分支。
+# 触发（2026-10-25 分层测试）：
+# - push 仅 main：PR 分支只由 pull_request 事件跑，消掉 push + PR 双跑（一个 PR 一组 check）；
+# - pull_request：所有 PR 单次全量（lint/typecheck/test/build + e2e 双浏览器）；
+# - schedule：每晚全量回归。schedule 固定执行默认分支 main 上的本文件与代码——
+#   v2 未发 main 期间夜跑覆盖的是 main 现状，发 main 后自动追平；
+# - workflow_dispatch：手动补跑全量，可在 Actions 页选任意分支（跑所选分支的代码）。
 on:
   push:
     branches: [main]
@@ -18,36 +22,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
-env:
-  CI_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
-  CI_FULL: ${{ github.event_name != 'pull_request' }}
-
 jobs:
-  scope:
-    name: 判定验证范围
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      run: ${{ steps.scope.outputs.run }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-      - name: 验证范围决策回归
-        run: node --test scripts/ci-scope.spec.mjs
-      - id: scope
-        name: 计算范围
-        run: node scripts/ci-scope.mjs plan "$CI_BASE"
-
   ci:
-    needs: scope
-    if: needs.scope.outputs.run == 'true'
     name: lint / typecheck / test / build
     # ubuntu-latest 自 2026-10-19 起渐进迁移到 Ubuntu 26.04（至 11-19），窗口期内同一工作流
     # 会随机落在 24/26 两代系统上；显式钉 24.04 保证构建环境确定。切 26.04 时另行专门验证。
@@ -56,8 +32,6 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       # 不传 version，pnpm/action-setup 自动读取根 package.json 的 packageManager 字段（pnpm@12.6.0）。
       # v6 运行在 Node 24（v4 标签仍指向 node20 构建，已被 GitHub 弃用告警），v6.1.0 起明确支持 pnpm v12
@@ -85,7 +59,7 @@ jobs:
       - name: 单元测试
         run: |
           set -o pipefail
-          node scripts/ci-scope.mjs unit "$CI_BASE" 2>&1 | tee /tmp/test-output.log
+          pnpm test 2>&1 | tee /tmp/test-output.log
 
       # 2026-10-10：340d13a/142a112 单测步骤红而本地全维度复现均绿，日志需登录不可读——
       # 失败用例名经 ::error 工作流命令写进 check 注解（注解可经公开 API 匿名读取），
@@ -119,8 +93,6 @@ jobs:
   # 缓存未命中时下载安装 + apt 系统库；旧 40 分钟在套件涨到 262 项后余量归零
   # （2026-10-27 全仓撞 1800s 墙，主人拍板按方案①抬预算：globalTimeout 45m + 本处 55m）。
   e2e:
-    needs: scope
-    if: needs.scope.outputs.run == 'true'
     name: e2e (chromium + webkit, iPad 模拟)
     # 钉 24.04 而非跟随 ubuntu-latest 渐进迁移（2026-10-19 起）到 26.04：webkit 的 apt 系统
     # 库随发行版走。Playwright 1.61 起官方支持 Ubuntu 26.04（本仓库 @playwright/test 1.63），
@@ -130,8 +102,6 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: 安装 pnpm
         uses: pnpm/action-setup@v6
@@ -182,7 +152,7 @@ jobs:
           du -sh ~/.cache/ms-playwright
 
       - name: E2E 测试
-        run: node scripts/ci-scope.mjs e2e "$CI_BASE"
+        run: pnpm e2e
 
       - name: 上传测试报告
         if: failure()
@@ -192,27 +162,3 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
-
-  result:
-    name: CI 结果
-    if: always()
-    needs: [scope, ci, e2e]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - name: 汇总（可作为固定必需检查）
-        env:
-          SCOPE_RESULT: ${{ needs.scope.result }}
-          APP_RESULT: ${{ needs.ci.result }}
-          E2E_RESULT: ${{ needs.e2e.result }}
-          RUN_APP: ${{ needs.scope.outputs.run }}
-        run: |
-          test "$SCOPE_RESULT" = success
-          if [ "$RUN_APP" = true ]; then
-            test "$APP_RESULT" = success
-            test "$E2E_RESULT" = success
-            exit 0
-          fi
-          for result in "$APP_RESULT" "$E2E_RESULT"; do
-            test "$result" = success || test "$result" = skipped || exit 1
-          done
