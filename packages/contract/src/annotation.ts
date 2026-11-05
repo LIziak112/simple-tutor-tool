@@ -309,6 +309,9 @@ export const annotationHashSchema = z
 export const ANNOTATION_SURFACE_RENDER_VERSION = 2;
 /** 冻结原稿与已定位控件的协议版本；旧 v2 原稿保持原样。 */
 export const ANNOTATION_FROZEN_RENDER_VERSION = 3;
+/** 真实题面整题缩放；PNG 仅存证，不含图片控件恢复清单。 */
+export const ANNOTATION_WHOLE_QUESTION_RENDER_VERSION = 4;
+export const ANNOTATION_WHOLE_QUESTION_RENDER_PROFILE = "whole-question-v1";
 export const ANNOTATION_SURFACE_PIXEL_RATIO = 2;
 const annotationSurfaceRectSchema = z.strictObject({
   x: z.number().min(-ANNOTATION_MAX_PIXEL_DIM).max(ANNOTATION_MAX_PIXEL_DIM),
@@ -391,10 +394,16 @@ const annotationSurfaceLayoutV3Schema = annotationSurfaceLayoutV2Schema.extend({
   renderVersion: z.literal(ANNOTATION_FROZEN_RENDER_VERSION),
   controls: z.array(annotationFrozenControlSchema).min(1).max(64),
 });
+const annotationSurfaceLayoutV4Schema = annotationSurfaceLayoutV2Schema.extend({
+  renderVersion: z.literal(ANNOTATION_WHOLE_QUESTION_RENDER_VERSION),
+  renderProfile: z.literal(ANNOTATION_WHOLE_QUESTION_RENDER_PROFILE),
+  compatibility: annotationSurfaceCompatibilitySchema,
+});
 export const annotationSurfaceLayoutSchema = z
   .discriminatedUnion("renderVersion", [
     annotationSurfaceLayoutV2Schema,
     annotationSurfaceLayoutV3Schema,
+    annotationSurfaceLayoutV4Schema,
   ])
   .superRefine((layout, ctx) => {
     if (layout.renderVersion !== ANNOTATION_FROZEN_RENDER_VERSION) return;
@@ -456,7 +465,12 @@ export const annotationBaseCreateRequestSchema = z.strictObject({
  */
 export const annotationUploadMetaSchema = z.object({
   resetVersion: annotationResetVersionSchema.optional(),
-  protocolVersion: z.literal(ANNOTATION_FROZEN_RENDER_VERSION).optional(),
+  protocolVersion: z
+    .union([
+      z.literal(ANNOTATION_FROZEN_RENDER_VERSION),
+      z.literal(ANNOTATION_WHOLE_QUESTION_RENDER_VERSION),
+    ])
+    .optional(),
   baseRevision: z.number().int().min(0).max(1_000_000),
   mutationId: z.uuid(),
   phase: annotationPhaseSchema.default("scratch"),
@@ -624,6 +638,11 @@ export const annotationBasePreviewDataSchema = z
     z.object({
       ...annotationBasePreviewShape,
       baseRenderVersion: z.literal(ANNOTATION_FROZEN_RENDER_VERSION),
+      maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
+    }),
+    z.object({
+      ...annotationBasePreviewShape,
+      baseRenderVersion: z.literal(ANNOTATION_WHOLE_QUESTION_RENDER_VERSION),
       maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
     }),
   ])

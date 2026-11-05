@@ -18,6 +18,8 @@ import type {
   AnnotationReceipt,
 } from "@tutor/contract";
 import {
+  ANNOTATION_FROZEN_RENDER_VERSION,
+  ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
   annotationConflictSummarySchema,
   annotationSurfaceLayoutCore,
 } from "@tutor/contract";
@@ -411,6 +413,9 @@ async function runUpload(
         gzipMemo.set(doc, bytes);
       }
       if (stale()) return;
+      const renderVersion =
+        record.localBase?.layout.renderVersion ??
+        record.base?.layout?.renderVersion;
       receipt = await putAnnotationDocApi(
         scope.attemptId,
         scope.questionId,
@@ -418,9 +423,9 @@ async function runUpload(
         {
           baseRevision,
           mutationId,
-          ...((record.localBase?.layout.renderVersion ??
-            record.base?.layout?.renderVersion) === 3
-            ? { protocolVersion: 3 as const }
+          ...(renderVersion === ANNOTATION_FROZEN_RENDER_VERSION ||
+          renderVersion === ANNOTATION_WHOLE_QUESTION_RENDER_VERSION
+            ? { protocolVersion: renderVersion }
             : {}),
           ...(record.resetVersion ? { resetVersion: record.resetVersion } : {}),
           ...(scope.phase !== "scratch" ? { phase: scope.phase } : {}),
