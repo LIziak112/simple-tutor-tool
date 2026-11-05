@@ -118,6 +118,21 @@ for (const withoutCompatibility of [false, true]) {
           deviceScaleFactor: 1.25,
         });
         const other = await context.newPage();
+        if (withoutCompatibility) {
+          // 不同内核也可能生成相同旧签名；在首帧前固定字距差，明确制造失配。
+          await other.route("**/*", async (route) => {
+            if (route.request().resourceType() !== "document") {
+              await route.continue();
+              return;
+            }
+            const response = await route.fetch();
+            const body = (await response.text()).replace(
+              "</head>",
+              '<style>[data-slot="question-surface"], [data-slot="question-surface"] * { letter-spacing: 3px !important; }</style></head>',
+            );
+            await route.fulfill({ response, body });
+          });
+        }
         const leaks = attachLeakMonitor(other);
         let writes = 0;
         other.on("request", (req) => {
@@ -137,6 +152,7 @@ for (const withoutCompatibility of [false, true]) {
         );
         await expect(surface).toBeVisible();
         if (withoutCompatibility) {
+          await expect(surface).toHaveCSS("letter-spacing", "3px");
           // 原哈希不能给出逐块位置误差；失配须保稿，不能假称正常恢复。
           await expect(resumed.getByRole("alert").first()).toContainText(
             "原稿已保留",
@@ -177,26 +193,6 @@ for (const withoutCompatibility of [false, true]) {
           resumed.getByRole("radio", { name: "错", exact: true }),
         ).toBeChecked();
         await expect(surface).toBeVisible();
-        if (withoutCompatibility) {
-          // 原哈希不能给出逐块位置误差；失配须保稿，不能假称正常恢复。
-          await expect(resumed.getByRole("alert").first()).toContainText(
-            "原稿已保留",
-          );
-          await expect(resumedCanvas).toHaveCount(0);
-          await expect(
-            resumed.getByRole("img", { name: /冻结原稿/ }),
-          ).toHaveCount(0);
-          await resumed.getByRole("button", { name: /圈画题干/ }).click();
-          await expect(resumedCanvas).toHaveCount(0);
-          expect(
-            (await (await other.request.get(viewPath)).json()).data,
-          ).toEqual(before);
-          expect(await pngHash(before.base.downloadUrl)).toBe(originalPngHash);
-          expect(writes).toBe(0);
-          expect(leaks.violations()).toEqual([]);
-          await context.close();
-          return;
-        }
         await expect(resumedCanvas).toBeVisible();
         expect((await (await other.request.get(viewPath)).json()).data).toEqual(
           before,
@@ -233,26 +229,6 @@ for (const withoutCompatibility of [false, true]) {
         writes = 0;
         await other.reload();
         await expect(surface).toBeVisible();
-        if (withoutCompatibility) {
-          // 原哈希不能给出逐块位置误差；失配须保稿，不能假称正常恢复。
-          await expect(resumed.getByRole("alert").first()).toContainText(
-            "原稿已保留",
-          );
-          await expect(resumedCanvas).toHaveCount(0);
-          await expect(
-            resumed.getByRole("img", { name: /冻结原稿/ }),
-          ).toHaveCount(0);
-          await resumed.getByRole("button", { name: /圈画题干/ }).click();
-          await expect(resumedCanvas).toHaveCount(0);
-          expect(
-            (await (await other.request.get(viewPath)).json()).data,
-          ).toEqual(before);
-          expect(await pngHash(before.base.downloadUrl)).toBe(originalPngHash);
-          expect(writes).toBe(0);
-          expect(leaks.violations()).toEqual([]);
-          await context.close();
-          return;
-        }
         await expect(resumedCanvas).toBeVisible();
         await page.reload();
         await expect(
