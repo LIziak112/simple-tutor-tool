@@ -406,6 +406,7 @@ test(
   "草稿全屏参考包含全部选项，退出后保留作答",
   { tag: ["@annotation"] },
   async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     const leak = attachLeakMonitor(page);
     const card = page.getByRole("article", { name: "第 1 题", exact: true });
     await card.locator('[role="radiogroup"] label').nth(1).click();
@@ -415,12 +416,37 @@ test(
     const paper = card.locator('[data-slot="note-layer"]');
     await paper.getByRole("button", { name: "第 1 题草稿纸全屏" }).click();
     const dialog = page.getByRole("dialog", { name: "第 1 题草稿纸全屏" });
+    const layers = await page.evaluate(() => {
+      const frame = document.querySelector(
+        '[data-slot="paper-frame"][data-state="open"]',
+      );
+      if (!frame) throw new Error("全屏纸面不存在");
+      const locked = [...document.querySelectorAll<HTMLElement>("[inert]")];
+      for (const element of locked) element.removeAttribute("inert");
+      try {
+        return [20, window.innerHeight - 20].map((y) =>
+          frame.contains(document.elementFromPoint(window.innerWidth / 2, y)),
+        );
+      } finally {
+        for (const element of locked) element.setAttribute("inert", "");
+      }
+    });
+    expect(layers).toEqual([true, true]);
     const options = dialog.getByRole("list", { name: "参考选项" });
     await expect(options.getByRole("listitem")).toHaveCount(4);
     for (const label of ["选项甲", "选项乙", "选项丙", "选项丁"])
       await expect(options).toContainText(label);
     await options.getByRole("listitem").last().scrollIntoViewIfNeeded();
     await expect(options.getByRole("listitem").last()).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "更多操作（第 1 题草稿纸）" })
+      .click();
+    await page.getByRole("menuitem", { name: "清空草稿纸" }).click();
+    const confirm = page.getByRole("dialog", { name: "清空草稿纸？" });
+    await expect(confirm).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(confirm).toHaveCount(0);
+    await expect(dialog).toBeVisible();
     await expect(dialog).not.toContainText("不应提前出现的秘密详解");
     await expect(dialog.locator(".katex-error, .math-fallback")).toHaveCount(0);
     await page.screenshot({
