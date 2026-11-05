@@ -161,50 +161,115 @@ test(
             ?.length ?? 0,
       )
       .toBe(2);
-    const after = (await (await page.request.get(viewPath)).json()).data;
+    let after = (await (await page.request.get(viewPath)).json()).data;
     expect(after.base).toEqual(before.base);
     await expect(page.getByText("全部已保存", { exact: true })).toBeVisible();
-    const reloadEvents: string[] = [];
-    page.on("pageerror", (error) =>
-      reloadEvents.push(`pageerror ${error.message}`),
-    );
-    page.on("requestfailed", (request) =>
-      reloadEvents.push(
-        `failed ${request.url()} ${request.failure()?.errorText}`,
-      ),
-    );
-    page.on("response", (response) => {
-      if (response.url().includes(`/api/student/attempts/${attemptId}`))
-        reloadEvents.push(`response ${response.status()} ${response.url()}`);
+
+    // 后台详情失败时仍有一笔正在输入；提示不能改变题面坐标或丢掉这一笔。
+    await card.getByRole("button", { name: /圈画题干/ }).click();
+    await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+    const beforeErrorBox = await canvas.boundingBox();
+    if (!beforeErrorBox) throw new Error("后台失败前画布不可见");
+    const held = await canvas.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const y = rect.top + rect.height / 2;
+      const x = rect.left + rect.width / 3;
+      const fire = (type: string, clientX: number, buttons: number) =>
+        element.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            pointerId: 23,
+            pointerType: "pen",
+            isPrimary: true,
+            clientX,
+            clientY: y,
+            button: 0,
+            buttons,
+            pressure: 0.5,
+          }),
+        );
+      fire("pointerdown", x, 1);
+      fire("pointermove", x + 18, 1);
+      return { x, y };
     });
+    const detailPath = `/api/student/attempts/${attemptId}`;
+    await page.route("**/api/student/attempts/**", async (route) => {
+      const request = route.request();
+      if (
+        request.method() === "GET" &&
+        new URL(request.url()).pathname === detailPath
+      )
+        await route.abort("failed");
+      else await route.continue();
+    });
+    await expect(page.getByText("练习信息刷新失败")).toBeVisible({
+      timeout: 25_000,
+    });
+    const afterErrorBox = await canvas.boundingBox();
+    if (!afterErrorBox) throw new Error("后台失败后画布被卸载");
+    for (const key of ["x", "y", "width", "height"] as const)
+      expect(afterErrorBox[key]).toBeCloseTo(beforeErrorBox[key], 2);
+    await page.screenshot({
+      path: testInfo.outputPath("reload-warning-fixed.png"),
+    });
+    await canvas.evaluate((element, point) => {
+      for (const [type, clientX, buttons] of [
+        ["pointermove", point.x + 36, 1],
+        ["pointerup", point.x + 36, 0],
+      ] as const)
+        element.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            pointerId: 23,
+            pointerType: "pen",
+            isPrimary: true,
+            clientX,
+            clientY: point.y,
+            button: 0,
+            buttons,
+            pressure: 0.5,
+          }),
+        );
+    }, held);
+    await page.unroute("**/api/student/attempts/**");
+    await page.getByRole("button", { name: "重试读取" }).click();
+    await expect(page.getByText("练习信息刷新失败")).toHaveCount(0);
+    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get(viewPath)).json()).data.doc?.strokes
+            ?.length ?? 0,
+      )
+      .toBe(after.doc.strokes.length + 1);
+    const afterFailure = (await (await page.request.get(viewPath)).json()).data;
+    expect(afterFailure.base).toEqual(after.base);
+    expect(afterFailure.doc.strokes.slice(0, after.doc.strokes.length)).toEqual(
+      after.doc.strokes,
+    );
+    const heldStroke = afterFailure.doc.strokes.at(-1);
+    if (!heldStroke) throw new Error("后台失败期间的在途笔迹未保留");
+    expect(heldStroke.points.length).toBeGreaterThanOrEqual(3);
+    const xs = heldStroke.points.map((point: { x: number }) => point.x);
+    const ys = heldStroke.points.map((point: { y: number }) => point.y);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(20);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(2);
+    after = afterFailure;
+
     await page.reload();
-    try {
-      await expect(
-        card.getByRole("img", { name: "第 1 题冻结原稿" }),
-      ).toBeVisible();
-    } catch (error) {
-      const probe = await page.request
-        .get(`/api/student/attempts/${attemptId}`, { timeout: 10_000 })
-        .then((response) => response.status())
-        .catch((cause: unknown) => String(cause));
-      console.log(
-        "native reload diagnostic",
-        JSON.stringify({
-          probe,
-          reloadEvents,
-          url: page.url(),
-          body: await page.locator("body").innerText(),
-        }),
-      );
-      throw error;
-    }
+    await expect(
+      card.getByRole("img", { name: "第 1 题冻结原稿" }),
+    ).toBeVisible();
     await expect(card.getByRole("textbox", { name: "第1空" })).toHaveValue(
       "修改后的答案",
     );
     expect((await (await page.request.get(viewPath)).json()).data.doc).toEqual(
       after.doc,
     );
-
     const otherBrowser =
       testInfo.project.name === "chromium"
         ? await webkit.launch({ channel: "", args: [] })

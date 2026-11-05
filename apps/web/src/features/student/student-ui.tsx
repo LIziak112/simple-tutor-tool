@@ -326,6 +326,27 @@ export function StudentErrorPanel({
   );
 }
 
+/** 详情后台读取失败时保留已打开的作答会话，提供显式重取入口。 */
+export function StudentRefreshWarning({
+  title,
+  onRetry,
+}: {
+  title: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="fixed top-20 right-4 left-4 z-50 mx-auto flex max-w-lg flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-lg dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100"
+    >
+      <p>{title}</p>
+      <Button variant="outline" className="min-h-11" onClick={onRetry}>
+        重试读取
+      </Button>
+    </div>
+  );
+}
+
 /**
  * 「我的课程」卡片（T2A.5，首页与 /s/courses 共用）：课程名/简介 + 可见讲义与
  * 练习计数 + 完成进度条。无可见练习时显示「练习即将开放」代替 0/0 进度。
