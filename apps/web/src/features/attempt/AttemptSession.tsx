@@ -832,6 +832,8 @@ function AnswerView({
           return;
         }
         article.scrollIntoView?.({ block: "start", behavior: "auto" });
+        // 跳题先登记已对齐的位置；邻题占位随后换成真实题卡时沿用挂载补偿。
+        preserveReadingPosition(id);
         const fields = card?.querySelectorAll<HTMLInputElement>(
           'input:not([type="radio"]):not([type="checkbox"])',
         );
