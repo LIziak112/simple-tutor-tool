@@ -14,6 +14,7 @@ import {
   QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT,
   wrongAttemptTitleWithLabel,
 } from "@tutor/contract";
+import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
 
 /**
  * 作答展示的纯函数集（T2.6 答题页/结果视图共用）：
@@ -141,7 +142,6 @@ export function formatStudentAnswer(answer: StudentAnswer | null): string {
 }
 
 /** LaTeX 命令形态（\frac、\pm、\sqrt 等；显示侧判断答案是否要走公式管线） */
-const LATEX_COMMAND_RE = /\\[a-zA-Z]+/;
 
 /**
  * 参考答案的显示侧 LaTeX 启发式包裹：
@@ -152,9 +152,7 @@ const LATEX_COMMAND_RE = /\\[a-zA-Z]+/;
  * 已含 $ 的文本（T2.13 旧写法 $…$）不二次包裹，避免拆错既有定界符。
  */
 export function mathifyAnswerText(text: string): string {
-  if (!LATEX_COMMAND_RE.test(text)) return text;
-  if (text.includes("$")) return text;
-  return `$${text}$`;
+  return mathifyAiReferenceAnswer(text);
 }
 
 /**

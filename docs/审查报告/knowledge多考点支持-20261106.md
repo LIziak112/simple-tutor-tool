@@ -5,6 +5,7 @@
 ## 范围与授权
 
 - 基点：`origin/v2@cebe5a5a920e17d71d1b1202dfa3f6e195939dc5`；分支：`codex/knowledge-multi-57`。
+- 创建 [PR #71](https://github.com/LIziak112/simple-tutor-tool/pull/71) 时目标分支已前进到 `7f8fd85ce0eab4ad744c1814f1129b6588cdcf46`。合并最新 v2，仅独立 lint 生成文件冲突；从合并源码重生成解决，未选择任一侧旧 bundle。
 - 用户明确授权在迭代期直接扩展既有 `knowledge` 的含义，不另加属性；验证通过后合并 `v2`。
 - 解析 `knowledge="数轴|有理数加法"`：拆分、trim、去空、按首次出现去重。省略得到空数组，显式全空或纯分隔符报错。
 - 考点无主辅之分；解析保序不改变数据库回读按名称排序和错题首项归组。历史关联经重导或 reparse 更新，既有作答快照不改写。
@@ -31,10 +32,12 @@
 | `pnpm lint:changed` | 退出码 0；相对 origin/main 扫描 1510 文件，1 条既存 info，无错误 |
 | `pnpm test:affected` | 选测命中兜底升级全量；612 文件、7485 测试通过，退出码 0，254.36 秒 |
 | `pnpm gen:spec` 与重复生成 | 退出码 0；17 个规范/分发文件的 SHA-256 重复生成前后一致 |
+| 合并最新 v2 后定向复核 | 5 文件、76 测试通过，退出码 0；包含独立分发校验器 |
+| 合并最新 v2 后重复生成 | 19 个规范/分发文件的 SHA-256 前后一致，退出码 0 |
 | `git diff --check` | 退出码 0 |
 | `pnpm e2e:affected origin/v2` | 选测按 contract 变动升级全量 Chromium；启动阶段退出码 1：8899 被另一工作区服务占用，未执行浏览器用例 |
 
-本机未停止或复用其他工作区的服务。浏览器验证转交隔离 PR CI，合并前须确认 CI 的单测、生成、构建与 Chromium/WebKit E2E 最终通过；证据以关联 PR 的最终 checks 为准。本机不重复整仓构建。全量 test:affected 的有效结果复用于 quick 检查，不重复执行同一全量。
+本机未停止或复用其他工作区的服务。浏览器验证转交隔离 PR CI，合并前须确认 CI 的单测、生成、构建与 Chromium/WebKit E2E 最终通过；证据以 PR #71 的最终 checks 为准。本机不重复整仓构建。初始基点的全量 test:affected 结果复用于 quick 检查；合并树由最终 CI 验证，不将旧基点结果冒充最终合并树结果。
 
 ## 完整 diff 自审
 

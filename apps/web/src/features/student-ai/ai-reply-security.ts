@@ -11,14 +11,19 @@ import { richMarkdownSanitizeSchema } from "@/features/markdown/sanitize";
  * 普通题面 Markdown 不走本模块（RichMarkdown 语义不变，完成条件 2）。
  */
 
-/** 回复渲染字节上限（UTF-8；服务端入库另有 AI_REPLY_MAX_CHARS 上限） */
-export const AI_REPLY_RENDER_MAX_BYTES = 128 * 1024;
-/** 回复渲染节点规模上限（估算值：行 × 3 + 公式 × 40 + 链接 × 4 + 图片 × 3） */
-export const AI_REPLY_RENDER_MAX_NODES = 6000;
-/** 单条回复公式数量上限 */
-export const AI_REPLY_MAX_FORMULAS = 80;
-/** 单个公式长度上限（字符；超长公式按失败处理，不交给 KaTeX） */
-export const AI_REPLY_MAX_FORMULA_CHARS = 1000;
+import {
+  AI_REPLY_MAX_FORMULA_CHARS,
+  AI_REPLY_MAX_FORMULAS,
+  AI_REPLY_RENDER_MAX_BYTES,
+  AI_REPLY_RENDER_MAX_NODES,
+} from "@tutor/contract";
+
+export {
+  AI_REPLY_MAX_FORMULA_CHARS,
+  AI_REPLY_MAX_FORMULAS,
+  AI_REPLY_RENDER_MAX_BYTES,
+  AI_REPLY_RENDER_MAX_NODES,
+} from "@tutor/contract";
 
 export type AiReplySafetyReason =
   | "bytes"

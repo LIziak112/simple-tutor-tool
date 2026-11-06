@@ -22,6 +22,7 @@ import {
   AI_TURNS_MAX,
   aiContextSnapshotSchema,
 } from "@tutor/contract";
+import { checkAiReply } from "@tutor/md-dsl";
 import {
   and,
   asc,
@@ -1435,7 +1436,11 @@ function recordLateReplyCommitted(
 type SubmitOutcome =
   | { kind: "duplicate" }
   | { kind: "late"; task: AiTaskRow; detail: FactDetail; message: string }
-  | { kind: "ok"; truncated: boolean };
+  | {
+      kind: "ok";
+      truncated: boolean;
+      formatWarnings?: import("@tutor/contract").AiReplyIssue[];
+    };
 
 /** 页内写回事务的结果形态（delivered=false = 回信入库为事实但暂不交付） */
 type CompleteOutcome =
@@ -1467,7 +1472,11 @@ export function submitMcpReply(
   db: Db,
   input: SubmitMcpReplyInput,
   options: { now?: Date | string } = {},
-): { duplicate: boolean; truncated: boolean } {
+): {
+  duplicate: boolean;
+  truncated: boolean;
+  formatWarnings?: import("@tutor/contract").AiReplyIssue[];
+} {
   const now = nowSpecOf(options.now);
   const contentHash = sha256Hex(input.replyMarkdown);
   const currentEpoch = runtimeEpochOf(db);
@@ -1529,7 +1538,27 @@ export function submitMcpReply(
           message: "租约已失效或任务状态已变化，回信已记录为迟到事实",
         };
       }
+      const checked = checkAiReply(input.replyMarkdown);
+      if (!checked.valid) {
+        throw new HttpError(
+          422,
+          "AI_REPLY_FORMAT_INVALID",
+          "回信数学格式有误，请按行列反馈修正后使用当前租约重新提交。",
+          { _issues: checked.issues, version: checked.version },
+        );
+      }
       const { content, truncated } = truncateReply(input.replyMarkdown);
+      const storedCheck = truncated ? checkAiReply(content) : checked;
+      const formatWarnings = storedCheck.issues.map((issue) =>
+        truncated && issue.severity === "error"
+          ? {
+              ...issue,
+              severity: "warning" as const,
+              code: "TRUNCATED_MATH" as const,
+              message: "截断后的片段格式不完整，页面将安全降级显示。",
+            }
+          : issue,
+      );
       insertAssistantReply(tx, task.id, content, now);
       applyTransition(tx, task, "replied", now);
       insertFact(tx, task, "reply_received", now, {
@@ -1537,7 +1566,7 @@ export function submitMcpReply(
         contentHash,
         truncated,
       });
-      return { kind: "ok", truncated };
+      return { kind: "ok", truncated, formatWarnings };
     },
     { behavior: "immediate" },
   );
@@ -1547,7 +1576,11 @@ export function submitMcpReply(
     recordLateReplyCommitted(db, outcome.task, now, outcome.detail);
     throw conflict(outcome.message);
   }
-  return { duplicate: false, truncated: outcome.truncated };
+  return {
+    duplicate: false,
+    truncated: outcome.truncated,
+    formatWarnings: outcome.formatWarnings ?? [],
+  };
 }
 
 // ---------- 页内派发原语（worker：SAI-13/15 消费；网络在事务外） ----------
