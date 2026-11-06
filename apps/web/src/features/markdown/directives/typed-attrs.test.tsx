@@ -13,6 +13,20 @@ import { renderMd } from "../test-support/render-md";
  */
 
 describe("T7.2 缺省值经注册表 schema 通道（组件不再自行解析）", () => {
+  it("question 多考点预览使用独立标签，去空白、去空项并保序去重", () => {
+    const { container } = renderMd(
+      '::::question{type=judge knowledge=" 数轴 | 有理数加法 || 数轴 | "}\n[[正确]]\n::::',
+    );
+    const labels = container.querySelectorAll(
+      "[data-slot='question'] header .bg-secondary",
+    );
+    expect(Array.from(labels, (label) => label.textContent)).toEqual([
+      "考点：数轴",
+      "考点：有理数加法",
+    ]);
+    expect(container).not.toHaveTextContent("|");
+  });
+
   it("question 合法 type 缺 difficulty：难度徽章为缺省 2，题卡正常渲染", () => {
     const { container } = renderMd(
       '::::question{type=fill knowledge="有理数加法"}\n计算 $(-3)+7=$ [[4]]。\n::::',
