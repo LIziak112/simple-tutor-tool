@@ -40,7 +40,7 @@ export function AttemptHeader({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const editor = useAttemptEditor();
   const toolbar = useReadingToolbar({
-    blocked: detailsOpen || editor?.active != null || editor?.paper != null,
+    blocked: detailsOpen || editor?.active != null,
   });
   const navigating = useRef(false);
   const closeDetails = () => {

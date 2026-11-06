@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -13,7 +14,7 @@ import type {
   LessonStartData,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   fetchAttemptContextApi,
@@ -240,6 +241,31 @@ function firstSubmitButton(): HTMLElement {
   if (first === undefined) throw new Error("没有可显示答案的题卡");
   return first;
 }
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("讲练展开草稿后正文仍可收起顶栏并反向展开", async () => {
+  vi.stubGlobal("scrollY", 0);
+  mockedStart.mockResolvedValue(lessonStart());
+  renderPage();
+  const card = await screen.findByRole("article", { name: "第 1 题" });
+  const paper = within(card).getByRole("button", {
+    name: /^第 1 题草稿纸(?:（|$)/,
+  });
+  await waitFor(() => expect(paper).toBeEnabled());
+  fireEvent.click(paper);
+  await waitFor(() => expect(paper).toHaveAttribute("aria-expanded", "true"));
+  const header = screen.getByRole("navigation", { name: "讲练页工具栏" });
+  const scroll = (y: number) => {
+    fireEvent.wheel(document.body, { deltaY: y - window.scrollY });
+    vi.stubGlobal("scrollY", y);
+    fireEvent.scroll(window);
+  };
+  act(() => scroll(180));
+  expect(header).toHaveAttribute("data-reading-hidden", "true");
+  act(() => scroll(160));
+  expect(header).toHaveAttribute("data-reading-hidden", "false");
+});
 
 beforeEach(() => {
   localStorage.clear();
