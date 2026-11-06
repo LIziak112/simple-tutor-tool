@@ -389,6 +389,25 @@ describe("SAI-09 表行1:开放/启发双模式答案解析均在,差别在模�
 // ---------- 表行 2:单项缺失与均无 ----------
 
 describe("SAI-09 表行2:单项/均无的真实缺失标记,缺参考不阻塞提问", () => {
+  it("AI 上下文参考答案裸 LaTeX 使用既有格式化入口补定界符", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const attemptId = insertAttempt(db, { studentId });
+    insertResponse(db, attemptId, "q-math", {
+      snapshotJson: snapshotJsonOf({
+        id: "q-math",
+        type: "fill",
+        answers: { kind: "fill", blanks: [[String.raw`\frac{1}{2}`]] },
+      }),
+    });
+    const bundle = buildAiContextBundle(
+      db,
+      { studentId, attemptId, questionId: "q-math" },
+      { now: NOW, hmacSecret: SECRET_A },
+    );
+    expect(bundle.snapshot.referenceAnswerMd).toBe(String.raw`$\frac{1}{2}$`);
+    db.$client.close();
+  });
   it("有答案无解析 → 发送答案并标记暂无官方解析(no_solution)", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);

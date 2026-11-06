@@ -146,6 +146,52 @@ function mkTask(
 // ---------- 必测①：重放同 claim / 两客户端竞争唯一写回 ----------
 
 describe("SAI-26 领取与写回竞争", () => {
+  it("格式检查无副作用；坏回信不结束租约，修正后同租约提交成功", async () => {
+    const env = await makeEnv();
+    const taskId = mkTask(env);
+    const client = await connectClient(env);
+    const before = env.db.select().from(aiFacts).all();
+    const check = await callToolJson(client, "check_ai_reply", {
+      replyMarkdown: String.raw`结果是 -\frac{1}{2}$（负数）。`,
+    });
+    expect(check.isError).toBe(false);
+    expect(check.data.valid).toBe(false);
+    expect(env.db.select().from(aiFacts).all()).toEqual(before);
+    const claim = await callToolJson(client, "claim_ai_task", {});
+    expect(claim.data.replyFormat).toEqual(
+      expect.objectContaining({
+        version: "1.0.0",
+        manifestUrl: expect.stringContaining("/ai-reply-checker/manifest.json"),
+      }),
+    );
+    const lease = env.db
+      .select()
+      .from(aiTasks)
+      .where(eq(aiTasks.id, taskId))
+      .get();
+    const args = { taskId, leaseToken: claim.data.leaseToken };
+    const invalid = await callToolJson(client, "submit_ai_reply", {
+      ...args,
+      replyMarkdown: String.raw`$\notARealCommand$`,
+    });
+    expect(invalid.isError).toBe(true);
+    expect(invalid.data.error).toBe("AI_REPLY_FORMAT_INVALID");
+    expect(invalid.data._issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "INVALID_MATH", line: 1 }),
+      ]),
+    );
+    expect(
+      env.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get(),
+    ).toEqual(lease);
+    const valid = await callToolJson(client, "submit_ai_reply", {
+      ...args,
+      replyMarkdown: String.raw`结果是 $-\frac{1}{2}$。`,
+    });
+    expect(valid.isError).toBe(false);
+    expect(valid.data.submitted).toBe(true);
+    await client.close();
+  });
   it("整体复盘真实 MCP 领取含全部选项，作答作废后拒绝报告交付", async () => {
     const env = await makeEnv();
     env.db

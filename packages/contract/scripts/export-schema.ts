@@ -31,6 +31,10 @@ import {
   learningPackV2JsonSchema,
 } from "../src/learning-pack.ts";
 import { reviewPackJsonSchema } from "../src/review-pack.ts";
+import {
+  aiReplyCheckerManifestSchema,
+  aiReplyCheckResultSchema,
+} from "../src/student-ai-reply-check.ts";
 
 /** 根对象：把每个顶层契约收进一个属性，生成一份自包含（$defs 内部 $ref）的 schema */
 const contentContractSchema = z.object({
@@ -88,3 +92,14 @@ await writeSchema(
 // 单题复习包（T6R.13）：reviewPackJsonSchema() 与 review-pack-service 共用，
 // zip 内 schema.json 与本文件逐字节一致（同一模式）
 await writeSchema("review-pack.json", "单题复习包契约", reviewPackJsonSchema());
+
+await writeSchema(
+  "ai-reply-check.json",
+  "AI 回信校验契约",
+  z.toJSONSchema(
+    z.object({
+      result: aiReplyCheckResultSchema,
+      manifest: aiReplyCheckerManifestSchema,
+    }),
+  ),
+);

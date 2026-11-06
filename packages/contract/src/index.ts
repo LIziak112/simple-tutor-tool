@@ -181,3 +181,5 @@ export type ApiOk = z.infer<typeof apiOkSchema>;
 export type ApiErr = z.infer<typeof apiErrSchema>;
 
 export * from "./result-counts.ts";
+
+export * from "./student-ai-reply-check.ts";

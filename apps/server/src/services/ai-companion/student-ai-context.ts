@@ -22,6 +22,7 @@ import {
   type PublicStructureByKind,
   QUESTION_TYPE_LABELS,
 } from "@tutor/contract";
+import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
 import { asc, eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { type Attempt, aiMessages, responses } from "../../db/schema.ts";
@@ -385,6 +386,7 @@ function assembleBundleFromRows(args: {
   const referenceAnswerMd =
     snapshot.answers !== undefined
       ? formatQuestionAnswers(snapshot.answers, {
+          mathify: mathifyAiReferenceAnswer,
           labels: {
             slot: slotLabelOf,
             option: optionLabelOf,

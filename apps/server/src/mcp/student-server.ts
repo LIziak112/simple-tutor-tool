@@ -1,9 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  AI_REPLY_CHECK_VERSION,
+  AI_REPLY_FORMAT_INSTRUCTIONS,
   AI_REPLY_MAX_CHARS,
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
 } from "@tutor/contract";
+import { checkAiReply } from "@tutor/md-dsl";
 import { z } from "zod";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
@@ -76,6 +79,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "renew_ai_lease",
   "renew_attempt_review_lease",
   "submit_ai_reply",
+  "check_ai_reply",
   "submit_attempt_review_result",
 ] as const;
 
@@ -113,6 +117,7 @@ export interface StudentMcpServerDeps {
   readonly db: Db;
   /** DATA_DIR（材料 PNG 字节读取） */
   readonly dataDir: string;
+  readonly publicUrl: string;
   /** token 绑定的学生（全部工具以此域隔离；唯一身份来源是鉴权中间件） */
   readonly studentId: string;
   /** 快照装配 HMAC 密钥（DATA_DIR/secret.key；整体复盘范围锚核对用） */
@@ -129,6 +134,22 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     name: STUDENT_MCP_SERVER_NAME,
     version: STUDENT_MCP_SERVER_VERSION,
   });
+
+  server.registerTool(
+    "check_ai_reply",
+    {
+      description:
+        "提交前检查 AI 回信的数学格式；只检查传入正文，不保存、不领取、不续租、不改变任务状态。按行列反馈修正 error 后再提交。" +
+        AI_REPLY_FORMAT_INSTRUCTIONS,
+      inputSchema: { replyMarkdown: z.string().max(REPLY_INPUT_MAX_CHARS) },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    guard(({ replyMarkdown }) => jsonContent(checkAiReply(replyMarkdown))),
+  );
 
   // 1. list_my_ai_tasks：只读列表（无领取/已读副作用）
   server.registerTool(
@@ -208,6 +229,14 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
       const assembly = outboundAssemblyOfTask(db, task, { recordView });
       const base = {
         claimed: true as const,
+        replyFormat: {
+          version: AI_REPLY_CHECK_VERSION,
+          instructions: AI_REPLY_FORMAT_INSTRUCTIONS,
+          manifestUrl: new URL(
+            "api/public/ai-reply-checker/manifest.json",
+            `${deps.publicUrl.replace(/\/$/, "")}/`,
+          ).href,
+        },
         taskId: claimed.taskId,
         attemptId: task.attemptId,
         questionId: task.questionId,
@@ -297,7 +326,8 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     "submit_ai_reply",
     {
       description:
-        "把 AI 回信写回平台（学生在伴学栏查看）。校验任务归属与租约：leaseToken 必须是当前有效持有者；contextVersion/runtimeEpoch 与领取时不一致 → 409（迟到回执仅记事实，不覆盖首次成功）。同内容重放幂等成功（duplicate:true）；正文超过平台上限将被截断并在 truncated:true 声明。正文用 Markdown。",
+        "把 AI 回信写回平台（学生在伴学栏查看）。校验任务归属与租约：leaseToken 必须是当前有效持有者；contextVersion/runtimeEpoch 与领取时不一致 → 409（迟到回执仅记事实，不覆盖首次成功）。同内容重放幂等成功（duplicate:true）；正文超过平台上限将被截断并在 truncated:true 声明。正文用 Markdown。" +
+        AI_REPLY_FORMAT_INSTRUCTIONS,
       inputSchema: {
         taskId: z.string().uuid().describe("claim_ai_task 返回的任务 id"),
         leaseToken: z.string().min(1).describe("claim_ai_task 返回的租约凭证"),
@@ -339,6 +369,7 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           taskId,
           duplicate: result.duplicate,
           truncated: result.truncated,
+          formatWarnings: result.formatWarnings ?? [],
           maxChars: AI_REPLY_MAX_CHARS,
         });
       },
