@@ -66,6 +66,7 @@ export const SPEC_TAGS = {
   "annotation-local-base.spec.ts": ["@annotation"],
   "annotation-paper-interaction.spec.ts": ["@annotation"],
   "annotation-cross-device-view.spec.ts": ["@annotation"],
+  "annotation-legacy-browser.spec.ts": ["@annotation"],
   // 圈画会话新增 spec，合入 v2 后条目即生效（文件暂不在 v2 不影响判定）
   "annotation-pixel-grid.spec.ts": ["@annotation"],
   "question-inline-annotation.spec.ts": ["@annotation"],

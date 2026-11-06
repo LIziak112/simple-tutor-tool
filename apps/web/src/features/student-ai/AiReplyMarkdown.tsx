@@ -18,6 +18,7 @@ import {
 import {
   hasIncompleteAiReplyMath,
   normalizeAiReplyMath,
+  prepareAiReplyMarkdown,
   replyTextPage,
 } from "./ai-reply-format";
 import {
@@ -88,12 +89,13 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
 }: AiReplyMarkdownProps) {
   const [textOpen, setTextOpen] = useState(false);
   const [page, setPage] = useState(0);
+  const plain = replyTextPage(source, page);
   // 先检查原始字节，再规范化并重新核对公式与节点预算。
   const initial = inspectAiReplySafety(source);
-  const normalized = initial.ok ? normalizeAiReplyMath(source) : source;
-  const safety = initial.ok ? inspectAiReplySafety(normalized) : initial;
+  const canonical = initial.ok ? normalizeAiReplyMath(source) : source;
+  const safety = initial.ok ? inspectAiReplySafety(canonical) : initial;
+  const normalized = safety.ok ? prepareAiReplyMarkdown(source) : canonical;
   if (!safety.ok) {
-    const plain = replyTextPage(source, page);
     return (
       <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
         <p role="alert">{safety.message}</p>
@@ -161,7 +163,26 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
             <summary className="cursor-pointer">
               部分公式格式不完整，查看回复原文
             </summary>
-            <p className="mt-2 whitespace-pre-wrap break-words">{source}</p>
+            <p className="mt-2 whitespace-pre-wrap break-words">{plain.text}</p>
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                variant="outline"
+                disabled={plain.page === 0}
+                onClick={() => setPage(Math.max(0, page - 1))}
+              >
+                上一段
+              </Button>
+              <span role="status">
+                第 {plain.page + 1} / {plain.count} 段
+              </span>
+              <Button
+                variant="outline"
+                disabled={plain.page + 1 === plain.count}
+                onClick={() => setPage(page + 1)}
+              >
+                下一段
+              </Button>
+            </div>
           </details>
         )}
         <ReactMarkdown

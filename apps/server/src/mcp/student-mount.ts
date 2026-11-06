@@ -106,6 +106,7 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
       const server = createStudentMcpServer({
         db: options.db,
         dataDir: options.dataDir,
+        publicUrl: options.publicUrl,
         studentId: c.var.mcpStudent.id,
         hmacSecret,
       });

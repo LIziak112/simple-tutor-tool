@@ -8,7 +8,12 @@
  * - 导出合成图＝canvas 直绘（drawImage 底图＋笔迹层单 PNG，不走
  *   html-to-image——见 annotation-composite）。
  */
-import type { AnnotationPhase, AnnotationViewData } from "@tutor/contract";
+import type {
+  AnnotationPhase,
+  AnnotationViewData,
+  AttemptQuestionPublic,
+  StudentAnswer,
+} from "@tutor/contract";
 import {
   ChevronDown,
   CircleAlert,
@@ -28,23 +33,35 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   fetchAnnotationViewApi,
   fetchTeacherAnnotationViewApi,
   saveBlobAs,
 } from "@/lib/api";
 import { copyPngBlobToClipboard } from "@/lib/copy";
-import { AnnotationOriginal } from "./AnnotationOriginal";
+import { AnnotationStaticCanvas } from "./AnnotationStaticCanvas";
 import {
   annotationCompositeFilename,
   exportAnnotationComposite,
 } from "./annotation-composite";
+import {
+  QuestionAnnotationFrame,
+  type QuestionFrameGeometry,
+  questionFrameIdentity,
+} from "./QuestionAnnotationFrame";
+import { resolveQuestionSurface } from "./question-surface-resolver";
+import { useAnnotationSessionRef } from "./use-annotation-record";
 
 type ViewPhase = "idle" | "loading" | "loaded" | "error";
 
 export interface AnnotationViewProps {
   /** 题面原位回看：进入可见区域自动读取，成功后在同一位置呈现原稿。 */
   children?: ReactNode;
+  /** 主题面原位回看；children 仅为缺少历史公开模型时的可读内容。 */
+  inline?: boolean;
+  question?: AttemptQuestionPublic | undefined;
+  answer?: StudentAnswer | undefined;
   /** 结果页闭合入口并排，展开材料仍占满可用宽度。 */
   compact?: boolean;
   viewer: "student" | "teacher";
@@ -56,7 +73,120 @@ export interface AnnotationViewProps {
   ariaPrefix?: string;
 }
 
-export function AnnotationView({
+export function AnnotationView(props: AnnotationViewProps) {
+  const session = useAnnotationSessionRef();
+  const scopeKey = JSON.stringify([
+    window.location.origin,
+    props.viewer,
+    props.viewer === "student" ? session?.studentId : null,
+    props.attemptId,
+    props.questionId,
+    props.phase ?? "scratch",
+    props.question?.questionRevisionId,
+  ]);
+  return (
+    <AnnotationViewContent key={scopeKey} {...props} scopeKey={scopeKey} />
+  );
+}
+
+function NativeQuestionReview({
+  question,
+  questionId,
+  answer,
+  view,
+  scopeKey,
+  children,
+}: {
+  question?: AttemptQuestionPublic | undefined;
+  questionId: string;
+  answer?: StudentAnswer | undefined;
+  view: AnnotationViewData | null;
+  scopeKey: string;
+  children?: ReactNode;
+}) {
+  const [geometry, setGeometry] = useState<QuestionFrameGeometry | null>(null);
+  const [retry, setRetry] = useState(0);
+  const resolution =
+    question && view?.doc
+      ? resolveQuestionSurface(
+          {
+            base: view.base,
+            doc: view.doc,
+            localBase: null,
+            sealedAt: view.annotation?.sealedAt ?? null,
+            conflict: null,
+            retained: null,
+          },
+          question.questionRevisionId,
+          true,
+        )
+      : null;
+  const source = resolution?.status === "blocked" ? null : resolution?.source;
+  const frameScope = JSON.stringify([scopeKey, view?.resetVersion ?? 0, retry]);
+  const identity = question
+    ? questionFrameIdentity(question, source?.layout ?? null, frameScope)
+    : null;
+  const sameGeometry = geometry?.identity === identity;
+  const showInk =
+    source &&
+    sameGeometry &&
+    (geometry.status === "ready" || geometry.preserveInk === true);
+  const problem =
+    view?.doc && !question
+      ? "缺少公开冻结题面信息，原稿已保留，暂不能核验笔迹位置"
+      : question && question.id !== questionId
+        ? "原稿与当前题目身份不符，原记录已保留"
+        : resolution?.status === "blocked"
+          ? resolution.reason
+          : sameGeometry && geometry.status === "blocked"
+            ? geometry.reason
+            : null;
+  return (
+    <>
+      {question ? (
+        <QuestionAnnotationFrame
+          question={question}
+          layout={source?.layout ?? null}
+          scopeKey={frameScope}
+          onGeometryChange={setGeometry}
+          inkLayer={
+            showInk && view?.doc && question?.id === questionId ? (
+              <AnnotationStaticCanvas
+                doc={view.doc}
+                base={{
+                  pixelWidth: source.pixelWidth,
+                  pixelHeight: source.pixelHeight,
+                }}
+                ready
+              />
+            ) : undefined
+          }
+        >
+          <QuestionSurface question={question} answer={answer} readOnly />
+        </QuestionAnnotationFrame>
+      ) : (
+        children
+      )}
+      {problem && (
+        <div
+          role="alert"
+          className="mt-2 flex items-center gap-2 text-sm text-destructive"
+        >
+          {problem}
+          <Button
+            variant="outline"
+            className="h-11"
+            onClick={() => setRetry((value) => value + 1)}
+          >
+            重新加载标画
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function AnnotationViewContent({
   viewer,
   attemptId,
   questionId,
@@ -65,8 +195,12 @@ export function AnnotationView({
   ariaPrefix = "本题",
   compact = false,
   children,
-}: AnnotationViewProps) {
-  const inline = children !== undefined;
+  question,
+  answer,
+  inline: inlineProp = false,
+  scopeKey,
+}: AnnotationViewProps & { scopeKey: string }) {
+  const inline = inlineProp || children !== undefined;
   const container = useRef<HTMLDivElement>(null);
   const loadGeneration = useRef(0);
   const [open, setOpen] = useState(false);
@@ -80,10 +214,6 @@ export function AnnotationView({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "unsupported">(
     "idle",
   );
-  /** 底图 img 布局就绪信号（回放门控；换底图/重载视图时复位——P0-1） */
-  const [loadedBaseId, setLoadedBaseId] = useState<string | null>(null);
-  const baseId = view?.base?.baseId ?? null;
-  const baseLoaded = baseId !== null && loadedBaseId === baseId;
   const label = `${ariaPrefix}题干标注`;
 
   useEffect(() => {
@@ -107,7 +237,6 @@ export function AnnotationView({
 
   const load = useCallback(async (): Promise<void> => {
     const generation = ++loadGeneration.current;
-    setLoadedBaseId(null);
     setPhaseState("loading");
     setError(null);
     try {
@@ -129,17 +258,12 @@ export function AnnotationView({
     if (open && phaseState === "idle") void load();
   }, [open, phaseState, load]);
 
-  // 切换 phase/题目/角色（load 身份变化；教师卡 phase 切换——审查修复 3②）：
-  // 重置回拉取态，由上面的打开效应重新拉取（初始 mount 为幂等 no-op）
-  // biome-ignore lint/correctness/useExhaustiveDependencies(load): load 是身份变更键（effect 体内不读取）
-  useEffect(() => {
-    setPhaseState((prev) => (prev === "idle" ? prev : "idle"));
-    setView(null);
-    setExportResult(null);
-    return () => {
+  useEffect(
+    () => () => {
       loadGeneration.current += 1;
-    };
-  }, [load]);
+    },
+    [],
+  );
 
   const baseReady =
     view?.base !== null &&
@@ -153,7 +277,9 @@ export function AnnotationView({
     setExporting(true);
     setExportResult(null);
     setCopyState("idle");
+    const generation = loadGeneration.current;
     const result = await exportAnnotationComposite(view.base, view.doc);
+    if (generation !== loadGeneration.current) return;
     setExporting(false);
     if (result.ok) {
       saveBlobAs(result.blob, annotationCompositeFilename(questionNo, phase));
@@ -173,45 +299,29 @@ export function AnnotationView({
   }, [exportedBlob]);
 
   if (inline) {
-    const unavailable =
-      phaseState === "loaded" &&
-      strokeCount > 0 &&
-      (!baseReady || !view?.base?.downloadUrl);
-    const hasOriginal =
-      phaseState === "loaded" &&
-      baseReady &&
-      strokeCount > 0 &&
-      view?.base?.downloadUrl;
     return (
       <div
         ref={container}
         data-slot="annotation-question-view"
         className="min-w-0"
       >
-        <div className={hasOriginal && baseLoaded ? "sr-only" : "space-y-4"}>
+        <NativeQuestionReview
+          question={question}
+          questionId={questionId}
+          answer={answer}
+          view={view}
+          scopeKey={scopeKey}
+        >
           {children}
-        </div>
-        {hasOriginal && view.base && view.doc && (
-          <div
-            className="relative mx-auto w-full"
-            style={{ maxWidth: view.base.layout?.cssWidth ?? 720 }}
-          >
-            <AnnotationOriginal
-              src={view.base.downloadUrl ?? ""}
-              pixelWidth={view.base.pixelWidth ?? 0}
-              pixelHeight={view.base.pixelHeight ?? 0}
-              doc={view.doc}
-              label={label}
-              onReadyChange={(ready) => setLoadedBaseId(ready ? baseId : null)}
-            />
-          </div>
-        )}
-        {(phaseState === "error" || unavailable) && (
+        </NativeQuestionReview>
+        {view?.base?.stale && <p role="note">旧版本题干的标注</p>}
+        {view?.annotation?.sealedAt && <p>已随交卷固定</p>}
+        {phaseState === "error" && (
           <div
             role="alert"
             className="mt-2 flex items-center gap-2 text-sm text-destructive"
           >
-            {unavailable ? "标画底图尚未就绪，请重新加载" : error}
+            {error}
             <Button
               variant="outline"
               className="h-11"
@@ -318,6 +428,15 @@ export function AnnotationView({
                     : "已随交卷固定（订正期另开新标注）"}
                 </p>
               )}
+              {(view.doc === null || !baseReady) && (
+                <NativeQuestionReview
+                  question={question}
+                  questionId={questionId}
+                  answer={answer}
+                  view={view}
+                  scopeKey={scopeKey}
+                />
+              )}
               {/* 空态：从未圈画 */}
               {view.doc === null && (
                 <p className="rounded-xl border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
@@ -342,15 +461,13 @@ export function AnnotationView({
               {/* 正常态：底图 + 静态笔迹层 */}
               {view.doc !== null && baseReady && view.base !== null && (
                 <>
-                  <div className="relative w-full overflow-hidden rounded-lg border border-border bg-white">
-                    <AnnotationOriginal
-                      src={view.base.downloadUrl ?? ""}
-                      pixelWidth={view.base.pixelWidth ?? 0}
-                      pixelHeight={view.base.pixelHeight ?? 0}
-                      doc={view.doc}
-                      label={label}
-                    />
-                  </div>
+                  <NativeQuestionReview
+                    question={question}
+                    questionId={questionId}
+                    answer={answer}
+                    view={view}
+                    scopeKey={scopeKey}
+                  />
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="outline"

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { annotationSurfaceLayoutSchema } from "./annotation.ts";
+import {
+  annotationSurfaceLayoutSchema,
+  annotationUploadMetaSchema,
+} from "./annotation.ts";
 
 const layout = {
   renderVersion: 2,
@@ -13,6 +16,58 @@ const layout = {
   fontSignature: "c".repeat(64),
 };
 describe("原位题面布局契约", () => {
+  it("v4 明确整题渲染配置与区域证据，不接受图片控件或未知配置", () => {
+    const whole = {
+      ...layout,
+      renderVersion: 4,
+      renderProfile: "whole-question-v1",
+      compatibility: {
+        version: 1,
+        contentSignature: "d".repeat(64),
+        blocks: [
+          {
+            tag: "DIV",
+            node: "root",
+            x: 0,
+            y: 0,
+            width: 300.5,
+            height: 450.25,
+          },
+        ],
+        fonts: [["sans-serif", "16px", "400", "28px", "normal"]],
+        textRects: [],
+      },
+    };
+    expect(annotationSurfaceLayoutSchema.parse(whole)).toEqual(whole);
+    for (const change of [
+      { controls: [] },
+      { compatibility: undefined },
+      { renderProfile: undefined },
+      { renderProfile: "unknown" },
+      { renderVersion: 99 },
+    ]) {
+      expect(
+        annotationSurfaceLayoutSchema.safeParse({ ...whole, ...change })
+          .success,
+      ).toBe(false);
+    }
+  });
+  it("上传能力只接受已知 v3/v4，缺省继续兼容旧协议", () => {
+    const meta = {
+      baseRevision: 0,
+      mutationId: "11111111-1111-4111-8111-111111111111",
+    };
+    for (const protocolVersion of [undefined, 3, 4]) {
+      expect(
+        annotationUploadMetaSchema.safeParse({ ...meta, protocolVersion })
+          .success,
+      ).toBe(true);
+    }
+    expect(
+      annotationUploadMetaSchema.safeParse({ ...meta, protocolVersion: 99 })
+        .success,
+    ).toBe(false);
+  });
   it("v3 冻结表面只接受有限且不重复的已定位填空槽位", () => {
     const frozen = {
       ...layout,

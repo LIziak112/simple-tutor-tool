@@ -123,10 +123,10 @@ test(
       ),
     ).toBeLessThanOrEqual(generatedBeforeOpen + 1);
     await page.setViewportSize({ width: 1300, height: 1000 });
-    const frozen = first.getByRole("img", { name: "第 1 题冻结原稿" });
+    const frozen = first.locator('[data-slot="question-surface"]');
     await expect(frozen).toBeVisible();
     await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
-      0,
+      1,
     );
     await expect(
       first.locator('[data-slot="annotation-workspace"]'),
@@ -161,19 +161,18 @@ test(
       )
       .toBeGreaterThan(10);
     await page.screenshot({ path: testInfo.outputPath("inline-drawing.png") });
-    await page.getByRole("button", { name: "作答", exact: true }).click();
-    await expect(
-      first.locator(
-        '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-      ),
-    ).toHaveCount(1);
-    await expect(canvas).toBeHidden();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
+    await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
+      1,
+    );
+    await expect(canvas).toBeVisible();
+    await expect(canvas).toHaveAttribute("data-input-enabled", "false");
     await expect(first.getByRole("radio")).toHaveCount(2);
     await first.getByText("错", { exact: true }).click();
     await expect(
       first.getByRole("radio", { name: "错", exact: true }),
     ).toBeChecked();
-    await expect(canvas).toBeHidden();
+    await expect(canvas).toBeVisible();
     await first.getByRole("button", { name: "第 1 题更多" }).click();
     await page.getByRole("menuitem", { name: "导出本题" }).click();
     const preview = page.getByRole("img", { name: "本题导出预览" });
@@ -304,7 +303,7 @@ test(
       0,
     );
     await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
-      0,
+      1,
     );
     await expect(frozen).toBeVisible();
     // 新浏览器没有本机底图：仅靠云端恢复就必须自动原位显示。
@@ -390,7 +389,7 @@ test(
       1,
     );
     await expect(first.locator('[data-slot="question-surface"]')).toHaveCount(
-      0,
+      1,
     );
     await page.setViewportSize({ width: 320, height: 800 });
     await expect(
@@ -407,12 +406,10 @@ test(
     await expect(page.getByRole("toolbar", { name: /标画工具栏/ })).toHaveCount(
       0,
     );
-    await second.getByRole("button", { name: "进入作答" }).click();
-    await expect(
-      second.locator(
-        '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-      ),
-    ).toHaveCount(1);
+    await expect(second.locator('[data-slot="question-surface"]')).toHaveCount(
+      1,
+    );
+    await expect(canvas).toBeVisible();
     await second
       .getByRole("radio", { name: "选项 B" })
       .locator("xpath=ancestor::label[1]")
@@ -469,7 +466,7 @@ test(
     await page.screenshot({
       path: testInfo.outputPath("inline-original-320.png"),
     });
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     // 已缓存底图可离线导出；未上传的新笔迹必须显式确认，交卷不删除本机稿。
     let blockedUploads = 0;
     await page.route(
@@ -492,7 +489,7 @@ test(
     await first.getByRole("button", { name: /圈画题干/ }).click();
     await expect(canvas).toHaveAttribute("data-input-enabled", "true");
     await drawStrokeWithPointerEvents(canvas);
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await expect(
       first.getByRole("button", { name: /圈画题干.*已有 2 笔/ }),
     ).toBeVisible();

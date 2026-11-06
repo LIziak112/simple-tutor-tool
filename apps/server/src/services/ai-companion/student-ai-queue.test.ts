@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   AI_MCP_LEASE_MINUTES,
+  AI_REPLY_MAX_CHARS,
   AI_TASK_DAILY_PER_STUDENT,
   AI_TASK_PENDING_PER_STUDENT,
   aiContextSnapshotSchema,
@@ -752,6 +753,30 @@ describe("SAI-12 租约超时与写回", () => {
       leaseX: { leaseToken: claim.leaseToken, generation: claim.generation },
     };
   }
+
+  it("合法长回信保持截断语义，截断损坏公式只返回降级警告", () => {
+    const db = createTestDb();
+    const { world, task, leaseX } = claimedWorld(db);
+    const source = "a".repeat(AI_REPLY_MAX_CHARS - 2) + "$x+1$";
+    const result = submitMcpReply(
+      db,
+      {
+        studentId: world.studentId,
+        taskId: task.id,
+        leaseToken: leaseX.leaseToken,
+        replyMarkdown: source,
+      },
+      { now: at(1000) },
+    );
+    expect(result.truncated).toBe(true);
+    expect(result.formatWarnings).toContainEqual(
+      expect.objectContaining({ code: "TRUNCATED_MATH", severity: "warning" }),
+    );
+    expect(assistantMessagesOf(db, task.id)[0]?.contentMd).toBe(
+      source.slice(0, AI_REPLY_MAX_CHARS),
+    );
+    expect(taskRow(db, task.id).status).toBe("replied");
+  });
 
   it("超时再领后：旧 lease 不能续期/回信，仅记 late_reply；新持有者可写回", () => {
     const db = createTestDb();

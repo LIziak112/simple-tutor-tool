@@ -32,8 +32,9 @@ import {
 
 /**
  * 材料圈画冻结基准元数据：cssWidth/cssHeight=首笔落笔时的活排版宽高
- * （CSS px，可为小数）。cssHeight 缺省=仅按宽匹配（早期数据）。活排版
- * 与基准宽高 ±1px 匹配时笔迹才叠显（questionSurfaceMatchesLayout 同口径）。
+ * （CSS px，可为小数）。已有基准的真实阅读框常驻固定宽度并整体缩放。
+ * 仅能核验宽高差异（容差 10px），不能证明内部逐字位置；早期 cssHeight
+ * 缺省的稿件缺少历史高度证据。
  */
 export interface MaterialInkBaseMeta {
   readonly cssWidth: number;
@@ -50,7 +51,7 @@ export interface AttemptDraftRecord {
   materialInks?: Record<string, InkDoc>;
   /**
    * materialId → 材料圈画冻结基准元数据（首笔落笔时的活排版宽高）：
-   * 笔迹逻辑坐标按该排版归一化，圈画态/只读回看按同一基准挂冻结框对齐。
+   * 笔迹逻辑坐标按该排版归一化，阅读与圈画共用同一固定宽度框。
    * 客户端本地形态，不随服务端同步。
    */
   materialInkBases?: Record<string, MaterialInkBaseMeta>;

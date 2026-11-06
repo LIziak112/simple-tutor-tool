@@ -334,7 +334,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         q1.locator('[data-slot="question-annotation-overlay"] canvas'),
       );
       await annotationToolbar
-        .getByRole("button", { name: "作答", exact: true })
+        .getByRole("button", { name: "完成标画", exact: true })
         .click();
       await expect(annotationToolbar).toHaveCount(0);
       await q1

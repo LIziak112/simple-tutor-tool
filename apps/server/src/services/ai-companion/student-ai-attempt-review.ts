@@ -27,6 +27,7 @@ import {
   formatQuestionAnswers,
   optionsPublicStructureOf,
 } from "@tutor/contract";
+import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
 import {
   and,
   asc,
@@ -434,7 +435,9 @@ function attemptReviewRangeOf(
             ),
       referenceAnswerMd:
         snapshot.answers !== undefined
-          ? formatQuestionAnswers(snapshot.answers)
+          ? formatQuestionAnswers(snapshot.answers, {
+              mathify: mathifyAiReferenceAnswer,
+            })
           : null,
       solutionMd: snapshot.solutionMd ?? null,
       missingNote: missingNoteOf(snapshot.answers, snapshot.solutionMd),

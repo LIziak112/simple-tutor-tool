@@ -130,6 +130,21 @@ function renderStatefulCard(
 }
 
 describe("题头元信息", () => {
+  it("缺少冻结版本时明确禁用圈画，不挂载旧图片工作台", () => {
+    const { container } = renderStatefulCard(baseQuestion({}), {
+      attemptId: "attempt-no-revision",
+    });
+    const button = screen.getByRole("button", { name: "第 3 题圈画题干" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      "title",
+      expect.stringContaining("缺少冻结版本"),
+    );
+    fireEvent.click(button);
+    expect(
+      container.querySelector('[data-slot="annotation-workspace"]'),
+    ).toBeNull();
+  });
   it("标画和草稿入口只在题头出现，展开状态受题卡控制", () => {
     const { container } = renderStatefulCard(baseQuestion({}), {
       attemptId: "attempt-tools",

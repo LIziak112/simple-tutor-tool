@@ -34,7 +34,7 @@ const test = baseTest.extend({
 
 for (const withoutCompatibility of [false, true]) {
   test(
-    `跨内核 v2 冻结原稿：${withoutCompatibility ? "旧稿无兼容证据" : "普通稿"}双向增写、擦除、撤销与零写入恢复`,
+    `跨内核 v2 真实题面：${withoutCompatibility ? "仅哈希失配明确保稿拒写" : "有证据稿双向增写、擦除、撤销与零写入恢复"}`,
     { tag: ["@annotation"] },
     async ({ page, request, baseURL }, testInfo) => {
       test.setTimeout(180_000);
@@ -59,20 +59,18 @@ for (const withoutCompatibility of [false, true]) {
       });
       const student = await getStudentViaApi(request, loginName);
       await addCourseMemberViaApi(request, courseId, student.id);
-      if (withoutCompatibility) {
-        // 历史 v2 生成器缺兼容证据；服务端仍保留原 PNG、布局与正文。
-        await page.route(
-          "**/src/features/annotation/question-base-image.tsx*",
-          async (route) => {
-            const response = await route.fetch();
-            const body = (await response.text()).replace(
-              "const fontCss =",
-              "delete layout.compatibility;\nconst fontCss =",
-            );
-            await route.fulfill({ response, body });
-          },
-        );
-      }
+      // 生成历史 v2 夹具；可选移除兼容证据，保留原 PNG、布局与正文。
+      await page.route(
+        "**/src/features/annotation/question-base-image.tsx*",
+        async (route) => {
+          const response = await route.fetch();
+          const body = (await response.text()).replace(
+            "const fontCss =",
+            `layout.renderVersion = 2; delete layout.renderProfile; ${withoutCompatibility ? "delete layout.compatibility;" : ""}\nconst fontCss =`,
+          );
+          await route.fulfill({ response, body });
+        },
+      );
       await page.goto(`/s/${student.linkToken}`);
       await page.waitForURL("**/s/home");
       const attemptId = await openChoicePractice(
@@ -95,7 +93,7 @@ for (const withoutCompatibility of [false, true]) {
       const canvas = first.locator('canvas[data-slot="annotation-canvas"]');
       await expect(canvas).toHaveAttribute("data-input-enabled", "true");
       await drawStrokeWithPointerEvents(canvas);
-      await page.getByRole("button", { name: "作答", exact: true }).click();
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
       await expect
         .poll(async () => (await readView()).doc?.strokes?.length ?? 0)
         .toBe(1);
@@ -120,6 +118,21 @@ for (const withoutCompatibility of [false, true]) {
           deviceScaleFactor: 1.25,
         });
         const other = await context.newPage();
+        if (withoutCompatibility) {
+          // 不同内核也可能生成相同旧签名；在首帧前固定字距差，明确制造失配。
+          await other.route("**/*", async (route) => {
+            if (route.request().resourceType() !== "document") {
+              await route.continue();
+              return;
+            }
+            const response = await route.fetch();
+            const body = (await response.text()).replace(
+              "</head>",
+              '<style>[data-slot="question-surface"], [data-slot="question-surface"] * { letter-spacing: 3px !important; }</style></head>',
+            );
+            await route.fulfill({ response, body });
+          });
+        }
         const leaks = attachLeakMonitor(other);
         let writes = 0;
         other.on("request", (req) => {
@@ -133,13 +146,38 @@ for (const withoutCompatibility of [false, true]) {
         await other.waitForURL("**/s/home");
         await other.goto(page.url());
         const resumed = other.locator('article[aria-label="第 1 题"]');
-        const image = resumed.getByRole("img", { name: "第 1 题冻结原稿" });
+        const surface = resumed.locator('[data-slot="question-surface"]');
         const resumedCanvas = resumed.locator(
           'canvas[data-slot="annotation-canvas"]',
         );
-        await expect(image).toBeVisible();
+        await expect(surface).toBeVisible();
+        if (withoutCompatibility) {
+          await expect(surface).toHaveCSS("letter-spacing", "3px");
+          // 原哈希不能给出逐块位置误差；失配须保稿，不能假称正常恢复。
+          await expect(resumed.getByRole("alert").first()).toContainText(
+            "原稿已保留",
+          );
+          await expect(resumedCanvas).toHaveCount(0);
+          await expect(
+            resumed.getByRole("img", { name: /冻结原稿/ }),
+          ).toHaveCount(0);
+          await resumed.getByRole("button", { name: /圈画题干/ }).click();
+          await expect(resumedCanvas).toHaveCount(0);
+          expect(
+            (await (await other.request.get(viewPath)).json()).data,
+          ).toEqual(before);
+          expect(await pngHash(before.base.downloadUrl)).toBe(originalPngHash);
+          expect(writes).toBe(0);
+          expect(leaks.violations()).toEqual([]);
+          await context.close();
+          return;
+        }
         await expect(resumedCanvas).toBeVisible();
-        await expect(resumed.getByRole("radio")).toHaveCount(0);
+        await expect(resumed.getByRole("radio")).toHaveCount(2);
+        await expect(resumedCanvas).toHaveAttribute(
+          "data-input-enabled",
+          "false",
+        );
         await expect(other.getByRole("dialog")).toHaveCount(0);
         expect((await (await other.request.get(viewPath)).json()).data).toEqual(
           before,
@@ -147,26 +185,21 @@ for (const withoutCompatibility of [false, true]) {
         expect(await pngHash(before.base.downloadUrl)).toBe(originalPngHash);
         expect(writes).toBe(0);
 
-        await other.addStyleTag({
-          content:
-            '[data-slot="question-surface"] * { font-family: monospace !important; letter-spacing: 3px !important; }',
-        });
-        await resumed.getByRole("button", { name: "进入作答" }).click();
-        await expect(resumed.getByRole("radio")).toHaveCount(2);
-        expect(
-          await resumed
-            .locator('[data-slot="question-surface"] p')
-            .first()
-            .evaluate((node) => getComputedStyle(node).letterSpacing),
-        ).toBe("3px");
-        await resumed.getByRole("button", { name: "返回原稿" }).click();
-        await expect(image).toBeVisible();
+        await resumed
+          .getByRole("radio", { name: "错", exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        await expect(
+          resumed.getByRole("radio", { name: "错", exact: true }),
+        ).toBeChecked();
+        await expect(surface).toBeVisible();
+        await expect(resumedCanvas).toBeVisible();
         expect((await (await other.request.get(viewPath)).json()).data).toEqual(
           before,
         );
         expect(writes).toBe(0);
         await other.screenshot({
-          path: testInfo.outputPath("v2-frozen-original.png"),
+          path: testInfo.outputPath("v2-real-question.png"),
         });
 
         await resumed.getByRole("button", { name: /圈画题干/ }).click();
@@ -178,7 +211,9 @@ for (const withoutCompatibility of [false, true]) {
         await other.getByRole("button", { name: "橡皮", exact: true }).click();
         await drawStrokeWithPointerEvents(resumedCanvas);
         await other.getByRole("button", { name: "撤销", exact: true }).click();
-        await other.getByRole("button", { name: "作答", exact: true }).click();
+        await other
+          .getByRole("button", { name: "完成标画", exact: true })
+          .click();
         await expect
           .poll(
             async () =>
@@ -193,10 +228,14 @@ for (const withoutCompatibility of [false, true]) {
 
         writes = 0;
         await other.reload();
-        await expect(image).toBeVisible();
+        await expect(surface).toBeVisible();
+        await expect(resumedCanvas).toBeVisible();
         await page.reload();
         await expect(
-          first.getByRole("img", { name: "第 1 题冻结原稿" }),
+          first.locator('[data-slot="question-surface"]'),
+        ).toBeVisible();
+        await expect(
+          first.locator('canvas[data-slot="annotation-canvas"]'),
         ).toBeVisible();
         expect(await readView()).toEqual(updated);
         expect(writes).toBe(0);

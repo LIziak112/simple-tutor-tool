@@ -31,6 +31,29 @@ function modelOf(model: PreparedOf<"matching"> = baseModel) {
 }
 
 describe("matching Input", () => {
+  it("完整选项与槽位节点在选择后保持，框内布局不依赖视口 sm 断点", () => {
+    const { rerender } = render(
+      matchingView.Input({
+        model: baseModel,
+        answer: undefined,
+        update: () => {},
+      }),
+    );
+    const control = screen.getByRole("combobox", { name: "第 1 空的选项" });
+    const original = screen.getByRole("region", { name: "完整选项" });
+    expect(control.parentElement?.className).not.toContain("sm:");
+    rerender(
+      matchingView.Input({
+        model: baseModel,
+        answer: { kind: "matching", pairs: { "slot-1": "opt-1" } },
+        update: () => {},
+      }),
+    );
+    expect(screen.getByRole("combobox", { name: "第 1 空的选项" })).toBe(
+      control,
+    );
+    expect(screen.getByRole("region", { name: "完整选项" })).toBe(original);
+  });
   it("每槽位一行原生 select（键盘/触摸原生语义）；选择即时回调不 defer", () => {
     const update = vi.fn();
     render(matchingView.Input({ model: modelOf(), answer: undefined, update }));

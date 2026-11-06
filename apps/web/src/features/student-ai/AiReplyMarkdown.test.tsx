@@ -17,6 +17,20 @@ import {
  */
 
 describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
+  it("坏定界符不把中文配成伪公式，后续合法公式仍渲染", () => {
+    const source =
+      String.raw`结果是 -\frac{1}{2}$（负数）。` +
+      "\n" +
+      String.raw`当 $x$ 趋近零时。`;
+    const { container } = render(<AiReplyMarkdown source={source} />);
+    const formulas = [...container.querySelectorAll(".katex annotation")].map(
+      (node) => node.textContent,
+    );
+    expect(formulas).toEqual(["x"]);
+    expect(container.textContent).toContain(
+      String.raw`-\frac{1}{2}$（负数）。`,
+    );
+  });
   it("裸公式渲染且不完整回复可查看原文", () => {
     const source = "推导：\n\\frac{1}{2}\n\n当 \\to 0$ 时";
     const { container } = render(<AiReplyMarkdown source={source} />);

@@ -200,8 +200,9 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
       const judge2 = studentPage.locator('article[aria-label="第 1 题"]');
       await expect(
         judge2.getByRole("button", { name: /显示下一步/ }),
-      ).toBeVisible();
-      await expect(judge2.getByText("再与零比大小。")).toBeHidden();
+      ).toHaveCount(0);
+      // 题内公开步骤固定展开以保持整题坐标，能力恢复只恢复题外工具。
+      await expect(judge2.getByText("再与零比大小。")).toBeVisible();
       await expect(
         studentPage.getByRole("button", { name: /手写作答/ }),
       ).toBeVisible();

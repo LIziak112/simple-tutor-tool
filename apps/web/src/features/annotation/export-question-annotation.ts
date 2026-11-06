@@ -1,78 +1,105 @@
-import type { AttemptQuestionPublic } from "@tutor/contract";
+import type {
+  AnnotationViewData,
+  AttemptQuestionPublic,
+} from "@tutor/contract";
+import {
+  draftStore,
+  getDraftPersistenceState,
+  getDraftSessionEpoch,
+} from "@/features/attempt/draft-store";
 import { fetchAnnotationViewApi } from "@/lib/api";
-import { exportAnnotationCompositeSource } from "./annotation-composite";
 import {
   type AnnotationScope,
   type AnnotationSessionRef,
   getAnnotationRecord,
 } from "./annotation-store";
 import { currentAnnotationSession } from "./annotation-sync";
-import { prepareQuestionAnnotationBase } from "./question-annotation-base";
-import { renderQuestionBaseImage } from "./question-base-image";
+import { resolveQuestionSurface } from "./question-surface-resolver";
+import { renderCurrentQuestionImage } from "./render-current-question";
 
-/** 同份公开底图与矢量快照；不克隆带个人输入/提示的整张题卡。
- * surface 允许 null（B05 AI 材料采集：材料收起/画布释放时仍从已保存底图
- * 合成）；只有需要新渲染题面的路径要求活题面，此时给明确可重试错误。 */
+/** 当前题面快照只读：原生题面、本人答案和选定的原域笔迹；不准备或写回底图。 */
 export async function exportQuestionAnnotationImage(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
   question: AttemptQuestionPublic,
   surface: HTMLElement | null,
+  options: { includeAnnotation?: boolean } = {},
 ): Promise<Blob> {
+  const epoch = getDraftSessionEpoch();
+  const isCurrent = () =>
+    currentAnnotationSession() === session && getDraftSessionEpoch() === epoch;
   const guard = () => {
-    if (currentAnnotationSession() !== session)
-      throw new Error("会话已切换，请重新导出");
+    if (!isCurrent()) throw new Error("会话已切换，请重新导出");
   };
   guard();
-  const before = await getAnnotationRecord(session, scope);
+  if (scope.questionId !== question.id)
+    throw new Error("当前题目身份不符，原稿已保留");
+  const draft = await draftStore.loadDraft(scope.attemptId, {
+    strictRead: true,
+  });
   guard();
-  if (!before?.localBase && !before?.base && !before?.doc?.strokes.length) {
-    const view = await fetchAnnotationViewApi(
+  if (getDraftPersistenceState(scope.attemptId) !== "saved")
+    throw new Error("本机作答未保存，请重试保存后导出");
+  if (draft?.answerConflicts?.[scope.questionId] !== undefined)
+    throw new Error("本题答案存在待裁决冲突，请先选择保留版本");
+  const answer = draft?.answers[scope.questionId];
+  if (options.includeAnnotation === false) {
+    const blob = await renderCurrentQuestionImage(question, {
+      answer,
+      layout: null,
+      doc: null,
+      reference: surface,
+      shouldAbort: () => !isCurrent(),
+    });
+    guard();
+    return blob;
+  }
+  const record = await getAnnotationRecord(session, scope, {
+    strictRead: true,
+  });
+  guard();
+  if (record && record.local !== "saved")
+    throw new Error("本机标画未保存，请重试保存后导出");
+  if (record?.conflict || record?.denied)
+    throw new Error("标画存在同步冲突或被拒，请处理后导出");
+  let view: AnnotationViewData | null = null;
+  if (!record) {
+    view = await fetchAnnotationViewApi(
       scope.attemptId,
       scope.questionId,
       scope.phase,
     );
     guard();
-    if (view.annotation?.sealedAt != null)
-      throw new Error("标画已随交卷固定，请到结果页导出");
-    if (!view.base && !view.doc?.strokes.length) {
-      if (!surface) throw new Error("题面尚未就绪，请重试");
-      const rendered = await renderQuestionBaseImage(question, surface);
-      guard();
-      return rendered.blob;
-    }
   }
-  const prepared = await prepareQuestionAnnotationBase(
-    session,
-    scope,
-    question,
-    surface,
-  );
-  guard();
-  if (prepared.kind === "sealed")
+  if (record?.sealedAt != null || view?.annotation?.sealedAt != null)
     throw new Error("标画已随交卷固定，请到结果页导出");
-  if (prepared.kind === "legacy")
-    throw new Error("此题标画为旧版，仅可查看原圈画，暂不支持导出合成");
-  const record = await getAnnotationRecord(session, scope);
+  const resolved = resolveQuestionSurface(
+    record ??
+      (view && (view.annotation || view.base || view.doc)
+        ? {
+            localBase: null,
+            base: view.base,
+            doc: view.doc,
+            sealedAt: view.annotation?.sealedAt ?? null,
+            conflict: null,
+            retained: null,
+            pending: null,
+          }
+        : null),
+    question.questionRevisionId,
+  );
+  if (resolved.status === "blocked")
+    throw new Error(resolved.reason ?? "原稿无法核对，原记录已保留");
+  const doc = resolved.source
+    ? structuredClone(record?.doc ?? view?.doc ?? null)
+    : null;
+  const blob = await renderCurrentQuestionImage(question, {
+    answer,
+    layout: resolved.source?.layout ?? null,
+    doc,
+    reference: surface,
+    shouldAbort: () => !isCurrent(),
+  });
   guard();
-  if (!record?.localBase || record.local !== "saved")
-    throw new Error("本机标画未保存，请重试保存后导出");
-  const { png, layout } = record.localBase;
-  const url = URL.createObjectURL(png);
-  try {
-    const result = await exportAnnotationCompositeSource(
-      {
-        downloadUrl: url,
-        pixelWidth: Math.ceil(layout.cssWidth * layout.pixelRatio),
-        pixelHeight: Math.ceil(layout.cssHeight * layout.pixelRatio),
-        cssWidth: layout.cssWidth,
-      },
-      record.doc,
-    );
-    guard();
-    if (!result.ok) throw new Error(result.error.message);
-    return result.blob;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  return blob;
 }

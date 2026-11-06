@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useContext } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { QuestionRenderContext } from "../question-render-context";
 import type {
   AnswerKindView,
   PreparedOf,
@@ -144,7 +145,9 @@ function OrderRowActions({
   upDisabled,
   downDisabled,
   label,
+  disabled = false,
 }: {
+  disabled?: boolean;
   onUp: () => void;
   onDown: () => void;
   onRemove: () => void;
@@ -156,21 +159,21 @@ function OrderRowActions({
     <div className="flex shrink-0 items-center gap-1">
       <ButtonishAction
         onClick={onUp}
-        disabled={upDisabled}
+        disabled={disabled || upDisabled}
         label={`${label}上移`}
       >
         ↑
       </ButtonishAction>
       <ButtonishAction
         onClick={onDown}
-        disabled={downDisabled}
+        disabled={disabled || downDisabled}
         label={`${label}下移`}
       >
         ↓
       </ButtonishAction>
       <ButtonishAction
         onClick={onRemove}
-        disabled={false}
+        disabled={disabled}
         label={`${label}移除`}
       >
         移除
@@ -204,83 +207,109 @@ function ButtonishAction({
   );
 }
 
-export const orderingView: AnswerKindView<
-  StudentAnswerOfKind<"ordering">,
-  PreparedOf<"ordering">,
-  ReferenceOfKind<"ordering">
-> = {
-  Input: ({ model, answer, update, disabled = false }) => {
-    // 结构不可用防御态：显式报错不静默降级（§7.1）
-    if (model.items.length === 0) {
-      return (
-        <div className="flex min-w-0 flex-col gap-3">
-          <RichMarkdown
-            source={model.stemMd}
-            className="text-base leading-[1.75]"
-            lrNodes
-          />
-          <p role="alert" className="text-sm text-destructive">
-            这道排序题的排序项信息不完整，请联系老师重新检查题目。
-          </p>
-        </div>
-      );
-    }
-    const fixedRows = fixedRowIndexesOf(model);
-    const rows = boardOf(model, answer);
-    const firstEmptyRow = rows.indexOf(null);
-    const placedKeys = new Set(
-      rows.filter((key): key is string => key !== null),
-    );
-    const applyBoard = (next: ReadonlyArray<string | null>) => {
+/** 原文与旧空板恒定；只有编号区消费 sequence，答案值不参与公开几何。 */
+function OrderingInput({
+  model,
+  answer,
+  update,
+  disabled = false,
+}: {
+  model: PreparedOf<"ordering">;
+  answer: StudentAnswerOfKind<"ordering"> | undefined;
+  update: (answer: StudentAnswerOfKind<"ordering">, defer?: boolean) => void;
+  disabled?: boolean;
+}) {
+  const profile = useContext(QuestionRenderContext);
+  const legacy = profile.renderVersion !== 4;
+  const rows = boardOf(model, answer);
+  const fixedRows = fixedRowIndexesOf(model);
+  const firstEmptyRow = rows.indexOf(null);
+  const placedKeys = new Set(rows.filter((key): key is string => key !== null));
+  const applyBoard = (next: Board) => {
+    if (!disabled)
       update(
         { kind: "ordering", sequence: sequenceOfBoard(model, next) },
         undefined,
       );
-    };
+  };
+  if (model.items.length === 0)
     return (
-      <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-3">
         <RichMarkdown
           source={model.stemMd}
           className="text-base leading-[1.75]"
           lrNodes
         />
-        <div className="flex min-w-0 flex-col gap-2">
-          <p className="text-sm font-semibold text-muted-foreground">
-            排序区（按正确顺序放置）
-          </p>
-          <ol className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
-            {rows.map((key, index) => {
-              const item = key === null ? undefined : itemOf(model, key);
-              const fixed = fixedRows.has(index);
-              const movableHere = item !== undefined && !fixed;
-              return (
-                <li
-                  key={fixed ? `fixed-${index}` : (key ?? `empty-${index}`)}
-                  className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-start"
-                >
-                  <div className="flex min-w-0 flex-1 items-start gap-2">
-                    <span className="mt-1 shrink-0 text-sm font-semibold text-muted-foreground">
-                      {`第 ${index + 1} 位`}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      {item === undefined ? (
-                        <p className="text-muted-foreground">待放置</p>
-                      ) : (
-                        <>
-                          <RichMarkdown
-                            source={item.text}
-                            className="min-w-0 text-base leading-[1.75]"
-                          />
-                          {fixed && (
-                            <span className="mt-1 inline-block rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                              已固定，不可移动
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
+        <p role="alert" className="text-sm text-destructive">
+          这道排序题的排序项信息不完整，请联系老师重新检查题目。
+        </p>
+      </div>
+    );
+  const board = (
+    <div key="board" className="flex min-w-0 flex-col gap-2">
+      <p className="text-sm font-semibold text-muted-foreground">
+        排序区（按正确顺序放置）
+      </p>
+      <ol className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
+        {rows.map((key, index) => {
+          const fixed = fixedRows.has(index);
+          const fixedItem = fixed
+            ? model.items.find((item) => item.fixedPosition === index + 1)
+            : undefined;
+          const number =
+            key === null
+              ? ""
+              : String(model.items.findIndex((item) => item.key === key) + 1);
+          return (
+            <li
+              // biome-ignore lint/suspicious/noArrayIndexKey: 键是固定答案位置，移动项只改变该位置的编号值
+              key={`position-${index + 1}`}
+              className={`relative flex min-w-0 gap-2 rounded-lg border border-border bg-card p-3 ${legacy ? "flex-col" : "h-[70px] items-center"}`}
+            >
+              {legacy ? (
+                <div className="flex min-w-0 flex-1 items-start gap-2">
+                  <span className="mt-1 shrink-0 text-sm font-semibold text-muted-foreground">
+                    第 {index + 1} 位
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {fixedItem ? (
+                      <>
+                        <RichMarkdown
+                          source={fixedItem.text}
+                          className="min-w-0 text-base leading-[1.75]"
+                        />
+                        <span className="mt-1 inline-block rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          已固定，不可移动
+                        </span>
+                      </>
+                    ) : (
+                      <p className="text-muted-foreground">待放置</p>
+                    )}
                   </div>
-                  {movableHere && key !== null && !disabled && (
+                </div>
+              ) : (
+                <span className="shrink-0 text-sm font-semibold text-muted-foreground">
+                  第 {index + 1} 位
+                </span>
+              )}
+              {(!legacy || !fixed) && (
+                <div
+                  data-annotation-answer-control="ordering"
+                  className={
+                    legacy
+                      ? "absolute inset-y-0 right-3 left-20 flex items-center justify-end gap-1 bg-card"
+                      : "flex min-w-0 flex-1 items-center justify-end gap-1"
+                  }
+                >
+                  <input
+                    data-ordering-position={index + 1}
+                    aria-label={`第 ${index + 1} 位的选项编号`}
+                    value={number}
+                    readOnly
+                    tabIndex={-1}
+                    className="h-11 w-11 shrink-0 rounded border border-input bg-transparent text-center text-base"
+                  />
+                  {!fixed && (
                     <OrderRowActions
                       label={`第 ${index + 1} 位`}
                       onUp={() =>
@@ -294,53 +323,94 @@ export const orderingView: AnswerKindView<
                         next[index] = null;
                         applyBoard(next);
                       }}
-                      upDisabled={moveTargetOf(rows, index, -1, fixedRows) < 0}
-                      downDisabled={moveTargetOf(rows, index, 1, fixedRows) < 0}
+                      upDisabled={
+                        key === null ||
+                        moveTargetOf(rows, index, -1, fixedRows) < 0
+                      }
+                      downDisabled={
+                        key === null ||
+                        moveTargetOf(rows, index, 1, fixedRows) < 0
+                      }
+                      disabled={disabled || key === null}
                     />
                   )}
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-        <div className="flex min-w-0 flex-col gap-2">
-          <p className="text-sm font-semibold text-muted-foreground">
-            待排序项
-          </p>
-          <ul className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
-            {model.items
-              .filter((item) => !placedKeys.has(item.key))
-              .map((item) => (
-                <li
-                  key={item.key}
-                  className="flex min-w-0 flex-col gap-2 rounded-lg border border-dashed border-border bg-card/50 p-3 sm:flex-row sm:items-center"
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+  const pool = (
+    <div key="pool" className="flex min-w-0 flex-col gap-2">
+      <p className="text-sm font-semibold text-muted-foreground">待排序项</p>
+      <ul className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
+        {model.items
+          .filter((item) => !legacy || item.fixedPosition === null)
+          .map((item) => (
+            <li
+              key={item.key}
+              data-lr-node={
+                legacy ? undefined : `options/item/${model.items.indexOf(item)}`
+              }
+              className={`flex min-w-0 gap-2 rounded-lg border border-dashed border-border bg-card/50 p-3 ${legacy && (profile.legacyDirection === "vertical" || (profile.legacyDirection === undefined && (profile.logicalWidth ?? 640) < 640)) ? "flex-col" : "flex-row items-center"}`}
+            >
+              <div className="min-w-0 flex-1">
+                <RichMarkdown
+                  source={item.text}
+                  className="min-w-0 text-base leading-[1.75]"
+                />
+              </div>
+              {!legacy && (
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  {model.items.indexOf(item) + 1}
+                </span>
+              )}
+              {!legacy && item.fixedPosition !== null ? (
+                <span className="inline-block shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                  已固定，不可移动
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={
+                    disabled || placedKeys.has(item.key) || firstEmptyRow < 0
+                  }
+                  onClick={() => {
+                    if (firstEmptyRow < 0 || placedKeys.has(item.key)) return;
+                    const next = [...rows];
+                    next[firstEmptyRow] = item.key;
+                    applyBoard(next);
+                  }}
+                  className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-input bg-card px-3 text-sm font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <div className="min-w-0 flex-1">
-                    <RichMarkdown
-                      source={item.text}
-                      className="min-w-0 text-base leading-[1.75]"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    disabled={disabled || firstEmptyRow < 0}
-                    onClick={() => {
-                      if (firstEmptyRow < 0) return;
-                      const next = [...rows];
-                      next[firstEmptyRow] = item.key;
-                      applyBoard(next);
-                    }}
-                    className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-input bg-card px-3 text-sm font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    加入排序
-                  </button>
-                </li>
-              ))}
-          </ul>
-        </div>
-      </div>
-    );
-  },
+                  加入排序
+                </button>
+              )}
+            </li>
+          ))}
+      </ul>
+    </div>
+  );
+  return (
+    <div className="flex min-w-0 flex-col gap-4">
+      <RichMarkdown
+        source={model.stemMd}
+        className="text-base leading-[1.75]"
+        lrNodes
+      />
+      {legacy ? [board, pool] : [pool, board]}
+    </div>
+  );
+}
+
+export const orderingView: AnswerKindView<
+  StudentAnswerOfKind<"ordering">,
+  PreparedOf<"ordering">,
+  ReferenceOfKind<"ordering">
+> = {
+  Input: (props) => <OrderingInput {...props} />,
   ReadOnly: ({ model, answer }) => {
     if (answer === undefined || answer.sequence.length === 0) {
       return (
