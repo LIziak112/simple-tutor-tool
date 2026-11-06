@@ -1,10 +1,65 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "./AttemptEditorContext";
 import { AttemptHeader } from "./AttemptHeader";
+
+afterEach(() => vi.unstubAllGlobals());
+
+it.each(["scratch", "answerInk"] as const)(
+  "%s 纸面开合前后正文滚动均收起顶栏，反向滚动展开",
+  async (kind) => {
+    vi.stubGlobal("scrollY", 0);
+    let editor: ReturnType<typeof useAttemptEditor>;
+    function EditorProbe() {
+      editor = useAttemptEditor();
+      return null;
+    }
+    render(
+      <AttemptEditorProvider>
+        <AttemptHeader title="练习" status={() => null} onBack={() => {}}>
+          课程信息
+        </AttemptHeader>
+        <EditorProbe />
+        <canvas data-testid="paper" />
+      </AttemptEditorProvider>,
+    );
+    const header = screen.getByRole("banner");
+    const scroll = (y: number) => {
+      fireEvent.wheel(document.body, { deltaY: y - window.scrollY });
+      vi.stubGlobal("scrollY", y);
+      fireEvent.scroll(window);
+    };
+    for (const open of [false, true, false]) {
+      await act(async () => {
+        expect(
+          await editor?.requestPaper(open ? { questionId: "q1", kind } : null),
+        ).toBe(true);
+      });
+      scroll(0);
+      scroll(180);
+      expect(header).toHaveAttribute("data-reading-hidden", "true");
+      scroll(160);
+      expect(header).toHaveAttribute("data-reading-hidden", "false");
+      if (open) {
+        fireEvent.pointerDown(screen.getByTestId("paper"));
+        fireEvent.touchMove(screen.getByTestId("paper"));
+        vi.stubGlobal("scrollY", 220);
+        fireEvent.scroll(window);
+        expect(header).toHaveAttribute("data-reading-hidden", "false");
+      }
+    }
+    await act(async () => {
+      expect(
+        await editor?.request({ questionId: "q1", kind: "annotation" }),
+      ).toBe(true);
+    });
+    scroll(300);
+    expect(header).toHaveAttribute("data-reading-hidden", "false");
+  },
+);
 
 it("编辑失败提示属于标题正常布局，不在标题外悬浮覆盖", async () => {
   function Switch() {

@@ -66,6 +66,49 @@ test.beforeEach(async ({ request, page }, testInfo) => {
   await openChoicePractice(page, courseId, courseName, unitName, 1);
 });
 
+test("草稿开合前后正文阅读均收起顶栏，反向展开且保留草稿", {
+  tag: ["@annotation"],
+}, async ({ page }) => {
+  const card = page.getByRole("article", { name: "第 1 题", exact: true });
+  const trigger = card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ });
+  const paper = card.locator('[data-slot="note-layer"]');
+  const header = page.locator('[data-slot="attempt-header"]');
+  await trigger.click();
+  await drawStrokeWithPointerEvents(paper.locator("canvas"));
+  await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+  await trigger.click();
+  for (const width of [390, 1180]) {
+    await page.setViewportSize({ width, height: 300 });
+    for (const open of [false, true, false]) {
+      if (open !== ((await trigger.getAttribute("aria-expanded")) === "true"))
+        await trigger.click();
+      await expect(trigger).toHaveAttribute("aria-expanded", String(open));
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      });
+      const beforeWidth = (await card.boundingBox())?.width;
+      await page.mouse.move(5, 150);
+      await page.mouse.wheel(0, 180);
+      await expect(header).toHaveAttribute("data-reading-hidden", "true");
+      await expect
+        .poll(() =>
+          header.evaluate((node) => node.getBoundingClientRect().bottom),
+        )
+        .toBeLessThanOrEqual(1);
+      expect((await card.boundingBox())?.width).toBe(beforeWidth);
+      await page.mouse.wheel(0, -80);
+      await expect(header).toHaveAttribute("data-reading-hidden", "false");
+      if (open)
+        await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    }
+  }
+});
+
 for (const preference of ["auto", "side", "below"] as const) {
   test(
     `草稿按需分栏：${preference}收起不占位，展开等比适配且保留像素与笔数`,

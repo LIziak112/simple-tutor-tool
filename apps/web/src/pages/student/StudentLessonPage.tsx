@@ -154,7 +154,7 @@ export default function StudentLessonPage() {
   );
 }
 
-/** 顶部工具栏：所有尺寸随阅读收起，手写期间固定。 */
+/** 顶部工具栏：所有尺寸随正文阅读收起，圈画模式固定。 */
 function HeaderBar({
   title,
   backTo,
@@ -178,7 +178,7 @@ function HeaderBar({
   const editor = useAttemptEditor();
   const isDesktop = useDesktopViewport();
   const toolbar = useReadingToolbar({
-    blocked: readingBlocked || editor?.active != null || editor?.paper != null,
+    blocked: readingBlocked || editor?.active != null,
   });
   // 目录跳转的滚动锚点：按实际工具栏高度预留，标题不被 sticky 头遮住。
   useEffect(() => {
