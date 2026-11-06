@@ -1,4 +1,5 @@
 import { devices, expect, test } from "@playwright/test";
+import { analyticsStudentOkSchema } from "../packages/contract/src/analytics-api";
 import {
   addCourseMemberViaApi,
   createCourseViaApi,
@@ -38,7 +39,7 @@ function practiceMarkdown(unitName: string): string {
     "topic: 有理数",
     "---",
     "",
-    '::::question{type=fill difficulty=1 knowledge="二十以内加法"}',
+    '::::question{type=fill difficulty=1 knowledge=" 二十以内加法 | 加法运算 || 二十以内加法 | "}',
     "计算：$2+3=$ [[5]]",
     "",
     ":::solution",
@@ -130,6 +131,8 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
 
       // 第 1 题填空：答 6（判错 → 错题列表与高频错误答案数据）
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
+      await expect(q1.getByText("二十以内加法", { exact: true })).toBeVisible();
+      await expect(q1.getByText("加法运算", { exact: true })).toBeVisible();
       const blank = q1.getByLabel("第1空");
       const fillSaved = studentPage.waitForResponse(async (response) => {
         if (
@@ -202,6 +205,25 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     await pendingCard.getByRole("button", { name: "标错（2）" }).click();
     await expect(pendingCard).toHaveCount(0);
     await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
+
+    // 同一道错题在每个考点下各计一次，重复声明不放大计数。
+    const analyticsResponse = await request.get(
+      `/api/teacher/analytics/student/${student.id}`,
+    );
+    expect(analyticsResponse.ok()).toBe(true);
+    const analytics = analyticsStudentOkSchema.parse(
+      await analyticsResponse.json(),
+    );
+    expect(analytics.ok).toBe(true);
+    for (const name of ["二十以内加法", "加法运算"]) {
+      expect(
+        analytics.data.knowledge.find((row) => row.knowledge === name),
+      ).toMatchObject({
+        wrongCount: 1,
+        correctCount: 0,
+        judgedCount: 1,
+      });
+    }
 
     await page.goto("/t/insights");
     // 关键计数：判断自动判对 + 填空教师批错 → graded，正确率 50%（D4：判对 1 / 已判定 2）

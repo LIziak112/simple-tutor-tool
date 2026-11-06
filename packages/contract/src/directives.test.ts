@@ -170,6 +170,22 @@ describe("example 与 kind/syntax 自洽（独立于注册期校验的回归断�
 });
 
 describe("question：与 content.ts 契约对齐", () => {
+  it.each(["", "   ", "|", " | | "])(
+    "knowledge=%j 没有有效考点时拒绝",
+    (knowledge) => {
+      expect(
+        questionDirective.attrs.safeParse({ type: "judge", knowledge }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("knowledge 属性仍是字符串，允许管道符列表与可清理的空项", () => {
+    const knowledge = " 数轴 | 有理数加法 || 数轴 | ";
+    expect(
+      questionDirective.attrs.parse({ type: "judge", knowledge }).knowledge,
+    ).toBe(knowledge);
+  });
+
   it("type 枚举与 questionTypeSchema 同源一致（契约优先，禁止重复定义）", () => {
     const attrType = questionDirective.attrs.shape.type;
     expect(attrType.options).toEqual(questionTypeSchema.options);

@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -23,6 +26,27 @@ function runBundle(...args: string[]) {
 }
 
 describe("dsl-kit/tutor-lint.mjs（独立校验脚本冒烟）", () => {
+  it.each([
+    [" 数轴 | 有理数加法 || 数轴 | ", 0],
+    [" | | ", 1],
+  ])("分发产物校验多考点 %j：退出码 %i", (knowledge, status) => {
+    const directory = mkdtempSync(join(tmpdir(), "ownclass-knowledge-"));
+    const file = join(directory, "多考点.md");
+    try {
+      writeFileSync(
+        file,
+        `---\nkind: practice\nunit: 多考点\n---\n::::question{type=judge knowledge="${knowledge}"}\n[[正确]]\n::::\n`,
+      );
+      const done = runBundle(file);
+      expect(done.status).toBe(status);
+      if (status === 1)
+        expect(done.stdout).toContain("[INVALID_QUESTION_ATTRS]");
+    } finally {
+      unlinkSync(file);
+      rmdirSync(directory);
+    }
+  });
+
   it("反例文件：退出码 1，输出含 code 与统计、无 ANSI 码，行为与仓库 CLI 一致", () => {
     const fixture = fileURLToPath(
       new URL("../../../../samples/lint/04-choice-correct.md", import.meta.url),

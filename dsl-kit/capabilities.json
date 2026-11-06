@@ -22,7 +22,7 @@
           "name": "knowledge",
           "type": "string",
           "required": false,
-          "description": "考点（单个字符串），用于学情统计；解析时归一为数组入库"
+          "description": "考点，多个用 | 分隔，如 knowledge=\"有理数加法|绝对值\"；逐项去首尾空白、去空项、按首次出现去重；未写为空数组，显式全空或纯分隔符报错。考点无主辅之分，| 不能作为名称的一部分"
         },
         {
           "name": "word-min",
