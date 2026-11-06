@@ -109,7 +109,7 @@
       "informationDiagnostics": 11
     }
   },
-  "ci": "pending",
-  "merged": false,
-  "implementationCommit": "0b3f1a69571409143e64ec00f484f7719aa6f12f"
+  "implementationCommit": "0b3f1a69571409143e64ec00f484f7719aa6f12f",
+  "capturedAt": "2026-11-06T20:02:52.097800+00:00",
+  "deliveryStatusSource": "对应PR的实时CI与合并状态（本文件是创建PR前的本地证据快照）"
 }

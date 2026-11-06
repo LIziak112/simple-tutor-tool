@@ -1,6 +1,6 @@
 # 013 AI 相关入口改用表示用途的图标
 
-状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。`TOUCHES-DS`：共享 AiCompanionTrigger 的图标；无 `REQUIRES-APPROVAL`，保留已定稿入口名称。
+状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。`TOUCHES-DS`：共享 AiCompanionTrigger 的图标；无 `REQUIRES-APPROVAL`，保留已定稿入口名称。
 
 UI-14；P3；canon `ST-2`（hard / slop / judgement，source UNSLOP），遵守 `US-001`；`ST-1` 仅为修复约束，不是第二项违规。版本 `public-2026.11.06-1`；索引 SHA-256 `2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f`。
 

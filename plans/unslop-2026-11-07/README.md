@@ -144,3 +144,5 @@
 所有source/license/credits原样保留于MCP主题文件；没有修改远程规则、没有把本项目判断写回canon。
 
 原始索引以 `evidence/canon/index.json.txt` 保存精确响应字节，避免JSON格式化器改变字节数；主题文件仍保持原始格式。
+
+规则文本署名：**UNSLOP by [Oleg.Design](https://oleg.design)**，采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)；保存的规则文本未修改，项目判断与修复方案单独记录。各规则的原始署名、许可与第三方credit仍保留在主题JSON中。

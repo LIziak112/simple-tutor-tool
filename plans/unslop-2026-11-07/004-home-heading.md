@@ -1,6 +1,6 @@
 # 004 补上学生首页的页面标题语义
 
-状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。无 `REQUIRES-APPROVAL`；无 `TOUCHES-DS`。
+状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。无 `REQUIRES-APPROVAL`；无 `TOUCHES-DS`。
 
 对应 UI-05；P3；judgement；本轮 canon 已经 MCP 获取并校验。检测器 1.0.3 / `12a35cc5f003ec08dcb6dd828ed0d059904902cd`，本问题来自 DOM 大纲检查。
 

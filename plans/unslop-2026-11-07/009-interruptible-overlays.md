@@ -1,6 +1,6 @@
 # 009 弹层动画从当前位置反向，并遵守减少动画偏好
 
-状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。`TOUCHES-DS`：SheetContent、DropdownMenuContent 的共享动效；无 `REQUIRES-APPROVAL`。
+状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。`TOUCHES-DS`：SheetContent、DropdownMenuContent 的共享动效；无 `REQUIRES-APPROVAL`。
 
 UI-10；P2；canon `KR-13`（hard / slop / judgement，source UNSLOP），修复位置依 `US-004`。减少动画项同时依据已有项目验收约定，不假称 KR-13 直接规定该媒体查询。版本 `public-2026.11.06-1`；索引 SHA-256 `2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f`；原文见 `evidence/canon/interface.json`。
 

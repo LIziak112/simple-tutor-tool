@@ -1,6 +1,6 @@
 # 014 按压反馈与 canon 的固定缩放偏好
 
-当前实施决定：用户已明确选择 **B**；原 A/B 比较保留为审查历史，以下等待选择的描述已被本决定替代。状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。
+当前实施决定：用户已明确选择 **B**；原 A/B 比较保留为审查历史，以下等待选择的描述已被本决定替代。状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。
 **REQUIRES-APPROVAL：这是风格取舍，先选 A 或 B。** 状态：等待产品选择；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。若选 B，`TOUCHES-DS`：Button 共享按压反馈。
 
 UI-15；P3；canon `KR-10`（hard / slop / judgement，source UNSLOP），同时受 `US-001` 约束。版本 `public-2026.11.06-1`；索引 SHA-256 `2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f`。

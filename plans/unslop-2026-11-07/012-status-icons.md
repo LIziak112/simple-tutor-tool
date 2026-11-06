@@ -1,6 +1,6 @@
 # 012 状态呈现使用既有图标集
 
-状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。无 `REQUIRES-APPROVAL`、无 `TOUCHES-DS`，复用 Lucide。
+状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。无 `REQUIRES-APPROVAL`、无 `TOUCHES-DS`，复用 Lucide。
 
 UI-13；P3；canon `ST-11`（hard / slop / judgement，source UNSLOP）；版本 `public-2026.11.06-1`；索引 SHA-256 `2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f`。
 

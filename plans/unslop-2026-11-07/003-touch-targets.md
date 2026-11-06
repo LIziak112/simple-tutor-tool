@@ -1,6 +1,6 @@
 # 003 补齐批选、学生入口和筛选的触控范围
 
-状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。无 `REQUIRES-APPROVAL`；无 `TOUCHES-DS`，使用已有 Button、label 和 44px 调用模式。
+状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。无 `REQUIRES-APPROVAL`；无 `TOUCHES-DS`，使用已有 Button、label 和 44px 调用模式。
 
 对应 UI-02；P2；judgement；本轮 canon 已经 MCP 获取并校验。检测器版本 1.0.3 / `12a35cc5f003ec08dcb6dd828ed0d059904902cd`；命中范围来自实际 DOM 矩形与关联 label 核查。
 

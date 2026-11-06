@@ -1,6 +1,6 @@
 # 008 保存过程保持按钮尺寸稳定
 
-状态：本地验收通过，待CI及合并；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。`TOUCHES-DS`：在现有 Button 变体中增加可选的忙碌呈现能力；无 `REQUIRES-APPROVAL`。
+状态：已实现并完成本地验收；CI及合并以对应PR为准；执行提交：`0b3f1a69571409143e64ec00f484f7719aa6f12f`。`TOUCHES-DS`：在现有 Button 变体中增加可选的忙碌呈现能力；无 `REQUIRES-APPROVAL`。
 
 UI-09；P2；canon `ST-4`（hard / slop / judgement，source UNSLOP），关联 `US-004`。版本 `public-2026.11.06-1`，索引 SHA-256 `2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f`。完整规则及主题校验和见 `evidence/canon/`；没有机器检测绑定。
 
