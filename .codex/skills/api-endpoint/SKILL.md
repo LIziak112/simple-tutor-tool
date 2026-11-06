@@ -5,7 +5,7 @@ description: 在 simple-tutor-tool 中新增或修改后端 API 接口的标准�
 
 # 新增/修改 API 接口
 
-适用于 T1.9 起所有涉及接口的任务。固定顺序：**schema → 路由 → service → 测试 → 前端调用**。顺序不能颠倒，因为契约是唯一事实来源（AGENTS.md 第 1 条）。
+适用于 T1.9 起所有涉及接口的任务。固定顺序：**schema → 路由 → service → 测试 → 前端调用**。顺序不能颠倒，因为契约是唯一事实来源（AGENTS.md 产品核心硬性规则 1（契约优先））。
 
 ## 固定约定（先背下来）
 
@@ -40,7 +40,7 @@ description: 在 simple-tutor-tool 中新增或修改后端 API 接口的标准�
 
 ### 学生端接口：泄露测试是硬性要求
 
-学生端接口永远不返回未交卷题目的答案、详解、提示内容（AGENTS.md 第 3 条）。用 T2.4 的通用工具：
+学生端接口永远不返回未交卷题目的答案、详解、提示内容（AGENTS.md 产品核心硬性规则 2（安全防线））。用 T2.4 的通用工具：
 
 ```ts
 assertNoLeak(response); // 递归检查不存在 answers、solution*、hints 内容字段
