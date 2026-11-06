@@ -127,6 +127,69 @@ beforeEach(() => {
 });
 
 describe("StudentCourseUnitPage", () => {
+  it("模态请求中 Esc 不关闭，失败后可原地重试", async () => {
+    let fail: (error: Error) => void = () => {
+      throw new Error("请求未开始");
+    };
+    vi.mocked(mockedStart).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    renderPage(SUBMITTED_ONCE);
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", { name: "再做一次" })
+      )[0] as HTMLElement,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "开始新一次" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /正在开始/ })).toBeDisabled(),
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+    expect(
+      screen.getByRole("dialog", { name: "再做一次确认" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "关闭弹层" }),
+    ).not.toBeInTheDocument();
+    await act(async () => fail(new Error("审查模拟失败")));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("审查模拟失败"),
+    );
+    expect(screen.getByRole("button", { name: "开始新一次" })).toBeEnabled();
+  });
+
+  it("模态初始聚焦、约束背景焦点，Esc 取消后归还触发者", async () => {
+    renderPage(SUBMITTED_ONCE);
+    const trigger = (
+      await screen.findAllByRole("button", { name: "再做一次" })
+    )[0];
+    if (!trigger) throw new Error("缺少真实触发按钮");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "再做一次确认" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "先不做" })).toHaveFocus(),
+    );
+    trigger.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement ?? dialog, {
+      key: "Escape",
+      code: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(mockedStart).not.toHaveBeenCalled();
+  });
+
   it("从未做过：渲染题数/题型分布/历次空态，「开始练习」直达答题页", async () => {
     const utils = renderPage(NEVER_DONE);
     expect(await screen.findByText("有理数小练")).toBeInTheDocument();
@@ -149,7 +212,11 @@ describe("StudentCourseUnitPage", () => {
   it("已交卷一次：显示得分汇总与历次记录；「再做一次」先确认（第 n+1 次、从空白开始）", async () => {
     const utils = renderPage(SUBMITTED_ONCE);
     expect(await screen.findByText(/已做 1 次/)).toBeInTheDocument();
-    expect(screen.getByText(/首次 做对 3 \/ 4 题/)).toBeInTheDocument();
+    expect(screen.getByText("首次表现").closest("div")).toHaveTextContent(
+      "做对 3 / 4 题",
+    );
+    expect(screen.getAllByRole("term")).toHaveLength(3);
+    expect(screen.getAllByRole("definition")).toHaveLength(3);
     expect(screen.getByText(/有 1 题待批/)).toBeInTheDocument();
     // 历次记录：点击进入该次结果视图（只读）
     expect(

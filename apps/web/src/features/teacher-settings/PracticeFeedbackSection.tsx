@@ -1,5 +1,5 @@
 import type { TeacherPracticeFeedbackPolicy } from "@tutor/contract";
-import { Info, Loader2 } from "lucide-react";
+import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   usePracticeFeedbackSettings,
@@ -137,6 +137,7 @@ export function PracticeFeedbackSection({
                     : "当前设置已保存"}
             </p>
             <Button
+              busy={saveMutation.isPending}
               className="min-h-11 px-5"
               disabled={saveMutation.isPending}
               onClick={() =>
@@ -146,9 +147,6 @@ export function PracticeFeedbackSection({
                 )
               }
             >
-              {saveMutation.isPending && (
-                <Loader2 aria-hidden className="motion-safe:animate-spin" />
-              )}
               保存更改
             </Button>
           </div>

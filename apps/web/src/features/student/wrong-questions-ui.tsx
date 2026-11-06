@@ -1051,7 +1051,7 @@ export function WrongFilterBar({
           )}
           <Button
             variant="ghost"
-            className="min-h-9 px-2 text-xs text-muted-foreground"
+            className="min-h-11 min-w-11 px-2 text-xs text-muted-foreground"
             onClick={onClearAll}
           >
             清除全部筛选

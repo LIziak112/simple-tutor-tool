@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Clock,
   Lightbulb,
+  LockKeyhole,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
@@ -25,7 +26,7 @@ export interface PendingReleaseBannerProps {
 
 /**
  * 结果页“截止后公布（after_due）”未公布态横幅
- * - 绿色高辨识度成功 Hero 确认区（🎉 作业已成功交卷！）；
+ * - 绿色高辨识度成功 Hero 确认区（作业已成功交卷！）；
  * - 动态倒计时胶囊：显眼的 [天] [时] [分] [秒] 胶囊卡片；到期时提示正在加载
  *   并提供「立即刷新」（到期自动刷新后仍未公布/刷新失败时不至于卡死在加载态）；
  * - 作答凭证摘要行：交卷时间、已作答题数、手写原稿状态、待公布锁定状态；
@@ -52,7 +53,7 @@ export function PendingReleaseBanner({
         </div>
         <div className="flex flex-col gap-1">
           <h2 className="text-xl font-bold tracking-tight text-emerald-950 dark:text-emerald-100 sm:text-2xl">
-            🎉 作业已成功交卷！
+            作业已成功交卷！
           </h2>
           <p className="text-sm leading-relaxed text-emerald-800/90 dark:text-emerald-200/80">
             作答与过程草稿已妥善保存，请放心休息。
@@ -61,7 +62,7 @@ export function PendingReleaseBanner({
       </div>
 
       {/* 动态倒计时胶囊 */}
-      <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-background/80 p-4 shadow-xs backdrop-blur-xs">
+      <div className="flex flex-col gap-3 p-[17px]">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Clock aria-hidden className="size-4 text-primary" />
@@ -112,9 +113,9 @@ export function PendingReleaseBanner({
             ].map(({ label, val }) => (
               <div
                 key={label}
-                className="flex flex-col items-center justify-center rounded-lg border border-border bg-muted/40 py-2"
+                className="flex flex-col items-center justify-center py-[9px] px-px"
               >
-                <span className="font-mono text-2xl font-bold tabular-nums text-foreground sm:text-3xl">
+                <span className="text-2xl font-bold tabular-nums text-foreground sm:text-3xl">
                   {String(val).padStart(2, "0")}
                 </span>
                 <span className="text-[11px] font-medium text-muted-foreground">
@@ -128,19 +129,19 @@ export function PendingReleaseBanner({
 
       {/* 作答凭证摘要行 */}
       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3">
+        <div className="flex flex-col gap-1 p-[13px]">
           <span className="text-xs text-muted-foreground">交卷时间</span>
           <span className="font-medium text-foreground">
             {submittedAt ? formatCnTime(submittedAt) : "已记录"}
           </span>
         </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3">
+        <div className="flex flex-col gap-1 p-[13px]">
           <span className="text-xs text-muted-foreground">已作答题数</span>
           <span className="font-medium tabular-nums text-foreground">
             {summary.answered} / {summary.total} 题
           </span>
         </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3">
+        <div className="flex flex-col gap-1 p-[13px]">
           <span className="text-xs text-muted-foreground">手写原稿状态</span>
           <span className="flex items-center gap-1 font-medium text-foreground">
             <ShieldCheck
@@ -150,10 +151,15 @@ export function PendingReleaseBanner({
             {handwritingStatus}
           </span>
         </div>
-        <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3">
+        <div className="flex flex-col gap-1 p-[13px]">
           <span className="text-xs text-muted-foreground">作答结果</span>
           <span className="font-medium text-amber-700 dark:text-amber-400">
-            待公布 🔒（截止后自动判分）
+            待公布{" "}
+            <LockKeyhole
+              aria-hidden
+              className="inline size-3.5 align-text-bottom"
+            />
+            （截止后自动判分）
           </span>
         </div>
       </div>

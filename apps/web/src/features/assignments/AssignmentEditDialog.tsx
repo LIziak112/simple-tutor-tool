@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { learningStatusClass } from "@/components/learning-status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,12 +55,7 @@ const ROSTER_STATUS_LABELS: Record<AssignmentStatus, string> = {
 };
 
 /** 状态徽章配色（进行中蓝、已交卷琥珀、已批改绿） */
-const ROSTER_STATUS_BADGE_CLASS: Record<AssignmentStatus, string> = {
-  not_started: "bg-muted text-muted-foreground",
-  in_progress: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  submitted: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  graded: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-};
+const ROSTER_STATUS_BADGE_CLASS = learningStatusClass;
 
 /** 409 CONFIRM_REQUIRED 错误体携带的受影响学生（D13） */
 interface ConfirmStudent {

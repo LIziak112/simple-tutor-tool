@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { LessonLandingData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchLessonLandingApi, restartLessonAttemptApi } from "@/lib/api";
@@ -106,6 +106,69 @@ beforeEach(() => {
 });
 
 describe("StudentLessonLandingPage", () => {
+  it("模态请求中 Esc 不关闭，失败后可原地重试", async () => {
+    let fail: (error: Error) => void = () => {
+      throw new Error("请求未开始");
+    };
+    vi.mocked(mockedRestart).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    renderPage(HAS_DRAFT);
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", { name: "重新开始" })
+      )[0] as HTMLElement,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "开始新一次" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /正在开始/ })).toBeDisabled(),
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+    expect(
+      screen.getByRole("dialog", { name: "重新开始确认" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "关闭弹层" }),
+    ).not.toBeInTheDocument();
+    await act(async () => fail(new Error("审查模拟失败")));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("审查模拟失败"),
+    );
+    expect(screen.getByRole("button", { name: "开始新一次" })).toBeEnabled();
+  });
+
+  it("模态初始聚焦、约束背景焦点，Esc 取消后归还触发者", async () => {
+    renderPage(HAS_DRAFT);
+    const trigger = (
+      await screen.findAllByRole("button", { name: "重新开始" })
+    )[0];
+    if (!trigger) throw new Error("缺少真实触发按钮");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "重新开始确认" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "先不做" })).toHaveFocus(),
+    );
+    trigger.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement ?? dialog, {
+      key: "Escape",
+      code: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(mockedRestart).not.toHaveBeenCalled();
+  });
+
   it("从未做过：渲染题数/题型分布/历次空态；「开始练习」直达作答页 /lesson/run", async () => {
     const utils = renderPage(NEVER_DONE);
     expect(await screen.findByText("第1讲 有理数讲练")).toBeInTheDocument();

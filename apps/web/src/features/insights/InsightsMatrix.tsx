@@ -5,6 +5,7 @@ import type {
   AnalyticsUnitCell,
 } from "@tutor/contract";
 import { Link } from "react-router";
+import { learningStatusClass } from "@/components/learning-status";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import { CELL_STATUS_LABELS } from "./insights-format";
 
@@ -18,13 +19,13 @@ import { CELL_STATUS_LABELS } from "./insights-format";
  * - 横向滚动容纳多列（一对一规模可控），首列粘性跟随。
  */
 
-/** 状态徽章配色（进行中实心蓝显著，同作答列表 STATUS_BADGE_CLASS 族） */
+/** 状态徽章配色（进行中蓝，同作答列表 STATUS_BADGE_CLASS 族） */
 const CELL_BADGE_CLASS: Record<AnalyticsCellStatus, string> = {
   "not-assigned": "text-muted-foreground",
-  "not-started": "bg-muted text-muted-foreground",
-  "in-progress": "bg-sky-500 font-medium text-white",
-  submitted: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  graded: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  "not-started": learningStatusClass.not_started,
+  "in-progress": learningStatusClass.in_progress,
+  submitted: learningStatusClass.submitted,
+  graded: learningStatusClass.graded,
 };
 
 /** 单元格状态徽章（not-assigned 只渲染「—」） */

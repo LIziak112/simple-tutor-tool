@@ -20,10 +20,7 @@ const SheetOverlay = ({
 }: React.ComponentProps<typeof SheetPrimitive.Overlay>) => (
   <SheetPrimitive.Overlay
     data-slot="sheet-overlay"
-    className={cn(
-      "fixed inset-0 z-50 bg-black/50 motion-safe:data-[state=open]:animate-in motion-safe:data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      className,
-    )}
+    className={cn("fixed inset-0 z-50 bg-black/50", className)}
     {...props}
   />
 );
@@ -44,11 +41,12 @@ const SheetContent = ({
     <SheetOverlay />
     <SheetPrimitive.Content
       data-slot="sheet-content"
+      data-side={side}
       className={cn(
-        "fixed inset-y-0 z-50 flex h-full w-full flex-col bg-background shadow-lg motion-safe:transition motion-safe:ease-in-out motion-safe:data-[state=open]:animate-in motion-safe:data-[state=closed]:animate-out motion-safe:data-[state=closed]:duration-300 motion-safe:data-[state=open]:duration-500",
+        "fixed inset-y-0 z-50 flex h-full w-full flex-col bg-background shadow-lg",
         side === "right"
-          ? "right-0 border-l border-border data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right"
-          : "left-0 border-r border-border data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
+          ? "right-0 border-l border-border"
+          : "left-0 border-r border-border",
         // 竖屏全宽；md 起（iPad 横屏 ≥768px）约 80%，超大屏封顶（编辑器 + 预览双栏）
         "sm:max-w-[min(80vw,56rem)]",
         className,

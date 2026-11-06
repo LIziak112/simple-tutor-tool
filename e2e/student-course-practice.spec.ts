@@ -169,11 +169,18 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       );
       await expect(studentPage.getByText(/历次记录（1）/)).toBeVisible();
       await expect(studentPage.getByText(/已做 1 次/)).toBeVisible();
-      await expect(
-        studentPage.getByText(
-          /首次 做对 2 \/ 2 题 · 最近 做对 2 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
-        ),
-      ).toBeVisible();
+      for (const [label, correct] of [
+        ["首次表现", 2],
+        ["最近表现", 2],
+        ["最佳表现", 2],
+      ] as const) {
+        const group = studentPage
+          .getByText(label, { exact: true })
+          .locator("..");
+        await expect(group.getByRole("definition")).toHaveText(
+          `做对 ${correct} / 2 题`,
+        );
+      }
 
       await studentPage.getByRole("button", { name: "再做一次" }).click();
       await expect(
@@ -223,11 +230,18 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
         `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
       );
       await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
-      await expect(
-        studentPage.getByText(
-          /首次 做对 2 \/ 2 题 · 最近 做对 0 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
-        ),
-      ).toBeVisible();
+      for (const [label, correct] of [
+        ["首次表现", 2],
+        ["最近表现", 0],
+        ["最佳表现", 2],
+      ] as const) {
+        const group = studentPage
+          .getByText(label, { exact: true })
+          .locator("..");
+        await expect(group.getByRole("definition")).toHaveText(
+          `做对 ${correct} / 2 题`,
+        );
+      }
       // 历次列表：第 2 次（最近在前）与第 1 次都可进入回看
       await expect(
         studentPage.getByRole("button", { name: "查看第 2 次记录" }),

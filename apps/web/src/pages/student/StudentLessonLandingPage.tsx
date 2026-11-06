@@ -6,9 +6,16 @@ import {
   RotateCcw,
   Sparkles,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
   useLessonLanding,
@@ -60,6 +67,8 @@ function RestartConfirmDialog({
   busy,
   onConfirm,
   onCancel,
+  onClosed,
+  error,
 }: {
   open: boolean;
   mode: "abandon" | "redo";
@@ -67,26 +76,53 @@ function RestartConfirmDialog({
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  onClosed: () => void;
+  error: string | null;
 }) {
-  if (!open) return null;
+  const cancelRef = useRef<HTMLButtonElement>(null);
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={mode === "abandon" ? "重新开始确认" : "再做一次确认"}
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !busy) onCancel();
+      }}
     >
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-lg">
-        <h2 className="text-base font-semibold">
+      <DialogContent
+        aria-labelledby={undefined}
+        aria-label={mode === "abandon" ? "重新开始确认" : "再做一次确认"}
+        className="top-auto bottom-4 w-[calc(100%-2rem)] max-w-sm translate-y-0 rounded-2xl sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+        closeDisabled={busy}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          cancelRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onClosed();
+        }}
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (busy) event.preventDefault();
+        }}
+      >
+        <DialogTitle>
           {mode === "abandon" ? "重新开始" : "再做一次"}
-        </h2>
-        <p className="mt-2 text-sm text-muted-foreground">
+        </DialogTitle>
+        <DialogDescription className="mt-2">
           {mode === "abandon"
             ? `进行中的这一次将被作废（不再计入历次与统计），并开始第 ${nextAttemptNo} 次，从空白开始。`
             : `将开始第 ${nextAttemptNo} 次，从空白开始。之前的记录会保留，可随时回看。`}
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
+        </DialogDescription>
+        {error !== null ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter className="mt-4">
           <Button
+            ref={cancelRef}
             variant="outline"
             className="min-h-11"
             disabled={busy}
@@ -97,9 +133,9 @@ function RestartConfirmDialog({
           <Button className="min-h-11" disabled={busy} onClick={onConfirm}>
             {busy ? "正在开始…" : "开始新一次"}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -116,6 +152,7 @@ export default function StudentLessonLandingPage() {
     courseId,
   );
   const restart = useRestartLesson(id);
+  const redoTriggerRef = useRef<HTMLButtonElement>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const accessDenied =
@@ -268,6 +305,7 @@ export default function StudentLessonLandingPage() {
                 variant="outline"
                 className="min-h-12 px-6 text-base"
                 disabled={busy}
+                ref={redoTriggerRef}
                 onClick={() => setConfirmOpen(true)}
                 aria-label="重新开始"
               >
@@ -279,6 +317,7 @@ export default function StudentLessonLandingPage() {
             <Button
               className="min-h-12 px-8 text-base"
               disabled={busy}
+              ref={redoTriggerRef}
               onClick={() => setConfirmOpen(true)}
               aria-label="再做一次"
             >
@@ -321,7 +360,7 @@ export default function StudentLessonLandingPage() {
                         draft ? runTo : `/s/attempts/${attempt.attemptId}`,
                       );
                     }}
-                    className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2 text-left shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+                    className="flex min-h-14 w-full flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2 text-left shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     <span className="w-14 shrink-0 text-sm font-medium">
                       第 {attempt.attemptNo} 次
@@ -330,7 +369,7 @@ export default function StudentLessonLandingPage() {
                       {statusLabel(attempt.status)}
                     </span>
                     {!draft && (
-                      <span className="shrink-0 text-sm">
+                      <span className="min-w-0 max-w-full text-sm break-words">
                         {formatResultCounts(attempt.resultCounts)}
                       </span>
                     )}
@@ -352,8 +391,15 @@ export default function StudentLessonLandingPage() {
         mode={hasDraft ? "abandon" : "redo"}
         nextAttemptNo={nextAttemptNo}
         busy={busy}
+        onClosed={() => redoTriggerRef.current?.focus()}
+        error={
+          restart.isError
+            ? restart.error instanceof Error
+              ? restart.error.message
+              : "开始失败，请稍后重试"
+            : null
+        }
         onConfirm={() => {
-          setConfirmOpen(false);
           onRestart();
         }}
         onCancel={() => setConfirmOpen(false)}

@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "transport": "MCP Streamable HTTP",
+  "endpoint": "https://oleg.design/unslop/mcp",
+  "origin": "remote",
+  "localFallback": false,
+  "version": "public-2026.11.06-1",
+  "checksum": "2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f",
+  "publishedAt": "2026-11-06T00:00:00Z",
+  "projectFiles": 5215,
+  "requestedTopics": ["copy", "interface", "process"],
+  "notRequestedTopics": [],
+  "receivedBytes": 62724,
+  "fullCanonBytes": 62724,
+  "checks": [
+    "MCP 资源 URI 与 MIME",
+    "index schema 与 SHA-256",
+    "固定版本",
+    "各 topic schema 与 SHA-256",
+    "topic 精确字节数",
+    "topic 规则 ID 集合与标题",
+    "rule mode/strength/class/source/license"
+  ],
+  "topics": [
+    {
+      "topic": "copy",
+      "checksum": "eec7da27ed58b98e34c2b6c975091e99637d303d751d80d37bc904c9f7be0d5a",
+      "bytes": 7018,
+      "ruleIds": [
+        "DEC-5",
+        "KR-20",
+        "LK-01",
+        "US-009",
+        "XP-22a",
+        "XP-22b",
+        "XP-23",
+        "XP-33",
+        "XP-34"
+      ]
+    },
+    {
+      "topic": "interface",
+      "checksum": "602ce866c9eb622cd5c559ad77c2ce512b63154c82d917509062a7e7faf0eb76",
+      "bytes": 41109,
+      "ruleIds": [
+        "C-11",
+        "DEC-1",
+        "DEC-2",
+        "DEC-3",
+        "DEC-4",
+        "DEC-6",
+        "DEC-7",
+        "DEC-8",
+        "DEC-9",
+        "J-12",
+        "KR-1",
+        "KR-10",
+        "KR-11",
+        "KR-13",
+        "KR-15",
+        "KR-16",
+        "KR-18",
+        "KR-19",
+        "KR-21",
+        "KR-3",
+        "KR-3d",
+        "KR-4",
+        "KR-5",
+        "KR-7",
+        "KR-8",
+        "KR-9",
+        "NR-02",
+        "ST-1",
+        "ST-11",
+        "ST-13",
+        "ST-2",
+        "ST-3",
+        "ST-4",
+        "ST-5",
+        "TY-1",
+        "XP-18",
+        "XP-31"
+      ]
+    },
+    {
+      "topic": "process",
+      "checksum": "157b327696a694fe1b7d7b4c2be5893f70cfe0a41fa9e9c36b9fb719cc9198a9",
+      "bytes": 7977,
+      "ruleIds": [
+        "UR-1",
+        "US-001",
+        "US-002",
+        "US-003",
+        "US-004",
+        "US-005",
+        "US-006",
+        "US-007",
+        "US-008",
+        "US-010"
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "uri": "unslop://canon-index/latest",
+      "bytes": 6620
+    },
+    {
+      "uri": "unslop://canon-topic/public-2026.11.06-1/copy",
+      "bytes": 7018
+    },
+    {
+      "uri": "unslop://canon-topic/public-2026.11.06-1/interface",
+      "bytes": 41109
+    },
+    {
+      "uri": "unslop://canon-topic/public-2026.11.06-1/process",
+      "bytes": 7977
+    }
+  ],
+  "verified": true,
+  "compatibleDetectorBindings": false
+}

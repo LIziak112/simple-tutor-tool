@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,11 +65,11 @@ export function TeacherAiSettingsPanel() {
                     : "当前 AI 设置已保存"}
         </p>
         <Button
+          busy={saving}
           className="min-h-11 px-5"
           disabled={saving || blocked || !dirty}
           onClick={() => void save()}
         >
-          {saving && <Loader2 aria-hidden className="animate-spin" />}
           保存 AI 设置
         </Button>
       </div>

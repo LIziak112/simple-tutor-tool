@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { SharedFileList } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteAdminSharedFileApi, fetchAdminSharedFiles } from "@/lib/api";
@@ -74,6 +80,71 @@ beforeEach(() => {
 });
 
 describe("AdminSharedFilesPage 列表与删除", () => {
+  it("模态请求中 Esc 不关闭，失败后可原地重试", async () => {
+    let fail: (error: Error) => void = () => {
+      throw new Error("请求未开始");
+    };
+    vi.mocked(apiMocks.deleteAdminSharedFileApi).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    apiMocks.fetchAdminSharedFiles.mockResolvedValue(fileList());
+    renderPage();
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", { name: /^删除共享文件/ })
+      )[0] as HTMLElement,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /删除中/ })).toBeDisabled(),
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+    expect(
+      screen.getByRole("alertdialog", { name: "删除共享文件？" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "关闭弹层" }),
+    ).not.toBeInTheDocument();
+    await act(async () => fail(new Error("审查模拟失败")));
+    await waitFor(() =>
+      expect(screen.getByRole("alertdialog")).toHaveTextContent("审查模拟失败"),
+    );
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeEnabled();
+  });
+
+  it("模态初始聚焦、约束背景焦点，Esc 取消后归还触发者", async () => {
+    apiMocks.fetchAdminSharedFiles.mockResolvedValue(fileList());
+    renderPage();
+    const trigger = (
+      await screen.findAllByRole("button", { name: /^删除共享文件/ })
+    )[0];
+    if (!trigger) throw new Error("缺少真实触发按钮");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("alertdialog", { name: "删除共享文件？" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "取消" })).toHaveFocus(),
+    );
+    trigger.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement ?? dialog, {
+      key: "Escape",
+      code: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(apiMocks.deleteAdminSharedFileApi).not.toHaveBeenCalled();
+  });
+
   it("渲染文件卡片：来源标签（在线发布 / 本地文件）、发布者、搜索过滤", async () => {
     apiMocks.fetchAdminSharedFiles.mockResolvedValue(fileList());
     renderPage();

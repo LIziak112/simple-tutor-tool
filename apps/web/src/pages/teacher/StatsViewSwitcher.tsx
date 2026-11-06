@@ -13,7 +13,9 @@ export function StatsViewSwitcher({
 }) {
   return (
     <fieldset className="flex flex-wrap gap-2">
-      <legend className="sr-only">数据视图</legend>
+      <legend className="mb-1 text-xs text-muted-foreground sm:sr-only">
+        数据视图
+      </legend>
       {active === "attempts" ? (
         <Button variant="default" className="min-h-11" aria-pressed={true}>
           作答记录

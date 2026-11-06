@@ -13,6 +13,10 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
+import {
+  learningStatusAccent,
+  learningStatusClass,
+} from "@/components/learning-status";
 import { Button } from "@/components/ui/button";
 import { formatCnTime, formatDueTime } from "@/lib/time";
 import { isAssignmentTodo } from "./assignment-list-filters";
@@ -29,21 +33,10 @@ const STATUS_META: Record<
   AssignmentStatus,
   { label: string; className: string }
 > = {
-  not_started: { label: "未开始", className: "bg-muted text-muted-foreground" },
-  in_progress: {
-    label: "进行中",
-    className: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
-  },
-  submitted: {
-    label: "已交卷",
-    className:
-      "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-  },
-  graded: {
-    label: "已批改",
-    className:
-      "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  },
+  not_started: { label: "未开始", className: learningStatusClass.not_started },
+  in_progress: { label: "进行中", className: learningStatusClass.in_progress },
+  submitted: { label: "已交卷", className: learningStatusClass.submitted },
+  graded: { label: "已批改", className: learningStatusClass.graded },
 };
 
 /** 完成状态徽章（小标签，非触控目标，信息展示用） */
@@ -113,12 +106,6 @@ const ENTRY_LABEL: Record<AssignmentStatus, string> = {
 };
 
 /** 卡片左侧状态色条（还要做的作业用主色强调，做完的淡化） */
-const STATUS_ACCENT: Record<AssignmentStatus, string> = {
-  not_started: "before:bg-primary",
-  in_progress: "before:bg-sky-500",
-  submitted: "before:bg-emerald-400",
-  graded: "before:bg-amber-400",
-};
 
 /**
  * 「我的作业」卡片（T2A.7 多单元化；2026-10 UI 打磨：左侧状态色条、
@@ -144,7 +131,7 @@ export function StudentAssignmentCard({
       className={cn(
         "relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-border bg-card p-4 ps-5 text-card-foreground shadow-xs",
         "before:absolute before:inset-y-0 before:start-0 before:w-1.5",
-        STATUS_ACCENT[assignment.status],
+        learningStatusAccent[assignment.status],
       )}
     >
       <div className="flex flex-col gap-1.5">
@@ -405,7 +392,7 @@ export function StudentCourseCard({
                 className="h-2 flex-1 overflow-hidden rounded-full bg-muted"
               >
                 <div
-                  className="h-full rounded-full bg-primary transition-[width]"
+                  className="h-full rounded-full bg-primary"
                   style={{ width: `${percent}%` }}
                 />
               </div>

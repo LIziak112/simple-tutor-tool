@@ -430,20 +430,14 @@ function EditCourseDialog({
               取消
             </Button>
             <Button
+              busy={updateMutation.isPending}
               type="submit"
               className="min-h-11 px-4"
               disabled={
                 updateMutation.isPending || nextName.trim().length === 0
               }
             >
-              {updateMutation.isPending ? (
-                <>
-                  <Loader2 aria-hidden className="animate-spin" />
-                  正在保存…
-                </>
-              ) : (
-                "保存"
-              )}
+              保存
             </Button>
           </DialogFooter>
         </form>

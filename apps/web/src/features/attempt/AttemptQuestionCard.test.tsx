@@ -205,7 +205,7 @@ describe("题头元信息", () => {
     // 工具栏文字改挂容器查询变体（窄列图标-only，aria-label 恒可访问）
     const annotateText = screen
       .getByRole("button", { name: "第 3 题圈画题干" })
-      .querySelector("span");
+      .querySelector("span[class*='/question-card:']");
     expect(annotateText?.className).toContain("/question-card:");
     expect(annotateText?.className).not.toContain("lg:inline");
   });

@@ -132,7 +132,11 @@ it("保存单元只刷新文件夹一次，并与内容树并行刷新", async (
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(folders).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(content).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("button", { name: "保存中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     finishFolders?.();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "保存" })).not.toBeDisabled(),

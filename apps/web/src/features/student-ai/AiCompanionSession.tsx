@@ -1,4 +1,5 @@
 import type { AiChannel, StudentQuickButton } from "@tutor/contract";
+import { ChevronDown } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { AiLinkShareBox } from "./AiLinkShareBox";
@@ -208,9 +209,13 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
     <div className="flex flex-wrap gap-2">
       {buttons.slice(0, 2).map(renderButton)}
       {buttons.length > 2 && (
-        <details className="min-w-0">
-          <summary className="flex min-h-11 cursor-pointer items-center rounded-lg border border-border px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring">
-            更多问法
+        <details className="group min-w-0">
+          <summary className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring">
+            <span>更多问法</span>
+            <ChevronDown
+              aria-hidden
+              className="size-4 shrink-0 motion-safe:transition-transform motion-safe:duration-150 group-open:rotate-180"
+            />
           </summary>
           <div className="mt-2 flex flex-wrap gap-2">
             {buttons.slice(2).map(renderButton)}

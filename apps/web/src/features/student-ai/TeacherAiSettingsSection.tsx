@@ -6,13 +6,7 @@ import {
   type AiTeachingMode,
   DEFAULT_AI_PROMPT_TEMPLATES,
 } from "@tutor/contract";
-import {
-  ChevronDown,
-  Info,
-  Loader2,
-  RotateCcw,
-  TriangleAlert,
-} from "lucide-react";
+import { ChevronDown, Info, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -443,13 +437,11 @@ export function TeacherAiSettingsSection() {
                       : "当前设置已保存"}
               </p>
               <Button
+                busy={saveMutation.isPending}
                 className="min-h-11 px-5"
                 disabled={saveMutation.isPending || !dirty || emptyTemplate}
                 onClick={() => void handleSave().catch(() => {})}
               >
-                {saveMutation.isPending && (
-                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
-                )}
                 保存 AI 设置
               </Button>
             </div>

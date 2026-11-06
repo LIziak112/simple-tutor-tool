@@ -356,11 +356,18 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         `**/s/courses/${courseId}/units/${encodeURIComponent(courseUnitName)}`,
       );
       await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
-      await expect(
-        studentPage.getByText(
-          /首次 做对 2 \/ 2 题 · 最近 做对 0 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
-        ),
-      ).toBeVisible();
+      for (const [label, correct] of [
+        ["首次表现", 2],
+        ["最近表现", 0],
+        ["最佳表现", 2],
+      ] as const) {
+        const group = studentPage
+          .getByText(label, { exact: true })
+          .locator("..");
+        await expect(group.getByRole("definition")).toHaveText(
+          `做对 ${correct} / 2 题`,
+        );
+      }
 
       // —— 泄露检查（课程练习段）：全程无禁用键、无提示/详解原文 ——
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

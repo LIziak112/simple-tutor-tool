@@ -1,0 +1,364 @@
+[
+  {
+    "name": "import-dialog-390",
+    "passed": true,
+    "value": {
+      "width": 390,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "teacher-delete-390",
+    "passed": true,
+    "value": {
+      "width": 390,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "admin-delete-390",
+    "passed": true,
+    "value": {
+      "width": 390,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "unit-redo-390",
+    "passed": true,
+    "value": {
+      "width": 390,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "lesson-restart-390",
+    "passed": true,
+    "value": {
+      "width": 390,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "import-dialog-768",
+    "passed": true,
+    "value": {
+      "width": 768,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "teacher-delete-768",
+    "passed": true,
+    "value": {
+      "width": 768,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "admin-delete-768",
+    "passed": true,
+    "value": {
+      "width": 768,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "unit-redo-768",
+    "passed": true,
+    "value": {
+      "width": 768,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "lesson-restart-768",
+    "passed": true,
+    "value": {
+      "width": 768,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "import-dialog-1440",
+    "passed": true,
+    "value": {
+      "width": 1440,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "teacher-delete-1440",
+    "passed": true,
+    "value": {
+      "width": 1440,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "admin-delete-1440",
+    "passed": true,
+    "value": {
+      "width": 1440,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "unit-redo-1440",
+    "passed": true,
+    "value": {
+      "width": 1440,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "lesson-restart-1440",
+    "passed": true,
+    "value": {
+      "width": 1440,
+      "height": 844,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "import-landscape",
+    "passed": true,
+    "value": {
+      "width": 844,
+      "height": 390,
+      "focusTrap": true,
+      "escape": true,
+      "returnFocus": true
+    }
+  },
+  {
+    "name": "analytics-390",
+    "passed": true,
+    "value": {
+      "focusTop": 705.5,
+      "width": 390
+    }
+  },
+  {
+    "name": "unit-results-390",
+    "passed": true,
+    "value": {
+      "columns": "316px"
+    }
+  },
+  {
+    "name": "analytics-768",
+    "passed": true,
+    "value": {
+      "focusTop": 496.5,
+      "width": 768
+    }
+  },
+  {
+    "name": "unit-results-768",
+    "passed": true,
+    "value": {
+      "columns": "226px 226px 226px"
+    }
+  },
+  {
+    "name": "analytics-1440",
+    "passed": true,
+    "value": {
+      "focusTop": 484.5,
+      "width": 1440
+    }
+  },
+  {
+    "name": "unit-results-1440",
+    "passed": true,
+    "value": {
+      "columns": "311.328px 311.328px 311.344px"
+    }
+  },
+  {
+    "name": "touch-targets",
+    "passed": true,
+    "value": {
+      "sizes": [
+        {
+          "labelCount": 1,
+          "width": 44,
+          "height": 44
+        },
+        {
+          "labelCount": 1,
+          "width": 44,
+          "height": 44
+        }
+      ],
+      "nameBox": {
+        "x": 37,
+        "y": 333.5,
+        "width": 48,
+        "height": 44
+      }
+    }
+  },
+  {
+    "name": "home-and-progress",
+    "passed": true,
+    "value": [
+      {
+        "route": "/s/home",
+        "reducedMotion": "no-preference",
+        "styles": [
+          {
+            "duration": "0s",
+            "property": "all"
+          },
+          {
+            "duration": "0s",
+            "property": "all"
+          }
+        ]
+      },
+      {
+        "route": "/s/courses",
+        "reducedMotion": "no-preference",
+        "styles": [
+          {
+            "duration": "0s",
+            "property": "all"
+          },
+          {
+            "duration": "0s",
+            "property": "all"
+          }
+        ]
+      },
+      {
+        "route": "/s/home",
+        "reducedMotion": "reduce",
+        "styles": [
+          {
+            "duration": "0s",
+            "property": "all"
+          },
+          {
+            "duration": "0s",
+            "property": "all"
+          }
+        ]
+      },
+      {
+        "route": "/s/courses",
+        "reducedMotion": "reduce",
+        "styles": [
+          {
+            "duration": "0s",
+            "property": "all"
+          },
+          {
+            "duration": "0s",
+            "property": "all"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "save-size-and-press",
+    "passed": true,
+    "value": {
+      "idle": {
+        "x": 1186,
+        "y": 612.6875,
+        "width": 98,
+        "height": 44
+      },
+      "pending": {
+        "x": 1186,
+        "y": 612.6875,
+        "width": 98,
+        "height": 44
+      },
+      "success": {
+        "x": 1186,
+        "y": 612.6875,
+        "width": 98,
+        "height": 44
+      },
+      "failed": {
+        "x": 1186,
+        "y": 652.6875,
+        "width": 98,
+        "height": 44
+      },
+      "press": "matrix(0.96, 0, 0, 0.96, 0, 0)",
+      "reducedPress": "none"
+    }
+  },
+  {
+    "name": "real-unpublished",
+    "passed": true,
+    "value": {
+      "attemptId": "a06cb6b8-b950-43d4-a309-3a24c49efdf7",
+      "serverAnswersReleased": false,
+      "payloadSecretAbsent": true,
+      "layouts": [
+        {
+          "width": 390,
+          "frameCount": 1
+        },
+        {
+          "width": 768,
+          "frameCount": 1
+        },
+        {
+          "width": 1440,
+          "frameCount": 1
+        }
+      ]
+    }
+  }
+]

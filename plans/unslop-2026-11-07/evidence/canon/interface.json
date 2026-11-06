@@ -1,0 +1,706 @@
+{
+  "checksum": "602ce866c9eb622cd5c559ad77c2ce512b63154c82d917509062a7e7faf0eb76",
+  "payload": {
+    "kind": "unslop-canon-topic",
+    "rules": [
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "bad-tone",
+        "id": "C-11",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "On a page that sets display text in capitals, prose gets its own class with text-transform: none and the text typeface. A global text-transform rule on body does not remove the need for that class.",
+        "strength": "soft",
+        "title": "Prose on all-caps display pages stays in normal case",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "DEC-1",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Carry grouping, hierarchy and separation with space, type and alignment first, then with background. Add a line, container, shadow, badge, icon tile or gradient only when the content does not read without it, when it marks a state or an interactive boundary, or when the approved design system defines it. Test by hand: remove the element; if nothing is lost, it is a finding. Replacing one decoration with another (a border with a ring shadow, a card with a tinted box) is the same finding. Example: a section card holding cards, each with lines between its rows. Not a finding: an input boundary, a focus state, decoration the approved design system defines.",
+        "strength": "hard",
+        "title": "Structure before decoration",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Refactoring UI",
+            "url": "https://www.refactoringui.com/",
+            "work": "Use fewer borders"
+          },
+          {
+            "name": "Aurora Harley (NN/g)",
+            "url": "https://www.nngroup.com/articles/common-region/",
+            "work": "Common Region"
+          },
+          {
+            "name": "impeccable.style",
+            "url": "https://impeccable.style/slop",
+            "work": "AI slop catalog"
+          }
+        ],
+        "id": "DEC-2",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A border, divider, outline or ring shadow is not the default way to group content: use spacing, type and background first. Remove a line when switching it off changes neither grouping, interactivity nor state, or when two other cues already mark the same edge. Keep lines for input and control boundaries, focus and selection, dense data tables, images that blend into the background (KR-9), and lines the approved design system defines. A framed box inside a framed box is a finding; input fields and controls inside a frame are not, because their boundaries are among the exceptions above. Any visible line up to 2px counts as a line under this rule: border, outline outside :focus-visible, box-shadow with 0 blur and a positive spread, hr, 1–2px pseudo-elements, divide-x and divide-y. Lines between list rows belong only in dense data where the eye follows a row across columns; when space already separates the rows, the lines are a finding. Check by hand in order: remove, look for a substitute, look for double encoding, apply the exceptions. Detection signals (share of framed containers, nesting depth, double encoding, lines between rows, line density, a border with a wide shadow) only prompt a review and give no verdict: their thresholds are not calibrated. Example: a rounded-xl border shadow-sm section holding three rounded-xl border cards, each with divide-y. Not a finding: a settings group without frames, where spacing separates the groups and inputs have a 3:1 boundary (WCAG 1.4.11).",
+        "strength": "hard",
+        "title": "Lines only where structure needs them",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "impeccable.style",
+            "url": "https://impeccable.style/slop",
+            "work": "AI slop catalog"
+          }
+        ],
+        "id": "DEC-3",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A container with a border or shadow and with a radius or background, that is a card, is only for a real object: one that is dragged, clicked as a whole or has its own state (a kanban item, a product). A card inside a card is a finding; input fields and controls inside a card do not count as cards. Example: every section of the page wrapped in a card. Detection signal: a card inside a card, or cards in more than half of the page's sections. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated.",
+        "strength": "hard",
+        "title": "Cards are not the default container",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "DEC-4",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A shadow means a layer above the content. Use it for a real layer or when the approved design system defines it. A shadow on an element that is not a layer is a finding, including a shadow used in place of a border that DEC-2 would remove. Real layers: popovers, menus, modals, sticky elements, dragged objects, and a card that really is a layer above the content (KR-5). Example: a shadow on every card and section by default. Detection signal: a shadow on any other element. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated.",
+        "strength": "hard",
+        "title": "Shadows only for real layers",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "impeccable.style",
+            "url": "https://impeccable.style/slop",
+            "work": "AI slop catalog"
+          }
+        ],
+        "id": "DEC-6",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Use muted text only for truly secondary meta information and with at least the WCAG text contrast: 4.5:1 for regular text, 3:1 for large text. Muting everything secondary by default is a finding. Example: every description under headings in regular-size gray text at 3:1. Not a finding: the date and author under an article at 4.5:1. Detection signal: a large share of text nodes below the WCAG threshold for their size or using a muted token; gray text on a colored background. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated.",
+        "strength": "hard",
+        "title": "Muted text needs a role and contrast",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "impeccable.style",
+            "url": "https://impeccable.style/slop",
+            "work": "AI slop catalog"
+          }
+        ],
+        "id": "DEC-7",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Use an eyebrow, kicker, section numbering or a pill above the H1 only as a deliberate element of the brand system or for a real sequence of steps. A label above every heading by default is a finding. Example: \"01 / FEATURES\", \"02 / PRICING\" above every section. Not a finding: one deliberate kicker in the brand system; real steps of a process. Detection signal: two or more sections with a small uppercase label above h2, or a pill above the H1. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated. Related: UR-1.",
+        "strength": "hard",
+        "title": "Labels above headings only as a system",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "impeccable.style",
+            "url": "https://impeccable.style/slop",
+            "work": "AI slop catalog"
+          }
+        ],
+        "id": "DEC-8",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Three or more identical blocks of an icon in a colored tile, a heading and text give everything the same weight; this template is a finding. Example: \"three features\" with icons in squares. Not a finding: truly equivalent options (pricing tiers, comparisons); iconography the design system defines and that carries meaning. Detection signal: neighboring containers of the same size and structure, a 32–128px icon tile right before a heading, one icon per card. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated.",
+        "strength": "hard",
+        "title": "No identical feature grids with icon tiles",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "impeccable.style",
+            "url": "https://impeccable.style/slop",
+            "work": "AI slop catalog"
+          }
+        ],
+        "id": "DEC-9",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Gradient text, a purple-to-blue gradient and colored glow on a dark background are allowed only as brand identity fixed in the design system; otherwise they are a finding. Example: a purple gradient hero heading in a project without such a brand. Not a finding: a brand gradient defined by design-system tokens. Detection signal: background-clip: text with a gradient, hues 250–290 in a hero background, a colored blurred shadow on a dark background. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated.",
+        "strength": "hard",
+        "title": "Decorative gradients and glow only from the design system",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "J-12",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A details/summary disclosure whose default marker was removed shows a chevron or plus sign that changes state when it opens, so the row does not read as a caption. Size the summary's hit area per KR-3 on touch screens and KR-3d on desktop.",
+        "strength": "hard",
+        "title": "Disclosure needs a visible indicator",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-1",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Derive nested corner radii from each other instead of picking them by eye: inner radius = outer radius − padding, or outer = inner + padding. An inner radius equal to or larger than the outer one is a finding.",
+        "strength": "hard",
+        "title": "Concentric radii for nested shapes",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-10",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A pressed button responds with scale(0.96); no feedback and a deeper squeeze are both findings.",
+        "strength": "hard",
+        "title": "Press feedback scales to exactly 0.96",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          },
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Icons and logos); pair 'Give icons a shared construction'"
+          }
+        ],
+        "id": "KR-11",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "An icon's stroke width matches the stroke of the text next to it. Calculate it where possible and propose adjusting the icon stroke or slightly changing the font weight; next to bold text, prefer a filled icon instead of adding another stroke width. There is no fixed stroke value. Icons on one screen share one family and one stroke width. Within one group of icons, such as a toolbar or a navigation list, filled and outlined styles are not mixed: the group is filled or outlined as a whole, next to bold text preferably filled. A single filled icon among outlined ones is a finding unless the design system assigns the filled style to a state such as selected. The icon size stays with the design system. Example: three navigation icons from one card, one filled and heavy, two thin outlines. Not a finding: the same three drawn the same way, with even visual weight.",
+        "strength": "hard",
+        "title": "Icon stroke matches the adjacent text",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-13",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Use CSS transitions for interactive states where a person can change their mind mid-motion, such as opening and closing a menu. Keep keyframe animations for one-off sequences.",
+        "strength": "hard",
+        "title": "Interactive motion can be interrupted",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-15",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Do not play an entrance animation every time the page loads unless the entrance is intended. An intentional entrance stays as designed.",
+        "strength": "hard",
+        "title": "No animation on first render",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          },
+          {
+            "name": "invisibledetails.com",
+            "url": "https://invisibledetails.com",
+            "work": "Small details that add up (free notes)"
+          }
+        ],
+        "id": "KR-16",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Give direct feedback a short duration (100–160 ms) and context changes a longer one within the motion budget. One duration for every transition is a finding.",
+        "strength": "hard",
+        "title": "Duration follows the weight of the action",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "KR-18",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Do not rely on html { scroll-behavior: smooth } when the page scrolls from code: in embedded viewers scrollTo() and scrollIntoView() may not move the page. Implement smoothness in JavaScript and confirm arrival; if scrollY has not changed after 400 ms, jump to the target.",
+        "strength": "hard",
+        "title": "Smooth scrolling without breaking scripted scroll",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "KR-19",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Monospace type is not slop in itself, but AI-generated interfaces overuse it, so treat it as slop by default. Use it only in code blocks and inline code in technical text, in terminal or CLI commands shown for copying, and in diff or patch views. Nowhere else: not for IDs, numbers, labels, tags, headings or interface elements. Numerals in regular text never use monospace digits; code keeps its own digits (TY-1).",
+        "strength": "hard",
+        "title": "Monospace type only where explicitly allowed",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "KR-21",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A row or card that changes color on hover must do something on click. Either make it clickable or remove the hover highlight.",
+        "strength": "hard",
+        "title": "Hover highlight needs a click",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-3",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "On touch screens every interactive element has a hit area of at least 44×44 px, and the hit areas of neighboring elements do not overlap. The desktop recommendation is KR-3d.",
+        "strength": "hard",
+        "title": "Touch targets on touch screens",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-3d",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "On desktop, a 44×44 px hit area is only a recommendation for key actions. Hit areas of 15 px or more inside menus and similar lists are not a finding.",
+        "strength": "soft",
+        "title": "Desktop hit areas for key actions",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          },
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Spacing and alignment); pair 'Control alignment'"
+          }
+        ],
+        "id": "KR-4",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Center asymmetric shapes, such as a play triangle or an icon inside a button, optically, preferably inside the SVG itself. Arithmetic centering that looks off-center is a finding. A text label centers by its visible letters, not by its line box: an untrimmed line box also holds the font's space for ascenders, accents and descenders, which is rarely even around the capitals, so a label centered by its box usually reads off-center, most often low. This shows in a button with an icon and a label, in a pill or badge, and in an initial inside an avatar. Trim the text to cap height and baseline (text-box: trim-both cap alphabetic) or offset it in the component. In a centered price the digits are what is centered; the currency sign is placed outside that box. Example: a check icon and the word \"Sent\" in one button, the word visibly lower than the icon. Not a finding: the same button with the word trimmed so its capitals line up with the icon's center.",
+        "strength": "hard",
+        "title": "Optical, not arithmetic, centering",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-5",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Show that a card or popover sits on its own layer with a shadow from the design system's tokens, not with a 1px solid border. Keep borders for states such as focus or selection, and for places that do not read without one. Unlike the source recipe, a 0-blur ring shadow counts as a border (DEC-2); whether an edge is needed is decided by DEC-2.",
+        "strength": "hard",
+        "title": "Shadow for layers, border for state",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-7",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A heading that fits the available width stays on one line; a narrow max-width or a <br> must not force a break. When it does not fit, it breaks at a sentence boundary, after the full stop, or between meaningful word groups, never in the middle of a phrase. text-wrap: balance on a short heading made of several sentences is a finding: it evens out line lengths and ignores the syntax. Content paragraphs use text-wrap: pretty, so no orphan is left on the last line. Custom typographic compositions are not a finding. Example: \"Stop scrolling. Start / your workflow.\" on a desktop screen where the heading fits on one line. Not a finding: \"Stop scrolling. / Start your workflow.\" where the width runs out.",
+        "strength": "hard",
+        "title": "Line breaks follow the sentence",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-8",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Choose font smoothing for each typeface and size. Do not set one smoothing value, such as -webkit-font-smoothing: antialiased, on the root for every typeface.",
+        "strength": "soft",
+        "title": "Font smoothing chosen per typeface and size",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Jakub Krehel",
+            "url": "https://jakub.kr/writing/details-that-make-interfaces-feel-better",
+            "work": "Details that make interfaces feel better (make-interfaces-feel-better skill)"
+          }
+        ],
+        "id": "KR-9",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "For images that are part of the content, such as images inside an article, a thin low-opacity 1px outline may be offered as an option, never required. An outline around images anywhere else is slop. Transparent images and images the author intentionally integrated with their surroundings are not a finding.",
+        "strength": "hard",
+        "title": "Image outlines only as an option for content images",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://benji.org",
+            "work": "Morphing icons with Claude"
+          }
+        ],
+        "id": "NR-02",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "In projects that already have animated icon toggles (menu and close, play and pause, arrows and chevrons), icons of the same shape in another orientation (arrows, chevrons, plus and cross) change by rotation; interpolating coordinates between them bends the lines. Where a transformation is intended, a coordinate morph or a crossfade of two SVGs is a finding. The check is manual: an agent does not notice on its own that a transition looks wrong, so a person sets the boundary. Otherwise a plain crossfade between icons is not slop in itself and requires neither morphing nor an animation library.",
+        "strength": "hard",
+        "title": "Icon transitions transform instead of swapping",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Icons and logos); pair 'Use an icon pack, not glyphs drawn on the fly'"
+          }
+        ],
+        "id": "ST-1",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Interface icons come from the product's own icon set (its icon component, sprite or icon package) or, where the product has none, from one published set picked deliberately. A glyph drawn ad hoc for one screen is a finding: its weight and drawing differ from the icons around it, and it is among the most visible signs of generated UI. How to check: trace every icon on the screen to its set; an inline SVG path that belongs to no set, or icons from two sets on one screen, is a finding. Example: a settings card whose three icons are improvised shapes in tiles of three different hues, one filled and two outlined. Not a finding: the same three icons from the product's set, one stroke width and one color, with status carried by color alone. An icon drawn because no set has that symbol is allowed when it follows the set's grid and stroke; KR-11 covers stroke and family.",
+        "strength": "hard",
+        "title": "Icons come from one chosen set",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Icons and logos)"
+          }
+        ],
+        "id": "ST-11",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Emoji belong to content, such as messages and reactions. An emoji in the place of an interface icon, in navigation, buttons, list markers, feature lists or status, is a finding, in a playful style too: a playful style changes the shape of the icons, not their kind. How to check: search markup and copy for emoji characters and check where each one renders; one inside a control, a heading or a list marker is a finding. Example: a pricing list whose items start with a green check emoji and a sidebar item whose label starts with a bar-chart emoji. Not a finding: the same list with check icons from the product's set, or an emoji reaction on a chat message.",
+        "strength": "hard",
+        "title": "Emoji are content, not interface icons",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Icons and logos)"
+          }
+        ],
+        "id": "ST-13",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A product appears with the mark it actually uses, or with its name set in type when it has none. A letter or symbol in a colored square or circle made up to stand in for a logo is a finding, and so is a look-alike of another company's logo; other companies' logos come only from their real files, unaltered in shape and color. How to check: trace every logo on the page to a source file from the brand; a mark with no source is a finding. Example: a header with a white letter in a purple rounded square next to the product name. Not a finding: the product name set as a text wordmark when no mark exists. Customer logos used as proof are covered by DEC-5.",
+        "strength": "hard",
+        "title": "No invented logo",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Icons and logos); pair 'Name the AI action, don't sparkle it'"
+          }
+        ],
+        "id": "ST-2",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "An AI feature is labelled with the action it performs, such as \"Summarize thread\" or \"Explain the failure\". A sparkle, a magic wand or a star as a generic AI sign, a gradient \"AI\" chip, or purple used as the color of AI is a finding: it says only that AI is involved, not what will happen. A sparkle that is the product's own registered icon is allowed: it is the product's mark, not decoration. Gradients and glow are also covered by DEC-9. How to check: read the label of every control that starts an AI feature with its icon hidden; a label that does not say what happens is a finding. Example: a failed deploy card with a wand button and a gradient chip reading \"AI\". Not a finding: the same card with a plain button reading \"Explain the failure\".",
+        "strength": "hard",
+        "title": "AI features are named by what they do",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Spacing and alignment); pair 'Make edges feel deliberate'"
+          }
+        ],
+        "id": "ST-3",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Neighboring edges of boxes, surfaces, text blocks and corners either line up exactly or sit clearly apart, by at least the layout's gutter and never less than 8px. A gap of 1 to 3px looks unintended and is a finding. How to check: measure the distance between adjacent edges in the rendered layout, horizontally and vertically, corners included; a gap above 0 and below 8px between surfaces that are not meant to touch is a finding. Example: a confirmation toast whose top edge stops 2px below the panel it belongs to. Not a finding: the toast aligned to the panel's edge, or set 12px below it. Spacing inside a component that the design system defines, such as the gap between an icon and its label, is not a near-touch.",
+        "strength": "hard",
+        "title": "No near-touching edges",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/motion.md; pairs 'A new row that jolts its neighbors', 'A popup resizes with its content'"
+          }
+        ],
+        "id": "ST-4",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "When an element is added, removed or changes its content, nothing around it jumps. A new row moves the content below it together with its own height, or its space is reserved in advance; a button keeps one width across its states (for example \"Save\", \"Saving…\", \"Saved\"), sized for the longest; a popover or menu has its final size before it appears and keeps its position against its trigger while it is open. How to check: trigger each state change and compare the frames before, during and after; a neighbor that moves in one step, a button that changes width, or an open surface that resizes or drifts from its anchor is a finding. Example: checking a task inserts a status line and the next row snaps down. Not a finding: the next row moves down together with the opening space, or the space was reserved.",
+        "strength": "hard",
+        "title": "No layout jumps on state change",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/craft.md (Type); pair 'Write in sentence case'"
+          }
+        ],
+        "id": "ST-5",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Headings, labels, buttons and menu items use sentence case: a capital on the first word and on proper names only. Title Case and letter-spaced capitals are allowed only where the brand or design system defines them as a style, for the roles it names, or where the platform's own convention requires them. How to check: read every heading, label and button; Title Case or tracked capitals with no design-system style or platform convention behind them are a finding. Example: a card titled \"RECENT DEPLOYS\" in tracked capitals with a button reading \"View All Logs\". Not a finding: \"Recent deploys\" and \"View all logs\", or tracked capitals on labels when the design system defines that label style. Prose on all-caps pages is covered by C-11, labels above headings by DEC-7.",
+        "strength": "soft",
+        "title": "Sentence case by default",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "TY-1",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Regular text uses the font's ordinary numerals. Do not use tabular figures (tabular-nums, tnum), a slashed zero (slashed-zero, zero) or monospace digits. Monospace text where KR-19 allows it, such as code, keeps its own digits.",
+        "strength": "hard",
+        "title": "Plain font numerals in regular text",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "XP-18",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "On a colored background, such as a brand or accent fill, text is white or black. To mute it, lower the opacity of that white or black, for example rgb(255 255 255 / 0.6); never use a gray token or a gray hex value. Accent-colored text is the only exception. Muted text still meets the contrast in DEC-6. Example: #aaa text in a purple table cell. Not a finding: white text at 0.6 opacity in the same cell when it meets that contrast.",
+        "strength": "hard",
+        "title": "No gray text on colored backgrounds",
+        "topic": "interface"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "XP-31",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A plain prose list that is indented shows visible markers; indentation without markers reads as shifted paragraphs, often after a CSS reset such as ul { list-style: none }. Classed navigation lists without markers by design are not a finding.",
+        "strength": "hard",
+        "title": "Indented lists keep their markers",
+        "topic": "interface"
+      }
+    ],
+    "schemaVersion": 1,
+    "topic": "interface",
+    "version": "public-2026.11.06-1"
+  }
+}

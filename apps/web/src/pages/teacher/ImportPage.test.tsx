@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   ImportBatchFilePreview,
   ImportPreviewData,
@@ -303,6 +309,76 @@ function pickFiles(
 describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("模态请求中 Esc 不关闭，失败后可原地重试", async () => {
+    let fail: (error: Error) => void = () => {
+      throw new Error("请求未开始");
+    };
+    vi.mocked(createLibraryFolderApi).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    renderImportPage();
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", { name: /就地新建文件夹/ })
+      )[0] as HTMLElement,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "文件夹名" }), {
+      target: { value: "失败后保留的名称" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /正在|创建中/ }),
+      ).toBeDisabled(),
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+    expect(
+      screen.getByRole("dialog", { name: "新建文件夹" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "关闭弹层" }),
+    ).not.toBeInTheDocument();
+    await act(async () => fail(new ApiError("CONFLICT", "审查模拟失败", 409)));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("审查模拟失败"),
+    );
+    expect(screen.getByRole("button", { name: "创建" })).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: "文件夹名" })).toHaveValue(
+      "失败后保留的名称",
+    );
+  });
+
+  it("模态初始聚焦、约束背景焦点，Esc 取消后归还触发者", async () => {
+    renderImportPage();
+    const trigger = (
+      await screen.findAllByRole("button", { name: /就地新建文件夹/ })
+    )[0];
+    if (!trigger) throw new Error("缺少真实触发按钮");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "新建文件夹" });
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "文件夹名" })).toHaveFocus(),
+    );
+    trigger.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement ?? dialog, {
+      key: "Escape",
+      code: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(createLibraryFolderApi).not.toHaveBeenCalled();
   });
 
   it("渲染文件与粘贴入口、清单空态与目标文件夹下拉；粘贴区默认收起，清单空时预览禁用", async () => {
