@@ -43,6 +43,10 @@ try {
       String.raw`$\badcommand$`,
       "```tex\n\\frac{1}{2}$\n```",
       String.raw`\frac{1}{2}`,
+      String.raw`结果为 -\frac{1}{2}$（负数），另一结果为 -\frac{1}{3}$（负数）。`,
+      String.raw`结果为 -\frac{1}{2}$（负数），\text{a}另一结果为 -\frac{1}{3}$（负数）。`,
+      String.raw`$$x\tag{1}$$`,
+      "$$\n\\frac{1}{2}\n$$",
     ]) {
       writeFileSync(path, source);
       const expected = checkAiReply(source.replace(/^\uFEFF/, ""));
@@ -60,7 +64,7 @@ try {
     assert.equal(version.status, 0);
     assert.equal(version.stdout.trim(), manifest.version);
     console.log(
-      `${file.name}：哈希、版本、5 组正文、无文件退出码通过${executable ? "（空 PATH）" : ""}`,
+      `${file.name}：哈希、版本、9 组正文、无文件退出码通过${executable ? "（空 PATH）" : ""}`,
     );
   }
   const rebuilt = spawnSync(

@@ -16,6 +16,7 @@ import { HttpError } from "./lib/http-error";
 import { createMcpRoutes } from "./mcp/mount";
 import { createStudentMcpRoutes } from "./mcp/student-mount";
 import { createAdminRoutes } from "./routes/admin";
+import { createAiReplyCheckerRoutes } from "./routes/ai-reply-checker.ts";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
 import { createTeacherRoutes } from "./routes/teacher";
@@ -342,6 +343,7 @@ export function createApp(options: CreateAppOptions) {
         options.specDir,
       ),
     )
+    .route("/api/public/ai-reply-checker", createAiReplyCheckerRoutes())
     .route(
       "/api/student",
       createStudentRoutes(options.db, options.publicUrl, options.dataDir),

@@ -47,8 +47,35 @@ jobs:
         name: 计算范围
         run: node scripts/ci-scope.mjs plan "$CI_BASE"
 
-  ci:
+  checker:
+    name: Windows x64 回信检查器
     needs: scope
+    if: needs.scope.outputs.run == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      # 仅检查器打包需要内置 --build-sea；应用仍在 Node 24 验证。
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26.13.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm checker:build --exe
+      - run: pnpm checker:smoke --exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ownclass-ai-checker
+          path: |
+            dist/ai-reply-checker/manifest.json
+            dist/ai-reply-checker/ownclass-ai-check.cjs
+            dist/ai-reply-checker/ownclass-ai-check.exe
+            dist/ai-reply-checker/exe-source.sha256
+          retention-days: 14
+
+  ci:
+    needs: [scope, checker]
     if: needs.scope.outputs.run == 'true'
     name: lint / typecheck / test / build
     # ubuntu-latest 自 2026-10-19 起渐进迁移到 Ubuntu 26.04（至 11-19），窗口期内同一工作流
@@ -112,8 +139,17 @@ jobs:
           pnpm gen:spec
           git diff --exit-code
 
+      - name: 获取同一提交的 Windows 检查器产物
+        uses: actions/download-artifact@v8
+        with:
+          name: ownclass-ai-checker
+          path: dist/ai-reply-checker
+
       - name: 构建
         run: pnpm build
+
+      - name: 确认服务端交付包含 Windows exe
+        run: node -e "const m = JSON.parse(require('node:fs').readFileSync('apps/server/dist/ai-reply-checker/manifest.json', 'utf8')); if (!m.files.some(f => f.platform === 'win32-x64')) process.exit(1)"
 
   # T2.13 E2E（架构 §7.2：E2E 全过才可合并；webkit 项目必须在 CI 中运行）。
   # 独立 job：浏览器安装与单测互不拖慢；失败时上传 html 报告 artifact。
@@ -198,7 +234,7 @@ jobs:
   result:
     name: CI 结果
     if: always()
-    needs: [scope, ci, e2e]
+    needs: [scope, ci, e2e, checker]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -207,14 +243,16 @@ jobs:
           SCOPE_RESULT: ${{ needs.scope.result }}
           APP_RESULT: ${{ needs.ci.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          CHECKER_RESULT: ${{ needs.checker.result }}
           RUN_APP: ${{ needs.scope.outputs.run }}
         run: |
           test "$SCOPE_RESULT" = success
           if [ "$RUN_APP" = true ]; then
+            test "$CHECKER_RESULT" = success
             test "$APP_RESULT" = success
             test "$E2E_RESULT" = success
             exit 0
           fi
-          for result in "$APP_RESULT" "$E2E_RESULT"; do
+          for result in "$APP_RESULT" "$E2E_RESULT" "$CHECKER_RESULT"; do
             test "$result" = success || test "$result" = skipped || exit 1
           done

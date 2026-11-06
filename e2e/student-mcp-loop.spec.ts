@@ -399,6 +399,21 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }
       // ⑧ 批量写回：各题收到对应回复（内容互不串题）
       const reply1 = "第一题的讲解：$1$ 大于 $0$，所以是正数，判断为正确。";
       const reply2 = "第二题的讲解：$(-3)+7=4$，选 $4$。";
+      const checked = await callTool(request, token, 90, "check_ai_reply", {
+        replyMarkdown: String.raw`结果是 -\frac{1}{2}$（负数）。`,
+      });
+      expect(checked.json.valid).toBe(false);
+      await expect(
+        callTool(request, token, 91, "submit_ai_reply", {
+          taskId: claim1.taskId,
+          leaseToken: claim1.leaseToken,
+          replyMarkdown: String.raw`$\notARealCommand$`,
+        }),
+      ).rejects.toThrow("AI_REPLY_FORMAT_INVALID");
+      const unchanged = (await (
+        await studentApi.get(`/api/student/ai/tasks/${claim1.taskId}`)
+      ).json()) as { data: { task: { status: string } } };
+      expect(unchanged.data.task.status).toBe("claimed");
       const submit1 = await callTool(request, token, 9, "submit_ai_reply", {
         taskId: claim1.taskId,
         leaseToken: claim1.leaseToken,
