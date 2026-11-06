@@ -1,44 +1,45 @@
 {
-  "name": "simple-tutor-tool",
-  "version": "2.0.0",
-  "private": true,
-  "license": "MIT",
-  "packageManager": "pnpm@12.6.0",
-  "engines": {
-    "node": ">=24"
-  },
-  "scripts": {
-    "dev": "pnpm -r --parallel run dev",
-    "build": "pnpm -r run build",
-    "test": "vitest run --passWithNoTests",
-    "test:quick": "node scripts/test-affected.mjs HEAD",
-    "test:affected": "node scripts/test-affected.mjs origin/main",
-    "test:full": "vitest run --passWithNoTests",
-    "e2e": "playwright test",
-    "e2e:full": "pnpm run e2e",
-    "e2e:affected": "node scripts/e2e-affected.mjs",
-    "lint": "biome check .",
-    "lint:changed": "node scripts/lint-affected.mjs origin/main",
-    "typecheck": "tsc -p e2e/tsconfig.json && pnpm -r run typecheck",
-    "typecheck:affected": "pnpm --filter \"...[origin/main]\" run typecheck",
-    "format": "biome format --write .",
-    "db:generate": "pnpm --filter server db:generate",
-    "schema:export": "pnpm --filter @tutor/contract run export-schema",
-    "tutor-lint": "node packages/md-dsl/scripts/tutor-lint.ts",
-    "reparse": "node apps/server/scripts/reparse.ts",
-    "seed:demo": "pnpm --filter server run seed:demo",
-    "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec && pnpm --filter @tutor/md-dsl run bundle-standalone",
-    "checker:build": "node packages/md-dsl/scripts/build-ai-reply-checker.ts",
-    "checker:smoke": "node scripts/check-ai-reply-artifacts.mjs"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
-    "@playwright/test": "^1.63.0",
-    "@types/node": "^24.19.0",
-    "@types/qrcode": "^1.5.6",
-    "@vitest/coverage-v8": "^5.0.2",
-    "qrcode": "^1.5.4",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
-  }
+	"name": "simple-tutor-tool",
+	"version": "2.0.0",
+	"private": true,
+	"license": "MIT",
+	"packageManager": "pnpm@12.6.0",
+	"engines": {
+		"node": ">=24"
+	},
+	"scripts": {
+		"dev": "pnpm -r --parallel run dev",
+		"build": "pnpm -r run build",
+		"test": "vitest run --passWithNoTests",
+		"test:quick": "node scripts/test-affected.mjs HEAD",
+		"test:affected": "node scripts/test-affected.mjs origin/main",
+		"test:full": "vitest run --passWithNoTests",
+		"e2e": "playwright test",
+		"e2e:full": "pnpm run e2e",
+		"e2e:affected": "node scripts/e2e-affected.mjs",
+		"lint": "biome check .",
+		"lint:changed": "node scripts/lint-affected.mjs origin/main",
+		"lint:governance": "node scripts/governance-invariants.mjs",
+		"typecheck": "tsc -p e2e/tsconfig.json && pnpm -r run typecheck",
+		"typecheck:affected": "pnpm --filter \"...[origin/main]\" run typecheck",
+		"format": "biome format --write .",
+		"db:generate": "pnpm --filter server db:generate",
+		"schema:export": "pnpm --filter @tutor/contract run export-schema",
+		"tutor-lint": "node packages/md-dsl/scripts/tutor-lint.ts",
+		"reparse": "node apps/server/scripts/reparse.ts",
+		"seed:demo": "pnpm --filter server run seed:demo",
+		"gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec && pnpm --filter @tutor/md-dsl run bundle-standalone",
+		"checker:build": "node packages/md-dsl/scripts/build-ai-reply-checker.ts",
+		"checker:smoke": "node scripts/check-ai-reply-artifacts.mjs"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.14",
+		"@playwright/test": "^1.63.0",
+		"@types/node": "^24.19.0",
+		"@types/qrcode": "^1.5.6",
+		"@vitest/coverage-v8": "^5.0.2",
+		"qrcode": "^1.5.4",
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.2"
+	}
 }
