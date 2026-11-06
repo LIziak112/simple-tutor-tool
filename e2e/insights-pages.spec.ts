@@ -131,6 +131,8 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
 
       // 第 1 题填空：答 6（判错 → 错题列表与高频错误答案数据）
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
+      await q1.getByRole("button", { name: "第 1 题更多" }).click();
+      await studentPage.getByRole("menuitem", { name: "显示题目资料" }).click();
       await expect(q1.getByText("二十以内加法", { exact: true })).toBeVisible();
       await expect(q1.getByText("加法运算", { exact: true })).toBeVisible();
       const blank = q1.getByLabel("第1空");
