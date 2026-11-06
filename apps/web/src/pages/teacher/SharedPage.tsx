@@ -10,8 +10,15 @@ import {
   Share2,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { SharedImportSheet } from "@/features/shared/SharedImportSheet";
@@ -46,6 +53,8 @@ export function SharedPage() {
   const [query, setQuery] = useState("");
   const [previewing, setPreviewing] = useState<SharedFileSummary | null>(null);
   const [importing, setImporting] = useState<SharedFileSummary | null>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const [deleting, setDeleting] = useState<SharedFileSummary | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionHint, setActionHint] = useState<string | null>(null);
@@ -252,7 +261,8 @@ export function SharedPage() {
                       variant="ghost"
                       className="min-h-11 px-4 text-destructive hover:bg-destructive/10 hover:text-destructive"
                       aria-label={`删除共享文件 ${file.filename}`}
-                      onClick={() => {
+                      onClick={(event) => {
+                        deleteTriggerRef.current = event.currentTarget;
                         setActionError(null);
                         setActionHint(null);
                         setDeleting(file);
@@ -291,23 +301,40 @@ export function SharedPage() {
       ) : null}
 
       {/* 删除确认（§4.2：已导入的资源不受影响） */}
-      {deleting !== null ? (
-        <div
-          role="alertdialog"
-          aria-labelledby="shared-delete-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-        >
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
-            <h3 id="shared-delete-title" className="text-base font-semibold">
-              删除共享文件？
-            </h3>
+      <Dialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) setDeleting(null);
+        }}
+      >
+        {deleting !== null ? (
+          <DialogContent
+            role="alertdialog"
+            className="w-[calc(100%-2rem)] max-w-md p-5"
+            closeDisabled={deleteMutation.isPending}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              cancelDeleteRef.current?.focus();
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              deleteTriggerRef.current?.focus();
+            }}
+            onEscapeKeyDown={(event) => {
+              if (deleteMutation.isPending) event.preventDefault();
+            }}
+            onInteractOutside={(event) => {
+              if (deleteMutation.isPending) event.preventDefault();
+            }}
+          >
+            <DialogTitle>删除共享文件？</DialogTitle>
             <p className="mt-2 truncate font-mono text-xs text-muted-foreground">
               {deleting.filename}
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <DialogDescription className="mt-2">
               删除后其他老师将不能继续导入该文件；
               <strong>已导入进资源库的内容不受影响</strong>。此操作不可撤销。
-            </p>
+            </DialogDescription>
             {deleteMutation.isError ? (
               <p role="alert" className="mt-2 text-sm text-destructive">
                 {deleteMutation.error instanceof Error
@@ -315,11 +342,12 @@ export function SharedPage() {
                   : "删除失败，请稍后重试"}
               </p>
             ) : null}
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <DialogFooter className="mt-4">
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11 px-4"
+                ref={cancelDeleteRef}
                 onClick={() => setDeleting(null)}
                 disabled={deleteMutation.isPending}
               >
@@ -361,10 +389,10 @@ export function SharedPage() {
                   "确认删除"
                 )}
               </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

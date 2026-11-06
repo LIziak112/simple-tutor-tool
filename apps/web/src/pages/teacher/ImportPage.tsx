@@ -20,6 +20,13 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { AiPromptPanel } from "@/features/content/AiPromptPanel";
 import { catalogTreeRows } from "@/features/courses/catalog-tree";
@@ -282,6 +289,8 @@ export function ImportPage() {
   );
   const targetCourse = useCourseDetail(courseSelection);
   const [courseVisible, setCourseVisible] = useState(true);
+  const createTriggerRef = useRef<HTMLButtonElement>(null);
+  const folderNameRef = useRef<HTMLInputElement>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [createFolderError, setCreateFolderError] = useState<string | null>(
@@ -944,6 +953,7 @@ export function ImportPage() {
                   type="button"
                   variant="ghost"
                   className="min-h-11 w-fit px-2 text-sm text-muted-foreground"
+                  ref={createTriggerRef}
                   onClick={() => {
                     setCreateFolderError(null);
                     setCreateOpen(true);
@@ -1093,82 +1103,81 @@ export function ImportPage() {
           </section>
 
           {/* 就地新建文件夹弹层 */}
-          {createOpen ? (
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="create-folder-heading"
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          <Dialog
+            open={createOpen}
+            onOpenChange={(open) => {
+              if (!creatingFolder) setCreateOpen(open);
+            }}
+          >
+            <DialogContent
+              className="w-[calc(100%-2rem)] max-w-md p-4"
+              closeDisabled={creatingFolder}
+              onOpenAutoFocus={(event) => {
+                event.preventDefault();
+                folderNameRef.current?.focus();
+              }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                createTriggerRef.current?.focus();
+              }}
+              onEscapeKeyDown={(event) => {
+                if (creatingFolder) event.preventDefault();
+              }}
+              onInteractOutside={(event) => {
+                if (creatingFolder) event.preventDefault();
+              }}
             >
-              <div className="flex w-full max-w-md flex-col rounded-xl border border-border bg-card p-4 shadow-lg">
-                <div className="flex items-center justify-between gap-3">
-                  <h3
-                    id="create-folder-heading"
-                    className="flex items-center gap-2 text-sm font-semibold"
-                  >
-                    <FolderUp
-                      aria-hidden
-                      className="size-4 text-muted-foreground"
-                    />
-                    新建文件夹
-                  </h3>
-                  <button
-                    type="button"
-                    aria-label="关闭弹层"
-                    onClick={() => setCreateOpen(false)}
-                    // 触控目标 ≥44px（size-11，T4.7 与全局 dialog.tsx 同处理：
-                    // -mr-1.5 外扩补偿保持图标中心原位，仅扩热区不改视觉位）
-                    className="-mr-1.5 flex size-11 items-center justify-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
-                  >
-                    <X aria-hidden className="size-4" />
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  新建后自动选为目标文件夹；同名文件夹已存在时会提示。
-                </p>
-                <Input
-                  aria-label="文件夹名"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  placeholder="如：第一章 有理数"
-                  className="mt-3 min-h-11"
+              <DialogTitle className="flex items-center gap-2 pr-10 text-sm">
+                <FolderUp
+                  aria-hidden
+                  className="size-4 text-muted-foreground"
                 />
-                {createFolderError !== null ? (
-                  <p role="alert" className="mt-2 text-sm text-destructive">
-                    {createFolderError}
-                  </p>
-                ) : null}
-                <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 px-4"
-                    onClick={() => setCreateOpen(false)}
-                    disabled={creatingFolder}
-                  >
-                    取消
-                  </Button>
-                  <Button
-                    type="button"
-                    className="min-h-11 px-4"
-                    disabled={
-                      creatingFolder || newFolderName.trim().length === 0
-                    }
-                    onClick={() => void handleCreateFolder()}
-                  >
-                    {creatingFolder ? (
-                      <>
-                        <Loader2 aria-hidden className="animate-spin" />
-                        创建中…
-                      </>
-                    ) : (
-                      "创建"
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
+                新建文件夹
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                新建后自动选为目标文件夹；同名文件夹已存在时会提示。
+              </DialogDescription>
+              <Input
+                ref={folderNameRef}
+                aria-label="文件夹名"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="如：第一章 有理数"
+                className="mt-3 min-h-11"
+              />
+              {createFolderError !== null ? (
+                <p role="alert" className="mt-2 text-sm text-destructive">
+                  {createFolderError}
+                </p>
+              ) : null}
+              <DialogFooter className="mt-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 px-4"
+                  onClick={() => setCreateOpen(false)}
+                  disabled={creatingFolder}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="button"
+                  className="min-h-11 px-4"
+                  disabled={creatingFolder || newFolderName.trim().length === 0}
+                  onClick={() => void handleCreateFolder()}
+                >
+                  {creatingFolder ? (
+                    <>
+                      <Loader2 aria-hidden className="animate-spin" />
+                      创建中…
+                    </>
+                  ) : (
+                    "创建"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       ) : stage === "single" && singleInput !== null ? (
         <SingleImportPreview

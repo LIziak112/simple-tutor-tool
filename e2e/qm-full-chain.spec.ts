@@ -9,6 +9,7 @@ import {
   type Page,
   test,
 } from "@playwright/test";
+import { attemptStartOkSchema } from "../packages/contract/src";
 import { FORBIDDEN_EXACT_KEYS, FORBIDDEN_KEY_PREFIXES } from "./helpers";
 import {
   type QmPair,
@@ -714,7 +715,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     test.setTimeout(240_000);
     const runAssignment = async (
       world: TeacherWorld,
-      answer: (page: Page) => Promise<void>,
+      answer: (page: Page, attemptId: string) => Promise<void>,
       checks: (page: Page) => Promise<void>,
     ) => {
       const context = await browser.newContext({
@@ -726,9 +727,17 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       await page.goto(`/s/${world.linkToken}`);
       await page.waitForURL("**/s/home");
       const card = page.locator("li", { hasText: world.assignmentTitle });
+      const opening = page.waitForResponse(
+        (response) =>
+          /\/api\/student\/assignments\/[^/]+\/attempt$/.test(
+            new URL(response.url()).pathname,
+          ) && response.request().method() === "POST",
+      );
       await card.getByRole("link", { name: "开始练习" }).click();
       await page.waitForURL("**/s/assignments/**");
-      await answer(page);
+      const attemptId = attemptStartOkSchema.parse(await (await opening).json())
+        .data.id;
+      await answer(page, attemptId);
       await waitForDraftSaved(page);
       await page.getByRole("button", { name: "交卷", exact: true }).click();
       await page.getByRole("button", { name: "确认交卷" }).first().click();
@@ -801,9 +810,22 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // （导出本题的材料页可达题级材料）。
     await runAssignment(
       worldOf("W4"),
-      async (page) => {
+      async (page, attemptId) => {
         const q1 = questionCard(page, 1);
         await expect(q1.getByText(/建议.*150/).first()).toBeVisible();
+        await waitForAllSaved(page);
+        // 导出有本机落盘守卫；初始恢复仍可能在写入，不能仅凭提示文字判定完成。
+        await expect
+          .poll(() =>
+            page.evaluate(async (id) => {
+              const moduleUrl = "/src/features/attempt/draft-store.ts";
+              const store = (await import(moduleUrl)) as {
+                getDraftPersistenceState(attemptId: string): string;
+              };
+              return store.getDraftPersistenceState(id);
+            }, attemptId),
+          )
+          .toBe("saved");
         // 导出本题：材料页携带题级材料（材料 A：给定资料一）
         await q1.getByRole("button", { name: "第 1 题更多" }).click();
         await page.getByRole("menuitem", { name: "导出本题" }).click();

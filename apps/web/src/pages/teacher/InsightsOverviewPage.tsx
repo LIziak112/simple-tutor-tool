@@ -98,8 +98,7 @@ export function InsightsOverviewPage() {
         <div>
           <h1 className="teacher-page-title">学情总览</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            一页看全完成情况与薄弱点：矩阵看谁没做，重点卡片备下节课，
-            计数区待批与离线一目了然。
+            查看完成情况与薄弱点
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

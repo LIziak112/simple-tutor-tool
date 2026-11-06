@@ -1,5 +1,5 @@
 import type { ReportSummary } from "@tutor/contract";
-import { ChevronDown, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { ChevronDown, FileText, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -140,7 +140,7 @@ export function StudentReportsSection({ studentId }: { studentId: string }) {
   return (
     <section aria-label="AI 报告" className="flex flex-col gap-2">
       <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-        <Sparkles aria-hidden className="size-4 text-primary" />
+        <FileText aria-hidden className="size-4 text-primary" />
         AI 报告
       </h2>
 

@@ -43,9 +43,7 @@ it("公布前不读取参考答案空数或内容，温和展示截止后公布�
   expect(screen.queryByRole("list", { name: "参考填空答案" })).toBeNull();
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
   expect(screen.queryByText(/secret/)).toBeNull();
-  expect(
-    screen.getByText("参考答案与详解将在截止后公布 🔒"),
-  ).toBeInTheDocument();
+  expect(screen.getByText("参考答案与详解将在截止后公布")).toBeInTheDocument();
 });
 
 // ---------- QM-13 细项 5：matching/ordering 逐项对照（TT-09b 通用文本占位随
@@ -138,9 +136,7 @@ it("QM-13 matching 未公布/无参考沿用三态（锁定提示/暂无参考�
   const { unmount } = render(
     <ResultAnswerComparison question={matchingQuestion} released={false} />,
   );
-  expect(
-    screen.getByText("参考答案与详解将在截止后公布 🔒"),
-  ).toBeInTheDocument();
+  expect(screen.getByText("参考答案与详解将在截止后公布")).toBeInTheDocument();
   unmount();
 
   render(

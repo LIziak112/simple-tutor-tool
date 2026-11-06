@@ -3,8 +3,8 @@ import {
   ChevronUp,
   CircleAlert,
   Copy,
+  FilePenLine,
   Loader2,
-  Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,7 @@ export function AiPromptPanel() {
           id="ai-prompt-heading"
           className="flex items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300"
         >
-          <Sparkles aria-hidden className="size-4 shrink-0" />
+          <FilePenLine aria-hidden className="size-4 shrink-0" />
           AI 出题助手
         </span>
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">

@@ -360,19 +360,13 @@ export function TeacherAiPromptsSection() {
         </div>
         {!sharedSave && (
           <Button
+            busy={saveMutation.isPending}
             type="button"
             className="min-h-11 px-5"
             disabled={!dirty || blankChanged || saveMutation.isPending}
             onClick={() => void handleSave().catch(() => {})}
           >
-            {saveMutation.isPending ? (
-              <>
-                <Loader2 aria-hidden className="animate-spin" />
-                正在保存…
-              </>
-            ) : (
-              "保存全部改动"
-            )}
+            保存全部改动
           </Button>
         )}
       </div>

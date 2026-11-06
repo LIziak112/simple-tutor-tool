@@ -185,19 +185,13 @@ export function StudentAiPromptsSection({
           ) : null}
         </div>
         <Button
+          busy={saveMutation.isPending}
           type="button"
           className="min-h-11 px-5"
           disabled={!dirty || blankChanged || saveMutation.isPending}
           onClick={handleSave}
         >
-          {saveMutation.isPending ? (
-            <>
-              <Loader2 aria-hidden className="animate-spin" />
-              正在保存…
-            </>
-          ) : (
-            "保存"
-          )}
+          保存
         </Button>
       </div>
     </div>

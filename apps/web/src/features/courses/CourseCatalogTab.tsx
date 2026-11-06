@@ -1,13 +1,5 @@
 import type { CourseDetailData, CourseDetailItem } from "@tutor/contract";
-import {
-  BookOpen,
-  Dumbbell,
-  Eye,
-  Hash,
-  Loader2,
-  Plus,
-  UserRound,
-} from "lucide-react";
+import { BookOpen, Dumbbell, Eye, Hash, Plus, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -211,16 +203,13 @@ function PublishDialog({
             </Button>
           )}
           <Button
+            busy={updateMutation.isPending}
             type="button"
             className="min-h-11 px-4"
             disabled={updateMutation.isPending || value.length === 0}
             onClick={() => submit(localInputToUtcIso(value))}
           >
-            {updateMutation.isPending ? (
-              <Loader2 aria-hidden className="animate-spin" />
-            ) : (
-              "保存"
-            )}
+            保存
           </Button>
         </DialogFooter>
       </DialogContent>

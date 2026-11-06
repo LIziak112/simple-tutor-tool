@@ -7,7 +7,7 @@ import type {
   AiImageCapability,
 } from "@tutor/contract";
 import { AI_SHARE_MAX_VALID_HOURS } from "@tutor/contract";
-import { CircleAlert, Loader2, TriangleAlert } from "lucide-react";
+import { CircleAlert, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -810,14 +810,12 @@ export function AiConnectionManager() {
 
             <div className="flex flex-wrap items-center gap-3">
               <Button
+                busy={saving}
                 type="button"
                 className="min-h-11 px-5"
                 disabled={!consentOk || !formValid || saving || editingMissing}
                 onClick={handleSave}
               >
-                {saving && (
-                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
-                )}
                 保存连接
               </Button>
               <Button

@@ -977,15 +977,17 @@ function LectureListView({
         {lectures.map((lecture) => (
           <li
             key={lecture.id}
-            className="grid min-h-11 grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-3 rounded-xl border border-border bg-card px-5 py-3"
+            className="grid min-h-11 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 rounded-xl border border-border bg-card px-5 py-3"
           >
-            <input
-              type="checkbox"
-              checked={selected.has(lecture.id)}
-              onChange={() => onToggle(lecture.id)}
-              aria-label={`选择讲义 ${lecture.title}`}
-              className="size-5 shrink-0 accent-primary"
-            />
+            <label className="flex size-11 shrink-0 cursor-pointer items-center justify-center">
+              <input
+                type="checkbox"
+                checked={selected.has(lecture.id)}
+                onChange={() => onToggle(lecture.id)}
+                aria-label={`选择讲义 ${lecture.title}`}
+                className="size-5 shrink-0 accent-primary"
+              />
+            </label>
             <p className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-1 text-sm">
               {lecture.kind === "lesson" ? (
                 // 讲练页（2026-10 讲练一体）：教师侧仅提示形态，点击仍进编辑/预览
@@ -1154,14 +1156,16 @@ function UnitListView({
             key={unit.id}
             className="rounded-lg border border-border bg-card px-2 py-1.5"
           >
-            <div className="grid min-h-11 grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-3 px-3 py-3">
-              <input
-                type="checkbox"
-                checked={selected.has(unit.id)}
-                onChange={() => onToggle(unit.id)}
-                aria-label={`选择单元 ${unit.title}`}
-                className="mt-3 size-5 shrink-0 accent-primary"
-              />
+            <div className="grid min-h-11 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 px-3 py-3">
+              <label className="flex size-11 shrink-0 cursor-pointer items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={selected.has(unit.id)}
+                  onChange={() => onToggle(unit.id)}
+                  aria-label={`选择单元 ${unit.title}`}
+                  className="size-5 shrink-0 accent-primary"
+                />
+              </label>
               <details className="group min-w-0 flex-1">
                 <summary className="grid min-h-11 cursor-pointer list-none grid-cols-[1rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1 py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
                   <ChevronRight

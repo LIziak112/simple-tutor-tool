@@ -11,6 +11,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   useStartCourseAttempt,
   useStudentUnitLanding,
   workflowStartOptions,
@@ -82,29 +89,58 @@ function RedoConfirmDialog({
   busy,
   onConfirm,
   onCancel,
+  onClosed,
+  error,
 }: {
   open: boolean;
   nextAttemptNo: number;
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  onClosed: () => void;
+  error: string | null;
 }) {
-  if (!open) return null;
+  const cancelRef = useRef<HTMLButtonElement>(null);
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="再做一次确认"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !busy) onCancel();
+      }}
     >
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-lg">
-        <h2 className="text-base font-semibold">再做一次</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
+      <DialogContent
+        aria-labelledby={undefined}
+        aria-label="再做一次确认"
+        className="top-auto bottom-4 w-[calc(100%-2rem)] max-w-sm translate-y-0 rounded-2xl sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+        closeDisabled={busy}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          cancelRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onClosed();
+        }}
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (busy) event.preventDefault();
+        }}
+      >
+        <DialogTitle>再做一次</DialogTitle>
+        <DialogDescription className="mt-2">
           将开始第 {nextAttemptNo}{" "}
           次，从空白开始。之前的记录会保留，可随时回看。
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
+        </DialogDescription>
+        {error !== null ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter className="mt-4">
           <Button
+            ref={cancelRef}
             variant="outline"
             className="min-h-11"
             disabled={busy}
@@ -115,9 +151,9 @@ function RedoConfirmDialog({
           <Button className="min-h-11" disabled={busy} onClick={onConfirm}>
             {busy ? "正在开始…" : "开始新一次"}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -210,6 +246,7 @@ function UnitLandingView({
 }) {
   const navigate = useNavigate();
   const startAttempt = useStartCourseAttempt(courseId, unitId);
+  const redoTriggerRef = useRef<HTMLButtonElement>(null);
   const [redoOpen, setRedoOpen] = useState(false);
 
   const summary = landing.summary;
@@ -322,7 +359,7 @@ function UnitLandingView({
           )}
         </div>
         {summary !== null && submittedCount > 0 && (
-          <div aria-hidden className="grid grid-cols-3 gap-2">
+          <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
               { label: "首次", value: summary.firstResultCounts },
               { label: "最近", value: summary.latestResultCounts },
@@ -330,26 +367,22 @@ function UnitLandingView({
             ].map((tile) => (
               <div
                 key={tile.label}
-                className="rounded-xl bg-muted/60 px-3 py-2.5 text-center"
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-xl bg-muted/60 px-3 py-2.5 sm:flex-col sm:items-start"
               >
-                <p className="text-base font-bold text-foreground">
-                  {formatResultCounts(tile.value)}
-                </p>
-                <p className="text-xs text-muted-foreground">
+                <dt className="text-xs text-muted-foreground">
                   {tile.label}表现
-                </p>
+                </dt>
+                <dd className="m-0 text-sm font-semibold tabular-nums">
+                  {formatResultCounts(tile.value)}
+                </dd>
               </div>
             ))}
-          </div>
+          </dl>
         )}
         {summary !== null && submittedCount > 0 && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>已做 {summary.count} 次</span>
-            <span>
-              首次 {formatResultCounts(summary.firstResultCounts)} · 最近{" "}
-              {formatResultCounts(summary.latestResultCounts)} · 最佳{" "}
-              {formatResultCounts(summary.bestResultCounts)}
-            </span>
+
             {summary.pendingCount > 0 && (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
                 有 {summary.pendingCount} 题待批
@@ -452,6 +485,7 @@ function UnitLandingView({
           ) : (
             <Button
               className="min-h-12 px-8 text-base"
+              ref={redoTriggerRef}
               onClick={() => setRedoOpen(true)}
               aria-label="再做一次"
             >
@@ -488,7 +522,7 @@ function UnitLandingView({
                   type="button"
                   aria-label={`查看第 ${attempt.attemptNo} 次记录`}
                   onClick={() => enterAttempt(attempt.attemptId)}
-                  className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2 text-left shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="flex min-h-14 w-full flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2 text-left shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <span className="w-14 shrink-0 text-sm font-medium">
                     第 {attempt.attemptNo} 次
@@ -497,7 +531,7 @@ function UnitLandingView({
                     {statusLabel(attempt.status)}
                   </span>
                   {attempt.status !== "draft" && (
-                    <span className="shrink-0 text-sm">
+                    <span className="min-w-0 max-w-full text-sm break-words">
                       {formatResultCounts(attempt.resultCounts)}
                     </span>
                   )}
@@ -517,8 +551,15 @@ function UnitLandingView({
         open={redoOpen}
         nextAttemptNo={nextAttemptNo}
         busy={busy}
+        onClosed={() => redoTriggerRef.current?.focus()}
+        error={
+          startAttempt.isError
+            ? startAttempt.error instanceof Error
+              ? startAttempt.error.message
+              : "开始失败，请稍后重试"
+            : null
+        }
         onConfirm={() => {
-          setRedoOpen(false);
           onStart();
         }}
         onCancel={() => setRedoOpen(false)}

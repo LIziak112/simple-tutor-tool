@@ -22,7 +22,7 @@ const DropdownMenuContent = ({
       data-slot="dropdown-menu-content"
       sideOffset={sideOffset}
       className={cn(
-        "z-50 min-w-40 overflow-hidden rounded-lg border border-border bg-card p-1 text-sm shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        "z-50 min-w-40 overflow-hidden rounded-lg border border-border bg-card p-1 text-sm shadow-lg",
         className,
       )}
       {...props}

@@ -249,21 +249,13 @@ export function UnitDetailSheet({
 
             <div className="flex flex-wrap items-center gap-2">
               <Button
+                busy={saveMutation.isPending}
                 type="submit"
                 className="min-h-11 px-5"
                 disabled={!canSave}
               >
-                {saveMutation.isPending ? (
-                  <>
-                    <Loader2 aria-hidden className="animate-spin" />
-                    保存中…
-                  </>
-                ) : (
-                  <>
-                    <Save aria-hidden />
-                    保存
-                  </>
-                )}
+                <Save aria-hidden />
+                保存
               </Button>
               <Button
                 type="button"

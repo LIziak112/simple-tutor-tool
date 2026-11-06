@@ -538,7 +538,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
 
   it("汇总卡替换为「PendingReleaseBanner」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
     render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
-    expect(screen.getByText("🎉 作业已成功交卷！")).toBeInTheDocument();
+    expect(screen.getByText("作业已成功交卷！")).toBeInTheDocument();
     expect(screen.getByText(/截止时间：/)).toBeInTheDocument();
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     expect(screen.queryByText("60")).toBeNull();
@@ -562,9 +562,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(screen.queryAllByLabelText("待批改").length).toBe(0);
     expect(screen.getAllByText("答案已保存 · 待公布").length).toBe(3);
     expect(screen.getAllByText("未作答").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("参考答案与详解将在截止后公布 🔒").length).toBe(
-      4,
-    );
+    expect(screen.getAllByText("参考答案与详解将在截止后公布").length).toBe(4);
     expect(screen.queryAllByRole("button", { name: /查看详解/ }).length).toBe(
       0,
     );

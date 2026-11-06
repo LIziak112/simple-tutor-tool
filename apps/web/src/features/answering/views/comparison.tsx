@@ -1,3 +1,4 @@
+import { LockKeyhole } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ReferenceMaterial } from "../types";
 
@@ -40,7 +41,13 @@ export function referenceColumnOf<Rf>(
 ): ReactNode {
   if (material.status === "unavailable") {
     return (
-      <p className="text-muted-foreground">参考答案与详解将在截止后公布 🔒</p>
+      <p className="text-muted-foreground">
+        参考答案与详解将在截止后公布{" "}
+        <LockKeyhole
+          aria-hidden
+          className="inline size-3.5 align-text-bottom"
+        />
+      </p>
     );
   }
   if (material.status === "no-reference") {

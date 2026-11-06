@@ -7,6 +7,7 @@ import {
 } from "@tutor/contract";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
+import { learningStatusClass } from "@/components/learning-status";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { formatResultCounts } from "@/features/attempt/result-counts";
@@ -35,9 +36,9 @@ export const ATTEMPT_STATUS_LABELS: Record<AttemptStatus, string> = {
  * graded 绿（与作业名单徽章配色同族）。
  */
 const STATUS_BADGE_CLASS: Record<AttemptStatus, string> = {
-  draft: "bg-sky-500 font-medium text-white",
-  submitted: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  graded: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  draft: learningStatusClass.in_progress,
+  submitted: learningStatusClass.submitted,
+  graded: learningStatusClass.graded,
 };
 
 /** 状态徽章（列表卡片与详情页头共用） */

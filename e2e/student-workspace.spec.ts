@@ -244,7 +244,7 @@ test(
         const toggle = sidebar.getByRole("button", { name: "收起答题卡" });
         await expect(toggle).toHaveAttribute("aria-expanded", "true");
         const textLeft = await toggle
-          .locator("span")
+          .getByText("答题卡", { exact: true })
           .evaluate((element) => element.getBoundingClientRect().left);
         const nextTextLeft = await sidebar
           .getByRole("button", { name: "下一道未答" })

@@ -8,8 +8,8 @@ import {
   ArrowLeft,
   ChevronDown,
   Clock3,
+  FileDown,
   Lightbulb,
-  Sparkles,
   TriangleAlert,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -251,7 +251,7 @@ export function StudentHomePage() {
                     : "",
               }}
             >
-              <Sparkles aria-hidden />
+              <FileDown aria-hidden />
               导出给 AI
             </Link>
           </Button>
@@ -299,7 +299,7 @@ export function StudentHomePage() {
             作答记录加载失败
             <Button
               variant="outline"
-              className="min-h-9"
+              className="min-h-11 min-w-11"
               onClick={() => void attemptsQuery.refetch()}
             >
               重试
@@ -439,7 +439,7 @@ export function StudentHomePage() {
                 <Button
                   key={item}
                   variant={item === kind ? "secondary" : "outline"}
-                  className="min-h-9"
+                  className="min-h-11 min-w-11"
                   aria-pressed={item === kind}
                   onClick={() => applyKind(item)}
                 >
@@ -458,7 +458,7 @@ export function StudentHomePage() {
                 错题与存疑加载失败
                 <Button
                   variant="outline"
-                  className="min-h-9"
+                  className="min-h-11 min-w-11"
                   onClick={() => void reviewQuery.refetch()}
                 >
                   重试
