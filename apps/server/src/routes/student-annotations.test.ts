@@ -165,6 +165,73 @@ describe("原位布局底图首建", () => {
       200, 409,
     ]);
   });
+  it("v4 实际路由两阶段及正文往返，按底图版本校验能力且不泄露", async () => {
+    const { attemptId, layout, create } = await world();
+    const whole = {
+      ...layout,
+      renderVersion: 4,
+      renderProfile: "whole-question-v1",
+      compatibility: {
+        version: 1,
+        contentSignature: "a".repeat(64),
+        blocks: [
+          { tag: "DIV", node: "root", x: 0, y: 0, width: 300, height: 200 },
+        ],
+        fonts: [["sans-serif", "16px", "400", "28px", "normal"]],
+        textRects: [],
+      },
+    };
+    const created = await create(whole);
+    expect(created.status).toBe(200);
+    const preview = await created.json();
+    assertNoLeak(preview);
+    expect(
+      annotationBasePreviewDataSchema.parse((preview as { data: unknown }).data)
+        .baseRenderVersion,
+    ).toBe(4);
+    expect(
+      (
+        await postBaseImage(
+          attemptId,
+          aCookie,
+          {
+            questionRevisionId: layout.questionRevisionId,
+            baseRenderVersion: 4,
+          },
+          makeNotePng(600, 400),
+        )
+      ).status,
+    ).toBe(200);
+    const doc = { ...annotationDoc(400), baseWidth: 600 };
+    for (const [protocolVersion, status] of [
+      [undefined, 403],
+      [3, 403],
+      [999, 400],
+      [4, 200],
+    ] as const) {
+      const response = await putAnnotation(
+        attemptId,
+        aCookie,
+        doc,
+        protocolVersion === undefined ? {} : { protocolVersion },
+      );
+      expect(response.status).toBe(status);
+      assertNoLeak(await response.json());
+    }
+    const viewResponse = await getView(attemptId, aCookie);
+    expect(viewResponse.status).toBe(200);
+    const payload = await viewResponse.json();
+    assertNoLeak(payload);
+    const view = annotationViewDataSchema.parse(
+      (payload as { data: unknown }).data,
+    );
+    expect(view.base?.layout).toEqual(whole);
+    expect(view.doc).toEqual(doc);
+    expect((await create({ ...whole, renderProfile: "unknown" })).status).toBe(
+      400,
+    );
+    expect((await create({ ...whole, controls: [] })).status).toBe(400);
+  });
 });
 
 // ---------- 请求组装 ----------
@@ -240,7 +307,12 @@ function annotationDoc(height = 900, strokes = 1) {
 
 function putAnnotationForm(
   doc: unknown,
-  options: { baseRevision?: number; mutationId?: string; phase?: string },
+  options: {
+    baseRevision?: number;
+    mutationId?: string;
+    phase?: string;
+    protocolVersion?: number;
+  },
 ): FormData {
   const form = new FormData();
   form.append(
@@ -251,6 +323,8 @@ function putAnnotationForm(
   form.append("baseRevision", String(options.baseRevision ?? 0));
   form.append("mutationId", options.mutationId ?? randomUUID());
   if (options.phase !== undefined) form.append("phase", options.phase);
+  if (options.protocolVersion !== undefined)
+    form.append("protocolVersion", String(options.protocolVersion));
   return form;
 }
 
@@ -258,7 +332,12 @@ function putAnnotation(
   attemptId: string,
   cookie: string | undefined,
   doc: unknown,
-  options: { baseRevision?: number; mutationId?: string; phase?: string } = {},
+  options: {
+    baseRevision?: number;
+    mutationId?: string;
+    phase?: string;
+    protocolVersion?: number;
+  } = {},
 ): Promise<Response> {
   return Promise.resolve(
     app.request(

@@ -606,7 +606,7 @@ test(
     const firstOpenMs = await measureEnter();
     const canvas = last.locator('canvas[data-slot="annotation-canvas"]');
     await drawStrokeWithPointerEvents(canvas);
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await expect(canvas).toHaveAttribute("data-input-enabled", "false");
     // 首次落笔的本机/云端持久化属于准备阶段，不能计入后续热打开耗时。
     await expect(page.getByTestId("draft-status")).toHaveText("全部已保存", {
@@ -627,7 +627,7 @@ test(
       await expect(
         page.locator('canvas[data-input-enabled="true"]'),
       ).toHaveCount(1);
-      await page.getByRole("button", { name: "作答", exact: true }).click();
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
       await expect(canvas).toHaveAttribute("data-input-enabled", "false");
     }
     expect(await listenerCount()).toBe(beforeListeners);
@@ -701,7 +701,7 @@ test(
         moveCount: 60,
       };
     });
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     const warmMaxMs = Math.max(...warmMs);
     // 中位数容忍少量离群样本；CI 保留最大值守护，继续检测偶发慢路径。
     const warmMedianMs =

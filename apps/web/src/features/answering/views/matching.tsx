@@ -1,5 +1,7 @@
+import { useContext } from "react";
 import { plainInlineMdOf } from "@/features/markdown/plain-text";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { QuestionRenderContext } from "../question-render-context";
 import type {
   AnswerKindView,
   PreparedOf,
@@ -57,35 +59,26 @@ function referenceRowsOf(
   return [...known, ...unknown];
 }
 
-export const matchingView: AnswerKindView<
-  StudentAnswerOfKind<"matching">,
-  PreparedOf<"matching">,
-  ReferenceOfKind<"matching">
-> = {
-  Input: ({ model, answer, update, disabled = false }) => {
-    const pairs = answer?.pairs ?? {};
-    // 结构不可用防御态：显式报错不静默降级（§7.1）
-    if (model.slots.length === 0 || model.options.length === 0) {
-      return (
-        <div className="flex min-w-0 flex-col gap-3">
-          <RichMarkdown
-            source={model.stemMd}
-            className="text-base leading-[1.75]"
-            lrNodes
-          />
-          <p role="alert" className="text-sm text-destructive">
-            这道配对题的选项池或槽位信息不完整，请联系老师重新检查题目。
-          </p>
-        </div>
-      );
-    }
-    /** 该选项是否已被其他槽位占用（不可重复约束的客户端面） */
-    const usedElsewhere = (optionKey: string, slot: string): boolean =>
-      !model.allowRepeat &&
-      Object.entries(pairs).some(
-        ([otherSlot, otherOption]) =>
-          otherSlot !== slot && otherOption === optionKey,
-      );
+function MatchingInput({
+  model,
+  answer,
+  update,
+  disabled = false,
+}: {
+  model: PreparedOf<"matching">;
+  answer: StudentAnswerOfKind<"matching"> | undefined;
+  update: (answer: StudentAnswerOfKind<"matching">, defer?: boolean) => void;
+  disabled?: boolean;
+}) {
+  const profile = useContext(QuestionRenderContext);
+  const horizontal =
+    profile.renderVersion === 4 ||
+    profile.legacyDirection === "horizontal" ||
+    (profile.legacyDirection === undefined &&
+      (profile.logicalWidth ?? 640) >= 640);
+  const pairs = answer?.pairs ?? {};
+  // 结构不可用防御态：显式报错不静默降级（§7.1）
+  if (model.slots.length === 0 || model.options.length === 0) {
     return (
       <div className="flex min-w-0 flex-col gap-3">
         <RichMarkdown
@@ -93,82 +86,109 @@ export const matchingView: AnswerKindView<
           className="text-base leading-[1.75]"
           lrNodes
         />
-        <section
-          aria-label="完整选项"
-          className="min-w-0 rounded-md border border-border p-3"
-        >
-          <p className="mb-2 text-sm font-medium">完整选项</p>
-          <ol className="m-0 flex list-none flex-col gap-3 p-0">
-            {model.options.map((option, index) => (
-              <li key={option.key} className="flex min-w-0 gap-2">
-                <span aria-hidden className="shrink-0 text-muted-foreground">
-                  {index + 1}.
-                </span>
-                <RichMarkdown
-                  source={option.text}
-                  className="min-w-0 break-words [overflow-wrap:anywhere] [&_p]:my-0"
-                />
-              </li>
-            ))}
-          </ol>
-        </section>
-        <div className="flex min-w-0 flex-col gap-2">
-          {model.slots.map((slot) => {
-            const selectId = `matching-${model.scopeId}-${slot.id}`;
-            return (
-              <div
-                key={slot.id}
-                className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3"
-              >
-                <label
-                  htmlFor={selectId}
-                  className="shrink-0 text-sm font-medium sm:w-20"
-                >
-                  {slotLabelOf(slot.ordinal)}
-                </label>
-                <select
-                  id={selectId}
-                  aria-label={`${slotLabelOf(slot.ordinal)}的选项`}
-                  value={pairs[slot.id] ?? ""}
-                  disabled={disabled}
-                  onChange={(event) => {
-                    const next = { ...pairs };
-                    if (event.target.value === "") delete next[slot.id];
-                    else next[slot.id] = event.target.value;
-                    update({ kind: "matching", pairs: next }, undefined);
-                  }}
-                  className="min-h-11 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <option value="">未选择</option>
-                  {model.options.map((option, index) => {
-                    const plain = plainInlineMdOf(option.text);
-                    const label = plain
-                      ? `选项 ${index + 1}：${plain}`
-                      : `选项 ${index + 1}`;
-                    return (
-                      <option
-                        key={option.key}
-                        value={option.key}
-                        aria-label={option.text}
-                        disabled={usedElsewhere(option.key, slot.id)}
-                      >
-                        {label}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-            );
-          })}
-        </div>
-        {!model.allowRepeat && model.slots.length > 1 && (
-          <p className="text-sm text-muted-foreground">
-            每个选项只能用于一个空位。
-          </p>
-        )}
+        <p role="alert" className="text-sm text-destructive">
+          这道配对题的选项池或槽位信息不完整，请联系老师重新检查题目。
+        </p>
       </div>
     );
-  },
+  }
+  /** 该选项是否已被其他槽位占用（不可重复约束的客户端面） */
+  const usedElsewhere = (optionKey: string, slot: string): boolean =>
+    !model.allowRepeat &&
+    Object.entries(pairs).some(
+      ([otherSlot, otherOption]) =>
+        otherSlot !== slot && otherOption === optionKey,
+    );
+  return (
+    <div className="flex min-w-0 flex-col gap-3">
+      <RichMarkdown
+        source={model.stemMd}
+        className="text-base leading-[1.75]"
+        lrNodes
+      />
+      <section
+        aria-label="完整选项"
+        className="min-w-0 rounded-md border border-border p-3"
+      >
+        <p className="mb-2 text-sm font-medium">完整选项</p>
+        <ol className="m-0 flex list-none flex-col gap-3 p-0">
+          {model.options.map((option, index) => (
+            <li key={option.key} className="flex min-w-0 gap-2">
+              <span aria-hidden className="shrink-0 text-muted-foreground">
+                {index + 1}.
+              </span>
+              <RichMarkdown
+                source={option.text}
+                className="min-w-0 break-words [overflow-wrap:anywhere] [&_p]:my-0"
+              />
+            </li>
+          ))}
+        </ol>
+      </section>
+      <div className="flex min-w-0 flex-col gap-2">
+        {model.slots.map((slot) => {
+          const selectId = `matching-${model.scopeId}-${slot.id}`;
+          return (
+            <div
+              key={slot.id}
+              className={`flex min-w-0 ${horizontal ? "flex-row items-center gap-3" : "flex-col gap-1"}`}
+            >
+              <label
+                htmlFor={selectId}
+                className={`shrink-0 text-sm font-medium ${horizontal ? "w-20" : ""}`}
+              >
+                {slotLabelOf(slot.ordinal)}
+              </label>
+              <select
+                id={selectId}
+                aria-label={`${slotLabelOf(slot.ordinal)}的选项`}
+                value={pairs[slot.id] ?? ""}
+                disabled={disabled}
+                onChange={(event) => {
+                  const next = { ...pairs };
+                  if (event.target.value === "") delete next[slot.id];
+                  else next[slot.id] = event.target.value;
+                  update({ kind: "matching", pairs: next }, undefined);
+                }}
+                className="min-h-11 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">未选择</option>
+                {model.options.map((option, index) => {
+                  const plain = plainInlineMdOf(option.text);
+                  const label = plain
+                    ? `选项 ${index + 1}：${plain}`
+                    : `选项 ${index + 1}`;
+                  return (
+                    <option
+                      key={option.key}
+                      value={option.key}
+                      aria-label={option.text}
+                      disabled={usedElsewhere(option.key, slot.id)}
+                    >
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          );
+        })}
+      </div>
+      {!model.allowRepeat && model.slots.length > 1 && (
+        <p className="text-sm text-muted-foreground">
+          每个选项只能用于一个空位。
+        </p>
+      )}
+    </div>
+  );
+}
+
+export const matchingView: AnswerKindView<
+  StudentAnswerOfKind<"matching">,
+  PreparedOf<"matching">,
+  ReferenceOfKind<"matching">
+> = {
+  Input: (props) => <MatchingInput {...props} />,
   ReadOnly: ({ model, answer }) => {
     if (answer === undefined || Object.keys(answer.pairs).length === 0) {
       return (

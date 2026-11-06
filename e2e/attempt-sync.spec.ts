@@ -136,7 +136,7 @@ test(
       await expect(
         a1.getByRole("button", { name: /圈画题干.*已有 1 笔/ }),
       ).toBeVisible();
-      await a.getByRole("button", { name: "作答", exact: true }).click();
+      await a.getByRole("button", { name: "完成标画", exact: true }).click();
       await expect(a.getByTestId("draft-status")).toHaveText("全部已保存", {
         timeout: 30_000,
       });

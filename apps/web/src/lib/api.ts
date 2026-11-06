@@ -1072,13 +1072,47 @@ export function updateAttemptWorkflowApi(
   return callApi(() => api.api.student.attempts[":id"].workflow.$patch(args));
 }
 
+/** 材料读取覆盖连接与完整响应体；超时不把未知基线当成空稿。 */
+function readMaterialWithDeadline<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted)
+    return Promise.reject(new DOMException("材料读取已取消", "AbortError"));
+  const controller = new AbortController();
+  let rejectStopped: (reason: Error) => void = () => undefined;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    rejectStopped = reject;
+  });
+  const stop = (reason: Error) => {
+    if (controller.signal.aborted) return;
+    rejectStopped(reason);
+    controller.abort();
+  };
+  const onAbort = () => stop(new DOMException("材料读取已取消", "AbortError"));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(
+    () => stop(new Error("材料读取超时，请检查网络后重试")),
+    30_000,
+  );
+  return Promise.race([read(controller.signal), stopped]).finally(() => {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  });
+}
+
 export async function fetchAttemptMaterialRevisionsApi(
   attemptId: string,
 ): Promise<AttemptMaterialRevisions> {
-  const data = await callApi(() =>
-    api.api.student.attempts[":id"].materials.$get({
-      param: { id: attemptId },
-    }),
+  const data = await readMaterialWithDeadline((signal) =>
+    callApi(() =>
+      api.api.student.attempts[":id"].materials.$get(
+        {
+          param: { id: attemptId },
+        },
+        { init: { signal } },
+      ),
+    ),
   );
   return attemptMaterialRevisionsSchema.parse(data);
 }
@@ -1366,10 +1400,11 @@ interface GzipJsonMessages {
 async function fetchGzipJson(
   path: string,
   msg: GzipJsonMessages,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(path);
+    res = await (signal ? fetch(path, { signal }) : fetch(path));
   } catch {
     throw new Error(msg.network);
   }
@@ -1449,12 +1484,14 @@ export async function fetchStudentNoteHeadsApi(
     param: { id: attemptId },
     json: { questionIds: [...questionIds] },
   };
-  const data: NoteHeadsData = await callApi(() =>
-    signal === undefined
-      ? api.api.student.attempts[":id"]["note-heads"].$post(args)
-      : api.api.student.attempts[":id"]["note-heads"].$post(args, {
-          init: { signal },
+  const data: NoteHeadsData = await readMaterialWithDeadline(
+    (readSignal) =>
+      callApi(() =>
+        api.api.student.attempts[":id"]["note-heads"].$post(args, {
+          init: { signal: readSignal },
         }),
+      ),
+    signal,
   );
   const headById = new Map(
     data.heads.map((entry) => [entry.questionId, entry.head] as const),
@@ -1514,9 +1551,12 @@ const NOTE_DOC_MESSAGES: GzipJsonMessages = {
 export function fetchStudentNoteDocumentApi(
   versionId: string,
 ): Promise<unknown> {
-  return fetchGzipJson(
-    `/api/student/note-versions/${encodeURIComponent(versionId)}/document`,
-    NOTE_DOC_MESSAGES,
+  return readMaterialWithDeadline((signal) =>
+    fetchGzipJson(
+      `/api/student/note-versions/${encodeURIComponent(versionId)}/document`,
+      NOTE_DOC_MESSAGES,
+      signal,
+    ),
   );
 }
 
@@ -1826,11 +1866,16 @@ export function fetchAnnotationViewApi(
   questionId: string,
   phase?: AnnotationPhase,
 ): Promise<AnnotationViewData> {
-  return callApi(() =>
-    api.api.student.attempts[":id"].questions[":questionId"].annotation.$get({
-      param: { id: attemptId, questionId },
-      ...(phase !== undefined ? { query: { phase } } : {}),
-    }),
+  return readMaterialWithDeadline((signal) =>
+    callApi(() =>
+      api.api.student.attempts[":id"].questions[":questionId"].annotation.$get(
+        {
+          param: { id: attemptId, questionId },
+          ...(phase !== undefined ? { query: { phase } } : {}),
+        },
+        { init: { signal } },
+      ),
+    ),
   );
 }
 

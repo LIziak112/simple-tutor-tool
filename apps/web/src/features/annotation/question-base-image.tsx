@@ -4,6 +4,8 @@ import {
   ANNOTATION_MAX_PIXEL_DIM,
   ANNOTATION_SURFACE_PIXEL_RATIO,
   ANNOTATION_SURFACE_RENDER_VERSION,
+  ANNOTATION_WHOLE_QUESTION_RENDER_PROFILE,
+  ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
   type AnnotationSurfaceCompatibility,
   type AnnotationSurfaceLayout,
   type AttemptQuestionPublic,
@@ -11,8 +13,9 @@ import {
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { toBlob } from "html-to-image";
+import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { captureFrozenControls } from "@/features/answering";
+import { QuestionRenderContext } from "@/features/answering/question-render-context";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   collectFontEmbedCss,
@@ -24,6 +27,7 @@ import {
 import { contentHash64, stableContentHash64 } from "@/lib/content-hash";
 import { measureStage } from "@/lib/performance-stages";
 import {
+  ANNOTATION_SURFACE_TOLERANCE_CSS_PX,
   compatibleSurfaceEvidence,
   legacySurfaceFontCandidates,
   normalizeSurfaceFont,
@@ -41,7 +45,10 @@ const FONT_PROPERTIES = [
 ] as const;
 
 /** 几何不含表单值、选中态和焦点；适用于正常题面与脱敏副本。 */
-export function measureQuestionSurface(surface: HTMLElement) {
+export function measureQuestionSurface(
+  surface: HTMLElement,
+  options?: { precise?: boolean },
+) {
   const root = surface.getBoundingClientRect();
   const declaredScale = Number(
     surface.closest<HTMLElement>("[data-annotation-scale]")?.dataset
@@ -49,11 +56,16 @@ export function measureQuestionSurface(surface: HTMLElement) {
   );
   const scale =
     Number.isFinite(declaredScale) && declaredScale > 0 ? declaredScale : 1;
-  const rounded = (value: number) => Math.round((value / scale) * 64) / 64;
+  // 旧签名保留 1/64px 序列化；准入比较保留小数，避免吞掉 10.001px 越界。
+  const rounded = (value: number) =>
+    options?.precise ? value / scale : Math.round((value / scale) * 64) / 64;
   const nodes = [
     surface,
     ...[...surface.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)].filter(
-      (node) => !node.closest('[data-slot="question-annotation-overlay"]'),
+      (node) =>
+        !node.closest(
+          '[data-slot="question-annotation-overlay"], [data-annotation-answer-control="ordering"]',
+        ),
     ),
   ];
   const textRects: AnnotationSurfaceCompatibility["textRects"] = [];
@@ -63,7 +75,7 @@ export function measureQuestionSurface(surface: HTMLElement) {
     if (
       !node.textContent?.trim() ||
       node.parentElement?.closest(
-        '.sr-only, .katex-mathml, input, textarea, select, [data-slot="question-annotation-overlay"]',
+        '.sr-only, .katex-mathml, input, textarea, select, [data-slot="question-annotation-overlay"], [data-annotation-answer-control="ordering"]',
       )
     )
       continue;
@@ -161,11 +173,16 @@ export async function questionSurfaceMatchesLayout(
   surface: HTMLElement,
   layout: AnnotationSurfaceLayout,
 ): Promise<boolean> {
-  const measure = measureQuestionSurface(surface);
+  if (!annotationSurfaceLayoutSchema.safeParse(layout).success) return false;
+  const measure = measureQuestionSurface(surface, {
+    precise: layout.compatibility !== undefined,
+  });
   if (
     question.questionRevisionId !== layout.questionRevisionId ||
-    Math.abs(measure.cssWidth - layout.cssWidth) > 1 ||
-    Math.abs(measure.cssHeight - layout.cssHeight) > 1
+    Math.abs(measure.cssWidth - layout.cssWidth) >
+      ANNOTATION_SURFACE_TOLERANCE_CSS_PX ||
+    Math.abs(measure.cssHeight - layout.cssHeight) >
+      ANNOTATION_SURFACE_TOLERANCE_CSS_PX
   )
     return false;
   const publicContent = publicContentSignatureOf(question);
@@ -187,6 +204,60 @@ export async function questionSurfaceMatchesLayout(
       layout,
     )) !== null
   );
+}
+
+/** 以原始证据选择旧版断点形态，离屏试错不移动可见题面和笔迹。 */
+export async function resolveLegacyQuestionProfile(
+  question: AttemptQuestionPublic,
+  reference: HTMLElement,
+  layout: AnnotationSurfaceLayout,
+  signal?: AbortSignal,
+): Promise<"horizontal" | "vertical" | null> {
+  if (layout.renderVersion === 4) return null;
+  const host = document.createElement("div");
+  const inherited = getComputedStyle(reference);
+  Object.assign(host.style, {
+    position: "fixed",
+    left: "-10000px",
+    top: "0",
+    width: `${layout.cssWidth}px`,
+    pointerEvents: "none",
+  });
+  for (const property of FONT_PROPERTIES)
+    host.style.setProperty(property, inherited.getPropertyValue(property));
+  host.setAttribute("aria-hidden", "true");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    for (const direction of ["horizontal", "vertical"] as const) {
+      if (signal?.aborted)
+        throw new DOMException("题面核验已取消", "AbortError");
+      flushSync(() =>
+        root.render(
+          <QuestionRenderContext
+            value={{
+              renderVersion: layout.renderVersion as 2 | 3,
+              logicalWidth: layout.cssWidth,
+              legacyDirection: direction,
+            }}
+          >
+            <QuestionSurface question={question} mode="export" />
+          </QuestionRenderContext>,
+        ),
+      );
+      const surface = host.querySelector<HTMLElement>(
+        '[data-slot="question-surface"]',
+      );
+      if (!surface) throw new Error("题面尚未就绪，请重试");
+      await awaitQuestionSurfaceReady(surface, () => {}, signal);
+      if (await questionSurfaceMatchesLayout(question, surface, layout))
+        return direction;
+    }
+    return null;
+  } finally {
+    root.unmount();
+    host.remove();
+  }
 }
 
 async function legacyCompatibility(
@@ -228,6 +299,12 @@ export async function verifiedLegacySurfaceCompatibility(
   surface: HTMLElement,
   layout: AnnotationSurfaceLayout,
 ): Promise<AnnotationSurfaceCompatibility | null> {
+  if (
+    !annotationSurfaceLayoutSchema.safeParse(layout).success ||
+    (layout.renderVersion !== ANNOTATION_SURFACE_RENDER_VERSION &&
+      layout.renderVersion !== ANNOTATION_FROZEN_RENDER_VERSION)
+  )
+    return null;
   const measure = measureQuestionSurface(surface);
   if (
     layout.compatibility ||
@@ -289,10 +366,45 @@ function assertSize(surface: HTMLElement): void {
 export async function awaitQuestionSurfaceReady(
   surface: HTMLElement,
   check: () => void = () => {},
+  signal?: AbortSignal,
+): Promise<SurfaceMeasure> {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  const guardedCheck = () => {
+    if (!active || signal?.aborted)
+      throw new DOMException("题面核验已取消", "AbortError");
+    check();
+  };
+  try {
+    return await Promise.race([
+      waitForQuestionSurface(surface, guardedCheck),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("题面布局稳定等待超时")),
+          STEP_TIMEOUT_MS,
+        );
+        abort = () => reject(new DOMException("题面核验已取消", "AbortError"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
+    ]);
+  } finally {
+    active = false;
+    if (timer !== undefined) clearTimeout(timer);
+    if (abort) signal?.removeEventListener("abort", abort);
+  }
+}
+
+async function waitForQuestionSurface(
+  surface: HTMLElement,
+  check: () => void,
 ): Promise<SurfaceMeasure> {
   const deadline = performance.now() + STEP_TIMEOUT_MS;
   if (document.fonts) await document.fonts.ready;
+  check();
   const images = [...surface.querySelectorAll<HTMLImageElement>("img")];
+  for (const image of images) image.loading = "eager";
   await Promise.all(images.map((image) => image.decode()));
   check();
   let previous = "";
@@ -343,7 +455,7 @@ export async function renderQuestionBaseImage(
   assertSize(reference);
   const before = await measureStage("annotation:reference-ready", () =>
     withTimeout(
-      awaitQuestionSurfaceReady(reference, check),
+      awaitQuestionSurfaceReady(reference, check, options.signal),
       STEP_TIMEOUT_MS,
       "题面资源或布局未稳定，请稍后重试",
     ),
@@ -398,7 +510,7 @@ export async function renderQuestionBaseImage(
       image.loading = "eager";
     const exportedSnapshot = await measureStage("annotation:copy-ready", () =>
       withTimeout(
-        awaitQuestionSurfaceReady(exported, check),
+        awaitQuestionSurfaceReady(exported, check, options.signal),
         STEP_TIMEOUT_MS,
         "导出题面资源未稳定，请重试",
       ),
@@ -410,7 +522,6 @@ export async function renderQuestionBaseImage(
       !sameGeometry(before, measureQuestionSurface(reference))
     )
       throw new Error("题面布局已变化或与底图不一致，请恢复原布局后重试");
-    const controls = captureFrozenControls(question, exported);
     const publicContent = publicContentSignatureOf(question);
     const [contentSignature, geometrySignature, fontSignature] =
       await Promise.all([
@@ -419,10 +530,8 @@ export async function renderQuestionBaseImage(
         contentHash64(before.fonts),
       ]);
     const layout = annotationSurfaceLayoutSchema.parse({
-      renderVersion:
-        controls === null
-          ? ANNOTATION_SURFACE_RENDER_VERSION
-          : ANNOTATION_FROZEN_RENDER_VERSION,
+      renderVersion: ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
+      renderProfile: ANNOTATION_WHOLE_QUESTION_RENDER_PROFILE,
       questionRevisionId: question.questionRevisionId,
       cssWidth: before.cssWidth,
       cssHeight: before.cssHeight,
@@ -438,7 +547,6 @@ export async function renderQuestionBaseImage(
         fonts: before.fonts.map(normalizeSurfaceFont),
         textRects: before.textRects,
       },
-      ...(controls !== null ? { controls } : {}),
     });
     const fontCss = await measureStage("annotation:font-css", () =>
       withTimeout(
@@ -487,9 +595,7 @@ export async function renderQuestionBaseImage(
       throw new Error("底图实际像素尺寸不符，不采用错位图片");
     if (
       !sameGeometry(before, measureQuestionSurface(reference)) ||
-      !sameGeometry(exportedSnapshot, measureQuestionSurface(exported)) ||
-      JSON.stringify(controls) !==
-        JSON.stringify(captureFrozenControls(question, exported))
+      !sameGeometry(exportedSnapshot, measureQuestionSurface(exported))
     )
       throw new Error("生成期间题面布局变化，请重试");
     return { blob, layout, pixelWidth, pixelHeight };

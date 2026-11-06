@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  attemptQuestionPublicSchema,
   attemptSourceSchema,
   attemptStatusSchema,
   studentFlagSchema,
@@ -198,6 +199,8 @@ export const teacherAttemptDetailQuestionSchema = z.object({
    * 当前库题目、可能尚无 responses 行，恒 null（draft 本就不可批注）。
    */
   responseId: z.uuid().nullable(),
+  /** 只读题面始终用公开冻结投影，与批注 responseId 的可空语义独立。 */
+  publicQuestion: attemptQuestionPublicSchema.optional(),
   /** 全卷连续题号（1 起 = attempt 单元顺序 × 单元内题序） */
   no: z.number().int().min(1),
   /** 所在单元 id */

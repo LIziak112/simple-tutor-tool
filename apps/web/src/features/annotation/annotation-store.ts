@@ -1060,6 +1060,8 @@ export async function applyAnnotationBaseCompatibility(
 ): Promise<void> {
   await mutateLoaded(session, scope, null, (record) => {
     guard();
+    if (record.sealedAt !== null)
+      throw new Error("本题圈画已封存，不能补写布局证据");
     const local = record.localBase;
     if (
       (record.resetVersion ?? 0) !== resetVersion ||

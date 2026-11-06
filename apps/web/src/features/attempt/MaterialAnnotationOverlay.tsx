@@ -134,21 +134,10 @@ export interface MaterialAnnotationOverlayProps {
  * 笔迹按 attemptId + inkKey 合并存入 draftStore（本机稿；交卷不清除，
  * 结果页只读回看——见 clearDraft 的保稿分支）。
  *
- * 冻结作用域（与题面「永久冻结排版」的关键差异——材料是整组题共享的长
- * 阅读面，列宽是学生用中缝主动调节的阅读旋钮，不能被一次圈画永久接管）：
- * - 默认阅读恒为活排版：正文随列宽自然回流，永不因有笔迹而固定宽度；
- * - 圈画态挂冻结工作框（固定逻辑宽 + transform 等比适配，题面同款形态）：
- *   已有冻结基准立即挂框（旧笔迹对齐显示、几何稳定）；无基准材料保持
- *   活排版，首笔收笔时按落笔矩形捕获基准并随稿存 materialInkBases
- *   （cssWidth/cssHeight）；首笔前有就绪门控（字体/图片/连续 3 帧稳定，
- *   未就绪禁墨提示），冻结宽此后锁定，拖中缝先收笔、只整体缩放不回流；
- * - 非圈画态笔迹按「排版匹配自显」：活排版宽高与冻结基准 ±1px 匹配
- *   （questionSurfaceMatchesLayout 同口径）时笔迹直接叠在活正文上；
- *   不匹配（分栏拖动/材料改版/字体变化）时隐藏笔迹，提供「按圈画时排版
- *   查看」只读冻结框——禁止旧笔迹静默叠到新排版（手写与同步约定）；
- * - 圈画态 fitScale<0.85 提供「放大材料」1:1 横滚逃生（同题面「放大题面」）；
- * - 不栅格化底图 PNG：长材料受 Safari canvas 面积上限约束
- *   （material-export-pages 分块先例），以冻结框 + 宽高匹配替代底图兜底。
+ * 已有基准的真实阅读框常驻固定 CSS 宽度，分栏只整体等比缩放，笔迹常显；
+ * 无基准的新材料在首笔前保持自然排版，收笔时捕获落笔矩形；旧稿缺少基准
+ * 无法证明历史位置，保稿并停止续画。材料只存本机，不使用题卡 PNG 坐标域。
+ * fitScale<0.85 时提供「放大材料」1:1 横滚，宽高变化超过 10 CSS px 停写。
  */
 export function MaterialAnnotationOverlay({
   attemptId,
@@ -181,7 +170,7 @@ export function MaterialAnnotationOverlay({
   }, []);
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  /** 活排版壳（children+输入层）：匹配量高/首笔捕获/就绪门控的测量面 */
+  /** 材料正文壳（children+输入层）：首笔捕获与就绪门控的测量面 */
   const liveSurfaceRef = useRef<HTMLDivElement>(null);
 
   // 冻结基准（首笔落笔时的活排版矩形；空稿清除后下次首笔重冻）
@@ -190,16 +179,14 @@ export function MaterialAnnotationOverlay({
   );
   const frozenRef = useRef(frozen);
   frozenRef.current = frozen;
-  /** 活排版壳实测尺寸：宽高用于排版匹配与首笔捕获兜底（辅助按钮在壳外） */
+  /** 正文壳实测尺寸：首笔捕获兜底（辅助按钮在壳外） */
   const [liveSize, setLiveSize] = useState({ width: 0, height: 0 });
   const liveSizeRef = useRef(liveSize);
   liveSizeRef.current = liveSize;
-  /** 根节点列宽：框缩放比、放大复位与只读回看自动退出的观察源 */
+  /** 根节点列宽：框缩放比与放大复位的观察源 */
   const [columnSize, setColumnSize] = useState({ width: 0, height: 0 });
-  /** 冻结框内容高（未缩放布局高，transform 不参与布局须显式占位） */
-  const [frameHeight, setFrameHeight] = useState(0);
-  /** 只读回看态（「按圈画时排版查看」；圈画态本身也走冻结框渲染） */
-  const [reviewMode, setReviewMode] = useState(false);
+  /** 冻结框布局尺寸（未缩放 CSS px，transform 不参与布局须显式占位） */
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
   /** 1:1 放大态（fitScale<0.85 的逃生口；宽度变化即复位，同题面） */
   const [expanded, setExpanded] = useState(false);
   /** 首笔就绪门控（无基准材料的圈画态；有基准即视为就绪） */
@@ -237,28 +224,12 @@ export function MaterialAnnotationOverlay({
   const lastEraseRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  // ── 派生态（渲染分支与匹配自显） ──
-  // 冻结框形态门：圈画态或只读回看时挂框（固定逻辑宽 + transform 等比
-  // 适配）；sizer/frame 壳常驻（进出圈画态只切样式不切树，材料子树不重挂）
-  const frameMode = frozen !== null && (isAnnotationActive || reviewMode);
-  const frameMounted = frameMode && frozen !== null;
-  // 活排版匹配：量的是活排版壳（children+输入层），「按圈画时排版查看」
-  // 等辅助按钮在壳外，量高不被按钮污染（失配一次不再永久失配）。±1px 口径
-  // 与题面 questionSurfaceMatchesLayout 一致；宽高任一漂移（拖中缝回流、
-  // 晚到图片下推）都视为不匹配，撤下笔迹不静默叠。只在活排版态判定——
-  // 框内量出的恒等于基准，无判定意义
-  const layoutMatch =
-    !frameMode &&
-    frozen !== null &&
-    liveSize.width > 0 &&
-    Math.abs(liveSize.width - frozen.cssWidth) <= 1 &&
-    (frozen.cssHeight === undefined ||
-      Math.abs(liveSize.height - frozen.cssHeight) <= 1);
-  const showInk = frameMode || layoutMatch || isAnnotationActive;
+  // 壳与材料子树常驻；已有基准在阅读和圈画时共用同一真实固定宽框。
+  const frameMounted = frozen !== null;
+  const missingBase = frozen === null && strokes.length > 0;
+  const showInk = !missingBase && (frameMounted || isAnnotationActive);
   const showInkRef = useRef(showInk);
   showInkRef.current = showInk;
-  // 缩放比按根列宽（中缝拖动即反映）；只读回看自动退出也看列宽（框内量
-  // 不到活排版）
   const fitScale =
     frozen !== null &&
     frozen.cssWidth > 0 &&
@@ -267,22 +238,24 @@ export function MaterialAnnotationOverlay({
       ? columnSize.width / frozen.cssWidth
       : 1;
   const scale = expanded ? 1 : fitScale;
-  // 挂框高度漂移：冻结框内容高与基准高差 >1px（晚到图片/材料改版下推）
-  const heightDrift =
+  // 只有宽高证据：允许 10px 内尺寸差异，不能据此证明材料内部逐字位置。
+  const layoutDrift =
     frozen !== null &&
-    frameMounted &&
-    frozen.cssHeight !== undefined &&
-    frameHeight > 0 &&
-    Math.abs(frameHeight - frozen.cssHeight) > 1;
-  // 输入门控：无基准等首笔就绪；有基准等挂框就绪且无高度漂移（D：
-  // 挂框后同样禁墨至稳定，与「不匹配禁墨」口径一致）
+    ((frameSize.width > 0 &&
+      Math.abs(frameSize.width - frozen.cssWidth) > 10) ||
+      (frozen.cssHeight !== undefined &&
+        frameSize.height > 0 &&
+        Math.abs(frameSize.height - frozen.cssHeight) > 10));
   const inputEnabled =
     isAnnotationActive &&
-    (frozen === null ? surfaceReady : frameSurfaceReady && !heightDrift);
+    !missingBase &&
+    (frozen === null ? surfaceReady : frameSurfaceReady && !layoutDrift);
   const frameSurfaceReadyRef = useRef(false);
   frameSurfaceReadyRef.current = frameSurfaceReady;
-  const heightDriftRef = useRef(false);
-  heightDriftRef.current = heightDrift;
+  const layoutDriftRef = useRef(false);
+  layoutDriftRef.current = layoutDrift;
+  const missingBaseRef = useRef(false);
+  missingBaseRef.current = missingBase;
 
   // 恢复材料草稿（内存命中立即读取；硬刷新冷启动时异步回源 IndexedDB）；
   // 冻结基准随笔迹一并恢复
@@ -314,27 +287,15 @@ export function MaterialAnnotationOverlay({
     };
   }, [attemptId, storeKey, setStrokesBoth]);
 
-  // 圈画态入口对齐：已有冻结基准（本机或他实例已存）立即采用挂框；无基准
-  // 旧笔迹（冻结机制落盘前的数据）按当前活排版收养基准；干净材料不冻结，
-  // 保持活排版（全组材料不因一点圈画被接管）
+  // 同材料的其他实例已存基准时采用原基准；缺基准旧稿不可凭当前排版补造。
   useEffect(() => {
     if (!isAnnotationActive || frozenRef.current !== null) return;
     const base = draftStore.getMaterialInkBase(attemptId, storeKey);
     if (base !== null) {
       frozenRef.current = base;
       setFrozen(base);
-      return;
     }
-    if (strokes.length > 0 && liveSize.width > 0) {
-      const adopted: MaterialInkBaseMeta = {
-        cssWidth: liveSize.width,
-        ...(liveSize.height > 0 ? { cssHeight: liveSize.height } : {}),
-      };
-      frozenRef.current = adopted;
-      setFrozen(adopted);
-      draftStore.saveMaterialInkBase(attemptId, storeKey, adopted);
-    }
-  }, [isAnnotationActive, attemptId, storeKey, strokes.length, liveSize]);
+  }, [isAnnotationActive, attemptId, storeKey]);
 
   // 首笔就绪门控：无基准材料的圈画态等材料表面稳定（字体/图片/连续 3 帧），
   // 未就绪禁墨并提示；量活排版壳而非根（辅助按钮不进测量面）
@@ -380,15 +341,14 @@ export function MaterialAnnotationOverlay({
   }, [drawCurrent]);
 
   // 绘制层：复用回放画布（canvas 创建/DPR 上限/ResizeObserver 重画一体）。
-  // 依赖输入层元素而非仅挂载时读一次 ref：冻结框切换会重挂输入层
+  // 依赖输入层元素而非仅挂载时读一次 ref；固定框切换不重挂输入层
   useEffect(() => {
     const el = inputElement;
     if (!el) return;
     try {
       const replay = createAtramentReplayCanvas(el);
       replayRef.current = replay;
-      // 挂载即画一帧：重挂后的新画布须立即恢复既有笔迹（stroke 变动效应
-      // 不会为同一份 strokes 再触发）；不匹配隐藏态画空帧
+      // 挂载即恢复既有笔迹，缺基准旧稿不叠在未经核验的正文上
       drawCurrent();
     } catch (err) {
       // 无 2d 上下文（极老浏览器）：保留材料正文可读，圈画层静默不可用
@@ -417,7 +377,7 @@ export function MaterialAnnotationOverlay({
   }, [strokes, scheduleRedraw, cancelRedraw]);
   useEffect(() => {
     if (!showInk) {
-      // 隐藏态立即清屏，不排队 rAF（排版不匹配时禁止旧笔迹叠新排版）
+      // 缺基准旧稿立即清屏，不叠在无法核验的当前排版上
       replayRef.current?.drawFrame([], []);
       return;
     }
@@ -439,7 +399,6 @@ export function MaterialAnnotationOverlay({
         draftStore.removeMaterialInkBase(attemptId, storeKey);
         frozenRef.current = null;
         setFrozen(null);
-        setReviewMode(false);
         return;
       }
       const base = frozenRef.current;
@@ -493,12 +452,12 @@ export function MaterialAnnotationOverlay({
 
   const beginInteraction = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      // 就绪门控：无基准等首笔就绪；有基准等挂框就绪且无高度漂移（晚到
-      // 图片会把内容下推，冻结基准与笔迹一起错位）
+      // 就绪门控：旧稿缺基准保稿；新材料等资源稳定，已有基准核验布局。
+      if (missingBaseRef.current) return;
       if (frozenRef.current === null && !surfaceReadyRef.current) return;
       if (
         frozenRef.current !== null &&
-        (!frameSurfaceReadyRef.current || heightDriftRef.current)
+        (!frameSurfaceReadyRef.current || layoutDriftRef.current)
       ) {
         return;
       }
@@ -667,8 +626,8 @@ export function MaterialAnnotationOverlay({
   // 窗口失焦与尺寸变化（分栏拖拽/排版切换/窗口缩放/晚到图片下推）：
   // 在途一笔按已采样收笔——指针→逻辑的换算矩形随布局变化，一笔不混用
   // 两个排版基准（「布局变化先收笔」约定）；列宽变化同时复位 1:1 放大。
-  // 双观察：根节点=列宽（缩放比/放大复位/回看自动退出）；活排版壳=材料
-  // 正文实测（匹配自显/首笔捕获兜底/就绪门控）——辅助按钮在壳外，
+  // 双观察：根节点=列宽（缩放比/放大复位）；正文壳=材料
+  // 正文实测（首笔捕获兜底/就绪门控）——辅助按钮在壳外，
   // 量高不被按钮污染
   useEffect(() => {
     const feedInterrupt = () => {
@@ -724,22 +683,28 @@ export function MaterialAnnotationOverlay({
     };
   }, [applyDecisions]);
 
-  // 冻结框内容高跟踪：transform 不参与布局，sizer 须以「内容高 × 缩放」
-  // 显式占位（contentRect 为未缩放布局高）
+  // 冻结框观察使用未缩放尺寸：既供占位，也核验资源变化；尺寸变化先收笔。
   useEffect(() => {
-    if (!frameMode) return;
+    if (!frameMounted) return;
     const el = frameRef.current;
     if (!el) return;
-    let lastHeight = -1;
+    let previous = { width: 0, height: 0 };
     const observer = new ResizeObserver((entries) => {
-      const height = entries[0]?.contentRect.height ?? 0;
-      if (height <= 0 || height === lastHeight) return;
-      lastHeight = height;
-      setFrameHeight(height);
+      const rect = entries[0]?.contentRect;
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      if (rect.width === previous.width && rect.height === previous.height)
+        return;
+      previous = { width: rect.width, height: rect.height };
+      const result = advancePointerMachine(machineRef.current, {
+        kind: "layoutchange",
+      });
+      machineRef.current = result.state;
+      applyDecisions(result.decisions);
+      setFrameSize(previous);
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [frameMode]);
+  }, [frameMounted, applyDecisions]);
 
   // 挂框就绪门控（D）：有基准挂框后材料表面仍需稳定——晚到图片会把冻结
   // 框内容推高（先量到的高度作废）；稳定前与高度漂移期间禁墨，与「不匹配
@@ -759,19 +724,6 @@ export function MaterialAnnotationOverlay({
       active = false;
     };
   }, [frameMounted, isAnnotationActive]);
-
-  // 只读回看自动退出（E）：框内量不到活排版，用列宽回冻结宽（±1px）作
-  // 信号——列宽回到基准宽即活排版与基准一致，自动回活排版不滞留
-  useEffect(() => {
-    if (!reviewMode || isAnnotationActive) return;
-    if (
-      frozen !== null &&
-      columnSize.width > 0 &&
-      Math.abs(columnSize.width - frozen.cssWidth) <= 1
-    ) {
-      setReviewMode(false);
-    }
-  }, [reviewMode, isAnnotationActive, columnSize.width, frozen]);
 
   // 会话输入偏好切换（笔写/手指书写）：在途笔先收，再按新模式重建状态机
   useEffect(() => {
@@ -794,7 +746,7 @@ export function MaterialAnnotationOverlay({
       onLostPointerCapture={(e) => handlePointerEnd(e, "lostpointercapture")}
       style={{
         // 输入门控：非标注态不拦截；标注态下未就绪（首笔/挂框门控）或
-        // 挂框高度漂移期间不拦截（与「不匹配禁墨」同口径）
+        // 挂框宽高漂移期间不拦截（与「不匹配禁墨」同口径）
         pointerEvents: inputEnabled ? "auto" : "none",
         // 会话输入偏好：pen=手指滚动（pan-y）、finger=手指书写（none），
         // 与题面圈画 touchActionForInput 同源
@@ -820,7 +772,7 @@ export function MaterialAnnotationOverlay({
       data-stroke-count={strokes.length}
       data-ink-visible={showInk}
       data-ink-ready={inputEnabled || !isAnnotationActive}
-      className={`relative min-w-0 ${frameMode ? "overflow-x-auto" : ""}`}
+      className={`relative min-w-0 ${frameMounted ? "overflow-x-auto" : ""}`}
     >
       <div
         data-slot="material-ink-frame-sizer"
@@ -829,7 +781,8 @@ export function MaterialAnnotationOverlay({
           frameMounted
             ? {
                 width: frozen.cssWidth * scale,
-                height: frameHeight > 0 ? frameHeight * scale : undefined,
+                height:
+                  frameSize.height > 0 ? frameSize.height * scale : undefined,
               }
             : undefined
         }
@@ -858,12 +811,13 @@ export function MaterialAnnotationOverlay({
           </div>
         </div>
       </div>
-      {heightDrift && (
+      {layoutDrift && (
         <p
           role="note"
           className="mt-2 text-xs text-amber-600 dark:text-amber-400"
         >
-          材料排版与圈画时略有差异，笔迹位置可能偏移
+          材料尺寸与圈画基准相差超过
+          10px，已暂停圈画并保留原稿；请检查材料内容或图片加载情况。
         </p>
       )}
       <div className="mt-2 flex flex-wrap gap-2">
@@ -878,36 +832,23 @@ export function MaterialAnnotationOverlay({
             {expanded ? "适应宽度" : "放大材料"}
           </Button>
         )}
-        {reviewMode && !isAnnotationActive && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-11"
-            onClick={() => setReviewMode(false)}
-          >
-            回到当前排版查看
-          </Button>
-        )}
-        {frozen !== null &&
-          !isAnnotationActive &&
-          !frameMode &&
-          !layoutMatch &&
-          liveSize.width > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-11"
-              onClick={() => setReviewMode(true)}
-            >
-              按圈画时排版查看
-            </Button>
-          )}
       </div>
-      {isAnnotationActive && frozen === null && !surfaceReady && (
-        <p role="status" className="mt-2 text-xs text-muted-foreground">
-          正在准备圈画…
+      {missingBase && (
+        <p
+          role="note"
+          className="mt-2 text-xs text-amber-600 dark:text-amber-400"
+        >
+          旧材料笔迹缺少原排版基准，无法确认位置；已保留原稿并暂停圈画。
         </p>
       )}
+      {isAnnotationActive &&
+        !missingBase &&
+        frozen === null &&
+        !surfaceReady && (
+          <p role="status" className="mt-2 text-xs text-muted-foreground">
+            正在准备圈画…
+          </p>
+        )}
     </div>
   );
 }

@@ -20,7 +20,7 @@ import {
   NotebookPen,
   Pencil,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -30,7 +30,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AnnotationExportDialog } from "@/features/annotation/AnnotationExportDialog";
-import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { ongoingAnnotationFilename } from "@/features/annotation/annotation-composite";
 import { getAnnotationRecord } from "@/features/annotation/annotation-store";
 import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
@@ -128,6 +127,7 @@ function QuestionMeta({
     /** 材料入口按钮文案（缺省「查看共享材料」；题级装配传「查看本题材料」） */
     openMaterialLabel?: string;
     annotationOpen: boolean;
+    annotationUnavailable?: string;
     paperOpen: boolean;
     paperEnabled: boolean;
     /** 已提交只读：圈画与草稿/手写编辑入口一并隐藏（更多菜单保留） */
@@ -211,7 +211,8 @@ function QuestionMeta({
             type="button"
             variant="ghost"
             className="h-11 min-w-11 gap-1.5 px-2"
-            title="圈画题干"
+            title={tools.annotationUnavailable ?? "圈画题干"}
+            disabled={tools.annotationUnavailable !== undefined}
             aria-label={`第 ${index + 1} 题圈画题干${tools.annotationOpen ? "（标画中）" : ""}${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
             aria-expanded={tools.annotationOpen}
             data-annotation-trigger
@@ -436,7 +437,6 @@ export function AttemptQuestionCard({
     };
     void openPaperWithPosition(request, open);
   };
-  const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationHidden, setAnnotationHidden] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const layoutPreference = useNoteLayoutPreference();
@@ -472,10 +472,6 @@ export function AttemptQuestionCard({
   const drawing =
     editor?.active?.questionId === question.id &&
     editor.active.kind === "annotation";
-  useEffect(() => {
-    if (inlineQuestion !== null && annotationOpen && !drawing)
-      setAnnotationOpen(false);
-  }, [inlineQuestion, annotationOpen, drawing]);
   const annotationRecord = useAnnotationRecord(attemptId ?? "", question.id);
   const noteRecord = useNoteRecord(attemptId ?? "", question.id);
   const scratchContext = renderScratchContext(question);
@@ -507,8 +503,6 @@ export function AttemptQuestionCard({
           ref={annotationOverlay}
           attemptId={attemptId}
           question={inlineQuestion}
-          answer={answer}
-          onAnswer={onAnswer}
           label={`第 ${index + 1} 题`}
           hidden={annotationHidden}
           annotationReadOnly={readOnly}
@@ -585,34 +579,6 @@ export function AttemptQuestionCard({
             onUnlocked={onHintUnlocked}
           />
         )}
-
-      {/* T6R.20 题干标注（圈画题干）：所有题型的附加折叠区——标注模式外
-          保留原作答控件（方案 §10）；base ready 才挂画布（层内 gate） */}
-      {attemptId !== undefined &&
-        !readOnly &&
-        (inlineQuestion === null || annotationOpen) && (
-          <AnnotationLayer
-            attemptId={attemptId}
-            questionId={question.id}
-            ariaPrefix={`第 ${index + 1} 题`}
-            open={annotationOpen}
-            onOpenChange={async (open) => {
-              if (!open && editor && !(await editor.request(null))) return;
-              setAnnotationOpen(open);
-            }}
-            showTrigger={false}
-          />
-        )}
-      {inlineQuestion !== null && annotationOpen && drawing && (
-        <div
-          data-slot="attempt-bottom-bar"
-          className="fixed inset-x-0 bottom-0 z-30 flex min-h-16 items-center justify-center border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
-        >
-          <Button className="h-11" onClick={() => void editor?.request(null)}>
-            作答
-          </Button>
-        </div>
-      )}
     </>
   );
 
@@ -663,7 +629,13 @@ export function AttemptQuestionCard({
                         : {}),
                     }
                   : {}),
-                annotationOpen: annotationOpen || drawing,
+                annotationOpen: drawing,
+                ...(inlineQuestion === null
+                  ? {
+                      annotationUnavailable:
+                        "当前题目缺少冻结版本或编辑协调器，无法圈画",
+                    }
+                  : {}),
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,
                 editLocked: readOnly,
@@ -681,21 +653,14 @@ export function AttemptQuestionCard({
                   noteRecord?.denied != null ||
                   noteRecord?.local === "failed",
                 toggleAnnotation: () => {
-                  if (inlineQuestion === null)
-                    setAnnotationOpen((value) => !value);
-                  else if (drawing) void editor?.request(null);
-                  else if (annotationOpen) setAnnotationOpen(false);
+                  if (drawing) void editor?.request(null);
                   else {
                     setAnnotationHidden(false);
                     void annotationOverlay.current?.start();
                   }
                 },
                 cancelAnnotation: () => {
-                  if (!editor) setAnnotationOpen(false);
-                  else
-                    void editor.request(null).then((closed) => {
-                      if (closed) setAnnotationOpen(false);
-                    });
+                  void editor?.request(null);
                 },
                 togglePaper: () => setNoteOpen((value) => !value),
                 ...(inlineQuestion
@@ -748,10 +713,11 @@ export function AttemptQuestionCard({
             const session = currentAnnotationSession();
             const noteSession = currentNoteSession();
             const draftEpoch = getDraftSessionEpoch();
-            const surface = articleRef.current?.querySelector<HTMLElement>(
-              '[data-slot="question-surface"]',
-            );
-            if (!session || !noteSession || !surface)
+            const surface =
+              articleRef.current?.querySelector<HTMLElement>(
+                '[data-slot="question-surface"]',
+              ) ?? null;
+            if (!session || !noteSession)
               throw new Error("题面尚未就绪，请重试");
             const guard = () => {
               if (

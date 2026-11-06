@@ -127,7 +127,7 @@ test(
     await drawStrokeWithPointerEvents(
       card.locator('canvas[data-slot="annotation-canvas"]'),
     );
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await more.click();
     await page.getByRole("menuitem", { name: "隐藏标画" }).click();
     await more.click();
