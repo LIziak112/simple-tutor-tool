@@ -146,6 +146,13 @@ const kitCopies: ReadonlyArray<{ file: string; content: string }> = [
     file: "schema/content.json",
     content: await readFile(join(outDir, "schema", "content.json"), "utf8"),
   },
+  {
+    file: "schema/ai-reply-check.json",
+    content: await readFile(
+      join(outDir, "schema", "ai-reply-check.json"),
+      "utf8",
+    ),
+  },
   // 能力清单按清单/方案口径放 dsl-kit 根路径（与 schema/ 子目录的 content.json 不同）
   { file: "capabilities.json", content: capabilitiesJson },
 ];
