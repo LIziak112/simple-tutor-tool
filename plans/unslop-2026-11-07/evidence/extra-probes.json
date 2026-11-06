@@ -1,0 +1,150 @@
+[
+  {
+    "case": "delete-dialog",
+    "route": "/t/shared",
+    "tabs": [
+      {
+        "text": "取消",
+        "inside": true
+      },
+      {
+        "text": "确认删除",
+        "inside": true
+      },
+      {
+        "text": "跳到主要内容\n\nOwnClass\n\n教师工作台\n\n教学\n\n资源库\n共享资源\n课程\n学生\n作",
+        "inside": false
+      },
+      {
+        "text": "跳到主要内容",
+        "inside": false
+      }
+    ],
+    "escapeStillOpen": 1
+  },
+  {
+    "case": "delete-dialog",
+    "route": "/a/shared-files",
+    "tabs": [
+      {
+        "text": "取消",
+        "inside": true
+      },
+      {
+        "text": "确认删除",
+        "inside": true
+      },
+      {
+        "text": "跳到主要内容\n\nOwnClass\n\n系统管理工作台\n\n系统\n\n概览\n教师管理\n共享文件\n返",
+        "inside": false
+      },
+      {
+        "text": "跳到主要内容",
+        "inside": false
+      }
+    ],
+    "escapeStillOpen": 1
+  },
+  {
+    "case": "analytics-position",
+    "value": {
+      "focusTop": 885.5,
+      "matrixTop": 1741.5,
+      "headerBottom": 268.5,
+      "filterHeight": 96
+    }
+  },
+  {
+    "case": "course-progress-motion",
+    "motion": "no-preference",
+    "value": {
+      "property": "width",
+      "duration": "0.15s"
+    }
+  },
+  {
+    "case": "course-progress-motion",
+    "motion": "reduce",
+    "value": {
+      "property": "width",
+      "duration": "0.15s"
+    }
+  },
+  {
+    "case": "lesson-render",
+    "width": 1440,
+    "path": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a/lesson",
+    "scrollWidth": 1440
+  },
+  {
+    "case": "lesson-render",
+    "width": 1440,
+    "path": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a/lesson/run",
+    "scrollWidth": 1440
+  },
+  {
+    "case": "lesson-render",
+    "width": 768,
+    "path": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a/lesson",
+    "scrollWidth": 768
+  },
+  {
+    "case": "lesson-render",
+    "width": 768,
+    "path": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a/lesson/run",
+    "scrollWidth": 768
+  },
+  {
+    "case": "lesson-render",
+    "width": 390,
+    "path": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a/lesson",
+    "scrollWidth": 390
+  },
+  {
+    "case": "lesson-render",
+    "width": 390,
+    "path": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a/lesson/run",
+    "scrollWidth": 390
+  },
+  {
+    "case": "lesson-restart-dialog",
+    "tabs": [
+      {
+        "text": "第 1 次\n进行中\n未交卷",
+        "inside": false
+      },
+      {
+        "text": "先不做",
+        "inside": true
+      },
+      {
+        "text": "开始新一次",
+        "inside": true
+      },
+      {
+        "text": "跳到主内容\n陈\n首页\n作业\n课程\n错题本\n记录\n\n课程：初一数学·上学期\n\n第1讲 有理数\n共 0 题\n继续作答\n重新开",
+        "inside": false
+      },
+      {
+        "text": "跳到主内容",
+        "inside": false
+      }
+    ],
+    "escapeStillOpen": 1
+  },
+  {
+    "case": "unit-render",
+    "width": 1440,
+    "scrollWidth": 1440
+  },
+  {
+    "case": "unit-render",
+    "width": 768,
+    "scrollWidth": 768
+  },
+  {
+    "case": "unit-render",
+    "width": 390,
+    "scrollWidth": 390
+  }
+]

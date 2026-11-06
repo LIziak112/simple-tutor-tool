@@ -1,0 +1,906 @@
+[
+  {
+    "role": "teacher",
+    "route": "/t/students",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/library",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/courses",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/assignments",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/data",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/insights",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/insights/questions",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/export",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/shared",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/connect",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=ai",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=backup",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=account",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/import",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a/teachers",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a/shared-files",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/library",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/courses",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/assignments",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/data",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/insights",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/insights/questions",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/export",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/shared",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/connect",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=ai",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=backup",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=account",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/import",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a/teachers",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a/shared-files",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students/c84968ee-590c-4bb1-a6bd-8082bba699ed",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students/fd94d342-95f7-4409-8308-460c9037895e",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students/3ef9d8fd-0825-44b5-8758-8272fc175bcb",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/library",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/courses",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/assignments",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/data",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/insights",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/insights/questions",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/export",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/shared",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/connect",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=ai",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=backup",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/settings?section=account",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/import",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a/teachers",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/a/shared-files",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students/c84968ee-590c-4bb1-a6bd-8082bba699ed",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students/fd94d342-95f7-4409-8308-460c9037895e",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "teacher",
+    "route": "/t/students/3ef9d8fd-0825-44b5-8758-8272fc175bcb",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/home",
+    "width": 1440,
+    "h1": 0,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/wrong",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/records",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings/ai",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings/ink-feel",
+    "width": 1440,
+    "h1": 1,
+    "scrollWidth": 1440,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/home",
+    "width": 768,
+    "h1": 0,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/wrong",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/records",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings/ai",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings/ink-feel",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments/927f76b0-3b9b-475b-b59d-d4ae27e4fd69",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses/24993439-c87c-46f7-b773-787099ee06b3",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses/d1bf50ff-f844-4ea8-8ab3-010394dfc658",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments/927f76b0-3b9b-475b-b59d-d4ae27e4fd69?returnTo=%2Fs%2Fassignments",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/9a5ff26e-1fc9-4241-a2dc-99b5070657c6?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/df916cf0-fb1b-4f74-a8e8-97f76a3bf6e0?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/c515abd2-284e-4870-8ad2-f6149973e939?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/07821a8a-c358-4aaa-8922-0e1b2281238d?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/4189b824-c473-4a31-bb15-d9c5eca9ad31?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/c01f26d0-aba1-4661-bcd7-7f6691ce447e?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/cd27c8c4-47c6-4676-9e0f-82f6629194c2?returnTo=%2Fs%2Frecords",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a?courseId=24993439-c87c-46f7-b773-787099ee06b3",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures/6d57115f-e9b3-49c4-8d93-16f9f3fcd246?courseId=d1bf50ff-f844-4ea8-8ab3-010394dfc658",
+    "width": 768,
+    "h1": 1,
+    "scrollWidth": 768,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/home",
+    "width": 390,
+    "h1": 0,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/wrong",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/records",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings/ai",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/settings/ink-feel",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments/927f76b0-3b9b-475b-b59d-d4ae27e4fd69",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses/24993439-c87c-46f7-b773-787099ee06b3",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/courses/d1bf50ff-f844-4ea8-8ab3-010394dfc658",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/assignments/927f76b0-3b9b-475b-b59d-d4ae27e4fd69?returnTo=%2Fs%2Fassignments",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/9a5ff26e-1fc9-4241-a2dc-99b5070657c6?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/df916cf0-fb1b-4f74-a8e8-97f76a3bf6e0?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/c515abd2-284e-4870-8ad2-f6149973e939?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/07821a8a-c358-4aaa-8922-0e1b2281238d?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/4189b824-c473-4a31-bb15-d9c5eca9ad31?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/c01f26d0-aba1-4661-bcd7-7f6691ce447e?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/attempts/cd27c8c4-47c6-4676-9e0f-82f6629194c2?returnTo=%2Fs%2Frecords",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures/bd7e3bfe-a962-44c4-8b9b-fcbc3984ab6a?courseId=24993439-c87c-46f7-b773-787099ee06b3",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  },
+  {
+    "role": "student",
+    "route": "/s/lectures/6d57115f-e9b3-49c4-8d93-16f9f3fcd246?courseId=d1bf50ff-f844-4ea8-8ab3-010394dfc658",
+    "width": 390,
+    "h1": 1,
+    "scrollWidth": 390,
+    "error": null
+  }
+]

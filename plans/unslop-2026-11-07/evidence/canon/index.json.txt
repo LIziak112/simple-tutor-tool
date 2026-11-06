@@ -1,0 +1,179 @@
+{
+  "checksum": "2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f",
+  "payload": {
+    "classes": {
+      "bad-tone": {
+        "definition": "Dishonest or disrespectful communication with a person: pressure, manipulation, dark patterns or false signals.",
+        "title": "Bad tone"
+      },
+      "instruction": {
+        "definition": "How the agent works: permissions, scope and the order of checks. It is not directly visible on screen and is verified through the process.",
+        "title": "Instruction"
+      },
+      "project-decision": {
+        "definition": "A specific approved decision of one product that results are compared against. Deviating from it is slop under US-008. Project decisions stay with their project and are not part of this public canon.",
+        "title": "Project decision"
+      },
+      "slop": {
+        "definition": "A result of missing judgment: the agent substituted a default, broke something already approved, or left a defect or unfinished work.",
+        "title": "Slop"
+      }
+    },
+    "kind": "unslop-canon-index",
+    "license": "CC-BY-4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "publishedAt": "2026-11-06T00:00:00Z",
+    "schemaVersion": 1,
+    "source": "UNSLOP",
+    "topics": {
+      "copy": {
+        "bytes": 7018,
+        "checksum": "eec7da27ed58b98e34c2b6c975091e99637d303d751d80d37bc904c9f7be0d5a",
+        "globs": [
+          "**/*.{html,jsx,tsx,vue,svelte}",
+          "**/*.md",
+          "**/*.{js,ts}"
+        ],
+        "ruleIds": [
+          "DEC-5",
+          "KR-20",
+          "LK-01",
+          "US-009",
+          "XP-22a",
+          "XP-22b",
+          "XP-23",
+          "XP-33",
+          "XP-34"
+        ],
+        "titles": {
+          "DEC-5": "No fabricated proof",
+          "KR-20": "Machine formats translated for people",
+          "LK-01": "No false urgency",
+          "US-009": "No agent or process service notes on production pages",
+          "XP-22a": "Compare products at the level of intent",
+          "XP-22b": "Only verified claims about competitors",
+          "XP-23": "Use the approved positioning in comparisons",
+          "XP-33": "No placeholder or service text in production",
+          "XP-34": "Stage shows exactly what production will show"
+        }
+      },
+      "interface": {
+        "bytes": 41109,
+        "checksum": "602ce866c9eb622cd5c559ad77c2ce512b63154c82d917509062a7e7faf0eb76",
+        "globs": [
+          "**/*.{css,scss}",
+          "**/*.{html,jsx,tsx,vue,svelte}"
+        ],
+        "ruleIds": [
+          "C-11",
+          "DEC-1",
+          "DEC-2",
+          "DEC-3",
+          "DEC-4",
+          "DEC-6",
+          "DEC-7",
+          "DEC-8",
+          "DEC-9",
+          "J-12",
+          "KR-1",
+          "KR-10",
+          "KR-11",
+          "KR-13",
+          "KR-15",
+          "KR-16",
+          "KR-18",
+          "KR-19",
+          "KR-21",
+          "KR-3",
+          "KR-3d",
+          "KR-4",
+          "KR-5",
+          "KR-7",
+          "KR-8",
+          "KR-9",
+          "NR-02",
+          "ST-1",
+          "ST-11",
+          "ST-13",
+          "ST-2",
+          "ST-3",
+          "ST-4",
+          "ST-5",
+          "TY-1",
+          "XP-18",
+          "XP-31"
+        ],
+        "titles": {
+          "C-11": "Prose on all-caps display pages stays in normal case",
+          "DEC-1": "Structure before decoration",
+          "DEC-2": "Lines only where structure needs them",
+          "DEC-3": "Cards are not the default container",
+          "DEC-4": "Shadows only for real layers",
+          "DEC-6": "Muted text needs a role and contrast",
+          "DEC-7": "Labels above headings only as a system",
+          "DEC-8": "No identical feature grids with icon tiles",
+          "DEC-9": "Decorative gradients and glow only from the design system",
+          "J-12": "Disclosure needs a visible indicator",
+          "KR-1": "Concentric radii for nested shapes",
+          "KR-10": "Press feedback scales to exactly 0.96",
+          "KR-11": "Icon stroke matches the adjacent text",
+          "KR-13": "Interactive motion can be interrupted",
+          "KR-15": "No animation on first render",
+          "KR-16": "Duration follows the weight of the action",
+          "KR-18": "Smooth scrolling without breaking scripted scroll",
+          "KR-19": "Monospace type only where explicitly allowed",
+          "KR-21": "Hover highlight needs a click",
+          "KR-3": "Touch targets on touch screens",
+          "KR-3d": "Desktop hit areas for key actions",
+          "KR-4": "Optical, not arithmetic, centering",
+          "KR-5": "Shadow for layers, border for state",
+          "KR-7": "Line breaks follow the sentence",
+          "KR-8": "Font smoothing chosen per typeface and size",
+          "KR-9": "Image outlines only as an option for content images",
+          "NR-02": "Icon transitions transform instead of swapping",
+          "ST-1": "Icons come from one chosen set",
+          "ST-11": "Emoji are content, not interface icons",
+          "ST-13": "No invented logo",
+          "ST-2": "AI features are named by what they do",
+          "ST-3": "No near-touching edges",
+          "ST-4": "No layout jumps on state change",
+          "ST-5": "Sentence case by default",
+          "TY-1": "Plain font numerals in regular text",
+          "XP-18": "No gray text on colored backgrounds",
+          "XP-31": "Indented lists keep their markers"
+        }
+      },
+      "process": {
+        "always": true,
+        "bytes": 7977,
+        "checksum": "157b327696a694fe1b7d7b4c2be5893f70cfe0a41fa9e9c36b9fb719cc9198a9",
+        "globs": [],
+        "ruleIds": [
+          "UR-1",
+          "US-001",
+          "US-002",
+          "US-003",
+          "US-004",
+          "US-005",
+          "US-006",
+          "US-007",
+          "US-008",
+          "US-010"
+        ],
+        "titles": {
+          "UR-1": "Ship only requested content",
+          "US-001": "Explicit requirements outrank generic style lists",
+          "US-002": "Needed additions are proposed; execution is proactive",
+          "US-003": "Verify the actual result before handoff",
+          "US-004": "Fix systemic issues at the design-system source",
+          "US-005": "Design-system changes inside authorized work",
+          "US-006": "Visual recipes stay project-scoped",
+          "US-007": "Keep provenance of examples and claims",
+          "US-008": "Leave everything outside the change intact",
+          "US-010": "Product-wide removal covers every occurrence"
+        }
+      }
+    },
+    "version": "public-2026.11.06-1"
+  }
+}

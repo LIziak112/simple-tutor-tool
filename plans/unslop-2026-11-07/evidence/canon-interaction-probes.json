@@ -1,0 +1,55 @@
+[
+  {
+    "case": "drawer-fast-reverse",
+    "before": {
+      "time": 1687.3999999761581,
+      "x": -306.30743408203125,
+      "animation": "enter",
+      "duration": "0.5s"
+    },
+    "after": {
+      "time": 1709.7999999523163,
+      "x": -2.3070526123046875,
+      "animation": "exit",
+      "duration": "0.3s"
+    }
+  },
+  {
+    "case": "menu-reduce",
+    "value": {
+      "html": "<div data-side=\"bottom\" data-align=\"center\" role=\"menu\" aria-orientation=\"vertical\" data-state=\"open\" data-radix-menu-content=\"\" dir=\"ltr\" id=\"radix-_r_7_\" aria-labelledby=\"radix-_r_6_\" data-slot=\"dropdown-menu-content\" class=\"z-50 min-w-40 overflow-hidden rounded-lg border border-border bg-card p-1 text-sm shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open",
+      "animation": "enter",
+      "duration": "0.2s",
+      "transform": "matrix3d(0.955054, 0, 0, 0, 0, 0.955054, 0, 0, 0, 0, 0.955054, 0, 0, 0, 0, 1)"
+    }
+  },
+  {
+    "case": "more-presets-indicator",
+    "closed": {
+      "html": "<summary class=\"flex min-h-11 cursor-pointer items-center rounded-lg border border-border px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring\">更多问法</summary>",
+      "display": "flex",
+      "listStyle": "disclosure-closed",
+      "before": "none",
+      "after": "none",
+      "svg": 0,
+      "open": false
+    },
+    "opened": {
+      "html": "<summary class=\"flex min-h-11 cursor-pointer items-center rounded-lg border border-border px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring\">更多问法</summary>",
+      "display": "flex",
+      "listStyle": "disclosure-open",
+      "before": "none",
+      "after": "none",
+      "svg": 0,
+      "open": true
+    }
+  },
+  {
+    "case": "press-style",
+    "value": {
+      "translate": "0px 1px",
+      "scale": "none",
+      "transform": "none"
+    }
+  }
+]

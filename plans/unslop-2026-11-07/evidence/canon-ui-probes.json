@@ -1,0 +1,124 @@
+[
+  {
+    "case": "save-idle",
+    "value": {
+      "x": 1186,
+      "y": 612.6875,
+      "width": 98,
+      "height": 44,
+      "transform": "none",
+      "animation": "none",
+      "duration": "0s",
+      "text": "保存更改"
+    }
+  },
+  {
+    "case": "button-pressed",
+    "value": {
+      "x": 1186,
+      "y": 613.6875,
+      "width": 98,
+      "height": 44,
+      "transform": "none",
+      "animation": "none",
+      "duration": "0s",
+      "text": "保存更改"
+    }
+  },
+  {
+    "case": "save-pending",
+    "value": {
+      "x": 1164,
+      "y": 612.6875,
+      "width": 120,
+      "height": 44,
+      "transform": "none",
+      "animation": "none",
+      "duration": "0s",
+      "text": "保存更改"
+    }
+  },
+  {
+    "case": "ordinary-monospace",
+    "elements": [
+      {
+        "text": "登录名：陈小明",
+        "font": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+        "cls": "rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+      },
+      {
+        "text": "登录名：李小红",
+        "font": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+        "cls": "rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+      },
+      {
+        "text": "登录名：王小刚",
+        "font": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+        "cls": "rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+      }
+    ]
+  },
+  {
+    "case": "drawer-interruption",
+    "openState": {
+      "x": -302.4864196777344,
+      "y": 0,
+      "width": 320,
+      "height": 844,
+      "transform": "matrix(1, 0, 0, 1, -302.486, 0)",
+      "animation": "enter",
+      "duration": "0.5s",
+      "text": "OwnClass 导航\n\n教学\n\n资源库\n共享资源\n课程\n学生\n作业\n\n分析\n\n作答记录\n导出中心\n\n系统\n\n连接 AI\n设置"
+    },
+    "closeState": {
+      "x": -17.5191650390625,
+      "y": 0,
+      "width": 320,
+      "height": 844,
+      "transform": "matrix(1, 0, 0, 1, -17.5192, 0)",
+      "animation": "exit",
+      "duration": "0.3s",
+      "text": "OwnClass 导航\n\n教学\n\n资源库\n共享资源\n课程\n学生\n作业\n\n分析\n\n作答记录\n导出中心\n\n系统\n\n连接 AI\n设置"
+    }
+  },
+  {
+    "case": "reduced-motion-menu",
+    "value": {
+      "probeError": "locator.evaluate: Timeout 8000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-slot=dropdow"
+    }
+  },
+  {
+    "case": "export-content",
+    "text": "导出给 AI\n\n按五个步骤勾选范围与内容，生成一份可直接交给 AI 的学情数据包 （zip：数据 + 提示词 + 说明文件）。\n\n① 范围→\n② 内容→\n③ 目标→\n④ 隐私→\n⑤ 预览\n教学内容\n\n讲义（候选集为资源库全部讲义；勾选 = 纳入导出，小节不勾 = 仅大纲）\n\nUI审查讲练\n第1讲 有理数\n第2讲 数轴\n第2讲 数轴\n题目（三层递进，单选）\n不包含题目\n仅题干（题干中的答案标记会隐去）\n题干 + 参考答案\n题干 + 参考答案 + 解析\n\n题目取范围内作答的交卷时快照；层级越高包含越多（answer 含题干与 参考答案，solution 再加详解）。\n\n学生作答\n逐题答案与对错判定、教师评语\n每题的学生答案、判定结果与你的批注评语（原文）\n作答汇总（题数、状态、历次）\n每次作答的答对数量与总题数一览，可看历次进步\n手写过程 PNG（默认不勾选）\n手写题的过程图片，供多模态模型分析书写与步骤\n学习痕迹\n每题派生指标与讲义阅读地图\n有效用时、提示数、改答次数、离线作答占比等过程指标 + 讲义阅读 地图（均为聚合派生结果，不含原始事件记录）\n手写证据（v2 数据包）\n手写原稿与订正图片（v2 数据包）\n按题收录学生手写原稿、封存订正与补充稿的真实切片图片附件（面向多模态 AI 模型）\n\n历次口径（固定）：数据包收录所选范围内全部历次已交卷作答（带第几次作答与「首次」标记，可看重做进步）；未交卷的草稿不收录。\n\n下一步需要至少勾选一个内容模块（讲义 / 题目 / 逐题作答 / 作答汇总 / 学习痕迹；手写 PNG 只是附件开关）。\n\n取消\n上一步\n下一步"
+  },
+  {
+    "case": "ai-trigger",
+    "value": {
+      "html": "<button data-slot=\"button\" data-variant=\"ghost\" data-size=\"default\" class=\"group/button inline-flex items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 motion-safe:active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&amp;_svg]:pointer-events-none [&amp;_svg]:shrink-0 [&amp;_svg:not([class*='size-'])]:size-4 hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 gap-1.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 size-11 shrink-0 p-0\" data-ai-trigger-question=\"有理数随堂练习-1\" type=\"button\" aria-label=\"AI 助教\" title=\"AI 助教\" aria-expanded=\"false\" aria-pressed=\"false\" data-ai-selected=\"false\" aria-controls=\"_r_6_\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-sparkles lucide-stars size-5\" aria-hidden=\"true\"><path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\"></path><path d=\"M20 2v4\"></path><path d=\"M22 4h-4\"></path><circle cx=\"4\" cy=\"20\" r=\"2\"></circle></svg></button>",
+      "rect": {
+        "x": 273,
+        "y": 86,
+        "width": 44,
+        "height": 44,
+        "top": 86,
+        "right": 317,
+        "bottom": 130,
+        "left": 273
+      }
+    }
+  },
+  {
+    "case": "ai-open-no-dispatch",
+    "text": "周末加练\n\n第 1 题\n\n判断\n已填写\n\n0\n0 是正数。（　）\n\n对\n错\nAI 助教\n第 1 题\n放大阅读\n\n当前：开放伴学\n\n默认：未配置\n\n去设置连接\n显示方式设置\n\n卡住了也没关系。先拿一点提示，再自己试一步。\n\n启发下一步\n查当前步骤\n更多问法\n\n本次会发送：题目与当前作答\n\n问法：请给我一点提示，帮助我自己试出下一步。\n\n补充问题\n发送\n圈画\n草稿\n\n第 2 题\n\n单选\n未填写\n\n−\n5\n−5 的相反数是（　）\n\n选项\nA\n\n−\n5\n−5\n\n选项\nB\n\n5\n5\n\n选项\nC\n\n1\n5\n5\n1\n\t​\n\n\n选项\nD\n\n−\n1\n5\n−\n5\n1\n\t​\n\n\n给我一点提示（剩余 2 条）\n\n第 3 题\n\n填空\n未填写\n\n计算：\n(\n−\n3\n)\n+\n7\n=\n(−3)+7= 。\n\n给我一点提示（剩余 1 条）\n\n第 4 题\n\n多选\n未填写\n\n下列运算结果为正数的有（　）\n\n选项\nA\n\n(\n−\n3\n)\n+\n7\n(−3)+7\n\n选项\nB\n\n(\n−\n2\n)\n+\n(\n−\n5\n)\n(−2)+(−5)\n\n选项\nC\n\n0\n+\n4.8\n0+4.8\n\n选项\nD\n\n∣\n−\n9\n∣\n+\n(\n−\n10\n)\n∣−9∣+(−10)\n\n第 5 题\n\n计算\n未填写\n\n写一写：计算 \n(\n−\n3\n)\n+\n7\n(−3)+7，并写出结果。\n\n最终答案\n普通输入\n数学键盘\n答题卡 · 已填 1/5\n交卷"
+  },
+  {
+    "case": "records-double-font",
+    "clientWidth": 390,
+    "scrollWidth": 390
+  },
+  {
+    "case": "pending-release",
+    "fixture": "页面响应拦截：已提交卷改为未公布且明天截止，非真实发布状态",
+    "text": "数轴专题作业\n\n已交卷 · 待公布\n\n已交卷\n\n作业 · 有理数运算专题\n\n交卷时间：2026年11月5日 00:10:19\n\n🎉 作业已成功交卷！\n\n作答与过程草稿已妥善保存，请放心休息。\n\n成绩公布倒计时\n截止时间：2026年11月8日 02:12:19\n00\n天\n23\n时\n59\n分\n59\n秒\n交卷时间\n2026年11月5日 00:10:19\n已作答题数\n3 / 3 题\n手写原稿状态\n已归档保存\n作答结果\n待公布 🔒（截止后自动判分）\n\n为什么不在交卷后立即出分？\n\n为保障全班同学独立思考和练习公平，老师设置了在截止时间后统一公布。截止后系统将自动完成判分，届时再次进入本页面即可查看完整成绩、参考答案与题目解析。\n\n再做一次\n答案已保存 · 待公布\n第 1 题\n判断\n★★★★★\n数轴\n\n数轴上表示 \n−\n2\n−2 的点在原点的左边。\n\n你的答案：\n\n对\n\n参考答案：\n\n参考答案与详解将在截止后公布 🔒\n\n草稿\n订正\n本题历史\n更多\n答案已保存 · 待公布\n第 2 题\n单选\n★★★★★\n绝对值\n\n数轴上到原点的距离等于 \n3\n3 的点表示的数是（　）\n\nA\n\n只有 \n3\n3\n\nB\n\n只有 \n−\n3\n−3\n\nC\n\n3\n3 或 \n−\n3\n−3\n\n你的选择\nD\n\n0\n0\n\n你的答案：\n\nC\n\n参考答案：\n\n参考答案与详解将在截止后公布 🔒\n\n草稿\n订正\n本题历史\n更多\n答案已保存 · 待公布\n第 3 题\n计算\n★★★★★\n绝对值\n\n写一写：写出一个绝对值等于 \n3\n3 的负数。\n\n你的答案：\n\n-3\n\n参考答案：\n\n参考答案与详解将在截止后公布 🔒\n\n草稿\n订正\n本题历史\n更多\n题号\n\n第 1 题 / 3 题"
+  }
+]

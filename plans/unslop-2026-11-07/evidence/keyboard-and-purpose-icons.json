@@ -1,0 +1,27 @@
+{
+  "keyboardPress": {
+    "transform": "matrix(0.96, 0, 0, 0.96, 0, 0)",
+    "justify": "center",
+    "gap": "6px",
+    "duration": "0.1s"
+  },
+  "outer": {
+    "x": 41,
+    "y": 759,
+    "width": 308,
+    "height": 44
+  },
+  "pressed": {
+    "x": 41,
+    "y": 759,
+    "width": 308,
+    "height": 44
+  },
+  "batchIcon": "lucide lucide-list-checks size-5",
+  "reportAndExportIcons": [
+    "lucide lucide-file-down size-[18px] shrink-0",
+    "lucide lucide-file-down",
+    "lucide lucide-file-text size-4 text-primary"
+  ],
+  "verified": true
+}
