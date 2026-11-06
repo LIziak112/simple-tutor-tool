@@ -447,8 +447,10 @@ describe("分栏材料工作区与协同标画集成", () => {
     );
     expect(groupMaterials).toBeInTheDocument();
     expect(groupMaterials?.className).toContain("isolate");
-    expect(groupMaterials?.className).toContain("lg:col-start-1");
-    expect(groupMaterials?.className).toContain(
+    expect(groupMaterials?.parentElement?.className).toContain(
+      "lg:col-start-1",
+    );
+    expect(groupMaterials?.parentElement?.className).toContain(
       "lg:[grid-row:span_var(--qg-row-span)]",
     );
     expect(groupMaterials?.className).toContain("lg:sticky");
@@ -462,8 +464,10 @@ describe("分栏材料工作区与协同标画集成", () => {
     );
     expect(soloMaterials).toBeInTheDocument();
     expect(soloMaterials?.className).toContain("isolate");
-    expect(soloMaterials?.className).toContain("lg:col-start-1");
-    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.parentElement?.className).toContain("lg:col-start-1");
+    expect(soloMaterials?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloMaterials?.className).toContain("lg:sticky");
     expect(soloMaterials?.className).toContain("lg:overflow-y-auto");
     expect(soloMaterials?.className).toContain("lg:overscroll-contain");
@@ -572,8 +576,10 @@ describe("分栏材料工作区与协同标画集成", () => {
       '[data-slot="question-materials"]',
     );
     expect(soloMaterials).toBeInTheDocument();
-    expect(soloMaterials?.className).toContain("lg:col-start-1");
-    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.parentElement?.className).toContain("lg:col-start-1");
+    expect(soloMaterials?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloMaterials?.className).toContain("lg:sticky");
     expect(soloMaterials?.className).toContain("lg:overflow-y-auto");
 
@@ -581,8 +587,10 @@ describe("分栏材料工作区与协同标画集成", () => {
       '[data-slot="question-split-handle-container"]',
     );
     expect(soloHandle).toBeInTheDocument();
-    expect(soloHandle?.className).toContain("lg:col-start-2");
-    expect(soloHandle?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloHandle?.parentElement?.className).toContain("lg:col-start-2");
+    expect(soloHandle?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloHandle?.className).toContain("lg:sticky");
 
     // 无材料普通题整行跨列 (lg:col-span-full)
@@ -655,8 +663,10 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(groupMaterials).toHaveLength(2);
     for (const mat of groupMaterials) {
       expect(mat.className).toContain("isolate");
-      expect(mat.className).toContain("lg:col-start-1");
-      expect(mat.className).toContain("lg:[grid-row:span_var(--qg-row-span)]");
+      expect(mat?.parentElement?.className).toContain("lg:col-start-1");
+      expect(mat?.parentElement?.className).toContain(
+        "lg:[grid-row:span_var(--qg-row-span)]",
+      );
       expect(mat.className).toContain("lg:sticky");
       expect(mat.className).toContain("lg:overscroll-contain");
     }
@@ -665,7 +675,9 @@ describe("分栏材料工作区与协同标画集成", () => {
     const soloMaterials = container.querySelector(
       '[data-slot="question-materials"]',
     );
-    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloMaterials?.className).toContain("lg:sticky");
 
     // 所有中缝 Handle 同栏粘性

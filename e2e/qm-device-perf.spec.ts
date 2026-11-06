@@ -67,7 +67,7 @@ interface DeviceWorld {
 }
 
 let pair: QmPair;
-const worlds: Partial<Record<"WA" | "WB", DeviceWorld>> = {};
+const worlds: Partial<Record<"WA" | "WB" | "WC", DeviceWorld>> = {};
 
 function worldOf(key: "WA" | "WB"): DeviceWorld {
   const world = worlds[key];
@@ -93,13 +93,14 @@ async function registerTeacher(
 
 /** 建世界：新教师域导入一份语料 → 造学生 → 布置单元作业 */
 async function buildWorld(
-  key: "WA" | "WB",
+  key: "WA" | "WB" | "WC",
   teacherLogin: string | null,
   ip: string,
   sample: string,
   assignmentUnit: string,
   questionCount: number,
   suffix: string,
+  extraMarkdown = "",
 ): Promise<DeviceWorld> {
   const api = await qmApi(pair);
   // null = 主教师走 setup（独立 DATA_DIR 的首位教师）；其余按独立限流段 IP 注册
@@ -111,7 +112,11 @@ async function buildWorld(
   const courseId = ((await courseRes.json()) as { data: { id: string } }).data
     .id;
   const importRes = await api.post("/api/teacher/import/commit", {
-    data: { markdown: readSample(sample), filename: sample, courseId },
+    data: {
+      markdown: readSample(sample) + extraMarkdown,
+      filename: sample,
+      courseId,
+    },
   });
   expect(importRes.ok(), `导入 ${sample} 失败`).toBeTruthy();
   const units = (
@@ -285,6 +290,130 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       3,
       suffix,
     );
+  });
+
+  test("材料圈画前后独立滚动，题目上翻保留材料阅读位置", async ({
+    browser,
+  }) => {
+    const world = await buildWorld(
+      "WC",
+      `qmdev-scroll-${Date.now().toString(36)}`,
+      "10.232.3.1",
+      "valid-02-英语阅读五题.md",
+      "Reading Comprehension",
+      6,
+      Date.now().toString(36),
+      "\n\n::::question{id=after-material type=choice difficulty=1}\n这是材料题组之后的独立题。\n\n- [x] 第一项\n- [ ] 第二项\n::::\n",
+    );
+    const context = await browser.newContext({
+      viewport: { width: 1112, height: 731 },
+      baseURL: pair.webUrl,
+    });
+    try {
+      const page = await openAssignmentAttempt(context, world);
+      const materials = page.locator('[data-slot="group-materials"]');
+      const overlay = materials.locator(
+        '[data-slot="material-annotation-overlay"]',
+      );
+      await page.getByRole("button", { name: "第 1 题圈画题干" }).click();
+      await expect(overlay).toHaveAttribute("data-ink-ready", "true");
+      await expect(overlay).toHaveAttribute("data-drawing", "true");
+      await drawStrokeWithPointerEvents(
+        overlay.locator('[data-slot="material-annotation-input"]'),
+      );
+      await expect(overlay).toHaveAttribute("data-stroke-count", "1");
+      // 适应宽度时不能有截获手势的内部滚动口，纵向手势应到达材料列。
+      const nestedScrollports = await materials.evaluate((root) => {
+        const input = root.querySelector(
+          '[data-slot="material-annotation-input"]',
+        );
+        const slots: string[] = [];
+        for (
+          let node = input?.parentElement;
+          node && node !== root;
+          node = node.parentElement
+        ) {
+          if (/^(auto|scroll|hidden)$/.test(getComputedStyle(node).overflowY)) {
+            slots.push(node.dataset.slot ?? node.tagName);
+          }
+        }
+        return slots;
+      });
+      expect(nestedScrollports).toEqual([]);
+      await materials.evaluate((element) =>
+        element.scrollIntoView({ block: "start" }),
+      );
+      expect(
+        await overlay
+          .locator('[data-slot="material-annotation-input"]')
+          .evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            const target = document.elementFromPoint(
+              rect.left + 30,
+              rect.top + 30,
+            );
+            return target === null
+              ? null
+              : getComputedStyle(target).touchAction;
+          }),
+      ).toBe("pan-y");
+      const pageTop = await page.evaluate(() => window.scrollY);
+      const box = await materials.boundingBox();
+      if (box === null) throw new Error("材料列应可见");
+      await page.mouse.move(box.x + 100, box.y + 120);
+      await page.mouse.wheel(0, 150);
+      await expect
+        .poll(() => materials.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(100);
+      expect(await page.evaluate(() => window.scrollY)).toBe(pageTop);
+      const readingOffset = await materials.evaluate(
+        (element) => element.scrollTop,
+      );
+      const question = page.getByRole("article", {
+        name: "第 1 题",
+        exact: true,
+      });
+      const questionBox = await question.boundingBox();
+      if (questionBox === null) throw new Error("题目应可见");
+      await page.mouse.move(
+        questionBox.x + 100,
+        Math.max(questionBox.y + 120, 200),
+      );
+      await page.mouse.wheel(0, 200);
+      await expect
+        .poll(() => page.evaluate(() => window.scrollY))
+        .toBeGreaterThan(pageTop + 100);
+      expect(await materials.evaluate((element) => element.scrollTop)).toBe(
+        readingOffset,
+      );
+      const sticky = await materials.evaluate((element) => ({
+        top: element.getBoundingClientRect().top,
+        expected: Number.parseFloat(getComputedStyle(element).top),
+      }));
+      expect(Math.abs(sticky.top - sticky.expected)).toBeLessThan(2);
+      await expectNoHorizontalOverflow(page);
+      await expect(overlay).toHaveAttribute("data-stroke-count", "1");
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
+      expect(
+        await materials
+          .locator(".material-reading")
+          .evaluate((element) => getComputedStyle(element).overflowY),
+      ).toBe("visible");
+      const next = page.getByRole("article", { name: "第 6 题", exact: true });
+      await next.evaluate((element) =>
+        element.scrollIntoView({ block: "start" }),
+      );
+      const boundary = await materials.evaluate((element) => ({
+        bottom: element.getBoundingClientRect().bottom,
+        nextTop:
+          document
+            .querySelector('article[data-question-id="after-material"]')
+            ?.getBoundingClientRect().top ?? 0,
+      }));
+      expect(boundary.bottom).toBeLessThanOrEqual(boundary.nextTop);
+    } finally {
+      await context.close();
+    }
   });
 
   test("② 视口矩阵（细项 3）：手机竖/横 + iPad 分屏——材料可达、焦点可达、无整页溢出", async ({

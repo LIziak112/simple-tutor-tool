@@ -168,6 +168,29 @@ export function MaterialAnnotationOverlay({
     inputRef.current = el;
     setInputElement(el);
   }, []);
+  useEffect(() => {
+    if (!inputElement || !isAnnotationActive) return;
+    // Safari 的笔触也参与原生平移；只拦笔，手指继续交给材料滚动区。
+    const preventStylusScroll = (event: TouchEvent) => {
+      if (
+        [...event.changedTouches, ...event.touches].some(
+          (touch) => touch.touchType === "stylus",
+        )
+      ) {
+        event.preventDefault();
+      }
+    };
+    inputElement.addEventListener("touchstart", preventStylusScroll, {
+      passive: false,
+    });
+    inputElement.addEventListener("touchmove", preventStylusScroll, {
+      passive: false,
+    });
+    return () => {
+      inputElement.removeEventListener("touchstart", preventStylusScroll);
+      inputElement.removeEventListener("touchmove", preventStylusScroll);
+    };
+  }, [inputElement, isAnnotationActive]);
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   /** 材料正文壳（children+输入层）：首笔捕获与就绪门控的测量面 */
@@ -564,6 +587,7 @@ export function MaterialAnnotationOverlay({
     ) => {
       for (const decision of decisions) {
         if (decision.action === "start" && e) {
+          e.preventDefault();
           beginInteraction(e);
         } else if (decision.action === "commit") {
           finishInteraction();
@@ -579,7 +603,6 @@ export function MaterialAnnotationOverlay({
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (!isAnnotationActive || e.button !== 0) return;
-      e.preventDefault();
       const result = advancePointerMachine(machineRef.current, {
         kind: "pointerdown",
         pointerId: e.pointerId,
@@ -753,7 +776,7 @@ export function MaterialAnnotationOverlay({
         touchAction: touchActionForInput(inputMode, true, false),
         zIndex: 10,
       }}
-      className={`absolute inset-0 ${
+      className={`absolute inset-0 [&_canvas]:pointer-events-none ${
         isAnnotationActive
           ? tool === "eraser"
             ? "cursor-cell"
@@ -772,7 +795,8 @@ export function MaterialAnnotationOverlay({
       data-stroke-count={strokes.length}
       data-ink-visible={showInk}
       data-ink-ready={inputEnabled || !isAnnotationActive}
-      className={`relative min-w-0 ${frameMounted ? "overflow-x-auto" : ""}`}
+      // 适应宽度只裁剪横向溢出，避免内部滚动口截获材料列的纵向手势。
+      className={`relative min-w-0 ${frameMounted ? (expanded ? "overflow-x-auto" : "overflow-x-clip") : ""}`}
     >
       <div
         data-slot="material-ink-frame-sizer"

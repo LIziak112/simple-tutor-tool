@@ -1,5 +1,6 @@
 import {
   act,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -520,6 +521,17 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     const layer = inputLayerOf(container);
     mockLayerRect(layer);
 
+    // 手指交给浏览器滚动，不能只做到不落墨却取消默认手势。
+    const touchDown = createEvent.pointerDown(layer, {
+      pointerId: 2,
+      button: 0,
+      pointerType: "touch",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(layer, touchDown);
+    expect(touchDown.defaultPrevented).toBe(false);
+
     await act(async () => {
       fireEvent.pointerDown(layer, {
         pointerId: 2,
@@ -541,6 +553,37 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     expect(draftStore.getMaterialInk("att-1", "mat-1")).toBeNull();
     expect(overlayRootOf(container)).toHaveAttribute("data-stroke-count", "0");
   });
+
+  it.each(["touchstart", "touchmove"] as const)(
+    "%s 只阻止 Pencil 原生滚动，保留手指阅读",
+    async (type) => {
+      const { container } = render(
+        <AttemptEditorProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-stylus" materialId="m1">
+            <div>笔写与手指阅读</div>
+          </MaterialAnnotationOverlay>
+        </AttemptEditorProvider>,
+      );
+      fireEvent.click(screen.getByTestId("toggle-annotation"));
+      await waitInkReady(overlayRootOf(container));
+      const layer = inputLayerOf(container);
+      const touch = (changed: string[], all = changed) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, {
+          changedTouches: {
+            value: changed.map((touchType) => ({ touchType })),
+          },
+          touches: { value: all.map((touchType) => ({ touchType })) },
+        });
+        fireEvent(layer, event);
+        return event.defaultPrevented;
+      };
+      expect(touch(["direct"])).toBe(false);
+      expect(touch(["stylus"], ["direct", "stylus"])).toBe(true);
+      expect(touch(["direct"], ["stylus", "direct"])).toBe(true);
+    },
+  );
 
   it("窗口失焦时在途一笔按已收采样收笔保存，后续 move 不再计入", async () => {
     const { container } = render(
