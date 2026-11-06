@@ -19,6 +19,7 @@
     "e2e:affected": "node scripts/e2e-affected.mjs",
     "lint": "biome check .",
     "lint:changed": "node scripts/lint-affected.mjs origin/main",
+    "lint:governance": "node scripts/governance-invariants.mjs",
     "typecheck": "tsc -p e2e/tsconfig.json && pnpm -r run typecheck",
     "typecheck:affected": "pnpm --filter \"...[origin/main]\" run typecheck",
     "format": "biome format --write .",

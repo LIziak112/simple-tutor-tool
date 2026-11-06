@@ -43,6 +43,10 @@ jobs:
           package-manager-cache: false
       - name: 验证范围决策回归
         run: node --test scripts/ci-scope.spec.mjs
+      - name: 治理不变量闸门回归
+        run: node --test scripts/governance-invariants.spec.mjs
+      - name: 治理不变量闸门
+        run: node scripts/governance-invariants.mjs
       - id: scope
         name: 计算范围
         run: node scripts/ci-scope.mjs plan "$CI_BASE"
