@@ -419,12 +419,38 @@ test(
             .click();
           if (i === 0) {
             await player
+              .getByRole("button", { name: "2×", exact: true })
+              .click();
+            await expect(
+              player.getByRole("button", { name: "2×", exact: true }),
+            ).toHaveAttribute("aria-pressed", "true");
+            await player
+              .getByRole("button", { name: "4×", exact: true })
+              .click();
+            await expect(
+              player.getByRole("button", { name: "4×", exact: true }),
+            ).toHaveAttribute("aria-pressed", "true");
+            await player
+              .getByRole("button", { name: "1×", exact: true })
+              .click();
+            const actualTime = player.getByRole("checkbox", {
+              name: "按真实时间",
+            });
+            await actualTime.check();
+            await expect(actualTime).toBeChecked();
+            await actualTime.uncheck();
+            await player
               .getByRole("button", { name: /本段起始状态/ })
               .first()
               .click();
             await player
               .getByRole("button", { name: "播放", exact: true })
               .click();
+            await expect
+              .poll(async () =>
+                Number(await player.getByRole("slider").inputValue()),
+              )
+              .toBeGreaterThan(0);
             await expect
               .poll(
                 async () =>

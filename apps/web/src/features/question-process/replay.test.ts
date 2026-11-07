@@ -1,6 +1,12 @@
 import type { QuestionProcessEvent } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { frameAt, replayPrefix } from "./replay";
+import {
+  frameAt,
+  fromPlaybackTime,
+  processPauses,
+  replayPrefix,
+  toPlaybackTime,
+} from "./replay";
 
 const stroke = {
   id: "stroke-a",
@@ -145,6 +151,23 @@ describe("单题过程回放", () => {
     expect(
       frameAt([start, { ...ink, seq: 2 }], 988)?.layers.scratch,
     ).toBeUndefined();
+  });
+
+  it("长停顿压成5秒且可逆，真实时间模式保留完整时长", () => {
+    const pauses = processPauses([
+      { at: 0 },
+      { at: 1000 },
+      { at: 21000 },
+      { at: 22000 },
+    ]);
+    expect(pauses).toEqual([{ startMs: 1000, endMs: 21000, realMs: 20000 }]);
+    expect(toPlaybackTime(22000, pauses)).toBe(7000);
+    expect(toPlaybackTime(11000, pauses)).toBe(3500);
+    expect(fromPlaybackTime(3500, pauses)).toBe(11000);
+    expect(fromPlaybackTime(7000, pauses)).toBe(22000);
+    expect(toPlaybackTime(22000, [])).toBe(22000);
+    expect(fromPlaybackTime(22000, [])).toBe(22000);
+    expect(processPauses([{ at: 0 }, { at: 5000 }])).toEqual([]);
   });
 
   it("缺段时停在可验证的前缀，后续快照不冒充连续历史", () => {
