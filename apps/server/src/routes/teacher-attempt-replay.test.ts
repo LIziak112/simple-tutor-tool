@@ -306,6 +306,25 @@ describe("GET /api/teacher/attempts/:id/replay", () => {
 });
 
 describe("单题过程记录", () => {
+  it("容量聚合走覆盖索引，不读取批次payload", () => {
+    const db = createTestDb();
+    try {
+      for (const query of [
+        "SELECT sum(bytes), sum(last_seq-first_seq+1) FROM question_process_batches WHERE recording_id=? AND question_id=?",
+        "SELECT sum(bytes) FROM question_process_batches WHERE recording_id=?",
+      ]) {
+        const plan = db.$client
+          .prepare(`EXPLAIN QUERY PLAN ${query}`)
+          .all(...(query.includes("question_id=?") ? ["r", "q"] : ["r"]));
+        expect(JSON.stringify(plan)).toContain(
+          "COVERING INDEX question_process_capacity_idx",
+        );
+      }
+    } finally {
+      db.$client.close();
+    }
+  });
+
   it("默认关闭，启用试点后仍须学生主动开启", async () => {
     const { app, studentCookie, teacherCookie, attemptId, questionId } =
       await makeEnv();

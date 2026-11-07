@@ -84,6 +84,32 @@ test(
       await expect(page.getByText("过程已同步", { exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
 
+      let putCount = 0;
+      page.on("request", (req) => {
+        if (req.method() === "PUT" && req.url().includes("/question-process"))
+          putCount++;
+      });
+      const baselineCard = question(1);
+      await baselineCard.locator("[data-paper-trigger]").click();
+      const baselineCanvas = baselineCard.locator(
+        'canvas[data-slot="ink-canvas"], canvas[data-slot="feel-wet"]',
+      );
+      await drawStrokeWithPointerEvents(baselineCanvas, 20);
+      await page.waitForTimeout(2000);
+      expect(putCount).toBeGreaterThan(0);
+      expect(putCount).toBeLessThanOrEqual(2);
+      await baselineCard
+        .locator('[data-slot="note-layer"]')
+        .getByRole("button", { name: /更多/ })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "清空草稿纸", exact: true })
+        .click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "清空", exact: true })
+        .click();
+      await baselineCard.locator("[data-paper-trigger]").click();
       const rows: Array<{ type: string; id: string }> = [];
       for (let n = 1; n <= 10; n += 1) {
         const card = question(n);
@@ -325,6 +351,8 @@ test(
           ?.filter((event) => event.kind === "ink")
           .map((event) => `${event.layer}:${event.operation}`),
       ).toEqual([
+        ...Array.from({ length: 20 }, () => "scratch:stroke"),
+        "scratch:clear",
         "annotation:stroke",
         "scratch:stroke",
         "scratch:stroke",

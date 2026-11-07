@@ -2768,6 +2768,13 @@ export const questionProcessBatches = sqliteTable(
     bytes: integer("bytes").notNull(),
   },
   (table) => [
+    index("question_process_capacity_idx").on(
+      table.recordingId,
+      table.questionId,
+      table.bytes,
+      table.firstSeq,
+      table.lastSeq,
+    ),
     primaryKey({
       columns: [
         table.recordingId,

@@ -552,8 +552,9 @@ async function drawStrokeWithMouse(page: Page, canvas: Locator): Promise<void> {
  */
 export async function drawStrokeWithPointerEvents(
   canvas: Locator,
+  repetitions = 1,
 ): Promise<void> {
-  await canvas.evaluate((el) => {
+  await canvas.evaluate((el, count) => {
     const rect = el.getBoundingClientRect();
     const cx = rect.width / 2;
     const cy = rect.height / 2;
@@ -591,12 +592,12 @@ export async function drawStrokeWithPointerEvents(
     const first = pts[0];
     const last = pts[pts.length - 1];
     if (first === undefined || last === undefined) return;
-    fire("pointerdown", first[0], first[1], 1);
-    for (const [x, y] of pts.slice(1)) {
-      fire("pointermove", x, y, 1);
+    for (let i = 0; i < count; i++) {
+      fire("pointerdown", first[0], first[1], 1);
+      for (const [x, y] of pts.slice(1)) fire("pointermove", x, y, 1);
+      fire("pointerup", last[0], last[1], 0);
     }
-    fire("pointerup", last[0], last[1], 0);
-  });
+  }, repetitions);
 }
 
 /** 等待笔迹上传请求（每笔结束 2 秒防抖后 PUT）；超时返回 false */
