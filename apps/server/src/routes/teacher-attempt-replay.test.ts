@@ -520,8 +520,9 @@ describe("单题过程记录", () => {
       .get();
     expect(sealed?.answerJson).toBe(JSON.stringify(answer));
 
-    const second = {
+    const second: import("@tutor/contract").QuestionProcessBatch = {
       ...start,
+      version: 1,
       segmentId: randomUUID(),
       startedAt: base.startedAt + 10,
       events: [
@@ -542,6 +543,12 @@ describe("单题过程记录", () => {
         },
       ],
     };
+    second.events.push({
+      seq: 1,
+      at: 1,
+      kind: "answer",
+      answer: { kind: "judge", value: false },
+    });
     expect(
       (await request(app, path, second, studentCookie, "PUT")).status,
     ).toBe(200);
@@ -558,8 +565,12 @@ describe("单题过程记录", () => {
       })),
     ).toEqual([
       { id: base.segmentId, count: 3, gap: false },
-      { id: second.segmentId, count: 1, gap: false },
+      { id: second.segmentId, count: 2, gap: false },
     ]);
+    expect(splitData.segments[1]?.events[1]).toMatchObject({
+      kind: "answer",
+      answer: { kind: "judge", value: false },
+    });
     expect(splitData.segments[1]?.events[0]).toMatchObject({
       kind: "start",
       layers: { annotation: { width: 100, height: 100, strokes: [] } },

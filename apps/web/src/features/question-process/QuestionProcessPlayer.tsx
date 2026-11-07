@@ -315,6 +315,9 @@ function SegmentPlayer({
     : null;
   return (
     <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        本段起始笔迹为录制前已有或恢复的状态，未采集的书写过程无法回放。
+      </p>
       {segments.some((segment) => segment.gap) && (
         <p role="status">记录有缺失，已显示可回放的部分。</p>
       )}

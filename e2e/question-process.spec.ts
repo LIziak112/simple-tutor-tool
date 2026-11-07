@@ -396,6 +396,20 @@ test(
               if (!response.ok()) continue;
               const body = (await response.json()) as { data: unknown };
               const result = questionProcessReadSchema.parse(body.data);
+              for (const segment of result.segments) {
+                expect(segment.gap).toBe(false);
+                expect(segment.events.map((event) => event.seq)).toEqual(
+                  segment.events.map((_, index) => index),
+                );
+                expect(
+                  new Set(segment.events.map((event) => event.seq)).size,
+                ).toBe(segment.events.length);
+                expect(segment.events.map((event) => event.at)).toEqual(
+                  segment.events
+                    .map((event) => event.at)
+                    .toSorted((a, b) => a - b),
+                );
+              }
               const events = result.segments.flatMap(
                 (segment) => segment.events,
               );
@@ -665,6 +679,20 @@ test(
             await expect(
               player.getByText("已呈现提示：1", { exact: true }),
             ).toBeVisible();
+            const annotation = player
+              .getByRole("region", { name: "回放题面", exact: true })
+              .locator("[data-process-stroke-count]");
+            const circles = player.getByRole("button", { name: /圈画书写/ });
+            await circles.first().click();
+            await expect(annotation).toHaveAttribute(
+              "data-process-stroke-count",
+              "1",
+            );
+            await circles.last().click();
+            await expect(annotation).toHaveAttribute(
+              "data-process-stroke-count",
+              "2",
+            );
             const scratch = player
               .getByRole("region", { name: "回放草稿" })
               .locator("[data-process-stroke-count]");
@@ -688,6 +716,49 @@ test(
             .getByRole("button", { name: "收起过程回放", exact: true })
             .click();
         }
+        // 服务端缺批次已由路由测试产生 gap=true；这里核对该投影在真实页面的降级。
+        const processPath = `**/api/teacher/attempts/${attempt}/questions/*/process`;
+        await teacherPage.route(processPath, async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.data.segments[0].gap = true;
+          body.data.segments[0].events = body.data.segments[0].events.slice(
+            0,
+            1,
+          );
+          await route.fulfill({ response, json: body });
+        });
+        const firstPlayer = players.first();
+        await firstPlayer
+          .getByRole("button", { name: "过程回放", exact: true })
+          .click();
+        await expect(
+          firstPlayer.getByText("记录有缺失，已显示可回放的部分。", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await firstPlayer
+          .getByRole("button", { name: "收起过程回放", exact: true })
+          .click();
+        await teacherPage.unroute(processPath);
+        await teacherPage.route(processPath, async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.data.segments = [];
+          await route.fulfill({ response, json: body });
+        });
+        await firstPlayer
+          .getByRole("button", { name: "过程回放", exact: true })
+          .click();
+        await expect(
+          firstPlayer.getByText("这道题暂无可回放的过程记录。", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await firstPlayer
+          .getByRole("button", { name: "收起过程回放", exact: true })
+          .click();
+        await teacherPage.unroute(processPath);
         await teacherPage.route(
           "**/api/teacher/annotation-bases/*/image.png",
           (route) =>
