@@ -3,7 +3,7 @@ import { optionsPublicStructureOf } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
@@ -91,6 +91,7 @@ function InkThumbnail({
   question: TeacherAttemptDetailQuestion;
 }) {
   const ink = question.ink;
+  const zoomTriggerRef = useRef<HTMLButtonElement>(null);
   const [zoomed, setZoomed] = useState(false);
   const [available, setAvailable] = useState(true);
   const [tab, setTab] = useState<InkViewTab>("snapshot");
@@ -111,6 +112,7 @@ function InkThumbnail({
       </div>
       {tab === "snapshot" ? (
         <button
+          ref={zoomTriggerRef}
           type="button"
           className="min-h-11 w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           aria-label={`放大查看第 ${question.no} 题的手写笔迹`}
@@ -139,6 +141,7 @@ function InkThumbnail({
           inkId={ink.inkId}
           hasStrokes={ink.hasStrokes}
           initialTab={tab}
+          triggerRef={zoomTriggerRef}
           onClose={() => setZoomed(false)}
         />
       )}

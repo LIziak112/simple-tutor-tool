@@ -1,4 +1,4 @@
-import { devices, expect, test } from "@playwright/test";
+import { devices, expect, type Request, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
@@ -313,19 +313,136 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
           inkImg.evaluate((el: HTMLImageElement) => el.naturalWidth),
         )
         .toBeGreaterThan(0);
-      await q3Card
-        .getByRole("button", { name: "放大查看第 3 题的手写笔迹" })
-        .click();
-      const lightbox = page.locator('[aria-label="手写笔迹放大查看"]');
-      await expect(lightbox).toBeVisible();
-      const zoomedImg = lightbox.locator("img");
-      await expect
-        .poll(async () =>
-          zoomedImg.evaluate((el: HTMLImageElement) => el.naturalWidth),
-        )
-        .toBeGreaterThan(0);
-      await lightbox.getByRole("button", { name: "关闭", exact: true }).click();
-      await expect(lightbox).not.toBeVisible();
+      const teacherStorage = await page.context().storageState();
+      const detailUrl = page.url();
+      const inkSrc = await inkImg.getAttribute("src");
+      expect(inkSrc).toBeTruthy();
+      const modalWrites: string[] = [];
+      const recordWrite = (request: Request) => {
+        if (
+          request.method() !== "GET" &&
+          new URL(request.url()).pathname.startsWith("/api/")
+        ) {
+          modalWrites.push(request.url());
+        }
+      };
+      page.on("request", recordWrite);
+      for (const [width, height] of [
+        [390, 844],
+        [844, 390],
+        [768, 1024],
+        [1440, 900],
+      ] as const) {
+        // 各设备独立进入详情，避免模拟器沿用上一个尺寸的视觉缩放。
+        const modalPage = await browser.newPage({
+          ...devices["iPad (gen 7)"],
+          viewport: { width, height },
+          storageState: teacherStorage,
+          reducedMotion: width === 844 ? "reduce" : "no-preference",
+        });
+        modalPage.on("request", recordWrite);
+        await modalPage.goto(detailUrl);
+        const lightbox = modalPage.getByRole("dialog", {
+          name: "手写笔迹放大查看",
+        });
+        const close = lightbox.getByRole("button", {
+          name: "关闭",
+          exact: true,
+        });
+        const detailZoom = modalPage.getByRole("button", {
+          name: "放大查看第 3 题的手写笔迹",
+        });
+        await modalPage.evaluate(
+          (size) => {
+            document.documentElement.style.fontSize = size;
+          },
+          width === 390 ? "200%" : "",
+        );
+        await detailZoom.click();
+        await expect(close).toBeFocused();
+        await expect(close).toBeInViewport({ ratio: 1 });
+        expect(
+          await close.evaluate((button) => {
+            const box = button.getBoundingClientRect();
+            const view = window.visualViewport;
+            return (
+              view !== null &&
+              box.left >= view.offsetLeft &&
+              box.right <= view.offsetLeft + view.width &&
+              box.top >= view.offsetTop &&
+              box.bottom <= view.offsetTop + view.height
+            );
+          }),
+        ).toBe(true);
+        expect(
+          await lightbox.evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+        const zoomedImg = lightbox.locator("img");
+        await expect(zoomedImg).toHaveAttribute("src", inkSrc ?? "");
+        await expect
+          .poll(() =>
+            zoomedImg.evaluate((el: HTMLImageElement) => el.naturalWidth),
+          )
+          .toBeGreaterThan(0);
+        expect(
+          await zoomedImg.evaluate((img: HTMLImageElement) =>
+            Math.abs(
+              img.clientWidth -
+                (img.clientHeight * img.naturalWidth) / img.naturalHeight,
+            ),
+          ),
+        ).toBeLessThan(2);
+        if (width === 390) {
+          await modalPage.screenshot({
+            path: test.info().outputPath("ink-zoom-large-text.png"),
+          });
+        }
+        expect(
+          await modalPage.evaluate(
+            () => getComputedStyle(document.body).overflow,
+          ),
+        ).toBe("hidden");
+        for (const key of ["Tab", "Shift+Tab"]) {
+          for (let i = 0; i < 8; i++) {
+            await modalPage.keyboard.press(key);
+            expect(
+              await lightbox.evaluate((el) =>
+                el.contains(document.activeElement),
+              ),
+            ).toBe(true);
+          }
+        }
+        if (width === 390) {
+          await lightbox
+            .getByRole("button", { name: "回放", exact: true })
+            .click();
+          await expect(
+            lightbox.getByRole("button", { name: "播放", exact: true }),
+          ).toBeVisible();
+          await expect(
+            lightbox.locator('canvas[data-slot="ink-replay-canvas"]'),
+          ).toBeVisible();
+          await modalPage.keyboard.press("Escape");
+        } else if (width === 844) {
+          await zoomedImg.click();
+          await expect(lightbox).toBeVisible();
+          // 点顶部中间的实际遮罩，避开左右工具栏。
+          await modalPage.locator('[data-slot="ink-lightbox-overlay"]').click({
+            position: { x: width / 2, y: 2 },
+          });
+        } else {
+          await close.click();
+        }
+        await expect(lightbox).toHaveCount(0);
+        await expect(detailZoom).toBeFocused();
+        await expect
+          .poll(() =>
+            modalPage.evaluate(() => getComputedStyle(document.body).overflow),
+          )
+          .not.toBe("hidden");
+        await modalPage.close();
+      }
+      expect(modalWrites).toEqual([]);
 
       // 笔迹回放（T3.3）：切「回放」出现播放控件（矢量数据真实可用，未降级）
       await q3Card.getByRole("button", { name: "回放", exact: true }).click();
@@ -370,6 +487,28 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(pendingCard.getByText("未作答（仅笔迹）")).toBeVisible();
       const pendingInk = pendingCard.locator('img[alt*="手写笔迹"]');
       await expect(pendingInk).toBeVisible();
+      const queueZoom = pendingCard.getByRole("button", {
+        name: /放大查看.*手写笔迹/,
+      });
+      const lightbox = page.getByRole("dialog", { name: "手写笔迹放大查看" });
+      const close = lightbox.getByRole("button", { name: "关闭", exact: true });
+      await queueZoom.click();
+      await expect(close).toBeFocused();
+      await page.screenshot({ path: test.info().outputPath("ink-queue.png") });
+      await expect(
+        lightbox.getByRole("button", { name: "回放", exact: true }),
+      ).toHaveCount(0);
+      await page.keyboard.press("1");
+      await expect(lightbox).toBeVisible();
+      await page.keyboard.press("Tab");
+      await expect(close).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(close).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(lightbox).toHaveCount(0);
+      await expect(queueZoom).toBeFocused();
+      expect(modalWrites).toEqual([]);
+      page.off("request", recordWrite);
       await expect(
         pendingCard.getByText(`${courseName} · ${unitName} · 第 1 次`),
       ).toBeVisible();

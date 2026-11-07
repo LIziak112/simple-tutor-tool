@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { buildFixPrompt } from "../apps/web/src/features/content/error-prompt";
+import {
+  importPreviewBatchDataSchema,
+  importPreviewDataSchema,
+} from "../packages/contract/src";
 import {
   TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
@@ -55,6 +60,208 @@ function lessonMarkdown(unitName: string, lectureTitle: string): string {
     "",
   ].join("\n");
 }
+
+test("导入错误的手动复制窗圈闭焦点，嵌套在编辑抽屉时只关闭内层", {
+  tag: ["@teacher"],
+}, async ({ page }) => {
+  await teacherApiLogin(page.request);
+  const suffix = uniqueSuffix();
+  const unit = `焦点验收${suffix}`;
+  const title = `复制弹层${suffix}`;
+  const valid = lessonMarkdown(unit, title);
+  const invalid = valid.replace(
+    "$0$ 既不是正数，也不是负数。[[正确]]",
+    "$0$ 既不是正数，也不是负数。",
+  );
+  const committed = await page.request.post("/api/teacher/import/commit", {
+    data: { markdown: valid, filename: `${unit}.md` },
+  });
+  expect(committed.ok()).toBeTruthy();
+
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() !== "GET" &&
+      url.pathname.startsWith("/api/") &&
+      !url.pathname.startsWith("/api/teacher/import/preview")
+    ) {
+      writes.push(url.pathname);
+    }
+  });
+
+  for (const batch of [false, true]) {
+    await page.goto("/t/import");
+    await page.evaluate((reject) => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: reject
+          ? {
+              writeText: async () => {
+                throw new Error("剪贴板被拒绝");
+              },
+            }
+          : undefined,
+      });
+    }, batch);
+    const files = [
+      {
+        name: "有错误.md",
+        mimeType: "text/markdown",
+        buffer: Buffer.from(invalid),
+      },
+    ];
+    if (batch) {
+      files.push({
+        name: "可导入.md",
+        mimeType: "text/markdown",
+        buffer: Buffer.from(lessonMarkdown(`${unit}对照`, `${title}对照`)),
+      });
+    }
+    await page
+      .locator('input[type="file"][multiple]')
+      .first()
+      .setInputFiles(files);
+    const preview = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/teacher/import/preview${batch ? "-batch" : ""}` &&
+        response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "预览", exact: true }).click();
+    const payload = (await (await preview).json()).data;
+    const expectedPrompt = batch
+      ? buildFixPrompt(
+          importPreviewBatchDataSchema
+            .parse(payload)
+            .files.filter((file) => file.hasError)
+            .map((file) => ({
+              path: file.path,
+              markdown: invalid,
+              issues: file.preview.issues,
+              conflicts: file.conflicts,
+            })),
+        )
+      : buildFixPrompt([
+          {
+            path: files[0]?.name ?? "",
+            markdown: invalid,
+            issues: importPreviewDataSchema.parse(payload).issues,
+          },
+        ]);
+    const trigger = page.getByRole("button", {
+      name: batch ? /^复制全部错误给 AI/ : "复制错误给 AI",
+    });
+    const dialog = page.getByRole("dialog", {
+      name: "剪贴板不可用，请手动复制",
+    });
+    for (const [width, height] of [
+      [390, 844],
+      [844, 390],
+      [768, 1024],
+      [1440, 900],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await page.emulateMedia({
+        reducedMotion: width === 844 ? "reduce" : "no-preference",
+      });
+      await page.evaluate(
+        (size) => {
+          document.documentElement.style.fontSize = size;
+        },
+        width === 844 ? "200%" : "",
+      );
+      await trigger.click();
+      const text = dialog.getByRole("textbox", { name: "提示词全文" });
+      await expect(text).toBeFocused();
+      await expect(text).toHaveValue(expectedPrompt);
+      expect(
+        await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth),
+      ).toBe(true);
+      if (width === 390) {
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(batch ? "copy-batch.png" : "copy-single.png"),
+        });
+      }
+      const selection = () =>
+        text.evaluate((el: HTMLTextAreaElement) => [
+          el.selectionStart,
+          el.selectionEnd,
+          el.value.length,
+        ]);
+      expect(await selection()).toEqual([
+        0,
+        expectedPrompt.length,
+        expectedPrompt.length,
+      ]);
+      for (const key of ["Tab", "Shift+Tab"]) {
+        for (let i = 0; i < 8; i++) {
+          await page.keyboard.press(key);
+          expect(
+            await dialog.evaluate((el) => el.contains(document.activeElement)),
+          ).toBe(true);
+        }
+      }
+      await dialog.getByRole("button", { name: "全选", exact: true }).click();
+      expect(await selection()).toEqual([
+        0,
+        expectedPrompt.length,
+        expectedPrompt.length,
+      ]);
+      if (width === 1440) await page.keyboard.press("Escape");
+      else
+        await dialog
+          .getByRole("button", {
+            name: width === 390 ? "关闭弹层" : "关闭",
+            exact: true,
+          })
+          .click();
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  }
+
+  await page.goto("/t/library");
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    }),
+  );
+  await page.getByRole("tab", { name: "讲义库" }).click();
+  await page.getByRole("button", { name: `编辑讲义 ${title}` }).click();
+  const editor = page.locator('[data-slot="sheet-content"]');
+  // 讲练编辑器只编辑正文，在原文末尾留下未闭合指令触发本地诊断。
+  await editor
+    .locator(".cm-content")
+    .fill("# 编辑验收\n\n:::note\n缺少结束标记");
+  const copy = editor.getByRole("button", { name: "复制错误给 AI" });
+  await copy.click();
+  const fallback = page.getByRole("dialog", {
+    name: "剪贴板不可用，请手动复制",
+  });
+  await expect(
+    fallback.getByRole("textbox", { name: "提示词全文" }),
+  ).toBeFocused();
+  await page.screenshot({
+    path: test.info().outputPath("copy-nested.png"),
+  });
+  for (const key of ["Tab", "Shift+Tab"]) {
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press(key);
+      expect(
+        await fallback.evaluate((el) => el.contains(document.activeElement)),
+      ).toBe(true);
+    }
+  }
+  await page.keyboard.press("Escape");
+  await expect(fallback).toHaveCount(0);
+  await expect(editor).toBeVisible();
+  await expect(copy).toBeFocused();
+  expect(writes).toEqual([]);
+});
 
 test("讲练页改名重构后替换重导：指认目标 → 预览变更新并亮接管警示 → 确认弹层 → 列表无重复且标题为新名", {
   tag: ["@teacher"],

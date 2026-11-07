@@ -1,7 +1,9 @@
 import { cn } from "cn";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
+import { type RefObject, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogTitle } from "@/components/ui/dialog";
 import { InkReplayPane } from "./InkReplayPane";
 
 /** 快照 / 回放 双视图的取值（题卡与放大层共用） */
@@ -9,7 +11,7 @@ export type InkViewTab = "snapshot" | "replay";
 
 /**
  * 手写笔迹放大层（T3.1，D7；T3.3 扩展双视图）：详情页缩略图点击后全屏查看。
- * 自实现覆盖层（无新增依赖）：Esc / 点击背景 / 「关闭」按钮三种退出方式；
+ * 共用模态焦点管理，保留 Esc / 点击背景 / 「关闭」按钮三种退出方式。
  * 触控目标 ≥44px。传入 inkId 时提供「快照 / 回放」切换（T3.3），回放态三态
  * 交给 InkReplayPane（加载 / 重演 / PNG 降级）；不传（如待批队列）仅快照，
  * 行为与 T3.2b 一致。
@@ -18,6 +20,7 @@ export function InkLightbox({
   pngUrl,
   alt,
   onClose,
+  triggerRef,
   inkId,
   hasStrokes = true,
   initialTab = "snapshot",
@@ -27,6 +30,7 @@ export function InkLightbox({
   /** 图片替代文本（含题号） */
   alt: string;
   onClose: () => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
   /** 笔迹定位 id：提供时显示「快照 / 回放」切换（矢量接口的定位） */
   inkId?: string;
   /** 契约 ink.hasStrokes：false 时回放态不发矢量请求直接降级（透传 InkReplayPane） */
@@ -35,67 +39,73 @@ export function InkLightbox({
   initialTab?: InkViewTab;
 }) {
   const [tab, setTab] = useState<InkViewTab>(initialTab);
-
-  // Esc 关闭（对话框内键盘可达）
-  useEffect(() => {
-    function onKey(event: KeyboardEvent): void {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <div
-      data-slot="ink-lightbox"
-      role="dialog"
-      aria-modal="true"
-      aria-label="手写笔迹放大查看"
-      className="fixed inset-0 z-50 flex flex-col bg-black/80 p-4"
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <div className="relative z-10 flex shrink-0 items-center justify-between gap-2">
-        {/* 快照 / 回放 切换（≥44px 触控目标）；无 inkId（无回放数据源）不渲染 */}
-        {inkId === undefined ? (
-          <span className="min-w-0" />
-        ) : (
-          <InkViewTabs value={tab} onChange={setTab} />
-        )}
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11 shrink-0 bg-card"
-          onClick={onClose}
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          data-slot="ink-lightbox-overlay"
+          className="fixed inset-0 z-50 bg-black/80"
+        />
+        {/* 仅工具栏和笔迹接收指针，空白处命中遮罩并走 Radix 的外点关闭。 */}
+        <DialogPrimitive.Content
+          data-slot="ink-lightbox"
+          aria-describedby={undefined}
+          className="pointer-events-none! fixed top-0 left-0 z-50 flex h-dvh w-dvw flex-col p-4"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            closeRef.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            triggerRef.current?.focus({ preventScroll: true });
+          }}
         >
-          <X aria-hidden className="size-4" />
-          关闭
-        </Button>
-      </div>
-      {/* 背景即「关闭」按钮（铺满整层的透明按钮，位于内容之下）：
-          点击图片以外的任意处关闭，且是真实交互元素（无静态 div 挂 onClick） */}
-      <button
-        type="button"
-        aria-label="点击背景关闭放大查看"
-        className="absolute inset-0 cursor-default bg-transparent outline-none"
-        onClick={onClose}
-      />
-      <div className="relative z-10 flex min-h-0 w-full flex-1 items-center justify-center">
-        {tab === "replay" && inkId !== undefined ? (
-          <InkReplayPane
-            inkId={inkId}
-            pngUrl={pngUrl}
-            alt={alt}
-            layout="fill"
-            hasStrokes={hasStrokes}
-          />
-        ) : (
-          <img
-            src={pngUrl}
-            alt={alt}
-            className="max-h-full max-w-full rounded-lg bg-white object-contain"
-          />
-        )}
-      </div>
-    </div>
+          <DialogTitle className="sr-only">手写笔迹放大查看</DialogTitle>
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 [&>*]:pointer-events-auto">
+            {inkId === undefined ? (
+              <span />
+            ) : (
+              <InkViewTabs value={tab} onChange={setTab} />
+            )}
+            <DialogClose asChild>
+              <Button
+                ref={closeRef}
+                type="button"
+                variant="outline"
+                className="ml-auto min-h-11 shrink-0 bg-card"
+              >
+                <X aria-hidden className="size-4" />
+                关闭
+              </Button>
+            </DialogClose>
+          </div>
+          <div className="flex min-h-0 w-full flex-1 items-center justify-center [&>*]:pointer-events-auto">
+            {tab === "replay" && inkId !== undefined ? (
+              <InkReplayPane
+                inkId={inkId}
+                pngUrl={pngUrl}
+                alt={alt}
+                layout="fill"
+                hasStrokes={hasStrokes}
+              />
+            ) : (
+              <img
+                src={pngUrl}
+                alt={alt}
+                className="max-h-full max-w-full rounded-lg bg-white object-contain"
+              />
+            )}
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </Dialog>
   );
 }
 
