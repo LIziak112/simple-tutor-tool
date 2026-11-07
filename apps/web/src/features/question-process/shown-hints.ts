@@ -16,9 +16,15 @@ export class ProcessShownHints {
     this.key = JSON.stringify([prefix, "shown", recordingId]);
   }
   load() {
-    this.#loaded ??= this.store.get(this.key).then((raw) => {
-      this.#seen = raw === undefined ? {} : seenSchema.parse(raw);
-    });
+    this.#loaded ??= this.store
+      .get(this.key)
+      .then((raw) => {
+        this.#seen = raw === undefined ? {} : seenSchema.parse(raw);
+      })
+      .catch((error) => {
+        this.#loaded = undefined;
+        throw error;
+      });
     return this.#loaded;
   }
   read(questionId: string, unlocked: readonly number[]) {

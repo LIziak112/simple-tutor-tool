@@ -148,12 +148,25 @@ export function useQuestionProcess(inputs: Inputs) {
   const [active, setActive] = useState<QuestionProcessRecorder | null>(null);
   const deleting = useRef(false);
   const shownRef = useRef<ProcessShownHints | null>(null);
+  const [restoredShown, setRestoredShown] = useState<ProcessShownHints | null>(
+    null,
+  );
   const restoreShown = useCallback(
     async (data: QuestionProcessStatus, targetPrefix: string) => {
       if (data.state !== "active") return;
       const next = new ProcessShownHints(store, targetPrefix, data.recordingId);
       if (shownRef.current?.key !== next.key) shownRef.current = next;
-      await shownRef.current.load();
+      const candidate = shownRef.current;
+      try {
+        await candidate.load();
+        if (shownRef.current !== candidate) return;
+        setRestoredShown(candidate);
+        setCacheFailed(false);
+      } catch {
+        if (shownRef.current !== candidate) return;
+        setRestoredShown(null);
+        setCacheFailed(true);
+      }
     },
     [],
   );
@@ -232,8 +245,9 @@ export function useQuestionProcess(inputs: Inputs) {
 
   useEffect(() => {
     if (!prefix || !scope || !recordingId || !expiresAt) return;
-    const shown = shownRef.current;
-    if (!shown) return;
+    const shown = restoredShown;
+    if (!shown || shown.key !== JSON.stringify([prefix, "shown", recordingId]))
+      return;
     const instance = new QuestionProcessRecorder({
       attemptId,
       recordingId,
@@ -284,7 +298,7 @@ export function useQuestionProcess(inputs: Inputs) {
       window.removeEventListener("pagehide", pagehide);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [attemptId, expiresAt, prefix, recordingId, scope]);
+  }, [attemptId, expiresAt, prefix, recordingId, scope, restoredShown]);
 
   useEffect(() => {
     if (!ready && recorder && status?.state === "active" && status.canCapture)

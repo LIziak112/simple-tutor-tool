@@ -228,13 +228,21 @@ export class QuestionProcessRecorder {
     const track = this.#ensure(questionId);
     if (!track || track.shownHints.has(index)) return;
     track.shownHints.add(index);
-    if (this.options.onHintShown)
-      this.#local = this.#local
-        .then(() => this.options.onHintShown?.(questionId, index))
-        .catch(() => {
-          this.#lostEvents = true;
-          this.#status("failed");
-        });
+    if (this.options.onHintShown) {
+      const failed = () => {
+        this.#lostEvents = true;
+        this.#status("failed");
+      };
+      try {
+        // 立即更新视口事实；持久化仍接入本机队列，供flush/close等待。
+        const persisted = this.options
+          .onHintShown(questionId, index)
+          .catch(failed);
+        this.#local = this.#local.then(() => persisted);
+      } catch {
+        failed();
+      }
+    }
     this.event(questionId, {
       kind: "hint",
       action: "shown",

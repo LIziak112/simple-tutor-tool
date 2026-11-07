@@ -99,3 +99,39 @@ it("新段起始快照含已见提示，快照后首次出现的解锁提示才�
   ]);
   await next.close();
 });
+
+it("刚呈现提示即同步暂停恢复，新段快照仍保留视口事实", async () => {
+  const { QuestionProcessRecorder } = await import("./recorder");
+  const store = memoryKVBackend();
+  const seen = new ProcessShownHints(store, "immediate", "recording");
+  await seen.load();
+  const batches: import("@tutor/contract").QuestionProcessBatch[] = [];
+  const recorder = new QuestionProcessRecorder({
+    attemptId: "attempt",
+    recordingId: "863de11a-f212-46e1-b876-d3a29e07df55",
+    expiresAt: "2099-01-01T00:00:00Z",
+    prefix: "immediate",
+    store,
+    current: () => true,
+    revision: () => "revision",
+    snapshot: (id) => ({ answer: null, layers: {}, hints: seen.read(id, [0]) }),
+    onHintShown: (id, index) => seen.add(id, index),
+    upload: async (batch) => {
+      batches.push(batch);
+      return batch.events.at(-1)?.seq ?? -1;
+    },
+  });
+  recorder.showHint("q1", 0);
+  recorder.invalidate("paused");
+  recorder.resume("paused");
+  recorder.begin("q1");
+  await recorder.flush();
+  const starts = batches
+    .flatMap((batch) => batch.events)
+    .filter((event) => event.kind === "start");
+  expect(starts).toHaveLength(2);
+  expect(starts.find((event) => event.hints.length > 0)).toMatchObject({
+    hints: [0],
+  });
+  await recorder.close();
+});
