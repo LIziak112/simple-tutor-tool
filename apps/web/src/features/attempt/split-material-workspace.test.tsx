@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   AttemptContextData,
   AttemptDraftData,
@@ -173,6 +179,17 @@ function renderPage() {
   );
 }
 
+async function jumpWithAnswerCard(index: number) {
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
+  const dialog = await screen.findByRole("dialog", { name: "答题卡" });
+  fireEvent.click(
+    within(dialog).getByRole("button", {
+      name: new RegExp(`^第 ${index} 题，`),
+    }),
+  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+}
+
 describe("分栏材料工作区与协同标画集成", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -250,8 +267,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     });
 
     // 切换到第 3 题（solo 材料题）
-    const q3Button = screen.getByRole("button", { name: /第 3 题/ });
-    fireEvent.click(q3Button);
+    await jumpWithAnswerCard(3);
 
     await waitFor(() => {
       expect(screen.getByLabelText("本题材料")).toBeInTheDocument();
@@ -312,11 +328,8 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(peeked?.["mat-group"]).toEqual(sampleDoc);
 
     // 切到第 2 题再切回，笔迹仍然保留在合并草稿仓中
-    const q2Buttons = screen.getAllByRole("button", { name: /第 2 题/ });
-    if (q2Buttons[0]) fireEvent.click(q2Buttons[0]);
-
-    const q1Buttons = screen.getAllByRole("button", { name: /第 1 题/ });
-    if (q1Buttons[0]) fireEvent.click(q1Buttons[0]);
+    await jumpWithAnswerCard(2);
+    await jumpWithAnswerCard(1);
 
     const reloadedInk = await draftStore.getMaterialInk(
       ATTEMPT_ID,

@@ -102,10 +102,10 @@ async function expectSingleProgress(
     `第 ${index} / 2 题 · 已提交 ${submitted} 题`,
   );
   await expect(progress).toHaveCount(1);
+  const entry = footer.getByRole("button", { name: "答题卡", exact: true });
+  await expect(entry).toBeVisible();
+  await expect(entry).toContainText(`${index}/2`);
   if ((page.viewportSize()?.width ?? 1440) < 1024) {
-    await expect(
-      footer.getByRole("button", { name: "答题卡", exact: true }),
-    ).toContainText(`${index}/2`);
     await expect(progress).toBeHidden();
   } else await expect(progress).toBeVisible();
 }
@@ -843,7 +843,7 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
       q1.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
 
-    // —— 桌面视口 1440×900：单题可达可输入、正文唯一、侧栏答题定位在场 ——
+    // —— 桌面视口 1440×900：单题可达可输入、正文唯一、答题卡从底栏打开 ——
     await page.setViewportSize({ width: 1440, height: 900 });
     await expectSingleProgress(page, 1, 0);
     await expect(q1).toBeVisible();
@@ -851,17 +851,24 @@ test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student
     await expect(
       q1.getByRole("radio", { name: "对", exact: true }),
     ).toBeChecked();
-    const sidebar = page.getByRole("complementary", { name: "答题定位" });
-    await expect(sidebar).toBeVisible();
-    const filter = sidebar.getByRole("combobox", { name: "筛选题目" });
-    await expect(filter).toHaveValue("flagged");
-    await filter.selectOption("all");
     await expect(
-      sidebar.getByRole("button", { name: /^第 1 题/ }),
-    ).toBeVisible();
+      page.getByRole("complementary", { name: "答题定位" }),
+    ).toHaveCount(0);
+    const entry = page
+      .locator('[data-slot="attempt-bottom-bar"]')
+      .getByRole("button", { name: "答题卡", exact: true });
+    await entry.click();
+    const dialog = page.getByRole("dialog", { name: "答题卡" });
     await expect(
-      sidebar.getByRole("button", { name: "下一道未答" }),
-    ).toBeVisible();
+      dialog.getByRole("button", { name: "待检查" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await dialog.getByRole("button", { name: "全部", exact: true }).click();
+    await dialog.getByRole("button", { name: /^第 2 题，/ }).click();
+    await expect(dialog).toBeHidden();
+    await expect(q2).toBeVisible();
+    await expectWorkspaceFocused(page);
+    await page.keyboard.press("ArrowLeft");
+    await expect(q1).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(1440);

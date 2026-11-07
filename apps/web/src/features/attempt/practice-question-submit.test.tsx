@@ -417,12 +417,14 @@ it("提交本题：请求体五字段齐备，回执反馈原位呈现且该题�
   expect(
     screen.getByRole("button", { name: "第 1 题更多" }),
   ).toBeInTheDocument();
-  // 进度与导航四态更新；主动作变下一题（主导作 + 侧栏导航钮）
+  // 进度与答题卡更新，主动作变为唯一的「下一题」。
   expect(screen.getByText("第 1 / 3 题 · 已提交 1 题")).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "第 1 题，已提交" }),
-  ).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
+  const dialog = await screen.findByRole("dialog", { name: "答题卡" });
+  expect(
+    within(dialog).getByRole("button", { name: "第 1 题，已提交" }),
+  ).toBeInTheDocument();
 });
 
 it.each(["list", "single"] as const)(
@@ -566,7 +568,7 @@ it("busy：提交中上一题/下一题/导航跳题禁用，按钮显示正在�
   expect(busyButton).toBeDisabled();
   expect(screen.getByRole("button", { name: "上一题" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "下一题" })[0]).toBeDisabled();
-  expect(screen.getByRole("button", { name: /第 3 题/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "答题卡" })).toBeDisabled();
   // 重复提交被禁（主按钮唯一且禁用）
   expect(screen.queryByRole("button", { name: /^提交$/ })).toBeNull();
   await waitFor(() => expect(mockedSubmit).toHaveBeenCalledOnce());
@@ -575,7 +577,11 @@ it("busy：提交中上一题/下一题/导航跳题禁用，按钮显示正在�
   expect(mockedSubmit).toHaveBeenCalledTimes(1);
   // 收尾解除：切题恢复可用（当前在 q1，上一题本就无上一题可去）
   expect(screen.getAllByRole("button", { name: "下一题" })[0]).toBeEnabled();
-  expect(screen.getByRole("button", { name: /第 3 题/ })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
+  const dialog = await screen.findByRole("dialog", { name: "答题卡" });
+  expect(
+    within(dialog).getByRole("button", { name: /^第 3 题，/ }),
+  ).toBeEnabled();
 });
 
 it("网络失败后重试复用同一 mutationId，成功后收敛", async () => {
@@ -883,9 +889,11 @@ it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公�
   fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("已提交，交卷后统一公布");
   expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
-  // 导航只报提交事实（待公布），无对错泄露
+  // 答题卡只报提交事实（待公布），无对错泄露。
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
+  const dialog = await screen.findByRole("dialog", { name: "答题卡" });
   expect(
-    screen.getByRole("button", { name: "第 1 题，已提交，反馈待公布" }),
+    within(dialog).getByRole("button", { name: "第 1 题，已提交，反馈待公布" }),
   ).toBeInTheDocument();
 });
 

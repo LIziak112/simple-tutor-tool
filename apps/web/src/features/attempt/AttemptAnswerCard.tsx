@@ -82,7 +82,6 @@ export function AttemptAnswerCard({
   workIds,
   onJump,
   locked = false,
-  sidebar = false,
   showNextUnanswered = false,
 }: {
   items: readonly QuestionNavigationItem[];
@@ -92,7 +91,6 @@ export function AttemptAnswerCard({
   workIds: ReadonlySet<string> | null;
   onJump: (id: string) => void;
   locked?: boolean;
-  sidebar?: boolean;
   showNextUnanswered?: boolean;
 }) {
   const grid = useRef<HTMLOListElement>(null);
@@ -147,7 +145,7 @@ export function AttemptAnswerCard({
         scroller.scrollTop += target.bottom - bounds.bottom + 4;
     };
     alignCurrentTile();
-    // 窄屏时桌面侧栏没有布局尺寸，跨断点显示时重新对齐当前题。
+    // 窗口尺寸改变后重新对齐当前题。
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(alignCurrentTile);
     observer.observe(scroller);
@@ -188,44 +186,20 @@ export function AttemptAnswerCard({
       aria-label="答题卡"
       className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden"
     >
-      {sidebar ? (
-        <select
-          aria-label="筛选题目"
-          className="min-h-11 w-full shrink-0 rounded-md border border-input bg-card px-2 text-sm"
-          value={activeFilter}
-          onChange={(event) => {
-            const option = filters.find(({ id }) => id === event.target.value);
-            if (!option) return;
-            if (grid.current) grid.current.scrollTop = 0;
-            onFilterChange(option.id);
-          }}
+      <div className="flex shrink-0 flex-wrap gap-x-4 gap-y-2">
+        <fieldset
+          aria-label="作答状态"
+          className="grid min-w-0 basis-full grid-cols-4 gap-0.5 rounded-xl bg-muted p-1 sm:min-w-[280px] sm:flex-1 sm:basis-auto"
         >
-          {filters.map(({ id, label }) => (
-            <option
-              key={id}
-              value={id}
-              disabled={needsWork && (id === "empty" || id === "partial")}
-            >
-              {label}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <div className="flex shrink-0 flex-wrap gap-x-4 gap-y-2">
-          <fieldset
-            aria-label="作答状态"
-            className="grid min-w-0 basis-full grid-cols-4 gap-0.5 rounded-xl bg-muted p-1 sm:min-w-[280px] sm:flex-1 sm:basis-auto"
-          >
-            {answerFilters.map(filterButton)}
-          </fieldset>
-          <fieldset
-            aria-label="个人标记"
-            className="grid w-[156px] grid-cols-2 gap-2 sm:w-[168px]"
-          >
-            {markFilters.map(filterButton)}
-          </fieldset>
-        </div>
-      )}
+          {answerFilters.map(filterButton)}
+        </fieldset>
+        <fieldset
+          aria-label="个人标记"
+          className="grid w-[156px] grid-cols-2 gap-2 sm:w-[168px]"
+        >
+          {markFilters.map(filterButton)}
+        </fieldset>
+      </div>
       <div className="flex min-h-6 shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <p role="status">
           {visible.length > 0
