@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -576,6 +577,22 @@ describe("StudentHomePage 指标区", () => {
     const lastCall = mockedReview.mock.calls.at(-1);
     expect(lastCall?.[0]).toBe(S2);
     expect(lastCall?.[1].kind).toBe("unsure");
+  });
+
+  it("连续改变时间范围与错题档位会保留两项筛选", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    renderPage();
+    const review = await screen.findByRole("region", { name: "错题与存疑" });
+    const recent = screen.getByRole("button", { name: "最近 7 天" });
+    act(() => {
+      fireEvent.click(recent);
+      fireEvent.click(within(review).getByRole("button", { name: "已订正" }));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "?days=7&kind=corrected",
+      );
+    });
   });
 
   it("错题与存疑空态与超出单页时的总数提示", async () => {

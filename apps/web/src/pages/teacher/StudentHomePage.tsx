@@ -13,7 +13,13 @@ import {
   List,
   TriangleAlert,
 } from "lucide-react";
-import { type MouseEvent, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
@@ -228,6 +234,10 @@ export function StudentHomePage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const state = useMemo(() => parseAnalyticsUrl(searchParams), [searchParams]);
+  const latestQuery = useRef(searchParams);
+  useLayoutEffect(() => {
+    latestQuery.current = searchParams;
+  }, [searchParams]);
 
   const coursesQuery = useTeacherCourses(false);
   const studentQuery = useAnalyticsStudent(
@@ -265,15 +275,30 @@ export function StudentHomePage() {
     offset: 0,
   });
 
+  function updateQuery(query: URLSearchParams): void {
+    // URL 更新可能先于 React 提交。连续点击应合并到最近一次筛选。
+    latestQuery.current = query;
+    void setSearchParams(query);
+  }
+
   function applyPatch(patch: Partial<AnalyticsUrlState>): void {
-    void setSearchParams(analyticsUrlQuery({ ...state, ...patch }));
+    const current = latestQuery.current;
+    const query = analyticsUrlQuery({
+      ...parseAnalyticsUrl(current),
+      ...patch,
+    });
+    const reviewKind = current.get("kind");
+    if (reviewKind === "unsure" || reviewKind === "corrected")
+      query.set("kind", reviewKind);
+    updateQuery(query);
   }
 
   /** 错题与存疑换档：写 URL ?kind=（默认档 wrong 不写，保持地址干净） */
   function applyKind(next: QuestionReviewKind): void {
-    const query = analyticsUrlQuery(state);
+    const query = new URLSearchParams(latestQuery.current);
     if (next !== "wrong") query.set("kind", next);
-    void setSearchParams(query);
+    else query.delete("kind");
+    updateQuery(query);
   }
 
   const data = studentQuery.data;
@@ -365,7 +390,7 @@ export function StudentHomePage() {
         courses={coursesQuery.data?.courses ?? []}
         showFocusDays={false}
         onPatch={applyPatch}
-        onReset={() => void setSearchParams(new URLSearchParams())}
+        onReset={() => updateQuery(new URLSearchParams())}
       />
 
       {data !== undefined && <SectionNavigation />}
