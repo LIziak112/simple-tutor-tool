@@ -49,6 +49,8 @@ export interface AnswerKindView<A extends { kind: string }, M, Rf> {
     update: (answer: A, defer?: boolean) => void;
     /** 原位锁定信号（disabled 属性用）；readonly/public-base 的 update 已被宿主换成稳定无副作用回调 */
     disabled?: boolean;
+    repeatChoiceSelection?: boolean;
+    correctOptionIndexes?: readonly number[] | undefined;
   }): ReactNode;
   /** 独立的结果材料呈现入口（不是原位锁定的替身——§5；不含参考答案） */
   ReadOnly(p: { model: M; answer: A | undefined }): ReactNode;

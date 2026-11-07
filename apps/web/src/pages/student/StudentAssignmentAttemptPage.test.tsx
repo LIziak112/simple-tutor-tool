@@ -476,11 +476,16 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     );
     expect(screen.getByText("第 1 题")).toBeInTheDocument();
     expect(screen.getByText("第 2 题")).toBeInTheDocument();
-    // 进度条文本含 <b> 强调，用整页文本断言
     expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
       "已填写 0/2",
     );
-    expect(screen.getByText("10月1日 20:00 截止")).toBeInTheDocument();
+    expect(screen.queryByText("10月1日 20:00 截止")).not.toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "练习信息" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("10月1日 20:00 截止");
   });
 
   it("作答即保存：点判断题「对」立即 PUT 草稿，进度条更新", async () => {

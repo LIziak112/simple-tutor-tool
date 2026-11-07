@@ -1,6 +1,5 @@
-import { ArrowRight, Check, CircleHelp, Clock, Flag } from "lucide-react";
+import { CircleHelp, Flag } from "lucide-react";
 import type { Ref } from "react";
-import { Button } from "@/components/ui/button";
 import { PracticeSubmittedMark } from "./PracticeWorkspace";
 import {
   completionLabel,
@@ -116,80 +115,5 @@ export function QuestionNavigationTile({
         />
       )}
     </button>
-  );
-}
-
-export function QuestionNavigator({
-  items,
-  currentId,
-  onJump,
-  locked = false,
-}: {
-  items: readonly QuestionNavigationItem[];
-  currentId: string | null;
-  onJump: (id: string) => void;
-  /** 单题模式提交在途：跳题整体禁用（§7.2 busy 禁切题；列表模式不限滚动） */
-  locked?: boolean;
-}) {
-  const currentIndex = items.findIndex((item) => item.id === currentId);
-  // 从当前位置之后查找，卷尾回到前面；部分填写仍属于待补全；
-  // v1 卷已提交题不可再改答，「未答」同时要求未提交（§9.1 四态口径）。
-  const next = [
-    ...items.slice(currentIndex + 1),
-    ...items.slice(0, currentIndex + 1),
-  ].find(
-    (item) => item.completion.state !== "filled" && !item.practice?.submitted,
-  );
-  const hasPractice = items.some((item) => item.practice !== undefined);
-  return (
-    <nav
-      aria-label="答题卡"
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-    >
-      <div className="mb-3 flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>○ 未填写</span>
-        <span>◐ 部分填写</span>
-        <span>● 已填写</span>
-        {hasPractice && (
-          <>
-            <span className="inline-flex items-center gap-1">
-              <Check aria-hidden className="size-3" />
-              已提交
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Clock aria-hidden className="size-3" />
-              已提交 · 待公布
-            </span>
-          </>
-        )}
-      </div>
-      {/* 为向外延伸 4px 的选中框和键盘焦点框留出空间，避免滚动容器裁切。 */}
-      <ol className="grid min-h-0 grid-cols-[repeat(auto-fill,44px)] justify-start gap-2 overflow-y-auto overscroll-contain p-1">
-        {items.map((item) => (
-          <li key={item.id}>
-            <QuestionNavigationTile
-              item={item}
-              current={item.id === currentId}
-              onJump={onJump}
-              locked={locked}
-            />
-          </li>
-        ))}
-      </ol>
-      <Button
-        type="button"
-        variant="outline"
-        className="mt-3 shrink-0 min-h-11 w-full justify-between px-3"
-        disabled={locked || !next}
-        onClick={() => next && onJump(next.id)}
-      >
-        {next ? "下一道未答" : items.length === 0 ? "暂无题目" : "全部已填写"}
-        {next ? (
-          <ArrowRight aria-hidden className="size-4" />
-        ) : (
-          <Check aria-hidden className="size-4" />
-        )}
-      </Button>
-    </nav>
   );
 }

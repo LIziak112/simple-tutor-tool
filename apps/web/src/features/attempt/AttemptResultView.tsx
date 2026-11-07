@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
+import { optionCorrectOf } from "@/features/answering/views/choice";
 import {
   groupSegmentsOfUnit,
   questionMaterialsOf,
@@ -424,6 +425,9 @@ function ResultQuestionCard({
       <AnnotationView
         question={question.publicQuestion}
         answer={question.answer ?? undefined}
+        correctOptionIndexes={
+          released ? optionCorrectOf(question.answers) : undefined
+        }
         viewer="student"
         attemptId={attemptId}
         questionId={question.questionId}
@@ -436,9 +440,6 @@ function ResultQuestionCard({
         />
         <ResultOptions question={question} released={released} />
       </AnnotationView>
-      {question.publicQuestion && released && (
-        <ResultOptions question={question} released={released} />
-      )}
 
       <ResultAnswerComparison question={question} released={released} />
 

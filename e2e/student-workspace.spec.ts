@@ -8,7 +8,7 @@ import {
   getStudentViaApi,
   openChoicePractice,
   openPracticeInfoDialog,
-  openSaveDetailsViaInfoDialog,
+  openSaveDetails,
   setCourseItemVisible,
   teacherApiLogin,
   uniqueSuffix,
@@ -28,7 +28,8 @@ test("桌面长卷答题卡固定筛选并独立滚动", { tag: ["@student"] }, 
   request,
   page,
 }) => {
-  await page.setViewportSize({ width: 942, height: 668 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `答题卡课程${suffix}`;
@@ -103,7 +104,7 @@ test("桌面长卷答题卡固定筛选并独立滚动", { tag: ["@student"] }, 
   await page.keyboard.press("Escape");
   await expect(entry).toBeFocused();
   const first = page.getByRole("article", { name: "第 1 题", exact: true });
-  const scratch = first.getByRole("button", { name: /第 1 题草稿纸/ });
+  const scratch = first.locator('[data-paper-trigger="true"]');
   await scratch.click();
   await drawStrokeWithPointerEvents(
     first.locator('[data-slot="note-layer"] canvas'),
@@ -116,6 +117,62 @@ test("桌面长卷答题卡固定筛选并独立滚动", { tag: ["@student"] }, 
   ).toBeVisible();
   await expect(dialog.getByRole("status")).toHaveText("部分作答 1 题");
   await page.keyboard.press("Escape");
+
+  const footer = page.locator('[data-slot="attempt-bottom-bar"]');
+  const sidebar = page.getByRole("complementary", { name: "答题定位" });
+  await expect(
+    footer.getByRole("button", { name: "交卷", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 668 });
+  await expect(
+    footer.getByRole("button", { name: "交卷", exact: true }),
+  ).toBeVisible();
+  await entry.click();
+  await expect(
+    dialog.getByRole("button", { name: "部分作答", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "练习更多" }).click();
+  await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
+  await page.getByText("单题专注", { exact: true }).click();
+  await expect(sidebar).toBeHidden();
+  await expect(
+    footer.getByRole("button", { name: "交卷", exact: true }),
+  ).toHaveCount(0);
+  await entry.click();
+  await expect(
+    dialog.getByRole("button", { name: "部分作答", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("button", { name: "全部", exact: true }).click();
+  await dialog.getByRole("button", { name: /^第 105 题，/ }).click();
+  const workspace = page.locator('[data-slot="practice-single-workspace"]');
+  await expect(workspace).toBeFocused();
+  await expect(entry).toContainText("105/105");
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(entry).toBeHidden();
+  await expect(sidebar.getByRole("combobox", { name: "筛选题目" })).toHaveValue(
+    "all",
+  );
+  const current = sidebar.locator('button[aria-current="location"]');
+  await expect(current).toHaveText("105");
+  await expect(current).toBeInViewport();
+  await sidebar.getByRole("button", { name: "收起答题卡" }).click();
+  await expect(current).toBeHidden();
+  await sidebar.getByRole("button", { name: "展开答题卡" }).click();
+  await expect(current).toBeInViewport();
+
+  await page.setViewportSize({ width: 390, height: 668 });
+  await entry.click();
+  await expect(
+    dialog.locator('button[aria-current="location"]'),
+  ).toBeInViewport();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.keyboard.press("Escape");
+  await expect(
+    sidebar.getByRole("button", { name: "收起答题卡" }),
+  ).toBeFocused();
   expect(leak.violations()).toEqual([]);
 });
 
@@ -220,22 +277,20 @@ test(
         const details = await openPracticeInfoDialog(page);
         await expect(details).toContainText(courseName);
         await expect(details).toContainText(unitName);
-        await expect(details.getByTestId("draft-status")).toBeVisible();
-        await details
-          .getByRole("button", { name: "保存详情", exact: true })
-          .click();
-        const saves = page.getByRole("dialog", {
-          name: "保存详情",
-          exact: true,
-        });
+        await expect(details.getByTestId("draft-status")).toHaveCount(0);
+        await expect(
+          details.getByRole("button", { name: "保存详情" }),
+        ).toHaveCount(0);
+        await details.press("Escape");
+        const saves = await openSaveDetails(page);
         await saves.getByRole("button", { name: "定位第 1 题" }).click();
         await expect(page.getByRole("dialog")).toHaveCount(0);
         await expect(first).toBeFocused();
       } else {
-        await expect(header.getByTestId("draft-status")).toBeVisible();
+        await expect(header.getByTestId("draft-status")).toHaveCount(0);
         await expect(
           header.getByText(`课程：${courseName}`, { exact: false }),
-        ).toBeVisible();
+        ).toHaveCount(0);
       }
       // 所有尺寸都可向下阅读收起顶栏，横屏和电脑也不例外。
       // 短卷用短视口产生真实滚动；等待两帧让旋转/缩放事件先落定。
@@ -349,7 +404,7 @@ test(
       page.getByRole("dialog").getByRole("navigation", { name: "答题卡" }),
     );
     await expect(
-      page.getByRole("button", { name: "部分作答" }),
+      page.getByRole("button", { name: "部分作答", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "全部", exact: true }).click();
     await page
@@ -746,9 +801,8 @@ test(
         `热开中位数 ${warmMedianMs}ms 超预算 ${WARM_OPEN_BUDGET_MS}ms（max ${warmMaxMs}ms，样本 ${JSON.stringify(warmMs)}），请安静机器或 E2E_PERF_GATE=1 复验`,
       );
     }
-    // 手机端顶栏精简（2026-10-15 决策）：保存详情入口在「更多 → 练习信息」
-    // 弹层里，与首个用例同款路径；当前视口 390px。
-    const saves = await openSaveDetailsViaInfoDialog(page);
+    // 在 390px 视口从更多菜单进入保存详情。
+    const saves = await openSaveDetails(page);
     await expect(saves).toContainText("标画：");
     await page.screenshot({
       path: testInfo.outputPath("save-details-390.png"),

@@ -221,6 +221,16 @@ export const attemptStartOptionsRequestSchema = z
   .strict()
   .superRefine(rejectFeedbackModeWithoutVersion);
 
+/** 课程单元重开必须指定要作废的进行中卷，避免旧页面清掉新卷。 */
+export const courseAttemptStartOptionsRequestSchema =
+  attemptStartOptionsRequestSchema.safeExtend({
+    restartAttemptId: z.uuid().optional(),
+  });
+
+export type CourseAttemptStartOptions = z.infer<
+  typeof courseAttemptStartOptionsRequestSchema
+>;
+
 /**
  * PATCH /api/student/attempts/:id/workflow 响应 data（M1b，strict）：
  * 返回更新后的裁决投影与题级进度白名单（与草稿视图同口径，无答案秘密）；

@@ -17,13 +17,11 @@ export function AttemptNavigatorButton({
   children,
   onOpen,
   disabled = false,
-  icon = true,
   desktop = false,
 }: {
   children: ReactNode;
   onOpen: (trigger: HTMLButtonElement) => void;
   disabled?: boolean;
-  icon?: boolean;
   desktop?: boolean;
 }) {
   const progressId = useId();
@@ -37,8 +35,11 @@ export function AttemptNavigatorButton({
       disabled={disabled}
       onClick={(event) => onOpen(event.currentTarget)}
     >
-      {icon && <Grid2X2 aria-hidden className="size-4" />}
-      <span id={progressId} className="tabular-nums text-sm">
+      <Grid2X2 aria-hidden className="size-4" />
+      <span
+        id={progressId}
+        className="flex items-center gap-1.5 tabular-nums text-sm"
+      >
         {children}
       </span>
       <ChevronDown aria-hidden className="size-3 shrink-0" />
@@ -60,7 +61,6 @@ export function AttemptNavigatorButton({
  */
 export function AttemptBottomBar({
   primaryActions,
-  hideSubmit = false,
   progressLabel,
   progressValue,
   answered,
@@ -77,8 +77,6 @@ export function AttemptBottomBar({
   onOpenNavigator,
 }: {
   primaryActions?: ReactNode;
-  /** 单题主动作已经承担交卷时，隐藏重复的整卷入口。 */
-  hideSubmit?: boolean;
   /** 单题紧凑布局的进度文案（替代默认「已填写/已提交」计数） */
   progressLabel?: ReactNode;
   /** 进度条比例（0–1）；缺省按已填写比例 */
@@ -198,16 +196,6 @@ export function AttemptBottomBar({
             className="hidden min-w-0 flex-1 items-center gap-2 lg:flex"
           >
             {progress}
-            {!hideSubmit && !viewResult && (
-              <Button
-                variant="ghost"
-                className="h-11 shrink-0 px-3 text-sm text-muted-foreground lg:order-3"
-                disabled={submitDisabled}
-                onClick={onOpenSubmit}
-              >
-                提前交卷
-              </Button>
-            )}
           </div>
         </div>
       ) : (
@@ -221,7 +209,7 @@ export function AttemptBottomBar({
               {progress}
             </div>
           )}
-          {hideSubmit ? null : viewResult ? (
+          {viewResult ? (
             <Button
               className={`h-11 min-w-[88px] shrink-0 px-4 text-base ${pressFeedback}`}
               onClick={onViewResult}

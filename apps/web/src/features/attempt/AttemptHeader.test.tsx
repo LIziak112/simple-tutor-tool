@@ -19,7 +19,7 @@ it.each(["scratch", "answerInk"] as const)(
     }
     render(
       <AttemptEditorProvider>
-        <AttemptHeader title="练习" status={() => null} onBack={() => {}}>
+        <AttemptHeader title="练习" onBack={() => {}}>
           课程信息
         </AttemptHeader>
         <EditorProbe />
@@ -81,7 +81,7 @@ it("编辑失败提示属于标题正常布局，不在标题外悬浮覆盖", a
   }
   render(
     <AttemptEditorProvider>
-      <AttemptHeader title="练习标题" status={() => null} onBack={() => {}}>
+      <AttemptHeader title="练习标题" onBack={() => {}}>
         课程信息
       </AttemptHeader>
       <Switch />
@@ -101,14 +101,6 @@ it("返回可用，手机标题单行桌面最多两行，更多可查看完整�
   render(
     <AttemptHeader
       title="很长的练习标题，需要在更多里查看完整名称"
-      status={(closeDetails) => (
-        <div>
-          <p>全部已保存</p>
-          <button type="button" onClick={closeDetails}>
-            定位题目
-          </button>
-        </div>
-      )}
       onBack={back}
     >
       课程信息
@@ -129,20 +121,16 @@ it("返回可用，手机标题单行桌面最多两行，更多可查看完整�
     "很长的练习标题，需要在更多里查看完整名称",
   );
   expect(screen.getByRole("dialog")).toHaveTextContent("课程信息");
-  expect(screen.getByRole("dialog")).toHaveTextContent("全部已保存");
-  fireEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", {
-      name: "定位题目",
-    }),
+  expect(screen.getByRole("dialog")).not.toHaveTextContent("全部已保存");
+  expect(screen.getByRole("banner", { hidden: true })).not.toHaveTextContent(
+    "课程信息",
   );
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("actions 槽渲染在更多按钮左侧（SAI-19 AI 助教入口位）", () => {
   render(
     <AttemptHeader
       title="练习"
-      status={() => <p>全部已保存</p>}
       onBack={() => undefined}
       actions={<button type="button">AI 助教</button>}
     >
@@ -162,7 +150,6 @@ it("menuItems 槽渲染在练习信息之前（做题方式切换挂点）", () 
   render(
     <AttemptHeader
       title="练习"
-      status={() => <p>全部已保存</p>}
       onBack={() => undefined}
       menuItems={
         <div role="menuitem" tabIndex={0}>

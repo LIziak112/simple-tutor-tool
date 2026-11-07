@@ -1,4 +1,4 @@
-import { ListChecks, RotateCw } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import {
   type RefObject,
   useCallback,
@@ -14,7 +14,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   type AttemptSaveDetail,
@@ -90,39 +89,34 @@ function SaveRows({
   );
 }
 
-export function AttemptSaveDetails(props: DetailsProps) {
-  const [open, setOpen] = useState(false);
+export function AttemptSaveDetails({
+  open,
+  onOpenChange,
+  onReturnFocus,
+  ...props
+}: DetailsProps & {
+  open: boolean;
+  onOpenChange: (value: boolean) => void;
+  onReturnFocus: () => void;
+}) {
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const jumping = useRef(false);
   const generation = useRef(0);
+  const changeOpen = (value: boolean) => {
+    generation.current++;
+    onOpenChange(value);
+    setError(null);
+    setRetrying(false);
+  };
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(value) => {
-        generation.current++;
-        setOpen(value);
-        setError(null);
-        setRetrying(false);
-      }}
-    >
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          className="size-11 shrink-0 p-0"
-          title="保存详情"
-          aria-label="保存详情"
-        >
-          <ListChecks aria-hidden className="size-4" />
-        </Button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent
         className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg"
         onCloseAutoFocus={(event) => {
-          if (jumping.current) {
-            event.preventDefault();
-            jumping.current = false;
-          }
+          event.preventDefault();
+          if (!jumping.current) onReturnFocus();
+          jumping.current = false;
         }}
       >
         <DialogHeader>
@@ -134,8 +128,7 @@ export function AttemptSaveDetails(props: DetailsProps) {
             {...props}
             onJump={async (id) => {
               jumping.current = true;
-              generation.current++;
-              setOpen(false);
+              changeOpen(false);
               await props.onJump(id);
             }}
           />

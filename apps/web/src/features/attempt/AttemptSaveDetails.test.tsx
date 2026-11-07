@@ -5,9 +5,32 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { type ComponentProps, useState } from "react";
 import { expect, it, vi } from "vitest";
 import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
+
+function DetailsHarness(
+  props: Omit<
+    ComponentProps<typeof AttemptSaveDetails>,
+    "open" | "onOpenChange" | "onReturnFocus"
+  >,
+) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        保存详情
+      </button>
+      <AttemptSaveDetails
+        {...props}
+        open={open}
+        onOpenChange={setOpen}
+        onReturnFocus={() => {}}
+      />
+    </>
+  );
+}
 
 it("详情可从问题题号定位，重试失败不关闭，保存文案不代替云端回执", async () => {
   installDraftBackend(memoryBackend());
@@ -16,7 +39,7 @@ it("详情可从问题题号定位，重试失败不关闭，保存文案不代�
   const jump = vi.fn().mockResolvedValue(undefined);
   const retry = vi.fn().mockRejectedValue(new Error("网络不可用"));
   render(
-    <AttemptSaveDetails
+    <DetailsHarness
       attemptId="details-ui"
       questionIds={["q"]}
       controllers={{ current: new Map() }}
@@ -42,7 +65,7 @@ it("关闭重开后，上一轮重试的迟到失败不能污染新详情", asyn
       reject = fail;
     });
   render(
-    <AttemptSaveDetails
+    <DetailsHarness
       attemptId="late-details"
       questionIds={[]}
       controllers={{ current: new Map() }}

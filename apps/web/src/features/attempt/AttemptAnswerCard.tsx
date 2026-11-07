@@ -1,6 +1,7 @@
 import { cn } from "cn";
-import { CircleHelp, Flag } from "lucide-react";
+import { ArrowRight, Check, CircleHelp, Flag } from "lucide-react";
 import { useEffect, useReducer, useRef } from "react";
+import { Button } from "@/components/ui/button";
 import {
   getAnnotationView,
   subscribeAnnotationStore,
@@ -27,7 +28,7 @@ const filters = [...answerFilters, ...markFilters];
 export type AnswerCardFilter = (typeof filters)[number]["id"];
 
 /** 只读已恢复的卷内正文。弹层关闭时不订阅逐笔更新。 */
-export function useAnswerCardWorkIds(
+function useAnswerCardWorkIds(
   attemptId: string,
   questionIds: readonly string[],
   enabled: boolean,
@@ -59,6 +60,20 @@ export function useAnswerCardWorkIds(
   );
 }
 
+export function LiveAttemptAnswerCard({
+  attemptId,
+  questionIds,
+  materialsReady,
+  ...props
+}: Omit<Parameters<typeof AttemptAnswerCard>[0], "workIds"> & {
+  attemptId: string;
+  questionIds: readonly string[];
+  materialsReady: boolean;
+}) {
+  const workIds = useAnswerCardWorkIds(attemptId, questionIds, materialsReady);
+  return <AttemptAnswerCard {...props} workIds={workIds} />;
+}
+
 export function AttemptAnswerCard({
   items,
   currentId,
@@ -66,6 +81,9 @@ export function AttemptAnswerCard({
   onFilterChange,
   workIds,
   onJump,
+  locked = false,
+  sidebar = false,
+  showNextUnanswered = false,
 }: {
   items: readonly QuestionNavigationItem[];
   currentId: string | null;
@@ -73,6 +91,9 @@ export function AttemptAnswerCard({
   onFilterChange: (filter: AnswerCardFilter) => void;
   workIds: ReadonlySet<string> | null;
   onJump: (id: string) => void;
+  locked?: boolean;
+  sidebar?: boolean;
+  showNextUnanswered?: boolean;
 }) {
   const grid = useRef<HTMLOListElement>(null);
   const currentTile = useRef<HTMLButtonElement>(null);
@@ -101,17 +122,36 @@ export function AttemptAnswerCard({
     });
   const current = items.find((item) => item.id === currentId);
   const currentVisible = visible.some(({ item }) => item.id === currentId);
+  const currentIndex = items.findIndex((item) => item.id === currentId);
+  const nextUnanswered = showNextUnanswered
+    ? [
+        ...items.slice(currentIndex + 1),
+        ...items.slice(0, currentIndex + 1),
+      ].find(
+        (item) =>
+          item.completion.state !== "filled" && !item.practice?.submitted,
+      )
+    : undefined;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 切换筛选或当前题后重新检查滚动边界。
   useEffect(() => {
     const scroller = grid.current;
     const tile = currentTile.current;
     if (!currentVisible || !scroller || !tile) return;
-    const bounds = scroller.getBoundingClientRect();
-    const target = tile.getBoundingClientRect();
-    if (target.top < bounds.top + 4)
-      scroller.scrollTop += target.top - bounds.top - 4;
-    else if (target.bottom > bounds.bottom - 4)
-      scroller.scrollTop += target.bottom - bounds.bottom + 4;
+    const alignCurrentTile = () => {
+      if (!scroller.clientHeight) return;
+      const bounds = scroller.getBoundingClientRect();
+      const target = tile.getBoundingClientRect();
+      if (target.top < bounds.top + 4)
+        scroller.scrollTop += target.top - bounds.top - 4;
+      else if (target.bottom > bounds.bottom - 4)
+        scroller.scrollTop += target.bottom - bounds.bottom + 4;
+    };
+    alignCurrentTile();
+    // 窄屏时桌面侧栏没有布局尺寸，跨断点显示时重新对齐当前题。
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(alignCurrentTile);
+    observer.observe(scroller);
+    return () => observer.disconnect();
   }, [activeFilter, currentId, currentVisible]);
 
   function filterButton(option: (typeof filters)[number]) {
@@ -144,21 +184,48 @@ export function AttemptAnswerCard({
   }
 
   return (
-    <nav aria-label="答题卡" className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="flex shrink-0 flex-wrap gap-x-4 gap-y-2">
-        <fieldset
-          aria-label="作答状态"
-          className="grid min-w-0 basis-full grid-cols-4 gap-0.5 rounded-xl bg-muted p-1 sm:min-w-[280px] sm:flex-1 sm:basis-auto"
+    <nav
+      aria-label="答题卡"
+      className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden"
+    >
+      {sidebar ? (
+        <select
+          aria-label="筛选题目"
+          className="min-h-11 w-full shrink-0 rounded-md border border-input bg-card px-2 text-sm"
+          value={activeFilter}
+          onChange={(event) => {
+            const option = filters.find(({ id }) => id === event.target.value);
+            if (!option) return;
+            if (grid.current) grid.current.scrollTop = 0;
+            onFilterChange(option.id);
+          }}
         >
-          {answerFilters.map(filterButton)}
-        </fieldset>
-        <fieldset
-          aria-label="个人标记"
-          className="grid w-[156px] grid-cols-2 gap-2 sm:w-[168px]"
-        >
-          {markFilters.map(filterButton)}
-        </fieldset>
-      </div>
+          {filters.map(({ id, label }) => (
+            <option
+              key={id}
+              value={id}
+              disabled={needsWork && (id === "empty" || id === "partial")}
+            >
+              {label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <div className="flex shrink-0 flex-wrap gap-x-4 gap-y-2">
+          <fieldset
+            aria-label="作答状态"
+            className="grid min-w-0 basis-full grid-cols-4 gap-0.5 rounded-xl bg-muted p-1 sm:min-w-[280px] sm:flex-1 sm:basis-auto"
+          >
+            {answerFilters.map(filterButton)}
+          </fieldset>
+          <fieldset
+            aria-label="个人标记"
+            className="grid w-[156px] grid-cols-2 gap-2 sm:w-[168px]"
+          >
+            {markFilters.map(filterButton)}
+          </fieldset>
+        </div>
+      )}
       <div className="flex min-h-6 shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <p role="status">
           {visible.length > 0
@@ -185,11 +252,32 @@ export function AttemptAnswerCard({
               item={item}
               current={item.id === currentId}
               answerCardState={state}
+              locked={locked}
               onJump={onJump}
             />
           </li>
         ))}
       </ol>
+      {showNextUnanswered && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 w-full shrink-0 justify-between px-3"
+          disabled={locked || !nextUnanswered}
+          onClick={() => nextUnanswered && onJump(nextUnanswered.id)}
+        >
+          {nextUnanswered
+            ? "下一道未答"
+            : items.length === 0
+              ? "暂无题目"
+              : "全部已填写"}
+          {nextUnanswered ? (
+            <ArrowRight aria-hidden className="size-4" />
+          ) : (
+            <Check aria-hidden className="size-4" />
+          )}
+        </Button>
+      )}
     </nav>
   );
 }

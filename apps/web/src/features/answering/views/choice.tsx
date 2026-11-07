@@ -26,12 +26,19 @@ import { AnswerComparisonShell, referenceColumnOf } from "./comparison";
  */
 
 /** 选项按钮的公共外壳（单选/多选共用；触控 ≥44px；has-[:checked] 联动选中态） */
-function optionShellClass(selected: boolean): string {
+function optionShellClass(selected: boolean, correct?: boolean): string {
   return cn(
     "flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
-    selected
-      ? "border-primary bg-primary/5 ring-1 ring-primary"
-      : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
+    // 结果标记只改配色，不移动选项正文或圈画坐标。
+    correct === true || (correct === false && selected)
+      ? optionRowClass("student", {
+          isCorrect: correct,
+          isPicked: selected,
+          released: true,
+        })
+      : selected
+        ? "border-primary bg-primary/5 ring-1 ring-primary"
+        : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
   );
 }
 
@@ -71,14 +78,44 @@ function choiceStemSourceOf(model: {
   });
 }
 
+function OptionReviewMark({
+  picked,
+  correct,
+}: {
+  picked: boolean;
+  correct: boolean | undefined;
+}) {
+  if (correct === undefined || (!picked && !correct)) return null;
+  return (
+    <span className="sr-only">
+      {correct && picked
+        ? "正确项 · 你的选择"
+        : correct
+          ? "正确项"
+          : "你的选择"}
+    </span>
+  );
+}
+
+function optionIsCorrect(
+  indexes: readonly number[] | undefined,
+  index: number,
+) {
+  return indexes?.length ? indexes.includes(index) : undefined;
+}
+
 /** 单选题：原生标签提供字母及正文，保留公式的可访问语义。 */
 function ChoiceControls({
   model,
   answer,
   update,
   disabled = false,
+  repeatChoiceSelection = false,
+  correctOptionIndexes,
 }: {
   model: PreparedOf<"choice">;
+  repeatChoiceSelection?: boolean;
+  correctOptionIndexes?: readonly number[] | undefined;
   answer: StudentAnswerOfKind<"choice"> | undefined;
   update: (answer: StudentAnswerOfKind<"choice">, defer?: boolean) => void;
   /** 已提交只读（§11-2 原位只读）：隐藏输入同样携带 disabled 语义 */
@@ -88,26 +125,36 @@ function ChoiceControls({
   const groupName = `choice-${model.scopeId}`;
   return (
     <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="选项">
-      {model.options.map((option) => (
+      {model.options.map((option) => {
+        const isPicked = picked === option.index;
+        const correct = optionIsCorrect(correctOptionIndexes, option.index);
         // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
-        <label
-          key={option.key}
-          className={optionShellClass(picked === option.index)}
-          data-lr-node={`options/option/${option.index}`}
-        >
-          <input
-            type="radio"
-            name={groupName}
-            checked={picked === option.index}
-            disabled={disabled}
-            onChange={() =>
-              update({ kind: "choice", index: option.index }, undefined)
-            }
-            className="sr-only"
-          />
-          <OptionBody letter={letterOf(option.index)} text={option.text} />
-        </label>
-      ))}
+        return (
+          <label
+            key={option.key}
+            className={optionShellClass(isPicked, correct)}
+            data-lr-node={`options/option/${option.index}`}
+          >
+            <input
+              type="radio"
+              name={groupName}
+              checked={isPicked}
+              disabled={disabled}
+              onChange={() =>
+                update({ kind: "choice", index: option.index }, undefined)
+              }
+              onClick={
+                repeatChoiceSelection && isPicked
+                  ? () => update({ kind: "choice", index: option.index })
+                  : undefined
+              }
+              className="sr-only"
+            />
+            <OptionBody letter={letterOf(option.index)} text={option.text} />
+            <OptionReviewMark picked={isPicked} correct={correct} />
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -118,8 +165,10 @@ function MultiControls({
   answer,
   update,
   disabled = false,
+  correctOptionIndexes,
 }: {
   model: PreparedOf<"multi">;
+  correctOptionIndexes?: readonly number[] | undefined;
   answer: StudentAnswerOfKind<"multi"> | undefined;
   update: (answer: StudentAnswerOfKind<"multi">, defer?: boolean) => void;
   /** 已提交只读（§11-2 原位只读）：隐藏输入同样携带 disabled 语义 */
@@ -137,23 +186,28 @@ function MultiControls({
       aria-label="多选题选项"
       className="m-0 flex flex-col gap-1.5 border-0 p-0"
     >
-      {model.options.map((option) => (
+      {model.options.map((option) => {
+        const isPicked = pickedIndexes.includes(option.index);
+        const correct = optionIsCorrect(correctOptionIndexes, option.index);
         // key 由序号派生（§4.2 旧题规则 opt-N）：重复选项文本不再冲突告警
-        <label
-          key={option.key}
-          className={optionShellClass(pickedIndexes.includes(option.index))}
-          data-lr-node={`options/option/${option.index}`}
-        >
-          <input
-            type="checkbox"
-            checked={pickedIndexes.includes(option.index)}
-            disabled={disabled}
-            onChange={() => toggle(option.index)}
-            className="sr-only"
-          />
-          <OptionBody letter={letterOf(option.index)} text={option.text} />
-        </label>
-      ))}
+        return (
+          <label
+            key={option.key}
+            className={optionShellClass(isPicked, correct)}
+            data-lr-node={`options/option/${option.index}`}
+          >
+            <input
+              type="checkbox"
+              checked={isPicked}
+              disabled={disabled}
+              onChange={() => toggle(option.index)}
+              className="sr-only"
+            />
+            <OptionBody letter={letterOf(option.index)} text={option.text} />
+            <OptionReviewMark picked={isPicked} correct={correct} />
+          </label>
+        );
+      })}
     </fieldset>
   );
 }
@@ -336,7 +390,14 @@ export const choiceView: AnswerKindView<
   PreparedOf<"choice">,
   ReferenceOfKind<"choice">
 > = {
-  Input: ({ model, answer, update, disabled = false }) => (
+  Input: ({
+    model,
+    answer,
+    update,
+    disabled = false,
+    repeatChoiceSelection = false,
+    correctOptionIndexes,
+  }) => (
     <>
       <RichMarkdown
         source={choiceStemSourceOf(model)}
@@ -344,6 +405,8 @@ export const choiceView: AnswerKindView<
         lrNodes
       />
       <ChoiceControls
+        repeatChoiceSelection={repeatChoiceSelection}
+        correctOptionIndexes={correctOptionIndexes}
         model={model}
         answer={answer}
         update={update}
@@ -380,7 +443,13 @@ export const multiView: AnswerKindView<
   PreparedOf<"multi">,
   ReferenceOfKind<"multi">
 > = {
-  Input: ({ model, answer, update, disabled = false }) => (
+  Input: ({
+    model,
+    answer,
+    update,
+    disabled = false,
+    correctOptionIndexes,
+  }) => (
     <>
       <RichMarkdown
         source={choiceStemSourceOf(model)}
@@ -388,6 +457,7 @@ export const multiView: AnswerKindView<
         lrNodes
       />
       <MultiControls
+        correctOptionIndexes={correctOptionIndexes}
         model={model}
         answer={answer}
         update={update}
