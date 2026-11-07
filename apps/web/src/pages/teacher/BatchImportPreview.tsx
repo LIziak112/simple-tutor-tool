@@ -14,10 +14,16 @@ import {
   Loader2,
   RefreshCw,
   Upload,
-  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   ActionsPanel,
   describeImportNames,
@@ -225,17 +231,10 @@ export function BatchImportPreview({
       : "";
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 降级弹层打开时聚焦并全选；Escape 关闭
-  useEffect(() => {
-    if (clipboard.fallbackText === null) return;
+  function handleSelectAll(): void {
     fallbackTextareaRef.current?.focus();
     fallbackTextareaRef.current?.select();
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") clipboard.closeFallback();
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clipboard]);
+  }
 
   return (
     <div className="mt-4">
@@ -428,65 +427,54 @@ export function BatchImportPreview({
       ) : null}
 
       {/* 剪贴板不可用的降级弹层（全选 + 手动复制） */}
-      {clipboard.fallbackText !== null ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="batch-copy-fallback-heading"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      <Dialog
+        open={clipboard.fallbackText !== null}
+        onOpenChange={(open) => {
+          if (!open) clipboard.closeFallback();
+        }}
+      >
+        <DialogContent
+          className="w-[calc(100%-2rem)] max-w-2xl gap-3 p-4"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            handleSelectAll();
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            clipboard.buttonRef.current?.focus({ preventScroll: true });
+          }}
+          onPointerDownOutside={(event) => event.preventDefault()}
         >
-          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-card p-4 shadow-lg">
-            <div className="flex items-center justify-between gap-3">
-              <h3
-                id="batch-copy-fallback-heading"
-                className="text-sm font-semibold"
-              >
-                剪贴板不可用，请手动复制
-              </h3>
-              <button
-                type="button"
-                aria-label="关闭弹层"
-                onClick={clipboard.closeFallback}
-                // 触控目标 ≥44px（size-11，T4.7 与全局 dialog.tsx 同处理：
-                // -mr-1.5 外扩补偿保持图标中心原位，仅扩热区不改视觉位）
-                className="-mr-1.5 flex size-11 items-center justify-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
-              >
-                <X aria-hidden className="size-4" />
-              </button>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              全选下方提示词后按 Ctrl+C 复制，粘贴给 AI 即可。
-            </p>
-            <textarea
-              ref={fallbackTextareaRef}
-              readOnly
-              value={clipboard.fallbackText}
-              aria-label="提示词全文"
-              className="mt-2 min-h-48 w-full flex-1 resize-none rounded-lg border border-border bg-background p-3 font-mono text-xs leading-5 outline-none"
-            />
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 px-4"
-                onClick={() => {
-                  fallbackTextareaRef.current?.focus();
-                  fallbackTextareaRef.current?.select();
-                }}
-              >
-                全选
-              </Button>
-              <Button
-                type="button"
-                className="min-h-11 px-4"
-                onClick={clipboard.closeFallback}
-              >
+          <DialogTitle className="min-h-8 content-center pr-12 text-sm leading-snug">
+            剪贴板不可用，请手动复制
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            全选下方提示词后按 Ctrl+C 复制，粘贴给 AI 即可。
+          </DialogDescription>
+          <textarea
+            ref={fallbackTextareaRef}
+            readOnly
+            value={clipboard.fallbackText ?? ""}
+            aria-label="提示词全文"
+            className="min-h-48 w-full resize-none rounded-lg border border-border bg-background p-3 font-mono text-xs leading-5 focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 px-4"
+              onClick={handleSelectAll}
+            >
+              全选
+            </Button>
+            <DialogClose asChild>
+              <Button type="button" className="min-h-11 px-4">
                 关闭
               </Button>
-            </div>
+            </DialogClose>
           </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

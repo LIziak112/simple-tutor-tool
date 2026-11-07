@@ -190,7 +190,7 @@ test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大�
     await q2Card
       .getByRole("button", { name: "放大查看第 2 题的手写笔迹" })
       .click();
-    const lightbox = page.locator('[aria-label="手写笔迹放大查看"]');
+    const lightbox = page.getByRole("dialog", { name: "手写笔迹放大查看" });
     await expect(lightbox).toBeVisible();
     const zoomedImg = lightbox.locator("img");
     await expect
