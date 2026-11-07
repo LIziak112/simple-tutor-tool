@@ -1,4 +1,8 @@
-import type { StudentAnswer } from "@tutor/contract";
+import type {
+  LearningEvent,
+  QuestionProcessEventInput,
+  StudentAnswer,
+} from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   type AttemptEditor,
@@ -9,6 +13,7 @@ import {
   peekNoteRecord,
   subscribeNoteStore,
 } from "@/features/notes/note-store";
+import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
 
 /**
@@ -56,6 +61,44 @@ interface InkEditCounts {
   clear: number;
 }
 
+type Activity = Extract<QuestionProcessEventInput, { kind: "activity" }>;
+function activityOf(event: LearningEvent): Activity | null {
+  switch (event.type) {
+    case "question_focus":
+    case "page_visible":
+      return { kind: "activity", action: "focus" };
+    case "question_blur":
+    case "page_hidden":
+      return { kind: "activity", action: "blur" };
+    case "editor_toggle":
+      return {
+        kind: "activity",
+        action: event.on ? "paper_open" : "paper_close",
+        layer: (
+          {
+            annotation: "annotation",
+            scratch: "scratch",
+            answerInk: "answer",
+          } as const
+        )[event.editor],
+      };
+    case "ink_fullscreen":
+      return {
+        kind: "activity",
+        action: event.on ? "fullscreen_on" : "fullscreen_off",
+      };
+    case "idle_start":
+    case "idle_end":
+      return { kind: "activity", action: event.type };
+    case "submit":
+      return { kind: "activity", action: "submit", scope: "attempt" };
+    case "question_submit":
+      return { kind: "activity", action: "submit", scope: "question" };
+    default:
+      return null;
+  }
+}
+
 /** 答题页对外的埋点 API */
 export interface AttemptEventsApi {
   /** 学生与某题发生交互（作答/手写展开）→ 聚焦切到该题 */
@@ -81,11 +124,16 @@ export interface AttemptEventsApi {
   trackHintUnlock(questionId: string, index: number): void;
   /** 题卡 DOM 注册（li 元素）：question_view 首次进视口 + 视口兜底聚焦 */
   registerCard(questionId: string, el: HTMLElement | null): void;
+  /** 新录制器或材料恢复后复用当前聚焦事实，补本段进入节点。 */
+  syncProcessFocus(): void;
   /** 交卷前收尾：blur 当前聚焦 + submit 事件 + flush（尽力，不抛错） */
   finalizeSubmit(): Promise<void>;
 }
 
-export function useAttemptEvents(attemptId: string): AttemptEventsApi {
+export function useAttemptEvents(
+  attemptId: string,
+  process?: { current: QuestionProcessRecorder | null },
+): AttemptEventsApi {
   const queueRef = useRef<EventQueueApi | null>(null);
   /** 当前已上报 question_focus 的题（null=尚未聚焦） */
   const focusedRef = useRef<string | null>(null);
@@ -161,6 +209,23 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
   useEffect(() => {
     const queue = createEventQueue({
       scope: { kind: "attempt", attemptId },
+      onEvent: (event) => {
+        const recorder = process?.current;
+        const input = activityOf(event);
+        if (!recorder || recorder.options.attemptId !== attemptId || !input)
+          return;
+        const questionId =
+          "questionId" in event && typeof event.questionId === "string"
+            ? event.questionId
+            : focusedRef.current;
+        const targets =
+          event.type === "submit"
+            ? [...cardsRef.current.keys()]
+            : questionId
+              ? [questionId]
+              : [];
+        for (const id of targets) recorder.event(id, input);
+      },
     });
     queueRef.current = queue;
     focusedRef.current = null;
@@ -183,7 +248,7 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
       queue.dispose();
       queueRef.current = null;
     };
-  }, [attemptId, flushInkEdits]);
+  }, [attemptId, flushInkEdits, process]);
 
   // 视口观察：question_view（每题首次进视口）+ 聚焦题的视口兜底切换。
   // jsdom 等无 IntersectionObserver 的环境自动降级（聚焦只靠交互）。
@@ -239,9 +304,32 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
   // off，硬刷新场景接受为已知极限）。
   const editorStore = useAttemptEditorStore();
   const prevEditorRef = useRef<AttemptEditor | null>(null);
+  const prevPaperRef = useRef<AttemptEditor | null>(null);
   useEffect(() => {
     if (editorStore === null) return;
     const diff = (): void => {
+      const paper = editorStore.getPaper();
+      const previousPaper = prevPaperRef.current;
+      if (
+        paper?.kind !== previousPaper?.kind ||
+        paper?.questionId !== previousPaper?.questionId
+      ) {
+        prevPaperRef.current = paper;
+        const recorder = process?.current;
+        if (recorder?.options.attemptId === attemptId) {
+          for (const [item, action] of [
+            [previousPaper, "paper_close"],
+            [paper, "paper_open"],
+          ] as const) {
+            if (item)
+              recorder.event(item.questionId, {
+                kind: "activity",
+                action,
+                layer: item.kind === "answerInk" ? "answer" : item.kind,
+              });
+          }
+        }
+      }
       const prev = prevEditorRef.current;
       const next = editorStore.getActive();
       if (prev?.kind === next?.kind && prev?.questionId === next?.questionId) {
@@ -270,7 +358,7 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
     };
     diff();
     return editorStore.subscribe(diff);
-  }, [editorStore, track]);
+  }, [attemptId, editorStore, process, track]);
 
   // 草稿同步埋点（2026-10-28 使用数据补缺，hall-15077）：订阅草稿 store，本
   // attempt 的草稿（含订正 phase=correction）baseRevision 前进（一次成功
@@ -407,6 +495,13 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
     [],
   );
 
+  const syncProcessFocus = useCallback(() => {
+    const recorder = process?.current;
+    const id = focusedRef.current;
+    if (recorder?.options.attemptId === attemptId && id)
+      recorder.event(id, { kind: "activity", action: "focus" });
+  }, [process, attemptId]);
+
   const finalizeSubmit = useCallback(async () => {
     const queue = queueRef.current;
     if (queue === null) return;
@@ -441,6 +536,7 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
       trackInkFullscreen,
       trackHintUnlock,
       registerCard,
+      syncProcessFocus,
       finalizeSubmit,
     }),
     [
@@ -451,6 +547,7 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
       trackInkFullscreen,
       trackHintUnlock,
       registerCard,
+      syncProcessFocus,
       finalizeSubmit,
     ],
   );

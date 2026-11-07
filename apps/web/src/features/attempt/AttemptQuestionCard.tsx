@@ -492,6 +492,7 @@ export function AttemptQuestionCard({
         contextLabel={scratchContextLabel}
         open={noteOpen}
         onOpenChange={setNoteOpen}
+        {...(onInkFullscreen ? { onFullscreenChange: onInkFullscreen } : {})}
         ariaPrefix={`第 ${index + 1} 题`}
         showTrigger={false}
       />

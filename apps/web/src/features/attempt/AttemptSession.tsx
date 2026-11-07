@@ -84,6 +84,7 @@ import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
+import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
   QuestionProcessControls,
   QuestionProcessSyncNotice,
@@ -289,7 +290,8 @@ function AnswerView({
     data.draftRevisions,
   );
   // 学习痕迹埋点（T2.10）：attempt_start/聚焦/answer_change/ink/page_*/submit
-  const attemptEvents = useAttemptEvents(attemptId);
+  const processRecorderRef = useRef<QuestionProcessRecorder | null>(null);
+  const attemptEvents = useAttemptEvents(attemptId, processRecorderRef);
   const {
     answers,
     setAnswer: setDraftAnswer,
@@ -353,14 +355,20 @@ function AnswerView({
   );
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
+  const processReady =
+    attemptMaterialsEditable(materialRecovery) && answers !== null;
   const questionProcess = useQuestionProcess({
     attemptId,
     enabled: data.attempt.sourceType === "course",
-    ready: attemptMaterialsEditable(materialRecovery) && answers !== null,
+    ready: processReady,
     questions: flatQuestions,
     answers,
   });
   const recorder = questionProcess.recorder;
+  processRecorderRef.current = recorder;
+  useEffect(() => {
+    if (recorder && processReady) attemptEvents.syncProcessFocus();
+  }, [attemptEvents, recorder, processReady]);
   const [processOpen, setProcessOpen] = useState(false);
   const composition = useRef<{
     answer?: { id: string; value: StudentAnswer };
@@ -825,6 +833,15 @@ function AnswerView({
       opts?: { allowMissing?: boolean },
     ): Promise<void> => {
       const outcome = await practiceSubmit.submit(questionId, opts);
+      if (
+        outcome.kind === "submitted" &&
+        processRecorderRef.current?.options.attemptId === attemptId
+      )
+        processRecorderRef.current.event(questionId, {
+          kind: "activity",
+          action: "submit",
+          scope: "question",
+        });
       if (outcome.kind === "problems") {
         setPracticeProblem({
           questionId,
@@ -849,7 +866,7 @@ function AnswerView({
       }
       setPracticeProblem(null);
     },
-    [practiceSubmit.submit],
+    [practiceSubmit.submit, attemptId],
   );
   const { getSubmittingId } = practiceSubmit;
   const [queuedChoices, setQueuedChoices] = useState<string[]>([]);

@@ -1604,6 +1604,61 @@
                   },
                   "kind": {
                     "type": "string",
+                    "const": "activity"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "focus",
+                      "blur",
+                      "paper_open",
+                      "paper_close",
+                      "fullscreen_on",
+                      "fullscreen_off",
+                      "submit",
+                      "idle_start",
+                      "idle_end"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "annotation",
+                      "scratch",
+                      "answer"
+                    ]
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "attempt",
+                      "question"
+                    ]
+                  }
+                },
+                "required": [
+                  "seq",
+                  "at",
+                  "kind",
+                  "action"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "seq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 604800000
+                  },
+                  "kind": {
+                    "type": "string",
                     "const": "boundary"
                   },
                   "reason": {
@@ -3403,6 +3458,61 @@
                         "action",
                         "requestId",
                         "index"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "seq": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "at": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 604800000
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "activity"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "focus",
+                            "blur",
+                            "paper_open",
+                            "paper_close",
+                            "fullscreen_on",
+                            "fullscreen_off",
+                            "submit",
+                            "idle_start",
+                            "idle_end"
+                          ]
+                        },
+                        "layer": {
+                          "type": "string",
+                          "enum": [
+                            "annotation",
+                            "scratch",
+                            "answer"
+                          ]
+                        },
+                        "scope": {
+                          "type": "string",
+                          "enum": [
+                            "attempt",
+                            "question"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "seq",
+                        "at",
+                        "kind",
+                        "action"
                       ],
                       "additionalProperties": false
                     },

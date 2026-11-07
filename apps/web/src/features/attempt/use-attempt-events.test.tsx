@@ -12,7 +12,9 @@ import {
   resetNoteStoreForTest,
   writeNoteDoc,
 } from "@/features/notes/note-store";
+import { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
+import { memoryKVBackend } from "@/lib/kv-backend";
 import { useAttemptEvents } from "./use-attempt-events";
 
 /**
@@ -373,4 +375,70 @@ describe("useAttemptEvents：编辑器开合 / 草稿同步（2026-10-28 使用�
       },
     ]);
   });
+});
+
+it("原聚焦、纸面开合、全屏、交卷触发点同步进入单题过程", async () => {
+  const uploads: import("@tutor/contract").QuestionProcessBatch[] = [];
+  const recorder = new QuestionProcessRecorder({
+    attemptId: "process-activity",
+    recordingId: "863de11a-f212-46e1-b876-d3a29e07df55",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    prefix: "activity",
+    store: memoryKVBackend(),
+    revision: () => "revision",
+    current: () => true,
+    snapshot: () => ({ answer: null, hints: [], layers: {} }),
+    upload: async (batch) => {
+      uploads.push(batch);
+      return batch.events.at(-1)?.seq ?? -1;
+    },
+  });
+  const ref = { current: recorder };
+  const holder: { api: ReturnType<typeof useAttemptEvents> | null } = {
+    api: null,
+  };
+  function Probe() {
+    holder.api = useAttemptEvents("process-activity", ref);
+    return null;
+  }
+  let editor: ReturnType<typeof useAttemptEditor> | null = null;
+  function Driver() {
+    editor = useAttemptEditor(undefined);
+    return null;
+  }
+  const view = render(
+    <AttemptEditorProvider>
+      <Probe />
+      <Driver />
+    </AttemptEditorProvider>,
+  );
+  const api = holder.api;
+  if (!api) throw new Error("测试宿主未挂载");
+  act(() => {
+    api.registerCard("q1", document.createElement("li"));
+    api.noteInteraction("q1");
+    api.trackInkFullscreen("q1", true);
+  });
+  await act(async () => {
+    if (!editor) throw new Error("编辑器未挂载");
+    await editor.requestPaper({ questionId: "q1", kind: "scratch" });
+    await editor.requestPaper(null);
+    await api.finalizeSubmit();
+  });
+  await recorder.flush();
+  expect(
+    uploads
+      .flatMap((batch) => batch.events)
+      .filter((event) => event.kind === "activity")
+      .map((event) => event.action),
+  ).toEqual([
+    "focus",
+    "fullscreen_on",
+    "paper_open",
+    "paper_close",
+    "blur",
+    "submit",
+  ]);
+  view.unmount();
+  await recorder.close();
 });

@@ -257,6 +257,8 @@ export interface EventQueueApi {
 /** 创建选项（全部可注入，默认值即生产行为） */
 export interface EventQueueOptions {
   scope: EventScope;
+  /** 旁路消费同一触发点的事件，不另建环境观察器。 */
+  onEvent?: (event: LearningEvent) => void;
   /** 发送函数（抛错视为本批失败） */
   send?: (events: readonly LearningEvent[]) => Promise<void>;
   /** sendBeacon 实现（返回 false 视为失败）；传 null 显式禁用 */
@@ -303,6 +305,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   function inject(event: LearningEvent): void {
     if (denied) return;
     queue.push(event);
+    options.onEvent?.(event);
   }
 
   // ---------- 环境事件：网络状态（两 scope，§5.0-A3） ----------
@@ -636,7 +639,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   return {
     track(event: LearningEvent): void {
       if (denied) return; // 终态停止：静默丢弃（不再上传）
-      queue.push(event);
+      inject(event);
       // 队列攒到单批上限立即触发（防下一次越过 200 被契约拒绝）
       if (queue.length >= BATCH_MAX) void flushNow();
     },

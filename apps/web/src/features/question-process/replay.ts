@@ -235,3 +235,30 @@ export function timelineFrame(
     segment.startedAt,
   );
 }
+
+export function focusPeriods(timeline: ReturnType<typeof questionTimeline>) {
+  const periods: Array<{ segmentId: string; startMs: number; endMs: number }> =
+    [];
+  for (const segment of timeline.segments) {
+    const events = replayPrefix(segment.events).events;
+    const offset = segment.startedAt - timeline.origin;
+    let startMs: number | undefined;
+    for (const event of events) {
+      if (event.kind !== "activity") continue;
+      if (event.action === "focus") startMs ??= offset + event.at;
+      if (event.action === "blur" && startMs !== undefined) {
+        if (offset + event.at > startMs)
+          periods.push({
+            segmentId: segment.id,
+            startMs,
+            endMs: offset + event.at,
+          });
+        startMs = undefined;
+      }
+    }
+    const endMs = offset + (events.at(-1)?.at ?? 0);
+    if (startMs !== undefined && endMs > startMs)
+      periods.push({ segmentId: segment.id, startMs, endMs });
+  }
+  return periods;
+}

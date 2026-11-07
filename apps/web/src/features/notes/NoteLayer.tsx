@@ -198,7 +198,10 @@ export function NoteLayer({
   // 全屏态外发（ref 转发：内联回调不重建 changeFullscreen）
   const onFullscreenChangeRef = useRef(onFullscreenChange);
   onFullscreenChangeRef.current = onFullscreenChange;
+  const fullscreenRef = useRef(false);
   const changeFullscreen = useCallback((next: boolean) => {
+    if (fullscreenRef.current === next) return;
+    fullscreenRef.current = next;
     setFullscreen(next);
     onFullscreenChangeRef.current?.(next);
   }, []);

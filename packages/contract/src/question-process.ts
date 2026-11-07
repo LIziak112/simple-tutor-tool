@@ -91,6 +91,23 @@ export const questionProcessEventSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...order,
+    kind: z.literal("activity"),
+    action: z.enum([
+      "focus",
+      "blur",
+      "paper_open",
+      "paper_close",
+      "fullscreen_on",
+      "fullscreen_off",
+      "submit",
+      "idle_start",
+      "idle_end",
+    ]),
+    layer: layer.optional(),
+    scope: z.enum(["attempt", "question"]).optional(),
+  }),
+  z.strictObject({
+    ...order,
     kind: z.literal("boundary"),
     reason: z.enum([
       "offline",
