@@ -18,6 +18,11 @@ import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import {
+  processStrokes,
+  readProcessSurfaces,
+  useQuestionProcessContext,
+} from "@/features/question-process/session";
 import { measureStage } from "@/lib/performance-stages";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { blocksInBaseDomain } from "./annotation-anchor";
@@ -79,6 +84,9 @@ export const QuestionAnnotationOverlay = forwardRef<
   const recovery = useDraftSyncRecovery();
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, question.id, phase);
+  const process = useQuestionProcessContext();
+  const processRef = useRef(process);
+  processRef.current = process;
   const root = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const surface = useRef<AnnotationSurface | null>(null);
@@ -566,7 +574,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     const resetVersion = recordRef.current?.resetVersion ?? 0;
     current.mount(host.current, recordRef.current.doc);
     loadedVersion.current = recordRef.current.docVersion;
-    current.onChange((doc, reason) => {
+    current.onChange((doc, reason, finish) => {
       const latest = recordRef.current;
       if (
         reason === "load" ||
@@ -577,6 +585,22 @@ export const QuestionAnnotationOverlay = forwardRef<
         (recordRef.current?.resetVersion ?? 0) !== resetVersion
       )
         return;
+      if (processRef.current && phase === "scratch") {
+        const before = readProcessSurfaces(attemptId, question.id).annotation;
+        processRef.current.ink(
+          question.id,
+          "annotation",
+          reason,
+          before,
+          {
+            ...before,
+            width: doc.baseWidth,
+            height: doc.baseHeight,
+            strokes: processStrokes(doc.strokes),
+          },
+          finish,
+        );
+      }
       loadedVersion.current = writeAnnotationDoc(
         session,
         { attemptId, questionId: question.id, phase },

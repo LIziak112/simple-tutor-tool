@@ -6,6 +6,7 @@
  * 重写一个适配器。适配器可附加能力（如 setTool），引擎层（index.ts）负责
  * 把固定 API 转发到适配器。
  */
+import type { PointerFinishCause } from "./pointer-machine.ts";
 import type { InkDoc, InkInputMode, InkToolConfig } from "./types.ts";
 
 /**
@@ -46,7 +47,13 @@ export interface InkSurface {
    * 埋点分型（T4.0b ink_edit_batch）。reason 缺省 "stroke"（老回调忽略第二参
    * 零影响；TS 少参函数可赋给多参签名）。
    */
-  onChange(cb: (doc: InkDoc, reason: InkChangeReason) => void): () => void;
+  onChange(
+    cb: (
+      doc: InkDoc,
+      reason: InkChangeReason,
+      finish?: PointerFinishCause,
+    ) => void,
+  ): () => void;
   destroy(): void;
 }
 

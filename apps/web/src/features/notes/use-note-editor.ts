@@ -60,6 +60,12 @@ export function inkDocOf(doc: NoteDoc): InkDoc {
   return { engine: "atrament", version: 1, data: doc.ink, updatedAt: 0 };
 }
 
+import {
+  processStrokes,
+  readProcessSurfaces,
+  useQuestionProcessContext,
+} from "@/features/question-process/session";
+
 export interface UseNoteEditorOptions {
   session: NoteSessionRef | null;
   attemptId: string;
@@ -94,6 +100,7 @@ export function useNoteEditor({
   active,
 }: UseNoteEditorOptions): NoteEditorHandle {
   const view = useNoteRecord(attemptId, questionId, phase);
+  const process = useQuestionProcessContext();
 
   // ---- 本地载入（刷新/重进的恢复路径；区分「尚未加载」与「无记录」） ----
   const [localLoaded, setLocalLoaded] = useState(false);
@@ -144,7 +151,11 @@ export function useNoteEditor({
   const scopeRef = useRef<NoteScope>({ attemptId, questionId, phase });
   scopeRef.current = { attemptId, questionId, phase };
   const handleDocChange = useCallback(
-    (inkDoc: InkDoc, reason: InkChangeReason) => {
+    (
+      inkDoc: InkDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => {
       if (inkDoc.engine !== "atrament" || session === null) return;
       // load 不写回（paper-geometry 口径：载入恢复不算编辑、不触发 dirty）
       if (reason === "load") return;
@@ -182,6 +193,26 @@ export function useNoteEditor({
       }
       // writeNoteDoc 返回新 docVersion（复审⑬：消二次 peek）——同令牌的
       // 视图变化即自写
+      const scope = scopeRef.current;
+      if (process && scope.phase === "scratch") {
+        const before = readProcessSurfaces(
+          scope.attemptId,
+          scope.questionId,
+        ).scratch;
+        process.ink(
+          scope.questionId,
+          "scratch",
+          reason,
+          before,
+          {
+            width: 1000,
+            height: logical,
+            background,
+            strokes: processStrokes(strokes),
+          },
+          finish,
+        );
+      }
       lastWriteVersionRef.current = writeNoteDoc(session, scopeRef.current, {
         version: 1,
         ink: inkDoc.data,
@@ -189,7 +220,7 @@ export function useNoteEditor({
         background,
       });
     },
-    [session],
+    [session, process],
   );
 
   // 外部正文变化 → 载入引擎（服务端播种/冲突裁决后）。比对版本令牌
