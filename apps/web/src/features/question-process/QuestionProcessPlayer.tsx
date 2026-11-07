@@ -31,9 +31,10 @@ import {
   teacherAnnotationBasePngUrl,
 } from "@/lib/api";
 import {
-  frameAt,
   fromPlaybackTime,
   processPauses,
+  questionTimeline,
+  timelineFrame,
   toPlaybackTime,
 } from "./replay";
 
@@ -195,35 +196,31 @@ function eventLabel(event: QuestionProcessEvent): string {
 
 function SegmentPlayer({
   question,
-  segment,
+  segments,
 }: {
   question: QuestionProcessRead["question"];
-  segment: QuestionProcessRead["segments"][number];
+  segments: QuestionProcessRead["segments"];
 }) {
   const range = useId();
   const markers = useId();
+  const timeline = useMemo(() => questionTimeline(segments), [segments]);
   const [speed, setSpeed] = useState<ReplaySpeed>(1);
   const [realTime, setRealTime] = useState(false);
   const pauses = useMemo(
-    () => (realTime ? [] : processPauses(segment.events)),
-    [realTime, segment.events],
+    () => (realTime ? [] : processPauses(timeline.events)),
+    [realTime, timeline.events],
   );
-  const start = segment.events[0]?.at ?? 0;
+  const start = timeline.events[0]?.at ?? 0;
   const [time, setTime] = useState(start);
   const [selected, setSelected] = useState<number | undefined>();
   const [playing, setPlaying] = useState(false);
   const playFrom = useRef(0);
-  const tail = segment.events.at(-1);
-  const end = tail?.at ?? 0;
+  const tail = timeline.events.at(-1)?.event;
+  const end = timeline.events.at(-1)?.at ?? 0;
   const playbackEnd = toPlaybackTime(end, pauses);
-  const activeEvent =
-    selected ?? segment.events.findLastIndex((event) => event.at <= time);
   const state = useMemo(
-    () =>
-      selected === undefined
-        ? frameAt(segment.events, time, Infinity, segment.startedAt)
-        : frameAt(segment.events, Infinity, activeEvent, segment.startedAt),
-    [segment.events, segment.startedAt, activeEvent, selected, time],
+    () => timelineFrame(timeline, time, selected),
+    [timeline, time, selected],
   );
   const answerStructures = useMemo(() => {
     const slots = question.matchingSlots ?? [];
@@ -272,7 +269,9 @@ function SegmentPlayer({
     : null;
   return (
     <div className="space-y-3">
-      {segment.gap && <p role="status">该段有缺失，已显示可回放的部分。</p>}
+      {segments.some((segment) => segment.gap) && (
+        <p role="status">记录有缺失，已显示可回放的部分。</p>
+      )}
       {!(tail?.kind === "boundary" && tail.reason === "closed") && (
         <p className="text-sm text-muted-foreground">
           该段可能仍在记录或有尾部尚未同步。
@@ -391,19 +390,23 @@ function SegmentPlayer({
         className="max-h-48 overflow-auto rounded border p-2 text-sm"
         aria-label="过程事件"
       >
-        {segment.events.map((event) => (
-          <li key={event.seq}>
+        {timeline.events.map((entry, index) => (
+          <li key={`${entry.segment.id}:${entry.event.seq}`}>
             <button
               type="button"
               className="min-h-8 w-full rounded px-2 text-left hover:bg-muted"
-              aria-current={selected === event.seq ? "step" : undefined}
+              aria-current={selected === index ? "step" : undefined}
+              data-process-segment={entry.segment.id}
               onClick={() => {
                 setPlaying(false);
-                setSelected(event.seq);
-                setTime(event.at);
+                setSelected(index);
+                setTime(entry.at);
               }}
             >
-              {(event.at / 1000).toFixed(1)} 秒 · {eventLabel(event)}
+              {(entry.at / 1000).toFixed(1)} 秒 ·{" "}
+              {entry.event.kind === "start" && entry.segmentIndex > 0
+                ? `刷新重进 · 间隔 ${(entry.gapMs / 1000).toFixed(1)} 秒${entry.overlap ? "（采集段时间重叠，可按段查看）" : ""}`
+                : eventLabel(entry.event)}
             </button>
           </li>
         ))}
@@ -419,7 +422,7 @@ function ProcessBody({
   attemptId: string;
   questionId: string;
 }) {
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(-1);
   const query = useQuery({
     queryKey: ["teacher-question-process", attemptId, questionId],
     queryFn: ({ signal }) =>
@@ -438,17 +441,21 @@ function ProcessBody({
         加载失败，重试
       </Button>
     );
-  const segment = query.data.segments[index];
-  if (!segment) return <p>这道题暂无可回放的过程记录。</p>;
+  const segments =
+    index < 0
+      ? query.data.segments
+      : query.data.segments.filter((_, i) => i === index);
+  if (segments.length === 0) return <p>这道题暂无可回放的过程记录。</p>;
   return (
     <>
       {query.data.segments.length > 1 && (
         <label className="text-sm">
-          采集段{" "}
+          回放范围{" "}
           <select
             value={index}
             onChange={(event) => setIndex(Number(event.currentTarget.value))}
           >
+            <option value={-1}>整题</option>
             {query.data.segments.map((item, i) => (
               <option key={item.id} value={i}>
                 第 {i + 1} 段
@@ -458,9 +465,9 @@ function ProcessBody({
         </label>
       )}
       <SegmentPlayer
-        key={segment.id}
+        key={index}
         question={query.data.question}
-        segment={segment}
+        segments={segments}
       />
     </>
   );

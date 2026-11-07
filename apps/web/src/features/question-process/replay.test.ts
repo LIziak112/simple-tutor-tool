@@ -4,7 +4,9 @@ import {
   frameAt,
   fromPlaybackTime,
   processPauses,
+  questionTimeline,
   replayPrefix,
+  timelineFrame,
   toPlaybackTime,
 } from "./replay";
 
@@ -168,6 +170,103 @@ describe("单题过程回放", () => {
     expect(toPlaybackTime(22000, [])).toBe(22000);
     expect(fromPlaybackTime(22000, [])).toBe(22000);
     expect(processPauses([{ at: 0 }, { at: 5000 }])).toEqual([]);
+  });
+
+  it("多段按开始时刻串接，跨刷新切换快照且不沿用上一段提示", () => {
+    const first = {
+      id: "first",
+      startedAt: 1000,
+      gap: false,
+      events: [
+        {
+          seq: 0,
+          at: 0,
+          kind: "start",
+          answer: null,
+          hints: [0],
+          layers: { scratch: { width: 1000, height: 800, strokes: [stroke] } },
+        },
+        {
+          seq: 1,
+          at: 1000,
+          kind: "answer",
+          answer: { kind: "choice", index: 1 },
+        },
+      ],
+    } satisfies import("@tutor/contract").QuestionProcessRead["segments"][number];
+    const second = {
+      id: "second",
+      startedAt: 5000,
+      gap: false,
+      events: [
+        {
+          seq: 0,
+          at: 0,
+          kind: "start",
+          answer: { kind: "choice", index: 2 },
+          hints: [],
+          layers: {},
+        },
+      ],
+    } satisfies import("@tutor/contract").QuestionProcessRead["segments"][number];
+    const third = { ...second, id: "third", startedAt: 9000 };
+    const timeline = questionTimeline([third, first, second]);
+    expect(timeline.events.map((entry) => entry.at)).toEqual([
+      0, 1000, 4000, 8000,
+    ]);
+    expect(
+      timeline.events
+        .filter(
+          (entry) => entry.event.kind === "start" && entry.segmentIndex > 0,
+        )
+        .map((entry) => entry.gapMs),
+    ).toEqual([3000, 4000]);
+    expect(timelineFrame(timeline, 3999)?.answer).toEqual({
+      kind: "choice",
+      index: 1,
+    });
+    expect(timelineFrame(timeline, 4000)?.answer).toEqual({
+      kind: "choice",
+      index: 2,
+    });
+    expect(timelineFrame(timeline, 4000)?.layers.scratch).toBeUndefined();
+    expect(timelineFrame(timeline, 4000)?.hints).toEqual([]);
+    expect(timelineFrame(timeline, 8000, 1)?.answer).toEqual({
+      kind: "choice",
+      index: 1,
+    });
+  });
+
+  it("空缺段不阻塞后续可播放段，重叠段给出明确标记", () => {
+    const start: QuestionProcessEvent = {
+      seq: 0,
+      at: 0,
+      kind: "start",
+      answer: null,
+      hints: [],
+      layers: {},
+    };
+    const timeline = questionTimeline([
+      { id: "missing", startedAt: 1000, events: [], gap: true },
+      {
+        id: "one",
+        startedAt: 2000,
+        events: [
+          start,
+          { seq: 1, at: 2000, kind: "boundary", reason: "closed" },
+        ],
+        gap: false,
+      },
+      { id: "two", startedAt: 3000, events: [start], gap: false },
+    ]);
+    expect(timelineFrame(timeline, 1000)?.answer).toBeNull();
+    expect(timeline.segments.map((segment) => segment.id)).toEqual([
+      "one",
+      "two",
+    ]);
+    expect(
+      timeline.events.find((entry) => entry.segment.id === "two")?.overlap,
+    ).toBe(true);
   });
 
   it("缺段时停在可验证的前缀，后续快照不冒充连续历史", () => {
