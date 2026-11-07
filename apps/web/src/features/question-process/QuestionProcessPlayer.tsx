@@ -34,7 +34,9 @@ import {
 import {
   focusPeriods,
   fromPlaybackTime,
+  normalizedStroke,
   processPauses,
+  type QuestionProcessFrame,
   questionTimeline,
   timelineFrame,
   toPlaybackTime,
@@ -45,11 +47,13 @@ function AtramentProcessInk({
   annotation,
   fallback,
   visiblePoints,
+  removed,
 }: {
   surface: QuestionProcessSurface;
   annotation: boolean;
   fallback?: ReactNode;
   visiblePoints?: number[] | undefined;
+  removed?: QuestionProcessFrame["removedSince"]["scratch"];
 }) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ReturnType<typeof createAtramentReplayCanvas> | null>(
@@ -75,24 +79,24 @@ function AtramentProcessInk({
   }, [ready]);
   useEffect(() => {
     if (!ready) return;
-    const scale = 1000 / surface.width;
-    const strokes =
-      scale === 1
-        ? surface.strokes
-        : surface.strokes.map((stroke) => ({
-            ...stroke,
-            weight: stroke.weight * scale,
-            points: stroke.points.map((point) => ({
-              ...point,
-              x: point.x * scale,
-              y: point.y * scale,
-            })),
-          }));
+    const strokes = surface.strokes.map((stroke) =>
+      normalizedStroke(stroke, surface.width),
+    );
     canvas.current?.drawFrame(
       strokes,
       visiblePoints ?? strokes.map((stroke) => stroke.points.length),
     );
-  }, [ready, surface, visiblePoints]);
+    if (removed?.length)
+      canvas.current?.drawDeleted?.(
+        removed.map((item) => ({
+          stroke: item.stroke,
+          startMs: 0,
+          deletedAtMs: Infinity,
+          pointTimesMs: item.stroke.points.map(() => 0),
+        })),
+        0,
+      );
+  }, [ready, surface, visiblePoints, removed]);
   if (annotation && (!baseId || decoded === "error")) {
     return (
       <>
@@ -109,6 +113,7 @@ function AtramentProcessInk({
     <div
       className="relative max-w-3xl overflow-hidden rounded border bg-white"
       data-process-stroke-count={surface.strokes.length}
+      data-process-deleted-strokes={removed?.length ?? 0}
       data-process-visible-points={(
         visiblePoints ?? surface.strokes.map((stroke) => stroke.points.length)
       ).reduce((sum, n) => sum + n, 0)}
@@ -245,6 +250,7 @@ function SegmentPlayer({
   const timeline = useMemo(() => questionTimeline(segments), [segments]);
   const [speed, setSpeed] = useState<ReplaySpeed>(1);
   const [realTime, setRealTime] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const pauses = useMemo(
     () => (realTime ? [] : processPauses(timeline.events)),
     [realTime, timeline.events],
@@ -354,6 +360,14 @@ function SegmentPlayer({
           />{" "}
           按真实时间
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={showDeleted}
+            onChange={(event) => setShowDeleted(event.currentTarget.checked)}
+          />{" "}
+          看擦改
+        </label>
         <label htmlFor={range}>回放时刻</label>
         <input
           id={range}
@@ -415,6 +429,7 @@ function SegmentPlayer({
               key={annotation.baseId}
               surface={annotation}
               visiblePoints={state.visiblePoints.annotation}
+              removed={showDeleted ? state.removedSince.annotation : undefined}
               annotation
               fallback={frozenStem}
             />
@@ -439,6 +454,7 @@ function SegmentPlayer({
             <ProcessInk
               surface={state.layers.scratch}
               visiblePoints={state.visiblePoints.scratch}
+              removed={showDeleted ? state.removedSince.scratch : undefined}
               annotation={false}
             />
           </section>
@@ -448,6 +464,7 @@ function SegmentPlayer({
             <ProcessInk
               surface={state.layers.answer}
               visiblePoints={state.visiblePoints.answer}
+              removed={showDeleted ? state.removedSince.answer : undefined}
               annotation={false}
             />
           </section>

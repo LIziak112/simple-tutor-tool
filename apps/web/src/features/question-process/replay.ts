@@ -1,6 +1,7 @@
 import type {
   QuestionProcessEvent,
   QuestionProcessLayer,
+  QuestionProcessStroke,
   QuestionProcessSurface,
   StudentAnswer,
 } from "@tutor/contract";
@@ -19,7 +20,31 @@ export function replayPrefix(events: readonly QuestionProcessEvent[]) {
   return { events: end < 0 ? events : events.slice(0, end), gap: end >= 0 };
 }
 
+export function normalizedStroke(
+  stroke: QuestionProcessStroke,
+  width: number,
+): QuestionProcessStroke {
+  const scale = 1000 / width;
+  return scale === 1
+    ? stroke
+    : {
+        ...stroke,
+        weight: stroke.weight * scale,
+        points: stroke.points.map((point) => ({
+          ...point,
+          x: point.x * scale,
+          y: point.y * scale,
+        })),
+      };
+}
+
 export interface QuestionProcessFrame {
+  removedSince: Partial<
+    Record<
+      QuestionProcessLayer,
+      { stroke: QuestionProcessStroke; at: number }[]
+    >
+  >;
   visiblePoints: Partial<Record<QuestionProcessLayer, number[]>>;
   answer: StudentAnswer | null;
   hints: number[];
@@ -38,6 +63,7 @@ export function frameAt(
   const first = events[0];
   if (first?.kind !== "start" || first.seq !== 0 || at < first.at) return null;
   const state: QuestionProcessFrame = {
+    removedSince: {},
     visiblePoints: {},
     answer: first.answer,
     hints: [...first.hints],
@@ -50,10 +76,24 @@ export function frameAt(
     switch (event.kind) {
       case "surface":
         state.layers[event.layer] = event.surface;
+        state.removedSince[event.layer] = [];
         break;
       case "ink": {
         const previous = state.layers[event.layer];
         const removed = new Set(event.removed);
+        const restored = new Set(event.added.map((item) => item.stroke.id));
+        const ghosts = (state.removedSince[event.layer] ?? []).filter(
+          (item) => !restored.has(item.stroke.id),
+        );
+        for (const stroke of previous?.strokes ?? []) {
+          if (removed.has(stroke.id) && !restored.has(stroke.id)) {
+            ghosts.push({
+              stroke: normalizedStroke(stroke, previous?.width ?? 1000),
+              at: event.at,
+            });
+          }
+        }
+        state.removedSince[event.layer] = ghosts;
         const strokes =
           previous?.strokes.filter((stroke) => !removed.has(stroke.id)) ?? [];
         for (const { index, stroke } of event.added)
