@@ -554,12 +554,13 @@ export async function drawStrokeWithPointerEvents(
   canvas: Locator,
   repetitions = 1,
   pointDelayMs = 0,
+  offsetYRatio = 0,
 ): Promise<void> {
   await canvas.evaluate(
-    async (el, { count, delay }) => {
+    async (el, { count, delay, offset }) => {
       const rect = el.getBoundingClientRect();
       const cx = rect.width / 2;
-      const cy = rect.height / 2;
+      const cy = rect.height * (0.5 + offset);
       const dx = Math.min(120, rect.width * 0.2);
       const dy = Math.min(40, rect.height * 0.2);
       const pts = [
@@ -604,7 +605,7 @@ export async function drawStrokeWithPointerEvents(
         fire("pointerup", last[0], last[1], 0);
       }
     },
-    { count: repetitions, delay: pointDelayMs },
+    { count: repetitions, delay: pointDelayMs, offset: offsetYRatio },
   );
 }
 

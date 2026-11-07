@@ -63,6 +63,7 @@ function sameSurface(
     (a?.width === b?.width &&
       a?.height === b?.height &&
       a?.background === b?.background &&
+      a?.legacy === b?.legacy &&
       (!a?.png || !b?.png || a.png === b.png) &&
       (!a?.baseId || !b?.baseId || a.baseId === b.baseId) &&
       a?.strokes.length === b?.strokes.length &&
@@ -247,6 +248,23 @@ export class QuestionProcessRecorder {
     this.#append(questionId, track, input);
   }
 
+  surface(
+    questionId: string,
+    layer: QuestionProcessLayer,
+    surface: ProcessSurface,
+  ) {
+    this.commitText(questionId);
+    const track = this.#ensure(questionId);
+    if (!track) return;
+    track.layers = { ...track.layers, [layer]: surface };
+    this.#append(
+      questionId,
+      track,
+      { kind: "surface", layer, surface },
+      { [layer]: surface },
+    );
+  }
+
   ink(
     questionId: string,
     layer: QuestionProcessLayer,
@@ -370,7 +388,7 @@ export class QuestionProcessRecorder {
         const baseIdentity = png ? await this.#hash(png) : undefined;
         const event = { ...input, seq, at } satisfies QuestionProcessEvent;
         if (event.kind === "start") {
-          const { annotation, scratch } = layers ?? {};
+          const { annotation, scratch, answer } = layers ?? {};
           const strip = ({ png: _png, ...surface }: ProcessSurface) => surface;
           event.layers = {
             ...(annotation
@@ -382,6 +400,7 @@ export class QuestionProcessRecorder {
                 }
               : {}),
             ...(scratch ? { scratch: strip(scratch) } : {}),
+            ...(answer ? { answer: strip(answer) } : {}),
           };
         } else if (event.kind === "surface") {
           const surface = layers?.[event.layer];

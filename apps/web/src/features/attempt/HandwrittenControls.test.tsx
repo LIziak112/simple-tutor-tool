@@ -2,6 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EnabledCapabilitiesProvider } from "@/features/capability/enabled-capabilities";
+import { QuestionProcessRecorder } from "@/features/question-process/recorder";
+import {
+  QuestionProcessContext,
+  readProcessSurfaces,
+} from "@/features/question-process/session";
+import { memoryKVBackend } from "@/lib/kv-backend";
 import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
 import { HandwrittenControls } from "./HandwrittenControls";
 
@@ -438,3 +444,51 @@ describe("手写编辑分型与全屏事件（T4.0b）", () => {
 function queryInkPad(): HTMLElement | null {
   return document.querySelector('[data-slot="ink-pad"]');
 }
+
+it("正式手写进入过程层，恢复load不冒充书写", async () => {
+  const uploads: import("@tutor/contract").QuestionProcessBatch[] = [];
+  const recorder = new QuestionProcessRecorder({
+    attemptId: "att-1",
+    recordingId: "863de11a-f212-46e1-b876-d3a29e07df55",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    prefix: "formal",
+    store: memoryKVBackend(),
+    revision: () => "revision",
+    current: () => true,
+    snapshot: () => ({
+      answer: null,
+      hints: [],
+      layers: readProcessSurfaces("att-1", "q1"),
+    }),
+    upload: async (batch) => {
+      uploads.push(batch);
+      return batch.events.at(-1)?.seq ?? -1;
+    },
+  });
+  const view = render(
+    <QuestionProcessContext value={recorder}>
+      <HandwrittenControls
+        attemptId="att-1"
+        questionId="q1"
+        stemMd="正式手写"
+        answer={undefined}
+        onAnswer={vi.fn()}
+        expanded
+      />
+    </QuestionProcessContext>,
+  );
+  fireEvent.click(await screen.findByTestId("ink-emit-atrament-load"));
+  await recorder.flush();
+  expect(uploads).toHaveLength(0);
+  fireEvent.click(screen.getByTestId("ink-emit-atrament-stroke"));
+  await recorder.flush();
+  expect(
+    uploads
+      .flatMap((batch) => batch.events)
+      .filter((event) => event.kind === "ink"),
+  ).toEqual([
+    expect.objectContaining({ layer: "answer", operation: "stroke" }),
+  ]);
+  view.unmount();
+  await recorder.close();
+});

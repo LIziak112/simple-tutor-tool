@@ -1,5 +1,6 @@
 import type {
   AttemptQuestionPublic,
+  InkDoc,
   InkStroke,
   QuestionProcessStatus,
   StudentAnswer,
@@ -18,12 +19,17 @@ import {
 } from "react";
 import { peekAnnotationRecord } from "@/features/annotation/annotation-store";
 import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
+import { draftStore } from "@/features/attempt/draft-store";
 import { peekNoteRecord } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
+import {
+  NOTE_PAPER_SHRINK_MARGIN_LOGICAL,
+  strokesBottomLogical,
+} from "@/features/notes/paper-geometry";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
 import { questionProcessStatusApi, uploadQuestionProcessApi } from "@/lib/api";
 import { idbKVBackend } from "@/lib/kv-backend";
-import { QuestionProcessRecorder } from "./recorder";
+import { type ProcessSurface, QuestionProcessRecorder } from "./recorder";
 
 export const QuestionProcessContext =
   createContext<QuestionProcessRecorder | null>(null);
@@ -44,6 +50,33 @@ export function processStrokes(strokes: readonly InkStroke[]) {
   }));
 }
 
+export function processAnswerSurface(
+  doc: InkDoc | null,
+): ProcessSurface | undefined {
+  if (!doc) return undefined;
+  if (doc.engine === "excalidraw")
+    return {
+      width: 1000,
+      height: NOTE_PAPER_HEIGHT_DEFAULT,
+      strokes: [],
+      legacy: structuredClone(doc.data),
+    };
+  // 正式稿未持久化纸高，复用笔迹边界保留展示空间，不裁掉纸张下方笔迹。
+  const height = Math.max(
+    NOTE_PAPER_HEIGHT_DEFAULT,
+    Math.ceil(
+      (strokesBottomLogical(doc.data.strokes) ?? 0) +
+        NOTE_PAPER_SHRINK_MARGIN_LOGICAL,
+    ),
+  );
+  return {
+    width: 1000,
+    height,
+    background: "grid",
+    strokes: processStrokes(doc.data.strokes),
+  };
+}
+
 export function readProcessSurfaces(attemptId: string, questionId: string) {
   const noteSession = currentNoteSession();
   const annotationSession = currentAnnotationSession();
@@ -58,7 +91,11 @@ export function readProcessSurfaces(attemptId: string, questionId: string) {
   const baseId = annotation?.localBase
     ? annotation.localBase.boundBaseId
     : annotation?.base?.baseId;
+  const answer = processAnswerSurface(
+    draftStore.peekInk(attemptId, questionId),
+  );
   return {
+    ...(answer ? { answer } : {}),
     ...(note
       ? {
           scratch: {

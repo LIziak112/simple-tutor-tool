@@ -1,4 +1,4 @@
-import type { NoteBackground } from "@tutor/contract";
+import type { NoteBackground, QuestionProcessFinish } from "@tutor/contract";
 import { type ReactNode, useEffect, useState } from "react";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import type {
@@ -35,7 +35,11 @@ export function PaperEditor({
   label: string;
   initial?: InkDoc | undefined;
   engineRef: React.RefObject<InkEngine | null>;
-  onDocChange: (doc: InkDoc, reason: InkChangeReason) => void;
+  onDocChange: (
+    doc: InkDoc,
+    reason: InkChangeReason,
+    finish?: QuestionProcessFinish,
+  ) => void;
   inputEnabled: boolean;
   paperHeight?: number | undefined;
   background?: NoteBackground;
@@ -121,8 +125,8 @@ export function PaperEditor({
             setGeneration((value) => value + 1);
             onEngineRebuild?.();
           }}
-          onDocChange={(doc, reason) => {
-            onDocChange(doc, reason);
+          onDocChange={(doc, reason, finish) => {
+            onDocChange(doc, reason, finish);
             setHistory({
               undo: engineRef.current?.canUndo() ?? false,
               redo: engineRef.current?.canRedo() ?? false,
