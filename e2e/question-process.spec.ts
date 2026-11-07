@@ -428,6 +428,15 @@ test(
             : [],
         );
       expect(fillAnswers).toEqual(["拼", "1", "2"]);
+      await expect
+        .poll(async () => {
+          const response = await request.get(
+            `/api/teacher/attempts/${attempt}/questions/${encodeURIComponent(rows.find((item) => item.type === "judge")?.id ?? "")}/process`,
+          );
+          const payload = (await response.json()) as { data: unknown };
+          return questionProcessReadSchema.parse(payload.data).segments.length;
+        })
+        .toBe(3);
       const teacher = await browser.newContext({
         baseURL: pair.webUrl,
         storageState: await request.storageState(),
