@@ -7,11 +7,15 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { InkDoc, InkStroke } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CoordinatedAnnotationProvider,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
+import {
+  resetSessionInputPreference,
+  setSessionInputPreference,
+} from "@/features/ink/input-preference";
 import { preparePwaUpdate } from "@/lib/pwa-update-safety";
 import {
   AttemptEditorProvider,
@@ -235,6 +239,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     installDraftBackend(memoryBackend());
     drawFrameMock.mockClear();
   });
+  afterEach(resetSessionInputPreference);
 
   it("更新前收下最后一笔真实采样并等材料稿落盘，即使输入层漏收pointerup", async () => {
     const { container } = render(
@@ -503,7 +508,8 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     });
   });
 
-  it("笔写输入偏好下手指 touch 不落墨（手掌防误触/手指滚动语义）", async () => {
+  it("材料圈画不沿用正式手写的手指输入偏好", async () => {
+    setSessionInputPreference("finger");
     const { container } = render(
       <AttemptEditorProvider>
         <CoordinatedAnnotationProvider>

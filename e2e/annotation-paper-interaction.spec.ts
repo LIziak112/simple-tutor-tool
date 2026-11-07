@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
@@ -622,7 +622,7 @@ test(
   },
 );
 
-test("标画默认手指滚动，显式开启手指书写后落墨", {
+test("圈画和草稿都用同款笔橡皮，手指不落墨", {
   tag: ["@annotation"],
 }, async ({ page }) => {
   const card = page.getByRole("article", { name: "第 1 题", exact: true });
@@ -630,8 +630,8 @@ test("标画默认手指滚动，显式开启手指书写后落墨", {
   await trigger.click();
   const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
   await expect(canvas).toHaveAttribute("data-input-enabled", "true");
-  const touchStroke = async () =>
-    canvas.evaluate((element) => {
+  const touchStroke = (target: Locator) =>
+    target.evaluate((element) => {
       const box = element.getBoundingClientRect();
       for (const [type, offset] of [
         ["pointerdown", 15],
@@ -652,13 +652,42 @@ test("标画默认手指滚动，显式开启手指书写后落墨", {
           }),
         );
     });
-  await touchStroke();
+  const markToolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
+  await expect(markToolbar.getByRole("button")).toHaveCount(5);
+  await expect(
+    markToolbar.getByRole("button", { name: "手指书写", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    markToolbar.getByRole("button", { name: "笔", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(canvas).toHaveCSS("touch-action", "pan-y");
+  await touchStroke(canvas);
   await expect(trigger).not.toHaveAccessibleName(/已有/);
-  const finger = page
-    .getByRole("toolbar", { name: "第 1 题标画工具栏" })
-    .getByRole("button", { name: "手指书写", exact: true });
-  await finger.click();
-  await expect(finger).toHaveAttribute("aria-pressed", "true");
-  await touchStroke();
+  await drawStrokeWithPointerEvents(canvas);
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  await markToolbar.getByRole("button", { name: "橡皮", exact: true }).click();
+  await drawStrokeWithPointerEvents(canvas);
+  await expect(trigger).not.toHaveAccessibleName(/已有/);
+  await markToolbar.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  await markToolbar
+    .getByRole("button", { name: "完成标画", exact: true })
+    .click();
+
+  await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+  const paper = card.locator('[data-slot="note-layer"]');
+  const paperToolbar = paper.getByRole("toolbar");
+  const paperCanvas = paper.locator("canvas");
+  await expect(paperToolbar.getByRole("button")).toHaveCount(4);
+  await expect(paperCanvas).toHaveCSS("touch-action", "pan-y");
+  await touchStroke(paperCanvas);
+  await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+  await drawStrokeWithPointerEvents(paperCanvas);
+  await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+  await paperToolbar.getByRole("button", { name: "橡皮", exact: true }).click();
+  await drawStrokeWithPointerEvents(paperCanvas);
+  await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+  await paperToolbar.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
 });

@@ -25,8 +25,8 @@ import type {
   InkToolConfig,
 } from "@/features/ink/engine/index.ts";
 import {
-  getSessionInputPreference,
   resetSessionInputPreference,
+  setSessionInputPreference,
 } from "@/features/ink/input-preference";
 import {
   NOTE_ENGINE_KEEPALIVE_MS,
@@ -230,6 +230,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   cleanup();
+  resetSessionInputPreference();
   resetNoteSession();
   vi.unstubAllGlobals();
 });
@@ -271,7 +272,7 @@ describe("NoteLayer：收起/展开形态", () => {
     expect(onOpenChange).toHaveBeenCalledWith(true);
     // Harness 已回写 open → 工具条出现
     expect(await screen.findByRole("toolbar")).toBeInTheDocument();
-    for (const name of ["笔", "橡皮", "撤销", "手指书写", "更多"]) {
+    for (const name of ["笔", "橡皮", "撤销", "更多"]) {
       expect(
         screen.getByRole("button", { name: new RegExp(name) }),
       ).toBeInTheDocument();
@@ -496,15 +497,12 @@ describe("NoteLayer：工具条与操作", () => {
     expect(mockClear).toHaveBeenCalledTimes(1);
   });
 
-  it("手指书写按钮切换会话偏好（store 与 InkPad 两侧共用）", async () => {
+  it("草稿没有手指书写入口，也不沿用正式手写的手指输入偏好", async () => {
+    setSessionInputPreference("finger");
     renderLayer({ initialOpen: true });
     await waitForEngine();
-    const toggle = screen.getByRole("button", { name: /手指书写/ });
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(toggle);
-    expect(getSessionInputPreference()).toBe("finger");
-    expect(mockSetInputMode).toHaveBeenCalledWith("finger");
-    resetSessionInputPreference();
+    expect(screen.queryByRole("button", { name: /手指书写/ })).toBeNull();
+    expect(mockSetInputMode).toHaveBeenLastCalledWith("pen");
   });
 
   it("「更多」title 提示含布局段（闸门修复 F10：NoteToolbar 抽取时丢失回归）", async () => {

@@ -24,10 +24,6 @@ import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
-import {
-  getSessionInputPreference,
-  useSessionInputPreference,
-} from "@/features/ink/input-preference";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { studentAnnotationBasePngUrl } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
@@ -99,7 +95,6 @@ export function AnnotationWorkspace({
   ariaPrefix = "本题",
 }: AnnotationWorkspaceProps) {
   const session = useAnnotationSessionRef();
-  const inputPreference = useSessionInputPreference();
   const record = useAnnotationRecord(attemptId, questionId, phase);
   const label = `${ariaPrefix}题干标注`;
 
@@ -176,7 +171,7 @@ export function AnnotationWorkspace({
     const surface = createAnnotationSurface({
       baseWidth,
       baseHeight,
-      inputMode: getSessionInputPreference(),
+      inputMode: "pen",
       // LR-6：收笔锚定布局证据（record 活引用取当前 layout；无 layout 不锚）
       anchorBlocks: () => {
         const layout =
@@ -212,13 +207,12 @@ export function AnnotationWorkspace({
   // 工具变化 → setTool（不重建引擎）
   useEffect(() => {
     if (!docReady) return;
-    surfaceRef.current?.setInputMode(inputPreference);
     surfaceRef.current?.setTool(
       tool === "pen"
         ? { type: "pen", color: penColor, size: penSize }
         : { type: "eraser" },
     );
-  }, [tool, penColor, penSize, inputPreference, docReady]);
+  }, [tool, penColor, penSize, docReady]);
 
   // 外部换稿守卫（自写自载）：docVersion 推进而非本引擎产物 → load 重放
   useEffect(() => {
@@ -244,10 +238,10 @@ export function AnnotationWorkspace({
         label={label}
         tool={tool}
         onToolChange={setTool}
-        penColor={penColor}
-        onPenColorChange={setPenColor}
-        penSize={penSize}
-        onPenSizeChange={setPenSize}
+        color={penColor}
+        onColorChange={setPenColor}
+        size={penSize}
+        onSizeChange={setPenSize}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={() => surfaceRef.current?.undo()}

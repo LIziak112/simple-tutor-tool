@@ -17,7 +17,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { InkPenColor, InkPenSize, InkToolType } from "./engine/index";
 
-/** 草稿和正式手写共享工具呈现，命令仍由各自控制器处理。 */
+export const toolButtonClass =
+  "h-11 min-w-11 px-2.5 gap-1.5 rounded-lg border border-border text-sm font-medium select-none transition-colors";
+
+export const COLOR_LABEL = { black: "黑", blue: "蓝", red: "红" } as const;
+export const SIZE_LABEL = { thin: "细", medium: "中", thick: "粗" } as const;
+
+/** 圈画、草稿与正式手写共享工具呈现，命令仍由各自控制器处理。 */
 export function CompactInkToolbar({
   label,
   tool,
@@ -36,6 +42,10 @@ export function CompactInkToolbar({
   disabled = false,
   clearLabel = "清空",
   menuExtras,
+  compact = true,
+  moreLabel = `更多操作（${label}）`,
+  moreTitle = "更多",
+  children,
 }: {
   label: string;
   tool: InkToolType;
@@ -49,21 +59,30 @@ export function CompactInkToolbar({
   onUndo(): void;
   onRedo(): void;
   onClearRequest(): void;
-  fingerToggle: ReactNode;
+  fingerToggle?: ReactNode;
   advanced?: boolean;
   disabled?: boolean;
   clearLabel?: string;
   menuExtras?: ReactNode;
+  compact?: boolean;
+  moreLabel?: string;
+  moreTitle?: string;
+  children?: ReactNode;
 }) {
+  const buttonClass = compact ? "size-11 shrink-0 p-0" : toolButtonClass;
   return (
     <div
       role="toolbar"
       aria-label={`${label}工具栏`}
-      className="flex min-h-11 min-w-0 items-center gap-1"
+      className={
+        compact
+          ? "flex min-h-11 min-w-0 items-center gap-1"
+          : "flex flex-wrap items-center gap-1.5"
+      }
     >
       <Button
         variant={tool === "pen" ? "secondary" : "ghost"}
-        className="size-11 shrink-0 p-0"
+        className={buttonClass}
         aria-label="笔"
         title="笔"
         aria-pressed={tool === "pen"}
@@ -71,10 +90,11 @@ export function CompactInkToolbar({
         onClick={() => onToolChange("pen")}
       >
         <PenLine aria-hidden />
+        {!compact && "笔"}
       </Button>
       <Button
         variant={tool === "eraser" ? "secondary" : "ghost"}
-        className="size-11 shrink-0 p-0"
+        className={buttonClass}
         aria-label="橡皮"
         title="橡皮"
         aria-pressed={tool === "eraser"}
@@ -82,26 +102,29 @@ export function CompactInkToolbar({
         onClick={() => onToolChange("eraser")}
       >
         <Eraser aria-hidden />
+        {!compact && "橡皮"}
       </Button>
       <Button
         variant="ghost"
-        className="size-11 shrink-0 p-0"
+        className={buttonClass}
         aria-label="撤销"
         title="撤销"
         disabled={!canUndo || disabled}
         onClick={onUndo}
       >
         <Undo2 aria-hidden />
+        {!compact && "撤销"}
       </Button>
       {fingerToggle}
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="flex size-11 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`更多操作（${label}）`}
-          title="更多"
+          className={`flex shrink-0 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring ${compact ? "size-11 rounded-md" : `ml-auto border-transparent ${toolButtonClass}`}`}
+          aria-label={moreLabel}
+          title={moreTitle}
           disabled={disabled}
         >
           <MoreHorizontal aria-hidden />
+          {!compact && "更多"}
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
@@ -139,7 +162,7 @@ export function CompactInkToolbar({
                 className="size-3 rounded-full"
                 style={{ backgroundColor: value }}
               />
-              颜色：{{ black: "黑", blue: "蓝", red: "红" }[value]}
+              颜色：{COLOR_LABEL[value]}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
@@ -153,7 +176,7 @@ export function CompactInkToolbar({
                 onToolChange("pen");
               }}
             >
-              粗细：{{ thin: "细", medium: "中", thick: "粗" }[value]}
+              粗细：{SIZE_LABEL[value]}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
@@ -164,6 +187,7 @@ export function CompactInkToolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {children}
     </div>
   );
 }

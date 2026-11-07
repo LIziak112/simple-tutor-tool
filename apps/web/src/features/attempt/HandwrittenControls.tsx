@@ -598,6 +598,7 @@ export function HandwrittenControls({
                 <PaperEditor
                   initial={masterDoc ?? undefined}
                   label="手写答题区"
+                  allowFingerWriting
                   maxDeletedPoints={INK_MAX_DELETED_POINTS}
                   onDocChange={handleDocChange}
                   engineRef={pageEngineRef}

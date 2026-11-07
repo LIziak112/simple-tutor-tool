@@ -6,8 +6,7 @@
  * - **收起**：只显示「草稿纸 · N 笔」标记按钮（有笔迹时含笔数与待处理
  *   提示）；纸面隐藏保留（复审⑦：收起后引擎保活 NOTE_ENGINE_KEEPALIVE_MS，
  *   重开零重建；超时才卸载）；
- * - **展开**：精简工具条（笔/橡皮/撤销/手指书写/更多——「手指书写」按钮
- *   归属本工具条，T6R.7 衔接注记①定案；会话偏好 store 两侧共用不变）
+ * - **展开**：与圈画共用的精简工具条（笔/橡皮/撤销/更多，手指只滚动）
  *   + 纸面（InkPad 隐藏工具条形态）+ 四维状态区。
  *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
  *   编辑器 CorrectionWorkspace 共用），冲突/被拒动作接线抽至 useNoteSyncActions
@@ -344,8 +343,7 @@ export function NoteLayer({
           </div>
         )}
 
-        {/* 展开形态：标题行 + 精简工具条（方案 §4.3：常驻笔/橡皮/撤销/更多＋
-          手指书写；44px 触控目标） */}
+        {/* 展开形态：标题行与全屏入口；工具栏随纸面呈现。 */}
         {open && !fullscreen && (
           <div className="flex items-center justify-between gap-2">
             <p className="flex items-center gap-1.5 text-sm font-medium">

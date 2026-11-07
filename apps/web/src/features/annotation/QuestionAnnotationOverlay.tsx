@@ -1,5 +1,4 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
-import { Eraser, MoreHorizontal, PenLine, Redo2, Undo2 } from "lucide-react";
 import {
   forwardRef,
   type ReactNode,
@@ -11,24 +10,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
 import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
-import { SessionPrefToggleButton } from "@/features/ink/InkPad";
-import {
-  getSessionInputPreference,
-  useSessionInputPreference,
-} from "@/features/ink/input-preference";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
+import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { measureStage } from "@/lib/performance-stages";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { blocksInBaseDomain } from "./annotation-anchor";
@@ -88,7 +77,6 @@ export const QuestionAnnotationOverlay = forwardRef<
   } = props;
   const editor = useAttemptEditor(question.id);
   const recovery = useDraftSyncRecovery();
-  const inputPreference = useSessionInputPreference();
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, question.id, phase);
   const root = useRef<HTMLDivElement>(null);
@@ -559,7 +547,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       baseWidth,
       baseHeight,
       inputEnabled: false,
-      inputMode: getSessionInputPreference(),
+      inputMode: "pen",
       // LR-6：收笔锚定的布局证据——从 record 活引用取当前 layout（effect
       // 闭包里的 layout 会过期）；无 layout（旧底图）返回 undefined 不锚。
       anchorBlocks: () => {
@@ -621,12 +609,11 @@ export const QuestionAnnotationOverlay = forwardRef<
   useEffect(() => {
     if (!mountedOnce) return;
     if (!active && recordRef.current?.sealedAt != null) finishSurface();
-    surface.current?.setInputMode(inputPreference);
     surface.current?.setInputEnabled(active);
     surface.current?.setTool(
       tool === "pen" ? { type: "pen", color, size } : { type: "eraser" },
     );
-  }, [active, tool, color, size, mountedOnce, inputPreference, finishSurface]);
+  }, [active, tool, color, size, mountedOnce, finishSurface]);
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -747,97 +734,33 @@ export const QuestionAnnotationOverlay = forwardRef<
             data-slot="attempt-bottom-bar"
             className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
           >
-            <div
-              role="toolbar"
-              aria-label={`${label}标画工具栏`}
-              className="mx-auto flex min-h-16 max-w-[1120px] items-center justify-center gap-1 px-2 py-2"
-            >
-              <Button
-                title="画笔"
-                aria-label="画笔"
-                aria-pressed={tool === "pen"}
-                variant={tool === "pen" ? "secondary" : "ghost"}
-                className="size-11 shrink-0 p-0"
-                onClick={() => setTool("pen")}
+            <div className="mx-auto flex min-h-16 max-w-[1120px] items-center justify-center gap-1 px-2 py-2">
+              <NoteToolbar
+                compact
+                label={`${label}标画`}
+                tool={tool}
+                onToolChange={setTool}
+                color={color}
+                onColorChange={setColor}
+                size={size}
+                onSizeChange={setSize}
+                canUndo={surface.current?.canUndo() ?? false}
+                canRedo={surface.current?.canRedo() ?? false}
+                onUndo={() => surface.current?.undo()}
+                onRedo={() => surface.current?.redo()}
+                onClearRequest={() => surface.current?.clear()}
+                clearLabel="清空标画（可撤销）"
+                moreLabel="更多标画操作"
               >
-                <PenLine />
-              </Button>
-              <Button
-                title="橡皮"
-                aria-label="橡皮"
-                aria-pressed={tool === "eraser"}
-                variant={tool === "eraser" ? "secondary" : "ghost"}
-                className="size-11 shrink-0 p-0"
-                onClick={() => setTool("eraser")}
-              >
-                <Eraser />
-              </Button>
-              <Button
-                title="撤销"
-                aria-label="撤销"
-                variant="ghost"
-                className="size-11 shrink-0 p-0"
-                disabled={!surface.current?.canUndo()}
-                onClick={() => surface.current?.undo()}
-              >
-                <Undo2 />
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  aria-label="更多标画操作"
-                  title="颜色、粗细、清空"
-                  className="flex size-11 shrink-0 items-center justify-center rounded-md"
+                <Button
+                  className="h-11 w-16 shrink-0 px-2"
+                  onClick={() => {
+                    void editor?.request(null);
+                  }}
                 >
-                  <MoreHorizontal />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem
-                    disabled={!surface.current?.canRedo()}
-                    onSelect={() => surface.current?.redo()}
-                  >
-                    <Redo2 aria-hidden />
-                    重做
-                  </DropdownMenuItem>
-                  {(["red", "blue", "black"] as const).map((value) => (
-                    <DropdownMenuItem
-                      key={value}
-                      onClick={() => setColor(value)}
-                    >
-                      <span
-                        aria-hidden
-                        className="size-3 rounded-full"
-                        style={{ backgroundColor: value }}
-                      />
-                      {{ red: "红色", blue: "蓝色", black: "黑色" }[value]}
-                      {color === value ? "（当前）" : ""}
-                    </DropdownMenuItem>
-                  ))}
-                  {(["thin", "medium", "thick"] as const).map((value) => (
-                    <DropdownMenuItem
-                      key={value}
-                      onClick={() => setSize(value)}
-                    >
-                      {{ thin: "细笔", medium: "中笔", thick: "粗笔" }[value]}
-                      {size === value ? "（当前）" : ""}
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuItem onSelect={() => surface.current?.clear()}>
-                    清空标画（可撤销）
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <SessionPrefToggleButton
-                iconOnly
-                className="size-11 shrink-0 p-0"
-              />
-              <Button
-                className="h-11 w-16 shrink-0 px-2"
-                onClick={() => {
-                  void editor?.request(null);
-                }}
-              >
-                完成标画
-              </Button>
+                  完成标画
+                </Button>
+              </NoteToolbar>
             </div>
           </div>,
           document.body,
