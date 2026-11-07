@@ -25,7 +25,6 @@ import {
   INK_PEN_COLORS,
   INK_PEN_SIZES,
 } from "@/features/ink/engine/types.ts";
-import { useSessionInputPreference } from "@/features/ink/input-preference";
 import {
   type AtramentReplayCanvas,
   createAtramentReplayCanvas,
@@ -124,8 +123,7 @@ export interface MaterialAnnotationOverlayProps {
 /**
  * 材料圈画手写图层（协同标画）。引擎与题面圈画（annotation-surface）单源：
  * - 输入：engine/pointer-machine 状态机（第二指针/pointercancel/失焦/布局
- *   变化先收笔等决策矩阵与其单测共用），输入偏好沿用会话级
- *   getSessionInputPreference（笔写／手指滚动）；
+ *   变化先收笔等决策矩阵与其单测共用），固定笔写、手指滚动；
  * - 绘制：ink/replay/draw 的 createAtramentReplayCanvas（与回放/导出同一
  *   atrament 绘制原语、DPR 上限 2、尺寸变化自重画）；
  * - 笔色/笔粗/橡皮半径：INK_PEN_COLORS / INK_PEN_SIZES / INK_ERASE_RADIUS，
@@ -234,9 +232,8 @@ export function MaterialAnnotationOverlay({
   }, []);
 
   // 输入状态机与绘制原语都不进 React 状态：笔势期间零重渲染
-  const inputMode = useSessionInputPreference();
   const machineRef = useRef<PointerMachineState>(
-    createPointerMachineState(inputMode),
+    createPointerMachineState("pen"),
   );
   const currentStrokeRef = useRef<InkStroke | null>(null);
   /** 本笔落笔矩形：首笔冻结基准的捕获源（一笔不混用两个排版基准） */
@@ -748,16 +745,6 @@ export function MaterialAnnotationOverlay({
     };
   }, [frameMounted, isAnnotationActive]);
 
-  // 会话输入偏好切换（笔写/手指书写）：在途笔先收，再按新模式重建状态机
-  useEffect(() => {
-    const result = advancePointerMachine(machineRef.current, {
-      kind: "layoutchange",
-    });
-    machineRef.current = result.state;
-    applyDecisions(result.decisions);
-    machineRef.current = createPointerMachineState(inputMode);
-  }, [inputMode, applyDecisions]);
-
   const inputLayer = (
     <div
       ref={setInputLayer}
@@ -771,9 +758,8 @@ export function MaterialAnnotationOverlay({
         // 输入门控：非标注态不拦截；标注态下未就绪（首笔/挂框门控）或
         // 挂框宽高漂移期间不拦截（与「不匹配禁墨」同口径）
         pointerEvents: inputEnabled ? "auto" : "none",
-        // 会话输入偏好：pen=手指滚动（pan-y）、finger=手指书写（none），
-        // 与题面圈画 touchActionForInput 同源
-        touchAction: touchActionForInput(inputMode, true, false),
+        // 与题面圈画同口径：手指用于滚动，Pencil 与鼠标可圈画。
+        touchAction: touchActionForInput("pen", true, false),
         zIndex: 10,
       }}
       className={`absolute inset-0 [&_canvas]:pointer-events-none ${
