@@ -51,6 +51,7 @@ interface Options {
   current: () => boolean;
   canCapture?: () => boolean;
   inactiveReason?: () => string | undefined;
+  onHintShown?: (questionId: string, index: number) => Promise<void>;
   upload: (batch: QuestionProcessBatch, signal: AbortSignal) => Promise<number>;
 }
 
@@ -227,6 +228,13 @@ export class QuestionProcessRecorder {
     const track = this.#ensure(questionId);
     if (!track || track.shownHints.has(index)) return;
     track.shownHints.add(index);
+    if (this.options.onHintShown)
+      this.#local = this.#local
+        .then(() => this.options.onHintShown?.(questionId, index))
+        .catch(() => {
+          this.#lostEvents = true;
+          this.#status("failed");
+        });
     this.event(questionId, {
       kind: "hint",
       action: "shown",

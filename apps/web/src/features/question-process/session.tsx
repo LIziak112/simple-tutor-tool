@@ -1,5 +1,6 @@
 import type {
   AttemptQuestionPublic,
+  HintOpenedEntry,
   InkDoc,
   InkStroke,
   QuestionProcessStatus,
@@ -11,6 +12,7 @@ import {
 } from "@tutor/contract";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -30,6 +32,7 @@ import { useNoteSessionRef } from "@/features/notes/use-note-head";
 import { questionProcessStatusApi, uploadQuestionProcessApi } from "@/lib/api";
 import { idbKVBackend } from "@/lib/kv-backend";
 import { type ProcessSurface, QuestionProcessRecorder } from "./recorder";
+import { ProcessShownHints } from "./shown-hints";
 
 export const QuestionProcessContext =
   createContext<QuestionProcessRecorder | null>(null);
@@ -126,6 +129,7 @@ interface Inputs {
   ready: boolean;
   questions: readonly AttemptQuestionPublic[];
   answers: Record<string, StudentAnswer> | null;
+  hintsOpened: Record<string, readonly HintOpenedEntry[]>;
 }
 
 export function useQuestionProcess(inputs: Inputs) {
@@ -143,6 +147,16 @@ export function useQuestionProcess(inputs: Inputs) {
   const [working, setWorking] = useState(false);
   const [active, setActive] = useState<QuestionProcessRecorder | null>(null);
   const deleting = useRef(false);
+  const shownRef = useRef<ProcessShownHints | null>(null);
+  const restoreShown = useCallback(
+    async (data: QuestionProcessStatus, targetPrefix: string) => {
+      if (data.state !== "active") return;
+      const next = new ProcessShownHints(store, targetPrefix, data.recordingId);
+      if (shownRef.current?.key !== next.key) shownRef.current = next;
+      await shownRef.current.load();
+    },
+    [],
+  );
   const changeEpoch = useRef(0);
   const latest = useRef(inputs);
   latest.current = inputs;
@@ -173,6 +187,8 @@ export function useQuestionProcess(inputs: Inputs) {
         );
         if (!isCurrent()) return;
         const data = questionProcessStatusSchema.parse(raw);
+        await restoreShown(data, prefix);
+        if (!isCurrent()) return;
         setState({ prefix, data });
         if (data.state === "active") await store.set(prefix, data);
         else {
@@ -195,7 +211,8 @@ export function useQuestionProcess(inputs: Inputs) {
             cached.data.state === "active" &&
             Date.parse(cached.data.expiresAt) > Date.now()
           ) {
-            setState({ prefix, data: cached.data });
+            await restoreShown(cached.data, prefix);
+            if (isCurrent()) setState({ prefix, data: cached.data });
           }
         } catch {
           if (isCurrent()) setCacheFailed(true);
@@ -211,10 +228,12 @@ export function useQuestionProcess(inputs: Inputs) {
       controller.abort();
       window.removeEventListener("online", online);
     };
-  }, [attemptId, enabled, prefix, scope]);
+  }, [attemptId, enabled, prefix, scope, restoreShown]);
 
   useEffect(() => {
     if (!prefix || !scope || !recordingId || !expiresAt) return;
+    const shown = shownRef.current;
+    if (!shown) return;
     const instance = new QuestionProcessRecorder({
       attemptId,
       recordingId,
@@ -226,11 +245,15 @@ export function useQuestionProcess(inputs: Inputs) {
           ?.questionRevisionId,
       snapshot: (id) => ({
         answer: latest.current.answers?.[id] ?? null,
-        hints: [],
+        hints: shown.read(
+          id,
+          (latest.current.hintsOpened[id] ?? []).map((hint) => hint.index),
+        ),
         layers: readProcessSurfaces(attemptId, id),
       }),
       current: () => currentNoteSession() === scope && !deleting.current,
       canCapture: () => latest.current.ready,
+      onHintShown: (id, index) => shown.add(id, index),
       inactiveReason: () =>
         latest.current.ready ? undefined : MATERIAL_INACTIVE_REASON,
       upload: (batch, signal) =>
@@ -278,6 +301,7 @@ export function useQuestionProcess(inputs: Inputs) {
     try {
       const data = await questionProcessStatusApi(attemptId, method);
       const next: QuestionProcessStatus = data ?? { state: "closed" };
+      await restoreShown(next, prefix);
       if (currentNoteSession() === scope) setState({ prefix, data: next });
       if (method === "DELETE") {
         await recorder?.discard();

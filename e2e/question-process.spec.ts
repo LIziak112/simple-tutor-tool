@@ -465,7 +465,21 @@ test(
             `/api/teacher/attempts/${attempt}/questions/${encodeURIComponent(rows.find((item) => item.type === "judge")?.id ?? "")}/process`,
           );
           const payload = (await response.json()) as { data: unknown };
-          return questionProcessReadSchema.parse(payload.data).segments.length;
+          const process = questionProcessReadSchema.parse(payload.data);
+          if (process.segments.length === 3) {
+            for (const segment of process.segments.slice(1)) {
+              expect(segment.events[0]).toMatchObject({
+                kind: "start",
+                hints: [0],
+              });
+              expect(
+                segment.events.filter(
+                  (event) => event.kind === "hint" && event.action === "shown",
+                ),
+              ).toEqual([]);
+            }
+          }
+          return process.segments.length;
         })
         .toBe(3);
       const teacher = await browser.newContext({

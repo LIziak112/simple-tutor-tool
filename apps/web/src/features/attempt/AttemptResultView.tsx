@@ -550,6 +550,7 @@ export function AttemptResultView({
     ready: false,
     questions: [],
     answers: null,
+    hintsOpened: {},
   });
   // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
   // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
