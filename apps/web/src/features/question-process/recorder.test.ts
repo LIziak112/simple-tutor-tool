@@ -5,6 +5,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryKVBackend } from "@/lib/kv-backend";
 import { type ProcessSurface, QuestionProcessRecorder } from "./recorder";
+import { frameAt } from "./replay";
 
 const stroke: QuestionProcessStroke = {
   id: "test-stroke",
@@ -23,6 +24,80 @@ const active = "863de11a-f212-46e1-b876-d3a29e07df55";
 afterEach(() => vi.restoreAllMocks());
 
 describe("单题过程待传队列", () => {
+  it("本机写盘失败时不上报，恢复后按原顺序补传", async () => {
+    const backend = memoryKVBackend();
+    const uploads: QuestionProcessBatch[] = [];
+    let blocked = true;
+    const recorder = new QuestionProcessRecorder({
+      attemptId: "attempt",
+      recordingId: active,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      prefix: "本次会话",
+      store: {
+        ...backend,
+        set: async (key, value) => {
+          if (blocked) throw new DOMException("磁盘已满", "QuotaExceededError");
+          await backend.set(key, value);
+        },
+      },
+      revision: () => "revision",
+      current: () => true,
+      snapshot: () => ({ answer: null, hints: [], layers: {} }),
+      upload: async (batch) => {
+        uploads.push(batch);
+        return batch.events.at(-1)?.seq ?? -1;
+      },
+    });
+    try {
+      recorder.ink("q", "annotation", "stroke", undefined, ink, "up");
+      await recorder.flush();
+      expect(recorder.getStatus()).toBe("failed");
+      expect(uploads).toHaveLength(0);
+
+      blocked = false;
+      await recorder.flush();
+      expect(
+        uploads.flatMap((batch) => batch.events).map((event) => event.seq),
+      ).toEqual([0, 1]);
+      expect(await backend.getAll("")).toEqual([]);
+      expect(recorder.getStatus()).toBe("synced");
+
+      recorder.ink("q", "scratch", "stroke", undefined, ink, "up");
+      recorder.ink("q", "annotation", "erase", ink, empty, "up");
+      recorder.ink("q", "annotation", "undo", empty, ink);
+      recorder.ink("q", "scratch", "clear", ink, empty);
+      recorder.ink("q", "scratch", "undo", empty, ink);
+      recorder.ink("q", "scratch", "undo", ink, ink);
+      await recorder.flush();
+      const events = uploads.flatMap((batch) => batch.events);
+      expect(
+        events.flatMap((event) =>
+          event.kind === "ink" ? [`${event.layer}:${event.operation}`] : [],
+        ),
+      ).toEqual([
+        "annotation:stroke",
+        "scratch:stroke",
+        "annotation:erase",
+        "annotation:undo",
+        "scratch:clear",
+        "scratch:undo",
+      ]);
+      const countsAt = (seq: number) => {
+        const frame = frameAt(events, Infinity, seq);
+        return [
+          frame?.layers.annotation?.strokes.length,
+          frame?.layers.scratch?.strokes.length,
+        ];
+      };
+      expect(countsAt(3)).toEqual([0, 1]);
+      expect(countsAt(4)).toEqual([1, 1]);
+      expect(countsAt(5)).toEqual([1, 0]);
+      expect(countsAt(6)).toEqual([1, 1]);
+    } finally {
+      await recorder.close();
+    }
+  });
+
   it("离线保存后可由新会话续传，丢回执保留原批次", async () => {
     const store = memoryKVBackend();
     const network = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);

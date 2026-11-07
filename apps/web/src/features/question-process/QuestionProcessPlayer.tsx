@@ -4,8 +4,20 @@ import type {
   QuestionProcessRead,
   QuestionProcessSurface,
 } from "@tutor/contract";
-import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  dispatchBehavior,
+  emptyPublicStructure,
+  matchingPublicStructureOf,
+  orderingPublicStructureOf,
+} from "@tutor/contract";
+import {
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import { createAtramentReplayCanvas } from "@/features/ink/replay/draw";
@@ -18,9 +30,11 @@ import { frameAt } from "./replay";
 function ProcessInk({
   surface,
   annotation,
+  fallback,
 }: {
   surface: QuestionProcessSurface;
   annotation: boolean;
+  fallback?: ReactNode;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ReturnType<typeof createAtramentReplayCanvas> | null>(
@@ -64,8 +78,18 @@ function ProcessInk({
       strokes.map((stroke) => stroke.points.length),
     );
   }, [ready, surface]);
-  if (annotation && !baseId)
-    return <p role="status">该段圈画的原始底图尚不可用。</p>;
+  if (annotation && (!baseId || decoded === "error")) {
+    return (
+      <>
+        {fallback}
+        <p role="status">
+          {baseId
+            ? "圈画底图无法读取或尺寸不符。"
+            : "该段圈画的原始底图尚不可用。"}
+        </p>
+      </>
+    );
+  }
   return (
     <div
       className="relative max-w-3xl overflow-hidden rounded border bg-white"
@@ -78,7 +102,6 @@ function ProcessInk({
     >
       {annotation && baseId && (
         <img
-          key={baseId}
           src={teacherAnnotationBasePngUrl(baseId)}
           alt="保存时的题面底图"
           className="absolute inset-0 h-full w-full"
@@ -99,9 +122,7 @@ function ProcessInk({
       )}
       {annotation && !ready && (
         <p className="relative bg-background p-2" role="status">
-          {decoded === "error"
-            ? "圈画底图无法读取或尺寸不符。"
-            : "正在读取圈画底图…"}
+          正在读取圈画底图…
         </p>
       )}
     </div>
@@ -174,6 +195,22 @@ function SegmentPlayer({
     () => frameAt(segment.events, Number.POSITIVE_INFINITY, activeEvent),
     [segment.events, activeEvent],
   );
+  const answerStructures = useMemo(() => {
+    const slots = question.matchingSlots ?? [];
+    return {
+      ...emptyPublicStructure,
+      matching: question.matchingOptions
+        ? matchingPublicStructureOf(
+            question.matchingOptions,
+            slots.map(({ id }) => id),
+            Object.fromEntries(slots.map(({ id, ordinal }) => [id, ordinal])),
+          )
+        : emptyPublicStructure.matching,
+      ordering: question.orderingItems
+        ? orderingPublicStructureOf(question.orderingItems)
+        : emptyPublicStructure.ordering,
+    };
+  }, [question]);
   useEffect(() => {
     if (!playing) return;
     const start = playFrom.current;
@@ -191,11 +228,15 @@ function SegmentPlayer({
   }, [playing, end]);
   if (!state) return <p>该段缺少起始状态，无法回放。</p>;
   const annotation = state.layers.annotation;
+  const frozenStem = (
+    <QuestionSurface
+      question={question}
+      answer={state.answer ?? undefined}
+      readOnly
+    />
+  );
   const answerText = state.answer
-    ? dispatchBehavior(state.answer, "display", {
-        ...emptyPublicStructure,
-        ...question,
-      })
+    ? dispatchBehavior(state.answer, "display", answerStructures)
     : null;
   return (
     <div className="space-y-3">
@@ -241,17 +282,15 @@ function SegmentPlayer({
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         <section aria-label="回放题面" className="min-w-0 space-y-2">
-          {annotation?.baseId ? (
-            <ProcessInk surface={annotation} annotation />
+          {annotation ? (
+            <ProcessInk
+              key={annotation.baseId}
+              surface={annotation}
+              annotation
+              fallback={frozenStem}
+            />
           ) : (
-            <>
-              <QuestionSurface
-                question={question}
-                answer={state.answer ?? undefined}
-                readOnly
-              />
-              {annotation && <ProcessInk surface={annotation} annotation />}
-            </>
+            frozenStem
           )}
           <p
             data-slot="question-process-answer"

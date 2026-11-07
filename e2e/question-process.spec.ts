@@ -107,7 +107,36 @@ test(
             .getByRole("radio", { name: "错", exact: true })
             .locator("xpath=ancestor::label[1]")
             .click();
-          await card.getByRole("button", { name: /给我一点提示/ }).click();
+          const hintButton = card.getByRole("button", { name: /给我一点提示/ });
+          const hintPath = "**/api/student/attempts/*/hints";
+          await page.route(hintPath, (route) => route.abort("failed"), {
+            times: 1,
+          });
+          await hintButton.click();
+          await expect(card.getByRole("alert")).toContainText("重试");
+
+          let releaseHint = () => {};
+          const delayedHint = new Promise<void>((resolve) => {
+            releaseHint = resolve;
+          });
+          await page.route(
+            hintPath,
+            async (route) => {
+              await delayedHint;
+              await route.continue();
+            },
+            { times: 1 },
+          );
+          const requestedHint = page.waitForRequest(hintPath);
+          await hintButton.click();
+          try {
+            await requestedHint;
+            await question(4).scrollIntoViewIfNeeded();
+            await expect(hintButton).not.toBeInViewport();
+          } finally {
+            releaseHint();
+          }
+          await card.getByText("先比较绝对值与原数。").scrollIntoViewIfNeeded();
           await expect(card.getByText("先比较绝对值与原数。")).toBeInViewport();
           // 先让原草稿链路确认一个云端版本，再验收离线修改。
           await card.locator("[data-paper-trigger]").click();
@@ -163,6 +192,7 @@ test(
           );
           await page.reload();
           await page.unroute("**/api/student/attempts/*/question-process");
+          await expect(card.getByText("先比较绝对值与原数。")).toBeVisible();
         } else if (n === 2) {
           await card
             .getByRole("radio")
@@ -192,6 +222,12 @@ test(
             .click();
         } else if (n === 4) {
           const input = card.getByRole("textbox").first();
+          await input.focus();
+          await input.dispatchEvent("compositionstart");
+          await input.fill("pin");
+          await input.fill("拼");
+          await input.dispatchEvent("compositionend", { data: "拼" });
+          await input.blur();
           await input.fill("1");
           await input.blur();
           await input.fill("2");
@@ -303,7 +339,15 @@ test(
           .get("judge")
           ?.filter((event) => event.kind === "hint")
           .map((event) => event.action),
-      ).toEqual(["request", "received", "shown"]);
+      ).toEqual(["request", "failed", "request", "received", "shown"]);
+      const fillAnswers = eventLists
+        .get("fill")
+        ?.flatMap((event) =>
+          event.kind === "answer" && event.answer?.kind === "fill"
+            ? [event.answer.values[0]]
+            : [],
+        );
+      expect(fillAnswers).toEqual(["拼", "1", "2"]);
       const teacher = await browser.newContext({
         baseURL: pair.webUrl,
         storageState: await request.storageState(),
@@ -329,13 +373,24 @@ test(
           const before = await answer.textContent();
           await changes.last().click();
           await expect(answer).not.toHaveText(before ?? "");
+          if (i === 8) {
+            await expect(answer).toContainText("第 1 空 = A ten-minute nap");
+          } else if (i === 9) {
+            await expect(answer).toContainText(
+              "如何对一部作品作出恰如其分的评价？ →",
+            );
+            await expect(answer).not.toContainText(/it-\d/);
+          }
           await expect(player.getByAltText("保存时的题面底图")).toBeVisible();
           if (i < 4 || i > 7)
             await expect(
               player.getByRole("region", { name: "回放草稿" }),
             ).toBeVisible();
           if (i === 0) {
-            await player.getByRole("button", { name: /请求提示 1/ }).click();
+            await player
+              .getByRole("button", { name: /请求提示 1/ })
+              .last()
+              .click();
             await expect(
               player.getByText("已呈现提示：无", { exact: true }),
             ).toBeVisible();
@@ -366,6 +421,31 @@ test(
             .getByRole("button", { name: "收起过程回放", exact: true })
             .click();
         }
+        await teacherPage.route(
+          "**/api/teacher/annotation-bases/*/image.png",
+          (route) =>
+            route.fulfill({
+              status: 200,
+              contentType: "image/png",
+              body: "invalid",
+            }),
+        );
+        const player = players.first();
+        await player
+          .getByRole("button", { name: "过程回放", exact: true })
+          .click();
+        await player
+          .getByRole("button", { name: /圈画书写/ })
+          .first()
+          .click();
+        const stem = player.getByRole("region", { name: "回放题面" });
+        await expect(
+          stem.getByText("圈画底图无法读取或尺寸不符。"),
+        ).toBeVisible();
+        await expect(
+          stem.locator('[data-slot="question-surface"]'),
+        ).toBeVisible();
+        await expect(stem.locator("canvas")).toHaveCount(0);
       } finally {
         await teacher.close();
       }

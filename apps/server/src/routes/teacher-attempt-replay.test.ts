@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
+  QUESTION_PROCESS_MAX_BATCH_BYTES,
+  QUESTION_PROCESS_MAX_EVENTS,
   questionProcessReadSchema,
   questionProcessStatusSchema,
 } from "@tutor/contract";
@@ -305,13 +307,22 @@ describe("GET /api/teacher/attempts/:id/replay", () => {
 
 describe("单题过程记录", () => {
   it("默认关闭，启用试点后仍须学生主动开启", async () => {
-    const { app, studentCookie, attemptId } = await makeEnv();
+    const { app, studentCookie, teacherCookie, attemptId, questionId } =
+      await makeEnv();
     const path = `/api/student/attempts/${attemptId}/question-process`;
     const response = await request(app, path, {}, studentCookie);
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { data: unknown };
     expect(payload.data).toEqual({ state: "unavailable" });
     assertNoLeak(payload);
+    const legacyRead = await app.request(
+      `/api/teacher/attempts/${attemptId}/questions/${encodeURIComponent(questionId)}/process`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(legacyRead.status).toBe(200);
+    const legacy = (await legacyRead.json()) as { data: unknown };
+    expect(questionProcessReadSchema.parse(legacy.data).segments).toEqual([]);
+    assertNoLeak(legacy.data);
   });
 
   it("识别缺段、拒绝改写序号，删除后拒绝迟到批次", async () => {
@@ -420,6 +431,126 @@ describe("单题过程记录", () => {
     expect(
       questionProcessReadSchema.parse(completeBody.data).segments[0]?.events,
     ).toHaveLength(3);
+
+    const peer = await request(
+      app,
+      "/api/teacher/students",
+      {
+        displayName: "另一位同学",
+        loginName: "peer-process",
+        password: STUDENT_PASSWORD,
+      },
+      teacherCookie,
+    );
+    expect(peer.status).toBe(201);
+    const peerLogin = await request(app, "/api/public/student/login", {
+      loginName: "peer-process",
+      password: STUDENT_PASSWORD,
+    });
+    const peerCookie = `tutor_student_session=${extractSessionToken(peerLogin, "tutor_student_session")}`;
+    expect((await request(app, path, start, peerCookie, "PUT")).status).toBe(
+      403,
+    );
+    const otherTeacher = await request(app, "/api/public/teacher/register", {
+      loginName: "peer-teacher",
+      password: TEACHER_PASSWORD,
+    });
+    expect(otherTeacher.status).toBe(200);
+    expect(
+      (
+        await app.request(readPath, {
+          headers: {
+            cookie: `tutor_session=${extractSessionToken(otherTeacher)}`,
+          },
+        })
+      ).status,
+    ).toBe(404);
+
+    const answer = { kind: "judge", value: true };
+    expect(
+      (
+        await request(
+          app,
+          `/api/student/attempts/${attemptId}/answers/${questionId}`,
+          { answer },
+          studentCookie,
+          "PUT",
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(
+          app,
+          `/api/student/attempts/${attemptId}/submit`,
+          {
+            revisions: await fetchSubmitRevisions(
+              app,
+              studentCookie,
+              attemptId,
+            ),
+          },
+          studentCookie,
+        )
+      ).status,
+    ).toBe(200);
+    const sealed = db
+      .select()
+      .from(responses)
+      .where(eq(responses.id, row.id))
+      .get();
+    expect(sealed?.answerJson).toBe(JSON.stringify(answer));
+
+    const second = {
+      ...start,
+      segmentId: randomUUID(),
+      startedAt: base.startedAt + 10,
+      events: [
+        {
+          seq: 0,
+          at: 0,
+          kind: "start",
+          answer: null,
+          hints: [],
+          layers: {
+            annotation: {
+              width: 100,
+              height: 100,
+              baseId: randomUUID(),
+              strokes: [],
+            },
+          },
+        },
+      ],
+    };
+    expect(
+      (await request(app, path, second, studentCookie, "PUT")).status,
+    ).toBe(200);
+    const split = await app.request(readPath, {
+      headers: { cookie: teacherCookie },
+    });
+    const splitBody = (await split.json()) as { data: unknown };
+    const splitData = questionProcessReadSchema.parse(splitBody.data);
+    expect(
+      splitData.segments.map((segment) => ({
+        id: segment.id,
+        count: segment.events.length,
+        gap: segment.gap,
+      })),
+    ).toEqual([
+      { id: base.segmentId, count: 3, gap: false },
+      { id: second.segmentId, count: 1, gap: false },
+    ]);
+    expect(splitData.segments[1]?.events[0]).toMatchObject({
+      kind: "start",
+      layers: { annotation: { width: 100, height: 100, strokes: [] } },
+    });
+    expect(splitData.segments[1]?.events[0]).not.toHaveProperty(
+      "layers.annotation.baseId",
+    );
+    expect(
+      db.select().from(responses).where(eq(responses.id, row.id)).get(),
+    ).toEqual(sealed);
     expect((await request(app, path, {}, studentCookie, "DELETE")).status).toBe(
       200,
     );
@@ -427,5 +558,72 @@ describe("单题过程记录", () => {
     expect((await request(app, path, late, studentCookie, "PUT")).status).toBe(
       403,
     );
+  });
+
+  it("限制单批大小和单题事件数", async () => {
+    const { app, db, studentCookie, attemptId, questionId } =
+      await makeEnv(true);
+    const path = `/api/student/attempts/${attemptId}/question-process`;
+    const status = await request(app, path, {}, studentCookie);
+    const { data } = (await status.json()) as { data: unknown };
+    const recording = questionProcessStatusSchema.parse(data);
+    if (recording.state !== "active") throw new Error("过程未开启");
+    const row = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, attemptId))
+      .get();
+    if (!row) throw new Error("测试题不存在");
+    const base = {
+      version: 1,
+      recordingId: recording.recordingId,
+      questionId,
+      revisionId: row.id,
+      segmentId: randomUUID(),
+      startedAt: Date.now(),
+    };
+    expect(
+      (
+        await request(
+          app,
+          path,
+          { ...base, excess: "x".repeat(QUESTION_PROCESS_MAX_BATCH_BYTES) },
+          studentCookie,
+          "PUT",
+        )
+      ).status,
+    ).toBe(413);
+    for (let first = 0; first < QUESTION_PROCESS_MAX_EVENTS; first += 64) {
+      const events = Array.from(
+        { length: Math.min(64, QUESTION_PROCESS_MAX_EVENTS - first) },
+        (_, i) => {
+          const seq = first + i;
+          return seq === 0
+            ? { seq, at: 0, kind: "start", answer: null, hints: [], layers: {} }
+            : { seq, at: seq, kind: "boundary", reason: "visible" };
+        },
+      );
+      expect(
+        (await request(app, path, { ...base, events }, studentCookie, "PUT"))
+          .status,
+      ).toBe(200);
+    }
+    const extra = {
+      seq: QUESTION_PROCESS_MAX_EVENTS,
+      at: QUESTION_PROCESS_MAX_EVENTS,
+      kind: "boundary",
+      reason: "visible",
+    };
+    const full = await request(
+      app,
+      path,
+      { ...base, events: [extra] },
+      studentCookie,
+      "PUT",
+    );
+    expect(full.status).toBe(413);
+    await expect(full.json()).resolves.toMatchObject({
+      error: "QUESTION_PROCESS_LIMIT",
+    });
   });
 });

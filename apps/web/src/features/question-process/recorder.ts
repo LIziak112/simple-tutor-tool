@@ -100,7 +100,7 @@ export class QuestionProcessRecorder {
     this.#sync = value;
     for (const listener of this.#listeners) listener();
   }
-  #failed = false;
+  #lostEvents = false;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(readonly options: Options) {}
@@ -119,7 +119,7 @@ export class QuestionProcessRecorder {
     try {
       snapshot = this.options.snapshot(questionId);
     } catch {
-      this.#failed = true;
+      this.#lostEvents = true;
       this.#status("failed");
       return undefined;
     }
@@ -290,7 +290,7 @@ export class QuestionProcessRecorder {
     if (!revisionId || track.stopped) return;
     if (track.seq >= QUESTION_PROCESS_MAX_EVENTS) {
       track.stopped = true;
-      this.#failed = true;
+      this.#lostEvents = true;
       this.#status("failed");
       return;
     }
@@ -304,7 +304,7 @@ export class QuestionProcessRecorder {
       track.id,
       String(seq).padStart(6, "0"),
     ]);
-    this.#status(this.#failed ? "failed" : "saving");
+    this.#status(this.#lostEvents ? "failed" : "saving");
     this.#local = this.#local
       .then(async () => {
         const png = layers?.annotation?.png;
@@ -354,12 +354,17 @@ export class QuestionProcessRecorder {
         }
         track.bytes += bytes;
         this.#pending.set(key, { batch, expiresAt: this.options.expiresAt });
-        await this.#persist();
-        this.#status(this.#failed ? "failed" : "pending");
-        this.scheduleUpload();
+        try {
+          await this.#persist();
+          this.#status(this.#lostEvents ? "failed" : "pending");
+          this.scheduleUpload();
+        } catch {
+          this.#status("failed");
+          this.scheduleUpload(5000);
+        }
       })
       .catch(() => {
-        this.#failed = true;
+        this.#lostEvents = true;
         this.#status("failed");
       });
   }
@@ -392,8 +397,10 @@ export class QuestionProcessRecorder {
     this.#sending = true;
     const generation = this.#generation;
     try {
-      await this.#local;
-      await this.#persist();
+      // 与新事件串行落盘，防止晚到的写入恢复已确认的批次。
+      const persisted = this.#local.then(() => this.#persist());
+      this.#local = persisted.catch(() => {});
+      await persisted;
       const prefix = `${JSON.stringify([
         this.options.prefix,
         this.options.recordingId,
@@ -401,7 +408,13 @@ export class QuestionProcessRecorder {
       const rows = (await this.options.store.getAll(prefix)).filter(
         ([key]) => !this.#rejected.has(key),
       );
-      if (!navigator.onLine && rows.length > 0) return;
+      if (!navigator.onLine && rows.length > 0) {
+        if (generation === this.#generation)
+          this.#status(
+            this.#lostEvents || this.#rejected.size ? "failed" : "pending",
+          );
+        return;
+      }
       for (let i = 0; i < rows.length; i += 4) {
         if (this.#abort.signal.aborted || !this.options.current()) return;
         const results = await Promise.allSettled(
@@ -444,7 +457,9 @@ export class QuestionProcessRecorder {
           throw new Error("过程尚未同步");
       }
       if (generation === this.#generation)
-        this.#status(this.#failed || this.#rejected.size ? "failed" : "synced");
+        this.#status(
+          this.#lostEvents || this.#rejected.size ? "failed" : "synced",
+        );
       else this.scheduleUpload();
     } catch {
       if (!this.#abort.signal.aborted) {
