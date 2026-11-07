@@ -274,25 +274,21 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
           ).toHaveCount(0);
         }
         // 第二题留空也能交卷，不强迫先逐题提交。
-        const responsePromise = page.waitForResponse(
-          (response) =>
-            /\/api\/student\/attempts\/[^/]+\/submit$/.test(response.url()) &&
-            response.request().method() === "POST",
-        );
         if (mode === "单题逐题") {
+          await page.getByRole("button", { name: "练习更多" }).click();
           await page
-            .getByRole("button", { name: "答题卡", exact: true })
-            .click();
-          await page
-            .getByRole("dialog", { name: "答题卡", exact: true })
-            .getByRole("button", { name: "提前交卷", exact: true })
+            .getByRole("menuitem", { name: "提前交卷", exact: true })
             .click();
         } else
           await page.getByRole("button", { name: "交卷", exact: true }).click();
-        await page
-          .getByRole("button", { name: "确认交卷", exact: true })
-          .click();
-        const response = await responsePromise;
+        const [response] = await Promise.all([
+          page.waitForResponse(
+            (response) =>
+              /\/api\/student\/attempts\/[^/]+\/submit$/.test(response.url()) &&
+              response.request().method() === "POST",
+          ),
+          page.getByRole("button", { name: "确认交卷", exact: true }).click(),
+        ]);
         expect(response.status()).toBe(200);
         const sent = response.request().postDataJSON() as {
           revisions: unknown[];
