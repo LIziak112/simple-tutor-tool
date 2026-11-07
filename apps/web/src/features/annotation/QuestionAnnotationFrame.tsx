@@ -9,6 +9,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -257,6 +258,20 @@ export const QuestionAnnotationFrame = forwardRef<
     }, [identity, verify, getSurface]);
     const cssWidth = layout?.cssWidth;
     const cssHeight = layout?.cssHeight;
+    const renderVersion = layout?.renderVersion ?? 4;
+    const legacyDirection =
+      legacyProfile?.identity === identity
+        ? legacyProfile.direction
+        : undefined;
+    // 墨层和缩放可以独立更新。题面只在渲染参数变化时接收新配置。
+    const renderProfile = useMemo(
+      () => ({
+        renderVersion,
+        ...(cssWidth ? { logicalWidth: cssWidth } : {}),
+        ...(legacyDirection ? { legacyDirection } : {}),
+      }),
+      [renderVersion, cssWidth, legacyDirection],
+    );
     const scale = expanded ? 1 : fitScale;
     useLayoutEffect(() => {
       const element = viewport.current;
@@ -305,15 +320,7 @@ export const QuestionAnnotationFrame = forwardRef<
                   : undefined
               }
             >
-              <QuestionRenderContext
-                value={{
-                  renderVersion: layout?.renderVersion ?? 4,
-                  ...(cssWidth ? { logicalWidth: cssWidth } : {}),
-                  ...(legacyProfile?.identity === identity
-                    ? { legacyDirection: legacyProfile.direction }
-                    : {}),
-                }}
-              >
+              <QuestionRenderContext value={renderProfile}>
                 <StableQuestionPixelGridContext value>
                   {children}
                 </StableQuestionPixelGridContext>

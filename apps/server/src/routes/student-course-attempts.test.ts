@@ -332,6 +332,87 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
     );
   });
 
+  it("清空只作废指定的进行中卷，重复请求不清掉新卷", async () => {
+    const env = await makeEnv();
+    const completed = attemptStartOkSchema.parse(
+      await (await startAttempt(env)).json(),
+    ).data;
+    expect((await submit(env, env.memberCookie, completed.id)).status).toBe(
+      200,
+    );
+    const previous = attemptStartOkSchema.parse(
+      await (await startAttempt(env)).json(),
+    ).data;
+    const saved = await saveAnswer(
+      env,
+      env.memberCookie,
+      previous.id,
+      Q.judge1,
+      {
+        kind: "judge",
+        value: true,
+      },
+    );
+    expect(saved.ok).toBe(true);
+    const restart = () =>
+      env.app.request(
+        `/api/student/courses/${env.courseId}/units/${env.unitId}/attempts`,
+        {
+          method: "POST",
+          headers: {
+            cookie: env.memberCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ restartAttemptId: previous.id }),
+        },
+      );
+
+    const response = await restart();
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    assertNoLeak(body);
+    assertNoStemLeak(body);
+    const replacement = attemptStartOkSchema.parse(body).data;
+    expect(replacement.id).not.toBe(previous.id);
+    expect(replacement.attemptNo).toBe(previous.attemptNo + 1);
+
+    expect((await restart()).status).toBe(409);
+    const continued = attemptStartOkSchema.parse(
+      await (await startAttempt(env)).json(),
+    ).data;
+    expect(continued.id).toBe(replacement.id);
+    const detail = (id: string) =>
+      env.app.request(`/api/student/attempts/${id}`, {
+        headers: { cookie: env.memberCookie },
+      });
+    expect((await detail(previous.id)).status).toBe(409);
+    expect((await detail(completed.id)).status).toBe(200);
+    expect(
+      (
+        await saveAnswer(env, env.memberCookie, previous.id, Q.judge1, {
+          kind: "judge",
+          value: false,
+        })
+      ).status,
+    ).toBe(409);
+    expect(await (await detail(replacement.id)).json()).toMatchObject({
+      data: { drafts: {} },
+    });
+    const landing = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${env.unitId}`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    expect(await landing.json()).toMatchObject({
+      data: {
+        attempts: [
+          expect.objectContaining({ attemptId: replacement.id }),
+          expect.objectContaining({ attemptId: completed.id }),
+        ],
+        summary: { count: 2, submittedCount: 1, hasDraft: true },
+      },
+    });
+  });
+
   it("交卷后再做一次 → attemptNo=2 且新一次答案为空（不预填上次答案）", async () => {
     const env = await makeEnv();
     const started = (await (await startAttempt(env)).json()) as {

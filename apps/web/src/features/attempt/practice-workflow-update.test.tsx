@@ -7,7 +7,7 @@ import type {
 import { beforeEach, expect, it, vi } from "vitest";
 import { ApiError, updateAttemptWorkflowApi } from "@/lib/api";
 import { studentAttemptKey, useUpdateAttemptWorkflow } from "./attempt-queries";
-import { PracticeModeSummary } from "./PracticeWorkspace";
+import { PracticeModeDialog } from "./PracticeWorkspace";
 import { workflowOf } from "./practice-test-fixtures";
 
 /**
@@ -31,7 +31,9 @@ const ATTEMPT_ID = "77777777-7777-4777-8777-777777777777";
 function Harness({ workflow }: { workflow: PracticeWorkflow }) {
   const updater = useUpdateAttemptWorkflow(ATTEMPT_ID);
   return (
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflow}
       layout="list"
       onLayoutChange={() => {}}
@@ -57,9 +59,7 @@ function renderHarness(workflow: PracticeWorkflow) {
       <Harness workflow={workflow} />
     </QueryClientProvider>,
   );
-  const expand = () =>
-    fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
-  return { invalidateSpy, expand };
+  return { invalidateSpy };
 }
 
 const updateReceiptOf = (
@@ -77,8 +77,7 @@ it("切换调用 PATCH：携带目标模式与当前 workflowRevision（CAS 基�
   mockedUpdate.mockResolvedValue(
     updateReceiptOf(workflowOf({ feedbackMode: "after_attempt", revision: 1 })),
   );
-  const { expand } = renderHarness(workflowOf({ revision: 3 }));
-  expand();
+  renderHarness(workflowOf({ revision: 3 }));
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   await waitFor(() =>
     expect(mockedUpdate).toHaveBeenCalledWith(ATTEMPT_ID, {
@@ -92,8 +91,7 @@ it("成功后失效该 attempt 详情查询（重取服务端投影），无错�
   mockedUpdate.mockResolvedValue(
     updateReceiptOf(workflowOf({ feedbackMode: "after_attempt", revision: 4 })),
   );
-  const { invalidateSpy, expand } = renderHarness(workflowOf({ revision: 3 }));
-  expand();
+  const { invalidateSpy } = renderHarness(workflowOf({ revision: 3 }));
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   await waitFor(() => expect(invalidateSpy).toHaveBeenCalled());
   expect(invalidateSpy).toHaveBeenCalledWith(
@@ -113,8 +111,7 @@ it("WORKFLOW_REVISION_STALE：失效详情（重取投影）并提示已刷新�
       409,
     ),
   );
-  const { invalidateSpy, expand } = renderHarness(workflowOf({ revision: 3 }));
-  expand();
+  const { invalidateSpy } = renderHarness(workflowOf({ revision: 3 }));
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   await waitFor(() => expect(invalidateSpy).toHaveBeenCalled());
   expect(invalidateSpy).toHaveBeenCalledWith(
@@ -146,8 +143,7 @@ it("stale 后的新错误不再被旧提示掩蔽（M6 闸门 A2：onMutate 清 
         409,
       ),
     );
-  const { expand } = renderHarness(workflowOf({ revision: 3 }));
-  expand();
+  renderHarness(workflowOf({ revision: 3 }));
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "反馈节奏刚被其他操作修改，已刷新，请重试",
@@ -167,8 +163,7 @@ it("其他错误透传服务端 message，且不失效详情查询", async () =>
       409,
     ),
   );
-  const { invalidateSpy, expand } = renderHarness(workflowOf({ revision: 3 }));
-  expand();
+  const { invalidateSpy } = renderHarness(workflowOf({ revision: 3 }));
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "已有题目提交，反馈节奏已固定",
@@ -184,8 +179,7 @@ it("PATCH 在途期间节奏组临时禁用（防重复提交），完成后恢�
         resolveApi = resolve;
       }),
   );
-  const { expand } = renderHarness(workflowOf({ revision: 3 }));
-  expand();
+  renderHarness(workflowOf({ revision: 3 }));
   fireEvent.click(screen.getByRole("radio", { name: "交卷后查看" }));
   await waitFor(() =>
     expect(

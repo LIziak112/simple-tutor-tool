@@ -310,7 +310,7 @@ async function openPracticeMenu() {
 it("关闭答题卡后恢复实际导航入口焦点", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表/);
+  await screen.findAllByRole("article");
   const trigger = screen.getByRole("button", { name: "答题卡" });
   trigger.focus();
   fireEvent.click(trigger);
@@ -325,15 +325,15 @@ it("关闭答题卡后恢复实际导航入口焦点", async () => {
 it("更多菜单复用唯一做题方式编辑器，不再有第二组布局选项", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   expect(screen.queryByRole("menuitemradio", { name: /做题方式/ })).toBeNull();
   fireEvent.click(screen.getByRole("menuitem", { name: "做题方式" }));
-  await screen.findByRole("radio", { name: "单题专注" });
-  expect(screen.getByRole("button", { name: "调整做题方式" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  const dialog = await screen.findByRole("dialog", { name: "做题方式" });
+  expect(
+    within(dialog).getAllByRole("radio", { name: "单题专注" }),
+  ).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "调整做题方式" })).toBeNull();
 });
 
 beforeEach(() => {
@@ -394,12 +394,10 @@ beforeEach(() => {
   vi.mocked(openStudentAiReplyApi).mockResolvedValue(aiTask);
 });
 
-it("v1 卷默认列表呈现：摘要行可见，三题同列渲染", async () => {
+it("v1 卷默认列表呈现：三题同列渲染，做题方式不占正文", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   const { container } = renderPage();
-  expect(
-    await screen.findByText(/做题方式：列表 · 每题提交后查看/),
-  ).toBeInTheDocument();
+  expect(await screen.findAllByRole("article")).toHaveLength(3);
   // 三张题卡都在 DOM（列表呈现）
   expect(container.querySelectorAll("article")).toHaveLength(3);
   expect(locationRef.search).toBe("");
@@ -428,7 +426,7 @@ it("legacy 卷零变化：无摘要行、更多菜单无做题方式项", async 
 it("菜单切单题：仅当前题可见、其余隐藏但不卸载；进度行计数正确", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   const { container } = renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   // 切换前抓 q2 输入节点（DOM 同一性断言用）
   const q2InputBefore = screen.getByRole("textbox", { name: "第1空" });
   await openPracticeMenu();
@@ -451,7 +449,7 @@ it("菜单切单题：仅当前题可见、其余隐藏但不卸载；进度行�
 it("单题模式去重：进度只在吸底栏出现一次、无常驻摘要行，更多→做题方式打开弹窗", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   const { container } = renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   const progress = await screen.findByText("第 2 / 3 题 · 已提交 1 题");
@@ -465,23 +463,24 @@ it("单题模式去重：进度只在吸底栏出现一次、无常驻摘要行�
   expect(screen.queryByRole("button", { name: "调整做题方式" })).toBeNull();
   // 逐题反馈：交卷降级为次级「提前交卷」
   expect(screen.queryByRole("button", { name: "交卷" })).toBeNull();
-  expect(screen.getByRole("button", { name: "提前交卷" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "提前交卷" })).toBeNull();
   await openPracticeMenu();
+  expect(
+    screen.getByRole("menuitem", { name: "提前交卷" }),
+  ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("menuitem", { name: "做题方式" }));
   const dialog = await screen.findByRole("dialog", { name: "做题方式" });
   fireEvent.click(within(dialog).getByRole("radio", { name: "列表作答" }));
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "做题方式" })).toBeNull(),
   );
-  expect(
-    await screen.findByText(/做题方式：列表 · 每题提交后查看/),
-  ).toBeInTheDocument();
+  expect(await screen.findAllByRole("article")).toHaveLength(3);
 });
 
 it("单题做题方式弹窗 Esc 关闭后恢复更多入口焦点", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   await openPracticeMenu();
@@ -501,7 +500,7 @@ it("单题做题方式弹窗 Esc 关闭后恢复更多入口焦点", async () =>
 it("列表↔单题互切题卡不重建，切回列表恢复全部题可见", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   const q2Input = screen.getByRole("textbox", { name: "第1空" });
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
@@ -509,7 +508,7 @@ it("列表↔单题互切题卡不重建，切回列表恢复全部题可见", a
   expect(screen.getByRole("textbox", { name: "第1空" })).toBe(q2Input);
   await openPracticeMenu();
   await chooseLayoutFromMenu("列表作答");
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   expect(screen.getByRole("textbox", { name: "第1空" })).toBe(q2Input);
   // 回列表后各题恢复可见（q3 判断题选项可再访问）
   expect(screen.getAllByRole("radio").length).toBeGreaterThanOrEqual(2);
@@ -534,7 +533,7 @@ it("单题模式上一题/下一题切换题目并 replace 更新 q", async () =
     if (button === undefined) throw new Error("操作条下一题未渲染");
     return button;
   };
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   await screen.findByText("第 2 / 3 题 · 已提交 1 题");
@@ -596,10 +595,10 @@ it("受限卷（老师要求交卷后公布）在摘要行显示受限文案", a
     }),
   });
   renderPage();
-  expect(
-    await screen.findByText(/做题方式：列表 · 交卷后查看/),
-  ).toBeInTheDocument();
-  expect(screen.getByText(/老师要求交卷后公布/)).toBeInTheDocument();
+  expect(await screen.findAllByRole("article")).toHaveLength(3);
+  await openPracticeMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: "做题方式" }));
+  expect(await screen.findByText(/老师要求交卷后公布/)).toBeInTheDocument();
 });
 
 it("v1 卷导航区四态可见且已提交待公布行无对错泄露", async () => {
@@ -616,14 +615,15 @@ it("v1 卷导航区四态可见且已提交待公布行无对错泄露", async (
     ],
   });
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
   // 统一公布模式：q1 已提交但反馈不可读——导航只报提交事实
-  const submitted = screen.getByRole("button", {
+  const submitted = await screen.findByRole("button", {
     name: "第 1 题，已提交，反馈待公布",
   });
   expect(submitted.textContent).not.toMatch(/对|错|正确|得分/);
   expect(
-    screen.getByRole("button", { name: /第 2 题，未填写/ }),
+    screen.getByRole("button", { name: "第 2 题，作答状态尚未确认" }),
   ).toBeInTheDocument();
 });
 
@@ -646,9 +646,7 @@ it("未绑定先渲染回落列表：账号绑定时按已保存单题对齐一�
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
   // 布局层账号绑定 effect 晚于本组件首渲染：初始只回落列表
-  expect(
-    await screen.findByText(/做题方式：列表 · 每题提交后查看/),
-  ).toBeInTheDocument();
+  expect(await screen.findAllByRole("article")).toHaveLength(3);
   // 布局层绑定该账号：呈现按已保存默认布局切为单题（一次性对齐）
   act(() => {
     bindPracticePreferenceAccount("x");
@@ -663,14 +661,14 @@ it("显式切换过布局后，账号绑定与跨标签变更不拉扯当前选�
   presetSingleAccountThenUnbind();
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   // 用户显式切到单题再切回列表：本次作答内自决
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   await screen.findByText(/第 \d+ \/ 3 题 · 已提交 \d+ 题/);
   await openPracticeMenu();
   await chooseLayoutFromMenu("列表作答");
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   // 此刻才绑定「默认单题」账号：不得覆盖用户显式选择
   act(() => {
     bindPracticePreferenceAccount("x");
@@ -686,9 +684,7 @@ it("显式切换过布局后，账号绑定与跨标签变更不拉扯当前选�
       }),
     );
   });
-  expect(
-    screen.getByText(/做题方式：列表 · 每题提交后查看/),
-  ).toBeInTheDocument();
+  expect(screen.getAllByRole("article")).toHaveLength(3);
 });
 
 // ---------- M3-D3：单题切题本机落盘保护（§11-5） ----------
@@ -715,7 +711,7 @@ it("单题切题保护：本机写失败不切题并提示，重试成功后再�
     draftRevisions: { q1: 2 },
   });
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   await screen.findByText("第 2 / 3 题 · 已提交 1 题");
@@ -740,7 +736,7 @@ it("单题切题保护：本机写失败不切题并提示，重试成功后再�
 it("单题切题成功后焦点落单题工作区容器（←→ 键盘域），URL q 同步 replace", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   await screen.findByText("第 2 / 3 题 · 已提交 1 题");
@@ -760,7 +756,7 @@ it("单题切题成功后焦点落单题工作区容器（←→ 键盘域），
 it("保存详情定位在单题模式走统一切题入口：更新单题态与 URL（闸门修复）", async () => {
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   await openPracticeMenu();
   await chooseLayoutFromMenu("单题专注");
   await screen.findByText("第 2 / 3 题 · 已提交 1 题");
@@ -772,8 +768,7 @@ it("保存详情定位在单题模式走统一切题入口：更新单题态与 
   await screen.findByText("第 3 / 3 题 · 已提交 1 题");
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
   await openPracticeMenu();
-  fireEvent.click(screen.getByRole("menuitem", { name: "练习信息" }));
-  fireEvent.click(await screen.findByRole("button", { name: "保存详情" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "保存详情" }));
   // 从保存详情回跳 q2：单题态与 URL 必须随切（直连 jumpToQuestion 时对隐藏卡无效）
   fireEvent.click(await screen.findByRole("button", { name: "定位第 2 题" }));
   await screen.findByText("第 2 / 3 题 · 已提交 1 题");
@@ -1028,5 +1023,5 @@ it("M5-D3 无 transient：硬刷新直写作答页回落本机偏好（列表）
   installMaterialSessions();
   mockedFetch.mockResolvedValue(v1Draft());
   renderPage("");
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
 });

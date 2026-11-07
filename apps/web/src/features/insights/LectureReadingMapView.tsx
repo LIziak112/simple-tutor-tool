@@ -4,7 +4,7 @@ import type {
   AnalyticsLectureSectionRow,
   AnalyticsLectureStepsRow,
 } from "@tutor/contract";
-import { Info, TriangleAlert } from "lucide-react";
+import { ChevronDown, Info, TriangleAlert } from "lucide-react";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { formatCnTime } from "@/lib/time";
 import {
@@ -66,7 +66,7 @@ function dwellLine(rawSec: number, dwellSec: number): string {
 /** 一行折叠指令（挂在所属节下，缩进呈现） */
 function FoldRow({ fold }: { fold: AnalyticsLectureFoldRow }) {
   return (
-    <li className="ml-4 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 border-l border-border pl-3">
+    <li className="ms-4 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 border-s border-border ps-3">
       <span className="text-xs text-muted-foreground">
         {FOLD_NAME_LABELS[fold.name] ?? fold.name}
       </span>
@@ -85,7 +85,7 @@ function FoldRow({ fold }: { fold: AnalyticsLectureFoldRow }) {
 /** 一行 steps 容器（挂在所属节下，缩进呈现） */
 function StepsRow({ row }: { row: AnalyticsLectureStepsRow }) {
   return (
-    <li className="ml-4 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 border-l border-border pl-3">
+    <li className="ms-4 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 border-s border-border ps-3">
       <span className="text-xs text-muted-foreground">分步演示</span>
       <span
         className={`rounded-full px-2 py-0.5 text-xs whitespace-nowrap ${STEPS_BADGE_CLASS[row.status]}`}
@@ -113,7 +113,7 @@ function SectionRow({
     <li className="flex flex-col">
       <div
         className={`flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 ${
-          section.level === 3 ? "ml-5" : ""
+          section.level === 3 ? "ms-5" : ""
         }`}
       >
         {section.level === 3 && (
@@ -121,7 +121,9 @@ function SectionRow({
             └
           </span>
         )}
-        <span className={`text-sm ${section.level === 2 ? "font-medium" : ""}`}>
+        <span
+          className={`min-w-0 text-sm [overflow-wrap:anywhere] ${section.level === 2 ? "font-medium" : ""}`}
+        >
           {section.text}
         </span>
         <span
@@ -179,55 +181,65 @@ function LectureMap({ entry }: { entry: AnalyticsLectureMapEntry }) {
   }
 
   return (
-    <li className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h4 className="text-sm font-semibold">{entry.title}</h4>
-        <span className="text-xs text-muted-foreground">
-          版本时间 {formatCnTime(entry.updatedAt)}
-        </span>
-      </div>
-      <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>节覆盖 {formatPercent(map.summary.sectionCoverage)}</span>
-        <span>阅读 {formatActiveSec(map.summary.readSec)}</span>
-        <span>折叠打开 {formatPercent(map.summary.foldOpenRate)}</span>
-        <span>提示 {map.summary.hintOpenCount} 次</span>
-        <span>解析 {map.summary.solutionOpenCount} 次</span>
-        <span>
-          连点跳过 {map.summary.stepsRushContainerCount} /{" "}
-          {map.summary.stepsTotalContainers} 组
-        </span>
-        {map.summary.degradedEventCount > 0 && (
-          <span className="flex items-center gap-1 text-amber-700 dark:text-amber-300">
-            <TriangleAlert aria-hidden className="size-3" />
-            {map.summary.degradedEventCount} 条旧版本事件未定位
+    <li>
+      <details className="group/lecture rounded-lg border border-border bg-card">
+        <summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 rounded-lg px-3 py-3 hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">
+              {entry.title}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              版本时间 {formatCnTime(entry.updatedAt)}
+            </span>
           </span>
-        )}
-      </p>
-      <ul className="flex flex-col gap-0.5">
-        {map.sections.map((section) => (
-          <SectionRow
-            key={section.headingIndex}
-            section={section}
-            folds={foldsByHost.get(section.headingIndex) ?? []}
-            steps={stepsByHost.get(section.headingIndex) ?? []}
+          <ChevronDown
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-muted-foreground group-open/lecture:rotate-180"
           />
-        ))}
-        {(orphanFolds.length > 0 || orphanSteps.length > 0) && (
-          <li className="flex flex-col">
-            <p className="min-h-11 py-2 text-xs text-muted-foreground">
-              文档其他位置（未对应到现存小节）
-            </p>
-            <ul className="flex flex-col gap-0.5">
-              {orphanFolds.map((fold) => (
-                <FoldRow key={`orphan-fold-${fold.docIndex}`} fold={fold} />
-              ))}
-              {orphanSteps.map((step) => (
-                <StepsRow key={`orphan-steps-${step.docIndex}`} row={step} />
-              ))}
-            </ul>
-          </li>
-        )}
-      </ul>
+          <span className="col-start-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>节覆盖 {formatPercent(map.summary.sectionCoverage)}</span>
+            <span>阅读 {formatActiveSec(map.summary.readSec)}</span>
+            <span>折叠打开 {formatPercent(map.summary.foldOpenRate)}</span>
+            <span>提示 {map.summary.hintOpenCount} 次</span>
+            <span>解析 {map.summary.solutionOpenCount} 次</span>
+            <span>
+              连点跳过 {map.summary.stepsRushContainerCount} /{" "}
+              {map.summary.stepsTotalContainers} 组
+            </span>
+            {map.summary.degradedEventCount > 0 && (
+              <span className="flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                <TriangleAlert aria-hidden className="size-3" />
+                {map.summary.degradedEventCount} 条旧版本事件未定位
+              </span>
+            )}
+          </span>
+        </summary>
+        <ul className="flex flex-col gap-0.5 border-t border-border px-3 py-2">
+          {map.sections.map((section) => (
+            <SectionRow
+              key={section.headingIndex}
+              section={section}
+              folds={foldsByHost.get(section.headingIndex) ?? []}
+              steps={stepsByHost.get(section.headingIndex) ?? []}
+            />
+          ))}
+          {(orphanFolds.length > 0 || orphanSteps.length > 0) && (
+            <li className="flex flex-col">
+              <p className="min-h-11 py-2 text-xs text-muted-foreground">
+                文档其他位置（未对应到现存小节）
+              </p>
+              <ul className="flex flex-col gap-0.5">
+                {orphanFolds.map((fold) => (
+                  <FoldRow key={`orphan-fold-${fold.docIndex}`} fold={fold} />
+                ))}
+                {orphanSteps.map((step) => (
+                  <StepsRow key={`orphan-steps-${step.docIndex}`} row={step} />
+                ))}
+              </ul>
+            </li>
+          )}
+        </ul>
+      </details>
     </li>
   );
 }
@@ -239,7 +251,7 @@ export function LectureReadingMapView({
   entries: AnalyticsLectureMapEntry[];
 }) {
   return (
-    <section aria-label="讲义阅读地图" className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3">
       <div
         role="note"
         className="flex items-start gap-2 rounded-lg border border-amber-300/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:text-amber-200"
@@ -262,6 +274,6 @@ export function LectureReadingMapView({
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }

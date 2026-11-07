@@ -1397,7 +1397,11 @@ export function getCourseProgress(
     .select()
     .from(attempts)
     .where(
-      and(eq(attempts.courseId, courseId), eq(attempts.sourceType, "course")),
+      and(
+        eq(attempts.courseId, courseId),
+        eq(attempts.sourceType, "course"),
+        isNull(attempts.abandonedAt),
+      ),
     )
     .orderBy(asc(attempts.attemptNo))
     .all()

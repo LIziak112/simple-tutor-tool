@@ -25,8 +25,7 @@ import { busyCloseGuard, DraftProblemAlert } from "./SubmitConfirmDialog";
  *   单题模式只呈现反馈——提交按钮在 SingleQuestionActionBar 主操作位）；
  *   已提交行原位追加反馈区（题面宿主与题干位置不变，输入只读由 readOnly
  *   链路承担，呈现层防线，服务端行级锁定才是边界）；
- * - PracticeSingleActions：单题主操作位三态——提交本题（含「不会」空答案
- *   提交）→ 正在提交… → 下一题 / 查看本次结果（+ 继续未提交题目）。
+ * - PracticeSingleActions：单题主操作位三态——提交（含空答案）→ 正在提交… → 下一题 / 查看本次结果（+ 继续未提交题目）。
  * 状态纪律：已提交以 questionProgress/回执为准；错误就地提示可重试，不弹
  * 确认层（缺稿明确选择弹层由页面层 PracticeSubmitProblemDialog 承担）。
  */
@@ -74,13 +73,51 @@ function FeedbackPending({
   );
 }
 
+function SubmitQuestionButton({
+  autoSubmit,
+  busy,
+  disabled,
+  failed,
+  onSubmit,
+}: {
+  autoSubmit: boolean;
+  busy: boolean;
+  disabled: boolean;
+  failed: boolean;
+  onSubmit: () => void;
+}) {
+  if (autoSubmit && busy) {
+    return (
+      <span
+        role="status"
+        className="flex min-h-11 items-center gap-1.5 text-sm"
+      >
+        <LoaderCircle aria-hidden className="size-4 animate-spin" />
+        正在提交…
+      </span>
+    );
+  }
+  if (autoSubmit && !failed) return null;
+  return (
+    <Button
+      type="button"
+      className="min-h-11 w-fit px-4"
+      disabled={busy || disabled}
+      onClick={onSubmit}
+    >
+      {busy ? "正在提交…" : autoSubmit ? "重试提交" : "提交"}
+    </Button>
+  );
+}
+
 /** 题卡 footer 槽：v1 卷的本题提交区 / 已提交反馈区（legacy 不挂） */
 export function PracticeQuestionFooter({
   attemptId,
   mode,
   submitted,
   readable,
-  answered,
+  autoSubmit = false,
+  queued = false,
   busy,
   anyBusy,
   feedback,
@@ -96,7 +133,8 @@ export function PracticeQuestionFooter({
   mode: "list" | "single";
   submitted: boolean;
   readable: boolean;
-  answered: boolean;
+  autoSubmit?: boolean;
+  queued?: boolean;
   busy: boolean;
   anyBusy: boolean;
   feedback: PracticeQuestionFeedback | null;
@@ -110,32 +148,24 @@ export function PracticeQuestionFooter({
   if (!submitted) {
     // 逐题提交入口只在工作流允许时呈现（规则收紧时统一反馈走整卷交卷）。
     if (mode === "single" || !workflow?.canSubmitQuestion) return null;
+    if (autoSubmit && !queued && !busy && error === null) return null;
     return (
       <div
         data-slot="practice-question-submit"
         className="flex min-w-0 flex-col gap-2"
       >
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            className="min-h-11 w-fit px-4"
-            disabled={!answered || busy || anyBusy}
-            onClick={() => onSubmit()}
-          >
-            {busy ? "正在提交…" : "提交本题"}
-          </Button>
-          {!answered && (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 w-fit px-4"
-              disabled={busy || anyBusy}
-              onClick={() => onSubmit()}
-            >
-              不会，提交并看解析
-            </Button>
-          )}
-        </div>
+        <SubmitQuestionButton
+          autoSubmit={autoSubmit}
+          busy={busy}
+          disabled={anyBusy}
+          failed={error !== null}
+          onSubmit={() => onSubmit()}
+        />
+        {queued && !busy && (
+          <span role="status" className="text-sm text-muted-foreground">
+            等待提交
+          </span>
+        )}
         {error !== null && <InlineError message={error} />}
       </div>
     );
@@ -165,7 +195,7 @@ export function PracticeSingleActions({
   finishDisabled = false,
   onFinish,
   submitted,
-  answered,
+  autoSubmit = false,
   busy,
   finished,
   hasNext,
@@ -183,7 +213,7 @@ export function PracticeSingleActions({
   finishDisabled?: boolean;
   onFinish?: () => void;
   submitted: boolean;
-  answered: boolean;
+  autoSubmit?: boolean;
   busy: boolean;
   /** 回执收尾（attempt 离开 draft）：主动作查看本次结果，不自动跳转 */
   finished: boolean;
@@ -208,33 +238,18 @@ export function PracticeSingleActions({
     );
   }
   if (!submitted) {
-    // 未提交只保留一个提交类主动作：已作答=提交本题；未作答=「不会」空答案
-    // 提交（同一提交链），不再并列一个禁用的提交按钮
     return (
       <div
         data-slot="practice-primary-action"
-        className="flex min-w-0 flex-col gap-1.5"
+        className="flex min-w-0 flex-col items-center gap-1.5"
       >
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button
-            type="button"
-            variant={answered ? "default" : "outline"}
-            className="min-h-11 w-fit px-5"
-            disabled={busy}
-            onClick={onSubmit}
-          >
-            {busy ? (
-              <>
-                <LoaderCircle aria-hidden className="size-4 animate-spin" />
-                正在提交…
-              </>
-            ) : answered ? (
-              "提交本题"
-            ) : (
-              "不会，提交并看解析"
-            )}
-          </Button>
-        </div>
+        <SubmitQuestionButton
+          autoSubmit={autoSubmit}
+          busy={busy}
+          disabled={busy}
+          failed={error !== null}
+          onSubmit={onSubmit}
+        />
         {error !== null && (
           <div className="flex justify-center">
             <InlineError message={error} />

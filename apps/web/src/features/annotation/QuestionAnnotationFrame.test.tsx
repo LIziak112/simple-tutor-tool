@@ -3,7 +3,9 @@ import type {
   AnnotationSurfaceLayout,
   AttemptQuestionPublic,
 } from "@tutor/contract";
+import { memo, useContext } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { QuestionRenderContext } from "@/features/answering/question-render-context";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import { QuestionAnnotationFrame } from "./QuestionAnnotationFrame";
 import { questionSurfaceMatchesLayout } from "./question-base-image";
@@ -54,6 +56,34 @@ beforeEach(() => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(true);
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it("圈画状态切换不刷新题面，逻辑宽度变化时才更新渲染配置", () => {
+  const rendered = vi.fn();
+  const Content = memo(function Content() {
+    rendered(useContext(QuestionRenderContext));
+    return null;
+  });
+  const frame = (active: boolean, surface: AnnotationSurfaceLayout | null) => (
+    <QuestionAnnotationFrame
+      active={active}
+      question={question}
+      layout={surface}
+      scopeKey="s"
+    >
+      <Content />
+    </QuestionAnnotationFrame>
+  );
+  const { rerender } = render(frame(false, null));
+  rerender(frame(true, null));
+  expect(rendered).toHaveBeenCalledTimes(1);
+  rerender(frame(true, layout));
+  expect(rendered).toHaveBeenCalledTimes(2);
+  expect(rendered).toHaveBeenLastCalledWith({
+    renderVersion: 4,
+    logicalWidth: 600,
+  });
+});
+
 it("保留唯一真实输入，墨层在固定逻辑框的兄弟层", async () => {
   const changed = vi.fn();
   const { container, rerender } = render(

@@ -124,10 +124,11 @@ test(
     });
     await page.getByRole("button", { name: "关闭弹层" }).click();
     await card.getByRole("button", { name: "第 1 题圈画题干" }).click();
-    await drawStrokeWithPointerEvents(
-      card.locator('canvas[data-slot="annotation-canvas"]'),
-    );
+    const annotation = card.locator('canvas[data-slot="annotation-canvas"]');
+    await expect(annotation).toHaveAttribute("data-input-enabled", "true");
+    await drawStrokeWithPointerEvents(annotation);
     await page.getByRole("button", { name: "完成标画", exact: true }).click();
+    await expect(annotation).toHaveAttribute("data-input-enabled", "false");
     await more.click();
     await page.getByRole("menuitem", { name: "隐藏标画" }).click();
     await more.click();

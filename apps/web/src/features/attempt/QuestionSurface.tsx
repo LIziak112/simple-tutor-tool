@@ -31,6 +31,8 @@ export const QuestionSurface = memo(function QuestionSurface({
   onAnswer: suppliedOnAnswer,
   mode = "answer",
   readOnly = false,
+  repeatChoiceSelection = false,
+  correctOptionIndexes,
 }: {
   question: QuestionPublic;
   answer?: StudentAnswer | undefined;
@@ -38,6 +40,8 @@ export const QuestionSurface = memo(function QuestionSurface({
   mode?: "answer" | "export";
   /** 已提交原位只读（§11-2）：同宿主同位置呈现，输入改为只读而非换卡 */
   readOnly?: boolean;
+  repeatChoiceSelection?: boolean;
+  correctOptionIndexes?: readonly number[] | undefined;
 }) {
   const surfaceId = useId();
   const profile = useContext(QuestionRenderContext);
@@ -57,7 +61,14 @@ export const QuestionSurface = memo(function QuestionSurface({
         className="mx-auto flex w-full min-w-0 flex-col gap-3 text-base leading-[1.75]"
       >
         <QuestionDslContext value={profile.renderVersion}>
-          {dispatchInput(prepared, answer, update, readOnly)}
+          {dispatchInput(
+            prepared,
+            answer,
+            update,
+            readOnly,
+            !isPublicBase && repeatChoiceSelection,
+            readOnly && !isPublicBase ? correctOptionIndexes : undefined,
+          )}
         </QuestionDslContext>
       </div>
     </QuestionSurfaceFrame>

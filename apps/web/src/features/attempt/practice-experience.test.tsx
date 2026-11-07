@@ -3,14 +3,12 @@ import { expect, it, vi } from "vitest";
 import { PracticeSingleActions } from "./PracticeQuestionSubmit";
 import {
   PracticeModeDialog,
-  PracticeModeSummary,
   SingleQuestionActionBar,
 } from "./PracticeWorkspace";
 import { workflowOf } from "./practice-test-fixtures";
 
 const actions = {
   submitted: false,
-  answered: false,
   busy: false,
   finished: false,
   hasNext: true,
@@ -31,7 +29,7 @@ it("整卷反馈只能切下一题，不承诺逐题提交与即时解析", () =
       onNext={next}
     />,
   );
-  expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^提交$/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /提交并看解析/ })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "下一题" }));
   expect(next).toHaveBeenCalledOnce();
@@ -84,18 +82,11 @@ it("已提交题的操作栏只有一个下一题", () => {
   expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
 });
 
-it("未作答只有一个提交类主动作：不会，提交并看解析（无禁用的提交本题）", () => {
+it("空白作答可用同一个提交按钮提交", () => {
   const submit = vi.fn();
   render(<PracticeSingleActions {...actions} onSubmit={submit} />);
-  expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "不会，提交并看解析" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   expect(submit).toHaveBeenCalledOnce();
-});
-
-it("已作答只有提交本题，不再并列「不会」入口", () => {
-  render(<PracticeSingleActions {...actions} answered />);
-  expect(screen.getByRole("button", { name: "提交本题" })).toBeEnabled();
-  expect(screen.queryByRole("button", { name: /不会/ })).toBeNull();
 });
 
 it("单题操作条嵌在吸底栏内，不再自带边框卡片", () => {
@@ -136,12 +127,13 @@ it("做题方式弹窗复用同一编辑器：切换布局即回调并收起", (
 
 it("首题提交后解释反馈节奏锁定原因", () => {
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({ canChangeFeedback: false })}
       layout="single"
       onLayoutChange={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "调整做题方式" }));
   expect(screen.getByText(/本卷已有题目提交/)).toBeInTheDocument();
 });

@@ -73,6 +73,8 @@ export function dispatchInput(
   answer: StudentAnswer | undefined,
   update: (answer: StudentAnswer, defer?: boolean) => void,
   disabled: boolean,
+  repeatChoiceSelection = false,
+  correctOptionIndexes?: readonly number[],
 ): ReactNode {
   switch (model.kind) {
     case "judge":
@@ -91,6 +93,8 @@ export function dispatchInput(
           answer={answer?.kind === "choice" ? answer : undefined}
           update={update}
           disabled={disabled}
+          repeatChoiceSelection={repeatChoiceSelection}
+          correctOptionIndexes={correctOptionIndexes}
         />
       );
     case "multi":
@@ -100,6 +104,7 @@ export function dispatchInput(
           answer={answer?.kind === "multi" ? answer : undefined}
           update={update}
           disabled={disabled}
+          correctOptionIndexes={correctOptionIndexes}
         />
       );
     case "fill":
