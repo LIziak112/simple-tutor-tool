@@ -27,8 +27,8 @@ afterEach(() => {
 });
 
 describe("单题过程待传队列", () => {
-  it("阶段0：当前会话失效、过期、缺版本时原实现静默丢弃", async () => {
-    for (const cause of ["session", "expired", "revision"]) {
+  it("会话失效、过期、缺版本、已关闭均显式失效并计数丢弃", async () => {
+    for (const cause of ["session", "expired", "revision", "closed"]) {
       const upload = vi.fn(
         async (batch: QuestionProcessBatch) => batch.events.at(-1)?.seq ?? -1,
       );
@@ -46,15 +46,67 @@ describe("单题过程待传队列", () => {
         snapshot: () => ({ answer: null, hints: [], layers: {} }),
         upload,
       });
+      if (cause === "closed") await recorder.close();
       recorder.event("q", {
         kind: "answer",
         answer: { kind: "choice", index: 1 },
       });
       await recorder.flush();
       expect(upload).not.toHaveBeenCalled();
-      expect(recorder.getStatus()).toBe("synced");
+      expect(recorder.getStatus()).toBe("inactive");
+      expect(recorder.getInactiveReason()).not.toBe("");
+      expect(recorder.getDroppedEvents()).toBe(1);
       await recorder.close();
     }
+  });
+
+  it("材料不可编辑时不再显示已同步，恢复以新快照和中断边界续录", async () => {
+    const uploads: QuestionProcessBatch[] = [];
+    let ready = true;
+    const recorder = new QuestionProcessRecorder({
+      attemptId: "attempt",
+      recordingId: active,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      prefix: "recovery",
+      store: memoryKVBackend(),
+      revision: () => "revision",
+      current: () => ready,
+      inactiveReason: () => "材料正在恢复，暂不可编辑",
+      snapshot: () => ({ answer: null, hints: [], layers: {} }),
+      upload: async (batch) => {
+        uploads.push(batch);
+        return batch.events.at(-1)?.seq ?? -1;
+      },
+    });
+    recorder.begin("q");
+    ready = false;
+    recorder.event("q", {
+      kind: "answer",
+      answer: { kind: "choice", index: 1 },
+    });
+    expect(recorder.getStatus()).toBe("inactive");
+    expect(recorder.getInactiveReason()).toContain("材料正在恢复");
+    ready = true;
+    recorder.event("q", {
+      kind: "answer",
+      answer: { kind: "choice", index: 0 },
+    });
+    await recorder.flush();
+    expect(recorder.getStatus()).toBe("synced");
+    expect(new Set(uploads.map((batch) => batch.segmentId)).size).toBe(2);
+    expect(
+      uploads
+        .flatMap((batch) => batch.events)
+        .filter((event) => event.kind === "boundary"),
+    ).toEqual([expect.objectContaining({ reason: "interrupted" })]);
+    expect(
+      uploads
+        .flatMap((batch) => batch.events)
+        .filter((event) => event.kind === "answer"),
+    ).toEqual([
+      expect.objectContaining({ answer: { kind: "choice", index: 0 } }),
+    ]);
+    await recorder.close();
   });
 
   it("连续20笔合为最多两个上传批次，序号连续", async () => {

@@ -376,6 +376,29 @@ test(
             : [],
         );
       expect(fillAnswers).toEqual(["拼", "1", "2"]);
+      const materialPath = "**/api/student/attempts/*/materials";
+      await page.route(materialPath, (route) => route.abort("failed"));
+      await page.reload();
+      await expect(
+        page
+          .getByText("当前操作未被记录（材料正在恢复，暂不可编辑）", {
+            exact: true,
+          })
+          .first(),
+      ).toBeVisible();
+      await expect(page.getByText("过程已同步", { exact: true })).toHaveCount(
+        0,
+      );
+      await page.unroute(materialPath);
+      await page
+        .getByRole("button", { name: "重试恢复作答材料", exact: true })
+        .click();
+      await expect(
+        page.getByText("当前操作未被记录（材料正在恢复，暂不可编辑）", {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+
       const teacher = await browser.newContext({
         baseURL: pair.webUrl,
         storageState: await request.storageState(),

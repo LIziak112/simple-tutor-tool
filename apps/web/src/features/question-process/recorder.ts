@@ -35,7 +35,7 @@ interface Track {
   layers: Snapshot["layers"];
   stopped: boolean;
 }
-type SyncStatus = "saving" | "pending" | "synced" | "failed";
+type SyncStatus = "saving" | "pending" | "synced" | "failed" | "inactive";
 interface Pending {
   batch: QuestionProcessBatch;
   expiresAt: string;
@@ -49,6 +49,7 @@ interface Options {
   revision: (questionId: string) => string | undefined;
   snapshot: (questionId: string) => Snapshot;
   current: () => boolean;
+  inactiveReason?: () => string | undefined;
   upload: (batch: QuestionProcessBatch, signal: AbortSignal) => Promise<number>;
 }
 
@@ -91,6 +92,28 @@ export class QuestionProcessRecorder {
   #local = Promise.resolve();
   #sending = false;
   #sync: SyncStatus = "synced";
+  #inactiveReason = "";
+  #droppedEvents = 0;
+  #interrupted = false;
+  getInactiveReason = () => this.#inactiveReason;
+  getDroppedEvents = () => this.#droppedEvents;
+  invalidate(reason: string) {
+    if (this.#inactiveReason === reason) return;
+    const wasInactive = this.#sync === "inactive";
+    this.#inactiveReason = reason;
+    if (wasInactive) for (const listener of this.#listeners) listener();
+    this.#interrupted = true;
+    this.#tracks.clear();
+    this.#local = this.#local.then(() => {
+      this.#open.clear();
+    });
+    this.#status("inactive");
+  }
+  #drop(reason: string) {
+    this.#droppedEvents++;
+    this.invalidate(reason);
+    return undefined;
+  }
   readonly #listeners = new Set<() => void>();
 
   getStatus = () => this.#sync;
@@ -101,6 +124,7 @@ export class QuestionProcessRecorder {
     };
   };
   #status(value: SyncStatus) {
+    if (this.#inactiveReason) value = "inactive";
     if (this.#sync === value) return;
     this.#sync = value;
     for (const listener of this.#listeners) listener();
@@ -111,15 +135,15 @@ export class QuestionProcessRecorder {
   constructor(readonly options: Options) {}
 
   #ensure(questionId: string) {
-    if (
-      this.#abort.signal.aborted ||
-      !this.options.current() ||
-      Date.now() >= Date.parse(this.options.expiresAt)
-    )
-      return undefined;
+    if (this.#abort.signal.aborted) return this.#drop("录制器已关闭");
+    if (!this.options.current())
+      return this.#drop(this.options.inactiveReason?.() ?? "会话已变化");
+    if (Date.now() >= Date.parse(this.options.expiresAt))
+      return this.#drop("过程记录已过期");
+    if (!this.options.revision(questionId)) return this.#drop("题目版本不可用");
     let track = this.#tracks.get(questionId);
     if (track) return track;
-    if (!this.options.revision(questionId)) return undefined;
+    this.#inactiveReason = "";
     let snapshot: Snapshot;
     try {
       snapshot = this.options.snapshot(questionId);
@@ -147,6 +171,11 @@ export class QuestionProcessRecorder {
       { kind: "start", ...snapshot },
       snapshot.layers,
     );
+    if (this.#interrupted)
+      this.#append(questionId, track, {
+        kind: "boundary",
+        reason: "interrupted",
+      });
     return track;
   }
 
@@ -292,7 +321,8 @@ export class QuestionProcessRecorder {
     layers?: Snapshot["layers"],
   ) {
     const revisionId = this.options.revision(questionId);
-    if (!revisionId || track.stopped) return;
+    if (!revisionId) return this.#drop("题目版本不可用");
+    if (track.stopped) return;
     if (track.seq >= QUESTION_PROCESS_MAX_EVENTS) {
       track.stopped = true;
       this.#lostEvents = true;

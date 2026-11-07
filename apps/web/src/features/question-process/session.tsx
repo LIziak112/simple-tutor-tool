@@ -191,7 +191,12 @@ export function useQuestionProcess(inputs: Inputs) {
         hints: [],
         layers: readProcessSurfaces(attemptId, id),
       }),
-      current: () => currentNoteSession() === scope && !deleting.current,
+      current: () =>
+        currentNoteSession() === scope &&
+        !deleting.current &&
+        latest.current.ready,
+      inactiveReason: () =>
+        latest.current.ready ? undefined : "材料正在恢复，暂不可编辑",
       upload: (batch, signal) =>
         uploadQuestionProcessApi(attemptId, batch, signal).then(
           (data) => data.acceptedThrough,
@@ -222,6 +227,11 @@ export function useQuestionProcess(inputs: Inputs) {
     };
   }, [attemptId, expiresAt, prefix, recordingId, scope]);
 
+  useEffect(() => {
+    if (!ready && recorder && status?.state === "active" && status.canCapture)
+      recorder.invalidate("材料正在恢复，暂不可编辑");
+  }, [ready, recorder, status]);
+
   async function change(method: "POST" | "DELETE") {
     if (!scope || !prefix || currentNoteSession() !== scope) return;
     changeEpoch.current += 1;
@@ -248,10 +258,15 @@ export function useQuestionProcess(inputs: Inputs) {
   }
 
   return {
-    recorder:
-      ready && status?.state === "active" && status.canCapture
-        ? recorder
-        : null,
+    recorder: status?.state === "active" && status.canCapture ? recorder : null,
+    inactiveReason:
+      status?.state === "active" && status.canCapture
+        ? !ready
+          ? "材料正在恢复，暂不可编辑"
+          : !recorder
+            ? "录制器尚未就绪"
+            : undefined
+        : undefined,
     status,
     storeRecorder: recorder,
     cacheFailed,
@@ -264,17 +279,33 @@ export function useQuestionProcess(inputs: Inputs) {
 
 const initialSync = () => "synced" as const;
 const noopSubscribe = () => () => {};
+const emptyReason = () => "";
+function useProcessSync(process: ReturnType<typeof useQuestionProcess>) {
+  const sync = useSyncExternalStore(
+    process.storeRecorder?.subscribe ?? noopSubscribe,
+    process.storeRecorder?.getStatus ?? initialSync,
+  );
+  const reason = useSyncExternalStore(
+    process.storeRecorder?.subscribe ?? noopSubscribe,
+    process.storeRecorder?.getInactiveReason ?? emptyReason,
+  );
+  return { sync, reason: process.inactiveReason ?? reason };
+}
 
 export function QuestionProcessSyncNotice({
   process,
 }: {
   process: ReturnType<typeof useQuestionProcess>;
 }) {
-  const sync = useSyncExternalStore(
-    process.storeRecorder?.subscribe ?? noopSubscribe,
-    process.storeRecorder?.getStatus ?? initialSync,
-  );
-  if (process.status?.state !== "active" || sync !== "failed") return null;
+  const { sync, reason } = useProcessSync(process);
+  if (process.status?.state !== "active") return null;
+  if (reason || sync === "inactive")
+    return (
+      <p role="status" className="rounded border p-2 text-sm">
+        当前操作未被记录（{reason || "录制器不可用"}）
+      </p>
+    );
+  if (sync !== "failed") return null;
   return (
     <p role="status" className="rounded border p-2 text-sm">
       部分做题过程可能缺失或尚未同步。{" "}
@@ -291,10 +322,7 @@ export function QuestionProcessControls({
   process: ReturnType<typeof useQuestionProcess>;
 }) {
   const [remove, setRemove] = useState(false);
-  const sync = useSyncExternalStore(
-    process.storeRecorder?.subscribe ?? noopSubscribe,
-    process.storeRecorder?.getStatus ?? initialSync,
-  );
+  const { sync, reason } = useProcessSync(process);
   if (!process.status || process.status.state === "unavailable") return null;
   return (
     <section
@@ -320,13 +348,15 @@ export function QuestionProcessControls({
       {process.status.state === "active" && (
         <>
           <p role="status">
-            {sync === "saving"
-              ? "正在保存过程"
-              : sync === "pending"
-                ? "过程待同步"
-                : sync === "failed"
-                  ? "部分过程可能缺失或尚未同步"
-                  : "过程已同步"}
+            {reason || sync === "inactive"
+              ? `当前操作未被记录（${reason || "录制器不可用"}）`
+              : sync === "saving"
+                ? "正在保存过程"
+                : sync === "pending"
+                  ? "过程待同步"
+                  : sync === "failed"
+                    ? "部分过程可能缺失或尚未同步"
+                    : "过程已同步"}
           </p>
           {sync === "failed" && (
             <button
