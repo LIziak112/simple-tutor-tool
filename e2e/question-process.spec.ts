@@ -607,7 +607,9 @@ test(
               "0",
             );
             const canvas = paper.locator("canvas");
-            const original = await canvas.evaluate((el) => el.toDataURL());
+            const original = await canvas.evaluate((el) =>
+              (el as HTMLCanvasElement).toDataURL(),
+            );
             await player
               .getByRole("checkbox", { name: "看擦改", exact: true })
               .check();
@@ -616,7 +618,9 @@ test(
               "1",
             );
             await expect
-              .poll(() => canvas.evaluate((el) => el.toDataURL()))
+              .poll(() =>
+                canvas.evaluate((el) => (el as HTMLCanvasElement).toDataURL()),
+              )
               .not.toBe(original);
             await player
               .getByRole("checkbox", { name: "看擦改", exact: true })
@@ -626,7 +630,9 @@ test(
               "0",
             );
             await expect
-              .poll(() => canvas.evaluate((el) => el.toDataURL()))
+              .poll(() =>
+                canvas.evaluate((el) => (el as HTMLCanvasElement).toDataURL()),
+              )
               .toBe(original);
           }
           if (i < 4 || i > 7)
