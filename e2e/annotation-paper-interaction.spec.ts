@@ -140,9 +140,6 @@ for (const preference of ["auto", "side", "below"] as const) {
         await expect(paper).toBeHidden();
       }
       // 外框保持足够宽，草稿未打开时内部不能提前预留右列。
-      await page
-        .getByRole("button", { name: "收起答题卡", exact: true })
-        .click();
       const trigger = card.getByRole("button", { name: /圈画题干/ });
       await trigger.click();
       const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
@@ -607,7 +604,6 @@ test(
     await expect(row).toHaveAttribute("data-layout", "below");
     await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 1800, height: 1000 });
-    await page.getByRole("button", { name: "收起答题卡", exact: true }).click();
     await paper
       .getByRole("button", { name: "更多操作（第 1 题草稿纸）" })
       .click();

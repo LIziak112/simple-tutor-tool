@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  expectPracticeSource,
   getStudentViaApi,
   setCourseItemVisible,
   teacherApiLogin,
@@ -131,9 +132,10 @@ test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）"
           await studentPage.getByRole("button", { name: "开始新一次" }).click();
         }
         await studentPage.waitForURL("**/s/attempts/**");
-        await expect(
-          studentPage.getByText(`课程：${courseName} · 第 ${round} 次`),
-        ).toBeVisible();
+        await expectPracticeSource(
+          studentPage,
+          `课程：${courseName} · 第 ${round} 次`,
+        );
         const q1 = studentPage.locator('article[aria-label="第 1 题"]');
         await q1
           .getByRole("radio", { name: q1Answer, exact: true })
@@ -334,9 +336,10 @@ test.describe("错题本：课程筛选（2026-10）", { tag: ["@student"] }, ()
         );
         await studentPage.getByRole("button", { name: "开始练习" }).click();
         await studentPage.waitForURL("**/s/attempts/**");
-        await expect(
-          studentPage.getByText(`课程：${courseName} · 第 1 次`),
-        ).toBeVisible();
+        await expectPracticeSource(
+          studentPage,
+          `课程：${courseName} · 第 1 次`,
+        );
         const question = studentPage.locator('article[aria-label="第 1 题"]');
         await question
           .getByRole("radio", { name: "错", exact: true })
@@ -477,9 +480,10 @@ test.describe("错题本：综合筛选（2026-10；考点多选 / 时间 / 错�
           await studentPage.getByRole("button", { name: "开始新一次" }).click();
         }
         await studentPage.waitForURL("**/s/attempts/**");
-        await expect(
-          studentPage.getByText(`课程：${courseName} · 第 ${round} 次`),
-        ).toBeVisible();
+        await expectPracticeSource(
+          studentPage,
+          `课程：${courseName} · 第 ${round} 次`,
+        );
         const q1 = studentPage.locator('article[aria-label="第 1 题"]');
         await q1
           .getByRole("radio", { name: q1Answer, exact: true })

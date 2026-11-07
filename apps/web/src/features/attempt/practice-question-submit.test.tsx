@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type {
   AttemptDraftData,
@@ -343,7 +344,7 @@ it.each(["list", "single"] as const)(
     if (!answer) throw new Error("缺少首题作答入口");
     fireEvent.click(answer);
     const submitButton = (
-      await screen.findAllByRole("button", { name: "提交本题" })
+      await screen.findAllByRole("button", { name: /^提交$/ })
     )[0];
     if (!submitButton) throw new Error("缺少首题提交入口");
     fireEvent.click(submitButton);
@@ -353,11 +354,17 @@ it.each(["list", "single"] as const)(
       mockedFetch.mockResolvedValue(result);
       return result;
     });
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: layout === "single" ? "提前交卷" : "交卷",
-      }),
-    );
+    if (layout === "single") {
+      fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "提前交卷" }),
+      );
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "交卷" }));
+    }
     fireEvent.click(await screen.findByRole("button", { name: "确认交卷" }));
     await waitFor(() => expect(submitAttemptApi).toHaveBeenCalledOnce());
     expect(vi.mocked(submitAttemptApi).mock.calls[0]).toEqual([
@@ -381,7 +388,7 @@ it("提交本题：请求体五字段齐备，回执反馈原位呈现且该题�
   const pickTrue = screen.getByRole("radio", { name: "对" });
   expect(pickTrue).toBeEnabled();
   fireEvent.click(pickTrue);
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   expect(mockedSubmit).toHaveBeenCalledTimes(1);
   expect(mockedSubmit.mock.calls[0]?.[0]).toBe(ATTEMPT_ID);
@@ -418,6 +425,108 @@ it("提交本题：请求体五字段齐备，回执反馈原位呈现且该题�
   expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
 });
 
+it.each(["list", "single"] as const)(
+  "%s：选中即提交先同步这次选中的单选答案，点击其他选项不会改写在途答案",
+  async (layout) => {
+    installNoteBackend(memoryNoteBackend());
+    installAnnotationBackend(memoryAnnotationBackend());
+    const session = { origin: "https://page.test", studentId: "submit-test" };
+    bindNoteSession(session);
+    bindAnnotationSession(session);
+    const draft = baseDraft();
+    const first = draft.units[0]?.questions[0];
+    if (!first || !draft.units[0]) throw new Error("缺少测试题");
+    draft.units[0].questions[0] = {
+      ...first,
+      type: "choice",
+      options: ["甲", "乙"],
+    };
+    if (layout === "list") {
+      const second = draft.units[0].questions[1];
+      if (!second) throw new Error("缺少第二道选择题夹具");
+      draft.units[0].questions[1] = {
+        ...second,
+        type: "choice",
+        options: ["丙", "丁"],
+      };
+      mockedSubmit.mockImplementation(async (_attemptId, questionId) =>
+        submitReceipt({
+          questionId,
+          questionProgress: progressOf([
+            { id: "q1", submitted: true, readable: true },
+            {
+              id: "q2",
+              submitted: questionId === "q2",
+              readable: questionId === "q2",
+            },
+            { id: "q3" },
+          ]),
+        }),
+      );
+    }
+    let finishSave = () => {};
+    vi.mocked(saveAttemptAnswerApi).mockImplementationOnce(
+      (_attemptId, questionId) =>
+        new Promise((resolve) => {
+          finishSave = () =>
+            resolve({ questionId, changeCount: 1, revision: 1 });
+        }),
+    );
+    savePracticePreference({ layout, keyboardShortcuts: true, feedback: null });
+    mockedFetch.mockResolvedValue(draft);
+    renderPage();
+    await waitFor(() =>
+      expect(getAttemptRecoveryState(ATTEMPT_ID).state).toBe("ready"),
+    );
+    fireEvent.pointerDown(screen.getByRole("button", { name: "练习更多" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "做题方式" }));
+    const settings = await screen.findByRole("dialog", { name: "做题方式" });
+    fireEvent.click(
+      within(settings).getByRole("radio", { name: "选中即提交" }),
+    );
+    fireEvent.keyDown(settings, { key: "Escape" });
+    const firstChoice = screen.getByRole("radio", { name: /选项 A.*甲/ });
+    const secondChoice = screen.getByRole("radio", { name: /选项 B.*乙/ });
+    fireEvent.click(firstChoice);
+    fireEvent.click(secondChoice);
+    if (layout === "list") {
+      const nextChoice = screen.getByRole("radio", { name: /选项 B.*丁/ });
+      fireEvent.click(nextChoice);
+      expect(nextChoice).toBeChecked();
+      expect(screen.getByText("等待提交")).toBeVisible();
+      await waitFor(() =>
+        expect(saveAttemptAnswerApi).toHaveBeenCalledWith(ATTEMPT_ID, "q2", {
+          kind: "choice",
+          index: 1,
+        }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(saveAttemptAnswerApi)
+          .mock.calls.filter((call) => call[1] === "q1"),
+      ).toHaveLength(1),
+    );
+    expect(vi.mocked(saveAttemptAnswerApi).mock.calls[0]?.[2]).toMatchObject({
+      kind: "choice",
+      index: 0,
+    });
+    expect(mockedSubmit).not.toHaveBeenCalled();
+    finishSave();
+    await waitFor(() =>
+      expect(mockedSubmit).toHaveBeenCalledTimes(layout === "list" ? 2 : 1),
+    );
+    expect(mockedSubmit.mock.calls.map((call) => call[1])).toEqual(
+      layout === "list" ? ["q1", "q2"] : ["q1"],
+    );
+    expect(mockedSubmit.mock.calls[0]?.[2]?.expectedAnswerRevision).toBe(1);
+  },
+);
+
 it("expectedAnswerRevision 取自本机草稿版本（draftRevisions 播种）", async () => {
   await renderSingle(
     baseDraft({
@@ -425,15 +534,14 @@ it("expectedAnswerRevision 取自本机草稿版本（draftRevisions 播种）",
       draftRevisions: { q1: 4 },
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   expect(mockedSubmit.mock.calls[0]?.[2]?.expectedAnswerRevision).toBe(4);
 });
 
-it("未作答：仅「不会，提交并看解析」发空答案提交", async () => {
+it("未作答：同一个提交按钮发空答案提交", async () => {
   await renderSingle(baseDraft());
-  expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "不会，提交并看解析" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   expect(mockedSubmit.mock.calls[0]?.[1]).toBe("q1");
   expect(mockedSubmit.mock.calls[0]?.[2]?.expectedAnswerRevision).toBe(0);
@@ -453,14 +561,15 @@ it("busy：提交中上一题/下一题/导航跳题禁用，按钮显示正在�
   );
   await renderSingle(baseDraft());
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   const busyButton = await screen.findByRole("button", { name: "正在提交…" });
   expect(busyButton).toBeDisabled();
   expect(screen.getByRole("button", { name: "上一题" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "下一题" })[0]).toBeDisabled();
   expect(screen.getByRole("button", { name: /第 3 题/ })).toBeDisabled();
   // 重复提交被禁（主按钮唯一且禁用）
-  expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^提交$/ })).toBeNull();
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledOnce());
   resolveSubmit();
   await screen.findByText("回答正确");
   expect(mockedSubmit).toHaveBeenCalledTimes(1);
@@ -475,9 +584,9 @@ it("网络失败后重试复用同一 mutationId，成功后收敛", async () =>
     .mockImplementationOnce(async () => submitReceipt({}));
   await renderSingle(baseDraft());
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("网络异常");
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   expect(mockedSubmit).toHaveBeenCalledTimes(2);
   const first = mockedSubmit.mock.calls[0]?.[2]?.submissionMutationId;
@@ -509,7 +618,7 @@ it("最后一题收尾：不自动重发详情查询，主动作换查看本次�
   );
   expect(mockedFetch).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   // 回执已收尾：不自动 refetch（详情查询仍是首屏那一次）；主动作换查看本次结果
   expect(mockedFetch).toHaveBeenCalledTimes(1);
@@ -541,7 +650,7 @@ it("末题提交失败后恢复详情读取，不把作答永久暂停", async (
   renderPage("", client);
   await screen.findByText("第 3 / 3 题 · 已提交 2 题");
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("末题网络异常");
   const calls = mockedFetch.mock.calls.length;
   await act(async () => {
@@ -579,7 +688,7 @@ it("末题提交回执迟到时，期间详情重取也不能提前切到结果"
   renderPage("", client);
   await screen.findByText("第 3 / 3 题 · 已提交 2 题");
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await waitFor(() => expect(mockedSubmit).toHaveBeenCalledOnce());
   try {
     await act(async () => {
@@ -637,7 +746,7 @@ it("离开页面后末题回执迟到，不阻止重新进入读取权威结果"
   const view = renderPage("", client);
   await screen.findByText("第 3 / 3 题 · 已提交 2 题");
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await waitFor(() => expect(mockedSubmit).toHaveBeenCalledOnce());
   view.unmount();
   await act(async () => {
@@ -651,7 +760,7 @@ it("离开页面后末题回执迟到，不阻止重新进入读取权威结果"
   ).toBe("submitted");
 });
 
-it("列表模式：每题 footer 提交区按作答态启停，提交后底栏进度与只读更新", async () => {
+it("列表模式：每题只有一个提交按钮，提交后更新进度与只读状态", async () => {
   savePracticePreference({
     layout: "list",
     keyboardShortcuts: true,
@@ -692,19 +801,22 @@ it("列表模式：每题 footer 提交区按作答态启停，提交后底栏�
     }),
   );
   const { container } = renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   expect(
     container.querySelectorAll('[data-slot="practice-question-submit"]'),
   ).toHaveLength(3);
   const [q1Button, q2Button] = screen.getAllByRole("button", {
-    name: "提交本题",
+    name: /^提交$/,
   });
   if (q1Button === undefined || q2Button === undefined)
     throw new Error("提交按钮未按题渲染");
-  expect(q1Button).toBeDisabled(); // q1 未作答
+  expect(q1Button).toBeEnabled(); // q1 留空也可以提交
   expect(q2Button).toBeEnabled(); // q2 已作答
   fireEvent.click(q2Button);
-  await screen.findByText(/已提交 1 \/ 3 题/);
+  await screen.findByText("回答正确");
+  expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
+    "已填写 1/3",
+  );
   // q2 卡只读：填空输入禁用、反馈原位呈现
   expect(screen.getByRole("textbox", { name: "第1空" })).toBeDisabled();
   const q2Card = container.querySelector('[data-question-id="q2"]');
@@ -733,7 +845,7 @@ it.each(["list", "single"] as const)(
     const answer = screen.getAllByRole("radio", { name: "对" })[0];
     if (!answer) throw new Error("缺少首题选项");
     fireEvent.click(answer);
-    expect(screen.queryByRole("button", { name: "提交本题" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^提交$/ })).toBeNull();
     expect(
       screen.queryByRole("button", { name: "不会，提交并看解析" }),
     ).toBeNull();
@@ -768,7 +880,7 @@ it("after_attempt 冒烟（单题）：回执待公布时反馈区按统一公�
   renderPage();
   await screen.findByText(/第 \d+ \/ 3 题 · 已提交 \d+ 题/);
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("已提交，交卷后统一公布");
   expect(screen.getAllByRole("button", { name: "下一题" })).toHaveLength(1);
   // 导航只报提交事实（待公布），无对错泄露
@@ -863,7 +975,7 @@ it("列表模式：可读卡进入视口才惰性取反馈，未提交题不发�
       }),
     );
     const { container } = renderPage();
-    await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+    await screen.findAllByRole("article");
     await waitFor(() => expect(mockedFeedbackGet).toHaveBeenCalledTimes(2));
     expect(mockedFeedbackGet).toHaveBeenCalledWith(ATTEMPT_ID, "q1");
     expect(mockedFeedbackGet).toHaveBeenCalledWith(ATTEMPT_ID, "q2");
@@ -886,7 +998,7 @@ it("QUESTION_ALREADY_SUBMITTED：不弹错，静默 refetch 详情收敛", async
     new ApiError("QUESTION_ALREADY_SUBMITTED", "这道题已经提交过", 409),
   );
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("alert")).toBeNull();
 });
@@ -897,7 +1009,7 @@ it("WORKFLOW_RESTRICTED：不弹错误，refetch 草稿视图按受限呈现", a
     new ApiError("WORKFLOW_RESTRICTED", "老师已调整反馈方式", 409),
   );
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("alert")).toBeNull();
 });
@@ -908,12 +1020,12 @@ it("QUESTION_REVISION_STALE：就地提示刷新，可直接重试收敛", async
     new ApiError("QUESTION_REVISION_STALE", "题目版本已变化", 409),
   );
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   expect(
     await screen.findByText("页面内容已过期，请刷新后重试"),
   ).toBeInTheDocument();
   mockedSubmit.mockResolvedValueOnce(submitReceipt({}));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   expect(screen.queryByText("页面内容已过期，请刷新后重试")).toBeNull();
 });
@@ -935,7 +1047,7 @@ it("提交本题只确认本题答案同步，其他题保存失败不拦本题�
   );
   mockedFetch.mockResolvedValue(baseDraft());
   renderPage();
-  await screen.findByText(/做题方式：列表 · 每题提交后查看/);
+  await screen.findAllByRole("article");
   const wrongRadios = screen.getAllByRole("radio", { name: "错" });
   const q3Wrong = wrongRadios[1];
   if (q3Wrong === undefined) throw new Error("q3 判断选项未渲染");
@@ -944,7 +1056,9 @@ it("提交本题只确认本题答案同步，其他题保存失败不拦本题�
   const q1True = trueRadios[0];
   if (q1True === undefined) throw new Error("q1 判断选项未渲染");
   fireEvent.click(q1True);
-  const [q1Submit] = screen.getAllByRole("button", { name: "提交本题" });
+  const [q1Submit] = screen.getAllByRole("button", {
+    name: /^提交$/,
+  });
   if (q1Submit === undefined) throw new Error("q1 提交按钮未渲染");
   fireEvent.click(q1Submit);
   // 旧全局 flush 会因 q3 未同步抛「答案尚未保存」拦下提交；按题 flush 只
@@ -957,7 +1071,7 @@ it("本题答案同步失败：就地提示且不发提交请求", async () => {
   vi.mocked(saveAttemptAnswerApi).mockRejectedValue(new Error("断网"));
   await renderSingle(baseDraft());
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   expect(
     await screen.findByText("本题答案尚未保存完成，请检查网络后重试"),
   ).toBeInTheDocument();
@@ -989,7 +1103,7 @@ it("查看本次结果：显式点击才重发详情并切换结果视图", asyn
   );
   expect(mockedFetch).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   // 回执已收尾：不自动 refetch
   expect(mockedFetch).toHaveBeenCalledTimes(1);
@@ -1025,7 +1139,7 @@ it("收尾暂停期间窗口焦点重取被抑制，查看本次结果后恢复�
   );
   expect(mockedFetch).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("回答正确");
   expect(mockedFetch).toHaveBeenCalledTimes(1);
   // 切窗再切回（visibilitychange 触发 focus 重取）：暂停集内不得绕过

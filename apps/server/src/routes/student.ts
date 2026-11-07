@@ -13,6 +13,7 @@ import {
   attemptWorkflowUpdateDataSchema,
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
+  courseAttemptStartOptionsRequestSchema,
   hintOpenRequestSchema,
   inkWriteMetaSchema,
   lectureEventBatchRequestSchema,
@@ -1025,8 +1026,10 @@ export function createStudentRoutes(
       // 新一次从空白开始；事务保证并发只得一份 draft）
       .post("/courses/:id/units/:unitId/attempts", async (c) => {
         const options =
-          (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
-          {};
+          (await parseJsonBodyOrEmpty(
+            c,
+            courseAttemptStartOptionsRequestSchema,
+          )) ?? {};
         return c.json(
           {
             ok: true,

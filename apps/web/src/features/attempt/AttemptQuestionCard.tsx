@@ -346,6 +346,7 @@ export function AttemptQuestionCard({
   question,
   answer,
   onAnswer,
+  repeatChoiceSelection = false,
   attemptId,
   registerInkController,
   onInkStroke,
@@ -373,6 +374,7 @@ export function AttemptQuestionCard({
   answer: StudentAnswer | undefined;
   /** 作答回调（defer 交给控件语义：文本类防抖、离散类立即） */
   onAnswer: (answer: StudentAnswer, defer?: boolean) => void;
+  repeatChoiceSelection?: boolean;
   /** attempt id（手写题笔迹上传与分步提示用；客观题忽略） */
   attemptId?: string;
   /** 交卷 flush 用：手写题上传 controller 注册（透传 HandwrittenControls） */
@@ -511,6 +513,7 @@ export function AttemptQuestionCard({
             question={question}
             answer={answer}
             onAnswer={onAnswer}
+            repeatChoiceSelection={repeatChoiceSelection}
             readOnly={readOnly}
           />
         </QuestionAnnotationOverlay>
@@ -519,6 +522,7 @@ export function AttemptQuestionCard({
           question={question}
           answer={answer}
           onAnswer={onAnswer}
+          repeatChoiceSelection={repeatChoiceSelection}
           readOnly={readOnly}
         />
       )}

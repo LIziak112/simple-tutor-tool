@@ -62,6 +62,7 @@ export interface AnnotationViewProps {
   inline?: boolean;
   question?: AttemptQuestionPublic | undefined;
   answer?: StudentAnswer | undefined;
+  correctOptionIndexes?: readonly number[] | undefined;
   /** 结果页闭合入口并排，展开材料仍占满可用宽度。 */
   compact?: boolean;
   viewer: "student" | "teacher";
@@ -93,6 +94,7 @@ function NativeQuestionReview({
   question,
   questionId,
   answer,
+  correctOptionIndexes,
   view,
   scopeKey,
   children,
@@ -100,6 +102,7 @@ function NativeQuestionReview({
   question?: AttemptQuestionPublic | undefined;
   questionId: string;
   answer?: StudentAnswer | undefined;
+  correctOptionIndexes?: readonly number[] | undefined;
   view: AnnotationViewData | null;
   scopeKey: string;
   children?: ReactNode;
@@ -162,7 +165,12 @@ function NativeQuestionReview({
             ) : undefined
           }
         >
-          <QuestionSurface question={question} answer={answer} readOnly />
+          <QuestionSurface
+            question={question}
+            answer={answer}
+            readOnly
+            correctOptionIndexes={correctOptionIndexes}
+          />
         </QuestionAnnotationFrame>
       ) : (
         children
@@ -197,6 +205,7 @@ function AnnotationViewContent({
   children,
   question,
   answer,
+  correctOptionIndexes,
   inline: inlineProp = false,
   scopeKey,
 }: AnnotationViewProps & { scopeKey: string }) {
@@ -309,6 +318,7 @@ function AnnotationViewContent({
           question={question}
           questionId={questionId}
           answer={answer}
+          correctOptionIndexes={correctOptionIndexes}
           view={view}
           scopeKey={scopeKey}
         >

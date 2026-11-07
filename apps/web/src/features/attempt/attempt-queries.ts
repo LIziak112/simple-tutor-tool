@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptSubmitRevision,
-  PracticeWorkflowStartOptions,
+  CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
   StudentAnswer,
   SubmitEvidenceDeclaration,
@@ -11,6 +11,7 @@ import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   studentAssignmentsKey,
+  studentCourseKey,
   studentCoursesKey,
 } from "@/features/student/student-queries";
 import {
@@ -97,6 +98,14 @@ export function resumeAttemptDetailPolling(attemptId: string): void {
 }
 
 /** attempt 详情（draft→草稿视图、submitted/graded→结果视图；按 attempt.status 分支） */
+export function isAttemptUnavailable(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    ([401, 403, 404].includes(error.status) ||
+      error.code === "ATTEMPT_ABANDONED")
+  );
+}
+
 export function useAttemptDetail(attemptId: string | undefined) {
   const queryClient = useQueryClient();
   const paused = useSyncExternalStore(
@@ -126,7 +135,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
         if (
           previous &&
           detailPollingPaused.has(attemptId ?? "") &&
-          !(error instanceof ApiError && [401, 403, 404].includes(error.status))
+          !isAttemptUnavailable(error)
         )
           return previous;
         throw error;
@@ -135,7 +144,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
     enabled: attemptId !== undefined && !paused,
     retry: (failureCount, error) =>
       !(error instanceof AttemptDetailReadTimeoutError) &&
-      !(error instanceof ApiError && [401, 403, 404].includes(error.status)) &&
+      !isAttemptUnavailable(error) &&
       failureCount < 1,
     staleTime: 0,
     refetchOnMount: "always",
@@ -145,6 +154,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
       attemptId === undefined || !detailPollingPaused.has(attemptId),
     refetchInterval: (query) =>
       !paused &&
+      !isAttemptUnavailable(query.state.error) &&
       query.state.data?.attempt.status === "draft" &&
       (attemptId === undefined || !detailPollingPaused.has(attemptId))
         ? 10_000
@@ -239,16 +249,38 @@ export function useUpdateAttemptWorkflow(attemptId: string) {
 export function useStartCourseAttempt(courseId: string, unitId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (options: PracticeWorkflowStartOptions | undefined) =>
+    mutationFn: (options: CourseAttemptStartOptions | undefined) =>
       startCourseAttemptApi(
         courseId,
         unitId,
         options ?? workflowStartOptions(),
       ),
-    onSuccess: () => {
+    onSuccess: (_attempt, options) => {
       void queryClient.invalidateQueries({
         queryKey: studentUnitLandingKey(courseId, unitId),
       });
+      if (options?.restartAttemptId !== undefined) {
+        void queryClient.invalidateQueries({
+          queryKey: studentAttemptKey(options.restartAttemptId),
+        });
+        void queryClient.invalidateQueries({ queryKey: studentCoursesKey });
+        void queryClient.invalidateQueries({
+          queryKey: studentCourseKey(courseId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["student", "records"],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["student", "wrong-questions"],
+        });
+      }
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === "ATTEMPT_RESTART_STALE") {
+        void queryClient.invalidateQueries({
+          queryKey: studentUnitLandingKey(courseId, unitId),
+        });
+      }
     },
   });
 }

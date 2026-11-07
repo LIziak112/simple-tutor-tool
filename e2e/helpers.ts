@@ -1106,27 +1106,25 @@ export function expectDecodablePng(entry: Buffer, name: string): void {
   expect(entry.length, `${name} 字节量`).toBeGreaterThan(100);
 }
 
-/**
- * 手机端习题作答顶栏精简（2026-10-15 决策）后，课程/保存状态在
- * 「更多 → 练习信息」弹层里查看。打开练习信息弹层，返回弹层定位器。
- */
+/** 打开练习资料弹层。 */
 export async function openPracticeInfoDialog(page: Page) {
   await page.getByRole("button", { name: "练习更多" }).click();
   await page.getByRole("menuitem", { name: "练习信息" }).click();
-  const info = page.getByRole("dialog");
-  await expect(info.getByTestId("draft-status")).toBeVisible();
-  return info;
+  return page.getByRole("dialog");
 }
 
-/**
- * 在练习信息弹层里进入保存详情，返回保存详情弹层定位器（练习信息弹层保持叠放）。
- * 练习信息弹层的可访问名是作业标题——标题恰好叫「保存详情」时按名定位会
- * 命中两个弹层（严格模式冲突），按标题 heading 过滤不受标题内容影响。
- */
-export async function openSaveDetailsViaInfoDialog(page: Page) {
+export async function expectPracticeSource(
+  page: Page,
+  source: string | RegExp,
+) {
   const info = await openPracticeInfoDialog(page);
-  await info.getByRole("button", { name: "保存详情", exact: true }).click();
-  return page.getByRole("dialog").filter({
-    has: page.getByRole("heading", { name: "保存详情", exact: true }),
-  });
+  await expect(info.getByText(source)).toBeVisible();
+  await info.press("Escape");
+}
+
+/** 从更多菜单打开独立的保存详情。 */
+export async function openSaveDetails(page: Page) {
+  await page.getByRole("button", { name: "练习更多" }).click();
+  await page.getByRole("menuitem", { name: "保存详情", exact: true }).click();
+  return page.getByRole("dialog", { name: "保存详情", exact: true });
 }

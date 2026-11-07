@@ -12,6 +12,7 @@ import {
   createCourseViaApi,
   createStudentViaApi,
   drawStrokeWithPointerEvents,
+  expectPracticeSource,
   getStudentViaApi,
   setCourseItemVisible,
   teacherApiLogin,
@@ -264,7 +265,7 @@ test.describe("SAI-33 四来源与结果页共存", { tag: ["@ai"] }, () => {
       await expect(
         page.getByRole("heading", { name: "错题重练", exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("错题重练 · 第 1 次")).toBeVisible();
+      await expectPracticeSource(page, "错题重练 · 第 1 次");
 
       // —— 重练卷作答中求助：同一冻结投影（题面/答案/解析仍进出站）——
       const reReply = "重练回信：注意符号判断。";

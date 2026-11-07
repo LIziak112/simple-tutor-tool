@@ -1192,9 +1192,8 @@ export const attemptDetailDataSchema = z
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
  * - REDO_NOT_ALLOWED：作业不允许重做（allowRedo=false）且无进行中卷时，显式
  *   redo:true 开新卷被拒（409，hall-15313）——前端渲染重做入口的兜底门；
- * - ATTEMPT_ABANDONED：作答已作废（2026-10 讲练随时重开：进行中卷被「重新开始」
- *   放弃后，其上一切读写——详情/存草稿/单题提交/提示解锁——都被拒绝；409，
- *   前端提示重新进入）；
+ * - ATTEMPT_ABANDONED：课程练习或讲练重开后，原卷的所有学生读写返回 409；
+ * - ATTEMPT_RESTART_STALE：课程单元当前的进行中卷与确认时指定的卷不符（409）；
  * - QUESTION_ALREADY_SUBMITTED：该题已单题提交过（2026-10 讲练一体逐题提交；
  *   409——lesson 卷同一题二次提交被可诊断拒绝，与整卷 ALREADY_SUBMITTED 分码，
  *   前端据此锁定题卡为结果态而非提示整卷已交）；
@@ -1247,6 +1246,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ALREADY_SUBMITTED",
   "REDO_NOT_ALLOWED",
   "ATTEMPT_ABANDONED",
+  "ATTEMPT_RESTART_STALE",
   "ATTEMPT_CONTEXT_BROKEN",
   "QUESTION_ALREADY_SUBMITTED",
   "QUESTION_REVISION_STALE",

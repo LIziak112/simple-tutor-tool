@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  expectPracticeSource,
   getStudentViaApi,
   setCourseItemVisible,
   TEACHER_LOGIN_NAME,
@@ -102,9 +103,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
       await studentPage.goto(unitPath);
       await studentPage.getByRole("button", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(
-        studentPage.getByText(`课程：${courseName} · 第 1 次`),
-      ).toBeVisible();
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 1 次`);
       for (const q of [1, 2]) {
         const card = studentPage.locator(`article[aria-label="第 ${q} 题"]`);
         await card
@@ -149,7 +148,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
       await expect(
         studentPage.getByRole("heading", { name: "错题重练", exact: true }),
       ).toBeVisible();
-      await expect(studentPage.getByText("错题重练 · 第 1 次")).toBeVisible();
+      await expectPracticeSource(studentPage, "错题重练 · 第 1 次");
       await expect(
         studentPage.locator('article[aria-label="第 1 题"]'),
       ).toBeVisible();
@@ -206,7 +205,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
         .getByRole("button", { name: "重练本组（1 题）" })
         .click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(studentPage.getByText("错题重练 · 第 2 次")).toBeVisible();
+      await expectPracticeSource(studentPage, "错题重练 · 第 2 次");
       const q1Again = studentPage.locator('article[aria-label="第 1 题"]');
       await q1Again
         .getByRole("radio", { name: "对", exact: true })
@@ -398,7 +397,7 @@ test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点�
       await expect(
         studentPage.getByRole("heading", { name: "错题重练", exact: true }),
       ).toBeVisible();
-      await expect(studentPage.getByText("错题重练 · 第 1 次")).toBeVisible();
+      await expectPracticeSource(studentPage, "错题重练 · 第 1 次");
       await expect(
         studentPage.locator('article[aria-label="第 1 题"]'),
       ).toBeVisible();
@@ -453,9 +452,7 @@ test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点�
       await studentPage.getByRole("button", { name: "再做一次" }).click();
       await studentPage.getByRole("button", { name: "开始新一次" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(
-        studentPage.getByText(`课程：${courseName} · 第 2 次`),
-      ).toBeVisible();
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 2 次`);
       for (const q of [1, 2]) {
         await studentPage
           .locator(`article[aria-label="第 ${q} 题"]`)
@@ -545,9 +542,10 @@ test.describe("选题重练（2026-10）：复选 + 跨筛选保留 + 只练已�
           await studentPage.getByRole("button", { name: "开始新一次" }).click();
         }
         await studentPage.waitForURL("**/s/attempts/**");
-        await expect(
-          studentPage.getByText(`课程：${courseName} · 第 ${round} 次`),
-        ).toBeVisible();
+        await expectPracticeSource(
+          studentPage,
+          `课程：${courseName} · 第 ${round} 次`,
+        );
         const q1 = studentPage.locator('article[aria-label="第 1 题"]');
         await q1
           .getByRole("radio", { name: q1Answer, exact: true })
@@ -620,7 +618,7 @@ test.describe("选题重练（2026-10）：复选 + 跨筛选保留 + 只练已�
         .getByRole("button", { name: "重练已选（2 题）" })
         .click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(studentPage.getByText("手选 2 题")).toBeVisible();
+      await expectPracticeSource(studentPage, "手选 2 题");
       await expect(
         studentPage.locator('article[aria-label^="第 "]'),
       ).toHaveCount(2);

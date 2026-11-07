@@ -17,6 +17,7 @@ import {
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
+  type CourseAttemptStartOptions,
   type EffectiveVerdict,
   effectiveVerdictOf,
   emptyPublicStructure,
@@ -599,13 +600,13 @@ export function requireUsableAttempt(
   attemptId: string,
 ): Attempt {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
-  // 作废卷（2026-10 讲练随时重开）：其上一切读写（详情/存草稿/单题提交/提示
+  // 作废卷（课程练习或讲练重开）：其上一切读写（详情/存草稿/单题提交/提示
   // 解锁——本函数是这些路径共用的取卷入口）都拒绝，前端提示重新进入
   if (attempt.abandonedAt !== null) {
     throw new HttpError(
       409,
       "ATTEMPT_ABANDONED",
-      "这份作答已作废（讲练已重新开始），请回到讲练页继续最新一次",
+      "这份作答已作废，请回到练习入口继续最新一次",
     );
   }
   assertDraftCourseVisible(db, studentId, attempt);
@@ -1999,7 +2000,7 @@ export function startCourseAttempt(
   studentId: string,
   courseId: string,
   unitId: string,
-  options: AttemptWorkflowStartOptions = {},
+  options: CourseAttemptStartOptions = {},
   /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
   newContentEnabled?: boolean,
 ): AttemptStartData {
@@ -2018,8 +2019,24 @@ export function startCourseAttempt(
         ),
       )
       .all();
-    const draft = existing.find((row) => row.status === "draft");
-    if (draft !== undefined) return attemptSummaryOf(draft);
+    const draft = existing.find(
+      (row) => row.status === "draft" && row.abandonedAt === null,
+    );
+    if (options.restartAttemptId !== undefined) {
+      if (draft?.id !== options.restartAttemptId) {
+        throw new HttpError(
+          409,
+          "ATTEMPT_RESTART_STALE",
+          "当前作答已变化，请关闭确认后查看最新记录。",
+        );
+      }
+      tx.update(attempts)
+        .set({ abandonedAt: new Date().toISOString() })
+        .where(eq(attempts.id, draft.id))
+        .run();
+    } else if (draft !== undefined) {
+      return attemptSummaryOf(draft);
+    }
 
     const maxAttemptNo = existing.reduce(
       (max, row) => Math.max(max, row.attemptNo),

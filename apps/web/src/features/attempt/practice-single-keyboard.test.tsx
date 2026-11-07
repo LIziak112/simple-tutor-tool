@@ -291,7 +291,7 @@ it("按钮聚焦时 Enter 不触发主动作（保留按钮自身语义）", asy
   fireEvent.change(screen.getByRole("textbox", { name: "第1空" }), {
     target: { value: "4" },
   });
-  const button = screen.getByRole("button", { name: "提交本题" });
+  const button = screen.getByRole("button", { name: /^提交$/ });
   button.focus();
   press(button, "Enter");
   expect(mockedSubmit).not.toHaveBeenCalled();
@@ -312,7 +312,7 @@ it("提交中 Enter 与 ←→ 均无效；提交成功后需新 keydown 才切�
   );
   const { container } = await renderSingle("?q=q1");
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByRole("button", { name: "正在提交…" });
   container.focus();
   press(container, "Enter");
@@ -410,7 +410,7 @@ it("1-9 按可见选项作答：判断两项、单选第 n 项、多选切换、
 it("已提交只读题 1-9 不生效", async () => {
   const { container } = await renderSingle("?q=q1");
   fireEvent.click(screen.getByRole("radio", { name: "对" }));
-  fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
   await screen.findByText("已提交，交卷后统一公布");
   container.focus();
   press(container, "2");
