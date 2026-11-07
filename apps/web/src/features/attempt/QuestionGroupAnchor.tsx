@@ -198,55 +198,65 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
         </header>
         {hasMaterials && (
           <>
-            <section
-              ref={materialsRef}
-              data-slot="group-materials"
-              tabIndex={-1}
-              aria-label="本组共享材料"
-              // compare 网格材料列跨行数经 CSS 变量传入（Tailwind 任意属性在
-              // lg/xl 才生效；非网格语境下 grid-row 声明无害）
+            {/* 外层占满本组网格行，限制粘性材料的退出边界。 */}
+            <div
+              data-slot="group-materials-boundary"
               style={
                 {
                   "--qg-row-span": String(Math.max(questionCount, 1)),
                 } as CSSProperties
               }
-              // 分栏网格生效（列表/单题同口径）：材料列视口级粘性 + 独立
-              // 滚动端口 + overscroll 隔离 + isolate 层叠上下文（2026-10-27
-              // 需求：长材料独立滚动、滚动不穿透、边界裁剪不侵入相邻题卡；
-              // 此前仅单题模式享有，整卷列表分栏被留在流式随页滚）
               className={
                 gridActive
-                  ? "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
-                  : "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  ? "min-w-0 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
+                  : "min-w-0"
               }
             >
-              {materials.map((material) => (
-                <MaterialPanel
-                  // QM-15 细项 4：键含冻结版本——同材料多版本分别保留（React
-                  // key 按 materialId 会在双版本卷撞键丢面板）
-                  key={materialVersionKey(material)}
-                  material={material}
-                  versionNote={versionNotes.get(materialVersionKey(material))}
-                  attemptId={attemptId}
-                  associatedQuestionIds={group.questionIds}
-                />
-              ))}
-            </section>
+              <section
+                ref={materialsRef}
+                data-slot="group-materials"
+                tabIndex={-1}
+                aria-label="本组共享材料"
+                // 列统一管理滚动，正文不再创建截获手指的嵌套滚动口。
+                className={
+                  gridActive
+                    ? "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:[&_.material-reading]:overflow-visible! lg:rounded-lg lg:ring-1 lg:ring-border lg:has-[[data-drawing=true]]:ring-2 lg:has-[[data-drawing=true]]:ring-primary/50"
+                    : "flex min-w-0 max-w-full flex-col gap-4 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                }
+              >
+                {materials.map((material) => (
+                  <MaterialPanel
+                    // QM-15 细项 4：键含冻结版本——同材料多版本分别保留（React
+                    // key 按 materialId 会在双版本卷撞键丢面板）
+                    key={materialVersionKey(material)}
+                    material={material}
+                    versionNote={versionNotes.get(materialVersionKey(material))}
+                    attemptId={attemptId}
+                    associatedQuestionIds={group.questionIds}
+                  />
+                ))}
+              </section>
+            </div>
             {gridActive && (
               <div
-                data-slot="group-split-handle-container"
+                data-slot="group-split-handle-boundary"
                 style={
                   {
                     "--qg-row-span": String(Math.max(questionCount, 1)),
                   } as CSSProperties
                 }
-                className="hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)] lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch"
+                className="hidden min-w-0 lg:block xl:block lg:col-start-2 xl:col-start-2 lg:[grid-row:span_var(--qg-row-span)] xl:[grid-row:span_var(--qg-row-span)]"
               >
-                <MaterialSplitHandle
-                  ratio={splitRatio ?? 50}
-                  onRatioChange={onSplitRatioChange}
-                  containerRef={containerRef}
-                />
+                <div
+                  data-slot="group-split-handle-container"
+                  className="hidden lg:flex xl:flex lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:h-full xl:h-full lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center"
+                >
+                  <MaterialSplitHandle
+                    ratio={splitRatio ?? 50}
+                    onRatioChange={onSplitRatioChange}
+                    containerRef={containerRef}
+                  />
+                </div>
               </div>
             )}
           </>
