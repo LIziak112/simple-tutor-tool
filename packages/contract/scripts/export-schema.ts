@@ -30,6 +30,11 @@ import {
   learningPackJsonSchema,
   learningPackV2JsonSchema,
 } from "../src/learning-pack.ts";
+import {
+  questionProcessBatchSchema,
+  questionProcessReadSchema,
+  questionProcessStatusSchema,
+} from "../src/question-process.ts";
 import { reviewPackJsonSchema } from "../src/review-pack.ts";
 import {
   aiReplyCheckerManifestSchema,
@@ -100,6 +105,17 @@ await writeSchema(
     z.object({
       result: aiReplyCheckResultSchema,
       manifest: aiReplyCheckerManifestSchema,
+    }),
+  ),
+);
+await writeSchema(
+  "question-process.json",
+  "单题过程契约",
+  z.toJSONSchema(
+    z.object({
+      batch: questionProcessBatchSchema,
+      replay: questionProcessReadSchema,
+      status: questionProcessStatusSchema,
     }),
   ),
 );

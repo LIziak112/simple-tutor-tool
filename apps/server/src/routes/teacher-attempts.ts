@@ -22,6 +22,7 @@ import {
 import { getTeacherLearningRecord } from "../services/learning-record-service";
 import { listPendingMarks, markResponse } from "../services/mark-response";
 import { getTeacherNoteEvidence } from "../services/note-service";
+import { readQuestionProcess } from "../services/question-process";
 import {
   buildReviewPackZip,
   previewReviewPack,
@@ -105,6 +106,19 @@ export function createTeacherAttemptRoutes(
       })
       // hall-15077：做题复现——events 时间轴 + 草稿/手写/逐题提交事实一次取齐
       // （只读投影，业务在 teacher-attempt-replay；权限同详情 requireTeacherAttempt）
+      .get("/attempts/:id/questions/:questionId/process", (c) => {
+        c.header("Cache-Control", "no-store");
+        return c.json({
+          ok: true,
+          data: readQuestionProcess(
+            db,
+            dataDir,
+            c.var.teacher.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+          ),
+        });
+      })
       .get("/attempts/:id/replay", (c) => {
         return c.json({
           ok: true,

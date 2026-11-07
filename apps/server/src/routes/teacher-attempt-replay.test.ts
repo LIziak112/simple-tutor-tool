@@ -1,10 +1,17 @@
+import { randomUUID } from "node:crypto";
+import {
+  questionProcessReadSchema,
+  questionProcessStatusSchema,
+} from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { events } from "../db/schema.ts";
+import { events, questionProcessBatches, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { assertNoLeak } from "../test/assert-no-leak";
 import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
@@ -69,10 +76,11 @@ interface Env {
   questionId: string;
 }
 
-async function makeEnv(): Promise<Env> {
+async function makeEnv(questionProcessEnabled = false): Promise<Env> {
   const db = createTestDb();
   const app = createApp({
     isProduction: false,
+    questionProcessEnabled,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
@@ -292,5 +300,132 @@ describe("GET /api/teacher/attempts/:id/replay", () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("ATTEMPT_NOT_FOUND");
+  });
+});
+
+describe("单题过程记录", () => {
+  it("默认关闭，启用试点后仍须学生主动开启", async () => {
+    const { app, studentCookie, attemptId } = await makeEnv();
+    const path = `/api/student/attempts/${attemptId}/question-process`;
+    const response = await request(app, path, {}, studentCookie);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { data: unknown };
+    expect(payload.data).toEqual({ state: "unavailable" });
+    assertNoLeak(payload);
+  });
+
+  it("识别缺段、拒绝改写序号，删除后拒绝迟到批次", async () => {
+    const { app, db, studentCookie, teacherCookie, attemptId, questionId } =
+      await makeEnv(true);
+    const path = `/api/student/attempts/${attemptId}/question-process`;
+    const readPath =
+      "/api/teacher/attempts/" +
+      attemptId +
+      "/questions/" +
+      encodeURIComponent(questionId) +
+      "/process";
+    const response = await request(app, path, {}, studentCookie);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: unknown };
+    assertNoLeak(body);
+    const active = questionProcessStatusSchema.parse(body.data);
+    expect(active.state).toBe("active");
+    if (active.state !== "active") throw new Error("过程未开启");
+    const row = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, attemptId))
+      .get();
+    if (!row) throw new Error("测试题不存在");
+    const base = {
+      version: 1,
+      recordingId: active.recordingId,
+      questionId,
+      revisionId: row.id,
+      segmentId: randomUUID(),
+      startedAt: Date.now(),
+    };
+    const start = {
+      ...base,
+      events: [
+        { seq: 0, at: 0, kind: "start", answer: null, hints: [], layers: {} },
+      ],
+    };
+    const late = {
+      ...base,
+      events: [
+        {
+          seq: 2,
+          at: 9,
+          kind: "answer",
+          answer: { kind: "judge", value: false },
+        },
+      ],
+    };
+    expect(
+      (
+        await request(
+          app,
+          path,
+          { ...start, revisionId: "old" },
+          studentCookie,
+          "PUT",
+        )
+      ).status,
+    ).toBe(409);
+    const accepted = await request(app, path, start, studentCookie, "PUT");
+    expect(accepted.status).toBe(200);
+    assertNoLeak(await accepted.json());
+    expect((await request(app, path, start, studentCookie, "PUT")).status).toBe(
+      200,
+    );
+    expect((await request(app, path, late, studentCookie, "PUT")).status).toBe(
+      200,
+    );
+    expect(
+      (
+        await request(
+          app,
+          path,
+          { ...late, startedAt: base.startedAt + 1 },
+          studentCookie,
+          "PUT",
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (await app.request(readPath, { headers: { cookie: studentCookie } }))
+        .status,
+    ).toBe(401);
+    const replay = await app.request(readPath, {
+      headers: { cookie: teacherCookie },
+    });
+    expect(replay.status).toBe(200);
+    const read = (await replay.json()) as { data: unknown };
+    const data = questionProcessReadSchema.parse(read.data);
+    assertNoLeak(data.question);
+    expect(data.segments[0]?.events).toEqual(start.events);
+    expect(data.segments[0]?.gap).toBe(true);
+    const fill = {
+      ...base,
+      events: [{ seq: 1, at: 8, kind: "boundary", reason: "offline" }],
+    };
+    expect((await request(app, path, fill, studentCookie, "PUT")).status).toBe(
+      200,
+    );
+    const completed = await app.request(readPath, {
+      headers: { cookie: teacherCookie },
+    });
+    const completeBody = (await completed.json()) as { data: unknown };
+    expect(
+      questionProcessReadSchema.parse(completeBody.data).segments[0]?.events,
+    ).toHaveLength(3);
+    expect((await request(app, path, {}, studentCookie, "DELETE")).status).toBe(
+      200,
+    );
+    expect(db.select().from(questionProcessBatches).all()).toHaveLength(0);
+    expect((await request(app, path, late, studentCookie, "PUT")).status).toBe(
+      403,
+    );
   });
 });
