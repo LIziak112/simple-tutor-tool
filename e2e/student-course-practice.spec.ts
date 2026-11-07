@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  expectPracticeSource,
   expectResultCount,
   getStudentViaApi,
   setCourseItemVisible,
@@ -119,9 +120,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await studentPage.getByRole("button", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
       // 顶部来源行：课程 + 第 n 次（D9/D10）
-      await expect(
-        studentPage.getByText(`课程：${courseName} · 第 1 次`),
-      ).toBeVisible();
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 1 次`);
       const progressPage = await studentContext.newPage();
       const progressLeak = attachLeakMonitor(progressPage);
       await progressPage.goto("/s/records");
@@ -191,9 +190,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       ).toBeVisible();
       await studentPage.getByRole("button", { name: "开始新一次" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(
-        studentPage.getByText(`课程：${courseName} · 第 2 次`),
-      ).toBeVisible();
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 2 次`);
 
       // —— 第二次：全错（从空白开始，无上一次答案回填）→ 交卷 ——
       const second = studentPage.locator('article[aria-label="第 1 题"]');
@@ -260,6 +257,32 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       ).toBeVisible();
       await expect(studentPage.getByText("批改结果")).toBeVisible();
       await expectResultCount(studentPage, "答对", 2);
+
+      // 清空进行中卷会创建新卷，已交卷记录仍保留。
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "再做一次" }).click();
+      await studentPage.getByRole("button", { name: "开始新一次" }).click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      const discardedUrl = studentPage.url();
+      await studentPage
+        .getByRole("button", { name: "返回", exact: true })
+        .click();
+      await studentPage.getByRole("button", { name: "清空并重新作答" }).click();
+      await studentPage.getByRole("button", { name: "确认清空并重开" }).click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      expect(studentPage.url()).not.toBe(discardedUrl);
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 4 次`);
+      await studentPage
+        .getByRole("button", { name: "返回", exact: true })
+        .click();
+      await expect(
+        studentPage.getByRole("button", { name: "查看第 3 次记录" }),
+      ).toHaveCount(0);
+      for (const round of [1, 2, 4]) {
+        await expect(
+          studentPage.getByRole("button", { name: `查看第 ${round} 次记录` }),
+        ).toBeVisible();
+      }
 
       // —— 泄露检查：全程 /api/student/* 响应无禁用键、无提示/详解原文 ——
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

@@ -145,7 +145,7 @@ describe("草稿渲染不发起订正/笔记本请求（T6R.15 F）", () => {
   it("草稿入口不提前加载结果回看模块", async () => {
     mockedFetch.mockResolvedValue(COURSE_DRAFT);
     renderPage();
-    await screen.findByText("课程：初一上 · 第 2 次");
+    await screen.findByRole("button", { name: "交卷" });
     expect(resultModuleState.loaded).toBe(false);
   });
   it("draft 渲染 settle 后零 corrections/notebook 请求与查询（重练不自动展示历史答案）", async () => {
@@ -184,13 +184,28 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
     expect(cardRender.mock.calls.length).toBe(before);
   });
 
+  async function openPracticeInfo() {
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "练习更多" }),
+      {
+        button: 0,
+        ctrlKey: false,
+      },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "练习信息" }));
+    return screen.findByRole("dialog");
+  }
+
   it("课程来源草稿：渲染答题会话与来源行「课程：xx · 第 n 次」+ 返回单元落地页", async () => {
     mockedFetch.mockResolvedValue(COURSE_DRAFT);
     renderPage();
-    // 来源行 + 答题视图（交卷入口出现即会话已渲染）
     expect(
-      await screen.findByText("课程：初一上 · 第 2 次"),
+      await screen.findByRole("button", { name: "交卷" }),
     ).toBeInTheDocument();
+    expect(await openPracticeInfo()).toHaveTextContent(
+      "课程：初一上 · 第 2 次",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭弹层" }));
     expect(screen.getByRole("button", { name: /^返回$/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "返回单元练习" })).toBeNull();
     expect(screen.getByRole("button", { name: "交卷" })).toBeInTheDocument();
@@ -210,9 +225,10 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
       courseName: null,
     });
     renderPage();
-    expect(
-      await screen.findByText("讲练：第1讲 有理数讲练 · 第 2 次"),
-    ).toBeInTheDocument();
+    expect(await openPracticeInfo()).toHaveTextContent(
+      "讲练：第1讲 有理数讲练 · 第 2 次",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭弹层" }));
     expect(screen.queryByText(/^作业/)).toBeNull();
     expect(screen.getByRole("button", { name: /^返回$/ })).toBeInTheDocument();
   });
@@ -272,7 +288,7 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
   it("T6R.3 legacyUnverified 横幅（false）：正常卷不显示恢复版本提示", async () => {
     mockedFetch.mockResolvedValue(COURSE_DRAFT);
     renderPage();
-    await screen.findByText("课程：初一上 · 第 2 次");
+    await screen.findByRole("button", { name: "交卷" });
     expect(screen.queryByText(/系统升级后恢复的版本/)).toBeNull();
   });
 

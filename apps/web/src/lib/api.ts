@@ -93,6 +93,7 @@ import {
   type ContentTree,
   type CorrectionCreateRequest,
   type CorrectionSealRequest,
+  type CourseAttemptStartOptions,
   type CourseCreateRequest,
   type CourseData,
   type CourseDetailData,
@@ -903,7 +904,7 @@ export function fetchStudentUnitLandingApi(
 export function startCourseAttemptApi(
   courseId: string,
   unitId: string,
-  options?: PracticeWorkflowStartOptions,
+  options?: CourseAttemptStartOptions,
 ): Promise<AttemptStartData> {
   return callApi(() =>
     api.api.student.courses[":id"].units[":unitId"].attempts.$post({

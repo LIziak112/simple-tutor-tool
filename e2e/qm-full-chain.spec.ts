@@ -10,7 +10,11 @@ import {
   test,
 } from "@playwright/test";
 import { attemptStartOkSchema } from "../packages/contract/src";
-import { FORBIDDEN_EXACT_KEYS, FORBIDDEN_KEY_PREFIXES } from "./helpers";
+import {
+  expectPracticeSource,
+  FORBIDDEN_EXACT_KEYS,
+  FORBIDDEN_KEY_PREFIXES,
+} from "./helpers";
 import {
   type QmPair,
   qmApi,
@@ -689,7 +693,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // 题 1 ordering 全放、题 2 choice 答对 → 提交后 reference_self 待自评 / auto 判对 ——
     await page.getByRole("button", { name: "重练全部（2 题）" }).click();
     await page.waitForURL("**/s/attempts/**");
-    await expect(page.getByText(/错题重练 · 第 1 次/)).toBeVisible();
+    await expectPracticeSource(page, /错题重练 · 第 1 次/);
     await placeOrdering(page, 1, [
       "古人说「不以人废言」，评价作品同样不能因作者的声名与好恶而先存成见。",
       "然而现实中，不少批评在作品开卷之前就已写好：喜欢作者的，赞其败笔为创新；厌恶作者的，讥其妙处为侥幸。",
@@ -1008,9 +1012,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       .click();
     await page.getByRole("button", { name: "开始练习" }).click();
     await page.waitForURL("**/s/attempts/**");
-    await expect(
-      page.getByText(`课程：${w1.courseName} · 第 1 次`),
-    ).toBeVisible();
+    await expectPracticeSource(page, `课程：${w1.courseName} · 第 1 次`);
 
     // —— 本题导出成功路径：材料页 PNG 实栅格化（TT-12 携带留项；Chromium 真渲染，
     //    jsdom 不伪造 html-to-image）——材料长文 + 真实配图成页

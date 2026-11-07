@@ -385,7 +385,9 @@ describe("StudentHomePage 三态", () => {
     expect(await screen.findByText("学生主页加载失败")).toBeInTheDocument();
     mockedStudent.mockResolvedValue(makeStudent());
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
-    expect(await screen.findByText("讲义阅读地图")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "讲义阅读地图" }),
+    ).toBeInTheDocument();
   });
 
   it("404 STUDENT_NOT_FOUND 显示「找不到这名学生」错误页（带返回学生列表）", async () => {
@@ -409,7 +411,7 @@ describe("StudentHomePage 指标区", () => {
   it("头部汇总 + 薄弱考点前 5 文字表（按错误数降序，待批单列）", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("讲义阅读地图");
+    await screen.findByRole("heading", { name: "讲义阅读地图" });
 
     expect(screen.getByText("李小红")).toBeInTheDocument();
     expect(
@@ -458,7 +460,7 @@ describe("StudentHomePage 指标区", () => {
   it("异常题卡片（D6 两类）与跳作答详情链接", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("用时异常题");
+    await screen.findByRole("heading", { name: /^用时异常题/ });
 
     expect(screen.getByText("用时偏慢")).toBeInTheDocument();
     expect(screen.getByText("提示过多")).toBeInTheDocument();
@@ -579,7 +581,7 @@ describe("StudentHomePage 指标区", () => {
   it("错题与存疑空态与超出单页时的总数提示", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("错题与存疑");
+    await screen.findByRole("heading", { name: /^错题与存疑/ });
     expect(screen.getByText("当前筛选下没有这一类题目。")).toBeInTheDocument();
 
     mockedReview.mockResolvedValue({
@@ -598,7 +600,7 @@ describe("StudentHomePage 指标区", () => {
   it("重做概览与离线作答占比", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("课程练习重做");
+    await screen.findByRole("heading", { name: /^课程练习重做/ });
 
     // 错题行与重做表可能同名单元——重做断言限定在表格内
     const redoTable = screen.getByRole("table", {
@@ -612,7 +614,7 @@ describe("StudentHomePage 指标区", () => {
   it("「查看该生全部作答」跳作答数据页（携带 studentId）", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("讲义阅读地图");
+    await screen.findByRole("heading", { name: "讲义阅读地图" });
     expect(
       screen.getByRole("link", { name: /查看该生全部作答/ }),
     ).toHaveAttribute("href", `/t/data?studentId=${S2}`);
@@ -621,7 +623,7 @@ describe("StudentHomePage 指标区", () => {
   it("「导出给 AI」入口指向导出页并携带 studentId 预填（T4.4）", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("讲义阅读地图");
+    await screen.findByRole("heading", { name: "讲义阅读地图" });
     expect(screen.getByRole("link", { name: /导出给 AI/ })).toHaveAttribute(
       "href",
       `/t/export?studentId=${S2}`,
@@ -629,11 +631,90 @@ describe("StudentHomePage 指标区", () => {
   });
 });
 
+describe("StudentHomePage 页内导航", () => {
+  it("页内导航的八个入口均对应真实区块", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    renderPage(`/t/students/${S2}?kind=corrected`);
+
+    const nav = await screen.findByRole("navigation", {
+      name: "学生详情页内导航",
+    });
+    const destinations = [
+      ["作答记录", "作答记录"],
+      ["薄弱考点", "薄弱考点"],
+      ["错题与存疑", "错题与存疑"],
+      ["用时异常题", "用时异常题"],
+      ["课程练习重做", "重做概览"],
+      ["离线作答", "离线作答"],
+      ["讲义阅读地图", "讲义阅读地图"],
+      ["AI 报告", "报告"],
+    ] as const;
+    for (const [label, region] of destinations) {
+      const target = screen.getByRole("region", { name: region });
+      expect(target.id).not.toBe("");
+      for (const link of within(nav).getAllByRole("link", { name: label })) {
+        expect(link).toHaveAttribute("href", `#${target.id}`);
+      }
+    }
+    expect(mockedReports).not.toHaveBeenCalled();
+  });
+});
+
 describe("StudentHomePage 讲义阅读地图（T4.0 §4.4.4）", () => {
+  it("默认只显示讲义摘要，可独立展开单篇和收起整块地图", async () => {
+    const original = makeStudent().lectures;
+    mockedStudent.mockResolvedValue(
+      makeStudent({
+        lectures: [
+          ...original,
+          ...original.map((entry) => ({
+            ...entry,
+            lectureId: "99999999-9999-4999-8999-999999999992",
+            title: "第2讲 有理数加减法",
+          })),
+        ],
+      }),
+    );
+    renderPage();
+    const firstTitle = await screen.findByText("第1讲 有理数");
+    const secondTitle = screen.getByText("第2讲 有理数加减法");
+    const first = firstTitle.closest("details");
+    const second = secondTitle.closest("details");
+    const heading = screen.getByRole("heading", { name: "讲义阅读地图" });
+    const map = heading.closest("details");
+
+    expect(map).toHaveAttribute("open");
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).not.toHaveAttribute("open");
+    expect(second).not.toHaveAttribute("open");
+    expect(firstTitle).toBeVisible();
+    expect(
+      within(first ?? firstTitle).getByText("一、正数与负数"),
+    ).not.toBeVisible();
+
+    fireEvent.click(firstTitle);
+    expect(first).toHaveAttribute("open");
+    expect(second).not.toHaveAttribute("open");
+    expect(
+      within(first ?? firstTitle).getByText("一、正数与负数"),
+    ).toBeVisible();
+
+    fireEvent.click(heading);
+    expect(map).not.toHaveAttribute("open");
+    expect(firstTitle).not.toBeVisible();
+    fireEvent.click(heading);
+    expect(firstTitle).toBeVisible();
+    expect(first).toHaveAttribute("open");
+
+    fireEvent.click(firstTitle);
+    expect(first).not.toHaveAttribute("open");
+  });
+
   it("目录树逐项状态中文渲染：节三态 + 折叠两态 + steps 连点跳过", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("第1讲 有理数");
+    fireEvent.click(await screen.findByText("第1讲 有理数"));
 
     // 节：细读 / 掠过 / 未到达
     expect(screen.getByText("细读")).toBeInTheDocument();
@@ -650,7 +731,7 @@ describe("StudentHomePage 讲义阅读地图（T4.0 §4.4.4）", () => {
   it("显示 rawDwell 与 dwell（「含挂机 X」）；显著标注行为推断", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("第1讲 有理数");
+    fireEvent.click(await screen.findByText("第1讲 有理数"));
 
     expect(screen.getByText(/含挂机 30 秒/)).toBeInTheDocument();
     expect(screen.getByText(/停留 1 分 30 秒/)).toBeInTheDocument();
@@ -673,7 +754,7 @@ describe("StudentHomePage AI 报告区（T4.7 实数据；T-PR4 起默认折叠�
   it("默认折叠不取列表（首屏请求 ≤ 4）；展开后才出现报告区", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    await screen.findByText("讲义阅读地图");
+    await screen.findByRole("heading", { name: "讲义阅读地图" });
     // 首屏只发 4 个请求：画像 / 课程 / 作答记录 / 错题与存疑——报告列表不取
     expect(mockedReports).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /AI 报告/ }));
@@ -690,7 +771,7 @@ describe("StudentHomePage 筛选联动", () => {
   it("URL 初始化的筛选透传接口（days/courseId）；切换天数重查", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage(`/t/students/${S2}?days=7&courseId=${COURSE_A}`);
-    await screen.findByText("讲义阅读地图");
+    await screen.findByRole("heading", { name: "讲义阅读地图" });
     expect(mockedStudent).toHaveBeenLastCalledWith(S2, {
       days: 7,
       courseId: COURSE_A,

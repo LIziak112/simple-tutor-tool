@@ -24,6 +24,11 @@ import {
 } from "@/features/attempt/attempt-queries";
 import { setAttemptStartLayoutIntent } from "@/features/attempt/attempt-start-intent";
 import {
+  readAutoSubmitChoice,
+  saveAutoSubmitChoice,
+} from "@/features/attempt/choice-submit-mode";
+import { ChoiceSubmitOptions } from "@/features/attempt/PracticeWorkspace";
+import {
   getPracticePreference,
   usePracticePreference,
 } from "@/features/attempt/practice-preference-store";
@@ -86,6 +91,7 @@ function initialSelectionOf(
 function RedoConfirmDialog({
   open,
   nextAttemptNo,
+  restarting,
   busy,
   onConfirm,
   onCancel,
@@ -94,6 +100,7 @@ function RedoConfirmDialog({
 }: {
   open: boolean;
   nextAttemptNo: number;
+  restarting: boolean;
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -110,7 +117,7 @@ function RedoConfirmDialog({
     >
       <DialogContent
         aria-labelledby={undefined}
-        aria-label="再做一次确认"
+        aria-label={restarting ? "清空并重新作答确认" : "再做一次确认"}
         className="top-auto bottom-4 w-[calc(100%-2rem)] max-w-sm translate-y-0 rounded-2xl sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
         closeDisabled={busy}
         onOpenAutoFocus={(event) => {
@@ -128,10 +135,11 @@ function RedoConfirmDialog({
           if (busy) event.preventDefault();
         }}
       >
-        <DialogTitle>再做一次</DialogTitle>
+        <DialogTitle>{restarting ? "清空并重新作答" : "再做一次"}</DialogTitle>
         <DialogDescription className="mt-2">
-          将开始第 {nextAttemptNo}{" "}
-          次，从空白开始。之前的记录会保留，可随时回看。
+          {restarting
+            ? "当前作答及其答案、手写、草稿和标画将从记录中移除，然后从空白开始。已交卷的记录仍可回看。"
+            : `将开始第 ${nextAttemptNo} 次，从空白开始。之前的记录会保留，可随时回看。`}
         </DialogDescription>
         {error !== null ? (
           <p role="alert" className="text-sm text-destructive">
@@ -148,8 +156,13 @@ function RedoConfirmDialog({
           >
             先不做
           </Button>
-          <Button className="min-h-11" disabled={busy} onClick={onConfirm}>
-            {busy ? "正在开始…" : "开始新一次"}
+          <Button
+            className="min-h-11"
+            variant={restarting ? "destructive" : "default"}
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {busy ? "正在开始…" : restarting ? "确认清空并重开" : "开始新一次"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -248,11 +261,18 @@ function UnitLandingView({
   const startAttempt = useStartCourseAttempt(courseId, unitId);
   const redoTriggerRef = useRef<HTMLButtonElement>(null);
   const [redoOpen, setRedoOpen] = useState(false);
+  const [restartTarget, setRestartTarget] = useState<string | null>(null);
 
   const summary = landing.summary;
+  const draft = landing.attempts.find((attempt) => attempt.status === "draft");
   const hasDraft = summary?.hasDraft === true;
   const submittedCount = summary?.submittedCount ?? 0;
-  const nextAttemptNo = (summary?.count ?? 0) + 1;
+  const nextAttemptNo =
+    Math.max(0, ...landing.attempts.map((attempt) => attempt.attemptNo)) + 1;
+  const [choiceOverride, setChoiceOverride] = useState<boolean | null>(null);
+  const autoSubmitChoice =
+    choiceOverride ??
+    (draft !== undefined && readAutoSubmitChoice(draft.attemptId));
   const busy = startAttempt.isPending;
 
   // 初值链：已保存偏好 → 单元推荐 → 缺省；子组件在落地数据到达后挂载，
@@ -284,10 +304,14 @@ function UnitLandingView({
     void navigate(`/s/attempts/${attemptId}`);
   };
 
-  const onStart = () => {
+  const onStart = (restartAttemptId?: string) => {
     startAttempt.mutate(
-      rhythmTouched
-        ? { ...workflowStartOptions(), feedbackMode: selected.feedback }
+      rhythmTouched || restartAttemptId !== undefined
+        ? {
+            ...workflowStartOptions(),
+            ...(rhythmTouched ? { feedbackMode: selected.feedback } : {}),
+            ...(restartAttemptId !== undefined ? { restartAttemptId } : {}),
+          }
         : undefined,
       {
         onSuccess: (attempt) => {
@@ -295,6 +319,9 @@ function UnitLandingView({
           // 统一；闸门 A1）：失败/中断不得残留——模块级值永不过期，会劫持
           // 之后任意无关作答的初始布局（裁决⑨「一次性」变「下一次消费」）
           setAttemptStartLayoutIntent(selected.layout);
+          if (choiceOverride !== null || attempt.id !== draft?.attemptId) {
+            saveAutoSubmitChoice(attempt.id, autoSubmitChoice);
+          }
           enterAttempt(attempt.id);
         },
       },
@@ -455,8 +482,13 @@ function UnitLandingView({
               </label>
             ))}
           </fieldset>
+          <ChoiceSubmitOptions
+            value={autoSubmitChoice}
+            onChange={setChoiceOverride}
+            disabled={selected.feedback !== "per_question"}
+          />
           <p className="text-xs text-muted-foreground">
-            反馈节奏与布局可在此预选；进入练习后可在做题方式里查看，老师允许时也可调整。
+            进入练习后可在右上角「做题方式」调整。选中即提交仅在逐题反馈时生效。
           </p>
         </div>
 
@@ -466,34 +498,56 @@ function UnitLandingView({
             <Button
               className="min-h-12 px-8 text-base"
               disabled={busy}
-              onClick={onStart}
+              onClick={() => onStart()}
               aria-label={`开始练习 ${landing.title}`}
             >
               <Play aria-hidden className="size-4" />
               {busy ? "正在开始…" : "开始练习"}
             </Button>
           ) : hasDraft ? (
-            <Button
-              className="min-h-12 px-8 text-base"
-              disabled={busy}
-              onClick={onStart}
-              aria-label="继续作答"
-            >
-              <Play aria-hidden className="size-4" />
-              {busy ? "正在打开…" : "继续作答"}
-            </Button>
+            <>
+              <Button
+                className="min-h-12 px-8 text-base"
+                disabled={busy}
+                onClick={() => onStart()}
+                aria-label="继续作答"
+              >
+                <Play aria-hidden className="size-4" />
+                {busy && !redoOpen ? "正在打开…" : "继续作答"}
+              </Button>
+              {draft !== undefined && (
+                <Button
+                  variant="outline"
+                  className="min-h-12 px-4 text-destructive"
+                  ref={redoTriggerRef}
+                  disabled={busy}
+                  onClick={() => {
+                    startAttempt.reset();
+                    setRestartTarget(draft.attemptId);
+                    setRedoOpen(true);
+                  }}
+                >
+                  <RotateCcw aria-hidden className="size-4" />
+                  清空并重新作答
+                </Button>
+              )}
+            </>
           ) : (
             <Button
               className="min-h-12 px-8 text-base"
               ref={redoTriggerRef}
-              onClick={() => setRedoOpen(true)}
+              onClick={() => {
+                startAttempt.reset();
+                setRestartTarget(null);
+                setRedoOpen(true);
+              }}
               aria-label="再做一次"
             >
               <RotateCcw aria-hidden className="size-4" />
               再做一次
             </Button>
           )}
-          {startAttempt.isError && (
+          {!redoOpen && startAttempt.isError && (
             <p role="alert" className="text-xs text-destructive">
               {startAttempt.error instanceof Error
                 ? startAttempt.error.message
@@ -550,6 +604,7 @@ function UnitLandingView({
       <RedoConfirmDialog
         open={redoOpen}
         nextAttemptNo={nextAttemptNo}
+        restarting={restartTarget !== null}
         busy={busy}
         onClosed={() => redoTriggerRef.current?.focus()}
         error={
@@ -560,9 +615,12 @@ function UnitLandingView({
             : null
         }
         onConfirm={() => {
-          onStart();
+          onStart(restartTarget ?? undefined);
         }}
-        onCancel={() => setRedoOpen(false)}
+        onCancel={() => {
+          startAttempt.reset();
+          setRedoOpen(false);
+        }}
       />
     </section>
   );

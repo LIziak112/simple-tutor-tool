@@ -5,8 +5,17 @@ import type {
   HintOpenedEntry,
   MaterialRef,
   PracticeLayout,
+  StudentAnswer,
 } from "@tutor/contract";
-import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
+import {
+  ClipboardCheck,
+  Grid2X2,
+  ListChecks,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RotateCw,
+  SlidersHorizontal,
+} from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
@@ -30,6 +39,10 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
 import { questionBindings } from "@/features/answering/question-binding";
+import {
+  type AnswerCardFilter,
+  LiveAttemptAnswerCard,
+} from "@/features/attempt/AttemptAnswerCard";
 import {
   AttemptBottomBar,
   AttemptNavigatorButton,
@@ -94,6 +107,10 @@ import {
   useUpdateAttemptWorkflow,
 } from "./attempt-queries";
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
+import {
+  readAutoSubmitChoice,
+  saveAutoSubmitChoice,
+} from "./choice-submit-mode";
 import { focusWhenReachable } from "./focus-when-reachable";
 import { useGroupMaterialLayout } from "./group-material-layout-store";
 import { LazyMountWindow } from "./lazy-mount-window";
@@ -107,7 +124,6 @@ import {
   PracticeKeyboardHelpDialog,
   PracticeKeyboardHelpMenuItem,
   PracticeModeDialog,
-  PracticeModeSummary,
   SingleQuestionActionBar,
 } from "./PracticeWorkspace";
 import {
@@ -128,7 +144,6 @@ import {
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
-import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
   retryAttemptLocalPersistence,
@@ -369,13 +384,17 @@ function AnswerView({
     }));
   }, []);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [navigatorFilter, setNavigatorFilter] =
+    useState<AnswerCardFilter>("all");
   const navigatorTrigger = useRef<HTMLElement | null>(null);
+  const navigatorSidebarTrigger = useRef<HTMLButtonElement>(null);
+  const navigatorJumping = useRef(false);
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
-  const openNavigator = () => {
-    navigatorTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+  const [saveDetailsOpen, setSaveDetailsOpen] = useState(false);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+  const openNavigator = (trigger: HTMLButtonElement) => {
+    navigatorTrigger.current = trigger;
+    navigatorJumping.current = false;
     setNavigatorOpen(true);
   };
   // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
@@ -643,6 +662,13 @@ function AnswerView({
     setPracticeLayout(currentLayout());
   }, [boundAccountId, practiceProtocol]);
   const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
+  const [autoSubmitChoice, setAutoSubmitChoice] = useState(() =>
+    readAutoSubmitChoice(attemptId),
+  );
+  const canAutoSubmitChoice =
+    autoSubmitChoice && practiceWorkflow?.canSubmitQuestion === true;
+  const navigatorMaterialsReady =
+    answers !== null && attemptMaterialsEditable(materialRecovery);
   // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
   const [singleQuestionId, setSingleQuestionId] = useState<string | null>(null);
   const resolvedSingleQuestionId = useMemo(() => {
@@ -693,6 +719,7 @@ function AnswerView({
     singleMode,
     syncNow: draftSync.syncNow,
     flushQuestion,
+    flushQuestionLocal,
     inkControllers,
     beforeSubmit: async () => (editor === null ? true : editor.request(null)),
   });
@@ -763,6 +790,30 @@ function AnswerView({
     },
     [practiceSubmit.submit],
   );
+  const { getSubmittingId } = practiceSubmit;
+  const [queuedChoices, setQueuedChoices] = useState<string[]>([]);
+  const onAutoChoiceAnswer = useCallback(
+    (questionId: string, answer: StudentAnswer, defer?: boolean) => {
+      const submittingId = getSubmittingId();
+      // 已出站的本题答案不再修改。其他题的点选照常保存，并等待提交。
+      if (submittingId === questionId) return;
+      setAnswer(questionId, answer, defer);
+      if (submittingId === null && queuedChoices.length === 0) {
+        void runPracticeSubmit(questionId);
+      } else {
+        setQueuedChoices((queued) =>
+          queued.includes(questionId) ? queued : [...queued, questionId],
+        );
+      }
+    },
+    [getSubmittingId, queuedChoices.length, runPracticeSubmit, setAnswer],
+  );
+  const singleQuestion = flatQuestions[singleIndex];
+  const singleAutoSubmit =
+    canAutoSubmitChoice &&
+    singleQuestion !== undefined &&
+    questionBindings[singleQuestion.type].placement === "options-radio";
+
   // §11 纪律 7：单题切题 replace 更新 q、回列表清除 q——不加历史条目；
   // 其他查询参数（returnTo/aiFrom）原样保留
   useEffect(() => {
@@ -831,6 +882,7 @@ function AnswerView({
     focusElement?: HTMLElement | null,
   ) => {
     if (editor && !(await editor.request(null))) return;
+    if (navigatorOpen) navigatorJumping.current = true;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
     // 显式跳题信号（C 口径）：只有这条入口发材料回顶信号；seq 单调递增
@@ -1003,7 +1055,12 @@ function AnswerView({
               else if (online && !denied) await openSubmitDialog();
               return;
             }
-            // 与主操作按钮同链：未提交（含空答「不会」）= 提交本题
+            if (singleAutoSubmit) {
+              const next = questionIds[currentIndex + 1];
+              if (next !== undefined) await goSingleQuestion(next);
+              return;
+            }
+            // 与主操作按钮同链，空白也可提交。
             await runPracticeSubmit(currentId);
             return;
           }
@@ -1231,8 +1288,39 @@ function AnswerView({
 
   // 访问权终态（T2A.6，D7）：已无权限时收起交卷入口（交卷必然同样被拒）
   const denied = draftSync.status.state === "denied";
+  const nextQueuedChoice = queuedChoices[0];
+  const queuedChoiceSubmitted =
+    nextQueuedChoice !== undefined &&
+    (progressById.get(nextQueuedChoice)?.submittedAt ?? null) !== null;
+  const canDrainChoices =
+    canAutoSubmitChoice && !denied && !practiceSubmit.finished;
+  const choiceQueuePaused =
+    !online ||
+    confirmOpen ||
+    practiceProblem !== null ||
+    practiceSubmit.lastError !== null ||
+    practiceSubmit.submittingId !== null ||
+    feedbackUpdate.isPending;
 
-  // 做题方式唯一编辑器的接线（列表模式行内摘要行 / 单题模式弹窗共用）
+  useEffect(() => {
+    if (nextQueuedChoice === undefined) return;
+    if (!canDrainChoices) {
+      setQueuedChoices([]);
+      return;
+    }
+    if (choiceQueuePaused || getSubmittingId() !== null) return;
+    setQueuedChoices((queued) => queued.slice(1));
+    if (!queuedChoiceSubmitted) void runPracticeSubmit(nextQueuedChoice);
+  }, [
+    canDrainChoices,
+    choiceQueuePaused,
+    getSubmittingId,
+    nextQueuedChoice,
+    queuedChoiceSubmitted,
+    runPracticeSubmit,
+  ]);
+
+  // 两种布局共用更多菜单里的做题方式弹窗。
   const practiceModeEditor =
     practiceWorkflow === undefined
       ? null
@@ -1240,6 +1328,11 @@ function AnswerView({
           workflow: practiceWorkflow,
           layout: practiceLayout,
           onLayoutChange: setPracticeLayoutExplicit,
+          autoSubmitChoice,
+          onAutoSubmitChoiceChange: (auto: boolean) => {
+            setAutoSubmitChoice(auto);
+            saveAutoSubmitChoice(attemptId, auto);
+          },
           onFeedbackModeChange: (mode: typeof practiceWorkflow.feedbackMode) =>
             feedbackUpdate.mutate({
               feedbackMode: mode,
@@ -1262,11 +1355,15 @@ function AnswerView({
       <SingleQuestionActionBar
         navigation={
           <AttemptNavigatorButton
-            icon={false}
             onOpen={openNavigator}
             disabled={practiceSubmit.submittingId !== null}
           >
-            {singleIndex + 1}/{total}
+            <span aria-hidden className="hidden sm:inline">
+              答题卡
+            </span>
+            <span>
+              {singleIndex + 1}/{total}
+            </span>
           </AttemptNavigatorButton>
         }
         showNext={
@@ -1283,9 +1380,7 @@ function AnswerView({
             finishDisabled={!online || denied || total === 0}
             onFinish={openSubmitDialog}
             submitted={(singleProgressRow?.submittedAt ?? null) !== null}
-            answered={
-              navigationItems[singleIndex]?.completion.state === "filled"
-            }
+            autoSubmit={singleAutoSubmit}
             busy={practiceSubmit.submittingId !== null}
             finished={practiceSubmit.finished}
             hasNext={singleIndex < total - 1}
@@ -1328,9 +1423,10 @@ function AnswerView({
   return (
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
       <AttemptWorkspace>
-        {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
+        {/* 练习资料与保存详情分别从更多菜单打开。 */}
         <AttemptHeader
           title={data.title}
+          moreTriggerRef={moreTriggerRef}
           menuItems={
             <>
               {singleMode && !practiceSubmit.finished && (
@@ -1338,26 +1434,14 @@ function AnswerView({
                   disabled={!online || denied || total === 0}
                   onSelect={openSubmitDialog}
                 >
+                  <ClipboardCheck aria-hidden className="size-4" />
                   提前交卷
                 </DropdownMenuItem>
               )}
               {practiceWorkflow !== undefined && (
                 <>
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      setModeSettingsOpen(true);
-                      // 单题模式由弹窗承载同一编辑器；列表模式展开行内摘要行
-                      if (singleMode) return;
-                      requestAnimationFrame(() => {
-                        const trigger =
-                          singleWorkspaceRef.current?.querySelector<HTMLButtonElement>(
-                            '[aria-label="调整做题方式"]',
-                          );
-                        trigger?.scrollIntoView?.({ block: "nearest" });
-                        trigger?.focus();
-                      });
-                    }}
-                  >
+                  <DropdownMenuItem onSelect={() => setModeSettingsOpen(true)}>
+                    <SlidersHorizontal aria-hidden className="size-4" />
                     做题方式
                   </DropdownMenuItem>
                   {keyboardDevice && (
@@ -1367,6 +1451,10 @@ function AnswerView({
                   )}
                 </>
               )}
+              <DropdownMenuItem onSelect={() => setSaveDetailsOpen(true)}>
+                <ListChecks aria-hidden className="size-4" />
+                保存详情
+              </DropdownMenuItem>
             </>
           }
           actions={
@@ -1376,71 +1464,6 @@ function AnswerView({
               onOpenQuestion={aiCompanion.openQuestion}
             />
           }
-          status={(closeDetails) => (
-            <div className="flex min-w-0 items-center gap-2">
-              <p
-                data-testid="draft-status"
-                className="min-w-0 text-xs break-words text-muted-foreground"
-                aria-live="polite"
-              >
-                {saveStatus}
-              </p>
-              <AttemptSaveDetails
-                attemptId={attemptId}
-                questionIds={questionIds}
-                controllers={inkControllers}
-                onJump={async (questionId) => {
-                  closeDetails();
-                  // 单题模式必须走 goSingleQuestion：直连 jumpToQuestion 不更新
-                  // 单题态，跳转对隐藏卡无效（闸门修复）
-                  await jumpForMode(questionId);
-                }}
-                onRetry={async () => {
-                  await recoverAttemptMaterials(attemptId, questionIds);
-                  await retryAttemptLocalPersistence(attemptId, questionIds);
-                  await Promise.all([
-                    draftSync.syncNow(),
-                    catchUpNotes(attemptId),
-                    catchUpAnnotations(attemptId),
-                  ]);
-                }}
-              />
-              {saveStatus.startsWith("本机保存失败") && (
-                <Button
-                  variant="ghost"
-                  className="size-11 shrink-0 p-0"
-                  title="重试本机保存"
-                  aria-label="重试本机保存"
-                  disabled={retryingSave}
-                  onClick={async () => {
-                    setRetryingSave(true);
-                    setRetrySaveError(null);
-                    try {
-                      await retryAttemptLocalPersistence(
-                        attemptId,
-                        questionIds,
-                      );
-                    } catch (cause) {
-                      setRetrySaveError(
-                        cause instanceof Error
-                          ? cause.message
-                          : "本机保存仍失败，请保持页面打开",
-                      );
-                    } finally {
-                      setRetryingSave(false);
-                    }
-                  }}
-                >
-                  <RotateCw />
-                </Button>
-              )}
-              {retrySaveError && (
-                <span role="alert" className="text-xs text-destructive">
-                  {retrySaveError}
-                </span>
-              )}
-            </div>
-          )}
           onBack={async () => {
             if (!editor || (await editor.request(null))) onBackHome();
           }}
@@ -1457,6 +1480,67 @@ function AnswerView({
             <span>共 {total} 题</span>
           </p>
         </AttemptHeader>
+
+        <p data-testid="draft-status" className="sr-only" aria-live="polite">
+          {saveStatus}
+        </p>
+        {(saveStatus.startsWith("本机保存失败") || retrySaveError !== null) && (
+          <div
+            className="flex items-center gap-2 text-sm text-destructive"
+            role="alert"
+          >
+            <span>{saveStatus}</span>
+            {saveStatus.startsWith("本机保存失败") && (
+              <Button
+                variant="ghost"
+                className="size-11 shrink-0 p-0"
+                title="重试本机保存"
+                aria-label="重试本机保存"
+                disabled={retryingSave}
+                onClick={async () => {
+                  setRetryingSave(true);
+                  setRetrySaveError(null);
+                  try {
+                    await retryAttemptLocalPersistence(attemptId, questionIds);
+                  } catch (cause) {
+                    setRetrySaveError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "本机保存仍失败，请保持页面打开",
+                    );
+                  } finally {
+                    setRetryingSave(false);
+                  }
+                }}
+              >
+                <RotateCw aria-hidden className="size-4" />
+              </Button>
+            )}
+            {retrySaveError && (
+              <span className="text-xs text-destructive">{retrySaveError}</span>
+            )}
+          </div>
+        )}
+        <AttemptSaveDetails
+          open={saveDetailsOpen}
+          onOpenChange={setSaveDetailsOpen}
+          onReturnFocus={() => moreTriggerRef.current?.focus()}
+          attemptId={attemptId}
+          questionIds={questionIds}
+          controllers={inkControllers}
+          onJump={async (questionId) => {
+            await jumpForMode(questionId);
+          }}
+          onRetry={async () => {
+            await recoverAttemptMaterials(attemptId, questionIds);
+            await retryAttemptLocalPersistence(attemptId, questionIds);
+            await Promise.all([
+              draftSync.syncNow(),
+              catchUpNotes(attemptId),
+              catchUpAnnotations(attemptId),
+            ]);
+          }}
+        />
 
         {/* 升级遗留卷按恢复版本作答的提醒随正文滚动，不占吸顶导航。 */}
         {data.legacyUnverified && (
@@ -1512,57 +1596,71 @@ function AnswerView({
             SAI-22：装配在共享 useAiCompanionDock，本页只传身份与阶段。 */}
         {aiCompanion.rail(
           <div
-            className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
+            className={`grid min-w-0 grid-cols-1 gap-6 ${singleMode ? (navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]") : ""}`}
           >
-            <aside
-              aria-label="答题定位"
-              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start flex-col overflow-hidden lg:flex"
-            >
-              <h2 className="mb-3 shrink-0">
-                <Button
-                  variant="outline"
-                  className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
-                  // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
-                  style={{ outlineOffset: -2 }}
-                  aria-label={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                  title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                  aria-expanded={!navigatorCollapsed}
-                  aria-controls={navigationId}
-                  onClick={() => {
-                    const element = currentQuestionId
-                      ? cardElements.current.get(currentQuestionId)
-                      : undefined;
-                    if (element && currentQuestionId) {
-                      preserveReadingPosition(currentQuestionId);
-                      navigationAnchor.current = {
-                        element,
-                        top: element.getBoundingClientRect().top,
-                      };
-                    }
-                    aiCompanion.controller.toggleNavigator();
-                  }}
-                >
-                  {!navigatorCollapsed && <span>答题卡</span>}
-                  {navigatorCollapsed ? (
-                    <PanelLeftOpen aria-hidden className="size-4" />
-                  ) : (
-                    <PanelLeftClose aria-hidden className="size-4" />
-                  )}
-                </Button>
-              </h2>
-              <div
-                id={navigationId}
-                hidden={navigatorCollapsed}
-                className={`min-h-0 flex-1 flex-col overflow-hidden ${navigatorCollapsed ? "hidden" : "flex"}`}
+            {singleMode && (
+              <aside
+                aria-label="答题定位"
+                className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start flex-col overflow-hidden lg:flex"
               >
-                <QuestionNavigator
-                  items={navigationItems}
-                  currentId={currentQuestionId}
-                  onJump={jumpForMode}
-                  locked={singleMode && practiceSubmit.submittingId !== null}
-                />
-              </div>
-            </aside>
+                <h2 className="mb-3 shrink-0">
+                  <Button
+                    ref={navigatorSidebarTrigger}
+                    variant="outline"
+                    className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
+                    // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
+                    style={{ outlineOffset: -2 }}
+                    aria-label={
+                      navigatorCollapsed ? "展开答题卡" : "收起答题卡"
+                    }
+                    title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
+                    aria-expanded={!navigatorCollapsed}
+                    aria-controls={navigationId}
+                    onClick={() => {
+                      const element = currentQuestionId
+                        ? cardElements.current.get(currentQuestionId)
+                        : undefined;
+                      if (element && currentQuestionId) {
+                        preserveReadingPosition(currentQuestionId);
+                        navigationAnchor.current = {
+                          element,
+                          top: element.getBoundingClientRect().top,
+                        };
+                      }
+                      aiCompanion.controller.toggleNavigator();
+                    }}
+                  >
+                    {!navigatorCollapsed && <span>答题卡</span>}
+                    {navigatorCollapsed ? (
+                      <PanelLeftOpen aria-hidden className="size-4" />
+                    ) : (
+                      <PanelLeftClose aria-hidden className="size-4" />
+                    )}
+                  </Button>
+                </h2>
+                <div
+                  id={navigationId}
+                  hidden={navigatorCollapsed}
+                  className={`min-h-0 flex-1 flex-col overflow-hidden ${navigatorCollapsed ? "hidden" : "flex"}`}
+                >
+                  {!navigatorCollapsed && (
+                    <LiveAttemptAnswerCard
+                      attemptId={attemptId}
+                      questionIds={questionIds}
+                      materialsReady={navigatorMaterialsReady}
+                      items={navigationItems}
+                      currentId={resolvedSingleQuestionId}
+                      filter={navigatorFilter}
+                      onFilterChange={setNavigatorFilter}
+                      onJump={jumpForMode}
+                      locked={practiceSubmit.submittingId !== null}
+                      sidebar
+                      showNextUnanswered
+                    />
+                  )}
+                </div>
+              </aside>
+            )}
 
             {/* 主内容列（M3-D1）：做题方式摘要 + 单题紧凑行 + 题卡列表 +
                 单题占位操作条。作答保护（材料核对）沿用原 ol 的 inert 语义，
@@ -1595,18 +1693,6 @@ function AnswerView({
                     返回
                   </Button>
                 </div>
-              )}
-
-              {/* 做题方式摘要行（§7.1）：v1 卷列表模式才常驻；单题模式经「更多」
-                  在弹窗打开同一编辑器（见下 PracticeModeDialog）；legacy/lesson
-                  不渲染。M5-D3：节奏切换 PATCH 以服务端投影 revision 为 CAS
-                  基线；在途与就地提示（stale/服务端 message）透传 */}
-              {practiceModeEditor !== null && total > 0 && !singleMode && (
-                <PracticeModeSummary
-                  open={modeSettingsOpen}
-                  onOpenChange={setModeSettingsOpen}
-                  {...practiceModeEditor}
-                />
               )}
 
               {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
@@ -1696,6 +1782,10 @@ function AnswerView({
                         : undefined;
                     const practiceSubmitted =
                       (practiceRow?.submittedAt ?? null) !== null;
+                    const autoSubmit =
+                      canAutoSubmitChoice &&
+                      questionBindings[question.type].placement ===
+                        "options-radio";
                     return (
                       <AttemptQuestionRow
                         key={question.id}
@@ -1721,7 +1811,8 @@ function AnswerView({
                         question={question}
                         assignmentTitle={data.title}
                         answer={answers?.[question.id]}
-                        onAnswer={setAnswer}
+                        onAnswer={autoSubmit ? onAutoChoiceAnswer : setAnswer}
+                        repeatChoiceSelection={autoSubmit}
                         attemptId={attemptId}
                         flagged={flaggedQuestions.has(question.id)}
                         onToggleFlag={toggleFlag}
@@ -1757,9 +1848,10 @@ function AnswerView({
                               mode={singleMode ? "single" : "list"}
                               submitted={practiceSubmitted}
                               readable={practiceRow?.feedbackReadable ?? false}
-                              answered={
-                                navigationItems[index]?.completion.state ===
-                                "filled"
+                              autoSubmit={autoSubmit}
+                              queued={
+                                autoSubmit &&
+                                queuedChoices.includes(question.id)
                               }
                               busy={practiceSubmit.submittingId === question.id}
                               anyBusy={practiceSubmit.submittingId !== null}
@@ -1972,13 +2064,18 @@ function AnswerView({
           <DialogContent
             onCloseAutoFocus={(event) => {
               event.preventDefault();
+              if (navigatorJumping.current) return;
               if (singleWorkspaceRef.current?.contains(document.activeElement))
                 return;
-              navigatorTrigger.current?.focus();
+              const trigger = navigatorTrigger.current;
+              trigger?.focus();
+              // 跨断点后底栏入口可能隐藏，回到可见的侧栏入口。
+              if (document.activeElement !== trigger)
+                navigatorSidebarTrigger.current?.focus();
             }}
-            className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg max-lg:top-auto max-lg:bottom-0 max-lg:w-full max-lg:translate-y-0 max-lg:rounded-b-none max-lg:pb-[max(16px,env(safe-area-inset-bottom))]"
+            className="flex h-[560px] max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-[608px] flex-col gap-3 overflow-hidden rounded-[25px] p-4 shadow-md max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-0 max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(16px,env(safe-area-inset-bottom))] [&>[data-slot=dialog-close]]:bg-muted motion-safe:[&>[data-slot=dialog-close]]:transition-transform motion-safe:[&>[data-slot=dialog-close]]:duration-150 motion-safe:[&>[data-slot=dialog-close]]:active:scale-[0.96] [&>[data-slot=dialog-close]]:ease-out motion-reduce:[&>[data-slot=dialog-close]]:transition-opacity motion-reduce:[&>[data-slot=dialog-close]]:duration-150 motion-reduce:[&>[data-slot=dialog-close]]:active:opacity-75"
           >
-            <DialogHeader>
+            <DialogHeader className="shrink-0 pe-12">
               <DialogTitle className="flex items-center gap-2">
                 <Grid2X2 aria-hidden className="size-4" />
                 答题卡
@@ -1993,38 +2090,20 @@ function AnswerView({
                 )}
               </DialogDescription>
             </DialogHeader>
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-1">
-              <QuestionNavigator
-                items={navigationItems}
-                currentId={currentQuestionId}
-                onJump={jumpForMode}
-                locked={singleMode && practiceSubmit.submittingId !== null}
-              />
-            </div>
-            <div className="flex shrink-0 justify-end border-t border-border pt-3">
-              {practiceSubmit.finished ? (
-                <Button
-                  className="min-h-11"
-                  onClick={() => {
-                    setNavigatorOpen(false);
-                    practiceSubmit.viewResult();
-                  }}
-                >
-                  查看本次结果
-                </Button>
-              ) : (
-                <Button
-                  className="min-h-11"
-                  disabled={!online || denied || total === 0}
-                  onClick={() => {
-                    setNavigatorOpen(false);
-                    openSubmitDialog();
-                  }}
-                >
-                  {singleMode ? "提前交卷" : "交卷"}
-                </Button>
-              )}
-            </div>
+            <LiveAttemptAnswerCard
+              attemptId={attemptId}
+              questionIds={questionIds}
+              materialsReady={navigatorOpen && navigatorMaterialsReady}
+              items={navigationItems}
+              currentId={
+                singleMode ? resolvedSingleQuestionId : currentQuestionId
+              }
+              filter={navigatorFilter}
+              onFilterChange={setNavigatorFilter}
+              onJump={jumpForMode}
+              locked={singleMode && practiceSubmit.submittingId !== null}
+              showNextUnanswered={singleMode}
+            />
           </DialogContent>
         </Dialog>
 
@@ -2054,11 +2133,6 @@ function AnswerView({
                 : singleProgressCount / total
               : undefined
           }
-          hideSubmit={
-            singleMode &&
-            !practiceWorkflow?.canSubmitQuestion &&
-            singleIndex === total - 1
-          }
           answered={answered}
           total={total}
           offline={!online}
@@ -2075,18 +2149,11 @@ function AnswerView({
           onOpenNavigator={openNavigator}
         />
 
-        {singleMode && practiceModeEditor !== null && (
+        {practiceModeEditor !== null && (
           <PracticeModeDialog
             open={modeSettingsOpen}
             onOpenChange={setModeSettingsOpen}
-            onReturnFocus={() => {
-              singleWorkspaceRef.current
-                ?.closest('[data-slot="attempt-workspace"]')
-                ?.querySelector<HTMLButtonElement>(
-                  'button[aria-label="练习更多"]',
-                )
-                ?.focus();
-            }}
+            onReturnFocus={() => moreTriggerRef.current?.focus()}
             {...practiceModeEditor}
           />
         )}

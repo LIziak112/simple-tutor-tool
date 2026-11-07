@@ -117,6 +117,7 @@ export function usePracticeQuestionSubmit(input: {
    * 不等其他题；false=本题未追平（就地提示，不发提交请求）。
    */
   flushQuestion: (questionId: string) => Promise<boolean>;
+  flushQuestionLocal: (questionId: string) => Promise<boolean>;
   inkControllers: RefObject<Map<string, InkUploadController>>;
   /** 提交前收笔（编辑器让位）；返回 false = 用户选择继续书写，中止提交 */
   beforeSubmit: () => Promise<boolean>;
@@ -156,6 +157,7 @@ export function usePracticeQuestionSubmit(input: {
   // ---- 在途提交（全卷串行；一题同时最多一个在途） ----
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const submittingRef = useRef<string | null>(null);
+  const getSubmittingId = useCallback(() => submittingRef.current, []);
   /** 幂等键复用对：请求内容未变的重试固定复用同一 mutationId（§10.3） */
   const mutationPairRef = useRef<{ id: string; key: string } | null>(null);
   /** WORKFLOW_MUTATION_CONFLICT 的自动换新重试只做一次 */
@@ -172,7 +174,9 @@ export function usePracticeQuestionSubmit(input: {
   const syncNowRef = useRef(input.syncNow);
   syncNowRef.current = input.syncNow;
   const flushQuestionRef = useRef(input.flushQuestion);
+  const flushQuestionLocalRef = useRef(input.flushQuestionLocal);
   flushQuestionRef.current = input.flushQuestion;
+  flushQuestionLocalRef.current = input.flushQuestionLocal;
   const dataRef = useRef(input.data);
   dataRef.current = input.data;
 
@@ -210,7 +214,6 @@ export function usePracticeQuestionSubmit(input: {
       if (question === undefined) {
         return { kind: "error", message: "这道题不在本次练习中，请刷新页面" };
       }
-      if (!(await beforeSubmitRef.current())) return { kind: "aborted" };
       submittingRef.current = questionId;
       setSubmittingId(questionId);
       setLastError(null);
@@ -222,13 +225,14 @@ export function usePracticeQuestionSubmit(input: {
       let pausedForSubmission = false;
       let keepPaused = false;
       try {
+        if (!(await beforeSubmitRef.current())) return { kind: "aborted" };
+        if (!(await flushQuestionLocalRef.current(questionId))) {
+          return failWith("本题答案尚未保存到本机，请重试");
+        }
         // 手写题笔迹先行（同整卷/lesson「提交前该题笔迹已上传」口径）
         const controller = input.inkControllers.current.get(questionId);
         if (controller !== undefined && !(await controller.flush())) {
-          return {
-            kind: "error",
-            message: "手写内容还没有上传完成，请稍后重试",
-          };
+          return failWith("手写内容还没有上传完成，请稍后重试");
         }
         await syncNowRef.current();
         // 按题 flush（M3-D3 §11-4）：只确认本题答案同步，不等其他题在途重试；
@@ -248,10 +252,7 @@ export function usePracticeQuestionSubmit(input: {
         }
         const evidence = prep.declarations[0];
         if (evidence === undefined) {
-          return {
-            kind: "error",
-            message: "草稿状态获取失败，请检查网络后重试",
-          };
+          return failWith("草稿状态获取失败，请检查网络后重试");
         }
         // 答案版本基线：追平后的本机记录（服务端 CAS 比对，§10.2）
         const record = await draftStore.loadDraft(attemptId);
@@ -492,6 +493,7 @@ export function usePracticeQuestionSubmit(input: {
   return {
     submit,
     submittingId,
+    getSubmittingId,
     finished,
     progress,
     workflow,

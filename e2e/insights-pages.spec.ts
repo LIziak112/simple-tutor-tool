@@ -267,6 +267,67 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     await expect(reviewZone.getByText("计算：")).toBeVisible();
     await expect(reviewZone.getByText("判错").first()).toBeVisible();
 
+    // 页内跳转保留时间、课程与已订正档位，阅读地图标题留在导航下方。
+    await page.getByRole("button", { name: "最近 7 天" }).click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("days") === "7");
+    await page
+      .getByRole("combobox", { name: "课程", exact: true })
+      .selectOption(courseId);
+    await expect(page).toHaveURL(
+      (url) => url.searchParams.get("courseId") === courseId,
+    );
+    await reviewZone.getByRole("button", { name: "已订正" }).click();
+    await expect(page).toHaveURL(
+      (url) =>
+        url.searchParams.get("kind") === "corrected" &&
+        url.searchParams.get("days") === "7" &&
+        url.searchParams.get("courseId") === courseId,
+    );
+    const filteredUrl = page.url();
+    const initialViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const sectionNav = page.getByRole("navigation", {
+      name: "学生详情页内导航",
+    });
+    await sectionNav.getByRole("link", { name: "讲义阅读地图" }).click();
+    await expect(readingMap).toBeFocused();
+    await expect(page).toHaveURL(filteredUrl);
+    const mapTitle = readingMap.getByRole("heading", { name: "讲义阅读地图" });
+    await expect(mapTitle).toBeInViewport();
+    const navBox = await sectionNav.boundingBox();
+    const mapTitleBox = await mapTitle.boundingBox();
+    expect(mapTitleBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (navBox?.y ?? 0) + (navBox?.height ?? 0),
+    );
+
+    const lectureSummary = readingMap
+      .locator("summary")
+      .filter({ hasText: "第1讲 有理数" });
+    const sectionTitle = readingMap.getByText("一、正数与负数", {
+      exact: true,
+    });
+    await expect(sectionTitle).toBeHidden();
+    await lectureSummary.press("Enter");
+    await expect(sectionTitle).toBeVisible();
+    await lectureSummary.press("Space");
+    await expect(sectionTitle).toBeHidden();
+
+    await page.setViewportSize({ width: 320, height: 760 });
+    const narrowNav = sectionNav.getByText("跳至区块", { exact: true });
+    await narrowNav.click();
+    await sectionNav.getByRole("link", { name: "错题与存疑" }).click();
+    await expect(reviewZone).toBeFocused();
+    await expect(
+      sectionNav.getByRole("link", { name: "错题与存疑" }),
+    ).toBeHidden();
+    await expect(reviewZone.getByRole("heading")).toBeInViewport();
+    await expect(page).toHaveURL(filteredUrl);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(320);
+
+    if (initialViewport) await page.setViewportSize(initialViewport);
+
     // —— 题目视角：行展开（题干全文 + 高频错误答案「6 × 1」，fill 聚合口径） ——
     await page.goto("/t/insights/questions");
     const rowButton = page.locator("tbody th button[aria-expanded]").first();

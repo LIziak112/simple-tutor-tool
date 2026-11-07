@@ -234,55 +234,71 @@ describe("StudentCourseUnitPage", () => {
     expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
   });
 
-  it("存在未交卷作答：入口为「继续作答」（直达那份 draft，无确认弹层）", async () => {
-    const hasDraft: StudentUnitLandingData = {
-      ...SUBMITTED_ONCE,
-      attempts: [
-        {
-          attemptId: "66666666-6666-4666-8666-666666666666",
-          attemptNo: 2,
-          status: "draft",
-          score: null,
-          startedAt: "2026-09-28T02:00:00.000Z",
-          submittedAt: null,
-        },
-        ...SUBMITTED_ONCE.attempts,
-      ],
-      summary: {
-        count: 2,
-        submittedCount: 1,
-        hasDraft: true,
-        firstScore: 75,
-        firstResultCounts: {
-          correctCount: 3,
-          totalCount: 4,
+  it.each(["继续作答", "清空并重新作答"])(
+    "存在未交卷作答：%s",
+    async (action) => {
+      const hasDraft: StudentUnitLandingData = {
+        ...SUBMITTED_ONCE,
+        attempts: [
+          {
+            attemptId: "66666666-6666-4666-8666-666666666666",
+            attemptNo: 2,
+            status: "draft",
+            score: null,
+            startedAt: "2026-09-28T02:00:00.000Z",
+            submittedAt: null,
+          },
+          ...SUBMITTED_ONCE.attempts,
+        ],
+        summary: {
+          count: 2,
+          submittedCount: 1,
+          hasDraft: true,
+          firstScore: 75,
+          firstResultCounts: {
+            correctCount: 3,
+            totalCount: 4,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+          latestScore: 75,
+          latestResultCounts: {
+            correctCount: 3,
+            totalCount: 4,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+          bestScore: 75,
+          bestResultCounts: {
+            correctCount: 3,
+            totalCount: 4,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
           pendingCount: 0,
-          pendingSelfReviewCount: 0,
         },
-        latestScore: 75,
-        latestResultCounts: {
-          correctCount: 3,
-          totalCount: 4,
-          pendingCount: 0,
-          pendingSelfReviewCount: 0,
-        },
-        bestScore: 75,
-        bestResultCounts: {
-          correctCount: 3,
-          totalCount: 4,
-          pendingCount: 0,
-          pendingSelfReviewCount: 0,
-        },
-        pendingCount: 0,
-      },
-    };
-    const utils = renderPage(hasDraft);
-    await screen.findByRole("button", { name: "继续作答" });
-    fireEvent.click(screen.getByRole("button", { name: "继续作答" }));
-    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
-  });
+      };
+      const utils = renderPage(hasDraft);
+      fireEvent.click(await screen.findByRole("button", { name: action }));
+      if (action === "清空并重新作答") {
+        expect(await screen.findByRole("dialog")).toHaveTextContent("当前作答");
+        expect(mockedStart).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "确认清空并重开" }));
+        await waitFor(() =>
+          expect(mockedStart).toHaveBeenCalledWith(
+            COURSE_ID,
+            UNIT_ID,
+            expect.objectContaining({
+              restartAttemptId: hasDraft.attempts[0]?.attemptId,
+            }),
+          ),
+        );
+      }
+      await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
+    },
+  );
 
   it("越权（403 COURSE_ACCESS_DENIED）：中文引导 + 返回我的课程", async () => {
     const { ApiError } = await import("@/lib/api");

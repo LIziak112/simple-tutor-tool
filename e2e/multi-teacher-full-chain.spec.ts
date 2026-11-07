@@ -243,7 +243,7 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
 
       await expect(
         studentPage.getByRole("button", { name: "答题卡", exact: true }),
-      ).toContainText("已填 2/2");
+      ).toContainText("已填写 2/2");
       await studentPage
         .getByRole("button", { name: "交卷", exact: true })
         .click();

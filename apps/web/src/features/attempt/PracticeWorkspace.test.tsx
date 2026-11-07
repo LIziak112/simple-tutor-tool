@@ -1,14 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { PracticeLayout, PracticeQuestionProgress } from "@tutor/contract";
+import type { PracticeQuestionProgress } from "@tutor/contract";
 import { expect, it, vi } from "vitest";
+import { AttemptAnswerCard } from "./AttemptAnswerCard";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  PracticeLayoutMenuItems,
-  PracticeModeSummary,
+  PracticeModeDialog,
   SingleQuestionActionBar,
 } from "./PracticeWorkspace";
 import {
@@ -17,10 +12,9 @@ import {
 } from "./practice-protocol";
 import { workflowOf } from "./practice-test-fixtures";
 import type { QuestionNavigationItem } from "./QuestionNavigator";
-import { QuestionNavigator } from "./QuestionNavigator";
 
 /**
- * M3-D1 工作区呈现骨架：v1 新协议卷的做题方式摘要行（含受限文案）、
+ * M3-D1 工作区呈现骨架：v1 新协议卷的做题方式弹窗（含受限文案）、
  * 单题紧凑进度行、占位主操作条、「更多」菜单切换项与题目导航四态标记；
  * 统一公布模式下已提交行不得出现红绿对错或正确率暗示（计划 §7.1/§9.1）。
  */
@@ -70,12 +64,14 @@ it("首道未提交题定位：跳过已提交，全提交返回 null 由调用�
   expect(firstUnsubmittedQuestionId(["q1"], allSubmitted)).toBeNull();
 });
 
-// ---------- 摘要行（PracticeModeSummary） ----------
+// ---------- 做题方式弹窗 ----------
 
 it("v1 可逐题卷显示当前布局摘要，展开可改本次布局", () => {
   const onLayoutChange = vi.fn();
   const { rerender } = render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf()}
       layout="list"
       onLayoutChange={onLayoutChange}
@@ -83,11 +79,12 @@ it("v1 可逐题卷显示当前布局摘要，展开可改本次布局", () => {
   );
   expect(screen.getByText(/列表 · 每题提交后查看/)).toBeInTheDocument();
   // 展开后切换布局（本次作答即时生效）
-  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
   fireEvent.click(screen.getByRole("radio", { name: /单题专注/ }));
   expect(onLayoutChange).toHaveBeenCalledWith("single");
   rerender(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf()}
       layout="single"
       onLayoutChange={onLayoutChange}
@@ -98,7 +95,9 @@ it("v1 可逐题卷显示当前布局摘要，展开可改本次布局", () => {
 
 it("反馈节奏为交卷后查看时摘要显示交卷后查看", () => {
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({
         feedbackMode: "after_attempt",
         allowedFeedbackModes: ["after_attempt"],
@@ -112,7 +111,9 @@ it("反馈节奏为交卷后查看时摘要显示交卷后查看", () => {
 
 it("受限卷显示受限原因，紧邻节奏描述（老师要求交卷后/截止后公布）", () => {
   const { rerender } = render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({
         feedbackMode: "after_attempt",
         canChangeFeedback: false,
@@ -127,7 +128,9 @@ it("受限卷显示受限原因，紧邻节奏描述（老师要求交卷后/截
   expect(screen.getByText(/列表 · 交卷后查看/)).toBeInTheDocument();
   expect(screen.getByText(/老师要求交卷后公布/)).toBeInTheDocument();
   rerender(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({
         feedbackMode: "after_attempt",
         canChangeFeedback: false,
@@ -146,7 +149,9 @@ it("受限卷显示受限原因，紧邻节奏描述（老师要求交卷后/截
 
 it("未受限卷不显示受限文案", () => {
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf()}
       layout="list"
       onLayoutChange={vi.fn()}
@@ -160,14 +165,15 @@ it("未受限卷不显示受限文案", () => {
 it("M5-D3 节奏组（可改态）：两枚单选可点，当前节奏选中，切换回调带目标模式", () => {
   const onFeedbackModeChange = vi.fn();
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({ revision: 2 })}
       layout="list"
       onLayoutChange={vi.fn()}
       onFeedbackModeChange={onFeedbackModeChange}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
   const perQuestion = screen.getByRole("radio", { name: "每题提交后查看" });
   const afterAttempt = screen.getByRole("radio", { name: "交卷后查看" });
   expect(perQuestion).toBeChecked();
@@ -181,7 +187,9 @@ it("M5-D3 节奏组（可改态）：两枚单选可点，当前节奏选中，�
 it("M5-D3 节奏组（教师限单一模式）：允许集外的项禁用，当前项仍可保持", () => {
   const onFeedbackModeChange = vi.fn();
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({
         feedbackMode: "after_attempt",
         allowedFeedbackModes: ["after_attempt"],
@@ -191,7 +199,6 @@ it("M5-D3 节奏组（教师限单一模式）：允许集外的项禁用，当�
       onFeedbackModeChange={onFeedbackModeChange}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
   const afterAttempt = screen.getByRole("radio", { name: "交卷后查看" });
   const perQuestion = screen.getByRole("radio", { name: "每题提交后查看" });
   expect(afterAttempt).toBeChecked();
@@ -201,7 +208,9 @@ it("M5-D3 节奏组（教师限单一模式）：允许集外的项禁用，当�
 
 it("M5-D3 节奏组（提交后冻结）：整组禁用并展示受限文案", () => {
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({
         feedbackMode: "after_attempt",
         canChangeFeedback: false,
@@ -214,25 +223,22 @@ it("M5-D3 节奏组（提交后冻结）：整组禁用并展示受限文案", (
       onFeedbackModeChange={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
   expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
   expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
-  // 展开区紧邻节奏组展示受限文案（摘要行已有一处，展开区追加同源文案）
-  expect(
-    screen.getAllByText("老师要求交卷后公布").length,
-  ).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText("老师要求交卷后公布")).toBeVisible();
 });
 
 it("M5-D3 节奏组（冻结无受限原因，如已开始提交）：整组禁用且不臆造受限文案", () => {
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf({ canChangeFeedback: false })}
       layout="list"
       onLayoutChange={vi.fn()}
       onFeedbackModeChange={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
   expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
   expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
   expect(screen.queryByText(/老师要求/)).toBeNull();
@@ -240,7 +246,9 @@ it("M5-D3 节奏组（冻结无受限原因，如已开始提交）：整组禁�
 
 it("M5-D3 节奏组：PATCH 在途临时禁用；就地错误以 alert 呈现", () => {
   render(
-    <PracticeModeSummary
+    <PracticeModeDialog
+      open
+      onOpenChange={() => {}}
       workflow={workflowOf()}
       layout="list"
       onLayoutChange={vi.fn()}
@@ -249,7 +257,6 @@ it("M5-D3 节奏组：PATCH 在途临时禁用；就地错误以 alert 呈现", 
       feedbackError="反馈节奏刚被其他操作修改，已刷新，请重试"
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /调整做题方式/ }));
   expect(screen.getByRole("radio", { name: "每题提交后查看" })).toBeDisabled();
   expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeDisabled();
   // role="alert" 为 name-from-author，不用 name 匹配，断言文本内容
@@ -291,44 +298,6 @@ it("占位主操作条：上一题/下一题可达且首末题禁用；中间为
   expect(screen.getByRole("button", { name: "下一题" })).toBeDisabled();
 });
 
-// ---------- 「更多」菜单切换项 ----------
-
-it("菜单切换项标记当前布局，点击即时切换不写默认偏好", () => {
-  const onChange = vi.fn();
-  const show = (layout: PracticeLayout) =>
-    render(
-      <DropdownMenu open>
-        <DropdownMenuTrigger asChild>
-          <button type="button">更多</button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          <PracticeLayoutMenuItems layout={layout} onChange={onChange} />
-        </DropdownMenuContent>
-      </DropdownMenu>,
-    );
-  const { rerender } = show("list");
-  expect(
-    screen.getByRole("menuitemradio", { name: /做题方式：列表/ }),
-  ).toHaveAttribute("aria-checked", "true");
-  fireEvent.click(
-    screen.getByRole("menuitemradio", { name: /做题方式：单题/ }),
-  );
-  expect(onChange).toHaveBeenCalledWith("single");
-  rerender(
-    <DropdownMenu open>
-      <DropdownMenuTrigger asChild>
-        <button type="button">更多</button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent>
-        <PracticeLayoutMenuItems layout="single" onChange={onChange} />
-      </DropdownMenuContent>
-    </DropdownMenu>,
-  );
-  expect(
-    screen.getByRole("menuitemradio", { name: /做题方式：单题/ }),
-  ).toHaveAttribute("aria-checked", "true");
-});
-
 // ---------- 题目导航四态（QuestionNavigator 扩展） ----------
 
 const practiceItems: QuestionNavigationItem[] = [
@@ -362,7 +331,14 @@ const practiceItems: QuestionNavigationItem[] = [
 
 it("四态标记：未答/已填未交/已提交/已提交待公布可区分", () => {
   render(
-    <QuestionNavigator items={practiceItems} currentId="a" onJump={vi.fn()} />,
+    <AttemptAnswerCard
+      items={practiceItems}
+      currentId="a"
+      onJump={vi.fn()}
+      filter="all"
+      onFilterChange={vi.fn()}
+      workIds={new Set()}
+    />,
   );
   expect(
     screen.getByRole("button", { name: "第 1 题，未填写" }),
@@ -384,14 +360,18 @@ it("四态标记：未答/已填未交/已提交/已提交待公布可区分", (
       }).className,
   );
   expect(new Set(classes).size).toBe(4);
-  // 图例覆盖新状态
-  expect(screen.getByText(/^已提交$/)).toBeInTheDocument();
-  expect(screen.getByText("已提交 · 待公布")).toBeInTheDocument();
 });
 
 it("统一公布模式：已提交行无红绿对错与正确率暗示", () => {
   render(
-    <QuestionNavigator items={practiceItems} currentId="a" onJump={vi.fn()} />,
+    <AttemptAnswerCard
+      items={practiceItems}
+      currentId="a"
+      onJump={vi.fn()}
+      filter="all"
+      onFilterChange={vi.fn()}
+      workIds={new Set()}
+    />,
   );
   for (const item of practiceItems.filter((i) => i.practice?.submitted)) {
     const button = screen.getByRole("button", {
@@ -421,7 +401,17 @@ it("全部已提交且未填时下一道未答仍指向未填未提交题", () =
       flagged: false,
     },
   ];
-  render(<QuestionNavigator items={items} currentId="a" onJump={jump} />);
+  render(
+    <AttemptAnswerCard
+      items={items}
+      currentId="a"
+      onJump={jump}
+      filter="all"
+      onFilterChange={vi.fn()}
+      workIds={new Set()}
+      showNextUnanswered
+    />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "下一道未答" }));
   expect(jump).toHaveBeenCalledWith("b");
   expect(

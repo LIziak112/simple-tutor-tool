@@ -173,6 +173,7 @@ export function courseUnitAttemptSummaries(
         eq(attempts.studentId, studentId),
         eq(attempts.sourceType, "course"),
         eq(attempts.courseId, courseId),
+        isNull(attempts.abandonedAt),
       ),
     )
     .orderBy(asc(attempts.attemptNo))
@@ -452,6 +453,7 @@ export function getStudentUnitLanding(
         eq(attempts.studentId, studentId),
         eq(attempts.sourceType, "course"),
         eq(attempts.courseId, courseId),
+        isNull(attempts.abandonedAt),
         eq(attempts.unitId, unitId),
       ),
     )
