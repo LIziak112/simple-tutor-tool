@@ -653,11 +653,14 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       await expect(q4.locator('[data-slot="note-layer"]')).toBeVisible();
       // 长卷翻题往返（细项 6）：答题卡跳末题再跳回第 1 题，标画控制器与
       // 笔迹计数不丢（跳题链收笔/滚动/聚焦不卸载已挂载的题卡控制器）
-      const nav = page.getByRole("navigation", { name: "答题卡" });
+      const entry = page.getByRole("button", { name: "答题卡", exact: true });
+      const nav = page.getByRole("dialog", { name: "答题卡" });
+      await entry.click();
       await nav.getByRole("button", { name: /^第 5 题，/ }).click();
       await expect(
         page.getByRole("article", { name: "第 5 题", exact: true }),
       ).toBeVisible();
+      await entry.click();
       await nav.getByRole("button", { name: /^第 1 题，/ }).click();
       await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
       const paintedAfterNav = await canvas.evaluate((element) => {

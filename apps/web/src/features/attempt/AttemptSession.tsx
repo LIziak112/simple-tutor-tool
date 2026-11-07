@@ -31,6 +31,11 @@ import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
 import { questionBindings } from "@/features/answering/question-binding";
 import {
+  type AnswerCardFilter,
+  AttemptAnswerCard,
+  useAnswerCardWorkIds,
+} from "@/features/attempt/AttemptAnswerCard";
+import {
   AttemptBottomBar,
   AttemptNavigatorButton,
 } from "@/features/attempt/AttemptBottomBar";
@@ -369,13 +374,14 @@ function AnswerView({
     }));
   }, []);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [navigatorFilter, setNavigatorFilter] =
+    useState<AnswerCardFilter>("all");
   const navigatorTrigger = useRef<HTMLElement | null>(null);
+  const navigatorJumping = useRef(false);
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
-  const openNavigator = () => {
-    navigatorTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+  const openNavigator = (trigger: HTMLButtonElement) => {
+    navigatorTrigger.current = trigger;
+    navigatorJumping.current = false;
     setNavigatorOpen(true);
   };
   // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
@@ -643,6 +649,14 @@ function AnswerView({
     setPracticeLayout(currentLayout());
   }, [boundAccountId, practiceProtocol]);
   const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
+  const navigatorWorkIds = useAnswerCardWorkIds(
+    attemptId,
+    questionIds,
+    !singleMode &&
+      navigatorOpen &&
+      answers !== null &&
+      attemptMaterialsEditable(materialRecovery),
+  );
   // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
   const [singleQuestionId, setSingleQuestionId] = useState<string | null>(null);
   const resolvedSingleQuestionId = useMemo(() => {
@@ -831,6 +845,7 @@ function AnswerView({
     focusElement?: HTMLElement | null,
   ) => {
     if (editor && !(await editor.request(null))) return;
+    if (navigatorOpen && !singleMode) navigatorJumping.current = true;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
     // 显式跳题信号（C 口径）：只有这条入口发材料回顶信号；seq 单调递增
@@ -1512,57 +1527,61 @@ function AnswerView({
             SAI-22：装配在共享 useAiCompanionDock，本页只传身份与阶段。 */}
         {aiCompanion.rail(
           <div
-            className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
+            className={`grid min-w-0 grid-cols-1 gap-6 ${singleMode ? (navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]") : ""}`}
           >
-            <aside
-              aria-label="答题定位"
-              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start flex-col overflow-hidden lg:flex"
-            >
-              <h2 className="mb-3 shrink-0">
-                <Button
-                  variant="outline"
-                  className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
-                  // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
-                  style={{ outlineOffset: -2 }}
-                  aria-label={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                  title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                  aria-expanded={!navigatorCollapsed}
-                  aria-controls={navigationId}
-                  onClick={() => {
-                    const element = currentQuestionId
-                      ? cardElements.current.get(currentQuestionId)
-                      : undefined;
-                    if (element && currentQuestionId) {
-                      preserveReadingPosition(currentQuestionId);
-                      navigationAnchor.current = {
-                        element,
-                        top: element.getBoundingClientRect().top,
-                      };
-                    }
-                    aiCompanion.controller.toggleNavigator();
-                  }}
-                >
-                  {!navigatorCollapsed && <span>答题卡</span>}
-                  {navigatorCollapsed ? (
-                    <PanelLeftOpen aria-hidden className="size-4" />
-                  ) : (
-                    <PanelLeftClose aria-hidden className="size-4" />
-                  )}
-                </Button>
-              </h2>
-              <div
-                id={navigationId}
-                hidden={navigatorCollapsed}
-                className={`min-h-0 flex-1 flex-col overflow-hidden ${navigatorCollapsed ? "hidden" : "flex"}`}
+            {singleMode && (
+              <aside
+                aria-label="答题定位"
+                className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start flex-col overflow-hidden lg:flex"
               >
-                <QuestionNavigator
-                  items={navigationItems}
-                  currentId={currentQuestionId}
-                  onJump={jumpForMode}
-                  locked={singleMode && practiceSubmit.submittingId !== null}
-                />
-              </div>
-            </aside>
+                <h2 className="mb-3 shrink-0">
+                  <Button
+                    variant="outline"
+                    className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
+                    // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
+                    style={{ outlineOffset: -2 }}
+                    aria-label={
+                      navigatorCollapsed ? "展开答题卡" : "收起答题卡"
+                    }
+                    title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
+                    aria-expanded={!navigatorCollapsed}
+                    aria-controls={navigationId}
+                    onClick={() => {
+                      const element = currentQuestionId
+                        ? cardElements.current.get(currentQuestionId)
+                        : undefined;
+                      if (element && currentQuestionId) {
+                        preserveReadingPosition(currentQuestionId);
+                        navigationAnchor.current = {
+                          element,
+                          top: element.getBoundingClientRect().top,
+                        };
+                      }
+                      aiCompanion.controller.toggleNavigator();
+                    }}
+                  >
+                    {!navigatorCollapsed && <span>答题卡</span>}
+                    {navigatorCollapsed ? (
+                      <PanelLeftOpen aria-hidden className="size-4" />
+                    ) : (
+                      <PanelLeftClose aria-hidden className="size-4" />
+                    )}
+                  </Button>
+                </h2>
+                <div
+                  id={navigationId}
+                  hidden={navigatorCollapsed}
+                  className={`min-h-0 flex-1 flex-col overflow-hidden ${navigatorCollapsed ? "hidden" : "flex"}`}
+                >
+                  <QuestionNavigator
+                    items={navigationItems}
+                    currentId={currentQuestionId}
+                    onJump={jumpForMode}
+                    locked={singleMode && practiceSubmit.submittingId !== null}
+                  />
+                </div>
+              </aside>
+            )}
 
             {/* 主内容列（M3-D1）：做题方式摘要 + 单题紧凑行 + 题卡列表 +
                 单题占位操作条。作答保护（材料核对）沿用原 ol 的 inert 语义，
@@ -1972,13 +1991,18 @@ function AnswerView({
           <DialogContent
             onCloseAutoFocus={(event) => {
               event.preventDefault();
+              if (navigatorJumping.current) return;
               if (singleWorkspaceRef.current?.contains(document.activeElement))
                 return;
               navigatorTrigger.current?.focus();
             }}
-            className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg max-lg:top-auto max-lg:bottom-0 max-lg:w-full max-lg:translate-y-0 max-lg:rounded-b-none max-lg:pb-[max(16px,env(safe-area-inset-bottom))]"
+            className={
+              singleMode
+                ? "flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg max-lg:top-auto max-lg:bottom-0 max-lg:w-full max-lg:translate-y-0 max-lg:rounded-b-none max-lg:pb-[max(16px,env(safe-area-inset-bottom))]"
+                : "flex h-[560px] max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-[608px] flex-col gap-3 overflow-hidden rounded-[25px] p-4 shadow-md max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-0 max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(16px,env(safe-area-inset-bottom))] [&>[data-slot=dialog-close]]:bg-muted motion-safe:[&>[data-slot=dialog-close]]:transition-transform motion-safe:[&>[data-slot=dialog-close]]:duration-150 motion-safe:[&>[data-slot=dialog-close]]:active:scale-[0.96] [&>[data-slot=dialog-close]]:ease-out motion-reduce:[&>[data-slot=dialog-close]]:transition-opacity motion-reduce:[&>[data-slot=dialog-close]]:duration-150 motion-reduce:[&>[data-slot=dialog-close]]:active:opacity-75"
+            }
           >
-            <DialogHeader>
+            <DialogHeader className={singleMode ? undefined : "shrink-0 pe-12"}>
               <DialogTitle className="flex items-center gap-2">
                 <Grid2X2 aria-hidden className="size-4" />
                 答题卡
@@ -1993,38 +2017,51 @@ function AnswerView({
                 )}
               </DialogDescription>
             </DialogHeader>
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-1">
-              <QuestionNavigator
+            {singleMode ? (
+              <>
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-1">
+                  <QuestionNavigator
+                    items={navigationItems}
+                    currentId={currentQuestionId}
+                    onJump={jumpForMode}
+                    locked={singleMode && practiceSubmit.submittingId !== null}
+                  />
+                </div>
+                <div className="flex shrink-0 justify-end border-t border-border pt-3">
+                  {practiceSubmit.finished ? (
+                    <Button
+                      className="min-h-11"
+                      onClick={() => {
+                        setNavigatorOpen(false);
+                        practiceSubmit.viewResult();
+                      }}
+                    >
+                      查看本次结果
+                    </Button>
+                  ) : (
+                    <Button
+                      className="min-h-11"
+                      disabled={!online || denied || total === 0}
+                      onClick={() => {
+                        setNavigatorOpen(false);
+                        openSubmitDialog();
+                      }}
+                    >
+                      提前交卷
+                    </Button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <AttemptAnswerCard
                 items={navigationItems}
                 currentId={currentQuestionId}
+                filter={navigatorFilter}
+                onFilterChange={setNavigatorFilter}
+                workIds={navigatorWorkIds}
                 onJump={jumpForMode}
-                locked={singleMode && practiceSubmit.submittingId !== null}
               />
-            </div>
-            <div className="flex shrink-0 justify-end border-t border-border pt-3">
-              {practiceSubmit.finished ? (
-                <Button
-                  className="min-h-11"
-                  onClick={() => {
-                    setNavigatorOpen(false);
-                    practiceSubmit.viewResult();
-                  }}
-                >
-                  查看本次结果
-                </Button>
-              ) : (
-                <Button
-                  className="min-h-11"
-                  disabled={!online || denied || total === 0}
-                  onClick={() => {
-                    setNavigatorOpen(false);
-                    openSubmitDialog();
-                  }}
-                >
-                  {singleMode ? "提前交卷" : "交卷"}
-                </Button>
-              )}
-            </div>
+            )}
           </DialogContent>
         </Dialog>
 

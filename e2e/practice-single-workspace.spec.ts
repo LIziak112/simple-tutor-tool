@@ -164,7 +164,8 @@ async function navigateSingleQuestion(page: Page, label: "上一题" | "下一�
   await panel
     .getByRole("button", { name: new RegExp(`^第 ${target} 题，`) })
     .click();
-  if (await panel.isVisible()) await panel.press("Escape");
+  // 成功跳题后面板可能正退出，直接发按键，避免等待已卸载的定位器。
+  if (await panel.isVisible()) await page.keyboard.press("Escape");
 }
 
 test.describe("练习反馈升级 M3：单题专注工作区", { tag: ["@student"] }, () => {

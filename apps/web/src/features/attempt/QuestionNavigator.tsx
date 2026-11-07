@@ -1,4 +1,5 @@
 import { ArrowRight, Check, CircleHelp, Clock, Flag } from "lucide-react";
+import type { Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { PracticeSubmittedMark } from "./PracticeWorkspace";
 import {
@@ -23,17 +24,21 @@ export interface QuestionNavigationItem {
 }
 
 /** 单格的可达名：已提交行先报提交事实，不混入对错与得分 */
-function itemLabel(item: QuestionNavigationItem): string {
+function itemLabel(item: QuestionNavigationItem, label?: string): string {
   const state = item.practice?.submitted
     ? item.practice.feedbackReadable
       ? "已提交"
       : "已提交，反馈待公布"
-    : completionLabel(item.completion);
+    : (label ?? completionLabel(item.completion));
   return `第 ${item.index + 1} 题，${state}${item.flagged ? "，待检查" : ""}${item.unsure ? "，标过不会" : ""}`;
 }
 
 /** 单格样式：已提交用中性前景色系（可读=浅底实线、待公布=灰底），非红绿 */
-function itemClass(item: QuestionNavigationItem, current: boolean): string {
+function itemClass(
+  item: QuestionNavigationItem,
+  current: boolean,
+  state: QuestionCompletion["state"],
+): string {
   const base =
     "relative flex size-11 items-center justify-center rounded-md border text-sm font-medium tabular-nums outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
   const currentRing = current
@@ -43,12 +48,75 @@ function itemClass(item: QuestionNavigationItem, current: boolean): string {
     return `${base} ${item.practice.feedbackReadable ? "border-foreground/40 bg-foreground/10 text-foreground" : "border-foreground/25 bg-muted text-muted-foreground"} ${currentRing}`;
   }
   const completion =
-    item.completion.state === "filled"
+    state === "filled"
       ? "border-primary bg-primary text-primary-foreground"
-      : item.completion.state === "partial"
+      : state === "partial"
         ? "border-primary bg-primary/10 text-primary"
         : "border-border bg-card text-foreground";
   return `${base} ${completion} ${currentRing}`;
+}
+
+export function QuestionNavigationTile({
+  item,
+  current,
+  onJump,
+  locked,
+  ref,
+  answerCardState,
+}: {
+  item: QuestionNavigationItem;
+  current: boolean;
+  onJump: (id: string) => void;
+  locked?: boolean;
+  ref?: Ref<HTMLButtonElement> | undefined;
+  answerCardState?: QuestionCompletion["state"] | "unknown" | undefined;
+}) {
+  const state =
+    answerCardState === undefined || answerCardState === "unknown"
+      ? item.completion.state
+      : answerCardState;
+  const label =
+    answerCardState === "partial"
+      ? "部分作答"
+      : answerCardState === "unknown"
+        ? "作答状态尚未确认"
+        : undefined;
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label={itemLabel(item, label)}
+      aria-current={current ? "location" : undefined}
+      disabled={locked}
+      onClick={() => onJump(item.id)}
+      className={itemClass(item, current, state)}
+    >
+      {item.index + 1}
+      {item.practice?.submitted && (
+        <PracticeSubmittedMark
+          feedbackReadable={item.practice.feedbackReadable}
+        />
+      )}
+      {answerCardState === undefined && state === "partial" && (
+        <span aria-hidden className="absolute bottom-1 h-0.5 w-3 bg-current" />
+      )}
+      {item.flagged && (
+        <Flag aria-hidden className="absolute end-0.5 top-0.5 size-2.5" />
+      )}
+      {item.unsure && (
+        <CircleHelp
+          aria-hidden
+          className={
+            answerCardState === undefined
+              ? "absolute bottom-0.5 right-0.5 size-2.5 text-amber-600 dark:text-amber-400"
+              : item.practice?.submitted
+                ? "absolute start-0.5 bottom-0.5 size-2.5"
+                : "absolute start-0.5 top-0.5 size-2.5"
+          }
+        />
+      )}
+    </button>
+  );
 }
 
 export function QuestionNavigator({
@@ -99,39 +167,12 @@ export function QuestionNavigator({
       <ol className="grid min-h-0 grid-cols-[repeat(auto-fill,44px)] justify-start gap-2 overflow-y-auto overscroll-contain p-1">
         {items.map((item) => (
           <li key={item.id}>
-            <button
-              type="button"
-              aria-label={itemLabel(item)}
-              aria-current={item.id === currentId ? "location" : undefined}
-              disabled={locked}
-              onClick={() => onJump(item.id)}
-              className={itemClass(item, item.id === currentId)}
-            >
-              {item.index + 1}
-              {item.practice?.submitted && (
-                <PracticeSubmittedMark
-                  feedbackReadable={item.practice.feedbackReadable}
-                />
-              )}
-              {item.completion.state === "partial" && (
-                <span
-                  aria-hidden
-                  className="absolute bottom-1 h-0.5 w-3 bg-current"
-                />
-              )}
-              {item.flagged && (
-                <Flag
-                  aria-hidden
-                  className="absolute right-0.5 top-0.5 size-2.5"
-                />
-              )}
-              {item.unsure && (
-                <CircleHelp
-                  aria-hidden
-                  className="absolute bottom-0.5 right-0.5 size-2.5 text-amber-600 dark:text-amber-400"
-                />
-              )}
-            </button>
+            <QuestionNavigationTile
+              item={item}
+              current={item.id === currentId}
+              onJump={onJump}
+              locked={locked}
+            />
           </li>
         ))}
       </ol>

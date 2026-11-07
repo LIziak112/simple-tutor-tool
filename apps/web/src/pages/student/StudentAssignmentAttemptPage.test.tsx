@@ -449,7 +449,9 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
       target: { value: "1" },
     });
     expect(screen.getByText("已填 1/4 空")).toBeInTheDocument();
-    expect(document.body.textContent).toContain("已填写 0 / 2 题");
+    expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
+      "已填写 0/2",
+    );
     fireEvent.click(screen.getByRole("button", { name: "交卷" }));
     expect(
       await screen.findByRole("button", { name: /去补全第 1 题/ }),
@@ -475,7 +477,9 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     expect(screen.getByText("第 1 题")).toBeInTheDocument();
     expect(screen.getByText("第 2 题")).toBeInTheDocument();
     // 进度条文本含 <b> 强调，用整页文本断言
-    expect(document.body.textContent).toContain("已填写 0 / 2 题");
+    expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
+      "已填写 0/2",
+    );
     expect(screen.getByText("10月1日 20:00 截止")).toBeInTheDocument();
   });
 
@@ -494,7 +498,9 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
         value: true,
       } satisfies StudentAnswer);
     });
-    expect(document.body.textContent).toContain("已填写 1 / 2 题");
+    expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
+      "已填写 1/2",
+    );
   });
 
   it("交卷确认显示未答数量；确认后 submit 并切结果视图", async () => {
@@ -841,7 +847,9 @@ describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () 
     const yes = await screen.findByRole("radio", { name: /对/ });
     await waitFor(() => expect(yes).toBeChecked());
     expect(screen.getByDisplayValue("4")).toBeInTheDocument();
-    expect(document.body.textContent).toContain("已填写 2 / 2 题");
+    expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
+      "已填写 2/2",
+    );
     // 合并后本地较新 → 触发一次增量同步（逐题 PUT）
     await waitFor(() =>
       expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {

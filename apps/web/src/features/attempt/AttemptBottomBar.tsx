@@ -9,34 +9,39 @@ import { type ReactNode, useId } from "react";
 import { Button } from "@/components/ui/button";
 import { useAttemptEditor } from "./AttemptEditorContext";
 
-/** 手机答题卡入口兼作紧凑进度；完整统计在面板中呈现。 */
+const pressFeedback =
+  "duration-150 ease-out motion-safe:transition-transform motion-safe:enabled:active:scale-[0.96] motion-reduce:transition-opacity motion-reduce:enabled:active:opacity-75";
+
+/** 列表统一使用底栏入口；单题仍只在紧凑布局中显示。 */
 export function AttemptNavigatorButton({
   children,
   onOpen,
   disabled = false,
   icon = true,
+  desktop = false,
 }: {
   children: ReactNode;
-  onOpen: () => void;
+  onOpen: (trigger: HTMLButtonElement) => void;
   disabled?: boolean;
   icon?: boolean;
+  desktop?: boolean;
 }) {
   const progressId = useId();
   return (
     <Button
       variant="ghost"
-      className="h-11 shrink-0 gap-1 px-2 lg:hidden"
+      className={`min-h-11 min-w-0 gap-1.5 ps-3 pe-2.5 ${pressFeedback} ${desktop ? "" : "shrink-0 lg:hidden"}`}
       aria-label="答题卡"
       aria-describedby={progressId}
       aria-haspopup="dialog"
       disabled={disabled}
-      onClick={onOpen}
+      onClick={(event) => onOpen(event.currentTarget)}
     >
       {icon && <Grid2X2 aria-hidden className="size-4" />}
       <span id={progressId} className="tabular-nums text-sm">
         {children}
       </span>
-      <ChevronDown aria-hidden className="size-3" />
+      <ChevronDown aria-hidden className="size-3 shrink-0" />
     </Button>
   );
 }
@@ -50,8 +55,7 @@ export function AttemptNavigatorButton({
  * - 无权限（T2A.6，D7）：保存/上传收到 403/404 的终态——交卷同样必然被拒，
  *   按钮禁用并提示「已无权限访问该练习」。
  * 从页面文件抽出以便直接做组件测试（离线态渲染断言），页面只负责接线。
- * 手机仅保留一行：列表的答题卡入口携带填写数，单题的题号入口嵌入主操作。
- * 完整统计、提前交卷在答题卡面板查看；桌面沿用进度条和次级交卷入口。
+ * 列表的答题卡入口携带填写数；单题的题号入口嵌入主操作。
  * 异常提示独立于桌面统计，避免窄屏隐藏进度时一并隐藏保存失败与离线状态。
  */
 export function AttemptBottomBar({
@@ -97,7 +101,7 @@ export function AttemptBottomBar({
   viewResult?: boolean | undefined;
   onOpenSubmit: () => void;
   onViewResult?: (() => void) | undefined;
-  onOpenNavigator?: (() => void) | undefined;
+  onOpenNavigator?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
   const editor = useAttemptEditor();
   if (editor?.active?.kind === "annotation") return null;
@@ -105,9 +109,8 @@ export function AttemptBottomBar({
   const ratio =
     progressValue ?? (total === 0 ? 0 : Math.min(1, answered / total));
   const navigatorButton = onOpenNavigator && !compact && (
-    <AttemptNavigatorButton onOpen={onOpenNavigator}>
-      <span className="hidden min-[390px]:inline">答题卡 · </span>已填{" "}
-      {answered}/{total}
+    <AttemptNavigatorButton onOpen={onOpenNavigator} desktop>
+      答题卡 · 已填写 {answered}/{total}
     </AttemptNavigatorButton>
   );
   const progress = (
@@ -210,22 +213,24 @@ export function AttemptBottomBar({
       ) : (
         <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center justify-between gap-2 px-3 py-1.5 sm:px-6">
           {navigatorButton}
-          <div
-            data-slot="attempt-desktop-progress"
-            className={`${onOpenNavigator ? "hidden lg:flex" : "flex"} min-w-0 flex-1`}
-          >
-            {progress}
-          </div>
+          {!navigatorButton && (
+            <div
+              data-slot="attempt-desktop-progress"
+              className="flex min-w-0 flex-1"
+            >
+              {progress}
+            </div>
+          )}
           {hideSubmit ? null : viewResult ? (
             <Button
-              className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+              className={`h-11 min-w-[88px] shrink-0 px-4 text-base ${pressFeedback}`}
               onClick={onViewResult}
             >
               查看本次结果
             </Button>
           ) : (
             <Button
-              className="h-11 min-w-[88px] shrink-0 px-4 text-base"
+              className={`h-11 min-w-[88px] shrink-0 px-4 text-base ${pressFeedback}`}
               disabled={submitDisabled}
               onClick={onOpenSubmit}
             >
