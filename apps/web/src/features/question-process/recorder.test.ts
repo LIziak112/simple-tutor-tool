@@ -70,7 +70,8 @@ describe("单题过程待传队列", () => {
       prefix: "recovery",
       store: memoryKVBackend(),
       revision: () => "revision",
-      current: () => ready,
+      current: () => true,
+      canCapture: () => ready,
       inactiveReason: () => "材料正在恢复，暂不可编辑",
       snapshot: () => ({ answer: null, hints: [], layers: {} }),
       upload: async (batch) => {
@@ -350,4 +351,42 @@ describe("单题过程待传队列", () => {
       recovered.close();
     }
   });
+});
+
+it("材料不可编辑仍续传已落盘批次，结果页新实例也能补传", async () => {
+  const store = memoryKVBackend();
+  const network = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  const uploads: QuestionProcessBatch[] = [];
+  const options = {
+    attemptId: "attempt",
+    recordingId: active,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    prefix: "late-upload",
+    store,
+    revision: () => "revision",
+    current: () => true,
+    canCapture: () => false,
+    snapshot: () => ({ answer: null, hints: [], layers: {} }),
+    upload: async (batch: QuestionProcessBatch) => {
+      uploads.push(batch);
+      return batch.events.at(-1)?.seq ?? -1;
+    },
+  };
+  const original = new QuestionProcessRecorder({
+    ...options,
+    canCapture: () => true,
+  });
+  original.event("q", { kind: "answer", answer: { kind: "choice", index: 1 } });
+  await original.close();
+  network.mockReturnValue(true);
+  const review = new QuestionProcessRecorder(options);
+  await review.flush();
+  expect(
+    uploads.flatMap((batch) => batch.events).map((event) => event.kind),
+  ).toEqual(["start", "answer", "boundary"]);
+  expect(await store.getAll("")).toEqual([]);
+  review.event("q", { kind: "answer", answer: { kind: "choice", index: 0 } });
+  expect(review.getStatus()).toBe("inactive");
+  expect(review.getDroppedEvents()).toBe(1);
+  await review.close();
 });

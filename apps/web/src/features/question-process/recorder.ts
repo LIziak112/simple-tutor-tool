@@ -49,6 +49,7 @@ interface Options {
   revision: (questionId: string) => string | undefined;
   snapshot: (questionId: string) => Snapshot;
   current: () => boolean;
+  canCapture?: () => boolean;
   inactiveReason?: () => string | undefined;
   upload: (batch: QuestionProcessBatch, signal: AbortSignal) => Promise<number>;
 }
@@ -91,7 +92,7 @@ export class QuestionProcessRecorder {
 
   #local = Promise.resolve();
   #sending = false;
-  #sync: SyncStatus = "synced";
+  #sync: SyncStatus = "pending";
   #inactiveReason = "";
   #droppedEvents = 0;
   #interrupted = false;
@@ -114,6 +115,7 @@ export class QuestionProcessRecorder {
       this.#inactiveReason !== expectedReason ||
       this.#abort.signal.aborted ||
       !this.options.current() ||
+      this.options.canCapture?.() === false ||
       Date.now() >= Date.parse(this.options.expiresAt)
     )
       return;
@@ -148,8 +150,9 @@ export class QuestionProcessRecorder {
 
   #ensure(questionId: string) {
     if (this.#abort.signal.aborted) return this.#drop("录制器已关闭");
-    if (!this.options.current())
-      return this.#drop(this.options.inactiveReason?.() ?? "会话已变化");
+    if (!this.options.current()) return this.#drop("会话已变化");
+    if (this.options.canCapture?.() === false)
+      return this.#drop(this.options.inactiveReason?.() ?? "当前材料不可编辑");
     if (Date.now() >= Date.parse(this.options.expiresAt))
       return this.#drop("过程记录已过期");
     if (!this.options.revision(questionId)) return this.#drop("题目版本不可用");

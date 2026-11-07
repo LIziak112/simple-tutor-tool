@@ -192,10 +192,8 @@ export function useQuestionProcess(inputs: Inputs) {
         hints: [],
         layers: readProcessSurfaces(attemptId, id),
       }),
-      current: () =>
-        currentNoteSession() === scope &&
-        !deleting.current &&
-        latest.current.ready,
+      current: () => currentNoteSession() === scope && !deleting.current,
+      canCapture: () => latest.current.ready,
       inactiveReason: () =>
         latest.current.ready ? undefined : MATERIAL_INACTIVE_REASON,
       upload: (batch, signal) =>
