@@ -31,10 +31,12 @@ function ProcessInk({
   surface,
   annotation,
   fallback,
+  visiblePoints,
 }: {
   surface: QuestionProcessSurface;
   annotation: boolean;
   fallback?: ReactNode;
+  visiblePoints?: number[] | undefined;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ReturnType<typeof createAtramentReplayCanvas> | null>(
@@ -75,9 +77,9 @@ function ProcessInk({
           }));
     canvas.current?.drawFrame(
       strokes,
-      strokes.map((stroke) => stroke.points.length),
+      visiblePoints ?? strokes.map((stroke) => stroke.points.length),
     );
-  }, [ready, surface]);
+  }, [ready, surface, visiblePoints]);
   if (annotation && (!baseId || decoded === "error")) {
     return (
       <>
@@ -94,6 +96,13 @@ function ProcessInk({
     <div
       className="relative max-w-3xl overflow-hidden rounded border bg-white"
       data-process-stroke-count={surface.strokes.length}
+      data-process-visible-points={(
+        visiblePoints ?? surface.strokes.map((stroke) => stroke.points.length)
+      ).reduce((sum, n) => sum + n, 0)}
+      data-process-total-points={surface.strokes.reduce(
+        (sum, stroke) => sum + stroke.points.length,
+        0,
+      )}
       style={{
         aspectRatio: `${surface.width}/${surface.height}`,
         backgroundImage: background,
@@ -192,8 +201,11 @@ function SegmentPlayer({
   const activeEvent =
     selected ?? segment.events.findLastIndex((event) => event.at <= time);
   const state = useMemo(
-    () => frameAt(segment.events, Number.POSITIVE_INFINITY, activeEvent),
-    [segment.events, activeEvent],
+    () =>
+      selected === undefined
+        ? frameAt(segment.events, time, Infinity, segment.startedAt)
+        : frameAt(segment.events, Infinity, activeEvent, segment.startedAt),
+    [segment.events, segment.startedAt, activeEvent, selected, time],
   );
   const answerStructures = useMemo(() => {
     const slots = question.matchingSlots ?? [];
@@ -286,6 +298,7 @@ function SegmentPlayer({
             <ProcessInk
               key={annotation.baseId}
               surface={annotation}
+              visiblePoints={state.visiblePoints.annotation}
               annotation
               fallback={frozenStem}
             />
@@ -307,7 +320,11 @@ function SegmentPlayer({
         </section>
         {state.layers.scratch && (
           <section aria-label="回放草稿" className="min-w-0">
-            <ProcessInk surface={state.layers.scratch} annotation={false} />
+            <ProcessInk
+              surface={state.layers.scratch}
+              visiblePoints={state.visiblePoints.scratch}
+              annotation={false}
+            />
           </section>
         )}
       </div>

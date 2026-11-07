@@ -148,7 +148,7 @@ export class QuestionProcessRecorder {
 
   constructor(readonly options: Options) {}
 
-  #ensure(questionId: string) {
+  #ensure(questionId: string, inkStartedAt?: number) {
     if (this.#abort.signal.aborted) return this.#drop("录制器已关闭");
     if (!this.options.current()) return this.#drop("会话已变化");
     if (this.options.canCapture?.() === false)
@@ -167,12 +167,15 @@ export class QuestionProcessRecorder {
       this.#status("failed");
       return undefined;
     }
+    const now = Date.now();
+    const startedAt =
+      inkStartedAt !== undefined ? Math.min(now, inkStartedAt) : now;
     track = {
       id: randomUuid(),
       seq: 0,
       bytes: 0,
-      startedAt: Date.now(),
-      startClock: performance.now(),
+      startedAt,
+      startClock: performance.now() - (now - startedAt),
       answer: snapshot.answer,
       hintRequests: new Map(),
       shownHints: new Set(snapshot.hints),
@@ -253,7 +256,10 @@ export class QuestionProcessRecorder {
     finish?: Ink["finish"],
   ) {
     this.commitText(questionId);
-    const track = this.#ensure(questionId);
+    const track = this.#ensure(
+      questionId,
+      operation === "stroke" ? after.strokes.at(-1)?.startedAt : undefined,
+    );
     if (!track) return;
     if (
       !sameSurface(track.layers[layer], before) &&
@@ -346,7 +352,10 @@ export class QuestionProcessRecorder {
     }
     this.#generation += 1;
     const seq = track.seq++;
-    const at = Math.max(0, Math.round(performance.now() - track.startClock));
+    const at =
+      input.kind === "start"
+        ? 0
+        : Math.max(0, Math.round(performance.now() - track.startClock));
     const key = JSON.stringify([
       this.options.prefix,
       this.options.recordingId,

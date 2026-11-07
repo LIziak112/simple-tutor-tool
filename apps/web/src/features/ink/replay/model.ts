@@ -233,7 +233,7 @@ function parseAtramentStrokes(raw: unknown): RawStroke[] | null {
  * - 部分缺失 → 以首个有效时间戳为原点，缺失点沿用前一刻（同时出现），
  *   并夹逼为非递减（脏数据的倒退时间不回退画面）。
  */
-function normalizePointTimes(rawTimes: Array<number | null>): number[] {
+export function normalizePointTimes(rawTimes: Array<number | null>): number[] {
   const firstValid = rawTimes.findIndex((t) => t !== null);
   if (firstValid === -1) {
     return rawTimes.map((_, i) => i * REPLAY_UNIFORM_POINT_MS);
