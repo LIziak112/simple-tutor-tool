@@ -87,6 +87,9 @@ describe("单题过程待传队列", () => {
     expect(recorder.getStatus()).toBe("inactive");
     expect(recorder.getInactiveReason()).toContain("材料正在恢复");
     ready = true;
+    recorder.resume("材料正在恢复，暂不可编辑");
+    expect(recorder.getInactiveReason()).toBe("");
+    expect(recorder.getStatus()).not.toBe("inactive");
     recorder.event("q", {
       kind: "answer",
       answer: { kind: "choice", index: 0 },

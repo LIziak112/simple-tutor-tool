@@ -109,6 +109,18 @@ export class QuestionProcessRecorder {
     });
     this.#status("inactive");
   }
+  resume(expectedReason: string) {
+    if (
+      this.#inactiveReason !== expectedReason ||
+      this.#abort.signal.aborted ||
+      !this.options.current() ||
+      Date.now() >= Date.parse(this.options.expiresAt)
+    )
+      return;
+    this.#inactiveReason = "";
+    this.#status("pending");
+    this.scheduleUpload(0);
+  }
   #drop(reason: string) {
     this.#droppedEvents++;
     this.invalidate(reason);

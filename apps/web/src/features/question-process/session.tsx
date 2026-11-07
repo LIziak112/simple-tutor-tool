@@ -29,6 +29,7 @@ export const QuestionProcessContext =
   createContext<QuestionProcessRecorder | null>(null);
 export const useQuestionProcessContext = () =>
   useContext(QuestionProcessContext);
+const MATERIAL_INACTIVE_REASON = "材料正在恢复，暂不可编辑";
 const store = idbKVBackend("tutor-question-process", "process");
 
 async function removeProcessQueue(prefix: string) {
@@ -196,7 +197,7 @@ export function useQuestionProcess(inputs: Inputs) {
         !deleting.current &&
         latest.current.ready,
       inactiveReason: () =>
-        latest.current.ready ? undefined : "材料正在恢复，暂不可编辑",
+        latest.current.ready ? undefined : MATERIAL_INACTIVE_REASON,
       upload: (batch, signal) =>
         uploadQuestionProcessApi(attemptId, batch, signal).then(
           (data) => data.acceptedThrough,
@@ -229,7 +230,8 @@ export function useQuestionProcess(inputs: Inputs) {
 
   useEffect(() => {
     if (!ready && recorder && status?.state === "active" && status.canCapture)
-      recorder.invalidate("材料正在恢复，暂不可编辑");
+      recorder.invalidate(MATERIAL_INACTIVE_REASON);
+    else if (ready) recorder?.resume(MATERIAL_INACTIVE_REASON);
   }, [ready, recorder, status]);
 
   async function change(method: "POST" | "DELETE") {
@@ -262,7 +264,7 @@ export function useQuestionProcess(inputs: Inputs) {
     inactiveReason:
       status?.state === "active" && status.canCapture
         ? !ready
-          ? "材料正在恢复，暂不可编辑"
+          ? MATERIAL_INACTIVE_REASON
           : !recorder
             ? "录制器尚未就绪"
             : undefined
