@@ -113,6 +113,43 @@ describe("单题过程待传队列", () => {
     await recorder.close();
   });
 
+  it("首笔收笔时才建段也保留落笔起点，起始快照为0毫秒", async () => {
+    const uploads: QuestionProcessBatch[] = [];
+    const recorder = new QuestionProcessRecorder({
+      attemptId: "attempt",
+      recordingId: active,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      prefix: "first-stroke",
+      store: memoryKVBackend(),
+      revision: () => "revision",
+      current: () => true,
+      snapshot: () => ({ answer: null, hints: [], layers: {} }),
+      upload: async (batch) => {
+        uploads.push(batch);
+        return batch.events.at(-1)?.seq ?? -1;
+      },
+    });
+    const startedAt = Date.now() - 200;
+    recorder.ink("q", "scratch", "stroke", empty, {
+      ...ink,
+      strokes: [
+        {
+          ...stroke,
+          startedAt,
+          points: [
+            { x: 0, y: 0, t: 0, p: 0.5 },
+            { x: 1, y: 1, t: 200, p: 0.5 },
+          ],
+        },
+      ],
+    });
+    await recorder.flush();
+    expect(uploads[0]?.startedAt).toBe(startedAt);
+    expect(uploads[0]?.events[0]?.at).toBe(0);
+    expect(uploads[0]?.events[1]?.at).toBeGreaterThanOrEqual(200);
+    await recorder.close();
+  });
+
   it("连续20笔合为最多两个上传批次，序号连续", async () => {
     const uploads: QuestionProcessBatch[] = [];
     const recorder = new QuestionProcessRecorder({

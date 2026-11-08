@@ -553,51 +553,59 @@ async function drawStrokeWithMouse(page: Page, canvas: Locator): Promise<void> {
 export async function drawStrokeWithPointerEvents(
   canvas: Locator,
   repetitions = 1,
+  pointDelayMs = 0,
 ): Promise<void> {
-  await canvas.evaluate((el, count) => {
-    const rect = el.getBoundingClientRect();
-    const cx = rect.width / 2;
-    const cy = rect.height / 2;
-    const dx = Math.min(120, rect.width * 0.2);
-    const dy = Math.min(40, rect.height * 0.2);
-    const pts = [
-      [cx - dx, cy - dy * 0.75],
-      [cx - dx / 2, cy + dy],
-      [cx, cy - dy],
-      [cx + dx / 2, cy + dy],
-      [cx + dx, cy - dy * 0.5],
-    ] as const;
-    const fire = (
-      type: string,
-      x: number,
-      y: number,
-      buttons: number,
-    ): void => {
-      el.dispatchEvent(
-        new PointerEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          pointerId: 7,
-          pointerType: "pen",
-          isPrimary: true,
-          clientX: rect.left + x,
-          clientY: rect.top + y,
-          button: 0,
-          buttons,
-          pressure: 0.5,
-        }),
-      );
-    };
-    const first = pts[0];
-    const last = pts[pts.length - 1];
-    if (first === undefined || last === undefined) return;
-    for (let i = 0; i < count; i++) {
-      fire("pointerdown", first[0], first[1], 1);
-      for (const [x, y] of pts.slice(1)) fire("pointermove", x, y, 1);
-      fire("pointerup", last[0], last[1], 0);
-    }
-  }, repetitions);
+  await canvas.evaluate(
+    async (el, { count, delay }) => {
+      const rect = el.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const dx = Math.min(120, rect.width * 0.2);
+      const dy = Math.min(40, rect.height * 0.2);
+      const pts = [
+        [cx - dx, cy - dy * 0.75],
+        [cx - dx / 2, cy + dy],
+        [cx, cy - dy],
+        [cx + dx / 2, cy + dy],
+        [cx + dx, cy - dy * 0.5],
+      ] as const;
+      const fire = (
+        type: string,
+        x: number,
+        y: number,
+        buttons: number,
+      ): void => {
+        el.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            pointerId: 7,
+            pointerType: "pen",
+            isPrimary: true,
+            clientX: rect.left + x,
+            clientY: rect.top + y,
+            button: 0,
+            buttons,
+            pressure: 0.5,
+          }),
+        );
+      };
+      const first = pts[0];
+      const last = pts[pts.length - 1];
+      if (first === undefined || last === undefined) return;
+      for (let i = 0; i < count; i++) {
+        fire("pointerdown", first[0], first[1], 1);
+        for (const [x, y] of pts.slice(1)) {
+          if (delay > 0)
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          fire("pointermove", x, y, 1);
+        }
+        fire("pointerup", last[0], last[1], 0);
+      }
+    },
+    { count: repetitions, delay: pointDelayMs },
+  );
 }
 
 /** 等待笔迹上传请求（每笔结束 2 秒防抖后 PUT）；超时返回 false */

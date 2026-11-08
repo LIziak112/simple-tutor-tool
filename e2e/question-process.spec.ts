@@ -94,7 +94,8 @@ test(
       const baselineCanvas = baselineCard.locator(
         'canvas[data-slot="ink-canvas"], canvas[data-slot="feel-wet"]',
       );
-      await drawStrokeWithPointerEvents(baselineCanvas, 20);
+      await drawStrokeWithPointerEvents(baselineCanvas, 1, 100);
+      await drawStrokeWithPointerEvents(baselineCanvas, 19);
       await page.waitForTimeout(2000);
       expect(putCount).toBeGreaterThan(0);
       expect(putCount).toBeLessThanOrEqual(2);
@@ -416,6 +417,34 @@ test(
           await player
             .getByRole("button", { name: "过程回放", exact: true })
             .click();
+          if (i === 0) {
+            await player
+              .getByRole("button", { name: /本段起始状态/ })
+              .first()
+              .click();
+            await player
+              .getByRole("button", { name: "播放", exact: true })
+              .click();
+            await expect
+              .poll(
+                async () =>
+                  player
+                    .locator("[data-process-visible-points]")
+                    .evaluateAll((nodes) =>
+                      nodes.some((node) => {
+                        const visible = Number(
+                          node.getAttribute("data-process-visible-points"),
+                        );
+                        const total = Number(
+                          node.getAttribute("data-process-total-points"),
+                        );
+                        return visible > 0 && visible < total;
+                      }),
+                    ),
+                { intervals: [20, 30, 50] },
+              )
+              .toBe(true);
+          }
           const changes = player.getByRole("button", { name: /作答变化/ });
           const answer = player.locator(
             '[data-slot="question-process-answer"]',
