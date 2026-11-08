@@ -380,7 +380,7 @@ export function queryStudentResponses(
     eq(students.teacherId, teacherId),
     // studentId 经 resolveToolStudent 解析后必达：缺这条会把「查学生 A」
     // 放大成「名下全部学生」（多学生教师串档，评审 #11725 必改①）
-    eq(attempts.studentId, args.studentId),
+    ...(args.studentId !== undefined ? [eq(attempts.studentId, args.studentId)] : []),
     // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
     isNull(attempts.abandonedAt),
     isNotNull(responses.questionSnapshotJson),

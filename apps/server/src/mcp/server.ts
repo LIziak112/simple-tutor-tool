@@ -1,3 +1,5 @@
+import { attempts, responses } from "../db/schema";
+import { and, eq, sql } from "drizzle-orm";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -1027,7 +1029,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         cursor,
       }) => {
         const parsed = teacherAttemptListQuerySchema.safeParse({
-          studentId: resolveToolStudent(db, teacherId, studentId),
+          ...(studentId !== undefined ? { studentId: resolveToolStudent(db, teacherId, studentId) } : {}),
           ...(courseId !== undefined ? { courseId } : {}),
           ...(assignmentId !== undefined ? { assignmentId } : {}),
           ...(unitId !== undefined ? { unitId } : {}),
@@ -1284,7 +1286,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     },
     guard(({ attemptId, questionId, snapshot, reason }) => {
       // 1. 查阅归属和状态
-      const attemptRow = db.query.attempts.get(attemptId);
+      const attemptRow = db.select().from(attempts).where(eq(attempts.id, attemptId)).get();
       if (!attemptRow || attemptRow.teacherId !== teacherId) {
         throw new HttpError(404, "NOT_FOUND", "找不到指定的卷或非本教师名下。");
       }
@@ -1293,7 +1295,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       }
 
       // 2. 查阅 response
-      const responseRow = db.query.responses.get({ attemptId, questionId });
+      const responseRow = db.select().from(responses).where(and(eq(responses.attemptId, attemptId), eq(responses.questionId, questionId))).get();
       if (!responseRow || !responseRow.questionSnapshotJson) {
         throw new HttpError(404, "NOT_FOUND", "该题作答行或原快照不存在。");
       }
@@ -1310,7 +1312,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       
       // 4. 更新数据库
       db.run(
-        sql`UPDATE responses SET questionSnapshotJson = ${JSON.stringify(snapshot)}, frozenAt = CURRENT_TIMESTAMP WHERE attemptId = ${attemptId} AND questionId = ${questionId}`
+        sql`UPDATE responses SET questionSnapshotJson = ${JSON.stringify(snapshot)} WHERE attemptId = ${attemptId} AND questionId = ${questionId}`
       );
       
       return jsonContent({
@@ -1336,7 +1338,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     },
     guard(({ attemptId, questionId, answer, reason }) => {
       // 1. 查阅归属和状态
-      const attemptRow = db.query.attempts.get(attemptId);
+      const attemptRow = db.select().from(attempts).where(eq(attempts.id, attemptId)).get();
       if (!attemptRow || attemptRow.teacherId !== teacherId) {
         throw new HttpError(404, "NOT_FOUND", "找不到指定的卷或非本教师名下。");
       }
@@ -1345,7 +1347,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       }
 
       // 2. 查阅 response
-      const responseRow = db.query.responses.get({ attemptId, questionId });
+      const responseRow = db.select().from(responses).where(and(eq(responses.attemptId, attemptId), eq(responses.questionId, questionId))).get();
       if (!responseRow) {
         throw new HttpError(404, "NOT_FOUND", "该题作答行不存在。");
       }
@@ -1354,9 +1356,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       const result = db.run(
         sql`UPDATE responses 
             SET answerJson = ${JSON.stringify(answer)}, 
-                answerRevision = answerRevision + 1, 
-                answerMutationId = ${"teacher_mcp_fix_" + Date.now()} 
-            WHERE attemptId = ${attemptId} AND questionId = ${questionId} AND answerRevision = ${responseRow.answerRevision}`
+            submittedAt = CURRENT_TIMESTAMP WHERE attemptId = ${attemptId} AND questionId = ${questionId}`
       );
       
       if (result.changes === 0) {
