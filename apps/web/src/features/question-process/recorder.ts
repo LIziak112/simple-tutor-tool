@@ -75,6 +75,11 @@ export class QuestionProcessRecorder {
     Promise<{ baseHash?: string; baseFingerprint?: string }>
   >();
   readonly #pending = new Map<string, Pending>();
+  // 开放批次可在本机按 firstSeq 覆写；封批后不再修改，保证重传幂等。
+  readonly #open = new Map<
+    string,
+    { key: string; entry: Pending; bytes: number; createdAt: number }
+  >();
   readonly #rejected = new Set<string>();
   readonly #text = new Map<
     string,
@@ -333,31 +338,62 @@ export class QuestionProcessRecorder {
         } else if (event.kind === "ink" && event.frame && baseIdentity) {
           event.frame = { ...event.frame, ...baseIdentity };
         }
-        const batch = questionProcessBatchSchema.parse({
+        let open = this.#open.get(questionId);
+        const metadata = {
           version: 1,
           recordingId: this.options.recordingId,
           questionId,
           revisionId,
           segmentId: track.id,
           startedAt: track.startedAt,
-          events: [event],
+        };
+        const sizeOf = (value: unknown) =>
+          new TextEncoder().encode(JSON.stringify(value)).byteLength;
+        let batch = questionProcessBatchSchema.parse({
+          ...metadata,
+          events: [...(open?.entry.batch.events ?? []), event],
         });
-        const bytes = new TextEncoder().encode(
-          JSON.stringify(batch),
-        ).byteLength;
+        let bytes = sizeOf(batch);
+        if (
+          open &&
+          (bytes >= 1.5 * 1024 * 1024 || Date.now() - open.createdAt >= 1000)
+        ) {
+          this.#open.delete(questionId);
+          open = undefined;
+          batch = questionProcessBatchSchema.parse({
+            ...metadata,
+            events: [event],
+          });
+          bytes = sizeOf(batch);
+        }
+        const increase = bytes - (open?.bytes ?? 0);
         if (
           bytes > QUESTION_PROCESS_MAX_BATCH_BYTES ||
-          track.bytes + bytes > QUESTION_PROCESS_MAX_QUESTION_BYTES
+          track.bytes + increase > QUESTION_PROCESS_MAX_QUESTION_BYTES
         ) {
           track.stopped = true;
           throw new Error("过程记录已达到容量上限");
         }
-        track.bytes += bytes;
-        this.#pending.set(key, { batch, expiresAt: this.options.expiresAt });
+        track.bytes += increase;
+        const batchKey = open?.key ?? key;
+        const entry = { batch, expiresAt: this.options.expiresAt };
+        this.#open.set(questionId, {
+          key: batchKey,
+          entry,
+          bytes,
+          createdAt: open?.createdAt ?? Date.now(),
+        });
+        this.#pending.set(batchKey, entry);
+        const seal =
+          batch.events.length >= 64 ||
+          bytes >= 1.5 * 1024 * 1024 ||
+          (event.kind === "boundary" &&
+            ["offline", "hidden", "closed"].includes(event.reason));
+        if (seal) this.#open.delete(questionId);
         try {
           await this.#persist();
           this.#status(this.#lostEvents ? "failed" : "pending");
-          this.scheduleUpload();
+          this.scheduleUpload(seal ? 0 : 1000);
         } catch {
           this.#status("failed");
           this.scheduleUpload(5000);
@@ -398,7 +434,10 @@ export class QuestionProcessRecorder {
     const generation = this.#generation;
     try {
       // 与新事件串行落盘，防止晚到的写入恢复已确认的批次。
-      const persisted = this.#local.then(() => this.#persist());
+      const persisted = this.#local.then(() => {
+        this.#open.clear();
+        return this.#persist();
+      });
       this.#local = persisted.catch(() => {});
       await persisted;
       const prefix = `${JSON.stringify([
@@ -415,10 +454,12 @@ export class QuestionProcessRecorder {
           );
         return;
       }
-      for (let i = 0; i < rows.length; i += 4) {
+      // 同一段必须按 firstSeq 上传；首批失败后不越过缺口。
+      rows.sort(([a], [b]) => a.localeCompare(b));
+      for (let i = 0; i < rows.length; i += 1) {
         if (this.#abort.signal.aborted || !this.options.current()) return;
         const results = await Promise.allSettled(
-          rows.slice(i, i + 4).map(async ([key, raw]) => {
+          rows.slice(i, i + 1).map(async ([key, raw]) => {
             if (typeof raw !== "object" || raw === null) {
               this.#rejected.add(key);
               return;
@@ -482,6 +523,7 @@ export class QuestionProcessRecorder {
   async discard() {
     await this.close();
     this.#pending.clear();
+    this.#open.clear();
     const prefix = `${JSON.stringify([
       this.options.prefix,
       this.options.recordingId,

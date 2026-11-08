@@ -21,9 +21,150 @@ const ink: ProcessSurface = { width: 1000, height: 800, strokes: [stroke] };
 const empty: ProcessSurface = { ...ink, strokes: [] };
 const active = "863de11a-f212-46e1-b876-d3a29e07df55";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("单题过程待传队列", () => {
+  it("阶段0：当前会话失效、过期、缺版本时原实现静默丢弃", async () => {
+    for (const cause of ["session", "expired", "revision"]) {
+      const upload = vi.fn(
+        async (batch: QuestionProcessBatch) => batch.events.at(-1)?.seq ?? -1,
+      );
+      const recorder = new QuestionProcessRecorder({
+        attemptId: "attempt",
+        recordingId: active,
+        expiresAt:
+          cause === "expired"
+            ? "2000-01-01T00:00:00.000Z"
+            : "2099-01-01T00:00:00.000Z",
+        prefix: cause,
+        store: memoryKVBackend(),
+        revision: () => (cause === "revision" ? undefined : "revision"),
+        current: () => cause !== "session",
+        snapshot: () => ({ answer: null, hints: [], layers: {} }),
+        upload,
+      });
+      recorder.event("q", {
+        kind: "answer",
+        answer: { kind: "choice", index: 1 },
+      });
+      await recorder.flush();
+      expect(upload).not.toHaveBeenCalled();
+      expect(recorder.getStatus()).toBe("synced");
+      await recorder.close();
+    }
+  });
+
+  it("连续20笔合为最多两个上传批次，序号连续", async () => {
+    const uploads: QuestionProcessBatch[] = [];
+    const recorder = new QuestionProcessRecorder({
+      attemptId: "attempt",
+      recordingId: active,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      prefix: "batch-test",
+      store: memoryKVBackend(),
+      revision: () => "revision",
+      current: () => true,
+      snapshot: () => ({ answer: null, hints: [], layers: {} }),
+      upload: async (batch) => {
+        uploads.push(batch);
+        return batch.events.at(-1)?.seq ?? -1;
+      },
+    });
+    let before = empty;
+    for (let i = 0; i < 20; i++) {
+      const after = {
+        ...ink,
+        strokes: [...before.strokes, { ...stroke, id: `stroke-${i}` }],
+      };
+      recorder.ink("q", "scratch", "stroke", before, after, "up");
+      before = after;
+    }
+    await recorder.flush();
+    expect(uploads.length).toBeLessThanOrEqual(2);
+    expect(
+      uploads.flatMap((batch) => batch.events).map((event) => event.seq),
+    ).toEqual(Array.from({ length: 21 }, (_, i) => i));
+    await recorder.close();
+  });
+
+  it("达到64事件封批，flush保持同段顺序", async () => {
+    const uploads: QuestionProcessBatch[] = [];
+    const recorder = new QuestionProcessRecorder({
+      attemptId: "attempt",
+      recordingId: active,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      prefix: "64-events",
+      store: memoryKVBackend(),
+      revision: () => "revision",
+      current: () => true,
+      snapshot: () => ({ answer: null, hints: [], layers: {} }),
+      upload: async (batch) => {
+        uploads.push(batch);
+        return batch.events.at(-1)?.seq ?? -1;
+      },
+    });
+    for (let i = 0; i < 70; i++)
+      recorder.event("q", {
+        kind: "answer",
+        answer: { kind: "choice", index: i % 2 },
+      });
+    await recorder.flush();
+    expect(uploads.map((batch) => batch.events.length)).toEqual([64, 7]);
+    expect(
+      uploads.flatMap((batch) => batch.events).map((event) => event.seq),
+    ).toEqual(Array.from({ length: 71 }, (_, i) => i));
+    await recorder.close();
+  });
+
+  it("开放批次立即落盘，1秒后上传；飞行中的批次不被新事件改写", async () => {
+    vi.useFakeTimers();
+    const store = memoryKVBackend();
+    const uploads: QuestionProcessBatch[] = [];
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const recorder = new QuestionProcessRecorder({
+      attemptId: "attempt",
+      recordingId: active,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      prefix: "timer",
+      store,
+      revision: () => "revision",
+      current: () => true,
+      snapshot: () => ({ answer: null, hints: [], layers: {} }),
+      upload: async (batch) => {
+        uploads.push(batch);
+        if (uploads.length === 1) await gate;
+        return batch.events.at(-1)?.seq ?? -1;
+      },
+    });
+    recorder.event("q", {
+      kind: "answer",
+      answer: { kind: "choice", index: 0 },
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(await store.getAll("")).toHaveLength(1);
+    expect(uploads).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(uploads).toHaveLength(1);
+    recorder.event("q", {
+      kind: "answer",
+      answer: { kind: "choice", index: 1 },
+    });
+    expect(uploads[0]?.events.map((event) => event.seq)).toEqual([0, 1]);
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    await recorder.flush();
+    expect(
+      uploads.map((batch) => batch.events.map((event) => event.seq)),
+    ).toEqual([[0, 1], [2]]);
+    await recorder.close();
+  });
+
   it("本机写盘失败时不上报，恢复后按原顺序补传", async () => {
     const backend = memoryKVBackend();
     const uploads: QuestionProcessBatch[] = [];
@@ -125,20 +266,20 @@ describe("单题过程待传队列", () => {
     original.ink("q", "scratch", "redo", ink, empty);
     await original.flush();
     expect(uploads).toHaveLength(0);
-    expect((await store.getAll("")).length).toBe(5);
+    expect((await store.getAll("")).length).toBe(1);
     await original.close();
 
     network.mockReturnValue(true);
     const recovered = new QuestionProcessRecorder(options);
     try {
       await recovered.flush();
-      expect(uploads).toHaveLength(4);
+      expect(uploads).toHaveLength(1);
       const previous = uploads[0];
       drop = false;
       await recovered.flush();
-      expect(uploads[4]).toEqual(previous);
+      expect(uploads[1]).toEqual(previous);
       expect((await store.getAll("")).length).toBe(0);
-      const all = uploads.slice(4).flatMap((batch) => batch.events);
+      const all = uploads.slice(1).flatMap((batch) => batch.events);
       expect(all.map((event) => event.seq)).toEqual([0, 1, 2, 3, 4, 5]);
       expect(all[1]).toMatchObject({ operation: "stroke", finish: "cancel" });
       expect(all[2]).toMatchObject({
