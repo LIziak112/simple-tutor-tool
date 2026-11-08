@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
+  processAnswerSurface,
   QuestionProcessControls,
   QuestionProcessSyncNotice,
   type useQuestionProcess,
@@ -38,4 +39,35 @@ describe("过程记录失效文案", () => {
       );
     },
   );
+});
+
+it("正式稿快照保留纸外笔迹空间与旧场景原始元素", () => {
+  expect(
+    processAnswerSurface({
+      engine: "atrament",
+      version: 1,
+      updatedAt: 1,
+      data: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#000",
+            weight: 2,
+            points: [{ x: 1, y: 1800, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+    })?.height,
+  ).toBeGreaterThan(1800);
+  const legacy = processAnswerSurface({
+    engine: "excalidraw",
+    version: 1,
+    updatedAt: 1,
+    data: { scene: { elements: [{ id: "old-rectangle", type: "rectangle" }] } },
+  });
+  expect(legacy?.legacy?.scene.elements).toEqual([
+    { id: "old-rectangle", type: "rectangle" },
+  ]);
+  expect(legacy?.strokes).toEqual([]);
 });

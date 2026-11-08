@@ -123,6 +123,21 @@ test(
               'canvas[data-slot="ink-canvas"], canvas[data-slot="feel-wet"]',
             ),
           );
+          if (n === 5) {
+            const canvas = card.locator(
+              'canvas[data-slot="ink-canvas"], canvas[data-slot="feel-wet"]',
+            );
+            await drawStrokeWithPointerEvents(canvas, 1, 0, 0.25);
+            await card
+              .getByRole("button", { name: "橡皮", exact: true })
+              .filter({ visible: true })
+              .click();
+            await drawStrokeWithPointerEvents(canvas);
+            await card
+              .getByRole("button", { name: "笔", exact: true })
+              .filter({ visible: true })
+              .click();
+          }
           await expect(card.locator("[data-paper-trigger]")).toHaveAttribute(
             "aria-label",
             /已有笔迹/,
@@ -531,6 +546,28 @@ test(
             await expect(answer).not.toContainText(/it-\d/);
           }
           await expect(player.getByAltText("保存时的题面底图")).toBeVisible();
+          if (i >= 4 && i <= 7)
+            await expect(
+              player.getByRole("region", { name: "回放手写作答", exact: true }),
+            ).toBeVisible();
+          if (i === 4) {
+            const paper = player.getByRole("region", {
+              name: "回放手写作答",
+              exact: true,
+            });
+            const writing = player.getByRole("button", {
+              name: /手写作答书写/,
+            });
+            await expect(writing).toHaveCount(2);
+            await writing.last().click();
+            await expect(
+              paper.locator("[data-process-stroke-count]"),
+            ).toHaveAttribute("data-process-stroke-count", "2");
+            await player.getByRole("button", { name: /手写作答擦除/ }).click();
+            await expect(
+              paper.locator("[data-process-stroke-count]"),
+            ).toHaveAttribute("data-process-stroke-count", "1");
+          }
           if (i < 4 || i > 7)
             await expect(
               player.getByRole("region", { name: "回放草稿" }),

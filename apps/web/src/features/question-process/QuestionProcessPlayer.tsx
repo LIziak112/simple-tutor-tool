@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import { createAtramentReplayCanvas } from "@/features/ink/replay/draw";
+import { ExcalidrawReplay } from "@/features/ink/replay/ExcalidrawReplay";
 import {
   advancePlayhead,
   REPLAY_SPEEDS,
@@ -38,7 +39,7 @@ import {
   toPlaybackTime,
 } from "./replay";
 
-function ProcessInk({
+function AtramentProcessInk({
   surface,
   annotation,
   fallback,
@@ -149,6 +150,22 @@ function ProcessInk({
   );
 }
 
+function ProcessInk(props: Parameters<typeof AtramentProcessInk>[0]) {
+  const legacy = props.surface.legacy;
+  if (legacy)
+    return (
+      <div>
+        <p className="text-sm">历史场景按快照回放</p>
+        <ExcalidrawReplay
+          elements={legacy.scene.elements}
+          visibleElements={legacy.scene.elements.length}
+        />
+      </div>
+    );
+  return <AtramentProcessInk {...props} />;
+}
+
+const layerLabels = { annotation: "圈画", scratch: "草稿", answer: "手写作答" };
 const inkLabels = {
   stroke: "书写",
   erase: "擦除",
@@ -176,10 +193,10 @@ function eventLabel(event: QuestionProcessEvent): string {
     case "start":
       return "本段起始状态";
     case "surface":
-      return event.layer === "scratch" ? "恢复草稿状态" : "恢复圈画状态";
+      return `恢复${layerLabels[event.layer]}状态`;
     case "ink":
       return (
-        (event.layer === "scratch" ? "草稿" : "圈画") +
+        layerLabels[event.layer] +
         inkLabels[event.operation] +
         (event.finish && event.finish !== "up" ? "（中断收笔）" : "")
       );
@@ -381,6 +398,15 @@ function SegmentPlayer({
             <ProcessInk
               surface={state.layers.scratch}
               visiblePoints={state.visiblePoints.scratch}
+              annotation={false}
+            />
+          </section>
+        )}
+        {state.layers.answer && (
+          <section aria-label="回放手写作答" className="min-w-0">
+            <ProcessInk
+              surface={state.layers.answer}
+              visiblePoints={state.visiblePoints.answer}
               annotation={false}
             />
           </section>

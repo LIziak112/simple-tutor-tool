@@ -404,6 +404,11 @@ export const draftStore = {
     });
   },
 
+  /** 只读当前会话已载入的正式手写稿，不触发磁盘读取。 */
+  peekInk(attemptId: string, questionId: string): InkDoc | null {
+    return cache.get(attemptId)?.inks[questionId] ?? null;
+  },
+
   /** 每笔结束写本地（InkPad onDocChange 链路） */
   saveInk(attemptId: string, questionId: string, doc: InkDoc): void {
     mutate(attemptId, (record) => {

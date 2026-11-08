@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { questionPublicSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
-import { inkStrokeIdSchema, inkStrokeSchema } from "./ink.ts";
+import {
+  inkExcalidrawDataSchema,
+  inkStrokeIdSchema,
+  inkStrokeSchema,
+} from "./ink.ts";
 import { noteBackgroundSchema } from "./note.ts";
 
 export const QUESTION_PROCESS_RETENTION_DAYS = 30;
@@ -10,7 +14,7 @@ export const QUESTION_PROCESS_MAX_QUESTION_BYTES = 8 * 1024 * 1024;
 export const QUESTION_PROCESS_MAX_EVENTS = 2500;
 
 const index = z.number().int().min(0).max(100_000);
-const layer = z.enum(["annotation", "scratch"]);
+const layer = z.enum(["annotation", "scratch", "answer"]);
 export const questionProcessFinishSchema = z.enum([
   "up",
   "cancel",
@@ -40,7 +44,10 @@ const frame = z.strictObject({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
 });
-const surface = frame.extend({ strokes: z.array(stroke).max(4000) });
+const surface = frame.extend({
+  strokes: z.array(stroke).max(4000),
+  legacy: inkExcalidrawDataSchema.optional(),
+});
 const order = {
   seq: index,
   at: z.number().int().nonnegative().max(604_800_000),
@@ -56,6 +63,7 @@ export const questionProcessEventSchema = z.discriminatedUnion("kind", [
     layers: z.strictObject({
       annotation: surface.optional(),
       scratch: surface.optional(),
+      answer: surface.optional(),
     }),
   }),
   z.strictObject({ ...order, kind: z.literal("surface"), layer, surface }),
