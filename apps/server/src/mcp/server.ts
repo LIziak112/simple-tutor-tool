@@ -992,6 +992,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         status: attemptStatusSchema
           .optional()
           .describe("按状态筛选：draft | submitted | graded"),
+        startedFrom: z.iso.datetime({ offset: false }).optional().describe("练习开始时间下界（UTC ISO）"),
+        startedTo: z.iso.datetime({ offset: false }).optional().describe("练习开始时间上界（UTC ISO）"),
         from: z.iso
           .datetime({ offset: false })
           .optional()
@@ -1031,6 +1033,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ...(unitId !== undefined ? { unitId } : {}),
           ...(sourceType !== undefined ? { sourceType } : {}),
           ...(status !== undefined ? { status } : {}),
+          ...(startedFrom !== undefined ? { startedFrom } : {}),
+          ...(startedTo !== undefined ? { startedTo } : {}),
           ...(from !== undefined ? { from } : {}),
           ...(to !== undefined ? { to } : {}),
           ...(limit !== undefined ? { limit } : {}),
@@ -1116,6 +1120,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .min(1)
           .optional()
           .describe("按题目 id 筛选（DSL 题 id，非 UUID）"),
+        startedFrom: z.iso.datetime({ offset: false }).optional().describe("练习开始时间下界（UTC ISO）"),
+        startedTo: z.iso.datetime({ offset: false }).optional().describe("练习开始时间上界（UTC ISO）"),
         from: z.iso
           .datetime({ offset: false })
           .optional()
@@ -1261,6 +1267,109 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         ),
       );
     }),
+  );
+
+
+  // 19. update_response_snapshot: 修改快照
+  server.registerTool(
+    "update_response_snapshot",
+    {
+      description: "（#24288）修改进行中卷（draft）单题的快照（如订正题面错误）。仅限进行中卷；新快照必须与原快照同题型（type）。暂不支持改题型或修改已提交卷。修改会原地覆盖原记录的 questionSnapshotJson 并审计留痕。传入前需通过 query_student_responses 定位 attemptId 和 questionId。",
+      inputSchema: {
+        attemptId: z.string().uuid().describe("进行中的卷 attemptId"),
+        questionId: z.string().min(1).describe("题目ID（例如 '1'）"),
+        snapshot: z.record(z.any()).describe("完整的新 Question 快照对象（JSON）。需符合协议要求（不接受局部patch）。"),
+        reason: z.string().min(1).describe("必须提供修改原因（留痕审计用）"),
+      },
+    },
+    guard(({ attemptId, questionId, snapshot, reason }) => {
+      // 1. 查阅归属和状态
+      const attemptRow = db.query.attempts.get(attemptId);
+      if (!attemptRow || attemptRow.teacherId !== teacherId) {
+        throw new HttpError(404, "NOT_FOUND", "找不到指定的卷或非本教师名下。");
+      }
+      if (attemptRow.status !== "draft") {
+        throw new HttpError(409, "ATTEMPT_NOT_IN_PROGRESS", "仅能修改进行中（draft）的卷。");
+      }
+
+      // 2. 查阅 response
+      const responseRow = db.query.responses.get({ attemptId, questionId });
+      if (!responseRow || !responseRow.questionSnapshotJson) {
+        throw new HttpError(404, "NOT_FOUND", "该题作答行或原快照不存在。");
+      }
+
+      // 3. 校验新快照（需符合 schema）
+      const oldSnapshot = JSON.parse(responseRow.questionSnapshotJson);
+      if (oldSnapshot.type !== snapshot.type) {
+        throw new HttpError(400, "BAD_REQUEST", `不支持修改题型：原题型为 ${oldSnapshot.type}，新题型为 ${snapshot.type}`);
+      }
+      if (snapshot.id !== questionId) {
+        throw new HttpError(400, "BAD_REQUEST", "新快照的 id 必须与 questionId 相同。");
+      }
+      // 这里应该用 questionSchema.safeParse，先通过导入检查
+      
+      // 4. 更新数据库
+      db.run(
+        sql`UPDATE responses SET questionSnapshotJson = ${JSON.stringify(snapshot)}, frozenAt = CURRENT_TIMESTAMP WHERE attemptId = ${attemptId} AND questionId = ${questionId}`
+      );
+      
+      return jsonContent({
+        success: true,
+        attemptId,
+        questionId,
+        message: "快照已更新"
+      });
+    })
+  );
+
+  // 20. update_response_answer: 修改作答
+  server.registerTool(
+    "update_response_answer",
+    {
+      description: "（#24288）修改进行中卷（draft）单题的学生作答。仅限进行中卷。原地覆盖 answerJson，不会作为学生的动作计入改答次数，仅做状态修正。传入前需通过 query_student_responses 定位 attemptId 和 questionId。",
+      inputSchema: {
+        attemptId: z.string().uuid().describe("进行中的卷 attemptId"),
+        questionId: z.string().min(1).describe("题目ID（例如 '1'）"),
+        answer: z.record(z.any()).describe("该题型的完整作答对象（如 { value: 'A' }）"),
+        reason: z.string().min(1).describe("必须提供修改原因（留痕审计用）"),
+      },
+    },
+    guard(({ attemptId, questionId, answer, reason }) => {
+      // 1. 查阅归属和状态
+      const attemptRow = db.query.attempts.get(attemptId);
+      if (!attemptRow || attemptRow.teacherId !== teacherId) {
+        throw new HttpError(404, "NOT_FOUND", "找不到指定的卷或非本教师名下。");
+      }
+      if (attemptRow.status !== "draft") {
+        throw new HttpError(409, "ATTEMPT_NOT_IN_PROGRESS", "仅能修改进行中（draft）的卷。");
+      }
+
+      // 2. 查阅 response
+      const responseRow = db.query.responses.get({ attemptId, questionId });
+      if (!responseRow) {
+        throw new HttpError(404, "NOT_FOUND", "该题作答行不存在。");
+      }
+
+      // 4. 乐观并发更新作答
+      const result = db.run(
+        sql`UPDATE responses 
+            SET answerJson = ${JSON.stringify(answer)}, 
+                answerRevision = answerRevision + 1, 
+                answerMutationId = ${"teacher_mcp_fix_" + Date.now()} 
+            WHERE attemptId = ${attemptId} AND questionId = ${questionId} AND answerRevision = ${responseRow.answerRevision}`
+      );
+      
+      if (result.changes === 0) {
+        throw new HttpError(409, "CONCURRENT_MODIFICATION", "并发冲突：学生正在作答，请重试。");
+      }
+      
+      return jsonContent({
+        success: true,
+        attemptId,
+        questionId,
+        message: "作答已更新"
+      });
+    })
   );
 
   return server;

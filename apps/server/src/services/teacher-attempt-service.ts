@@ -329,6 +329,8 @@ export function listTeacherAttempts(
       ? sql`${lastActivitySql} >= ${query.from}`
       : undefined,
     query.to !== undefined ? sql`${lastActivitySql} <= ${query.to}` : undefined,
+    query.startedFrom !== undefined ? sql`${attempts.startedAt} >= ${query.startedFrom}` : undefined,
+    query.startedTo !== undefined ? sql`${attempts.startedAt} <= ${query.startedTo}` : undefined,
   ].filter((item): item is NonNullable<typeof item> => item !== undefined);
 
   const where = and(

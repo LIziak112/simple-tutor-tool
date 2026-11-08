@@ -218,6 +218,7 @@ export function attemptExtrasOf(
 
 /** query_student_responses 入参（server.ts 的 inputSchema shape 与之对齐） */
 export interface StudentResponseQueryArgs {
+  includeUnsubmitted?: boolean;
   studentId: string;
   attemptIds?: string[] | undefined;
   courseId?: string | undefined;
@@ -381,7 +382,9 @@ export function queryStudentResponses(
     // 放大成「名下全部学生」（多学生教师串档，评审 #11725 必改①）
     eq(attempts.studentId, args.studentId),
     // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
-    ...teacherVisibleResponsesWhere(),
+    isNull(attempts.abandonedAt),
+    isNotNull(responses.questionSnapshotJson),
+    ...(args.includeUnsubmitted ? [] : [or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt))]),
     ...(args.attemptIds !== undefined && args.attemptIds.length > 0
       ? [inArray(responses.attemptId, args.attemptIds)]
       : []),

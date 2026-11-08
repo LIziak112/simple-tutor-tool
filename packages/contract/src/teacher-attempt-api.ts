@@ -64,6 +64,8 @@ export const teacherAttemptListQuerySchema = z.object({
   status: attemptStatusSchema.optional(),
   from: z.iso.datetime({ offset: false }).optional(),
   to: z.iso.datetime({ offset: false }).optional(),
+  startedFrom: z.iso.datetime({ offset: false }).optional(),
+  startedTo: z.iso.datetime({ offset: false }).optional(),
   limit: z.coerce
     .number()
     .int("limit 必须是整数")
@@ -450,6 +452,8 @@ export const exportCsvQuerySchema = z.object({
   sourceType: attemptSourceSchema.optional(),
   from: z.iso.datetime({ offset: false }).optional(),
   to: z.iso.datetime({ offset: false }).optional(),
+  startedFrom: z.iso.datetime({ offset: false }).optional(),
+  startedTo: z.iso.datetime({ offset: false }).optional(),
 });
 
 // ---------- 做题复现（hall-15077） ----------
