@@ -220,6 +220,23 @@ test(
           await page.reload();
           await page.unroute("**/api/student/attempts/*/question-process");
           await expect(card.getByText("先比较绝对值与原数。")).toBeVisible();
+          await page.getByRole("button", { name: "练习更多" }).click();
+          await page.getByRole("menuitem", { name: "做题过程记录" }).click();
+          await expect(
+            page.getByText("过程已同步", { exact: true }),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+          await card
+            .getByRole("radio", { name: "错", exact: true })
+            .locator("xpath=ancestor::label[1]")
+            .click();
+          await expect(
+            card.getByRole("radio", { name: "错", exact: true }),
+          ).toBeChecked();
+          await card
+            .getByRole("radio", { name: "对", exact: true })
+            .locator("xpath=ancestor::label[1]")
+            .click();
         } else if (n === 2) {
           await card
             .getByRole("radio")
@@ -314,6 +331,17 @@ test(
         }),
       ).toHaveCount(0);
 
+      await question(1)
+        .getByRole("radio", { name: "错", exact: true })
+        .locator("xpath=ancestor::label[1]")
+        .click();
+      await expect(
+        question(1).getByRole("radio", { name: "错", exact: true }),
+      ).toBeChecked();
+      await question(1)
+        .getByRole("radio", { name: "对", exact: true })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       await page.getByRole("button", { name: "交卷", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "确认交卷吗？" });
       await dialog.getByRole("button", { name: "确认交卷" }).click();
@@ -400,6 +428,15 @@ test(
             : [],
         );
       expect(fillAnswers).toEqual(["拼", "1", "2"]);
+      await expect
+        .poll(async () => {
+          const response = await request.get(
+            `/api/teacher/attempts/${attempt}/questions/${encodeURIComponent(rows.find((item) => item.type === "judge")?.id ?? "")}/process`,
+          );
+          const payload = (await response.json()) as { data: unknown };
+          return questionProcessReadSchema.parse(payload.data).segments.length;
+        })
+        .toBe(3);
       const teacher = await browser.newContext({
         baseURL: pair.webUrl,
         storageState: await request.storageState(),
@@ -418,6 +455,12 @@ test(
             .getByRole("button", { name: "过程回放", exact: true })
             .click();
           if (i === 0) {
+            await expect(
+              player.getByRole("combobox", { name: "回放范围" }),
+            ).toHaveValue("-1");
+            await expect(
+              player.getByRole("button", { name: /刷新重进/ }),
+            ).toHaveCount(2);
             await player
               .getByRole("button", { name: "2×", exact: true })
               .click();

@@ -174,3 +174,64 @@ export function fromPlaybackTime(
   }
   return timeMs + removed;
 }
+
+type ProcessSegment =
+  import("@tutor/contract").QuestionProcessRead["segments"][number];
+export function questionTimeline(input: readonly ProcessSegment[]) {
+  const ordered = [...input].sort(
+    (a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id),
+  );
+  const origin = ordered[0]?.startedAt ?? 0;
+  let previousEnd = 0;
+  const segments = ordered.filter(
+    (segment) =>
+      segment.events[0]?.kind === "start" && segment.events[0].seq === 0,
+  );
+  const events = ordered
+    .flatMap((segment, segmentIndex) => {
+      const offset = segment.startedAt - origin;
+      const gapMs = Math.max(0, offset - previousEnd);
+      const overlap = segmentIndex > 0 && offset < previousEnd;
+      previousEnd = Math.max(
+        previousEnd,
+        offset + (segment.events.at(-1)?.at ?? 0),
+      );
+      return replayPrefix(segment.events).events.map((event) => ({
+        event,
+        segment,
+        segmentIndex,
+        at: offset + event.at,
+        gapMs,
+        overlap,
+      }));
+    })
+    .sort(
+      (a, b) =>
+        a.at - b.at ||
+        a.segmentIndex - b.segmentIndex ||
+        a.event.seq - b.event.seq,
+    );
+  return { origin, segments, events };
+}
+
+export function timelineFrame(
+  timeline: ReturnType<typeof questionTimeline>,
+  at: number,
+  selected?: number,
+) {
+  const entry = selected === undefined ? undefined : timeline.events[selected];
+  const segment =
+    entry?.segment ??
+    timeline.segments.findLast(
+      (segment) =>
+        segment.startedAt - timeline.origin + (segment.events[0]?.at ?? 0) <=
+        at,
+    );
+  if (!segment) return null;
+  return frameAt(
+    segment.events,
+    entry ? Infinity : at - (segment.startedAt - timeline.origin),
+    entry?.event.seq ?? Infinity,
+    segment.startedAt,
+  );
+}
