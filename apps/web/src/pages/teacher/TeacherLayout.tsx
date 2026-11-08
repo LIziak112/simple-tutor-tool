@@ -28,6 +28,7 @@ import { SettingsNavigationProvider } from "@/features/teacher-settings/settings
 import { ApiError } from "@/lib/api";
 import { BRAND_NAME } from "@/lib/brand";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
+import { type QuickJumpItem, TeacherQuickJump } from "./TeacherQuickJump";
 
 interface NavItemSpec {
   to: string;
@@ -73,6 +74,39 @@ const NAV_GROUPS: { label: string; items: NavItemSpec[] }[] = [
       { to: "/t/connect", label: "连接 AI", icon: PlugZap },
       { to: "/t/settings", label: "设置", icon: Settings },
     ],
+  },
+];
+
+/** 快速跳转条目：一级入口 + 常用次级页，关键词兼顾拼音首字母与同义词。 */
+const QUICK_JUMP_ITEMS: QuickJumpItem[] = [
+  ...NAV_GROUPS.flatMap((group) =>
+    group.items.map((item) => ({
+      to: item.to,
+      label: item.label,
+      group: group.label,
+      icon: item.icon,
+    })),
+  ),
+  {
+    to: "/t/import",
+    label: "导入资源",
+    group: "教学",
+    icon: Library,
+    keywords: "上传 导入 题目 讲义 dr",
+  },
+  {
+    to: "/t/insights",
+    label: "学情统计",
+    group: "分析",
+    icon: Database,
+    keywords: "统计 分析 正确率 xq",
+  },
+  {
+    to: "/t/settings?section=account",
+    label: "教师账号",
+    group: "系统",
+    icon: UserRound,
+    keywords: "账号 密码 登录 zh",
   },
 ];
 
@@ -201,7 +235,7 @@ export function TeacherLayout() {
           </Link>
         </aside>
         <div className="min-w-0 flex-1">
-          <header className="flex min-h-14 flex-wrap items-center gap-2 px-5 py-1.5 lg:px-10">
+          <header className="sticky top-0 z-20 flex min-h-14 flex-wrap items-center gap-2 border-b border-border/60 bg-background/95 px-5 py-1.5 lg:px-10">
             <div className="flex min-w-0 items-center gap-3">
               <Sheet open={navOpen} onOpenChange={setNavOpen}>
                 <SheetTrigger asChild>
@@ -236,6 +270,7 @@ export function TeacherLayout() {
                 </span>
               </p>
             </div>
+            <TeacherQuickJump items={QUICK_JUMP_ITEMS} />
           </header>
           <main
             id="teacher-content"
