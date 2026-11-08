@@ -359,6 +359,7 @@ function AnswerView({
     ready: processReady,
     questions: flatQuestions,
     answers,
+    hintsOpened,
   });
   const recorder = questionProcess.recorder;
   processRecorderRef.current = recorder;
