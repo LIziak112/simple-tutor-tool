@@ -233,8 +233,8 @@ test(
             },
           );
           await page.reload();
-          await page.unroute("**/api/student/attempts/*/question-process");
           await expect(card.getByText("先比较绝对值与原数。")).toBeVisible();
+          await page.unroute("**/api/student/attempts/*/question-process");
           await page.getByRole("button", { name: "练习更多" }).click();
           await page.getByRole("menuitem", { name: "做题过程记录" }).click();
           await expect(
@@ -381,6 +381,7 @@ test(
         [...questionTypeSchema.options].sort(),
       );
       const eventLists = new Map<string, QuestionProcessEvent[]>();
+      let firstHintActions: string[] = [];
       await expect
         .poll(
           async () => {
@@ -395,7 +396,21 @@ test(
               if (!response.ok()) continue;
               const body = (await response.json()) as { data: unknown };
               const result = questionProcessReadSchema.parse(body.data);
-              const events = result.segments[0]?.events ?? [];
+              const events = result.segments.flatMap(
+                (segment) => segment.events,
+              );
+              if (item.type === "judge")
+                firstHintActions =
+                  result.segments
+                    .find((segment) =>
+                      segment.events.some(
+                        (event) =>
+                          event.kind === "hint" && event.action === "request",
+                      ),
+                    )
+                    ?.events.flatMap((event) =>
+                      event.kind === "hint" ? [event.action] : [],
+                    ) ?? [];
               if (
                 events.filter((event) => event.kind === "answer").length >= 2 &&
                 events.some(
@@ -429,12 +444,13 @@ test(
         "annotation:stroke",
       ]);
 
-      expect(
-        eventLists
-          .get("judge")
-          ?.filter((event) => event.kind === "hint")
-          .map((event) => event.action),
-      ).toEqual(["request", "failed", "request", "received", "shown"]);
+      expect(firstHintActions).toEqual([
+        "request",
+        "failed",
+        "request",
+        "received",
+        "shown",
+      ]);
       const fillAnswers = eventLists
         .get("fill")
         ?.flatMap((event) =>
@@ -470,6 +486,24 @@ test(
             .getByRole("button", { name: "过程回放", exact: true })
             .click();
           if (i === 0) {
+            await expect(
+              player.getByRole("button", { name: /进入本题/ }).first(),
+            ).toBeVisible();
+            await expect(
+              player.getByRole("button", { name: /离开本题/ }).first(),
+            ).toBeVisible();
+            await expect(
+              player.getByRole("button", { name: /展开草稿纸/ }).first(),
+            ).toBeVisible();
+            await expect(
+              player.getByRole("button", { name: /收起草稿纸/ }).first(),
+            ).toBeVisible();
+            await expect(
+              player.getByRole("button", { name: /提交/ }).first(),
+            ).toBeVisible();
+            await expect(
+              player.getByRole("img", { name: /^在本题区间/ }),
+            ).toBeVisible();
             await expect(
               player.getByRole("combobox", { name: "回放范围" }),
             ).toHaveValue("-1");

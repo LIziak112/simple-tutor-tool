@@ -32,6 +32,7 @@ import {
   teacherAnnotationBasePngUrl,
 } from "@/lib/api";
 import {
+  focusPeriods,
   fromPlaybackTime,
   processPauses,
   questionTimeline,
@@ -179,6 +180,17 @@ const hintLabels = {
   failed: "提示请求失败",
   shown: "已呈现提示",
 };
+const activityLabels = {
+  focus: "进入本题",
+  blur: "离开本题",
+  paper_open: "展开草稿纸",
+  paper_close: "收起草稿纸",
+  fullscreen_on: "进入全屏",
+  fullscreen_off: "退出全屏",
+  submit: "提交本题",
+  idle_start: "开始空闲",
+  idle_end: "结束空闲",
+};
 const boundaryLabels = {
   offline: "断网",
   online: "重新联网",
@@ -206,6 +218,16 @@ function eventLabel(event: QuestionProcessEvent): string {
       if (event.action === "shown" && event.requestId.startsWith("restored-"))
         return `已呈现此前解锁的提示 ${event.index + 1}`;
       return `${hintLabels[event.action]} ${event.index + 1}`;
+    case "activity":
+      if (event.action === "submit" && event.scope === "attempt")
+        return "整卷提交请求";
+      if (
+        (event.action === "paper_open" || event.action === "paper_close") &&
+        event.layer &&
+        event.layer !== "scratch"
+      )
+        return `${event.action === "paper_open" ? "展开" : "收起"}${event.layer === "answer" ? "手写作答纸" : "圈画工具"}`;
+      return activityLabels[event.action];
     case "boundary":
       return boundaryLabels[event.reason];
   }
@@ -235,6 +257,7 @@ function SegmentPlayer({
   const tail = timeline.events.at(-1)?.event;
   const end = timeline.events.at(-1)?.at ?? 0;
   const playbackEnd = toPlaybackTime(end, pauses);
+  const periods = useMemo(() => focusPeriods(timeline), [timeline]);
   const state = useMemo(
     () => timelineFrame(timeline, time, selected),
     [timeline, time, selected],
@@ -351,6 +374,24 @@ function SegmentPlayer({
         />
         <span className="tabular-nums">{(time / 1000).toFixed(1)} 秒</span>
       </div>
+      {periods.length > 0 && (
+        <div
+          role="img"
+          aria-label={`在本题区间：${periods.map((period) => `${(period.startMs / 1000).toFixed(1)}到${(period.endMs / 1000).toFixed(1)}秒`).join("；")}`}
+          className="relative h-2 rounded bg-muted"
+        >
+          {periods.map((period) => (
+            <span
+              key={`${period.segmentId}:${period.startMs}`}
+              className="absolute h-full rounded bg-blue-500"
+              style={{
+                left: `${(100 * (toPlaybackTime(period.startMs, pauses) - start)) / Math.max(1, playbackEnd - start)}%`,
+                width: `${(100 * (toPlaybackTime(period.endMs, pauses) - toPlaybackTime(period.startMs, pauses))) / Math.max(1, playbackEnd - start)}%`,
+              }}
+            />
+          ))}
+        </div>
+      )}
       <datalist id={markers}>
         {pauses.map((pause) => (
           <option

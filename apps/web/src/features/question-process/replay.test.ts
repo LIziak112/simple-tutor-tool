@@ -1,6 +1,7 @@
 import type { QuestionProcessEvent } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
+  focusPeriods,
   frameAt,
   fromPlaybackTime,
   processPauses,
@@ -276,4 +277,31 @@ describe("单题过程回放", () => {
     });
     expect(frameAt(events.slice(1), 70)).toBeNull();
   });
+});
+
+it("聚焦色带按段封口，不把刷新间隔当作在本题时间", () => {
+  const first: import("@tutor/contract").QuestionProcessRead["segments"][number] =
+    {
+      id: "first",
+      startedAt: 1000,
+      gap: false,
+      events: [
+        { seq: 0, at: 0, kind: "start", answer: null, hints: [], layers: {} },
+        { seq: 1, at: 100, kind: "activity", action: "focus" },
+        { seq: 2, at: 500, kind: "activity", action: "blur" },
+        { seq: 3, at: 800, kind: "activity", action: "focus" },
+        { seq: 4, at: 1000, kind: "boundary", reason: "closed" },
+      ],
+    };
+  const second = { ...first, id: "second", startedAt: 3000 };
+  expect(
+    focusPeriods(questionTimeline([first, second])).map(
+      ({ startMs, endMs }) => ({ startMs, endMs }),
+    ),
+  ).toEqual([
+    { startMs: 100, endMs: 500 },
+    { startMs: 800, endMs: 1000 },
+    { startMs: 2100, endMs: 2500 },
+    { startMs: 2800, endMs: 3000 },
+  ]);
 });

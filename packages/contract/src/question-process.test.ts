@@ -74,3 +74,31 @@ describe("单题过程正式手写契约", () => {
     ).toBe(true);
   });
 });
+
+it("题目活动共享序列与时钟，纸面来源可识别", () => {
+  const actions = [
+    "focus",
+    "blur",
+    "paper_open",
+    "paper_close",
+    "fullscreen_on",
+    "fullscreen_off",
+    "submit",
+    "idle_start",
+    "idle_end",
+  ];
+  const batch = questionProcessBatchSchema.parse({
+    ...base,
+    events: [
+      { seq: 0, at: 0, kind: "start", answer: null, hints: [], layers: {} },
+      ...actions.map((action, i) => ({
+        seq: i + 1,
+        at: i + 1,
+        kind: "activity",
+        action,
+        layer: "scratch",
+      })),
+    ],
+  });
+  expect(batch.events).toHaveLength(10);
+});
