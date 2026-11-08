@@ -72,7 +72,8 @@ describe("StudentLayout", () => {
     const entries = await screen.findAllByRole("link", {
       name: "张三，学生设置",
     });
-    expect(entries).toHaveLength(2);
+    // 2026-11 壳层重构：顶栏单行，身份入口只渲染一份
+    expect(entries).toHaveLength(1);
     expect(entries[0]).toHaveAttribute("href", "/s/settings");
     expect(
       screen.queryByRole("link", { name: "手写手感" }),
@@ -96,7 +97,7 @@ describe("StudentLayout", () => {
     mockedMe.mockResolvedValue(STUDENT);
     renderLayout();
 
-    expect(await screen.findAllByText("张三")).toHaveLength(2);
+    expect(await screen.findAllByText("张三")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "首页" })).toHaveAttribute(
       "href",
       "/s/home",
@@ -122,7 +123,7 @@ describe("StudentLayout", () => {
       screen.queryByRole("link", { name: "讲义" }),
     ).not.toBeInTheDocument();
     // jsdom 不加载响应式 CSS；实际可见的退出入口由浏览器测试验证。
-    expect(screen.getAllByRole("button", { name: /退出/ })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /退出/ })).toHaveLength(1);
     // 子路由正常渲染
     expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
   });

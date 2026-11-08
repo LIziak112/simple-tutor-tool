@@ -29,7 +29,7 @@ import { ScreenError, ScreenLoading } from "./StudentScreen";
  * 顶栏三段式——左侧姓名头像、中间分段式导航、右侧退出）。
  * 守卫：me 查询 pending → 全屏加载；401 → 跳 /s/login；其他错误 → 错误态 + 重试。
  * 布局：内容区居中限宽；iPad 竖屏单栏，横屏（lg:）加宽；导航项触控目标 ≥44px，
- * 窄屏导航独立一行并缩短标签，五个入口始终可达。
+ * 窄屏导航改为底部拇指区标签栏（2026-11 壳层重构），五个入口始终可达。
  * 讲义不占顶栏入口：/s/lectures 保留为二级页面（首页「按讲义浏览」进入，
  * 讲义的主要入口是课程目录）。
  */
@@ -156,52 +156,62 @@ export function StudentLayout() {
           跳到主内容
         </a>
         {!workspace && (
-          <header className="sticky top-0 z-10 border-b border-border/70 bg-card/90 backdrop-blur">
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-2 lg:max-w-5xl lg:flex-row lg:items-center lg:gap-3">
-              <div className="flex w-full items-center justify-between gap-3 lg:hidden">
-                {identity}
-                <div className="flex shrink-0 items-center gap-1">
-                  <AiQueueButton />
-                  {logout}
-                </div>
-              </div>
-              <div className="hidden shrink-0 lg:block">{identity}</div>
-              <nav aria-label="学生端导航" className="w-full min-w-0 lg:flex-1">
-                <div className="grid min-w-0 grid-cols-5 gap-1 rounded-xl bg-muted p-1">
+          /* 2026-11 壳层重构：顶栏收成单行（身份 / 导航 / 操作）。窄屏把同一个
+             <nav> 改成固定在底部的拇指区标签栏，顶栏只留一行 56px；lg 起导航回到
+             顶栏中段。只渲染一份导航，读屏与测试都只看到一组链接。
+             顶栏不用 backdrop-filter：它会成为 fixed 子元素的包含块，把底栏钉在顶栏里。 */
+          <header className="sticky top-0 z-20 border-b border-border/70 bg-card/95 supports-[backdrop-filter]:bg-card/90">
+            <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-3 px-4 lg:h-16 lg:max-w-5xl">
+              <div className="min-w-0 shrink-0">{identity}</div>
+              <nav
+                aria-label="学生端导航"
+                className="fixed inset-x-0 bottom-0 z-30 border-t border-border/70 bg-card/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_-8px_rgb(0_0_0/0.12)] backdrop-blur lg:static lg:z-auto lg:flex-1 lg:border-0 lg:bg-transparent lg:pb-0 lg:shadow-none lg:backdrop-blur-none"
+              >
+                <div className="mx-auto grid max-w-3xl grid-cols-5 gap-1 px-2 pt-1 lg:mx-0 lg:max-w-none lg:rounded-xl lg:bg-muted lg:p-1">
                   {NAV_ITEMS.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
                       aria-label={item.label}
                       className={({ isActive }) =>
-                        `flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-2 ${
+                        `group relative flex min-h-14 min-w-11 flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-xs font-medium whitespace-nowrap outline-none transition-[color,background-color,transform] duration-150 active:scale-[0.96] focus-visible:ring-3 focus-visible:ring-ring/50 lg:min-h-10 lg:flex-row lg:gap-1.5 lg:px-2 lg:text-sm ${
                           isActive
-                            ? "bg-card text-primary shadow-sm"
+                            ? "text-primary lg:bg-card lg:shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
                         }`
                       }
                     >
-                      <item.icon
-                        aria-hidden
-                        className="hidden size-4 shrink-0 sm:block"
-                      />
-                      <span className="text-xs sm:text-sm">
-                        {"shortLabel" in item ? (
-                          <>
-                            <span className="sm:hidden">{item.shortLabel}</span>
-                            <span className="hidden sm:inline">
-                              {item.label}
-                            </span>
-                          </>
-                        ) : (
-                          item.label
-                        )}
-                      </span>
+                      {({ isActive }) => (
+                        <>
+                          <span
+                            aria-hidden
+                            className={`flex h-7 w-12 items-center justify-center rounded-full transition-colors lg:h-auto lg:w-auto ${
+                              isActive ? "bg-primary/12 lg:bg-transparent" : ""
+                            }`}
+                          >
+                            <item.icon className="size-5 shrink-0 lg:size-4" />
+                          </span>
+                          <span>
+                            {"shortLabel" in item ? (
+                              <>
+                                <span className="lg:hidden">
+                                  {item.shortLabel}
+                                </span>
+                                <span className="hidden lg:inline">
+                                  {item.label}
+                                </span>
+                              </>
+                            ) : (
+                              item.label
+                            )}
+                          </span>
+                        </>
+                      )}
                     </NavLink>
                   ))}
                 </div>
               </nav>
-              <div className="hidden shrink-0 items-center gap-1 lg:flex">
+              <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0">
                 <AiQueueButton />
                 {logout}
               </div>
@@ -215,7 +225,7 @@ export function StudentLayout() {
           className={
             workspace
               ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6"
-              : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 pb-[env(safe-area-inset-bottom)] lg:max-w-5xl lg:py-8"
+              : "mx-auto w-full max-w-3xl flex-1 px-4 pt-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:max-w-5xl lg:py-8"
           }
         >
           <Outlet />
