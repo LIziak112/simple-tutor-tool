@@ -40,13 +40,14 @@ import {
   type PracticeQuestionFeedback,
   type PracticeQuestionFeedbackData,
   type PracticeQuestionSubmitData,
-  type PracticeQuestionSubmitRequest,
+  type PracticeQuestionSubmitWithAnswer,
   type PracticeWorkflowStartOptions,
   type PublicStructureByKind,
   type Question,
   type QuestionAnswers,
   type QuestionOption,
   questionAnswersSchema,
+  questionEvidenceBindings,
   questionSchema,
   type SelfReviewRecord,
   type StudentAnswer,
@@ -101,6 +102,7 @@ import {
   type Unit,
   units,
 } from "../db/schema";
+import { canonicalJsonOf } from "../lib/canonical-json";
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
@@ -1020,6 +1022,35 @@ function assertNewKindAnswerShape(
       "VALIDATION_ERROR",
       `答案结构不合法：${issues.map((issue) => issue.message).join("；")}`,
     );
+  }
+}
+
+/** MCP 写入时核对题型和结构，不比较参考答案。 */
+export function assertMcpDraftAnswerShape(
+  db: Db,
+  row: ResponseRow,
+  snapshot: Question,
+  answer: StudentAnswer,
+): void {
+  if (questionEvidenceBindings[snapshot.type].answerKind !== answer.kind) {
+    throw new HttpError(400, "VALIDATION_ERROR", "答案类型与题型不一致");
+  }
+  const options = (snapshot.options ?? []).map(({ text }, index) => ({
+    key: String(index),
+    index,
+    text,
+  }));
+  const issues = inspectShapeOfAnswer(answer, {
+    ...structuresOfSnapshot(
+      snapshot,
+      materialSlotOrderOf(db, row.attemptId),
+      row.unitId,
+    ),
+    choice: { options },
+    multi: { options },
+  });
+  if (issues.length > 0) {
+    throw new HttpError(400, "VALIDATION_ERROR", "答案结构与题目不符");
   }
 }
 
@@ -3330,7 +3361,7 @@ export function submitLessonQuestion(
 function practiceRequestDigestOf(
   attemptId: string,
   questionId: string,
-  req: PracticeQuestionSubmitRequest,
+  req: PracticeQuestionSubmitWithAnswer,
 ): string {
   const evidence = `${req.evidence.state}\u0001${req.evidence.versionId ?? ""}\u0001${req.evidence.revision ?? ""}\u0001${req.evidence.questionId}`;
   return createHash("sha256")
@@ -3343,6 +3374,7 @@ function practiceRequestDigestOf(
         req.questionRevisionId,
         String(req.expectedAnswerRevision),
         evidence,
+        ...(req.answer === undefined ? [] : [canonicalJsonOf(req.answer)]),
       ].join("\u0000"),
     )
     .digest("hex");
@@ -3381,7 +3413,7 @@ export function submitPracticeQuestion(
   studentId: string,
   attemptId: string,
   questionId: string,
-  req: PracticeQuestionSubmitRequest,
+  req: PracticeQuestionSubmitWithAnswer,
   now: Date | string = new Date(),
 ): PracticeQuestionSubmitData {
   const nowIso = new Date(now).toISOString();
@@ -3496,7 +3528,11 @@ export function submitPracticeQuestion(
     if (snapshot === null) {
       throw questionNotFound();
     }
-    const answer = answerOf(row.answerJson) ?? undefined;
+    if (req.answer !== undefined)
+      assertMcpDraftAnswerShape(db, row, snapshot, req.answer);
+    const answer = req.answer ?? answerOf(row.answerJson) ?? undefined;
+    const answerJson =
+      req.answer === undefined ? row.answerJson : JSON.stringify(req.answer);
     // QM-10 细项1：行级判分走 gradeResponseRow（新策略行不自动匹配）
     const autoCorrect = gradeResponseRow(row.gradingPolicy, snapshot, answer);
 
@@ -3530,6 +3566,14 @@ export function submitPracticeQuestion(
     const written = tx
       .update(responses)
       .set({
+        ...(answerJson === row.answerJson
+          ? {}
+          : {
+              answerJson,
+              answerRevision: row.answerRevision + 1,
+              answerMutationId: req.submissionMutationId,
+              changeCount: row.changeCount + 1,
+            }),
         autoCorrect,
         // 提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
         finalCorrect: autoCorrect,

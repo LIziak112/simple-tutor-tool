@@ -5,6 +5,7 @@ import {
   AI_REPLY_MAX_CHARS,
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
+  studentMcpPracticeQuestionSubmitSchema,
 } from "@tutor/contract";
 import { checkAiReply } from "@tutor/md-dsl";
 import { z } from "zod";
@@ -27,6 +28,7 @@ import {
   submitMcpReply,
 } from "../services/ai-companion/student-ai-queue.ts";
 import { outboundAssemblyOfTask } from "../services/ai-companion/student-ai-worker.ts";
+import { submitPracticeQuestion } from "../services/attempt-service.ts";
 import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
@@ -81,6 +83,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "submit_ai_reply",
   "check_ai_reply",
   "submit_attempt_review_result",
+  "student_submit_practice_question",
 ] as const;
 
 /**
@@ -689,6 +692,24 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
         includedCount,
         excludedCount: new Set(questionIds).size - includedCount,
       });
+    }),
+  );
+
+  server.registerTool(
+    "student_submit_practice_question",
+    {
+      description:
+        "学生确认后提交一题。提交会锁定本题，最后一题会自动交卷。questionId 是 DSL 题号，questionRevisionId 是作答行 UUID。携带练习详情中的工作流版本、答案版本及笔记证据声明。可同时提供本次答案，省略则提交已保存的草稿。重试同一次提交须复用 submissionMutationId 和全部输入。",
+      inputSchema: studentMcpPracticeQuestionSubmitSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+      },
+    },
+    guard(({ practiceId, questionId, ...request }) => {
+      submitPracticeQuestion(db, studentId, practiceId, questionId, request);
+      return jsonContent({ success: true });
     }),
   );
 

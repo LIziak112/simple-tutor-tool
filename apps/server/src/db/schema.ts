@@ -1265,6 +1265,18 @@ export const responses = sqliteTable(
   ],
 );
 
+/** 教师修正前的草稿证据，仅供内部审计，随修正同事务追加。 */
+export const responseEditAudits = sqliteTable("response_edit_audits", {
+  id: text("id").primaryKey(),
+  responseId: text("response_id").notNull(),
+  teacherId: text("teacher_id").notNull(),
+  kind: text("kind").$type<"snapshot" | "answer">().notNull(),
+  previousJson: text("previous_json"),
+  reason: text("reason").notNull(),
+  answerRevision: integer("answer_revision").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 /**
  * attempt 上下文冻结快照表（tt-05b / QM-03 预留，决策记录 §5.8.1 与设计方案
  * §5.1/§5.3）——开卷冻结时按 attempt 保存组与材料的冻结内容、版本及引用：

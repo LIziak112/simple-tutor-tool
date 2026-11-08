@@ -218,10 +218,13 @@ export function attemptExtrasOf(
 
 /** query_student_responses 入参（server.ts 的 inputSchema shape 与之对齐） */
 export interface StudentResponseQueryArgs {
+  includeUnsubmitted?: boolean | undefined;
   studentId: string;
   attemptIds?: string[] | undefined;
   courseId?: string | undefined;
   questionId?: string | undefined;
+  startedFrom?: string | undefined;
+  startedTo?: string | undefined;
   /** 单题提交时间下界 / 上界（UTC ISO，字符串比较口径） */
   from?: string | undefined;
   to?: string | undefined;
@@ -381,7 +384,7 @@ export function queryStudentResponses(
     // 放大成「名下全部学生」（多学生教师串档，评审 #11725 必改①）
     eq(attempts.studentId, args.studentId),
     // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
-    ...teacherVisibleResponsesWhere(),
+    ...teacherVisibleResponsesWhere(args.includeUnsubmitted),
     ...(args.attemptIds !== undefined && args.attemptIds.length > 0
       ? [inArray(responses.attemptId, args.attemptIds)]
       : []),
@@ -391,6 +394,16 @@ export function queryStudentResponses(
     ...(args.questionId !== undefined
       ? [eq(responses.questionId, args.questionId)]
       : []),
+    ...(args.startedFrom === undefined
+      ? []
+      : [
+          sql`julianday(${attempts.startedAt}) >= julianday(${args.startedFrom})`,
+        ]),
+    ...(args.startedTo === undefined
+      ? []
+      : [
+          sql`julianday(${attempts.startedAt}) <= julianday(${args.startedTo})`,
+        ]),
     ...(args.from !== undefined ? [gte(responses.submittedAt, args.from)] : []),
     ...(args.to !== undefined ? [lte(responses.submittedAt, args.to)] : []),
     ...(args.knowledge !== undefined
@@ -436,6 +449,7 @@ export function queryStudentResponses(
   const rows = db
     .select({
       revisionId: responses.id,
+      answerRevision: responses.answerRevision,
       attemptId: responses.attemptId,
       attemptNo: attempts.attemptNo,
       sourceType: attempts.sourceType,
@@ -498,6 +512,7 @@ export function queryStudentResponses(
     const refs = refMap.get(refKeyOf(row.attemptId, row.questionId));
     return {
       revisionId: row.revisionId,
+      answerRevision: row.answerRevision,
       attemptId: row.attemptId,
       attemptNo: row.attemptNo,
       sourceType: row.sourceType,

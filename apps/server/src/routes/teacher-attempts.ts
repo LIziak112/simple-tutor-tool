@@ -76,6 +76,8 @@ export function createTeacherAttemptRoutes(
           unitId: c.req.query("unitId") ?? undefined,
           sourceType: c.req.query("sourceType") ?? undefined,
           status: c.req.query("status") ?? undefined,
+          startedFrom: c.req.query("startedFrom") ?? undefined,
+          startedTo: c.req.query("startedTo") ?? undefined,
           from: c.req.query("from") ?? undefined,
           to: c.req.query("to") ?? undefined,
           limit: c.req.query("limit") ?? undefined,

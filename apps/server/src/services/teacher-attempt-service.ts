@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
+  gradingPolicyOf,
   type Question,
+  questionEvidenceBindings,
   type TeacherAttemptCard,
   type TeacherAttemptDetailData,
   type TeacherAttemptDetailQuestion,
@@ -7,6 +11,7 @@ import {
   type TeacherAttemptListData,
   type TeacherAttemptListQuery,
   type TeacherAttemptSource,
+  type TeacherResponseEdit,
   type WrongScope,
   wrongPracticeScopeSchema,
   wrongScopeLabelOf,
@@ -26,13 +31,16 @@ import {
 import type { Db } from "../db/client";
 import {
   type Attempt,
+  annotationBases,
   assignments,
   attempts,
   courses,
   type InkRow,
   ink,
+  notes,
   questions,
   type ResponseRow,
+  responseEditAudits,
   responses,
   students,
   units,
@@ -40,9 +48,11 @@ import {
 import { HttpError } from "../lib/http-error";
 import {
   answerOf,
+  assertMcpDraftAnswerShape,
   attemptQuestionRows,
   attemptResponseRows,
   attemptUnitIds,
+  buildAttemptQuestionWhere,
   effectiveVerdictOfRow,
   ensureAttemptFrozen,
   lessonSourceContextOf,
@@ -331,6 +341,12 @@ export function listTeacherAttempts(
       ? sql`${lastActivitySql} >= ${query.from}`
       : undefined,
     query.to !== undefined ? sql`${lastActivitySql} <= ${query.to}` : undefined,
+    query.startedFrom !== undefined
+      ? sql`julianday(${attempts.startedAt}) >= julianday(${query.startedFrom})`
+      : undefined,
+    query.startedTo !== undefined
+      ? sql`julianday(${attempts.startedAt}) <= julianday(${query.startedTo})`
+      : undefined,
   ].filter((item): item is NonNullable<typeof item> => item !== undefined);
 
   const where = and(
@@ -412,11 +428,13 @@ export function listTeacherAttempts(
  * 缺失」幽灵行（T6R.3）一并排除，与 D4 待批谓词同口径。使用方必须同时 join
  * attempts 与 responses 两表。
  */
-export function teacherVisibleResponsesWhere() {
+export function teacherVisibleResponsesWhere(includeUnsubmitted = false) {
   return [
     isNull(attempts.abandonedAt),
     isNotNull(responses.questionSnapshotJson),
-    or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
+    ...(includeUnsubmitted
+      ? []
+      : [or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt))]),
   ];
 }
 
@@ -464,6 +482,137 @@ export function requireTeacherAttempt(
     throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   }
   return row;
+}
+
+export function editTeacherDraftResponse(
+  db: Db,
+  teacherId: string,
+  edit: TeacherResponseEdit,
+) {
+  const { attemptId, questionId, expectedAnswerRevision, reason } = edit;
+  return db.transaction((tx) => {
+    const { attempt } = requireTeacherAttempt(db, teacherId, attemptId);
+    if (attempt.status !== "draft" || attempt.abandonedAt !== null) {
+      throw new HttpError(
+        409,
+        "ATTEMPT_NOT_IN_PROGRESS",
+        "只能修改未作废的进行中练习",
+      );
+    }
+    const row = tx
+      .select()
+      .from(responses)
+      .where(buildAttemptQuestionWhere(attemptId, questionId))
+      .get();
+    const original = row === undefined ? null : snapshotOfRow(row);
+    if (row === undefined || original === null) {
+      throw new HttpError(404, "QUESTION_NOT_FOUND", "找不到该练习的冻结题目");
+    }
+    if (row.submittedAt !== null) {
+      throw new HttpError(
+        409,
+        "QUESTION_ALREADY_SUBMITTED",
+        "本题已提交，不能修改",
+      );
+    }
+    if (row.answerRevision !== expectedAnswerRevision) {
+      throw new HttpError(
+        409,
+        "ANSWER_REVISION_CONFLICT",
+        "本题已更新，请重新查询",
+      );
+    }
+
+    if ("snapshot" in edit) {
+      const { snapshot } = edit;
+      if (
+        snapshot.id !== questionId ||
+        snapshot.type !== original.type ||
+        !isDeepStrictEqual(
+          snapshot.materialRefs ?? [],
+          original.materialRefs ?? [],
+        ) ||
+        (snapshot.answers !== undefined &&
+          snapshot.answers.kind !==
+            questionEvidenceBindings[snapshot.type].answerKind) ||
+        (row.gradingPolicy !== null &&
+          gradingPolicyOf(snapshot) !== row.gradingPolicy)
+      ) {
+        throw new HttpError(
+          400,
+          "VALIDATION_ERROR",
+          "题号、题型、材料引用与冻结判分策略须保持一致",
+        );
+      }
+      // 已存答案、提示和笔迹依附原题面，保留它们的原始解释。
+      if (
+        row.answerJson !== null ||
+        row.hintsUsed > 0 ||
+        [ink, notes, annotationBases].some(
+          (table) =>
+            tx
+              .select({ id: table.id })
+              .from(table)
+              .where(
+                and(
+                  eq(table.attemptId, attemptId),
+                  eq(table.questionId, questionId),
+                ),
+              )
+              .get() !== undefined,
+        )
+      ) {
+        throw new HttpError(
+          409,
+          "RESPONSE_EVIDENCE_EXISTS",
+          "本题已留存作答材料，不能覆盖原题面",
+        );
+      }
+    } else {
+      assertMcpDraftAnswerShape(db, row, original, edit.answer);
+    }
+
+    const auditId = randomUUID();
+    const isSnapshot = "snapshot" in edit;
+    const answerRevision = row.answerRevision + 1;
+    const written = tx
+      .update(responses)
+      .set({
+        ...(isSnapshot
+          ? { questionSnapshotJson: JSON.stringify(edit.snapshot) }
+          : { answerJson: JSON.stringify(edit.answer) }),
+        answerRevision,
+        answerMutationId: auditId,
+      })
+      .where(
+        and(
+          eq(responses.id, row.id),
+          isNull(responses.submittedAt),
+          eq(responses.answerRevision, expectedAnswerRevision),
+        ),
+      )
+      .run();
+    if (written.changes !== 1) {
+      throw new HttpError(
+        409,
+        "ANSWER_REVISION_CONFLICT",
+        "本题已更新，请重新查询",
+      );
+    }
+    tx.insert(responseEditAudits)
+      .values({
+        id: auditId,
+        responseId: row.id,
+        teacherId,
+        kind: isSnapshot ? "snapshot" : "answer",
+        previousJson: isSnapshot ? row.questionSnapshotJson : row.answerJson,
+        reason,
+        answerRevision,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    return { success: true, attemptId, questionId, answerRevision };
+  });
 }
 
 // 快照解析统一走 services/snapshot.ts 的 snapshotOfRow（T6R.3 全服务端唯一

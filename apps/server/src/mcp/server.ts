@@ -13,6 +13,8 @@ import {
   notePhaseSchema,
   questionTypeSchema,
   teacherAttemptListQuerySchema,
+  teacherResponseAnswerEditSchema,
+  teacherResponseSnapshotEditSchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -54,7 +56,10 @@ import {
   listStudentReports,
 } from "../services/report-service";
 import { listStudents } from "../services/student-service";
-import { listTeacherAttempts } from "../services/teacher-attempt-service";
+import {
+  editTeacherDraftResponse,
+  listTeacherAttempts,
+} from "../services/teacher-attempt-service";
 import {
   commitZipImport,
   decodeImportZipBase64,
@@ -992,6 +997,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         status: attemptStatusSchema
           .optional()
           .describe("按状态筛选：draft | submitted | graded"),
+        startedFrom: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("练习开始时间下界（UTC ISO）"),
+        startedTo: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("练习开始时间上界（UTC ISO）"),
         from: z.iso
           .datetime({ offset: false })
           .optional()
@@ -1019,6 +1032,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         unitId,
         sourceType,
         status,
+        startedFrom,
+        startedTo,
         from,
         to,
         limit,
@@ -1031,6 +1046,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ...(unitId !== undefined ? { unitId } : {}),
           ...(sourceType !== undefined ? { sourceType } : {}),
           ...(status !== undefined ? { status } : {}),
+          ...(startedFrom !== undefined ? { startedFrom } : {}),
+          ...(startedTo !== undefined ? { startedTo } : {}),
           ...(from !== undefined ? { from } : {}),
           ...(to !== undefined ? { to } : {}),
           ...(limit !== undefined ? { limit } : {}),
@@ -1098,7 +1115,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     "query_student_responses",
     {
       description:
-        "按条件检索学生的逐题作答行（一行 = 一次作答，同题多次作答各自成行；已作废卷不返回，进行中卷只返回单题已提交的行）。筛选——归属：studentId（可省，同 query_student_attempts 约定）/ attemptIds / courseId / questionId / 提交时间 from-to；内容：knowledge（建卷冻结考点，精确等于）/ type（题型）；结果面：correct（true 判对 / false 判错 / pending 待批）/ flaggedUnsure / answered；过程面：minActiveSec / minChangeCount / usedHints / hasScratchOrInk（草稿笔记或正式笔迹）/ hasCorrection（订正）/ hasAiHelp（AI 求助）/ selfReview（自评）。summary 模式（默认）题干截 120 字且不含参考答案与解析；fields=full 返回题干全文、参考答案与选项——自学者注意 full 含参考答案。每行带引用 id（refs.inkIds/noteVersionIds/annotationIds/aiTaskIds），内容按 id 另取不内联。limit（默认 50 上限 200）+ cursor 翻页。",
+        "按条件检索学生的逐题作答行（一行对应一次作答）。排除作废卷，进行中卷默认只返回已提交题，includeUnsubmitted 可显式纳入未提交题。studentId 可省，规则同 query_student_attempts。from/to 筛选单题提交时间，startedFrom/startedTo 筛选练习开始时间。每行带答案版本 answerRevision 和材料引用 id（refs），材料按 id 另取。summary（默认）题干截 120 字，不含参考答案与解析。full 返回题干全文、选项、参考答案与解析，自学者注意 full 含参考答案。limit（默认 50 上限 200）+ cursor 翻页。",
       inputSchema: {
         studentId: z
           .string()
@@ -1111,11 +1128,23 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .optional()
           .describe("按卷筛选（attempts.id，可多个）"),
         courseId: z.string().uuid().optional().describe("按课程筛选"),
+        includeUnsubmitted: z
+          .boolean()
+          .optional()
+          .describe("显式包含进行中卷未提交的题目"),
         questionId: z
           .string()
           .min(1)
           .optional()
           .describe("按题目 id 筛选（DSL 题 id，非 UUID）"),
+        startedFrom: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("练习开始时间下界（UTC ISO）"),
+        startedTo: z.iso
+          .datetime({ offset: false })
+          .optional()
+          .describe("练习开始时间上界（UTC ISO）"),
         from: z.iso
           .datetime({ offset: false })
           .optional()
@@ -1261,6 +1290,28 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         ),
       );
     }),
+  );
+
+  server.registerTool(
+    "update_response_snapshot",
+    {
+      description:
+        "修正未作废草稿卷中未提交、尚无作答材料的题目快照。须保持题号、题型、材料引用和冻结判分策略一致。用 query_student_responses 定位并读取版本，修正与原因同步留痕。",
+      inputSchema: teacherResponseSnapshotEditSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
+  );
+
+  server.registerTool(
+    "update_response_answer",
+    {
+      description:
+        "修正未作废草稿卷中未提交题目的草稿答案。用 query_student_responses 定位并读取版本。修正不会提交、判分或计入学生改答次数，原因同步留痕。",
+      inputSchema: teacherResponseAnswerEditSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
   );
 
   return server;

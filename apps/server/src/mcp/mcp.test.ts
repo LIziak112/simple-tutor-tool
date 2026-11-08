@@ -2292,6 +2292,66 @@ function gradedAttemptWithRows(
 }
 
 describe("query_student_attempts（T-PR2 MCP-A ①）", () => {
+  it("开始时间边界与草稿题显式查询", async () => {
+    const env = await makeEnv();
+    const studentId = env.seed.students.s1.id;
+    const attemptId = gradedAttemptWithRows(env.db, studentId, 3);
+    const startedAt = "2026-06-01T10:00:00.000Z";
+    env.db
+      .update(attempts)
+      .set({ startedAt, status: "draft" })
+      .where(eq(attempts.id, attemptId))
+      .run();
+    env.db
+      .update(responses)
+      .set({ submittedAt: null })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
+    const client = await connectClient(env, env.tokenA);
+    try {
+      const list = await client.callTool({
+        name: "query_student_attempts",
+        arguments: {
+          studentId,
+          startedFrom: "2026-06-01T10:00:00Z",
+          startedTo: startedAt,
+        },
+      });
+      expect(parseToolJson(list)).toMatchObject({ attempts: [{ attemptId }] });
+      const query = (options: Record<string, unknown>) =>
+        client.callTool({
+          name: "query_student_responses",
+          arguments: { studentId, attemptIds: [attemptId], ...options },
+        });
+      expect(parseToolJson(await query({}))).toMatchObject({ total: 0 });
+      const draftRows = env.db
+        .select({ id: responses.id })
+        .from(responses)
+        .where(eq(responses.attemptId, attemptId))
+        .all();
+      expect(
+        parseToolJson(
+          await query({ includeUnsubmitted: true, startedFrom: startedAt }),
+        ),
+      ).toMatchObject({
+        total: draftRows.length,
+        responses: expect.arrayContaining([
+          expect.objectContaining({ answerRevision: expect.any(Number) }),
+        ]),
+      });
+      expect(
+        parseToolJson(
+          await query({
+            includeUnsubmitted: true,
+            startedTo: "2026-06-01T09:59:59.999Z",
+          }),
+        ),
+      ).toMatchObject({ total: 0 });
+    } finally {
+      await client.close();
+    }
+  });
+
   it("主路径：graded 卷返回已提交题数与对/错/待批计数，hasAiReview 缺省 false", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
@@ -2410,6 +2470,157 @@ describe("query_student_attempts（T-PR2 MCP-A ①）", () => {
     expect(new Set(collected).size).toBe(collected.length);
     expect(collected.length).toBe(total);
     await client.close();
+  });
+});
+
+describe("教师 MCP 修正草稿", () => {
+  it("同域修改保留未提交状态，版本冲突及题级锁定拒写，并原子审计", async () => {
+    const env = await makeEnv();
+    const questionId = "mcp-draft-fix";
+    const { attemptId } = frozenDraftAttempt(env.db, env.seed.students.s1.id, [
+      {
+        questionId,
+        snapshotJson: snapshotJsonOf({
+          id: questionId,
+          type: "choice",
+          options: [{ text: "甲" }, { text: "乙" }],
+        }),
+      },
+    ]);
+    const row = mustDefined(
+      env.db
+        .select()
+        .from(responses)
+        .where(eq(responses.attemptId, attemptId))
+        .get(),
+      "草稿题",
+    );
+    const snapshot = JSON.parse(
+      mustDefined(row.questionSnapshotJson, "冻结快照"),
+    ) as Record<string, unknown>;
+    const client = await connectClient(env, env.tokenA);
+    const other = await connectClient(env, TOKEN_B);
+    try {
+      const args = {
+        attemptId,
+        questionId: row.questionId,
+        expectedAnswerRevision: row.answerRevision,
+        reason: "修正题面",
+      };
+      const edit = (
+        target: Client,
+        name: string,
+        fields: Record<string, unknown>,
+      ) => target.callTool({ name, arguments: { ...args, ...fields } });
+      const replacement = { ...snapshot, stemMd: "修正后题干" };
+      expect(
+        (
+          await edit(other, "update_response_snapshot", {
+            snapshot: replacement,
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        (
+          await edit(client, "update_response_snapshot", {
+            snapshot: { id: row.questionId, type: snapshot.type },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        parseToolJson(
+          await edit(client, "update_response_snapshot", {
+            snapshot: replacement,
+          }),
+        ),
+      ).toMatchObject({
+        success: true,
+        answerRevision: row.answerRevision + 1,
+      });
+      const answer = { kind: "choice", index: 1 };
+      expect(
+        parseToolJson(await edit(client, "update_response_answer", { answer })),
+      ).toMatchObject({ error: "ANSWER_REVISION_CONFLICT" });
+      expect(
+        parseToolJson(
+          await edit(client, "update_response_answer", {
+            answer,
+            expectedAnswerRevision: row.answerRevision + 1,
+            reason: "修正草稿",
+          }),
+        ),
+      ).toMatchObject({
+        success: true,
+        answerRevision: row.answerRevision + 2,
+      });
+      const current = env.db
+        .select()
+        .from(responses)
+        .where(eq(responses.id, row.id))
+        .get();
+      expect(current).toMatchObject({
+        answerJson: JSON.stringify(answer),
+        submittedAt: null,
+        changeCount: row.changeCount,
+      });
+      expect(current?.questionSnapshotJson).toContain("修正后题干");
+      expect(
+        parseToolJson(
+          await edit(client, "update_response_snapshot", {
+            snapshot: replacement,
+            expectedAnswerRevision: row.answerRevision + 2,
+          }),
+        ),
+      ).toMatchObject({ error: "RESPONSE_EVIDENCE_EXISTS" });
+      env.db.$client.exec(
+        "CREATE TEMP TRIGGER reject_edit_audit BEFORE INSERT ON response_edit_audits BEGIN SELECT RAISE(ABORT, 'audit failure'); END",
+      );
+      expect(
+        (
+          await edit(client, "update_response_answer", {
+            answer: { kind: "choice", index: 0 },
+            expectedAnswerRevision: row.answerRevision + 2,
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        env.db.select().from(responses).where(eq(responses.id, row.id)).get(),
+      ).toEqual(current);
+      env.db
+        .update(responses)
+        .set({ submittedAt: "2026-06-01T00:00:00.000Z" })
+        .where(eq(responses.id, row.id))
+        .run();
+      expect(
+        (
+          await edit(client, "update_response_answer", {
+            answer,
+            expectedAnswerRevision: row.answerRevision + 2,
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        (
+          await edit(client, "update_response_snapshot", {
+            snapshot: replacement,
+            expectedAnswerRevision: row.answerRevision + 2,
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        env.db.$client
+          .prepare(
+            "SELECT kind, reason FROM response_edit_audits ORDER BY rowid",
+          )
+          .all(),
+      ).toEqual([
+        { kind: "snapshot", reason: "修正题面" },
+        { kind: "answer", reason: "修正草稿" },
+      ]);
+    } finally {
+      await client.close();
+      await other.close();
+    }
   });
 });
 

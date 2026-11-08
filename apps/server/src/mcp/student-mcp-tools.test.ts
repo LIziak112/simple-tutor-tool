@@ -32,6 +32,7 @@ import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   callToolJson,
   connectMcpClientViaApp,
@@ -105,6 +106,90 @@ async function makeEnv(): Promise<ToolsEnv> {
 /** 建立 SDK 客户端连接（Streamable HTTP + Bearer token；样板见 test/mcp-test-utils.ts） */
 const connectClient = (env: ToolsEnv, token = env.token) =>
   connectMcpClientViaApp(env.app, "/mcp/student", token, "sai26-tools-test");
+
+it("学生 MCP 原子逐题提交，失败保稿、幂等且不泄露参考答案", async () => {
+  const env = await makeEnv();
+  const { attemptId, q1, q2 } = env.world;
+  env.db
+    .update(attempts)
+    .set({
+      sourceType: "wrong",
+      assignmentId: null,
+      practiceWorkflowVersion: 1,
+      feedbackMode: "per_question",
+    })
+    .where(eq(attempts.id, attemptId))
+    .run();
+  const row = env.db
+    .select()
+    .from(responses)
+    .where(eq(responses.questionId, q1))
+    .get();
+  if (row === undefined) throw new Error("缺少冻结题");
+  const original = JSON.stringify({ kind: "choice", index: 0 });
+  env.db
+    .update(responses)
+    .set({ answerJson: original, answerRevision: 1 })
+    .where(eq(responses.id, row.id))
+    .run();
+  const client = await connectClient(env);
+  try {
+    const args = {
+      practiceId: attemptId,
+      questionId: q1,
+      questionRevisionId: row.id,
+      workflowVersion: 1,
+      workflowRevision: 0,
+      expectedAnswerRevision: 1,
+      submissionMutationId: randomUUID(),
+      evidence: { questionId: q1, state: "none" },
+      answer: { kind: "choice", index: 1 },
+    };
+    const submit = (overrides: Record<string, unknown> = {}) =>
+      callToolJson(client, "student_submit_practice_question", {
+        ...args,
+        ...overrides,
+      });
+    const otherAttempt = insertAttempt(env.db, {
+      studentId: makeStudent(env.db),
+    });
+    expect((await submit({ practiceId: otherAttempt })).isError).toBe(true);
+    expect((await submit({ workflowRevision: 1 })).data.error).toBe(
+      "WORKFLOW_REVISION_STALE",
+    );
+    expect((await submit({ expectedAnswerRevision: 0 })).data.error).toBe(
+      "ANSWER_REVISION_CONFLICT",
+    );
+    expect(
+      (await submit({ evidence: { questionId: q2, state: "none" } })).data
+        .error,
+    ).toBe("NOTE_EVIDENCE_MISMATCH");
+    const read = () =>
+      env.db.select().from(responses).where(eq(responses.id, row.id)).get();
+    expect(read()).toMatchObject({
+      answerJson: original,
+      answerRevision: 1,
+      submittedAt: null,
+    });
+    const accepted = await submit();
+    expect(accepted).toEqual({ isError: false, data: { success: true } });
+    assertNoLeak(accepted.data);
+    const stored = read();
+    expect(stored).toMatchObject({
+      answerJson: JSON.stringify(args.answer),
+      answerRevision: 2,
+      finalCorrect: true,
+      submittedAt: expect.any(String),
+    });
+    expect((await submit()).isError).toBe(false);
+    expect(
+      (await submit({ answer: { kind: "choice", index: 0 } })).data.error,
+    ).toBe("WORKFLOW_MUTATION_CONFLICT");
+    expect(read()).toEqual(stored);
+  } finally {
+    await client.close();
+  }
+});
 
 /** callTool + 取第一段 text 解析 JSON；isError 时返回解析后的错误对象 */
 async function callJson(
