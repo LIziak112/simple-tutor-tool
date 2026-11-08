@@ -1,4 +1,11 @@
-import { BookOpen, BookX, ClipboardList, School, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  BookX,
+  ClipboardList,
+  School,
+  Sparkles,
+} from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -67,9 +74,12 @@ function useWrongCounts() {
 function GreetingBanner({
   todoCount,
   wrongPending,
+  next,
 }: {
   todoCount: number | null;
   wrongPending: number | null;
+  /** 2026-11 首页重构：最该先做的一份作业（列表排序第一项），横幅直接给主操作 */
+  next?: { id: string; title: string; status: string } | undefined;
 }) {
   const meQuery = useStudentMe();
   const name = meQuery.data?.displayName ?? "同学";
@@ -88,7 +98,7 @@ function GreetingBanner({
   return (
     <section
       aria-label="今日概览"
-      className="flex items-center gap-4 rounded-2xl bg-gradient-to-r from-primary to-sky-700 px-5 py-5 text-primary-foreground shadow-sm sm:px-6"
+      className="flex flex-wrap items-center gap-4 rounded-2xl bg-gradient-to-r from-primary to-sky-700 px-5 py-5 text-primary-foreground shadow-sm sm:px-6"
     >
       <span
         aria-hidden
@@ -96,10 +106,28 @@ function GreetingBanner({
       >
         <Sparkles className="size-6" />
       </span>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <h1 className="text-lg font-semibold">{name}，你好</h1>
         <p className="mt-0.5 text-sm text-white/90">{summary}</p>
       </div>
+      {next ? (
+        <Link
+          to={`/s/assignments/${next.id}`}
+          aria-label={`${next.status === "in_progress" ? "接着做" : "先做这份"}：${next.title}`}
+          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-primary shadow-sm outline-none transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-3 focus-visible:ring-white/60 active:scale-[0.96]"
+        >
+          {next.status === "in_progress" ? "接着做" : "先做这份"}
+          <ArrowRight aria-hidden className="size-4" />
+        </Link>
+      ) : wrongPending !== null && wrongPending > 0 ? (
+        <Link
+          to="/s/wrong"
+          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl bg-white/15 px-4 text-sm font-semibold text-white outline-none ring-1 ring-white/40 transition-[transform,background-color] duration-150 hover:bg-white/25 focus-visible:ring-3 focus-visible:ring-white/60 active:scale-[0.96]"
+        >
+          复习错题
+          <ArrowRight aria-hidden className="size-4" />
+        </Link>
+      ) : null}
     </section>
   );
 }
@@ -201,6 +229,7 @@ export default function StudentHomePage() {
       <GreetingBanner
         todoCount={todoCount}
         wrongPending={wrong.counts?.pending ?? null}
+        next={todo?.[0]}
       />
 
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-8">
