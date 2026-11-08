@@ -601,6 +601,39 @@ test(
             await expect(
               paper.locator("[data-process-stroke-count]"),
             ).toHaveAttribute("data-process-stroke-count", "1");
+            const ghost = paper.locator("[data-process-deleted-strokes]");
+            await expect(ghost).toHaveAttribute(
+              "data-process-deleted-strokes",
+              "0",
+            );
+            const canvas = paper.locator("canvas");
+            const original = await canvas.evaluate((el) =>
+              (el as HTMLCanvasElement).toDataURL(),
+            );
+            await player
+              .getByRole("checkbox", { name: "看擦改", exact: true })
+              .check();
+            await expect(ghost).toHaveAttribute(
+              "data-process-deleted-strokes",
+              "1",
+            );
+            await expect
+              .poll(() =>
+                canvas.evaluate((el) => (el as HTMLCanvasElement).toDataURL()),
+              )
+              .not.toBe(original);
+            await player
+              .getByRole("checkbox", { name: "看擦改", exact: true })
+              .uncheck();
+            await expect(ghost).toHaveAttribute(
+              "data-process-deleted-strokes",
+              "0",
+            );
+            await expect
+              .poll(() =>
+                canvas.evaluate((el) => (el as HTMLCanvasElement).toDataURL()),
+              )
+              .toBe(original);
           }
           if (i < 4 || i > 7)
             await expect(

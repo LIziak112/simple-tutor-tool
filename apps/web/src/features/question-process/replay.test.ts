@@ -305,3 +305,38 @@ it("聚焦色带按段封口，不把刷新间隔当作在本题时间", () => {
     { startMs: 2800, endMs: 3000 },
   ]);
 });
+
+it("擦改对照只保留当前已移除笔画，恢复、换底及新段不会留下重影", () => {
+  expect(frameAt(events, 39)?.removedSince.scratch).toEqual([]);
+  expect(frameAt(events, 40)?.removedSince.scratch).toEqual([
+    { stroke, at: 40 },
+  ]);
+  expect(frameAt(events, 50)?.removedSince.scratch).toEqual([]);
+  const cleared = [
+    ...events,
+    {
+      seq: 9,
+      at: 80,
+      kind: "ink",
+      layer: "scratch",
+      operation: "clear",
+      removed: [stroke.id],
+      added: [],
+    },
+  ] satisfies QuestionProcessEvent[];
+  expect(frameAt(cleared, 80)?.removedSince.scratch).toEqual([
+    { stroke, at: 80 },
+  ]);
+  const reset = [
+    ...cleared,
+    {
+      seq: 10,
+      at: 90,
+      kind: "surface",
+      layer: "scratch",
+      surface: { width: 1000, height: 800, strokes: [] },
+    },
+  ] satisfies QuestionProcessEvent[];
+  expect(frameAt(reset, 90)?.removedSince.scratch).toEqual([]);
+  expect(frameAt(events.slice(0, 1), 0)?.removedSince).toEqual({});
+});
