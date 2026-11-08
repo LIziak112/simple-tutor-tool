@@ -77,6 +77,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "renew_attempt_review_lease",
   "submit_ai_reply",
   "submit_attempt_review_result",
+  "student_submit_practice_question",
 ] as const;
 
 /**
@@ -657,6 +658,44 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
         label: scopeLabel,
         includedCount,
         excludedCount: new Set(questionIds).size - includedCount,
+      });
+    }),
+  );
+
+  
+  // student_submit_practice_question：提交练习题目作答
+  server.registerTool(
+    "student_submit_practice_question",
+    {
+      description:
+        "提交练习中的单道题目作答：支持针对进行中的练习提交选项/文本/填空答案。该工具接收题目所在练习的 practiceId、作答所在题目行 questionId，并基于题目类型提供相应作答载荷。对于长练习（如 100 题），学生可分批次逐题提交作答，不必等全部做完才提交。",
+      inputSchema: {
+        practiceId: z.string().uuid().describe("所属的练习 ID"),
+        questionId: z.string().uuid().describe("具体的题目作答记录 ID（从查询工具中获取的 id）"),
+        evidence: z.object({
+            answers: z.array(z.string()).optional().describe("填空/选择答案"),
+            text: z.string().optional().describe("主观文本解答"),
+        }).describe("题目作答载荷（填空、选择、文本等），须匹配题目题型声明格式"),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    guard(async ({ practiceId, questionId, evidence }) => {
+      // 动态导入所需模块
+      const attemptServiceModule = await import("../services/attempt-service.ts");
+      const attemptService = attemptServiceModule.attemptService;
+      
+      const payload = {
+        workflowVersion: 1,
+        workflowRevision: 0, 
+        questionRevisionId: questionId,
+        expectedAnswerRevision: 0,
+        submissionMutationId: crypto.randomUUID(),
+        evidence: evidence,
+      };
+      
+      const result = await attemptService.submitPracticeQuestion(db, studentId, practiceId, questionId, payload as any);
+      return jsonContent({
+        success: true,
       });
     }),
   );
