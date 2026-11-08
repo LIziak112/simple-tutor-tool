@@ -65,6 +65,7 @@ export const SPEC_TAGS = {
   "annotation-native-surface.spec.ts": ["@annotation"],
   "annotation-local-base.spec.ts": ["@annotation"],
   "annotation-paper-interaction.spec.ts": ["@annotation"],
+  "question-process.spec.ts": ["@student", "@teacher", "@annotation"],
   "annotation-cross-device-view.spec.ts": ["@annotation"],
   "annotation-legacy-browser.spec.ts": ["@annotation"],
   // 圈画会话新增 spec，合入 v2 后条目即生效（文件暂不在 v2 不影响判定）
@@ -155,6 +156,7 @@ export const FEATURE_DIR_TAGS = {
   lesson: ["@teacher", "@student"],
   library: ["@teacher"],
   notes: ["@annotation"],
+  "question-process": ["@student", "@teacher", "@annotation"],
   "student-ai": ["@ai"],
   student: ["@student"],
   students: ["@teacher"],

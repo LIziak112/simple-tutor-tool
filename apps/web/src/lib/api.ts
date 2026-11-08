@@ -3395,3 +3395,58 @@ export function manageCourseCatalogApi(
   const args = { param: { id: courseId }, json: request };
   return callApi(() => api.api.teacher.courses[":id"].catalog.$post(args));
 }
+
+export function questionProcessStatusApi(
+  attemptId: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  signal?: AbortSignal,
+): Promise<import("@tutor/contract").QuestionProcessStatus | null> {
+  return callApi(() =>
+    fetch(
+      "/api/student/attempts/" +
+        encodeURIComponent(attemptId) +
+        "/question-process",
+      {
+        method,
+        ...(signal ? { signal } : {}),
+      },
+    ),
+  );
+}
+
+export function uploadQuestionProcessApi(
+  attemptId: string,
+  batch: import("@tutor/contract").QuestionProcessBatch,
+  signal: AbortSignal,
+): Promise<{ acceptedThrough: number }> {
+  return callApi(() =>
+    fetch(
+      "/api/student/attempts/" +
+        encodeURIComponent(attemptId) +
+        "/question-process",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(batch),
+        signal,
+      },
+    ),
+  );
+}
+
+export function fetchTeacherQuestionProcessApi(
+  attemptId: string,
+  questionId: string,
+  signal: AbortSignal,
+): Promise<import("@tutor/contract").QuestionProcessRead> {
+  return callApi(() =>
+    fetch(
+      "/api/teacher/attempts/" +
+        encodeURIComponent(attemptId) +
+        "/questions/" +
+        encodeURIComponent(questionId) +
+        "/process",
+      { signal },
+    ),
+  );
+}

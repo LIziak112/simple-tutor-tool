@@ -1,9 +1,11 @@
 import type { HintOpenedEntry } from "@tutor/contract";
 import { Lightbulb, LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { useQuestionProcessContext } from "@/features/question-process/session";
 import { openAttemptHintApi } from "@/lib/api";
+import { randomUuid } from "@/lib/uuid";
 
 /**
  * 题卡提示面板（T2.11 分步提示）：
@@ -19,14 +21,45 @@ import { openAttemptHintApi } from "@/lib/api";
 /** 已解锁提示列表（答题面板与结果视图回看共用） */
 export function HintEntryList({
   entries,
+  onVisible,
 }: {
   entries: readonly HintOpenedEntry[];
+  onVisible?: (index: number) => void;
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (
+      !onVisible ||
+      !root.current ||
+      typeof IntersectionObserver === "undefined"
+    )
+      return;
+    const observer = new IntersectionObserver((observations) => {
+      if (document.hidden) return;
+      for (const item of observations) {
+        const index = item.target.getAttribute("data-hint-index");
+        if (
+          item.isIntersecting &&
+          item.intersectionRatio > 0 &&
+          index !== null
+        ) {
+          onVisible(Number(index));
+          observer.unobserve(item.target);
+        }
+      }
+    });
+    for (const { index } of entries) {
+      const item = root.current.querySelector(`[data-hint-index="${index}"]`);
+      if (item) observer.observe(item);
+    }
+    return () => observer.disconnect();
+  }, [entries, onVisible]);
   return (
-    <div className="flex flex-col gap-1.5">
+    <div ref={root} className="flex flex-col gap-1.5">
       {entries.map((entry) => (
         <div
           key={entry.index}
+          data-hint-index={entry.index}
           className="rounded-lg border border-amber-300/70 bg-amber-50 px-4 py-3 dark:border-amber-500/40 dark:bg-amber-500/10"
         >
           <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
@@ -57,6 +90,11 @@ export function HintPanel({
   /** 解锁成功回调（上抛页面状态追加；面板内不持有列表） */
   onUnlocked: (entry: HintOpenedEntry) => void;
 }) {
+  const process = useQuestionProcessContext();
+  const onVisible = useCallback(
+    (index: number) => process?.showHint(questionId, index),
+    [process, questionId],
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,10 +108,31 @@ export function HintPanel({
     if (pending || remaining <= 0 || nextIndex >= hintCount) return;
     setPending(true);
     setError(null);
+    const requestId = process ? randomUuid() : "";
+    process?.event(questionId, {
+      kind: "hint",
+      action: "request",
+      requestId,
+      index: nextIndex,
+    });
     try {
       const data = await openAttemptHintApi(attemptId, questionId, nextIndex);
+      if (process) {
+        process.event(questionId, {
+          kind: "hint",
+          action: "received",
+          requestId,
+          index: data.index,
+        });
+      }
       onUnlocked({ index: data.index, text: data.hint });
     } catch (err) {
+      process?.event(questionId, {
+        kind: "hint",
+        action: "failed",
+        requestId,
+        index: nextIndex,
+      });
       setError(
         err instanceof Error
           ? `${err.message}，点按钮重试`
@@ -86,7 +145,9 @@ export function HintPanel({
 
   return (
     <div className="flex flex-col gap-2">
-      {hints.length > 0 && <HintEntryList entries={hints} />}
+      {hints.length > 0 && (
+        <HintEntryList entries={hints} {...(process ? { onVisible } : {})} />
+      )}
       {remaining > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <Button

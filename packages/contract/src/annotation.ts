@@ -873,6 +873,18 @@ export type AnnotationBaseImageReceipt = z.infer<
   typeof annotationBaseImageReceiptSchema
 >;
 export type AnnotationBaseRef = z.infer<typeof annotationBaseRefSchema>;
+
+/** HTTP 环境下比较底图字节。只用于同一题的已鉴权底图匹配，不作为授权凭证。 */
+export function annotationPngFingerprint(bytes: Uint8Array): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0xc2b2ae35;
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index] ?? 0;
+    h1 = Math.imul(h1 ^ byte, 0x01000193);
+    h2 = Math.imul(h2 ^ byte, 0x85ebca6b);
+  }
+  return `${bytes.byteLength.toString(16)}-${(h1 >>> 0).toString(16)}-${(h2 >>> 0).toString(16)}`;
+}
 export type AnnotationBasePreviewData = z.infer<
   typeof annotationBasePreviewDataSchema
 >;

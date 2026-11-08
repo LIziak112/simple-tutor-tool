@@ -23,7 +23,6 @@ import {
   useState,
 } from "react";
 import { useSearchParams } from "react-router";
-
 import {
   Dialog,
   DialogContent,
@@ -81,6 +80,11 @@ import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
+import {
+  QuestionProcessControls,
+  QuestionProcessSyncNotice,
+  useQuestionProcess,
+} from "@/features/question-process/session";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
@@ -284,7 +288,7 @@ function AnswerView({
   const attemptEvents = useAttemptEvents(attemptId);
   const {
     answers,
-    setAnswer,
+    setAnswer: setDraftAnswer,
     saveFailed,
     flush: flushAnswers,
     flushQuestion,
@@ -345,6 +349,63 @@ function AnswerView({
   );
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
+  const questionProcess = useQuestionProcess({
+    attemptId,
+    enabled: data.attempt.sourceType === "course",
+    ready: attemptMaterialsEditable(materialRecovery) && answers !== null,
+    questions: flatQuestions,
+    answers,
+  });
+  const recorder = questionProcess.recorder;
+  const [processOpen, setProcessOpen] = useState(false);
+  const composition = useRef<{
+    answer?: { id: string; value: StudentAnswer };
+  } | null>(null);
+  useEffect(() => {
+    if (!recorder) return;
+    const start = () => {
+      composition.current = {};
+    };
+    const end = () => {
+      const pending = composition.current;
+      if (!pending) {
+        recorder.commitText();
+        return;
+      }
+      queueMicrotask(() => {
+        if (composition.current !== pending) return;
+        composition.current = null;
+        if (pending.answer)
+          recorder.event(pending.answer.id, {
+            kind: "answer",
+            answer: pending.answer.value,
+          });
+      });
+    };
+    document.addEventListener("compositionstart", start, true);
+    document.addEventListener("compositionend", end, true);
+    document.addEventListener("focusout", end, true);
+    return () => {
+      composition.current = null;
+      document.removeEventListener("compositionstart", start, true);
+      document.removeEventListener("compositionend", end, true);
+      document.removeEventListener("focusout", end, true);
+    };
+  }, [recorder]);
+  const setAnswer = useCallback(
+    (id: string, answer: StudentAnswer, defer?: boolean) => {
+      if (defer && composition.current) {
+        recorder?.begin(id);
+        composition.current.answer = { id, value: answer };
+      } else if (defer) {
+        recorder?.textAnswer(id, answer);
+      } else {
+        recorder?.event(id, { kind: "answer", answer });
+      }
+      setDraftAnswer(id, answer, defer);
+    },
+    [recorder, setDraftAnswer],
+  );
   usePwaUpdateGuard(
     () =>
       prepareDraftForPwaUpdate(
@@ -1402,13 +1463,34 @@ function AnswerView({
 
   return (
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
-      <AttemptWorkspace>
+      <AttemptWorkspace process={recorder}>
+        <QuestionProcessSyncNotice process={questionProcess} />
+        <Dialog open={processOpen} onOpenChange={setProcessOpen}>
+          <DialogContent
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              moreTriggerRef.current?.focus();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>做题过程记录</DialogTitle>
+              <DialogDescription>管理这次练习的过程回放。</DialogDescription>
+            </DialogHeader>
+            <QuestionProcessControls process={questionProcess} />
+          </DialogContent>
+        </Dialog>
         {/* 练习资料与保存详情分别从更多菜单打开。 */}
         <AttemptHeader
           title={data.title}
           moreTriggerRef={moreTriggerRef}
           menuItems={
             <>
+              {questionProcess.status &&
+                questionProcess.status.state !== "unavailable" && (
+                  <DropdownMenuItem onSelect={() => setProcessOpen(true)}>
+                    做题过程记录
+                  </DropdownMenuItem>
+                )}
               {singleMode && !practiceSubmit.finished && (
                 <DropdownMenuItem
                   disabled={!online || denied || total === 0}

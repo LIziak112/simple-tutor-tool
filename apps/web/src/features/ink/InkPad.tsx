@@ -82,7 +82,13 @@ export interface InkPadProps {
   /** 无障碍标签 */
   label?: string;
   /** 每次笔迹变化回调（doc + 变化原因，T4.0b 起带 reason） */
-  onDocChange?: ((doc: InkDoc, reason: InkChangeReason) => void) | undefined;
+  onDocChange?:
+    | ((
+        doc: InkDoc,
+        reason: InkChangeReason,
+        finish?: import("@tutor/contract").QuestionProcessFinish,
+      ) => void)
+    | undefined;
   /** 引擎实例透出（开发页/草稿保存等需要命令式访问 getData/load/exportPng） */
   engineRef?: React.RefObject<InkEngine | null> | undefined;
   /** 草稿固定笔写；正式手写可订阅会话偏好。 */
@@ -296,10 +302,10 @@ export function InkPad({
       localEngineRef.current = ink;
       ink.setInputEnabled?.(inputEnabledRef.current);
       if (engineRef) engineRef.current = ink;
-      off = ink.on("change", (doc, reason) => {
+      off = ink.on("change", (doc, reason, finish) => {
         setCanUndo(ink.canUndo());
         setCanRedo(ink.canRedo());
-        onDocChangeRef.current?.(doc, reason);
+        onDocChangeRef.current?.(doc, reason, finish);
         // 自动加高：最后一笔的最低点接近底部时加高（仅 atrament 页内答题区，
         // 且仅旧作答链路——T6R.9 受控纸高形态禁用，加高统一走 paper-geometry
         // 逻辑口径由外层负责，注记②定案）

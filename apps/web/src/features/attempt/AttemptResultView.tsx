@@ -40,6 +40,10 @@ import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { DraftRecoverySection } from "@/features/notes/DraftRecoverySection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
+import {
+  QuestionProcessControls,
+  useQuestionProcess,
+} from "@/features/question-process/session";
 import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
@@ -540,6 +544,13 @@ export function AttemptResultView({
   onRefresh?: (() => void) | undefined;
 }) {
   const { attempt, summary } = data;
+  const questionProcess = useQuestionProcess({
+    attemptId: attempt.id,
+    enabled: attempt.sourceType === "course",
+    ready: false,
+    questions: [],
+    answers: null,
+  });
   // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
   // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
   // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
@@ -655,6 +666,7 @@ export function AttemptResultView({
       }
       actions={
         <>
+          <QuestionProcessControls process={questionProcess} />
           {/* SAI-31 批量复盘入口：勾选只进面板，创建走一次确认（B16） */}
           <AiBatchReviewEntry
             attemptId={attempt.id}
