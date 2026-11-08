@@ -1,6 +1,10 @@
+import { gunzipSync } from "node:zlib";
 import { expect, type Locator, test } from "@playwright/test";
 import {
+  annotationViewDataSchema,
   HANDWRITTEN_QUESTION_TYPES,
+  noteDocSchema,
+  noteHeadDataSchema,
   type QuestionProcessEvent,
   questionProcessReadSchema,
   questionTypeSchema,
@@ -224,16 +228,112 @@ test(
           await expect(
             page.getByText("过程待同步", { exact: true }),
           ).toBeVisible();
+          // 以最后一次改选落盘为屏障：它排在离线笔迹操作之后，不能只等瞬时状态文案。
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () =>
+                  new Promise<boolean>((resolve, reject) => {
+                    const open = indexedDB.open("tutor-question-process");
+                    open.onerror = () => reject(open.error);
+                    open.onsuccess = () => {
+                      const db = open.result;
+                      if (!db.objectStoreNames.contains("process")) {
+                        db.close();
+                        reject(new Error("过程记录存储不存在"));
+                        return;
+                      }
+                      const read = db
+                        .transaction("process", "readonly")
+                        .objectStore("process")
+                        .getAll();
+                      read.onerror = () => {
+                        db.close();
+                        reject(read.error);
+                      };
+                      read.onsuccess = () => {
+                        const rows = read.result as Array<{
+                          batch?: { events: QuestionProcessEvent[] };
+                        }>;
+                        db.close();
+                        resolve(
+                          rows.some((row) =>
+                            row.batch?.events.some(
+                              (event) =>
+                                event.kind === "answer" &&
+                                event.answer?.kind === "judge" &&
+                                event.answer.value === true,
+                            ),
+                          ),
+                        );
+                      };
+                    };
+                  }),
+              ),
+            )
+            .toBe(true);
+          const resumeUrl = page.url();
+          let navigation = "loaded";
+          try {
+            await page.reload();
+          } catch (error) {
+            // 开发服务没有SW壳；只接受明确的离线导航错误，不吞掉其它故障。
+            expect(error).toBeInstanceOf(Error);
+            expect((error as Error).message).toMatch(
+              /ERR_INTERNET_DISCONNECTED|The Internet connection appears to be offline|The network connection was lost|Load failed/i,
+            );
+            navigation = "offline navigation blocked";
+          }
+          console.log("PROCESS_OFFLINE_RELOAD", info.project.name, navigation);
           await studentContext.setOffline(false);
-          // 原稿继续使用自己的同步链。过程上传仍被拦截，验证刷新续传。
+          await page.goto(resumeUrl);
+          await expect(card.getByText("先比较绝对值与原数。")).toBeVisible();
+          // 原稿尚未上传就已离开旧页面；恢复后不能回退到云端旧的一笔。
+          await card.locator("[data-paper-trigger]").click();
+          await expect(paper.locator("canvas")).toBeVisible();
+          await expect(paper.getByText(/^[1-9]\d* 笔$/)).toHaveCount(0);
+          await paper.getByRole("button", { name: /收起.*草稿纸/ }).click();
+          await expect(
+            card.locator("[data-paper-trigger]"),
+          ).not.toHaveAttribute("aria-label", /已有/);
           await expect(page.getByTestId("draft-status")).toHaveText(
             "全部已保存",
-            {
-              timeout: 20_000,
-            },
+            { timeout: 20_000 },
           );
-          await page.reload();
-          await expect(card.getByText("先比较绝对值与原数。")).toBeVisible();
+          const questionId = await card.getAttribute("data-question-id");
+          if (!questionId) throw new Error("题卡缺少冻结题目身份");
+          await expect
+            .poll(async () => {
+              const response = await studentContext.request.get(
+                `${pair.webUrl}/api/student/attempts/${attempt}/questions/${encodeURIComponent(questionId)}/annotation`,
+              );
+              expect(response.ok()).toBe(true);
+              const body = (await response.json()) as { data: unknown };
+              return annotationViewDataSchema.parse(body.data).doc?.strokes
+                .length;
+            })
+            .toBe(2);
+          await expect
+            .poll(async () => {
+              const headResponse = await studentContext.request.get(
+                `${pair.webUrl}/api/student/attempts/${attempt}/evidence/${encodeURIComponent(questionId)}`,
+              );
+              expect(headResponse.ok()).toBe(true);
+              const headBody = (await headResponse.json()) as { data: unknown };
+              const version = noteHeadDataSchema.parse(headBody.data).note
+                ?.currentVersionId;
+              if (!version) return undefined;
+              const document = await studentContext.request.get(
+                `${pair.webUrl}/api/student/note-versions/${version}/document`,
+              );
+              expect(document.ok()).toBe(true);
+              const body = await document.body();
+              const json =
+                body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body;
+              return noteDocSchema.parse(JSON.parse(json.toString("utf8"))).ink
+                .strokes.length;
+            })
+            .toBe(0);
           await page.unroute("**/api/student/attempts/*/question-process");
           await page.getByRole("button", { name: "练习更多" }).click();
           await page.getByRole("menuitem", { name: "做题过程记录" }).click();
