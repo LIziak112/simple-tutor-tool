@@ -1,22 +1,32 @@
 import {
   act,
+  createEvent,
   fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
 import type { InkDoc, InkStroke } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CoordinatedAnnotationProvider,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
+import {
+  resetSessionInputPreference,
+  setSessionInputPreference,
+} from "@/features/ink/input-preference";
 import { preparePwaUpdate } from "@/lib/pwa-update-safety";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "./AttemptEditorContext";
-import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
+import {
+  bindDraftSession,
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "./draft-store";
 import { MaterialAnnotationOverlay } from "./MaterialAnnotationOverlay";
 
 // 绘制层复用 ink/replay/draw（jsdom 无 2d 上下文）——按仓内惯例 mock 本模块，
@@ -99,7 +109,7 @@ function frameOf(container: HTMLElement): HTMLElement {
   return frame;
 }
 
-/** 活排版壳（children+输入层）：匹配自显/首笔捕获的测量面（按钮在壳外） */
+/** 材料正文壳（children+输入层）：首笔捕获的测量面（按钮在壳外） */
 function liveSurfaceOf(container: HTMLElement): HTMLElement {
   const live = container.querySelector<HTMLElement>(
     '[data-slot="material-live-surface"]',
@@ -143,7 +153,9 @@ function strokeAt(x: number, y: number): InkStroke {
   };
 }
 
-function inkDocOf(strokes: InkStroke[]): InkDoc {
+function inkDocOf(
+  strokes: InkStroke[],
+): Extract<InkDoc, { engine: "atrament" }> {
   return {
     engine: "atrament",
     version: 1,
@@ -227,6 +239,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     installDraftBackend(memoryBackend());
     drawFrameMock.mockClear();
   });
+  afterEach(resetSessionInputPreference);
 
   it("更新前收下最后一笔真实采样并等材料稿落盘，即使输入层漏收pointerup", async () => {
     const { container } = render(
@@ -313,7 +326,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     expect(inputLayerOf(container)).toHaveStyle({ pointerEvents: "none" });
   });
 
-  it("已存材料笔迹挂载时恢复并重绘（内存命中路径；活排版匹配时叠显）", async () => {
+  it("已存材料笔迹挂载即在固定阅读框恢复并重绘（内存命中路径）", async () => {
     const observer = manualResizeObserver();
     try {
       draftStore.saveMaterialInk(
@@ -336,7 +349,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
 
       const root = overlayRootOf(container);
       expect(root).toHaveAttribute("data-stroke-count", "1");
-      // 活排版与冻结基准匹配（500×400）→ 笔迹直接叠在活正文上
+      // 已有基准恒使用固定阅读框，资源测量不改变笔迹身份
       act(() => observer.fire(liveSurfaceOf(container), 500, 400));
       await waitFor(() =>
         expect(root).toHaveAttribute("data-ink-visible", "true"),
@@ -382,7 +395,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
       );
 
       const root = overlayRootOf(container);
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(root).toHaveAttribute("data-stroke-count", "1");
       });
       act(() => observer.fire(liveSurfaceOf(container), 500, 400));
@@ -396,6 +409,38 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     } finally {
       observer.restore();
     }
+  });
+
+  it("账号 epoch 变化后迟到的材料读取不恢复旧账号笔迹或基准", async () => {
+    let resolveRead: (value: unknown) => void = () => {};
+    const pendingRead = new Promise<unknown>((resolve) => {
+      resolveRead = resolve;
+    });
+    const get = vi.fn(() => pendingRead);
+    installDraftBackend({ ...memoryBackend(), get });
+    bindDraftSession({ origin: "https://tutor.test", studentId: "old" });
+    const { container } = render(
+      <MaterialAnnotationOverlay
+        attemptId="same-attempt"
+        materialId="m1"
+        inkKey="m1|1"
+      >
+        <div>账号隔离材料</div>
+      </MaterialAnnotationOverlay>,
+    );
+    expect(get).toHaveBeenCalledOnce();
+    bindDraftSession({ origin: "https://tutor.test", studentId: "new" });
+    await act(async () => {
+      resolveRead({
+        materialInks: { "m1|1": inkDocOf([strokeAt(100, 100)]) },
+        materialInkBases: { "m1|1": { cssWidth: 480, cssHeight: 400 } },
+      });
+      await pendingRead;
+    });
+    expect(overlayRootOf(container)).toHaveAttribute("data-stroke-count", "0");
+    expect(frameOf(container).style.width).toBe("");
+    expect(draftStore.getMaterialInk("same-attempt", "m1|1")).toBeNull();
+    expect(draftStore.getMaterialInkBase("same-attempt", "m1|1")).toBeNull();
   });
 
   it("标注态落笔保存到 draftStore：引擎单源色粗、1000 逻辑宽归一化与相对毫秒", async () => {
@@ -463,7 +508,8 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     });
   });
 
-  it("笔写输入偏好下手指 touch 不落墨（手掌防误触/手指滚动语义）", async () => {
+  it("材料圈画不沿用正式手写的手指输入偏好", async () => {
+    setSessionInputPreference("finger");
     const { container } = render(
       <AttemptEditorProvider>
         <CoordinatedAnnotationProvider>
@@ -480,6 +526,17 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     await waitInkReady(root);
     const layer = inputLayerOf(container);
     mockLayerRect(layer);
+
+    // 手指交给浏览器滚动，不能只做到不落墨却取消默认手势。
+    const touchDown = createEvent.pointerDown(layer, {
+      pointerId: 2,
+      button: 0,
+      pointerType: "touch",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(layer, touchDown);
+    expect(touchDown.defaultPrevented).toBe(false);
 
     await act(async () => {
       fireEvent.pointerDown(layer, {
@@ -502,6 +559,37 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     expect(draftStore.getMaterialInk("att-1", "mat-1")).toBeNull();
     expect(overlayRootOf(container)).toHaveAttribute("data-stroke-count", "0");
   });
+
+  it.each(["touchstart", "touchmove"] as const)(
+    "%s 只阻止 Pencil 原生滚动，保留手指阅读",
+    async (type) => {
+      const { container } = render(
+        <AttemptEditorProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-stylus" materialId="m1">
+            <div>笔写与手指阅读</div>
+          </MaterialAnnotationOverlay>
+        </AttemptEditorProvider>,
+      );
+      fireEvent.click(screen.getByTestId("toggle-annotation"));
+      await waitInkReady(overlayRootOf(container));
+      const layer = inputLayerOf(container);
+      const touch = (changed: string[], all = changed) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, {
+          changedTouches: {
+            value: changed.map((touchType) => ({ touchType })),
+          },
+          touches: { value: all.map((touchType) => ({ touchType })) },
+        });
+        fireEvent(layer, event);
+        return event.defaultPrevented;
+      };
+      expect(touch(["direct"])).toBe(false);
+      expect(touch(["stylus"], ["direct", "stylus"])).toBe(true);
+      expect(touch(["direct"], ["stylus", "direct"])).toBe(true);
+    },
+  );
 
   it("窗口失焦时在途一笔按已收采样收笔保存，后续 move 不再计入", async () => {
     const { container } = render(
@@ -583,6 +671,10 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
   });
 
   it("inkKey 按材料版本隔离：双版本卷两份面板笔迹互不覆盖", async () => {
+    const previousDoc = inkDocOf([strokeAt(20, 20)]);
+    const previousBase = { cssWidth: 480, cssHeight: 400 };
+    draftStore.saveMaterialInk("att-1", "m1|1", previousDoc);
+    draftStore.saveMaterialInkBase("att-1", "m1|1", previousBase);
     const { container } = render(
       <AttemptEditorProvider>
         <CoordinatedAnnotationProvider>
@@ -598,6 +690,8 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
       </AttemptEditorProvider>,
     );
 
+    expect(frameOf(container).style.width).toBe("");
+    expect(overlayRootOf(container)).toHaveAttribute("data-stroke-count", "0");
     fireEvent.click(screen.getByTestId("toggle-annotation"));
     await waitInkReady(overlayRootOf(container));
     const layer = inputLayerOf(container);
@@ -605,6 +699,10 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
 
     await drawStroke(layer, 50);
 
+    expect(draftStore.getMaterialInk("att-1", "m1|1")).toEqual(previousDoc);
+    expect(draftStore.getMaterialInkBase("att-1", "m1|1")).toEqual(
+      previousBase,
+    );
     // 落在版本化键 m1|2，不污染裸 materialId 槽位
     expect(draftStore.getMaterialInk("att-1", "m1|2")).not.toBeNull();
     expect(draftStore.getMaterialInk("att-1", "m1")).toBeNull();
@@ -617,6 +715,10 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
       inkDocOf([strokeAt(100, 100)]),
     );
 
+    draftStore.saveMaterialInkBase("att-1", "mat-1", {
+      cssWidth: 500,
+      cssHeight: 400,
+    });
     const { container } = render(
       <AttemptEditorProvider>
         <CoordinatedAnnotationProvider initialTool="eraser">
@@ -655,21 +757,20 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
   });
 });
 
-describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）", () => {
+describe("材料圈画固定阅读框（已有基准常显）", () => {
   beforeEach(() => {
     installDraftBackend(memoryBackend());
     drawFrameMock.mockClear();
   });
 
-  it("默认阅读恒活排版：有冻结稿也不挂框，正文随列宽自然回流", () => {
+  it("已有基准在阅读态保持同一固定框与墨层，窄列只缩放且不拦阅读交互", async () => {
     const observer = manualResizeObserver();
     try {
-      draftStore.saveMaterialInk("att-f1", "m1|1", inkDocOf([strokeAt(1, 1)]));
-      draftStore.saveMaterialInkBase("att-f1", "m1|1", {
-        cssWidth: 320,
-        cssHeight: 400,
-      });
-
+      const doc = inkDocOf([strokeAt(1, 1)]);
+      const base = { cssWidth: 480, cssHeight: 400 };
+      draftStore.saveMaterialInk("att-f1", "m1|1", doc);
+      draftStore.saveMaterialInkBase("att-f1", "m1|1", base);
+      const clicked = vi.fn();
       const { container } = render(
         <AttemptEditorProvider>
           <MaterialAnnotationOverlay
@@ -677,107 +778,87 @@ describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）"
             materialId="m1"
             inkKey="m1|1"
           >
-            <div>恢复材料</div>
-          </MaterialAnnotationOverlay>
-        </AttemptEditorProvider>,
-      );
-      // 容器 640（如切回列表形式/拖宽中缝）：正文直接以 640 宽回流，无冻结框
-      act(() => observer.fire(liveSurfaceOf(container), 640, 800));
-      // 壳常驻（B）：活排版态框不带固定宽/transform，正文随列宽回流
-      expect(frameOf(container).style.width).toBe("");
-      expect(frameOf(container).style.transform).toBe("");
-      expect(screen.getByText("恢复材料")).toBeInTheDocument();
-    } finally {
-      observer.restore();
-    }
-  });
-
-  it("活排版与冻结基准匹配（±1px）时笔迹直接叠在活正文上，不加 transform", async () => {
-    const observer = manualResizeObserver();
-    try {
-      draftStore.saveMaterialInk("att-f2", "m1|1", inkDocOf([strokeAt(1, 1)]));
-      draftStore.saveMaterialInkBase("att-f2", "m1|1", {
-        cssWidth: 500,
-        cssHeight: 400,
-      });
-
-      const { container } = render(
-        <AttemptEditorProvider>
-          <MaterialAnnotationOverlay
-            attemptId="att-f2"
-            materialId="m1"
-            inkKey="m1|1"
-          >
-            <div>匹配材料</div>
+            <button type="button" onClick={clicked}>
+              阅读链接
+            </button>
           </MaterialAnnotationOverlay>
         </AttemptEditorProvider>,
       );
       const root = overlayRootOf(container);
-      act(() => observer.fire(liveSurfaceOf(container), 500, 400));
-      await waitFor(() =>
-        expect(root).toHaveAttribute("data-ink-visible", "true"),
-      );
-      expect(frameOf(container).style.width).toBe("");
-      expect(frameOf(container).style.transform).toBe("");
-      await flushFrame();
-      const [strokes] = drawFrameMock.mock.calls.at(-1) as [
-        unknown[],
-        number[],
-      ];
-      expect(strokes).toHaveLength(1);
-      // 高度漂移 2px 以上（晚到图片把内容下推）→ 视为不匹配，撤下笔迹
-      act(() => observer.fire(liveSurfaceOf(container), 500, 402));
-      await waitFor(() =>
-        expect(root).toHaveAttribute("data-ink-visible", "false"),
-      );
-    } finally {
-      observer.restore();
-    }
-  });
-
-  it("排版不匹配（分栏拖宽）时隐藏笔迹并提供「按圈画时排版查看」只读冻结框", async () => {
-    const observer = manualResizeObserver();
-    try {
-      draftStore.saveMaterialInk("att-f3", "m1|1", inkDocOf([strokeAt(1, 1)]));
-      draftStore.saveMaterialInkBase("att-f3", "m1|1", {
-        cssWidth: 320,
-        cssHeight: 400,
-      });
-
-      const { container } = render(
-        <AttemptEditorProvider>
-          <MaterialAnnotationOverlay
-            attemptId="att-f3"
-            materialId="m1"
-            inkKey="m1|1"
-          >
-            <div>切换材料</div>
-          </MaterialAnnotationOverlay>
-        </AttemptEditorProvider>,
-      );
-      const root = overlayRootOf(container);
-      act(() => observer.fire(liveSurfaceOf(container), 480, 520));
-      await waitFor(() =>
-        expect(root).toHaveAttribute("data-ink-visible", "false"),
-      );
-      // 只读入口出现；切换后按冻结宽 320 挂框（容器 480 > 320 → scale 1）
-      fireEvent.click(screen.getByRole("button", { name: "按圈画时排版查看" }));
       const frame = frameOf(container);
-      expect(frame.style.width).toBe("320px");
+      const layer = inputLayerOf(container);
+      const child = screen.getByRole("button", { name: "阅读链接" });
+      expect(frame.style.width).toBe("480px");
+      expect(root).toHaveAttribute("data-ink-visible", "true");
+      act(() => observer.fire(root, 240, 200));
+      expect(frame.style.transform).toBe("scale(0.5)");
+      act(() => observer.fire(root, 640, 400));
+      expect(frame.style.width).toBe("480px");
       expect(frame.style.transform).toBe("");
-      expect(inputLayerOf(container)).toHaveStyle({ pointerEvents: "none" });
-      await waitFor(() =>
-        expect(root).toHaveAttribute("data-ink-visible", "true"),
-      );
-      // 切回当前排版：冻结框卸载，回到活排版
-      fireEvent.click(screen.getByRole("button", { name: "回到当前排版查看" }));
-      await waitFor(() => {
-        expect(frameOf(container).style.width).toBe("");
-      });
+      expect(frameOf(container)).toBe(frame);
+      expect(inputLayerOf(container)).toBe(layer);
+      expect(screen.getByRole("button", { name: "阅读链接" })).toBe(child);
+      expect(layer).toHaveStyle({ pointerEvents: "none" });
+      fireEvent.click(child);
+      expect(clicked).toHaveBeenCalledOnce();
+      await flushFrame();
+      expect(drawFrameMock.mock.calls.at(-1)?.[0]).toEqual(doc.data.strokes);
+      expect(draftStore.getMaterialInkBase("att-f1", "m1|1")).toEqual(base);
+      expect(draftStore.getMaterialInk("att-f1", "m1|1")).toEqual(doc);
+      expect(screen.queryByRole("button", { name: /排版查看/ })).toBeNull();
     } finally {
       observer.restore();
     }
   });
+
+  it.each([
+    [510, 410, true],
+    [490, 390, true],
+    [502, 402, true],
+    [510.001, 400, false],
+    [500, 410.001, false],
+    [489.999, 400, false],
+    [500, 389.999, false],
+  ])(
+    "材料基准宽高容差 %s×%s：10px 含边界，超出停写保稿",
+    async (width, height, allowed) => {
+      const observer = manualResizeObserver();
+      try {
+        const doc = inkDocOf([strokeAt(1, 1)]);
+        const base = { cssWidth: 500, cssHeight: 400 };
+        draftStore.saveMaterialInk("att-f2", "m1|1", doc);
+        draftStore.saveMaterialInkBase("att-f2", "m1|1", base);
+        const { container } = render(
+          <AttemptEditorProvider>
+            <AnnotationToggle questionId="q1" />
+            <MaterialAnnotationOverlay
+              attemptId="att-f2"
+              materialId="m1"
+              inkKey="m1|1"
+            >
+              <div>容差材料</div>
+            </MaterialAnnotationOverlay>
+          </AttemptEditorProvider>,
+        );
+        fireEvent.click(screen.getByTestId("toggle-annotation"));
+        await waitInkReady(overlayRootOf(container));
+        act(() => observer.fire(frameOf(container), width, height));
+        expect(inputLayerOf(container)).toHaveStyle({
+          pointerEvents: allowed ? "auto" : "none",
+        });
+        expect(overlayRootOf(container)).toHaveAttribute(
+          "data-ink-visible",
+          "true",
+        );
+        if (allowed) expect(screen.queryByRole("note")).toBeNull();
+        else expect(screen.getByRole("note")).toHaveTextContent("暂停圈画");
+        expect(draftStore.getMaterialInkBase("att-f2", "m1|1")).toEqual(base);
+        expect(draftStore.getMaterialInk("att-f2", "m1|1")).toEqual(doc);
+      } finally {
+        observer.restore();
+      }
+    },
+  );
 
   it("圈画态且有冻结基准：立即挂冻结框显示旧笔迹，拖窄只等比缩放不回流", async () => {
     const observer = manualResizeObserver();
@@ -825,7 +906,7 @@ describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）"
     }
   });
 
-  it("无基准材料在圈画态保持活排版：仅激活圈画不挂框（全组材料不因一点圈画被冻结）", async () => {
+  it("无基准新材料在圈画态保持自然排版：首笔前不冻结", async () => {
     const observer = manualResizeObserver();
     try {
       const { container } = render(
@@ -1128,72 +1209,33 @@ describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）"
     }
   });
 
-  it("失配提示按钮在活排版壳外，不污染匹配量高（结构断言）", async () => {
+  it("阅读态放大按钮位于材料测量壳外，适应宽度不重挂输入层", async () => {
     const observer = manualResizeObserver();
     try {
       draftStore.saveMaterialInk("att-g1", "m1|1", inkDocOf([strokeAt(1, 1)]));
       draftStore.saveMaterialInkBase("att-g1", "m1|1", {
-        cssWidth: 320,
+        cssWidth: 480,
         cssHeight: 400,
       });
-
       const { container } = render(
-        <AttemptEditorProvider>
-          <MaterialAnnotationOverlay
-            attemptId="att-g1"
-            materialId="m1"
-            inkKey="m1|1"
-          >
-            <div>壳外材料</div>
-          </MaterialAnnotationOverlay>
-        </AttemptEditorProvider>,
+        <MaterialAnnotationOverlay
+          attemptId="att-g1"
+          materialId="m1"
+          inkKey="m1|1"
+        >
+          <div>壳外材料</div>
+        </MaterialAnnotationOverlay>,
       );
-      act(() => observer.fire(liveSurfaceOf(container), 480, 520));
-      const button = await screen.findByRole("button", {
-        name: "按圈画时排版查看",
-      });
+      const layer = inputLayerOf(container);
+      act(() => observer.fire(overlayRootOf(container), 240, 200));
+      const button = screen.getByRole("button", { name: "放大材料" });
       expect(button.closest('[data-slot="material-live-surface"]')).toBeNull();
-      expect(
-        button.closest('[data-slot="material-annotation-overlay"]'),
-      ).not.toBeNull();
-    } finally {
-      observer.restore();
-    }
-  });
-
-  it("失配回原宽后笔迹自显恢复：data-ink-visible 回 true，入口消失", async () => {
-    const observer = manualResizeObserver();
-    try {
-      draftStore.saveMaterialInk("att-g2", "m1|1", inkDocOf([strokeAt(1, 1)]));
-      draftStore.saveMaterialInkBase("att-g2", "m1|1", {
-        cssWidth: 320,
-        cssHeight: 400,
-      });
-
-      const { container } = render(
-        <AttemptEditorProvider>
-          <MaterialAnnotationOverlay
-            attemptId="att-g2"
-            materialId="m1"
-            inkKey="m1|1"
-          >
-            <div>复显材料</div>
-          </MaterialAnnotationOverlay>
-        </AttemptEditorProvider>,
-      );
-      const root = overlayRootOf(container);
-      const live = liveSurfaceOf(container);
-      act(() => observer.fire(live, 480, 520));
-      await waitFor(() =>
-        expect(root).toHaveAttribute("data-ink-visible", "false"),
-      );
-      act(() => observer.fire(live, 320, 400));
-      await waitFor(() =>
-        expect(root).toHaveAttribute("data-ink-visible", "true"),
-      );
-      expect(
-        screen.queryByRole("button", { name: "按圈画时排版查看" }),
-      ).toBeNull();
+      fireEvent.click(button);
+      expect(frameOf(container).style.transform).toBe("");
+      fireEvent.click(screen.getByRole("button", { name: "适应宽度" }));
+      expect(frameOf(container).style.transform).toBe("scale(0.5)");
+      expect(inputLayerOf(container)).toBe(layer);
+      expect(layer).toHaveStyle({ pointerEvents: "none" });
     } finally {
       observer.restore();
     }
@@ -1242,11 +1284,109 @@ describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）"
       });
       fireEvent.click(screen.getByTestId("release-annotation"));
       await waitFor(() => {
-        expect(frameOf(container).style.width).toBe("");
+        expect(frameOf(container).style.width).toBe("320px");
       });
       expect(seen.length).toBeGreaterThan(0);
       expect(seen[0]).not.toBeNull();
       expect(new Set(seen).size).toBe(1);
+    } finally {
+      observer.restore();
+    }
+  });
+
+  it("晚到图片改变固定框时先收下在途采样，再停写并保留原基准", async () => {
+    const observer = manualResizeObserver();
+    try {
+      const base = { cssWidth: 480, cssHeight: 400 };
+      draftStore.saveMaterialInk(
+        "att-late",
+        "m1|1",
+        inkDocOf([strokeAt(1, 1)]),
+      );
+      draftStore.saveMaterialInkBase("att-late", "m1|1", base);
+      const { container } = render(
+        <AttemptEditorProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay
+            attemptId="att-late"
+            materialId="m1"
+            inkKey="m1|1"
+          >
+            <img src="late.png" alt="晚到图片" />
+          </MaterialAnnotationOverlay>
+        </AttemptEditorProvider>,
+      );
+      const image = screen.getByAltText("晚到图片");
+      fireEvent.click(screen.getByTestId("toggle-annotation"));
+      expect(inputLayerOf(container)).toHaveStyle({ pointerEvents: "none" });
+      fireEvent.load(image);
+      await waitInkReady(overlayRootOf(container));
+      const layer = inputLayerOf(container);
+      mockLayerRect(layer, 480, 400);
+      act(() => observer.fire(frameOf(container), 480, 400));
+      fireEvent.pointerDown(layer, {
+        pointerId: 1,
+        button: 0,
+        pointerType: "pen",
+        clientX: 48,
+        clientY: 48,
+      });
+      fireEvent.pointerMove(layer, {
+        pointerId: 1,
+        pointerType: "pen",
+        clientX: 96,
+        clientY: 48,
+      });
+      act(() => observer.fire(frameOf(container), 480, 500));
+      expect(layer).toHaveStyle({ pointerEvents: "none" });
+      expect(screen.getByRole("note")).toHaveTextContent("暂停圈画");
+      const stored = draftStore.getMaterialInk("att-late", "m1|1");
+      if (stored?.engine !== "atrament") throw new Error("应保留材料稿");
+      expect(stored.data.strokes).toHaveLength(2);
+      expect(stored.data.strokes[1]?.points).toHaveLength(2);
+      fireEvent.pointerMove(layer, {
+        pointerId: 1,
+        pointerType: "pen",
+        clientX: 192,
+        clientY: 48,
+      });
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+      await drawStroke(layer, 192);
+      expect(draftStore.getMaterialInk("att-late", "m1|1")).toEqual(stored);
+      expect(draftStore.getMaterialInkBase("att-late", "m1|1")).toEqual(base);
+    } finally {
+      observer.restore();
+    }
+  });
+
+  it("无基准旧材料稿说明证据限制，不自动按当前排版收养或写入", async () => {
+    const doc = inkDocOf([strokeAt(100, 100)]);
+    draftStore.saveMaterialInk("att-legacy", "m1|1", doc);
+    const observer = manualResizeObserver();
+    try {
+      const { container } = render(
+        <AttemptEditorProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay
+            attemptId="att-legacy"
+            materialId="m1"
+            inkKey="m1|1"
+          >
+            <div>旧材料</div>
+          </MaterialAnnotationOverlay>
+        </AttemptEditorProvider>,
+      );
+      act(() => observer.fire(liveSurfaceOf(container), 500, 400));
+      fireEvent.click(screen.getByTestId("toggle-annotation"));
+      await flushFrame();
+      expect(screen.getByRole("note")).toHaveTextContent("缺少原排版基准");
+      expect(inputLayerOf(container)).toHaveStyle({ pointerEvents: "none" });
+      expect(overlayRootOf(container)).toHaveAttribute(
+        "data-ink-visible",
+        "false",
+      );
+      expect(draftStore.getMaterialInkBase("att-legacy", "m1|1")).toBeNull();
+      expect(draftStore.getMaterialInk("att-legacy", "m1|1")).toEqual(doc);
     } finally {
       observer.restore();
     }
@@ -1286,7 +1426,7 @@ describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）"
       act(() => observer.fire(frameOf(container), 480, 500));
       expect(inputLayerOf(container)).toHaveStyle({ pointerEvents: "none" });
       expect(root).toHaveAttribute("data-ink-ready", "false");
-      expect(screen.getByRole("note").textContent).toContain("略有差异");
+      expect(screen.getByRole("note")).toHaveTextContent("暂停圈画");
       // 内容回到基准高 → 放行
       act(() => observer.fire(frameOf(container), 480, 400));
       await waitFor(() =>
@@ -1294,47 +1434,6 @@ describe("材料圈画冻结作用域（默认活排版 + 圈画态冻结框）"
           pointerEvents: "auto",
         }),
       );
-    } finally {
-      observer.restore();
-    }
-  });
-
-  it("排版回到匹配后自动退出只读回看（列宽回冻结宽即退出）", async () => {
-    const observer = manualResizeObserver();
-    try {
-      draftStore.saveMaterialInk("att-g5", "m1|1", inkDocOf([strokeAt(1, 1)]));
-      draftStore.saveMaterialInkBase("att-g5", "m1|1", {
-        cssWidth: 320,
-        cssHeight: 400,
-      });
-
-      const { container } = render(
-        <AttemptEditorProvider>
-          <MaterialAnnotationOverlay
-            attemptId="att-g5"
-            materialId="m1"
-            inkKey="m1|1"
-          >
-            <div>回看材料</div>
-          </MaterialAnnotationOverlay>
-        </AttemptEditorProvider>,
-      );
-      const root = overlayRootOf(container);
-      const live = liveSurfaceOf(container);
-      act(() => observer.fire(live, 480, 520));
-      fireEvent.click(
-        await screen.findByRole("button", { name: "按圈画时排版查看" }),
-      );
-      expect(frameOf(container).style.width).toBe("320px");
-      // 列宽拖回冻结宽 → 只读回看自动退出回活排版（旧笔迹仍隐藏：活排版
-      // 仍 480×520 未匹配）
-      act(() => observer.fire(root, 320, 400));
-      await waitFor(() => {
-        expect(frameOf(container).style.width).toBe("");
-      });
-      await waitFor(() => {
-        expect(root).toHaveAttribute("data-ink-visible", "false");
-      });
     } finally {
       observer.restore();
     }

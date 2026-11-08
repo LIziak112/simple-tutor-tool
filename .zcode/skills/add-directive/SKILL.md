@@ -26,7 +26,7 @@ description: 在 simple-tutor-tool 中新增 DSL 指令（Markdown 容器/块/�
 
 **涉及新作答形态的指令不止四步**（新的输入/证据方式）：还需适配学生端题卡会话上下文（`DirectiveSessionContext`，fill/telemetry 子命名空间）与服务端判分桥接（题型能力表 validatorId + `packages/grading` 校验器注册表）；纯展示类指令无需这些适配。
 
-## 兼容规则（AGENTS.md 第 11 条，违反即 bug）
+## 兼容规则（AGENTS.md 产品核心硬性规则 5（DSL 兼容），违反即 bug）
 
 1. **只增不改**：已发布指令的名字和含义永不改变；属性只能新增，且必须可选、带默认值。
 2. **改名用别名**：确需改名时登记 `aliases: ['旧名']`，旧写法继续有效，linter 只提示建议改用新名。

@@ -168,6 +168,7 @@ beforeEach(() => {
   mocks.conflicts.mockReturnValue({});
   mocks.recovery.mockReturnValue({ state: "ready" });
   mocks.flush.mockResolvedValue(undefined);
+  mocks.exportAnnotation.mockResolvedValue(new Blob(["current-question"]));
   mocks.renderBase.mockResolvedValue({
     blob: new Blob(["question"]),
     layout: {},
@@ -178,6 +179,59 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("草稿收起时也按冻结模型生成含本人作答的题面，不依赖活DOM", async () => {
+  installImageStub();
+  installCanvasStub();
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fixed");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  mocks.local.mockResolvedValue(withDraftDoc(1));
+  mocks.renderNote.mockResolvedValue([
+    {
+      blob: new Blob(["note"]),
+      spec: "analysis",
+      page: 0,
+      pixelWidth: 1000,
+      pixelHeight: 800,
+    },
+  ]);
+  mocks.png.mockResolvedValue(new Blob(["composed"]));
+  mocks.exportAnnotation.mockResolvedValue(new Blob(["current-question"]));
+  const snapshot = await captureAiQuestionMaterials(
+    baseInput({ surface: null }),
+  );
+  expect(snapshot.pages[0]?.kind).toBe("draft");
+  expect(mocks.exportAnnotation).toHaveBeenCalledWith(
+    state.annotationSession,
+    { attemptId: "a1", questionId: "q1", phase: "scratch" },
+    question,
+    null,
+    { includeAnnotation: false },
+  );
+  expect(mocks.renderBase).not.toHaveBeenCalled();
+});
+it("填空答案冲突同样阻止题面截图采集，不能只保护正式手写答案", async () => {
+  mocks.conflicts.mockReturnValue({ q1: { revision: 3 } });
+  await expect(captureAiQuestionMaterials(baseInput())).rejects.toMatchObject({
+    stage: "conflict",
+  });
+  expect(mocks.exportAnnotation).not.toHaveBeenCalled();
+});
+it("圈画严格读取失败归入材料错误，不伪装成无圈画", async () => {
+  mocks.annotation.mockRejectedValue(new Error("本机圈画损坏"));
+  await expect(
+    captureAiQuestionMaterials(
+      baseInput({
+        selection: { annotation: true, draft: false, formalInk: false },
+      }),
+    ),
+  ).rejects.toMatchObject({ stage: "annotation", material: "annotation" });
+  expect(mocks.annotation).toHaveBeenCalledWith(
+    state.annotationSession,
+    { attemptId: "a1", questionId: "q1", phase: "scratch" },
+    { strictRead: true },
+  );
 });
 
 it("会话未就绪立即失败，不收笔不读稿", async () => {
@@ -254,7 +308,7 @@ it("风险2：本机比云端新、材料收起、画布已释放仍取本机固
   expect(draftSnapshot.pages[0]).toMatchObject({ kind: "draft" });
 });
 
-it("风险2/4：圈画收起仍从已保存底图合成（surface=null 传入原导出入口）", async () => {
+it("风险2/4：圈画与草稿收起后仍从持久模型生成当前题面快照", async () => {
   installImageStub();
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fixed");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
@@ -287,18 +341,27 @@ it("风险2/4：圈画收起仍从已保存底图合成（surface=null 传入原
     byteSize: annotationBlob.size,
     blob: annotationBlob,
   });
-  // 圈画材料不走题面重渲染（配套底图来自已保存合成入口）
+  // 不再走清空本人答案的公开底图生成入口。
   expect(mocks.renderBase).not.toHaveBeenCalled();
-  // 纸面路径题面未挂载时给明确可重试错误，不当空稿也不假成功
+  // 纸面路径也能在题面未挂载时生成当前快照，且不偷带未选择的圈画。
   mocks.local.mockResolvedValue(withDraftDoc(1));
-  await expect(
-    captureAiQuestionMaterials(
-      baseInput({
-        selection: { annotation: false, draft: true, formalInk: false },
-        surface: null,
-      }),
-    ),
-  ).rejects.toThrow("题面尚未就绪");
+  installCanvasStub();
+  mocks.renderNote.mockResolvedValue([{ blob: new Blob(["draft"]) }]);
+  mocks.png.mockResolvedValue(new Blob(["page"]));
+  const paper = await captureAiQuestionMaterials(
+    baseInput({
+      selection: { annotation: false, draft: true, formalInk: false },
+      surface: null,
+    }),
+  );
+  expect(paper.pages[0]?.kind).toBe("draft");
+  expect(mocks.exportAnnotation).toHaveBeenLastCalledWith(
+    state.annotationSession,
+    { attemptId: "a1", questionId: "q1", phase: "scratch" },
+    question,
+    null,
+    { includeAnnotation: false },
+  );
 });
 
 it("风险3：本机写入失败不发送不清稿不假装成功", async () => {
@@ -506,7 +569,7 @@ it("风险6：采集中换账号/切题——迟到图片丢弃，不能进入�
 it("风险7：字体/图片读取失败明确报错可重试，不生成空白假成功图", async () => {
   mocks.local.mockResolvedValue(withDraftDoc(1));
   // 题面渲染失败（字体/资源未稳定）：错误原文透出，重试后成功
-  mocks.renderBase.mockRejectedValue(
+  mocks.exportAnnotation.mockRejectedValue(
     new Error("题面资源或布局未稳定，请稍后重试"),
   );
   const failure = await captureAiQuestionMaterials(baseInput()).catch(
@@ -521,7 +584,7 @@ it("风险7：字体/图片读取失败明确报错可重试，不生成空白�
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fixed");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   mocks.png.mockResolvedValue(new Blob(["page"]));
-  mocks.renderBase.mockResolvedValue({ blob: new Blob(["question"]) });
+  mocks.exportAnnotation.mockResolvedValue(new Blob(["question"]));
   mocks.renderNote.mockResolvedValue([{ blob: new Blob(["draft"]) }]);
   const snapshot = await captureAiQuestionMaterials(baseInput());
   expect(snapshot.pages).toHaveLength(1);

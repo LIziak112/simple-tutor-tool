@@ -1,10 +1,11 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "cn";
+import { Loader2 } from "lucide-react";
 import { Slot } from "radix-ui";
-import type * as React from "react";
+import * as React from "react";
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 motion-safe:active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button relative inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -45,21 +46,57 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  busy = false,
+  children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    busy?: boolean;
   }) {
   const Comp = asChild ? Slot.Root : "button";
+  const content = (value: React.ReactNode) => (
+    <>
+      <span
+        data-slot="button-content"
+        className="inline-flex min-w-0 flex-1 items-center"
+        style={{
+          justifyContent: "inherit",
+          gap: "inherit",
+          opacity: busy ? 0 : undefined,
+        }}
+      >
+        {value}
+      </span>
+      {busy && (
+        <Loader2
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 motion-safe:animate-spin"
+        />
+      )}
+    </>
+  );
+  // Slot 仍只接收原来的单一元素；不把真实 Link 包进按钮或丢失其事件/ref。
+  const renderedChildren =
+    asChild && React.isValidElement<{ children?: React.ReactNode }>(children)
+      ? React.cloneElement(
+          children,
+          undefined,
+          content(children.props.children),
+        )
+      : content(children);
 
   return (
     <Comp
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      aria-busy={busy || undefined}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {renderedChildren}
+    </Comp>
   );
 }
 

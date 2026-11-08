@@ -230,6 +230,7 @@ function QueueInkThumbnail({
   onZoomChange: (zoomed: boolean) => void;
 }) {
   const ink = card.ink;
+  const zoomTriggerRef = useRef<HTMLButtonElement>(null);
   const [zoomed, setZoomed] = useState(false);
   const [available, setAvailable] = useState(true);
   if (ink === null || !available) return null;
@@ -245,6 +246,7 @@ function QueueInkThumbnail({
         )}
       </p>
       <button
+        ref={zoomTriggerRef}
         type="button"
         className="min-h-11 w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         aria-label={`放大查看 ${card.studentName} 这道题的手写笔迹`}
@@ -265,6 +267,7 @@ function QueueInkThumbnail({
         <InkLightbox
           pngUrl={ink.pngUrl}
           alt={`${card.studentName} 这道题的手写笔迹`}
+          triggerRef={zoomTriggerRef}
           onClose={() => {
             setZoomed(false);
             onZoomChange(false);

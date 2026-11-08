@@ -470,6 +470,57 @@ describe("逐题结果卡", () => {
     expect(screen.getByText("你的选择")).toBeInTheDocument();
   });
 
+  it.each(["choice", "multi"] as const)(
+    "公开冻结题面的 %s 只显示一组选项，公布后在原位标记正确项",
+    (type) => {
+      const unit = DATA.units[0];
+      const original = unit?.questions[1];
+      if (!unit || !original) throw new Error("缺少选择题夹具");
+      const snapshot = {
+        ...original.snapshot,
+        type,
+        options: ["本人的选项", "参考的选项"],
+      };
+      const question = {
+        ...original,
+        snapshot,
+        publicQuestion: { ...snapshot, questionRevisionId: "rev-choice" },
+        answer:
+          type === "choice"
+            ? ({ kind: "choice", index: 0 } as const)
+            : { kind: "multi" as const, indexes: [0] },
+        answers:
+          type === "choice"
+            ? ({ kind: "choice", index: 1 } as const)
+            : { kind: "multi" as const, indexes: [1] },
+      };
+      const ui = (released: boolean) => (
+        <AttemptResultView
+          data={{
+            ...DATA,
+            answersReleased: released,
+            units: [{ ...unit, questions: [question] }],
+          }}
+          onBackHome={vi.fn()}
+        />
+      );
+      const view = render(ui(false));
+      const role = type === "choice" ? "radio" : "checkbox";
+      const picked = screen.getByRole(role, { name: /本人的选项/ });
+      const correct = screen.getByRole(role, { name: /参考的选项/ });
+      expect(picked).toBeChecked();
+      expect(picked).toBeDisabled();
+      expect(correct).not.toHaveAccessibleName(/正确项/);
+      expect(screen.getAllByText("参考的选项")).toHaveLength(1);
+
+      view.rerender(ui(true));
+      expect(screen.getAllByText("参考的选项")).toHaveLength(1);
+      expect(correct).toHaveAccessibleName(/正确项/);
+      expect(picked).toHaveAccessibleName(/你的选择/);
+      expect(correct.closest("label")).toHaveClass("border-emerald-300");
+    },
+  );
+
   it("详解默认收起，点开显示内容；无详解显示提示文案", () => {
     renderView();
     const folds = screen.getAllByRole("button", { name: /查看详解/ });
@@ -538,7 +589,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
 
   it("汇总卡替换为「PendingReleaseBanner」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
     render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
-    expect(screen.getByText("🎉 作业已成功交卷！")).toBeInTheDocument();
+    expect(screen.getByText("作业已成功交卷！")).toBeInTheDocument();
     expect(screen.getByText(/截止时间：/)).toBeInTheDocument();
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     expect(screen.queryByText("60")).toBeNull();
@@ -562,9 +613,7 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(screen.queryAllByLabelText("待批改").length).toBe(0);
     expect(screen.getAllByText("答案已保存 · 待公布").length).toBe(3);
     expect(screen.getAllByText("未作答").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("参考答案与详解将在截止后公布 🔒").length).toBe(
-      4,
-    );
+    expect(screen.getAllByText("参考答案与详解将在截止后公布").length).toBe(4);
     expect(screen.queryAllByRole("button", { name: /查看详解/ }).length).toBe(
       0,
     );

@@ -2,9 +2,18 @@ import {
   ANALYTICS_DAYS_DEFAULT,
   ANALYTICS_FOCUS_DAYS_DEFAULT,
 } from "@tutor/contract";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import type { AnalyticsFetchParams } from "@/lib/api";
 
 /**
@@ -145,11 +154,13 @@ export function InsightsViewSwitcher({
 }) {
   return (
     <fieldset className="flex flex-wrap gap-2">
-      <legend className="sr-only">学情视图</legend>
+      <legend className="mb-1 text-xs text-muted-foreground sm:sr-only">
+        学情视图
+      </legend>
       {(Object.keys(INSIGHTS_VIEW_LABELS) as InsightsViewMode[]).map((mode) => (
         <Button
           key={mode}
-          variant={mode === view ? "default" : "outline"}
+          variant={mode === view ? "secondary" : "outline"}
           className="min-h-11"
           aria-pressed={mode === view}
           asChild
@@ -169,6 +180,22 @@ export function InsightsViewSwitcher({
   );
 }
 
+const MOBILE_FILTER_QUERY = "(max-width: 639px)";
+
+function subscribeMobileFilters(onChange: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => {};
+  const media = window.matchMedia(MOBILE_FILTER_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function mobileFilterSnapshot(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(MOBILE_FILTER_QUERY).matches
+  );
+}
+
 /** 学情筛选条（课程下拉数据由页面传入；patch 回调由页面合并进 URL 状态） */
 export function AnalyticsFilterBar({
   state,
@@ -183,7 +210,16 @@ export function AnalyticsFilterBar({
   onPatch: (patch: Partial<AnalyticsUrlState>) => void;
   onReset: () => void;
 }) {
-  return (
+  const mobile = useSyncExternalStore(
+    subscribeMobileFilters,
+    mobileFilterSnapshot,
+    () => false,
+  );
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!mobile) setOpen(false);
+  }, [mobile]);
+  const controls = (
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-3">
       <fieldset className="flex min-w-0 flex-col gap-1.5">
         <legend className="text-sm">时间范围</legend>
@@ -253,6 +289,46 @@ export function AnalyticsFilterBar({
           清除筛选
         </Button>
       )}
+    </div>
+  );
+  if (!mobile) return controls;
+  const courseName =
+    state.courseId === null
+      ? "全部课程"
+      : (courses.find((course) => course.id === state.courseId)?.name ??
+        "所选课程");
+  const summary = [
+    state.days === "all" ? "全部时间" : `最近 ${state.days} 天`,
+    courseName,
+    ...(showFocusDays ? [`重点 ${state.focusDays} 天`] : []),
+  ].join(" · ");
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <p className="min-w-0 flex-1 text-sm break-words text-muted-foreground">
+        {summary}
+      </p>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button variant="outline" className="min-h-11 min-w-11">
+            <SlidersHorizontal aria-hidden />
+            筛选
+          </Button>
+        </SheetTrigger>
+        <SheetContent className="max-w-full">
+          <SheetHeader>
+            <SheetTitle>筛选学情</SheetTitle>
+            <SheetDescription>
+              选择后立即生效，关闭后保留当前筛选。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">{controls}</div>
+          <div className="border-t border-border p-4">
+            <Button className="min-h-11 w-full" onClick={() => setOpen(false)}>
+              完成
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

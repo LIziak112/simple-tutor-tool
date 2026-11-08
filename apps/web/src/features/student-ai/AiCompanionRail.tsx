@@ -1,4 +1,4 @@
-import { Settings2, Sparkles, X } from "lucide-react";
+import { MessageCircleQuestion, Settings2, X } from "lucide-react";
 import {
   forwardRef,
   type ReactNode,
@@ -72,7 +72,7 @@ export const AiCompanionTrigger = forwardRef<
         else void controller.openPanel();
       }}
     >
-      <Sparkles aria-hidden className="size-5" />
+      <MessageCircleQuestion aria-hidden className="size-5" />
     </Button>
   );
 });

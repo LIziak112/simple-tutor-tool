@@ -1,5 +1,5 @@
-import { ArrowRight, Check, CircleHelp, Clock, Flag } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CircleHelp, Flag } from "lucide-react";
+import type { Ref } from "react";
 import { PracticeSubmittedMark } from "./PracticeWorkspace";
 import {
   completionLabel,
@@ -23,17 +23,21 @@ export interface QuestionNavigationItem {
 }
 
 /** 单格的可达名：已提交行先报提交事实，不混入对错与得分 */
-function itemLabel(item: QuestionNavigationItem): string {
+function itemLabel(item: QuestionNavigationItem, label?: string): string {
   const state = item.practice?.submitted
     ? item.practice.feedbackReadable
       ? "已提交"
       : "已提交，反馈待公布"
-    : completionLabel(item.completion);
+    : (label ?? completionLabel(item.completion));
   return `第 ${item.index + 1} 题，${state}${item.flagged ? "，待检查" : ""}${item.unsure ? "，标过不会" : ""}`;
 }
 
 /** 单格样式：已提交用中性前景色系（可读=浅底实线、待公布=灰底），非红绿 */
-function itemClass(item: QuestionNavigationItem, current: boolean): string {
+function itemClass(
+  item: QuestionNavigationItem,
+  current: boolean,
+  state: QuestionCompletion["state"],
+): string {
   const base =
     "relative flex size-11 items-center justify-center rounded-md border text-sm font-medium tabular-nums outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
   const currentRing = current
@@ -43,112 +47,73 @@ function itemClass(item: QuestionNavigationItem, current: boolean): string {
     return `${base} ${item.practice.feedbackReadable ? "border-foreground/40 bg-foreground/10 text-foreground" : "border-foreground/25 bg-muted text-muted-foreground"} ${currentRing}`;
   }
   const completion =
-    item.completion.state === "filled"
+    state === "filled"
       ? "border-primary bg-primary text-primary-foreground"
-      : item.completion.state === "partial"
+      : state === "partial"
         ? "border-primary bg-primary/10 text-primary"
         : "border-border bg-card text-foreground";
   return `${base} ${completion} ${currentRing}`;
 }
 
-export function QuestionNavigator({
-  items,
-  currentId,
+export function QuestionNavigationTile({
+  item,
+  current,
   onJump,
-  locked = false,
+  locked,
+  ref,
+  answerCardState,
 }: {
-  items: readonly QuestionNavigationItem[];
-  currentId: string | null;
+  item: QuestionNavigationItem;
+  current: boolean;
   onJump: (id: string) => void;
-  /** 单题模式提交在途：跳题整体禁用（§7.2 busy 禁切题；列表模式不限滚动） */
   locked?: boolean;
+  ref?: Ref<HTMLButtonElement> | undefined;
+  answerCardState?: QuestionCompletion["state"] | "unknown" | undefined;
 }) {
-  const currentIndex = items.findIndex((item) => item.id === currentId);
-  // 从当前位置之后查找，卷尾回到前面；部分填写仍属于待补全；
-  // v1 卷已提交题不可再改答，「未答」同时要求未提交（§9.1 四态口径）。
-  const next = [
-    ...items.slice(currentIndex + 1),
-    ...items.slice(0, currentIndex + 1),
-  ].find(
-    (item) => item.completion.state !== "filled" && !item.practice?.submitted,
-  );
-  const hasPractice = items.some((item) => item.practice !== undefined);
+  const state =
+    answerCardState === undefined || answerCardState === "unknown"
+      ? item.completion.state
+      : answerCardState;
+  const label =
+    answerCardState === "partial"
+      ? "部分作答"
+      : answerCardState === "unknown"
+        ? "作答状态尚未确认"
+        : undefined;
   return (
-    <nav
-      aria-label="答题卡"
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    <button
+      ref={ref}
+      type="button"
+      aria-label={itemLabel(item, label)}
+      aria-current={current ? "location" : undefined}
+      disabled={locked}
+      onClick={() => onJump(item.id)}
+      className={itemClass(item, current, state)}
     >
-      <div className="mb-3 flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>○ 未填写</span>
-        <span>◐ 部分填写</span>
-        <span>● 已填写</span>
-        {hasPractice && (
-          <>
-            <span className="inline-flex items-center gap-1">
-              <Check aria-hidden className="size-3" />
-              已提交
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Clock aria-hidden className="size-3" />
-              已提交 · 待公布
-            </span>
-          </>
-        )}
-      </div>
-      {/* 为向外延伸 4px 的选中框和键盘焦点框留出空间，避免滚动容器裁切。 */}
-      <ol className="grid min-h-0 grid-cols-[repeat(auto-fill,44px)] justify-start gap-2 overflow-y-auto overscroll-contain p-1">
-        {items.map((item) => (
-          <li key={item.id}>
-            <button
-              type="button"
-              aria-label={itemLabel(item)}
-              aria-current={item.id === currentId ? "location" : undefined}
-              disabled={locked}
-              onClick={() => onJump(item.id)}
-              className={itemClass(item, item.id === currentId)}
-            >
-              {item.index + 1}
-              {item.practice?.submitted && (
-                <PracticeSubmittedMark
-                  feedbackReadable={item.practice.feedbackReadable}
-                />
-              )}
-              {item.completion.state === "partial" && (
-                <span
-                  aria-hidden
-                  className="absolute bottom-1 h-0.5 w-3 bg-current"
-                />
-              )}
-              {item.flagged && (
-                <Flag
-                  aria-hidden
-                  className="absolute right-0.5 top-0.5 size-2.5"
-                />
-              )}
-              {item.unsure && (
-                <CircleHelp
-                  aria-hidden
-                  className="absolute bottom-0.5 right-0.5 size-2.5 text-amber-600 dark:text-amber-400"
-                />
-              )}
-            </button>
-          </li>
-        ))}
-      </ol>
-      <Button
-        type="button"
-        variant="outline"
-        className="mt-3 shrink-0 min-h-11 w-full justify-between px-3"
-        disabled={locked || !next}
-        onClick={() => next && onJump(next.id)}
-      >
-        {next ? "下一道未答" : items.length === 0 ? "暂无题目" : "全部已填写"}
-        {next ? (
-          <ArrowRight aria-hidden className="size-4" />
-        ) : (
-          <Check aria-hidden className="size-4" />
-        )}
-      </Button>
-    </nav>
+      {item.index + 1}
+      {item.practice?.submitted && (
+        <PracticeSubmittedMark
+          feedbackReadable={item.practice.feedbackReadable}
+        />
+      )}
+      {answerCardState === undefined && state === "partial" && (
+        <span aria-hidden className="absolute bottom-1 h-0.5 w-3 bg-current" />
+      )}
+      {item.flagged && (
+        <Flag aria-hidden className="absolute end-0.5 top-0.5 size-2.5" />
+      )}
+      {item.unsure && (
+        <CircleHelp
+          aria-hidden
+          className={
+            answerCardState === undefined
+              ? "absolute bottom-0.5 right-0.5 size-2.5 text-amber-600 dark:text-amber-400"
+              : item.practice?.submitted
+                ? "absolute start-0.5 bottom-0.5 size-2.5"
+                : "absolute start-0.5 top-0.5 size-2.5"
+          }
+        />
+      )}
+    </button>
   );
 }

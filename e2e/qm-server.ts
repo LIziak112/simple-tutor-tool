@@ -89,7 +89,10 @@ let started: Array<{ child: ChildProcess; name: string }> = [];
  * web 根路径任一 2xx）。幂等：同 ports 重复调用返回同一 QmPair（单 spec
  * beforeAll 只应调一次）。
  */
-export async function startQmPair(ports: QmPorts): Promise<QmPair> {
+export async function startQmPair(
+  ports: QmPorts,
+  questionProcess = false,
+): Promise<QmPair> {
   const { serverPort, webPort } = ports;
   const webUrl = `http://127.0.0.1:${webPort}`;
   const serverUrl = `http://127.0.0.1:${serverPort}`;
@@ -107,6 +110,7 @@ export async function startQmPair(ports: QmPorts): Promise<QmPair> {
         DATA_DIR: dataDir,
         PUBLIC_URL: webUrl,
         NEW_CONTENT_ENABLED: "true",
+        QUESTION_PROCESS_ENABLED: questionProcess ? "1" : "0",
         E2E_FAKE_AI_BASE_URL: "http://127.0.0.1:8898/v1",
       },
       stdio: ["ignore", "ignore", "pipe"],

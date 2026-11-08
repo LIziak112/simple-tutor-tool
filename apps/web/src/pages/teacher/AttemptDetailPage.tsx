@@ -7,6 +7,7 @@ import {
   isAnswered,
 } from "@/features/attempt/answer-format";
 import { formatResultCounts } from "@/features/attempt/result-counts";
+import { QuestionProcessPlayer } from "@/features/question-process/QuestionProcessPlayer";
 import {
   AttemptDetailQuestionCard,
   formatActiveSec,
@@ -232,6 +233,12 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
                 attemptId={data.attemptId}
                 roundLabel={roundLabel}
               />
+              {data.sourceType === "course" && (
+                <QuestionProcessPlayer
+                  attemptId={data.attemptId}
+                  questionId={question.questionId}
+                />
+              )}
             </li>
           );
         })}

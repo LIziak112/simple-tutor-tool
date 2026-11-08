@@ -13,7 +13,7 @@ import {
 } from "./helpers";
 
 test(
-  "v3 公开填空原稿承载唯一真实输入，缩放后槽位仍与保存框一致",
+  "v4 真实填空承载唯一输入，缩放后槽位与笔迹同框",
   {
     tag: ["@annotation"],
   },
@@ -62,12 +62,26 @@ test(
     await expect(input).toHaveCount(1);
     await input.fill("自己的答案");
     await card.getByRole("button", { name: /圈画题干/ }).click();
-    const image = card.getByRole("img", { name: "第 1 题冻结原稿" });
-    await expect(image).toBeVisible();
+    const surface = card.locator('[data-slot="question-surface"]');
+    await expect(surface).toBeVisible();
     const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
     await expect(canvas).toHaveAttribute("data-input-enabled", "true");
     await expect(input).toHaveCount(1);
-    await expect(input).toBeDisabled();
+    await expect
+      .poll(() =>
+        input.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            document
+              .elementFromPoint(
+                rect.left + rect.width / 2,
+                rect.top + rect.height / 2,
+              )
+              ?.closest('[data-slot="question-annotation-overlay"]') != null
+          );
+        }),
+      )
+      .toBe(true);
     await expect(input).toHaveValue("自己的答案");
     // 空原稿预备只在本机保存；首笔才建立云端 ready 底图。
     await drawStrokeWithPointerEvents(canvas);
@@ -79,21 +93,19 @@ test(
       )
       .toBe("ready");
     const before = (await (await page.request.get(viewPath)).json()).data;
-    expect(before.base.layout.renderVersion).toBe(3);
-    expect(before.base.layout.controls).toHaveLength(1);
+    expect(before.base.layout.renderVersion).toBe(4);
+    expect(before.base.layout.controls).toBeUndefined();
     expect(before.base.layout.cssHeight % 1).toBeGreaterThan(0);
     expect(before.base.pixelHeight).toBe(
       Math.ceil(before.base.layout.cssHeight * before.base.layout.pixelRatio),
     );
     const surfaceGeometry = await card.evaluate((article) => {
-      const image = article.querySelector(
-        '[data-slot="annotation-frozen-surface"] img',
-      );
+      const surface = article.querySelector('[data-slot="question-surface"]');
       const ink = article.querySelector(
         'canvas[data-slot="annotation-canvas"]',
       );
       if (
-        !(image instanceof HTMLImageElement) ||
+        !(surface instanceof HTMLElement) ||
         !(ink instanceof HTMLCanvasElement)
       )
         throw new Error("缺少原稿或墨层");
@@ -101,20 +113,29 @@ test(
         const rect = element.getBoundingClientRect();
         return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
       };
-      return { image: box(image), ink: box(ink) };
+      return { surface: box(surface), ink: box(ink) };
     });
     for (const key of ["x", "y", "width", "height"] as const)
-      expect(surfaceGeometry.image[key]).toBeCloseTo(
+      expect(surfaceGeometry.surface[key]).toBeCloseTo(
         surfaceGeometry.ink[key],
         2,
       );
-    const slot = before.base.layout.controls[0];
+    const frame = card.locator('[data-slot="annotation-logical-frame"]');
+    const originalFrameBox = await frame.boundingBox();
+    const originalInputBox = await input.boundingBox();
+    if (!originalFrameBox || !originalInputBox)
+      throw new Error("原始填空槽位不可见");
+    const slot = {
+      x: originalInputBox.x - originalFrameBox.x,
+      y: originalInputBox.y - originalFrameBox.y,
+      width: originalInputBox.width,
+      height: originalInputBox.height,
+    };
 
     // 容器缩到保存逻辑宽的约 0.9，验真实 DOM 命中框和原稿坐标映射。
     await page.addStyleTag({
       content: `article[aria-label="第 1 题"] [data-slot="annotated-question"] { max-width: ${before.base.layout.cssWidth * 0.9}px !important; }`,
     });
-    const frame = card.locator('[data-slot="annotation-logical-frame"]');
     await expect
       .poll(async () =>
         Number(await frame.getAttribute("data-annotation-scale")),
@@ -135,24 +156,25 @@ test(
       JSON.stringify({ scale, slot, frameBox, inputBox }, null, 2),
     );
     await expect(card.getByRole("button", { name: "放大题面" })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath("v3-fill-fit.png") });
+    await page.screenshot({ path: testInfo.outputPath("v4-fill-fit.png") });
     await card.getByRole("button", { name: "放大题面" }).click();
     await expect(frame).toHaveAttribute("data-annotation-scale", "1");
     const expandedBox = await input.boundingBox();
     if (!expandedBox) throw new Error("放大后填空槽位不可见");
     expect(expandedBox.height).toBeGreaterThanOrEqual(44);
-    await expect(image).toBeVisible();
+    await expect(surface).toBeVisible();
+    await expect(canvas).toBeVisible();
     await expect(input).toBeEditable();
     await expect(input).toHaveCount(1);
     await input.fill("修改后的答案");
     await expect(input).toHaveValue("修改后的答案");
     await page.screenshot({
-      path: testInfo.outputPath("v3-fill-original.png"),
+      path: testInfo.outputPath("v4-fill-original.png"),
     });
     await card.getByRole("button", { name: /圈画题干/ }).click();
     await expect(canvas).toHaveAttribute("data-input-enabled", "true");
     await drawStrokeWithPointerEvents(canvas);
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await expect(input).toBeEditable();
     await expect
       .poll(
@@ -238,7 +260,7 @@ test(
     await page.unroute("**/api/student/attempts/**");
     await page.getByRole("button", { name: "重试读取" }).click();
     await expect(page.getByText("练习信息刷新失败")).toHaveCount(0);
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await expect
       .poll(
         async () =>
@@ -261,9 +283,7 @@ test(
     after = afterFailure;
 
     await page.reload();
-    await expect(
-      card.getByRole("img", { name: "第 1 题冻结原稿" }),
-    ).toBeVisible();
+    await expect(card.locator('[data-slot="question-surface"]')).toBeVisible();
     await expect(card.getByRole("textbox", { name: "第1空" })).toHaveValue(
       "修改后的答案",
     );
@@ -291,7 +311,10 @@ test(
       const otherCard = other.locator('article[aria-label="第 1 题"]');
       const otherInput = otherCard.getByRole("textbox", { name: "第1空" });
       await expect(
-        otherCard.getByRole("img", { name: "第 1 题冻结原稿" }),
+        otherCard.locator('[data-slot="question-surface"]'),
+      ).toBeVisible();
+      await expect(
+        otherCard.locator('canvas[data-slot="annotation-canvas"]'),
       ).toBeVisible();
       await expect(otherInput).toHaveCount(1);
       await expect(otherInput).toHaveValue("修改后的答案");
@@ -305,18 +328,24 @@ test(
       const otherScale = Number(
         await otherFrame.getAttribute("data-annotation-scale"),
       );
-      expect(otherInputBox.x).toBeCloseTo(
-        otherFrameBox.x + slot.x * otherScale,
-        0,
-      );
-      expect(otherInputBox.y).toBeCloseTo(
-        otherFrameBox.y + slot.y * otherScale,
-        0,
-      );
-      expect(otherInputBox.width).toBeCloseTo(slot.width * otherScale, 0);
-      expect(otherInputBox.height).toBeCloseTo(slot.height * otherScale, 0);
+      const actualEdges = [
+        (otherInputBox.x - otherFrameBox.x) / otherScale,
+        (otherInputBox.y - otherFrameBox.y) / otherScale,
+        (otherInputBox.x + otherInputBox.width - otherFrameBox.x) / otherScale,
+        (otherInputBox.y + otherInputBox.height - otherFrameBox.y) / otherScale,
+      ];
+      const savedEdges = [
+        slot.x,
+        slot.y,
+        slot.x + slot.width,
+        slot.y + slot.height,
+      ];
+      for (let i = 0; i < savedEdges.length; i++)
+        expect(
+          Math.abs((actualEdges[i] ?? 0) - (savedEdges[i] ?? 0)),
+        ).toBeLessThanOrEqual(10);
       await writeFile(
-        testInfo.outputPath("v3-fill-cross-geometry.json"),
+        testInfo.outputPath("v4-fill-cross-geometry.json"),
         JSON.stringify(
           {
             scale: otherScale,
@@ -333,7 +362,7 @@ test(
       );
       expect(annotationWrites).toBe(0);
       await other.screenshot({
-        path: testInfo.outputPath("v3-fill-cross-engine.png"),
+        path: testInfo.outputPath("v4-fill-cross-engine.png"),
       });
 
       await otherCard.getByRole("button", { name: /圈画题干/ }).click();
@@ -341,9 +370,25 @@ test(
         'canvas[data-slot="annotation-canvas"]',
       );
       await expect(otherCanvas).toHaveAttribute("data-input-enabled", "true");
-      await expect(otherInput).toBeDisabled();
+      await expect
+        .poll(() =>
+          otherInput.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return (
+              document
+                .elementFromPoint(
+                  rect.left + rect.width / 2,
+                  rect.top + rect.height / 2,
+                )
+                ?.closest('[data-slot="question-annotation-overlay"]') != null
+            );
+          }),
+        )
+        .toBe(true);
       await drawStrokeWithPointerEvents(otherCanvas);
-      await other.getByRole("button", { name: "作答", exact: true }).click();
+      await other
+        .getByRole("button", { name: "完成标画", exact: true })
+        .click();
       await expect(otherInput).toBeEditable();
       await expect
         .poll(

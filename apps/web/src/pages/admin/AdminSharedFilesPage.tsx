@@ -8,8 +8,15 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   ApiError,
@@ -51,6 +58,8 @@ export function AdminSharedFilesPage() {
   });
 
   const [query, setQuery] = useState("");
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const [deleting, setDeleting] = useState<SharedFileSummary | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionHint, setActionHint] = useState<string | null>(null);
@@ -215,7 +224,8 @@ export function AdminSharedFilesPage() {
                 variant="ghost"
                 className="min-h-11 shrink-0 px-4 text-destructive hover:bg-destructive/10 hover:text-destructive"
                 aria-label={`删除共享文件 ${file.filename}`}
-                onClick={() => {
+                onClick={(event) => {
+                  deleteTriggerRef.current = event.currentTarget;
                   setActionError(null);
                   setActionHint(null);
                   setDeleting(file);
@@ -230,28 +240,42 @@ export function AdminSharedFilesPage() {
       )}
 
       {/* 删除确认（D18：管理员可删任意，含本地文件；§4.2 影响先说清） */}
-      {deleting !== null ? (
-        <div
-          role="alertdialog"
-          aria-labelledby="admin-shared-delete-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-        >
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
-            <h3
-              id="admin-shared-delete-title"
-              className="text-base font-semibold"
-            >
-              删除共享文件？
-            </h3>
+      <Dialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) setDeleting(null);
+        }}
+      >
+        {deleting !== null ? (
+          <DialogContent
+            role="alertdialog"
+            className="w-[calc(100%-2rem)] max-w-md p-5"
+            closeDisabled={deleteMutation.isPending}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              cancelDeleteRef.current?.focus();
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              deleteTriggerRef.current?.focus();
+            }}
+            onEscapeKeyDown={(event) => {
+              if (deleteMutation.isPending) event.preventDefault();
+            }}
+            onInteractOutside={(event) => {
+              if (deleteMutation.isPending) event.preventDefault();
+            }}
+          >
+            <DialogTitle>删除共享文件？</DialogTitle>
             <p className="mt-2 truncate font-mono text-xs text-muted-foreground">
               {deleting.filename}
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <DialogDescription className="mt-2">
               以管理员身份删除该文件（
               {deleting.source === "published" ? "在线发布" : "本地文件"}
               ）。删除后老师们将不能继续导入；
               <strong>已导入进资源库的内容不受影响</strong>。此操作不可撤销。
-            </p>
+            </DialogDescription>
             {deleteMutation.isError ? (
               <p role="alert" className="mt-2 text-sm text-destructive">
                 {deleteMutation.error instanceof Error
@@ -259,11 +283,12 @@ export function AdminSharedFilesPage() {
                   : "删除失败，请稍后重试"}
               </p>
             ) : null}
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <DialogFooter className="mt-4">
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11 px-4"
+                ref={cancelDeleteRef}
                 onClick={() => setDeleting(null)}
                 disabled={deleteMutation.isPending}
               >
@@ -304,10 +329,10 @@ export function AdminSharedFilesPage() {
                   "确认删除"
                 )}
               </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

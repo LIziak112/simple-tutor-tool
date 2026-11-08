@@ -1,6 +1,9 @@
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
-import { useAttemptDetail } from "@/features/attempt/attempt-queries";
+import {
+  isAttemptUnavailable,
+  useAttemptDetail,
+} from "@/features/attempt/attempt-queries";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   aiQueueReturnTarget,
@@ -29,10 +32,10 @@ export default function StudentAttemptPage() {
   // 队列入口只在无回看上下文时改写返回目标
   const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
-  const denied =
-    detailQuery.isError &&
+  const denied = detailQuery.isError && isAttemptUnavailable(detailQuery.error);
+  const abandoned =
     detailQuery.error instanceof ApiError &&
-    [401, 403, 404].includes(detailQuery.error.status);
+    detailQuery.error.code === "ATTEMPT_ABANDONED";
 
   if (detailQuery.data === undefined && detailQuery.fetchStatus === "paused") {
     return (
@@ -53,9 +56,13 @@ export default function StudentAttemptPage() {
           role="alert"
           className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5"
         >
-          <p className="text-sm font-medium">已无权限访问该练习</p>
+          <p className="text-sm font-medium">
+            {abandoned ? "这份作答已清空" : "已无权限访问该练习"}
+          </p>
           <p className="text-sm text-muted-foreground">
-            这份练习可能已被老师收回，或你已不在对应课程中。有疑问请联系老师。
+            {abandoned
+              ? "请从练习入口打开当前作答。"
+              : "这份练习可能已被老师收回，或你已不在对应课程中。有疑问请联系老师。"}
           </p>
           <Link
             to="/s/home"

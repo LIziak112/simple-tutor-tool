@@ -1,9 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  AI_REPLY_CHECK_VERSION,
+  AI_REPLY_FORMAT_INSTRUCTIONS,
   AI_REPLY_MAX_CHARS,
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
+  studentMcpPracticeQuestionSubmitSchema,
 } from "@tutor/contract";
+import { checkAiReply } from "@tutor/md-dsl";
 import { z } from "zod";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
@@ -24,6 +28,7 @@ import {
   submitMcpReply,
 } from "../services/ai-companion/student-ai-queue.ts";
 import { outboundAssemblyOfTask } from "../services/ai-companion/student-ai-worker.ts";
+import { submitPracticeQuestion } from "../services/attempt-service.ts";
 import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
@@ -76,6 +81,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "renew_ai_lease",
   "renew_attempt_review_lease",
   "submit_ai_reply",
+  "check_ai_reply",
   "submit_attempt_review_result",
   "student_submit_practice_question",
 ] as const;
@@ -114,6 +120,7 @@ export interface StudentMcpServerDeps {
   readonly db: Db;
   /** DATA_DIR（材料 PNG 字节读取） */
   readonly dataDir: string;
+  readonly publicUrl: string;
   /** token 绑定的学生（全部工具以此域隔离；唯一身份来源是鉴权中间件） */
   readonly studentId: string;
   /** 快照装配 HMAC 密钥（DATA_DIR/secret.key；整体复盘范围锚核对用） */
@@ -130,6 +137,22 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     name: STUDENT_MCP_SERVER_NAME,
     version: STUDENT_MCP_SERVER_VERSION,
   });
+
+  server.registerTool(
+    "check_ai_reply",
+    {
+      description:
+        "提交前检查 AI 回信的数学格式；只检查传入正文，不保存、不领取、不续租、不改变任务状态。按行列反馈修正 error 后再提交。" +
+        AI_REPLY_FORMAT_INSTRUCTIONS,
+      inputSchema: { replyMarkdown: z.string().max(REPLY_INPUT_MAX_CHARS) },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    guard(({ replyMarkdown }) => jsonContent(checkAiReply(replyMarkdown))),
+  );
 
   // 1. list_my_ai_tasks：只读列表（无领取/已读副作用）
   server.registerTool(
@@ -209,6 +232,14 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
       const assembly = outboundAssemblyOfTask(db, task, { recordView });
       const base = {
         claimed: true as const,
+        replyFormat: {
+          version: AI_REPLY_CHECK_VERSION,
+          instructions: AI_REPLY_FORMAT_INSTRUCTIONS,
+          manifestUrl: new URL(
+            "api/public/ai-reply-checker/manifest.json",
+            `${deps.publicUrl.replace(/\/$/, "")}/`,
+          ).href,
+        },
         taskId: claimed.taskId,
         attemptId: task.attemptId,
         questionId: task.questionId,
@@ -298,7 +329,8 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     "submit_ai_reply",
     {
       description:
-        "把 AI 回信写回平台（学生在伴学栏查看）。校验任务归属与租约：leaseToken 必须是当前有效持有者；contextVersion/runtimeEpoch 与领取时不一致 → 409（迟到回执仅记事实，不覆盖首次成功）。同内容重放幂等成功（duplicate:true）；正文超过平台上限将被截断并在 truncated:true 声明。正文用 Markdown。",
+        "把 AI 回信写回平台（学生在伴学栏查看）。校验任务归属与租约：leaseToken 必须是当前有效持有者；contextVersion/runtimeEpoch 与领取时不一致 → 409（迟到回执仅记事实，不覆盖首次成功）。同内容重放幂等成功（duplicate:true）；正文超过平台上限将被截断并在 truncated:true 声明。正文用 Markdown。" +
+        AI_REPLY_FORMAT_INSTRUCTIONS,
       inputSchema: {
         taskId: z.string().uuid().describe("claim_ai_task 返回的任务 id"),
         leaseToken: z.string().min(1).describe("claim_ai_task 返回的租约凭证"),
@@ -340,6 +372,7 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
           taskId,
           duplicate: result.duplicate,
           truncated: result.truncated,
+          formatWarnings: result.formatWarnings ?? [],
           maxChars: AI_REPLY_MAX_CHARS,
         });
       },
@@ -662,41 +695,21 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
     }),
   );
 
-  
-  // student_submit_practice_question：提交练习题目作答
   server.registerTool(
     "student_submit_practice_question",
     {
       description:
-        "提交练习中的单道题目作答：支持针对进行中的练习提交选项/文本/填空答案。该工具接收题目所在练习的 practiceId、作答所在题目行 questionId，并基于题目类型提供相应作答载荷。对于长练习（如 100 题），学生可分批次逐题提交作答，不必等全部做完才提交。",
-      inputSchema: {
-        practiceId: z.string().uuid().describe("所属的练习 ID"),
-        responseId: z.string().uuid().describe("具体的题目作答记录 ID（从查询工具中获取的 id）"),
-        evidence: z.object({
-            answers: z.array(z.string()).optional().describe("填空/选择答案"),
-            text: z.string().optional().describe("主观文本解答"),
-        }).describe("题目作答载荷（填空、选择、文本等），须匹配题目题型声明格式"),
-        expectedAnswerRevision: z.number().int().describe("期望的上一版答案 revision，防止覆盖冲突"),
+        "学生确认后提交一题。提交会锁定本题，最后一题会自动交卷。questionId 是 DSL 题号，questionRevisionId 是作答行 UUID。携带练习详情中的工作流版本、答案版本及笔记证据声明。可同时提供本次答案，省略则提交已保存的草稿。重试同一次提交须复用 submissionMutationId 和全部输入。",
+      inputSchema: studentMcpPracticeQuestionSubmitSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
       },
-      annotations: { readOnlyHint: false },
     },
-    guard(async ({ practiceId, responseId, evidence, expectedAnswerRevision }) => {
-      // 动态导入所需模块
-      const attemptServiceModule = await import("../services/attempt-service");
-      const attemptService = attemptServiceModule.attemptService || attemptServiceModule;
-      
-      const payload = {
-        workflowVersion: 1,
-        workflowRevision: 1, 
-        expectedAnswerRevision,
-        submissionMutationId: crypto.randomUUID(),
-        evidence: evidence,
-      };
-      
-      const result = await attemptService.submitPracticeQuestion(db, studentId, practiceId, responseId, payload as any);
-      return jsonContent({
-        success: true,
-      });
+    guard(({ practiceId, questionId, ...request }) => {
+      submitPracticeQuestion(db, studentId, practiceId, questionId, request);
+      return jsonContent({ success: true });
     }),
   );
 

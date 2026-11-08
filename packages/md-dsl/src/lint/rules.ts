@@ -70,7 +70,7 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "INVALID_QUESTION_ATTRS",
     level: "error",
     description:
-      "question 属性不合法：如 difficulty 不在 1–5、knowledge 为空串等",
+      "question 属性不合法：如 difficulty 不在 1–5、knowledge 为空白或仅含分隔符等",
   },
   {
     code: "INVALID_BLANK_MARKER",

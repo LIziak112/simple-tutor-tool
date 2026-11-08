@@ -1,4 +1,5 @@
 import { devices, expect, test } from "@playwright/test";
+import { analyticsStudentOkSchema } from "../packages/contract/src/analytics-api";
 import {
   addCourseMemberViaApi,
   createCourseViaApi,
@@ -38,7 +39,7 @@ function practiceMarkdown(unitName: string): string {
     "topic: 有理数",
     "---",
     "",
-    '::::question{type=fill difficulty=1 knowledge="二十以内加法"}',
+    '::::question{type=fill difficulty=1 knowledge=" 二十以内加法 | 加法运算 || 二十以内加法 | "}',
     "计算：$2+3=$ [[5]]",
     "",
     ":::solution",
@@ -130,6 +131,10 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
 
       // 第 1 题填空：答 6（判错 → 错题列表与高频错误答案数据）
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
+      await q1.getByRole("button", { name: "第 1 题更多" }).click();
+      await studentPage.getByRole("menuitem", { name: "显示题目资料" }).click();
+      await expect(q1.getByText("二十以内加法", { exact: true })).toBeVisible();
+      await expect(q1.getByText("加法运算", { exact: true })).toBeVisible();
       const blank = q1.getByLabel("第1空");
       const fillSaved = studentPage.waitForResponse(async (response) => {
         if (
@@ -203,6 +208,25 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     await expect(pendingCard).toHaveCount(0);
     await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
 
+    // 同一道错题在每个考点下各计一次，重复声明不放大计数。
+    const analyticsResponse = await request.get(
+      `/api/teacher/analytics/student/${student.id}`,
+    );
+    expect(analyticsResponse.ok()).toBe(true);
+    const analytics = analyticsStudentOkSchema.parse(
+      await analyticsResponse.json(),
+    );
+    expect(analytics.ok).toBe(true);
+    for (const name of ["二十以内加法", "加法运算"]) {
+      expect(
+        analytics.data.knowledge.find((row) => row.knowledge === name),
+      ).toMatchObject({
+        wrongCount: 1,
+        correctCount: 0,
+        judgedCount: 1,
+      });
+    }
+
     await page.goto("/t/insights");
     // 关键计数：判断自动判对 + 填空教师批错 → graded，正确率 50%（D4：判对 1 / 已判定 2）
     await expect(page.getByText("总正确率")).toBeVisible();
@@ -242,6 +266,67 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
     const reviewZone = page.locator('section[aria-label="错题与存疑"]');
     await expect(reviewZone.getByText("计算：")).toBeVisible();
     await expect(reviewZone.getByText("判错").first()).toBeVisible();
+
+    // 页内跳转保留时间、课程与已订正档位，阅读地图标题留在导航下方。
+    await page.getByRole("button", { name: "最近 7 天" }).click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("days") === "7");
+    await page
+      .getByRole("combobox", { name: "课程", exact: true })
+      .selectOption(courseId);
+    await expect(page).toHaveURL(
+      (url) => url.searchParams.get("courseId") === courseId,
+    );
+    await reviewZone.getByRole("button", { name: "已订正" }).click();
+    await expect(page).toHaveURL(
+      (url) =>
+        url.searchParams.get("kind") === "corrected" &&
+        url.searchParams.get("days") === "7" &&
+        url.searchParams.get("courseId") === courseId,
+    );
+    const filteredUrl = page.url();
+    const initialViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const sectionNav = page.getByRole("navigation", {
+      name: "学生详情页内导航",
+    });
+    await sectionNav.getByRole("link", { name: "讲义阅读地图" }).click();
+    await expect(readingMap).toBeFocused();
+    await expect(page).toHaveURL(filteredUrl);
+    const mapTitle = readingMap.getByRole("heading", { name: "讲义阅读地图" });
+    await expect(mapTitle).toBeInViewport();
+    const navBox = await sectionNav.boundingBox();
+    const mapTitleBox = await mapTitle.boundingBox();
+    expect(mapTitleBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (navBox?.y ?? 0) + (navBox?.height ?? 0),
+    );
+
+    const lectureSummary = readingMap
+      .locator("summary")
+      .filter({ hasText: "第1讲 有理数" });
+    const sectionTitle = readingMap.getByText("一、正数与负数", {
+      exact: true,
+    });
+    await expect(sectionTitle).toBeHidden();
+    await lectureSummary.press("Enter");
+    await expect(sectionTitle).toBeVisible();
+    await lectureSummary.press("Space");
+    await expect(sectionTitle).toBeHidden();
+
+    await page.setViewportSize({ width: 320, height: 760 });
+    const narrowNav = sectionNav.getByText("跳至区块", { exact: true });
+    await narrowNav.click();
+    await sectionNav.getByRole("link", { name: "错题与存疑" }).click();
+    await expect(reviewZone).toBeFocused();
+    await expect(
+      sectionNav.getByRole("link", { name: "错题与存疑" }),
+    ).toBeHidden();
+    await expect(reviewZone.getByRole("heading")).toBeInViewport();
+    await expect(page).toHaveURL(filteredUrl);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(320);
+
+    if (initialViewport) await page.setViewportSize(initialViewport);
 
     // —— 题目视角：行展开（题干全文 + 高频错误答案「6 × 1」，fill 聚合口径） ——
     await page.goto("/t/insights/questions");

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
@@ -66,6 +66,49 @@ test.beforeEach(async ({ request, page }, testInfo) => {
   await openChoicePractice(page, courseId, courseName, unitName, 1);
 });
 
+test("草稿开合前后正文阅读均收起顶栏，反向展开且保留草稿", {
+  tag: ["@annotation"],
+}, async ({ page }) => {
+  const card = page.getByRole("article", { name: "第 1 题", exact: true });
+  const trigger = card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ });
+  const paper = card.locator('[data-slot="note-layer"]');
+  const header = page.locator('[data-slot="attempt-header"]');
+  await trigger.click();
+  await drawStrokeWithPointerEvents(paper.locator("canvas"));
+  await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+  await trigger.click();
+  for (const width of [390, 1180]) {
+    await page.setViewportSize({ width, height: 300 });
+    for (const open of [false, true, false]) {
+      if (open !== ((await trigger.getAttribute("aria-expanded")) === "true"))
+        await trigger.click();
+      await expect(trigger).toHaveAttribute("aria-expanded", String(open));
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      });
+      const beforeWidth = (await card.boundingBox())?.width;
+      await page.mouse.move(5, 150);
+      await page.mouse.wheel(0, 180);
+      await expect(header).toHaveAttribute("data-reading-hidden", "true");
+      await expect
+        .poll(() =>
+          header.evaluate((node) => node.getBoundingClientRect().bottom),
+        )
+        .toBeLessThanOrEqual(1);
+      expect((await card.boundingBox())?.width).toBe(beforeWidth);
+      await page.mouse.wheel(0, -80);
+      await expect(header).toHaveAttribute("data-reading-hidden", "false");
+      if (open)
+        await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    }
+  }
+});
+
 for (const preference of ["auto", "side", "below"] as const) {
   test(
     `草稿按需分栏：${preference}收起不占位，展开等比适配且保留像素与笔数`,
@@ -97,9 +140,6 @@ for (const preference of ["auto", "side", "below"] as const) {
         await expect(paper).toBeHidden();
       }
       // 外框保持足够宽，草稿未打开时内部不能提前预留右列。
-      await page
-        .getByRole("button", { name: "收起答题卡", exact: true })
-        .click();
       const trigger = card.getByRole("button", { name: /圈画题干/ });
       await trigger.click();
       const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
@@ -109,13 +149,13 @@ for (const preference of ["auto", "side", "below"] as const) {
       const snapshot = async () =>
         card.evaluate((article) => {
           const source = article.querySelector(
-            '[data-slot="annotation-frozen-surface"] img',
+            '[data-slot="question-surface"]',
           );
           const canvas = article.querySelector(
             'canvas[data-slot="annotation-canvas"]',
           );
           if (!source || !(canvas instanceof HTMLCanvasElement))
-            throw new Error("冻结原稿或标画画布未就绪");
+            throw new Error("题面或标画画布未就绪");
           const context = canvas.getContext("2d");
           if (!context) throw new Error("无法检查标画像素");
           const pixels = context.getImageData(
@@ -213,24 +253,16 @@ for (const preference of ["auto", "side", "below"] as const) {
         }
       };
       await cycle(true);
-      await page.getByRole("button", { name: "作答", exact: true }).click();
-      await expect(
-        card.locator('[data-slot="annotation-answer-view"]'),
-      ).toBeVisible();
-      await expect(
-        card.locator(
-          '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-        ),
-      ).toHaveCount(1);
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
+      await expect(card.locator('[data-slot="question-surface"]')).toHaveCount(
+        1,
+      );
       await expect(card.getByRole("radio")).toHaveCount(4);
-      await expect(canvas).toBeHidden();
-      await card.getByRole("button", { name: "返回原稿" }).click();
-      await expect(
-        card.locator('[data-slot="annotation-answer-view"]'),
-      ).toHaveCount(0);
-      await expect(
-        card.locator('[data-slot="annotation-frozen-surface"] img'),
-      ).toBeVisible();
+      await expect(canvas).toBeVisible();
+      await expect(canvas).toHaveAttribute("data-input-enabled", "false");
+      await card.locator('[role="radiogroup"] label').nth(1).click();
+      await expect(card.getByRole("radio").nth(1)).toBeChecked();
+      await expect.poll(snapshot).toEqual(original);
       await cycle(false);
       await page.screenshot({
         path: testInfo.outputPath(`paper-geometry-${preference}.png`),
@@ -256,9 +288,7 @@ test("题卡扩宽后题面居中且保留标画原尺寸与像素", {
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
   const geometry = async () =>
     card.evaluate((article) => {
-      const source = article.querySelector(
-        '[data-slot="annotation-frozen-surface"] img',
-      );
+      const source = article.querySelector('[data-slot="question-surface"]');
       const canvas = article.querySelector(
         'canvas[data-slot="annotation-canvas"]',
       );
@@ -368,7 +398,7 @@ test(
       await expect(page.getByTestId("draft-status")).toContainText(
         "本机保存失败",
       );
-      await page.getByRole("button", { name: "作答", exact: true }).click();
+      await page.getByRole("button", { name: "完成标画", exact: true }).click();
       const notice = page.locator(
         '[data-slot="attempt-header"] [role="alert"]',
       );
@@ -422,15 +452,13 @@ test("圈画再次点击与双击取消，不丢已有笔迹", { tag: ["@annotat
   await trigger.dblclick();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
-  await card.getByRole("button", { name: "进入作答" }).click();
-  await expect(
-    card.locator(
-      '[data-slot="annotation-answer-view"] [data-slot="question-surface"]',
-    ),
-  ).toHaveCount(1);
+  await expect(card.locator('[data-slot="question-surface"]')).toHaveCount(1);
+  await expect(canvas).toBeVisible();
   await expect(card.getByRole("radio")).toHaveCount(4);
   await card.locator('[role="radiogroup"] label').nth(1).click();
   await expect(card.getByRole("radio").nth(1)).toBeChecked();
+  await expect(canvas).toBeVisible();
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
 });
 
 test(
@@ -550,7 +578,7 @@ test(
     await paperTrigger.click();
     await expect(paper).toBeVisible();
     await expect(annotationTrigger).toHaveAttribute("aria-expanded", "true");
-    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await page.getByRole("button", { name: "完成标画", exact: true }).click();
     await expect(paper).toBeVisible();
     await paper
       .getByRole("button", { name: "更多操作（第 1 题草稿纸）" })
@@ -576,7 +604,6 @@ test(
     await expect(row).toHaveAttribute("data-layout", "below");
     await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 1800, height: 1000 });
-    await page.getByRole("button", { name: "收起答题卡", exact: true }).click();
     await paper
       .getByRole("button", { name: "更多操作（第 1 题草稿纸）" })
       .click();
@@ -591,7 +618,7 @@ test(
   },
 );
 
-test("标画默认手指滚动，显式开启手指书写后落墨", {
+test("圈画和草稿都用同款笔橡皮，手指不落墨", {
   tag: ["@annotation"],
 }, async ({ page }) => {
   const card = page.getByRole("article", { name: "第 1 题", exact: true });
@@ -599,8 +626,8 @@ test("标画默认手指滚动，显式开启手指书写后落墨", {
   await trigger.click();
   const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
   await expect(canvas).toHaveAttribute("data-input-enabled", "true");
-  const touchStroke = async () =>
-    canvas.evaluate((element) => {
+  const touchStroke = (target: Locator) =>
+    target.evaluate((element) => {
       const box = element.getBoundingClientRect();
       for (const [type, offset] of [
         ["pointerdown", 15],
@@ -621,13 +648,42 @@ test("标画默认手指滚动，显式开启手指书写后落墨", {
           }),
         );
     });
-  await touchStroke();
+  const markToolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
+  await expect(markToolbar.getByRole("button")).toHaveCount(5);
+  await expect(
+    markToolbar.getByRole("button", { name: "手指书写", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    markToolbar.getByRole("button", { name: "笔", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(canvas).toHaveCSS("touch-action", "pan-y");
+  await touchStroke(canvas);
   await expect(trigger).not.toHaveAccessibleName(/已有/);
-  const finger = page
-    .getByRole("toolbar", { name: "第 1 题标画工具栏" })
-    .getByRole("button", { name: "手指书写", exact: true });
-  await finger.click();
-  await expect(finger).toHaveAttribute("aria-pressed", "true");
-  await touchStroke();
+  await drawStrokeWithPointerEvents(canvas);
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  await markToolbar.getByRole("button", { name: "橡皮", exact: true }).click();
+  await drawStrokeWithPointerEvents(canvas);
+  await expect(trigger).not.toHaveAccessibleName(/已有/);
+  await markToolbar.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  await markToolbar
+    .getByRole("button", { name: "完成标画", exact: true })
+    .click();
+
+  await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+  const paper = card.locator('[data-slot="note-layer"]');
+  const paperToolbar = paper.getByRole("toolbar");
+  const paperCanvas = paper.locator("canvas");
+  await expect(paperToolbar.getByRole("button")).toHaveCount(4);
+  await expect(paperCanvas).toHaveCSS("touch-action", "pan-y");
+  await touchStroke(paperCanvas);
+  await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+  await drawStrokeWithPointerEvents(paperCanvas);
+  await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+  await paperToolbar.getByRole("button", { name: "橡皮", exact: true }).click();
+  await drawStrokeWithPointerEvents(paperCanvas);
+  await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+  await paperToolbar.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
 });

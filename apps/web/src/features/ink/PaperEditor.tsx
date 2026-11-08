@@ -1,4 +1,4 @@
-import type { NoteBackground } from "@tutor/contract";
+import type { NoteBackground, QuestionProcessFinish } from "@tutor/contract";
 import { type ReactNode, useEffect, useState } from "react";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import type {
@@ -8,7 +8,7 @@ import type {
   InkPenColor,
   InkPenSize,
 } from "./engine";
-import { InkPad } from "./InkPad";
+import { InkPad, SessionPrefToggleButton } from "./InkPad";
 import { useInkProfileSelection } from "./ink-profile-store";
 
 /** 草稿与正式作答共用纸面和工具栏，正文由调用方各自保存。 */
@@ -30,11 +30,16 @@ export function PaperEditor({
   mountPad = true,
   initialHeight,
   moreTitle = "更多（重做/颜色/粗细/清空）",
+  allowFingerWriting = false,
 }: {
   label: string;
   initial?: InkDoc | undefined;
   engineRef: React.RefObject<InkEngine | null>;
-  onDocChange: (doc: InkDoc, reason: InkChangeReason) => void;
+  onDocChange: (
+    doc: InkDoc,
+    reason: InkChangeReason,
+    finish?: QuestionProcessFinish,
+  ) => void;
   inputEnabled: boolean;
   paperHeight?: number | undefined;
   background?: NoteBackground;
@@ -48,6 +53,7 @@ export function PaperEditor({
   mountPad?: boolean;
   initialHeight?: number | undefined;
   moreTitle?: string;
+  allowFingerWriting?: boolean;
 }) {
   const profile = useInkProfileSelection();
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
@@ -79,10 +85,10 @@ export function PaperEditor({
             label={label}
             tool={tool}
             onToolChange={setTool}
-            penColor={color}
-            onPenColorChange={setColor}
-            penSize={size}
-            onPenSizeChange={setSize}
+            color={color}
+            onColorChange={setColor}
+            size={size}
+            onSizeChange={setSize}
             canUndo={history.undo}
             canRedo={history.redo}
             onUndo={() => engineRef.current?.undo()}
@@ -91,6 +97,14 @@ export function PaperEditor({
             clearLabel={clearLabel}
             moreTitle={moreTitle}
             menuExtras={menuExtras}
+            fingerToggle={
+              allowFingerWriting && (
+                <SessionPrefToggleButton
+                  iconOnly={compact}
+                  {...(compact ? { className: "size-11 shrink-0 p-0" } : {})}
+                />
+              )
+            }
           />
         </div>
       )}
@@ -98,7 +112,7 @@ export function PaperEditor({
         <InkPad
           engine="atrament"
           showToolbar={false}
-          inputMode="session"
+          inputMode={allowFingerWriting ? "session" : "pen"}
           label={label}
           initial={initial}
           engineRef={engineRef}
@@ -111,8 +125,8 @@ export function PaperEditor({
             setGeneration((value) => value + 1);
             onEngineRebuild?.();
           }}
-          onDocChange={(doc, reason) => {
-            onDocChange(doc, reason);
+          onDocChange={(doc, reason, finish) => {
+            onDocChange(doc, reason, finish);
             setHistory({
               undo: engineRef.current?.canUndo() ?? false,
               redo: engineRef.current?.canRedo() ?? false,

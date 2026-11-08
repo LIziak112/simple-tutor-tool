@@ -1,12 +1,17 @@
 import { z } from "zod";
 import {
+  attemptQuestionPublicSchema,
   attemptSourceSchema,
   attemptStatusSchema,
   studentFlagSchema,
   teacherMarkSchema,
   wrongScopeSchema,
 } from "./attempt.ts";
-import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+import {
+  questionAnswersSchema,
+  questionSchema,
+  questionTypeSchema,
+} from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
 import { notePhaseSchema } from "./note.ts";
 import { attemptResultCountsSchema } from "./result-counts.ts";
@@ -42,6 +47,32 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 
 /** 分页 limit：默认 50，最小 1，最大 200（D6） */
 export const TEACHER_ATTEMPT_PAGE_MAX = 200;
+
+const teacherResponseEditSchema = z.strictObject({
+  attemptId: z.uuid().describe("进行中的练习 ID"),
+  questionId: z.string().min(1).describe("DSL 题号"),
+  expectedAnswerRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe("查询作答行返回的 answerRevision"),
+  reason: z.string().trim().min(1).max(1000).describe("修正原因，写入审计"),
+});
+
+export const teacherResponseSnapshotEditSchema =
+  teacherResponseEditSchema.extend({
+    snapshot: questionSchema.describe("同题型的完整替换快照"),
+  });
+
+export const teacherResponseAnswerEditSchema = teacherResponseEditSchema.extend(
+  {
+    answer: studentAnswerSchema.describe("对应题型的完整答案"),
+  },
+);
+
+export type TeacherResponseEdit =
+  | z.infer<typeof teacherResponseSnapshotEditSchema>
+  | z.infer<typeof teacherResponseAnswerEditSchema>;
 
 /**
  * GET /api/teacher/attempts 查询参数（全部可选，可任意组合）：
@@ -200,6 +231,8 @@ export const teacherAttemptDetailQuestionSchema = z.object({
    * 当前库题目、可能尚无 responses 行，恒 null（draft 本就不可批注）。
    */
   responseId: z.uuid().nullable(),
+  /** 只读题面始终用公开冻结投影，与批注 responseId 的可空语义独立。 */
+  publicQuestion: attemptQuestionPublicSchema.optional(),
   /** 全卷连续题号（1 起 = attempt 单元顺序 × 单元内题序） */
   no: z.number().int().min(1),
   /** 所在单元 id */
@@ -452,8 +485,6 @@ export const exportCsvQuerySchema = z.object({
   sourceType: attemptSourceSchema.optional(),
   from: z.iso.datetime({ offset: false }).optional(),
   to: z.iso.datetime({ offset: false }).optional(),
-  startedFrom: z.iso.datetime({ offset: false }).optional(),
-  startedTo: z.iso.datetime({ offset: false }).optional(),
 });
 
 // ---------- 做题复现（hall-15077） ----------

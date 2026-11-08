@@ -29,6 +29,30 @@ function modelOf(model: PreparedOf<"ordering"> = baseModel) {
 }
 
 describe("ordering Input", () => {
+  it("更新 sequence 后原文池与正文节点常驻，答案区只显示编号且保持操作占位", () => {
+    const { container, rerender } = render(
+      orderingView.Input({
+        model: baseModel,
+        answer: undefined,
+        update: () => {},
+      }),
+    );
+    const original = screen.getByText("甲：也就是说");
+    const pool = original.closest("ul");
+    rerender(
+      orderingView.Input({
+        model: baseModel,
+        answer: { kind: "ordering", sequence: ["it-1"] },
+        update: () => {},
+      }),
+    );
+    expect(screen.getByText("甲：也就是说")).toBe(original);
+    expect(original.closest("ul")).toBe(pool);
+    expect(pool?.querySelectorAll("li")).toHaveLength(4);
+    expect(
+      container.querySelectorAll("input[data-ordering-position]"),
+    ).toHaveLength(3);
+  });
   it("固定项预置在声明位并锁定（无移除/移动按钮，徽标可见）；待排序项含干扰项但不加标记", () => {
     render(
       orderingView.Input({
@@ -81,7 +105,7 @@ describe("ordering Input", () => {
     );
   });
 
-  it("上移/下移跳过固定行；disabled 时无操作按钮", async () => {
+  it("上移/下移跳过固定行；disabled 时保留禁用操作位置", async () => {
     const update = vi.fn();
     // 板 [甲, 丙, 乙(固定)]；it-3（第 2 位）下移 → 目标行 3 是固定行，跳过 → 无目标（禁用）
     const { unmount } = render(
@@ -108,7 +132,7 @@ describe("ordering Input", () => {
         disabled: true,
       }),
     );
-    expect(screen.queryByRole("button", { name: "第 1 位移除" })).toBeNull();
+    expect(screen.getByRole("button", { name: "第 1 位移除" })).toBeDisabled();
   });
 
   it("固定项不能错移：固定行无移动按钮（UI 面口径；服务端保存校验兜底）", () => {

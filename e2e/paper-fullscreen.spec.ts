@@ -252,7 +252,12 @@ test(
       await page.setViewportSize({ width: 320, height: 800 });
       await openFullscreen();
       const toolbar = page.getByRole("toolbar").filter({ visible: true });
-      await expect(toolbar.getByRole("button")).toHaveCount(5);
+      await expect(toolbar.getByRole("button")).toHaveCount(
+        kind === "scratch" ? 4 : 5,
+      );
+      await expect(
+        toolbar.getByRole("button", { name: "手指书写", exact: true }),
+      ).toHaveCount(kind === "scratch" ? 0 : 1);
       for (const button of await toolbar.getByRole("button").all()) {
         const box = await button.boundingBox();
         expect(box?.width).toBeGreaterThanOrEqual(44);

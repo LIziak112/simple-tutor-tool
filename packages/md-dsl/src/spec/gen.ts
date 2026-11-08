@@ -292,6 +292,7 @@ export function renderSpecMarkdown(input: SpecInput): string {
       "| 讲义 | 同文件夹（按讲义名） | 同名覆盖正文 |",
       "",
       "考点（`knowledge` 属性）为公共数据，按名称全局匹配合并。",
+      '多个考点写作 `knowledge="有理数加法|绝对值"`，按 | 拆分、去首尾空白、去空项并按首次出现去重；缺省为空数组，显式全空或纯分隔符报错。考点无主辅之分，书写顺序不代表主考点。已有题目需重新导入或 reparse 后更新考点关联，历史作答快照不变。',
       "",
       "`lecture` 是**配套讲义指针**：按讲义名在同文件夹匹配，匹配不到时导入预览给出 warning（LECTURE_LINK_UNRESOLVED），不会静默不关联。",
       "",

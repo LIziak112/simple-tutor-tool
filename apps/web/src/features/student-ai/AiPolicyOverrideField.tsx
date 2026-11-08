@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { AiPolicyInheritableMode } from "@tutor/contract";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { AiPolicySubjectRef } from "@/lib/api";
@@ -216,6 +216,7 @@ export function AiPolicyOverrideField({
                     : `当前${subjectNoun}策略已保存`}
             </p>
             <Button
+              busy={putMutation.isPending}
               type="button"
               className="min-h-11 px-5"
               disabled={putMutation.isPending || !dirty}
@@ -226,9 +227,6 @@ export function AiPolicyOverrideField({
                 )
               }
             >
-              {putMutation.isPending && (
-                <Loader2 aria-hidden className="motion-safe:animate-spin" />
-              )}
               保存 AI 策略
             </Button>
           </div>

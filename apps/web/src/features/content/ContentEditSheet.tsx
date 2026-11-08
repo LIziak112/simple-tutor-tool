@@ -271,6 +271,7 @@ export function QuestionEditSheet({
 
             <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-border px-4 py-3">
               <Button
+                busy={saveMutation.isPending}
                 type="button"
                 className="min-h-11 px-5"
                 disabled={!canSave}
@@ -280,17 +281,8 @@ export function QuestionEditSheet({
                   saveMutation.mutate();
                 }}
               >
-                {saveMutation.isPending ? (
-                  <>
-                    <Loader2 aria-hidden className="animate-spin" />
-                    保存中…
-                  </>
-                ) : (
-                  <>
-                    <Save aria-hidden />
-                    保存
-                  </>
-                )}
+                <Save aria-hidden />
+                保存
               </Button>
               <Button
                 type="button"
@@ -523,6 +515,7 @@ export function LectureEditSheet({
 
             <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-border px-4 py-3">
               <Button
+                busy={saveMutation.isPending}
                 type="button"
                 className="min-h-11 px-5"
                 disabled={!canSave}
@@ -532,17 +525,8 @@ export function LectureEditSheet({
                   saveMutation.mutate();
                 }}
               >
-                {saveMutation.isPending ? (
-                  <>
-                    <Loader2 aria-hidden className="animate-spin" />
-                    保存中…
-                  </>
-                ) : (
-                  <>
-                    <Save aria-hidden />
-                    保存
-                  </>
-                )}
+                <Save aria-hidden />
+                保存
               </Button>
               <Button
                 type="button"

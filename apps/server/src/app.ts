@@ -16,6 +16,7 @@ import { HttpError } from "./lib/http-error";
 import { createMcpRoutes } from "./mcp/mount";
 import { createStudentMcpRoutes } from "./mcp/student-mount";
 import { createAdminRoutes } from "./routes/admin";
+import { createAiReplyCheckerRoutes } from "./routes/ai-reply-checker.ts";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
 import { createTeacherRoutes } from "./routes/teacher";
@@ -39,6 +40,7 @@ import { createSpaStatic, defaultWebDistDir } from "./static";
 export interface CreateAppOptions {
   /** 生产模式：托管 apps/web/dist 并对未命中的非 /api 路径回退 index.html */
   isProduction: boolean;
+  questionProcessEnabled?: boolean;
   /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
   db: Db;
   /**
@@ -342,9 +344,15 @@ export function createApp(options: CreateAppOptions) {
         options.specDir,
       ),
     )
+    .route("/api/public/ai-reply-checker", createAiReplyCheckerRoutes())
     .route(
       "/api/student",
-      createStudentRoutes(options.db, options.publicUrl, options.dataDir),
+      createStudentRoutes(
+        options.db,
+        options.publicUrl,
+        options.dataDir,
+        options.questionProcessEnabled,
+      ),
     )
     // —— 管理端（T2B.6，D7/D19）：整组 requireAdmin（非管理员 403 ADMIN_ONLY） ——
     .route(

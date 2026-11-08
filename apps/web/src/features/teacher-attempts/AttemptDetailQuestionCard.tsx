@@ -3,7 +3,7 @@ import { optionsPublicStructureOf } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
@@ -91,6 +91,7 @@ function InkThumbnail({
   question: TeacherAttemptDetailQuestion;
 }) {
   const ink = question.ink;
+  const zoomTriggerRef = useRef<HTMLButtonElement>(null);
   const [zoomed, setZoomed] = useState(false);
   const [available, setAvailable] = useState(true);
   const [tab, setTab] = useState<InkViewTab>("snapshot");
@@ -111,6 +112,7 @@ function InkThumbnail({
       </div>
       {tab === "snapshot" ? (
         <button
+          ref={zoomTriggerRef}
           type="button"
           className="min-h-11 w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           aria-label={`放大查看第 ${question.no} 题的手写笔迹`}
@@ -139,6 +141,7 @@ function InkThumbnail({
           inkId={ink.inkId}
           hasStrokes={ink.hasStrokes}
           initialTab={tab}
+          triggerRef={zoomTriggerRef}
           onClose={() => setZoomed(false)}
         />
       )}
@@ -350,6 +353,8 @@ export function AttemptDetailQuestionCard({
           选择题选项另由 DetailOptions 渲染——displayStemMd 剥掉题干内嵌的
           选项任务列表，避免选项显示两遍（[x] 还会渲染成打勾框） */}
       <AnnotationView
+        question={question.publicQuestion}
+        answer={question.answer ?? undefined}
         viewer="teacher"
         attemptId={attemptId}
         questionId={question.questionId}
@@ -359,6 +364,8 @@ export function AttemptDetailQuestionCard({
         <RichMarkdown source={displayStemMd(question)} className="text-base" />
         <DetailOptions question={question} />
       </AnnotationView>
+
+      {question.publicQuestion && <DetailOptions question={question} />}
 
       {/* 手写笔迹（懒加载 + 点击放大） */}
       <InkThumbnail question={question} />
@@ -382,6 +389,7 @@ export function AttemptDetailQuestionCard({
           两阶段切换（scratch=作答期圈画；correction=订正检查点圈画——
           无数据时回看视图自呈空态） */}
       <TeacherAnnotationSection
+        question={question}
         attemptId={attemptId}
         questionId={question.questionId}
         questionNo={question.no}
@@ -474,11 +482,13 @@ export function AttemptDetailQuestionCard({
 
 /** 教师侧标注回看（审查修复 3②）：scratch/correction 两阶段切换 */
 function TeacherAnnotationSection({
+  question,
   attemptId,
   questionId,
   questionNo,
   ariaPrefix,
 }: {
+  question: TeacherAttemptDetailQuestion;
   attemptId: string;
   questionId: string;
   questionNo: number;
@@ -514,6 +524,8 @@ function TeacherAnnotationSection({
         </Button>
       </div>
       <AnnotationView
+        question={question.publicQuestion}
+        answer={question.answer ?? undefined}
         viewer="teacher"
         attemptId={attemptId}
         questionId={questionId}

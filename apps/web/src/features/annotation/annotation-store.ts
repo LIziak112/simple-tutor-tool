@@ -36,6 +36,7 @@ import {
   annotationDocSchema,
   annotationSurfaceLayoutCore,
   annotationSurfaceLayoutSchema,
+  annotationPngFingerprint as pngBytesDigest,
 } from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
 import {
@@ -122,22 +123,6 @@ export function annotationBaseKeyOf(
     scope.phase,
     digest,
   ]);
-}
-
-/**
- * PNG 字节内容指纹：双 32 位 FNV-1a 变体 + 字节数（本地缓存键用途，非密码学；
- * crypto.subtle 在 http 部署不可用，不走该路）。碰撞后果止于底图缓存键撞车，
- * 读取端另有指纹复核兜底。
- */
-function pngBytesDigest(bytes: Uint8Array): string {
-  let h1 = 0x811c9dc5;
-  let h2 = 0xc2b2ae35;
-  for (let index = 0; index < bytes.length; index += 1) {
-    const byte = bytes[index] ?? 0;
-    h1 = Math.imul(h1 ^ byte, 0x01000193);
-    h2 = Math.imul(h2 ^ byte, 0x85ebca6b);
-  }
-  return `${bytes.byteLength.toString(16)}-${(h1 >>> 0).toString(16)}-${(h2 >>> 0).toString(16)}`;
 }
 
 /** 键 → 会话 + scope（sync 订阅回调里反查归属用） */
@@ -1060,6 +1045,8 @@ export async function applyAnnotationBaseCompatibility(
 ): Promise<void> {
   await mutateLoaded(session, scope, null, (record) => {
     guard();
+    if (record.sealedAt !== null)
+      throw new Error("本题圈画已封存，不能补写布局证据");
     const local = record.localBase;
     if (
       (record.resetVersion ?? 0) !== resetVersion ||

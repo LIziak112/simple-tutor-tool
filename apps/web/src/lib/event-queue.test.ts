@@ -704,3 +704,22 @@ describe("T4.0a idle_start / idle_end 注入（阈值分域：attempt 90s / lect
     expect(types).toContain("idle_start");
   });
 });
+
+it("旁路订阅同时收到显式事件与原有空闲注入，不增加活动观察器", async () => {
+  const seen: LearningEvent[] = [];
+  const queue = makeQueue({
+    send: async () => {},
+    beacon: null,
+    onEvent: (event) => seen.push(event),
+  });
+  queue.track(ev("question_focus", { questionId: "q1" }));
+  await vi.advanceTimersByTimeAsync(90_000);
+  window.dispatchEvent(new Event("pointerdown"));
+  expect(
+    seen
+      .filter((event) =>
+        ["question_focus", "idle_start", "idle_end"].includes(event.type),
+      )
+      .map((event) => event.type),
+  ).toEqual(["question_focus", "idle_start", "idle_end"]);
+});

@@ -1,7 +1,11 @@
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
-import { memo, useId } from "react";
+import { memo, useContext, useId } from "react";
 import { dispatchInput } from "@/features/answering";
 import { prepareQuestion } from "@/features/answering/prepare-question";
+import {
+  QuestionDslContext,
+  QuestionRenderContext,
+} from "@/features/answering/question-render-context";
 import { QuestionSurfaceFrame } from "./QuestionSurfaceFrame";
 
 /**
@@ -27,6 +31,8 @@ export const QuestionSurface = memo(function QuestionSurface({
   onAnswer: suppliedOnAnswer,
   mode = "answer",
   readOnly = false,
+  repeatChoiceSelection = false,
+  correctOptionIndexes,
 }: {
   question: QuestionPublic;
   answer?: StudentAnswer | undefined;
@@ -34,8 +40,11 @@ export const QuestionSurface = memo(function QuestionSurface({
   mode?: "answer" | "export";
   /** 已提交原位只读（§11-2）：同宿主同位置呈现，输入改为只读而非换卡 */
   readOnly?: boolean;
+  repeatChoiceSelection?: boolean;
+  correctOptionIndexes?: readonly number[] | undefined;
 }) {
   const surfaceId = useId();
+  const profile = useContext(QuestionRenderContext);
   const prepared = prepareQuestion(question, `${question.id}-${surfaceId}`);
   const isPublicBase = mode === "export";
   const answer = isPublicBase ? undefined : suppliedAnswer;
@@ -51,7 +60,16 @@ export const QuestionSurface = memo(function QuestionSurface({
         inert={isPublicBase}
         className="mx-auto flex w-full min-w-0 flex-col gap-3 text-base leading-[1.75]"
       >
-        {dispatchInput(prepared, answer, update, readOnly)}
+        <QuestionDslContext value={profile.renderVersion}>
+          {dispatchInput(
+            prepared,
+            answer,
+            update,
+            readOnly,
+            !isPublicBase && repeatChoiceSelection,
+            readOnly && !isPublicBase ? correctOptionIndexes : undefined,
+          )}
+        </QuestionDslContext>
       </div>
     </QuestionSurfaceFrame>
   );

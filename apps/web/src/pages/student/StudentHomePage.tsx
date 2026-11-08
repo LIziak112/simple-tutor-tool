@@ -97,7 +97,7 @@ function GreetingBanner({
         <Sparkles className="size-6" />
       </span>
       <div className="min-w-0">
-        <p className="text-lg font-semibold">{name}，你好</p>
+        <h1 className="text-lg font-semibold">{name}，你好</h1>
         <p className="mt-0.5 text-sm text-white/90">{summary}</p>
       </div>
     </section>

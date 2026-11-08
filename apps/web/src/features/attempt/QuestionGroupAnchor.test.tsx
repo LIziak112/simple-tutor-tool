@@ -95,14 +95,16 @@ describe("QuestionGroupAnchor", () => {
     // 窄容器不变量：材料列 min-w-0（不撑出整页横向溢出）；首列 + 跨行数经
     // CSS 变量传入（消费侧单元 ol 的 compare 网格项）
     expect(materials?.className.includes("min-w-0")).toBe(true);
-    expect(materials?.className.includes("xl:col-start-1")).toBe(true);
+    expect(materials?.parentElement?.className.includes("xl:col-start-1")).toBe(
+      true,
+    );
     expect(
-      materials?.className.includes("xl:[grid-row:span_var(--qg-row-span)]"),
+      materials?.parentElement?.className.includes(
+        "xl:[grid-row:span_var(--qg-row-span)]",
+      ),
     ).toBe(true);
     expect(
-      (materials as HTMLElement | null)?.style.getPropertyValue(
-        "--qg-row-span",
-      ),
+      materials?.parentElement?.style.getPropertyValue("--qg-row-span"),
     ).toBe("3");
     // 审查 P2-2：reveal 滚入目标让出粘性顶栏（与题卡/结果卡 scroll-mt 同款
     // 约定值；jsdom 测不出遮挡，静态判定类存在——组头是零材料组的回落目标）

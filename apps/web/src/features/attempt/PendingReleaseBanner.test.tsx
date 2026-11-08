@@ -21,7 +21,7 @@ describe("PendingReleaseBanner", () => {
       />,
     );
 
-    expect(screen.getByText("🎉 作业已成功交卷！")).toBeInTheDocument();
+    expect(screen.getByText("作业已成功交卷！")).toBeInTheDocument();
     expect(
       screen.getByText("作答与过程草稿已妥善保存，请放心休息。"),
     ).toBeInTheDocument();
@@ -41,7 +41,7 @@ describe("PendingReleaseBanner", () => {
     expect(screen.getByText("手写原稿状态")).toBeInTheDocument();
     expect(screen.getByText("已归档保存")).toBeInTheDocument();
     expect(screen.getByText("作答结果")).toBeInTheDocument();
-    expect(screen.getByText("待公布 🔒（截止后自动判分）")).toBeInTheDocument();
+    expect(screen.getByText("待公布 （截止后自动判分）")).toBeInTheDocument();
   });
 
   it("渲染倒计时胶囊卡片并在倒计时到达时显示加载状态和触发 onRefresh", () => {

@@ -9,7 +9,12 @@ import {
   type Page,
   test,
 } from "@playwright/test";
-import { FORBIDDEN_EXACT_KEYS, FORBIDDEN_KEY_PREFIXES } from "./helpers";
+import { attemptStartOkSchema } from "../packages/contract/src";
+import {
+  expectPracticeSource,
+  FORBIDDEN_EXACT_KEYS,
+  FORBIDDEN_KEY_PREFIXES,
+} from "./helpers";
 import {
   type QmPair,
   qmApi,
@@ -688,7 +693,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // 题 1 ordering 全放、题 2 choice 答对 → 提交后 reference_self 待自评 / auto 判对 ——
     await page.getByRole("button", { name: "重练全部（2 题）" }).click();
     await page.waitForURL("**/s/attempts/**");
-    await expect(page.getByText(/错题重练 · 第 1 次/)).toBeVisible();
+    await expectPracticeSource(page, /错题重练 · 第 1 次/);
     await placeOrdering(page, 1, [
       "古人说「不以人废言」，评价作品同样不能因作者的声名与好恶而先存成见。",
       "然而现实中，不少批评在作品开卷之前就已写好：喜欢作者的，赞其败笔为创新；厌恶作者的，讥其妙处为侥幸。",
@@ -714,7 +719,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     test.setTimeout(240_000);
     const runAssignment = async (
       world: TeacherWorld,
-      answer: (page: Page) => Promise<void>,
+      answer: (page: Page, attemptId: string) => Promise<void>,
       checks: (page: Page) => Promise<void>,
     ) => {
       const context = await browser.newContext({
@@ -726,9 +731,17 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       await page.goto(`/s/${world.linkToken}`);
       await page.waitForURL("**/s/home");
       const card = page.locator("li", { hasText: world.assignmentTitle });
+      const opening = page.waitForResponse(
+        (response) =>
+          /\/api\/student\/assignments\/[^/]+\/attempt$/.test(
+            new URL(response.url()).pathname,
+          ) && response.request().method() === "POST",
+      );
       await card.getByRole("link", { name: "开始练习" }).click();
       await page.waitForURL("**/s/assignments/**");
-      await answer(page);
+      const attemptId = attemptStartOkSchema.parse(await (await opening).json())
+        .data.id;
+      await answer(page, attemptId);
       await waitForDraftSaved(page);
       await page.getByRole("button", { name: "交卷", exact: true }).click();
       await page.getByRole("button", { name: "确认交卷" }).first().click();
@@ -801,9 +814,22 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     // （导出本题的材料页可达题级材料）。
     await runAssignment(
       worldOf("W4"),
-      async (page) => {
+      async (page, attemptId) => {
         const q1 = questionCard(page, 1);
         await expect(q1.getByText(/建议.*150/).first()).toBeVisible();
+        await waitForAllSaved(page);
+        // 导出有本机落盘守卫；初始恢复仍可能在写入，不能仅凭提示文字判定完成。
+        await expect
+          .poll(() =>
+            page.evaluate(async (id) => {
+              const moduleUrl = "/src/features/attempt/draft-store.ts";
+              const store = (await import(moduleUrl)) as {
+                getDraftPersistenceState(attemptId: string): string;
+              };
+              return store.getDraftPersistenceState(id);
+            }, attemptId),
+          )
+          .toBe("saved");
         // 导出本题：材料页携带题级材料（材料 A：给定资料一）
         await q1.getByRole("button", { name: "第 1 题更多" }).click();
         await page.getByRole("menuitem", { name: "导出本题" }).click();
@@ -986,9 +1012,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       .click();
     await page.getByRole("button", { name: "开始练习" }).click();
     await page.waitForURL("**/s/attempts/**");
-    await expect(
-      page.getByText(`课程：${w1.courseName} · 第 1 次`),
-    ).toBeVisible();
+    await expectPracticeSource(page, `课程：${w1.courseName} · 第 1 次`);
 
     // —— 本题导出成功路径：材料页 PNG 实栅格化（TT-12 携带留项；Chromium 真渲染，
     //    jsdom 不伪造 html-to-image）——材料长文 + 真实配图成页

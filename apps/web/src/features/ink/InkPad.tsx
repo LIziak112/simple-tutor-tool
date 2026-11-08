@@ -27,7 +27,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CompactInkToolbar } from "./CompactInkToolbar";
+import {
+  COLOR_LABEL,
+  CompactInkToolbar,
+  SIZE_LABEL,
+  toolButtonClass,
+} from "./CompactInkToolbar";
 import {
   create,
   type InkChangeReason,
@@ -59,10 +64,8 @@ import {
  * - 每笔结束（含撤销/重做/清空/load）经 onDocChange 上抛 InkDoc 与变化原因
  *   （reason，T4.0b ink_edit_batch 分型；缺省 "stroke"，老回调忽略零影响）；
  * - 自动加高（§5.4.1 绘制层第 4 条）：最后一笔接近答题区底部时自动增高；
- * - 输入模式（T6R.7，方案 §4.1）：inputMode 缺省 "auto"=旧行为（自动探测，
- *   手写作答零变化）；"session"=新草稿——订阅会话共享偏好（笔写／手指滚动
- *   ⇄ 手指书写），工具栏出现「手指书写」切换，多画布经 input-preference
- *   共享同一状态；
+ * - 输入模式：缺省 "auto" 自动探测；"pen" 固定笔写、手指滚动；
+ *   "session" 订阅会话偏好并提供「手指书写」切换。
  * - 工具栏触控目标不小于 44px（ui-conventions iPad 硬性要求）。
  */
 export interface InkPadProps {
@@ -79,14 +82,16 @@ export interface InkPadProps {
   /** 无障碍标签 */
   label?: string;
   /** 每次笔迹变化回调（doc + 变化原因，T4.0b 起带 reason） */
-  onDocChange?: ((doc: InkDoc, reason: InkChangeReason) => void) | undefined;
+  onDocChange?:
+    | ((
+        doc: InkDoc,
+        reason: InkChangeReason,
+        finish?: import("@tutor/contract").QuestionProcessFinish,
+      ) => void)
+    | undefined;
   /** 引擎实例透出（开发页/草稿保存等需要命令式访问 getData/load/exportPng） */
   engineRef?: React.RefObject<InkEngine | null> | undefined;
-  /**
-   * 输入模式（T6R.7）：缺省 "auto"=旧行为（自动探测，手写作答零变化）；
-   * "session"=新草稿——使用会话共享输入偏好并显示「手指书写」切换
-   * （T6R.9 的 NoteLayer 传入；旧作答组件不传）。
-   */
+  /** 草稿固定笔写；正式手写可订阅会话偏好。 */
   inputMode?: InkPadInputMode;
   /**
    * 纸张背景（T6R.9 NoteLayer 传入 doc.background）：透传引擎（格线/横线
@@ -94,10 +99,7 @@ export interface InkPadProps {
    */
   background?: NoteBackground;
   /**
-   * 是否渲染内置工具条（缺省 true=旧行为）。NoteLayer 用自带精简工具条
-   * （笔/橡皮/撤销/手指书写/更多）时传 false——「手指书写」按钮随内置工具条
-   * 隐藏，由外层精简工具条承担（会话偏好 store 两侧共用；T6R.7 衔接注记①
-   * 定案）。画布与引擎生命周期不受影响。
+   * 是否渲染内置工具条（默认开启）。纸面由外层提供工具栏时关闭。
    */
   showToolbar?: boolean;
   compactToolbar?: boolean;
@@ -123,8 +125,8 @@ export interface InkPadProps {
   maxDeletedPoints?: number;
 }
 
-/** 输入模式接入形态：auto=旧行为；session=会话共享偏好（新草稿） */
-export type InkPadInputMode = "auto" | "session";
+/** auto=旧行为；pen=手指只滚动；session=会话输入偏好。 */
+export type InkPadInputMode = "auto" | "pen" | "session";
 
 /** 颜色按钮的色块（黑/蓝/红） */
 const COLOR_SWATCH: Record<InkPenColor, string> = {
@@ -133,22 +135,6 @@ const COLOR_SWATCH: Record<InkPenColor, string> = {
   red: "#dc2626",
 };
 
-export const COLOR_LABEL: Record<InkPenColor, string> = {
-  black: "黑",
-  blue: "蓝",
-  red: "红",
-};
-
-export const SIZE_LABEL: Record<InkPenSize, string> = {
-  thin: "细",
-  medium: "中",
-  thick: "粗",
-};
-
-/** 工具按钮通用样式（导出共用，T6R.9 复审⑭）：高度 44px 起步（触控目标硬性尺寸） */
-export const toolButtonClass =
-  "h-11 min-w-11 px-2.5 gap-1.5 rounded-lg border border-border text-sm font-medium select-none transition-colors";
-
 /** 非 session 档的常量订阅（不订阅任何源）与常量快照（恒 pen）——
  * useSyncExternalStore 不得条件调用（复审⑪），非 session 档用稳定常量 */
 const SUBSCRIBE_NOTHING = () => () => undefined;
@@ -156,7 +142,7 @@ const SNAPSHOT_PEN = (): InkSessionInputPreference => "pen";
 
 /**
  * 「手指书写」切换按钮（T6R.7 衔接注记①定案后的共用件，T6R.9 复审⑭）：
- * InkPad 内置工具条与 NoteLayer 精简工具条同款——会话偏好 store 单源、
+ * 正式手写和 InkPad 内置工具条共用会话偏好、
  * 形态/文案/title 一处维护（含 44px 触控目标）。
  */
 export function SessionPrefToggleButton({
@@ -185,8 +171,8 @@ export function SessionPrefToggleButton({
       className={className ?? toolButtonClass}
       title={
         sessionPref === "pen"
-          ? "手指书写（无笔设备：手指直接书写；本会话内草稿与标画画布生效）"
-          : "切回笔写／手指滚动（本会话内草稿与标画画布生效）"
+          ? "手指书写（无笔设备：手指直接书写）"
+          : "切回笔写／手指滚动"
       }
     >
       <Pointer aria-hidden />
@@ -316,10 +302,10 @@ export function InkPad({
       localEngineRef.current = ink;
       ink.setInputEnabled?.(inputEnabledRef.current);
       if (engineRef) engineRef.current = ink;
-      off = ink.on("change", (doc, reason) => {
+      off = ink.on("change", (doc, reason, finish) => {
         setCanUndo(ink.canUndo());
         setCanRedo(ink.canRedo());
-        onDocChangeRef.current?.(doc, reason);
+        onDocChangeRef.current?.(doc, reason, finish);
         // 自动加高：最后一笔的最低点接近底部时加高（仅 atrament 页内答题区，
         // 且仅旧作答链路——T6R.9 受控纸高形态禁用，加高统一走 paper-geometry
         // 逻辑口径由外层负责，注记②定案）
@@ -367,14 +353,16 @@ export function InkPad({
     localEngineRef.current?.setInputEnabled?.(inputEnabled);
   }, [inputEnabled, retryKey]);
 
-  // 会话偏好 → 引擎（T6R.7）。声明在引擎创建 effect **之后**：挂载时引擎已
+  // 固定笔写或会话偏好 → 引擎。声明在引擎创建 effect **之后**：挂载时引擎已
   // 就绪、当前偏好即刻下发（否则首帧 localEngineRef 为 null，pen 值又不再
   // 变化会导致永不重发）。引擎重建（retryKey）后同样重发；excalidraw 引擎
   // 的 setInputMode 为安全 no-op（守卫在引擎包装层，复审⑩）。
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键变化=引擎重建，需重发输入模式，effect 体内不读取
   useEffect(() => {
-    if (inputMode !== "session") return;
-    localEngineRef.current?.setInputMode(sessionPref);
+    if (inputMode === "auto") return;
+    localEngineRef.current?.setInputMode(
+      inputMode === "session" ? sessionPref : inputMode,
+    );
   }, [inputMode, sessionPref, retryKey]);
 
   // 工具/颜色/粗细变化 → 下发引擎
@@ -432,11 +420,13 @@ export function InkPad({
           advanced
           disabled={toolsDisabled}
           fingerToggle={
-            <SessionPrefToggleButton
-              iconOnly
-              disabled={toolsDisabled}
-              className="size-11 shrink-0 p-0"
-            />
+            inputMode === "session" && (
+              <SessionPrefToggleButton
+                iconOnly
+                disabled={toolsDisabled}
+                className="size-11 shrink-0 p-0"
+              />
+            )
           }
         />
       )}

@@ -26,12 +26,14 @@ import {
   ANNOTATION_BODY_GZIP_MAX_BYTES,
   ANNOTATION_FROZEN_RENDER_VERSION,
   ANNOTATION_SURFACE_RENDER_VERSION,
+  ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
   annotationBaseImageUrl,
   annotationBasePreviewDataSchema,
   annotationConflictCurrentSchema,
   annotationDocSchema,
   annotationIssueIsLimit,
   annotationSurfaceLayoutCore,
+  annotationSurfaceLayoutSchema,
   stableContentHash64,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
@@ -670,7 +672,8 @@ export function registerBaseImage(
     base.snapshotHash !== currentHash ||
     (base.baseRenderVersion !== ANNOTATION_BASE_RENDER_VERSION &&
       base.baseRenderVersion !== ANNOTATION_SURFACE_RENDER_VERSION &&
-      base.baseRenderVersion !== ANNOTATION_FROZEN_RENDER_VERSION)
+      base.baseRenderVersion !== ANNOTATION_FROZEN_RENDER_VERSION &&
+      base.baseRenderVersion !== ANNOTATION_WHOLE_QUESTION_RENDER_VERSION)
   ) {
     throw new HttpError(
       409,
@@ -941,8 +944,19 @@ export function putAnnotationDoc(
     );
   }
   if (
-    base.baseRenderVersion === ANNOTATION_FROZEN_RENDER_VERSION &&
-    meta.protocolVersion !== ANNOTATION_FROZEN_RENDER_VERSION
+    ![
+      ANNOTATION_BASE_RENDER_VERSION,
+      ANNOTATION_SURFACE_RENDER_VERSION,
+      ANNOTATION_FROZEN_RENDER_VERSION,
+      ANNOTATION_WHOLE_QUESTION_RENDER_VERSION,
+    ].includes(base.baseRenderVersion) ||
+    (base.baseRenderVersion === ANNOTATION_BASE_RENDER_VERSION
+      ? base.layout !== null
+      : base.layout?.renderVersion !== base.baseRenderVersion ||
+        !annotationSurfaceLayoutSchema.safeParse(base.layout).success) ||
+    ((base.baseRenderVersion === ANNOTATION_FROZEN_RENDER_VERSION ||
+      base.baseRenderVersion === ANNOTATION_WHOLE_QUESTION_RENDER_VERSION) &&
+      meta.protocolVersion !== base.baseRenderVersion)
   ) {
     throw new HttpError(
       403,

@@ -1,0 +1,62 @@
+[
+  {
+    "file": "apps/web/src/features/content/ContentEditSheet.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/content/ContentEditSheet.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/courses/CourseCatalogTab.tsx",
+    "busy": "updateMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/library/UnitDetailSheet.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/AiConnectionManager.tsx",
+    "busy": "saving"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/AiPolicyOverrideField.tsx",
+    "busy": "putMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/StudentAiPromptsSection.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/StudentQuickButtonsSection.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/TeacherAiPromptsSection.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/TeacherAiSettingsPanel.tsx",
+    "busy": "saving"
+  },
+  {
+    "file": "apps/web/src/features/student-ai/TeacherAiSettingsSection.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/teacher-settings/CapabilityProfileSection.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/features/teacher-settings/PracticeFeedbackSection.tsx",
+    "busy": "saveMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/pages/teacher/CourseEditPage.tsx",
+    "busy": "updateMutation.isPending"
+  },
+  {
+    "file": "apps/web/src/pages/teacher/StudentsPage.tsx",
+    "busy": "syncMutation.isPending"
+  }
+]

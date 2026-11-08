@@ -17,6 +17,7 @@ import {
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
+  type CourseAttemptStartOptions,
   type EffectiveVerdict,
   effectiveVerdictOf,
   emptyPublicStructure,
@@ -39,13 +40,14 @@ import {
   type PracticeQuestionFeedback,
   type PracticeQuestionFeedbackData,
   type PracticeQuestionSubmitData,
-  type PracticeQuestionSubmitRequest,
+  type PracticeQuestionSubmitWithAnswer,
   type PracticeWorkflowStartOptions,
   type PublicStructureByKind,
   type Question,
   type QuestionAnswers,
   type QuestionOption,
   questionAnswersSchema,
+  questionEvidenceBindings,
   questionSchema,
   type SelfReviewRecord,
   type StudentAnswer,
@@ -100,6 +102,7 @@ import {
   type Unit,
   units,
 } from "../db/schema";
+import { canonicalJsonOf } from "../lib/canonical-json";
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
@@ -599,13 +602,13 @@ export function requireUsableAttempt(
   attemptId: string,
 ): Attempt {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
-  // 作废卷（2026-10 讲练随时重开）：其上一切读写（详情/存草稿/单题提交/提示
+  // 作废卷（课程练习或讲练重开）：其上一切读写（详情/存草稿/单题提交/提示
   // 解锁——本函数是这些路径共用的取卷入口）都拒绝，前端提示重新进入
   if (attempt.abandonedAt !== null) {
     throw new HttpError(
       409,
       "ATTEMPT_ABANDONED",
-      "这份作答已作废（讲练已重新开始），请回到讲练页继续最新一次",
+      "这份作答已作废，请回到练习入口继续最新一次",
     );
   }
   assertDraftCourseVisible(db, studentId, attempt);
@@ -1019,6 +1022,35 @@ function assertNewKindAnswerShape(
       "VALIDATION_ERROR",
       `答案结构不合法：${issues.map((issue) => issue.message).join("；")}`,
     );
+  }
+}
+
+/** MCP 写入时核对题型和结构，不比较参考答案。 */
+export function assertMcpDraftAnswerShape(
+  db: Db,
+  row: ResponseRow,
+  snapshot: Question,
+  answer: StudentAnswer,
+): void {
+  if (questionEvidenceBindings[snapshot.type].answerKind !== answer.kind) {
+    throw new HttpError(400, "VALIDATION_ERROR", "答案类型与题型不一致");
+  }
+  const options = (snapshot.options ?? []).map(({ text }, index) => ({
+    key: String(index),
+    index,
+    text,
+  }));
+  const issues = inspectShapeOfAnswer(answer, {
+    ...structuresOfSnapshot(
+      snapshot,
+      materialSlotOrderOf(db, row.attemptId),
+      row.unitId,
+    ),
+    choice: { options },
+    multi: { options },
+  });
+  if (issues.length > 0) {
+    throw new HttpError(400, "VALIDATION_ERROR", "答案结构与题目不符");
   }
 }
 
@@ -1999,7 +2031,7 @@ export function startCourseAttempt(
   studentId: string,
   courseId: string,
   unitId: string,
-  options: AttemptWorkflowStartOptions = {},
+  options: CourseAttemptStartOptions = {},
   /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
   newContentEnabled?: boolean,
 ): AttemptStartData {
@@ -2018,8 +2050,24 @@ export function startCourseAttempt(
         ),
       )
       .all();
-    const draft = existing.find((row) => row.status === "draft");
-    if (draft !== undefined) return attemptSummaryOf(draft);
+    const draft = existing.find(
+      (row) => row.status === "draft" && row.abandonedAt === null,
+    );
+    if (options.restartAttemptId !== undefined) {
+      if (draft?.id !== options.restartAttemptId) {
+        throw new HttpError(
+          409,
+          "ATTEMPT_RESTART_STALE",
+          "当前作答已变化，请关闭确认后查看最新记录。",
+        );
+      }
+      tx.update(attempts)
+        .set({ abandonedAt: new Date().toISOString() })
+        .where(eq(attempts.id, draft.id))
+        .run();
+    } else if (draft !== undefined) {
+      return attemptSummaryOf(draft);
+    }
 
     const maxAttemptNo = existing.reduce(
       (max, row) => Math.max(max, row.attemptNo),
@@ -3313,7 +3361,7 @@ export function submitLessonQuestion(
 function practiceRequestDigestOf(
   attemptId: string,
   questionId: string,
-  req: PracticeQuestionSubmitRequest,
+  req: PracticeQuestionSubmitWithAnswer,
 ): string {
   const evidence = `${req.evidence.state}\u0001${req.evidence.versionId ?? ""}\u0001${req.evidence.revision ?? ""}\u0001${req.evidence.questionId}`;
   return createHash("sha256")
@@ -3326,6 +3374,7 @@ function practiceRequestDigestOf(
         req.questionRevisionId,
         String(req.expectedAnswerRevision),
         evidence,
+        ...(req.answer === undefined ? [] : [canonicalJsonOf(req.answer)]),
       ].join("\u0000"),
     )
     .digest("hex");
@@ -3364,7 +3413,7 @@ export function submitPracticeQuestion(
   studentId: string,
   attemptId: string,
   questionId: string,
-  req: PracticeQuestionSubmitRequest,
+  req: PracticeQuestionSubmitWithAnswer,
   now: Date | string = new Date(),
 ): PracticeQuestionSubmitData {
   const nowIso = new Date(now).toISOString();
@@ -3479,7 +3528,11 @@ export function submitPracticeQuestion(
     if (snapshot === null) {
       throw questionNotFound();
     }
-    const answer = answerOf(row.answerJson) ?? undefined;
+    if (req.answer !== undefined)
+      assertMcpDraftAnswerShape(db, row, snapshot, req.answer);
+    const answer = req.answer ?? answerOf(row.answerJson) ?? undefined;
+    const answerJson =
+      req.answer === undefined ? row.answerJson : JSON.stringify(req.answer);
     // QM-10 细项1：行级判分走 gradeResponseRow（新策略行不自动匹配）
     const autoCorrect = gradeResponseRow(row.gradingPolicy, snapshot, answer);
 
@@ -3513,6 +3566,14 @@ export function submitPracticeQuestion(
     const written = tx
       .update(responses)
       .set({
+        ...(answerJson === row.answerJson
+          ? {}
+          : {
+              answerJson,
+              answerRevision: row.answerRevision + 1,
+              answerMutationId: req.submissionMutationId,
+              changeCount: row.changeCount + 1,
+            }),
         autoCorrect,
         // 提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
         finalCorrect: autoCorrect,
@@ -3925,6 +3986,12 @@ export function resultQuestionOf(
     // 题目版本引用（responses 行 id）：订正工作台原位圈画建底图布局的身份
     // 三要素之一（与作答视图同源；对学生不透明，旧客户端忽略）
     questionRevisionId: row.id,
+    publicQuestion: publicOfSnapshot(snapshot, row.id, {
+      ...(options.materialSlots
+        ? { materialSlots: options.materialSlots }
+        : {}),
+      unitId: row.unitId,
+    }),
     snapshot: {
       id: snapshot.id,
       type: snapshot.type,

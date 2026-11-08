@@ -1,0 +1,26 @@
+[
+  {
+    "case": "reverse",
+    "before": {
+      "x": -302.42498779296875,
+      "animation": "enter",
+      "transform": "matrix(1, 0, 0, 1, -302.425, 0)",
+      "transition": "0.5s"
+    },
+    "after": {
+      "x": -1.5731353759765625,
+      "animation": "exit",
+      "transform": "matrix(1, 0, 0, 1, -1.57313, 0)",
+      "transition": "0.3s"
+    }
+  },
+  {
+    "case": "reduced-menu",
+    "value": {
+      "x": 233.78794860839844,
+      "animation": "enter",
+      "transform": "matrix3d(0.952651, 0, 0, 0, 0, 0.952651, 0, 0, 0, 0, 0.952651, 0, 0, 0, 0, 1)",
+      "transition": "0.2s"
+    }
+  }
+]

@@ -1,7 +1,8 @@
-import type {
-  ExampleDirectiveAttrs,
-  QuestionDirectiveAttrs,
-  QuestionType,
+import {
+  type ExampleDirectiveAttrs,
+  parseKnowledge,
+  type QuestionDirectiveAttrs,
+  type QuestionType,
 } from "@tutor/contract";
 import { Sigma } from "lucide-react";
 import { useQuestionView } from "./question-view";
@@ -35,7 +36,7 @@ export function QuestionDirective({
 }: DirectiveProps<QuestionDirectiveAttrs>) {
   const typeLabel = QUESTION_TYPE_LABELS[attrs.type];
   const difficulty = attrs.difficulty;
-  const knowledge = attrs.knowledge?.trim();
+  const knowledge = parseKnowledge(attrs.knowledge);
   return (
     <section
       data-slot="question"
@@ -48,11 +49,14 @@ export function QuestionDirective({
         <span className="rounded-md border border-border px-2 py-1 text-muted-foreground">
           {typeLabel}
         </span>
-        {knowledge ? (
-          <span className="rounded-md bg-secondary px-2 py-1 text-secondary-foreground">
-            考点：{knowledge}
+        {knowledge.map((name) => (
+          <span
+            key={name}
+            className="rounded-md bg-secondary px-2 py-1 text-secondary-foreground"
+          >
+            考点：{name}
           </span>
-        ) : null}
+        ))}
         <span
           role="img"
           title={`难度 ${difficulty}`}

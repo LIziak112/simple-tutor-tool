@@ -552,51 +552,61 @@ async function drawStrokeWithMouse(page: Page, canvas: Locator): Promise<void> {
  */
 export async function drawStrokeWithPointerEvents(
   canvas: Locator,
+  repetitions = 1,
+  pointDelayMs = 0,
+  offsetYRatio = 0,
 ): Promise<void> {
-  await canvas.evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    const cx = rect.width / 2;
-    const cy = rect.height / 2;
-    const dx = Math.min(120, rect.width * 0.2);
-    const dy = Math.min(40, rect.height * 0.2);
-    const pts = [
-      [cx - dx, cy - dy * 0.75],
-      [cx - dx / 2, cy + dy],
-      [cx, cy - dy],
-      [cx + dx / 2, cy + dy],
-      [cx + dx, cy - dy * 0.5],
-    ] as const;
-    const fire = (
-      type: string,
-      x: number,
-      y: number,
-      buttons: number,
-    ): void => {
-      el.dispatchEvent(
-        new PointerEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          pointerId: 7,
-          pointerType: "pen",
-          isPrimary: true,
-          clientX: rect.left + x,
-          clientY: rect.top + y,
-          button: 0,
-          buttons,
-          pressure: 0.5,
-        }),
-      );
-    };
-    const first = pts[0];
-    const last = pts[pts.length - 1];
-    if (first === undefined || last === undefined) return;
-    fire("pointerdown", first[0], first[1], 1);
-    for (const [x, y] of pts.slice(1)) {
-      fire("pointermove", x, y, 1);
-    }
-    fire("pointerup", last[0], last[1], 0);
-  });
+  await canvas.evaluate(
+    async (el, { count, delay, offset }) => {
+      const rect = el.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height * (0.5 + offset);
+      const dx = Math.min(120, rect.width * 0.2);
+      const dy = Math.min(40, rect.height * 0.2);
+      const pts = [
+        [cx - dx, cy - dy * 0.75],
+        [cx - dx / 2, cy + dy],
+        [cx, cy - dy],
+        [cx + dx / 2, cy + dy],
+        [cx + dx, cy - dy * 0.5],
+      ] as const;
+      const fire = (
+        type: string,
+        x: number,
+        y: number,
+        buttons: number,
+      ): void => {
+        el.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            pointerId: 7,
+            pointerType: "pen",
+            isPrimary: true,
+            clientX: rect.left + x,
+            clientY: rect.top + y,
+            button: 0,
+            buttons,
+            pressure: 0.5,
+          }),
+        );
+      };
+      const first = pts[0];
+      const last = pts[pts.length - 1];
+      if (first === undefined || last === undefined) return;
+      for (let i = 0; i < count; i++) {
+        fire("pointerdown", first[0], first[1], 1);
+        for (const [x, y] of pts.slice(1)) {
+          if (delay > 0)
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          fire("pointermove", x, y, 1);
+        }
+        fire("pointerup", last[0], last[1], 0);
+      }
+    },
+    { count: repetitions, delay: pointDelayMs, offset: offsetYRatio },
+  );
 }
 
 /** 等待笔迹上传请求（每笔结束 2 秒防抖后 PUT）；超时返回 false */
@@ -1106,27 +1116,25 @@ export function expectDecodablePng(entry: Buffer, name: string): void {
   expect(entry.length, `${name} 字节量`).toBeGreaterThan(100);
 }
 
-/**
- * 手机端习题作答顶栏精简（2026-10-15 决策）后，课程/保存状态在
- * 「更多 → 练习信息」弹层里查看。打开练习信息弹层，返回弹层定位器。
- */
+/** 打开练习资料弹层。 */
 export async function openPracticeInfoDialog(page: Page) {
   await page.getByRole("button", { name: "练习更多" }).click();
   await page.getByRole("menuitem", { name: "练习信息" }).click();
-  const info = page.getByRole("dialog");
-  await expect(info.getByTestId("draft-status")).toBeVisible();
-  return info;
+  return page.getByRole("dialog");
 }
 
-/**
- * 在练习信息弹层里进入保存详情，返回保存详情弹层定位器（练习信息弹层保持叠放）。
- * 练习信息弹层的可访问名是作业标题——标题恰好叫「保存详情」时按名定位会
- * 命中两个弹层（严格模式冲突），按标题 heading 过滤不受标题内容影响。
- */
-export async function openSaveDetailsViaInfoDialog(page: Page) {
+export async function expectPracticeSource(
+  page: Page,
+  source: string | RegExp,
+) {
   const info = await openPracticeInfoDialog(page);
-  await info.getByRole("button", { name: "保存详情", exact: true }).click();
-  return page.getByRole("dialog").filter({
-    has: page.getByRole("heading", { name: "保存详情", exact: true }),
-  });
+  await expect(info.getByText(source)).toBeVisible();
+  await info.press("Escape");
+}
+
+/** 从更多菜单打开独立的保存详情。 */
+export async function openSaveDetails(page: Page) {
+  await page.getByRole("button", { name: "练习更多" }).click();
+  await page.getByRole("menuitem", { name: "保存详情", exact: true }).click();
+  return page.getByRole("dialog", { name: "保存详情", exact: true });
 }

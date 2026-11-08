@@ -1,4 +1,4 @@
-import type { StudentAnswer } from "@tutor/contract";
+import type { QuestionProcessFinish, StudentAnswer } from "@tutor/contract";
 import {
   INK_MAX_DELETED_POINTS,
   NOTE_PAPER_HEIGHT_DEFAULT,
@@ -33,6 +33,11 @@ import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { paperCssHeight } from "@/features/notes/paper-geometry";
+import {
+  processAnswerSurface,
+  readProcessSurfaces,
+  useQuestionProcessContext,
+} from "@/features/question-process/session";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useObservedCssWidth } from "@/lib/use-observed-css-width";
@@ -250,10 +255,18 @@ export function HandwrittenControls({
   onInkStrokeRef.current = onInkStroke;
   const onInkEditRef = useRef(onInkEdit);
   onInkEditRef.current = onInkEdit;
+  const process = useQuestionProcessContext();
   const handleDocChange = useCallback(
-    (doc: InkDoc, reason: InkChangeReason) => {
+    (doc: InkDoc, reason: InkChangeReason, finish?: QuestionProcessFinish) => {
       if (reason === "load") return;
       doc = { ...doc, serverRevision: baseRevision.current };
+      const after = processAnswerSurface(doc);
+      if (process && after) {
+        const before = readProcessSurfaces(attemptId, questionId).answer;
+        if (doc.engine === "excalidraw" || before?.legacy)
+          process.surface(questionId, "answer", after);
+        else process.ink(questionId, "answer", reason, before, after, finish);
+      }
       setMasterDoc(doc);
       draftStore.saveInk(attemptId, questionId, doc);
       draftSyncRef.current?.noteLocalWrite();
@@ -270,7 +283,7 @@ export function HandwrittenControls({
         onInkStrokeRef.current?.(inkStrokeCount(doc));
       }
     },
-    [attemptId, questionId, onDocChangeUpload],
+    [attemptId, questionId, onDocChangeUpload, process],
   );
 
   // 恢复基线与本机稿：修订一致才可补传；云端已前进则保留两份并要求裁决。
@@ -598,6 +611,7 @@ export function HandwrittenControls({
                 <PaperEditor
                   initial={masterDoc ?? undefined}
                   label="手写答题区"
+                  allowFingerWriting
                   maxDeletedPoints={INK_MAX_DELETED_POINTS}
                   onDocChange={handleDocChange}
                   engineRef={pageEngineRef}

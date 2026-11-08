@@ -307,11 +307,11 @@ function StudentCard({
         {/* T-PR1：学生名链接进学生主页 */}
         <Link
           to={`/t/students/${student.id}`}
-          className="rounded text-base font-semibold outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          className="inline-flex min-h-11 min-w-11 items-center rounded text-base font-semibold outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
         >
           {student.displayName}
         </Link>
-        <p className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
+        <p className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
           登录名：{student.loginName}
         </p>
         {student.archived && (
@@ -937,19 +937,13 @@ function ManageCoursesDialog({
             取消
           </Button>
           <Button
+            busy={syncMutation.isPending}
             type="button"
             className="min-h-11 px-4"
             disabled={syncMutation.isPending}
             onClick={handleSave}
           >
-            {syncMutation.isPending ? (
-              <>
-                <Loader2 aria-hidden className="animate-spin" />
-                正在保存…
-              </>
-            ) : (
-              "保存"
-            )}
+            保存
           </Button>
         </DialogFooter>
       </DialogContent>

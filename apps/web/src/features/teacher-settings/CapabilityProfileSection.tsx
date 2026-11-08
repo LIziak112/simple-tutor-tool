@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { CapabilitySwitch } from "@tutor/contract";
 import { toEnabledCapabilities } from "@tutor/contract";
-import { Info, Loader2 } from "lucide-react";
+import { Info } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -157,6 +157,7 @@ export function CapabilityProfileSection({
                     : "当前设置已保存"}
             </p>
             <Button
+              busy={saveMutation.isPending}
               className="min-h-11 px-5"
               disabled={saveMutation.isPending}
               onClick={() =>
@@ -170,9 +171,6 @@ export function CapabilityProfileSection({
                 )
               }
             >
-              {saveMutation.isPending && (
-                <Loader2 aria-hidden className="motion-safe:animate-spin" />
-              )}
               保存更改
             </Button>
           </div>

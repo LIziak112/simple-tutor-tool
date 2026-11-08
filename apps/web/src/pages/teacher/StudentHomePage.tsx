@@ -8,11 +8,18 @@ import {
   ArrowLeft,
   ChevronDown,
   Clock3,
+  FileDown,
   Lightbulb,
-  Sparkles,
+  List,
   TriangleAlert,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  type MouseEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
@@ -136,10 +143,101 @@ function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
   );
 }
 
+const SECTION_LINKS = [
+  ["student-attempts", "作答记录"],
+  ["student-knowledge", "薄弱考点"],
+  ["student-review", "错题与存疑"],
+  ["student-anomalies", "用时异常题"],
+  ["student-redo", "课程练习重做"],
+  ["student-offline", "离线作答"],
+  ["student-reading", "讲义阅读地图"],
+  ["student-reports", "AI 报告"],
+] as const;
+
+const SECTION_TARGET_CLASS =
+  "scroll-mt-17 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+
+function SectionNavigation() {
+  const menu = useRef<HTMLDetailsElement>(null);
+
+  function jump(event: MouseEvent<HTMLAnchorElement>, id: string) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      return;
+    const target = document.getElementById(id);
+    if (target === null) return;
+    event.preventDefault();
+    if (menu.current !== null) menu.current.open = false;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "start" });
+  }
+
+  const links = SECTION_LINKS.map(([id, label]) => (
+    <li key={id}>
+      <a
+        href={`#${id}`}
+        onClick={(event) => jump(event, id)}
+        className="flex min-h-11 items-center rounded-lg px-2 text-sm font-medium whitespace-nowrap hover:bg-muted hover:text-primary"
+      >
+        {label}
+      </a>
+    </li>
+  ));
+
+  return (
+    <nav
+      aria-label="学生详情页内导航"
+      className="sticky top-0 z-10 border-b border-border bg-background py-1.5 @min-[47rem]:flex @min-[47rem]:items-center @min-[47rem]:gap-2"
+    >
+      <span
+        aria-hidden
+        className="hidden shrink-0 items-center gap-1.5 px-2 text-xs font-semibold text-muted-foreground @min-[47rem]:flex"
+      >
+        <List className="size-4" /> 跳至
+      </span>
+      <ul className="hidden gap-0.5 @min-[47rem]:flex">{links}</ul>
+      <details
+        ref={menu}
+        className="group/menu relative w-fit @min-[47rem]:hidden"
+        onBlur={(event) => {
+          if (
+            event.relatedTarget &&
+            !event.currentTarget.contains(event.relatedTarget)
+          ) {
+            event.currentTarget.open = false;
+          }
+        }}
+        onKeyDown={(event) => {
+          const details = event.currentTarget;
+          if (event.key === "Escape" && details.open) {
+            details.open = false;
+            details.querySelector("summary")?.focus();
+          }
+        }}
+      >
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium hover:bg-muted [&::-webkit-details-marker]:hidden">
+          <List aria-hidden className="size-4" />
+          跳至区块
+          <ChevronDown
+            aria-hidden
+            className="size-4 text-muted-foreground group-open/menu:rotate-180"
+          />
+        </summary>
+        <ul className="absolute start-0 top-full z-10 mt-1.5 max-h-[min(26rem,60dvh)] min-w-44 overflow-y-auto rounded-xl border border-border bg-card p-1 shadow-lg">
+          {links}
+        </ul>
+      </details>
+    </nav>
+  );
+}
+
 export function StudentHomePage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const state = useMemo(() => parseAnalyticsUrl(searchParams), [searchParams]);
+  const latestQuery = useRef(searchParams);
+  useLayoutEffect(() => {
+    latestQuery.current = searchParams;
+  }, [searchParams]);
 
   const coursesQuery = useTeacherCourses(false);
   const studentQuery = useAnalyticsStudent(
@@ -177,15 +275,30 @@ export function StudentHomePage() {
     offset: 0,
   });
 
+  function updateQuery(query: URLSearchParams): void {
+    // URL 更新可能先于 React 提交。连续点击应合并到最近一次筛选。
+    latestQuery.current = query;
+    void setSearchParams(query);
+  }
+
   function applyPatch(patch: Partial<AnalyticsUrlState>): void {
-    void setSearchParams(analyticsUrlQuery({ ...state, ...patch }));
+    const current = latestQuery.current;
+    const query = analyticsUrlQuery({
+      ...parseAnalyticsUrl(current),
+      ...patch,
+    });
+    const reviewKind = current.get("kind");
+    if (reviewKind === "unsure" || reviewKind === "corrected")
+      query.set("kind", reviewKind);
+    updateQuery(query);
   }
 
   /** 错题与存疑换档：写 URL ?kind=（默认档 wrong 不写，保持地址干净） */
   function applyKind(next: QuestionReviewKind): void {
-    const query = analyticsUrlQuery(state);
+    const query = new URLSearchParams(latestQuery.current);
     if (next !== "wrong") query.set("kind", next);
-    void setSearchParams(query);
+    else query.delete("kind");
+    updateQuery(query);
   }
 
   const data = studentQuery.data;
@@ -211,7 +324,7 @@ export function StudentHomePage() {
   }
 
   return (
-    <section className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
+    <section className="mx-auto flex w-full max-w-4xl flex-col gap-4 @container px-4 py-6 md:px-6 md:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold">
@@ -251,7 +364,7 @@ export function StudentHomePage() {
                     : "",
               }}
             >
-              <Sparkles aria-hidden />
+              <FileDown aria-hidden />
               导出给 AI
             </Link>
           </Button>
@@ -277,11 +390,18 @@ export function StudentHomePage() {
         courses={coursesQuery.data?.courses ?? []}
         showFocusDays={false}
         onPatch={applyPatch}
-        onReset={() => void setSearchParams(new URLSearchParams())}
+        onReset={() => updateQuery(new URLSearchParams())}
       />
 
+      {data !== undefined && <SectionNavigation />}
+
       {/* Web-2① 作答记录 */}
-      <section aria-label="作答记录" className="flex flex-col gap-2">
+      <section
+        id="student-attempts"
+        tabIndex={-1}
+        aria-label="作答记录"
+        className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
+      >
         <h2 className="text-sm font-semibold">
           作答记录
           <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -299,7 +419,7 @@ export function StudentHomePage() {
             作答记录加载失败
             <Button
               variant="outline"
-              className="min-h-9"
+              className="min-h-11 min-w-11"
               onClick={() => void attemptsQuery.refetch()}
             >
               重试
@@ -362,7 +482,12 @@ export function StudentHomePage() {
 
       {data !== undefined && (
         <>
-          <section aria-label="薄弱考点" className="flex flex-col gap-2">
+          <section
+            id="student-knowledge"
+            tabIndex={-1}
+            aria-label="薄弱考点"
+            className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
+          >
             <h2 className="text-sm font-semibold">
               薄弱考点前 5
               <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -427,7 +552,12 @@ export function StudentHomePage() {
           </section>
 
           {/* Web-2② 错题与存疑（聚合端点 question-review，三档 kind） */}
-          <section aria-label="错题与存疑" className="flex flex-col gap-2">
+          <section
+            id="student-review"
+            tabIndex={-1}
+            aria-label="错题与存疑"
+            className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
+          >
             <h2 className="text-sm font-semibold">
               错题与存疑
               <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -439,7 +569,7 @@ export function StudentHomePage() {
                 <Button
                   key={item}
                   variant={item === kind ? "secondary" : "outline"}
-                  className="min-h-9"
+                  className="min-h-11 min-w-11"
                   aria-pressed={item === kind}
                   onClick={() => applyKind(item)}
                 >
@@ -458,7 +588,7 @@ export function StudentHomePage() {
                 错题与存疑加载失败
                 <Button
                   variant="outline"
-                  className="min-h-9"
+                  className="min-h-11 min-w-11"
                   onClick={() => void reviewQuery.refetch()}
                 >
                   重试
@@ -487,7 +617,12 @@ export function StudentHomePage() {
               ))}
           </section>
 
-          <section aria-label="用时异常题" className="flex flex-col gap-2">
+          <section
+            id="student-anomalies"
+            tabIndex={-1}
+            aria-label="用时异常题"
+            className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
+          >
             <h2 className="text-sm font-semibold">
               用时异常题
               <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -510,7 +645,12 @@ export function StudentHomePage() {
             )}
           </section>
 
-          <section aria-label="重做概览" className="flex flex-col gap-2">
+          <section
+            id="student-redo"
+            tabIndex={-1}
+            aria-label="重做概览"
+            className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
+          >
             <h2 className="text-sm font-semibold">
               课程练习重做
               <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -581,8 +721,10 @@ export function StudentHomePage() {
           </section>
 
           <section
+            id="student-offline"
+            tabIndex={-1}
             aria-label="离线作答"
-            className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
+            className={`${SECTION_TARGET_CLASS} flex flex-col gap-1 rounded-xl border border-border bg-card p-4`}
           >
             <h2 className="text-sm font-semibold">离线作答占比</h2>
             <p className="text-2xl font-semibold">
@@ -595,9 +737,30 @@ export function StudentHomePage() {
             </p>
           </section>
 
-          <section aria-label="讲义阅读地图" className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">讲义阅读地图</h2>
-            <LectureReadingMapView entries={data.lectures} />
+          <section
+            id="student-reading"
+            tabIndex={-1}
+            aria-label="讲义阅读地图"
+            className={SECTION_TARGET_CLASS}
+          >
+            <details
+              open
+              className="group/map rounded-xl border border-border bg-card"
+            >
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-4 py-3 hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
+                <h2 className="text-sm font-semibold">讲义阅读地图</h2>
+                <span className="text-xs text-muted-foreground">
+                  {data.lectures.length} 篇讲义
+                </span>
+                <ChevronDown
+                  aria-hidden
+                  className="ms-auto size-4 shrink-0 text-muted-foreground group-open/map:rotate-180"
+                />
+              </summary>
+              <div className="px-4 pb-4">
+                <LectureReadingMapView entries={data.lectures} />
+              </div>
+            </details>
           </section>
 
           {/* T4.7：AI 报告实数据（T4.2 占位换实）；T-PR4 Web-2④ 起默认折叠、
@@ -683,7 +846,12 @@ function QuestionReviewRowCard({ row }: { row: QuestionReviewRow }) {
 function ReportsDisclosure({ studentId }: { studentId: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <section aria-label="报告" className="flex flex-col gap-2">
+    <section
+      id="student-reports"
+      tabIndex={-1}
+      aria-label="报告"
+      className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
+    >
       <button
         type="button"
         aria-expanded={open}

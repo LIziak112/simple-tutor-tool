@@ -5,13 +5,12 @@ import type {
 } from "@tutor/contract";
 import {
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   Keyboard,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,11 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   formatKeys,
   PRACTICE_KEYBOARD_COMMANDS,
@@ -37,28 +32,56 @@ import {
   practiceRhythmLabel,
 } from "./practice-protocol";
 
-/**
- * PracticeWorkspace 呈现件（M3-D1，计划 §7.1/§7.2/§9.1）：做题方式摘要行、
- * 单题紧凑进度行、占位主操作条与「更多」菜单切换项。只改变呈现，不搬题卡、
- * 不复制题面（题卡列表仍在 AttemptSession 的同一 keyed 序列里，纪律 §11-1）；
- * 主操作条中间为占位容器，三态交互（提交本题→查看反馈→下一题）由 D2 接线。
- * M5-D3：摘要行展开区追加「反馈节奏」组——切换经 PATCH CAS 提交（调用方
- * 接线），禁用只按服务端投影（canChangeFeedback/allowedFeedbackModes）。
- * 2026-10-24 去重：单题模式不再常驻摘要行与工作区进度行——做题方式经
- * 「更多」在弹窗打开同一编辑器，题号与提交进度并入吸底栏。
- */
-
 /** 反馈节奏两枚选项（标签复用 practiceRhythmLabel 单一出处） */
 const feedbackModeOptions = [
   { value: "per_question" },
   { value: "after_attempt" },
 ] as const;
 
-/** 做题方式编辑器公共属性：行内摘要行与单题弹窗共用同一编辑器 */
+/** 单元预选与作答中的单选提交选项。 */
+export function ChoiceSubmitOptions({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: boolean;
+  onChange: (value: boolean) => void;
+  disabled: boolean;
+}) {
+  const name = useId();
+  return (
+    <fieldset
+      disabled={disabled}
+      className="grid min-w-0 gap-2 sm:grid-cols-2 disabled:opacity-60"
+    >
+      <legend className="mb-1.5 text-xs font-medium text-muted-foreground">
+        单选题怎么提交
+      </legend>
+      {([false, true] as const).map((auto) => (
+        <label
+          key={String(auto)}
+          className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${value === auto ? "border-primary bg-primary/5" : "border-border"} ${disabled ? "" : "cursor-pointer"}`}
+        >
+          <input
+            className="size-4 shrink-0 accent-primary"
+            type="radio"
+            name={name}
+            checked={value === auto}
+            onChange={() => onChange(auto)}
+          />
+          {auto ? "选中即提交" : "点提交按钮"}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
 interface PracticeModeEditorProps {
   workflow: PracticeWorkflow;
   layout: PracticeLayout;
   onLayoutChange: (layout: PracticeLayout) => void;
+  autoSubmitChoice?: boolean;
+  onAutoSubmitChoiceChange?: (auto: boolean) => void;
   /** 反馈节奏切换回调（M5-D3）：由调用方 PATCH CAS 提交；缺省仅呈现 */
   onFeedbackModeChange?: (mode: PracticeFeedbackMode) => void;
   /** PATCH 在途：节奏组临时禁用防重复提交 */
@@ -67,31 +90,13 @@ interface PracticeModeEditorProps {
   feedbackError?: string | null;
 }
 
-/** 摘要文案：当前布局与反馈节奏（行内摘要行与弹窗描述同一出处） */
-function PracticeModeSummaryText({
-  workflow,
-  layout,
-}: {
-  workflow: PracticeWorkflow;
-  layout: PracticeLayout;
-}) {
-  const restriction = practiceRestrictionCopy(workflow);
-  return (
-    <>
-      做题方式：{practiceLayoutLabel(layout)} ·{" "}
-      {practiceRhythmLabel(workflow.feedbackMode)}
-      {restriction !== null && (
-        <span className="ml-1 text-muted-foreground">{restriction}</span>
-      )}
-    </>
-  );
-}
-
 /** 做题方式唯一编辑器：布局与反馈节奏两组选项 + 限制说明 */
 function PracticeModeEditor({
   workflow,
   layout,
   onLayoutChange,
+  autoSubmitChoice = false,
+  onAutoSubmitChoiceChange,
   onFeedbackModeChange,
   feedbackBusy = false,
   feedbackError = null,
@@ -160,7 +165,14 @@ function PracticeModeEditor({
           );
         })}
       </fieldset>
-      {!workflow.canChangeFeedback && restriction !== null && (
+      {onAutoSubmitChoiceChange && (
+        <ChoiceSubmitOptions
+          value={autoSubmitChoice}
+          onChange={onAutoSubmitChoiceChange}
+          disabled={!workflow.canSubmitQuestion || feedbackBusy}
+        />
+      )}
+      {restriction !== null && (
         <p className="text-xs text-muted-foreground">{restriction}</p>
       )}
       {!workflow.canChangeFeedback && restriction === null && (
@@ -180,63 +192,7 @@ function PracticeModeEditor({
   );
 }
 
-/**
- * 摘要行（列表模式行内）：当前布局与反馈节奏一行摘要，可展开改本次布局与
- * 反馈节奏；选择布局即生效并收起（切到单题后摘要行不再常驻）。
- */
-export function PracticeModeSummary({
-  open: controlledOpen,
-  onOpenChange,
-  ...editor
-}: PracticeModeEditorProps & {
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-}) {
-  const [localOpen, setLocalOpen] = useState(false);
-  const open = controlledOpen ?? localOpen;
-  const setOpen = onOpenChange ?? setLocalOpen;
-  return (
-    <div
-      data-slot="practice-mode-summary"
-      className="min-w-0 rounded-lg border border-border bg-card text-sm"
-    >
-      <button
-        type="button"
-        aria-label="调整做题方式"
-        aria-expanded={open}
-        className="flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left outline-none hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
-        onClick={() => setOpen(!open)}
-      >
-        <span className="min-w-0 flex-1 break-words">
-          <PracticeModeSummaryText
-            workflow={editor.workflow}
-            layout={editor.layout}
-          />
-        </span>
-        <ChevronDown
-          aria-hidden
-          className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && (
-        <div className="border-t border-border p-3">
-          <PracticeModeEditor
-            {...editor}
-            onLayoutChange={(layout) => {
-              editor.onLayoutChange(layout);
-              setOpen(false);
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * 单题模式的做题方式弹窗：单题工作区不常驻摘要行，「更多 → 做题方式」
- * 在弹窗里打开同一编辑器；选择布局即生效并关闭，反馈节奏切换保持打开。
- */
+/** 列表和单题共用的做题方式弹窗。 */
 export function PracticeModeDialog({
   open,
   onOpenChange,
@@ -250,7 +206,7 @@ export function PracticeModeDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[calc(100%-24px)] max-w-lg rounded-lg"
+        className="max-h-[85dvh] w-[calc(100%-24px)] max-w-lg overflow-y-auto rounded-lg"
         onCloseAutoFocus={(event) => {
           if (onReturnFocus) {
             event.preventDefault();
@@ -261,10 +217,8 @@ export function PracticeModeDialog({
         <DialogHeader>
           <DialogTitle>做题方式</DialogTitle>
           <DialogDescription className="break-words">
-            <PracticeModeSummaryText
-              workflow={editor.workflow}
-              layout={editor.layout}
-            />
+            做题方式：{practiceLayoutLabel(editor.layout)} ·{" "}
+            {practiceRhythmLabel(editor.workflow.feedbackMode)}
           </DialogDescription>
         </DialogHeader>
         <PracticeModeEditor
@@ -302,7 +256,7 @@ export function SingleQuestionActionBar({
   busy?: boolean;
   /** 主操作位内容（PracticeSingleActions）；缺省保持占位容器 */
   middle?: ReactNode;
-  /** 手机题号兼答题卡入口，与主操作共用一行。 */
+  /** 题号兼答题卡入口，与主操作共用一行。 */
   navigation?: ReactNode;
   onPrev: () => void;
   onNext: () => void;
@@ -312,66 +266,41 @@ export function SingleQuestionActionBar({
       data-slot="practice-action-bar"
       className="flex min-w-0 items-center gap-1 sm:gap-2"
     >
+      {navigation}
       <Button
         variant="ghost"
-        className="size-11 shrink-0 p-0 lg:w-auto lg:px-3"
+        className="ms-auto size-11 shrink-0 p-0 sm:w-auto sm:px-3"
         aria-label="上一题"
         disabled={!hasPrev || busy}
         onClick={onPrev}
       >
         <ChevronLeft aria-hidden className="size-4" />
-        <span aria-hidden className="hidden lg:inline">
+        <span aria-hidden className="hidden sm:inline">
           上一题
         </span>
       </Button>
-      {navigation}
       <div
         data-slot="practice-action-placeholder"
         aria-hidden={middle === undefined ? true : undefined}
-        className={
-          middle === undefined ? "h-11 min-w-0 flex-1" : "min-w-0 flex-1"
-        }
+        className={middle === undefined ? "h-11 min-w-0" : "min-w-0"}
       >
         {middle}
       </div>
       {(showNext ?? middle === undefined) && (
         <Button
           variant="ghost"
-          className={`${navigation ? "hidden lg:flex" : "flex"} size-11 shrink-0 p-0 lg:w-auto lg:px-3`}
+          className="size-11 shrink-0 p-0 sm:w-auto sm:px-3"
           aria-label="下一题"
           disabled={!hasNext || busy}
           onClick={onNext}
         >
-          <span aria-hidden className="hidden lg:inline">
+          <span aria-hidden className="hidden sm:inline">
             下一题
           </span>
           <ChevronRight aria-hidden className="size-4" />
         </Button>
       )}
     </div>
-  );
-}
-
-/** 「更多」菜单里的做题方式切换项：当前卷即时生效，不写回默认偏好 */
-export function PracticeLayoutMenuItems({
-  layout,
-  onChange,
-}: {
-  layout: PracticeLayout;
-  onChange: (layout: PracticeLayout) => void;
-}): ReactNode {
-  return (
-    <DropdownMenuRadioGroup
-      value={layout}
-      onValueChange={(value) => {
-        onChange(value === "single" ? "single" : "list");
-      }}
-    >
-      <DropdownMenuRadioItem value="list">做题方式：列表</DropdownMenuRadioItem>
-      <DropdownMenuRadioItem value="single">
-        做题方式：单题
-      </DropdownMenuRadioItem>
-    </DropdownMenuRadioGroup>
   );
 }
 

@@ -29,7 +29,6 @@
  */
 
 import {
-  type AttemptQuestionPublic,
   type AttemptResultQuestion,
   NOTE_REFLECTION_MAX_LENGTH,
   type NoteHeadData,
@@ -156,6 +155,18 @@ function CorrectionWorkspaceInner({
       stemMd: snapshot.stemMd,
       ...(snapshot.options !== undefined ? { options: snapshot.options } : {}),
       hintCount: snapshot.hintCount,
+      ...(snapshot.matchingOptions !== undefined
+        ? { matchingOptions: snapshot.matchingOptions }
+        : {}),
+      ...(snapshot.matchingSlots !== undefined
+        ? { matchingSlots: snapshot.matchingSlots }
+        : {}),
+      ...(snapshot.orderingItems !== undefined
+        ? { orderingItems: snapshot.orderingItems }
+        : {}),
+      ...(snapshot.sortableCount !== undefined
+        ? { sortableCount: snapshot.sortableCount }
+        : {}),
     }),
     [snapshot],
   );
@@ -163,16 +174,7 @@ function CorrectionWorkspaceInner({
    * 原位圈画身份（questionRevisionId = responses 行 id，服务端 POST base
    * 严格校验）：旧结果视图响应缺失时优雅降级——只渲染题面，不提供圈画。
    */
-  const inlineQuestion = useMemo<AttemptQuestionPublic | null>(
-    () =>
-      question.questionRevisionId !== undefined
-        ? {
-            ...surfaceQuestion,
-            questionRevisionId: question.questionRevisionId,
-          }
-        : null,
-    [surfaceQuestion, question.questionRevisionId],
-  );
+  const inlineQuestion = question.publicQuestion ?? null;
 
   const toggleAnnotation = () => {
     if (drawing) void editor?.request(null);
@@ -449,11 +451,24 @@ function CorrectionWorkspaceInner({
                     sealing || annotationRecord?.sealedAt != null
                   }
                 >
-                  <QuestionSurface question={inlineQuestion} readOnly />
+                  <QuestionSurface
+                    question={inlineQuestion}
+                    answer={question.answer ?? undefined}
+                    readOnly
+                  />
                 </QuestionAnnotationOverlay>
               ) : (
-                // 旧结果视图响应无 questionRevisionId：题面照常，圈画不可用
-                <QuestionSurface question={surfaceQuestion} readOnly />
+                // 旧响应缺少冻结公开题面：只保留可读内容，不推测圈画身份
+                <>
+                  <QuestionSurface
+                    question={surfaceQuestion}
+                    answer={question.answer ?? undefined}
+                    readOnly
+                  />
+                  <p role="alert">
+                    缺少公开冻结题面信息，原稿已保留，暂不能核验笔迹位置
+                  </p>
+                </>
               )}
             </section>
 

@@ -10,6 +10,7 @@ import { runMigrations } from "./db/migrate";
 import { handleServerError, installCrashHandlers } from "./lib/startup-errors";
 import { startStudentAiWorker } from "./services/ai-companion/student-ai-worker";
 import { startBackupScheduler } from "./services/backup-service";
+import { purgeExpiredQuestionProcesses } from "./services/question-process";
 
 /**
  * 启动入口：读配置 → 准备数据目录与密钥 → 打开数据库并迁移 → 组装 app → 监听端口。
@@ -63,7 +64,20 @@ const stopStudentAiWorker = startStudentAiWorker({
   logger,
 });
 
+purgeExpiredQuestionProcesses(db);
+const questionProcessCleanup = setInterval(
+  () => {
+    try {
+      purgeExpiredQuestionProcesses(db);
+    } catch (error) {
+      logger.error({ err: error }, "清理到期过程记录失败");
+    }
+  },
+  60 * 60 * 1000,
+).unref();
+
 const app = createApp({
+  questionProcessEnabled: process.env.QUESTION_PROCESS_ENABLED === "1",
   isProduction: config.isProduction,
   logger,
   db,
@@ -98,6 +112,7 @@ function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, "收到退出信号，正在关闭服务");
   stopStudentAiWorker.stop();
   stopBackupScheduler();
+  clearInterval(questionProcessCleanup);
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

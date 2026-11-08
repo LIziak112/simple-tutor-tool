@@ -1,4 +1,7 @@
-import type { AnnotationSurfaceLayout } from "@tutor/contract";
+import {
+  type AnnotationSurfaceLayout,
+  annotationSurfaceLayoutSchema,
+} from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", async (original) => ({
@@ -264,6 +267,69 @@ it("v3 能力升级拒写时保留原 pending 与 PNG，并提示刷新而非无
   expect(after?.retained?.reason).toContain("刷新");
   await flushAnnotationSync(scope.attemptId);
   expect(putAnnotationDocApi).toHaveBeenCalledOnce();
+});
+
+it("v4 两阶段同步声明对应能力，未知能力拒写后保留同一待传身份", async () => {
+  const wholeLayout = annotationSurfaceLayoutSchema.parse({
+    ...layout,
+    renderVersion: 4,
+    renderProfile: "whole-question-v1",
+    compatibility: {
+      version: 1,
+      contentSignature: "a".repeat(64),
+      blocks: [
+        { tag: "DIV", node: "root", x: 0, y: 0, width: 300, height: 200 },
+      ],
+      fonts: [["sans-serif", "16px", "400", "28px", "normal"]],
+      textRects: [],
+    },
+  });
+  vi.mocked(postAnnotationBaseApi).mockResolvedValue({
+    base: { ...base, layout: wholeLayout },
+    baseRenderVersion: 4,
+    maxWidthPx: 600,
+    questionRevisionId: wholeLayout.questionRevisionId,
+    questionNo: 1,
+    questionMd: "公开题面",
+    mediaSrcs: [],
+    graphFigures: [],
+    interactionNotes: [],
+  });
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout: wholeLayout },
+    {
+      version: 1,
+      baseWidth: 600,
+      baseHeight: 400,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#dc2626",
+          weight: 4,
+          points: [{ x: 10, y: 10, p: 0.5, t: 0 }],
+        },
+      ],
+    },
+  );
+  const before = await getAnnotationRecord(session, scope);
+  vi.mocked(putAnnotationDocApi).mockRejectedValue(
+    new ApiError("ANNOTATION_PROTOCOL_UPGRADE_REQUIRED", "请更新客户端", 403),
+  );
+  await flushAnnotationSync(scope.attemptId);
+  expect(putAnnotationDocApi).toHaveBeenCalledWith(
+    scope.attemptId,
+    scope.questionId,
+    expect.any(Blob),
+    expect.objectContaining({ protocolVersion: 4 }),
+    expect.any(AbortSignal),
+  );
+  const after = await getAnnotationRecord(session, scope);
+  expect(after?.pending?.mutationId).toBe(before?.pending?.mutationId);
+  expect(after?.localBase?.png).toBe(png);
+  expect(after?.localBase?.layout).toEqual(wholeLayout);
+  expect(after?.retained?.reason).toContain("刷新");
 });
 
 it("旧分类器已有的通用 403 口径停止重试并保留待传身份", async () => {

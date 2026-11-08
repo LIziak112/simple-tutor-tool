@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * ErrorPanel 有自己的完整实现（含降级弹层回焦），此 hook 提供同样的两段式：
  * - copy(text)：优先 navigator.clipboard.writeText；成功 → copied=true（3 秒轻提示）；
  * - 剪贴板不可用（http 非安全上下文/被拒绝）→ fallbackText 置值，调用方渲染
- *   手动复制弹层（全选 + Ctrl+C），closeFallback 关闭并把焦点还给按钮。
+ *   手动复制弹层（全选 + Ctrl+C），Dialog 关闭后用 buttonRef 回焦。
  */
 export function useClipboardCopy() {
   const [copied, setCopied] = useState(false);
@@ -33,7 +33,6 @@ export function useClipboardCopy() {
 
   const closeFallback = useCallback((): void => {
     setFallbackText(null);
-    buttonRef.current?.focus();
   }, []);
 
   return { copied, fallbackText, buttonRef, copy, closeFallback };

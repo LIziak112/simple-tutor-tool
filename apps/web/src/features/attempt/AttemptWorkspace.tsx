@@ -1,7 +1,15 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
+import { QuestionProcessContext } from "@/features/question-process/session";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 
-export function AttemptWorkspace({ children }: { children: ReactNode }) {
+export function AttemptWorkspace({
+  children,
+  process = null,
+}: {
+  children: ReactNode;
+  process?: QuestionProcessRecorder | null;
+}) {
   useStudentWorkspace();
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -111,7 +119,9 @@ export function AttemptWorkspace({ children }: { children: ReactNode }) {
       data-slot="attempt-workspace"
       className="group/workspace flex min-w-0 flex-col gap-4 pb-[calc(var(--attempt-footer-height,64px)+24px)]"
     >
-      {children}
+      <QuestionProcessContext.Provider value={process}>
+        {children}
+      </QuestionProcessContext.Provider>
     </div>
   );
 }

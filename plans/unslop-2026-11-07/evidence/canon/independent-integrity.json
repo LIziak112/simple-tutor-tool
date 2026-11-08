@@ -1,0 +1,30 @@
+{
+  "implementation": "Python hashlib SHA-256 independent of skill JavaScript sha256",
+  "resources": [
+    {
+      "resource": "index",
+      "bytes": 6620,
+      "sha256": "2ff9cedd3abd8868acb8ea7c4fffa3b32cd6ed6971788ad3aca4a1a8d19ab78f",
+      "valid": true
+    },
+    {
+      "resource": "copy",
+      "bytes": 7018,
+      "sha256": "eec7da27ed58b98e34c2b6c975091e99637d303d751d80d37bc904c9f7be0d5a",
+      "valid": true
+    },
+    {
+      "resource": "interface",
+      "bytes": 41109,
+      "sha256": "602ce866c9eb622cd5c559ad77c2ce512b63154c82d917509062a7e7faf0eb76",
+      "valid": true
+    },
+    {
+      "resource": "process",
+      "bytes": 7977,
+      "sha256": "157b327696a694fe1b7d7b4c2be5893f70cfe0a41fa9e9c36b9fb719cc9198a9",
+      "valid": true
+    }
+  ],
+  "tamperedPayloadRejected": true
+}

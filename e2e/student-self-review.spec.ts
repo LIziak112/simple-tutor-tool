@@ -70,12 +70,12 @@ topic: 对照自评
   await q1.getByRole("textbox", { name: "第1空" }).fill("3");
   await waitForDraftSaved(page);
   await expect(q1.getByRole("textbox", { name: "第1空" })).toHaveValue("3");
-  await q1.getByRole("button", { name: "提交本题", exact: true }).click();
+  await q1.getByRole("button", { name: "提交", exact: true }).click();
   await expect(q1.getByText("已完成，待自评", { exact: true })).toBeVisible();
   // QM 判分框架（两线收敛）：无参考答案的 solve 行冻结为 manual_only，
   // 同样可逐题提交（判定走教师待批，不设 v2 的「只能整卷交卷」门控）
   await expect(
-    q2.getByRole("button", { name: "不会，提交并看解析", exact: true }),
+    q2.getByRole("button", { name: "提交", exact: true }),
   ).toBeVisible();
   await q1.getByRole("button", { name: "错了", exact: true }).click();
   await expect(q1.getByText("自评错误", { exact: true })).toBeVisible();
@@ -100,9 +100,7 @@ topic: 对照自评
   await expect(q1.getByText("自评错误", { exact: true })).toBeVisible();
   // q2 逐题提交（未作答空答案链）——最后一题提交在事务内自动收尾整卷，
   // 不再出现手动「交卷」确认入口
-  await q2
-    .getByRole("button", { name: "不会，提交并看解析", exact: true })
-    .click();
+  await q2.getByRole("button", { name: "提交", exact: true }).click();
   await expect(page.getByText("批改结果", { exact: true })).toBeVisible();
   await expect(page.getByText("自评错误", { exact: true })).toBeVisible();
   await expect(

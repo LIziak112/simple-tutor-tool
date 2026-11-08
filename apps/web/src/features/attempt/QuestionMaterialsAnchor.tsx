@@ -124,49 +124,63 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
             : `flex min-w-0 flex-col gap-3${className ? ` ${className}` : ""}`
       }
     >
-      <section
-        ref={materialsRef}
-        data-slot="question-materials"
-        tabIndex={-1}
-        aria-label="本题材料"
+      <div
+        data-slot="question-materials-boundary"
         className={
           onSplitRatioChange !== undefined
-            ? "flex min-w-0 max-w-full flex-col gap-3 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_1] xl:[grid-row:span_1]"
-            : "flex min-w-0 max-w-full flex-col gap-3 isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            ? "min-w-0 lg:col-start-1 xl:col-start-1 lg:[grid-row:span_1] xl:[grid-row:span_1]"
+            : "min-w-0"
         }
       >
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            本题材料
-          </p>
-          {onLayoutModeChange !== undefined && (
-            <MaterialLayoutToggle
-              layoutMode={layoutMode ?? "split"}
-              onLayoutModeChange={onLayoutModeChange}
+        <section
+          ref={materialsRef}
+          data-slot="question-materials"
+          tabIndex={-1}
+          aria-label="本题材料"
+          className={
+            onSplitRatioChange !== undefined
+              ? "flex min-w-0 max-w-full flex-col gap-3 self-start isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:overflow-y-auto xl:overflow-y-auto lg:overscroll-contain xl:overscroll-contain lg:pr-1 xl:pr-1 lg:[&_.material-reading]:overflow-visible! lg:rounded-lg lg:ring-1 lg:ring-border lg:has-[[data-drawing=true]]:ring-2 lg:has-[[data-drawing=true]]:ring-primary/50"
+              : "flex min-w-0 max-w-full flex-col gap-3 isolate scroll-mt-[calc(var(--attempt-header-height,64px)+16px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          }
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              本题材料
+            </p>
+            {onLayoutModeChange !== undefined && (
+              <MaterialLayoutToggle
+                layoutMode={layoutMode ?? "split"}
+                onLayoutModeChange={onLayoutModeChange}
+              />
+            )}
+          </div>
+          {materials.map((material) => (
+            <MaterialPanel
+              // QM-15 细项 4：键含冻结版本（同 materialId 撞键丢面板）
+              key={materialVersionKey(material)}
+              material={material}
+              versionNote={versionNotes.get(materialVersionKey(material))}
+              attemptId={attemptId}
+              associatedQuestionIds={associatedQuestionIds}
             />
-          )}
-        </div>
-        {materials.map((material) => (
-          <MaterialPanel
-            // QM-15 细项 4：键含冻结版本（同 materialId 撞键丢面板）
-            key={materialVersionKey(material)}
-            material={material}
-            versionNote={versionNotes.get(materialVersionKey(material))}
-            attemptId={attemptId}
-            associatedQuestionIds={associatedQuestionIds}
-          />
-        ))}
-      </section>
+          ))}
+        </section>
+      </div>
       {onSplitRatioChange !== undefined && (
         <div
-          data-slot="question-split-handle-container"
-          className="hidden lg:flex xl:flex lg:col-start-2 xl:col-start-2 lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center lg:self-stretch xl:self-stretch lg:[grid-row:span_1] xl:[grid-row:span_1]"
+          data-slot="question-split-handle-boundary"
+          className="hidden min-w-0 lg:block xl:block lg:col-start-2 xl:col-start-2 lg:[grid-row:span_1] xl:[grid-row:span_1]"
         >
-          <MaterialSplitHandle
-            ratio={splitRatio ?? 50}
-            onRatioChange={onSplitRatioChange}
-            containerRef={containerRef}
-          />
+          <div
+            data-slot="question-split-handle-container"
+            className="hidden lg:flex xl:flex lg:sticky xl:sticky lg:top-[calc(var(--attempt-header-height,64px)+16px)] xl:top-[calc(var(--attempt-header-height,64px)+16px)] lg:h-full xl:h-full lg:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] xl:max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] lg:justify-center xl:justify-center"
+          >
+            <MaterialSplitHandle
+              ratio={splitRatio ?? 50}
+              onRatioChange={onSplitRatioChange}
+              containerRef={containerRef}
+            />
+          </div>
         </div>
       )}
     </li>

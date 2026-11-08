@@ -1265,6 +1265,18 @@ export const responses = sqliteTable(
   ],
 );
 
+/** 教师修正前的草稿证据，仅供内部审计，随修正同事务追加。 */
+export const responseEditAudits = sqliteTable("response_edit_audits", {
+  id: text("id").primaryKey(),
+  responseId: text("response_id").notNull(),
+  teacherId: text("teacher_id").notNull(),
+  kind: text("kind").$type<"snapshot" | "answer">().notNull(),
+  previousJson: text("previous_json"),
+  reason: text("reason").notNull(),
+  answerRevision: integer("answer_revision").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 /**
  * attempt 上下文冻结快照表（tt-05b / QM-03 预留，决策记录 §5.8.1 与设计方案
  * §5.1/§5.3）——开卷冻结时按 attempt 保存组与材料的冻结内容、版本及引用：
@@ -2737,3 +2749,51 @@ export type AttemptContextSnapshotRow =
 /** attempt_context_snapshots 表插入类型 */
 export type NewAttemptContextSnapshotRow =
   typeof attemptContextSnapshots.$inferInsert;
+
+/** 单题过程与当前稿独立。删除记录后保留授权行直到到期，拒绝迟到批次。 */
+export const questionProcessRecordings = sqliteTable(
+  "question_process_recordings",
+  {
+    id: text("id").primaryKey(),
+    attemptId: text("attempt_id")
+      .notNull()
+      .unique()
+      .references(() => attempts.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [index("question_process_expires_idx").on(table.expiresAt)],
+);
+
+export const questionProcessBatches = sqliteTable(
+  "question_process_batches",
+  {
+    recordingId: text("recording_id")
+      .notNull()
+      .references(() => questionProcessRecordings.id, { onDelete: "cascade" }),
+    questionId: text("question_id").notNull(),
+    segmentId: text("segment_id").notNull(),
+    firstSeq: integer("first_seq").notNull(),
+    lastSeq: integer("last_seq").notNull(),
+    payload: text("payload").notNull(),
+    bytes: integer("bytes").notNull(),
+  },
+  (table) => [
+    index("question_process_capacity_idx").on(
+      table.recordingId,
+      table.questionId,
+      table.bytes,
+      table.firstSeq,
+      table.lastSeq,
+    ),
+    primaryKey({
+      columns: [
+        table.recordingId,
+        table.questionId,
+        table.segmentId,
+        table.firstSeq,
+      ],
+    }),
+  ],
+);

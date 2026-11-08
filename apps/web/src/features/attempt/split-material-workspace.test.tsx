@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   AttemptContextData,
   AttemptDraftData,
@@ -173,6 +179,17 @@ function renderPage() {
   );
 }
 
+async function jumpWithAnswerCard(index: number) {
+  fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
+  const dialog = await screen.findByRole("dialog", { name: "答题卡" });
+  fireEvent.click(
+    within(dialog).getByRole("button", {
+      name: new RegExp(`^第 ${index} 题，`),
+    }),
+  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+}
+
 describe("分栏材料工作区与协同标画集成", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -250,8 +267,7 @@ describe("分栏材料工作区与协同标画集成", () => {
     });
 
     // 切换到第 3 题（solo 材料题）
-    const q3Button = screen.getByRole("button", { name: /第 3 题/ });
-    fireEvent.click(q3Button);
+    await jumpWithAnswerCard(3);
 
     await waitFor(() => {
       expect(screen.getByLabelText("本题材料")).toBeInTheDocument();
@@ -312,11 +328,8 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(peeked?.["mat-group"]).toEqual(sampleDoc);
 
     // 切到第 2 题再切回，笔迹仍然保留在合并草稿仓中
-    const q2Buttons = screen.getAllByRole("button", { name: /第 2 题/ });
-    if (q2Buttons[0]) fireEvent.click(q2Buttons[0]);
-
-    const q1Buttons = screen.getAllByRole("button", { name: /第 1 题/ });
-    if (q1Buttons[0]) fireEvent.click(q1Buttons[0]);
+    await jumpWithAnswerCard(2);
+    await jumpWithAnswerCard(1);
 
     const reloadedInk = await draftStore.getMaterialInk(
       ATTEMPT_ID,
@@ -447,8 +460,10 @@ describe("分栏材料工作区与协同标画集成", () => {
     );
     expect(groupMaterials).toBeInTheDocument();
     expect(groupMaterials?.className).toContain("isolate");
-    expect(groupMaterials?.className).toContain("lg:col-start-1");
-    expect(groupMaterials?.className).toContain(
+    expect(groupMaterials?.parentElement?.className).toContain(
+      "lg:col-start-1",
+    );
+    expect(groupMaterials?.parentElement?.className).toContain(
       "lg:[grid-row:span_var(--qg-row-span)]",
     );
     expect(groupMaterials?.className).toContain("lg:sticky");
@@ -462,8 +477,10 @@ describe("分栏材料工作区与协同标画集成", () => {
     );
     expect(soloMaterials).toBeInTheDocument();
     expect(soloMaterials?.className).toContain("isolate");
-    expect(soloMaterials?.className).toContain("lg:col-start-1");
-    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.parentElement?.className).toContain("lg:col-start-1");
+    expect(soloMaterials?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloMaterials?.className).toContain("lg:sticky");
     expect(soloMaterials?.className).toContain("lg:overflow-y-auto");
     expect(soloMaterials?.className).toContain("lg:overscroll-contain");
@@ -572,8 +589,10 @@ describe("分栏材料工作区与协同标画集成", () => {
       '[data-slot="question-materials"]',
     );
     expect(soloMaterials).toBeInTheDocument();
-    expect(soloMaterials?.className).toContain("lg:col-start-1");
-    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.parentElement?.className).toContain("lg:col-start-1");
+    expect(soloMaterials?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloMaterials?.className).toContain("lg:sticky");
     expect(soloMaterials?.className).toContain("lg:overflow-y-auto");
 
@@ -581,8 +600,10 @@ describe("分栏材料工作区与协同标画集成", () => {
       '[data-slot="question-split-handle-container"]',
     );
     expect(soloHandle).toBeInTheDocument();
-    expect(soloHandle?.className).toContain("lg:col-start-2");
-    expect(soloHandle?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloHandle?.parentElement?.className).toContain("lg:col-start-2");
+    expect(soloHandle?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloHandle?.className).toContain("lg:sticky");
 
     // 无材料普通题整行跨列 (lg:col-span-full)
@@ -655,8 +676,10 @@ describe("分栏材料工作区与协同标画集成", () => {
     expect(groupMaterials).toHaveLength(2);
     for (const mat of groupMaterials) {
       expect(mat.className).toContain("isolate");
-      expect(mat.className).toContain("lg:col-start-1");
-      expect(mat.className).toContain("lg:[grid-row:span_var(--qg-row-span)]");
+      expect(mat?.parentElement?.className).toContain("lg:col-start-1");
+      expect(mat?.parentElement?.className).toContain(
+        "lg:[grid-row:span_var(--qg-row-span)]",
+      );
       expect(mat.className).toContain("lg:sticky");
       expect(mat.className).toContain("lg:overscroll-contain");
     }
@@ -665,7 +688,9 @@ describe("分栏材料工作区与协同标画集成", () => {
     const soloMaterials = container.querySelector(
       '[data-slot="question-materials"]',
     );
-    expect(soloMaterials?.className).toContain("lg:[grid-row:span_1]");
+    expect(soloMaterials?.parentElement?.className).toContain(
+      "lg:[grid-row:span_1]",
+    );
     expect(soloMaterials?.className).toContain("lg:sticky");
 
     // 所有中缝 Handle 同栏粘性

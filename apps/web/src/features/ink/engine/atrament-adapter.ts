@@ -243,19 +243,28 @@ export function createAtramentSurface(
    * 未及赋值的旁路通知按缺省 "stroke" 处理。
    */
   let reasonOverride: InkChangeReason | null = null;
+  let finishCause: import("@tutor/contract").QuestionProcessFinish | undefined;
   const unsubscribeStore = store.subscribe(() => {
     const reason = reasonOverride ?? "stroke";
     reasonOverride = null;
-    notifyListeners(reason);
+    try {
+      notifyListeners(reason);
+    } finally {
+      finishCause = undefined;
+    }
   });
 
   /** 变更监听（surface.onChange 注册的回调集合） */
   const changeListeners = new Set<
-    (doc: InkDoc, reason: InkChangeReason) => void
+    (
+      doc: InkDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => void
   >();
   function notifyListeners(reason: InkChangeReason): void {
     const doc = buildAtramentDoc(store);
-    for (const cb of changeListeners) cb(doc, reason);
+    for (const cb of changeListeners) cb(doc, reason, finishCause);
   }
   /** 在 reason 标记下执行一次 store 变更（§5.0-C14 分型） */
   function withReason<T>(reason: InkChangeReason, action: () => T): T {
@@ -401,7 +410,10 @@ export function createAtramentSurface(
    * **落笔快照** liveStrokeIsErase（复审③）：工具条中途切换不改变在途笔画
    * 的提交归属。
    */
-  function commitLiveStroke(): void {
+  function commitLiveStroke(
+    cause: import("@tutor/contract").QuestionProcessFinish,
+  ): void {
+    finishCause = cause;
     if (liveStrokeIsErase) {
       // 下标属于删除前正文，提交前清空预览，避免重绘时误隐藏前移的其他笔画。
       const indices = [...pendingErase];
@@ -449,6 +461,7 @@ export function createAtramentSurface(
     erasePrev = undefined;
     liveStartedAt = 0;
     livePointerKind = undefined;
+    finishCause = undefined;
   }
 
   // ---- 事件处理 ----
@@ -474,7 +487,7 @@ export function createAtramentSurface(
       // discard＝丢弃手掌笔段（防误触）；commit＝superseded 自愈收笔（在途
       // 笔按已收点提交后新指针接管，复审①）——先执行收尾决策再 start
       if (d.action === "discard") abortLiveStroke();
-      if (d.action === "commit") commitLiveStroke();
+      if (d.action === "commit") commitLiveStroke(d.cause);
       if (d.action === "start") started = true;
     }
     // auto 模式笔观测可能翻转 touch-action（手势开始前设置的口径）
@@ -605,7 +618,7 @@ export function createAtramentSurface(
     machine = r.state;
     for (const d of r.decisions) {
       if (d.action === "commit") {
-        commitLiveStroke();
+        commitLiveStroke(d.cause);
         if (canvas?.hasPointerCapture?.(d.pointerId)) {
           canvas.releasePointerCapture(d.pointerId);
         }
@@ -891,7 +904,13 @@ export function createAtramentSurface(
       return store.canRedo();
     },
 
-    onChange(cb: (doc: InkDoc, reason: InkChangeReason) => void): () => void {
+    onChange(
+      cb: (
+        doc: InkDoc,
+        reason: InkChangeReason,
+        finish?: import("@tutor/contract").QuestionProcessFinish,
+      ) => void,
+    ): () => void {
       changeListeners.add(cb);
       return () => {
         changeListeners.delete(cb);

@@ -259,7 +259,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
         if (mode !== "统一交卷") {
           // 单题专注的提交入口在吸底栏，列表在题卡内。
           await page
-            .getByRole("button", { name: "提交本题", exact: true })
+            .getByRole("button", { name: "提交", exact: true })
             .first()
             .click();
           await expect(
@@ -270,29 +270,25 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
           ).toBeDisabled();
         } else {
           await expect(
-            page.getByRole("button", { name: "提交本题", exact: true }),
+            page.getByRole("button", { name: "提交", exact: true }),
           ).toHaveCount(0);
         }
         // 第二题留空也能交卷，不强迫先逐题提交。
-        const responsePromise = page.waitForResponse(
-          (response) =>
-            /\/api\/student\/attempts\/[^/]+\/submit$/.test(response.url()) &&
-            response.request().method() === "POST",
-        );
         if (mode === "单题逐题") {
+          await page.getByRole("button", { name: "练习更多" }).click();
           await page
-            .getByRole("button", { name: "答题卡", exact: true })
-            .click();
-          await page
-            .getByRole("dialog", { name: "答题卡", exact: true })
-            .getByRole("button", { name: "提前交卷", exact: true })
+            .getByRole("menuitem", { name: "提前交卷", exact: true })
             .click();
         } else
           await page.getByRole("button", { name: "交卷", exact: true }).click();
-        await page
-          .getByRole("button", { name: "确认交卷", exact: true })
-          .click();
-        const response = await responsePromise;
+        const [response] = await Promise.all([
+          page.waitForResponse(
+            (response) =>
+              /\/api\/student\/attempts\/[^/]+\/submit$/.test(response.url()) &&
+              response.request().method() === "POST",
+          ),
+          page.getByRole("button", { name: "确认交卷", exact: true }).click(),
+        ]);
         expect(response.status()).toBe(200);
         const sent = response.request().postDataJSON() as {
           revisions: unknown[];
@@ -357,9 +353,16 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       const attemptId =
         studentPage.url().match(/\/s\/attempts\/([^/?#]+)/)?.[1] ?? "";
       expect(attemptId).not.toBe("");
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 每题提交后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
 
       // —— 第 1 题：作答 → 提交本题 → 原位反馈（参考答案 + 解析；进行中卷
       // 对错判定按 M2 设计不下发——finalCorrect 恒 null，徽章为待批文案）——
@@ -367,7 +370,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
       const submitStart = Date.now();
-      await q1.getByRole("button", { name: "提交本题" }).click();
+      await q1.getByRole("button", { name: "提交", exact: true }).click();
       const feedback = q1.getByRole("region", { name: "本题反馈" });
       await expect(feedback).toBeVisible();
       annotateLatency("课程练习逐题提交→反馈可见", Date.now() - submitStart);
@@ -380,7 +383,9 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await expect(
         q1.getByRole("radio", { name: "对", exact: true }),
       ).toBeDisabled();
-      await expect(q1.getByRole("button", { name: "提交本题" })).toHaveCount(0);
+      await expect(
+        q1.getByRole("button", { name: "提交", exact: true }),
+      ).toHaveCount(0);
 
       // —— 未交的第 2 题无反馈区；草稿取卷键级断言（逐题提交后监控仍在）——
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
@@ -392,7 +397,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await chooseAnswer(studentPage, 2, "选项 B");
       await waitForDraftSaved(studentPage);
       const lastStart = Date.now();
-      await q2.getByRole("button", { name: "提交本题" }).click();
+      await q2.getByRole("button", { name: "提交", exact: true }).click();
       const q2Feedback = q2.getByRole("region", { name: "本题反馈" });
       await expect(q2Feedback).toBeVisible();
       await expect(q2Feedback.getByText("回答正确")).toBeVisible();
@@ -469,16 +474,23 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       expect(attemptId).not.toBe("");
 
       // —— 授权作业默认逐题（新协议）——
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 每题提交后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
 
       // —— 第 1 题：提交本题 → 原位反馈（显示授权的自动判定）+ 行锁定 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
       const submitStart = Date.now();
-      await q1.getByRole("button", { name: "提交本题" }).click();
+      await q1.getByRole("button", { name: "提交", exact: true }).click();
       const feedback = q1.getByRole("region", { name: "本题反馈" });
       await expect(feedback).toBeVisible();
       annotateLatency("作业逐题提交→反馈可见", Date.now() - submitStart);
@@ -495,7 +507,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
       await chooseAnswer(studentPage, 2, "选项 B");
       await waitForDraftSaved(studentPage);
-      await q2.getByRole("button", { name: "提交本题" }).click();
+      await q2.getByRole("button", { name: "提交", exact: true }).click();
       const q2Feedback = q2.getByRole("region", { name: "本题反馈" });
       await expect(q2Feedback).toBeVisible();
       await expect(q2Feedback.getByText("回答正确")).toBeVisible();
@@ -553,32 +565,36 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.goto(`/s/assignments/${assignmentId}`);
 
       // —— 整卷节奏摘要 + 教师限制说明 ——
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 交卷后查看"),
       ).toBeVisible();
       await expect(studentPage.getByText("老师要求交卷后公布")).toBeVisible();
 
       // —— 展开做题方式：反馈节奏整组禁用（canChangeFeedback=false）——
-      await studentPage.getByRole("button", { name: "调整做题方式" }).click();
       await expect(
         studentPage.getByRole("radio", { name: "每题提交后查看" }),
       ).toBeDisabled();
       await expect(
         studentPage.getByRole("radio", { name: "交卷后查看" }),
       ).toBeDisabled();
+      await expect(
+        studentPage.getByRole("radio", { name: "选中即提交" }),
+      ).toBeDisabled();
+
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
 
       // —— 教师限制下不提供逐题提交，普通作答不出现反馈 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
       await expect(
-        studentPage.getByRole("button", { name: "提交本题", exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        studentPage.getByRole("button", {
-          name: "不会，提交并看解析",
-          exact: true,
-        }),
+        studentPage.getByRole("button", { name: "提交", exact: true }),
       ).toHaveCount(0);
       await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
       await expect(
@@ -648,9 +664,16 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.goto(`/s/assignments/${assignmentId}`);
 
       // —— 第一次作答：整卷节奏两题 → 交卷出结果 ——
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 交卷后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
       await chooseAnswer(studentPage, 2, "选项 B");
@@ -692,9 +715,16 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.waitForURL(`**/s/attempts/${redoAttemptId}`);
 
       // —— 新卷从空白开始：第 1 题可作答（无锁定、无预填）——
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 交卷后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
       await expect(
         studentPage
           .locator('article[aria-label="第 1 题"]')
@@ -767,9 +797,16 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
       await studentPage.goto(`/s/assignments/${assignmentId}`);
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 交卷后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
       await chooseAnswer(studentPage, 2, "选项 B");
@@ -837,12 +874,22 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       );
       await studentPage.getByRole("button", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       await expect(
         studentPage.getByText("做题方式：列表 · 每题提交后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
 
       // —— 首次提交前展开做题方式，反馈节奏切「交卷后查看」（PATCH CAS）——
-      await studentPage.getByRole("button", { name: "调整做题方式" }).click();
+      await studentPage.getByRole("button", { name: "练习更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "做题方式", exact: true })
+        .click();
       const patchPromise = studentPage.waitForResponse(
         (r) =>
           /\/api\/student\/attempts\/[^/]+\/workflow/.test(r.url()) &&
@@ -854,19 +901,16 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await expect(
         studentPage.getByText("做题方式：列表 · 交卷后查看"),
       ).toBeVisible();
+      await studentPage
+        .getByRole("dialog", { name: "做题方式" })
+        .press("Escape");
 
       // —— 切换后收起逐题提交入口，不出现即时反馈 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await chooseAnswer(studentPage, 1, "对", true);
       await waitForDraftSaved(studentPage);
       await expect(
-        studentPage.getByRole("button", { name: "提交本题", exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        studentPage.getByRole("button", {
-          name: "不会，提交并看解析",
-          exact: true,
-        }),
+        studentPage.getByRole("button", { name: "提交", exact: true }),
       ).toHaveCount(0);
       await expect(q1.getByRole("region", { name: "本题反馈" })).toHaveCount(0);
       await expect(
@@ -948,7 +992,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       ).toHaveCount(1);
       await expect(
         studentPage.getByRole("button", { name: "答题卡", exact: true }),
-      ).toHaveText("1/2");
+      ).toContainText("1/2");
       await expect(
         studentPage.getByRole("button", { name: "调整做题方式" }),
       ).toHaveCount(0);

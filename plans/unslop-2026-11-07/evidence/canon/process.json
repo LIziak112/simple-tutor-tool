@@ -1,0 +1,148 @@
+{
+  "checksum": "157b327696a694fe1b7d7b4c2be5893f70cfe0a41fa9e9c36b9fb719cc9198a9",
+  "payload": {
+    "kind": "unslop-canon-topic",
+    "rules": [
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "UR-1",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Anything a person will see (text, copy, labels, meta rows, blocks, decoration, effects, layers, product claims) ships only if the request or the approved layout contains it. A request covers only its own content: placeholder rows or invented items inside a requested block are unrequested. Approval of a direction, a discussion or a reference unlocks proposals, not implementation. Each unrequested element in a delivered result is a finding; repeating it after a correction raises its severity. Text the user supplied verbatim is not a finding. Proposals and execution follow US-002.",
+        "strength": "hard",
+        "title": "Ship only requested content",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "US-001",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Follow the user's current explicit requirements when they differ from general style preferences. Review how well the requested design works and how it uses the project's design system. Do not reject an intentional choice merely because it appears in a generic anti-pattern list.",
+        "strength": "hard",
+        "title": "Explicit requirements outrank generic style lists",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "instruction",
+        "id": "US-002",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "When the agent believes an element outside the request is needed, it sends a separate proposal with the element's purpose and a preview instead of adding it to the result (UR-1). Inside the authorized scope, technical steps, checks and fixes of defects against the stated intent are done without asking, and signals such as risks, contradictions or lost elements are raised without asking. Outside that scope, or when a step is irreversible or external, the agent reports and asks first.",
+        "strength": "soft",
+        "title": "Needed additions are proposed; execution is proactive",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "credits": [
+          {
+            "name": "Benji Taylor",
+            "url": "https://github.com/benjitaylor/skills",
+            "work": "Stageshow: references/review.md (The reviewer's brief); references/craft.md (Color and looks)"
+          }
+        ],
+        "id": "US-003",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Before presenting a revision, verify the actual result against its requirements. Check design-system use, behavior and visual output separately. Reading guidelines or passing a build is not evidence that the interface meets its acceptance criteria. Use an independent reviewer before handoff. The reviewer gets the result and the original requirement, not the author's plan or explanations, and judges what is on screen. A finding is backed by a screenshot of the state it describes; a pass or a failure that is only expected, not seen, is not evidence. Each theme the product supports, such as light and dark, is checked on its own: a pass in one theme does not prove another.",
+        "strength": "hard",
+        "title": "Verify the actual result before handoff",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "US-004",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Make a systemic fix in the governing design-system component, token or recipe. Use its existing API or a defined extension, then verify the consuming interfaces. Do not conceal a local override behind a new token name.",
+        "strength": "hard",
+        "title": "Fix systemic issues at the design-system source",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "instruction",
+        "id": "US-005",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "A change to the design system does not by itself require renewed permission for work the user has already authorized. Ask when an unresolved product or design choice needs the owner's decision, and stay within the authorized scope.",
+        "strength": "soft",
+        "title": "Design-system changes inside authorized work",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "instruction",
+        "id": "US-006",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Keep a project's visual recipes scoped to that project. Reuse the principle of consistency without turning a particular color, shape or treatment into a universal requirement.",
+        "strength": "soft",
+        "title": "Visual recipes stay project-scoped",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "US-007",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Preserve the provenance of examples, references and claimed results. Distinguish a recorded example from a live verified run, and an agent proposal from an owner-approved decision. State missing evidence explicitly.",
+        "strength": "hard",
+        "title": "Keep provenance of examples and claims",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "US-008",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Preserve approved content, behavior and composition outside the requested change. Compare the original requirement, the baseline and the candidate. Treat unverified areas as unknown rather than passed.",
+        "strength": "hard",
+        "title": "Leave everything outside the change intact",
+        "topic": "process"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "US-010",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "When asked to remove a pattern throughout a product, locate and update every occurrence in the agreed scope. Verify the affected routes and components before handoff instead of fixing only the example that was pointed out.",
+        "strength": "hard",
+        "title": "Product-wide removal covers every occurrence",
+        "topic": "process"
+      }
+    ],
+    "schemaVersion": 1,
+    "topic": "process",
+    "version": "public-2026.11.06-1"
+  }
+}

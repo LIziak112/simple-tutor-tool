@@ -5,6 +5,7 @@ import {
   questionRevisionIdSchema,
   submitEvidenceDeclarationSchema,
 } from "./attempt.ts";
+import { studentAnswerSchema } from "./grading.ts";
 import {
   practiceQuestionProgressSchema,
   practiceRestrictionReasonSchema,
@@ -95,6 +96,22 @@ export const practiceQuestionSubmitRequestSchema = z
     evidence: submitEvidenceDeclarationSchema,
   })
   .strict();
+
+/** 学生 MCP 主动确认后的逐题提交，可同时提供本次答案。 */
+const practiceQuestionSubmitWithAnswerSchema =
+  practiceQuestionSubmitRequestSchema.extend({
+    answer: studentAnswerSchema.optional(),
+  });
+
+export type PracticeQuestionSubmitWithAnswer = z.infer<
+  typeof practiceQuestionSubmitWithAnswerSchema
+>;
+
+export const studentMcpPracticeQuestionSubmitSchema =
+  practiceQuestionSubmitWithAnswerSchema.extend({
+    practiceId: z.uuid(),
+    questionId: z.string().min(1),
+  });
 
 /**
  * 逐题提交回执 data（M2 新协议；strict 白名单）：本题安全反馈 + 本题与全卷

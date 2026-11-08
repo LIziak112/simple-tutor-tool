@@ -146,10 +146,17 @@ export function createFeelSurface(
     predictedSeen: false,
     renderMs: 0,
   };
-  const listeners = new Set<(doc: InkDoc, reason: InkChangeReason) => void>();
+  let finishCause: import("@tutor/contract").QuestionProcessFinish | undefined;
+  const listeners = new Set<
+    (
+      doc: InkDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => void
+  >();
   const unsubscribe = store.subscribe(() => {
     const doc = buildAtramentDoc(store);
-    for (const cb of listeners) cb(doc, reason);
+    for (const cb of listeners) cb(doc, reason, finishCause);
   });
   function change(next: InkChangeReason, action: () => void) {
     reason = next;
@@ -213,7 +220,11 @@ export function createFeelSurface(
       renders.push(performance.now());
     });
   }
-  function finishLive(discard = false) {
+  function finishLive(
+    discard = false,
+    cause?: import("@tutor/contract").QuestionProcessFinish,
+  ) {
+    finishCause = cause;
     if (!discard) {
       if (eraseActive) {
         change("erase", () => store.commitErase([...pendingErase]));
@@ -227,6 +238,7 @@ export function createFeelSurface(
       pendingErase.clear();
       redrawDry();
     }
+    finishCause = undefined;
     live = null;
     erasePrev = undefined;
     eraseActive = false;
@@ -237,7 +249,7 @@ export function createFeelSurface(
     machine = result.state;
     for (const decision of result.decisions) {
       if (decision.action === "commit") {
-        finishLive();
+        finishLive(false, decision.cause);
         if (wet?.hasPointerCapture?.(decision.pointerId))
           wet.releasePointerCapture(decision.pointerId);
       }
@@ -279,7 +291,7 @@ export function createFeelSurface(
     touchAction();
     for (const decision of result.decisions) {
       if (decision.action === "discard") finishLive(true);
-      if (decision.action === "commit") finishLive();
+      if (decision.action === "commit") finishLive(false, decision.cause);
       if (decision.action !== "start") continue;
       startStamp = event.timeStamp;
       lastStamp = event.timeStamp;

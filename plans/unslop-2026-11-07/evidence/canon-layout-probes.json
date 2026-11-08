@@ -1,0 +1,83 @@
+[
+  {
+    "case": "touch-render",
+    "route": "/s/home",
+    "scrollWidth": 390
+  },
+  {
+    "case": "touch-render",
+    "route": "/s/settings",
+    "scrollWidth": 390
+  },
+  {
+    "case": "touch-render",
+    "route": "/s/records",
+    "scrollWidth": 390
+  },
+  {
+    "case": "touch-render",
+    "route": "/s/settings/ai",
+    "scrollWidth": 390
+  },
+  {
+    "case": "nested-frames",
+    "before": [
+      {
+        "class": "flex flex-col gap-3 rounded-xl border border-border/80 bg-background/80 p-4 shadow-xs backdrop-blur-xs",
+        "text": "成绩公布倒计时\n截止时间：2026年11月8日 02:18:02\n00\n天\n23\n时\n59\n分\n59"
+      },
+      {
+        "class": "flex flex-col items-center justify-center rounded-lg border border-border bg-muted/40 py-2",
+        "text": "00\n天"
+      },
+      {
+        "class": "flex flex-col items-center justify-center rounded-lg border border-border bg-muted/40 py-2",
+        "text": "23\n时"
+      },
+      {
+        "class": "flex flex-col items-center justify-center rounded-lg border border-border bg-muted/40 py-2",
+        "text": "59\n分"
+      },
+      {
+        "class": "flex flex-col items-center justify-center rounded-lg border border-border bg-muted/40 py-2",
+        "text": "59\n秒"
+      },
+      {
+        "class": "flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3",
+        "text": "交卷时间\n2026年11月5日 00:10:19"
+      },
+      {
+        "class": "flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3",
+        "text": "已作答题数\n3 / 3 题"
+      },
+      {
+        "class": "flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3",
+        "text": "手写原稿状态\n已归档保存"
+      },
+      {
+        "class": "flex flex-col gap-1 rounded-lg border border-border/60 bg-background/60 p-3",
+        "text": "作答结果\n待公布 🔒（截止后自动判分）"
+      },
+      {
+        "class": "flex items-start gap-2.5 rounded-xl border border-amber-200/60 bg-amber-50/70 p-3.5 text-xs leading-relaxed text-amber-900 sm:text-sm dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200",
+        "text": "为什么不在交卷后立即出分？\n\n为保障全班同学独立思考和练习公平，老师设置了在截止时间后统一公布。截止"
+      }
+    ]
+  },
+  {
+    "case": "touch-library-choice",
+    "pointer": true,
+    "controls": [
+      {
+        "w": 20,
+        "h": 20,
+        "labels": 0
+      },
+      {
+        "w": 20,
+        "h": 20,
+        "labels": 0
+      }
+    ]
+  }
+]

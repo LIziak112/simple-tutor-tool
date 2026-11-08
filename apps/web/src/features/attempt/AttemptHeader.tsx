@@ -1,5 +1,5 @@
-import { ArrowLeft, MoreHorizontal } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { ArrowLeft, Info, MoreHorizontal } from "lucide-react";
+import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,14 +19,14 @@ import { AttemptEditorNotice, useAttemptEditor } from "./AttemptEditorContext";
 
 export function AttemptHeader({
   title,
-  status,
+  moreTriggerRef,
   onBack,
   actions,
   menuItems,
   children,
 }: {
   title: string;
-  status: (closeDetails: () => void) => ReactNode;
+  moreTriggerRef?: RefObject<HTMLButtonElement | null>;
   onBack: () => void;
   /** 标题右侧的扩展动作位（SAI-19 AI 助教入口；无动作时不占格） */
   actions?: ReactNode;
@@ -38,22 +38,19 @@ export function AttemptHeader({
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const ownTrigger = useRef<HTMLButtonElement>(null);
+  const trigger = moreTriggerRef ?? ownTrigger;
   const editor = useAttemptEditor();
   const toolbar = useReadingToolbar({
-    blocked: detailsOpen || editor?.active != null || editor?.paper != null,
+    blocked: detailsOpen || editor?.active != null,
   });
-  const navigating = useRef(false);
-  const closeDetails = () => {
-    navigating.current = detailsOpen;
-    setDetailsOpen(false);
-  };
   const hasActions = actions != null;
   return (
     <header
       ref={toolbar.ref}
       data-reading-hidden={toolbar.hidden}
       data-slot="attempt-header"
-      className={`reading-toolbar sticky top-0 z-20 -mx-3 grid min-h-14 items-center gap-x-2 gap-y-1 border-b border-border bg-background/95 px-3 py-1.5 backdrop-blur sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2 ${hasActions ? "grid-cols-[44px_minmax(0,1fr)_44px_44px] sm:grid-cols-[44px_minmax(0,1fr)_44px_auto_44px]" : "grid-cols-[44px_minmax(0,1fr)_44px] sm:grid-cols-[44px_minmax(0,1fr)_auto_44px]"}`}
+      className={`reading-toolbar sticky top-0 z-20 -mx-3 grid min-h-14 items-center gap-x-2 border-b border-border bg-background/95 px-3 py-1.5 backdrop-blur sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2 ${hasActions ? "grid-cols-[44px_minmax(0,1fr)_44px_44px] sm:grid-cols-[44px_minmax(0,1fr)_auto_44px]" : "grid-cols-[44px_minmax(0,1fr)_44px]"}`}
     >
       <div className="contents">
         <Button
@@ -79,9 +76,10 @@ export function AttemptHeader({
             <Button
               type="button"
               variant="ghost"
-              className={`row-start-1 size-11 shrink-0 p-0 ${hasActions ? "col-start-4 sm:col-start-5" : "col-start-3 sm:col-start-4"}`}
+              ref={trigger}
+              className={`row-start-1 size-11 shrink-0 p-0 ${hasActions ? "col-start-4" : "col-start-3"}`}
               aria-label="练习更多"
-              title="练习信息"
+              title="练习更多"
             >
               <MoreHorizontal aria-hidden className="size-5" />
             </Button>
@@ -89,32 +87,19 @@ export function AttemptHeader({
           <DropdownMenuContent align="end" className="max-w-[calc(100vw-24px)]">
             {menuItems}
             <DropdownMenuItem onSelect={() => setDetailsOpen(true)}>
+              <Info aria-hidden className="size-4" />
               练习信息
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
-      <div className="contents">
-        <div
-          className={`hidden min-w-0 sm:col-start-2 sm:row-start-2 sm:block ${hasActions ? "sm:col-span-4" : "sm:col-span-3"}`}
-        >
-          {children}
-        </div>
-        <div
-          className={`hidden min-w-0 sm:row-start-1 sm:block sm:max-w-sm ${hasActions ? "sm:col-start-4" : "sm:col-start-3"}`}
-        >
-          {status(closeDetails)}
-        </div>
       </div>
       <AttemptEditorNotice />
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent
           className="max-h-[70dvh] overflow-y-auto"
           onCloseAutoFocus={(event) => {
-            if (navigating.current) {
-              event.preventDefault();
-              navigating.current = false;
-            }
+            event.preventDefault();
+            trigger.current?.focus();
           }}
         >
           <DialogHeader>
@@ -122,7 +107,6 @@ export function AttemptHeader({
             <DialogDescription>练习信息</DialogDescription>
           </DialogHeader>
           <div>{children}</div>
-          {status(closeDetails)}
         </DialogContent>
       </Dialog>
     </header>

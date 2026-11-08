@@ -1,0 +1,70 @@
+[
+  {
+    "case": "lesson-with-questions",
+    "width": 1440,
+    "questionCount": 0,
+    "text": "UI审查讲练\n\n课程：UI审查·讲练夹具 · 讲练 · 第 1 次\n全部已保存\n收起目录\n求助记录\n\n讲练目录\n\n认识有理数\n数轴比较\nUI审查讲练\n认识有理数\n\n判断下面的说法。\n\n第 1 题\n\n判断\n未填写\n圈画\n草稿\n\n1 是正数。（　）\n\n对\n错\n显示答案\n数轴比较\n\n第 2 题\n\n单选\n未填写\n圈画\n草稿\n\n下列哪个数较大？\n\n选项\nA\n\n1\n\n选项\nB\n\n2\n\n显示答案",
+    "scrollWidth": 1440
+  },
+  {
+    "case": "lesson-with-questions",
+    "width": 768,
+    "questionCount": 0,
+    "text": "UI审查讲练\n\n展开目录\n求助记录\n课程：UI审查·讲练夹具 · 讲练 · 第 1 次\n全部已保存\nUI审查讲练\n认识有理数\n\n判断下面的说法。\n\n第 1 题\n\n判断\n未填写\n圈画\n草稿\n\n1 是正数。（　）\n\n对\n错\n显示答案\n数轴比较\n\n第 2 题\n\n单选\n未填写\n圈画\n草稿\n\n下列哪个数较大？\n\n选项\nA\n\n1\n\n选项\nB\n\n2\n\n显示答案",
+    "scrollWidth": 768
+  },
+  {
+    "case": "lesson-with-questions",
+    "width": 390,
+    "questionCount": 0,
+    "text": "UI审查讲练\n\n展开目录\n课程：UI审查·讲练夹具 · 讲练 · 第 1 次\n全部已保存\nUI审查讲练\n认识有理数\n\n判断下面的说法。\n\n第 1 题\n\n判断\n未填写\n\n1 是正数。（　）\n\n对\n错\n显示答案\n数轴比较\n\n第 2 题\n\n单选\n未填写\n\n下列哪个数较大？\n\n选项\nA\n\n1\n\n选项\nB\n\n2\n\n显示答案",
+    "scrollWidth": 390
+  },
+  {
+    "case": "unit-redo-dialog",
+    "tabs": [
+      {
+        "text": "第 3 次\n已交卷\n做对 4 / 5 题 · 待批 1 题\n14 天前",
+        "inside": false
+      },
+      {
+        "text": "第 2 次\n已交卷\n做对 4 / 5 题 · 待批 1 题\n16 天前",
+        "inside": false
+      },
+      {
+        "text": "第 1 次\n已交卷\n做对 4 / 5 题 · 待批 1 题\n20 天前",
+        "inside": false
+      },
+      {
+        "text": "先不做",
+        "inside": true
+      },
+      {
+        "text": "开始新一次",
+        "inside": true
+      }
+    ],
+    "escapeStillOpen": 1
+  },
+  {
+    "case": "home-outline",
+    "headings": [
+      {
+        "tag": "H2",
+        "text": "我的作业\n1"
+      },
+      {
+        "tag": "H2",
+        "text": "错题本"
+      },
+      {
+        "tag": "H2",
+        "text": "我的课程"
+      }
+    ],
+    "courseMotion": {
+      "property": "width",
+      "duration": "0.15s"
+    }
+  }
+]

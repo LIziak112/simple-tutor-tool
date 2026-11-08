@@ -257,7 +257,7 @@ describe("dispatchComparison 对照派发", () => {
       ),
     );
     expect(
-      screen.getByText("参考答案与详解将在截止后公布 🔒"),
+      screen.getByText("参考答案与详解将在截止后公布"),
     ).toBeInTheDocument();
     // unavailable 在类型上不携带参考（ReferenceMaterial 判别联合，I09 类型
     // 层保证），此层可断言的真实泄露面是参考呈现不挂载；携带 secret 参考内容

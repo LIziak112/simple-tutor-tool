@@ -25,6 +25,7 @@ import {
   submissionEvidence,
 } from "../db/schema";
 import { resolveWithinRootOrNull } from "../lib/blob-io";
+import { canonicalJsonOf } from "../lib/canonical-json";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
@@ -272,25 +273,6 @@ export function evidenceImageFileName(
 ): string {
   const label = phase === "scratch" ? "original" : phase;
   return `evidence/${ref}-${label}-${String(pageIndex + 1).padStart(2, "0")}.png`;
-}
-
-/**
- * 规范化序列化（复审 A7：递归键序排序）——快照内容身份的稳定形态：
- * 同内容不同键序的两份 JSON 得同一 hash（冻结快照由不同链路/版本写入时
- * 键序不保证一致，逐字 stringify 会把同内容误判为两个版本）。
- */
-function canonicalJsonOf(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJsonOf).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJsonOf(v)}`);
-    entries.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
 }
 
 /** sha-256 hex（快照内容身份：对 canonicalJsonOf 规范化形态计算） */

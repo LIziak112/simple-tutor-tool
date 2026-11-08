@@ -1,0 +1,26 @@
+[
+  {
+    "case": "reverse",
+    "before": {
+      "x": -80.62460327148438,
+      "animation": "none",
+      "transform": "matrix(1, 0, 0, 1, -80.6246, 0)",
+      "transition": "0.18s, 0.18s"
+    },
+    "after": {
+      "x": -229.61758422851562,
+      "animation": "overlay-presence",
+      "transform": "matrix(1, 0, 0, 1, -229.618, 0)",
+      "transition": "0.18s, 0.18s"
+    }
+  },
+  {
+    "case": "reduced-menu",
+    "value": {
+      "x": 230,
+      "animation": "none",
+      "transform": "none",
+      "transition": "0s"
+    }
+  }
+]

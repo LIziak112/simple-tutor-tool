@@ -1927,7 +1927,7 @@ describe("呈现层接口原型（TT-02）", () => {
       </div>,
     );
     expect(
-      screen.getByText("参考答案与详解将在截止后公布 🔒"),
+      screen.getByText("参考答案与详解将在截止后公布"),
     ).toBeInTheDocument();
     unmount();
     render(

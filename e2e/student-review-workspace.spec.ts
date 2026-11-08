@@ -534,8 +534,12 @@ test(
       page.getByRole("region", { name: "交卷成功与待公布提示" }),
     ).toBeVisible();
     const card = page.getByRole("article", { name: "第 2 题", exact: true });
-    const picked = card.getByRole("listitem").filter({ hasText: "你的选择" });
-    await expect(picked).not.toHaveClass(/red|emerald/);
+    const picked = card.getByRole("radio", { checked: true });
+    await expect(picked).toHaveCount(1);
+    await expect(picked).toBeDisabled();
+    await expect(picked.locator("xpath=ancestor::label[1]")).not.toHaveClass(
+      /red|emerald/,
+    );
     await expect(card.getByText("正确项", { exact: false })).toHaveCount(0);
     await page.getByRole("button", { name: "打开回看题号" }).click();
     const range = page

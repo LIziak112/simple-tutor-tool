@@ -1,7 +1,5 @@
 import type {
-  AnnotationSurfaceLayout,
   AnswerKind,
-  AttemptQuestionPublic,
   QuestionAnswers,
   ReferenceOf,
   StudentAnswer,
@@ -10,16 +8,12 @@ import type { ReactNode } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { formatReferenceAnswers } from "../attempt/answer-format";
 import type { QuestionCompletion } from "../attempt/question-completion";
-import { type PreparedQuestion, prepareQuestion } from "./prepare-question";
+import type { PreparedQuestion } from "./prepare-question";
 import type { AnswerKindViewTable, ReferenceMaterial } from "./types";
 import { assertNeverView } from "./types";
 import { choiceView, multiView } from "./views/choice";
 import { AnswerComparisonShell } from "./views/comparison";
-import {
-  captureFrozenFillControls,
-  FrozenFillControls,
-  fillView,
-} from "./views/fill";
+import { fillView } from "./views/fill";
 import { finalView } from "./views/final";
 import { judgeView } from "./views/judge";
 import { matchingView } from "./views/matching";
@@ -60,74 +54,6 @@ export const answerKindViews = {
   QuestionAnswers
 >;
 
-/** 捕获和恢复共用这一处题型能力分发；其他题型采用固定原稿加独立作答视图。 */
-function frozenAdapterOf(question: AttemptQuestionPublic) {
-  const model = prepareQuestion(question, `${question.id}-frozen`);
-  switch (model.kind) {
-    case "fill":
-      return {
-        capture: (exported: HTMLElement) =>
-          captureFrozenFillControls(model, exported),
-        render: (
-          layout: AnnotationSurfaceLayout,
-          answer: StudentAnswer | undefined,
-          update: (answer: StudentAnswer, defer?: boolean) => void,
-          disabled: boolean,
-        ): ReactNode | null => {
-          if (
-            layout.renderVersion !== 3 ||
-            layout.questionRevisionId !== question.questionRevisionId ||
-            model.slots.length === 0 ||
-            model.slots.length !== layout.controls.length ||
-            new Set(model.slots.map((slot) => slot.slotId)).size !==
-              model.slots.length ||
-            !model.slots.every(
-              (slot) =>
-                slot.slotKind === "text" &&
-                layout.controls.some(
-                  (control) =>
-                    control.slotId === slot.slotId &&
-                    control.kind === slot.slotKind,
-                ),
-            )
-          )
-            return null;
-          return (
-            <FrozenFillControls
-              model={model}
-              controls={layout.controls}
-              answer={answer?.kind === "fill" ? answer : undefined}
-              update={update}
-              disabled={disabled}
-            />
-          );
-        },
-      };
-    default:
-      return null;
-  }
-}
-
-export function captureFrozenControls(
-  question: AttemptQuestionPublic,
-  exported: HTMLElement,
-) {
-  return frozenAdapterOf(question)?.capture(exported) ?? null;
-}
-
-/** 固定原稿的首批能力边界：只有完整同源槽位才接入唯一答案通道。 */
-export function dispatchFrozenInput(
-  question: AttemptQuestionPublic,
-  layout: AnnotationSurfaceLayout,
-  answer: StudentAnswer | undefined,
-  update: (answer: StudentAnswer, defer?: boolean) => void,
-  disabled: boolean,
-): ReactNode | null {
-  return (
-    frozenAdapterOf(question)?.render(layout, answer, update, disabled) ?? null
-  );
-}
-
 /**
  * 参考材料按 kind 窄化（类型层）。调用前提：错配参考已在 dispatchComparison
  * 顶部归一，本函数运行时值原样透传；断言仅表达「available 的 reference 与
@@ -147,6 +73,8 @@ export function dispatchInput(
   answer: StudentAnswer | undefined,
   update: (answer: StudentAnswer, defer?: boolean) => void,
   disabled: boolean,
+  repeatChoiceSelection = false,
+  correctOptionIndexes?: readonly number[],
 ): ReactNode {
   switch (model.kind) {
     case "judge":
@@ -165,6 +93,8 @@ export function dispatchInput(
           answer={answer?.kind === "choice" ? answer : undefined}
           update={update}
           disabled={disabled}
+          repeatChoiceSelection={repeatChoiceSelection}
+          correctOptionIndexes={correctOptionIndexes}
         />
       );
     case "multi":
@@ -174,6 +104,7 @@ export function dispatchInput(
           answer={answer?.kind === "multi" ? answer : undefined}
           update={update}
           disabled={disabled}
+          correctOptionIndexes={correctOptionIndexes}
         />
       );
     case "fill":

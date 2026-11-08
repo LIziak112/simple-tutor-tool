@@ -1,0 +1,135 @@
+{
+  "checksum": "eec7da27ed58b98e34c2b6c975091e99637d303d751d80d37bc904c9f7be0d5a",
+  "payload": {
+    "kind": "unslop-canon-topic",
+    "rules": [
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "bad-tone",
+        "id": "DEC-5",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Show metrics, testimonials and client logos only from the product's data and with a source; fabricated ones are a finding. Example: \"10,000+ teams\", \"3x faster\" or a row of logos in a template with no data behind it. Not a finding: a metric from product data with its source; a testimonial with a name and a link. This extends LK-01 and XP-22b to claims about one's own product. Detection signal: numbers with \"+\", \"%\" or \"x\" without a source in the data, a testimonial without a name or a link. Detection signals only prompt a review and give no verdict: their thresholds are not calibrated.",
+        "strength": "soft",
+        "title": "No fabricated proof",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "KR-20",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Do not show machine formats such as cron expressions, ISO 8601 durations or raw timestamps to people; translate them into plain language, for example \"daily at 06:30 UTC\". Leave an unfamiliar format as it is: an invented interpretation is worse than the raw string.",
+        "strength": "hard",
+        "title": "Machine formats translated for people",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "bad-tone",
+        "credits": [
+          {
+            "name": "Nick DiLallo",
+            "url": "https://uxdesign.cc/this-is-good-ux-writing-10c4b956a6c3",
+            "work": "This is good UX writing (UX Collective)"
+          }
+        ],
+        "id": "LK-01",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Interface copy does not create urgency the product does not have, such as an invented deadline or a claim that only a few places are left without data behind it. A real deadline with a date is not a finding.",
+        "strength": "soft",
+        "title": "No false urgency",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "US-009",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Production pages of any project do not show the agent's or the process's service notes: verification dates, internal source IDs, blocks such as \"Sources, checked\" with a date, or lines such as \"Sources:\" followed by internal IDs. Facts are checked against fresh sources, but that evidence lives in the working records. Sources meant for readers, such as sources in science or medicine, or citations, are not forbidden.",
+        "strength": "hard",
+        "title": "No agent or process service notes on production pages",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "XP-22a",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "When comparing products or writing promotion, compare what each product is meant to do. Do not use internal version numbers, release states or target/today markers.",
+        "strength": "hard",
+        "title": "Compare products at the level of intent",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "bad-tone",
+        "id": "XP-22b",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "State a claim about a competitor only with a verified source; where there is no verified fact, show a dash. Convey the advantage through the wording of your own product's intent.",
+        "strength": "soft",
+        "title": "Only verified claims about competitors",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "XP-23",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Before building a comparison or a promotional page, read the product's approved positioning and show its axes. A comparison assembled from technical mechanisms that omits the agreed differentiation is a finding.",
+        "strength": "hard",
+        "title": "Use the approved positioning in comparisons",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "XP-33",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Service and temporary text does not reach the visible production interface: template default placeholders, a loading state that never loads, aria-only text shown on screen, notes for developers. An empty field hides its element or stops the build. A real empty state with useful text for the user is not a finding.",
+        "strength": "hard",
+        "title": "No placeholder or service text in production",
+        "topic": "copy"
+      },
+      {
+        "attribution": "UNSLOP by Oleg.Design",
+        "class": "slop",
+        "id": "XP-34",
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "mode": "judgement",
+        "source": "UNSLOP",
+        "statement": "Stage must look like a ready candidate for production: what a person sees on stage is exactly what they will see in production. Anything visible on stage that slips through review can be carried into production. Show no commit hashes, preview or stage labels, environment badges or build versions on screen. Identify a build only invisibly: an HTTP header, a build.json file, a meta tag or an HTML comment. The rendered stage and production differ in visible text only by the changes of the release.",
+        "strength": "hard",
+        "title": "Stage shows exactly what production will show",
+        "topic": "copy"
+      }
+    ],
+    "schemaVersion": 1,
+    "topic": "copy",
+    "version": "public-2026.11.06-1"
+  }
+}

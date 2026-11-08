@@ -85,7 +85,11 @@ export interface AnnotationSurface {
   canUndo(): boolean;
   canRedo(): boolean;
   onChange(
-    cb: (doc: AnnotationDoc, reason: InkChangeReason) => void,
+    cb: (
+      doc: AnnotationDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => void,
   ): () => void;
   destroy(): void;
 }
@@ -232,17 +236,26 @@ export function createAnnotationSurface(
   let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
 
   let reasonOverride: InkChangeReason | null = null;
+  let finishCause: import("@tutor/contract").QuestionProcessFinish | undefined;
   store.subscribe(() => {
     const reason = reasonOverride ?? "stroke";
     reasonOverride = null;
-    notifyListeners(reason);
+    try {
+      notifyListeners(reason);
+    } finally {
+      finishCause = undefined;
+    }
   });
 
   const changeListeners = new Set<
-    (doc: AnnotationDoc, reason: InkChangeReason) => void
+    (
+      doc: AnnotationDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => void
   >();
   function notifyListeners(reason: InkChangeReason): void {
-    for (const cb of changeListeners) cb(getDoc(), reason);
+    for (const cb of changeListeners) cb(getDoc(), reason, finishCause);
   }
   function withReason<T>(reason: InkChangeReason, action: () => T): T {
     reasonOverride = reason;
@@ -366,6 +379,7 @@ export function createAnnotationSurface(
     if (livePrev && atrament) {
       atrament.endStroke(livePrev.x, livePrev.y);
     }
+    finishCause = undefined;
     livePoints = [];
     livePrev = null;
     liveStrokeIsErase = false;
@@ -375,7 +389,10 @@ export function createAnnotationSurface(
   }
 
   /** 收笔：按已收真实采样提交（不补造终点；落笔快照分派，同引擎口径） */
-  function commitLiveStroke(): void {
+  function commitLiveStroke(
+    cause: import("@tutor/contract").QuestionProcessFinish,
+  ): void {
+    finishCause = cause;
     if (liveStrokeIsErase) {
       // 删除前的预览下标不能继续用于删除后正文。
       const indices = [...pendingErase];
@@ -423,6 +440,7 @@ export function createAnnotationSurface(
       }
       withReason("stroke", () => store.commitAdd([mapped.stroke]));
     }
+    finishCause = undefined;
     livePoints = [];
     livePrev = null;
     liveStrokeIsErase = false;
@@ -454,7 +472,7 @@ export function createAnnotationSurface(
     let started = false;
     for (const d of r.decisions) {
       if (d.action === "discard") abortLiveStroke();
-      if (d.action === "commit") commitLiveStroke();
+      if (d.action === "commit") commitLiveStroke(d.cause);
       if (d.action === "start") started = true;
     }
     applyTouchAction();
@@ -567,7 +585,7 @@ export function createAnnotationSurface(
     machine = r.state;
     for (const d of r.decisions) {
       if (d.action === "commit") {
-        commitLiveStroke();
+        commitLiveStroke(d.cause);
         try {
           if (canvas?.hasPointerCapture?.(d.pointerId))
             canvas.releasePointerCapture(d.pointerId);
@@ -766,7 +784,11 @@ export function createAnnotationSurface(
     },
 
     onChange(
-      cb: (doc: AnnotationDoc, reason: InkChangeReason) => void,
+      cb: (
+        doc: AnnotationDoc,
+        reason: InkChangeReason,
+        finish?: import("@tutor/contract").QuestionProcessFinish,
+      ) => void,
     ): () => void {
       changeListeners.add(cb);
       return () => {

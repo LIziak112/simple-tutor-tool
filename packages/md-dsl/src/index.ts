@@ -9,6 +9,12 @@
 // 题面语义节点枚举（LR-4）：公开投影 → 块级语义节点（键 schema / kind 词表 /
 // 版本常量单源在 @tutor/contract question-node.ts；渲染器 data-lr-node 共用）。
 export { QUESTION_NODES_VERSION } from "@tutor/contract";
+export {
+  checkAiReply,
+  mathifyAiReferenceAnswer,
+  prepareAiReplyMarkdown,
+} from "./ai-reply/check.ts";
+export { normalizeAiReplyMath } from "./ai-reply/format.ts";
 export type { LintOptions, LintResult } from "./lint/lint.ts";
 export { lintDocument } from "./lint/lint.ts";
 export {

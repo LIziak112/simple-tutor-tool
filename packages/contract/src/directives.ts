@@ -323,6 +323,18 @@ const directiveAttrs = <TShape extends z.ZodRawShape>(shape: TShape) =>
 
 // ---------- 题目结构 ----------
 
+/** 管道符考点列表归一：解析器与 Markdown 预览使用同一规则。 */
+export function parseKnowledge(value?: string): string[] {
+  return [
+    ...new Set(
+      (value ?? "")
+        .split("|")
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 /** 一道题（练习/混合文档的顶层容器） */
 export const questionDirective = defineDirective({
   name: "question",
@@ -334,8 +346,12 @@ export const questionDirective = defineDirective({
     type: questionTypeSchema,
     /** 难度 1–5 的整数，缺省 2；remark-directive 属性值是字符串，故用 coerce */
     difficulty: z.coerce.number().int().min(1).max(5).default(2),
-    /** 考点（单个；解析时归一为数组入库，见 content.ts questionSchema.knowledge） */
-    knowledge: z.string().min(1).optional(),
+    /** 考点以 | 分隔，解析与预览共用 parseKnowledge 归一为数组。 */
+    knowledge: z
+      .string()
+      .min(1)
+      .regex(/[^|\s]/u, "考点至少包含一个非空名称")
+      .optional(),
     /**
      * response 类字数提示下限（TT-06，§5.4.1）：正整数，可选；仅展示提示，
      * 不硬校验不截断（设计方案 §7.3，硬限制属后续扩展）。
@@ -348,7 +364,8 @@ export const questionDirective = defineDirective({
     type: "题型，必填。十种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错 / response 开放 / matching 配对 / ordering 排序（新三型的完整作答语法 TT-06 注册、导入入口受发布开关控制）；写其他值会在 lint 报错",
     difficulty:
       "难度 1–5 的整数，缺省 2；可写字符串数字（如 difficulty=3），解析时自动转换",
-    knowledge: "考点（单个字符串），用于学情统计；解析时归一为数组入库",
+    knowledge:
+      '考点，多个用 | 分隔，如 knowledge="有理数加法|绝对值"；逐项去首尾空白、去空项、按首次出现去重；未写为空数组，显式全空或纯分隔符报错。考点无主辅之分，| 不能作为名称的一部分',
     "word-min":
       "response 开放题的字数提示下限（正整数，可选）：仅作答时展示提示，不硬校验、不截断",
     "word-max":
@@ -357,7 +374,7 @@ export const questionDirective = defineDirective({
   description:
     "一道题，练习/混合文档的顶层容器。内部依次为：题干正文（填空标记 [[…]]、判断 [[正确]]/[[错误]]、选择题任务列表 - [x] 都直接写在题干里）、可选的 :::hint（可多个）、手写题可选 :::answer、可选 :::solution。id 可用 {#p4-q7} 指定，缺省为「单元slug-序号」；编辑内容时保持 id 不变，学情统计才能跨版本延续。type 必填，difficulty 缺省 2。",
   example:
-    '::::question{type=fill difficulty=2 knowledge="有理数加法"}\n计算：$(-3)+7=$ [[4]]。\n\n:::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
+    '::::question{type=fill difficulty=2 knowledge="有理数加法|异号相加"}\n计算：$(-3)+7=$ [[4]]。\n\n:::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
 });
 
 /** question 指令属性经注册表 schema 校验后的输出形态（T1.3 起解析器消费，勿手抄同形类型） */

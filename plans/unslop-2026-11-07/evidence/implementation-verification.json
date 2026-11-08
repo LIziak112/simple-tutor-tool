@@ -1,0 +1,115 @@
+{
+  "baseline": "6c89c0deedc30ef78db8edb5aa1133927ef5df4d",
+  "sourceFiles": {
+    "apps/web/src/components/learning-status.ts": "71dc705acedd7f3b3c4557c417aa51cb2d30b57aea661579b92618435cce6fc4",
+    "apps/web/src/components/ui/button.test.tsx": "e936ac5cad591b3e19188ed7fa42f85d7ed0bd4e06557254127bf7a24f41e59d",
+    "apps/web/src/components/ui/button.tsx": "ec04dca29cca460d07d9fcbb74bd9e74c8b16a27488537775351b8ea8d9b67d1",
+    "apps/web/src/components/ui/dropdown-menu.tsx": "070a944e545e0251f597e0ef2c45402da129ce4abf8653ca99fb02e697a604d3",
+    "apps/web/src/components/ui/sheet.tsx": "9e4987010f6af821680ee3b2365765437a652c7fb965d6ffb951ae349eb4478f",
+    "apps/web/src/features/answering/index.test.tsx": "08025052e3656c35afa16b80997a57ace2151b03e239fad37c92e8075821b3a2",
+    "apps/web/src/features/answering/prototype.test.tsx": "df899bc352f91cade888e44fabb10dfbe25a40fd4014628feff919170a5bfd54",
+    "apps/web/src/features/answering/views/comparison.tsx": "980d07f2f0b4169f76f8bc74c27ba8c110bbbdbe1c1c869f47c7d29b2cd2b131",
+    "apps/web/src/features/assignments/AssignmentEditDialog.tsx": "93a3b2dd4abe9d4296a6dc616498896b3fa6e7ff62a4f29d8a3ccd424269e8e9",
+    "apps/web/src/features/attempt/AttemptQuestionCard.test.tsx": "9796bfe0d9d9479d93760e775a1eeace9876a48094a97f85aa6f66ff0569f701",
+    "apps/web/src/features/attempt/AttemptResultView.test.tsx": "2ec061ee35ae28194ee6a9846d1dd375e58d96dc15a63a8270b3e15d5c32a7a8",
+    "apps/web/src/features/attempt/PendingReleaseBanner.test.tsx": "fcec21f6a1c04bfb10f9b11698c27183261872bd81b3bb6dbde0124e19fed366",
+    "apps/web/src/features/attempt/PendingReleaseBanner.tsx": "92fe12f0bef5f13931facb14a783326c96618bcec3f692d8dddc18e55a7e2c5e",
+    "apps/web/src/features/attempt/ResultAnswerComparison.test.tsx": "152709b4235346a96bd8b71633ce777eef6270bc8610a5335b509a9e1c352e61",
+    "apps/web/src/features/content/AiPromptPanel.tsx": "cd2d50514494770c9022164da7f58c8e612984310ac407922618ccfee9131ab8",
+    "apps/web/src/features/content/ContentEditSheet.tsx": "5495863e9b93b95e452cf0389b7c3117a867028fce852eae457b2544b29069e3",
+    "apps/web/src/features/courses/CourseCatalogTab.tsx": "d498d9d0bbb5ff8be8cc5a2aefdae9a52a0649b863a6358a0ba2d872b509284f",
+    "apps/web/src/features/insights/InsightsMatrix.tsx": "02a88a11135c2b3c25af974c453dc311e120efe0e1e21ea487d535aa1f7dcc79",
+    "apps/web/src/features/insights/StudentReportsSection.tsx": "f2320d16399b610809b1d3d1d2dd24e58d1a607b96eaab26daff43a8c6095567",
+    "apps/web/src/features/insights/analytics-filters-ui.test.tsx": "6ddb5a3592e20b134f5fefa2ed628a858eb21a3eb4191de920b4199f425ba6de",
+    "apps/web/src/features/insights/analytics-filters.tsx": "c2eeba17994f3cccc7b3e24ab9945f69074b3df7fd59755dff388fc52efedef1",
+    "apps/web/src/features/library/UnitDetailSheet.test.tsx": "4f6d33ed2305836dc0c5062769516b62c305fca822b037f969cf92610a5ea43b",
+    "apps/web/src/features/library/UnitDetailSheet.tsx": "1166c4079a0b2b1d38e8304490ac9879c39deaba176dd8ec127f0acbb297c73e",
+    "apps/web/src/features/student-ai/AiBatchReviewPanel.tsx": "fa3ebf93713a50c3178f75638edd4eafd65c48a51378c1afec7a065055854a45",
+    "apps/web/src/features/student-ai/AiCompanionRail.tsx": "48d3c7b7bf848c5ddb07aa62475fc89efcdbb968abec1cfd596784e4b696295d",
+    "apps/web/src/features/student-ai/AiCompanionSession.tsx": "a50458dad7aaec77561ea1c6a32b98ba213364c05ea714034d8de947f0b7a599",
+    "apps/web/src/features/student-ai/AiConnectionManager.tsx": "015b3520884582fb3b22380390389cca43a8abdc7231dac5943e92a98881d61a",
+    "apps/web/src/features/student-ai/AiPolicyOverrideField.tsx": "b632ff71183a1d56323801d2c447d3814c1c5121484316bebdfb90650a5864c5",
+    "apps/web/src/features/student-ai/StudentAiPromptsSection.tsx": "c00a52bf400e72c85f7e4d3267fcf871d7a4ad649e08d0deec6b1193ee6194b9",
+    "apps/web/src/features/student-ai/StudentQuickButtonsSection.tsx": "8d5a78db358d7a29eaa5abc05cd93bbab4e750ed4084f91b5831a5d669096f6e",
+    "apps/web/src/features/student-ai/TeacherAiPromptsSection.tsx": "60c6e29adf0820b48bfeeb8c732b2eb00588ecff01b3a5ba40eb6c1794561afa",
+    "apps/web/src/features/student-ai/TeacherAiSettingsPanel.tsx": "7a9af5639e2b42629b32196498c92c67277f1609ff5a4d7cb6ff6207efd78580",
+    "apps/web/src/features/student-ai/TeacherAiSettingsSection.tsx": "0076845cbf8fdaba1107c39a80f66ffa1c0447fa9b9701ffb6a3ebf2353059fc",
+    "apps/web/src/features/student/records-views.tsx": "87b68d2711ec155932dad04f32b5e1036bee704cfca0cf317e506ab910f6e863",
+    "apps/web/src/features/student/student-ui.tsx": "ee7c71f46efe94c19f020c33e0fcd92defe4716d2a67e79efa013a08edf11fe2",
+    "apps/web/src/features/student/wrong-questions-ui.tsx": "2e1340cb297d039987194b8b8178c31fe7cd26cfac284e0a22f08342b15d7562",
+    "apps/web/src/features/teacher-attempts/attempt-views.tsx": "3a5f4e916074b89173e22c02a21325e0651f3907abf2a1de1c44f294a4a19aec",
+    "apps/web/src/features/teacher-settings/CapabilityProfileSection.tsx": "ea0856bbd9e89e25e63641ae4b330f8eba4ad89234f2920ccc48d7194ea40890",
+    "apps/web/src/features/teacher-settings/PracticeFeedbackSection.tsx": "f84131024d0cae05e84ad6740348a455c3e1fc0b7eff69e60a4d7e450d56140d",
+    "apps/web/src/index.css": "69cc944381ee2c94338b74e6884bffdfa073bc1bdb0db5619028cb25fc4e0085",
+    "apps/web/src/pages/admin/AdminSharedFilesPage.test.tsx": "04f3ed0bb5a827c81ebbaffe5b838cb2992a07f6294b7b6bf07e8c5298ad1031",
+    "apps/web/src/pages/admin/AdminSharedFilesPage.tsx": "73287163a9d12e7ce302f38fdc53683f90ec24159a19533000ea509df468b97b",
+    "apps/web/src/pages/student/StudentCourseUnitPage.test.tsx": "edd31833447698359a9a6440223ed30be5d7a6e7c68ed13281abf411911b2588",
+    "apps/web/src/pages/student/StudentCourseUnitPage.tsx": "5ad567d608ec432d580f922b8aca2e04cb5814a69d22b4828ff0961bdbba24af",
+    "apps/web/src/pages/student/StudentHomePage.tsx": "f1ff01949727027695eac7ea05abbc81489453d3056c06fa19e6916eef483823",
+    "apps/web/src/pages/student/StudentLessonLandingPage.test.tsx": "24d869ff29d96f1fa6336c482b1ceb6ca70162ab1f97fce986d9b8d3edfa820d",
+    "apps/web/src/pages/student/StudentLessonLandingPage.tsx": "4cd74638a60ec503d83f19db7ee0de0e532dd458c1ef72b0312ff316af769b50",
+    "apps/web/src/pages/teacher/CourseEditPage.tsx": "47009e5f585991e85fd4288faa13c95762f699398c55ca6e41c89978dc2f3337",
+    "apps/web/src/pages/teacher/ImportPage.test.tsx": "98b4817850ad836829bd706c7f86d814f9e0e96865aa9bc88f3cdaba31fdcf38",
+    "apps/web/src/pages/teacher/ImportPage.tsx": "940faf70cbc6f17df0a9e1fca4ca4946c9fc7686eb7ea74aee30b059a2dd6a04",
+    "apps/web/src/pages/teacher/InsightsOverviewPage.tsx": "d0c5dc925cb450ff4f9d008da8f248bd88d474e651c3530f07b8949aa7a65622",
+    "apps/web/src/pages/teacher/LibraryPage.tsx": "8e8f5bb045b43ff974aaf17832e2e9d46dbb3384d1bdbcc7f97e1bf8f69b4b21",
+    "apps/web/src/pages/teacher/SharedPage.test.tsx": "3b3b95853c1ac110651148c0d9a7b9e6aef17d2a8f060754107e31786bc98fd0",
+    "apps/web/src/pages/teacher/SharedPage.tsx": "32d82afe4761739822d43e0ef779b629cdcd588d12a1d2a679d0db1eeea6e43f",
+    "apps/web/src/pages/teacher/StatsViewSwitcher.tsx": "f85b00418e9cb46ca1f1a5ab8e07ed605fb0327fd5807b109c3ba490601b2ec1",
+    "apps/web/src/pages/teacher/StudentHomePage.tsx": "d8de1390becd86014a754363bd2c091508a7c09e00d4bded71b37b833136a56f",
+    "apps/web/src/pages/teacher/StudentsPage.tsx": "a78f362c452dfd06677405cfa23cfa6bdaa25c5b8785ef2d0ecff9fd04fa1e0c",
+    "e2e/full-chain.spec.ts": "b288d33ce075b0f4547774e5ae7d85e338fa887057dd9d3b37a47167f18373dd",
+    "e2e/qm-full-chain.spec.ts": "eb66a0b6b1364f9d24eaaffa4f7ff8791044f33ed1ff4de96643a249d06df473",
+    "e2e/student-course-practice.spec.ts": "70d180e1fbcc11e444b0e51be1356d0c1f5dd4f3223124d3aaf17dcd5d7bd410",
+    "e2e/student-workspace.spec.ts": "a1d560d92dde479bfee655622fbe85b4e303007df96b8f2270c092d576e32930"
+  },
+  "logDirectory": "C:/Users/HUAYU/AppData/Local/Temp/ownclass-unslop-fixes-20261107",
+  "runtimeSourceChangesAfterIndependentReview": false,
+  "checks": {
+    "unitFull": {
+      "passed": 7525,
+      "failed": 1,
+      "reason": "unmodified CLI test 5000ms timeout",
+      "isolatedCliPassed": 1
+    },
+    "responsiveFinal": {
+      "passed": 3
+    },
+    "buttonAndResponsiveFinal": {
+      "passed": 5
+    },
+    "e2eInitial": {
+      "passed": 146,
+      "failed": 8,
+      "skipped": 1,
+      "blockedBySerialFailure": 2
+    },
+    "e2eWorkspaceFollowup": {
+      "passed": 2
+    },
+    "e2eFiveFilesFollowup": {
+      "passed": 15,
+      "failed": 1,
+      "blockedBySerialFailure": 2
+    },
+    "e2eQmBaseline": {
+      "passed": 5
+    },
+    "e2eQmFinal": {
+      "passed": 5
+    },
+    "typecheckAffected": true,
+    "e2eTypecheck": true,
+    "independentReview": "no unresolved confirmed findings",
+    "e2eTypecheckFinal": true,
+    "lintChangedFinal": {
+      "passed": true,
+      "filesChecked": 1559,
+      "errors": 0,
+      "informationDiagnostics": 11
+    }
+  },
+  "implementationCommit": "0b3f1a69571409143e64ec00f484f7719aa6f12f",
+  "capturedAt": "2026-11-06T20:02:52.097800+00:00",
+  "deliveryStatusSource": "对应PR的实时CI与合并状态（本文件是创建PR前的本地证据快照）"
+}

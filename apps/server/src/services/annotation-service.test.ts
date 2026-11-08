@@ -523,60 +523,142 @@ function surfaceLayoutOf(
   });
 }
 
-it("v3 底图只允许声明协议能力的客户端写入，v2 既有上传口径不变", () => {
-  const world = makeWorld();
-  const { attemptId, revisionId } = makePaper(world);
-  const frozen = annotationSurfaceLayoutSchema.parse({
-    ...surfaceLayoutOf(revisionId, 300),
-    renderVersion: 3,
-    controls: [
-      { slotId: "slot-1", kind: "text", x: 20, y: 30, width: 112, height: 44 },
-    ],
-  });
-  const preview = assembleAnnotationBase(
-    world.db,
-    world.studentId,
-    attemptId,
-    Q,
-    "scratch",
-    frozen,
-  );
-  expect(preview.baseRenderVersion).toBe(3);
-  registerBaseImage(
-    world.db,
-    world.dataDir,
-    world.studentId,
-    attemptId,
-    Q,
-    makeNotePng(600, 400),
-    { questionRevisionId: revisionId, baseRenderVersion: 3, phase: "scratch" },
-  );
-  const body = gzipJson({ ...annotationDoc(400), baseWidth: 600 });
-  try {
-    putAnnotationDoc(
+it.each([3, 4] as const)(
+  "v%s 底图只允许声明对应协议能力的客户端写入，原始身份不变",
+  (renderVersion) => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    const frozen = annotationSurfaceLayoutSchema.parse({
+      ...surfaceLayoutOf(revisionId, 300),
+      renderVersion,
+      ...(renderVersion === 3
+        ? {
+            controls: [
+              {
+                slotId: "slot-1",
+                kind: "text",
+                x: 20,
+                y: 30,
+                width: 112,
+                height: 44,
+              },
+            ],
+          }
+        : {
+            renderProfile: "whole-question-v1",
+            compatibility: {
+              version: 1,
+              contentSignature: "a".repeat(64),
+              blocks: [
+                {
+                  tag: "DIV",
+                  node: "root",
+                  x: 0,
+                  y: 0,
+                  width: 300,
+                  height: 200,
+                },
+              ],
+              fonts: [["sans-serif", "16px", "400", "28px", "normal"]],
+              textRects: [],
+            },
+          }),
+    });
+    const preview = assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      frozen,
+    );
+    expect(preview.baseRenderVersion).toBe(renderVersion);
+    registerBaseImage(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      makeNotePng(600, 400),
+      {
+        questionRevisionId: revisionId,
+        baseRenderVersion: renderVersion,
+        phase: "scratch",
+      },
+    );
+    const body = gzipJson({ ...annotationDoc(400), baseWidth: 600 });
+    try {
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        body,
+        { baseRevision: 0, mutationId: randomUUID() },
+      );
+      throw new Error("旧客户端应被拒绝");
+    } catch (error) {
+      expectHttpError(error, 403, "ANNOTATION_PROTOCOL_UPGRADE_REQUIRED");
+    }
+    expect(() =>
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        body,
+        {
+          baseRevision: 0,
+          mutationId: randomUUID(),
+          protocolVersion: renderVersion === 3 ? 4 : 3,
+        },
+      ),
+    ).toThrow("新版客户端");
+    const receipt = putAnnotationDoc(
       world.db,
       world.dataDir,
       world.studentId,
       attemptId,
       Q,
       body,
-      { baseRevision: 0, mutationId: randomUUID() },
+      {
+        baseRevision: 0,
+        mutationId: randomUUID(),
+        protocolVersion: renderVersion,
+      },
     );
-    throw new Error("旧客户端应被拒绝");
-  } catch (error) {
-    expectHttpError(error, 403, "ANNOTATION_PROTOCOL_UPGRADE_REQUIRED");
-  }
-  const receipt = putAnnotationDoc(
-    world.db,
-    world.dataDir,
-    world.studentId,
-    attemptId,
-    Q,
-    body,
-    { baseRevision: 0, mutationId: randomUUID(), protocolVersion: 3 },
-  );
-  expect(receipt.revision).toBe(1);
-});
+    expect(receipt.revision).toBe(1);
+    const view = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(view.base?.layout).toEqual(frozen);
+    expect(view.doc).toEqual(
+      annotationDocSchema.parse({ ...annotationDoc(400), baseWidth: 600 }),
+    );
+    world.db.update(annotationBasesTable).set({ baseRenderVersion: 999 }).run();
+    expect(() =>
+      putAnnotationDoc(
+        world.db,
+        world.dataDir,
+        world.studentId,
+        attemptId,
+        Q,
+        body,
+        {
+          baseRevision: 1,
+          mutationId: randomUUID(),
+          protocolVersion: renderVersion,
+        },
+      ),
+    ).toThrow("新版客户端");
+  },
+);
 
 /** 把唯一底图行的 updatedAt 回拨到超过 TTL（模拟半途死亡后过了接管窗口） */
 function backdateBaseRow(world: World): void {

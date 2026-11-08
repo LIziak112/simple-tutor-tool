@@ -19,6 +19,7 @@
     "e2e:affected": "node scripts/e2e-affected.mjs",
     "lint": "biome check .",
     "lint:changed": "node scripts/lint-affected.mjs origin/main",
+    "lint:governance": "node scripts/governance-invariants.mjs",
     "typecheck": "tsc -p e2e/tsconfig.json && pnpm -r run typecheck",
     "typecheck:affected": "pnpm --filter \"...[origin/main]\" run typecheck",
     "format": "biome format --write .",
@@ -27,7 +28,9 @@
     "tutor-lint": "node packages/md-dsl/scripts/tutor-lint.ts",
     "reparse": "node apps/server/scripts/reparse.ts",
     "seed:demo": "pnpm --filter server run seed:demo",
-    "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec && pnpm --filter @tutor/md-dsl run bundle-standalone"
+    "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec && pnpm --filter @tutor/md-dsl run bundle-standalone",
+    "checker:build": "node packages/md-dsl/scripts/build-ai-reply-checker.ts",
+    "checker:smoke": "node scripts/check-ai-reply-artifacts.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

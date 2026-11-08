@@ -4,8 +4,66 @@ type Evidence = Pick<
   AnnotationSurfaceCompatibility,
   "blocks" | "fonts" | "textRects"
 >;
+export const ANNOTATION_SURFACE_TOLERANCE_CSS_PX = 10;
+type Rect = Evidence["textRects"][number];
 
-/** 只消除内核 CSS 序列化差异，真实字号、字重与字距继续参与核对。 */
+/** 四边都对照保存基准，不能让位移与尺寸误差叠加。 */
+function rectMatches(left: Rect, right: Rect): boolean {
+  return [
+    left.x - right.x,
+    left.y - right.y,
+    left.x + left.width - right.x - right.width,
+    left.y + left.height - right.y - right.height,
+  ].every((delta) => Math.abs(delta) <= ANNOTATION_SURFACE_TOLERANCE_CSS_PX);
+}
+
+/** Range 可拆成多个片段；仅合并同一结构块内、顺序连续且竖向重叠的行。 */
+function textLines(evidence: Evidence): { block: number; rect: Rect }[] {
+  const lines: { block: number; rect: Rect }[] = [];
+  for (const rect of evidence.textRects) {
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    let block = -1;
+    let area = Infinity;
+    evidence.blocks.forEach((candidate, index) => {
+      if (
+        centerX >= candidate.x &&
+        centerX <= candidate.x + candidate.width &&
+        centerY >= candidate.y &&
+        centerY <= candidate.y + candidate.height &&
+        candidate.width * candidate.height <= area
+      ) {
+        block = index;
+        area = candidate.width * candidate.height;
+      }
+    });
+    const previous = lines.at(-1);
+    if (
+      previous &&
+      block === previous.block &&
+      rect.x >= previous.rect.x &&
+      rect.y < previous.rect.y + previous.rect.height &&
+      rect.y + rect.height > previous.rect.y
+    ) {
+      const right = Math.max(
+        previous.rect.x + previous.rect.width,
+        rect.x + rect.width,
+      );
+      const bottom = Math.max(
+        previous.rect.y + previous.rect.height,
+        rect.y + rect.height,
+      );
+      previous.rect.y = Math.min(previous.rect.y, rect.y);
+      previous.rect.width = right - previous.rect.x;
+      previous.rect.height = bottom - previous.rect.y;
+    } else {
+      lines.push({ block, rect: { ...rect } });
+    }
+  }
+  return lines;
+}
+
+/** 规范化历史字体签名；有区域证据的稿件不以字体字符串独立阻断。 */
 export function normalizeSurfaceFont(
   font: readonly string[],
 ): AnnotationSurfaceCompatibility["fonts"][number] {
@@ -30,33 +88,33 @@ export function normalizeSurfaceFont(
   ];
 }
 
-/** 逐块及逐文本行比较，半像素基线差异不能放宽成任意重排。 */
+/** 区域身份与顺序严格对应；字体表示与 Range 拆分不独立阻断。 */
 export function compatibleSurfaceEvidence(
   saved: Evidence,
   current: Evidence,
 ): boolean {
-  const rectsMatch = (
-    left: Evidence["textRects"],
-    right: Evidence["textRects"],
-  ) =>
-    left.length === right.length &&
-    left.every((rect, index) => {
-      const other = right[index];
+  const savedLines = textLines(saved);
+  const currentLines = textLines(current);
+  return (
+    saved.blocks.length === current.blocks.length &&
+    saved.blocks.every((block, index) => {
+      const other = current.blocks[index];
       return (
         other !== undefined &&
-        (["x", "y", "width", "height"] as const).every(
-          (key) => Math.abs(rect[key] - other[key]) <= 0.75,
-        )
+        block.tag === other.tag &&
+        (block.node === undefined || block.node === other.node) &&
+        rectMatches(block, other)
       );
-    });
-  return (
-    saved.blocks.every(
-      (block, index) => block.tag === current.blocks[index]?.tag,
-    ) &&
-    rectsMatch(saved.blocks, current.blocks) &&
-    rectsMatch(saved.textRects, current.textRects) &&
-    JSON.stringify(saved.fonts.map(normalizeSurfaceFont)) ===
-      JSON.stringify(current.fonts.map(normalizeSurfaceFont))
+    }) &&
+    savedLines.length === currentLines.length &&
+    savedLines.every((line, index) => {
+      const other = currentLines[index];
+      return (
+        other !== undefined &&
+        line.block === other.block &&
+        rectMatches(line.rect, other.rect)
+      );
+    })
   );
 }
 

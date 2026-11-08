@@ -10,7 +10,6 @@ import {
 import {
   ArrowUp,
   Info,
-  Loader2,
   Plus,
   RotateCcw,
   Trash2,
@@ -441,13 +440,11 @@ export function StudentQuickButtonsSection({
                 恢复默认
               </Button>
               <Button
+                busy={saveMutation.isPending}
                 className="min-h-11 px-5"
                 disabled={saveMutation.isPending || emptyName || emptyPrompt}
                 onClick={handleSave}
               >
-                {saveMutation.isPending && (
-                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
-                )}
                 保存快捷按钮
               </Button>
             </div>

@@ -1,8 +1,10 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
-import { getAnnotationRecord } from "@/features/annotation/annotation-store";
+import {
+  type AnnotationLocalRecord,
+  getAnnotationRecord,
+} from "@/features/annotation/annotation-store";
 import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
 import { exportQuestionAnnotationImage } from "@/features/annotation/export-question-annotation";
-import { renderQuestionBaseImage } from "@/features/annotation/question-base-image";
 import {
   attemptMaterialsEditable,
   getAttemptRecoveryState,
@@ -181,9 +183,19 @@ export async function captureAiQuestionMaterials(
         : "作答材料尚未恢复完成，请稍后重试",
       "recovery",
     );
-  const annotationRecord = selection.annotation
-    ? await getAnnotationRecord(annotationSession, scope)
-    : null;
+  let annotationRecord: AnnotationLocalRecord | null = null;
+  try {
+    if (selection.annotation)
+      annotationRecord = await getAnnotationRecord(annotationSession, scope, {
+        strictRead: true,
+      });
+  } catch (cause) {
+    throw new AiCaptureError(
+      messageOf(cause, "题面圈画读取失败，请重试"),
+      "annotation",
+      "annotation",
+    );
+  }
   guard();
   if (annotationRecord?.conflict || annotationRecord?.denied)
     throw new AiCaptureError(
@@ -192,14 +204,13 @@ export async function captureAiQuestionMaterials(
       "annotation",
     );
   if (
-    wantsPaper &&
-    isHandwritten &&
+    (wantsPaper || selection.annotation) &&
     draftStore.peekAnswerConflicts(attemptId)[question.id] !== undefined
   )
     throw new AiCaptureError(
-      "手写作答存在待裁决冲突，请先选择保留版本",
+      "本题答案存在待裁决冲突，请先选择保留版本",
       "conflict",
-      "formal_ink",
+      wantsPaper ? paperKind : "annotation",
     );
   const pages: AiCapturedPage[] = [];
   // 5a. 圈画：原底图配套合成（题面 + 标画同域坐标；收起仍可从已保存底图取）。
@@ -263,12 +274,15 @@ export async function captureAiQuestionMaterials(
     guard();
     if (paper) {
       // 草稿/手写页不带未选定的圈画：用不带标画的公开题面合成。
-      if (!input.surface)
-        throw new AiCaptureError("题面尚未就绪，请重试", "paper", paperKind);
       let questionBlob: Blob;
       try {
-        questionBlob = (await renderQuestionBaseImage(question, input.surface))
-          .blob;
+        questionBlob = await exportQuestionAnnotationImage(
+          annotationSession,
+          scope,
+          question,
+          input.surface,
+          { includeAnnotation: false },
+        );
       } catch (cause) {
         throw new AiCaptureError(
           messageOf(cause, "题面渲染失败，请重试"),

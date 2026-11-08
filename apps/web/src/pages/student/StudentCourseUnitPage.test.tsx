@@ -127,6 +127,69 @@ beforeEach(() => {
 });
 
 describe("StudentCourseUnitPage", () => {
+  it("模态请求中 Esc 不关闭，失败后可原地重试", async () => {
+    let fail: (error: Error) => void = () => {
+      throw new Error("请求未开始");
+    };
+    vi.mocked(mockedStart).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    renderPage(SUBMITTED_ONCE);
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", { name: "再做一次" })
+      )[0] as HTMLElement,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "开始新一次" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /正在开始/ })).toBeDisabled(),
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+    expect(
+      screen.getByRole("dialog", { name: "再做一次确认" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "关闭弹层" }),
+    ).not.toBeInTheDocument();
+    await act(async () => fail(new Error("审查模拟失败")));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("审查模拟失败"),
+    );
+    expect(screen.getByRole("button", { name: "开始新一次" })).toBeEnabled();
+  });
+
+  it("模态初始聚焦、约束背景焦点，Esc 取消后归还触发者", async () => {
+    renderPage(SUBMITTED_ONCE);
+    const trigger = (
+      await screen.findAllByRole("button", { name: "再做一次" })
+    )[0];
+    if (!trigger) throw new Error("缺少真实触发按钮");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "再做一次确认" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "先不做" })).toHaveFocus(),
+    );
+    trigger.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement ?? dialog, {
+      key: "Escape",
+      code: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(mockedStart).not.toHaveBeenCalled();
+  });
+
   it("从未做过：渲染题数/题型分布/历次空态，「开始练习」直达答题页", async () => {
     const utils = renderPage(NEVER_DONE);
     expect(await screen.findByText("有理数小练")).toBeInTheDocument();
@@ -149,7 +212,11 @@ describe("StudentCourseUnitPage", () => {
   it("已交卷一次：显示得分汇总与历次记录；「再做一次」先确认（第 n+1 次、从空白开始）", async () => {
     const utils = renderPage(SUBMITTED_ONCE);
     expect(await screen.findByText(/已做 1 次/)).toBeInTheDocument();
-    expect(screen.getByText(/首次 做对 3 \/ 4 题/)).toBeInTheDocument();
+    expect(screen.getByText("首次表现").closest("div")).toHaveTextContent(
+      "做对 3 / 4 题",
+    );
+    expect(screen.getAllByRole("term")).toHaveLength(3);
+    expect(screen.getAllByRole("definition")).toHaveLength(3);
     expect(screen.getByText(/有 1 题待批/)).toBeInTheDocument();
     // 历次记录：点击进入该次结果视图（只读）
     expect(
@@ -167,55 +234,71 @@ describe("StudentCourseUnitPage", () => {
     expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
   });
 
-  it("存在未交卷作答：入口为「继续作答」（直达那份 draft，无确认弹层）", async () => {
-    const hasDraft: StudentUnitLandingData = {
-      ...SUBMITTED_ONCE,
-      attempts: [
-        {
-          attemptId: "66666666-6666-4666-8666-666666666666",
-          attemptNo: 2,
-          status: "draft",
-          score: null,
-          startedAt: "2026-09-28T02:00:00.000Z",
-          submittedAt: null,
-        },
-        ...SUBMITTED_ONCE.attempts,
-      ],
-      summary: {
-        count: 2,
-        submittedCount: 1,
-        hasDraft: true,
-        firstScore: 75,
-        firstResultCounts: {
-          correctCount: 3,
-          totalCount: 4,
+  it.each(["继续作答", "清空并重新作答"])(
+    "存在未交卷作答：%s",
+    async (action) => {
+      const hasDraft: StudentUnitLandingData = {
+        ...SUBMITTED_ONCE,
+        attempts: [
+          {
+            attemptId: "66666666-6666-4666-8666-666666666666",
+            attemptNo: 2,
+            status: "draft",
+            score: null,
+            startedAt: "2026-09-28T02:00:00.000Z",
+            submittedAt: null,
+          },
+          ...SUBMITTED_ONCE.attempts,
+        ],
+        summary: {
+          count: 2,
+          submittedCount: 1,
+          hasDraft: true,
+          firstScore: 75,
+          firstResultCounts: {
+            correctCount: 3,
+            totalCount: 4,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+          latestScore: 75,
+          latestResultCounts: {
+            correctCount: 3,
+            totalCount: 4,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+          bestScore: 75,
+          bestResultCounts: {
+            correctCount: 3,
+            totalCount: 4,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
           pendingCount: 0,
-          pendingSelfReviewCount: 0,
         },
-        latestScore: 75,
-        latestResultCounts: {
-          correctCount: 3,
-          totalCount: 4,
-          pendingCount: 0,
-          pendingSelfReviewCount: 0,
-        },
-        bestScore: 75,
-        bestResultCounts: {
-          correctCount: 3,
-          totalCount: 4,
-          pendingCount: 0,
-          pendingSelfReviewCount: 0,
-        },
-        pendingCount: 0,
-      },
-    };
-    const utils = renderPage(hasDraft);
-    await screen.findByRole("button", { name: "继续作答" });
-    fireEvent.click(screen.getByRole("button", { name: "继续作答" }));
-    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
-  });
+      };
+      const utils = renderPage(hasDraft);
+      fireEvent.click(await screen.findByRole("button", { name: action }));
+      if (action === "清空并重新作答") {
+        expect(await screen.findByRole("dialog")).toHaveTextContent("当前作答");
+        expect(mockedStart).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "确认清空并重开" }));
+        await waitFor(() =>
+          expect(mockedStart).toHaveBeenCalledWith(
+            COURSE_ID,
+            UNIT_ID,
+            expect.objectContaining({
+              restartAttemptId: hasDraft.attempts[0]?.attemptId,
+            }),
+          ),
+        );
+      }
+      await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
+    },
+  );
 
   it("越权（403 COURSE_ACCESS_DENIED）：中文引导 + 返回我的课程", async () => {
     const { ApiError } = await import("@/lib/api");

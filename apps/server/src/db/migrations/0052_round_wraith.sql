@@ -1,0 +1,1 @@
+CREATE INDEX `question_process_capacity_idx` ON `question_process_batches` (`recording_id`,`question_id`,`bytes`,`first_seq`,`last_seq`);

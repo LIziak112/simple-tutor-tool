@@ -437,6 +437,52 @@ function draftQuestionOf(
 }
 
 describe("QM-13 细项2/3：配对与排序的公开投影（选项池/展开槽位/排序项）", () => {
+  it("原生回看公开题目：教师草稿与学生结果复用原冻结投影，保留槽位和 revision、无参考泄露", async () => {
+    const { app, aCookie, teacherCookie, attemptId } = await makeQm13App();
+    const draft = await getDraft(app, aCookie, attemptId);
+    const expected = draft.units.flatMap((unit) => unit.questions);
+    const teacher = await app.request(`/api/teacher/attempts/${attemptId}`, {
+      headers: { cookie: teacherCookie },
+    });
+    expect(teacher.status).toBe(200);
+    const teacherData = (
+      (await teacher.json()) as {
+        data: { questions: { publicQuestion?: unknown }[] };
+      }
+    ).data;
+    expect(
+      teacherData.questions.map(
+        (q: { publicQuestion?: unknown }) => q.publicQuestion,
+      ),
+    ).toEqual(expected);
+    assertNoLeak(
+      teacherData.questions.map(
+        (q: { publicQuestion?: unknown }) => q.publicQuestion,
+      ),
+    );
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    const submit = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({ revisions }),
+      },
+    );
+    expect(submit.status).toBe(200);
+    const result = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    const resultData = ((await result.json()) as { data: AttemptResultData })
+      .data;
+    const publicQuestions = resultData.units.flatMap(
+      (unit: { questions: { publicQuestion?: unknown }[] }) =>
+        unit.questions.map((q) => q.publicQuestion),
+    );
+    expect(publicQuestions).toEqual(expected);
+    assertNoLeak(publicQuestions);
+  });
+
   it("matching：选项池与展开槽位集合随草稿下发；slots= 区间按材料槽位序展开", async () => {
     const { app, aCookie, attemptId } = await makeQm13App();
     const draft = await getDraft(app, aCookie, attemptId);

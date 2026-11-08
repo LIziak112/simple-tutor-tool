@@ -2,6 +2,7 @@ import { devices, expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
+  expectPracticeSource,
   expectResultCount,
   getStudentViaApi,
   setCourseItemVisible,
@@ -281,9 +282,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
 
       await studentPage.getByRole("button", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(
-        studentPage.getByText(`课程：${courseName} · 第 1 次`),
-      ).toBeVisible();
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 1 次`);
       const firstQ1 = studentPage.locator('article[aria-label="第 1 题"]');
       await firstQ1
         .getByRole("radio", { name: "对", exact: true })
@@ -324,9 +323,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       ).toBeVisible();
       await studentPage.getByRole("button", { name: "开始新一次" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
-      await expect(
-        studentPage.getByText(`课程：${courseName} · 第 2 次`),
-      ).toBeVisible();
+      await expectPracticeSource(studentPage, `课程：${courseName} · 第 2 次`);
       const secondQ1 = studentPage.locator('article[aria-label="第 1 题"]');
       await secondQ1
         .getByRole("radio", { name: "错", exact: true })
@@ -356,11 +353,18 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         `**/s/courses/${courseId}/units/${encodeURIComponent(courseUnitName)}`,
       );
       await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
-      await expect(
-        studentPage.getByText(
-          /首次 做对 2 \/ 2 题 · 最近 做对 0 \/ 2 题 · 最佳 做对 2 \/ 2 题/,
-        ),
-      ).toBeVisible();
+      for (const [label, correct] of [
+        ["首次表现", 2],
+        ["最近表现", 0],
+        ["最佳表现", 2],
+      ] as const) {
+        const group = studentPage
+          .getByText(label, { exact: true })
+          .locator("..");
+        await expect(group.getByRole("definition")).toHaveText(
+          `做对 ${correct} / 2 题`,
+        );
+      }
 
       // —— 泄露检查（课程练习段）：全程无禁用键、无提示/详解原文 ——
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

@@ -8,6 +8,7 @@ import {
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
+import { learningStatusClass } from "@/components/learning-status";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { formatResultCounts } from "@/features/attempt/result-counts";
@@ -32,13 +33,11 @@ export const RECORD_STATUS_LABELS: Record<AttemptStatus, string> = {
   graded: "已批改",
 };
 
-/** 状态徽章配色：进行中实心蓝（显著），已交琥珀、已批绿 */
+/** 状态徽章配色：进行中蓝，已交琥珀、已批绿 */
 const STATUS_BADGE_CLASS: Record<AttemptStatus, string> = {
-  draft: "bg-sky-500 font-medium text-white",
-  submitted:
-    "bg-amber-500/15 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-  graded:
-    "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+  draft: learningStatusClass.in_progress,
+  submitted: learningStatusClass.submitted,
+  graded: learningStatusClass.graded,
 };
 
 /** 状态徽章（列表卡片用） */

@@ -103,7 +103,11 @@ export interface InkEngine {
    */
   on(
     event: "change",
-    cb: (doc: InkDoc, reason: InkChangeReason) => void,
+    cb: (
+      doc: InkDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => void,
   ): () => void;
   /** 工具栏禁用态查询（附加能力） */
   canUndo(): boolean;
@@ -133,7 +137,13 @@ export function create(
     color: config.color,
     size: config.size,
   };
-  const subscribers = new Set<(doc: InkDoc, reason: InkChangeReason) => void>();
+  const subscribers = new Set<
+    (
+      doc: InkDoc,
+      reason: InkChangeReason,
+      finish?: import("@tutor/contract").QuestionProcessFinish,
+    ) => void
+  >();
   let unsubscribe: (() => void) | null = null;
   const build = (): ToolAwareSurface =>
     opts.engine === "excalidraw"
@@ -165,8 +175,8 @@ export function create(
 
   let surface = build();
   const connect = () => {
-    unsubscribe = surface.onChange((doc, reason) => {
-      for (const cb of subscribers) cb(doc, reason);
+    unsubscribe = surface.onChange((doc, reason, finish) => {
+      for (const cb of subscribers) cb(doc, reason, finish);
     });
     surface.setTool(currentTool);
     surface.setInputMode?.(inputMode);
