@@ -256,7 +256,7 @@ export function SingleQuestionActionBar({
   busy?: boolean;
   /** 主操作位内容（PracticeSingleActions）；缺省保持占位容器 */
   middle?: ReactNode;
-  /** 手机题号兼答题卡入口，与主操作共用一行。 */
+  /** 题号兼答题卡入口，与主操作共用一行。 */
   navigation?: ReactNode;
   onPrev: () => void;
   onNext: () => void;

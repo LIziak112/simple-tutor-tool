@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { AttemptAnswerCard } from "./AttemptAnswerCard";
 import type { QuestionNavigationItem } from "./QuestionNavigator";
 
-function Sidebar(
+function SingleAnswerCard(
   props: Pick<
     Parameters<typeof AttemptAnswerCard>[0],
     "items" | "currentId" | "onJump"
@@ -15,7 +15,6 @@ function Sidebar(
       filter="all"
       onFilterChange={vi.fn()}
       workIds={new Set()}
-      sidebar
       showNextUnanswered
     />
   );
@@ -44,7 +43,7 @@ const items: QuestionNavigationItem[] = [
 
 it("下一道未答包含部分填写，并保留题号定位", () => {
   const jump = vi.fn();
-  render(<Sidebar items={items} currentId="a" onJump={jump} />);
+  render(<SingleAnswerCard items={items} currentId="a" onJump={jump} />);
   fireEvent.click(screen.getByRole("button", { name: "下一道未答" }));
   expect(jump).toHaveBeenLastCalledWith("b");
   fireEvent.click(screen.getByRole("button", { name: "第 3 题，未填写" }));
@@ -54,18 +53,18 @@ it("下一道未答包含部分填写，并保留题号定位", () => {
 it("从当前题向后寻找，到卷尾回到前面的未答题", () => {
   const jump = vi.fn();
   const { rerender } = render(
-    <Sidebar items={items} currentId="b" onJump={jump} />,
+    <SingleAnswerCard items={items} currentId="b" onJump={jump} />,
   );
   fireEvent.click(screen.getByRole("button", { name: "下一道未答" }));
   expect(jump).toHaveBeenLastCalledWith("c");
-  rerender(<Sidebar items={items} currentId="c" onJump={jump} />);
+  rerender(<SingleAnswerCard items={items} currentId="c" onJump={jump} />);
   fireEvent.click(screen.getByRole("button", { name: "下一道未答" }));
   expect(jump).toHaveBeenLastCalledWith("b");
 });
 
 it("没有当前位置时从第一道未答开始", () => {
   const jump = vi.fn();
-  render(<Sidebar items={items} currentId={null} onJump={jump} />);
+  render(<SingleAnswerCard items={items} currentId={null} onJump={jump} />);
   fireEvent.click(screen.getByRole("button", { name: "下一道未答" }));
   expect(jump).toHaveBeenCalledWith("b");
 });
@@ -73,7 +72,7 @@ it("没有当前位置时从第一道未答开始", () => {
 it("全部填写后说明完成，禁用未答定位", () => {
   const jump = vi.fn();
   render(
-    <Sidebar
+    <SingleAnswerCard
       items={items.filter((item) => item.id === "a")}
       currentId="a"
       onJump={jump}
@@ -86,12 +85,12 @@ it("全部填写后说明完成，禁用未答定位", () => {
 });
 
 it("空卷不声称全部已填写", () => {
-  render(<Sidebar items={[]} currentId={null} onJump={vi.fn()} />);
+  render(<SingleAnswerCard items={[]} currentId={null} onJump={vi.fn()} />);
   expect(screen.getByRole("button", { name: "暂无题目" })).toBeDisabled();
 });
 
 it("题号列表独立滚动，未答按钮固定在滚动区域外的底部", () => {
-  render(<Sidebar items={items} currentId="a" onJump={vi.fn()} />);
+  render(<SingleAnswerCard items={items} currentId="a" onJump={vi.fn()} />);
   const nav = screen.getByRole("navigation", { name: "答题卡" });
   const list = screen.getByRole("list");
   const action = screen.getByRole("button", { name: "下一道未答" });

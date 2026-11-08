@@ -119,7 +119,6 @@ test("桌面长卷答题卡固定筛选并独立滚动", { tag: ["@student"] }, 
   await page.keyboard.press("Escape");
 
   const footer = page.locator('[data-slot="attempt-bottom-bar"]');
-  const sidebar = page.getByRole("complementary", { name: "答题定位" });
   await expect(
     footer.getByRole("button", { name: "交卷", exact: true }),
   ).toBeVisible();
@@ -136,7 +135,6 @@ test("桌面长卷答题卡固定筛选并独立滚动", { tag: ["@student"] }, 
   await page.getByRole("button", { name: "练习更多" }).click();
   await page.getByRole("menuitem", { name: "做题方式", exact: true }).click();
   await page.getByText("单题专注", { exact: true }).click();
-  await expect(sidebar).toBeHidden();
   await expect(
     footer.getByRole("button", { name: "交卷", exact: true }),
   ).toHaveCount(0);
@@ -151,28 +149,23 @@ test("桌面长卷答题卡固定筛选并独立滚动", { tag: ["@student"] }, 
   await expect(entry).toContainText("105/105");
 
   await page.setViewportSize({ width: 1280, height: 720 });
-  await expect(entry).toBeHidden();
-  await expect(sidebar.getByRole("combobox", { name: "筛选题目" })).toHaveValue(
-    "all",
-  );
-  const current = sidebar.locator('button[aria-current="location"]');
+  await expect(entry).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "答题定位" }),
+  ).toHaveCount(0);
+  await entry.click();
+  await expect(
+    dialog.getByRole("button", { name: "全部", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const current = dialog.locator('button[aria-current="location"]');
   await expect(current).toHaveText("105");
-  await expect(current).toBeInViewport();
-  await sidebar.getByRole("button", { name: "收起答题卡" }).click();
-  await expect(current).toBeHidden();
-  await sidebar.getByRole("button", { name: "展开答题卡" }).click();
   await expect(current).toBeInViewport();
 
   await page.setViewportSize({ width: 390, height: 668 });
-  await entry.click();
-  await expect(
-    dialog.locator('button[aria-current="location"]'),
-  ).toBeInViewport();
+  await expect(current).toBeInViewport();
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.keyboard.press("Escape");
-  await expect(
-    sidebar.getByRole("button", { name: "收起答题卡" }),
-  ).toBeFocused();
+  await expect(entry).toBeFocused();
   expect(leak.violations()).toEqual([]);
 });
 

@@ -11,8 +11,6 @@ import {
   ClipboardCheck,
   Grid2X2,
   ListChecks,
-  PanelLeftClose,
-  PanelLeftOpen,
   RotateCw,
   SlidersHorizontal,
 } from "lucide-react";
@@ -20,8 +18,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
-  useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -386,8 +382,7 @@ function AnswerView({
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [navigatorFilter, setNavigatorFilter] =
     useState<AnswerCardFilter>("all");
-  const navigatorTrigger = useRef<HTMLElement | null>(null);
-  const navigatorSidebarTrigger = useRef<HTMLButtonElement>(null);
+  const navigatorTrigger = useRef<HTMLButtonElement>(null);
   const navigatorJumping = useRef(false);
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
   const [saveDetailsOpen, setSaveDetailsOpen] = useState(false);
@@ -459,21 +454,6 @@ function AnswerView({
     editor,
     goToQuestion: (questionId) => goToQuestionRef.current(questionId),
   });
-  const navigatorCollapsed = aiCompanion.controller.navigatorCollapsed;
-  const navigationId = useId();
-  const navigationAnchor = useRef<{ element: HTMLElement; top: number } | null>(
-    null,
-  );
-  // biome-ignore lint/correctness/useExhaustiveDependencies(navigatorCollapsed): 折叠布局提交后恢复当前题卡位置。
-  useLayoutEffect(() => {
-    const saved = navigationAnchor.current;
-    if (!saved) return;
-    window.scrollBy({
-      top: saved.element.getBoundingClientRect().top - saved.top,
-      behavior: "instant",
-    });
-    navigationAnchor.current = null;
-  }, [navigatorCollapsed]);
   const { flags: flaggedQuestions, toggle: toggleFlag } =
     useWorkspaceFlags(attemptId);
   // #6980-4：服务端「不会」标记（draft 限定，交卷后只读）。乐观更新、失败
@@ -1591,77 +1571,11 @@ function AnswerView({
         )}
 
         {/* SAI-19：AI 伴学栏与主区共栖（dock 右栏/窄屏独立面板），主区
-            （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定。
+            作为 rail 子内容保持控制器身份稳定。
             SAI-20：题号与栏内会话都跟随绑定题（非滚动当前题）。
             SAI-22：装配在共享 useAiCompanionDock，本页只传身份与阶段。 */}
         {aiCompanion.rail(
-          <div
-            className={`grid min-w-0 grid-cols-1 gap-6 ${singleMode ? (navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]") : ""}`}
-          >
-            {singleMode && (
-              <aside
-                aria-label="答题定位"
-                className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start flex-col overflow-hidden lg:flex"
-              >
-                <h2 className="mb-3 shrink-0">
-                  <Button
-                    ref={navigatorSidebarTrigger}
-                    variant="outline"
-                    className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
-                    // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
-                    style={{ outlineOffset: -2 }}
-                    aria-label={
-                      navigatorCollapsed ? "展开答题卡" : "收起答题卡"
-                    }
-                    title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                    aria-expanded={!navigatorCollapsed}
-                    aria-controls={navigationId}
-                    onClick={() => {
-                      const element = currentQuestionId
-                        ? cardElements.current.get(currentQuestionId)
-                        : undefined;
-                      if (element && currentQuestionId) {
-                        preserveReadingPosition(currentQuestionId);
-                        navigationAnchor.current = {
-                          element,
-                          top: element.getBoundingClientRect().top,
-                        };
-                      }
-                      aiCompanion.controller.toggleNavigator();
-                    }}
-                  >
-                    {!navigatorCollapsed && <span>答题卡</span>}
-                    {navigatorCollapsed ? (
-                      <PanelLeftOpen aria-hidden className="size-4" />
-                    ) : (
-                      <PanelLeftClose aria-hidden className="size-4" />
-                    )}
-                  </Button>
-                </h2>
-                <div
-                  id={navigationId}
-                  hidden={navigatorCollapsed}
-                  className={`min-h-0 flex-1 flex-col overflow-hidden ${navigatorCollapsed ? "hidden" : "flex"}`}
-                >
-                  {!navigatorCollapsed && (
-                    <LiveAttemptAnswerCard
-                      attemptId={attemptId}
-                      questionIds={questionIds}
-                      materialsReady={navigatorMaterialsReady}
-                      items={navigationItems}
-                      currentId={resolvedSingleQuestionId}
-                      filter={navigatorFilter}
-                      onFilterChange={setNavigatorFilter}
-                      onJump={jumpForMode}
-                      locked={practiceSubmit.submittingId !== null}
-                      sidebar
-                      showNextUnanswered
-                    />
-                  )}
-                </div>
-              </aside>
-            )}
-
+          <div className="grid min-w-0 grid-cols-1">
             {/* 主内容列（M3-D1）：做题方式摘要 + 单题紧凑行 + 题卡列表 +
                 单题占位操作条。作答保护（材料核对）沿用原 ol 的 inert 语义，
                 现上移到本列容器——保护期间新增的呈现件同样不可交互。
@@ -2067,11 +1981,7 @@ function AnswerView({
               if (navigatorJumping.current) return;
               if (singleWorkspaceRef.current?.contains(document.activeElement))
                 return;
-              const trigger = navigatorTrigger.current;
-              trigger?.focus();
-              // 跨断点后底栏入口可能隐藏，回到可见的侧栏入口。
-              if (document.activeElement !== trigger)
-                navigatorSidebarTrigger.current?.focus();
+              navigatorTrigger.current?.focus();
             }}
             className="flex h-[560px] max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-[608px] flex-col gap-3 overflow-hidden rounded-[25px] p-4 shadow-md max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-0 max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(16px,env(safe-area-inset-bottom))] [&>[data-slot=dialog-close]]:bg-muted motion-safe:[&>[data-slot=dialog-close]]:transition-transform motion-safe:[&>[data-slot=dialog-close]]:duration-150 motion-safe:[&>[data-slot=dialog-close]]:active:scale-[0.96] [&>[data-slot=dialog-close]]:ease-out motion-reduce:[&>[data-slot=dialog-close]]:transition-opacity motion-reduce:[&>[data-slot=dialog-close]]:duration-150 motion-reduce:[&>[data-slot=dialog-close]]:active:opacity-75"
           >

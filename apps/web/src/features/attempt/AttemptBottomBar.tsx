@@ -12,23 +12,21 @@ import { useAttemptEditor } from "./AttemptEditorContext";
 const pressFeedback =
   "duration-150 ease-out motion-safe:transition-transform motion-safe:enabled:active:scale-[0.96] motion-reduce:transition-opacity motion-reduce:enabled:active:opacity-75";
 
-/** 列表统一使用底栏入口；单题仍只在紧凑布局中显示。 */
+/** 列表与单题共用底栏答题卡入口。 */
 export function AttemptNavigatorButton({
   children,
   onOpen,
   disabled = false,
-  desktop = false,
 }: {
   children: ReactNode;
   onOpen: (trigger: HTMLButtonElement) => void;
   disabled?: boolean;
-  desktop?: boolean;
 }) {
   const progressId = useId();
   return (
     <Button
       variant="ghost"
-      className={`min-h-11 min-w-0 gap-1.5 ps-3 pe-2.5 ${pressFeedback} ${desktop ? "" : "shrink-0 lg:hidden"}`}
+      className={`min-h-11 min-w-0 gap-1.5 ps-3 pe-2.5 ${pressFeedback}`}
       aria-label="答题卡"
       aria-describedby={progressId}
       aria-haspopup="dialog"
@@ -107,7 +105,7 @@ export function AttemptBottomBar({
   const ratio =
     progressValue ?? (total === 0 ? 0 : Math.min(1, answered / total));
   const navigatorButton = onOpenNavigator && !compact && (
-    <AttemptNavigatorButton onOpen={onOpenNavigator} desktop>
+    <AttemptNavigatorButton onOpen={onOpenNavigator}>
       答题卡 · 已填写 {answered}/{total}
     </AttemptNavigatorButton>
   );
