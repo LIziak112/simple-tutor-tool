@@ -22,10 +22,20 @@ import { Button } from "@/components/ui/button";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import { createAtramentReplayCanvas } from "@/features/ink/replay/draw";
 import {
+  advancePlayhead,
+  REPLAY_SPEEDS,
+  type ReplaySpeed,
+} from "@/features/ink/replay/model";
+import {
   fetchTeacherQuestionProcessApi,
   teacherAnnotationBasePngUrl,
 } from "@/lib/api";
-import { frameAt } from "./replay";
+import {
+  frameAt,
+  fromPlaybackTime,
+  processPauses,
+  toPlaybackTime,
+} from "./replay";
 
 function ProcessInk({
   surface,
@@ -191,6 +201,13 @@ function SegmentPlayer({
   segment: QuestionProcessRead["segments"][number];
 }) {
   const range = useId();
+  const markers = useId();
+  const [speed, setSpeed] = useState<ReplaySpeed>(1);
+  const [realTime, setRealTime] = useState(false);
+  const pauses = useMemo(
+    () => (realTime ? [] : processPauses(segment.events)),
+    [realTime, segment.events],
+  );
   const start = segment.events[0]?.at ?? 0;
   const [time, setTime] = useState(start);
   const [selected, setSelected] = useState<number | undefined>();
@@ -198,6 +215,7 @@ function SegmentPlayer({
   const playFrom = useRef(0);
   const tail = segment.events.at(-1);
   const end = tail?.at ?? 0;
+  const playbackEnd = toPlaybackTime(end, pauses);
   const activeEvent =
     selected ?? segment.events.findLastIndex((event) => event.at <= time);
   const state = useMemo(
@@ -225,19 +243,21 @@ function SegmentPlayer({
   }, [question]);
   useEffect(() => {
     if (!playing) return;
-    const start = playFrom.current;
+    const start = toPlaybackTime(playFrom.current, pauses);
     let origin: number | undefined;
     let handle = 0;
     const tick = (now: number) => {
       origin ??= now;
-      const next = Math.min(end, start + now - origin);
+      const advanced = advancePlayhead(start, now - origin, speed, playbackEnd);
+      const next = fromPlaybackTime(advanced.timeMs, pauses);
+      playFrom.current = next;
       setTime(next);
-      if (next < end) handle = requestAnimationFrame(tick);
+      if (!advanced.ended) handle = requestAnimationFrame(tick);
       else setPlaying(false);
     };
     handle = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(handle);
-  }, [playing, end]);
+  }, [playing, pauses, speed, playbackEnd]);
   if (!state) return <p>该段缺少起始状态，无法回放。</p>;
   const annotation = state.layers.annotation;
   const frozenStem = (
@@ -275,23 +295,62 @@ function SegmentPlayer({
         >
           {playing ? "暂停" : "播放"}
         </Button>
+        {REPLAY_SPEEDS.map((value) => (
+          <Button
+            key={value}
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-pressed={speed === value}
+            onClick={() => setSpeed(value)}
+          >
+            {value}×
+          </Button>
+        ))}
+        <label>
+          <input
+            type="checkbox"
+            checked={realTime}
+            onChange={(event) => setRealTime(event.currentTarget.checked)}
+          />{" "}
+          按真实时间
+        </label>
         <label htmlFor={range}>回放时刻</label>
         <input
           id={range}
           className="min-w-24 flex-1"
           type="range"
           min={start}
-          max={end}
+          max={playbackEnd}
           step={1}
-          value={Math.round(time)}
+          list={markers}
+          value={Math.round(toPlaybackTime(time, pauses))}
           onChange={(event) => {
             setPlaying(false);
             setSelected(undefined);
-            setTime(Number(event.currentTarget.value));
+            setTime(
+              fromPlaybackTime(Number(event.currentTarget.value), pauses),
+            );
           }}
         />
         <span className="tabular-nums">{(time / 1000).toFixed(1)} 秒</span>
       </div>
+      <datalist id={markers}>
+        {pauses.map((pause) => (
+          <option
+            key={pause.startMs}
+            value={toPlaybackTime(pause.endMs, pauses)}
+            label={`停顿 ${(pause.realMs / 1000).toFixed(0)} 秒`}
+          />
+        ))}
+      </datalist>
+      {pauses.length > 0 && (
+        <p data-slot="process-pauses" className="text-sm text-muted-foreground">
+          {pauses
+            .map((pause) => `停顿 ${(pause.realMs / 1000).toFixed(0)} 秒`)
+            .join("；")}
+        </p>
+      )}
       <div className="grid gap-3 lg:grid-cols-2">
         <section aria-label="回放题面" className="min-w-0 space-y-2">
           {annotation ? (

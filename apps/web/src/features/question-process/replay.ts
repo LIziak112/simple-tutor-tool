@@ -4,7 +4,10 @@ import type {
   QuestionProcessSurface,
   StudentAnswer,
 } from "@tutor/contract";
-import { normalizePointTimes } from "@/features/ink/replay/model";
+import {
+  normalizePointTimes,
+  REPLAY_PAUSE_CAP_MS,
+} from "@/features/ink/replay/model";
 
 export function replayPrefix(events: readonly QuestionProcessEvent[]) {
   const end = events.findIndex(
@@ -122,4 +125,52 @@ export function frameAt(
     }
   }
   return state;
+}
+
+export interface ProcessPause {
+  startMs: number;
+  endMs: number;
+  realMs: number;
+}
+
+export function processPauses(
+  events: readonly { at: number }[],
+): ProcessPause[] {
+  return events.flatMap((event, i) => {
+    const previous = events[i - 1];
+    const realMs = event.at - (previous?.at ?? event.at);
+    return previous && realMs > REPLAY_PAUSE_CAP_MS
+      ? [{ startMs: previous.at, endMs: event.at, realMs }]
+      : [];
+  });
+}
+
+export function toPlaybackTime(
+  realMs: number,
+  pauses: readonly ProcessPause[],
+) {
+  return pauses.reduce(
+    (time, pause) =>
+      time -
+      Math.max(0, Math.min(realMs, pause.endMs) - pause.startMs) *
+        (1 - REPLAY_PAUSE_CAP_MS / pause.realMs),
+    realMs,
+  );
+}
+
+export function fromPlaybackTime(
+  timeMs: number,
+  pauses: readonly ProcessPause[],
+) {
+  let removed = 0;
+  for (const pause of pauses) {
+    const start = pause.startMs - removed;
+    if (timeMs < start) break;
+    if (timeMs <= start + REPLAY_PAUSE_CAP_MS)
+      return (
+        pause.startMs + ((timeMs - start) * pause.realMs) / REPLAY_PAUSE_CAP_MS
+      );
+    removed += pause.realMs - REPLAY_PAUSE_CAP_MS;
+  }
+  return timeMs + removed;
 }
