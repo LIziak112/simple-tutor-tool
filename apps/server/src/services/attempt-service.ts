@@ -112,6 +112,11 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import {
+  assertAttemptNotTimedOut,
+  attemptTimingOf,
+  timedColumnsOf,
+} from "./attempt-timing";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
@@ -233,18 +238,18 @@ export function attemptSummaryOf(row: Attempt): AttemptStartData {
     // 2026-10 讲练一体：lesson 开卷写入讲义 id，其余来源恒 null（契约反向锁定）
     lectureId: row.lectureId,
     courseId: row.courseId,
-    // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
-    // assignment_units）；course 来源恒有值；wrong 来源恒 null（2026-10）。
-    // 摘要层归一化而非直接透传：
-    // D23-6 回填「原值保留」可能让旧库 assignment 行带历史非空 unitId，
-    // 此处收敛到契约 superRefine 锁定的不变式（assignment 来源 unitId 恒
-    // null），不改库（题目集合本就只走 assignment_units，历史值无消费方）。
+    // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走 assignment_units）；
+    // course 恒有值；wrong 恒 null。摘要层归一化：D23-6 回填「原值保留」可能让旧库
+    // assignment 行带历史非空 unitId，此处收敛到契约不变式，不改库（历史值无消费方）
     unitId: row.sourceType === "assignment" ? null : row.unitId,
     attemptNo: row.attemptNo,
     status: row.status,
     startedAt: row.startedAt,
     submittedAt: row.submittedAt,
     scoreAuto: row.scoreAuto,
+    // 模块 2 限时测试：时长 / 截止随摘要下发（记录页、结果页显示「限时 N 分钟」）
+    timeLimitSec: row.timeLimitSec,
+    deadlineAt: row.deadlineAt,
     // #6980-2：错题重练范围标签（wrong 来源按建卷存的 scope 取 label，
     // 答题页/结果页来源行「练的是什么」；其余来源与历史卷恒 null）
     wrongScopeLabel:
@@ -602,8 +607,7 @@ export function requireUsableAttempt(
   attemptId: string,
 ): Attempt {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
-  // 作废卷（课程练习或讲练重开）：其上一切读写（详情/存草稿/单题提交/提示
-  // 解锁——本函数是这些路径共用的取卷入口）都拒绝，前端提示重新进入
+  // 作废卷（课程练习或讲练重开）：其上一切读写都拒绝（本函数是共用取卷入口），前端提示重新进入
   if (attempt.abandonedAt !== null) {
     throw new HttpError(
       409,
@@ -1721,8 +1725,7 @@ export function workflowStartColumns(
   studentId: string,
   assignmentId: string | null,
   options: AttemptWorkflowStartOptions,
-  /** 该卷的单元 id（M5-D2 文档推荐档：course 传单元、assignment 恒不传——
-   * 多单元按 assignment_units 聚合；wrong 不传，恒无推荐） */
+  /** 该卷的单元 id（M5-D2 文档推荐档：course 传单元；assignment 按 assignment_units 聚合不传；wrong 不传） */
   unitId?: string | null,
 ): {
   practiceWorkflowVersion?: 1;
@@ -1761,14 +1764,13 @@ export function newDraftAttempt(config: {
   lectureId?: string | null;
   attemptNo: number;
   startedAt: string;
-  /**
-   * 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式
-   * workflowVersion=1 请求时由服务端按教师规则裁决后传入；缺省 = 旧协议
-   * （version/mode 为 NULL，revision 0），lesson 恒缺省（独立适配路径）。
-   */
+  /** 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式 workflowVersion=1
+   *  时由服务端按教师规则裁决后传入；缺省 = 旧协议（NULL/NULL/0），lesson 恒缺省 */
   practiceWorkflowVersion?: 1 | null;
   feedbackMode?: "per_question" | "after_attempt" | null;
   workflowRevision?: number;
+  /** 限时测试（模块 2）：自选时长分钟；仅 course / assignment 建卷传入，缺省不限时 */
+  timeLimitMinutes?: number | undefined;
 }): Attempt {
   return {
     id: config.id,
@@ -1790,8 +1792,7 @@ export function newDraftAttempt(config: {
     scoreFinal: null,
     frozenAt: config.startedAt,
     legacyUnverified: false,
-    // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，讲练重开时才由
-    // restartLessonAttempt 写入
+    // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，restartLessonAttempt 才写入
     abandonedAt: null,
     // 错题重练建卷范围快照（#6980-2）：缺省 null，wrong 建卷路径显式写入
     practiceScopeJson: null,
@@ -1799,6 +1800,8 @@ export function newDraftAttempt(config: {
     practiceWorkflowVersion: config.practiceWorkflowVersion ?? null,
     feedbackMode: config.feedbackMode ?? null,
     workflowRevision: config.workflowRevision ?? 0,
+    // 模块 2：时长 → 截止（服务端时钟）；未选时长两列 NULL
+    ...timedColumnsOf(config.startedAt, config.timeLimitMinutes),
   };
 }
 
@@ -1838,17 +1841,14 @@ export function startAttempt(
     // tie-break）选出不同卷
     .orderBy(desc(attempts.startedAt), desc(attempts.attemptNo))
     .all();
-  // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft
-  // 再判策略位，教师关「允许重做」不追溯进行中的重做卷（hall-15313）
+  // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft 再判策略位（hall-15313）
   const draft = existing.find((row) => row.status === "draft");
   if (draft !== undefined) {
     return withAllowRedo(attemptSummaryOf(draft), assignment.allowRedo);
   }
 
-  // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、
-  // 历次保留可回看）；不允许重做且无进行中卷 → 409 REDO_NOT_ALLOWED。
-  // 「查最近卷 + 插新卷」同事务（D10 课程口径；better-sqlite3 单写者，事务
-  // 串行化并发，防重复开卷/重复 attemptNo），冻结输入读走外层 db 与课程同款
+  // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、历次可回看）；
+  // 不允许重做且无进行中卷 → 409。「查最近卷 + 插新卷」同事务（D10；单写者串行化防重复开卷）
   if (options.redo === true) {
     if (assignment.allowRedo === false) {
       throw new HttpError(
@@ -1913,10 +1913,8 @@ export function startAttempt(
 }
 
 /**
- * 作业来源建卷（T6R.3 冻结；attemptNo 由调用方按既有卷裁决——首卷 1、重做 =
- * 既有最大值 +1，hall-15313）。冻结输入读走外层 db，写走同事务 tx
- * （better-sqlite3 同连接同步执行，事务内外读写口径一致，课程
- * startCourseAttempt 同款）。
+ * 作业来源建卷（T6R.3 冻结；attemptNo 由调用方裁决——首卷 1、重做 = 既有最大值 +1，
+ * hall-15313）。冻结输入读走外层 db，写走同事务 tx（同连接同步执行，课程建卷同款）。
  */
 function createAssignmentAttempt(
   db: Db,
@@ -1938,8 +1936,9 @@ function createAssignmentAttempt(
     unitId: null,
     attemptNo,
     startedAt: new Date().toISOString(),
-    // M1b：仅显式 workflowVersion=1 走新协议（服务端按作业授权裁决）；
-    // 省略维持旧协议（version/mode NULL）
+    // 模块 2：自选时长（缺省不限时）
+    timeLimitMinutes: options.timeLimitMinutes,
+    // M1b：仅显式 workflowVersion=1 走新协议（服务端按作业授权裁决）；省略维持旧协议
     ...workflowStartColumns(
       db,
       "assignment",
@@ -2082,13 +2081,14 @@ export function startCourseAttempt(
       unitId,
       attemptNo: maxAttemptNo + 1,
       startedAt: new Date().toISOString(),
+      // 模块 2：自选时长（缺省不限时）
+      timeLimitMinutes: options.timeLimitMinutes,
       // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议。
       // M5-D2：传该卷 unitId——学生未设置偏好时课程单元的文档推荐参与裁决
       ...workflowStartColumns(db, "course", studentId, null, options, unitId),
     });
-    // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入的读走
-    // 外层 db（better-sqlite3 同连接同步执行，事务内读取与写入口径一致），
-    // 写走 tx 与 attempt 行同事务落库
+    // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入读走外层 db
+    // （同连接同步执行，事务内读写口径一致），写走 tx 与 attempt 行同事务落库
     const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
       db,
       attempt,
@@ -2220,16 +2220,16 @@ export function saveDraftAnswer(
         "这份练习已交卷，不能再修改答案",
       );
     }
+    // 模块 2：限时卷宽限已过 → 409 ATTEMPT_TIME_UP（非限时卷零变化）
+    assertAttemptNotTimedOut(attempt);
     requireAttemptQuestion(db, attempt, questionId);
-    // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
-    //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
+    // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改（非 lesson 行零变化）
     assertRowNotSubmitted(db, attemptId, questionId);
     // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
     // 永不比对参考答案；旧七型行为零变化
     assertNewKindAnswerShape(db, attemptId, questionId, answer);
 
-    // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
-    // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
+    // T6R.3：requireAttemptQuestion 已保证冻结行存在——无插入分支，upsert 收敛为原行更新
     const existing = tx
       .select({
         id: responses.id,
@@ -2701,14 +2701,12 @@ export function submitAttempt(
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }
 
-  // T6R.3：判分输入 = 冻结快照（requireUsableAttempt 门口已懒冻结兜底）。
-  // 三来源统一取行（rowid 序；判分/写入与顺序无关，展示排序在结果视图
-  // 经 unitGroupedRows 重建）
+  // T6R.3：判分输入 = 冻结快照（门口已懒冻结兜底）。三来源统一取行（rowid 序；
+  // 判分与顺序无关，展示排序在结果视图经 unitGroupedRows 重建）
   const ownRows = attemptResponseRows(db, attemptId);
-  // 逐题提交语义的卷（2026-10 lesson 独立适配 + M2 新协议普通卷）：已单题提交
-  // 的行不重判（见函数头注释）；判定走 practiceProtocolOf 单一谓词（异常行
-  // version=1 而 feedbackMode 缺失时也按历史卷全量判分，与四个逐题消费点
-  // 口径一致）；历史卷行的 submittedAt 恒 null → 全量判分，行为零变化
+  // 逐题提交语义的卷（lesson 独立适配 + M2 新协议普通卷）：已单题提交的行不重判；
+  // 判定走 practiceProtocolOf 单一谓词（异常行按历史卷全量判分，与逐题消费点一致）；
+  // 历史卷行 submittedAt 恒 null → 全量判分，行为零变化
   const perQuestionAttempt = practiceProtocolOf(attempt) !== "legacy";
 
   // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
@@ -3424,8 +3422,9 @@ export function submitPracticeQuestion(
     const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
     // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
     assertDraftCourseVisible(db, studentId, attempt);
-    // 新协议路径仅普通来源的新协议卷：lesson 独立适配（旧协议形态）→ 协议
-    // 不匹配；历史卷（无工作流版本）不可升级 → legacy（§5.3）
+    // 模块 2：限时卷宽限已过 → 409 ATTEMPT_TIME_UP
+    assertAttemptNotTimedOut(attempt, nowIso);
+    // 新协议路径仅普通来源的新协议卷：lesson 独立适配 → 协议不匹配；历史卷 → legacy（§5.3）
     const protocol = practiceProtocolOf(attempt);
     if (protocol === "lesson") {
       throw new HttpError(
@@ -3843,9 +3842,8 @@ export function getAttemptDetail(
 }
 
 /**
- * 草稿视图组装（T6R.3 单一数据源：unitGroupedRows 的冻结行只查一次、快照只
- * parse 一次，公开投影/草稿答案/提示回显都从同一批行派生）。attempt 已在
- * requireUsableAttempt 门口过课程分态校验与懒冻结。
+ * 草稿视图组装（T6R.3 单一数据源：冻结行只查一次、快照只 parse 一次，公开投影/草稿
+ * 答案/提示回显同批行派生）。attempt 已在 requireUsableAttempt 门口过校验与懒冻结。
  */
 function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const meta = attemptSourceMeta(db, attempt);
@@ -3895,6 +3893,8 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     studentFlags,
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
+    // 模块 2：限时卷下发截止 / 服务端时刻 / 阶段（非限时 null）
+    timing: attemptTimingOf(attempt),
     enabledCapabilities,
     ...(workflowView ?? {}),
   };

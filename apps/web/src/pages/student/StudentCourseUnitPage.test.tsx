@@ -497,4 +497,88 @@ describe("StudentCourseUnitPage", () => {
     // 节奏未被触碰：显式触碰守卫生效后整个初值链对齐被跳过
     expect(screen.getByRole("radio", { name: "交卷后查看" })).toBeChecked();
   });
+
+  it("模块 2 限时测试：缺省关闭，开卷请求不带 timeLimitMinutes", async () => {
+    renderPage(NEVER_DONE);
+    expect(await screen.findByText("有理数小练")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /限时测试/ })).not.toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", { name: "开始练习 有理数小练" }),
+    );
+    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+    expect(mockedStart.mock.calls[0]?.[2]).toEqual({ workflowVersion: 1 });
+  });
+
+  it("模块 2 限时测试：单元推荐时长 → 默认开启并预选，开卷携带 timeLimitMinutes", async () => {
+    renderPage({
+      ...NEVER_DONE,
+      practiceRecommendation: { timeLimitMinutes: 45 },
+    });
+    expect(await screen.findByText("有理数小练")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /限时测试/ })).toBeChecked();
+    expect(screen.getByText("本单元推荐 45 分钟")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "45 分钟" })).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", { name: "开始练习 有理数小练" }),
+    );
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenCalledWith(COURSE_ID, UNIT_ID, {
+        workflowVersion: 1,
+        timeLimitMinutes: 45,
+      }),
+    );
+  });
+
+  it("模块 2 限时测试：手动开启并自定义 25 分钟 → 开卷携带 25", async () => {
+    renderPage(NEVER_DONE);
+    expect(await screen.findByText("有理数小练")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: /限时测试/ }));
+    expect(screen.getByRole("radio", { name: "60 分钟" })).toBeChecked();
+    fireEvent.change(screen.getByLabelText("自定义时长（分钟）"), {
+      target: { value: "25" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "开始练习 有理数小练" }),
+    );
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenCalledWith(COURSE_ID, UNIT_ID, {
+        workflowVersion: 1,
+        timeLimitMinutes: 25,
+      }),
+    );
+  });
+
+  it("模块 2 限时测试：有进行中卷时「继续作答」不带时长（时钟以首次建卷为准）", async () => {
+    renderPage({
+      ...NEVER_DONE,
+      practiceRecommendation: { timeLimitMinutes: 45 },
+      attempts: [
+        {
+          attemptId: ATTEMPT_ID,
+          attemptNo: 1,
+          status: "draft",
+          score: null,
+          resultCounts: null,
+          startedAt: "2026-11-09T10:00:00.000Z",
+          submittedAt: null,
+        },
+      ],
+      summary: {
+        count: 1,
+        submittedCount: 0,
+        hasDraft: true,
+        firstScore: null,
+        firstResultCounts: null,
+        latestScore: null,
+        latestResultCounts: null,
+        bestScore: null,
+        bestResultCounts: null,
+        pendingCount: 0,
+      },
+    });
+    expect(await screen.findByText("有理数小练")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续作答" }));
+    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+    expect(mockedStart.mock.calls[0]?.[2]).toEqual({ workflowVersion: 1 });
+  });
 });

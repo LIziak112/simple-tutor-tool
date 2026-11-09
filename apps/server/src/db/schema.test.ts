@@ -457,6 +457,8 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
       practiceWorkflowVersion: null,
       feedbackMode: null,
       workflowRevision: 0,
+      timeLimitSec: null,
+      deadlineAt: null,
     };
     db.insert(attempts).values(attempt).run();
     expect(
@@ -626,6 +628,8 @@ describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectu
       practiceWorkflowVersion: null,
       feedbackMode: null,
       workflowRevision: 0,
+      timeLimitSec: null,
+      deadlineAt: null,
     };
     db.insert(attempts).values(attempt).run();
     expect(

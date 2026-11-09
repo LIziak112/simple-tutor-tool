@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attemptTimingSchema } from "./attempt-timing.ts";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentAnswerReleaseSchema,
@@ -167,16 +168,15 @@ export const attemptSummarySchema = z
      * 取 label（答题页/结果页来源行用）；其余来源与历史卷缺省（旧载荷
      * 兼容，optional） */
     wrongScopeLabel: z.string().min(1).nullable().optional(),
-    /**
-     * 是否允许重做（hall-15313）：仅 assignment 来源携带（其余来源恒 undefined，
-     * 由 superRefine 强制）；结果页据此渲染「再做一次」。旧版响应缺省 undefined，
-     * 客户端按 true 处理（存量作业即允许重做）。
-     */
+    /** 是否允许重做（hall-15313）：仅 assignment 来源携带（其余恒 undefined，superRefine
+     *  强制）；结果页据此渲染「再做一次」。旧响应缺省 undefined，客户端按 true 处理 */
     allowRedo: z.boolean().optional(),
+    /** 限时测试（模块 2）：时长秒 / 截止 UTC ISO；非限时卷 null，旧响应缺省 */
+    timeLimitSec: z.number().int().positive().nullable().optional(),
+    deadlineAt: z.string().min(1).nullable().optional(),
   })
   .superRefine((summary, ctx) => {
-    // allowRedo 仅 assignment 来源携带（hall-15313）：重做是作业语义，其余来源
-    // 携带即拒绝（与 lectureId 同款来源不变式）
+    // allowRedo 仅 assignment 来源携带（hall-15313）：重做是作业语义，其余来源携带即拒绝
     if (
       summary.sourceType !== "assignment" &&
       summary.allowRedo !== undefined
@@ -572,12 +572,11 @@ export const attemptDraftDataSchema = z.object({
    * 旧响应缺省按无标记处理。
    */
   studentFlags: z.record(z.string(), studentFlagSchema).optional(),
-  /**
-   * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
-   * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
-   * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
-   */
+  /** 冻结来源不可信标记（T6R.3 §5.1「legacy_unverified」）：true = 升级后首次访问时
+   *  懒冻结的当前版本（前端提示「内容为恢复后的版本」）；false = 建卷即冻结 */
   legacyUnverified: z.boolean(),
+  /** 限时信息（模块 2）：限时卷下发截止 / 服务端时刻 / 阶段；非限时卷 null，旧响应缺省 */
+  timing: attemptTimingSchema.nullable().optional(),
   /**
    * 教师辅助能力有效启用集（T7.7 / 方案 §4.5）：steps/ink 子集，读时按
    * attempt → student → teacher 的配置列计算（NULL=全启用）。steps 关闭时
@@ -1270,6 +1269,7 @@ export const attemptErrorCodeSchema = z.enum([
   "SELF_REVIEW_REVISION_CONFLICT",
   "SELF_REVIEW_NOT_ALLOWED",
   "ANSWER_SHAPE_INVALID",
+  "ATTEMPT_TIME_UP",
 ]);
 
 // ---------- 具体化的成功壳 ----------
