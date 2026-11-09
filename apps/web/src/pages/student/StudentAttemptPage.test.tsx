@@ -1,5 +1,11 @@
 import { onlineManager } from "@tanstack/react-query";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AttemptDraftData, AttemptResultData } from "@tutor/contract";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -560,5 +566,45 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
     expect(
       screen.getByRole("button", { name: "练习本卷错题（1 题）" }),
     ).toBeEnabled();
+  });
+
+  it("模块 7「专项重练（n）」：只圈本模块的题，范围标题带「· 模块名」", async () => {
+    const unit = RESULT_WITH_WRONG.units[0];
+    if (unit === undefined) throw new Error("fixture");
+    const twoModules: AttemptResultData = {
+      ...RESULT_WITH_WRONG,
+      units: [
+        { ...unit, id: "言语理解", title: "言语理解" },
+        {
+          id: "资料分析",
+          title: "资料分析",
+          questions: unit.questions.map((question) => ({
+            ...question,
+            questionId: "练习四-2",
+            snapshot: { ...question.snapshot, id: "练习四-2" },
+          })),
+        },
+      ],
+    };
+    mockedFetch.mockResolvedValue(twoModules);
+    mockedPractice.mockResolvedValue({
+      ...RESULT_WITH_WRONG.attempt,
+      id: NEW_ATTEMPT_ID,
+      sourceType: "wrong",
+    });
+    renderPage();
+    const table = within(await screen.findByTestId("module-results")).getByRole(
+      "table",
+    );
+    const row = within(table).getByText("资料分析").closest("tr");
+    if (row === null) throw new Error("row");
+    fireEvent.click(within(row).getByRole("button", { name: "专项重练（1）" }));
+    await waitFor(() =>
+      expect(mockedPractice).toHaveBeenCalledWith(
+        ["练习四-2"],
+        { workflowVersion: 1 },
+        { kind: "result", sourceTitle: "有理数小练 · 资料分析" },
+      ),
+    );
   });
 });

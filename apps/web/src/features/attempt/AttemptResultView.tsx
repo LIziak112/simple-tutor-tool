@@ -60,6 +60,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { ModuleResultTable } from "./ModuleResultTable";
 import { QuestionActivityBadge, ResultActivityLine } from "./QuestionActivity";
 
 // 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
@@ -513,8 +514,8 @@ export function AttemptResultView({
     loading: boolean;
     /** 组卷失败的中文提示（null = 无失败）；非 null 时按钮下方渲染告警 */
     error: string | null;
-    /** 点击按钮（questionIds = 本卷判错题按本卷题序） */
-    onStart: (questionIds: string[]) => void;
+    /** 点击按钮（questionIds 按本卷题序；moduleTitle = 模块专项重练时的模块名） */
+    onStart: (questionIds: string[], moduleTitle?: string) => void;
   };
   /**
    * 作业重做「再做一次」入口（hall-15313）：页面层传入开新卷动作与状态；
@@ -547,10 +548,8 @@ export function AttemptResultView({
     answers: null,
     hintsOpened: {},
   });
-  // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
-  // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
-  // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
-  // （材料缺省不阻断回看；服务端对坏快照已 fail-closed 409）
+  // QM-08：只读题面与作答共用 /attempts/:id/context 冻结投影经 groupSegmentsOfUnit
+  // 解释组段；失败 / legacy 卷按 undefined → 全部 solo 段，回看零变化
   const contextQuery = useAttemptContext(attempt.id);
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
@@ -790,11 +789,8 @@ export function AttemptResultView({
                   <div className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
                     <dt>待判断</dt>
                     <dd>
-                      {/* QM-12：有效判定口径（教师判 > 自评 > 自动）的未判断数
-                      （含待教师批改与待自评，逐题徽章区分两态）；与徽章同出处
-                      （reviewCounts→verdictBadgeDisplayOf），公布态下与答对/答错
-                      三分互补。D9 的 pendingCount（教师待批权威计数）另在
-                      「有 X 题待批」提示位消费 */}
+                      {/* QM-12 有效判定口径的未判断数（含待批与待自评），与徽章
+                      同出处；D9 pendingCount 另在「有 X 题待批」提示位消费 */}
                       {counts.pending}
                       <span>题</span>
                     </dd>
@@ -928,6 +924,14 @@ export function AttemptResultView({
             </div>
           </section>
 
+          {/* 模块 7：按模块（单元）看答对 / 作答 / 跳过 / 不确定但对 / 用时 / 配额 */}
+          <ModuleResultTable
+            units={data.units}
+            released={released}
+            activity={data.activity}
+            wrongPractice={wrongPractice}
+          />
+
           {/* T6R.20 审查修复 2：交卷后标注封存失败的非阻断警示（懒补封兜底） */}
           {annotationSealWarning && (
             <p
@@ -939,14 +943,10 @@ export function AttemptResultView({
             </p>
           )}
 
-          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续）。
-              QM-08：题目序经 groupSegmentsOfUnit 解释成组段——组段共享材料
-              按组渲染一份（与作答视图同一数据解释单源）。审查 P1 修复：与
-              作答视图同构——题组只是题行 ol 里的兄弟锚点，题行永不进组子树，
-              context 后到不重挂题卡（回看本无控制器，与作答侧共享一份结构）。
-              P1-2：solo 题的题级 ::ref 材料挂题级锚（与作答视图同口径）；
-              segments 展平成单层题行数组（嵌套数组 key 带段位前缀会重挂行，
-              与作答侧同修复）。 */}
+          {/* 逐题结果（T2A.7 多单元按节分组，题号全卷连续）。QM-08 题目序经
+              groupSegmentsOfUnit 解释成组段，共享材料按组渲染一份；题组只是题行
+              ol 里的兄弟锚点，题行永不进组子树；solo 题的题级 ::ref 材料挂题级锚；
+              segments 展平成单层题行数组（与作答视图同构同口径）。 */}
           <ol className="flex flex-col gap-4">
             {data.units.map((unit) => {
               const questionById = new Map(

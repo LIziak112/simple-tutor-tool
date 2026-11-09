@@ -11,7 +11,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts } from "../db/schema.ts";
+import { attempts, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
@@ -318,6 +318,37 @@ describe("限时测试 · 到时后的写闸门", () => {
     const res = await startCourse(env);
     const attempt = attemptStartOkSchema.parse(await res.json()).data;
     expect((await saveAnswer(env, attempt.id, true)).status).toBe(200);
+  });
+});
+
+describe("按模块看结果（模块 7）· 模块参考配额", () => {
+  it("结果视图单元分组带 timeQuotaMinutes = 单元 practice.timeLimitMinutes；无推荐单元不带键", async () => {
+    const env = await makeEnv();
+    const attempt = await startTimed(env, 30);
+    const submitted = await submitAttemptRequest(
+      env.app,
+      env.studentCookie,
+      attempt.id,
+    );
+    expect(submitted.status).toBe(200);
+    const result = (await submitted.json()) as {
+      data: { units: { id: string; timeQuotaMinutes?: number }[] };
+    };
+    expect(result.data.units).toHaveLength(1);
+    expect(result.data.units[0]?.timeQuotaMinutes).toBe(45);
+    // 推荐被清空后（当前值语义）结果视图不再带该键
+    env.db
+      .update(units)
+      .set({ practiceDefaultsJson: null })
+      .where(eq(units.id, env.unitId))
+      .run();
+    const again = await env.app.request(`/api/student/attempts/${attempt.id}`, {
+      headers: { cookie: env.studentCookie },
+    });
+    const detail = (await again.json()) as {
+      data: { units: { timeQuotaMinutes?: number }[] };
+    };
+    expect(detail.data.units[0]).not.toHaveProperty("timeQuotaMinutes");
   });
 });
 

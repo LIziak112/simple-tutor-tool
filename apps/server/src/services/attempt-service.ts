@@ -153,6 +153,7 @@ import { attemptActivityProjection } from "./question-activity";
 import type { Tx } from "./question-sync";
 import { rubricReviewOf } from "./rubric-review-read";
 import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
+import { unitTimeQuotasOf } from "./unit-time-quota";
 
 /**
  * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10；T6R.3 全来源建卷冻结）
@@ -588,18 +589,14 @@ export function requireOwnAttempt(
 }
 
 /**
- * 取本人 attempt 并按来源做访问权校验（T2A.6，D7/D22）：
- * - course 来源且 draft：每次调用都重校验 D5 可见性与成员资格——移出成员/课程
- *   归档 → 403 COURSE_ACCESS_DENIED；条目隐藏/未到发布/资源删除 → 404 NOT_FOUND
- *   （requireVisibleCourseUnit 统一口径）；
- * - course 来源且已交卷：只读记录，不做课程校验（D7：已交卷课程练习仍可回看）；
- * - assignment 来源：维持现状（归属即权限，被移出名单后已建作答仍可继续）。
- * 草稿保存、交卷、提示、笔迹、事件、详情、通用取卷全部经本函数进门。
+ * 取本人 attempt 并按来源做访问权校验（T2A.6，D7/D22）：course 来源且 draft
+ * 每次重校验可见性与成员资格（403 COURSE_ACCESS_DENIED / 404 NOT_FOUND，
+ * requireVisibleCourseUnit 统一口径）；course 已交卷只读不校验；assignment
+ * 归属即权限。草稿保存、交卷、提示、笔迹、事件、详情、通用取卷全部经此进门。
  *
- * **T6R.3 冻结统一门口**：末尾经 ensureAttemptFrozen 懒冻结升级遗留草稿并
- * 返回**最新行**——分态消费方（hint-service 的「冻结卷不回退当前题库」等）
- * 必须用返回值；旧内存对象的 frozenAt=null 会误走遗留分支（/simplify 层级角
- * 修复的真 bug）。已冻结/已交卷时幂等直返。
+ * **T6R.3 冻结统一门口**：末尾经 ensureAttemptFrozen 懒冻结遗留草稿并返回
+ * **最新行**——消费方必须用返回值（旧内存对象 frozenAt=null 会误走遗留分支）；
+ * 已冻结/已交卷时幂等直返。
  */
 export function requireUsableAttempt(
   db: Db,
@@ -4220,12 +4217,11 @@ function buildResultData(
         };
   };
 
-  // 逐题条目与分组同批组装（groupedSnapshotRows 统一「跳过缺失+组 id 回退+
-  // 空组过滤」；快照优先取预加载，未覆盖行现场 parse）
-  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  // 逐题条目与分组同批组装（groupedSnapshotRows；快照优先取预加载）；QM-13
+  // matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
   const materialSlots = materialSlotOrderOf(db, attempt.id);
   const resultQuestions: AttemptResultQuestion[] = [];
-  const unitGroups: AttemptResultUnit[] = groupedSnapshotRows(
+  const unitGroups = groupedSnapshotRows(
     db,
     attempt,
     (row, snapshot) => {
@@ -4243,17 +4239,19 @@ function buildResultData(
             parsedByQuestion?.get(row.questionId) ?? snapshotOfRow(row),
           ...(preloadedRows !== undefined ? { preloadedRows } : {}),
         },
-  ).map((group) => ({
-    id: group.id,
-    title: group.title,
-    questions: group.items,
-  }));
+  );
+  // 模块 7：模块参考配额（单元推荐时长当前值）随单元分组下发，与活动用时并列
+  const unitIds = unitGroups.map((group) => group.id);
+  const quotas = unitTimeQuotasOf(db, unitIds);
+  const unitViews: AttemptResultUnit[] = unitGroups.map((group) => {
+    const quota = quotas.get(group.id);
+    const unit = { id: group.id, title: group.title, questions: group.items };
+    return quota === undefined ? unit : { ...unit, timeQuotaMinutes: quota };
+  });
 
-  // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，
-  // pending 按 answered 口径（每道已答题显示为「待批」，截止后恢复真实计数）；
-  // D9 新增字段 scoreFinal / pendingCount 同法置 null 投影（待批数不 null 会
-  // 泄露整卷批改进度，与「待公布」口径冲突）。已公布时 scoreFinal 取 attempt 行、
-  // pendingCount 走 pendingMarkCount（D4 共享谓词，与教师端列表/详情同一实现）
+  // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，pending 按
+  // answered 口径，scoreFinal / pendingCount 置 null（待批数会泄露批改进度）；
+  // 已公布时 scoreFinal 取 attempt 行、pendingCount 走 pendingMarkCount（D4 共享）
   const fullSummary = scoreSummaryOf(resultQuestions);
   const summary = released
     ? {
@@ -4285,7 +4283,7 @@ function buildResultData(
     dueAt: meta.dueAt,
     answersReleased: released,
     summary,
-    units: unitGroups,
+    units: unitViews,
     enabledCapabilities,
     // M4-D3 §13.8 节奏摘要：v1 新协议卷携带裁决投影（feedbackMode 驱动结果页
     // 「反馈节奏」摘要行），读时按当前规则裁决（与草稿视图同一 resolver / schema
