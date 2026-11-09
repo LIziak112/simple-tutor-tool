@@ -191,6 +191,7 @@ function postEvents(
   cookie: string | undefined,
   attemptId: string,
   events: unknown[],
+  viewId?: string,
 ): Promise<Response> {
   return Promise.resolve(
     app.request(`/api/student/attempts/${attemptId}/events`, {
@@ -199,7 +200,10 @@ function postEvents(
         "content-type": "application/json",
         ...(cookie === undefined ? {} : { cookie }),
       },
-      body: JSON.stringify({ events }),
+      body: JSON.stringify({
+        events,
+        ...(viewId === undefined ? {} : { viewId }),
+      }),
     }),
   );
 }
@@ -479,6 +483,86 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
     // attempts 总用时 = 40 + 30
     const all = db.select().from(attempts).all();
     expect(all[0]?.activeSec).toBe(70);
+  });
+
+  it("题内活动用时 v1（模块 2 补刀）：批级 viewId 折进 payload；结果视图 activity 与旧 activeSec 口径并存", async () => {
+    const { app, db, aCookie, assignmentId } = await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    // 端 A：q1 聚焦 0–40s 有动作（hidden 20–25 不计 → active 35s）；q2 聚焦 40–60 只看
+    await postEvents(
+      app,
+      aCookie,
+      attemptId,
+      [
+        ev("question_focus", 0, { questionId: Q.judge }),
+        ev("answer_change", 10, {
+          questionId: Q.judge,
+          to: { kind: "judge", value: true },
+        }),
+        ev("page_hidden", 20),
+        ev("page_visible", 25),
+        ev("question_focus", 40, { questionId: Q.choice }),
+        ev("question_blur", 60, { questionId: Q.choice }),
+      ],
+      "view-a",
+    );
+    // 端 B：同时聚焦 q3 50–70s 有动作 → 50–60 与端 A 的 q2 重叠记未归属 10s
+    await postEvents(
+      app,
+      aCookie,
+      attemptId,
+      [
+        ev("question_focus", 50, { questionId: Q.fill }),
+        ev("answer_change", 55, {
+          questionId: Q.fill,
+          to: { kind: "fill", values: ["x"] },
+        }),
+        ev("question_blur", 70, { questionId: Q.fill }),
+      ],
+      "view-b",
+    );
+    // viewId 折进每行 payload（不加列）；旧客户端缺省行 payload 无该键
+    const rows = db.select().from(events).all();
+    const payloads = rows.map(
+      (row) => JSON.parse(row.payloadJson) as { viewId?: string },
+    );
+    expect(new Set(payloads.map((p) => p.viewId))).toEqual(
+      new Set(["view-a", "view-b"]),
+    );
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    const result = (await submitRes.json()) as { data: AttemptResultData };
+    const activity = result.data.activity;
+    expect(activity?.version).toBe(1);
+    expect(activity?.sessions).toBe(2);
+    expect(activity?.byQuestion[Q.judge]).toEqual({
+      activeSec: 35,
+      observedSec: 0,
+      actions: 1,
+      viewed: true,
+    });
+    expect(activity?.byQuestion[Q.choice]).toEqual({
+      activeSec: 0,
+      observedSec: 10,
+      actions: 0,
+      viewed: true,
+    });
+    expect(activity?.byQuestion[Q.fill]).toEqual({
+      activeSec: 10,
+      observedSec: 0,
+      actions: 1,
+      viewed: true,
+    });
+    expect(activity?.unattributedSec).toBe(10);
+    expect(activity?.activeSecTotal).toBe(45);
+    expect(activity?.observedSecTotal).toBe(10);
+    // 旧口径（教师侧 responses.activeSec）不受影响：仍按旧规则算
+    const judgeRow = db
+      .select()
+      .from(responses)
+      .all()
+      .find((row) => row.questionId === Q.judge);
+    expect(judgeRow?.activeSec).toBe(35);
+    assertNoLeak(activity);
   });
 
   it("changeCount 口径 = max(草稿 PUT 计数, 事件计数)；无事件 attempt 的 activeSec 保持 NULL", async () => {

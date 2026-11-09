@@ -20,6 +20,7 @@ export * from "./answer-kinds/index.ts";
 export * from "./assignment.ts";
 export * from "./attempt.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
+export * from "./attempt-activity.ts";
 export * from "./attempt-timing.ts";
 /** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login/register 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptTimingSchema } from "./attempt-timing.ts";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
@@ -586,9 +587,8 @@ export const attemptDraftDataSchema = z.object({
    */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
   /**
-   * 做题工作流裁决投影（M1a，2026-10-22 计划 §6.1，可选）：仅新协议卷携带，
-   * 旧响应缺失按整卷旧协议处理，不能默认授权。授权结论由服务端 resolver
-   * 产出；题面/答案仍走各自既有投影，本字段不混入题目秘密。
+   * 做题工作流裁决投影（M1a §6.1，可选）：仅新协议卷携带，旧响应缺失按整卷旧
+   * 协议处理，不能默认授权。结论由服务端 resolver 产出，不混入题目秘密。
    */
   practiceWorkflow: practiceWorkflowSchema.optional(),
   /**
@@ -797,18 +797,16 @@ export const attemptResultDataSchema = z.object({
   summary: attemptScoreSummarySchema,
   /** 逐题结果分组（T2A.7：assignment 按单元序分节，course 单组；组内按题序） */
   units: z.array(attemptResultUnitSchema),
-  /**
-   * 教师辅助能力有效启用集（T7.7，与草稿视图同口径）：结果视图的详解/揭晓
-   * 渲染同样遵循开关（steps 关闭时详解内 steps 完整展开）。
-   */
+  /** 教师辅助能力有效启用集（T7.7，与草稿视图同口径；结果视图详解/揭晓同样遵循） */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
   /**
    * 练习工作流裁决投影（M4-D3 §13.8，与草稿视图同一 schema 单源）：v1 新协议
-   * 卷携带（feedbackMode 驱动结果页「反馈节奏」摘要行——作答时逐题反馈 /
-   * 交卷后反馈）；lesson / 历史旧协议卷缺省 = 前端不渲染该行。结论只能来自
-   * 服务端 resolver 读时裁决，本字段不作为任何授权依据。
+   * 卷携带（feedbackMode 驱动结果页「反馈节奏」摘要行）；lesson / 旧协议卷缺省。
+   * 结论只能来自服务端 resolver 读时裁决，本字段不作为任何授权依据。
    */
   practiceWorkflow: practiceWorkflowSchema.optional(),
+  /** 题内活动用时（attempt-activity.ts v1 口径，服务端按事件现算；无事件卷缺省） */
+  activity: attemptActivitySchema.optional(),
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */

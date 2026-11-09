@@ -1,5 +1,6 @@
 import type { LearningEvent } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { postAttemptEventsApi } from "./api";
 import {
   createEventQueue,
   EVENT_BATCH_BYTES_MAX,
@@ -153,6 +154,49 @@ describe("定时批量", () => {
     expect(sizes[0]).toBe(200);
     expect(sizes.reduce((sum, n) => sum + n, 0)).toBeGreaterThanOrEqual(205);
     for (const size of sizes) expect(size).toBeLessThanOrEqual(200);
+  });
+});
+
+describe("作答页会话 viewId（题内活动用时按会话分组）", () => {
+  it("attempt scope 默认发送 / beacon 都随批携带同一个 viewId；事件本体不变", async () => {
+    const posted = vi
+      .mocked(postAttemptEventsApi)
+      .mockResolvedValue({ accepted: 1, rejected: 0 } as never);
+    const sent: Blob[] = [];
+    // jsdom 无 sendBeacon：临时装一个可检视的替身，用完即拆（其他用例依赖「无 beacon → 落仓」）
+    Object.defineProperty(navigator, "sendBeacon", {
+      configurable: true,
+      value: vi.fn((_url: string, body: Blob) => {
+        sent.push(body);
+        return true;
+      }),
+    });
+    try {
+      const q = makeQueue();
+      q.track(ev("question_focus", { questionId: "q1" }));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(posted).toHaveBeenCalledTimes(1);
+      const [attemptId, batch, viewId] = posted.mock.calls[0] ?? [];
+      expect(attemptId).toBe("att-1");
+      expect((batch ?? []).map((e) => e.type)).toEqual(["question_focus"]);
+      expect(typeof viewId).toBe("string");
+      expect((viewId ?? "").length).toBeGreaterThan(0);
+      expect(batch?.[0]).not.toHaveProperty("viewId");
+      // 页面隐藏 → beacon 路径：请求体顶层带同一 viewId
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.runOnlyPendingTimersAsync();
+      expect(sent).toHaveLength(1);
+      const body = JSON.parse((await sent[0]?.text()) ?? "{}") as {
+        events: LearningEvent[];
+        viewId?: string;
+      };
+      expect(body.events.map((e) => e.type)).toEqual(["page_hidden"]);
+      expect(body.viewId).toBe(viewId);
+    } finally {
+      Reflect.deleteProperty(navigator, "sendBeacon");
+      posted.mockReset().mockRejectedValue(new Error("不应直接调用"));
+    }
   });
 });
 
