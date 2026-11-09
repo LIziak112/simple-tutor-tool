@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { BookOpenCheck, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import { CopyBlock } from "@/components/CopyBlock";
 import { Button } from "@/components/ui/button";
+import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { useApiToken } from "@/features/teacher-settings/api-token-queries";
 import { fetchPublicConfig } from "@/lib/api";
@@ -10,8 +12,42 @@ import { buildMcpServersConfig } from "@/lib/mcp-config";
 
 const TOKEN_PLACEHOLDER = "<你的API_TOKEN>";
 
-/** 凭据、地址、客户端配置三个步骤；两类客户端共用一份配置。 */
+/**
+ * 凭据、地址、客户端配置三个步骤；两类客户端共用一份配置。
+ * 个人账号（模块 0）没有教师 API token（唯一 token 在学习视角「AI 伴学」里，
+ * 端点 /mcp/personal）——本页只给指路卡，不发起会 409 的 token 请求。
+ */
 export function ConnectPage() {
+  const me = useTeacherMe();
+  if (me.data?.accountKind === "personal") {
+    return <PersonalConnectNotice />;
+  }
+  return <ClassConnectPage />;
+}
+
+/** 个人账号的指路卡：一枚 token 在学习视角管理 */
+function PersonalConnectNotice() {
+  return (
+    <section className="teacher-config-page">
+      <header className="mb-7">
+        <h1 className="teacher-page-title">连接 AI</h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          个人账号只有一枚 AI 连接 Token，在学习视角的「AI
+          伴学」里生成与管理；同一枚 Token 既能让 AI
+          帮你导入整理资料、查看自己的学情，也能做 AI 伴学任务。
+        </p>
+      </header>
+      <Button className="min-h-11" asChild>
+        <Link to="/s/settings/ai">
+          <BookOpenCheck aria-hidden />
+          去学习视角管理 AI 连接
+        </Link>
+      </Button>
+    </section>
+  );
+}
+
+function ClassConnectPage() {
   const configQuery = useQuery({
     queryKey: ["public-config"],
     queryFn: fetchPublicConfig,

@@ -13,6 +13,8 @@ import TeacherLayout from "./TeacherLayout";
  * 讲义库/题库/回收站由 /t/library 页内页签切换、导入经「导入内容」按钮，
  * 侧边栏不再单列（与页内导航去重）；资源库在 /t/library 任意页签与
  * /t/import（导入流程页）上均高亮（aria-current）。
+ * 模块 0 个人账号：导航去掉 学生 / 作业 / 连接 AI，账号标签「个人账号」，顶栏有
+ * 「学习视角」切换（/s/home）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -29,6 +31,7 @@ const TEACHER: TeacherInfo = {
   id: "11111111-1111-4111-8111-111111111111",
   loginName: "teacher",
   isAdmin: true,
+  accountKind: "class",
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 
@@ -54,6 +57,35 @@ function renderLayout(initialEntry: string): void {
 
 beforeEach(() => {
   mockedMe.mockReset();
+});
+
+describe("TeacherLayout · 个人账号（模块 0）", () => {
+  it("导航无 学生 / 作业 / 连接 AI；账号标签「个人账号」；顶栏「学习视角」指向 /s/home", async () => {
+    mockedMe.mockResolvedValue({
+      ...TEACHER,
+      loginName: "kaosheng",
+      isAdmin: false,
+      accountKind: "personal",
+    });
+    renderLayout("/t/library");
+
+    const nav = await screen.findByRole("navigation", { name: "教师端导航" });
+    expect(within(nav).getByRole("link", { name: "资源库" })).toHaveAttribute(
+      "href",
+      "/t/library",
+    );
+    for (const name of ["学生", "作业", "连接 AI"]) {
+      expect(within(nav).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+    expect(within(nav).getByRole("link", { name: "设置" })).toHaveAttribute(
+      "href",
+      "/t/settings",
+    );
+    expect(screen.getByText("个人账号 · 管理视角")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "切换到学习视角" }),
+    ).toHaveAttribute("href", "/s/home");
+  });
 });
 
 describe("TeacherLayout 导航（侧边栏去重简化）", () => {

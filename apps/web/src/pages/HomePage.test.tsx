@@ -12,8 +12,9 @@ import {
 import { HomePage } from "./HomePage";
 
 /**
- * 首页登录面板测试：未登录时展示学生/教师两个入口（链接指向各自登录页）、
- * 已登录时对应卡换文案并直达端内页、底部系统状态卡三态（成功时间/错误重试）。
+ * 首页登录面板测试：未登录时展示学生/教师/个人学习三个入口（链接指向各自登录页）、
+ * 已登录时对应卡换文案并直达端内页、个人账号登录后收成一张「个人学习」卡（模块 0）、
+ * 底部系统状态卡三态（成功时间/错误重试）。
  * API 层 mock（真实接口行为由后端测试覆盖）；未登录用真实 ApiError 401。
  */
 
@@ -37,12 +38,14 @@ const STUDENT: StudentMeData = {
   loginName: "张三",
   linkEnabled: true,
   passwordEnabled: true,
+  accountKind: "class",
 };
 
 const TEACHER: TeacherInfo = {
   id: "22222222-2222-4222-8222-222222222222",
   loginName: "demo",
   isAdmin: false,
+  accountKind: "class",
   createdAt: "2026-09-01T00:00:00.000Z",
 };
 
@@ -83,6 +86,39 @@ describe("HomePage 登录入口面板", () => {
       "href",
       "/t/login",
     );
+    // 模块 0：个人学习入口
+    expect(screen.getByRole("link", { name: /个人学习/ })).toHaveAttribute(
+      "href",
+      "/p/login",
+    );
+  });
+
+  it("个人账号已登录（两侧会话同在）→ 只剩一张「个人学习」卡直达 /s/home", async () => {
+    mockedStudentMe.mockResolvedValue({
+      ...STUDENT,
+      displayName: "小考",
+      loginName: "kaosheng",
+      accountKind: "personal",
+    });
+    mockedTeacherMe.mockResolvedValue({
+      ...TEACHER,
+      loginName: "kaosheng",
+      accountKind: "personal",
+    });
+    renderHomePage();
+
+    // 探测落定前仍是三卡（个人学习 → /p/login），落定后收成一张已登录卡
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: /个人学习/ })).toHaveAttribute(
+        "href",
+        "/s/home",
+      );
+    });
+    const link = screen.getByRole("link", { name: /个人学习/ });
+    expect(link).toHaveTextContent("已登录：小考");
+    expect(
+      screen.queryByRole("link", { name: /学生登录|教师登录|进入工作台/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("学生已登录时学生卡直达 /s/home 并显示姓名，教师卡仍是登录入口", async () => {

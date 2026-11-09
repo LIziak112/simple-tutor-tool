@@ -3,13 +3,19 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchStudentMe, logoutStudentApi } from "@/lib/api";
+import {
+  ApiError,
+  fetchStudentMe,
+  logoutStudentApi,
+  logoutTeacher,
+} from "@/lib/api";
 import StudentLayout from "./StudentLayout";
 
 /**
  * 学生端布局与守卫测试（T2.3）：未登录跳 /s/login；已登录渲染顶栏
  * （姓名 / 五分区导航 / 退出）；退出调 logout 接口并回登录页。
  * 2026-10 学生端 IA 调整：错题本升为一级导航（/s/wrong）。
+ * 模块 0 个人账号：导航无「我的作业」、顶栏有「管理视角」切换、退出同时结束两枚会话。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -18,11 +24,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchStudentMe: vi.fn(),
     logoutStudentApi: vi.fn(),
+    logoutTeacher: vi.fn(),
   };
 });
 
 const mockedMe = vi.mocked(fetchStudentMe);
 const mockedLogout = vi.mocked(logoutStudentApi);
+const mockedLogoutTeacher = vi.mocked(logoutTeacher);
 
 const STUDENT: StudentMeData = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -30,6 +38,7 @@ const STUDENT: StudentMeData = {
   loginName: "张三",
   linkEnabled: true,
   passwordEnabled: true,
+  accountKind: "class",
 };
 
 function renderLayout() {
@@ -54,6 +63,10 @@ function renderLayout() {
             path="/s/login"
             element={<p data-testid="route-stub">学生登录页</p>}
           />
+          <Route
+            path="/p/login"
+            element={<p data-testid="route-stub">个人登录页</p>}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -63,6 +76,59 @@ function renderLayout() {
 beforeEach(() => {
   mockedMe.mockReset();
   mockedLogout.mockReset();
+  mockedLogoutTeacher.mockReset();
+});
+
+describe("StudentLayout · 个人账号（模块 0）", () => {
+  const PERSONAL: StudentMeData = {
+    ...STUDENT,
+    loginName: "kaosheng",
+    linkEnabled: false,
+    passwordEnabled: false,
+    accountKind: "personal",
+  };
+
+  it("导航四分区（无「我的作业」）+ 「管理视角」切换指向 /t", async () => {
+    mockedMe.mockResolvedValue(PERSONAL);
+    renderLayout();
+
+    expect(await screen.findByRole("link", { name: "首页" })).toHaveAttribute(
+      "href",
+      "/s/home",
+    );
+    expect(
+      screen.queryByRole("link", { name: "我的作业" }),
+    ).not.toBeInTheDocument();
+    for (const [name, href] of [
+      ["课程", "/s/courses"],
+      ["错题本", "/s/wrong"],
+      ["我的记录", "/s/records"],
+    ] as const) {
+      expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
+    }
+    const manage = screen.getAllByRole("link", { name: "切换到管理视角" });
+    expect(manage.length).toBeGreaterThan(0);
+    expect(manage[0]).toHaveAttribute("href", "/t");
+  });
+
+  it("退出同时调学生与教师登出接口，并回个人登录页", async () => {
+    mockedMe.mockResolvedValue(PERSONAL);
+    mockedLogout.mockResolvedValue(null);
+    mockedLogoutTeacher.mockResolvedValue(null);
+    renderLayout();
+
+    const [logoutButton] = await screen.findAllByRole("button", {
+      name: /退出/,
+    });
+    if (!logoutButton) throw new Error("退出按钮缺失");
+    fireEvent.click(logoutButton);
+
+    await waitFor(() => {
+      expect(mockedLogout).toHaveBeenCalledTimes(1);
+      expect(mockedLogoutTeacher).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("route-stub")).toHaveTextContent("个人登录页");
+    });
+  });
 });
 
 describe("StudentLayout", () => {

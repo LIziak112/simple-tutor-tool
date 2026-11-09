@@ -91,9 +91,8 @@ import {
  */
 
 /**
- * 教师表——T2B.1 起为多教师基础结构（D1 单表多角色：管理员 = isAdmin 的教师）。
- * 首位教师由首启 setup 创建（T2B.1 写 loginName='teacher'、isAdmin=true；T2B.2 起
- * 表单带登录名）；存量部署唯一的教师行由 T2B.1 回填自动升级（D4）。
+ * 教师表——T2B.1 起为多教师基础结构（D1 单表多角色：管理员 = isAdmin 的教师；模块 0 起
+ * accountKind 区分班级 / 个人账号）。首位教师由首启 setup 创建；存量唯一教师行由 T2B.1 回填升级（D4）。
  */
 export const teachers = sqliteTable(
   "teachers",
@@ -101,9 +100,8 @@ export const teachers = sqliteTable(
     /** 主键：crypto.randomUUID()（§0.3 主键约定） */
     id: text("id").primaryKey(),
     /**
-     * 登录名（D2：全局唯一，字符集中文/字母/数字/下划线/连字符，长度 2–32，
-     * 契约校验在 T2B.2 落地）。列可空仅因迁移加列无法在 DDL 内回填（D9 同款口径）：
-     * 存量行由 T2B.1 回填写 'teacher'，此后各创建入口恒写非空，读侧可视为必有。
+     * 登录名（D2：全局唯一，中文/字母/数字/下划线/连字符，2–32，契约校验 T2B.2）。
+     * 列可空仅因迁移加列无法在 DDL 内回填（D9）：存量行由 T2B.1 回填 'teacher'，此后恒非空。
      */
     loginName: text("login_name"),
     /** 是否管理员（D1）：管理员可兼任全部教师功能并进管理端（T2B.6）；默认 false */
@@ -112,26 +110,29 @@ export const teachers = sqliteTable(
     disabledAt: text("disabled_at"),
     /** 登录密码的 scrypt 哈希；设置密码前为 NULL */
     passwordHash: text("password_hash"),
-    /** MCP / 脚本调用用的 API Token（T4.6 起启用，D22：randomBytes(32) base64url，
-     *  每教师一份、可重置；未生成时为 NULL。唯一索引允许多个 NULL（存量行不冲突）） */
+    /** MCP / 脚本调用用的 API Token（T4.6，D22：randomBytes(32) base64url，每教师一份可重置；NULL = 未生成，唯一索引允许多个 NULL） */
     apiToken: text("api_token"),
     /**
      * 辅助能力启用集 JSON（T7.7 / 方案 §4.5）：capabilityProfileSchema 形态
-     * （{"enabledCapabilities":[…]}，值为 steps/ink 子集）。NULL = 未配置 =
-     * 全启用（缺省语义，存量行无需回填）；空数组 = 显式全关。学生端 attempt/
-     * 讲义读取接口按本列计算有效启用集下发；开关只影响辅助入口渲染，不是
-     * 安全边界。
+     * （{"enabledCapabilities":[steps/ink 子集]}）。NULL = 未配置 = 全启用（存量行无需回填）；
+     * 空数组 = 显式全关。学生端 attempt/讲义接口按本列下发有效启用集；只影响辅助入口渲染，不是安全边界。
      */
     capabilityProfileJson: text("capability_profile_json"),
     /**
      * 练习反馈默认策略（M1b，2026-10-22 计划 §5.2）：student_choice | after_attempt。
-     * NULL = 未配置，仅对新普通自由练习（course/wrong 建卷）按 student_choice
-     * 缺省处理；不混入 capabilityProfileJson（那是 steps/ink 辅助能力开关）。
-     * 异常持久化值读侧按保守的 after_attempt 处理（fail closed，不意外授权）。
+     * NULL = 未配置，新普通自由练习（course/wrong 建卷）按 student_choice 缺省；不混入
+     * capabilityProfileJson；异常持久化值读侧按 after_attempt 处理（fail closed）。
      */
     practiceFeedbackPolicy: text(
       "practice_feedback_policy",
     ).$type<TeacherPracticeFeedbackPolicy>(),
+    /** 账号类型（模块 0）：class 班级账号（存量行默认）/ personal 个人账号（见 auth/personal-auth-service.ts） */
+    accountKind: text("account_kind")
+      .$type<"class" | "personal">()
+      .notNull()
+      .default("class"),
+    /** 个人账号固定绑定的学习者 students.id（仅 personal 非空；不建外键，与 students.teacherId 同口径） */
+    personalStudentId: text("personal_student_id"),
     /** 创建时间：UTC ISO 字符串 */
     createdAt: text("created_at").notNull(),
   },
@@ -152,12 +153,11 @@ export const sessions = sqliteTable("sessions", {
   /** 会话主体类型：'teacher' 或 'student' */
   subjectType: text("subject_type").$type<"teacher" | "student">().notNull(),
   /**
-   * 主体 id——多态引用（teachers.id 或未来的 students.id）。
-   * 不建外键：student_type 主体指向的 students 表要到 T2.1 才创建，
-   * 且先删主体后会话由过期清理任务负责，靠外键级联反而会把清理顺序耦死。
+   * 主体 id——多态引用（teachers.id 或 students.id）。不建外键：先删主体后会话由
+   * 过期清理任务负责，靠外键级联反而会把清理顺序耦死。
    */
   subjectId: text("subject_id").notNull(),
-  /** 过期时间：UTC ISO 字符串（教师会话 7 天、学生会话 90 天，写入方决定） */
+  /** 过期时间：UTC ISO 字符串（教师 / 学生会话均 90 天，写入方决定；教师 2026-11 前为 7 天） */
   expiresAt: text("expires_at").notNull(),
   /** 创建时间：UTC ISO 字符串 */
   createdAt: text("created_at").notNull(),

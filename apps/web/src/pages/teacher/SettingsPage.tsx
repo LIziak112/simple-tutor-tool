@@ -6,8 +6,10 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
+import { useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { useLogoutPersonal } from "@/features/auth/personal-auth";
 import {
   teacherMeKey,
   useLogoutTeacher,
@@ -33,7 +35,10 @@ const SECTIONS = [
 /** 分类写入 URL；配置控制器持续挂载，切换时保留未保存状态。 */
 export function SettingsPage() {
   const meQuery = useTeacherMe();
-  const logoutMutation = useLogoutTeacher();
+  const logoutTeacherMutation = useLogoutTeacher();
+  const logoutPersonalMutation = useLogoutPersonal();
+  // 个人账号退出两侧会话、回 /p/login；守卫在 me 变 401 时读这个目标
+  const [logoutTarget, setLogoutTarget] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const settingsNavigation = useSettingsNavigation();
@@ -43,10 +48,16 @@ export function SettingsPage() {
       ?.id ?? "teaching";
   if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
   if (meQuery.isError || !meQuery.data)
-    return <Navigate to="/t/login" replace />;
+    return <Navigate to={logoutTarget ?? "/t/login"} replace />;
+  const personal = meQuery.data.accountKind === "personal";
+  const logoutMutation = personal
+    ? logoutPersonalMutation
+    : logoutTeacherMutation;
+  const loginPath = personal ? "/p/login" : "/t/login";
   function handleLogout() {
     const action = () =>
       logoutMutation.mutate(undefined, {
+        onError: () => setLogoutTarget(null),
         onSuccess: () => {
           queryClient.removeQueries({
             queryKey: ["teacher", "capability-draft"],
@@ -59,9 +70,10 @@ export function SettingsPage() {
           });
           queryClient.removeQueries({ queryKey: teacherAiPromptsDraftKey });
           void queryClient.invalidateQueries({ queryKey: teacherMeKey });
-          navigate("/t/login", { replace: true });
+          navigate(loginPath, { replace: true });
         },
       });
+    setLogoutTarget(loginPath);
     if (settingsNavigation) settingsNavigation.leave(action);
     else action();
   }
@@ -152,7 +164,9 @@ export function SettingsPage() {
         <section>
           <h2 className="text-lg font-semibold">登录会话</h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            退出后需要重新登录，才能继续使用教师工作台。
+            {personal
+              ? "退出会同时结束学习视角与管理视角的会话，需要重新登录才能继续。"
+              : "退出后需要重新登录，才能继续使用教师工作台。"}
           </p>
           {logoutMutation.isError && (
             <p

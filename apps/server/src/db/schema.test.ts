@@ -238,7 +238,8 @@ describe("teachers / sessions 表读写", () => {
     db.insert(sessions).values(session).run();
 
     // T2B.1 新增列（loginName/isAdmin/disabledAt）落默认值读回；
-    // T7.7 capabilityProfileJson 未配置读回 null（全启用缺省语义在服务层）
+    // T7.7 capabilityProfileJson 未配置读回 null（全启用缺省语义在服务层）；
+    // 模块 0 新增列 accountKind 默认 'class'、personalStudentId 默认 null
     expect(
       db.select().from(teachers).where(eq(teachers.id, teacher.id)).get(),
     ).toEqual({
@@ -247,6 +248,8 @@ describe("teachers / sessions 表读写", () => {
       isAdmin: false,
       disabledAt: null,
       capabilityProfileJson: null,
+      accountKind: "class",
+      personalStudentId: null,
     });
     expect(
       db.select().from(sessions).where(eq(sessions.id, session.id)).get(),
@@ -272,6 +275,8 @@ describe("teachers / sessions 表读写", () => {
       isAdmin: false,
       disabledAt: null,
       capabilityProfileJson: null,
+      accountKind: "class",
+      personalStudentId: null,
     });
     db.$client.close();
   });

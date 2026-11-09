@@ -190,27 +190,41 @@ describe("setup / login 请求体", () => {
 });
 
 describe("响应壳（data 具体化）", () => {
-  it("status 响应壳含 hasTeacher 与 registrationOpen 两个布尔", () => {
+  it("status 响应壳含 hasTeacher、registrationOpen 与 personalRegistrationOpen 三个布尔", () => {
     expect(
       teacherStatusOkSchema.safeParse({
         ok: true,
-        data: { hasTeacher: false, registrationOpen: false },
+        data: {
+          hasTeacher: false,
+          registrationOpen: false,
+          personalRegistrationOpen: false,
+        },
       }).success,
     ).toBe(true);
     expect(
       teacherStatusOkSchema.safeParse({
         ok: true,
-        data: { hasTeacher: "yes", registrationOpen: false },
+        data: {
+          hasTeacher: "yes",
+          registrationOpen: false,
+          personalRegistrationOpen: false,
+        },
       }).success,
     ).toBe(false);
-    // registrationOpen 缺失不符合契约（T2B.2 起必有，避免契约二次变更）
+    // registrationOpen / personalRegistrationOpen 缺失不符合契约（必有，避免契约二次变更）
     expect(
       teacherStatusOkSchema.safeParse({ ok: true, data: { hasTeacher: true } })
         .success,
     ).toBe(false);
+    expect(
+      teacherStatusOkSchema.safeParse({
+        ok: true,
+        data: { hasTeacher: true, registrationOpen: true },
+      }).success,
+    ).toBe(false);
   });
 
-  it("教师信息响应壳含 id、loginName、isAdmin 与 createdAt", () => {
+  it("教师信息响应壳含 id、loginName、isAdmin、accountKind 与 createdAt", () => {
     expect(
       teacherInfoOkSchema.safeParse({
         ok: true,
@@ -218,10 +232,24 @@ describe("响应壳（data 具体化）", () => {
           id: "uuid-1",
           loginName: "teacher",
           isAdmin: true,
+          accountKind: "class",
           createdAt: "2026-09-26T00:00:00.000Z",
         },
       }).success,
     ).toBe(true);
+    // accountKind 只认 class / personal
+    expect(
+      teacherInfoOkSchema.safeParse({
+        ok: true,
+        data: {
+          id: "uuid-1",
+          loginName: "teacher",
+          isAdmin: true,
+          accountKind: "guest",
+          createdAt: "2026-09-26T00:00:00.000Z",
+        },
+      }).success,
+    ).toBe(false);
     // 缺 loginName / isAdmin 均不通过
     expect(
       teacherInfoOkSchema.safeParse({

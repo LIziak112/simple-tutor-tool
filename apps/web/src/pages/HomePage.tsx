@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
+  BookOpenCheck,
   GraduationCap,
   Loader2,
   type LucideIcon,
@@ -62,9 +63,11 @@ function RoleEntryCard({
 }
 
 /**
- * 首页：登录入口面板（学生/教师两张身份卡）+ 底部系统状态卡。
+ * 首页：登录入口面板（学生 / 教师 / 个人学习三张身份卡）+ 底部系统状态卡。
  * - 两端会话独立，useStudentMe / useTeacherMe 未登录时 401（isError），
  *   探测未落定或未登录一律显示登录入口；已登录则换文案直接进对应端；
+ * - 个人账号（模块 0）登录后两侧会话同在：三张卡收成一张「个人学习」已登录卡
+ *   （直达学习视角），不再把同一个人拆成学生 / 教师两张；
  * - 系统状态卡保留 T1.x 的前后端联通自检（部署排障用），加载中 /
  *   错误（含重试）/ 成功 三态齐全（UI 约定硬性要求）。
  */
@@ -78,6 +81,8 @@ export function HomePage() {
   const teacherMe = useTeacherMe();
   const student = studentMe.data;
   const teacher = teacherMe.data;
+  const personal =
+    teacher?.accountKind === "personal" || student?.accountKind === "personal";
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-background px-6 py-12 text-foreground">
@@ -89,33 +94,55 @@ export function HomePage() {
         <p className="mt-5 text-sm text-muted-foreground">请选择你的身份进入</p>
       </header>
 
-      <section
-        aria-label="登录入口"
-        className="grid w-full max-w-2xl grid-cols-1 gap-4 sm:grid-cols-2"
-      >
-        <RoleEntryCard
-          to={student ? "/s/home" : "/s/login"}
-          icon={GraduationCap}
-          title={student ? "学生端" : "学生登录"}
-          description={
-            student
-              ? `已登录：${student.displayName}`
-              : "用老师给的登录名和密码登录，或打开老师发的专属链接"
-          }
-          actionLabel={student ? "继续学习" : "去登录"}
-        />
-        <RoleEntryCard
-          to={teacher ? "/t" : "/t/login"}
-          icon={Presentation}
-          title={teacher ? "教师端" : "教师登录"}
-          description={
-            teacher
-              ? `已登录：${teacher.loginName}`
-              : "进入辅导工作台，管理课程、讲义、作业与学情"
-          }
-          actionLabel={teacher ? "进入工作台" : "去登录"}
-        />
-      </section>
+      {personal ? (
+        <section
+          aria-label="登录入口"
+          className="grid w-full max-w-sm grid-cols-1 gap-4"
+        >
+          <RoleEntryCard
+            to="/s/home"
+            icon={BookOpenCheck}
+            title="个人学习"
+            description={`已登录：${student?.displayName ?? teacher?.loginName ?? ""}，学习视角与管理视角随时切换`}
+            actionLabel="继续学习"
+          />
+        </section>
+      ) : (
+        <section
+          aria-label="登录入口"
+          className="grid w-full max-w-3xl grid-cols-1 gap-4 sm:grid-cols-3"
+        >
+          <RoleEntryCard
+            to={student ? "/s/home" : "/s/login"}
+            icon={GraduationCap}
+            title={student ? "学生端" : "学生登录"}
+            description={
+              student
+                ? `已登录：${student.displayName}`
+                : "用老师给的登录名和密码登录，或打开老师发的专属链接"
+            }
+            actionLabel={student ? "继续学习" : "去登录"}
+          />
+          <RoleEntryCard
+            to={teacher ? "/t" : "/t/login"}
+            icon={Presentation}
+            title={teacher ? "教师端" : "教师登录"}
+            description={
+              teacher
+                ? `已登录：${teacher.loginName}`
+                : "进入辅导工作台，管理课程、讲义、作业与学情"
+            }
+            actionLabel={teacher ? "进入工作台" : "去登录"}
+          />
+          <RoleEntryCard
+            to="/p/login"
+            icon={BookOpenCheck}
+            title="个人学习"
+            description="自己导入资料、自己练、自己看学情；一个账号同时拥有学习与管理两个视角"
+            actionLabel="去登录"
+          />
+        </section>
+      )}
 
       <section
         aria-label="系统状态"

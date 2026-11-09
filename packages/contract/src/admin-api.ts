@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { teacherLoginNameSchema, teacherPasswordSchema } from "./auth.ts";
+import {
+  accountKindSchema,
+  PERSONAL_INVITE_CODE_MAX,
+  teacherLoginNameSchema,
+  teacherPasswordSchema,
+} from "./auth.ts";
 
 /**
  * 管理端 API 契约（T2B.6 起为权威定义）：/api/admin/* 的请求/响应与错误码。
@@ -35,6 +40,8 @@ export const adminTeacherSummarySchema = z.object({
   loginName: teacherLoginNameSchema,
   /** 是否管理员（D1：管理员 = isAdmin 的教师） */
   isAdmin: z.boolean(),
+  /** 账号类型（模块 0）：class 班级教师 / personal 个人账号（名下恒为本人一名学生） */
+  accountKind: accountKindSchema,
   /** 禁用时间：UTC ISO 字符串；null = 未禁用（D5：置值即禁用，可再启用） */
   disabledAt: z.string().min(1).nullable(),
   /** 创建时间：UTC ISO 字符串（§0.3 时间约定） */
@@ -96,18 +103,47 @@ export const adminTeacherResetPasswordDataSchema = z.object({
   password: z.string().min(1),
 });
 
-// ---------- 注册开关（D8） ----------
+// ---------- 注册开关（D8）与个人注册邀请码（模块 0） ----------
 
-/** GET /api/admin/settings 响应 data：注册开关当前状态 */
+/**
+ * 管理员配置的个人注册邀请码（app_settings.personalInviteCode）：trim 后 1–64
+ * 字符；null = 未配置 = 个人注册关闭（登录页不出现「个人学习」注册入口）。
+ * 邀请码是共享口令而非个人凭证，管理员可随时查看与更换；更换后旧码立即失效，
+ * 已注册的个人账号不受影响。
+ */
+export const adminPersonalInviteCodeSchema = z
+  .string()
+  .trim()
+  .min(1, "邀请码不能为空")
+  .max(
+    PERSONAL_INVITE_CODE_MAX,
+    `邀请码最多 ${PERSONAL_INVITE_CODE_MAX} 个字符`,
+  )
+  .nullable();
+
+/** GET /api/admin/settings 响应 data：注册开关 + 个人注册邀请码当前值 */
 export const adminSettingsDataSchema = z.object({
   /** 是否允许教师自助注册（app_settings.allowRegistration；默认开） */
   allowRegistration: z.boolean(),
+  /** 个人注册邀请码；null = 未配置（个人注册关闭） */
+  personalInviteCode: adminPersonalInviteCodeSchema,
 });
 
-/** PATCH /api/admin/settings 请求体：切换注册开关 */
-export const adminSettingsUpdateRequestSchema = z.object({
-  allowRegistration: z.boolean(),
-});
+/**
+ * PATCH /api/admin/settings 请求体：两项都可选、缺省 = 不改（至少给一项；
+ * personalInviteCode 传 null 即关闭个人注册）。
+ */
+export const adminSettingsUpdateRequestSchema = z
+  .object({
+    allowRegistration: z.boolean().optional(),
+    personalInviteCode: adminPersonalInviteCodeSchema.optional(),
+  })
+  .refine(
+    (value) =>
+      value.allowRegistration !== undefined ||
+      value.personalInviteCode !== undefined,
+    { message: "至少提供一项要修改的设置" },
+  );
 
 // ---------- 概览（D20：只返回聚合计数，无任何明细） ----------
 

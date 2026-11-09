@@ -7,7 +7,9 @@ import { AdminOverviewPage } from "./AdminOverviewPage";
 
 /**
  * /a 概览页测试（T2B.6，D20/§4.3）：
- * 聚合计数卡片渲染；注册开关行显示当前状态并可就地切换（翻转值调 PATCH）。
+ * 聚合计数卡片渲染；注册开关行显示当前状态并可就地切换（翻转值调 PATCH）；
+ * 个人学习邀请码卡（模块 0）：未配置 = 已关闭，保存邀请码 → PATCH personalInviteCode，
+ * 已配置时显示开放中并可关闭（PATCH null）。
  */
 
 const apiMocks = vi.hoisted(() => ({
@@ -51,6 +53,10 @@ beforeEach(() => {
     attemptCount: 45,
     sharedFileCount: 1,
     registrationOpen: true,
+  });
+  apiMocks.fetchAdminSettings.mockResolvedValue({
+    allowRegistration: true,
+    personalInviteCode: null,
   });
 });
 
@@ -113,5 +119,52 @@ describe("AdminOverviewPage（D20 聚合计数）", () => {
 
     expect(await screen.findByText("概览加载失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+describe("个人学习邀请码卡（模块 0）", () => {
+  it("未配置邀请码 → 已关闭；输入后保存 → PATCH personalInviteCode（trim 后）", async () => {
+    apiMocks.updateAdminSettingsApi.mockResolvedValue({
+      allowRegistration: true,
+      personalInviteCode: "GONGKAO-2026",
+    });
+    renderPage();
+
+    expect(
+      await screen.findByTestId("personal-registration-state"),
+    ).toHaveTextContent("已关闭");
+    const input = screen.getByLabelText("邀请码");
+    fireEvent.change(input, { target: { value: "  GONGKAO-2026 " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并开放个人注册" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateAdminSettingsApi.mock.calls[0]?.[0]).toEqual({
+        personalInviteCode: "GONGKAO-2026",
+      });
+    });
+  });
+
+  it("已配置邀请码 → 开放中 + 回显；「关闭个人注册」→ PATCH null", async () => {
+    apiMocks.fetchAdminSettings.mockResolvedValue({
+      allowRegistration: true,
+      personalInviteCode: "GONGKAO-2026",
+    });
+    apiMocks.updateAdminSettingsApi.mockResolvedValue({
+      allowRegistration: true,
+      personalInviteCode: null,
+    });
+    renderPage();
+
+    expect(
+      await screen.findByTestId("personal-registration-state"),
+    ).toHaveTextContent("开放中");
+    expect(screen.getByLabelText("邀请码")).toHaveValue("GONGKAO-2026");
+    fireEvent.click(screen.getByRole("button", { name: "关闭个人注册" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateAdminSettingsApi.mock.calls[0]?.[0]).toEqual({
+        personalInviteCode: null,
+      });
+    });
   });
 });

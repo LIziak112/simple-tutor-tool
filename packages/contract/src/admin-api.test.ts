@@ -21,6 +21,7 @@ const summaryFixture = {
   id: "0199aaaa-1111-4222-8333-444455556666",
   loginName: "teacher",
   isAdmin: true,
+  accountKind: "class",
   disabledAt: null,
   createdAt: "2026-09-30T00:00:00.000Z",
   studentCount: 3,
