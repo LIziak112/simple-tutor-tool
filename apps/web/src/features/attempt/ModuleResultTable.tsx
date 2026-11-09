@@ -16,7 +16,16 @@ import { formatActivitySec } from "./QuestionActivity";
  * 与用时分列，不是时钟），以及「专项重练（n）」入口（走结果页既有的错题重练
  * 组卷，范围标题带模块名，新卷标题即可看出来自哪一轮诊断）。
  * 未公布时只给作答 / 跳过 / 用时；多模块时点模块名跳到该节。
+ * 响应式：sm 及以上用表格（横向可滚），更窄的手机屏改为逐模块卡片。表格外层
+ * 用 w-0 + min-w-full 让它对祖先的 min-content 贡献为 0——否则 560px 的表格
+ * 会把结果页主栏撑宽；再加 relative，让表头里 sr-only 的绝对定位文字以它为
+ * 包含块、随滚动容器一起裁剪，不会逃出去撑出页面横向滚动（e2e zoom 200% 口径）。
  */
+interface WrongPracticeHook {
+  loading: boolean;
+  onStart: (questionIds: string[], moduleTitle: string) => void;
+}
+
 export function ModuleResultTable({
   units,
   released,
@@ -26,12 +35,7 @@ export function ModuleResultTable({
   units: readonly AttemptResultUnit[];
   released: boolean;
   activity: AttemptActivity | undefined;
-  wrongPractice?:
-    | {
-        loading: boolean;
-        onStart: (questionIds: string[], moduleTitle: string) => void;
-      }
-    | undefined;
+  wrongPractice?: WrongPracticeHook | undefined;
 }) {
   const rows = useMemo(
     () => units.map((unit) => moduleResultStatsOf(unit, released, activity)),
@@ -44,16 +48,19 @@ export function ModuleResultTable({
     released &&
     wrongPractice !== undefined &&
     rows.some((row) => row.wrongQuestionIds.length > 0);
-  const jumpTo = (unitId: string) => {
-    document
-      .querySelector(`[data-review-unit="${CSS.escape(unitId)}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  const jumpTo = multi
+    ? (unitId: string) => {
+        document
+          .querySelector(`[data-review-unit="${CSS.escape(unitId)}"]`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    : undefined;
+  const shared = { released, showQuota, showActions, jumpTo, wrongPractice };
   return (
     <section
       data-testid="module-results"
       aria-label="按模块看结果"
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
+      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold">按模块看</h2>
@@ -61,7 +68,7 @@ export function ModuleResultTable({
           用时为题内活动用时（口径 v1）；参考配额来自单元推荐时长，不是时钟
         </p>
       </div>
-      <div className="overflow-x-auto">
+      <div className="relative hidden w-0 min-w-full overflow-x-auto sm:block">
         <table className="w-full min-w-[560px] text-sm tabular-nums">
           <thead className="text-left text-xs text-muted-foreground">
             <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium">
@@ -82,20 +89,112 @@ export function ModuleResultTable({
           </thead>
           <tbody>
             {rows.map((row) => (
-              <ModuleRow
-                key={row.unitId}
-                row={row}
-                released={released}
-                showQuota={showQuota}
-                showActions={showActions}
-                onJump={multi ? jumpTo : undefined}
-                wrongPractice={wrongPractice}
-              />
+              <ModuleRow key={row.unitId} row={row} {...shared} />
             ))}
           </tbody>
         </table>
       </div>
+      <ul
+        data-testid="module-results-cards"
+        className="flex flex-col gap-2 sm:hidden"
+      >
+        {rows.map((row) => (
+          <ModuleCard key={row.unitId} row={row} {...shared} />
+        ))}
+      </ul>
     </section>
+  );
+}
+
+interface RowProps {
+  row: ModuleResultStats;
+  released: boolean;
+  showQuota: boolean;
+  showActions: boolean;
+  jumpTo: ((unitId: string) => void) | undefined;
+  wrongPractice?: WrongPracticeHook | undefined;
+}
+
+/** 单元格文案（表格与卡片共用，口径一处） */
+function countsText(row: ModuleResultStats, released: boolean): string {
+  return released
+    ? `${row.correct} / ${row.answered} / ${row.total}`
+    : `${row.answered} / ${row.total}`;
+}
+function activityText(row: ModuleResultStats): string {
+  return row.activeSec === null
+    ? "无可用记录"
+    : formatActivitySec(row.activeSec);
+}
+function activityTitle(row: ModuleResultStats): string {
+  return row.activeSec === null
+    ? "本卷没有作答事件记录"
+    : `只看过 ${formatActivitySec(row.observedSec)}（无作答动作）`;
+}
+function quotaText(row: ModuleResultStats): string {
+  return row.timeQuotaMinutes === null
+    ? "—"
+    : formatTimeLimit(row.timeQuotaMinutes * 60);
+}
+function overQuota(row: ModuleResultStats): boolean {
+  return (
+    row.timeQuotaMinutes !== null &&
+    row.activeSec !== null &&
+    row.activeSec > row.timeQuotaMinutes * 60
+  );
+}
+
+/** 模块名：表格里单行截断（列宽有上限），卡片里换行（窄屏不能被撑宽） */
+function ModuleTitle({
+  row,
+  jumpTo,
+  wrap = false,
+}: {
+  row: ModuleResultStats;
+  jumpTo: ((unitId: string) => void) | undefined;
+  wrap?: boolean;
+}) {
+  const fit = wrap ? "break-words" : "max-w-full truncate";
+  return jumpTo !== undefined ? (
+    <button
+      type="button"
+      className={cn(
+        "text-left font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        fit,
+      )}
+      onClick={() => jumpTo(row.unitId)}
+    >
+      {row.title}
+    </button>
+  ) : (
+    <span className={cn("font-medium", fit)}>{row.title}</span>
+  );
+}
+
+function RetrainButton({
+  row,
+  wrongPractice,
+}: {
+  row: ModuleResultStats;
+  wrongPractice: WrongPracticeHook | undefined;
+}) {
+  if (wrongPractice === undefined || row.wrongQuestionIds.length === 0) {
+    return null;
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="min-h-9"
+      disabled={wrongPractice.loading}
+      onClick={() => wrongPractice.onStart(row.wrongQuestionIds, row.title)}
+    >
+      <RotateCcw
+        aria-hidden
+        className={cn("size-3.5", wrongPractice.loading && "animate-spin")}
+      />
+      专项重练（{row.wrongQuestionIds.length}）
+    </Button>
   );
 }
 
@@ -104,42 +203,16 @@ function ModuleRow({
   released,
   showQuota,
   showActions,
-  onJump,
+  jumpTo,
   wrongPractice,
-}: {
-  row: ModuleResultStats;
-  released: boolean;
-  showQuota: boolean;
-  showActions: boolean;
-  onJump: ((unitId: string) => void) | undefined;
-  wrongPractice?:
-    | {
-        loading: boolean;
-        onStart: (questionIds: string[], moduleTitle: string) => void;
-      }
-    | undefined;
-}) {
-  const overQuota =
-    row.timeQuotaMinutes !== null &&
-    row.activeSec !== null &&
-    row.activeSec > row.timeQuotaMinutes * 60;
+}: RowProps) {
   return (
     <tr
       data-module-row={row.unitId}
       className="border-t border-border [&>td]:px-2 [&>td]:py-2 [&>td]:align-middle"
     >
-      <td className="max-w-[220px] font-medium">
-        {onJump !== undefined ? (
-          <button
-            type="button"
-            className="truncate text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => onJump(row.unitId)}
-          >
-            {row.title}
-          </button>
-        ) : (
-          <span className="truncate">{row.title}</span>
-        )}
+      <td className="max-w-[220px]">
+        <ModuleTitle row={row} jumpTo={jumpTo} />
       </td>
       <td>
         {released ? (
@@ -150,54 +223,60 @@ function ModuleRow({
             {` / ${row.answered} / ${row.total}`}
           </>
         ) : (
-          `${row.answered} / ${row.total}`
+          countsText(row, released)
         )}
       </td>
       <td>{row.skipped}</td>
       {released && <td>{row.unsureCorrect}</td>}
       <td
-        className={cn(overQuota && "text-amber-700 dark:text-amber-300")}
-        title={
-          row.activeSec === null
-            ? "本卷没有作答事件记录"
-            : `只看过 ${formatActivitySec(row.observedSec)}（无作答动作）`
-        }
+        className={cn(overQuota(row) && "text-amber-700 dark:text-amber-300")}
+        title={activityTitle(row)}
       >
-        {row.activeSec === null
-          ? "无可用记录"
-          : formatActivitySec(row.activeSec)}
+        {activityText(row)}
       </td>
-      {showQuota && (
-        <td>
-          {row.timeQuotaMinutes === null
-            ? "—"
-            : formatTimeLimit(row.timeQuotaMinutes * 60)}
-        </td>
-      )}
+      {showQuota && <td>{quotaText(row)}</td>}
       {showActions && (
         <td className="text-right">
-          {wrongPractice !== undefined && row.wrongQuestionIds.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="min-h-9"
-              disabled={wrongPractice.loading}
-              onClick={() =>
-                wrongPractice.onStart(row.wrongQuestionIds, row.title)
-              }
-            >
-              <RotateCcw
-                aria-hidden
-                className={cn(
-                  "size-3.5",
-                  wrongPractice.loading && "animate-spin",
-                )}
-              />
-              专项重练（{row.wrongQuestionIds.length}）
-            </Button>
-          )}
+          <RetrainButton row={row} wrongPractice={wrongPractice} />
         </td>
       )}
     </tr>
+  );
+}
+
+function ModuleCard({
+  row,
+  released,
+  showQuota,
+  showActions,
+  jumpTo,
+  wrongPractice,
+}: RowProps) {
+  return (
+    <li
+      data-module-card={row.unitId}
+      className="flex min-w-0 flex-col items-start gap-1.5 rounded-lg border border-border p-3 text-sm tabular-nums"
+    >
+      <ModuleTitle row={row} jumpTo={jumpTo} wrap />
+      <p className="text-muted-foreground">
+        {released ? "答对 / 作答 / 题数 " : "作答 / 题数 "}
+        <span className="text-foreground">{countsText(row, released)}</span>
+        {` · 跳过 ${row.skipped}`}
+        {released && ` · 不确定但答对 ${row.unsureCorrect}`}
+      </p>
+      <p className="text-muted-foreground" title={activityTitle(row)}>
+        活动用时{" "}
+        <span
+          className={cn(
+            "text-foreground",
+            overQuota(row) && "text-amber-700 dark:text-amber-300",
+          )}
+        >
+          {activityText(row)}
+        </span>
+        {showQuota && ` · 参考配额 ${quotaText(row)}`}
+      </p>
+      {showActions && <RetrainButton row={row} wrongPractice={wrongPractice} />}
+    </li>
   );
 }

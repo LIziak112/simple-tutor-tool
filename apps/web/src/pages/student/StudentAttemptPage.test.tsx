@@ -593,7 +593,9 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
       sourceType: "wrong",
     });
     renderPage();
-    const table = await screen.findByTestId("module-results");
+    const table = within(await screen.findByTestId("module-results")).getByRole(
+      "table",
+    );
     const row = within(table).getByText("资料分析").closest("tr");
     if (row === null) throw new Error("row");
     fireEvent.click(within(row).getByRole("button", { name: "专项重练（1）" }));

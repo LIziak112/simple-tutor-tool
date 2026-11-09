@@ -109,8 +109,8 @@ describe("按模块看结果：模型", () => {
   });
 });
 
-describe("按模块看结果：表格", () => {
-  it("多模块：每模块一行，点模块名跳到该节；超配额用时高亮；专项重练带模块名", () => {
+describe("按模块看结果：表格与窄屏卡片", () => {
+  it("多模块：表格每模块一行，点模块名跳到该节；专项重练带模块名；卡片同口径", () => {
     const onStart = vi.fn();
     const scrollIntoView = vi.fn();
     const anchor = document.createElement("h2");
@@ -125,13 +125,15 @@ describe("按模块看结果：表格", () => {
         wrongPractice={{ loading: false, onStart }}
       />,
     );
-    const table = screen.getByTestId("module-results");
+    const table = within(screen.getByTestId("module-results")).getByRole(
+      "table",
+    );
     const rowA = within(table).getByText("言语理解").closest("tr");
     const rowB = within(table).getByText("资料分析").closest("tr");
     expect(rowA?.textContent).toContain("2 / 3 / 4");
     expect(rowA?.textContent).toContain("1 分 30 秒");
     expect(rowA?.textContent).toContain("30 分钟");
-    // 资料分析无配额显示「—」；b2 用时 2000s 不超配额（无配额不比较）
+    // 资料分析无配额显示「—」；b2 用时 2000s（无配额不比较）
     expect(rowB?.textContent).toContain("—");
     expect(rowB?.textContent).toContain("33 分 20 秒");
     fireEvent.click(within(table).getByRole("button", { name: "资料分析" }));
@@ -142,6 +144,14 @@ describe("按模块看结果：表格", () => {
       }),
     );
     expect(onStart).toHaveBeenCalledWith(["a2", "a3"], "言语理解");
+    // 窄屏卡片：同一行口径（jsdom 不解析断点类，两套都在 DOM 里）
+    const cards = screen.getByTestId("module-results-cards");
+    const cardA = within(cards).getByText("言语理解").closest("li");
+    expect(cardA?.textContent).toContain("答对 / 作答 / 题数 2 / 3 / 4");
+    expect(cardA?.textContent).toContain("跳过 1 · 不确定但答对 1");
+    expect(cardA?.textContent).toContain(
+      "活动用时 1 分 30 秒 · 参考配额 30 分钟",
+    );
     anchor.remove();
   });
 
@@ -154,11 +164,13 @@ describe("按模块看结果：表格", () => {
         wrongPractice={{ loading: false, onStart: vi.fn() }}
       />,
     );
-    const table = screen.getByTestId("module-results");
-    expect(within(table).queryByText("不确定但答对")).toBeNull();
-    expect(within(table).queryByRole("button")).toBeNull();
+    const section = screen.getByTestId("module-results");
+    expect(within(section).queryByText("不确定但答对")).toBeNull();
+    expect(within(section).queryByRole("button")).toBeNull();
     expect(
-      within(table).getByText("资料分析").closest("tr")?.textContent,
+      within(within(section).getByRole("table"))
+        .getByText("资料分析")
+        .closest("tr")?.textContent,
     ).toContain("无可用记录");
   });
 });

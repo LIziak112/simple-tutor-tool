@@ -353,7 +353,9 @@ describe("得分汇总卡", () => {
     expect(
       screen.getByRole("heading", { name: "练习五", level: 2 }),
     ).toBeInTheDocument();
-    const moduleTable = screen.getByTestId("module-results");
+    const moduleTable = within(screen.getByTestId("module-results")).getByRole(
+      "table",
+    );
     expect(
       within(moduleTable).getByRole("button", { name: "练习五" }),
     ).toBeInTheDocument();
