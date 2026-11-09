@@ -71,6 +71,20 @@ describe("契约表引用完备性（验收：登记集合与契约引用一致�
     expect(() => assertValidatorCoverage()).not.toThrow();
   });
 
+  it("assertValidatorCoverage 拒绝恰好缺少一个校验器", () => {
+    const choice = questionCapabilityBindings.choice;
+    const missingValidatorId = "t-test-missing-choice";
+    questionCapabilityBindings.choice = {
+      ...choice,
+      validatorId: missingValidatorId,
+    };
+    try {
+      expect(() => assertValidatorCoverage()).toThrow(missingValidatorId);
+    } finally {
+      questionCapabilityBindings.choice = choice;
+    }
+  });
+
   it("新三型恒 null 判分器（TT-05a 域②，D12：沿 gradeFill 先例，不造不可达判分器）", () => {
     const question = {
       id: "q",

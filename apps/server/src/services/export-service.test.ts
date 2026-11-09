@@ -1069,7 +1069,63 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     expect(entries.has("evidence/e002-correction-01.png")).toBe(true);
   });
 
-  it("只选证据不选题目：manifest 标明上下文未提供，不夹带题目媒体", async () => {
+  it("v2 仅选题目：保留各轮快照及题目媒体，不导出作答和证据", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({ modules: { questions: "stem" } }),
+      { now: V2_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pack = packEntryOf(entries, learningPackV2Schema);
+    const questions = pack.content?.questions ?? [];
+    expect(questions.map((question) => question.questionId)).toEqual([
+      "v2配对题-1",
+      "v2配对题-1",
+    ]);
+    expect(questions[0]?.stemMd).toContain("2+3");
+    expect(questions[1]?.stemMd).toContain("12+13");
+    expect(entries.has(v2MediaSrc)).toBe(true);
+    expect(
+      pack.manifest.files.find((file) => file.path === v2MediaSrc)?.refs,
+    ).toEqual([questions[0]?.ref]);
+    expect(pack.attempts).toBeUndefined();
+    expect(pack.evidence).toBeUndefined();
+    expect(
+      [...entries.keys()].some((path) => path.startsWith("evidence/")),
+    ).toBe(false);
+  });
+
+  it("v2 仅选逐题作答：保留快照配对键，不导出题目和证据", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({ modules: { responses: true } }),
+      { now: V2_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pack = packEntryOf(entries, learningPackV2Schema);
+    const responses = pack.attempts?.responses ?? [];
+    expect(responses.map((response) => response.attemptId)).toEqual([
+      round1AttemptId,
+      round2AttemptId,
+    ]);
+    expect(responses[0]?.snapshotHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(responses[1]?.snapshotHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(responses[0]?.snapshotHash).not.toBe(responses[1]?.snapshotHash);
+    expect(pack.content).toBeUndefined();
+    expect(pack.evidence).toBeUndefined();
+    expect(
+      [...entries.keys()].some(
+        (path) =>
+          path.startsWith("blobs/media/") || path.startsWith("evidence/"),
+      ),
+    ).toBe(false);
+  });
+
+  it("选逐题作答和证据但不选题目：manifest 标明上下文未提供，不夹带题目媒体", async () => {
     const zip = await buildLearningPackZip(
       db,
       dataDir,

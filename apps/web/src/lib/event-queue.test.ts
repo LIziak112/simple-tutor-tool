@@ -298,6 +298,7 @@ describe("离线存 IndexedDB / 恢复补发", () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(send).toHaveBeenCalledTimes(2);
     expect(store.dumpAll()).toEqual([]);
+    expect(store.keyCount()).toBe(0);
   });
 });
 
@@ -468,6 +469,64 @@ describe("T4.0a 持久键实例隔离（IDB 键冲突修复，§5.0-A1）", () =
 // ---------- T4.0a：beacon 字节双限切批（§5.0-A5） ----------
 
 describe("T4.0a 批次按条数与字节双限切（sendBeacon 64KiB 上限）", () => {
+  it.each([
+    { over: 0, batches: 1, hasTextEncoder: true },
+    { over: 1, batches: 2, hasTextEncoder: true },
+    { over: 1, batches: 2, hasTextEncoder: false },
+  ])(
+    "整批 JSON 超出 $over 字节时发送 $batches 批（TextEncoder=$hasTextEncoder）",
+    async ({ over, batches, hasTextEncoder }) => {
+      const encoder = new TextEncoder();
+      const bytesOf = (events: readonly LearningEvent[]) =>
+        encoder.encode(JSON.stringify({ events })).length;
+      const answerChange = (finalAnswer: string) =>
+        ev("answer_change", {
+          questionId: "q1",
+          to: { kind: "final", finalAnswer },
+        });
+      const first = answerChange("题");
+      const padding =
+        EVENT_BATCH_BYTES_MAX + over - bytesOf([first, answerChange("")]);
+      const second = answerChange(
+        "题".repeat(Math.floor(padding / 3)) + "x".repeat(padding % 3),
+      );
+      const send = vi.fn(async (_events: readonly LearningEvent[]) => {});
+      const queue = makeQueue({ send });
+
+      queue.track(first);
+      queue.track(second);
+      if (!hasTextEncoder) vi.stubGlobal("TextEncoder", undefined);
+      try {
+        await queue.flush();
+      } finally {
+        if (!hasTextEncoder) vi.unstubAllGlobals();
+      }
+
+      expect(send).toHaveBeenCalledTimes(batches);
+      for (const [events] of send.mock.calls) {
+        expect(bytesOf(events)).toBeLessThanOrEqual(EVENT_BATCH_BYTES_MAX);
+      }
+      expect(send.mock.calls.flatMap(([events]) => events)).toEqual([
+        first,
+        second,
+      ]);
+    },
+  );
+
+  it("单条事件超过字节上限时独占一批，不发送空批", async () => {
+    const event = ev("answer_change", {
+      questionId: "q1",
+      to: { kind: "final", finalAnswer: "题".repeat(12_000) },
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const queue = makeQueue({ send });
+
+    queue.track(event);
+    await queue.flush();
+
+    expect(send.mock.calls).toEqual([[[event]]]);
+  });
+
   it("超 32KiB 的事件分多批 beacon，每批字节数不超限", async () => {
     const beacon = vi.fn((_events: readonly LearningEvent[]) => true);
     const q = makeQueue({ beacon });
