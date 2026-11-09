@@ -8,6 +8,7 @@ import type {
   AiTaskAction,
   AiTaskOriginSummary,
   AiTaskPublic,
+  AiTaskPurpose,
   AiTaskStatus,
   AiTaskTeacher,
 } from "@tutor/contract";
@@ -83,21 +84,17 @@ import {
  * SAI-12 可靠任务队列（B06；技术方案 §3.4/§6、需求规格 §8）。
  *
  * 在 SAI-11 固定快照之上实现供 worker（页内派发）与 MCP 客户端共用的队列：
- * - 状态机沿用 B00 已确认状态表（aiTaskStatusSchema 八态），本模块不另造状态；
- * - **状态转换集中实现**：唯一写入口 applyTransition（合法转换表 + 按旧状态
- *   CAS），路由/worker/MCP 只能调本模块操作函数，无法直接 set status 绕过；
- * - 所有写操作单事务（BEGIN IMMEDIATE）：better-sqlite3 同步模型下多连接
- *   并发由写锁串行化，CAS（status/generation/leaseToken 条件更新）保证
- *   「同时领取只有一个 lease / 迟到回执不覆盖首次成功」的唯一合法结果；
- * - 网络出站、大图编码都不在本模块事务内（worker 先 begin 落库代次、事务外
- *   fetch、再按代次 CAS 写回——技术方案 §6）；
- * - 权限在每次创建/领取/派发前经 SAI-04 统一裁决实时重校验（教师刚改设置
- *   立即生效）；查看态（replyDeliveredAt）与处理状态（status）相互独立，
- *   archived/opened 不作为任务终结状态覆盖 replied。
- * - SAI-15 生命周期：领取/派发前按**当前**规则重装配（outboundPromptSnapshotOf
- *   第二阶段装配——提交后按复盘模式、教师改模式对未外发任务生效，快照数据
- *   与原请求时间不追改）；写回核对运行代际（runtimeEpochOf，恢复数据库后
- *   旧代迟到结果只落事实）；交卷/判分链路零 AI 调用（AI 失败不阻塞交卷）。
+ * - 状态机沿用 B00 状态表（aiTaskStatusSchema 八态）；**状态转换集中**在唯一
+ *   写入口 applyTransition（合法转换表 + 按旧状态 CAS），路由/worker/MCP 不能
+ *   直接 set status；
+ * - 所有写操作单事务（BEGIN IMMEDIATE）：CAS（status/generation/leaseToken）保证
+ *   「同时领取只有一个 lease / 迟到回执不覆盖首次成功」；网络出站、大图编码
+ *   不在事务内（worker 先落库代次、事务外 fetch、再按代次 CAS 写回，§6）；
+ * - 权限在创建/领取/派发前经 SAI-04 统一裁决实时重校验；查看态与处理状态
+ *   相互独立，archived/opened 不覆盖 replied。
+ * - SAI-15：领取/派发前按**当前**规则重装配（outboundPromptSnapshotOf），快照
+ *   数据与原请求时间不追改；写回核对运行代际（runtimeEpochOf）；交卷/判分
+ *   链路零 AI 调用。
  */
 
 // ---------- 服务层运营常量（契约 §9 限额单源在 @tutor/contract，此处只补运营边界） ----------
@@ -261,16 +258,11 @@ export function runtimeEpochOf(db: Db): string {
 }
 
 /**
- * 外发时点重装配（实施步骤 1/2，B04 双阶段检查点兑现）：真正出站/领取前
- * 以**当前**裁决重算规则部分（模式 + 提示词快照），与创建时冻结不同才落
- * 库——提交后的未外发任务按完成后复盘规则装配（需求 §8「发送时采用当前
- * 完成后的复盘规则并显示阶段变化」），教师改模式对未外发任务同样生效
- * （§3.3「尚未外发的求助采用当前启发要求；不自动改写已发送的上下文」）。
- * 只换规则字段：快照数据段（题面/本人答案/capturedAt）与材料、问题、
- * createdAt/beforeSubmit 原样保留（保留原请求时间，不覆盖为提交后新请求；
- * 不可悄悄覆盖原快照）。contextVersion 随 promptSnapshotMd 变化，领取方/
- * 派发方拿到的即重装配后的身份；已出站任务（非 created 态）不进本函数，
- * 历史任务保留当时有效模式及提示词（§3.3 回溯口径）。
+ * 外发时点重装配（B04 双阶段检查点）：真正出站/领取前以**当前**裁决重算规则
+ * 部分（模式 + 提示词快照），与创建时不同才落库——提交后的未外发任务按复盘
+ * 规则装配，教师改模式对未外发任务同样生效（需求 §8、§3.3）。只换规则字段：
+ * 快照数据段、材料、问题、createdAt/beforeSubmit 原样保留；contextVersion 随
+ * promptSnapshotMd 变化；已出站任务（非 created）不进本函数（§3.3 回溯口径）。
  */
 function rearmOutboundRules(
   tx: QueueTx,
@@ -322,6 +314,11 @@ function rearmOutboundRules(
 // ---------- 任务定位与门禁 ----------
 
 const TASK_NOT_FOUND_MESSAGE = "AI 任务不存在";
+
+/** 任务快照里的目的（模块 3）；旧快照 / 普通求助为 undefined */
+export function snapshotPurposeOf(task: AiTaskRow): AiTaskPurpose | undefined {
+  return parseContextSnapshotOf(task).purpose;
+}
 
 /** 任务行查找：不存在与不属于同一文案（防枚举），行查询单源 taskOf */
 function requireOwnTask(
@@ -508,6 +505,8 @@ export interface CreateAiTaskInput {
   readonly channel: AiChannel;
   /** 客户端幂等键（requestId；全局唯一索引承载查重） */
   readonly mutationId: string;
+  /** 模块 3：任务目的（rubric_opinion = 请 Agent 按量表给意见） */
+  readonly purpose?: AiTaskPurpose;
 }
 
 export interface AiTaskServiceOptions {
@@ -587,6 +586,7 @@ export function createAiTask(
         input.attemptId,
         input.questionId,
       ),
+      ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
     },
     configSource,
   );
@@ -1972,6 +1972,7 @@ export function refreshPendingAiTask(
       if (task.status !== "created") {
         throw conflict("任务已进入处理流程，输入不可替换；新材料请发起新求助");
       }
+      const purpose = snapshotPurposeOf(task);
       const bundle = buildAiContextBundle(
         asDb(tx),
         {
@@ -1979,7 +1980,11 @@ export function refreshPendingAiTask(
           attemptId: task.attemptId,
           questionId: task.questionId,
         },
-        { now: now.date, hmacSecret: options.hmacSecret },
+        {
+          now: now.date,
+          hmacSecret: options.hmacSecret,
+          ...(purpose !== undefined ? { purpose } : {}),
+        },
         configSource,
       );
       tx.update(aiTasks)
@@ -2026,18 +2031,11 @@ export interface FollowupAiTaskResult {
 }
 
 /**
- * 同题追问（需求 §7.4/§8、技术方案 §3.3）：把一条学生消息追加进本题对话
- * 并把任务重新排队（replied → created，worker/外部按通道再领取）。
- * - 只引用本题当前对话：消息按 taskId 隔离，不注入其他题或其他学生数据；
- * - 不重新采集材料：快照/材料/版本锚定原样不动（「回复基于之前发送的
- *   材料」——新材料 = 新任务新快照，同任务追问不悄悄附新笔迹）；
- * - 幂等：网络重试同文追问且上一条仍在途（created/dispatching/uncertain/
- *   claimed）→ 返回现状不重复追加（一次追问只出站一次，不重复计费）；
- * - 上限：本题学生消息数达 AI_TURNS_MAX（一轮 = 一条学生提问）→ 409
- *   AI_TURNS_LIMIT；
- * - 门禁：出站语义入口，按当前策略与完成态实时校验（教师刚改设置立即
- *   生效），不可用 → 403，消息零落库；重排队后的真正出站前仍由
- *   beginInappDispatch/claim 再次实时重校验（SAI-15 双阶段口径）。
+ * 同题追问（需求 §7.4/§8、技术方案 §3.3）：把一条学生消息追加进本题对话并把
+ * 任务重新排队（replied → created）。只引用本题当前对话；不重新采集材料（新
+ * 材料 = 新任务）；幂等：同文追问且上一条仍在途 → 返回现状不重复追加；上限
+ * AI_TURNS_MAX → 409 AI_TURNS_LIMIT；门禁按当前策略与完成态实时校验，不可用
+ * → 403 消息零落库；真正出站前仍由 beginInappDispatch/claim 再次重校验。
  */
 export function followupStudentAiTask(
   db: Db,

@@ -1881,6 +1881,48 @@
                 ],
                 "additionalProperties": false
               }
+            },
+            "rubric": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 40
+                      },
+                      "desc": {
+                        "type": "string",
+                        "maxLength": 200
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "levels": {
+                  "type": "number",
+                  "const": 4
+                }
+              },
+              "required": [
+                "items",
+                "levels"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [

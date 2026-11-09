@@ -19,6 +19,7 @@ import {
   optionsDirective,
   questionDirective,
   refDirective,
+  rubricDirective,
   segDirective,
   solutionDirective,
   stepDirective,
@@ -40,6 +41,7 @@ import {
   OptionDirective,
   OptionsDirective,
   RefDirective,
+  RubricDirective,
   SegDirective,
   VariantDirective,
 } from "./Qm";
@@ -133,6 +135,7 @@ export const directiveComponents: Readonly<Record<string, DirectiveRenderer>> =
     option: withTypedAttrs(optionDirective, OptionDirective),
     item: withTypedAttrs(itemDirective, ItemDirective),
     variant: withTypedAttrs(variantDirective, VariantDirective),
+    rubric: withTypedAttrs(rubricDirective, RubricDirective),
   };
 
 /**

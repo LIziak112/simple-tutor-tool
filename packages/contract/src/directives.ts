@@ -894,3 +894,19 @@ export const variantDirective = defineDirective({
 
 /** variant 指令属性经注册表 schema 校验后的输出形态 */
 export type VariantDirectiveAttrs = z.output<typeof variantDirective.attrs>;
+
+/** 量表（模块 3 通用量表判卷；写在开放题内，评价项逐行列出） */
+export const rubricDirective = defineDirective({
+  name: "rubric",
+  kind: "container",
+  since: "2.2",
+  allowedIn: ["question"],
+  attrs: directiveAttrs({}),
+  description:
+    "量表：开放题（solve/apply/find-error/fill/response）的评价项清单，每行一项，写成「- 项名：评什么」（说明可省），1–8 项，统一 1–4 档（1 最低、4 最高）。交卷后学习者按量表逐项自评并写一句依据，Agent 经 MCP 对同一作答独立给意见，分歧由本人裁定。量表分单列，不进对错与总分。客观题（judge/choice/multi）内不要写。",
+  example:
+    ":::rubric\n- 要点覆盖：是否覆盖材料的核心要点\n- 结构：总分总、段落清晰\n- 字数：满足题目要求的字数\n- 用时：在限时内完成\n:::",
+});
+
+/** rubric 指令属性经注册表 schema 校验后的输出形态 */
+export type RubricDirectiveAttrs = z.output<typeof rubricDirective.attrs>;

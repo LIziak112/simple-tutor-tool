@@ -5,6 +5,7 @@ import type {
   OptionDirectiveAttrs,
   OptionsDirectiveAttrs,
   RefDirectiveAttrs,
+  RubricDirectiveAttrs,
   SegDirectiveAttrs,
   VariantDirectiveAttrs,
 } from "@tutor/contract";
@@ -153,6 +154,24 @@ export function VariantDirective({
       className="my-2 rounded-lg border border-dashed border-border p-3 text-sm leading-7"
     >
       <p className="mb-1 text-xs text-muted-foreground">备选参考</p>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 模块 3 量表（:::rubric）：题内评价项清单的静态渲染壳——正文就是「- 项名：
+ * 评什么」列表，原样展示并加标题行；打分交互在结果页 RubricReviewSection。
+ */
+export function RubricDirective({
+  children,
+}: DirectiveProps<RubricDirectiveAttrs>) {
+  return (
+    <div
+      data-slot="rubric"
+      className="my-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm leading-7"
+    >
+      <p className="mb-1 text-xs text-muted-foreground">量表（每项 1–4 档）</p>
       {children}
     </div>
   );
