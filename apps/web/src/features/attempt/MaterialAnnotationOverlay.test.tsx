@@ -906,6 +906,52 @@ describe("材料圈画固定阅读框（已有基准常显）", () => {
     }
   });
 
+  it.each([
+    { mountedWidth: null, expectedWidth: 520 },
+    { mountedWidth: 480, expectedWidth: 480 },
+  ])(
+    "进入圈画才读取晚到的基准，已挂载的宽度 $mountedWidth 保持优先",
+    async ({ mountedWidth, expectedWidth }) => {
+      const attemptId = `att-late-base-${mountedWidth}`;
+      const inkKey = "m1|1";
+      const doc = inkDocOf([strokeAt(1, 1)]);
+      draftStore.saveMaterialInk(attemptId, inkKey, doc);
+      if (mountedWidth !== null) {
+        draftStore.saveMaterialInkBase(attemptId, inkKey, {
+          cssWidth: mountedWidth,
+          cssHeight: 400,
+        });
+      }
+      const { container } = render(
+        <AttemptEditorProvider>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay
+            attemptId={attemptId}
+            materialId="m1"
+            inkKey={inkKey}
+          >
+            <div>晚到基准材料</div>
+          </MaterialAnnotationOverlay>
+        </AttemptEditorProvider>,
+      );
+
+      draftStore.saveMaterialInkBase(attemptId, inkKey, {
+        cssWidth: 520,
+        cssHeight: 400,
+      });
+      fireEvent.click(screen.getByTestId("toggle-annotation"));
+
+      expect(frameOf(container).style.width).toBe(`${expectedWidth}px`);
+      expect(overlayRootOf(container)).toHaveAttribute(
+        "data-ink-visible",
+        "true",
+      );
+      await flushFrame();
+      expect(drawFrameMock.mock.calls.at(-1)?.[0]).toEqual(doc.data.strokes);
+      expect(draftStore.getMaterialInk(attemptId, inkKey)).toEqual(doc);
+    },
+  );
+
   it("无基准新材料在圈画态保持自然排版：首笔前不冻结", async () => {
     const observer = manualResizeObserver();
     try {

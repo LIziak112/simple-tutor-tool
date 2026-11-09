@@ -64,6 +64,33 @@ describe("组引用健康（§5.4.3）", () => {
     expect(codes).toContain("GROUP_MEMBER_NOT_FOUND");
   });
 
+  it("不同组引用同一缺失子题时，分别指出各自引用的精确行列", () => {
+    const firstRef = "::ref{question=q-404}";
+    const secondRef = `  ${firstRef}`;
+    const markdown = `${FRONT}${[
+      "::::group{id=grp-1}",
+      firstRef,
+      "::::",
+      "",
+      "::::group{id=grp-2}",
+      "::ref{question=q-1}",
+      secondRef,
+      "::::",
+      "",
+      "::::question{id=q-1 type=judge}",
+      "判断。[[]]",
+      "::::",
+    ].join("\n")}\n`;
+    const lines = markdown.split("\n");
+    const missing = parseDocument(markdown)
+      .issues.filter((issue) => issue.code === "GROUP_MEMBER_NOT_FOUND")
+      .map(({ line, column }) => ({ line, column }));
+    expect(missing).toEqual([
+      { line: lines.indexOf(firstRef) + 1, column: 1 },
+      { line: lines.indexOf(secondRef) + 1, column: 3 },
+    ]);
+  });
+
   it("组引用组：GROUP_NESTED_OR_CYCLIC（首版仅一层）", () => {
     const codes = errorCodes(
       VALID_BASE.replace("::ref{question=q-2}", "::ref{question=grp-1}"),

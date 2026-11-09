@@ -1275,6 +1275,29 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
     db.$client.close();
   });
 
+  it("历史作业卷没有作业 ID 时不查询作业覆盖", () => {
+    const db = createTestDb();
+    try {
+      const studentId = makeStudent(db);
+      const attemptId = insertAttempt(db, { studentId, assignmentId: null });
+      insertResponse(db, attemptId, "q1");
+      const config = new FakeConfigSource();
+      config.teacherDefaults.set(TEST_TEACHER_ID, "guided_only");
+
+      expect(
+        resolveAttemptQuestionAiPolicy(db, studentId, attemptId, "q1", config)
+          .resolution,
+      ).toEqual({
+        usable: true,
+        mode: "guided_only",
+        reason: "teacher_default",
+      });
+      expect(config.assignmentReads).toEqual([]);
+    } finally {
+      db.$client.close();
+    }
+  });
+
   it("无教师域异常行：教师默认回落 DEFAULT_AI_TEACHER_MODE（无配置 = 开放伴学）", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
