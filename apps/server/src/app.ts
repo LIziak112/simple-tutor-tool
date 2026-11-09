@@ -14,6 +14,7 @@ import { createRequireAnySession } from "./auth/require-any-session";
 import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
 import { createMcpRoutes } from "./mcp/mount";
+import { createPersonalMcpRoutes } from "./mcp/personal-mount";
 import { createStudentMcpRoutes } from "./mcp/student-mount";
 import { createAdminRoutes } from "./routes/admin";
 import { createAiReplyCheckerRoutes } from "./routes/ai-reply-checker.ts";
@@ -384,6 +385,18 @@ export function createApp(options: CreateAppOptions) {
         db: options.db,
         dataDir: options.dataDir,
         publicUrl: options.publicUrl,
+      }),
+    )
+    // —— 个人账号 MCP Server（模块 0「一枚 token」）：/mcp/personal 只收个人账号
+    //    学习者的 mcp token（与 /mcp/student 同一凭证域、账号类型闸门互斥），实例
+    //    = 教师白名单工具 ∪ 学生全部工具（src/mcp/personal-server.ts）。
+    .route(
+      "/mcp/personal",
+      createPersonalMcpRoutes({
+        db: options.db,
+        dataDir: options.dataDir,
+        publicUrl: options.publicUrl,
+        specDir: options.specDir,
       }),
     )
     // —— 媒体图片伺服（媒体管线第二单）：GET/HEAD /blobs/media/<hash>.<ext> ——

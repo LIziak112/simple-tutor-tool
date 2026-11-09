@@ -35,6 +35,7 @@ const ME_A: StudentMeData = {
   loginName: "stu-a",
   linkEnabled: true,
   passwordEnabled: false,
+  accountKind: "class",
 };
 const ME_B: StudentMeData = {
   ...ME_A,

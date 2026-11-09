@@ -272,7 +272,7 @@ export class ApiError extends Error {
  * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
  * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
  */
-async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
+export async function callApi<T>(fn: () => Promise<Response>): Promise<T> {
   let res: Response;
   try {
     res = await fn();
@@ -303,7 +303,7 @@ async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
       pickExtraFields(body),
     );
   }
-  return parsed.data.data as TData;
+  return parsed.data.data as T;
 }
 
 /** 取统一壳（ok/error/message）之外的附加字段（如 LINT_ERROR 的 _issues） */

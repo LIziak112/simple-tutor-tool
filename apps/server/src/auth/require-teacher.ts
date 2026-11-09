@@ -19,8 +19,8 @@ import { getTeacherInfo } from "./teacher-auth-service";
  * 通过后把教师信息放进 c.var.teacher（id / loginName / isAdmin / createdAt），
  * 路由内直接取用。
  *
- * 滑动续期：校验通过即把 DB 会话与 Cookie 的寿命一起重置为 7 天——
- * 只要两次使用的间隔不超过 7 天就永远不需要重新登录（活跃不掉线）。
+ * 滑动续期：校验通过即把 DB 会话与 Cookie 的寿命一起重置为 90 天（2026-11 起
+ * 与学生同档）——只要两次使用的间隔不超过 90 天就永远不需要重新登录（活跃不掉线）。
  */
 
 /** 教师路由的环境类型（c.var.teacher） */

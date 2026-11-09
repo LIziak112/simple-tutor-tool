@@ -1,3 +1,4 @@
+import type { StudentMeData } from "@tutor/contract";
 import { getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { Db } from "../db/client";
@@ -23,16 +24,10 @@ import {
  * 滑动续期与 requireTeacher 同口径：校验通过即重置 90 天寿命。
  */
 
-/** 学生路由的环境类型（c.var.student） */
+/** 学生路由的环境类型（c.var.student；形状即 GET /me 的 data，含 accountKind） */
 export interface StudentEnv {
   Variables: {
-    student: {
-      id: string;
-      displayName: string;
-      loginName: string;
-      linkEnabled: boolean;
-      passwordEnabled: boolean;
-    };
+    student: StudentMeData;
   };
 }
 

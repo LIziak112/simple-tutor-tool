@@ -43,6 +43,7 @@ const studentA: StudentMeData = {
   displayName: "甲",
   loginName: "a",
   passwordEnabled: true,
+  accountKind: "class",
   linkEnabled: true,
 };
 const studentB: StudentMeData = {
@@ -55,6 +56,7 @@ const teacherA: TeacherInfo = {
   id: "a",
   loginName: "teacher-a",
   isAdmin: true,
+  accountKind: "class",
   createdAt: "2026-10-16",
 };
 const teacherB: TeacherInfo = {
@@ -62,6 +64,7 @@ const teacherB: TeacherInfo = {
   id: "b",
   loginName: "teacher-b",
   isAdmin: false,
+  accountKind: "class",
 };
 
 function setup() {

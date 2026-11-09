@@ -1,8 +1,8 @@
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import type { Context, Next } from "hono";
+import type { Context, Env, Next } from "hono";
 import { Hono } from "hono";
 import { loadOrCreateSecretKey } from "../config";
 import type { Db } from "../db/client";
+import { serveStatelessMcpRequest } from "./stateless-transport";
 import {
   createRequireStudentMcpToken,
   type StudentMcpEnv,
@@ -17,7 +17,8 @@ import { createStudentMcpServer } from "./student-server";
  * 与教师 mount.ts 同形态（Hono 子应用桥接 SDK Web 标准 RequestHandler：
  * c.req.raw → transport.handleRequest → 原生 Response 原样返回），
  * stateless 模式（sessionIdGenerator 缺省 = 无会话）：每个 HTTP 请求独立成套
- * （新建学生 McpServer 实例 + transport，请求结束即关），无跨请求会话状态。
+ * （新建学生 McpServer 实例 + transport，请求结束即关），无跨请求会话状态；
+ * transport 装配单源见 ./stateless-transport.ts。
  *
  * 学生端点新增两道防线：
  * - **Origin 校验**（MCP 规范建议，B14 执行步骤 5）：浏览器请求的 Origin
@@ -61,13 +62,11 @@ function hostOf(origin: string): string | null {
 /**
  * Origin 门：无 Origin（SDK/CLI 等非浏览器客户端）放行；有 Origin 则必须
  * 与部署源（publicUrl）或请求 Host 同源（直连 IP / 自定义端口场景）。
+ * 导出供个人 /mcp/personal 挂载复用（模块 0；环境类型泛化，不依赖学生 c.var）。
  */
-function createRejectForeignOrigin(publicUrl: string) {
+export function createRejectForeignOrigin<E extends Env>(publicUrl: string) {
   const publicHost = hostOf(publicUrl);
-  return async (
-    c: Context<StudentMcpEnv>,
-    next: Next,
-  ): Promise<Response | undefined> => {
+  return async (c: Context<E>, next: Next): Promise<Response | undefined> => {
     const origin = c.req.header("origin");
     if (origin !== undefined) {
       const originHost = hostOf(origin);
@@ -94,7 +93,9 @@ function createRejectForeignOrigin(publicUrl: string) {
  * 协议内错误（Content-Type / 方法不符等）由 SDK 按 MCP 规范应答。
  */
 export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
-  const rejectForeignOrigin = createRejectForeignOrigin(options.publicUrl);
+  const rejectForeignOrigin = createRejectForeignOrigin<StudentMcpEnv>(
+    options.publicUrl,
+  );
   const requireToken = createRequireStudentMcpToken(options.db);
   // 快照装配 HMAC 密钥一次性读入（与路由层同源 DATA_DIR/secret.key）
   const hmacSecret = loadOrCreateSecretKey(options.dataDir);
@@ -110,22 +111,6 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
         studentId: c.var.mcpStudent.id,
         hmacSecret,
       });
-      // stateless 模式：不传 sessionIdGenerator（缺省即 undefined = 无会话；
-      // 教师 mount.ts 同款注释口径）+ JSON 响应模式（工具型服务器）
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        enableJsonResponse: true,
-      });
-      // 请求结束关闭 transport 与 server 实例（stateless：不留任何状态）
-      transport.onclose = () => {
-        void server.close();
-      };
-      try {
-        await server.connect(transport);
-        return await transport.handleRequest(c.req.raw);
-      } finally {
-        // 兜底清理（onclose 之外路径，如 handleRequest 抛错）；
-        // 已关闭时再关为幂等 no-op
-        await transport.close();
-      }
+      return serveStatelessMcpRequest(server, c.req.raw);
     });
 }

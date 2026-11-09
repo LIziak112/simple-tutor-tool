@@ -1,8 +1,8 @@
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Hono } from "hono";
 import type { Db } from "../db/client";
 import { createRequireMcpToken, type McpEnv } from "./auth";
 import { createMcpServer } from "./server";
+import { serveStatelessMcpRequest } from "./stateless-transport";
 
 /**
  * /mcp 挂载（T4.6）——SDK Streamable HTTP 传输，**不走统一壳、不走 /api 前缀**
@@ -17,6 +17,7 @@ import { createMcpServer } from "./server";
  * （SDK 文档：无 Session ID、无会话校验；GET 带 token+accept SSE 返回 200 的立即关闭空流、
  * DELETE 返回 200 空体——Opus 实测④核实的 SDK 1.31 实际行为，无功能与安全影响）。
  * enableJsonResponse: true——工具型服务器用 JSON 响应（非 SSE 流）。
+ * transport 装配单源见 ./stateless-transport.ts（三个 MCP 挂载共用）。
  *
  * 鉴权：createRequireMcpToken 在 transport 之前执行（无/错 token/禁用教师 →
  * 401，同一文案防探测，D22）。
@@ -50,24 +51,6 @@ export function createMcpRoutes(options: McpMountOptions) {
       teacherId: c.var.mcpTeacher.id,
       specDir: options.specDir,
     });
-    // stateless 模式：不传 sessionIdGenerator（运行时读 options.sessionIdGenerator，
-    // 缺省即 undefined = 无会话；SDK 文档的显式 undefined 写法在
-    // exactOptionalPropertyTypes 下类型不接受，省略语义完全相同）。
-    // enableJsonResponse: true——工具型服务器用 JSON 响应（非 SSE 流）。
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      enableJsonResponse: true,
-    });
-    // 请求结束关闭 transport 与 server 实例（stateless：不留任何状态）
-    transport.onclose = () => {
-      void server.close();
-    };
-    try {
-      await server.connect(transport);
-      return await transport.handleRequest(c.req.raw);
-    } finally {
-      // 兜底清理（onclose 之外路径，如 handleRequest 抛错）；
-      // 已关闭时再关为幂等 no-op
-      await transport.close();
-    }
+    return serveStatelessMcpRequest(server, c.req.raw);
   });
 }

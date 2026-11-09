@@ -1,13 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchTeacherMe } from "@/lib/api";
+import { fetchTeacherMe, logoutStudentApi, logoutTeacher } from "@/lib/api";
 import SettingsPage from "./SettingsPage";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchTeacherMe: vi.fn(),
+  logoutTeacher: vi.fn(),
+  logoutStudentApi: vi.fn(),
   // hall-9533：AI 提示词区在页面测试只要求渲染，不取真实接口
   fetchTeacherAiPromptsApi: async () => ({
     slots: [],
@@ -33,7 +35,14 @@ vi.mock("@/features/student-ai/TeacherAiSettingsPanel", () => ({
 }));
 
 function LocationProbe() {
-  return <output data-testid="location">{useLocation().search}</output>;
+  const location = useLocation();
+  return (
+    <output data-testid="location">
+      {location.pathname === "/t/settings"
+        ? location.search
+        : location.pathname}
+    </output>
+  );
 }
 
 function renderPage(entry = "/t/settings") {
@@ -55,6 +64,7 @@ beforeEach(() => {
     id: "11111111-1111-4111-8111-111111111111",
     loginName: "teacher",
     isAdmin: true,
+    accountKind: "class",
     createdAt: "2026-01-01T00:00:00.000Z",
   });
 });
@@ -78,11 +88,34 @@ describe("设置分类", () => {
     ).toBeVisible();
   });
 
+  it("个人账号退出同时结束两侧会话并回 /p/login", async () => {
+    vi.mocked(fetchTeacherMe).mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      loginName: "小明",
+      isAdmin: false,
+      accountKind: "personal",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    vi.mocked(logoutTeacher).mockResolvedValue(null);
+    vi.mocked(logoutStudentApi).mockResolvedValue(null);
+    renderPage("/t/settings?section=account");
+    expect(
+      await screen.findByText(/退出会同时结束学习视角与管理视角的会话/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent("/p/login"),
+    );
+    expect(logoutTeacher).toHaveBeenCalledTimes(1);
+    expect(logoutStudentApi).toHaveBeenCalledTimes(1);
+  });
+
   it("普通教师账号分类没有管理入口", async () => {
     vi.mocked(fetchTeacherMe).mockResolvedValue({
       id: "11111111-1111-4111-8111-111111111111",
       loginName: "teacher",
       isAdmin: false,
+      accountKind: "class",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     renderPage("/t/settings?section=account");
@@ -94,6 +127,7 @@ describe("设置分类", () => {
       id: "11111111-1111-4111-8111-111111111111",
       loginName: "teacher",
       isAdmin: false,
+      accountKind: "class",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     renderPage("/t/settings?section=teaching");

@@ -3,6 +3,7 @@ import { API_TOKEN_BYTES } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { teachers } from "../db/schema";
+import { HttpError } from "../lib/http-error";
 
 /**
  * API Token 服务（T4.6，D22）——教师 API Token 的生成 / 查看 / MCP 鉴权解析。
@@ -14,7 +15,26 @@ import { teachers } from "../db/schema";
  *   （disabledAt IS NULL，与 requireTeacher 同口径——禁用即全部凭证失效）；
  *   未命中 / 已禁用统一返回 null，由调用方给同一份 401 文案（防探测，不区分
  *   「token 不存在 / 错误 / 教师已禁用」，D22）。
+ * - 个人账号（模块 0「一枚 token」）：不持有教师 API token——其唯一 token 是绑定
+ *   学习者的 AI 连接 token，服务于 /mcp/personal。教师侧 token 读写入口对个人账号
+ *   409 PERSONAL_ACCOUNT_RESTRICTED（assertClassAccount），鉴权解析也按账号类型排除。
  */
+
+/** 个人账号不持有教师 API token：生成 / 查看入口一律 409 */
+export function assertClassAccount(db: Db, teacherId: string): void {
+  const row = db
+    .select({ accountKind: teachers.accountKind })
+    .from(teachers)
+    .where(eq(teachers.id, teacherId))
+    .get();
+  if (row?.accountKind === "personal") {
+    throw new HttpError(
+      409,
+      "PERSONAL_ACCOUNT_RESTRICTED",
+      "个人账号只有一枚 token，请在「学习视角 → AI 伴学」中管理",
+    );
+  }
+}
 
 /** 生成新 API Token 并覆盖写入（无则生成、有则重置，D22 同一动作） */
 export function regenerateApiToken(
@@ -62,7 +82,13 @@ export function authenticateApiToken(
   const row = db
     .select({ id: teachers.id, loginName: teachers.loginName })
     .from(teachers)
-    .where(and(eq(teachers.apiToken, token), isNull(teachers.disabledAt)))
+    .where(
+      and(
+        eq(teachers.apiToken, token),
+        isNull(teachers.disabledAt),
+        eq(teachers.accountKind, "class"),
+      ),
+    )
     .get();
   return row ?? null;
 }

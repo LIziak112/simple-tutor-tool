@@ -26,6 +26,7 @@ describe("useBindNoteSession（T6R.9；T6R.11 起为 StudentLayout 布局级接�
       loginName: "e2e-stu",
       linkEnabled: true,
       passwordEnabled: false,
+      accountKind: "class",
     };
     function Probe({ me: m }: { me: StudentMeData | undefined }) {
       useBindNoteSession(m);

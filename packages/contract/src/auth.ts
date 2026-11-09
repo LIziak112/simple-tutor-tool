@@ -83,14 +83,27 @@ export const teacherRegisterRequestSchema = z.object({
 });
 
 /**
+ * 账号类型（个人学习迭代模块 0，2026-11）：
+ * - class：班级账号——既有教师形态，名下可建多名学生，师生各用各的凭证；
+ * - personal：个人账号——一个内容空间 + 一个固定绑定的学习者身份（teachers 行
+ *   + 一条 students 行），同一次登录同时持有教师会话与学生会话（双视角），
+ *   MCP 用一枚 token（/mcp/personal）同时承载本人内容管理与本人学习两侧权限。
+ * 班级账号的任何行为不因本枚举出现而变化。
+ */
+export const accountKindSchema = z.enum(["class", "personal"]);
+
+/**
  * GET /api/public/teacher/status 响应 data（D8）：
  * - hasTeacher：是否已设置教师（首启判断，只回布尔值，无其他信息泄露）；
  * - registrationOpen：注册入口是否开放。T2B.2 契约即含该字段（避免二次变更），
- *   注册接口 T2B.6 才上线，此前服务端恒返回 false。
+ *   注册接口 T2B.6 才上线，此前服务端恒返回 false；
+ * - personalRegistrationOpen：个人账号自助注册（登录页「个人学习」+ 邀请码）
+ *   是否开放——管理员配置了邀请码且已完成首启即为 true；不泄露邀请码本身。
  */
 export const teacherStatusDataSchema = z.object({
   hasTeacher: z.boolean(),
   registrationOpen: z.boolean(),
+  personalRegistrationOpen: z.boolean(),
 });
 
 /** 教师信息：setup / login 成功与 GET /api/teacher/me 的 data 部分 */
@@ -101,9 +114,39 @@ export const teacherInfoSchema = z.object({
   loginName: teacherLoginNameSchema,
   /** 是否管理员（D6：登录成功返回 isAdmin，供前端显示管理入口——T2B.6） */
   isAdmin: z.boolean(),
+  /** 账号类型（class 班级 / personal 个人；前端据此切换导航与视角入口） */
+  accountKind: accountKindSchema,
   /** 创建时间：UTC ISO 字符串（§0.3 时间约定） */
   createdAt: z.string().min(1),
 });
+
+/** 邀请码长度上限（管理员配置、个人注册时填写；trim 后 1–64 字符） */
+export const PERSONAL_INVITE_CODE_MAX = 64;
+
+/** 个人注册邀请码（提交侧：非空即交给服务端比对，不在前端限定字符集） */
+export const personalInviteCodeSchema = z
+  .string()
+  .trim()
+  .min(1, "请输入邀请码")
+  .max(
+    PERSONAL_INVITE_CODE_MAX,
+    `邀请码最多 ${PERSONAL_INVITE_CODE_MAX} 个字符`,
+  );
+
+/**
+ * POST /api/public/personal/register 请求体（模块 0，Q7 定案 b：登录页自助
+ * 注册 + 邀请码）。登录名 / 密码沿用教师策略（同一张 teachers 表、同一套唯一
+ * 约束）；displayName 可选——学习视角显示的称呼，缺省等于登录名。
+ */
+export const personalRegisterRequestSchema = z.object({
+  loginName: teacherLoginNameSchema,
+  password: teacherPasswordSchema,
+  inviteCode: personalInviteCodeSchema,
+  displayName: z.string().trim().min(1).max(32).optional(),
+});
+
+/** POST /api/public/personal/login 请求体：与教师登录同形（登录名 + 密码） */
+export const personalLoginRequestSchema = teacherLoginRequestSchema;
 
 /**
  * auth 相关错误码（UPPER_SNAKE_CODE 的固定子集）：
@@ -116,7 +159,13 @@ export const teacherInfoSchema = z.object({
  * - ADMIN_ONLY（T2B.2）：非管理员访问管理接口（D7；/api/admin/* T2B.6 挂载）；
  * - TEACHER_LOGIN_EXISTS / LAST_ADMIN / REGISTRATION_DISABLED / TEACHER_NOT_EXISTS
  *   （T2B.2 定义、T2B.6 使用）：教师登录名冲突 / 最后一位活跃管理员保护 /
- *   注册开关关闭 / 无教师行时调用注册接口。
+ *   注册开关关闭 / 无教师行时调用注册接口；
+ * - PERSONAL_REGISTRATION_DISABLED（模块 0）：管理员未配置邀请码，个人注册不开放；
+ * - INVITE_CODE_INVALID（模块 0）：邀请码不匹配（403；计入注册限流额度）；
+ * - ACCOUNT_KIND_MISMATCH（模块 0）：凭证正确但账号类型与入口不符（班级教师走
+ *   个人登录入口）——验密通过后才返回，不构成枚举面；
+ * - PERSONAL_ACCOUNT_RESTRICTED（模块 0）：个人账号不开放的班级能力（添加学生、
+ *   教师 API Token 等）→ 409。
  */
 export const authErrorCodeSchema = z.enum([
   "TEACHER_EXISTS",
@@ -130,6 +179,10 @@ export const authErrorCodeSchema = z.enum([
   "LAST_ADMIN",
   "REGISTRATION_DISABLED",
   "TEACHER_NOT_EXISTS",
+  "PERSONAL_REGISTRATION_DISABLED",
+  "INVITE_CODE_INVALID",
+  "ACCOUNT_KIND_MISMATCH",
+  "PERSONAL_ACCOUNT_RESTRICTED",
 ]);
 
 /** 携带教师信息的成功响应壳（setup / login / me 复用） */
@@ -145,3 +198,8 @@ export type TeacherRegisterRequest = z.infer<
 >;
 export type TeacherStatusData = z.infer<typeof teacherStatusDataSchema>;
 export type TeacherInfo = z.infer<typeof teacherInfoSchema>;
+export type AccountKind = z.infer<typeof accountKindSchema>;
+export type PersonalRegisterRequest = z.infer<
+  typeof personalRegisterRequestSchema
+>;
+export type PersonalLoginRequest = z.infer<typeof personalLoginRequestSchema>;

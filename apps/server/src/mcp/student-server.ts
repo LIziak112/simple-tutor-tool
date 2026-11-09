@@ -32,7 +32,7 @@ import { submitPracticeQuestion } from "../services/attempt-service.ts";
 import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
-import { guard, jsonContent } from "./server.js";
+import { guard, jsonContent } from "./tool-result";
 
 /**
  * 学生 MCP 工具实例（SAI-25 骨架 / SAI-26 四类任务工具，B00 §4.3 工具名）。
@@ -128,15 +128,27 @@ export interface StudentMcpServerDeps {
 }
 
 /**
- * 创建一台绑定单学生的 MCP 服务器实例（四工具）。
+ * 创建一台绑定单学生的 MCP 服务器实例（12 工具，见 STUDENT_MCP_TOOL_NAMES）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
-  const { db, dataDir, studentId, hmacSecret } = deps;
   const server = new McpServer({
     name: STUDENT_MCP_SERVER_NAME,
     version: STUDENT_MCP_SERVER_VERSION,
   });
+  registerStudentTools(server, deps);
+  return server;
+}
+
+/**
+ * 把全部学生工具注册到给定实例（模块 0 抽出：个人账号的 /mcp/personal 复用同一份
+ * 注册，与教师白名单工具合并在一台实例上——工具定义单源）。
+ */
+export function registerStudentTools(
+  server: McpServer,
+  deps: StudentMcpServerDeps,
+): void {
+  const { db, dataDir, studentId, hmacSecret } = deps;
 
   server.registerTool(
     "check_ai_reply",
@@ -712,6 +724,4 @@ export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
       return jsonContent({ success: true });
     }),
   );
-
-  return server;
 }

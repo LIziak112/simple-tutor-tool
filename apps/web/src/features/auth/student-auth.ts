@@ -46,8 +46,11 @@ export function useStudentMe() {
   });
 }
 
-/** 登录成功后写入 me 缓存并预取我的作业/课程/讲义（首页立即可用，T2A.5 加课程） */
-function useApplyStudentAuthed() {
+/**
+ * 登录成功后写入 me 缓存并预取我的作业/课程/讲义（首页立即可用，T2A.5 加课程）。
+ * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
+ */
+export function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return async (student: StudentMeData) => {
     await clearAccountQueries(queryClient, "student");

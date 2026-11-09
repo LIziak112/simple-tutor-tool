@@ -99,6 +99,8 @@ export const SPEC_TAGS = {
   // 管理端
   "admin-ui.spec.ts": ["@admin"],
   "teacher-register-admin.spec.ts": ["@admin"],
+  // 个人账号（模块 0：邀请码注册 / 双视角 / /mcp/personal）
+  "personal-account.spec.ts": ["@admin", "@student"],
   // 教师端
   "teacher-mark-flow.spec.ts": ["@teacher"],
   "teacher-navigation-settings.spec.ts": ["@teacher"],

@@ -23,6 +23,8 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
  * T2B.6：底部按 status.registrationOpen 显示「没有账号？注册」入口（开关关时不显示）。
  * T-PR4 Web-4：登录成功后按学生数落点——名下未归档学生恰 1 名 → 该生学生主页，
  * 其余 → 学生列表（resolveTeacherLanding；取列表失败回落学生列表不阻塞登录）。
+ * 模块 0：个人账号（accountKind=personal）在此登录同样成功（服务端补发学生会话），
+ * 落点改为学习视角 /s/home；底部给个人学习入口。
  */
 
 /** localStorage 键：上次成功登录的教师登录名（预填用） */
@@ -82,7 +84,7 @@ export function LoginPage() {
     loginMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: async (_teacher, request) => {
+        onSuccess: async (teacher, request) => {
           // 记住登录名供下次预填（仅成功时记，避免把敲错的存下来）
           try {
             window.localStorage.setItem(
@@ -91,6 +93,11 @@ export function LoginPage() {
             );
           } catch {
             // 存不进就算了，不影响登录
+          }
+          // 个人账号（模块 0）从教师入口登录：服务端同样补发学生会话，落点学习视角
+          if (teacher.accountKind === "personal") {
+            navigate("/s/home", { replace: true });
+            return;
           }
           // T-PR4 Web-4：登录后按学生数落点（恰 1 名未归档学生 → 该生学生主页）
           navigate(await resolveTeacherLanding(), { replace: true });
@@ -212,6 +219,15 @@ export function LoginPage() {
             </Link>
           </p>
         )}
+        <p className="mt-3 text-center text-xs text-muted-foreground">
+          个人学习账号？
+          <Link
+            to="/p/login"
+            className="mx-1 text-primary underline-offset-4 hover:underline"
+          >
+            去个人学习登录
+          </Link>
+        </p>
         <footer className="mt-6 text-center text-xs text-muted-foreground">
           <p className="font-semibold">{BRAND_NAME}</p>
           <p lang="en" className="mt-1 leading-relaxed">

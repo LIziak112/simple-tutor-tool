@@ -931,7 +931,8 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
     insertPreT2bFixture(db);
     migrateAndBackfill(db);
 
-    // D4 升级：只动 loginName/isAdmin，其余列原样（T7.7 新列读回 NULL=全启用）
+    // D4 升级：只动 loginName/isAdmin，其余列原样（T7.7 新列读回 NULL=全启用；
+    // 模块 0 新列 accountKind 迁移默认 'class'、personalStudentId NULL）
     expect(db.select().from(teachers).all()).toEqual([
       {
         id: "th-1",
@@ -942,6 +943,8 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
         apiToken: null,
         capabilityProfileJson: null,
         practiceFeedbackPolicy: null,
+        accountKind: "class",
+        personalStudentId: null,
         createdAt: "2026-01-10T08:00:00.000Z",
       },
     ]);

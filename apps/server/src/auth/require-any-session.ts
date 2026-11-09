@@ -15,7 +15,7 @@ import { getTeacherInfo } from "./teacher-auth-service";
  *
  * 师生各一枚 Cookie（2026-10 拆分，见 auth/session.ts）：两枚都读、逐枚尝试
  * 「会话行有效且主体可用」，任一槽位通过即放行。教师槽优先；教师槽主体不可用
- * （教师被禁用、Cookie 残留最长 7 天）时继续尝试学生槽——双身份浏览器里不能
+ * （教师被禁用、Cookie 残留最长 90 天）时继续尝试学生槽——双身份浏览器里不能
  * 让残留的教师 Cookie 挡住仍然有效的学生会话。旧部署升级后浏览器残留的学生
  * token 仍在 tutor_session 名下——getAnySession 不分角色，该残留天然继续
  * 可用（直到自然过期）。
