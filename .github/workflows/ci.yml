@@ -47,6 +47,12 @@ jobs:
         run: node --test scripts/governance-invariants.spec.mjs
       - name: 治理不变量闸门
         run: node scripts/governance-invariants.mjs
+      - name: 文件规模闸门回归
+        run: node --test scripts/file-size-guard.spec.mjs
+      # AGENTS.md §五：全仓 1000 行硬线 + 历史基线只降不升（scripts/file-size-baseline.json）；
+      # 400 行软线只对相对基点的改动文件提醒（写进 check 注解）。非 PR 事件基点是自身，不报软线。
+      - name: 文件规模闸门
+        run: node scripts/file-size-guard.mjs check --base "$CI_BASE"
       - id: scope
         name: 计算范围
         run: node scripts/ci-scope.mjs plan "$CI_BASE"

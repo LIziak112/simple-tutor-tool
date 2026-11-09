@@ -1,0 +1,33 @@
+{
+  "description": "文件规模闸门（AGENTS.md §五）：apply_patch 写入前越过 1000 行硬线即拒绝，写入后越过 400 行软线 / 历史基线增长即提醒。首次使用需在 Codex 里执行 /hooks 审核并信任本钩子；细则见 docs/约定/文件规模约束.md。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/file-size-guard.mjs\" hook codex",
+            "commandWindows": "node scripts/file-size-guard.mjs hook codex",
+            "timeout": 10,
+            "statusMessage": "检查文件规模"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/file-size-guard.mjs\" hook codex",
+            "commandWindows": "node scripts/file-size-guard.mjs hook codex",
+            "timeout": 10,
+            "statusMessage": "检查文件规模"
+          }
+        ]
+      }
+    ]
+  }
+}
