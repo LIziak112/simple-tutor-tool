@@ -1,7 +1,7 @@
 # 研发元规则（单一事实源）
 
 > 本文件是本仓研发纪律的**唯一正文**。Claude Code 经 `CLAUDE.md`（仅一行 `@AGENTS.md`）导入；Codex、Cursor 经 `.codexrules` / `.cursorrules` 指针读本文件。入口文件只放指针，不放第二份规则正文。
-> 修订本文件先读 §五 修订协议；`scripts/governance-invariants.mjs` 在 CI 守门。
+> 修订本文件先读 §六 修订协议；`scripts/governance-invariants.mjs` 在 CI 守门。
 
 ## 一、价值观
 
@@ -30,7 +30,14 @@
 2. **先写失败测试再改实现**（TDD）。Bug 先复现、定位根因再修。纯样式/文案/文档可豁免测试，但需说明理由。
 3. 交付代码、测试、类型、生成产物、相关文档需在同一 PR 中交齐。
 
-## 五、修订协议
+## 五、文件规模与拆分
+
+- **一个文件一个职责**。代码文件（ts / tsx / js / mjs）超过 **400 行**先提拆分方案再加代码；**1000 行**是硬线。`scripts/file-size-guard.mjs` 在三处守门：编辑钩子（Cursor / Claude Code / Codex：写入前拦硬线、写入后提醒）、pre-commit、CI。
+- 拆分按「一起变化的放一起」，不按行数凑：禁止 `xxx-part2.ts` 式切片、删注释空行、一行多句、无意义转发层换绿灯；也不要碎成几十个 30 行小文件。拆了什么、为什么这样切，写进 PR 说明。
+- 历史超限文件登记在 `scripts/file-size-baseline.json`，**只降不升**：改到这些文件先抽一段出去或等量精简；确需增长在 PR 写明理由并更新基线。降到 1000 行以下即移除条目。
+- 测试 / E2E / fixtures / 迁移 / 生成产物 / 技能镜像不计入。细则、豁免清单与钩子启用方式见 [文件规模约束](docs/约定/文件规模约束.md)。
+
+## 六、修订协议
 
 - 本文件行数上限需保持健康。
 - 灵魂关键词不可静默丢失。删改本文件及下方关键字需同步修改 `scripts/governance-invariants.mjs` 中的 `INVARIANTS`。

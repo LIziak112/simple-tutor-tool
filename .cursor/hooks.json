@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "node scripts/file-size-guard.mjs hook cursor",
+        "matcher": "Write|Edit|StrReplace",
+        "timeout": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node scripts/file-size-guard.mjs hook cursor",
+        "matcher": "Write|Edit|StrReplace",
+        "timeout": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+#!/bin/sh
+# 文件规模闸门（AGENTS.md §五「文件规模与拆分」）：对本次暂存的代码文件检查 1000 行硬线与
+# 历史基线棘轮（scripts/file-size-baseline.json 只降不升），越过软线 400 行的给提醒。
+# 本目录经 scripts/setup-git-hooks.mjs（pnpm install → prepare）设为 core.hooksPath；
+# 手动启用：pnpm hooks:install。临时绕过：git commit --no-verify（CI 的同一闸门仍会拦下）。
+# git 运行钩子时工作目录即仓库根，相对路径可直接用。
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit：找不到 node（需要 Node >= 24）。请在装有 Node 的终端里提交；临时绕过用 git commit --no-verify（CI 仍会检查）。" >&2
+  exit 1
+fi
+exec node scripts/file-size-guard.mjs check --staged

@@ -40,6 +40,9 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/contract/package.json packages/contract/package.json
 COPY packages/md-dsl/package.json packages/md-dsl/package.json
 COPY packages/grading/package.json packages/grading/package.json
+# 根 package.json 的 prepare 在 install 时执行 scripts/setup-git-hooks.mjs（启用 pre-commit 钩子）；
+# 它在非 git 检出里会直接跳过，但文件必须在场，否则 install 因找不到脚本而失败
+COPY scripts/setup-git-hooks.mjs scripts/setup-git-hooks.mjs
 RUN pnpm install --frozen-lockfile
 
 # 再拷全部源码并构建两个产物（.dockerignore 已剔除 node_modules/dist/data 等，
@@ -68,6 +71,8 @@ WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json apps/server/package.json
 COPY packages/contract/package.json packages/contract/package.json
+# 同阶段一：根 prepare 脚本须在场（非 git 检出里自动跳过）
+COPY scripts/setup-git-hooks.mjs scripts/setup-git-hooks.mjs
 RUN pnpm install --frozen-lockfile --prod --filter "server..." \
     # @tutor/contract 是 workspace 符号链接，目标目录不在本阶段，
     # 已被 bundle 进 dist/index.js，运行时不会解析，删掉悬空链接避免误导
