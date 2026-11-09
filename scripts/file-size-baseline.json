@@ -8,7 +8,7 @@
   "apps/server/src/services/analytics-service.ts": 1693,
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1412,
-  "apps/server/src/services/attempt-service.ts": 4299,
+  "apps/server/src/services/attempt-service.ts": 4297,
   "apps/server/src/services/content-service.ts": 2246,
   "apps/server/src/services/course-service.ts": 1498,
   "apps/server/src/services/export-service.ts": 2783,
@@ -30,7 +30,7 @@
   "apps/web/src/pages/student/StudentLessonPage.tsx": 1137,
   "apps/web/src/pages/teacher/ImportPage.tsx": 1225,
   "apps/web/src/pages/teacher/LibraryPage.tsx": 1759,
-  "packages/contract/src/attempt.ts": 1398,
+  "packages/contract/src/attempt.ts": 1397,
   "packages/contract/src/content-api.ts": 1004,
   "packages/contract/src/learning-pack.ts": 1491
 }

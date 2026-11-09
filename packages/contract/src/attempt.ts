@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
-import { attemptTimingSchema } from "./attempt-timing.ts";
+import {
+  attemptTimeLimitMinutesSchema,
+  attemptTimingSchema,
+} from "./attempt-timing.ts";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentAnswerReleaseSchema,
@@ -289,24 +292,14 @@ export const attemptSummarySchema = z
 export const attemptStartDataSchema = attemptSummarySchema;
 
 /**
- * POST /api/student/wrong-practice 请求体（2026-10 错题重练组卷）：
- * - questionIds：前端按错题本当前筛选口径（tab + 分组）圈出的题目 id，顺序即
- *   组卷题序（服务端按此顺序冻结进新 attempt 的 responses 行）；
- * - min(1)：空数组 400 VALIDATION_ERROR；重复 id 由服务端去重（保序），
- *   不在契约层拦截——前端从聚合结果取 id 天然无重复；
- * - 每个 id 服务端校验「∈ 该生错题本聚合（includeResolved 全量口径）且最近
- *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
- *   WRONG_PRACTICE_EMPTY（附中文说明）。
- */
-/**
- * 错题重练建卷范围（2026-10-25 #6980-2「我的记录要说明重练的是哪些错题」）：
- * 前端组卷时随请求下发，服务端原样落 attempts.practice_scope_json（快照语义，
- * 单元/考点改名不影响历史卷标题）。五种口径对应错题本的全部重练入口：
- * - all：页头「重练全部」（当前 tab + 课程筛选圈定的全部题）；
- * - group：组头「重练本组」（分组维度 + 组标题 + 可选课程名）；
- * - result：结果页「练习本卷错题」（来源卷标题）；
- * - selection：选题重练（2026-10 手选 N 题跨组组卷，可选课程名）；
- * - ai：AI 组卷（2026-10 学生 MCP create_wrong_practice，AI 给出的组卷说明）。
+ * POST /api/student/wrong-practice 请求体（2026-10 错题重练组卷）：questionIds
+ * 顺序即组卷题序；空数组 400，重复 id 服务端去重保序；每个 id 须 ∈ 该生错题本
+ * 聚合且最近判定作答快照可用，不满足静默剔除，剔完为空 400 WRONG_PRACTICE_EMPTY。
+ *
+ * 建卷范围（#6980-2）：随请求下发、原样落 attempts.practice_scope_json（快照
+ * 语义）。五种口径：all 页头重练全部；group 组头重练本组；result 结果页
+ * 「练习本卷错题」（来源卷标题，模块 7 起可带「· 模块名」后缀）；selection
+ * 手选 N 题；ai AI 组卷（只由学生 MCP create_wrong_practice 构造）。
  */
 export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -762,6 +755,12 @@ export const attemptResultUnitSchema = z.object({
   title: z.string().min(1),
   /** 该单元的逐题结果（按单元内题序） */
   questions: z.array(attemptResultQuestionSchema),
+  /**
+   * 模块参考时间配额（分钟，2026-11-09 模块 7「按模块看结果」）：单元
+   * frontmatter `practice.timeLimitMinutes` 的当前值，结果页与该模块的
+   * 题内活动用时并列展示；无推荐 / 非单元组缺省。只是参考，不构成时钟。
+   */
+  timeQuotaMinutes: attemptTimeLimitMinutesSchema.optional(),
 });
 
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
