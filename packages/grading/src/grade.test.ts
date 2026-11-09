@@ -110,6 +110,12 @@ describe("grade：单选题", () => {
     expect(grade(q, { kind: "choice", index: 99 })).toBe(false);
   });
 
+  it("单选：与历史标准答案相同的首个越界下标仍判错", () => {
+    const index = options.length;
+    const staleQuestion = { ...q, answers: { kind: "choice" as const, index } };
+    expect(grade(staleQuestion, { kind: "choice", index })).toBe(false);
+  });
+
   it("未作答 → false（D1 修订）；题目无 answers → null", () => {
     expect(grade(q, undefined)).toBe(false);
     expect(
@@ -149,6 +155,15 @@ describe("grade：多选题", () => {
   it("任一越界下标 → false；空选（未选任何项）→ false（D1 修订：空选=未作答判错）", () => {
     expect(grade(q, { kind: "multi", indexes: [0, 4] })).toBe(false);
     expect(grade(q, { kind: "multi", indexes: [] })).toBe(false);
+  });
+
+  it("多选：与历史标准答案相同但包含首个越界下标的集合仍判错", () => {
+    const indexes = [0, options.length];
+    const staleQuestion = {
+      ...q,
+      answers: { kind: "multi" as const, indexes },
+    };
+    expect(grade(staleQuestion, { kind: "multi", indexes })).toBe(false);
   });
 
   it("未作答 → false（D1 修订）；题目无 answers → null", () => {
@@ -368,6 +383,23 @@ describe("grade：形态错位与防御", () => {
     });
     expect(grade(choiceQ, { kind: "fill", values: ["A"] })).toBeNull();
     expect(grade(choiceQ, { kind: "final", finalAnswer: "A" })).toBeNull();
+  });
+
+  it("多选题收到单选答案时返回 null，不读取 indexes", () => {
+    const question = makeQuestion({
+      type: "multi",
+      options: [{ text: "A" }, { text: "B" }],
+      answers: { kind: "multi", indexes: [0, 1] },
+    });
+    expect(grade(question, { kind: "choice", index: 0 })).toBeNull();
+  });
+
+  it("手写题收到单选答案时返回 null，不读取 finalAnswer", () => {
+    const question = makeQuestion({
+      type: "solve",
+      answers: { kind: "final", answer: "1" },
+    });
+    expect(grade(question, { kind: "choice", index: 0 })).toBeNull();
   });
 
   it("题目 answers 的 kind 与题型不符（带错误的解析结果）→ null", () => {
