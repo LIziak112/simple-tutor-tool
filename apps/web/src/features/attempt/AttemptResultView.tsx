@@ -68,6 +68,7 @@ import { PendingReleaseBanner } from "./PendingReleaseBanner";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
+import { RubricReviewSection } from "./RubricReviewSection";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
 import { SelfReviewSection } from "./SelfReviewSection";
 import { verdictBadgeDisplayOf } from "./self-review-display";
@@ -85,18 +86,13 @@ import { useResultReviewLocation } from "./use-result-review-location";
  * T2.11：做题时解锁过的提示在此回看（hintsOpened，只含学生自己请求过的条目；
  * 未解锁提示内容服务端从不下发）。详解只在交卷后由服务端下发
  * （AGENTS 第 3 条对「未交卷题目」的限制已解除）。
- * T2A.8（D11）：answersReleased=false（作业「截止后公布」且未到截止）时——
- * 汇总卡替换为「已交卷，答案将在截止后公布」横幅（含截止时间与已答统计），
- * 逐题卡只渲染题干（公开化版）、选项、本人答案、笔迹与已解锁提示；
- * 不显示对错判定、参考答案与详解（服务端本就不下发，前端双保险不渲染）。
- * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect——教师批注
- * 后以批注为准）与老师批改块（teacherMark/teacherComment 显著展示，未批且
- * 已交维持既有待批态）；汇总区大数字改 scoreFinal ?? scoreAuto（全部批完显示
- * 「最终得分」）。QM-12（TT-09c）：待判断计数与对/错计数统一走有效判定口径
- * （reviewCounts → verdictBadgeDisplayOf：教师判 > 自评 > 自动——自评行按
- * 自评三态计数，与逐题徽章同出处不漂移；原 D9 的 pendingCount（教师待批
- * 权威计数）不再顶「待批」瓦片——自评卷会漏计待自评行）。公布 gate 截止前
- * 服务端已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
+ * T2A.8（D11）：answersReleased=false（截止后公布且未到截止）时汇总卡换成
+ * 「已交卷，答案将在截止后公布」横幅，逐题卡只渲染题干、选项、本人答案、笔迹
+ * 与已解锁提示；不显示判定、参考答案与详解（服务端本就不下发，前端双保险）。
+ * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect）与老师批改块；
+ * 汇总大数字 scoreFinal ?? scoreAuto。QM-12（TT-09c）：待判断与对/错计数统一
+ * 走有效判定口径（reviewCounts → verdictBadgeDisplayOf：教师判 > 自评 > 自动，
+ * 与逐题徽章同出处）。公布 gate 截止前服务端已把这些字段置 null（双保险）。
  * 2026-10（学生端闭环补完）：汇总卡操作区新增「练习本卷错题（N 题）」次级
  * 按钮——N = 本卷已判定为错的题数（逐题 finalCorrect === false，不含待批
  * finalCorrect=null；公布前已被 gate 置 null，天然不参与计数）。未公布
@@ -452,6 +448,10 @@ function ResultQuestionCard({
           判定显示走下方批改块——教师优先） */}
       {released && (
         <SelfReviewSection attemptId={attemptId} question={question} />
+      )}
+      {/* 模块 3：量表评价（题有 :::rubric 且已公布；量表分不进总分） */}
+      {released && (
+        <RubricReviewSection attemptId={attemptId} question={question} />
       )}
 
       {released &&

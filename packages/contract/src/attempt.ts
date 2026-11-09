@@ -18,6 +18,7 @@ import {
   practiceWorkflowStartOptionsFields,
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
+import { rubricReviewSchema } from "./rubric.ts";
 import {
   effectiveVerdictSchema,
   gradingPolicySchema,
@@ -674,17 +675,12 @@ export const attemptResultQuestionSchema = z.object({
    * 默认不含未做题。
    */
   answered: z.boolean(),
-  /**
-   * 做题时学生自标「不会」（#6980-4）：unsure / null。入错题本条件之一
-   * （标过不会的题无论对错都保留），不是作答内容、不受公布 gate 影响。
-   */
+  /** 做题时自标「不会」（#6980-4）：unsure / null。入错题本条件之一，不受公布 gate 影响 */
   studentFlag: studentFlagSchema.nullable(),
   /**
-   * QM-11（TT-09b）行级自评状态（公布 gate 截止前置 null 投影；旧载荷缺省
-   * = 无自评信息，读侧按 null 处理）：record=null 表示未自评或已撤回
-   * （undecided 清除记录），revision 是 CAS 基线（清除亦递增——record=null
-   * 时不能从 record 推出，故单独下发）；与 gradingPolicy 组合经
-   * resolveSelfReviewState 单一出处推导 self_pending/self_reviewed 等展示态。
+   * QM-11（TT-09b）行级自评状态（公布前投影 null；旧载荷缺省按 null）：record=null
+   * 表示未自评或已撤回（undecided 清除），revision 是 CAS 基线（清除亦递增，故单独
+   * 下发）；与 gradingPolicy 组合经 resolveSelfReviewState 单一出处推导展示态。
    */
   selfReview: z
     .object({
@@ -694,11 +690,12 @@ export const attemptResultQuestionSchema = z.object({
     .nullable()
     .optional(),
   /**
-   * QM-11（TT-09b）行级判分策略（开卷冻结；null=旧行或公布前投影——旧行
-   * 历史不开放自评）。reference_self 行公布后开放自评入口；auto/manual_only
-   * 与旧行的展示沿用既有判定徽章路径。
+   * QM-11（TT-09b）行级判分策略（开卷冻结；null=旧行或公布前投影——旧行不开放
+   * 自评）。reference_self 行公布后开放自评入口；其余沿用既有判定徽章路径。
    */
   gradingPolicy: gradingPolicySchema.nullable().optional(),
+  /** 模块 3 量表视图（题有 :::rubric 且已公布才下发；量表分不进对错与总分） */
+  rubricReview: rubricReviewSchema.nullable().optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
@@ -1270,6 +1267,8 @@ export const attemptErrorCodeSchema = z.enum([
   "SELF_REVIEW_NOT_ALLOWED",
   "ANSWER_SHAPE_INVALID",
   "ATTEMPT_TIME_UP",
+  "RUBRIC_NOT_AVAILABLE",
+  "RUBRIC_RATINGS_INVALID",
 ]);
 
 // ---------- 具体化的成功壳 ----------

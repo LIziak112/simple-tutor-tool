@@ -72,6 +72,30 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     description:
       "question 属性不合法：如 difficulty 不在 1–5、knowledge 为空白或仅含分隔符等",
   },
+  // ---------- 量表（模块 3 通用量表判卷，:::rubric） ----------
+  {
+    code: "RUBRIC_ON_OBJECTIVE_QUESTION",
+    level: "error",
+    description:
+      "量表写在客观题（judge/choice/multi）内：客观题自动判分没有可评的开放作答，该量表被忽略",
+  },
+  {
+    code: "RUBRIC_ITEM_INVALID",
+    level: "error",
+    description:
+      "量表项不合法：项名为空或超过 40 字，或说明超过 200 字（每行「- 项名：评什么」）",
+  },
+  {
+    code: "RUBRIC_EMPTY",
+    level: "error",
+    description:
+      "量表没有任何合法的项：:::rubric 内至少写一行「- 项名：评什么」",
+  },
+  {
+    code: "RUBRIC_TOO_MANY_ITEMS",
+    level: "error",
+    description: "量表超过 8 项：合并或删减评价项，该量表被忽略",
+  },
   {
     code: "INVALID_BLANK_MARKER",
     level: "error",

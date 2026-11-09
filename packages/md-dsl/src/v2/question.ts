@@ -16,6 +16,7 @@ import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
 import { materialRefOf, parseRefAttrs } from "./materials.ts";
 import type { QmRefSite } from "./references.ts";
+import { parseRubricBlock } from "./rubric.ts";
 import {
   canonicalName,
   FENCE_ATTR_ID_RE,
@@ -224,6 +225,7 @@ function extractQuestion(
   let answerText: string | undefined;
   let solutionMd: string | undefined;
   const variants: string[] = [];
+  let rubricNode: ContainerDirective | undefined;
   let optionsNode: ContainerDirective | undefined;
   const itemNodes: ContainerDirective[] = [];
   const blockRefs: Array<{ ref: MaterialRef; line: number; column: number }> =
@@ -250,6 +252,11 @@ function extractQuestion(
       }
       if (name === "variant") {
         variants.push(sliceInnerLines(child, lines));
+        excluded.push(lineRange(child));
+        continue;
+      }
+      if (name === "rubric") {
+        rubricNode ??= child; // 多个 rubric 取第一个
         excluded.push(lineRange(child));
         continue;
       }
@@ -431,6 +438,17 @@ function extractQuestion(
     const wordMax = attrs["word-max"];
     if (wordMin !== undefined) question.wordMin = wordMin;
     if (wordMax !== undefined) question.wordMax = wordMax;
+  }
+  // 模块 3：量表（开放题评价项，1–4 档；客观题内记 error 并忽略）
+  if (rubricNode !== undefined) {
+    const rubric = parseRubricBlock(
+      sliceInnerLines(rubricNode, lines),
+      attrs.type,
+      rubricNode.position?.start.line ?? startLine,
+      rubricNode.position?.start.column ?? 1,
+      issues,
+    );
+    if (rubric !== undefined) question.rubric = rubric;
   }
   return question;
 }

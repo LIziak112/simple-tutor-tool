@@ -1213,32 +1213,32 @@ export const responses = sqliteTable(
      */
     practiceRequestDigest: text("practice_request_digest"),
     /**
-     * 行级判分策略（tt-05b / QM-03 建列，决策记录 §5.6 D11）：开卷冻结时按题目
-     * 快照内容写入（gradingPolicyOf 单一出处）——auto / reference_self /
-     * manual_only。**NULL = 旧行旧语义**（升级前历史卷不重释：judge/choice/multi
-     * 自动判定、fill 恒 null 进待批、solve/apply/find-error final 等价比较）；
-     * 写入接线在 QM-06/TT-07 开卷冻结闭包。值域不加 DB CHECK（teacherMark 同款
-     * 口径，由写入方契约把关）。
+     * 行级判分策略（tt-05b / QM-03，决策记录 §5.6 D11）：开卷冻结时按题目快照写入
+     * （gradingPolicyOf 单一出处）——auto / reference_self / manual_only。**NULL =
+     * 旧行旧语义**（历史卷不重释）；值域不加 DB CHECK（teacherMark 同款口径）。
      */
     gradingPolicy: text("grading_policy").$type<GradingPolicy>(),
     /**
-     * 学生自评 verdict（tt-05b / QM-03 建列，决策记录 §5.5.1/§5.5.2 三源分立）：
-     * correct/wrong 只存实际判断；NULL = 从未自评或已撤回（undecided = 清除
-     * 记录，不是一次写入）。自评不写 teacherMark/finalCorrect（D7）；路由与
-     * CAS/幂等校验链在 TT-09 落地，本列是存储预留。
+     * 学生自评 verdict（决策记录 §5.5.1/§5.5.2 三源分立）：correct/wrong 只存实际
+     * 判断；NULL = 从未自评或已撤回（undecided = 清除）。自评不写 teacherMark/
+     * finalCorrect（D7）。
      */
     selfReviewVerdict: text("self_review_verdict").$type<
       SelfReviewRecord["verdict"]
     >(),
     /** 最近一次自评时刻（UTC ISO）；从未自评为 NULL */
     selfReviewAt: text("self_review_at"),
-    /**
-     * 自评记录修订版本（CAS 基线，首次自评为 0；撤回/修正亦递增——决策记录
-     * §5.5.1「undecided 是清除自评记录的幂等写，revision 递增」）。
-     */
+    /** 自评记录修订版本（CAS 基线，首次 0；撤回/修正亦递增，§5.5.1） */
     selfReviewRevision: integer("self_review_revision").notNull().default(0),
     /** 最近一次自评写入的幂等键（网络重试同键不重复写）；从未自评为 NULL */
     selfReviewMutationId: text("self_review_mutation_id"),
+    /**
+     * 模块 3 通用量表判卷（0056）：自评 / Agent 意见 / 本人裁定三份 JSON（契约
+     * rubric.ts），NULL = 尚无；量表在冻结题目快照里，量表分不进 finalCorrect。
+     */
+    rubricSelfJson: text("rubric_self_json"),
+    rubricAgentJson: text("rubric_agent_json"),
+    rubricFinalJson: text("rubric_final_json"),
     /**
      * v2 旧自评实现的 review_* 列族（0040_bizarre 建列）：§22 两线收敛后
      * 业务代码统一走 self_review_* 体系，这些列不再读写，仅为迁移链与

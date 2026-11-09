@@ -6,6 +6,7 @@ import {
   unitGroupSchema,
 } from "./material.ts";
 import { practiceRecommendationSchema } from "./practice-workflow.ts";
+import { rubricSchema } from "./rubric.ts";
 import { teachingPackSchema } from "./teaching-pack.ts";
 
 /**
@@ -375,6 +376,8 @@ export const questionSchema = z.object({
    * 内容、无泄露面；导出闭包组∪题级同源所需，见 questionPublicSchema）。
    */
   materialRefs: z.array(materialRefSchema).optional(),
+  /** 量表（模块 3，`:::rubric`）：评价项 + 固定 4 档；公开内容，学生面同样下发 */
+  rubric: rubricSchema.optional(),
 });
 
 /**
@@ -430,6 +433,7 @@ export const questionPublicSchema = z.object({
    * 组∪题级同源）。可选——无题级引用的题不注入键（旧载荷键集不变）。
    */
   materialRefs: z.array(materialRefSchema).optional(),
+  rubric: rubricSchema.optional(),
 });
 
 /**

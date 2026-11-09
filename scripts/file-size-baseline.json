@@ -4,7 +4,7 @@
   "apps/server/src/mcp/server.ts": 1274,
   "apps/server/src/routes/student.ts": 1273,
   "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1408,
-  "apps/server/src/services/ai-companion/student-ai-queue.ts": 2393,
+  "apps/server/src/services/ai-companion/student-ai-queue.ts": 2391,
   "apps/server/src/services/analytics-service.ts": 1693,
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1412,
@@ -30,7 +30,7 @@
   "apps/web/src/pages/student/StudentLessonPage.tsx": 1137,
   "apps/web/src/pages/teacher/ImportPage.tsx": 1225,
   "apps/web/src/pages/teacher/LibraryPage.tsx": 1759,
-  "packages/contract/src/attempt.ts": 1401,
+  "packages/contract/src/attempt.ts": 1400,
   "packages/contract/src/content-api.ts": 1004,
   "packages/contract/src/learning-pack.ts": 1491
 }

@@ -506,6 +506,7 @@ export function createStudentAiRoutes(
             question: body.question,
             channel: body.channel,
             mutationId: body.mutationId,
+            ...(body.purpose !== undefined ? { purpose: body.purpose } : {}),
           },
           { hmacSecret },
         );

@@ -789,6 +789,10 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.self_review_at;
         delete row.self_review_revision;
         delete row.self_review_mutation_id;
+        // 0056（模块 3 通用量表判卷）三列 JSON：NULL = 尚无记录
+        delete row.rubric_self_json;
+        delete row.rubric_agent_json;
+        delete row.rubric_final_json;
         // 0040_bizarre（v2 链正主，2026-10-25 迁移对齐后并入本链）自评列族
         // 的兼容默认值单独核对，不改变旧业务字段；与上方 QM 族（0044）并存
         for (const key of [

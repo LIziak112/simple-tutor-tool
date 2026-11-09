@@ -134,6 +134,7 @@ import { listWrongQuestions } from "../services/wrong-questions";
 import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
+import { createStudentRubricRoutes } from "./student-rubric";
 
 /**
  * 学生路由（需学生会话），挂载在 /api/student，整组套 requireStudent 守卫：
@@ -281,6 +282,7 @@ export function createStudentRoutes(
       )
       .route("/", createStudentInkProfileRoutes(db))
       .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
+      .route("/", createStudentRubricRoutes(db))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })
@@ -450,10 +452,8 @@ export function createStudentRoutes(
           { "Cache-Control": "private, no-store" },
         );
       })
-      // QM-10（TT-09a）学生自评：已提交且公布后对了/错了/暂不判断，即时生效
-      // 无需教师确认；校验链与幂等/CAS/教师优先见 self-review-service（契约层
-      // packages/contract self-review.ts TT-05a 定稿）；自评不写 teacherMark/
-      // finalCorrect、不推动 graded；响应 no-store 不落缓存
+      // QM-10（TT-09a）学生自评：已提交且公布后对了/错了/暂不判断，即时生效无需
+      // 教师确认；校验链见 self-review-service；不写 teacherMark/finalCorrect
       .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
         const body = await parseJsonBody(c, selfReviewRequestSchema);
         return c.json(

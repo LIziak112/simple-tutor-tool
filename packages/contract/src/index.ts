@@ -186,4 +186,5 @@ export type ApiErr = z.infer<typeof apiErrSchema>;
 
 export * from "./question-process.ts";
 export * from "./result-counts.ts";
+export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";

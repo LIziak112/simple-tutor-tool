@@ -30,6 +30,7 @@ import {
 import { outboundAssemblyOfTask } from "../services/ai-companion/student-ai-worker.ts";
 import { submitPracticeQuestion } from "../services/attempt-service.ts";
 import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
+import { submitRubricOpinion } from "../services/rubric-review-service.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
 import { guard, jsonContent } from "./tool-result";
@@ -82,6 +83,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "renew_attempt_review_lease",
   "submit_ai_reply",
   "check_ai_reply",
+  "submit_rubric_opinion",
   "submit_attempt_review_result",
   "student_submit_practice_question",
 ] as const;
@@ -206,7 +208,7 @@ export function registerStudentTools(
     "claim_ai_task",
     {
       description:
-        "领取一个 AI 求助任务：缺省按创建时间领取下一个待领取任务（无任务返回 claimed:false）；携带 taskId = 指定领取（重放已领取任务 → 409，不改抢其他任务）。领取即出站：按当前教学模式实时裁决并重装配提示词（提交后的待处理任务按复盘尺度），返回租约（leaseToken/leaseUntil）、generation、contextVersion、完整出站消息（system + 数据段 + 历史 + 学生诉求）与材料图像。图像为 PNG base64（SDK image content）；材料合计超限将显式报 AI_MATERIAL_TOO_LARGE（租约信息随错误交付，可仅文字写回）。不支持识图的客户端可传 includeImages=false 显式不附图。写回用 submit_ai_reply，长处理用 renew_ai_lease 续租。",
+        "领取一个 AI 求助任务：缺省按创建时间领取下一个待领取任务（无任务返回 claimed:false）；携带 taskId = 指定领取（重放已领取任务 → 409，不改抢其他任务）。领取即出站：按当前教学模式实时裁决并重装配提示词（提交后的待处理任务按复盘尺度），返回租约（leaseToken/leaseUntil）、generation、contextVersion、完整出站消息（system + 数据段 + 历史 + 学生诉求）与材料图像。图像为 PNG base64（SDK image content）；材料合计超限将显式报 AI_MATERIAL_TOO_LARGE（租约信息随错误交付，可仅文字写回）。不支持识图的客户端可传 includeImages=false 显式不附图。写回用 submit_ai_reply（数据段含「量表」段的判卷任务改用 submit_rubric_opinion 逐项写回），长处理用 renew_ai_lease 续租。",
       inputSchema: {
         taskId: z
           .string()
@@ -386,6 +388,60 @@ export function registerStudentTools(
           truncated: result.truncated,
           formatWarnings: result.formatWarnings ?? [],
           maxChars: AI_REPLY_MAX_CHARS,
+        });
+      },
+    ),
+  );
+
+  // 4b. submit_rubric_opinion：量表判卷意见写回（模块 3）——同一任务租约，
+  //     结构化逐项档位落 responses.rubric_agent_json，同时生成回信入伴学栏
+  server.registerTool(
+    "submit_rubric_opinion",
+    {
+      description:
+        "对带量表（contextDataMd 的「量表」段 / 任务 purpose=rubric_opinion）的开放题写回逐项意见：每个量表项一个档位（1–4，1 最低）+ 可选一句证据（引用作答原文或量表依据）+ 整体一句评语。校验任务归属与租约（同 submit_ai_reply）；项必须与量表一一对应，缺项/多项/未知 id 拒绝。意见只是参考，学习者会与自评并排后裁定。平台会据此生成一条 Markdown 回信，无需再调 submit_ai_reply。",
+      inputSchema: {
+        taskId: z.string().uuid().describe("claim_ai_task 返回的任务 id"),
+        leaseToken: z.string().min(1).describe("claim_ai_task 返回的租约凭证"),
+        ratings: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("量表项 id（如 r1）"),
+              level: z.number().int().min(1).max(4).describe("档位 1–4"),
+              evidence: z
+                .string()
+                .max(300)
+                .optional()
+                .describe("一句证据：引用作答原文或说明依据"),
+            }),
+          )
+          .min(1)
+          .describe("逐项评定，须覆盖量表全部项"),
+        note: z.string().min(1).max(300).describe("整体一句评语"),
+        contextVersion: z.string().optional(),
+        runtimeEpoch: z.string().optional(),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    guard(
+      ({ taskId, leaseToken, ratings, note, contextVersion, runtimeEpoch }) => {
+        const result = submitRubricOpinion(db, {
+          studentId,
+          taskId,
+          leaseToken,
+          opinion: { ratings, note },
+          ...(contextVersion !== undefined
+            ? { expectedContextVersion: contextVersion }
+            : {}),
+          ...(runtimeEpoch !== undefined
+            ? { expectedRuntimeEpoch: runtimeEpoch }
+            : {}),
+        });
+        return jsonContent({
+          submitted: true,
+          taskId,
+          duplicate: result.duplicate,
+          agent: result.review.agent,
         });
       },
     ),
