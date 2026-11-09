@@ -766,6 +766,9 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.practice_workflow_version;
         delete row.feedback_mode;
         delete row.workflow_revision;
+        // 0055（模块 2 限时测试）attempts 两列：历史卷恒 NULL
+        delete row.time_limit_sec;
+        delete row.deadline_at;
       }
       // 0038（M1b）responses 两列：普通作答无逐题提交标记
       if (table === "responses") {

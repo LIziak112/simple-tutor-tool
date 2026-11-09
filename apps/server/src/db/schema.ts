@@ -1037,11 +1037,8 @@ export const attempts = sqliteTable(
     scoreAuto: integer("score_auto"),
     /** 最终得分（D2：round(finalCorrect=true 题数/全部题数×100)；T3.2a 起交卷时全非 null 即写入）；未批为 NULL */
     scoreFinal: integer("score_final"),
-    /**
-     * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
-     * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
-     * 内容；false = 建卷即冻结（可信）。草稿视图透传给前端展示提示。
-     */
+    /** 冻结来源不可信标记（T6R.3 §5.1「legacy_unverified」）：true = 升级后首次恢复
+     *  访问时懒冻结的当前版本（不能宣称是学生更早看到的内容）；false = 建卷即冻结 */
     legacyUnverified: integer("legacy_unverified", { mode: "boolean" })
       .notNull()
       .default(false),
@@ -1065,11 +1062,13 @@ export const attempts = sqliteTable(
      * 冻结 canSubmitQuestion），历史卷 NULL。
      */
     feedbackMode: text("feedback_mode").$type<PracticeFeedbackMode>(),
-    /**
-     * 工作流 CAS 版本（M1b）：新协议卷建卷写 0，反馈节奏修改（PATCH workflow）
-     * 与逐题提交（M2）事务内自增比对；历史卷恒 0 且不可变更。
-     */
+    /** 工作流 CAS 版本（M1b）：新协议卷建卷写 0，反馈节奏修改（PATCH workflow）与
+     *  逐题提交（M2）事务内自增比对；历史卷恒 0 且不可变更。 */
     workflowRevision: integer("workflow_revision").notNull().default(0),
+    /** 限时测试（模块 2，2026-11）：自选时长秒 / 截止 UTC ISO（= startedAt + 时长）；
+     *  非限时卷与历史卷 NULL。时钟以本列为准，写入闸门见 attempt-timing.ts */
+    timeLimitSec: integer("time_limit_sec"),
+    deadlineAt: text("deadline_at"),
   },
   (table) => [
     // 「一个作业一人一份进行中」的查询索引；唯一性由服务层保证（先查后插，

@@ -18,8 +18,9 @@ export * from "./annotation.ts";
 export * from "./answer-kinds/index.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
-/** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
 export * from "./attempt.ts";
+/** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
+export * from "./attempt-timing.ts";
 /** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login/register 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";
 /** 备份与恢复 API 契约（T4.5 起为权威定义，依据 Phase4 清单 §2 D20/D21）：快照列表、

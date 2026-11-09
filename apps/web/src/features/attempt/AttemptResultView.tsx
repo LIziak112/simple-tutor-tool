@@ -51,6 +51,7 @@ import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
+import { ResultTimeLimitLine } from "./AttemptTimer";
 import {
   attemptRoundLabel,
   attemptSourceLabel,
@@ -713,10 +714,8 @@ export function AttemptResultView({
               >
                 {released ? "批改结果" : "已交卷"}
               </h2>
-              {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
-              第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
-              错题重练「错题重练 · 第 n 次」（2026-10）；讲练「讲练：讲义标题 ·
-              第 n 次」（title 为讲义标题，2026-10 讲练一体） */}
+              {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数；作业「作业 · 课程名」；
+              错题重练「错题重练 · 第 n 次」；讲练「讲练：讲义标题 · 第 n 次」 */}
               <p className="text-sm leading-relaxed text-muted-foreground">
                 {attemptSourceLabel(data)}
               </p>
@@ -725,6 +724,7 @@ export function AttemptResultView({
                   交卷时间：{formatCnTime(attempt.submittedAt)}
                 </p>
               )}
+              <ResultTimeLimitLine attempt={attempt} />
             </div>
             {/* M4-D3 §13.8 反馈节奏摘要：v1 新协议卷按 feedbackMode 呈现；
             legacy/lesson 卷缺省不渲染（数据侧同样缺省）。纯呈现——反馈可见性

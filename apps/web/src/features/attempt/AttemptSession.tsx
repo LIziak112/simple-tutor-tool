@@ -45,6 +45,11 @@ import {
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
 import {
+  AttemptCountdown,
+  AttemptTimeUpBanner,
+} from "@/features/attempt/AttemptTimer";
+import { useAttemptClock } from "@/features/attempt/attempt-clock";
+import {
   groupSegmentsOfUnit,
   questionMaterialsOf,
 } from "@/features/attempt/attempt-context-view";
@@ -185,21 +190,12 @@ export function isResultDetail(
 }
 
 /**
- * 答题会话（T2A.6 通用化，D9 两种来源共用）：
- * /s/assignments/:id（作业入口）与 /s/attempts/:attemptId（课程练习/历次回看）
- * 在创建/获取 attempt 后渲染同一组件。
- * - 顶部来源行：课程练习「课程：xx · 第 n 次」/ 作业「作业：xx」（含截止）；
- * - draft → 答题视图（题卡 + 草稿防丢 + 交卷确认）；已交 → 结果视图；
- * - 草稿同步终态（T2A.6，D7）：顶栏显示「已无权限访问该练习」时同时收起
- *   交卷入口（交卷必然同样被拒）。
- */
-
-/**
- * 交卷准备阶段（T6R.10，验收修复 A-4）：单一判别联合替代原先三个独立
- * state（preparing/problems/error）——阶段迁移一次 set 完成，弹层各分支
- * （等待文案/明确选择/阻止性错误）据此渲染，不存在中间组合态。
- * 2026-10 讲练一体起与讲练页共用 use-submit-evidence-confirm 状态机单源，
- * 本页只注入整卷六步编排（runSubmit）。
+ * 答题会话（T2A.6 通用化，D9 两种来源共用）：/s/assignments/:id 与 /s/attempts/:attemptId
+ * 在创建/获取 attempt 后渲染同一组件。顶部来源行（课程 / 作业含截止 / 限时倒计时）；
+ * draft → 答题视图（题卡 + 草稿防丢 + 交卷确认）；已交 → 结果视图；草稿同步终态
+ * （D7）「已无权限」时同时收起交卷入口。
+ * 交卷准备阶段（T6R.10 A-4）：单一判别联合（preparing/problems/error 一次 set 迁移），
+ * 与讲练页共用 use-submit-evidence-confirm 状态机单源，本页只注入整卷六步编排（runSubmit）。
  */
 
 export function AttemptSession({
@@ -1160,8 +1156,7 @@ function AnswerView({
       setKeyboardHelpOpen(true);
     }
   };
-  // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
-  // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
+  // T6R.3：交卷回传题目版本集合（冻结下发的 questionRevisionId 原样回传，服务端比对）
   const submitRevisions = useMemo(
     () =>
       flatQuestions.map((question) => ({
@@ -1172,21 +1167,12 @@ function AnswerView({
   );
 
   /**
-   * 交卷编排（注入共享确认状态机 use-submit-evidence-confirm；T2.8 口径 +
-   * T6R.10 证据固定，方案 §6.4 六步）：
-   * 1. 模态弹层已冻结编辑界面（当前真实笔段随指针抬起自然结束，链路无
-   *    用户输入竞态）；
-   * 2. 两条独立网络链**并行**：每道手写题的最新笔迹 flush（Promise.all，
-   *    任一失败 → 阻止交卷并提示重试——「交卷时确保每道手写题最新笔迹已
-   *    上传」的既有强制上传约束不因草稿链路放宽）+ prepareSubmitEvidence
-   *    （等本地落盘事务 → flushNoteSync 追平矢量 → 逐题拉服务端 head →
-   *    组装 none/frozen/missing 声明；PNG 不阻塞，后台补图）；
-   * 3. 有未决问题 → 弹层切「草稿未保存完整」明确选择分支，交卷被阻止；
-   * 4. 交卷请求携带 revisions + evidence（服务端同一事务固定原稿）；
-   *    成功后清本地草稿（T2.9；交卷 clearDraft 不删 notes）。
-   * 失败时错误相留在弹层内提示（点「确认交卷」即可重试整条链）；
-   * 响应丢失重试撞 409 ALREADY_SUBMITTED 由 useSubmitAttempt 失效详情
-   * 切结果视图（不自动重交）。
+   * 交卷编排（共享确认状态机 use-submit-evidence-confirm；T2.8 + T6R.10 证据固定 §6.4）：
+   * 1. 模态弹层已冻结编辑界面；2. 并行两链：每道手写题最新笔迹 flush（任一失败阻止
+   * 交卷）+ prepareSubmitEvidence（落盘 → flushNoteSync → 拉 head → 组装 none/frozen/
+   * missing 声明，PNG 后台补）；3. 有未决问题 → 弹层切明确选择分支；4. 请求携带
+   * revisions + evidence，成功后清本地草稿（不删 notes）。失败留在弹层可重试；
+   * 响应丢失重试撞 409 ALREADY_SUBMITTED 由 useSubmitAttempt 切结果视图（不自动重交）。
    */
   const runSubmit = useCallback(
     async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
@@ -1347,12 +1333,15 @@ function AnswerView({
 
   // 访问权终态（T2A.6，D7）：已无权限时收起交卷入口（交卷必然同样被拒）
   const denied = draftSync.status.state === "denied";
+  // 模块 2 限时测试：服务端时钟；到时（grace/locked）锁编辑、停自动提交，只留交卷
+  const clock = useAttemptClock(data.timing);
+  const timeUp = clock !== null && clock.phase !== "running";
   const nextQueuedChoice = queuedChoices[0];
   const queuedChoiceSubmitted =
     nextQueuedChoice !== undefined &&
     (progressById.get(nextQueuedChoice)?.submittedAt ?? null) !== null;
   const canDrainChoices =
-    canAutoSubmitChoice && !denied && !practiceSubmit.finished;
+    canAutoSubmitChoice && !denied && !practiceSubmit.finished && !timeUp;
   const choiceQueuePaused =
     !online ||
     confirmOpen ||
@@ -1560,6 +1549,16 @@ function AnswerView({
             <span>共 {total} 题</span>
           </p>
         </AttemptHeader>
+        {clock !== null && <AttemptCountdown clock={clock} />}
+        {clock !== null && timeUp && (
+          <AttemptTimeUpBanner
+            clock={clock}
+            syncing={draftSync.status.state === "saving"}
+            offline={!online}
+            onConfirmSubmit={openSubmitDialog}
+            submitDisabled={denied || submit.isPending}
+          />
+        )}
 
         <p data-testid="draft-status" className="sr-only" aria-live="polite">
           {saveStatus}
@@ -1853,7 +1852,8 @@ function AnswerView({
                           singleMode && question.id !== resolvedSingleQuestionId
                         }
                         readOnly={
-                          practiceProtocol === "v1" && practiceSubmitted
+                          (practiceProtocol === "v1" && practiceSubmitted) ||
+                          timeUp
                         }
                         footer={
                           practiceProtocol === "v1" ? (

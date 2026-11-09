@@ -1418,9 +1418,9 @@ export function teachingPackYamlLineOf(column: string | null): string | null {
 }
 
 /**
- * practice 推荐 → 确定性 YAML flow 映射行（M5-D1）：只写已有字段（键序 layout、
- * feedback），值 JSON 字符串引号——合法 YAML，frontmatter 解析可原样读回；空推荐
- * 输出 `practice: {}`（同样合法往返）。server 不依赖 yaml 包（硬性规则 5）。
+ * practice 推荐 → 确定性 YAML flow 行（M5-D1）：只写已有字段（键序 layout、feedback、
+ * timeLimitMinutes），枚举 JSON 引号、时长裸整数——合法 YAML 可原样读回；空推荐
+ * 输出 `practice: {}`。server 不依赖 yaml 包（硬性规则 5）。
  */
 function practiceYamlLine(rec: PracticeRecommendation): string {
   const parts: string[] = [];
@@ -1430,14 +1430,13 @@ function practiceYamlLine(rec: PracticeRecommendation): string {
   if (rec.feedback !== undefined) {
     parts.push(`feedback: ${JSON.stringify(rec.feedback)}`);
   }
+  if (rec.timeLimitMinutes !== undefined) {
+    parts.push(`timeLimitMinutes: ${rec.timeLimitMinutes}`);
+  }
   return `practice: {${parts.join(", ")}}`;
 }
 
-/**
- * 从 practiceDefaultsJson 列读回推荐行；列解析统一走 practiceDefaultsOf
- * （M5 simplify 收敛——全服务端唯一实现），无有效推荐返回 null 不导出
- * （老单元导出字节级不变）。
- */
+/** 从 practiceDefaultsJson 列读回推荐行（解析统一走 practiceDefaultsOf，M5 simplify）；无有效推荐返回 null 不导出（老单元导出字节级不变） */
 function practiceYamlLineOf(column: string | null): string | null {
   const recommendation = practiceDefaultsOf(column);
   return recommendation === null ? null : practiceYamlLine(recommendation);

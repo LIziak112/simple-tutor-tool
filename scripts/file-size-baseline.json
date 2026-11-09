@@ -1,6 +1,6 @@
 {
   "apps/server/src/db/backfill.ts": 1022,
-  "apps/server/src/db/schema.ts": 2799,
+  "apps/server/src/db/schema.ts": 2798,
   "apps/server/src/mcp/server.ts": 1274,
   "apps/server/src/routes/student.ts": 1273,
   "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1408,
@@ -13,7 +13,7 @@
   "apps/server/src/services/course-service.ts": 1498,
   "apps/server/src/services/export-service.ts": 2783,
   "apps/server/src/services/learning-record-service.ts": 1041,
-  "apps/server/src/services/library-service.ts": 1611,
+  "apps/server/src/services/library-service.ts": 1610,
   "apps/server/src/services/note-service.ts": 2256,
   "apps/server/src/services/question-evidence.ts": 1005,
   "apps/server/src/services/reparse-service.ts": 1035,

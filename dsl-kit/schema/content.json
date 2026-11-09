@@ -655,6 +655,11 @@
                 "per_question",
                 "after_attempt"
               ]
+            },
+            "timeLimitMinutes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600
             }
           },
           "additionalProperties": false
@@ -1336,6 +1341,11 @@
                     "per_question",
                     "after_attempt"
                   ]
+                },
+                "timeLimitMinutes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 600
                 }
               },
               "additionalProperties": false
@@ -1434,6 +1444,11 @@
                       "per_question",
                       "after_attempt"
                     ]
+                  },
+                  "timeLimitMinutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 600
                   }
                 },
                 "additionalProperties": false
