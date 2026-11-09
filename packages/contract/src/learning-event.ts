@@ -501,13 +501,19 @@ export const learningEventSchema = z.union([
 /** 批量上报的单次上限（§T2.10：≤200 条/次，超出 400） */
 export const LEARNING_EVENTS_BATCH_MAX = 200;
 
-/** POST /api/student/attempts/:id/events 请求体（1–200 条，逐条校验 type/payload） */
+/**
+ * POST /api/student/attempts/:id/events 请求体（1–200 条，逐条校验 type/payload）。
+ * viewId（2026-11-09 题内活动用时）：作答页会话标识，每次页面加载一个随机串
+ * （队列层生成，不含内容），服务端折进每行 payload；多设备 / 多标签页同开时
+ * 聚合据此分组，同时聚焦不同题的重叠时段按「未归属」处理。旧客户端缺省。
+ */
 export const attemptEventBatchRequestSchema = z.object(
   {
     events: z
       .array(attemptEventSchema)
       .min(1, "events 至少 1 条")
       .max(LEARNING_EVENTS_BATCH_MAX, "每次最多上报 200 条事件"),
+    viewId: viewIdSchema.optional(),
   },
   { message: "请求体需为 { events: […] }" },
 );

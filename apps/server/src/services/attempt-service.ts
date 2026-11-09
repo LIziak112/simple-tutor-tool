@@ -149,6 +149,7 @@ import {
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
 export { answersReleased } from "./practice-workflow-service";
 
+import { attemptActivityProjection } from "./question-activity";
 import type { Tx } from "./question-sync";
 import { rubricReviewOf } from "./rubric-review-read";
 import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
@@ -2134,9 +2135,8 @@ export function startCourseAttempt(
  *   名单或作业软删后，已建作答仍可继续（§5.2「删除作业不删除已有作答记录」），
  *   取卷与详情/存答/交卷同一口径；
  * - course 来源：requireUsableAttempt 按状态分态（D7/D22）——draft 每次重校验
- *   可见性与成员资格（移出成员 → 403 COURSE_ACCESS_DENIED、条目隐藏等 →
- *   404 NOT_FOUND）；已交卷只读回看，不叠加课程校验（与 GET /attempts/:id
- *   详情同口径——T6R.3 收敛为统一进门函数后消除两接口的口径差）；
+ *   可见性与成员资格（403 COURSE_ACCESS_DENIED / 404 NOT_FOUND）；已交卷只读
+ *   回看，不叠加课程校验（与 GET /attempts/:id 详情同口径）；
  * - 题目经 attemptPublicUnitGroups 输出过滤（冻结快照公开投影 +
  *   questionRevisionId，无答案/详解/提示）。
  */
@@ -4288,12 +4288,12 @@ function buildResultData(
     units: unitGroups,
     enabledCapabilities,
     // M4-D3 §13.8 节奏摘要：v1 新协议卷携带裁决投影（feedbackMode 驱动结果页
-    // 「反馈节奏」摘要行），读时按当前规则裁决——与草稿视图同一 resolver/同一
-    // schema 单源；lesson / legacy 卷为 null（缺省 = 前端不渲染该行，零查询
-    // 早退）。只携带授权结论本身，答案/对错仍走 answersReleased gate，不放宽
-    // 任何普通学生接口投影
+    // 「反馈节奏」摘要行），读时按当前规则裁决（与草稿视图同一 resolver / schema
+    // 单源）；lesson / legacy 卷缺省不渲染。只携带授权结论本身，答案/对错仍走
+    // answersReleased gate
     ...(workflowView !== null
       ? { practiceWorkflow: workflowView.practiceWorkflow }
       : {}),
+    ...attemptActivityProjection(db, attempt.id), // 题内活动用时 v1（无事件不带键）
   };
 }

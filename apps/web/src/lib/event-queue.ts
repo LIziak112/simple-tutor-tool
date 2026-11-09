@@ -216,12 +216,20 @@ function scopeUrl(scope: EventScope): string {
     : "/api/student/events";
 }
 
-/** 生产默认发送：走 hc 类型客户端（postAttemptEventsApi / postLectureEventsApi） */
-function defaultSend(scope: EventScope) {
+/**
+ * 生产默认发送：走 hc 类型客户端（postAttemptEventsApi / postLectureEventsApi）。
+ * attempt scope 随批携带本页会话 viewId（题内活动用时按会话分组识别多端重叠；
+ * 批级字段不改事件本体与字节切批口径）。
+ */
+function defaultSend(scope: EventScope, viewId: string) {
   return async (events: readonly LearningEvent[]): Promise<void> => {
     if (scope.kind === "attempt") {
       // scope 保证队列内全部为 attempt 事件（调用方只对 attempt scope track 这类事件）
-      await postAttemptEventsApi(scope.attemptId, events as AttemptEvent[]);
+      await postAttemptEventsApi(
+        scope.attemptId,
+        events as AttemptEvent[],
+        viewId,
+      );
       return;
     }
     await postLectureEventsApi(events as LectureEvent[]);
@@ -229,11 +237,15 @@ function defaultSend(scope: EventScope) {
 }
 
 /** 生产默认 beacon：Blob application/json（同源自动带会话 Cookie） */
-function defaultBeacon(scope: EventScope) {
+function defaultBeacon(scope: EventScope, viewId: string) {
   return (events: readonly LearningEvent[]): boolean => {
     if (typeof navigator === "undefined" || navigator.sendBeacon === undefined)
       return false;
-    const blob = new Blob([JSON.stringify({ events: [...events] })], {
+    const body =
+      scope.kind === "attempt"
+        ? { events: [...events], viewId }
+        : { events: [...events] };
+    const blob = new Blob([JSON.stringify(body)], {
       type: "application/json",
     });
     return navigator.sendBeacon(scopeUrl(scope), blob);
@@ -278,18 +290,20 @@ export interface EventQueueOptions {
 export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   const { scope } = options;
   const intervalMs = options.intervalMs ?? EVENT_FLUSH_INTERVAL_MS;
+  /** 页会话标识：每次页面加载一个随机串（讲义区间配对 / 作答多端分组，不含内容） */
+  const viewId = randomId();
   const send =
     options.send ??
-    ((events: readonly LearningEvent[]) => defaultSend(scope)(events));
+    ((events: readonly LearningEvent[]) => defaultSend(scope, viewId)(events));
   const beacon =
-    options.beacon === undefined ? defaultBeacon(scope) : options.beacon;
+    options.beacon === undefined
+      ? defaultBeacon(scope, viewId)
+      : options.beacon;
 
   /** 本实例持久键：scope 前缀 + 随机后缀（两标签页/两次加载互不覆盖，§5.0-A1） */
   const keyPrefix = keyPrefixOf(scope);
   const key = `${keyPrefix}${randomId()}`;
   const legacyKey = legacyKeyOf(scope);
-  /** 阅读会话标识：每次页面加载一个随机串（双标签页区间配对用，不含内容） */
-  const viewId = randomId();
 
   /** 内存待发队列 */
   let queue: LearningEvent[] = [];

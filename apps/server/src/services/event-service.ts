@@ -68,11 +68,13 @@ export function appendAttemptEvents(
   studentId: string,
   attemptId: string,
   batch: readonly AttemptEvent[],
+  /** 作答页会话标识（批级，折进每行 payload；题内活动用时按它分组识别多端重叠） */
+  viewId?: string,
 ): LearningEventBatchData {
   requireUsableAttempt(db, studentId, attemptId);
   return insertEvents(
     db,
-    batch.map((event) => attemptEventRow(event, attemptId, studentId)),
+    batch.map((event) => attemptEventRow(event, attemptId, studentId, viewId)),
   );
 }
 
@@ -225,6 +227,7 @@ function attemptEventRow(
   event: AttemptEvent,
   attemptId: string,
   studentId: string,
+  viewId?: string,
 ): NewEventRow {
   return {
     id: "", // insertEvents 统一生成
@@ -233,7 +236,9 @@ function attemptEventRow(
     questionId: questionIdOf(event),
     lectureId: lectureIdOf(event),
     type: event.type,
-    payloadJson: JSON.stringify(event),
+    payloadJson: JSON.stringify(
+      viewId === undefined ? event : { ...event, viewId },
+    ),
     clientTs: event.clientTs,
     serverTs: "", // insertEvents 统一填写
   };

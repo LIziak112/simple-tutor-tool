@@ -140,11 +140,9 @@ import { createStudentRubricRoutes } from "./student-rubric";
  * 学生路由（需学生会话），挂载在 /api/student，整组套 requireStudent 守卫：
  * - GET  /me：当前登录学生信息（displayName 等，守卫已校验存在且未归档）；
  * - POST /password：自助修改密码（验证原密码）；
- * - GET  /assignments：我的作业（仅本人被指派且未删除，附完成状态，T2.2；
- *   T2.6 起状态由 attempts 推导：未开始/进行中/已交/已批）；
- * - GET  /assignments/:id/paper：作业试卷——按单元分组的公开题目（T2.4；
- *   T2A.7 起为 {units:[{id,title,questions}]}，live 题数为 0 的单元不出现
- *   （D16：单元软删不影响出卷）；未被指派 403，作业不存在/已删除 404）；
+ * - GET  /assignments：我的作业（仅本人被指派且未删除，状态由 attempts 推导）；
+ * - GET  /assignments/:id/paper：作业试卷——按单元分组的公开题目（T2A.7 起为
+ *   {units:[{id,title,questions}]}；未被指派 403，作业不存在/已删除 404）；
  * - POST /assignments/:id/attempt：创建或取回进行中的 attempt（T2.6，幂等：
  *   一人一份进行中；已交卷返回已交的那份让前端直接进结果视图）；
  * - PUT  /attempts/:id/answers/:questionId：保存草稿答案（T2.6；已交 409）；
@@ -554,6 +552,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             body.events,
+            body.viewId,
           ),
         });
       })
