@@ -173,14 +173,13 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-/** 单事件 JSON 的 UTF-8 字节数（无 TextEncoder 的环境按 UTF-16 码元数 ×2 上界估） */
+/** 单事件 JSON 的 UTF-8 字节数 */
 function eventBytes(event: LearningEvent): number {
   const text = JSON.stringify(event);
   if (typeof TextEncoder !== "undefined") {
     return new TextEncoder().encode(text).length;
   }
-  // 上界：BMP 字符最多 3 字节/码元 < 2×2，代理对 4 字节 = 2×2 —— 保守（偏小批）
-  return text.length * 2;
+  return new Blob([text]).size;
 }
 
 /**
@@ -190,7 +189,9 @@ function eventBytes(event: LearningEvent): number {
 function chunkBatches(pending: readonly LearningEvent[]): LearningEvent[][] {
   const batches: LearningEvent[][] = [];
   let current: LearningEvent[] = [];
-  let bytes = 0;
+  // 计入 JSON 外壳；下面每条都预留一个逗号，末条实际不带逗号。
+  const batchOverhead = JSON.stringify({ events: [] }).length - 1;
+  let bytes = batchOverhead;
   for (const event of pending) {
     const size = eventBytes(event) + 1; // +1 逗号（批量 JSON 分隔符）
     if (
@@ -199,7 +200,7 @@ function chunkBatches(pending: readonly LearningEvent[]): LearningEvent[][] {
     ) {
       batches.push(current);
       current = [];
-      bytes = 0;
+      bytes = batchOverhead;
     }
     current.push(event);
     bytes += size;

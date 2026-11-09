@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loginFailures } from "../db/schema.ts";
 import { createTestDb } from "../db/test-utils.ts";
 import {
@@ -22,6 +22,30 @@ import {
  */
 
 describe("recordLoginFailure / isLoginLocked", () => {
+  it("锁定截止的前一毫秒仍锁定，到达截止时刻即可登录", () => {
+    const db = createTestDb();
+    vi.useFakeTimers();
+    try {
+      const key = "name:teacher";
+      const deadline = new Date("2026-10-01T00:00:00.000Z");
+      db.insert(loginFailures)
+        .values({
+          key,
+          count: MAX_LOGIN_FAILURES,
+          lockedUntil: deadline.toISOString(),
+        })
+        .run();
+
+      vi.setSystemTime(deadline.getTime() - 1);
+      expect(isLoginLocked(db, [key])).toBe(true);
+      vi.setSystemTime(deadline);
+      expect(isLoginLocked(db, [key])).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      db.$client.close();
+    }
+  });
+
   it(`连续失败 ${MAX_LOGIN_FAILURES} 次后锁定，锁截止时间约为 10 分钟后`, () => {
     const db = createTestDb();
     const key = "name:teacher";
