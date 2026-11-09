@@ -180,6 +180,24 @@ export function SubmitConfirmDialog({
               className="m-0 flex flex-wrap gap-2 border-0 p-0"
               aria-label="待补全题目"
             >
+              {/* 阶段 B：多题未答时给一键入口——从第一道未答题开始补答，
+                  逐题按钮仍保留给想挑着补的学生 */}
+              {incompleteQuestions.length > 1 && incompleteQuestions[0] && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-slot="submit-jump-first-incomplete"
+                  className="min-h-11 w-full whitespace-normal"
+                  disabled={busy}
+                  onClick={() => {
+                    const first = incompleteQuestions[0];
+                    if (first !== undefined) onGoToQuestion(first.id);
+                  }}
+                >
+                  一键去补答：从第 {incompleteQuestions[0].index + 1} 题开始（共{" "}
+                  {incompleteQuestions.length} 题未完成）
+                </Button>
+              )}
               {incompleteQuestions.map((question) => (
                 <Button
                   key={question.id}

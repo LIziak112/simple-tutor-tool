@@ -2,6 +2,8 @@ import {
   AlertTriangle,
   Ban,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Grid2X2,
   WifiOff,
 } from "lucide-react";
@@ -56,11 +58,16 @@ export function AttemptNavigatorButton({
  * 从页面文件抽出以便直接做组件测试（离线态渲染断言），页面只负责接线。
  * 列表的答题卡入口携带填写数；单题的题号入口嵌入主操作。
  * 异常提示独立于桌面统计，避免窄屏隐藏进度时一并隐藏保存失败与离线状态。
+ *
+ * 阶段 B 做题工作区改版（2026-11）：列表模式底栏收成「上一题 / 答题卡进度 /
+ * 下一题 / 交卷」四件——上一题/下一题按滚动当前题步进（窄屏仅图标、可达名
+ * 保留），交卷旁挂「未答 n」徽标并支持一键跳到第一道未答题（sm 起显示；
+ * 窄屏 56px 底栏放不下，依靠答题卡入口与交卷确认弹层里的同款入口）。
+ * 进度条随之移除（已填写/未答计数已把进度说清，进度条在 56px 底栏里只剩装饰）。
  */
 export function AttemptBottomBar({
   primaryActions,
   progressLabel,
-  progressValue,
   answered,
   total,
   offline,
@@ -70,6 +77,11 @@ export function AttemptBottomBar({
   submitError,
   practiceSubmittedCount,
   viewResult = false,
+  hasPrev = false,
+  hasNext = false,
+  onPrev,
+  onNext,
+  onJumpUnanswered,
   onOpenSubmit,
   onViewResult,
   onOpenNavigator,
@@ -77,8 +89,6 @@ export function AttemptBottomBar({
   primaryActions?: ReactNode;
   /** 单题紧凑布局的进度文案（替代默认「已填写/已提交」计数） */
   progressLabel?: ReactNode;
-  /** 进度条比例（0–1）；缺省按已填写比例 */
-  progressValue?: number | undefined;
   answered: number;
   total: number;
   /** 是否离线（useOnlineStatus；离线时禁用交卷） */
@@ -95,6 +105,13 @@ export function AttemptBottomBar({
   practiceSubmittedCount?: number | undefined;
   /** 逐题提交全部收尾：主按钮换「查看本次结果」（列表模式入口） */
   viewResult?: boolean | undefined;
+  /** 列表模式按滚动当前题步进；缺省不渲染上一题/下一题 */
+  hasPrev?: boolean | undefined;
+  hasNext?: boolean | undefined;
+  onPrev?: (() => void) | undefined;
+  onNext?: (() => void) | undefined;
+  /** 一键跳到第一道未答题（未答徽标的点击动作） */
+  onJumpUnanswered?: (() => void) | undefined;
   onOpenSubmit: () => void;
   onViewResult?: (() => void) | undefined;
   onOpenNavigator?: ((trigger: HTMLButtonElement) => void) | undefined;
@@ -102,45 +119,82 @@ export function AttemptBottomBar({
   const editor = useAttemptEditor();
   if (editor?.active?.kind === "annotation") return null;
   const compact = Boolean(primaryActions);
-  const ratio =
-    progressValue ?? (total === 0 ? 0 : Math.min(1, answered / total));
+  const unanswered = Math.max(0, total - answered);
   const navigatorButton = onOpenNavigator && !compact && (
     <AttemptNavigatorButton onOpen={onOpenNavigator}>
       答题卡 · 已填写 {answered}/{total}
     </AttemptNavigatorButton>
   );
   const progress = (
-    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        {progressLabel !== undefined ? (
-          <span aria-live="polite" className="tabular-nums">
-            {progressLabel}
+    <p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+      {progressLabel !== undefined ? (
+        <span aria-live="polite" className="tabular-nums">
+          {progressLabel}
+        </span>
+      ) : (
+        <>
+          <span className="tabular-nums">
+            已填写 <b className="text-primary">{answered}</b> / {total} 题
           </span>
-        ) : (
-          <>
+          {practiceSubmittedCount !== undefined && (
             <span className="tabular-nums">
-              已填写 <b className="text-primary">{answered}</b> / {total} 题
+              已提交 {practiceSubmittedCount} / {total} 题
             </span>
-            {practiceSubmittedCount !== undefined && (
-              <span className="tabular-nums">
-                已提交 {practiceSubmittedCount} / {total} 题
-              </span>
-            )}
-          </>
-        )}
-      </p>
-      {/* 进度条只在桌面出现，手机通过答题卡查看详细进度。 */}
-      <div
-        aria-hidden
-        className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted"
-      >
-        <div
-          className="h-full rounded-full bg-primary motion-safe:transition-[width]"
-          style={{ width: `${Math.round(ratio * 100)}%` }}
-        />
-      </div>
-    </div>
+          )}
+        </>
+      )}
+    </p>
   );
+  const stepButtons = (onPrev !== undefined || onNext !== undefined) && {
+    prev: (
+      <Button
+        type="button"
+        variant="outline"
+        className={`h-11 min-w-11 shrink-0 gap-1 px-2 sm:px-3 ${pressFeedback}`}
+        aria-label="上一题"
+        title="上一题（K）"
+        disabled={!hasPrev}
+        onClick={onPrev}
+      >
+        <ChevronLeft aria-hidden className="size-4" />
+        <span aria-hidden className="hidden sm:inline">
+          上一题
+        </span>
+      </Button>
+    ),
+    next: (
+      <Button
+        type="button"
+        variant="outline"
+        className={`h-11 min-w-11 shrink-0 gap-1 px-2 sm:px-3 ${pressFeedback}`}
+        aria-label="下一题"
+        title="下一题（J）"
+        disabled={!hasNext}
+        onClick={onNext}
+      >
+        <span aria-hidden className="hidden sm:inline">
+          下一题
+        </span>
+        <ChevronRight aria-hidden className="size-4" />
+      </Button>
+    ),
+  };
+  // 未答徽标：交卷前把「还差几题」亮在交卷旁，点一下跳到第一道未答题
+  const unansweredBadge = !viewResult &&
+    unanswered > 0 &&
+    onJumpUnanswered !== undefined && (
+      <Button
+        type="button"
+        variant="ghost"
+        data-slot="attempt-unanswered-badge"
+        className={`hidden h-11 shrink-0 gap-1 px-2.5 text-amber-700 tabular-nums sm:inline-flex dark:text-amber-400 ${pressFeedback}`}
+        title="跳到第一道未答题"
+        onClick={onJumpUnanswered}
+      >
+        <AlertTriangle aria-hidden className="size-4" />
+        未答 {unanswered}
+      </Button>
+    );
   const notices = (
     <>
       {offline && (
@@ -185,7 +239,7 @@ export function AttemptBottomBar({
       className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
     >
       {compact ? (
-        <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center gap-2 px-3 py-1.5 sm:px-6">
+        <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center gap-2 px-3 py-1.5 sm:px-6 xl:max-w-[1280px]">
           <div className="min-w-0 flex-1 lg:order-2 lg:shrink-0 lg:flex-none">
             {primaryActions}
           </div>
@@ -197,16 +251,21 @@ export function AttemptBottomBar({
           </div>
         </div>
       ) : (
-        <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center justify-between gap-2 px-3 py-1.5 sm:px-6">
-          {navigatorButton}
-          {!navigatorButton && (
-            <div
-              data-slot="attempt-desktop-progress"
-              className="flex min-w-0 flex-1"
-            >
-              {progress}
-            </div>
-          )}
+        <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center gap-2 px-3 py-1.5 sm:px-6 xl:max-w-[1280px]">
+          {stepButtons ? stepButtons.prev : null}
+          <div className="flex min-w-0 flex-1 items-center">
+            {navigatorButton}
+            {!navigatorButton && (
+              <div
+                data-slot="attempt-desktop-progress"
+                className="flex min-w-0 flex-1"
+              >
+                {progress}
+              </div>
+            )}
+          </div>
+          {unansweredBadge}
+          {stepButtons ? stepButtons.next : null}
           {viewResult ? (
             <Button
               className={`h-11 min-w-[88px] shrink-0 px-4 text-base ${pressFeedback}`}
@@ -216,7 +275,7 @@ export function AttemptBottomBar({
             </Button>
           ) : (
             <Button
-              className={`h-11 min-w-[88px] shrink-0 px-4 text-base ${pressFeedback}`}
+              className={`h-11 min-w-[72px] shrink-0 px-4 text-base ${pressFeedback}`}
               disabled={submitDisabled}
               onClick={onOpenSubmit}
             >
@@ -232,7 +291,7 @@ export function AttemptBottomBar({
         submitError !== null) && (
         <div
           role="status"
-          className="mx-auto flex max-w-[1120px] flex-col gap-1 px-3 pb-2 sm:px-6"
+          className="mx-auto flex max-w-[1120px] flex-col gap-1 px-3 pb-2 sm:px-6 xl:max-w-[1280px]"
         >
           {notices}
         </div>

@@ -10,7 +10,8 @@ export function AttemptWorkspace({
   children: ReactNode;
   process?: QuestionProcessRecorder | null;
 }) {
-  useStudentWorkspace();
+  // 宽工作区：xl 起 1280px 容器，给题号导航 + 题面 + AI 助教三栏并排留宽度
+  useStudentWorkspace("wide");
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = root.current;

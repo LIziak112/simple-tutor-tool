@@ -33,6 +33,7 @@ it("未保存时生效键位 = 注册表默认（Enter/←→/? 与固定 1–9�
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
   expect(getResolvedKeyboardBindings()["practice.select-option"]).toHaveLength(
     9,
@@ -91,6 +92,7 @@ it("账号隔离：换账号读默认，旧账号的迟到保存被拒绝", () =
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
   expect(() => saveKeyboardBindings({}, "a")).toThrow(/账号/);
 });
@@ -101,6 +103,7 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
   bindKeyboardBindingsAccount(null);
   localStorage.setItem(
@@ -114,6 +117,7 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
   bindKeyboardBindingsAccount(null);
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
@@ -123,6 +127,7 @@ it("损坏 JSON / 未来 version / 存储不可读整体回默认，不抛错", 
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
 });
 
@@ -137,6 +142,7 @@ it("非法键位（Ctrl 组合 / 3 键）保存时被契约兜底拒绝", () => 
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
 });
 
@@ -157,6 +163,7 @@ it("跨标签事件同步当前账号；写入失败抛错且不发布", () => {
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
   window.dispatchEvent(
     new StorageEvent("storage", {
@@ -194,6 +201,7 @@ it("存储清空事件（key null）→ 回默认键位", () => {
   expect(getResolvedKeyboardBindings()["practice.next-question"]).toEqual([
     "ArrowRight",
     "Shift+ArrowRight",
+    "j",
   ]);
 });
 

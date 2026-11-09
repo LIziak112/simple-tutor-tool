@@ -55,7 +55,6 @@ describe("AttemptBottomBar（离线交卷保护，T2.12）", () => {
     const { onOpenSubmit, container } = renderBar({
       primaryActions: <button type="button">提交本题</button>,
       progressLabel: "第 1 / 5 题 · 已提交 0 题",
-      progressValue: 0,
       practiceSubmittedCount: 0,
     });
     expect(screen.getAllByText("第 1 / 5 题 · 已提交 0 题")).toHaveLength(1);
@@ -123,5 +122,86 @@ describe("AttemptBottomBar（离线交卷保护，T2.12）", () => {
   it("空试卷（total=0）时无论在线离线都禁用", () => {
     renderBar({ answered: 0, total: 0, offline: false });
     expect(screen.getByRole("button", { name: "交卷" })).toBeDisabled();
+  });
+});
+
+describe("AttemptBottomBar（阶段 B：上一题 / 下一题 / 交卷 + 未答一键跳转）", () => {
+  it("列表模式按滚动当前题步进：首题禁上一题、末题禁下一题", () => {
+    const onPrev = vi.fn();
+    const onNext = vi.fn();
+    const { rerender } = renderBar({
+      answered: 1,
+      total: 5,
+      hasPrev: false,
+      hasNext: true,
+      onPrev,
+      onNext,
+    });
+    const prev = screen.getByRole("button", { name: "上一题" });
+    const next = screen.getByRole("button", { name: "下一题" });
+    expect(prev).toBeDisabled();
+    expect(next).toBeEnabled();
+    fireEvent.click(next);
+    expect(onNext).toHaveBeenCalledTimes(1);
+    rerender(
+      <AttemptBottomBar
+        answered={1}
+        total={5}
+        offline={false}
+        denied={false}
+        saveFailed={false}
+        inkFlushError={false}
+        submitError={null}
+        hasPrev
+        hasNext={false}
+        onPrev={onPrev}
+        onNext={onNext}
+        onOpenSubmit={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "上一题" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "下一题" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "上一题" }));
+    expect(onPrev).toHaveBeenCalledTimes(1);
+  });
+  it("未传步进回调（旧接线）时不渲染上一题/下一题", () => {
+    renderBar({ answered: 1, total: 5 });
+    expect(screen.queryByRole("button", { name: "上一题" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "下一题" })).toBeNull();
+  });
+  it("交卷前亮出未答数量，点击一键跳到第一道未答题", () => {
+    const onJumpUnanswered = vi.fn();
+    renderBar({ answered: 2, total: 5, onJumpUnanswered });
+    const badge = screen.getByRole("button", { name: "未答 3" });
+    expect(badge).toHaveAttribute("title", "跳到第一道未答题");
+    fireEvent.click(badge);
+    expect(onJumpUnanswered).toHaveBeenCalledTimes(1);
+    // 交卷按钮的可达名不被徽标污染（既有 e2e 按「交卷」精确取按钮）
+    expect(screen.getByRole("button", { name: "交卷" })).toBeEnabled();
+  });
+  it("全部已答或已收尾看结果时不显示未答徽标", () => {
+    const { rerender } = renderBar({
+      answered: 5,
+      total: 5,
+      onJumpUnanswered: vi.fn(),
+    });
+    expect(screen.queryByRole("button", { name: /未答/ })).toBeNull();
+    rerender(
+      <AttemptBottomBar
+        answered={2}
+        total={5}
+        offline={false}
+        denied={false}
+        saveFailed={false}
+        inkFlushError={false}
+        submitError={null}
+        viewResult
+        onViewResult={vi.fn()}
+        onJumpUnanswered={vi.fn()}
+        onOpenSubmit={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /未答/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "查看本次结果" })).toBeVisible();
   });
 });

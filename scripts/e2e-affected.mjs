@@ -127,6 +127,7 @@ export const SPEC_TAGS = {
   "practice-feedback.spec.ts": ["@student"],
   "practice-single-workspace.spec.ts": ["@student"],
   "attempt-window.spec.ts": ["@student"],
+  "attempt-workspace-b.spec.ts": ["@student"],
   // 跨师生两端
   "lesson.spec.ts": ["@teacher", "@student"],
   "dual-role-session.spec.ts": ["@teacher", "@student"],

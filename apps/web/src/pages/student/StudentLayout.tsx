@@ -16,7 +16,10 @@ import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
-import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
+import {
+  StudentWorkspaceContext,
+  type StudentWorkspaceVariant,
+} from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
@@ -49,7 +52,7 @@ const NAV_ITEMS = [
 ] as const;
 
 export function StudentLayout() {
-  const [workspace, setWorkspace] = useState(false);
+  const [workspace, setWorkspace] = useState<StudentWorkspaceVariant>(false);
   useStudentTheme();
   const meQuery = useStudentMe();
   useEffect(() => {
@@ -223,9 +226,11 @@ export function StudentLayout() {
           id="student-main"
           tabIndex={-1}
           className={
-            workspace
-              ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6"
-              : "mx-auto w-full max-w-3xl flex-1 px-4 pt-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:max-w-5xl lg:py-8"
+            workspace === "wide"
+              ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6 xl:max-w-[1280px]"
+              : workspace
+                ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6"
+                : "mx-auto w-full max-w-3xl flex-1 px-4 pt-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:max-w-5xl lg:py-8"
           }
         >
           <Outlet />
