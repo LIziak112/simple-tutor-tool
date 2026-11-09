@@ -44,52 +44,23 @@ Try answering a few questions as a student, then open the tutor's data and analy
 
 ## Recent updates
 
-These highlights cover **October 10–19, 2026**, grouped by feature. Dates show when each area received its main updates.
+These highlights cover changes released from `v2` between **October 20 and November 9, 2026**.
 
-### Ask AI, read the feedback, and keep working · October 15–19
+### Practice, feedback, and corrections
 
-- **Three ways to ask**: connect a personal AI API, use an MCP client, or generate a question link for an AI with web access. The result page also supports selecting several questions for separate AI reviews.
-- **Tutor-controlled timing**: choose open study, guided hints, or help after completion, with settings for individual students or assignments. Tutors can view help and reply records.
-- **Replies under the question**: ask and read beside the relevant work. Wide screens offer an optional pinned comparison view, and focused reading provides more room for a reply.
-- **Ready-to-send prompts**: choose how to ask and send, optionally adding your own words. Your text stays in place as you choose prompts. Review the question, answer, and selected materials before sending.
-- **Return and try a step**: jump back to the original position, add some working, and send fresh materials or written steps for a check. Follow-ups on an earlier reply keep using the materials originally sent.
-- **Keep your place**: question drafts survive switching questions, closing the conversation, and a visit to connection settings during the current page session. New replies arrive as a notification so students choose when to read them.
-- **Read longer replies comfortably**: use headings, quote a step in a follow-up, enter focused reading, and view typeset formulas. Longer content also offers reading in plain-text sections.
-- **Reopen the right conversation**: help records lead to the matching question and task so students can continue reading or working.
+- **Choose a practice rhythm.** Switch between a question list and single-question focus. When tutors allow per-question feedback, students can submit and review each answer as they go or see feedback together after handing in the attempt.
+- **Compare and self-assess after submission.** On questions awaiting self-assessment with a reference answer, students can mark their answer correct, incorrect, or leave it undecided. Corrections preserve the submitted original. Students can filter the mistake notebook and choose questions to retry, and tutors can decide whether homework may be redone.
+- **Find your place again.** In-progress records show how many questions have been answered, and published results can show how many were correct. Course catalogs support nested folders and search.
 
-### Read a section, practice a question · October 13–16
+### Handwriting and process replay
 
-- **Integrated lessons are available**: tutors place questions at the relevant point in a lecture, and students submit each question separately.
-- **Feedback per question**: objective questions provide immediate results and worked solutions; written answers enter grading. Submitting the last question completes the attempt.
-- **Clearer course entries**: each integrated lesson appears as one course item, with its embedded questions inside. Import previews present it as one lesson too.
-- **Learning records follow the work**: question progress, answers, and handwriting originals stay available for later review and another practice attempt.
+- **One toolbar for scratch work and annotations.** Keep the question, shared materials, and scratchpad in the same workspace, with side-by-side, stacked, and full-screen layouts. When a PWA update is available, students can save their answers and ink before updating.
+- **Question process replay pilot for regular course practice.** With `QUESTION_PROCESS_ENABLED=1`, students can opt in for an attempt or delete its process record. Tutors can replay annotations, scratch work, answer changes, and hint-opening events on one timeline. Pilot records are kept for 30 days.
 
-### Scratchpads, annotations, and handwriting together · October 10–19
+### AI and MCP
 
-- **Use annotations and a scratchpad together**: circle a condition while calculating; choose side-by-side, stacked, or full-screen working.
-- **Scale the question and ink together**: saved annotations retain the question layout for proportional display during review and across devices.
-- **Clearer saving and device changes**: answers, scratchpads, written answers, and annotations each have saving status. Returning on another device checks existing materials, with a version choice when the same material has competing edits.
-- **Export a question and its working**: include the question, existing annotations, and handwritten materials. Long work spans pages with a repeated question, with download and per-page copy options.
-- **Save a preferred writing feel**: name configurations and choose one for the current device. Scratchpads, written answers, and corrections share that device choice.
-- **Smoother writing in long assignments**: reopening annotations is faster, and other questions stay steady while saving and AI status updates arrive.
-- **Smoother opening and review**: improvements cover material loading, annotation preparation, and repeated layout work. Original annotations load as the question comes into view.
-
-### Assignments, review, and personal settings · October 10–19
-
-- **A home page focused on pending work**: see the latest two pending assignments and the total count. My Assignments offers status, date, and title filters with pagination and remembers them on return.
-- **A simpler phone header**: back, unit title, and more actions stay at the top; saving status and practice details live in the practice information panel.
-- **Review actions together**: worked solution, original, correction, question history, and more actions share one row, with a return to the original question from history.
-- **AI connections in one place**: start from My Connections, then add, view, or edit a connection. MCP details provide the complete configuration, token, and endpoint for copying.
-- **Settings grouped by purpose**: personal information, learning preferences, and AI help preferences share one settings page. Collapsing an editor preserves the current input.
-
-### Tutor workspace and everyday details · October 12–19
-
-- **OwnClass styling**: tutor and admin pages share the brand and indigo theme. Navigation groups teaching, analytics, and system tools, with a drawer on smaller screens.
-- **Settings by category**: teaching, backup, and account settings have separate sections, with reminders when leaving edited settings.
-- **Safer consecutive saves**: each save advances the settings version. An older page receives a refresh prompt while the latest saved settings stay in place.
-- **Fresh course choices**: creating or changing a course refreshes the import page's course selector.
-- **Smoother account changes**: tutor and student sessions can coexist in one browser; switching accounts refreshes the relevant page data.
-- **More complete formula display**: improvements cover formula checking, annotation fonts, and formulas in exported images.
+- **Whole-attempt AI review.** Once an attempt is submitted, answers are released, and the teaching policy permits AI access for every question, students can preview and confirm a request for one report from their MCP client. Per-question reviews remain available from the results page.
+- **Per-question submission through student MCP.** Students can confirm and submit individual questions in eligible regular practice. Tutor MCP can filter practice records by start time and correct unsubmitted questions in draft attempts, subject to permission and version checks.
 
 ## Content and learning options
 
@@ -153,7 +124,7 @@ docker compose up -d --build
 
 Open `http://your-server-address` after startup. Alternatively, run `pnpm build` on the host and manage `node apps/server/dist/index.js` with systemd. See the [deployment guide](docs/部署.md).
 
-**On a small-memory server, stop the existing service before installing dependencies and building. Start it again after the build and check its health.** Back up the full data directory before an upgrade. Stop systemd with `systemctl stop simple-tutor-tool`, or Docker Compose with `docker compose stop app`.
+**Use prebuilt artifacts on low-memory servers.** Build and verify them on a build machine, then upload them. Stop the service, back up the full data directory, switch artifacts, restart, and check service health. See the [artifact deployment procedure](docs/部署.md#01-现有云服务器的日常部署).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -215,6 +186,7 @@ Development starts with shared contracts. Grading runs on the server, student co
 
 | Document | Contents |
 | --- | --- |
+| [Documentation index](docs/README.md) | Documentation and directory map. |
 | [Page feature guide](docs/页面功能清单.md) | Current features by page. |
 | [Student AI guide](docs/学生端AI伴学/使用指南.md) | Tutor settings, student connections, help, and review. |
 | [Deployment guide](docs/部署.md) | Installation, upgrades, backup, and operations. |
