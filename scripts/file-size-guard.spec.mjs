@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -100,7 +101,12 @@ test("判定：软线 / 硬线 / 历史基线棘轮", () => {
   );
   const baseline = { "a.ts": 1500 };
   assert.equal(evaluate("a.ts", 1500, baseline).kind, "legacy");
-  assert.equal(evaluate("a.ts", 1200, baseline).kind, "legacy");
+  const shortened = evaluate("a.ts", 1200, baseline);
+  assert.equal(shortened.level, "error");
+  assert.equal(shortened.kind, "stale");
+  const loweredBaseline = { "a.ts": 1200 };
+  assert.equal(evaluate("a.ts", 1200, loweredBaseline).kind, "legacy");
+  assert.equal(evaluate("a.ts", 1201, loweredBaseline).kind, "ratchet");
   assert.deepEqual(
     [
       evaluate("a.ts", 1501, baseline).level,
@@ -395,6 +401,56 @@ test("钩子：写入前只拦硬线；写入后基线增长阻塞、软线提�
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("暂存检查只使用暂存的源码和基线", (t) => {
+  const { root } = fixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const gitDir = join(root, "fixture-git");
+  const options = {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_DIR: gitDir,
+      GIT_WORK_TREE: root,
+      GIT_INDEX_FILE: join(gitDir, "index"),
+    },
+  };
+  const git = (...args) => {
+    const result = spawnSync("git", args, options);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  for (const name of [
+    "file-size-guard.mjs",
+    "file-size-policy.mjs",
+    "file-size-hooks.mjs",
+  ]) {
+    copyFileSync(join(repoRoot, "scripts", name), join(root, "scripts", name));
+  }
+  const source = "src/legacy.ts";
+  const baseline = "scripts/file-size-baseline.json";
+  const check = () =>
+    spawnSync(
+      process.execPath,
+      ["scripts/file-size-guard.mjs", "check", "--staged"],
+      options,
+    );
+
+  git("init", "--quiet", "--template=");
+  writeFileSync(join(root, source), lines(1501));
+  git("add", "--", source, baseline);
+  writeFileSync(join(root, baseline), JSON.stringify({ [source]: 1501 }));
+
+  const blocked = check();
+  assert.equal(blocked.status, 1, blocked.stdout);
+  assert.match(blocked.stderr, /基线 1500 行.*1501 行/);
+
+  git("add", "--", baseline);
+  writeFileSync(join(root, baseline), JSON.stringify({ [source]: 1500 }));
+  writeFileSync(join(root, source), lines(1500));
+  const allowed = check();
+  assert.equal(allowed.status, 0, allowed.stderr);
 });
 
 test("当前仓库通过闸门（历史基线与实际一致）", () => {

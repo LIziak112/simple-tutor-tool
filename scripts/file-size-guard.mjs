@@ -18,7 +18,7 @@ import {
   DOC_PATH,
   HARD_LIMIT,
   isChecked,
-  loadBaseline,
+  parseBaseline,
   runCheck,
   SOFT_LIMIT,
   toRepoPath,
@@ -70,9 +70,14 @@ const readIndex = (rel) => {
   return r.status === 0 ? r.stdout : null;
 };
 
-function loadBaselineOrExit() {
+function loadBaseline(readContent = readWorkTree) {
+  const text = readContent(BASELINE_FILE);
+  return text === null ? {} : parseBaseline(text);
+}
+
+function loadBaselineOrExit(readContent) {
   try {
-    return loadBaseline(root);
+    return loadBaseline(readContent);
   } catch (e) {
     console.error(`❌ ${e.message}`);
     process.exit(1);
@@ -80,7 +85,6 @@ function loadBaselineOrExit() {
 }
 
 function cmdCheck(args) {
-  const baseline = loadBaselineOrExit();
   let files;
   let focus = null;
   let read = readWorkTree;
@@ -102,6 +106,7 @@ function cmdCheck(args) {
   } else {
     files = args.map((p) => toRepoPath(root, p, process.cwd())).filter(Boolean);
   }
+  const baseline = loadBaselineOrExit(read);
   const { errors, warnings, stats } = runCheck({
     files,
     focus,
@@ -181,7 +186,7 @@ function cmdHook(flavor) {
   let out = allow;
   try {
     const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-    out = handleHook(flavor, input, { root, baseline: loadBaseline(root) });
+    out = handleHook(flavor, input, { root, baseline: loadBaseline() });
   } catch (e) {
     // 钩子自身出错一律放行：硬闸门在 pre-commit / CI
     console.error(`file-size-guard hook：${e.message}（已放行）`);

@@ -2,8 +2,7 @@
 // 历史基线棘轮与逐文件判定。被 file-size-guard.mjs（pre-commit / CI / 命令行）与
 // file-size-hooks.mjs（Cursor / Claude Code / Codex 编辑钩子）共用，三层口径一致。
 // 只依赖 Node 内置模块：CI 的 scope 作业不装依赖也能跑。细则见 docs/约定/文件规模约束.md。
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 // 软线：超过即提醒「先提拆分方案再加代码」；硬线：超过即阻塞（写入前拦截 / 拒绝提交 / CI 红）。
 export const SOFT_LIMIT = 400;
@@ -72,11 +71,6 @@ export function parseBaseline(text) {
   return data;
 }
 
-export function loadBaseline(root) {
-  const file = join(root, BASELINE_FILE);
-  return existsSync(file) ? parseBaseline(readFileSync(file, "utf8")) : {};
-}
-
 const splitHint =
   "按职责拆（一起变化的放一起），不要用 part2 / 删注释空行 / 一行多句 / 无意义转发层凑行数";
 
@@ -95,6 +89,12 @@ export function evaluate(rel, lines, baseline = {}) {
         level: "error",
         kind: "stale",
         message: `${rel} 已降到 ${lines} 行（≤ 硬线 ${HARD_LIMIT}），请从 ${BASELINE_FILE} 移除该条目，让它回到常规闸门`,
+      };
+    if (lines < base)
+      return {
+        level: "error",
+        kind: "stale",
+        message: `${rel} 已从 ${base} 行降到 ${lines} 行，请将 ${BASELINE_FILE} 的条目同步下调到 ${lines} 行`,
       };
     return {
       level: "warn",
