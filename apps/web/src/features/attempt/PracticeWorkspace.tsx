@@ -350,8 +350,8 @@ export function PracticeKeyboardHelpDialog({
         <DialogHeader>
           <DialogTitle>键盘快捷键</DialogTitle>
           <DialogDescription>
-            单题专注作答时可用；列表作答不响应这些按键。可在「设置 → 学习
-            偏好」修改键位。
+            单题专注作答时全部可用；列表作答响应切题（J / K
+            与方向键）和选选项（1–9）。可在「设置 → 学习偏好」修改键位。
           </DialogDescription>
         </DialogHeader>
         <dl className="space-y-2 text-sm">

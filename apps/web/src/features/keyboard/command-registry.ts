@@ -10,8 +10,14 @@ import { formatKeySpec } from "./key-spec";
  *   不参与派发——全局层不得劫持局部 Esc（docs/约定/学生作答与讲练.md）。
  */
 
-/** 生效范围：当前仅单题专注作答页（v1 新协议卷）；讲练页接入时扩 lesson.* */
-export type KeyboardCommandScope = "practice-single";
+/**
+ * 生效范围：
+ * - practice-single：仅单题专注作答页（v1 新协议卷）；
+ * - practice：列表作答与单题专注都生效（阶段 B 做题工作区改版，2026-11：
+ *   切题与选选项在列表模式同样派发，键盘守门链同口径）。
+ * 讲练页接入时扩 lesson.*。
+ */
+export type KeyboardCommandScope = "practice-single" | "practice";
 
 export interface KeyboardCommand {
   id: string;
@@ -38,20 +44,23 @@ export const PRACTICE_KEYBOARD_COMMANDS = [
     scope: "practice-single",
     customizable: true,
   },
+  // 阶段 B（2026-11）：J/K 切题——字母键不带控件原生语义（方向键在单选组
+  // 内会移动选中），因此不受「工作区容器自身持有焦点」守卫约束，输入区外
+  // 随处可按；方向键守卫不变。列表模式同样派发（scope=practice）。
   {
     id: "practice.prev-question",
     label: "上一题",
-    description: "工作区获得焦点时切上一题",
-    defaultKeys: ["ArrowLeft", "Shift+ArrowLeft"],
-    scope: "practice-single",
+    description: "切上一题；方向键须工作区获得焦点，K 在输入区外随处可按",
+    defaultKeys: ["ArrowLeft", "Shift+ArrowLeft", "k"],
+    scope: "practice",
     customizable: true,
   },
   {
     id: "practice.next-question",
     label: "下一题",
-    description: "工作区获得焦点时切下一题",
-    defaultKeys: ["ArrowRight", "Shift+ArrowRight"],
-    scope: "practice-single",
+    description: "切下一题；方向键须工作区获得焦点，J 在输入区外随处可按",
+    defaultKeys: ["ArrowRight", "Shift+ArrowRight", "j"],
+    scope: "practice",
     customizable: true,
   },
   {
@@ -66,9 +75,9 @@ export const PRACTICE_KEYBOARD_COMMANDS = [
     id: "practice.select-option",
     label: "选择第 1–9 个选项",
     description:
-      "选择对应可见选项：判断 1 对 2 错；单选第 n 项；多选切换第 n 项",
+      "选择当前题对应可见选项：判断 1 对 2 错；单选第 n 项；多选切换第 n 项",
     defaultKeys: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
-    scope: "practice-single",
+    scope: "practice",
     customizable: false,
   },
   {
@@ -166,15 +175,37 @@ export function findConflicts<C extends KeyboardCommand>(
 }
 
 /**
- * 键位展示：≥3 个键的固定项聚合为「首–末」（1–9 选项），其余逐键 formatKeySpec
- * 以「 / 」连接。帮助面板与设置页行共用。
+ * 键位展示：≥3 个**连续数字键**聚合为「首–末」（1–9 选项），其余逐键
+ * formatKeySpec 以「 / 」连接（切题命令自带方向键 + 字母键三项，不能被
+ * 误聚合成「←–K」）。帮助面板与设置页行共用。
  */
 export function formatKeys(keys: readonly string[]): string {
-  const parts = keys.map(formatKeySpec);
-  if (parts.length >= 3) {
+  // 单字母键按大写展示（键帽惯例：J / K），匹配本身不区分大小写
+  const parts = keys.map((key) =>
+    /^[a-z]$/.test(key) ? key.toUpperCase() : formatKeySpec(key),
+  );
+  if (parts.length >= 3 && parts.every((part) => /^\d$/.test(part))) {
     const first = parts[0];
     const last = parts[parts.length - 1];
     if (first !== undefined && last !== undefined) return `${first}–${last}`;
   }
   return parts.join(" / ");
+}
+
+/**
+ * 命令键位匹配（作答页派发单源）：单字母键不区分大小写——CapsLock 或中文
+ * 输入法切换后 Shift 未松开时 `event.key` 为大写，J/K 不应静默失效（与
+ * Enter/方向键默认键含 Shift 变体的初衷一致）；其余键位（数字、符号、命名键）
+ * 逐字比对。
+ */
+export function matchesKeyBinding(
+  keys: readonly string[],
+  spec: string,
+): boolean {
+  if (keys.includes(spec)) return true;
+  if (spec.length === 1 && /[A-Za-z]/.test(spec)) {
+    const folded = spec.toLowerCase();
+    return keys.some((key) => key.length === 1 && key.toLowerCase() === folded);
+  }
+  return false;
 }

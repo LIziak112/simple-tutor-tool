@@ -79,7 +79,7 @@ describe("自定义键位分区", () => {
     const row = startRecording("下一题");
     expect(screen.getByText(/按下新快捷键，Esc 取消/)).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "j" });
-    expect(within(row).getByText("j")).toBeInTheDocument();
+    expect(within(row).getByText("J")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: "保存键位" });
     expect(save).toBeEnabled();
     fireEvent.click(save);
@@ -106,7 +106,7 @@ describe("自定义键位分区", () => {
     expect(screen.getByText(/该键不可绑定/)).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(screen.queryByText(/按下新快捷键/)).toBeNull();
-    expect(within(row).getByText("→ / Shift+→")).toBeInTheDocument();
+    expect(within(row).getByText("→ / Shift+→ / J")).toBeInTheDocument();
   });
 
   it("两个命令改到同键：后到者标红冲突并禁存；撞固定键（1–9）同样拒绝", () => {
@@ -163,10 +163,10 @@ describe("自定义键位分区", () => {
       }),
     );
     expect(screen.getByText(/其他页面已修改键位/)).toBeInTheDocument();
-    expect(within(row).getByText("j")).toBeInTheDocument();
+    expect(within(row).getByText("J")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "载入已保存值" }));
-    expect(within(row).getByText("→ / Shift+→")).toBeInTheDocument();
-    expect(screen.getByText("h")).toBeInTheDocument();
+    expect(within(row).getByText("→ / Shift+→ / J")).toBeInTheDocument();
+    expect(screen.getByText("H")).toBeInTheDocument();
   });
 
   it("收起分区自动取消录制：不留全页吞键监听、不静默改键", async () => {
@@ -179,7 +179,7 @@ describe("自定义键位分区", () => {
     // 收起后页面按键不再被录制吞掉/改键
     fireEvent.keyDown(document.body, { key: "h" });
     fireEvent.click(summary);
-    expect(screen.getByText("→ / Shift+→")).toBeInTheDocument();
+    expect(screen.getByText("→ / Shift+→ / J")).toBeInTheDocument();
   });
 
   it("录制不吞文本编辑区按键：他处输入不改键、不拦截", () => {
@@ -196,7 +196,7 @@ describe("自定义键位分区", () => {
     expect(within(row).getByText("…")).toBeInTheDocument();
     input.remove();
     fireEvent.keyDown(document.body, { key: "j" });
-    expect(within(row).getByText("j")).toBeInTheDocument();
+    expect(within(row).getByText("J")).toBeInTheDocument();
   });
 
   it("键序不同但内容相同的跨标签保存不误报未保存", () => {

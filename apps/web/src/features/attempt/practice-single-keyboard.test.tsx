@@ -484,7 +484,9 @@ it("自定义键位即时生效：j 切下一题、默认 → 失效；帮助面
   const help = await screen.findByRole("menuitem", { name: /快捷键/ });
   fireEvent.click(help);
   const dialog = await screen.findByRole("dialog");
-  expect(dialog).toHaveTextContent("j");
+  // 字母键位统一大写展示（J），匹配仍不分大小写
+  expect(dialog).toHaveTextContent("J切下一题");
+  expect(dialog).not.toHaveTextContent("→ / Shift+→");
   expect(dialog).toHaveTextContent("固定");
 });
 

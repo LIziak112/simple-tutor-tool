@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   findConflicts,
   formatKeys,
+  matchesKeyBinding,
   PRACTICE_KEYBOARD_COMMANDS,
   resolveBindings,
 } from "./command-registry";
@@ -102,12 +103,41 @@ describe("findConflicts", () => {
 });
 
 describe("formatKeys", () => {
-  it("≥3 键聚合首–末（1–9 选项）；1–2 键逐键连接", () => {
+  it("≥3 个纯数字键聚合首–末（1–9 选项）；其余逐键连接，字母键大写展示", () => {
     expect(formatKeys(["1", "2", "3", "4", "5", "6", "7", "8", "9"])).toBe(
       "1–9",
     );
     expect(formatKeys(["Enter"])).toBe("Enter");
-    expect(formatKeys(["?", "h"])).toBe("? / h");
+    expect(formatKeys(["?", "h"])).toBe("? / H");
     expect(formatKeys(["ArrowLeft", "ArrowRight"])).toBe("← / →");
+    // 阶段 B：切题默认键三项（方向键 + Shift 变体 + 字母），不能被误聚合
+    expect(formatKeys(["ArrowRight", "Shift+ArrowRight", "j"])).toBe(
+      "→ / Shift+→ / J",
+    );
+  });
+  it("切题默认键含 J / K 且生效范围扩到列表模式；1–9 选选项同样列表可用", () => {
+    const byId = new Map(
+      PRACTICE_KEYBOARD_COMMANDS.map((command) => [command.id, command]),
+    );
+    expect(byId.get("practice.next-question")?.defaultKeys).toContain("j");
+    expect(byId.get("practice.prev-question")?.defaultKeys).toContain("k");
+    expect(byId.get("practice.next-question")?.scope).toBe("practice");
+    expect(byId.get("practice.prev-question")?.scope).toBe("practice");
+    expect(byId.get("practice.select-option")?.scope).toBe("practice");
+    // Enter 主动作与帮助仍只在单题专注生效
+    expect(byId.get("practice.submit-or-next")?.scope).toBe("practice-single");
+  });
+});
+
+describe("matchesKeyBinding", () => {
+  it("单字母键不区分大小写（CapsLock / Shift 未松开），其余键逐字比对", () => {
+    const keys = ["ArrowRight", "Shift+ArrowRight", "j"];
+    expect(matchesKeyBinding(keys, "j")).toBe(true);
+    expect(matchesKeyBinding(keys, "J")).toBe(true);
+    expect(matchesKeyBinding(keys, "ArrowRight")).toBe(true);
+    expect(matchesKeyBinding(keys, "ArrowLeft")).toBe(false);
+    expect(matchesKeyBinding(keys, "k")).toBe(false);
+    expect(matchesKeyBinding(["1"], "1")).toBe(true);
+    expect(matchesKeyBinding(["1"], "2")).toBe(false);
   });
 });

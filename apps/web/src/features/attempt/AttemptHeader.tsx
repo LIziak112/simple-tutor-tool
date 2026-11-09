@@ -23,6 +23,7 @@ export function AttemptHeader({
   onBack,
   actions,
   menuItems,
+  meta,
   children,
 }: {
   title: string;
@@ -35,6 +36,11 @@ export function AttemptHeader({
    * 不传时菜单维持原样（legacy/lesson 卷零变化）。
    */
   menuItems?: ReactNode;
+  /**
+   * 标题下方的常驻元信息行（阶段 B：计时块「已用 / 距截止」）；不传不占行。
+   * 与 children（练习信息弹层内容）不同：meta 是页面上一直可见的一小行。
+   */
+  meta?: ReactNode;
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -45,6 +51,7 @@ export function AttemptHeader({
     blocked: detailsOpen || editor?.active != null,
   });
   const hasActions = actions != null;
+  const hasMeta = meta != null;
   return (
     <header
       ref={toolbar.ref}
@@ -66,6 +73,11 @@ export function AttemptHeader({
         <h1 className="col-start-2 row-start-1 truncate min-w-0 text-base leading-[1.45] font-semibold sm:line-clamp-2 sm:whitespace-normal sm:text-lg sm:break-words">
           {title}
         </h1>
+        {hasMeta && (
+          <div className="col-start-2 row-start-2 min-w-0 leading-4">
+            {meta}
+          </div>
+        )}
         {hasActions && (
           <div className="col-start-3 row-start-1 flex items-center justify-self-end">
             {actions}

@@ -88,6 +88,19 @@ export function useReadingPosition(
       const header = headerHeightOf();
       let best: ReadingPosition | null = null;
       let distance = Infinity;
+      // 显式跳题 / 恢复刚对齐过的题（alignedRef，用户接管即清空）只要还在
+      // 视口内就是当前题：末题够不到题头锚点时，几何就近会把前一题当成当前
+      // 题，题号导航高亮与列表键盘 1–9 会指错题（阶段 B 列表键盘，2026-11）。
+      const aligned = alignedRef.current;
+      const alignedCard =
+        aligned === null ? undefined : cards.current.get(aligned.questionId);
+      if (aligned !== null && alignedCard !== undefined) {
+        const rect = alignedCard.getBoundingClientRect();
+        if (rect.bottom > header && rect.top < window.innerHeight) {
+          best = { questionId: aligned.questionId, offset: rect.top - header };
+          distance = -1;
+        }
+      }
       for (const [id, element] of cards.current) {
         const rect = element.getBoundingClientRect();
         if (rect.bottom <= header || rect.top >= window.innerHeight) continue;

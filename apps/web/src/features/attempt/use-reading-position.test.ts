@@ -128,6 +128,40 @@ describe("学生阅读位置恢复", () => {
     expect(scroll).toHaveBeenCalledTimes(1);
   });
 
+  it("显式跳题对齐过的题在视口内就是当前题；用户接管后回到几何就近", () => {
+    const onCurrent = vi.fn();
+    const requestMount = vi.fn();
+    const q2 = cards.current.get("q2");
+    if (!q2) throw new Error("缺少题卡夹具");
+    // 末题 q3 够不到题头锚点：顶边 520，比 q2（300）离锚点更远
+    const q3 = document.createElement("li");
+    q3.innerHTML = '<article tabindex="-1"></article>';
+    vi.spyOn(q3, "getBoundingClientRect").mockReturnValue({
+      top: 520,
+      bottom: 720,
+      height: 200,
+    } as DOMRect);
+    cards.current.set("q3", q3);
+    const { result } = renderHook(() =>
+      useReadingPosition("attempt", cards, onCurrent, requestMount, 0),
+    );
+    onCurrent.mockClear();
+    // 跳到 q3 后登记对齐，随后程序滚动触发捕获：当前题仍是 q3
+    act(() => result.current("q3"));
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(20);
+    });
+    expect(onCurrent).toHaveBeenLastCalledWith("q3");
+    // 用户滚轮接管：对齐登记作废，按几何就近回到 q2
+    act(() => window.dispatchEvent(new Event("wheel")));
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(20);
+    });
+    expect(onCurrent).toHaveBeenLastCalledWith("q2");
+  });
+
   it("待执行挂载补偿在切换练习和卸载时取消", () => {
     const onCurrent = vi.fn();
     const requestMount = vi.fn();
