@@ -973,12 +973,8 @@ export function submitAttemptApi(
   attemptId: string,
   input: AttemptSubmitRequest,
 ): Promise<AttemptDetailData> {
-  return callApi(() =>
-    api.api.student.attempts[":id"].submit.$post({
-      param: { id: attemptId },
-      json: input,
-    }),
-  );
+  const args = { param: { id: attemptId }, json: input };
+  return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
 }
 
 /**
