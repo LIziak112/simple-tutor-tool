@@ -20,8 +20,9 @@ import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
  * （只追加，不会冲突）」）：
  * - 每条随笔先落本机（IndexedDB，媒体 Blob 一并存），再尝试上传；成功即删本机；
  *   本机写不进时立即上传这一条，传不上去就拒绝（enqueueMemo「返回即有副本」）；
- * - 暂态失败（离线 / 超时 / 5xx / 408 / 429 / 响应不成形）保留在队列，联网（online
- *   事件）/ 进页面 / 新记一条时按入队顺序重试；服务端按 clientId 幂等，重放不产生重复；
+ * - 暂态失败（离线 / 超时 / 5xx / 401 / 408 / 429 / 响应不成形）保留在队列，联网
+ *   （online 事件）/ 进页面 / 新记一条时按入队顺序重试；服务端按 clientId 幂等，重放
+ *   不产生重复；
  * - 业务拒绝（其余 4xx：格式 / 超限 / 校验）不会自愈：标 failedMessage 留在队列让本人
  *   看到并手动丢弃或重试（retryMemoOutboxItem），不静默删除未同步内容（草稿域同口径）；
  * - 按账号隔离：键前缀带 studentId，布局层 bind / 登出 unbind。每个异步步骤开始
@@ -203,17 +204,19 @@ export async function retryMemoOutboxItem(clientId: string): Promise<void> {
   return flushMemoOutbox();
 }
 
+/** 4xx 里仍可自愈的状态：会话过期（重新登录后 bind 会再补传）、超时、限流 */
+const RECOVERABLE_4XX = new Set([401, 408, 429]);
+
 /**
  * 服务端业务拒绝（不会自愈，等本人处理）与暂态失败（下次再试）的分界：4xx 里除
- * 408 超时、429 限流外都算拒绝；5xx、网络层、响应不成形都算暂态。
+ * RECOVERABLE_4XX 外都算拒绝；5xx、网络层、响应不成形都算暂态。
  */
 function isBusinessRejection(err: unknown): err is ApiError {
   return (
     err instanceof ApiError &&
     err.status >= 400 &&
     err.status < 500 &&
-    err.status !== 408 &&
-    err.status !== 429
+    !RECOVERABLE_4XX.has(err.status)
   );
 }
 

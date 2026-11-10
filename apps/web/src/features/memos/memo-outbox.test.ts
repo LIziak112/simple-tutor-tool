@@ -200,6 +200,10 @@ describe("memo-outbox：暂态失败与重试（#104-05）", () => {
     ["500", new ApiError("INTERNAL_ERROR", "服务器开小差", 500)],
     ["429", new ApiError("RATE_LIMITED", "请求太频繁", 429)],
     ["408", new ApiError("TIMEOUT", "请求超时", 408)],
+    [
+      "401（会话过期，重新登录后补传）",
+      new ApiError("UNAUTHORIZED", "请先登录", 401),
+    ],
     ["响应异常（非 ApiError）", new Error("服务器响应异常（HTTP 502）")],
   ])("%s：不标失败、保留原样，下次触发继续补传", async (_label, err) => {
     await bindMemoOutboxAccount("stu-a");
