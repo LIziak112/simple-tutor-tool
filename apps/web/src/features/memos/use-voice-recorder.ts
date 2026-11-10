@@ -6,7 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * - MediaRecorder 用浏览器自己选的容器——Safari / iOS 是 audio/mp4（AAC），
  *   Chrome / Firefox 是 audio/webm 或 audio/ogg（Opus）；服务端按内容识别；
  * - 计时到 MEMO_VOICE_MAX_SECONDS（10 分钟）自动停止；界面建议单条 ≤ 5 分钟；
- * - 没有麦克风权限 / 不支持 MediaRecorder 给中文说明，不抛裸异常。
+ * - 没有麦克风权限 / 不支持 MediaRecorder 给中文说明，不抛裸异常；
+ * - 每次 start 领一个请求序号，取消 / 卸载让序号作废：授权晚于取消才返回时不再
+ *   启动 recorder 与计时器，拿到的 stream 直接停掉，也不会把结果交给入队回调。
  */
 export interface VoiceRecording {
   readonly blob: Blob;
@@ -58,10 +60,13 @@ export function useVoiceRecorder(
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef(0);
   const timerRef = useRef<number | null>(null);
+  /** 当前有效的录音请求序号；cleanup 递增使仍在等授权的 start 作废 */
+  const requestSeqRef = useRef(0);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
   const cleanup = useCallback(() => {
+    requestSeqRef.current += 1;
     if (timerRef.current !== null) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
@@ -85,12 +90,20 @@ export function useVoiceRecorder(
       });
       return;
     }
+    const seq = ++requestSeqRef.current;
     setState({ status: "requesting" });
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
+      // 等授权期间已取消 / 卸载：不再改状态
+      if (seq !== requestSeqRef.current) return;
       setState({ status: "error", message: permissionMessage(err) });
+      return;
+    }
+    if (seq !== requestSeqRef.current) {
+      // 授权晚于取消 / 卸载才回来：不启动，只把拿到的麦克风放掉
+      for (const track of stream.getTracks()) track.stop();
       return;
     }
     const mimeType = pickMimeType();
@@ -112,6 +125,8 @@ export function useVoiceRecorder(
       if (event.data.size > 0) chunksRef.current.push(event.data);
     };
     recorder.onstop = () => {
+      // 已被取消的请求（cancel 会先摘掉 onstop，这里再兜一层）：不入队
+      if (seq !== requestSeqRef.current) return;
       const durationSec = Math.min(
         MEMO_VOICE_MAX_SECONDS,
         Math.max(1, Math.round((Date.now() - startedAtRef.current) / 1000)),
