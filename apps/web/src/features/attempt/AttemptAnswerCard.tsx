@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { ArrowRight, Check, CircleHelp, Flag } from "lucide-react";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer } from "react";
 import { Button } from "@/components/ui/button";
 import {
   getAnnotationView,
@@ -13,6 +13,7 @@ import {
   type QuestionNavigationItem,
   QuestionNavigationTile,
 } from "./QuestionNavigator";
+import { useCurrentQuestionScroll } from "./use-current-question-scroll";
 
 const answerFilters = [
   { id: "all", label: "全部" },
@@ -93,8 +94,6 @@ export function AttemptAnswerCard({
   locked?: boolean;
   showNextUnanswered?: boolean;
 }) {
-  const grid = useRef<HTMLOListElement>(null);
-  const currentTile = useRef<HTMLButtonElement>(null);
   const needsWork = workIds === null;
   const activeFilter =
     needsWork && (filter === "empty" || filter === "partial") ? "all" : filter;
@@ -120,6 +119,10 @@ export function AttemptAnswerCard({
     });
   const current = items.find((item) => item.id === currentId);
   const currentVisible = visible.some(({ item }) => item.id === currentId);
+  const { grid, currentTile } = useCurrentQuestionScroll<HTMLOListElement>(
+    currentVisible ? currentId : null,
+    activeFilter,
+  );
   const currentIndex = items.findIndex((item) => item.id === currentId);
   const nextUnanswered = showNextUnanswered
     ? [
@@ -130,28 +133,6 @@ export function AttemptAnswerCard({
           item.completion.state !== "filled" && !item.practice?.submitted,
       )
     : undefined;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 切换筛选或当前题后重新检查滚动边界。
-  useEffect(() => {
-    const scroller = grid.current;
-    const tile = currentTile.current;
-    if (!currentVisible || !scroller || !tile) return;
-    const alignCurrentTile = () => {
-      if (!scroller.clientHeight) return;
-      const bounds = scroller.getBoundingClientRect();
-      const target = tile.getBoundingClientRect();
-      if (target.top < bounds.top + 4)
-        scroller.scrollTop += target.top - bounds.top - 4;
-      else if (target.bottom > bounds.bottom - 4)
-        scroller.scrollTop += target.bottom - bounds.bottom + 4;
-    };
-    alignCurrentTile();
-    // 窗口尺寸改变后重新对齐当前题。
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(alignCurrentTile);
-    observer.observe(scroller);
-    return () => observer.disconnect();
-  }, [activeFilter, currentId, currentVisible]);
-
   function filterButton(option: (typeof filters)[number]) {
     const selected = option.id === activeFilter;
     return (

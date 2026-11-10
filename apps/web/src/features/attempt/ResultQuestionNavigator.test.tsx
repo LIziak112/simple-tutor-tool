@@ -33,6 +33,7 @@ it("回看题号沿原卷编号，未作答与判错并存且能定位末题", (
       scope="unanswered"
       currentId="q1"
       onJump={jump}
+      onResetScope={vi.fn()}
     />,
   );
   const last = screen.getByRole("button", { name: "第 2 题，未作答，判错" });
@@ -43,6 +44,7 @@ it("回看题号沿原卷编号，未作答与判错并存且能定位末题", (
   ).toHaveAttribute("aria-current", "location");
 });
 it("未公布不暴露判定；空定位范围有退出入口", () => {
+  const resetScope = vi.fn();
   const { rerender } = render(
     <ResultQuestionNavigator
       questions={[question]}
@@ -50,6 +52,7 @@ it("未公布不暴露判定；空定位范围有退出入口", () => {
       scope="all"
       currentId="q1"
       onJump={vi.fn()}
+      onResetScope={resetScope}
     />,
   );
   expect(
@@ -63,7 +66,10 @@ it("未公布不暴露判定；空定位范围有退出入口", () => {
       scope="pending"
       currentId="q1"
       onJump={vi.fn()}
+      onResetScope={resetScope}
     />,
   );
   expect(screen.getByText("此范围没有题目")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "返回全部题目" }));
+  expect(resetScope).toHaveBeenCalledOnce();
 });

@@ -155,7 +155,7 @@ async function prepareResult(
   );
   expect(submitted.ok(), await submitted.text()).toBe(true);
   const result = attemptResultOkSchema.parse(await submitted.json()).data;
-  return { attemptId, title, secret, result };
+  return { assignmentId, attemptId, title, secret, result };
 }
 
 test(
@@ -295,7 +295,11 @@ test(
   { tag: ["@student"] },
   async ({ request, page }, testInfo) => {
     test.setTimeout(180_000);
-    const { attemptId, title } = await prepareResult(request, page, true);
+    const { assignmentId, attemptId, title } = await prepareResult(
+      request,
+      page,
+      true,
+    );
     const materialRequests: string[] = [];
     // 2026-10-15 起题卡进入可见区自动读取原标画（AGENTS.md「结果回看 UI 约定」）：
     // 题干标注视图按可见性懒加载属于设计内行为，不计入「折叠材料不得预取」的
@@ -502,6 +506,23 @@ test(
     // 展开材料触发的请求必须都属于当前展开的末题。
     for (const url of eagerMaterialRequests())
       expect(decodeURIComponent(url)).toContain(lastQuestionId);
+
+    const lastTile = navigation.getByRole("button", {
+      name: "第 130 题，未作答，判错",
+      exact: true,
+    });
+    for (const width of [390, 1110]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(
+        `/s/assignments/${assignmentId}?reviewQuestion=${encodeURIComponent(lastQuestionId)}`,
+      );
+      await expect(last).toBeInViewport();
+      await entry.click();
+      await expect(lastTile).toHaveAttribute("aria-current", "location");
+      await expect(lastTile).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press("Escape");
+      await expect(entry).toBeFocused();
+    }
   },
 );
 

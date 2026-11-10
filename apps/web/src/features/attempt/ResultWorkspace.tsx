@@ -165,27 +165,17 @@ export function ResultWorkspace({
             ))}
           </select>
         </label>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <ResultQuestionNavigator
-            questions={questions}
-            released={released}
-            scope={location.scope}
-            currentId={location.currentId}
-            onJump={(id) => {
-              jumping.current = id;
-              setOpen(false);
-            }}
-          />
-          {range.length === 0 && location.scope !== "all" && (
-            <Button
-              variant="outline"
-              className="mt-3 min-h-11"
-              onClick={() => location.setScope("all")}
-            >
-              返回全部题目
-            </Button>
-          )}
-        </div>
+        <ResultQuestionNavigator
+          questions={questions}
+          released={released}
+          scope={location.scope}
+          currentId={location.currentId}
+          onJump={(id) => {
+            jumping.current = id;
+            setOpen(false);
+          }}
+          onResetScope={() => location.setScope("all")}
+        />
       </AttemptNavigationDialog>
     </AttemptWorkspace>
   );

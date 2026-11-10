@@ -1,9 +1,11 @@
 import type { AttemptResultQuestion } from "@tutor/contract";
+import { Button } from "@/components/ui/button";
 import {
   inReviewScope,
   type ReviewScope,
   reviewQuestionState,
 } from "./result-review-model";
+import { useCurrentQuestionScroll } from "./use-current-question-scroll";
 
 export function ResultQuestionNavigator({
   questions,
@@ -11,18 +13,31 @@ export function ResultQuestionNavigator({
   scope,
   currentId,
   onJump,
+  onResetScope,
 }: {
   questions: readonly AttemptResultQuestion[];
   released: boolean;
   scope: ReviewScope;
   currentId: string | null;
   onJump(id: string): void;
+  onResetScope(): void;
 }) {
   const items = questions
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => inReviewScope(question, scope, released));
+  const currentVisible = items.some(
+    ({ question }) => question.questionId === currentId,
+  );
+  const { grid, currentTile } = useCurrentQuestionScroll<HTMLElement>(
+    currentVisible ? currentId : null,
+    scope,
+  );
   return (
-    <nav aria-label="回看题号" className="min-w-0">
+    <nav
+      ref={grid}
+      aria-label="回看题号"
+      className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+    >
       <p className="mb-3 text-xs text-muted-foreground">
         {released
           ? "✓ 答对 · × 判错 · ◷ 待批 · — 未作答"
@@ -34,6 +49,7 @@ export function ResultQuestionNavigator({
         <ol className="grid grid-cols-[repeat(auto-fill,44px)] gap-2 p-1">
           {items.map(({ question, index }) => {
             const state = reviewQuestionState(question, released);
+            const current = currentId === question.questionId;
             const label = [
               state.unanswered ? "未作答" : "已作答",
               ...(released
@@ -49,13 +65,12 @@ export function ResultQuestionNavigator({
             return (
               <li key={question.questionId}>
                 <button
+                  ref={current ? currentTile : undefined}
                   type="button"
                   aria-label={`第 ${index + 1} 题，${label}`}
-                  aria-current={
-                    currentId === question.questionId ? "location" : undefined
-                  }
+                  aria-current={current ? "location" : undefined}
                   onClick={() => onJump(question.questionId)}
-                  className={`relative flex size-11 items-center justify-center rounded-md border text-sm tabular-nums outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${!released ? "border-border bg-card" : state.verdict === true ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : state.verdict === false ? "border-red-600 bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200" : "border-amber-600 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200"} ${currentId === question.questionId ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`}
+                  className={`relative flex size-11 items-center justify-center rounded-md border text-sm tabular-nums outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${!released ? "border-border bg-card" : state.verdict === true ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : state.verdict === false ? "border-red-600 bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200" : "border-amber-600 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200"} ${current ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`}
                 >
                   {index + 1}
                   <span
@@ -77,6 +92,15 @@ export function ResultQuestionNavigator({
             );
           })}
         </ol>
+      )}
+      {items.length === 0 && scope !== "all" && (
+        <Button
+          variant="outline"
+          className="mt-3 min-h-11"
+          onClick={onResetScope}
+        >
+          返回全部题目
+        </Button>
       )}
     </nav>
   );
