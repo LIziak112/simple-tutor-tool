@@ -51,7 +51,7 @@ export const PERSONAL_MCP_PATH = "/mcp/personal";
  * 个人入口开放的教师侧工具白名单（第 3 版 §3「个人入口首版开放导入预览、本人内容
  * 管理和本人的学习任务所需工具；班级名册、全班学情和可跨学生导出的工具不出现」）。
  * 服务端按本清单过滤注册（白名单外的工具在个人实例上结构上不存在），前端连接页
- * 据此说明权限范围；学生侧 12 个工具全部开放（清单见服务端 STUDENT_MCP_TOOL_NAMES）。
+ * 据此说明权限范围；学生侧 15 个工具全部开放（清单见服务端 STUDENT_MCP_TOOL_NAMES）。
  *
  * 不开放：list_students / create_assignment / delete_assignment / list_assignments /
  * get_report / save_report / get_question_stats / update_response_answer /

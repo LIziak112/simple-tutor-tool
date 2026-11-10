@@ -163,13 +163,10 @@ export const sessions = sqliteTable("sessions", {
   createdAt: text("created_at").notNull(),
 });
 
-/** teachers 表行类型（SELECT 结果） */
+/** teachers / sessions 表的行类型（SELECT 结果）与插入类型 */
 export type Teacher = typeof teachers.$inferSelect;
-/** teachers 表插入类型 */
 export type NewTeacher = typeof teachers.$inferInsert;
-/** sessions 表行类型（SELECT 结果） */
 export type Session = typeof sessions.$inferSelect;
-/** sessions 表插入类型 */
 export type NewSession = typeof sessions.$inferInsert;
 
 /**
@@ -2794,5 +2791,6 @@ export const questionProcessBatches = sqliteTable(
     }),
   ],
 );
-// 资料附件表（模块 6 第一步）独立成文件 schema-attachments.ts（本文件只降不升）
+// 新表独立成文件（本文件只降不升）：资料附件 schema-attachments.ts / 随笔 schema-memos.ts
 export * from "./schema-attachments";
+export * from "./schema-memos";

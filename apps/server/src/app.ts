@@ -329,6 +329,17 @@ export function createApp(options: CreateAppOptions) {
         message: "文件超过 20 MB 上传上限，请压缩或拆分后重试",
       }),
     )
+    // 模块 5 第一步：随笔媒体上传（语音 20 MB 契约限额 + multipart 余量取 21 MB；
+    // 图片 10 MB 的精确限额由 memo-service 按实际字节校验）
+    .use(
+      "/api/student/memos/media",
+      guardBodyLimit({
+        method: "POST",
+        limit: ATTACHMENT_UPLOAD_BODY_LIMIT,
+        code: "MEMO_TOO_LARGE",
+        message: "录音或图片超过上传上限（语音 20 MB / 图片 10 MB）",
+      }),
+    )
     // SAI-13 AI 任务文字请求（create / update-pending 小信封；材料 multipart
     // 与追问入口归后续批次，届时按 §9 材料粗防线另配）
     .use("/api/student/ai/tasks", guardBodyLimit(AI_TASK_JSON_GUARD))

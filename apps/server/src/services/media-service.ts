@@ -147,8 +147,9 @@ export function statMediaSrc(dataDir: string, src: string): MediaSrcStat {
 /**
  * 魔数检测：命中白名单返回规范化扩展名（JPEG → jpg），其余 null。
  * 只看文件头字节，不看上传方声明的 MIME/文件名（两者都可伪造）。
+ * 导出供随笔图片 / 手写（memo-format）复用同一份白名单。
  */
-function detectImageExt(
+export function detectImageExt(
   bytes: Uint8Array,
 ): "png" | "jpg" | "webp" | "gif" | null {
   /** bytes 从 offset 起是否以 signature 开头 */

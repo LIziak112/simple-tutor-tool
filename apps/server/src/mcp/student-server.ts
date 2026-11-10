@@ -33,6 +33,7 @@ import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
 import { submitRubricOpinion } from "../services/rubric-review-service.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
+import { registerStudentMemoTools } from "./student-memo-tools";
 import { guard, jsonContent } from "./tool-result";
 
 /**
@@ -86,6 +87,10 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "submit_rubric_opinion",
   "submit_attempt_review_result",
   "student_submit_practice_question",
+  // 模块 5 第一步随笔（student-memo-tools.ts）
+  "list_my_memos",
+  "add_memo",
+  "get_memo_media",
 ] as const;
 
 /**
@@ -130,7 +135,7 @@ export interface StudentMcpServerDeps {
 }
 
 /**
- * 创建一台绑定单学生的 MCP 服务器实例（12 工具，见 STUDENT_MCP_TOOL_NAMES）。
+ * 创建一台绑定单学生的 MCP 服务器实例（15 工具，见 STUDENT_MCP_TOOL_NAMES）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
@@ -151,6 +156,7 @@ export function registerStudentTools(
   deps: StudentMcpServerDeps,
 ): void {
   const { db, dataDir, studentId, hmacSecret } = deps;
+  registerStudentMemoTools(server, { db, dataDir, studentId });
 
   server.registerTool(
     "check_ai_reply",

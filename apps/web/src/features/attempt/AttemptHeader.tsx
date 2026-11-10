@@ -1,4 +1,4 @@
-import { ArrowLeft, Info, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, Info, MoreHorizontal, NotebookPen } from "lucide-react";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { MemoQuickCaptureDialog } from "@/features/memos/MemoQuickCapture";
 import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { AttemptEditorNotice, useAttemptEditor } from "./AttemptEditorContext";
 
@@ -38,6 +39,8 @@ export function AttemptHeader({
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // 随手记（模块 5 第一步）：作答页有吸底操作条，浮动按钮会压住它，入口放菜单里
+  const [memoOpen, setMemoOpen] = useState(false);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const trigger = moreTriggerRef ?? ownTrigger;
   const editor = useAttemptEditor();
@@ -86,6 +89,10 @@ export function AttemptHeader({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-w-[calc(100vw-24px)]">
             {menuItems}
+            <DropdownMenuItem onSelect={() => setMemoOpen(true)}>
+              <NotebookPen aria-hidden className="size-4" />
+              随手记
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setDetailsOpen(true)}>
               <Info aria-hidden className="size-4" />
               练习信息
@@ -94,6 +101,7 @@ export function AttemptHeader({
         </DropdownMenu>
       </div>
       <AttemptEditorNotice />
+      <MemoQuickCaptureDialog open={memoOpen} onOpenChange={setMemoOpen} />
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent
           className="max-h-[70dvh] overflow-y-auto"

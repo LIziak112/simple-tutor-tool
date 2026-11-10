@@ -409,6 +409,9 @@ const studentRoutes = (() => {
   const StudentWrongQuestionsPage = lazy(
     () => import("./pages/student/StudentWrongQuestionsPage"),
   );
+  const StudentMemosPage = lazy(
+    () => import("./pages/student/StudentMemosPage"),
+  );
   const StudentQuestionNotebookPage = lazy(
     () => import("./pages/student/StudentQuestionNotebookPage"),
   );
@@ -583,6 +586,15 @@ const studentRoutes = (() => {
           // 旧路径重定向（书签/历史链接不 404）
           path="records/wrong"
           element={<Navigate to="/s/wrong" replace />}
+        />
+        <Route
+          // 模块 5 第一步：随笔记录端（默认仅本人；浮动「随手记」在布局层）
+          path="memos"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentMemosPage />
+            </Suspense>
+          }
         />
         <Route
           // T6R.15：题目笔记本（按题聚合跨来源已交卷轮次——原稿/订正/补充稿

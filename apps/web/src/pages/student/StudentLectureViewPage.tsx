@@ -21,6 +21,8 @@ import {
   scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
+import { usePublishLearningFocus } from "@/features/memos/learning-focus-store";
+import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
@@ -61,6 +63,17 @@ export default function StudentLectureViewPage() {
   /** 课程上下文（课程目录/讲义列表带出；缺省时服务端取第一个可见该讲义的课程） */
   const courseId = searchParams.get("courseId") ?? undefined;
   const lectureQuery = useStudentLecture(id, courseId);
+  // 随笔上下文锚（模块 5 第一步）：在读哪篇讲义
+  usePublishLearningFocus(
+    id === "" || lectureQuery.data === undefined
+      ? null
+      : {
+          kind: "lecture",
+          lectureId: id,
+          sectionId: null,
+          label: lectureQuery.data.title.slice(0, 120) || "讲义",
+        },
+  );
   const isDesktop = useDesktopViewport();
   /** 桌面侧栏默认展开；窄屏只通过阅读栏进入目录。 */
   const [outlineOpen, setOutlineOpen] = useState(true);
@@ -268,6 +281,7 @@ export default function StudentLectureViewPage() {
             {isDesktop && outlineOpen ? "收起目录" : "展开目录"}
           </button>
         )}
+        <MemoQuickCaptureButton />
       </nav>
 
       <Dialog

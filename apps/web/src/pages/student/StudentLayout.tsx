@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Loader2,
   LogOut,
+  NotebookPen,
   School,
   Settings2,
 } from "lucide-react";
@@ -17,6 +18,8 @@ import { useLogoutPersonal } from "@/features/auth/personal-auth";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
+import { MemoQuickCapture } from "@/features/memos/MemoQuickCapture";
+import { bindMemoOutboxAccount } from "@/features/memos/memo-outbox";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
@@ -31,15 +34,17 @@ import { ScreenError, ScreenLoading } from "./StudentScreen";
  * 顶栏三段式——左侧姓名头像、中间分段式导航、右侧退出）。
  * 守卫：me 查询 pending → 全屏加载；401 → 跳 /s/login；其他错误 → 错误态 + 重试。
  * 布局：内容区居中限宽；iPad 竖屏单栏，横屏（lg:）加宽；导航项触控目标 ≥44px，
- * 窄屏导航独立一行并缩短标签，五个入口始终可达。
+ * 窄屏导航独立一行并缩短标签，全部入口始终可达。
  * 讲义不占顶栏入口：/s/lectures 保留为二级页面（首页「按讲义浏览」进入，
  * 讲义的主要入口是课程目录）。
  * 个人账号（模块 0，accountKind=personal）：本布局即「学习视角」——导航去掉
  * 「我的作业」（没有老师派作业），顶栏多一枚「管理视角」切换（/t，教师端布局），
  * 退出同时结束学习 / 管理两枚会话；其余页面与班级学生完全一致。
+ * 随笔（模块 5 第一步）：导航加「随笔」入口，布局右下角常驻浮动「随手记」
+ * （任意页面可记、锚自动带上）；待补传队列按当前学生绑定。
  */
 
-/** 学生端分区导航（首页 / 我的作业 / 课程 / 错题本 / 我的记录；错题本 2026-10 起为一级功能） */
+/** 学生端分区导航（首页 / 我的作业 / 课程 / 错题本 / 我的记录 / 随笔） */
 const NAV_ITEMS = [
   { to: "/s/home", label: "首页", icon: Home },
   {
@@ -51,6 +56,7 @@ const NAV_ITEMS = [
   { to: "/s/courses", label: "课程", icon: School },
   { to: "/s/wrong", label: "错题本", icon: BookX },
   { to: "/s/records", label: "我的记录", shortLabel: "记录", icon: History },
+  { to: "/s/memos", label: "随笔", icon: NotebookPen },
 ] as const;
 
 /** 个人账号的导航：没有老师派作业，去掉「我的作业」 */
@@ -77,6 +83,11 @@ export function StudentLayout() {
     return () => bindKeyboardBindingsAccount(null);
   }, [meQuery.data?.id]);
   useBindInkProfiles("student", meQuery.data?.id);
+  // 随笔待补传队列按账号隔离（模块 5 第一步）
+  useEffect(() => {
+    void bindMemoOutboxAccount(meQuery.data?.id ?? null);
+    return () => void bindMemoOutboxAccount(null);
+  }, [meQuery.data?.id]);
   const logoutStudentMutation = useLogoutStudent();
   const logoutPersonalMutation = useLogoutPersonal();
   // 退出目标：登出清缓存后 me 先变 401、守卫先于 mutate 回调跳转，个人账号
@@ -205,7 +216,7 @@ export function StudentLayout() {
               <nav aria-label="学生端导航" className="w-full min-w-0 lg:flex-1">
                 <div
                   className={`grid min-w-0 gap-1 rounded-xl bg-muted p-1 ${
-                    navItems.length === 4 ? "grid-cols-4" : "grid-cols-5"
+                    navItems.length === 5 ? "grid-cols-5" : "grid-cols-6"
                   }`}
                 >
                   {navItems.map((item) => (
@@ -261,6 +272,7 @@ export function StudentLayout() {
         >
           <Outlet />
         </main>
+        {!workspace && <MemoQuickCapture />}
       </div>
     </StudentWorkspaceContext.Provider>
   );

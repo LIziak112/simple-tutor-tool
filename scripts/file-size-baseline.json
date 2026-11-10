@@ -1,6 +1,6 @@
 {
   "apps/server/src/db/backfill.ts": 1022,
-  "apps/server/src/db/schema.ts": 2798,
+  "apps/server/src/db/schema.ts": 2796,
   "apps/server/src/mcp/server.ts": 1274,
   "apps/server/src/routes/student.ts": 1272,
   "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1408,

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 import {
   ApiError,
   fetchStudentMe,
@@ -13,7 +14,7 @@ import StudentLayout from "./StudentLayout";
 
 /**
  * 学生端布局与守卫测试（T2.3）：未登录跳 /s/login；已登录渲染顶栏
- * （姓名 / 五分区导航 / 退出）；退出调 logout 接口并回登录页。
+ * （姓名 / 六分区导航 / 退出）；退出调 logout 接口并回登录页。
  * 2026-10 学生端 IA 调整：错题本升为一级导航（/s/wrong）。
  * 模块 0 个人账号：导航无「我的作业」、顶栏有「管理视角」切换、退出同时结束两枚会话。
  */
@@ -88,7 +89,7 @@ describe("StudentLayout · 个人账号（模块 0）", () => {
     accountKind: "personal",
   };
 
-  it("导航四分区（无「我的作业」）+ 「管理视角」切换指向 /t", async () => {
+  it("导航五分区（无「我的作业」）+ 「管理视角」切换指向 /t", async () => {
     mockedMe.mockResolvedValue(PERSONAL);
     renderLayout();
 
@@ -103,6 +104,7 @@ describe("StudentLayout · 个人账号（模块 0）", () => {
       ["课程", "/s/courses"],
       ["错题本", "/s/wrong"],
       ["我的记录", "/s/records"],
+      ["随笔", "/s/memos"],
     ] as const) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
     }
@@ -158,7 +160,7 @@ describe("StudentLayout", () => {
     });
   });
 
-  it("已登录渲染顶栏：姓名、五分区导航（首页/我的作业/课程/错题本/我的记录）与退出按钮", async () => {
+  it("已登录渲染顶栏：姓名、六分区导航（首页/我的作业/课程/错题本/我的记录/随笔）与退出按钮", async () => {
     mockedMe.mockResolvedValue(STUDENT);
     renderLayout();
 
@@ -183,6 +185,12 @@ describe("StudentLayout", () => {
       "href",
       "/s/records",
     );
+    // 模块 5 第一步：随笔入口 + 右下角浮动「随手记」
+    expect(screen.getByRole("link", { name: "随笔" })).toHaveAttribute(
+      "href",
+      "/s/memos",
+    );
+    expect(screen.getByRole("button", { name: "随手记" })).toBeInTheDocument();
     // 顶栏不再有讲义入口（/s/lectures 保留为二级页面）
     expect(
       screen.queryByRole("link", { name: "讲义" }),
@@ -191,6 +199,36 @@ describe("StudentLayout", () => {
     expect(screen.getAllByRole("button", { name: /退出/ })).toHaveLength(2);
     // 子路由正常渲染
     expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
+  });
+
+  it("工作区页面（作答 / 结果 / 讲练）不浮「随手记」：自带吸底操作条，入口在各自工具栏", async () => {
+    mockedMe.mockResolvedValue(STUDENT);
+    function WorkspaceStub() {
+      useStudentWorkspace();
+      return <p data-testid="route-stub">作答页</p>;
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/s/attempts/a1"]}>
+          <Routes>
+            <Route path="/s" element={<StudentLayout />}>
+              <Route path="attempts/:id" element={<WorkspaceStub />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId("route-stub")).toHaveTextContent("作答页");
+    expect(
+      screen.queryByRole("button", { name: /^随手记/ }),
+    ).not.toBeInTheDocument();
+    // 工作区连顶栏导航也不渲染（页面自带头部）
+    expect(
+      screen.queryByRole("link", { name: "随笔" }),
+    ).not.toBeInTheDocument();
   });
 
   it("点击退出调用接口并回登录页", async () => {
