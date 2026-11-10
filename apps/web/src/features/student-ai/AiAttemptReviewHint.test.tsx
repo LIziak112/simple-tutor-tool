@@ -1,16 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type {
   AiAttemptReviewPreviewData,
   AiAttemptReviewTaskPublic,
 } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   fetchStudentAiAttemptReviewPreviewApi,
   listStudentAiAttemptReviewsApi,
 } from "@/lib/api";
 import {
+  ATTEMPT_REVIEW_POLL_INTERVAL_MS,
   AiAttemptReviewHint,
   pickAttemptReviewTask,
 } from "./AiAttemptReviewHint";
@@ -155,6 +156,62 @@ describe("结果页「可复盘」提示条", () => {
     renderHint(false);
     expect(mockedList).not.toHaveBeenCalled();
     expect(screen.queryByTestId("attempt-review-hint")).toBeNull();
+  });
+
+  describe("在途任务轮询（#102-01）", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("等待领取 / 处理中：停留页面时每 15 秒重拉列表，报告到了就改报「已到」并停止轮询", async () => {
+      vi.useFakeTimers();
+      mockedList.mockResolvedValue({
+        tasks: [taskOf({ status: "claimed" })],
+        nextCursor: null,
+      });
+      renderHint();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20);
+      });
+      expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
+        "外部 AI 处理中",
+      );
+      expect(mockedList).toHaveBeenCalledTimes(1);
+      mockedList.mockResolvedValue({
+        tasks: [taskOf({ status: "replied", hasResult: true })],
+        nextCursor: null,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS + 50);
+      });
+      expect(mockedList).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
+        "整体复盘报告已到，还没看过",
+      );
+      // 有结局后不再轮询
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS * 3);
+      });
+      expect(mockedList).toHaveBeenCalledTimes(2);
+    });
+
+    it("无任务（可复盘）时不轮询列表", async () => {
+      vi.useFakeTimers();
+      mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+      mockedPreview.mockResolvedValue(PREVIEW);
+      renderHint();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20);
+      });
+      expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
+        "本卷可复盘",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS * 3);
+      });
+      expect(mockedList).toHaveBeenCalledTimes(1);
+      expect(mockedPreview).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("pickAttemptReviewTask：活动任务优先；其余有结局的按创建时间最新优先（#102-03 新失败 / 暂停不被旧报告盖住）；取消与归档不计", () => {

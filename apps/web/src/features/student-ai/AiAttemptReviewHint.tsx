@@ -19,13 +19,17 @@ import {
  *   拒绝即不渲染「可复盘」，不在前端猜；
  * - 只提示不代发：点「预览并确认」打开既有整体复盘面板，本人确认后才创建任务
  *   （创建 / 领取 / 读材料 / 回信交付仍逐步重验权限）；
- * - 有任务时改报进度：等待领取 / 处理中 / 已出报告（未读高亮）/ 已暂停或失败
- *   （面板里可重试 —— 策略变化导致暂停后由本人选择是否继续）。
+ * - 有任务时改报进度：等待领取 / 处理中（停留页面时每 15 秒核对一次，#102-01）
+ *   / 已出报告（未读高亮）/ 已暂停或失败（面板里可重试 —— 策略变化导致暂停后
+ *   由本人选择是否继续）。
  */
 export const attemptReviewListKey = (attemptId: string) =>
   ["student-ai", "attempt-reviews", attemptId] as const;
 export const attemptReviewPreviewKey = (attemptId: string) =>
   ["student-ai", "attempt-review-preview", attemptId] as const;
+
+/** 在途任务（等待领取 / 处理中）时任务列表的轮询间隔；有结局 / 无任务不轮询 */
+export const ATTEMPT_REVIEW_POLL_INTERVAL_MS = 15_000;
 
 /** 等待领取 / 处理中——提示条要跟着它刷新 */
 function isActiveTask(task: AiAttemptReviewTaskPublic): boolean {
@@ -65,6 +69,17 @@ export function AiAttemptReviewHint({
     enabled: released,
     staleTime: 15_000,
     retry: false,
+    // #102-01：学生停在结果页等外部 Agent，等待领取 / 处理中时每 15 秒核对一次
+    // 任务状态（页面隐藏时 TanStack 默认 refetchIntervalInBackground=false 自动
+    // 暂停）；无任务 / 已有结局不轮询——那两种状态只会由本人在面板里的操作改变
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data === undefined) return false;
+      const current = pickAttemptReviewTask(data.tasks);
+      return current !== undefined && isActiveTask(current)
+        ? ATTEMPT_REVIEW_POLL_INTERVAL_MS
+        : false;
+    },
   });
   const task =
     tasksQuery.data === undefined
