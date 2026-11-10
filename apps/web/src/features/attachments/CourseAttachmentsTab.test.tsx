@@ -157,6 +157,48 @@ describe("课程「资料」页签（模块 6 第一步）", () => {
     );
   });
 
+  it("批量上传：同时最多 2 个请求，前一个完成后第 3 个才开始；完成行仍显示文件名与大小（#103-05）", async () => {
+    mockedList.mockResolvedValue({ attachments: [] });
+    const finishers: Array<(value: Attachment) => void> = [];
+    mockedUpload.mockImplementation(
+      () =>
+        new Promise<Attachment>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    renderTab();
+    await screen.findByText(/还没有资料/);
+    pickFiles(
+      ["一.pdf", "二.pdf", "三.pdf"].map(
+        (name) =>
+          new File([new Uint8Array(2048)], name, { type: "application/pdf" }),
+      ),
+    );
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    expect(mockedUpload.mock.calls.map((call) => call[0].name)).toEqual([
+      "一.pdf",
+      "二.pdf",
+    ]);
+    const queue = await screen.findByRole("list", { name: "上传队列" });
+    const third = within(queue)
+      .getByText("三.pdf")
+      .closest("li") as HTMLElement;
+    expect(third.textContent).toContain("等待上传");
+    // 再等一拍：没有第三个请求被发出
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockedUpload).toHaveBeenCalledTimes(2);
+
+    finishers[0]?.({ ...PDF, fileName: "一.pdf" });
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(3));
+    expect(mockedUpload.mock.calls[2]?.[0].name).toBe("三.pdf");
+    const first = within(queue)
+      .getByText("一.pdf")
+      .closest("li") as HTMLElement;
+    expect(first.textContent).toContain("已上传");
+    expect(first.textContent).toContain("2.0 KB");
+    expect(within(first).queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
   it("上传失败：显示服务端原因，可重试、可移除；本地预检失败不发请求", async () => {
     mockedList.mockResolvedValue({ attachments: [] });
     mockedUpload.mockRejectedValueOnce(

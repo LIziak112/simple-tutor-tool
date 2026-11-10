@@ -2,21 +2,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AttachmentVisibility } from "@tutor/contract";
 import { formatAttachmentBytes } from "@tutor/contract";
 import { FileText, RotateCcw, Upload, X } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { listAttachmentsApi, uploadAttachmentApi } from "@/lib/attachment-api";
 import { AttachmentList, VISIBILITY_LABEL } from "./AttachmentList";
 import {
+  completeItem,
   makeUploadItem,
   patchItem,
+  pickUploadsToStart,
+  retryItem,
   type UploadItem,
   uploadStatusText,
 } from "./attachment-upload-queue";
 
 /**
  * 课程「资料」页签（2026-11-10 个人学习迭代模块 6 第一步）：上传 PDF / docx 原件
- * （进度、失败原因、重试、移除）、资料列表（文件名 / 格式 / 大小 / 页数已知时 /
- * 可见性 / 上传时间）、改可见性、下载、删除（软删）。
+ * （进度、失败原因、重试、移除；按入队顺序最多 2 个同时在传，成功后释放文件，
+ * #103-05）、资料列表（文件名 / 格式 / 大小 / 页数已知时 / 可见性 / 上传时间）、
+ * 改可见性、下载、删除（软删）。
  * 可见性文案与契约一致：students =「学生可查看和下载」/ teacher_only =「仅教师可见」。
  */
 export const attachmentsKey = (courseId: string) =>
@@ -40,7 +44,7 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const runUpload = useCallback(
-    async (item: UploadItem) => {
+    async (item: UploadItem, file: File) => {
       setQueue((items) =>
         patchItem(items, item.key, {
           status: "uploading",
@@ -49,7 +53,7 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
         }),
       );
       try {
-        const result = await uploadAttachmentApi(item.file, {
+        const result = await uploadAttachmentApi(file, {
           courseId,
           visibility: item.visibility,
           uploadId: item.uploadId,
@@ -58,9 +62,7 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
               patchItem(items, item.key, { progress: ratio }),
             ),
         });
-        setQueue((items) =>
-          patchItem(items, item.key, { status: "done", progress: 1, result }),
-        );
+        setQueue((items) => completeItem(items, item.key, result));
         void invalidate();
       } catch (err) {
         setQueue((items) =>
@@ -74,15 +76,21 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
     [courseId, invalidate],
   );
 
+  // 调度（#103-05）：队列每次变化后，在传的不足 2 个就按入队顺序补位；
+  // runUpload 同步把条目改为 uploading，下一轮渲染不会再挑到它
+  useEffect(() => {
+    for (const item of pickUploadsToStart(queue)) {
+      if (item.file !== null) void runUpload(item, item.file);
+    }
+  }, [queue, runUpload]);
+
   const onFilesChosen = (files: FileList | null) => {
     if (files === null || files.length === 0) return;
     const items = Array.from(files).map((file) =>
       makeUploadItem(file, defaultVisibility),
     );
-    setQueue((prev) => [...items, ...prev]);
-    for (const item of items) {
-      if (item.status === "queued") void runUpload(item);
-    }
+    // 追加到队尾：显示顺序 = 入队顺序 = 上传顺序
+    setQueue((prev) => [...prev, ...items]);
     if (inputRef.current !== null) inputRef.current.value = "";
   };
 
@@ -140,7 +148,7 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
               <UploadRow
                 key={item.key}
                 item={item}
-                onRetry={() => void runUpload(item)}
+                onRetry={() => setQueue((items) => retryItem(items, item.key))}
                 onRemove={() => removeItem(item.key)}
               />
             ))}
@@ -207,13 +215,13 @@ function UploadRow({
             aria-hidden
             className="size-4 shrink-0 text-muted-foreground"
           />
-          <span className="truncate font-medium">{item.file.name}</span>
+          <span className="truncate font-medium">{item.fileName}</span>
           <span className="shrink-0 text-xs text-muted-foreground">
-            {formatAttachmentBytes(item.file.size)}
+            {formatAttachmentBytes(item.fileSize)}
           </span>
         </span>
         <span className="flex items-center gap-1">
-          {item.status === "failed" && (
+          {item.status === "failed" && item.file !== null && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <RotateCcw aria-hidden className="size-3.5" />
               重试
@@ -223,7 +231,7 @@ function UploadRow({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`移除 ${item.file.name}`}
+              aria-label={`移除 ${item.fileName}`}
               onClick={onRemove}
             >
               <X aria-hidden className="size-4" />
@@ -249,7 +257,7 @@ function UploadRow({
       </div>
       {item.status === "uploading" && (
         <progress
-          aria-label={`${item.file.name} 上传进度`}
+          aria-label={`${item.fileName} 上传进度`}
           className="h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary"
           max={100}
           value={percent}

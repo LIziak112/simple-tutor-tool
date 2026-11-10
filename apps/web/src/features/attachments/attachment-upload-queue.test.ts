@@ -1,8 +1,13 @@
+import type { Attachment } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
+  completeItem,
   localPrecheck,
+  MAX_CONCURRENT_UPLOADS,
   makeUploadItem,
   patchItem,
+  pickUploadsToStart,
+  retryItem,
   uploadStatusText,
 } from "./attachment-upload-queue";
 
@@ -66,6 +71,61 @@ describe("上传队列模型（模块 6 第一步）", () => {
       error: null,
     })[0] as typeof item;
     expect(retried.uploadId).toBe(item.uploadId);
+  });
+
+  it("调度：同时最多 2 个在传，按入队顺序补位；失败 / 完成 / 无文件的不参与（#103-05）", () => {
+    expect(MAX_CONCURRENT_UPLOADS).toBe(2);
+    const items = ["a", "b", "c", "d"].map((k) =>
+      makeUploadItem(file(`${k}.pdf`, 10), "students", k),
+    );
+    expect(pickUploadsToStart(items).map((i) => i.key)).toEqual(["a", "b"]);
+    const oneRunning = patchItem(items, "a", { status: "uploading" });
+    expect(pickUploadsToStart(oneRunning).map((i) => i.key)).toEqual(["b"]);
+    const twoRunning = patchItem(oneRunning, "b", { status: "uploading" });
+    expect(pickUploadsToStart(twoRunning)).toEqual([]);
+    const aDone = completeItem(twoRunning, "a", {} as Attachment);
+    expect(pickUploadsToStart(aDone).map((i) => i.key)).toEqual(["c"]);
+    // 失败的、本地预检失败（没有文件可传）的都不会被挑中
+    const withFailed = [
+      ...patchItem(items, "c", { status: "failed", error: "x" }),
+      makeUploadItem(file("e.png", 10), "students", "e"),
+    ];
+    expect(pickUploadsToStart(withFailed, 10).map((i) => i.key)).toEqual([
+      "a",
+      "b",
+      "d",
+    ]);
+  });
+
+  it("完成项释放 File 但保留展示信息；重试只对持有文件的失败项生效（#103-05）", () => {
+    const item = makeUploadItem(file("a.pdf", 2048), "students", "a");
+    expect(item.file).not.toBeNull();
+    const done = completeItem([item], "a", { id: "x" } as Attachment)[0];
+    expect(done).toMatchObject({
+      status: "done",
+      progress: 1,
+      file: null,
+      fileName: "a.pdf",
+      fileSize: 2048,
+      result: { id: "x" },
+    });
+    const failed = patchItem([item], "a", {
+      status: "failed",
+      error: "网络",
+      progress: 0.3,
+    });
+    const retried = retryItem(failed, "a")[0];
+    expect(retried).toMatchObject({
+      status: "queued",
+      error: null,
+      progress: 0,
+      uploadId: item.uploadId,
+    });
+    // 已完成的不会被重试；本地预检失败的没有文件、也不会
+    expect(retryItem([done as typeof item], "a")[0]?.status).toBe("done");
+    const bad = makeUploadItem(file("图.png", 10), "students", "b");
+    expect(bad.file).toBeNull();
+    expect(retryItem([bad], "b")[0]?.status).toBe("failed");
   });
 
   it("patchItem 只改目标行；状态文案", () => {
