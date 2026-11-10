@@ -65,7 +65,7 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
 
     // 管理视角：教师端布局（桌面宽度侧栏常驻），导航无班级入口，顶栏可切回学习视角
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByRole("link", { name: "切换到管理视角" }).first().click();
+    await page.getByRole("button", { name: "切换到管理视角" }).first().click();
     await expect(page).toHaveURL(/\/t\/library/);
     const teacherNav = page.getByRole("navigation", { name: "教师端导航" });
     await expect(
@@ -74,7 +74,7 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     for (const name of ["学生", "作业", "连接 AI"]) {
       await expect(teacherNav.getByRole("link", { name })).toHaveCount(0);
     }
-    await page.getByRole("link", { name: "切换到学习视角" }).click();
+    await page.getByRole("button", { name: "切换到学习视角" }).click();
     await expect(page).toHaveURL(/\/s\/home/);
 
     // 一枚 token：学习视角 AI 伴学新建 MCP 连接，接口地址为 /mcp/personal
@@ -129,6 +129,34 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await page.goto("/s/home");
     await page.getByRole("button", { name: "退出" }).first().click();
     await expect(page).toHaveURL(/\/p\/login/);
+    expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
+    expect((await page.request.get("/api/student/me")).status()).toBe(401);
+  });
+
+  test("从管理视角退出回个人登录并结束双会话", async ({ page, request }) => {
+    await teacherApiLogin(request);
+    expect(
+      (
+        await request.patch("/api/admin/settings", {
+          data: { personalInviteCode: INVITE_CODE },
+        })
+      ).ok(),
+    ).toBe(true);
+    const registered = await page.request.post(
+      "/api/public/personal/register",
+      {
+        headers: { "x-forwarded-for": "10.91.1.1" },
+        data: {
+          loginName: `个人${uniqueSuffix()}`,
+          password: PERSONAL_PASSWORD,
+          inviteCode: INVITE_CODE,
+        },
+      },
+    );
+    expect(registered.ok()).toBe(true);
+    await page.goto("/t/settings?section=account");
+    await page.getByRole("button", { name: "退出登录" }).click();
+    await expect(page).toHaveURL(/\/p\/login$/);
     expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
     expect((await page.request.get("/api/student/me")).status()).toBe(401);
   });

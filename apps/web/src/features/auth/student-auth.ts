@@ -112,19 +112,21 @@ export function useLoginStudent() {
  * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
  */
 export function useLogoutStudent() {
+  const clearSession = useClearStudentSession();
+  return useMutation({ mutationFn: logoutStudentApi, onSuccess: clearSession });
+}
+
+export function useClearStudentSession() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: logoutStudentApi,
-    onSuccess: async () => {
-      bindDraftSession(null);
-      bindAiDisplayAccount(null);
-      bindPracticePreferenceAccount(null);
-      bindKeyboardBindingsAccount(null);
-      bindGroupMaterialLayoutAccount(null);
-      resetNoteSession();
-      resetAnnotationSession();
-      await clearAccountQueries(queryClient, "student");
-      await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
-    },
-  });
+  return async () => {
+    bindDraftSession(null);
+    bindAiDisplayAccount(null);
+    bindPracticePreferenceAccount(null);
+    bindKeyboardBindingsAccount(null);
+    bindGroupMaterialLayoutAccount(null);
+    resetNoteSession();
+    resetAnnotationSession();
+    await clearAccountQueries(queryClient, "student");
+    await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
+  };
 }

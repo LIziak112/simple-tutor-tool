@@ -60,7 +60,7 @@ beforeEach(() => {
 });
 
 describe("TeacherLayout · 个人账号（模块 0）", () => {
-  it("导航无 学生 / 作业 / 连接 AI；账号标签「个人账号」；顶栏「学习视角」指向 /s/home", async () => {
+  it("导航无 学生 / 作业 / 连接 AI；账号标签「个人账号」；顶栏有学习视角按钮", async () => {
     mockedMe.mockResolvedValue({
       ...TEACHER,
       loginName: "kaosheng",
@@ -83,8 +83,8 @@ describe("TeacherLayout · 个人账号（模块 0）", () => {
     );
     expect(screen.getByText("个人账号 · 管理视角")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "切换到学习视角" }),
-    ).toHaveAttribute("href", "/s/home");
+      screen.getByRole("button", { name: "切换到学习视角" }),
+    ).toBeVisible();
   });
 });
 

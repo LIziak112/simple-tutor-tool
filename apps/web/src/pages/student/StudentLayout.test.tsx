@@ -3,13 +3,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 import {
-  ApiError,
-  fetchStudentMe,
-  logoutStudentApi,
-  logoutTeacher,
-} from "@/lib/api";
+  checkPersonalSessionApi,
+  logoutPersonalApi,
+} from "@/features/auth/personal-api";
+import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { ApiError, fetchStudentMe, logoutStudentApi } from "@/lib/api";
 import StudentLayout from "./StudentLayout";
 
 /**
@@ -25,13 +24,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchStudentMe: vi.fn(),
     logoutStudentApi: vi.fn(),
-    logoutTeacher: vi.fn(),
   };
 });
 
+vi.mock("@/features/auth/personal-api", () => ({
+  checkPersonalSessionApi: vi.fn(),
+  logoutPersonalApi: vi.fn(),
+}));
+
 const mockedMe = vi.mocked(fetchStudentMe);
 const mockedLogout = vi.mocked(logoutStudentApi);
-const mockedLogoutTeacher = vi.mocked(logoutTeacher);
 
 const STUDENT: StudentMeData = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -77,7 +79,8 @@ function renderLayout() {
 beforeEach(() => {
   mockedMe.mockReset();
   mockedLogout.mockReset();
-  mockedLogoutTeacher.mockReset();
+  vi.mocked(checkPersonalSessionApi).mockReset();
+  vi.mocked(logoutPersonalApi).mockReset();
 });
 
 describe("StudentLayout · 个人账号（模块 0）", () => {
@@ -89,7 +92,7 @@ describe("StudentLayout · 个人账号（模块 0）", () => {
     accountKind: "personal",
   };
 
-  it("导航五分区（无「我的作业」）+ 「管理视角」切换指向 /t", async () => {
+  it("导航五分区（无「我的作业」）+ 「管理视角」检查另一侧会话", async () => {
     mockedMe.mockResolvedValue(PERSONAL);
     renderLayout();
 
@@ -108,15 +111,19 @@ describe("StudentLayout · 个人账号（模块 0）", () => {
     ] as const) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
     }
-    const manage = screen.getAllByRole("link", { name: "切换到管理视角" });
-    expect(manage.length).toBeGreaterThan(0);
-    expect(manage[0]).toHaveAttribute("href", "/t");
+    vi.mocked(checkPersonalSessionApi).mockResolvedValue(null);
+    const [manage] = screen.getAllByRole("button", { name: "切换到管理视角" });
+    if (!manage) throw new Error("管理视角按钮缺失");
+    fireEvent.click(manage);
+    expect(await screen.findByText("个人登录页")).toBeVisible();
+    expect(checkPersonalSessionApi).toHaveBeenCalledWith("student");
   });
 
-  it("退出同时调学生与教师登出接口，并回个人登录页", async () => {
+  it("个人退出失败保留页面并能原地重试", async () => {
     mockedMe.mockResolvedValue(PERSONAL);
-    mockedLogout.mockResolvedValue(null);
-    mockedLogoutTeacher.mockResolvedValue(null);
+    vi.mocked(logoutPersonalApi)
+      .mockRejectedValueOnce(new Error("退出失败，请重试"))
+      .mockResolvedValueOnce({ paired: true });
     renderLayout();
 
     const [logoutButton] = await screen.findAllByRole("button", {
@@ -124,10 +131,17 @@ describe("StudentLayout · 个人账号（模块 0）", () => {
     });
     if (!logoutButton) throw new Error("退出按钮缺失");
     fireEvent.click(logoutButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "退出失败，请重试",
+    );
+    expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
+    mockedMe.mockRejectedValueOnce(new ApiError("UNAUTHORIZED", "请登录", 401));
+    fireEvent.click(logoutButton);
 
     await waitFor(() => {
-      expect(mockedLogout).toHaveBeenCalledTimes(1);
-      expect(mockedLogoutTeacher).toHaveBeenCalledTimes(1);
+      expect(logoutPersonalApi).toHaveBeenCalledTimes(2);
+      expect(logoutPersonalApi).toHaveBeenCalledWith("student");
+      expect(mockedLogout).not.toHaveBeenCalled();
       expect(screen.getByTestId("route-stub")).toHaveTextContent("个人登录页");
     });
   });

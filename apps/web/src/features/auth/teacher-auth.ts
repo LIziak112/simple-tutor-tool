@@ -99,12 +99,14 @@ export function useRegisterTeacher() {
 
 /** 退出登录：清理教师及管理数据并重置身份，学生会话继续保留。 */
 export function useLogoutTeacher() {
+  const clearSession = useClearTeacherSession();
+  return useMutation({ mutationFn: logoutTeacher, onSuccess: clearSession });
+}
+
+export function useClearTeacherSession() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: logoutTeacher,
-    onSuccess: async () => {
-      await clearAccountQueries(queryClient, "teacher");
-      await queryClient.resetQueries({ queryKey: teacherMeKey, exact: true });
-    },
-  });
+  return async () => {
+    await clearAccountQueries(queryClient, "teacher");
+    await queryClient.resetQueries({ queryKey: teacherMeKey, exact: true });
+  };
 }

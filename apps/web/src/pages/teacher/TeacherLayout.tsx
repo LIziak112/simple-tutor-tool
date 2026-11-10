@@ -23,6 +23,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
+import { useAccountLoginPath } from "@/features/auth/personal-auth";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
@@ -166,6 +168,7 @@ export function TeacherLayout() {
     return () => document.documentElement.classList.remove("teacher-theme");
   }, []);
   const meQuery = useTeacherMe();
+  const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/t/login");
   useBindInkProfiles("teacher", meQuery.data?.id);
   const { pathname } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
@@ -191,7 +194,7 @@ export function TeacherLayout() {
   if (meQuery.isError) {
     const err = meQuery.error;
     if (err instanceof ApiError && err.code === "UNAUTHORIZED")
-      return <Navigate to="/t/login" replace />;
+      return <Navigate to={loginPath} replace />;
     return (
       <AuthScreenError
         message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
@@ -273,14 +276,15 @@ export function TeacherLayout() {
               </p>
             </div>
             {personal && (
-              <Link
+              <PersonalViewButton
+                from="teacher"
                 to="/s/home"
                 aria-label="切换到学习视角"
                 className="ml-auto flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-primary outline-offset-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
               >
                 <BookOpenCheck aria-hidden className="size-4 shrink-0" />
                 学习视角
-              </Link>
+              </PersonalViewButton>
             )}
           </header>
           <main

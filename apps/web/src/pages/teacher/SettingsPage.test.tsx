@@ -2,19 +2,23 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchTeacherMe, logoutStudentApi, logoutTeacher } from "@/lib/api";
+import { logoutPersonalApi } from "@/features/auth/personal-api";
+import { fetchTeacherMe, logoutTeacher } from "@/lib/api";
 import SettingsPage from "./SettingsPage";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchTeacherMe: vi.fn(),
   logoutTeacher: vi.fn(),
-  logoutStudentApi: vi.fn(),
   // hall-9533：AI 提示词区在页面测试只要求渲染，不取真实接口
   fetchTeacherAiPromptsApi: async () => ({
     slots: [],
     updatedAt: "1970-01-01T00:00:00.000Z",
   }),
+}));
+
+vi.mock("@/features/auth/personal-api", () => ({
+  logoutPersonalApi: vi.fn(),
 }));
 
 // 模拟有未保存本地状态的配置，验证分类切换不会卸载配置控制器。
@@ -96,8 +100,7 @@ describe("设置分类", () => {
       accountKind: "personal",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
-    vi.mocked(logoutTeacher).mockResolvedValue(null);
-    vi.mocked(logoutStudentApi).mockResolvedValue(null);
+    vi.mocked(logoutPersonalApi).mockResolvedValue({ paired: true });
     renderPage("/t/settings?section=account");
     expect(
       await screen.findByText(/退出会同时结束学习视角与管理视角的会话/),
@@ -106,8 +109,8 @@ describe("设置分类", () => {
     await waitFor(() =>
       expect(screen.getByTestId("location")).toHaveTextContent("/p/login"),
     );
-    expect(logoutTeacher).toHaveBeenCalledTimes(1);
-    expect(logoutStudentApi).toHaveBeenCalledTimes(1);
+    expect(logoutPersonalApi).toHaveBeenCalledWith("teacher");
+    expect(logoutTeacher).not.toHaveBeenCalled();
   });
 
   it("普通教师账号分类没有管理入口", async () => {

@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Loader2,
@@ -6,16 +5,13 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
-import { useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { useLogoutPersonal } from "@/features/auth/personal-auth";
 import {
-  teacherMeKey,
-  useLogoutTeacher,
-  useTeacherMe,
-} from "@/features/auth/teacher-auth";
-import { teacherAiPromptsDraftKey } from "@/features/student-ai/ai-prompt-queries";
+  useAccountLoginPath,
+  useLogoutPersonal,
+} from "@/features/auth/personal-auth";
+import { useLogoutTeacher, useTeacherMe } from "@/features/auth/teacher-auth";
 import { TeacherAiSettingsPanel } from "@/features/student-ai/TeacherAiSettingsPanel";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
@@ -36,10 +32,8 @@ const SECTIONS = [
 export function SettingsPage() {
   const meQuery = useTeacherMe();
   const logoutTeacherMutation = useLogoutTeacher();
-  const logoutPersonalMutation = useLogoutPersonal();
-  // 个人账号退出两侧会话、回 /p/login；守卫在 me 变 401 时读这个目标
-  const [logoutTarget, setLogoutTarget] = useState<string | null>(null);
-  const queryClient = useQueryClient();
+  const logoutPersonalMutation = useLogoutPersonal("teacher");
+  const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/t/login");
   const navigate = useNavigate();
   const settingsNavigation = useSettingsNavigation();
   const [searchParams] = useSearchParams();
@@ -48,32 +42,16 @@ export function SettingsPage() {
       ?.id ?? "teaching";
   if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
   if (meQuery.isError || !meQuery.data)
-    return <Navigate to={logoutTarget ?? "/t/login"} replace />;
+    return <Navigate to={loginPath} replace />;
   const personal = meQuery.data.accountKind === "personal";
   const logoutMutation = personal
     ? logoutPersonalMutation
     : logoutTeacherMutation;
-  const loginPath = personal ? "/p/login" : "/t/login";
   function handleLogout() {
     const action = () =>
       logoutMutation.mutate(undefined, {
-        onError: () => setLogoutTarget(null),
-        onSuccess: () => {
-          queryClient.removeQueries({
-            queryKey: ["teacher", "capability-draft"],
-          });
-          queryClient.removeQueries({
-            queryKey: ["teacher", "ai-settings-draft"],
-          });
-          queryClient.removeQueries({
-            queryKey: ["teacher", "practice-feedback-draft"],
-          });
-          queryClient.removeQueries({ queryKey: teacherAiPromptsDraftKey });
-          void queryClient.invalidateQueries({ queryKey: teacherMeKey });
-          navigate(loginPath, { replace: true });
-        },
+        onSuccess: () => navigate(loginPath, { replace: true }),
       });
-    setLogoutTarget(loginPath);
     if (settingsNavigation) settingsNavigation.leave(action);
     else action();
   }

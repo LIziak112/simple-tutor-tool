@@ -34,6 +34,8 @@
 
 ## 个人账号的 MCP 端点（2026-11-09，模块 0）
 
+- 个人账号停用后，已有学习会话与个人 MCP Token 都拒绝访问，学习会话不再续期。
+
 - 个人账号的学习者在「AI 伴学」里新建的 MCP 连接，配置地址是 `/mcp/personal`（配置键 `tutor-personal`），同一枚 token 同时服务教师白名单工具（`describe_capabilities` / `get_dsl_spec` / `lint_markdown` / `import_markdown` / `import_zip` / `upload_image` / 资源库与课程整理 / 本人作答与学习记录只读查询 / `get_student_learning_pack`）与全部学生工具；班级管理类（学生、作业、报告、改答、题目统计）结构上不存在。班级学生的连接仍是 `/mcp/student`，两端点按账号类型互斥。单源：`packages/contract/src/personal-api.ts` 与 `apps/server/src/mcp/personal-server.ts`。
 
 ## 学习记录进入 AI 上下文（2026-10-27，LR-PR5）

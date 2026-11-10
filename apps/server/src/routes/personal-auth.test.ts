@@ -1,6 +1,8 @@
 import type { ApiErr } from "@tutor/contract";
 import {
   adminSettingsOkSchema,
+  personalLogoutOkSchema,
+  personalSessionCheckOkSchema,
   personalSessionOkSchema,
   studentMeOkSchema,
   teacherInfoOkSchema,
@@ -117,6 +119,156 @@ const VALID_REGISTER = {
   password: PERSONAL_PASSWORD,
   inviteCode: INVITE_CODE,
 } as const;
+
+describe("个人会话配对", () => {
+  it.each(["student", "teacher"] as const)(
+    "%s 视角只切换和结束本人双侧会话",
+    async (role) => {
+      const { app, db } = makeApp();
+      await setupAdmin(app);
+      const registered = await registerPersonal(app, VALID_REGISTER);
+      const { data } = personalSessionOkSchema.parse(await registered.json());
+      const cookie = cookieHeaderOf(registered);
+      const check = await req(
+        app,
+        "POST",
+        "/api/public/personal/session/check",
+        { role },
+        { cookie },
+      );
+      expect(check.status).toBe(200);
+      const body = await check.json();
+      assertNoLeak(body);
+      expect(personalSessionCheckOkSchema.parse(body).data).toEqual(data);
+
+      const logout = await req(
+        app,
+        "POST",
+        "/api/public/personal/session/logout",
+        { role },
+        { cookie },
+      );
+      expect(logout.status).toBe(200);
+      expect(
+        personalLogoutOkSchema.parse(await logout.json()).data.paired,
+      ).toBe(true);
+      expect(logout.headers.getSetCookie()).toHaveLength(2);
+      for (const side of ["student", "teacher"]) {
+        expect(
+          (await req(app, "GET", `/api/${side}/me`, undefined, { cookie }))
+            .status,
+        ).toBe(401);
+      }
+      db.$client.close();
+    },
+  );
+
+  it("另一侧是班级会话时拒绝切换，并只结束个人学习会话", async () => {
+    const { app, db } = makeApp();
+    const admin = await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const student = cookieHeaderOf(registered)
+      .split("; ")
+      .find((entry) => entry.startsWith("tutor_student_session="));
+    expect(student).toBeDefined();
+    const cookie = `${admin.cookie}; ${student}`;
+    for (const action of ["check", "logout"]) {
+      const response = await req(
+        app,
+        "POST",
+        `/api/public/personal/session/${action}`,
+        { role: "student" },
+        { cookie },
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      assertNoLeak(body);
+      expect(body).toEqual({
+        ok: true,
+        data: action === "check" ? null : { paired: false },
+      });
+      const cleared = response.headers.getSetCookie();
+      expect(cleared).toHaveLength(action === "check" ? 0 : 1);
+      if (action === "logout") {
+        expect(cleared[0]).toMatch(/^tutor_student_session=/);
+      }
+    }
+    expect(
+      (await req(app, "GET", "/api/teacher/me", undefined, { cookie })).status,
+    ).toBe(200);
+    expect(
+      (await req(app, "GET", "/api/student/me", undefined, { cookie })).status,
+    ).toBe(401);
+    db.$client.close();
+  });
+
+  it("拒绝无当前个人会话和无效视角", async () => {
+    const { app, db } = makeApp();
+    const admin = await setupAdmin(app);
+    for (const action of ["check", "logout"]) {
+      const path = `/api/public/personal/session/${action}`;
+      expect((await req(app, "POST", path, { role: "student" })).status).toBe(
+        401,
+      );
+      expect(
+        (
+          await req(
+            app,
+            "POST",
+            path,
+            { role: "teacher" },
+            { cookie: admin.cookie },
+          )
+        ).status,
+      ).toBe(401);
+      expect((await req(app, "POST", path, { role: "admin" })).status).toBe(
+        400,
+      );
+    }
+    db.$client.close();
+  });
+
+  it("另一侧会话过期时引导重登，当前侧仍可单独退出", async () => {
+    const { app, db } = makeApp();
+    await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const { data } = personalSessionOkSchema.parse(await registered.json());
+    const cookie = cookieHeaderOf(registered);
+    db.update(sessions)
+      .set({ expiresAt: "2020-01-01T00:00:00.000Z" })
+      .where(eq(sessions.subjectId, data.teacher.id))
+      .run();
+    const check = await req(
+      app,
+      "POST",
+      "/api/public/personal/session/check",
+      {
+        role: "student",
+      },
+      { cookie },
+    );
+    expect(
+      personalSessionCheckOkSchema.parse(await check.json()).data,
+    ).toBeNull();
+    const logout = await req(
+      app,
+      "POST",
+      "/api/public/personal/session/logout",
+      {
+        role: "student",
+      },
+      { cookie },
+    );
+    expect(personalLogoutOkSchema.parse(await logout.json()).data.paired).toBe(
+      false,
+    );
+    expect(logout.headers.getSetCookie()).toHaveLength(1);
+    expect(
+      (await req(app, "GET", "/api/student/me", undefined, { cookie })).status,
+    ).toBe(401);
+    db.$client.close();
+  });
+});
 
 it("停用个人账号后两侧会话均失效，学习侧不会续期", async () => {
   const { app, db } = makeApp();

@@ -45,6 +45,7 @@ import {
 } from "../services/student-service";
 import { readSpecFile } from "../spec-files";
 import { createPublicAiShareRoutes } from "./public-ai-share";
+import { createPublicPersonalSessionRoutes } from "./public-personal-session";
 
 /**
  * 公开路由（无需登录），挂载在 /api/public。
@@ -228,5 +229,6 @@ export function createPublicRoutes(
       // —— AI 分享票据读端点（SAI-29，B15）：无会话，票据即授权；正文
       //    HTML 与材料附件，防线在 student-ai-share/materials 服务层
       .route("/ai/share", createPublicAiShareRoutes(db, dataDir))
+      .route("/personal/session", createPublicPersonalSessionRoutes(db, secure))
   );
 }
