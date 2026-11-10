@@ -29,6 +29,7 @@
 1. 多步任务先列计划，等确认后再连续执行。
 2. **先写失败测试再改实现**（TDD）。Bug 先复现、定位根因再修。纯样式/文案/文档可豁免测试，但需说明理由。
 3. 交付代码、测试、类型、生成产物、相关文档需在同一 PR 中交齐。
+4. 合入 `v2` 前按 [项目代码审查技能](.agents/skills/ownclass-code-review/SKILL.md) 对本次任务完整 diff 依次做简化、正确性和按需安全审查。触及学生载荷或答案数据时必须做安全审查。独立验收使用 [requesting-code-review](.agents/skills/requesting-code-review/SKILL.md)。
 
 ## 五、文件规模与拆分
 

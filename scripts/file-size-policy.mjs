@@ -14,7 +14,7 @@ export const DOC_PATH = "docs/约定/文件规模约束.md";
 export const CODE_EXT = /\.[cm]?[jt]sx?$/;
 
 // 豁免（仓库根相对路径，/ 分隔）：测试与 E2E、fixtures、声明文件、数据库迁移、生成产物、
-// 技能镜像（源头 .claude/skills 受检，.codex / .zcode 镜像不重复计）、计划 / 报告 / 样例 / 文档。
+// 技能镜像（源头 .claude/skills 受检，.codex 镜像不重复计）、计划 / 报告 / 样例 / 文档。
 export const EXEMPT_PATTERNS = [
   /\.(?:test|spec)\.[cm]?[jt]sx?$/,
   /\.d\.ts$/,
@@ -23,7 +23,7 @@ export const EXEMPT_PATTERNS = [
   /(?:^|\/)(?:test|tests|__tests__|fixtures|__fixtures__|__mocks__|__snapshots__)\//,
   /^apps\/server\/src\/db\/migrations\//,
   /^(?:docs|plans|reports|samples|dsl-kit)\//,
-  /^\.(?:codex|zcode)\/skills\//,
+  /^\.codex\/skills\//,
   /(?:^|\/)generated\//,
   /\.(?:gen|generated)\.[cm]?[jt]sx?$/,
 ];

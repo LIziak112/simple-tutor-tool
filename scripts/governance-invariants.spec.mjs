@@ -27,11 +27,7 @@ function fixture() {
   writeFileSync(join(root, ".codexrules"), "见 AGENTS.md\n");
   mkdirSync(join(root, "docs"));
   writeFileSync(join(root, "docs/a.md"), "x\n");
-  for (const dir of [
-    ".claude/skills/s1",
-    ".codex/skills/s1",
-    ".zcode/skills/s1",
-  ]) {
+  for (const dir of [".claude/skills/s1", ".codex/skills/s1"]) {
     mkdirSync(join(root, dir), { recursive: true });
     writeFileSync(join(root, dir, "SKILL.md"), "same\n");
   }
@@ -96,21 +92,18 @@ test("本地链接：跳过外链与锚点，失效路径报错", () => {
   }
 });
 
-test("技能镜像：严格镜像缺失或漂移报错，部分镜像只校验已有项", () => {
+test("Claude 技能的 Codex 镜像缺失或漂移报错", () => {
   const root = fixture();
   try {
     mkdirSync(join(root, ".claude/skills/s2"));
     writeFileSync(join(root, ".claude/skills/s2/SKILL.md"), "new\n");
-    let errors = checkRepo(root).errors;
-    assert.ok(errors.some((e) => e.includes(".codex/skills 缺少技能镜像 s2")));
-    assert.ok(!errors.some((e) => e.includes(".zcode")));
+    assert.deepEqual(checkRepo(root).errors, [".codex/skills 缺少技能镜像 s2"]);
     cpSync(join(root, ".claude/skills/s2"), join(root, ".codex/skills/s2"), {
       recursive: true,
     });
-    writeFileSync(join(root, ".zcode/skills/s1/SKILL.md"), "drift\n");
-    errors = checkRepo(root).errors;
-    assert.deepEqual(errors, [
-      ".zcode/skills/s1/SKILL.md 与 .claude/skills/s1/SKILL.md 不一致（改技能须同步镜像）",
+    writeFileSync(join(root, ".codex/skills/s1/SKILL.md"), "drift\n");
+    assert.deepEqual(checkRepo(root).errors, [
+      ".codex/skills/s1/SKILL.md 与 .claude/skills/s1/SKILL.md 不一致（改技能须同步镜像）",
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });

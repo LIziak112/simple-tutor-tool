@@ -16,6 +16,7 @@ test("文件系统夹具与未知路径不作为纯说明文档", () => {
     "docs/待处理的问题/练习六第8题修正题源.md",
     "docs/dsl/完整样例.md",
     ".claude/skills/lecture-practice/samples/a.md",
+    ".agents/skills/ownclass-code-review/samples/a.md",
     "new-config.json",
   ]) {
     assert.equal(planCi([path]).run, true);
@@ -59,7 +60,20 @@ test("未知应用路径保留 E2E 全量；仅 spec 选测保留冒烟", () => 
 });
 
 test("技能说明跳过，运行脚本和生成内容不跳过", () => {
-  assert.equal(planCi([".claude/skills/task-workflow/SKILL.md"]).run, false);
+  for (const path of [
+    ".claude/skills/task-workflow/SKILL.md",
+    ".codex/skills/task-workflow/SKILL.md",
+    ".agents/skills/ownclass-code-review/SKILL.md",
+    ".agents/skills/ownclass-code-review/references/checklist.md",
+    ".agents/skills/requesting-code-review/code-reviewer.md",
+    ".agents/skills/requesting-code-review/LICENSE",
+  ]) {
+    assert.equal(planCi([path]).run, false, path);
+  }
+  assert.equal(
+    planCi([".agents/skills/ownclass-code-review/scripts/run.mjs"]).full,
+    true,
+  );
   assert.equal(
     planCi([".claude/skills/lecture-practice/scripts/run.cjs"]).full,
     true,
