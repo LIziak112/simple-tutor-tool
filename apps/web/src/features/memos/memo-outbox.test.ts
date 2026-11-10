@@ -22,8 +22,18 @@ import {
  * 随笔待补传队列：先落本机再上传；网络失败保留、联网后按序补传；业务拒绝标
  * failedMessage 不自动重试、可丢弃；按账号隔离；补传成功回调。
  * 审查修复（PR #104 报告）：账号切换与本机写入 / 补传交错时旧账号数据不进新队列
- * （#104-01）。
+ * （#104-01）；本机写入失败时「返回即有副本」——立即上传，传不上去就拒绝（#104-02）。
  */
+
+/** set 必败的后端（IndexedDB 不可用 / 配额满） */
+function brokenSetBackend(base: KVStoreBackend): KVStoreBackend {
+  return {
+    ...base,
+    set: async () => {
+      throw new Error("QuotaExceededError");
+    },
+  };
+}
 
 /** 可挂起的 set：测试在写入途中切账号 */
 function gatedSetBackend(base: KVStoreBackend): {
@@ -183,6 +193,47 @@ describe("memo-outbox", () => {
   });
 });
 
+describe("memo-outbox：本机写入失败（#104-02）", () => {
+  it("本机写不进、上传也失败：拒绝并说明，不留内存条目（避免恢复输入后重发成两条）", async () => {
+    installMemoOutboxBackendForTest(brokenSetBackend(backend));
+    await bindMemoOutboxAccount("stu-a");
+    mockedText.mockRejectedValue(new MemoNetworkError());
+    const probe = queueProbe();
+    await act(async () => {
+      await expect(enqueueMemo(TEXT_INPUT)).rejects.toThrow(/本机保存失败/);
+    });
+    expect(mockedText).toHaveBeenCalledTimes(1);
+    expect(probe.current).toEqual([]);
+    expect(await backend.getAll('["memo-outbox"')).toEqual([]);
+  });
+
+  it("本机写不进、上传被业务拒绝：拒绝信息带服务端说明", async () => {
+    installMemoOutboxBackendForTest(brokenSetBackend(backend));
+    await bindMemoOutboxAccount("stu-a");
+    mockedText.mockRejectedValue(
+      new ApiError("VALIDATION_ERROR", "正文超过 5000 字", 400),
+    );
+    await expect(enqueueMemo(TEXT_INPUT)).rejects.toThrow(/正文超过 5000 字/);
+  });
+
+  it("本机写不进但上传成功：正常返回，onMemoSynced 收到那条", async () => {
+    installMemoOutboxBackendForTest(brokenSetBackend(backend));
+    await bindMemoOutboxAccount("stu-a");
+    mockedText.mockImplementation(async (input) => memoOf(input.text));
+    const synced: Memo[] = [];
+    const off = onMemoSynced((memo) => synced.push(memo));
+    const probe = queueProbe();
+    await act(async () => {
+      await expect(enqueueMemo(TEXT_INPUT)).resolves.toEqual(
+        expect.any(String),
+      );
+    });
+    expect(synced.map((memo) => memo.text)).toEqual(["第一条"]);
+    expect(probe.current).toEqual([]);
+    off();
+  });
+});
+
 describe("memo-outbox：账号切换交错（#104-01）", () => {
   it("未绑定账号时拒绝入队（不落到 null 账号键下）", async () => {
     await expect(enqueueMemo(TEXT_INPUT)).rejects.toThrow(/登录/);
@@ -262,9 +313,8 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
     expect(await backend.getAll('["memo-outbox","stu-b"')).toEqual([]);
     const stored = await backend.getAll('["memo-outbox","stu-a"');
     expect(stored).toHaveLength(1);
-    expect((stored[0]?.[1] as { failedMessage?: string }).failedMessage).toBe(
-      "正文太长",
-    );
+    const storedItem = stored[0]?.[1] as { failedMessage?: string } | undefined;
+    expect(storedItem?.failedMessage).toBe("正文太长");
   });
 
   it("旧账号补传在途时新账号 bind：新账号的本机条目在旧一轮结束后自动补传", async () => {

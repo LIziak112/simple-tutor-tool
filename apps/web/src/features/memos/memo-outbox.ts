@@ -19,6 +19,7 @@ import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
  * 随笔待补传队列（模块 5 第一步，计划 §8.2 第 3 条「离线也能记，联网后自动合并
  * （只追加，不会冲突）」）：
  * - 每条随笔先落本机（IndexedDB，媒体 Blob 一并存），再尝试上传；成功即删本机；
+ *   本机写不进时立即上传这一条，传不上去就拒绝（enqueueMemo「返回即有副本」）；
  * - 网络层失败（离线 / 超时）保留在队列，联网（online 事件）/ 进页面 / 新记一条时
  *   按入队顺序重试；服务端按 clientId 幂等，重放不产生重复；
  * - 业务拒绝（4xx：格式 / 超限 / 校验）不会自愈：标 failedMessage 留在队列让本人
@@ -121,7 +122,11 @@ export async function bindMemoOutboxAccount(
   void flushMemoOutbox();
 }
 
-/** 记一条：先落本机，再立即尝试上传；返回时本机已保存（上传结果看队列 / onSynced） */
+/**
+ * 记一条：先落本机，再立即尝试上传。契约是「返回即有副本」——本机已保存（上传结果
+ * 看队列 / onSynced），或本机写不进但已传到服务端；两边都没有就拒绝（带中文说明），
+ * 由记录端恢复输入让本人重试，不把没有任何副本的内容当「已保存」关掉界面。
+ */
 export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
   const account = requireAccount();
   const item: MemoOutboxItem = {
@@ -130,15 +135,44 @@ export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
     recordedAt: input.recordedAt ?? new Date().toISOString(),
     failedMessage: undefined,
   };
+  let savedLocally = true;
   try {
     await backend.set(keyFor(account, item.clientId), item);
   } catch {
-    // 本机落盘失败仍进内存队列：能传就传，不因存储故障丢这一条
+    savedLocally = false;
   }
   // 等待期间换了账号：条目已在旧账号键下，旧账号下次 bind 会出现；不进当前队列
-  if (accountId !== account) return item.clientId;
+  if (accountId !== account) {
+    if (!savedLocally) throw new Error("账号已切换，这条随笔没有保存");
+    return item.clientId;
+  }
+  if (!savedLocally) return uploadWithoutLocalCopy(item, account);
   setItems([...items, item]);
   void flushMemoOutbox();
+  return item.clientId;
+}
+
+/**
+ * 本机没有副本（IndexedDB 不可用 / 配额满）：不进队列，直接把这一条传上去，成功才算
+ * 保存；失败整条交还调用方（内存里不留，避免本人恢复输入后再保存变成两条）。
+ */
+async function uploadWithoutLocalCopy(
+  item: MemoOutboxItem,
+  account: string,
+): Promise<string> {
+  let memo: Memo;
+  try {
+    memo = await upload(item);
+  } catch (err) {
+    throw new Error(
+      err instanceof ApiError
+        ? `本机保存失败，上传也被拒绝：${err.message}`
+        : "本机保存失败，暂时也传不上去：这条还没有存下来，请联网后重新保存",
+    );
+  }
+  if (accountId === account) {
+    for (const listener of syncedListeners) listener(memo);
+  }
   return item.clientId;
 }
 

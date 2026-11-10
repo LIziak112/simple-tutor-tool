@@ -53,6 +53,8 @@ export function MemoComposer({
   const [text, setText] = useState("");
   const [tagsRaw, setTagsRaw] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  /** 入队失败（本机写不进且传不上去）：红字提示，语音 / 图片 / 手写同样可见 */
+  const [error, setError] = useState<string | null>(null);
   const [inkOpen, setInkOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,19 +71,21 @@ export function MemoComposer({
   async function queue(
     input: Parameters<typeof enqueueMemo>[0],
   ): Promise<void> {
-    // 先清空输入再落本机：点「保存」立刻有反馈；本机写失败再把原文放回来
+    // 先清空输入再落本机：点「保存」立刻有反馈；两边都没存下来再把原文放回来
+    //（enqueueMemo 返回即有本机或服务端副本，拒绝 = 没有任何副本）
     const previous = { text, tagsRaw };
     setBusy(true);
     setText("");
     setTagsRaw("");
     setNotice(null);
+    setError(null);
     try {
       await enqueueMemo(input);
       onQueued?.();
-    } catch {
+    } catch (err) {
       setText(previous.text);
       setTagsRaw(previous.tagsRaw);
-      setNotice("本机保存失败，请重试");
+      setError(err instanceof Error ? err.message : "本机保存失败，请重试");
     } finally {
       setBusy(false);
     }
@@ -277,6 +281,11 @@ export function MemoComposer({
       {recorderState.status === "error" && (
         <p role="alert" className="text-sm text-destructive">
           {recorderState.message}
+        </p>
+      )}
+      {error !== null && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
         </p>
       )}
       {notice !== null && (
