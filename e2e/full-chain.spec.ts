@@ -460,6 +460,16 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(studentCard.getByText("共 3 题")).toBeVisible();
       await studentCard.getByRole("link", { name: "开始练习" }).click();
       await assignPage.waitForURL("**/s/assignments/**");
+      const assignmentNavigator = assignPage
+        .locator('[data-slot="attempt-bottom-bar"]')
+        .getByRole("button", { name: "答题卡", exact: true });
+      await assignmentNavigator.click();
+      const answerCard = assignPage.getByRole("dialog", { name: "答题卡" });
+      await expect(
+        answerCard.getByRole("button", { name: "全部", exact: true }),
+      ).toBeVisible();
+      await assignPage.keyboard.press("Escape");
+      await expect(assignmentNavigator).toBeFocused();
       await expect(
         assignPage.locator('article[aria-label="第 3 题"]'),
       ).toBeVisible();

@@ -12,7 +12,35 @@ import { useAttemptEditor } from "./AttemptEditorContext";
 const pressFeedback =
   "duration-150 ease-out motion-safe:transition-transform motion-safe:enabled:active:scale-[0.96] motion-reduce:transition-opacity motion-reduce:enabled:active:opacity-75";
 
-/** 列表与单题共用底栏答题卡入口。 */
+/** 作答与回看共用吸底区的尺寸及安全区。 */
+export function AttemptFooter({
+  children,
+  notices,
+}: {
+  children: ReactNode;
+  notices?: ReactNode;
+}) {
+  return (
+    <footer
+      data-slot="attempt-bottom-bar"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
+    >
+      <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center justify-between gap-2 px-3 py-1.5 sm:px-6">
+        {children}
+      </div>
+      {notices != null && (
+        <div
+          role="status"
+          className="mx-auto flex max-w-[1120px] flex-col gap-1 px-3 pb-2 sm:px-6"
+        >
+          {notices}
+        </div>
+      )}
+    </footer>
+  );
+}
+
+/** 作答与回看共用底栏答题卡入口。 */
 export function AttemptNavigatorButton({
   children,
   onOpen,
@@ -180,12 +208,15 @@ export function AttemptBottomBar({
   );
   const submitDisabled = total === 0 || offline || denied;
   return (
-    <div
-      data-slot="attempt-bottom-bar"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
+    <AttemptFooter
+      notices={
+        offline || denied || saveFailed || inkFlushError || submitError !== null
+          ? notices
+          : null
+      }
     >
       {compact ? (
-        <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center gap-2 px-3 py-1.5 sm:px-6">
+        <>
           <div className="min-w-0 flex-1 lg:order-2 lg:shrink-0 lg:flex-none">
             {primaryActions}
           </div>
@@ -195,9 +226,9 @@ export function AttemptBottomBar({
           >
             {progress}
           </div>
-        </div>
+        </>
       ) : (
-        <div className="mx-auto flex min-h-14 w-full max-w-[1120px] items-center justify-between gap-2 px-3 py-1.5 sm:px-6">
+        <>
           {navigatorButton}
           {!navigatorButton && (
             <div
@@ -223,20 +254,8 @@ export function AttemptBottomBar({
               交卷
             </Button>
           )}
-        </div>
+        </>
       )}
-      {(offline ||
-        denied ||
-        saveFailed ||
-        inkFlushError ||
-        submitError !== null) && (
-        <div
-          role="status"
-          className="mx-auto flex max-w-[1120px] flex-col gap-1 px-3 pb-2 sm:px-6"
-        >
-          {notices}
-        </div>
-      )}
-    </div>
+    </AttemptFooter>
   );
 }

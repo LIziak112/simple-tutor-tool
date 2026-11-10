@@ -3,6 +3,7 @@ import {
   fireEvent,
   render as renderReact,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
@@ -241,7 +242,7 @@ describe("得分汇总卡", () => {
     rerender(ui(true));
     expect(within(card).getByTestId("note-original-stub")).toBe(original);
   });
-  it("先读答案与详解，再访问草稿和订正，定位范围不卸载正文", () => {
+  it("先读答案与详解，再访问草稿和订正，定位范围不卸载正文", async () => {
     renderView();
     const card = screen.getByRole("article", { name: "第 1 题" });
     const answer = within(card).getByText("你的答案：");
@@ -255,9 +256,16 @@ describe("得分汇总卡", () => {
     ).toBeTruthy();
     expect(tools).toContainElement(solution);
     fireEvent.click(within(card).getByRole("button", { name: "草稿" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "回看定位范围" }), {
-      target: { value: "wrong" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "答题卡" }));
+    const dialog = await screen.findByRole("dialog", { name: "答题卡" });
+    fireEvent.change(
+      within(dialog).getByRole("combobox", { name: "回看定位范围" }),
+      {
+        target: { value: "wrong" },
+      },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭弹层" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(screen.getAllByRole("article")).toHaveLength(4);
     expect(within(card).getByTestId("note-original-stub")).toBeInTheDocument();
   });

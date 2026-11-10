@@ -266,6 +266,27 @@ test(
     await page.getByRole("link", { name: "返回作答结果" }).click();
     await expect(card).toBeInViewport();
     expect(new URL(page.url()).pathname).toBe(`/s/assignments/${assignmentId}`);
+    const entry = page
+      .locator('[data-slot="attempt-bottom-bar"]')
+      .getByRole("button", { name: "答题卡", exact: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await entry.click();
+    const dialog = page.getByRole("dialog", { name: "答题卡" });
+    await expect(
+      dialog.getByRole("combobox", { name: "回看定位范围" }),
+    ).toHaveValue("pending");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(entry).toBeFocused();
+    await expect(
+      page.getByRole("complementary", { name: "结果定位" }),
+    ).toHaveCount(0);
+    await entry.click();
+    await dialog.getByRole("button", { name: /^第 2 题，/ }).click();
+    await expect(
+      card.getByRole("heading", { name: "第 2 题", exact: true }),
+    ).toBeFocused();
   },
 );
 
@@ -312,6 +333,10 @@ test(
       top: number;
     }[] = [];
     const last = page.getByRole("article", { name: "第 130 题", exact: true });
+    const entry = page
+      .locator('[data-slot="attempt-bottom-bar"]')
+      .getByRole("button", { name: "答题卡", exact: true });
+    const navigation = page.getByRole("dialog", { name: "答题卡" });
     for (const [width, height] of [
       [320, 800],
       [390, 844],
@@ -323,12 +348,10 @@ test(
       [1440, 900],
     ] as const) {
       await page.setViewportSize({ width, height });
-      if (width < 1024)
-        await page.getByRole("button", { name: "打开回看题号" }).click();
-      const navigation =
-        width < 1024
-          ? page.getByRole("dialog")
-          : page.getByRole("complementary", { name: "结果定位" });
+      await expect(
+        page.getByRole("complementary", { name: "结果定位" }),
+      ).toHaveCount(0);
+      await entry.click();
       await expectNavigationRingSpace(
         navigation.getByRole("navigation", { name: "回看题号" }),
       );
@@ -363,25 +386,17 @@ test(
         expect(toolsBox?.height).toBeLessThanOrEqual(180);
         const before = await last.boundingBox();
         if (!before) throw new Error("无法测量题卡");
-        const toggle = page.getByRole("button", { name: "收起题号栏" });
-        await toggle.press("Enter");
-        await expect(
-          page.getByRole("button", { name: "展开题号栏" }),
-        ).toBeFocused();
-        await expect(
-          navigation.getByRole("combobox", { name: "回看定位范围" }),
-        ).toBeHidden();
-        await expect
-          .poll(async () => (await last.boundingBox())?.width ?? 0)
-          .toBeGreaterThan(before.width + 190);
-        await expect(last).toBeInViewport();
-        await page.screenshot({
-          path: testInfo.outputPath(`review-collapsed-${width}.png`),
-        });
-        await page.getByRole("button", { name: "展开题号栏" }).press("Space");
+        await entry.press("Enter");
         await expect(
           navigation.getByRole("combobox", { name: "回看定位范围" }),
         ).toHaveValue("all");
+        await page.keyboard.press("Escape");
+        await expect(navigation).toHaveCount(0);
+        await expect(entry).toBeFocused();
+        await expect
+          .poll(async () => (await last.boundingBox())?.width)
+          .toBe(before.width);
+        await expect(last).toBeInViewport();
         await expect(page.locator("[data-review-question]")).toHaveCount(130);
         await page
           .locator("[aria-labelledby='result-summary']")
@@ -390,6 +405,7 @@ test(
         await page.screenshot({
           path: testInfo.outputPath(`review-summary-${width}.png`),
         });
+        await entry.click();
         await navigation
           .getByRole("button", { name: "第 130 题，未作答，判错", exact: true })
           .click();
@@ -407,8 +423,8 @@ test(
     await page.evaluate(() => {
       document.documentElement.style.zoom = "2";
     });
-    await page
-      .getByRole("complementary", { name: "结果定位" })
+    await entry.click();
+    await navigation
       .getByRole("button", { name: "第 130 题，未作答，判错", exact: true })
       .click();
     await expect(last).toBeInViewport();
@@ -424,16 +440,14 @@ test(
       document.documentElement.style.zoom = "";
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "打开回看题号" }).click();
+    await page.getByRole("button", { name: "答题卡" }).click();
     await page
       .getByRole("dialog")
       .getByRole("combobox", { name: "回看定位范围" })
       .selectOption("wrong");
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "打开回看题号" }),
-    ).toBeFocused();
+    await expect(page.getByRole("button", { name: "答题卡" })).toBeFocused();
     await expect(page.locator("[data-review-question]")).toHaveCount(130);
     await page.reload();
     await expect(last).toBeInViewport();
@@ -541,7 +555,7 @@ test(
       /red|emerald/,
     );
     await expect(card.getByText("正确项", { exact: false })).toHaveCount(0);
-    await page.getByRole("button", { name: "打开回看题号" }).click();
+    await page.getByRole("button", { name: "答题卡" }).click();
     const range = page
       .getByRole("dialog")
       .getByRole("combobox", { name: "回看定位范围" });
@@ -584,7 +598,7 @@ test(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    await page.getByRole("button", { name: "打开回看题号" }).click();
+    await page.getByRole("button", { name: "答题卡" }).click();
     await page
       .getByRole("dialog")
       .getByRole("combobox", { name: "回看定位范围" })
