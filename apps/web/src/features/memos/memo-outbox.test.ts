@@ -15,6 +15,7 @@ import {
   flushMemoOutbox,
   installMemoOutboxBackendForTest,
   onMemoSynced,
+  retryMemoOutboxItem,
   useMemoOutbox,
 } from "./memo-outbox";
 
@@ -22,7 +23,8 @@ import {
  * 随笔待补传队列：先落本机再上传；网络失败保留、联网后按序补传；业务拒绝标
  * failedMessage 不自动重试、可丢弃；按账号隔离；补传成功回调。
  * 审查修复（PR #104 报告）：账号切换与本机写入 / 补传交错时旧账号数据不进新队列
- * （#104-01）；本机写入失败时「返回即有副本」——立即上传，传不上去就拒绝（#104-02）。
+ * （#104-01）；本机写入失败时「返回即有副本」——立即上传，传不上去就拒绝（#104-02）；
+ * 暂态服务错误（5xx / 408 / 429）不标失败、下次继续补传，失败条目可原地重试（#104-05）。
  */
 
 /** set 必败的后端（IndexedDB 不可用 / 配额满） */
@@ -190,6 +192,71 @@ describe("memo-outbox", () => {
     await flushMemoOutbox();
     expect(mockedText).not.toHaveBeenCalled();
     expect(await backend.getAll('["memo-outbox","stu-a"')).toHaveLength(1);
+  });
+});
+
+describe("memo-outbox：暂态失败与重试（#104-05）", () => {
+  it.each([
+    ["500", new ApiError("INTERNAL_ERROR", "服务器开小差", 500)],
+    ["429", new ApiError("RATE_LIMITED", "请求太频繁", 429)],
+    ["408", new ApiError("TIMEOUT", "请求超时", 408)],
+    ["响应异常（非 ApiError）", new Error("服务器响应异常（HTTP 502）")],
+  ])("%s：不标失败、保留原样，下次触发继续补传", async (_label, err) => {
+    await bindMemoOutboxAccount("stu-a");
+    mockedText.mockRejectedValue(err);
+    const probe = queueProbe();
+    await act(async () => {
+      await enqueueMemo(TEXT_INPUT);
+      await flushMemoOutbox();
+    });
+    expect(mockedText).toHaveBeenCalled();
+    expect(probe.current).toHaveLength(1);
+    expect(probe.current[0]?.failedMessage).toBeUndefined();
+    const stored = await backend.getAll('["memo-outbox","stu-a"');
+    expect(
+      (stored[0]?.[1] as { failedMessage?: string } | undefined)?.failedMessage,
+    ).toBeUndefined();
+
+    const attemptsBefore = mockedText.mock.calls.length;
+    mockedText.mockImplementation(async (input) => memoOf(input.text));
+    await act(async () => {
+      await flushMemoOutbox();
+    });
+    expect(mockedText).toHaveBeenCalledTimes(attemptsBefore + 1);
+    expect(probe.current).toEqual([]);
+  });
+
+  it("业务拒绝后 retryMemoOutboxItem：清掉失败标记并重新上传", async () => {
+    await bindMemoOutboxAccount("stu-a");
+    mockedText.mockRejectedValueOnce(
+      new ApiError("VALIDATION_ERROR", "标签太多", 400),
+    );
+    const probe = queueProbe();
+    let clientId = "";
+    await act(async () => {
+      clientId = await enqueueMemo(TEXT_INPUT);
+      await flushMemoOutbox();
+    });
+    expect(probe.current[0]?.failedMessage).toBe("标签太多");
+
+    // 服务端仍拒绝：重试一次后再次标失败，不会无限重试
+    mockedText.mockRejectedValueOnce(
+      new ApiError("VALIDATION_ERROR", "标签太多", 400),
+    );
+    await act(async () => {
+      await retryMemoOutboxItem(clientId);
+    });
+    expect(mockedText).toHaveBeenCalledTimes(2);
+    expect(probe.current[0]?.failedMessage).toBe("标签太多");
+
+    // 服务端放行：重试成功，条目清掉、本机键删掉
+    mockedText.mockImplementation(async (input) => memoOf(input.text));
+    await act(async () => {
+      await retryMemoOutboxItem(clientId);
+    });
+    expect(mockedText).toHaveBeenCalledTimes(3);
+    expect(probe.current).toEqual([]);
+    expect(await backend.getAll('["memo-outbox","stu-a"')).toEqual([]);
   });
 });
 

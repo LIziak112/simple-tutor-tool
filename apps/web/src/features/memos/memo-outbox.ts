@@ -20,10 +20,10 @@ import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
  * （只追加，不会冲突）」）：
  * - 每条随笔先落本机（IndexedDB，媒体 Blob 一并存），再尝试上传；成功即删本机；
  *   本机写不进时立即上传这一条，传不上去就拒绝（enqueueMemo「返回即有副本」）；
- * - 网络层失败（离线 / 超时）保留在队列，联网（online 事件）/ 进页面 / 新记一条时
- *   按入队顺序重试；服务端按 clientId 幂等，重放不产生重复；
- * - 业务拒绝（4xx：格式 / 超限 / 校验）不会自愈：标 failedMessage 留在队列让本人
- *   看到并手动丢弃，不静默删除未同步内容（草稿域同口径）；
+ * - 暂态失败（离线 / 超时 / 5xx / 408 / 429 / 响应不成形）保留在队列，联网（online
+ *   事件）/ 进页面 / 新记一条时按入队顺序重试；服务端按 clientId 幂等，重放不产生重复；
+ * - 业务拒绝（其余 4xx：格式 / 超限 / 校验）不会自愈：标 failedMessage 留在队列让本人
+ *   看到并手动丢弃或重试（retryMemoOutboxItem），不静默删除未同步内容（草稿域同口径）；
  * - 按账号隔离：键前缀带 studentId，布局层 bind / 登出 unbind。每个异步步骤开始
  *   时捕获账号，等待结束后账号已换则不再碰当前队列 / 通知（本机键只按捕获的
  *   账号读写），换账号与保存 / 补传交错时旧账号的数据不会进新账号队列。
@@ -187,6 +187,36 @@ export async function discardMemoOutboxItem(clientId: string): Promise<void> {
   }
 }
 
+/** 失败条目原地重试（业务拒绝后由本人决定）：清掉失败标记、落盘，再补传一轮 */
+export async function retryMemoOutboxItem(clientId: string): Promise<void> {
+  const account = requireAccount();
+  const item = items.find((it) => it.clientId === clientId);
+  if (item === undefined || item.failedMessage === undefined) return;
+  const retried: MemoOutboxItem = { ...item, failedMessage: undefined };
+  setItems(items.map((it) => (it.clientId === clientId ? retried : it)));
+  try {
+    await backend.set(keyFor(account, clientId), retried);
+  } catch {
+    // 标记只影响是否自动重试，落盘失败可接受
+  }
+  if (accountId !== account) return;
+  return flushMemoOutbox();
+}
+
+/**
+ * 服务端业务拒绝（不会自愈，等本人处理）与暂态失败（下次再试）的分界：4xx 里除
+ * 408 超时、429 限流外都算拒绝；5xx、网络层、响应不成形都算暂态。
+ */
+function isBusinessRejection(err: unknown): err is ApiError {
+  return (
+    err instanceof ApiError &&
+    err.status >= 400 &&
+    err.status < 500 &&
+    err.status !== 408 &&
+    err.status !== 429
+  );
+}
+
 async function upload(item: MemoOutboxItem): Promise<Memo> {
   const common = {
     clientId: item.clientId,
@@ -213,7 +243,7 @@ async function upload(item: MemoOutboxItem): Promise<Memo> {
   return uploadMemoMediaApi(item.blob, fields);
 }
 
-/** 按入队顺序补传；网络层失败即停（等下次触发），业务拒绝标 failedMessage 后继续下一条 */
+/** 按入队顺序补传；暂态失败即停（等下次触发），业务拒绝标 failedMessage 后继续下一条 */
 export function flushMemoOutbox(): Promise<void> {
   if (flushing !== null) {
     // 在途那一轮属于别的账号（切换时它会在下一次循环退出）：接力给当前账号再来一轮
@@ -248,7 +278,7 @@ export function flushMemoOutbox(): Promise<void> {
         if (accountId !== account) return;
         for (const listener of syncedListeners) listener(memo);
       } catch (err) {
-        if (err instanceof ApiError) {
+        if (isBusinessRejection(err)) {
           const failed: MemoOutboxItem = {
             ...item,
             failedMessage: err.message,
@@ -265,7 +295,7 @@ export function flushMemoOutbox(): Promise<void> {
           }
           continue;
         }
-        // 网络 / 本机解析类失败：保留原样，等下次触发
+        // 暂态失败（网络 / 5xx / 限流 / 响应不成形）：保留原样，等下次触发
         return;
       }
     }

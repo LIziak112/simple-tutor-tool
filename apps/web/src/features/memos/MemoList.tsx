@@ -29,6 +29,7 @@ import {
   discardMemoOutboxItem,
   type MemoOutboxItem,
   onMemoSynced,
+  retryMemoOutboxItem,
   useMemoOutbox,
 } from "./memo-outbox";
 
@@ -251,14 +252,25 @@ function PendingMemoCard({ item }: { item: MemoOutboxItem }) {
         </time>
         <span className="flex-1" />
         {failed && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => void discardMemoOutboxItem(item.clientId)}
-          >
-            丢弃
-          </Button>
+          // 失败后由本人决定：原地重试（服务端规则可能已放宽 / 误判）或丢弃；44px 触控面
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 min-w-11"
+              onClick={() => void retryMemoOutboxItem(item.clientId)}
+            >
+              重试
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 min-w-11"
+              onClick={() => void discardMemoOutboxItem(item.clientId)}
+            >
+              丢弃
+            </Button>
+          </>
         )}
       </div>
       {item.text !== undefined && item.text !== "" && (
