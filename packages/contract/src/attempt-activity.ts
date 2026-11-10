@@ -14,6 +14,9 @@ import { z } from "zod";
  * - **多端重叠不归属**：同一作答在两台设备 / 两个标签页同时聚焦不同题的重叠
  *   时段计 unattributedSec，不归任何题；同时聚焦同一题只算一次；
  * - **离线补发去重**：完全相同的事件（类型 / 时刻 / 题 / 会话）只算一条；
+ * - **交卷即全卷截止**：任一会话的 submit 之后，所有会话的事件都不再计；
+ * - **服务端记录的逐题提交并入会话**：question_submit 由服务端落库、没有会话
+ *   标识，按「最近聚焦该题的会话」归入，只把那次聚焦标为有动作，不另开时段；
  * - **信息不足如实标**：没有任何事件的题不出现在 byQuestion（前端标「无可用
  *   记录」）；只有进入视野（question_view）没聚焦的题 viewed=true、时长 0。
  */
@@ -42,6 +45,11 @@ export const attemptActivitySchema = z.object({
   unattributedSec: z.number().int().min(0),
   /** 参与计算的作答页会话数（1 = 单端；缺会话标识的旧事件合并为一组） */
   sessions: z.number().int().min(1),
+  /**
+   * 同一时刻同时在前台聚焦的会话数峰值（1 = 从未同开；刷新 / 换设备先后打开
+   * 的会话不算同开）——「N 端同开」的展示口径（审查 #100-04）。
+   */
+  concurrentSessionsMax: z.number().int().min(1),
 });
 export type AttemptActivity = z.infer<typeof attemptActivitySchema>;
 

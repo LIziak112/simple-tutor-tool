@@ -150,6 +150,96 @@ describe("题内活动用时：多端", () => {
     expect(result.unattributedSec).toBe(0);
   });
 
+  it("审查 #100-02：任一端交卷后，其他端之后的事件也不再计（交卷是全卷截止）", () => {
+    const result = computeAttemptActivity([
+      ev("question_focus", 0, "q1", "a"),
+      ev("answer_change", 10, "q1", "a"),
+      ev("question_blur", 40, "q1", "a"),
+      ev("submit", 100, null, "a"),
+      // 另一端：交卷前看 q2，交卷后还在做 q3
+      ev("question_focus", 50, "q2", "b"),
+      ev("question_blur", 90, "q2", "b"),
+      ev("question_focus", 120, "q3", "b"),
+      ev("answer_change", 150, "q3", "b"),
+      ev("question_blur", 200, "q3", "b"),
+    ]);
+    expect(result.byQuestion.q1?.activeSec).toBe(40);
+    expect(result.byQuestion.q2?.observedSec).toBe(40);
+    expect(result.byQuestion.q3).toBeUndefined();
+    expect(result.activeSecTotal).toBe(40);
+    expect(result.unattributedSec).toBe(0);
+  });
+
+  it("审查 #100-03：服务端记录的 question_submit（无 viewId）并入最近聚焦该题的会话，标记该次聚焦有动作而不是另开一段", () => {
+    const result = computeAttemptActivity([
+      // 端 a：0–60 做 q1（只看），60–120 做 q2
+      ev("question_focus", 0, "q1", "a"),
+      ev("question_focus", 60, "q2", "a"),
+      ev("question_blur", 120, "q2", "a"),
+      // 服务端为 q1 记的逐题提交：时钟略晚于端 a 切到 q2 的时刻、没有 viewId
+      ev("question_submit", 61, "q1", null),
+    ]);
+    expect(result.sessions).toBe(1);
+    // q1 那次聚焦因提交而算有动作（60 秒 active），q2 的聚焦不被截断
+    expect(result.byQuestion.q1).toEqual({
+      activeSec: 60,
+      observedSec: 0,
+      actions: 1,
+      viewed: true,
+    });
+    expect(result.byQuestion.q2).toEqual({
+      activeSec: 0,
+      observedSec: 60,
+      actions: 0,
+      viewed: true,
+    });
+    expect(result.unattributedSec).toBe(0);
+  });
+
+  it("审查 #100-03：多端时 question_submit 归到最近聚焦该题的那一端", () => {
+    const result = computeAttemptActivity([
+      ev("question_focus", 0, "q1", "a"),
+      ev("question_blur", 100, "q1", "a"),
+      ev("question_focus", 200, "q1", "b"),
+      ev("question_submit", 230, "q1", null),
+      ev("question_blur", 260, "q1", "b"),
+    ]);
+    expect(result.sessions).toBe(2);
+    // a 的 0–100 只看（observed）；b 的 200–260 因提交算 active
+    expect(result.byQuestion.q1).toEqual({
+      activeSec: 60,
+      observedSec: 100,
+      actions: 1,
+      viewed: true,
+    });
+    expect(result.unattributedSec).toBe(0);
+  });
+
+  it("审查 #100-04：「同开」按同时在线的会话峰值计，先后打开的多次会话不算同开", () => {
+    const sequential = computeAttemptActivity([
+      ev("question_focus", 0, "q1", "a"),
+      ev("question_blur", 50, "q1", "a"),
+      ev("question_focus", 100, "q1", "b"), // 刷新后的新会话
+      ev("question_blur", 150, "q1", "b"),
+      ev("question_focus", 200, "q2", "c"),
+      ev("question_blur", 250, "q2", "c"),
+    ]);
+    expect(sequential.sessions).toBe(3);
+    expect(sequential.concurrentSessionsMax).toBe(1);
+
+    const overlapping = computeAttemptActivity([
+      ev("question_focus", 0, "q1", "a"),
+      ev("question_blur", 100, "q1", "a"),
+      ev("question_focus", 50, "q2", "b"),
+      ev("question_blur", 150, "q2", "b"),
+      ev("question_focus", 60, "q3", "c"),
+      ev("question_blur", 70, "q3", "c"),
+    ]);
+    expect(overlapping.sessions).toBe(3);
+    expect(overlapping.concurrentSessionsMax).toBe(3);
+    expect(overlapping.unattributedSec).toBe(50);
+  });
+
   it("旧客户端事件（无 viewId）与新事件各成一组：单端回放不会被当成重叠", () => {
     const result = computeAttemptActivity([
       ev("question_focus", 0, "q1"),

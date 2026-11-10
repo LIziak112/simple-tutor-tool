@@ -534,6 +534,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
     const activity = result.data.activity;
     expect(activity?.version).toBe(1);
     expect(activity?.sessions).toBe(2);
+    expect(activity?.concurrentSessionsMax).toBe(2);
     expect(activity?.byQuestion[Q.judge]).toEqual({
       activeSec: 35,
       observedSec: 0,

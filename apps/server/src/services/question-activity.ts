@@ -14,11 +14,14 @@ import { events } from "../db/schema";
  * 旧统计保留原口径，这里按「有题级动作才归题 / 隐藏与空闲扣除 / 多端重叠不归属
  * / 完全重复去重」现算，不存新列、不信任客户端汇总。
  *
- * 实现分两步：
+ * 实现分三步：
+ * 0. 去重后按首个 submit 截止全卷（任一端交卷后各端事件都不计），再把服务端
+ *    记录的 question_submit（无会话标识）归入最近聚焦该题的会话；
  * 1. 按作答页会话（viewId；缺省合并为一组）各自回放事件，产出前台聚焦片段
- *    {题, 起, 止, 本次聚焦是否有动作}；同一会话内片段天然不重叠；
+ *    {题, 起, 止, 本次聚焦是否有动作, 会话}；同一会话内片段天然不重叠；
  * 2. 多会话片段做一次扫描线：每个基本区间看覆盖它的片段涉及几道题——一道题
- *    归该题（任一片段有动作即 active，否则 observed），多道题归「未归属」。
+ *    归该题（任一片段有动作即 active，否则 observed），多道题归「未归属」；
+ *    同时统计同时在前台的会话数峰值（「N 端同开」展示口径）。
  */
 
 /** 计算所需的最小事件投影（events 行 + payload 顶层 viewId） */
@@ -33,7 +36,10 @@ interface Segment {
   readonly questionId: string;
   readonly start: number;
   readonly end: number;
-  readonly active: boolean;
+  /** 可在收尾后被服务端记录的逐题提交追认为有动作（见 replaySession） */
+  active: boolean;
+  /** 所属会话（viewId；缺省组为空串），同开峰值按它计 */
+  readonly session: string;
 }
 
 /** 一次聚焦（focus → blur / 切题 / submit）：可被隐藏 / 空闲切成多个前台片段 */
@@ -58,10 +64,13 @@ function eventKey(event: ActivityEvent): string {
 
 /** 单会话回放：事件已按 clientTs 升序；返回片段并累计 actions / viewed */
 function replaySession(
+  session: string,
   ordered: readonly ActivityEvent[],
   tallies: Map<string, Tally>,
 ): Segment[] {
   const segments: Segment[] = [];
+  /** 每题最近一次已收尾聚焦的片段（服务端逐题提交迟到时追认为有动作） */
+  const lastClosedByQuestion = new Map<string, Segment[]>();
   // 回放状态放在对象里：闭包内赋值不会被控制流分析误收窄成 never
   const state: { episode: Episode | null; hidden: boolean; idle: boolean } = {
     episode: null,
@@ -99,13 +108,16 @@ function replaySession(
     const episode = state.episode;
     if (episode === null) return;
     pause(at);
-    for (const piece of episode.pieces) {
-      segments.push({
+    const closed = episode.pieces.map(
+      (piece): Segment => ({
         ...piece,
         questionId: episode.questionId,
         active: episode.active,
-      });
-    }
+        session,
+      }),
+    );
+    segments.push(...closed);
+    lastClosedByQuestion.set(episode.questionId, closed);
     state.episode = null;
   };
   const open = (questionId: string, at: number, active: boolean) => {
@@ -166,10 +178,20 @@ function replaySession(
               state.idle = false;
               resume(at);
             }
-          } else {
-            // 没聚焦就有动作（焦点事件丢失 / 旧客户端）：动作本身就是归属依据
-            open(questionId, at, true);
+            break;
           }
+          const lastClosed =
+            event.type === "question_submit"
+              ? lastClosedByQuestion.get(questionId)
+              : undefined;
+          if (lastClosed !== undefined) {
+            // 服务端记录的逐题提交（服务器时钟、无会话标识）落在该题聚焦收尾
+            // 之后：追认那次聚焦有动作，不在当前题的时段里另开一段（审查 #100-03）
+            for (const segment of lastClosed) segment.active = true;
+            break;
+          }
+          // 没聚焦就有动作（焦点事件丢失 / 旧客户端）：动作本身就是归属依据
+          open(questionId, at, true);
         }
     }
   }
@@ -178,16 +200,17 @@ function replaySession(
   return segments;
 }
 
-/** 多会话扫描线：按基本区间归属；返回未归属毫秒 */
+/** 多会话扫描线：按基本区间归属；返回未归属毫秒与同时在前台的会话数峰值 */
 function attribute(
   segments: readonly Segment[],
   tallies: Map<string, Tally>,
-): number {
+): { unattributedMs: number; concurrentSessionsMax: number } {
   const points = [...new Set(segments.flatMap((s) => [s.start, s.end]))].sort(
     (a, b) => a - b,
   );
   const byStart = [...segments].sort((a, b) => a.start - b.start);
   let unattributedMs = 0;
+  let concurrentSessionsMax = 1;
   let cursor = 0;
   const live: Segment[] = [];
   for (let i = 0; i + 1 < points.length; i++) {
@@ -201,6 +224,10 @@ function attribute(
       if ((live[j] as Segment).end <= a) live.splice(j, 1);
     }
     if (live.length === 0) continue;
+    concurrentSessionsMax = Math.max(
+      concurrentSessionsMax,
+      new Set(live.map((s) => s.session)).size,
+    );
     const questionIds = new Set(live.map((s) => s.questionId));
     const span = b - a;
     if (questionIds.size > 1) {
@@ -213,7 +240,53 @@ function attribute(
     if (live.some((s) => s.active)) tally.activeMs += span;
     else tally.observedMs += span;
   }
-  return unattributedMs;
+  return { unattributedMs, concurrentSessionsMax };
+}
+
+/**
+ * 服务端记录的逐题提交（question_submit：服务器时钟、没有会话标识）归入
+ * 「最近聚焦该题」的会话：取各会话里该题 question_focus 与提交时刻最接近的
+ * 一次（之前的优先；没有则取之后最近的）。没有任何会话聚焦过该题 → 原样留在
+ * 缺省组（按「没聚焦直接动作」规则归属）。
+ */
+function adoptSessionlessSubmits(
+  ordered: readonly ActivityEvent[],
+): ActivityEvent[] {
+  const focusesByQuestion = new Map<string, ActivityEvent[]>();
+  for (const event of ordered) {
+    if (
+      event.type === "question_focus" &&
+      event.questionId !== null &&
+      event.viewId !== null
+    ) {
+      const list = focusesByQuestion.get(event.questionId);
+      if (list === undefined) focusesByQuestion.set(event.questionId, [event]);
+      else list.push(event);
+    }
+  }
+  if (focusesByQuestion.size === 0) return [...ordered];
+  return ordered.map((event) => {
+    if (
+      event.type !== "question_submit" ||
+      event.viewId !== null ||
+      event.questionId === null
+    ) {
+      return event;
+    }
+    const focuses = focusesByQuestion.get(event.questionId);
+    if (focuses === undefined) return event;
+    const before = focuses.filter((f) => f.clientTs <= event.clientTs);
+    const nearest =
+      before[before.length - 1] ??
+      focuses.find((f) => f.clientTs > event.clientTs);
+    return nearest === undefined ? event : { ...event, viewId: nearest.viewId };
+  });
+}
+
+/** 任一会话交卷即全卷截止：之后的事件（不论哪一端）都不计（审查 #100-02） */
+function submitCutoffOf(ordered: readonly ActivityEvent[]): number | null {
+  const submit = ordered.find((event) => event.type === "submit");
+  return submit === undefined ? null : submit.clientTs;
 }
 
 /** 事件序列 → 题内活动用时（纯函数；输入可乱序、可含重复） */
@@ -221,7 +294,7 @@ export function computeAttemptActivity(
   input: readonly ActivityEvent[],
 ): AttemptActivity {
   const seen = new Set<string>();
-  const ordered = [...input]
+  const deduped = [...input]
     .sort((a, b) => a.clientTs - b.clientTs)
     .filter((event) => {
       const key = eventKey(event);
@@ -229,6 +302,12 @@ export function computeAttemptActivity(
       seen.add(key);
       return true;
     });
+  const cutoff = submitCutoffOf(deduped);
+  const ordered = adoptSessionlessSubmits(
+    cutoff === null
+      ? deduped
+      : deduped.filter((event) => event.clientTs <= cutoff),
+  );
   const sessions = new Map<string, ActivityEvent[]>();
   for (const event of ordered) {
     const key = event.viewId ?? "";
@@ -238,10 +317,13 @@ export function computeAttemptActivity(
   }
   const tallies = new Map<string, Tally>();
   const segments: Segment[] = [];
-  for (const list of sessions.values()) {
-    segments.push(...replaySession(list, tallies));
+  for (const [session, list] of sessions) {
+    segments.push(...replaySession(session, list, tallies));
   }
-  const unattributedMs = attribute(segments, tallies);
+  const { unattributedMs, concurrentSessionsMax } = attribute(
+    segments,
+    tallies,
+  );
 
   const byQuestion: Record<string, QuestionActivity> = {};
   let activeSecTotal = 0;
@@ -265,6 +347,7 @@ export function computeAttemptActivity(
     observedSecTotal,
     unattributedSec: Math.round(unattributedMs / 1000),
     sessions: Math.max(1, sessions.size),
+    concurrentSessionsMax,
   };
 }
 
