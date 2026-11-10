@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AttemptResultQuestion, RubricReview } from "@tutor/contract";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createStudentAiTaskApi, fetchStudentAiStatusApi } from "@/lib/api";
 import { saveRubricFinalApi, saveRubricSelfApi } from "@/lib/rubric-api";
 import { RubricReviewSection } from "./RubricReviewSection";
+import { RUBRIC_PENDING_POLL_MS } from "./rubric-review-model";
 
 /**
  * 模块 3 量表评价交互件：无量表题不渲染；自评表单逐项必填、保存后并排显示；
@@ -85,15 +86,119 @@ const statusOf = (
 
 function renderSection(question: AttemptResultQuestion) {
   const client = new QueryClient();
-  return render(
-    <QueryClientProvider client={client}>
-      <RubricReviewSection attemptId="att-1" question={question} />
-    </QueryClientProvider>,
-  );
+  return {
+    client,
+    ...render(
+      <QueryClientProvider client={client}>
+        <RubricReviewSection attemptId="att-1" question={question} />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it("审查 #99-05：判卷任务在途时按周期刷新本卷缓存，回信落地后停止", () => {
+  vi.useFakeTimers();
+  const { client, rerender } = renderSection(
+    questionOf(reviewOf({ pendingAgentTaskId: "task-1" })),
+  );
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  expect(screen.getByText("Agent 判卷中…回信后自动显示")).toBeTruthy();
+  vi.advanceTimersByTime(RUBRIC_PENDING_POLL_MS * 2 + 10);
+  const calls = invalidate.mock.calls.filter(
+    (call) =>
+      JSON.stringify(call[0]?.queryKey) ===
+      JSON.stringify(["student", "attempt", "att-1"]),
+  );
+  expect(calls.length).toBeGreaterThanOrEqual(2);
+
+  // 回信落地（pending 归零）后不再轮询
+  invalidate.mockClear();
+  rerender(
+    <QueryClientProvider client={client}>
+      <RubricReviewSection
+        attemptId="att-1"
+        question={questionOf(
+          reviewOf({
+            agent: {
+              source: "agent",
+              ratings: [
+                { id: "r1", level: 3 },
+                { id: "r2", level: 2 },
+              ],
+              note: "",
+              at: AT,
+              taskId: "task-1",
+            },
+          }),
+        )}
+      />
+    </QueryClientProvider>,
+  );
+  vi.advanceTimersByTime(RUBRIC_PENDING_POLL_MS * 2 + 10);
+  expect(invalidate).not.toHaveBeenCalled();
+});
+
+it("审查 #99-06：裁定来源相同但档位已变时仍可再裁；完全一致才禁用", () => {
+  const ratings = [
+    { id: "r1", level: 4 },
+    { id: "r2", level: 2 },
+  ];
+  const self = { source: "self" as const, ratings, note: "", at: AT };
+  const agent = {
+    source: "agent" as const,
+    ratings: [
+      { id: "r1", level: 3 },
+      { id: "r2", level: 2 },
+    ],
+    note: "",
+    at: AT,
+    taskId: "task-1",
+  };
+  // 裁定 = 保留我的，且自评未变 → 「保留我的」禁用、「采纳 Agent」可用
+  const { unmount } = renderSection(
+    questionOf(
+      reviewOf({
+        self,
+        agent,
+        final: { decision: "self", ratings, note: "", at: AT },
+      }),
+    ),
+  );
+  expect(
+    screen.getByRole("button", { name: "保留我的" }).hasAttribute("disabled"),
+  ).toBe(true);
+  expect(
+    screen.getByRole("button", { name: "采纳 Agent" }).hasAttribute("disabled"),
+  ).toBe(false);
+  unmount();
+
+  // 自评改过（r1 4→2）而裁定仍是旧档位 → 「保留我的」重新可用
+  renderSection(
+    questionOf(
+      reviewOf({
+        self: {
+          ...self,
+          ratings: [
+            { id: "r1", level: 2 },
+            { id: "r2", level: 2 },
+          ],
+        },
+        agent,
+        final: { decision: "self", ratings, note: "", at: AT },
+      }),
+    ),
+  );
+  expect(
+    screen.getByRole("button", { name: "保留我的" }).hasAttribute("disabled"),
+  ).toBe(false);
 });
 
 it("无量表题不渲染；有量表且无记录时显示自评入口与 Agent 入口", () => {

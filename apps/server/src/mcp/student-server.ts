@@ -405,7 +405,7 @@ export function registerStudentTools(
     "submit_rubric_opinion",
     {
       description:
-        "对带量表（contextDataMd 的「量表」段 / 任务 purpose=rubric_opinion）的开放题写回逐项意见：每个量表项一个档位（1–4，1 最低）+ 可选一句证据（引用作答原文或量表依据）+ 整体一句评语。校验任务归属与租约（同 submit_ai_reply）；项必须与量表一一对应，缺项/多项/未知 id 拒绝。意见只是参考，学习者会与自评并排后裁定。平台会据此生成一条 Markdown 回信，无需再调 submit_ai_reply。",
+        "只用于量表判卷任务（数据段「量表」段末尾写着「学习者请你按量表逐项给出独立意见」）：写回逐项意见，每个量表项一个档位（1–4，1 最低）+ 可选一句证据（引用作答原文或量表依据）+ 整体一句评语。校验任务归属与租约（同 submit_ai_reply）；项必须与量表一一对应，缺项/多项/未知 id 拒绝。普通求助任务（即使数据段带「量表」段）、答案尚未公布、练习已不可用 → 409 RUBRIC_NOT_AVAILABLE，此时改用 submit_ai_reply 写普通回信。意见只是参考，学习者会与自评并排后裁定。平台会据此生成一条 Markdown 回信，无需再调 submit_ai_reply。",
       inputSchema: {
         taskId: z.string().uuid().describe("claim_ai_task 返回的任务 id"),
         leaseToken: z.string().min(1).describe("claim_ai_task 返回的租约凭证"),

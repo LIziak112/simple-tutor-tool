@@ -23,6 +23,13 @@ import { saveRubricFinalApi, saveRubricSelfApi } from "@/lib/rubric-api";
 import { randomUuid } from "@/lib/uuid";
 import { studentAiQueueSummaryKey } from "../student-ai/ai-queue-queries";
 import { RubricRatingForm } from "./RubricRatingForm";
+import {
+  DECISION_LABEL,
+  decisionAlreadyApplied,
+  levelCell,
+  ratingOf,
+  useRubricPendingPoll,
+} from "./rubric-review-model";
 
 /**
  * 通用量表判卷（模块 3）结果页交互件：题有 `:::rubric` 且已公布时挂在答案对照
@@ -36,23 +43,6 @@ import { RubricRatingForm } from "./RubricRatingForm";
 const AGENT_PROMPT = "请按量表逐项评定我的作答：每项一个档位，附一句依据。";
 
 type Panel = "none" | "self" | "custom";
-
-function levelCell(rating: RubricRating | undefined): string {
-  return rating === undefined ? "—" : String(rating.level);
-}
-
-function ratingOf(
-  record: { ratings: readonly RubricRating[] } | null,
-  id: string,
-): RubricRating | undefined {
-  return record?.ratings.find((rating) => rating.id === id);
-}
-
-const DECISION_LABEL: Record<RubricDecision, string> = {
-  self: "保留我的",
-  agent: "采纳 Agent",
-  custom: "自行改写",
-};
 
 function AssessmentNote({
   label,
@@ -105,10 +95,17 @@ export function RubricReviewSection({
     agentMutationRef.current = null;
   }, [scope, projectedKey]);
 
+  const pendingTask =
+    (override ?? projected)?.pendingAgentTaskId ?? localPendingTask;
+  // 判卷任务在途：按周期刷新本卷缓存，回信落地后由投影接管并停止（#99-05）；
+  // 重取落地后本地「刚发起」标记让位给投影（任务没进在途桶时也能停下来）
+  useRubricPendingPoll(client, attemptId, pendingTask, () =>
+    setLocalPendingTask(null),
+  );
+
   if (projected === null) return null;
   const review = override ?? projected;
   const { rubric } = review;
-  const pendingTask = review.pendingAgentTaskId ?? localPendingTask;
   const disagreements =
     review.self !== null && review.agent !== null
       ? new Set(
@@ -355,7 +352,7 @@ export function RubricReviewSection({
               size="sm"
               className="min-h-11"
               variant="ghost"
-              disabled={busy || review.final?.decision === "self"}
+              disabled={busy || decisionAlreadyApplied(review, "self")}
               onClick={() => void saveFinal("self")}
             >
               保留我的
@@ -366,7 +363,7 @@ export function RubricReviewSection({
               size="sm"
               className="min-h-11"
               variant="ghost"
-              disabled={busy || review.final?.decision === "agent"}
+              disabled={busy || decisionAlreadyApplied(review, "agent")}
               onClick={() => void saveFinal("agent")}
             >
               采纳 Agent

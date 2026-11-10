@@ -778,6 +778,135 @@ describe("SAI-12 租约超时与写回", () => {
     expect(taskRow(db, task.id).status).toBe("replied");
   });
 
+  it("审查 #99-04：onReplied 同事务——钩子抛错则回信、状态、事实整笔回滚；重放不再触发钩子", () => {
+    const db = createTestDb();
+    const { world, task, leaseX } = claimedWorld(db);
+    const input = {
+      studentId: world.studentId,
+      taskId: task.id,
+      leaseToken: leaseX.leaseToken,
+      replyMarkdown: "量表意见正文",
+    };
+    expect(() =>
+      submitMcpReply(
+        db,
+        {
+          ...input,
+          onReplied: () => {
+            throw new Error("记录写入失败");
+          },
+        },
+        { now: at(1000) },
+      ),
+    ).toThrow("记录写入失败");
+    expect(assistantMessagesOf(db, task.id)).toHaveLength(0);
+    expect(taskRow(db, task.id).status).toBe("claimed");
+    expect(
+      factsOf(db, task.id).filter((f) => f.type === "reply_received"),
+    ).toHaveLength(0);
+
+    let calls = 0;
+    const ok = submitMcpReply(
+      db,
+      {
+        ...input,
+        onReplied: (_tx, replied) => {
+          calls += 1;
+          expect(replied.id).toBe(task.id);
+        },
+      },
+      { now: at(1100) },
+    );
+    expect(ok.duplicate).toBe(false);
+    expect(calls).toBe(1);
+    expect(taskRow(db, task.id).status).toBe("replied");
+    // 同内容重放：幂等成功，钩子不再调用
+    const replay = submitMcpReply(
+      db,
+      {
+        ...input,
+        onReplied: () => {
+          calls += 1;
+        },
+      },
+      { now: at(1200) },
+    );
+    expect(replay.duplicate).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("审查 #99-04：页内 onDelivered 只在交付分支调用；抛错整笔回滚；取消后的回信不调", () => {
+    const db = createTestDb();
+    const world = setupWorld(db);
+    const task = mkInappTask(db, world);
+    const { generation } = beginInappDispatch(
+      db,
+      { studentId: world.studentId, taskId: task.id },
+      { now: at(1000) },
+    );
+    const base = {
+      studentId: world.studentId,
+      taskId: task.id,
+      generation,
+      replyMd: "回信",
+    };
+    expect(() =>
+      completeInappDispatch(
+        db,
+        {
+          ...base,
+          onDelivered: () => {
+            throw new Error("记录写入失败");
+          },
+        },
+        { now: at(2000) },
+      ),
+    ).toThrow("记录写入失败");
+    expect(assistantMessagesOf(db, task.id)).toHaveLength(0);
+    expect(taskRow(db, task.id).status).toBe("dispatching");
+
+    let delivered = 0;
+    const result = completeInappDispatch(
+      db,
+      {
+        ...base,
+        onDelivered: (_tx, replied) => {
+          delivered += 1;
+          expect(replied.status).toBe("replied");
+        },
+      },
+      { now: at(2100) },
+    );
+    expect(result).toEqual({ duplicate: false, delivered: true });
+    expect(delivered).toBe(1);
+
+    // 取消后的回信（同代次）：入库为事实但不交付，钩子不调
+    const task2 = mkInappTask(db, world, {
+      questionId: openQuestions(db, world.attemptId, "q-cancel", 1)[0],
+    });
+    cancelAiTask(
+      db,
+      { studentId: world.studentId, taskId: task2.id },
+      { now: at(3100) },
+    );
+    let cancelledCalls = 0;
+    const late = completeInappDispatch(
+      db,
+      {
+        studentId: world.studentId,
+        taskId: task2.id,
+        generation: taskRow(db, task2.id).generation,
+        replyMd: "取消后到达",
+        onDelivered: () => {
+          cancelledCalls += 1;
+        },
+      },
+      { now: at(3200) },
+    );
+    expect(late.delivered).toBe(false);
+    expect(cancelledCalls).toBe(0);
+  });
+
   it("超时再领后：旧 lease 不能续期/回信，仅记 late_reply；新持有者可写回", () => {
     const db = createTestDb();
     const { world, task, leaseX } = claimedWorld(db);
