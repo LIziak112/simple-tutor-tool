@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type {
   AiAttemptReviewPreviewData,
   AiAttemptReviewTaskPublic,
 } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   fetchStudentAiAttemptReviewPreviewApi,
@@ -12,6 +12,8 @@ import {
 } from "@/lib/api";
 import {
   AiAttemptReviewHint,
+  ATTEMPT_REVIEW_POLL_INTERVAL_MS,
+  attemptReviewPreviewKey,
   pickAttemptReviewTask,
 } from "./AiAttemptReviewHint";
 
@@ -71,10 +73,10 @@ const PREVIEW: AiAttemptReviewPreviewData = {
   readyAt: "2026-11-09T10:00:00.000Z",
 };
 
-function renderHint(released = true) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+const newClient = () =>
+  new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+function renderHint(released = true, client = newClient()) {
   return render(
     <QueryClientProvider client={client}>
       <AiAttemptReviewHint attemptId={ATTEMPT_ID} released={released} />
@@ -107,6 +109,33 @@ describe("结果页「可复盘」提示条", () => {
     renderHint();
     await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("attempt-review-hint")).toBeNull();
+  });
+
+  it("#102-02 预览重取被拒绝：缓存里虽留有上次数据，也不再提示「本卷可复盘」", async () => {
+    const client = newClient();
+    mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+    mockedPreview.mockResolvedValue(PREVIEW);
+    renderHint(true, client);
+    expect(
+      (await screen.findByTestId("attempt-review-hint")).textContent,
+    ).toContain("本卷可复盘");
+    // 教师收紧策略：后台重取被服务端拒绝
+    mockedPreview.mockRejectedValue(
+      new ApiError("AI_ATTEMPT_REVIEW_NOT_AVAILABLE", "当前不可复盘", 403),
+    );
+    await act(async () => {
+      await client.invalidateQueries({
+        queryKey: attemptReviewPreviewKey(ATTEMPT_ID),
+      });
+    });
+    expect(mockedPreview).toHaveBeenCalledTimes(2);
+    // TanStack v5：重取失败 status=error 但保留上次 data——提示条不能只看 data
+    expect(client.getQueryData(attemptReviewPreviewKey(ATTEMPT_ID))).toEqual(
+      PREVIEW,
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("attempt-review-hint")).toBeNull(),
+    );
   });
 
   it("有进行中任务 → 报进度，不再请求预览", async () => {
@@ -157,19 +186,120 @@ describe("结果页「可复盘」提示条", () => {
     expect(screen.queryByTestId("attempt-review-hint")).toBeNull();
   });
 
-  it("pickAttemptReviewTask：活动任务 > 已回信 > 暂停/失败；取消与归档不计", () => {
-    const paused = taskOf({ id: "a", status: "paused" });
-    const replied = taskOf({ id: "b", status: "replied" });
-    const created = taskOf({ id: "c", status: "created" });
+  describe("在途任务轮询（#102-01）", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("等待领取 / 处理中：停留页面时每 15 秒重拉列表，报告到了就改报「已到」并停止轮询", async () => {
+      vi.useFakeTimers();
+      mockedList.mockResolvedValue({
+        tasks: [taskOf({ status: "claimed" })],
+        nextCursor: null,
+      });
+      renderHint();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20);
+      });
+      expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
+        "外部 AI 处理中",
+      );
+      expect(mockedList).toHaveBeenCalledTimes(1);
+      mockedList.mockResolvedValue({
+        tasks: [taskOf({ status: "replied", hasResult: true })],
+        nextCursor: null,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS + 50);
+      });
+      expect(mockedList).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
+        "整体复盘报告已到，还没看过",
+      );
+      // 有结局后不再轮询
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS * 3);
+      });
+      expect(mockedList).toHaveBeenCalledTimes(2);
+    });
+
+    it("无任务（可复盘）时不轮询列表", async () => {
+      vi.useFakeTimers();
+      mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+      mockedPreview.mockResolvedValue(PREVIEW);
+      renderHint();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20);
+      });
+      expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
+        "本卷可复盘",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS * 3);
+      });
+      expect(mockedList).toHaveBeenCalledTimes(1);
+      expect(mockedPreview).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("pickAttemptReviewTask：活动任务优先；其余有结局的按最近更新优先（#102-03 新失败 / 暂停不被旧报告盖住）；取消与归档不计", () => {
+    const at = (iso: string) => ({ createdAt: iso, updatedAt: iso });
+    const oldReplied = taskOf({
+      id: "b",
+      status: "replied",
+      ...at("2026-11-09T10:00:00.000Z"),
+    });
+    const newerPaused = taskOf({
+      id: "a",
+      status: "paused",
+      ...at("2026-11-09T11:00:00.000Z"),
+    });
+    const newerFailed = taskOf({
+      id: "f",
+      status: "failed",
+      ...at("2026-11-09T11:30:00.000Z"),
+    });
+    const created = taskOf({
+      id: "c",
+      status: "created",
+      ...at("2026-11-09T09:00:00.000Z"),
+    });
     const cancelled = taskOf({ id: "d", status: "cancelled" });
     const archived = taskOf({
       id: "e",
       status: "replied",
       archivedAt: "2026-11-09T12:00:00.000Z",
+      ...at("2026-11-09T12:00:00.000Z"),
     });
-    expect(pickAttemptReviewTask([paused, replied, created])?.id).toBe("c");
-    expect(pickAttemptReviewTask([paused, replied])?.id).toBe("b");
-    expect(pickAttemptReviewTask([paused])?.id).toBe("a");
+    // 活动任务即使最早创建也优先
+    expect(pickAttemptReviewTask([newerPaused, oldReplied, created])?.id).toBe(
+      "c",
+    );
+    // 旧报告 vs 新暂停 / 新失败：取最新的那次，不让旧报告盖住要处理的状态
+    expect(pickAttemptReviewTask([oldReplied, newerPaused])?.id).toBe("a");
+    expect(pickAttemptReviewTask([newerFailed, oldReplied])?.id).toBe("f");
+    // 新报告 vs 旧失败：同样按最新
+    expect(
+      pickAttemptReviewTask([
+        taskOf({
+          id: "g",
+          status: "failed",
+          ...at("2026-11-09T08:00:00.000Z"),
+        }),
+        oldReplied,
+      ])?.id,
+    ).toBe("b");
+    expect(pickAttemptReviewTask([newerPaused])?.id).toBe("a");
     expect(pickAttemptReviewTask([cancelled, archived])).toBeUndefined();
+    // 重试复用同一任务行（createdAt 不变、updatedAt 刷新）：早创建、后重试出报告的
+    // 任务要压过中间那次更早出的报告——按 createdAt 排会把刚到的新报告藏起来
+    const retriedReplied = taskOf({
+      id: "r",
+      status: "replied",
+      retryCount: 1,
+      createdAt: "2026-11-09T09:30:00.000Z",
+      updatedAt: "2026-11-09T13:00:00.000Z",
+    });
+    expect(pickAttemptReviewTask([oldReplied, retriedReplied])?.id).toBe("r");
   });
 });
