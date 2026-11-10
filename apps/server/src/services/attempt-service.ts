@@ -4278,6 +4278,6 @@ function buildResultData(
     ...(workflowView !== null
       ? { practiceWorkflow: workflowView.practiceWorkflow }
       : {}),
-    ...attemptActivityProjection(db, attempt.id), // 题内活动用时 v1（无事件不带键）
+    ...attemptActivityProjection(db, attempt.id, attempt.submittedAt), // 题内活动用时 v1（无事件不带键；交卷时刻作截止锚点）
   };
 }

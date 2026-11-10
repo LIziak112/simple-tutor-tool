@@ -19,15 +19,30 @@ import {
  *   拒绝即不渲染「可复盘」，不在前端猜；
  * - 只提示不代发：点「预览并确认」打开既有整体复盘面板，本人确认后才创建任务
  *   （创建 / 领取 / 读材料 / 回信交付仍逐步重验权限）；
- * - 有任务时改报进度：等待领取 / 处理中 / 已出报告（未读高亮）/ 已暂停或失败
- *   （面板里可重试 —— 策略变化导致暂停后由本人选择是否继续）。
+ * - 有任务时改报进度：等待领取 / 处理中（停留页面时每 15 秒核对一次，#102-01）
+ *   / 已出报告（未读高亮）/ 已暂停或失败（面板里可重试 —— 策略变化导致暂停后
+ *   由本人选择是否继续）。
  */
 export const attemptReviewListKey = (attemptId: string) =>
   ["student-ai", "attempt-reviews", attemptId] as const;
 export const attemptReviewPreviewKey = (attemptId: string) =>
   ["student-ai", "attempt-review-preview", attemptId] as const;
 
-/** 活动中的任务优先，其次最近一次有结局的任务；全部已取消 / 归档则无 */
+/** 在途任务（等待领取 / 处理中）时任务列表的轮询间隔；有结局 / 无任务不轮询 */
+export const ATTEMPT_REVIEW_POLL_INTERVAL_MS = 15_000;
+
+/** 等待领取 / 处理中——提示条要跟着它刷新 */
+function isActiveTask(task: AiAttemptReviewTaskPublic): boolean {
+  return task.status === "created" || task.status === "claimed";
+}
+
+/**
+ * 活动中的任务优先；其余有结局的（已回信 / 失败 / 暂停）不分档，直接取**最近
+ * 更新**的一次——#102-03：先复盘成功过、再发一轮却失败或暂停时，要报的是新
+ * 任务待处理，不能让旧报告盖住它。排序键用 updatedAt 而不是 createdAt：重试
+ * 复用同一任务行（failed / paused → created，createdAt 不变），重试后新出的
+ * 报告才是「最新一次结局」。全部已取消 / 归档则无。
+ */
 export function pickAttemptReviewTask(
   tasks: readonly AiAttemptReviewTaskPublic[],
 ): AiAttemptReviewTaskPublic | undefined {
@@ -35,13 +50,9 @@ export function pickAttemptReviewTask(
     (task) => task.archivedAt === null && task.status !== "cancelled",
   );
   const rank = (task: AiAttemptReviewTaskPublic): number =>
-    task.status === "claimed" || task.status === "created"
-      ? 0
-      : task.status === "replied"
-        ? 1
-        : 2;
+    isActiveTask(task) ? 0 : 1;
   return [...live].sort(
-    (a, b) => rank(a) - rank(b) || b.createdAt.localeCompare(a.createdAt),
+    (a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt),
   )[0];
 }
 
@@ -60,6 +71,17 @@ export function AiAttemptReviewHint({
     enabled: released,
     staleTime: 15_000,
     retry: false,
+    // #102-01：学生停在结果页等外部 Agent，等待领取 / 处理中时每 15 秒核对一次
+    // 任务状态（页面隐藏时 TanStack 默认 refetchIntervalInBackground=false 自动
+    // 暂停）；无任务 / 已有结局不轮询——那两种状态只会由本人在面板里的操作改变
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data === undefined) return false;
+      const current = pickAttemptReviewTask(data.tasks);
+      return current !== undefined && isActiveTask(current)
+        ? ATTEMPT_REVIEW_POLL_INTERVAL_MS
+        : false;
+    },
   });
   const task =
     tasksQuery.data === undefined
@@ -83,14 +105,17 @@ export function AiAttemptReviewHint({
       text = emphasis
         ? "整体复盘报告已到，还没看过"
         : "整体复盘已完成，可再看一次报告";
-    } else if (task.status === "created" || task.status === "claimed") {
+    } else if (isActiveTask(task)) {
       text = `整体复盘进行中：${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}（覆盖 ${task.questionCount} 题）`;
       action = "查看进度";
     } else {
       text = `上次整体复盘${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}`;
       action = "查看并处理";
     }
-  } else if (previewQuery.data !== undefined) {
+  } else if (previewQuery.isSuccess) {
+    // #102-02：TanStack v5 重取失败后 status=error 但仍保留上次 data——教师刚
+    // 收紧策略时不能拿旧缓存继续引导点击，按本轮结果判断（isError 即不提示；
+    // isSuccess 已把 data 收窄为非空）
     const counts = previewQuery.data.counts;
     text = `本卷可复盘：共 ${counts.total} 题、已判 ${counts.gradedCount} 题，Agent 可按整卷给一次复盘建议`;
     action = "预览并确认";

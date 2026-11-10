@@ -127,8 +127,9 @@ function activityText(row: ModuleResultStats): string {
     : formatActivitySec(row.activeSec);
 }
 function activityTitle(row: ModuleResultStats): string {
+  // null 两种来源同一句：整卷无事件，或整卷有事件但本模块没有任何题的记录
   return row.activeSec === null
-    ? "本卷没有作答事件记录"
+    ? "本模块没有作答事件记录"
     : `只看过 ${formatActivitySec(row.observedSec)}（无作答动作）`;
 }
 function quotaText(row: ModuleResultStats): string {
