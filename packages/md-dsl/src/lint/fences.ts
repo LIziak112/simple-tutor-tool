@@ -1,4 +1,6 @@
 import type { LintIssue } from "@tutor/contract";
+import type { Root } from "mdast";
+import type { Node, Parent } from "unist";
 import { makeIssue } from "../v2/shared.ts";
 
 /**
@@ -136,4 +138,79 @@ function skipFrontmatter(lines: readonly string[]): number {
     if (FRONTMATTER_FENCE_RE.test(lines[index] ?? "")) return index + 1;
   }
   return 0;
+}
+
+/** 仅检查被语法树识别为正文的围栏，保留真正闭合的围栏和代码示例。 */
+export function lintMisplacedContainerFences(
+  tree: Root,
+  lines: readonly string[],
+): LintIssue[] {
+  const issues: LintIssue[] = [];
+
+  function walk(
+    node: Node,
+    inContainer: boolean,
+    inList: boolean,
+    index: number,
+  ): void {
+    inContainer ||= node.type === "containerDirective";
+    inList ||= node.type === "listItem";
+    const position = node.position;
+
+    if (inContainer && position !== undefined) {
+      if (node.type === "tableRow" && index > 0) {
+        const line = position.start.line;
+        const match = /^([ \t|]*):{3,}[ \t|]*$/.exec(lines[line - 1] ?? "");
+        if (match?.[1] !== undefined) {
+          issues.push(misplacedFence(line, match[1].length + 1, "表格"));
+        }
+      } else if (node.type === "text" && inList) {
+        // 一个文本节点可以包含连续几行围栏，位置以 Markdown 原文为准。
+        for (
+          let line = position.start.line;
+          line <= position.end.line;
+          line += 1
+        ) {
+          const match = /^([ \t]+)(:{3,})[ \t]*$/.exec(lines[line - 1] ?? "");
+          if (match?.[1] === undefined || match[2] === undefined) continue;
+          const column = match[1].length + 1;
+          if (line === position.start.line && column < position.start.column)
+            continue;
+          if (
+            line === position.end.line &&
+            column + match[2].length > position.end.column
+          )
+            continue;
+          issues.push(misplacedFence(line, column, "列表"));
+        }
+      }
+    }
+
+    if (node.type !== "tableRow" && "children" in node) {
+      (node as Parent).children.forEach((child, childIndex) => {
+        walk(child, inContainer, inList, childIndex);
+      });
+    }
+  }
+
+  walk(tree, false, false, 0);
+  return issues;
+}
+
+function misplacedFence(
+  line: number,
+  column: number,
+  location: "列表" | "表格",
+): LintIssue {
+  const fix = `将结束围栏移到${location}外，保留原冒号数量，单独占一行并与开栏对齐`;
+  return {
+    ...makeIssue(
+      "error",
+      line,
+      column,
+      "MISPLACED_CONTAINER_FENCE",
+      `第 ${line} 行的容器结束围栏被解析为${location}内容，无法闭合容器。${fix}。`,
+    ),
+    fix,
+  };
 }

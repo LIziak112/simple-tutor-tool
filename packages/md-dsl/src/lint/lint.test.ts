@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type LintIssue, lintIssueSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import {
+  CORRECTED_FENCE_LECTURE,
+  MISPLACED_FENCE_LECTURE,
+  MISPLACED_FENCE_POSITIONS,
+} from "../../../../test-support/misplaced-fence-lecture.ts";
 import { lintDocument } from "./lint";
 
 /**
@@ -1227,4 +1232,100 @@ describe("lintDocument：frontmatter practice 推荐（M5-D1）", () => {
       "practice.feedback",
     );
   });
+});
+
+describe("被列表或表格吞掉的结束围栏", () => {
+  it.each(["LF", "CRLF"])("9.27 讲义逐行定位误吞的围栏（%s）", (newline) => {
+    const markdown =
+      newline === "CRLF"
+        ? MISPLACED_FENCE_LECTURE.replaceAll("\n", "\r\n")
+        : MISPLACED_FENCE_LECTURE;
+    const errors = lintDocument(markdown).issues.filter(
+      (issue) => issue.level === "error",
+    );
+    expect(errors).toMatchObject(
+      MISPLACED_FENCE_POSITIONS.map((position) => ({
+        ...position,
+        code: "MISPLACED_CONTAINER_FENCE",
+        level: "error",
+        fix: expect.any(String),
+      })),
+    );
+    expect(errors[0]?.message).toContain("表格");
+    expect(errors[1]?.message).toContain("列表");
+  });
+
+  it("修正同一份讲义后可通过校验", () => {
+    expect(lintDocument(CORRECTED_FENCE_LECTURE).issues).toEqual([]);
+  });
+
+  it("代码、数学块、行内代码、正常表格和实际闭合围栏不误报", () => {
+    const markdown = md([
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 结束围栏示例",
+      "",
+      "::::box",
+      "- 列表内的代码：",
+      "",
+      "  ```text",
+      "  :::",
+      "  ```",
+      "",
+      "  $$",
+      "  :::",
+      "  $$",
+      "",
+      "  `第一行",
+      "  :::",
+      "  最后一行`",
+      "",
+      "  :::tip",
+      "  合法的列表内指令。",
+      "  :::",
+      "",
+      "| 语法 | 说明 |",
+      "| --- | --- |",
+      "| `:::` | |",
+      "| ::: | 结束标记 |",
+      "",
+      "::::",
+      "",
+    ]);
+    expect(codes(lintDocument(markdown).issues)).not.toContain(
+      "MISPLACED_CONTAINER_FENCE",
+    );
+  });
+});
+
+it("列表里的表格吞掉围栏时，只在原位报一条表格错误", () => {
+  const markdown = md([
+    "---",
+    "kind: lecture",
+    "---",
+    "",
+    "# 列表里的表格",
+    "",
+    ":::box",
+    "10. 列表项",
+    "",
+    "    | 表头 | 说明 |",
+    "    | --- | --- |",
+    "    | 数据 | 说明 |",
+    "    :::",
+    "",
+    ":::",
+    "",
+  ]);
+  expect(lintDocument(markdown).issues).toMatchObject([
+    {
+      level: "error",
+      code: "MISPLACED_CONTAINER_FENCE",
+      line: 13,
+      column: 5,
+      message: expect.stringContaining("表格"),
+    },
+  ]);
 });
