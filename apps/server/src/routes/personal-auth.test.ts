@@ -116,6 +116,29 @@ const VALID_REGISTER = {
   inviteCode: INVITE_CODE,
 } as const;
 
+it("停用个人账号后两侧会话均失效，学习侧不会续期", async () => {
+  const { app, db } = makeApp();
+  const admin = await setupAdmin(app);
+  const registered = await registerPersonal(app, VALID_REGISTER);
+  const { data } = personalSessionOkSchema.parse(await registered.json());
+  const cookie = cookieHeaderOf(registered);
+
+  const disabled = await req(
+    app,
+    "POST",
+    `/api/admin/teachers/${data.teacher.id}/disable`,
+    undefined,
+    { cookie: admin.cookie },
+  );
+  expect(disabled.status).toBe(200);
+  for (const role of ["student", "teacher"]) {
+    const me = await req(app, "GET", `/api/${role}/me`, undefined, { cookie });
+    expect(me.status).toBe(401);
+    expect(me.headers.getSetCookie()).toEqual([]);
+  }
+  db.$client.close();
+});
+
 describe("status.personalRegistrationOpen（模块 0）", () => {
   it("未首启 false；首启后未配置邀请码仍 false；配置后 true；置 null 回到 false", async () => {
     const { app, db } = makeApp();

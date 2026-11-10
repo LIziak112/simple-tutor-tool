@@ -62,16 +62,14 @@ export function personalLearnerLoginName(accountLoginName: string): string {
  * 学生行所属的个人账号（teachers.accountKind='personal' 且 personalStudentId
  * 指回本行）；班级学生 → undefined。toMe 据此给出 accountKind 与展示登录名。
  */
-function personalOwnerOf(
-  db: Db,
-  row: Student,
-): { loginName: string } | undefined {
+function personalOwnerOf(db: Db, row: Student) {
   if (row.teacherId === null) return undefined;
   const owner = db
     .select({
       loginName: teachers.loginName,
       accountKind: teachers.accountKind,
       personalStudentId: teachers.personalStudentId,
+      disabledAt: teachers.disabledAt,
     })
     .from(teachers)
     .where(eq(teachers.id, row.teacherId))
@@ -83,7 +81,7 @@ function personalOwnerOf(
   ) {
     return undefined;
   }
-  return { loginName: owner.loginName };
+  return { loginName: owner.loginName, disabledAt: owner.disabledAt };
 }
 
 /** 教师是否为个人账号（创建学生等班级能力的闸门） */
@@ -140,8 +138,10 @@ function toSummary(row: Student): StudentSummary {
  * students 行 → 学生端信息（不含 linkToken/note/passwordHash）。
  * 个人账号的学习者：accountKind='personal'，loginName 展示账号登录名（去掉内部前缀）。
  */
-function toMe(db: Db, row: Student): StudentMeData {
-  const personal = personalOwnerOf(db, row);
+function toMe(
+  row: Student,
+  personal: ReturnType<typeof personalOwnerOf>,
+): StudentMeData {
   return {
     id: row.id,
     displayName: row.displayName,
@@ -476,7 +476,7 @@ export async function loginStudentByPassword(
   clearLoginFailures(db, keys);
   pruneExpiredSessions(db);
   const { token } = createStudentSession(db, row.id);
-  return { student: toMe(db, row), token };
+  return { student: toMe(row, personalOwnerOf(db, row)), token };
 }
 
 /**
@@ -495,14 +495,17 @@ export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
   }
   pruneExpiredSessions(db);
   const { token: sessionToken } = createStudentSession(db, row.id);
-  return { student: toMe(db, row), token: sessionToken };
+  return {
+    student: toMe(row, personalOwnerOf(db, row)),
+    token: sessionToken,
+  };
 }
 
 // ---------- 学生端：me / 自助改密 ----------
 
 /**
  * 按学生 id 取账号信息（requireStudent 守卫与 /api/student/me 共用）。
- * 不存在或已归档 → null（归档学生会话立即失效）。
+ * 不存在、已归档或绑定个人账号已停用 → null。
  */
 export function getStudentAccount(
   db: Db,
@@ -512,7 +515,8 @@ export function getStudentAccount(
   if (!row || row.archivedAt != null) {
     return null;
   }
-  return toMe(db, row);
+  const owner = personalOwnerOf(db, row);
+  return owner?.disabledAt != null ? null : toMe(row, owner);
 }
 
 /**
@@ -542,5 +546,5 @@ export async function changeStudentPassword(
     .where(eq(students.id, studentId))
     .run();
   const updated = requireStudentRowById(db, studentId);
-  return toMe(db, updated);
+  return toMe(updated, personalOwnerOf(db, updated));
 }
