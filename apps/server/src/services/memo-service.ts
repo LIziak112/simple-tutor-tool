@@ -241,7 +241,7 @@ export function createAgentMemo(
   const anchor =
     input.anchor === undefined
       ? MEMO_ANCHOR_NONE
-      : resolveAgentMemoAnchor(db, studentId, input.anchor);
+      : resolveAgentMemoAnchor(db, studentId, input.anchor, now);
   return insertMemo(
     db,
     {

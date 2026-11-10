@@ -16,14 +16,12 @@ import {
   AI_MCP_LEASE_MAX_TOTAL_MS,
   AI_MCP_LEASE_MINUTES,
   AI_OUTBOUND_TIMEOUT_MS,
-  AI_REPLY_MAX_CHARS,
   AI_TASK_ACTIVE_PER_QUESTION,
   AI_TASK_ALLOWED_ACTIONS,
   AI_TASK_QUEUE_BUCKETS,
   AI_TURNS_MAX,
   aiContextSnapshotSchema,
 } from "@tutor/contract";
-import { checkAiReply } from "@tutor/md-dsl";
 import {
   and,
   asc,
@@ -66,6 +64,11 @@ import {
   loadAiTaskMaterialRows,
   taskOf,
 } from "./student-ai-materials.ts";
+import {
+  checkedReplyOf,
+  insertAssistantReply,
+  truncateReply,
+} from "./student-ai-reply.ts";
 import {
   asDb,
   assertStudentAiTaskQuota,
@@ -525,9 +528,10 @@ export interface AiTaskCreateResult {
 }
 
 /**
- * 幂等重放谓词：既有行是否就是本请求的重放（同学生/卷/题/通道 + 首条消息
- * 原文一致）。预检查与唯一索引竞态兜底分支共用同一口径——竞态窗口同键
- * 异内容同样必须 409，不得静默当作重放返回原任务。
+ * 幂等重放谓词：既有行是否就是本请求的重放（同学生/卷/题/通道/目的 + 首条
+ * 消息原文一致）。预检查与唯一索引竞态兜底分支共用同一口径——竞态窗口同键
+ * 异内容同样必须 409，不得静默当作重放返回原任务。目的参与比较（审查
+ * #99-07）：普通求助与量表判卷的写回方式不同，同键换目的不能拿回旧任务。
  */
 function matchesCreateReplay(
   db: Db | QueueTx,
@@ -539,6 +543,7 @@ function matchesCreateReplay(
     row.attemptId === input.attemptId &&
     row.questionId === input.questionId &&
     row.channel === input.channel &&
+    (snapshotPurposeOf(row) ?? "help") === (input.purpose ?? "help") &&
     firstQuestionOf(db, row.id) === input.question
   );
 }
@@ -1385,34 +1390,6 @@ function lastReplyReceipt(
   return { contentHash };
 }
 
-/** 回信正文超长截断（契约口径：不硬拒，截断并显式声明） */
-function truncateReply(text: string): { content: string; truncated: boolean } {
-  if (text.length <= AI_REPLY_MAX_CHARS)
-    return { content: text, truncated: false };
-  return {
-    content: text.slice(0, AI_REPLY_MAX_CHARS),
-    truncated: true,
-  };
-}
-
-/** 回信入库（MCP 写回与页内派发写回共用同形） */
-function insertAssistantReply(
-  tx: QueueTx,
-  taskId: string,
-  content: string,
-  now: NowSpec,
-): void {
-  tx.insert(aiMessages)
-    .values({
-      id: randomUUID(),
-      taskId,
-      role: "assistant",
-      contentMd: content,
-      createdAt: now.iso,
-    })
-    .run();
-}
-
 /**
  * 迟到回执落账：拒绝写任务正文，但 late_reply 事实（回信内容随 detailJson
  * 入库为审计事实——取消/过期后回信仍保留，不交付不覆盖）必须**独立提交**——
@@ -1459,6 +1436,11 @@ export interface SubmitMcpReplyInput {
   readonly expectedContextVersion?: string;
   /** 领取时拿到的运行代际（可选核对：恢复数据库后旧代迟到回执只落事实） */
   readonly expectedRuntimeEpoch?: string;
+  /**
+   * 回信落库同事务的附加写入（模块 3 量表意见落 responses 行；审查 #99-04）：
+   * 只在首次成功写回时调用，重放 / 迟到 / 校验失败都不调；抛错则整笔回滚。
+   * 第二参是转换后（status=replied）的任务行，与 onDelivered 同口径。 */
+  readonly onReplied?: (tx: QueueTx, task: AiTaskRow) => void;
 }
 
 /**
@@ -1538,34 +1520,17 @@ export function submitMcpReply(
           message: "租约已失效或任务状态已变化，回信已记录为迟到事实",
         };
       }
-      const checked = checkAiReply(input.replyMarkdown);
-      if (!checked.valid) {
-        throw new HttpError(
-          422,
-          "AI_REPLY_FORMAT_INVALID",
-          "回信数学格式有误，请按行列反馈修正后使用当前租约重新提交。",
-          { _issues: checked.issues, version: checked.version },
-        );
-      }
-      const { content, truncated } = truncateReply(input.replyMarkdown);
-      const storedCheck = truncated ? checkAiReply(content) : checked;
-      const formatWarnings = storedCheck.issues.map((issue) =>
-        truncated && issue.severity === "error"
-          ? {
-              ...issue,
-              severity: "warning" as const,
-              code: "TRUNCATED_MATH" as const,
-              message: "截断后的片段格式不完整，页面将安全降级显示。",
-            }
-          : issue,
+      const { content, truncated, formatWarnings } = checkedReplyOf(
+        input.replyMarkdown,
       );
-      insertAssistantReply(tx, task.id, content, now);
-      applyTransition(tx, task, "replied", now);
+      insertAssistantReply(tx, task.id, content, now.iso);
+      const replied = applyTransition(tx, task, "replied", now);
       insertFact(tx, task, "reply_received", now, {
         via: "mcp",
         contentHash,
         truncated,
       });
+      input.onReplied?.(tx, replied);
       return { kind: "ok", truncated, formatWarnings };
     },
     { behavior: "immediate" },
@@ -1660,6 +1625,12 @@ export function completeInappDispatch(
     replyMd: string;
     /** begin 时拿到的运行代际（可选核对：恢复数据库后旧代回执只落事实） */
     expectedRuntimeEpoch?: string;
+    /**
+     * 回信交付（dispatching / uncertain → replied）同事务的附加写入（模块 3
+     * 页内量表意见落 responses 行；审查 #99-02 / #99-04）；重放 / 迟到 /
+     * 不交付（paused / cancelled）都不调，抛错则整笔回滚。
+     */
+    onDelivered?: (tx: QueueTx, task: AiTaskRow) => void;
   },
   options: { now?: Date | string } = {},
 ): CompleteInappResult {
@@ -1712,7 +1683,7 @@ export function completeInappDispatch(
         task.status === "cancelled"
       ) {
         // 回信入库一次，再按当前状态转换/记事实（三分支仅事实口径不同）
-        insertAssistantReply(tx, task.id, content, now);
+        insertAssistantReply(tx, task.id, content, now.iso);
         if (task.status === "dispatching") {
           const replied = applyTransition(tx, task, "replied", now);
           insertFact(tx, task, "dispatched", now, {
@@ -1725,15 +1696,17 @@ export function completeInappDispatch(
             contentHash,
             truncated,
           });
+          input.onDelivered?.(tx, replied);
           return { kind: "delivered", delivered: true };
         }
         if (task.status === "uncertain") {
-          applyTransition(tx, task, "replied", now);
+          const replied = applyTransition(tx, task, "replied", now);
           insertFact(tx, task, "reply_received", now, {
             via: "inapp_late",
             contentHash,
             truncated,
           });
+          input.onDelivered?.(tx, replied);
           return { kind: "delivered", delivered: true };
         }
         // paused/cancelled：回信入库为事实（审计保留），不交付（replyDeliveredAt 保持 null）
