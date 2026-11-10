@@ -27,7 +27,16 @@ export const attemptReviewListKey = (attemptId: string) =>
 export const attemptReviewPreviewKey = (attemptId: string) =>
   ["student-ai", "attempt-review-preview", attemptId] as const;
 
-/** 活动中的任务优先，其次最近一次有结局的任务；全部已取消 / 归档则无 */
+/** 等待领取 / 处理中——提示条要跟着它刷新 */
+function isActiveTask(task: AiAttemptReviewTaskPublic): boolean {
+  return task.status === "created" || task.status === "claimed";
+}
+
+/**
+ * 活动中的任务优先；其余有结局的（已回信 / 失败 / 暂停）不分档，直接取创建
+ * 时间最新的一次——#102-03：先复盘成功过、再发一轮却失败或暂停时，要报的是
+ * 新任务待处理，不能让旧报告盖住它。全部已取消 / 归档则无。
+ */
 export function pickAttemptReviewTask(
   tasks: readonly AiAttemptReviewTaskPublic[],
 ): AiAttemptReviewTaskPublic | undefined {
@@ -35,11 +44,7 @@ export function pickAttemptReviewTask(
     (task) => task.archivedAt === null && task.status !== "cancelled",
   );
   const rank = (task: AiAttemptReviewTaskPublic): number =>
-    task.status === "claimed" || task.status === "created"
-      ? 0
-      : task.status === "replied"
-        ? 1
-        : 2;
+    isActiveTask(task) ? 0 : 1;
   return [...live].sort(
     (a, b) => rank(a) - rank(b) || b.createdAt.localeCompare(a.createdAt),
   )[0];
@@ -83,7 +88,7 @@ export function AiAttemptReviewHint({
       text = emphasis
         ? "整体复盘报告已到，还没看过"
         : "整体复盘已完成，可再看一次报告";
-    } else if (task.status === "created" || task.status === "claimed") {
+    } else if (isActiveTask(task)) {
       text = `整体复盘进行中：${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}（覆盖 ${task.questionCount} 题）`;
       action = "查看进度";
     } else {

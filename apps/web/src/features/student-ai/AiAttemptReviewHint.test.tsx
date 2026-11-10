@@ -157,19 +157,53 @@ describe("结果页「可复盘」提示条", () => {
     expect(screen.queryByTestId("attempt-review-hint")).toBeNull();
   });
 
-  it("pickAttemptReviewTask：活动任务 > 已回信 > 暂停/失败；取消与归档不计", () => {
-    const paused = taskOf({ id: "a", status: "paused" });
-    const replied = taskOf({ id: "b", status: "replied" });
-    const created = taskOf({ id: "c", status: "created" });
+  it("pickAttemptReviewTask：活动任务优先；其余有结局的按创建时间最新优先（#102-03 新失败 / 暂停不被旧报告盖住）；取消与归档不计", () => {
+    const oldReplied = taskOf({
+      id: "b",
+      status: "replied",
+      createdAt: "2026-11-09T10:00:00.000Z",
+    });
+    const newerPaused = taskOf({
+      id: "a",
+      status: "paused",
+      createdAt: "2026-11-09T11:00:00.000Z",
+    });
+    const newerFailed = taskOf({
+      id: "f",
+      status: "failed",
+      createdAt: "2026-11-09T11:30:00.000Z",
+    });
+    const created = taskOf({
+      id: "c",
+      status: "created",
+      createdAt: "2026-11-09T09:00:00.000Z",
+    });
     const cancelled = taskOf({ id: "d", status: "cancelled" });
     const archived = taskOf({
       id: "e",
       status: "replied",
       archivedAt: "2026-11-09T12:00:00.000Z",
+      createdAt: "2026-11-09T12:00:00.000Z",
     });
-    expect(pickAttemptReviewTask([paused, replied, created])?.id).toBe("c");
-    expect(pickAttemptReviewTask([paused, replied])?.id).toBe("b");
-    expect(pickAttemptReviewTask([paused])?.id).toBe("a");
+    // 活动任务即使最早创建也优先
+    expect(pickAttemptReviewTask([newerPaused, oldReplied, created])?.id).toBe(
+      "c",
+    );
+    // 旧报告 vs 新暂停 / 新失败：取最新的那次，不让旧报告盖住要处理的状态
+    expect(pickAttemptReviewTask([oldReplied, newerPaused])?.id).toBe("a");
+    expect(pickAttemptReviewTask([newerFailed, oldReplied])?.id).toBe("f");
+    // 新报告 vs 旧失败：同样按最新
+    expect(
+      pickAttemptReviewTask([
+        taskOf({
+          id: "g",
+          status: "failed",
+          createdAt: "2026-11-09T08:00:00.000Z",
+        }),
+        oldReplied,
+      ])?.id,
+    ).toBe("b");
+    expect(pickAttemptReviewTask([newerPaused])?.id).toBe("a");
     expect(pickAttemptReviewTask([cancelled, archived])).toBeUndefined();
   });
 });
