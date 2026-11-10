@@ -155,9 +155,22 @@ export function checkRepo(root) {
       errors.push(`${f} 必须指向 AGENTS.md`);
   }
 
-  for (const link of localLinks(agents)) {
-    if (!existsSync(resolve(root, link)))
-      errors.push(`AGENTS.md 引用的本地路径不存在：${link}`);
+  const agentsLinks = localLinks(agents);
+  const linksByFile = new Map([["AGENTS.md", agentsLinks]]);
+  for (const link of agentsLinks) {
+    if (
+      /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(link) &&
+      existsSync(join(root, link))
+    ) {
+      linksByFile.set(link, localLinks(read(root, link)));
+    }
+  }
+  for (const [file, links] of linksByFile) {
+    for (const link of links) {
+      if (!existsSync(resolve(root, dirname(file), link))) {
+        errors.push(`${file} 引用的本地路径不存在：${link}`);
+      }
+    }
   }
 
   errors.push(...checkSkillMirrors(root));

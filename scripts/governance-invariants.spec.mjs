@@ -20,7 +20,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "gov-inv-"));
-  const agents = `${INVARIANTS["AGENTS.md"].join("\n")}\n[专题](docs/a.md)\n[外链](https://example.com)\n[锚点](#x)\n`;
+  const agents = `${INVARIANTS["AGENTS.md"].join("\n")}\n[专题](docs/a.md)\n[审查技能](.agents/skills/review/SKILL.md)\n[外链](https://example.com)\n[锚点](#x)\n`;
   writeFileSync(join(root, "AGENTS.md"), agents);
   writeFileSync(join(root, "CLAUDE.md"), "@AGENTS.md\n");
   writeFileSync(join(root, ".cursorrules"), "见 AGENTS.md\n");
@@ -31,6 +31,10 @@ function fixture() {
     mkdirSync(join(root, dir), { recursive: true });
     writeFileSync(join(root, dir, "SKILL.md"), "same\n");
   }
+  const skill = join(root, ".agents/skills/review");
+  mkdirSync(skill, { recursive: true });
+  writeFileSync(join(skill, "SKILL.md"), "[模板](reviewer.md)\n");
+  writeFileSync(join(skill, "reviewer.md"), "review instructions\n");
   return root;
 }
 
@@ -87,6 +91,18 @@ test("本地链接：跳过外链与锚点，失效路径报错", () => {
   try {
     rmSync(join(root, "docs/a.md"));
     assert.ok(checkRepo(root).errors.some((e) => e.includes("docs/a.md")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AGENTS 登记的项目技能引用缺失文件时报错", () => {
+  const root = fixture();
+  try {
+    rmSync(join(root, ".agents/skills/review/reviewer.md"));
+    assert.deepEqual(checkRepo(root).errors, [
+      ".agents/skills/review/SKILL.md 引用的本地路径不存在：reviewer.md",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
