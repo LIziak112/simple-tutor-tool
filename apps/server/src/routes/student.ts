@@ -134,6 +134,7 @@ import { listWrongQuestions } from "../services/wrong-questions";
 import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
+import { createStudentAttachmentRoutes } from "./student-attachments";
 import { createStudentRubricRoutes } from "./student-rubric";
 
 /**
@@ -281,6 +282,7 @@ export function createStudentRoutes(
       .route("/", createStudentInkProfileRoutes(db))
       .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
       .route("/", createStudentRubricRoutes(db))
+      .route("/", createStudentAttachmentRoutes(db, dataDir))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })
@@ -310,8 +312,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1
-      // 与可选 feedbackMode，契约拒绝 mode 无版本）
+      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode，契约拒绝 mode 无版本）
       .post("/assignments/:id/attempt", async (c) => {
         const options =
           (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
@@ -335,8 +336,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），
-      // 请求/回执只有标志位、不含任何答案内容（泄露测试 student-flags.test.ts）
+      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
       .put("/attempts/:id/flags/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptFlagRequestSchema);
         return c.json({

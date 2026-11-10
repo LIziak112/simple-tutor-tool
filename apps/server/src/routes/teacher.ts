@@ -37,6 +37,7 @@ import { createTeacherAiRoutes } from "./teacher-ai";
 import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
 import { createTeacherApiTokenRoutes } from "./teacher-api-token";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
+import { createTeacherAttachmentRoutes } from "./teacher-attachments";
 import { createTeacherAttemptRoutes } from "./teacher-attempts";
 import { createTeacherBackupRoutes } from "./teacher-backup";
 import { createTeacherExportRoutes } from "./teacher-export";
@@ -204,6 +205,8 @@ export function createTeacherRoutes(
       // 媒体管线第二单：图片上传（multipart 字段 file；类型/限额/内容寻址落盘
       // 在 media-service，content-length 粗防线在 app.ts）
       .route("/", createTeacherMediaRoutes(dataDir))
+      // 模块 6 第一步：课程资料 PDF / docx 原件上传下载（attachment-service；21 MB 粗防线在 app.ts）
+      .route("/", createTeacherAttachmentRoutes(db, dataDir))
       .route("/", createImportRoutes(db, dataDir))
       .route("/", createContentRoutes(db))
       .route("/", createCourseRoutes(db))

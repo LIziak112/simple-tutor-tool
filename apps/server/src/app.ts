@@ -136,6 +136,13 @@ function guardBodyLimit(config: {
 export const MEDIA_UPLOAD_BODY_LIMIT = 6 * 1024 * 1024;
 
 /**
+ * 资料附件上传的 body 预检上限（模块 6 第一步）：原件 ≤20 MB（契约
+ * ATTACHMENT_MAX_UPLOAD_BYTES）+ multipart 开销余量，取 21 MB；精确限额由
+ * attachment-service 按实际字节校验（chunked 兜底）。
+ */
+const ATTACHMENT_UPLOAD_BODY_LIMIT = 21 * 1024 * 1024;
+
+/**
  * AI 任务文字请求的 body 预检上限（SAI-13）：问题 ≤2,000 字符（§9 限额表，
  * UTF-8 ≤6KB）+ 材料偏好/幂等键等 JSON 信封余量，取整 64KB；create 与
  * update-pending 两个小信封入口同配置。超限在 parseJsonBody（整包进内存）
@@ -310,6 +317,16 @@ export function createApp(options: CreateAppOptions) {
         limit: MEDIA_UPLOAD_BODY_LIMIT,
         code: "MEDIA_TOO_LARGE",
         message: "图片超过 5MB 上传上限，请压缩后重试",
+      }),
+    )
+    // 模块 6 第一步：资料附件上传（20 MB 契约限额 + multipart 开销余量取 21 MB）
+    .use(
+      "/api/teacher/attachments",
+      guardBodyLimit({
+        method: "POST",
+        limit: ATTACHMENT_UPLOAD_BODY_LIMIT,
+        code: "ATTACHMENT_TOO_LARGE",
+        message: "文件超过 20 MB 上传上限，请压缩或拆分后重试",
       }),
     )
     // SAI-13 AI 任务文字请求（create / update-pending 小信封；材料 multipart
