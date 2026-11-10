@@ -272,7 +272,7 @@ export function StudentLayout() {
         >
           <Outlet />
         </main>
-        <MemoQuickCapture />
+        {!workspace && <MemoQuickCapture />}
       </div>
     </StudentWorkspaceContext.Provider>
   );

@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { ResultQuestionNavigator } from "./ResultQuestionNavigator";
 import {
@@ -164,9 +165,10 @@ export function ResultWorkspace({
                 : "已交卷 · 待批改"}
           </p>
         </div>
-        {actions != null && (
-          <div className="flex shrink-0 items-center">{actions}</div>
-        )}
+        <div className="flex shrink-0 items-center">
+          {actions}
+          <MemoQuickCaptureButton />
+        </div>
       </header>
       <div
         className={`grid min-w-0 gap-6 ${collapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]"}`}

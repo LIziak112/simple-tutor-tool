@@ -69,13 +69,19 @@ export function MemoComposer({
   async function queue(
     input: Parameters<typeof enqueueMemo>[0],
   ): Promise<void> {
+    // 先清空输入再落本机：点「保存」立刻有反馈；本机写失败再把原文放回来
+    const previous = { text, tagsRaw };
     setBusy(true);
+    setText("");
+    setTagsRaw("");
+    setNotice(null);
     try {
       await enqueueMemo(input);
-      setText("");
-      setTagsRaw("");
-      setNotice(null);
       onQueued?.();
+    } catch {
+      setText(previous.text);
+      setTagsRaw(previous.tagsRaw);
+      setNotice("本机保存失败，请重试");
     } finally {
       setBusy(false);
     }

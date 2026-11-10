@@ -22,6 +22,7 @@ import {
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
 import { usePublishLearningFocus } from "@/features/memos/learning-focus-store";
+import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
@@ -280,6 +281,7 @@ export default function StudentLectureViewPage() {
             {isDesktop && outlineOpen ? "收起目录" : "展开目录"}
           </button>
         )}
+        <MemoQuickCaptureButton />
       </nav>
 
       <Dialog

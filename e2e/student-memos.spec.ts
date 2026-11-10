@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { getStudentViaApi, teacherApiLogin, uniqueSuffix } from "./helpers";
+import {
+  choiceJudgePracticeMarkdown,
+  createCourseViaApi,
+  getStudentViaApi,
+  importUnitToCourse,
+  openChoicePractice,
+  prepareCourseStudent,
+  teacherApiLogin,
+  uniqueSuffix,
+} from "./helpers";
 
 /**
  * 随笔记录端（模块 5 第一步）E2E 主路径：链接登录 → 首页右下角「随手记」浮层记一条
@@ -45,20 +54,23 @@ test("随手记 → 随笔页：文字与图片随笔的记录、筛选、删除
     .click();
   await expect(page).toHaveURL(/\/s\/memos$/);
   await expect(page.getByRole("heading", { name: "随笔" })).toBeVisible();
+  // 随笔卡片是 article；文案断言限定在卡片里（textarea 的文本内容也会被 getByText 命中）
+  const cards = page.locator("article");
   await expect(
-    page.getByText("资料分析增长率总把基期当现期", { exact: true }),
+    cards.getByText("资料分析增长率总把基期当现期", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("#易错", { exact: true })).toBeVisible();
+  await expect(cards.getByText("#易错", { exact: true })).toBeVisible();
   // 随笔页本身不再叠加浮动按钮
   await expect(
     page.getByRole("button", { name: "随手记", exact: true }),
   ).toHaveCount(0);
 
-  // 页内再记一条文字
+  // 页内再记一条文字：点保存后输入框立即清空，条目先以「待补传」出现、传完换成正式卡片
   await page.getByLabel("随笔内容").fill("明天重做第 7 题");
   await page.getByRole("button", { name: "保存" }).click();
+  await expect(page.getByLabel("随笔内容")).toHaveValue("");
   await expect(
-    page.getByText("明天重做第 7 题", { exact: true }),
+    cards.getByText("明天重做第 7 题", { exact: true }),
   ).toBeVisible();
 
   // 上传一张 1×1 PNG 作为图片随笔
@@ -82,7 +94,7 @@ test("随手记 → 随笔页：文字与图片随笔的记录、筛选、删除
   await page.getByRole("tab", { name: "图片" }).click();
   await expect(page).toHaveURL(/kind=image/);
   await expect(page.getByRole("img", { name: "图片随笔" })).toBeVisible();
-  await expect(page.getByText("明天重做第 7 题", { exact: true })).toHaveCount(
+  await expect(cards.getByText("明天重做第 7 题", { exact: true })).toHaveCount(
     0,
   );
   await page.getByRole("tab", { name: "全部" }).click();
@@ -104,4 +116,77 @@ test("随手记 → 随笔页：文字与图片随笔的记录、筛选、删除
   };
   expect(body.data.memos).toHaveLength(2);
   expect(JSON.stringify(body)).not.toMatch(/passwordHash|linkToken|solution/);
+});
+
+/**
+ * 作答页是「工作区」：自带吸底「交卷」条，右下角不浮「随手记」（曾压住「下一题」「交卷」），
+ * 入口在「练习更多」菜单里；记下的随笔自动锚到当前题，随笔页能点锚回到那道题。
+ */
+test("作答页：不浮随手记按钮、菜单入口记一条并锚到当前题", {
+  tag: ["@student"],
+}, async ({ page }) => {
+  await teacherApiLogin(page.request);
+  const suffix = uniqueSuffix();
+  const courseName = `随笔课程-${suffix}`;
+  const unitName = `随笔练习-${suffix}`;
+  const courseId = await createCourseViaApi(page.request, courseName);
+  await importUnitToCourse(
+    page.request,
+    courseId,
+    unitName,
+    choiceJudgePracticeMarkdown(unitName),
+  );
+  const student = await prepareCourseStudent(
+    page.request,
+    courseId,
+    `memo-anchor-${suffix}`,
+    "锚点同学",
+  );
+
+  await page.goto(`/s/${student.linkToken}`);
+  await page.waitForURL("**/s/home");
+  const attemptId = await openChoicePractice(
+    page,
+    courseId,
+    courseName,
+    unitName,
+  );
+
+  // 工作区没有浮动按钮；吸底「交卷」可被点中（trial 只做可点性检查，不真的交卷）
+  await expect(page.locator('article[aria-label="第 1 题"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: /^随手记/ })).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "交卷", exact: true })
+    .click({ trial: true });
+
+  // 练习更多 → 随手记：浮层带当前题锚
+  await page.getByRole("button", { name: "练习更多" }).click();
+  await page.getByRole("menuitem", { name: "随手记" }).click();
+  const dialog = page.getByRole("dialog", { name: "随手记" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/^锚到：第 1 题/)).toBeVisible();
+  await dialog.getByLabel("随笔内容").fill("判断题里「正数」的定义要再看");
+  await dialog.getByRole("button", { name: "保存" }).click();
+  await expect(dialog).toBeHidden();
+
+  // 接口口径：锚是 question，指向本卷
+  await expect
+    .poll(async () => {
+      const res = await page.request.get("/api/student/memos");
+      const body = (await res.json()) as {
+        data: { memos: { anchor: { kind: string; attemptId?: string } }[] };
+      };
+      return body.data.memos[0]?.anchor ?? null;
+    })
+    .toMatchObject({ kind: "question", attemptId });
+
+  // 随笔页：卡片上的锚链接回到那道题
+  await page.goto("/s/memos");
+  const anchorLink = page
+    .locator("article")
+    .getByRole("link", { name: /^第 1 题/ });
+  await expect(anchorLink).toBeVisible();
+  await anchorLink.click();
+  await page.waitForURL(`**/s/attempts/${attemptId}?q=*`);
+  await expect(page.locator('article[aria-label="第 1 题"]')).toBeVisible();
 });

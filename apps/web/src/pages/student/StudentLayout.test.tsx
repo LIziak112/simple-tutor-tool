@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 import {
   ApiError,
   fetchStudentMe,
@@ -198,6 +199,36 @@ describe("StudentLayout", () => {
     expect(screen.getAllByRole("button", { name: /退出/ })).toHaveLength(2);
     // 子路由正常渲染
     expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
+  });
+
+  it("工作区页面（作答 / 结果 / 讲练）不浮「随手记」：自带吸底操作条，入口在各自工具栏", async () => {
+    mockedMe.mockResolvedValue(STUDENT);
+    function WorkspaceStub() {
+      useStudentWorkspace();
+      return <p data-testid="route-stub">作答页</p>;
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/s/attempts/a1"]}>
+          <Routes>
+            <Route path="/s" element={<StudentLayout />}>
+              <Route path="attempts/:id" element={<WorkspaceStub />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId("route-stub")).toHaveTextContent("作答页");
+    expect(
+      screen.queryByRole("button", { name: /^随手记/ }),
+    ).not.toBeInTheDocument();
+    // 工作区连顶栏导航也不渲染（页面自带头部）
+    expect(
+      screen.queryByRole("link", { name: "随笔" }),
+    ).not.toBeInTheDocument();
   });
 
   it("点击退出调用接口并回登录页", async () => {
