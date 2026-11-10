@@ -52,6 +52,7 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
         const result = await uploadAttachmentApi(item.file, {
           courseId,
           visibility: item.visibility,
+          uploadId: item.uploadId,
           onProgress: (ratio) =>
             setQueue((items) =>
               patchItem(items, item.key, { progress: ratio }),

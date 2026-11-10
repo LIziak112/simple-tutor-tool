@@ -16,6 +16,8 @@ export type UploadItemStatus = "queued" | "uploading" | "done" | "failed";
 
 export interface UploadItem {
   readonly key: string;
+  /** 上传幂等键（随请求发给服务端，重试复用；同键重放不会多建资料，#103-04） */
+  readonly uploadId: string;
   readonly file: File;
   readonly visibility: AttachmentVisibility;
   /** 文件名像含答案、被自动改成仅教师可见 */
@@ -45,12 +47,14 @@ export function makeUploadItem(
   file: File,
   defaultVisibility: AttachmentVisibility,
   key: string = crypto.randomUUID(),
+  uploadId: string = crypto.randomUUID(),
 ): UploadItem {
   const answerLike =
     defaultVisibility === "students" && ANSWER_LIKE_FILE_NAME.test(file.name);
   const error = localPrecheck(file);
   return {
     key,
+    uploadId,
     file,
     visibility: answerLike ? "teacher_only" : defaultVisibility,
     answerLike,
@@ -64,7 +68,7 @@ export function makeUploadItem(
 export function patchItem(
   items: readonly UploadItem[],
   key: string,
-  patch: Partial<Omit<UploadItem, "key" | "file">>,
+  patch: Partial<Omit<UploadItem, "key" | "uploadId" | "file">>,
 ): UploadItem[] {
   return items.map((item) => (item.key === key ? { ...item, ...patch } : item));
 }

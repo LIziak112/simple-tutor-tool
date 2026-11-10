@@ -63,6 +63,14 @@ describe("资料附件契约（模块 6 第一步）", () => {
       },
     );
     expect(attachmentUploadFieldsSchema.parse({})).toEqual({});
+    // 幂等键可选、必须是 UUID（#103-04）
+    const uploadId = "33333333-3333-4333-8333-333333333333";
+    expect(attachmentUploadFieldsSchema.parse({ uploadId })).toEqual({
+      uploadId,
+    });
+    expect(
+      attachmentUploadFieldsSchema.safeParse({ uploadId: "retry-1" }).success,
+    ).toBe(false);
   });
 
   it("上限 20 MB；字节格式化；下载 URL；含答案文件名提示", () => {

@@ -254,6 +254,29 @@ describe("资料附件 · 教师侧", () => {
     expect(noFile.status).toBe(400);
   });
 
+  it("带 uploadId 上传：首次 201，同键重试 200 且是同一条，列表只有一行；非 UUID 键 400（#103-04）", async () => {
+    const env = await makeEnv();
+    const uploadId = crypto.randomUUID();
+    const first = await uploadOk(env, MINI_PDF, "真题.pdf", {
+      courseId: env.courseId,
+      uploadId,
+    });
+    const retry = await upload(env, MINI_PDF, "真题.pdf", {
+      courseId: env.courseId,
+      uploadId,
+    });
+    expect(retry.status).toBe(200);
+    expect(attachmentOkSchema.parse(await retry.json()).data).toEqual(first);
+    const list = await env.app.request("/api/teacher/attachments", {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(
+      attachmentListOkSchema.parse(await list.json()).data.attachments,
+    ).toHaveLength(1);
+    const bad = await upload(env, MINI_PDF, "真题.pdf", { uploadId: "retry" });
+    expect(bad.status).toBe(400);
+  });
+
   it("流式上传（无 content-length）超 20 MB → 413 且未落库未落盘，源流在上限处停读；正常流式上传 201（#103-01）", async () => {
     const env = await makeEnv();
     const big = multipartFileStream({

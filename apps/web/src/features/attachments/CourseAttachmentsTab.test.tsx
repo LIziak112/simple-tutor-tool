@@ -186,6 +186,10 @@ describe("课程「资料」页签（模块 6 第一步）", () => {
     fireEvent.click(within(failedRow).getByRole("button", { name: "重试" }));
     await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(failedRow.textContent).toContain("已上传"));
+    // 重试复用同一个幂等键（#103-04）：服务端据此不重复建资料
+    const firstUploadId = mockedUpload.mock.calls[0]?.[1]?.uploadId;
+    expect(firstUploadId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(mockedUpload.mock.calls[1]?.[1]?.uploadId).toBe(firstUploadId);
 
     fireEvent.click(screen.getByRole("button", { name: "移除 表格.xlsx" }));
     expect(screen.queryByText("表格.xlsx")).toBeNull();

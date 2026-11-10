@@ -17,8 +17,10 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
  * - 可见性二选一：students（授权范围内的学生可查看下载）/ teacher_only（仅教师）。
  *   学生能否下载 = 课程成员 + 课程未归档 + 本人未归档 + visibility=students。
  *
- * 请求是 multipart/form-data（字段 file + 可选 courseId / visibility），失败走通用
- * ApiErr 壳：
+ * 请求是 multipart/form-data（字段 file + 可选 courseId / visibility / uploadId）。
+ * uploadId 是客户端生成的幂等键：服务端按 (教师, uploadId) 唯一，同一键重放返回
+ * 首次创建的那行（新建 201 / 命中 200，响应形状相同）——上传回执丢失后重试不会
+ * 多出一份资料；不带 uploadId 的每次上传都是新的一行。失败走通用 ApiErr 壳：
  * - ATTACHMENT_TOO_LARGE（413）：超过 20 MB 上传上限；
  * - ATTACHMENT_UNSUPPORTED_TYPE（415）：按文件内容识别不是 PDF 也不是 docx
  *   （不信任扩展名 / MIME）；
@@ -76,6 +78,8 @@ export const attachmentUploadFieldsSchema = z.object({
   courseId: z.uuid().optional(),
   /** 缺省 students（教师上传默认学生可见；含答案提示由前端做） */
   visibility: attachmentVisibilitySchema.optional(),
+  /** 客户端幂等键（crypto.randomUUID，重试复用）；同教师同键重放返回既有行 */
+  uploadId: z.uuid().optional(),
 });
 export type AttachmentUploadFields = z.infer<
   typeof attachmentUploadFieldsSchema

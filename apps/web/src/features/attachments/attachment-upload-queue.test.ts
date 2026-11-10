@@ -54,6 +54,20 @@ describe("上传队列模型（模块 6 第一步）", () => {
     );
   });
 
+  it("每个条目带一个 UUID 幂等键 uploadId，随条目保留（重试复用，#103-04）", () => {
+    const item = makeUploadItem(file("a.pdf", 10), "students", "k1");
+    expect(item.uploadId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    const other = makeUploadItem(file("b.pdf", 10), "students", "k2");
+    expect(other.uploadId).not.toBe(item.uploadId);
+    const retried = patchItem([item], "k1", {
+      status: "queued",
+      error: null,
+    })[0] as typeof item;
+    expect(retried.uploadId).toBe(item.uploadId);
+  });
+
   it("patchItem 只改目标行；状态文案", () => {
     const a = makeUploadItem(file("a.pdf", 10), "students", "a");
     const b = makeUploadItem(file("b.pdf", 10), "students", "b");

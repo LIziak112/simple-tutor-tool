@@ -1,43 +1,32 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   Attachment,
   AttachmentFormat,
   AttachmentUpdate,
-  AttachmentUploadFields,
   AttachmentVisibility,
   StudentAttachment,
 } from "@tutor/contract";
-import {
-  ATTACHMENT_MAX_UPLOAD_BYTES,
-  attachmentSchema,
-  studentAttachmentSchema,
-} from "@tutor/contract";
+import { attachmentSchema, studentAttachmentSchema } from "@tutor/contract";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attachments, courses } from "../db/schema";
-import { readFileBytes, writeFileAtomic } from "../lib/blob-io";
+import { readFileBytes } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
-import {
-  detectAttachmentFormat,
-  pdfPageCountOf,
-  sanitizeAttachmentFileName,
-} from "./attachment-format";
+import { sanitizeAttachmentFileName } from "./attachment-format";
 import { requireStudentCourseAccess } from "./student-course-service";
 
 /**
- * 资料附件服务（2026-11-10，个人学习迭代模块 6 第一步「PDF / docx 原件上传下载」）。
+ * 资料附件服务（2026-11-10，个人学习迭代模块 6 第一步「PDF / docx 原件上传下载」）：
+ * 教师侧列表 / 改可见性与展示名 / 软删 / 下载，学生侧列表 / 下载，以及两边共用的
+ * 行投影与课程归属校验。上传写路径（格式识别、限额、内容寻址落盘、uploadId 幂等）
+ * 在 attachment-upload.ts。
  *
  * - 格式只认内容：PDF 看文件头 `%PDF-`；docx 看 ZIP 本地头 `PK\x03\x04` 且中央
  *   目录里有 [Content_Types].xml 与 word/document.xml 两个条目——扩展名 / MIME
- *   一概不信（与 media-service 同纪律）；
- * - 上限 20 MB（契约 ATTACHMENT_MAX_UPLOAD_BYTES；app.ts 另有 21 MB content-length
- *   粗防线，此处按实际字节兜底 chunked）；
- * - 内容寻址落盘 blobs/attachments/<sha256>.<pdf|docx>，同内容幂等跳过写入；
- *   多行可共享一个 blob，软删不删 blob（留给以后的 GC，与媒体一致）；
- * - 页数只在能读到时给：PDF 取 /Type /Pages 字典里最大的 /Count（根节点即总页数；
- *   对象流压缩的 PDF 可能读不到 → null），docx 不解析 → null；
+ *   一概不信（与 media-service 同纪律，见 attachment-format）；
+ * - 文件本体内容寻址存 blobs/attachments/<sha256>.<pdf|docx>，多行可共享一个 blob，
+ *   软删不删 blob（留给以后的 GC，与媒体一致）；
  * - 学生侧可见 = 课程访问权（成员 + 课程未归档 + 本人未归档，复用
  *   requireStudentCourseAccess）+ visibility=students + 未软删。
  */
@@ -49,15 +38,15 @@ const ATTACHMENT_CONTENT_TYPES: Record<AttachmentFormat, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
-function attachmentDir(dataDir: string): string {
+export type AttachmentRow = typeof attachments.$inferSelect;
+
+export function attachmentDir(dataDir: string): string {
   const dir = join(dataDir, "blobs", ATTACHMENT_BLOB_DIR);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-type AttachmentRow = typeof attachments.$inferSelect;
-
-function requireTeacherCourse(
+export function requireTeacherCourse(
   db: Db,
   teacherId: string,
   courseId: string,
@@ -72,7 +61,7 @@ function requireTeacherCourse(
   }
 }
 
-function courseTitlesOf(
+export function courseTitlesOf(
   db: Db,
   courseIds: readonly (string | null)[],
 ): Map<string, string> {
@@ -88,7 +77,7 @@ function courseTitlesOf(
   );
 }
 
-function toAttachment(
+export function toAttachment(
   row: AttachmentRow,
   courseTitles: Map<string, string>,
 ): Attachment {
@@ -132,70 +121,6 @@ function requireOwnRow(db: Db, teacherId: string, id: string): AttachmentRow {
 }
 
 // ---------- 教师侧 ----------
-
-export interface CreateAttachmentInput extends AttachmentUploadFields {
-  readonly teacherId: string;
-  /** 上传时的原文件名（可缺） */
-  readonly fileName?: string | undefined;
-  readonly bytes: Uint8Array;
-}
-
-/** 上传：识别格式 → 限额 → 内容寻址落盘 → 插行（同内容再传是新的一行，blob 共享） */
-export function createAttachment(
-  db: Db,
-  dataDir: string,
-  input: CreateAttachmentInput,
-  now: Date = new Date(),
-): Attachment {
-  if (input.courseId !== undefined) {
-    requireTeacherCourse(db, input.teacherId, input.courseId);
-  }
-  const format = detectAttachmentFormat(input.bytes);
-  if (format === null) {
-    throw new HttpError(
-      415,
-      "ATTACHMENT_UNSUPPORTED_TYPE",
-      "文件格式不受支持：按文件内容识别，只接受 PDF 与 Word（docx）",
-    );
-  }
-  if (input.bytes.byteLength > ATTACHMENT_MAX_UPLOAD_BYTES) {
-    throw new HttpError(
-      413,
-      "ATTACHMENT_TOO_LARGE",
-      "文件超过 20 MB 上传上限，请压缩或拆分后重试",
-    );
-  }
-  const sha256 = createHash("sha256")
-    .update(
-      Buffer.from(
-        input.bytes.buffer,
-        input.bytes.byteOffset,
-        input.bytes.byteLength,
-      ),
-    )
-    .digest("hex");
-  const filePath = join(attachmentDir(dataDir), `${sha256}.${format}`);
-  if (!existsSync(filePath)) {
-    writeFileAtomic({ finalPath: filePath, bytes: input.bytes });
-  }
-  const nowIso = now.toISOString();
-  const row: AttachmentRow = {
-    id: crypto.randomUUID(),
-    teacherId: input.teacherId,
-    courseId: input.courseId ?? null,
-    fileName: sanitizeAttachmentFileName(input.fileName, format),
-    format,
-    bytes: input.bytes.byteLength,
-    sha256,
-    pageCount: format === "pdf" ? pdfPageCountOf(input.bytes) : null,
-    visibility: input.visibility ?? "students",
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    deletedAt: null,
-  };
-  db.insert(attachments).values(row).run();
-  return toAttachment(row, courseTitlesOf(db, [row.courseId]));
-}
 
 /** 本教师的资料（可按课程过滤；上传时间倒序） */
 export function listTeacherAttachments(

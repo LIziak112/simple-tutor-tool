@@ -17,12 +17,12 @@ import {
 import { wellFormedFileName } from "../services/attachment-format";
 import {
   type AttachmentFile,
-  createAttachment,
   deleteAttachment,
   listTeacherAttachments,
   readTeacherAttachmentFile,
   updateAttachment,
 } from "../services/attachment-service";
+import { createAttachment } from "../services/attachment-upload";
 
 /**
  * 上传请求体上限：原件 20 MB（契约）+ multipart 文本字段 / 边界余量 1 MiB。
@@ -38,8 +38,9 @@ export const ATTACHMENT_UPLOAD_CAP: MultipartCap = {
 /**
  * 资料附件教师侧路由（模块 6 第一步），由 teacher.ts 挂在 /api/teacher 之下：
  * - POST /attachments：multipart/form-data，字段 file（原件）+ 可选 courseId /
- *   visibility 文本字段；格式按内容识别（415）、20 MB 上限（413：content-length
- *   预检在 app.ts，流式计数在本路由，实际字节在服务层）；
+ *   visibility / uploadId 文本字段；格式按内容识别（415）、20 MB 上限（413：
+ *   content-length 预检在 app.ts，流式计数在本路由，实际字节在服务层）；
+ *   uploadId 幂等：新建 201、同键重放 200（#103-04）；
  * - GET /attachments?courseId=：本教师的资料（可按课程过滤）；
  * - PATCH /attachments/:id：改可见性 / 改展示名；
  * - DELETE /attachments/:id：软删；
@@ -61,24 +62,28 @@ export function createTeacherAttachmentRoutes(db: Db, dataDir: string) {
           MULTIPART_REQUIRED_MESSAGE,
         );
       }
+      // 文本字段：空串当缺省（表单里没填 = 不传）
+      const text = (key: "courseId" | "visibility" | "uploadId") => {
+        const value = body[key];
+        return typeof value === "string" && value !== ""
+          ? { [key]: value }
+          : {};
+      };
       const fields = parseJsonValue(
-        {
-          ...(typeof body.courseId === "string" && body.courseId !== ""
-            ? { courseId: body.courseId }
-            : {}),
-          ...(typeof body.visibility === "string" && body.visibility !== ""
-            ? { visibility: body.visibility }
-            : {}),
-        },
+        { ...text("courseId"), ...text("visibility"), ...text("uploadId") },
         attachmentUploadFieldsSchema,
       );
-      const data = createAttachment(db, dataDir, {
+      const result = createAttachment(db, dataDir, {
         teacherId: c.var.teacher.id,
         ...fields,
         fileName: file.name,
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
-      return c.json({ ok: true, data }, 201);
+      // 新建 201；命中 uploadId 幂等键 200（同一响应形状，前端不区分）
+      return c.json(
+        { ok: true, data: result.attachment },
+        result.created ? 201 : 200,
+      );
     })
     .get("/attachments", (c) => {
       const query = parseJsonValue(
