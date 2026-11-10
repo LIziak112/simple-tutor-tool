@@ -37,9 +37,10 @@ import {
 export const MEMO_LIST_KEY = ["student", "memos"] as const;
 
 /**
- * 随笔列表（模块 5 第一步）：本机待传条目置顶（灰底、带「待补传 / 上传失败」），
- * 其下是服务端记录时间倒序的游标分页；每条按形态渲染（文字 / <audio> / <img>），
- * 带锚（可点回当时的题 / 讲义）、标签、时间、设备、Agent 转记标识与删除。
+ * 随笔列表（模块 5 第一步）：本机待传条目置顶（灰底、带「待补传 / 上传失败」，失败的
+ * 可重试 / 丢弃），始终先渲染、不等云端；其下是服务端记录时间倒序的游标分页（加载中
+ * 骨架 / 失败面板 / 列表三态）；每条按形态渲染（文字 / <audio> / <img>），带锚（可点回
+ * 当时的题 / 讲义）、标签、时间、设备、Agent 转记标识与删除。
  */
 export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
   const queryClient = useQueryClient();
@@ -66,66 +67,76 @@ export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: MEMO_LIST_KEY }),
   });
 
-  if (query.isPending) return <StudentListSkeleton label="正在加载随笔" />;
-  if (query.isError) {
-    return (
-      <StudentErrorPanel
-        title="随笔加载失败"
-        message={
-          query.error instanceof Error ? query.error.message : "请稍后重试"
-        }
-        onRetry={() => void query.refetch()}
-      />
-    );
-  }
-  const memos = query.data.pages.flatMap((page) => page.memos);
   const matchesFilter = (item: MemoOutboxItem): boolean =>
     (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.tag === undefined || item.tags.includes(filter.tag));
   const pending = outbox.filter(matchesFilter);
 
-  if (memos.length === 0 && pending.length === 0) {
+  // 本机待传条目不依赖云端查询状态：离线首次进页、云端没缓存时也能看到已记的
+  const cloud = (() => {
+    if (query.isPending) return <StudentListSkeleton label="正在加载随笔" />;
+    if (query.isError) {
+      return (
+        <StudentErrorPanel
+          title="随笔加载失败"
+          message={
+            query.error instanceof Error ? query.error.message : "请稍后重试"
+          }
+          onRetry={() => void query.refetch()}
+        />
+      );
+    }
+    const memos = query.data.pages.flatMap((page) => page.memos);
+    if (memos.length === 0) {
+      // 空态只在两边都空时显示；只有本机条目时不说「还没有随笔」
+      return pending.length === 0 ? (
+        <StudentEmptyState
+          title="还没有随笔"
+          description="想法、疑问、易错点，随手记下来；联网后自动同步，Agent 也能读到。"
+        />
+      ) : null;
+    }
     return (
-      <StudentEmptyState
-        title="还没有随笔"
-        description="想法、疑问、易错点，随手记下来；联网后自动同步，Agent 也能读到。"
-      />
+      <>
+        <ul className="flex flex-col gap-3">
+          {memos.map((memo) => (
+            <li key={memo.id}>
+              <MemoCard
+                memo={memo}
+                deleting={remove.isPending && remove.variables === memo.id}
+                onDelete={() => remove.mutate(memo.id)}
+              />
+            </li>
+          ))}
+        </ul>
+        {remove.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {remove.error instanceof Error ? remove.error.message : "删除失败"}
+          </p>
+        )}
+        {query.hasNextPage && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={query.isFetchingNextPage}
+            onClick={() => void query.fetchNextPage()}
+          >
+            {query.isFetchingNextPage && (
+              <Loader2 aria-hidden className="size-4 animate-spin" />
+            )}
+            加载更早的
+          </Button>
+        )}
+      </>
     );
-  }
+  })();
+
   return (
     <div className="flex flex-col gap-3">
       {pending.map((item) => (
         <PendingMemoCard key={item.clientId} item={item} />
       ))}
-      <ul className="flex flex-col gap-3">
-        {memos.map((memo) => (
-          <li key={memo.id}>
-            <MemoCard
-              memo={memo}
-              deleting={remove.isPending && remove.variables === memo.id}
-              onDelete={() => remove.mutate(memo.id)}
-            />
-          </li>
-        ))}
-      </ul>
-      {remove.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          {remove.error instanceof Error ? remove.error.message : "删除失败"}
-        </p>
-      )}
-      {query.hasNextPage && (
-        <Button
-          type="button"
-          variant="outline"
-          disabled={query.isFetchingNextPage}
-          onClick={() => void query.fetchNextPage()}
-        >
-          {query.isFetchingNextPage && (
-            <Loader2 aria-hidden className="size-4 animate-spin" />
-          )}
-          加载更早的
-        </Button>
-      )}
+      {cloud}
     </div>
   );
 }
