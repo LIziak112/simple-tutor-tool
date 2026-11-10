@@ -122,8 +122,8 @@ describe("resolveAgentMemoAnchor：讲义锚按学生可见性核对", () => {
         studentId,
         { kind: "lecture", lectureId, label: "比例那一讲" },
         NOW,
-      ).label,
-    ).toBe("比例那一讲");
+      ),
+    ).toMatchObject({ kind: "lecture", label: "比例那一讲" });
   });
 
   it("同教师但不在任何课程目录中的讲义：404 MEMO_ANCHOR_NOT_FOUND（标题不泄露）", () => {
@@ -173,8 +173,8 @@ describe("resolveAgentMemoAnchor：讲义锚按学生可见性核对", () => {
         studentId,
         { kind: "lecture", lectureId: scheduled },
         new Date("2026-12-01T00:00:00.000Z"),
-      ).label,
-    ).toBe("定时发布的讲义");
+      ),
+    ).toMatchObject({ kind: "lecture", label: "定时发布的讲义" });
 
     const deleted = insertLecture(db, "已删除的讲义");
     insertCourseWithLecture(db, studentId, deleted);
