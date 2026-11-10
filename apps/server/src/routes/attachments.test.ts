@@ -12,7 +12,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { courses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
-import { FAKE_DOCX, MINI_PDF } from "../services/attachment-service.test.ts";
+import { FAKE_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**

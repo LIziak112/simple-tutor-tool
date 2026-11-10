@@ -3,7 +3,7 @@ import {
   detectAttachmentFormat,
   pdfPageCountOf,
   sanitizeAttachmentFileName,
-} from "./attachment-service.ts";
+} from "./attachment-format.ts";
 
 /** 最小 PDF（根 Pages /Count 3，另有一个子 Pages /Count 2——取最大者） */
 export const MINI_PDF = Buffer.from(
