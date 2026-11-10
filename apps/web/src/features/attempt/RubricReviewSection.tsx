@@ -10,7 +10,6 @@ import {
   rubricDisagreementsOf,
   rubricEffectiveOf,
   rubricMaxOf,
-  rubricRatingsEqual,
   rubricTotalOf,
 } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
@@ -24,6 +23,13 @@ import { saveRubricFinalApi, saveRubricSelfApi } from "@/lib/rubric-api";
 import { randomUuid } from "@/lib/uuid";
 import { studentAiQueueSummaryKey } from "../student-ai/ai-queue-queries";
 import { RubricRatingForm } from "./RubricRatingForm";
+import {
+  DECISION_LABEL,
+  decisionAlreadyApplied,
+  levelCell,
+  ratingOf,
+  useRubricPendingPoll,
+} from "./rubric-review-model";
 
 /**
  * 通用量表判卷（模块 3）结果页交互件：题有 `:::rubric` 且已公布时挂在答案对照
@@ -36,48 +42,7 @@ import { RubricRatingForm } from "./RubricRatingForm";
 
 const AGENT_PROMPT = "请按量表逐项评定我的作答：每项一个档位，附一句依据。";
 
-/**
- * 判卷任务在途时刷新本卷缓存的周期（审查 #99-05）：「回信后自动显示」靠它兑现
- * ——Agent 回信走 MCP / 页内 worker 写库，结果页没有推送通道。页面不可见时
- * 不轮询（切回后一个周期内补刷）。
- */
-export const RUBRIC_PENDING_POLL_MS = 15_000;
-
 type Panel = "none" | "self" | "custom";
-
-/**
- * 「保留我的 / 采纳 Agent」是否已无事可做：裁定来源相同且档位与当前那份记录
- * 逐项一致。来源相同但档位已变（自评改过 / 新一份意见）仍可再裁（审查 #99-06）。
- */
-function decisionAlreadyApplied(
-  review: RubricReview,
-  decision: "self" | "agent",
-): boolean {
-  const source = review[decision];
-  return (
-    review.final !== null &&
-    review.final.decision === decision &&
-    source !== null &&
-    rubricRatingsEqual(review.final.ratings, source.ratings)
-  );
-}
-
-function levelCell(rating: RubricRating | undefined): string {
-  return rating === undefined ? "—" : String(rating.level);
-}
-
-function ratingOf(
-  record: { ratings: readonly RubricRating[] } | null,
-  id: string,
-): RubricRating | undefined {
-  return record?.ratings.find((rating) => rating.id === id);
-}
-
-const DECISION_LABEL: Record<RubricDecision, string> = {
-  self: "保留我的",
-  agent: "采纳 Agent",
-  custom: "自行改写",
-};
 
 function AssessmentNote({
   label,
@@ -132,23 +97,8 @@ export function RubricReviewSection({
 
   const pendingTask =
     (override ?? projected)?.pendingAgentTaskId ?? localPendingTask;
-  // 判卷任务在途：按周期刷新本卷缓存，回信落地（pendingAgentTaskId 归零、
-  // agent 记录出现）后由投影接管并停止
-  useEffect(() => {
-    if (pendingTask === null) return;
-    const tick = () => {
-      if (document.visibilityState === "hidden") return;
-      void client.invalidateQueries({
-        queryKey: ["student", "attempt", attemptId],
-      });
-    };
-    const timer = window.setInterval(tick, RUBRIC_PENDING_POLL_MS);
-    document.addEventListener("visibilitychange", tick);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
-    };
-  }, [pendingTask, attemptId, client]);
+  // 判卷任务在途：按周期刷新本卷缓存，回信落地后由投影接管并停止（#99-05）
+  useRubricPendingPoll(client, attemptId, pendingTask);
 
   if (projected === null) return null;
   const review = override ?? projected;

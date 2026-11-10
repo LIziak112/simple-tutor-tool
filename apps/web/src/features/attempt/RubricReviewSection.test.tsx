@@ -4,10 +4,8 @@ import type { AttemptResultQuestion, RubricReview } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createStudentAiTaskApi, fetchStudentAiStatusApi } from "@/lib/api";
 import { saveRubricFinalApi, saveRubricSelfApi } from "@/lib/rubric-api";
-import {
-  RUBRIC_PENDING_POLL_MS,
-  RubricReviewSection,
-} from "./RubricReviewSection";
+import { RubricReviewSection } from "./RubricReviewSection";
+import { RUBRIC_PENDING_POLL_MS } from "./rubric-review-model";
 
 /**
  * 模块 3 量表评价交互件：无量表题不渲染；自评表单逐项必填、保存后并排显示；
