@@ -77,7 +77,7 @@ export function ResultActivityLine({
   }
   if (activity.unattributedSec > 0) {
     parts.push(
-      `未归属 ${formatActivitySec(activity.unattributedSec)}（${activity.sessions} 端同开）`,
+      `未归属 ${formatActivitySec(activity.unattributedSec)}（最多 ${activity.concurrentSessionsMax} 端同开）`,
     );
   }
   return (

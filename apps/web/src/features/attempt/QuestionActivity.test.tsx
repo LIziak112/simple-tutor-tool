@@ -70,12 +70,13 @@ describe("题内活动用时呈现（口径 v1）", () => {
           activeSecTotal: 300,
           observedSecTotal: 40,
           unattributedSec: 25,
-          sessions: 2,
+          sessions: 3,
+          concurrentSessionsMax: 2,
         }}
       />,
     );
     expect(screen.getByTestId("result-activity").textContent).toBe(
-      "题内活动合计 5 分钟 · 只看过 40 秒 · 未归属 25 秒（2 端同开）（口径 v1）",
+      "题内活动合计 5 分钟 · 只看过 40 秒 · 未归属 25 秒（最多 2 端同开）（口径 v1）",
     );
     rerender(
       <ResultActivityLine
@@ -86,6 +87,7 @@ describe("题内活动用时呈现（口径 v1）", () => {
           observedSecTotal: 0,
           unattributedSec: 0,
           sessions: 1,
+          concurrentSessionsMax: 1,
         }}
       />,
     );

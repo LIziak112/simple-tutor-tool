@@ -84,6 +84,7 @@ const ACTIVITY: AttemptActivity = {
   observedSecTotal: 10,
   unattributedSec: 0,
   sessions: 1,
+  concurrentSessionsMax: 1,
 };
 
 describe("按模块看结果：模型", () => {
