@@ -13,6 +13,7 @@ import {
 import {
   ATTEMPT_REVIEW_POLL_INTERVAL_MS,
   AiAttemptReviewHint,
+  attemptReviewPreviewKey,
   pickAttemptReviewTask,
 } from "./AiAttemptReviewHint";
 
@@ -72,10 +73,10 @@ const PREVIEW: AiAttemptReviewPreviewData = {
   readyAt: "2026-11-09T10:00:00.000Z",
 };
 
-function renderHint(released = true) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+const newClient = () =>
+  new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+function renderHint(released = true, client = newClient()) {
   return render(
     <QueryClientProvider client={client}>
       <AiAttemptReviewHint attemptId={ATTEMPT_ID} released={released} />
@@ -108,6 +109,33 @@ describe("结果页「可复盘」提示条", () => {
     renderHint();
     await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("attempt-review-hint")).toBeNull();
+  });
+
+  it("#102-02 预览重取被拒绝：缓存里虽留有上次数据，也不再提示「本卷可复盘」", async () => {
+    const client = newClient();
+    mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+    mockedPreview.mockResolvedValue(PREVIEW);
+    renderHint(true, client);
+    expect(
+      (await screen.findByTestId("attempt-review-hint")).textContent,
+    ).toContain("本卷可复盘");
+    // 教师收紧策略：后台重取被服务端拒绝
+    mockedPreview.mockRejectedValue(
+      new ApiError("AI_ATTEMPT_REVIEW_NOT_AVAILABLE", "当前不可复盘", 403),
+    );
+    await act(async () => {
+      await client.invalidateQueries({
+        queryKey: attemptReviewPreviewKey(ATTEMPT_ID),
+      });
+    });
+    expect(mockedPreview).toHaveBeenCalledTimes(2);
+    // TanStack v5：重取失败 status=error 但保留上次 data——提示条不能只看 data
+    expect(client.getQueryData(attemptReviewPreviewKey(ATTEMPT_ID))).toEqual(
+      PREVIEW,
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("attempt-review-hint")).toBeNull(),
+    );
   });
 
   it("有进行中任务 → 报进度，不再请求预览", async () => {

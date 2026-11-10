@@ -110,7 +110,9 @@ export function AiAttemptReviewHint({
       text = `上次整体复盘${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}`;
       action = "查看并处理";
     }
-  } else if (previewQuery.data !== undefined) {
+  } else if (previewQuery.isSuccess && previewQuery.data !== undefined) {
+    // #102-02：TanStack v5 重取失败后 status=error 但仍保留上次 data——教师刚
+    // 收紧策略时不能拿旧缓存继续引导点击，按本轮结果判断（isError 即不提示）
     const counts = previewQuery.data.counts;
     text = `本卷可复盘：共 ${counts.total} 题、已判 ${counts.gradedCount} 题，Agent 可按整卷给一次复盘建议`;
     action = "预览并确认";
