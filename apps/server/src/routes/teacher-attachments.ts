@@ -1,0 +1,120 @@
+import {
+  attachmentListQuerySchema,
+  attachmentUpdateSchema,
+  attachmentUploadFieldsSchema,
+} from "@tutor/contract";
+import { Hono } from "hono";
+import type { TeacherEnv } from "../auth/require-teacher";
+import type { Db } from "../db/client";
+import { HttpError, parseJsonBody, parseJsonValue } from "../lib/http-error";
+import {
+  type AttachmentFile,
+  createAttachment,
+  deleteAttachment,
+  listTeacherAttachments,
+  readTeacherAttachmentFile,
+  updateAttachment,
+} from "../services/attachment-service";
+
+/**
+ * 资料附件教师侧路由（模块 6 第一步），由 teacher.ts 挂在 /api/teacher 之下：
+ * - POST /attachments：multipart/form-data，字段 file（原件）+ 可选 courseId /
+ *   visibility 文本字段；格式按内容识别（415）、20 MB 上限（413，粗防线在 app.ts）；
+ * - GET /attachments?courseId=：本教师的资料（可按课程过滤）；
+ * - PATCH /attachments/:id：改可见性 / 改展示名；
+ * - DELETE /attachments/:id：软删；
+ * - GET /attachments/:id/file：原件直出（Content-Disposition attachment，不走 JSON 壳）。
+ *
+ * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
+ */
+export function createTeacherAttachmentRoutes(db: Db, dataDir: string) {
+  return new Hono<TeacherEnv>()
+    .post("/attachments", async (c) => {
+      const body = await c.req.parseBody();
+      const file = body.file;
+      if (!(file instanceof File)) {
+        throw new HttpError(
+          400,
+          "VALIDATION_ERROR",
+          "请求需为 multipart/form-data，且包含名为 file 的文件字段",
+        );
+      }
+      const fields = parseJsonValue(
+        {
+          ...(typeof body.courseId === "string" && body.courseId !== ""
+            ? { courseId: body.courseId }
+            : {}),
+          ...(typeof body.visibility === "string" && body.visibility !== ""
+            ? { visibility: body.visibility }
+            : {}),
+        },
+        attachmentUploadFieldsSchema,
+      );
+      const data = createAttachment(db, dataDir, {
+        teacherId: c.var.teacher.id,
+        ...fields,
+        fileName: file.name,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      });
+      return c.json({ ok: true, data }, 201);
+    })
+    .get("/attachments", (c) => {
+      const query = parseJsonValue(
+        Object.fromEntries(
+          Object.entries(c.req.query()).filter(
+            ([, value]) => value !== undefined && value !== "",
+          ),
+        ),
+        attachmentListQuerySchema,
+      );
+      return c.json({
+        ok: true,
+        data: {
+          attachments: listTeacherAttachments(
+            db,
+            c.var.teacher.id,
+            query.courseId,
+          ),
+        },
+      });
+    })
+    .patch("/attachments/:id", async (c) => {
+      const patch = await parseJsonBody(c, attachmentUpdateSchema);
+      return c.json({
+        ok: true,
+        data: updateAttachment(db, c.var.teacher.id, c.req.param("id"), patch),
+      });
+    })
+    .delete("/attachments/:id", (c) => {
+      deleteAttachment(db, c.var.teacher.id, c.req.param("id"));
+      return c.json({ ok: true, data: { id: c.req.param("id") } });
+    })
+    .get("/attachments/:id/file", (c) =>
+      attachmentFileResponse(
+        readTeacherAttachmentFile(
+          db,
+          dataDir,
+          c.var.teacher.id,
+          c.req.param("id"),
+        ),
+      ),
+    );
+}
+
+/**
+ * 原件直出响应（教师 / 学生两侧共用）：Content-Disposition 同时给 ASCII 回退名与
+ * RFC 5987 的 filename*（中文名）；nosniff + private no-store。
+ */
+export function attachmentFileResponse(file: AttachmentFile): Response {
+  const ascii = file.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+  return new Response(file.bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": file.contentType,
+      "Content-Length": String(file.bytes.byteLength),
+      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "private, no-store",
+    },
+  });
+}

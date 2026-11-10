@@ -1437,10 +1437,9 @@ export const events = sqliteTable(
  * 逐题提交证据。契约权威定义在 packages/contract/src/note.ts（契约优先），
  * 本处 $type 仅引用其枚举类型，不重复手写值域。
  *
- * 归属推导（方案 §5.2/§8，T6R.0 决策 1）：一律 attemptId → attempts.studentId →
- * students.teacherId 服务端推导，客户端不可指定 studentId/teacherId/serverSavedAt；
- * **不使用 responses.inkId**——那是 T2.8 手写作答通道（手写题答案本体）的引用，
- * 与题目草稿（演算证据）是两条数据链，不得互相替代或混用作归属/证据引用。
+ * 归属推导（方案 §5.2/§8，T6R.0 决策 1）：一律 attemptId → attempts.studentId → students.teacherId
+ * 服务端推导，客户端不可指定 studentId/teacherId/serverSavedAt；**不使用 responses.inkId**——那是
+ * T2.8 手写作答通道（答案本体）的引用，与题目草稿（演算证据）是两条数据链，不得混用作归属/证据引用。
  *
  * 正文与图片不进数据库（db-change 红线，ink 同款口径）：文件以不可变路径存
  * DATA_DIR/blobs/notes/…，库里只存相对路径（T6R.4 定稿路径规则与临时文件协议）。
@@ -1733,10 +1732,9 @@ export const submissionEvidence = sqliteTable(
  * annotation_bases 固定底图行（身份三要素：questionRevisionId＋snapshotHash＋
  * baseRenderVersion）+ annotations 标注当前头（CAS revision，正文文件不可变）。
  *
- * 与 notes 四表的关系（计划决策 7 轻量口径）：标注数据量小（限额内几十笔）、
- * 无审计版本链需求（订正另开是 phase 记录级隔离，非版本链）；单表 + CAS +
- * mutationId 幂等与 note 上传协议同构，但**不复用** notes/note_versions 头/版本
- * 两表（NoteDoc 覆盖载荷禁令——方案 §10「不塞进 NoteDoc 同一次覆盖上传」）。
+ * 与 notes 四表的关系（计划决策 7 轻量口径）：标注数据量小（限额内几十笔）、无审计版本链
+ * 需求（订正另开是 phase 记录级隔离，非版本链）；单表 + CAS + mutationId 幂等与 note 上传协议
+ * 同构，但**不复用** notes/note_versions 头/版本两表（方案 §10「不塞进 NoteDoc 同一次覆盖上传」）。
  *
  * 存储口径：底图 PNG 与标注正文均不进数据库——底图存 DATA_DIR/blobs/
  * annotations/<sha256>.png（内容寻址；**绝不放 blobs/media/**——/blobs 伺服
@@ -2796,3 +2794,5 @@ export const questionProcessBatches = sqliteTable(
     }),
   ],
 );
+// 资料附件表（模块 6 第一步）独立成文件 schema-attachments.ts（本文件只降不升）
+export * from "./schema-attachments";

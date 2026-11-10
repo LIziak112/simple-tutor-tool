@@ -18,6 +18,7 @@ export * from "./annotation.ts";
 export * from "./answer-kinds/index.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
+export * from "./attachment-api.ts";
 export * from "./attempt.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
 export * from "./attempt-activity.ts";
