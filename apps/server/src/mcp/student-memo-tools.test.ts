@@ -7,7 +7,12 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createStudentSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
-import { lectures } from "../db/schema.ts";
+import {
+  courseItems,
+  courseStudents,
+  courses,
+  lectures,
+} from "../db/schema.ts";
 import {
   createTestDb,
   createTestDir,
@@ -26,8 +31,9 @@ import { makeStudent } from "../test/note-fixtures.ts";
 /**
  * 随笔三工具（模块 5 第一步）MCP 测试（真实 SDK Streamable HTTP 客户端）：
  * add_memo 转记（source=agent、锚核对：本人作答 / 他人作答 404、可见讲义 label
- * 缺省取标题）→ list_my_memos 读到 → 页面接口同样读到（同一服务层）；
- * get_memo_media 语音以 audio、图片以 image 内联；别的学生的 id 404。
+ * 缺省取标题、同教师但隐藏的讲义 404——#104-04）→ list_my_memos 读到 → 页面接口
+ * 同样读到（同一服务层）；get_memo_media 语音以 audio、图片以 image 内联；别的
+ * 学生的 id 404。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -73,7 +79,14 @@ async function makeEnv(): Promise<Env> {
   return { app, db, dataDir, studentId, studentCookie, client };
 }
 
-function insertLecture(db: Db, teacherId: string, title: string): string {
+/** 讲义只经课程对学生可见（D5）：建讲义 + 一门该生为成员的课 + 目录条目（可指定隐藏） */
+function insertLecture(
+  db: Db,
+  teacherId: string,
+  title: string,
+  studentId: string,
+  visible = true,
+): string {
   const id = randomUUID();
   db.insert(lectures)
     .values({
@@ -88,6 +101,33 @@ function insertLecture(db: Db, teacherId: string, title: string): string {
       updatedAt: "2026-01-01T00:00:00.000Z",
       deletedAt: null,
       teachingPackJson: null,
+    })
+    .run();
+  const courseId = randomUUID();
+  db.insert(courses)
+    .values({
+      id: courseId,
+      teacherId,
+      title: `课程 ${title}`,
+      order: 0,
+      archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })
+    .run();
+  db.insert(courseStudents)
+    .values({ courseId, studentId, joinedAt: "2026-01-01T00:00:00.000Z" })
+    .run();
+  db.insert(courseItems)
+    .values({
+      id: randomUUID(),
+      courseId,
+      kind: "lecture",
+      refId: id,
+      title: null,
+      order: 0,
+      visible,
+      publishAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
     })
     .run();
   return id;
@@ -108,7 +148,19 @@ describe("随笔 MCP 工具", () => {
     const otherAttemptId = insertAttempt(env.db, {
       studentId: makeStudent(env.db),
     });
-    const lectureId = insertLecture(env.db, TEST_TEACHER_ID, "第二讲 比例");
+    const lectureId = insertLecture(
+      env.db,
+      TEST_TEACHER_ID,
+      "第二讲 比例",
+      env.studentId,
+    );
+    const hiddenLectureId = insertLecture(
+      env.db,
+      TEST_TEACHER_ID,
+      "隐藏的第三讲",
+      env.studentId,
+      false,
+    );
 
     const plain = await callToolJson(env.client, "add_memo", {
       text: "语音转写：这题先算总量再算比例",
@@ -160,6 +212,14 @@ describe("随笔 MCP 工具", () => {
     });
     expect(unknownLecture.isError).toBe(true);
     expect(unknownLecture.data.error).toBe("MEMO_ANCHOR_NOT_FOUND");
+    // 同教师但目录里隐藏的讲义：与不存在同口径，标题不经转记泄露（#104-04）
+    const hiddenLecture = await callToolJson(env.client, "add_memo", {
+      text: "隐藏讲义",
+      anchor: { kind: "lecture", lectureId: hiddenLectureId },
+    });
+    expect(hiddenLecture.isError).toBe(true);
+    expect(hiddenLecture.data.error).toBe("MEMO_ANCHOR_NOT_FOUND");
+    expect(JSON.stringify(hiddenLecture.data)).not.toContain("隐藏的第三讲");
 
     const listed = await callToolJson(env.client, "list_my_memos", {
       tag: "转写",
