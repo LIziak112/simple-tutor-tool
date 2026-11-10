@@ -9,7 +9,11 @@ import {
   learningRecordAiViewForTask,
   learningRecordSectionMd,
 } from "../learning-record-ai.ts";
-import { inappReplyPlanOf } from "../rubric-agent-record.ts";
+import {
+  type InappReplyPlan,
+  inappReplyFallbackOf,
+  inappReplyPlanOf,
+} from "../rubric-agent-record.ts";
 import { findDispatchInappConnection } from "./connection-service.ts";
 import type { ProviderTransport } from "./provider-client.ts";
 import {
@@ -208,10 +212,32 @@ function isConflict(error: unknown): boolean {
 }
 
 /**
- * 成功写回：代次 CAS 交队列；409 = 迟到回执（已记 late_reply）。
- * 量表判卷任务（模块 3）的回信末尾若带合法 rubric-opinion 块，块替换为可读
- * 段、结构化意见在同一事务落 Agent 记录（审查 #99-02）；其余任务原文照发。
+ * 量表判卷任务（模块 3）的回信落库计划（审查 #99-02）：回信末尾带合法
+ * rubric-opinion 块 → 块替换为可读段、结构化意见在同一事务落 Agent 记录。
+ * 规划本身抛错（读库 / 快照损坏）只记日志、回信原文照发——已经拿到的回信
+ * 不能因为落账失败而丢掉。
  */
+function inappReplyPlanFor(
+  ctx: DispatchRunContext,
+  taskId: string,
+  replyMd: string,
+  now: Date,
+): InappReplyPlan {
+  try {
+    const task = taskOf(ctx.db, taskId);
+    return task === undefined
+      ? { replyMd }
+      : inappReplyPlanOf(ctx.db, task, replyMd, now);
+  } catch (error) {
+    ctx.logger?.error(
+      { event: "ai_rubric_plan_failed", taskId, err: error },
+      "量表意见落账规划失败，回信原文照发",
+    );
+    return inappReplyFallbackOf(replyMd);
+  }
+}
+
+/** 成功写回：代次 CAS 交队列；409 = 迟到回执（已记 late_reply）。 */
 function completeReply(
   ctx: DispatchRunContext,
   studentId: string,
@@ -222,11 +248,7 @@ function completeReply(
 ): DispatchOutcome {
   try {
     const now = ctx.now();
-    const task = taskOf(ctx.db, taskId);
-    const plan =
-      task === undefined
-        ? { replyMd }
-        : inappReplyPlanOf(ctx.db, task, replyMd, now);
+    const plan = inappReplyPlanFor(ctx, taskId, replyMd, now);
     completeInappDispatch(
       ctx.db,
       {

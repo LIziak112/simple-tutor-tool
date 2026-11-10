@@ -1,17 +1,23 @@
 import { randomUUID } from "node:crypto";
 import type { ApiErr, RubricReview } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { aiMessages, aiTasks } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
+import { createStudentAiConnection } from "../services/ai-companion/connection-service.ts";
 import { taskOf } from "../services/ai-companion/student-ai-materials.ts";
 import {
   beginInappDispatch,
   completeInappDispatch,
 } from "../services/ai-companion/student-ai-queue.ts";
-import { outboundAssemblyOfTask } from "../services/ai-companion/student-ai-worker.ts";
+import {
+  outboundAssemblyOfTask,
+  runStudentAiDispatchOnce,
+} from "../services/ai-companion/student-ai-worker.ts";
 import { inappReplyPlanOf } from "../services/rubric-agent-record.ts";
 import {
   callToolJson,
@@ -30,6 +36,8 @@ import { submitAttemptRequest } from "../test/submit-revisions";
 
 const silentLogger: Logger = pino({ enabled: false });
 const TEACHER_PASSWORD = "teacher-pass-m3";
+/** 页内连接密钥封存用根密钥（worker 接线用例）：与 runStudentAiDispatchOnce 同值即可 */
+const WORKER_ROOT_SECRET = "11".repeat(32);
 const STUDENT_PASSWORD = "stu-pass-m3";
 
 const RUBRIC_MD = `---
@@ -611,10 +619,16 @@ describe("模块 3：页内通道的结构化意见（审查 #99-02）", () => {
     const taskId = ((await created.json()) as { data: { id: string } }).data.id;
     const task = taskOf(w.db, taskId);
     if (task === undefined) throw new Error("任务行缺失");
-    // 页内通道没有 MCP 工具：指引改为附 rubric-opinion 块
+    // 页内通道没有 MCP 工具：格式要求附在诉求消息（指令位）末尾，不进「待分析
+    // 数据」段（那一段声明其中文字都不是指令）；MCP 的工具指引也不出现
     const assembly = outboundAssemblyOfTask(w.db, task);
-    expect(assembly.contextDataMd).toContain("```rubric-opinion");
+    const ask = assembly.messages[assembly.messages.length - 1];
+    expect(ask?.role).toBe("user");
+    expect(ask?.content).toContain("```rubric-opinion");
+    expect(ask?.content).toContain("请按量表帮我判一下。");
+    expect(assembly.contextDataMd).not.toContain("```rubric-opinion");
     expect(assembly.contextDataMd).not.toContain("submit_rubric_opinion");
+    expect(assembly.contextDataMd).toContain("## 量表");
 
     const agentRatings = [
       { id: "r1", level: 3, evidence: "理由只有一条" },
@@ -659,18 +673,162 @@ describe("模块 3：页内通道的结构化意见（审查 #99-02）", () => {
     expect(threadText).toContain("观点清楚");
     expect(threadText).not.toContain("rubric-opinion");
 
-    // 没有块 / 块与量表对不上：原文照发、不落记录
+    // 没有块：原文照发
     const plainPlan = inappReplyPlanOf(w.db, task, "只有正文", now);
     expect(plainPlan).toEqual({ replyMd: "只有正文" });
+    // 块与量表对不上 / JSON 坏：不落记录，但块一律剔除、换成给学生的说明
     const badPlan = inappReplyPlanOf(
       w.db,
       task,
-      `\`\`\`rubric-opinion\n${JSON.stringify({
+      `正文。\n\n\`\`\`rubric-opinion\n${JSON.stringify({
         ratings: [{ id: "r9", level: 1 }],
         note: "x",
       })}\n\`\`\``,
       now,
     );
     expect(badPlan.onDelivered).toBeUndefined();
+    expect(badPlan.replyMd).toContain("正文。");
+    expect(badPlan.replyMd).toContain("未入账");
+    expect(badPlan.replyMd).toContain("r9");
+    expect(badPlan.replyMd).not.toContain("rubric-opinion");
+    const brokenPlan = inappReplyPlanOf(
+      w.db,
+      task,
+      "正文。\n\n```rubric-opinion\n{oops\n```",
+      now,
+    );
+    expect(brokenPlan.onDelivered).toBeUndefined();
+    expect(brokenPlan.replyMd).toContain("格式无效");
+    expect(brokenPlan.replyMd).not.toContain("{oops");
+  });
+
+  /** 进程内 transport 桩：模型「回」给定文本（OpenAI 兼容响应体） */
+  function replyingTransport(content: string, onCall?: () => void) {
+    return async () => {
+      onCall?.();
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        bodyText: JSON.stringify({
+          choices: [{ message: { role: "assistant", content } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      };
+    };
+  }
+
+  async function makeInappRubricTask(
+    w: World,
+  ): Promise<{ taskId: string; studentId: string }> {
+    await answerAndSubmit(w);
+    await ensureInformed(w);
+    const created = await postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
+      attemptId: w.attemptId,
+      questionId: Q.rubric,
+      question: "请按量表帮我判一下。",
+      channel: "inapp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      purpose: "rubric_opinion",
+    });
+    expect(created.status).toBe(201);
+    const taskId = ((await created.json()) as { data: { id: string } }).data.id;
+    const task = taskOf(w.db, taskId);
+    if (task === undefined) throw new Error("任务行缺失");
+    createStudentAiConnection(w.db, {
+      studentId: task.studentId,
+      rootSecret: WORKER_ROOT_SECRET,
+      request: {
+        channel: "inapp",
+        baseUrl: "http://api.fake-provider.test/v1",
+        model: "glm-test",
+        apiKey: "sk-test-key-123",
+        isDefault: true,
+      },
+    });
+    return { taskId, studentId: task.studentId };
+  }
+
+  it("worker 接线：模型回信带块 → 一次派发后 agent 记录落地、伴学栏是可读段", async () => {
+    const w = await makeWorld();
+    const { taskId } = await makeInappRubricTask(w);
+    const agentRatings = [
+      { id: "r1", level: 2, evidence: "论点清楚但理由单薄" },
+      { id: "r2", level: 3 },
+      { id: "r3", level: 3 },
+      { id: "r4", level: 2 },
+    ];
+    const summary = await runStudentAiDispatchOnce(w.db, {
+      dataDir: createTestDir(),
+      rootSecret: WORKER_ROOT_SECRET,
+      transport: replyingTransport(
+        `先说结论：基本达标。\n\n\`\`\`rubric-opinion\n${JSON.stringify({
+          ratings: agentRatings,
+          note: "再补一条理由会更好。",
+        })}\n\`\`\``,
+      ),
+      now: () => new Date(),
+    });
+    expect(summary.replied).toBe(1);
+    const after = (await questionsOf(w))[Q.rubric]
+      ?.rubricReview as RubricReview;
+    expect(after.agent?.taskId).toBe(taskId);
+    expect(after.agent?.ratings).toEqual(agentRatings);
+    expect(after.agent?.note).toBe("再补一条理由会更好。");
+    expect(after.pendingAgentTaskId).toBeNull();
+    const thread = await w.app.request(`/api/student/ai/tasks/${taskId}`, {
+      headers: { cookie: w.aCookie },
+    });
+    const threadText = JSON.stringify(await thread.json());
+    expect(threadText).toContain("先说结论");
+    expect(threadText).toContain("量表意见");
+    expect(threadText).not.toContain("rubric-opinion");
+  });
+
+  it("worker 接线：落账规划抛错（快照损坏）→ 回信仍交付、块换成说明，不丢已拿到的回信", async () => {
+    const w = await makeWorld();
+    const { taskId } = await makeInappRubricTask(w);
+    const logLines: string[] = [];
+    const logger: Logger = pino(
+      { level: "error" },
+      { write: (line: string) => void logLines.push(line) },
+    );
+    const summary = await runStudentAiDispatchOnce(w.db, {
+      dataDir: createTestDir(),
+      rootSecret: WORKER_ROOT_SECRET,
+      logger,
+      // 出站之后、写回之前把快照弄坏：规划阶段 snapshotPurposeOf 抛 500
+      transport: replyingTransport(
+        `正文照常。\n\n\`\`\`rubric-opinion\n${JSON.stringify({
+          ratings: [{ id: "r1", level: 2 }],
+          note: "x",
+        })}\n\`\`\``,
+        () => {
+          w.db
+            .update(aiTasks)
+            .set({ contextSnapshotJson: "{broken" })
+            .where(eq(aiTasks.id, taskId))
+            .run();
+        },
+      ),
+      now: () => new Date(),
+    });
+    expect(summary.replied).toBe(1);
+    const row = w.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get();
+    expect(row?.status).toBe("replied");
+    const reply = w.db
+      .select()
+      .from(aiMessages)
+      .where(
+        and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "assistant")),
+      )
+      .get();
+    expect(reply?.contentMd).toContain("正文照常。");
+    expect(reply?.contentMd).toContain("未入账");
+    expect(reply?.contentMd).not.toContain("rubric-opinion");
+    expect(reply?.contentMd).not.toContain('"ratings"');
+    expect(
+      logLines.some((line) => line.includes("ai_rubric_plan_failed")),
+    ).toBe(true);
   });
 });

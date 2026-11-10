@@ -23,6 +23,7 @@ import {
   optionsPublicStructureOf,
   type PublicStructureByKind,
   QUESTION_TYPE_LABELS,
+  RUBRIC_OPINION_FENCE,
 } from "@tutor/contract";
 import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
 import { asc, eq } from "drizzle-orm";
@@ -585,16 +586,19 @@ function referenceSectionOf(bundle: OutboundContextSource): string {
 }
 
 /**
- * 判卷任务的写回指引(按通道):MCP 有工具可逐项写回;页内通道没有工具,
- * 要求在回信末尾附一个 rubric-opinion 围栏块,服务端解析后落结构化记录并
- * 替换成可读段(rubric-agent-record.inappReplyPlanOf)。
+ * 判卷任务的写回指引(按通道):MCP 有工具可逐项写回,指引随量表段给(Agent
+ * 侧另有工具描述兜底);页内通道没有工具,格式要求不放在「待分析数据」段
+ * (那一段开头声明其中的文字都不是指令,放在那里的要求越守规矩的模型越不会
+ * 照做),而是作为平台要求附在本次诉求消息末尾(见 INAPP_RUBRIC_FORMAT_ASK),
+ * 服务端解析后落结构化记录并替换成可读段(rubric-agent-record.inappReplyPlanOf)。
  */
 function rubricWriteBackHintOf(channel: AiChannel | undefined): string {
-  if (channel === "inapp") {
-    return `先写给学习者看的意见正文,最后另起一段附一个 \`\`\`rubric-opinion 代码块,内容是 JSON:{"ratings":[{"id":"评价项 id","level":档位数字,"evidence":"一句依据(可省)"}],"note":"整体一句评语"},ratings 覆盖全部评价项、id 与上表一致,代码块之外不要再出现 JSON。`;
-  }
+  if (channel === "inapp") return "";
   return "写回用 submit_rubric_opinion(不要只用 submit_ai_reply)。";
 }
+
+/** 页内判卷任务:附在诉求消息末尾的格式要求(围栏名与契约常量同源) */
+const INAPP_RUBRIC_FORMAT_ASK = `【平台格式要求】请先写给学习者看的意见正文,最后另起一段附一个 \`\`\`${RUBRIC_OPINION_FENCE} 代码块,内容是 JSON:{"ratings":[{"id":"评价项 id","level":档位数字,"evidence":"一句依据(可省)"}],"note":"整体一句评语"};ratings 覆盖「量表」段的全部评价项、id 与之一致,代码块之外不要再出现 JSON。`;
 
 /** 组装出站消息:system(模板+硬约束+注入防御)→ 数据段 → 历史 → 本次诉求 */
 export function assembleOutboundMessages(input: {
@@ -683,12 +687,19 @@ ${answerLine}
 
 ${referenceSectionOf(bundle)}${materialLines}${recordSectionMd ?? ""}`;
 
-  const askContent =
+  const askBody =
     presetPrompt !== undefined &&
     presetPrompt !== null &&
     presetPrompt.trim() !== ""
       ? `${presetPrompt}\n\n${studentQuestion}`
       : studentQuestion;
+  // 页内判卷任务的格式要求放在诉求消息(指令位),不放在数据段(审查 Important 3)
+  const askContent =
+    channel === "inapp" &&
+    snapshot.purpose === "rubric_opinion" &&
+    snapshot.rubric !== undefined
+      ? `${askBody}\n\n${INAPP_RUBRIC_FORMAT_ASK}`
+      : askBody;
 
   const messages: OutboundChatMessage[] = [
     { role: "system", content: bundle.systemPromptMd },

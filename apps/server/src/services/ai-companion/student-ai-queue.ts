@@ -1439,7 +1439,7 @@ export interface SubmitMcpReplyInput {
   /**
    * 回信落库同事务的附加写入（模块 3 量表意见落 responses 行；审查 #99-04）：
    * 只在首次成功写回时调用，重放 / 迟到 / 校验失败都不调；抛错则整笔回滚。
-   */
+   * 第二参是转换后（status=replied）的任务行，与 onDelivered 同口径。 */
   readonly onReplied?: (tx: QueueTx, task: AiTaskRow) => void;
 }
 
@@ -1524,13 +1524,13 @@ export function submitMcpReply(
         input.replyMarkdown,
       );
       insertAssistantReply(tx, task.id, content, now.iso);
-      applyTransition(tx, task, "replied", now);
+      const replied = applyTransition(tx, task, "replied", now);
       insertFact(tx, task, "reply_received", now, {
         via: "mcp",
         contentHash,
         truncated,
       });
-      input.onReplied?.(tx, task);
+      input.onReplied?.(tx, replied);
       return { kind: "ok", truncated, formatWarnings };
     },
     { behavior: "immediate" },

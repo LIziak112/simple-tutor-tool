@@ -97,8 +97,11 @@ export function RubricReviewSection({
 
   const pendingTask =
     (override ?? projected)?.pendingAgentTaskId ?? localPendingTask;
-  // 判卷任务在途：按周期刷新本卷缓存，回信落地后由投影接管并停止（#99-05）
-  useRubricPendingPoll(client, attemptId, pendingTask);
+  // 判卷任务在途：按周期刷新本卷缓存，回信落地后由投影接管并停止（#99-05）；
+  // 重取落地后本地「刚发起」标记让位给投影（任务没进在途桶时也能停下来）
+  useRubricPendingPoll(client, attemptId, pendingTask, () =>
+    setLocalPendingTask(null),
+  );
 
   if (projected === null) return null;
   const review = override ?? projected;

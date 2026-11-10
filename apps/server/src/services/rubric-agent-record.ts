@@ -25,9 +25,40 @@ import { snapshotOfRow } from "./snapshot";
  * 由队列模块的 onReplied / onDelivered 钩子回调。
  */
 
+/** 门禁不过的原因码（MCP 文案给 Agent，页内文案给学生，各按码取） */
+export type RubricOpinionBlockedReason =
+  | "not_rubric_task"
+  | "no_rubric"
+  | "attempt_unusable"
+  | "not_released";
+
 export type RubricOpinionTarget =
   | { readonly ok: true; readonly row: ResponseRow; readonly rubric: Rubric }
-  | { readonly ok: false; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly reason: RubricOpinionBlockedReason;
+      /** 给 MCP Agent 的说明（409 RUBRIC_NOT_AVAILABLE 文案） */
+      readonly message: string;
+    };
+
+const AGENT_BLOCKED_MESSAGE: Record<RubricOpinionBlockedReason, string> = {
+  not_rubric_task: "该任务不是量表判卷任务，请用 submit_ai_reply 回信",
+  no_rubric: "这道题没有量表，请用 submit_ai_reply 回信",
+  attempt_unusable: "这份练习已不可用，量表意见不再写回",
+  not_released: "答案尚未公布，量表意见暂不能写回，请用 submit_ai_reply 回信",
+};
+
+/** 页内通道：块没入账时替换进回信的说明里，给学生看的原因 */
+const STUDENT_BLOCKED_REASON: Record<RubricOpinionBlockedReason, string> = {
+  not_rubric_task: "这次不是量表判卷任务",
+  no_rubric: "这道题没有量表",
+  attempt_unusable: "这份练习已不可用",
+  not_released: "答案尚未公布",
+};
+
+function blocked(reason: RubricOpinionBlockedReason): RubricOpinionTarget {
+  return { ok: false, reason, message: AGENT_BLOCKED_MESSAGE[reason] };
+}
 
 /**
  * 三道门：任务目的是量表判卷、题有量表、本人卷可用且该题答案已公布
@@ -39,10 +70,7 @@ export function rubricOpinionTargetOf(
   now: Date | string,
 ): RubricOpinionTarget {
   if (snapshotPurposeOf(task) !== "rubric_opinion") {
-    return {
-      ok: false,
-      message: "该任务不是量表判卷任务，请用 submit_ai_reply 回信",
-    };
+    return blocked("not_rubric_task");
   }
   const row = db
     .select()
@@ -50,28 +78,18 @@ export function rubricOpinionTargetOf(
     .where(buildAttemptQuestionWhere(task.attemptId, task.questionId))
     .get();
   const rubric = row === undefined ? undefined : snapshotOfRow(row)?.rubric;
-  if (row === undefined || rubric === undefined) {
-    return {
-      ok: false,
-      message: "这道题没有量表，请用 submit_ai_reply 回信",
-    };
-  }
+  if (row === undefined || rubric === undefined) return blocked("no_rubric");
   let attempt: ReturnType<typeof requireUsableAttempt>;
   try {
     attempt = requireUsableAttempt(db, task.studentId, task.attemptId);
   } catch (error) {
-    if (error instanceof HttpError) {
-      return { ok: false, message: "这份练习已不可用，量表意见不再写回" };
-    }
+    if (error instanceof HttpError) return blocked("attempt_unusable");
     throw error;
   }
   if (
     practiceQuestionFeedbackStateOf(db, attempt, row, now).status !== "released"
   ) {
-    return {
-      ok: false,
-      message: "答案尚未公布，量表意见暂不能写回，请用 submit_ai_reply 回信",
-    };
+    return blocked("not_released");
   }
   return { ok: true, row, rubric };
 }
@@ -117,23 +135,34 @@ export function rubricOpinionMarkdownOf(
       `- ${item.title}：${rating.level} / ${rubric.levels}${evidence}`,
     );
   }
-  lines.push("", opinion.note);
+  if (opinion.note !== "") lines.push("", opinion.note);
   return lines.join("\n");
 }
 
 // ---------- 页内通道 ----------
 
 export interface InappReplyPlan {
-  /** 实际入库的回信正文（结构化块已替换为可读的量表意见段） */
+  /** 实际入库的回信正文（结构化块已替换为可读的量表意见段或未入账说明） */
   readonly replyMd: string;
-  /** 交付成功时同事务追加写入；原文照发时为 undefined */
+  /** 交付成功时同事务追加写入；没有结构化意见要落时为 undefined */
   readonly onDelivered?: (tx: QueueTx) => void;
 }
 
+function joinParts(...parts: readonly string[]): string {
+  return parts.filter((part) => part.length > 0).join("\n\n");
+}
+
+/** 块定位到但没入账：替换成给学生看的一句说明（原始 JSON 不进伴学栏） */
+function unrecordedNoteOf(reason: string): string {
+  return `（AI 附带的量表意见未入账：${reason}）`;
+}
+
 /**
- * 页内通道的回信落库计划：判卷任务回信末尾带合法的 rubric-opinion 块 →
- * 块替换为可读段 + 同事务落 Agent 记录；非判卷任务 / 没有块 / 块与量表
- * 对不上 / 门禁不过 → 原文照发（回信仍可读，只是没有结构化意见）。
+ * 页内通道的回信落库计划：
+ * - 回信里没有 rubric-opinion 块 → 原文照发；
+ * - 有块（不论任务目的）→ 块一律从正文剔除：判卷任务、门禁通过、评定项与量表
+ *   对得上 → 替换为可读的量表意见段 + 同事务落 Agent 记录；否则替换为一句
+ *   「未入账 + 原因」的说明，回信其余部分照发。
  */
 export function inappReplyPlanOf(
   db: Db,
@@ -141,23 +170,54 @@ export function inappReplyPlanOf(
   replyMd: string,
   now: Date | string,
 ): InappReplyPlan {
-  if (snapshotPurposeOf(task) !== "rubric_opinion") return { replyMd };
-  const block = rubricOpinionBlockOf(replyMd);
-  if (block === null) return { replyMd };
-  const target = rubricOpinionTargetOf(db, task, now);
-  if (!target.ok) return { replyMd };
-  if (rubricRatingsProblem(target.rubric, block.opinion.ratings) !== null) {
-    return { replyMd };
+  const parsed = rubricOpinionBlockOf(replyMd);
+  if (parsed.kind === "none") return { replyMd };
+  if (parsed.kind === "invalid") {
+    return {
+      replyMd: joinParts(
+        parsed.rest,
+        unrecordedNoteOf(`格式无效，${parsed.problem}`),
+      ),
+    };
   }
-  const record = rubricAgentRecordOf(block.opinion, task.id, now);
-  const rendered = [
-    block.rest,
-    rubricOpinionMarkdownOf(target.rubric, block.opinion),
-  ]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
+  const target = rubricOpinionTargetOf(db, task, now);
+  if (!target.ok) {
+    return {
+      replyMd: joinParts(
+        parsed.rest,
+        unrecordedNoteOf(STUDENT_BLOCKED_REASON[target.reason]),
+      ),
+    };
+  }
+  const problem = rubricRatingsProblem(target.rubric, parsed.opinion.ratings);
+  if (problem !== null) {
+    return { replyMd: joinParts(parsed.rest, unrecordedNoteOf(problem)) };
+  }
+  const record = rubricAgentRecordOf(parsed.opinion, task.id, now);
   return {
-    replyMd: rendered,
+    replyMd: joinParts(
+      parsed.rest,
+      rubricOpinionMarkdownOf(target.rubric, parsed.opinion),
+    ),
     onDelivered: (tx) => writeRubricAgentRecord(tx, target.row.id, record),
   };
+}
+
+/**
+ * 规划阶段意外抛错（读库 / 快照损坏等）时的兜底：回信照常交付，块（若能定位）
+ * 替换为说明——已经拿到的回信不能因为落账失败而丢掉（审查 Important 1）。
+ */
+export function inappReplyFallbackOf(replyMd: string): InappReplyPlan {
+  try {
+    const parsed = rubricOpinionBlockOf(replyMd);
+    if (parsed.kind === "none") return { replyMd };
+    return {
+      replyMd: joinParts(
+        parsed.rest,
+        unrecordedNoteOf("服务暂时无法核对量表，可稍后重新发起判卷"),
+      ),
+    };
+  } catch {
+    return { replyMd };
+  }
 }

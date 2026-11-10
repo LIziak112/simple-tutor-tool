@@ -198,31 +198,91 @@ export function rubricRatingsEqual(
  */
 export const RUBRIC_OPINION_FENCE = "rubric-opinion";
 
-const RUBRIC_OPINION_BLOCK_RE =
-  /```rubric-opinion[^\n]*\n([\s\S]*?)\n[ \t]*```/g;
+/** 只认独占一行的开栏 / 闭栏：正文里内联提到 ```rubric-opinion 不算块 */
+const RUBRIC_OPINION_BLOCK_RE = new RegExp(
+  `^[ \\t]*\`\`\`${RUBRIC_OPINION_FENCE}[^\\n]*\\n([\\s\\S]*?)\\n[ \\t]*\`\`\`[ \\t]*$`,
+  "gm",
+);
 
-export interface RubricOpinionBlock {
-  readonly opinion: RubricOpinionInput;
-  /** 去掉该代码块后的回信正文（两端空白已收） */
-  readonly rest: string;
-}
+/**
+ * 模型写的块按宽松口径解析（严格 schema 留给 API）：忽略未知键、档位允许写成
+ * 数字字符串、评语可缺省、超长依据 / 评语截断——这些是模型高频的小偏差，
+ * 不该让整条意见作废。
+ */
+const rubricOpinionModelBlockSchema = z.object({
+  ratings: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        level: z.coerce.number().int().min(1).max(RUBRIC_LEVEL_MAX),
+        evidence: z.string().optional(),
+      }),
+    )
+    .min(1),
+  note: z.string().optional(),
+});
 
-/** 取回信 Markdown 里最后一个 rubric-opinion 块；没有 / JSON 不合法 / 不符契约 → null */
+export type RubricOpinionBlockParse =
+  /** 回信里没有块 */
+  | { readonly kind: "none" }
+  /** 有块但 JSON 不合法 / 不符口径；rest 已去掉全部块 */
+  | {
+      readonly kind: "invalid";
+      readonly rest: string;
+      readonly problem: string;
+    }
+  | {
+      readonly kind: "ok";
+      readonly opinion: RubricOpinionInput;
+      /** 去掉全部块后的回信正文（两端空白已收） */
+      readonly rest: string;
+    };
+
+/**
+ * 解析回信 Markdown 里的 rubric-opinion 块：以最后一个为准（模型可能先草拟后
+ * 修正），正文去掉**全部**块——命中块就一定从正文剔除，不让学生看到原始 JSON。
+ * CRLF 先归一为 LF。
+ */
 export function rubricOpinionBlockOf(
   markdown: string,
-): RubricOpinionBlock | null {
+): RubricOpinionBlockParse {
+  const normalized = markdown.replace(/\r\n?/g, "\n");
   let last: RegExpExecArray | null = null;
-  for (const match of markdown.matchAll(RUBRIC_OPINION_BLOCK_RE)) last = match;
-  if (last === null) return null;
+  for (const match of normalized.matchAll(RUBRIC_OPINION_BLOCK_RE)) {
+    last = match;
+  }
+  if (last === null) return { kind: "none" };
+  const rest = normalized
+    .replace(RUBRIC_OPINION_BLOCK_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   let parsed: unknown;
   try {
     parsed = JSON.parse(last[1] ?? "");
   } catch {
-    return null;
+    return { kind: "invalid", rest, problem: "代码块里不是合法的 JSON" };
   }
-  const result = rubricOpinionInputSchema.safeParse(parsed);
-  if (!result.success) return null;
-  const rest =
-    `${markdown.slice(0, last.index)}${markdown.slice(last.index + last[0].length)}`.trim();
-  return { opinion: result.data, rest };
+  const result = rubricOpinionModelBlockSchema.safeParse(parsed);
+  if (!result.success) {
+    return {
+      kind: "invalid",
+      rest,
+      problem: `JSON 缺少 ratings（含 id / level）或档位不在 1–${RUBRIC_LEVEL_MAX}`,
+    };
+  }
+  const opinion: RubricOpinionInput = {
+    ratings: result.data.ratings.map((rating) => ({
+      id: rating.id,
+      level: rating.level,
+      ...(rating.evidence !== undefined && rating.evidence.trim() !== ""
+        ? {
+            evidence: rating.evidence
+              .trim()
+              .slice(0, RUBRIC_EVIDENCE_MAX_CHARS),
+          }
+        : {}),
+    })),
+    note: (result.data.note ?? "").trim().slice(0, RUBRIC_NOTE_MAX_CHARS),
+  };
+  return { kind: "ok", opinion, rest };
 }
