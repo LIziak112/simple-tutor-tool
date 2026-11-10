@@ -510,9 +510,14 @@ export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
 export function getStudentAccount(
   db: Db,
   studentId: string,
+  teacherId?: string,
 ): StudentMeData | null {
   const row = findById(db, studentId);
-  if (!row || row.archivedAt != null) {
+  if (
+    !row ||
+    row.archivedAt != null ||
+    (teacherId !== undefined && row.teacherId !== teacherId)
+  ) {
     return null;
   }
   const owner = personalOwnerOf(db, row);

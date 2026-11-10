@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  StudentMeData,
   TeacherInfo,
   TeacherLoginRequest,
   TeacherRegisterRequest,
@@ -14,6 +15,7 @@ import {
   isPersonalRegistrationOpen,
   isRegistrationOpen,
 } from "../services/app-settings-service";
+import { getStudentAccount } from "../services/student-service";
 import { hashPassword, verifyPassword } from "./password";
 import {
   clearLoginFailures,
@@ -66,24 +68,13 @@ export function teacherStatus(db: Db): TeacherStatusData {
 
 /**
  * setup / register / login 成功的返回：教师信息 + 教师会话 token（由路由写入
- * Cookie）；studentToken 仅个人账号登录时存在（绑定学习者的学生会话，路由一并
+ * Cookie）；studentSession 仅个人账号登录时存在（绑定学习者的学生会话，路由一并
  * 写入学生 Cookie）。
  */
 export interface AuthResult {
   teacher: TeacherInfo;
   token: string;
-  studentToken?: string;
-}
-
-/** 个人账号登录时为其绑定学习者签发学生会话；班级账号 → undefined */
-function personalStudentTokenOf(
-  db: Db,
-  row: { accountKind: "class" | "personal"; personalStudentId: string | null },
-): string | undefined {
-  if (row.accountKind !== "personal" || row.personalStudentId === null) {
-    return undefined;
-  }
-  return createStudentSession(db, row.personalStudentId).token;
+  studentSession?: { student: StudentMeData; token: string };
 }
 
 /**
@@ -194,10 +185,27 @@ export async function loginTeacher(
     throw new HttpError(403, "ACCOUNT_DISABLED", "账号已被停用，请联系管理员");
   }
 
+  const student =
+    row.accountKind === "personal" && row.personalStudentId !== null
+      ? getStudentAccount(db, row.personalStudentId, row.id)
+      : null;
+  if (row.accountKind === "personal" && student?.accountKind !== "personal") {
+    throw new HttpError(
+      403,
+      "ACCOUNT_DISABLED",
+      "个人账号的学习者身份不可用，请联系管理员",
+    );
+  }
+
   clearLoginFailures(db, keys);
   pruneExpiredSessions(db);
-  const { token } = createTeacherSession(db, row.id);
-  const studentToken = personalStudentTokenOf(db, row);
+  const { token, studentSession } = db.transaction(() => ({
+    token: createTeacherSession(db, row.id).token,
+    studentSession:
+      student === null
+        ? undefined
+        : { student, token: createStudentSession(db, student.id).token },
+  }));
   return {
     teacher: {
       id: row.id,
@@ -208,7 +216,7 @@ export async function loginTeacher(
       createdAt: row.createdAt,
     },
     token,
-    ...(studentToken !== undefined ? { studentToken } : {}),
+    ...(studentSession !== undefined ? { studentSession } : {}),
   };
 }
 

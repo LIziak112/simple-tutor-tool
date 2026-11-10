@@ -182,49 +182,17 @@ export async function loginPersonalAccount(
   ip: string,
 ): Promise<PersonalAuthResult> {
   const result = await loginTeacher(db, request, ip);
-  if (
-    result.teacher.accountKind !== "personal" ||
-    result.studentToken === undefined
-  ) {
-    revokeIssuedSessions(db, result.token, result.studentToken);
+  if (result.studentSession === undefined) {
+    deleteSession(db, result.token);
     throw new HttpError(
       403,
       "ACCOUNT_KIND_MISMATCH",
       "这是班级教师账号，请从「教师登录」进入",
     );
   }
-  const studentRow = db
-    .select({ personalStudentId: teachers.personalStudentId })
-    .from(teachers)
-    .where(eq(teachers.id, result.teacher.id))
-    .get();
-  const student =
-    studentRow?.personalStudentId == null
-      ? null
-      : getStudentAccount(db, studentRow.personalStudentId);
-  if (student === null) {
-    revokeIssuedSessions(db, result.token, result.studentToken);
-    throw new HttpError(
-      403,
-      "ACCOUNT_DISABLED",
-      "个人账号的学习者身份不可用，请联系管理员",
-    );
-  }
   return {
-    data: { teacher: result.teacher, student },
+    data: { teacher: result.teacher, student: result.studentSession.student },
     teacherToken: result.token,
-    studentToken: result.studentToken,
+    studentToken: result.studentSession.token,
   };
-}
-
-/** 入口校验失败时撤回 loginTeacher 已签发的会话行（不留可用凭证） */
-function revokeIssuedSessions(
-  db: Db,
-  teacherToken: string,
-  studentToken: string | undefined,
-): void {
-  deleteSession(db, teacherToken);
-  if (studentToken !== undefined) {
-    deleteSession(db, studentToken);
-  }
 }

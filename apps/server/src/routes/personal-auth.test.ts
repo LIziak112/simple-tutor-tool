@@ -4,6 +4,7 @@ import {
   personalSessionOkSchema,
   studentMeOkSchema,
   teacherInfoOkSchema,
+  teacherLoginOkSchema,
   teacherStatusOkSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
@@ -14,6 +15,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { sessions, students, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
  * 个人账号（模块 0）集成测试：app.request() 直调路由 + 内存库。
@@ -437,9 +439,10 @@ describe("个人账号登录（模块 0）", () => {
       password: PERSONAL_PASSWORD,
     });
     expect(viaTeacher.status).toBe(200);
-    expect(await viaTeacher.json()).toMatchObject({
-      data: { accountKind: "personal" },
-    });
+    const teacherLogin = teacherLoginOkSchema.parse(await viaTeacher.json());
+    expect(teacherLogin.data.accountKind).toBe("personal");
+    expect(teacherLogin.data.student?.accountKind).toBe("personal");
+    assertNoLeak(teacherLogin);
     const viaTeacherNames = viaTeacher.headers
       .getSetCookie()
       .map((c) => c.split("=")[0] ?? "");
@@ -450,6 +453,9 @@ describe("个人账号登录（模块 0）", () => {
       cookie: cookieHeaderOf(viaTeacher),
     });
     expect(studentMe.status).toBe(200);
+    expect(teacherLogin.data.student).toEqual(
+      studentMeOkSchema.parse(await studentMe.json()).data,
+    );
     db.$client.close();
   });
 

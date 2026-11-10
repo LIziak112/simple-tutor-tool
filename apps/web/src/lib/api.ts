@@ -431,7 +431,7 @@ export function setupTeacher(
 /** 教师登录名 + 密码登录（连续失败 5 次会被临时锁定，见后端 §5.7 限流） */
 export function loginTeacher(
   request: TeacherLoginRequest,
-): Promise<TeacherInfo> {
+): Promise<import("@tutor/contract").TeacherLoginData> {
   return callApi(() => api.api.public.teacher.login.$post({ json: request }));
 }
 

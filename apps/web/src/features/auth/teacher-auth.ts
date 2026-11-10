@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { TeacherInfo } from "@tutor/contract";
+import type { PersonalSessionData, TeacherInfo } from "@tutor/contract";
 import {
   fetchTeacherMe,
   fetchTeacherStatus,
@@ -9,6 +9,7 @@ import {
   setupTeacher,
 } from "@/lib/api";
 import { clearAccountQueries } from "./account-query-cache";
+import { useApplyStudentAuthed } from "./student-auth";
 
 /**
  * 教师登录状态（T1.9）：TanStack Query 管服务端状态的既有模式——
@@ -57,6 +58,14 @@ export function useApplyTeacherAuthed() {
   };
 }
 
+export function useApplyPersonalAuthed() {
+  const applyTeacher = useApplyTeacherAuthed();
+  const applyStudent = useApplyStudentAuthed();
+  return async ({ teacher, student }: PersonalSessionData) => {
+    await Promise.all([applyStudent(student), applyTeacher(teacher)]);
+  };
+}
+
 /** 首次设置密码（成功自动登录） */
 export function useSetupTeacher() {
   const applyAuthed = useApplyTeacherAuthed();
@@ -69,9 +78,13 @@ export function useSetupTeacher() {
 /** 密码登录 */
 export function useLoginTeacher() {
   const applyAuthed = useApplyTeacherAuthed();
+  const applyPersonal = useApplyPersonalAuthed();
   return useMutation({
     mutationFn: loginTeacher,
-    onSuccess: applyAuthed,
+    onSuccess: ({ student, ...teacher }) =>
+      student === undefined
+        ? applyAuthed(teacher)
+        : applyPersonal({ teacher, student }),
   });
 }
 

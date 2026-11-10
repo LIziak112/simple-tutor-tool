@@ -158,6 +158,43 @@ describe("学生账号缓存边界", () => {
 });
 
 describe("教师账号缓存边界", () => {
+  it("从教师入口登录个人账号时更新学习者并隔离旧查询", async () => {
+    const { client, wrapper } = setup();
+    const teacher = { ...teacherB, accountKind: "personal" } as const;
+    const student = { ...studentB, accountKind: "personal" } as const;
+    const login = { ...teacher, student };
+    vi.mocked(loginTeacher).mockResolvedValue(login);
+    client.setQueryData(teacherMeKey, teacherA);
+    client.setQueryData(studentMeKey, studentA);
+    client.setQueryData(["student", "wrong"], "甲的错题");
+    let release: (value: StudentMeData) => void = () => {};
+    const pending = client
+      .fetchQuery({
+        queryKey: studentMeKey,
+        staleTime: 0,
+        queryFn: () =>
+          new Promise<StudentMeData>((resolve) => {
+            release = resolve;
+          }),
+      })
+      .catch(() => undefined);
+
+    const { result } = renderHook(() => useLoginTeacher(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({
+        loginName: teacher.loginName,
+        password: "password",
+      });
+      release(studentA);
+      await pending;
+    });
+
+    expect(client.getQueryData(studentMeKey)).toEqual(student);
+    expect(client.getQueryData(teacherMeKey)).toEqual(teacher);
+    expect(client.getQueryData(["student", "wrong"])).toBeUndefined();
+    client.clear();
+  });
+
   it("退出清除活动身份与教师/管理业务，保留学生会话", async () => {
     const { client, wrapper } = setup();
     client.setQueryData(teacherMeKey, teacherA);
