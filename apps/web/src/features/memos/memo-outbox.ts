@@ -23,7 +23,9 @@ import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
  *   按入队顺序重试；服务端按 clientId 幂等，重放不产生重复；
  * - 业务拒绝（4xx：格式 / 超限 / 校验）不会自愈：标 failedMessage 留在队列让本人
  *   看到并手动丢弃，不静默删除未同步内容（草稿域同口径）；
- * - 按账号隔离：键前缀带 studentId，布局层 bind / 登出 unbind。
+ * - 按账号隔离：键前缀带 studentId，布局层 bind / 登出 unbind。每个异步步骤开始
+ *   时捕获账号，等待结束后账号已换则不再碰当前队列 / 通知（本机键只按捕获的
+ *   账号读写），换账号与保存 / 补传交错时旧账号的数据不会进新账号队列。
  */
 export interface MemoOutboxItem {
   readonly clientId: string;
@@ -57,16 +59,25 @@ let backend: KVStoreBackend = defaultBackend();
 let accountId: string | null = null;
 let items: readonly MemoOutboxItem[] = [];
 let flushing: Promise<void> | null = null;
+/** 在途补传那一轮所属的账号（账号已换时 bind 据此接力新一轮） */
+let flushingAccount: string | null = null;
 const listeners = new Set<() => void>();
 const syncedListeners = new Set<(memo: Memo) => void>();
 
-function keyOf(clientId: string): string {
-  return JSON.stringify(["memo-outbox", accountId, clientId]);
+function keyFor(account: string, clientId: string): string {
+  return JSON.stringify(["memo-outbox", account, clientId]);
 }
 
-function prefix(): string {
+function prefixFor(account: string): string {
   // 去掉结尾的 "]"，前缀匹配同账号全部条目
-  return JSON.stringify(["memo-outbox", accountId]).slice(0, -1);
+  return JSON.stringify(["memo-outbox", account]).slice(0, -1);
+}
+
+function requireAccount(): string {
+  if (accountId === null) {
+    throw new Error("还没有登录，这条随笔没有保存：请刷新页面后重试");
+  }
+  return accountId;
 }
 
 function emit(): void {
@@ -96,7 +107,7 @@ export async function bindMemoOutboxAccount(
   setItems([]);
   if (studentId === null) return;
   try {
-    const stored = await backend.getAll(prefix());
+    const stored = await backend.getAll(prefixFor(studentId));
     if (accountId !== studentId) return;
     setItems(
       stored
@@ -112,6 +123,7 @@ export async function bindMemoOutboxAccount(
 
 /** 记一条：先落本机，再立即尝试上传；返回时本机已保存（上传结果看队列 / onSynced） */
 export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
+  const account = requireAccount();
   const item: MemoOutboxItem = {
     ...input,
     clientId: crypto.randomUUID(),
@@ -119,10 +131,12 @@ export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
     failedMessage: undefined,
   };
   try {
-    await backend.set(keyOf(item.clientId), item);
+    await backend.set(keyFor(account, item.clientId), item);
   } catch {
     // 本机落盘失败仍进内存队列：能传就传，不因存储故障丢这一条
   }
+  // 等待期间换了账号：条目已在旧账号键下，旧账号下次 bind 会出现；不进当前队列
+  if (accountId !== account) return item.clientId;
   setItems([...items, item]);
   void flushMemoOutbox();
   return item.clientId;
@@ -130,9 +144,10 @@ export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
 
 /** 丢弃一条（业务拒绝后由本人决定） */
 export async function discardMemoOutboxItem(clientId: string): Promise<void> {
+  const account = requireAccount();
   setItems(items.filter((item) => item.clientId !== clientId));
   try {
-    await backend.del(keyOf(clientId));
+    await backend.del(keyFor(account, clientId));
   } catch {
     // 本机删除失败下次 bind 会再出现，届时仍可丢弃
   }
@@ -166,13 +181,20 @@ async function upload(item: MemoOutboxItem): Promise<Memo> {
 
 /** 按入队顺序补传；网络层失败即停（等下次触发），业务拒绝标 failedMessage 后继续下一条 */
 export function flushMemoOutbox(): Promise<void> {
-  if (flushing !== null) return flushing;
+  if (flushing !== null) {
+    // 在途那一轮属于别的账号（切换时它会在下一次循环退出）：接力给当前账号再来一轮
+    return flushingAccount === accountId
+      ? flushing
+      : flushing.then(() => flushMemoOutbox());
+  }
   const account = accountId;
+  if (account === null) return Promise.resolve();
+  flushingAccount = account;
   flushing = (async () => {
     // 每轮重新从当前队列取「还没试过、没被拒绝」的第一条：补传期间新记的也在本轮传完
     const attempted = new Set<string>();
     for (;;) {
-      if (account === null || accountId !== account) return;
+      if (accountId !== account) return;
       const item = items.find(
         (it) => it.failedMessage === undefined && !attempted.has(it.clientId),
       );
@@ -180,12 +202,16 @@ export function flushMemoOutbox(): Promise<void> {
       attempted.add(item.clientId);
       try {
         const memo = await upload(item);
-        setItems(items.filter((it) => it.clientId !== item.clientId));
+        // 等待期间换了账号：当前队列 / 页面已属于别人，只清掉旧账号的本机键
+        if (accountId === account) {
+          setItems(items.filter((it) => it.clientId !== item.clientId));
+        }
         try {
-          await backend.del(keyOf(item.clientId));
+          await backend.del(keyFor(account, item.clientId));
         } catch {
           // 已在服务端：下次 bind 重放只会命中幂等键，无害
         }
+        if (accountId !== account) return;
         for (const listener of syncedListeners) listener(memo);
       } catch (err) {
         if (err instanceof ApiError) {
@@ -193,11 +219,13 @@ export function flushMemoOutbox(): Promise<void> {
             ...item,
             failedMessage: err.message,
           };
-          setItems(
-            items.map((it) => (it.clientId === item.clientId ? failed : it)),
-          );
+          if (accountId === account) {
+            setItems(
+              items.map((it) => (it.clientId === item.clientId ? failed : it)),
+            );
+          }
           try {
-            await backend.set(keyOf(item.clientId), failed);
+            await backend.set(keyFor(account, item.clientId), failed);
           } catch {
             // 标记只影响是否自动重试，落盘失败可接受
           }
@@ -209,6 +237,7 @@ export function flushMemoOutbox(): Promise<void> {
     }
   })().finally(() => {
     flushing = null;
+    flushingAccount = null;
   });
   return flushing;
 }
@@ -249,5 +278,6 @@ export function installMemoOutboxBackendForTest(
   backend = next ?? defaultBackend();
   accountId = null;
   flushing = null;
+  flushingAccount = null;
   setItems([]);
 }
