@@ -66,8 +66,7 @@ function RoleEntryCard({
  * 首页：登录入口面板（学生 / 教师 / 个人学习三张身份卡）+ 底部系统状态卡。
  * - 两端会话独立，useStudentMe / useTeacherMe 未登录时 401（isError），
  *   探测未落定或未登录一律显示登录入口；已登录则换文案直接进对应端；
- * - 个人账号（模块 0）登录后两侧会话同在：三张卡收成一张「个人学习」已登录卡
- *   （直达学习视角），不再把同一个人拆成学生 / 教师两张；
+ * - 个人账号显示个人学习入口，混合会话另外保留已登录的班级入口。
  * - 系统状态卡保留 T1.x 的前后端联通自检（部署排障用），加载中 /
  *   错误（含重试）/ 成功 三态齐全（UI 约定硬性要求）。
  */
@@ -81,8 +80,16 @@ export function HomePage() {
   const teacherMe = useTeacherMe();
   const student = studentMe.data;
   const teacher = teacherMe.data;
-  const personal =
-    teacher?.accountKind === "personal" || student?.accountKind === "personal";
+  const personalStudent = student?.accountKind === "personal" ? student : null;
+  const personalTeacher = teacher?.accountKind === "personal" ? teacher : null;
+  const personal = personalStudent !== null || personalTeacher !== null;
+  const showStudent = !personal || student?.accountKind === "class";
+  const showTeacher = !personal || teacher?.accountKind === "class";
+  const entryLayout = !personal
+    ? "max-w-3xl sm:grid-cols-3"
+    : showStudent || showTeacher
+      ? "max-w-2xl sm:grid-cols-2"
+      : "max-w-sm";
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-background px-6 py-12 text-foreground">
@@ -94,24 +101,11 @@ export function HomePage() {
         <p className="mt-5 text-sm text-muted-foreground">请选择你的身份进入</p>
       </header>
 
-      {personal ? (
-        <section
-          aria-label="登录入口"
-          className="grid w-full max-w-sm grid-cols-1 gap-4"
-        >
-          <RoleEntryCard
-            to="/s/home"
-            icon={BookOpenCheck}
-            title="个人学习"
-            description={`已登录：${student?.displayName ?? teacher?.loginName ?? ""}，学习视角与管理视角随时切换`}
-            actionLabel="继续学习"
-          />
-        </section>
-      ) : (
-        <section
-          aria-label="登录入口"
-          className="grid w-full max-w-3xl grid-cols-1 gap-4 sm:grid-cols-3"
-        >
+      <section
+        aria-label="登录入口"
+        className={`grid w-full grid-cols-1 gap-4 ${entryLayout}`}
+      >
+        {showStudent && (
           <RoleEntryCard
             to={student ? "/s/home" : "/s/login"}
             icon={GraduationCap}
@@ -123,6 +117,8 @@ export function HomePage() {
             }
             actionLabel={student ? "继续学习" : "去登录"}
           />
+        )}
+        {showTeacher && (
           <RoleEntryCard
             to={teacher ? "/t" : "/t/login"}
             icon={Presentation}
@@ -134,15 +130,21 @@ export function HomePage() {
             }
             actionLabel={teacher ? "进入工作台" : "去登录"}
           />
-          <RoleEntryCard
-            to="/p/login"
-            icon={BookOpenCheck}
-            title="个人学习"
-            description="自己导入资料、自己练、自己看学情；一个账号同时拥有学习与管理两个视角"
-            actionLabel="去登录"
-          />
-        </section>
-      )}
+        )}
+        <RoleEntryCard
+          to={personalStudent ? "/s/home" : "/p/login"}
+          icon={BookOpenCheck}
+          title="个人学习"
+          description={
+            personalStudent
+              ? `已登录：${personalStudent.displayName}`
+              : personalTeacher
+                ? `管理视角已登录：${personalTeacher.loginName}。请重新登录以进入学习视角。`
+                : "自己导入资料、自己练、自己看学情。一个账号同时拥有学习与管理两个视角。"
+          }
+          actionLabel={personalStudent ? "继续学习" : "去登录"}
+        />
+      </section>
 
       <section
         aria-label="系统状态"

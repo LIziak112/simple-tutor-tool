@@ -103,25 +103,14 @@ export async function registerPersonalAccount(
   if (!inviteCodeMatches(inviteCode, request.inviteCode)) {
     throw new HttpError(403, "INVITE_CODE_INVALID", "邀请码不正确");
   }
-  const conflict = db
-    .select({ id: teachers.id })
-    .from(teachers)
-    .where(eq(teachers.loginName, request.loginName))
-    .get();
-  if (conflict) {
-    throw new HttpError(
-      409,
-      "TEACHER_LOGIN_EXISTS",
-      "登录名已被使用，请换一个",
-    );
-  }
-
   const teacherId = randomUUID();
   const createdAt = new Date().toISOString();
   const passwordHash = await hashPassword(request.password);
   const displayName = request.displayName ?? request.loginName;
-  const studentId = db.transaction((tx) => {
-    tx.insert(teachers)
+  pruneExpiredSessions(db);
+  const { student, teacherToken, studentToken } = db.transaction((tx) => {
+    const inserted = tx
+      .insert(teachers)
       .values({
         id: teacherId,
         loginName: request.loginName,
@@ -133,11 +122,17 @@ export async function registerPersonalAccount(
         personalStudentId: null,
         createdAt,
       })
+      .onConflictDoNothing({ target: teachers.loginName })
       .run();
-    // 事务句柄与 Db 包装同一底层连接（queue / connection-service 同款口径）
-    const learner = insertPersonalLearner(tx as unknown as Db, {
+    if (inserted.changes === 0) {
+      throw new HttpError(
+        409,
+        "TEACHER_LOGIN_EXISTS",
+        "登录名已被使用，请换一个",
+      );
+    }
+    const learner = insertPersonalLearner(tx, {
       teacherId,
-      accountLoginName: request.loginName,
       displayName,
       createdAt,
     });
@@ -145,16 +140,16 @@ export async function registerPersonalAccount(
       .set({ personalStudentId: learner.id })
       .where(eq(teachers.id, teacherId))
       .run();
-    return learner.id;
+    const student = getStudentAccount(db, learner.id, teacherId);
+    if (student === null) {
+      throw new HttpError(500, "INTERNAL", "个人账号创建后读取学习者身份失败");
+    }
+    return {
+      student,
+      teacherToken: createTeacherSession(db, teacherId).token,
+      studentToken: createStudentSession(db, learner.id).token,
+    };
   });
-
-  pruneExpiredSessions(db);
-  const { token: teacherToken } = createTeacherSession(db, teacherId);
-  const { token: studentToken } = createStudentSession(db, studentId);
-  const student = getStudentAccount(db, studentId);
-  if (student === null) {
-    throw new HttpError(500, "INTERNAL", "个人账号创建后读取学习者身份失败");
-  }
   return {
     data: {
       teacher: {

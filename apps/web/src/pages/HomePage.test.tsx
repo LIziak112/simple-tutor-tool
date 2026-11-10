@@ -134,6 +134,25 @@ describe("HomePage 登录入口面板", () => {
     );
   });
 
+  it("个人管理会话和班级学习会话并存时首页保留两张独立入口", async () => {
+    mockedTeacherMe.mockResolvedValue({
+      ...TEACHER,
+      loginName: "kaosheng",
+      accountKind: "personal",
+    });
+    mockedStudentMe.mockResolvedValue(STUDENT);
+    renderHomePage();
+    const personal = await screen.findByRole("link", {
+      name: /个人学习.*kaosheng/,
+    });
+    expect(personal).toHaveAttribute("href", "/p/login");
+    expect(personal).not.toHaveTextContent(STUDENT.displayName);
+    expect(screen.getByRole("link", { name: /学生端.*张三/ })).toHaveAttribute(
+      "href",
+      "/s/home",
+    );
+  });
+
   it("教师已登录时教师卡直达 /t 并显示登录名，学生卡仍是登录入口", async () => {
     mockedTeacherMe.mockResolvedValue(TEACHER);
     renderHomePage();

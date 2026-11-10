@@ -23,6 +23,7 @@ import { createStudentSession, pruneExpiredSessions } from "../auth/session";
 import type { Db } from "../db/client";
 import { type Student, students, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { assertIndependentStudent, personalOwnerOf } from "./personal-learner";
 import { studentActivitySummaries } from "./teacher-attempt-service";
 
 /**
@@ -46,43 +47,9 @@ import { studentActivitySummaries } from "./teacher-attempt-service";
  *
  * 个人账号（模块 0，2026-11）：个人账号的学习者行由 insertPersonalLearner 与
  * teachers 行同事务创建——两种直接登录都关闭（密码由账号统一管理、会话由个人登录
- * 成套签发），students.loginName 用 `personal:<账号登录名>` 前缀与班级学生隔离，
+ * 成套签发），新行用 `personal:<学生 ID>` 作内部登录名，
  * 对外（toMe）展示账号登录名；个人账号不能再建第二名学生（createStudent 409）。
  */
-
-/** 个人账号学习者行的 loginName 前缀（班级学生登录名不含冒号前缀，命名空间天然隔离） */
-const PERSONAL_LOGIN_NAME_PREFIX = "personal:";
-
-/** 个人学习者行的 students.loginName（全局唯一约束下与账号登录名一一对应） */
-export function personalLearnerLoginName(accountLoginName: string): string {
-  return `${PERSONAL_LOGIN_NAME_PREFIX}${accountLoginName}`;
-}
-
-/**
- * 学生行所属的个人账号（teachers.accountKind='personal' 且 personalStudentId
- * 指回本行）；班级学生 → undefined。toMe 据此给出 accountKind 与展示登录名。
- */
-function personalOwnerOf(db: Db, row: Student) {
-  if (row.teacherId === null) return undefined;
-  const owner = db
-    .select({
-      loginName: teachers.loginName,
-      accountKind: teachers.accountKind,
-      personalStudentId: teachers.personalStudentId,
-      disabledAt: teachers.disabledAt,
-    })
-    .from(teachers)
-    .where(eq(teachers.id, row.teacherId))
-    .get();
-  if (
-    owner?.accountKind !== "personal" ||
-    owner.personalStudentId !== row.id ||
-    owner.loginName === null
-  ) {
-    return undefined;
-  }
-  return { loginName: owner.loginName, disabledAt: owner.disabledAt };
-}
 
 /** 教师是否为个人账号（创建学生等班级能力的闸门） */
 function isPersonalAccount(db: Db, teacherId: string): boolean {
@@ -315,28 +282,23 @@ export async function createStudent(
 /**
  * 个人账号的学习者行（模块 0）：与 teachers 行同事务创建（调用方负责事务与
  * personalStudentId 回填）。两种直接登录都关闭、无密码——本行只经个人登录成套
- * 签发的学生会话进入；linkToken 仍生成以满足唯一非空约束（linkEnabled=false，
- * 链接不可用）。loginName 冲突（同名个人账号曾存在且 teachers 行被删的极端态）
- * → 409 TEACHER_LOGIN_EXISTS 由调用方在 teachers 层先行拦截，此处仅兜底。
+ * 签发的学生会话进入；linkToken 仍生成以满足唯一非空约束。
  */
 export function insertPersonalLearner(
-  db: Db,
+  db: Pick<Db, "insert">,
   input: {
     readonly teacherId: string;
-    readonly accountLoginName: string;
     readonly displayName: string;
     readonly createdAt: string;
   },
 ): { id: string } {
-  const loginName = personalLearnerLoginName(input.accountLoginName);
-  assertLoginNameFree(db, loginName);
   const id = randomUUID();
   db.insert(students)
     .values({
       id,
       teacherId: input.teacherId,
       displayName: input.displayName,
-      loginName,
+      loginName: `personal:${id}`,
       passwordHash: null,
       linkToken: generateLinkToken(),
       linkEnabled: false,
@@ -361,6 +323,14 @@ export function updateStudent(
   request: StudentUpdateRequest,
 ): StudentSummary {
   const row = requireStudentRow(db, teacherId, id);
+  if (
+    request.archived === true ||
+    request.loginName !== undefined ||
+    request.linkEnabled === true ||
+    request.passwordEnabled === true
+  ) {
+    assertIndependentStudent(db, row);
+  }
   if (request.loginName !== undefined && request.loginName !== row.loginName) {
     assertLoginNameFree(db, request.loginName, id);
   }
@@ -401,6 +371,7 @@ export async function resetStudentPassword(
   id: string,
 ): Promise<StudentResetPasswordData> {
   const row = requireStudentRow(db, teacherId, id);
+  assertIndependentStudent(db, row);
   const password = generateInitialPassword();
   const passwordHash = await hashPassword(password);
   db.update(students)
@@ -423,6 +394,7 @@ export function resetStudentLink(
   id: string,
 ): StudentResetLinkData {
   const row = requireStudentRow(db, teacherId, id);
+  assertIndependentStudent(db, row);
   const linkToken = generateLinkToken();
   db.update(students)
     .set({ linkToken, linkEnabled: true })
@@ -465,6 +437,7 @@ export async function loginStudentByPassword(
     row.archivedAt == null &&
     row.passwordEnabled &&
     row.passwordHash != null &&
+    personalOwnerOf(db, row) === undefined &&
     (await verifyPassword(request.password, row.passwordHash));
   if (!ok) {
     for (const key of keys) {
@@ -476,7 +449,7 @@ export async function loginStudentByPassword(
   clearLoginFailures(db, keys);
   pruneExpiredSessions(db);
   const { token } = createStudentSession(db, row.id);
-  return { student: toMe(row, personalOwnerOf(db, row)), token };
+  return { student: toMe(row, undefined), token };
 }
 
 /**
@@ -486,7 +459,12 @@ export async function loginStudentByPassword(
  */
 export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
   const row = findByLinkToken(db, token);
-  if (!row || row.archivedAt != null || !row.linkEnabled) {
+  if (
+    !row ||
+    row.archivedAt != null ||
+    !row.linkEnabled ||
+    personalOwnerOf(db, row) !== undefined
+  ) {
     throw new HttpError(
       401,
       "LINK_INVALID",
@@ -496,7 +474,7 @@ export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
   pruneExpiredSessions(db);
   const { token: sessionToken } = createStudentSession(db, row.id);
   return {
-    student: toMe(row, personalOwnerOf(db, row)),
+    student: toMe(row, undefined),
     token: sessionToken,
   };
 }
@@ -521,7 +499,13 @@ export function getStudentAccount(
     return null;
   }
   const owner = personalOwnerOf(db, row);
-  return owner?.disabledAt != null ? null : toMe(row, owner);
+  return owner &&
+    (owner.disabledAt !== null ||
+      owner.loginName === null ||
+      row.linkEnabled ||
+      row.passwordEnabled)
+    ? null
+    : toMe(row, owner);
 }
 
 /**
@@ -535,6 +519,7 @@ export async function changeStudentPassword(
   request: StudentPasswordChangeRequest,
 ): Promise<StudentMeData> {
   const row = requireStudentRowById(db, studentId);
+  assertIndependentStudent(db, row);
   if (row.passwordHash == null) {
     throw new HttpError(
       401,

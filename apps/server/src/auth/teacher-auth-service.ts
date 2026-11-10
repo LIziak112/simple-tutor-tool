@@ -15,6 +15,7 @@ import {
   isPersonalRegistrationOpen,
   isRegistrationOpen,
 } from "../services/app-settings-service";
+import { restorePersonalLearner } from "../services/personal-learner";
 import { getStudentAccount } from "../services/student-service";
 import { hashPassword, verifyPassword } from "./password";
 import {
@@ -185,27 +186,35 @@ export async function loginTeacher(
     throw new HttpError(403, "ACCOUNT_DISABLED", "账号已被停用，请联系管理员");
   }
 
-  const student =
-    row.accountKind === "personal" && row.personalStudentId !== null
-      ? getStudentAccount(db, row.personalStudentId, row.id)
-      : null;
-  if (row.accountKind === "personal" && student?.accountKind !== "personal") {
-    throw new HttpError(
-      403,
-      "ACCOUNT_DISABLED",
-      "个人账号的学习者身份不可用，请联系管理员",
-    );
-  }
-
   clearLoginFailures(db, keys);
   pruneExpiredSessions(db);
-  const { token, studentSession } = db.transaction(() => ({
-    token: createTeacherSession(db, row.id).token,
-    studentSession:
-      student === null
-        ? undefined
-        : { student, token: createStudentSession(db, student.id).token },
-  }));
+  const { token, studentSession } = db.transaction(
+    () => {
+      if (row.accountKind === "class") {
+        return { token: createTeacherSession(db, row.id).token };
+      }
+      let student: StudentMeData | null = null;
+      if (row.personalStudentId !== null) {
+        restorePersonalLearner(db, row.id, row.personalStudentId);
+        student = getStudentAccount(db, row.personalStudentId, row.id);
+      }
+      if (student?.accountKind !== "personal") {
+        throw new HttpError(
+          403,
+          "ACCOUNT_DISABLED",
+          "个人账号的学习者身份不可用，请联系管理员",
+        );
+      }
+      return {
+        token: createTeacherSession(db, row.id).token,
+        studentSession: {
+          student,
+          token: createStudentSession(db, student.id).token,
+        },
+      };
+    },
+    { behavior: "immediate" },
+  );
   return {
     teacher: {
       id: row.id,
