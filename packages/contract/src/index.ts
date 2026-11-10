@@ -75,6 +75,8 @@ export * from "./mcp-api.ts";
 /** 图片上传 API 契约（媒体管线第一单起为权威定义）：上传响应的内容寻址路径与字节数；
  *  请求为 multipart（无 JSON 请求 schema），MEDIA_TOO_LARGE / UNSUPPORTED_MEDIA_TYPE 走通用 ApiErr */
 export * from "./media-api.ts";
+/** 随笔契约（2026-11-10 个人学习迭代模块 5 第一步）：四种形态、上下文锚、标签、幂等创建、列表游标、MCP 转记入参 */
+export * from "./memo-api.ts";
 /** 题目草稿契约（T6R.2 起为权威定义，依据 Phase6 方案 §5/§6.2/§7）：NoteDoc v1、
  *  四类正交状态、上传协议（CAS+幂等回执）、笔记/版本/图片/证据元信息、限额常量与错误码 */
 export * from "./note.ts";

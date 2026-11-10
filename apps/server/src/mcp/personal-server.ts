@@ -12,7 +12,7 @@ import { AllowListMcpServer } from "./tool-allow-list";
  * - 教师工具按 PERSONAL_TEACHER_TOOL_NAMES（契约单源）白名单放行——内容管线
  *   （导入 / lint / 资源库 / 课程整理）与本人学习数据的只读查询；班级管理类
  *   （学生 / 作业 / 报告 / 作答改写）结构上不存在；
- * - 学生工具全部放行（STUDENT_MCP_TOOL_NAMES：AI 伴学任务 / 复盘 / 错题）；
+ * - 学生工具全部放行（STUDENT_MCP_TOOL_NAMES：AI 伴学任务 / 复盘 / 错题 / 随笔）；
  * - 两份工具的域分别绑定个人账号的教师行与学习者行（同一个人，
  *   teachers.personalStudentId），身份只来自鉴权中间件注入的 deps。
  *
