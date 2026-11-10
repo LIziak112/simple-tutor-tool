@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import {
   attachmentListOkSchema,
@@ -10,10 +12,14 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { courses } from "../db/schema.ts";
+import { attachments, courses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { MINI_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import {
+  multipartFileStream,
+  streamingInit,
+} from "../test/multipart-stream.ts";
 import { attachmentFileResponse } from "./teacher-attachments.ts";
 
 /**
@@ -37,6 +43,7 @@ function extractSessionToken(res: Response, cookie = "tutor_session"): string {
 interface Env {
   app: ReturnType<typeof createApp>;
   db: Db;
+  dataDir: string;
   teacherCookie: string;
   memberCookie: string;
   outsiderCookie: string;
@@ -78,12 +85,13 @@ async function createStudentAndLogin(
 
 async function makeEnv(): Promise<Env> {
   const db = createTestDb();
+  const dataDir = createTestDir();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
+    dataDir,
   });
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -113,6 +121,7 @@ async function makeEnv(): Promise<Env> {
   return {
     app,
     db,
+    dataDir,
     teacherCookie,
     memberCookie: member.cookie,
     outsiderCookie: outsider.cookie,
@@ -243,6 +252,44 @@ describe("资料附件 · 教师侧", () => {
       body: form,
     });
     expect(noFile.status).toBe(400);
+  });
+
+  it("流式上传（无 content-length）超 20 MB → 413 且未落库未落盘，源流在上限处停读；正常流式上传 201（#103-01）", async () => {
+    const env = await makeEnv();
+    const big = multipartFileStream({
+      fileName: "big.pdf",
+      file: { bytes: 64 * 1024 * 1024 },
+      fields: { courseId: env.courseId },
+    });
+    const res = await env.app.request(
+      "/api/teacher/attachments",
+      streamingInit(big, { cookie: env.teacherCookie }),
+    );
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as ApiErr).error).toBe("ATTACHMENT_TOO_LARGE");
+    // 21 MiB 上限 + 几块余量，远小于 64 MiB 的源
+    expect(big.counter.pulled).toBeLessThan(22 * 1024 * 1024);
+    expect(env.db.select().from(attachments).all()).toEqual([]);
+    expect(existsSync(join(env.dataDir, "blobs", "attachments"))).toBe(false);
+
+    const ok = await env.app.request(
+      "/api/teacher/attachments",
+      streamingInit(
+        multipartFileStream({
+          fileName: "真题.pdf",
+          file: new Uint8Array(MINI_PDF),
+          fields: { courseId: env.courseId, visibility: "teacher_only" },
+        }),
+        { cookie: env.teacherCookie },
+      ),
+    );
+    expect(ok.status).toBe(201);
+    expect(attachmentOkSchema.parse(await ok.json()).data).toMatchObject({
+      fileName: "真题.pdf",
+      courseId: env.courseId,
+      visibility: "teacher_only",
+      bytes: MINI_PDF.byteLength,
+    });
   });
 
   it("直出响应：文件名含孤立代理项（历史脏数据）也能生成下载头，不抛 URIError（#103-03 最后防线）", () => {

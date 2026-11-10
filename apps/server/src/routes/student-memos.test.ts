@@ -5,6 +5,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { memos } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import {
   MEMO_TEST_M4A,
@@ -12,6 +13,10 @@ import {
   MEMO_TEST_WEBM,
 } from "../services/memo-format.test.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import {
+  multipartFileStream,
+  streamingInit,
+} from "../test/multipart-stream.ts";
 
 /**
  * 随笔（模块 5 第一步）接口集成测试：文字 / 媒体创建与 clientId 幂等；列表（游标、
@@ -317,6 +322,36 @@ describe("随笔：媒体创建、格式与上限", () => {
     });
     expect(tooLarge.status).toBe(413);
     expect(((await tooLarge.json()) as ApiErr).error).toBe("MEMO_TOO_LARGE");
+  });
+
+  it("流式上传（无 content-length）超 21 MB → 413 MEMO_TOO_LARGE、不落库、源流在上限处停读；正常流式上传 201（#103-01）", async () => {
+    const env = await makeEnv();
+    const big = multipartFileStream({
+      fileName: "big.webm",
+      file: { bytes: 64 * 1024 * 1024 },
+      fields: { clientId: crypto.randomUUID(), kind: "voice" },
+    });
+    const res = await env.app.request(
+      "/api/student/memos/media",
+      streamingInit(big, { cookie: env.aliceCookie }),
+    );
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as ApiErr).error).toBe("MEMO_TOO_LARGE");
+    expect(big.counter.pulled).toBeLessThan(22 * 1024 * 1024);
+    expect(env.db.select().from(memos).all()).toEqual([]);
+
+    const ok = await env.app.request(
+      "/api/student/memos/media",
+      streamingInit(
+        multipartFileStream({
+          fileName: "voice.webm",
+          file: new Uint8Array(MEMO_TEST_WEBM),
+          fields: { clientId: crypto.randomUUID(), kind: "voice" },
+        }),
+        { cookie: env.aliceCookie },
+      ),
+    );
+    expect(ok.status).toBe(201);
   });
 
   it("图片超过 10 MB 精确限额 413（服务层按实际字节）", async () => {

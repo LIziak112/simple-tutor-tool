@@ -20,7 +20,9 @@ import { createAdminRoutes } from "./routes/admin";
 import { createAiReplyCheckerRoutes } from "./routes/ai-reply-checker.ts";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
+import { MEMO_MEDIA_UPLOAD_CAP } from "./routes/student-memos";
 import { createTeacherRoutes } from "./routes/teacher";
+import { ATTACHMENT_UPLOAD_CAP } from "./routes/teacher-attachments";
 import {
   MEDIA_BLOB_URL_TAIL_PATTERN,
   readMediaBlob,
@@ -134,13 +136,6 @@ function guardBodyLimit(config: {
  * content-length 时兜底，同 ink 的两级防线设计）。
  */
 export const MEDIA_UPLOAD_BODY_LIMIT = 6 * 1024 * 1024;
-
-/**
- * 资料附件上传的 body 预检上限（模块 6 第一步）：原件 ≤20 MB（契约
- * ATTACHMENT_MAX_UPLOAD_BYTES）+ multipart 开销余量，取 21 MB；精确限额由
- * attachment-service 按实际字节校验（chunked 兜底）。
- */
-const ATTACHMENT_UPLOAD_BODY_LIMIT = 21 * 1024 * 1024;
 
 /**
  * AI 任务文字请求的 body 预检上限（SAI-13）：问题 ≤2,000 字符（§9 限额表，
@@ -319,25 +314,27 @@ export function createApp(options: CreateAppOptions) {
         message: "图片超过 5MB 上传上限，请压缩后重试",
       }),
     )
-    // 模块 6 第一步：资料附件上传（20 MB 契约限额 + multipart 开销余量取 21 MB）
+    // 模块 6 第一步：资料附件上传（20 MB 契约限额 + multipart 余量 1 MiB；限额 /
+    // 错误码与路由内的流式计数解析共用 ATTACHMENT_UPLOAD_CAP，#103-01）
     .use(
       "/api/teacher/attachments",
       guardBodyLimit({
         method: "POST",
-        limit: ATTACHMENT_UPLOAD_BODY_LIMIT,
-        code: "ATTACHMENT_TOO_LARGE",
-        message: "文件超过 20 MB 上传上限，请压缩或拆分后重试",
+        limit: ATTACHMENT_UPLOAD_CAP.limitBytes,
+        code: ATTACHMENT_UPLOAD_CAP.code,
+        message: ATTACHMENT_UPLOAD_CAP.message,
       }),
     )
-    // 模块 5 第一步：随笔媒体上传（语音 20 MB 契约限额 + multipart 余量取 21 MB；
-    // 图片 10 MB 的精确限额由 memo-service 按实际字节校验）
+    // 模块 5 第一步：随笔媒体上传（语音 20 MB 契约限额 + multipart 余量 1 MiB，
+    // 与路由内流式计数共用 MEMO_MEDIA_UPLOAD_CAP；图片 10 MB 的精确限额由
+    // memo-service 按实际字节校验）
     .use(
       "/api/student/memos/media",
       guardBodyLimit({
         method: "POST",
-        limit: ATTACHMENT_UPLOAD_BODY_LIMIT,
-        code: "MEMO_TOO_LARGE",
-        message: "录音或图片超过上传上限（语音 20 MB / 图片 10 MB）",
+        limit: MEMO_MEDIA_UPLOAD_CAP.limitBytes,
+        code: MEMO_MEDIA_UPLOAD_CAP.code,
+        message: MEMO_MEDIA_UPLOAD_CAP.message,
       }),
     )
     // SAI-13 AI 任务文字请求（create / update-pending 小信封；材料 multipart

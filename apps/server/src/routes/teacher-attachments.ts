@@ -1,4 +1,5 @@
 import {
+  ATTACHMENT_MAX_UPLOAD_BYTES,
   attachmentListQuerySchema,
   attachmentUpdateSchema,
   attachmentUploadFieldsSchema,
@@ -7,6 +8,12 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody, parseJsonValue } from "../lib/http-error";
+import {
+  formDataToRecord,
+  MULTIPART_REQUIRED_MESSAGE,
+  type MultipartCap,
+  parseMultipartCapped,
+} from "../lib/multipart-capped";
 import { wellFormedFileName } from "../services/attachment-format";
 import {
   type AttachmentFile,
@@ -18,9 +25,21 @@ import {
 } from "../services/attachment-service";
 
 /**
+ * 上传请求体上限：原件 20 MB（契约）+ multipart 文本字段 / 边界余量 1 MiB。
+ * 三道防线同一份配置：app.ts 的 content-length 预检（有头就早拒）→ 本路由的
+ * 流式计数解析（无头的 chunked 上传在此停读，#103-01）→ 服务层按文件实际字节。
+ */
+export const ATTACHMENT_UPLOAD_CAP: MultipartCap = {
+  limitBytes: ATTACHMENT_MAX_UPLOAD_BYTES + 1024 * 1024,
+  code: "ATTACHMENT_TOO_LARGE",
+  message: "文件超过 20 MB 上传上限，请压缩或拆分后重试",
+};
+
+/**
  * 资料附件教师侧路由（模块 6 第一步），由 teacher.ts 挂在 /api/teacher 之下：
  * - POST /attachments：multipart/form-data，字段 file（原件）+ 可选 courseId /
- *   visibility 文本字段；格式按内容识别（415）、20 MB 上限（413，粗防线在 app.ts）；
+ *   visibility 文本字段；格式按内容识别（415）、20 MB 上限（413：content-length
+ *   预检在 app.ts，流式计数在本路由，实际字节在服务层）；
  * - GET /attachments?courseId=：本教师的资料（可按课程过滤）；
  * - PATCH /attachments/:id：改可见性 / 改展示名；
  * - DELETE /attachments/:id：软删；
@@ -31,13 +50,15 @@ import {
 export function createTeacherAttachmentRoutes(db: Db, dataDir: string) {
   return new Hono<TeacherEnv>()
     .post("/attachments", async (c) => {
-      const body = await c.req.parseBody();
+      const body = formDataToRecord(
+        await parseMultipartCapped(c, ATTACHMENT_UPLOAD_CAP),
+      );
       const file = body.file;
       if (!(file instanceof File)) {
         throw new HttpError(
           400,
           "VALIDATION_ERROR",
-          "请求需为 multipart/form-data，且包含名为 file 的文件字段",
+          MULTIPART_REQUIRED_MESSAGE,
         );
       }
       const fields = parseJsonValue(

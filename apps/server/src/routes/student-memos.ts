@@ -1,4 +1,5 @@
 import {
+  MEMO_VOICE_MAX_BYTES,
   memoCreateMediaSchema,
   memoCreateTextSchema,
   memoListQuerySchema,
@@ -7,6 +8,12 @@ import { Hono } from "hono";
 import type { StudentEnv } from "../auth/require-student";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody, parseJsonValue } from "../lib/http-error";
+import {
+  formDataToRecord,
+  MULTIPART_REQUIRED_MESSAGE,
+  type MultipartCap,
+  parseMultipartCapped,
+} from "../lib/multipart-capped";
 import {
   deleteMemo,
   listMemos,
@@ -22,13 +29,25 @@ import { createMediaMemo, createTextMemo } from "../services/memo-service";
  *   命中已有 200（同一响应形状，前端不区分）；
  * - POST   /memos/media：语音 / 图片 / 手写（multipart：file + 文本字段 clientId /
  *   kind / text / anchor(JSON) / tags(JSON) / device / recordedAt / durationSec）；
- *   格式按内容识别 415、超限 413（粗防线在 app.ts）；
+ *   格式按内容识别 415、超限 413（content-length 预检在 app.ts，流式计数在本路由，
+ *   语音 20 MB / 图片 10 MB 的精确限额在服务层）；
  * - GET    /memos?limit&cursor&kind&tag&attemptId&lectureId&since：本人列表；
  * - DELETE /memos/:id：软删（不是本人 / 已删 → 404）；
  * - GET    /memos/:id/media：媒体直出（inline，<audio> / <img> 直接引用；仅本人）。
  *
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
+/**
+ * 随笔媒体上传请求体上限：语音 20 MB（契约 MEMO_VOICE_MAX_BYTES，两种形态里较大者）
+ * + multipart 文本字段 / 边界余量 1 MiB。app.ts 的 content-length 预检与本路由的
+ * 流式计数解析共用这一份（#103-01）；图片 10 MB 的精确限额由 memo-service 按实际字节校验。
+ */
+export const MEMO_MEDIA_UPLOAD_CAP: MultipartCap = {
+  limitBytes: MEMO_VOICE_MAX_BYTES + 1024 * 1024,
+  code: "MEMO_TOO_LARGE",
+  message: "录音或图片超过上传上限（语音 20 MB / 图片 10 MB）",
+};
+
 export function createStudentMemoRoutes(db: Db, dataDir: string) {
   return new Hono<StudentEnv>()
     .post("/memos", async (c) => {
@@ -43,13 +62,15 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
       );
     })
     .post("/memos/media", async (c) => {
-      const body = await c.req.parseBody();
+      const body = formDataToRecord(
+        await parseMultipartCapped(c, MEMO_MEDIA_UPLOAD_CAP),
+      );
       const file = body.file;
       if (!(file instanceof File)) {
         throw new HttpError(
           400,
           "VALIDATION_ERROR",
-          "请求需为 multipart/form-data，且包含名为 file 的文件字段",
+          MULTIPART_REQUIRED_MESSAGE,
         );
       }
       const fields = parseJsonValue(
