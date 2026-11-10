@@ -45,6 +45,7 @@ import {
   QuestionProcessControls,
   useQuestionProcess,
 } from "@/features/question-process/session";
+import { AiAttemptReviewHint } from "@/features/student-ai/AiAttemptReviewHint";
 import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
@@ -61,6 +62,7 @@ import {
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
 import { ModuleResultTable } from "./ModuleResultTable";
+import { isRetrainable } from "./module-result-model";
 import { QuestionActivityBadge, ResultActivityLine } from "./QuestionActivity";
 
 // 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
@@ -565,23 +567,11 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷错题——直达重练的圈题范围与示数。QM-12 起判错按有效判定
-  // （教师判 > 自评 > 自动，verdictBadgeDisplayOf 同口径）：自评「错」同样
-  // 可重练；#6980-3：未做轮不圈入（人工显式判定的未做行不被掩盖——与
-  // 错题本 enteredWrongBook 同口径）；#6980-4：标过「不会」的题（含做对）
-  // 也进本卷错题（标不会 = 按做错结算的主人口径）。未公布时服务端已把判定键
-  // 整键 null 投影（数出来必为 0），与 released 显隐判据双保险。
+  // 2026-10：本卷错题——直达重练的圈题范围与示数（口径单源 isRetrainable，
+  // 与模块 7 按模块「专项重练」同一函数）：有效判定为错且已作答 / 教师已判 /
+  // 自评有记录，或标过「不会」。未公布时服务端已把判定键整键 null（数出来必为 0）
   const wrongQuestionIds = flatQuestions
-    .filter((question) => {
-      const badge = verdictBadgeDisplayOf(question);
-      if (question.studentFlag === "unsure") return true;
-      if (badge.verdict !== false) return false;
-      return (
-        question.answered ||
-        question.teacherMark !== null ||
-        (question.selfReview?.record?.verdict ?? null) !== null
-      );
-    })
+    .filter(isRetrainable)
     .map((question) => question.questionId);
   // QM-12：含自评行时注明口径（自评是本人判定；得分只按自动判定与教师
   // 批改计算——不把自评冒充客观独立完成证据）
@@ -923,6 +913,9 @@ export function AttemptResultView({
               )}
             </div>
           </section>
+
+          {/* 模块 1：交卷后「可复盘」提示条（可用门在服务端；只提示，确认后才建任务） */}
+          <AiAttemptReviewHint attemptId={attempt.id} released={released} />
 
           {/* 模块 7：按模块（单元）看答对 / 作答 / 跳过 / 不确定但对 / 用时 / 配额 */}
           <ModuleResultTable
