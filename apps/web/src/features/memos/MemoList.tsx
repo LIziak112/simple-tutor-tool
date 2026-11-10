@@ -269,6 +269,7 @@ function PendingMemoCard({ item }: { item: MemoOutboxItem }) {
               type="button"
               variant="outline"
               className="min-h-11 min-w-11"
+              aria-label="重试这条随笔"
               onClick={() => void retryMemoOutboxItem(item.clientId)}
             >
               重试
@@ -277,6 +278,7 @@ function PendingMemoCard({ item }: { item: MemoOutboxItem }) {
               type="button"
               variant="ghost"
               className="min-h-11 min-w-11"
+              aria-label="丢弃这条随笔"
               onClick={() => void discardMemoOutboxItem(item.clientId)}
             >
               丢弃

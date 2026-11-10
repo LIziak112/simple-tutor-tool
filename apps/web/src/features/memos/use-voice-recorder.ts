@@ -138,6 +138,8 @@ export function useVoiceRecorder(
       if (blob.size > 0) onCompleteRef.current({ blob, durationSec });
     };
     recorder.onerror = () => {
+      // 已取消的请求补发的 error 不覆盖状态（cancel 会先摘掉 onerror，这里再兜一层）
+      if (seq !== requestSeqRef.current) return;
       cleanup();
       setState({ status: "error", message: "录音中断，请重试" });
     };
@@ -155,6 +157,7 @@ export function useVoiceRecorder(
     const recorder = recorderRef.current;
     if (recorder !== null && recorder.state !== "inactive") {
       recorder.onstop = null;
+      recorder.onerror = null;
       recorder.stop();
     }
     cleanup();

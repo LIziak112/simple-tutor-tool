@@ -46,7 +46,11 @@ export interface MemoOutboxItem {
 export type MemoOutboxInput = Omit<
   MemoOutboxItem,
   "clientId" | "recordedAt" | "failedMessage"
-> & { readonly recordedAt?: string | undefined };
+> & {
+  /** 重新保存同一条时复用（服务端按 clientId 幂等，响应丢失后重发不成两条） */
+  readonly clientId?: string | undefined;
+  readonly recordedAt?: string | undefined;
+};
 
 const IDB_DB = "tutor-memos";
 const IDB_STORE = "outbox";
@@ -132,7 +136,7 @@ export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
   const account = requireAccount();
   const item: MemoOutboxItem = {
     ...input,
-    clientId: crypto.randomUUID(),
+    clientId: input.clientId ?? crypto.randomUUID(),
     recordedAt: input.recordedAt ?? new Date().toISOString(),
     failedMessage: undefined,
   };
@@ -156,6 +160,8 @@ export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
 /**
  * 本机没有副本（IndexedDB 不可用 / 配额满）：不进队列，直接把这一条传上去，成功才算
  * 保存；失败整条交还调用方（内存里不留，避免本人恢复输入后再保存变成两条）。
+ * 取舍：服务端已落库但响应丢失时这里也会拒绝——记录端重新保存要带同一 clientId
+ * （MemoOutboxInput.clientId），命中服务端幂等键就不会成两条。
  */
 async function uploadWithoutLocalCopy(
   item: MemoOutboxItem,
@@ -201,7 +207,13 @@ export async function retryMemoOutboxItem(clientId: string): Promise<void> {
     // 标记只影响是否自动重试，落盘失败可接受
   }
   if (accountId !== account) return;
-  return flushMemoOutbox();
+  // 在途那一轮已经跳过这条（本轮 attempted），直接 flush 只会拿回在途的 promise：
+  // 等它结束再来一轮，重试才真的发生
+  const inflight = flushing;
+  if (inflight === null) return flushMemoOutbox();
+  return inflight.then(() =>
+    accountId === account ? flushMemoOutbox() : undefined,
+  );
 }
 
 /** 4xx 里仍可自愈的状态：会话过期（重新登录后 bind 会再补传）、超时、限流 */

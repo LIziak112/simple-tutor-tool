@@ -262,6 +262,74 @@ describe("memo-outbox：暂态失败与重试（#104-05）", () => {
     expect(probe.current).toEqual([]);
     expect(await backend.getAll('["memo-outbox","stu-a"')).toEqual([]);
   });
+
+  it("同账号一轮补传在途时点重试：等这一轮结束后再来一轮，被重试那条真的重传", async () => {
+    await bindMemoOutboxAccount("stu-a");
+    const probe = queueProbe();
+    // X 先被业务拒绝；Y 的上传挂起（模拟大语音在传）
+    let releaseY: (memo: Memo) => void = () => {};
+    mockedText.mockImplementation((input) => {
+      if (input.text === "X") {
+        return Promise.reject(
+          new ApiError("VALIDATION_ERROR", "标签太多", 400),
+        );
+      }
+      return new Promise<Memo>((resolve) => {
+        releaseY = resolve;
+      });
+    });
+    let xId = "";
+    await act(async () => {
+      xId = await enqueueMemo({ ...TEXT_INPUT, text: "X" });
+      await enqueueMemo({ ...TEXT_INPUT, text: "Y" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(probe.current.find((it) => it.text === "X")?.failedMessage).toBe(
+      "标签太多",
+    );
+    expect(mockedText).toHaveBeenCalledTimes(2);
+
+    // Y 还在传时点 X 的「重试」：此时不应再发请求（在途一轮已跳过 X）
+    mockedText.mockImplementation(async (input) => memoOf(input.text));
+    let retryDone = false;
+    await act(async () => {
+      void retryMemoOutboxItem(xId).then(() => {
+        retryDone = true;
+      });
+      await Promise.resolve();
+    });
+    expect(
+      probe.current.find((it) => it.text === "X")?.failedMessage,
+    ).toBeUndefined();
+    expect(mockedText).toHaveBeenCalledTimes(2);
+    expect(retryDone).toBe(false);
+
+    // Y 传完：接力的一轮把 X 传上去，队列清空
+    await act(async () => {
+      releaseY(memoOf("Y"));
+    });
+    await vi.waitFor(() => expect(retryDone).toBe(true));
+    expect(mockedText).toHaveBeenCalledTimes(3);
+    expect(mockedText.mock.calls[2]?.[0].text).toBe("X");
+    expect(probe.current).toEqual([]);
+  });
+});
+
+describe("memo-outbox：重新保存复用 clientId", () => {
+  it("enqueueMemo 带 clientId：本机键与上传请求都用它（响应丢失后重发命中幂等键）", async () => {
+    await bindMemoOutboxAccount("stu-a");
+    mockedText.mockImplementation(async (input) => memoOf(input.text));
+    const clientId = "11111111-1111-4111-8111-111111111111";
+    await act(async () => {
+      await expect(enqueueMemo({ ...TEXT_INPUT, clientId })).resolves.toBe(
+        clientId,
+      );
+      await flushMemoOutbox();
+    });
+    expect(mockedText.mock.calls[0]?.[0].clientId).toBe(clientId);
+  });
 });
 
 describe("memo-outbox：本机写入失败（#104-02）", () => {

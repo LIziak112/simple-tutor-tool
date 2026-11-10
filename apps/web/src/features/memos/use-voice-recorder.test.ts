@@ -186,4 +186,42 @@ describe("useVoiceRecorder", () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
     for (const track of fresh.tracks) expect(track.stop).toHaveBeenCalled();
   });
+
+  it("录音中 recorder 报错：状态转「录音中断」、stream 停掉；取消后补发的 error 不再改状态", async () => {
+    const onComplete = vi.fn<(recording: VoiceRecording) => void>();
+    const { result } = renderHook(() => useVoiceRecorder(onComplete));
+    const first = fakeStream();
+    await act(async () => {
+      void result.current.start();
+    });
+    await act(async () => {
+      settleUserMedia(0).resolve(first.stream);
+    });
+    const recorder = FakeMediaRecorder.instances[0];
+    await act(async () => {
+      recorder?.onerror?.();
+    });
+    expect(result.current.state.status).toBe("error");
+    for (const track of first.tracks) expect(track.stop).toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    // 再开始一次，然后取消：取消把 onerror 摘掉；即使浏览器补发 error 也不覆盖 idle
+    const second = fakeStream();
+    await act(async () => {
+      void result.current.start();
+    });
+    await act(async () => {
+      settleUserMedia(1).resolve(second.stream);
+    });
+    const recorder2 = FakeMediaRecorder.instances[1];
+    const staleOnError = recorder2?.onerror;
+    await act(async () => {
+      result.current.cancel();
+    });
+    expect(recorder2?.onerror).toBeNull();
+    await act(async () => {
+      staleOnError?.();
+    });
+    expect(result.current.state.status).toBe("idle");
+  });
 });

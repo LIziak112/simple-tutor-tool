@@ -111,11 +111,12 @@ describe("MemoList：失败条目重试（#104-05）", () => {
     renderList();
     const card = await screen.findByRole("article", { name: "上传失败的随笔" });
     expect(card).toHaveTextContent("标签太多");
-    const retry = screen.getByRole("button", { name: "重试" });
+    // 多张失败卡片 + 云端错误面板的「重试」并列时读屏要能分辨：逐条可访问名
+    const retry = screen.getByRole("button", { name: "重试这条随笔" });
     expect(retry.className).toContain("min-h-11");
-    expect(screen.getByRole("button", { name: "丢弃" }).className).toContain(
-      "min-h-11",
-    );
+    expect(
+      screen.getByRole("button", { name: "丢弃这条随笔" }).className,
+    ).toContain("min-h-11");
 
     mockedCreate.mockImplementation(async (input) => memoOf(input.text));
     await act(async () => {
