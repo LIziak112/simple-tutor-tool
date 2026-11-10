@@ -14,6 +14,7 @@ import { courses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { MINI_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { attachmentFileResponse } from "./teacher-attachments.ts";
 
 /**
  * 资料附件（模块 6 第一步）接口集成测试：教师上传 / 列表 / 改可见性 / 软删 /
@@ -242,6 +243,20 @@ describe("资料附件 · 教师侧", () => {
       body: form,
     });
     expect(noFile.status).toBe(400);
+  });
+
+  it("直出响应：文件名含孤立代理项（历史脏数据）也能生成下载头，不抛 URIError（#103-03 最后防线）", () => {
+    // 说明：better-sqlite3 写入时已把孤立代理项转成 U+FFFD，库里出现它的概率极低；
+    // 这里直接喂给响应函数，锁定「任何来源的脏名字都不让下载 500」
+    const res = attachmentFileResponse({
+      bytes: new Uint8Array(MINI_PDF).buffer as ArrayBuffer,
+      contentType: "application/pdf",
+      fileName: `${"甲".repeat(195)}\ud83d.pdf`,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(
+      `filename*=UTF-8''${encodeURIComponent(`${"甲".repeat(195)}\ufffd.pdf`)}`,
+    );
   });
 
   it("改可见性 / 改名；软删后列表不见、下载 404；再删 404", async () => {

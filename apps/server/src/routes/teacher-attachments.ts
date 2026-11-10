@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody, parseJsonValue } from "../lib/http-error";
+import { wellFormedFileName } from "../services/attachment-format";
 import {
   type AttachmentFile,
   createAttachment,
@@ -104,15 +105,18 @@ export function createTeacherAttachmentRoutes(db: Db, dataDir: string) {
 /**
  * 原件直出响应（教师 / 学生两侧共用）：Content-Disposition 同时给 ASCII 回退名与
  * RFC 5987 的 filename*（中文名）；nosniff + private no-store。
+ * 文件名先过 wellFormedFileName：孤立代理项会让 encodeURIComponent 抛 URIError，
+ * 不能因为一个名字让已保存的文件下载不了（#103-03）。
  */
 export function attachmentFileResponse(file: AttachmentFile): Response {
-  const ascii = file.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+  const fileName = wellFormedFileName(file.fileName);
+  const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
   return new Response(file.bytes, {
     status: 200,
     headers: {
       "Content-Type": file.contentType,
       "Content-Length": String(file.bytes.byteLength),
-      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, no-store",
     },

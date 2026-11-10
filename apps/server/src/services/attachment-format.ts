@@ -64,18 +64,49 @@ export function pdfPageCountOf(bytes: Uint8Array): number | null {
   return max > 0 ? max : null;
 }
 
-/** 展示文件名：去路径、去控制字符、收空白、≤200（保留扩展名）；空 → 资料.<ext> */
+/** 逐码点迭代时，孤立代理项会以单个 UTF-16 单元出现（码位落在 D800–DFFF） */
+function isLoneSurrogate(codePoint: number): boolean {
+  return codePoint >= 0xd800 && codePoint <= 0xdfff;
+}
+
+/**
+ * 按码点截断到不超过 maxUnits 个 UTF-16 单元（契约 .max(200) 按 UTF-16 计），
+ * 放不下的整个码点丢掉——不会把表情等代理对劈成两半（#103-03）。
+ */
+function truncateByCodePoint(text: string, maxUnits: number): string {
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > maxUnits) break;
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * 孤立代理项 → U+FFFD（等价 String.prototype.toWellFormed；tsconfig lib 为
+ * ES2023 没带它的类型）。下载直出前的最后防线：encodeURIComponent 遇到孤立
+ * 代理项会抛 URIError，历史脏数据也要能下载。
+ */
+export function wellFormedFileName(name: string): string {
+  let out = "";
+  for (const ch of name) {
+    out += isLoneSurrogate(ch.codePointAt(0) ?? 0) ? "\ufffd" : ch;
+  }
+  return out;
+}
+
+/** 展示文件名：去路径、去控制字符 / 孤立代理项、收空白、≤200（保留扩展名）；空 → 资料.<ext> */
 export function sanitizeAttachmentFileName(
   raw: string | undefined,
   format: AttachmentFormat,
 ): string {
   const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
-  // 先把各种空白（含 \t）收成单个空格，再逐字符剔除控制字符
-  // （U+0000–U+001F、U+007F；不用含控制字符的正则）
+  // 先把各种空白（含 \t）收成单个空格，再逐码点剔除控制字符
+  // （U+0000–U+001F、U+007F；不用含控制字符的正则）与孤立代理项
   let name = Array.from(base.replace(/\s+/g, " "))
     .filter((ch) => {
       const code = ch.codePointAt(0) ?? 0;
-      return code > 0x1f && code !== 0x7f;
+      return code > 0x1f && code !== 0x7f && !isLoneSurrogate(code);
     })
     .join("")
     .trim();
@@ -85,7 +116,7 @@ export function sanitizeAttachmentFileName(
   if (name.length > ATTACHMENT_FILE_NAME_MAX) {
     const dot = name.lastIndexOf(".");
     const ext = dot > 0 && name.length - dot <= 8 ? name.slice(dot) : "";
-    name = `${name.slice(0, ATTACHMENT_FILE_NAME_MAX - ext.length)}${ext}`;
+    name = `${truncateByCodePoint(name, ATTACHMENT_FILE_NAME_MAX - ext.length)}${ext}`;
   }
   return name;
 }

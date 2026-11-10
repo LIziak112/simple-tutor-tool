@@ -4,6 +4,7 @@ import {
   detectAttachmentFormat,
   pdfPageCountOf,
   sanitizeAttachmentFileName,
+  wellFormedFileName,
 } from "./attachment-format.ts";
 
 /** 最小 PDF（根 Pages /Count 3，另有一个子 Pages /Count 2——取最大者） */
@@ -109,5 +110,28 @@ describe("资料附件：展示文件名清洗", () => {
     const cleaned = sanitizeAttachmentFileName(long, "pdf");
     expect(cleaned.length).toBe(200);
     expect(cleaned.endsWith(".pdf")).toBe(true);
+  });
+
+  it("超长截断按码点：边界落在表情中间时整个丢掉，不留孤立代理项（#103-03）", () => {
+    // 195 个汉字 + 😀（2 个 UTF-16 单元）+ 10 个汉字 + .pdf = 211 单元；
+    // 预算 196 单元恰好劈在 😀 中间
+    const raw = `${"甲".repeat(195)}😀${"乙".repeat(10)}.pdf`;
+    const cleaned = sanitizeAttachmentFileName(raw, "pdf");
+    expect(cleaned).toBe(`${"甲".repeat(195)}.pdf`);
+    expect(cleaned.length).toBeLessThanOrEqual(200);
+    expect(() => encodeURIComponent(cleaned)).not.toThrow();
+    // 预算够放下整个表情时保留它
+    const fits = sanitizeAttachmentFileName(
+      `${"甲".repeat(194)}😀${"乙".repeat(10)}.pdf`,
+      "pdf",
+    );
+    expect(fits).toBe(`${"甲".repeat(194)}😀.pdf`);
+    expect(fits.length).toBe(200);
+    // 输入里本来就有孤立代理项（JSON 改名可构造）→ 剔除
+    expect(sanitizeAttachmentFileName("真题\ud83d.pdf", "pdf")).toBe(
+      "真题.pdf",
+    );
+    expect(wellFormedFileName("真题\ud83d.pdf")).toBe("真题\ufffd.pdf");
+    expect(wellFormedFileName("真题😀.pdf")).toBe("真题😀.pdf");
   });
 });
