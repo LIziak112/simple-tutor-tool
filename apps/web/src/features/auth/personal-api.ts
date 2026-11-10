@@ -1,7 +1,9 @@
 import type {
   PersonalLoginRequest,
+  PersonalLogoutData,
   PersonalRegisterRequest,
   PersonalSessionData,
+  PersonalSessionRole,
 } from "@tutor/contract";
 import { api, callApi } from "@/lib/api";
 
@@ -29,4 +31,20 @@ export function loginPersonalApi(
   request: PersonalLoginRequest,
 ): Promise<PersonalSessionData> {
   return callApi(() => api.api.public.personal.login.$post({ json: request }));
+}
+
+export function checkPersonalSessionApi(
+  role: PersonalSessionRole,
+): Promise<PersonalSessionData | null> {
+  return callApi(() =>
+    api.api.public.personal.session.check.$post({ json: { role } }),
+  );
+}
+
+export function logoutPersonalApi(
+  role: PersonalSessionRole,
+): Promise<PersonalLogoutData> {
+  return callApi(() =>
+    api.api.public.personal.session.logout.$post({ json: { role } }),
+  );
 }

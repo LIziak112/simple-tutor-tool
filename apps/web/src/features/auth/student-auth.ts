@@ -53,12 +53,6 @@ export function useStudentMe() {
 export function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return async (student: StudentMeData) => {
-    await clearAccountQueries(queryClient, "student");
-    bindAiDisplayAccount(student.id);
-    bindPracticePreferenceAccount(student.id);
-    bindKeyboardBindingsAccount(student.id);
-    bindGroupMaterialLayoutAccount(student.id);
-    bindDraftSession({ origin: window.location.origin, studentId: student.id });
     // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
     // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
     // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
@@ -72,6 +66,12 @@ export function useApplyStudentAuthed() {
     if (boundAnnotation !== null && boundAnnotation.studentId !== student.id) {
       resetAnnotationSession();
     }
+    await clearAccountQueries(queryClient, "student");
+    bindAiDisplayAccount(student.id);
+    bindPracticePreferenceAccount(student.id);
+    bindKeyboardBindingsAccount(student.id);
+    bindGroupMaterialLayoutAccount(student.id);
+    bindDraftSession({ origin: window.location.origin, studentId: student.id });
     queryClient.setQueryData(studentMeKey, student);
     void queryClient.prefetchQuery({
       queryKey: ["student", "assignments"],
@@ -112,19 +112,21 @@ export function useLoginStudent() {
  * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
  */
 export function useLogoutStudent() {
+  const clearSession = useClearStudentSession();
+  return useMutation({ mutationFn: logoutStudentApi, onSuccess: clearSession });
+}
+
+export function useClearStudentSession() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: logoutStudentApi,
-    onSuccess: async () => {
-      bindDraftSession(null);
-      bindAiDisplayAccount(null);
-      bindPracticePreferenceAccount(null);
-      bindKeyboardBindingsAccount(null);
-      bindGroupMaterialLayoutAccount(null);
-      resetNoteSession();
-      resetAnnotationSession();
-      await clearAccountQueries(queryClient, "student");
-      await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
-    },
-  });
+  return async () => {
+    bindDraftSession(null);
+    bindAiDisplayAccount(null);
+    bindPracticePreferenceAccount(null);
+    bindKeyboardBindingsAccount(null);
+    bindGroupMaterialLayoutAccount(null);
+    resetNoteSession();
+    resetAnnotationSession();
+    await clearAccountQueries(queryClient, "student");
+    await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
+  };
 }

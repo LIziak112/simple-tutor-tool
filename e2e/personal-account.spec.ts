@@ -1,5 +1,10 @@
-import { expect, test } from "@playwright/test";
-import { teacherApiLogin, uniqueSuffix } from "./helpers";
+import { type APIRequestContext, expect, test } from "@playwright/test";
+import {
+  createStudentViaApi,
+  STUDENT_PASSWORD,
+  teacherApiLogin,
+  uniqueSuffix,
+} from "./helpers";
 
 /**
  * 个人账号（个人学习迭代模块 0）主链：
@@ -15,6 +20,14 @@ import { teacherApiLogin, uniqueSuffix } from "./helpers";
 const INVITE_CODE = "e2e-personal-invite";
 const PERSONAL_PASSWORD = "e2e-personal-pass";
 
+async function openPersonalRegistration(request: APIRequestContext) {
+  await teacherApiLogin(request);
+  const patch = await request.patch("/api/admin/settings", {
+    data: { personalInviteCode: INVITE_CODE },
+  });
+  expect(patch.ok()).toBe(true);
+}
+
 test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
   tag: ["@admin", "@student"],
 }, () => {
@@ -23,11 +36,7 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     request,
   }) => {
     // 管理员配置邀请码（request 上下文：独立 Cookie jar，不污染被测页面）
-    await teacherApiLogin(request);
-    const patch = await request.patch("/api/admin/settings", {
-      data: { personalInviteCode: INVITE_CODE },
-    });
-    expect(patch.ok()).toBe(true);
+    await openPersonalRegistration(request);
     const status = await request.get("/api/public/teacher/status");
     expect(
       ((await status.json()) as { data: { personalRegistrationOpen: boolean } })
@@ -65,7 +74,7 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
 
     // 管理视角：教师端布局（桌面宽度侧栏常驻），导航无班级入口，顶栏可切回学习视角
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByRole("link", { name: "切换到管理视角" }).first().click();
+    await page.getByRole("button", { name: "切换到管理视角" }).first().click();
     await expect(page).toHaveURL(/\/t\/library/);
     const teacherNav = page.getByRole("navigation", { name: "教师端导航" });
     await expect(
@@ -74,7 +83,7 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     for (const name of ["学生", "作业", "连接 AI"]) {
       await expect(teacherNav.getByRole("link", { name })).toHaveCount(0);
     }
-    await page.getByRole("link", { name: "切换到学习视角" }).click();
+    await page.getByRole("button", { name: "切换到学习视角" }).click();
     await expect(page).toHaveURL(/\/s\/home/);
 
     // 一枚 token：学习视角 AI 伴学新建 MCP 连接，接口地址为 /mcp/personal
@@ -131,5 +140,67 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await expect(page).toHaveURL(/\/p\/login/);
     expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
     expect((await page.request.get("/api/student/me")).status()).toBe(401);
+  });
+
+  test("从管理视角退出回个人登录并结束双会话", async ({ page, request }) => {
+    await openPersonalRegistration(request);
+    const registered = await page.request.post(
+      "/api/public/personal/register",
+      {
+        headers: { "x-forwarded-for": "10.91.1.1" },
+        data: {
+          loginName: `个人${uniqueSuffix()}`,
+          password: PERSONAL_PASSWORD,
+          inviteCode: INVITE_CODE,
+        },
+      },
+    );
+    expect(registered.ok()).toBe(true);
+    await page.goto("/t/settings?section=account");
+    await page.getByRole("button", { name: "退出登录" }).click();
+    await expect(page).toHaveURL(/\/p\/login$/);
+    expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
+    expect((await page.request.get("/api/student/me")).status()).toBe(401);
+  });
+
+  test("教师入口登录个人账号时替换同页已有的学生身份", async ({
+    page,
+    request,
+  }) => {
+    await openPersonalRegistration(request);
+    const className = `班级${uniqueSuffix()}`;
+    await createStudentViaApi(request, className, className);
+    const loginName = `个人${uniqueSuffix()}`;
+    const displayName = "个人学习者";
+    const registered = await request.post("/api/public/personal/register", {
+      headers: { "x-forwarded-for": "10.91.2.1" },
+      data: {
+        loginName,
+        displayName,
+        password: PERSONAL_PASSWORD,
+        inviteCode: INVITE_CODE,
+      },
+    });
+    expect(registered.ok()).toBe(true);
+    const studentLogin = await page.request.post("/api/public/student/login", {
+      data: { loginName: className, password: STUDENT_PASSWORD },
+    });
+    expect(studentLogin.ok()).toBe(true);
+
+    await page.goto("/");
+    await expect(
+      page.getByRole("link", { name: new RegExp(className) }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: /教师登录/ }).click();
+    await page.getByLabel("登录名", { exact: true }).fill(loginName);
+    await page.getByLabel("密码", { exact: true }).fill(PERSONAL_PASSWORD);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(page).toHaveURL(/\/s\/home$/);
+    await expect(
+      page.getByRole("link", { name: `${displayName}，学生设置` }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: `${className}，学生设置` }),
+    ).toHaveCount(0);
   });
 });

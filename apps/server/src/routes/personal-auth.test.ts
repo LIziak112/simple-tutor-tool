@@ -1,9 +1,12 @@
 import type { ApiErr } from "@tutor/contract";
 import {
   adminSettingsOkSchema,
+  personalLogoutOkSchema,
+  personalSessionCheckOkSchema,
   personalSessionOkSchema,
   studentMeOkSchema,
   teacherInfoOkSchema,
+  teacherLoginOkSchema,
   teacherStatusOkSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
@@ -11,9 +14,11 @@ import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
+import { hashPassword } from "../auth/password.ts";
 import type { Db } from "../db/client.ts";
 import { sessions, students, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
  * 个人账号（模块 0）集成测试：app.request() 直调路由 + 内存库。
@@ -115,6 +120,338 @@ const VALID_REGISTER = {
   password: PERSONAL_PASSWORD,
   inviteCode: INVITE_CODE,
 } as const;
+
+describe("绑定学习者与个人注册回归", () => {
+  it("绑定学习者不能归档、改内部登录名或开启独立登录", async () => {
+    const { app, db } = makeApp();
+    await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const { data } = personalSessionOkSchema.parse(await registered.json());
+    const cookie = cookieHeaderOf(registered);
+    const path = `/api/teacher/students/${data.student.id}`;
+    const changes = [
+      ["PATCH", path, { archived: true }],
+      ["PATCH", path, { loginName: "unbound" }],
+      ["PATCH", path, { passwordEnabled: true }],
+      ["PATCH", path, { linkEnabled: true }],
+      ["POST", `${path}/reset-password`, undefined],
+      ["POST", `${path}/reset-link`, undefined],
+    ] as const;
+    for (const [method, url, body] of changes) {
+      const denied = await req(app, method, url, body, { cookie });
+      expect(denied.status).toBe(409);
+      expect(await denied.json()).toMatchObject({
+        error: "PERSONAL_ACCOUNT_RESTRICTED",
+      });
+    }
+    expect(
+      (await req(app, "GET", "/api/student/me", undefined, { cookie })).status,
+    ).toBe(200);
+    db.$client.close();
+  });
+
+  it("拒绝历史独立凭证，验证个人密码后恢复错误归档的学习者", async () => {
+    const { app, db } = makeApp();
+    await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const { data } = personalSessionOkSchema.parse(await registered.json());
+    const legacy = db
+      .update(students)
+      .set({
+        loginName: "personal:kaosheng",
+        passwordHash: await hashPassword("legacy-pass"),
+        passwordEnabled: true,
+        linkEnabled: true,
+      })
+      .where(eq(students.id, data.student.id))
+      .returning({ linkToken: students.linkToken })
+      .get();
+    const oldCookie = cookieHeaderOf(registered);
+    expect(
+      (
+        await req(app, "POST", "/api/public/student/login", {
+          loginName: "personal:kaosheng",
+          password: "legacy-pass",
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (await app.request(`/api/public/s/${legacy.linkToken}`)).status,
+    ).toBe(401);
+
+    db.update(students)
+      .set({ archivedAt: "2026-10-01T00:00:00.000Z" })
+      .where(eq(students.id, data.student.id))
+      .run();
+    const relogged = await req(app, "POST", "/api/public/personal/login", {
+      loginName: VALID_REGISTER.loginName,
+      password: VALID_REGISTER.password,
+    });
+    expect(relogged.status).toBe(200);
+    const { data: restored } = personalSessionOkSchema.parse(
+      await relogged.json(),
+    );
+    expect(restored.student).toMatchObject({
+      id: data.student.id,
+      linkEnabled: false,
+      passwordEnabled: false,
+    });
+    expect(
+      (
+        await req(app, "GET", "/api/student/me", undefined, {
+          cookie: oldCookie,
+        })
+      ).status,
+    ).toBe(401);
+    db.$client.close();
+  });
+
+  it("旧个人账号改名后原登录名可注册，原学习者绑定保留", async () => {
+    const { app, db } = makeApp();
+    const admin = await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const { data } = personalSessionOkSchema.parse(await registered.json());
+    db.update(students)
+      .set({ loginName: "personal:kaosheng" })
+      .where(eq(students.id, data.student.id))
+      .run();
+    const renamed = await req(
+      app,
+      "PATCH",
+      `/api/admin/teachers/${data.teacher.id}`,
+      {
+        loginName: "renamed",
+      },
+      { cookie: admin.cookie },
+    );
+    expect(renamed.status).toBe(200);
+    const another = await registerPersonal(app, VALID_REGISTER);
+    expect(another.status).toBe(200);
+    const { data: newAccount } = personalSessionOkSchema.parse(
+      await another.json(),
+    );
+    expect(newAccount.student.id).not.toBe(data.student.id);
+    const relogged = await req(app, "POST", "/api/public/personal/login", {
+      loginName: "renamed",
+      password: PERSONAL_PASSWORD,
+    });
+    const { data: oldAccount } = personalSessionOkSchema.parse(
+      await relogged.json(),
+    );
+    expect(oldAccount.student).toMatchObject({
+      id: data.student.id,
+      loginName: "renamed",
+    });
+    db.$client.close();
+  });
+
+  it("并发同名注册一次成功、一次返回 409，只有一组绑定", async () => {
+    const { app, db } = makeApp();
+    await setupAdmin(app);
+    const responses = await Promise.all([
+      registerPersonal(app, VALID_REGISTER, "10.9.0.2"),
+      registerPersonal(app, VALID_REGISTER, "10.9.0.3"),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+    const conflict = responses.find((response) => response.status === 409);
+    expect(await conflict?.json()).toMatchObject({
+      error: "TEACHER_LOGIN_EXISTS",
+    });
+    const accounts = db
+      .select()
+      .from(teachers)
+      .where(eq(teachers.accountKind, "personal"))
+      .all();
+    const learners = db.select().from(students).all();
+    expect(accounts).toHaveLength(1);
+    expect(learners).toHaveLength(1);
+    expect(learners[0]?.id).toBe(accounts[0]?.personalStudentId);
+    db.$client.close();
+  });
+});
+
+describe("个人会话配对", () => {
+  it.each(["student", "teacher"] as const)(
+    "%s 视角只切换和结束本人双侧会话",
+    async (role) => {
+      const { app, db } = makeApp();
+      await setupAdmin(app);
+      const registered = await registerPersonal(app, VALID_REGISTER);
+      const { data } = personalSessionOkSchema.parse(await registered.json());
+      const cookie = cookieHeaderOf(registered);
+      const check = await req(
+        app,
+        "POST",
+        "/api/public/personal/session/check",
+        { role },
+        { cookie },
+      );
+      expect(check.status).toBe(200);
+      const body = await check.json();
+      assertNoLeak(body);
+      expect(personalSessionCheckOkSchema.parse(body).data).toEqual(data);
+
+      const logout = await req(
+        app,
+        "POST",
+        "/api/public/personal/session/logout",
+        { role },
+        { cookie },
+      );
+      expect(logout.status).toBe(200);
+      expect(
+        personalLogoutOkSchema.parse(await logout.json()).data.paired,
+      ).toBe(true);
+      expect(logout.headers.getSetCookie()).toHaveLength(2);
+      for (const side of ["student", "teacher"]) {
+        expect(
+          (await req(app, "GET", `/api/${side}/me`, undefined, { cookie }))
+            .status,
+        ).toBe(401);
+      }
+      db.$client.close();
+    },
+  );
+
+  it("另一侧是班级会话时拒绝切换，并只结束个人学习会话", async () => {
+    const { app, db } = makeApp();
+    const admin = await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const student = cookieHeaderOf(registered)
+      .split("; ")
+      .find((entry) => entry.startsWith("tutor_student_session="));
+    expect(student).toBeDefined();
+    const cookie = `${admin.cookie}; ${student}`;
+    for (const action of ["check", "logout"]) {
+      const response = await req(
+        app,
+        "POST",
+        `/api/public/personal/session/${action}`,
+        { role: "student" },
+        { cookie },
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      assertNoLeak(body);
+      expect(body).toEqual({
+        ok: true,
+        data: action === "check" ? null : { paired: false },
+      });
+      const cleared = response.headers.getSetCookie();
+      expect(cleared).toHaveLength(action === "check" ? 0 : 1);
+      if (action === "logout") {
+        expect(cleared[0]).toMatch(/^tutor_student_session=/);
+      }
+    }
+    expect(
+      (await req(app, "GET", "/api/teacher/me", undefined, { cookie })).status,
+    ).toBe(200);
+    expect(
+      (await req(app, "GET", "/api/student/me", undefined, { cookie })).status,
+    ).toBe(401);
+    db.$client.close();
+  });
+
+  it("拒绝无当前个人会话和无效视角", async () => {
+    const { app, db } = makeApp();
+    const admin = await setupAdmin(app);
+    for (const action of ["check", "logout"]) {
+      const path = `/api/public/personal/session/${action}`;
+      expect((await req(app, "POST", path, { role: "student" })).status).toBe(
+        401,
+      );
+      expect(
+        (
+          await req(
+            app,
+            "POST",
+            path,
+            { role: "teacher" },
+            { cookie: admin.cookie },
+          )
+        ).status,
+      ).toBe(401);
+      expect((await req(app, "POST", path, { role: "admin" })).status).toBe(
+        400,
+      );
+    }
+    db.$client.close();
+  });
+
+  it("另一侧会话过期时引导重登，当前侧仍可单独退出", async () => {
+    const { app, db } = makeApp();
+    await setupAdmin(app);
+    const registered = await registerPersonal(app, VALID_REGISTER);
+    const { data } = personalSessionOkSchema.parse(await registered.json());
+    const cookie = cookieHeaderOf(registered);
+    db.update(sessions)
+      .set({ expiresAt: "2020-01-01T00:00:00.000Z" })
+      .where(eq(sessions.subjectId, data.teacher.id))
+      .run();
+    const check = await req(
+      app,
+      "POST",
+      "/api/public/personal/session/check",
+      {
+        role: "student",
+      },
+      { cookie },
+    );
+    expect(
+      personalSessionCheckOkSchema.parse(await check.json()).data,
+    ).toBeNull();
+    const logout = await req(
+      app,
+      "POST",
+      "/api/public/personal/session/logout",
+      {
+        role: "student",
+      },
+      { cookie },
+    );
+    expect(personalLogoutOkSchema.parse(await logout.json()).data.paired).toBe(
+      false,
+    );
+    expect(logout.headers.getSetCookie()).toHaveLength(1);
+    expect(
+      (await req(app, "GET", "/api/student/me", undefined, { cookie })).status,
+    ).toBe(401);
+    db.$client.close();
+  });
+});
+
+it("停用个人账号后两侧会话均失效，学习侧不会续期", async () => {
+  const { app, db } = makeApp();
+  const admin = await setupAdmin(app);
+  const registered = await registerPersonal(app, VALID_REGISTER);
+  const { data } = personalSessionOkSchema.parse(await registered.json());
+  const cookie = cookieHeaderOf(registered);
+
+  const disabled = await req(
+    app,
+    "POST",
+    `/api/admin/teachers/${data.teacher.id}/disable`,
+    undefined,
+    { cookie: admin.cookie },
+  );
+  expect(disabled.status).toBe(200);
+  for (const role of ["student", "teacher"]) {
+    const me = await req(app, "GET", `/api/${role}/me`, undefined, { cookie });
+    expect(me.status).toBe(401);
+    expect(me.headers.getSetCookie()).toEqual([]);
+  }
+  const media = await req(
+    app,
+    "GET",
+    `/blobs/media/${"a".repeat(64)}.png`,
+    undefined,
+    { cookie },
+  );
+  expect(media.status).toBe(401);
+  db.$client.close();
+});
 
 describe("status.personalRegistrationOpen（模块 0）", () => {
   it("未首启 false；首启后未配置邀请码仍 false；配置后 true；置 null 回到 false", async () => {
@@ -269,7 +606,7 @@ describe("POST /api/public/personal/register（模块 0，Q7 定案 b）", () =>
       .where(eq(students.id, teacherRow?.personalStudentId ?? ""))
       .get();
     expect(studentRow?.teacherId).toBe(teacherRow?.id);
-    expect(studentRow?.loginName).toBe("personal:kaosheng");
+    expect(studentRow?.loginName).toBe(`personal:${studentRow?.id}`);
     expect(studentRow?.passwordEnabled).toBe(false);
     expect(studentRow?.linkEnabled).toBe(false);
     expect(studentRow?.passwordHash).toBeNull();
@@ -414,9 +751,10 @@ describe("个人账号登录（模块 0）", () => {
       password: PERSONAL_PASSWORD,
     });
     expect(viaTeacher.status).toBe(200);
-    expect(await viaTeacher.json()).toMatchObject({
-      data: { accountKind: "personal" },
-    });
+    const teacherLogin = teacherLoginOkSchema.parse(await viaTeacher.json());
+    expect(teacherLogin.data.accountKind).toBe("personal");
+    expect(teacherLogin.data.student?.accountKind).toBe("personal");
+    assertNoLeak(teacherLogin);
     const viaTeacherNames = viaTeacher.headers
       .getSetCookie()
       .map((c) => c.split("=")[0] ?? "");
@@ -427,6 +765,9 @@ describe("个人账号登录（模块 0）", () => {
       cookie: cookieHeaderOf(viaTeacher),
     });
     expect(studentMe.status).toBe(200);
+    expect(teacherLogin.data.student).toEqual(
+      studentMeOkSchema.parse(await studentMe.json()).data,
+    );
     db.$client.close();
   });
 

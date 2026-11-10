@@ -14,7 +14,11 @@ import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
 import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
-import { useLogoutPersonal } from "@/features/auth/personal-auth";
+import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
+import {
+  useAccountLoginPath,
+  useLogoutPersonal,
+} from "@/features/auth/personal-auth";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
@@ -89,10 +93,8 @@ export function StudentLayout() {
     return () => void bindMemoOutboxAccount(null);
   }, [meQuery.data?.id]);
   const logoutStudentMutation = useLogoutStudent();
-  const logoutPersonalMutation = useLogoutPersonal();
-  // 退出目标：登出清缓存后 me 先变 401、守卫先于 mutate 回调跳转，个人账号
-  // 要回 /p/login 而不是 /s/login，所以目标在点击时记下、守卫读它
-  const [logoutTarget, setLogoutTarget] = useState<string | null>(null);
+  const logoutPersonalMutation = useLogoutPersonal("student");
+  const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/s/login");
   const navigate = useNavigate();
   // T6R.11 复审（会话接线层级）：草稿会话绑定上提到布局层——所有 /s/* 学生
   // 页面（答题/结果/历史回看）自动获得当前身份接线（bind/reset 对称：reset
@@ -109,7 +111,7 @@ export function StudentLayout() {
     const err = meQuery.error;
     if (err instanceof ApiError && err.code === "UNAUTHORIZED") {
       // 未登录 / 会话过期 / 已归档：去登录页（主动退出按账号类型回对应登录页）
-      return <Navigate to={logoutTarget ?? "/s/login"} replace />;
+      return <Navigate to={loginPath} replace />;
     }
     return (
       <ScreenError
@@ -125,14 +127,8 @@ export function StudentLayout() {
     ? logoutPersonalMutation
     : logoutStudentMutation;
   function handleLogout() {
-    const target = personal ? "/p/login" : "/s/login";
-    setLogoutTarget(target);
     logoutMutation.mutate(undefined, {
-      onSuccess: () => {
-        // 守卫缓存已清（logout onSuccess），这里直接回登录页
-        navigate(target, { replace: true });
-      },
-      onError: () => setLogoutTarget(null),
+      onSuccess: () => navigate(loginPath, { replace: true }),
     });
   }
 
@@ -180,7 +176,8 @@ export function StudentLayout() {
   );
   // 个人账号：学习视角 ⇄ 管理视角（教师端布局）切换入口
   const manageView = personal ? (
-    <NavLink
+    <PersonalViewButton
+      from="student"
       to="/t"
       aria-label="切换到管理视角"
       title="管理视角：导入资料、整理课程、看学情"
@@ -188,7 +185,7 @@ export function StudentLayout() {
     >
       <LayoutDashboard aria-hidden className="size-4 shrink-0" />
       <span className="hidden sm:inline">管理视角</span>
-    </NavLink>
+    </PersonalViewButton>
   ) : null;
 
   return (
@@ -270,6 +267,11 @@ export function StudentLayout() {
               : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 pb-[env(safe-area-inset-bottom)] lg:max-w-5xl lg:py-8"
           }
         >
+          {logoutMutation.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              {logoutMutation.error.message}
+            </p>
+          )}
           <Outlet />
         </main>
         {!workspace && <MemoQuickCapture />}

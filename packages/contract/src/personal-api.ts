@@ -44,6 +44,25 @@ export const personalSessionDataSchema = z.object({
 /** 携带双侧身份的成功响应壳（personal/register 与 personal/login 共用） */
 export const personalSessionOkSchema = apiOkExtend(personalSessionDataSchema);
 
+/** 教师入口登录个人账号时附带学习者身份，班级账号保留原响应。 */
+export const teacherLoginDataSchema = teacherInfoSchema.extend({
+  student: studentMeDataSchema.optional(),
+});
+
+export const teacherLoginOkSchema = apiOkExtend(teacherLoginDataSchema);
+
+/** 当前视角只用于选择要验证的会话 Cookie。 */
+export const personalSessionActionSchema = z.object({
+  role: z.enum(["teacher", "student"]),
+});
+
+export const personalSessionCheckOkSchema = apiOkExtend(
+  personalSessionDataSchema.nullable(),
+);
+export const personalLogoutOkSchema = apiOkExtend(
+  z.object({ paired: z.boolean() }),
+);
+
 /** 个人 MCP 端点路径（前端连接页与服务端挂载共用同一常量，不在两处手写） */
 export const PERSONAL_MCP_PATH = "/mcp/personal";
 
@@ -83,5 +102,10 @@ export const PERSONAL_TEACHER_TOOL_NAMES = [
 ] as const;
 
 export type PersonalSessionData = z.infer<typeof personalSessionDataSchema>;
+export type TeacherLoginData = z.infer<typeof teacherLoginDataSchema>;
+export type PersonalSessionRole = z.infer<
+  typeof personalSessionActionSchema
+>["role"];
+export type PersonalLogoutData = z.infer<typeof personalLogoutOkSchema>["data"];
 export type PersonalTeacherToolName =
   (typeof PERSONAL_TEACHER_TOOL_NAMES)[number];

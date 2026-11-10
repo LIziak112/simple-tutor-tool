@@ -2,6 +2,7 @@ import type {
   PersonalLoginRequest,
   PersonalRegisterRequest,
   StudentLoginRequest,
+  TeacherLoginData,
   TeacherLoginRequest,
   TeacherRegisterRequest,
   TeacherSetupRequest,
@@ -44,6 +45,7 @@ import {
 } from "../services/student-service";
 import { readSpecFile } from "../spec-files";
 import { createPublicAiShareRoutes } from "./public-ai-share";
+import { createPublicPersonalSessionRoutes } from "./public-personal-session";
 
 /**
  * 公开路由（无需登录），挂载在 /api/public。
@@ -134,17 +136,21 @@ export function createPublicRoutes(
           c,
           teacherLoginRequestSchema,
         );
-        const { teacher, token, studentToken } = await loginTeacher(
+        const { teacher, token, studentSession } = await loginTeacher(
           db,
           body,
           getClientIp(c),
         );
         setTeacherCookie(c, token);
         // 个人账号：绑定学习者的学生会话一并下发（入口不限，双视角成套）
-        if (studentToken !== undefined) {
-          setStudentCookie(c, studentToken);
+        if (studentSession !== undefined) {
+          setStudentCookie(c, studentSession.token);
         }
-        return c.json({ ok: true, data: teacher });
+        const data: TeacherLoginData =
+          studentSession === undefined
+            ? teacher
+            : { ...teacher, student: studentSession.student };
+        return c.json({ ok: true, data });
       })
       // —— 个人账号（模块 0）：邀请码自助注册 / 登录，成功都是双会话 ——
       .post("/personal/register", async (c) => {
@@ -223,5 +229,6 @@ export function createPublicRoutes(
       // —— AI 分享票据读端点（SAI-29，B15）：无会话，票据即授权；正文
       //    HTML 与材料附件，防线在 student-ai-share/materials 服务层
       .route("/ai/share", createPublicAiShareRoutes(db, dataDir))
+      .route("/personal/session", createPublicPersonalSessionRoutes(db, secure))
   );
 }

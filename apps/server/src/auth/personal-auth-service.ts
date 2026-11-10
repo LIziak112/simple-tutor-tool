@@ -103,25 +103,14 @@ export async function registerPersonalAccount(
   if (!inviteCodeMatches(inviteCode, request.inviteCode)) {
     throw new HttpError(403, "INVITE_CODE_INVALID", "邀请码不正确");
   }
-  const conflict = db
-    .select({ id: teachers.id })
-    .from(teachers)
-    .where(eq(teachers.loginName, request.loginName))
-    .get();
-  if (conflict) {
-    throw new HttpError(
-      409,
-      "TEACHER_LOGIN_EXISTS",
-      "登录名已被使用，请换一个",
-    );
-  }
-
   const teacherId = randomUUID();
   const createdAt = new Date().toISOString();
   const passwordHash = await hashPassword(request.password);
   const displayName = request.displayName ?? request.loginName;
-  const studentId = db.transaction((tx) => {
-    tx.insert(teachers)
+  pruneExpiredSessions(db);
+  const { student, teacherToken, studentToken } = db.transaction((tx) => {
+    const inserted = tx
+      .insert(teachers)
       .values({
         id: teacherId,
         loginName: request.loginName,
@@ -133,11 +122,17 @@ export async function registerPersonalAccount(
         personalStudentId: null,
         createdAt,
       })
+      .onConflictDoNothing({ target: teachers.loginName })
       .run();
-    // 事务句柄与 Db 包装同一底层连接（queue / connection-service 同款口径）
-    const learner = insertPersonalLearner(tx as unknown as Db, {
+    if (inserted.changes === 0) {
+      throw new HttpError(
+        409,
+        "TEACHER_LOGIN_EXISTS",
+        "登录名已被使用，请换一个",
+      );
+    }
+    const learner = insertPersonalLearner(tx, {
       teacherId,
-      accountLoginName: request.loginName,
       displayName,
       createdAt,
     });
@@ -145,16 +140,16 @@ export async function registerPersonalAccount(
       .set({ personalStudentId: learner.id })
       .where(eq(teachers.id, teacherId))
       .run();
-    return learner.id;
+    const student = getStudentAccount(db, learner.id, teacherId);
+    if (student === null) {
+      throw new HttpError(500, "INTERNAL", "个人账号创建后读取学习者身份失败");
+    }
+    return {
+      student,
+      teacherToken: createTeacherSession(db, teacherId).token,
+      studentToken: createStudentSession(db, learner.id).token,
+    };
   });
-
-  pruneExpiredSessions(db);
-  const { token: teacherToken } = createTeacherSession(db, teacherId);
-  const { token: studentToken } = createStudentSession(db, studentId);
-  const student = getStudentAccount(db, studentId);
-  if (student === null) {
-    throw new HttpError(500, "INTERNAL", "个人账号创建后读取学习者身份失败");
-  }
   return {
     data: {
       teacher: {
@@ -182,49 +177,17 @@ export async function loginPersonalAccount(
   ip: string,
 ): Promise<PersonalAuthResult> {
   const result = await loginTeacher(db, request, ip);
-  if (
-    result.teacher.accountKind !== "personal" ||
-    result.studentToken === undefined
-  ) {
-    revokeIssuedSessions(db, result.token, result.studentToken);
+  if (result.studentSession === undefined) {
+    deleteSession(db, result.token);
     throw new HttpError(
       403,
       "ACCOUNT_KIND_MISMATCH",
       "这是班级教师账号，请从「教师登录」进入",
     );
   }
-  const studentRow = db
-    .select({ personalStudentId: teachers.personalStudentId })
-    .from(teachers)
-    .where(eq(teachers.id, result.teacher.id))
-    .get();
-  const student =
-    studentRow?.personalStudentId == null
-      ? null
-      : getStudentAccount(db, studentRow.personalStudentId);
-  if (student === null) {
-    revokeIssuedSessions(db, result.token, result.studentToken);
-    throw new HttpError(
-      403,
-      "ACCOUNT_DISABLED",
-      "个人账号的学习者身份不可用，请联系管理员",
-    );
-  }
   return {
-    data: { teacher: result.teacher, student },
+    data: { teacher: result.teacher, student: result.studentSession.student },
     teacherToken: result.token,
-    studentToken: result.studentToken,
+    studentToken: result.studentSession.token,
   };
-}
-
-/** 入口校验失败时撤回 loginTeacher 已签发的会话行（不留可用凭证） */
-function revokeIssuedSessions(
-  db: Db,
-  teacherToken: string,
-  studentToken: string | undefined,
-): void {
-  deleteSession(db, teacherToken);
-  if (studentToken !== undefined) {
-    deleteSession(db, studentToken);
-  }
 }

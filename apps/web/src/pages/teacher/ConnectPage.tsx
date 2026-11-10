@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { BookOpenCheck, Loader2 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router";
 import { CopyBlock } from "@/components/CopyBlock";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { useApiToken } from "@/features/teacher-settings/api-token-queries";
@@ -37,12 +37,14 @@ function PersonalConnectNotice() {
           帮你导入整理资料、查看自己的学情，也能做 AI 伴学任务。
         </p>
       </header>
-      <Button className="min-h-11" asChild>
-        <Link to="/s/settings/ai">
-          <BookOpenCheck aria-hidden />
-          去学习视角管理 AI 连接
-        </Link>
-      </Button>
+      <PersonalViewButton
+        from="teacher"
+        to="/s/settings/ai"
+        className={buttonVariants({ className: "min-h-11" })}
+      >
+        <BookOpenCheck aria-hidden />
+        去学习视角管理 AI 连接
+      </PersonalViewButton>
     </section>
   );
 }

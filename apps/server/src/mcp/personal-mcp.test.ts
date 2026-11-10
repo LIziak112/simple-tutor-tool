@@ -302,6 +302,25 @@ describe("/mcp/personal 鉴权：端点 × 账号类型互斥（同文案 401）
     env.db.$client.close();
   });
 
+  it("个人账号停用后立即拒绝已发放的 MCP Token", async () => {
+    const env = await makeEnv();
+    expect(
+      (await postRpc(env, "/mcp/personal", env.personalToken)).status,
+    ).toBe(200);
+    env.db
+      .update(teachers)
+      .set({ disabledAt: new Date().toISOString() })
+      .where(eq(teachers.accountKind, "personal"))
+      .run();
+    expect(
+      (await postRpc(env, "/mcp/personal", env.personalToken)).status,
+    ).toBe(401);
+    expect((await postRpc(env, "/mcp/student", env.classToken)).status).toBe(
+      200,
+    );
+    env.db.$client.close();
+  });
+
   it("个人账号的教师行不持有 apiToken：教师 /mcp 对其无入口", async () => {
     const env = await makeEnv();
     const personalTeacher = env.db
