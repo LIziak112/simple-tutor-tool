@@ -13,8 +13,9 @@ import {
  * - 含答案提示：文件名像含答案（契约 ANSWER_LIKE_FILE_NAME）且默认可见性是
  *   「学生可见」时，这一条按「仅教师可见」上传并在行内说明，上传后可在列表里改回；
  * - 幂等键 uploadId 随条目生成、重试复用（#103-04）；
- * - 并发上限 MAX_CONCURRENT_UPLOADS（#103-05）：组件在队列变化时用 pickUploadsToStart
- *   补位；成功的条目用 completeItem 释放 File（只留文件名 / 大小 / 结果）。
+ * - 并发上限 MAX_CONCURRENT_UPLOADS（#103-05）：attachment-upload-store 在队列变化时用
+ *   pickUploadsToStart 补位；成功的条目用 completeItem 释放 File（只留文件名 / 大小 / 结果）；
+ * - 条目记下入队时的 courseId：请求按条目自己的课程发，切页签 / 换课程不影响（第二轮）。
  */
 export type UploadItemStatus = "queued" | "uploading" | "done" | "failed";
 
@@ -23,6 +24,8 @@ export const MAX_CONCURRENT_UPLOADS = 2;
 
 export interface UploadItem {
   readonly key: string;
+  /** 入队时所在课程：请求按它发，不看当前页签正在看哪门课 */
+  readonly courseId: string;
   /** 上传幂等键（随请求发给服务端，重试复用；同键重放不会多建资料，#103-04） */
   readonly uploadId: string;
   /** 展示用（成功后 file 已释放，行里仍要显示名字与大小） */
@@ -56,6 +59,7 @@ export function localPrecheck(file: File): string | null {
 
 export function makeUploadItem(
   file: File,
+  courseId: string,
   defaultVisibility: AttachmentVisibility,
   key: string = crypto.randomUUID(),
   uploadId: string = crypto.randomUUID(),
@@ -65,6 +69,7 @@ export function makeUploadItem(
   const error = localPrecheck(file);
   return {
     key,
+    courseId,
     uploadId,
     fileName: file.name,
     fileSize: file.size,
@@ -82,7 +87,7 @@ export function patchItem(
   items: readonly UploadItem[],
   key: string,
   patch: Partial<
-    Omit<UploadItem, "key" | "uploadId" | "fileName" | "fileSize">
+    Omit<UploadItem, "key" | "courseId" | "uploadId" | "fileName" | "fileSize">
   >,
 ): UploadItem[] {
   return items.map((item) => (item.key === key ? { ...item, ...patch } : item));

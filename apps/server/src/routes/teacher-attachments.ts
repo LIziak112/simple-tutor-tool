@@ -1,5 +1,4 @@
 import {
-  ATTACHMENT_MAX_UPLOAD_BYTES,
   attachmentListQuerySchema,
   attachmentUpdateSchema,
   attachmentUploadFieldsSchema,
@@ -11,7 +10,6 @@ import { HttpError, parseJsonBody, parseJsonValue } from "../lib/http-error";
 import {
   formDataToRecord,
   MULTIPART_REQUIRED_MESSAGE,
-  type MultipartCap,
   parseMultipartCapped,
 } from "../lib/multipart-capped";
 import { wellFormedFileName } from "../services/attachment-format";
@@ -22,18 +20,10 @@ import {
   readTeacherAttachmentFile,
   updateAttachment,
 } from "../services/attachment-service";
-import { createAttachment } from "../services/attachment-upload";
-
-/**
- * 上传请求体上限：原件 20 MB（契约）+ multipart 文本字段 / 边界余量 1 MiB。
- * 三道防线同一份配置：app.ts 的 content-length 预检（有头就早拒）→ 本路由的
- * 流式计数解析（无头的 chunked 上传在此停读，#103-01）→ 服务层按文件实际字节。
- */
-export const ATTACHMENT_UPLOAD_CAP: MultipartCap = {
-  limitBytes: ATTACHMENT_MAX_UPLOAD_BYTES + 1024 * 1024,
-  code: "ATTACHMENT_TOO_LARGE",
-  message: "文件超过 20 MB 上传上限，请压缩或拆分后重试",
-};
+import {
+  ATTACHMENT_UPLOAD_CAP,
+  createAttachment,
+} from "../services/attachment-upload";
 
 /**
  * 资料附件教师侧路由（模块 6 第一步），由 teacher.ts 挂在 /api/teacher 之下：

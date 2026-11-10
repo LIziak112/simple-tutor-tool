@@ -8,6 +8,7 @@ import type { Db } from "../db/client";
 import { attachments } from "../db/schema";
 import { writeFileAtomic } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
+import type { MultipartCap } from "../lib/multipart-capped";
 import {
   detectAttachmentFormat,
   pdfPageCountOf,
@@ -36,6 +37,17 @@ import {
  * - 内容寻址落盘 blobs/attachments/<sha256>.<pdf|docx>，同内容跳过写入、多行共享
  *   一个 blob；页数只在能从 PDF 读到时给。
  */
+
+/**
+ * 上传请求体上限：原件 20 MB（契约）+ multipart 文本字段 / 边界余量 1 MiB。
+ * 三道防线同一份配置（错误码 / 文案单源）：app.ts 的 content-length 预检（有头就早拒）
+ * → 路由的流式计数解析（无头的 chunked 上传在此停读，#103-01）→ 本服务层按文件实际字节。
+ */
+export const ATTACHMENT_UPLOAD_CAP: MultipartCap = {
+  limitBytes: ATTACHMENT_MAX_UPLOAD_BYTES + 1024 * 1024,
+  code: "ATTACHMENT_TOO_LARGE",
+  message: "文件超过 20 MB 上传上限，请压缩或拆分后重试",
+};
 
 export interface CreateAttachmentInput extends AttachmentUploadFields {
   readonly teacherId: string;
@@ -124,8 +136,8 @@ export function createAttachment(
   if (input.bytes.byteLength > ATTACHMENT_MAX_UPLOAD_BYTES) {
     throw new HttpError(
       413,
-      "ATTACHMENT_TOO_LARGE",
-      "文件超过 20 MB 上传上限，请压缩或拆分后重试",
+      ATTACHMENT_UPLOAD_CAP.code,
+      ATTACHMENT_UPLOAD_CAP.message,
     );
   }
   const sha256 = createHash("sha256")

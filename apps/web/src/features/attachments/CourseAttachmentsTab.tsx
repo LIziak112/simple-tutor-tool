@@ -4,23 +4,24 @@ import { formatAttachmentBytes } from "@tutor/contract";
 import { FileText, RotateCcw, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { listAttachmentsApi, uploadAttachmentApi } from "@/lib/attachment-api";
+import { listAttachmentsApi } from "@/lib/attachment-api";
 import { AttachmentList, VISIBILITY_LABEL } from "./AttachmentList";
+import { type UploadItem, uploadStatusText } from "./attachment-upload-queue";
 import {
-  completeItem,
-  makeUploadItem,
-  patchItem,
-  pickUploadsToStart,
-  retryItem,
-  type UploadItem,
-  uploadStatusText,
-} from "./attachment-upload-queue";
+  enqueueAttachmentUploads,
+  onAttachmentUploadCompleted,
+  removeAttachmentUpload,
+  retryAttachmentUpload,
+  takeStaleAttachmentCourse,
+  useAttachmentUploadQueue,
+} from "./attachment-upload-store";
 
 /**
  * 课程「资料」页签（2026-11-10 个人学习迭代模块 6 第一步）：上传 PDF / docx 原件
  * （进度、失败原因、重试、移除；按入队顺序最多 2 个同时在传，成功后释放文件，
- * #103-05）、资料列表（文件名 / 格式 / 大小 / 页数已知时 / 可见性 / 上传时间）、
- * 改可见性、下载、删除（软删）。
+ * #103-05；队列是模块级的 attachment-upload-store——切页签 / 换课程不丢排队中的
+ * 文件、也不会把文件传进别的课程）、资料列表（文件名 / 格式 / 大小 / 页数已知时 /
+ * 可见性 / 上传时间）、改可见性、下载、删除（软删）。
  * 可见性文案与契约一致：students =「学生可查看和下载」/ teacher_only =「仅教师可见」。
  */
 export const attachmentsKey = (courseId: string) =>
@@ -40,62 +41,25 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
 
   const [defaultVisibility, setDefaultVisibility] =
     useState<AttachmentVisibility>("students");
-  const [queue, setQueue] = useState<UploadItem[]>([]);
+  const queue = useAttachmentUploadQueue(courseId);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const runUpload = useCallback(
-    async (item: UploadItem, file: File) => {
-      setQueue((items) =>
-        patchItem(items, item.key, {
-          status: "uploading",
-          progress: 0,
-          error: null,
-        }),
-      );
-      try {
-        const result = await uploadAttachmentApi(file, {
-          courseId,
-          visibility: item.visibility,
-          uploadId: item.uploadId,
-          onProgress: (ratio) =>
-            setQueue((items) =>
-              patchItem(items, item.key, { progress: ratio }),
-            ),
-        });
-        setQueue((items) => completeItem(items, item.key, result));
-        void invalidate();
-      } catch (err) {
-        setQueue((items) =>
-          patchItem(items, item.key, {
-            status: "failed",
-            error: err instanceof Error ? err.message : "未知原因",
-          }),
-        );
-      }
-    },
-    [courseId, invalidate],
-  );
-
-  // 调度（#103-05）：队列每次变化后，在传的不足 2 个就按入队顺序补位；
-  // runUpload 同步把条目改为 uploading，下一轮渲染不会再挑到它
+  // 上传成功 → 刷新那门课的列表（按条目的 courseId，哪怕完成的是别的课程的文件）；
+  // 没有页签在听时完成的，挂载时补刷一次
   useEffect(() => {
-    for (const item of pickUploadsToStart(queue)) {
-      if (item.file !== null) void runUpload(item, item.file);
-    }
-  }, [queue, runUpload]);
+    if (takeStaleAttachmentCourse(courseId)) void invalidate();
+    return onAttachmentUploadCompleted((item) => {
+      void queryClient.invalidateQueries({
+        queryKey: attachmentsKey(item.courseId),
+      });
+    });
+  }, [courseId, invalidate, queryClient]);
 
   const onFilesChosen = (files: FileList | null) => {
     if (files === null || files.length === 0) return;
-    const items = Array.from(files).map((file) =>
-      makeUploadItem(file, defaultVisibility),
-    );
-    // 追加到队尾：显示顺序 = 入队顺序 = 上传顺序
-    setQueue((prev) => [...prev, ...items]);
+    enqueueAttachmentUploads(Array.from(files), courseId, defaultVisibility);
     if (inputRef.current !== null) inputRef.current.value = "";
   };
-
-  const removeItem = (key: string) =>
-    setQueue((items) => items.filter((item) => item.key !== key));
 
   return (
     <div className="flex flex-col gap-4">
@@ -148,8 +112,8 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
               <UploadRow
                 key={item.key}
                 item={item}
-                onRetry={() => setQueue((items) => retryItem(items, item.key))}
-                onRemove={() => removeItem(item.key)}
+                onRetry={() => retryAttachmentUpload(item.key)}
+                onRemove={() => removeAttachmentUpload(item.key)}
               />
             ))}
           </ul>

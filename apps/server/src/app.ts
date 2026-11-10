@@ -22,7 +22,7 @@ import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
 import { MEMO_MEDIA_UPLOAD_CAP } from "./routes/student-memos";
 import { createTeacherRoutes } from "./routes/teacher";
-import { ATTACHMENT_UPLOAD_CAP } from "./routes/teacher-attachments";
+import { ATTACHMENT_UPLOAD_CAP } from "./services/attachment-upload";
 import {
   MEDIA_BLOB_URL_TAIL_PATTERN,
   readMediaBlob,
