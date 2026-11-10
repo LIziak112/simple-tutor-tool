@@ -5,6 +5,7 @@ import { ZipArchive } from "archiver";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   isSafeZipEntryName,
+  listZipEntryNames,
   readZipEntries,
   ZipReadError,
 } from "./zip-read.ts";
@@ -129,6 +130,50 @@ describe("readZipEntries：损坏与不支持", () => {
 
   it("过小 buffer（连 EOCD 都放不下）被拒绝", () => {
     expect(() => readZipEntries(Buffer.alloc(4))).toThrow(ZipReadError);
+  });
+});
+
+describe("listZipEntryNames：只走中央目录，不解压", () => {
+  it("按中央目录顺序列出条目名（含目录条目，不校验条目名安全性）", async () => {
+    dir = mkdtempSync(join(tmpdir(), "tutor-zipnames-"));
+    mkdirSync(join(dir, "word"), { recursive: true });
+    writeFileSync(
+      join(dir, "word", "document.xml"),
+      Buffer.from("<w:document/>"),
+    );
+    writeFileSync(join(dir, "[Content_Types].xml"), Buffer.from("<Types/>"));
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    const chunks: Buffer[] = [];
+    archive.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const done = new Promise<void>((resolve, reject) => {
+      archive.on("end", () => resolve());
+      archive.on("error", (err: Error) => reject(err));
+    });
+    archive.directory(dir, false);
+    await archive.finalize();
+    await done;
+    const names = listZipEntryNames(Buffer.concat(chunks));
+    expect(names).toContain("word/document.xml");
+    expect(names).toContain("[Content_Types].xml");
+    // 条目正文里出现的字符串不算条目名
+    const decoy = await zipOf([
+      { name: "readme.txt", data: Buffer.from("see word/document.xml") },
+    ]);
+    expect(listZipEntryNames(decoy)).toEqual(["readme.txt"]);
+  });
+
+  it("非 zip / 截断 / 中央目录签名不符 → ZipReadError", async () => {
+    expect(() => listZipEntryNames(Buffer.from("not a zip at all"))).toThrow(
+      ZipReadError,
+    );
+    const zip = await zipOf([{ name: "a.txt", data: Buffer.from("hello") }]);
+    expect(() =>
+      listZipEntryNames(Buffer.from(zip.subarray(0, zip.length - 4))),
+    ).toThrow(ZipReadError);
+    // 篡改 EOCD 里的中央目录偏移 → 读到的不是中央目录签名
+    const broken = Buffer.from(zip);
+    broken.writeUInt32LE(0, broken.length - 22 + 16);
+    expect(() => listZipEntryNames(broken)).toThrow(ZipReadError);
   });
 });
 

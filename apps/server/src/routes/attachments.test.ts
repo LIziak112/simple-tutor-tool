@@ -12,7 +12,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { courses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
-import { FAKE_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
+import { MINI_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
@@ -162,7 +162,7 @@ describe("资料附件 · 教师侧", () => {
       pageCount: 3,
       visibility: "students",
     });
-    const docx = await uploadOk(env, FAKE_DOCX, "申论 材料.docx", {
+    const docx = await uploadOk(env, MINI_DOCX, "申论 材料.docx", {
       visibility: "teacher_only",
     });
     expect(docx).toMatchObject({
@@ -308,11 +308,11 @@ describe("资料附件 · 学生侧", () => {
     const visible = await uploadOk(env, MINI_PDF, "真题.pdf", {
       courseId: env.courseId,
     });
-    await uploadOk(env, FAKE_DOCX, "答案.docx", {
+    await uploadOk(env, MINI_DOCX, "答案.docx", {
       courseId: env.courseId,
       visibility: "teacher_only",
     });
-    await uploadOk(env, FAKE_DOCX, "空间里的.docx");
+    await uploadOk(env, MINI_DOCX, "空间里的.docx");
 
     const res = await env.app.request(
       `/api/student/courses/${env.courseId}/attachments`,
@@ -346,7 +346,7 @@ describe("资料附件 · 学生侧", () => {
     const visible = await uploadOk(env, MINI_PDF, "真题.pdf", {
       courseId: env.courseId,
     });
-    const hidden = await uploadOk(env, FAKE_DOCX, "答案.docx", {
+    const hidden = await uploadOk(env, MINI_DOCX, "答案.docx", {
       courseId: env.courseId,
       visibility: "teacher_only",
     });

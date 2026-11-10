@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { storedZipOf } from "../test/stored-zip.ts";
 import {
   detectAttachmentFormat,
   pdfPageCountOf,
@@ -20,25 +21,58 @@ trailer << /Root 1 0 R >>
   "latin1",
 );
 
-/** 伪 docx：ZIP 本地头 + 包内条目名 word/document.xml（识别只看这两点） */
-export const FAKE_DOCX = Buffer.concat([
-  Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
-  Buffer.alloc(64, 0),
-  Buffer.from("[Content_Types].xmlword/document.xml", "latin1"),
-  Buffer.alloc(32, 0),
+/** 最小 docx：真实 ZIP（stored 条目 + 中央目录 + EOCD），含 OPC 必备的两个条目 */
+export const MINI_DOCX = storedZipOf([
+  { name: "[Content_Types].xml", data: Buffer.from("<Types/>", "utf8") },
+  { name: "_rels/.rels", data: Buffer.from("<Relationships/>", "utf8") },
+  { name: "word/document.xml", data: Buffer.from("<w:document/>", "utf8") },
 ]);
 
 describe("资料附件：格式识别（只认内容）", () => {
-  it("PDF 文件头 / docx ZIP 头 + word/document.xml；其余 null", () => {
+  it("PDF 文件头 / docx = ZIP 中央目录含 word/document.xml 与 [Content_Types].xml；其余 null", () => {
     expect(detectAttachmentFormat(MINI_PDF)).toBe("pdf");
-    expect(detectAttachmentFormat(FAKE_DOCX)).toBe("docx");
-    // 普通 zip（无 word/document.xml）不是 docx
+    expect(detectAttachmentFormat(MINI_DOCX)).toBe("docx");
+    // 普通 zip（xlsx 结构）不是 docx
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "[Content_Types].xml", data: Buffer.from("<Types/>") },
+          { name: "xl/workbook.xml", data: Buffer.from("<workbook/>") },
+        ]),
+      ),
+    ).toBeNull();
+    // 条目正文里出现 word/document.xml 字符串、但没有这个条目 → 不是 docx
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "[Content_Types].xml", data: Buffer.from("<Types/>") },
+          {
+            name: "readme.txt",
+            data: Buffer.from("rename me to word/document.xml"),
+          },
+        ]),
+      ),
+    ).toBeNull();
+    // 有 word/document.xml 但缺 [Content_Types].xml（不是合法 Office 包）
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "word/document.xml", data: Buffer.from("<w:document/>") },
+        ]),
+      ),
+    ).toBeNull();
+    // 截断（丢了中央目录 / EOCD）的 docx 不能当 Word 原件保存
+    expect(
+      detectAttachmentFormat(MINI_DOCX.subarray(0, MINI_DOCX.length - 30)),
+    ).toBeNull();
+    // 只有 ZIP 本地头 + 散落的条目名字符串、没有中央目录 → null
     expect(
       detectAttachmentFormat(
         Buffer.concat([
-          Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-          Buffer.from("xl/workbook.xml", "latin1"),
-          Buffer.alloc(16, 0),
+          Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
+          Buffer.alloc(64, 0),
+          Buffer.from("[Content_Types].xmlword/document.xml", "latin1"),
+          Buffer.alloc(32, 0),
         ]),
       ),
     ).toBeNull();

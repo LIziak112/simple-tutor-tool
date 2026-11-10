@@ -1,10 +1,14 @@
 import type { AttachmentFormat } from "@tutor/contract";
 import { ATTACHMENT_FILE_NAME_MAX } from "@tutor/contract";
+import { listZipEntryNames } from "../lib/zip-read";
 
 /**
  * 资料附件的纯函数（模块 6 第一步）：按内容识别格式、PDF 页数、展示文件名清洗。
  * 与存储 / 权限无关，attachment-service 与测试共用；以后加格式（如 pptx）只改这里。
  */
+
+/** docx（OPC 包）必须同时具备的两个条目：内容类型清单 + Word 主文档部件 */
+const DOCX_REQUIRED_ENTRIES = ["[Content_Types].xml", "word/document.xml"];
 
 /** 按内容识别格式；都不是 → null */
 export function detectAttachmentFormat(
@@ -18,19 +22,26 @@ export function detectAttachmentFormat(
     Math.min(bytes.byteLength, 1024),
   ).toString("latin1");
   if (head.includes("%PDF-")) return "pdf";
-  // docx：ZIP 本地文件头 + 包内 word/document.xml（条目名在 ZIP 里是明文）
+  // docx：ZIP 本地文件头，且中央目录里真有 [Content_Types].xml 与 word/document.xml
+  // 两个条目（审查 #103-02：不再在整包字节里找字符串——条目正文里出现这串字节
+  // 的普通 zip、丢了中央目录的截断包都不是能打开的 Word 原件）
   if (
     bytes[0] === 0x50 &&
     bytes[1] === 0x4b &&
     bytes[2] === 0x03 &&
     bytes[3] === 0x04
   ) {
-    const all = Buffer.from(
-      bytes.buffer,
-      bytes.byteOffset,
-      bytes.byteLength,
-    ).toString("latin1");
-    if (all.includes("word/document.xml")) return "docx";
+    let names: string[];
+    try {
+      names = listZipEntryNames(
+        Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      );
+    } catch {
+      return null;
+    }
+    if (DOCX_REQUIRED_ENTRIES.every((entry) => names.includes(entry))) {
+      return "docx";
+    }
   }
   return null;
 }

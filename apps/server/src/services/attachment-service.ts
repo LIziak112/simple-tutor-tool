@@ -29,8 +29,9 @@ import { requireStudentCourseAccess } from "./student-course-service";
 /**
  * 资料附件服务（2026-11-10，个人学习迭代模块 6 第一步「PDF / docx 原件上传下载」）。
  *
- * - 格式只认内容：PDF 看文件头 `%PDF-`；docx 看 ZIP 本地头 `PK\x03\x04` 且包内
- *   有 word/document.xml 条目名——扩展名 / MIME 一概不信（与 media-service 同纪律）；
+ * - 格式只认内容：PDF 看文件头 `%PDF-`；docx 看 ZIP 本地头 `PK\x03\x04` 且中央
+ *   目录里有 [Content_Types].xml 与 word/document.xml 两个条目——扩展名 / MIME
+ *   一概不信（与 media-service 同纪律）；
  * - 上限 20 MB（契约 ATTACHMENT_MAX_UPLOAD_BYTES；app.ts 另有 21 MB content-length
  *   粗防线，此处按实际字节兜底 chunked）；
  * - 内容寻址落盘 blobs/attachments/<sha256>.<pdf|docx>，同内容幂等跳过写入；
