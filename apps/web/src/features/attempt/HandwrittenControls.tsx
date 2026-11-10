@@ -458,7 +458,7 @@ export function HandwrittenControls({
     masterDoc !== undefined &&
     masterDoc.engine === "excalidraw";
 
-  const recoveryStatus = (
+  const recoveryStatus = !suspendUpload && (
     <>
       {conflict && (
         <div
@@ -486,7 +486,11 @@ export function HandwrittenControls({
           role="alert"
           className="flex flex-wrap items-center gap-2 text-sm text-destructive"
         >
-          <span>笔迹读取失败，请重试后继续手写；最终答案仍可填写。</span>
+          <span>
+            {readOnly
+              ? "笔迹读取失败，请重试以同步已写的笔迹。"
+              : "笔迹读取失败，请重试后继续手写；最终答案仍可填写。"}
+          </span>
           <Button
             type="button"
             variant="outline"
@@ -503,8 +507,9 @@ export function HandwrittenControls({
   // 查看、最终答案照常。挂载期合并/补传效果在上方照常执行（开关不清数据）；
   // expanded 状态无渲染消费者，effect 内的 setExpanded 无 UI 影响。
   if (!inkEnabled) {
+    if (readOnly) return recoveryStatus || null;
     return (
-      <div className={readOnly ? "hidden" : "flex flex-col gap-3"}>
+      <div className="flex flex-col gap-3">
         {recoveryStatus}
         {saveFailed && (
           <p className="text-xs text-destructive" role="status">
@@ -542,12 +547,11 @@ export function HandwrittenControls({
   }
 
   return (
-    <div
-      data-slot="handwritten-controls"
-      className={readOnly ? "hidden" : "flex flex-col gap-3"}
-    >
+    <div data-slot="handwritten-controls" className="flex flex-col gap-3">
       {/* 操作行：展开/收起 + 全屏 + 上传状态提示 */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={readOnly ? "hidden" : "flex flex-wrap items-center gap-2"}
+      >
         {showExpandTrigger && (
           <Button
             type="button"
@@ -594,7 +598,7 @@ export function HandwrittenControls({
 
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
       {paperAlive && (
-        <div hidden={!expanded && !fullscreen}>
+        <div hidden={readOnly || (!expanded && !fullscreen)}>
           <PaperPresentation
             fullscreen={fullscreen && !readOnly}
             label="全屏作答"
@@ -698,12 +702,14 @@ export function HandwrittenControls({
 
       {/* 最终答案（普通输入 / 数学键盘，T2.6 输入框保留 + MathLive 切换） */}
       {showFinalAnswer && (
-        <FinalAnswerField
-          questionId={questionId}
-          stemMd={stemMd}
-          answer={answer?.kind === "final" ? answer : undefined}
-          onAnswer={onAnswer}
-        />
+        <div hidden={readOnly}>
+          <FinalAnswerField
+            questionId={questionId}
+            stemMd={stemMd}
+            answer={answer?.kind === "final" ? answer : undefined}
+            onAnswer={onAnswer}
+          />
+        </div>
       )}
 
       <Dialog

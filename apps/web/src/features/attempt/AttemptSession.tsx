@@ -62,6 +62,7 @@ import {
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
+import { useAttemptForcedMounts } from "@/features/attempt/use-attempt-forced-mounts";
 import { useAttemptSubmitFlow } from "@/features/attempt/use-attempt-submit-flow";
 import {
   DraftSyncProvider,
@@ -182,12 +183,16 @@ export function isResultDetail(
 }
 
 /**
- * 答题会话（T2A.6 通用化，D9 两种来源共用）：/s/assignments/:id 与 /s/attempts/:attemptId
- * 在创建/获取 attempt 后渲染同一组件。顶部来源行（课程 / 作业含截止 / 限时倒计时）；
- * draft → 答题视图（题卡 + 草稿防丢 + 交卷确认）；已交 → 结果视图；草稿同步终态
- * （D7）「已无权限」时同时收起交卷入口。
- * 交卷准备阶段（T6R.10 A-4）：单一判别联合（preparing/problems/error 一次 set 迁移），
- * 与讲练页共用 use-submit-evidence-confirm 状态机单源，本页只注入整卷六步编排（runSubmit）。
+ * 答题会话（T2A.6 通用化，D9 两种来源共用）：
+ * /s/assignments/:id（作业入口）与 /s/attempts/:attemptId（课程练习和历次回看）
+ * 在创建或取回 attempt 后渲染同一组件。
+ * - 顶部标注来源与作业截止时间，限时卷单独显示倒计时。
+ * - 草稿进入答题视图，已交卷进入结果视图。
+ * - 草稿同步失去访问权（D7）时收起交卷入口。
+ *
+ * 交卷准备阶段（T6R.10 A-4）使用判别联合，一次迁移到准备、缺稿确认或错误态。
+ * 本页与讲练页共用 use-submit-evidence-confirm 状态机，整卷编排由
+ * useAttemptSubmitFlow 注入。
  */
 
 export function AttemptSession({
@@ -331,7 +336,7 @@ function AnswerView({
   // useCallback 依赖因此稳定（原先每渲染新数组零收益地失效缓存）
   const flatQuestions = useMemo(
     () => data.units.flatMap((unit) => unit.questions),
-    [data],
+    [data.units],
   );
   const showUnitHeaders = data.units.length > 1;
   const questionIds = useMemo(
@@ -553,23 +558,13 @@ function AnswerView({
     [],
   );
   const cardElements = useRef(new Map<string, HTMLLIElement>());
-  // ---------- 题卡视口懒挂载（性能：大量习题加载卡顿，2026-10-28） ----------
-  // 列表模式只挂载视口上下各一屏的题卡；跳题与阅读位置恢复的目标题需要
-  // 越过视口判断立即挂载，走 forcedMountIds。
-  const [forcedMountIds, setForcedMountIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  const mountWindowRef = useRef<LazyMountWindow | null>(null);
+  const { forcedMountIds, forceMountQuestion } = useAttemptForcedMounts(
+    attemptId,
+    mountWindowRef,
+    questionIds,
+    phase !== null && !savedOnly && draftSync.recoveredDrafts !== undefined,
   );
-  const forceMountQuestion = useCallback((questionId: string) => {
-    setForcedMountIds((previous) => {
-      if (previous.has(questionId)) return previous;
-      const next = new Set(previous);
-      next.add(questionId);
-      return next;
-    });
-    // 窗口化卸载的目标题立即直挂（跳题/阅读位置恢复），同时被 retain 钉住
-    // 不再卸载（forcedMountIds）。
-    mountWindowRef.current?.forceMount(questionId);
-  }, []);
   // 新挂载的题卡编号版本：判分反馈观察器按它重建观察列表（rAF 合帧——
   // 滚动时一批题同时挂载只触发一次重建）。
   const [cardMountVersion, setCardMountVersion] = useState(0);
@@ -604,6 +599,7 @@ function AnswerView({
   }, [forcedMountIds]);
   const retainQuestion = useCallback((questionId: string): boolean => {
     if (forcedMountIdsRef.current.has(questionId)) return true;
+    if (inkControllers.current.get(questionId)?.isDirty()) return true;
     const editorStore = editorRef.current;
     if (
       editorStore !== null &&
@@ -631,7 +627,6 @@ function AnswerView({
     }
     return false;
   }, []);
-  const mountWindowRef = useRef<LazyMountWindow | null>(null);
   if (
     mountWindowRef.current === null &&
     questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
@@ -1150,7 +1145,8 @@ function AnswerView({
       setKeyboardHelpOpen(true);
     }
   };
-  // T6R.3：交卷回传题目版本集合（冻结下发的 questionRevisionId 原样回传，服务端比对）
+  // T6R.3：交卷原样回传建卷冻结时下发的 questionRevisionId，
+  // 服务端与冻结集合比对，确保判分题目与学生看到的试卷一致。
   const submitRevisions = useMemo(
     () =>
       flatQuestions.map((question) => ({
@@ -1164,6 +1160,7 @@ function AnswerView({
     useAttemptSubmitFlow({
       attemptId,
       savedOnly,
+      timed: phase !== null,
       recoveryReady:
         materialRecovery.state === "ready" && !draftSync.recoveryError,
       syncDraft: draftSync.syncNow,
@@ -1456,7 +1453,7 @@ function AnswerView({
         <TimedAttemptControls
           timing={data.timing}
           clockAnchor={data.clockAnchor}
-          syncing={draftSync.status.state === "saving"}
+          syncing={draftSync.status.state !== "saved"}
           offline={!online}
           onConfirmSubmit={openSubmitDialog}
           submitDisabled={!online || denied || submit.isPending}

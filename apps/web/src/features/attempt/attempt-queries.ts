@@ -2,11 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptDetailData,
-  AttemptSubmitRevision,
+  AttemptSubmitRequest,
   CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
   StudentAnswer,
-  SubmitEvidenceDeclaration,
 } from "@tutor/contract";
 import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -325,11 +324,8 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
 export function useSubmitAttempt(attemptId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
-      revisions: AttemptSubmitRevision[];
-      /** 每题笔记证据声明（T6R.10）；旧客户端语义不适用于本前端，恒携带 */
-      evidence: SubmitEvidenceDeclaration[];
-    }) => submitAttemptApi(attemptId, input.revisions, input.evidence),
+    mutationFn: (input: AttemptSubmitRequest) =>
+      submitAttemptApi(attemptId, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentAttemptKey(attemptId),
@@ -346,7 +342,10 @@ export function useSubmitAttempt(attemptId: string) {
     onError: (err) => {
       // 响应丢失后的重试撞 409 ALREADY_SUBMITTED：交卷实际已成功——失效
       // 详情让视图切到结果页（方案 §6.4 第 4 步：绝不自动重交产生不同引用）
-      if (err instanceof ApiError && err.code === "ALREADY_SUBMITTED") {
+      if (
+        err instanceof ApiError &&
+        (err.code === "ALREADY_SUBMITTED" || err.code === "ATTEMPT_TIME_UP")
+      ) {
         void queryClient.invalidateQueries({
           queryKey: studentAttemptKey(attemptId),
         });

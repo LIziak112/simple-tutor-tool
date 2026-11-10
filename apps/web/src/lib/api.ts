@@ -971,18 +971,14 @@ export function saveAttemptAnswerApi(
  */
 export function submitAttemptApi(
   attemptId: string,
-  revisions: AttemptSubmitRequest["revisions"],
-  evidence?: AttemptSubmitRequest["evidence"],
+  input: AttemptSubmitRequest,
 ): Promise<AttemptDetailData> {
-  const args = {
-    param: { id: attemptId },
-    json: {
-      revisions: [...revisions],
-      // 条件展开适配 exactOptionalPropertyTypes：不传 ≠ 传 undefined
-      ...(evidence !== undefined ? { evidence: [...evidence] } : {}),
-    },
-  };
-  return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
+  return callApi(() =>
+    api.api.student.attempts[":id"].submit.$post({
+      param: { id: attemptId },
+      json: input,
+    }),
+  );
 }
 
 /**

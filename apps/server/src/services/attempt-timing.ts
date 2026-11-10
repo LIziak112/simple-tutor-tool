@@ -83,3 +83,20 @@ export function assertAttemptNotTimedOut(
     );
   }
 }
+
+/** 整卷交卷以服务端收到请求时的阶段为准。 */
+export function assertSavedAnswersConfirmed(
+  attempt: TimedColumns,
+  now: Date | string,
+  confirmed: true | undefined,
+): void {
+  const locked = attemptTimingOf(attempt, now)?.phase === "locked";
+  if (locked === (confirmed === true)) return;
+  throw new HttpError(
+    409,
+    "ATTEMPT_TIME_UP",
+    locked
+      ? "宽限已过，请确认按服务端已保存的作答交卷"
+      : "服务端限时状态已变化，请刷新作答页后重试",
+  );
+}

@@ -13,7 +13,10 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 限时测试（个人学习迭代模块 2）路由级测试：
@@ -320,10 +323,31 @@ describe("限时测试 · 到时后的写闸门", () => {
     expect(rejected.status).toBe(409);
     expect(((await rejected.json()) as ApiErr).error).toBe("ATTEMPT_TIME_UP");
     expect((await detailOf(env, attempt.id)).timing?.phase).toBe("locked");
-    const submitted = await submitAttemptRequest(
+    const ordinarySubmit = await submitAttemptRequest(
       env.app,
       env.studentCookie,
       attempt.id,
+    );
+    expect(ordinarySubmit.status).toBe(409);
+    expect(((await ordinarySubmit.json()) as ApiErr).error).toBe(
+      "ATTEMPT_TIME_UP",
+    );
+    expect((await detailOf(env, attempt.id)).attempt.status).toBe("draft");
+    const revisions = await fetchSubmitRevisions(
+      env.app,
+      env.studentCookie,
+      attempt.id,
+    );
+    const submitted = await env.app.request(
+      `/api/student/attempts/${attempt.id}/submit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.studentCookie,
+        },
+        body: JSON.stringify({ revisions, confirmedSavedAnswers: true }),
+      },
     );
     expect(submitted.status).toBe(200);
     const result = (await submitted.json()) as {

@@ -89,7 +89,7 @@ export function AttemptTimeUpBanner({
   const draftState = offline
     ? "离线：本机稿已保住，联网后会先追平再交卷"
     : syncing
-      ? "有本机稿待同步，正在追平服务端…"
+      ? "有本机稿待同步"
       : "服务端稿已是最新";
   return (
     <section

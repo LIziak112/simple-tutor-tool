@@ -13,6 +13,7 @@ import {
   type AttemptResultUnit,
   type AttemptScoreSummary,
   type AttemptStartData,
+  type AttemptSubmitRequest,
   type AttemptSubmitRevision,
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
@@ -114,6 +115,7 @@ import {
 } from "./attempt-context.ts";
 import {
   assertAttemptNotTimedOut,
+  assertSavedAnswersConfirmed,
   attemptTimingOf,
   timedColumnsOf,
 } from "./attempt-timing";
@@ -2670,7 +2672,7 @@ export function attemptFinalOutcomeOf(
  * - changeCount：T2.10 口径 = max(草稿期 PUT 计数, answer_change 事件数)——
  *   事件计数为权威（每次有效修改一条），草稿计数兜底（无前端事件的 attempt，
  *   如脚本直接调 API 交卷）；
- * - T6R.3 版本验证：clientRevisions 提供时（HTTP 路由恒传，不带请求体按空
+ * - T6R.3 版本验证：request 提供时（HTTP 路由恒传，不带请求体按空
  *   集合）与**全部冻结题**（含 lesson 已单题提交的行——旧标签页的整卷提交
  *   仍须回传完整版本集合）精确比对，不符 409 QUESTION_REVISION_STALE；
  *   服务层内部调用（seed 等）可省略参数跳过验证；
@@ -2692,13 +2694,13 @@ export function submitAttempt(
   studentId: string,
   attemptId: string,
   now: Date | string = new Date(),
-  clientRevisions?: readonly AttemptSubmitRevision[],
-  evidenceDeclarations?: readonly SubmitEvidenceDeclaration[],
+  request?: AttemptSubmitRequest,
 ): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }
+  assertSavedAnswersConfirmed(attempt, now, request?.confirmedSavedAnswers);
 
   // T6R.3：判分输入 = 冻结快照（门口已懒冻结兜底）。三来源统一取行（rowid 序；
   // 判分与顺序无关，展示排序在结果视图经 unitGroupedRows 重建）
@@ -2766,9 +2768,7 @@ export function submitAttempt(
   }
 
   // revisions 全集校验不变：比对对象是**全部冻结题**（lesson 含已提交行）
-  if (clientRevisions !== undefined) {
-    validateSubmitRevisions(allFrozen, clientRevisions);
-  }
+  if (request) validateSubmitRevisions(allFrozen, request.revisions);
   // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
   // 范围 = 参与本次判分的行（逐题语义卷：未提交题）；任一项验证失败零落行，
   // attempt 保持 draft 可恢复
@@ -2776,7 +2776,7 @@ export function submitAttempt(
     db,
     attemptId,
     graded,
-    evidenceDeclarations,
+    request?.evidence,
   );
 
   // #6980-3（审查修复 P0-1，2026-10-25）：正式手写笔迹也算「有实际作答」——

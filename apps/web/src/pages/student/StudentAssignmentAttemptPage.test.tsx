@@ -23,6 +23,7 @@ import {
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
 import {
+  assertLoadedDraftsForPwaUpdate,
   draftStore,
   installDraftBackend,
   memoryBackend,
@@ -36,6 +37,7 @@ import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
 import {
   ApiError,
   fetchAttemptApi,
+  fetchAttemptInkApi,
   fetchStudentAssignmentsApi,
   openAttemptHintApi,
   postAttemptEventsApi,
@@ -360,6 +362,7 @@ beforeEach(() => {
   mockedSave.mockReset();
   mockedSubmit.mockReset();
   mockedPutInk.mockReset();
+  vi.mocked(fetchAttemptInkApi).mockReset().mockResolvedValue(null);
   mockedPostEvents.mockReset();
   mockedPostEvents.mockResolvedValue({ accepted: 1 });
   mockedPutInk.mockResolvedValue({
@@ -590,17 +593,16 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     await waitFor(() =>
       // T6R.3：交卷回传建卷下发的题目版本集合（questionRevisionId）；
       // T6R.10：携带每题笔记证据声明（本文件无笔记 → 全 none）
-      expect(mockedSubmit).toHaveBeenCalledWith(
-        ATTEMPT_ID,
-        [
+      expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID, {
+        revisions: [
           { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
           { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
         ],
-        [
+        evidence: [
           { questionId: "练习四-1", state: "none" },
           { questionId: "练习四-4", state: "none" },
         ],
-      ),
+      }),
     );
     // 详情已失效重取 → 结果视图
     expect(
@@ -892,6 +894,9 @@ function localInkDoc(strokes: number): InkDoc {
 
 describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () => {
   it("宽限后明确确认按已保存作答交卷，结果页保留本机未同步稿", async () => {
+    const backend = memoryBackend();
+    const write = vi.fn(backend.set);
+    installDraftBackend({ ...backend, set: write });
     const serverNow = new Date().toISOString();
     const deadlineAt = new Date(Date.now() - 700_000).toISOString();
     const timing = {
@@ -933,15 +938,25 @@ describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () 
     expect(mockedSubmit).not.toHaveBeenCalled();
     fireEvent.click(confirm);
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      ATTEMPT_ID,
+      expect.objectContaining({ confirmedSavedAnswers: true }),
+    );
     await screen.findByText(/批改结果/);
     expect(mockedSave).not.toHaveBeenCalled();
     expect(
       (await draftStore.loadDraft(ATTEMPT_ID))?.answers["练习四-1"],
     ).toEqual(answer);
+    await expect(assertLoadedDraftsForPwaUpdate()).resolves.toBeUndefined();
+    write.mockRejectedValue(new Error("磁盘已满"));
+    await expect(assertLoadedDraftsForPwaUpdate()).rejects.toThrow("本机");
   });
 
   it("到时只读仍补传已落盘的正式手写", async () => {
     draftStore.saveInk(ATTEMPT_ID, "q-ink-1", localInkDoc(2));
+    vi.mocked(fetchAttemptInkApi).mockRejectedValueOnce(
+      new Error("笔迹读取超时"),
+    );
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch.mockResolvedValue({
       ...HANDWRITTEN_DRAFT,
@@ -955,10 +970,62 @@ describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () 
     });
     renderPage();
     await screen.findByTestId("attempt-time-up");
+    const retry = await screen.findByRole("button", { name: "重试读取笔迹" });
+    expect(retry.closest("[hidden], [inert], .hidden")).toBeNull();
+    fireEvent.click(retry);
     await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1), {
       timeout: 4000,
     });
     expect(mockedPutInk.mock.calls[0]?.[1]).toBe("q-ink-1");
+  });
+
+  it("宽限内补传尚未进入视口的本机正式手写", async () => {
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 30_000, 100, 100));
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      const [unit] = HANDWRITTEN_DRAFT.units;
+      if (!unit?.questions[0]) throw new Error("缺少手写夹具");
+      const first = unit.questions[0];
+      const questions = [
+        ...Array.from({ length: 20 }, (_, index) => ({
+          ...first,
+          id: `offscreen-${index}`,
+          questionRevisionId: `rev-offscreen-${index}`,
+        })),
+        first,
+      ];
+      draftStore.saveInk(ATTEMPT_ID, first.id, localInkDoc(2));
+      mockedStart.mockResolvedValue(START_DRAFT);
+      mockedFetch.mockResolvedValue({
+        ...HANDWRITTEN_DRAFT,
+        units: [{ ...unit, questions }],
+        timing: {
+          serverNow: new Date().toISOString(),
+          deadlineAt: new Date(Date.now() - 10_000).toISOString(),
+          timeLimitSec: 60,
+          graceSec: 600,
+          phase: "grace",
+        },
+      });
+      renderPage();
+      await screen.findByTestId("attempt-time-up");
+      await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1), {
+        timeout: 4000,
+      });
+      expect(mockedPutInk.mock.calls[0]?.[1]).toBe(first.id);
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("刷新恢复（答案）：本地较新的答案在进入页面后还原到控件，并自动补传服务端", async () => {

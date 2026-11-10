@@ -49,7 +49,8 @@ export default function AttemptResultWithDraftCleanup({
     ) === "locked";
   const navigate = useNavigate();
   useEffect(() => {
-    if (!preserveDraft) void draftStore.clearDraft(attemptId);
+    if (preserveDraft) draftStore.markLockedSubmission(attemptId);
+    else void draftStore.clearDraft(attemptId);
   }, [attemptId, preserveDraft]);
   const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
   useEffect(() => {

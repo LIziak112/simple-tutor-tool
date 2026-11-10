@@ -375,8 +375,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             new Date(),
-            body?.revisions ?? [],
-            body?.evidence,
+            body ?? { revisions: [] },
           ),
         });
       })

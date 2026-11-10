@@ -4,7 +4,7 @@ import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
-import { fetchAttemptApi, sealAttemptAnnotationsApi } from "@/lib/api";
+import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { useSubmitAttempt } from "./attempt-queries";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
 import type { InkUploadController } from "./use-ink-upload";
@@ -16,6 +16,7 @@ import type {
 export function useAttemptSubmitFlow({
   attemptId,
   savedOnly,
+  timed,
   recoveryReady,
   syncDraft,
   flushAnswers,
@@ -27,6 +28,7 @@ export function useAttemptSubmitFlow({
 }: {
   attemptId: string;
   savedOnly: boolean;
+  timed: boolean;
   recoveryReady: boolean;
   syncDraft: () => Promise<void>;
   flushAnswers: () => Promise<void>;
@@ -44,11 +46,12 @@ export function useAttemptSubmitFlow({
 
   /**
    * 交卷编排（共享确认状态机 use-submit-evidence-confirm；T2.8 + T6R.10 证据固定 §6.4）：
-   * 1. 模态弹层已冻结编辑界面；2. 并行两链：每道手写题最新笔迹 flush（任一失败阻止
-   * 交卷）+ prepareSubmitEvidence（落盘 → flushNoteSync → 拉 head → 组装 none/frozen/
-   * missing 声明，PNG 后台补）；3. 有未决问题 → 弹层切明确选择分支；4. 请求携带
-   * revisions + evidence，成功后由结果页按交卷时刻清理本机稿。失败可重试；
-   * 响应丢失重试撞 409 ALREADY_SUBMITTED 由 useSubmitAttempt 切结果视图（不自动重交）。
+   * - 弹层冻结编辑。普通交卷并行追平正式笔迹与答案、草稿证据；正式作答
+   *   尚未追平时阻止交卷。宽限结束后改为核验本机落盘，发送明确确认字段。
+   * - prepareSubmitEvidence 等待本机落盘和草稿矢量同步，再拉服务端 head，
+   *   组装 none/frozen/missing 声明。PNG 在后台补传，有缺稿先请学生选择。
+   * - 服务端用 revisions 与 evidence 验证并固定原稿。结果页按交卷时刻
+   *   清理或保留本机稿。响应丢失时由 useSubmitAttempt 重取结果，避免重交。
    */
   const runSubmit = useCallback(
     async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
@@ -74,9 +77,6 @@ export function useAttemptSubmitFlow({
           await draftStore.flush(attemptId);
           if (getDraftPersistenceState(attemptId) === "failed")
             throw new Error("本机作答保存失败，请重试后再交卷");
-          const current = await fetchAttemptApi(attemptId);
-          if (!("timing" in current) || current.timing?.phase !== "locked")
-            throw new Error("服务端限时状态已变化，请刷新作答页后重试");
         } else {
           await syncDraft();
           await flushAnswers();
@@ -108,7 +108,13 @@ export function useAttemptSubmitFlow({
       if (submitAbortedRef.current) return { kind: "aborted" };
       // ink 失败早退阻止交卷（prep 结果弃用——副作用无害）：收起弹层
       // 走底栏提示（状态迁移与 submitted 同——关弹层回 idle）
-      if (!inkResults.every(Boolean)) {
+      const hasPendingInk =
+        timed &&
+        !savedOnly &&
+        draftStore
+          .peekUnsyncedInkIds(attemptId)
+          .some((id) => questionIds.includes(id));
+      if (!inkResults.every(Boolean) || hasPendingInk) {
         setInkFlushError(true);
         return { kind: "submitted" };
       }
@@ -130,7 +136,11 @@ export function useAttemptSubmitFlow({
       const declarations = prep.declarations;
       await new Promise<void>((settle) => {
         submit.mutate(
-          { revisions, evidence: declarations },
+          {
+            revisions,
+            evidence: declarations,
+            ...(savedOnly ? { confirmedSavedAnswers: true } : {}),
+          },
           {
             onSuccess: () => {
               // T6R.20 审查修复 2：标注 seal 在**交卷不可逆点之后**补调——失败
@@ -159,6 +169,7 @@ export function useAttemptSubmitFlow({
       savedOnly,
       submit,
       syncDraft,
+      timed,
     ],
   );
   return { inkFlushError, runSubmit, submit, submitAbortedRef };

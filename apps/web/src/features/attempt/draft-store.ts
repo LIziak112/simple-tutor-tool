@@ -104,6 +104,7 @@ export function bindDraftSession(session: DraftSession | null): void {
   for (const timer of writeTimers.values()) clearTimeout(timer);
   writeTimers.clear();
   cache.clear();
+  lockedSubmissions.clear();
   persistenceStates.clear();
   writeVersions.clear();
   draftSession = session;
@@ -151,6 +152,8 @@ let backendGeneration = 0;
 export type DraftPersistenceState = "saving" | "saved" | "failed";
 const persistenceStates = new Map<string, DraftPersistenceState>();
 const writeVersions = new Map<string, number>();
+/** 仅服务端结果确认宽限后交卷的记录可以归档为本机稿。 */
+const lockedSubmissions = new Set<string>();
 const persistenceListeners = new Set<() => void>();
 export function subscribeDraftPersistence(listener: () => void): () => void {
   persistenceListeners.add(listener);
@@ -184,6 +187,7 @@ export function installDraftBackend(backend: KVBackend): void {
   for (const timer of writeTimers.values()) clearTimeout(timer);
   writeTimers.clear();
   cache.clear();
+  lockedSubmissions.clear();
   activeBackend = backend;
 }
 
@@ -330,6 +334,7 @@ export async function assertLoadedDraftsForPwaUpdate(): Promise<void> {
     for (const [attemptId, record] of cache) {
       if (getDraftPersistenceState(attemptId) !== "saved")
         throw new Error("仍有作答或手写未存入本机，请保持页面打开并重试更新");
+      if (lockedSubmissions.has(attemptId)) continue;
       if (Object.keys(record.answerConflicts ?? {}).length > 0)
         throw new Error("仍有作答同步冲突，请先处理后更新");
       if (
@@ -343,6 +348,9 @@ export async function assertLoadedDraftsForPwaUpdate(): Promise<void> {
 }
 
 export const draftStore = {
+  markLockedSubmission(attemptId: string): void {
+    lockedSubmissions.add(attemptId);
+  },
   /** 仅在服务端已验证本人作答归属后调用；旧稿迁入新键，原键继续保留。 */
   async recoverLegacyDraft(
     attemptId: string,
@@ -407,6 +415,12 @@ export const draftStore = {
   /** 只读当前会话已载入的正式手写稿，不触发磁盘读取。 */
   peekInk(attemptId: string, questionId: string): InkDoc | null {
     return cache.get(attemptId)?.inks[questionId] ?? null;
+  },
+
+  /** 题卡可能尚未挂载，待传正式笔迹以本机稿记录为准。 */
+  peekUnsyncedInkIds(attemptId: string): string[] {
+    const record = cache.get(attemptId);
+    return record ? unsyncedInkIds(record) : [];
   },
 
   /** 每笔结束写本地（InkPad onDocChange 链路） */
@@ -640,6 +654,7 @@ export const draftStore = {
 
   /** 交卷成功后清除本地草稿（含防抖未落盘的部分） */
   async clearDraft(attemptId: string): Promise<void> {
+    lockedSubmissions.delete(attemptId);
     const timer = writeTimers.get(attemptId);
     if (timer !== undefined) {
       clearTimeout(timer);
