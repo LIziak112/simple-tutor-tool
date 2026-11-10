@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { storedZipOf } from "../test/stored-zip.ts";
 import {
   detectAttachmentFormat,
   pdfPageCountOf,
   sanitizeAttachmentFileName,
+  wellFormedFileName,
 } from "./attachment-format.ts";
 
 /** 最小 PDF（根 Pages /Count 3，另有一个子 Pages /Count 2——取最大者） */
@@ -20,25 +22,58 @@ trailer << /Root 1 0 R >>
   "latin1",
 );
 
-/** 伪 docx：ZIP 本地头 + 包内条目名 word/document.xml（识别只看这两点） */
-export const FAKE_DOCX = Buffer.concat([
-  Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
-  Buffer.alloc(64, 0),
-  Buffer.from("[Content_Types].xmlword/document.xml", "latin1"),
-  Buffer.alloc(32, 0),
+/** 最小 docx：真实 ZIP（stored 条目 + 中央目录 + EOCD），含 OPC 必备的两个条目 */
+export const MINI_DOCX = storedZipOf([
+  { name: "[Content_Types].xml", data: Buffer.from("<Types/>", "utf8") },
+  { name: "_rels/.rels", data: Buffer.from("<Relationships/>", "utf8") },
+  { name: "word/document.xml", data: Buffer.from("<w:document/>", "utf8") },
 ]);
 
 describe("资料附件：格式识别（只认内容）", () => {
-  it("PDF 文件头 / docx ZIP 头 + word/document.xml；其余 null", () => {
+  it("PDF 文件头 / docx = ZIP 中央目录含 word/document.xml 与 [Content_Types].xml；其余 null", () => {
     expect(detectAttachmentFormat(MINI_PDF)).toBe("pdf");
-    expect(detectAttachmentFormat(FAKE_DOCX)).toBe("docx");
-    // 普通 zip（无 word/document.xml）不是 docx
+    expect(detectAttachmentFormat(MINI_DOCX)).toBe("docx");
+    // 普通 zip（xlsx 结构）不是 docx
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "[Content_Types].xml", data: Buffer.from("<Types/>") },
+          { name: "xl/workbook.xml", data: Buffer.from("<workbook/>") },
+        ]),
+      ),
+    ).toBeNull();
+    // 条目正文里出现 word/document.xml 字符串、但没有这个条目 → 不是 docx
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "[Content_Types].xml", data: Buffer.from("<Types/>") },
+          {
+            name: "readme.txt",
+            data: Buffer.from("rename me to word/document.xml"),
+          },
+        ]),
+      ),
+    ).toBeNull();
+    // 有 word/document.xml 但缺 [Content_Types].xml（不是合法 Office 包）
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "word/document.xml", data: Buffer.from("<w:document/>") },
+        ]),
+      ),
+    ).toBeNull();
+    // 截断（丢了中央目录 / EOCD）的 docx 不能当 Word 原件保存
+    expect(
+      detectAttachmentFormat(MINI_DOCX.subarray(0, MINI_DOCX.length - 30)),
+    ).toBeNull();
+    // 只有 ZIP 本地头 + 散落的条目名字符串、没有中央目录 → null
     expect(
       detectAttachmentFormat(
         Buffer.concat([
-          Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-          Buffer.from("xl/workbook.xml", "latin1"),
-          Buffer.alloc(16, 0),
+          Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
+          Buffer.alloc(64, 0),
+          Buffer.from("[Content_Types].xmlword/document.xml", "latin1"),
+          Buffer.alloc(32, 0),
         ]),
       ),
     ).toBeNull();
@@ -75,5 +110,28 @@ describe("资料附件：展示文件名清洗", () => {
     const cleaned = sanitizeAttachmentFileName(long, "pdf");
     expect(cleaned.length).toBe(200);
     expect(cleaned.endsWith(".pdf")).toBe(true);
+  });
+
+  it("超长截断按码点：边界落在表情中间时整个丢掉，不留孤立代理项（#103-03）", () => {
+    // 195 个汉字 + 😀（2 个 UTF-16 单元）+ 10 个汉字 + .pdf = 211 单元；
+    // 预算 196 单元恰好劈在 😀 中间
+    const raw = `${"甲".repeat(195)}😀${"乙".repeat(10)}.pdf`;
+    const cleaned = sanitizeAttachmentFileName(raw, "pdf");
+    expect(cleaned).toBe(`${"甲".repeat(195)}.pdf`);
+    expect(cleaned.length).toBeLessThanOrEqual(200);
+    expect(() => encodeURIComponent(cleaned)).not.toThrow();
+    // 预算够放下整个表情时保留它
+    const fits = sanitizeAttachmentFileName(
+      `${"甲".repeat(194)}😀${"乙".repeat(10)}.pdf`,
+      "pdf",
+    );
+    expect(fits).toBe(`${"甲".repeat(194)}😀.pdf`);
+    expect(fits.length).toBe(200);
+    // 输入里本来就有孤立代理项（JSON 改名可构造）→ 剔除
+    expect(sanitizeAttachmentFileName("真题\ud83d.pdf", "pdf")).toBe(
+      "真题.pdf",
+    );
+    expect(wellFormedFileName("真题\ud83d.pdf")).toBe("真题\ufffd.pdf");
+    expect(wellFormedFileName("真题😀.pdf")).toBe("真题😀.pdf");
   });
 });

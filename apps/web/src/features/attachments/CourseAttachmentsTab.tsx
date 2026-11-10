@@ -2,20 +2,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AttachmentVisibility } from "@tutor/contract";
 import { formatAttachmentBytes } from "@tutor/contract";
 import { FileText, RotateCcw, Upload, X } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { listAttachmentsApi, uploadAttachmentApi } from "@/lib/attachment-api";
+import { listAttachmentsApi } from "@/lib/attachment-api";
 import { AttachmentList, VISIBILITY_LABEL } from "./AttachmentList";
+import { type UploadItem, uploadStatusText } from "./attachment-upload-queue";
 import {
-  makeUploadItem,
-  patchItem,
-  type UploadItem,
-  uploadStatusText,
-} from "./attachment-upload-queue";
+  enqueueAttachmentUploads,
+  onAttachmentUploadCompleted,
+  removeAttachmentUpload,
+  retryAttachmentUpload,
+  takeStaleAttachmentCourse,
+  useAttachmentUploadQueue,
+} from "./attachment-upload-store";
 
 /**
  * 课程「资料」页签（2026-11-10 个人学习迭代模块 6 第一步）：上传 PDF / docx 原件
- * （进度、失败原因、重试、移除）、资料列表（文件名 / 格式 / 大小 / 页数已知时 /
+ * （进度、失败原因、重试、移除；按入队顺序最多 2 个同时在传，成功后释放文件，
+ * #103-05；队列是模块级的 attachment-upload-store——切页签 / 换课程不丢排队中的
+ * 文件、也不会把文件传进别的课程）、资料列表（文件名 / 格式 / 大小 / 页数已知时 /
  * 可见性 / 上传时间）、改可见性、下载、删除（软删）。
  * 可见性文案与契约一致：students =「学生可查看和下载」/ teacher_only =「仅教师可见」。
  */
@@ -36,57 +41,25 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
 
   const [defaultVisibility, setDefaultVisibility] =
     useState<AttachmentVisibility>("students");
-  const [queue, setQueue] = useState<UploadItem[]>([]);
+  const queue = useAttachmentUploadQueue(courseId);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const runUpload = useCallback(
-    async (item: UploadItem) => {
-      setQueue((items) =>
-        patchItem(items, item.key, {
-          status: "uploading",
-          progress: 0,
-          error: null,
-        }),
-      );
-      try {
-        const result = await uploadAttachmentApi(item.file, {
-          courseId,
-          visibility: item.visibility,
-          onProgress: (ratio) =>
-            setQueue((items) =>
-              patchItem(items, item.key, { progress: ratio }),
-            ),
-        });
-        setQueue((items) =>
-          patchItem(items, item.key, { status: "done", progress: 1, result }),
-        );
-        void invalidate();
-      } catch (err) {
-        setQueue((items) =>
-          patchItem(items, item.key, {
-            status: "failed",
-            error: err instanceof Error ? err.message : "未知原因",
-          }),
-        );
-      }
-    },
-    [courseId, invalidate],
-  );
+  // 上传成功 → 刷新那门课的列表（按条目的 courseId，哪怕完成的是别的课程的文件）；
+  // 没有页签在听时完成的，挂载时补刷一次
+  useEffect(() => {
+    if (takeStaleAttachmentCourse(courseId)) void invalidate();
+    return onAttachmentUploadCompleted((item) => {
+      void queryClient.invalidateQueries({
+        queryKey: attachmentsKey(item.courseId),
+      });
+    });
+  }, [courseId, invalidate, queryClient]);
 
   const onFilesChosen = (files: FileList | null) => {
     if (files === null || files.length === 0) return;
-    const items = Array.from(files).map((file) =>
-      makeUploadItem(file, defaultVisibility),
-    );
-    setQueue((prev) => [...items, ...prev]);
-    for (const item of items) {
-      if (item.status === "queued") void runUpload(item);
-    }
+    enqueueAttachmentUploads(Array.from(files), courseId, defaultVisibility);
     if (inputRef.current !== null) inputRef.current.value = "";
   };
-
-  const removeItem = (key: string) =>
-    setQueue((items) => items.filter((item) => item.key !== key));
 
   return (
     <div className="flex flex-col gap-4">
@@ -139,8 +112,8 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
               <UploadRow
                 key={item.key}
                 item={item}
-                onRetry={() => void runUpload(item)}
-                onRemove={() => removeItem(item.key)}
+                onRetry={() => retryAttachmentUpload(item.key)}
+                onRemove={() => removeAttachmentUpload(item.key)}
               />
             ))}
           </ul>
@@ -206,13 +179,13 @@ function UploadRow({
             aria-hidden
             className="size-4 shrink-0 text-muted-foreground"
           />
-          <span className="truncate font-medium">{item.file.name}</span>
+          <span className="truncate font-medium">{item.fileName}</span>
           <span className="shrink-0 text-xs text-muted-foreground">
-            {formatAttachmentBytes(item.file.size)}
+            {formatAttachmentBytes(item.fileSize)}
           </span>
         </span>
         <span className="flex items-center gap-1">
-          {item.status === "failed" && (
+          {item.status === "failed" && item.file !== null && (
             <Button variant="outline" size="sm" onClick={onRetry}>
               <RotateCcw aria-hidden className="size-3.5" />
               重试
@@ -222,7 +195,7 @@ function UploadRow({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`移除 ${item.file.name}`}
+              aria-label={`移除 ${item.fileName}`}
               onClick={onRemove}
             >
               <X aria-hidden className="size-4" />
@@ -248,7 +221,7 @@ function UploadRow({
       </div>
       {item.status === "uploading" && (
         <progress
-          aria-label={`${item.file.name} 上传进度`}
+          aria-label={`${item.fileName} 上传进度`}
           className="h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary"
           max={100}
           value={percent}

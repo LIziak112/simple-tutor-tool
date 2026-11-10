@@ -15,6 +15,7 @@ import {
   updateAttachmentApi,
   uploadAttachmentApi,
 } from "@/lib/attachment-api";
+import { resetAttachmentUploadStoreForTest } from "./attachment-upload-store";
 import { CourseAttachmentsTab } from "./CourseAttachmentsTab";
 
 vi.mock("@/lib/attachment-api", () => ({
@@ -53,15 +54,26 @@ const DOCX: Attachment = {
   visibility: "teacher_only",
 };
 
-function renderTab() {
+function renderTab(courseId = COURSE_ID) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const tree = (id: string) => (
     <QueryClientProvider client={client}>
-      <CourseAttachmentsTab courseId={COURSE_ID} />
-    </QueryClientProvider>,
+      <CourseAttachmentsTab courseId={id} />
+    </QueryClientProvider>
   );
+  const utils = render(tree(courseId));
+  return {
+    ...utils,
+    /** 换课程（同一组件实例、courseId 变了） */
+    switchCourse: (id: string) => utils.rerender(tree(id)),
+    /** 模拟切页签再切回：卸载后重新挂载 */
+    remount: () => {
+      utils.unmount();
+      return render(tree(courseId));
+    },
+  };
 }
 
 function pickFiles(files: File[]) {
@@ -75,6 +87,7 @@ describe("课程「资料」页签（模块 6 第一步）", () => {
     mockedUpdate.mockReset();
     mockedDelete.mockReset();
     mockedUpload.mockReset();
+    resetAttachmentUploadStoreForTest();
   });
 
   it("列表：格式徽标、大小、页数已知时显示、可见性与下载链接；切换可见性", async () => {
@@ -157,6 +170,143 @@ describe("课程「资料」页签（模块 6 第一步）", () => {
     );
   });
 
+  it("批量上传：同时最多 2 个请求，前一个完成后第 3 个才开始；完成行仍显示文件名与大小（#103-05）", async () => {
+    mockedList.mockResolvedValue({ attachments: [] });
+    const finishers: Array<(value: Attachment) => void> = [];
+    mockedUpload.mockImplementation(
+      () =>
+        new Promise<Attachment>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    renderTab();
+    await screen.findByText(/还没有资料/);
+    pickFiles(
+      ["一.pdf", "二.pdf", "三.pdf"].map(
+        (name) =>
+          new File([new Uint8Array(2048)], name, { type: "application/pdf" }),
+      ),
+    );
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    expect(mockedUpload.mock.calls.map((call) => call[0].name)).toEqual([
+      "一.pdf",
+      "二.pdf",
+    ]);
+    const queue = await screen.findByRole("list", { name: "上传队列" });
+    const third = within(queue)
+      .getByText("三.pdf")
+      .closest("li") as HTMLElement;
+    expect(third.textContent).toContain("等待上传");
+    // 再等一拍：没有第三个请求被发出
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockedUpload).toHaveBeenCalledTimes(2);
+
+    finishers[0]?.({ ...PDF, fileName: "一.pdf" });
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(3));
+    expect(mockedUpload.mock.calls[2]?.[0].name).toBe("三.pdf");
+    const first = within(queue)
+      .getByText("一.pdf")
+      .closest("li") as HTMLElement;
+    expect(first.textContent).toContain("已上传");
+    expect(first.textContent).toContain("2.0 KB");
+    expect(within(first).queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
+  it("切页签（卸载）再切回：排队中与在传的文件都还在，前一个完成后第 3 个照常开始，列表刷新（第二轮）", async () => {
+    mockedList.mockResolvedValue({ attachments: [] });
+    const finishers: Array<(value: Attachment) => void> = [];
+    mockedUpload.mockImplementation(
+      () =>
+        new Promise<Attachment>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    const view = renderTab();
+    await screen.findByText(/还没有资料/);
+    pickFiles(
+      ["一.pdf", "二.pdf", "三.pdf"].map(
+        (name) =>
+          new File([new Uint8Array(2048)], name, { type: "application/pdf" }),
+      ),
+    );
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    // 切到别的页签：组件卸载；此时第 3 个还没发请求
+    view.remount();
+    await screen.findByText(/还没有资料/);
+    const queue = await screen.findByRole("list", { name: "上传队列" });
+    expect(within(queue).getAllByRole("listitem")).toHaveLength(3);
+    expect(
+      (within(queue).getByText("三.pdf").closest("li") as HTMLElement)
+        .textContent,
+    ).toContain("等待上传");
+    expect(mockedUpload).toHaveBeenCalledTimes(2);
+
+    mockedList.mockResolvedValue({
+      attachments: [{ ...PDF, fileName: "一.pdf" }],
+    });
+    finishers[0]?.({ ...PDF, fileName: "一.pdf" });
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(3));
+    expect(mockedUpload.mock.calls[2]?.[0].name).toBe("三.pdf");
+    const list = screen.getByRole("region", { name: "资料列表" });
+    await waitFor(() =>
+      expect(within(list).getByText("一.pdf")).toBeInTheDocument(),
+    );
+  });
+
+  it("换课程：为 A 选的文件仍传进 A，B 的页签不显示它们；没人听时完成的上传在回到 A 时刷新列表（第二轮）", async () => {
+    const COURSE_B = "1c7f29bf-7c0b-4e1f-9c8d-0c2c2c2c2c2c";
+    mockedList.mockResolvedValue({ attachments: [] });
+    const finishers: Array<(value: Attachment) => void> = [];
+    mockedUpload.mockImplementation(
+      () =>
+        new Promise<Attachment>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    const view = renderTab();
+    await screen.findByText(/还没有资料/);
+    pickFiles(
+      ["一.pdf", "二.pdf", "三.pdf"].map(
+        (name) =>
+          new File([new Uint8Array(2048)], name, { type: "application/pdf" }),
+      ),
+    );
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    view.switchCourse(COURSE_B);
+    await waitFor(() => expect(mockedList).toHaveBeenCalledWith(COURSE_B));
+    expect(screen.queryByRole("list", { name: "上传队列" })).toBeNull();
+
+    // A 的第 1 个传完：第 3 个开始，且仍然发给 A，不是正在看的 B
+    finishers[0]?.({ ...PDF, fileName: "一.pdf" });
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(3));
+    for (const call of mockedUpload.mock.calls) {
+      expect(call[1]?.courseId).toBe(COURSE_ID);
+    }
+
+    // 完全离开（没有页签在听）时第 2 个传完 → 回到 A 时列表刷新一次
+    view.unmount();
+    finishers[1]?.({ ...PDF, fileName: "二.pdf" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    mockedList.mockClear();
+    mockedList.mockResolvedValue({
+      attachments: [
+        { ...PDF, fileName: "一.pdf" },
+        {
+          ...PDF,
+          id: "33333333-3333-4333-8333-333333333333",
+          fileName: "二.pdf",
+        },
+      ],
+    });
+    renderTab();
+    const list = await screen.findByRole("region", { name: "资料列表" });
+    await waitFor(() =>
+      expect(within(list).getByText("二.pdf")).toBeInTheDocument(),
+    );
+    const queue = screen.getByRole("list", { name: "上传队列" });
+    expect(within(queue).getAllByRole("listitem")).toHaveLength(3);
+  });
+
   it("上传失败：显示服务端原因，可重试、可移除；本地预检失败不发请求", async () => {
     mockedList.mockResolvedValue({ attachments: [] });
     mockedUpload.mockRejectedValueOnce(
@@ -186,6 +336,10 @@ describe("课程「资料」页签（模块 6 第一步）", () => {
     fireEvent.click(within(failedRow).getByRole("button", { name: "重试" }));
     await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(failedRow.textContent).toContain("已上传"));
+    // 重试复用同一个幂等键（#103-04）：服务端据此不重复建资料
+    const firstUploadId = mockedUpload.mock.calls[0]?.[1]?.uploadId;
+    expect(firstUploadId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(mockedUpload.mock.calls[1]?.[1]?.uploadId).toBe(firstUploadId);
 
     fireEvent.click(screen.getByRole("button", { name: "移除 表格.xlsx" }));
     expect(screen.queryByText("表格.xlsx")).toBeNull();

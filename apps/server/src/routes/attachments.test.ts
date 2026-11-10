@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import {
   attachmentListOkSchema,
@@ -10,10 +12,15 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { courses } from "../db/schema.ts";
+import { attachments, courses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
-import { FAKE_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
+import { MINI_DOCX, MINI_PDF } from "../services/attachment-format.test.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import {
+  multipartFileStream,
+  streamingInit,
+} from "../test/multipart-stream.ts";
+import { attachmentFileResponse } from "./teacher-attachments.ts";
 
 /**
  * 资料附件（模块 6 第一步）接口集成测试：教师上传 / 列表 / 改可见性 / 软删 /
@@ -36,6 +43,7 @@ function extractSessionToken(res: Response, cookie = "tutor_session"): string {
 interface Env {
   app: ReturnType<typeof createApp>;
   db: Db;
+  dataDir: string;
   teacherCookie: string;
   memberCookie: string;
   outsiderCookie: string;
@@ -77,12 +85,13 @@ async function createStudentAndLogin(
 
 async function makeEnv(): Promise<Env> {
   const db = createTestDb();
+  const dataDir = createTestDir();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
+    dataDir,
   });
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -112,6 +121,7 @@ async function makeEnv(): Promise<Env> {
   return {
     app,
     db,
+    dataDir,
     teacherCookie,
     memberCookie: member.cookie,
     outsiderCookie: outsider.cookie,
@@ -162,7 +172,7 @@ describe("资料附件 · 教师侧", () => {
       pageCount: 3,
       visibility: "students",
     });
-    const docx = await uploadOk(env, FAKE_DOCX, "申论 材料.docx", {
+    const docx = await uploadOk(env, MINI_DOCX, "申论 材料.docx", {
       visibility: "teacher_only",
     });
     expect(docx).toMatchObject({
@@ -244,6 +254,81 @@ describe("资料附件 · 教师侧", () => {
     expect(noFile.status).toBe(400);
   });
 
+  it("带 uploadId 上传：首次 201，同键重试 200 且是同一条，列表只有一行；非 UUID 键 400（#103-04）", async () => {
+    const env = await makeEnv();
+    const uploadId = crypto.randomUUID();
+    const first = await uploadOk(env, MINI_PDF, "真题.pdf", {
+      courseId: env.courseId,
+      uploadId,
+    });
+    const retry = await upload(env, MINI_PDF, "真题.pdf", {
+      courseId: env.courseId,
+      uploadId,
+    });
+    expect(retry.status).toBe(200);
+    expect(attachmentOkSchema.parse(await retry.json()).data).toEqual(first);
+    const list = await env.app.request("/api/teacher/attachments", {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(
+      attachmentListOkSchema.parse(await list.json()).data.attachments,
+    ).toHaveLength(1);
+    const bad = await upload(env, MINI_PDF, "真题.pdf", { uploadId: "retry" });
+    expect(bad.status).toBe(400);
+  });
+
+  it("流式上传（无 content-length）超 20 MB → 413 且未落库未落盘，源流在上限处停读；正常流式上传 201（#103-01）", async () => {
+    const env = await makeEnv();
+    const big = multipartFileStream({
+      fileName: "big.pdf",
+      file: { bytes: 64 * 1024 * 1024 },
+      fields: { courseId: env.courseId },
+    });
+    const res = await env.app.request(
+      "/api/teacher/attachments",
+      streamingInit(big, { cookie: env.teacherCookie }),
+    );
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as ApiErr).error).toBe("ATTACHMENT_TOO_LARGE");
+    // 21 MiB 上限 + 几块余量，远小于 64 MiB 的源
+    expect(big.counter.pulled).toBeLessThan(22 * 1024 * 1024);
+    expect(env.db.select().from(attachments).all()).toEqual([]);
+    expect(existsSync(join(env.dataDir, "blobs", "attachments"))).toBe(false);
+
+    const ok = await env.app.request(
+      "/api/teacher/attachments",
+      streamingInit(
+        multipartFileStream({
+          fileName: "真题.pdf",
+          file: new Uint8Array(MINI_PDF),
+          fields: { courseId: env.courseId, visibility: "teacher_only" },
+        }),
+        { cookie: env.teacherCookie },
+      ),
+    );
+    expect(ok.status).toBe(201);
+    expect(attachmentOkSchema.parse(await ok.json()).data).toMatchObject({
+      fileName: "真题.pdf",
+      courseId: env.courseId,
+      visibility: "teacher_only",
+      bytes: MINI_PDF.byteLength,
+    });
+  });
+
+  it("直出响应：文件名含孤立代理项（历史脏数据）也能生成下载头，不抛 URIError（#103-03 最后防线）", () => {
+    // 说明：better-sqlite3 写入时已把孤立代理项转成 U+FFFD，库里出现它的概率极低；
+    // 这里直接喂给响应函数，锁定「任何来源的脏名字都不让下载 500」
+    const res = attachmentFileResponse({
+      bytes: new Uint8Array(MINI_PDF).buffer as ArrayBuffer,
+      contentType: "application/pdf",
+      fileName: `${"甲".repeat(195)}\ud83d.pdf`,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(
+      `filename*=UTF-8''${encodeURIComponent(`${"甲".repeat(195)}\ufffd.pdf`)}`,
+    );
+  });
+
   it("改可见性 / 改名；软删后列表不见、下载 404；再删 404", async () => {
     const env = await makeEnv();
     const pdf = await uploadOk(env, MINI_PDF, "真题.pdf", {
@@ -308,11 +393,11 @@ describe("资料附件 · 学生侧", () => {
     const visible = await uploadOk(env, MINI_PDF, "真题.pdf", {
       courseId: env.courseId,
     });
-    await uploadOk(env, FAKE_DOCX, "答案.docx", {
+    await uploadOk(env, MINI_DOCX, "答案.docx", {
       courseId: env.courseId,
       visibility: "teacher_only",
     });
-    await uploadOk(env, FAKE_DOCX, "空间里的.docx");
+    await uploadOk(env, MINI_DOCX, "空间里的.docx");
 
     const res = await env.app.request(
       `/api/student/courses/${env.courseId}/attachments`,
@@ -346,7 +431,7 @@ describe("资料附件 · 学生侧", () => {
     const visible = await uploadOk(env, MINI_PDF, "真题.pdf", {
       courseId: env.courseId,
     });
-    const hidden = await uploadOk(env, FAKE_DOCX, "答案.docx", {
+    const hidden = await uploadOk(env, MINI_DOCX, "答案.docx", {
       courseId: env.courseId,
       visibility: "teacher_only",
     });

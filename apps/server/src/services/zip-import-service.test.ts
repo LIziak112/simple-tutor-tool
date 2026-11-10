@@ -1,7 +1,7 @@
-import { crc32 } from "node:zlib";
 import { ZipArchive } from "archiver";
 import { describe, expect, it } from "vitest";
 import { HttpError } from "../lib/http-error.ts";
+import { storedZipOf } from "../test/stored-zip.ts";
 import {
   basenameOf,
   decodeImportZipBase64,
@@ -40,84 +40,6 @@ async function zipOf(
   await archive.finalize();
   await done;
   return Buffer.concat(chunks);
-}
-
-// ---------- 手工构造 stored zip（archiver 会清洗 ../ 名，危险条目名只能手打） ----------
-
-function u16(value: number): Buffer {
-  const b = Buffer.alloc(2);
-  b.writeUInt16LE(value);
-  return b;
-}
-function u32(value: number): Buffer {
-  const b = Buffer.alloc(4);
-  b.writeUInt32LE(value);
-  return b;
-}
-
-/** 最小 stored（method 0）zip：条目名原样写入（含 ../ 等危险名），逐条 CRC 正确 */
-function rawStoredZip(
-  files: ReadonlyArray<{ name: string; data: Buffer }>,
-): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-  for (const { name, data } of files) {
-    const nameBuf = Buffer.from(name, "utf8");
-    const crc = crc32(data);
-    const local = Buffer.concat([
-      u32(0x04034b50), // 本地文件头签名
-      u16(20), // 版本
-      u16(0x0800), // UTF-8 名标志
-      u16(0), // method 0 = stored
-      u16(0),
-      u16(0), // 时间 / 日期
-      u32(crc),
-      u32(data.length),
-      u32(data.length),
-      u16(nameBuf.length),
-      u16(0),
-      nameBuf,
-      data,
-    ]);
-    locals.push(local);
-    centrals.push(
-      Buffer.concat([
-        u32(0x02014b50), // 中央目录签名
-        u16(20),
-        u16(20),
-        u16(0x0800),
-        u16(0),
-        u16(0),
-        u16(0),
-        u32(crc),
-        u32(data.length),
-        u32(data.length),
-        u16(nameBuf.length),
-        u16(0),
-        u16(0),
-        u16(0),
-        u16(0),
-        u32(0),
-        u32(offset),
-        nameBuf,
-      ]),
-    );
-    offset += local.length;
-  }
-  const cd = Buffer.concat(centrals);
-  return Buffer.concat([
-    ...locals,
-    cd,
-    u32(0x06054b50), // EOCD 签名
-    u16(0),
-    u16(0),
-    u16(files.length),
-    u16(files.length),
-    u32(cd.length),
-    u32(offset),
-    u16(0),
-  ]);
 }
 
 /** 最小 PNG 字节（魔数 + 填充；saveMedia 只看魔数） */
@@ -207,9 +129,7 @@ describe("unpackImportZip", () => {
   });
 
   it("危险条目名（../x.md）→ ZIP_INVALID，透传中文说明", () => {
-    const zip = rawStoredZip([
-      { name: "../x.md", data: Buffer.from("# evil") },
-    ]);
+    const zip = storedZipOf([{ name: "../x.md", data: Buffer.from("# evil") }]);
     const err = expectHttpError(() => unpackImportZip(zip), "ZIP_INVALID");
     expect(err.message).toContain("../x.md");
     expect(err.message).toContain("不安全");

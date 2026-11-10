@@ -86,6 +86,9 @@ export function uploadAttachmentApi(
     if (options.visibility !== undefined) {
       form.append("visibility", options.visibility);
     }
+    // 幂等键（#103-04）：重试带同一个，服务端同键重放返回既有资料（200）而不是再建一份
+    if (options.uploadId !== undefined)
+      form.append("uploadId", options.uploadId);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/teacher/attachments");
     xhr.responseType = "text";
