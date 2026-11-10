@@ -60,12 +60,12 @@ export function attemptTimingOf(
 }
 
 /**
- * 答案写入闸门（saveDraftAnswer / 逐题提交共用）：限时卷宽限已过 → 409
- * ATTEMPT_TIME_UP。非限时卷与宽限内直接放行。
+ * 草稿与正式手写允许在宽限内补传，新逐题提交必须发生在截止前。
  */
 export function assertAttemptNotTimedOut(
-  attempt: TimedColumns,
+  attempt: Pick<TimedColumns, "deadlineAt">,
   now: Date | string = new Date(),
+  latestPhase: "running" | "grace" = "grace",
 ): void {
   if (attempt.deadlineAt === null) return;
   const phase = attemptTimingPhaseOf(
@@ -73,11 +73,13 @@ export function assertAttemptNotTimedOut(
     ATTEMPT_TIME_UP_GRACE_SEC,
     new Date(now).getTime(),
   );
-  if (phase === "locked") {
+  if (phase === "locked" || (phase === "grace" && latestPhase === "running")) {
     throw new HttpError(
       409,
       "ATTEMPT_TIME_UP",
-      "限时已到且宽限期已过，不能再修改答案；请确认交卷",
+      latestPhase === "running"
+        ? "限时已到，不能再逐题提交，请确认交卷"
+        : "限时已到且宽限期已过，不能再修改答案；请确认交卷",
     );
   }
 }

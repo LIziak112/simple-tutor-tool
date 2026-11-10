@@ -26,6 +26,7 @@ import {
   requireAttemptQuestion,
   requireUsableAttempt,
 } from "./attempt-service";
+import { assertAttemptNotTimedOut } from "./attempt-timing";
 
 /**
  * InkService（T2.8）——手写笔迹的文件存储与元数据管理（架构 §5.2/§5.4）。
@@ -206,7 +207,7 @@ export function saveInk(
     (tx) => {
       // 取得写锁后重查提交状态，防止另一个进程在预检与写入之间封卷。
       const latest = tx
-        .select({ status: attempts.status })
+        .select({ status: attempts.status, deadlineAt: attempts.deadlineAt })
         .from(attempts)
         .where(eq(attempts.id, attemptId))
         .get();
@@ -254,6 +255,7 @@ export function saveInk(
           revision: current.revision,
         };
       }
+      assertAttemptNotTimedOut(latest);
       if (!meta && current)
         throw new HttpError(
           409,

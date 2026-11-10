@@ -3413,8 +3413,6 @@ export function submitPracticeQuestion(
     const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
     // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
     assertDraftCourseVisible(db, studentId, attempt);
-    // 模块 2：限时卷宽限已过 → 409 ATTEMPT_TIME_UP
-    assertAttemptNotTimedOut(attempt, nowIso);
     // 新协议路径仅普通来源的新协议卷：lesson 独立适配 → 协议不匹配；历史卷 → legacy（§5.3）
     const protocol = practiceProtocolOf(attempt);
     if (protocol === "lesson") {
@@ -3466,6 +3464,7 @@ export function submitPracticeQuestion(
 
     // 当前 resolver 裁决：教师收紧立即生效（§5.4），收紧后拒绝进一步逐题提交
     //（学生按「继续完成剩余题目并交卷」收敛；已提交行与成绩保留）
+    assertAttemptNotTimedOut(attempt, nowIso, "running");
     const view = attemptWorkflowView(db, attempt, now);
     if (view === null) {
       // M1 加固语义（v2 d7c84b89）：读侧视图缺失＝授权事实异常（如作业授权
