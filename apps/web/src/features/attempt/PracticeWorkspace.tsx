@@ -50,28 +50,28 @@ export function ChoiceSubmitOptions({
 }) {
   const name = useId();
   return (
-    <fieldset
-      disabled={disabled}
-      className="grid min-w-0 gap-2 sm:grid-cols-2 disabled:opacity-60"
-    >
+    <fieldset disabled={disabled} className="min-w-0 disabled:opacity-60">
       <legend className="mb-1.5 text-xs font-medium text-muted-foreground">
         单选题怎么提交
       </legend>
-      {([false, true] as const).map((auto) => (
-        <label
-          key={String(auto)}
-          className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${value === auto ? "border-primary bg-primary/5" : "border-border"} ${disabled ? "" : "cursor-pointer"}`}
-        >
-          <input
-            className="size-4 shrink-0 accent-primary"
-            type="radio"
-            name={name}
-            checked={value === auto}
-            onChange={() => onChange(auto)}
-          />
-          {auto ? "选中即提交" : "点提交按钮"}
-        </label>
-      ))}
+      {/* 可见 legend 与 fieldset 网格共用时，Safari 首次布局可能错位。 */}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {([false, true] as const).map((auto) => (
+          <label
+            key={String(auto)}
+            className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium has-focus-visible:ring-3 has-focus-visible:ring-ring/50 ${value === auto ? "border-primary bg-primary/5" : "border-border"} ${disabled ? "" : "cursor-pointer"}`}
+          >
+            <input
+              className="size-4 shrink-0 accent-primary"
+              type="radio"
+              name={name}
+              checked={value === auto}
+              onChange={() => onChange(auto)}
+            />
+            {auto ? "选中即提交" : "点提交按钮"}
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }
