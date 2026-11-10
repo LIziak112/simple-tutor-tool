@@ -6,6 +6,13 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { createTestDb, createTestDir } from "../db/test-utils";
+import { taskOf } from "../services/ai-companion/student-ai-materials.ts";
+import {
+  beginInappDispatch,
+  completeInappDispatch,
+} from "../services/ai-companion/student-ai-queue.ts";
+import { outboundAssemblyOfTask } from "../services/ai-companion/student-ai-worker.ts";
+import { inappReplyPlanOf } from "../services/rubric-agent-record.ts";
 import {
   callToolJson,
   connectMcpClientViaApp,
@@ -91,7 +98,12 @@ async function postJson(
 }
 
 /** 教师导入带量表练习 → 学生 → 作业 → 开卷（新协议）；不交卷 */
-async function makeWorld(): Promise<World> {
+async function makeWorld(
+  assignment: {
+    answerRelease?: "on_submit" | "after_due";
+    dueAt?: string;
+  } = {},
+): Promise<World> {
   const db = createTestDb();
   const app = createApp({
     isProduction: false,
@@ -128,6 +140,7 @@ async function makeWorld(): Promise<World> {
   const assigned = await postJson(app, "/api/teacher/assignments", tCookie, {
     unitIds: [unitId],
     studentIds: [studentId],
+    ...assignment,
   });
   expect(assigned.status).toBe(201);
   const assignmentId = (
@@ -186,6 +199,18 @@ async function answerAndSubmit(w: World): Promise<void> {
   }
   const submitted = await submitAttemptRequest(w.app, w.aCookie, w.attemptId);
   expect(submitted.status).toBe(200);
+}
+
+/** 跨过首次知情门（任一 active 连接即可）：建一条 MCP 连接并返回其令牌 */
+async function ensureInformed(w: World): Promise<string> {
+  const conn = await postJson(w.app, "/api/student/ai/connections", w.aCookie, {
+    channel: "mcp",
+  });
+  const token = (
+    (await conn.json()) as { data: { credential: { token: string } | null } }
+  ).data.credential?.token;
+  if (token === undefined) throw new Error("mcp token 创建失败");
+  return token;
 }
 
 function rubricPath(w: World, questionId: string, leaf: "self" | "final") {
@@ -329,16 +354,7 @@ describe("模块 3：Agent 判卷走既有 AI 任务 + MCP submit_rubric_opinion
   it("purpose=rubric_opinion 进快照与出站数据段；写回落 agent 记录、pending 归零；无量表题拒绝", async () => {
     const w = await makeWorld();
     await answerAndSubmit(w);
-    const conn = await postJson(
-      w.app,
-      "/api/student/ai/connections",
-      w.aCookie,
-      { channel: "mcp" },
-    );
-    const token = (
-      (await conn.json()) as { data: { credential: { token: string } | null } }
-    ).data.credential?.token;
-    if (token === undefined) throw new Error("mcp token 创建失败");
+    const token = await ensureInformed(w);
 
     const makeTask = (questionId: string) =>
       postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
@@ -449,8 +465,212 @@ describe("模块 3：Agent 判卷走既有 AI 任务 + MCP submit_rubric_opinion
       });
       expect(rejected.isError).toBe(true);
       expect(String(rejected.data.error)).toBe("RUBRIC_NOT_AVAILABLE");
+
+      // 审查 #99-03：普通求助任务（purpose 缺省）即使题有量表，也不能写回结构化意见
+      const helpTask = await postJson(
+        w.app,
+        "/api/student/ai/tasks",
+        w.aCookie,
+        {
+          attemptId: w.attemptId,
+          questionId: Q.rubric,
+          question: "这题的论证结构怎么改？",
+          channel: "mcp",
+          materials: { annotation: false, draft: false, formalInk: false },
+          mutationId: randomUUID(),
+        },
+      );
+      expect(helpTask.status).toBe(201);
+      const helpId = ((await helpTask.json()) as { data: { id: string } }).data
+        .id;
+      const helpClaim = await callToolJson(client, "claim_ai_task", {
+        taskId: helpId,
+        includeImages: false,
+      });
+      const notPurpose = await callToolJson(client, "submit_rubric_opinion", {
+        taskId: helpId,
+        leaseToken: String(helpClaim.data.leaseToken),
+        ratings: agentRatings,
+        note: "x",
+      });
+      expect(notPurpose.isError).toBe(true);
+      expect(String(notPurpose.data.error)).toBe("RUBRIC_NOT_AVAILABLE");
+      // 结果页的 agent 记录仍是最初那份（没被普通求助任务覆盖）
+      const still = (await questionsOf(w))[Q.rubric]
+        ?.rubricReview as RubricReview;
+      expect(still.agent?.taskId).toBe(taskId);
     } finally {
       await client.close();
     }
+  });
+
+  it("审查 #99-07：同 mutationId 换 purpose 不是重放，409 而不是拿回旧任务", async () => {
+    const w = await makeWorld();
+    await answerAndSubmit(w);
+    await ensureInformed(w);
+    const mutationId = randomUUID();
+    const body = {
+      attemptId: w.attemptId,
+      questionId: Q.rubric,
+      question: "请按量表帮我判一下。",
+      channel: "mcp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId,
+    };
+    const first = await postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
+      ...body,
+      purpose: "rubric_opinion",
+    });
+    expect(first.status).toBe(201);
+    const replay = await postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
+      ...body,
+      purpose: "rubric_opinion",
+    });
+    expect(replay.status).toBe(200);
+    const changed = await postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
+      ...body,
+      purpose: "help",
+    });
+    expect(changed.status).toBe(409);
+    expect((await errOf(changed)).error).toBe("AI_STATE_CONFLICT");
+  });
+});
+
+describe("模块 3：公布门禁（审查 #99-01 / #99-03）", () => {
+  it("截止后公布且未到期：结果视图不带 rubricReview，MCP 写回量表意见被拒", async () => {
+    const dueAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const w = await makeWorld({ answerRelease: "after_due", dueAt });
+    await answerAndSubmit(w);
+    const result = await questionsOf(w);
+    const question = result[Q.rubric];
+    expect(question).toBeDefined();
+    // 受限形态：答案与对错都不下发，量表三份记录同样不下发（rubric 本身在作答视图里仍可见）
+    expect(question?.answers).toBeNull();
+    expect(question?.rubricReview ?? null).toBeNull();
+
+    const token = await ensureInformed(w);
+    const created = await postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
+      attemptId: w.attemptId,
+      questionId: Q.rubric,
+      question: "请按量表帮我判一下。",
+      channel: "mcp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      purpose: "rubric_opinion",
+    });
+    expect(created.status).toBe(201);
+    const taskId = ((await created.json()) as { data: { id: string } }).data.id;
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "m3-rubric-gate-test",
+    );
+    try {
+      const claimed = await callToolJson(client, "claim_ai_task", {
+        taskId,
+        includeImages: false,
+      });
+      const leaseToken = String(claimed.data.leaseToken);
+      const rejected = await callToolJson(client, "submit_rubric_opinion", {
+        taskId,
+        leaseToken,
+        ratings: FULL_RATINGS,
+        note: "先于公布的意见",
+      });
+      expect(rejected.isError).toBe(true);
+      expect(String(rejected.data.error)).toBe("RUBRIC_NOT_AVAILABLE");
+      // 普通回信仍可写回（Agent 按提示退回 submit_ai_reply）
+      const plain = await callToolJson(client, "submit_ai_reply", {
+        taskId,
+        leaseToken,
+        replyMarkdown: "答案公布后再按量表细看。",
+      });
+      expect(plain.isError).toBe(false);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("模块 3：页内通道的结构化意见（审查 #99-02）", () => {
+  it("出站指引按通道给；回信末尾的 rubric-opinion 块落 agent 记录并替换成可读段", async () => {
+    const w = await makeWorld();
+    await answerAndSubmit(w);
+    await ensureInformed(w);
+    const created = await postJson(w.app, "/api/student/ai/tasks", w.aCookie, {
+      attemptId: w.attemptId,
+      questionId: Q.rubric,
+      question: "请按量表帮我判一下。",
+      channel: "inapp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      purpose: "rubric_opinion",
+    });
+    expect(created.status).toBe(201);
+    const taskId = ((await created.json()) as { data: { id: string } }).data.id;
+    const task = taskOf(w.db, taskId);
+    if (task === undefined) throw new Error("任务行缺失");
+    // 页内通道没有 MCP 工具：指引改为附 rubric-opinion 块
+    const assembly = outboundAssemblyOfTask(w.db, task);
+    expect(assembly.contextDataMd).toContain("```rubric-opinion");
+    expect(assembly.contextDataMd).not.toContain("submit_rubric_opinion");
+
+    const agentRatings = [
+      { id: "r1", level: 3, evidence: "理由只有一条" },
+      { id: "r2", level: 3 },
+      { id: "r3", level: 4 },
+      { id: "r4", level: 3 },
+    ];
+    const replyMd = `观点清楚，论证还可以更充分。\n\n\`\`\`rubric-opinion\n${JSON.stringify(
+      { ratings: agentRatings, note: "整体达标。" },
+    )}\n\`\`\``;
+    const now = new Date();
+    const { generation } = beginInappDispatch(
+      w.db,
+      { studentId: task.studentId, taskId },
+      { now },
+    );
+    const plan = inappReplyPlanOf(w.db, task, replyMd, now);
+    expect(plan.onDelivered).toBeDefined();
+    completeInappDispatch(
+      w.db,
+      {
+        studentId: task.studentId,
+        taskId,
+        generation,
+        replyMd: plan.replyMd,
+        ...(plan.onDelivered !== undefined
+          ? { onDelivered: plan.onDelivered }
+          : {}),
+      },
+      { now },
+    );
+    const after = (await questionsOf(w))[Q.rubric]
+      ?.rubricReview as RubricReview;
+    expect(after.agent?.taskId).toBe(taskId);
+    expect(after.agent?.ratings).toEqual(agentRatings);
+    expect(after.pendingAgentTaskId).toBeNull();
+    const thread = await w.app.request(`/api/student/ai/tasks/${taskId}`, {
+      headers: { cookie: w.aCookie },
+    });
+    const threadText = JSON.stringify(await thread.json());
+    expect(threadText).toContain("量表意见");
+    expect(threadText).toContain("观点清楚");
+    expect(threadText).not.toContain("rubric-opinion");
+
+    // 没有块 / 块与量表对不上：原文照发、不落记录
+    const plainPlan = inappReplyPlanOf(w.db, task, "只有正文", now);
+    expect(plainPlan).toEqual({ replyMd: "只有正文" });
+    const badPlan = inappReplyPlanOf(
+      w.db,
+      task,
+      `\`\`\`rubric-opinion\n${JSON.stringify({
+        ratings: [{ id: "r9", level: 1 }],
+        note: "x",
+      })}\n\`\`\``,
+      now,
+    );
+    expect(badPlan.onDelivered).toBeUndefined();
   });
 });

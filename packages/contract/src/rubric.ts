@@ -173,3 +173,56 @@ export function rubricEffectiveOf(
 ): readonly RubricRating[] | null {
   return review.final?.ratings ?? review.self?.ratings ?? null;
 }
+
+/**
+ * 两份评定逐项相同（同一组 id、各项档位一致；evidence 不参与）。结果页据此判断
+ * 「保留我的 / 采纳 Agent」是否还有意义：裁定来源相同但档位已被新版自评 / 新
+ * 意见改变时仍可再裁一次（审查 #99-06）。
+ */
+export function rubricRatingsEqual(
+  a: readonly RubricRating[],
+  b: readonly RubricRating[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const levelsOfB = new Map(b.map((rating) => [rating.id, rating.level]));
+  return a.every((rating) => levelsOfB.get(rating.id) === rating.level);
+}
+
+// ---------- 页内通道的结构化意见块 ----------
+
+/**
+ * 页内（inapp）通道没有 MCP 工具可写回结构化意见：模型在回信末尾附一个
+ * ```rubric-opinion 围栏代码块（JSON：{ ratings: [{ id, level, evidence? }], note }），
+ * 服务端解析后落 Agent 记录，并把块替换成可读的量表意见段。MCP 通道仍走
+ * submit_rubric_opinion 工具，不用这个块。
+ */
+export const RUBRIC_OPINION_FENCE = "rubric-opinion";
+
+const RUBRIC_OPINION_BLOCK_RE =
+  /```rubric-opinion[^\n]*\n([\s\S]*?)\n[ \t]*```/g;
+
+export interface RubricOpinionBlock {
+  readonly opinion: RubricOpinionInput;
+  /** 去掉该代码块后的回信正文（两端空白已收） */
+  readonly rest: string;
+}
+
+/** 取回信 Markdown 里最后一个 rubric-opinion 块；没有 / JSON 不合法 / 不符契约 → null */
+export function rubricOpinionBlockOf(
+  markdown: string,
+): RubricOpinionBlock | null {
+  let last: RegExpExecArray | null = null;
+  for (const match of markdown.matchAll(RUBRIC_OPINION_BLOCK_RE)) last = match;
+  if (last === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last[1] ?? "");
+  } catch {
+    return null;
+  }
+  const result = rubricOpinionInputSchema.safeParse(parsed);
+  if (!result.success) return null;
+  const rest =
+    `${markdown.slice(0, last.index)}${markdown.slice(last.index + last[0].length)}`.trim();
+  return { opinion: result.data, rest };
+}

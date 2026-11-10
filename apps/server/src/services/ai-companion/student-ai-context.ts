@@ -1,5 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import type {
+  AiChannel,
   AiContextMissingNote,
   AiContextSnapshot,
   AiMessage,
@@ -583,6 +584,18 @@ function referenceSectionOf(bundle: OutboundContextSource): string {
   return "**参考内容**:缺少参考答案与解析,请独立核对推导;若学生推导与你的判断矛盾,请说明疑点与依据,不强迫学生迎合可能错误的标准答案。";
 }
 
+/**
+ * 判卷任务的写回指引(按通道):MCP 有工具可逐项写回;页内通道没有工具,
+ * 要求在回信末尾附一个 rubric-opinion 围栏块,服务端解析后落结构化记录并
+ * 替换成可读段(rubric-agent-record.inappReplyPlanOf)。
+ */
+function rubricWriteBackHintOf(channel: AiChannel | undefined): string {
+  if (channel === "inapp") {
+    return `先写给学习者看的意见正文,最后另起一段附一个 \`\`\`rubric-opinion 代码块,内容是 JSON:{"ratings":[{"id":"评价项 id","level":档位数字,"evidence":"一句依据(可省)"}],"note":"整体一句评语"},ratings 覆盖全部评价项、id 与上表一致,代码块之外不要再出现 JSON。`;
+  }
+  return "写回用 submit_rubric_opinion(不要只用 submit_ai_reply)。";
+}
+
 /** 组装出站消息:system(模板+硬约束+注入防御)→ 数据段 → 历史 → 本次诉求 */
 export function assembleOutboundMessages(input: {
   readonly bundle: OutboundContextSource;
@@ -595,6 +608,11 @@ export function assembleOutboundMessages(input: {
   readonly materials?: readonly AiOutboundMaterialRef[];
   /** LR-PR5 学习记录段(评审 #12249 必改①):拼 messages 前并入数据段尾部 */
   readonly recordSectionMd?: string;
+  /**
+   * 任务通道(模块 3 判卷任务的写回指引按通道给:mcp 用 submit_rubric_opinion
+   * 工具,inapp 在回信末尾附 rubric-opinion 块;审查 #99-02)。缺省按 mcp。
+   */
+  readonly channel?: AiChannel;
 }): OutboundAssembly {
   const {
     bundle,
@@ -603,6 +621,7 @@ export function assembleOutboundMessages(input: {
     history,
     materials,
     recordSectionMd,
+    channel,
   } = input;
   const { snapshot } = bundle;
 
@@ -640,7 +659,7 @@ export function assembleOutboundMessages(input: {
           )
           .join("\n")}${
           snapshot.purpose === "rubric_opinion"
-            ? "\n\n学习者请你按量表逐项给出独立意见:每项一个档位、一句依据(可引用作答原文);写回用 submit_rubric_opinion(不要只用 submit_ai_reply)。意见只是参考,最终由学习者裁定。"
+            ? `\n\n学习者请你按量表逐项给出独立意见:每项一个档位、一句依据(可引用作答原文);${rubricWriteBackHintOf(channel)}意见只是参考,最终由学习者裁定。`
             : ""
         }`
       : "";

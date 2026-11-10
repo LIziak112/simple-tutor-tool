@@ -5,6 +5,8 @@ import {
   rubricEffectiveOf,
   rubricFinalRequestSchema,
   rubricMaxOf,
+  rubricOpinionBlockOf,
+  rubricRatingsEqual,
   rubricRatingsProblem,
   rubricSchema,
   rubricSelfRequestSchema,
@@ -88,5 +90,70 @@ describe("量表契约（模块 3）", () => {
         final: { decision: "agent", ratings: agent, note: "", at },
       }),
     ).toEqual(agent);
+  });
+
+  it("rubricRatingsEqual：同一组 id 且各项档位一致才相等（evidence 不参与）", () => {
+    const a = [
+      { id: "r1", level: 4, evidence: "开头点题" },
+      { id: "r2", level: 2 },
+    ];
+    expect(rubricRatingsEqual(a, [...a].reverse())).toBe(true);
+    expect(
+      rubricRatingsEqual(a, [
+        { id: "r1", level: 4 },
+        { id: "r2", level: 3 },
+      ]),
+    ).toBe(false);
+    expect(rubricRatingsEqual(a, a.slice(0, 1))).toBe(false);
+    expect(
+      rubricRatingsEqual(a, [
+        { id: "r1", level: 4 },
+        { id: "r3", level: 2 },
+      ]),
+    ).toBe(false);
+  });
+
+  it("rubricOpinionBlockOf：取回信末尾的 rubric-opinion 块，返回意见与去块后的正文", () => {
+    const opinion = {
+      ratings: [
+        { id: "r1", level: 3, evidence: "理由只有一条" },
+        { id: "r2", level: 4 },
+        { id: "r3", level: 2 },
+      ],
+      note: "整体达标。",
+    };
+    const md = `先说结论：写得不错。\n\n\`\`\`rubric-opinion\n${JSON.stringify(
+      opinion,
+      null,
+      2,
+    )}\n\`\`\`\n`;
+    const block = rubricOpinionBlockOf(md);
+    expect(block?.opinion).toEqual(opinion);
+    expect(block?.rest).toBe("先说结论：写得不错。");
+    // 多个块取最后一个（模型可能先草拟后修正）
+    const twice = `${md}\n\`\`\`rubric-opinion\n${JSON.stringify({
+      ...opinion,
+      note: "修正后的评语",
+    })}\n\`\`\``;
+    expect(rubricOpinionBlockOf(twice)?.opinion.note).toBe("修正后的评语");
+    // 没有块 / JSON 坏 / 不符契约（档位越界、note 为空）→ null
+    expect(rubricOpinionBlockOf("只有正文")).toBeNull();
+    expect(rubricOpinionBlockOf("```rubric-opinion\n{oops\n```")).toBeNull();
+    expect(
+      rubricOpinionBlockOf(
+        `\`\`\`rubric-opinion\n${JSON.stringify({
+          ratings: [{ id: "r1", level: 9 }],
+          note: "x",
+        })}\n\`\`\``,
+      ),
+    ).toBeNull();
+    expect(
+      rubricOpinionBlockOf(
+        `\`\`\`rubric-opinion\n${JSON.stringify({
+          ratings: [{ id: "r1", level: 1 }],
+          note: "",
+        })}\n\`\`\``,
+      ),
+    ).toBeNull();
   });
 });
