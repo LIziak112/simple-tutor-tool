@@ -170,6 +170,85 @@ describe("题内活动用时：多端", () => {
     expect(result.unattributedSec).toBe(0);
   });
 
+  it("审查 #100-02 复核：截止锚在服务端受理前到达的最后一条 submit——失败交卷后刷新重做的真实作答不被截掉，交卷后过期标签页再点的 submit 不拖后截止", () => {
+    // 服务端接收时刻 = 客户端时刻（同步时钟）；受理交卷在 400 秒
+    const at = (sec: number) => new Date(T0 + sec * 1000).toISOString();
+    const withServerTs = (
+      event: ActivityEvent,
+      sec: number,
+    ): ActivityEvent => ({
+      ...event,
+      serverTs: at(sec),
+    });
+    const events: ActivityEvent[] = [
+      // 会话 a：做 q1，100 秒点交卷 → 409 刷新重交（submit 事件已发出）
+      ev("question_focus", 0, "q1", "a"),
+      ev("answer_change", 10, "q1", "a"),
+      ev("question_blur", 100, "q1", "a"),
+      withServerTs(ev("submit", 100, null, "a"), 100),
+      // 刷新后的会话 b：接着做 q2，400 秒真正交卷
+      ev("question_focus", 200, "q2", "b"),
+      ev("answer_change", 210, "q2", "b"),
+      ev("question_blur", 399, "q2", "b"),
+      withServerTs(ev("submit", 399, null, "b"), 399),
+      // 过期标签页 c：交卷后还开着，500 秒看 q3 并又点了一次交卷
+      ev("question_focus", 420, "q3", "c"),
+      ev("answer_change", 430, "q3", "c"),
+      withServerTs(ev("submit", 500, null, "c"), 500),
+    ];
+    const anchored = computeAttemptActivity(events, { submittedAt: at(400) });
+    expect(anchored.byQuestion.q1?.activeSec).toBe(100);
+    expect(anchored.byQuestion.q2?.activeSec).toBe(199);
+    expect(anchored.byQuestion.q3).toBeUndefined();
+    // 不知道受理时刻：退回首条 submit（保守）
+    const blind = computeAttemptActivity(events);
+    expect(blind.byQuestion.q1?.activeSec).toBe(100);
+    expect(blind.byQuestion.q2).toBeUndefined();
+    // 没有客户端 submit 事件（逐题提交协议 / 旧客户端）：按服务端接收时刻截止
+    const noSubmit = computeAttemptActivity(
+      [
+        withServerTs(ev("question_focus", 0, "q1", "a"), 0),
+        withServerTs(ev("answer_change", 10, "q1", "a"), 10),
+        withServerTs(ev("question_blur", 50, "q1", "a"), 50),
+        withServerTs(ev("question_focus", 60, "q2", "a"), 60),
+        withServerTs(ev("question_blur", 90, "q2", "a"), 90),
+        // 受理之后才到达服务端的事件不计
+        withServerTs(ev("question_focus", 100, "q3", "a"), 200),
+        withServerTs(ev("answer_change", 110, "q3", "a"), 200),
+      ],
+      { submittedAt: at(95) },
+    );
+    expect(noSubmit.byQuestion.q1?.activeSec).toBe(50);
+    expect(noSubmit.byQuestion.q2?.observedSec).toBe(30);
+    expect(noSubmit.byQuestion.q3).toBeUndefined();
+  });
+
+  it("审查 #100-03 复核：服务端直记的 hint_open 与 question_submit 同法归入会话，单设备不再出现「多端同开」与幻影时段", () => {
+    const result = computeAttemptActivity([
+      ev("question_focus", 0, "q1", "a"),
+      ev("question_focus", 60, "q2", "a"),
+      ev("question_blur", 120, "q2", "a"),
+      // 服务端为 q1 / q2 记的 hint_open：服务器时钟略晚、无 viewId
+      ev("hint_open", 30.5, "q1", null),
+      ev("hint_open", 90.5, "q2", null),
+    ]);
+    expect(result.sessions).toBe(1);
+    expect(result.concurrentSessionsMax).toBe(1);
+    expect(result.unattributedSec).toBe(0);
+    expect(result.byQuestion.q1).toEqual({
+      activeSec: 60,
+      observedSec: 0,
+      actions: 1,
+      viewed: true,
+    });
+    expect(result.byQuestion.q2).toEqual({
+      activeSec: 60,
+      observedSec: 0,
+      actions: 1,
+      viewed: true,
+    });
+  });
+
   it("审查 #100-03：服务端记录的 question_submit（无 viewId）并入最近聚焦该题的会话，标记该次聚焦有动作而不是另开一段", () => {
     const result = computeAttemptActivity([
       // 端 a：0–60 做 q1（只看），60–120 做 q2

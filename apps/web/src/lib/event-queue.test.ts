@@ -567,6 +567,97 @@ describe("T4.0a 持久键实例隔离（IDB 键冲突修复，§5.0-A1）", () =
     expect(store.keyCount()).toBe(1);
   });
 
+  it("审查 #100-01：页面隐藏走 beacon 时同样按来源会话分组、各带各的 viewId", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    store.setRaw("events:attempt:att-1:prev", {
+      events: [ev("answer_change", { questionId: "q1" })],
+      viewId: "view-prev",
+    });
+    const beacon = vi.fn(
+      (_events: readonly LearningEvent[], _viewId: string | null) => true,
+    );
+    const q = makeQueue({ send: vi.fn(), beacon });
+    q.track(ev("question_focus", { questionId: "q2" }));
+    setVisibility("hidden");
+    await q.flush();
+    const byViewId = new Map(
+      beacon.mock.calls.map((call) => [
+        call[1] as string | null,
+        (call[0] as LearningEvent[]).map((e) => e.type),
+      ]),
+    );
+    expect(byViewId.get("view-prev")).toEqual(["answer_change"]);
+    const ownEntry = [...byViewId.entries()].find(
+      ([viewId]) => viewId !== "view-prev",
+    );
+    expect(typeof ownEntry?.[0]).toBe("string");
+    expect(ownEntry?.[1]).toContain("question_focus");
+    expect(ownEntry?.[1]).not.toContain("answer_change");
+    expect(store.dumpAll()).toEqual([]);
+  });
+
+  it("审查 #100-01：别的会话那组写回失败时不进本实例内存队列——仓里原件仍在、下一轮按原 viewId 重发，不会双发或冒用", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    store.setRaw("events:attempt:att-1:prev", {
+      events: [ev("answer_change", { questionId: "q1" })],
+      viewId: "view-prev",
+    });
+    let failPrev = true;
+    const send = vi.fn(
+      async (_events: readonly LearningEvent[], viewId: string | null) => {
+        if (viewId === "view-prev" && failPrev) throw new Error("5xx");
+      },
+    );
+    // 仓只读不可写：写回失败
+    const originalSet = store.set;
+    store.set = async () => {
+      throw new Error("quota");
+    };
+    const q = makeQueue({ send });
+    q.track(ev("question_focus", { questionId: "q2" }));
+    await q.flush();
+    // 别的会话的原件还在仓里，没有被搬进内存
+    expect(store.keyCount()).toBe(1);
+    expect(store.dumpAll().map((e) => e.type)).toEqual(["answer_change"]);
+    // 下一轮恢复：只按原 viewId 再发一次，自己的 viewId 下没有它
+    failPrev = false;
+    store.set = originalSet;
+    send.mockClear();
+    await q.flush();
+    const prevCalls = send.mock.calls.filter((call) => call[1] === "view-prev");
+    expect(prevCalls.length).toBe(1);
+    expect(
+      send.mock.calls.some(
+        (call) =>
+          call[1] !== "view-prev" &&
+          (call[0] as LearningEvent[]).some((e) => e.type === "answer_change"),
+      ),
+    ).toBe(false);
+    expect(store.dumpAll()).toEqual([]);
+  });
+
+  it("审查 #100-01：离线时别的会话的键原样保留，既不并入自己的键也不删除", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    mockNavigator(false);
+    store.setRaw("events:attempt:att-1:prev", {
+      events: [ev("answer_change", { questionId: "q1" })],
+      viewId: "view-prev",
+    });
+    const q = makeQueue({ send: vi.fn() });
+    q.track(ev("question_focus", { questionId: "q2" }));
+    await q.flush();
+    expect(store.keyCount()).toBe(2);
+    const prev = (await store.get("events:attempt:att-1:prev")) as {
+      events: LearningEvent[];
+      viewId?: string;
+    };
+    expect(prev.viewId).toBe("view-prev");
+    expect(prev.events.map((e) => e.type)).toEqual(["answer_change"]);
+  });
+
   it("旧版无后缀键（events:lecture）的遗留积压被收编发送", async () => {
     const store = memoryStore();
     installEventStore(store);

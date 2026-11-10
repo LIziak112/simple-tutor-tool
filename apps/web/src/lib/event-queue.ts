@@ -40,9 +40,11 @@ import { ApiError, postAttemptEventsApi, postLectureEventsApi } from "./api";
  * - **持久键按队列实例隔离（T4.0a §5.0-A1，修 IDB 键跨实例冲突 bug）**：
  *   持久键 = scope 前缀 + 每实例随机后缀（旧版是全局固定键，两标签页同时
  *   离线会互相覆盖丢事件）；flush 时**遍历前缀下全部键**（其他实例与上次
- *   页面被杀的遗留积压，含旧版无后缀键）合并发送、成功后逐键删除。重复
- *   投递可能出现在「store 写失败后恢复」的极端路径，服务端聚合按重复容错
- *   （§5.0-D17），不为去重在前端做防重锁；
+ *   页面被杀的遗留积压，含旧版无后缀键），**按来源会话分组**各自带各自的
+ *   viewId 发送（审查 #100-01：别的会话的积压不冒用本页 viewId；旧版无
+ *   viewId 的条目不带 viewId 发），成功后逐键删除、失败部分写回该组的键。
+ *   重复投递可能出现在「store 写失败后恢复」的极端路径，服务端聚合按重复
+ *   容错（§5.0-D17），不为去重在前端做防重锁；
  * - 页面隐藏（visibilitychange=hidden / pagehide）时优先 sendBeacon
  *   （fire-and-forget，浏览器保证在页面卸载后发出）；
  * - **终态停止（T2A.6，D7）**：上报收到 403/404（如课程练习移出成员后的
@@ -578,7 +580,8 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         const mine = groups.find((group) => group.viewId === viewId);
         if (mine !== undefined && !(await persist(key, mine.events, viewId))) {
-          queue = own;
+          // 写仓期间新 track 的事件已在 queue 里，合并而不是覆盖
+          queue = [...own, ...queue];
         }
         return;
       }
@@ -598,16 +601,21 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
         }
         // 失败部分写回这组的键（成功部分不回写）；自己这组写自己的键，
         // 别的会话写它原来的首键、其余键删除
-        const targetKey =
-          group.viewId === viewId ? key : (group.keys[0] ?? key);
+        const isOwn = group.viewId === viewId;
+        const firstKey = group.keys[0];
+        // 别的会话一定来自仓里的条目（keys 非空）；?? key 只是收窄类型
+        const targetKey = isOwn ? key : (firstKey ?? key);
         const persistedOk = await persist(
           targetKey,
           result.failed,
           group.viewId,
         );
         if (!persistedOk) {
-          // 写不进仓：留在内存队列（随本实例下一轮按自己的会话重发）
-          queue = [...result.failed, ...queue];
+          // 写不进仓：自己的事件留在内存队列（随本实例下一轮重发）；别的会话
+          // 的键没删、仓里原件仍完整，不进内存——否则下一轮仓里按原 viewId、
+          // 内存里按本会话各发一次，服务端去重键含 viewId 合不掉（会双计并
+          // 冒用本会话）
+          if (isOwn) queue = [...result.failed, ...queue];
           continue;
         }
         await deleteKeys(group.keys.filter((k) => k !== targetKey));
