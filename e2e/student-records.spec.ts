@@ -116,6 +116,9 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", {
       });
       await studentCard.getByRole("link", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/assignments/**");
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
 
       // 第 1 题判断：答「错」（可自动判分 → 答错，进错题本）
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');

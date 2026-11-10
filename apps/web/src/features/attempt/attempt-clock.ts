@@ -3,13 +3,18 @@ import {
   type AttemptTimingPhase,
   attemptTimingPhaseOf,
 } from "@tutor/contract";
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 /**
  * 限时测试的本机时钟（模块 2）：以服务端下发的 timing 为准——
- * - offset = serverNow - 本机 Date.now()（响应到达那一刻算一次，含网络时延，
- *   秒级足够）；剩余时间 = deadlineAt - (Date.now() + offset)，不信任本机时钟；
- * - 每秒一拍，阶段按契约纯函数 attemptTimingPhaseOf 判定（与服务端同口径）；
+ * - 在详情响应到达时记下与 serverNow 对应的浏览器单调时刻，随查询缓存保存；
+ * - 倒计时每秒更新，答题会话只订阅阶段边界；
  * - 非限时卷（timing null / undefined）返回 null，调用方零变化。
  */
 export interface AttemptClock {
@@ -41,21 +46,83 @@ export function clockOf(
 
 export function useAttemptClock(
   timing: AttemptTiming | null | undefined,
+  clockAnchor?: number,
 ): AttemptClock | null {
-  // 时钟偏移：timing 对象每次 refetch 都是新引用 → 每次响应到达重算一次
-  const offsetMs = useMemo(
-    () => (timing ? Date.parse(timing.serverNow) - Date.now() : 0),
-    [timing],
-  );
-  const [now, setNow] = useState(() => Date.now());
-  const active = timing !== null && timing !== undefined;
+  const readClock = useClockReader(timing, clockAnchor);
+  const [, setTick] = useState(0);
+  const phase = readClock()?.phase;
   useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [active]);
-  return timing ? clockOf(timing, offsetMs, now) : null;
+    if (phase === undefined || phase === "locked") return;
+    const tick = () => setTick((previous) => previous + 1);
+    const id = window.setInterval(tick, 1000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [phase]);
+  return readClock();
+}
+
+function useClockReader(
+  timing: AttemptTiming | null | undefined,
+  clockAnchor?: number,
+) {
+  const offset = useMemo(
+    () =>
+      timing
+        ? Date.parse(timing.serverNow) - (clockAnchor ?? performance.now())
+        : 0,
+    [timing, clockAnchor],
+  );
+  return useCallback(
+    () => (timing ? clockOf(timing, offset, performance.now()) : null),
+    [timing, offset],
+  );
+}
+
+export function useAttemptPhase(
+  timing: AttemptTiming | null | undefined,
+  clockAnchor?: number,
+): AttemptTimingPhase | null {
+  const readClock = useClockReader(timing, clockAnchor);
+  const readPhase = useCallback(() => readClock()?.phase ?? null, [readClock]);
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      if (!timing) return () => {};
+      let timer: number | undefined;
+      const schedule = () => {
+        window.clearTimeout(timer);
+        const clock = readClock();
+        if (clock === null || clock.phase === "locked") return;
+        timer = window.setTimeout(
+          () => {
+            notify();
+            schedule();
+          },
+          Math.ceil(
+            clock.phase === "running"
+              ? clock.remainingMs
+              : clock.graceRemainingMs,
+          ),
+        );
+      };
+      const resume = () => {
+        notify();
+        schedule();
+      };
+      schedule();
+      document.addEventListener("visibilitychange", resume);
+      window.addEventListener("online", resume);
+      return () => {
+        window.clearTimeout(timer);
+        document.removeEventListener("visibilitychange", resume);
+        window.removeEventListener("online", resume);
+      };
+    },
+    [timing, readClock],
+  );
+  return useSyncExternalStore(subscribe, readPhase);
 }
 
 /** mm:ss（≥ 1 小时显示 h:mm:ss） */

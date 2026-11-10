@@ -118,6 +118,8 @@ export interface HandwrittenControlsProps {
    * （solve/apply/find-error 与既有测试不受影响）。
    */
   showFinalAnswer?: boolean;
+  readOnly?: boolean;
+  suspendUpload?: boolean;
   /** 结构化题目参考内容（供全屏参考） */
   scratchContext?: import("react").ReactNode;
   /** 全屏参考展开标题（缺省「题干」） */
@@ -140,6 +142,8 @@ export function HandwrittenControls({
   showExpandTrigger = true,
   ariaPrefix = "本题",
   showFinalAnswer = true,
+  readOnly = false,
+  suspendUpload = false,
   scratchContext,
   contextLabel,
 }: HandwrittenControlsProps) {
@@ -204,6 +208,9 @@ export function HandwrittenControls({
       throw new Error("手写作答本机保存失败，请保持页面打开并重试");
   }, [engineGetter, attemptId]);
   const paperAlive = useRetainedPaper(expanded || fullscreen, finish);
+  useEffect(() => {
+    if (readOnly) void finish().catch(() => {});
+  }, [readOnly, finish]);
   useEffect(
     () => coordinator?.register(questionId, finish, "answerInk"),
     [coordinator?.register, questionId, finish],
@@ -214,6 +221,7 @@ export function HandwrittenControls({
     saveFailed,
     clearFailure,
   } = useInkUpload(attemptId, questionId, {
+    suspended: suspendUpload,
     onSynced: (doc) => {
       baseRevision.current = doc.serverRevision ?? baseRevision.current + 1;
       void draftStore.markInkSynced(attemptId, questionId, doc);
@@ -496,7 +504,7 @@ export function HandwrittenControls({
   // expanded 状态无渲染消费者，effect 内的 setExpanded 无 UI 影响。
   if (!inkEnabled) {
     return (
-      <div className="flex flex-col gap-3">
+      <div className={readOnly ? "hidden" : "flex flex-col gap-3"}>
         {recoveryStatus}
         {saveFailed && (
           <p className="text-xs text-destructive" role="status">
@@ -534,7 +542,10 @@ export function HandwrittenControls({
   }
 
   return (
-    <div data-slot="handwritten-controls" className="flex flex-col gap-3">
+    <div
+      data-slot="handwritten-controls"
+      className={readOnly ? "hidden" : "flex flex-col gap-3"}
+    >
       {/* 操作行：展开/收起 + 全屏 + 上传状态提示 */}
       <div className="flex flex-wrap items-center gap-2">
         {showExpandTrigger && (
@@ -585,7 +596,7 @@ export function HandwrittenControls({
       {paperAlive && (
         <div hidden={!expanded && !fullscreen}>
           <PaperPresentation
-            fullscreen={fullscreen}
+            fullscreen={fullscreen && !readOnly}
             label="全屏作答"
             heading={`${ariaPrefix}手写作答`}
             contextLabel={contextLabel ?? "题干"}
@@ -616,7 +627,10 @@ export function HandwrittenControls({
                   onDocChange={handleDocChange}
                   engineRef={pageEngineRef}
                   inputEnabled={
-                    (expanded || fullscreen) && !restoreFailed && !conflict
+                    !readOnly &&
+                    (expanded || fullscreen) &&
+                    !restoreFailed &&
+                    !conflict
                   }
                   clearLabel="清空作答纸"
                   onClearRequest={() => setClearPaperOpen(true)}
@@ -638,7 +652,9 @@ export function HandwrittenControls({
                       label="历史手写作答区"
                       onDocChange={handleDocChange}
                       engineRef={pageEngineRef}
-                      inputEnabled={fullscreen && !restoreFailed && !conflict}
+                      inputEnabled={
+                        !readOnly && fullscreen && !restoreFailed && !conflict
+                      }
                       initialHeight={600}
                     />
                   </div>
@@ -690,7 +706,10 @@ export function HandwrittenControls({
         />
       )}
 
-      <Dialog open={clearPaperOpen} onOpenChange={setClearPaperOpen}>
+      <Dialog
+        open={!readOnly && clearPaperOpen}
+        onOpenChange={setClearPaperOpen}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>清空作答纸？</DialogTitle>
@@ -721,7 +740,7 @@ export function HandwrittenControls({
       </Dialog>
 
       {/* 引擎切换确认：全屏 → 清空回页内 */}
-      <Dialog open={confirmReset} onOpenChange={setConfirmReset}>
+      <Dialog open={!readOnly && confirmReset} onOpenChange={setConfirmReset}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>清空笔迹，改用页内手写？</DialogTitle>

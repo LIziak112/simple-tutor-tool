@@ -61,6 +61,7 @@ export interface InkUploadController {
 
 /** 上传结果回调（HandwrittenControls 注入，联动草稿仓与顶栏状态） */
 export interface InkUploadHooks {
+  suspended?: boolean;
   /** 一次上传成功（doc=本次上传的文档） */
   onSynced?: (doc: InkDoc) => void;
   /** 一次上传失败（网络/服务端错误） */
@@ -134,6 +135,7 @@ export function useInkUpload(
       if (deniedRef.current || blockedRef.current) return false;
       const doc = pendingRef.current;
       if (doc === null) return true;
+      if (hooksRef.current?.suspended) return false;
       uploadingRef.current = true;
       try {
         // 固定正文与派生图整体缓存，响应丢失重试不能更换图片或上传标识。
@@ -151,7 +153,7 @@ export function useInkUpload(
           };
           mutations.current.set(doc, mutation);
         }
-        if (stale()) return false;
+        if (stale() || hooksRef.current?.suspended) return false;
         const receipt = await putAttemptInkApi(
           attemptIdRef.current,
           questionIdRef.current,

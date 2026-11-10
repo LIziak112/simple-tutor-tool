@@ -366,6 +366,8 @@ export function AttemptQuestionCard({
   footer,
   aiTrigger,
   readOnly = false,
+  inkSyncWhileReadOnly = false,
+  suspendInkUpload = false,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -408,6 +410,8 @@ export function AttemptQuestionCard({
   aiTrigger?: ReactNode;
   /** 已提交原位只读（M3-D2 §11-2）：同宿主同题干位置，隐藏编辑入口、输入只读 */
   readOnly?: boolean;
+  inkSyncWhileReadOnly?: boolean;
+  suspendInkUpload?: boolean;
 }) {
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
@@ -546,7 +550,7 @@ export function AttemptQuestionCard({
 
       {HANDWRITTEN_TYPES.has(question.type) &&
         attemptId !== undefined &&
-        !readOnly && (
+        (!readOnly || inkSyncWhileReadOnly) && (
           <HandwrittenControls
             ariaPrefix={`第 ${index + 1} 题`}
             attemptId={attemptId}
@@ -564,6 +568,8 @@ export function AttemptQuestionCard({
             expanded={noteOpen}
             onExpandedChange={setNoteOpen}
             showExpandTrigger={false}
+            readOnly={readOnly}
+            suspendUpload={suspendInkUpload}
             // QM-09（D14）：单行最终答案输入是 final kind 专属——response 的
             // 手写纸面与正文并存，不挂最终答案行（中央绑定派生，不写字面量）
             showFinalAnswer={

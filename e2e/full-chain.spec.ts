@@ -460,6 +460,9 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(studentCard.getByText("共 3 题")).toBeVisible();
       await studentCard.getByRole("link", { name: "开始练习" }).click();
       await assignPage.waitForURL("**/s/assignments/**");
+      await assignPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
       await expect(
         assignPage.locator('article[aria-label="第 3 题"]'),
       ).toBeVisible();

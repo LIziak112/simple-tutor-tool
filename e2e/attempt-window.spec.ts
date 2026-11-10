@@ -94,6 +94,9 @@ async function openAttempt(
   }
   await page.goto(attemptUrl);
   const first = page.locator('article[aria-label="第 1 题"]');
+  const start = page.getByRole("button", { name: "开始作业", exact: true });
+  await expect(first.or(start)).toBeVisible({ timeout: 30_000 });
+  if (await start.isVisible()) await start.click();
   await expect(first).toBeVisible({ timeout: 30_000 });
   return first;
 }

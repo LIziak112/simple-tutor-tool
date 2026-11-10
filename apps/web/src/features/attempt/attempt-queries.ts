@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
+  AttemptDetailData,
   AttemptSubmitRevision,
   CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
@@ -106,6 +107,8 @@ export function isAttemptUnavailable(error: unknown): boolean {
   );
 }
 
+export type TimedAttemptDetail = AttemptDetailData & { clockAnchor?: number };
+
 export function useAttemptDetail(attemptId: string | undefined) {
   const queryClient = useQueryClient();
   const paused = useSyncExternalStore(
@@ -121,16 +124,31 @@ export function useAttemptDetail(attemptId: string | undefined) {
   return useQuery({
     queryKey: studentAttemptKey(attemptId ?? "pending"),
     queryFn: async ({ signal }) => {
-      const previous = queryClient.getQueryData<
-        Awaited<ReturnType<typeof fetchAttemptApi>>
-      >(studentAttemptKey(attemptId ?? "pending"));
+      const previous = queryClient.getQueryData<TimedAttemptDetail>(
+        studentAttemptKey(attemptId ?? "pending"),
+      );
       // 暂停期间不出站；已在途的详情也不能覆盖末题阅读现场。
       if (previous && detailPollingPaused.has(attemptId ?? "")) return previous;
       try {
         const next = await fetchAttemptApi(attemptId ?? "", signal);
-        return previous && detailPollingPaused.has(attemptId ?? "")
-          ? previous
-          : next;
+        if (previous && detailPollingPaused.has(attemptId ?? ""))
+          return previous;
+        if (!("timing" in next) || !next.timing) return next;
+        const receivedAt = performance.now();
+        const priorTiming =
+          previous && "timing" in previous ? previous.timing : null;
+        // 两次响应的网络延迟不同时，继续使用较快的估计，避免已经到时的卷重新解锁。
+        const clockAnchor =
+          previous?.clockAnchor !== undefined &&
+          priorTiming?.deadlineAt === next.timing.deadlineAt
+            ? Math.min(
+                receivedAt,
+                previous.clockAnchor +
+                  Date.parse(next.timing.serverNow) -
+                  Date.parse(priorTiming.serverNow),
+              )
+            : receivedAt;
+        return { ...next, clockAnchor };
       } catch (error) {
         if (
           previous &&
@@ -187,9 +205,15 @@ export const workflowStartOptions = () => {
 
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
     // mutationFn 执行时才读偏好（点击时刻），不在模块顶层求值
-    mutationFn: () => startAttemptApi(assignmentId, workflowStartOptions()),
+    mutationFn: (timing?: { timeLimitMinutes?: number }) =>
+      startAttemptApi(assignmentId, { ...workflowStartOptions(), ...timing }),
+    onSuccess: (_attempt, timing) => {
+      if (timing !== undefined)
+        void queryClient.invalidateQueries({ queryKey: studentAssignmentsKey });
+    },
   });
 }
 

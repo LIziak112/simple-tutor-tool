@@ -1,12 +1,19 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
+import { Button } from "@/components/ui/button";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import {
   useAttemptDetail,
   useStartAttempt,
 } from "@/features/attempt/attempt-queries";
+import {
+  initialTimeLimitOf,
+  TimeLimitPicker,
+  timeLimitStartOption,
+} from "@/features/attempt/TimeLimitPicker";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
+import { useStudentAssignments } from "@/features/student/student-queries";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -16,8 +23,7 @@ import { ApiError } from "@/lib/api";
 
 /**
  * /s/assignments/:id 作业答题入口（T2.6；T2A.6 通用化改造）：
- * 1. 进入即 POST attempt（幂等创建/取回——「一个作业一人一份进行中」只对
- *    assignment 来源生效；已交卷返回已交的那份，直接进结果视图）；
+ * 1. 已开始的作业直接取回进行中卷或结果，首次进入先选择限时设置再建卷；
  * 2. 拿到 attemptId 后渲染通用答题会话 AttemptSession（与课程练习
  *    /s/attempts/:attemptId 共用同一组件，D9）；
  * 3. 三态齐全（加载骨架/错误重试/空试卷提示在 AttemptSession 内）。
@@ -25,6 +31,12 @@ import { ApiError } from "@/lib/api";
 
 export default function StudentAssignmentAttemptPage() {
   const { id: assignmentId = "" } = useParams();
+  return (
+    <AssignmentAttemptEntry key={assignmentId} assignmentId={assignmentId} />
+  );
+}
+
+function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const returnTo = assignmentsReturnTarget(params.get("returnTo"));
@@ -32,12 +44,26 @@ export default function StudentAssignmentAttemptPage() {
   // 上下文时改写返回目标，保留打开队列时的来源位置
   const queueTarget = aiQueueReturnTarget(params.get("aiFrom"));
 
-  // 第 1 步：幂等创建/取回 attempt（进入页面触发一次；重试走错误态按钮）
+  const assignments = useStudentAssignments();
+  const assignment = assignments.data?.assignments.find(
+    (item) => item.id === assignmentId,
+  );
+  const needsStart = assignment?.status === "not_started";
+  const [timeLimit, setTimeLimit] = useState(() =>
+    initialTimeLimitOf(undefined),
+  );
+  const timing = timeLimitStartOption(timeLimit);
+  const back = () => void navigate(returnTo ?? queueTarget ?? "/s/home");
   const startAttempt = useStartAttempt(assignmentId);
   const startMutate = startAttempt.mutate;
+  const startIdle = startAttempt.isIdle;
+  const attemptedResume = useRef(false);
   useEffect(() => {
-    if (assignmentId !== "") startMutate();
-  }, [assignmentId, startMutate]);
+    if (!assignment || needsStart || !startIdle || attemptedResume.current)
+      return;
+    attemptedResume.current = true;
+    startMutate();
+  }, [assignment, needsStart, startIdle, startMutate]);
 
   // 第 2 步：详情（draft→草稿视图 / 已交→结果视图）
   const attemptId = startAttempt.data?.id;
@@ -52,10 +78,73 @@ export default function StudentAssignmentAttemptPage() {
       />
     );
   }
-  if (startAttempt.isPending) {
+  if (
+    !startAttempt.data &&
+    assignments.fetchStatus === "paused" &&
+    !assignments.data
+  ) {
+    return (
+      <StudentErrorPanel
+        title="打不开这份作业"
+        message="当前网络不可用，请连接网络后重试。"
+        onRetry={() => void assignments.refetch()}
+      />
+    );
+  }
+  if (!startAttempt.data && assignments.isPending) {
     return <StudentListSkeleton label="正在打开作业" />;
   }
-  if (startAttempt.isError || startAttempt.data === undefined) {
+  if (!startAttempt.data && !assignment) {
+    return (
+      <StudentErrorPanel
+        title="打不开这份作业"
+        message={
+          assignments.error instanceof Error
+            ? assignments.error.message
+            : "作业不存在或你已无权作答。"
+        }
+        onRetry={() => void assignments.refetch()}
+      />
+    );
+  }
+  if (assignment && needsStart && !startAttempt.data) {
+    return (
+      <section
+        aria-label="作业开卷设置"
+        className="flex max-w-xl flex-col gap-4"
+      >
+        <h1 className="text-xl font-semibold">{assignment.title}</h1>
+        <TimeLimitPicker
+          value={timeLimit}
+          onChange={setTimeLimit}
+          recommended={undefined}
+        />
+        {startAttempt.error instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {startAttempt.error.message}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3">
+          <Button className="min-h-11" variant="outline" onClick={back}>
+            返回
+          </Button>
+          <Button
+            className="min-h-11"
+            disabled={timing === null || startAttempt.isPending}
+            onClick={() => {
+              if (timing !== null) startMutate(timing);
+            }}
+          >
+            {startAttempt.isPending ? "正在开始…" : "开始作业"}
+          </Button>
+        </div>
+      </section>
+    );
+  }
+  if (startAttempt.isIdle || startAttempt.isPending) {
+    return <StudentListSkeleton label="正在打开作业" />;
+  }
+  if (startAttempt.isError) {
     return (
       <StudentErrorPanel
         title="打不开这份作业"
@@ -108,7 +197,7 @@ export default function StudentAssignmentAttemptPage() {
       )}
       <AttemptSession
         data={detailQuery.data}
-        onExit={() => void navigate(returnTo ?? queueTarget ?? "/s/home")}
+        onExit={back}
         exitLabel={
           returnTo ? "返回我的作业" : queueTarget ? "返回原页面" : undefined
         }

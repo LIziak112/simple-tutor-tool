@@ -1,13 +1,35 @@
+import type { AttemptTiming } from "@tutor/contract";
 import { Hourglass, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   type AttemptClock,
   formatRemaining,
   formatTimeLimit,
+  useAttemptClock,
 } from "./attempt-clock";
 
 /** 最后 5 分钟醒目提示 */
 const WARN_MS = 5 * 60 * 1000;
+
+export function TimedAttemptControls({
+  timing,
+  clockAnchor,
+  ...banner
+}: Omit<Parameters<typeof AttemptTimeUpBanner>[0], "clock"> & {
+  timing: AttemptTiming | null | undefined;
+  clockAnchor: number | undefined;
+}) {
+  const clock = useAttemptClock(timing, clockAnchor);
+  if (clock === null) return null;
+  return (
+    <>
+      <AttemptCountdown clock={clock} />
+      {clock.phase !== "running" && (
+        <AttemptTimeUpBanner clock={clock} {...banner} />
+      )}
+    </>
+  );
+}
 
 /**
  * 答题页头部下方的倒计时条（限时卷专用；非限时卷不渲染）：吸顶跟随头部，右对齐
@@ -87,7 +109,7 @@ export function AttemptTimeUpBanner({
           </p>
           <p className="text-muted-foreground">
             {locked
-              ? "限时已到且 10 分钟宽限已过，不能再修改答案；未同步的本机稿不再纳入，按服务端已有答案判分。"
+              ? "宽限已过。确认后按服务端已保存的作答判分，未同步的本机稿会保留。"
               : `限时已到，不能再修改答案。${draftState}；宽限还剩 ${formatRemaining(clock.graceRemainingMs)}，请确认交卷。`}
           </p>
         </div>

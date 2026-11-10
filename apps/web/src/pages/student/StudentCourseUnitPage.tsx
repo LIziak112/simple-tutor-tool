@@ -98,6 +98,7 @@ function RedoConfirmDialog({
   nextAttemptNo,
   restarting,
   busy,
+  invalidTimeLimit,
   onConfirm,
   onCancel,
   onClosed,
@@ -107,6 +108,7 @@ function RedoConfirmDialog({
   nextAttemptNo: number;
   restarting: boolean;
   busy: boolean;
+  invalidTimeLimit: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   onClosed: () => void;
@@ -164,7 +166,7 @@ function RedoConfirmDialog({
           <Button
             className="min-h-11"
             variant={restarting ? "destructive" : "default"}
-            disabled={busy}
+            disabled={busy || invalidTimeLimit}
             onClick={onConfirm}
           >
             {busy ? "正在开始…" : restarting ? "确认清空并重开" : "开始新一次"}
@@ -314,13 +316,13 @@ function UnitLandingView({
     void navigate(`/s/attempts/${attemptId}`);
   };
 
+  const timeLimitOption = timeLimitStartOption(timeLimit);
   const onStart = (restartAttemptId?: string) => {
     // 新建卷（首次 / 再做 / 清空重做）才带限时；继续作答取回原卷，服务端忽略
     const timed =
-      hasDraft && restartAttemptId === undefined
-        ? {}
-        : timeLimitStartOption(timeLimit);
-    const timedOn = "timeLimitMinutes" in timed;
+      hasDraft && restartAttemptId === undefined ? {} : timeLimitOption;
+    if (timed === null) return;
+    const timedOn = timed.timeLimitMinutes !== undefined;
     startAttempt.mutate(
       rhythmTouched || restartAttemptId !== undefined || timedOn
         ? {
@@ -520,7 +522,7 @@ function UnitLandingView({
           {summary === null ? (
             <Button
               className="min-h-12 px-8 text-base"
-              disabled={busy}
+              disabled={busy || timeLimitOption === null}
               onClick={() => onStart()}
               aria-label={`开始练习 ${landing.title}`}
             >
@@ -543,7 +545,7 @@ function UnitLandingView({
                   variant="outline"
                   className="min-h-12 px-4 text-destructive"
                   ref={redoTriggerRef}
-                  disabled={busy}
+                  disabled={busy || timeLimitOption === null}
                   onClick={() => {
                     startAttempt.reset();
                     setRestartTarget(draft.attemptId);
@@ -559,6 +561,7 @@ function UnitLandingView({
             <Button
               className="min-h-12 px-8 text-base"
               ref={redoTriggerRef}
+              disabled={busy || timeLimitOption === null}
               onClick={() => {
                 startAttempt.reset();
                 setRestartTarget(null);
@@ -629,6 +632,7 @@ function UnitLandingView({
         nextAttemptNo={nextAttemptNo}
         restarting={restartTarget !== null}
         busy={busy}
+        invalidTimeLimit={timeLimitOption === null}
         onClosed={() => redoTriggerRef.current?.focus()}
         error={
           startAttempt.isError

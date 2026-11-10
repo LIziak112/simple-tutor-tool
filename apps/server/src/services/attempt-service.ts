@@ -2221,14 +2221,9 @@ export function saveDraftAnswer(
         "这份练习已交卷，不能再修改答案",
       );
     }
-    // 模块 2：限时卷宽限已过 → 409 ATTEMPT_TIME_UP（非限时卷零变化）
-    assertAttemptNotTimedOut(attempt);
     requireAttemptQuestion(db, attempt, questionId);
     // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改（非 lesson 行零变化）
     assertRowNotSubmitted(db, attemptId, questionId);
-    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
-    // 永不比对参考答案；旧七型行为零变化
-    assertNewKindAnswerShape(db, attemptId, questionId, answer);
 
     // T6R.3：requireAttemptQuestion 已保证冻结行存在——无插入分支，upsert 收敛为原行更新
     const existing = tx
@@ -2265,11 +2260,6 @@ export function saveDraftAnswer(
         },
       );
     if (
-      options.baseRevision === undefined &&
-      existing.answerMutationId !== null
-    )
-      throw conflict();
-    if (
       options.mutationId !== undefined &&
       existing.answerMutationId === options.mutationId
     ) {
@@ -2280,6 +2270,16 @@ export function saveDraftAnswer(
         revision: existing.answerRevision,
       };
     }
+    // 模块 2：宽限结束后只允许重放既有回执。
+    assertAttemptNotTimedOut(attempt);
+    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
+    // 永不比对参考答案；旧七型行为零变化
+    assertNewKindAnswerShape(db, attemptId, questionId, answer);
+    if (
+      options.baseRevision === undefined &&
+      existing.answerMutationId !== null
+    )
+      throw conflict();
     // 内容相同即收敛，不要求用户裁决，也不重复计数；接管后阻止旧客户端盲写。
     if (options.baseRevision !== undefined && encoded === existing.answerJson) {
       tx.update(responses)
