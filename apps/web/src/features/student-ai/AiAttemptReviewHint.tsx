@@ -37,9 +37,11 @@ function isActiveTask(task: AiAttemptReviewTaskPublic): boolean {
 }
 
 /**
- * 活动中的任务优先；其余有结局的（已回信 / 失败 / 暂停）不分档，直接取创建
- * 时间最新的一次——#102-03：先复盘成功过、再发一轮却失败或暂停时，要报的是
- * 新任务待处理，不能让旧报告盖住它。全部已取消 / 归档则无。
+ * 活动中的任务优先；其余有结局的（已回信 / 失败 / 暂停）不分档，直接取**最近
+ * 更新**的一次——#102-03：先复盘成功过、再发一轮却失败或暂停时，要报的是新
+ * 任务待处理，不能让旧报告盖住它。排序键用 updatedAt 而不是 createdAt：重试
+ * 复用同一任务行（failed / paused → created，createdAt 不变），重试后新出的
+ * 报告才是「最新一次结局」。全部已取消 / 归档则无。
  */
 export function pickAttemptReviewTask(
   tasks: readonly AiAttemptReviewTaskPublic[],
@@ -50,7 +52,7 @@ export function pickAttemptReviewTask(
   const rank = (task: AiAttemptReviewTaskPublic): number =>
     isActiveTask(task) ? 0 : 1;
   return [...live].sort(
-    (a, b) => rank(a) - rank(b) || b.createdAt.localeCompare(a.createdAt),
+    (a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt),
   )[0];
 }
 
@@ -110,9 +112,10 @@ export function AiAttemptReviewHint({
       text = `上次整体复盘${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}`;
       action = "查看并处理";
     }
-  } else if (previewQuery.isSuccess && previewQuery.data !== undefined) {
+  } else if (previewQuery.isSuccess) {
     // #102-02：TanStack v5 重取失败后 status=error 但仍保留上次 data——教师刚
-    // 收紧策略时不能拿旧缓存继续引导点击，按本轮结果判断（isError 即不提示）
+    // 收紧策略时不能拿旧缓存继续引导点击，按本轮结果判断（isError 即不提示；
+    // isSuccess 已把 data 收窄为非空）
     const counts = previewQuery.data.counts;
     text = `本卷可复盘：共 ${counts.total} 题、已判 ${counts.gradedCount} 题，Agent 可按整卷给一次复盘建议`;
     action = "预览并确认";

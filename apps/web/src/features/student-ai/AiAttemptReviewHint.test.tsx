@@ -242,33 +242,34 @@ describe("结果页「可复盘」提示条", () => {
     });
   });
 
-  it("pickAttemptReviewTask：活动任务优先；其余有结局的按创建时间最新优先（#102-03 新失败 / 暂停不被旧报告盖住）；取消与归档不计", () => {
+  it("pickAttemptReviewTask：活动任务优先；其余有结局的按最近更新优先（#102-03 新失败 / 暂停不被旧报告盖住）；取消与归档不计", () => {
+    const at = (iso: string) => ({ createdAt: iso, updatedAt: iso });
     const oldReplied = taskOf({
       id: "b",
       status: "replied",
-      createdAt: "2026-11-09T10:00:00.000Z",
+      ...at("2026-11-09T10:00:00.000Z"),
     });
     const newerPaused = taskOf({
       id: "a",
       status: "paused",
-      createdAt: "2026-11-09T11:00:00.000Z",
+      ...at("2026-11-09T11:00:00.000Z"),
     });
     const newerFailed = taskOf({
       id: "f",
       status: "failed",
-      createdAt: "2026-11-09T11:30:00.000Z",
+      ...at("2026-11-09T11:30:00.000Z"),
     });
     const created = taskOf({
       id: "c",
       status: "created",
-      createdAt: "2026-11-09T09:00:00.000Z",
+      ...at("2026-11-09T09:00:00.000Z"),
     });
     const cancelled = taskOf({ id: "d", status: "cancelled" });
     const archived = taskOf({
       id: "e",
       status: "replied",
       archivedAt: "2026-11-09T12:00:00.000Z",
-      createdAt: "2026-11-09T12:00:00.000Z",
+      ...at("2026-11-09T12:00:00.000Z"),
     });
     // 活动任务即使最早创建也优先
     expect(pickAttemptReviewTask([newerPaused, oldReplied, created])?.id).toBe(
@@ -283,12 +284,22 @@ describe("结果页「可复盘」提示条", () => {
         taskOf({
           id: "g",
           status: "failed",
-          createdAt: "2026-11-09T08:00:00.000Z",
+          ...at("2026-11-09T08:00:00.000Z"),
         }),
         oldReplied,
       ])?.id,
     ).toBe("b");
     expect(pickAttemptReviewTask([newerPaused])?.id).toBe("a");
     expect(pickAttemptReviewTask([cancelled, archived])).toBeUndefined();
+    // 重试复用同一任务行（createdAt 不变、updatedAt 刷新）：早创建、后重试出报告的
+    // 任务要压过中间那次更早出的报告——按 createdAt 排会把刚到的新报告藏起来
+    const retriedReplied = taskOf({
+      id: "r",
+      status: "replied",
+      retryCount: 1,
+      createdAt: "2026-11-09T09:30:00.000Z",
+      updatedAt: "2026-11-09T13:00:00.000Z",
+    });
+    expect(pickAttemptReviewTask([oldReplied, retriedReplied])?.id).toBe("r");
   });
 });
