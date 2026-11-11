@@ -83,7 +83,6 @@ import {
   type AttemptSubmitRequest,
   type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
-  apiResponseSchema,
   attemptContextDataSchema,
   attemptFlagDataSchema,
   attemptMaterialRevisionsSchema,
@@ -215,6 +214,9 @@ import {
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
+import { ApiError, invalidApiResponse, parseApiResponse } from "./api-response";
+
+export { ApiError } from "./api-response";
 
 /**
  * Hono RPC 类型客户端：路由类型来自 apps/server 的 AppType，端到端类型安全。
@@ -242,27 +244,10 @@ export async function fetchHealth(): Promise<HealthData> {
     );
   }
   if (!res.ok) {
-    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+    throw invalidApiResponse(res.status);
   }
   const body = await res.json();
   return body.data;
-}
-
-/**
- * 后端返回的业务错误（{ ok:false } 壳）：带 UPPER_SNAKE 错误码，
- * 页面按 code 分支展示（如 INVALID_CREDENTIALS / LOCKED / UNAUTHORIZED）。
- * extra 为统一壳之外的附加字段（如导入 commit 422 LINT_ERROR 携带的 _issues）。
- */
-export class ApiError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status: number,
-    readonly extra?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
 }
 
 /**
@@ -289,21 +274,18 @@ export async function callApi<T>(fn: () => Promise<Response>): Promise<T> {
   try {
     body = await res.json();
   } catch {
-    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+    throw invalidApiResponse(res.status);
   }
-  const parsed = apiResponseSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
-  }
-  if (!parsed.data.ok) {
+  const response = parseApiResponse(body, res.status);
+  if (!response.ok) {
     throw new ApiError(
-      parsed.data.error,
-      parsed.data.message,
+      response.error,
+      response.message,
       res.status,
       pickExtraFields(body),
     );
   }
-  return parsed.data.data as T;
+  return response.data as T;
 }
 
 /** 取统一壳（ok/error/message）之外的附加字段（如 LINT_ERROR 的 _issues） */
@@ -328,18 +310,18 @@ async function throwShellError(res: Response): Promise<never> {
   try {
     body = await res.json();
   } catch {
-    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+    throw invalidApiResponse(res.status);
   }
-  const parsed = apiResponseSchema.safeParse(body);
-  if (parsed.success && !parsed.data.ok) {
+  const response = parseApiResponse(body, res.status);
+  if (!response.ok) {
     throw new ApiError(
-      parsed.data.error,
-      parsed.data.message,
+      response.error,
+      response.message,
       res.status,
       pickExtraFields(body),
     );
   }
-  throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+  throw invalidApiResponse(res.status);
 }
 
 /**
@@ -416,7 +398,7 @@ export async function fetchSpecFile(file: SpecFileName): Promise<string> {
     throw new Error("规范文档不存在（spec 文件缺失，请检查服务端部署）");
   }
   if (!res.ok) {
-    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+    throw invalidApiResponse(res.status);
   }
   return res.text();
 }
