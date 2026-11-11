@@ -36,9 +36,8 @@ export const attemptTimingPhaseSchema = z.enum(["running", "grace", "locked"]);
 export type AttemptTimingPhase = z.infer<typeof attemptTimingPhaseSchema>;
 
 /**
- * 草稿视图随卷下发的限时信息（非限时卷为 null）。serverNow 供前端算本机与
- * 服务端的时钟偏移——倒计时以 deadlineAt - (Date.now() + offset) 计，不信任
- * 本机时钟。
+ * 草稿视图随卷下发的限时信息（非限时卷为 null）。前端用 serverNow 和响应
+ * 到达后的单调时钟经过时间估计服务端当前时刻。
  */
 export const attemptTimingSchema = z
   .object({

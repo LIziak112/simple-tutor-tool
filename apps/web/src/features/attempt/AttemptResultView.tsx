@@ -17,14 +17,6 @@ import {
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { optionCorrectOf } from "@/features/answering/views/choice";
 import {
@@ -52,6 +44,7 @@ import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
+import { AssignmentRedoDialog } from "./AssignmentRedoDialog";
 import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 import { ResultTimeLimitLine } from "./AttemptTimer";
 import {
@@ -531,7 +524,7 @@ export function AttemptResultView({
     /** 开新卷失败的中文提示（null = 无失败；含教师关闭重做后的兜底提示） */
     error: string | null;
     /** 确认「再做一次」（页面层 POST redo:true 并跳新卷） */
-    onStart: () => void;
+    onStart: (timing: { timeLimitMinutes?: number }) => void;
   };
   /**
    * T6R.20 审查修复 2：交卷后的标注封存（seal）失败警示——非阻断
@@ -879,37 +872,12 @@ export function AttemptResultView({
               )}
               {/* 再做一次确认（hall-15313）：显式动作——新卷从空白开始，本卷
               保留可回看（文案与讲练「再做一次」先例同口径） */}
-              {showRedo && (
-                <Dialog open={redoOpen} onOpenChange={setRedoOpen}>
-                  <DialogContent className="w-[calc(100%-24px)] max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>再做一次吗？</DialogTitle>
-                      <DialogDescription className="text-sm leading-6">
-                        将开始第 {attempt.attemptNo + 1}
-                        次作答，全部题目从空白开始；这一次的作答会保留，可随时在「我的记录」回看。
-                      </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={() => setRedoOpen(false)}
-                      >
-                        先不用
-                      </Button>
-                      <Button
-                        className="min-h-11"
-                        disabled={redo.loading}
-                        onClick={() => {
-                          setRedoOpen(false);
-                          redo.onStart();
-                        }}
-                      >
-                        开始第 {attempt.attemptNo + 1} 次
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+              {showRedo && redoOpen && (
+                <AssignmentRedoDialog
+                  nextAttemptNo={attempt.attemptNo + 1}
+                  onClose={() => setRedoOpen(false)}
+                  onStart={redo.onStart}
+                />
               )}
             </div>
           </section>

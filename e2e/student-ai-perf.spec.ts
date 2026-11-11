@@ -115,6 +115,7 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
       await expect(card).toHaveCount(1);
       await card.getByRole("link", { name: "开始练习" }).click();
       await page.waitForURL("**/s/assignments/**");
+      await page.getByRole("button", { name: "开始作业", exact: true }).click();
       const assignmentId = page.url().split("/").pop() ?? "";
       const q1 = page.locator('article[aria-label="第 1 题"]');
       await q1.waitFor({ state: "visible" });

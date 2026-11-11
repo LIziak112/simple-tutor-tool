@@ -23,6 +23,7 @@ import {
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
 import {
+  assertLoadedDraftsForPwaUpdate,
   draftStore,
   installDraftBackend,
   memoryBackend,
@@ -36,6 +37,8 @@ import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
 import {
   ApiError,
   fetchAttemptApi,
+  fetchAttemptInkApi,
+  fetchStudentAssignmentsApi,
   openAttemptHintApi,
   postAttemptEventsApi,
   putAttemptInkApi,
@@ -138,6 +141,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       annotation: null,
     })),
     startAttemptApi: vi.fn(),
+    fetchStudentAssignmentsApi: vi.fn(),
     fetchAttemptApi: vi.fn(),
     // QM-08：作答会话消费冻结上下文投影——本用例无材料/组，空投影即可
     fetchAttemptContextApi: vi.fn(async (attemptId: string) => ({
@@ -192,6 +196,17 @@ const mockedSeal = vi.mocked(sealAttemptAnnotationsApi);
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
+const ASSIGNMENT = {
+  id: ASSIGNMENT_ID,
+  title: "周末加练",
+  units: [],
+  unitCount: 1,
+  questionCount: 4,
+  dueAt: null,
+  createdAt: "2026-09-27T00:00:00.000Z",
+  status: "in_progress" as const,
+};
+const mockedAssignments = vi.mocked(fetchStudentAssignmentsApi);
 
 const START_DRAFT: AttemptStartData = {
   id: ATTEMPT_ID,
@@ -341,10 +356,13 @@ beforeEach(() => {
   bindAnnotationSession(session);
   resetNoteHeadBatchForTest();
   mockedStart.mockReset();
+  mockedAssignments.mockReset();
+  mockedAssignments.mockResolvedValue({ assignments: [ASSIGNMENT] });
   mockedFetch.mockReset();
   mockedSave.mockReset();
   mockedSubmit.mockReset();
   mockedPutInk.mockReset();
+  vi.mocked(fetchAttemptInkApi).mockReset().mockResolvedValue(null);
   mockedPostEvents.mockReset();
   mockedPostEvents.mockResolvedValue({ accepted: 1 });
   mockedPutInk.mockResolvedValue({
@@ -368,6 +386,50 @@ afterEach(() => {
 });
 
 describe("作业详情读取恢复出口", () => {
+  it("首次进入作业先选择时长，点击开始才建卷", async () => {
+    mockedAssignments.mockResolvedValue({
+      assignments: [{ ...ASSIGNMENT, status: "not_started" }],
+    });
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    renderPage();
+    const picker = await screen.findByTestId("time-limit-picker");
+    expect(mockedStart).not.toHaveBeenCalled();
+    fireEvent.click(within(picker).getByRole("switch", { name: "限时测试" }));
+    fireEvent.click(within(picker).getByRole("radio", { name: "15 分钟" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始作业" }));
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenCalledWith(
+        ASSIGNMENT_ID,
+        expect.objectContaining({ timeLimitMinutes: 15 }),
+      ),
+    );
+  });
+
+  it("作业结果页重做使用本次选择的时长", async () => {
+    mockedAssignments.mockResolvedValue({
+      assignments: [{ ...ASSIGNMENT, status: "graded" }],
+    });
+    mockedStart
+      .mockResolvedValueOnce(RESULT_DATA.attempt)
+      .mockResolvedValueOnce(START_DRAFT);
+    mockedFetch.mockResolvedValue(RESULT_DATA);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "再做一次" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("switch", { name: "限时测试" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "30 分钟" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "开始第 2 次" }),
+    );
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenLastCalledWith(
+        ASSIGNMENT_ID,
+        expect.objectContaining({ redo: true, timeLimitMinutes: 30 }),
+      ),
+    );
+  });
+
   it("建卷完成后离线暂停详情读取时给出重试入口", async () => {
     mockedStart.mockImplementation(async () => {
       onlineManager.setOnline(false);
@@ -531,17 +593,16 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     await waitFor(() =>
       // T6R.3：交卷回传建卷下发的题目版本集合（questionRevisionId）；
       // T6R.10：携带每题笔记证据声明（本文件无笔记 → 全 none）
-      expect(mockedSubmit).toHaveBeenCalledWith(
-        ATTEMPT_ID,
-        [
+      expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID, {
+        revisions: [
           { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
           { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
         ],
-        [
+        evidence: [
           { questionId: "练习四-1", state: "none" },
           { questionId: "练习四-4", state: "none" },
         ],
-      ),
+      }),
     );
     // 详情已失效重取 → 结果视图
     expect(
@@ -832,6 +893,141 @@ function localInkDoc(strokes: number): InkDoc {
 }
 
 describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () => {
+  it("宽限后明确确认按已保存作答交卷，结果页保留本机未同步稿", async () => {
+    const backend = memoryBackend();
+    const write = vi.fn(backend.set);
+    installDraftBackend({ ...backend, set: write });
+    const serverNow = new Date().toISOString();
+    const deadlineAt = new Date(Date.now() - 700_000).toISOString();
+    const timing = {
+      serverNow,
+      deadlineAt,
+      timeLimitSec: 60,
+      graceSec: 600,
+      phase: "locked",
+    } as const;
+    const answer = { kind: "judge", value: false } as const;
+    draftStore.saveAnswer(ATTEMPT_ID, "练习四-1", answer);
+    await draftStore.flush(ATTEMPT_ID);
+    const result = {
+      ...RESULT_DATA,
+      attempt: {
+        ...RESULT_DATA.attempt,
+        deadlineAt,
+        timeLimitSec: 60,
+        submittedAt: serverNow,
+      },
+    };
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue({ ...DRAFT_DATA, timing });
+    mockedSave.mockRejectedValue(
+      new ApiError("ATTEMPT_TIME_UP", "宽限已过", 409),
+    );
+    mockedSubmit.mockImplementation(async () => {
+      mockedFetch.mockResolvedValue(result);
+      return result;
+    });
+    renderPage();
+
+    const banner = await screen.findByTestId("attempt-time-up");
+    fireEvent.click(within(banner).getByRole("button", { name: "确认交卷" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", {
+      name: "确认按已保存作答交卷",
+    });
+    expect(mockedSubmit).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      ATTEMPT_ID,
+      expect.objectContaining({ confirmedSavedAnswers: true }),
+    );
+    await screen.findByText(/批改结果/);
+    expect(mockedSave).not.toHaveBeenCalled();
+    expect(
+      (await draftStore.loadDraft(ATTEMPT_ID))?.answers["练习四-1"],
+    ).toEqual(answer);
+    await expect(assertLoadedDraftsForPwaUpdate()).resolves.toBeUndefined();
+    write.mockRejectedValue(new Error("磁盘已满"));
+    await expect(assertLoadedDraftsForPwaUpdate()).rejects.toThrow("本机");
+  });
+
+  it("到时只读仍补传已落盘的正式手写", async () => {
+    draftStore.saveInk(ATTEMPT_ID, "q-ink-1", localInkDoc(2));
+    vi.mocked(fetchAttemptInkApi).mockRejectedValueOnce(
+      new Error("笔迹读取超时"),
+    );
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue({
+      ...HANDWRITTEN_DRAFT,
+      timing: {
+        serverNow: new Date().toISOString(),
+        deadlineAt: new Date(Date.now() - 10_000).toISOString(),
+        timeLimitSec: 60,
+        graceSec: 600,
+        phase: "grace",
+      },
+    });
+    renderPage();
+    await screen.findByTestId("attempt-time-up");
+    const retry = await screen.findByRole("button", { name: "重试读取笔迹" });
+    expect(retry.closest("[hidden], [inert], .hidden")).toBeNull();
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1), {
+      timeout: 4000,
+    });
+    expect(mockedPutInk.mock.calls[0]?.[1]).toBe("q-ink-1");
+  });
+
+  it("宽限内补传尚未进入视口的本机正式手写", async () => {
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 30_000, 100, 100));
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      const [unit] = HANDWRITTEN_DRAFT.units;
+      if (!unit?.questions[0]) throw new Error("缺少手写夹具");
+      const first = unit.questions[0];
+      const questions = [
+        ...Array.from({ length: 20 }, (_, index) => ({
+          ...first,
+          id: `offscreen-${index}`,
+          questionRevisionId: `rev-offscreen-${index}`,
+        })),
+        first,
+      ];
+      draftStore.saveInk(ATTEMPT_ID, first.id, localInkDoc(2));
+      mockedStart.mockResolvedValue(START_DRAFT);
+      mockedFetch.mockResolvedValue({
+        ...HANDWRITTEN_DRAFT,
+        units: [{ ...unit, questions }],
+        timing: {
+          serverNow: new Date().toISOString(),
+          deadlineAt: new Date(Date.now() - 10_000).toISOString(),
+          timeLimitSec: 60,
+          graceSec: 600,
+          phase: "grace",
+        },
+      });
+      renderPage();
+      await screen.findByTestId("attempt-time-up");
+      await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1), {
+        timeout: 4000,
+      });
+      expect(mockedPutInk.mock.calls[0]?.[1]).toBe(first.id);
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("刷新恢复（答案）：本地较新的答案在进入页面后还原到控件，并自动补传服务端", async () => {
     // 模拟「上次会话写了答案、刷新前最后一次同步没到服务端」：
     // 本地草稿仓有答案，服务端 drafts 为空

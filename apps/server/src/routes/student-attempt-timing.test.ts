@@ -13,7 +13,10 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 限时测试（个人学习迭代模块 2）路由级测试：
@@ -185,11 +188,12 @@ async function saveAnswer(
   env: TestEnv,
   attemptId: string,
   value: boolean,
+  version?: { baseRevision: number; mutationId: string },
 ): Promise<Response> {
   return env.app.request(`/api/student/attempts/${attemptId}/answers/${Q1}`, {
     method: "PUT",
     headers: { "content-type": "application/json", cookie: env.studentCookie },
-    body: JSON.stringify({ answer: { kind: "judge", value } }),
+    body: JSON.stringify({ answer: { kind: "judge", value }, ...version }),
   });
 }
 
@@ -282,6 +286,26 @@ describe("限时测试 · 开卷自选时长", () => {
 });
 
 describe("限时测试 · 到时后的写闸门", () => {
+  it("宽限后可重放已保存答案的回执，新保存仍被拒绝", async () => {
+    const env = await makeEnv();
+    const attempt = await startTimed(env, 30);
+    const version = { baseRevision: 0, mutationId: crypto.randomUUID() };
+    const first = await saveAnswer(env, attempt.id, true, version);
+    expect(first.status).toBe(200);
+    const receipt = await first.json();
+
+    shiftDeadline(env, attempt.id, -(ATTEMPT_TIME_UP_GRACE_SEC + 30));
+    const replay = await saveAnswer(env, attempt.id, true, version);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(receipt);
+    const newSave = await saveAnswer(env, attempt.id, true, {
+      baseRevision: 1,
+      mutationId: crypto.randomUUID(),
+    });
+    expect(newSave.status).toBe(409);
+    expect(((await newSave.json()) as ApiErr).error).toBe("ATTEMPT_TIME_UP");
+  });
+
   it("宽限内：答案写入仍接受（离线稿追平），timing.phase = grace", async () => {
     const env = await makeEnv();
     const attempt = await startTimed(env, 30);
@@ -299,10 +323,31 @@ describe("限时测试 · 到时后的写闸门", () => {
     expect(rejected.status).toBe(409);
     expect(((await rejected.json()) as ApiErr).error).toBe("ATTEMPT_TIME_UP");
     expect((await detailOf(env, attempt.id)).timing?.phase).toBe("locked");
-    const submitted = await submitAttemptRequest(
+    const ordinarySubmit = await submitAttemptRequest(
       env.app,
       env.studentCookie,
       attempt.id,
+    );
+    expect(ordinarySubmit.status).toBe(409);
+    expect(((await ordinarySubmit.json()) as ApiErr).error).toBe(
+      "ATTEMPT_TIME_UP",
+    );
+    expect((await detailOf(env, attempt.id)).attempt.status).toBe("draft");
+    const revisions = await fetchSubmitRevisions(
+      env.app,
+      env.studentCookie,
+      attempt.id,
+    );
+    const submitted = await env.app.request(
+      `/api/student/attempts/${attempt.id}/submit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.studentCookie,
+        },
+        body: JSON.stringify({ revisions, confirmedSavedAnswers: true }),
+      },
     );
     expect(submitted.status).toBe(200);
     const result = (await submitted.json()) as {

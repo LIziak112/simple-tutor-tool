@@ -14,7 +14,7 @@ import {
 /**
  * 限时测试（个人学习迭代模块 2）主链：
  * DSL 推荐时长 → 落地页默认开启并预选，学习者改选 15 分钟开卷 →
- * 答题页倒计时（服务端 timing 下发）→ 本机时钟拨到到时后：横幅「待确认交卷」、
+ * 答题页倒计时（服务端 timing 下发）→ 单调时钟经过截止：横幅「待确认交卷」、
  * 题卡只读、横幅「确认交卷」进交卷弹层 → 结果页「限时 15 分钟」。
  * 服务端宽限 / 锁定（409 ATTEMPT_TIME_UP）由 student-attempt-timing 路由测试覆盖。
  */
@@ -74,6 +74,7 @@ test("限时测试：推荐时长预选、自选开卷、倒计时、到时锁�
     .locator("xpath=ancestor::label[1]")
     .click();
   await expect(picker.getByRole("radio", { name: "15 分钟" })).toBeChecked();
+  await page.clock.install();
   await page.getByRole("button", { name: "开始练习" }).click();
   await page.waitForURL("**/s/attempts/**");
   const attemptId = page.url().split("/").pop() ?? "";
@@ -99,8 +100,8 @@ test("限时测试：推荐时长预选、自选开卷、倒计时、到时锁�
   await chooseAnswer(page, 1, "对", true);
   await waitForDraftSaved(page);
 
-  // 本机时钟拨到到时后 2 分钟（只改 Date，不动定时器）：进入宽限态
-  await page.clock.setFixedTime(Date.now() + 17 * 60_000);
+  // 单调时钟经过截止后 2 分钟，进入宽限态。
+  await page.clock.fastForward(17 * 60_000);
   const banner = page.getByTestId("attempt-time-up");
   await expect(banner).toContainText("到时，待确认交卷");
   await expect(page.getByTestId("attempt-countdown")).toHaveText("已到时");

@@ -122,6 +122,9 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
       await expect(studentCard).toHaveCount(1);
       await studentCard.getByRole("link", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/assignments/**");
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
 
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await q1

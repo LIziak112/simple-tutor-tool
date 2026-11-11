@@ -548,6 +548,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     await expect(studentCard.getByText("共 14 题")).toBeVisible();
     await studentCard.getByRole("link", { name: "开始练习" }).click();
     await page.waitForURL("**/s/assignments/**");
+    await page.getByRole("button", { name: "开始作业", exact: true }).click();
     await expect(questionCard(page, 14)).toBeVisible();
 
     // —— 组材料面：valid-01 组材料列可见（材料标题 + 组说明）——
@@ -739,6 +740,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       );
       await card.getByRole("link", { name: "开始练习" }).click();
       await page.waitForURL("**/s/assignments/**");
+      await page.getByRole("button", { name: "开始作业", exact: true }).click();
       const attemptId = attemptStartOkSchema.parse(await (await opening).json())
         .data.id;
       await answer(page, attemptId);
@@ -1052,6 +1054,9 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
     const card2 = robustPage.locator("li", { hasText: w2.assignmentTitle });
     await card2.getByRole("link", { name: "开始练习" }).click();
     await robustPage.waitForURL("**/s/assignments/**");
+    await robustPage
+      .getByRole("button", { name: "开始作业", exact: true })
+      .click();
     await expect(questionCard(robustPage, 20)).toBeVisible();
     await expect(questionCard(robustPage, 1)).not.toContainText("::ref{");
     await expect(questionCard(robustPage, 20)).not.toContainText("::ref{");

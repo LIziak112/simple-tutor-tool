@@ -127,6 +127,29 @@ beforeEach(() => {
 });
 
 describe("StudentCourseUnitPage", () => {
+  it("自定义时长无效时禁用开始，修正后使用当前值", async () => {
+    renderPage(NEVER_DONE);
+    fireEvent.click(await screen.findByRole("switch", { name: "限时测试" }));
+    const custom = screen.getByRole("spinbutton", {
+      name: "自定义时长（分钟）",
+    });
+    const start = screen.getByRole("button", { name: /开始练习/ });
+    for (const value of ["601", "1.5", ""]) {
+      fireEvent.change(custom, { target: { value } });
+      expect(start).toBeDisabled();
+    }
+    expect(mockedStart).not.toHaveBeenCalled();
+    fireEvent.change(custom, { target: { value: "600" } });
+    fireEvent.click(start);
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenCalledWith(
+        COURSE_ID,
+        UNIT_ID,
+        expect.objectContaining({ timeLimitMinutes: 600 }),
+      ),
+    );
+  });
+
   it("模态请求中 Esc 不关闭，失败后可原地重试", async () => {
     let fail: (error: Error) => void = () => {
       throw new Error("请求未开始");

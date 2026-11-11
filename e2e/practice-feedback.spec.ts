@@ -452,7 +452,7 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       allowPerQuestionFeedback: true,
     });
 
-    // —— 学生端：链接登录 → 直达 /s/assignments/:id（进入即幂等建卷）——
+    // —— 学生端：链接登录 → 直达作业 → 确认开卷 ——
     const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
     const studentPage = await studentContext.newPage();
     try {
@@ -466,6 +466,9 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
           r.status() === 200,
       );
       await studentPage.goto(`/s/assignments/${assignmentId}`);
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
       const attemptResp = await attemptRespPromise;
       const attemptBody = (await attemptResp.json()) as {
         data?: { id?: string };
@@ -563,6 +566,9 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
       await studentPage.goto(`/s/assignments/${assignmentId}`);
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
 
       // —— 整卷节奏摘要 + 教师限制说明 ——
       await studentPage.getByRole("button", { name: "练习更多" }).click();
@@ -662,6 +668,9 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
       await studentPage.goto(`/s/assignments/${assignmentId}`);
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
 
       // —— 第一次作答：整卷节奏两题 → 交卷出结果 ——
       await studentPage.getByRole("button", { name: "练习更多" }).click();
@@ -797,6 +806,9 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
       await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
       await studentPage.goto(`/s/assignments/${assignmentId}`);
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
       await studentPage.getByRole("button", { name: "练习更多" }).click();
       await studentPage
         .getByRole("menuitem", { name: "做题方式", exact: true })

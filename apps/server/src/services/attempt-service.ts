@@ -13,6 +13,7 @@ import {
   type AttemptResultUnit,
   type AttemptScoreSummary,
   type AttemptStartData,
+  type AttemptSubmitRequest,
   type AttemptSubmitRevision,
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
@@ -115,6 +116,7 @@ import {
 import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
   assertAttemptNotTimedOut,
+  assertSavedAnswersConfirmed,
   attemptTimingOf,
   timedColumnsOf,
 } from "./attempt-timing";
@@ -2222,14 +2224,9 @@ export function saveDraftAnswer(
         "这份练习已交卷，不能再修改答案",
       );
     }
-    // 模块 2：限时卷宽限已过 → 409 ATTEMPT_TIME_UP（非限时卷零变化）
-    assertAttemptNotTimedOut(attempt);
     requireAttemptQuestion(db, attempt, questionId);
     // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改（非 lesson 行零变化）
     assertRowNotSubmitted(db, attemptId, questionId);
-    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
-    // 永不比对参考答案；旧七型行为零变化
-    assertNewKindAnswerShape(db, attemptId, questionId, answer);
 
     // T6R.3：requireAttemptQuestion 已保证冻结行存在——无插入分支，upsert 收敛为原行更新
     const existing = tx
@@ -2266,11 +2263,6 @@ export function saveDraftAnswer(
         },
       );
     if (
-      options.baseRevision === undefined &&
-      existing.answerMutationId !== null
-    )
-      throw conflict();
-    if (
       options.mutationId !== undefined &&
       existing.answerMutationId === options.mutationId
     ) {
@@ -2281,6 +2273,16 @@ export function saveDraftAnswer(
         revision: existing.answerRevision,
       };
     }
+    // 模块 2：宽限结束后只允许重放既有回执。
+    assertAttemptNotTimedOut(attempt);
+    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
+    // 永不比对参考答案；旧七型行为零变化
+    assertNewKindAnswerShape(db, attemptId, questionId, answer);
+    if (
+      options.baseRevision === undefined &&
+      existing.answerMutationId !== null
+    )
+      throw conflict();
     // 内容相同即收敛，不要求用户裁决，也不重复计数；接管后阻止旧客户端盲写。
     if (options.baseRevision !== undefined && encoded === existing.answerJson) {
       tx.update(responses)
@@ -2671,7 +2673,7 @@ export function attemptFinalOutcomeOf(
  * - changeCount：T2.10 口径 = max(草稿期 PUT 计数, answer_change 事件数)——
  *   事件计数为权威（每次有效修改一条），草稿计数兜底（无前端事件的 attempt，
  *   如脚本直接调 API 交卷）；
- * - T6R.3 版本验证：clientRevisions 提供时（HTTP 路由恒传，不带请求体按空
+ * - T6R.3 版本验证：request 提供时（HTTP 路由恒传，不带请求体按空
  *   集合）与**全部冻结题**（含 lesson 已单题提交的行——旧标签页的整卷提交
  *   仍须回传完整版本集合）精确比对，不符 409 QUESTION_REVISION_STALE；
  *   服务层内部调用（seed 等）可省略参数跳过验证；
@@ -2693,13 +2695,13 @@ export function submitAttempt(
   studentId: string,
   attemptId: string,
   now: Date | string = new Date(),
-  clientRevisions?: readonly AttemptSubmitRevision[],
-  evidenceDeclarations?: readonly SubmitEvidenceDeclaration[],
+  request?: AttemptSubmitRequest,
 ): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }
+  assertSavedAnswersConfirmed(attempt, now, request?.confirmedSavedAnswers);
 
   // T6R.3：判分输入 = 冻结快照（门口已懒冻结兜底）。三来源统一取行（rowid 序；
   // 判分与顺序无关，展示排序在结果视图经 unitGroupedRows 重建）
@@ -2767,9 +2769,7 @@ export function submitAttempt(
   }
 
   // revisions 全集校验不变：比对对象是**全部冻结题**（lesson 含已提交行）
-  if (clientRevisions !== undefined) {
-    validateSubmitRevisions(allFrozen, clientRevisions);
-  }
+  if (request) validateSubmitRevisions(allFrozen, request.revisions);
   // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
   // 范围 = 参与本次判分的行（逐题语义卷：未提交题）；任一项验证失败零落行，
   // attempt 保持 draft 可恢复
@@ -2777,7 +2777,7 @@ export function submitAttempt(
     db,
     attemptId,
     graded,
-    evidenceDeclarations,
+    request?.evidence,
   );
 
   // #6980-3（审查修复 P0-1，2026-10-25）：正式手写笔迹也算「有实际作答」——
@@ -3414,8 +3414,6 @@ export function submitPracticeQuestion(
     const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
     // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
     assertDraftCourseVisible(db, studentId, attempt);
-    // 模块 2：限时卷宽限已过 → 409 ATTEMPT_TIME_UP
-    assertAttemptNotTimedOut(attempt, nowIso);
     // 新协议路径仅普通来源的新协议卷：lesson 独立适配 → 协议不匹配；历史卷 → legacy（§5.3）
     const protocol = practiceProtocolOf(attempt);
     if (protocol === "lesson") {
@@ -3467,6 +3465,7 @@ export function submitPracticeQuestion(
 
     // 当前 resolver 裁决：教师收紧立即生效（§5.4），收紧后拒绝进一步逐题提交
     //（学生按「继续完成剩余题目并交卷」收敛；已提交行与成绩保留）
+    assertAttemptNotTimedOut(attempt, nowIso, "running");
     const view = attemptWorkflowView(db, attempt, now);
     if (view === null) {
       // M1 加固语义（v2 d7c84b89）：读侧视图缺失＝授权事实异常（如作业授权

@@ -1,5 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
 import type { AttemptResultData, WrongPracticeScope } from "@tutor/contract";
+import {
+  ATTEMPT_TIME_UP_GRACE_SEC,
+  attemptTimingPhaseOf,
+} from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { startAttemptApi, startWrongPracticeApi } from "@/lib/api";
@@ -9,8 +13,8 @@ import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
 
 /**
- * 结果视图外壳（T2.9）：进入即清本地草稿——覆盖「在别的设备交卷后，本机残留
- * 旧草稿」的路径（正常交卷在 AnswerView 里清，这里是兜底，幂等）。
+ * 结果视图外壳（T2.9）：普通交卷进入结果时清除本地草稿，含从别的设备交卷后
+ * 再回看的情况。宽限结束后交卷保留这台设备的本机稿。
  * T4.0b（§5.0-C12）：自建 attempt scope 队列实例（同一 attemptId）收
  * directive_interact{host:result} 复盘事件——requireUsableAttempt 宽松口径
  * 已支持交卷后上报，无需改服务端；离开结果页 dispose（内部尽力 flush）。
@@ -34,10 +38,20 @@ export default function AttemptResultWithDraftCleanup({
   onRefresh?: (() => void) | undefined;
 }) {
   const attemptId = data.attempt.id;
+  const { deadlineAt, submittedAt } = data.attempt;
+  const preserveDraft =
+    typeof deadlineAt === "string" &&
+    submittedAt !== null &&
+    attemptTimingPhaseOf(
+      deadlineAt,
+      ATTEMPT_TIME_UP_GRACE_SEC,
+      Date.parse(submittedAt),
+    ) === "locked";
   const navigate = useNavigate();
   useEffect(() => {
-    void draftStore.clearDraft(attemptId);
-  }, [attemptId]);
+    if (preserveDraft) draftStore.markLockedSubmission(attemptId);
+    else void draftStore.clearDraft(attemptId);
+  }, [attemptId, preserveDraft]);
   const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
   useEffect(() => {
     const queue = createEventQueue({ scope: { kind: "attempt", attemptId } });
@@ -89,10 +103,11 @@ export default function AttemptResultWithDraftCleanup({
   // → 跳新卷作答；本卷保留，可随时在「我的记录」回看。服务端拒绝（教师已关
   // 允许重做）时中文信息回传结果视图告警展示
   const redo = useMutation({
-    mutationFn: () =>
+    mutationFn: (timing: { timeLimitMinutes?: number }) =>
       startAttemptApi(data.attempt.assignmentId ?? "", {
         ...workflowStartOptions(),
         redo: true,
+        ...timing,
       }),
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
@@ -127,7 +142,7 @@ export default function AttemptResultWithDraftCleanup({
       redo={{
         loading: redo.isPending,
         error: redoErrorText,
-        onStart: () => redo.mutate(),
+        onStart: redo.mutate,
       }}
     />
   );
