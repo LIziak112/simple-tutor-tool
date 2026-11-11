@@ -39,6 +39,11 @@ import {
 } from "@/features/attempt/practice-protocol";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
+  initialTimeLimitOf,
+  TimeLimitPicker,
+  timeLimitStartOption,
+} from "@/features/attempt/TimeLimitPicker";
+import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
@@ -93,6 +98,7 @@ function RedoConfirmDialog({
   nextAttemptNo,
   restarting,
   busy,
+  invalidTimeLimit,
   onConfirm,
   onCancel,
   onClosed,
@@ -102,6 +108,7 @@ function RedoConfirmDialog({
   nextAttemptNo: number;
   restarting: boolean;
   busy: boolean;
+  invalidTimeLimit: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   onClosed: () => void;
@@ -159,7 +166,7 @@ function RedoConfirmDialog({
           <Button
             className="min-h-11"
             variant={restarting ? "destructive" : "default"}
-            disabled={busy}
+            disabled={busy || invalidTimeLimit}
             onClick={onConfirm}
           >
             {busy ? "正在开始…" : restarting ? "确认清空并重开" : "开始新一次"}
@@ -282,6 +289,11 @@ function UnitLandingView({
   );
   // 节奏是否被显式触碰：未触碰不携 feedbackMode（M5-D2 链不因本页中断）
   const [rhythmTouched, setRhythmTouched] = useState(false);
+  // 模块 2 限时测试：初值取单元推荐时长（有则默认开启）；继续作答时不生效
+  const recommendedMinutes = landing.practiceRecommendation?.timeLimitMinutes;
+  const [timeLimit, setTimeLimit] = useState(() =>
+    initialTimeLimitOf(recommendedMinutes),
+  );
 
   // 闸门 B1（M3-D1.5 同款竞态）：硬刷新时布局层的账号绑定 effect 晚于本组件
   // 首渲染，初值链可能读到未绑定 store——已保存偏好被错过退化为 推荐??缺省，
@@ -304,13 +316,20 @@ function UnitLandingView({
     void navigate(`/s/attempts/${attemptId}`);
   };
 
+  const timeLimitOption = timeLimitStartOption(timeLimit);
   const onStart = (restartAttemptId?: string) => {
+    // 新建卷（首次 / 再做 / 清空重做）才带限时；继续作答取回原卷，服务端忽略
+    const timed =
+      hasDraft && restartAttemptId === undefined ? {} : timeLimitOption;
+    if (timed === null) return;
+    const timedOn = timed.timeLimitMinutes !== undefined;
     startAttempt.mutate(
-      rhythmTouched || restartAttemptId !== undefined
+      rhythmTouched || restartAttemptId !== undefined || timedOn
         ? {
             ...workflowStartOptions(),
             ...(rhythmTouched ? { feedbackMode: selected.feedback } : {}),
             ...(restartAttemptId !== undefined ? { restartAttemptId } : {}),
+            ...timed,
           }
         : undefined,
       {
@@ -491,13 +510,19 @@ function UnitLandingView({
             进入练习后可在右上角「做题方式」调整。选中即提交仅在逐题反馈时生效。
           </p>
         </div>
+        {/* 模块 2：限时测试（通用，学习者自选）；有进行中卷时只对「清空并重新作答」生效 */}
+        <TimeLimitPicker
+          value={timeLimit}
+          recommended={recommendedMinutes}
+          onChange={setTimeLimit}
+        />
 
         {/* 入口：开始练习（从未做）/ 继续作答（有未交卷）/ 再做一次（确认后新建） */}
         <div className="flex flex-wrap items-center gap-3">
           {summary === null ? (
             <Button
               className="min-h-12 px-8 text-base"
-              disabled={busy}
+              disabled={busy || timeLimitOption === null}
               onClick={() => onStart()}
               aria-label={`开始练习 ${landing.title}`}
             >
@@ -520,7 +545,7 @@ function UnitLandingView({
                   variant="outline"
                   className="min-h-12 px-4 text-destructive"
                   ref={redoTriggerRef}
-                  disabled={busy}
+                  disabled={busy || timeLimitOption === null}
                   onClick={() => {
                     startAttempt.reset();
                     setRestartTarget(draft.attemptId);
@@ -536,6 +561,7 @@ function UnitLandingView({
             <Button
               className="min-h-12 px-8 text-base"
               ref={redoTriggerRef}
+              disabled={busy || timeLimitOption === null}
               onClick={() => {
                 startAttempt.reset();
                 setRestartTarget(null);
@@ -606,6 +632,7 @@ function UnitLandingView({
         nextAttemptNo={nextAttemptNo}
         restarting={restartTarget !== null}
         busy={busy}
+        invalidTimeLimit={timeLimitOption === null}
         onClosed={() => redoTriggerRef.current?.focus()}
         error={
           startAttempt.isError

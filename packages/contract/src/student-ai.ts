@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { attemptSourceSchema, questionRevisionIdSchema } from "./attempt.ts";
+import { rubricSchema } from "./rubric.ts";
 import { aiTeachingModeSchema } from "./student-ai-policy.ts";
 
 /**
@@ -142,6 +143,10 @@ export type AiMaterialKind = z.infer<typeof aiMaterialKindSchema>;
  * missingNote 与答案/解析的实际有无做强一致交叉校验——矛盾快照（如两者齐全却
  * 声明缺失）在契约层拒绝，不进任何出站/领取/分享视图。
  */
+/** 任务目的：普通求助（缺省）/ 量表判卷意见（模块 3） */
+export const aiTaskPurposeSchema = z.enum(["help", "rubric_opinion"]);
+export type AiTaskPurpose = z.infer<typeof aiTaskPurposeSchema>;
+
 export const aiContextSnapshotSchema = z
   .object({
     /** 版本锚定 = responses 行 id（复用 attempt.ts 的不透明单源口径） */
@@ -180,6 +185,13 @@ export const aiContextSnapshotSchema = z
           .strict(),
       )
       .optional(),
+    /**
+     * 模块 3：题目量表（有 :::rubric 的开放题才携带）与任务目的——
+     * purpose=rubric_opinion 表示学习者请 Agent 按量表逐项给意见（写回用
+     * submit_rubric_opinion），缺省为普通求助。旧快照无键，解析零变化。
+     */
+    rubric: rubricSchema.optional(),
+    purpose: aiTaskPurposeSchema.optional(),
     /** 快照时间（UTC ISO） */
     capturedAt: z.string().min(1),
     /**

@@ -1,5 +1,6 @@
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
+  ATTEMPT_TIME_UP_GRACE_SEC,
   practiceQuestionFeedbackOkSchema,
   practiceQuestionSubmitOkSchema,
 } from "@tutor/contract";
@@ -381,6 +382,45 @@ async function practiceSubmit(
     },
   );
 }
+
+it("限时到点不接受新单题提交，宽限结束仍可确认已成功的提交", async () => {
+  const env = await makeEnv();
+  const attemptId = await startPracticeAttempt(env);
+  const draft = await fetchDraft(env, attemptId);
+  const [first, second] = [...draft.revisions.keys()];
+  if (!first || !second) throw new Error("限时夹具至少需要两题");
+  const mutationId = crypto.randomUUID();
+  const saved = await practiceSubmit(env, draft, attemptId, first, {
+    mutationId,
+  });
+  expect(saved.status).toBe(200);
+  const setDeadline = (seconds: number) =>
+    env.db
+      .update(attempts)
+      .set({
+        timeLimitSec: 60,
+        deadlineAt: new Date(Date.now() - seconds * 1000).toISOString(),
+      })
+      .where(eq(attempts.id, attemptId))
+      .run();
+  setDeadline(10);
+  const latest = await fetchDraft(env, attemptId);
+  const expired = await practiceSubmit(env, latest, attemptId, second);
+  expect(expired.status).toBe(409);
+  const denied = await expired.json();
+  expect(denied).toMatchObject({ error: "ATTEMPT_TIME_UP" });
+  assertNoLeak(denied);
+  setDeadline(ATTEMPT_TIME_UP_GRACE_SEC + 10);
+  const replay = await practiceSubmit(env, draft, attemptId, first, {
+    mutationId,
+  });
+  expect(replay.status).toBe(200);
+  expect(
+    practiceQuestionSubmitOkSchema.parse(await replay.json()).data.feedback,
+  ).toEqual(
+    practiceQuestionSubmitOkSchema.parse(await saved.json()).data.feedback,
+  );
+});
 
 /** 提交成功路径：200 + 契约壳校验，返回 data 与响应 */
 async function practiceSubmitOk(

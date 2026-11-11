@@ -481,9 +481,11 @@ describe("SAI-15 ④ 提交失败不解锁", () => {
     // 提交失败：错版 revision → 409，attempt 保持 draft（提交中途/失败不解锁）
     expectHttpError(
       () =>
-        submitAttempt(db, world.studentId, world.attemptId, at(60_000), [
-          { questionId: world.questionId, questionRevisionId: "stale-rev" },
-        ]),
+        submitAttempt(db, world.studentId, world.attemptId, at(60_000), {
+          revisions: [
+            { questionId: world.questionId, questionRevisionId: "stale-rev" },
+          ],
+        }),
       409,
       "QUESTION_REVISION_STALE",
     );

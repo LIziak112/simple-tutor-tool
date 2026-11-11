@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { accountKindSchema } from "./auth.ts";
 
 /**
  * 学生账号契约（T2.1 起为权威定义）：学生 CRUD 请求/响应、两种登录（专属链接 /
@@ -176,6 +177,9 @@ export const studentLoginRequestSchema = z.object({
 /**
  * 登录成功后返回的学生基本信息（密码登录 / 链接登录 / GET /api/student/me 共用）。
  * 不含 linkToken、passwordHash 等内部凭证。
+ * accountKind（模块 0）：所属账号类型——personal 表示这是个人账号固定绑定的
+ * 学习者身份（登录名即账号登录名、密码由账号统一管理、MCP 走 /mcp/personal），
+ * 学习视角据此显示「管理视角」入口并隐藏班级专属区块；class 为既有班级学生。
  */
 export const studentMeDataSchema = z.object({
   id: z.uuid(),
@@ -183,6 +187,7 @@ export const studentMeDataSchema = z.object({
   loginName: z.string().min(1),
   linkEnabled: z.boolean(),
   passwordEnabled: z.boolean(),
+  accountKind: accountKindSchema,
 });
 
 // ---------- 学生端接口 ----------

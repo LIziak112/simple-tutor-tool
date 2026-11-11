@@ -844,7 +844,15 @@ describe("整体复盘：领取、租约与写回", () => {
     expect(summary.unreadReplyCount).toBe(1);
 
     // open → 未读清零；created 状态不能 open（409）
-    attemptReviewActionOf(db, { studentId, taskId: task.id, action: "open" });
+    const before = attemptReviewDetailOf(db, { studentId, taskId: task.id });
+    const readAt = "2026-11-11T10:00:00.000Z";
+    const opened = attemptReviewActionOf(
+      db,
+      { studentId, taskId: task.id, action: "open" },
+      { now: readAt },
+    );
+    expect(opened.openedAt).toBe(readAt);
+    expect(opened.updatedAt).toBe(before.task.updatedAt);
     expect(aiQueueSummaryOf(db, studentId).unreadReplyCount).toBe(0);
     attemptReviewActionOf(db, {
       studentId,

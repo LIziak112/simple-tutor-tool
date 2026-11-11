@@ -124,6 +124,8 @@ describe("GET /api/public/teacher/status", () => {
       hasTeacher: false,
       // 无教师行时恒 false（D8，即使 app_settings 开关为 true）
       registrationOpen: false,
+      // 个人注册（模块 0）同样以 hasTeacher 为前提，且未配置邀请码
+      personalRegistrationOpen: false,
     });
 
     await jsonRequestOn(app, "/api/public/teacher/setup", {
@@ -137,6 +139,7 @@ describe("GET /api/public/teacher/status", () => {
       hasTeacher: true,
       // T2B.6 起 registrationOpen 接 app_settings 真值（初始键默认开）
       registrationOpen: true,
+      personalRegistrationOpen: false,
     });
     // 无泄露：响应只含布尔，不出现哈希等内部信息
     expect(JSON.stringify(afterBody)).not.toContain("scrypt$");
@@ -160,6 +163,7 @@ describe("POST /api/public/teacher/setup", () => {
         id: TEST_TEACHER_ID,
         loginName: LOGIN_NAME,
         isAdmin: true,
+        accountKind: "class",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     });
@@ -167,13 +171,13 @@ describe("POST /api/public/teacher/setup", () => {
     expect(JSON.stringify(body)).not.toContain(PASSWORD);
 
     // Cookie：httpOnly + SameSite=Lax + Path=/；http 环境不加 Secure；
-    // Max-Age=7 天（604800 秒）——必须是持久化 Cookie，否则浏览器一关登录态就丢
+    // Max-Age=90 天（7776000 秒）——必须是持久化 Cookie，否则浏览器一关登录态就丢
     const cookie = setCookieHeader(res);
     expect(cookie).toContain("tutor_session=");
     expect(cookie).toContain("httponly");
     expect(cookie).toContain("samesite=lax");
     expect(cookie).toContain("path=/");
-    expect(cookie).toContain("max-age=604800");
+    expect(cookie).toContain("max-age=7776000");
     expect(cookie).not.toContain("secure");
   });
 
@@ -709,8 +713,8 @@ describe("requireAdmin 守卫（D7：T2B.2 定义，/api/admin/* 路由 T2B.6 �
   });
 });
 
-describe("会话持久化与滑动续期（7 天内使用不掉线）", () => {
-  it("教师守卫通过即续期：DB expiresAt 重置为 ~7 天后，Cookie Max-Age 同步重置", async () => {
+describe("会话持久化与滑动续期（90 天内使用不掉线）", () => {
+  it("教师守卫通过即续期：DB expiresAt 重置为 ~90 天后，Cookie Max-Age 同步重置", async () => {
     const { app, db } = makeApp();
     const setup = await jsonRequestOn(app, "/api/public/teacher/setup", {
       loginName: LOGIN_NAME,
@@ -729,15 +733,15 @@ describe("会话持久化与滑动续期（7 天内使用不掉线）", () => {
     });
     expect(me.status).toBe(200);
 
-    // DB 侧：expiresAt 被推回 ~7 天（最后一次活动 + 7 天的滑动语义）
+    // DB 侧：expiresAt 被推回 ~90 天（最后一次活动 + 90 天的滑动语义）
     const row = db.select().from(sessions).where(eq(sessions.id, token)).get();
     const remainMs = new Date(row?.expiresAt ?? 0).getTime() - Date.now();
-    expect(remainMs).toBeGreaterThan(6 * 24 * 60 * 60 * 1000);
-    expect(remainMs).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000);
+    expect(remainMs).toBeGreaterThan(89 * 24 * 60 * 60 * 1000);
+    expect(remainMs).toBeLessThanOrEqual(90 * 24 * 60 * 60 * 1000);
 
     // 浏览器侧：Cookie Max-Age 同步重置——只续 DB 不续 Cookie 的话，
     // 浏览器到期即停发 Cookie，续期等于白做
-    expect(setCookieHeader(me)).toContain("max-age=604800");
+    expect(setCookieHeader(me)).toContain("max-age=7776000");
   });
 
   it("续期不改变 token：前后仍是同一会话行（不换发新会话）", async () => {

@@ -19,6 +19,7 @@ import {
   aiTaskMaterialSchema,
   aiTaskOriginSummarySchema,
   aiTaskPublicSchema,
+  aiTaskPurposeSchema,
   aiTaskStatusSchema,
   aiTaskTeacherSchema,
   aiTeacherFactSchema,
@@ -124,6 +125,8 @@ export const aiTaskCreateRequestSchema = z
     mutationId: z.string().min(1),
     /** 来源快捷按钮（可选，仅回显与统计） */
     quickButtonId: z.string().min(1).optional(),
+    /** 任务目的（模块 3）：rubric_opinion = 请 Agent 按量表判卷；缺省普通求助 */
+    purpose: aiTaskPurposeSchema.optional(),
   })
   .strict();
 export type AiTaskCreateRequest = z.infer<typeof aiTaskCreateRequestSchema>;

@@ -21,8 +21,9 @@ import {
 } from "../auth/rate-limit";
 import { createStudentSession, pruneExpiredSessions } from "../auth/session";
 import type { Db } from "../db/client";
-import { type Student, students } from "../db/schema";
+import { type Student, students, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { assertIndependentStudent, personalOwnerOf } from "./personal-learner";
 import { studentActivitySummaries } from "./teacher-attempt-service";
 
 /**
@@ -43,7 +44,22 @@ import { studentActivitySummaries } from "./teacher-attempt-service";
  * （404 STUDENT_NOT_FOUND，不暴露存在性）；loginName / linkToken 维持**全局唯一**
  * （D14：学生一生只归创建教师，loginName 命名空间不按教师分片）；学生侧接口
  * （登录 / me / 改密）按 studentId 工作，天然隔离，签名与行为不变。
+ *
+ * 个人账号（模块 0，2026-11）：个人账号的学习者行由 insertPersonalLearner 与
+ * teachers 行同事务创建——两种直接登录都关闭（密码由账号统一管理、会话由个人登录
+ * 成套签发），新行用 `personal:<学生 ID>` 作内部登录名，
+ * 对外（toMe）展示账号登录名；个人账号不能再建第二名学生（createStudent 409）。
  */
+
+/** 教师是否为个人账号（创建学生等班级能力的闸门） */
+function isPersonalAccount(db: Db, teacherId: string): boolean {
+  const row = db
+    .select({ accountKind: teachers.accountKind })
+    .from(teachers)
+    .where(eq(teachers.id, teacherId))
+    .get();
+  return row?.accountKind === "personal";
+}
 
 /** 随机初始密码长度（无混淆字符字符集，方便口头/微信转述） */
 const INITIAL_PASSWORD_LENGTH = 8;
@@ -85,14 +101,21 @@ function toSummary(row: Student): StudentSummary {
   };
 }
 
-/** students 行 → 学生端信息（不含 linkToken/note/passwordHash） */
-function toMe(row: Student): StudentMeData {
+/**
+ * students 行 → 学生端信息（不含 linkToken/note/passwordHash）。
+ * 个人账号的学习者：accountKind='personal'，loginName 展示账号登录名（去掉内部前缀）。
+ */
+function toMe(
+  row: Student,
+  personal: ReturnType<typeof personalOwnerOf>,
+): StudentMeData {
   return {
     id: row.id,
     displayName: row.displayName,
-    loginName: row.loginName,
+    loginName: personal?.loginName ?? row.loginName,
     linkEnabled: row.linkEnabled,
     passwordEnabled: row.passwordEnabled,
+    accountKind: personal !== undefined ? "personal" : "class",
   };
 }
 
@@ -223,6 +246,13 @@ export async function createStudent(
   teacherId: string,
   request: StudentCreateRequest,
 ): Promise<StudentCreateData> {
+  if (isPersonalAccount(db, teacherId)) {
+    throw new HttpError(
+      409,
+      "PERSONAL_ACCOUNT_RESTRICTED",
+      "个人账号只有本人一个学习者身份，不能添加学生",
+    );
+  }
   assertLoginNameFree(db, request.loginName);
 
   const provided = request.password ?? null;
@@ -250,6 +280,38 @@ export async function createStudent(
 }
 
 /**
+ * 个人账号的学习者行（模块 0）：与 teachers 行同事务创建（调用方负责事务与
+ * personalStudentId 回填）。两种直接登录都关闭、无密码——本行只经个人登录成套
+ * 签发的学生会话进入；linkToken 仍生成以满足唯一非空约束。
+ */
+export function insertPersonalLearner(
+  db: Pick<Db, "insert">,
+  input: {
+    readonly teacherId: string;
+    readonly displayName: string;
+    readonly createdAt: string;
+  },
+): { id: string } {
+  const id = randomUUID();
+  db.insert(students)
+    .values({
+      id,
+      teacherId: input.teacherId,
+      displayName: input.displayName,
+      loginName: `personal:${id}`,
+      passwordHash: null,
+      linkToken: generateLinkToken(),
+      linkEnabled: false,
+      passwordEnabled: false,
+      note: null,
+      archivedAt: null,
+      createdAt: input.createdAt,
+    })
+    .run();
+  return { id };
+}
+
+/**
  * PATCH /api/teacher/students/:id。全部字段可选（缺省 = 不改）；
  * 改登录名仍要求全局唯一（不含自身，D14）；archived=true 归档 / false 取消归档。
  * T2B.5：按归属教师取行（乙对甲学生 → 404 STUDENT_NOT_FOUND）。
@@ -261,6 +323,14 @@ export function updateStudent(
   request: StudentUpdateRequest,
 ): StudentSummary {
   const row = requireStudentRow(db, teacherId, id);
+  if (
+    request.archived === true ||
+    request.loginName !== undefined ||
+    request.linkEnabled === true ||
+    request.passwordEnabled === true
+  ) {
+    assertIndependentStudent(db, row);
+  }
   if (request.loginName !== undefined && request.loginName !== row.loginName) {
     assertLoginNameFree(db, request.loginName, id);
   }
@@ -301,6 +371,7 @@ export async function resetStudentPassword(
   id: string,
 ): Promise<StudentResetPasswordData> {
   const row = requireStudentRow(db, teacherId, id);
+  assertIndependentStudent(db, row);
   const password = generateInitialPassword();
   const passwordHash = await hashPassword(password);
   db.update(students)
@@ -323,6 +394,7 @@ export function resetStudentLink(
   id: string,
 ): StudentResetLinkData {
   const row = requireStudentRow(db, teacherId, id);
+  assertIndependentStudent(db, row);
   const linkToken = generateLinkToken();
   db.update(students)
     .set({ linkToken, linkEnabled: true })
@@ -365,6 +437,7 @@ export async function loginStudentByPassword(
     row.archivedAt == null &&
     row.passwordEnabled &&
     row.passwordHash != null &&
+    personalOwnerOf(db, row) === undefined &&
     (await verifyPassword(request.password, row.passwordHash));
   if (!ok) {
     for (const key of keys) {
@@ -376,7 +449,7 @@ export async function loginStudentByPassword(
   clearLoginFailures(db, keys);
   pruneExpiredSessions(db);
   const { token } = createStudentSession(db, row.id);
-  return { student: toMe(row), token };
+  return { student: toMe(row, undefined), token };
 }
 
 /**
@@ -386,7 +459,12 @@ export async function loginStudentByPassword(
  */
 export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
   const row = findByLinkToken(db, token);
-  if (!row || row.archivedAt != null || !row.linkEnabled) {
+  if (
+    !row ||
+    row.archivedAt != null ||
+    !row.linkEnabled ||
+    personalOwnerOf(db, row) !== undefined
+  ) {
     throw new HttpError(
       401,
       "LINK_INVALID",
@@ -395,24 +473,39 @@ export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
   }
   pruneExpiredSessions(db);
   const { token: sessionToken } = createStudentSession(db, row.id);
-  return { student: toMe(row), token: sessionToken };
+  return {
+    student: toMe(row, undefined),
+    token: sessionToken,
+  };
 }
 
 // ---------- 学生端：me / 自助改密 ----------
 
 /**
  * 按学生 id 取账号信息（requireStudent 守卫与 /api/student/me 共用）。
- * 不存在或已归档 → null（归档学生会话立即失效）。
+ * 不存在、已归档或绑定个人账号已停用 → null。
  */
 export function getStudentAccount(
   db: Db,
   studentId: string,
+  teacherId?: string,
 ): StudentMeData | null {
   const row = findById(db, studentId);
-  if (!row || row.archivedAt != null) {
+  if (
+    !row ||
+    row.archivedAt != null ||
+    (teacherId !== undefined && row.teacherId !== teacherId)
+  ) {
     return null;
   }
-  return toMe(row);
+  const owner = personalOwnerOf(db, row);
+  return owner &&
+    (owner.disabledAt !== null ||
+      owner.loginName === null ||
+      row.linkEnabled ||
+      row.passwordEnabled)
+    ? null
+    : toMe(row, owner);
 }
 
 /**
@@ -426,6 +519,7 @@ export async function changeStudentPassword(
   request: StudentPasswordChangeRequest,
 ): Promise<StudentMeData> {
   const row = requireStudentRowById(db, studentId);
+  assertIndependentStudent(db, row);
   if (row.passwordHash == null) {
     throw new HttpError(
       401,
@@ -442,5 +536,5 @@ export async function changeStudentPassword(
     .where(eq(students.id, studentId))
     .run();
   const updated = requireStudentRowById(db, studentId);
-  return toMe(updated);
+  return toMe(updated, personalOwnerOf(db, updated));
 }

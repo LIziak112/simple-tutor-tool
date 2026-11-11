@@ -81,6 +81,7 @@ export function useDraftSync(
   serverDrafts: Record<string, StudentAnswer>,
   inkControllers: RefObject<Map<string, InkUploadController>>,
   serverRevisions?: Record<string, number>,
+  writesLocked = false,
 ): DraftSyncApi {
   const [status, setStatus] = useState<DraftSaveStatus>({
     state: "saved",
@@ -101,6 +102,8 @@ export function useDraftSync(
   const deniedRef = useRef(false);
   const attemptIdRef = useRef(attemptId);
   const readyRef = useRef(false);
+  const writesLockedRef = useRef(writesLocked);
+  writesLockedRef.current = writesLocked;
   attemptIdRef.current = attemptId;
 
   /** 全部笔迹 controller 是否都无待传（ref 取当前注册表，引用稳定） */
@@ -120,7 +123,7 @@ export function useDraftSync(
   }, [inksClean]);
 
   const syncNow = useCallback(async (): Promise<void> => {
-    if (!readyRef.current) return;
+    if (!readyRef.current || writesLockedRef.current) return;
     if (deniedRef.current) return; // 终态：不再上传（本地草稿保留）
     if (syncingRef.current) {
       await syncCompletion.current;
@@ -138,7 +141,7 @@ export function useDraftSync(
     });
     try {
       const record = await draftStore.loadDraft(attemptIdRef.current);
-      if (epoch !== getDraftSessionEpoch()) return;
+      if (epoch !== getDraftSessionEpoch() || writesLockedRef.current) return;
       /** 待补传答案（指纹不同）：[questionId, answer]（跳过值缺失的防御分支） */
       const pendingAnswers: ReadonlyArray<readonly [string, StudentAnswer]> =
         record === null

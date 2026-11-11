@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { formatResultCounts } from "@/features/attempt/result-counts";
+import { StudentCourseAttachments } from "@/features/student/StudentCourseAttachments";
 import { StudentCourseCatalog } from "@/features/student/StudentCourseCatalog";
 import { useStudentCourse } from "@/features/student/student-queries";
 import {
@@ -25,6 +26,7 @@ import { ApiError } from "@/lib/api";
  * 单元项状态（D10）：未做 / 进行中 / 已完成（最近做对 X / N 题 · 共 n 次）/ 有待批。
  * 越权（D22）：非成员/课程已归档 → 403 COURSE_ACCESS_DENIED，展示中文引导
  * （可能已被移出）；课程不存在 → 404（服务端不暴露存在性，前端统一「打不开了」）。
+ * 资料区（模块 6 第一步）：目录加载成功后再挂，老师设为学生可见的 PDF / Word 可下载。
  */
 
 /** 单元项状态徽章（attempt 摘要 → 展示文案；优先级：待批 > 进行中 > 已完成 > 未做） */
@@ -124,6 +126,9 @@ export default function StudentCourseDetailPage() {
           />
         ))}
 
+      {courseQuery.data && (
+        <StudentCourseAttachments courseId={courseQuery.data.id} />
+      )}
       {courseQuery.data &&
         (courseQuery.data.items.length === 0 ? (
           <StudentEmptyState

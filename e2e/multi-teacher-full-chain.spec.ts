@@ -216,6 +216,9 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
       await expect(studentCard.getByText("共 2 题")).toBeVisible();
       await studentCard.getByRole("link", { name: "开始练习" }).click();
       await studentPage.waitForURL("**/s/assignments/**");
+      await studentPage
+        .getByRole("button", { name: "开始作业", exact: true })
+        .click();
       await expect(
         studentPage.locator('article[aria-label="第 2 题"]'),
       ).toBeVisible();

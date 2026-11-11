@@ -44,6 +44,8 @@ import {
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptNavigationDialog } from "@/features/attempt/AttemptNavigationDialog";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
+import { TimedAttemptControls } from "@/features/attempt/AttemptTimer";
+import { useAttemptPhase } from "@/features/attempt/attempt-clock";
 import {
   groupSegmentsOfUnit,
   questionMaterialsOf,
@@ -60,6 +62,8 @@ import {
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
+import { useAttemptForcedMounts } from "@/features/attempt/use-attempt-forced-mounts";
+import { useAttemptSubmitFlow } from "@/features/attempt/use-attempt-submit-flow";
 import {
   DraftSyncProvider,
   useDraftSync,
@@ -76,10 +80,6 @@ import {
   useKeyboardDevice,
 } from "@/features/keyboard/keyboard-device";
 import { catchUpNotes } from "@/features/notes/note-sync";
-import {
-  prepareSubmitEvidence,
-  type SubmitEvidencePrep,
-} from "@/features/notes/submit-evidence";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
   QuestionProcessControls,
@@ -89,7 +89,7 @@ import {
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
-import { sealAttemptAnnotationsApi, setStudentFlagApi } from "@/lib/api";
+import { setStudentFlagApi } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -103,8 +103,8 @@ import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
 import {
+  type TimedAttemptDetail,
   useAttemptContext,
-  useSubmitAttempt,
   useUpdateAttemptWorkflow,
 } from "./attempt-queries";
 import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
@@ -153,8 +153,6 @@ import {
 import { usePracticeQuestionSubmit } from "./use-practice-question-submit";
 import { useReadingPosition } from "./use-reading-position";
 import {
-  type EvidenceConfirmContext,
-  type EvidenceConfirmOutcome,
   evidenceProblemViewsOf,
   useSubmitEvidenceConfirm,
 } from "./use-submit-evidence-confirm";
@@ -186,20 +184,15 @@ export function isResultDetail(
 
 /**
  * 答题会话（T2A.6 通用化，D9 两种来源共用）：
- * /s/assignments/:id（作业入口）与 /s/attempts/:attemptId（课程练习/历次回看）
- * 在创建/获取 attempt 后渲染同一组件。
- * - 顶部来源行：课程练习「课程：xx · 第 n 次」/ 作业「作业：xx」（含截止）；
- * - draft → 答题视图（题卡 + 草稿防丢 + 交卷确认）；已交 → 结果视图；
- * - 草稿同步终态（T2A.6，D7）：顶栏显示「已无权限访问该练习」时同时收起
- *   交卷入口（交卷必然同样被拒）。
- */
-
-/**
- * 交卷准备阶段（T6R.10，验收修复 A-4）：单一判别联合替代原先三个独立
- * state（preparing/problems/error）——阶段迁移一次 set 完成，弹层各分支
- * （等待文案/明确选择/阻止性错误）据此渲染，不存在中间组合态。
- * 2026-10 讲练一体起与讲练页共用 use-submit-evidence-confirm 状态机单源，
- * 本页只注入整卷六步编排（runSubmit）。
+ * /s/assignments/:id（作业入口）与 /s/attempts/:attemptId（课程练习和历次回看）
+ * 在创建或取回 attempt 后渲染同一组件。
+ * - 顶部标注来源与作业截止时间，限时卷单独显示倒计时。
+ * - 草稿进入答题视图，已交卷进入结果视图。
+ * - 草稿同步失去访问权（D7）时收起交卷入口。
+ *
+ * 交卷准备阶段（T6R.10 A-4）使用判别联合，一次迁移到准备、缺稿确认或错误态。
+ * 本页与讲练页共用 use-submit-evidence-confirm 状态机，整卷编排由
+ * useAttemptSubmitFlow 注入。
  */
 
 export function AttemptSession({
@@ -208,7 +201,7 @@ export function AttemptSession({
   exitLabel,
   onRefresh,
 }: {
-  data: AttemptDetailData;
+  data: TimedAttemptDetail;
   /** 退出（返回首页/课程等；结果视图按钮与空试卷兜底用） */
   onExit: () => void;
   exitLabel?: string | undefined;
@@ -259,13 +252,17 @@ function AnswerView({
   onBackHome,
   onAnnotationSealFailed,
 }: {
-  data: AttemptDraftData;
+  data: AttemptDraftData & { clockAnchor?: number };
   attemptId: string;
   onBackHome: () => void;
   /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
   onAnnotationSealFailed: () => void;
 }) {
   const editor = useAttemptEditor(null);
+  // 模块 2 限时测试：服务端时钟；到时（grace/locked）锁编辑、停自动提交，只留交卷
+  const phase = useAttemptPhase(data.timing, data.clockAnchor);
+  const timeUp = phase !== null && phase !== "running";
+  const savedOnly = phase === "locked";
   /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush，
    *  草稿同步循环也会逐题 sync——先声明再传给 useDraftSync） */
   const inkControllers = useRef(new Map<string, InkUploadController>());
@@ -284,6 +281,7 @@ function AnswerView({
     data.drafts,
     inkControllers,
     data.draftRevisions,
+    savedOnly,
   );
   // 学习痕迹埋点（T2.10）：attempt_start/聚焦/answer_change/ink/page_*/submit
   const processRecorderRef = useRef<QuestionProcessRecorder | null>(null);
@@ -296,6 +294,7 @@ function AnswerView({
     flushQuestion,
     flushQuestionLocal,
   } = useAttemptAnswers(attemptId, draftSync.recoveredDrafts, draftSync, {
+    writesLocked: savedOnly,
     // 保存生效点：聚焦切到该题 + answer_change 事件（from=上次上报值）
     onAnswerCommitted: (questionId, answer) => {
       attemptEvents.noteInteraction(questionId);
@@ -328,11 +327,6 @@ function AnswerView({
     },
     [attemptEvents],
   );
-  /** 笔迹上传失败提示（交卷 flush 失败时展示，重试交卷消除） */
-  const [inkFlushError, setInkFlushError] = useState(false);
-  /** 交卷准备中止标志：弹层关闭（=取消）置位，runSubmit 各 await 段后检查 */
-  const submitAbortedRef = useRef(false);
-  const submit = useSubmitAttempt(attemptId);
   // 反馈节奏切换（M5-D3）：PATCH CAS + 详情失效；禁用只按服务端投影
   const feedbackUpdate = useUpdateAttemptWorkflow(attemptId);
 
@@ -342,7 +336,7 @@ function AnswerView({
   // useCallback 依赖因此稳定（原先每渲染新数组零收益地失效缓存）
   const flatQuestions = useMemo(
     () => data.units.flatMap((unit) => unit.questions),
-    [data],
+    [data.units],
   );
   const showUnitHeaders = data.units.length > 1;
   const questionIds = useMemo(
@@ -564,23 +558,13 @@ function AnswerView({
     [],
   );
   const cardElements = useRef(new Map<string, HTMLLIElement>());
-  // ---------- 题卡视口懒挂载（性能：大量习题加载卡顿，2026-10-28） ----------
-  // 列表模式只挂载视口上下各一屏的题卡；跳题与阅读位置恢复的目标题需要
-  // 越过视口判断立即挂载，走 forcedMountIds。
-  const [forcedMountIds, setForcedMountIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  const mountWindowRef = useRef<LazyMountWindow | null>(null);
+  const { forcedMountIds, forceMountQuestion } = useAttemptForcedMounts(
+    attemptId,
+    mountWindowRef,
+    questionIds,
+    phase !== null && !savedOnly && draftSync.recoveredDrafts !== undefined,
   );
-  const forceMountQuestion = useCallback((questionId: string) => {
-    setForcedMountIds((previous) => {
-      if (previous.has(questionId)) return previous;
-      const next = new Set(previous);
-      next.add(questionId);
-      return next;
-    });
-    // 窗口化卸载的目标题立即直挂（跳题/阅读位置恢复），同时被 retain 钉住
-    // 不再卸载（forcedMountIds）。
-    mountWindowRef.current?.forceMount(questionId);
-  }, []);
   // 新挂载的题卡编号版本：判分反馈观察器按它重建观察列表（rAF 合帧——
   // 滚动时一批题同时挂载只触发一次重建）。
   const [cardMountVersion, setCardMountVersion] = useState(0);
@@ -615,6 +599,7 @@ function AnswerView({
   }, [forcedMountIds]);
   const retainQuestion = useCallback((questionId: string): boolean => {
     if (forcedMountIdsRef.current.has(questionId)) return true;
+    if (inkControllers.current.get(questionId)?.isDirty()) return true;
     const editorStore = editorRef.current;
     if (
       editorStore !== null &&
@@ -642,7 +627,6 @@ function AnswerView({
     }
     return false;
   }, []);
-  const mountWindowRef = useRef<LazyMountWindow | null>(null);
   if (
     mountWindowRef.current === null &&
     questionIds.length > ATTEMPT_LAZY_MOUNT_THRESHOLD
@@ -813,6 +797,7 @@ function AnswerView({
       questionId: string,
       opts?: { allowMissing?: boolean },
     ): Promise<void> => {
+      if (timeUp) return;
       const outcome = await practiceSubmit.submit(questionId, opts);
       if (
         outcome.kind === "submitted" &&
@@ -847,7 +832,7 @@ function AnswerView({
       }
       setPracticeProblem(null);
     },
-    [practiceSubmit.submit, attemptId],
+    [practiceSubmit.submit, attemptId, timeUp],
   );
   const { getSubmittingId } = practiceSubmit;
   const [queuedChoices, setQueuedChoices] = useState<string[]>([]);
@@ -1108,7 +1093,7 @@ function AnswerView({
           if (!submitted) {
             // 工作流收紧时 Enter 退为切题/交卷（与主操作位同链）；题目级
             // 参考答案门控已随 v2 自评实现移除（QM 判分框架下逐题提交恒可用）
-            if (!practiceWorkflow?.canSubmitQuestion) {
+            if (timeUp || !practiceWorkflow?.canSubmitQuestion) {
               const next = questionIds[currentIndex + 1];
               if (next !== undefined) await goSingleQuestion(next);
               else if (online && !denied) await openSubmitDialog();
@@ -1160,8 +1145,8 @@ function AnswerView({
       setKeyboardHelpOpen(true);
     }
   };
-  // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
-  // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
+  // T6R.3：交卷原样回传建卷冻结时下发的 questionRevisionId，
+  // 服务端与冻结集合比对，确保判分题目与学生看到的试卷一致。
   const submitRevisions = useMemo(
     () =>
       flatQuestions.map((question) => ({
@@ -1171,117 +1156,21 @@ function AnswerView({
     [flatQuestions],
   );
 
-  /**
-   * 交卷编排（注入共享确认状态机 use-submit-evidence-confirm；T2.8 口径 +
-   * T6R.10 证据固定，方案 §6.4 六步）：
-   * 1. 模态弹层已冻结编辑界面（当前真实笔段随指针抬起自然结束，链路无
-   *    用户输入竞态）；
-   * 2. 两条独立网络链**并行**：每道手写题的最新笔迹 flush（Promise.all，
-   *    任一失败 → 阻止交卷并提示重试——「交卷时确保每道手写题最新笔迹已
-   *    上传」的既有强制上传约束不因草稿链路放宽）+ prepareSubmitEvidence
-   *    （等本地落盘事务 → flushNoteSync 追平矢量 → 逐题拉服务端 head →
-   *    组装 none/frozen/missing 声明；PNG 不阻塞，后台补图）；
-   * 3. 有未决问题 → 弹层切「草稿未保存完整」明确选择分支，交卷被阻止；
-   * 4. 交卷请求携带 revisions + evidence（服务端同一事务固定原稿）；
-   *    成功后清本地草稿（T2.9；交卷 clearDraft 不删 notes）。
-   * 失败时错误相留在弹层内提示（点「确认交卷」即可重试整条链）；
-   * 响应丢失重试撞 409 ALREADY_SUBMITTED 由 useSubmitAttempt 失效详情
-   * 切结果视图（不自动重交）。
-   */
-  const runSubmit = useCallback(
-    async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
-      setInkFlushError(false);
-      if (materialRecovery.state !== "ready" || draftSync.recoveryError)
-        return { kind: "error", message: "请先完成作答材料恢复后再交卷" };
-      // 两条独立网络链并行（模态弹层已冻结编辑，无用户输入竞态）：
-      // 手写题笔迹 flush（既有硬约束，失败阻止交卷）+ 草稿追平与证据组装。
-      // ink flush 契约永不 reject（失败以 false 返回）——单一 rejection 源
-      // 是 prep；prep 失败时丢弃 ink 结果无害（对称于 ink 失败弃 prep：
-      // 两者的副作用都只是把数据追平上传，本来就要做）
-      const inkPromise = Promise.all(
-        [...inkControllers.current.values()].map((controller) =>
-          controller.flush(),
-        ),
-      );
-      let prep: SubmitEvidencePrep;
-      try {
-        await draftSync.syncNow();
-        await flushAnswers();
-        if (submitAbortedRef.current) return { kind: "aborted" };
-        prep = await prepareSubmitEvidence({
-          attemptId,
-          questionIds: submitEvidenceQuestionIds,
-          ...(ctx.missingConfirmed !== null
-            ? { allowMissing: ctx.missingConfirmed }
-            : {}),
-        });
-      } catch (err) {
-        // 弹层已关（中止）：错误相也不落地（cancel 已复位 idle）
-        if (submitAbortedRef.current) return { kind: "aborted" };
-        // 阻止性失败（head 拉取失败等）：如实提示，并清空缺稿确认集——
-        // 下轮普通确认重新权威判定，缺稿题重新显式确认
-        ctx.clearMissingConfirmed();
-        return {
-          kind: "error",
-          message:
-            err instanceof Error
-              ? err.message
-              : "草稿状态获取失败，请检查网络后重试",
-        };
-      }
-      if (submitAbortedRef.current) return { kind: "aborted" }; // 弹层已关：状态已由 cancel 复位
-      const inkResults = await inkPromise;
-      if (submitAbortedRef.current) return { kind: "aborted" };
-      // ink 失败早退阻止交卷（prep 结果弃用——副作用无害）：收起弹层
-      // 走底栏提示（状态迁移与 submitted 同——关弹层回 idle）
-      if (!inkResults.every(Boolean)) {
-        setInkFlushError(true);
-        return { kind: "submitted" };
-      }
-      if (prep.declarations === null) {
-        // 有未追平草稿：明确选择分支（不静默 missing，不提供普通确认）。
-        // problems 必非空——declarations=null 由 problems.length>0 推导（不变量）
-        return { kind: "problems", problems: prep.problems };
-      }
-      // T2.10：submit 前收尾事件（尽力 flush；失败不阻塞交卷，宽松口径兜底迟到事件）
-      await attemptEvents.finalizeSubmit();
-      if (submitAbortedRef.current) return { kind: "aborted" };
-      // 两阶段 busy 分离：准备完毕、进入提交——不再显示「正在同步草稿」
-      ctx.enterSubmitting();
-      const declarations = prep.declarations;
-      await new Promise<void>((settle) => {
-        submit.mutate(
-          { revisions: submitRevisions, evidence: declarations },
-          {
-            onSuccess: () => {
-              void draftStore.clearDraft(attemptId);
-              // T6R.20 审查修复 2：标注 seal 在**交卷不可逆点之后**补调——失败
-              // 非阻断（交卷已成事实不回滚），警示置位由结果视图横幅呈现；
-              // 服务端读路径懒补封兜底最终一致（getAnnotationView/
-              // assembleAnnotationPairs 入口）。seal 幂等（409 重交安全）。
-              void sealAttemptAnnotationsApi(attemptId).catch(() => {
-                onAnnotationSealFailed();
-              });
-            },
-            onSettled: () => settle(),
-          },
-        );
-      });
-      return { kind: "submitted" };
-    },
-    [
-      attemptEvents,
+  const { inkFlushError, runSubmit, submit, submitAbortedRef } =
+    useAttemptSubmitFlow({
       attemptId,
-      draftSync.syncNow,
-      draftSync.recoveryError,
-      materialRecovery.state,
+      savedOnly,
+      timed: phase !== null,
+      recoveryReady:
+        materialRecovery.state === "ready" && !draftSync.recoveryError,
+      syncDraft: draftSync.syncNow,
       flushAnswers,
+      inkControllers,
+      questionIds: submitEvidenceQuestionIds,
+      revisions: submitRevisions,
+      finalizeEvents: attemptEvents.finalizeSubmit,
       onAnnotationSealFailed,
-      submit,
-      submitEvidenceQuestionIds,
-      submitRevisions,
-    ],
-  );
+    });
 
   const {
     confirmOpen,
@@ -1307,7 +1196,7 @@ function AnswerView({
     // 复位上一轮取消置位的中止标志（原实现同语义：新一轮确认链不被旧 abort 拦下）
     submitAbortedRef.current = false;
     openConfirmDialog();
-  }, [editor, openConfirmDialog]);
+  }, [editor, openConfirmDialog, submitAbortedRef]);
 
   /**
    * 关闭交卷弹层 = 取消 = 中止准备链：置 abort 标志（runSubmit 各
@@ -1318,7 +1207,7 @@ function AnswerView({
   const closeSubmitDialog = useCallback(() => {
     submitAbortedRef.current = true;
     cancelConfirmDialog();
-  }, [cancelConfirmDialog]);
+  }, [cancelConfirmDialog, submitAbortedRef]);
 
   // 交卷失败：网络等错误留中文提示；QUESTION_REVISION_STALE（旧标签页/陈旧
   // 页面）由服务端中文 message 直接提示刷新重交（T6R.3）
@@ -1352,7 +1241,7 @@ function AnswerView({
     nextQueuedChoice !== undefined &&
     (progressById.get(nextQueuedChoice)?.submittedAt ?? null) !== null;
   const canDrainChoices =
-    canAutoSubmitChoice && !denied && !practiceSubmit.finished;
+    canAutoSubmitChoice && !denied && !practiceSubmit.finished && !timeUp;
   const choiceQueuePaused =
     !online ||
     confirmOpen ||
@@ -1402,7 +1291,8 @@ function AnswerView({
         };
   // 单题吸底进度：题号 + 逐题提交进度（整卷反馈不可逐题提交时报已填写）；
   // canSubmitQuestion 只取工作流级开关——题目级参考答案门控已随 v2 自评实现移除
-  const singleCanSubmit = practiceWorkflow?.canSubmitQuestion === true;
+  const singleCanSubmit =
+    !timeUp && practiceWorkflow?.canSubmitQuestion === true;
   const singleProgressCount = singleCanSubmit
     ? submittedPracticeCount
     : answered;
@@ -1560,6 +1450,14 @@ function AnswerView({
             <span>共 {total} 题</span>
           </p>
         </AttemptHeader>
+        <TimedAttemptControls
+          timing={data.timing}
+          clockAnchor={data.clockAnchor}
+          syncing={draftSync.status.state !== "saved"}
+          offline={!online}
+          onConfirmSubmit={openSubmitDialog}
+          submitDisabled={!online || denied || submit.isPending}
+        />
 
         <p data-testid="draft-status" className="sr-only" aria-live="polite">
           {saveStatus}
@@ -1853,10 +1751,14 @@ function AnswerView({
                           singleMode && question.id !== resolvedSingleQuestionId
                         }
                         readOnly={
-                          practiceProtocol === "v1" && practiceSubmitted
+                          (practiceProtocol === "v1" && practiceSubmitted) ||
+                          timeUp
                         }
+                        inkSyncWhileReadOnly={timeUp && !practiceSubmitted}
+                        suspendInkUpload={savedOnly}
                         footer={
-                          practiceProtocol === "v1" ? (
+                          practiceProtocol === "v1" &&
+                          (!timeUp || practiceSubmitted) ? (
                             <PracticeQuestionFooter
                               attemptId={attemptId}
                               mode={singleMode ? "single" : "list"}
@@ -2164,12 +2066,12 @@ function AnswerView({
 
         {/* 逐题提交缺稿明确选择弹层：choice→busy→error 相在 runPracticeSubmit 内迁移 */}
         <PracticeSubmitProblemDialog
-          open={practiceProblem !== null}
+          open={!timeUp && practiceProblem !== null}
           phase={practiceProblem?.phase ?? { kind: "choice", reason: "" }}
           onCancel={() => setPracticeProblem(null)}
           onConfirm={() => {
             const target = practiceProblem?.questionId;
-            if (target === undefined) return;
+            if (timeUp || target === undefined) return;
             setPracticeProblem((prev) =>
               prev !== null ? { ...prev, phase: { kind: "busy" } } : prev,
             );
@@ -2179,6 +2081,7 @@ function AnswerView({
 
         <SubmitConfirmDialog
           open={confirmOpen}
+          savedOnly={savedOnly}
           unansweredCount={unanswered}
           submitting={submit.isPending}
           preparing={notePrep.kind === "preparing"}
@@ -2191,13 +2094,17 @@ function AnswerView({
           onConfirm={() => void confirmSubmit()}
           onConfirmMissing={confirmMissingSubmit}
           onCancel={closeSubmitDialog}
-          incompleteQuestions={navigationItems
-            .filter((item) => item.completion.state !== "filled")
-            .map((item) => ({
-              id: item.id,
-              index: item.index,
-              label: completionLabel(item.completion),
-            }))}
+          incompleteQuestions={
+            timeUp
+              ? []
+              : navigationItems
+                  .filter((item) => item.completion.state !== "filled")
+                  .map((item) => ({
+                    id: item.id,
+                    index: item.index,
+                    label: completionLabel(item.completion),
+                  }))
+          }
           onGoToQuestion={(id) => {
             closeSubmitDialog();
             void jumpForMode(id, true);

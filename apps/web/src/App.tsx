@@ -409,6 +409,9 @@ const studentRoutes = (() => {
   const StudentWrongQuestionsPage = lazy(
     () => import("./pages/student/StudentWrongQuestionsPage"),
   );
+  const StudentMemosPage = lazy(
+    () => import("./pages/student/StudentMemosPage"),
+  );
   const StudentQuestionNotebookPage = lazy(
     () => import("./pages/student/StudentQuestionNotebookPage"),
   );
@@ -585,6 +588,15 @@ const studentRoutes = (() => {
           element={<Navigate to="/s/wrong" replace />}
         />
         <Route
+          // 模块 5 第一步：随笔记录端（默认仅本人；浮动「随手记」在布局层）
+          path="memos"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentMemosPage />
+            </Suspense>
+          }
+        />
+        <Route
           // T6R.15：题目笔记本（按题聚合跨来源已交卷轮次——原稿/订正/补充稿
           // 历史对照；结果页题卡「本题历史」链接的落点）
           path="notebook/:questionId"
@@ -595,6 +607,36 @@ const studentRoutes = (() => {
           }
         />
       </Route>
+    </>
+  );
+})();
+
+/** 个人学习账号公开页（模块 0）：登录 / 邀请码注册；登录后走学生端与教师端既有布局 */
+const personalRoutes = (() => {
+  const PersonalLoginPage = lazy(
+    () => import("./pages/personal/PersonalLoginPage"),
+  );
+  const PersonalRegisterPage = lazy(
+    () => import("./pages/personal/PersonalRegisterPage"),
+  );
+  return (
+    <>
+      <Route
+        path="/p/login"
+        element={
+          <Suspense fallback={<StudentRouteFallback />}>
+            <PersonalLoginPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/p/register"
+        element={
+          <Suspense fallback={<StudentRouteFallback />}>
+            <PersonalRegisterPage />
+          </Suspense>
+        }
+      />
     </>
   );
 })();
@@ -611,7 +653,7 @@ function StudentRouteFallback() {
   );
 }
 
-/** 顶层路由。学生端（/s/*，T2.3）与教师端（/t）、管理端（/a，T2B.6）分区扩展 */
+/** 顶层路由。学生端（/s/*，T2.3）与教师端（/t）、管理端（/a，T2B.6）、个人账号公开页（/p，模块 0）分区扩展 */
 export function App() {
   return (
     <Routes>
@@ -640,6 +682,7 @@ export function App() {
       />
       {teacherRoutes}
       {studentRoutes}
+      {personalRoutes}
       {adminRoutes}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

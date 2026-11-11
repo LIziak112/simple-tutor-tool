@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { CourseAttachmentsTab } from "@/features/attachments/CourseAttachmentsTab";
 import { CourseCatalogTab } from "@/features/courses/CourseCatalogTab";
 import { CourseMembersTab } from "@/features/courses/CourseMembersTab";
 import { CourseProgressTab } from "@/features/courses/CourseProgressTab";
@@ -34,10 +35,11 @@ import { ApiError } from "@/lib/api";
  * 头部：课程名与简介（可编辑）、归档/恢复、删除（D4）；三态齐全。
  */
 
-type Tab = "catalog" | "members" | "progress";
+type Tab = "catalog" | "attachments" | "members" | "progress";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "catalog", label: "目录" },
+  { key: "attachments", label: "资料" },
   { key: "members", label: "成员" },
   { key: "progress", label: "进度" },
 ];
@@ -134,6 +136,7 @@ export function CourseEditPage() {
       {tab === "catalog" && (
         <CourseCatalogTab courseId={detail.id} detail={detail} />
       )}
+      {tab === "attachments" && <CourseAttachmentsTab courseId={detail.id} />}
       {tab === "members" && (
         <CourseMembersTab courseId={detail.id} detail={detail} />
       )}

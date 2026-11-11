@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Loader2,
@@ -9,11 +8,10 @@ import {
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
-  teacherMeKey,
-  useLogoutTeacher,
-  useTeacherMe,
-} from "@/features/auth/teacher-auth";
-import { teacherAiPromptsDraftKey } from "@/features/student-ai/ai-prompt-queries";
+  useAccountLoginPath,
+  useLogoutPersonal,
+} from "@/features/auth/personal-auth";
+import { useLogoutTeacher, useTeacherMe } from "@/features/auth/teacher-auth";
 import { TeacherAiSettingsPanel } from "@/features/student-ai/TeacherAiSettingsPanel";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
@@ -33,8 +31,9 @@ const SECTIONS = [
 /** 分类写入 URL；配置控制器持续挂载，切换时保留未保存状态。 */
 export function SettingsPage() {
   const meQuery = useTeacherMe();
-  const logoutMutation = useLogoutTeacher();
-  const queryClient = useQueryClient();
+  const logoutTeacherMutation = useLogoutTeacher();
+  const logoutPersonalMutation = useLogoutPersonal("teacher");
+  const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/t/login");
   const navigate = useNavigate();
   const settingsNavigation = useSettingsNavigation();
   const [searchParams] = useSearchParams();
@@ -43,24 +42,15 @@ export function SettingsPage() {
       ?.id ?? "teaching";
   if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
   if (meQuery.isError || !meQuery.data)
-    return <Navigate to="/t/login" replace />;
+    return <Navigate to={loginPath} replace />;
+  const personal = meQuery.data.accountKind === "personal";
+  const logoutMutation = personal
+    ? logoutPersonalMutation
+    : logoutTeacherMutation;
   function handleLogout() {
     const action = () =>
       logoutMutation.mutate(undefined, {
-        onSuccess: () => {
-          queryClient.removeQueries({
-            queryKey: ["teacher", "capability-draft"],
-          });
-          queryClient.removeQueries({
-            queryKey: ["teacher", "ai-settings-draft"],
-          });
-          queryClient.removeQueries({
-            queryKey: ["teacher", "practice-feedback-draft"],
-          });
-          queryClient.removeQueries({ queryKey: teacherAiPromptsDraftKey });
-          void queryClient.invalidateQueries({ queryKey: teacherMeKey });
-          navigate("/t/login", { replace: true });
-        },
+        onSuccess: () => navigate(loginPath, { replace: true }),
       });
     if (settingsNavigation) settingsNavigation.leave(action);
     else action();
@@ -152,7 +142,9 @@ export function SettingsPage() {
         <section>
           <h2 className="text-lg font-semibold">登录会话</h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            退出后需要重新登录，才能继续使用教师工作台。
+            {personal
+              ? "退出会同时结束学习视角与管理视角的会话，需要重新登录才能继续。"
+              : "退出后需要重新登录，才能继续使用教师工作台。"}
           </p>
           {logoutMutation.isError && (
             <p

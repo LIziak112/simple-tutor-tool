@@ -49,6 +49,7 @@ const STATIC_CONTAINER_LABELS: Record<string, string> = {
   box: "框注",
   columns: "分栏",
   col: "栏",
+  rubric: "量表",
 };
 
 function StaticDirectiveContainer({

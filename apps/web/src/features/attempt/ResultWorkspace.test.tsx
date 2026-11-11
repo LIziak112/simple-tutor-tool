@@ -26,6 +26,10 @@ it("从底栏打开答题卡，开合保留定位范围和正文实例", async (
     </MemoryRouter>,
   );
   const body = screen.getByRole("textbox", { name: "订正反思" });
+  const header = screen.getByRole("banner");
+  expect(
+    within(header).getByRole("button", { name: "随手记" }),
+  ).toBeInTheDocument();
   const footer = screen.getByRole("contentinfo");
   const entry = within(footer).getByRole("button", { name: "答题卡" });
   expect(screen.queryByRole("complementary", { name: "结果定位" })).toBeNull();

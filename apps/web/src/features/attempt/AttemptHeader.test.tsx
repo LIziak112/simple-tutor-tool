@@ -168,6 +168,7 @@ it("menuItems 槽渲染在练习信息之前（做题方式切换挂点）", () 
   const items = within(menu).getAllByRole("menuitem");
   expect(items.map((item) => item.textContent)).toEqual([
     "做题方式：列表",
+    "随手记",
     "练习信息",
   ]);
 });

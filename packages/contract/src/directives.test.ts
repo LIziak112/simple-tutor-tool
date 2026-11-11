@@ -75,13 +75,15 @@ const FIRST_RELEASE_DIRECTIVES = [
   "option",
   "item",
   "variant",
+  // 通用量表判卷（模块 3，2.2）
+  "rubric",
 ] as const;
 
 describe("首发清单：§5.1.1(5) 全部指令已登记", () => {
-  it("数量恰为 25（首发 17 + TT-06 批次 8），名称与注册顺序一致", () => {
+  it("数量恰为 26（首发 17 + TT-06 批次 8 + 量表 1），名称与注册顺序一致", () => {
     const names = listDirectives().map((d) => d.name);
     expect(names).toEqual([...FIRST_RELEASE_DIRECTIVES]);
-    expect(names).toHaveLength(25);
+    expect(names).toHaveLength(26);
   });
 
   it("每个首发指令按名可查（2.0 首发 / 2.1 TT-06 批次），描述/样例非空", () => {
@@ -98,7 +100,9 @@ describe("首发清单：§5.1.1(5) 全部指令已登记", () => {
     for (const name of FIRST_RELEASE_DIRECTIVES) {
       const d = getDirective(name);
       expect(d, `指令 ${name} 应已注册`).toBeDefined();
-      expect(d?.since).toBe(SINCE_21.has(name) ? "2.1" : "2.0");
+      expect(d?.since).toBe(
+        name === "rubric" ? "2.2" : SINCE_21.has(name) ? "2.1" : "2.0",
+      );
       expect(d?.description.length ?? 0).toBeGreaterThan(4);
       expect(d?.example.length ?? 0).toBeGreaterThan(0);
       expect(d?.allowedIn.length ?? 0).toBeGreaterThan(0);

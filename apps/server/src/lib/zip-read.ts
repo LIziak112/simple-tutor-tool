@@ -6,6 +6,8 @@ import { inflateRawSync, crc32 as zlibCrc32 } from "node:zlib";
  * 为什么手写：技术栈内只有 archiver（只打包不解包），红线禁止新增依赖，
  * Node 内置 zlib 能解 deflate 但不懂 zip 容器——因此按 zip 格式规范
  * （APPNOTE）解析中央目录 + 本地文件头，用 inflateRawSync 解压。
+ * 另提供 listZipEntryNames（只走中央目录、不解压、不校验条目名安全）——
+ * 资料附件按包结构识别 docx 用（attachment-format）。
  *
  * 范围与取舍（一对一自部署场景，zip 来源 = 本系统下载的备份）：
  * - 支持 method 0（stored）与 method 8（deflate）——archiver 的全部输出形态；
@@ -120,7 +122,11 @@ export function readZipEntriesMap(buffer: Buffer): Map<string, Buffer> {
   );
 }
 
-export function readZipEntries(buffer: Buffer): ZipEntry[] {
+/** EOCD → 中央目录起点与条目数（ZIP64 / 空包在此拒绝；readZipEntries 与 listZipEntryNames 共用） */
+function centralDirectoryOf(buffer: Buffer): {
+  entryCount: number;
+  centralOffset: number;
+} {
   const eocd = findEocd(buffer);
   const entryCount = u16(buffer, eocd + 10);
   const centralOffset = u32(buffer, eocd + 16);
@@ -132,6 +138,44 @@ export function readZipEntries(buffer: Buffer): ZipEntry[] {
   if (entryCount === 0) {
     throw new ZipReadError("压缩包为空");
   }
+  return { entryCount, centralOffset };
+}
+
+/**
+ * 只列中央目录里的条目名（含目录条目，按出现顺序），不解压、不校验 CRC、
+ * 不做条目名安全校验——用于「这个 zip 是不是某种 Office 包」一类的结构判断。
+ * 结构不符（非 zip / 截断 / 签名错 / ZIP64）抛 ZipReadError。
+ */
+export function listZipEntryNames(buffer: Buffer): string[] {
+  const { entryCount, centralOffset } = centralDirectoryOf(buffer);
+  const names: string[] = [];
+  let cursor = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (u32(buffer, cursor) !== CENTRAL_SIGNATURE) {
+      throw new ZipReadError("压缩包损坏（中央目录签名不符）");
+    }
+    const nameLength = u16(buffer, cursor + 28);
+    const extraLength = u16(buffer, cursor + 30);
+    const commentLength = u16(buffer, cursor + 32);
+    if (cursor + 46 + nameLength > buffer.length) {
+      throw new ZipReadError("压缩包损坏（读取越界）");
+    }
+    names.push(
+      buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8"),
+    );
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return names;
+}
+
+export function readZipEntries(
+  buffer: Buffer,
+  selection?: {
+    readonly names: ReadonlySet<string>;
+    readonly maxEntryBytes: number;
+  },
+): ZipEntry[] {
+  const { entryCount, centralOffset } = centralDirectoryOf(buffer);
 
   const entries: ZipEntry[] = [];
   let cursor = centralOffset;
@@ -151,6 +195,14 @@ export function readZipEntries(buffer: Buffer): ZipEntry[] {
     const name = buffer
       .subarray(cursor + 46, cursor + 46 + nameLength)
       .toString("utf8");
+
+    if (selection !== undefined && !selection.names.has(name)) {
+      cursor += 46 + nameLength + extraLength + commentLength;
+      continue;
+    }
+    if (selection !== undefined && uncompressedSize > selection.maxEntryBytes) {
+      throw new ZipReadError(`压缩包条目解压后超限：${name}`);
+    }
 
     // 加密位（bit 0）：不是本系统备份的形态，明确拒绝
     if ((flags & 0x0001) !== 0) {
@@ -173,16 +225,29 @@ export function readZipEntries(buffer: Buffer): ZipEntry[] {
     const localNameLength = u16(buffer, localOffset + 26);
     const localExtraLength = u16(buffer, localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    if (
+      dataStart + compressedSize > centralOffset ||
+      buffer
+        .subarray(localOffset + 30, localOffset + 30 + localNameLength)
+        .toString("utf8") !== name
+    ) {
+      throw new ZipReadError(`压缩包损坏（条目位置不符：${name}）`);
+    }
     const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
 
     let data: Buffer;
     if (method === 0) {
       // stored：原样字节
+      if (compressedSize !== uncompressedSize) {
+        throw new ZipReadError(`压缩包损坏（条目大小不符：${name}）`);
+      }
       data = Buffer.from(compressed);
     } else if (method === 8) {
       // deflate：raw inflate（zip 的 deflate 不带 zlib 头）
       try {
-        data = inflateRawSync(compressed);
+        data = inflateRawSync(compressed, {
+          maxOutputLength: Math.max(1, uncompressedSize),
+        });
       } catch {
         throw new ZipReadError(`压缩包损坏（条目解压失败：${name}）`);
       }

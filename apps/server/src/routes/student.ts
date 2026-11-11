@@ -134,16 +134,17 @@ import { listWrongQuestions } from "../services/wrong-questions";
 import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
+import { createStudentAttachmentRoutes } from "./student-attachments";
+import { createStudentMemoRoutes } from "./student-memos";
+import { createStudentRubricRoutes } from "./student-rubric";
 
 /**
  * 学生路由（需学生会话），挂载在 /api/student，整组套 requireStudent 守卫：
  * - GET  /me：当前登录学生信息（displayName 等，守卫已校验存在且未归档）；
  * - POST /password：自助修改密码（验证原密码）；
- * - GET  /assignments：我的作业（仅本人被指派且未删除，附完成状态，T2.2；
- *   T2.6 起状态由 attempts 推导：未开始/进行中/已交/已批）；
- * - GET  /assignments/:id/paper：作业试卷——按单元分组的公开题目（T2.4；
- *   T2A.7 起为 {units:[{id,title,questions}]}，live 题数为 0 的单元不出现
- *   （D16：单元软删不影响出卷）；未被指派 403，作业不存在/已删除 404）；
+ * - GET  /assignments：我的作业（仅本人被指派且未删除，状态由 attempts 推导）；
+ * - GET  /assignments/:id/paper：作业试卷——按单元分组的公开题目（T2A.7 起为
+ *   {units:[{id,title,questions}]}；未被指派 403，作业不存在/已删除 404）；
  * - POST /assignments/:id/attempt：创建或取回进行中的 attempt（T2.6，幂等：
  *   一人一份进行中；已交卷返回已交的那份让前端直接进结果视图）；
  * - PUT  /attempts/:id/answers/:questionId：保存草稿答案（T2.6；已交 409）；
@@ -242,14 +243,13 @@ import { createStudentAiRoutes } from "./student-ai";
  *   静默剔除；剔完为空 400 WRONG_PRACTICE_EMPTY）并按最近一次判定作答的
  *   快照冻结组卷（sourceType=wrong，题目顺序 = questionIds 顺序）；响应为新
  *   attempt 摘要（201）；作答/判分/批改复用既有 /attempts/:id/* 机制；
- * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
+ * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）；
+ * - /memos*（模块 5 第一步随笔，见 student-memos.ts）：仅本人、教师侧无投影。
  *
- * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
- * 因此 ink 的取回路由注册一个 /attempts/:id/ink/:questionId，handler 内按
- * .png 后缀分流 JSON（矢量文档）与 PNG（快照直出）——对外 URL 形态与任务
- * 约定一致（GET …/ink/:questionId 与 GET …/ink/:questionId.png）。T6R.5 的
- * note-versions 图片路由同款注册 /images/:file：该资源只有 PNG 一种形态
- * （元数据经头投影接口下发），后缀可选——带不带 .png 都直出 PNG。
+ * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），因此
+ * ink 的取回路由注册一个 /attempts/:id/ink/:questionId，handler 内按 .png 后缀分流
+ * JSON（矢量文档）与 PNG（快照直出）——对外 URL 形态与任务约定一致。T6R.5 的
+ * note-versions 图片路由同款注册 /images/:file：只有 PNG 一种形态，后缀可选。
  *
  * 学生端接口永不返回答案/详解等教师侧内容（AGENTS.md 第 3 条）：/assignments
  * 只含单元公开元信息（标题/topic/题数）；/assignments/:id/paper 与草稿视图的
@@ -260,9 +260,8 @@ import { createStudentAiRoutes } from "./student-ai";
  * 图片状态与学生自产附件（题干内容不在本批接口）。泄露测试见
  * routes/assignments.test.ts、routes/student-lectures.test.ts、
  * routes/student-paper.test.ts 与 routes/student-attempts.test.ts
- * （通用工具 src/test/assert-no-leak.ts；T2.8 ink 接口见 routes/student-ink.test.ts；
- * T2.11 提示接口与全学生端泄露矩阵见 routes/student-hints.test.ts；
- * T6R.5 草稿接口见 routes/student-notes.test.ts 与 routes/student-note-read.test.ts）。
+ * （通用工具 src/test/assert-no-leak.ts；ink / 提示与全学生端泄露矩阵 / 草稿接口分别见
+ * routes/student-ink、student-hints、student-notes 与 student-note-read 的测试）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
 export function createStudentRoutes(
@@ -281,6 +280,9 @@ export function createStudentRoutes(
       )
       .route("/", createStudentInkProfileRoutes(db))
       .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
+      .route("/", createStudentRubricRoutes(db))
+      .route("/", createStudentAttachmentRoutes(db, dataDir))
+      .route("/", createStudentMemoRoutes(db, dataDir))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })
@@ -310,8 +312,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1
-      // 与可选 feedbackMode，契约拒绝 mode 无版本）
+      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode，契约拒绝 mode 无版本）
       .post("/assignments/:id/attempt", async (c) => {
         const options =
           (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
@@ -335,8 +336,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），
-      // 请求/回执只有标志位、不含任何答案内容（泄露测试 student-flags.test.ts）
+      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
       .put("/attempts/:id/flags/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptFlagRequestSchema);
         return c.json({
@@ -375,8 +375,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             new Date(),
-            body?.revisions ?? [],
-            body?.evidence,
+            body ?? { revisions: [] },
           ),
         });
       })
@@ -450,10 +449,8 @@ export function createStudentRoutes(
           { "Cache-Control": "private, no-store" },
         );
       })
-      // QM-10（TT-09a）学生自评：已提交且公布后对了/错了/暂不判断，即时生效
-      // 无需教师确认；校验链与幂等/CAS/教师优先见 self-review-service（契约层
-      // packages/contract self-review.ts TT-05a 定稿）；自评不写 teacherMark/
-      // finalCorrect、不推动 graded；响应 no-store 不落缓存
+      // QM-10（TT-09a）学生自评：已提交且公布后对了/错了/暂不判断，即时生效无需
+      // 教师确认；校验链见 self-review-service；不写 teacherMark/finalCorrect
       .post("/attempts/:id/questions/:questionId/self-review", async (c) => {
         const body = await parseJsonBody(c, selfReviewRequestSchema);
         return c.json(
@@ -554,6 +551,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             body.events,
+            body.viewId,
           ),
         });
       })

@@ -14,12 +14,15 @@ import { createRequireAnySession } from "./auth/require-any-session";
 import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
 import { createMcpRoutes } from "./mcp/mount";
+import { createPersonalMcpRoutes } from "./mcp/personal-mount";
 import { createStudentMcpRoutes } from "./mcp/student-mount";
 import { createAdminRoutes } from "./routes/admin";
 import { createAiReplyCheckerRoutes } from "./routes/ai-reply-checker.ts";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
+import { MEMO_MEDIA_UPLOAD_CAP } from "./routes/student-memos";
 import { createTeacherRoutes } from "./routes/teacher";
+import { ATTACHMENT_UPLOAD_CAP } from "./services/attachment-upload";
 import {
   MEDIA_BLOB_URL_TAIL_PATTERN,
   readMediaBlob,
@@ -311,6 +314,29 @@ export function createApp(options: CreateAppOptions) {
         message: "图片超过 5MB 上传上限，请压缩后重试",
       }),
     )
+    // 模块 6 第一步：资料附件上传（20 MB 契约限额 + multipart 余量 1 MiB；限额 /
+    // 错误码与路由内的流式计数解析共用 ATTACHMENT_UPLOAD_CAP，#103-01）
+    .use(
+      "/api/teacher/attachments",
+      guardBodyLimit({
+        method: "POST",
+        limit: ATTACHMENT_UPLOAD_CAP.limitBytes,
+        code: ATTACHMENT_UPLOAD_CAP.code,
+        message: ATTACHMENT_UPLOAD_CAP.message,
+      }),
+    )
+    // 模块 5 第一步：随笔媒体上传（语音 20 MB 契约限额 + multipart 余量 1 MiB，
+    // 与路由内流式计数共用 MEMO_MEDIA_UPLOAD_CAP；图片 10 MB 的精确限额由
+    // memo-service 按实际字节校验）
+    .use(
+      "/api/student/memos/media",
+      guardBodyLimit({
+        method: "POST",
+        limit: MEMO_MEDIA_UPLOAD_CAP.limitBytes,
+        code: MEMO_MEDIA_UPLOAD_CAP.code,
+        message: MEMO_MEDIA_UPLOAD_CAP.message,
+      }),
+    )
     // SAI-13 AI 任务文字请求（create / update-pending 小信封；材料 multipart
     // 与追问入口归后续批次，届时按 §9 材料粗防线另配）
     .use("/api/student/ai/tasks", guardBodyLimit(AI_TASK_JSON_GUARD))
@@ -384,6 +410,18 @@ export function createApp(options: CreateAppOptions) {
         db: options.db,
         dataDir: options.dataDir,
         publicUrl: options.publicUrl,
+      }),
+    )
+    // —— 个人账号 MCP Server（模块 0「一枚 token」）：/mcp/personal 只收个人账号
+    //    学习者的 mcp token（与 /mcp/student 同一凭证域、账号类型闸门互斥），实例
+    //    = 教师白名单工具 ∪ 学生全部工具（src/mcp/personal-server.ts）。
+    .route(
+      "/mcp/personal",
+      createPersonalMcpRoutes({
+        db: options.db,
+        dataDir: options.dataDir,
+        publicUrl: options.publicUrl,
+        specDir: options.specDir,
       }),
     )
     // —— 媒体图片伺服（媒体管线第二单）：GET/HEAD /blobs/media/<hash>.<ext> ——

@@ -18,7 +18,9 @@ import type { Db } from "../db/client";
 import { attempts, students, type Teacher, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  getPersonalInviteCode,
   isRegistrationOpen,
+  setPersonalInviteCode,
   setRegistrationOpen,
 } from "./app-settings-service";
 
@@ -90,6 +92,7 @@ function toSummary(row: Teacher, studentCount: number): AdminTeacherSummary {
     // 列可空仅因迁移口径（D9 同款），各创建入口恒写非空，读侧视为必有
     loginName: row.loginName ?? "",
     isAdmin: row.isAdmin,
+    accountKind: row.accountKind,
     disabledAt: row.disabledAt,
     createdAt: row.createdAt,
     studentCount,
@@ -284,19 +287,31 @@ export async function resetTeacherPassword(
   return { password };
 }
 
-// ---------- 注册开关（D8） ----------
+// ---------- 注册开关（D8）与个人学习邀请码（模块 0） ----------
 
-/** GET /api/admin/settings：注册开关当前状态 */
+/** GET /api/admin/settings：注册开关 + 个人学习邀请码（null = 个人注册关闭） */
 export function getAdminSettings(db: Db): AdminSettingsData {
-  return { allowRegistration: isRegistrationOpen(db) };
+  return {
+    allowRegistration: isRegistrationOpen(db),
+    personalInviteCode: getPersonalInviteCode(db),
+  };
 }
 
-/** PATCH /api/admin/settings：切换注册开关（登录页注册入口随 status 联动） */
+/**
+ * PATCH /api/admin/settings：按提供的字段更新（契约保证至少一项）——注册开关
+ * （登录页注册入口随 status 联动）/ 个人学习邀请码（null 即关闭个人注册，
+ * 登录页「个人学习」入口随 status.personalRegistrationOpen 联动）。
+ */
 export function updateAdminSettings(
   db: Db,
   request: AdminSettingsUpdateRequest,
 ): AdminSettingsData {
-  setRegistrationOpen(db, request.allowRegistration);
+  if (request.allowRegistration !== undefined) {
+    setRegistrationOpen(db, request.allowRegistration);
+  }
+  if (request.personalInviteCode !== undefined) {
+    setPersonalInviteCode(db, request.personalInviteCode);
+  }
   return getAdminSettings(db);
 }
 

@@ -12,11 +12,13 @@ import {
   useAdminOverview,
   useUpdateAdminSettings,
 } from "@/features/admin/admin-queries";
+import { PersonalInviteCodeCard } from "@/features/admin/PersonalInviteCodeCard";
 import { formatCnTime } from "@/lib/time";
 
 /**
  * /a 管理端概览（T2B.6，D20）：只显示聚合计数——教师数/未禁用教师数/学生总数/
- * 作答总数/共享文件数 + 注册开关行（就地切换，§4.3 设置区显示当前注册状态）。
+ * 作答总数/共享文件数 + 注册开关行（就地切换，§4.3 设置区显示当前注册状态）
+ * + 个人学习邀请码卡（模块 0，PersonalInviteCodeCard）。
  * 三态齐全；卡片为纯展示，无任何明细（管理员没有业务数据权限，D19）。
  */
 export function AdminOverviewPage() {
@@ -171,6 +173,9 @@ export function AdminOverviewPage() {
             : "切换失败，请稍后重试"}
         </p>
       )}
+
+      {/* 个人学习注册：邀请码即开关（模块 0） */}
+      <PersonalInviteCodeCard />
     </section>
   );
 }

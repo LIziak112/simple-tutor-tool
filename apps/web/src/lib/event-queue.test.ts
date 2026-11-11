@@ -1,5 +1,6 @@
 import type { LearningEvent } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { postAttemptEventsApi } from "./api";
 import {
   createEventQueue,
   EVENT_BATCH_BYTES_MAX,
@@ -153,6 +154,49 @@ describe("定时批量", () => {
     expect(sizes[0]).toBe(200);
     expect(sizes.reduce((sum, n) => sum + n, 0)).toBeGreaterThanOrEqual(205);
     for (const size of sizes) expect(size).toBeLessThanOrEqual(200);
+  });
+});
+
+describe("作答页会话 viewId（题内活动用时按会话分组）", () => {
+  it("attempt scope 默认发送 / beacon 都随批携带同一个 viewId；事件本体不变", async () => {
+    const posted = vi
+      .mocked(postAttemptEventsApi)
+      .mockResolvedValue({ accepted: 1, rejected: 0 } as never);
+    const sent: Blob[] = [];
+    // jsdom 无 sendBeacon：临时装一个可检视的替身，用完即拆（其他用例依赖「无 beacon → 落仓」）
+    Object.defineProperty(navigator, "sendBeacon", {
+      configurable: true,
+      value: vi.fn((_url: string, body: Blob) => {
+        sent.push(body);
+        return true;
+      }),
+    });
+    try {
+      const q = makeQueue();
+      q.track(ev("question_focus", { questionId: "q1" }));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(posted).toHaveBeenCalledTimes(1);
+      const [attemptId, batch, viewId] = posted.mock.calls[0] ?? [];
+      expect(attemptId).toBe("att-1");
+      expect((batch ?? []).map((e) => e.type)).toEqual(["question_focus"]);
+      expect(typeof viewId).toBe("string");
+      expect((viewId ?? "").length).toBeGreaterThan(0);
+      expect(batch?.[0]).not.toHaveProperty("viewId");
+      // 页面隐藏 → beacon 路径：请求体顶层带同一 viewId
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.runOnlyPendingTimersAsync();
+      expect(sent).toHaveLength(1);
+      const body = JSON.parse((await sent[0]?.text()) ?? "{}") as {
+        events: LearningEvent[];
+        viewId?: string;
+      };
+      expect(body.events.map((e) => e.type)).toEqual(["page_hidden"]);
+      expect(body.viewId).toBe(viewId);
+    } finally {
+      Reflect.deleteProperty(navigator, "sendBeacon");
+      posted.mockReset().mockRejectedValue(new Error("不应直接调用"));
+    }
   });
 });
 
@@ -432,6 +476,188 @@ describe("T4.0a 持久键实例隔离（IDB 键冲突修复，§5.0-A1）", () =
     expect(store.dumpAll()).toEqual([]);
   });
 
+  it("审查 #100-01：离线积压按来源会话补发——上次页面的事件随它自己的 viewId 发，不冒用当前 viewId", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    mockNavigator(false);
+    // 上一次页面加载：离线积压后被杀
+    const sendA = vi.fn();
+    const qA = makeQueue({ send: sendA });
+    qA.track(ev("question_focus", { questionId: "q1" }));
+    qA.track(ev("answer_change", { questionId: "q1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sendA).not.toHaveBeenCalled();
+    expect(store.keyCount()).toBe(1);
+
+    // 新页面加载恢复在线：自己的事件带自己的 viewId，积压带积压时的 viewId
+    mockNavigator(true);
+    const sendB = vi.fn().mockResolvedValue(undefined);
+    const qB = makeQueue({ send: sendB });
+    qB.track(ev("question_focus", { questionId: "q2" }));
+    await qB.flush();
+    const byViewId = new Map<string | null, string[]>();
+    for (const call of sendB.mock.calls) {
+      const [events, viewId] = call as [LearningEvent[], string | null];
+      byViewId.set(viewId, [
+        ...(byViewId.get(viewId) ?? []),
+        ...events.map((e) => e.type),
+      ]);
+    }
+    expect(byViewId.size).toBe(2);
+    const groups = [...byViewId.entries()];
+    expect(groups.every(([viewId]) => typeof viewId === "string")).toBe(true);
+    const backlog = groups.find(([, types]) => types.includes("answer_change"));
+    expect(backlog?.[1]).toEqual(
+      expect.arrayContaining(["question_focus", "answer_change"]),
+    );
+    const fresh = groups.find(([viewId]) => viewId !== backlog?.[0]);
+    expect(fresh?.[1]).toContain("question_focus");
+    expect(fresh?.[1]).not.toContain("answer_change");
+    expect(store.dumpAll()).toEqual([]);
+
+    // 旧版积压（没存 viewId）：不带 viewId 发（服务端并入缺省组），不冒用当前会话
+    qA.dispose();
+    qB.dispose();
+    await vi.runOnlyPendingTimersAsync();
+    store.setRaw("events:attempt:att-1:legacy", {
+      events: [ev("question_blur", { questionId: "q1" })],
+    });
+    const sendC = vi.fn().mockResolvedValue(undefined);
+    makeQueue({ send: sendC });
+    await vi.advanceTimersByTimeAsync(5000);
+    const legacyCall = sendC.mock.calls.find((call) =>
+      (call[0] as LearningEvent[]).some((e) => e.type === "question_blur"),
+    );
+    expect(legacyCall?.[1]).toBeNull();
+  });
+
+  it("审查 #100-01：补发失败只把失败的那组写回它自己的键，viewId 保留", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    mockNavigator(false);
+    const qA = makeQueue({ send: vi.fn() });
+    qA.track(ev("answer_change", { questionId: "q1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    const [backlogKey] = await store.keys("events:attempt:att-1:");
+    const stored = (await store.get(backlogKey ?? "")) as {
+      events: LearningEvent[];
+      viewId?: string;
+    };
+    expect(typeof stored.viewId).toBe("string");
+
+    mockNavigator(true);
+    const send = vi.fn(
+      async (events: readonly LearningEvent[], viewId: string | null) => {
+        if (viewId === stored.viewId) throw new Error("5xx");
+        void events;
+      },
+    );
+    const qB = makeQueue({ send });
+    qB.track(ev("question_focus", { questionId: "q2" }));
+    await qB.flush();
+    const again = (await store.get(backlogKey ?? "")) as {
+      events: LearningEvent[];
+      viewId?: string;
+    };
+    expect(again.viewId).toBe(stored.viewId);
+    const againTypes = again.events.map((e) => e.type);
+    expect(againTypes).toContain("answer_change");
+    expect(againTypes).not.toContain("question_focus");
+    // 自己那组发成功：不留键
+    expect(store.keyCount()).toBe(1);
+  });
+
+  it("审查 #100-01：页面隐藏走 beacon 时同样按来源会话分组、各带各的 viewId", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    store.setRaw("events:attempt:att-1:prev", {
+      events: [ev("answer_change", { questionId: "q1" })],
+      viewId: "view-prev",
+    });
+    const beacon = vi.fn(
+      (_events: readonly LearningEvent[], _viewId: string | null) => true,
+    );
+    const q = makeQueue({ send: vi.fn(), beacon });
+    q.track(ev("question_focus", { questionId: "q2" }));
+    setVisibility("hidden");
+    await q.flush();
+    const byViewId = new Map(
+      beacon.mock.calls.map((call) => [
+        call[1] as string | null,
+        (call[0] as LearningEvent[]).map((e) => e.type),
+      ]),
+    );
+    expect(byViewId.get("view-prev")).toEqual(["answer_change"]);
+    const ownEntry = [...byViewId.entries()].find(
+      ([viewId]) => viewId !== "view-prev",
+    );
+    expect(typeof ownEntry?.[0]).toBe("string");
+    expect(ownEntry?.[1]).toContain("question_focus");
+    expect(ownEntry?.[1]).not.toContain("answer_change");
+    expect(store.dumpAll()).toEqual([]);
+  });
+
+  it("审查 #100-01：别的会话那组写回失败时不进本实例内存队列——仓里原件仍在、下一轮按原 viewId 重发，不会双发或冒用", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    store.setRaw("events:attempt:att-1:prev", {
+      events: [ev("answer_change", { questionId: "q1" })],
+      viewId: "view-prev",
+    });
+    let failPrev = true;
+    const send = vi.fn(
+      async (_events: readonly LearningEvent[], viewId: string | null) => {
+        if (viewId === "view-prev" && failPrev) throw new Error("5xx");
+      },
+    );
+    // 仓只读不可写：写回失败
+    const originalSet = store.set;
+    store.set = async () => {
+      throw new Error("quota");
+    };
+    const q = makeQueue({ send });
+    q.track(ev("question_focus", { questionId: "q2" }));
+    await q.flush();
+    // 别的会话的原件还在仓里，没有被搬进内存
+    expect(store.keyCount()).toBe(1);
+    expect(store.dumpAll().map((e) => e.type)).toEqual(["answer_change"]);
+    // 下一轮恢复：只按原 viewId 再发一次，自己的 viewId 下没有它
+    failPrev = false;
+    store.set = originalSet;
+    send.mockClear();
+    await q.flush();
+    const prevCalls = send.mock.calls.filter((call) => call[1] === "view-prev");
+    expect(prevCalls.length).toBe(1);
+    expect(
+      send.mock.calls.some(
+        (call) =>
+          call[1] !== "view-prev" &&
+          (call[0] as LearningEvent[]).some((e) => e.type === "answer_change"),
+      ),
+    ).toBe(false);
+    expect(store.dumpAll()).toEqual([]);
+  });
+
+  it("审查 #100-01：离线时别的会话的键原样保留，既不并入自己的键也不删除", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    mockNavigator(false);
+    store.setRaw("events:attempt:att-1:prev", {
+      events: [ev("answer_change", { questionId: "q1" })],
+      viewId: "view-prev",
+    });
+    const q = makeQueue({ send: vi.fn() });
+    q.track(ev("question_focus", { questionId: "q2" }));
+    await q.flush();
+    expect(store.keyCount()).toBe(2);
+    const prev = (await store.get("events:attempt:att-1:prev")) as {
+      events: LearningEvent[];
+      viewId?: string;
+    };
+    expect(prev.viewId).toBe("view-prev");
+    expect(prev.events.map((e) => e.type)).toEqual(["answer_change"]);
+  });
+
   it("旧版无后缀键（events:lecture）的遗留积压被收编发送", async () => {
     const store = memoryStore();
     installEventStore(store);
@@ -524,7 +750,7 @@ describe("T4.0a 批次按条数与字节双限切（sendBeacon 64KiB 上限）",
     queue.track(event);
     await queue.flush();
 
-    expect(send.mock.calls).toEqual([[[event]]]);
+    expect(send.mock.calls.map((call) => call[0])).toEqual([[event]]);
   });
 
   it("超 32KiB 的事件分多批 beacon，每批字节数不超限", async () => {

@@ -262,7 +262,11 @@ describe("POST /api/public/teacher/register（T2B.6，D3 来源一）", () => {
     const open = await app.request("/api/public/teacher/status");
     const openBody = (await open.json()) as { data: unknown };
     expect(teacherStatusOkSchema.safeParse(openBody).success).toBe(true);
-    expect(openBody.data).toEqual({ hasTeacher: true, registrationOpen: true });
+    expect(openBody.data).toEqual({
+      hasTeacher: true,
+      registrationOpen: true,
+      personalRegistrationOpen: false,
+    });
 
     setSwitch(db, false);
     const closed = await app.request("/api/public/teacher/status");
@@ -270,6 +274,7 @@ describe("POST /api/public/teacher/register（T2B.6，D3 来源一）", () => {
     expect(closedBody.data).toEqual({
       hasTeacher: true,
       registrationOpen: false,
+      personalRegistrationOpen: false,
     });
     db.$client.close();
   });
@@ -279,7 +284,11 @@ describe("POST /api/public/teacher/register（T2B.6，D3 来源一）", () => {
     // 全新库（app_settings 由回填写入 'true'，但无教师 → 恒 false）
     const res = await app.request("/api/public/teacher/status");
     const body = (await res.json()) as { data: unknown };
-    expect(body.data).toEqual({ hasTeacher: false, registrationOpen: false });
+    expect(body.data).toEqual({
+      hasTeacher: false,
+      registrationOpen: false,
+      personalRegistrationOpen: false,
+    });
     db.$client.close();
   });
 

@@ -369,15 +369,17 @@ it.each(["list", "single"] as const)(
     await waitFor(() => expect(submitAttemptApi).toHaveBeenCalledOnce());
     expect(vi.mocked(submitAttemptApi).mock.calls[0]).toEqual([
       ATTEMPT_ID,
-      [
-        { questionId: "q1", questionRevisionId: "rev-q1" },
-        { questionId: "q2", questionRevisionId: "rev-q2" },
-        { questionId: "q3", questionRevisionId: "rev-q3" },
-      ],
-      [
-        { questionId: "q2", state: "none" },
-        { questionId: "q3", state: "none" },
-      ],
+      {
+        revisions: [
+          { questionId: "q1", questionRevisionId: "rev-q1" },
+          { questionId: "q2", questionRevisionId: "rev-q2" },
+          { questionId: "q3", questionRevisionId: "rev-q3" },
+        ],
+        evidence: [
+          { questionId: "q2", state: "none" },
+          { questionId: "q3", state: "none" },
+        ],
+      },
     ]);
     await screen.findByText("批改结果", {}, { timeout: 10_000 });
   },

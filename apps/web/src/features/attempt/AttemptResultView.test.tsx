@@ -354,17 +354,30 @@ describe("得分汇总卡", () => {
     const view = render(
       <AttemptResultView data={multi} onBackHome={vi.fn()} />,
     );
-    expect(screen.getByText("练习四")).toBeInTheDocument();
-    expect(screen.getByText("练习五")).toBeInTheDocument();
+    // 节标题 + 模块 7「按模块看」表格各出现一次单元名
+    expect(
+      screen.getByRole("heading", { name: "练习四", level: 2 }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "练习五", level: 2 }),
+    ).toBeInTheDocument();
+    const moduleTable = within(screen.getByTestId("module-results")).getByRole(
+      "table",
+    );
+    expect(
+      within(moduleTable).getByRole("button", { name: "练习五" }),
     ).toBeInTheDocument();
     expect(screen.getByText("第 4 题")).toBeInTheDocument();
     view.unmount();
 
-    // 对照：单单元（DATA 本体）不渲染节标题
+    // 对照：单单元（DATA 本体）不渲染节标题；按模块表仍有一行但模块名不是按钮
     renderView();
     expect(screen.queryByRole("heading", { name: "练习四" })).toBeNull();
+    expect(
+      within(screen.getByTestId("module-results")).queryByRole("button", {
+        name: "练习四",
+      }),
+    ).toBeNull();
   });
 });
 

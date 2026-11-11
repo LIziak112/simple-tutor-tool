@@ -3,7 +3,11 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { ApiErr, InkDoc, InkWriteMeta } from "@tutor/contract";
-import { inkFetchOkSchema, inkUploadOkSchema } from "@tutor/contract";
+import {
+  ATTEMPT_TIME_UP_GRACE_SEC,
+  inkFetchOkSchema,
+  inkUploadOkSchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -255,6 +259,65 @@ async function submitAttempt(
 }
 
 describe("PUT + GET 笔迹：上传取回往返", () => {
+  it("限时卷的正式手写在宽限内可追平，宽限后只接受已落库回执重放", async () => {
+    const { app, db, aCookie, attemptId } = await makeInkApp();
+    const setDeadline = (seconds: number) =>
+      db
+        .update(attempts)
+        .set({
+          timeLimitSec: 60,
+          deadlineAt: new Date(Date.now() - seconds * 1000).toISOString(),
+        })
+        .where(eq(attempts.id, attemptId))
+        .run();
+    setDeadline(10);
+    const meta = { baseRevision: 0, mutationId: randomUUID() };
+    const png = makePng();
+    const doc = gzipDoc(atramentDoc(1));
+    const saved = await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      doc,
+      png,
+      meta,
+    );
+    expect(saved.status).toBe(200);
+    setDeadline(ATTEMPT_TIME_UP_GRACE_SEC + 10);
+    const replay = await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      doc,
+      png,
+      meta,
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(await saved.json());
+    const late = await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(atramentDoc(2)),
+      png,
+      {
+        baseRevision: 1,
+        mutationId: randomUUID(),
+      },
+    );
+    expect(late.status).toBe(409);
+    const body = await late.json();
+    expect(body).toMatchObject({ error: "ATTEMPT_TIME_UP" });
+    assertNoLeak(body);
+    expect(
+      db.select().from(inkTable).where(eq(inkTable.attemptId, attemptId)).get()
+        ?.revision,
+    ).toBe(1);
+  });
+
   it("上传成功 → 回执字段齐全 → GET 取回 InkDoc 往返一致 → ink 行与文件落盘", async () => {
     const { app, db, dataDir, aCookie, attemptId } = await makeInkApp();
     const doc = atramentDoc(2);

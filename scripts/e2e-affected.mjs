@@ -99,6 +99,8 @@ export const SPEC_TAGS = {
   // 管理端
   "admin-ui.spec.ts": ["@admin"],
   "teacher-register-admin.spec.ts": ["@admin"],
+  // 个人账号（模块 0：邀请码注册 / 双视角 / /mcp/personal）
+  "personal-account.spec.ts": ["@admin", "@student"],
   // 教师端
   "teacher-mark-flow.spec.ts": ["@teacher"],
   "teacher-navigation-settings.spec.ts": ["@teacher"],
@@ -116,8 +118,10 @@ export const SPEC_TAGS = {
   "student-settings.spec.ts": ["@student"],
   "student-workspace.spec.ts": ["@student"],
   "student-records.spec.ts": ["@student"],
+  "student-memos.spec.ts": ["@student"],
   "student-review-workspace.spec.ts": ["@student"],
   "student-self-review.spec.ts": ["@student"],
+  "timed-test.spec.ts": ["@student"],
   "wrong-book.spec.ts": ["@student"],
   "wrong-practice.spec.ts": ["@student"],
   "attempt-sync.spec.ts": ["@student"],
@@ -158,6 +162,7 @@ export const FEATURE_DIR_TAGS = {
   notes: ["@annotation"],
   "question-process": ["@student", "@teacher", "@annotation"],
   "student-ai": ["@ai"],
+  memos: ["@student"],
   student: ["@student"],
   students: ["@teacher"],
   "teacher-attempts": ["@teacher"],
@@ -192,6 +197,7 @@ export const ROUTE_TAGS = {
   "student-hints": ["@student"],
   "student-lectures": ["@student"],
   "student-lesson": ["@student"],
+  "student-memos": ["@student"],
   "student-note-read": ["@student"],
   "student-practice-question-submit": ["@student"],
   "student-practice-workflow": ["@student"],

@@ -272,7 +272,7 @@ export class ApiError extends Error {
  * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
  * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
  */
-async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
+export async function callApi<T>(fn: () => Promise<Response>): Promise<T> {
   let res: Response;
   try {
     res = await fn();
@@ -303,7 +303,7 @@ async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
       pickExtraFields(body),
     );
   }
-  return parsed.data.data as TData;
+  return parsed.data.data as T;
 }
 
 /** 取统一壳（ok/error/message）之外的附加字段（如 LINT_ERROR 的 _issues） */
@@ -431,7 +431,7 @@ export function setupTeacher(
 /** 教师登录名 + 密码登录（连续失败 5 次会被临时锁定，见后端 §5.7 限流） */
 export function loginTeacher(
   request: TeacherLoginRequest,
-): Promise<TeacherInfo> {
+): Promise<import("@tutor/contract").TeacherLoginData> {
   return callApi(() => api.api.public.teacher.login.$post({ json: request }));
 }
 
@@ -971,17 +971,9 @@ export function saveAttemptAnswerApi(
  */
 export function submitAttemptApi(
   attemptId: string,
-  revisions: AttemptSubmitRequest["revisions"],
-  evidence?: AttemptSubmitRequest["evidence"],
+  input: AttemptSubmitRequest,
 ): Promise<AttemptDetailData> {
-  const args = {
-    param: { id: attemptId },
-    json: {
-      revisions: [...revisions],
-      // 条件展开适配 exactOptionalPropertyTypes：不传 ≠ 传 undefined
-      ...(evidence !== undefined ? { evidence: [...evidence] } : {}),
-    },
-  };
+  const args = { param: { id: attemptId }, json: input };
   return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
 }
 
@@ -1269,10 +1261,8 @@ export function fetchPracticeQuestionFeedbackApi(
 
 /**
  * 学生自评（QM-10/11，POST /attempts/:id/questions/:questionId/self-review）：
- * verdict 三值（correct/wrong/undecided=撤回清除记录）+ baseRevision CAS +
- * mutationId 幂等键；服务端校验链（公布 gate/策略/教师优先）拒绝时 403/409，
- * REVISION_CONFLICT 附 _current（最新自评与 revision）。响应含本题有效判定
- * 投影与卷汇总；private,no-store。json 以独立变量传入的原因同 updateQuestion。
+ * verdict 三值（correct/wrong/undecided=撤回）+ baseRevision CAS + mutationId
+ * 幂等键；服务端校验链拒绝时 403/409，REVISION_CONFLICT 附 _current。
  */
 export function saveSelfReviewApi(
   attemptId: string,
@@ -1290,16 +1280,17 @@ export function saveSelfReviewApi(
 // ---------- T2.10：学习痕迹事件（学生端） ----------
 
 /**
- * 批量上报 attempt 上下文的学习痕迹事件（≤200 条/次，契约拦截）。
- * 事件队列（lib/event-queue.ts）的正常发送路径；sendBeacon 兜底路径
- * 在队列内部用原生 fetch/Beacon 直发（见 putAttemptInkApi 的同类说明）。
- * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
+ * 批量上报 attempt 上下文的学习痕迹事件（≤200 条/次，契约拦截）；事件队列
+ * （lib/event-queue.ts）的正常发送路径，sendBeacon 兜底在队列内直发。
+ * viewId：作答页会话标识（题内活动用时按会话分组识别多端重叠）。
  */
 export function postAttemptEventsApi(
   attemptId: string,
   events: readonly AttemptEvent[],
+  viewId?: string,
 ): Promise<LearningEventBatchData> {
-  const args = { param: { id: attemptId }, json: { events: [...events] } };
+  const json = { events: [...events], ...(viewId && { viewId }) };
+  const args = { param: { id: attemptId }, json };
   return callApi(() => api.api.student.attempts[":id"].events.$post(args));
 }
 

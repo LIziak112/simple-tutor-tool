@@ -73,6 +73,7 @@ import {
   scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
+import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   StudentErrorPanel,
@@ -227,6 +228,7 @@ function HeaderBar({
           )}
         </div>
         {toc}
+        <MemoQuickCaptureButton />
         {actions !== null && (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             {actions}
@@ -704,8 +706,7 @@ function LessonAnswerView({
 }) {
   const session = useLessonAttempt(data, { refetch });
 
-  // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
-  // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
+  // 末题提交自动收尾：先切完成视图（refetch 落地后由页面级分支接管并卸载作答会话）
   if (session.attempt.status !== "draft") {
     return (
       <LessonCompletedView
@@ -774,8 +775,7 @@ function LessonAnswerInner({
   const total = data.questions.length;
 
   const outline = useLessonOutline(data);
-  // ---- SAI-22 讲练 AI 伴学 ----
-  const editor = useAttemptEditor(null);
+  const editor = useAttemptEditor(null); // ---- SAI-22 讲练 AI 伴学 ----
   const cardElements = useRef(new Map<string, HTMLElement>());
   // 阅读位置：按作答卷保存「读到哪一节/哪道题」，重进本页自动回到原位。
   useLessonReadingPosition({ attemptId, cards: cardElements });

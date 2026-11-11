@@ -349,6 +349,7 @@ export const aiAttemptReviewTaskPublicSchema = z
     archivedAt: z.string().nullable(),
     allowedActions: z.array(aiAttemptReviewActionSchema),
     createdAt: z.string().min(1),
+    /** 已回信任务取最新报告收到时刻，打开报告不改变任务进度。 */
     updatedAt: z.string().min(1),
   })
   .strict();

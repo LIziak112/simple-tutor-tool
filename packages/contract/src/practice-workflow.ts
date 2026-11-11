@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attemptTimeLimitMinutesSchema } from "./attempt-timing.ts";
 
 /**
  * 学生端做题方式与反馈节奏共享契约（M1a 起为权威定义，依据
@@ -29,6 +30,8 @@ export const practiceRecommendationSchema = z
   .object({
     layout: practiceLayoutSchema.optional(),
     feedback: practiceFeedbackModeSchema.optional(),
+    /** 推荐时长（分钟，模块 2 限时测试）：开卷页「限时」的缺省值；只推荐，学习者可改可不限时 */
+    timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
   })
   .strict();
 
@@ -180,6 +183,8 @@ export interface PracticeWorkflowStartOptions {
    * （attemptNo 递增、从空白开始、历次保留可回看）；缺省 = 幂等开卷语义不变。
    */
   redo?: boolean | undefined;
+  /** 限时测试（模块 2）：学习者自选时长（分钟）；缺省不限时。course / assignment 建卷生效 */
+  timeLimitMinutes?: number | undefined;
 }
 
 /** feedbackMode 无 workflowVersion=1 拒绝（不得暗中按新协议授权） */
@@ -217,6 +222,11 @@ export const attemptStartOptionsRequestSchema = z
      * 教师关开关不掐进行中卷）。
      */
     redo: z.boolean().optional(),
+    /**
+     * 限时测试（模块 2）：自选时长（分钟，1–600）。新建卷时服务端按建卷时刻算
+     * deadlineAt 持久化；取回已有进行中卷时忽略（时钟以首次建卷为准）。
+     */
+    timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
   })
   .strict()
   .superRefine(rejectFeedbackModeWithoutVersion);

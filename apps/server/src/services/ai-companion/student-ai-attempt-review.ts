@@ -20,7 +20,6 @@ import {
   AI_ATTEMPT_REVIEW_PROMPT_VERSION,
   AI_ATTEMPT_REVIEW_RESULT_MAX_CHARS,
   AI_MCP_LEASE_MAX_TOTAL_MS,
-  aiAttemptReviewCountsSchema,
   aiAttemptReviewReportSchema,
   aiAttemptReviewSnapshotSchema,
   dispatchIsAnswered,
@@ -37,6 +36,7 @@ import {
   isNull,
   lt,
   lte,
+  max,
   or,
   type SQL,
 } from "drizzle-orm";
@@ -59,6 +59,7 @@ import {
 import { resolveNowDate } from "../export-service.ts";
 import { jsonOf, snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
+import { attemptReviewPublicViewOf } from "./student-ai-attempt-review-public.ts";
 import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { missingNoteOf, studentAnswerTextOf } from "./student-ai-context.ts";
 import {
@@ -568,55 +569,6 @@ function parseSnapshotOf(
   return parsed.data;
 }
 
-/** 公开视图的计数来源：counts_json 反规范化投影（损坏 → AI_ATTEMPT_REVIEW_BROKEN） */
-function countsOfTask(task: AiAttemptReviewTaskRow): AiAttemptReviewCounts {
-  const parsed = aiAttemptReviewCountsSchema.safeParse(jsonOf(task.countsJson));
-  if (!parsed.success) {
-    throw new HttpError(
-      500,
-      "AI_ATTEMPT_REVIEW_BROKEN",
-      "整体复盘任务计数数据已损坏，无法读取",
-    );
-  }
-  return parsed.data;
-}
-
-export function attemptReviewPublicViewOf(
-  db: Db | QueueTx,
-  task: AiAttemptReviewTaskRow,
-  /** 列表批量查询的已收报告标志（省略时按行查询） */
-  hasResultOverride?: boolean,
-): AiAttemptReviewTaskPublic {
-  // counts 是创建时冻结的反规范化投影（counts_json），公开视图不解整体
-  // 快照——列表/详情/动作的响应面不为此解析 256KiB 内部视图
-  const counts = countsOfTask(task);
-  const hasResult =
-    hasResultOverride ??
-    asDb(db)
-      .select({ id: aiAttemptReviewResults.id })
-      .from(aiAttemptReviewResults)
-      .where(eq(aiAttemptReviewResults.taskId, task.id))
-      .get() !== undefined;
-  return {
-    id: task.id,
-    attemptId: task.attemptId,
-    status: task.status,
-    purpose: task.purpose,
-    questionCount: task.questionCount,
-    counts,
-    snapshotVersion: task.snapshotVersion,
-    generation: task.generation,
-    retryCount: task.retryCount,
-    errorText: task.errorText,
-    hasResult,
-    openedAt: task.openedAt,
-    archivedAt: task.archivedAt,
-    allowedActions: [...AI_ATTEMPT_REVIEW_ALLOWED_ACTIONS[task.status]],
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
-  };
-}
-
 // ---------- 预览 ----------
 
 /** 整体复盘预览：范围题数、四类计数、发送字段与边界说明、不透明预览版本 */
@@ -843,21 +795,24 @@ export function listAttemptReviewTasks(
   const hasMore = rows.length > input.limit;
   const page = hasMore ? rows.slice(0, input.limit) : rows;
   const last = page.at(-1);
-  // hasResult 批量判定：一次 inArray 查询替代逐行存在性查询
   const pageIds = page.map((row) => row.id);
-  const resultTaskIds = new Set(
+  const resultTimes = new Map(
     pageIds.length === 0
       ? []
       : db
-          .select({ taskId: aiAttemptReviewResults.taskId })
+          .select({
+            taskId: aiAttemptReviewResults.taskId,
+            at: max(aiAttemptReviewResults.receivedAt),
+          })
           .from(aiAttemptReviewResults)
-          .where(inArray(aiAttemptReviewResults.taskId, [...pageIds]))
+          .where(inArray(aiAttemptReviewResults.taskId, pageIds))
+          .groupBy(aiAttemptReviewResults.taskId)
           .all()
-          .map((row) => row.taskId),
+          .map((row) => [row.taskId, row.at] as const),
   );
   return {
     tasks: page.map((row) =>
-      attemptReviewPublicViewOf(db, row, resultTaskIds.has(row.id)),
+      attemptReviewPublicViewOf(db, row, resultTimes.get(row.id) ?? null),
     ),
     nextCursor:
       hasMore && last !== undefined
@@ -958,13 +913,9 @@ export function attemptReviewActionOf(
           studentId: task.studentId,
           attemptId: task.attemptId,
         });
-        updated = {
-          ...task,
-          openedAt: task.openedAt ?? nowIso,
-          updatedAt: nowIso,
-        };
+        updated = { ...task, openedAt: task.openedAt ?? nowIso };
         tx.update(aiAttemptReviewTasks)
-          .set({ openedAt: task.openedAt ?? nowIso, updatedAt: nowIso })
+          .set({ openedAt: updated.openedAt })
           .where(eq(aiAttemptReviewTasks.id, task.id))
           .run();
         insertArFact(tx, updated, "opened", nowIso);

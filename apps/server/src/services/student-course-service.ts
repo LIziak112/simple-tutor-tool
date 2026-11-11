@@ -282,12 +282,21 @@ export function listStudentCourses(
  * COURSE_ACCESS_DENIED（D22）。隐藏条目零信息。
  * T2B.5：题数按课程根行 teacherId 域内统计（D10，对外行为不变）。
  */
-export function getStudentCourseDetail(
+/**
+ * 课程访问权（D22）：课程不存在 → 404；非成员 / 学生已归档 / 课程已归档 → 403
+ * COURSE_ACCESS_DENIED；无教师域的异常课程行 → 404（fail closed）。返回课程根行
+ * （含教师域），课程目录与课程资料（模块 6）共用同一道门。
+ */
+export function requireStudentCourseAccess(
   db: Db,
   studentId: string,
   courseId: string,
-  now: Date | string = new Date(),
-): StudentCourseDetailData {
+): {
+  id: string;
+  title: string;
+  description: string | null;
+  teacherId: string;
+} {
   const course = db
     .select({
       id: courses.id,
@@ -330,6 +339,21 @@ export function getStudentCourseDetail(
   if (course.teacherId === null) {
     throw notFound();
   }
+  return {
+    id: course.id,
+    title: course.title,
+    description: course.description,
+    teacherId: course.teacherId,
+  };
+}
+
+export function getStudentCourseDetail(
+  db: Db,
+  studentId: string,
+  courseId: string,
+  now: Date | string = new Date(),
+): StudentCourseDetailData {
+  const course = requireStudentCourseAccess(db, studentId, courseId);
 
   const items = listVisibleItems(db, studentId, courseId, now);
   const unitIds = items

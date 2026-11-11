@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   createCourseViaApi,
@@ -156,6 +156,12 @@ async function measureLoad(
 
   const t0 = Date.now();
   await page.goto(url, { waitUntil: "domcontentloaded" });
+  if (url.startsWith("/s/assignments/")) {
+    const start = page.getByRole("button", { name: "开始作业", exact: true });
+    const first = page.getByRole("article", { name: "第 1 题", exact: true });
+    await expect(start.or(first)).toBeVisible();
+    if (await start.isVisible()) await start.click();
+  }
   let firstCardMs: number | null = null;
   let attachNowMs: number | null = null;
   let firstScreenDomNodes: number | null = null;
