@@ -30,8 +30,7 @@ const REL_TYPE =
 const MAIN_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
 
-/** 最小 DOCX：包关系指向实际可读的主文档。 */
-export const MINI_DOCX = storedZipOf([
+const docxEntries = [
   {
     name: "[Content_Types].xml",
     data: Buffer.from(
@@ -50,11 +49,15 @@ export const MINI_DOCX = storedZipOf([
       `<w:document xmlns:w="${WORD_NS}"><w:body><w:p/></w:body></w:document>`,
     ),
   },
-]);
+];
+
+/** 最小 DOCX：包关系指向实际可读的主文档。 */
+export const MINI_DOCX = storedZipOf(docxEntries);
 
 describe("资料附件：格式识别（只认内容）", () => {
   it("PDF 文件头 / docx = ZIP 中央目录含 word/document.xml 与 [Content_Types].xml；其余 null", () => {
     expect(detectAttachmentFormat(MINI_PDF)).toBe("pdf");
+    expect(detectAttachmentFormat(MINI_PDF.subarray(0, 8))).toBe("pdf");
     expect(detectAttachmentFormat(MINI_DOCX)).toBe("docx");
     expect(
       detectAttachmentFormat(
@@ -119,6 +122,16 @@ describe("资料附件：格式识别（只认内容）", () => {
       detectAttachmentFormat(Buffer.from("hello world", "utf8")),
     ).toBeNull();
     expect(detectAttachmentFormat(Buffer.from("%PDF", "latin1"))).toBeNull();
+  });
+
+  it("DOCX 的首个本地文件头签名必须有效，即使该条目不参与主文档读取", () => {
+    const docx = storedZipOf([
+      { name: "customXml/item1.xml", data: Buffer.from("<data/>") },
+      ...docxEntries,
+    ]);
+    expect(detectAttachmentFormat(docx)).toBe("docx");
+    docx[3] = 0;
+    expect(detectAttachmentFormat(docx)).toBeNull();
   });
 
   it("PDF 页数取 /Type /Pages 附近最大的 /Count；没有就 null", () => {
