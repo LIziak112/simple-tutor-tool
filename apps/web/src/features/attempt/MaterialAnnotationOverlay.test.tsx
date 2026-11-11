@@ -30,11 +30,23 @@ import {
 import { MaterialAnnotationOverlay } from "./MaterialAnnotationOverlay";
 
 // 绘制层复用 ink/replay/draw（jsdom 无 2d 上下文）——按仓内惯例 mock 本模块，
-// 断言经 drawFrame 传入的笔画数据
+// 按实际可见笔画统一记录全量与顺序绘制的入参。
 const drawFrameMock = vi.fn();
 vi.mock("@/features/ink/replay/draw", () => ({
   createAtramentReplayCanvas: () => ({
     drawFrame: drawFrameMock,
+    drawOrdered: (
+      strokes: InkStroke[],
+      completed: number,
+      active: InkStroke | null,
+      points: number,
+    ) => {
+      const visible = strokes.slice(0, completed);
+      drawFrameMock(active === null ? visible : [...visible, active], [
+        ...visible.map((stroke) => stroke.points.length),
+        ...(active === null ? [] : [points]),
+      ]);
+    },
     destroy: () => undefined,
   }),
 }));

@@ -342,12 +342,13 @@ export function MaterialAnnotationOverlay({
       replay.drawFrame([], []);
       return;
     }
-    const all = currentStrokeRef.current
-      ? [...strokesRef.current, currentStrokeRef.current]
-      : strokesRef.current;
-    replay.drawFrame(
-      all,
-      all.map((s) => s.points.length),
+    const strokes = strokesRef.current;
+    const active = currentStrokeRef.current;
+    replay.drawOrdered(
+      strokes,
+      strokes.length,
+      active,
+      active?.points.length ?? 0,
     );
   }, []);
 
@@ -591,10 +592,11 @@ export function MaterialAnnotationOverlay({
         } else if (decision.action === "discard") {
           releaseCapture();
           currentStrokeRef.current = null;
+          scheduleRedraw();
         }
       }
     },
-    [beginInteraction, finishInteraction, releaseCapture],
+    [beginInteraction, finishInteraction, releaseCapture, scheduleRedraw],
   );
 
   const handlePointerDown = useCallback(
