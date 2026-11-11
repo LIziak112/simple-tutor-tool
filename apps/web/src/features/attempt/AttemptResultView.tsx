@@ -2,6 +2,7 @@ import type {
   AttemptResultData,
   AttemptResultQuestion,
   MaterialRef,
+  QuestionActivity,
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
@@ -16,14 +17,6 @@ import {
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { optionCorrectOf } from "@/features/answering/views/choice";
 import {
@@ -44,13 +37,16 @@ import {
   QuestionProcessControls,
   useQuestionProcess,
 } from "@/features/question-process/session";
+import { AiAttemptReviewHint } from "@/features/student-ai/AiAttemptReviewHint";
 import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
 import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
+import { AssignmentRedoDialog } from "./AssignmentRedoDialog";
 import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
+import { ResultTimeLimitLine } from "./AttemptTimer";
 import {
   attemptRoundLabel,
   attemptSourceLabel,
@@ -58,6 +54,9 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { ModuleResultTable } from "./ModuleResultTable";
+import { isRetrainable } from "./module-result-model";
+import { QuestionActivityBadge, ResultActivityLine } from "./QuestionActivity";
 
 // 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
 // 把本重模块拖进作答页）；此处对外再导出，既有调用方不受影响。
@@ -67,6 +66,7 @@ import { PendingReleaseBanner } from "./PendingReleaseBanner";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
+import { RubricReviewSection } from "./RubricReviewSection";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
 import { SelfReviewSection } from "./SelfReviewSection";
 import { verdictBadgeDisplayOf } from "./self-review-display";
@@ -84,24 +84,16 @@ import { useResultReviewLocation } from "./use-result-review-location";
  * T2.11：做题时解锁过的提示在此回看（hintsOpened，只含学生自己请求过的条目；
  * 未解锁提示内容服务端从不下发）。详解只在交卷后由服务端下发
  * （AGENTS 第 3 条对「未交卷题目」的限制已解除）。
- * T2A.8（D11）：answersReleased=false（作业「截止后公布」且未到截止）时——
- * 汇总卡替换为「已交卷，答案将在截止后公布」横幅（含截止时间与已答统计），
- * 逐题卡只渲染题干（公开化版）、选项、本人答案、笔迹与已解锁提示；
- * 不显示对错判定、参考答案与详解（服务端本就不下发，前端双保险不渲染）。
- * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect——教师批注
- * 后以批注为准）与老师批改块（teacherMark/teacherComment 显著展示，未批且
- * 已交维持既有待批态）；汇总区大数字改 scoreFinal ?? scoreAuto（全部批完显示
- * 「最终得分」）。QM-12（TT-09c）：待判断计数与对/错计数统一走有效判定口径
- * （reviewCounts → verdictBadgeDisplayOf：教师判 > 自评 > 自动——自评行按
- * 自评三态计数，与逐题徽章同出处不漂移；原 D9 的 pendingCount（教师待批
- * 权威计数）不再顶「待批」瓦片——自评卷会漏计待自评行）。公布 gate 截止前
- * 服务端已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
- * 2026-10（学生端闭环补完）：汇总卡操作区新增「练习本卷错题（N 题）」次级
- * 按钮——N = 本卷已判定为错的题数（逐题 finalCorrect === false，不含待批
- * finalCorrect=null；公布前已被 gate 置 null，天然不参与计数）。未公布
- * （answersReleased=false）或 N=0（全对/只剩待批）时隐藏。点击由页面层调
- * POST /wrong-practice 组新重练卷并跳作答（onStart 携带按本卷题序的
- * questionIds，服务端校验这些题必在错题本聚合内）。
+ * T2A.8（D11）：answersReleased=false（截止后公布且未到截止）时汇总卡换成
+ * 「已交卷，答案将在截止后公布」横幅，逐题卡只渲染题干、选项、本人答案、笔迹
+ * 与已解锁提示；不显示判定、参考答案与详解（服务端本就不下发，前端双保险）。
+ * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect）与老师批改块；
+ * 汇总大数字 scoreFinal ?? scoreAuto。QM-12（TT-09c）：待判断与对/错计数统一
+ * 走有效判定口径（reviewCounts → verdictBadgeDisplayOf：教师判 > 自评 > 自动，
+ * 与逐题徽章同出处）。公布 gate 截止前服务端已把这些字段置 null（双保险）。
+ * 2026-10 汇总卡操作区「练习本卷错题（N 题）」：N = finalCorrect === false 题数
+ * （待批 null 不计；公布前被 gate 置 null）；未公布或 N=0 隐藏。点击由页面层调
+ * POST /wrong-practice 组新重练卷并跳作答（服务端校验题必在错题本聚合内）。
  */
 
 /**
@@ -235,6 +227,7 @@ function ResultQuestionCard({
   attemptId,
   released,
   roundLabel,
+  activity,
   onSolutionToggle,
 }: {
   aiTrigger?: ReactNode;
@@ -244,22 +237,18 @@ function ResultQuestionCard({
   released: boolean;
   /** 轮次标注（T6R.11 原稿查看面板显示所属轮次） */
   roundLabel: string;
-  /**
-   * 详解折叠开合回调（T4.0b host=result 复盘埋点；缺省不报）。
-   * @param action open=收起→展开、close=展开→收起
-   */
+  /** 题内活动用时（卷有事件时传 byQuestion 条目，可缺；卷无事件传 null 不渲染） */
+  activity: QuestionActivity | undefined | null;
+  /** 详解折叠开合回调（T4.0b host=result 复盘埋点；缺省不报）；open=收起→展开 */
   onSolutionToggle?:
     | ((questionId: string, index: number, action: "open" | "close") => void)
     | undefined;
 }) {
-  // 手写题型判定走共享 HANDWRITTEN_TYPES（与答题卡/教师卡单一事实来源）
   const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
-  // 复算一次共享：verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源
+  // verdict（公布后对错）与 unanswered（未公布态徽标/边框）同源复算一次
   const reviewState = reviewQuestionState(question, released);
-  // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
-  // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）。
-  // QM-11：reference_self 行（教师未判）按自评三态显示（待自评/自评正确/
-  // 自评错误，verdictBadgeDisplayOf 单一出处）；徽章与左边框共用其 verdict
+  // D9 最终判定优先，null = 真待批；QM-11 reference_self 行按自评三态显示
+  // （verdictBadgeDisplayOf 单一出处）；徽章与左边框共用其 verdict
   const badge = verdictBadgeDisplayOf(question);
   const verdict = released ? badge.verdict : reviewState.verdict;
   const renderTools = (
@@ -295,9 +284,7 @@ function ResultQuestionCard({
               roundLabel={roundLabel}
             />
           )}
-          {/* 题干标注回看 + 合成图导出（底图＋圈，粘贴给 AI/保存）——题面
-              原位直显之外的学生侧导出出口（2026-10 复审恢复：入口随组按需
-              挂载，compact 关闭态零请求） */}
+          {/* 题干标注回看 + 合成图导出（底图＋圈）；入口随组按需挂载，compact 关闭态零请求 */}
           <AnnotationView
             compact
             question={question.publicQuestion}
@@ -357,9 +344,8 @@ function ResultQuestionCard({
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {/* T2A.8：未公布时不显示对错判定；显示答案已保存或未作答。
-            「标过不会」是学生做题时的事实标注（#6980-4），不受公布 gate 与
-            自评分支影响——自评题与待公布卷同样显示（审查修复 P1-5） */}
+        {/* T2A.8 未公布时不显示对错判定；「标过不会」是做题时的事实标注（#6980-4），
+            不受公布 gate 与自评分支影响 */}
         {released ? (
           <VerdictBadge
             verdict={badge.verdict}
@@ -422,6 +408,7 @@ function ResultQuestionCard({
             {name}
           </span>
         ))}
+        {activity !== null && <QuestionActivityBadge activity={activity} />}
         <div className="ml-auto">{aiTrigger}</div>
       </div>
 
@@ -451,6 +438,10 @@ function ResultQuestionCard({
           判定显示走下方批改块——教师优先） */}
       {released && (
         <SelfReviewSection attemptId={attemptId} question={question} />
+      )}
+      {/* 模块 3：量表评价（题有 :::rubric 且已公布；量表分不进总分） */}
+      {released && (
+        <RubricReviewSection attemptId={attemptId} question={question} />
       )}
 
       {released &&
@@ -518,8 +509,8 @@ export function AttemptResultView({
     loading: boolean;
     /** 组卷失败的中文提示（null = 无失败）；非 null 时按钮下方渲染告警 */
     error: string | null;
-    /** 点击按钮（questionIds = 本卷判错题按本卷题序） */
-    onStart: (questionIds: string[]) => void;
+    /** 点击按钮（questionIds 按本卷题序；moduleTitle = 模块专项重练时的模块名） */
+    onStart: (questionIds: string[], moduleTitle?: string) => void;
   };
   /**
    * 作业重做「再做一次」入口（hall-15313）：页面层传入开新卷动作与状态；
@@ -533,7 +524,7 @@ export function AttemptResultView({
     /** 开新卷失败的中文提示（null = 无失败；含教师关闭重做后的兜底提示） */
     error: string | null;
     /** 确认「再做一次」（页面层 POST redo:true 并跳新卷） */
-    onStart: () => void;
+    onStart: (timing: { timeLimitMinutes?: number }) => void;
   };
   /**
    * T6R.20 审查修复 2：交卷后的标注封存（seal）失败警示——非阻断
@@ -552,10 +543,8 @@ export function AttemptResultView({
     answers: null,
     hintsOpened: {},
   });
-  // QM-08 验收行：只读题面与作答共用数据解释——同一 /attempts/:id/context
-  // 冻结投影经 groupSegmentsOfUnit 解释组段（不另写一套归属逻辑）。失败/
-  // legacy 卷（无上下文条目）按 undefined 处理 → 全部 solo 段，回看零变化
-  // （材料缺省不阻断回看；服务端对坏快照已 fail-closed 409）
+  // QM-08：只读题面与作答共用 /attempts/:id/context 冻结投影经 groupSegmentsOfUnit
+  // 解释组段；失败 / legacy 卷按 undefined → 全部 solo 段，回看零变化
   const contextQuery = useAttemptContext(attempt.id);
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
@@ -571,23 +560,11 @@ export function AttemptResultView({
   );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
-  // 2026-10：本卷错题——直达重练的圈题范围与示数。QM-12 起判错按有效判定
-  // （教师判 > 自评 > 自动，verdictBadgeDisplayOf 同口径）：自评「错」同样
-  // 可重练；#6980-3：未做轮不圈入（人工显式判定的未做行不被掩盖——与
-  // 错题本 enteredWrongBook 同口径）；#6980-4：标过「不会」的题（含做对）
-  // 也进本卷错题（标不会 = 按做错结算的主人口径）。未公布时服务端已把判定键
-  // 整键 null 投影（数出来必为 0），与 released 显隐判据双保险。
+  // 2026-10：本卷错题——直达重练的圈题范围与示数（口径单源 isRetrainable，
+  // 与模块 7 按模块「专项重练」同一函数）：有效判定为错且已作答 / 教师已判 /
+  // 自评有记录，或标过「不会」。未公布时服务端已把判定键整键 null（数出来必为 0）
   const wrongQuestionIds = flatQuestions
-    .filter((question) => {
-      const badge = verdictBadgeDisplayOf(question);
-      if (question.studentFlag === "unsure") return true;
-      if (badge.verdict !== false) return false;
-      return (
-        question.answered ||
-        question.teacherMark !== null ||
-        (question.selfReview?.record?.verdict ?? null) !== null
-      );
-    })
+    .filter(isRetrainable)
     .map((question) => question.questionId);
   // QM-12：含自评行时注明口径（自评是本人判定；得分只按自动判定与教师
   // 批改计算——不把自评冒充客观独立完成证据）
@@ -713,10 +690,8 @@ export function AttemptResultView({
               >
                 {released ? "批改结果" : "已交卷"}
               </h2>
-              {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
-              第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
-              错题重练「错题重练 · 第 n 次」（2026-10）；讲练「讲练：讲义标题 ·
-              第 n 次」（title 为讲义标题，2026-10 讲练一体） */}
+              {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数；作业「作业 · 课程名」；
+              错题重练「错题重练 · 第 n 次」；讲练「讲练：讲义标题 · 第 n 次」 */}
               <p className="text-sm leading-relaxed text-muted-foreground">
                 {attemptSourceLabel(data)}
               </p>
@@ -725,6 +700,8 @@ export function AttemptResultView({
                   交卷时间：{formatCnTime(attempt.submittedAt)}
                 </p>
               )}
+              <ResultTimeLimitLine attempt={attempt} />
+              <ResultActivityLine activity={data.activity} />
             </div>
             {/* M4-D3 §13.8 反馈节奏摘要：v1 新协议卷按 feedbackMode 呈现；
             legacy/lesson 卷缺省不渲染（数据侧同样缺省）。纯呈现——反馈可见性
@@ -795,11 +772,8 @@ export function AttemptResultView({
                   <div className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
                     <dt>待判断</dt>
                     <dd>
-                      {/* QM-12：有效判定口径（教师判 > 自评 > 自动）的未判断数
-                      （含待教师批改与待自评，逐题徽章区分两态）；与徽章同出处
-                      （reviewCounts→verdictBadgeDisplayOf），公布态下与答对/答错
-                      三分互补。D9 的 pendingCount（教师待批权威计数）另在
-                      「有 X 题待批」提示位消费 */}
+                      {/* QM-12 有效判定口径的未判断数（含待批与待自评），与徽章
+                      同出处；D9 pendingCount 另在「有 X 题待批」提示位消费 */}
                       {counts.pending}
                       <span>题</span>
                     </dd>
@@ -898,40 +872,26 @@ export function AttemptResultView({
               )}
               {/* 再做一次确认（hall-15313）：显式动作——新卷从空白开始，本卷
               保留可回看（文案与讲练「再做一次」先例同口径） */}
-              {showRedo && (
-                <Dialog open={redoOpen} onOpenChange={setRedoOpen}>
-                  <DialogContent className="w-[calc(100%-24px)] max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>再做一次吗？</DialogTitle>
-                      <DialogDescription className="text-sm leading-6">
-                        将开始第 {attempt.attemptNo + 1}
-                        次作答，全部题目从空白开始；这一次的作答会保留，可随时在「我的记录」回看。
-                      </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={() => setRedoOpen(false)}
-                      >
-                        先不用
-                      </Button>
-                      <Button
-                        className="min-h-11"
-                        disabled={redo.loading}
-                        onClick={() => {
-                          setRedoOpen(false);
-                          redo.onStart();
-                        }}
-                      >
-                        开始第 {attempt.attemptNo + 1} 次
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+              {showRedo && redoOpen && (
+                <AssignmentRedoDialog
+                  nextAttemptNo={attempt.attemptNo + 1}
+                  onClose={() => setRedoOpen(false)}
+                  onStart={redo.onStart}
+                />
               )}
             </div>
           </section>
+
+          {/* 模块 1：交卷后「可复盘」提示条（可用门在服务端；只提示，确认后才建任务） */}
+          <AiAttemptReviewHint attemptId={attempt.id} released={released} />
+
+          {/* 模块 7：按模块（单元）看答对 / 作答 / 跳过 / 不确定但对 / 用时 / 配额 */}
+          <ModuleResultTable
+            units={data.units}
+            released={released}
+            activity={data.activity}
+            wrongPractice={wrongPractice}
+          />
 
           {/* T6R.20 审查修复 2：交卷后标注封存失败的非阻断警示（懒补封兜底） */}
           {annotationSealWarning && (
@@ -944,14 +904,10 @@ export function AttemptResultView({
             </p>
           )}
 
-          {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续）。
-              QM-08：题目序经 groupSegmentsOfUnit 解释成组段——组段共享材料
-              按组渲染一份（与作答视图同一数据解释单源）。审查 P1 修复：与
-              作答视图同构——题组只是题行 ol 里的兄弟锚点，题行永不进组子树，
-              context 后到不重挂题卡（回看本无控制器，与作答侧共享一份结构）。
-              P1-2：solo 题的题级 ::ref 材料挂题级锚（与作答视图同口径）；
-              segments 展平成单层题行数组（嵌套数组 key 带段位前缀会重挂行，
-              与作答侧同修复）。 */}
+          {/* 逐题结果（T2A.7 多单元按节分组，题号全卷连续）。QM-08 题目序经
+              groupSegmentsOfUnit 解释成组段，共享材料按组渲染一份；题组只是题行
+              ol 里的兄弟锚点，题行永不进组子树；solo 题的题级 ::ref 材料挂题级锚；
+              segments 展平成单层题行数组（与作答视图同构同口径）。 */}
           <ol className="flex flex-col gap-4">
             {data.units.map((unit) => {
               const questionById = new Map(
@@ -987,6 +943,11 @@ export function AttemptResultView({
                       attemptId={attempt.id}
                       released={released}
                       roundLabel={roundLabel}
+                      activity={
+                        data.activity === undefined
+                          ? null
+                          : data.activity.byQuestion[question.questionId]
+                      }
                       onSolutionToggle={onSolutionToggle}
                     />
                     {aiCompanion.inlineForQuestion(question.questionId)}

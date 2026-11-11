@@ -12,6 +12,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePublishLearningFocus } from "@/features/memos/learning-focus-store";
 import {
   AiCompanionPanelBody,
   AiCompanionTrigger,
@@ -121,6 +122,17 @@ const ensureAtQuestion = async (
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const { attemptId, questions, currentQuestionId, editor, labelOf } = host;
+  // 随笔上下文锚（模块 5 第一步）：当前题随宿主变化发布到 learning-focus-store
+  usePublishLearningFocus(
+    currentQuestionId === null
+      ? null
+      : {
+          kind: "question",
+          attemptId,
+          questionId: currentQuestionId,
+          label: host.titleOf(currentQuestionId).slice(0, 120) || "作答",
+        },
+  );
   const location = useLocation();
   const navigate = useNavigate();
   // 异步定位回写地址时按最新 search 重算（统一切题可能已改写 q）

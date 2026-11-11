@@ -18,8 +18,11 @@ export * from "./annotation.ts";
 export * from "./answer-kinds/index.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
-/** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
+export * from "./attachment-api.ts";
 export * from "./attempt.ts";
+/** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
+export * from "./attempt-activity.ts";
+export * from "./attempt-timing.ts";
 /** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login/register 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";
 /** 备份与恢复 API 契约（T4.5 起为权威定义，依据 Phase4 清单 §2 D20/D21）：快照列表、
@@ -72,9 +75,14 @@ export * from "./mcp-api.ts";
 /** 图片上传 API 契约（媒体管线第一单起为权威定义）：上传响应的内容寻址路径与字节数；
  *  请求为 multipart（无 JSON 请求 schema），MEDIA_TOO_LARGE / UNSUPPORTED_MEDIA_TYPE 走通用 ApiErr */
 export * from "./media-api.ts";
+/** 随笔契约（2026-11-10 个人学习迭代模块 5 第一步）：四种形态、上下文锚、标签、幂等创建、列表游标、MCP 转记入参 */
+export * from "./memo-api.ts";
 /** 题目草稿契约（T6R.2 起为权威定义，依据 Phase6 方案 §5/§6.2/§7）：NoteDoc v1、
  *  四类正交状态、上传协议（CAS+幂等回执）、笔记/版本/图片/证据元信息、限额常量与错误码 */
 export * from "./note.ts";
+/** 个人账号契约（个人学习迭代模块 0，2026-11）：邀请码注册 / 登录的双侧身份响应、
+ *  个人 MCP 端点路径与教师侧工具白名单（服务端过滤注册与前端连接页说明的单源） */
+export * from "./personal-api.ts";
 /** 学生端做题反馈 M2 逐题提交与题级反馈契约（2026-10-22 计划 §10.1–§10.4）：
  *  新协议单题提交请求（strict、缺省拒绝）、提交回执与反馈读取共用的单题
  *  授权投影（released/not_submitted/pending_attempt/restricted 判别二态）、
@@ -182,4 +190,5 @@ export type ApiErr = z.infer<typeof apiErrSchema>;
 
 export * from "./question-process.ts";
 export * from "./result-counts.ts";
+export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";

@@ -62,6 +62,7 @@ export interface AttemptAnswersState {
 
 /** useAttemptAnswers 的可选回调集 */
 export interface AttemptAnswersOptions {
+  writesLocked?: boolean;
   /**
    * 一次答案保存生效（立即或防抖到期，即 PUT 发起点）时回调。
    * T2.10：答题页用它上报 answer_change 事件——与保存同节奏，文本键击
@@ -127,6 +128,7 @@ export function useAttemptAnswers(
   const deniedFor = useRef<string | null>(null);
 
   const save = useCallback((questionId: string, answer: StudentAnswer) => {
+    if (optionsRef.current?.writesLocked) return Promise.resolve(false);
     const scope = attemptIdRef.current;
     const epoch = getDraftSessionEpoch();
     const api = syncRef.current;

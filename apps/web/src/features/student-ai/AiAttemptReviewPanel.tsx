@@ -37,7 +37,8 @@ import { errorMessageOf } from "./error-text";
 
 const DEFAULT_PURPOSE = "请帮我复盘这次练习的整体情况，指出问题并给出训练建议";
 
-const STATUS_LABEL = {
+/** 整体复盘任务状态文案（面板与结果页「可复盘」提示条共用，单一出处） */
+export const ATTEMPT_REVIEW_STATUS_LABEL = {
   created: "等待外部 AI 领取",
   claimed: "外部 AI 处理中",
   replied: "已出整体报告",
@@ -110,7 +111,7 @@ function ReportCard(props: { readonly detail: AiAttemptReviewDetailData }) {
   );
 }
 
-function AiAttemptReviewPanel(props: {
+export function AiAttemptReviewPanel(props: {
   readonly attemptId: string;
   readonly released: boolean;
   readonly open: boolean;
@@ -276,7 +277,8 @@ function AiAttemptReviewPanel(props: {
             {tasks.map((task) => (
               <div key={task.id} className="flex flex-col gap-1">
                 <p className="text-sm">
-                  {STATUS_LABEL[task.status]} · 覆盖 {task.questionCount} 题 ·{" "}
+                  {ATTEMPT_REVIEW_STATUS_LABEL[task.status]} · 覆盖{" "}
+                  {task.questionCount} 题 ·{" "}
                   {task.allowedActions.length === 0 ? "无可用操作" : null}
                 </p>
                 {task.allowedActions.some((action) => action !== "open") && (

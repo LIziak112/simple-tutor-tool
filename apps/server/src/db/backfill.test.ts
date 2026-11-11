@@ -766,6 +766,9 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.practice_workflow_version;
         delete row.feedback_mode;
         delete row.workflow_revision;
+        // 0055（模块 2 限时测试）attempts 两列：历史卷恒 NULL
+        delete row.time_limit_sec;
+        delete row.deadline_at;
       }
       // 0038（M1b）responses 两列：普通作答无逐题提交标记
       if (table === "responses") {
@@ -786,6 +789,10 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
         delete row.self_review_at;
         delete row.self_review_revision;
         delete row.self_review_mutation_id;
+        // 0056（模块 3 通用量表判卷）三列 JSON：NULL = 尚无记录
+        delete row.rubric_self_json;
+        delete row.rubric_agent_json;
+        delete row.rubric_final_json;
         // 0040_bizarre（v2 链正主，2026-10-25 迁移对齐后并入本链）自评列族
         // 的兼容默认值单独核对，不改变旧业务字段；与上方 QM 族（0044）并存
         for (const key of [
@@ -931,7 +938,8 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
     insertPreT2bFixture(db);
     migrateAndBackfill(db);
 
-    // D4 升级：只动 loginName/isAdmin，其余列原样（T7.7 新列读回 NULL=全启用）
+    // D4 升级：只动 loginName/isAdmin，其余列原样（T7.7 新列读回 NULL=全启用；
+    // 模块 0 新列 accountKind 迁移默认 'class'、personalStudentId NULL）
     expect(db.select().from(teachers).all()).toEqual([
       {
         id: "th-1",
@@ -942,6 +950,8 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
         apiToken: null,
         capabilityProfileJson: null,
         practiceFeedbackPolicy: null,
+        accountKind: "class",
+        personalStudentId: null,
         createdAt: "2026-01-10T08:00:00.000Z",
       },
     ]);

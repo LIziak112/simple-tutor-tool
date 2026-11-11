@@ -13,6 +13,7 @@ import {
   type AttemptResultUnit,
   type AttemptScoreSummary,
   type AttemptStartData,
+  type AttemptSubmitRequest,
   type AttemptSubmitRevision,
   attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
@@ -112,6 +113,13 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import { restrictedResultQuestionOf } from "./attempt-result-release";
+import {
+  assertAttemptNotTimedOut,
+  assertSavedAnswersConfirmed,
+  attemptTimingOf,
+  timedColumnsOf,
+} from "./attempt-timing";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
@@ -144,8 +152,11 @@ import {
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
 export { answersReleased } from "./practice-workflow-service";
 
+import { attemptActivityProjection } from "./question-activity";
 import type { Tx } from "./question-sync";
+import { rubricReviewOf } from "./rubric-review-read";
 import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
+import { unitTimeQuotasOf } from "./unit-time-quota";
 
 /**
  * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10；T6R.3 全来源建卷冻结）
@@ -233,18 +244,18 @@ export function attemptSummaryOf(row: Attempt): AttemptStartData {
     // 2026-10 讲练一体：lesson 开卷写入讲义 id，其余来源恒 null（契约反向锁定）
     lectureId: row.lectureId,
     courseId: row.courseId,
-    // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
-    // assignment_units）；course 来源恒有值；wrong 来源恒 null（2026-10）。
-    // 摘要层归一化而非直接透传：
-    // D23-6 回填「原值保留」可能让旧库 assignment 行带历史非空 unitId，
-    // 此处收敛到契约 superRefine 锁定的不变式（assignment 来源 unitId 恒
-    // null），不改库（题目集合本就只走 assignment_units，历史值无消费方）。
+    // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走 assignment_units）；
+    // course 恒有值；wrong 恒 null。摘要层归一化：D23-6 回填「原值保留」可能让旧库
+    // assignment 行带历史非空 unitId，此处收敛到契约不变式，不改库（历史值无消费方）
     unitId: row.sourceType === "assignment" ? null : row.unitId,
     attemptNo: row.attemptNo,
     status: row.status,
     startedAt: row.startedAt,
     submittedAt: row.submittedAt,
     scoreAuto: row.scoreAuto,
+    // 模块 2 限时测试：时长 / 截止随摘要下发（记录页、结果页显示「限时 N 分钟」）
+    timeLimitSec: row.timeLimitSec,
+    deadlineAt: row.deadlineAt,
     // #6980-2：错题重练范围标签（wrong 来源按建卷存的 scope 取 label，
     // 答题页/结果页来源行「练的是什么」；其余来源与历史卷恒 null）
     wrongScopeLabel:
@@ -442,10 +453,8 @@ export function freezeInputsOfAttempt(
  * ——live 题补齐快照（保留已有答案），软删/缺失题的既有行保留为
  * 「历史题目缺失」（快照空，不回填），标记 legacy_unverified=1（不能宣称是
  * 学生更早看到的内容）。幂等：已冻结或已交卷立即返回。冻结统一发生在
- * requireUsableAttempt 门口（学生侧全部续作接口）与教师 draft 详情；
- * better-sqlite3 同步单进程，无并发竞态。
- * 返回冻结后的最新 attempt 行（懒冻结刚发生时内存里的旧对象不含新标记，
- * 分态消费方〔如 hint-service 的冻结分态〕必须用返回值）。
+ * requireUsableAttempt 门口（学生侧全部续作接口）与教师 draft 详情；同步单
+ * 进程无并发竞态。返回冻结后的最新 attempt 行（分态消费方必须用返回值）。
  */
 export function ensureAttemptFrozen(db: Db, attempt: Attempt): Attempt {
   if (attempt.frozenAt !== null || attempt.status !== "draft") return attempt;
@@ -583,18 +592,14 @@ export function requireOwnAttempt(
 }
 
 /**
- * 取本人 attempt 并按来源做访问权校验（T2A.6，D7/D22）：
- * - course 来源且 draft：每次调用都重校验 D5 可见性与成员资格——移出成员/课程
- *   归档 → 403 COURSE_ACCESS_DENIED；条目隐藏/未到发布/资源删除 → 404 NOT_FOUND
- *   （requireVisibleCourseUnit 统一口径）；
- * - course 来源且已交卷：只读记录，不做课程校验（D7：已交卷课程练习仍可回看）；
- * - assignment 来源：维持现状（归属即权限，被移出名单后已建作答仍可继续）。
- * 草稿保存、交卷、提示、笔迹、事件、详情、通用取卷全部经本函数进门。
+ * 取本人 attempt 并按来源做访问权校验（T2A.6，D7/D22）：course 来源且 draft
+ * 每次重校验可见性与成员资格（403 COURSE_ACCESS_DENIED / 404 NOT_FOUND，
+ * requireVisibleCourseUnit 统一口径）；course 已交卷只读不校验；assignment
+ * 归属即权限。草稿保存、交卷、提示、笔迹、事件、详情、通用取卷全部经此进门。
  *
- * **T6R.3 冻结统一门口**：末尾经 ensureAttemptFrozen 懒冻结升级遗留草稿并
- * 返回**最新行**——分态消费方（hint-service 的「冻结卷不回退当前题库」等）
- * 必须用返回值；旧内存对象的 frozenAt=null 会误走遗留分支（/simplify 层级角
- * 修复的真 bug）。已冻结/已交卷时幂等直返。
+ * **T6R.3 冻结统一门口**：末尾经 ensureAttemptFrozen 懒冻结遗留草稿并返回
+ * **最新行**——消费方必须用返回值（旧内存对象 frozenAt=null 会误走遗留分支）；
+ * 已冻结/已交卷时幂等直返。
  */
 export function requireUsableAttempt(
   db: Db,
@@ -602,8 +607,7 @@ export function requireUsableAttempt(
   attemptId: string,
 ): Attempt {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
-  // 作废卷（课程练习或讲练重开）：其上一切读写（详情/存草稿/单题提交/提示
-  // 解锁——本函数是这些路径共用的取卷入口）都拒绝，前端提示重新进入
+  // 作废卷（课程练习或讲练重开）：其上一切读写都拒绝（本函数是共用取卷入口），前端提示重新进入
   if (attempt.abandonedAt !== null) {
     throw new HttpError(
       409,
@@ -767,6 +771,8 @@ export function publicOfSnapshot(
     // 数字，不含任何参考内容（§5.4.1 不硬校验不截断）
     ...(question.wordMin !== undefined ? { wordMin: question.wordMin } : {}),
     ...(question.wordMax !== undefined ? { wordMax: question.wordMax } : {}),
+    // 模块 3：量表是公开评价项（无参考内容），作答时就让学习者看到
+    ...(question.rubric !== undefined ? { rubric: question.rubric } : {}),
     // QM-13：matching 选项池 / ordering 项与展开槽位集合（slots= 区间按材料
     // 槽位序展开，材料快照缺失不携带键——学生端呈现防御形态）。2026-10-25
     // 审查 P1 收紧：两结构走学生面变体（剥离 distractor，ordering 附
@@ -1599,14 +1605,11 @@ function requireAssignmentVisible(
 
 /**
  * questions 行 → 契约 Question（判分输入与快照内容；解析失败的字段按缺省处理）。
- * T6R.20 审查修复 4 起导出：annotation-service 的 stale 判定以同构路径对题库
- * 当前行重建快照算 hash（与建卷冻结同一实现单源，不另写副本）。
- * QM-09（TT-08b）：新题型的无专列结构化字段（今日 word-min/max，后续
- * matching/ordering 选项池等）沿用 reparse 的「结构化字段以 sourceMd 为单一
- * 来源」口径，建卷冻结时从 sourceMd 重抽取（wrapSingleQuestionMd +
- * parseDocument 同款机制，零迁移）；门控用契约 NEW_QUESTION_TYPES 单源集合
- * （不写题型字面量判别——I16 守卫口径），仅新题型行付出解析成本、旧七型
- * 零开销；解析失败静默缺省（建议只是提示性投影，缺失不阻断建卷）。
+ * T6R.20：annotation-service 的 stale 判定以同构路径重建快照算 hash（单源）。
+ * QM-09（TT-08b）：无专列结构化字段（word-min/max、matching/ordering 选项池、
+ * rubric）沿用「结构化字段以 sourceMd 为单一来源」口径，建卷冻结时从 sourceMd
+ * 重抽取（零迁移）；门控用契约 NEW_QUESTION_TYPES 单源集合（I16 守卫口径），
+ * 旧七型零开销；解析失败静默缺省（提示性投影缺失不阻断建卷）。
  */
 export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
   const answers: QuestionAnswers | undefined =
@@ -1640,7 +1643,12 @@ export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
       question.materialRefs = refs.data;
     }
   }
-  if (NEW_QUESTION_TYPES.includes(row.type)) {
+  // 模块 3 量表（:::rubric）同走 sourceMd 重抽（零迁移）；源文无该指令的题
+  // 不付解析成本（旧七型主观题也可带量表，不限新题型）
+  if (
+    NEW_QUESTION_TYPES.includes(row.type) ||
+    row.sourceMd.includes(":::rubric")
+  ) {
     const structure = qmStructureOfSourceMd(row);
     if (structure.wordMin !== undefined) question.wordMin = structure.wordMin;
     if (structure.wordMax !== undefined) question.wordMax = structure.wordMax;
@@ -1652,23 +1660,23 @@ export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
     if (structure.orderingItems !== undefined) {
       question.orderingItems = structure.orderingItems;
     }
+    if (structure.rubric !== undefined) question.rubric = structure.rubric;
   }
   return question;
 }
 
 /**
- * 单题 sourceMd → 无专列结构化字段的重抽通道（word-min/word-max +
- * matchingOptions/orderingItems，QM-13 扩展）。包装与解析选项与
- * reparse-service.planQuestion 完全同款（unitId/起始序号覆盖缺省 id 推导，
- * 保证解析出的题与库中行同 id）；包装内恰一题，按 id 命中后只取无专列字段，
- * 其余字段一概不采（快照仍按既有列组卷）。解析失败静默缺省（建议/结构缺失
- * 只是少作答面投影，不阻断建卷——结构缺失时学生端呈现防御形态）。
+ * 单题 sourceMd → 无专列结构化字段的重抽通道（word-min/max、matchingOptions/
+ * orderingItems、rubric）。包装与解析选项与 reparse-service.planQuestion 同款
+ * （保证解析出的题与库中行同 id）；按 id 命中后只取无专列字段。解析失败静默
+ * 缺省（只是少作答面投影，不阻断建卷）。
  */
 function qmStructureOfSourceMd(row: QuestionRow): {
   wordMin?: number;
   wordMax?: number;
   matchingOptions?: Question["matchingOptions"];
   orderingItems?: Question["orderingItems"];
+  rubric?: Question["rubric"];
 } {
   try {
     const parsed = parseDocument(
@@ -1689,6 +1697,7 @@ function qmStructureOfSourceMd(row: QuestionRow): {
           ...(hit.orderingItems !== undefined
             ? { orderingItems: hit.orderingItems }
             : {}),
+          ...(hit.rubric !== undefined ? { rubric: hit.rubric } : {}),
         };
   } catch {
     // sourceMd 损坏（历史脏行）不阻断建卷：字数建议缺失只是少一条提示
@@ -1721,8 +1730,7 @@ export function workflowStartColumns(
   studentId: string,
   assignmentId: string | null,
   options: AttemptWorkflowStartOptions,
-  /** 该卷的单元 id（M5-D2 文档推荐档：course 传单元、assignment 恒不传——
-   * 多单元按 assignment_units 聚合；wrong 不传，恒无推荐） */
+  /** 该卷的单元 id（M5-D2 文档推荐档：course 传单元；assignment 按 assignment_units 聚合不传；wrong 不传） */
   unitId?: string | null,
 ): {
   practiceWorkflowVersion?: 1;
@@ -1761,14 +1769,13 @@ export function newDraftAttempt(config: {
   lectureId?: string | null;
   attemptNo: number;
   startedAt: string;
-  /**
-   * 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式
-   * workflowVersion=1 请求时由服务端按教师规则裁决后传入；缺省 = 旧协议
-   * （version/mode 为 NULL，revision 0），lesson 恒缺省（独立适配路径）。
-   */
+  /** 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式 workflowVersion=1
+   *  时由服务端按教师规则裁决后传入；缺省 = 旧协议（NULL/NULL/0），lesson 恒缺省 */
   practiceWorkflowVersion?: 1 | null;
   feedbackMode?: "per_question" | "after_attempt" | null;
   workflowRevision?: number;
+  /** 限时测试（模块 2）：自选时长分钟；仅 course / assignment 建卷传入，缺省不限时 */
+  timeLimitMinutes?: number | undefined;
 }): Attempt {
   return {
     id: config.id,
@@ -1790,8 +1797,7 @@ export function newDraftAttempt(config: {
     scoreFinal: null,
     frozenAt: config.startedAt,
     legacyUnverified: false,
-    // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，讲练重开时才由
-    // restartLessonAttempt 写入
+    // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，restartLessonAttempt 才写入
     abandonedAt: null,
     // 错题重练建卷范围快照（#6980-2）：缺省 null，wrong 建卷路径显式写入
     practiceScopeJson: null,
@@ -1799,6 +1805,8 @@ export function newDraftAttempt(config: {
     practiceWorkflowVersion: config.practiceWorkflowVersion ?? null,
     feedbackMode: config.feedbackMode ?? null,
     workflowRevision: config.workflowRevision ?? 0,
+    // 模块 2：时长 → 截止（服务端时钟）；未选时长两列 NULL
+    ...timedColumnsOf(config.startedAt, config.timeLimitMinutes),
   };
 }
 
@@ -1838,17 +1846,14 @@ export function startAttempt(
     // tie-break）选出不同卷
     .orderBy(desc(attempts.startedAt), desc(attempts.attemptNo))
     .all();
-  // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft
-  // 再判策略位，教师关「允许重做」不追溯进行中的重做卷（hall-15313）
+  // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft 再判策略位（hall-15313）
   const draft = existing.find((row) => row.status === "draft");
   if (draft !== undefined) {
     return withAllowRedo(attemptSummaryOf(draft), assignment.allowRedo);
   }
 
-  // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、
-  // 历次保留可回看）；不允许重做且无进行中卷 → 409 REDO_NOT_ALLOWED。
-  // 「查最近卷 + 插新卷」同事务（D10 课程口径；better-sqlite3 单写者，事务
-  // 串行化并发，防重复开卷/重复 attemptNo），冻结输入读走外层 db 与课程同款
+  // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、历次可回看）；
+  // 不允许重做且无进行中卷 → 409。「查最近卷 + 插新卷」同事务（D10；单写者串行化防重复开卷）
   if (options.redo === true) {
     if (assignment.allowRedo === false) {
       throw new HttpError(
@@ -1913,10 +1918,8 @@ export function startAttempt(
 }
 
 /**
- * 作业来源建卷（T6R.3 冻结；attemptNo 由调用方按既有卷裁决——首卷 1、重做 =
- * 既有最大值 +1，hall-15313）。冻结输入读走外层 db，写走同事务 tx
- * （better-sqlite3 同连接同步执行，事务内外读写口径一致，课程
- * startCourseAttempt 同款）。
+ * 作业来源建卷（T6R.3 冻结；attemptNo 由调用方裁决——首卷 1、重做 = 既有最大值 +1，
+ * hall-15313）。冻结输入读走外层 db，写走同事务 tx（同连接同步执行，课程建卷同款）。
  */
 function createAssignmentAttempt(
   db: Db,
@@ -1938,8 +1941,9 @@ function createAssignmentAttempt(
     unitId: null,
     attemptNo,
     startedAt: new Date().toISOString(),
-    // M1b：仅显式 workflowVersion=1 走新协议（服务端按作业授权裁决）；
-    // 省略维持旧协议（version/mode NULL）
+    // 模块 2：自选时长（缺省不限时）
+    timeLimitMinutes: options.timeLimitMinutes,
+    // M1b：仅显式 workflowVersion=1 走新协议（服务端按作业授权裁决）；省略维持旧协议
     ...workflowStartColumns(
       db,
       "assignment",
@@ -2082,13 +2086,14 @@ export function startCourseAttempt(
       unitId,
       attemptNo: maxAttemptNo + 1,
       startedAt: new Date().toISOString(),
+      // 模块 2：自选时长（缺省不限时）
+      timeLimitMinutes: options.timeLimitMinutes,
       // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议。
       // M5-D2：传该卷 unitId——学生未设置偏好时课程单元的文档推荐参与裁决
       ...workflowStartColumns(db, "course", studentId, null, options, unitId),
     });
-    // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入的读走
-    // 外层 db（better-sqlite3 同连接同步执行，事务内读取与写入口径一致），
-    // 写走 tx 与 attempt 行同事务落库
+    // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入读走外层 db
+    // （同连接同步执行，事务内读写口径一致），写走 tx 与 attempt 行同事务落库
     const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
       db,
       attempt,
@@ -2130,9 +2135,8 @@ export function startCourseAttempt(
  *   名单或作业软删后，已建作答仍可继续（§5.2「删除作业不删除已有作答记录」），
  *   取卷与详情/存答/交卷同一口径；
  * - course 来源：requireUsableAttempt 按状态分态（D7/D22）——draft 每次重校验
- *   可见性与成员资格（移出成员 → 403 COURSE_ACCESS_DENIED、条目隐藏等 →
- *   404 NOT_FOUND）；已交卷只读回看，不叠加课程校验（与 GET /attempts/:id
- *   详情同口径——T6R.3 收敛为统一进门函数后消除两接口的口径差）；
+ *   可见性与成员资格（403 COURSE_ACCESS_DENIED / 404 NOT_FOUND）；已交卷只读
+ *   回看，不叠加课程校验（与 GET /attempts/:id 详情同口径）；
  * - 题目经 attemptPublicUnitGroups 输出过滤（冻结快照公开投影 +
  *   questionRevisionId，无答案/详解/提示）。
  */
@@ -2221,15 +2225,10 @@ export function saveDraftAnswer(
       );
     }
     requireAttemptQuestion(db, attempt, questionId);
-    // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
-    //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
+    // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改（非 lesson 行零变化）
     assertRowNotSubmitted(db, attemptId, questionId);
-    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
-    // 永不比对参考答案；旧七型行为零变化
-    assertNewKindAnswerShape(db, attemptId, questionId, answer);
 
-    // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
-    // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
+    // T6R.3：requireAttemptQuestion 已保证冻结行存在——无插入分支，upsert 收敛为原行更新
     const existing = tx
       .select({
         id: responses.id,
@@ -2264,11 +2263,6 @@ export function saveDraftAnswer(
         },
       );
     if (
-      options.baseRevision === undefined &&
-      existing.answerMutationId !== null
-    )
-      throw conflict();
-    if (
       options.mutationId !== undefined &&
       existing.answerMutationId === options.mutationId
     ) {
@@ -2279,6 +2273,16 @@ export function saveDraftAnswer(
         revision: existing.answerRevision,
       };
     }
+    // 模块 2：宽限结束后只允许重放既有回执。
+    assertAttemptNotTimedOut(attempt);
+    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
+    // 永不比对参考答案；旧七型行为零变化
+    assertNewKindAnswerShape(db, attemptId, questionId, answer);
+    if (
+      options.baseRevision === undefined &&
+      existing.answerMutationId !== null
+    )
+      throw conflict();
     // 内容相同即收敛，不要求用户裁决，也不重复计数；接管后阻止旧客户端盲写。
     if (options.baseRevision !== undefined && encoded === existing.answerJson) {
       tx.update(responses)
@@ -2606,11 +2610,9 @@ export interface FinalOutcomeRow {
  * - **新行口径**：graded ⟺ 全部行已提交 且 无「教师待处理」行
  *   （manual_only 且 teacherMark=null——判定来源枯竭，唯一出口是教师；
  *   reference_self 行自评与否不阻塞，「完成作答不以自评为前提」）；
- * - opts.finalized（整卷已收尾）时全部行按已提交语义参与 allSubmitted——与
- *   四态 gate（practiceQuestionFeedbackStateOf）同口径：整卷交卷/收尾即全部
- *   判分行已交，legacy 协议行不写行级 submittedAt（逐题列，协议分野保持）；
- *   scoreFinal 公式沿用 D3（round(finalCorrect=true ÷ 全部题数 × 100)，
- *   reference_self 行 finalCorrect 恒 null——计分母不计分子，教师权威线）；
+ * - opts.finalized（整卷已收尾）时全部行按已提交语义参与 allSubmitted（与四态
+ *   gate 同口径；legacy 协议行不写行级 submittedAt）；scoreFinal 公式沿用 D3
+ *   （round(finalCorrect=true ÷ 全部题数 × 100)，reference_self 行计分母不计分子）；
  * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
  */
 export function attemptFinalOutcomeOf(
@@ -2671,7 +2673,7 @@ export function attemptFinalOutcomeOf(
  * - changeCount：T2.10 口径 = max(草稿期 PUT 计数, answer_change 事件数)——
  *   事件计数为权威（每次有效修改一条），草稿计数兜底（无前端事件的 attempt，
  *   如脚本直接调 API 交卷）；
- * - T6R.3 版本验证：clientRevisions 提供时（HTTP 路由恒传，不带请求体按空
+ * - T6R.3 版本验证：request 提供时（HTTP 路由恒传，不带请求体按空
  *   集合）与**全部冻结题**（含 lesson 已单题提交的行——旧标签页的整卷提交
  *   仍须回传完整版本集合）精确比对，不符 409 QUESTION_REVISION_STALE；
  *   服务层内部调用（seed 等）可省略参数跳过验证；
@@ -2693,22 +2695,20 @@ export function submitAttempt(
   studentId: string,
   attemptId: string,
   now: Date | string = new Date(),
-  clientRevisions?: readonly AttemptSubmitRevision[],
-  evidenceDeclarations?: readonly SubmitEvidenceDeclaration[],
+  request?: AttemptSubmitRequest,
 ): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }
+  assertSavedAnswersConfirmed(attempt, now, request?.confirmedSavedAnswers);
 
-  // T6R.3：判分输入 = 冻结快照（requireUsableAttempt 门口已懒冻结兜底）。
-  // 三来源统一取行（rowid 序；判分/写入与顺序无关，展示排序在结果视图
-  // 经 unitGroupedRows 重建）
+  // T6R.3：判分输入 = 冻结快照（门口已懒冻结兜底）。三来源统一取行（rowid 序；
+  // 判分与顺序无关，展示排序在结果视图经 unitGroupedRows 重建）
   const ownRows = attemptResponseRows(db, attemptId);
-  // 逐题提交语义的卷（2026-10 lesson 独立适配 + M2 新协议普通卷）：已单题提交
-  // 的行不重判（见函数头注释）；判定走 practiceProtocolOf 单一谓词（异常行
-  // version=1 而 feedbackMode 缺失时也按历史卷全量判分，与四个逐题消费点
-  // 口径一致）；历史卷行的 submittedAt 恒 null → 全量判分，行为零变化
+  // 逐题提交语义的卷（lesson 独立适配 + M2 新协议普通卷）：已单题提交的行不重判；
+  // 判定走 practiceProtocolOf 单一谓词（异常行按历史卷全量判分，与逐题消费点一致）；
+  // 历史卷行 submittedAt 恒 null → 全量判分，行为零变化
   const perQuestionAttempt = practiceProtocolOf(attempt) !== "legacy";
 
   // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
@@ -2769,9 +2769,7 @@ export function submitAttempt(
   }
 
   // revisions 全集校验不变：比对对象是**全部冻结题**（lesson 含已提交行）
-  if (clientRevisions !== undefined) {
-    validateSubmitRevisions(allFrozen, clientRevisions);
-  }
+  if (request) validateSubmitRevisions(allFrozen, request.revisions);
   // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
   // 范围 = 参与本次判分的行（逐题语义卷：未提交题）；任一项验证失败零落行，
   // attempt 保持 draft 可恢复
@@ -2779,7 +2777,7 @@ export function submitAttempt(
     db,
     attemptId,
     graded,
-    evidenceDeclarations,
+    request?.evidence,
   );
 
   // #6980-3（审查修复 P0-1，2026-10-25）：正式手写笔迹也算「有实际作答」——
@@ -3343,6 +3341,7 @@ export function submitLessonQuestion(
     question: studentFacingResultOf(
       resultQuestionOf(freshRow, snapshot, {
         materialSlots: materialSlotOrderOf(db, attemptId),
+        db,
       }),
     ),
     summary: lessonLiveSummaryOf(summaryRows, freshAttempt),
@@ -3382,31 +3381,22 @@ function practiceRequestDigestOf(
 
 /**
  * M2 新协议逐题提交（submitAttemptQuestion 的普通练习实现；lesson 走上方
- * submitLessonQuestion 独立适配）。单事务完成 §10.2 必要顺序：
- * 归属（404/403 不暴露差异——按 studentId 复核）→ 作废 409 → 课程失权
- * （requireVisibleCourseUnit 分态 403/404，与取卷同口径）→ 协议形态（lesson /
- * 历史卷 409，不退回无版本写入 §5.3）→ **幂等与已提交裁决**（§10.3：同
- * mutationId 同摘要重试返回同一提交事实、不重判不重复事件；同 id 异摘要 409
- * WORKFLOW_MUTATION_CONFLICT；异 mutationId 含整卷已收尾 → 409
- * QUESTION_ALREADY_SUBMITTED）→ 当前 resolver 裁决（教师收紧立即生效，§5.4
- * ——canSubmitQuestion=false 拒绝进一步逐题提交 409 WORKFLOW_RESTRICTED，
- * 但幂等重放先于它：收紧后重试按当前规则投影）→ workflowRevision CAS（陈旧
- * 409，工作流改动与首题提交竞态）→ questionRevisionId 版本（409，与整卷/
- * lesson 同口径）→ **expectedAnswerRevision 与事务内实际读取的学生答案版本
- * 比对**（§10.2 末段：不是题目版本；不一致 409 ANSWER_REVISION_CONFLICT 附
- * _current，复用既有答案冲突协议）→ 证据声明核对（frozen/none/missing——
- * buildSingleQuestionEvidence 与 lesson 同一实现，questionId 一致性、有稿
- * none 拒绝；本机读取失败在客户端阻断，服务端只核对声明与既有证据事实的一致
- * 性）→ 判分（**事务内**读冻结快照与答案，grade 复用判分包——M0 风险 1 的
- * 「事务前读答案」窗口就此关闭）→ 行级真实 CAS 写入（WHERE submittedAt IS
- * NULL，已提交行不可覆盖）→ 最后一题调用共同收尾函数
- * （autoFinishPerQuestionAttempt，与 lesson 同源；并发下整卷只收尾一次）。
+ * submitLessonQuestion 独立适配）。单事务完成 §10.2 必要顺序：归属（404/403
+ * 不暴露差异）→ 作废 409 → 课程失权（requireVisibleCourseUnit）→ 协议形态
+ * （lesson / 历史卷 409）→ **幂等与已提交裁决**（§10.3：同 mutationId 同摘要
+ * 返回同一提交事实；同 id 异摘要 409 WORKFLOW_MUTATION_CONFLICT；异 mutationId
+ * 含整卷已收尾 → 409 QUESTION_ALREADY_SUBMITTED）→ 当前 resolver 裁决
+ * （canSubmitQuestion=false → 409 WORKFLOW_RESTRICTED，幂等重放先于它）→
+ * workflowRevision CAS（陈旧 409）→ questionRevisionId 版本（409）→
+ * **expectedAnswerRevision 与事务内实际答案版本比对**（不一致 409
+ * ANSWER_REVISION_CONFLICT 附 _current）→ 证据声明核对
+ * （buildSingleQuestionEvidence，与 lesson 同一实现）→ 判分（**事务内**读冻结
+ * 快照与答案）→ 行级真实 CAS 写入（WHERE submittedAt IS NULL）→ 最后一题调用
+ * autoFinishPerQuestionAttempt（并发下整卷只收尾一次）。
  *
- * 响应（practiceQuestionSubmitData 四键白名单，§6.1——不夹带邻题对错与整卷
- * 汇总）：feedback 共用授权投影 + questionProgress 白名单 + 最新 attempt 摘要
- * + 工作流裁决投影，全部在事务后按**读取时刻**的当前规则组装（教师在该题
- * 事务提交后、响应投影前收紧的竞态下按当前 gate 返回受限态，不重放缓存旧
- * 正文，§10.3）。成功路径记 question_submit 事件（重放不重复记）。
+ * 响应（practiceQuestionSubmitData 四键白名单，§6.1）：feedback 授权投影 +
+ * questionProgress + 最新 attempt 摘要 + 工作流裁决投影，全部在事务后按**读取
+ * 时刻**的当前规则组装（§10.3）。成功路径记 question_submit 事件（重放不重复记）。
  */
 export function submitPracticeQuestion(
   db: Db,
@@ -3424,8 +3414,7 @@ export function submitPracticeQuestion(
     const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
     // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
     assertDraftCourseVisible(db, studentId, attempt);
-    // 新协议路径仅普通来源的新协议卷：lesson 独立适配（旧协议形态）→ 协议
-    // 不匹配；历史卷（无工作流版本）不可升级 → legacy（§5.3）
+    // 新协议路径仅普通来源的新协议卷：lesson 独立适配 → 协议不匹配；历史卷 → legacy（§5.3）
     const protocol = practiceProtocolOf(attempt);
     if (protocol === "lesson") {
       throw new HttpError(
@@ -3476,6 +3465,7 @@ export function submitPracticeQuestion(
 
     // 当前 resolver 裁决：教师收紧立即生效（§5.4），收紧后拒绝进一步逐题提交
     //（学生按「继续完成剩余题目并交卷」收敛；已提交行与成绩保留）
+    assertAttemptNotTimedOut(attempt, nowIso, "running");
     const view = attemptWorkflowView(db, attempt, now);
     if (view === null) {
       // M1 加固语义（v2 d7c84b89）：读侧视图缺失＝授权事实异常（如作业授权
@@ -3716,6 +3706,7 @@ export function practiceQuestionFeedbackOf(
   const question = studentFacingResultOf(
     resultQuestionOf(row, snapshot, {
       materialSlots: materialSlotOrderOf(db, attempt.id),
+      db,
     }),
   );
   return {
@@ -3843,9 +3834,8 @@ export function getAttemptDetail(
 }
 
 /**
- * 草稿视图组装（T6R.3 单一数据源：unitGroupedRows 的冻结行只查一次、快照只
- * parse 一次，公开投影/草稿答案/提示回显都从同一批行派生）。attempt 已在
- * requireUsableAttempt 门口过课程分态校验与懒冻结。
+ * 草稿视图组装（T6R.3 单一数据源：冻结行只查一次、快照只 parse 一次，公开投影/草稿
+ * 答案/提示回显同批行派生）。attempt 已在 requireUsableAttempt 门口过校验与懒冻结。
  */
 function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const meta = attemptSourceMeta(db, attempt);
@@ -3895,6 +3885,8 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     studentFlags,
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
+    // 模块 2：限时卷下发截止 / 服务端时刻 / 阶段（非限时 null）
+    timing: attemptTimingOf(attempt),
     enabledCapabilities,
     ...(workflowView ?? {}),
   };
@@ -3976,6 +3968,8 @@ export function resultQuestionOf(
   options: {
     /** 冻结材料槽位序（QM-13：matching 槽位集合展开用；缺省不携带键） */
     readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
+    /** 模块 3：给了 db 才投影量表三份记录与在途判卷任务（题无量表不注入键） */
+    readonly db?: Db;
   } = {},
 ): AttemptResultQuestion {
   // 审查 P2-1：旧格式冻结快照（三结构键全缺）从快照自身 sourceMd 兜底重抽
@@ -4046,6 +4040,9 @@ export function resultQuestionOf(
       revision: row.selfReviewRevision,
     },
     gradingPolicy: row.gradingPolicy,
+    ...(options.db !== undefined && snapshot.rubric !== undefined
+      ? { rubricReview: rubricReviewOf(options.db, row, snapshot) }
+      : {}),
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
   };
@@ -4198,39 +4195,23 @@ function buildResultData(
    * stemMd 一律经 studentFacingResultOf 学生端投影（已公布也不例外）：[[答案]]
    * 渲染为空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下
    * 都不含 [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd
-   * 唯一入口）。D9 字段 teacherMark / teacherComment / finalCorrect 与
-   * autoCorrect 同法置 null——教师已批也不在截止前泄露对错与评语。
-   * QM-11：selfReview / gradingPolicy 同法置 null——未公布形态无自评入口，
-   * 行策略与自评状态不下发（与 §5.5.3 pending_release「不显示答案、无自评
-   * 入口」同一读侧口径） */
+   * 唯一入口）。未公布形态置 null 的字段清单见 restrictedResultQuestionOf
+   * （答案 / 判定 / 自评 / 量表记录，与 §5.5.3 pending_release 同一读侧口径） */
   const releaseAwareQuestion = (item: AttemptResultQuestion) => {
     const projected = studentFacingResultOf(item);
-    return released
-      ? projected
-      : {
-          ...projected,
-          answers: null,
-          solutionMd: null,
-          autoCorrect: null,
-          teacherMark: null,
-          teacherComment: null,
-          finalCorrect: null,
-          selfReview: null,
-          gradingPolicy: null,
-        };
+    return released ? projected : restrictedResultQuestionOf(projected);
   };
 
-  // 逐题条目与分组同批组装（groupedSnapshotRows 统一「跳过缺失+组 id 回退+
-  // 空组过滤」；快照优先取预加载，未覆盖行现场 parse）
-  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
+  // 逐题条目与分组同批组装（groupedSnapshotRows；快照优先取预加载）；QM-13
+  // matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
   const materialSlots = materialSlotOrderOf(db, attempt.id);
   const resultQuestions: AttemptResultQuestion[] = [];
-  const unitGroups: AttemptResultUnit[] = groupedSnapshotRows(
+  const unitGroups = groupedSnapshotRows(
     db,
     attempt,
     (row, snapshot) => {
       const item = releaseAwareQuestion(
-        resultQuestionOf(row, snapshot, { materialSlots }),
+        resultQuestionOf(row, snapshot, { materialSlots, db }),
       );
       resultQuestions.push(item);
       return item;
@@ -4243,17 +4224,19 @@ function buildResultData(
             parsedByQuestion?.get(row.questionId) ?? snapshotOfRow(row),
           ...(preloadedRows !== undefined ? { preloadedRows } : {}),
         },
-  ).map((group) => ({
-    id: group.id,
-    title: group.title,
-    questions: group.items,
-  }));
+  );
+  // 模块 7：模块参考配额（单元推荐时长当前值）随单元分组下发，与活动用时并列
+  const unitIds = unitGroups.map((group) => group.id);
+  const quotas = unitTimeQuotasOf(db, unitIds);
+  const unitViews: AttemptResultUnit[] = unitGroups.map((group) => {
+    const quota = quotas.get(group.id);
+    const unit = { id: group.id, title: group.title, questions: group.items };
+    return quota === undefined ? unit : { ...unit, timeQuotaMinutes: quota };
+  });
 
-  // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，
-  // pending 按 answered 口径（每道已答题显示为「待批」，截止后恢复真实计数）；
-  // D9 新增字段 scoreFinal / pendingCount 同法置 null 投影（待批数不 null 会
-  // 泄露整卷批改进度，与「待公布」口径冲突）。已公布时 scoreFinal 取 attempt 行、
-  // pendingCount 走 pendingMarkCount（D4 共享谓词，与教师端列表/详情同一实现）
+  // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，pending 按
+  // answered 口径，scoreFinal / pendingCount 置 null（待批数会泄露批改进度）；
+  // 已公布时 scoreFinal 取 attempt 行、pendingCount 走 pendingMarkCount（D4 共享）
   const fullSummary = scoreSummaryOf(resultQuestions);
   const summary = released
     ? {
@@ -4285,15 +4268,15 @@ function buildResultData(
     dueAt: meta.dueAt,
     answersReleased: released,
     summary,
-    units: unitGroups,
+    units: unitViews,
     enabledCapabilities,
     // M4-D3 §13.8 节奏摘要：v1 新协议卷携带裁决投影（feedbackMode 驱动结果页
-    // 「反馈节奏」摘要行），读时按当前规则裁决——与草稿视图同一 resolver/同一
-    // schema 单源；lesson / legacy 卷为 null（缺省 = 前端不渲染该行，零查询
-    // 早退）。只携带授权结论本身，答案/对错仍走 answersReleased gate，不放宽
-    // 任何普通学生接口投影
+    // 「反馈节奏」摘要行），读时按当前规则裁决（与草稿视图同一 resolver / schema
+    // 单源）；lesson / legacy 卷缺省不渲染。只携带授权结论本身，答案/对错仍走
+    // answersReleased gate
     ...(workflowView !== null
       ? { practiceWorkflow: workflowView.practiceWorkflow }
       : {}),
+    ...attemptActivityProjection(db, attempt.id, attempt.submittedAt), // 题内活动用时 v1（无事件不带键；交卷时刻作截止锚点）
   };
 }

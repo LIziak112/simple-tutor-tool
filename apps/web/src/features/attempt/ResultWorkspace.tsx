@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { AttemptFooter, AttemptNavigatorButton } from "./AttemptBottomBar";
 import { AttemptNavigationDialog } from "./AttemptNavigationDialog";
 import { AttemptWorkspace } from "./AttemptWorkspace";
@@ -95,9 +96,10 @@ export function ResultWorkspace({
                 : "已交卷 · 待批改"}
           </p>
         </div>
-        {actions != null && (
-          <div className="flex shrink-0 items-center">{actions}</div>
-        )}
+        <div className="flex shrink-0 items-center">
+          {actions}
+          <MemoQuickCaptureButton />
+        </div>
       </header>
       <div ref={root} className="min-w-0">
         {children}

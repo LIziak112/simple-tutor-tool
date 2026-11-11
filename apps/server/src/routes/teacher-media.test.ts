@@ -297,7 +297,7 @@ describe("GET/HEAD /blobs/media/<hash>.<ext>：伺服", () => {
     const { app, db, teacherCookie, studentCookie } = await makeMediaApp();
     const { name } = await uploadPng(app, teacherCookie);
 
-    // D5：禁用即吊销该教师全部会话——但其 Cookie 仍残留在浏览器（最长 7 天）。
+    // D5：禁用即吊销该教师全部会话——但其 Cookie 仍残留在浏览器（最长 90 天）。
     // 修复前：教师槽会话行有效但主体不可用 → 直接 401，不再尝试学生槽，
     // 双身份浏览器的学生端图片会一直 401 到教师 Cookie 自然过期
     db.update(teachers)

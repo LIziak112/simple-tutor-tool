@@ -1,0 +1,62 @@
+import { useMutation } from "@tanstack/react-query";
+import type { AccountKind, PersonalSessionRole } from "@tutor/contract";
+import { useEffect, useRef } from "react";
+import {
+  loginPersonalApi,
+  logoutPersonalApi,
+  registerPersonalApi,
+} from "./personal-api";
+import { useClearStudentSession } from "./student-auth";
+import { useApplyPersonalAuthed, useClearTeacherSession } from "./teacher-auth";
+
+/**
+ * 个人账号登录状态（模块 0）：个人账号 = 一条教师行 + 一条绑定学习者行、两枚会话
+ * Cookie，前端不新增第三份身份缓存——注册 / 登录成功后把两侧身份分别写进既有的
+ * teacher me / student me 缓存（各自的 apply 钩子：学生侧还负责草稿 / 标注 /
+ * 偏好等按账号绑定），两端布局守卫与页面照常工作；退出则两侧一起退。
+ */
+
+/** 邀请码自助注册（成功即双会话登录） */
+export function useRegisterPersonal() {
+  const applyAuthed = useApplyPersonalAuthed();
+  return useMutation({
+    mutationFn: registerPersonalApi,
+    onSuccess: applyAuthed,
+  });
+}
+
+/** 个人账号登录 */
+export function useLoginPersonal() {
+  const applyAuthed = useApplyPersonalAuthed();
+  return useMutation({
+    mutationFn: loginPersonalApi,
+    onSuccess: applyAuthed,
+  });
+}
+
+/** 服务端只结束属于本人的会话，按实际结束的角色清理缓存。 */
+export function useLogoutPersonal(role: PersonalSessionRole) {
+  const clearStudent = useClearStudentSession();
+  const clearTeacher = useClearTeacherSession();
+  return useMutation({
+    mutationFn: () => logoutPersonalApi(role),
+    onSuccess: async ({ paired }) => {
+      await Promise.all([
+        role === "student" || paired ? clearStudent() : undefined,
+        role === "teacher" || paired ? clearTeacher() : undefined,
+      ]);
+    },
+  });
+}
+
+/** 身份查询在退出时先清空，外层守卫保留最近一次确认的账号类型。 */
+export function useAccountLoginPath(
+  kind: AccountKind | undefined,
+  fallback: string,
+) {
+  const lastKind = useRef(kind);
+  useEffect(() => {
+    if (kind !== undefined) lastKind.current = kind;
+  }, [kind]);
+  return (kind ?? lastKind.current) === "personal" ? "/p/login" : fallback;
+}

@@ -1,4 +1,13 @@
 import { z } from "zod";
+import { attemptActivitySchema } from "./attempt-activity.ts";
+import {
+  questionRevisionIdSchema,
+  submitEvidenceDeclarationSchema,
+} from "./attempt-submission.ts";
+import {
+  attemptTimeLimitMinutesSchema,
+  attemptTimingSchema,
+} from "./attempt-timing.ts";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentAnswerReleaseSchema,
@@ -17,6 +26,7 @@ import {
   practiceWorkflowStartOptionsFields,
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
+import { rubricReviewSchema } from "./rubric.ts";
 import {
   effectiveVerdictSchema,
   gradingPolicySchema,
@@ -26,6 +36,17 @@ import {
   studentUnitAttemptRecordSchema,
   studentUnitAttemptSummarySchema,
 } from "./student-course-api.ts";
+
+export {
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
+  type AttemptSubmitRequest,
+  type AttemptSubmitRevision,
+  attemptSubmitRequestSchema,
+  attemptSubmitRevisionSchema,
+  questionRevisionIdSchema,
+  type SubmitEvidenceDeclaration,
+  submitEvidenceDeclarationSchema,
+} from "./attempt-submission.ts";
 
 /**
  * 作答生命周期契约（T2.6 起为权威定义）：attempt 的创建（幂等）、草稿保存、
@@ -167,16 +188,15 @@ export const attemptSummarySchema = z
      * 取 label（答题页/结果页来源行用）；其余来源与历史卷缺省（旧载荷
      * 兼容，optional） */
     wrongScopeLabel: z.string().min(1).nullable().optional(),
-    /**
-     * 是否允许重做（hall-15313）：仅 assignment 来源携带（其余来源恒 undefined，
-     * 由 superRefine 强制）；结果页据此渲染「再做一次」。旧版响应缺省 undefined，
-     * 客户端按 true 处理（存量作业即允许重做）。
-     */
+    /** 是否允许重做（hall-15313）：仅 assignment 来源携带（其余恒 undefined，superRefine
+     *  强制）；结果页据此渲染「再做一次」。旧响应缺省 undefined，客户端按 true 处理 */
     allowRedo: z.boolean().optional(),
+    /** 限时测试（模块 2）：时长秒 / 截止 UTC ISO；非限时卷 null，旧响应缺省 */
+    timeLimitSec: z.number().int().positive().nullable().optional(),
+    deadlineAt: z.string().min(1).nullable().optional(),
   })
   .superRefine((summary, ctx) => {
-    // allowRedo 仅 assignment 来源携带（hall-15313）：重做是作业语义，其余来源
-    // 携带即拒绝（与 lectureId 同款来源不变式）
+    // allowRedo 仅 assignment 来源携带（hall-15313）：重做是作业语义，其余来源携带即拒绝
     if (
       summary.sourceType !== "assignment" &&
       summary.allowRedo !== undefined
@@ -287,24 +307,14 @@ export const attemptSummarySchema = z
 export const attemptStartDataSchema = attemptSummarySchema;
 
 /**
- * POST /api/student/wrong-practice 请求体（2026-10 错题重练组卷）：
- * - questionIds：前端按错题本当前筛选口径（tab + 分组）圈出的题目 id，顺序即
- *   组卷题序（服务端按此顺序冻结进新 attempt 的 responses 行）；
- * - min(1)：空数组 400 VALIDATION_ERROR；重复 id 由服务端去重（保序），
- *   不在契约层拦截——前端从聚合结果取 id 天然无重复；
- * - 每个 id 服务端校验「∈ 该生错题本聚合（includeResolved 全量口径）且最近
- *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
- *   WRONG_PRACTICE_EMPTY（附中文说明）。
- */
-/**
- * 错题重练建卷范围（2026-10-25 #6980-2「我的记录要说明重练的是哪些错题」）：
- * 前端组卷时随请求下发，服务端原样落 attempts.practice_scope_json（快照语义，
- * 单元/考点改名不影响历史卷标题）。五种口径对应错题本的全部重练入口：
- * - all：页头「重练全部」（当前 tab + 课程筛选圈定的全部题）；
- * - group：组头「重练本组」（分组维度 + 组标题 + 可选课程名）；
- * - result：结果页「练习本卷错题」（来源卷标题）；
- * - selection：选题重练（2026-10 手选 N 题跨组组卷，可选课程名）；
- * - ai：AI 组卷（2026-10 学生 MCP create_wrong_practice，AI 给出的组卷说明）。
+ * POST /api/student/wrong-practice 请求体（2026-10 错题重练组卷）：questionIds
+ * 顺序即组卷题序；空数组 400，重复 id 服务端去重保序；每个 id 须 ∈ 该生错题本
+ * 聚合且最近判定作答快照可用，不满足静默剔除，剔完为空 400 WRONG_PRACTICE_EMPTY。
+ *
+ * 建卷范围（#6980-2）：随请求下发、原样落 attempts.practice_scope_json（快照
+ * 语义）。五种口径：all 页头重练全部；group 组头重练本组；result 结果页
+ * 「练习本卷错题」（来源卷标题，模块 7 起可带「· 模块名」后缀）；selection
+ * 手选 N 题；ai AI 组卷（只由学生 MCP create_wrong_practice 构造）。
  */
 export const wrongPracticeScopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -472,21 +482,6 @@ export const hintOpenedEntrySchema = z.object({
 });
 
 /**
- * 题目版本引用（T6R.3 冻结，方案 §5.1）：定位「本次作答时被冻结的那道题」，
- * 对学生不透明。铸造规则已由 T6R.3 定稿：**该 (attempt, question) 的
- * responses 行 id**（crypto.randomUUID）——每题每次作答天然唯一、快照与版本
- * 引用同源同寿、交卷回传比对即可验证题目版本，契约长度上限自然满足。
- * 该引用只能定位授权记录，不能当访问凭证。
- * （定义原在 note.ts；T6R.3 收敛时移入本文件——铸造规则属作答域，且 attempt
- * 视图/试卷形态与笔记元信息共用同一份，单一出处。）
- */
-export const questionRevisionIdSchema = z
-  .string()
-  .min(1, "questionRevisionId 不能为空")
-  .max(512)
-  .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
-
-/**
  * attempt 视图的公开题目（T6R.3 全来源冻结）：QuestionPublic 白名单投影 +
  * 每题不透明 questionRevisionId（该题在本 attempt 的 responses 行 id——建卷
  * 冻结时铸造，交卷时原样回传以验证题目版本；只能定位授权记录，不能当访问
@@ -572,12 +567,11 @@ export const attemptDraftDataSchema = z.object({
    * 旧响应缺省按无标记处理。
    */
   studentFlags: z.record(z.string(), studentFlagSchema).optional(),
-  /**
-   * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
-   * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
-   * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
-   */
+  /** 冻结来源不可信标记（T6R.3 §5.1「legacy_unverified」）：true = 升级后首次访问时
+   *  懒冻结的当前版本（前端提示「内容为恢复后的版本」）；false = 建卷即冻结 */
   legacyUnverified: z.boolean(),
+  /** 限时信息（模块 2）：限时卷下发截止 / 服务端时刻 / 阶段；非限时卷 null，旧响应缺省 */
+  timing: attemptTimingSchema.nullable().optional(),
   /**
    * 教师辅助能力有效启用集（T7.7 / 方案 §4.5）：steps/ink 子集，读时按
    * attempt → student → teacher 的配置列计算（NULL=全启用）。steps 关闭时
@@ -586,9 +580,8 @@ export const attemptDraftDataSchema = z.object({
    */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
   /**
-   * 做题工作流裁决投影（M1a，2026-10-22 计划 §6.1，可选）：仅新协议卷携带，
-   * 旧响应缺失按整卷旧协议处理，不能默认授权。授权结论由服务端 resolver
-   * 产出；题面/答案仍走各自既有投影，本字段不混入题目秘密。
+   * 做题工作流裁决投影（M1a §6.1，可选）：仅新协议卷携带，旧响应缺失按整卷旧
+   * 协议处理，不能默认授权。结论由服务端 resolver 产出，不混入题目秘密。
    */
   practiceWorkflow: practiceWorkflowSchema.optional(),
   /**
@@ -675,17 +668,12 @@ export const attemptResultQuestionSchema = z.object({
    * 默认不含未做题。
    */
   answered: z.boolean(),
-  /**
-   * 做题时学生自标「不会」（#6980-4）：unsure / null。入错题本条件之一
-   * （标过不会的题无论对错都保留），不是作答内容、不受公布 gate 影响。
-   */
+  /** 做题时自标「不会」（#6980-4）：unsure / null。入错题本条件之一，不受公布 gate 影响 */
   studentFlag: studentFlagSchema.nullable(),
   /**
-   * QM-11（TT-09b）行级自评状态（公布 gate 截止前置 null 投影；旧载荷缺省
-   * = 无自评信息，读侧按 null 处理）：record=null 表示未自评或已撤回
-   * （undecided 清除记录），revision 是 CAS 基线（清除亦递增——record=null
-   * 时不能从 record 推出，故单独下发）；与 gradingPolicy 组合经
-   * resolveSelfReviewState 单一出处推导 self_pending/self_reviewed 等展示态。
+   * QM-11（TT-09b）行级自评状态（公布前投影 null；旧载荷缺省按 null）：record=null
+   * 表示未自评或已撤回（undecided 清除），revision 是 CAS 基线（清除亦递增，故单独
+   * 下发）；与 gradingPolicy 组合经 resolveSelfReviewState 单一出处推导展示态。
    */
   selfReview: z
     .object({
@@ -695,11 +683,12 @@ export const attemptResultQuestionSchema = z.object({
     .nullable()
     .optional(),
   /**
-   * QM-11（TT-09b）行级判分策略（开卷冻结；null=旧行或公布前投影——旧行
-   * 历史不开放自评）。reference_self 行公布后开放自评入口；auto/manual_only
-   * 与旧行的展示沿用既有判定徽章路径。
+   * QM-11（TT-09b）行级判分策略（开卷冻结；null=旧行或公布前投影——旧行不开放
+   * 自评）。reference_self 行公布后开放自评入口；其余沿用既有判定徽章路径。
    */
   gradingPolicy: gradingPolicySchema.nullable().optional(),
+  /** 模块 3 量表视图（题有 :::rubric 且已公布才下发；量表分不进对错与总分） */
+  rubricReview: rubricReviewSchema.nullable().optional(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
@@ -766,6 +755,12 @@ export const attemptResultUnitSchema = z.object({
   title: z.string().min(1),
   /** 该单元的逐题结果（按单元内题序） */
   questions: z.array(attemptResultQuestionSchema),
+  /**
+   * 模块参考时间配额（分钟，2026-11-09 模块 7「按模块看结果」）：单元
+   * frontmatter `practice.timeLimitMinutes` 的当前值，结果页与该模块的
+   * 题内活动用时并列展示；无推荐 / 非单元组缺省。只是参考，不构成时钟。
+   */
+  timeQuotaMinutes: attemptTimeLimitMinutesSchema.optional(),
 });
 
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
@@ -801,18 +796,16 @@ export const attemptResultDataSchema = z.object({
   summary: attemptScoreSummarySchema,
   /** 逐题结果分组（T2A.7：assignment 按单元序分节，course 单组；组内按题序） */
   units: z.array(attemptResultUnitSchema),
-  /**
-   * 教师辅助能力有效启用集（T7.7，与草稿视图同口径）：结果视图的详解/揭晓
-   * 渲染同样遵循开关（steps 关闭时详解内 steps 完整展开）。
-   */
+  /** 教师辅助能力有效启用集（T7.7，与草稿视图同口径；结果视图详解/揭晓同样遵循） */
   enabledCapabilities: enabledCapabilitiesFieldSchema,
   /**
    * 练习工作流裁决投影（M4-D3 §13.8，与草稿视图同一 schema 单源）：v1 新协议
-   * 卷携带（feedbackMode 驱动结果页「反馈节奏」摘要行——作答时逐题反馈 /
-   * 交卷后反馈）；lesson / 历史旧协议卷缺省 = 前端不渲染该行。结论只能来自
-   * 服务端 resolver 读时裁决，本字段不作为任何授权依据。
+   * 卷携带（feedbackMode 驱动结果页「反馈节奏」摘要行）；lesson / 旧协议卷缺省。
+   * 结论只能来自服务端 resolver 读时裁决，本字段不作为任何授权依据。
    */
   practiceWorkflow: practiceWorkflowSchema.optional(),
+  /** 题内活动用时（attempt-activity.ts v1 口径，服务端按事件现算；无事件卷缺省） */
+  activity: attemptActivitySchema.optional(),
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
@@ -858,112 +851,6 @@ export const attemptAnswerSaveDataSchema = z.object({
   questionId: z.string().min(1),
   /** 该题累计保存次数（含本次；T2.10 起用于改答案次数统计） */
   changeCount: z.number().int().min(1),
-});
-
-/**
- * POST /api/student/attempts/:id/submit 请求体（T6R.3 全来源题目版本冻结）：
- * 交卷回传建卷时下发的每题 questionRevisionId（responses 行 id，对学生不透明），
- * 服务端与本次冻结集合逐一比对——旧标签页/陈旧页面的提交（缺项、错版、多项）
- * 被 409 QUESTION_REVISION_STALE 可诊断拒绝（前端提示刷新后重交），不静默接受。
- * 空 revisions 合法（空卷交卷；服务端把不带请求体同样按空集合处理，非空卷
- * 由此自然落入 409）；上限 500 为防御性边界（单卷题数远低于此；常量
- * ATTEMPT_SUBMIT_MAX_QUESTIONS 与批量头共享，见彼处注释）。
- */
-export const attemptSubmitRevisionSchema = z.object({
-  questionId: z.string().min(1),
-  questionRevisionId: questionRevisionIdSchema,
-});
-
-/**
- * 交卷请求的单题笔记证据声明（T6R.10，方案 §6.4）：
- * - state="frozen"：该题草稿矢量已在服务端，交卷事务把 head 版本固定为
- *   原稿——versionId=客户端所知 head 的 note_versions.id、revision=客户端
- *   预期的当前 head revision（CAS 期望值）；服务端与实际 head 精确比对，
- *   其他标签页/设备改出新 head 则 409 NOTE_EVIDENCE_MISMATCH 拒绝这次
- *   冻结（不静默固定不一致旧版本，方案 §6.4 第 4 步）；
- * - state="none"：该题确实空稿（无笔记行）；与实际 head 有稿矛盾时同样
- *   409——用户未确认不能静默 missing（任务清单 T6R.10 一致性条款）；
- * - state="missing"：草稿矢量未保存完整，**用户已明确选择**「提交答案，
- *   草稿未保存完整」后才允许发送（确认动作在客户端交卷流程，服务端无法
- *   也不重复验证）；本地稿保留，之后找回只能作为 supplement（T6R.15），
- *   不冒称原稿。
- * legacy_unverified 不在声明值域：那是升级遗留进行中稿的服务端降级标记
- * （T6R.3 恢复路径写入），不接受客户端声明。
- */
-export const submitEvidenceDeclarationSchema = z
-  .object({
-    questionId: z.string().min(1),
-    state: z.enum(["none", "frozen", "missing"]),
-    /** 待固定版本（note_versions.id）；仅 state="frozen" 携带 */
-    versionId: z.uuid().optional(),
-    /** 客户端预期的当前 head revision（CAS 期望值）；仅 state="frozen" 携带（≥1） */
-    revision: z.number().int().min(0).optional(),
-  })
-  .superRefine((decl, ctx) => {
-    if (decl.state === "frozen") {
-      if (decl.versionId === undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["versionId"],
-          message: "state='frozen' 必须携带待固定版本 versionId",
-        });
-      }
-      if (decl.revision === undefined || decl.revision < 1) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["revision"],
-          message: "state='frozen' 必须携带预期 head revision（≥1）",
-        });
-      }
-      return;
-    }
-    // none / missing：不得携带版本引用与预期 revision（语义上无服务端 head 对账）
-    if (decl.versionId !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["versionId"],
-        message: `state='${decl.state}' 不得携带版本引用`,
-      });
-    }
-    if (decl.revision !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["revision"],
-        message: `state='${decl.state}' 不得携带预期 revision`,
-      });
-    }
-  });
-
-/**
- * 单卷题数的防御性上限（交卷 revisions/evidence 与批量头 note-heads 共用
- * 同一常量——C1 一致性红线：批量头上限若小于交卷上限，「>批量上限 但
- * ≤交卷上限」的卷会在答题页整页 400、交卷被永久阻断。修订须两侧同步，
- * 契约一致性测试锁定相等）。
- */
-export const ATTEMPT_SUBMIT_MAX_QUESTIONS = 500;
-
-/** 交卷请求体（revisions = 取卷/草稿视图下发过的全部题目版本引用） */
-export const attemptSubmitRequestSchema = z.object({
-  revisions: z
-    .array(attemptSubmitRevisionSchema)
-    .max(ATTEMPT_SUBMIT_MAX_QUESTIONS),
-  /**
-   * 每题笔记证据声明（T6R.10，方案 §6.4 第 3 步——交卷事务固定原稿）。
-   * **缺省 = 旧客户端**：服务端检测到该 attempt **参与本次判分题目**的草稿
-   * （notes 表有 scratch 行且 head revision>0）时 409 NOTE_EVIDENCE_MISMATCH
-   * 拒绝并要求刷新；确无草稿按兼容规则交卷（不落 submission_evidence 行 =
-   * 未采集，与 state='none'〔明确空稿〕区分，见 schema 注释）。
-   * 字段存在（新客户端）时必须覆盖**参与本次判分的全部题目**：服务端与该
-   * 范围精确比对（缺项/多项/未知题目同样 409），逐项验证归属与并发状态后
-   **同一事务**写 submission_evidence 与成绩/状态——原稿引用写入后不能换。
-   * 判分范围（2026-10 讲练一体）：assignment/course/wrong 来源 = 全部冻结题；
-   * lesson 来源整卷收尾 = **未单题提交的行**（已提交题的证据已在该题提交事务
-   * 冻结，不再重复声明——多带已提交题同样 409）。
-   */
-  evidence: z
-    .array(submitEvidenceDeclarationSchema)
-    .max(ATTEMPT_SUBMIT_MAX_QUESTIONS)
-    .optional(),
 });
 
 // ---------- 讲练页（kind: lesson，2026-10：单题提交即时反馈） ----------
@@ -1270,6 +1157,9 @@ export const attemptErrorCodeSchema = z.enum([
   "SELF_REVIEW_REVISION_CONFLICT",
   "SELF_REVIEW_NOT_ALLOWED",
   "ANSWER_SHAPE_INVALID",
+  "ATTEMPT_TIME_UP",
+  "RUBRIC_NOT_AVAILABLE",
+  "RUBRIC_RATINGS_INVALID",
 ]);
 
 // ---------- 具体化的成功壳 ----------
@@ -1357,14 +1247,6 @@ export type AttemptAnswerSaveRequest = z.infer<
   typeof attemptAnswerSaveRequestSchema
 >;
 export type AttemptAnswerSaveData = z.infer<typeof attemptAnswerSaveDataSchema>;
-/** 交卷回传的单题版本对（T6R.3；questionRevisionId = responses 行 id，不透明） */
-export type AttemptSubmitRevision = z.infer<typeof attemptSubmitRevisionSchema>;
-/** 交卷请求的单题笔记证据声明（T6R.10） */
-export type SubmitEvidenceDeclaration = z.infer<
-  typeof submitEvidenceDeclarationSchema
->;
-/** 交卷请求体（T6R.3；T6R.10 增可选 evidence——缺省=旧客户端） */
-export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;
 /** 开卷上下文条目（材料/题组公开投影 + 来源版本，tt-07a/QM-06） */

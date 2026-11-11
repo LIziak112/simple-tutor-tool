@@ -1,7 +1,11 @@
 import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
-import { getApiToken, regenerateApiToken } from "../services/api-token-service";
+import {
+  assertClassAccount,
+  getApiToken,
+  regenerateApiToken,
+} from "../services/api-token-service";
 
 /**
  * API Token 路由（需教师会话，T4.6 D22），由 teacher.ts 挂在 /api/teacher 之下：
@@ -9,13 +13,17 @@ import { getApiToken, regenerateApiToken } from "../services/api-token-service";
  *   D22：可随时查看，不做「只显示一次」）；
  * - POST /api-token：生成 / 重置（同一动作：无则生成、有则覆盖；旧 token 立即
  *   失效。前端重置需二次确认并提示「已配置的客户端需更新 token」）。
+ * - 个人账号（模块 0）两个入口均 409 PERSONAL_ACCOUNT_RESTRICTED——其唯一 token 在
+ *   学习视角「AI 伴学」里管理。
  */
 export function createTeacherApiTokenRoutes(db: Db) {
   return new Hono<TeacherEnv>()
     .get("/api-token", (c) => {
+      assertClassAccount(db, c.var.teacher.id);
       return c.json({ ok: true, data: getApiToken(db, c.var.teacher.id) });
     })
     .post("/api-token", (c) => {
+      assertClassAccount(db, c.var.teacher.id);
       return c.json({
         ok: true,
         data: regenerateApiToken(db, c.var.teacher.id),

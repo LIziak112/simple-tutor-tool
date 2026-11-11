@@ -26,8 +26,12 @@ export const TEACHER_SESSION_COOKIE = "tutor_session";
 /** 学生会话 Cookie 名（独立于教师，双身份同浏览器并存互不覆盖） */
 export const STUDENT_SESSION_COOKIE = "tutor_student_session";
 
-/** 教师会话有效期：7 天（学生 90 天见 STUDENT_SESSION_TTL_MS；调整改这里） */
-export const TEACHER_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * 教师会话有效期：90 天（2026-11 个人学习迭代 Q10 定案：教师与个人账号统一为
+ * 90 天，与学生同档——此前教师 7 天；个人账号一次登录持有双会话，两侧寿命一致
+ * 才不会出现「学习视角在线、管理视角已掉线」的半截态）。
+ */
+export const TEACHER_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** 学生会话有效期：90 天（§5.7，T2.1；学生登录低频，长会话减少重新登录摩擦） */
 export const STUDENT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;

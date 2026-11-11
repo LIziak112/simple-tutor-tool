@@ -382,6 +382,12 @@
       "kind": "container",
       "attrs": [],
       "capability": null
+    },
+    {
+      "name": "rubric",
+      "kind": "container",
+      "attrs": [],
+      "capability": null
     }
   ],
   "questionTypes": {

@@ -185,6 +185,10 @@ async function openAssignmentAttempt(
     .getByRole("link", { name: /^(开始练习|继续作答)$/ })
     .click({ timeout: 15_000 });
   await page.waitForURL("**/s/assignments/**");
+  const start = page.getByRole("button", { name: "开始作业", exact: true });
+  const first = page.locator('article[aria-label="第 1 题"]');
+  await expect(start.or(first)).toBeVisible({ timeout: 30_000 });
+  if (await start.isVisible()) await start.click();
   // 题卡按视口懒挂载后，视口外题目只有占位没有 article——就绪信号改为
   // 首题（恒在视口内、必已挂载）的 article 可见。
   await expect(

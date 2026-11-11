@@ -95,6 +95,7 @@ export function DraftProblemAlert({
 
 export function SubmitConfirmDialog({
   open,
+  savedOnly = false,
   unansweredCount,
   submitting,
   preparing = false,
@@ -111,6 +112,7 @@ export function SubmitConfirmDialog({
   answerRelease = "on_submit",
 }: {
   open: boolean;
+  savedOnly?: boolean;
   /** 未作答题数（0 时也确认一次，防止误触） */
   unansweredCount: number;
   submitting: boolean;
@@ -164,13 +166,15 @@ export function SubmitConfirmDialog({
             id="submit-confirm-desc"
             className="text-sm leading-6"
           >
-            {afterDueDueAt !== null
-              ? unansweredCount > 0
-                ? `还有 ${unansweredCount} 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(afterDueDueAt)}）统一公布。确认交卷吗？`
-                : `全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(afterDueDueAt)}）统一公布。确认交卷吗？`
-              : unansweredCount > 0
-                ? `还有 ${unansweredCount} 题没有作答，交卷后不能再修改答案。`
-                : "全部题目已作答，交卷后立即判分且不能再修改答案。"}
+            {savedOnly
+              ? "宽限已过。只按服务端已保存的作答判分，未同步的本机稿会保留。"
+              : afterDueDueAt !== null
+                ? unansweredCount > 0
+                  ? `还有 ${unansweredCount} 题没有作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(afterDueDueAt)}）统一公布。确认交卷吗？`
+                  : `全部题目已作答。老师设置了截止后公布，交卷后答案将妥善保存，成绩与详解将在截止后（${formatDueTime(afterDueDueAt)}）统一公布。确认交卷吗？`
+                : unansweredCount > 0
+                  ? `还有 ${unansweredCount} 题没有作答，交卷后不能再修改答案。`
+                  : "全部题目已作答，交卷后立即判分且不能再修改答案。"}
           </DialogDescription>
         </DialogHeader>
 
@@ -262,7 +266,7 @@ export function SubmitConfirmDialog({
             onClick={onCancel}
             disabled={busy}
           >
-            继续作答
+            {savedOnly ? "返回查看" : "继续作答"}
           </Button>
           {choiceMode ? (
             <Button
@@ -273,13 +277,19 @@ export function SubmitConfirmDialog({
             >
               {busy
                 ? "正在交卷…"
-                : annotationProblem
-                  ? "仅交答案，未保存材料留在本机"
-                  : "提交答案，草稿未保存完整"}
+                : savedOnly
+                  ? "按已保存作答交卷，未保存材料留在本机"
+                  : annotationProblem
+                    ? "仅交答案，未保存材料留在本机"
+                    : "提交答案，草稿未保存完整"}
             </Button>
           ) : (
             <Button className="min-h-11" onClick={onConfirm} disabled={busy}>
-              {busy ? "正在交卷…" : "确认交卷"}
+              {busy
+                ? "正在交卷…"
+                : savedOnly
+                  ? "确认按已保存作答交卷"
+                  : "确认交卷"}
             </Button>
           )}
         </DialogFooter>

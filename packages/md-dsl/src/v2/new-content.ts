@@ -26,6 +26,13 @@ import { canonicalName, processor } from "./shared.ts";
 /** 首发指令集的注册表基线版本：since 晚于此值的指令都算新内容 */
 const BASE_DIRECTIVE_VERSION = "2.0";
 
+/**
+ * 不受发布开关门控的后续指令（直接可用）：`:::rubric`（模块 3 量表，2.2）
+ * 只是开放题内的一段评价项清单，不触及 TT-06 新题型 / 材料机制，部署未开
+ * NEW_CONTENT_ENABLED 也应能导入——否则个人学习账号默认用不上量表。
+ */
+const UNGATED_DIRECTIVES: ReadonlySet<string> = new Set(["rubric"]);
+
 /** 新属性清单：question 容器上 TT-06 新增的属性名 */
 const NEW_QUESTION_ATTRS: readonly string[] = ["word-min", "word-max"];
 
@@ -89,7 +96,8 @@ export function detectNewContent(md: string): readonly NewContentUsage[] {
       const definition = getDirective(name);
       if (
         definition !== undefined &&
-        definition.since !== BASE_DIRECTIVE_VERSION
+        definition.since !== BASE_DIRECTIVE_VERSION &&
+        !UNGATED_DIRECTIVES.has(name)
       ) {
         usages.push({ kind: "directive", name, line, column });
       }

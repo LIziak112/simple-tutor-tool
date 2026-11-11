@@ -51,6 +51,7 @@ function teacher(overrides: Partial<AdminTeacherSummary>): AdminTeacherSummary {
     id: "22222222-2222-4222-8222-222222222222",
     loginName: "李老师",
     isAdmin: false,
+    accountKind: "class",
     disabledAt: null,
     createdAt: "2026-09-01T08:00:00.000Z",
     studentCount: 3,

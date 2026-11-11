@@ -1,9 +1,19 @@
 import { CopyBlock } from "@/components/CopyBlock";
-import { buildMcpServersConfig } from "@/lib/mcp-config";
+import { useStudentMe } from "@/features/auth/student-auth";
+import { buildMcpServersConfig, learnerMcpEndpoint } from "@/lib/mcp-config";
 
-/** 连接卡直接给出可用配置；历史哈希没有可恢复的 Token，不伪造占位凭据。 */
+/**
+ * 连接卡直接给出可用配置；历史哈希没有可恢复的 Token，不伪造占位凭据。
+ * 端点按账号类型（模块 0）：班级学生 /mcp/student；个人账号 /mcp/personal——
+ * 同一枚 token 同时开放内容管线 / 本人学情的教师白名单工具与全部学生工具。
+ */
 export function McpConnectionDetails({ token }: { token: string | null }) {
-  const endpoint = `${window.location.origin}/mcp/student`;
+  const accountKind = useStudentMe().data?.accountKind ?? "class";
+  const personal = accountKind === "personal";
+  const { url: endpoint, serverKey } = learnerMcpEndpoint(
+    window.location.origin,
+    accountKind,
+  );
   return (
     <div className="min-w-0 space-y-3">
       {token !== null ? (
@@ -11,7 +21,7 @@ export function McpConnectionDetails({ token }: { token: string | null }) {
           <CopyBlock
             label="完整 MCP 配置"
             text={buildMcpServersConfig({
-              serverKey: "tutor-student",
+              serverKey,
               serverUrl: endpoint,
               token,
             })}
@@ -40,6 +50,13 @@ export function McpConnectionDetails({ token }: { token: string | null }) {
           <p className="text-sm text-muted-foreground">
             认证方式 Bearer Token · Streamable HTTP
           </p>
+          {personal && (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              个人账号只有这一枚 Token：AI
+              既能帮你导入与整理资料、查看自己的作答与学习记录，也能做 AI
+              伴学任务；不开放班级管理类能力（学生、作业、报告、改答）。
+            </p>
+          )}
         </div>
       </details>
     </div>

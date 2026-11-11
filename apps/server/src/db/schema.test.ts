@@ -238,7 +238,8 @@ describe("teachers / sessions 表读写", () => {
     db.insert(sessions).values(session).run();
 
     // T2B.1 新增列（loginName/isAdmin/disabledAt）落默认值读回；
-    // T7.7 capabilityProfileJson 未配置读回 null（全启用缺省语义在服务层）
+    // T7.7 capabilityProfileJson 未配置读回 null（全启用缺省语义在服务层）；
+    // 模块 0 新增列 accountKind 默认 'class'、personalStudentId 默认 null
     expect(
       db.select().from(teachers).where(eq(teachers.id, teacher.id)).get(),
     ).toEqual({
@@ -247,6 +248,8 @@ describe("teachers / sessions 表读写", () => {
       isAdmin: false,
       disabledAt: null,
       capabilityProfileJson: null,
+      accountKind: "class",
+      personalStudentId: null,
     });
     expect(
       db.select().from(sessions).where(eq(sessions.id, session.id)).get(),
@@ -272,6 +275,8 @@ describe("teachers / sessions 表读写", () => {
       isAdmin: false,
       disabledAt: null,
       capabilityProfileJson: null,
+      accountKind: "class",
+      personalStudentId: null,
     });
     db.$client.close();
   });
@@ -452,6 +457,8 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
       practiceWorkflowVersion: null,
       feedbackMode: null,
       workflowRevision: 0,
+      timeLimitSec: null,
+      deadlineAt: null,
     };
     db.insert(attempts).values(attempt).run();
     expect(
@@ -621,6 +628,8 @@ describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectu
       practiceWorkflowVersion: null,
       feedbackMode: null,
       workflowRevision: 0,
+      timeLimitSec: null,
+      deadlineAt: null,
     };
     db.insert(attempts).values(attempt).run();
     expect(

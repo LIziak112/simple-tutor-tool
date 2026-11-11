@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  StudentMeData,
   TeacherInfo,
   TeacherLoginRequest,
   TeacherRegisterRequest,
@@ -10,7 +11,12 @@ import { eq, isNotNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { isRegistrationOpen } from "../services/app-settings-service";
+import {
+  isPersonalRegistrationOpen,
+  isRegistrationOpen,
+} from "../services/app-settings-service";
+import { restorePersonalLearner } from "../services/personal-learner";
+import { getStudentAccount } from "../services/student-service";
 import { hashPassword, verifyPassword } from "./password";
 import {
   clearLoginFailures,
@@ -20,12 +26,21 @@ import {
   recordRegistrationAttempt,
   registrationAttemptKey,
 } from "./rate-limit";
-import { createTeacherSession, pruneExpiredSessions } from "./session";
+import {
+  createStudentSession,
+  createTeacherSession,
+  pruneExpiredSessions,
+} from "./session";
 
 /**
  * 教师鉴权领域服务（T1.9 起；T2B.2 起登录名 + 密码登录、管理员与禁用语义；
  * T2B.6 起多教师入口上线：自助注册 registerTeacher + status 注册开关真值）。
  * 路由层只做「鉴权 → 校验 → 调 service → 包装响应」，业务规则都在这里。
+ *
+ * 个人账号（模块 0，2026-11）：teachers.accountKind='personal' 的行经本服务登录
+ * 时除教师会话外**同时**签发其固定绑定学习者（personalStudentId）的学生会话
+ * ——双视角成套，入口不限（教师登录页 / 个人登录页都一样）；注册与账号类型
+ * 校验见 personal-auth-service。setup / register 创建的恒为班级账号。
  */
 
 /** 教师行（单教师等价阶段取第一行，用于 hasTeacher 与 setup 占位判断；不存在返回 null） */
@@ -48,13 +63,19 @@ export function teacherStatus(db: Db): TeacherStatusData {
   return {
     hasTeacher,
     registrationOpen: hasTeacher && isRegistrationOpen(db),
+    personalRegistrationOpen: hasTeacher && isPersonalRegistrationOpen(db),
   };
 }
 
-/** setup 成功 / login 成功的返回：教师信息 + 会话 token（由路由写入 Cookie） */
-interface AuthResult {
+/**
+ * setup / register / login 成功的返回：教师信息 + 教师会话 token（由路由写入
+ * Cookie）；studentSession 仅个人账号登录时存在（绑定学习者的学生会话，路由一并
+ * 写入学生 Cookie）。
+ */
+export interface AuthResult {
   teacher: TeacherInfo;
   token: string;
+  studentSession?: { student: StudentMeData; token: string };
 }
 
 /**
@@ -112,7 +133,13 @@ export async function setupTeacher(
   pruneExpiredSessions(db);
   const { token } = createTeacherSession(db, id);
   return {
-    teacher: { id, loginName: request.loginName, isAdmin: true, createdAt },
+    teacher: {
+      id,
+      loginName: request.loginName,
+      isAdmin: true,
+      accountKind: "class",
+      createdAt,
+    },
     token,
   };
 }
@@ -161,16 +188,44 @@ export async function loginTeacher(
 
   clearLoginFailures(db, keys);
   pruneExpiredSessions(db);
-  const { token } = createTeacherSession(db, row.id);
+  const { token, studentSession } = db.transaction(
+    () => {
+      if (row.accountKind === "class") {
+        return { token: createTeacherSession(db, row.id).token };
+      }
+      let student: StudentMeData | null = null;
+      if (row.personalStudentId !== null) {
+        restorePersonalLearner(db, row.id, row.personalStudentId);
+        student = getStudentAccount(db, row.personalStudentId, row.id);
+      }
+      if (student?.accountKind !== "personal") {
+        throw new HttpError(
+          403,
+          "ACCOUNT_DISABLED",
+          "个人账号的学习者身份不可用，请联系管理员",
+        );
+      }
+      return {
+        token: createTeacherSession(db, row.id).token,
+        studentSession: {
+          student,
+          token: createStudentSession(db, student.id).token,
+        },
+      };
+    },
+    { behavior: "immediate" },
+  );
   return {
     teacher: {
       id: row.id,
       // 行即按该登录名查得（loginName 列只经契约校验写入，此处必非空）
       loginName: request.loginName,
       isAdmin: row.isAdmin,
+      accountKind: row.accountKind,
       createdAt: row.createdAt,
     },
     token,
+    ...(studentSession !== undefined ? { studentSession } : {}),
   };
 }
 
@@ -192,6 +247,7 @@ export function getTeacherInfo(db: Db, teacherId: string): TeacherInfo | null {
     id: row.id,
     loginName: row.loginName,
     isAdmin: row.isAdmin,
+    accountKind: row.accountKind,
     createdAt: row.createdAt,
   };
 }
@@ -267,7 +323,13 @@ export async function registerTeacher(
   pruneExpiredSessions(db);
   const { token } = createTeacherSession(db, id);
   return {
-    teacher: { id, loginName: request.loginName, isAdmin: false, createdAt },
+    teacher: {
+      id,
+      loginName: request.loginName,
+      isAdmin: false,
+      accountKind: "class",
+      createdAt,
+    },
     token,
   };
 }

@@ -1,10 +1,15 @@
 import type {
+  PersonalLoginRequest,
+  PersonalRegisterRequest,
   StudentLoginRequest,
+  TeacherLoginData,
   TeacherLoginRequest,
   TeacherRegisterRequest,
   TeacherSetupRequest,
 } from "@tutor/contract";
 import {
+  personalLoginRequestSchema,
+  personalRegisterRequestSchema,
   specFileNameSchema,
   studentLoginRequestSchema,
   teacherLoginRequestSchema,
@@ -13,6 +18,11 @@ import {
 } from "@tutor/contract";
 import { type Context, Hono } from "hono";
 import { setCookie } from "hono/cookie";
+import {
+  loginPersonalAccount,
+  type PersonalAuthResult,
+  registerPersonalAccount,
+} from "../auth/personal-auth-service";
 import {
   isSecurePublicUrl,
   STUDENT_SESSION_COOKIE,
@@ -35,6 +45,7 @@ import {
 } from "../services/student-service";
 import { readSpecFile } from "../spec-files";
 import { createPublicAiShareRoutes } from "./public-ai-share";
+import { createPublicPersonalSessionRoutes } from "./public-personal-session";
 
 /**
  * 公开路由（无需登录），挂载在 /api/public。
@@ -44,7 +55,12 @@ import { createPublicAiShareRoutes } from "./public-ai-share";
  * - POST /teacher/setup：首次启动创建教师（登录名 + 密码，仅无教师时可用），成功自动登录
  * - POST /teacher/register：教师自助注册（T2B.6，D3——受注册开关控制、IP 限流
  *    reg:ip:<IP> 1 小时 5 次；成功创建 isAdmin=false 教师并自动登录）
- * - POST /teacher/login：教师登录名+密码登录（§5.7 限流，key 按登录名与 IP 双计）
+ * - POST /teacher/login：教师登录名+密码登录（§5.7 限流，key 按登录名与 IP 双计；
+ *    个人账号在此登录同样补发学生会话 Cookie——双视角成套，模块 0）
+ * - POST /personal/register：个人账号邀请码自助注册（模块 0，Q7 定案 b；限流与教师
+ *    注册共用 reg:ip:<IP>；成功同时写教师 + 学生两枚会话 Cookie，响应给出两侧身份）
+ * - POST /personal/login：个人账号登录（同上双 Cookie；班级教师凭证 → 403
+ *    ACCOUNT_KIND_MISMATCH）
  * - POST /student/login：学生登录名+密码登录（T2.1，§5.7 限流，key 与教师隔离）
  * - GET  /s/:token：学生专属链接登录（写学生 Cookie；前端 /s/:token 页面为 T2.3）
  * - GET  /spec/:file：DSL 规范文档直出（T1.13，§3 公开区；md/json 原文作为
@@ -69,6 +85,30 @@ export function createPublicRoutes(
   specDir?: string | undefined,
 ) {
   const secure = isSecurePublicUrl(publicUrl);
+  /** 写教师会话 Cookie（setup / login / register / 个人双会话共用） */
+  const setTeacherCookie = (c: Context, token: string): void => {
+    setCookie(
+      c,
+      TEACHER_SESSION_COOKIE,
+      token,
+      sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
+    );
+  };
+  /** 写学生会话 Cookie（学生两种登录 / 个人双会话共用） */
+  const setStudentCookie = (c: Context, token: string): void => {
+    setCookie(
+      c,
+      STUDENT_SESSION_COOKIE,
+      token,
+      sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
+    );
+  };
+  /** 个人账号注册 / 登录成功：两枚 Cookie 一起下发 + 双侧身份响应 */
+  const personalAuthed = (c: Context, result: PersonalAuthResult) => {
+    setTeacherCookie(c, result.teacherToken);
+    setStudentCookie(c, result.studentToken);
+    return c.json({ ok: true, data: result.data });
+  };
   return (
     new Hono()
       .get("/teacher/status", (c) => {
@@ -88,12 +128,7 @@ export function createPublicRoutes(
           teacherSetupRequestSchema,
         );
         const { teacher, token } = await setupTeacher(db, body);
-        setCookie(
-          c,
-          TEACHER_SESSION_COOKIE,
-          token,
-          sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
-        );
+        setTeacherCookie(c, token);
         return c.json({ ok: true, data: teacher });
       })
       .post("/teacher/login", async (c) => {
@@ -101,14 +136,42 @@ export function createPublicRoutes(
           c,
           teacherLoginRequestSchema,
         );
-        const { teacher, token } = await loginTeacher(db, body, getClientIp(c));
-        setCookie(
-          c,
-          TEACHER_SESSION_COOKIE,
-          token,
-          sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
+        const { teacher, token, studentSession } = await loginTeacher(
+          db,
+          body,
+          getClientIp(c),
         );
-        return c.json({ ok: true, data: teacher });
+        setTeacherCookie(c, token);
+        // 个人账号：绑定学习者的学生会话一并下发（入口不限，双视角成套）
+        if (studentSession !== undefined) {
+          setStudentCookie(c, studentSession.token);
+        }
+        const data: TeacherLoginData =
+          studentSession === undefined
+            ? teacher
+            : { ...teacher, student: studentSession.student };
+        return c.json({ ok: true, data });
+      })
+      // —— 个人账号（模块 0）：邀请码自助注册 / 登录，成功都是双会话 ——
+      .post("/personal/register", async (c) => {
+        const body: PersonalRegisterRequest = await parseJsonBody(
+          c,
+          personalRegisterRequestSchema,
+        );
+        return personalAuthed(
+          c,
+          await registerPersonalAccount(db, body, getClientIp(c)),
+        );
+      })
+      .post("/personal/login", async (c) => {
+        const body: PersonalLoginRequest = await parseJsonBody(
+          c,
+          personalLoginRequestSchema,
+        );
+        return personalAuthed(
+          c,
+          await loginPersonalAccount(db, body, getClientIp(c)),
+        );
       })
       // —— 教师自助注册（T2B.6，D3 来源一）：成功即自动登录（isAdmin=false） ——
       .post("/teacher/register", async (c) => {
@@ -121,12 +184,7 @@ export function createPublicRoutes(
           body,
           getClientIp(c),
         );
-        setCookie(
-          c,
-          TEACHER_SESSION_COOKIE,
-          token,
-          sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
-        );
+        setTeacherCookie(c, token);
         return c.json({ ok: true, data: teacher });
       })
       // —— 学生两种登录（T2.1，§5.7）：成功都写学生专属会话 Cookie（90 天，
@@ -141,23 +199,13 @@ export function createPublicRoutes(
           body,
           getClientIp(c),
         );
-        setCookie(
-          c,
-          STUDENT_SESSION_COOKIE,
-          token,
-          sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
-        );
+        setStudentCookie(c, token);
         return c.json({ ok: true, data: student });
       })
       // 专属链接：GET 带 token 即登录（写 Cookie + 返回学生信息，页面跳转由前端 T2.3 处理）
       .get("/s/:token", (c) => {
         const { student, token } = loginStudentByLink(db, c.req.param("token"));
-        setCookie(
-          c,
-          STUDENT_SESSION_COOKIE,
-          token,
-          sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
-        );
+        setStudentCookie(c, token);
         return c.json({ ok: true, data: student });
       })
       // DSL 规范文档直出（T1.13）：契约枚举校验，未知文件名 404 统一错误壳；
@@ -181,5 +229,6 @@ export function createPublicRoutes(
       // —— AI 分享票据读端点（SAI-29，B15）：无会话，票据即授权；正文
       //    HTML 与材料附件，防线在 student-ai-share/materials 服务层
       .route("/ai/share", createPublicAiShareRoutes(db, dataDir))
+      .route("/personal/session", createPublicPersonalSessionRoutes(db, secure))
   );
 }

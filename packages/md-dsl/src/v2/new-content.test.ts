@@ -137,3 +137,26 @@ describe("detectNewContent：新指令与属性（§5.8.4 清单）", () => {
     expect(markers[0]?.line).toBeGreaterThan(0);
   });
 });
+
+describe("量表指令不受发布开关门控", () => {
+  it("旧题型（solve）内写 :::rubric 不算新内容", () => {
+    const md = [
+      "---",
+      "kind: practice",
+      "unit: 单元",
+      "---",
+      "",
+      "::::question{type=solve}",
+      "解方程。",
+      ":::rubric",
+      "- 步骤：推导完整",
+      ":::",
+      ":::answer",
+      "x=1",
+      ":::",
+      "::::",
+      "",
+    ].join("\n");
+    expect(detectNewContent(md)).toEqual([]);
+  });
+});

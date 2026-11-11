@@ -40,9 +40,11 @@ import { ApiError, postAttemptEventsApi, postLectureEventsApi } from "./api";
  * - **持久键按队列实例隔离（T4.0a §5.0-A1，修 IDB 键跨实例冲突 bug）**：
  *   持久键 = scope 前缀 + 每实例随机后缀（旧版是全局固定键，两标签页同时
  *   离线会互相覆盖丢事件）；flush 时**遍历前缀下全部键**（其他实例与上次
- *   页面被杀的遗留积压，含旧版无后缀键）合并发送、成功后逐键删除。重复
- *   投递可能出现在「store 写失败后恢复」的极端路径，服务端聚合按重复容错
- *   （§5.0-D17），不为去重在前端做防重锁；
+ *   页面被杀的遗留积压，含旧版无后缀键），**按来源会话分组**各自带各自的
+ *   viewId 发送（审查 #100-01：别的会话的积压不冒用本页 viewId；旧版无
+ *   viewId 的条目不带 viewId 发），成功后逐键删除、失败部分写回该组的键。
+ *   重复投递可能出现在「store 写失败后恢复」的极端路径，服务端聚合按重复
+ *   容错（§5.0-D17），不为去重在前端做防重锁；
  * - 页面隐藏（visibilitychange=hidden / pagehide）时优先 sendBeacon
  *   （fire-and-forget，浏览器保证在页面卸载后发出）；
  * - **终态停止（T2A.6，D7）**：上报收到 403/404（如课程练习移出成员后的
@@ -216,12 +218,22 @@ function scopeUrl(scope: EventScope): string {
     : "/api/student/events";
 }
 
-/** 生产默认发送：走 hc 类型客户端（postAttemptEventsApi / postLectureEventsApi） */
-function defaultSend(scope: EventScope) {
-  return async (events: readonly LearningEvent[]): Promise<void> => {
+/**
+ * 生产默认发送：走 hc 类型客户端（postAttemptEventsApi / postLectureEventsApi）。
+ * attempt scope 随批携带该批事件**来源会话**的 viewId（题内活动用时按会话分组
+ * 识别多端重叠；离线积压补发时带积压当时的 viewId，不冒用当前页会话——审查
+ * #100-01；旧版积压没存 viewId 则不带，服务端并入缺省组）。批级字段不改事件
+ * 本体与字节切批口径。
+ */
+function defaultSend(scope: EventScope): EventSender {
+  return async (events, viewId) => {
     if (scope.kind === "attempt") {
       // scope 保证队列内全部为 attempt 事件（调用方只对 attempt scope track 这类事件）
-      await postAttemptEventsApi(scope.attemptId, events as AttemptEvent[]);
+      await postAttemptEventsApi(
+        scope.attemptId,
+        events as AttemptEvent[],
+        viewId ?? undefined,
+      );
       return;
     }
     await postLectureEventsApi(events as LectureEvent[]);
@@ -229,11 +241,15 @@ function defaultSend(scope: EventScope) {
 }
 
 /** 生产默认 beacon：Blob application/json（同源自动带会话 Cookie） */
-function defaultBeacon(scope: EventScope) {
-  return (events: readonly LearningEvent[]): boolean => {
+function defaultBeacon(scope: EventScope): EventBeacon {
+  return (events, viewId) => {
     if (typeof navigator === "undefined" || navigator.sendBeacon === undefined)
       return false;
-    const blob = new Blob([JSON.stringify({ events: [...events] })], {
+    const body =
+      scope.kind === "attempt"
+        ? { events: [...events], ...(viewId !== null ? { viewId } : {}) }
+        : { events: [...events] };
+    const blob = new Blob([JSON.stringify(body)], {
       type: "application/json",
     });
     return navigator.sendBeacon(scopeUrl(scope), blob);
@@ -255,15 +271,26 @@ export interface EventQueueApi {
   isDenied(): boolean;
 }
 
+/** 发送函数：第二参数是这一批事件来源会话的 viewId（旧版积压为 null） */
+export type EventSender = (
+  events: readonly LearningEvent[],
+  viewId: string | null,
+) => Promise<void>;
+/** sendBeacon 实现（返回 false 视为失败）；参数同 EventSender */
+export type EventBeacon = (
+  events: readonly LearningEvent[],
+  viewId: string | null,
+) => boolean;
+
 /** 创建选项（全部可注入，默认值即生产行为） */
 export interface EventQueueOptions {
   scope: EventScope;
   /** 旁路消费同一触发点的事件，不另建环境观察器。 */
   onEvent?: (event: LearningEvent) => void;
   /** 发送函数（抛错视为本批失败） */
-  send?: (events: readonly LearningEvent[]) => Promise<void>;
+  send?: EventSender;
   /** sendBeacon 实现（返回 false 视为失败）；传 null 显式禁用 */
-  beacon?: ((events: readonly LearningEvent[]) => boolean) | null;
+  beacon?: EventBeacon | null;
   /** 批量周期毫秒（默认 5000；idle 检查搭同一周期） */
   intervalMs?: number;
 }
@@ -278,18 +305,16 @@ export interface EventQueueOptions {
 export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   const { scope } = options;
   const intervalMs = options.intervalMs ?? EVENT_FLUSH_INTERVAL_MS;
-  const send =
-    options.send ??
-    ((events: readonly LearningEvent[]) => defaultSend(scope)(events));
-  const beacon =
+  /** 页会话标识：每次页面加载一个随机串（讲义区间配对 / 作答多端分组，不含内容） */
+  const viewId = randomId();
+  const send: EventSender = options.send ?? defaultSend(scope);
+  const beacon: EventBeacon | null =
     options.beacon === undefined ? defaultBeacon(scope) : options.beacon;
 
   /** 本实例持久键：scope 前缀 + 随机后缀（两标签页/两次加载互不覆盖，§5.0-A1） */
   const keyPrefix = keyPrefixOf(scope);
   const key = `${keyPrefix}${randomId()}`;
   const legacyKey = legacyKeyOf(scope);
-  /** 阅读会话标识：每次页面加载一个随机串（双标签页区间配对用，不含内容） */
-  const viewId = randomId();
 
   /** 内存待发队列 */
   let queue: LearningEvent[] = [];
@@ -398,15 +423,16 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
     );
   }
 
-  /** 单个持久键的载入形态 */
+  /** 单个持久键的载入形态（viewId = 积压当时的页会话；旧版键没存 → null） */
   interface PersistedEntry {
     key: string;
     events: LearningEvent[];
+    viewId: string | null;
   }
 
   /**
    * 扫描本 scope 前缀下全部持久键（含旧版无后缀键）：自己的键、其他实例
-   * （双标签页）的键、上次页面被杀遗留的键——一并载入合并发送（§5.0-A1）。
+   * （双标签页）的键、上次页面被杀遗留的键——一并载入发送（§5.0-A1）。
    */
   async function loadPersistedEntries(): Promise<PersistedEntry[]> {
     try {
@@ -416,13 +442,14 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
       const entries: PersistedEntry[] = [];
       for (const scanKey of scanned) {
         const value = (await backend.get(scanKey)) as
-          | { events?: unknown }
+          | { events?: unknown; viewId?: unknown }
           | null
           | undefined;
         if (Array.isArray(value?.events)) {
           entries.push({
             key: scanKey,
             events: value.events as LearningEvent[],
+            viewId: typeof value.viewId === "string" ? value.viewId : null,
           });
         }
       }
@@ -433,15 +460,55 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
     }
   }
 
-  /** 写持久层（自己的键，替换式；吞错但向上反馈：失败时调用方把事件留在内存） */
-  async function persist(events: readonly LearningEvent[]): Promise<boolean> {
+  /**
+   * 写持久层（替换式；吞错但向上反馈：失败时调用方把事件留在内存）。事件随
+   * 它们的来源会话 viewId 一起存——补发时按来源会话发，不冒用当前页会话。
+   */
+  async function persist(
+    targetKey: string,
+    events: readonly LearningEvent[],
+    sourceViewId: string | null,
+  ): Promise<boolean> {
     try {
-      await store().set(key, { events: [...events] });
+      await store().set(targetKey, {
+        events: [...events],
+        ...(sourceViewId !== null ? { viewId: sourceViewId } : {}),
+      });
       return true;
     } catch (err) {
       console.warn("事件离线仓写入失败（事件留在内存队列）", err);
       return false;
     }
+  }
+
+  /** 一次 flush 的发送分组：同一来源会话的事件一组（自己的队列并入自己的键） */
+  interface SendGroup {
+    viewId: string | null;
+    events: LearningEvent[];
+    /** 这组事件来自哪些持久键（成功后删除；失败写回首键、删其余） */
+    keys: string[];
+  }
+
+  function groupBySession(
+    entries: readonly PersistedEntry[],
+    own: readonly LearningEvent[],
+  ): SendGroup[] {
+    const groups = new Map<string | null, SendGroup>();
+    const groupOf = (sessionId: string | null): SendGroup => {
+      let group = groups.get(sessionId);
+      if (group === undefined) {
+        group = { viewId: sessionId, events: [], keys: [] };
+        groups.set(sessionId, group);
+      }
+      return group;
+    };
+    for (const entry of entries) {
+      const group = groupOf(entry.viewId);
+      group.events.push(...entry.events);
+      group.keys.push(entry.key);
+    }
+    if (own.length > 0) groupOf(viewId).events.push(...own);
+    return [...groups.values()].filter((group) => group.events.length > 0);
   }
 
   /** 逐键删除（成功送达后清理；吞错：清除失败不影响发送链路） */
@@ -468,71 +535,90 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
     await deleteKeys([...scanned, key, legacyKey]);
   }
 
+  /**
+   * 发一组（同来源会话）：按条数 / 字节切批；返回失败事件，或 denied。
+   * 页面隐藏（或即将卸载）→ sendBeacon 兜底；否则正常 POST。
+   */
+  async function sendGroup(
+    group: SendGroup,
+    useBeacon: boolean,
+  ): Promise<{ failed: LearningEvent[]; denied: boolean }> {
+    const failed: LearningEvent[] = [];
+    for (const chunk of chunkBatches(group.events)) {
+      try {
+        if (useBeacon) {
+          if (beacon === null || !beacon(chunk, group.viewId)) {
+            failed.push(...chunk);
+          }
+        } else {
+          await send(chunk, group.viewId);
+        }
+      } catch (err) {
+        // 403/404 = 访问权终态（D7）：丢弃整批并停止（其余批次一并丢弃）
+        if (isDeniedError(err)) {
+          console.warn("事件上报被拒（403/404），已停止本练习的事件上报", err);
+          return { failed, denied: true };
+        }
+        console.warn("事件批量上报失败（已留待重发）", err);
+        failed.push(...chunk);
+      }
+    }
+    return { failed, denied: false };
+  }
+
   async function flushNow(): Promise<void> {
     if (denied || flushing) return;
     flushing = true;
     try {
       const entries = await loadPersistedEntries();
-      const persisted = entries.flatMap((entry) => entry.events);
-      const pending = [...persisted, ...queue];
+      const own = queue;
       queue = [];
-      if (pending.length === 0) return;
-      // 离线（复用 T2.9 的 navigator.onLine 判定）：合并落自己的键等恢复，
-      // 其他键内容已并入 → 一并删除（下轮只从自己的键恢复，不再重复扫出）
+      const groups = groupBySession(entries, own);
+      if (groups.length === 0) return;
+      // 离线（复用 T2.9 的 navigator.onLine 判定）：自己的事件落自己的键等恢复；
+      // 其他键（别的实例 / 上次页面的积压）已在仓里，原样保留到在线再按来源补发
       if (typeof navigator !== "undefined" && !navigator.onLine) {
-        if (await persist(pending)) {
-          await deleteKeys(
-            entries.filter((entry) => entry.key !== key).map((e) => e.key),
-          );
-        } else {
-          queue = pending;
+        const mine = groups.find((group) => group.viewId === viewId);
+        if (mine !== undefined && !(await persist(key, mine.events, viewId))) {
+          // 写仓期间新 track 的事件已在 queue 里，合并而不是覆盖
+          queue = [...own, ...queue];
         }
         return;
       }
-      // 页面隐藏（或即将卸载）→ sendBeacon 兜底；否则正常 POST
       const useBeacon =
         typeof document !== "undefined" &&
         document.visibilityState === "hidden";
-      const failed: LearningEvent[] = [];
-      let deniedHit = false;
-      for (const chunk of chunkBatches(pending)) {
-        try {
-          if (useBeacon) {
-            if (beacon === null || !beacon(chunk)) failed.push(...chunk);
-          } else {
-            await send(chunk);
-          }
-        } catch (err) {
-          // 403/404 = 访问权终态（D7）：丢弃整批并停止（其余批次一并丢弃）
-          if (isDeniedError(err)) {
-            console.warn(
-              "事件上报被拒（403/404），已停止本练习的事件上报",
-              err,
-            );
-            deniedHit = true;
-            break;
-          }
-          console.warn("事件批量上报失败（已留待重发）", err);
-          failed.push(...chunk);
+      for (const group of groups) {
+        const result = await sendGroup(group, useBeacon);
+        if (result.denied) {
+          await stopDenied();
+          return;
         }
-      }
-      if (deniedHit) {
-        await stopDenied();
-        return;
-      }
-      if (failed.length > 0) {
-        // 失败批次写回自己的键（成功部分不回写）；写回成功后其他键可删
-        // （其内容已并入 pending，失败部分随 failed 落在自己的键里）
-        const persistedOk = await persist(failed);
-        if (!persistedOk) queue = [...failed, ...queue];
-        if (persistedOk) {
-          await deleteKeys(
-            entries.filter((entry) => entry.key !== key).map((e) => e.key),
-          );
+        if (result.failed.length === 0) {
+          // 这组全部成功：逐键删除（含自己的键与遗留键）
+          await deleteKeys(group.keys);
+          continue;
         }
-      } else {
-        // 全部成功：逐键删除（含自己的键与遗留键）
-        await deleteKeys(entries.map((entry) => entry.key));
+        // 失败部分写回这组的键（成功部分不回写）；自己这组写自己的键，
+        // 别的会话写它原来的首键、其余键删除
+        const isOwn = group.viewId === viewId;
+        const firstKey = group.keys[0];
+        // 别的会话一定来自仓里的条目（keys 非空）；?? key 只是收窄类型
+        const targetKey = isOwn ? key : (firstKey ?? key);
+        const persistedOk = await persist(
+          targetKey,
+          result.failed,
+          group.viewId,
+        );
+        if (!persistedOk) {
+          // 写不进仓：自己的事件留在内存队列（随本实例下一轮重发）；别的会话
+          // 的键没删、仓里原件仍完整，不进内存——否则下一轮仓里按原 viewId、
+          // 内存里按本会话各发一次，服务端去重键含 viewId 合不掉（会双计并
+          // 冒用本会话）
+          if (isOwn) queue = [...result.failed, ...queue];
+          continue;
+        }
+        await deleteKeys(group.keys.filter((k) => k !== targetKey));
       }
     } finally {
       flushing = false;

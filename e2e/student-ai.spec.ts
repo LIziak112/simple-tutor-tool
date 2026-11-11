@@ -124,6 +124,7 @@ async function openAssignmentAttempt(
   await expect(card).toHaveCount(1);
   await card.getByRole("link", { name: "开始练习" }).click();
   await page.waitForURL("**/s/assignments/**");
+  await page.getByRole("button", { name: "开始作业", exact: true }).click();
   return page.url().split("/").pop() ?? "";
 }
 

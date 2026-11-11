@@ -32,6 +32,7 @@ const STUDENT: StudentMeData = {
   loginName: "张三",
   linkEnabled: true,
   passwordEnabled: true,
+  accountKind: "class",
 };
 
 function renderPage() {

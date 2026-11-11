@@ -1,5 +1,4 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ANALYTICS_DAYS_DEFAULT,
   ANALYTICS_FOCUS_DAYS_DEFAULT,
@@ -80,6 +79,7 @@ import {
   resolveToolStudent,
   searchQuestions,
 } from "./teacher-queries";
+import { guard, jsonContent, textContent } from "./tool-result";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
@@ -120,62 +120,8 @@ export interface McpServerDeps {
   readonly now?: Date | string | undefined;
 }
 
-// ---------- 统一返回与错误结构（SAI-26 起学生 server.ts 复用，导出单源） ----------
-
-/** JSON 数据 → text content（2 空格缩进） */
-export function jsonContent(data: unknown): CallToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-}
-
-/** 纯文本 / 已是 JSON 文本的原文 → text content */
-export function textContent(text: string): CallToolResult {
-  return { content: [{ type: "text", text }] };
-}
-
-/** 业务错误 → 结构化错误文本（不抛裸异常给协议层；lint 错误清单原样透传） */
-export function errorContent(err: unknown): CallToolResult {
-  if (err instanceof HttpError) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            { error: err.code, message: err.message, ...(err.extra ?? {}) },
-            null,
-            2,
-          ),
-        },
-      ],
-      isError: true,
-    };
-  }
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(
-          { error: "INTERNAL", message: "服务器内部错误，请稍后重试" },
-          null,
-          2,
-        ),
-      },
-    ],
-    isError: true,
-  };
-}
-
-/** 包装工具回调：异常统一转结构化错误文本（args 原样透传，保住 SDK 的类型推断） */
-export function guard<Args>(
-  run: (args: Args) => CallToolResult | Promise<CallToolResult>,
-): (args: Args) => Promise<CallToolResult> {
-  return async (args: Args): Promise<CallToolResult> => {
-    try {
-      return await run(args);
-    } catch (err) {
-      return errorContent(err);
-    }
-  };
-}
+// 统一返回与错误结构：单源在 ./tool-result.ts（模块 0 抽出），此处转出口保住既有导入
+export { errorContent, guard, jsonContent, textContent } from "./tool-result";
 
 // ---------- D14 模块勾选（get_student_learning_pack 参数对齐） ----------
 
@@ -326,15 +272,27 @@ export function mcpLearningPackRequestOf(
 // ---------- 工具注册 ----------
 
 /**
- * 创建一台绑定单教师的 MCP 服务器实例（18 工具）。
+ * 创建一台绑定单教师的 MCP 服务器实例（27 工具）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
-  const { db, dataDir, teacherId, specDir } = deps;
   const server = new McpServer({
     name: MCP_SERVER_NAME,
     version: MCP_SERVER_VERSION,
   });
+  registerTeacherTools(server, deps);
+  return server;
+}
+
+/**
+ * 把全部教师工具注册到给定实例（模块 0 抽出：个人账号的 /mcp/personal 在白名单
+ * 实例上复用同一份注册——工具定义单源，白名单在 personal-server.ts）。
+ */
+export function registerTeacherTools(
+  server: McpServer,
+  deps: McpServerDeps,
+): void {
+  const { db, dataDir, teacherId, specDir } = deps;
 
   server.registerTool(
     "get_course_catalog",
@@ -1313,6 +1271,4 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     },
     guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
   );
-
-  return server;
 }

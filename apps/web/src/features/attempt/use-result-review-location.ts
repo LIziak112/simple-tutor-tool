@@ -131,22 +131,36 @@ export function useResultReviewLocation(
       ?.querySelector('[data-slot="attempt-header"]');
     const observer = new IntersectionObserver(
       (entries) => {
-        if (restoring.current) return;
         for (const entry of entries) {
           if (!(entry.target instanceof HTMLElement)) continue;
           if (entry.isIntersecting) visible.add(entry.target);
           else visible.delete(entry.target);
         }
+        if (restoring.current) return;
+        const headerBottom = header?.getBoundingClientRect().bottom ?? 96;
+        const focused = document.activeElement;
+        if (
+          focused instanceof HTMLElement &&
+          focused.matches("[data-review-heading]") &&
+          root.current?.contains(focused)
+        ) {
+          const rect = focused.getBoundingClientRect();
+          const id = focused.closest<HTMLElement>("[data-review-question]")
+            ?.dataset.reviewQuestion;
+          // 末题可能无法滚到顶栏下。只要定位后的标题仍在视口内，就保留该题。
+          if (
+            id &&
+            rect.bottom > headerBottom &&
+            rect.top < window.innerHeight
+          ) {
+            setCurrentId(id);
+            return;
+          }
+        }
         const closest = [...visible].sort(
           (a, b) =>
-            Math.abs(
-              a.getBoundingClientRect().top -
-                (header?.getBoundingClientRect().bottom ?? 96),
-            ) -
-            Math.abs(
-              b.getBoundingClientRect().top -
-                (header?.getBoundingClientRect().bottom ?? 96),
-            ),
+            Math.abs(a.getBoundingClientRect().top - headerBottom) -
+            Math.abs(b.getBoundingClientRect().top - headerBottom),
         )[0];
         if (closest?.dataset.reviewQuestion)
           setCurrentId(closest.dataset.reviewQuestion);
