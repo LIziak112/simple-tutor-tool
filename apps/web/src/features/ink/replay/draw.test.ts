@@ -18,6 +18,7 @@ vi.mock("../engine/atrament-adapter.ts", async (importOriginal) => ({
 }));
 
 const clearRect = vi.fn();
+let resize: () => void;
 const point = { x: 20, y: 20, p: 0.5, t: 0 };
 const stroke = (): InkStroke => ({
   tool: "pen",
@@ -34,8 +35,33 @@ beforeEach(() => {
     setTransform: vi.fn(),
     clearRect,
   } as unknown as CanvasRenderingContext2D);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        resize = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+it("隐藏画布显示后，即使尺寸等于兜底值也重画当前帧", () => {
+  const host = document.createElement("div");
+  const canvas = createAtramentReplayCanvas(host);
+  canvas.drawFrame([stroke()], [1]);
+  vi.spyOn(host, "clientWidth", "get").mockReturnValue(300);
+  vi.spyOn(host, "clientHeight", "get").mockReturnValue(200);
+  resize();
+  expect(clearRect).toHaveBeenCalledTimes(2);
+  expect(draw).toHaveBeenCalledTimes(2);
+  canvas.destroy();
+});
 
 it("运笔只绘制新增采样，收笔补齐末点且不重画旧笔", () => {
   const canvas = createAtramentReplayCanvas(document.createElement("div"));

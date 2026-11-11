@@ -74,6 +74,8 @@ export function createAtramentReplayCanvas(
   container.appendChild(canvas);
 
   let cssWidth = 0;
+  let clientWidth = -1;
+  let clientHeight = -1;
   let orderedFrame: OrderedFrame | null = null;
   let activePen: ReturnType<typeof beginAtramentStroke> = null;
   /** 最近一次 drawFrame 的入参（resize 后原样重画） */
@@ -93,18 +95,21 @@ export function createAtramentReplayCanvas(
   } | null = null;
 
   function sizeCanvas(): boolean {
-    const width = container.clientWidth || 300;
-    const cssHeight = container.clientHeight || 200;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    const pixelsWide = Math.max(1, Math.round(width * dpr));
-    const pixelsHigh = Math.max(1, Math.round(cssHeight * dpr));
+    const pixelsWide = Math.max(1, Math.round((width || 300) * dpr));
+    const pixelsHigh = Math.max(1, Math.round((height || 200) * dpr));
     if (
-      width === cssWidth &&
+      width === clientWidth &&
+      height === clientHeight &&
       canvas.width === pixelsWide &&
       canvas.height === pixelsHigh
     )
       return false;
-    cssWidth = width;
+    clientWidth = width;
+    clientHeight = height;
+    cssWidth = width || 300;
     canvas.width = pixelsWide;
     canvas.height = pixelsHigh;
     return true;

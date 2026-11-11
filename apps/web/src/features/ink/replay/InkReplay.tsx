@@ -28,6 +28,7 @@ import {
   REPLAY_SPEEDS,
   type ReplaySpeed,
 } from "./model.ts";
+import { createOrderedReplay } from "./ordered-replay.ts";
 
 /**
  * @param data parseInkReplayData 的产物（null 时调用方走「无回放数据」降级，不进本组件）
@@ -95,10 +96,19 @@ export function InkReplay({
     return () => cancelAnimationFrame(raf);
   }, [playing, speed, durationMs, empty]);
 
-  // 画面状态（纯函数产物；组件不自己计算截断逻辑）
-  const frame = useMemo(() => frameAt(data, timeMs), [data, timeMs]);
+  const drawOrdered = useMemo(
+    () =>
+      data.engine === "atrament" && !showDeleted
+        ? createOrderedReplay(data)
+        : null,
+    [data, showDeleted],
+  );
+  const frame = useMemo(
+    () => (drawOrdered === null ? frameAt(data, timeMs) : null),
+    [data, timeMs, drawOrdered],
+  );
 
-  // atrament 画布：挂载时创建一次（数据换新则重建），每帧全量重绘（见 draw.ts 头注释）
+  // 换一份矢量时重建画布，画布内部负责尺寸变化后的回绘。
   useEffect(() => {
     if (data.engine !== "atrament") return;
     const host = hostRef.current;
@@ -115,15 +125,17 @@ export function InkReplay({
     if (data.engine !== "atrament") return;
     const handle = canvasRef.current;
     if (!handle) return;
-    handle.drawFrame(
-      data.strokes,
-      frame.engine === "atrament" ? frame.visiblePoints : [],
-    );
+    if (drawOrdered !== null) {
+      drawOrdered(handle, timeMs);
+      return;
+    }
+    if (frame?.engine !== "atrament") return;
+    handle.drawFrame(data.strokes, frame.visiblePoints);
     // LR-PR4：看擦改开启时在当前帧之上叠加墓碑（淡色虚线，deletedAt 消失）
-    if (showDeleted && frame.engine === "atrament" && handle.drawDeleted) {
+    if (showDeleted && handle.drawDeleted) {
       handle.drawDeleted(data.deletedSlots, timeMs);
     }
-  }, [data, frame, showDeleted, timeMs]);
+  }, [data, frame, showDeleted, timeMs, drawOrdered]);
 
   function seek(next: number): void {
     const clamped = Math.min(Math.max(next, 0), durationMs);
@@ -184,7 +196,7 @@ export function InkReplay({
           <ExcalidrawReplay
             elements={data.elements}
             visibleElements={
-              frame.engine === "excalidraw" ? frame.visibleElements : 0
+              frame?.engine === "excalidraw" ? frame.visibleElements : 0
             }
             {...(layout === "embed"
               ? { className: "h-80 w-full sm:h-96" }

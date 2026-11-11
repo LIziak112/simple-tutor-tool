@@ -23,6 +23,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 vi.mock("@/features/ink/replay/draw.ts", () => ({
   createAtramentReplayCanvas: () => ({
     drawFrame: vi.fn(),
+    drawOrdered: vi.fn(),
     destroy: vi.fn(),
   }),
 }));
