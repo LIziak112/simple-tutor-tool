@@ -123,6 +123,14 @@ describe("资料附件：格式识别（只认内容）", () => {
 
   it("PDF 页数取 /Type /Pages 附近最大的 /Count；没有就 null", () => {
     expect(pdfPageCountOf(MINI_PDF)).toBe(3);
+    expect(
+      pdfPageCountOf(
+        Buffer.from(
+          "%PDF-1.7\n2 0 obj << /Type /Pages /Count 1 >> endobj\n%%EOF",
+          "latin1",
+        ),
+      ),
+    ).toBe(1);
     expect(pdfPageCountOf(Buffer.from("%PDF-1.7\n%%EOF", "latin1"))).toBeNull();
   });
 });
@@ -142,6 +150,33 @@ describe("资料附件：展示文件名清洗", () => {
     const cleaned = sanitizeAttachmentFileName(long, "pdf");
     expect(cleaned.length).toBe(200);
     expect(cleaned.endsWith(".pdf")).toBe(true);
+  });
+
+  it("仅在超长时截断，保留最长 8 个单元的后缀", () => {
+    const atLimit = `${"甲".repeat(196)}.pdf`;
+    expect(sanitizeAttachmentFileName(atLimit, "pdf")).toBe(atLimit);
+    const long = "甲".repeat(201);
+    expect(sanitizeAttachmentFileName(`${long}.abcdefg`, "pdf")).toBe(
+      `${"甲".repeat(192)}.abcdefg`,
+    );
+    expect(sanitizeAttachmentFileName(`${long}.abcdefgh`, "pdf")).toBe(
+      "甲".repeat(200),
+    );
+    expect(sanitizeAttachmentFileName(`.${long}`, "pdf")).toBe(
+      `.${"甲".repeat(199)}`,
+    );
+  });
+
+  it("清洗和下载处理孤立代理项范围的两端", () => {
+    const raw = "真\ud800题\udfff.pdf";
+    expect(sanitizeAttachmentFileName(raw, "pdf")).toBe("真题.pdf");
+    expect(wellFormedFileName(raw)).toBe("真\ufffd题\ufffd.pdf");
+  });
+
+  it("清洗删除控制字符上界和 DEL，保留相邻可显示字符", () => {
+    expect(sanitizeAttachmentFileName("甲\u001f乙\u007f丙.pdf", "pdf")).toBe(
+      "甲乙丙.pdf",
+    );
   });
 
   it("超长截断按码点：边界落在表情中间时整个丢掉，不留孤立代理项（#103-03）", () => {
