@@ -20,21 +20,21 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "gov-inv-"));
-  const agents = `${INVARIANTS["AGENTS.md"].join("\n")}\n[专题](docs/a.md)\n[外链](https://example.com)\n[锚点](#x)\n`;
+  const agents = `${INVARIANTS["AGENTS.md"].join("\n")}\n[专题](docs/a.md)\n[审查技能](.agents/skills/review/SKILL.md)\n[外链](https://example.com)\n[锚点](#x)\n`;
   writeFileSync(join(root, "AGENTS.md"), agents);
   writeFileSync(join(root, "CLAUDE.md"), "@AGENTS.md\n");
   writeFileSync(join(root, ".cursorrules"), "见 AGENTS.md\n");
   writeFileSync(join(root, ".codexrules"), "见 AGENTS.md\n");
   mkdirSync(join(root, "docs"));
   writeFileSync(join(root, "docs/a.md"), "x\n");
-  for (const dir of [
-    ".claude/skills/s1",
-    ".codex/skills/s1",
-    ".zcode/skills/s1",
-  ]) {
+  for (const dir of [".claude/skills/s1", ".codex/skills/s1"]) {
     mkdirSync(join(root, dir), { recursive: true });
     writeFileSync(join(root, dir, "SKILL.md"), "same\n");
   }
+  const skill = join(root, ".agents/skills/review");
+  mkdirSync(skill, { recursive: true });
+  writeFileSync(join(skill, "SKILL.md"), "[模板](reviewer.md)\n");
+  writeFileSync(join(skill, "reviewer.md"), "review instructions\n");
   return root;
 }
 
@@ -96,21 +96,30 @@ test("本地链接：跳过外链与锚点，失效路径报错", () => {
   }
 });
 
-test("技能镜像：严格镜像缺失或漂移报错，部分镜像只校验已有项", () => {
+test("AGENTS 登记的项目技能引用缺失文件时报错", () => {
+  const root = fixture();
+  try {
+    rmSync(join(root, ".agents/skills/review/reviewer.md"));
+    assert.deepEqual(checkRepo(root).errors, [
+      ".agents/skills/review/SKILL.md 引用的本地路径不存在：reviewer.md",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude 技能的 Codex 镜像缺失或漂移报错", () => {
   const root = fixture();
   try {
     mkdirSync(join(root, ".claude/skills/s2"));
     writeFileSync(join(root, ".claude/skills/s2/SKILL.md"), "new\n");
-    let errors = checkRepo(root).errors;
-    assert.ok(errors.some((e) => e.includes(".codex/skills 缺少技能镜像 s2")));
-    assert.ok(!errors.some((e) => e.includes(".zcode")));
+    assert.deepEqual(checkRepo(root).errors, [".codex/skills 缺少技能镜像 s2"]);
     cpSync(join(root, ".claude/skills/s2"), join(root, ".codex/skills/s2"), {
       recursive: true,
     });
-    writeFileSync(join(root, ".zcode/skills/s1/SKILL.md"), "drift\n");
-    errors = checkRepo(root).errors;
-    assert.deepEqual(errors, [
-      ".zcode/skills/s1/SKILL.md 与 .claude/skills/s1/SKILL.md 不一致（改技能须同步镜像）",
+    writeFileSync(join(root, ".codex/skills/s1/SKILL.md"), "drift\n");
+    assert.deepEqual(checkRepo(root).errors, [
+      ".codex/skills/s1/SKILL.md 与 .claude/skills/s1/SKILL.md 不一致（改技能须同步镜像）",
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });

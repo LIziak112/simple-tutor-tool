@@ -36,9 +36,7 @@ export const INVARIANTS = {
 
 export const POINTER_FILES = [".cursorrules", ".codexrules"];
 export const SKILL_SOURCE = ".claude/skills";
-// 严格镜像：必须与源目录技能集合完全一致；部分镜像：存在的技能必须逐字一致
-export const SKILL_MIRRORS_STRICT = [".codex/skills"];
-export const SKILL_MIRRORS_PARTIAL = [".zcode/skills"];
+const SKILL_MIRROR = ".codex/skills";
 
 const read = (root, rel) => readFileSync(join(root, rel), "utf8");
 
@@ -95,35 +93,33 @@ function listSkills(root, dir) {
 }
 
 export function checkSkillMirrors(root) {
-  const errors = [];
   const source = listSkills(root, SKILL_SOURCE);
   if (source === null) return [`缺少技能源目录 ${SKILL_SOURCE}`];
-  const same = (a, b) =>
-    existsSync(join(root, a)) &&
-    existsSync(join(root, b)) &&
-    read(root, a) === read(root, b);
-  for (const mirror of [...SKILL_MIRRORS_STRICT, ...SKILL_MIRRORS_PARTIAL]) {
-    const strict = SKILL_MIRRORS_STRICT.includes(mirror);
-    const skills = listSkills(root, mirror);
-    if (skills === null) {
-      errors.push(`缺少技能镜像目录 ${mirror}`);
+  const mirror = listSkills(root, SKILL_MIRROR);
+  if (mirror === null) return [`缺少技能镜像目录 ${SKILL_MIRROR}`];
+
+  const errors = [];
+  for (const skill of source) {
+    if (!mirror.includes(skill)) {
+      errors.push(`${SKILL_MIRROR} 缺少技能镜像 ${skill}`);
       continue;
     }
-    for (const s of source) {
-      const a = `${SKILL_SOURCE}/${s}/SKILL.md`;
-      const b = `${mirror}/${s}/SKILL.md`;
-      if (!skills.includes(s)) {
-        if (strict) errors.push(`${mirror} 缺少技能镜像 ${s}`);
-        continue;
-      }
-      if (!same(a, b)) errors.push(`${b} 与 ${a} 不一致（改技能须同步镜像）`);
+    const original = `${SKILL_SOURCE}/${skill}/SKILL.md`;
+    const copy = `${SKILL_MIRROR}/${skill}/SKILL.md`;
+    if (
+      !existsSync(join(root, original)) ||
+      !existsSync(join(root, copy)) ||
+      read(root, original) !== read(root, copy)
+    ) {
+      errors.push(`${copy} 与 ${original} 不一致（改技能须同步镜像）`);
     }
-    if (strict)
-      for (const s of skills)
-        if (!source.includes(s))
-          errors.push(
-            `${mirror}/${s} 在 ${SKILL_SOURCE} 中不存在（源头在 .claude）`,
-          );
+  }
+  for (const skill of mirror) {
+    if (!source.includes(skill)) {
+      errors.push(
+        `${SKILL_MIRROR}/${skill} 在 ${SKILL_SOURCE} 中不存在（源头在 .claude）`,
+      );
+    }
   }
   return errors;
 }
@@ -159,9 +155,22 @@ export function checkRepo(root) {
       errors.push(`${f} 必须指向 AGENTS.md`);
   }
 
-  for (const link of localLinks(agents)) {
-    if (!existsSync(resolve(root, link)))
-      errors.push(`AGENTS.md 引用的本地路径不存在：${link}`);
+  const agentsLinks = localLinks(agents);
+  const linksByFile = new Map([["AGENTS.md", agentsLinks]]);
+  for (const link of agentsLinks) {
+    if (
+      /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(link) &&
+      existsSync(join(root, link))
+    ) {
+      linksByFile.set(link, localLinks(read(root, link)));
+    }
+  }
+  for (const [file, links] of linksByFile) {
+    for (const link of links) {
+      if (!existsSync(resolve(root, dirname(file), link))) {
+        errors.push(`${file} 引用的本地路径不存在：${link}`);
+      }
+    }
   }
 
   errors.push(...checkSkillMirrors(root));

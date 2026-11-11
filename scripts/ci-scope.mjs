@@ -14,10 +14,12 @@ function isDocumentation(path) {
     /^(AGENTS|CONTRIBUTING|README(?:\.en)?)\.md$/.test(path) ||
     /^docs\/(约定|审查报告|superpowers\/plans)\/.*\.md$/.test(path) ||
     /^docs\/(README|开发任务清单|技术架构与实施方案)\.md$/.test(path) ||
-    /^\.(claude|zcode)\/skills\/[^/]+\/SKILL\.md$/.test(path) ||
-    /^\.zcode\/skills\/code-review\/(prompts|reference|assets)\/.*\.md$/.test(
+    /^\.(claude|codex)\/skills\/[^/]+\/SKILL\.md$/.test(path) ||
+    /^\.agents\/skills\/(?:ownclass-code-review|requesting-code-review)\/(?:SKILL\.md|LICENSE)$/.test(
       path,
-    )
+    ) ||
+    path === ".agents/skills/ownclass-code-review/references/checklist.md" ||
+    path === ".agents/skills/requesting-code-review/code-reviewer.md"
   );
 }
 
