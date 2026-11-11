@@ -9,7 +9,6 @@ import type {
 } from "@tutor/contract";
 import {
   ClipboardCheck,
-  Grid2X2,
   ListChecks,
   RotateCw,
   SlidersHorizontal,
@@ -43,6 +42,7 @@ import {
   AttemptNavigatorButton,
 } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
+import { AttemptNavigationDialog } from "@/features/attempt/AttemptNavigationDialog";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
 import {
   groupSegmentsOfUnit,
@@ -2074,48 +2074,42 @@ function AnswerView({
           </div>,
         )}
 
-        <Dialog open={navigatorOpen} onOpenChange={setNavigatorOpen}>
-          <DialogContent
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              if (navigatorJumping.current) return;
-              if (singleWorkspaceRef.current?.contains(document.activeElement))
-                return;
-              navigatorTrigger.current?.focus();
-            }}
-            className="flex h-[560px] max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-[608px] flex-col gap-3 overflow-hidden rounded-[25px] p-4 shadow-md max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-0 max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(16px,env(safe-area-inset-bottom))] [&>[data-slot=dialog-close]]:bg-muted motion-safe:[&>[data-slot=dialog-close]]:transition-transform motion-safe:[&>[data-slot=dialog-close]]:duration-150 motion-safe:[&>[data-slot=dialog-close]]:active:scale-[0.96] [&>[data-slot=dialog-close]]:ease-out motion-reduce:[&>[data-slot=dialog-close]]:transition-opacity motion-reduce:[&>[data-slot=dialog-close]]:duration-150 motion-reduce:[&>[data-slot=dialog-close]]:active:opacity-75"
-          >
-            <DialogHeader className="shrink-0 pe-12">
-              <DialogTitle className="flex items-center gap-2">
-                <Grid2X2 aria-hidden className="size-4" />
-                答题卡
-              </DialogTitle>
-              <DialogDescription>
-                已填写 {answered}/{total} 题
-                {practiceProtocol === "v1" && (
-                  <>
-                    {" "}
-                    · 已提交 {submittedPracticeCount}/{total} 题
-                  </>
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <LiveAttemptAnswerCard
-              attemptId={attemptId}
-              questionIds={questionIds}
-              materialsReady={navigatorOpen && navigatorMaterialsReady}
-              items={navigationItems}
-              currentId={
-                singleMode ? resolvedSingleQuestionId : currentQuestionId
-              }
-              filter={navigatorFilter}
-              onFilterChange={setNavigatorFilter}
-              onJump={jumpForMode}
-              locked={singleMode && practiceSubmit.submittingId !== null}
-              showNextUnanswered={singleMode}
-            />
-          </DialogContent>
-        </Dialog>
+        <AttemptNavigationDialog
+          open={navigatorOpen}
+          onOpenChange={setNavigatorOpen}
+          onCloseFocus={() => {
+            if (navigatorJumping.current) return;
+            if (singleWorkspaceRef.current?.contains(document.activeElement))
+              return;
+            navigatorTrigger.current?.focus();
+          }}
+          description={
+            <>
+              已填写 {answered}/{total} 题
+              {practiceProtocol === "v1" && (
+                <>
+                  {" "}
+                  · 已提交 {submittedPracticeCount}/{total} 题
+                </>
+              )}
+            </>
+          }
+        >
+          <LiveAttemptAnswerCard
+            attemptId={attemptId}
+            questionIds={questionIds}
+            materialsReady={navigatorOpen && navigatorMaterialsReady}
+            items={navigationItems}
+            currentId={
+              singleMode ? resolvedSingleQuestionId : currentQuestionId
+            }
+            filter={navigatorFilter}
+            onFilterChange={setNavigatorFilter}
+            onJump={jumpForMode}
+            locked={singleMode && practiceSubmit.submittingId !== null}
+            showNextUnanswered={singleMode}
+          />
+        </AttemptNavigationDialog>
 
         {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外。
             仅键盘设备渲染（纯触屏不出现快捷键 UI，探测成功当次会话即出现） */}

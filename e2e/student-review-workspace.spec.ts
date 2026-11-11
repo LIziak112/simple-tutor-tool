@@ -155,7 +155,7 @@ async function prepareResult(
   );
   expect(submitted.ok(), await submitted.text()).toBe(true);
   const result = attemptResultOkSchema.parse(await submitted.json()).data;
-  return { attemptId, title, secret, result };
+  return { assignmentId, attemptId, title, secret, result };
 }
 
 test(
@@ -266,6 +266,27 @@ test(
     await page.getByRole("link", { name: "返回作答结果" }).click();
     await expect(card).toBeInViewport();
     expect(new URL(page.url()).pathname).toBe(`/s/assignments/${assignmentId}`);
+    const entry = page
+      .locator('[data-slot="attempt-bottom-bar"]')
+      .getByRole("button", { name: "答题卡", exact: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await entry.click();
+    const dialog = page.getByRole("dialog", { name: "答题卡" });
+    await expect(
+      dialog.getByRole("combobox", { name: "回看定位范围" }),
+    ).toHaveValue("pending");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(entry).toBeFocused();
+    await expect(
+      page.getByRole("complementary", { name: "结果定位" }),
+    ).toHaveCount(0);
+    await entry.click();
+    await dialog.getByRole("button", { name: /^第 2 题，/ }).click();
+    await expect(
+      card.getByRole("heading", { name: "第 2 题", exact: true }),
+    ).toBeFocused();
   },
 );
 
@@ -274,7 +295,11 @@ test(
   { tag: ["@student"] },
   async ({ request, page }, testInfo) => {
     test.setTimeout(180_000);
-    const { attemptId, title } = await prepareResult(request, page, true);
+    const { assignmentId, attemptId, title } = await prepareResult(
+      request,
+      page,
+      true,
+    );
     const materialRequests: string[] = [];
     // 2026-10-15 起题卡进入可见区自动读取原标画（AGENTS.md「结果回看 UI 约定」）：
     // 题干标注视图按可见性懒加载属于设计内行为，不计入「折叠材料不得预取」的
@@ -312,6 +337,10 @@ test(
       top: number;
     }[] = [];
     const last = page.getByRole("article", { name: "第 130 题", exact: true });
+    const entry = page
+      .locator('[data-slot="attempt-bottom-bar"]')
+      .getByRole("button", { name: "答题卡", exact: true });
+    const navigation = page.getByRole("dialog", { name: "答题卡" });
     for (const [width, height] of [
       [320, 800],
       [390, 844],
@@ -323,12 +352,10 @@ test(
       [1440, 900],
     ] as const) {
       await page.setViewportSize({ width, height });
-      if (width < 1024)
-        await page.getByRole("button", { name: "打开回看题号" }).click();
-      const navigation =
-        width < 1024
-          ? page.getByRole("dialog")
-          : page.getByRole("complementary", { name: "结果定位" });
+      await expect(
+        page.getByRole("complementary", { name: "结果定位" }),
+      ).toHaveCount(0);
+      await entry.click();
       await expectNavigationRingSpace(
         navigation.getByRole("navigation", { name: "回看题号" }),
       );
@@ -363,25 +390,17 @@ test(
         expect(toolsBox?.height).toBeLessThanOrEqual(180);
         const before = await last.boundingBox();
         if (!before) throw new Error("无法测量题卡");
-        const toggle = page.getByRole("button", { name: "收起题号栏" });
-        await toggle.press("Enter");
-        await expect(
-          page.getByRole("button", { name: "展开题号栏" }),
-        ).toBeFocused();
-        await expect(
-          navigation.getByRole("combobox", { name: "回看定位范围" }),
-        ).toBeHidden();
-        await expect
-          .poll(async () => (await last.boundingBox())?.width ?? 0)
-          .toBeGreaterThan(before.width + 190);
-        await expect(last).toBeInViewport();
-        await page.screenshot({
-          path: testInfo.outputPath(`review-collapsed-${width}.png`),
-        });
-        await page.getByRole("button", { name: "展开题号栏" }).press("Space");
+        await entry.press("Enter");
         await expect(
           navigation.getByRole("combobox", { name: "回看定位范围" }),
         ).toHaveValue("all");
+        await page.keyboard.press("Escape");
+        await expect(navigation).toHaveCount(0);
+        await expect(entry).toBeFocused();
+        await expect
+          .poll(async () => (await last.boundingBox())?.width)
+          .toBe(before.width);
+        await expect(last).toBeInViewport();
         await expect(page.locator("[data-review-question]")).toHaveCount(130);
         await page
           .locator("[aria-labelledby='result-summary']")
@@ -390,6 +409,7 @@ test(
         await page.screenshot({
           path: testInfo.outputPath(`review-summary-${width}.png`),
         });
+        await entry.click();
         await navigation
           .getByRole("button", { name: "第 130 题，未作答，判错", exact: true })
           .click();
@@ -407,8 +427,8 @@ test(
     await page.evaluate(() => {
       document.documentElement.style.zoom = "2";
     });
-    await page
-      .getByRole("complementary", { name: "结果定位" })
+    await entry.click();
+    await navigation
       .getByRole("button", { name: "第 130 题，未作答，判错", exact: true })
       .click();
     await expect(last).toBeInViewport();
@@ -424,16 +444,14 @@ test(
       document.documentElement.style.zoom = "";
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "打开回看题号" }).click();
+    await page.getByRole("button", { name: "答题卡" }).click();
     await page
       .getByRole("dialog")
       .getByRole("combobox", { name: "回看定位范围" })
       .selectOption("wrong");
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "打开回看题号" }),
-    ).toBeFocused();
+    await expect(page.getByRole("button", { name: "答题卡" })).toBeFocused();
     await expect(page.locator("[data-review-question]")).toHaveCount(130);
     await page.reload();
     await expect(last).toBeInViewport();
@@ -488,6 +506,23 @@ test(
     // 展开材料触发的请求必须都属于当前展开的末题。
     for (const url of eagerMaterialRequests())
       expect(decodeURIComponent(url)).toContain(lastQuestionId);
+
+    const lastTile = navigation.getByRole("button", {
+      name: "第 130 题，未作答，判错",
+      exact: true,
+    });
+    for (const width of [390, 1110]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(
+        `/s/assignments/${assignmentId}?reviewQuestion=${encodeURIComponent(lastQuestionId)}`,
+      );
+      await expect(last).toBeInViewport();
+      await entry.click();
+      await expect(lastTile).toHaveAttribute("aria-current", "location");
+      await expect(lastTile).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press("Escape");
+      await expect(entry).toBeFocused();
+    }
   },
 );
 
@@ -541,7 +576,7 @@ test(
       /red|emerald/,
     );
     await expect(card.getByText("正确项", { exact: false })).toHaveCount(0);
-    await page.getByRole("button", { name: "打开回看题号" }).click();
+    await page.getByRole("button", { name: "答题卡" }).click();
     const range = page
       .getByRole("dialog")
       .getByRole("combobox", { name: "回看定位范围" });
@@ -584,7 +619,7 @@ test(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    await page.getByRole("button", { name: "打开回看题号" }).click();
+    await page.getByRole("button", { name: "答题卡" }).click();
     await page
       .getByRole("dialog")
       .getByRole("combobox", { name: "回看定位范围" })
