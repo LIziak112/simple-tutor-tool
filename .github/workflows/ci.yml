@@ -181,6 +181,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 容器用户与宿主挂载目录的所有者不同，checkout 的临时 Git 配置仅对检出步骤生效。
+      - name: 信任容器内的检出目录
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: 安装 pnpm
         uses: pnpm/action-setup@v6
 
