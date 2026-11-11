@@ -18,6 +18,9 @@ function ReadingFixture() {
   return (
     <div ref={root}>
       <output>{location.currentId}</output>
+      <button type="button" onClick={() => location.jump("q2")}>
+        定位末题
+      </button>
       {ids.map((id) => (
         <article key={id} data-review-question={id}>
           <h3 data-review-heading tabIndex={-1}>
@@ -77,6 +80,42 @@ it("学生开始滚动后取消延迟阅读恢复", () => {
   const flush = prepareRestore();
   fireEvent.wheel(window);
   flush();
+  expect(screen.getByRole("status")).toHaveTextContent("q1");
+});
+
+it("显式定位到末题后保留当前题，滚离该题后恢复视口跟踪", () => {
+  type Observation = { target: Element; isIntersecting: boolean };
+  let report = (_entries: readonly Observation[]) => {};
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: typeof report) {
+        report = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const flush = prepareRestore();
+  flush();
+  const heading = screen.getByRole("heading", { name: "q2" });
+  const headingRect = vi
+    .spyOn(heading, "getBoundingClientRect")
+    .mockReturnValue(new DOMRect(0, 500, 100, 24));
+  const first = screen.getAllByRole("article")[0];
+  if (!first) throw new Error("缺少首题");
+  vi.spyOn(first, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 100, 100, 100),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "定位末题" }));
+  flush();
+  expect(heading).toHaveFocus();
+  act(() => report([{ target: first, isIntersecting: true }]));
+  expect(screen.getByRole("status")).toHaveTextContent("q2");
+
+  headingRect.mockReturnValue(new DOMRect(0, window.innerHeight + 10, 100, 24));
+  act(() => report([{ target: first, isIntersecting: true }]));
   expect(screen.getByRole("status")).toHaveTextContent("q1");
 });
 
