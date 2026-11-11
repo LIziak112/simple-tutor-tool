@@ -33,6 +33,40 @@ afterEach(() => {
 });
 const advance = () => act(() => vi.advanceTimersByTime(1000));
 describe("学生阅读位置恢复", () => {
+  it("百题卷小幅滚动只测量可见题卡和边界，远跳仍找准当前题", () => {
+    let offset = 0;
+    const measured: number[] = [];
+    cards.current = new Map(
+      Array.from({ length: 100 }, (_, index) => {
+        const element = document.createElement("li");
+        vi.spyOn(element, "getBoundingClientRect").mockImplementation(() => {
+          measured.push(index);
+          return {
+            top: index * 100 - offset,
+            bottom: (index + 1) * 100 - offset,
+          } as DOMRect;
+        });
+        return [`q${index}`, element];
+      }),
+    );
+    const onCurrent = vi.fn();
+    renderHook(() =>
+      useReadingPosition("attempt", cards, onCurrent, vi.fn(), 0),
+    );
+    expect(measured).toHaveLength(100);
+    measured.length = 0;
+    offset = 35;
+    act(() => window.dispatchEvent(new Event("scroll")));
+    advance();
+    expect(onCurrent).toHaveBeenLastCalledWith("q1");
+    expect(measured.length).toBeLessThan(12);
+
+    offset = 9100;
+    act(() => window.dispatchEvent(new Event("scroll")));
+    advance();
+    expect(onCurrent).toHaveBeenLastCalledWith("q92");
+  });
+
   it("普通挂载与切换练习不沿用答题卡开合的锚点", () => {
     const onCurrent = vi.fn();
     const requestMount = vi.fn();
