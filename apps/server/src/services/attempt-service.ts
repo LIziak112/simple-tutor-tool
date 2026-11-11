@@ -113,6 +113,7 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import { attemptAllowRedo } from "./attempt-redo-policy";
 import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
   assertAttemptNotTimedOut,
@@ -1994,30 +1995,6 @@ function withAllowRedo(
   return { ...data, allowRedo };
 }
 
-/**
- * 详情响应补 allowRedo（hall-15313）：重做入口的渲染依据随卷下发——开卷响应
- * （withAllowRedo，作业行在手）与详情响应（本处，作业主键单查）两处盖章；
- * 其余来源保持 undefined（契约来源不变式拒绝携带）。
- */
-function stampedAllowRedo(
-  db: Db,
-  attempt: Pick<Attempt, "sourceType" | "assignmentId">,
-  data: AttemptDraftData | AttemptResultData,
-): AttemptDetailData {
-  if (attempt.sourceType !== "assignment" || attempt.assignmentId === null) {
-    return data;
-  }
-  const row = db
-    .select({ allowRedo: assignments.allowRedo })
-    .from(assignments)
-    .where(eq(assignments.id, attempt.assignmentId))
-    .get();
-  return {
-    ...data,
-    attempt: { ...data.attempt, allowRedo: row?.allowRedo ?? true },
-  };
-}
-
 // ---------- POST /api/student/courses/:cid/units/:uid/attempts（T2A.6） ----------
 
 /**
@@ -3826,11 +3803,27 @@ export function getAttemptDetail(
   attemptId: string,
   now: Date | string = new Date(),
 ): AttemptDetailData {
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
-  if (attempt.status === "draft") {
-    return stampedAllowRedo(db, attempt, buildDraftData(db, attempt));
-  }
-  return stampedAllowRedo(db, attempt, buildResultData(db, attempt, now));
+  return detailOfAuthorizedAttempt(
+    db,
+    requireUsableAttempt(db, studentId, attemptId),
+    now,
+  );
+}
+
+/** 调用方已在当前读事务中核验归属与访问权。 */
+export function detailOfAuthorizedAttempt(
+  db: Db,
+  attempt: Attempt,
+  now: Date | string,
+): AttemptDetailData {
+  const data =
+    attempt.status === "draft"
+      ? buildDraftData(db, attempt)
+      : buildResultData(db, attempt, now);
+  const allowRedo = attemptAllowRedo(db, attempt);
+  return allowRedo === undefined
+    ? data
+    : { ...data, attempt: withAllowRedo(data.attempt, allowRedo) };
 }
 
 /**

@@ -1,5 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createReadingPositionCapture,
+  registerReadingCard,
+} from "./reading-position-capture";
 import { useReadingPosition } from "./use-reading-position";
 
 let session: { origin: string; studentId: string } | null;
@@ -33,6 +37,34 @@ afterEach(() => {
 });
 const advance = () => act(() => vi.advanceTimersByTime(1000));
 describe("学生阅读位置恢复", () => {
+  it("同数量题卡替换导致位置不单调时，按实际位置重新捕获", () => {
+    const rect = (top: number) => ({ top, bottom: top + 80 }) as DOMRect;
+    const first = document.createElement("li");
+    const last = document.createElement("li");
+    vi.spyOn(first, "getBoundingClientRect").mockReturnValue(rect(100));
+    vi.spyOn(last, "getBoundingClientRect").mockReturnValue(rect(10_000));
+    const registered = new Map([
+      ["first", first],
+      ["last", last],
+    ]);
+    const capture = createReadingPositionCapture();
+    expect(capture(registered, 64, 768, false)).toEqual({
+      questionId: "first",
+      offset: 36,
+    });
+    const moved = document.createElement("li");
+    vi.spyOn(moved, "getBoundingClientRect").mockReturnValue(rect(76));
+    registerReadingCard(registered, "last", moved);
+    expect(capture(registered, 64, 768, true)).toEqual({
+      questionId: "last",
+      offset: 12,
+    });
+    expect(capture(registered, 64, 768, true)).toEqual({
+      questionId: "last",
+      offset: 12,
+    });
+  });
+
   it("百题卷小幅滚动只测量可见题卡和边界，远跳仍找准当前题", () => {
     let offset = 0;
     const measured: number[] = [];

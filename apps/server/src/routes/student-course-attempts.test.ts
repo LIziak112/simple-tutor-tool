@@ -738,6 +738,14 @@ describe("T2A.6 课程练习：越权矩阵（D22）与移出成员（D7）", ()
       (await (await startAttempt(env)).json()) as { data: { id: string } }
     ).data;
 
+    const detailPath = `/api/student/attempts/${second.id}`;
+    const draft = await env.app.request(detailPath, {
+      headers: { cookie: env.memberCookie },
+    });
+    expect(draft.status).toBe(200);
+    const version = draft.headers.get("ETag");
+    expect(version).toBeTruthy();
+
     // 移出成员（D7）
     const removed = await env.app.request(
       `/api/teacher/courses/${env.courseId}/members`,
@@ -751,6 +759,15 @@ describe("T2A.6 课程练习：越权矩阵（D22）与移出成员（D7）", ()
       },
     );
     expect(removed.status).toBe(200);
+
+    const staleDetail = await env.app.request(detailPath, {
+      headers: { cookie: env.memberCookie, "If-None-Match": version ?? "" },
+    });
+    expect(staleDetail.status).toBe(403);
+    expect(staleDetail.headers.get("ETag")).toBeNull();
+    expect(((await staleDetail.json()) as ApiErr).error).toBe(
+      "COURSE_ACCESS_DENIED",
+    );
 
     // 未交草稿：取卷/保存/交卷/事件全部 403 COURSE_ACCESS_DENIED
     const paper = await env.app.request(

@@ -353,6 +353,10 @@ export function attemptWorkflowView(
   db: Db,
   attempt: Attempt,
   now: Date | string = new Date(),
+  preloadedRows?: readonly Pick<
+    PracticeQuestionProgress,
+    "questionId" | "submittedAt"
+  >[],
 ): AttemptWorkflowView | null {
   // lesson 独立适配 + 历史旧协议卷：先于授权查询与 responses 聚合早退（历史卷
   // 不付无用查询；升级期线上绝大多数取卷命此）——协议形态统一走单一谓词，
@@ -366,14 +370,16 @@ export function attemptWorkflowView(
   if (attempt.sourceType === "assignment" && grant === null) {
     return null;
   }
-  const rows = db
-    .select({
-      questionId: responses.questionId,
-      submittedAt: responses.submittedAt,
-    })
-    .from(responses)
-    .where(eq(responses.attemptId, attempt.id))
-    .all();
+  const rows =
+    preloadedRows ??
+    db
+      .select({
+        questionId: responses.questionId,
+        submittedAt: responses.submittedAt,
+      })
+      .from(responses)
+      .where(eq(responses.attemptId, attempt.id))
+      .all();
   const hasSubmittedQuestion = rows.some((row) => row.submittedAt !== null);
   const workflow = resolvePracticeWorkflow({
     sourceType: attempt.sourceType,

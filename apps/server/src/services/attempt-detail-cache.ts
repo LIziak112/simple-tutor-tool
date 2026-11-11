@@ -2,13 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AttemptDetailData } from "@tutor/contract";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, assignments, responses, units } from "../db/schema";
+import { type Attempt, responses, units } from "../db/schema";
+import { attemptAllowRedo } from "./attempt-redo-policy";
 import {
   attemptEnabledCapabilities,
   attemptSourceMeta,
   attemptSummaryOf,
   attemptTeacherId,
-  getAttemptDetail,
+  detailOfAuthorizedAttempt,
   requireUsableAttempt,
 } from "./attempt-service";
 import { attemptWorkflowView } from "./practice-workflow-wiring";
@@ -63,14 +64,6 @@ function draftEtag(db: Db, attempt: Attempt, now: Date): string | null {
           .orderBy(units.id)
           .all()
       : [];
-  const assignment =
-    attempt.assignmentId === null
-      ? undefined
-      : db
-          .select({ allowRedo: assignments.allowRedo })
-          .from(assignments)
-          .where(eq(assignments.id, attempt.assignmentId))
-          .get();
   const connection = db.$client;
   let generation = connectionVersions.get(connection);
   if (generation === undefined) {
@@ -85,8 +78,8 @@ function draftEtag(db: Db, attempt: Attempt, now: Date): string | null {
     attemptSummaryOf(attempt),
     attemptSourceMeta(db, attempt),
     attemptEnabledCapabilities(db, attempt),
-    attemptWorkflowView(db, attempt, now),
-    assignment?.allowRedo,
+    attemptWorkflowView(db, attempt, now, rows),
+    attemptAllowRedo(db, attempt),
     unitTitles,
     rows,
   ];
@@ -108,7 +101,7 @@ export function readConditionalAttemptDetail(
       detail:
         etag !== null && ifNoneMatch === etag
           ? null
-          : getAttemptDetail(db, studentId, attemptId, now),
+          : detailOfAuthorizedAttempt(db, attempt, now),
     };
   })();
 }
