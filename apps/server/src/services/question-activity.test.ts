@@ -186,15 +186,16 @@ describe("题内活动用时：多端", () => {
       ev("answer_change", 10, "q1", "a"),
       ev("question_blur", 100, "q1", "a"),
       withServerTs(ev("submit", 100, null, "a"), 100),
-      // 刷新后的会话 b：接着做 q2，400 秒真正交卷
-      ev("question_focus", 200, "q2", "b"),
-      ev("answer_change", 210, "q2", "b"),
-      ev("question_blur", 399, "q2", "b"),
-      withServerTs(ev("submit", 399, null, "b"), 399),
-      // 过期标签页 c：交卷后还开着，500 秒看 q3 并又点了一次交卷
-      ev("question_focus", 420, "q3", "c"),
-      ev("answer_change", 430, "q3", "c"),
-      withServerTs(ev("submit", 500, null, "c"), 500),
+      // 同一标签页接着做 q2，400 秒真正交卷
+      ev("question_focus", 200, "q2", "a"),
+      ev("answer_change", 210, "q2", "a"),
+      ev("question_blur", 399, "q2", "a"),
+      withServerTs(ev("submit", 399, null, "a"), 399),
+      // 旧标签页在交卷后的五秒内继续动作并再次请求交卷
+      withServerTs(ev("question_focus", 401, "q3", "c"), 401),
+      withServerTs(ev("answer_change", 402, "q3", "c"), 402),
+      withServerTs(ev("question_blur", 403, "q3", "c"), 403),
+      withServerTs(ev("submit", 404, null, "c"), 404),
     ];
     const anchored = computeAttemptActivity(events, { submittedAt: at(400) });
     expect(anchored.byQuestion.q1?.activeSec).toBe(100);
@@ -292,6 +293,19 @@ describe("题内活动用时：多端", () => {
       viewed: true,
     });
     expect(result.unattributedSec).toBe(0);
+  });
+
+  it("服务端时钟较慢时逐题提交仍不提前截断前一题", () => {
+    const result = computeAttemptActivity([
+      ev("question_focus", 0, "q1", "a"),
+      ev("answer_change", 5, "q1", "a"),
+      ev("question_submit", 10, "q2", null),
+      ev("question_focus", 20, "q2", "a"),
+      ev("question_blur", 30, "q2", "a"),
+    ]);
+    expect(result.byQuestion.q1?.activeSec).toBe(20);
+    expect(result.byQuestion.q2?.activeSec).toBe(10);
+    expect(result.byQuestion.q2?.actions).toBe(1);
   });
 
   it("审查 #100-04：「同开」按同时在线的会话峰值计，先后打开的多次会话不算同开", () => {

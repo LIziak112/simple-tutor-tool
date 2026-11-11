@@ -48,6 +48,47 @@ async function click(name: string): Promise<void> {
 }
 
 describe("MemoComposer：媒体随笔入队失败后可重新保存", () => {
+  it("重试旧图片成功后保留正在编辑的新稿和标签", async () => {
+    const onQueued = vi.fn();
+    mockedEnqueue.mockRejectedValueOnce(new Error("本机保存失败"));
+    render(<MemoComposer onQueued={onQueued} />);
+    await pickImage();
+    fireEvent.change(screen.getByLabelText("随笔内容"), {
+      target: { value: "另一条未保存的随笔" },
+    });
+    fireEvent.change(screen.getByLabelText("标签"), {
+      target: { value: "新标签" },
+    });
+    mockedEnqueue.mockResolvedValueOnce("saved");
+    await click("重新保存");
+    expect(screen.getByLabelText("随笔内容")).toHaveValue("另一条未保存的随笔");
+    expect(screen.getByLabelText("标签")).toHaveValue("新标签");
+    expect(onQueued).not.toHaveBeenCalled();
+  });
+
+  it("两张图片分别保存失败时，各自保留重新保存入口", async () => {
+    mockedEnqueue.mockRejectedValue(new Error("本机保存失败"));
+    render(<MemoComposer />);
+    await pickImage();
+    await pickImage();
+    expect(screen.getAllByRole("button", { name: "重新保存" })).toHaveLength(2);
+  });
+
+  it("文字随笔原样重试沿用第一次提交的键和记录时间", async () => {
+    mockedEnqueue.mockRejectedValueOnce(new Error("响应丢失"));
+    render(<MemoComposer />);
+    fireEvent.change(screen.getByLabelText("随笔内容"), {
+      target: { value: "一条文字" },
+    });
+    await click("保存");
+    mockedEnqueue.mockResolvedValueOnce("saved");
+    await click("保存");
+    expect(mockedEnqueue).toHaveBeenCalledTimes(2);
+    expect(mockedEnqueue.mock.calls[1]?.[0]).toEqual(
+      mockedEnqueue.mock.calls[0]?.[0],
+    );
+  });
+
   it("图片入队失败：提示带「重新保存」，点它用同一 clientId 重发；成功后提示消失并回调 onQueued", async () => {
     const onQueued = vi.fn();
     mockedEnqueue.mockRejectedValueOnce(

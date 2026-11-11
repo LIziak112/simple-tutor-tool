@@ -116,6 +116,37 @@ afterEach(() => {
 });
 
 describe("memo-outbox", () => {
+  it("没有 IndexedDB 且直传失败时，报告随笔尚未保存", async () => {
+    vi.stubGlobal("indexedDB", undefined);
+    try {
+      installMemoOutboxBackendForTest(null);
+      await bindMemoOutboxAccount("stu-a");
+      mockedText.mockRejectedValueOnce(new MemoNetworkError());
+      await expect(enqueueMemo(TEXT_INPUT)).rejects.toThrow("还没有存下来");
+      expect(queueProbe().current).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("在线限流后即使停留在同一页面也会继续补传", async () => {
+    vi.useFakeTimers();
+    try {
+      await bindMemoOutboxAccount("stu-a");
+      mockedText
+        .mockRejectedValueOnce(new ApiError("RATE_LIMITED", "请求太频繁", 429))
+        .mockResolvedValueOnce(memoOf("第一条"));
+      await enqueueMemo(TEXT_INPUT);
+      await flushMemoOutbox();
+      expect(mockedText).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mockedText).toHaveBeenCalledTimes(2);
+      expect(queueProbe().current).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("在线：入队即上传成功，本机条目清掉，onMemoSynced 收到服务端那条", async () => {
     await bindMemoOutboxAccount("stu-a");
     const synced: Memo[] = [];
@@ -125,6 +156,7 @@ describe("memo-outbox", () => {
     await flushMemoOutbox();
     expect(mockedText).toHaveBeenCalledTimes(1);
     const sent = mockedText.mock.calls[0]?.[0];
+    expect(mockedText.mock.calls[0]?.[1]).toBe("stu-a");
     expect(sent?.text).toBe("第一条");
     expect(sent?.tags).toEqual(["易错"]);
     expect(typeof sent?.clientId).toBe("string");

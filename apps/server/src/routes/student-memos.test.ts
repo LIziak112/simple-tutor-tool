@@ -1,5 +1,11 @@
 import type { ApiErr, Memo, MemoListData } from "@tutor/contract";
-import { memoListDataSchema, memoSchema } from "@tutor/contract";
+import {
+  MEMO_OUTBOX_ACCOUNT_CHANGED,
+  MEMO_OUTBOX_ACCOUNT_HEADER,
+  memoListDataSchema,
+  memoSchema,
+  studentMeDataSchema,
+} from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -42,13 +48,15 @@ interface Env {
   teacherCookie: string;
   aliceCookie: string;
   bobCookie: string;
+  aliceId: string;
+  bobId: string;
 }
 
 async function createStudentAndLogin(
   app: ReturnType<typeof createApp>,
   teacherCookie: string,
   displayName: string,
-): Promise<string> {
+): Promise<{ cookie: string; id: string }> {
   const create = await app.request("/api/teacher/students", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
@@ -68,7 +76,11 @@ async function createStudentAndLogin(
     }),
   });
   expect(login.status).toBe(200);
-  return `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`;
+  const { data } = (await login.json()) as { data: unknown };
+  return {
+    cookie: `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`,
+    id: studentMeDataSchema.parse(data).id,
+  };
 }
 
 async function makeEnv(): Promise<Env> {
@@ -86,12 +98,24 @@ async function makeEnv(): Promise<Env> {
     body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+  const alice = await createStudentAndLogin(app, teacherCookie, "甲同学");
+  const bob = await createStudentAndLogin(app, teacherCookie, "乙同学");
   return {
     app,
     db,
     teacherCookie,
-    aliceCookie: await createStudentAndLogin(app, teacherCookie, "甲同学"),
-    bobCookie: await createStudentAndLogin(app, teacherCookie, "乙同学"),
+    aliceCookie: alice.cookie,
+    bobCookie: bob.cookie,
+    aliceId: alice.id,
+    bobId: bob.id,
+  };
+}
+
+function memoHeaders(env: Env, cookie: string): Record<string, string> {
+  return {
+    cookie,
+    [MEMO_OUTBOX_ACCOUNT_HEADER]:
+      cookie === env.aliceCookie ? env.aliceId : env.bobId,
   };
 }
 
@@ -102,7 +126,10 @@ async function postText(
 ): Promise<Response> {
   return env.app.request("/api/student/memos", {
     method: "POST",
-    headers: { "content-type": "application/json", cookie },
+    headers: {
+      "content-type": "application/json",
+      ...memoHeaders(env, cookie),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -119,7 +146,7 @@ async function postMedia(
   form.set("file", new Blob([bytes]), fileName);
   return env.app.request("/api/student/memos/media", {
     method: "POST",
-    headers: { cookie },
+    headers: memoHeaders(env, cookie),
     body: form,
   });
 }
@@ -139,6 +166,20 @@ async function listOf(
 }
 
 describe("随笔：文字创建与幂等", () => {
+  it("文字与媒体写入都要求会话绑定，且在解析请求体之前校验", async () => {
+    const env = await makeEnv();
+    for (const path of ["/api/student/memos", "/api/student/memos/media"]) {
+      const res = await env.app.request(path, {
+        method: "POST",
+        headers: { cookie: env.aliceCookie },
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as ApiErr;
+      expect(body.error).toBe(MEMO_OUTBOX_ACCOUNT_CHANGED);
+      assertNoLeak(body);
+    }
+  });
+
   it("新建 201 → 契约形状；同 clientId 重放 200 且是同一条；recordedAt 不穿越未来", async () => {
     const env = await makeEnv();
     const clientId = crypto.randomUUID();
@@ -301,7 +342,7 @@ describe("随笔：媒体创建、格式与上限", () => {
     form.set("kind", "voice");
     const noFile = await env.app.request("/api/student/memos/media", {
       method: "POST",
-      headers: { cookie: env.aliceCookie },
+      headers: memoHeaders(env, env.aliceCookie),
       body: form,
     });
     expect(noFile.status).toBe(400);
@@ -333,7 +374,7 @@ describe("随笔：媒体创建、格式与上限", () => {
     });
     const res = await env.app.request(
       "/api/student/memos/media",
-      streamingInit(big, { cookie: env.aliceCookie }),
+      streamingInit(big, memoHeaders(env, env.aliceCookie)),
     );
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("MEMO_TOO_LARGE");
@@ -348,7 +389,7 @@ describe("随笔：媒体创建、格式与上限", () => {
           file: new Uint8Array(MEMO_TEST_WEBM),
           fields: { clientId: crypto.randomUUID(), kind: "voice" },
         }),
-        { cookie: env.aliceCookie },
+        memoHeaders(env, env.aliceCookie),
       ),
     );
     expect(ok.status).toBe(201);

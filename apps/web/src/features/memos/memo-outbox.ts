@@ -6,13 +6,10 @@ import type {
   MemoDevice,
   MemoKind,
 } from "@tutor/contract";
+import { MEMO_OUTBOX_ACCOUNT_CHANGED } from "@tutor/contract";
 import { useSyncExternalStore } from "react";
 import { ApiError } from "@/lib/api";
-import {
-  idbKVBackend,
-  type KVStoreBackend,
-  memoryKVBackend,
-} from "@/lib/kv-backend";
+import { idbKVBackend, type KVStoreBackend } from "@/lib/kv-backend";
 import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
 
 /**
@@ -55,18 +52,19 @@ export type MemoOutboxInput = Omit<
 const IDB_DB = "tutor-memos";
 const IDB_STORE = "outbox";
 
-function defaultBackend(): KVStoreBackend {
+function defaultBackend(): KVStoreBackend | null {
   return typeof indexedDB === "undefined"
-    ? memoryKVBackend()
+    ? null
     : idbKVBackend(IDB_DB, IDB_STORE);
 }
 
-let backend: KVStoreBackend = defaultBackend();
+let backend = defaultBackend();
 let accountId: string | null = null;
 let items: readonly MemoOutboxItem[] = [];
 let flushing: Promise<void> | null = null;
 /** 在途补传那一轮所属的账号（账号已换时 bind 据此接力新一轮） */
 let flushingAccount: string | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<() => void>();
 const syncedListeners = new Set<(memo: Memo) => void>();
 
@@ -109,14 +107,16 @@ export async function bindMemoOutboxAccount(
   studentId: string | null,
 ): Promise<void> {
   if (accountId === studentId) return;
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
   accountId = studentId;
   setItems([]);
   if (studentId === null) return;
   try {
-    const stored = await backend.getAll(prefixFor(studentId));
+    const stored = await backend?.getAll(prefixFor(studentId));
     if (accountId !== studentId) return;
     setItems(
-      stored
+      (stored ?? [])
         .map(([, value]) => value)
         .filter(isItem)
         .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt)),
@@ -140,11 +140,14 @@ export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
     recordedAt: input.recordedAt ?? new Date().toISOString(),
     failedMessage: undefined,
   };
-  let savedLocally = true;
+  let savedLocally = false;
   try {
-    await backend.set(keyFor(account, item.clientId), item);
+    if (backend !== null) {
+      await backend.set(keyFor(account, item.clientId), item);
+      savedLocally = true;
+    }
   } catch {
-    savedLocally = false;
+    // 无本机副本，转入直传。
   }
   // 等待期间换了账号：条目已在旧账号键下，旧账号下次 bind 会出现；不进当前队列
   if (accountId !== account) {
@@ -169,7 +172,7 @@ async function uploadWithoutLocalCopy(
 ): Promise<string> {
   let memo: Memo;
   try {
-    memo = await upload(item);
+    memo = await upload(item, account);
   } catch (err) {
     throw new Error(
       err instanceof ApiError
@@ -188,7 +191,7 @@ export async function discardMemoOutboxItem(clientId: string): Promise<void> {
   const account = requireAccount();
   setItems(items.filter((item) => item.clientId !== clientId));
   try {
-    await backend.del(keyFor(account, clientId));
+    await backend?.del(keyFor(account, clientId));
   } catch {
     // 本机删除失败下次 bind 会再出现，届时仍可丢弃
   }
@@ -202,7 +205,7 @@ export async function retryMemoOutboxItem(clientId: string): Promise<void> {
   const retried: MemoOutboxItem = { ...item, failedMessage: undefined };
   setItems(items.map((it) => (it.clientId === clientId ? retried : it)));
   try {
-    await backend.set(keyFor(account, clientId), retried);
+    await backend?.set(keyFor(account, clientId), retried);
   } catch {
     // 标记只影响是否自动重试，落盘失败可接受
   }
@@ -228,11 +231,12 @@ function isBusinessRejection(err: unknown): err is ApiError {
     err instanceof ApiError &&
     err.status >= 400 &&
     err.status < 500 &&
-    !RECOVERABLE_4XX.has(err.status)
+    !RECOVERABLE_4XX.has(err.status) &&
+    err.code !== MEMO_OUTBOX_ACCOUNT_CHANGED
   );
 }
 
-async function upload(item: MemoOutboxItem): Promise<Memo> {
+async function upload(item: MemoOutboxItem, account: string): Promise<Memo> {
   const common = {
     clientId: item.clientId,
     anchor: item.anchor,
@@ -242,7 +246,7 @@ async function upload(item: MemoOutboxItem): Promise<Memo> {
   };
   if (item.kind === "text") {
     const body: MemoCreateText = { ...common, text: item.text ?? "" };
-    return createTextMemoApi(body);
+    return createTextMemoApi(body, account);
   }
   if (item.blob === undefined) {
     throw new ApiError("MEMO_MEDIA_MISSING", "这条随笔的媒体内容丢失", 400);
@@ -255,7 +259,22 @@ async function upload(item: MemoOutboxItem): Promise<Memo> {
       ? { durationSec: item.durationSec }
       : {}),
   };
-  return uploadMemoMediaApi(item.blob, fields);
+  return uploadMemoMediaApi(item.blob, fields, account);
+}
+
+function scheduleMemoRetry(account: string, error: unknown): void {
+  if (
+    accountId !== account ||
+    typeof window === "undefined" ||
+    !navigator.onLine ||
+    (error instanceof ApiError &&
+      (error.status === 401 || error.code === MEMO_OUTBOX_ACCOUNT_CHANGED))
+  )
+    return;
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
+    if (accountId === account && navigator.onLine) void flushMemoOutbox();
+  }, 30_000);
 }
 
 /** 按入队顺序补传；暂态失败即停（等下次触发），业务拒绝标 failedMessage 后继续下一条 */
@@ -268,6 +287,8 @@ export function flushMemoOutbox(): Promise<void> {
   }
   const account = accountId;
   if (account === null) return Promise.resolve();
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
   flushingAccount = account;
   flushing = (async () => {
     // 每轮重新从当前队列取「还没试过、没被拒绝」的第一条：补传期间新记的也在本轮传完
@@ -280,13 +301,13 @@ export function flushMemoOutbox(): Promise<void> {
       if (item === undefined) return;
       attempted.add(item.clientId);
       try {
-        const memo = await upload(item);
+        const memo = await upload(item, account);
         // 等待期间换了账号：当前队列 / 页面已属于别人，只清掉旧账号的本机键
         if (accountId === account) {
           setItems(items.filter((it) => it.clientId !== item.clientId));
         }
         try {
-          await backend.del(keyFor(account, item.clientId));
+          await backend?.del(keyFor(account, item.clientId));
         } catch {
           // 已在服务端：下次 bind 重放只会命中幂等键，无害
         }
@@ -304,13 +325,14 @@ export function flushMemoOutbox(): Promise<void> {
             );
           }
           try {
-            await backend.set(keyFor(account, item.clientId), failed);
+            await backend?.set(keyFor(account, item.clientId), failed);
           } catch {
             // 标记只影响是否自动重试，落盘失败可接受
           }
           continue;
         }
-        // 暂态失败（网络 / 5xx / 限流 / 响应不成形）：保留原样，等下次触发
+        // 仍在线时，限流或服务异常恢复后继续补传。
+        scheduleMemoRetry(account, err);
         return;
       }
     }
@@ -358,5 +380,7 @@ export function installMemoOutboxBackendForTest(
   accountId = null;
   flushing = null;
   flushingAccount = null;
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
   setItems([]);
 }

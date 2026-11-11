@@ -1,4 +1,6 @@
 import {
+  MEMO_OUTBOX_ACCOUNT_CHANGED,
+  MEMO_OUTBOX_ACCOUNT_HEADER,
   MEMO_VOICE_MAX_BYTES,
   memoCreateMediaSchema,
   memoCreateTextSchema,
@@ -49,8 +51,24 @@ export const MEMO_MEDIA_UPLOAD_CAP: MultipartCap = {
 };
 
 export function createStudentMemoRoutes(db: Db, dataDir: string) {
+  const requireQueueAccount = (
+    expected: string | undefined,
+    actual: string,
+  ) => {
+    if (expected !== actual) {
+      throw new HttpError(
+        409,
+        MEMO_OUTBOX_ACCOUNT_CHANGED,
+        "学生会话已变化，请用记录这条随笔的账号重新登录后补传",
+      );
+    }
+  };
   return new Hono<StudentEnv>()
     .post("/memos", async (c) => {
+      requireQueueAccount(
+        c.req.header(MEMO_OUTBOX_ACCOUNT_HEADER),
+        c.var.student.id,
+      );
       const body = await parseJsonBody(c, memoCreateTextSchema);
       const result = createTextMemo(db, {
         studentId: c.var.student.id,
@@ -62,6 +80,10 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
       );
     })
     .post("/memos/media", async (c) => {
+      requireQueueAccount(
+        c.req.header(MEMO_OUTBOX_ACCOUNT_HEADER),
+        c.var.student.id,
+      );
       const body = formDataToRecord(
         await parseMultipartCapped(c, MEMO_MEDIA_UPLOAD_CAP),
       );
