@@ -3,7 +3,8 @@ import type { AtramentReplayModel } from "./model.ts";
 
 /** 仅在时间顺序与绘制顺序一致时，已画的像素才可直接保留。 */
 export function createOrderedReplay(data: AtramentReplayModel) {
-  let previousEnd = Number.NEGATIVE_INFINITY;
+  let previousStart = Number.NEGATIVE_INFINITY;
+  let previousDuration = 0;
   for (const [index, slot] of data.slots.entries()) {
     const stroke = data.strokes[index];
     const end = slot.pointTimesMs.at(-1);
@@ -12,10 +13,11 @@ export function createOrderedReplay(data: AtramentReplayModel) {
       stroke?.tool !== "pen" ||
       stroke.rendering?.renderer === "freehand" ||
       !/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(stroke.color) ||
-      slot.startMs < previousEnd
+      slot.startMs - previousStart < previousDuration
     )
       return null;
-    previousEnd = slot.startMs + end;
+    previousStart = slot.startMs;
+    previousDuration = end;
   }
 
   let completed = 0;
@@ -31,7 +33,11 @@ export function createOrderedReplay(data: AtramentReplayModel) {
     }
     for (let slot = data.slots[completed]; slot; slot = data.slots[completed]) {
       const elapsed = time - slot.startMs;
-      while ((slot.pointTimesMs[points] ?? Infinity) <= elapsed) points++;
+      while (
+        points < slot.pointTimesMs.length &&
+        (slot.pointTimesMs[points] ?? Infinity) <= elapsed
+      )
+        points++;
       if (points < slot.pointTimesMs.length) break;
       completed++;
       points = 0;
