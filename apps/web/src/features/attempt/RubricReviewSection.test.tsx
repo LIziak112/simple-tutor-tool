@@ -146,6 +146,25 @@ it("审查 #99-05：判卷任务在途时按周期刷新本卷缓存，回信落
   expect(invalidate).not.toHaveBeenCalled();
 });
 
+it("判卷回信刷新时保留正在编辑的自评表单", () => {
+  const { client, rerender } = renderSection(
+    questionOf(reviewOf({ pendingAgentTaskId: "task-1" })),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "按量表自评" }));
+  fireEvent.change(screen.getByLabelText("整体评语"), {
+    target: { value: "尚未保存的评语" },
+  });
+  rerender(
+    <QueryClientProvider client={client}>
+      <RubricReviewSection
+        attemptId="att-1"
+        question={questionOf(reviewOf())}
+      />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByLabelText("整体评语")).toHaveValue("尚未保存的评语");
+});
+
 it("审查 #99-06：裁定来源相同但档位已变时仍可再裁；完全一致才禁用", () => {
   const ratings = [
     { id: "r1", level: 4 },

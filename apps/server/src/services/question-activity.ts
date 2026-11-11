@@ -15,7 +15,7 @@ import { events } from "../db/schema";
  * / 完全重复去重」现算，不存新列、不信任客户端汇总。
  *
  * 实现分三步：
- * 0. 去重后按交卷截止全卷（任一端交卷后各端事件都不计；锚点见 submitCutoffOf），
+ * 0. 按服务端交卷时刻筛选并去重（任一端交卷后各端事件都不计），
  *    再把服务端直记的动作事件（question_submit / hint_open：服务器时钟、无会话
  *    标识）归入最近聚焦该题的会话；
  * 1. 按作答页会话（viewId；缺省合并为一组）各自回放事件，产出前台聚焦片段
@@ -49,12 +49,6 @@ const SERVER_RECORDED_ACTION_TYPES: ReadonlySet<string> = new Set([
 interface ReplayEvent extends ActivityEvent {
   readonly serverRecorded?: boolean;
 }
-
-/**
- * 交卷截止锚点的容差：真正交卷的那条客户端 submit 事件在 POST 交卷之前 flush，
- * 其服务端接收时刻早于 attempts.submitted_at；留几秒容差只为吸收同机时钟抖动。
- */
-const SUBMIT_CUTOFF_TOLERANCE_MS = 5_000;
 
 interface Segment {
   readonly questionId: string;
@@ -192,7 +186,7 @@ function replaySession(
         break;
       case "submit":
         close(at);
-        return segments; // 交卷后迟到的事件不再计
+        break; // 前置筛选已确定全卷截止；更早的提交意图仅结束当次聚焦
       default:
         if (
           questionId !== null &&
@@ -201,7 +195,7 @@ function replaySession(
           tallyOf(questionId).actions += 1;
           if (state.episode !== null && focused === questionId) {
             state.episode.active = true;
-            if (state.idle) {
+            if (state.idle && event.serverRecorded !== true) {
               // 有动作就不是空闲：队列的 idle_end 可能晚到，这里先恢复计时
               state.idle = false;
               resume(at);
@@ -212,10 +206,9 @@ function replaySession(
             event.serverRecorded === true
               ? lastClosedByQuestion.get(questionId)
               : undefined;
-          if (lastClosed !== undefined) {
-            // 服务端直记的动作（服务器时钟、无会话标识）落在该题聚焦收尾之后：
-            // 追认那次聚焦有动作，不在当前题的时段里另开一段（审查 #100-03）
-            for (const segment of lastClosed) segment.active = true;
+          if (event.serverRecorded === true) {
+            tallyOf(questionId).viewed = true;
+            for (const segment of lastClosed ?? []) segment.active = true;
             break;
           }
           // 没聚焦就有动作（焦点事件丢失 / 旧客户端）：动作本身就是归属依据
@@ -223,7 +216,7 @@ function replaySession(
         }
     }
   }
-  const last = ordered[ordered.length - 1];
+  const last = ordered.findLast((event) => event.serverRecorded !== true);
   if (last !== undefined) close(last.clientTs);
   return segments;
 }
@@ -283,69 +276,48 @@ function adoptServerRecordedActions(
 ): ReplayEvent[] {
   const focusesByQuestion = new Map<string, ActivityEvent[]>();
   for (const event of ordered) {
-    if (
-      event.type === "question_focus" &&
-      event.questionId !== null &&
-      event.viewId !== null
-    ) {
+    if (event.type === "question_focus" && event.questionId !== null) {
       const list = focusesByQuestion.get(event.questionId);
       if (list === undefined) focusesByQuestion.set(event.questionId, [event]);
       else list.push(event);
     }
   }
-  return ordered.map((event): ReplayEvent => {
-    if (
-      !SERVER_RECORDED_ACTION_TYPES.has(event.type) ||
-      event.viewId !== null ||
-      event.questionId === null
-    ) {
-      return event;
-    }
-    const marked: ReplayEvent = { ...event, serverRecorded: true };
-    const focuses = focusesByQuestion.get(event.questionId);
-    if (focuses === undefined) return marked;
-    const before = focuses.filter((f) => f.clientTs <= event.clientTs);
-    const nearest =
-      before[before.length - 1] ??
-      focuses.find((f) => f.clientTs > event.clientTs);
-    return nearest === undefined
-      ? marked
-      : { ...marked, viewId: nearest.viewId };
-  });
+  return ordered
+    .map((event): ReplayEvent => {
+      if (
+        !SERVER_RECORDED_ACTION_TYPES.has(event.type) ||
+        event.viewId !== null ||
+        event.questionId === null
+      ) {
+        return event;
+      }
+      const marked: ReplayEvent = { ...event, serverRecorded: true };
+      const focuses = focusesByQuestion.get(event.questionId);
+      if (focuses === undefined) return marked;
+      const before = focuses.filter((f) => f.clientTs <= event.clientTs);
+      const nearest =
+        before[before.length - 1] ??
+        focuses.find((f) => f.clientTs > event.clientTs);
+      return nearest === undefined
+        ? marked
+        : {
+            ...marked,
+            viewId: nearest.viewId,
+            // 服务端时钟偏慢时仍先回放客户端 focus，再标记这段有动作。
+            clientTs: Math.max(nearest.clientTs, event.clientTs),
+          };
+    })
+    .sort(
+      (a, b) =>
+        a.clientTs - b.clientTs ||
+        Number(a.serverRecorded === true) - Number(b.serverRecorded === true),
+    );
 }
 
 function serverTsMsOf(event: ActivityEvent): number | null {
   if (event.serverTs === undefined || event.serverTs === null) return null;
   const ms = Date.parse(event.serverTs);
   return Number.isNaN(ms) ? null : ms;
-}
-
-/**
- * 任一会话交卷即全卷截止：之后的事件（不论哪一端）都不计（审查 #100-02）。
- * 截止用客户端时钟（与其余事件同源），锚点选法：
- * - 知道服务端受理交卷的时刻（attempts.submitted_at）时，取**受理前到达服务端**
- *   的最后一条 submit 事件——失败 / 中止的交卷（409 刷新重交、网络失败重试、
- *   flush 期间点「继续作答」）发出的 submit 都在它之前，不会把刷新后真实作答
- *   截掉；交卷后过期标签页再点的 submit 到达在受理之后，也不会把截止拖后。
- *   一条都没来得及到达（flush 失败、事件迟到补发）→ 退回首条 submit；
- * - 不知道受理时刻（卷未交 / 调用方未给）→ 首条 submit；
- * - 没有任何 submit 事件（旧客户端 / 逐题提交协议）→ null，由调用方按服务端
- *   接收时刻截止（见 computeAttemptActivity）。
- */
-function submitCutoffOf(
-  ordered: readonly ActivityEvent[],
-  submittedAtMs: number | null,
-): number | null {
-  const submits = ordered.filter((event) => event.type === "submit");
-  const first = submits[0];
-  if (first === undefined) return null;
-  if (submittedAtMs === null) return first.clientTs;
-  const deadline = submittedAtMs + SUBMIT_CUTOFF_TOLERANCE_MS;
-  const arrivedInTime = submits.filter((event) => {
-    const arrived = serverTsMsOf(event);
-    return arrived !== null && arrived <= deadline;
-  });
-  return (arrivedInTime[arrivedInTime.length - 1] ?? first).clientTs;
 }
 
 export interface ComputeAttemptActivityOptions {
@@ -358,34 +330,28 @@ export function computeAttemptActivity(
   input: readonly ActivityEvent[],
   options: ComputeAttemptActivityOptions = {},
 ): AttemptActivity {
+  const submittedAtMs = Date.parse(options.submittedAt ?? "");
   const seen = new Set<string>();
   const deduped = [...input]
     .sort((a, b) => a.clientTs - b.clientTs)
     .filter((event) => {
+      // 先判断是否在交卷前收到，再去重，迟到的重复记录不能盖掉原记录。
+      const arrived = serverTsMsOf(event);
+      if (arrived !== null && arrived > submittedAtMs) return false;
       const key = eventKey(event);
       if (seen.has(key)) return false; // 离线补发 / 双发去重
       seen.add(key);
       return true;
     });
-  const submittedAtMs =
-    options.submittedAt === undefined || options.submittedAt === null
-      ? null
-      : Date.parse(options.submittedAt);
-  const cutoff = submitCutoffOf(deduped, submittedAtMs);
+  // 客户端时钟在不同设备间不可比。有服务端交卷时刻时，用同一服务端时钟
+  // 截止所有会话；服务器之后收到的补发仍可入事件表，但不改变已交卷统计。
+  const cutoff = Number.isNaN(submittedAtMs)
+    ? deduped.find((event) => event.type === "submit")?.clientTs
+    : undefined;
   const inScope =
-    cutoff !== null
-      ? deduped.filter((event) => event.clientTs <= cutoff)
-      : submittedAtMs === null || Number.isNaN(submittedAtMs)
-        ? deduped
-        : // 没有客户端 submit 事件：只能按服务端接收时刻截止（同一服务端时钟，
-          // 不受客户端时钟偏差影响）；受理后才到达的事件不计
-          deduped.filter((event) => {
-            const arrived = serverTsMsOf(event);
-            return (
-              arrived === null ||
-              arrived <= submittedAtMs + SUBMIT_CUTOFF_TOLERANCE_MS
-            );
-          });
+    cutoff === undefined
+      ? deduped
+      : deduped.filter((event) => event.clientTs <= cutoff);
   const ordered = adoptServerRecordedActions(inScope);
   const sessions = new Map<string, ReplayEvent[]>();
   for (const event of ordered) {

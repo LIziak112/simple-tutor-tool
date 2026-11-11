@@ -67,12 +67,19 @@ export function MemoComposer({
    * 可以放回去，不留就等于丢掉本人刚产出的内容。复用同一 clientId，服务端已落库只是
    * 响应丢失的情况下重发不会成两条。
    */
-  const [failedMedia, setFailedMedia] = useState<{
+  const [failedMedia, setFailedMedia] = useState<
+    readonly {
+      readonly input: MemoOutboxInput;
+      readonly message: string;
+    }[]
+  >([]);
+  const failedText = useRef<{
+    readonly payload: string;
     readonly input: MemoOutboxInput;
-    readonly message: string;
   } | null>(null);
   const [inkOpen, setInkOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 浮层打开即落焦到输入框（对话框首个可聚焦元素是「去掉锚」小按钮，不是想要的）
@@ -84,39 +91,64 @@ export function MemoComposer({
   const tags = normalizeMemoTags(splitMemoTagInput(tagsRaw));
   const tooManyTags = splitMemoTagInput(tagsRaw).length > MEMO_TAGS_MAX;
 
-  async function queue(raw: MemoOutboxInput): Promise<void> {
-    // 先清空输入再落本机：点「保存」立刻有反馈；两边都没存下来再把原文放回来
-    //（enqueueMemo 返回即有本机或服务端副本，拒绝 = 没有任何副本）
-    const input: MemoOutboxInput = {
+  async function queue(
+    raw: MemoOutboxInput,
+    retryMedia = false,
+  ): Promise<void> {
+    if (saving.current) return;
+    const payload = JSON.stringify(raw);
+    const retryText =
+      raw.kind === "text" && failedText.current?.payload === payload
+        ? failedText.current.input
+        : undefined;
+    const input: MemoOutboxInput = retryText ?? {
       ...raw,
       clientId: raw.clientId ?? crypto.randomUUID(),
       recordedAt: raw.recordedAt ?? new Date().toISOString(),
     };
-    const previous = { text, tagsRaw };
+    const remaining = failedMedia.filter(
+      (entry) => entry.input.clientId !== input.clientId,
+    );
+    saving.current = true;
     setBusy(true);
-    setText("");
-    setTagsRaw("");
     setNotice(null);
     setError(null);
     try {
       await enqueueMemo(input);
-      if (failedMedia?.input.clientId === input.clientId) setFailedMedia(null);
-      onQueued?.();
+      if (input.kind === "text") failedText.current = null;
+      if (retryMedia) {
+        setFailedMedia(remaining);
+      } else {
+        setText("");
+        setTagsRaw("");
+      }
+      if (
+        remaining.length === 0 &&
+        (!retryMedia || (text === "" && tagsRaw === ""))
+      ) {
+        onQueued?.();
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "本机保存失败，请重试";
       if (input.kind === "text") {
-        setText(previous.text);
-        setTagsRaw(previous.tagsRaw);
+        failedText.current = { input, payload };
         setError(message);
       } else {
-        // 媒体内容留在本页，文字 / 标签不放回输入框（它们随这条一起重新保存）
-        setFailedMedia({
-          input,
-          message: `${message}；${MEDIA_KIND_LABEL[input.kind]}还在本页，可点「重新保存」再试`,
-        });
+        if (!retryMedia) {
+          setText("");
+          setTagsRaw("");
+        }
+        setFailedMedia([
+          ...remaining,
+          {
+            input,
+            message: `${message}；${MEDIA_KIND_LABEL[input.kind]}还在本页，可点「重新保存」再试`,
+          },
+        ]);
       }
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   }
@@ -204,6 +236,7 @@ export function MemoComposer({
       </label>
       <textarea
         id={textId}
+        disabled={busy}
         value={text}
         onChange={(event) =>
           setText(event.target.value.slice(0, MEMO_TEXT_MAX))
@@ -225,6 +258,7 @@ export function MemoComposer({
         </label>
         <input
           id={tagsId}
+          disabled={busy}
           value={tagsRaw}
           onChange={(event) => setTagsRaw(event.target.value)}
           placeholder="标签（逗号分隔，如 易错, 疑问, 待办）"
@@ -318,23 +352,24 @@ export function MemoComposer({
           {error}
         </p>
       )}
-      {failedMedia !== null && (
+      {failedMedia.map(({ input, message }) => (
         <div
+          key={input.clientId}
           role="alert"
           className="flex flex-wrap items-center gap-2 text-sm text-destructive"
         >
-          <span>{failedMedia.message}</span>
+          <span>{message}</span>
           <Button
             type="button"
             variant="outline"
             size="sm"
             disabled={busy || recording}
-            onClick={() => void queue(failedMedia.input)}
+            onClick={() => void queue(input, true)}
           >
             重新保存
           </Button>
         </div>
-      )}
+      ))}
       {notice !== null && (
         <p role="status" className="text-sm text-muted-foreground">
           {notice}

@@ -85,11 +85,14 @@ export function RubricReviewSection({
   const scope = `${attemptId}:${question.questionId}`;
   const projectedKey = JSON.stringify(projected);
 
-  // 换题重置；服务端投影更新后以投影为准（override 只是等待 refetch 的过渡）
+  // 换题时重置表单。同一题的后台刷新只更新投影，保留尚未保存的编辑。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope 是换题的变更键
+  useEffect(() => {
+    setPanel("none");
+  }, [scope]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: scope/projectedKey 是重置的变更键
   useEffect(() => {
     setOverride(null);
-    setPanel("none");
     setError(null);
     setLocalPendingTask(null);
     agentMutationRef.current = null;

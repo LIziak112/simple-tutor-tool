@@ -171,6 +171,10 @@ export const memoCreateTextSchema = memoCreateBaseSchema.extend({
 });
 export type MemoCreateText = z.infer<typeof memoCreateTextSchema>;
 
+/** 浏览器补传声明的队列归属，必须与请求实际会话匹配。 */
+export const MEMO_OUTBOX_ACCOUNT_HEADER = "x-tutor-memo-account";
+export const MEMO_OUTBOX_ACCOUNT_CHANGED = "MEMO_OUTBOX_ACCOUNT_CHANGED";
+
 /**
  * POST /api/student/memos/media（multipart）：语音 / 图片 / 手写。文件走 file
  * 字段；其余为文本字段（anchor / tags 为 JSON 字符串，路由先 JSON.parse 再按

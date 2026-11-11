@@ -53,10 +53,10 @@ import {
   attemptReviewActionOf,
   attemptReviewDetailOf,
   attemptReviewPreviewOf,
-  attemptReviewPublicViewOf,
   createAttemptReviewTask,
   listAttemptReviewTasks,
 } from "../services/ai-companion/student-ai-attempt-review.ts";
+import { attemptReviewPublicViewOf } from "../services/ai-companion/student-ai-attempt-review-public.ts";
 import { createAiBatchReviewTasks } from "../services/ai-companion/student-ai-batch.ts";
 import {
   type AiMaterialUploadPage,

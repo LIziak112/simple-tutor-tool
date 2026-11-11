@@ -168,7 +168,13 @@ export function listZipEntryNames(buffer: Buffer): string[] {
   return names;
 }
 
-export function readZipEntries(buffer: Buffer): ZipEntry[] {
+export function readZipEntries(
+  buffer: Buffer,
+  selection?: {
+    readonly names: ReadonlySet<string>;
+    readonly maxEntryBytes: number;
+  },
+): ZipEntry[] {
   const { entryCount, centralOffset } = centralDirectoryOf(buffer);
 
   const entries: ZipEntry[] = [];
@@ -189,6 +195,14 @@ export function readZipEntries(buffer: Buffer): ZipEntry[] {
     const name = buffer
       .subarray(cursor + 46, cursor + 46 + nameLength)
       .toString("utf8");
+
+    if (selection !== undefined && !selection.names.has(name)) {
+      cursor += 46 + nameLength + extraLength + commentLength;
+      continue;
+    }
+    if (selection !== undefined && uncompressedSize > selection.maxEntryBytes) {
+      throw new ZipReadError(`压缩包条目解压后超限：${name}`);
+    }
 
     // 加密位（bit 0）：不是本系统备份的形态，明确拒绝
     if ((flags & 0x0001) !== 0) {
@@ -211,16 +225,29 @@ export function readZipEntries(buffer: Buffer): ZipEntry[] {
     const localNameLength = u16(buffer, localOffset + 26);
     const localExtraLength = u16(buffer, localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    if (
+      dataStart + compressedSize > centralOffset ||
+      buffer
+        .subarray(localOffset + 30, localOffset + 30 + localNameLength)
+        .toString("utf8") !== name
+    ) {
+      throw new ZipReadError(`压缩包损坏（条目位置不符：${name}）`);
+    }
     const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
 
     let data: Buffer;
     if (method === 0) {
       // stored：原样字节
+      if (compressedSize !== uncompressedSize) {
+        throw new ZipReadError(`压缩包损坏（条目大小不符：${name}）`);
+      }
       data = Buffer.from(compressed);
     } else if (method === 8) {
       // deflate：raw inflate（zip 的 deflate 不带 zlib 头）
       try {
-        data = inflateRawSync(compressed);
+        data = inflateRawSync(compressed, {
+          maxOutputLength: Math.max(1, uncompressedSize),
+        });
       } catch {
         throw new ZipReadError(`压缩包损坏（条目解压失败：${name}）`);
       }

@@ -22,17 +22,49 @@ trailer << /Root 1 0 R >>
   "latin1",
 );
 
-/** 最小 docx：真实 ZIP（stored 条目 + 中央目录 + EOCD），含 OPC 必备的两个条目 */
+const TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
+const RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const REL_TYPE =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+const MAIN_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+
+/** 最小 DOCX：包关系指向实际可读的主文档。 */
 export const MINI_DOCX = storedZipOf([
-  { name: "[Content_Types].xml", data: Buffer.from("<Types/>", "utf8") },
-  { name: "_rels/.rels", data: Buffer.from("<Relationships/>", "utf8") },
-  { name: "word/document.xml", data: Buffer.from("<w:document/>", "utf8") },
+  {
+    name: "[Content_Types].xml",
+    data: Buffer.from(
+      `<Types xmlns="${TYPES_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="${MAIN_TYPE}"/></Types>`,
+    ),
+  },
+  {
+    name: "_rels/.rels",
+    data: Buffer.from(
+      `<Relationships xmlns="${RELS_NS}"><Relationship Id="rId1" Type="${REL_TYPE}" Target="word/document.xml"/></Relationships>`,
+    ),
+  },
+  {
+    name: "word/document.xml",
+    data: Buffer.from(
+      `<w:document xmlns:w="${WORD_NS}"><w:body><w:p/></w:body></w:document>`,
+    ),
+  },
 ]);
 
 describe("资料附件：格式识别（只认内容）", () => {
   it("PDF 文件头 / docx = ZIP 中央目录含 word/document.xml 与 [Content_Types].xml；其余 null", () => {
     expect(detectAttachmentFormat(MINI_PDF)).toBe("pdf");
     expect(detectAttachmentFormat(MINI_DOCX)).toBe("docx");
+    expect(
+      detectAttachmentFormat(
+        storedZipOf([
+          { name: "[Content_Types].xml", data: Buffer.from("<Types/>") },
+          { name: "_rels/.rels", data: Buffer.from("<Relationships/>") },
+          { name: "word/document.xml", data: Buffer.from("<w:document/>") },
+        ]),
+      ),
+    ).toBeNull();
     // 普通 zip（xlsx 结构）不是 docx
     expect(
       detectAttachmentFormat(

@@ -5,7 +5,11 @@ import type {
   MemoListData,
   MemoListQuery,
 } from "@tutor/contract";
-import { apiResponseSchema, memoSchema } from "@tutor/contract";
+import {
+  apiResponseSchema,
+  MEMO_OUTBOX_ACCOUNT_HEADER,
+  memoSchema,
+} from "@tutor/contract";
 import { ApiError, api, callApi } from "@/lib/api";
 
 /**
@@ -28,8 +32,16 @@ export function listMemosApi(query: MemoListQuery = {}): Promise<MemoListData> {
   return callApi(() => api.api.student.memos.$get(args));
 }
 
-export function createTextMemoApi(input: MemoCreateText): Promise<Memo> {
-  return callApi(() => api.api.student.memos.$post({ json: input }));
+export function createTextMemoApi(
+  input: MemoCreateText,
+  account: string,
+): Promise<Memo> {
+  return callApi(() =>
+    api.api.student.memos.$post(
+      { json: input },
+      { headers: { [MEMO_OUTBOX_ACCOUNT_HEADER]: account } },
+    ),
+  );
 }
 
 export function deleteMemoApi(id: string): Promise<{ id: string }> {
@@ -75,6 +87,7 @@ function parseMemoResponse(status: number, text: string): Memo {
 export function uploadMemoMediaApi(
   blob: Blob,
   fields: MemoCreateMedia,
+  account: string,
   options: UploadMemoMediaOptions = {},
 ): Promise<Memo> {
   return new Promise<Memo>((resolve, reject) => {
@@ -100,6 +113,7 @@ export function uploadMemoMediaApi(
     }
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/student/memos/media");
+    xhr.setRequestHeader(MEMO_OUTBOX_ACCOUNT_HEADER, account);
     xhr.responseType = "text";
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
