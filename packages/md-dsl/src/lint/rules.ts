@@ -269,6 +269,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
   },
   // ---------- 规则层（src/lint/）：指令、题型语义、围栏 ----------
   {
+    code: "MISPLACED_CONTAINER_FENCE",
+    level: "error",
+    description:
+      "容器结束围栏被解析成列表正文或表格行，无法闭合容器。请将围栏移出列表或表格，保留冒号数量并单独占一行",
+  },
+  {
     code: "UNCLOSED_CONTAINER",
     level: "error",
     description:

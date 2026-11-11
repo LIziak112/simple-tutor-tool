@@ -10,6 +10,11 @@ import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+import {
+  CORRECTED_FENCE_LECTURE,
+  MISPLACED_FENCE_LECTURE,
+  MISPLACED_FENCE_POSITIONS,
+} from "../../../../test-support/misplaced-fence-lecture.ts";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import {
@@ -203,6 +208,57 @@ describe("POST /api/teacher/import/preview", () => {
 });
 
 describe("POST /api/teacher/import/commit", () => {
+  it("9.27 讲义：预览定位误吞围栏，提交拒绝且不写入，修正后可导入", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const input = {
+      filename: "9.27 数学重点专题精讲.md",
+      markdown: MISPLACED_FENCE_LECTURE,
+    };
+    const expected = MISPLACED_FENCE_POSITIONS.map((position) => ({
+      ...position,
+      code: "MISPLACED_CONTAINER_FENCE",
+      level: "error",
+    }));
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      input,
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const { data } = importPreviewOkSchema.parse(await preview.json());
+    expect
+      .soft(data.issues.filter((issue) => issue.level === "error"))
+      .toMatchObject(expected);
+
+    const rejected = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      input,
+      cookie,
+    );
+    expect(rejected.status).toBe(422);
+    const error = importLintErrorBodySchema.parse(await rejected.json());
+    expect(error.error).toBe("LINT_ERROR");
+    expect(error._issues).toMatchObject(expected);
+    expect(db.select().from(lectures).all()).toHaveLength(0);
+    expect(db.select().from(imports).all()).toHaveLength(0);
+
+    const accepted = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { ...input, markdown: CORRECTED_FENCE_LECTURE },
+      cookie,
+    );
+    expect(accepted.status).toBe(200);
+    const stored = db.select().from(lectures).all();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.markdown).toBe(
+      CORRECTED_FENCE_LECTURE.split("\n").slice(4).join("\n").trimEnd(),
+    );
+    expect(db.select().from(imports).all()).toHaveLength(1);
+  });
+
   it("v2 练习导入 200 符合契约；再导入同文件返回 updated=8 且库中 version 全 2、id 不变（验收 1）", async () => {
     const { app, db, cookie } = await makeTeacherApp();
     const first = await postJson(

@@ -16,7 +16,10 @@ import {
 } from "./blank-marker.ts";
 import { lintCapabilityProfile } from "./capability.ts";
 import { lintDirectives } from "./directives.ts";
-import { lintUnclosedContainers } from "./fences.ts";
+import {
+  lintMisplacedContainerFences,
+  lintUnclosedContainers,
+} from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
 import { lintMathSpacingOutside } from "./math-text.ts";
 import { lintPracticeRecommendation } from "./practice.ts";
@@ -77,6 +80,7 @@ function runRules(
     const kind: DocumentKind = parsed.frontmatter?.kind ?? "practice";
     return [
       ...lintUnclosedContainers(lines),
+      ...lintMisplacedContainerFences(tree, lines),
       ...lintDirectives(tree, kind),
       ...lintQuestions(tree, lines, parsed, options),
       ...lintMathDelimiters(tree),
