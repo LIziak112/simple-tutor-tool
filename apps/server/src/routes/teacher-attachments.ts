@@ -8,18 +8,29 @@ import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody, parseJsonValue } from "../lib/http-error";
 import {
+  formDataToRecord,
+  MULTIPART_REQUIRED_MESSAGE,
+  parseMultipartCapped,
+} from "../lib/multipart-capped";
+import { wellFormedFileName } from "../services/attachment-format";
+import {
   type AttachmentFile,
-  createAttachment,
   deleteAttachment,
   listTeacherAttachments,
   readTeacherAttachmentFile,
   updateAttachment,
 } from "../services/attachment-service";
+import {
+  ATTACHMENT_UPLOAD_CAP,
+  createAttachment,
+} from "../services/attachment-upload";
 
 /**
  * 资料附件教师侧路由（模块 6 第一步），由 teacher.ts 挂在 /api/teacher 之下：
  * - POST /attachments：multipart/form-data，字段 file（原件）+ 可选 courseId /
- *   visibility 文本字段；格式按内容识别（415）、20 MB 上限（413，粗防线在 app.ts）；
+ *   visibility / uploadId 文本字段；格式按内容识别（415）、20 MB 上限（413：
+ *   content-length 预检在 app.ts，流式计数在本路由，实际字节在服务层）；
+ *   uploadId 幂等：新建 201、同键重放 200（#103-04）；
  * - GET /attachments?courseId=：本教师的资料（可按课程过滤）；
  * - PATCH /attachments/:id：改可见性 / 改展示名；
  * - DELETE /attachments/:id：软删；
@@ -30,33 +41,39 @@ import {
 export function createTeacherAttachmentRoutes(db: Db, dataDir: string) {
   return new Hono<TeacherEnv>()
     .post("/attachments", async (c) => {
-      const body = await c.req.parseBody();
+      const body = formDataToRecord(
+        await parseMultipartCapped(c, ATTACHMENT_UPLOAD_CAP),
+      );
       const file = body.file;
       if (!(file instanceof File)) {
         throw new HttpError(
           400,
           "VALIDATION_ERROR",
-          "请求需为 multipart/form-data，且包含名为 file 的文件字段",
+          MULTIPART_REQUIRED_MESSAGE,
         );
       }
+      // 文本字段：空串当缺省（表单里没填 = 不传）
+      const text = (key: "courseId" | "visibility" | "uploadId") => {
+        const value = body[key];
+        return typeof value === "string" && value !== ""
+          ? { [key]: value }
+          : {};
+      };
       const fields = parseJsonValue(
-        {
-          ...(typeof body.courseId === "string" && body.courseId !== ""
-            ? { courseId: body.courseId }
-            : {}),
-          ...(typeof body.visibility === "string" && body.visibility !== ""
-            ? { visibility: body.visibility }
-            : {}),
-        },
+        { ...text("courseId"), ...text("visibility"), ...text("uploadId") },
         attachmentUploadFieldsSchema,
       );
-      const data = createAttachment(db, dataDir, {
+      const result = createAttachment(db, dataDir, {
         teacherId: c.var.teacher.id,
         ...fields,
         fileName: file.name,
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
-      return c.json({ ok: true, data }, 201);
+      // 新建 201；命中 uploadId 幂等键 200（同一响应形状，前端不区分）
+      return c.json(
+        { ok: true, data: result.attachment },
+        result.created ? 201 : 200,
+      );
     })
     .get("/attachments", (c) => {
       const query = parseJsonValue(
@@ -104,15 +121,18 @@ export function createTeacherAttachmentRoutes(db: Db, dataDir: string) {
 /**
  * 原件直出响应（教师 / 学生两侧共用）：Content-Disposition 同时给 ASCII 回退名与
  * RFC 5987 的 filename*（中文名）；nosniff + private no-store。
+ * 文件名先过 wellFormedFileName：孤立代理项会让 encodeURIComponent 抛 URIError，
+ * 不能因为一个名字让已保存的文件下载不了（#103-03）。
  */
 export function attachmentFileResponse(file: AttachmentFile): Response {
-  const ascii = file.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+  const fileName = wellFormedFileName(file.fileName);
+  const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
   return new Response(file.bytes, {
     status: 200,
     headers: {
       "Content-Type": file.contentType,
       "Content-Length": String(file.bytes.byteLength),
-      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, no-store",
     },

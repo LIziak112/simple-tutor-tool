@@ -12,7 +12,7 @@ import {
   memoSchema,
   memoTagsSchema,
 } from "@tutor/contract";
-import { and, desc, eq, gte, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memos } from "../db/schema";
 import { readFileBytes } from "../lib/blob-io";
@@ -72,7 +72,11 @@ function parseCursor(
   return { recordedAt: cursor.slice(0, at), id: cursor.slice(at + 1) };
 }
 
-/** 本人随笔：记录时间倒序、游标分页；可按形态 / 标签 / 锚 / 起始时间过滤 */
+/**
+ * 本人随笔：记录时间倒序、游标分页；可按形态 / 标签 / 锚 / 起始时间过滤。
+ * 标签存在 JSON 数组列里，过滤用 json_each 下沉到 SQL（曾「先取最近若干条再内存
+ * 过滤」——稀疏标签的旧随笔会永远翻不到，#104-06），hasMore 统一按 limit + 1 判。
+ */
 export function listMemos(
   db: Db,
   studentId: string,
@@ -88,6 +92,9 @@ export function listMemos(
         eq(memos.studentId, studentId),
         isNull(memos.deletedAt),
         query.kind === undefined ? undefined : eq(memos.kind, query.kind),
+        query.tag === undefined
+          ? undefined
+          : sql`exists (select 1 from json_each(${memos.tagsJson}) where json_each.value = ${query.tag})`,
         query.attemptId === undefined
           ? undefined
           : eq(memos.anchorAttemptId, query.attemptId),
@@ -109,19 +116,10 @@ export function listMemos(
       ),
     )
     .orderBy(desc(memos.recordedAt), desc(memos.id))
-    // 标签在 JSON 列里：多取一些在内存里过滤，再按 limit 截断
-    .limit(query.tag === undefined ? limit + 1 : (limit + 1) * 4)
+    .limit(limit + 1)
     .all();
-  const tag = query.tag;
-  const filtered =
-    tag === undefined
-      ? rows
-      : rows.filter((row) =>
-          (JSON.parse(row.tagsJson) as string[]).includes(tag),
-        );
-  const page = filtered.slice(0, limit);
-  const hasMore =
-    tag === undefined ? rows.length > limit : filtered.length > limit;
+  const page = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
   const last = page[page.length - 1];
   return {
     memos: page.map(toMemo),

@@ -1,4 +1,10 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 /**
  * 资料附件表（2026-11-10，个人学习迭代模块 6 第一步：PDF / docx 原件上传下载）。
@@ -38,9 +44,19 @@ export const attachments = sqliteTable(
     updatedAt: text("updated_at").notNull(),
     /** 软删时间：UTC ISO 字符串；未删除为 NULL */
     deletedAt: text("deleted_at"),
+    /**
+     * 客户端上传幂等键（#103-04，0059 起）：(teacher_id, upload_id) 唯一，同键重放
+     * 返回既有行；NULL = 未带键的上传（历史行 / 不要求幂等的调用），SQLite 唯一索引
+     * 允许多个 NULL。
+     */
+    uploadId: text("upload_id"),
   },
   (table) => [
     index("attachments_teacher_idx").on(table.teacherId, table.deletedAt),
     index("attachments_course_idx").on(table.courseId, table.deletedAt),
+    uniqueIndex("attachments_teacher_upload_uk").on(
+      table.teacherId,
+      table.uploadId,
+    ),
   ],
 );

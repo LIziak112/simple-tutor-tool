@@ -1,4 +1,4 @@
-import type { MemoAnchor } from "@tutor/contract";
+import type { MemoAnchor, MemoKind } from "@tutor/contract";
 import {
   formatMemoDuration,
   MEMO_ANCHOR_NONE,
@@ -25,10 +25,17 @@ import {
   memoAnchorLabel,
   splitMemoTagInput,
 } from "./memo-format";
-import { enqueueMemo } from "./memo-outbox";
+import { enqueueMemo, type MemoOutboxInput } from "./memo-outbox";
 import { useVoiceRecorder, type VoiceRecording } from "./use-voice-recorder";
 
 const MemoInkSheet = lazy(() => import("./MemoInkSheet"));
+
+/** 入队失败提示里指代媒体内容的词（text 走输入框恢复，不在此列） */
+const MEDIA_KIND_LABEL: Record<Exclude<MemoKind, "text">, string> = {
+  voice: "这段录音",
+  image: "这张图片",
+  ink: "这页手写",
+};
 
 /**
  * 随笔记录端（模块 5 第一步）：一个输入框 + 三个媒体入口（语音 / 图片 / 手写）。
@@ -53,8 +60,26 @@ export function MemoComposer({
   const [text, setText] = useState("");
   const [tagsRaw, setTagsRaw] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  /** 入队失败（本机写不进且传不上去）：红字提示，语音 / 图片 / 手写同样可见 */
+  const [error, setError] = useState<string | null>(null);
+  /**
+   * 媒体随笔入队失败时留住整条（含 Blob）给「重新保存」：录音 / 图片 / 手写没有输入框
+   * 可以放回去，不留就等于丢掉本人刚产出的内容。复用同一 clientId，服务端已落库只是
+   * 响应丢失的情况下重发不会成两条。
+   */
+  const [failedMedia, setFailedMedia] = useState<
+    readonly {
+      readonly input: MemoOutboxInput;
+      readonly message: string;
+    }[]
+  >([]);
+  const failedText = useRef<{
+    readonly payload: string;
+    readonly input: MemoOutboxInput;
+  } | null>(null);
   const [inkOpen, setInkOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 浮层打开即落焦到输入框（对话框首个可聚焦元素是「去掉锚」小按钮，不是想要的）
@@ -67,22 +92,63 @@ export function MemoComposer({
   const tooManyTags = splitMemoTagInput(tagsRaw).length > MEMO_TAGS_MAX;
 
   async function queue(
-    input: Parameters<typeof enqueueMemo>[0],
+    raw: MemoOutboxInput,
+    retryMedia = false,
   ): Promise<void> {
-    // 先清空输入再落本机：点「保存」立刻有反馈；本机写失败再把原文放回来
-    const previous = { text, tagsRaw };
+    if (saving.current) return;
+    const payload = JSON.stringify(raw);
+    const retryText =
+      raw.kind === "text" && failedText.current?.payload === payload
+        ? failedText.current.input
+        : undefined;
+    const input: MemoOutboxInput = retryText ?? {
+      ...raw,
+      clientId: raw.clientId ?? crypto.randomUUID(),
+      recordedAt: raw.recordedAt ?? new Date().toISOString(),
+    };
+    const remaining = failedMedia.filter(
+      (entry) => entry.input.clientId !== input.clientId,
+    );
+    saving.current = true;
     setBusy(true);
-    setText("");
-    setTagsRaw("");
     setNotice(null);
+    setError(null);
     try {
       await enqueueMemo(input);
-      onQueued?.();
-    } catch {
-      setText(previous.text);
-      setTagsRaw(previous.tagsRaw);
-      setNotice("本机保存失败，请重试");
+      if (input.kind === "text") failedText.current = null;
+      if (retryMedia) {
+        setFailedMedia(remaining);
+      } else {
+        setText("");
+        setTagsRaw("");
+      }
+      if (
+        remaining.length === 0 &&
+        (!retryMedia || (text === "" && tagsRaw === ""))
+      ) {
+        onQueued?.();
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "本机保存失败，请重试";
+      if (input.kind === "text") {
+        failedText.current = { input, payload };
+        setError(message);
+      } else {
+        if (!retryMedia) {
+          setText("");
+          setTagsRaw("");
+        }
+        setFailedMedia([
+          ...remaining,
+          {
+            input,
+            message: `${message}；${MEDIA_KIND_LABEL[input.kind]}还在本页，可点「重新保存」再试`,
+          },
+        ]);
+      }
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   }
@@ -170,6 +236,7 @@ export function MemoComposer({
       </label>
       <textarea
         id={textId}
+        disabled={busy}
         value={text}
         onChange={(event) =>
           setText(event.target.value.slice(0, MEMO_TEXT_MAX))
@@ -191,6 +258,7 @@ export function MemoComposer({
         </label>
         <input
           id={tagsId}
+          disabled={busy}
           value={tagsRaw}
           onChange={(event) => setTagsRaw(event.target.value)}
           placeholder="标签（逗号分隔，如 易错, 疑问, 待办）"
@@ -279,6 +347,29 @@ export function MemoComposer({
           {recorderState.message}
         </p>
       )}
+      {error !== null && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {failedMedia.map(({ input, message }) => (
+        <div
+          key={input.clientId}
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-sm text-destructive"
+        >
+          <span>{message}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || recording}
+            onClick={() => void queue(input, true)}
+          >
+            重新保存
+          </Button>
+        </div>
+      ))}
       {notice !== null && (
         <p role="status" className="text-sm text-muted-foreground">
           {notice}

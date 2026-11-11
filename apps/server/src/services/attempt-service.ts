@@ -113,6 +113,7 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
   assertAttemptNotTimedOut,
   assertSavedAnswersConfirmed,
@@ -4194,26 +4195,11 @@ function buildResultData(
    * stemMd 一律经 studentFacingResultOf 学生端投影（已公布也不例外）：[[答案]]
    * 渲染为空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下
    * 都不含 [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd
-   * 唯一入口）。D9 字段 teacherMark / teacherComment / finalCorrect 与
-   * autoCorrect 同法置 null——教师已批也不在截止前泄露对错与评语。
-   * QM-11：selfReview / gradingPolicy 同法置 null——未公布形态无自评入口，
-   * 行策略与自评状态不下发（与 §5.5.3 pending_release「不显示答案、无自评
-   * 入口」同一读侧口径） */
+   * 唯一入口）。未公布形态置 null 的字段清单见 restrictedResultQuestionOf
+   * （答案 / 判定 / 自评 / 量表记录，与 §5.5.3 pending_release 同一读侧口径） */
   const releaseAwareQuestion = (item: AttemptResultQuestion) => {
     const projected = studentFacingResultOf(item);
-    return released
-      ? projected
-      : {
-          ...projected,
-          answers: null,
-          solutionMd: null,
-          autoCorrect: null,
-          teacherMark: null,
-          teacherComment: null,
-          finalCorrect: null,
-          selfReview: null,
-          gradingPolicy: null,
-        };
+    return released ? projected : restrictedResultQuestionOf(projected);
   };
 
   // 逐题条目与分组同批组装（groupedSnapshotRows；快照优先取预加载）；QM-13
@@ -4291,6 +4277,6 @@ function buildResultData(
     ...(workflowView !== null
       ? { practiceWorkflow: workflowView.practiceWorkflow }
       : {}),
-    ...attemptActivityProjection(db, attempt.id), // 题内活动用时 v1（无事件不带键）
+    ...attemptActivityProjection(db, attempt.id, attempt.submittedAt), // 题内活动用时 v1（无事件不带键；交卷时刻作截止锚点）
   };
 }

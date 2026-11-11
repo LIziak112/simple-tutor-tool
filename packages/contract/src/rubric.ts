@@ -173,3 +173,116 @@ export function rubricEffectiveOf(
 ): readonly RubricRating[] | null {
   return review.final?.ratings ?? review.self?.ratings ?? null;
 }
+
+/**
+ * 两份评定逐项相同（同一组 id、各项档位一致；evidence 不参与）。结果页据此判断
+ * 「保留我的 / 采纳 Agent」是否还有意义：裁定来源相同但档位已被新版自评 / 新
+ * 意见改变时仍可再裁一次（审查 #99-06）。
+ */
+export function rubricRatingsEqual(
+  a: readonly RubricRating[],
+  b: readonly RubricRating[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const levelsOfB = new Map(b.map((rating) => [rating.id, rating.level]));
+  return a.every((rating) => levelsOfB.get(rating.id) === rating.level);
+}
+
+// ---------- 页内通道的结构化意见块 ----------
+
+/**
+ * 页内（inapp）通道没有 MCP 工具可写回结构化意见：模型在回信末尾附一个
+ * ```rubric-opinion 围栏代码块（JSON：{ ratings: [{ id, level, evidence? }], note }），
+ * 服务端解析后落 Agent 记录，并把块替换成可读的量表意见段。MCP 通道仍走
+ * submit_rubric_opinion 工具，不用这个块。
+ */
+export const RUBRIC_OPINION_FENCE = "rubric-opinion";
+
+/** 只认独占一行的开栏 / 闭栏：正文里内联提到 ```rubric-opinion 不算块 */
+const RUBRIC_OPINION_BLOCK_RE = new RegExp(
+  `^[ \\t]*\`\`\`${RUBRIC_OPINION_FENCE}[^\\n]*\\n([\\s\\S]*?)\\n[ \\t]*\`\`\`[ \\t]*$`,
+  "gm",
+);
+
+/**
+ * 模型写的块按宽松口径解析（严格 schema 留给 API）：忽略未知键、档位允许写成
+ * 数字字符串、评语可缺省、超长依据 / 评语截断——这些是模型高频的小偏差，
+ * 不该让整条意见作废。
+ */
+const rubricOpinionModelBlockSchema = z.object({
+  ratings: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        level: z.coerce.number().int().min(1).max(RUBRIC_LEVEL_MAX),
+        evidence: z.string().optional(),
+      }),
+    )
+    .min(1),
+  note: z.string().optional(),
+});
+
+export type RubricOpinionBlockParse =
+  /** 回信里没有块 */
+  | { readonly kind: "none" }
+  /** 有块但 JSON 不合法 / 不符口径；rest 已去掉全部块 */
+  | {
+      readonly kind: "invalid";
+      readonly rest: string;
+      readonly problem: string;
+    }
+  | {
+      readonly kind: "ok";
+      readonly opinion: RubricOpinionInput;
+      /** 去掉全部块后的回信正文（两端空白已收） */
+      readonly rest: string;
+    };
+
+/**
+ * 解析回信 Markdown 里的 rubric-opinion 块：以最后一个为准（模型可能先草拟后
+ * 修正），正文去掉**全部**块——命中块就一定从正文剔除，不让学生看到原始 JSON。
+ * CRLF 先归一为 LF。
+ */
+export function rubricOpinionBlockOf(
+  markdown: string,
+): RubricOpinionBlockParse {
+  const normalized = markdown.replace(/\r\n?/g, "\n");
+  let last: RegExpExecArray | null = null;
+  for (const match of normalized.matchAll(RUBRIC_OPINION_BLOCK_RE)) {
+    last = match;
+  }
+  if (last === null) return { kind: "none" };
+  const rest = normalized
+    .replace(RUBRIC_OPINION_BLOCK_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last[1] ?? "");
+  } catch {
+    return { kind: "invalid", rest, problem: "代码块里不是合法的 JSON" };
+  }
+  const result = rubricOpinionModelBlockSchema.safeParse(parsed);
+  if (!result.success) {
+    return {
+      kind: "invalid",
+      rest,
+      problem: `JSON 缺少 ratings（含 id / level）或档位不在 1–${RUBRIC_LEVEL_MAX}`,
+    };
+  }
+  const opinion: RubricOpinionInput = {
+    ratings: result.data.ratings.map((rating) => ({
+      id: rating.id,
+      level: rating.level,
+      ...(rating.evidence !== undefined && rating.evidence.trim() !== ""
+        ? {
+            evidence: rating.evidence
+              .trim()
+              .slice(0, RUBRIC_EVIDENCE_MAX_CHARS),
+          }
+        : {}),
+    })),
+    note: (result.data.note ?? "").trim().slice(0, RUBRIC_NOTE_MAX_CHARS),
+  };
+  return { kind: "ok", opinion, rest };
+}

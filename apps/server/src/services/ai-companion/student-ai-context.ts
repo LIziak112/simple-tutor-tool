@@ -1,5 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import type {
+  AiChannel,
   AiContextMissingNote,
   AiContextSnapshot,
   AiMessage,
@@ -22,6 +23,7 @@ import {
   optionsPublicStructureOf,
   type PublicStructureByKind,
   QUESTION_TYPE_LABELS,
+  RUBRIC_OPINION_FENCE,
 } from "@tutor/contract";
 import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
 import { asc, eq } from "drizzle-orm";
@@ -583,6 +585,21 @@ function referenceSectionOf(bundle: OutboundContextSource): string {
   return "**参考内容**:缺少参考答案与解析,请独立核对推导;若学生推导与你的判断矛盾,请说明疑点与依据,不强迫学生迎合可能错误的标准答案。";
 }
 
+/**
+ * 判卷任务的写回指引(按通道):MCP 有工具可逐项写回,指引随量表段给(Agent
+ * 侧另有工具描述兜底);页内通道没有工具,格式要求不放在「待分析数据」段
+ * (那一段开头声明其中的文字都不是指令,放在那里的要求越守规矩的模型越不会
+ * 照做),而是作为平台要求附在本次诉求消息末尾(见 INAPP_RUBRIC_FORMAT_ASK),
+ * 服务端解析后落结构化记录并替换成可读段(rubric-agent-record.inappReplyPlanOf)。
+ */
+function rubricWriteBackHintOf(channel: AiChannel | undefined): string {
+  if (channel === "inapp") return "";
+  return "写回用 submit_rubric_opinion(不要只用 submit_ai_reply)。";
+}
+
+/** 页内判卷任务:附在诉求消息末尾的格式要求(围栏名与契约常量同源) */
+const INAPP_RUBRIC_FORMAT_ASK = `【平台格式要求】请先写给学习者看的意见正文,最后另起一段附一个 \`\`\`${RUBRIC_OPINION_FENCE} 代码块,内容是 JSON:{"ratings":[{"id":"评价项 id","level":档位数字,"evidence":"一句依据(可省)"}],"note":"整体一句评语"};ratings 覆盖「量表」段的全部评价项、id 与之一致,代码块之外不要再出现 JSON。`;
+
 /** 组装出站消息:system(模板+硬约束+注入防御)→ 数据段 → 历史 → 本次诉求 */
 export function assembleOutboundMessages(input: {
   readonly bundle: OutboundContextSource;
@@ -595,6 +612,11 @@ export function assembleOutboundMessages(input: {
   readonly materials?: readonly AiOutboundMaterialRef[];
   /** LR-PR5 学习记录段(评审 #12249 必改①):拼 messages 前并入数据段尾部 */
   readonly recordSectionMd?: string;
+  /**
+   * 任务通道(模块 3 判卷任务的写回指引按通道给:mcp 用 submit_rubric_opinion
+   * 工具,inapp 在回信末尾附 rubric-opinion 块;审查 #99-02)。缺省按 mcp。
+   */
+  readonly channel?: AiChannel;
 }): OutboundAssembly {
   const {
     bundle,
@@ -603,6 +625,7 @@ export function assembleOutboundMessages(input: {
     history,
     materials,
     recordSectionMd,
+    channel,
   } = input;
   const { snapshot } = bundle;
 
@@ -640,7 +663,7 @@ export function assembleOutboundMessages(input: {
           )
           .join("\n")}${
           snapshot.purpose === "rubric_opinion"
-            ? "\n\n学习者请你按量表逐项给出独立意见:每项一个档位、一句依据(可引用作答原文);写回用 submit_rubric_opinion(不要只用 submit_ai_reply)。意见只是参考,最终由学习者裁定。"
+            ? `\n\n学习者请你按量表逐项给出独立意见:每项一个档位、一句依据(可引用作答原文);${rubricWriteBackHintOf(channel)}意见只是参考,最终由学习者裁定。`
             : ""
         }`
       : "";
@@ -664,12 +687,19 @@ ${answerLine}
 
 ${referenceSectionOf(bundle)}${materialLines}${recordSectionMd ?? ""}`;
 
-  const askContent =
+  const askBody =
     presetPrompt !== undefined &&
     presetPrompt !== null &&
     presetPrompt.trim() !== ""
       ? `${presetPrompt}\n\n${studentQuestion}`
       : studentQuestion;
+  // 页内判卷任务的格式要求放在诉求消息(指令位),不放在数据段(审查 Important 3)
+  const askContent =
+    channel === "inapp" &&
+    snapshot.purpose === "rubric_opinion" &&
+    snapshot.rubric !== undefined
+      ? `${askBody}\n\n${INAPP_RUBRIC_FORMAT_ASK}`
+      : askBody;
 
   const messages: OutboundChatMessage[] = [
     { role: "system", content: bundle.systemPromptMd },

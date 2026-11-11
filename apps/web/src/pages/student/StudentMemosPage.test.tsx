@@ -225,6 +225,25 @@ describe("StudentMemosPage", () => {
     expect(screen.getByText("待补传（联网后自动）")).toBeInTheDocument();
   });
 
+  it("本机保存失败且传不上去：输入恢复、给出错误说明（#104-02）", async () => {
+    const broken = memoryKVBackend();
+    broken.set = async () => {
+      throw new Error("QuotaExceededError");
+    };
+    installMemoOutboxBackendForTest(broken);
+    await bindMemoOutboxAccount("stu-test");
+    mockedCreate.mockRejectedValue(new MemoNetworkError());
+    renderPage();
+    await screen.findByText("基期现期别搞反");
+    fireEvent.change(screen.getByLabelText("随笔内容"), {
+      target: { value: "没存下来的一条" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("本机保存失败");
+    expect(screen.getByLabelText("随笔内容")).toHaveValue("没存下来的一条");
+    expect(screen.queryByRole("article", { name: "待补传的随笔" })).toBeNull();
+  });
+
   it("空文本保存给提示；删除调接口；形态筛选写入 URL 并带进列表查询", async () => {
     mockedDelete.mockResolvedValue({ id: "m-text" });
     renderPage();

@@ -20,6 +20,12 @@ import {
   questionNotFound,
   requireUsableAttempt,
 } from "./attempt-service";
+import {
+  rubricAgentRecordOf,
+  rubricOpinionMarkdownOf,
+  rubricOpinionTargetOf,
+  writeRubricAgentRecord,
+} from "./rubric-agent-record";
 import { rubricReviewOf } from "./rubric-review-read";
 import { snapshotOfRow } from "./snapshot";
 
@@ -27,7 +33,7 @@ import { snapshotOfRow } from "./snapshot";
  * 通用量表判卷（模块 3）写侧：自评 / 本人裁定 / Agent 意见三份记录互不覆盖
  * （「意见和结果分开」）。校验链与自评同款：本人卷 + 未作废 + 已提交且公布 +
  * 题有量表；量表分不写 teacherMark / finalCorrect，也不推动 graded（D7 同纪律）。
- * 读侧见 rubric-review-read.ts。
+ * 读侧见 rubric-review-read.ts；Agent 记录的门禁与落账见 rubric-agent-record.ts。
  */
 
 // ---------- 写：共用校验链 ----------
@@ -188,28 +194,12 @@ export interface SubmitRubricOpinionInput {
   readonly expectedRuntimeEpoch?: string;
 }
 
-/** 意见 → 回信 Markdown（伴学栏照常可读；结构化记录另存量表列） */
-export function rubricOpinionMarkdownOf(
-  rubric: Rubric,
-  opinion: RubricOpinionInput,
-): string {
-  const lines = ["**量表意见**", ""];
-  for (const item of rubric.items) {
-    const rating = opinion.ratings.find((r) => r.id === item.id);
-    if (rating === undefined) continue;
-    const evidence = rating.evidence ? `——${rating.evidence}` : "";
-    lines.push(
-      `- ${item.title}：${rating.level} / ${rubric.levels}${evidence}`,
-    );
-  }
-  lines.push("", opinion.note);
-  return lines.join("\n");
-}
-
 /**
- * Agent 经 MCP 写回量表意见：先校验量表与档位（不动库），再沿 submitMcpReply
- * 走任务归属 / 租约 / contextVersion / 幂等（回信入伴学栏，状态 replied），
- * 最后把结构化意见落到 rubric_agent_json（首份为准，重放不覆盖）。
+ * Agent 经 MCP 写回量表意见：先过三道门（任务目的 = 量表判卷、题有量表、
+ * 卷可用且已公布，见 rubricOpinionTargetOf）并校验档位（不动库），再沿
+ * submitMcpReply 走任务归属 / 租约 / contextVersion / 幂等（回信入伴学栏，
+ * 状态 replied）；结构化意见在同一事务里落 rubric_agent_json（首份为准，
+ * 重放不覆盖；审查 #99-03 / #99-04）。
  */
 export function submitRubricOpinion(
   db: Db,
@@ -224,20 +214,14 @@ export function submitRubricOpinion(
   if (task === undefined || task.studentId !== input.studentId) {
     throw new HttpError(404, "NOT_FOUND", "AI 任务不存在");
   }
-  const row = db
-    .select()
-    .from(responses)
-    .where(buildAttemptQuestionWhere(task.attemptId, task.questionId))
-    .get();
-  const rubric = row === undefined ? undefined : snapshotOfRow(row)?.rubric;
-  if (row === undefined || rubric === undefined) {
-    throw new HttpError(
-      409,
-      "RUBRIC_NOT_AVAILABLE",
-      "这道题没有量表，请用 submit_ai_reply 回信",
-    );
+  const now = options.now ?? new Date();
+  const target = rubricOpinionTargetOf(db, task, now);
+  if (!target.ok) {
+    throw new HttpError(409, "RUBRIC_NOT_AVAILABLE", target.message);
   }
+  const { row, rubric } = target;
   assertRatings(rubric, input.opinion.ratings);
+  const record = rubricAgentRecordOf(input.opinion, task.id, now);
   const result = submitMcpReply(
     db,
     {
@@ -251,21 +235,13 @@ export function submitRubricOpinion(
       ...(input.expectedRuntimeEpoch !== undefined
         ? { expectedRuntimeEpoch: input.expectedRuntimeEpoch }
         : {}),
+      onReplied: (tx) => writeRubricAgentRecord(tx, row.id, record),
     },
     options,
   );
-  if (!result.duplicate || row.rubricAgentJson === null) {
-    const record: RubricAssessment = {
-      source: "agent",
-      ratings: input.opinion.ratings,
-      note: input.opinion.note,
-      at: new Date(options.now ?? new Date()).toISOString(),
-      taskId: task.id,
-    };
-    db.update(responses)
-      .set({ rubricAgentJson: JSON.stringify(record) })
-      .where(eq(responses.id, row.id))
-      .run();
+  // 重放且记录缺失（只可能是钩子落地前写回的旧任务）：补写，口径与首写相同
+  if (result.duplicate && row.rubricAgentJson === null) {
+    writeRubricAgentRecord(db, row.id, record);
   }
   const review = rubricReviewOf(db, freshRowOf(db, row.id), { rubric });
   if (review === null) throw questionNotFound();

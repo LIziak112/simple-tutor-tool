@@ -6,15 +6,18 @@ import type {
 } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { ModuleResultTable } from "./ModuleResultTable";
-import { moduleResultStatsOf } from "./module-result-model";
+import { isRetrainable, moduleResultStatsOf } from "./module-result-model";
 
-/** 结果题夹具：客观题，finalCorrect / answered / studentFlag 可控 */
+/** 结果题夹具：客观题，finalCorrect / answered / studentFlag 等判定面可控 */
 const questionOf = (
   questionId: string,
   overrides: Partial<{
     finalCorrect: boolean | null;
     answered: boolean;
     studentFlag: "unsure" | null;
+    teacherMark: AttemptResultQuestion["teacherMark"];
+    gradingPolicy: AttemptResultQuestion["gradingPolicy"];
+    selfReview: AttemptResultQuestion["selfReview"];
   }> = {},
 ): AttemptResultQuestion =>
   ({
@@ -31,13 +34,13 @@ const questionOf = (
     solutionMd: null,
     answer: null,
     autoCorrect: null,
-    teacherMark: null,
+    teacherMark: overrides.teacherMark ?? null,
     teacherComment: null,
     finalCorrect: overrides.finalCorrect ?? null,
     answered: overrides.answered ?? true,
     studentFlag: overrides.studentFlag ?? null,
-    gradingPolicy: "auto",
-    selfReview: null,
+    gradingPolicy: overrides.gradingPolicy ?? "auto",
+    selfReview: overrides.selfReview ?? null,
     hintsOpened: [],
   }) as unknown as AttemptResultQuestion;
 
@@ -56,8 +59,18 @@ const UNIT_B: AttemptResultUnit = {
   id: "u-b",
   title: "资料分析",
   questions: [
-    questionOf("b1", { finalCorrect: null }),
+    // 标了不会但仍待判：服务端错题本只取已判定轮，这里不能先算进重练
+    questionOf("b1", { finalCorrect: null, studentFlag: "unsure" }),
     questionOf("b2", { finalCorrect: false }),
+  ],
+};
+/** 整卷有事件、但本模块任何题都没有 byQuestion 条目（#101-01） */
+const UNIT_C: AttemptResultUnit = {
+  id: "u-c",
+  title: "判断推理",
+  questions: [
+    questionOf("c1", { finalCorrect: true }),
+    questionOf("c2", { finalCorrect: true }),
   ],
 };
 const ACTIVITY: AttemptActivity = {
@@ -71,6 +84,7 @@ const ACTIVITY: AttemptActivity = {
   observedSecTotal: 10,
   unattributedSec: 0,
   sessions: 1,
+  concurrentSessionsMax: 1,
 };
 
 describe("按模块看结果：模型", () => {
@@ -106,6 +120,89 @@ describe("按模块看结果：模型", () => {
       timeQuotaMinutes: null,
       wrongQuestionIds: [],
     });
+  });
+
+  it("#101-01 整卷有事件但本模块无任何题命中：用时 null（与逐题徽标「无可用记录」同口径），不是 0 秒", () => {
+    const stats = moduleResultStatsOf(UNIT_C, true, ACTIVITY);
+    expect(stats.activeSec).toBeNull();
+    expect(stats.observedSec).toBe(0);
+    // 部分题命中仍按命中题求和（b1 无条目、b2 2000s）
+    expect(moduleResultStatsOf(UNIT_B, true, ACTIVITY).activeSec).toBe(2000);
+  });
+
+  it("#101-02 已公布：标了不会但待判的题不进专项重练（服务端只从已判定轮组卷）", () => {
+    const stats = moduleResultStatsOf(UNIT_B, true, ACTIVITY);
+    expect(stats).toMatchObject({ wrong: 1, pending: 1, unsureCorrect: 0 });
+    expect(stats.wrongQuestionIds).toEqual(["b2"]);
+  });
+});
+
+describe("isRetrainable：与服务端错题本「已判定轮」谓词同口径（#101-02）", () => {
+  const SELF_REVIEW_CORRECT = {
+    record: {
+      verdict: "correct" as const,
+      at: "2026-11-09T10:00:00.000Z",
+      revision: 1,
+    },
+    revision: 1,
+  };
+
+  it("标了不会但仍待判（finalCorrect 空且无自评记录）→ 不计", () => {
+    expect(isRetrainable(questionOf("q", { studentFlag: "unsure" }))).toBe(
+      false,
+    );
+    // 主观题空提交自动标「不会」、等老师判
+    expect(
+      isRetrainable(
+        questionOf("q", {
+          studentFlag: "unsure",
+          gradingPolicy: "manual_only",
+        }),
+      ),
+    ).toBe(false);
+    // 自评题还没自评（record=null）
+    expect(
+      isRetrainable(
+        questionOf("q", {
+          studentFlag: "unsure",
+          gradingPolicy: "reference_self",
+          selfReview: { record: null, revision: 0 },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("标了不会且已判（判对 / 自评对）→ 计", () => {
+    expect(
+      isRetrainable(
+        questionOf("q", { studentFlag: "unsure", finalCorrect: true }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetrainable(
+        questionOf("q", {
+          studentFlag: "unsure",
+          gradingPolicy: "reference_self",
+          selfReview: SELF_REVIEW_CORRECT,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("判错且已作答 → 计；判错未做且无显式判定 → 不计；教师判错的未做题 → 计", () => {
+    expect(isRetrainable(questionOf("q", { finalCorrect: false }))).toBe(true);
+    expect(
+      isRetrainable(questionOf("q", { finalCorrect: false, answered: false })),
+    ).toBe(false);
+    expect(
+      isRetrainable(
+        questionOf("q", {
+          finalCorrect: false,
+          answered: false,
+          teacherMark: "wrong",
+        }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -153,6 +250,26 @@ describe("按模块看结果：表格与窄屏卡片", () => {
       "活动用时 1 分 30 秒 · 参考配额 30 分钟",
     );
     anchor.remove();
+  });
+
+  it("#101-01 整卷有事件、模块无记录：该行与卡片显示「无可用记录」而不是 0 秒", () => {
+    render(
+      <ModuleResultTable
+        units={[UNIT_A, UNIT_C]}
+        released
+        activity={ACTIVITY}
+      />,
+    );
+    const section = screen.getByTestId("module-results");
+    const rowC = within(within(section).getByRole("table"))
+      .getByText("判断推理")
+      .closest("tr");
+    expect(rowC?.textContent).toContain("无可用记录");
+    expect(rowC?.textContent).not.toContain("0 秒");
+    const cardC = within(screen.getByTestId("module-results-cards"))
+      .getByText("判断推理")
+      .closest("li");
+    expect(cardC?.textContent).toContain("活动用时 无可用记录");
   });
 
   it("未公布：无答对列与重练按钮，模块名不是按钮（单模块）", () => {
