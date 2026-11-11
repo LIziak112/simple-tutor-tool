@@ -1363,7 +1363,7 @@ export function lessonSourceContextOf(
   };
 }
 
-function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
+export function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   if (attempt.sourceType === "wrong") {
     // 错题重练（2026-10）：标题固定「错题重练」，无课程/截止
     //（「错题重练 · 第 n 次」的来源行由前端从 attemptNo 拼）

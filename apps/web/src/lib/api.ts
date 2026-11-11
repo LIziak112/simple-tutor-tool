@@ -215,6 +215,7 @@ import {
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
+import { readAttemptDetail } from "./attempt-detail-read";
 
 /**
  * Hono RPC 类型客户端：路由类型来自 apps/server 的 AppType，端到端类型安全。
@@ -272,7 +273,10 @@ export class ApiError extends Error {
  * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
  * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
  */
-export async function callApi<T>(fn: () => Promise<Response>): Promise<T> {
+export async function callApi<T>(
+  fn: () => Promise<Response>,
+  reuse?: (response: Response) => T | undefined,
+): Promise<T> {
   let res: Response;
   try {
     res = await fn();
@@ -285,6 +289,8 @@ export async function callApi<T>(fn: () => Promise<Response>): Promise<T> {
       "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
     );
   }
+  const reused = reuse?.(res);
+  if (reused !== undefined) return reused;
   let body: unknown;
   try {
     body = await res.json();
@@ -1000,48 +1006,24 @@ export function setStudentFlagApi(
  * 已交 = 结果视图（快照 + 参考答案 + 详解 + 判分 + 已解锁提示回看）。
  * 前端按 data.attempt.status 分支渲染。
  */
-/** 详情单轮读取的上界；超时直接给出重试入口，避免自动重试再等待一轮。 */
-const ATTEMPT_DETAIL_READ_TIMEOUT_MS = 30_000;
-
-export class AttemptDetailReadTimeoutError extends Error {
-  constructor() {
-    super("读取练习超时，请检查网络后重试");
-    this.name = "AttemptDetailReadTimeoutError";
-  }
-}
+export { AttemptDetailReadTimeoutError } from "./attempt-detail-read";
 
 export function fetchAttemptApi(
   attemptId: string,
   signal?: AbortSignal,
+  cached?: AttemptDetailData,
 ): Promise<AttemptDetailData> {
-  if (signal?.aborted)
-    return Promise.reject(new DOMException("练习读取已取消", "AbortError"));
-  const controller = new AbortController();
-  let rejectStopped: (reason: Error) => void = () => undefined;
-  const stopped = new Promise<never>((_resolve, reject) => {
-    rejectStopped = reject;
-  });
-  const stop = (reason: Error) => {
-    if (controller.signal.aborted) return;
-    rejectStopped(reason);
-    controller.abort();
-  };
-  const onAbort = () => stop(new DOMException("练习读取已取消", "AbortError"));
-  signal?.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(
-    () => stop(new AttemptDetailReadTimeoutError()),
-    ATTEMPT_DETAIL_READ_TIMEOUT_MS,
+  return readAttemptDetail(
+    attemptId,
+    signal,
+    cached,
+    (init) =>
+      api.api.student.attempts[":id"].$get(
+        { param: { id: attemptId } },
+        { init },
+      ),
+    callApi,
   );
-  const read = callApi<AttemptDetailData>(() =>
-    api.api.student.attempts[":id"].$get(
-      { param: { id: attemptId } },
-      { init: { signal: controller.signal } },
-    ),
-  );
-  return Promise.race([read, stopped]).finally(() => {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
-  });
 }
 
 /**

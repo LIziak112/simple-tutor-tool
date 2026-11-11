@@ -14,11 +14,12 @@ import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, questions, responses, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import * as snapshot from "../services/snapshot.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -1229,6 +1230,52 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
 });
 
 describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
+  it("草稿版本命中跳过题目投影，修改和跨账号读取仍走当前校验", async () => {
+    const { app, db, aCookie, bCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    const path = `/api/student/attempts/${attemptId}`;
+    const { res } = await getAttempt(app, aCookie, attemptId);
+    const etag = res.headers.get("etag");
+    expect(etag).toBeTruthy();
+    const conditional = (cookie: string, tag: string) =>
+      app.request(path, { headers: { cookie, "If-None-Match": tag } });
+    const parse = vi.spyOn(snapshot, "snapshotOfRow");
+    try {
+      const unchanged = await conditional(aCookie, etag ?? "");
+      expect(unchanged.status).toBe(304);
+      expect(await unchanged.text()).toBe("");
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+    expect((await conditional(bCookie, etag ?? "")).status).toBe(403);
+
+    await putAnswer(app, aCookie, attemptId, Q.choice, {
+      kind: "choice",
+      index: 0,
+    });
+    const answered = await conditional(aCookie, etag ?? "");
+    expect(answered.status).toBe(200);
+    expect(answered.headers.get("etag")).not.toBe(etag);
+    assertNoLeak(await answered.json());
+    db.update(units).set({ title: "新版单元标题" }).run();
+    const renamed = await conditional(
+      aCookie,
+      answered.headers.get("etag") ?? "",
+    );
+    expect(renamed.status).toBe(200);
+    const renamedBody = (await renamed.json()) as { data: AttemptDraftData };
+    expect(renamedBody.data.units[0]?.title).toBe("新版单元标题");
+    await postSubmit(app, aCookie, attemptId);
+    const finished = await conditional(
+      aCookie,
+      renamed.headers.get("etag") ?? "",
+    );
+    expect(finished.status).toBe(200);
+    expect(finished.headers.get("etag")).toBeNull();
+  });
+
   it("草稿视图：题目为公开形态（脱敏题干/无选项标记），assertNoLeak 全量通过", async () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
