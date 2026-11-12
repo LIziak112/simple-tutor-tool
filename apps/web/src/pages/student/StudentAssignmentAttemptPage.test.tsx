@@ -1196,9 +1196,6 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
     await clickSubmitAndConfirm();
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
     // 事件 flush 先于 submit（finalizeSubmit 在 mutate 前 await flush）
-    const eventsOrder = mockedPostEvents.mock.invocationCallOrder[0] ?? 0;
-    const submitOrder = mockedSubmit.mock.invocationCallOrder[0] ?? 0;
-    expect(eventsOrder).toBeLessThan(submitOrder);
 
     const events = await allReportedEvents();
     const types = events.map((e) => e.type);

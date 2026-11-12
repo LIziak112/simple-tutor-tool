@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptDetailData,
-  AttemptSubmitRequest,
   CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
   StudentAnswer,
@@ -23,11 +22,11 @@ import {
   saveAttemptAnswerApi,
   startAttemptApi,
   startCourseAttemptApi,
-  submitAttemptApi,
   updateAttemptWorkflowApi,
 } from "@/lib/api";
 import { shareAttemptDetail } from "@/lib/attempt-detail-read";
 import { randomUuid } from "@/lib/uuid";
+import { useAttemptSubmitReceipt } from "./attempt-submit-receipt";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import { getPracticePreference } from "./practice-preference-store";
 
@@ -327,13 +326,18 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
  */
 export function useSubmitAttempt(attemptId: string) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: AttemptSubmitRequest) =>
-      submitAttemptApi(attemptId, input),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: studentAttemptKey(attemptId),
-      });
+  const epoch = getDraftSessionEpoch();
+  const { sendOrVerify, verificationRequired } =
+    useAttemptSubmitReceipt(attemptId);
+  const mutation = useMutation({
+    networkMode: "always",
+    mutationFn: sendOrVerify,
+    onSuccess: async (detail) => {
+      if (epoch !== getDraftSessionEpoch()) return;
+      const key = studentAttemptKey(attemptId);
+      await queryClient.cancelQueries({ queryKey: key, exact: true });
+      if (epoch !== getDraftSessionEpoch()) return;
+      queryClient.setQueryData(key, detail);
       void queryClient.invalidateQueries({ queryKey: studentAssignmentsKey });
       void queryClient.invalidateQueries({ queryKey: studentCoursesKey });
       void queryClient.invalidateQueries({ queryKey: ["student", "course"] });
@@ -356,6 +360,7 @@ export function useSubmitAttempt(attemptId: string) {
       }
     },
   });
+  return { ...mutation, verificationRequired };
 }
 
 /**

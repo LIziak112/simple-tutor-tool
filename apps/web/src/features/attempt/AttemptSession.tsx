@@ -1211,11 +1211,7 @@ function AnswerView({
 
   // 交卷失败：网络等错误留中文提示；QUESTION_REVISION_STALE（旧标签页/陈旧
   // 页面）由服务端中文 message 直接提示刷新重交（T6R.3）
-  const submitError = submit.isError
-    ? submit.error instanceof Error
-      ? submit.error.message
-      : "交卷失败，请稍后重试"
-    : null;
+  const submitError = submit.error?.message ?? null;
 
   // 离线状态（T2.12）：离线时禁用交卷并提示（作答照常，草稿本地保存）
   const online = useOnlineStatus();
@@ -2084,6 +2080,7 @@ function AnswerView({
           savedOnly={savedOnly}
           unansweredCount={unanswered}
           submitting={submit.isPending}
+          verificationRequired={submit.verificationRequired}
           preparing={notePrep.kind === "preparing"}
           noteSummary={noteSummary}
           noteProblems={evidenceProblemViewsOf(notePrep, questionIndexById)}

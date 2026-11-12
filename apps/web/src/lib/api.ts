@@ -74,7 +74,6 @@ import {
   type AttemptAnswerSaveRequest,
   type AttemptContextData,
   type AttemptDetailData,
-  type AttemptEvent,
   type AttemptFlagData,
   type AttemptMaterialRevisions,
   type AttemptSource,
@@ -115,11 +114,9 @@ import {
   type ImportPreviewRequest,
   type InkDoc,
   type InkUploadData,
-  type LearningEventBatchData,
   type LearningPackExportRequest,
   type LearningPackPreviewData,
   type LectureDetail,
-  type LectureEvent,
   type LectureMetaData,
   type LectureMetaUpdate,
   type LectureUpdateData,
@@ -216,6 +213,7 @@ import { hc } from "hono/client";
 import type { AppType } from "server";
 import { ApiError, invalidApiResponse, parseApiResponse } from "./api-response";
 import { readAttemptDetail } from "./attempt-detail-read";
+import { withRequestDeadline } from "./request-deadline";
 
 export { ApiError } from "./api-response";
 
@@ -942,8 +940,14 @@ export function saveAttemptAnswerApi(
     param: { id: attemptId, questionId },
     json: { answer, ...sync },
   };
-  return callApi(() =>
-    api.api.student.attempts[":id"].answers[":questionId"].$put(args),
+  return withRequestDeadline(
+    (signal) =>
+      callApi(() =>
+        api.api.student.attempts[":id"].answers[":questionId"].$put(args, {
+          init: { signal },
+        }),
+      ),
+    "保存答案",
   );
 }
 
@@ -962,7 +966,15 @@ export function submitAttemptApi(
   input: AttemptSubmitRequest,
 ): Promise<AttemptDetailData> {
   const args = { param: { id: attemptId }, json: input };
-  return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
+  return withRequestDeadline(
+    (signal) =>
+      callApi(() =>
+        api.api.student.attempts[":id"].submit.$post(args, {
+          init: { signal },
+        }),
+      ),
+    "交卷",
+  );
 }
 
 /**
@@ -1034,28 +1046,7 @@ function readMaterialWithDeadline<T>(
   read: (signal: AbortSignal) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  if (signal?.aborted)
-    return Promise.reject(new DOMException("材料读取已取消", "AbortError"));
-  const controller = new AbortController();
-  let rejectStopped: (reason: Error) => void = () => undefined;
-  const stopped = new Promise<never>((_resolve, reject) => {
-    rejectStopped = reject;
-  });
-  const stop = (reason: Error) => {
-    if (controller.signal.aborted) return;
-    rejectStopped(reason);
-    controller.abort();
-  };
-  const onAbort = () => stop(new DOMException("材料读取已取消", "AbortError"));
-  signal?.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(
-    () => stop(new Error("材料读取超时，请检查网络后重试")),
-    30_000,
-  );
-  return Promise.race([read(controller.signal), stopped]).finally(() => {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
-  });
+  return withRequestDeadline(read, "材料读取", signal);
 }
 
 export async function fetchAttemptMaterialRevisionsApi(
@@ -1241,34 +1232,10 @@ export function saveSelfReviewApi(
   );
 }
 
-// ---------- T2.10：学习痕迹事件（学生端） ----------
-
-/**
- * 批量上报 attempt 上下文的学习痕迹事件（≤200 条/次，契约拦截）；事件队列
- * （lib/event-queue.ts）的正常发送路径，sendBeacon 兜底在队列内直发。
- * viewId：作答页会话标识（题内活动用时按会话分组识别多端重叠）。
- */
-export function postAttemptEventsApi(
-  attemptId: string,
-  events: readonly AttemptEvent[],
-  viewId?: string,
-): Promise<LearningEventBatchData> {
-  const json = { events: [...events], ...(viewId && { viewId }) };
-  const args = { param: { id: attemptId }, json };
-  return callApi(() => api.api.student.attempts[":id"].events.$post(args));
-}
-
-/**
- * 批量上报无 attempt 上下文的事件（讲义 lecture_expand）。
- * 与 postAttemptEventsApi 同壳；讲义阅读页的事件队列使用。
- */
-export function postLectureEventsApi(
-  events: readonly LectureEvent[],
-): Promise<LearningEventBatchData> {
-  return callApi(() =>
-    api.api.student.events.$post({ json: { events: [...events] } }),
-  );
-}
+export {
+  postAttemptEventsApi,
+  postLectureEventsApi,
+} from "./student-events-api";
 
 // ---------- T2.8：手写笔迹（学生端） ----------
 
@@ -1312,11 +1279,15 @@ export function putAttemptInkApi(
   form.append("strokes", strokesGzip, "strokes.json.gz");
   form.append("snapshot", snapshotPng, "snapshot.png");
   if (meta) form.append("meta", JSON.stringify(meta));
-  return callApi(() =>
-    fetch(
-      `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}`,
-      { method: "PUT", body: form },
-    ),
+  return withRequestDeadline(
+    (signal) =>
+      callApi(() =>
+        fetch(
+          `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}`,
+          { method: "PUT", body: form, signal },
+        ),
+      ),
+    "上传正式手写",
   );
 }
 
