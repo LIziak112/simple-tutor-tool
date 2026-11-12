@@ -4,7 +4,7 @@ import {
   type AiBatchCreateItemResult,
   type AiChannel,
 } from "@tutor/contract";
-import { ListChecks } from "lucide-react";
+import { ListPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -483,7 +483,7 @@ export function AiBatchReviewEntry(props: {
         title="批量复盘"
         onClick={() => setOpen(true)}
       >
-        <ListChecks aria-hidden className="size-5" />
+        <ListPlus aria-hidden className="size-5" />
         <span className="hidden text-sm sm:inline">批量复盘</span>
       </Button>
       {open && (

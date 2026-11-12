@@ -1,8 +1,20 @@
-import type { AiTaskOriginSummary, AiTaskPublic } from "@tutor/contract";
-import { Loader2, MessageSquareReply, RefreshCw } from "lucide-react";
+import type {
+  AiAttemptReviewTaskPublic,
+  AiTaskOriginSummary,
+  AiTaskPublic,
+} from "@tutor/contract";
+import { Loader2, MessageCircleQuestion, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import { AiQueueBatchCard } from "@/features/student-ai/AiQueueBatchCard";
+import {
+  AiQueueItem,
+  aiQueueTargetOf,
+  QueueTypeTag,
+} from "@/features/student-ai/AiQueueItem";
+import { AiQueueReviewSection } from "@/features/student-ai/AiQueueReviewSection";
+import { aiQueueEntriesOf } from "@/features/student-ai/ai-queue-groups";
 import {
   type AiQueueAction,
   aiQueueBadgeOf,
@@ -10,12 +22,21 @@ import {
   useStudentAiQueueAction,
   useStudentAiQueueSummary,
 } from "@/features/student-ai/ai-queue-queries";
+import {
+  ATTEMPT_REVIEW_PARAM,
+  attemptReviewHref,
+} from "@/features/student-ai/attempt-review-entry";
+import { useAttemptReviewQueue } from "@/features/student-ai/attempt-review-queue";
 import { errorMessageOf } from "@/features/student-ai/error-text";
 
 /**
  * SAI-23 助教队列面板（B12；需求 §7.1/§8）。列表载荷只含展示与导航定位
  * 字段——对话正文与材料只在授权详情接口读取（抽屉内不拉详情，点任务去
  * 原作答页由伴学栏按 SAI-20/21 语义打开）。
+ *
+ * 呈现：分两段——「整卷复盘」（每条整卷任务一张卡）与「逐题求助」（同一次
+ * 批量复盘的任务合成一张批次卡，单题求助各自一行）；类型用图标 + 文字标签
+ * 区分。浏览、展开、看进度只读，不取任何正文、不记已读。
  *
  * 语义要点：
  * - 待处理与新回复两个角标含义分开（aiQueueBadgeOf 单源派生）；
@@ -26,194 +47,6 @@ import { errorMessageOf } from "@/features/student-ai/error-text";
  *   「返回原页面」可回到打开队列时的来源位置；
  * - 新任务/回信到达只刷新本列表与角标，不自动导航、不自动切题。
  */
-
-/** 处理状态徽标短文案（列表用；对话面板的完整文案在 AiConversationPanel） */
-function statusLabelOf(status: AiTaskPublic["status"]): string {
-  switch (status) {
-    case "created":
-      return "待领取";
-    case "dispatching":
-      return "发送中";
-    case "uncertain":
-      return "待确认";
-    case "claimed":
-      return "处理中";
-    case "replied":
-      return "已回复";
-    case "paused":
-      return "已暂停";
-    case "failed":
-      return "失败";
-    case "cancelled":
-      return "已取消";
-  }
-}
-
-/** 来源中文名（导航说明与列表展示共用） */
-function sourceLabelOf(sourceType: AiTaskOriginSummary["sourceType"]): string {
-  switch (sourceType) {
-    case "assignment":
-      return "作业";
-    case "course":
-      return "课程练习";
-    case "wrong":
-      return "错题重练";
-    case "lesson":
-      return "讲练";
-  }
-}
-
-/**
- * 队列项导航目标（attempt 级定位）：course/wrong 按本 attempt 直达（旧卷
- * 不跳新卷）；assignment 进作业入口页（单卷幂等）；lesson 进讲练落地页
- * （create-or-return 绝不开新卷）。缺导航键（如卷已删）→ null 呈现说明。
- */
-export function aiQueueTargetOf(
-  task: AiTaskPublic,
-  origin: AiTaskOriginSummary | undefined,
-): string | null {
-  if (origin === undefined) return null;
-  switch (origin.sourceType) {
-    case "assignment":
-      return task.attemptId !== ""
-        ? `/s/attempts/${encodeURIComponent(task.attemptId)}`
-        : null;
-    case "course":
-    case "wrong":
-      return `/s/attempts/${encodeURIComponent(task.attemptId)}`;
-    case "lesson":
-      return task.attemptId !== ""
-        ? `/s/attempts/${encodeURIComponent(task.attemptId)}`
-        : null;
-  }
-}
-
-/** 时间短呈现（MM-DD HH:mm；同年省年份，列表行内紧凑） */
-function shortTimeOf(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-/** 队列项行（状态/时间/题号/来源 + 与 allowedActions 对齐的操作） */
-function AiQueueItem({
-  task,
-  origin,
-  onNavigate,
-  onAction,
-  actionPending,
-}: {
-  task: AiTaskPublic;
-  origin: AiTaskOriginSummary | undefined;
-  onNavigate: (
-    task: AiTaskPublic,
-    origin: AiTaskOriginSummary | undefined,
-    openReply?: boolean,
-  ) => void;
-  onAction: (taskId: string, action: AiQueueAction) => void;
-  actionPending: boolean;
-}) {
-  const metaParts: string[] = [
-    origin?.questionNo !== null && origin?.questionNo !== undefined
-      ? `第 ${origin.questionNo} 题`
-      : "题目已不在卷内",
-  ];
-  if (origin !== undefined) {
-    metaParts.push(sourceLabelOf(origin.sourceType));
-    if (origin.title !== null) metaParts.push(origin.title);
-  }
-  const target = aiQueueTargetOf(task, origin);
-  const actions: { action: AiQueueAction; label: string }[] = [];
-  if (task.allowedActions.includes("cancel"))
-    actions.push({ action: "cancel", label: "取消" });
-  if (task.allowedActions.includes("retry"))
-    actions.push({ action: "retry", label: "重试" });
-  if (task.allowedActions.includes("resume"))
-    actions.push({ action: "resume", label: "继续" });
-  if (task.allowedActions.includes("archive"))
-    actions.push({ action: "archive", label: "归档" });
-  return (
-    <li className="rounded-xl border border-border bg-card p-3">
-      <div className="flex min-w-0 items-start gap-2">
-        <button
-          type="button"
-          className="flex min-h-11 min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg px-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-          disabled={target === null}
-          onClick={() => onNavigate(task, origin, true)}
-        >
-          <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-            <span
-              className={`rounded px-1.5 py-0.5 font-medium ${
-                task.status === "replied" && task.replyDeliveredAt === null
-                  ? "bg-primary/15 text-primary"
-                  : task.status === "failed"
-                    ? "bg-destructive/10 text-destructive"
-                    : "bg-muted text-foreground/80"
-              }`}
-            >
-              {statusLabelOf(task.status)}
-            </span>
-            <span>{shortTimeOf(task.createdAt)}</span>
-            <span className="min-w-0 truncate">{metaParts.join(" · ")}</span>
-          </span>
-          <span className="line-clamp-2 w-full text-sm break-words">
-            {task.question}
-          </span>
-        </button>
-        {task.status === "replied" && task.replyDeliveredAt === null && (
-          <span
-            className="mt-1 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary"
-            title="有新回复未读"
-          >
-            <MessageSquareReply aria-hidden className="size-4" />
-            <span className="sr-only">有新回复未读</span>
-          </span>
-        )}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {target !== null ? (
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              className="min-h-11 px-3 text-sm"
-              onClick={() => onNavigate(task, origin)}
-            >
-              回到本题
-            </Button>
-            {task.status === "replied" && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="min-h-11 px-3 text-sm"
-                onClick={() => onNavigate(task, origin, true)}
-              >
-                查看回复
-              </Button>
-            )}
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            原练习已不可访问（可能已被移出或删除）
-          </span>
-        )}
-        {actions.map(({ action, label }) => (
-          <Button
-            key={action}
-            type="button"
-            variant="ghost"
-            className="min-h-11 px-3 text-sm"
-            disabled={actionPending}
-            onClick={() => onAction(task.id, action)}
-          >
-            {label}
-          </Button>
-        ))}
-      </div>
-    </li>
-  );
-}
 
 /** 队列面板主体（放抽屉/独立视图共用；分组 = 归档三态的 exclude/only 两面） */
 export interface AiQueueNavigationProps {
@@ -243,9 +76,35 @@ export function AiQueuePanel({
   const summary = summaryQuery.data;
   const badge = summary !== undefined ? aiQueueBadgeOf(summary) : null;
   const pages = listQuery.data?.pages ?? [];
-  const tasks = pages
-    .flatMap((page) => page.tasks)
-    .filter((task) => scope === "all" || task.attemptId === currentAttemptId);
+  const inScope = (task: { attemptId: string }) =>
+    scope === "all" || task.attemptId === currentAttemptId;
+  const tasks = pages.flatMap((page) => page.tasks).filter(inScope);
+  const entries = aiQueueEntriesOf(
+    tasks,
+    (taskId) =>
+      pages.find((page) => page.origins?.[taskId] !== undefined)?.origins?.[
+        taskId
+      ],
+  );
+  const reviewQuery = useAttemptReviewQueue(archived);
+  const reviewTasks = (reviewQuery.data?.tasks ?? []).filter(inScope);
+
+  /** 来源位置（目标页「返回原页面」用）：当前完整位置去掉一次性的打开参数 */
+  const sourceLocation = () => {
+    const source = new URL(
+      location.pathname + location.search,
+      "https://student.invalid",
+    );
+    for (const key of [
+      "aiFrom",
+      "aiTask",
+      "aiQuestion",
+      "aiCompose",
+      ATTEMPT_REVIEW_PARAM,
+    ])
+      source.searchParams.delete(key);
+    return source.pathname + source.search;
+  };
 
   const handleNavigate = async (
     task: AiTaskPublic,
@@ -272,13 +131,7 @@ export function AiQueuePanel({
       return;
     }
     // 返回来源位置：携带当前完整位置（含筛选 query），目标页返回时回这里
-    const source = new URL(
-      location.pathname + location.search,
-      "https://student.invalid",
-    );
-    for (const key of ["aiFrom", "aiTask", "aiQuestion", "aiCompose"])
-      source.searchParams.delete(key);
-    const from = source.pathname + source.search;
+    const from = sourceLocation();
     onNavigated?.();
     const targetParams = new URLSearchParams({
       aiFrom: from,
@@ -286,6 +139,26 @@ export function AiQueuePanel({
     });
     if (openReply) targetParams.set("aiTask", task.id);
     void navigate(`${target}?${targetParams}`);
+  };
+
+  /**
+   * 打开整卷复盘（报告或进度面板）：只按任务自己的 attemptId 去那次作答的
+   * 结果页，由结果页按地址打开——和顶栏入口是同一个位置。已经在那次作答的
+   * 结果页上就原地打开（保留当前位置与既有回程），否则带上来源位置。
+   */
+  const handleOpenReview = (
+    task: AiAttemptReviewTaskPublic,
+    target: string,
+  ) => {
+    onNavigated?.();
+    const resultPath = `/s/attempts/${encodeURIComponent(task.attemptId)}`;
+    if (location.pathname === resultPath) {
+      const params = new URLSearchParams(location.search);
+      params.set(ATTEMPT_REVIEW_PARAM, target);
+      void navigate(`${resultPath}?${params}`, { replace: true });
+      return;
+    }
+    void navigate(attemptReviewHref(task.attemptId, target, sourceLocation()));
   };
 
   const handleAction = (taskId: string, action: AiQueueAction) => {
@@ -409,30 +282,57 @@ export function AiQueuePanel({
             重新加载
           </Button>
         </div>
-      ) : tasks.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">
-          {group === "active"
-            ? scope === "current"
-              ? "当前已加载记录中没有本次练习的求助，可加载更多或切换全部来源。"
-              : "队列为空——在题目旁的「AI 助教」发起求助后，任务会出现在这里"
-            : "还没有已归档的任务"}
-        </p>
       ) : (
-        <ul className="flex flex-col gap-2" aria-label="助教任务列表">
-          {tasks.map((task) => (
-            <AiQueueItem
-              key={task.id}
-              task={task}
-              origin={
-                pages.find((page) => page.origins?.[task.id] !== undefined)
-                  ?.origins?.[task.id]
-              }
-              onNavigate={handleNavigate}
-              onAction={handleAction}
-              actionPending={actionMutation.isPending}
-            />
-          ))}
-        </ul>
+        <>
+          <AiQueueReviewSection
+            query={reviewQuery}
+            tasks={reviewTasks}
+            onOpen={handleOpenReview}
+          />
+          {tasks.length > 0 ? (
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold">逐题求助</h3>
+              <ul className="flex flex-col gap-2" aria-label="助教任务列表">
+                {entries.map((entry) =>
+                  entry.kind === "batch" ? (
+                    <AiQueueBatchCard
+                      key={entry.batch.id}
+                      entry={entry}
+                      onNavigate={handleNavigate}
+                      onAction={handleAction}
+                      actionPending={actionMutation.isPending}
+                    />
+                  ) : (
+                    <AiQueueItem
+                      key={entry.task.id}
+                      task={entry.task}
+                      origin={entry.origin}
+                      typeTag={
+                        <QueueTypeTag icon={MessageCircleQuestion}>
+                          单题求助
+                        </QueueTypeTag>
+                      }
+                      onNavigate={handleNavigate}
+                      onAction={handleAction}
+                      actionPending={actionMutation.isPending}
+                    />
+                  ),
+                )}
+              </ul>
+            </section>
+          ) : (
+            reviewTasks.length === 0 &&
+            !reviewQuery.isPending && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                {group === "active"
+                  ? scope === "current"
+                    ? "当前已加载记录中没有本次练习的求助，可加载更多或切换全部来源。"
+                    : "队列为空——在题目旁的「AI 助教」发起求助后，任务会出现在这里"
+                  : "还没有已归档的任务"}
+              </p>
+            )
+          )}
+        </>
       )}
       {listQuery.hasNextPage && (
         <Button

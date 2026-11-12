@@ -11,10 +11,8 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import {
-  AiQueuePanel,
-  aiQueueTargetOf,
-} from "@/features/student-ai/AiQueuePanel";
+import { aiQueueTargetOf } from "@/features/student-ai/AiQueueItem";
+import { AiQueuePanel } from "@/features/student-ai/AiQueuePanel";
 import {
   studentAiQueueKey,
   studentAiQueueSummaryKey,
@@ -49,6 +47,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
     studentAiTaskActionApi: vi.fn(),
   };
 });
+
+// 整卷复盘段不是本文件的关注点：恒返回空列表（分组呈现见 ai-queue-groups.test）
+vi.mock("@/features/student-ai/attempt-review-queue-api", () => ({
+  listStudentAiAttemptReviewQueueApi: vi.fn(async () => ({
+    tasks: [],
+    nextCursor: null,
+  })),
+}));
 
 const mockedSummary = vi.mocked(fetchStudentAiQueueSummaryApi);
 const mockedList = vi.mocked(listStudentAiQueueApi);
