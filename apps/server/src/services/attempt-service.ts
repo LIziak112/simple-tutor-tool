@@ -105,7 +105,6 @@ import {
 } from "../db/schema";
 import { canonicalJsonOf } from "../lib/canonical-json";
 import { HttpError } from "../lib/http-error";
-import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import { touchAttemptActivity } from "./attempt-activity";
 import {
@@ -123,7 +122,11 @@ import {
 } from "./attempt-timing";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
+import {
+  recordConfirmedSubmit,
+  recordQuestionSubmitEvent,
+  submissionActivityOf,
+} from "./event-service";
 import {
   hintsOfJson,
   openedHintEcho,
@@ -2689,9 +2692,8 @@ export function submitAttempt(
   const perQuestionAttempt = practiceProtocolOf(attempt) !== "legacy";
 
   // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
-  const timeline = attemptTimeline(db, attemptId);
-  const activeSecByQuestion = computePerQuestionActiveSec(timeline);
-  const eventChangeCountByQuestion = countAnswerChanges(timeline);
+  const { activeSecByQuestion, eventChangeCountByQuestion } =
+    submissionActivityOf(db, attemptId);
 
   const nowIso = new Date(now).toISOString();
   // allFrozen：全部冻结题（revisions 全集校验与整卷得分汇总的输入）；
@@ -2786,6 +2788,8 @@ export function submitAttempt(
   // 下方内存镜像展开同一对象，两处口径永不漂移
   const rowSubmittedAtPatch = perQuestionAttempt ? { submittedAt: nowIso } : {};
   db.transaction((tx) => {
+    if (!touchAttemptActivity(tx, attemptId, nowIso))
+      throw new HttpError(409, "ALREADY_SUBMITTED", "该练习已提交");
     for (const g of graded) {
       tx.update(responses)
         .set({
@@ -2823,7 +2827,7 @@ export function submitAttempt(
         })
         .run();
     }
-    touchAttemptActivity(tx, attemptId, nowIso);
+    recordConfirmedSubmit(tx, attempt, nowIso);
     tx.update(attempts)
       .set({
         // D2/D3：全部 finalCorrect 非 null → 直接 graded 并写 scoreFinal；
@@ -3106,6 +3110,7 @@ function autoFinishPerQuestionAttempt(
       .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
       .returning()
       .get();
+    if (attempt) recordConfirmedSubmit(tx, attempt, nowIso);
     return { rows: rowsAfter, attempt: attempt ?? null };
   }
   return { rows: rowsAfter, attempt: null };
@@ -3291,11 +3296,9 @@ export function submitLessonQuestion(
     // 新协议逐题提交同一实现；返回瘦行集出事务即 lessonLiveSummaryOf 的输入，
     // 与开卷链路同一口径，不复制谓词）
     touchAttemptActivity(tx, attemptId, nowIso);
+    recordQuestionSubmitEvent(tx, studentId, attemptId, questionId, nowIso);
     return autoFinishPerQuestionAttempt(tx, attemptId, nowIso).rows;
   });
-
-  // 成功后直记 question_submit 事件（payload 仅 questionId，拒绝路径不记）
-  recordQuestionSubmitEvent(db, studentId, attemptId, questionId);
 
   // 响应组装：该题 result 投影（stemMd 经学生端投影）+ 现算 summary + 最新
   // attempt 摘要（自动收尾后为新状态）。提交行按主键取一行（快照复用事务前
@@ -3578,11 +3581,8 @@ export function submitPracticeQuestion(
     // 收尾 RETURNING 带回顾卷新行；no-op（他方已收尾）时回落事务内已读行
     //（同步单连接下与事务后重读恒等）
     touchAttemptActivity(tx, attemptId, nowIso);
+    recordQuestionSubmitEvent(tx, studentId, attemptId, questionId, nowIso);
     const finished = autoFinishPerQuestionAttempt(tx, attemptId, nowIso);
-    // 有效提交在事务内记事件（重放分支不会到这——§10.3 不重复写；与提交
-    // 原子落库，省一次独立 autocommit 的 fsync，不留「提交已持久、事件丢失」
-    // 崩溃窗口。lesson 路径的事件仍在事务外属既有模式）
-    recordQuestionSubmitEvent(tx, studentId, attemptId, questionId);
     return {
       replayed: false as const,
       row: written,

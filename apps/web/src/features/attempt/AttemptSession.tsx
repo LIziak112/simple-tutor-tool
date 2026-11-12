@@ -1168,7 +1168,7 @@ function AnswerView({
       inkControllers,
       questionIds: submitEvidenceQuestionIds,
       revisions: submitRevisions,
-      finalizeEvents: attemptEvents.finalizeSubmit,
+      events: attemptEvents,
       onAnnotationSealFailed,
     });
 

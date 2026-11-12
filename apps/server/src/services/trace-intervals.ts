@@ -204,6 +204,7 @@ export function traceEventsFromRows(
   rows: readonly TraceEventRow[],
 ): TraceEvent[] {
   const out: TraceEvent[] = [];
+  let hasConfirmedSubmit = false;
   for (const row of rows) {
     let payload: Record<string, unknown> = {};
     try {
@@ -213,6 +214,10 @@ export function traceEventsFromRows(
       }
     } catch {
       // 兜底：不带 payload 字段
+    }
+    if (row.type === "submit" && payload.confirmed === true) {
+      hasConfirmedSubmit = true;
+      continue;
     }
     out.push({
       type: row.type,
@@ -236,7 +241,9 @@ export function traceEventsFromRows(
       strokes: numOf(payload.strokes),
     });
   }
-  return out;
+  return hasConfirmedSubmit
+    ? out.filter((event) => event.type !== "submit")
+    : out;
 }
 
 // ---------- 事件 → 区间（配对与 gap-cap） ----------

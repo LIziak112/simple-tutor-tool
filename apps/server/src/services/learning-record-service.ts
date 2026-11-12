@@ -466,6 +466,20 @@ function annotationMaterialOf(
 
 // ---------- 时间线（§6；现算，不新建表） ----------
 
+const TIMELINE_EVENT_KINDS: Partial<Record<string, TimelineEntry["kind"]>> = {
+  question_view: "view",
+  question_focus: "focus",
+  question_blur: "blur",
+  page_hidden: "hidden",
+  page_visible: "visible",
+  idle_start: "idle_start",
+  idle_end: "idle_end",
+  answer_change: "answer_change",
+  hint_open: "hint_open",
+  directive_interact: "directive_interact",
+  question_submit: "question_submit",
+};
+
 function timelineOf(
   db: Db,
   attempt: Attempt,
@@ -490,47 +504,8 @@ function timelineOf(
     .orderBy(asc(events.clientTs))
     .all();
   for (const event of eventRows) {
-    let kind: TimelineEntry["kind"];
-    switch (event.type) {
-      case "question_view":
-        kind = "view";
-        break;
-      case "question_focus":
-        kind = "focus";
-        break;
-      case "question_blur":
-        kind = "blur";
-        break;
-      case "page_hidden":
-        kind = "hidden";
-        break;
-      case "page_visible":
-        kind = "visible";
-        break;
-      case "idle_start":
-        kind = "idle_start";
-        break;
-      case "idle_end":
-        kind = "idle_end";
-        break;
-      case "answer_change":
-        kind = "answer_change";
-        break;
-      case "hint_open":
-        kind = "hint_open";
-        break;
-      case "directive_interact":
-        kind = "directive_interact";
-        break;
-      case "question_submit":
-        kind = "question_submit";
-        break;
-      case "submit":
-        kind = "submit";
-        break;
-      default:
-        continue; // 其余事件种类不进时间线（ink_stroke_batch 等计数类由文档承载）
-    }
+    const kind = TIMELINE_EVENT_KINDS[event.type];
+    if (!kind) continue;
     const payload = JSON.parse(event.payloadJson) as Record<string, unknown>;
     const detail: TimelineEntry["detail"] = {};
     if (typeof payload.index === "number") detail.index = payload.index;
@@ -542,6 +517,13 @@ function timelineOf(
       ...(Object.keys(detail).length > 0 ? { detail } : {}),
     });
   }
+
+  if (attempt.submittedAt !== null)
+    push({
+      at: Date.parse(attempt.submittedAt),
+      kind: "submit",
+      source: "event",
+    });
 
   // ② 笔画与删除（三份文档的 startedAt / deletedAt——「过程」主体）。
   // maxStrokeEnd 为 timelineOf 局部（评审 #11695：模块级可变状态是反模式）

@@ -324,7 +324,7 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
  * ALREADY_SUBMITTED——同样失效 attempt 详情（详情重取即切结果视图，
  * 不把用户困在答题页），错误文案由服务端中文 message 承载。
  */
-export function useSubmitAttempt(attemptId: string) {
+export function useSubmitAttempt(attemptId: string, onConfirmed?: () => void) {
   const queryClient = useQueryClient();
   const epoch = getDraftSessionEpoch();
   const { sendOrVerify, verificationRequired } =
@@ -337,6 +337,11 @@ export function useSubmitAttempt(attemptId: string) {
       const key = studentAttemptKey(attemptId);
       await queryClient.cancelQueries({ queryKey: key, exact: true });
       if (epoch !== getDraftSessionEpoch()) return;
+      try {
+        onConfirmed?.();
+      } catch (error) {
+        console.warn("追加交卷过程标记失败", error);
+      }
       queryClient.setQueryData(key, detail);
       void queryClient.invalidateQueries({ queryKey: studentAssignmentsKey });
       void queryClient.invalidateQueries({ queryKey: studentCoursesKey });

@@ -43,7 +43,7 @@ function renderSubmit(syncDraft = ready, finalizeEvents = ready) {
       inkControllers: { current: new Map() },
       questionIds: [],
       revisions: [],
-      finalizeEvents,
+      events: { finalizeSubmit: finalizeEvents, confirmSubmit: () => {} },
       onAnnotationSealFailed: () => {},
     }),
   );

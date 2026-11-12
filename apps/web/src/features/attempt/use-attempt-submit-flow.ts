@@ -37,7 +37,7 @@ export function useAttemptSubmitFlow({
   inkControllers,
   questionIds,
   revisions,
-  finalizeEvents,
+  events,
   onAnnotationSealFailed,
 }: {
   attemptId: string;
@@ -49,7 +49,7 @@ export function useAttemptSubmitFlow({
   inkControllers: RefObject<Map<string, InkUploadController>>;
   questionIds: string[];
   revisions: AttemptSubmitRevision[];
-  finalizeEvents: () => Promise<void>;
+  events: { finalizeSubmit: () => Promise<void>; confirmSubmit: () => void };
   onAnnotationSealFailed: () => void;
 }) {
   const [inkFlushError, setInkFlushError] = useState(false);
@@ -64,7 +64,8 @@ export function useAttemptSubmitFlow({
   );
   const lockedRef = useRef(savedOnly);
   lockedRef.current = savedOnly;
-  const submit = useSubmitAttempt(attemptId);
+  const submit = useSubmitAttempt(attemptId, events.confirmSubmit);
+  const finalizeEvents = events.finalizeSubmit;
   const send = useCallback(
     async (
       ctx: EvidenceConfirmContext,

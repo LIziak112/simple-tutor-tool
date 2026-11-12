@@ -6,10 +6,11 @@ import type {
   LectureEvent,
   LectureEventDelivery,
 } from "@tutor/contract";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { events, lectures, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { requireUsableAttempt } from "./attempt-service";
 import type { Tx } from "./question-sync";
 
@@ -239,19 +240,19 @@ export function recordAttemptStartEvent(
  * 事件只做行为埋点）；拒绝路径（409 幂等/错版/证据不符）不记。clientTs 用
  * 服务端时钟（§2.6-3 不同源注记；question_submit 不参与 focus/blur 区间
  * 计时，混排无影响）；前端若另报一条，events 追加语义可容忍。
- * M2 起练习逐题提交在**主事务内**调用（提交与事件原子落库，better-sqlite3
- * 单连接同步执行无嵌套事务问题）；lesson 路径仍在事务后调用（既有模式）。
+ * 练习和讲练均在主事务内调用，沿用服务端受理时间。
  */
 export function recordQuestionSubmitEvent(
-  db: Db | Tx,
+  tx: Tx,
   studentId: string,
   attemptId: string,
   questionId: string,
+  now: string,
 ): void {
-  const now = Date.now();
-  insertEvents(db, [
-    {
-      id: "",
+  const clientTs = Date.parse(now);
+  tx.insert(events)
+    .values({
+      id: randomUUID(),
       attemptId,
       studentId,
       questionId,
@@ -259,13 +260,13 @@ export function recordQuestionSubmitEvent(
       type: "question_submit",
       payloadJson: JSON.stringify({
         type: "question_submit",
-        clientTs: now,
+        clientTs,
         questionId,
       }),
-      clientTs: now,
-      serverTs: "",
-    },
-  ]);
+      clientTs,
+      serverTs: now,
+    })
+    .run();
 }
 
 /**
@@ -348,7 +349,46 @@ export function attemptTimeline(
       questionId: events.questionId,
     })
     .from(events)
-    .where(eq(events.attemptId, attemptId))
+    .where(
+      and(
+        eq(events.attemptId, attemptId),
+        ne(events.type, "submit"),
+        ne(events.type, "hint_open"),
+        ne(events.type, "question_submit"),
+      ),
+    )
     .orderBy(asc(events.clientTs), asc(events.id))
     .all();
+}
+
+/** 与交卷状态同事务写入，服务端时间只用于提交审计，不参与浏览器区间回放。 */
+export function recordConfirmedSubmit(
+  tx: Tx,
+  attempt: { id: string; studentId: string },
+  now: string,
+): void {
+  const clientTs = Date.parse(now);
+  tx.insert(events)
+    .values({
+      id: randomUUID(),
+      attemptId: attempt.id,
+      studentId: attempt.studentId,
+      type: "submit",
+      clientTs,
+      serverTs: now,
+      payloadJson: JSON.stringify({
+        type: "submit",
+        confirmed: true,
+        clientTs,
+      }),
+    })
+    .run();
+}
+
+export function submissionActivityOf(db: Db, attemptId: string) {
+  const timeline = attemptTimeline(db, attemptId);
+  return {
+    activeSecByQuestion: computePerQuestionActiveSec(timeline),
+    eventChangeCountByQuestion: countAnswerChanges(timeline),
+  };
 }

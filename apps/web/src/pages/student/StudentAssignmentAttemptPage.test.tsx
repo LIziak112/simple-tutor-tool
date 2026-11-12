@@ -1195,15 +1195,13 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
 
     await clickSubmitAndConfirm();
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
-    // 事件 flush 先于 submit（finalizeSubmit 在 mutate 前 await flush）
-
     const events = await allReportedEvents();
     const types = events.map((e) => e.type);
     expect(types).toContain("attempt_start");
     expect(types).toContain("question_focus");
     expect(types).toContain("question_blur");
     expect(types).toContain("answer_change");
-    expect(types).toContain("submit");
+    expect(types).not.toContain("submit");
     // focus 归属：题 1 → 题 2（切换顺序）
     const focusQuestionIds = events
       .filter((e) => e.type === "question_focus")
@@ -1220,8 +1218,6 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
     expect(judgeChanges[0]?.from).toBeUndefined();
     expect(judgeChanges[1]?.from).toEqual({ kind: "judge", value: true });
     expect(judgeChanges[1]?.to).toEqual({ kind: "judge", value: false });
-    // submit 是最后一条
-    expect(types[types.length - 1]).toBe("submit");
   });
 
   it("手写题写一笔：ink_stroke_batch 事件带笔画数与题号", async () => {

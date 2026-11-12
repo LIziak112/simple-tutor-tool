@@ -412,6 +412,8 @@ export function attemptActivityProjection(
       clientTs: events.clientTs,
       serverTs: events.serverTs,
       questionId: events.questionId,
+      eventOrder: sql<number>`rowid`,
+      confirmed: sql<number>`CASE WHEN ${events.type} = 'submit' AND json_valid(${events.payloadJson}) THEN json_extract(${events.payloadJson}, '$.confirmed') ELSE 0 END`,
       viewId: sql<
         string | null
       >`json_extract(${events.payloadJson}, '$.viewId')`,
@@ -420,6 +422,16 @@ export function attemptActivityProjection(
     .where(eq(events.attemptId, attemptId))
     .orderBy(asc(events.clientTs), asc(events.id))
     .all();
-  if (rows.length === 0) return {};
-  return { activity: computeAttemptActivity(rows, { submittedAt }) };
+  const confirmed = rows.find((row) => row.confirmed === 1);
+  const activityRows = rows.filter(
+    (row) =>
+      row.type !== "submit" &&
+      (!confirmed || row.eventOrder < confirmed.eventOrder),
+  );
+  if (activityRows.length === 0) return {};
+  return {
+    activity: computeAttemptActivity(activityRows, {
+      submittedAt: confirmed ? null : submittedAt,
+    }),
+  };
 }

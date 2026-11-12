@@ -90,8 +90,6 @@ function activityOf(event: LearningEvent): Activity | null {
     case "idle_start":
     case "idle_end":
       return { kind: "activity", action: event.type };
-    case "submit":
-      return { kind: "activity", action: "submit", scope: "attempt" };
     case "question_submit":
       return { kind: "activity", action: "submit", scope: "question" };
     default:
@@ -126,8 +124,10 @@ export interface AttemptEventsApi {
   registerCard(questionId: string, el: HTMLElement | null): void;
   /** 新录制器或材料恢复后复用当前聚焦事实，补本段进入节点。 */
   syncProcessFocus(): void;
-  /** 交卷前收尾：blur 当前聚焦 + submit 事件 + flush（尽力，不抛错） */
+  /** 交卷前收尾：结束当前聚焦并补传已有事件。 */
   finalizeSubmit(): Promise<void>;
+  /** 收到交卷回执后在单题过程追加收尾标记。 */
+  confirmSubmit(): void;
 }
 
 export function useAttemptEvents(
@@ -218,13 +218,7 @@ export function useAttemptEvents(
           "questionId" in event && typeof event.questionId === "string"
             ? event.questionId
             : focusedRef.current;
-        const targets =
-          event.type === "submit"
-            ? [...cardsRef.current.keys()]
-            : questionId
-              ? [questionId]
-              : [];
-        for (const id of targets) recorder.event(id, input);
+        if (questionId) recorder.event(questionId, input);
       },
     });
     queueRef.current = queue;
@@ -519,13 +513,23 @@ export function useAttemptEvents(
       clearTimeout(inkEditTimerRef.current);
       inkEditTimerRef.current = null;
     }
-    queue.track({ type: "submit", clientTs: Date.now() });
     try {
       await queue.flush();
     } catch {
       // flush 失败不阻塞交卷（事件留在队列/离线仓，服务端宽松口径收迟到事件）
     }
   }, [flushInkEdits]);
+
+  const confirmSubmit = useCallback(() => {
+    const recorder = process?.current;
+    if (recorder?.options.attemptId !== attemptId) return;
+    for (const questionId of cardsRef.current.keys())
+      recorder.event(questionId, {
+        kind: "activity",
+        action: "submit",
+        scope: "attempt",
+      });
+  }, [attemptId, process]);
 
   return useMemo(
     () => ({
@@ -538,6 +542,7 @@ export function useAttemptEvents(
       registerCard,
       syncProcessFocus,
       finalizeSubmit,
+      confirmSubmit,
     }),
     [
       noteInteraction,
@@ -549,6 +554,7 @@ export function useAttemptEvents(
       registerCard,
       syncProcessFocus,
       finalizeSubmit,
+      confirmSubmit,
     ],
   );
 }
