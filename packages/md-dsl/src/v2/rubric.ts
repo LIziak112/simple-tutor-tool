@@ -8,6 +8,24 @@ import {
 } from "@tutor/contract";
 import { makeIssue } from "./shared.ts";
 
+const objectiveQuestionTypes = new Set(["judge", "choice", "multi"]);
+
+type RubricItemFields = Omit<Rubric["items"][number], "id">;
+
+function parseRubricItem(text: string): RubricItemFields | string {
+  const stripped = text.replace(/^(?:[-*+]|\d+[.)])\s+/, "");
+  const splitAt = stripped.search(/[：:]/);
+  const title = (splitAt === -1 ? stripped : stripped.slice(0, splitAt)).trim();
+  const desc = splitAt === -1 ? "" : stripped.slice(splitAt + 1).trim();
+  if (title === "" || title.length > RUBRIC_ITEM_TITLE_MAX_CHARS) {
+    return `量表项「${stripped.slice(0, 20)}」不合法：项名不能为空且不超过 ${RUBRIC_ITEM_TITLE_MAX_CHARS} 字`;
+  }
+  if (desc.length > RUBRIC_ITEM_DESC_MAX_CHARS) {
+    return `量表项「${title}」的说明超过 ${RUBRIC_ITEM_DESC_MAX_CHARS} 字`;
+  }
+  return desc === "" ? { title } : { title, desc };
+}
+
 /**
  * `:::rubric` 正文 → 量表（模块 3 通用量表判卷）。每行一项：
  * `- 项名：评什么`（全角 / 半角冒号均可，说明可省；列表记号 - * + 或 1.）。
@@ -21,11 +39,7 @@ export function parseRubricBlock(
   column: number,
   issues: LintIssue[],
 ): Rubric | undefined {
-  if (
-    questionType === "judge" ||
-    questionType === "choice" ||
-    questionType === "multi"
-  ) {
+  if (objectiveQuestionTypes.has(questionType)) {
     issues.push(
       makeIssue(
         "error",
@@ -38,50 +52,21 @@ export function parseRubricBlock(
     return undefined;
   }
   const items: Rubric["items"] = [];
-  let bad = false;
+  const initialIssueCount = issues.length;
   for (const raw of body.split("\n")) {
     const text = raw.trim();
     if (text === "") continue;
-    const stripped = text.replace(/^(?:[-*+]|\d+[.)])\s+/, "");
-    const splitAt = stripped.search(/[：:]/);
-    const title = (
-      splitAt === -1 ? stripped : stripped.slice(0, splitAt)
-    ).trim();
-    const desc = splitAt === -1 ? "" : stripped.slice(splitAt + 1).trim();
-    if (title === "" || title.length > RUBRIC_ITEM_TITLE_MAX_CHARS) {
+    const item = parseRubricItem(text);
+    if (typeof item === "string") {
       issues.push(
-        makeIssue(
-          "error",
-          line,
-          column,
-          "RUBRIC_ITEM_INVALID",
-          `量表项「${stripped.slice(0, 20)}」不合法：项名不能为空且不超过 ${RUBRIC_ITEM_TITLE_MAX_CHARS} 字`,
-        ),
+        makeIssue("error", line, column, "RUBRIC_ITEM_INVALID", item),
       );
-      bad = true;
       continue;
     }
-    if (desc.length > RUBRIC_ITEM_DESC_MAX_CHARS) {
-      issues.push(
-        makeIssue(
-          "error",
-          line,
-          column,
-          "RUBRIC_ITEM_INVALID",
-          `量表项「${title}」的说明超过 ${RUBRIC_ITEM_DESC_MAX_CHARS} 字`,
-        ),
-      );
-      bad = true;
-      continue;
-    }
-    items.push({
-      id: `r${items.length + 1}`,
-      title,
-      ...(desc === "" ? {} : { desc }),
-    });
+    items.push({ id: `r${items.length + 1}`, ...item });
   }
   if (items.length === 0) {
-    if (!bad) {
+    if (issues.length === initialIssueCount) {
       issues.push(
         makeIssue(
           "error",

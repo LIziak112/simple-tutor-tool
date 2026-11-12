@@ -50,19 +50,82 @@ describe("量表解析", () => {
     expect(question?.stemMd).toContain("策论");
   });
 
-  it("客观题内的量表：RUBRIC_ON_OBJECTIVE_QUESTION 且不注入 rubric", () => {
+  it.each([
+    ["judge", "$1$ 是正数。[[正确]]"],
+    ["choice", "选出正数。\n\n- [x] 1\n- [ ] -1"],
+    ["multi", "选出所有正数。\n\n- [x] 1\n- [ ] -1\n- [x] 2"],
+  ])("%s 题内的量表报错且不注入 rubric", (type, stem) => {
     const parsed = parseDocument(
-      doc(`::::question{type=judge}
-$1$ 是正数。[[正确]]
+      doc(`::::question{type=${type}}
+${stem}
+
 :::rubric
 - 要点
 :::
 ::::`),
     );
-    expect(parsed.units[0]?.questions[0]?.rubric).toBeUndefined();
-    expect(parsed.issues.map((i) => i.code)).toContain(
-      "RUBRIC_ON_OBJECTIVE_QUESTION",
+    const question = parsed.units[0]?.questions[0];
+    expect(question?.type).toBe(type);
+    expect(question?.rubric).toBeUndefined();
+    expect(
+      parsed.issues
+        .filter((issue) => issue.level === "error")
+        .map((issue) => issue.code),
+    ).toEqual(["RUBRIC_ON_OBJECTIVE_QUESTION"]);
+  });
+
+  it("接受 8 项及项名、说明的长度上限", () => {
+    const title = "甲".repeat(40);
+    const desc = "乙".repeat(200);
+    const parsed = parseDocument(
+      doc(`::::question{type=solve}
+解方程。
+:::rubric
+- ${title}: ${desc}
+${Array.from({ length: 7 }, (_, i) => `- 项 ${i + 2}`).join("\n")}
+:::
+::::`),
     );
+    expect(parsed.issues.filter((issue) => issue.level === "error")).toEqual(
+      [],
+    );
+    const items = parsed.units[0]?.questions[0]?.rubric?.items;
+    expect(items?.map((item) => item.id)).toEqual(
+      Array.from({ length: 8 }, (_, i) => `r${i + 1}`),
+    );
+    expect(items?.[0]).toEqual({ id: "r1", title, desc });
+  });
+
+  it.each([
+    {
+      text: `长${"甲".repeat(40)}：说明`,
+      message: `量表项「长${"甲".repeat(19)}」不合法：项名不能为空且不超过 40 字`,
+    },
+    {
+      text: `说明过长：${"乙".repeat(201)}`,
+      message: "量表项「说明过长」的说明超过 200 字",
+    },
+  ])("唯一量表项非法时只报项级错误并保留诊断位置", ({ text, message }) => {
+    const parsed = parseDocument(
+      doc(`::::question{type=solve}
+解方程。
+:::rubric
+- ${text}
+:::
+::::`),
+    );
+    expect(
+      parsed.issues.filter((issue) => issue.code.startsWith("RUBRIC_")),
+    ).toEqual([
+      {
+        level: "error",
+        code: "RUBRIC_ITEM_INVALID",
+        line: 8,
+        column: 1,
+        message,
+      },
+    ]);
+    expect(parsed.units[0]?.questions[0]?.rubric).toBeUndefined();
   });
 
   it("空量表 / 超过 8 项 / 坏项分别报码", () => {

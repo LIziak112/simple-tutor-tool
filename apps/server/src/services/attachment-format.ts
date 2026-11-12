@@ -86,28 +86,33 @@ export function wellFormedFileName(name: string): string {
   return out;
 }
 
+function truncateAttachmentFileName(name: string): string {
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 && name.length - dot <= 8 ? name.slice(dot) : "";
+  return `${truncateByCodePoint(name, ATTACHMENT_FILE_NAME_MAX - ext.length)}${ext}`;
+}
+
+/** 去掉 U+0000–U+001F、U+007F 和孤立代理项。 */
+function isDisplayFileNameCharacter(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return code > 0x1f && code !== 0x7f && !isLoneSurrogate(code);
+}
+
 /** 展示文件名：去路径、去控制字符 / 孤立代理项、收空白、≤200（保留扩展名）；空 → 资料.<ext> */
 export function sanitizeAttachmentFileName(
   raw: string | undefined,
   format: AttachmentFormat,
 ): string {
-  const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
-  // 先把各种空白（含 \t）收成单个空格，再逐码点剔除控制字符
-  // （U+0000–U+001F、U+007F；不用含控制字符的正则）与孤立代理项
-  let name = Array.from(base.replace(/\s+/g, " "))
-    .filter((ch) => {
-      const code = ch.codePointAt(0) ?? 0;
-      return code > 0x1f && code !== 0x7f && !isLoneSurrogate(code);
-    })
+  const base = raw?.split(/[\\/]/).pop() ?? "";
+  // 先把各种空白（含 \t）收成单个空格，再逐码点过滤。
+  const name = Array.from(base.replace(/\s+/g, " "))
+    .filter(isDisplayFileNameCharacter)
     .join("")
     .trim();
-  if (name.length === 0 || name === "." || name === "..") {
-    name = `资料.${format}`;
+  if (name === "" || name === "." || name === "..") {
+    return `资料.${format}`;
   }
-  if (name.length > ATTACHMENT_FILE_NAME_MAX) {
-    const dot = name.lastIndexOf(".");
-    const ext = dot > 0 && name.length - dot <= 8 ? name.slice(dot) : "";
-    name = `${truncateByCodePoint(name, ATTACHMENT_FILE_NAME_MAX - ext.length)}${ext}`;
-  }
-  return name;
+  return name.length > ATTACHMENT_FILE_NAME_MAX
+    ? truncateAttachmentFileName(name)
+    : name;
 }

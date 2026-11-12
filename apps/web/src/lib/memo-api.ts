@@ -5,12 +5,9 @@ import type {
   MemoListData,
   MemoListQuery,
 } from "@tutor/contract";
-import {
-  apiResponseSchema,
-  MEMO_OUTBOX_ACCOUNT_HEADER,
-  memoSchema,
-} from "@tutor/contract";
-import { ApiError, api, callApi } from "@/lib/api";
+import { MEMO_OUTBOX_ACCOUNT_HEADER, memoSchema } from "@tutor/contract";
+import { api, callApi } from "@/lib/api";
+import { parseUploadResponse } from "@/lib/api-response";
 
 /**
  * 随笔（模块 5 第一步）前端 API：
@@ -62,27 +59,6 @@ export class MemoNetworkError extends Error {
   }
 }
 
-function parseMemoResponse(status: number, text: string): Memo {
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw new Error(`服务器响应异常（HTTP ${status}），请稍后重试`);
-  }
-  const parsed = apiResponseSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new Error(`服务器响应异常（HTTP ${status}），请稍后重试`);
-  }
-  if (!parsed.data.ok) {
-    throw new ApiError(parsed.data.error, parsed.data.message, status);
-  }
-  const data = memoSchema.safeParse(parsed.data.data);
-  if (!data.success) {
-    throw new Error("服务器返回的随笔信息不完整，请刷新后查看");
-  }
-  return data.data;
-}
-
 /** 媒体随笔上传：file + 文本字段（anchor / tags 以 JSON 串入 multipart） */
 export function uploadMemoMediaApi(
   blob: Blob,
@@ -122,7 +98,14 @@ export function uploadMemoMediaApi(
     };
     xhr.onload = () => {
       try {
-        resolve(parseMemoResponse(xhr.status, xhr.responseText));
+        resolve(
+          parseUploadResponse(
+            xhr.status,
+            xhr.responseText,
+            memoSchema,
+            "服务器返回的随笔信息不完整，请刷新后查看",
+          ),
+        );
       } catch (err) {
         reject(err);
       }

@@ -30,8 +30,7 @@ const REL_TYPE =
 const MAIN_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
 
-/** 最小 DOCX：包关系指向实际可读的主文档。 */
-export const MINI_DOCX = storedZipOf([
+const docxEntries = [
   {
     name: "[Content_Types].xml",
     data: Buffer.from(
@@ -50,11 +49,15 @@ export const MINI_DOCX = storedZipOf([
       `<w:document xmlns:w="${WORD_NS}"><w:body><w:p/></w:body></w:document>`,
     ),
   },
-]);
+];
+
+/** 最小 DOCX：包关系指向实际可读的主文档。 */
+export const MINI_DOCX = storedZipOf(docxEntries);
 
 describe("资料附件：格式识别（只认内容）", () => {
   it("PDF 文件头 / docx = ZIP 中央目录含 word/document.xml 与 [Content_Types].xml；其余 null", () => {
     expect(detectAttachmentFormat(MINI_PDF)).toBe("pdf");
+    expect(detectAttachmentFormat(MINI_PDF.subarray(0, 8))).toBe("pdf");
     expect(detectAttachmentFormat(MINI_DOCX)).toBe("docx");
     expect(
       detectAttachmentFormat(
@@ -121,8 +124,26 @@ describe("资料附件：格式识别（只认内容）", () => {
     expect(detectAttachmentFormat(Buffer.from("%PDF", "latin1"))).toBeNull();
   });
 
+  it("DOCX 的首个本地文件头签名必须有效，即使该条目不参与主文档读取", () => {
+    const docx = storedZipOf([
+      { name: "customXml/item1.xml", data: Buffer.from("<data/>") },
+      ...docxEntries,
+    ]);
+    expect(detectAttachmentFormat(docx)).toBe("docx");
+    docx[3] = 0;
+    expect(detectAttachmentFormat(docx)).toBeNull();
+  });
+
   it("PDF 页数取 /Type /Pages 附近最大的 /Count；没有就 null", () => {
     expect(pdfPageCountOf(MINI_PDF)).toBe(3);
+    expect(
+      pdfPageCountOf(
+        Buffer.from(
+          "%PDF-1.7\n2 0 obj << /Type /Pages /Count 1 >> endobj\n%%EOF",
+          "latin1",
+        ),
+      ),
+    ).toBe(1);
     expect(pdfPageCountOf(Buffer.from("%PDF-1.7\n%%EOF", "latin1"))).toBeNull();
   });
 });
@@ -142,6 +163,33 @@ describe("资料附件：展示文件名清洗", () => {
     const cleaned = sanitizeAttachmentFileName(long, "pdf");
     expect(cleaned.length).toBe(200);
     expect(cleaned.endsWith(".pdf")).toBe(true);
+  });
+
+  it("仅在超长时截断，保留最长 8 个单元的后缀", () => {
+    const atLimit = `${"甲".repeat(196)}.pdf`;
+    expect(sanitizeAttachmentFileName(atLimit, "pdf")).toBe(atLimit);
+    const long = "甲".repeat(201);
+    expect(sanitizeAttachmentFileName(`${long}.abcdefg`, "pdf")).toBe(
+      `${"甲".repeat(192)}.abcdefg`,
+    );
+    expect(sanitizeAttachmentFileName(`${long}.abcdefgh`, "pdf")).toBe(
+      "甲".repeat(200),
+    );
+    expect(sanitizeAttachmentFileName(`.${long}`, "pdf")).toBe(
+      `.${"甲".repeat(199)}`,
+    );
+  });
+
+  it("清洗和下载处理孤立代理项范围的两端", () => {
+    const raw = "真\ud800题\udfff.pdf";
+    expect(sanitizeAttachmentFileName(raw, "pdf")).toBe("真题.pdf");
+    expect(wellFormedFileName(raw)).toBe("真\ufffd题\ufffd.pdf");
+  });
+
+  it("清洗删除控制字符上界和 DEL，保留相邻可显示字符", () => {
+    expect(sanitizeAttachmentFileName("甲\u001f乙\u007f丙.pdf", "pdf")).toBe(
+      "甲乙丙.pdf",
+    );
   });
 
   it("超长截断按码点：边界落在表情中间时整个丢掉，不留孤立代理项（#103-03）", () => {

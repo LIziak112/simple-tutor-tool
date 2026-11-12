@@ -5,8 +5,9 @@ import type {
   AttachmentUploadFields,
   StudentAttachmentListData,
 } from "@tutor/contract";
-import { apiResponseSchema, attachmentSchema } from "@tutor/contract";
-import { ApiError, api, callApi } from "@/lib/api";
+import { attachmentSchema } from "@tutor/contract";
+import { api, callApi } from "@/lib/api";
+import { parseUploadResponse } from "@/lib/api-response";
 
 /**
  * 资料附件（模块 6 第一步）前端 API：
@@ -52,28 +53,6 @@ export interface UploadAttachmentOptions extends AttachmentUploadFields {
 const NETWORK_ERROR_MESSAGE =
   "连不上服务器，请检查网络后重试（已选的文件不会丢，可直接重试）";
 
-/** 解析 XHR 响应文本：成功壳 → Attachment；失败壳 → ApiError；非壳 → Error */
-function parseUploadResponse(status: number, text: string): Attachment {
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw new Error(`服务器响应异常（HTTP ${status}），请稍后重试`);
-  }
-  const parsed = apiResponseSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new Error(`服务器响应异常（HTTP ${status}），请稍后重试`);
-  }
-  if (!parsed.data.ok) {
-    throw new ApiError(parsed.data.error, parsed.data.message, status);
-  }
-  const data = attachmentSchema.safeParse(parsed.data.data);
-  if (!data.success) {
-    throw new Error("服务器返回的资料信息不完整，请刷新后查看");
-  }
-  return data.data;
-}
-
 export function uploadAttachmentApi(
   file: File,
   options: UploadAttachmentOptions = {},
@@ -99,7 +78,14 @@ export function uploadAttachmentApi(
     };
     xhr.onload = () => {
       try {
-        resolve(parseUploadResponse(xhr.status, xhr.responseText));
+        resolve(
+          parseUploadResponse(
+            xhr.status,
+            xhr.responseText,
+            attachmentSchema,
+            "服务器返回的资料信息不完整，请刷新后查看",
+          ),
+        );
       } catch (err) {
         reject(err);
       }

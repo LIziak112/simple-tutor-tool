@@ -163,23 +163,27 @@ jobs:
 
   # T2.13 E2E（架构 §7.2：E2E 全过才可合并；webkit 项目必须在 CI 中运行）。
   # 独立 job：浏览器安装与单测互不拖慢；失败时上传 html 报告 artifact。
-  # timeout 55 分钟：测试本体约 30 分钟（globalTimeout 45m 含重试余量）+ 首跑浏览器
-  # 缓存未命中时下载安装 + apt 系统库；旧 40 分钟在套件涨到 262 项后余量归零
-  # （2026-10-27 全仓撞 1800s 墙，主人拍板按方案①抬预算：globalTimeout 45m + 本处 55m）。
+  # timeout 55 分钟包含镜像拉取、安装项目依赖及测试本体（globalTimeout 45m 含重试余量）。
   e2e:
     needs: scope
     if: needs.scope.outputs.run == 'true'
     name: e2e (chromium + webkit, iPad 模拟)
-    # 钉 24.04 而非跟随 ubuntu-latest 渐进迁移（2026-10-19 起）到 26.04：webkit 的 apt 系统
-    # 库随发行版走。Playwright 1.61 起官方支持 Ubuntu 26.04（本仓库 @playwright/test 1.63），
-    # 后续可单独起分支跑一轮 e2e 验证后再切 ubuntu-26.04
     runs-on: ubuntu-24.04
+    container:
+      # 官方 Noble 镜像已包含浏览器与系统库，避开 runner 的 Ubuntu 软件源故障。
+      # 升级锁文件中的 @playwright/test 时同步更新镜像版本。
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
     timeout-minutes: 55
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      # 容器用户与宿主挂载目录的所有者不同，checkout 的临时 Git 配置仅对检出步骤生效。
+      - name: 信任容器内的检出目录
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: 安装 pnpm
         uses: pnpm/action-setup@v6
@@ -192,42 +196,6 @@ jobs:
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
-
-      # 浏览器版本随 pnpm-lock.yaml 里的 @playwright/test 版本走：lockfile 不变即命中缓存。
-      # chromium 用 playwright 自带 build（config 中 CI 不走 msedge channel），
-      # 与 webkit 一起落在 ~/.cache/ms-playwright，可整体缓存；系统库由 --with-deps 装。
-      # restore-keys：版本升级后锁文件哈希变化时，降级命中旧目录（install 会补齐缺失部分）。
-      # actions/cache@v6 起运行在 Node 24（v4 为 node20，已被 GitHub 弃用告警），用法不变。
-      - name: 缓存 Playwright 浏览器
-        id: playwright-cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: playwright-${{ runner.os }}-
-
-      - name: 浏览器缓存状态与耗时
-        run: |
-          echo "cache-hit=${{ steps.playwright-cache.outputs.cache-hit }}"
-          du -sh ~/.cache/ms-playwright 2>/dev/null || echo "缓存目录尚不存在（首跑）"
-
-      # 安装拆成两步并各自限时：卡在哪一步（chromium / webkit / apt 依赖）日志可直接定位。
-      # chromium 用 --only-shell 只装 headless shell：E2E 全程 headless，完整 chromium
-      # （带 headed 支持的 ~170MB build）用不上，headless shell 体积约为其一半。
-      - name: 安装 chromium headless shell（含系统库）
-        timeout-minutes: 20
-        run: |
-          start=$(date +%s)
-          npx playwright install --with-deps --only-shell chromium
-          echo "chromium 安装耗时 $(( $(date +%s) - start ))s"
-
-      - name: 安装 webkit（含系统库）
-        timeout-minutes: 20
-        run: |
-          start=$(date +%s)
-          npx playwright install --with-deps webkit
-          echo "webkit 安装耗时 $(( $(date +%s) - start ))s"
-          du -sh ~/.cache/ms-playwright
 
       - name: E2E 测试
         run: node scripts/ci-scope.mjs e2e "$CI_BASE"
