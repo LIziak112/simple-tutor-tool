@@ -45,6 +45,7 @@ import {
   questionMaterialsOf,
 } from "@/features/attempt/attempt-context-view";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
+import { LessonResultLinks } from "@/features/attempt/LessonResultLinks";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
@@ -1061,9 +1062,7 @@ function LessonCompletedView({
                 onOpenTask={aiCompanion.openTask}
                 onOpenQuestion={aiCompanion.openQuestion}
               />
-              <Button asChild variant="outline" className="min-h-11">
-                <Link to={`/s/attempts/${attemptId}`}>查看结果</Link>
-              </Button>
+              <LessonResultLinks attemptId={attemptId} />
               <Button
                 className="min-h-11"
                 disabled={restart.isPending}
