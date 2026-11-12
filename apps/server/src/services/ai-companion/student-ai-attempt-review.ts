@@ -2,7 +2,6 @@ import { createHmac, randomUUID } from "node:crypto";
 import type {
   AiAttemptReviewAction,
   AiAttemptReviewCounts,
-  AiAttemptReviewListData,
   AiAttemptReviewMcpClaimView,
   AiAttemptReviewPreviewData,
   AiAttemptReviewQuestion,
@@ -27,19 +26,7 @@ import {
   optionsPublicStructureOf,
 } from "@tutor/contract";
 import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNull,
-  lt,
-  lte,
-  max,
-  or,
-  type SQL,
-} from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
   type AiAttemptReviewFactType,
@@ -66,8 +53,6 @@ import {
   asDb,
   assertStudentAiTaskQuota,
   conflict,
-  decodeCursor,
-  encodeCursor,
   type QueueTx,
   sha256Hex,
 } from "./student-ai-shared.ts";
@@ -743,83 +728,7 @@ export function createAttemptReviewTask(
   );
 }
 
-// ---------- 列表与详情 ----------
-
-export interface ListAttemptReviewInput {
-  readonly studentId: string;
-  readonly attemptId?: string;
-  readonly status?: AiAttemptReviewStatus;
-  readonly limit: number;
-  readonly cursor?: string;
-}
-
-/** 本人整体任务列表（公开视图；稳定游标分页，与单题任务列表同款） */
-export function listAttemptReviewTasks(
-  db: Db,
-  input: ListAttemptReviewInput,
-): AiAttemptReviewListData {
-  const filters: (SQL<unknown> | undefined)[] = [
-    eq(aiAttemptReviewTasks.studentId, input.studentId),
-  ];
-  if (input.attemptId !== undefined) {
-    filters.push(eq(aiAttemptReviewTasks.attemptId, input.attemptId));
-  }
-  if (input.status !== undefined) {
-    filters.push(eq(aiAttemptReviewTasks.status, input.status));
-  }
-  if (input.cursor !== undefined) {
-    const payload = decodeCursor(input.cursor);
-    // DESC 序的 keyset 游标：上一页末条 (c, i) → 下一页 = createdAt < c
-    // OR (createdAt = c AND id < i)。AND(lt, lte) 会把同秒更小 id 之后、
-    // 更早 createdAt 的行整段漏掉（/code-review 修复）
-    filters.push(
-      or(
-        lt(aiAttemptReviewTasks.createdAt, payload.c),
-        and(
-          eq(aiAttemptReviewTasks.createdAt, payload.c),
-          lt(aiAttemptReviewTasks.id, payload.i),
-        ),
-      ),
-    );
-  }
-  const rows = db
-    .select()
-    .from(aiAttemptReviewTasks)
-    .where(and(...filters))
-    .orderBy(
-      desc(aiAttemptReviewTasks.createdAt),
-      desc(aiAttemptReviewTasks.id),
-    )
-    .limit(input.limit + 1)
-    .all();
-  const hasMore = rows.length > input.limit;
-  const page = hasMore ? rows.slice(0, input.limit) : rows;
-  const last = page.at(-1);
-  const pageIds = page.map((row) => row.id);
-  const resultTimes = new Map(
-    pageIds.length === 0
-      ? []
-      : db
-          .select({
-            taskId: aiAttemptReviewResults.taskId,
-            at: max(aiAttemptReviewResults.receivedAt),
-          })
-          .from(aiAttemptReviewResults)
-          .where(inArray(aiAttemptReviewResults.taskId, pageIds))
-          .groupBy(aiAttemptReviewResults.taskId)
-          .all()
-          .map((row) => [row.taskId, row.at] as const),
-  );
-  return {
-    tasks: page.map((row) =>
-      attemptReviewPublicViewOf(db, row, resultTimes.get(row.id) ?? null),
-    ),
-    nextCursor:
-      hasMore && last !== undefined
-        ? encodeCursor({ c: last.createdAt, i: last.id })
-        : null,
-  };
-}
+// ---------- 详情 ----------
 
 /** 详情：任务公开视图 + 最近一代结构化报告（未回复为 null） */
 export function attemptReviewDetailOf(

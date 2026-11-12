@@ -54,8 +54,8 @@ import {
   attemptReviewDetailOf,
   attemptReviewPreviewOf,
   createAttemptReviewTask,
-  listAttemptReviewTasks,
 } from "../services/ai-companion/student-ai-attempt-review.ts";
+import { listAttemptReviewTasks } from "../services/ai-companion/student-ai-attempt-review-list.ts";
 import { attemptReviewPublicViewOf } from "../services/ai-companion/student-ai-attempt-review-public.ts";
 import { createAiBatchReviewTasks } from "../services/ai-companion/student-ai-batch.ts";
 import {
@@ -418,6 +418,7 @@ export function createStudentAiRoutes(
         const parsed = aiAttemptReviewListQuerySchema.safeParse({
           attemptId: c.req.query("attemptId") ?? undefined,
           status: c.req.query("status") ?? undefined,
+          archived: c.req.query("archived") ?? undefined,
           limit: rawLimit === undefined ? undefined : Number(rawLimit),
           cursor: c.req.query("cursor") ?? undefined,
         });
@@ -428,13 +429,14 @@ export function createStudentAiRoutes(
             `查询参数不合法：${firstIssueMessage(parsed.error)}`,
           );
         }
-        const { attemptId, status, limit, cursor } = parsed.data;
+        const { attemptId, status, archived, limit, cursor } = parsed.data;
         return c.json({
           ok: true,
           data: listAttemptReviewTasks(db, {
             studentId: c.var.student.id,
             ...(attemptId !== undefined && { attemptId }),
             ...(status !== undefined && { status }),
+            ...(archived !== undefined && { archived }),
             ...(cursor !== undefined && { cursor }),
             limit,
           }),

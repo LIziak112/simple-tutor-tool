@@ -204,6 +204,7 @@ it("SAI-23 全局队列：archived 过滤白名单与 origins 摘要挂载", () 
         unitId: null,
         lectureId: null,
         attemptStatus: "graded",
+        batch: null,
       },
     },
   };

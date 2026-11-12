@@ -6,6 +6,7 @@ import {
   AI_QUESTION_MAX_CHARS,
   AI_REPLY_MAX_CHARS,
 } from "./student-ai.ts";
+import { aiAttemptOriginSummarySchema } from "./student-ai-origin.ts";
 
 /**
  * 学生端 AI 伴学：本次练习整体复盘（MCP）契约（任务 1ef854c7；实施依据
@@ -452,6 +453,8 @@ export const aiAttemptReviewListQuerySchema = z
   .object({
     attemptId: z.uuid().optional(),
     status: aiAttemptReviewStatusSchema.optional(),
+    /** 归档过滤（与逐题任务列表同义）：exclude = 未归档、only = 已归档；缺省 = 全部 */
+    archived: z.enum(["exclude", "only"]).optional(),
     limit: z.number().int().min(1).max(50).default(20),
     /** 不透明游标（base64url JSON，与单题任务列表同款） */
     cursor: z
@@ -465,6 +468,8 @@ export const aiAttemptReviewListDataSchema = z
   .object({
     tasks: z.array(aiAttemptReviewTaskPublicSchema),
     nextCursor: z.string().nullable(),
+    /** 作答级来源摘要按任务 id 索引（仅账号范围列表返回；按 attempt 过滤时省略） */
+    origins: z.record(z.string(), aiAttemptOriginSummarySchema).optional(),
   })
   .strict();
 export type AiAttemptReviewListData = z.infer<

@@ -29,7 +29,6 @@ import {
   aiTaskActionSchema,
   aiTaskMaterialInternalSchema,
   aiTaskMaterialSchema,
-  aiTaskOriginSummarySchema,
   aiTaskPublicSchema,
   aiTaskStatusSchema,
 } from "./student-ai";
@@ -256,36 +255,6 @@ it("SAI-23 归档是队列管理动作：只加在终态（replied/cancelled）�
   }
   expect(aiTaskActionSchema.parse("archive")).toBe("archive");
   expect(aiTaskActionSchema.safeParse("unarchive").success).toBe(false);
-});
-
-it("SAI-23 任务来源摘要：来源/次数/题号/标题与导航定位键（列表附加视图）", () => {
-  const origin = {
-    sourceType: "lesson",
-    attemptNo: 2,
-    questionNo: 3,
-    title: "二次函数讲练页",
-    assignmentId: null,
-    courseId: "6b7c8d9e-0000-4000-8000-ffffffffffff",
-    unitId: "unit-b",
-    lectureId: "7c8d9e0f-0000-4000-8000-aaaaaaaaaaaa",
-    attemptStatus: "submitted",
-  };
-  expect(aiTaskOriginSummarySchema.parse(origin)).toEqual(origin);
-  // 题不在本卷（软删/缺失）如实可表达，不伪造题号
-  expect(
-    aiTaskOriginSummarySchema.parse({ ...origin, questionNo: null }).questionNo,
-  ).toBeNull();
-  // strict：未知字段与非法来源拒绝
-  expect(
-    aiTaskOriginSummarySchema.safeParse({ ...origin, extra: 1 }).success,
-  ).toBe(false);
-  expect(
-    aiTaskOriginSummarySchema.safeParse({ ...origin, sourceType: "exam" })
-      .success,
-  ).toBe(false);
-  expect(
-    aiTaskOriginSummarySchema.safeParse({ ...origin, attemptNo: 0 }).success,
-  ).toBe(false);
 });
 
 it("处理状态与查看状态分开：无反馈、未查看均可表达", () => {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { attemptSourceSchema, questionRevisionIdSchema } from "./attempt.ts";
+import { questionRevisionIdSchema } from "./attempt.ts";
 import { rubricSchema } from "./rubric.ts";
 import { aiTeachingModeSchema } from "./student-ai-policy.ts";
 
@@ -520,35 +520,6 @@ export const aiTaskPublicSchema = z
   })
   .strict();
 export type AiTaskPublic = z.infer<typeof aiTaskPublicSchema>;
-
-/**
- * 任务来源摘要（SAI-23 全局队列列表的附加视图，按任务 id 挂在 origins 上；
- * 单题历史调用方不消费可省略）。只放展示与导航定位所需的公开字段——
- * 来源/次数/题号/标题 + 各来源的导航定位键；不携带题面、答案或作答内容。
- * - questionNo 按建卷冻结序（unitId 首现序 + rowid 组内序）计算；null = 该题
- *   已不在本卷行中（软删/缺失），如实呈现不伪造题号；
- * - title：作业标题 / 课程名 / 讲练页标题；wrong 来源无卷标题恒 null；
- * - attemptStatus 供队列呈现作答阶段（作答中/已交卷/已批改）。
- */
-export const aiTaskOriginSummarySchema = z
-  .object({
-    sourceType: attemptSourceSchema,
-    /** 第几次作答（course/wrong/lesson 递增；assignment 缺省 1、显式重做后递增，hall-15313） */
-    attemptNo: z.number().int().min(1),
-    /** 卷内题号（1 起全卷连续）；null = 题已不在本卷 */
-    questionNo: z.number().int().min(1).nullable(),
-    /** 来源标题（wrong 为 null） */
-    title: z.string().nullable(),
-    /** 导航定位键（按来源非空；前端据此构造原作答地址，不按 questionId 反查） */
-    assignmentId: z.string().nullable(),
-    courseId: z.string().nullable(),
-    unitId: z.string().nullable(),
-    lectureId: z.string().nullable(),
-    /** 作答阶段：draft | submitted | graded */
-    attemptStatus: z.enum(["draft", "submitted", "graded"]),
-  })
-  .strict();
-export type AiTaskOriginSummary = z.infer<typeof aiTaskOriginSummarySchema>;
 
 /** 教师域任务视图：在公开视图上追加提示词哈希与完整快照（本域可见全部） */
 export const aiTaskTeacherSchema = aiTaskPublicSchema

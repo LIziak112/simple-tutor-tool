@@ -13,10 +13,10 @@ import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
 import {
   claimAttemptReviewTask,
-  listAttemptReviewTasks,
   renewAttemptReviewLease,
   submitAttemptReviewResult,
 } from "../services/ai-companion/student-ai-attempt-review.ts";
+import { listAttemptReviewTasks } from "../services/ai-companion/student-ai-attempt-review-list.ts";
 import {
   collectAiTaskMaterialBytes,
   taskOf,

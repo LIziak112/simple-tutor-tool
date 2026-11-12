@@ -20,6 +20,7 @@ import {
   requireUsableAttempt,
 } from "../attempt-service.ts";
 import { createAiTask } from "./student-ai-queue.ts";
+import { batchItemMutationIdOf } from "./student-ai-shared.ts";
 
 /**
  * SAI-31 批量错题复盘服务（B16；需求规格 §8 末段）。
@@ -128,7 +129,7 @@ function createOneBatchItem(
 ): AiBatchCreateItemResult {
   // 派生幂等键预检：跨学生撞键按冲突拒绝（createAiTask 的 409 文案同源，
   // 此处先行是为不把他人任务行误报成 already_exists）
-  const derivedMutationId = `${input.mutationId}:${item.attemptId}:${item.questionId}`;
+  const derivedMutationId = batchItemMutationIdOf(input.mutationId, item);
   try {
     const attempt = requireUsableAttempt(db, input.studentId, item.attemptId);
     if (attempt.status === "draft") {

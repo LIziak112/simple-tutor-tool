@@ -17,13 +17,13 @@ import {
   aiMessageSchema,
   aiShareViewSchema,
   aiTaskMaterialSchema,
-  aiTaskOriginSummarySchema,
   aiTaskPublicSchema,
   aiTaskPurposeSchema,
   aiTaskStatusSchema,
   aiTaskTeacherSchema,
   aiTeacherFactSchema,
 } from "./student-ai.ts";
+import { aiTaskOriginSummarySchema } from "./student-ai-origin.ts";
 import {
   aiMaterialPreferenceSchema,
   aiPolicyResolutionSchema,

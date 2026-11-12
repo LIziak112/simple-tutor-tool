@@ -102,6 +102,7 @@ function originOf(
     unitId: "有理数小练",
     lectureId: null,
     attemptStatus: "draft",
+    batch: null,
     ...over,
   };
 }

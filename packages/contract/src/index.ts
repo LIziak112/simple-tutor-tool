@@ -136,6 +136,9 @@ export * from "./student-ai-api.ts";
  *  一个 attempt 一份整体上下文，逐题任务不受影响 */
 export * from "./student-ai-attempt-review.ts";
 export * from "./student-ai-display.ts";
+/** 学生端 AI 伴学：任务来源摘要（求助记录列表附加视图）——作答级摘要、批量复盘批次
+ *  来源、逐题任务来源摘要；只含展示与导航定位字段 */
+export * from "./student-ai-origin.ts";
 /** 学生端 AI 伴学：教学配置与预设契约（SAI-02 起为权威定义，依据 B00 技术方案 §2/§4.1/§9）——
  *  三模式与继承、有效裁决输出、教师三模板与默认值、学生/作业覆盖、快捷按钮与附件偏好、
  *  限额常量与错误码；裁决是服务端输出，学生请求携带越权字段一律 strict 拒绝 */
