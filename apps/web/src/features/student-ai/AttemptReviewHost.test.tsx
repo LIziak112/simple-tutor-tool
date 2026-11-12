@@ -172,6 +172,18 @@ describe("整卷复盘承载：地址驱动", () => {
     expect(searchNow()).toBe("?reviewQuestion=q-3&aiFrom=%2Fs%2Fhome");
   });
 
+  it("地址参数不是任务 id（如带路径片段的伪造链接）：不打开任何东西、不发请求", async () => {
+    mockedList.mockResolvedValue({ tasks: [taskOf()], nextCursor: null });
+    renderAt(`?aiReview=${encodeURIComponent("../../settings?x=")}`);
+    // 顶栏入口照常（列表已返回），但没有弹层，也没有按伪造 id 取详情 / 记已读
+    expect(
+      await screen.findByRole("button", { name: /查看整卷复盘报告/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockedDetail).not.toHaveBeenCalled();
+    expect(mockedAction).not.toHaveBeenCalled();
+  });
+
   it("顶栏「查看整卷复盘报告」与地址进入打开的是同一份报告", async () => {
     mockedList.mockResolvedValue({ tasks: [taskOf()], nextCursor: null });
     mockedDetail.mockResolvedValue(DETAIL);

@@ -5,6 +5,7 @@ import { AttemptReviewReportReader } from "./AttemptReviewReportReader";
 import {
   ATTEMPT_REVIEW_PANEL_TARGET,
   ATTEMPT_REVIEW_PARAM,
+  attemptReviewTargetOf,
 } from "./attempt-review-entry";
 
 /**
@@ -24,7 +25,7 @@ export interface AttemptReviewOverlay {
 /** 读写 aiReview 地址参数（替换当前历史记录，不新增一步「后退」） */
 export function useAttemptReviewOverlay(): AttemptReviewOverlay {
   const [params, setParams] = useSearchParams();
-  const raw = params.get(ATTEMPT_REVIEW_PARAM);
+  const target = attemptReviewTargetOf(params.get(ATTEMPT_REVIEW_PARAM));
   const write = useCallback(
     (target: string | null) => {
       const next = new URLSearchParams(params);
@@ -36,7 +37,7 @@ export function useAttemptReviewOverlay(): AttemptReviewOverlay {
   );
   const open = useCallback((target: string) => write(target), [write]);
   const close = useCallback(() => write(null), [write]);
-  return { target: raw === null || raw === "" ? null : raw, open, close };
+  return { target, open, close };
 }
 
 export function AttemptReviewHost({

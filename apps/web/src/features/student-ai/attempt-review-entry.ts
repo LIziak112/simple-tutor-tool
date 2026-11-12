@@ -47,6 +47,20 @@ export const ATTEMPT_REVIEW_STATUS_LABEL = {
 export const ATTEMPT_REVIEW_PARAM = "aiReview";
 export const ATTEMPT_REVIEW_PANEL_TARGET = "panel";
 
+const TASK_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 解析地址参数：只认 "panel" 或任务 id（UUID）。参数来自地址栏，可能是别人
+ * 构造的链接——其余值一律当作没有，不拿去拼接口路径。
+ */
+export function attemptReviewTargetOf(raw: string | null): string | null {
+  if (raw === null) return null;
+  return raw === ATTEMPT_REVIEW_PANEL_TARGET || TASK_ID_PATTERN.test(raw)
+    ? raw
+    : null;
+}
+
 /**
  * 整卷复盘的唯一地址：所有入口（顶栏、提示条、求助记录、讲练完成页）都只
  * 构造这个地址，由结果页上的承载组件按地址打开——同一份报告不会有两套打开

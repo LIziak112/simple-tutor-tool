@@ -95,9 +95,10 @@ function FindingSection({
   return (
     <Section title={title}>
       <ul className="flex flex-col gap-2.5">
-        {findings.map((finding) => (
+        {findings.map((finding, index) => (
           <li
-            key={finding.statement}
+            // biome-ignore lint/suspicious/noArrayIndexKey: 报告是只读静态列表、不重排；正文是不可信输入，条目文字可能重复，不能当键
+            key={index}
             className="flex flex-col gap-2 rounded-xl border border-border bg-background p-3"
           >
             <p className="text-[15px] leading-7 break-words">
@@ -144,9 +145,10 @@ function ReportBody({
       {report.trainingPlan.length > 0 && (
         <Section title="接下来怎么练">
           <ol className="flex flex-col gap-2.5">
-            {report.trainingPlan.map((item) => (
+            {report.trainingPlan.map((item, index) => (
               <li
-                key={item.action}
+                // biome-ignore lint/suspicious/noArrayIndexKey: 报告是只读静态列表、不重排；正文是不可信输入，条目文字可能重复，不能当键
+                key={index}
                 className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3"
               >
                 <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -195,8 +197,9 @@ function ReportBody({
       {report.limitations.length > 0 && (
         <Section title="这份报告的局限">
           <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
-            {report.limitations.map((item) => (
-              <li key={item}>{item}</li>
+            {report.limitations.map((item, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 报告是只读静态列表、不重排；正文是不可信输入，条目文字可能重复，不能当键
+              <li key={index}>{item}</li>
             ))}
           </ul>
         </Section>
