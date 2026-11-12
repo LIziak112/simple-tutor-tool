@@ -58,7 +58,7 @@ export function sessionCookieOptions(isSecure: boolean, ttlMs?: number) {
 
 /** 创建教师会话，返回 token（写入 Cookie）与过期时间 */
 export function createTeacherSession(
-  db: Db,
+  db: Pick<Db, "insert">,
   teacherId: string,
 ): { token: string; expiresAt: string } {
   return insertSession(db, "teacher", teacherId, TEACHER_SESSION_TTL_MS);
@@ -74,7 +74,7 @@ export function createStudentSession(
 
 /** 写入一条会话行（教师/学生共用，token 即主键） */
 function insertSession(
-  db: Db,
+  db: Pick<Db, "insert">,
   subjectType: "teacher" | "student",
   subjectId: string,
   ttlMs: number,
@@ -183,7 +183,7 @@ export function deleteSession(db: Db, token: string): void {
 }
 
 /** 清理已过期的会话行（登录时顺带调用，防表膨胀） */
-export function pruneExpiredSessions(db: Db): void {
+export function pruneExpiredSessions(db: Pick<Db, "delete">): void {
   db.delete(sessions)
     .where(lt(sessions.expiresAt, new Date().toISOString()))
     .run();

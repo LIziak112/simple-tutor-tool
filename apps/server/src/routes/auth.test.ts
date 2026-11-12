@@ -147,6 +147,65 @@ describe("GET /api/public/teacher/status", () => {
 });
 
 describe("POST /api/public/teacher/setup", () => {
+  it.each(["空库", "占位行"] as const)(
+    "%s 并发首设只写入一位管理员和一个会话",
+    async (shape) => {
+      const { app, db } = makeApp();
+      if (shape === "空库") db.delete(teachers).run();
+      const path = "/api/public/teacher/setup";
+      const outcomes = await Promise.all([
+        jsonRequestOn(app, path, {
+          loginName: "teacher-one",
+          password: PASSWORD,
+        }),
+        jsonRequestOn(app, path, {
+          loginName: "teacher-two",
+          password: PASSWORD,
+        }),
+      ]);
+      expect(outcomes.map((response) => response.status).sort()).toEqual([
+        200, 409,
+      ]);
+      const winner = outcomes.find((response) => response.ok);
+      const loser = outcomes.find((response) => response.status === 409);
+      if (!winner || !loser) throw new Error("缺少首设胜负响应");
+      const { data } = teacherInfoOkSchema.parse(await winner.json());
+      expect(await loser.json()).toMatchObject({ error: "TEACHER_EXISTS" });
+      expect(loser.headers.getSetCookie()).toEqual([]);
+      expect(db.select().from(teachers).all()).toMatchObject([
+        { id: data.id, loginName: data.loginName, isAdmin: true },
+      ]);
+      expect(db.select().from(sessions).all()).toMatchObject([
+        {
+          id: extractSessionToken(winner),
+          subjectType: "teacher",
+          subjectId: data.id,
+        },
+      ]);
+      if (shape === "占位行") expect(data.id).toBe(TEST_TEACHER_ID);
+    },
+  );
+
+  it("其他教师已设密码时禁止占位行再次首设", async () => {
+    const { app, db } = makeApp();
+    await seedTeacher(
+      db,
+      { id: "teacher-configured", loginName: "existing-teacher" },
+      PASSWORD,
+    );
+    const response = await jsonRequestOn(app, "/api/public/teacher/setup", {
+      loginName: "another-teacher",
+      password: PASSWORD,
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "TEACHER_EXISTS" });
+    expect(
+      db.select().from(teachers).where(eq(teachers.id, TEST_TEACHER_ID)).get()
+        ?.passwordHash,
+    ).toBeNull();
+    expect(db.select().from(sessions).all()).toEqual([]);
+  });
+
   it("成功：200 + 教师信息（loginName/isAdmin）+ 写入会话 Cookie，响应不含密码哈希", async () => {
     const { app } = makeApp();
     const res = await jsonRequestOn(app, "/api/public/teacher/setup", {
