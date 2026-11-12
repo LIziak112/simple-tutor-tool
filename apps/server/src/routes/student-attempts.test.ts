@@ -452,8 +452,15 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
       draft.id,
     );
 
+    // 交卷回执直接驱动结果页，必须与详情一样携带当前重做策略。
+    const submitted = await postSubmit(app, aCookie, draft.id as string);
+    expect(submitted.status).toBe(200);
+    const receipt = attemptResultOkSchema.parse(await submitted.json()).data;
+    expect(receipt.attempt.allowRedo).toBe(false);
+    const detail = await getAttempt(app, aCookie, draft.id as string);
+    expect(attemptResultOkSchema.parse(detail.body).data).toEqual(receipt);
+
     // 交卷后：redo:true 被拒；缺省 POST 回看不受影响
-    await postSubmit(app, aCookie, draft.id as string);
     const denied = await postAttemptWithBody(app, aCookie, assignmentId, {
       redo: true,
     });
@@ -472,9 +479,14 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
       redo: true,
     });
     expect(redo.status).toBe(200);
+    const next = attemptStartOkSchema.parse(await redo.json()).data;
+    expect(next.attemptNo).toBe(2);
+    const nextSubmit = await postSubmit(app, aCookie, next.id);
+    expect(nextSubmit.status).toBe(200);
     expect(
-      ((await redo.json()) as { data: { attemptNo: number } }).data.attemptNo,
-    ).toBe(2);
+      attemptResultOkSchema.parse(await nextSubmit.json()).data.attempt
+        .allowRedo,
+    ).toBe(true);
   });
 
   it("缺省 POST（空 body / 无 redo 字段）在可重做作业上不开新卷（回归锁）", async () => {

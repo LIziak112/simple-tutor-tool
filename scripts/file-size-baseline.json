@@ -8,7 +8,7 @@
   "apps/server/src/services/analytics-service.ts": 1693,
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1390,
-  "apps/server/src/services/attempt-service.ts": 4275,
+  "apps/server/src/services/attempt-service.ts": 4270,
   "apps/server/src/services/content-service.ts": 2246,
   "apps/server/src/services/course-service.ts": 1498,
   "apps/server/src/services/export-service.ts": 2783,
