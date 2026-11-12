@@ -8,6 +8,7 @@ import {
   frozenGradingPolicyOf,
   wrongAttemptContextPlan,
 } from "./attempt-context.ts";
+import { assertAttemptQuestionLimit } from "./attempt-question-set.ts";
 import {
   type AttemptWorkflowStartOptions,
   attemptSummaryOf,
@@ -101,6 +102,7 @@ export function startWrongPractice(
       "这些题目不在你的错题本里（或状态有变），请刷新后再试",
     );
   }
+  assertAttemptQuestionLimit(plan.usable.length);
 
   const freezePolicy = newContentEnabled ?? newContentEnabledFromEnv();
   // P2（2026-10-28 #38）：selection 范围快照的 questionCount 以服务端实际冻结

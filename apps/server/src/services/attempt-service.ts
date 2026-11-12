@@ -69,7 +69,6 @@ import {
 } from "@tutor/md-dsl";
 import {
   and,
-  asc,
   desc,
   eq,
   gt,
@@ -86,7 +85,6 @@ import {
   annotations,
   assignmentStudents,
   assignments,
-  assignmentUnits,
   attempts,
   type Course,
   courses,
@@ -98,7 +96,6 @@ import {
   questions,
   type ResponseRow,
   responses,
-  students,
   submissionEvidence,
   type Unit,
   units,
@@ -113,6 +110,12 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import {
+  assertAttemptQuestionLimit,
+  attemptTeacherId,
+  attemptUnitIds,
+  loadAttemptQuestions,
+} from "./attempt-question-set.ts";
 import { attemptAllowRedo } from "./attempt-redo-policy";
 import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
@@ -149,6 +152,11 @@ import {
   resolveNewAttemptWorkflow,
 } from "./practice-workflow-wiring";
 
+export {
+  attemptQuestionRows,
+  attemptTeacherId,
+  attemptUnitIds,
+} from "./attempt-question-set.ts";
 // answersReleased 原定义在本文件（T2A.8），M2 迁入纯裁决器层（题级反馈
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
 export { answersReleased } from "./practice-workflow-service";
@@ -416,24 +424,23 @@ function backfillFrozenResponses(
 }
 
 /**
- * 非 wrong 来源的冻结输入（**读路径，事务外调用**——better-sqlite3 同步单进程，
- * 同线程内先读后写无竞态）：attempt 单元集合内的当前 live 题（单元序 × 题序，
+ * 非 wrong 来源的冻结输入：attempt 单元集合内的当前 live 题（单元序 × 题序，
  * attemptQuestionRows 口径，域内取题 D10）+ 各题考点名（快照 knowledge 用，
  * 只查卷内题目的关联，不拉全教师域）。
  * 教师域缺失的异常行按空集合处理（fail closed，空卷冻结）。
- * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（嵌入单元 live 题）。
  */
-export function freezeInputsOfAttempt(
+function freezeInputsOfAttempt(
   db: Db,
   attempt: Attempt,
+  checkNewAttemptLimit = false,
 ): {
   liveRows: QuestionRow[];
   knowledgeByQuestion: ReadonlyMap<string, string[]>;
   /** 题目所属教师域（tt-07a 依赖闭包计算用；异常行 null → 闭包为空） */
   teacherId: string | null;
 } {
-  const teacherId = attemptTeacherId(db, attempt);
-  const liveRows = attemptQuestionRows(db, attempt);
+  const { teacherId, liveRows } = loadAttemptQuestions(db, attempt);
+  if (checkNewAttemptLimit) assertAttemptQuestionLimit(liveRows.length);
   return {
     liveRows,
     teacherId,
@@ -446,6 +453,11 @@ export function freezeInputsOfAttempt(
             liveRows.map((row) => row.id),
           ),
   };
+}
+
+/** 新开卷在读取考点和冻结上下文之前先核对实际题数。 */
+export function freezeInputsOfNewAttempt(db: Db, attempt: Attempt) {
+  return freezeInputsOfAttempt(db, attempt, true);
 }
 
 /**
@@ -623,25 +635,6 @@ export function requireUsableAttempt(
 // ---------- 题目集合按来源分派（T2A.6；T2A.7 多单元化） ----------
 
 /**
- * attempt → student.teacherId 推导教师域（T2B.5，D10）：学生侧无会话教师，
- * 取卷/判分/提示/结果视图等一切按 unitId/questionId 查 units/questions 的地方
- * 在复合主键 (teacherId, id) 后不再唯一，必须带域（否则两位教师持同 id 单元/
- * 题目时会串到别人的内容——既是泄露也是判分错误）。attempt 归属学生一生只归
- * 一位教师（D14），故域取 students.teacherId。
- * D9 异常行防御：无教师域的学生行（回填后不应存在）返回 null，调用方按
- * 空结果/缺省处理（fail closed，与 T2B.4 listStudentAssignments 同口径）。
- * 导出供 hint-service 复用（提示内容同样按域取题）。
- */
-export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
-  const row = db
-    .select({ teacherId: students.teacherId })
-    .from(students)
-    .where(eq(students.id, attempt.studentId))
-    .get();
-  return row?.teacherId ?? null;
-}
-
-/**
  * T7.7：attempt → 所属教师的有效辅助能力启用集（草稿/结果视图同口径下发）。
  * 无教师域的异常学生行兜底全启用——与题目域的 fail closed（空结果）不同：
  * 开关只影响 steps 揭晓与手写入口的渲染，不是安全边界，兜底到「多给辅助」
@@ -656,73 +649,6 @@ export function attemptEnabledCapabilities(
   return teacherId === null
     ? [...ALL_ENABLED_CAPABILITIES]
     : getCapabilityProfile(db, teacherId).enabledCapabilities;
-}
-
-/**
- * attempt 的有序单元 id 列表（T2A.7）：
- * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行；
- *   课程侧可见性由 requireVisibleCourseUnit 把关）；
- * - lesson 来源（2026-10 讲练一体）：[attempt.unitId]（嵌入单元的快照值，开卷
- *   时写入；零题讲练页为讲义 id 占位——该值下无题目行，冻结结果为空卷）；
- * - assignment 来源：该作业 assignment_units 按 order 升序的列表（作业行经 FK
- *   必存在——含已删作业，作答不随作业软删消失）。
- *   D16：**单元软删不影响作业通道**——引用行保留，题目照常下发/判分；
- *   只有 questions.deletedAt（T1.12 题目级软删）才把题从判分/快照口径排除。
- * - wrong 来源（2026-10）：恒 []——错题重练卷不落单元，题目集合/快照/题序
- *   全在 attempt 自己的 responses 行（wrongAttemptResponseRows）。
- * 判分/快照/草稿/取卷/题目归属校验全部以本列表为唯一口径（wrong 来源除外，
- * 各消费方按 wrong 分支走自有行）。
- */
-export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
-  if (attempt.sourceType === "wrong") {
-    return [];
-  }
-  if (attempt.sourceType === "course" || attempt.sourceType === "lesson") {
-    return attempt.unitId !== null ? [attempt.unitId] : [];
-  }
-  const assignmentId = attempt.assignmentId;
-  if (assignmentId === null) return []; // 防御性兜底：assignment 来源必写 assignmentId
-  return db
-    .select({ unitId: assignmentUnits.unitId })
-    .from(assignmentUnits)
-    .where(eq(assignmentUnits.assignmentId, assignmentId))
-    .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
-    .all()
-    .map((row) => row.unitId);
-}
-
-/**
- * attempt 的判分/快照题目集合（按 sourceType 分派，D9；T2A.7 多单元拼接）：
- * 各单元未删除题按 (order, id) 升序后**按 attemptUnitIds 的单元顺序拼接**——
- * 题号全卷连续（D12），得分按全卷计算。course 来源为单单元的特例。
- * T2B.5：按 attempt → student.teacherId 域内取题（D10——同 id 题目分属不同
- * 教师，判分输入不可串域；无教师域的异常行按空集合处理）。
- */
-export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
-  const unitIds = attemptUnitIds(db, attempt);
-  if (unitIds.length === 0) return [];
-  const teacherId = attemptTeacherId(db, attempt);
-  if (teacherId === null) return [];
-  const rows = db
-    .select()
-    .from(questions)
-    .where(
-      and(
-        eq(questions.teacherId, teacherId),
-        inArray(questions.unitId, unitIds),
-        isNull(questions.deletedAt),
-      ),
-    )
-    .orderBy(asc(questions.order), asc(questions.id))
-    .all();
-  // 按单元顺序拼接（组内已按题序排序）
-  const byUnit = new Map<string, QuestionRow[]>();
-  for (const row of rows) {
-    const list = byUnit.get(row.unitId);
-    if (list === undefined) byUnit.set(row.unitId, [row]);
-    else list.push(row);
-  }
-  return unitIds.flatMap((unitId) => byUnit.get(unitId) ?? []);
 }
 
 /**
@@ -1955,7 +1881,7 @@ function createAssignmentAttempt(
   });
   // T6R.3：建卷冻结——题目集合/题序/完整快照/单元归属逐题预插 responses 行
   //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷
-  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
     db,
     attempt,
   );
@@ -2071,10 +1997,8 @@ export function startCourseAttempt(
     });
     // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入读走外层 db
     // （同连接同步执行，事务内读写口径一致），写走 tx 与 attempt 行同事务落库
-    const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
-      db,
-      attempt,
-    );
+    const { liveRows, teacherId, knowledgeByQuestion } =
+      freezeInputsOfNewAttempt(db, attempt);
     // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（读在外层 db，同款口径）
     const entries =
       teacherId === null

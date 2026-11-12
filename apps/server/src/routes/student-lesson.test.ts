@@ -1,6 +1,8 @@
 import { gzipSync } from "node:zlib";
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
+  ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
   apiErrSchema,
   attemptResultOkSchema,
   lessonLandingOkSchema,
@@ -35,6 +37,7 @@ import {
   snapshotJsonOf,
 } from "../test/evidence-fixtures.ts";
 import { putNoteReceipt } from "../test/note-fixtures.ts";
+import { addLimitFixtureQuestions } from "../test/question-limit-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -398,6 +401,24 @@ async function startOk(
 }
 
 describe("POST /api/student/lectures/:id/lesson/start（讲练开卷，幂等 create-or-return）", () => {
+  it("题量上限：超出上限的实际冻结题集不写入新卷", async () => {
+    const env = await makeEnv();
+    const unit = env.db
+      .select({ id: units.id })
+      .from(units)
+      .where(eq(units.lectureId, env.lectureId))
+      .get();
+    if (!unit) throw new Error("讲练夹具缺少嵌入单元");
+    addLimitFixtureQuestions(env.db, unit.id, ATTEMPT_SUBMIT_MAX_QUESTIONS - 1);
+    const opened = await startLesson(env);
+    expect(opened.status).toBe(400);
+    expect(await opened.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(env.db.select().from(attempts).all()).toHaveLength(0);
+    expect(env.db.select().from(responses).all()).toHaveLength(0);
+  });
+
   it("开卷投影：blocks 切段（无题块）、questions 公开平铺、attempt 归属与 lecture 上下文；三层泄露断言", async () => {
     const env = await makeEnv();
     const body = await startOk(env);
