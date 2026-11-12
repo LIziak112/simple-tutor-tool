@@ -43,6 +43,9 @@ export function unsyncedAnswerIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.answers).filter(
     (questionId) =>
       record.answerConflicts?.[questionId] === undefined &&
+      !record.localConflicts?.some(
+        (entry) => entry.kind === "answer" && entry.key === questionId,
+      ) &&
       record.answerDigests[questionId] !== digestOf(record.answers[questionId]),
   );
 }

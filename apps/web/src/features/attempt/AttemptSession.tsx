@@ -1160,7 +1160,6 @@ function AnswerView({
     useAttemptSubmitFlow({
       attemptId,
       savedOnly,
-      timed: phase !== null,
       recoveryReady:
         materialRecovery.state === "ready" && !draftSync.recoveryError,
       syncDraft: draftSync.syncNow,

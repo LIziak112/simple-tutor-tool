@@ -16,7 +16,6 @@ import type {
 export function useAttemptSubmitFlow({
   attemptId,
   savedOnly,
-  timed,
   recoveryReady,
   syncDraft,
   flushAnswers,
@@ -28,7 +27,6 @@ export function useAttemptSubmitFlow({
 }: {
   attemptId: string;
   savedOnly: boolean;
-  timed: boolean;
   recoveryReady: boolean;
   syncDraft: () => Promise<void>;
   flushAnswers: () => Promise<void>;
@@ -105,11 +103,11 @@ export function useAttemptSubmitFlow({
       }
       if (submitAbortedRef.current) return { kind: "aborted" }; // 弹层已关：状态已由 cancel 复位
       const inkResults = await inkPromise;
+      if (!savedOnly) await draftStore.flush(attemptId);
       if (submitAbortedRef.current) return { kind: "aborted" };
       // ink 失败早退阻止交卷（prep 结果弃用——副作用无害）：收起弹层
       // 走底栏提示（状态迁移与 submitted 同——关弹层回 idle）
       const hasPendingInk =
-        timed &&
         !savedOnly &&
         draftStore
           .peekUnsyncedInkIds(attemptId)
@@ -169,7 +167,6 @@ export function useAttemptSubmitFlow({
       savedOnly,
       submit,
       syncDraft,
-      timed,
     ],
   );
   return { inkFlushError, runSubmit, submit, submitAbortedRef };

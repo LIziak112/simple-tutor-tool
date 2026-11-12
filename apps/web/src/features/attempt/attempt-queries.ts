@@ -28,6 +28,7 @@ import {
 } from "@/lib/api";
 import { shareAttemptDetail } from "@/lib/attempt-detail-read";
 import { randomUuid } from "@/lib/uuid";
+import { digestOf } from "./draft-merge";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import { getPracticePreference } from "./practice-preference-store";
 
@@ -377,11 +378,24 @@ export function saveDraftAnswer(
   const task = prior.then(async () => {
     if (epoch !== getDraftSessionEpoch())
       throw new Error("作答会话已切换，旧答案未上传");
+    await draftStore.flush(attemptId);
     const record = await draftStore.loadDraft(attemptId, { strictRead: true });
     if (epoch !== getDraftSessionEpoch())
       throw new Error("作答会话已切换，旧答案未上传");
-    if (record?.answerConflicts?.[questionId])
+    if (
+      record?.answerConflicts?.[questionId] ||
+      record?.localConflicts?.some(
+        (entry) => entry.kind === "answer" && entry.key === questionId,
+      )
+    )
       throw new Error("本题答案有同步冲突，请先选择保留哪一份");
+    const latest = record?.answers[questionId];
+    if (
+      (latest !== undefined ||
+        record?.answerMutationIds?.[questionId] !== undefined) &&
+      digestOf(latest) !== digestOf(answer)
+    )
+      throw new Error("本题已有较新的本机答案，旧答案未上传");
     const baseRevision = record?.answerRevisions?.[questionId];
     try {
       const receipt = await (baseRevision === undefined

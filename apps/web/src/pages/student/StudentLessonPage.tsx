@@ -45,7 +45,6 @@ import {
   questionMaterialsOf,
 } from "@/features/attempt/attempt-context-view";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
-import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
   EnabledCapabilitiesProvider,
@@ -56,6 +55,7 @@ import {
   LessonQuestionMaterials,
 } from "@/features/lesson/LessonGroupBlock";
 import { LessonQuestionCard } from "@/features/lesson/LessonQuestionCard";
+import { LessonSaveNotices } from "@/features/lesson/LessonSaveNotices";
 import {
   useLessonStart,
   useRestartLesson,
@@ -758,7 +758,6 @@ function LessonAnswerInner({
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
   );
-  const [retryingSave, setRetryingSave] = useState(false);
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
   // QM-14：组段呈现（作答态与完成回看同一组锚点；context 失败非阻断）
   const {
@@ -896,31 +895,7 @@ function LessonAnswerInner({
           </p>
         )}
 
-        {/* 本机保存失败时的手动重试（其余失败态由同步循环自动重试） */}
-        {session.saveStatus.startsWith("本机保存失败") && (
-          <p className="flex flex-wrap items-center gap-2 text-sm text-destructive">
-            本机草稿保存失败
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={retryingSave}
-              onClick={async () => {
-                setRetryingSave(true);
-                try {
-                  await retryAttemptLocalPersistence(attemptId, questionIds);
-                  await session.draftSyncContext.syncNow();
-                } catch {
-                  // 重试失败保持提示（下一次点击再试）
-                } finally {
-                  setRetryingSave(false);
-                }
-              }}
-            >
-              <RotateCw aria-hidden className="size-4" />
-              重试保存
-            </Button>
-          </p>
-        )}
+        <LessonSaveNotices questionIds={questionIds} session={session} />
 
         {aiCompanion.rail(
           <LessonBody
