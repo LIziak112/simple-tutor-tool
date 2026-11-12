@@ -77,7 +77,6 @@ import {
 } from "../services/assignment-service";
 import { studentAttemptContext } from "../services/attempt-context";
 import {
-  getAttemptDetail,
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
   getStudentAttemptPaper,
@@ -135,6 +134,7 @@ import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
+import { respondAttemptDetail } from "./student-attempt-detail";
 import { createStudentMemoRoutes } from "./student-memos";
 import { createStudentRubricRoutes } from "./student-rubric";
 
@@ -484,18 +484,9 @@ export function createStudentRoutes(
           ),
         });
       })
-      .get("/attempts/:id", (c) => {
-        // T2A.8：now 显式注入（读时比较 dueAt，截止后自动恢复完整结果视图）
-        return c.json({
-          ok: true,
-          data: getAttemptDetail(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            new Date(),
-          ),
-        });
-      })
+      .get("/attempts/:id", (c) =>
+        respondAttemptDetail(c, db, c.var.student.id, c.req.param("id")),
+      )
       // tt-07a（QM-06）：冻结上下文公开投影（材料/组快照）读取——作答期渲染与
       // 结果回看共用，只读快照不查 live 库（教师改材料/软删不影响已开卷）；坏
       // 快照 409 ATTEMPT_CONTEXT_BROKEN 显式报错。归属校验复用

@@ -3,13 +3,10 @@
  *
  * 只负责「把 frameAt 的结果画上 canvas」：清屏 → 按可见点数截断每笔 → 复用
  * 引擎层导出的 replayAtramentStroke（与实时书写/全量重绘同一绘制原语）。
- * 全量重绘口径与 atrament-adapter.redraw 一致——荧光笔带 alpha，增量补画会
- * 叠深颜色，因此每帧整幅重来（题级笔迹量小，60fps 可承受）。
- *
- * jsdom 无 canvas 2d context，本模块刻意保持薄且不写单测；时间轴与截断逻辑
- * 在 model.ts 纯函数层已测。组件测试以 vi.mock 替换本模块。
+ * 按绘制顺序到达的普通笔段可直接追加；回退或替换旧笔时按矢量重建。
  */
 import {
+  beginAtramentStroke,
   createProgrammaticAtrament,
   replayAtramentStroke,
 } from "../engine/atrament-adapter.ts";
@@ -24,6 +21,13 @@ export interface AtramentReplayCanvas {
   drawFrame(
     strokes: readonly InkStroke[],
     visiblePoints: readonly number[],
+  ): void;
+  /** 已完成的笔画前缀，加上至多一笔正在绘制的普通 Atrament 笔迹。 */
+  drawOrdered(
+    strokes: readonly InkStroke[],
+    completed: number,
+    active: InkStroke | null,
+    points: number,
   ): void;
   /**
    * LR-PR4：墓碑淡色虚线（教师「看擦改」开关）。可选方法——既有 mock/消费方
@@ -42,6 +46,20 @@ export interface AtramentReplayCanvas {
   destroy(): void;
 }
 
+type OrderedFrame = Parameters<AtramentReplayCanvas["drawOrdered"]>;
+
+function samePrefix(
+  previous: readonly InkStroke[],
+  next: readonly InkStroke[],
+  count: number,
+): boolean {
+  if (previous === next) return true;
+  for (let i = 0; i < count; i++) {
+    if (previous[i] !== next[i]) return false;
+  }
+  return true;
+}
+
 /** 在容器内创建回放画布（canvas 撑满容器；容器负责纵横比/尺寸） */
 export function createAtramentReplayCanvas(
   container: HTMLElement,
@@ -56,6 +74,10 @@ export function createAtramentReplayCanvas(
   container.appendChild(canvas);
 
   let cssWidth = 0;
+  let clientWidth = -1;
+  let clientHeight = -1;
+  let orderedFrame: OrderedFrame | null = null;
+  let activePen: ReturnType<typeof beginAtramentStroke> = null;
   /** 最近一次 drawFrame 的入参（resize 后原样重画） */
   let lastFrame: {
     strokes: readonly InkStroke[];
@@ -72,12 +94,25 @@ export function createAtramentReplayCanvas(
     timeMs: number;
   } | null = null;
 
-  function sizeCanvas(): void {
-    cssWidth = container.clientWidth || 300;
-    const cssHeight = container.clientHeight || 200;
+  function sizeCanvas(): boolean {
+    const width = container.clientWidth;
+    const height = container.clientHeight;
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    canvas.width = Math.max(1, Math.round(cssWidth * dpr));
-    canvas.height = Math.max(1, Math.round(cssHeight * dpr));
+    const pixelsWide = Math.max(1, Math.round((width || 300) * dpr));
+    const pixelsHigh = Math.max(1, Math.round((height || 200) * dpr));
+    if (
+      width === clientWidth &&
+      height === clientHeight &&
+      canvas.width === pixelsWide &&
+      canvas.height === pixelsHigh
+    )
+      return false;
+    clientWidth = width;
+    clientHeight = height;
+    cssWidth = width || 300;
+    canvas.width = pixelsWide;
+    canvas.height = pixelsHigh;
+    return true;
   }
 
   sizeCanvas();
@@ -92,14 +127,7 @@ export function createAtramentReplayCanvas(
   // 收窄后的 context 引用（const + 早退后声明箭头函数，类型收窄才能进闭包）
   const ctx2d = ctx;
 
-  const drawFrame = (
-    strokes: readonly InkStroke[],
-    visiblePoints: readonly number[],
-  ): void => {
-    lastFrame = { strokes, visiblePoints };
-    // 「看擦改」关掉后不再调 drawDeleted——清掉残留墓碑入参，防 ResizeObserver
-    // 重画时把过期墓碑叠回当前帧（评审 #11750 顺手项）
-    lastDeleted = null;
+  function clear(): void {
     // 清屏（transform 安全口径，同 adapter.redraw；随后恢复画笔状态）
     ctx2d.save();
     ctx2d.setTransform(1, 0, 0, 1, 0, 0);
@@ -109,6 +137,67 @@ export function createAtramentReplayCanvas(
     ctx2d.globalAlpha = 1;
     ctx2d.lineCap = "round";
     ctx2d.lineJoin = "round";
+  }
+
+  function resetOrdered(): void {
+    activePen?.end();
+    activePen = null;
+    orderedFrame = null;
+  }
+
+  const drawOrdered: AtramentReplayCanvas["drawOrdered"] = (
+    strokes,
+    completed,
+    active,
+    points,
+  ) => {
+    const previous = orderedFrame;
+    let painted = previous?.[1] ?? 0;
+    const previousActive = previous?.[2];
+    const promoted =
+      previousActive != null &&
+      completed > painted &&
+      previousActive === strokes[painted];
+    const continuing =
+      previousActive === active &&
+      completed === painted &&
+      points >= (previous?.[3] ?? 0);
+    if (
+      previous === null ||
+      completed < painted ||
+      !samePrefix(previous[0], strokes, painted) ||
+      (previousActive != null && !promoted && !continuing)
+    ) {
+      resetOrdered();
+      clear();
+      painted = 0;
+    } else if (promoted) {
+      activePen?.appendThrough(previousActive.points.length);
+      activePen?.end();
+      activePen = null;
+      painted++;
+    }
+    for (; painted < completed; painted++) {
+      const stroke = strokes[painted];
+      if (stroke) replayAtramentStroke(atrament, cssWidth, stroke);
+    }
+    if (active !== null) {
+      activePen ??= beginAtramentStroke(atrament, cssWidth, active);
+      activePen?.appendThrough(points);
+    }
+    lastFrame = null;
+    lastDeleted = null;
+    orderedFrame = [strokes, completed, active, points];
+  };
+
+  const drawFrame = (
+    strokes: readonly InkStroke[],
+    visiblePoints: readonly number[],
+  ): void => {
+    resetOrdered();
+    lastFrame = { strokes, visiblePoints };
+    lastDeleted = null;
+    clear();
     for (let i = 0; i < strokes.length; i++) {
       const stroke = strokes[i];
       const visible = visiblePoints[i];
@@ -161,7 +250,13 @@ export function createAtramentReplayCanvas(
   // 评审 #11771 必改②：先取 lastDeleted 再 drawFrame——drawFrame 会清它，
   // 顺序颠倒会让 resize 后墓碑消失到下一次播放头变化。
   const observer = new ResizeObserver(() => {
-    sizeCanvas();
+    if (!sizeCanvas()) return;
+    if (orderedFrame !== null) {
+      const frame = orderedFrame;
+      resetOrdered();
+      drawOrdered(...frame);
+      return;
+    }
     const deleted = lastDeleted;
     if (lastFrame) drawFrame(lastFrame.strokes, lastFrame.visiblePoints);
     if (deleted) drawDeleted(deleted.tombstones, deleted.timeMs);
@@ -170,9 +265,11 @@ export function createAtramentReplayCanvas(
 
   return {
     drawFrame,
+    drawOrdered,
     drawDeleted,
     destroy(): void {
       observer.disconnect();
+      resetOrdered();
       atrament.destroy();
       canvas.remove();
     },

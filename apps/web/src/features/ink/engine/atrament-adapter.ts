@@ -116,24 +116,38 @@ export function replayAtramentStroke(
       );
     return;
   }
+  const stroke = beginAtramentStroke(atrament, cssWidth, s);
+  stroke?.appendThrough(s.points.length);
+  stroke?.end();
+}
+
+/** 同一笔复用平滑后的上一点，按原顺序只绘制新增线段。 */
+export function beginAtramentStroke(
+  atrament: Atrament,
+  cssWidth: number,
+  s: InkStroke,
+) {
+  const first = s.points[0];
+  if (!first) return null;
   atrament.smoothing = s.rendering?.smoothing ?? 0.35;
-  if (s.points.length === 0) return;
   atrament.color = s.color;
   atrament.weight = fromLogical(cssWidth, s.weight);
-  const first = s.points[0];
-  if (!first) return;
-  const start = fromLogicalPoint(cssWidth, first.x, first.y);
-  atrament.beginStroke(start.x, start.y);
-  // 先画起点（与实时书写路径一致；单点即零长二次曲线，各引擎不栅格化
-  // 出墨点——命令照发，像素语义与实时画布一致）
-  let prev = atrament.draw(start.x, start.y, start.x, start.y, first.p);
-  for (let i = 1; i < s.points.length; i++) {
-    const pt = s.points[i];
-    if (!pt) continue;
-    const at = fromLogicalPoint(cssWidth, pt.x, pt.y);
-    prev = atrament.draw(at.x, at.y, prev.x, prev.y, pt.p);
-  }
-  atrament.endStroke(prev.x, prev.y);
+  let prev = fromLogicalPoint(cssWidth, first.x, first.y);
+  let drawn = 0;
+  atrament.beginStroke(prev.x, prev.y);
+  return {
+    appendThrough(count: number): void {
+      for (; drawn < count; drawn++) {
+        const pt = s.points[drawn];
+        if (!pt) break;
+        const at = fromLogicalPoint(cssWidth, pt.x, pt.y);
+        prev = atrament.draw(at.x, at.y, prev.x, prev.y, pt.p);
+      }
+    },
+    end(): void {
+      atrament.endStroke(prev.x, prev.y);
+    },
+  };
 }
 
 /**
