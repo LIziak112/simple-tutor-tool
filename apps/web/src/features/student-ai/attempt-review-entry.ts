@@ -149,12 +149,21 @@ export interface AttemptReviewEntryView {
   readonly target: string;
   readonly unread: boolean;
   readonly attention: boolean;
+  /**
+   * 结果页顶栏在窄屏是否收起为紧凑形态：只有已读的报告收起（入口仍在，不再
+   * 占一整行）。再发起一轮、或新报告未读时状态变了，自然重新展开。
+   */
+  readonly compact: boolean;
 }
 
 export function attemptReviewEntryViewOf(
   state: AttemptReviewEntryState,
 ): AttemptReviewEntryView | null {
-  const panel = { target: ATTEMPT_REVIEW_PANEL_TARGET, unread: false };
+  const panel = {
+    target: ATTEMPT_REVIEW_PANEL_TARGET,
+    unread: false,
+    compact: false,
+  };
   switch (state.kind) {
     case "unavailable":
       return null;
@@ -182,6 +191,7 @@ export function attemptReviewEntryViewOf(
         target: state.task.id,
         unread: state.unread,
         attention: false,
+        compact: !state.unread,
       };
   }
 }

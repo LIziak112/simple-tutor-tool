@@ -5,6 +5,7 @@ import {
   attemptReviewEntryStateOf,
   attemptReviewEntryViewOf,
   attemptReviewHref,
+  pickAttemptReviewTask,
 } from "./attempt-review-entry";
 
 const ATTEMPT_ID = "11111111-1111-4111-8111-111111111111";
@@ -65,6 +66,7 @@ describe("整卷复盘入口状态", () => {
       target: ATTEMPT_REVIEW_PANEL_TARGET,
       unread: false,
       attention: false,
+      compact: false,
     });
   });
 
@@ -88,10 +90,11 @@ describe("整卷复盘入口状态", () => {
       target: TASK_ID,
       unread: true,
       attention: false,
+      compact: false,
     });
   });
 
-  it("已读后再回来：入口常驻，文字不变、降为描边，仍打开同一份报告", () => {
+  it("已读后再回来：入口仍在、名称不变、降为描边，仍打开同一份报告；窄屏顶栏收起为紧凑形态", () => {
     expect(
       viewOf(
         taskOf({
@@ -106,6 +109,42 @@ describe("整卷复盘入口状态", () => {
       target: TASK_ID,
       unread: false,
       attention: false,
+      compact: true,
+    });
+  });
+
+  it("只有已读报告收起：再发起一轮、或新报告未读时重新展开成整行", () => {
+    const read = taskOf({
+      status: "replied",
+      hasResult: true,
+      openedAt: "2026-11-12T18:00:00.000Z",
+      updatedAt: "2026-11-12T17:30:00.000Z",
+    });
+    expect(viewOf(pickAttemptReviewTask([read]))?.compact).toBe(true);
+    // 再发起一轮：新任务在途（等待领取 → 处理中）→ 展开
+    for (const status of ["created", "claimed"] as const) {
+      const next = taskOf({
+        id: "33333333-3333-4333-8333-333333333333",
+        status,
+        updatedAt: "2026-11-12T19:00:00.000Z",
+      });
+      expect(viewOf(pickAttemptReviewTask([read, next]))).toMatchObject({
+        target: ATTEMPT_REVIEW_PANEL_TARGET,
+        compact: false,
+      });
+    }
+    // 新报告出来（未读）→ 展开，并指向新报告
+    const fresh = taskOf({
+      id: "33333333-3333-4333-8333-333333333333",
+      status: "replied",
+      hasResult: true,
+      openedAt: null,
+      updatedAt: "2026-11-12T19:30:00.000Z",
+    });
+    expect(viewOf(pickAttemptReviewTask([read, fresh]))).toMatchObject({
+      target: fresh.id,
+      unread: true,
+      compact: false,
     });
   });
 
@@ -117,6 +156,7 @@ describe("整卷复盘入口状态", () => {
         target: ATTEMPT_REVIEW_PANEL_TARGET,
         unread: false,
         attention: true,
+        compact: false,
       });
     }
   });

@@ -48,6 +48,8 @@ export function ResultWorkspace({
   /**
    * 顶栏主动作位（整卷复盘入口）：宽屏排在图标动作前面；窄屏（< lg）单独
    * 占顶栏第二行，按钮文字完整显示、不和图标挤在一起。渲染为空时不占位。
+   * 里面的元素带 data-attempt-header-compact 时（入口已收起为紧凑形态），
+   * 窄屏不再占第二行，改排在图标动作下方靠右。
    */
   primaryAction?: ReactNode;
   /** 主区根 ref（调用方持有回看定位时一并传入；缺省内部自建） */
@@ -102,15 +104,20 @@ export function ResultWorkspace({
                 : "已交卷 · 待批改"}
           </p>
         </div>
-        <div
-          data-slot="attempt-header-primary"
-          className="order-last flex basis-full justify-end empty:hidden lg:order-none lg:shrink-0 lg:basis-auto"
-        >
-          {primaryAction}
-        </div>
-        <div className="flex shrink-0 items-center">
-          {actions}
-          <MemoQuickCaptureButton />
+        {/* 右侧动作：缺省不参与布局（contents）——主动作位与图标组各自是顶栏的
+            子项。入口收起时（窄屏）合成右侧一列：图标组在上，紧凑入口在它下方
+            靠右，不占整行、不挤标题 */}
+        <div className="contents max-lg:has-[[data-attempt-header-compact]]:flex max-lg:has-[[data-attempt-header-compact]]:shrink-0 max-lg:has-[[data-attempt-header-compact]]:flex-col max-lg:has-[[data-attempt-header-compact]]:items-end max-lg:has-[[data-attempt-header-compact]]:gap-1.5">
+          <div
+            data-slot="attempt-header-primary"
+            className="order-last flex basis-full justify-end empty:hidden max-lg:has-[[data-attempt-header-compact]]:basis-auto lg:order-none lg:shrink-0 lg:basis-auto"
+          >
+            {primaryAction}
+          </div>
+          <div className="flex shrink-0 items-center">
+            {actions}
+            <MemoQuickCaptureButton />
+          </div>
         </div>
       </header>
       <div ref={root} className="min-w-0">

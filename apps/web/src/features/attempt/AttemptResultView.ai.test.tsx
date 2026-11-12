@@ -490,4 +490,55 @@ describe("结果页顶栏：整卷复盘入口", () => {
       ).toContainElement(document.activeElement as HTMLElement),
     );
   });
+
+  it("报告未读：主按钮保持整行形态，不声明收起", async () => {
+    mockedReviewList.mockResolvedValue({
+      tasks: [reviewTask],
+      nextCursor: null,
+    });
+    const { container } = renderView();
+    const entry = await within(headerOf(container)).findByRole("button", {
+      name: /查看整卷复盘报告/,
+    });
+    expect(entry).not.toHaveAttribute("data-attempt-header-compact");
+    expect(entry).toHaveTextContent("新");
+  });
+
+  it("报告已读：入口收起为紧凑形态——仍在顶栏主位，带短文字与完整名称，点开还是这份报告", async () => {
+    const readTask = { ...reviewTask, openedAt: "2026-10-16T04:00:00.000Z" };
+    mockedReviewList.mockResolvedValue({ tasks: [readTask], nextCursor: null });
+    mockedReviewDetail.mockResolvedValue({
+      task: readTask,
+      result: {
+        schemaVersion: 1,
+        overview: "失分集中在相反数。",
+        knowledgeFindings: [],
+        errorPatterns: [],
+        performanceNotes: [],
+        trainingPlan: [],
+        limitations: [],
+      },
+    });
+    const { container } = renderView();
+    // 名称不变：读屏与桌面看到的仍是「查看整卷复盘报告」
+    const entry = await within(headerOf(container)).findByRole("button", {
+      name: "查看整卷复盘报告",
+    });
+    // 收起由入口自己声明，顶栏据此在窄屏把它排到图标组下方（见 ResultWorkspace）
+    expect(entry).toHaveAttribute("data-attempt-header-compact");
+    expect(
+      entry.closest('[data-slot="attempt-header-primary"]'),
+    ).not.toBeNull();
+    // 窄屏可见的短文字：不是只剩一个图标
+    expect(within(entry).getByText("复盘报告")).toBeInTheDocument();
+    expect(entry).not.toHaveTextContent("新");
+
+    fireEvent.click(entry);
+    const reader = await screen.findByRole("dialog", { name: "整卷复盘报告" });
+    expect(
+      await within(reader).findByText("失分集中在相反数。"),
+    ).toBeInTheDocument();
+    // 已读过：再打开不重复记已读
+    expect(mockedReviewAction).not.toHaveBeenCalled();
+  });
 });
