@@ -42,6 +42,7 @@ export interface PersonalMcpServerDeps {
   readonly studentId: string;
   /** 快照装配 HMAC 密钥（DATA_DIR/secret.key） */
   readonly hmacSecret: string;
+  readonly isAuthorized: () => boolean;
 }
 
 /**
@@ -54,6 +55,7 @@ export function createPersonalMcpServer(
   const server = new AllowListMcpServer(
     { name: PERSONAL_MCP_SERVER_NAME, version: PERSONAL_MCP_SERVER_VERSION },
     PERSONAL_MCP_TOOL_NAMES,
+    deps.isAuthorized,
   );
   registerTeacherTools(server, {
     db: deps.db,

@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { AiReplyIssue } from "@tutor/contract";
+import type { AiMessage, AiReplyIssue } from "@tutor/contract";
 import { AI_REPLY_MAX_CHARS } from "@tutor/contract";
 import { checkAiReply } from "@tutor/md-dsl";
-import { aiMessages } from "../../db/schema.ts";
+import { and, asc, desc, eq } from "drizzle-orm";
+import type { Db } from "../../db/client.ts";
+import { aiFacts, aiMessages } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
-import type { QueueTx } from "./student-ai-shared.ts";
+import { asDb, type QueueTx } from "./student-ai-shared.ts";
 
 /**
  * 回信写入原语（MCP 写回与页内派发写回共用）：截断、格式校验与警告降级、
@@ -77,4 +79,80 @@ export function insertAssistantReply(
       createdAt: nowIso,
     })
     .run();
+}
+
+/** 学生及教师共用的对话消息投影，按时间和 ID 稳定排序。 */
+export function messageRowsOf(db: Db | QueueTx, taskId: string): AiMessage[] {
+  return asDb(db)
+    .select({
+      id: aiMessages.id,
+      taskId: aiMessages.taskId,
+      role: aiMessages.role,
+      contentMd: aiMessages.contentMd,
+      createdAt: aiMessages.createdAt,
+    })
+    .from(aiMessages)
+    .where(eq(aiMessages.taskId, taskId))
+    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+    .all();
+}
+
+export function studentMessagesOf(
+  db: Db | QueueTx,
+  taskId: string,
+): AiMessage[] {
+  return messageRowsOf(db, taskId).filter(
+    (message) => message.role === "student",
+  );
+}
+
+export function latestMessageAtOf(
+  db: Db | QueueTx,
+  taskId: string,
+): string | undefined {
+  return asDb(db)
+    .select({ createdAt: aiMessages.createdAt })
+    .from(aiMessages)
+    .where(eq(aiMessages.taskId, taskId))
+    .orderBy(desc(aiMessages.createdAt))
+    .limit(1)
+    .get()?.createdAt;
+}
+
+/** 对话消息按发生次序排列，兼容同毫秒与时钟回拨。 */
+export function nextMessageAtOf(now: string, latest?: string | null): string {
+  return latest != null && now <= latest
+    ? new Date(Date.parse(latest) + 1).toISOString()
+    : now;
+}
+
+/** 同一内容仅在应答当前一轮时算重放。 */
+export function lastReplyReceipt(
+  db: Db | QueueTx,
+  taskId: string,
+): { contentHash: string; delivered: boolean; generation?: number } | null {
+  const fact = asDb(db)
+    .select()
+    .from(aiFacts)
+    .where(and(eq(aiFacts.taskId, taskId), eq(aiFacts.type, "reply_received")))
+    .orderBy(desc(aiFacts.serverTs))
+    .limit(1)
+    .get();
+  if (fact?.detailJson == null) return null;
+  const lastStudent = studentMessagesOf(db, taskId).at(-1);
+  if (lastStudent && fact.serverTs < lastStudent.createdAt) return null;
+  try {
+    const { contentHash, delivered, generation } = JSON.parse(
+      fact.detailJson,
+    ) as { contentHash?: unknown; delivered?: unknown; generation?: unknown };
+    return typeof contentHash === "string"
+      ? {
+          contentHash,
+          delivered: delivered !== false,
+          ...(typeof generation === "number" && { generation }),
+        }
+      : null;
+  } catch {
+    return null;
+  }
 }

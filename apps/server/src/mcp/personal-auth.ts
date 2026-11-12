@@ -1,6 +1,10 @@
 import type { Context, Next } from "hono";
 import type { Db } from "../db/client";
-import { resolveMcpStudentToken, unauthorizedMcpStudent } from "./student-auth";
+import {
+  type ResolvedMcpStudent,
+  resolveMcpStudentToken,
+  unauthorizedMcpStudent,
+} from "./student-auth";
 
 /**
  * 个人账号 MCP 鉴权中间件（模块 0「一枚 token」）——/mcp/personal 的入口防线。
@@ -19,14 +23,7 @@ import { resolveMcpStudentToken, unauthorizedMcpStudent } from "./student-auth";
 /** /mcp/personal 路由的环境类型（c.var.mcpPersonal） */
 export interface PersonalMcpEnv {
   Variables: {
-    mcpPersonal: {
-      /** 个人账号的教师行 id（教师白名单工具的域） */
-      readonly teacherId: string;
-      /** 绑定学习者 id（学生工具的域） */
-      readonly studentId: string;
-      /** 命中的 mcp 连接行 id（审计 / 调试用；不进协议响应） */
-      readonly connectionId: string;
-    };
+    mcpPersonal: ResolvedMcpStudent;
   };
 }
 
@@ -40,11 +37,7 @@ export function createRequirePersonalMcpToken(db: Db) {
     if (resolved === null || resolved.accountKind !== "personal") {
       return unauthorizedMcpStudent(c);
     }
-    c.set("mcpPersonal", {
-      teacherId: resolved.teacherId,
-      studentId: resolved.studentId,
-      connectionId: resolved.connectionId,
-    });
+    c.set("mcpPersonal", resolved);
     await next();
     return;
   };

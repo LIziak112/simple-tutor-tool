@@ -32,6 +32,7 @@ import {
   testProviderConnection,
 } from "./provider-client.ts";
 import { appendAiFact } from "./student-ai-audit.ts";
+import { revokeStudentShareTickets } from "./student-ai-share-revocation.ts";
 
 /**
  * 学生 AI 连接管理服务（SAI-16，B00 §5.1 表 3 + §7「Key 保存」）。
@@ -501,6 +502,7 @@ export function deleteStudentAiConnection(
       .set({ archivedAt: now, isDefault: false, updatedAt: now })
       .where(eq(aiConnections.id, connectionId))
       .run();
+    if (row.channel === "link") revokeStudentShareTickets(tx, studentId, now);
     // 停发该通道未执行任务（迟到领取/回执按任务状态机与 token 失效自然拒绝）
     const pending = tx
       .select()

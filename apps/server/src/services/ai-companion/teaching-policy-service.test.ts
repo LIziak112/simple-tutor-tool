@@ -1298,10 +1298,10 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
     }
   });
 
-  it("无教师域异常行：教师默认回落 DEFAULT_AI_TEACHER_MODE（无配置 = 开放伴学）", () => {
+  it("无教师域的历史异常行拒绝外发", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    // 异常形态：学生行 teacherId 置空（回填后不应存在，防御口径 = 未配置默认）
+    // 模拟没有教师域的历史异常行。
     db.update(students)
       .set({ teacherId: null })
       .where(eq(students.id, studentId))
@@ -1310,18 +1310,12 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
     insertResponse(db, attemptId, "q1");
     const config = new FakeConfigSource();
     config.teacherDefaults.set(TEST_TEACHER_ID, "post_submit_only");
-    const result = resolveAttemptQuestionAiPolicy(
-      db,
-      studentId,
-      attemptId,
-      "q1",
-      config,
+    expectHttpError(
+      () =>
+        resolveAttemptQuestionAiPolicy(db, studentId, attemptId, "q1", config),
+      403,
+      "AI_POLICY_DISABLED",
     );
-    expect(result.resolution).toEqual({
-      usable: true,
-      mode: "open_study",
-      reason: "teacher_default",
-    });
     db.$client.close();
   });
 

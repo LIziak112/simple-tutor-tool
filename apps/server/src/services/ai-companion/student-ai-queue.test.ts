@@ -754,6 +754,36 @@ describe("SAI-12 租约超时与写回", () => {
     };
   }
 
+  it("教师停用后有效 MCP 租约的回信只记迟到事实", () => {
+    const db = createTestDb();
+    const { world, task, leaseX } = claimedWorld(db);
+    db.update(teachers)
+      .set({ disabledAt: at(500).toISOString() })
+      .where(eq(teachers.id, TEST_TEACHER_ID))
+      .run();
+    let delivered = false;
+    expect(() =>
+      submitMcpReply(
+        db,
+        {
+          studentId: world.studentId,
+          taskId: task.id,
+          leaseToken: leaseX.leaseToken,
+          replyMarkdown: "撤权后的回信",
+          onReplied: () => {
+            delivered = true;
+          },
+        },
+        { now: at(1000) },
+      ),
+    ).toThrow("迟到事实");
+    expect(delivered).toBe(false);
+    expect(assistantMessagesOf(db, task.id)).toEqual([]);
+    expect(
+      db.select().from(aiFacts).where(eq(aiFacts.taskId, task.id)).all(),
+    ).toContainEqual(expect.objectContaining({ type: "late_reply" }));
+  });
+
   it("合法长回信保持截断语义，截断损坏公式只返回降级警告", () => {
     const db = createTestDb();
     const { world, task, leaseX } = claimedWorld(db);
@@ -905,6 +935,42 @@ describe("SAI-12 租约超时与写回", () => {
     );
     expect(late.delivered).toBe(false);
     expect(cancelledCalls).toBe(0);
+    expect(assistantMessagesOf(db, task2.id)).toEqual([]);
+  });
+
+  it("撤权代次的回信只留事实，学生继续后新代次可正常接收", () => {
+    const db = createTestDb();
+    const world = setupWorld(db);
+    const task = mkInappTask(db, world);
+    const ownTask = { studentId: world.studentId, taskId: task.id };
+    const { generation } = beginInappDispatch(db, ownTask, { now: at(1000) });
+    const complete = (
+      replyMd: string,
+      connectionIsCurrent: boolean,
+      offset: number,
+      currentGeneration = generation,
+    ) =>
+      completeInappDispatch(
+        db,
+        {
+          ...ownTask,
+          generation: currentGeneration,
+          replyMd,
+          connectionIsCurrent,
+        },
+        { now: at(offset) },
+      );
+    expect(complete("已撤权", false, 2000).delivered).toBe(false);
+    expect(complete("同代次回信", true, 2100).delivered).toBe(false);
+    expect(assistantMessagesOf(db, task.id)).toEqual([]);
+    resumeAiTask(db, ownTask, { now: at(3000) });
+    const next = beginInappDispatch(db, ownTask, { now: at(4000) });
+    expect(complete("同代次回信", true, 5000, next.generation).delivered).toBe(
+      true,
+    );
+    expect(
+      assistantMessagesOf(db, task.id).map((message) => message.contentMd),
+    ).toEqual(["同代次回信"]);
   });
 
   it("超时再领后：旧 lease 不能续期/回信，仅记 late_reply；新持有者可写回", () => {

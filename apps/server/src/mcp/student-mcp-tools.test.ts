@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import {
   aiAttemptReviewCreateOkSchema,
@@ -38,7 +39,10 @@ import {
   connectMcpClientViaApp,
 } from "../test/mcp-test-utils.ts";
 import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
-import { STUDENT_MCP_TOOL_NAMES } from "./student-server.ts";
+import {
+  createStudentMcpServer,
+  STUDENT_MCP_TOOL_NAMES,
+} from "./student-server.ts";
 
 /**
  * SAI-26 学生 MCP 任务工具测试（B14 必测 6 组；真实 SDK Streamable HTTP
@@ -106,6 +110,35 @@ async function makeEnv(): Promise<ToolsEnv> {
 /** 建立 SDK 客户端连接（Streamable HTTP + Bearer token；样板见 test/mcp-test-utils.ts） */
 const connectClient = (env: ToolsEnv, token = env.token) =>
   connectMcpClientViaApp(env.app, "/mcp/student", token, "sai26-tools-test");
+
+it("执行时授权拒绝的学生 MCP 工具不领取任务", async () => {
+  const env = await makeEnv();
+  const taskId = mkTask(env);
+  const server = createStudentMcpServer({
+    db: env.db,
+    dataDir: env.dataDir,
+    publicUrl: "http://localhost:8787",
+    studentId: env.studentId,
+    hmacSecret: SECRET,
+    isAuthorized: () => false,
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "sai-auth-test", version: "1" });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await callToolJson(client, "claim_ai_task", { taskId });
+    expect(result.isError).toBe(true);
+    expect(result.data.error).toBe("UNAUTHORIZED");
+    expect(
+      env.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()?.status,
+    ).toBe("created");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
 
 it("学生 MCP 原子逐题提交，失败保稿、幂等且不泄露参考答案", async () => {
   const env = await makeEnv();
