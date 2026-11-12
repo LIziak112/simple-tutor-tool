@@ -26,6 +26,7 @@ import {
   ATTEMPT_REVIEW_PARAM,
   attemptReviewHref,
 } from "@/features/student-ai/attempt-review-entry";
+import { useAttemptReviewOverlay } from "@/features/student-ai/attempt-review-overlay";
 import { useAttemptReviewQueue } from "@/features/student-ai/attempt-review-queue";
 import { errorMessageOf } from "@/features/student-ai/error-text";
 
@@ -72,6 +73,7 @@ export function AiQueuePanel({
   const actionMutation = useStudentAiQueueAction();
   const navigate = useNavigate();
   const location = useLocation();
+  const reviewOverlay = useAttemptReviewOverlay();
 
   const summary = summaryQuery.data;
   const badge = summary !== undefined ? aiQueueBadgeOf(summary) : null;
@@ -144,7 +146,8 @@ export function AiQueuePanel({
   /**
    * 打开整卷复盘（报告或进度面板）：只按任务自己的 attemptId 去那次作答的
    * 结果页，由结果页按地址打开——和顶栏入口是同一个位置。已经在那次作答的
-   * 结果页上就原地打开（保留当前位置与既有回程），否则带上来源位置。
+   * 结果页上就原地打开（保留当前位置与既有回程；和顶栏入口同一套历史规则，
+   * 后退先关报告），否则带上来源位置。
    */
   const handleOpenReview = (
     task: AiAttemptReviewTaskPublic,
@@ -153,9 +156,7 @@ export function AiQueuePanel({
     onNavigated?.();
     const resultPath = `/s/attempts/${encodeURIComponent(task.attemptId)}`;
     if (location.pathname === resultPath) {
-      const params = new URLSearchParams(location.search);
-      params.set(ATTEMPT_REVIEW_PARAM, target);
-      void navigate(`${resultPath}?${params}`, { replace: true });
+      reviewOverlay.open(target);
       return;
     }
     void navigate(attemptReviewHref(task.attemptId, target, sourceLocation()));

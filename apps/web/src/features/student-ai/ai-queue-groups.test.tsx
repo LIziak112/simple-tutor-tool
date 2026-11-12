@@ -13,7 +13,13 @@ import type {
   AiTaskOriginSummary,
   AiTaskPublic,
 } from "@tutor/contract";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchStudentAiAttemptReviewDetailApi,
@@ -407,26 +413,36 @@ describe("求助记录：整卷复盘", () => {
     expect(mockedReviewAction).not.toHaveBeenCalled();
   });
 
-  it("已在这次作答的结果页：原地打开，保留当前位置参数，不改写回程", async () => {
+  it("已在这次作答的结果页：原地打开，保留当前位置参数，不改写回程；后退先关报告、仍在结果页", async () => {
     mockedReviewQueue.mockResolvedValue({
       tasks: [reviewTask()],
       nextCursor: null,
       origins: { [REVIEW_TASK_ID]: ATTEMPT_ORIGIN },
     });
     const onNavigated = vi.fn();
+    const resultLocation = `/s/attempts/${ATTEMPT_ID}?reviewQuestion=q-8&returnTo=%2Fs%2Frecords`;
+    function BrowserBack() {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => void navigate(-1)}>
+          浏览器后退
+        </button>
+      );
+    }
     render(
       <QueryClientProvider client={new QueryClient()}>
         <MemoryRouter
-          initialEntries={[
-            `/s/attempts/${ATTEMPT_ID}?reviewQuestion=q-8&returnTo=%2Fs%2Frecords`,
-          ]}
+          initialEntries={["/s/records", resultLocation]}
+          initialIndex={1}
         >
           <Routes>
+            <Route path="/s/records" element={<LocationProbe />} />
             <Route
               path="/s/attempts/:id"
               element={
                 <>
                   <LocationProbe />
+                  <BrowserBack />
                   <AiQueuePanel
                     currentAttemptId={ATTEMPT_ID}
                     onNavigated={onNavigated}
@@ -443,10 +459,15 @@ describe("求助记录：整卷复盘", () => {
     );
     await waitFor(() =>
       expect(screen.getByTestId("location").textContent).toBe(
-        `/s/attempts/${ATTEMPT_ID}?reviewQuestion=q-8&returnTo=%2Fs%2Frecords&aiReview=${REVIEW_TASK_ID}`,
+        `${resultLocation}&aiReview=${REVIEW_TASK_ID}`,
       ),
     );
     expect(onNavigated).toHaveBeenCalledTimes(1);
+    // 和顶栏入口一样是「页内打开」：新增一条历史，后退一步回到没有报告的结果页
+    fireEvent.click(screen.getByRole("button", { name: "浏览器后退" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(resultLocation),
+    );
   });
 
   it("等待领取的整卷任务：按钮是「查看进度」，打开的是面板而不是报告", async () => {

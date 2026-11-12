@@ -12,8 +12,9 @@ import {
  * 交卷 → 结果页顶栏「整卷复盘」→ 确认（只建 1 条整卷任务、0 条逐题任务）→
  * 顶栏「整卷复盘 · 等待领取」→ 另行批量复盘两道错题 → 外部客户端经 MCP
  * 领取并写回报告 → 顶栏「查看整卷复盘报告」（未读）→ 全屏阅读器打开才记已读
- * → 关闭回到结果页 → 从首页「求助记录」分清整卷复盘与批量复盘错题，并打开
- * 同一份报告。
+ * → 系统返回 / 后退先关报告、留在结果页原位置 → 读过后顶栏入口收起成小按钮
+ * → 从首页「求助记录」分清整卷复盘与批量复盘错题，并打开同一份报告（跨页
+ * 落地：关闭留在结果页，后退回来源页）。
  */
 
 /** 与 playwright.config.ts 保持一致（server 直连；vite 代理不转发 /mcp） */
@@ -130,6 +131,19 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       ).data.tasks;
     const shot = (name: string) =>
       page.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+    // 全程记下「记已读」请求：无论后退 / 前进 / 重开多少次，都只应有 1 次
+    let openActionCount = 0;
+    page.on("request", (req) => {
+      if (
+        req.method() === "POST" &&
+        /\/api\/student\/ai\/attempt-reviews\/[^/]+\/actions$/u.test(
+          new URL(req.url()).pathname,
+        ) &&
+        req.postDataJSON()?.action === "open"
+      )
+        openActionCount += 1;
+    });
+    const scrollYNow = () => page.evaluate(() => Math.round(window.scrollY));
     /** 顶栏实际高度，与工作区写入的 --attempt-header-height（题目定位偏移用） */
     const headerHeights = () =>
       page.evaluate(() => {
@@ -323,6 +337,11 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       const expandedHeaderHeight = (await headerHeights()).actual;
       await shot("4-顶栏-报告已出未读");
 
+      // 往下滚一段再打开（顶栏吸顶，入口一直够得着）：关闭后要回到这个位置
+      await page.evaluate(() => window.scrollTo(0, 240));
+      const scrollBeforeOpen = await scrollYNow();
+      expect(scrollBeforeOpen).toBeGreaterThan(0);
+
       // 打开：手机上全屏阅读；正文成功打开后才记已读
       await entry.click();
       await expect(page).toHaveURL(new RegExp(`aiReview=${taskId}`, "u"));
@@ -344,11 +363,28 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         .not.toBeNull();
       await shot("5-阅读器-手机全屏");
 
+      // 手机系统返回手势 / 浏览器后退：先关报告，留在结果页原滚动位置
+      await page.goBack();
+      await expect(reader).toBeHidden();
+      await expect(page).not.toHaveURL(/aiReview=/u);
+      expect(new URL(page.url()).pathname).toBe(`/s/attempts/${attemptId}`);
+      await expect.poll(scrollYNow).toBe(scrollBeforeOpen);
+      // 前进：重新打开的还是这份报告，不再记一次已读
+      await page.goForward();
+      await expect(page).toHaveURL(new RegExp(`aiReview=${taskId}`, "u"));
+      await expect(reader).toContainText("三题里错了两题");
+
       // 点报告里的题号：关闭报告并回到结果页的那道题
       await reader.getByRole("button", { name: "第 2 题" }).first().click();
       await expect(reader).toBeHidden();
       await expect(page).not.toHaveURL(/aiReview=/u);
       expect(new URL(page.url()).pathname).toBe(`/s/attempts/${attemptId}`);
+      await expect
+        .poll(() => new URL(page.url()).searchParams.get("reviewQuestion"))
+        .toBe(questionIds[1]);
+      await expect(
+        page.locator(`[data-review-question="${questionIds[1]}"]`),
+      ).toBeInViewport();
 
       // —— ④ 已读后：入口还在，但收起成图标组下方的小按钮，不再占一整行 ——
       const assertCollapsed = async () => {
@@ -427,6 +463,17 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       await page.keyboard.press("Escape");
       await expect(reader).toBeHidden();
       await expect(page).not.toHaveURL(/aiReview=/u);
+      // 开过、关过这么多次，历史里没有留下多余的记录：后退一步就离开这次
+      // 作答的结果页（不会又弹出报告，也不用多按一次），前进再回来仍是关着的
+      await page.goBack();
+      await expect(page).not.toHaveURL(
+        new RegExp(`/s/attempts/${attemptId}`, "u"),
+      );
+      await page.goForward();
+      await expect(page).toHaveURL(new RegExp(`/s/attempts/${attemptId}`, "u"));
+      await expect(page).not.toHaveURL(/aiReview=/u);
+      await expect(entry).toHaveAttribute("data-attempt-header-compact", "");
+      await expect(reader).toBeHidden();
 
       // —— 求助记录（从首页进）：分清整卷复盘 / 批量复盘错题，同批两题一张卡 ——
       await page.goto("/s/home");
@@ -458,11 +505,16 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         new RegExp(`/s/attempts/${attemptId}\\?aiReview=${taskId}`, "u"),
       );
       await expect(reader).toContainText("三题里错了两题");
+      // 带参数跨页落地：关闭只去掉参数、留在结果页；后退按浏览器原样回来源页
       await reader.getByRole("button", { name: "关闭，回到作答结果" }).click();
       await expect(reader).toBeHidden();
       expect(new URL(page.url()).pathname).toBe(`/s/attempts/${attemptId}`);
       await expect(page).not.toHaveURL(/aiReview=/u);
       await expect(page.getByText("批改结果")).toBeVisible();
+      await page.goBack();
+      await expect(page).toHaveURL(/\/s\/home$/u);
+      // 全程只记过 1 次已读
+      expect(openActionCount).toBe(1);
     } finally {
       await context.close();
     }

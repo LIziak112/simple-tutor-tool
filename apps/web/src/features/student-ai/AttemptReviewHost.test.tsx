@@ -5,7 +5,14 @@ import type {
   AiAttemptReviewPreviewData,
   AiAttemptReviewTaskPublic,
 } from "@tutor/contract";
-import { MemoryRouter, useLocation } from "react-router";
+import {
+  type InitialEntry,
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentAiAttemptReviewApi,
@@ -15,11 +22,12 @@ import {
   listStudentAiAttemptReviewsApi,
   postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
-import {
-  AttemptReviewHost,
-  useAttemptReviewOverlay,
-} from "./AttemptReviewHost";
+import { AttemptReviewHost } from "./AttemptReviewHost";
 import { AttemptReviewTopBarEntry } from "./AttemptReviewTopBarEntry";
+import {
+  ATTEMPT_REVIEW_LAYER_STATE,
+  useAttemptReviewOverlay,
+} from "./attempt-review-overlay";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -36,6 +44,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const ATTEMPT_ID = "11111111-1111-4111-8111-111111111111";
 const TASK_ID = "22222222-2222-4222-8222-222222222222";
+const RESULT_PATH = `/s/attempts/${ATTEMPT_ID}`;
 const mockedList = vi.mocked(listStudentAiAttemptReviewsApi);
 const mockedPreview = vi.mocked(fetchStudentAiAttemptReviewPreviewApi);
 const mockedDetail = vi.mocked(fetchStudentAiAttemptReviewDetailApi);
@@ -111,9 +120,35 @@ const onJumpToQuestion = vi.fn();
 function Harness() {
   const overlay = useAttemptReviewOverlay();
   const location = useLocation();
+  const navigate = useNavigate();
   return (
     <>
       <output data-testid="location">{location.search}</output>
+      {/* 代替浏览器的后退 / 前进（手机系统返回手势就是后退） */}
+      <button type="button" onClick={() => void navigate(-1)}>
+        浏览器后退
+      </button>
+      <button type="button" onClick={() => void navigate(1)}>
+        浏览器前进
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          overlay.open(TASK_ID);
+          overlay.open(TASK_ID);
+        }}
+      >
+        连续打开两次
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          overlay.close();
+          overlay.close();
+        }}
+      >
+        连续关闭两次
+      </button>
       <AttemptReviewTopBarEntry
         attemptId={ATTEMPT_ID}
         released
@@ -130,21 +165,43 @@ function Harness() {
   );
 }
 
-function renderAt(search: string) {
+/** 历史记录从来源页起：来源页在下，结果页（当前）在上 */
+function renderWith(entries: InitialEntry[]) {
   return render(
     <QueryClientProvider
       client={
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <MemoryRouter initialEntries={[`/s/attempts/${ATTEMPT_ID}${search}`]}>
-        <Harness />
+      <MemoryRouter initialEntries={entries} initialIndex={entries.length - 1}>
+        <Routes>
+          <Route path="/s/home" element={<p>来源页</p>} />
+          <Route path="/s/attempts/:id" element={<Harness />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
+const renderAt = (search: string) =>
+  renderWith(["/s/home", `${RESULT_PATH}${search}`]);
+
 const searchNow = () => screen.getByTestId("location").textContent;
+// 弹层打开时页面其余部分对读屏隐藏，按隐藏元素查
+const browserBack = () =>
+  fireEvent.click(
+    screen.getByRole("button", { name: "浏览器后退", hidden: true }),
+  );
+const browserForward = () =>
+  fireEvent.click(
+    screen.getByRole("button", { name: "浏览器前进", hidden: true }),
+  );
+const openFromTopBar = async () => {
+  fireEvent.click(
+    await screen.findByRole("button", { name: /查看整卷复盘报告/ }),
+  );
+  expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+};
 
 beforeEach(() => {
   for (const mock of [
@@ -266,5 +323,167 @@ describe("整卷复盘承载：地址驱动", () => {
     expect(searchNow()).toBe("");
     expect(screen.queryByText("整体基础扎实。")).toBeNull();
     expect(onJumpToQuestion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("整卷复盘承载：浏览器后退 / 手机返回手势先关浮层", () => {
+  beforeEach(() => {
+    mockedList.mockResolvedValue({ tasks: [taskOf()], nextCursor: null });
+    mockedPreview.mockResolvedValue(PREVIEW);
+    mockedDetail.mockResolvedValue(DETAIL);
+  });
+
+  it("在结果页内打开：后退关闭报告、留在结果页原位置；再后退才离开", async () => {
+    renderAt("?reviewQuestion=q-3");
+    await openFromTopBar();
+    expect(searchNow()).toBe(`?reviewQuestion=q-3&aiReview=${TASK_ID}`);
+    browserBack();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("?reviewQuestion=q-3");
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("在结果页内打开后用关闭按钮或 Esc 关：和后退是同一步，不留脏历史", async () => {
+    renderAt("?reviewQuestion=q-3");
+    await openFromTopBar();
+    fireEvent.click(screen.getByRole("button", { name: "关闭，回到作答结果" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("?reviewQuestion=q-3");
+    // 再开一次，这回按 Esc
+    await openFromTopBar();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("?reviewQuestion=q-3");
+    // 历史里没有多出来的记录：后退一步就离开结果页，不会又弹出报告，
+    // 也不用多按一次
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("带参数直接落地：后退按浏览器原样回来源页，不拦截", async () => {
+    renderAt(`?aiReview=${TASK_ID}&aiFrom=%2Fs%2Fhome`);
+    expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("带参数直接落地：关闭只去掉参数、留在结果页；之后后退仍回来源页", async () => {
+    renderAt(`?aiReview=${TASK_ID}&aiFrom=%2Fs%2Fhome`);
+    expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭，回到作答结果" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("?aiFrom=%2Fs%2Fhome");
+    // 落地后再从顶栏打开，就是页内打开：后退先关报告
+    await openFromTopBar();
+    browserBack();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("?aiFrom=%2Fs%2Fhome");
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("面板与报告是同一层：互相切换不新增历史，后退直接回结果页而不是回面板", async () => {
+    renderAt("");
+    await openFromTopBar();
+    // 报告 → 面板
+    fireEvent.click(screen.getByRole("button", { name: "重新发起或归档" }));
+    expect(
+      await screen.findByRole("dialog", { name: "整卷复盘" }),
+    ).toBeInTheDocument();
+    expect(searchNow()).toBe("?aiReview=panel");
+    // 面板 → 报告
+    fireEvent.click(
+      await screen.findByRole("button", { name: /查看整卷复盘报告/ }),
+    );
+    expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+    expect(searchNow()).toBe(`?aiReview=${TASK_ID}`);
+    browserBack();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("");
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("面板与报告是同一层：切到面板后用面板的关闭，同样一步回结果页", async () => {
+    renderAt("");
+    await openFromTopBar();
+    fireEvent.click(screen.getByRole("button", { name: "重新发起或归档" }));
+    const panel = await screen.findByRole("dialog", { name: "整卷复盘" });
+    fireEvent.keyDown(panel, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("");
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("在结果页内打开后点证据题号：退回一步关报告再定位，历史里不留报告", async () => {
+    renderAt("");
+    await openFromTopBar();
+    fireEvent.click(screen.getByRole("button", { name: "第 8 题" }));
+    await waitFor(() => expect(onJumpToQuestion).toHaveBeenCalledWith(8));
+    expect(onJumpToQuestion).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(searchNow()).toBe("");
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("已读只写一次：后退再前进重新打开同一份报告，不重复记已读", async () => {
+    renderAt("");
+    await openFromTopBar();
+    await waitFor(() => expect(mockedAction).toHaveBeenCalledTimes(1));
+    // 服务端已记下 openedAt，之后的列表与详情都带着它
+    const opened = taskOf({ openedAt: "2026-11-12T18:00:00Z" });
+    mockedList.mockResolvedValue({ tasks: [opened], nextCursor: null });
+    mockedDetail.mockResolvedValue({ ...DETAIL, task: opened });
+    browserBack();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    browserForward();
+    expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+    expect(mockedDetail).toHaveBeenCalledTimes(2);
+    browserBack();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mockedAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("连续触发两次打开（双击入口）只新增一条历史：后退一步就关掉", async () => {
+    renderAt("");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "连续打开两次" }),
+    );
+    expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+    browserBack();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(searchNow()).toBe("");
+    browserBack();
+    expect(await screen.findByText("来源页")).toBeInTheDocument();
+  });
+
+  it("连续触发两次关闭只退一步，不会退出结果页", async () => {
+    renderAt("");
+    await openFromTopBar();
+    fireEvent.click(
+      screen.getByRole("button", { name: "连续关闭两次", hidden: true }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByText("来源页")).toBeNull();
+    expect(searchNow()).toBe("");
+  });
+
+  it("历史标记还在、下面却没有可退的记录：关闭兜底为去掉参数，不会关不掉", async () => {
+    renderWith([
+      {
+        pathname: RESULT_PATH,
+        search: `?reviewQuestion=q-3&aiReview=${TASK_ID}`,
+        state: ATTEMPT_REVIEW_LAYER_STATE,
+      },
+    ]);
+    expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭，回到作答结果" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), {
+      timeout: 3000,
+    });
+    expect(searchNow()).toBe("?reviewQuestion=q-3");
   });
 });

@@ -38,11 +38,9 @@ import {
   useQuestionProcess,
 } from "@/features/question-process/session";
 import { AiAttemptReviewHint } from "@/features/student-ai/AiAttemptReviewHint";
-import {
-  AttemptReviewHost,
-  useAttemptReviewOverlay,
-} from "@/features/student-ai/AttemptReviewHost";
+import { AttemptReviewHost } from "@/features/student-ai/AttemptReviewHost";
 import { AttemptReviewTopBarEntry } from "@/features/student-ai/AttemptReviewTopBarEntry";
+import { useAttemptReviewOverlay } from "@/features/student-ai/attempt-review-overlay";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import { AssignmentRedoDialog } from "./AssignmentRedoDialog";
