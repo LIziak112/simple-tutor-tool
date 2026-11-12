@@ -1,4 +1,4 @@
-import type { AttemptScoreSummary } from "@tutor/contract";
+import type { AttemptResultData, AttemptScoreSummary } from "@tutor/contract";
 import {
   CheckCircle2,
   Clock,
@@ -11,9 +11,30 @@ import { Button } from "@/components/ui/button";
 import { formatCnTime } from "@/lib/time";
 import { useDueCountdown } from "./use-due-countdown";
 
+export function PendingAttemptRelease({
+  data,
+  onRefresh,
+}: {
+  data: AttemptResultData & { clockAnchor?: number };
+  onRefresh?: (() => void) | undefined;
+}) {
+  return (
+    <PendingReleaseBanner
+      dueAt={data.dueAt}
+      serverNow={data.releaseCheckedAt}
+      receivedAt={data.clockAnchor}
+      submittedAt={data.attempt.submittedAt}
+      summary={data.summary}
+      onRefresh={onRefresh}
+    />
+  );
+}
+
 export interface PendingReleaseBannerProps {
   /** 截止时间（UTC ISO），可为 null（防御：受限形态服务端恒有值） */
   dueAt: string | null;
+  serverNow?: string | undefined;
+  receivedAt?: number | undefined;
   /** 交卷时间（UTC ISO），可为 null */
   submittedAt?: string | null | undefined;
   /** 作答统计摘要 */
@@ -34,12 +55,20 @@ export interface PendingReleaseBannerProps {
  */
 export function PendingReleaseBanner({
   dueAt,
+  serverNow,
+  receivedAt,
   submittedAt,
   summary,
   onRefresh,
   handwritingStatus = "已归档保存",
 }: PendingReleaseBannerProps) {
-  const countdown = useDueCountdown(dueAt, { onExpire: onRefresh });
+  const parsedServerNow = Date.parse(serverNow ?? "");
+  const hasServerTime = Number.isFinite(parsedServerNow);
+  const countdown = useDueCountdown(hasServerTime ? dueAt : null, {
+    onExpire: onRefresh,
+    serverNow: hasServerTime ? parsedServerNow : undefined,
+    receivedAt,
+  });
 
   return (
     <section
@@ -80,14 +109,14 @@ export function PendingReleaseBanner({
           <p className="py-2 text-sm text-muted-foreground">
             老师公布后将在这里显示成绩、参考答案与详解。
           </p>
-        ) : countdown.isExpired ? (
+        ) : !hasServerTime || countdown.isExpired ? (
           <div className="flex flex-wrap items-center gap-3">
             <div
               role="status"
               className="flex items-center gap-2 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-300"
             >
-              <Clock aria-hidden className="size-4 animate-spin" />
-              <span>截止时间已到，正在加载批改结果…</span>
+              <Clock aria-hidden className="size-4" />
+              <span>待服务器确认公布时间。</span>
             </div>
             {/* 到期自动刷新后仍未公布（时钟偏差/网络失败）时的手动重试口 */}
             {onRefresh && (

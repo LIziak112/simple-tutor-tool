@@ -136,7 +136,7 @@ import {
 } from "./material-repository.ts";
 import { pendingMarkCount } from "./pending-mark";
 import {
-  answersReleased,
+  answerReleaseProjection,
   attemptAnswersPublished,
   resolvePracticeQuestionFeedbackState,
 } from "./practice-workflow-service";
@@ -4181,8 +4181,8 @@ function buildResultData(
     attempt.sourceType === "assignment"
       ? requireAssignmentRow(db, attempt.assignmentId ?? "")
       : null;
-  const released =
-    assignmentRow === null || answersReleased(assignmentRow, now);
+  const release = answerReleaseProjection(assignmentRow, now);
+  const released = release.answersReleased;
 
   /** 受限形态的逐题投影（见函数头注释）。
    * stemMd 一律经 studentFacingResultOf 学生端投影（已公布也不例外）：[[答案]]
@@ -4259,7 +4259,7 @@ function buildResultData(
     title: meta.title,
     courseName: meta.courseName,
     dueAt: meta.dueAt,
-    answersReleased: released,
+    ...release,
     summary,
     units: unitViews,
     enabledCapabilities,

@@ -135,6 +135,10 @@ export function useAttemptDetail(attemptId: string | undefined) {
           : fetchAttemptApi(attemptId ?? "", signal, previous));
         if (previous && detailPollingPaused.has(attemptId ?? ""))
           return previous;
+        if ("answersReleased" in next && next.releaseCheckedAt !== undefined)
+          return next === previous
+            ? next
+            : { ...next, clockAnchor: performance.now() };
         if (!("timing" in next) || !next.timing) return next;
         const receivedAt = performance.now();
         const priorTiming =
