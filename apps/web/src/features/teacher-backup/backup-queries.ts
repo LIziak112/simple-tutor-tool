@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BACKUP_OPERATOR_REQUIRED, type TeacherInfo } from "@tutor/contract";
+import { teacherMeKey } from "@/features/auth/teacher-auth";
 import {
+  ApiError,
   downloadBackupApi,
   fetchBackupSnapshots,
   restoreBackupApi,
@@ -14,26 +17,53 @@ import {
 /** 快照列表查询键（恢复成功后失效重取） */
 export const backupSnapshotsKey = ["teacher", "backup", "snapshots"] as const;
 
+function useUpdateBackupAccessOnDenial() {
+  const queryClient = useQueryClient();
+  return async <T>(run: () => Promise<T>): Promise<T> => {
+    const teacherId = queryClient.getQueryData<TeacherInfo>(teacherMeKey)?.id;
+    try {
+      return await run();
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.code === BACKUP_OPERATOR_REQUIRED
+      ) {
+        queryClient.setQueryData<TeacherInfo>(teacherMeKey, (teacher) =>
+          teacher && teacher.id === teacherId
+            ? { ...teacher, canManageInstanceBackup: false }
+            : teacher,
+        );
+      }
+      throw error;
+    }
+  };
+}
+
 /** 最近快照列表（设置页展示时间 + 大小 + 文件名） */
 export function useBackupSnapshots() {
+  const updateAccessOnDenial = useUpdateBackupAccessOnDenial();
   return useQuery({
     queryKey: backupSnapshotsKey,
-    queryFn: fetchBackupSnapshots,
+    queryFn: () => updateAccessOnDenial(fetchBackupSnapshots),
     refetchOnWindowFocus: false,
   });
 }
 
 /** 下载完整备份 zip（返回下载文件名供页面展示） */
 export function useDownloadBackup() {
-  return useMutation({ mutationFn: downloadBackupApi });
+  const updateAccessOnDenial = useUpdateBackupAccessOnDenial();
+  return useMutation({
+    mutationFn: () => updateAccessOnDenial(downloadBackupApi),
+  });
 }
 
 /** 从备份 zip 恢复整库（multipart zip + 登录密码；返回恢复摘要） */
 export function useRestoreBackup() {
   const queryClient = useQueryClient();
+  const updateAccessOnDenial = useUpdateBackupAccessOnDenial();
   return useMutation({
     mutationFn: (input: { zip: File; password: string }) =>
-      restoreBackupApi(input.zip, input.password),
+      updateAccessOnDenial(() => restoreBackupApi(input.zip, input.password)),
     onSuccess: () => {
       // 恢复替换整库：快照列表（恢复前自动快照）需要重取
       void queryClient.invalidateQueries({ queryKey: backupSnapshotsKey });

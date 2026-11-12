@@ -65,6 +65,7 @@ export interface CreateAppOptions {
   webDistDir?: string | undefined;
   /** DSL 规范文档目录覆盖（T1.13 /spec 接口数据源）；缺省按候选顺序解析（见 spec-files.ts）。测试注入临时目录用 */
   specDir?: string | undefined;
+  backupOperatorId?: string | undefined;
 }
 
 /**
@@ -368,6 +369,7 @@ export function createApp(options: CreateAppOptions) {
         options.dataDir,
         options.dbHandle,
         options.specDir,
+        options.backupOperatorId,
       ),
     )
     .route("/api/public/ai-reply-checker", createAiReplyCheckerRoutes())
@@ -383,7 +385,12 @@ export function createApp(options: CreateAppOptions) {
     // —— 管理端（T2B.6，D7/D19）：整组 requireAdmin（非管理员 403 ADMIN_ONLY） ——
     .route(
       "/api/admin",
-      createAdminRoutes(options.db, options.publicUrl, options.dataDir),
+      createAdminRoutes(
+        options.db,
+        options.publicUrl,
+        options.dataDir,
+        options.backupOperatorId,
+      ),
     )
     // —— MCP Server（T4.6）：/mcp 挂 SDK Streamable HTTP（stateless + JSON），
     //    不走统一壳、不走 /api 前缀（SDK 协议格式原样）；Bearer apiToken 鉴权

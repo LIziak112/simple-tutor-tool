@@ -16,11 +16,10 @@ import {
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
 import Database from "better-sqlite3";
-import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
-import { verifyPassword } from "../auth/password";
+import { verifyBackupRestorePassword } from "../auth/instance-backup-access";
 import type { Db, DbHandle } from "../db/client";
-import { BLOB_BACKUP_REF_COLUMNS, teachers } from "../db/schema";
+import { BLOB_BACKUP_REF_COLUMNS } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries, type ZipEntry, ZipReadError } from "../lib/zip-read";
 import { beijingExportStampOf } from "./export-csv";
@@ -366,20 +365,11 @@ export async function restoreFromBackup(
   teacherId: string,
   password: string,
   zipBytes: Uint8Array,
+  recheckAccess?: () => void,
 ): Promise<BackupRestoreResult> {
-  // ① 密码（D21）：操作者本人的登录密码，服务端 scrypt 校验
-  const teacherRow = handle.db
-    .select()
-    .from(teachers)
-    .where(eq(teachers.id, teacherId))
-    .get();
-  const passwordOk =
-    teacherRow?.passwordHash !== undefined &&
-    teacherRow.passwordHash !== null &&
-    (await verifyPassword(password, teacherRow.passwordHash));
-  if (!passwordOk) {
-    throw new HttpError(403, "BACKUP_INVALID_PASSWORD", "登录密码不正确");
-  }
+  // ① 密码校验会让出执行权，恢复前重新检查当前会话和操作员资格。
+  await verifyBackupRestorePassword(handle.db, teacherId, password);
+  recheckAccess?.();
 
   // ② 解析 zip（损坏在此暴露，零副作用）
   let entries: ZipEntry[];

@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { TeacherInfo } from "@tutor/contract";
 import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { logoutPersonalApi } from "@/features/auth/personal-api";
+import { teacherMeKey } from "@/features/auth/teacher-auth";
 import { fetchTeacherMe, logoutTeacher } from "@/lib/api";
 import SettingsPage from "./SettingsPage";
 
@@ -49,10 +51,11 @@ function LocationProbe() {
   );
 }
 
-function renderPage(entry = "/t/settings") {
+function renderPage(entry = "/t/settings", cachedTeacher?: TeacherInfo) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  if (cachedTeacher) client.setQueryData(teacherMeKey, cachedTeacher);
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
@@ -63,17 +66,46 @@ function renderPage(entry = "/t/settings") {
   );
 }
 
+const teacher = {
+  id: "11111111-1111-4111-8111-111111111111",
+  loginName: "teacher",
+  isAdmin: true,
+  accountKind: "class",
+  createdAt: "2026-01-01T00:00:00.000Z",
+} as const;
+
 beforeEach(() => {
-  vi.mocked(fetchTeacherMe).mockResolvedValue({
-    id: "11111111-1111-4111-8111-111111111111",
-    loginName: "teacher",
-    isAdmin: true,
-    accountKind: "class",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  });
+  vi.mocked(fetchTeacherMe).mockResolvedValue(teacher);
 });
 
 describe("设置分类", () => {
+  it("未获主机授权的管理员打开旧备份书签时回落教学设置", async () => {
+    renderPage("/t/settings?section=backup");
+    expect(
+      await screen.findByRole("checkbox", { name: "逐步揭晓" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "备份与恢复" })).toBeNull();
+    expect(screen.queryByText("备份与恢复内容")).toBeNull();
+  });
+
+  it("登录回执预填身份后会读取操作员权限并显示备份入口", async () => {
+    vi.mocked(fetchTeacherMe).mockResolvedValue({
+      ...teacher,
+      canManageInstanceBackup: true,
+    });
+    renderPage("/t/settings?section=backup", teacher);
+    expect(await screen.findByText("备份与恢复内容")).toBeVisible();
+  });
+
+  it("重新打开设置时以服务端撤销结果覆盖缓存的操作员权限", async () => {
+    renderPage("/t/settings?section=backup", {
+      ...teacher,
+      canManageInstanceBackup: true,
+    });
+    await screen.findByRole("checkbox", { name: "逐步揭晓" });
+    expect(screen.queryByRole("link", { name: "备份与恢复" })).toBeNull();
+  });
+
   it("学生作答方式不展示教师手写手感入口", async () => {
     renderPage("/t/settings?section=teaching");
     await screen.findByRole("checkbox", { name: "逐步揭晓" });
@@ -151,7 +183,7 @@ describe("设置分类", () => {
       await screen.findByRole("checkbox", { name: "逐步揭晓" }),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
-    expect(screen.getByText("备份与恢复内容")).not.toBeVisible();
+    expect(screen.queryByText("备份与恢复内容")).toBeNull();
     fireEvent.click(screen.getByRole("link", { name: "AI 设置" }));
     expect(screen.getByRole("link", { name: "管理 AI 连接" })).toHaveAttribute(
       "href",
@@ -160,6 +192,10 @@ describe("设置分类", () => {
   });
 
   it("通过 URL 直达备份分类，未知分类回落教学配置", async () => {
+    vi.mocked(fetchTeacherMe).mockResolvedValue({
+      ...teacher,
+      canManageInstanceBackup: true,
+    });
     const view = renderPage("/t/settings?section=backup");
     expect(await screen.findByText("备份与恢复内容")).toBeVisible();
     view.unmount();
@@ -170,6 +206,10 @@ describe("设置分类", () => {
   });
 
   it("切换分类保存 URL，同时保留未保存的开关", async () => {
+    vi.mocked(fetchTeacherMe).mockResolvedValue({
+      ...teacher,
+      canManageInstanceBackup: true,
+    });
     renderPage();
     fireEvent.click(await screen.findByRole("checkbox", { name: "逐步揭晓" }));
     fireEvent.click(screen.getByRole("link", { name: "备份与恢复" }));

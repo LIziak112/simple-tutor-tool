@@ -19,6 +19,8 @@ export interface AppConfig {
   publicUrl: string;
   /** 生产模式（NODE_ENV=production）：托管 apps/web/dist 静态资源 */
   isProduction: boolean;
+  /** 未配置时关闭网页整站备份。 */
+  backupOperatorId: string | undefined;
 }
 
 /**
@@ -50,6 +52,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     dataDir,
     publicUrl,
     isProduction: env.NODE_ENV === "production",
+    backupOperatorId: env.INSTANCE_BACKUP_OPERATOR_ID?.trim() || undefined,
   };
 }
 

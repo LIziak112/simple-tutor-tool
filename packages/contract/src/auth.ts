@@ -114,6 +114,8 @@ export const teacherInfoSchema = z.object({
   loginName: teacherLoginNameSchema,
   /** 是否管理员（D6：登录成功返回 isAdmin，供前端显示管理入口——T2B.6） */
   isAdmin: z.boolean(),
+  /** 当前账号能否操作整站备份，由教师会话查询返回。 */
+  canManageInstanceBackup: z.boolean().optional(),
   /** 账号类型（class 班级 / personal 个人；前端据此切换导航与视角入口） */
   accountKind: accountKindSchema,
   /** 创建时间：UTC ISO 字符串（§0.3 时间约定） */
