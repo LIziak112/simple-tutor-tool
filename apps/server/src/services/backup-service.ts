@@ -357,7 +357,7 @@ function rmTempBestEffort(path: string): void {
  * 返回恢复摘要；失败路径：
  * - 密码错误 → 403（任何数据未动）；
  * - zip 损坏 / 结构不符 → 400（解析与校验在动数据之前）；
- * - 替换或重启连接失败 → 500 BACKUP_RESTORE_FAILED（已回滚复原，原数据无损）。
+ * - 替换或重启失败 → 500 BACKUP_RESTORE_FAILED。回滚未完成时保留旧数据暂存目录。
  */
 export async function restoreFromBackup(
   dataDir: string,
@@ -396,6 +396,7 @@ export async function restoreFromBackup(
   const oldDir = mkdtempSync(
     join(dirname(absoluteDataDir), "tutor-restore-old-"),
   );
+  let preserveOldDir = false;
 
   try {
     for (const entry of entries) {
@@ -410,40 +411,40 @@ export async function restoreFromBackup(
 
     // ⑤ 原子替换：先关连接（Windows 文件锁 + WAL 边车）
     handle.close();
+    const movedOut: string[] = [];
+    const movedIn: string[] = [];
     try {
       // 旧内容挪到暂存（backups/ 唯一保留：回滚快照在里面）
       for (const name of readdirSync(absoluteDataDir)) {
         if (name !== BACKUP_DIR_NAME) {
           renameSync(join(absoluteDataDir, name), join(oldDir, name));
+          movedOut.push(name);
         }
       }
-      // 新内容就位；中途失败撤回已就位部分再回滚旧内容
-      const movedIn: string[] = [];
-      try {
-        for (const name of readdirSync(staging)) {
-          renameSync(join(staging, name), join(absoluteDataDir, name));
-          movedIn.push(name);
-        }
-      } catch (err) {
-        for (const name of movedIn) {
-          rmSync(join(absoluteDataDir, name), { recursive: true, force: true });
-        }
-        throw err;
+      for (const name of readdirSync(staging)) {
+        renameSync(join(staging, name), join(absoluteDataDir, name));
+        movedIn.push(name);
       }
       // ⑥ 重启数据连接（迁移钩子在 onOpen 里，旧版快照恢复后自动升级）
       handle.restart();
     } catch {
-      // 回滚：清掉 DATA_DIR 里的新内容（若有），把旧内容原样放回
-      for (const name of readdirSync(absoluteDataDir)) {
-        if (name !== BACKUP_DIR_NAME) {
+      // 只撤回已经完成的移动。尚未移出的原文件留在原位。
+      try {
+        for (const name of movedIn) {
           rmSync(join(absoluteDataDir, name), { recursive: true, force: true });
         }
+        for (const name of movedOut) {
+          renameSync(join(oldDir, name), join(absoluteDataDir, name));
+        }
+        handle.restart();
+      } catch {
+        preserveOldDir = true;
+        throw new HttpError(
+          500,
+          "BACKUP_RESTORE_FAILED",
+          "恢复失败，自动回滚未完成，请联系主机运维人员",
+        );
       }
-      for (const name of readdirSync(oldDir)) {
-        renameSync(join(oldDir, name), join(absoluteDataDir, name));
-      }
-      // 旧库文件已回原位，重开连接恢复服务（此时几乎不会失败）
-      handle.restart();
       throw new HttpError(
         500,
         "BACKUP_RESTORE_FAILED",
@@ -452,7 +453,7 @@ export async function restoreFromBackup(
     }
   } finally {
     rmTempBestEffort(staging);
-    rmTempBestEffort(oldDir);
+    if (!preserveOldDir) rmTempBestEffort(oldDir);
   }
 
   // ⑦ 摘要：会话以恢复库为准（可能失效属预期，UI 提示重新登录）

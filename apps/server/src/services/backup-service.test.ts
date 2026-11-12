@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import {
   existsSync,
   mkdirSync,
@@ -8,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +52,11 @@ import {
  */
 
 const PASSWORD = BACKUP_TEST_PASSWORD;
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, renameSync: vi.fn(fs.renameSync) };
+});
 
 interface Fixture {
   dataDir: string;
@@ -449,6 +455,38 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect((err as HttpError).code).toBe("BACKUP_RESTORE_FAILED");
 
     // 回滚复原：库行、secret.key、shared 都在原位且连接可用
+    expect(hasStudent(handle, "stu-backup-1")).toBe(true);
+    expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe(
+      "ab".repeat(32),
+    );
+    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
+      "共享内容 v1",
+    );
+  });
+
+  it("移出原目录中途失败时，已经移出的和仍在原位的数据均保留", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const { renameSync: move } = await vi.importActual<typeof fs>("node:fs");
+    const rename = vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+      if (
+        from === join(dataDir, "shared") &&
+        typeof to === "string" &&
+        basename(dirname(to)).startsWith("tutor-restore-old-")
+      ) {
+        throw new Error("模拟移动原数据时的文件系统错误");
+      }
+      move(from, to);
+    });
+    try {
+      await expect(
+        restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip),
+      ).rejects.toMatchObject({ code: "BACKUP_RESTORE_FAILED" });
+    } finally {
+      rename.mockReset();
+    }
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
     expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe(
       "ab".repeat(32),
