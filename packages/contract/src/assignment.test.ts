@@ -30,6 +30,29 @@ const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const DUE_AT = "2026-10-01T12:00:00.000Z";
 
 describe("assignmentCreateRequestSchema（T2A.7 多单元 + 课程）", () => {
+  it("当前课程成员校验是可选的，启用时必须提供课程", () => {
+    const base = {
+      unitIds: ["unit-algebra"],
+      studentIds: ["11111111-1111-4111-8111-111111111111"],
+    };
+    expect(
+      assignmentCreateRequestSchema.parse(base).requireCourseMembership,
+    ).toBeUndefined();
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        ...base,
+        requireCourseMembership: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      assignmentCreateRequestSchema.parse({
+        ...base,
+        courseId: "33333333-3333-4333-8333-333333333333",
+        requireCourseMembership: true,
+      }).requireCourseMembership,
+    ).toBe(true);
+  });
+
   it("接受合法请求：unitIds 多个 + studentIds（title/courseId/dueAt 可选）", () => {
     const parsed = assignmentCreateRequestSchema.parse({
       unitIds: [UNIT_ID, UNIT_ID_2],

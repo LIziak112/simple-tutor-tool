@@ -22,8 +22,8 @@ import {
  */
 
 /**
- * create_assignment 入参：与 assignmentCreateRequestSchema 字段对齐（该 schema
- * 带 superRefine 无法 extend），仅 studentIds 改为可省——省略时走「单学生默认」；
+ * create_assignment 入参沿用显式学生名单，课程仅作关联。studentIds 可省略，
+ * 省略时走「单学生默认」；
  * after_due 与 allowPerQuestionFeedback 的组合校验由 createAssignment 服务内
  * 断言兜底（REST 同款）。
  */
