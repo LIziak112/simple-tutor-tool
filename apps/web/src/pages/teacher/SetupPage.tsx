@@ -1,7 +1,7 @@
 import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
+import { Link, Navigate } from "react-router";
 import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,13 +24,15 @@ import { ApiError } from "@/lib/api";
 export function SetupPage() {
   const statusQuery = useTeacherStatus();
   const setupMutation = useSetupTeacher();
-  const navigate = useNavigate();
 
   const [loginName, setLoginName] = useState("teacher");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
+  if (setupMutation.isSuccess) {
+    return <Navigate to="/t" replace />;
+  }
   if (statusQuery.isPending) {
     return <AuthScreenLoading text="正在检查初始状态…" />;
   }
@@ -46,8 +48,8 @@ export function SetupPage() {
       />
     );
   }
-  if (statusQuery.data.hasTeacher) {
-    // 已设置过教师：setup 入口失效，去登录
+  if (statusQuery.data.hasTeacher && !setupMutation.isPending) {
+    // 当前提交可能先触发状态刷新，等它收尾再决定去向。
     return <Navigate to="/t/login" replace />;
   }
 
@@ -69,15 +71,7 @@ export function SetupPage() {
       return;
     }
     setFormError(null);
-    setupMutation.mutate(
-      { loginName: parsedName.data, password },
-      {
-        onSuccess: () => {
-          // 设置成功即自动登录，进入教师端
-          navigate("/t", { replace: true });
-        },
-      },
-    );
+    setupMutation.mutate({ loginName: parsedName.data, password });
   }
 
   const serverError =

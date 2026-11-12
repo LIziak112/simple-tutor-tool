@@ -128,6 +128,8 @@ const rejectAfterDuePerQuestion = (
  *   至少 1 个；单元不存在 404 UNIT_NOT_FOUND；重复 400 DUPLICATE_UNIT；
  * - courseId：可选所属课程；不存在 404 COURSE_NOT_FOUND；选了课程也不自动
  *   带名单——名单由 studentIds 显式给出（前端向导负责「带出课程成员」交互）；
+ * - requireCourseMembership：按课程名单指派时启用，提交的学生须仍为课程成员，
+ *   否则 409 COURSE_ROSTER_CHANGED。仅关联课程的调用方可省略。
  * - title 缺省规则见 defaultAssignmentTitle；
  * - studentIds 至少一名（服务端去重并逐个校验存在）；
  * - dueAt 可选（UTC ISO）；answerRelease 可选（T2A.8，默认 on_submit；
@@ -140,6 +142,7 @@ export const assignmentCreateRequestSchema = z
   .object({
     title: assignmentTitleSchema.optional(),
     courseId: z.uuid("courseId 必须是 UUID 格式").nullable().optional(),
+    requireCourseMembership: z.boolean().optional(),
     unitIds: z.array(unitIdSchema).min(1, "作业必须至少包含一个练习单元"),
     studentIds: z.array(studentIdSchema).min(1, "作业必须至少指派一名学生"),
     dueAt: assignmentDueAtSchema.optional(),
@@ -159,6 +162,13 @@ export const assignmentCreateRequestSchema = z
      */
     allowRedo: z.boolean().optional(),
   })
+  .refine(
+    (request) => !request.requireCourseMembership || request.courseId != null,
+    {
+      path: ["courseId"],
+      message: "按课程成员布置作业必须选择课程",
+    },
+  )
   .superRefine(rejectAfterDuePerQuestion);
 
 /**
@@ -474,6 +484,7 @@ export const studentPaperOkSchema = apiOkExtend(studentPaperDataSchema);
  * - ASSIGNMENT_NOT_FOUND：目标作业不存在（含已删除的按需接口）（404）；
  * - UNIT_NOT_FOUND：unitIds 中存在未知单元（404）；
  * - COURSE_NOT_FOUND：courseId 不存在（404，T2A.7）；
+ * - COURSE_ROSTER_CHANGED：按课程指派的学生已移出课程（409）；
  * - STUDENT_NOT_FOUND：studentIds 中存在未知学生 id（404）；
  * - DUPLICATE_UNIT：unitIds 重复（同一作业单元不可重复，400，D12/T2A.7）；
  * - ASSIGNMENT_CONTENT_LOCKED：已锁定（有 attempt）后修改 unitIds
@@ -487,6 +498,7 @@ export const assignmentErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "UNIT_NOT_FOUND",
   "COURSE_NOT_FOUND",
+  "COURSE_ROSTER_CHANGED",
   "STUDENT_NOT_FOUND",
   "DUPLICATE_UNIT",
   "ASSIGNMENT_CONTENT_LOCKED",

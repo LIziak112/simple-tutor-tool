@@ -34,6 +34,10 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import {
+  requireCurrentCourseMembers,
+  requireStudentsExist,
+} from "./assignment-recipients";
 import { practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 
@@ -145,38 +149,6 @@ function requireAssignmentRow(
     throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
   }
   return row;
-}
-
-/**
- * 校验学生 id 全部存在且归属本教师（T2B.4，D12/D14），任一不满足 →
- * 404 STUDENT_NOT_FOUND（他人学生按不存在处理，不泄露存在性）。
- */
-function requireStudentsExist(
-  db: Db,
-  teacherId: string,
-  studentIds: readonly string[],
-): void {
-  const found = new Set(
-    db
-      .select({ id: students.id })
-      .from(students)
-      .where(
-        and(
-          eq(students.teacherId, teacherId),
-          inArray(students.id, [...studentIds]),
-        ),
-      )
-      .all()
-      .map((row) => row.id),
-  );
-  const missing = studentIds.find((id) => !found.has(id));
-  if (missing !== undefined) {
-    throw new HttpError(
-      404,
-      "STUDENT_NOT_FOUND",
-      "指派名单中包含不存在的学生，请刷新学生列表后重试",
-    );
-  }
 }
 
 /**
@@ -504,7 +476,7 @@ function teacherAssignmentOf(
  * - 同批各份 createdAt 逐份递减 1ms（首份最晚、仍在请求时刻的几毫秒内）：
  *   列表按 createdAt 倒序时批内顺序 = 教师选择的 unitIds 顺序（学生端先看到
  *   第一份），且不依赖 SQLite 同毫秒并列时的未定义排序；
- * - 全部校验发生在事务开始前，任一失败零写入（无半成品）。
+ * - 按课程指派在写入事务内重验成员；任一校验失败，整批零写入。
  */
 /** after_due + 逐题授权组合拒绝（M1b；create 合并后与 update 合并后共用） */
 function assertNoAfterDuePerQuestion(
@@ -578,47 +550,53 @@ export function createAssignment(
 
   const baseMs = Date.now();
   const createdIds: string[] = [];
-  db.transaction((tx) => {
-    batches.forEach((batch, index) => {
-      const id = randomUUID();
-      createdIds.push(id);
-      // 逐份递减 1ms（首份最晚）：倒序列表内批内顺序 = unitIds 顺序（见函数注释）
-      const stamp = new Date(
-        baseMs + (batches.length - 1 - index),
-      ).toISOString();
-      tx.insert(assignments)
-        .values({
-          id,
-          teacherId,
-          unitId: null,
-          courseId: request.courseId ?? null,
-          title: batch.title,
-          dueAt: request.dueAt ?? null,
-          answerRelease: effectiveRelease,
-          allowPerQuestionFeedback: allowPerQuestion,
-          // hall-15313：缺省允许重做（存量兼容），显式 false 才禁
-          allowRedo: request.allowRedo ?? true,
-          deletedAt: null,
-          createdAt: stamp,
-        })
-        .run();
-      batch.units.forEach((unit, order) => {
-        tx.insert(assignmentUnits)
-          .values({ assignmentId: id, unitId: unit.id, order })
-          .run();
-      });
-      for (const studentId of studentIds) {
-        tx.insert(assignmentStudents)
+  db.transaction(
+    (tx) => {
+      if (request.requireCourseMembership && request.courseId != null) {
+        requireCurrentCourseMembers(tx, request.courseId, studentIds);
+      }
+      batches.forEach((batch, index) => {
+        const id = randomUUID();
+        createdIds.push(id);
+        // 逐份递减 1ms（首份最晚）：倒序列表内批内顺序 = unitIds 顺序（见函数注释）
+        const stamp = new Date(
+          baseMs + (batches.length - 1 - index),
+        ).toISOString();
+        tx.insert(assignments)
           .values({
-            assignmentId: id,
-            studentId,
-            addedAt: stamp,
-            removedAt: null,
+            id,
+            teacherId,
+            unitId: null,
+            courseId: request.courseId ?? null,
+            title: batch.title,
+            dueAt: request.dueAt ?? null,
+            answerRelease: effectiveRelease,
+            allowPerQuestionFeedback: allowPerQuestion,
+            // hall-15313：缺省允许重做（存量兼容），显式 false 才禁
+            allowRedo: request.allowRedo ?? true,
+            deletedAt: null,
+            createdAt: stamp,
           })
           .run();
-      }
-    });
-  });
+        batch.units.forEach((unit, order) => {
+          tx.insert(assignmentUnits)
+            .values({ assignmentId: id, unitId: unit.id, order })
+            .run();
+        });
+        for (const studentId of studentIds) {
+          tx.insert(assignmentStudents)
+            .values({
+              assignmentId: id,
+              studentId,
+              addedAt: stamp,
+              removedAt: null,
+            })
+            .run();
+        }
+      });
+    },
+    { behavior: request.requireCourseMembership ? "immediate" : "deferred" },
+  );
   return {
     assignments: createdIds.map((id) => teacherAssignmentOf(db, teacherId, id)),
   };

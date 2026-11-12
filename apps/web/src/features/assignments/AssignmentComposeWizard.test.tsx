@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -16,7 +17,9 @@ import type {
   TeacherAssignment,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { courseDetailKey } from "@/features/courses/course-queries";
 import {
+  ApiError,
   checkAssignmentApi,
   createAssignmentApi,
   fetchCourseDetail,
@@ -66,6 +69,12 @@ const FOLDER_ID = "55555555-5555-4555-8555-555555555555";
 const STUDENT_A_ID = "11111111-1111-4111-8111-111111111111"; // 张三（课程成员）
 const STUDENT_B_ID = "22222222-2222-4222-8222-222222222222"; // 李四（非成员）
 const STUDENT_C_ID = "66666666-6666-4666-8666-666666666666"; // 王五（课程成员）
+const NEW_COURSE_MEMBER = {
+  studentId: STUDENT_B_ID,
+  displayName: "李四",
+  joinedAt: "2026-09-03T00:00:00.000Z",
+  archived: false,
+};
 const UNIT_A_ID = "unit-一元一次方程";
 const UNIT_B_ID = "unit-有理数乘除";
 const UNIT_C_ID = "unit-几何入门";
@@ -321,10 +330,12 @@ function makeAssignment(): TeacherAssignment {
   };
 }
 
-function renderWizard(initialCourseId: string | null = null) {
-  const client = new QueryClient({
+function renderWizard(
+  initialCourseId: string | null = null,
+  client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  }),
+) {
   const onClose = vi.fn();
   const utils = render(
     <QueryClientProvider client={client}>
@@ -389,6 +400,66 @@ beforeEach(() => {
 });
 
 describe("AssignmentComposeWizard 第①步 对象", () => {
+  it("移出的已选成员从人数中剔除，仍在课程内的手动取消保持有效", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    renderWizard(COURSE_ID, client);
+    const wang = await screen.findByRole("checkbox", { name: "王五" });
+    fireEvent.click(wang);
+    expect(screen.getByText("已选 1 人")).toBeInTheDocument();
+
+    mockedDetail.mockResolvedValue({
+      ...COURSE_DETAIL,
+      members: COURSE_DETAIL.members.filter(
+        (member) => member.studentId !== STUDENT_A_ID,
+      ),
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: courseDetailKey(COURSE_ID) });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("checkbox", { name: "张三" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "王五" })).not.toBeChecked();
+      expect(screen.getByRole("button", { name: "下一步" })).toBeDisabled();
+    });
+  });
+
+  it("缓存名单刷新后默认勾选新增成员，并保留手动取消的选择", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 10_000 } },
+    });
+    const key = courseDetailKey(COURSE_ID);
+    client.setQueryData(key, {
+      ...COURSE_DETAIL,
+      members: COURSE_DETAIL.members.slice(0, 1),
+    });
+    await client.invalidateQueries({ queryKey: key });
+    const refreshed = Promise.withResolvers<CourseDetailData>();
+    mockedDetail.mockReturnValueOnce(refreshed.promise);
+    renderWizard(COURSE_ID, client);
+    await waitFor(() => expect(mockedDetail).toHaveBeenCalledWith(COURSE_ID));
+    refreshed.resolve(COURSE_DETAIL);
+
+    const wang = await screen.findByRole("checkbox", { name: "王五" });
+    expect(wang).toBeChecked();
+    fireEvent.click(wang);
+    expect(wang).not.toBeChecked();
+
+    mockedDetail.mockResolvedValue({
+      ...COURSE_DETAIL,
+      members: [...COURSE_DETAIL.members, NEW_COURSE_MEMBER],
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: key });
+    });
+    expect(await screen.findByRole("checkbox", { name: "李四" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "王五" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "张三" })).toBeChecked();
+  });
+
   it("选课程带出全部成员且默认全勾选，可逐个取消；未选成员时下一步禁用", async () => {
     await openWizardWithCourse();
     expect(screen.getByText("① 对象")).toHaveAttribute("aria-current", "step");
@@ -420,6 +491,57 @@ describe("AssignmentComposeWizard 第①步 对象", () => {
     fireEvent.click(li);
     expect(screen.getByText("已选 1 人")).toBeInTheDocument();
     expect(mockedDetail).not.toHaveBeenCalled();
+  });
+});
+
+it("提交时名单变更回到对象步骤，刷新后保留单元和标题并重试", async () => {
+  await openStep2();
+  clickCourseUnit(UNIT_TITLES.A);
+  fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+  const title = await screen.findByLabelText(/作业标题/);
+  fireEvent.change(title, { target: { value: "周末复习" } });
+  mockedCreate.mockImplementationOnce(async () => {
+    mockedDetail.mockResolvedValue({
+      ...COURSE_DETAIL,
+      members: [
+        ...COURSE_DETAIL.members.filter(
+          (member) => member.studentId !== STUDENT_C_ID,
+        ),
+        NEW_COURSE_MEMBER,
+      ],
+    });
+    throw new ApiError(
+      "COURSE_ROSTER_CHANGED",
+      "课程名单已变更，请重新确认指派学生",
+      409,
+    );
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^布置作业（/ }));
+
+  expect(await screen.findByRole("checkbox", { name: "张三" })).toBeChecked();
+  expect(
+    screen.queryByRole("checkbox", { name: "王五" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "李四" })).not.toBeChecked();
+  expect(screen.getByText(/课程名单已变更/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+  expect(
+    within(courseList()).getByLabelText(new RegExp(UNIT_TITLES.A)),
+  ).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+  expect(await screen.findByLabelText(/作业标题/)).toHaveValue("周末复习");
+  fireEvent.click(screen.getByRole("button", { name: /^布置作业（/ }));
+  await waitFor(() => {
+    expect(mockedCreate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        courseId: COURSE_ID,
+        requireCourseMembership: true,
+        studentIds: [STUDENT_A_ID],
+        unitIds: [UNIT_A_ID],
+        title: "周末复习",
+      }),
+      expect.anything(),
+    );
   });
 });
 
@@ -564,6 +686,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       unitIds: [UNIT_A_ID, UNIT_B_ID],
       studentIds: [STUDENT_A_ID, STUDENT_C_ID],
       courseId: COURSE_ID,
+      requireCourseMembership: true,
       allowPerQuestionFeedback: true,
       // hall-15313：重做默认允许，payload 恒携带
       allowRedo: true,
@@ -611,6 +734,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       unitIds: [UNIT_B_ID, UNIT_A_ID],
       studentIds: [STUDENT_A_ID, STUDENT_C_ID],
       courseId: COURSE_ID,
+      requireCourseMembership: true,
       title: "国庆专项",
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
       allowPerQuestionFeedback: true,

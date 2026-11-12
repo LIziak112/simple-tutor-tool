@@ -17,7 +17,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -46,6 +46,7 @@ import {
 import { useStudents } from "@/features/students/student-queries";
 import { ApiError } from "@/lib/api";
 import { formatDueTime, localInputToUtcIso } from "@/lib/time";
+import { AssignmentRecipientsStep } from "./AssignmentRecipientsStep";
 import { useCheckAssignment, useCreateAssignment } from "./assignment-queries";
 import { DiscardConfirmDialog } from "./DiscardConfirmDialog";
 
@@ -107,6 +108,11 @@ function dueRelativeHint(localValue: string): string | null {
 
 const STEP_LABELS = ["① 对象", "② 内容", "③ 确认"] as const;
 
+interface RecipientSelection {
+  mode: "exclude" | "include";
+  ids: ReadonlySet<string>;
+}
+
 export function AssignmentComposeWizard({
   initialCourseId,
   onClose,
@@ -124,7 +130,10 @@ export function AssignmentComposeWizard({
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [courseId, setCourseId] = useState(initialCourseId ?? "");
-  const [studentIds, setStudentIds] = useState<ReadonlySet<string>>(new Set());
+  const [selection, setSelection] = useState<RecipientSelection>(() => ({
+    mode: initialCourseId ? "exclude" : "include",
+    ids: new Set(),
+  }));
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [dueLocal, setDueLocal] = useState("");
@@ -162,20 +171,25 @@ export function AssignmentComposeWizard({
   // 选中课程后加载其目录与成员（第①步名单带出 + 第②步本课程练习共用）
   const detailQuery = useCourseDetail(courseId);
 
-  /** 课程成员自动带出（D13）：选中课程且详情到达时，名单默认全勾选该课程全部
-   *  成员，可逐个取消；切到「不按课程」保留现选择，再次选课重新带出。 */
-  const syncedCourseRef = useRef<string | null>(null);
+  // 对象确认前只记手动取消，确认后冻结已选学生并剔除移出课程的人。
+  const followsRoster = selection.mode === "exclude";
+  const studentIds = courseId
+    ? new Set(
+        detailQuery.data?.members
+          .map((member) => member.studentId)
+          .filter((id) =>
+            followsRoster ? !selection.ids.has(id) : selection.ids.has(id),
+          ),
+      )
+    : selection.ids;
+  const rosterChanged =
+    courseId !== "" &&
+    detailQuery.data !== undefined &&
+    !followsRoster &&
+    selection.ids.size !== studentIds.size;
   useEffect(() => {
-    if (courseId === "") {
-      syncedCourseRef.current = null;
-      return;
-    }
-    const members = detailQuery.data?.members;
-    if (members !== undefined && syncedCourseRef.current !== courseId) {
-      setStudentIds(new Set(members.map((member) => member.studentId)));
-      syncedCourseRef.current = courseId;
-    }
-  }, [courseId, detailQuery.data]);
+    if (rosterChanged && !createMutation.isPending) setStep(1);
+  }, [rosterChanged, createMutation.isPending]);
 
   const libraryUnits = useMemo(
     () => libraryUnitsQuery.data?.units ?? [],
@@ -265,14 +279,14 @@ export function AssignmentComposeWizard({
   }
 
   function toggleStudent(id: string, checked: boolean): void {
-    setStudentIds((prev) => {
-      const next = new Set(prev);
-      if (checked) {
-        next.add(id);
+    setSelection((prev) => {
+      const ids = new Set(prev.ids);
+      if (prev.mode === "include" ? checked : !checked) {
+        ids.add(id);
       } else {
-        next.delete(id);
+        ids.delete(id);
       }
-      return next;
+      return { mode: prev.mode, ids };
     });
   }
 
@@ -290,6 +304,7 @@ export function AssignmentComposeWizard({
 
   /** 进入第③步时发起 D15「已做过」检查（unitIds × studentIds） */
   function goToStep3(): void {
+    if (rosterChanged || studentIds.size === 0) return;
     checkMutation.reset();
     checkMutation.mutate({
       unitIds: selectedUnitIds,
@@ -300,13 +315,14 @@ export function AssignmentComposeWizard({
 
   function handleSubmit(event: React.FormEvent): void {
     event.preventDefault();
+    if (rosterChanged || studentIds.size === 0) return;
     // T2A.8：选了「截止后公布」而没有截止时间时前端即时拦截（服务端同口径 400）
     if (answerRelease === "after_due" && dueLocal.length === 0) return;
     createMutation.mutate(
       {
         unitIds: selectedUnitIds,
         studentIds: [...studentIds],
-        ...(courseId.length > 0 ? { courseId } : {}),
+        ...(courseId ? { courseId, requireCourseMembership: true } : {}),
         ...(title.trim().length > 0 ? { title: title.trim() } : {}),
         ...(dueLocal.length > 0 ? { dueAt: localInputToUtcIso(dueLocal) } : {}),
         answerRelease,
@@ -314,7 +330,18 @@ export function AssignmentComposeWizard({
         allowRedo,
         unitGrouping,
       },
-      { onSuccess: onClose },
+      {
+        onSuccess: onClose,
+        onError: (error) => {
+          if (
+            error instanceof ApiError &&
+            error.code === "COURSE_ROSTER_CHANGED"
+          ) {
+            void detailQuery.refetch();
+            setStep(1);
+          }
+        },
+      },
     );
   }
 
@@ -326,6 +353,12 @@ export function AssignmentComposeWizard({
         : null;
 
   const loadingBase = coursesQuery.isPending || studentsQuery.isPending;
+  const rosterUnavailable = detailQuery.isFetching || detailQuery.isError;
+  const rosterConflict =
+    createMutation.error instanceof ApiError &&
+    createMutation.error.code === "COURSE_ROSTER_CHANGED"
+      ? createMutation.error.message
+      : null;
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : requestClose())}>
@@ -358,14 +391,27 @@ export function AssignmentComposeWizard({
         </DialogHeader>
 
         {step === 1 && (
-          <StepRecipients
+          <AssignmentRecipientsStep
             coursesQuery={coursesQuery}
             studentsQuery={studentsQuery}
             detailQuery={detailQuery}
             courseId={courseId}
             studentIds={studentIds}
             loadingBase={loadingBase}
-            onCourseChange={setCourseId}
+            refreshingRoster={detailQuery.isFetching && rosterConflict !== null}
+            rosterNotice={
+              rosterConflict ??
+              (rosterChanged ? "课程名单已变更，请重新确认指派学生" : null)
+            }
+            onCourseChange={(nextCourseId) => {
+              createMutation.reset();
+              setSelection(
+                nextCourseId
+                  ? { mode: "exclude", ids: new Set() }
+                  : { mode: "include", ids: studentIds },
+              );
+              setCourseId(nextCourseId);
+            }}
             onToggleStudent={toggleStudent}
           />
         )}
@@ -465,8 +511,14 @@ export function AssignmentComposeWizard({
             <Button
               type="button"
               className="min-h-11 px-4"
-              disabled={loadingBase || studentIds.size === 0}
-              onClick={() => setStep(2)}
+              disabled={
+                loadingBase || rosterUnavailable || studentIds.size === 0
+              }
+              onClick={() => {
+                createMutation.reset();
+                setSelection({ mode: "include", ids: studentIds });
+                setStep(2);
+              }}
             >
               下一步
             </Button>
@@ -492,161 +544,6 @@ export function AssignmentComposeWizard({
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-// ---------- 第①步：对象 ----------
-
-/** 学生勾选行（课程成员带出与学生多选共用） */
-function StudentCheckRow({
-  id,
-  name,
-  meta,
-  checked,
-  onToggle,
-}: {
-  id: string;
-  name: string;
-  meta: string | null;
-  checked: boolean;
-  onToggle: (id: string, checked: boolean) => void;
-}) {
-  return (
-    <li key={id}>
-      <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm outline-none select-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50">
-        <input
-          type="checkbox"
-          className="size-5 accent-primary"
-          checked={checked}
-          onChange={(e) => onToggle(id, e.target.checked)}
-        />
-        <span>{name}</span>
-        {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
-      </label>
-    </li>
-  );
-}
-
-function StepRecipients({
-  coursesQuery,
-  studentsQuery,
-  detailQuery,
-  courseId,
-  studentIds,
-  loadingBase,
-  onCourseChange,
-  onToggleStudent,
-}: {
-  coursesQuery: ReturnType<typeof useTeacherCourses>;
-  studentsQuery: ReturnType<typeof useStudents>;
-  detailQuery: ReturnType<typeof useCourseDetail>;
-  courseId: string;
-  studentIds: ReadonlySet<string>;
-  loadingBase: boolean;
-  onCourseChange: (courseId: string) => void;
-  onToggleStudent: (id: string, checked: boolean) => void;
-}) {
-  return (
-    <section aria-label="第①步 选择对象" className="flex flex-col gap-4">
-      {loadingBase ? (
-        <p className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-          <Loader2 aria-hidden className="size-4 animate-spin" />
-          正在加载课程与学生…
-        </p>
-      ) : (
-        <>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="wizard-course" className="text-sm">
-              所属课程（可选；选择后名单默认带出该课程全部成员）
-            </label>
-            <select
-              id="wizard-course"
-              value={courseId}
-              onChange={(e) => onCourseChange(e.target.value)}
-              className="flex h-11 w-full rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            >
-              <option value="">不按课程（从学生名单中选择）</option>
-              {coursesQuery.data?.courses.map((course) => (
-                <option key={course.id} value={course.id}>
-                  {course.name}（{course.memberCount} 名成员）
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {courseId === "" ? (
-            <fieldset className="flex flex-col gap-1.5">
-              <legend className="text-sm">指派学生（多选，至少一名）</legend>
-              {(studentsQuery.data?.students.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  还没有学生：请先到「学生」页添加。
-                </p>
-              )}
-              <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-lg border border-border p-1">
-                {studentsQuery.data?.students.map((student) => (
-                  <StudentCheckRow
-                    key={student.id}
-                    id={student.id}
-                    name={student.displayName}
-                    meta={student.loginName}
-                    checked={studentIds.has(student.id)}
-                    onToggle={onToggleStudent}
-                  />
-                ))}
-              </ul>
-            </fieldset>
-          ) : detailQuery.isPending ? (
-            <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-              <Loader2 aria-hidden className="size-4 animate-spin" />
-              正在加载课程成员…
-            </p>
-          ) : detailQuery.isError ? (
-            <div role="alert" className="flex flex-col items-start gap-2">
-              <p className="text-sm text-destructive">
-                {detailQuery.error instanceof Error
-                  ? detailQuery.error.message
-                  : "课程成员加载失败，请稍后重试"}
-              </p>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={() => void detailQuery.refetch()}
-              >
-                重试
-              </Button>
-            </div>
-          ) : (
-            <fieldset className="flex flex-col gap-1.5">
-              <legend className="text-sm">
-                课程成员（已默认全选，可逐个取消）
-              </legend>
-              {detailQuery.data.members.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  该课程还没有成员：可到课程页添加成员，或返回选择「不按课程」。
-                </p>
-              )}
-              <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-lg border border-border p-1">
-                {detailQuery.data.members.map((member) => (
-                  <StudentCheckRow
-                    key={member.studentId}
-                    id={member.studentId}
-                    name={member.displayName}
-                    meta={member.archived ? "已归档" : null}
-                    checked={studentIds.has(member.studentId)}
-                    onToggle={onToggleStudent}
-                  />
-                ))}
-              </ul>
-            </fieldset>
-          )}
-
-          <p aria-live="polite" className="text-sm text-muted-foreground">
-            已选 {studentIds.size} 人
-            {studentIds.size === 0 && "（下一步需要至少一名学生）"}
-          </p>
-        </>
-      )}
-    </section>
   );
 }
 

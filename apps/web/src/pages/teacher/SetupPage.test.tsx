@@ -1,7 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  teacherStatusKey,
+  useTeacherStatus,
+} from "@/features/auth/teacher-auth";
 import { SetupPage } from "./SetupPage";
 
 /**
@@ -41,17 +51,29 @@ vi.mock("@/lib/api", () => {
   };
 });
 
-function renderSetupPage() {
+function TeacherStatusProbe() {
+  return useTeacherStatus().data?.hasTeacher ? (
+    <span>教师状态已刷新</span>
+  ) : null;
+}
+
+function renderSetupPage(observeStatus = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/t/setup"]}>
-        <SetupPage />
+        {observeStatus && <TeacherStatusProbe />}
+        <Routes>
+          <Route path="/t/setup" element={<SetupPage />} />
+          <Route path="/t/login" element={<h1>教师登录</h1>} />
+          <Route path="/t" element={<h1>教师工作台</h1>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 beforeEach(() => {
@@ -191,14 +213,52 @@ describe("SetupPage 表单校验（登录名 + 密码两字段流程）", () => 
     });
   });
 
-  it("已设置教师时不渲染表单（守卫分流到登录页的路由行为由浏览器自验覆盖）", async () => {
+  it("当前首启提交尚未收尾时，即使站点状态已刷新也直接进入教师工作台", async () => {
+    const teacher = {
+      id: "t1",
+      loginName: "teacher",
+      isAdmin: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const setup = Promise.withResolvers<typeof teacher>();
+    apiMocks.setupTeacher.mockReturnValueOnce(setup.promise);
+    const queryClient = renderSetupPage(true);
+
+    fireEvent.change(await screen.findByLabelText("密码"), {
+      target: { value: "1234abcd" },
+    });
+    fireEvent.change(screen.getByLabelText("确认密码"), {
+      target: { value: "1234abcd" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号并进入" }));
+    await waitFor(() => expect(apiMocks.setupTeacher).toHaveBeenCalledOnce());
+
+    apiMocks.fetchTeacherStatus.mockResolvedValue({
+      hasTeacher: true,
+      registrationOpen: false,
+    });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: teacherStatusKey });
+    });
+    await screen.findByText("教师状态已刷新");
+    expect(
+      screen.queryByRole("heading", { name: "教师登录" }),
+    ).not.toBeInTheDocument();
+    setup.resolve(teacher);
+
+    expect(
+      await screen.findByRole("heading", { name: "教师工作台" }),
+    ).toBeInTheDocument();
+  });
+
+  it("已有教师且直接访问首启页时转到登录页", async () => {
     apiMocks.fetchTeacherStatus.mockResolvedValue({
       hasTeacher: true,
       registrationOpen: false,
     });
     renderSetupPage();
-    await waitFor(() => {
-      expect(screen.queryByLabelText("密码")).not.toBeInTheDocument();
-    });
+    expect(
+      await screen.findByRole("heading", { name: "教师登录" }),
+    ).toBeInTheDocument();
   });
 });
