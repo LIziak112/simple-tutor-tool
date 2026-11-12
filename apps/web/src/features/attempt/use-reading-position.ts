@@ -1,5 +1,9 @@
 import { type RefObject, useCallback, useEffect, useRef } from "react";
 import { useAnnotationSessionRef } from "@/features/annotation/use-annotation-record";
+import {
+  createReadingPositionCapture,
+  type ReadingPosition,
+} from "./reading-position-capture";
 
 function headerHeightOf(): number {
   return (
@@ -9,7 +13,6 @@ function headerHeightOf(): number {
   );
 }
 
-type ReadingPosition = { questionId: string; offset: number };
 const INTERRUPT_EVENTS = [
   "wheel",
   "touchstart",
@@ -83,20 +86,15 @@ export function useReadingPosition(
         // 只降级阅读恢复，不影响答案和草稿保存。
       }
     };
-    const capture = (save: boolean, notifyCurrent = true) => {
+    const read = createReadingPositionCapture();
+    const capture = (save: boolean, notifyCurrent = true, follow = false) => {
       frame = 0;
-      const header = headerHeightOf();
-      let best: ReadingPosition | null = null;
-      let distance = Infinity;
-      for (const [id, element] of cards.current) {
-        const rect = element.getBoundingClientRect();
-        if (rect.bottom <= header || rect.top >= window.innerHeight) continue;
-        const next = Math.abs(rect.top - header - 12);
-        if (next < distance) {
-          best = { questionId: id, offset: rect.top - header };
-          distance = next;
-        }
-      }
+      const best = read(
+        cards.current,
+        headerHeightOf(),
+        window.innerHeight,
+        follow,
+      );
       if (best === null) return;
       // 挂载版本驱动的重捕不通知 currentQuestionId：视口内就近题号只是
       // 落盘口径，翻动 current 会连带收起当前题的浮层面板（AI 助教等）。
@@ -109,7 +107,8 @@ export function useReadingPosition(
     };
     captureRef.current = capture;
     const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(() => capture(true));
+      if (!frame)
+        frame = requestAnimationFrame(() => capture(true, true, true));
     };
     const onPageHide = () => {
       cancelAnimationFrame(frame);

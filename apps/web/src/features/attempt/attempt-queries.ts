@@ -26,6 +26,7 @@ import {
   submitAttemptApi,
   updateAttemptWorkflowApi,
 } from "@/lib/api";
+import { shareAttemptDetail } from "@/lib/attempt-detail-read";
 import { randomUuid } from "@/lib/uuid";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import { getPracticePreference } from "./practice-preference-store";
@@ -129,7 +130,9 @@ export function useAttemptDetail(attemptId: string | undefined) {
       // 暂停期间不出站；已在途的详情也不能覆盖末题阅读现场。
       if (previous && detailPollingPaused.has(attemptId ?? "")) return previous;
       try {
-        const next = await fetchAttemptApi(attemptId ?? "", signal);
+        const next = await (previous === undefined
+          ? fetchAttemptApi(attemptId ?? "", signal)
+          : fetchAttemptApi(attemptId ?? "", signal, previous));
         if (previous && detailPollingPaused.has(attemptId ?? ""))
           return previous;
         if (!("timing" in next) || !next.timing) return next;
@@ -158,6 +161,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
         throw error;
       }
     },
+    structuralSharing: shareAttemptDetail,
     enabled: attemptId !== undefined && !paused,
     retry: (failureCount, error) =>
       !(error instanceof AttemptDetailReadTimeoutError) &&

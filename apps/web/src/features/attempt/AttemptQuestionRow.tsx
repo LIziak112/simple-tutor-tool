@@ -19,6 +19,7 @@ import {
 } from "react";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { LazyMountWindow } from "./lazy-mount-window";
+import { registerReadingCard } from "./reading-position-capture";
 import type { AttemptAnswersState } from "./use-attempt-answers";
 import type { useAttemptEvents } from "./use-attempt-events";
 
@@ -138,8 +139,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
     (element: HTMLLIElement | null) => {
       liRef.current = element;
       events.registerCard(question.id, element);
-      if (element) cardElements.current.set(question.id, element);
-      else cardElements.current.delete(question.id);
+      registerReadingCard(cardElements.current, question.id, element);
       mountCtl?.attach(question.id, element);
     },
     [events, cardElements, question.id, mountCtl],

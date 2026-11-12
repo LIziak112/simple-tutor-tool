@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttemptDetailReadTimeoutError, fetchAttemptApi } from "./api";
+import { shareAttemptDetail } from "./attempt-detail-read";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -7,6 +8,49 @@ afterEach(() => {
 });
 
 describe("练习详情读取期限", () => {
+  it("结构共享保留新响应的版本，即使复用相同的旧对象", async () => {
+    const response = (etag: string) =>
+      new Response(
+        JSON.stringify({ ok: true, data: { attempt: { id: "a" } } }),
+        { headers: { ETag: etag } },
+      );
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(response('W/"one"'))
+      .mockResolvedValueOnce(response('W/"two"'))
+      .mockResolvedValueOnce(
+        new Response(null, { status: 304, headers: { ETag: 'W/"two"' } }),
+      );
+    vi.stubGlobal("fetch", fetchSpy);
+    const previous = await fetchAttemptApi("a");
+    const refreshed = await fetchAttemptApi("a", undefined, previous);
+    expect(shareAttemptDetail(previous, refreshed)).toBe(previous);
+    expect(await fetchAttemptApi("a", undefined, previous)).toBe(previous);
+    const options = fetchSpy.mock.calls[2]?.[1] as RequestInit;
+    expect(new Headers(options.headers).get("if-none-match")).toBe('W/"two"');
+  });
+
+  it("仅对持有的详情发送版本，304 复用原详情对象", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, data: { attempt: { id: "a" } } }),
+          { headers: { ETag: 'W/"draft-a"' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, { status: 304, headers: { ETag: 'W/"draft-a"' } }),
+      );
+    vi.stubGlobal("fetch", fetchSpy);
+    const cached = await fetchAttemptApi("a");
+    expect(await fetchAttemptApi("a", undefined, cached)).toBe(cached);
+    const options = fetchSpy.mock.calls[1]?.[1] as RequestInit;
+    expect(new Headers(options.headers).get("if-none-match")).toBe(
+      'W/"draft-a"',
+    );
+  });
+
   it("请求已发出但 headers 永不返回时，终止本轮并允许新一轮读取", async () => {
     vi.useFakeTimers();
     let resolveOld: ((response: Response) => void) | undefined;

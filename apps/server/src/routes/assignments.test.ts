@@ -1323,6 +1323,72 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
 });
 
 describe("课程成员变化不影响已布置作业名单（D13 快照语义）", () => {
+  it("按课程指派时拒绝已移出的成员，整批零写入，确认最新名单后可以布置", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const unitIds = [
+      await importDoc(app, teacherCookie, UNIT_A_MD),
+      await importDoc(app, teacherCookie, UNIT_B_MD),
+    ];
+    const aId = await createStudent(app, teacherCookie, "张三");
+    const cId = await createStudent(app, teacherCookie, "王五");
+    const courseRes = await request(
+      app,
+      "/api/teacher/courses",
+      { title: "初一上" },
+      teacherCookie,
+    );
+    expect(courseRes.status).toBe(201);
+    const {
+      data: { id: courseId },
+    } = (await courseRes.json()) as { data: { id: string } };
+    const membersUrl = `/api/teacher/courses/${courseId}/members`;
+    const added = await request(
+      app,
+      membersUrl,
+      { studentIds: [aId, cId] },
+      teacherCookie,
+    );
+    expect(added.ok).toBe(true);
+
+    const staleRequest = {
+      courseId,
+      requireCourseMembership: true,
+      unitIds,
+      studentIds: [aId, cId],
+      unitGrouping: "separate",
+    };
+    const removed = await request(
+      app,
+      membersUrl,
+      { studentIds: [cId] },
+      teacherCookie,
+      "DELETE",
+    );
+    expect(removed.ok).toBe(true);
+    const rejected = await request(
+      app,
+      "/api/teacher/assignments",
+      staleRequest,
+      teacherCookie,
+    );
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toMatchObject({
+      ok: false,
+      error: "COURSE_ROSTER_CHANGED",
+    });
+    expect(await teacherList(app, teacherCookie, { courseId })).toHaveLength(0);
+
+    const data = await createAssignments(app, teacherCookie, {
+      ...staleRequest,
+      studentIds: [aId],
+    });
+    expect(data.assignments).toHaveLength(2);
+    const aCookie = await loginStudent(app, "张三");
+    const cCookie = await loginStudent(app, "王五");
+    expect(await studentList(app, aCookie)).toHaveLength(2);
+    expect(await studentList(app, cCookie)).toHaveLength(0);
+  });
+
   it("课程加/减成员后：作业名单与作答入口不变", async () => {
     const { app, teacherCookie } = await makeApp();
     const unitId = await importUnit(app, teacherCookie);

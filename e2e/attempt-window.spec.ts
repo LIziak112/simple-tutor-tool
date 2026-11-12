@@ -142,13 +142,18 @@ test("窗口化虚拟列表：远端挂载、身后卸载、回滚重挂", {
   tag: ["@student"],
 }, async ({ request, page }) => {
   const { attemptUrl, linkToken } = await setupWindowPractice(request);
-  await openAttempt(page, linkToken, attemptUrl);
+  const first = await openAttempt(page, linkToken, attemptUrl);
   const mountedAtStart = await page.locator("article").count();
   // 60 题长卷首屏只挂视口带（约 5~8 张）：全量挂载语义已被窗口化取代
   expect(mountedAtStart).toBeLessThan(20);
 
   // 跳到末题区（滚动静默后挂载）：末题挂载、身后远端卸载
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  // 真实滚轮会中断尚未结束的阅读恢复，和学生手动滚动使用相同的接管规则。
+  await first.hover();
+  await page.mouse.wheel(
+    0,
+    await page.evaluate(() => document.body.scrollHeight),
+  );
   const last = page.locator(`article[aria-label="第 ${QUESTION_COUNT} 题"]`);
   await expect(last).toBeVisible({ timeout: 15_000 });
   await expect
@@ -156,7 +161,7 @@ test("窗口化虚拟列表：远端挂载、身后卸载、回滚重挂", {
     .toBeLessThan(25);
 
   // 滚回顶部：第 1 题重挂（渲染缓存命中，不需要全量重解析）
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.mouse.wheel(0, -(await page.evaluate(() => window.scrollY)));
   await expect(page.locator('article[aria-label="第 1 题"]')).toBeVisible({
     timeout: 15_000,
   });

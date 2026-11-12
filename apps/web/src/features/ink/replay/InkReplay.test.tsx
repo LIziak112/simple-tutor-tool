@@ -10,14 +10,29 @@ import { parseInkReplayData } from "./model.ts";
  * rAF 手动驱动（stub requestAnimationFrame + performance.now），不依赖真实计时。
  */
 
-const { drawFrameMock, drawDeletedMock } = vi.hoisted(() => ({
+const { drawFrameMock, drawOrderedMock, drawDeletedMock } = vi.hoisted(() => ({
   drawFrameMock: vi.fn(),
+  drawOrderedMock: vi.fn(),
   drawDeletedMock: vi.fn(),
 }));
 
 vi.mock("./draw.ts", () => ({
   createAtramentReplayCanvas: () => ({
     drawFrame: drawFrameMock,
+    drawOrdered: drawOrderedMock.mockImplementation(
+      (strokes, completed, active, points) => {
+        drawFrameMock(
+          strokes,
+          strokes.map((stroke: { points: unknown[] }, index: number) =>
+            index < completed
+              ? stroke.points.length
+              : stroke === active
+                ? points
+                : 0,
+          ),
+        );
+      },
+    ),
     drawDeleted: drawDeletedMock,
     destroy: vi.fn(),
   }),
@@ -87,6 +102,7 @@ function driveFrame(elapsedMs: number): void {
 
 beforeEach(() => {
   drawFrameMock.mockClear();
+  drawOrderedMock.mockClear();
   drawDeletedMock.mockClear();
   rafCb = null;
   now = 1_000;
@@ -106,6 +122,21 @@ afterEach(() => {
 });
 
 describe("<InkReplay>：atrament 控制逻辑", () => {
+  it("顺序播放只推进已到达的采样，空白间隙不再发送重绘", () => {
+    render(<InkReplay data={atramentModel()} />);
+    expect(drawOrderedMock.mock.lastCall?.[1]).toBe(0);
+    expect(drawOrderedMock.mock.lastCall?.[2]).toBeTruthy();
+    expect(drawOrderedMock.mock.lastCall?.[3]).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "播放" }));
+    driveFrame(500);
+    expect(drawOrderedMock).toHaveBeenCalledTimes(1);
+    driveFrame(500);
+    expect(drawOrderedMock.mock.lastCall?.[3]).toBe(2);
+    driveFrame(2160);
+    expect(drawOrderedMock.mock.lastCall?.[1]).toBe(1);
+    expect(drawOrderedMock.mock.lastCall?.[3]).toBe(1);
+  });
+
   it("初始渲染控制条齐全；首帧只画第 1 笔起点（t=0 前段）", () => {
     render(<InkReplay data={atramentModel()} />);
     expect(screen.getByRole("button", { name: "播放" })).toBeEnabled();
