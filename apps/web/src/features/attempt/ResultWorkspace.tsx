@@ -31,6 +31,7 @@ export function ResultWorkspace({
   backLabel,
   children,
   actions,
+  primaryAction,
   rootRef,
   reviewLocation,
 }: {
@@ -44,6 +45,11 @@ export function ResultWorkspace({
   children: ReactNode;
   /** 标题右侧扩展动作位（SAI-22 AI 复盘入口；不传不占位） */
   actions?: ReactNode;
+  /**
+   * 顶栏主动作位（整卷复盘入口）：宽屏排在图标动作前面；窄屏（< lg）单独
+   * 占顶栏第二行，按钮文字完整显示、不和图标挤在一起。渲染为空时不占位。
+   */
+  primaryAction?: ReactNode;
   /** 主区根 ref（调用方持有回看定位时一并传入；缺省内部自建） */
   rootRef?: RefObject<HTMLDivElement | null>;
   /** 调用方持有的回看定位（AI 面板绑定回看当前题需要 currentId；
@@ -73,7 +79,7 @@ export function ResultWorkspace({
     <AttemptWorkspace>
       <header
         data-slot="attempt-header"
-        className="sticky top-0 z-30 -mx-3 flex items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"
+        className="sticky top-0 z-30 -mx-3 flex flex-wrap items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"
       >
         <Button
           variant="ghost"
@@ -95,6 +101,12 @@ export function ResultWorkspace({
                 ? "已批改 · 结果回看"
                 : "已交卷 · 待批改"}
           </p>
+        </div>
+        <div
+          data-slot="attempt-header-primary"
+          className="order-last flex basis-full justify-end empty:hidden lg:order-none lg:shrink-0 lg:basis-auto"
+        >
+          {primaryAction}
         </div>
         <div className="flex shrink-0 items-center">
           {actions}

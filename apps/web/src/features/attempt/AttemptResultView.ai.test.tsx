@@ -16,10 +16,14 @@ import {
 } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
+  fetchStudentAiAttemptReviewDetailApi,
+  fetchStudentAiAttemptReviewPreviewApi,
   fetchStudentAiConnectionsApi,
   fetchStudentAiStatusApi,
   fetchStudentQuickButtonsApi,
+  listStudentAiAttemptReviewsApi,
   listStudentAiTasksApi,
+  postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
 import { AttemptResultView } from "./AttemptResultView";
 
@@ -42,6 +46,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchStudentAiTaskApi: vi.fn(),
     openStudentAiReplyApi: vi.fn(),
     followupStudentAiTaskApi: vi.fn(),
+    listStudentAiAttemptReviewsApi: vi.fn(),
+    fetchStudentAiAttemptReviewPreviewApi: vi.fn(),
+    fetchStudentAiAttemptReviewDetailApi: vi.fn(),
+    postStudentAiAttemptReviewActionApi: vi.fn(),
   };
 });
 vi.mock("@/features/export/ai-material-capture", async (importOriginal) => {
@@ -72,6 +80,10 @@ const mockedList = vi.mocked(listStudentAiTasksApi);
 const mockedQuickButtons = vi.mocked(fetchStudentQuickButtonsApi);
 const mockedConnections = vi.mocked(fetchStudentAiConnectionsApi);
 const mockedCapture = vi.mocked(captureAiQuestionMaterials);
+const mockedReviewList = vi.mocked(listStudentAiAttemptReviewsApi);
+const mockedReviewPreview = vi.mocked(fetchStudentAiAttemptReviewPreviewApi);
+const mockedReviewDetail = vi.mocked(fetchStudentAiAttemptReviewDetailApi);
+const mockedReviewAction = vi.mocked(postStudentAiAttemptReviewActionApi);
 
 const DATA: AttemptResultData = {
   attempt: {
@@ -156,14 +168,14 @@ const DATA: AttemptResultData = {
   ],
 };
 
-function renderView() {
+function renderView(data: AttemptResultData = DATA) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <AttemptResultView data={DATA} onBackHome={() => {}} />
+        <AttemptResultView data={data} onBackHome={() => {}} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -183,6 +195,9 @@ beforeEach(() => {
     }),
   );
   mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+  // 整卷复盘入口：缺省服务端未放行（无任务 + 预览被拒）→ 顶栏不出现主按钮
+  mockedReviewList.mockResolvedValue({ tasks: [], nextCursor: null });
+  mockedReviewPreview.mockRejectedValue(new Error("当前不可复盘"));
   // 批量复盘面板（B16）的连接查询：默认一条 inapp 连接（契约完整形状）
   mockedConnections.mockResolvedValue({
     connections: [inappAiConnectionFixture()],
@@ -362,5 +377,117 @@ describe("AttemptResultView 批量复盘入口（B16/SAI-31）", () => {
     });
     expect(screen.queryByRole("checkbox", { name: "第 2 题" })).toBeNull();
     expect(screen.getByText(/已判对（1 题/)).toBeInTheDocument();
+  });
+});
+
+describe("结果页顶栏：整卷复盘入口", () => {
+  const REVIEW_TASK_ID = "22222222-2222-4222-8222-222222222222";
+  const reviewTask = {
+    id: REVIEW_TASK_ID,
+    attemptId: "attempt-result-1",
+    status: "replied" as const,
+    purpose: "复盘",
+    questionCount: 2,
+    counts: {
+      total: 2,
+      correctCount: 1,
+      incorrectCount: 1,
+      unansweredCount: 0,
+      pendingCount: 0,
+      unknownAnswerCount: 0,
+      hasAnswerCount: 2,
+      missingAnswerCount: 0,
+      gradedCount: 2,
+      accuracyAmongGraded: 0.5,
+    },
+    snapshotVersion: "v",
+    generation: 1,
+    retryCount: 0,
+    errorText: null,
+    hasResult: true,
+    openedAt: null,
+    archivedAt: null,
+    allowedActions: ["open" as const, "archive" as const],
+    createdAt: "2026-10-16T03:00:00.000Z",
+    updatedAt: "2026-10-16T03:10:00.000Z",
+  };
+  const headerOf = (container: HTMLElement) => {
+    const header = container.querySelector<HTMLElement>(
+      '[data-slot="attempt-header"]',
+    );
+    if (header === null) throw new Error("未找到结果页顶栏");
+    return header;
+  };
+
+  it("服务端未放行或答案未公布：顶栏没有整卷复盘按钮，也不占位", async () => {
+    const { container } = renderView();
+    await waitFor(() => expect(mockedReviewPreview).toHaveBeenCalled());
+    expect(
+      within(headerOf(container)).queryByRole("button", { name: /整卷复盘/ }),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-slot="attempt-header-primary"]'),
+    ).toBeEmptyDOMElement();
+  });
+
+  it("报告已出：顶栏主按钮带完整文字，打开报告写明卷名与轮次；点证据题号关闭并定位", async () => {
+    mockedReviewList.mockResolvedValue({
+      tasks: [reviewTask],
+      nextCursor: null,
+    });
+    mockedReviewDetail.mockResolvedValue({
+      task: reviewTask,
+      result: {
+        schemaVersion: 1,
+        overview: "失分集中在相反数。",
+        knowledgeFindings: [
+          {
+            statement: "相反数概念混淆",
+            evidenceQuestionNos: [2],
+            basis: "platform_fact",
+            confidence: "high",
+          },
+        ],
+        errorPatterns: [],
+        performanceNotes: [],
+        trainingPlan: [],
+        limitations: [],
+      },
+    });
+    mockedReviewAction.mockResolvedValue({
+      ...reviewTask,
+      openedAt: "2026-10-16T04:00:00.000Z",
+    });
+    const { container } = renderView();
+    const entry = await within(headerOf(container)).findByRole("button", {
+      name: /查看整卷复盘报告/,
+    });
+    // 顶栏主位：独立于图标动作组，文字不随宽度隐藏
+    expect(
+      entry.closest('[data-slot="attempt-header-primary"]'),
+    ).not.toBeNull();
+    expect(entry.textContent).toContain("查看整卷复盘报告");
+    // 「批量复盘」「求助记录」仍在，名称不变
+    expect(
+      within(headerOf(container)).getByRole("button", { name: "批量复盘" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(entry);
+    const reader = await screen.findByRole("dialog", { name: "整卷复盘报告" });
+    expect(
+      await within(reader).findByText("失分集中在相反数。"),
+    ).toBeInTheDocument();
+    expect(within(reader).getByText(/周末加练 · 第 1 次/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockedReviewAction).toHaveBeenCalledWith(REVIEW_TASK_ID, "open"),
+    );
+
+    fireEvent.click(within(reader).getByRole("button", { name: "第 2 题" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-review-question="练习四-2"]'),
+      ).toContainElement(document.activeElement as HTMLElement),
+    );
   });
 });

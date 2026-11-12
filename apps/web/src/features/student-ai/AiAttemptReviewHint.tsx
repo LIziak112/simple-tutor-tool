@@ -1,171 +1,94 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AiAttemptReviewTaskPublic } from "@tutor/contract";
-import { ListChecks } from "lucide-react";
-import { useState } from "react";
+import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  fetchStudentAiAttemptReviewPreviewApi,
-  listStudentAiAttemptReviewsApi,
-} from "@/lib/api";
-import {
-  AiAttemptReviewPanel,
   ATTEMPT_REVIEW_STATUS_LABEL,
-} from "./AiAttemptReviewPanel";
+  type AttemptReviewEntryState,
+  attemptReviewEntryViewOf,
+  useAttemptReviewEntry,
+} from "./attempt-review-entry";
 
 /**
  * 结果页「可复盘」提示条（2026-11-09 个人学习迭代模块 1「交卷后给一个入口」）：
- * 交卷并公布后自动出现，告诉本人现在能不能发一次整体复盘、上次发的到哪了。
- * - 可用门全部在服务端：预览接口（整卷已交 + 答案已公布 + 全部题当前策略允许）
- *   拒绝即不渲染「可复盘」，不在前端猜；
- * - 只提示不代发：点「预览并确认」打开既有整体复盘面板，本人确认后才创建任务
- *   （创建 / 领取 / 读材料 / 回信交付仍逐步重验权限）；
- * - 有任务时改报进度：等待领取 / 处理中（停留页面时每 15 秒核对一次，#102-01）
- *   / 已出报告（未读高亮）/ 已暂停或失败（面板里可重试 —— 策略变化导致暂停后
- *   由本人选择是否继续）。
+ * 交卷并公布后自动出现在汇总卡下方，用一句话说明整卷复盘现在到哪了。
+ * 与顶栏入口共用同一份状态（useAttemptReviewEntry）和同一个打开目标——
+ * 提示条负责解释，顶栏负责随时可达；两处不会各说各话。
+ * - 可用门全部在服务端：预览被拒绝即不渲染，不在前端猜；
+ * - 只提示不代发、不记已读：点按钮只是打开发起 / 进度面板或报告阅读器。
  */
-export const attemptReviewListKey = (attemptId: string) =>
-  ["student-ai", "attempt-reviews", attemptId] as const;
-export const attemptReviewPreviewKey = (attemptId: string) =>
-  ["student-ai", "attempt-review-preview", attemptId] as const;
 
-/** 在途任务（等待领取 / 处理中）时任务列表的轮询间隔；有结局 / 无任务不轮询 */
-export const ATTEMPT_REVIEW_POLL_INTERVAL_MS = 15_000;
-
-/** 等待领取 / 处理中——提示条要跟着它刷新 */
-function isActiveTask(task: AiAttemptReviewTaskPublic): boolean {
-  return task.status === "created" || task.status === "claimed";
-}
-
-/**
- * 活动中的任务优先；其余有结局的（已回信 / 失败 / 暂停）不分档，直接取**最近
- * 更新**的一次——#102-03：先复盘成功过、再发一轮却失败或暂停时，要报的是新
- * 任务待处理，不能让旧报告盖住它。排序键用 updatedAt 而不是 createdAt：重试
- * 复用同一任务行（failed / paused → created，createdAt 不变），重试后新出的
- * 报告才是「最新一次结局」。全部已取消 / 归档则无。
- */
-export function pickAttemptReviewTask(
-  tasks: readonly AiAttemptReviewTaskPublic[],
-): AiAttemptReviewTaskPublic | undefined {
-  const live = tasks.filter(
-    (task) => task.archivedAt === null && task.status !== "cancelled",
-  );
-  const rank = (task: AiAttemptReviewTaskPublic): number =>
-    isActiveTask(task) ? 0 : 1;
-  return [...live].sort(
-    (a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt),
-  )[0];
+/** 提示条文案与按钮（按钮文字写清楚点了会发生什么，不用单独一个「查看」） */
+function hintTextOf(
+  state: AttemptReviewEntryState,
+): { text: string; action: string; emphasis: boolean } | null {
+  switch (state.kind) {
+    case "unavailable":
+      return null; // 未公布 / 加载中 / 服务端不允许：不提示，不猜
+    case "launch":
+      return {
+        text: `本卷可以做整卷复盘：共 ${state.counts.total} 题、已判 ${state.counts.gradedCount} 题，AI 按整卷给一份复盘报告`,
+        action: "预览并确认",
+        emphasis: true,
+      };
+    case "waiting":
+    case "processing":
+      return {
+        text: `整卷复盘进行中：${ATTEMPT_REVIEW_STATUS_LABEL[state.task.status]}（覆盖 ${state.task.questionCount} 题）`,
+        action: "查看进度",
+        emphasis: false,
+      };
+    case "report":
+      return {
+        text: state.unread
+          ? "整卷复盘报告已生成，还没看过"
+          : "整卷复盘报告已看过，可以随时再打开",
+        action: "打开报告",
+        emphasis: state.unread,
+      };
+    case "attention":
+      return {
+        text: `上次整卷复盘${ATTEMPT_REVIEW_STATUS_LABEL[state.task.status]}，需要你处理`,
+        action: "查看并处理",
+        emphasis: false,
+      };
+  }
 }
 
 export function AiAttemptReviewHint({
   attemptId,
   released,
+  onOpen,
 }: {
   readonly attemptId: string;
   readonly released: boolean;
+  /** 打开整卷复盘：target = "panel" 或某份报告的任务 id（与顶栏入口同一目标） */
+  readonly onOpen: (target: string) => void;
 }) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const tasksQuery = useQuery({
-    queryKey: attemptReviewListKey(attemptId),
-    queryFn: () => listStudentAiAttemptReviewsApi(attemptId),
-    enabled: released,
-    staleTime: 15_000,
-    retry: false,
-    // #102-01：学生停在结果页等外部 Agent，等待领取 / 处理中时每 15 秒核对一次
-    // 任务状态（页面隐藏时 TanStack 默认 refetchIntervalInBackground=false 自动
-    // 暂停）；无任务 / 已有结局不轮询——那两种状态只会由本人在面板里的操作改变
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data === undefined) return false;
-      const current = pickAttemptReviewTask(data.tasks);
-      return current !== undefined && isActiveTask(current)
-        ? ATTEMPT_REVIEW_POLL_INTERVAL_MS
-        : false;
-    },
-  });
-  const task =
-    tasksQuery.data === undefined
-      ? undefined
-      : pickAttemptReviewTask(tasksQuery.data.tasks);
-  const previewQuery = useQuery({
-    queryKey: attemptReviewPreviewKey(attemptId),
-    queryFn: () => fetchStudentAiAttemptReviewPreviewApi(attemptId),
-    enabled: released && tasksQuery.isSuccess && task === undefined,
-    staleTime: 15_000,
-    retry: false,
-  });
-  if (!released) return null;
-
-  let text: string | null = null;
-  let action = "查看";
-  let emphasis = false;
-  if (task !== undefined) {
-    if (task.status === "replied") {
-      emphasis = task.openedAt === null;
-      text = emphasis
-        ? "整体复盘报告已到，还没看过"
-        : "整体复盘已完成，可再看一次报告";
-    } else if (isActiveTask(task)) {
-      text = `整体复盘进行中：${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}（覆盖 ${task.questionCount} 题）`;
-      action = "查看进度";
-    } else {
-      text = `上次整体复盘${ATTEMPT_REVIEW_STATUS_LABEL[task.status]}`;
-      action = "查看并处理";
-    }
-  } else if (previewQuery.isSuccess) {
-    // #102-02：TanStack v5 重取失败后 status=error 但仍保留上次 data——教师刚
-    // 收紧策略时不能拿旧缓存继续引导点击，按本轮结果判断（isError 即不提示；
-    // isSuccess 已把 data 收窄为非空）
-    const counts = previewQuery.data.counts;
-    text = `本卷可复盘：共 ${counts.total} 题、已判 ${counts.gradedCount} 题，Agent 可按整卷给一次复盘建议`;
-    action = "预览并确认";
-    emphasis = true;
-  }
-  if (text === null) return null; // 未公布 / 加载中 / 服务端不允许：不提示，不猜
-
-  const onOpenChange = (next: boolean) => {
-    setOpen(next);
-    if (!next) {
-      // 面板里可能创建 / 重试 / 取消了任务：关上就按最新状态重新提示
-      void queryClient.invalidateQueries({
-        queryKey: attemptReviewListKey(attemptId),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: attemptReviewPreviewKey(attemptId),
-      });
-    }
-  };
+  const state = useAttemptReviewEntry(attemptId, released);
+  const hint = hintTextOf(state);
+  const view = attemptReviewEntryViewOf(state);
+  if (hint === null || view === null) return null;
   return (
     <div
       role="status"
       data-testid="attempt-review-hint"
       className={
-        emphasis
+        hint.emphasis
           ? "flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-sm"
           : "flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-muted-foreground"
       }
     >
-      <span className="flex items-center gap-2">
-        <ListChecks aria-hidden className="size-4 shrink-0" />
-        {text}
+      <span className="flex min-w-0 items-center gap-2">
+        <FileText aria-hidden className="size-4 shrink-0" />
+        {hint.text}
       </span>
       <Button
         type="button"
-        variant={emphasis ? "default" : "outline"}
-        size="sm"
-        className="min-h-9"
-        onClick={() => setOpen(true)}
+        variant={hint.emphasis ? "default" : "outline"}
+        className="min-h-11 px-4"
+        onClick={() => onOpen(view.target)}
       >
-        {action}
+        {hint.action}
       </Button>
-      {open && (
-        <AiAttemptReviewPanel
-          attemptId={attemptId}
-          released={released}
-          open
-          onOpenChange={onOpenChange}
-        />
-      )}
     </div>
   );
 }
