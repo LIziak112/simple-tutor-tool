@@ -126,6 +126,8 @@ export default defineConfig({
         PORT: String(E2E_SERVER_PORT),
         DATA_DIR: dataDir,
         PUBLIC_URL: `http://127.0.0.1:${E2E_WEB_PORT}`,
+        // E2E 注册夹具经本机连接模拟不同来源，独立于部署配置。
+        TRUSTED_PROXIES: "127.0.0.1,::1",
         E2E_FAKE_AI_BASE_URL: "http://127.0.0.1:8898/v1",
       },
       // CI 打印被测进程输出（[WebServer] 前缀）：启动失败/卡住时日志能定位；

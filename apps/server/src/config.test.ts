@@ -10,6 +10,7 @@ describe("readConfig：环境变量读取（§0.3 约定）", () => {
     expect(config.port).toBe(8787);
     expect(config.dataDir).toBe(resolve("./data"));
     expect(config.publicUrl).toBe("http://localhost:8787");
+    expect(config.trustedProxies).toEqual([]);
     expect(config.isProduction).toBe(false);
   });
 
@@ -18,11 +19,13 @@ describe("readConfig：环境变量读取（§0.3 约定）", () => {
       PORT: "9000",
       DATA_DIR: "some-data",
       PUBLIC_URL: "https://tutor.example.com/",
+      TRUSTED_PROXIES: " 192.0.2.9, 2001:db8::/64 ",
       NODE_ENV: "production",
     });
     expect(config.port).toBe(9000);
     expect(config.dataDir).toBe(resolve("some-data"));
     expect(config.publicUrl).toBe("https://tutor.example.com");
+    expect(config.trustedProxies).toEqual(["192.0.2.9", "2001:db8::/64"]);
     expect(config.isProduction).toBe(true);
   });
 
