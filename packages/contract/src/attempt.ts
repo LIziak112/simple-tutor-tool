@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
-import {
-  questionRevisionIdSchema,
-  submitEvidenceDeclarationSchema,
-} from "./attempt-submission.ts";
+import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import {
   attemptTimeLimitMinutesSchema,
   attemptTimingSchema,
@@ -39,10 +36,15 @@ import {
 
 export {
   ATTEMPT_SUBMIT_MAX_QUESTIONS,
+  type AttemptAnswerConflictCurrent,
   type AttemptSubmitRequest,
   type AttemptSubmitRevision,
+  attemptAnswerConflictCurrentSchema,
+  attemptSubmissionConflictSchema,
   attemptSubmitRequestSchema,
   attemptSubmitRevisionSchema,
+  type LessonQuestionSubmitRequest,
+  lessonQuestionSubmitRequestSchema,
   questionRevisionIdSchema,
   type SubmitEvidenceDeclaration,
   submitEvidenceDeclarationSchema,
@@ -825,15 +827,6 @@ export const attemptAnswerSaveRequestSchema = z
     },
   );
 
-/** 冲突仅包含学生自己的云端稿，不包含参考答案、详解或提示。 */
-export const attemptAnswerConflictCurrentSchema = z.object({
-  revision: z.number().int().nonnegative(),
-  draft: studentAnswerSchema.nullable(),
-});
-export type AttemptAnswerConflictCurrent = z.infer<
-  typeof attemptAnswerConflictCurrentSchema
->;
-
 /** 本人作答材料盘点，仅提供题号键和版本，正文沿用已有授权接口读取。 */
 export const attemptMaterialRevisionsSchema = z.object({
   notes: z.record(z.string(), z.number().int().nonnegative()),
@@ -941,21 +934,6 @@ export const lessonStartDataSchema = z
       });
     }
   });
-
-/**
- * POST /api/student/attempts/:id/questions/:questionId/submit 请求体
- * （2026-10 讲练一体单题提交）：
- * - questionRevisionId：建卷时下发的该题版本引用（responses 行 id）——服务端
- *   与该题冻结行比对，错版 409 QUESTION_REVISION_STALE（旧标签页防误交，与
- *   整卷交卷同口径）；路径上的 questionId 是幂等键的一部分；
- * - evidence：可选的单题笔记证据声明，**复用整卷 submitEvidenceDeclarationSchema
- *   形态**（含 questionId，须与路径一致，服务端校验；CAS 语义同 T6R.10——
- *   frozen 比对 head、none/missing 按声明固定，缺省 = 旧客户端兼容分支）。
- */
-export const lessonQuestionSubmitRequestSchema = z.object({
-  questionRevisionId: questionRevisionIdSchema,
-  evidence: submitEvidenceDeclarationSchema.optional(),
-});
 
 /**
  * 单题提交响应 data（当题释放）：**只含该题**的判分结果 + 现算汇总 + attempt
@@ -1137,6 +1115,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ATTEMPT_CONTEXT_BROKEN",
   "QUESTION_ALREADY_SUBMITTED",
   "QUESTION_REVISION_STALE",
+  "ANSWER_REVISION_CONFLICT",
   "NOTE_EVIDENCE_MISMATCH",
   "QUESTION_NOT_FOUND",
   "HINT_INDEX_OUT_OF_RANGE",
@@ -1265,9 +1244,6 @@ export type LessonStartData = z.infer<typeof lessonStartDataSchema>;
 /** 讲练落地信息（三态入口 + 历次记录的数据源；2026-10） */
 export type LessonLandingData = z.infer<typeof lessonLandingDataSchema>;
 /** 单题提交请求体（questionRevisionId + 可选证据声明；2026-10） */
-export type LessonQuestionSubmitRequest = z.infer<
-  typeof lessonQuestionSubmitRequestSchema
->;
 /** 单题提交响应 data（question/summary/attempt 三键；2026-10） */
 export type LessonQuestionSubmitData = z.infer<
   typeof lessonQuestionSubmitDataSchema

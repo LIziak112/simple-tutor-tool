@@ -576,7 +576,11 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     mockedFetch
       .mockResolvedValueOnce(DRAFT_DATA)
       .mockResolvedValue(RESULT_DATA);
-    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    mockedSave.mockResolvedValue({
+      questionId: "练习四-1",
+      changeCount: 1,
+      revision: 1,
+    });
     mockedSubmit.mockResolvedValue(RESULT_DATA);
     renderPage();
 
@@ -595,8 +599,16 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
       // T6R.10：携带每题笔记证据声明（本文件无笔记 → 全 none）
       expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID, {
         revisions: [
-          { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
-          { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
+          {
+            questionId: "练习四-1",
+            questionRevisionId: "rev-练习四-1",
+            expectedAnswerRevision: 1,
+          },
+          {
+            questionId: "练习四-4",
+            questionRevisionId: "rev-练习四-4",
+            expectedAnswerRevision: 0,
+          },
         ],
         evidence: [
           { questionId: "练习四-1", state: "none" },
@@ -893,6 +905,43 @@ function localInkDoc(strokes: number): InkDoc {
 }
 
 describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () => {
+  it("交卷使用本机已见版本，另一设备改答时保留当前作答", async () => {
+    const questionId = "练习四-1";
+    const current = { kind: "judge", value: true } as const;
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue({
+      ...DRAFT_DATA,
+      drafts: { [questionId]: current },
+      draftRevisions: { [questionId]: 2 },
+    });
+    mockedSubmit.mockRejectedValue(
+      new ApiError("ANSWER_REVISION_CONFLICT", "请查看其他设备的新答案", 409, {
+        _questionId: questionId,
+        _current: { revision: 3, draft: { kind: "judge", value: false } },
+      }),
+    );
+    renderPage();
+    await screen.findByText("第 1 题");
+    await clickSubmitAndConfirm();
+    await screen.findByText("请查看其他设备的新答案");
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      ATTEMPT_ID,
+      expect.objectContaining({
+        revisions: expect.arrayContaining([
+          expect.objectContaining({ questionId, expectedAnswerRevision: 2 }),
+        ]),
+      }),
+    );
+    expect(
+      (await draftStore.loadDraft(ATTEMPT_ID))?.answers[questionId],
+    ).toEqual(current);
+    expect(draftStore.peekAnswerConflicts(ATTEMPT_ID)[questionId]).toEqual({
+      revision: 3,
+      draft: { kind: "judge", value: false },
+    });
+    expect(mockedSeal).not.toHaveBeenCalled();
+  });
+
   it("宽限后明确确认按已保存作答交卷，结果页保留本机未同步稿", async () => {
     const backend = memoryBackend();
     const write = vi.fn(backend.set);

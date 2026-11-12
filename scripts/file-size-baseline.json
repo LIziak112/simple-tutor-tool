@@ -8,7 +8,7 @@
   "apps/server/src/services/analytics-service.ts": 1693,
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1390,
-  "apps/server/src/services/attempt-service.ts": 4275,
+  "apps/server/src/services/attempt-service.ts": 4040,
   "apps/server/src/services/content-service.ts": 2246,
   "apps/server/src/services/course-service.ts": 1498,
   "apps/server/src/services/export-service.ts": 2783,
@@ -27,10 +27,10 @@
   "apps/web/src/features/notes/note-store.ts": 1317,
   "apps/web/src/features/student/wrong-questions-ui.tsx": 1278,
   "apps/web/src/lib/api.ts": 3407,
-  "apps/web/src/pages/student/StudentLessonPage.tsx": 1137,
+  "apps/web/src/pages/student/StudentLessonPage.tsx": 1117,
   "apps/web/src/pages/teacher/ImportPage.tsx": 1225,
   "apps/web/src/pages/teacher/LibraryPage.tsx": 1759,
-  "packages/contract/src/attempt.ts": 1283,
+  "packages/contract/src/attempt.ts": 1259,
   "packages/contract/src/content-api.ts": 1004,
   "packages/contract/src/learning-pack.ts": 1491
 }

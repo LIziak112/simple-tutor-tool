@@ -1,5 +1,5 @@
-import type { Question, QuestionAnswers } from "@tutor/contract";
-import { questionSchema } from "@tutor/contract";
+import type { Question, QuestionAnswers, StudentAnswer } from "@tutor/contract";
+import { questionSchema, studentAnswerSchema } from "@tutor/contract";
 import type { ResponseRow } from "../db/schema";
 
 /**
@@ -13,6 +13,13 @@ export function jsonOf(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** 统一解码作答列，历史坏数据按未作答处理。 */
+export function answerOf(answerJson: string | null): StudentAnswer | null {
+  if (answerJson === null) return null;
+  const parsed = studentAnswerSchema.safeParse(jsonOf(answerJson));
+  return parsed.success ? parsed.data : null;
 }
 
 /**

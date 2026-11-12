@@ -17,12 +17,21 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, questions, responses, units } from "../db/schema.ts";
+import {
+  attempts,
+  questions,
+  responses,
+  submissionEvidence,
+  units,
+} from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import * as snapshot from "../services/snapshot.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 作答生命周期集成测试（T2.6 全部验收项，app.request() 直调路由 + 内存库）：
@@ -832,6 +841,62 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
       ).status,
     ).toBe(409);
   });
+  it("整卷拒绝陈旧的可见答案版本，保留新草稿和未封存状态", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.judge, {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    expect(
+      revisions.find((entry) => entry.questionId === Q.judge)
+        ?.expectedAnswerRevision,
+    ).toBe(1);
+    const latest = { kind: "judge", value: false };
+    expect(
+      (await putAnswer(app, aCookie, attemptId, Q.judge, latest)).status,
+    ).toBe(200);
+    const stale = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          revisions,
+          evidence: revisions.map(({ questionId }) => ({
+            questionId,
+            state: "none",
+          })),
+        }),
+      },
+    );
+    expect(stale.status).toBe(409);
+    const error = await stale.json();
+    expect(error).toMatchObject({
+      error: "ANSWER_REVISION_CONFLICT",
+      _current: { revision: 2, draft: latest },
+    });
+    assertNoLeak(error);
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    const draft = (body as { data: AttemptDraftData }).data;
+    expect(draft.attempt.status).toBe("draft");
+    expect(draft.drafts[Q.judge]).toEqual(latest);
+    expect(
+      db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.attemptId, attemptId))
+        .all(),
+    ).toEqual([]);
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
+  });
+
   it("保存后 GET 详情可读回（往返）；重复保存 changeCount 递增", async () => {
     const { app, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))

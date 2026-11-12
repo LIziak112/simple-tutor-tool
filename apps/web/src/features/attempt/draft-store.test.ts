@@ -206,6 +206,37 @@ describe("同步指纹", () => {
 });
 
 describe("applyServerDrafts（进入答题页合并）", () => {
+  it("迟到的提交冲突不得覆盖已经显示的较新云端版本", async () => {
+    await draftStore.applyServerDrafts(
+      "late-conflict",
+      { q1: judge },
+      { q1: 1 },
+    );
+    draftStore.saveAnswer("late-conflict", "q1", judgeFalse);
+    draftStore.setAnswerConflict("late-conflict", "q1", {
+      revision: 3,
+      draft: fill,
+    });
+    draftStore.setAnswerConflict("late-conflict", "q1", {
+      revision: 2,
+      draft: judge,
+    });
+    expect(
+      (await draftStore.loadDraft("late-conflict"))?.answerConflicts?.q1,
+    ).toEqual({
+      revision: 3,
+      draft: fill,
+    });
+    await draftStore.resolveAnswerConflict("late-conflict", "q1", "cloud");
+    draftStore.setAnswerConflict("late-conflict", "q1", {
+      revision: 2,
+      draft: judge,
+    });
+    expect(
+      (await draftStore.loadDraft("late-conflict"))?.answerConflicts?.q1,
+    ).toBeUndefined();
+  });
+
   it("迟到的旧云端读取不得覆盖已确认的新答案或倒退版本", async () => {
     await draftStore.applyServerDrafts("late-read", { q1: judge }, { q1: 1 });
     draftStore.saveAnswer("late-read", "q1", judgeFalse);

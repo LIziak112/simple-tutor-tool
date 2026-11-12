@@ -1021,6 +1021,7 @@ describe("T6R.3 交卷回传题目版本验证（questionRevisionId）", () => {
       questions.map((question) => ({
         questionId: question.id,
         questionRevisionId: question.questionRevisionId,
+        expectedAnswerRevision: question.id === Q.judge ? 1 : 0,
       })),
     );
     expect(ok.status).toBe(200);
