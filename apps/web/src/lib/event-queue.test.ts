@@ -120,6 +120,80 @@ beforeEach(() => {
   setVisibility("visible");
 });
 
+it("讲义只补发同一账号同一讲义，beacon 入队后仍须收到服务端回执", async () => {
+  const persisted = memoryStore();
+  installEventStore(persisted);
+  const owner = { origin: "https://tutor.example", studentId: "student-a" };
+  const beacon = vi.fn(() => true);
+  const send = vi.fn(async () => undefined);
+  const a = makeLectureQueue({ owner, beacon, send });
+  setVisibility("hidden");
+  await a.flush();
+  expect(beacon).toHaveBeenCalled();
+  expect(persisted.keyCount()).toBeGreaterThan(0);
+  setVisibility("visible");
+  const other = makeLectureQueue({
+    owner: { ...owner, studentId: "student-b" },
+    send,
+  });
+  await other.flush();
+  expect(persisted.keyCount()).toBeGreaterThan(0);
+  const otherLecture = makeLectureQueue({
+    owner,
+    scope: { kind: "lecture", lectureId: "lec-2" },
+    send,
+  });
+  await otherLecture.flush();
+  expect(persisted.keyCount()).toBeGreaterThan(0);
+  await a.flush();
+  expect(persisted.keyCount()).toBe(0);
+});
+
+it("正式回执缺失或只确认部分事件时保留原批次与标识，全部确认后才清理", async () => {
+  const persisted = memoryStore();
+  installEventStore(persisted);
+  const posted: string[][] = [];
+  const fetchMock = vi.fn(
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        delivery: { eventIds: string[] };
+      };
+      const ids = body.delivery.eventIds;
+      posted.push(ids);
+      const acknowledgedIds = posted.length === 2 ? ids.slice(0, 1) : ids;
+      return Response.json({
+        ok: true,
+        data: {
+          accepted: ids.length,
+          ...(posted.length !== 1 && { acknowledgedIds }),
+        },
+      });
+    },
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const queue = makeQueue({
+      owner: {
+        origin: "https://tutor.example",
+        studentId: "f8300f08-2b02-4e26-9025-934cf83aed9e",
+      },
+    });
+    queue.track(ev("attempt_start"));
+    queue.track(ev("page_hidden"));
+    await queue.flush();
+    expect(persisted.keyCount()).toBe(1);
+    await queue.flush();
+    expect(persisted.keyCount()).toBe(1);
+    await queue.flush();
+    expect(persisted.keyCount()).toBe(0);
+    expect(posted).toEqual([posted[0], posted[0], posted[0]]);
+    expect(posted[0]).toHaveLength(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/events/deliver");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 afterEach(() => {
   for (const q of created.splice(0)) q.dispose();
   vi.useRealTimers();

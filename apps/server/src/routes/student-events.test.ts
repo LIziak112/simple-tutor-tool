@@ -237,6 +237,37 @@ function ev(
 }
 
 describe("POST /api/student/attempts/:id/events：批量上报", () => {
+  it("相同事件只落库一次，回执丢失重放仍确认；其他账号 Cookie 不能接收这批事件", async () => {
+    const { app, db, aCookie, aStudentId, bCookie, assignmentId, lectureId } =
+      await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    const eventIds = ["aeaf2993-25f6-4bdd-83eb-017f45fe4153"];
+    const send = (cookie: string, path: string) =>
+      app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          events: [ev("net_online", 0)],
+          delivery: {
+            ownerId: aStudentId,
+            eventIds,
+            ...(path.endsWith("/student/events/deliver") && { lectureId }),
+          },
+        }),
+      });
+    const path = `/api/student/attempts/${attemptId}/events/deliver`;
+    expect(await (await send(aCookie, path)).json()).toMatchObject({
+      data: { accepted: 1, acknowledgedIds: eventIds },
+    });
+    expect(await (await send(aCookie, path)).json()).toMatchObject({
+      data: { accepted: 0, acknowledgedIds: eventIds },
+    });
+    const before = db.select().from(events).all();
+    expect((await send(bCookie, "/api/student/events/deliver")).status).toBe(
+      403,
+    );
+    expect(db.select().from(events).all()).toEqual(before);
+  });
   it("正常批量：accepted 计数、events 表逐行落库（元信息形态）", async () => {
     const { app, db, aCookie, assignmentId } = await makeEventsApp();
     const attemptId = await startAttempt(app, aCookie, assignmentId);

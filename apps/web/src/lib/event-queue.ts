@@ -4,7 +4,15 @@ import type {
   LectureEvent,
 } from "@tutor/contract";
 import { createStore, del, get, keys, set } from "idb-keyval";
+import {
+  currentDraftSession,
+  getDraftSessionEpoch,
+} from "@/features/attempt/draft-store";
 import { ApiError, postAttemptEventsApi, postLectureEventsApi } from "./api";
+import {
+  createScopedEventOutbox,
+  type EventOwner,
+} from "./scoped-event-outbox";
 
 /**
  * 学习痕迹事件队列（T2.10，架构 §5.5；T4.0a 增强）：内存队列 + 每 5 秒批量
@@ -285,6 +293,7 @@ export type EventBeacon = (
 /** 创建选项（全部可注入，默认值即生产行为） */
 export interface EventQueueOptions {
   scope: EventScope;
+  owner?: EventOwner;
   /** 旁路消费同一触发点的事件，不另建环境观察器。 */
   onEvent?: (event: LearningEvent) => void;
   /** 发送函数（抛错视为本批失败） */
@@ -304,6 +313,18 @@ export interface EventQueueOptions {
  */
 export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   const { scope } = options;
+  const owner = options.owner ?? currentDraftSession();
+  const epoch = getDraftSessionEpoch();
+  const scoped =
+    owner &&
+    createScopedEventOutbox({
+      scope,
+      owner,
+      store,
+      isCurrent: () => epoch === getDraftSessionEpoch(),
+      send: options.send,
+      beacon: options.beacon,
+    });
   const intervalMs = options.intervalMs ?? EVENT_FLUSH_INTERVAL_MS;
   /** 页会话标识：每次页面加载一个随机串（讲义区间配对 / 作答多端分组，不含内容） */
   const viewId = randomId();
@@ -329,7 +350,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
 
   /** 注入环境事件（终态停止不注入）；不触发立即发送（搭周期/可见性触发的车） */
   function inject(event: LearningEvent): void {
-    if (denied) return;
+    if (denied || epoch !== getDraftSessionEpoch()) return;
     queue.push(event);
     options.onEvent?.(event);
   }
@@ -567,6 +588,14 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   }
 
   async function flushNow(): Promise<void> {
+    if (scoped) {
+      const own = queue;
+      queue = [];
+      await scoped.flush(chunkBatches(own), viewId);
+      denied = scoped.isDenied();
+      return;
+    }
+    if (epoch !== getDraftSessionEpoch()) return;
     if (denied || flushing) return;
     flushing = true;
     try {

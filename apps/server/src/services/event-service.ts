@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AttemptEvent,
+  EventDelivery,
   LearningEventBatchData,
   LectureEvent,
+  LectureEventDelivery,
 } from "@tutor/contract";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -38,18 +40,55 @@ import type { Tx } from "./question-sync";
 function insertEvents(
   db: Db | Tx,
   rows: readonly NewEventRow[],
+  delivery?: EventDelivery,
+  scope?: string,
 ): LearningEventBatchData {
   const now = new Date().toISOString();
-  db.insert(events)
+  const result = db
+    .insert(events)
     .values(
-      rows.map((row) => ({
+      rows.map((row, index) => ({
         ...row,
-        id: randomUUID(),
+        id:
+          delivery && scope
+            ? eventRowId(delivery.ownerId, scope, delivery.eventIds[index])
+            : randomUUID(),
         serverTs: now,
       })),
     )
+    .onConflictDoNothing({ target: events.id })
     .run();
-  return { accepted: rows.length };
+  return {
+    accepted: result.changes,
+    ...(delivery && { acknowledgedIds: delivery.eventIds }),
+  };
+}
+
+/** 新客户端的事件重放使用同一个主键，服务端内部事件继续使用随机主键。 */
+function eventRowId(
+  ownerId: string,
+  scope: string,
+  eventId: string | undefined,
+): string {
+  const hash = createHash("sha256")
+    .update(JSON.stringify([ownerId, scope, eventId]))
+    .digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+function validateDelivery(
+  studentId: string,
+  count: number,
+  delivery?: EventDelivery,
+): void {
+  if (!delivery) return;
+  if (delivery.ownerId !== studentId)
+    throw new HttpError(403, "EVENT_ACCOUNT_CHANGED", "事件会话已切换");
+  if (
+    delivery.eventIds.length !== count ||
+    new Set(delivery.eventIds).size !== count
+  )
+    throw new HttpError(400, "EVENT_IDS_INVALID", "事件标识与批次不符");
 }
 
 /**
@@ -70,11 +109,15 @@ export function appendAttemptEvents(
   batch: readonly AttemptEvent[],
   /** 作答页会话标识（批级，折进每行 payload；题内活动用时按它分组识别多端重叠） */
   viewId?: string,
+  delivery?: EventDelivery,
 ): LearningEventBatchData {
+  validateDelivery(studentId, batch.length, delivery);
   requireUsableAttempt(db, studentId, attemptId);
   return insertEvents(
     db,
     batch.map((event) => attemptEventRow(event, attemptId, studentId, viewId)),
+    delivery,
+    `attempt:${attemptId}`,
   );
 }
 
@@ -89,12 +132,17 @@ export function appendLectureEvents(
   db: Db,
   studentId: string,
   batch: readonly LectureEvent[],
+  delivery?: LectureEventDelivery,
 ): LearningEventBatchData {
+  validateDelivery(studentId, batch.length, delivery);
   // 讲义可见性校验（一对一场景学生可见全部讲义，T2.3 口径；这里只验存在——
   // T2A.1 起讲义软删，已删讲义按不存在处理，D3 窗口期过滤）
   const lectureIds = new Set<string>();
+  if (delivery) lectureIds.add(delivery.lectureId);
   for (const event of batch) {
     const lectureId = lectureIdOf(event);
+    if (lectureId !== null && delivery && lectureId !== delivery.lectureId)
+      throw new HttpError(400, "EVENT_SCOPE_INVALID", "事件讲义与批次不符");
     if (lectureId !== null) lectureIds.add(lectureId);
   }
   for (const lectureId of lectureIds) {
@@ -110,6 +158,8 @@ export function appendLectureEvents(
   return insertEvents(
     db,
     batch.map((event) => lectureEventRow(event, studentId)),
+    delivery,
+    delivery && `lecture:${delivery.lectureId}`,
   );
 }
 

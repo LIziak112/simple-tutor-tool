@@ -51,13 +51,16 @@ export function createRequireStudent(db: Db, publicUrl: string) {
           401,
         );
       }
-      touchSession(db, token, STUDENT_SESSION_TTL_MS);
-      setCookie(
-        c,
-        STUDENT_SESSION_COOKIE,
-        token,
-        sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
-      );
+      // 迟到的后台补传响应不能覆盖另一个标签页刚登录的会话。
+      if (!c.req.path.endsWith("/events/deliver")) {
+        touchSession(db, token, STUDENT_SESSION_TTL_MS);
+        setCookie(
+          c,
+          STUDENT_SESSION_COOKIE,
+          token,
+          sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
+        );
+      }
       c.set("student", student);
       await next();
       return;

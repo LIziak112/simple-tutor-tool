@@ -92,6 +92,10 @@ export function getDraftSessionEpoch(): number {
   return backendGeneration;
 }
 
+export function currentDraftSession(): Readonly<DraftSession> | null {
+  return draftSession;
+}
+
 /** 切账号前启动旧稿落盘；迟到读写回执不能进入新账号的内存仓。 */
 export function bindDraftSession(session: DraftSession | null): void {
   if (
