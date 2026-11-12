@@ -14,7 +14,10 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { draftStore } from "@/features/attempt/draft-store";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/attempt/draft-store";
 import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
@@ -228,12 +231,9 @@ async function openCompanion(index = 0) {
   await screen.findByRole("region", { name: /的 AI 助教/ });
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   vi.clearAllMocks();
-  // 本文件有点作答交互：清跨测试残留的本机稿（draftStore 模块级单例），
-  // 避免上一例的稿让下一例的单题提交走「草稿未保存完整」弹层
-  await draftStore.clearDraft(ATTEMPT_ID);
-  await draftStore.clearDraft(ATTEMPT_ID_2);
+  installDraftBackend(memoryBackend());
   mockedStart.mockReset();
   mockedRestart.mockReset();
   mockedSubmitQuestion.mockReset();
