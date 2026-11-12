@@ -112,7 +112,7 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
-import { attemptAllowRedo } from "./attempt-redo-policy";
+import { attemptAllowRedo, withAllowRedo } from "./attempt-redo-policy";
 import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
   assertAttemptNotTimedOut,
@@ -1988,14 +1988,6 @@ function createAssignmentAttempt(
     attempt.startedAt,
   );
   return attemptSummaryOf(attempt);
-}
-
-/** 作业开卷摘要补 allowRedo（hall-15313）——作业行在手，零额外查询 */
-function withAllowRedo(
-  data: AttemptStartData,
-  allowRedo: boolean,
-): AttemptStartData {
-  return { ...data, allowRedo };
 }
 
 // ---------- POST /api/student/courses/:cid/units/:uid/attempts（T2A.6） ----------
@@ -4250,7 +4242,10 @@ function buildResultData(
       };
 
   // scoreAuto 同理：未公布时置 null 投影（库里保留，教师侧统计不受影响）
-  const attemptProjection = attemptSummaryOf(attempt);
+  const summaryProjection = attemptSummaryOf(attempt);
+  const attemptProjection = assignmentRow
+    ? withAllowRedo(summaryProjection, assignmentRow.allowRedo)
+    : summaryProjection;
 
   return {
     attempt: released
