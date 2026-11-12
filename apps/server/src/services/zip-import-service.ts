@@ -2,7 +2,7 @@ import type { ImportCommitData, ImportPreviewData } from "@tutor/contract";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
 import type { ZipEntry } from "../lib/zip-read";
-import { readZipEntries, ZipReadError } from "../lib/zip-read";
+import { readZipEntries, ZipBudgetError, ZipReadError } from "../lib/zip-read";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { commitImport, previewImport } from "./content-service";
 import { saveMedia } from "./media-service";
@@ -37,7 +37,7 @@ import { saveMedia } from "./media-service";
 
 // ---------- 限额（MCP import_zip 的解包上限，见工具描述） ----------
 
-/** zip 内文件条目数上限 */
+/** ZIP 中央目录条目数上限（含目录）。 */
 export const ZIP_IMPORT_MAX_ENTRIES = 300;
 /** 单个解压条目字节上限（与图片上传 5MB 同量级） */
 export const ZIP_IMPORT_MAX_ENTRY_BYTES = 5 * 1024 * 1024;
@@ -105,39 +105,21 @@ export function unpackImportZip(zipBytes: Uint8Array): ZipImportBundle {
   try {
     entries = readZipEntries(
       Buffer.from(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength),
+      {
+        maxEntries: ZIP_IMPORT_MAX_ENTRIES,
+        maxEntryBytes: ZIP_IMPORT_MAX_ENTRY_BYTES,
+        maxTotalBytes: ZIP_IMPORT_MAX_TOTAL_BYTES,
+      },
     );
   } catch (err) {
+    if (err instanceof ZipBudgetError) {
+      throw new HttpError(413, "ZIP_TOO_LARGE", err.message);
+    }
     if (err instanceof ZipReadError) {
       throw new HttpError(400, "ZIP_INVALID", `压缩包无法解析：${err.message}`);
     }
     throw err;
   }
-  if (entries.length > ZIP_IMPORT_MAX_ENTRIES) {
-    throw new HttpError(
-      413,
-      "ZIP_TOO_LARGE",
-      `压缩包条目数超过上限（最多 ${ZIP_IMPORT_MAX_ENTRIES} 个文件，当前 ${entries.length} 个），请分批导入`,
-    );
-  }
-  let totalBytes = 0;
-  for (const entry of entries) {
-    if (entry.data.byteLength > ZIP_IMPORT_MAX_ENTRY_BYTES) {
-      throw new HttpError(
-        413,
-        "ZIP_TOO_LARGE",
-        `压缩包内文件「${entry.name}」超过单文件 5 MB 上限，请移出该文件或压缩后重试`,
-      );
-    }
-    totalBytes += entry.data.byteLength;
-  }
-  if (totalBytes > ZIP_IMPORT_MAX_TOTAL_BYTES) {
-    throw new HttpError(
-      413,
-      "ZIP_TOO_LARGE",
-      `压缩包解压后合计超过 48 MB 上限（当前约 ${Math.round(totalBytes / 1024 / 1024)} MB），请分批导入`,
-    );
-  }
-
   const mdFiles: { path: string; markdown: string }[] = [];
   const imageEntries: { name: string; data: Uint8Array }[] = [];
   const ignoredFiles: string[] = [];

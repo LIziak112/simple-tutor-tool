@@ -29,7 +29,7 @@ export async function verifyBackupRestorePassword(
   db: Db,
   teacherId: string,
   password: string,
-): Promise<void> {
+): Promise<() => void> {
   const readHash = () =>
     db
       .select({ passwordHash: teachers.passwordHash })
@@ -37,7 +37,14 @@ export async function verifyBackupRestorePassword(
       .where(eq(teachers.id, teacherId))
       .get()?.passwordHash;
   const hash = readHash();
-  if (!hash || !(await verifyPassword(password, hash)) || readHash() !== hash) {
+  if (!hash || !(await verifyPassword(password, hash))) {
     throw new HttpError(403, "BACKUP_INVALID_PASSWORD", "登录密码不正确");
   }
+  const recheck = () => {
+    if (readHash() !== hash) {
+      throw new HttpError(403, "BACKUP_INVALID_PASSWORD", "登录密码不正确");
+    }
+  };
+  recheck();
+  return recheck;
 }

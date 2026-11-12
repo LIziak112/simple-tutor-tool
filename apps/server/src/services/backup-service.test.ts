@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +43,7 @@ import {
  *   secret.key）→ 恢复 → 全部回到备份时点；恢复前自动快照存在；
  * - 错误密码拒绝且零副作用（连接仍可用）；
  * - 损坏 zip / 缺 db / 未知顶层内容 → 400 且原数据无损；
- * - 替换中途失败（zip 内 db 是坏文件，重启连接抛错）→ 回滚复原；
+ * - 坏库在暂存时拒绝，替换中途失败后回滚复原；
  * - 保留 14 份轮转（造 16 份只剩最新 14）；
  * - 恢复后数据连接重启可用（同一 db 引用读到恢复数据）；
  * - 下载 zip 结构（快照原名 + blobs + shared + secret.key，无 backups/）；
@@ -314,6 +314,29 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
 });
 
 describe("恢复的拒绝路径（原数据无损）", () => {
+  it("暂存期间失去恢复权限时保留原连接与快照", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const originalConnection = handle.db.$client;
+    const snapshots = listSnapshots(dataDir);
+    let checks = 0;
+    await expect(
+      restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip, () => {
+        checks += 1;
+        if (checks === 2)
+          throw new HttpError(
+            403,
+            "BACKUP_OPERATOR_REQUIRED",
+            "恢复权限已撤销",
+          );
+      }),
+    ).rejects.toMatchObject({ status: 403, code: "BACKUP_OPERATOR_REQUIRED" });
+    expect(handle.db.$client).toBe(originalConnection);
+    expect(listSnapshots(dataDir)).toEqual(snapshots);
+  });
+
   it("错误密码 → 403；数据未动、连接仍可用", async () => {
     const fixture = await makeFixture();
     fixtures.push(fixture);
@@ -414,7 +437,7 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
   });
 
-  it("zip 内 db 是坏文件（重启连接失败）→ 500 已回滚，原数据无损", async () => {
+  it("zip 内数据库不可读时在新建保险快照和切换连接前拒绝", async () => {
     const fixture = await makeFixture();
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
@@ -443,6 +466,8 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     await archive.finalize();
     await done;
     const poisoned = Buffer.concat(chunks);
+    const originalConnection = handle.db.$client;
+    const snapshots = listSnapshots(dataDir);
 
     const err = await restoreFromBackup(
       dataDir,
@@ -451,8 +476,10 @@ describe("恢复的拒绝路径（原数据无损）", () => {
       PASSWORD,
       poisoned,
     ).catch((e: unknown) => e);
-    expect((err as HttpError).status).toBe(500);
-    expect((err as HttpError).code).toBe("BACKUP_RESTORE_FAILED");
+    expect((err as HttpError).status).toBe(400);
+    expect((err as HttpError).code).toBe("BACKUP_ZIP_INVALID");
+    expect(listSnapshots(dataDir)).toEqual(snapshots);
+    expect(handle.db.$client).toBe(originalConnection);
 
     // 回滚复原：库行、secret.key、shared 都在原位且连接可用
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
@@ -494,6 +521,37 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
       "共享内容 v1",
     );
+  });
+
+  it("DATA_DIR 是单独挂载点时，恢复的移动全部留在挂载点内", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const { renameSync: move } = await vi.importActual<typeof fs>("node:fs");
+    const root = `${dataDir}${sep}`;
+    const rename = vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+      if (
+        typeof from === "string" &&
+        typeof to === "string" &&
+        (!from.startsWith(root) || !to.startsWith(root))
+      ) {
+        throw new Error("模拟禁止跨挂载点移动");
+      }
+      move(from, to);
+    });
+    try {
+      await expect(
+        restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip),
+      ).resolves.toMatchObject({ sessionWarning: true });
+      expect(rename).toHaveBeenCalled();
+    } finally {
+      rename.mockReset();
+    }
+    expect(readdirSync(join(dataDir, BACKUP_DIR_NAME))).not.toContainEqual(
+      expect.stringMatching(/^tutor-restore-/),
+    );
+    expect(hasStudent(handle, "stu-backup-1")).toBe(true);
   });
 });
 

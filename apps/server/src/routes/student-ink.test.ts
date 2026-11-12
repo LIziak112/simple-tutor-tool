@@ -450,10 +450,10 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
 describe("验收项：超限 413", () => {
   it("两文件合计超 2MB（body 在入口预检线内）→ 413 INK_TOO_LARGE，不落盘", async () => {
     const { app, db, dataDir, aCookie, attemptId } = await makeInkApp();
-    // 1.5MB 随机（不可压缩）strokes + 0.6MB png = 2.1MB > 2MiB，
+    // 合计 2076 KiB 超过 2 MiB，给 multipart 头和边界留足 36 KiB。
     // 但 body < 入口预检线（2MiB + 64KB）→ 命中 service 的精确合计校验
     const bigStrokes = randomBytes(1536 * 1024);
-    const bigPng = randomBytes(614 * 1024);
+    const bigPng = randomBytes(540 * 1024);
     const res = await putInk(
       app,
       aCookie,

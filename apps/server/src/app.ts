@@ -7,12 +7,13 @@ import {
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_IMAGE_PNG_MAX_BYTES,
 } from "@tutor/contract";
-import { type Context, Hono, type Next } from "hono";
+import { type Context, Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
 import { createRequireAnySession } from "./auth/require-any-session";
 import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
+import { guardBodyLimit } from "./lib/request-body-limit.ts";
 import { createMcpRoutes } from "./mcp/mount";
 import { createPersonalMcpRoutes } from "./mcp/personal-mount";
 import { createStudentMcpRoutes } from "./mcp/student-mount";
@@ -99,35 +100,6 @@ const NOTE_IMAGE_UPLOAD_GUARD = {
   code: "NOTE_LIMIT_EXCEEDED",
   message: "上传数据过大（超过派生图上传上限），请降低分辨率后重试",
 } as const;
-
-/**
- * content-length 入口预检中间件工厂（T6R.4 复审②：五段同构守卫收敛）。
- * 指定 method 的请求若 content-length 超过 limit，直接 413 {code}——不进入
- * parseBody（整包进内存）、不落盘不缓冲；精确限额由各 service 按文件实际
- * 字节校验（chunked 传输无 content-length 时 Number("") 不 Finite，自然放行
- * 给 service 兜底）。
- */
-function guardBodyLimit(config: {
-  method: "PUT" | "POST";
-  limit: number;
-  code: string;
-  message: string;
-}) {
-  return async (c: Context, next: Next) => {
-    if (c.req.method === config.method) {
-      const length = Number(c.req.header("content-length") ?? "0");
-      if (Number.isFinite(length) && length > config.limit) {
-        const body: ApiErr = {
-          ok: false,
-          error: config.code,
-          message: config.message,
-        };
-        return c.json(body, 413);
-      }
-    }
-    return next();
-  };
-}
 
 /**
  * 图片上传路由的 body 预检上限（媒体管线第二单）：图片本身 ≤5MB（契约口径，
@@ -250,10 +222,7 @@ export function createApp(options: CreateAppOptions) {
         options.specDir,
       ),
     )
-    // —— 上传接口的 content-length 入口预检（T6R.4 复审②收敛为 guardBodyLimit
-    //    工厂，五处一行注册）：超限在 parseBody（整包进内存）之前就 413，
-    //    不落盘不缓冲；精确限额由各 service 按文件实际字节校验（chunked
-    //    传输无 content-length 时兜底）。各路由粗防线取值与理由见常量注释。 ——
+    // 声明长度预检和实际流限额共用各路由预算；业务服务继续校验文件自身字节数。
     // T2.8 笔迹上传（ink-service 精确校验两文件合计 ≤2MB）
     .use(
       "/api/student/attempts/:id/ink/:questionId",

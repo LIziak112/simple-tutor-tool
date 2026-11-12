@@ -1,14 +1,13 @@
 import type { Context } from "hono";
 import { HttpError } from "./http-error";
+import { capBodyStream } from "./request-body-limit.ts";
 
 /**
  * 带流式计数上限的 multipart/form-data 解析（审查 #103-01）。
  *
- * app.ts 的 guardBodyLimit 只看声明的 content-length；浏览器 / 反代的 chunked
- * 上传没有这个头，c.req.parseBody() 会先把整个请求体读进内存、解析完，服务层
- * 才按文件字节校验上限——预检约束不到这一步的实际缓冲量。这里把 c.req.raw.body
- * 经一个计数 TransformStream 再交给 Response.formData() 解析：累计字节一过
- * limitBytes 就 controller.error() 停止读取（pipeThrough 随之取消源流），映射为
+ * 此解析器可独立使用，挂载层与解析器共用请求流限额实现。c.req.raw.body
+ * 经计数 TransformStream 后交给 Response.formData() 解析：累计字节一过
+ * limitBytes 就 controller.error() 停止读取上游，映射为
  * 413 {code, message}；已读入的至多 limitBytes + 一个 chunk。
  *
  * 非 multipart content-type / 没有请求体 / 坏 multipart → 400 VALIDATION_ERROR
@@ -46,18 +45,10 @@ export async function parseMultipartCapped(
   ) {
     throw new HttpError(400, "VALIDATION_ERROR", MULTIPART_REQUIRED_MESSAGE);
   }
-  let total = 0;
-  const capped = source.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        total += chunk.byteLength;
-        if (total > cap.limitBytes) {
-          controller.error(new MultipartBodyTooLarge());
-          return;
-        }
-        controller.enqueue(chunk);
-      },
-    }),
+  const capped = capBodyStream(
+    source,
+    cap.limitBytes,
+    () => new MultipartBodyTooLarge(),
   );
   try {
     return await new Response(capped, {

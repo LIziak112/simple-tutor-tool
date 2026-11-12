@@ -97,8 +97,8 @@ export const BACKUP_OPERATOR_REQUIRED = "BACKUP_OPERATOR_REQUIRED";
  * - BACKUP_INVALID_PASSWORD：恢复时登录密码不正确（403，D21）；
  * - BACKUP_ZIP_INVALID：zip 损坏 / 结构不符（400，中文说明缺什么——必备 db 文件、
  *   顶层只允许 db / blobs / shared / secret.key，禁路径穿越与 backups/ 覆写）；
- * - BACKUP_TOO_LARGE：恢复上传超过 BACKUP_MAX_UPLOAD_BYTES（413）；
- * - BACKUP_RESTORE_FAILED：替换 DATA_DIR 失败（500，响应说明是否已回滚）。
+ * - BACKUP_TOO_LARGE：恢复上传或 ZIP 展开预算超限（413）；
+ * - BACKUP_RESTORE_FAILED：暂存时数据连接已被另一恢复替换（409），或替换 DATA_DIR 失败（500，响应说明是否已回滚）。
  */
 export const backupErrorCodeSchema = z.enum([
   BACKUP_OPERATOR_REQUIRED,

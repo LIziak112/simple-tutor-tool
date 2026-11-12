@@ -263,6 +263,34 @@ describe("SAI-31 批量复盘路由：鉴权、知情门与契约边界", () => 
     expect(((await res.json()) as ApiErr).error).toBe("AI_TEXT_TOO_LONG");
     expect(db.select().from(aiTasks).all()).toHaveLength(0);
   });
+
+  it("按实际字节限制没有长度声明的请求流，超限停止读取", async () => {
+    const { app, db, cookie, studentId } = world();
+    insertAiConnectionFixture(db, studentId);
+    const chunks = 32;
+    let read = 0;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (read === chunks) return controller.close();
+        controller.enqueue(
+          encoder.encode(read === 0 ? "{}" : " ".repeat(4096)),
+        );
+        read += 1;
+      },
+    });
+    const init = {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body,
+      duplex: "half" as const,
+    };
+    const res = await app.request(BATCH_PATH, init);
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as ApiErr).error).toBe("AI_TEXT_TOO_LONG");
+    expect(read).toBeLessThan(chunks);
+    expect(db.select().from(aiTasks).all()).toHaveLength(0);
+  });
 });
 
 describe("SAI-31 批量复盘路由：逐项结果与防泄露", () => {
