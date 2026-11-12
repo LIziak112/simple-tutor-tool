@@ -12,6 +12,8 @@ import { attemptSourceSchema } from "./attempt.ts";
 /**
  * 作答级来源摘要：来源 / 第几次 / 标题 + 各来源的导航定位键 + 作答阶段。
  * - title：作业标题 / 课程名 / 讲练页标题；wrong 来源无卷标题恒 null；
+ * - unitTitle：课程练习的单元当前标题（与作答结果页的卷名同源——同一门课
+ *   有多份练习时，只有课程名分不清是哪一份）；其余来源恒 null；
  * - attemptStatus 供列表呈现作答阶段（作答中 / 已交卷 / 已批改）。
  */
 export const aiAttemptOriginSummarySchema = z
@@ -21,6 +23,8 @@ export const aiAttemptOriginSummarySchema = z
     attemptNo: z.number().int().min(1),
     /** 来源标题（wrong 为 null） */
     title: z.string().nullable(),
+    /** 课程练习的单元标题（其余来源、或单元已不可读时为 null） */
+    unitTitle: z.string().nullable(),
     /** 导航定位键（按来源非空；前端据此构造原作答地址，不按 questionId 反查） */
     assignmentId: z.string().nullable(),
     courseId: z.string().nullable(),

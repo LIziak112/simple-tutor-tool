@@ -17,14 +17,17 @@ import {
   aiTasks,
   assignments,
   attempts,
+  courses,
   responses,
   teachers,
+  units,
 } from "../db/schema.ts";
 import {
   createTestDb,
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { attemptOriginSummariesOf } from "../services/ai-companion/student-ai-origin-summary.ts";
 import { insertAiConnectionFixture } from "../test/ai-companion-fixtures.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { makeStudent } from "../test/note-fixtures.ts";
@@ -337,6 +340,7 @@ describe("整卷任务列表：账号范围、来源摘要与归档过滤", () =
       sourceType: "assignment",
       attemptNo: 3,
       title: ASSIGNMENT_TITLE,
+      unitTitle: null,
       assignmentId: expect.any(String),
       courseId: null,
       unitId: null,
@@ -392,5 +396,85 @@ describe("整卷任务列表：账号范围、来源摘要与归档过滤", () =
     const otherCookie = `tutor_student_session=${createStudentSession(db, otherId).token}`;
     const other = await listReviews(app, otherCookie, "archived=exclude");
     expect(other.data.tasks).toHaveLength(0);
+  });
+});
+
+describe("作答级来源摘要：课程练习的单元标题", () => {
+  it("课程练习带单元当前标题（本教师域内读取）；作业来源为 null；他人同名单元不串", () => {
+    const { db, studentId } = world();
+    const courseId = randomUUID();
+    db.insert(courses)
+      .values({
+        id: courseId,
+        teacherId: TEST_TEACHER_ID,
+        title: "初二数学",
+        order: 1,
+        createdAt: "2026-06-01T00:00:00.000Z",
+      })
+      .run();
+    const otherTeacherId = randomUUID();
+    db.insert(teachers)
+      .values({
+        ...(db
+          .select()
+          .from(teachers)
+          .where(eq(teachers.id, TEST_TEACHER_ID))
+          .get() as typeof teachers.$inferSelect),
+        id: otherTeacherId,
+        loginName: "origins-other-teacher",
+      })
+      .run();
+    for (const [teacherId, title] of [
+      [otherTeacherId, "别的老师的同名单元"],
+      [TEST_TEACHER_ID, "有理数小练"],
+    ] as const)
+      db.insert(units)
+        .values({
+          id: "unit-origins",
+          teacherId,
+          courseId: null,
+          folderId: null,
+          lectureId: null,
+          title,
+          order: 0,
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        })
+        .run();
+    const courseAttemptId = randomUUID();
+    db.insert(attempts)
+      .values({
+        id: courseAttemptId,
+        studentId,
+        sourceType: "course",
+        assignmentId: null,
+        courseId,
+        unitId: "unit-origins",
+        lectureId: null,
+        attemptNo: 3,
+        status: "submitted",
+        startedAt: "2026-06-01T00:00:00.000Z",
+        submittedAt: "2026-06-01T01:00:00.000Z",
+        frozenAt: "2026-06-01T00:00:00.000Z",
+        legacyUnverified: false,
+        abandonedAt: null,
+      })
+      .run();
+    const assignmentAttemptId = submittedAttempt(db, studentId);
+
+    const origins = attemptOriginSummariesOf(db, [
+      courseAttemptId,
+      assignmentAttemptId,
+    ]);
+    expect(origins.get(courseAttemptId)).toMatchObject({
+      sourceType: "course",
+      attemptNo: 3,
+      title: "初二数学",
+      unitTitle: "有理数小练",
+    });
+    expect(origins.get(assignmentAttemptId)).toMatchObject({
+      sourceType: "assignment",
+      title: ASSIGNMENT_TITLE,
+      unitTitle: null,
+    });
   });
 });

@@ -3,7 +3,7 @@ import type {
   AiTaskBatchOrigin,
   AiTaskOriginSummary,
 } from "@tutor/contract";
-import { and, asc, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
   type AiTaskRow,
@@ -13,6 +13,8 @@ import {
   courses,
   lectures,
   responses,
+  students,
+  units,
 } from "../../db/schema.ts";
 import { batchKeyOfTask, sha256Hex } from "./student-ai-shared.ts";
 
@@ -105,6 +107,26 @@ export function attemptOriginSummariesOf(
         .where(inArray(lectures.id, ids))
         .all(),
   );
+  // 课程练习的单元标题：按作答 → 学生 → 教师域读取（units 主键含 teacherId，
+  // 与结果页卷名同一口径）；键为作答 id
+  const unitTitles = new Map(
+    db
+      .select({ attemptId: attempts.id, title: units.title })
+      .from(attempts)
+      .innerJoin(students, eq(students.id, attempts.studentId))
+      .innerJoin(
+        units,
+        and(
+          eq(units.teacherId, students.teacherId),
+          eq(units.id, attempts.unitId),
+        ),
+      )
+      .where(
+        and(inArray(attempts.id, uniqueIds), eq(attempts.sourceType, "course")),
+      )
+      .all()
+      .map((row) => [row.attemptId, row.title] as const),
+  );
   // 三个标题 Map 的键均为卷 id；wrong 无卷标题恒 null
   const titleOf = (
     titles: Map<string, string>,
@@ -126,6 +148,7 @@ export function attemptOriginSummariesOf(
           sourceType: attempt.sourceType,
           attemptNo: attempt.attemptNo,
           title,
+          unitTitle: unitTitles.get(attempt.id) ?? null,
           assignmentId: attempt.assignmentId,
           courseId: attempt.courseId,
           unitId: attempt.unitId,

@@ -13,6 +13,7 @@ const attemptOrigin = {
   sourceType: "lesson",
   attemptNo: 2,
   title: "二次函数讲练页",
+  unitTitle: null,
   assignmentId: null,
   courseId: "6b7c8d9e-0000-4000-8000-ffffffffffff",
   unitId: "unit-b",
@@ -112,4 +113,18 @@ it("整卷任务列表查询：archived 与逐题列表同义，缺省 = 全部"
   expect(
     aiAttemptReviewListQuerySchema.safeParse({ archived: "all" }).success,
   ).toBe(false);
+});
+
+it("课程练习来源：单元标题随摘要下发（与结果页卷名同源），其余来源为 null", () => {
+  const course = {
+    ...attemptOrigin,
+    sourceType: "course",
+    title: "初二数学",
+    unitTitle: "有理数小练",
+    lectureId: null,
+  };
+  expect(aiAttemptOriginSummarySchema.parse(course)).toEqual(course);
+  // 必填可空：缺字段拒绝（服务端必须显式给出 null，不靠缺省）
+  const { unitTitle: _omitted, ...missing } = course;
+  expect(aiAttemptOriginSummarySchema.safeParse(missing).success).toBe(false);
 });

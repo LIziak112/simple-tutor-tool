@@ -32,10 +32,12 @@ function sourceLabelOf(
 
 /**
  * 来源一行：卷名 · 来源 · 第几次——从别的练习的记录点进去之前，就能确认是
- * 哪份卷的哪一次作答（wrong 来源没有卷名）。
+ * 哪份卷的哪一次作答（wrong 来源没有卷名）。课程练习先写单元名（结果页的
+ * 卷名），再写课程名：同一门课有多份练习，只写课程名分不清是哪一份。
  */
 export function attemptOriginLineOf(origin: AiAttemptOriginSummary): string {
   return [
+    ...(origin.unitTitle !== null ? [origin.unitTitle] : []),
     ...(origin.title !== null ? [origin.title] : []),
     sourceLabelOf(origin.sourceType),
     `第 ${origin.attemptNo} 次`,

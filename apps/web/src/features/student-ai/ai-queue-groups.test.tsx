@@ -21,6 +21,7 @@ import {
   listStudentAiQueueApi,
   postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
+import { attemptOriginLineOf } from "./AiQueueItem";
 import { AiQueuePanel } from "./AiQueuePanel";
 import { aiQueueEntriesOf, batchProgressTextOf } from "./ai-queue-groups";
 import { listStudentAiAttemptReviewQueueApi } from "./attempt-review-queue-api";
@@ -59,6 +60,7 @@ const ATTEMPT_ORIGIN: AiAttemptOriginSummary = {
   sourceType: "lesson",
   attemptNo: 2,
   title: "二次函数讲练",
+  unitTitle: null,
   assignmentId: null,
   courseId: "12121212-1212-4121-8121-121212121212",
   unitId: null,
@@ -236,6 +238,38 @@ describe("求助记录分组模型", () => {
         queueTask({ status: "created" }),
       ]),
     ).toBe("已回复 2 · 处理中 1 · 待领取 1");
+  });
+});
+
+describe("来源一行", () => {
+  it("讲练 / 作业：卷名 · 来源 · 第几次", () => {
+    expect(attemptOriginLineOf(ATTEMPT_ORIGIN)).toBe(
+      "二次函数讲练 · 讲练 · 第 2 次",
+    );
+  });
+
+  it("课程练习：先写单元名（结果页的卷名）再写课程名，分得清同一门课的多份练习", () => {
+    expect(
+      attemptOriginLineOf({
+        ...ATTEMPT_ORIGIN,
+        sourceType: "course",
+        title: "初二数学",
+        unitTitle: "有理数小练",
+        lectureId: null,
+        attemptNo: 3,
+      }),
+    ).toBe("有理数小练 · 初二数学 · 课程练习 · 第 3 次");
+  });
+
+  it("错题重练没有卷名：只写来源与第几次", () => {
+    expect(
+      attemptOriginLineOf({
+        ...ATTEMPT_ORIGIN,
+        sourceType: "wrong",
+        title: null,
+        lectureId: null,
+      }),
+    ).toBe("错题重练 · 第 2 次");
   });
 });
 
