@@ -10,17 +10,20 @@ import {
   assignmentUpdateRequestSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
+import { z } from "zod";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
 import {
   checkAssignment,
-  createAssignment,
+  createAssignmentIds,
   deleteAssignment,
   getAssignmentDetail,
   listTeacherAssignments,
+  teacherAssignmentOf,
   updateAssignment,
 } from "../services/assignment-service";
+import { createOnce } from "../services/create-receipt";
 
 /**
  * 作业管理路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下（T2A.7 大改；
@@ -80,10 +83,23 @@ export function createAssignmentTeacherRoutes(db: Db) {
         c,
         assignmentCreateRequestSchema,
       );
-      return c.json(
-        { ok: true, data: createAssignment(db, c.var.teacher.id, body) },
-        201,
-      );
+      const teacherId = c.var.teacher.id;
+      const { operationId, ...request } = body;
+      const ids = operationId
+        ? createOnce(
+            db,
+            "assignment",
+            teacherId,
+            operationId,
+            request,
+            z.array(z.uuid()),
+            (store) => createAssignmentIds(store, teacherId, request),
+          )
+        : createAssignmentIds(db, teacherId, request);
+      const data = {
+        assignments: ids.map((id) => teacherAssignmentOf(db, teacherId, id)),
+      };
+      return c.json({ ok: true, data }, 201);
     })
     .post("/assignments/check", async (c) => {
       const body: AssignmentCheckRequest = await parseJsonBody(

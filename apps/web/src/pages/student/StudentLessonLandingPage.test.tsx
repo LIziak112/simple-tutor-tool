@@ -213,7 +213,12 @@ describe("StudentLessonLandingPage", () => {
     expect(mockedRestart).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "开始新一次" }));
-    await waitFor(() => expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID));
+    await waitFor(() =>
+      expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID, {
+        expectedAttemptId: ATTEMPT_ID,
+        operationId: expect.any(String),
+      }),
+    );
     expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
   });
 
@@ -226,7 +231,12 @@ describe("StudentLessonLandingPage", () => {
     expect(screen.getByRole("dialog", { name: "再做一次确认" })).toBeVisible();
     expect(screen.getByText(/之前的记录会保留/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始新一次" }));
-    await waitFor(() => expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID));
+    await waitFor(() =>
+      expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID, {
+        expectedAttemptId: ATTEMPT_ID,
+        operationId: expect.any(String),
+      }),
+    );
     expect(await screen.findByTestId(utils.stubTestId)).toBeInTheDocument();
   });
 

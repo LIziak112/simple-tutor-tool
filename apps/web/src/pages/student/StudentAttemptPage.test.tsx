@@ -529,6 +529,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
         { workflowVersion: 1 },
         // #6980-2：范围快照（本卷结果入口 → kind:"result" + 卷标题）
         { kind: "result", sourceTitle: "有理数小练" },
+        expect.any(String),
       ),
     );
     // 跳转 /s/attempts/:新id（同路由重挂载）→ 按新 attemptId 重新拉详情
@@ -555,6 +556,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
         { workflowVersion: 1 },
         // #6980-2：范围快照（本卷结果入口 → kind:"result" + 卷标题）
         { kind: "result", sourceTitle: "有理数小练" },
+        expect.any(String),
       ),
     );
     // role=alert 按 ARIA 不能从内容取名（name 查询恒空），断言用文本内容
@@ -604,6 +606,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
         ["练习四-2"],
         { workflowVersion: 1 },
         { kind: "result", sourceTitle: "有理数小练 · 资料分析" },
+        expect.any(String),
       ),
     );
   });

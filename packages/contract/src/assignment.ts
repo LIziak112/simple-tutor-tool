@@ -4,6 +4,7 @@ import {
   assignmentAnswerReleaseSchema,
   assignmentDueAtSchema,
 } from "./content.ts";
+import { createOperationIdSchema } from "./create-operation.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
@@ -140,6 +141,7 @@ const rejectAfterDuePerQuestion = (
  */
 export const assignmentCreateRequestSchema = z
   .object({
+    operationId: createOperationIdSchema.optional(),
     title: assignmentTitleSchema.optional(),
     courseId: z.uuid("courseId 必须是 UUID 格式").nullable().optional(),
     requireCourseMembership: z.boolean().optional(),

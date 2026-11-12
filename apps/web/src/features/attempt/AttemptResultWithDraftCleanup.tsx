@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { startAttemptApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
+import { useReplayableCreate } from "@/lib/use-replayable-create";
 import { AttemptResultView } from "./AttemptResultView";
 import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
@@ -77,6 +78,7 @@ export default function AttemptResultWithDraftCleanup({
     },
   ).current;
   // 练习本卷错题（2026-10）：组新重练卷 → 跳作答；失败留告警可重试
+  const createPractice = useReplayableCreate();
   const practice = useMutation({
     // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
     mutationFn: ({
@@ -85,16 +87,21 @@ export default function AttemptResultWithDraftCleanup({
     }: {
       questionIds: string[];
       moduleTitle?: string | undefined;
-    }) =>
+    }) => {
       // #6980-2：结果页重练范围 = 来源卷标题（data.title），随卷落库供记录
       // 标题说明「练的是什么」；模块 7 专项重练再带「· 模块名」
-      startWrongPracticeApi(questionIds, workflowStartOptions(), {
+      const options = workflowStartOptions();
+      const scope = {
         kind: "result",
         sourceTitle: (moduleTitle === undefined
           ? data.title
           : `${data.title} · ${moduleTitle}`
         ).slice(0, 200),
-      } satisfies WrongPracticeScope),
+      } satisfies WrongPracticeScope;
+      return createPractice([questionIds, options, scope], (operationId) =>
+        startWrongPracticeApi(questionIds, options, scope, operationId),
+      );
+    },
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
     },

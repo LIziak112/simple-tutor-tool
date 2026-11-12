@@ -297,6 +297,29 @@ async function getWrongQuestions(env: PracticeEnv): Promise<{
 }
 
 describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
+  it("同一组卷操作重放返回同一份练习", async () => {
+    const env = await makePracticeEnv();
+    const attemptId = await startCourseAttempt(env);
+    await saveAnswer(env, attemptId, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, attemptId, T1);
+    const operationId = crypto.randomUUID();
+    const send = (questionIds: string[]) =>
+      env.app.request("/api/student/wrong-practice", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify({ questionIds, operationId }),
+      });
+    const responses = await Promise.all([send([Q.judge1]), send([Q.judge1])]);
+    expect(responses.map((response) => response.status)).toEqual([201, 201]);
+    const bodies = await Promise.all(
+      responses.map(async (response) =>
+        wrongPracticeOkSchema.parse(await response.json()),
+      ),
+    );
+    expect(bodies[0]?.data.id).toBe(bodies[1]?.data.id);
+    expect((await send([Q.judge2])).status).toBe(409);
+    for (const body of bodies) assertNoLeak(body);
+  });
   it("组卷成功：快照冻结（题干公开化、无答案）+ 摘要形态 + 题序 = questionIds 顺序 + 草稿在我的记录可见；泄露断言通过", async () => {
     const env = await makePracticeEnv();
     // 第 1 次课程练习：judge1 错（正确答案「正确」）、judge2 对 → 只有 judge1 入本

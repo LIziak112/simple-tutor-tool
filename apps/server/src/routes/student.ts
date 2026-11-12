@@ -29,7 +29,6 @@ import {
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
   studentRecordsQuerySchema,
-  wrongPracticeRequestSchema,
   wrongQuestionsQuerySchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
@@ -98,7 +97,6 @@ import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { getStudentLearningRecord } from "../services/learning-record-service";
 import {
   getLessonLanding,
-  restartLessonAttempt,
   startLessonAttempt,
 } from "../services/lesson-service";
 import {
@@ -128,13 +126,13 @@ import {
 } from "../services/student-course-service";
 import { listStudentRecords } from "../services/student-records";
 import { changeStudentPassword } from "../services/student-service";
-import { startWrongPractice } from "../services/wrong-practice";
 import { listWrongQuestions } from "../services/wrong-questions";
 import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
 import { respondAttemptDetail } from "./student-attempt-detail";
+import { createStudentCreateRoutes } from "./student-create";
 import { createStudentMemoRoutes } from "./student-memos";
 import { createStudentRubricRoutes } from "./student-rubric";
 
@@ -1129,33 +1127,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      // 2026-10 错题重练组卷：范围由前端按错题本筛选口径圈定（questionIds 顺序
-      // 即题序），服务端校验 + 快照冻结组卷（wrong-practice.ts，泄露口径与既有
-      // 作答接口一致——响应只有 attempt 摘要，无任何题目内容；未交卷详情/试卷
-      // 照旧走公开投影，泄露测试见 routes/student-wrong-practice.test.ts）
-      .post("/wrong-practice", async (c) => {
-        const body = await parseJsonBody(c, wrongPracticeRequestSchema);
-        const { attempt } = startWrongPractice(
-          db,
-          c.var.student.id,
-          body.questionIds,
-          // M1b：显式 workflowVersion=1 才写新协议列（契约内建组合校验）
-          {
-            workflowVersion: body.workflowVersion,
-            feedbackMode: body.feedbackMode,
-          },
-          // newContentEnabled 缺省读部署 env（§5.8.4）；scope 为第 6 参
-          undefined,
-          body.scope,
-        );
-        return c.json(
-          {
-            ok: true,
-            data: attempt,
-          },
-          201,
-        );
-      })
+      .route("/", createStudentCreateRoutes(db))
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）；
       // kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null + blocks 切段 +
       // companionUnits 恒空（嵌入单元隐藏，题目已在页内），泄露测试见
@@ -1232,18 +1204,6 @@ export function createStudentRoutes(
             parsed.data.courseId,
           ),
         });
-      })
-      // 2026-10 讲练一体：讲练重做（「再做一次/重新开始」显式独立动作）——
-      // 随时可用（进行中卷先作废再开新卷，教师演示口径）；新卷 attemptNo+1
-      // 从空白开始；无参数（课程上下文取第一个可见课程）
-      .post("/lectures/:id/lesson/restart", (c) => {
-        return c.json(
-          {
-            ok: true,
-            data: restartLessonAttempt(db, c.var.student.id, c.req.param("id")),
-          },
-          201,
-        );
       })
       .post("/logout", (c) => {
         const token = getCookie(c, STUDENT_SESSION_COOKIE);

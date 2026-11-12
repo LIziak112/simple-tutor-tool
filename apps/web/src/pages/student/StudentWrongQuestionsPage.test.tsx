@@ -998,6 +998,7 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
         { workflowVersion: 1 },
         // #6980-2：范围快照随请求上报（重练全部、无课程筛选 → 无 courseName）
         { kind: "all" },
+        expect.any(String),
       );
     });
     await waitFor(() => {
@@ -1040,6 +1041,7 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
         },
         // #6980-2：范围快照随请求上报（重练全部、无课程筛选 → 无 courseName）
         { kind: "all" },
+        expect.any(String),
       );
     });
     // 模块级 store 跨用例残留：解绑回默认，避免影响同文件其他用例
@@ -1067,6 +1069,7 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
         { workflowVersion: 1 },
         // #6980-2：范围快照（按练习分组 → dimension:"unit" + 组名，无课程筛选）
         { kind: "group", dimension: "unit", groupTitle: "有理数加法" },
+        expect.any(String),
       );
     });
     // 失败：错误横幅出现（含服务端信息），页面仍留在错题本
@@ -1079,6 +1082,7 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
         `/s/attempts/${NEW_ATTEMPT_ID}`,
       );
     });
+    expect(mockedPractice.mock.calls[1]).toEqual(mockedPractice.mock.calls[0]);
   });
 });
 
@@ -1278,6 +1282,7 @@ describe("StudentWrongQuestionsPage 选题重练（2026-10）", () => {
         ["q-judge-1", "q-judge-2"],
         { workflowVersion: 1 },
         { kind: "selection", questionCount: 2 },
+        expect.any(String),
       );
     });
     await waitFor(() => {
@@ -1323,6 +1328,7 @@ describe("StudentWrongQuestionsPage 选题重练（2026-10）", () => {
         ["q-judge-1", "q-judge-2"],
         { workflowVersion: 1 },
         { kind: "selection", questionCount: 2 },
+        expect.any(String),
       );
     });
   });
@@ -1388,6 +1394,7 @@ describe("StudentWrongQuestionsPage 选题重练（2026-10）", () => {
         ["q-judge-1", "q-conquered"],
         { workflowVersion: 1 },
         { kind: "selection", questionCount: 2 },
+        expect.any(String),
       );
     });
   });

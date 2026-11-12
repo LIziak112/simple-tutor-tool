@@ -731,7 +731,12 @@ describe("StudentLessonPage：已完成卷视图", () => {
     expect(screen.getByText("答对 1 · 答错 1 · 待判断 1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "再做一次" }));
     fireEvent.click(await screen.findByRole("button", { name: "开始新一轮" }));
-    await waitFor(() => expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID));
+    await waitFor(() =>
+      expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID, {
+        expectedAttemptId: ATTEMPT_ID,
+        operationId: expect.any(String),
+      }),
+    );
     // 重做成功 → 回到作答视图（三张题卡全部回到作答态）
     expect(
       await screen.findAllByRole("button", { name: "显示答案" }),
