@@ -3,10 +3,14 @@ import {
   type ReactNode,
   useContext,
   useId,
-  useState,
+  useMemo,
+  useSyncExternalStore,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { AiReadingMemoryContext } from "./AiReadingWorkspace";
+import {
+  AiReadingMemoryContext,
+  createReplySectionsStore,
+} from "./AiReadingWorkspace";
 
 const SectionsContext = createContext<{
   expanded: readonly string[] | null;
@@ -22,10 +26,11 @@ export function AiReplySectionsProvider({
   readingKey: string;
 }) {
   const memory = useContext(AiReadingMemoryContext);
-  const key = `sections:${readingKey}`;
-  const [expanded, setExpanded] = useState<readonly string[] | null>(
-    () => memory?.get(key)?.sections ?? null,
+  const store = useMemo(
+    () => memory?.sectionsOf(readingKey) ?? createReplySectionsStore(),
+    [memory, readingKey],
   );
+  const expanded = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const prefix = useId();
   return (
     <SectionsContext
@@ -33,10 +38,7 @@ export function AiReplySectionsProvider({
         expanded,
         prefix,
         readingKey,
-        update: (ids) => {
-          setExpanded(ids);
-          memory?.set(key, { sections: ids });
-        },
+        update: store.set,
       }}
     >
       {children}

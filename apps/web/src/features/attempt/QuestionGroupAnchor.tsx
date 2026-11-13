@@ -3,7 +3,7 @@ import type {
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { Layers } from "lucide-react";
-import { type CSSProperties, memo, useEffect, useMemo, useRef } from "react";
+import { type CSSProperties, memo, useMemo, useRef } from "react";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import type { GroupMaterialLayout } from "./group-material-layout-store";
 import { MaterialLayoutToggle } from "./MaterialLayoutToggle";
@@ -14,8 +14,8 @@ import {
 } from "./MaterialPanel";
 import { MaterialSplitHandle } from "./MaterialSplitHandle";
 import {
-  materialReadingOffsetOf,
-  useMaterialReadingPosition,
+  type MaterialJumpSignal,
+  useMaterialNavigation,
 } from "./material-reading-position";
 
 /**
@@ -78,7 +78,7 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
   /** 显式跳题信号（AttemptSession jumpToQuestion 发出）：seq 变化且目标题
    * 属于本组时材料列平滑回顶——滚动侦测改写的当前题不回顶，跳到其他
    * 材料组的题本列不动（C 口径） */
-  jumpSignal?: { questionId: string; seq: number } | null | undefined;
+  jumpSignal?: MaterialJumpSignal | null | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -88,43 +88,18 @@ export const QuestionGroupAnchor = memo(function QuestionGroupAnchor({
     [materials],
   );
 
-  // 阅读位置记录：材料列自身滚动（compare 模式）或窗口滚过材料顶（stack）
-  useMaterialReadingPosition(materialsRef, readingKey);
-
-  // 切题联动（2026-10-27 需求，C 口径修正）：只有显式跳题信号且目标题属于
-  // 本组时材料列平滑回顶——纯滚动切题不回顶（列表模式滚动阅读不被拉回），
-  // 跳到其他材料组的题本列不动；不可滚动（stack 流式/材料短于视口）时为
-  // 无害空操作
-  const lastJumpSeqRef = useRef(0);
-  useEffect(() => {
-    if (jumpSignal === null || jumpSignal === undefined) return;
-    if (jumpSignal.seq === lastJumpSeqRef.current) return;
-    lastJumpSeqRef.current = jumpSignal.seq;
-    if (!group.questionIds.includes(jumpSignal.questionId)) return;
-    const node = materialsRef.current;
-    if (node !== null && node.scrollHeight > node.clientHeight)
-      node.scrollTo({ top: 0, behavior: "smooth" });
-  }, [jumpSignal, group]);
-
-  // reveal：滚入 + 恢复已读偏移 + 焦点落材料列（键盘可达）
-  useEffect(() => {
-    if (revealSignal === 0) return;
-    const element = materialsRef.current ?? headerRef.current;
-    if (element === null) return;
-    element.scrollIntoView({ block: "start", behavior: "auto" });
-    const offset =
-      readingKey === undefined ? 0 : materialReadingOffsetOf(readingKey);
-    if (offset > 0) {
-      const node = materialsRef.current;
-      if (node !== null && node.scrollHeight > node.clientHeight)
-        node.scrollTop = offset;
-      else window.scrollBy({ top: -offset, behavior: "auto" });
-    }
-    const focusable = materialsRef.current;
-    if (focusable !== null) focusable.focus();
-  }, [revealSignal, readingKey]);
-
   const hasMaterials = materials.length > 0;
+  useMaterialNavigation({
+    elementRef: materialsRef,
+    fallbackRef: headerRef,
+    hasMaterials,
+    hidden,
+    questionIds: group.questionIds,
+    readingKey,
+    revealSignal,
+    jumpSignal,
+  });
+
   const intro = group.introMd.trim();
   const title = group.title?.trim();
   const label = group.label?.trim();
