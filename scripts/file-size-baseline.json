@@ -3,7 +3,7 @@
   "apps/server/src/db/schema.ts": 2796,
   "apps/server/src/mcp/server.ts": 1274,
   "apps/server/src/routes/student.ts": 1262,
-  "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1233,
+  "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1216,
   "apps/server/src/services/ai-companion/student-ai-queue.ts": 2217,
   "apps/server/src/services/analytics-service.ts": 1693,
   "apps/server/src/services/annotation-service.ts": 1621,

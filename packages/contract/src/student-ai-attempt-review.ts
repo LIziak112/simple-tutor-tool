@@ -36,7 +36,7 @@ export const AI_ATTEMPT_REVIEW_RESULT_MAX_CHARS = AI_REPLY_MAX_CHARS;
 /** 整体任务初始租约（分钟；过期回 created 可再领取） */
 export const AI_ATTEMPT_REVIEW_LEASE_MINUTES = AI_MCP_LEASE_MINUTES;
 /** 整体分析提示词版本（参与预览版本 HMAC 输入；提示词变更即换版本锚） */
-export const AI_ATTEMPT_REVIEW_PROMPT_VERSION = "attempt-review-prompt-v1";
+export const AI_ATTEMPT_REVIEW_PROMPT_VERSION = "attempt-review-prompt-v2";
 
 // ---------- 作答态与判分态（§3.3：两态分离，互斥四桶） ----------
 
