@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { StudentPracticePreferenceSection } from "@/features/attempt/StudentPracticePreferenceSection";
 import { useStudentMe } from "@/features/auth/student-auth";
+import { DeviceSettingsSection } from "@/features/devices/DeviceSettingsSection";
 import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
 import { KeyboardBindingsSection } from "@/features/keyboard/KeyboardBindingsSection";
 import { aiDisplayReturnTo } from "@/features/student-ai/ai-display-return";
@@ -140,6 +141,14 @@ export default function StudentSettingsPage() {
           </Link>
         </div>
       </section>
+      {student && (
+        <DeviceSettingsSection
+          key={`student:${student.id}`}
+          owner={{ type: "student", id: student.id }}
+          accountKind={student.accountKind}
+          connectionSettingsHref="/s/settings/ai"
+        />
+      )}
       <section aria-labelledby="student-ai-title" className="space-y-3">
         <h2
           id="student-ai-title"

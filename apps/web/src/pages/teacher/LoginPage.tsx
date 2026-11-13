@@ -1,17 +1,18 @@
 import { teacherLoginNameSchema } from "@tutor/contract";
 import { GraduationCap, Loader2, LogIn, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
+import { LoginShell } from "@/features/auth/LoginShell";
+import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useLoginTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
 import { resolveTeacherLanding } from "@/features/students/teacher-landing";
 import { ApiError } from "@/lib/api";
-import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
-import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
 /**
  * /t/login 教师登录（T2B.2 起为「登录名 + 密码」双字段，D6）。
@@ -40,6 +41,8 @@ function readRememberedLoginName(): string {
 }
 
 export function LoginPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
   const loginMutation = useLoginTeacher();
   const navigate = useNavigate();
@@ -49,23 +52,31 @@ export function LoginPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   if (statusQuery.isPending) {
-    return <AuthScreenLoading text="正在检查初始状态…" />;
+    return (
+      <LoginShell portal="teacher">
+        <AuthScreenLoading text="正在检查初始状态…" />
+      </LoginShell>
+    );
   }
   if (statusQuery.isError) {
     return (
-      <AuthScreenError
-        message={
-          statusQuery.error instanceof Error
-            ? statusQuery.error.message
-            : "网络异常，请稍后重试"
-        }
-        onRetry={() => void statusQuery.refetch()}
-      />
+      <LoginShell portal="teacher">
+        <AuthScreenError
+          message={
+            statusQuery.error instanceof Error
+              ? statusQuery.error.message
+              : "网络异常，请稍后重试"
+          }
+          onRetry={() => void statusQuery.refetch()}
+        />
+      </LoginShell>
     );
   }
   if (!statusQuery.data.hasTeacher) {
     // 尚未设置教师：先走初始化
-    return <Navigate to="/t/setup" replace />;
+    return (
+      <Navigate to={loginPathWithReturnTo("/t/setup", returnTo)} replace />
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -96,11 +107,14 @@ export function LoginPage() {
           }
           // 个人账号（模块 0）从教师入口登录：服务端同样补发学生会话，落点学习视角
           if (teacher.accountKind === "personal") {
-            navigate("/s/home", { replace: true });
+            navigate(safeReturnTo(returnTo, "personal"), { replace: true });
             return;
           }
           // T-PR4 Web-4：登录后按学生数落点（恰 1 名未归档学生 → 该生学生主页）
-          navigate(await resolveTeacherLanding(), { replace: true });
+          navigate(
+            safeReturnTo(returnTo, "teacher", await resolveTeacherLanding()),
+            { replace: true },
+          );
         },
       },
     );
@@ -119,7 +133,7 @@ export function LoginPage() {
   const shownError = formError ?? serverErrorMessage(loginMutation.error);
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-8 text-foreground">
+    <LoginShell portal="teacher">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm sm:p-8">
         <header className="text-center">
           <span
@@ -212,7 +226,7 @@ export function LoginPage() {
           <p className="mt-3 text-center text-sm text-muted-foreground">
             没有账号？
             <Link
-              to="/t/register"
+              to={loginPathWithReturnTo("/t/register", returnTo)}
               className="mx-1 font-medium text-primary underline-offset-4 hover:underline"
             >
               注册
@@ -222,20 +236,14 @@ export function LoginPage() {
         <p className="mt-3 text-center text-xs text-muted-foreground">
           个人学习账号？
           <Link
-            to="/p/login"
+            to={loginPathWithReturnTo("/p/login", returnTo)}
             className="mx-1 text-primary underline-offset-4 hover:underline"
           >
             去个人学习登录
           </Link>
         </p>
-        <footer className="mt-6 text-center text-xs text-muted-foreground">
-          <p className="font-semibold">{BRAND_NAME}</p>
-          <p lang="en" className="mt-1 leading-relaxed">
-            {BRAND_TAGLINE}
-          </p>
-        </footer>
       </div>
-    </main>
+    </LoginShell>
   );
 }
 

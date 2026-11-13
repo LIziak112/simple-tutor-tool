@@ -21,7 +21,19 @@ export type DeviceRegister = z.infer<typeof deviceRegisterSchema>;
 export const deviceRenameSchema = z.object({
   name: z.string().trim().min(1).max(80).nullable(),
 });
-export const deviceMergeSchema = z.object({ targetDeviceId: z.uuid() });
+/** 新 UI 的确认前提只约束合并意图，不代替 owner/session 鉴权。 */
+export const deviceMergeIntentSchema = z.object({
+  sourceDeviceId: z.uuid(),
+  targetDeviceId: z.uuid(),
+  allowActiveSource: z.boolean(),
+});
+export type DeviceMergeIntent = z.infer<typeof deviceMergeIntentSchema>;
+export const DEVICE_MERGE_STALE = "DEVICE_MERGE_STALE";
+export const deviceMergeSchema = z.object({
+  targetDeviceId: z.uuid(),
+  /** 旧调用可省略，保持历史别名语义；新 UI 必须发送实际确认的规范身份。 */
+  intent: deviceMergeIntentSchema.optional(),
+});
 export const deviceSchema = z.object({
   deviceId: z.uuid(),
   type: deviceTypeSchema,
@@ -39,4 +51,7 @@ export type Device = z.infer<typeof deviceSchema>;
 export const deviceListDataSchema = z.object({
   devices: z.array(deviceSchema),
   unassignedSessionCount: z.number().int().nonnegative(),
+  /** 当前认证会话对应的本人规范设备；旧响应可缺，来源未知为 null。 */
+  currentDeviceId: z.uuid().nullable().optional(),
 });
+export type DeviceListData = z.infer<typeof deviceListDataSchema>;

@@ -98,15 +98,24 @@ export function useRegisterTeacher() {
 }
 
 /** 退出登录：清理教师及管理数据并重置身份，学生会话继续保留。 */
-export function useLogoutTeacher() {
+export function useLogoutTeacher(onLoggedOut?: () => void) {
   const clearSession = useClearTeacherSession();
-  return useMutation({ mutationFn: logoutTeacher, onSuccess: clearSession });
+  return useMutation({
+    mutationFn: logoutTeacher,
+    onSuccess: () => clearSession(onLoggedOut),
+  });
 }
 
 export function useClearTeacherSession() {
   const queryClient = useQueryClient();
-  return async () => {
+  return async (onCleared?: () => void) => {
     await clearAccountQueries(queryClient, "teacher");
-    await queryClient.resetQueries({ queryKey: teacherMeKey, exact: true });
+    const reset = queryClient.resetQueries({
+      queryKey: teacherMeKey,
+      exact: true,
+    });
+    // 身份已清空、页面尚未卸载时完成主动退出导航，再等待身份重取。
+    onCleared?.();
+    await reset;
   };
 }

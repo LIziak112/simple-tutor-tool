@@ -12,7 +12,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { usePublishLearningFocus } from "@/features/memos/learning-focus-store";
+import { useLearningContextSnapshot } from "@/features/learning-context/learning-context-store";
 import {
   AiCompanionPanelBody,
   AiCompanionTrigger,
@@ -48,7 +48,6 @@ import {
 } from "./AiReadingWorkspace";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useAiDisplayPreference } from "./ai-display-preference-store";
-import { useMcpLiveFocus } from "./mcp-live-focus";
 
 /**
  * SAI-22 伴学栏共享装配（B12 执行步骤 1）：布局控制器 + 发送控制器 + 会话
@@ -88,7 +87,7 @@ export interface UseAiCompanionDockHost {
   readonly titleOf: (questionId: string) => string;
   /** 绑定题显示名（如「第 3 题」）；不在卷内 → null（面板显示未绑定） */
   readonly labelOf: (questionId: string) => string | null;
-  /** 打开瞬间的绑定/收笔目标题（页面自跟踪；null = 无当前题） */
+  /** 兼容宿主的阅读观测值；Dock实际绑定只从公共学习来源仓派生。 */
   readonly currentQuestionId: string | null;
   /** 布局控制器的编辑器（打开前收笔；null = 无可收笔对象直接打开） */
   readonly editor: Parameters<typeof useAiCompanionLayout>[0]["editor"];
@@ -122,23 +121,13 @@ const ensureAtQuestion = async (
 };
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
-  const { attemptId, questions, currentQuestionId, editor, labelOf } = host;
-  useMcpLiveFocus(
-    attemptId,
-    currentQuestionId,
-    host.triggerLabel === undefined,
-  );
-  // 随笔上下文锚（模块 5 第一步）：当前题随宿主变化发布到 learning-focus-store
-  usePublishLearningFocus(
-    currentQuestionId === null
-      ? null
-      : {
-          kind: "question",
-          attemptId,
-          questionId: currentQuestionId,
-          label: host.titleOf(currentQuestionId).slice(0, 120) || "作答",
-        },
-  );
+  const { attemptId, questions, editor, labelOf } = host;
+  const learning = useLearningContextSnapshot();
+  const currentQuestionId =
+    learning.host?.route === attemptId &&
+    learning.source.anchor.kind === "question"
+      ? learning.source.anchor.questionId
+      : null;
   const location = useLocation();
   const navigate = useNavigate();
   // 异步定位回写地址时按最新 search 重算（统一切题可能已改写 q）

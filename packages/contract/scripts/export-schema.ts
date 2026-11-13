@@ -144,3 +144,16 @@ await writeSchema(
     }),
   ),
 );
+
+await writeSchema(
+  "learning-context-api.json",
+  "学习上下文只读接口",
+  z.toJSONSchema(
+    z.object({
+      request: (await import("../src/learning-context-api.ts"))
+        .learningContextRequestSchema,
+      response: (await import("../src/learning-context-api.ts"))
+        .learningContextOkSchema,
+    }),
+  ),
+);

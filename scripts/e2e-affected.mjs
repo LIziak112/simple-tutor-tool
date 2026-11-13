@@ -55,6 +55,7 @@ export const ALL_TAGS = [
 
 /** e2e/<文件名> → 标签。每个 spec 至少一个；未登记的 spec 变动按全量兜底 */
 export const SPEC_TAGS = {
+  "device-settings.spec.ts": ["@student", "@teacher"],
   "nested-course-catalog.spec.ts": ["@teacher", "@student"],
   // 冒烟（任何选测都随基线跑）
   "full-chain.spec.ts": ["@smoke"],
@@ -102,6 +103,8 @@ export const SPEC_TAGS = {
   "teacher-register-admin.spec.ts": ["@admin"],
   // 个人账号（模块 0：邀请码注册 / 双视角 / /mcp/personal）
   "personal-account.spec.ts": ["@admin", "@student"],
+  // 多门户登录、回跳与身份切换（含管理入口）
+  "portal-navigation.spec.ts": ["@student", "@admin"],
   // 教师端
   "teacher-mark-flow.spec.ts": ["@teacher"],
   "teacher-navigation-settings.spec.ts": ["@teacher"],
@@ -120,6 +123,7 @@ export const SPEC_TAGS = {
   "student-workspace.spec.ts": ["@student"],
   "student-records.spec.ts": ["@student"],
   "student-memos.spec.ts": ["@student"],
+  "learning-context-memos.spec.ts": ["@student"],
   "student-review-workspace.spec.ts": ["@student"],
   "student-self-review.spec.ts": ["@student"],
   "timed-test.spec.ts": ["@student"],

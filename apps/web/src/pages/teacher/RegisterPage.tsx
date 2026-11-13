@@ -1,17 +1,18 @@
 import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, TriangleAlert, UserRoundPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
-import { Brand } from "@/components/brand";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
+import { LoginShell } from "@/features/auth/LoginShell";
+import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useRegisterTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
 import { resolveTeacherLanding } from "@/features/students/teacher-landing";
 import { ApiError } from "@/lib/api";
-import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
 /**
  * /t/register 教师自助注册页（T2B.6，D3 来源一）。
@@ -27,6 +28,8 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
  */
 
 export function RegisterPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
   const registerMutation = useRegisterTeacher();
   const navigate = useNavigate();
@@ -36,23 +39,31 @@ export function RegisterPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   if (statusQuery.isPending) {
-    return <AuthScreenLoading text="正在检查注册状态…" />;
+    return (
+      <LoginShell portal="teacher">
+        <AuthScreenLoading text="正在检查注册状态…" />
+      </LoginShell>
+    );
   }
   if (statusQuery.isError) {
     return (
-      <AuthScreenError
-        message={
-          statusQuery.error instanceof Error
-            ? statusQuery.error.message
-            : "网络异常，请稍后重试"
-        }
-        onRetry={() => void statusQuery.refetch()}
-      />
+      <LoginShell portal="teacher">
+        <AuthScreenError
+          message={
+            statusQuery.error instanceof Error
+              ? statusQuery.error.message
+              : "网络异常，请稍后重试"
+          }
+          onRetry={() => void statusQuery.refetch()}
+        />
+      </LoginShell>
     );
   }
   if (!statusQuery.data.hasTeacher) {
     // 尚未创建首位教师：注册不可用，先走初始化
-    return <Navigate to="/t/setup" replace />;
+    return (
+      <Navigate to={loginPathWithReturnTo("/t/setup", returnTo)} replace />
+    );
   }
   if (!statusQuery.data.registrationOpen) {
     return <RegistrationClosed />;
@@ -76,7 +87,10 @@ export function RegisterPage() {
       { loginName: parsedName.data, password },
       {
         onSuccess: async () =>
-          navigate(await resolveTeacherLanding(), { replace: true }),
+          navigate(
+            safeReturnTo(returnTo, "teacher", await resolveTeacherLanding()),
+            { replace: true },
+          ),
       },
     );
   }
@@ -91,10 +105,7 @@ export function RegisterPage() {
   const shownError = formError ?? serverError;
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-background px-6 text-foreground">
-      <div className="w-full max-w-sm">
-        <Brand />
-      </div>
+    <LoginShell portal="teacher">
       <header className="text-center">
         <h1 className="flex items-center justify-center gap-2 text-2xl font-semibold">
           <UserRoundPlus aria-hidden className="size-6" />
@@ -163,7 +174,7 @@ export function RegisterPage() {
               <p className="text-center text-sm text-muted-foreground">
                 尚未创建首位教师，请先
                 <Link
-                  to="/t/setup"
+                  to={loginPathWithReturnTo("/t/setup", returnTo)}
                   className="mx-1 text-primary underline-offset-4 hover:underline"
                 >
                   完成初始化
@@ -191,20 +202,22 @@ export function RegisterPage() {
       <p className="max-w-sm text-center text-xs text-muted-foreground">
         已有账号？
         <Link
-          to="/t/login"
+          to={loginPathWithReturnTo("/t/login", returnTo)}
           className="mx-1 text-primary underline-offset-4 hover:underline"
         >
           直接登录
         </Link>
       </p>
-    </main>
+    </LoginShell>
   );
 }
 
 /** 注册关闭态（管理员经管理端关闭开关后，status.registrationOpen=false） */
 function RegistrationClosed() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center text-foreground">
+    <LoginShell portal="teacher">
       <TriangleAlert aria-hidden className="size-10 text-muted-foreground" />
       <h1 className="text-xl font-semibold">注册已关闭，请联系管理员</h1>
       <p className="max-w-sm text-sm text-muted-foreground">
@@ -212,9 +225,9 @@ function RegistrationClosed() {
         管理员可在管理端直接创建。
       </p>
       <Button variant="outline" className="min-h-11 px-6" asChild>
-        <Link to="/t/login">返回登录</Link>
+        <Link to={loginPathWithReturnTo("/t/login", returnTo)}>返回登录</Link>
       </Button>
-    </main>
+    </LoginShell>
   );
 }
 

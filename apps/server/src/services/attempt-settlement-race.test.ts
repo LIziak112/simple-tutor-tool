@@ -1,16 +1,15 @@
-import { fork } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PracticeQuestionSubmitWithAnswer } from "@tutor/contract";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, onTestFinished } from "vitest";
+import { startSettlementRace } from "../test/settlement-race-harness.ts";
 import {
   closeTimingFixtures,
   timingFixture,
 } from "../test/submission-time-fixture.ts";
 
 afterEach(closeTimingFixtures);
-type Outcome = { ok: boolean; code?: string };
 async function race(
   env: ReturnType<typeof timingFixture>,
   requests: (PracticeQuestionSubmitWithAnswer | null)[],
@@ -18,42 +17,15 @@ async function race(
   const folder = mkdtempSync(join(tmpdir(), "settlement-race-"));
   const filename = join(folder, "test.db");
   await env.db.$client.backup(filename);
-  const workers = requests.map((request) =>
-    fork(
-      new URL("../test/settlement-race-worker.ts", import.meta.url),
-      [filename, env.studentId, env.attemptId, JSON.stringify(request)],
-      {
-        execArgv: ["--import", import.meta.resolve("tsx")],
-        stdio: ["ignore", "ignore", "pipe", "ipc"],
-      },
-    ),
+  const run = startSettlementRace(
+    filename,
+    env.studentId,
+    env.attemptId,
+    requests,
   );
+  onTestFinished(run.stop);
   try {
-    const outcomes = workers.map(
-      (worker) =>
-        new Promise<Outcome>((resolve, reject) => {
-          worker.once("error", reject);
-          worker.on("message", (message) => {
-            const value = message as Outcome & { ready?: boolean };
-            if (!value.ready) resolve(value);
-          });
-          worker.once("exit", (code) => {
-            if (code !== 0) reject(new Error(`竞争执行器退出${code}`));
-          });
-        }),
-    );
-    await Promise.all(
-      workers.map(
-        (worker) =>
-          new Promise<void>((resolve) =>
-            worker.on("message", (message) => {
-              if ((message as { ready?: boolean }).ready) resolve();
-            }),
-          ),
-      ),
-    );
-    for (const worker of workers) worker.send("go");
-    const results = await Promise.all(outcomes);
+    const results = await run.completion;
     expect(
       results.filter((result) => !result.ok).map((result) => result.code),
     ).not.toContain("SQLITE_BUSY_SNAPSHOT");
@@ -97,7 +69,7 @@ async function race(
       copy.$client.close();
     }
   } finally {
-    for (const worker of workers) worker.kill();
+    await run.stop();
     rmSync(folder, { recursive: true, force: true });
   }
 }
