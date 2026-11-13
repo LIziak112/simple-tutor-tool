@@ -23,5 +23,6 @@ export function withAllowRedo(
   data: AttemptStartData,
   allowRedo: boolean,
 ): AttemptStartData {
+  if (data.sourceType !== "assignment") return data;
   return { ...data, allowRedo };
 }

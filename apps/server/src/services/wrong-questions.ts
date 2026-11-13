@@ -7,7 +7,7 @@ import {
   wrongAttemptTitleOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
-import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   assignments,
@@ -17,6 +17,7 @@ import {
   responses,
   units,
 } from "../db/schema";
+import { releaseGateSql } from "./answer-publication-sql.ts";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { serializeStudentAnswerOfRow } from "./mark-response";
 import { pendingTeacherResponseSql } from "./pending-mark";
@@ -124,23 +125,6 @@ function enteredWrongBook(rounds: readonly JudgedRoundRow[]): boolean {
     (round) =>
       countsAsWrong(effectiveOfRound(round), round.answered) ||
       round.studentFlag === "unsure",
-  );
-}
-
-/**
- * 公布 gate 的 SQL 片段（answersReleased 的 SQL 化）：after_due 未公布的作业
- * attempt 整体排除。or 的三分支覆盖 course / 非 after_due / 已到截止；leftJoin
- * 未命中时 answerRelease 为 NULL → isNull 分支放行（防御口径：assignment 来源
- * 经 FK 必命中，NULL 只可能是 course/wrong 行——wrong 无 assignmentId 恒放行）。
- * 已判定轮次查询（judgedRoundsByQuestion）与待批轮计数（pendingCountByQuestion）
- * 共用本片段，保证「进 rounds」与「计 pendingCount」两处公布口径永不漂移。
- */
-function releaseGateSql(nowIso: string) {
-  return or(
-    eq(attempts.sourceType, "course"),
-    isNull(assignments.answerRelease),
-    ne(assignments.answerRelease, "after_due"),
-    and(isNotNull(assignments.dueAt), sql`${assignments.dueAt} <= ${nowIso}`),
   );
 }
 

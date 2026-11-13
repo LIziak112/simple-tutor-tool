@@ -49,8 +49,8 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
-import { LessonDraftNotices } from "@/features/lesson/LessonDraftNotices";
 import { CompletedLessonRestartDialog } from "@/features/lesson/CompletedLessonRestartDialog";
+import { LessonDraftNotices } from "@/features/lesson/LessonDraftNotices";
 import {
   LessonGroupBlock,
   LessonQuestionMaterials,

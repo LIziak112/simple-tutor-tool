@@ -2,6 +2,7 @@ import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
+import { attemptSummarySchema } from "./attempt-summary.ts";
 import {
   attemptTimeLimitMinutesSchema,
   attemptTimingSchema,
@@ -17,7 +18,6 @@ import {
   questionPublicSchema,
 } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
-import { materialPublicSchema, questionGroupPublicSchema } from "./material.ts";
 import {
   practiceQuestionProgressSchema,
   practiceWorkflowSchema,
@@ -35,6 +35,11 @@ import {
   studentUnitAttemptSummarySchema,
 } from "./student-course-api.ts";
 
+export * from "./attempt-context.ts";
+export {
+  ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+  attemptErrorCodeSchema,
+} from "./attempt-errors.ts";
 export { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
 export {
   ATTEMPT_SUBMIT_MAX_QUESTIONS,
@@ -51,6 +56,7 @@ export {
   type SubmitEvidenceDeclaration,
   submitEvidenceDeclarationSchema,
 } from "./attempt-submission.ts";
+export * from "./attempt-summary.ts";
 
 /**
  * 作答生命周期契约（T2.6 起为权威定义）：attempt 的创建（幂等）、草稿保存、
@@ -87,42 +93,6 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 }
 
 /**
- * attempt 状态（§5.2 attempts.status；D2/D3 口径 T3.2a 修订）：
- * - draft：进行中（草稿，可保存答案、可交卷）；
- * - submitted：已交卷（存在待批题——手写/无标准答案/判断写法无法归一化，
- *   等待教师批改）；
- * - graded：已批改（= 全部 responses 的 finalCorrect 均非 null；**全客观题卷
- *   交卷即 graded**——交卷时同时写 finalCorrect = autoCorrect（D3），无待批题
- *   则直接置位并写 scoreFinal）。
- * 学生作业列表的四态（AssignmentStatus）由 computeAssignmentStatus 从本状态推导。
- */
-export const attemptStatusSchema = z.enum(["draft", "submitted", "graded"]);
-
-/**
- * 作答来源（T2A.6，Phase 2A 清单 D9；2026-10 增 wrong 与 lesson）：
- * - assignment：作业作答（记 assignmentId；courseId 可空，T2A.7 起取作业所属课程）；
- * - course：课程练习作答（记 courseId + unitId，可重做，attemptNo 递增）；
- * - wrong：错题重练作答（2026-10 学生端闭环）：assignmentId / courseId / unitId
- *   恒 null（无课程/作业归属，attempt 永不失权），attemptNo 按该生已有 wrong
- *   来源 attempt 数从 1 递增；题目集合是创建时圈定的错题快照（不落单元，
- *   见服务端 startWrongPractice）；
- * - lesson：讲练页作答（2026-10 讲练一体）：记 lectureId（所属讲练页）+
- *   unitId（嵌入单元的快照值），assignmentId 恒 null，courseId 可空（打开时
- *   来自哪门课）。与 course 来源的行为差异（方案决策 7）：start 幂等
- *   create-or-return——刷新已完成讲练页不消耗 attemptNo，「再做一次」是显式
- *   独立动作（仅完成后可用，attemptNo+1 新卷）；lesson 作答永不失权（讲练页
- *   只经课程可见，但已开卷的作答记录恒可回看）。当题释放恒为题级粒度
- *   （提交即释放该题对错与详解），attempt 级 answerRelease 不适用于 lesson 来源。
- * 四种来源共用同一套作答接口与答题页（判分/快照/提示/笔迹/事件全按 attemptId）。
- */
-export const attemptSourceSchema = z.enum([
-  "assignment",
-  "course",
-  "wrong",
-  "lesson",
-]);
-
-/**
  * 教师批改标记（D3 持久化口径：teacherMark 优先于 autoCorrect）。
  * T3.2b 的 mark 接口写入；T3.5（D9）起学生端结果视图同样下发该标记——
  * 定义从 teacher-attempt-api.ts 上移到本文件（attempt.ts 是 teacher-attempt-api
@@ -137,175 +107,6 @@ export const studentFlagSchema = z.literal("unsure");
 
 /** 学生做题时标注「不会」的取值类型（#6980-4；端上 setStudentFlagApi 复用）。 */
 export type StudentFlag = z.infer<typeof studentFlagSchema>;
-
-/**
- * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
- * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
- *   /attempt 返回已交的那份（前端据此直接进结果视图，不另开新卷）；
- * - course 来源：同一 (学生, 课程, 单元) 同时最多 1 份 draft；已交卷后「再做一次」
- *   创建新 attempt（attemptNo 递增，从 1 起，新一次从空白开始，D10）；
- * - lesson 来源（2026-10）：同一 (学生, 讲练页) 同时最多 1 份 draft；start 幂等
- *   create-or-return，「再做一次」是显式独立动作（仅完成后，attemptNo+1 新卷）。
- *
- * 来源交叉不变式已在 schema 层锁定（下方 superRefine，不再是仅存于注释的约定）：
- * - course 来源：assignmentId 恒 null，courseId / unitId 恒有值；
- * - assignment 来源：assignmentId 恒有值，unitId 恒 null（courseId 随作业可空可非空）；
- * - wrong 来源（2026-10）：assignmentId / courseId / unitId 恒 null（错题重练
- *   无课程与作业归属；题目集合 = 创建 attempt 时冻结进 responses 的错题快照）；
- * - lesson 来源（2026-10 讲练一体）：lectureId 恒有值（所属讲练页）、assignmentId
- *   恒 null（不挂作业）、unitId 恒有值（嵌入单元的快照值）、courseId 可空可非空
- *   （打开时来自哪门课）；反之 lectureId 是讲练开卷专属归属键，其余三种来源恒 null。
- */
-export const attemptSummarySchema = z
-  .object({
-    /** attempts.id（crypto.randomUUID） */
-    id: z.uuid(),
-    /** 作答来源（D9） */
-    sourceType: attemptSourceSchema,
-    /** 所属作业（assignments.id）；course 来源为 null */
-    assignmentId: z.uuid().nullable(),
-    /** 所属讲练页（lectures.id）；lesson 来源必填，其余来源恒 null（2026-10） */
-    lectureId: z.string().min(1).nullable(),
-    /** 课程练习所属课程（courses.id）；assignment 来源取作业所属课程（可空，D9/T2A.7） */
-    courseId: z.uuid().nullable(),
-    /**
-     * 目标练习单元（units.id）：course 来源恒有值（单单元）；assignment 来源
-     * 自 T2A.7 多单元化起为 null——题目集合改由 assignment_units 决定
-     * （题号全卷连续），不再落在单个单元上。两条口径由下方 superRefine 强制。
-     */
-    unitId: z.string().min(1).nullable(),
-    /** 第几次作答（course 来源从 1 递增；assignment 来源缺省 1、显式重做开新卷后按 (学生, 作业) 递增，hall-15313） */
-    attemptNo: z.number().int().min(1),
-    status: attemptStatusSchema,
-    /** 开始作答时间：UTC ISO */
-    startedAt: z.string().min(1),
-    /** 交卷时间：UTC ISO；未交为 null */
-    submittedAt: z.string().nullable(),
-    /**
-     * 自动判分得分（0–100 整数百分比；口径=答对数/可自动判分数）。
-     * D1（T3.2a）后未作答客观题判 false 进入分母，数值更真实；无可自动判分的题
-     * （全部待批）或未交卷时为 null。graded 后以 scoreFinal 为准（全客观题卷
-     * 两者分母相同、数值相等）。
-     */
-    scoreAuto: z.number().int().min(0).max(100).nullable(),
-    /** 错题重练范围标签（2026-10-25 #6980-2）：wrong 来源按建卷存的 scope
-     * 取 label（答题页/结果页来源行用）；其余来源与历史卷缺省（旧载荷
-     * 兼容，optional） */
-    wrongScopeLabel: z.string().min(1).nullable().optional(),
-    /** 是否允许重做（hall-15313）：仅 assignment 来源携带（其余恒 undefined，superRefine
-     *  强制）；结果页据此渲染「再做一次」。旧响应缺省 undefined，客户端按 true 处理 */
-    allowRedo: z.boolean().optional(),
-    /** 限时测试（模块 2）：时长秒 / 截止 UTC ISO；非限时卷 null，旧响应缺省 */
-    timeLimitSec: z.number().int().positive().nullable().optional(),
-    deadlineAt: z.string().min(1).nullable().optional(),
-  })
-  .superRefine((summary, ctx) => {
-    // allowRedo 仅 assignment 来源携带（hall-15313）：重做是作业语义，其余来源携带即拒绝
-    if (
-      summary.sourceType !== "assignment" &&
-      summary.allowRedo !== undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["allowRedo"],
-        message: `来源不变式冲突：${summary.sourceType} 来源不得携带 allowRedo（仅 assignment 来源携带）`,
-      });
-    }
-    // lectureId 是讲练开卷专属归属键（2026-10）：除 lesson 外的来源携带即拒绝
-    if (summary.sourceType !== "lesson" && summary.lectureId !== null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lectureId"],
-        message: `来源不变式冲突：${summary.sourceType} 来源的 lectureId 必须为 null（讲练开卷专属归属键）`,
-      });
-    }
-    if (summary.sourceType === "lesson") {
-      // lesson（2026-10 讲练一体）：lectureId 必填、不挂作业、unitId=嵌入单元快照值；
-      // courseId 无约束（可空可非空——打开时来自哪门课）
-      if (summary.lectureId === null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["lectureId"],
-          message:
-            "来源不变式冲突：lesson 来源的 lectureId 必须非空（讲练作答必须记录所属讲练页）",
-        });
-      }
-      if (summary.assignmentId !== null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["assignmentId"],
-          message:
-            "来源不变式冲突：lesson 来源的 assignmentId 必须为 null（讲练作答不挂作业）",
-        });
-      }
-      if (summary.unitId === null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["unitId"],
-          message:
-            "来源不变式冲突：lesson 来源的 unitId 必须非空（嵌入单元的快照值，题目集合落该单元）",
-        });
-      }
-    } else if (summary.sourceType === "course") {
-      if (summary.assignmentId !== null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["assignmentId"],
-          message:
-            "来源不变式冲突：course 来源的 assignmentId 必须为 null（课程练习不挂在作业上）",
-        });
-      }
-      if (summary.courseId === null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["courseId"],
-          message:
-            "来源不变式冲突：course 来源的 courseId 必须非空（课程练习必须记录所属课程）",
-        });
-      }
-      if (summary.unitId === null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["unitId"],
-          message:
-            "来源不变式冲突：course 来源的 unitId 必须非空（课程练习必须记录目标单元）",
-        });
-      }
-    } else if (summary.sourceType === "wrong") {
-      // wrong（2026-10 错题重练）：三归属键恒 null（无课程/作业归属，
-      // 题目集合在 attempt 自己的 responses 行里，不经 assignment_units/单元）
-      for (const [path, value] of [
-        ["assignmentId", summary.assignmentId],
-        ["courseId", summary.courseId],
-        ["unitId", summary.unitId],
-      ] as const) {
-        if (value !== null) {
-          ctx.addIssue({
-            code: "custom",
-            path: [path],
-            message: `来源不变式冲突：wrong 来源的 ${path} 必须为 null（错题重练不挂作业/课程/单元）`,
-          });
-        }
-      }
-    } else {
-      if (summary.assignmentId === null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["assignmentId"],
-          message:
-            "来源不变式冲突：assignment 来源的 assignmentId 必须非空（作业作答必须记录所属作业）",
-        });
-      }
-      if (summary.unitId !== null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["unitId"],
-          message:
-            "来源不变式冲突：assignment 来源的 unitId 必须为 null（T2A.7 多单元化后题目集合由 assignment_units 决定，不落单单元）",
-        });
-      }
-    }
-  });
 
 /** POST /api/student/assignments/:id/attempt 与 POST /api/student/courses/:cid/units/:uid/attempts 响应 data（创建或取回 attempt） */
 export const attemptStartDataSchema = attemptSummarySchema;
@@ -805,8 +606,8 @@ export const attemptAnswerSaveDataSchema = z.object({
   revision: z.number().int().nonnegative().optional(),
   /** 已保存的题目 id（回显，方便前端对账） */
   questionId: z.string().min(1),
-  /** 该题累计保存次数（含本次；T2.10 起用于改答案次数统计） */
-  changeCount: z.number().int().min(1),
+  /** 学生改答次数；确认教师补答的相同内容时仍可为零。 */
+  changeCount: z.number().int().nonnegative(),
 });
 
 // ---------- 讲练页（kind: lesson，2026-10：单题提交即时反馈） ----------
@@ -1013,97 +814,6 @@ export const attemptDetailDataSchema = z
     }
   });
 
-/**
- * 作答模块错误码（UPPER_SNAKE_CODE 固定子集）：
- * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
- * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
- * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
- * - REDO_NOT_ALLOWED：作业不允许重做（allowRedo=false）且无进行中卷时，显式
- *   redo:true 开新卷被拒（409，hall-15313）——前端渲染重做入口的兜底门；
- * - ATTEMPT_ABANDONED：课程练习或讲练重开后，原卷的所有学生读写返回 409；
- * - ATTEMPT_RESTART_STALE：课程单元当前的进行中卷与确认时指定的卷不符（409）；
- * - QUESTION_ALREADY_SUBMITTED：该题已单题提交过（2026-10 讲练一体逐题提交；
- *   409——lesson 卷同一题二次提交被可诊断拒绝，与整卷 ALREADY_SUBMITTED 分码，
- *   前端据此锁定题卡为结果态而非提示整卷已交）；
- * - QUESTION_REVISION_STALE：交卷回传的题目版本集合与本次冻结集合不一致
- *   （缺项 / questionRevisionId 错版 / 多出未知题目 / 未带请求体的非空卷；
- *   409，T6R.3）——旧标签页或陈旧页面的提交被可诊断拒绝，前端提示刷新后重交；
- * - NOTE_EVIDENCE_MISMATCH：交卷笔记证据声明与服务端事实不符（409，T6R.10，
- *   镜像 note.ts 同码注释）——frozen 的 versionId/revision 与实际 head 不一致
- *   （其他标签页/设备改出新 head）、none 声明但实际有笔记行、声明集合与冻结
- *   题目集合不一致、旧客户端（缺 evidence 字段）但检测到草稿存在；前端据此
- *   重走交卷流程或提示刷新，不静默固定不一致旧版本；
- * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该次作答的单元集合内（404，
- *   T2A.7 起多单元作业为集合包含判断）；
- * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
- *   400，T2.11 验收项）；
- * - FORBIDDEN：非本人 attempt / 未被指派的作业（403）；
- * - WRONG_PRACTICE_EMPTY：错题重练组卷的 questionIds 经校验全部被剔除
- *   （不在错题本聚合内或快照不可用；400，2026-10，附中文说明）；
- * - COURSE_ACCESS_DENIED：课程来源作答失去访问权（非成员/学生归档/课程归档，
- *   D7+D22；403）——前端草稿同步与事件上报收到它（或 404）必须按终态停止重试；
- * - NOT_FOUND：课程来源作答的单元条目已隐藏/未到发布/资源删除（D22 的不暴露
- *   存在性口径，404）；
- * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）；
- * - WORKFLOW_LEGACY / WORKFLOW_REVISION_STALE / WORKFLOW_MODE_NOT_ALLOWED：
- *   反馈节奏工作流 409 家族（M1 PATCH 更改节奏：旧协议/讲练卷不可变更、
- *   revision 陈旧需刷新、当前规则不允许该模式）；
- * - WORKFLOW_PROTOCOL_MISMATCH：提交请求的协议形态与该卷不符（M2 逐题提交：
- *   新协议请求打到旧协议/讲练卷，或反之；409，前端提示刷新后按对应入口重试）；
- * - WORKFLOW_MUTATION_CONFLICT：同一 submissionMutationId 的两次请求内容不一致
- *   （幂等键复用冲突，M2；409，前端换新 mutationId 重试）；
- * - WORKFLOW_RESTRICTED：当前教师规则不允许逐题提交（教师收紧立即生效，
- *   M2 §5.4；409，前端收敛为「继续完成剩余题目并交卷」）；
- * - SELF_REVIEW_NOT_RELEASED：自评时公布 gate 非 released（未提交/未公布/受限；
- *   403，决策记录 §5.8.2——不泄露「已提交未公布」之外的答案状态）；
- * - SELF_REVIEW_TEACHER_MARKED：教师已判，自评被拒（教师优先；409）；
- * - SELF_REVIEW_REVISION_CONFLICT：自评 baseRevision 过期（409，附 _current
- *   最新自评与 revision）；
- * - SELF_REVIEW_NOT_ALLOWED：行 gradingPolicy 非 reference_self（auto 行无自评
- *   入口；manual_only 无参考不可自评；403）；
- * - ANSWER_SHAPE_INVALID：新 kind 结构校验失败（未知 slotId/optionId/itemId、
- *   重复占用、干扰项入序、固定项错位；422，保存与提交同码，草稿部分填充
- *   **不**触发）。路由与校验链 TT-09（QM-10）落地，契约层先定码。
- * - ATTEMPT_CONTEXT_BROKEN：开卷依赖的材料/题组已变动（缺失/软删，409 fail
- *   closed——不静默跳过、不拿 live 资源替补），或已冻结上下文快照损坏不可
- *   解析（读路径同码，tt-07a/QM-06）；前端提示联系老师重新检查。
- */
-export const attemptErrorCodeSchema = z.enum([
-  "ASSIGNMENT_NOT_FOUND",
-  "ATTEMPT_NOT_FOUND",
-  "ALREADY_SUBMITTED",
-  "REDO_NOT_ALLOWED",
-  "ATTEMPT_ABANDONED",
-  "ATTEMPT_RESTART_STALE",
-  "ATTEMPT_CONTEXT_BROKEN",
-  "QUESTION_ALREADY_SUBMITTED",
-  "QUESTION_REVISION_STALE",
-  "ANSWER_REVISION_CONFLICT",
-  "NOTE_EVIDENCE_MISMATCH",
-  "QUESTION_NOT_FOUND",
-  "HINT_INDEX_OUT_OF_RANGE",
-  "FORBIDDEN",
-  "WRONG_PRACTICE_EMPTY",
-  "COURSE_ACCESS_DENIED",
-  "NOT_FOUND",
-  "UNAUTHORIZED",
-  "VALIDATION_ERROR",
-  "WORKFLOW_LEGACY",
-  "WORKFLOW_REVISION_STALE",
-  "WORKFLOW_MODE_NOT_ALLOWED",
-  "WORKFLOW_PROTOCOL_MISMATCH",
-  "WORKFLOW_MUTATION_CONFLICT",
-  "WORKFLOW_RESTRICTED",
-  "SELF_REVIEW_NOT_RELEASED",
-  "SELF_REVIEW_TEACHER_MARKED",
-  "SELF_REVIEW_REVISION_CONFLICT",
-  "SELF_REVIEW_NOT_ALLOWED",
-  "ANSWER_SHAPE_INVALID",
-  "ATTEMPT_TIME_UP",
-  "RUBRIC_NOT_AVAILABLE",
-  "RUBRIC_RATINGS_INVALID",
-]);
-
 // ---------- 具体化的成功壳 ----------
 
 /** 标注「不会」的请求体（#6980-4）：flag=null 表示取消标记 */
@@ -1135,44 +845,8 @@ export const lessonQuestionSubmitOkSchema = apiOkExtend(
   lessonQuestionSubmitDataSchema,
 );
 
-// ---------- 开卷上下文读取（冻结快照的公开投影，tt-07a / QM-06） ----------
-
-/**
- * 材料/题组的冻结上下文条目：公开投影（materialPublicSchema /
- * questionGroupPublicSchema 白名单——contentMd/introMd 等学生作答所需）+
- * 冻结时来源版本。**显式白名单扩展而非快照行透传**（三投影纪律，设计方案
- * §8.1）：教师侧 sourceMd 等字段在 parse 时被 strip，答案/详解/提示键绝无
- * 携带通道（材料正文不含答案型内容另由 lint MATERIAL_CONTAINS_ANSWER 保证，
- * 双防线）。
- */
-export const attemptContextMaterialSchema = materialPublicSchema.extend({
-  /** 冻结时的 materials.version（与去重键/快照身份同源） */
-  sourceVersion: z.number().int().min(1),
-});
-export const attemptContextGroupSchema = questionGroupPublicSchema.extend({
-  /** 冻结时的 question_groups.version */
-  sourceVersion: z.number().int().min(1),
-});
-
-/**
- * GET /attempts/:id/context 的响应 data：该卷全部冻结上下文（作答期渲染与
- * 结果回看只读快照——教师改材料/软删不影响已开卷）。排序 (kind, sourceId,
- * sourceVersion) 稳定（不依赖 live order，TT-06b P2-3 记账）。
- */
-export const attemptContextDataSchema = z.object({
-  attemptId: z.string().min(1),
-  materials: z.array(attemptContextMaterialSchema),
-  groups: z.array(attemptContextGroupSchema),
-});
-
-/** 携带开卷上下文的成功响应壳 */
-export const attemptContextOkSchema = apiOkExtend(attemptContextDataSchema);
-
 // ---------- 推断类型导出 ----------
 
-export type AttemptStatus = z.infer<typeof attemptStatusSchema>;
-export type AttemptSource = z.infer<typeof attemptSourceSchema>;
-export type AttemptSummary = z.infer<typeof attemptSummarySchema>;
 export type AttemptStartData = z.infer<typeof attemptStartDataSchema>;
 export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;
 export type AttemptDraftUnit = z.infer<typeof attemptDraftUnitSchema>;
@@ -1191,12 +865,6 @@ export type AttemptAnswerSaveRequest = z.infer<
 export type AttemptAnswerSaveData = z.infer<typeof attemptAnswerSaveDataSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;
-/** 开卷上下文条目（材料/题组公开投影 + 来源版本，tt-07a/QM-06） */
-export type AttemptContextMaterial = z.infer<
-  typeof attemptContextMaterialSchema
->;
-export type AttemptContextGroup = z.infer<typeof attemptContextGroupSchema>;
-export type AttemptContextData = z.infer<typeof attemptContextDataSchema>;
 /** 错题重练组卷请求（2026-10） */
 /** 详情响应 data：草稿视图或结果视图（服务端按 attempt.status 返回其一） */
 export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;

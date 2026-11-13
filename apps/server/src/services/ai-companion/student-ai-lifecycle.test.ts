@@ -18,7 +18,11 @@ import {
   responses,
   teachers,
 } from "../../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../../db/test-utils.ts";
+import {
+  createTestDb,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "../../db/test-utils.ts";
 import {
   expectHttpError,
   insertAttempt,
@@ -88,9 +92,10 @@ function setupWorld(db: Db): World {
 }
 
 /** 讲练世界：lesson 来源 draft 卷两题（真实 submitLessonQuestion 可用） */
-function setupLessonWorld(db: Db): World & { readonly questionId2: string } {
+function setupLessonWorld(db: Db) {
   const studentId = makeStudent(db);
   const attemptId = randomUUID();
+  const lesson = seedLessonWithEmbeddedUnit(db);
   db.insert(attempts)
     .values({
       id: attemptId,
@@ -98,8 +103,7 @@ function setupLessonWorld(db: Db): World & { readonly questionId2: string } {
       sourceType: "lesson",
       assignmentId: null,
       courseId: null,
-      unitId: null,
-      lectureId: randomUUID(),
+      ...lesson,
       attemptNo: 1,
       status: "draft",
       startedAt: new Date(T0).toISOString(),
@@ -112,7 +116,7 @@ function setupLessonWorld(db: Db): World & { readonly questionId2: string } {
   const questionId2 = "lq2";
   insertResponse(db, attemptId, questionId);
   insertResponse(db, attemptId, questionId2);
-  return { studentId, attemptId, questionId, questionId2 };
+  return { studentId, attemptId, questionId, questionId2, lesson };
 }
 
 /** 教师全局默认模式（ai_teacher_settings 无行 = open_study；本夹具显式落行） */
@@ -663,8 +667,7 @@ describe("SAI-15 ⑤ 讲练题级完成与重开新卷", () => {
         sourceType: "lesson",
         assignmentId: null,
         courseId: null,
-        unitId: null,
-        lectureId: randomUUID(),
+        ...world.lesson,
         attemptNo: 2,
         status: "draft",
         startedAt: at(100_000).toISOString(),

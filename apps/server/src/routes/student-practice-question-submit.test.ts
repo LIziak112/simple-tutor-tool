@@ -12,6 +12,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import {
   assignments,
+  attemptContextFreezes,
   attempts,
   events,
   lectures,
@@ -1431,6 +1432,69 @@ describe("M2 异常数据降级（作业授权行悬挂——v2 加固 d7c84b89 
 });
 
 describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余行）", () => {
+  it("旧卷协议修订号损坏时，整卷收尾保留已经单题提交的判定和原稿", async () => {
+    const env = await makeEnv();
+    const attemptId = await startPracticeAttempt(env);
+    await saveAnswer(env, attemptId, Q.choice, { kind: "choice", index: 0 });
+    const draft = await fetchDraft(env, attemptId);
+    await practiceSubmitOk(env, draft, attemptId, Q.choice, {
+      mutationId: crypto.randomUUID(),
+    });
+    env.db
+      .delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, attemptId))
+      .run();
+    env.db
+      .update(attempts)
+      .set({ workflowRevision: -1 })
+      .where(eq(attempts.id, attemptId))
+      .run();
+    env.db
+      .update(responses)
+      .set({ teacherMark: "correct", finalCorrect: true })
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, Q.choice),
+        ),
+      )
+      .run();
+    const saved = responseRowOf(env.db, attemptId, Q.choice);
+    const evidence = env.db
+      .select()
+      .from(submissionEvidence)
+      .where(
+        and(
+          eq(submissionEvidence.attemptId, attemptId),
+          eq(submissionEvidence.questionId, Q.choice),
+        ),
+      )
+      .get();
+    expect(evidence).toBeDefined();
+    const submitted = await submitAttemptRequest(
+      env.app,
+      env.aCookie,
+      attemptId,
+      [
+        { questionId: Q.judge, state: "none" },
+        { questionId: Q.fill, state: "none" },
+      ],
+    );
+    expect(submitted.status).toBe(200);
+    expect(responseRowOf(env.db, attemptId, Q.choice)).toEqual(saved);
+    expect(
+      env.db
+        .select()
+        .from(submissionEvidence)
+        .where(
+          and(
+            eq(submissionEvidence.attemptId, attemptId),
+            eq(submissionEvidence.questionId, Q.choice),
+          ),
+        )
+        .get(),
+    ).toEqual(evidence);
+  });
   it("部分逐题提交后整卷提交：已提交行判定/submittedAt/幂等凭据保留，剩余行判分，attempt 只收尾一次", async () => {
     const env = await makeEnv();
     const attemptId = await startPracticeAttempt(env);

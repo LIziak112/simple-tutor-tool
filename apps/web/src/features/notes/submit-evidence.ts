@@ -28,8 +28,10 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
+import { NOTE_HEADS_MAX_QUESTIONS } from "@tutor/contract";
 import { snapshotAnnotationProblems } from "@/features/annotation/annotation-submit-materials";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
+import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
 import { fetchStudentNoteHeadsApi } from "@/lib/api";
 import {
   deriveServerState,
@@ -71,9 +73,26 @@ export interface SubmitEvidencePrep {
   problems: SubmitEvidenceProblem[];
 }
 
-/** 单次批量头拉取超时（对齐 note-sync PUT 的 30s 桥接口径；T6R.14 起一次
- * POST 拉全卷头，超时作用于整批而非逐题） */
+/** 草稿头读取的整轮期限（对齐 note-sync PUT 的 30s 桥接口径）。 */
 const NOTE_HEAD_TIMEOUT_MS = 30_000;
+
+async function readSubmitHeads(
+  attemptId: string,
+  ids: readonly string[],
+  ensureSession: () => void,
+  upstream?: AbortSignal,
+) {
+  const timeout = AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS);
+  const signal = upstream ? AbortSignal.any([upstream, timeout]) : timeout;
+  const heads: NoteHeadData[] = [];
+  for (let start = 0; start < ids.length; start += NOTE_HEADS_MAX_QUESTIONS) {
+    ensureSession();
+    const batch = ids.slice(start, start + NOTE_HEADS_MAX_QUESTIONS);
+    heads.push(...(await fetchStudentNoteHeadsApi(attemptId, batch, signal)));
+    ensureSession();
+  }
+  return heads;
+}
 
 /** 待传未追平的通用文案（dirty/uploading 共用；原文两处字面量收敛） */
 const UNTRACKED_NOTE_REASON = "草稿尚未保存完整（网络不稳定，正在重试）";
@@ -177,13 +196,14 @@ export async function prepareSubmitEvidence(input: {
   signal?: AbortSignal;
   assertActive?: () => void;
 }): Promise<SubmitEvidencePrep> {
+  const epoch = getDraftSessionEpoch();
   const check = () => {
     input.signal?.throwIfAborted();
     input.assertActive?.();
+    if (epoch !== getDraftSessionEpoch())
+      throw new Error("作答会话已切换，请重新打开练习");
   };
   check();
-  // ① 冻结编辑（模态弹层覆盖）后追平本卷草稿（先排干本地落盘再上传再
-  //    排干——语义见 note-sync.catchUpNotes）
   await catchUpNotes(input.attemptId);
   check();
 
@@ -197,27 +217,13 @@ export async function prepareSubmitEvidence(input: {
   check();
 
   // ② 本卷记录（attempt 前缀单事务装载，strictRead 读失败抛错≠无记录）
-  //    与整卷服务端 head 同窗并发读取（T6R.14：一次批量 POST，N 逐题 GET
-  //    收敛；head 全部成功才可声明——任一失败整组 reject 抛给调用方）
+  //    与整卷服务端 head 同窗并发读取。历史超限卷分批保序，全部成功后再声明。
   const session = currentNoteSession();
   const [records, heads] = await Promise.all([
     session === null
       ? Promise.resolve(new Map<string, NoteLocalRecord>())
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
-    // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 经 hc
-    // ClientRequestOptions.init 透传（C6 单分支）。
-    // 返回值已由 api 收口为按请求序对齐的 head 数组（缺条在 api 层统一抛
-    // 契约违错误——整组 reject 阻止交卷，不产出缺题声明）
-    fetchStudentNoteHeadsApi(
-      input.attemptId,
-      input.questionIds,
-      input.signal
-        ? AbortSignal.any([
-            input.signal,
-            AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
-          ])
-        : AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
-    ),
+    readSubmitHeads(input.attemptId, input.questionIds, check, input.signal),
   ]);
   check();
 
@@ -275,6 +281,7 @@ export async function prepareSubmitEvidence(input: {
     input.attemptId,
     input.questionIds,
   );
+  check();
   problems.push(
     ...annotationProblems.filter(
       (problem) => !input.allowMissing?.has(problem.questionId),

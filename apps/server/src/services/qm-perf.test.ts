@@ -91,7 +91,7 @@ function makeEnv(): PerfEnv {
     true,
   );
   const studentId = "student-qm-perf-1";
-  const courseId = "course-qm-perf";
+  const courseId = randomUUID();
   const unitId = "性能度量卷";
   const now = "2026-10-25T12:00:00.000Z";
   db.insert(students)
