@@ -22,7 +22,6 @@ import {
 } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  fetchStudentAiAttemptReviewDetailApi,
   fetchStudentAiQueueSummaryApi,
   listStudentAiQueueApi,
   postStudentAiAttemptReviewActionApi,
@@ -30,7 +29,11 @@ import {
 import { attemptOriginLineOf } from "./AiQueueItem";
 import { AiQueuePanel } from "./AiQueuePanel";
 import { aiQueueEntriesOf, batchProgressTextOf } from "./ai-queue-groups";
-import { listStudentAiAttemptReviewQueueApi } from "./attempt-review-queue-api";
+import {
+  fetchStudentAiAttemptReviewDetailApi,
+  listStudentAiAttemptReviewQueueApi,
+} from "./attempt-review-api";
+import { useAttemptReviewOverlay } from "./attempt-review-overlay";
 
 /**
  * 「求助记录」的任务呈现：整卷复盘 / 批量复盘错题 / 单题求助三类一眼分清；
@@ -44,11 +47,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchStudentAiQueueSummaryApi: vi.fn(),
     listStudentAiQueueApi: vi.fn(),
-    fetchStudentAiAttemptReviewDetailApi: vi.fn(),
     postStudentAiAttemptReviewActionApi: vi.fn(),
   };
 });
-vi.mock("./attempt-review-queue-api", () => ({
+vi.mock("./attempt-review-api", () => ({
+  fetchStudentAiAttemptReviewDetailApi: vi.fn(),
   listStudentAiAttemptReviewQueueApi: vi.fn(),
 }));
 
@@ -394,7 +397,7 @@ describe("求助记录：整卷复盘", () => {
     ).toHaveLength(1);
     expect(mockedReviewDetail).not.toHaveBeenCalled();
     expect(mockedReviewAction).not.toHaveBeenCalled();
-    expect(mockedReviewQueue).toHaveBeenCalledWith("exclude");
+    expect(mockedReviewQueue).toHaveBeenCalledWith("exclude", undefined);
   });
 
   it("从别的页面点「查看整卷复盘报告」：去那次作答的结果页打开这份报告，并带回程", async () => {
@@ -413,62 +416,63 @@ describe("求助记录：整卷复盘", () => {
     expect(mockedReviewAction).not.toHaveBeenCalled();
   });
 
-  it("已在这次作答的结果页：原地打开，保留当前位置参数，不改写回程；后退先关报告、仍在结果页", async () => {
-    mockedReviewQueue.mockResolvedValue({
-      tasks: [reviewTask()],
-      nextCursor: null,
-      origins: { [REVIEW_TASK_ID]: ATTEMPT_ORIGIN },
-    });
-    const onNavigated = vi.fn();
-    const resultLocation = `/s/attempts/${ATTEMPT_ID}?reviewQuestion=q-8&returnTo=%2Fs%2Frecords`;
-    function BrowserBack() {
-      const navigate = useNavigate();
-      return (
-        <button type="button" onClick={() => void navigate(-1)}>
-          浏览器后退
-        </button>
-      );
-    }
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <MemoryRouter
-          initialEntries={["/s/records", resultLocation]}
-          initialIndex={1}
-        >
-          <Routes>
-            <Route path="/s/records" element={<LocationProbe />} />
-            <Route
-              path="/s/attempts/:id"
-              element={
-                <>
-                  <LocationProbe />
-                  <BrowserBack />
-                  <AiQueuePanel
-                    currentAttemptId={ATTEMPT_ID}
-                    onNavigated={onNavigated}
-                  />
-                </>
-              }
+  it.each(["/s/attempts", "/s/assignments"])(
+    "%s 的同卷报告原地打开，后退先关报告",
+    async (prefix) => {
+      mockedReviewQueue.mockResolvedValue({
+        tasks: [reviewTask()],
+        nextCursor: null,
+        origins: { [REVIEW_TASK_ID]: ATTEMPT_ORIGIN },
+      });
+      const onNavigated = vi.fn();
+      const resultLocation = `${prefix}/${ATTEMPT_ID}?reviewQuestion=q-8&returnTo=%2Fs%2Frecords`;
+      function ResultPage() {
+        const navigate = useNavigate();
+        const overlay = useAttemptReviewOverlay();
+        return (
+          <>
+            <LocationProbe />
+            <button type="button" onClick={() => void navigate(-1)}>
+              浏览器后退
+            </button>
+            <AiQueuePanel
+              currentAttemptId={ATTEMPT_ID}
+              onOpenAttemptReview={overlay.open}
+              onNavigated={onNavigated}
             />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "查看整卷复盘报告" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("location").textContent).toBe(
-        `${resultLocation}&aiReview=${REVIEW_TASK_ID}`,
-      ),
-    );
-    expect(onNavigated).toHaveBeenCalledTimes(1);
-    // 和顶栏入口一样是「页内打开」：新增一条历史，后退一步回到没有报告的结果页
-    fireEvent.click(screen.getByRole("button", { name: "浏览器后退" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("location").textContent).toBe(resultLocation),
-    );
-  });
+          </>
+        );
+      }
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter
+            initialEntries={["/s/records", resultLocation]}
+            initialIndex={1}
+          >
+            <Routes>
+              <Route path="/s/records" element={<LocationProbe />} />
+              <Route path="/s/attempts/:id" element={<ResultPage />} />
+              <Route path="/s/assignments/:id" element={<ResultPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "查看整卷复盘报告" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).toBe(
+          `${resultLocation}&aiReview=${REVIEW_TASK_ID}`,
+        ),
+      );
+      expect(onNavigated).toHaveBeenCalledTimes(1);
+      // 和顶栏入口一样是「页内打开」：新增一条历史，后退一步回到没有报告的结果页
+      fireEvent.click(screen.getByRole("button", { name: "浏览器后退" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).toBe(resultLocation),
+      );
+    },
+  );
 
   it("等待领取的整卷任务：按钮是「查看进度」，打开的是面板而不是报告", async () => {
     mockedReviewQueue.mockResolvedValue({
@@ -490,31 +494,31 @@ describe("求助记录：整卷复盘", () => {
     );
   });
 
-  it("「本次练习」范围只留本次作答的整卷任务；已归档分组按 only 取数", async () => {
-    mockedReviewQueue.mockResolvedValue({
-      tasks: [
-        reviewTask(),
-        reviewTask({ id: "other-review", attemptId: OTHER_ATTEMPT_ID }),
-      ],
-      nextCursor: null,
+  it("「本次练习」让服务端在分页前筛选，归档切换保留作答范围", async () => {
+    const otherTasks = Array.from({ length: 50 }, (_, index) =>
+      reviewTask({ id: `other-review-${index}`, attemptId: OTHER_ATTEMPT_ID }),
+    );
+    mockedReviewQueue.mockImplementation(async (_archived, attemptId) => ({
+      tasks: attemptId === ATTEMPT_ID ? [reviewTask()] : otherTasks,
+      nextCursor: attemptId === ATTEMPT_ID ? null : "next",
       origins: {
         [REVIEW_TASK_ID]: ATTEMPT_ORIGIN,
-        "other-review": { ...ATTEMPT_ORIGIN, title: "另一份卷" },
+        "other-review-0": { ...ATTEMPT_ORIGIN, title: "另一份卷" },
       },
-    });
+    }));
     renderPanel("/s/records", { currentAttemptId: ATTEMPT_ID });
     const section = await screen.findByRole("list", {
       name: "整卷复盘任务列表",
     });
     expect(within(section).getAllByRole("listitem")).toHaveLength(1);
     expect(screen.queryByText(/另一份卷/)).toBeNull();
+    expect(mockedReviewQueue).toHaveBeenCalledWith("exclude", ATTEMPT_ID);
     fireEvent.click(screen.getByRole("button", { name: "全部来源" }));
-    expect(
-      within(
-        screen.getByRole("list", { name: "整卷复盘任务列表" }),
-      ).getAllByRole("listitem"),
-    ).toHaveLength(2);
+    expect(await screen.findByText(/另一份卷/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "本次练习" }));
     fireEvent.click(screen.getByRole("tab", { name: "已归档" }));
-    await waitFor(() => expect(mockedReviewQueue).toHaveBeenCalledWith("only"));
+    await waitFor(() =>
+      expect(mockedReviewQueue).toHaveBeenCalledWith("only", ATTEMPT_ID),
+    );
   });
 });

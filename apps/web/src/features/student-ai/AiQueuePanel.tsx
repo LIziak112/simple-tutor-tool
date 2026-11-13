@@ -26,7 +26,6 @@ import {
   ATTEMPT_REVIEW_PARAM,
   attemptReviewHref,
 } from "@/features/student-ai/attempt-review-entry";
-import { useAttemptReviewOverlay } from "@/features/student-ai/attempt-review-overlay";
 import { useAttemptReviewQueue } from "@/features/student-ai/attempt-review-queue";
 import { errorMessageOf } from "@/features/student-ai/error-text";
 
@@ -54,12 +53,14 @@ export interface AiQueueNavigationProps {
   currentAttemptId?: string | undefined;
   onOpenTask?: ((task: AiTaskPublic) => Promise<boolean>) | undefined;
   onOpenQuestion?: ((task: AiTaskPublic) => Promise<boolean>) | undefined;
+  onOpenAttemptReview?: (target: string) => void;
 }
 export function AiQueuePanel({
   onNavigated,
   currentAttemptId,
   onOpenTask,
   onOpenQuestion,
+  onOpenAttemptReview,
 }: AiQueueNavigationProps & { onNavigated?: () => void }) {
   const [group, setGroup] = useState<"active" | "archived">("active");
   const [scope, setScope] = useState<"current" | "all">(
@@ -73,7 +74,6 @@ export function AiQueuePanel({
   const actionMutation = useStudentAiQueueAction();
   const navigate = useNavigate();
   const location = useLocation();
-  const reviewOverlay = useAttemptReviewOverlay();
 
   const summary = summaryQuery.data;
   const badge = summary !== undefined ? aiQueueBadgeOf(summary) : null;
@@ -88,8 +88,11 @@ export function AiQueuePanel({
         taskId
       ],
   );
-  const reviewQuery = useAttemptReviewQueue(archived);
-  const reviewTasks = (reviewQuery.data?.tasks ?? []).filter(inScope);
+  const reviewQuery = useAttemptReviewQueue(
+    archived,
+    scope === "current" ? currentAttemptId : undefined,
+  );
+  const reviewTasks = reviewQuery.data?.tasks ?? [];
 
   /** 来源位置（目标页「返回原页面」用）：当前完整位置去掉一次性的打开参数 */
   const sourceLocation = () => {
@@ -154,9 +157,8 @@ export function AiQueuePanel({
     target: string,
   ) => {
     onNavigated?.();
-    const resultPath = `/s/attempts/${encodeURIComponent(task.attemptId)}`;
-    if (location.pathname === resultPath) {
-      reviewOverlay.open(target);
+    if (task.attemptId === currentAttemptId && onOpenAttemptReview) {
+      onOpenAttemptReview(target);
       return;
     }
     void navigate(attemptReviewHref(task.attemptId, target, sourceLocation()));

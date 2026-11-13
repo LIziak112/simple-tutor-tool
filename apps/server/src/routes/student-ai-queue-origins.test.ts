@@ -355,6 +355,26 @@ describe("整卷任务列表：账号范围、来源摘要与归档过滤", () =
     const scoped = await listReviews(app, cookie, `attemptId=${attemptId}`);
     expect(scoped.data.tasks).toHaveLength(1);
     expect(scoped.data.origins).toBeUndefined();
+
+    const newerAttemptId = submittedAttempt(db, studentId);
+    addWrongQuestion(db, newerAttemptId, "q-2");
+    const newer = await createWholeReview(app, cookie, newerAttemptId);
+    db.update(aiAttemptReviewTasks)
+      .set({ createdAt: "2000-01-01T00:00:00.000Z" })
+      .where(eq(aiAttemptReviewTasks.id, task.id))
+      .run();
+    const newest = await listReviews(app, cookie, "limit=1");
+    expect(newest.data.tasks.map((row) => row.id)).toEqual([newer.id]);
+    const current = await listReviews(
+      app,
+      cookie,
+      `attemptId=${attemptId}&archived=exclude&includeOrigins=1&limit=1`,
+    );
+    expect(current.data.tasks.map((row) => row.id)).toEqual([task.id]);
+    expect(current.data.origins).toEqual(global.data.origins);
+    assertNoLeak(current.body);
+    expect(current.raw).not.toContain(SENTINEL_STEM);
+    expect(current.raw).not.toContain(SENTINEL_SOLUTION);
   });
 
   it("archived=exclude / only 互补；缺省返回全部；非法取值 400", async () => {

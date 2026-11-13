@@ -196,23 +196,12 @@ export function attemptReviewEntryViewOf(
   }
 }
 
-/**
- * 入口状态查询（只读）：任务列表 + 无任务时的可用性预览。
- * - 可用门全部在服务端：预览接口（整卷已交 + 答案已公布 + 全部题当前策略允许）
- *   拒绝即不可用；
- * - #102-01：等待领取 / 处理中时每 15 秒核对一次（页面隐藏时 TanStack 默认
- *   暂停）；无任务 / 已有结局不轮询；
- * - #102-02：TanStack v5 重取失败后 status=error 但仍保留上次 data——教师刚
- *   收紧策略时不能拿旧缓存继续引导点击，所以只认本轮 isSuccess。
- */
-export function useAttemptReviewEntry(
-  attemptId: string,
-  released: boolean,
-): AttemptReviewEntryState {
-  const tasksQuery = useQuery({
+/** 入口与进度面板共用列表；在途任务每 15 秒刷新，页面隐藏时暂停。 */
+export function useAttemptReviewTasks(attemptId: string, enabled: boolean) {
+  return useQuery({
     queryKey: attemptReviewListKey(attemptId),
     queryFn: () => listStudentAiAttemptReviewsApi(attemptId),
-    enabled: released,
+    enabled,
     staleTime: 15_000,
     retry: false,
     refetchInterval: (query) => {
@@ -224,6 +213,14 @@ export function useAttemptReviewEntry(
         : false;
     },
   });
+}
+
+/** 可发起状态只认服务端成功的预览，重取被拒时不沿用旧数据。 */
+export function useAttemptReviewEntry(
+  attemptId: string,
+  released: boolean,
+): AttemptReviewEntryState {
+  const tasksQuery = useAttemptReviewTasks(attemptId, released);
   const task =
     tasksQuery.data === undefined
       ? undefined

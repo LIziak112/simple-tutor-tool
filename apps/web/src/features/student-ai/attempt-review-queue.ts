@@ -2,22 +2,25 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiAttemptReviewAction } from "@tutor/contract";
 import { postStudentAiAttemptReviewActionApi } from "@/lib/api";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
+import { listStudentAiAttemptReviewQueueApi } from "./attempt-review-api";
 import {
   attemptReviewListKey,
   attemptReviewPreviewKey,
   attemptReviewQueueKey,
 } from "./attempt-review-entry";
-import { listStudentAiAttemptReviewQueueApi } from "./attempt-review-queue-api";
 
 /**
  * 「求助记录」里的整卷复盘任务查询与列表上的显式动作。列表只读公开视图——
  * 不取报告正文、不记已读。
  */
 
-export function useAttemptReviewQueue(archived: "exclude" | "only") {
+export function useAttemptReviewQueue(
+  archived: "exclude" | "only",
+  attemptId?: string,
+) {
   return useQuery({
-    queryKey: [...attemptReviewQueueKey, archived],
-    queryFn: () => listStudentAiAttemptReviewQueueApi(archived),
+    queryKey: [...attemptReviewQueueKey, archived, attemptId],
+    queryFn: () => listStudentAiAttemptReviewQueueApi(archived, attemptId),
     refetchOnWindowFocus: false,
   });
 }

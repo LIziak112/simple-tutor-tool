@@ -13,7 +13,6 @@ import {
   type AiAttemptReviewAction,
   type AiAttemptReviewCreateData,
   type AiAttemptReviewCreateRequest,
-  type AiAttemptReviewDetailData,
   type AiAttemptReviewListData,
   type AiAttemptReviewPreviewData,
   type AiAttemptReviewTaskPublic,
@@ -3068,13 +3067,6 @@ export function createStudentAiAttemptReviewApi(
       body: JSON.stringify(request),
     }),
   );
-}
-
-/** 整体复盘详情（GET /ai/attempt-reviews/:id）：任务 + 已收到的结构化报告 */
-export function fetchStudentAiAttemptReviewDetailApi(
-  taskId: string,
-): Promise<AiAttemptReviewDetailData> {
-  return callApi(() => fetch(`/api/student/ai/attempt-reviews/${taskId}`));
 }
 
 /** 整体复盘显式动作（POST /ai/attempt-reviews/:id/actions） */

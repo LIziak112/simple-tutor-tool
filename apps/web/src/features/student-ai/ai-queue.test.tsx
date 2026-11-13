@@ -49,7 +49,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 // 整卷复盘段不是本文件的关注点：恒返回空列表（分组呈现见 ai-queue-groups.test）
-vi.mock("@/features/student-ai/attempt-review-queue-api", () => ({
+vi.mock("@/features/student-ai/attempt-review-api", () => ({
   listStudentAiAttemptReviewQueueApi: vi.fn(async () => ({
     tasks: [],
     nextCursor: null,

@@ -636,6 +636,7 @@ export function AttemptResultView({
             questions={flatQuestions}
             released={released}
             companion={aiCompanion}
+            onOpenAttemptReview={attemptReview.open}
           />
         </>
       }
@@ -860,9 +861,7 @@ export function AttemptResultView({
             released={released}
             attemptLabel={`${data.title} · 第 ${attempt.attemptNo} 次${attempt.submittedAt ? ` · ${formatCnTime(attempt.submittedAt)} 交卷` : ""}`}
             overlay={attemptReview}
-            onJumpToQuestion={(questionNo) =>
-              reviewLocation.jump(questionIds[questionNo - 1] ?? "")
-            }
+            onJumpToQuestion={reviewLocation.jump}
           />
 
           {/* 模块 7：按模块（单元）看答对 / 作答 / 跳过 / 不确定但对 / 用时 / 配额 */}

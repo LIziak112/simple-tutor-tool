@@ -24,23 +24,22 @@ export function AttemptReviewHost({
   /** 卷名 · 第几次 · 交卷时间：报告头部据此写明看的是哪一次作答 */
   readonly attemptLabel: string;
   readonly overlay: AttemptReviewOverlay;
-  /** 定位到卷内第 N 题（报告里的证据题号） */
-  readonly onJumpToQuestion: (questionNo: number) => void;
+  readonly onJumpToQuestion: (questionId: string) => void;
 }) {
   // 点证据题号：先关报告，等地址生效后再定位——关闭可能是后退一步（异步
   // 生效），定位也要改地址，同一拍里连改两次会互相覆盖
-  const [pendingQuestionNo, setPendingQuestionNo] = useState<number | null>(
+  const [pendingQuestionId, setPendingQuestionId] = useState<string | null>(
     null,
   );
   useEffect(() => {
-    if (overlay.target !== null || pendingQuestionNo === null) return;
+    if (overlay.target !== null || pendingQuestionId === null) return;
     // 排在弹层归还焦点之后执行，题目标题才能拿到焦点
     const timer = window.setTimeout(() => {
-      setPendingQuestionNo(null);
-      onJumpToQuestion(pendingQuestionNo);
+      setPendingQuestionId(null);
+      onJumpToQuestion(pendingQuestionId);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [overlay.target, pendingQuestionNo, onJumpToQuestion]);
+  }, [overlay.target, pendingQuestionId, onJumpToQuestion]);
 
   if (overlay.target === null) return null;
   if (overlay.target === ATTEMPT_REVIEW_PANEL_TARGET) {
@@ -56,12 +55,13 @@ export function AttemptReviewHost({
   }
   return (
     <AttemptReviewReportReader
+      key={overlay.target}
       attemptId={attemptId}
       taskId={overlay.target}
       attemptLabel={attemptLabel}
       onClose={overlay.close}
-      onJumpToQuestion={(questionNo) => {
-        setPendingQuestionNo(questionNo);
+      onJumpToQuestion={(questionId) => {
+        setPendingQuestionId(questionId);
         overlay.close();
       }}
       onOpenPanel={() => overlay.open(ATTEMPT_REVIEW_PANEL_TARGET)}

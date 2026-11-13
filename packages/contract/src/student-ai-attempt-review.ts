@@ -455,6 +455,8 @@ export const aiAttemptReviewListQuerySchema = z
     status: aiAttemptReviewStatusSchema.optional(),
     /** 归档过滤（与逐题任务列表同义）：exclude = 未归档、only = 已归档；缺省 = 全部 */
     archived: z.enum(["exclude", "only"]).optional(),
+    /** 按作答过滤时，求助记录可显式请求来源摘要。 */
+    includeOrigins: z.literal("1").optional(),
     limit: z.number().int().min(1).max(50).default(20),
     /** 不透明游标（base64url JSON，与单题任务列表同款） */
     cursor: z
@@ -468,7 +470,7 @@ export const aiAttemptReviewListDataSchema = z
   .object({
     tasks: z.array(aiAttemptReviewTaskPublicSchema),
     nextCursor: z.string().nullable(),
-    /** 作答级来源摘要按任务 id 索引（仅账号范围列表返回；按 attempt 过滤时省略） */
+    /** 作答级来源摘要按任务 id 索引（账号范围默认附带） */
     origins: z.record(z.string(), aiAttemptOriginSummarySchema).optional(),
   })
   .strict();
@@ -489,6 +491,10 @@ export const aiAttemptReviewDetailDataSchema = z
   .object({
     task: aiAttemptReviewTaskPublicSchema,
     result: aiAttemptReviewReportSchema.nullable(),
+    /** 报告快照的题序；下标 0 对应第 1 题。无报告时为空。 */
+    questionIds: z
+      .array(z.string().min(1))
+      .max(AI_ATTEMPT_REVIEW_MAX_QUESTIONS),
   })
   .strict();
 export type AiAttemptReviewDetailData = z.infer<

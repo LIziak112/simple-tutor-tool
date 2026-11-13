@@ -419,6 +419,7 @@ export function createStudentAiRoutes(
           attemptId: c.req.query("attemptId") ?? undefined,
           status: c.req.query("status") ?? undefined,
           archived: c.req.query("archived") ?? undefined,
+          includeOrigins: c.req.query("includeOrigins") ?? undefined,
           limit: rawLimit === undefined ? undefined : Number(rawLimit),
           cursor: c.req.query("cursor") ?? undefined,
         });
@@ -429,7 +430,8 @@ export function createStudentAiRoutes(
             `查询参数不合法：${firstIssueMessage(parsed.error)}`,
           );
         }
-        const { attemptId, status, archived, limit, cursor } = parsed.data;
+        const { attemptId, status, archived, includeOrigins, limit, cursor } =
+          parsed.data;
         return c.json({
           ok: true,
           data: listAttemptReviewTasks(db, {
@@ -437,12 +439,14 @@ export function createStudentAiRoutes(
             ...(attemptId !== undefined && { attemptId }),
             ...(status !== undefined && { status }),
             ...(archived !== undefined && { archived }),
+            ...(includeOrigins === "1" && { includeOrigins: true }),
             ...(cursor !== undefined && { cursor }),
             limit,
           }),
         });
       })
       .get("/ai/attempt-reviews/:id", (c) => {
+        c.header("Cache-Control", "no-store");
         return c.json({
           ok: true,
           data: attemptReviewDetailOf(db, {

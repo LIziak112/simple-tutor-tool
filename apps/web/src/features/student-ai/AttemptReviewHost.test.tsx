@@ -1,5 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   AiAttemptReviewDetailData,
   AiAttemptReviewPreviewData,
@@ -17,13 +24,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentAiAttemptReviewApi,
   createStudentAiBatchReviewApi,
-  fetchStudentAiAttemptReviewDetailApi,
   fetchStudentAiAttemptReviewPreviewApi,
   listStudentAiAttemptReviewsApi,
   postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
 import { AttemptReviewHost } from "./AttemptReviewHost";
 import { AttemptReviewTopBarEntry } from "./AttemptReviewTopBarEntry";
+import { fetchStudentAiAttemptReviewDetailApi } from "./attempt-review-api";
+import { attemptReviewListKey } from "./attempt-review-entry";
 import {
   ATTEMPT_REVIEW_LAYER_STATE,
   useAttemptReviewOverlay,
@@ -35,12 +43,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     listStudentAiAttemptReviewsApi: vi.fn(),
     fetchStudentAiAttemptReviewPreviewApi: vi.fn(),
-    fetchStudentAiAttemptReviewDetailApi: vi.fn(),
     postStudentAiAttemptReviewActionApi: vi.fn(),
     createStudentAiAttemptReviewApi: vi.fn(),
     createStudentAiBatchReviewApi: vi.fn(),
   };
 });
+vi.mock("./attempt-review-api", () => ({
+  fetchStudentAiAttemptReviewDetailApi: vi.fn(),
+}));
 
 const ATTEMPT_ID = "11111111-1111-4111-8111-111111111111";
 const TASK_ID = "22222222-2222-4222-8222-222222222222";
@@ -97,6 +107,7 @@ const PREVIEW: AiAttemptReviewPreviewData = {
 
 const DETAIL: AiAttemptReviewDetailData = {
   task: taskOf(),
+  questionIds: Array.from({ length: 27 }, (_, index) => `q-${index + 1}`),
   result: {
     schemaVersion: 1,
     overview: "整体基础扎实。",
@@ -166,13 +177,12 @@ function Harness() {
 }
 
 /** 历史记录从来源页起：来源页在下，结果页（当前）在上 */
-function renderWith(entries: InitialEntry[]) {
+function renderWith(
+  entries: InitialEntry[],
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={entries} initialIndex={entries.length - 1}>
         <Routes>
           <Route path="/s/home" element={<p>来源页</p>} />
@@ -183,8 +193,8 @@ function renderWith(entries: InitialEntry[]) {
   );
 }
 
-const renderAt = (search: string) =>
-  renderWith(["/s/home", `${RESULT_PATH}${search}`]);
+const renderAt = (search: string, client?: QueryClient) =>
+  renderWith(["/s/home", `${RESULT_PATH}${search}`], client);
 
 const searchNow = () => screen.getByTestId("location").textContent;
 // 弹层打开时页面其余部分对读屏隐藏，按隐藏元素查
@@ -223,7 +233,7 @@ describe("整卷复盘承载：地址驱动", () => {
     mockedDetail.mockResolvedValue(DETAIL);
     renderAt(`?reviewQuestion=q-3&aiReview=${TASK_ID}&aiFrom=%2Fs%2Fhome`);
     expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
-    expect(mockedDetail).toHaveBeenCalledWith(TASK_ID);
+    expect(mockedDetail).toHaveBeenCalledWith(TASK_ID, expect.any(AbortSignal));
     fireEvent.click(screen.getByRole("button", { name: "关闭，回到作答结果" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(searchNow()).toBe("?reviewQuestion=q-3&aiFrom=%2Fs%2Fhome");
@@ -276,6 +286,30 @@ describe("整卷复盘承载：地址驱动", () => {
     );
   });
 
+  it("进度面板保持打开时，共用列表刷新后显示已出报告", async () => {
+    mockedList.mockResolvedValue({
+      tasks: [taskOf({ status: "created", hasResult: false })],
+      nextCursor: null,
+    });
+    mockedPreview.mockResolvedValue(PREVIEW);
+    const client = new QueryClient();
+    renderAt("?aiReview=panel", client);
+    const panel = await screen.findByRole("dialog", { name: "整卷复盘" });
+    expect(await within(panel).findByText("等待领取")).toBeInTheDocument();
+
+    mockedList.mockResolvedValue({ tasks: [taskOf()], nextCursor: null });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: attemptReviewListKey(ATTEMPT_ID),
+      });
+    });
+    expect(
+      await within(panel).findByRole("button", { name: "查看整卷复盘报告" }),
+    ).toBeInTheDocument();
+    expect(mockedDetail).not.toHaveBeenCalled();
+    expect(mockedAction).not.toHaveBeenCalled();
+  });
+
   it("首次发起：确认后只发 1 次整卷任务创建请求，不创建任何逐题任务", async () => {
     mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
     mockedPreview.mockResolvedValue(PREVIEW);
@@ -319,7 +353,7 @@ describe("整卷复盘承载：地址驱动", () => {
     mockedDetail.mockResolvedValue(DETAIL);
     renderAt(`?aiReview=${TASK_ID}`);
     fireEvent.click(await screen.findByRole("button", { name: "第 8 题" }));
-    await waitFor(() => expect(onJumpToQuestion).toHaveBeenCalledWith(8));
+    await waitFor(() => expect(onJumpToQuestion).toHaveBeenCalledWith("q-8"));
     expect(searchNow()).toBe("");
     expect(screen.queryByText("整体基础扎实。")).toBeNull();
     expect(onJumpToQuestion).toHaveBeenCalledTimes(1);
@@ -421,7 +455,7 @@ describe("整卷复盘承载：浏览器后退 / 手机返回手势先关浮层"
     renderAt("");
     await openFromTopBar();
     fireEvent.click(screen.getByRole("button", { name: "第 8 题" }));
-    await waitFor(() => expect(onJumpToQuestion).toHaveBeenCalledWith(8));
+    await waitFor(() => expect(onJumpToQuestion).toHaveBeenCalledWith("q-8"));
     expect(onJumpToQuestion).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(searchNow()).toBe("");

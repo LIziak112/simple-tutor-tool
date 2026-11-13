@@ -271,6 +271,12 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       );
       expect(claim.claimed).toBe(true);
       await expect(entry).toHaveText("整卷复盘 · 处理中", { timeout: 20_000 });
+      await entry.click();
+      const progress = page.getByRole("dialog", {
+        name: "整卷复盘",
+        exact: true,
+      });
+      await expect(progress.getByText("处理中", { exact: true })).toBeVisible();
       const submitted = await callStudentTool(
         request,
         token,
@@ -315,6 +321,12 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         },
       );
       expect(submitted.submitted).toBe(true);
+      await expect(
+        progress.getByRole("button", { name: "查看整卷复盘报告" }),
+      ).toBeVisible({ timeout: 20_000 });
+      expect((await reviewTasksOf(attemptId))[0]?.openedAt).toBeNull();
+      await page.goBack();
+      await expect(progress).toBeHidden();
 
       // —— ③ 报告已出：顶栏变「查看整卷复盘报告」并标未读；看状态不记已读 ——
       await expect(entry).toHaveAttribute(

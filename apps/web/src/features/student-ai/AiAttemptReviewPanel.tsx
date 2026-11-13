@@ -2,7 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   AI_QUESTION_MAX_CHARS,
   type AiAttemptReviewPreviewData,
-  type AiAttemptReviewTaskPublic,
 } from "@tutor/contract";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -17,7 +16,6 @@ import {
   ApiError,
   createStudentAiAttemptReviewApi,
   fetchStudentAiAttemptReviewPreviewApi,
-  listStudentAiAttemptReviewsApi,
   postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
@@ -28,6 +26,7 @@ import {
   attemptReviewListKey,
   attemptReviewPreviewKey,
   attemptReviewQueueKey,
+  useAttemptReviewTasks,
 } from "./attempt-review-entry";
 import { errorMessageOf } from "./error-text";
 
@@ -60,7 +59,8 @@ export function AiAttemptReviewPanel(props: {
   const [preview, setPreview] = useState<AiAttemptReviewPreviewData | null>(
     null,
   );
-  const [tasks, setTasks] = useState<readonly AiAttemptReviewTaskPublic[]>([]);
+  const tasksQuery = useAttemptReviewTasks(attemptId, open);
+  const tasks = tasksQuery.data?.tasks ?? [];
   const [loading, setLoading] = useState(false);
   const [purpose, setPurpose] = useState(DEFAULT_PURPOSE);
   const [submitting, setSubmitting] = useState(false);
@@ -74,6 +74,7 @@ export function AiAttemptReviewPanel(props: {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setPreview(null);
     fetchStudentAiAttemptReviewPreviewApi(attemptId)
       .then((data) => {
         if (!cancelled) setPreview(data);
@@ -85,24 +86,6 @@ export function AiAttemptReviewPanel(props: {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, attemptId, refreshTick]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshTick 是手动重新取数的触发器，不是遗漏
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    listStudentAiAttemptReviewsApi(attemptId)
-      .then((data) => {
-        if (!cancelled) setTasks(data.tasks);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) {
-          setError(errorMessageOf(cause, "任务读取失败，请稍后重试"));
-        }
       });
     return () => {
       cancelled = true;
@@ -189,6 +172,11 @@ export function AiAttemptReviewPanel(props: {
         {loading && (
           <p className="text-sm text-muted-foreground">正在核对本次练习范围…</p>
         )}
+        {tasksQuery.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessageOf(tasksQuery.error, "任务读取失败，请稍后重试")}
+          </p>
+        )}
         {error !== null && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -246,61 +234,64 @@ export function AiAttemptReviewPanel(props: {
           </ul>
         )}
 
-        {preview !== null && counts !== undefined && !hasActiveTask && (
-          <div className="flex flex-col gap-3">
-            <p className="text-sm">
-              本次练习共 {counts.total} 题：判对 {counts.correctCount} · 判错{" "}
-              {counts.incorrectCount} · 未作答 {counts.unansweredCount} · 待批{" "}
-              {counts.pendingCount}
-              {counts.unknownAnswerCount > 0
-                ? `（含 ${counts.unknownAnswerCount} 题是否作答无法确认）`
-                : ""}
-              。
-            </p>
-            {counts.accuracyAmongGraded !== null && (
-              <p className="text-sm text-muted-foreground">
-                已判分正确率 {Math.round(counts.accuracyAmongGraded * 100)}%
-                （分母为已判分题数，待批不算错）。
+        {preview !== null &&
+          counts !== undefined &&
+          tasksQuery.isSuccess &&
+          !hasActiveTask && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm">
+                本次练习共 {counts.total} 题：判对 {counts.correctCount} · 判错{" "}
+                {counts.incorrectCount} · 未作答 {counts.unansweredCount} · 待批{" "}
+                {counts.pendingCount}
+                {counts.unknownAnswerCount > 0
+                  ? `（含 ${counts.unknownAnswerCount} 题是否作答无法确认）`
+                  : ""}
+                。
               </p>
-            )}
-            <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
-              {preview.fieldNotes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-              {preview.notes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-            <div className="flex flex-col gap-1">
-              <label
-                htmlFor="attempt-review-purpose"
-                className="text-sm font-medium"
+              {counts.accuracyAmongGraded !== null && (
+                <p className="text-sm text-muted-foreground">
+                  已判分正确率 {Math.round(counts.accuracyAmongGraded * 100)}%
+                  （分母为已判分题数，待批不算错）。
+                </p>
+              )}
+              <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+                {preview.fieldNotes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+                {preview.notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="attempt-review-purpose"
+                  className="text-sm font-medium"
+                >
+                  复盘诉求
+                </label>
+                <Input
+                  id="attempt-review-purpose"
+                  value={purpose}
+                  onChange={(event) => setPurpose(event.target.value)}
+                  maxLength={AI_QUESTION_MAX_CHARS}
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                确认后只创建 1 条整卷任务，覆盖全部 {counts.total}{" "}
+                题，不会按题拆成多条。想让 AI
+                逐题讲解错题，请用顶栏的「批量复盘」。
+              </p>
+              <Button
+                className="min-h-11"
+                disabled={submitting}
+                onClick={() => void confirmCreate()}
               >
-                复盘诉求
-              </label>
-              <Input
-                id="attempt-review-purpose"
-                value={purpose}
-                onChange={(event) => setPurpose(event.target.value)}
-                maxLength={AI_QUESTION_MAX_CHARS}
-              />
+                {submitting
+                  ? "正在创建…"
+                  : `确认发起整卷复盘（${counts.total} 题）`}
+              </Button>
             </div>
-            <p className="text-sm text-muted-foreground">
-              确认后只创建 1 条整卷任务，覆盖全部 {counts.total}{" "}
-              题，不会按题拆成多条。想让 AI
-              逐题讲解错题，请用顶栏的「批量复盘」。
-            </p>
-            <Button
-              className="min-h-11"
-              disabled={submitting}
-              onClick={() => void confirmCreate()}
-            >
-              {submitting
-                ? "正在创建…"
-                : `确认发起整卷复盘（${counts.total} 题）`}
-            </Button>
-          </div>
-        )}
+          )}
       </DialogContent>
     </Dialog>
   );

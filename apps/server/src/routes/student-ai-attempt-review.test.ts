@@ -201,7 +201,22 @@ describe("整体复盘路由", () => {
       { headers: { cookie } },
     );
     expect(allowed.status).toBe(200);
-    expect(JSON.stringify(await allowed.json())).toContain(SENTINEL_SOLUTION);
+    expect(allowed.headers.get("Cache-Control")).toBe("no-store");
+    const allowedBody = aiAttemptReviewDetailOkSchema.parse(
+      await allowed.json(),
+    );
+    expect(allowedBody.data.result?.overview).toBe(SENTINEL_SOLUTION);
+    expect(allowedBody.data.questionIds).toEqual(["q1"]);
+    assertNoLeak(allowedBody, {
+      forbid: [
+        "stemMd",
+        "contextSnapshotJson",
+        "leaseToken",
+        "questionRevisionId",
+        "teacherComment",
+      ],
+    });
+    expect(JSON.stringify(allowedBody)).not.toContain(SENTINEL_STEM);
     const attempt = db
       .select()
       .from(attempts)
@@ -228,6 +243,7 @@ describe("整体复盘路由", () => {
       const body: unknown = await response.json();
       assertNoLeak(body);
       expect(JSON.stringify(body)).not.toContain(SENTINEL_SOLUTION);
+      expect(body).not.toHaveProperty("data.questionIds");
     }
     expect(
       db
@@ -397,6 +413,7 @@ describe("整体复盘路由", () => {
       true,
     );
     assertNoLeak(detailBody);
+    expect(detailBody).toHaveProperty("data.questionIds", []);
     expect(
       (detailBody as { data: AiAttemptReviewDetailData }).data.result,
     ).toBeNull();

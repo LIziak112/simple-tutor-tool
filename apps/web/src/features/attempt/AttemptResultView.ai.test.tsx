@@ -10,13 +10,13 @@ import type { AttemptResultData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureAiQuestionMaterials } from "@/features/export/ai-material-capture";
+import { fetchStudentAiAttemptReviewDetailApi } from "@/features/student-ai/attempt-review-api";
 import {
   connectedAiStatus,
   inappAiConnectionFixture,
 } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
-  fetchStudentAiAttemptReviewDetailApi,
   fetchStudentAiAttemptReviewPreviewApi,
   fetchStudentAiConnectionsApi,
   fetchStudentAiStatusApi,
@@ -48,10 +48,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
     followupStudentAiTaskApi: vi.fn(),
     listStudentAiAttemptReviewsApi: vi.fn(),
     fetchStudentAiAttemptReviewPreviewApi: vi.fn(),
-    fetchStudentAiAttemptReviewDetailApi: vi.fn(),
     postStudentAiAttemptReviewActionApi: vi.fn(),
   };
 });
+vi.mock("@/features/student-ai/attempt-review-api", () => ({
+  fetchStudentAiAttemptReviewDetailApi: vi.fn(),
+}));
 vi.mock("@/features/export/ai-material-capture", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -430,13 +432,14 @@ describe("结果页顶栏：整卷复盘入口", () => {
     ).toBeEmptyDOMElement();
   });
 
-  it("报告已出：顶栏主按钮带完整文字，打开报告写明卷名与轮次；点证据题号关闭并定位", async () => {
+  it("报告已出：证据题按报告快照的题目 ID 定位，即使当前题序已经变化", async () => {
     mockedReviewList.mockResolvedValue({
       tasks: [reviewTask],
       nextCursor: null,
     });
     mockedReviewDetail.mockResolvedValue({
       task: reviewTask,
+      questionIds: ["练习四-2", "练习四-1"],
       result: {
         schemaVersion: 1,
         overview: "失分集中在相反数。",
@@ -486,7 +489,7 @@ describe("结果页顶栏：整卷复盘入口", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() =>
       expect(
-        container.querySelector('[data-review-question="练习四-2"]'),
+        container.querySelector('[data-review-question="练习四-1"]'),
       ).toContainElement(document.activeElement as HTMLElement),
     );
   });
@@ -509,6 +512,7 @@ describe("结果页顶栏：整卷复盘入口", () => {
     mockedReviewList.mockResolvedValue({ tasks: [readTask], nextCursor: null });
     mockedReviewDetail.mockResolvedValue({
       task: readTask,
+      questionIds: ["练习四-1", "练习四-2"],
       result: {
         schemaVersion: 1,
         overview: "失分集中在相反数。",

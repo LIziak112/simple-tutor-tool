@@ -64,11 +64,13 @@ export function ResultAiActions({
   questions,
   released,
   companion,
+  onOpenAttemptReview,
 }: {
   attemptId: string;
   questions: readonly AttemptResultQuestion[];
   released: boolean;
   companion: ReturnType<typeof useResultAiCompanion>;
+  onOpenAttemptReview: (target: string) => void;
 }) {
   return (
     <>
@@ -91,6 +93,7 @@ export function ResultAiActions({
         currentAttemptId={companion.send.attemptId}
         onOpenTask={companion.openTask}
         onOpenQuestion={companion.openQuestion}
+        onOpenAttemptReview={onOpenAttemptReview}
       />
     </>
   );

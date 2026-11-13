@@ -35,14 +35,14 @@ export interface ListAttemptReviewInput {
   readonly status?: AiAttemptReviewStatus;
   /** 归档过滤（与逐题任务列表同义）：exclude = 未归档、only = 已归档；缺省 = 全部 */
   readonly archived?: "exclude" | "only";
+  readonly includeOrigins?: boolean;
   readonly limit: number;
   readonly cursor?: string;
 }
 
 /**
- * 稳定游标分页（createdAt + id 双键倒序，与逐题任务列表同款）。来源摘要只在
- * 账号范围（无 attemptId 过滤）计算——结果页自己知道是哪次作答，不付标题
- * 查询的成本（契约 origins 可省略）。
+ * 稳定游标分页（createdAt + id 双键倒序，与逐题任务列表同款）。账号范围默认附
+ * 来源摘要；按作答过滤时，只有求助记录显式请求才计算。
  */
 export function listAttemptReviewTasks(
   db: Db,
@@ -112,7 +112,8 @@ export function listAttemptReviewTasks(
     hasMore && last !== undefined
       ? encodeCursor({ c: last.createdAt, i: last.id })
       : null;
-  if (input.attemptId !== undefined) return { tasks, nextCursor };
+  if (input.attemptId !== undefined && !input.includeOrigins)
+    return { tasks, nextCursor };
   const attemptOrigins = attemptOriginSummariesOf(
     db,
     page.map((row) => row.attemptId),

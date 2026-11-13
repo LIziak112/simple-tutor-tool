@@ -1,4 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import {
   act,
   fireEvent,
@@ -12,22 +16,21 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ApiError,
-  fetchStudentAiAttemptReviewDetailApi,
-  postStudentAiAttemptReviewActionApi,
-} from "@/lib/api";
+import { ApiError, postStudentAiAttemptReviewActionApi } from "@/lib/api";
 import { AttemptReviewReportReader } from "./AttemptReviewReportReader";
+import { fetchStudentAiAttemptReviewDetailApi } from "./attempt-review-api";
 import { attemptReviewDetailKey } from "./attempt-review-entry";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    fetchStudentAiAttemptReviewDetailApi: vi.fn(),
     postStudentAiAttemptReviewActionApi: vi.fn(),
   };
 });
+vi.mock("./attempt-review-api", () => ({
+  fetchStudentAiAttemptReviewDetailApi: vi.fn(),
+}));
 
 const ATTEMPT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ATTEMPT_ID = "33333333-3333-4333-8333-333333333333";
@@ -103,13 +106,20 @@ const REPORT: NonNullable<AiAttemptReviewDetailData["result"]> = {
 const detailOf = (
   task: AiAttemptReviewTaskPublic = taskOf(),
   result: AiAttemptReviewDetailData["result"] = REPORT,
-): AiAttemptReviewDetailData => ({ task, result });
+): AiAttemptReviewDetailData => ({
+  task,
+  result,
+  questionIds:
+    result === null
+      ? []
+      : Array.from({ length: 27 }, (_, index) => `q-${index + 1}`),
+});
 
 function renderReader(client = new QueryClient()) {
   const onClose = vi.fn();
   const onJumpToQuestion = vi.fn();
   const onOpenPanel = vi.fn();
-  render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <AttemptReviewReportReader
@@ -123,7 +133,7 @@ function renderReader(client = new QueryClient()) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { client, onClose, onJumpToQuestion, onOpenPanel };
+  return { ...view, client, onClose, onJumpToQuestion, onOpenPanel };
 }
 
 beforeEach(() => {
@@ -205,6 +215,53 @@ describe("整卷复盘报告阅读器", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
+  it("关闭后重开遇到撤权：上一轮迟到的正文不可显示或记已读", async () => {
+    const client = new QueryClient();
+    const oldResponse = Promise.withResolvers<AiAttemptReviewDetailData>();
+    mockedDetail
+      .mockReturnValueOnce(oldResponse.promise)
+      .mockRejectedValue(
+        new ApiError("AI_POLICY_DISABLED", "本次练习的复盘权限已撤回", 403),
+      );
+    const first = renderReader(client);
+    await waitFor(() => expect(mockedDetail).toHaveBeenCalledTimes(1));
+    const firstSignal = mockedDetail.mock.calls[0]?.[1];
+    first.unmount();
+    expect(firstSignal?.aborted).toBe(true);
+    renderReader(client);
+
+    await act(async () => oldResponse.resolve(detailOf()));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "复盘权限已撤回",
+    );
+    expect(mockedDetail).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(REPORT.overview)).not.toBeInTheDocument();
+    expect(mockedAction).not.toHaveBeenCalled();
+  });
+
+  it("离线重开时不渲染尚未清除的正文，联网后重新核对", async () => {
+    const client = new QueryClient();
+    client.setQueryData(attemptReviewDetailKey(TASK_ID), detailOf());
+    mockedDetail.mockRejectedValue(
+      new ApiError("AI_POLICY_DISABLED", "本次练习的复盘权限已撤回", 403),
+    );
+    onlineManager.setOnline(false);
+    try {
+      renderReader(client);
+      expect(screen.getByRole("status")).toHaveTextContent("当前离线");
+      expect(screen.queryByText(REPORT.overview)).not.toBeInTheDocument();
+      expect(mockedDetail).not.toHaveBeenCalled();
+      await act(async () => onlineManager.setOnline(true));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "复盘权限已撤回",
+      );
+      expect(mockedAction).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
   it("报告属于另一次作答：不显示正文、不记已读，给出去对应作答结果的入口", async () => {
     mockedDetail.mockResolvedValue(
       detailOf(taskOf({ attemptId: OTHER_ATTEMPT_ID })),
@@ -237,7 +294,7 @@ describe("整卷复盘报告阅读器", () => {
     const { onJumpToQuestion, onClose } = renderReader();
     await screen.findByText("读题漏掉取值范围");
     fireEvent.click(screen.getByRole("button", { name: "第 14 题" }));
-    expect(onJumpToQuestion).toHaveBeenCalledWith(14);
+    expect(onJumpToQuestion).toHaveBeenCalledWith("q-14");
     fireEvent.click(screen.getByRole("button", { name: "关闭，回到作答结果" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });

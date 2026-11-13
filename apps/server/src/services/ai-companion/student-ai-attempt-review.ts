@@ -2,10 +2,10 @@ import { createHmac, randomUUID } from "node:crypto";
 import type {
   AiAttemptReviewAction,
   AiAttemptReviewCounts,
+  AiAttemptReviewDetailData,
   AiAttemptReviewMcpClaimView,
   AiAttemptReviewPreviewData,
   AiAttemptReviewQuestion,
-  AiAttemptReviewReport,
   AiAttemptReviewSnapshot,
   AiAttemptReviewStatus,
   AiAttemptReviewTaskPublic,
@@ -44,9 +44,13 @@ import {
   structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
-import { jsonOf, snapshotOfRow } from "../snapshot.ts";
+import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
-import { attemptReviewPublicViewOf } from "./student-ai-attempt-review-public.ts";
+import {
+  attemptReviewPublicViewOf,
+  parseAttemptReviewSnapshot,
+  projectAttemptReviewDetail,
+} from "./student-ai-attempt-review-public.ts";
 import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { missingNoteOf, studentAnswerTextOf } from "./student-ai-context.ts";
 import {
@@ -535,25 +539,6 @@ function snapshotJsonOf(
   return json;
 }
 
-// ---------- 公开视图 ----------
-
-/** 快照损坏守卫：公开视图/领取视图/版本核对共用的快照解析（单点） */
-function parseSnapshotOf(
-  task: AiAttemptReviewTaskRow,
-): AiAttemptReviewSnapshot {
-  const parsed = aiAttemptReviewSnapshotSchema.safeParse(
-    jsonOf(task.contextSnapshotJson),
-  );
-  if (!parsed.success) {
-    throw new HttpError(
-      500,
-      "AI_ATTEMPT_REVIEW_BROKEN",
-      "整体复盘快照已损坏，无法读取",
-    );
-  }
-  return parsed.data;
-}
-
 // ---------- 预览 ----------
 
 /** 整体复盘预览：范围题数、四类计数、发送字段与边界说明、不透明预览版本 */
@@ -734,33 +719,13 @@ export function createAttemptReviewTask(
 export function attemptReviewDetailOf(
   db: Db,
   input: { studentId: string; taskId: string },
-): { task: AiAttemptReviewTaskPublic; result: AiAttemptReviewReport | null } {
+): AiAttemptReviewDetailData {
   const task = requireOwnAttemptReviewTask(db, input.studentId, input.taskId);
   requireAttemptReviewAccess(db, {
     studentId: task.studentId,
     attemptId: task.attemptId,
   });
-  const resultRow = db
-    .select()
-    .from(aiAttemptReviewResults)
-    .where(eq(aiAttemptReviewResults.taskId, task.id))
-    .orderBy(desc(aiAttemptReviewResults.generation))
-    .get();
-  let result: AiAttemptReviewReport | null = null;
-  if (resultRow !== undefined) {
-    const parsed = aiAttemptReviewReportSchema.safeParse(
-      jsonOf(resultRow.reportJson),
-    );
-    if (!parsed.success) {
-      throw new HttpError(
-        500,
-        "AI_ATTEMPT_REVIEW_BROKEN",
-        "整体复盘报告数据已损坏，无法读取",
-      );
-    }
-    result = parsed.data;
-  }
-  return { task: attemptReviewPublicViewOf(db, task), result };
+  return projectAttemptReviewDetail(db, task);
 }
 
 // ---------- 显式动作 ----------
@@ -922,7 +887,7 @@ export function claimAttemptReviewTask(
           generation: claimed.generation,
           leaseUntil,
         });
-        const snapshot = parseSnapshotOf(claimed);
+        const snapshot = parseAttemptReviewSnapshot(claimed);
         return {
           taskId: claimed.id,
           taskKind: "attempt_review",

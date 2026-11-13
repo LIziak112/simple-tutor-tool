@@ -9,12 +9,10 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  fetchStudentAiAttemptReviewDetailApi,
-  postStudentAiAttemptReviewActionApi,
-} from "@/lib/api";
+import { postStudentAiAttemptReviewActionApi } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
+import { fetchStudentAiAttemptReviewDetailApi } from "./attempt-review-api";
 import {
   ATTEMPT_REVIEW_STATUS_LABEL,
   attemptReviewDetailKey,
@@ -223,20 +221,25 @@ export function AttemptReviewReportReader({
   readonly attemptLabel: string;
   readonly onClose: () => void;
   /** 点证据题号：调用方负责关闭报告并定位到该题 */
-  readonly onJumpToQuestion: (questionNo: number) => void;
+  readonly onJumpToQuestion: (questionId: string) => void;
   /** 转去发起 / 进度面板（报告未生成、想重新发起或归档时） */
   readonly onOpenPanel: () => void;
 }) {
   const queryClient = useQueryClient();
   const detailQuery = useQuery({
     queryKey: attemptReviewDetailKey(taskId),
-    queryFn: () => fetchStudentAiAttemptReviewDetailApi(taskId),
+    queryFn: ({ signal }) =>
+      fetchStudentAiAttemptReviewDetailApi(taskId, signal),
+    refetchOnMount: "always",
     retry: false,
     staleTime: 0,
     gcTime: 0,
   });
-  // 只认本轮成功：重取被拒绝时 TanStack 仍保留上次 data，不能继续展示
-  const detail = detailQuery.isSuccess ? detailQuery.data : null;
+  // 快速重开时缓存可能还未清除；只有本轮详情请求成功后才展示正文。
+  const detail =
+    detailQuery.isSuccess && detailQuery.isFetchedAfterMount
+      ? detailQuery.data
+      : null;
   const belongsHere = detail !== null && detail.task.attemptId === attemptId;
   const report = belongsHere ? (detail?.result ?? null) : null;
   const unread = report !== null && detail?.task.openedAt === null;
@@ -286,7 +289,14 @@ export function AttemptReviewReportReader({
           </DialogDescription>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
-          {detailQuery.isPending ? (
+          {detailQuery.isPaused && detail === null ? (
+            <p
+              role="status"
+              className="py-8 text-center text-sm text-muted-foreground"
+            >
+              当前离线，联网后将核对报告权限。
+            </p>
+          ) : detail === null && !detailQuery.isError ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               正在核对权限并打开报告…
             </p>
@@ -321,7 +331,13 @@ export function AttemptReviewReportReader({
               </Button>
             </div>
           ) : (
-            <ReportBody report={report} onJump={onJumpToQuestion} />
+            <ReportBody
+              report={report}
+              onJump={(questionNo) => {
+                const questionId = detail.questionIds[questionNo - 1];
+                if (questionId !== undefined) onJumpToQuestion(questionId);
+              }}
+            />
           )}
         </div>
         <footer className="flex flex-col-reverse gap-2 border-t border-border px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-6">
