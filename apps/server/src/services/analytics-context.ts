@@ -220,6 +220,7 @@ export function buildContext(
         .where(
           and(
             eq(students.teacherId, teacherId),
+            isNull(attempts.abandonedAt),
             courseCondition,
             view.kind === "student"
               ? eq(attempts.studentId, view.studentId)

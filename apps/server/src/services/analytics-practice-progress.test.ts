@@ -97,8 +97,16 @@ describe("完成矩阵进行中进度计数（M4-D3）", () => {
     const u2 = unitCellOf(overview, seed.students.s2.id, seed.units.u2.id);
     // U2 共 3 题：已提交 1 行 → n/N = 1/3
     expect(u2.status).toBe("in-progress");
+    expect(u2.attemptCount).toBe(1);
+    expect(u2.redoCount).toBe(0);
     expect(u2.practiceSubmittedCount).toBe(1);
     expect(u2.practiceQuestionCount).toBe(3);
+    const replacedDraft = db
+      .select({ abandonedAt: attempts.abandonedAt })
+      .from(attempts)
+      .where(eq(attempts.id, draft.id))
+      .get();
+    expect(replacedDraft?.abandonedAt).toEqual(expect.any(String));
 
     // legacy 对照：陈小明 U1（已交卷、旧协议）不带计数
     const u1 = unitCellOf(overview, seed.students.s1.id, seed.units.u1.id);
