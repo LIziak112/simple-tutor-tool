@@ -44,7 +44,7 @@ const cli = (source: string, output?: string) =>
     ],
     { encoding: "utf8", timeout: 20_000 },
   );
-async function snapshot() {
+async function snapshot(invalidSnapshot = false) {
   const env = timingFixture();
   env.event("question_focus", 1, "q1");
   env.event("question_blur", 9, "q1");
@@ -62,6 +62,18 @@ async function snapshot() {
     .set({ activeSec: null })
     .where(eq(attempts.id, env.attemptId))
     .run();
+  if (invalidSnapshot)
+    env.db
+      .update(responses)
+      .set({
+        questionSnapshotJson: JSON.stringify({
+          id: "q1",
+          stemMd: "x",
+          hints: [],
+        }),
+      })
+      .where(eq(responses.id, env.row("q1").id))
+      .run();
   const dir = mkdtempSync(join(tmpdir(), "timing-copy-"));
   paths.push(dir);
   const source = join(dir, "source.db");
@@ -105,6 +117,33 @@ it("CLI默认只读；仅新副本可补账，源哈希和内容不变，副本�
     writtenRows: 0,
     plannedAttempts: 0,
   });
+}, 30_000);
+
+it("CLI原生SQLite连接使用完整快照验证，不给坏封套补时间", async () => {
+  const { source, dir } = await snapshot(true);
+  const hash = sha(source);
+  const output = join(dir, "validated-copy.db");
+  const result = cli(source, output);
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    writtenRows: 1,
+    skipped: { invalidSnapshot: 1 },
+  });
+  const copy = new Database(output, { readonly: true });
+  try {
+    expect(
+      copy
+        .prepare("SELECT active_sec FROM responses WHERE question_id='q1'")
+        .pluck()
+        .get(),
+    ).toBeNull();
+    expect(copy.prepare("SELECT active_sec FROM attempts").pluck().get()).toBe(
+      4,
+    );
+  } finally {
+    copy.close();
+  }
+  expect(sha(source)).toBe(hash);
 }, 30_000);
 
 it("CLI拒绝源路径、已有文件和硬链接作为输出，失败也不得删除它们", async () => {

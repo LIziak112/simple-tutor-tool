@@ -1,5 +1,7 @@
 import type { Database } from "better-sqlite3";
 import { replayFocusTimeline } from "./active-time.ts";
+import { focusTimelineOf, isFocusTimelineEvent } from "./focus-timeline.ts";
+import { createQuestionSnapshotValidator } from "./snapshot.ts";
 import { recordedActiveSecTotal } from "./submission-time.ts";
 
 interface HistoricalAttempt {
@@ -16,6 +18,7 @@ interface HistoricalResponse {
   hasSnapshot: number;
 }
 interface HistoricalEvent {
+  id: string;
   eventOrder: number;
   type: string;
   questionId: string | null;
@@ -24,11 +27,17 @@ interface HistoricalEvent {
   confirmed: number;
 }
 
-/** 只返回元数据与聚合计数，不读取或输出题干、答案、笔迹与个人字段。 */
+/** 只返回元数据与聚合计数；快照在连接内经现有校验器验证，不输出原文。 */
 export function backfillSubmissionTime(
   db: Database,
   options: { apply?: boolean } = {},
 ) {
+  // 原生 CLI SQLite 连接同样使用在线 Question 校验；仅把布尔结果投影给回填。
+  db.function(
+    "ownclass_question_snapshot_valid",
+    { deterministic: true },
+    createQuestionSnapshotValidator(),
+  );
   const report = {
     candidateRows: 0,
     plannedRows: 0,
@@ -55,16 +64,13 @@ export function backfillSubmissionTime(
     .all();
   const readRows = db.prepare<[string], HistoricalResponse>(`
     SELECT id,question_id AS questionId,submitted_at AS submittedAt,active_sec AS activeSec,
-      CASE WHEN json_valid(question_snapshot_json) THEN
-        CASE WHEN json_type(question_snapshot_json,'$.id')='text'
-          AND json_extract(question_snapshot_json,'$.id')=question_id
-          AND json_type(question_snapshot_json,'$.stemMd')='text'
-          AND json_type(question_snapshot_json,'$.hints')='array' THEN 1 ELSE 0 END
+      CASE WHEN ownclass_question_snapshot_valid(question_snapshot_json)=1 THEN
+        CASE WHEN json_extract(question_snapshot_json,'$.id')=question_id THEN 1 ELSE 0 END
       ELSE 0 END AS hasSnapshot
     FROM responses WHERE attempt_id=?
   `);
   const readEvents = db.prepare<[string], HistoricalEvent>(`
-    SELECT rowid AS eventOrder,type,question_id AS questionId,client_ts AS clientTs,server_ts AS serverTs,
+    SELECT id,rowid AS eventOrder,type,question_id AS questionId,client_ts AS clientTs,server_ts AS serverTs,
       CASE WHEN type='submit' AND json_valid(payload_json)
         THEN coalesce(json_extract(payload_json,'$.confirmed'),0) ELSE 0 END AS confirmed
     FROM events WHERE attempt_id=? ORDER BY rowid
@@ -103,9 +109,7 @@ export function backfillSubmissionTime(
         // question_submit 可经普通学生事件入口伪造，绝不以其形态或 clientTs 作边界。
         // 仅 confirmed 整卷标记为服务端专有（客户端契约剥除该键）。旧卷没有它时，
         // 直接按数据库提交时间与服务端接收时间比较；同毫秒且无顺序证据就留空。
-        const eligible = timeline.filter(
-          (e) => !["submit", "hint_open", "question_submit"].includes(e.type),
-        );
+        const eligible = timeline.filter(isFocusTimelineEvent);
         if (eligible.some((e) => !Number.isFinite(Date.parse(e.serverTs)))) {
           report.skipped.missingBoundary++;
           unresolved = true;
@@ -129,7 +133,7 @@ export function backfillSubmissionTime(
         const before = finalMarker
           ? eligible.filter((e) => e.eventOrder < finalMarker.eventOrder)
           : eligible.filter((e) => Date.parse(e.serverTs) < submittedMs);
-        const replay = replayFocusTimeline(before);
+        const replay = replayFocusTimeline(focusTimelineOf(before));
         if (replay.openQuestionId === row.questionId) {
           report.skipped.openFocusInterval++;
           unresolved = true;

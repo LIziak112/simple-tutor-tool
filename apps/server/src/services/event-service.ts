@@ -6,12 +6,13 @@ import type {
   LectureEvent,
   LectureEventDelivery,
 } from "@tutor/contract";
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { events, lectures, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { requireUsableAttempt } from "./attempt-service";
+import { focusTimelineOf } from "./focus-timeline.ts";
 import type { Tx } from "./question-sync";
 
 /**
@@ -342,23 +343,21 @@ export function attemptTimeline(
   clientTs: number;
   questionId: string | null;
 }> {
-  return db
+  const rows = db
     .select({
+      id: events.id,
       type: events.type,
       clientTs: events.clientTs,
       questionId: events.questionId,
     })
     .from(events)
-    .where(
-      and(
-        eq(events.attemptId, attemptId),
-        ne(events.type, "submit"),
-        ne(events.type, "hint_open"),
-        ne(events.type, "question_submit"),
-      ),
-    )
-    .orderBy(asc(events.clientTs), asc(events.id))
+    .where(eq(events.attemptId, attemptId))
     .all();
+  return focusTimelineOf(rows).map(({ type, clientTs, questionId }) => ({
+    type,
+    clientTs,
+    questionId,
+  }));
 }
 
 /** 与交卷状态同事务写入，服务端时间只用于提交审计，不参与浏览器区间回放。 */

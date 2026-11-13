@@ -9,7 +9,7 @@ import {
 } from "../test/submission-time-fixture.ts";
 import { submitAttempt } from "./attempt-whole-submit.ts";
 import { backfillSubmissionTime } from "./backfill-submission-time.ts";
-import { appendAttemptEvents } from "./event-service.ts";
+import { appendAttemptEvents, submissionActivityOf } from "./event-service.ts";
 
 afterEach(closeTimingFixtures);
 
@@ -84,6 +84,17 @@ it("已有非空时间与进行中卷合计保留；未提交行不补", () => {
   const env = timingFixture("lesson");
   env.event("question_focus", 1, "q1");
   env.event("question_blur", 1, "q1");
+  // 同毫秒零秒夹具显式给定 focus→blur 的并时次序，不能依赖随机 UUID。
+  env.db.$client
+    .prepare(
+      "UPDATE events SET id='00000000-0000-4000-8000-000000000001' WHERE type='question_focus' AND question_id='q1'",
+    )
+    .run();
+  env.db.$client
+    .prepare(
+      "UPDATE events SET id='00000000-0000-4000-8000-000000000002' WHERE type='question_blur' AND question_id='q1'",
+    )
+    .run();
   env.submit("q1", 2);
   env.db
     .update(responses)
@@ -218,3 +229,78 @@ it("旧question_submit标记的时钟漂移不参与计时边界", () => {
   expect(env.row("q1").activeSec).toBe(8);
   expect(env.row("q2").activeSec).toBe(4);
 });
+
+it("并时事件采用在线clientTs/id顺序，rowid仅用于提交边界", () => {
+  const env = timingFixture();
+  env.event("question_focus", 1, "q1");
+  env.event("question_blur", 1, "q1");
+  env.event("question_focus", 5, "q2");
+  env.event("question_blur", 9, "q2");
+  env.db.$client
+    .prepare(
+      "UPDATE events SET id='ffffffff-ffff-4fff-8fff-ffffffffffff' WHERE type='question_focus' AND question_id='q1'",
+    )
+    .run();
+  env.db.$client
+    .prepare(
+      "UPDATE events SET id='00000000-0000-4000-8000-000000000000' WHERE type='question_blur' AND question_id='q1'",
+    )
+    .run();
+  const online = submissionActivityOf(
+    env.db,
+    env.attemptId,
+  ).activeSecByQuestion;
+  expect(online).toEqual({ q1: 4, q2: 4 });
+  env.submit("q1", 10);
+  env.submit("q2", 12);
+  expect([env.row("q1").activeSec, env.row("q2").activeSec]).toEqual([4, 4]);
+  env.db
+    .update(responses)
+    .set({ activeSec: null })
+    .where(eq(responses.attemptId, env.attemptId))
+    .run();
+  env.db
+    .update(attempts)
+    .set({ activeSec: null })
+    .where(eq(attempts.id, env.attemptId))
+    .run();
+  backfillSubmissionTime(env.db.$client, { apply: true });
+  expect([env.row("q1").activeSec, env.row("q2").activeSec]).toEqual([
+    online.q1,
+    online.q2,
+  ]);
+  expect(env.db.select().from(attempts).get()?.activeSec).toBe(8);
+});
+
+it.each(["坏JSON", "缺必需字段", "冻结id不一致"])(
+  "%s复用完整快照校验，坏行留空且不进入卷级合计",
+  (kind) => {
+    const env = oldCompleted();
+    const snapshot =
+      kind === "坏JSON"
+        ? "{"
+        : kind === "缺必需字段"
+          ? JSON.stringify({ id: "q1", stemMd: "x", hints: [] })
+          : JSON.stringify({
+              ...JSON.parse(env.row("q1").questionSnapshotJson ?? "null"),
+              id: "other-id",
+            });
+    env.db
+      .update(responses)
+      .set({ questionSnapshotJson: snapshot })
+      .where(eq(responses.id, env.row("q1").id))
+      .run();
+    const valid = env.db.$client
+      .prepare(
+        "SELECT ownclass_question_snapshot_valid(question_snapshot_json) FROM responses WHERE id=?",
+      )
+      .pluck()
+      .get(env.row("q1").id);
+    expect(valid).toBe(kind === "冻结id不一致" ? 1 : 0);
+    const report = backfillSubmissionTime(env.db.$client, { apply: true });
+    expect(report.skipped.invalidSnapshot).toBe(1);
+    expect(env.row("q1").activeSec).toBeNull();
+    expect(env.row("q2").activeSec).toBe(4);
+    expect(env.db.select().from(attempts).get()?.activeSec).toBe(4);
+  },
+);
