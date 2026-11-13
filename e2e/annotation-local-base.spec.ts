@@ -1,5 +1,85 @@
 import { expect, test } from "@playwright/test";
 
+test("两标签页并发更新底图缓存，配额中断保留原稿并可重试", {
+  tag: ["@annotation"],
+}, async ({ page, context }) => {
+  const peer = await context.newPage();
+  await Promise.all([
+    page.goto("/dev/question-base"),
+    peer.goto("/dev/question-base"),
+  ]);
+  const write = (target: typeof page, key: string) =>
+    target.evaluate(async (key) => {
+      const moduleUrl = "/src/lib/kv-backend.ts";
+      const { idbKVBackend } = (await import(
+        moduleUrl
+      )) as typeof import("../apps/web/src/lib/kv-backend");
+      const backend = idbKVBackend("annotation-atomic-budget", "drafts");
+      await backend.update(["index"], ([previous], tx) => {
+        const list = Array.isArray(previous) ? previous : [];
+        tx.set("index", [...list, key]);
+        tx.set(key, new Uint8Array([1, 2, 3]));
+      });
+    }, key);
+  await Promise.all([write(page, "first"), write(peer, "second")]);
+  const result = await page.evaluate(async () => {
+    const moduleUrl = "/src/lib/kv-backend.ts";
+    const { idbKVBackend } = (await import(
+      moduleUrl
+    )) as typeof import("../apps/web/src/lib/kv-backend");
+    const backend = idbKVBackend("annotation-atomic-budget", "drafts");
+    await backend.set("body", { pending: "original", ref: "first" });
+    const previous = await backend.get("index");
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (
+      value: unknown,
+      key?: IDBValidKey,
+    ) {
+      if (
+        key === "body" &&
+        this.transaction.db.name === "annotation-atomic-budget"
+      ) {
+        throw new DOMException("fixture", "QuotaExceededError");
+      }
+      return put.call(this, value, key);
+    };
+    const replace = () =>
+      backend.update(["index"], (_values, tx) => {
+        tx.del("first");
+        tx.set("index", ["second"]);
+        tx.set("body", { pending: "latest", ref: "second" });
+      });
+    let error = "";
+    try {
+      await replace();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+    const afterFailure = {
+      body: await backend.get("body"),
+      first: Array.from((await backend.get("first")) as Uint8Array),
+    };
+    await replace();
+    return {
+      previous,
+      error,
+      afterFailure,
+      afterRetry: await backend.get("body"),
+      deleted: (await backend.get("first")) === undefined,
+    };
+  });
+  expect(result.previous).toEqual(expect.arrayContaining(["first", "second"]));
+  expect(result.error).toContain("存储空间不足");
+  expect(result.afterFailure).toEqual({
+    body: { pending: "original", ref: "first" },
+    first: [1, 2, 3],
+  });
+  expect(result.afterRetry).toEqual({ pending: "latest", ref: "second" });
+  expect(result.deleted).toBe(true);
+});
+
 test("真实存储事务中止：错误可读，手动重试保留原稿并在刷新后恢复", {
   tag: ["@annotation"],
 }, async ({ page }) => {
