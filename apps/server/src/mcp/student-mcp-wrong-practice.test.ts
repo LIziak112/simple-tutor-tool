@@ -575,7 +575,42 @@ describe("create_wrong_practice（AI 组卷）", () => {
     }
   });
 
-  it("label 缺省为「AI 组卷」；非幂等：两次调用建两份独立卷（attemptNo 递增）", async () => {
+  it("显式重试标识复用同一卷，同键改参数被拒绝", async () => {
+    const env = await makeMcpWrongEnv();
+    try {
+      await answerAllWrong(env, RECENT_DAY);
+      const request = {
+        questionIds: [Q.concept1],
+        operationId: "b6d9d230-66cc-476d-a287-36da41cf2cc4",
+      };
+      const first = await callToolJson(
+        env.client,
+        "create_wrong_practice",
+        request,
+      );
+      const replay = await callToolJson(
+        env.client,
+        "create_wrong_practice",
+        request,
+      );
+      expect(first.isError).toBe(false);
+      expect(replay).toEqual(first);
+      assertNoLeak(replay.data);
+      const mismatch = await callToolJson(env.client, "create_wrong_practice", {
+        ...request,
+        label: "另一份",
+      });
+      expect(mismatch.isError).toBe(true);
+      expect(mismatch.data).toMatchObject({
+        error: "CREATE_OPERATION_MISMATCH",
+      });
+    } finally {
+      await env.client.close();
+      env.db.$client.close();
+    }
+  });
+
+  it("label 缺省为「AI 组卷」；未带标识时两次调用建两份独立卷（attemptNo 递增）", async () => {
     const env = await makeMcpWrongEnv();
     try {
       await answerAllWrong(env, RECENT_DAY);

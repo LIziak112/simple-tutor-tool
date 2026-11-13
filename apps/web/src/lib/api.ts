@@ -73,13 +73,11 @@ import {
   type AttemptAnswerSaveRequest,
   type AttemptContextData,
   type AttemptDetailData,
-  type AttemptEvent,
   type AttemptFlagData,
   type AttemptMaterialRevisions,
   type AttemptSource,
   type AttemptStartData,
   type AttemptStatus,
-  type AttemptSubmitRequest,
   type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   attemptContextDataSchema,
@@ -114,11 +112,9 @@ import {
   type ImportPreviewRequest,
   type InkDoc,
   type InkUploadData,
-  type LearningEventBatchData,
   type LearningPackExportRequest,
   type LearningPackPreviewData,
   type LectureDetail,
-  type LectureEvent,
   type LectureMetaData,
   type LectureMetaUpdate,
   type LectureUpdateData,
@@ -213,10 +209,16 @@ import {
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
-import { ApiError, invalidApiResponse, parseApiResponse } from "./api-response";
+import {
+  ApiError,
+  callApi,
+  invalidApiResponse,
+  throwShellError,
+} from "./api-response";
 import { readAttemptDetail } from "./attempt-detail-read";
+import { withRequestDeadline } from "./request-deadline";
 
-export { ApiError } from "./api-response";
+export { ApiError, callApi } from "./api-response";
 
 /**
  * Hono RPC 类型客户端：路由类型来自 apps/server 的 AppType，端到端类型安全。
@@ -248,85 +250,6 @@ export async function fetchHealth(): Promise<HealthData> {
   }
   const body = await res.json();
   return body.data;
-}
-
-/**
- * 调用 hc 接口并解包响应壳（T1.9 起）：
- * - 成功 → 返回 data 部分；
- * - { ok:false } → 抛 ApiError（code + 服务端中文 message + 壳外附加字段）；
- * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
- * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
- */
-export async function callApi<T>(
-  fn: () => Promise<Response>,
-  reuse?: (response: Response) => T | undefined,
-): Promise<T> {
-  let res: Response;
-  try {
-    res = await fn();
-  } catch (err) {
-    // 中止身份保留（T6R.8 复审⑬）：AbortError 原样上抛——调用方（note-sync）
-    // 据此区分「会话切换主动中止（丢弃）」与网络错误（退避）；其余失败
-    // 归并中文网络文案
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    throw new Error(
-      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
-    );
-  }
-  const reused = reuse?.(res);
-  if (reused !== undefined) return reused;
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    throw invalidApiResponse(res.status);
-  }
-  const response = parseApiResponse(body, res.status);
-  if (!response.ok) {
-    throw new ApiError(
-      response.error,
-      response.message,
-      res.status,
-      pickExtraFields(body),
-    );
-  }
-  return response.data as T;
-}
-
-/** 取统一壳（ok/error/message）之外的附加字段（如 LINT_ERROR 的 _issues） */
-function pickExtraFields(body: unknown): Record<string, unknown> | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const extra: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (key !== "ok" && key !== "error" && key !== "message") {
-      extra[key] = value;
-    }
-  }
-  return Object.keys(extra).length > 0 ? extra : undefined;
-}
-
-/**
- * 非 2xx 响应 → 抛错（口径同 callApi 的错误路径，供文件直出接口复用）：
- * { ok:false } 统一壳 → ApiError（code + 服务端中文 message + 壳外附加字段），
- * 调用方按 code 分支（如 404 INK_NOT_FOUND 降级）；壳解析失败/非壳 → 通用中文 Error。
- */
-async function throwShellError(res: Response): Promise<never> {
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    throw invalidApiResponse(res.status);
-  }
-  const response = parseApiResponse(body, res.status);
-  if (!response.ok) {
-    throw new ApiError(
-      response.error,
-      response.message,
-      res.status,
-      pickExtraFields(body),
-    );
-  }
-  throw invalidApiResponse(res.status);
 }
 
 /**
@@ -915,12 +838,14 @@ export function startWrongPracticeApi(
   options?: PracticeWorkflowStartOptions,
   /** 建卷范围快照（#6980-2）：随卷落库，记录/轮次史标题「练的是什么」 */
   scope?: WrongPracticeScope,
+  operationId?: string,
 ): Promise<AttemptStartData> {
   const args = {
     json: {
       questionIds,
       ...(options !== undefined ? { ...options } : {}),
       ...(scope !== undefined ? { scope } : {}),
+      ...(operationId !== undefined ? { operationId } : {}),
     },
   };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
@@ -941,28 +866,18 @@ export function saveAttemptAnswerApi(
     param: { id: attemptId, questionId },
     json: { answer, ...sync },
   };
-  return callApi(() =>
-    api.api.student.attempts[":id"].answers[":questionId"].$put(args),
+  return withRequestDeadline(
+    (signal) =>
+      callApi(() =>
+        api.api.student.attempts[":id"].answers[":questionId"].$put(args, {
+          init: { signal },
+        }),
+      ),
+    "保存答案",
   );
 }
 
-/**
- * 交卷：服务端判分、按建卷冻结快照判分，返回结果视图（含参考答案与详解）。
- * T6R.3：请求体回传每题 questionRevisionId（建卷时下发的题目版本引用），
- * 服务端与冻结集合精确比对——旧标签页/陈旧页面的提交抛 409
- * QUESTION_REVISION_STALE（提示刷新页面后重交）；重复交卷抛 409
- * ALREADY_SUBMITTED。
- * T6R.10：evidence 为每题笔记证据声明（none/frozen/missing + 预期 revision），
- * 服务端同一事务固定原稿（submission_evidence）；**缺省 = 旧客户端**——
- * 有草稿的卷会被 409 NOTE_EVIDENCE_MISMATCH 拒绝并要求刷新。
- */
-export function submitAttemptApi(
-  attemptId: string,
-  input: AttemptSubmitRequest,
-): Promise<AttemptDetailData> {
-  const args = { param: { id: attemptId }, json: input };
-  return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
-}
+export { submitAttemptApi } from "./api-attempt-submit";
 
 /**
  * 做题时标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409）；
@@ -1033,28 +948,7 @@ function readMaterialWithDeadline<T>(
   read: (signal: AbortSignal) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  if (signal?.aborted)
-    return Promise.reject(new DOMException("材料读取已取消", "AbortError"));
-  const controller = new AbortController();
-  let rejectStopped: (reason: Error) => void = () => undefined;
-  const stopped = new Promise<never>((_resolve, reject) => {
-    rejectStopped = reject;
-  });
-  const stop = (reason: Error) => {
-    if (controller.signal.aborted) return;
-    rejectStopped(reason);
-    controller.abort();
-  };
-  const onAbort = () => stop(new DOMException("材料读取已取消", "AbortError"));
-  signal?.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(
-    () => stop(new Error("材料读取超时，请检查网络后重试")),
-    30_000,
-  );
-  return Promise.race([read(controller.signal), stopped]).finally(() => {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
-  });
+  return withRequestDeadline(read, "材料读取", signal);
 }
 
 export async function fetchAttemptMaterialRevisionsApi(
@@ -1153,17 +1047,9 @@ export function startLessonAttemptApi(
  * 讲练重做（POST /lectures/:id/lesson/restart，「再做一次/重新开始」显式
  * 独立动作，2026-10 教师演示口径随时可用）：最新 attempt 进行中时先作废
  * （abandonedAt 软标记——历次/记录/待批不再计入）再开新卷；无任何作答
- * 409。返回新卷（attemptNo+1，从空白开始）的讲练投影。无参数。
+ * 409。返回新卷（attemptNo+1，从空白开始）的讲练投影。
  */
-export function restartLessonAttemptApi(
-  lectureId: string,
-): Promise<LessonStartData> {
-  return callApi(() =>
-    api.api.student.lectures[":id"].lesson.restart.$post({
-      param: { id: lectureId },
-    }),
-  );
-}
+export { restartLessonAttemptApi } from "./lesson-restart-api";
 
 /**
  * 单题提交（POST /attempts/:id/questions/:questionId/submit，lesson 逐题
@@ -1240,34 +1126,10 @@ export function saveSelfReviewApi(
   );
 }
 
-// ---------- T2.10：学习痕迹事件（学生端） ----------
-
-/**
- * 批量上报 attempt 上下文的学习痕迹事件（≤200 条/次，契约拦截）；事件队列
- * （lib/event-queue.ts）的正常发送路径，sendBeacon 兜底在队列内直发。
- * viewId：作答页会话标识（题内活动用时按会话分组识别多端重叠）。
- */
-export function postAttemptEventsApi(
-  attemptId: string,
-  events: readonly AttemptEvent[],
-  viewId?: string,
-): Promise<LearningEventBatchData> {
-  const json = { events: [...events], ...(viewId && { viewId }) };
-  const args = { param: { id: attemptId }, json };
-  return callApi(() => api.api.student.attempts[":id"].events.$post(args));
-}
-
-/**
- * 批量上报无 attempt 上下文的事件（讲义 lecture_expand）。
- * 与 postAttemptEventsApi 同壳；讲义阅读页的事件队列使用。
- */
-export function postLectureEventsApi(
-  events: readonly LectureEvent[],
-): Promise<LearningEventBatchData> {
-  return callApi(() =>
-    api.api.student.events.$post({ json: { events: [...events] } }),
-  );
-}
+export {
+  postAttemptEventsApi,
+  postLectureEventsApi,
+} from "./student-events-api";
 
 // ---------- T2.8：手写笔迹（学生端） ----------
 
@@ -1311,11 +1173,15 @@ export function putAttemptInkApi(
   form.append("strokes", strokesGzip, "strokes.json.gz");
   form.append("snapshot", snapshotPng, "snapshot.png");
   if (meta) form.append("meta", JSON.stringify(meta));
-  return callApi(() =>
-    fetch(
-      `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}`,
-      { method: "PUT", body: form },
-    ),
+  return withRequestDeadline(
+    (signal) =>
+      callApi(() =>
+        fetch(
+          `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}`,
+          { method: "PUT", body: form, signal },
+        ),
+      ),
+    "上传正式手写",
   );
 }
 

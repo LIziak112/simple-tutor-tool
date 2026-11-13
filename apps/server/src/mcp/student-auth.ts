@@ -1,9 +1,8 @@
-import { eq } from "drizzle-orm";
 import type { Context, Next } from "hono";
+import { studentAiDomainOf } from "../auth/student-ai-domain.ts";
 import type { Db } from "../db/client";
-import { students, teachers } from "../db/schema";
+import { HttpError } from "../lib/http-error.ts";
 import { findActiveMcpConnectionByToken } from "../services/ai-companion/connection-service";
-import { getStudentAccount } from "../services/student-service";
 
 /**
  * 学生 MCP 鉴权中间件（SAI-25，B14）——/mcp/student 整组的入口防线。
@@ -44,11 +43,7 @@ export interface ResolvedMcpStudent {
 export interface StudentMcpEnv {
   Variables: {
     /** token 绑定的学生身份（全部工具闭包的唯一身份来源） */
-    mcpStudent: {
-      readonly id: string;
-      /** 命中的 mcp 连接行 id（审计/调试用；不进协议响应） */
-      readonly connectionId: string;
-    };
+    mcpStudent: ResolvedMcpStudent;
   };
 }
 
@@ -57,6 +52,27 @@ const UNAUTHORIZED_BODY = {
   error: "UNAUTHORIZED",
   message: "MCP Token 无效或已失效，请在「连接 AI」设置中重置后重试",
 } as const;
+
+/** 协议解析后、执行工具前核对同一凭证及绑定的账号域。 */
+export function studentMcpToolAuthorization(
+  db: Db,
+  header: string | undefined,
+  expected: ResolvedMcpStudent,
+): () => boolean {
+  return () => {
+    const current = resolveMcpStudentToken(db, header);
+    return (
+      current?.connectionId === expected.connectionId &&
+      current.studentId === expected.studentId &&
+      current.teacherId === expected.teacherId &&
+      current.accountKind === expected.accountKind
+    );
+  };
+}
+
+export function revokedMcpTokenError(): HttpError {
+  return new HttpError(401, UNAUTHORIZED_BODY.error, UNAUTHORIZED_BODY.message);
+}
 
 /**
  * 解析 Authorization: Bearer <token>；非 Bearer 形式返回 null。
@@ -77,42 +93,6 @@ function unauthorized(c: Context): Response {
 }
 
 /**
- * 学生所属教师域（教师域可用性实时核对，B14 执行步骤 4）：学生行存在且所属
- * 教师未被禁用——教师被禁用时其学生域的外部数据面（MCP 出口）一并冻结；
- * 查不到任何环节都按不可用处理（同文案不泄露原因）。可用时给出教师 id 与账号
- * 类型（个人账号 = 教师行 accountKind='personal' 且 personalStudentId 指回本学生）。
- */
-function teacherDomainOf(
-  db: Db,
-  studentId: string,
-): { teacherId: string; accountKind: "class" | "personal" } | null {
-  const student = db
-    .select({ teacherId: students.teacherId })
-    .from(students)
-    .where(eq(students.id, studentId))
-    .get();
-  // teacherId 列可空（历史行）；空值 = 域不完整，按不可用处理（同文案）
-  if (student?.teacherId == null) return null;
-  const teacher = db
-    .select({
-      disabledAt: teachers.disabledAt,
-      accountKind: teachers.accountKind,
-      personalStudentId: teachers.personalStudentId,
-    })
-    .from(teachers)
-    .where(eq(teachers.id, student.teacherId))
-    .get();
-  if (teacher === undefined || teacher.disabledAt !== null) return null;
-  const personal =
-    teacher.accountKind === "personal" &&
-    teacher.personalStudentId === studentId;
-  return {
-    teacherId: student.teacherId,
-    accountKind: personal ? "personal" : "class",
-  };
-}
-
-/**
  * Bearer token → 学生身份（两个端点共用的解析单源）：连接命中 + 学生未归档 +
  * 教师域可用，任一不满足 → null（调用方给同一份 401 文案）。
  */
@@ -124,12 +104,10 @@ export function resolveMcpStudentToken(
   const connection =
     token === null ? null : findActiveMcpConnectionByToken(db, token);
   if (connection === null) return null;
-  const account = getStudentAccount(db, connection.studentId);
-  if (account === null) return null;
-  const domain = teacherDomainOf(db, connection.studentId);
+  const domain = studentAiDomainOf(db, connection.studentId);
   if (domain === null) return null;
   return {
-    studentId: account.id,
+    studentId: connection.studentId,
     connectionId: connection.id,
     teacherId: domain.teacherId,
     accountKind: domain.accountKind,
@@ -155,10 +133,7 @@ export function createRequireStudentMcpToken(db: Db) {
     if (resolved === null || resolved.accountKind !== "class") {
       return unauthorized(c);
     }
-    c.set("mcpStudent", {
-      id: resolved.studentId,
-      connectionId: resolved.connectionId,
-    });
+    c.set("mcpStudent", resolved);
     await next();
     return;
   };

@@ -98,6 +98,7 @@ export function SubmitConfirmDialog({
   savedOnly = false,
   unansweredCount,
   submitting,
+  verificationRequired = false,
   preparing = false,
   noteSummary = null,
   noteProblems = null,
@@ -116,6 +117,7 @@ export function SubmitConfirmDialog({
   /** 未作答题数（0 时也确认一次，防止误触） */
   unansweredCount: number;
   submitting: boolean;
+  verificationRequired?: boolean;
   /** 正在追平草稿/组装证据声明（按钮禁用 + 同步文案） */
   preparing?: boolean;
   /** 草稿计数快览（null=不展示该区——如会话未绑定） */
@@ -250,6 +252,11 @@ export function SubmitConfirmDialog({
               正在同步草稿并确认可固定的版本，请稍候…
             </p>
           )}
+          {submitting && verificationRequired && (
+            <p role="status" className="text-xs text-muted-foreground">
+              正在核对交卷结果…
+            </p>
+          )}
 
           {/* 阻止性错误（head 拉取失败等）：如实提示，重试点确认即重试 */}
           {notePrepError !== null && (
@@ -268,7 +275,7 @@ export function SubmitConfirmDialog({
           >
             {savedOnly ? "返回查看" : "继续作答"}
           </Button>
-          {choiceMode ? (
+          {choiceMode && !verificationRequired ? (
             <Button
               variant="destructive"
               className="min-h-11"
@@ -285,11 +292,15 @@ export function SubmitConfirmDialog({
             </Button>
           ) : (
             <Button className="min-h-11" onClick={onConfirm} disabled={busy}>
-              {busy
-                ? "正在交卷…"
-                : savedOnly
-                  ? "确认按已保存作答交卷"
-                  : "确认交卷"}
+              {verificationRequired
+                ? submitting
+                  ? "正在核对…"
+                  : "重新核对"
+                : busy
+                  ? "正在交卷…"
+                  : savedOnly
+                    ? "确认按已保存作答交卷"
+                    : "确认交卷"}
             </Button>
           )}
         </DialogFooter>

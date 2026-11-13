@@ -446,6 +446,59 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
   });
 
   describe("MCP-C 作业写删两件（T-PR5）", () => {
+    it("create_assignment：确认请求回执丢失后重放，不重复布置", async () => {
+      const env = await makeEnv();
+      const client = await connectClient(env, env.tokenA);
+      const args = {
+        confirm: true,
+        assignment: {
+          operationId: "622ca1a7-9d7c-4603-8e75-413ff3f5cb05",
+          title: "重试布置",
+          unitIds: [env.seed.units.u1.id],
+        },
+      };
+      const send = (assignment = args.assignment) =>
+        client.callTool({
+          name: "create_assignment",
+          arguments: { ...args, assignment },
+        });
+      for (const id of [env.seed.students.s2.id, env.seed.students.s3.id])
+        env.db
+          .update(students)
+          .set({ archivedAt: SEED_NOW })
+          .where(eq(students.id, id))
+          .run();
+      const preview = await client.callTool({
+        name: "create_assignment",
+        arguments: { ...args, confirm: false },
+      });
+      expect(JSON.parse(textOf(preview))).toMatchObject({ preview: true });
+      expect(
+        env.db
+          .select()
+          .from(assignments)
+          .where(eq(assignments.title, "重试布置"))
+          .all(),
+      ).toHaveLength(0);
+      const first = await send();
+      expect(first.isError).toBeFalsy();
+      env.db
+        .update(students)
+        .set({ archivedAt: null })
+        .where(eq(students.id, env.seed.students.s2.id))
+        .run();
+      expect(textOf(await send())).toBe(textOf(first));
+      expect(
+        textOf(await send({ ...args.assignment, title: "另一次" })),
+      ).toContain("CREATE_OPERATION_MISMATCH");
+      expect(
+        env.db
+          .select()
+          .from(assignments)
+          .where(eq(assignments.title, "重试布置"))
+          .all(),
+      ).toHaveLength(1);
+    });
     it("create_assignment：缺省仅预检零副作用，confirm 创建；studentIds 省略多名学生 → STUDENT_AMBIGUOUS", async () => {
       const env = await makeEnv();
       const client = await connectClient(env, env.tokenA);
@@ -2641,7 +2694,7 @@ describe("query_student_responses（T-PR2 MCP-A ②）", () => {
     // r1：判错 + 改答 3 次
     env.db
       .update(responses)
-      .set({ finalCorrect: false, changeCount: 3 })
+      .set({ autoCorrect: false, finalCorrect: false, changeCount: 3 })
       .where(eq(responses.id, r1.id))
       .run();
     // r2：自标「不会」+ 订正笔记行（phase=correction）

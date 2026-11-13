@@ -82,6 +82,7 @@ import {
   studentAiShareAccessStatus,
 } from "../services/ai-companion/student-ai-share.ts";
 import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
+import { createStudentMcpLiveFocusRoutes } from "./student-mcp-live-focus.ts";
 
 /**
  * 学生端 AI 伴学路由（SAI-08 快捷按钮、SAI-13 任务接口），由 student.ts 挂在
@@ -300,6 +301,7 @@ export function createStudentAiRoutes(
 
   return (
     new Hono<StudentEnv>()
+      .route("/", createStudentMcpLiveFocusRoutes(db))
       .get("/ai/quick-buttons", (c) => {
         return c.json({
           ok: true,

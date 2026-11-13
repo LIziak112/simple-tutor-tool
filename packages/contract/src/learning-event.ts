@@ -501,6 +501,16 @@ export const learningEventSchema = z.union([
 /** 批量上报的单次上限（§T2.10：≤200 条/次，超出 400） */
 export const LEARNING_EVENTS_BATCH_MAX = 200;
 
+const eventDeliverySchema = z.object({
+  ownerId: z.uuid(),
+  eventIds: z.array(z.uuid()).min(1).max(LEARNING_EVENTS_BATCH_MAX),
+});
+const lectureEventDeliverySchema = eventDeliverySchema.extend({
+  lectureId: z.uuid(),
+});
+export type EventDelivery = z.infer<typeof eventDeliverySchema>;
+export type LectureEventDelivery = z.infer<typeof lectureEventDeliverySchema>;
+
 /**
  * POST /api/student/attempts/:id/events 请求体（1–200 条，逐条校验 type/payload）。
  * viewId（2026-11-09 题内活动用时）：作答页会话标识，每次页面加载一个随机串
@@ -514,6 +524,7 @@ export const attemptEventBatchRequestSchema = z.object(
       .min(1, "events 至少 1 条")
       .max(LEARNING_EVENTS_BATCH_MAX, "每次最多上报 200 条事件"),
     viewId: viewIdSchema.optional(),
+    delivery: eventDeliverySchema.optional(),
   },
   { message: "请求体需为 { events: […] }" },
 );
@@ -525,6 +536,7 @@ export const lectureEventBatchRequestSchema = z.object(
       .array(lectureEventSchema)
       .min(1, "events 至少 1 条")
       .max(LEARNING_EVENTS_BATCH_MAX, "每次最多上报 200 条事件"),
+    delivery: lectureEventDeliverySchema.optional(),
   },
   { message: "请求体需为 { events: […] }" },
 );
@@ -532,7 +544,9 @@ export const lectureEventBatchRequestSchema = z.object(
 /** 批量上报成功响应 data（只回计数，绝不回显事件内容） */
 export const learningEventBatchDataSchema = z.object({
   /** 本次落库的事件条数 */
-  accepted: z.number().int().min(1),
+  accepted: z.number().int().nonnegative(),
+  /** 此批已落库或此前已确认的事件标识。旧客户端不要求回执。 */
+  acknowledgedIds: z.array(z.uuid()).optional(),
 });
 
 // ---------- 推断类型导出 ----------

@@ -6,8 +6,12 @@ import type {
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
+import { attemptSubmissionConflictSchema } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
+import {
+  draftStore,
+  getDraftSessionEpoch,
+} from "@/features/attempt/draft-store";
 import { prepareDraftForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
@@ -20,6 +24,7 @@ import {
   type SubmitEvidenceProblem,
 } from "@/features/notes/submit-evidence";
 import { ApiError, submitLessonQuestionApi } from "@/lib/api";
+import { requestErrorMessage } from "@/lib/api-response";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useOnlineStatus } from "@/lib/use-online-status";
 
@@ -81,16 +86,12 @@ interface LessonOverlay {
   attempt: AttemptSummary;
 }
 
-/** 通用错误 → 中文文案 */
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error ? err.message : fallback;
-}
-
 /** 覆盖错误码 → stale 口径（页面内容过期，提示刷新） */
 function isStaleError(err: unknown): boolean {
   return (
     err instanceof ApiError &&
     (err.code === "QUESTION_REVISION_STALE" ||
+      err.code === "ANSWER_REVISION_CONFLICT" ||
       err.code === "NOTE_EVIDENCE_MISMATCH")
   );
 }
@@ -223,21 +224,6 @@ export function useLessonAttempt(
 
   const registerCard = attemptEvents.registerCard;
 
-  /** 追平草稿与答案（单题提交/整卷收尾共用的前置步骤） */
-  const settleDrafts =
-    useCallback(async (): Promise<LessonSubmitOutcome | null> => {
-      try {
-        await draftSync.syncNow();
-        await flushAnswers();
-        return null;
-      } catch (err) {
-        return {
-          kind: "error",
-          message: messageOf(err, "答案尚未保存，请检查网络后重试"),
-        };
-      }
-    }, [draftSync.syncNow, flushAnswers]);
-
   /** 单题证据组装（复用整卷 prepareSubmitEvidence 的单题化调用） */
   const prepEvidence = useCallback(
     async (
@@ -253,7 +239,10 @@ export function useLessonAttempt(
       } catch (err) {
         return {
           kind: "error",
-          message: messageOf(err, "草稿状态获取失败，请检查网络后重试"),
+          message: requestErrorMessage(
+            err,
+            "草稿状态获取失败，请检查网络后重试",
+          ),
         };
       }
     },
@@ -266,32 +255,60 @@ export function useLessonAttempt(
       opts?: { allowMissing?: boolean },
     ): Promise<LessonSubmitOutcome> => {
       const question = data.questions.find((item) => item.id === questionId);
+      const sessionEpoch = getDraftSessionEpoch();
+      const sameSession = () => sessionEpoch === getDraftSessionEpoch();
+      const sessionChanged: LessonSubmitOutcome = {
+        kind: "error",
+        message: "作答会话已切换，请重新打开练习",
+      };
       if (question === undefined) {
         return { kind: "error", message: "这道题不在本次练习中，请刷新页面" };
       }
       // 手写题笔迹先行（同整卷「交卷前强制上传」口径的单题化）
       const controller = inkControllers.current.get(questionId);
-      if (controller !== undefined && !(await controller.flush())) {
+      const inkReady = controller === undefined || (await controller.flush());
+      if (!sameSession()) return sessionChanged;
+      if (!inkReady) {
         return {
           kind: "error",
           message: "手写内容还没有上传完成，请稍后重试",
         };
       }
-      const settled = await settleDrafts();
-      if (settled !== null) return settled;
+      try {
+        await draftSync.syncNow();
+        if (!sameSession()) return sessionChanged;
+        await flushAnswers();
+      } catch (err) {
+        if (!sameSession()) return sessionChanged;
+        return {
+          kind: "error",
+          message: requestErrorMessage(err, "答案尚未保存，请检查网络后重试"),
+        };
+      }
+      if (!sameSession()) return sessionChanged;
       const prep = await prepEvidence(
         [questionId],
         opts?.allowMissing ? new Set([questionId]) : undefined,
       );
+      if (!sameSession()) return sessionChanged;
       if ("kind" in prep) return prep;
       if (prep.declarations === null) {
         return { kind: "problems", problems: prep.problems };
       }
       try {
+        const record = await draftStore.loadDraft(attemptId, {
+          strictRead: true,
+        });
+        if (!sameSession()) return sessionChanged;
         const result = await submitLessonQuestionApi(attemptId, questionId, {
           questionRevisionId: question.questionRevisionId,
+          expectedAnswerRevision:
+            record?.answerRevisions?.[questionId] ??
+            data.draftRevisions?.[questionId] ??
+            0,
           evidence: prep.declarations[0],
         });
+        if (!sameSession()) return sessionChanged;
         setOverlay((prev) => ({
           released: {
             ...(prev?.released ?? {}),
@@ -307,6 +324,7 @@ export function useLessonAttempt(
         }
         return { kind: "submitted" };
       } catch (err) {
+        if (!sameSession()) return sessionChanged;
         if (isAlreadySubmittedError(err)) {
           // 已提交过（旧响应迟到/他端已交）：静默收敛——重新拉 start，
           // 题卡随 released 转结果态，不弹错误
@@ -314,15 +332,39 @@ export function useLessonAttempt(
           return { kind: "submitted" };
         }
         if (isStaleError(err)) {
+          if (
+            err instanceof ApiError &&
+            err.code === "ANSWER_REVISION_CONFLICT"
+          ) {
+            const conflict = attemptSubmissionConflictSchema.safeParse(
+              err.extra,
+            );
+            if (conflict.success && conflict.data._questionId === questionId) {
+              draftStore.setAnswerConflict(
+                attemptId,
+                questionId,
+                conflict.data._current,
+              );
+            }
+            return { kind: "stale", message: err.message };
+          }
           return { kind: "stale", message: "页面内容已过期，请刷新后重试" };
         }
         return {
           kind: "error",
-          message: messageOf(err, "提交失败，请稍后重试"),
+          message: requestErrorMessage(err, "提交失败，请稍后重试"),
         };
       }
     },
-    [attemptId, data.questions, prepEvidence, refetch, settleDrafts],
+    [
+      attemptId,
+      data.draftRevisions,
+      data.questions,
+      draftSync.syncNow,
+      flushAnswers,
+      prepEvidence,
+      refetch,
+    ],
   );
 
   const handlers = useMemo<LessonQuestionHandlers>(

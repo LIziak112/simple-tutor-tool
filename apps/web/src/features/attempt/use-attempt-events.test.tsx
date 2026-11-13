@@ -152,7 +152,7 @@ describe("useAttemptEvents：ink_edit_batch 聚合（T4.0b）", () => {
     const batchIndex = events.findIndex((e) => e.type === "ink_edit_batch");
     const submitIndex = events.findIndex((e) => e.type === "submit");
     expect(batchIndex).toBeGreaterThanOrEqual(0);
-    expect(submitIndex).toBeGreaterThan(batchIndex);
+    expect(submitIndex).toBe(-1);
     unmount();
   });
 
@@ -424,6 +424,7 @@ it("原聚焦、纸面开合、全屏、交卷触发点同步进入单题过程"
     await editor.requestPaper({ questionId: "q1", kind: "scratch" });
     await editor.requestPaper(null);
     await api.finalizeSubmit();
+    api.confirmSubmit();
   });
   await recorder.flush();
   expect(

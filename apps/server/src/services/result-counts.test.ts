@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createTestDb } from "../db/test-utils";
+import { snapshotJsonOf } from "../test/evidence-fixtures.ts";
 import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 
 describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
@@ -18,7 +19,7 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         "auto-right",
         "done",
         "q1",
-        "{}",
+        snapshotJsonOf({ id: "q1" }),
         1,
         1,
         1,
@@ -32,7 +33,7 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         "self-right",
         "done",
         "q2",
-        "{}",
+        snapshotJsonOf({ id: "q2" }),
         null,
         null,
         1,
@@ -46,7 +47,7 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         "self-wrong",
         "done",
         "q3",
-        "{}",
+        snapshotJsonOf({ id: "q3" }),
         null,
         null,
         1,
@@ -60,7 +61,7 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         "teacher-wrong",
         "done",
         "q4",
-        "{}",
+        snapshotJsonOf({ id: "q4" }),
         0,
         1,
         1,
@@ -70,13 +71,25 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         null,
       );
       // 未做判错（#6980-3）：answered=false 仍进分母，不计判对
-      insert.run("blank", "done", "q5", "{}", 0, 0, 0, null, null, null, null);
+      insert.run(
+        "blank",
+        "done",
+        "q5",
+        snapshotJsonOf({ id: "q5" }),
+        0,
+        0,
+        0,
+        null,
+        null,
+        null,
+        null,
+      );
       // 待批：finalCorrect null 且非 reference_self 行（D4 谓词）
       insert.run(
         "pending",
         "done",
         "q6",
-        "{}",
+        snapshotJsonOf({ id: "q6" }),
         null,
         null,
         1,
@@ -90,7 +103,7 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
         "self-pending",
         "done",
         "q7",
-        "{}",
+        snapshotJsonOf({ id: "q7" }),
         null,
         null,
         1,
@@ -101,12 +114,25 @@ describe("冻结作答题数聚合（QM-12 有效判定口径）", () => {
       );
       // 幽灵行（快照缺失）：不计入任何计数
       insert.run("ghost", "done", "q8", null, 1, 1, 1, null, null, null, null);
+      insert.run(
+        "damaged",
+        "done",
+        "q9",
+        "{}",
+        1,
+        1,
+        1,
+        null,
+        null,
+        null,
+        null,
+      );
       // 草稿行：整卷不产生结果
       insert.run(
         "draft-row",
         "draft",
         "q1",
-        "{}",
+        snapshotJsonOf({ id: "q1" }),
         1,
         1,
         1,

@@ -22,6 +22,12 @@ export * from "./attachment-api.ts";
 export * from "./attempt.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
 export * from "./attempt-activity.ts";
+export * from "./attempt-batch-submission.ts";
+export * from "./attempt-state.ts";
+export {
+  type FrozenQuestionRevisionId,
+  frozenQuestionRevisionIdSchema,
+} from "./attempt-submission.ts";
 export * from "./attempt-timing.ts";
 /** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login/register 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";
@@ -40,6 +46,7 @@ export * from "./content-api.ts";
 export * from "./content-signature.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
+export * from "./create-operation.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
 export * from "./directives.ts";
 /** 判分输入契约（T2.5 起为权威定义）：学生答案按题型判别联合，与 content.ts 的 QuestionAnswers 对应 */
@@ -104,7 +111,7 @@ export * from "./question-node.ts";
  *  方案 §3）：GET /api/teacher/students/:id/question-review 查询参数与聚合行
  *  （一行 = questionId × 该 kind 口径下最新代表作答；口径与 MCP-A 同一构造器） */
 export * from "./question-review-api.ts";
-
+export * from "./request-diagnostics.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";
@@ -145,6 +152,7 @@ export * from "./student-ai-origin.ts";
 export * from "./student-ai-policy.ts";
 /** 学生端课程契约（T2A.5 起为权威定义）：我的课程、课程可见目录（D5）、D22 错误码 */
 export * from "./student-course-api.ts";
+export * from "./student-mcp-live-focus.ts";
 /** 学生端题目笔记本契约（T6R.15 起为权威定义，方案 §5.2/D7）：跨 attempt 聚合的
  *  同题历次轮次（仅已交卷；零答案零解析零题干正文，题目侧只有版本号数字） */
 export * from "./student-notebook-api.ts";

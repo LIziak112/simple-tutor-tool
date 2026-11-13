@@ -272,7 +272,7 @@ export function StudentLayout() {
               {logoutMutation.error.message}
             </p>
           )}
-          <Outlet />
+          <Outlet key={meQuery.data.id} />
         </main>
         {!workspace && <MemoQuickCapture />}
       </div>

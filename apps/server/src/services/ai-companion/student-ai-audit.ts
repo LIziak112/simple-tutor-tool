@@ -3,14 +3,19 @@ import type { AiFactType } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
+  type AiAttemptReviewFactType,
+  type AiAttemptReviewTaskRow,
   type AiFactRow,
   type AiTaskRow,
+  aiAttemptReviewFacts,
   aiFacts,
   aiTasks,
   attempts,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { observeRequestAiFact } from "../../lib/request-diagnostics.ts";
 import { resolveNowDate } from "../export-service.ts";
+import type { QueueTx } from "./student-ai-shared.ts";
 import { questionPhaseOf } from "./teaching-policy-service.ts";
 
 /**
@@ -84,7 +89,48 @@ export function appendAiFact(
     serverTs: nowIso,
   };
   handle.insert(aiFacts).values(row).run();
+  observeRequestAiFact(
+    row.taskId,
+    row.type,
+    () =>
+      handle
+        .select({ id: aiFacts.id })
+        .from(aiFacts)
+        .where(eq(aiFacts.id, row.id))
+        .get() !== undefined,
+  );
   return row;
+}
+
+export function insertArFact(
+  tx: QueueTx,
+  task: AiAttemptReviewTaskRow,
+  type: AiAttemptReviewFactType,
+  nowIso: string,
+  detail?: AiFactDetail,
+): void {
+  const id = randomUUID();
+  tx.insert(aiAttemptReviewFacts)
+    .values({
+      id,
+      taskId: task.id,
+      studentId: task.studentId,
+      attemptId: task.attemptId,
+      type,
+      ...(detail === undefined ? {} : { detailJson: JSON.stringify(detail) }),
+      serverTs: nowIso,
+    })
+    .run();
+  observeRequestAiFact(
+    task.id,
+    type,
+    () =>
+      tx
+        .select({ id: aiAttemptReviewFacts.id })
+        .from(aiAttemptReviewFacts)
+        .where(eq(aiAttemptReviewFacts.id, id))
+        .get() !== undefined,
+  );
 }
 
 // ---------- 预留通道 hook（上下文链接；票据端点归 B15/SAI-28 接线） ----------

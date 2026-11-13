@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ApiError,
   fetchLessonLandingApi,
   restartLessonAttemptApi,
   startLessonAttemptApi,
 } from "@/lib/api";
+import { useReplayableCreate } from "@/lib/use-replayable-create";
 
 /**
  * 讲练页数据层（2026-10 讲练一体）：
@@ -63,8 +65,12 @@ export function useLessonStart(
 /** 「再做一次/重新开始」：随时重开新卷（进行中先作废）；成功后失效开卷/落地与聚合缓存 */
 export function useRestartLesson(lectureId: string) {
   const queryClient = useQueryClient();
+  const create = useReplayableCreate();
   return useMutation({
-    mutationFn: () => restartLessonAttemptApi(lectureId),
+    mutationFn: (expectedAttemptId: string) =>
+      create([lectureId, expectedAttemptId], (operationId) =>
+        restartLessonAttemptApi(lectureId, { operationId, expectedAttemptId }),
+      ),
     onSuccess: () => {
       // 前缀失效：courseId 维度无关（同一讲练页任意课程上下文一起刷新）
       void queryClient.invalidateQueries({ queryKey: ["student", "lesson"] });
@@ -76,5 +82,18 @@ export function useRestartLesson(lectureId: string) {
         queryKey: ["student", "wrong-questions"],
       });
     },
+    onError: (error) => {
+      if (isStaleLessonRestart(error))
+        void queryClient.invalidateQueries({
+          queryKey: ["student", "lesson", lectureId],
+        });
+    },
   });
+}
+
+export function isStaleLessonRestart(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    ["LESSON_RESTART_STALE", "ATTEMPT_ABANDONED"].includes(error.code)
+  );
 }

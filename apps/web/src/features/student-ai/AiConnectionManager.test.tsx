@@ -537,6 +537,30 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
     expect(screen.getAllByText(/mcp-token-current/u)).toHaveLength(2);
   });
 
+  it("MCP 当前题定位默认关闭，仅明确开启时随保存提交", async () => {
+    const connection = mcp();
+    mockedFetch.mockResolvedValue(listData([connection]));
+    mockedPatch.mockResolvedValue({
+      connection: { ...connection, liveContextEnabled: true },
+      credential: null,
+    });
+    renderManager();
+    fireEvent.click(await screen.findByRole("button", { name: "修改配置" }));
+    const optIn = screen.getByRole("checkbox", {
+      name: /允许客户端定位当前题的求助/,
+    });
+    expect(optIn).not.toBeChecked();
+    fireEvent.click(optIn);
+    fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+    await waitFor(() =>
+      expect(mockedPatch).toHaveBeenCalledWith(connection.id, {
+        channel: "mcp",
+        isDefault: false,
+        liveContextEnabled: true,
+      }),
+    );
+  });
+
   it("创建 MCP 保存后回总览，凭据集中在详情", async () => {
     renderManager();
     await createView();

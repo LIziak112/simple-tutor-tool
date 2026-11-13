@@ -4,6 +4,7 @@ import type {
   PracticeWorkflow,
   TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
+import { storedAttemptProtocolSchema } from "@tutor/contract";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -259,13 +260,16 @@ export function practiceProtocolOf(
   attempt: Pick<
     Attempt,
     "sourceType" | "practiceWorkflowVersion" | "feedbackMode"
-  >,
+  > &
+    Partial<Pick<Attempt, "workflowRevision">>,
 ): "lesson" | "legacy" | "v1" {
   if (attempt.sourceType === "lesson") return "lesson";
-  if (attempt.practiceWorkflowVersion !== 1 || attempt.feedbackMode === null) {
-    return "legacy";
-  }
-  return "v1";
+  const stored = storedAttemptProtocolSchema.safeParse({
+    version: attempt.practiceWorkflowVersion,
+    feedbackMode: attempt.feedbackMode,
+    revision: attempt.workflowRevision ?? 0,
+  });
+  return stored.success && stored.data.version === 1 ? "v1" : "legacy";
 }
 
 /**

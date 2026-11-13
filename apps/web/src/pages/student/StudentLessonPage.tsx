@@ -29,7 +29,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -46,18 +45,20 @@ import {
 } from "@/features/attempt/attempt-context-view";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { LessonResultLinks } from "@/features/attempt/LessonResultLinks";
-import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { CompletedLessonRestartDialog } from "@/features/lesson/CompletedLessonRestartDialog";
+import { LessonDraftNotices } from "@/features/lesson/LessonDraftNotices";
 import {
   LessonGroupBlock,
   LessonQuestionMaterials,
 } from "@/features/lesson/LessonGroupBlock";
 import { LessonQuestionCard } from "@/features/lesson/LessonQuestionCard";
 import {
+  isStaleLessonRestart,
   useLessonStart,
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
@@ -759,7 +760,6 @@ function LessonAnswerInner({
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
   );
-  const [retryingSave, setRetryingSave] = useState(false);
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
   // QM-14：组段呈现（作答态与完成回看同一组锚点；context 失败非阻断）
   const {
@@ -897,31 +897,12 @@ function LessonAnswerInner({
           </p>
         )}
 
-        {/* 本机保存失败时的手动重试（其余失败态由同步循环自动重试） */}
-        {session.saveStatus.startsWith("本机保存失败") && (
-          <p className="flex flex-wrap items-center gap-2 text-sm text-destructive">
-            本机草稿保存失败
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={retryingSave}
-              onClick={async () => {
-                setRetryingSave(true);
-                try {
-                  await retryAttemptLocalPersistence(attemptId, questionIds);
-                  await session.draftSyncContext.syncNow();
-                } catch {
-                  // 重试失败保持提示（下一次点击再试）
-                } finally {
-                  setRetryingSave(false);
-                }
-              }}
-            >
-              <RotateCw aria-hidden className="size-4" />
-              重试保存
-            </Button>
-          </p>
-        )}
+        <LessonDraftNotices
+          attemptId={attemptId}
+          questionIds={questionIds}
+          session={session}
+          beforeResolve={async () => !editor || (await editor.request(null))}
+        />
 
         {aiCompanion.rail(
           <LessonBody
@@ -952,7 +933,7 @@ function LessonCompletedView({
   lectureId: string;
 }) {
   const restart = useRestartLesson(lectureId);
-  const [restartOpen, setRestartOpen] = useState(false);
+  const [restartTarget, setRestartTarget] = useState<string | null>(null);
   const summary = data.summary;
   const attemptId = data.attempt.id;
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
@@ -1066,7 +1047,7 @@ function LessonCompletedView({
               <Button
                 className="min-h-11"
                 disabled={restart.isPending}
-                onClick={() => setRestartOpen(true)}
+                onClick={() => setRestartTarget(attemptId)}
               >
                 {restart.isPending ? (
                   <LoaderCircle aria-hidden className="size-4 animate-spin" />
@@ -1094,38 +1075,23 @@ function LessonCompletedView({
         )}
 
         {/* 再做一次确认：显式动作（新卷从空白开始，之前作答保留可回看） */}
-        <Dialog open={restartOpen} onOpenChange={setRestartOpen}>
-          <DialogContent className="w-[calc(100%-24px)] max-w-md">
-            <DialogHeader>
-              <DialogTitle>再做一次吗？</DialogTitle>
-              <DialogDescription className="text-sm leading-6">
-                将开始第 {data.attempt.attemptNo + 1}{" "}
-                次练习，全部题目从空白开始作答；这一次的作答会保留，可随时在「我的记录」回看。
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={() => setRestartOpen(false)}
-              >
-                先不了
-              </Button>
-              <Button
-                className="min-h-11"
-                disabled={restart.isPending}
-                onClick={() =>
-                  void restart.mutateAsync(undefined, {
-                    onSuccess: () => setRestartOpen(false),
-                  })
-                }
-              >
-                {restart.isPending ? "正在开卷新一轮…" : "开始新一轮"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-        {restartErrorText !== null && (
+        <CompletedLessonRestartDialog
+          open={restartTarget !== null}
+          busy={restart.isPending}
+          nextAttemptNo={data.attempt.attemptNo + 1}
+          error={restartErrorText}
+          onClose={() => setRestartTarget(null)}
+          onConfirm={() => {
+            if (restartTarget === null) return;
+            restart.mutate(restartTarget, {
+              onSuccess: () => setRestartTarget(null),
+              onError: (error) => {
+                if (isStaleLessonRestart(error)) setRestartTarget(null);
+              },
+            });
+          }}
+        />
+        {restartTarget === null && restartErrorText !== null && (
           <p role="alert" className="text-sm text-destructive">
             再做一次失败：{restartErrorText}
           </p>

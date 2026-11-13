@@ -326,6 +326,8 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
         overlay.locator('[data-slot="material-annotation-input"]'),
       );
       await expect(overlay).toHaveAttribute("data-stroke-count", "1");
+      // 首笔冻结挂框会暂时关闭输入；等材料表面重新稳定，再检查实际命中层。
+      await expect(overlay).toHaveAttribute("data-ink-ready", "true");
       // 适应宽度时不能有截获手势的内部滚动口，纵向手势应到达材料列。
       const nestedScrollports = await materials.evaluate((root) => {
         const input = root.querySelector(

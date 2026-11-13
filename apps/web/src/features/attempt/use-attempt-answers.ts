@@ -189,7 +189,9 @@ export function useAttemptAnswers(
     );
     if (deniedFor.current === scope)
       throw new Error("已无权限保存答案，请返回首页");
-    const record = await draftStore.loadDraft(scope);
+    const record = await draftStore.refreshShared(scope);
+    if (record?.localConflicts?.length)
+      throw new Error("有本机稿件待裁决，请先选择保留版本");
     if (Object.keys(record?.answerConflicts ?? {}).length > 0)
       throw new Error("答案存在同步冲突，请先选择保留版本");
     if (attemptIdRef.current !== scope)
@@ -228,7 +230,7 @@ export function useAttemptAnswers(
       } catch {
         return false;
       }
-      return getDraftPersistenceState(attemptIdRef.current) !== "failed";
+      return getDraftPersistenceState(attemptIdRef.current) === "saved";
     },
     [flushPendingNow],
   );
@@ -247,7 +249,9 @@ export function useAttemptAnswers(
       };
       await waitOwnInflight();
       if (attemptIdRef.current !== scope) return false;
-      const record = await draftStore.loadDraft(scope);
+      const record = await draftStore.refreshShared(scope);
+      if (record?.localConflicts?.some((entry) => entry.key === questionId))
+        return false;
       // 待裁决冲突不是「未同步」：需用户先选保留版本，不自动重传内容
       if (record?.answerConflicts?.[questionId] !== undefined) return false;
       // 该题有本机答案但仍未同步（无本机答案不算未同步）

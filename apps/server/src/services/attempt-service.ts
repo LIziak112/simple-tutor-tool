@@ -1,3 +1,11 @@
+import { attemptSummaryOf } from "./attempt-summary.ts";
+
+export { attemptSummaryOf } from "./attempt-summary.ts";
+
+import { newDraftAttempt } from "./new-draft-attempt.ts";
+
+export { newDraftAttempt } from "./new-draft-attempt.ts";
+
 import { createHash, randomUUID } from "node:crypto";
 import {
   ALL_ENABLED_CAPABILITIES,
@@ -14,26 +22,28 @@ import {
   type AttemptScoreSummary,
   type AttemptStartData,
   type AttemptSubmitRequest,
-  type AttemptSubmitRevision,
   attemptAnswerConflictCurrentSchema,
+  attemptAnswerSaveDataSchema,
   attemptQuestionPublicSchema,
+  attemptResultDataSchema,
   type CapabilitySwitch,
   type CourseAttemptStartOptions,
-  type EffectiveVerdict,
+  canonicalAssignmentDueAt,
   effectiveVerdictOf,
   emptyPublicStructure,
+  frozenGradingPolicySchema,
   type GradingPolicy,
   type HintOpenedEntry,
   inspectShapeOfAnswer,
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
+  lessonQuestionSubmitDataSchema,
   type MatchingOptionsStudent,
   type MatchingSlot,
   matchingPublicStructureOf,
   materialPublicSchema,
   materialRefSchema,
   NEW_QUESTION_TYPES,
-  type NoteSubmissionEvidenceState,
   type OrderingItemStudent,
   optionSchema,
   orderingPublicStructureOf,
@@ -50,15 +60,9 @@ import {
   questionAnswersSchema,
   questionEvidenceBindings,
   questionSchema,
-  type SelfReviewRecord,
   type StudentAnswer,
   type StudentPaperData,
   type StudentPaperUnit,
-  type SubmitEvidenceDeclaration,
-  studentAnswerSchema,
-  type TeacherMark,
-  wrongPracticeScopeSchema,
-  wrongScopeLabelOf,
 } from "@tutor/contract";
 import { gradeResponseRow, isUnanswered } from "@tutor/grading";
 import {
@@ -69,7 +73,6 @@ import {
 } from "@tutor/md-dsl";
 import {
   and,
-  asc,
   desc,
   eq,
   gt,
@@ -86,26 +89,22 @@ import {
   annotations,
   assignmentStudents,
   assignments,
-  assignmentUnits,
   attempts,
   type Course,
   courses,
   ink,
   lectures,
-  type NoteRow,
   notes,
   type Question as QuestionRow,
   questions,
   type ResponseRow,
   responses,
-  students,
   submissionEvidence,
   type Unit,
   units,
 } from "../db/schema";
 import { canonicalJsonOf } from "../lib/canonical-json";
 import { HttpError } from "../lib/http-error";
-import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import { touchAttemptActivity } from "./attempt-activity";
 import {
@@ -113,17 +112,33 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
-import { attemptAllowRedo } from "./attempt-redo-policy";
+import {
+  attemptFinalOutcomeOf,
+  type FinalOutcomeRow,
+  hasUsableQuestionSnapshotSql,
+  needsTeacherMark,
+  scoreAutoOf,
+} from "./attempt-final-outcome.ts";
+import {
+  assertAttemptQuestionLimit,
+  attemptTeacherId,
+  attemptUnitIds,
+  loadAttemptQuestions,
+} from "./attempt-question-set.ts";
+import { attemptAllowRedo, withAllowRedo } from "./attempt-redo-policy";
 import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
   assertAttemptNotTimedOut,
   assertSavedAnswersConfirmed,
   attemptTimingOf,
-  timedColumnsOf,
 } from "./attempt-timing";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
+import {
+  recordConfirmedSubmit,
+  recordQuestionSubmitEvent,
+  submissionActivityOf,
+} from "./event-service";
 import {
   hintsOfJson,
   openedHintEcho,
@@ -136,7 +151,7 @@ import {
 } from "./material-repository.ts";
 import { pendingMarkCount } from "./pending-mark";
 import {
-  answersReleased,
+  answerReleaseProjection,
   attemptAnswersPublished,
   resolvePracticeQuestionFeedbackState,
 } from "./practice-workflow-service";
@@ -149,14 +164,44 @@ import {
   resolveNewAttemptWorkflow,
 } from "./practice-workflow-wiring";
 
+export {
+  attemptFinalOutcomeOf,
+  finalScoreOf,
+} from "./attempt-final-outcome.ts";
+export {
+  attemptQuestionRows,
+  attemptTeacherId,
+  attemptUnitIds,
+} from "./attempt-question-set.ts";
 // answersReleased 原定义在本文件（T2A.8），M2 迁入纯裁决器层（题级反馈
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
 export { answersReleased } from "./practice-workflow-service";
+export {
+  effectiveVerdictOfRow,
+  selfReviewRecordOf,
+  teacherMarkOf,
+} from "./response-verdict.ts";
 
+import {
+  buildSingleQuestionEvidence,
+  buildSubmissionEvidence,
+} from "./attempt-submit-evidence.ts";
+import {
+  assertSubmissionAnswerRevision,
+  revisionStale,
+  validateSubmitRevisions,
+} from "./attempt-submit-revisions.ts";
 import { attemptActivityProjection } from "./question-activity";
 import type { Tx } from "./question-sync";
+import {
+  effectiveVerdictOfRow,
+  selfReviewRecordOf,
+} from "./response-verdict.ts";
 import { rubricReviewOf } from "./rubric-review-read";
-import { jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
+import { answerOf, jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
+
+export { answerOf } from "./snapshot";
+
 import { unitTimeQuotasOf } from "./unit-time-quota";
 
 /**
@@ -222,50 +267,6 @@ import { unitTimeQuotasOf } from "./unit-time-quota";
  * （见 buildResultData）；截止后读时自动恢复。
  */
 
-/** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts / lesson-service.ts 组卷复用（同一投影） */
-
-/**
- * 建卷范围快照 → 展示标签（#6980-2）：坏 JSON/不合法形态按无存档处理（null），
- * 不打挂摘要读取。
- */
-function parseWrongScopeLabel(json: string): string | null {
-  try {
-    const parsed = wrongPracticeScopeSchema.safeParse(JSON.parse(json));
-    return parsed.success ? wrongScopeLabelOf(parsed.data) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function attemptSummaryOf(row: Attempt): AttemptStartData {
-  return {
-    id: row.id,
-    sourceType: row.sourceType,
-    assignmentId: row.assignmentId,
-    // 2026-10 讲练一体：lesson 开卷写入讲义 id，其余来源恒 null（契约反向锁定）
-    lectureId: row.lectureId,
-    courseId: row.courseId,
-    // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走 assignment_units）；
-    // course 恒有值；wrong 恒 null。摘要层归一化：D23-6 回填「原值保留」可能让旧库
-    // assignment 行带历史非空 unitId，此处收敛到契约不变式，不改库（历史值无消费方）
-    unitId: row.sourceType === "assignment" ? null : row.unitId,
-    attemptNo: row.attemptNo,
-    status: row.status,
-    startedAt: row.startedAt,
-    submittedAt: row.submittedAt,
-    scoreAuto: row.scoreAuto,
-    // 模块 2 限时测试：时长 / 截止随摘要下发（记录页、结果页显示「限时 N 分钟」）
-    timeLimitSec: row.timeLimitSec,
-    deadlineAt: row.deadlineAt,
-    // #6980-2：错题重练范围标签（wrong 来源按建卷存的 scope 取 label，
-    // 答题页/结果页来源行「练的是什么」；其余来源与历史卷恒 null）
-    wrongScopeLabel:
-      row.sourceType === "wrong" && row.practiceScopeJson !== null
-        ? parseWrongScopeLabel(row.practiceScopeJson)
-        : null,
-  };
-}
-
 // ---------- T6R.3 建卷冻结（三来源统一，方案 §5.1） ----------
 
 /**
@@ -317,7 +318,9 @@ export function insertFrozenResponse(
       questionVersion: values.questionVersion,
       questionSnapshotJson: values.questionSnapshotJson,
       unitId: values.unitId,
-      gradingPolicy: values.gradingPolicy ?? null,
+      gradingPolicy: frozenGradingPolicySchema.parse(
+        values.gradingPolicy ?? null,
+      ),
       answerJson: null,
       autoCorrect: null,
       finalCorrect: null,
@@ -416,24 +419,23 @@ function backfillFrozenResponses(
 }
 
 /**
- * 非 wrong 来源的冻结输入（**读路径，事务外调用**——better-sqlite3 同步单进程，
- * 同线程内先读后写无竞态）：attempt 单元集合内的当前 live 题（单元序 × 题序，
+ * 非 wrong 来源的冻结输入：attempt 单元集合内的当前 live 题（单元序 × 题序，
  * attemptQuestionRows 口径，域内取题 D10）+ 各题考点名（快照 knowledge 用，
  * 只查卷内题目的关联，不拉全教师域）。
  * 教师域缺失的异常行按空集合处理（fail closed，空卷冻结）。
- * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（嵌入单元 live 题）。
  */
-export function freezeInputsOfAttempt(
+function freezeInputsOfAttempt(
   db: Db,
   attempt: Attempt,
+  checkNewAttemptLimit = false,
 ): {
   liveRows: QuestionRow[];
   knowledgeByQuestion: ReadonlyMap<string, string[]>;
   /** 题目所属教师域（tt-07a 依赖闭包计算用；异常行 null → 闭包为空） */
   teacherId: string | null;
 } {
-  const teacherId = attemptTeacherId(db, attempt);
-  const liveRows = attemptQuestionRows(db, attempt);
+  const { teacherId, liveRows } = loadAttemptQuestions(db, attempt);
+  if (checkNewAttemptLimit) assertAttemptQuestionLimit(liveRows.length);
   return {
     liveRows,
     teacherId,
@@ -446,6 +448,11 @@ export function freezeInputsOfAttempt(
             liveRows.map((row) => row.id),
           ),
   };
+}
+
+/** 新开卷在读取考点和冻结上下文之前先核对实际题数。 */
+export function freezeInputsOfNewAttempt(db: Db, attempt: Attempt) {
+  return freezeInputsOfAttempt(db, attempt, true);
 }
 
 /**
@@ -530,9 +537,7 @@ function requireAssignmentRow(db: Db, id: string): Assignment {
  * 批量预取作业的公布口径（题目笔记本 2026-10 起，与 student-records 的
  * 作业记录列表同型收敛）：id 去重交调用方负责 → 单条 inArray 只取
  * answerRelease/dueAt → Map。含已软删行（作答记录不随作业软删消失，
- * requireAssignmentRow 同口径）；行异常缺失（Map 无键）的兜底方向由
- * 消费方自定——notebook 按 fail-closed 未公布（防泄露取严），student-
- * records 沿重构前既有语义 fail-open 视为已公布（记录列表不因异常行遮蔽）。
+ * requireAssignmentRow 同口径）；已交作业缺少公布事实时按未公布处理。
  */
 export function assignmentReleaseByIds(
   db: Db,
@@ -623,25 +628,6 @@ export function requireUsableAttempt(
 // ---------- 题目集合按来源分派（T2A.6；T2A.7 多单元化） ----------
 
 /**
- * attempt → student.teacherId 推导教师域（T2B.5，D10）：学生侧无会话教师，
- * 取卷/判分/提示/结果视图等一切按 unitId/questionId 查 units/questions 的地方
- * 在复合主键 (teacherId, id) 后不再唯一，必须带域（否则两位教师持同 id 单元/
- * 题目时会串到别人的内容——既是泄露也是判分错误）。attempt 归属学生一生只归
- * 一位教师（D14），故域取 students.teacherId。
- * D9 异常行防御：无教师域的学生行（回填后不应存在）返回 null，调用方按
- * 空结果/缺省处理（fail closed，与 T2B.4 listStudentAssignments 同口径）。
- * 导出供 hint-service 复用（提示内容同样按域取题）。
- */
-export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
-  const row = db
-    .select({ teacherId: students.teacherId })
-    .from(students)
-    .where(eq(students.id, attempt.studentId))
-    .get();
-  return row?.teacherId ?? null;
-}
-
-/**
  * T7.7：attempt → 所属教师的有效辅助能力启用集（草稿/结果视图同口径下发）。
  * 无教师域的异常学生行兜底全启用——与题目域的 fail closed（空结果）不同：
  * 开关只影响 steps 揭晓与手写入口的渲染，不是安全边界，兜底到「多给辅助」
@@ -656,73 +642,6 @@ export function attemptEnabledCapabilities(
   return teacherId === null
     ? [...ALL_ENABLED_CAPABILITIES]
     : getCapabilityProfile(db, teacherId).enabledCapabilities;
-}
-
-/**
- * attempt 的有序单元 id 列表（T2A.7）：
- * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行；
- *   课程侧可见性由 requireVisibleCourseUnit 把关）；
- * - lesson 来源（2026-10 讲练一体）：[attempt.unitId]（嵌入单元的快照值，开卷
- *   时写入；零题讲练页为讲义 id 占位——该值下无题目行，冻结结果为空卷）；
- * - assignment 来源：该作业 assignment_units 按 order 升序的列表（作业行经 FK
- *   必存在——含已删作业，作答不随作业软删消失）。
- *   D16：**单元软删不影响作业通道**——引用行保留，题目照常下发/判分；
- *   只有 questions.deletedAt（T1.12 题目级软删）才把题从判分/快照口径排除。
- * - wrong 来源（2026-10）：恒 []——错题重练卷不落单元，题目集合/快照/题序
- *   全在 attempt 自己的 responses 行（wrongAttemptResponseRows）。
- * 判分/快照/草稿/取卷/题目归属校验全部以本列表为唯一口径（wrong 来源除外，
- * 各消费方按 wrong 分支走自有行）。
- */
-export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
-  if (attempt.sourceType === "wrong") {
-    return [];
-  }
-  if (attempt.sourceType === "course" || attempt.sourceType === "lesson") {
-    return attempt.unitId !== null ? [attempt.unitId] : [];
-  }
-  const assignmentId = attempt.assignmentId;
-  if (assignmentId === null) return []; // 防御性兜底：assignment 来源必写 assignmentId
-  return db
-    .select({ unitId: assignmentUnits.unitId })
-    .from(assignmentUnits)
-    .where(eq(assignmentUnits.assignmentId, assignmentId))
-    .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
-    .all()
-    .map((row) => row.unitId);
-}
-
-/**
- * attempt 的判分/快照题目集合（按 sourceType 分派，D9；T2A.7 多单元拼接）：
- * 各单元未删除题按 (order, id) 升序后**按 attemptUnitIds 的单元顺序拼接**——
- * 题号全卷连续（D12），得分按全卷计算。course 来源为单单元的特例。
- * T2B.5：按 attempt → student.teacherId 域内取题（D10——同 id 题目分属不同
- * 教师，判分输入不可串域；无教师域的异常行按空集合处理）。
- */
-export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
-  const unitIds = attemptUnitIds(db, attempt);
-  if (unitIds.length === 0) return [];
-  const teacherId = attemptTeacherId(db, attempt);
-  if (teacherId === null) return [];
-  const rows = db
-    .select()
-    .from(questions)
-    .where(
-      and(
-        eq(questions.teacherId, teacherId),
-        inArray(questions.unitId, unitIds),
-        isNull(questions.deletedAt),
-      ),
-    )
-    .orderBy(asc(questions.order), asc(questions.id))
-    .all();
-  // 按单元顺序拼接（组内已按题序排序）
-  const byUnit = new Map<string, QuestionRow[]>();
-  for (const row of rows) {
-    const list = byUnit.get(row.unitId);
-    if (list === undefined) byUnit.set(row.unitId, [row]);
-    else list.push(row);
-  }
-  return unitIds.flatMap((unitId) => byUnit.get(unitId) ?? []);
 }
 
 /**
@@ -983,59 +902,10 @@ export function structuresOfSnapshot(
   return { ...emptyPublicStructure, matching, ordering };
 }
 
-/**
- * QM-13 细项4：新题型答案的保存结构校验（saveDraftAnswer 内调用）。
- * 只检查合法结构——契约 inspectShapeOfAnswer 单源调度（未知槽位/未知选项/
- * 重复占用/干扰项入序/固定项错位/未知项/重复项），非法结构整体拒绝
- * （400 VALIDATION_ERROR）；部分作答（部分配对/部分序列/空清除态）合法。
- * **永不比对参考答案**（对错恒 null，gradeNewKindAlwaysNull 口径不动）。
- * 旧七型零变化：门控走 NEW_QUESTION_TYPES 单源集合（I16 集合成员口径，
- * 不写字面量分支）。
- */
-function assertNewKindAnswerShape(
+/** 保存或直接提交前核对冻结题型和答案结构。 */
+export function assertFrozenAnswerShape(
   db: Db,
-  attemptId: string,
-  questionId: string,
-  answer: StudentAnswer,
-): void {
-  const row = db
-    .select({
-      attemptId: responses.attemptId,
-      questionId: responses.questionId,
-      unitId: responses.unitId,
-      questionSnapshotJson: responses.questionSnapshotJson,
-    })
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attemptId),
-        eq(responses.questionId, questionId),
-      ),
-    )
-    .get();
-  // 成员校验先行（requireAttemptQuestion 已挡不存在行）；防御性兜底不静默
-  if (row === undefined) throw questionNotFound();
-  const snapshot = snapshotOfRow(row);
-  if (snapshot === null || !NEW_QUESTION_TYPES.includes(snapshot.type)) return;
-  const structures = structuresOfSnapshot(
-    snapshot,
-    materialSlotOrderOf(db, attemptId),
-    row.unitId,
-  );
-  const issues = inspectShapeOfAnswer(answer, structures);
-  if (issues.length > 0) {
-    throw new HttpError(
-      400,
-      "VALIDATION_ERROR",
-      `答案结构不合法：${issues.map((issue) => issue.message).join("；")}`,
-    );
-  }
-}
-
-/** MCP 写入时核对题型和结构，不比较参考答案。 */
-export function assertMcpDraftAnswerShape(
-  db: Db,
-  row: ResponseRow,
+  row: Pick<ResponseRow, "attemptId" | "unitId">,
   snapshot: Question,
   answer: StudentAnswer,
 ): void {
@@ -1050,14 +920,16 @@ export function assertMcpDraftAnswerShape(
   const issues = inspectShapeOfAnswer(answer, {
     ...structuresOfSnapshot(
       snapshot,
-      materialSlotOrderOf(db, row.attemptId),
+      NEW_QUESTION_TYPES.includes(snapshot.type)
+        ? materialSlotOrderOf(db, row.attemptId)
+        : new Map(),
       row.unitId,
     ),
     choice: { options },
     multi: { options },
   });
   if (issues.length > 0) {
-    throw new HttpError(400, "VALIDATION_ERROR", "答案结构与题目不符");
+    throw new HttpError(400, "VALIDATION_ERROR", "答案结构不合法");
   }
 }
 
@@ -1429,8 +1301,9 @@ export function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   return {
     title: assignment.title,
     courseName: course?.title ?? null,
-    dueAt: assignment.dueAt,
-    answerRelease: assignment.answerRelease,
+    dueAt: canonicalAssignmentDueAt(assignment.dueAt),
+    answerRelease:
+      assignment.answerRelease === "on_submit" ? "on_submit" : "after_due",
   };
 }
 
@@ -1706,18 +1579,6 @@ function qmStructureOfSourceMd(row: QuestionRow): {
   }
 }
 
-/**
- * answerJson → StudentAnswer（坏数据按未作答 null 处理，不让单行脏数据打挂
- * 接口）。**全服务端唯一实现**（T6R.3 /code-review 合并——原 attempt-service
- * 的 undefined 语义与 teacher-attempt-service 的 null 语义收敛为 null，
- * 消费方按 null 判空）；供教师侧/导出/错题本/分析复用。
- */
-export function answerOf(answerJson: string | null): StudentAnswer | null {
-  if (answerJson === null) return null;
-  const parsed = studentAnswerSchema.safeParse(jsonOf(answerJson));
-  return parsed.success ? parsed.data : null;
-}
-
 // 快照解析统一走 services/snapshot.ts 的 snapshotOfRow（全服务端唯一实现，
 // 含坏数据 warn 留痕）——本文件经顶部 import 使用，不再留平行 safeParse。
 
@@ -1750,64 +1611,6 @@ export function workflowStartColumns(
     practiceWorkflowVersion: resolved.practiceWorkflowVersion,
     feedbackMode: resolved.feedbackMode,
     workflowRevision: resolved.workflowRevision,
-  };
-}
-
-/**
- * 新建 draft attempt 的行字面量（四来源建卷共用；T6R.3 建卷即冻结——
- * frozenAt=startedAt、legacyUnverified=false，快照行随建卷事务预插）。
- * wrong 组卷复用时三归属键传 null、attemptNo 按已有 wrong 卷数 +1；
- * lesson 开卷（2026-10）传 lectureId（所属讲练页，契约归属不变式）。
- */
-export function newDraftAttempt(config: {
-  id: string;
-  studentId: string;
-  sourceType: "assignment" | "course" | "wrong" | "lesson";
-  assignmentId: string | null;
-  courseId: string | null;
-  unitId: string | null;
-  /** 所属讲练页（lectures.id）；仅 lesson 来源传值，其余恒 null（2026-10） */
-  lectureId?: string | null;
-  attemptNo: number;
-  startedAt: string;
-  /** 新协议工作流选项（M1b）：仅 course/assignment/wrong 建卷在显式 workflowVersion=1
-   *  时由服务端按教师规则裁决后传入；缺省 = 旧协议（NULL/NULL/0），lesson 恒缺省 */
-  practiceWorkflowVersion?: 1 | null;
-  feedbackMode?: "per_question" | "after_attempt" | null;
-  workflowRevision?: number;
-  /** 限时测试（模块 2）：自选时长分钟；仅 course / assignment 建卷传入，缺省不限时 */
-  timeLimitMinutes?: number | undefined;
-}): Attempt {
-  return {
-    id: config.id,
-    studentId: config.studentId,
-    sourceType: config.sourceType,
-    assignmentId: config.assignmentId,
-    courseId: config.courseId,
-    unitId: config.unitId,
-    // 讲练一体（2026-10）：lesson 开卷写入讲义 id；assignment/course/wrong 恒 null
-    lectureId: config.lectureId ?? null,
-    attemptNo: config.attemptNo,
-    status: "draft",
-    startedAt: config.startedAt,
-    lastActivityAt: null,
-    submittedAt: null,
-    activeSec: null,
-    device: null,
-    scoreAuto: null,
-    scoreFinal: null,
-    frozenAt: config.startedAt,
-    legacyUnverified: false,
-    // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，restartLessonAttempt 才写入
-    abandonedAt: null,
-    // 错题重练建卷范围快照（#6980-2）：缺省 null，wrong 建卷路径显式写入
-    practiceScopeJson: null,
-    // M1b 工作流列：缺省旧协议（NULL/NULL/0），新协议卷由建卷路径显式传入
-    practiceWorkflowVersion: config.practiceWorkflowVersion ?? null,
-    feedbackMode: config.feedbackMode ?? null,
-    workflowRevision: config.workflowRevision ?? 0,
-    // 模块 2：时长 → 截止（服务端时钟）；未选时长两列 NULL
-    ...timedColumnsOf(config.startedAt, config.timeLimitMinutes),
   };
 }
 
@@ -1936,6 +1739,7 @@ function createAssignmentAttempt(
     studentId,
     sourceType: "assignment",
     assignmentId: assignment.id,
+    lectureId: null,
     // T2A.7：courseId 取作业所属课程（可空，D9/D13）；unitId 恒 null——
     // 多单元作业题目集合走 assignment_units（attemptUnitIds），不再落单单元
     courseId: assignment.courseId,
@@ -1955,7 +1759,7 @@ function createAssignmentAttempt(
   });
   // T6R.3：建卷冻结——题目集合/题序/完整快照/单元归属逐题预插 responses 行
   //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷
-  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
     db,
     attempt,
   );
@@ -1985,14 +1789,6 @@ function createAssignmentAttempt(
     attempt.startedAt,
   );
   return attemptSummaryOf(attempt);
-}
-
-/** 作业开卷摘要补 allowRedo（hall-15313）——作业行在手，零额外查询 */
-function withAllowRedo(
-  data: AttemptStartData,
-  allowRedo: boolean,
-): AttemptStartData {
-  return { ...data, allowRedo };
 }
 
 // ---------- POST /api/student/courses/:cid/units/:uid/attempts（T2A.6） ----------
@@ -2059,6 +1855,7 @@ export function startCourseAttempt(
       studentId,
       sourceType: "course",
       assignmentId: null,
+      lectureId: null,
       courseId,
       unitId,
       attemptNo: maxAttemptNo + 1,
@@ -2071,10 +1868,8 @@ export function startCourseAttempt(
     });
     // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入读走外层 db
     // （同连接同步执行，事务内读写口径一致），写走 tx 与 attempt 行同事务落库
-    const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
-      db,
-      attempt,
-    );
+    const { liveRows, teacherId, knowledgeByQuestion } =
+      freezeInputsOfNewAttempt(db, attempt);
     // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（读在外层 db，同款口径）
     const entries =
       teacherId === null
@@ -2201,31 +1996,29 @@ export function saveDraftAnswer(
         "这份练习已交卷，不能再修改答案",
       );
     }
-    requireAttemptQuestion(db, attempt, questionId);
-    // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改（非 lesson 行零变化）
-    assertRowNotSubmitted(db, attemptId, questionId);
-
-    // T6R.3：requireAttemptQuestion 已保证冻结行存在——无插入分支，upsert 收敛为原行更新
     const existing = tx
       .select({
         id: responses.id,
+        attemptId: responses.attemptId,
+        questionId: responses.questionId,
+        questionSnapshotJson: responses.questionSnapshotJson,
+        unitId: responses.unitId,
+        submittedAt: responses.submittedAt,
         changeCount: responses.changeCount,
         answerJson: responses.answerJson,
         answerRevision: responses.answerRevision,
         answerMutationId: responses.answerMutationId,
       })
       .from(responses)
-      .where(
-        and(
-          eq(responses.attemptId, attemptId),
-          eq(responses.questionId, questionId),
-        ),
-      )
+      .where(buildAttemptQuestionWhere(attemptId, questionId))
       .get();
-    if (existing === undefined) {
-      // 理论不可达（上一行成员校验刚通过）；防御性兜底不让脏状态静默
-      throw new HttpError(500, "INTERNAL", "保存失败，请刷新页面后重试");
-    }
+    if (existing === undefined) throw questionNotFound();
+    if (existing.submittedAt !== null)
+      throw new HttpError(
+        409,
+        "QUESTION_ALREADY_SUBMITTED",
+        "这道题已经提交过了，不能再修改答案",
+      );
     const encoded = JSON.stringify(answer);
     const conflict = () =>
       new HttpError(
@@ -2244,17 +2037,17 @@ export function saveDraftAnswer(
       existing.answerMutationId === options.mutationId
     ) {
       if (encoded !== existing.answerJson) throw conflict();
-      return {
+      return attemptAnswerSaveDataSchema.parse({
         questionId,
         changeCount: existing.changeCount,
         revision: existing.answerRevision,
-      };
+      });
     }
     // 模块 2：宽限结束后只允许重放既有回执。
     assertAttemptNotTimedOut(attempt);
-    // QM-13 细项4：新题型保存只校验合法结构（部分作答=草稿合法），
-    // 永不比对参考答案；旧七型行为零变化
-    assertNewKindAnswerShape(db, attemptId, questionId, answer);
+    const snapshot = snapshotOfRow(existing);
+    if (snapshot === null) throw questionNotFound();
+    assertFrozenAnswerShape(db, existing, snapshot, answer);
     if (
       options.baseRevision === undefined &&
       existing.answerMutationId !== null
@@ -2266,11 +2059,11 @@ export function saveDraftAnswer(
         .set({ answerMutationId: options.mutationId })
         .where(eq(responses.id, existing.id))
         .run();
-      return {
+      return attemptAnswerSaveDataSchema.parse({
         questionId,
         changeCount: existing.changeCount,
         revision: existing.answerRevision,
-      };
+      });
     }
     if (
       options.baseRevision !== undefined &&
@@ -2292,7 +2085,11 @@ export function saveDraftAnswer(
       .run();
     if (encoded !== existing.answerJson)
       touchAttemptActivity(tx, attemptId, new Date().toISOString());
-    return { questionId, changeCount: nextCount, revision: nextRevision };
+    return attemptAnswerSaveDataSchema.parse({
+      questionId,
+      changeCount: nextCount,
+      revision: nextRevision,
+    });
   });
 }
 
@@ -2311,317 +2108,6 @@ interface GradedResponse {
    * 未能自动判（含未作答/只写笔迹）、题目无标准答案、判断题写法无法归一化）。
    */
   autoCorrect: boolean | null;
-}
-
-/**
- * scoreAuto 口径：答对数 / 可自动判分数（autoCorrect 非 null），四舍五入百分比；
- * 无可判分为 null。入参结构化（只需 autoCorrect）：交卷链路传判分中间结果，
- * lesson 单题提交自动收尾传事务内重读的冻结行（同口径复用，不复制公式）。
- */
-function scoreAutoOf(
-  graded: readonly { autoCorrect: boolean | null }[],
-): number | null {
-  const autoGradable = graded.filter((g) => g.autoCorrect !== null).length;
-  if (autoGradable === 0) return null;
-  const correct = graded.filter((g) => g.autoCorrect === true).length;
-  return Math.round((correct / autoGradable) * 100);
-}
-
-/** 陈旧题目版本提交的统一拒绝（T6R.3，409；前端据此提示刷新页面后重交） */
-function revisionStale(): HttpError {
-  return new HttpError(
-    409,
-    "QUESTION_REVISION_STALE",
-    "题目版本已变化，请刷新页面后重新交卷",
-  );
-}
-
-/**
- * 交卷回传集合与冻结题目集合的精确比对（T6R.3/T6R.10 共用）：条数不符
- * （缺项/多项）、重复项、集合外题目都视为陈旧页面提交。长度相等 + 无
- * 重复 + 全部 ∈ 冻结集合 ⇒ 恰好一致（同一 attempt 的 responses 题目 id
- * 天然无重复）。错误经工厂差异化（revisions → QUESTION_REVISION_STALE；
- * evidence → NOTE_EVIDENCE_MISMATCH）。
- */
-function assertExactQuestionSet<T extends { questionId: string }>(
-  graded: readonly GradedResponse[],
-  items: readonly T[],
-  reject: () => HttpError,
-): void {
-  if (items.length !== graded.length) throw reject();
-  const expected = new Set(graded.map((g) => g.response.questionId));
-  const seen = new Set<string>();
-  for (const item of items) {
-    if (seen.has(item.questionId)) throw reject();
-    seen.add(item.questionId);
-    if (!expected.has(item.questionId)) throw reject();
-  }
-}
-
-/**
- * 交卷回传版本验证（T6R.3）：与参与判分的冻结集合精确比对——集合形状经
- * assertExactQuestionSet，再逐题比对 questionRevisionId（错版即陈旧），
- * 409 QUESTION_REVISION_STALE 可诊断拒绝（不静默配上新快照，方案 §5.1）。
- */
-function validateSubmitRevisions(
-  graded: readonly GradedResponse[],
-  clientRevisions: readonly AttemptSubmitRevision[],
-): void {
-  assertExactQuestionSet(graded, clientRevisions, revisionStale);
-  const expectedByQuestion = new Map(
-    graded.map((g) => [g.response.questionId, g.response.id] as const),
-  );
-  for (const entry of clientRevisions) {
-    if (expectedByQuestion.get(entry.questionId) !== entry.questionRevisionId) {
-      throw revisionStale();
-    }
-  }
-}
-
-/**
- * 交卷要写的逐题证据行（T6R.10，方案 §6.4）——验证纯读、先于事务，
- * 写入与判分同事务（见 submitAttempt）。
- *
- * 声明语义（契约 submitEvidenceDeclarationSchema）：
- * - frozen：versionId/revision 与服务端实际 head **精确比对**（归属已由
- *   attemptId+questionId 圈定——notes 行只能经本人 attempt 的写通道产生）；
- *   其他标签页/设备改出新 head ⇒ 409 拒绝这次冻结，不静默固定旧版；
- * - none：实际存在草稿（scratch 行 head revision>0）时矛盾 ⇒ 409——
- *   用户未确认不能静默 missing/none；
- * - missing：用户已明确选择「提交答案，草稿未保存完整」（确认动作在
- *   客户端交卷流程承担），服务端如实记录、不叠加上传状态校验。
- *
- * 旧客户端（缺 evidence 字段）：检测到**参与本次判分题目的**草稿存在 ⇒ 409
- * 要求刷新（不能把已有草稿记 none）；确无草稿按兼容规则交卷——**不落证据行**
- * （= 未采集，与 state='none'〔明确空稿〕区分）。graded 范围 = 本次交卷要
- * 判分的行（lesson 与新协议普通卷整卷收尾只含未提交题——已单题提交题的
- * 证据已在该题提交事务冻结，其草稿不再阻塞收尾；历史协议为全部冻结题）。
- *
- * 新客户端：声明集合必须与 graded 范围精确一致（缺项/多项/未知/重复
- * 同 409，口径同 validateSubmitRevisions）。
- */
-function buildSubmissionEvidence(
-  db: Db,
-  attemptId: string,
-  graded: readonly GradedResponse[],
-  declarations: readonly SubmitEvidenceDeclaration[] | undefined,
-): Array<{
-  questionId: string;
-  state: NoteSubmissionEvidenceState;
-  versionId: string | null;
-}> {
-  const noteRows = db
-    .select()
-    .from(notes)
-    .where(and(eq(notes.attemptId, attemptId), eq(notes.phase, "scratch")))
-    .all();
-  const noteByQuestion = new Map(
-    noteRows.map((n) => [n.questionId, n] as const),
-  );
-
-  if (declarations === undefined) {
-    // 旧客户端：范围内有草稿 ⇒ 拒绝并要求刷新；无草稿 ⇒ 兼容交卷（未采集=无行）
-    const scope = new Set(graded.map((g) => g.response.questionId));
-    if (
-      noteRows.some((n) => n.currentRevision > 0 && scope.has(n.questionId))
-    ) {
-      throw evidenceMismatch("这份练习有尚未固定的草稿，请刷新页面后重新交卷");
-    }
-    return [];
-  }
-
-  // 新客户端：集合精确比对（口径同 validateSubmitRevisions，错误码经工厂差异化）
-  assertExactQuestionSet(graded, declarations, () =>
-    evidenceMismatch("笔记证据声明与试卷题目不一致，请刷新页面后重新交卷"),
-  );
-
-  return declarations.map((decl) =>
-    evidenceRowOfDeclaration(noteByQuestion.get(decl.questionId), decl),
-  );
-}
-
-/**
- * 单条证据声明的验证核心（整卷 buildSubmissionEvidence 与 lesson 单题
- * buildSingleQuestionEvidence 共用，语义见上方注释块）：
- * 返回要写的证据行；任何不符抛 409 NOTE_EVIDENCE_MISMATCH。
- */
-function evidenceRowOfDeclaration(
-  note: NoteRow | undefined,
-  decl: SubmitEvidenceDeclaration,
-): {
-  questionId: string;
-  state: NoteSubmissionEvidenceState;
-  versionId: string | null;
-} {
-  if (decl.state === "frozen") {
-    if (
-      note === undefined ||
-      note.currentVersionId !== decl.versionId ||
-      note.currentRevision !== decl.revision
-    ) {
-      throw evidenceMismatch(
-        "草稿状态已变化（可能其他设备刚保存了新版本），请重新交卷",
-      );
-    }
-    return {
-      questionId: decl.questionId,
-      state: "frozen" as const,
-      versionId: decl.versionId,
-    };
-  }
-  if (decl.state === "none") {
-    if (note !== undefined && note.currentRevision > 0) {
-      throw evidenceMismatch(
-        "该题存在未固定的草稿，请返回处理后再交卷（或刷新页面查看最新草稿）",
-      );
-    }
-    return {
-      questionId: decl.questionId,
-      state: "none" as const,
-      versionId: null,
-    };
-  }
-  // missing（复审接受项）：到达此分支时服务端可能已有该题矢量（客户端
-  // 分类窗口的竞态——声明组装后、提交落地前他处上传成功）。按用户明示
-  // 选择如实记录 missing，**不自动升格 frozen**：本地可能还有更新的未传
-  // 内容，升格会把陈旧 head 伪装成原稿；已落地内容经 T6R.15 supplement
-  // 找回，不冒称原稿
-  return {
-    questionId: decl.questionId,
-    state: "missing" as const,
-    versionId: null,
-  };
-}
-
-/**
- * lesson 单题提交的证据验证（T6R.10 语义单题化，2026-10 讲练一体）：
- * - 声明缺省 = 旧客户端——该题存在草稿（scratch 行 head revision>0）⇒ 409
- *   拒绝、确无草稿不落行（未采集，与整卷兼容规则同口径）；
- * - 声明携带时 evidence.questionId 必须与路径 questionId 一致（否则 409
- *   NOTE_EVIDENCE_MISMATCH——契约注释「须与路径一致，服务端校验」）；
- * - 逐声明验证复用 evidenceRowOfDeclaration（与整卷同一实现，不复制语义）。
- * 验证纯读、先于事务；返回 null = 本次提交不落证据行。
- */
-function buildSingleQuestionEvidence(
-  db: Db,
-  attemptId: string,
-  questionId: string,
-  decl: SubmitEvidenceDeclaration | undefined,
-): {
-  questionId: string;
-  state: NoteSubmissionEvidenceState;
-  versionId: string | null;
-} | null {
-  const note = db
-    .select()
-    .from(notes)
-    .where(
-      and(
-        eq(notes.attemptId, attemptId),
-        eq(notes.questionId, questionId),
-        eq(notes.phase, "scratch"),
-      ),
-    )
-    .get();
-  if (decl === undefined) {
-    if (note !== undefined && note.currentRevision > 0) {
-      throw evidenceMismatch("这道题有尚未固定的草稿，请刷新页面后重新提交");
-    }
-    return null;
-  }
-  if (decl.questionId !== questionId) {
-    throw evidenceMismatch(
-      "笔记证据声明与提交的题目不一致，请刷新页面后重新提交",
-    );
-  }
-  return evidenceRowOfDeclaration(note, decl);
-}
-
-/** 证据声明验证失败的统一拒绝（T6R.10，409；前端据此刷新/重走交卷流程） */
-function evidenceMismatch(message: string): HttpError {
-  return new HttpError(409, "NOTE_EVIDENCE_MISMATCH", message);
-}
-
-/**
- * D2/D3 口径的 attempt 级最终得分与状态（T3.2a）：
- * - status=graded 当且仅当全部 finalCorrect 均非 null（此时必写 scoreFinal）；
- * - scoreFinal = round（finalCorrect 为 true 的题数 ÷ 全部题数 × 100）；
- *   任一待批（null）则 status=submitted、scoreFinal=null（批改完成后由 T3.2b 重算）；
- * - 空卷（无题）防御性保持 submitted / null。
- * 交卷链路调用时 finalCorrect=autoCorrect（teacherMark 必空）；backfill 与批改
- * 链路以 teacherMark ?? autoCorrect 为输入复用同一口径。
- */
-export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
-  status: "submitted" | "graded";
-  scoreFinal: number | null;
-} {
-  if (finalCorrects.length === 0 || finalCorrects.some((v) => v === null)) {
-    return { status: "submitted", scoreFinal: null };
-  }
-  const correct = finalCorrects.filter((v) => v === true).length;
-  return {
-    status: "graded",
-    scoreFinal: Math.round((correct / finalCorrects.length) * 100),
-  };
-}
-
-/**
- * 收尾判定的行级输入（attemptFinalOutcomeOf 消费；finalCorrect 为该口径下
- * 的写入后事实值——交卷链路 = autoCorrect，批改链路 = teacherMark ?? autoCorrect）
- */
-export interface FinalOutcomeRow {
-  readonly gradingPolicy: GradingPolicy | null;
-  readonly submittedAt: string | null;
-  /** 教师批改标记（teacher_pending 判定只消费 null 与否，形态由列类型把关） */
-  readonly teacherMark: string | null;
-  readonly finalCorrect: boolean | null;
-}
-
-/**
- * QM-10 细项7（§5.5.5 graded 触发放宽，新行口径单一出处——交卷/自动收尾/
- * 教师批改重算三链路共用）：
- * - **旧行旧口径（历史不重释）**：任一行 gradingPolicy=NULL（升级前开的卷、
- *   开关关闭部署）→ 整卷按 finalScoreOf（D2/D3：全部 finalCorrect 非 null 才
- *   graded）。正常数据新旧不混卷（行策略在开卷时整卷冻结），混卷防御性取
- *   旧口径——与「禁止重释历史」同一保守侧；
- * - **新行口径**：graded ⟺ 全部行已提交 且 无「教师待处理」行
- *   （manual_only 且 teacherMark=null——判定来源枯竭，唯一出口是教师；
- *   reference_self 行自评与否不阻塞，「完成作答不以自评为前提」）；
- * - opts.finalized（整卷已收尾）时全部行按已提交语义参与 allSubmitted（与四态
- *   gate 同口径；legacy 协议行不写行级 submittedAt）；scoreFinal 公式沿用 D3
- *   （round(finalCorrect=true ÷ 全部题数 × 100)，reference_self 行计分母不计分子）；
- * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
- */
-export function attemptFinalOutcomeOf(
-  rows: readonly FinalOutcomeRow[],
-  opts: { finalized?: boolean } = {},
-): {
-  status: "submitted" | "graded";
-  scoreFinal: number | null;
-} {
-  if (rows.length === 0) return finalScoreOf([]);
-  if (rows.some((row) => row.gradingPolicy === null)) {
-    return finalScoreOf(rows.map((row) => row.finalCorrect));
-  }
-  // P1 修复（审查 TT-09a）：整卷收尾即全部判分行已提交——与四态 gate
-  // （practiceQuestionFeedbackStateOf 的 `row.submittedAt !== null || finalized`）
-  // 同一口径。legacy 协议行不写行级 submittedAt（responses.submittedAt 是逐题
-  // 提交列，协议分野保持），不归一则 legacy+开关开启卷整卷交卷恒 submitted/
-  // scoreFinal=null，教师批改重算同病。finalized 由调用方声明收尾事实：
-  // 交卷链路交卷即收尾、自动收尾正在收尾、markResponse 只对已收尾卷重算
-  const allSubmitted =
-    opts.finalized === true || rows.every((row) => row.submittedAt !== null);
-  const teacherPending = rows.some(
-    (row) => row.gradingPolicy === "manual_only" && row.teacherMark === null,
-  );
-  if (!allSubmitted || teacherPending) {
-    return { status: "submitted", scoreFinal: null };
-  }
-  const correct = rows.filter((row) => row.finalCorrect === true).length;
-  return {
-    status: "graded",
-    scoreFinal: Math.round((correct / rows.length) * 100),
-  };
 }
 
 /**
@@ -2674,6 +2160,22 @@ export function submitAttempt(
   now: Date | string = new Date(),
   request?: AttemptSubmitRequest,
 ): AttemptResultData {
+  return db.transaction(
+    () =>
+      attemptResultDataSchema.parse(
+        finalizeWholeAttempt(db, studentId, attemptId, now, request),
+      ),
+    { behavior: "immediate" },
+  );
+}
+
+function finalizeWholeAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  now: Date | string,
+  request: AttemptSubmitRequest | undefined,
+): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
@@ -2689,9 +2191,8 @@ export function submitAttempt(
   const perQuestionAttempt = practiceProtocolOf(attempt) !== "legacy";
 
   // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
-  const timeline = attemptTimeline(db, attemptId);
-  const activeSecByQuestion = computePerQuestionActiveSec(timeline);
-  const eventChangeCountByQuestion = countAnswerChanges(timeline);
+  const { activeSecByQuestion, eventChangeCountByQuestion } =
+    submissionActivityOf(db, attemptId);
 
   const nowIso = new Date(now).toISOString();
   // allFrozen：全部冻结题（revisions 全集校验与整卷得分汇总的输入）；
@@ -2707,7 +2208,7 @@ export function submitAttempt(
     if (snapshot === null) continue; // 历史题目缺失/坏快照按缺失计（不回填、不判分）
     // answerOf 收敛为 null 语义后按 undefined 归一（判分/序列化的未作答口径）
     const answer = answerOf(ownRow.answerJson) ?? undefined;
-    if (perQuestionAttempt && ownRow.submittedAt !== null) {
+    if (ownRow.submittedAt !== null) {
       // 已单题提交：保行内判定（教师课中可能已批 teacherMark → finalCorrect），
       // 不重判不重写；快照与答案随行透传给结果视图与汇总
       keptRows.push(ownRow);
@@ -2720,7 +2221,6 @@ export function submitAttempt(
       outcomeRows.push({
         gradingPolicy: ownRow.gradingPolicy,
         submittedAt: ownRow.submittedAt,
-        teacherMark: ownRow.teacherMark,
         finalCorrect: ownRow.finalCorrect,
       });
       continue;
@@ -2740,14 +2240,13 @@ export function submitAttempt(
       // 逐题语义卷的本次判分行提交时刻 = 交卷时刻（rowSubmittedAtPatch 同款
       // 内存镜像口径；历史卷行保持 null——旧行旧口径不消费该键）
       submittedAt: perQuestionAttempt ? nowIso : null,
-      teacherMark: ownRow.teacherMark,
       finalCorrect: entry.autoCorrect,
     });
   }
 
   // revisions 全集校验不变：比对对象是**全部冻结题**（lesson 含已提交行）
-  if (request) validateSubmitRevisions(allFrozen, request.revisions);
-  // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
+  if (request) validateSubmitRevisions(allFrozen, graded, request.revisions);
+  // T6R.10：笔记证据声明验证、判分和写入都在同一事务——
   // 范围 = 参与本次判分的行（逐题语义卷：未提交题）；任一项验证失败零落行，
   // attempt 保持 draft 可恢复
   const evidenceRows = buildSubmissionEvidence(
@@ -2785,65 +2284,65 @@ export function submitAttempt(
   // 列注释口径）；历史卷行不写该列（保持 null，行为零变化）。事务内 update 与
   // 下方内存镜像展开同一对象，两处口径永不漂移
   const rowSubmittedAtPatch = perQuestionAttempt ? { submittedAt: nowIso } : {};
-  db.transaction((tx) => {
-    for (const g of graded) {
-      tx.update(responses)
-        .set({
-          answerJson: g.answer !== null ? JSON.stringify(g.answer) : null,
-          autoCorrect: g.autoCorrect,
-          // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
-          finalCorrect: g.autoCorrect,
-          // #6980-3：是否有实际作答（与判分正交；错题本入本/未做灰显共用）。
-          // 正式手写笔迹也算已答（审查修复 P0-1：只交手写未填文本的主观题
-          // 不是「未做」）；被动跳过（无答案、无笔迹、未单题提交）才冷处理
-          answered:
-            !isUnanswered(g.answer) ||
-            inkQuestionIds.has(g.response.questionId),
-          ...rowSubmittedAtPatch,
-          activeSec: activeSecByQuestion[g.response.questionId] ?? null,
-          changeCount: Math.max(
-            g.response.changeCount,
-            eventChangeCountByQuestion[g.response.questionId] ?? 0,
-          ),
-        })
-        .where(eq(responses.id, g.response.id))
-        .run();
-    }
-    // T6R.10：同一事务写 submission_evidence（方案 §6.4 第 3 步）——
-    // 原稿引用与成绩/状态同生共死，任一失败整体回滚；写入后不能换原稿
-    for (const row of evidenceRows) {
-      tx.insert(submissionEvidence)
-        .values({
-          id: randomUUID(),
-          attemptId,
-          questionId: row.questionId,
-          state: row.state,
-          versionId: row.versionId,
-          recordedAt: nowIso,
-        })
-        .run();
-    }
-    touchAttemptActivity(tx, attemptId, nowIso);
-    tx.update(attempts)
+  if (!touchAttemptActivity(db, attemptId, nowIso))
+    throw new HttpError(409, "ALREADY_SUBMITTED", "该练习已提交");
+
+  for (const g of graded) {
+    db.update(responses)
       .set({
-        // D2/D3：全部 finalCorrect 非 null → 直接 graded 并写 scoreFinal；
-        // 否则 submitted、scoreFinal=null（待批批改后由 T3.2b 重算）
-        status: finalStatus,
-        submittedAt: nowIso,
-        scoreAuto,
-        scoreFinal,
-        // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
-        activeSec:
-          Object.keys(activeSecByQuestion).length > 0
-            ? Object.values(activeSecByQuestion).reduce(
-                (sum, sec) => sum + sec,
-                0,
-              )
-            : null,
+        answerJson: g.answer !== null ? JSON.stringify(g.answer) : null,
+        autoCorrect: g.autoCorrect,
+        // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
+        finalCorrect: g.autoCorrect,
+        // #6980-3：是否有实际作答（与判分正交；错题本入本/未做灰显共用）。
+        // 正式手写笔迹也算已答（审查修复 P0-1：只交手写未填文本的主观题
+        // 不是「未做」）；被动跳过（无答案、无笔迹、未单题提交）才冷处理
+        answered:
+          !isUnanswered(g.answer) || inkQuestionIds.has(g.response.questionId),
+        ...rowSubmittedAtPatch,
+        activeSec: activeSecByQuestion[g.response.questionId] ?? null,
+        changeCount: Math.max(
+          g.response.changeCount,
+          eventChangeCountByQuestion[g.response.questionId] ?? 0,
+        ),
       })
-      .where(eq(attempts.id, attemptId))
+      .where(eq(responses.id, g.response.id))
       .run();
-  });
+  }
+  // T6R.10：同一事务写 submission_evidence（方案 §6.4 第 3 步）——
+  // 原稿引用与成绩/状态同生共死，任一失败整体回滚；写入后不能换原稿
+  for (const row of evidenceRows) {
+    db.insert(submissionEvidence)
+      .values({
+        id: randomUUID(),
+        attemptId,
+        questionId: row.questionId,
+        state: row.state,
+        versionId: row.versionId,
+        recordedAt: nowIso,
+      })
+      .run();
+  }
+  recordConfirmedSubmit(db, attempt, nowIso);
+  db.update(attempts)
+    .set({
+      // D2/D3：全部 finalCorrect 非 null → 直接 graded 并写 scoreFinal；
+      // 否则 submitted、scoreFinal=null（待批批改后由 T3.2b 重算）
+      status: finalStatus,
+      submittedAt: nowIso,
+      scoreAuto,
+      scoreFinal,
+      // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
+      activeSec:
+        Object.keys(activeSecByQuestion).length > 0
+          ? Object.values(activeSecByQuestion).reduce(
+              (sum, sec) => sum + sec,
+              0,
+            )
+          : null,
+    })
+    .where(eq(attempts.id, attemptId))
+    .run();
 
   // 预加载：判分循环已 parse 的快照 + 内存镜像事务写入后的行/attempt（结果
   // 视图免二次查询/parse，且拿到的是判分后的新值——预载原始行会带旧判定）。
@@ -2909,10 +2408,7 @@ export function attemptScoreSummaryOf(
   // 漂移（草稿答案也计入 answered、未提交行计入 pending）。
   const rows = db
     .select({
-      hasSnapshot:
-        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
-          Boolean,
-        ),
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -3000,9 +2496,7 @@ export function scoreSummaryCoreOf(
     }
     // D4 教师待批：finalCorrect IS NULL 且非 reference_self 行（pending-mark.ts
     // 谓词同口径；null 策略旧行不受影响）
-    if (row.finalCorrect === null && row.gradingPolicy !== "reference_self") {
-      pendingCount += 1;
-    }
+    if (needsTeacherMark(row)) pendingCount += 1;
   }
   return {
     total,
@@ -3052,26 +2546,23 @@ export function questionNotFound(): HttpError {
  * 实现，从 submitLessonQuestion 收尾块抽取——计划 §10.2 第 6 步「最后一题
  * 调用共同收尾函数，避免重复公式与双写统计」）：事务内重读全部冻结行（瘦列
  * 投影，不含每题数 KB 的快照原文），全部已提交才收尾——scoreAuto/scoreFinal/
- * status 与整卷交卷同口径复用 scoreAutoOf / finalScoreOf；收尾 UPDATE 带
+ * status 与整卷交卷同口径复用 scoreAutoOf / attemptFinalOutcomeOf；收尾 UPDATE 带
  * WHERE status='draft' 真实 CAS，逐题与整卷并发收尾只成功一次（后到者 no-op，
  * 行集照常返回）。返回瘦行集供 lesson 现算 summary / 题级进度消费，并带回
  * 收尾后的 attempt 新行（no-op 时 null——调用方回落事务内已读行，同步单
  * 连接下两者等价，省一次收尾后重读）。
  */
 function autoFinishPerQuestionAttempt(
-  tx: Tx,
+  tx: Pick<Db, "select" | "update" | "insert">,
   attemptId: string,
   nowIso: string,
 ): { rows: ScoreSummaryRow[]; attempt: Attempt | null } {
   const rowsAfter = tx
     .select({
-      // 快照原文不搬运（每题数 KB，收尾判定只需要存在性）
+      // 在数据库连接内核对快照，仅返回是否可用
       // mapWith(Boolean)：better-sqlite3 对该表达式返回 0/1 整数，归一为真
       // 布尔——严格比较（仓库布尔列惯例）与真值判断都安全
-      hasSnapshot:
-        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
-          Boolean,
-        ),
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -3106,6 +2597,7 @@ function autoFinishPerQuestionAttempt(
       .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
       .returning()
       .get();
+    if (attempt) recordConfirmedSubmit(tx, attempt, nowIso);
     return { rows: rowsAfter, attempt: attempt ?? null };
   }
   return { rows: rowsAfter, attempt: null };
@@ -3156,6 +2648,24 @@ export function submitLessonQuestion(
   req: LessonQuestionSubmitRequest,
   now: Date | string = new Date(),
 ): LessonQuestionSubmitData {
+  const result = db.transaction(
+    () =>
+      lessonQuestionSubmitDataSchema.parse(
+        finalizeLessonQuestion(db, studentId, attemptId, questionId, req, now),
+      ),
+    { behavior: "immediate" },
+  );
+  return result;
+}
+
+function finalizeLessonQuestion(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  req: LessonQuestionSubmitRequest,
+  now: Date | string,
+): LessonQuestionSubmitData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.sourceType !== "lesson") {
     // M2 协议分流（2026-10-22 计划 §5.3/§10.1）：新协议普通卷收到旧协议形态
@@ -3193,6 +2703,7 @@ export function submitLessonQuestion(
   if (row.submittedAt !== null) {
     throw questionAlreadySubmitted();
   }
+  assertSubmissionAnswerRevision(row, req.expectedAnswerRevision);
   const snapshot = snapshotOfRow(row);
   if (snapshot === null) {
     // 理论不可达（严格口径已保证快照非空）；防御性兜底不静默
@@ -3221,7 +2732,7 @@ export function submitLessonQuestion(
       )
       .get() === undefined;
 
-  // 笔记证据（单题化）：验证纯读、先于事务；写入与判分同事务
+  // 单题证据与判分由同一事务验证和写入。
   const evidenceRow = buildSingleQuestionEvidence(
     db,
     attemptId,
@@ -3230,76 +2741,44 @@ export function submitLessonQuestion(
   );
 
   const nowIso = new Date(now).toISOString();
-  // 单事务先复核后写：better-sqlite3 同步单进程，复核防御与写入原子同界。
-  // 闭包带出收尾判定的瘦行集（不含快照原文列）——事务后 summary 直接消费，
-  // 热路径不再整卷全列回读（每题数 KB 的 questionSnapshotJson）
-  const summaryRows = db.transaction((tx) => {
-    const freshAttempt = tx
-      .select()
-      .from(attempts)
-      .where(eq(attempts.id, attemptId))
-      .get();
-    const freshRow = tx
-      .select()
-      .from(responses)
-      .where(eq(responses.id, row.id))
-      .get();
-    if (
-      freshAttempt === undefined ||
-      freshAttempt.sourceType !== "lesson" ||
-      freshAttempt.status !== "draft"
-    ) {
-      // 并发双收尾的后到者：整卷收尾（或另一路收尾）已离开 draft
-      throw new HttpError(
-        409,
-        "ALREADY_SUBMITTED",
-        "这份练习已经完成，不能再提交",
-      );
-    }
-    if (freshRow === undefined || freshRow.submittedAt !== null) {
-      throw questionAlreadySubmitted();
-    }
-    tx.update(responses)
-      .set({
-        autoCorrect,
-        // D3：提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
-        finalCorrect: autoCorrect,
-        // #6980-3：是否有实际作答——单题主动提交即显式交锋，恒记 true
-        //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
-        // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
-        answered: true,
-        // #6980-4（主人口径）：空提交自动标「不会」；有答案/笔迹的提交不覆盖
-        // 既有标注（学生可先自标「不会」再作答，标注保留）
-        studentFlag: unsureOnEmpty ? "unsure" : (row.studentFlag ?? null),
-        submittedAt: nowIso,
+  db.update(responses)
+    .set({
+      autoCorrect,
+      // D3：提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
+      finalCorrect: autoCorrect,
+      // #6980-3：是否有实际作答——单题主动提交即显式交锋，恒记 true
+      //（2026-10-25 主人口径：提交 = 已读题交锋；被动跳过才冷处理；
+      // 「不会，提交并看解析」的空提交也计已答，unsure 标注随 #6980-4 落库）
+      answered: true,
+      // #6980-4（主人口径）：空提交自动标「不会」；有答案/笔迹的提交不覆盖
+      // 既有标注（学生可先自标「不会」再作答，标注保留）
+      studentFlag: unsureOnEmpty ? "unsure" : (row.studentFlag ?? null),
+      submittedAt: nowIso,
+    })
+    .where(eq(responses.id, row.id))
+    .run();
+  if (evidenceRow !== null) {
+    db.insert(submissionEvidence)
+      .values({
+        id: randomUUID(),
+        attemptId,
+        questionId: evidenceRow.questionId,
+        state: evidenceRow.state,
+        versionId: evidenceRow.versionId,
+        recordedAt: nowIso,
       })
-      .where(eq(responses.id, row.id))
       .run();
-    if (evidenceRow !== null) {
-      tx.insert(submissionEvidence)
-        .values({
-          id: randomUUID(),
-          attemptId,
-          questionId: evidenceRow.questionId,
-          state: evidenceRow.state,
-          versionId: evidenceRow.versionId,
-          recordedAt: nowIso,
-        })
-        .run();
-    }
-    // 自动收尾：全部冻结行都已提交 → 最后一题，共同收尾函数（lesson 与 M2
-    // 新协议逐题提交同一实现；返回瘦行集出事务即 lessonLiveSummaryOf 的输入，
-    // 与开卷链路同一口径，不复制谓词）
-    touchAttemptActivity(tx, attemptId, nowIso);
-    return autoFinishPerQuestionAttempt(tx, attemptId, nowIso).rows;
-  });
-
-  // 成功后直记 question_submit 事件（payload 仅 questionId，拒绝路径不记）
-  recordQuestionSubmitEvent(db, studentId, attemptId, questionId);
+  }
+  // 自动收尾：全部冻结行都已提交 → 最后一题，共同收尾函数（lesson 与 M2
+  // 新协议逐题提交同一实现；返回瘦行集出事务即 lessonLiveSummaryOf 的输入，
+  // 与开卷链路同一口径，不复制谓词）
+  touchAttemptActivity(db, attemptId, nowIso);
+  recordQuestionSubmitEvent(db, studentId, attemptId, questionId, nowIso);
+  const summaryRows = autoFinishPerQuestionAttempt(db, attemptId, nowIso).rows;
 
   // 响应组装：该题 result 投影（stemMd 经学生端投影）+ 现算 summary + 最新
   // attempt 摘要（自动收尾后为新状态）。提交行按主键取一行（快照复用事务前
-  // 已 parse 的同一份）；summary 消费事务带出的瘦行集
+  // 已 parse 的同一份）；summary 消费收尾查询得到的瘦行集
   const freshAttempt = db
     .select()
     .from(attempts)
@@ -3476,19 +2955,7 @@ export function submitPracticeQuestion(
     }
     // 学生答案版本（§10.2 末段：不是题目版本——他端又存了一版答案即拒绝，
     // 复用既有答案冲突协议与 _current 形态）
-    if (row.answerRevision !== req.expectedAnswerRevision) {
-      throw new HttpError(
-        409,
-        "ANSWER_REVISION_CONFLICT",
-        "本题答案已在其他设备更新，请刷新后查看最新答案再提交",
-        {
-          _current: attemptAnswerConflictCurrentSchema.parse({
-            revision: row.answerRevision,
-            draft: answerOf(row.answerJson),
-          }),
-        },
-      );
-    }
+    assertSubmissionAnswerRevision(row, req.expectedAnswerRevision);
 
     // 判分输入在事务内读取（M0 风险 1 窗口关闭）：冻结快照 + 行内草稿答案
     const snapshot = snapshotOfRow(row);
@@ -3496,7 +2963,7 @@ export function submitPracticeQuestion(
       throw questionNotFound();
     }
     if (req.answer !== undefined)
-      assertMcpDraftAnswerShape(db, row, snapshot, req.answer);
+      assertFrozenAnswerShape(db, row, snapshot, req.answer);
     const answer = req.answer ?? answerOf(row.answerJson) ?? undefined;
     const answerJson =
       req.answer === undefined ? row.answerJson : JSON.stringify(req.answer);
@@ -3578,11 +3045,11 @@ export function submitPracticeQuestion(
     // 收尾 RETURNING 带回顾卷新行；no-op（他方已收尾）时回落事务内已读行
     //（同步单连接下与事务后重读恒等）
     touchAttemptActivity(tx, attemptId, nowIso);
+    recordQuestionSubmitEvent(tx, studentId, attemptId, questionId, nowIso);
     const finished = autoFinishPerQuestionAttempt(tx, attemptId, nowIso);
     // 有效提交在事务内记事件（重放分支不会到这——§10.3 不重复写；与提交
     // 原子落库，省一次独立 autocommit 的 fsync，不留「提交已持久、事件丢失」
     // 崩溃窗口。lesson 路径的事件仍在事务外属既有模式）
-    recordQuestionSubmitEvent(tx, studentId, attemptId, questionId);
     return {
       replayed: false as const,
       row: written,
@@ -3893,68 +3360,6 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * studentFacingResultOf 整题投影（唯一包装处，不得再各自手写）。2026-10
  * 讲练一体起导出供 lesson-service 复用。
  */
-/**
- * teacherMark 列值的枚举收窄（列无 $type，按 D9 值域收窄给投影用）。原定义在
- * self-review-service（TT-09a），QM-12 移驻本文件：有效判定单一出处需要同一
- * 收窄，教师详情/汇总/错题/学情各消费面不再各写一份。
- */
-export function teacherMarkOf(value: string | null): TeacherMark | null {
-  return value === "correct" || value === "wrong" ? value : null;
-}
-
-/**
- * 行上自评记录的读取投影（QM-10 定义于 self-review-service，TT-09b 移驻本
- * 文件：结果单题投影与自评服务共用同一读取口径，且避免 attempt-service ←→
- * self-review-service 值循环）。verdict 列只存实际判断——undecided 已清除
- * 为 null；revision 的单独下发见 resultQuestionOf。
- * P3-2（TT-09a 审查遗留，本单落地）：脏行防御——verdict 非空而 at 缺失
- * （异常/历史写入）时契约 at min(1) 不成立，按「无记录」降级并 warn 留痕
- * （服务层拿不到 app 层 pino 实例，用固定前缀便于检索），不伪造空时间戳。
- */
-export function selfReviewRecordOf(
-  row: Pick<
-    ResponseRow,
-    "selfReviewVerdict" | "selfReviewAt" | "selfReviewRevision"
-  >,
-): SelfReviewRecord | null {
-  if (row.selfReviewVerdict === null) return null;
-  if (row.selfReviewAt === null) {
-    console.warn(
-      `【数据异常】responses 自评脏行（verdict 非空而 at 缺失），按无记录降级（revision=${row.selfReviewRevision}）`,
-    );
-    return null;
-  }
-  return {
-    verdict: row.selfReviewVerdict,
-    at: row.selfReviewAt,
-    revision: row.selfReviewRevision,
-  };
-}
-
-/**
- * 行级有效判定单一出处（QM-12 细项1：教师判 > 自评 > 自动，与契约
- * effectiveVerdictOf 同序）。服务端各消费面（教师详情计数、错题集合、学情
- * 统计、CSV/材料整理包、AI 复盘过滤）一律经本函数，不再各写
- * `finalCorrect ?? autoCorrect` 之类的快捷回落——该口径对自评行恒漏判
- * （reference_self 行 finalCorrect 恒 null）。
- */
-export function effectiveVerdictOfRow(
-  row: Pick<
-    ResponseRow,
-    | "autoCorrect"
-    | "teacherMark"
-    | "selfReviewVerdict"
-    | "selfReviewAt"
-    | "selfReviewRevision"
-  >,
-): EffectiveVerdict | null {
-  return effectiveVerdictOf(
-    row.autoCorrect,
-    teacherMarkOf(row.teacherMark),
-    selfReviewRecordOf(row),
-  );
-}
-
 export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,
@@ -4181,8 +3586,8 @@ function buildResultData(
     attempt.sourceType === "assignment"
       ? requireAssignmentRow(db, attempt.assignmentId ?? "")
       : null;
-  const released =
-    assignmentRow === null || answersReleased(assignmentRow, now);
+  const release = answerReleaseProjection(assignmentRow, now);
+  const released = release.answersReleased;
 
   /** 受限形态的逐题投影（见函数头注释）。
    * stemMd 一律经 studentFacingResultOf 学生端投影（已公布也不例外）：[[答案]]
@@ -4250,7 +3655,10 @@ function buildResultData(
       };
 
   // scoreAuto 同理：未公布时置 null 投影（库里保留，教师侧统计不受影响）
-  const attemptProjection = attemptSummaryOf(attempt);
+  const summaryProjection = attemptSummaryOf(attempt);
+  const attemptProjection = assignmentRow
+    ? withAllowRedo(summaryProjection, assignmentRow.allowRedo)
+    : summaryProjection;
 
   return {
     attempt: released
@@ -4259,7 +3667,7 @@ function buildResultData(
     title: meta.title,
     courseName: meta.courseName,
     dueAt: meta.dueAt,
-    answersReleased: released,
+    ...release,
     summary,
     units: unitViews,
     enabledCapabilities,

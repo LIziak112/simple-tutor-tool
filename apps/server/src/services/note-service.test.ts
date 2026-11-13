@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -90,16 +91,23 @@ function makeFrozenAttempt(
     questionVersion?: number;
   } = {},
 ): { attemptId: string; revisionIds: Map<string, string> } {
-  const base = newDraftAttempt({
-    id: randomUUID(),
-    studentId,
+  const base: Attempt = {
+    ...newDraftAttempt({
+      id: randomUUID(),
+      studentId,
+      sourceType: "wrong",
+      assignmentId: null,
+      lectureId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: overrides.attemptNo ?? 1,
+      startedAt: "2026-10-01T00:00:00.000Z",
+    }),
     sourceType: overrides.sourceType ?? "assignment",
     assignmentId: overrides.assignmentId ?? null,
     courseId: overrides.courseId ?? null,
     unitId: overrides.unitId ?? null,
-    attemptNo: overrides.attemptNo ?? 1,
-    startedAt: "2026-10-01T00:00:00.000Z",
-  });
+  };
   const attempt: Attempt =
     status === "submitted"
       ? {
@@ -1480,6 +1488,66 @@ describe("服务重启：新进程重开库后已确认正文可读且 hash 稳�
 // ---------- GC ----------
 
 describe("未引用版本延迟回收（GC 骨架）", () => {
+  it("历史两版本共享路径时只清旧行，保留当前头使用的文件", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld();
+    const first = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    const second = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      baseRevision: 1,
+    });
+    ageVersion(db, first.versionId);
+    const head = sole(
+      db
+        .select()
+        .from(noteVersionsTable)
+        .where(eq(noteVersionsTable.id, second.versionId))
+        .all(),
+      "head",
+    );
+    db.update(noteVersionsTable)
+      .set({ bodyPath: head.bodyPath })
+      .where(eq(noteVersionsTable.id, first.versionId))
+      .run();
+    const now = new Date("2026-10-06T00:00:00.000Z");
+    expect(gcNoteVersions(db, dataDir, { now, dryRun: true })).toMatchObject({
+      candidateVersionRows: 1,
+      candidateFiles: 0,
+    });
+    expect(gcNoteVersions(db, dataDir, { now })).toMatchObject({
+      deletedVersionRows: 1,
+      deletedFiles: 0,
+    });
+    expect(readNoteVersionDoc(db, dataDir, second.versionId).doc).toEqual(
+      noteDoc(2),
+    );
+  });
+
+  it("内容寻址路径经过目录链接时不会删除链接目标", () => {
+    const { db, dataDir } = makeWorld();
+    const outside = join(dataDir, "outside");
+    mkdirSync(outside, { recursive: true });
+    const blobs = join(dataDir, "blobs");
+    mkdirSync(blobs, { recursive: true });
+    symlinkSync(outside, join(blobs, "notes"), "junction");
+    const path = join(outside, ".tmp-legacy");
+    writeFileSync(path, "preserve");
+    const old = new Date("2026-10-01T00:00:00.000Z");
+    utimesSync(path, old, old);
+    const result = gcNoteVersions(db, dataDir, {
+      now: new Date("2026-10-06T00:00:00.000Z"),
+    });
+    expect(result.sweptTmp).toBe(0);
+    expect(readFileSync(path, "utf8")).toBe("preserve");
+  });
+
   it("超窗口的未引用版本被删（行+文件）；head 版本无论如何保留", () => {
     const { db, dataDir, studentId, attemptId } = makeWorld();
     const r1 = save(db, dataDir, {
@@ -1497,6 +1565,18 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     });
     ageVersion(db, r1.versionId);
     ageVersion(db, r2.versionId);
+
+    const preview = gcNoteVersions(db, dataDir, {
+      now: new Date("2026-10-06T00:00:00.000Z"),
+      dryRun: true,
+    });
+    expect(preview).toMatchObject({
+      candidateVersionRows: 1,
+      deletedVersionRows: 0,
+      deletedFiles: 0,
+    });
+    expect(db.select().from(noteVersionsTable).all()).toHaveLength(2);
+    expect(noteFiles(dataDir)).toHaveLength(2);
 
     const result = gcNoteVersions(db, dataDir, {
       now: new Date("2026-10-06T00:00:00.000Z"),
@@ -2705,16 +2785,20 @@ describe("QM-15 笔记本来源材料/组投影（round.context，快照不可�
   ): string {
     const questionId = opts.questionId ?? "q1";
     const attemptId = opts.attemptId ?? randomUUID();
-    const base = newDraftAttempt({
-      id: attemptId,
-      studentId,
+    const base: Attempt = {
+      ...newDraftAttempt({
+        id: attemptId,
+        studentId,
+        sourceType: "wrong",
+        assignmentId: null,
+        lectureId: null,
+        courseId: null,
+        unitId: null,
+        attemptNo: 1,
+        startedAt: "2026-10-01T00:00:00.000Z",
+      }),
       sourceType: "assignment",
-      assignmentId: null,
-      courseId: null,
-      unitId: null,
-      attemptNo: 1,
-      startedAt: "2026-10-01T00:00:00.000Z",
-    });
+    };
     db.transaction((tx) => {
       tx.insert(attemptsTable)
         .values({

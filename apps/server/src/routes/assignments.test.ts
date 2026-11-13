@@ -1,5 +1,7 @@
 import type { ApiErr } from "@tutor/contract";
 import {
+  ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
   apiErrSchema,
   assignmentCreateOkSchema,
   studentAssignmentListOkSchema,
@@ -16,6 +18,7 @@ import {
   assignmentStudents,
   assignments,
   assignmentUnits,
+  attempts,
   questions,
 } from "../db/schema.ts";
 import {
@@ -29,6 +32,7 @@ import {
 } from "../services/assignment-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { addLimitFixtureQuestions } from "../test/question-limit-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -603,6 +607,73 @@ describe("教师布置作业：POST /api/teacher/assignments（T2A.7 多单元�
 // ---------- 组合方式（2026-10 产品决策：默认不合并） ----------
 
 describe("组合方式 unitGrouping（每个单元一份 / 合并一份）", () => {
+  it("题量上限：合并超过 500 题拒绝，分开布置按每份计算，换单元被拒不改原内容", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const first = await importUnit(app, teacherCookie, "题量上限单元一");
+    const second = await importUnit(app, teacherCookie, "题量上限单元二");
+    addLimitFixtureQuestions(db, first, ATTEMPT_SUBMIT_MAX_QUESTIONS - 1);
+    const studentId = await createStudent(app, teacherCookie, "题量上限学生");
+    const path = "/api/teacher/assignments";
+    const body = { unitIds: [first, second], studentIds: [studentId] };
+    const merged = await request(app, path, body, teacherCookie);
+    expect(merged.status).toBe(400);
+    expect(await merged.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(db.select().from(assignments).all()).toHaveLength(0);
+    const separate = await request(
+      app,
+      path,
+      { ...body, unitGrouping: "separate" },
+      teacherCookie,
+    );
+    expect(separate.status).toBe(201);
+    const { assignments: created } = assignmentCreateOkSchema.parse(
+      await separate.json(),
+    ).data;
+    expect(created.map((assignment) => assignment.totalQuestionCount)).toEqual([
+      ATTEMPT_SUBMIT_MAX_QUESTIONS,
+      1,
+    ]);
+    const assignment = created[0];
+    if (!assignment) throw new Error("缺少已布置作业");
+    const patch = await patchAssignment(app, teacherCookie, assignment.id, {
+      unitIds: [first, second],
+    });
+    expect(patch.status).toBe(400);
+    expect(await patch.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(
+      db
+        .select()
+        .from(assignmentUnits)
+        .where(eq(assignmentUnits.assignmentId, assignment.id))
+        .all(),
+    ).toMatchObject([{ unitId: first }]);
+  });
+
+  it("题量上限：教师布置之后加题，学生新开卷重新按实际题集检查", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const unitId = await importUnit(app, teacherCookie, "布置后加题");
+    const studentId = await createStudent(app, teacherCookie, "布置后加题学生");
+    const assigned = await createAssignment(app, teacherCookie, {
+      unitIds: [unitId],
+      studentIds: [studentId],
+    });
+    addLimitFixtureQuestions(db, unitId, ATTEMPT_SUBMIT_MAX_QUESTIONS);
+    const cookie = await loginStudent(app, "布置后加题学生");
+    const opened = await app.request(
+      `/api/student/assignments/${assigned.id}/attempt`,
+      { method: "POST", headers: { cookie } },
+    );
+    expect(opened.status).toBe(400);
+    expect(await opened.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(db.select().from(attempts).all()).toHaveLength(0);
+  });
+
   /** 两单元 + 两学生 + 课程「初一上」的公共造数 */
   async function makeSeparateEnv() {
     const { app, db, teacherCookie } = await makeApp();
@@ -621,6 +692,34 @@ describe("组合方式 unitGrouping（每个单元一份 / 合并一份）", () 
       .id;
     return { app, db, teacherCookie, unitA, unitB, aId, bId, courseId };
   }
+
+  it.each(["separate", "merged"] as const)(
+    "重复到达的 %s 布置只创建首批",
+    async (unitGrouping) => {
+      const env = await makeSeparateEnv();
+      const input = {
+        unitIds: [env.unitA, env.unitB],
+        studentIds: [env.aId],
+        unitGrouping,
+        operationId: crypto.randomUUID(),
+      };
+      const send = () => createAssignments(env.app, env.teacherCookie, input);
+      const [first, replay] = await Promise.all([send(), send()]);
+      expect(replay.assignments.map((row) => row.id)).toEqual(
+        first.assignments.map((row) => row.id),
+      );
+      expect(first.assignments).toHaveLength(
+        unitGrouping === "separate" ? 2 : 1,
+      );
+      const conflict = await request(
+        env.app,
+        "/api/teacher/assignments",
+        { ...input, title: "另一个请求" },
+        env.teacherCookie,
+      );
+      expect(conflict.status).toBe(409);
+    },
+  );
 
   it("separate：按 unitIds 顺序创建 N 份；每份单单元、缺省标题 = 各自单元标题；courseId/studentIds/dueAt/answerRelease 共用", async () => {
     const env = await makeSeparateEnv();

@@ -1,6 +1,8 @@
 import { gzipSync } from "node:zlib";
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
+  ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
   apiErrSchema,
   attemptResultOkSchema,
   lessonLandingOkSchema,
@@ -35,7 +37,11 @@ import {
   snapshotJsonOf,
 } from "../test/evidence-fixtures.ts";
 import { putNoteReceipt } from "../test/note-fixtures.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import { addLimitFixtureQuestions } from "../test/question-limit-fixtures.ts";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 讲练一体（2026-10）开卷与学生安全投影集成测试（app.request() 直调路由 +
@@ -398,6 +404,24 @@ async function startOk(
 }
 
 describe("POST /api/student/lectures/:id/lesson/start（讲练开卷，幂等 create-or-return）", () => {
+  it("题量上限：超出上限的实际冻结题集不写入新卷", async () => {
+    const env = await makeEnv();
+    const unit = env.db
+      .select({ id: units.id })
+      .from(units)
+      .where(eq(units.lectureId, env.lectureId))
+      .get();
+    if (!unit) throw new Error("讲练夹具缺少嵌入单元");
+    addLimitFixtureQuestions(env.db, unit.id, ATTEMPT_SUBMIT_MAX_QUESTIONS - 1);
+    const opened = await startLesson(env);
+    expect(opened.status).toBe(400);
+    expect(await opened.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(env.db.select().from(attempts).all()).toHaveLength(0);
+    expect(env.db.select().from(responses).all()).toHaveLength(0);
+  });
+
   it("开卷投影：blocks 切段（无题块）、questions 公开平铺、attempt 归属与 lecture 上下文；三层泄露断言", async () => {
     const env = await makeEnv();
     const body = await startOk(env);
@@ -746,6 +770,31 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
 });
 
 describe("POST /api/student/lectures/:id/lesson/restart（再做一次/重新开始，显式独立动作）", () => {
+  it("相同重开请求重放返回同一新卷，过期源卷的另一次操作被拒绝", async () => {
+    const env = await makeEnv();
+    const { data } = await startOk(env);
+    const send = (operationId: string, expectedAttemptId = data.attempt.id) =>
+      env.app.request(`/api/student/lectures/${env.lectureId}/lesson/restart`, {
+        method: "POST",
+        headers: {
+          cookie: env.memberCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ operationId, expectedAttemptId }),
+      });
+    const id = crypto.randomUUID();
+    const responses = await Promise.all([send(id), send(id)]);
+    expect(responses.map((response) => response.status)).toEqual([201, 201]);
+    const bodies = await Promise.all(
+      responses.map(async (response) => (await response.json()) as StartBody),
+    );
+    const first = bodies[0]?.data.attempt.id;
+    expect(first).toBeDefined();
+    expect(bodies[1]?.data.attempt.id).toBe(first);
+    expect((await send(crypto.randomUUID())).status).toBe(409);
+    expect((await startOk(env)).data.attempt.id).toBe(first);
+    for (const body of bodies) assertNoLeak(body);
+  });
   it("无作答 409；随时重开——进行中 draft restart 也 201（旧卷作废，2026-10 教师演示口径；详测见 landing describe）", async () => {
     const env = await makeEnv();
 
@@ -1150,6 +1199,17 @@ async function submitQuestion(
       },
       body: JSON.stringify({
         questionRevisionId,
+        expectedAnswerRevision:
+          env.db
+            .select({ revision: responses.answerRevision })
+            .from(responses)
+            .where(
+              and(
+                eq(responses.attemptId, attemptId),
+                eq(responses.questionId, questionId),
+              ),
+            )
+            .get()?.revision ?? 0,
         ...(evidence === undefined ? {} : { evidence }),
       }),
     },
@@ -1219,6 +1279,61 @@ function responseRowOf(
 }
 
 describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题提交，当题即时反馈）", () => {
+  it("讲练拒绝陈旧的可见答案版本，保留新草稿和原稿声明", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    const visibleRevision = async () =>
+      (await fetchSubmitRevisions(env.app, env.memberCookie, attemptId)).find(
+        (revision) => revision.questionId === S.choice,
+      )?.expectedAnswerRevision;
+    const expectedRevision = await visibleRevision();
+    if (expectedRevision === undefined) throw new Error("未取得答案版本");
+    const latest = { kind: "choice", index: 0 };
+    await saveDraftAnswer(env, attemptId, S.choice, latest);
+    const send = (expectedAnswerRevision: number) =>
+      env.app.request(
+        `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(S.choice)}/submit`,
+        {
+          method: "POST",
+          headers: {
+            cookie: env.memberCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            questionRevisionId: revisions.get(S.choice),
+            expectedAnswerRevision,
+            evidence: { questionId: S.choice, state: "none" },
+          }),
+        },
+      );
+    const stale = await send(expectedRevision);
+    expect(stale.status).toBe(409);
+    const error = await stale.json();
+    expect(error).toMatchObject({
+      error: "ANSWER_REVISION_CONFLICT",
+      _current: { revision: expectedRevision + 1, draft: latest },
+    });
+    assertNoLeak(error);
+    expect(responseRowOf(env.db, attemptId, S.choice)).toMatchObject({
+      submittedAt: null,
+    });
+    expect(await visibleRevision()).toBe(expectedRevision + 1);
+    expect(env.db.select().from(submissionEvidence).all()).toEqual([]);
+    const questionEvents = () =>
+      env.db
+        .select()
+        .from(events)
+        .where(eq(events.attemptId, attemptId))
+        .all()
+        .filter((row) => row.type === "question_submit");
+    expect(questionEvents()).toEqual([]);
+    expect((await send(expectedRevision + 1)).status).toBe(200);
+    expect(questionEvents()).toHaveLength(1);
+  });
+
   it("choice 答：判对（autoCorrect=finalCorrect=true）、当题释放参考答案、summary 现算、泄露矩阵三层断言、question_submit 事件恰一条", async () => {
     const { env, attemptId, revisions } = await makeSubmitEnv();
     await saveDraftAnswer(env, attemptId, S.choice, {
@@ -2034,10 +2149,11 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
 
     // 新客户端：evidence 只覆盖未提交题（judge frozen / choice2 none——fill
     // 已单题提交，其证据不重做也不再声明）
-    const revisionsList = [...revisions.entries()].map(([questionId, id]) => ({
-      questionId,
-      questionRevisionId: id,
-    }));
+    const revisionsList = await fetchSubmitRevisions(
+      env.app,
+      env.memberCookie,
+      attemptId,
+    );
     const res = await env.app.request(
       `/api/student/attempts/${attemptId}/submit`,
       {
@@ -2152,10 +2268,11 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
           cookie: env.memberCookie,
         },
         body: JSON.stringify({
-          revisions: [...revisions.entries()].map(([questionId, id]) => ({
-            questionId,
-            questionRevisionId: id,
-          })),
+          revisions: await fetchSubmitRevisions(
+            env.app,
+            env.memberCookie,
+            attemptId,
+          ),
           evidence: [
             { questionId: S.judge, state: "none" },
             { questionId: S.fill, state: "none" },
@@ -2221,6 +2338,7 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
         headers: { "content-type": "application/json", cookie: second.cookie },
         body: JSON.stringify({
           questionRevisionId: revisionsB.get(S.choice) ?? "",
+          expectedAnswerRevision: 1,
         }),
       },
     );

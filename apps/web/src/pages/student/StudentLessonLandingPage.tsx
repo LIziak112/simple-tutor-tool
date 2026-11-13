@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import {
+  isStaleLessonRestart,
   useLessonLanding,
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
@@ -153,7 +154,7 @@ export default function StudentLessonLandingPage() {
   );
   const restart = useRestartLesson(id);
   const redoTriggerRef = useRef<HTMLButtonElement>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [restartTarget, setRestartTarget] = useState<string | null>(null);
 
   const accessDenied =
     landingQuery.error instanceof ApiError &&
@@ -213,8 +214,27 @@ export default function StudentLessonLandingPage() {
   const enterRun = () => {
     void navigate(runTo);
   };
+  const openRestart = () => {
+    const latest = landing.attempts.reduce<
+      (typeof landing.attempts)[number] | undefined
+    >(
+      (head, attempt) =>
+        !head || attempt.attemptNo > head.attemptNo ? attempt : head,
+      undefined,
+    );
+    setRestartTarget(latest?.attemptId ?? null);
+  };
   const onRestart = () => {
-    restart.mutate(undefined, { onSuccess: enterRun });
+    if (restartTarget === null) return;
+    restart.mutate(restartTarget, {
+      onSuccess: enterRun,
+      onError: (error) => {
+        if (isStaleLessonRestart(error)) {
+          setRestartTarget(null);
+          void landingQuery.refetch();
+        }
+      },
+    });
   };
 
   const typeBadges = Object.entries(landing.typeDistribution)
@@ -306,7 +326,7 @@ export default function StudentLessonLandingPage() {
                 className="min-h-12 px-6 text-base"
                 disabled={busy}
                 ref={redoTriggerRef}
-                onClick={() => setConfirmOpen(true)}
+                onClick={openRestart}
                 aria-label="重新开始"
               >
                 <RotateCcw aria-hidden className="size-4" />
@@ -318,7 +338,7 @@ export default function StudentLessonLandingPage() {
               className="min-h-12 px-8 text-base"
               disabled={busy}
               ref={redoTriggerRef}
-              onClick={() => setConfirmOpen(true)}
+              onClick={openRestart}
               aria-label="再做一次"
             >
               <RotateCcw aria-hidden className="size-4" />
@@ -387,7 +407,7 @@ export default function StudentLessonLandingPage() {
       </div>
 
       <RestartConfirmDialog
-        open={confirmOpen}
+        open={restartTarget !== null}
         mode={hasDraft ? "abandon" : "redo"}
         nextAttemptNo={nextAttemptNo}
         busy={busy}
@@ -402,7 +422,7 @@ export default function StudentLessonLandingPage() {
         onConfirm={() => {
           onRestart();
         }}
-        onCancel={() => setConfirmOpen(false)}
+        onCancel={() => setRestartTarget(null)}
       />
     </section>
   );

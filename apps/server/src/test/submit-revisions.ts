@@ -32,15 +32,15 @@ export async function fetchSubmitRevisions(
   const parsed = ((await res.json()) as { data: AttemptDetailData }).data;
   // 契约 union 的判别键在嵌套 attempt.status 上（TS 无法自动收窄）；服务端
   // 保证状态-形态一致，draft 时按草稿视图取题（结果视图无题目版本可取）
-  const revisions =
-    parsed.attempt.status === "draft"
-      ? (parsed as AttemptDraftData).units.flatMap((unit) =>
-          unit.questions.map((question) => ({
-            questionId: question.id,
-            questionRevisionId: question.questionRevisionId,
-          })),
-        )
-      : [];
+  if (parsed.attempt.status !== "draft") return [];
+  const draft = parsed as AttemptDraftData;
+  const revisions = draft.units.flatMap((unit) =>
+    unit.questions.map((question) => ({
+      questionId: question.id,
+      questionRevisionId: question.questionRevisionId,
+      expectedAnswerRevision: draft.draftRevisions?.[question.id] ?? 0,
+    })),
+  );
   return attemptSubmitRequestSchema.parse({ revisions }).revisions;
 }
 

@@ -337,6 +337,7 @@ it("更多菜单复用唯一做题方式编辑器，不再有第二组布局选�
 });
 
 beforeEach(() => {
+  installDraftBackend(memoryBackend());
   localStorage.clear();
   // M5-D3 开始页 transient 预选为模块级一次性变量，测试间显式清防串扰
   consumeAttemptStartLayoutIntent();

@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -110,8 +111,9 @@ async function makeWorld(tag: string): Promise<World> {
   const attempt = newDraftAttempt({
     id: randomUUID(),
     studentId,
-    sourceType: "assignment",
+    sourceType: "wrong",
     assignmentId: null,
+    lectureId: null,
     courseId: null,
     unitId: null,
     attemptNo: 1,
@@ -557,12 +559,46 @@ describe("0027 annotation 两表备份恢复链", () => {
     ) as unknown;
     expect(bodyJson).toEqual(JSON.parse(canonicalAnnotationJson(doc)));
 
+    const old = new Date("2026-10-01T00:00:00.000Z");
+    const now = new Date("2026-10-08T00:00:00.000Z");
+    const orphan = join(clean.dataDir, annotationBaseRelPath("a".repeat(64)));
+    const recent = join(clean.dataDir, annotationBodyRelPath("b".repeat(64)));
+    const liveBody = join(clean.dataDir, annoRow.bodyPath);
+    const backedBase = join(clean.dataDir, baseRow.imagePath);
+    for (const path of [orphan, recent]) writeFileSync(path, "fixture");
+    for (const path of [orphan, liveBody, backedBase])
+      utimesSync(path, old, old);
+    createSnapshot(clean.dataDir, clean.db, now);
+    clean.db
+      .delete(annotationsTable)
+      .where(eq(annotationsTable.id, putReceipt.annotationId))
+      .run();
+    clean.db
+      .delete(annotationBasesTable)
+      .where(eq(annotationBasesTable.id, baseReceipt.baseId))
+      .run();
+    const inventory = gcNoteVersions(clean.db, clean.dataDir, {
+      now,
+      dryRun: true,
+    });
+    expect(inventory).toMatchObject({
+      candidateFiles: 1,
+      candidateBytes: 7,
+      sweptOrphanFiles: 0,
+    });
+    expect(existsSync(orphan)).toBe(true);
+
     // 新表纳入扫描清单后保守行为不变：恢复库的真快照（迁移库，0027 两表
     // 存在且空/含行）可正常读，unreadable=0 不触发 GC 保守模式
     const gc = gcNoteVersions(clean.db, clean.dataDir, {
-      now: new Date("2026-10-08T00:00:00.000Z"),
+      now,
     });
     expect(gc.unreadableBackupDbs).toBe(0);
     expect(gc.malformedBodyPaths).toBe(0);
+    expect(gc.sweptOrphanFiles).toBe(1);
+    expect(existsSync(orphan)).toBe(false);
+    expect(
+      [recent, liveBody, backedBase].every((path) => existsSync(path)),
+    ).toBe(true);
   });
 });

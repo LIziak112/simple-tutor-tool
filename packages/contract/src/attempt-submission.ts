@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { studentAnswerSchema } from "./grading.ts";
 
 /**
  * 题目版本引用（T6R.3 冻结，方案 §5.1）：定位「本次作答时被冻结的那道题」，
@@ -15,18 +16,44 @@ export const questionRevisionIdSchema = z
   .max(512)
   .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
 
+/** 内部边界区分作答 ID 与题目冻结行引用，既有 wire 字符串保持兼容。 */
+export const frozenQuestionRevisionIdSchema =
+  questionRevisionIdSchema.brand<"FrozenQuestionRevisionId">();
+export type FrozenQuestionRevisionId = z.infer<
+  typeof frozenQuestionRevisionIdSchema
+>;
+
+/** 学生答案每次保存后的服务端版本，0 表示尚无版本化保存。 */
+export const answerRevisionSchema = z.number().int().nonnegative();
+
+/** 答案冲突仅包含学生自己的云端稿。 */
+export const attemptAnswerConflictCurrentSchema = z.object({
+  revision: answerRevisionSchema,
+  draft: studentAnswerSchema.nullable(),
+});
+export type AttemptAnswerConflictCurrent = z.infer<
+  typeof attemptAnswerConflictCurrentSchema
+>;
+
+export const attemptSubmissionConflictSchema = z.object({
+  _questionId: z.string().min(1),
+  _current: attemptAnswerConflictCurrentSchema,
+});
+
 /**
  * POST /api/student/attempts/:id/submit 请求体（T6R.3 全来源题目版本冻结）：
  * 交卷回传建卷时下发的每题 questionRevisionId（responses 行 id，对学生不透明），
  * 服务端与本次冻结集合逐一比对——旧标签页/陈旧页面的提交（缺项、错版、多项）
  * 被 409 QUESTION_REVISION_STALE 可诊断拒绝（前端提示刷新后重交），不静默接受。
  * 空 revisions 合法（空卷交卷；服务端把不带请求体同样按空集合处理，非空卷
- * 由此自然落入 409）；上限 500 为防御性边界（单卷题数远低于此；常量
+ * 由此自然落入 409）；上限 500 同时作为新开卷题数上限（常量
  * ATTEMPT_SUBMIT_MAX_QUESTIONS 与批量头共享，见彼处注释）。
  */
 export const attemptSubmitRevisionSchema = z.object({
   questionId: z.string().min(1),
   questionRevisionId: questionRevisionIdSchema,
+  /** 交卷时学生实际看到的已保存答案版本；旧请求缺字段由服务端安全裁决。 */
+  expectedAnswerRevision: answerRevisionSchema.optional(),
 });
 
 /**
@@ -90,7 +117,7 @@ export const submitEvidenceDeclarationSchema = z
   });
 
 /**
- * 单卷题数的防御性上限（交卷 revisions/evidence 与批量头 note-heads 共用
+ * 新卷题数上限（交卷 revisions/evidence 与批量头 note-heads 共用
  * 同一常量——C1 一致性红线：批量头上限若小于交卷上限，「>批量上限 但
  * ≤交卷上限」的卷会在答题页整页 400、交卷被永久阻断。修订须两侧同步，
  * 契约一致性测试锁定相等）。
@@ -123,6 +150,11 @@ export const attemptSubmitRequestSchema = z.object({
     .optional(),
 });
 
+/** 讲练单题提交沿用整卷的冻结题版本、可见答案版本与笔记证据。 */
+export const lessonQuestionSubmitRequestSchema = attemptSubmitRevisionSchema
+  .omit({ questionId: true })
+  .extend({ evidence: submitEvidenceDeclarationSchema.optional() });
+
 /** 交卷回传的单题版本对（T6R.3；questionRevisionId = responses 行 id，不透明） */
 export type AttemptSubmitRevision = z.infer<typeof attemptSubmitRevisionSchema>;
 /** 交卷请求的单题笔记证据声明（T6R.10） */
@@ -131,3 +163,6 @@ export type SubmitEvidenceDeclaration = z.infer<
 >;
 /** 交卷请求体（T6R.3；T6R.10 增可选 evidence——缺省=旧客户端） */
 export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
+export type LessonQuestionSubmitRequest = z.infer<
+  typeof lessonQuestionSubmitRequestSchema
+>;

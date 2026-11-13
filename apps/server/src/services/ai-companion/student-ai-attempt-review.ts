@@ -30,7 +30,6 @@ import { and, asc, desc, eq, inArray, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../../db/client.ts";
 import {
-  type AiAttemptReviewFactType,
   type AiAttemptReviewTaskRow,
   aiAttemptReviewFacts,
   aiAttemptReviewResults,
@@ -41,7 +40,6 @@ import {
   answerOf,
   frozenRowsInDisplayOrder,
   materialSlotOrderOf,
-  requireUsableAttempt,
   structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
@@ -56,6 +54,8 @@ import {
   parseAttemptReviewSnapshot,
   projectAttemptReviewDetail,
 } from "./student-ai-attempt-review-public.ts";
+import { insertArFact } from "./student-ai-audit.ts";
+
 import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { missingNoteOf, studentAnswerTextOf } from "./student-ai-context.ts";
 import {
@@ -67,6 +67,7 @@ import {
 } from "./student-ai-shared.ts";
 import {
   type AiPolicyConfigSource,
+  requireStudentAiAttempt,
   resolveAttemptQuestionAiPolicy,
 } from "./teaching-policy-service.ts";
 
@@ -119,28 +120,6 @@ const AR_TASK_TRANSITIONS: Readonly<
   paused: ["created", "cancelled"],
   cancelled: [],
 };
-
-type FactDetail = Record<string, string | number | boolean | null>;
-
-function insertArFact(
-  tx: QueueTx,
-  task: AiAttemptReviewTaskRow,
-  type: AiAttemptReviewFactType,
-  nowIso: string,
-  detail?: FactDetail,
-): void {
-  tx.insert(aiAttemptReviewFacts)
-    .values({
-      id: randomUUID(),
-      taskId: task.id,
-      studentId: task.studentId,
-      attemptId: task.attemptId,
-      type,
-      ...(detail === undefined ? {} : { detailJson: JSON.stringify(detail) }),
-      serverTs: nowIso,
-    })
-    .run();
-}
 
 /** 唯一状态转换入口：查表 + 按旧状态 CAS 条件更新（落空 → 409） */
 function applyArTransition(
@@ -243,7 +222,7 @@ const FIELD_NOTES: readonly string[] = [
 
 /**
  * 整体任务的实时授权门：创建、领取、报告写回、详情和打开共用。
- * 归属/作废/失权复用 requireUsableAttempt，交卷、公布及逐题策略任一不满足即拒绝。
+ * 账号及作答可用性复用逐题授权，交卷、公布及逐题策略任一不满足即拒绝。
  */
 function requireAttemptReviewAccess(
   db: Db | QueueTx,
@@ -251,7 +230,7 @@ function requireAttemptReviewAccess(
   options: Pick<AttemptReviewServiceOptions, "configSource"> = {},
 ) {
   const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
-  const attempt = requireUsableAttempt(
+  const { attempt } = requireStudentAiAttempt(
     asDb(db),
     input.studentId,
     input.attemptId,

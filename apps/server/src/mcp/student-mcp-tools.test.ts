@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import {
   aiAttemptReviewCreateOkSchema,
@@ -41,7 +42,10 @@ import {
   connectMcpClientViaApp,
 } from "../test/mcp-test-utils.ts";
 import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
-import { STUDENT_MCP_TOOL_NAMES } from "./student-server.ts";
+import {
+  createStudentMcpServer,
+  STUDENT_MCP_TOOL_NAMES,
+} from "./student-server.ts";
 
 /**
  * SAI-26 学生 MCP 任务工具测试（B14 必测 6 组；真实 SDK Streamable HTTP
@@ -60,6 +64,7 @@ interface ToolsEnv {
   db: Db;
   dataDir: string;
   token: string;
+  connectionId: string;
   studentId: string;
   studentCookie: string;
   /** 建好的题目世界：attemptId + 两道题 */
@@ -92,7 +97,7 @@ async function makeEnv(): Promise<ToolsEnv> {
     body: JSON.stringify({ channel: "mcp" }),
   });
   const body = (await created.json()) as {
-    data: { credential: { token: string } | null };
+    data: { connection: { id: string }; credential: { token: string } | null };
   };
   if (body.data.credential === null) throw new Error("mcp token 创建失败");
   return {
@@ -100,6 +105,7 @@ async function makeEnv(): Promise<ToolsEnv> {
     db,
     dataDir,
     token: body.data.credential.token,
+    connectionId: body.data.connection.id,
     studentId,
     studentCookie,
     world: { attemptId, q1, q2 },
@@ -109,6 +115,166 @@ async function makeEnv(): Promise<ToolsEnv> {
 /** 建立 SDK 客户端连接（Streamable HTTP + Bearer token；样板见 test/mcp-test-utils.ts） */
 const connectClient = (env: ToolsEnv, token = env.token) =>
   connectMcpClientViaApp(env.app, "/mcp/student", token, "sai26-tools-test");
+
+it("实时焦点可续期、后台撤回、多页不猜题且只定位已授权任务", async () => {
+  const env = await makeEnv();
+  const { attemptId, q1, q2 } = env.world;
+  const a = randomUUID();
+  const b = randomUUID();
+  const taskId = mkTask(env);
+  const cookie = {
+    cookie: env.studentCookie,
+    "content-type": "application/json",
+  };
+  const getGeneration = async (): Promise<string> => {
+    const res = await env.app.request("/api/student/ai/mcp-live-focus", {
+      headers: cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { generation: string | null } };
+    assertNoLeak(body);
+    if (body.data.generation === null) throw new Error("定位未开启");
+    return body.data.generation;
+  };
+  let generation: string;
+  const focus = (
+    viewId: string,
+    sequence: number,
+    questionId: string | null,
+    focusGeneration = generation,
+  ) =>
+    env.app.request(`/api/student/attempts/${attemptId}/mcp-live-focus`, {
+      method: "PUT",
+      headers: cookie,
+      body: JSON.stringify({
+        generation: focusGeneration,
+        viewId,
+        sequence,
+        questionId,
+      }),
+    });
+  const allow = (liveContextEnabled: boolean) =>
+    env.app.request(`/api/student/ai/connections/${env.connectionId}`, {
+      method: "PATCH",
+      headers: cookie,
+      body: JSON.stringify({ channel: "mcp", liveContextEnabled }),
+    });
+  const client = await connectClient(env);
+  let newClient: Client | undefined;
+  try {
+    const current = async () =>
+      (await callToolJson(client, "get_current_context", {})).data;
+    expect(await current()).toEqual({ status: "disabled" });
+    expect((await allow(true)).status).toBe(200);
+    generation = await getGeneration();
+    expect(await current()).toEqual({ status: "no_current_question" });
+    expect((await focus(a, 1, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "authorized_task", taskId });
+    expect((await focus(a, 2, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "authorized_task", taskId });
+    env.db
+      .update(attempts)
+      .set({ frozenAt: null })
+      .where(eq(attempts.id, attemptId))
+      .run();
+    expect((await focus(a, 3, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "no_current_question" });
+    expect(
+      env.db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+        ?.frozenAt,
+    ).toBeNull();
+    env.db
+      .update(attempts)
+      .set({ frozenAt: NOW })
+      .where(eq(attempts.id, attemptId))
+      .run();
+    expect((await focus(a, 4, q1)).status).toBe(200);
+    expect((await focus(b, 1, q2)).status).toBe(200);
+    expect(await current()).toEqual({ status: "no_current_question" });
+    expect((await focus(a, 5, null)).status).toBe(200);
+    expect((await focus(a, 4, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "student_action_required" });
+    expect((await focus(b, 2, null)).status).toBe(200);
+    expect(await current()).toEqual({ status: "no_current_question" });
+    expect((await focus(a, 6, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "authorized_task", taskId });
+    const revokedTarget = await focus(a, 7, "不在卷内的题");
+    expect(revokedTarget.status).toBe(200);
+    assertNoLeak(await revokedTarget.json());
+    expect(await current()).toEqual({ status: "no_current_question" });
+    expect((await focus(a, 8, q1)).status).toBe(200);
+    expect((await allow(false)).status).toBe(200);
+    expect(await current()).toEqual({ status: "disabled" });
+    expect((await allow(true)).status).toBe(200);
+    expect((await focus(a, 8, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "no_current_question" });
+    generation = await getGeneration();
+    expect((await focus(a, 9, q1)).status).toBe(200);
+    expect(await current()).toEqual({ status: "authorized_task", taskId });
+    const reset = await env.app.request(
+      `/api/student/ai/connections/${env.connectionId}`,
+      {
+        method: "PATCH",
+        headers: cookie,
+        body: JSON.stringify({ channel: "mcp", resetToken: true }),
+      },
+    );
+    expect(reset.status).toBe(200);
+    const replacement = (await reset.json()) as {
+      data: { credential: { token: string } };
+    };
+    newClient = await connectClient(env, replacement.data.credential.token);
+    expect((await focus(a, 10, q1)).status).toBe(200);
+    expect(
+      (await callToolJson(newClient, "get_current_context", {})).data,
+    ).toEqual({ status: "no_current_question" });
+    generation = await getGeneration();
+    expect((await focus(a, 11, q1)).status).toBe(200);
+    const claimed = await callToolJson(newClient, "claim_ai_task", {
+      taskId,
+      includeImages: false,
+    });
+    expect(claimed.data.claimed).toBe(true);
+    expect(
+      (await callToolJson(newClient, "get_current_context", {})).data,
+    ).toEqual({ status: "student_action_required" });
+    expect(
+      env.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()?.status,
+    ).toBe("claimed");
+  } finally {
+    await newClient?.close();
+    await client.close();
+  }
+});
+
+it("执行时授权拒绝的学生 MCP 工具不领取任务", async () => {
+  const env = await makeEnv();
+  const taskId = mkTask(env);
+  const server = createStudentMcpServer({
+    db: env.db,
+    dataDir: env.dataDir,
+    publicUrl: "http://localhost:8787",
+    studentId: env.studentId,
+    hmacSecret: SECRET,
+    isAuthorized: () => false,
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "sai-auth-test", version: "1" });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await callToolJson(client, "claim_ai_task", { taskId });
+    expect(result.isError).toBe(true);
+    expect(result.data.error).toBe("UNAUTHORIZED");
+    expect(
+      env.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()?.status,
+    ).toBe("created");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
 
 it("学生 MCP 原子逐题提交，失败保稿、幂等且不泄露参考答案", async () => {
   const env = await makeEnv();

@@ -13,9 +13,8 @@
  *
  * 底图 PNG 分键（批次五 P1-1）：PNG 字节不随正文记录落盘——每笔收笔只重写
  * 小正文记录（localBase 以字节指纹引用底图键）；底图键 `["annotation-base",
- * …六元, 指纹]` 内容寻址，同一内容只写一次、旧内容键永不删除（写序恒
- * 「先底图后正文」，任何中断窗口下正文引用的底图键都完整存在，无需跨键
- * 事务）。旧单键内嵌 PNG 的存量记录可读，并在下次落盘时顺带拆键。
+ * …六元, 指纹] 内容寻址，底图键与正文在同一事务落盘。空白云端底图有独立缓存
+ * 预算；编辑后原稿进入持久键。旧单键内嵌 PNG 仍可读。
  *
  * 后端注入（lib/kv-backend 共享实现）：jsdom 无 indexedDB 时自动退化内存
  * 实现；单测注入干净内存后端。真实 IDB 事务语义由 E2E/真机覆盖。
@@ -38,15 +37,27 @@ import {
   annotationSurfaceLayoutSchema,
   annotationPngFingerprint as pngBytesDigest,
 } from "@tutor/contract";
-import { digestOf } from "@/features/attempt/draft-merge";
 import {
   idbKVBackend,
-  type KVStoreBackend,
+  type KVAtomicBackend,
   memoryKVBackend,
 } from "@/lib/kv-backend";
 import { localPersistenceErrorMessage } from "@/lib/local-persistence-error";
 import { randomUuid } from "@/lib/uuid";
+import {
+  type AnnotationStoreBackend,
+  annotationBaseBytes,
+  annotationDocsEqual,
+  type CloudBaseIdentity,
+  emptyAnnotationDoc,
+  persistAnnotationRecord,
+  recoverAnnotationCache,
+} from "./annotation-base-persistence";
 import { annotationByteBackend } from "./annotation-byte-backend";
+import { deriveAnnotationServerState } from "./annotation-server-state";
+
+export type { AnnotationStoreBackend } from "./annotation-base-persistence";
+export { deriveAnnotationServerState } from "./annotation-server-state";
 
 // ---------- 会话与键 ----------
 
@@ -106,8 +117,7 @@ function sessionPrefix(session: AnnotationSessionRef): string {
 /**
  * 底图 PNG 独立键（批次五 P1-1）：与正文键同规则派生（部署实例 + 学生 +
  * attempt + 题 + phase，账号/作答隔离语义一致），尾元为 PNG 字节内容指纹。
- * 内容寻址 ⇒ 同一字节序列天然只写一次；旧内容键永不删除，正文引用与底图
- * 字节在任何写序中断窗口下都自洽（无需跨键事务）。
+ * 内容寻址 ⇒ 同一字节序列只写一次，正文与底图键用同一事务更新。
  */
 export function annotationBaseKeyOf(
   session: AnnotationSessionRef,
@@ -193,6 +203,7 @@ export interface AnnotationLocalRecord {
     png: Blob;
     layout: AnnotationSurfaceLayout;
     boundBaseId?: string;
+    cloudCache?: true;
   } | null;
   /** 本地最新正文（AnnotationDoc 全字段必填，无默认值物化问题） */
   doc: AnnotationDoc;
@@ -247,19 +258,6 @@ function freshRecord(): AnnotationLocalRecord {
     docVersion: 0,
   };
 }
-
-/**
- * 持久化正文记录形态（批次五 P1-1）：localBase 不再内嵌 PNG 字节，改以
- * `pngDigest` 指向独立底图键（annotationBaseKeyOf）。旧格式（localBase.png
- * 内嵌 Blob/字节）仍在读取端兼容，见 reviveLocalBaseOf。
- */
-type PersistedAnnotationRecord = Omit<AnnotationLocalRecord, "localBase"> & {
-  localBase:
-    | (Omit<NonNullable<AnnotationLocalRecord["localBase"]>, "png"> & {
-        pngDigest: string;
-      })
-    | null;
-};
 
 /** 读取旧记录的防御性归一（缺字段补默认；非空坏形必须保留并报错）。
  *  localBase 不在此处装配（需异步取底图键），恒置 null 由调用方回填。 */
@@ -346,7 +344,7 @@ function reviveRecord(
  * 装配完整 localBase（批次五 P1-1 读路径）：
  * - 新格式：localBase.pngDigest → 取独立底图键字节 → 复核指纹 → Blob 回填；
  * - 旧格式：localBase.png 内嵌 Blob/Uint8Array 直接使用（不迁移；下次落盘
- *   时顺带拆键——persistAnnotationBase 见不到已知底图即写独立键）。
+ *   时顺带拆键，先确认独立键中的字节。
  * 底图键缺失/字节损坏/指纹失配按坏字节纪律抛可读错误：正文记录保留在库，
  * 不静默清稿（严格读路径因此拒绝，非严格路径回落无稿呈现但不删除数据）。
  */
@@ -399,7 +397,12 @@ async function reviveLocalBaseOf(
     if (pngBytesDigest(bytes) !== base.pngDigest)
       throw new Error("本机底图字节与引用不符，原记录已保留，请重试");
     // 底图键已确认持有该字节：本会话后续每笔不再重写底图键
-    persistedBases.set(key, { png, digest: base.pngDigest });
+    persistedBases.set(key, {
+      png,
+      digest: base.pngDigest,
+      bytes,
+      cloud: null,
+    });
     return {
       png,
       layout: base.layout,
@@ -435,7 +438,15 @@ async function reviveRecordWithBase(
     scope,
     revived.rawLocalBase,
   );
-  return { ...revived.record, localBase };
+  if (localBase !== null) return { ...revived.record, localBase };
+  const cache = await recoverAnnotationCache(backend(), key, revived.record);
+  if (cache === null) return revived.record;
+  const png = pngBlobOf(cache.bytes);
+  persistedBases.set(key, { ...cache, png, cloud: cache.identity });
+  return {
+    ...revived.record,
+    localBase: { ...cache.base, png, cloudCache: true },
+  };
 }
 
 /** 持久化快照：local 归一化 */
@@ -445,19 +456,13 @@ function persistedCopy(record: AnnotationLocalRecord): AnnotationLocalRecord {
 
 // ---------- 后端注入 ----------
 
-export type AnnotationStoreBackend = Pick<
-  KVStoreBackend,
-  "get" | "set" | "getAll"
->;
-
-export function memoryAnnotationBackend(): AnnotationStoreBackend {
+export function memoryAnnotationBackend(): KVAtomicBackend {
   return memoryKVBackend();
 }
 
 function idbAnnotationBackend(): AnnotationStoreBackend {
-  return annotationByteBackend(
-    idbKVBackend(ANNOTATION_IDB_DB, ANNOTATION_IDB_STORE),
-  );
+  const raw = idbKVBackend(ANNOTATION_IDB_DB, ANNOTATION_IDB_STORE);
+  return { ...annotationByteBackend(raw), update: raw.update };
 }
 
 let activeBackend: AnnotationStoreBackend | null = null;
@@ -503,7 +508,15 @@ const records = new Map<string, AnnotationLocalRecord>();
  * 跳过底图键重写（重渲染确定性输出、重下载同字节均命中）；恢复读取时
  * 由底图键回填。clearCaches 随后端切换一并清空。
  */
-const persistedBases = new Map<string, { png: Blob; digest: string }>();
+const persistedBases = new Map<
+  string,
+  {
+    png: Blob;
+    digest: string;
+    bytes: Uint8Array;
+    cloud: CloudBaseIdentity | null;
+  }
+>();
 
 interface KeyQueue {
   writing: boolean;
@@ -522,62 +535,6 @@ function queueOf(key: string): KeyQueue {
   return q;
 }
 
-/**
- * 底图键写入（批次五 P1-1）：底图未变（png 引用或字节指纹与已知落盘一致）
- * 时跳过；真正变化（首次落盘 / prepare 重建 / 云端重绑）才写独立底图键。
- * 返回正文记录应携带的字节指纹（无底图为 null）。写序恒「先底图后正文」：
- * 底图键写失败即整体落盘失败（不解除保存失败保护），正文旧引用指向的旧
- * 底图键永不删除，任何中断窗口自洽。
- */
-async function persistAnnotationBase(
-  key: string,
-  record: AnnotationLocalRecord,
-): Promise<string | null> {
-  const local = record.localBase;
-  if (local === null) return null;
-  const known = persistedBases.get(key);
-  if (known !== undefined && known.png === local.png) return known.digest;
-  const bytes = new Uint8Array(await local.png.arrayBuffer());
-  if (
-    bytes.byteLength === 0 ||
-    bytes.byteLength > ANNOTATION_BASE_PNG_MAX_BYTES
-  )
-    throw new Error("本机圈画底图字节损坏或超限，原记录已保留，请重试");
-  const digest = pngBytesDigest(bytes);
-  if (known !== undefined && known.digest === digest) {
-    // 新引用同字节（重渲染/重下载的确定性输出）：内容寻址键已持有该字节
-    persistedBases.set(key, { png: local.png, digest });
-    return digest;
-  }
-  const parsed = parseAnnotationKey(key);
-  if (parsed === null) throw new Error("标注记录键损坏，无法保存底图");
-  await backend().set(
-    annotationBaseKeyOf(parsed.session, parsed.scope, digest),
-    bytes,
-  );
-  persistedBases.set(key, { png: local.png, digest });
-  return digest;
-}
-
-/** 持久化正文副本：localBase 去掉 PNG 字节、写入底图指纹引用 */
-function persistedBodyCopy(
-  record: AnnotationLocalRecord,
-  pngDigest: string | null,
-): PersistedAnnotationRecord {
-  const local = record.localBase;
-  const localBase =
-    local === null || pngDigest === null
-      ? null
-      : {
-          layout: local.layout,
-          ...(local.boundBaseId !== undefined
-            ? { boundBaseId: local.boundBaseId }
-            : {}),
-          pngDigest,
-        };
-  return { ...persistedCopy(record), localBase };
-}
-
 async function drain(key: string): Promise<void> {
   const q = queueOf(key);
   const gen = backendGeneration;
@@ -588,8 +545,34 @@ async function drain(key: string): Promise<void> {
       const record = records.get(key);
       if (record === undefined) continue;
       try {
-        const pngDigest = await persistAnnotationBase(key, record);
-        await backend().set(key, persistedBodyCopy(record, pngDigest));
+        const storage = backend();
+        const snapshot = { ...record };
+        const old = persistedBases.get(key);
+        const parsed = parseAnnotationKey(key);
+        if (parsed === null) throw new Error("标注记录键损坏，无法保存底图");
+        const baseKeyOf = (digest: string) =>
+          annotationBaseKeyOf(parsed.session, parsed.scope, digest);
+        const local = snapshot.localBase;
+        const prepared =
+          local === null
+            ? undefined
+            : old?.png === local.png
+              ? old
+              : await annotationBaseBytes(local.png);
+        if (gen !== backendGeneration) continue;
+        const cloud = await persistAnnotationRecord(
+          storage,
+          key,
+          snapshot,
+          baseKeyOf,
+          prepared,
+          old?.digest,
+          old?.cloud ?? null,
+        );
+        if (gen === backendGeneration) {
+          if (prepared === undefined) persistedBases.delete(key);
+          else persistedBases.set(key, { ...prepared, cloud });
+        }
       } catch (err) {
         if (gen !== backendGeneration) continue;
         const current = records.get(key);
@@ -672,19 +655,6 @@ export function notifyAnnotationStoreAll(): void {
 }
 
 // ---------- 状态派生 ----------
-
-/** 服务端维度派生：denied > conflict > retained > uploading > dirty > synced */
-export function deriveAnnotationServerState(
-  record: AnnotationLocalRecord,
-  uploading: boolean,
-): "denied" | "conflict" | "retained" | "uploading" | "dirty" | "synced" {
-  if (record.denied !== null) return "denied";
-  if (record.conflict !== null) return "conflict";
-  if (record.retained !== null) return "retained";
-  if (uploading) return "uploading";
-  if (record.pending !== null) return "dirty";
-  return "synced";
-}
 
 // ---------- 对外 API ----------
 
@@ -837,14 +807,6 @@ export function writeAnnotationDoc(
   return records.get(key)?.docVersion ?? 0;
 }
 
-function emptyAnnotationDoc(doc: AnnotationDoc): boolean {
-  return (
-    doc.strokes.length === 0 &&
-    (doc.deleted?.length ?? 0) === 0 &&
-    Object.keys(doc.anchors ?? {}).length === 0
-  );
-}
-
 /** 只有从未编辑、未传、未绑定且无裁决事实的本机空预备可随题目版本重建。 */
 export function canRebuildUnboundAnnotationBase(
   record: AnnotationLocalRecord,
@@ -915,6 +877,7 @@ export async function writeLocalAnnotationBase(
         png: base.png,
         layout,
         boundBaseId: downloaded.boundBaseId,
+        cloudCache: true,
       };
       if (record.doc.baseWidth === 0 && record.doc.strokes.length === 0) {
         record.doc = doc;
@@ -945,11 +908,6 @@ export async function writeLocalAnnotationBase(
     throw new Error(saved?.localError ?? "本机底图未保存，请重试");
 }
 
-/** 两份 AnnotationDoc 是否逐字段一致（digestOf 稳定序列化比较） */
-function annotationDocsEqual(a: AnnotationDoc, b: AnnotationDoc): boolean {
-  return digestOf(a) === digestOf(b);
-}
-
 /** 底图装配载荷落地：缓存 base 引用（幂等；ready/pending 状态如实） */
 export async function applyBasePreview(
   session: AnnotationSessionRef,
@@ -976,6 +934,7 @@ export async function applyBasePreview(
       )
         throw new Error("本机底图已更新，不能确认旧的布局绑定");
       record.localBase = {
+        ...record.localBase,
         png: confirmedLocalPng,
         layout: preview.base.layout,
         boundBaseId: preview.base.baseId,
@@ -1027,6 +986,7 @@ export async function adoptCloudAnnotationBase(
       png: cloud.png,
       layout,
       boundBaseId: cloud.boundBaseId,
+      cloudCache: true,
     };
   });
   await settleAnnotationRecordPersistence(session, scope);

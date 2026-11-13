@@ -1,5 +1,7 @@
 import type { ApiErr, WrongPracticeScope } from "@tutor/contract";
 import {
+  ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
   attemptDetailDataSchema,
   wrongPracticeOkSchema,
 } from "@tutor/contract";
@@ -13,6 +15,11 @@ import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import {
+  frozenDraftAttempt,
+  snapshotJsonOf,
+  submitAttemptStatus,
+} from "../test/evidence-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -297,6 +304,74 @@ async function getWrongQuestions(env: PracticeEnv): Promise<{
 }
 
 describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
+  it("同一组卷操作重放返回同一份练习", async () => {
+    const env = await makePracticeEnv();
+    const attemptId = await startCourseAttempt(env);
+    await saveAnswer(env, attemptId, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, attemptId, T1);
+    const operationId = crypto.randomUUID();
+    const send = (questionIds: string[]) =>
+      env.app.request("/api/student/wrong-practice", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: env.aCookie },
+        body: JSON.stringify({ questionIds, operationId }),
+      });
+    const responses = await Promise.all([send([Q.judge1]), send([Q.judge1])]);
+    expect(responses.map((response) => response.status)).toEqual([201, 201]);
+    const bodies = await Promise.all(
+      responses.map(async (response) =>
+        wrongPracticeOkSchema.parse(await response.json()),
+      ),
+    );
+    expect(bodies[0]?.data.id).toBe(bodies[1]?.data.id);
+    expect((await send([Q.judge2])).status).toBe(409);
+    for (const body of bodies) assertNoLeak(body);
+  });
+  it("题量上限：重练以可用冻结题数为准，过滤无效项后 500 题仍能开卷", async () => {
+    const env = await makePracticeEnv();
+    const validQuestions = Array.from(
+      { length: ATTEMPT_SUBMIT_MAX_QUESTIONS + 1 },
+      (_, index) => {
+        const questionId = `重练限额-${index}`;
+        return { questionId, snapshotJson: snapshotJsonOf({ id: questionId }) };
+      },
+    );
+    const seed = frozenDraftAttempt(env.db, env.studentId, validQuestions);
+    env.db
+      .update(attempts)
+      .set({ sourceType: "wrong" })
+      .where(eq(attempts.id, seed.attemptId))
+      .run();
+    env.db
+      .update(responses)
+      .set({ answered: true, autoCorrect: false, finalCorrect: false })
+      .where(eq(responses.attemptId, seed.attemptId))
+      .run();
+    submitAttemptStatus(env.db, seed.attemptId);
+    const ids = validQuestions.map((question) => question.questionId);
+    const overLimit = await postWrongPractice(env, ids);
+    expect(overLimit.status).toBe(400);
+    expect(await overLimit.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(env.db.select().from(attempts).all()).toHaveLength(1);
+    const accepted = await postWrongPractice(env, [
+      ...ids.slice(1),
+      "不在错题本",
+    ]);
+    expect(accepted.status).toBe(201);
+    const body = await accepted.json();
+    assertNoLeak(body);
+    const attempt = wrongPracticeOkSchema.parse(body).data;
+    expect(
+      env.db
+        .select()
+        .from(responses)
+        .where(eq(responses.attemptId, attempt.id))
+        .all(),
+    ).toHaveLength(ATTEMPT_SUBMIT_MAX_QUESTIONS);
+  });
+
   it("组卷成功：快照冻结（题干公开化、无答案）+ 摘要形态 + 题序 = questionIds 顺序 + 草稿在我的记录可见；泄露断言通过", async () => {
     const env = await makePracticeEnv();
     // 第 1 次课程练习：judge1 错（正确答案「正确」）、judge2 对 → 只有 judge1 入本

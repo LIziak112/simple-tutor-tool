@@ -1,5 +1,5 @@
-import type { Question, QuestionAnswers } from "@tutor/contract";
-import { questionSchema } from "@tutor/contract";
+import type { Question, QuestionAnswers, StudentAnswer } from "@tutor/contract";
+import { questionSchema, studentAnswerSchema } from "@tutor/contract";
 import type { ResponseRow } from "../db/schema";
 
 /**
@@ -15,6 +15,50 @@ export function jsonOf(text: string): unknown {
   }
 }
 
+/** 统一解码作答列，历史坏数据按未作答处理。 */
+export function answerOf(answerJson: string | null): StudentAnswer | null {
+  if (answerJson === null) return null;
+  const parsed = studentAnswerSchema.safeParse(jsonOf(answerJson));
+  return parsed.success ? parsed.data : null;
+}
+
+/** 校验冻结题目，不记录行级日志，供 SQLite 聚合与行级读取共用。 */
+export function questionSnapshotOf(text: string): Question | null {
+  const parsed = questionSchema.safeParse(jsonOf(text));
+  return parsed.success ? parsed.data : null;
+}
+
+/** 每个数据库连接有独立、有界的缓存。快照原文改变即重验。 */
+export function createQuestionSnapshotValidator(): (value: unknown) => number {
+  const maxEntries = 2048;
+  const maxCharacters = 4 * 1024 * 1024;
+  const cache = new Map<string, number>();
+  let characters = 0;
+  return (value) => {
+    if (typeof value !== "string") return 0;
+    const cached = cache.get(value);
+    if (cached !== undefined) {
+      cache.delete(value);
+      cache.set(value, cached);
+      return cached;
+    }
+    const valid = Number(questionSnapshotOf(value) !== null);
+    if (value.length > maxCharacters) return valid;
+    while (
+      cache.size >= maxEntries ||
+      characters + value.length > maxCharacters
+    ) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+      characters -= oldest.length;
+    }
+    cache.set(value, valid);
+    characters += value.length;
+    return valid;
+  };
+}
+
 /**
  * responses.questionSnapshotJson → 契约 Question（T6R.3 统一入口）：
  * 快照的解析在服务端只有这一处——attempt-service（草稿视图/判分/结果视图）、
@@ -27,8 +71,8 @@ export function snapshotOfRow(
   row: Pick<ResponseRow, "attemptId" | "questionId" | "questionSnapshotJson">,
 ): Question | null {
   if (row.questionSnapshotJson === null) return null;
-  const parsed = questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
-  if (parsed.success) return parsed.data;
+  const snapshot = questionSnapshotOf(row.questionSnapshotJson);
+  if (snapshot !== null) return snapshot;
   console.warn(
     `【数据异常】responses.questionSnapshotJson 解析失败，该题按缺失计（attemptId=${row.attemptId}，questionId=${row.questionId}）`,
   );

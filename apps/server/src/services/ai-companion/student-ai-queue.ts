@@ -1,3 +1,7 @@
+import { runtimeEpochOf } from "./runtime-epoch.ts";
+
+export { runtimeEpochOf } from "./runtime-epoch.ts";
+
 import { randomUUID } from "node:crypto";
 import type {
   AiChannel,
@@ -34,6 +38,7 @@ import {
   lte,
   or,
 } from "drizzle-orm";
+import { studentAiDomainOf } from "../../auth/student-ai-domain.ts";
 import type { Db } from "../../db/client.ts";
 import {
   type AiTaskMaterialRow,
@@ -62,6 +67,11 @@ import { aiTaskOriginSummariesOf } from "./student-ai-origin-summary.ts";
 import {
   checkedReplyOf,
   insertAssistantReply,
+  lastReplyReceipt,
+  latestMessageAtOf,
+  messageRowsOf,
+  nextMessageAtOf,
+  studentMessagesOf,
   truncateReply,
 } from "./student-ai-reply.ts";
 import {
@@ -73,6 +83,11 @@ import {
   type QueueTx,
   sha256Hex,
 } from "./student-ai-shared.ts";
+import {
+  currentTaskPolicy,
+  policyUsable,
+  taskPolicyAllowsReply,
+} from "./student-ai-task-policy.ts";
 import {
   type AiPolicyConfigSource,
   resolveAttemptQuestionAiPolicy,
@@ -146,7 +161,7 @@ const TASK_TRANSITIONS: Readonly<
 > = {
   created: ["dispatching", "claimed", "paused", "cancelled"],
   dispatching: ["replied", "failed", "paused", "uncertain"],
-  uncertain: ["created", "replied"],
+  uncertain: ["created", "replied", "paused"],
   claimed: ["replied", "created", "cancelled"],
   // replied → created 仅由追问触发（SAI-21 followupStudentAiTask）：追问把
   // 任务重新排队待发（快照/材料不动，对话继续本题）；其余 replied 出口不变
@@ -202,6 +217,7 @@ function applyTransition(
     leaseToken?: string | null;
     leaseUntil?: string | null;
     generation?: number;
+    replyDeliveredAt?: null;
   } = {},
 ): AiTaskRow {
   if (!TASK_TRANSITIONS[task.status].includes(to)) {
@@ -220,6 +236,7 @@ function applyTransition(
     ...(patch.leaseToken === undefined ? {} : { leaseToken: patch.leaseToken }),
     ...(patch.leaseUntil === undefined ? {} : { leaseUntil: patch.leaseUntil }),
     ...(patch.generation === undefined ? {} : { generation: patch.generation }),
+    ...(patch.replyDeliveredAt === null ? { replyDeliveredAt: null } : {}),
   };
   const changed = tx
     .update(aiTasks)
@@ -230,29 +247,6 @@ function applyTransition(
     throw conflict("任务状态已被其他操作更新，请刷新后重试");
   }
   return { ...task, status: to, updatedAt: now.iso, ...extra };
-}
-
-// ---------- 运行代际（SAI-15 实施步骤 7：恢复数据库后旧运行代际失效） ----------
-
-const connectionEpochs = new WeakMap<object, string>();
-
-/**
- * 当前运行代际：按底层连接（db.$client）派生的不透明 token——备份恢复
- * （restoreFromBackup → DbHandle.restart 换连接）后必然变化，且不落库、
- * 不随备份回滚。出站/领取时随 generation 一并交给执行方，写回时核对：
- * 恢复后的迟到结果即使与备份内 generation 一致也按 runtime_epoch_stale
- * 记迟到事实拒绝——不能依赖备份内旧 generation 自己排除迟到结果（备份
- * 可能包含同代次的进行中行）。恢复后配置经新连接重取（Proxy 转发到
- * 当前底层连接，sqliteAiPolicyConfigSource 每次实时读库）。
- */
-export function runtimeEpochOf(db: Db): string {
-  const connection = db.$client;
-  let epoch = connectionEpochs.get(connection);
-  if (epoch === undefined) {
-    epoch = randomUUID();
-    connectionEpochs.set(connection, epoch);
-  }
-  return epoch;
 }
 
 /**
@@ -329,30 +323,6 @@ function requireOwnTask(
     throw new HttpError(404, "NOT_FOUND", TASK_NOT_FOUND_MESSAGE);
   }
   return row;
-}
-
-/**
- * 当前策略可用性探测（非抛错形态，供领取扫描与 allowedActions 叠加）：
- * 裁决链任何拒绝（作废/失权/禁用/行缺失）都按「当前不可用」处理——教师刚
- * 改设置立即生效的口径由每次实时调用本探测保证。
- */
-function policyUsable(
-  db: Db | QueueTx,
-  task: AiTaskRow,
-  configSource: AiPolicyConfigSource,
-): boolean {
-  try {
-    const { resolution } = resolveAttemptQuestionAiPolicy(
-      asDb(db),
-      task.studentId,
-      task.attemptId,
-      task.questionId,
-      configSource,
-    );
-    return resolution.usable && resolution.mode !== undefined;
-  } catch {
-    return false;
-  }
 }
 
 // ---------- 上下文版本（任务行内容的确定性身份戳） ----------
@@ -455,41 +425,6 @@ export function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
       )
       .get() !== undefined
   );
-}
-
-/** 本题对话消息（createdAt+id 稳定序；学生/教师投影共用投影形状） */
-export function messageRowsOf(db: Db | QueueTx, taskId: string): AiMessage[] {
-  return asDb(db)
-    .select()
-    .from(aiMessages)
-    .where(eq(aiMessages.taskId, taskId))
-    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
-    .all()
-    .map((row) => ({
-      id: row.id,
-      taskId: row.taskId,
-      role: row.role,
-      contentMd: row.contentMd,
-      createdAt: row.createdAt,
-    }));
-}
-
-/** 末条学生消息（追问在途判定与 worker 出站诉求单源；无学生消息为故障形态） */
-function lastStudentMessageOf(
-  db: Db | QueueTx,
-  taskId: string,
-): AiMessage | undefined {
-  const rows = messageRowsOf(db, taskId).filter(
-    (message) => message.role === "student",
-  );
-  return rows.length > 0 ? rows[rows.length - 1] : undefined;
-}
-
-/** 本题学生消息数（一轮 = 一条学生提问；AI_TURNS_MAX 上限口径） */
-function studentTurnCountOf(db: Db | QueueTx, taskId: string): number {
-  return messageRowsOf(db, taskId).filter(
-    (message) => message.role === "student",
-  ).length;
 }
 
 // ---------- 操作与语义 1：创建（幂等 + 配额） ----------
@@ -1211,39 +1146,6 @@ export function renewMcpLease(
 // ---------- 写回共用：回执幂等与迟到事实 ----------
 
 /**
- * 最近一次成功回执（reply_received 事实的 detailJson）。
- * dedup 只在回执仍「应答末条学生消息」时成立（SAI-21 追问缺陷修复）：
- * 追问把任务重新排队后，新回信即使与上一轮逐字相同也是新应答——若只比
- * 内容哈希会把第二轮误判为重放，任务永远停在 dispatching。判定用回执
- * serverTs 与末条学生消息时刻比较（同为服务端时钟）。
- */
-function lastReplyReceipt(
-  db: Db | QueueTx,
-  taskId: string,
-): { contentHash: string } | null {
-  const fact = asDb(db)
-    .select()
-    .from(aiFacts)
-    .where(and(eq(aiFacts.taskId, taskId), eq(aiFacts.type, "reply_received")))
-    .orderBy(desc(aiFacts.serverTs))
-    .get();
-  if (fact === undefined || fact.detailJson === null) return null;
-  let contentHash: unknown;
-  try {
-    contentHash = (JSON.parse(fact.detailJson) as { contentHash?: unknown })
-      .contentHash;
-  } catch {
-    return null;
-  }
-  if (typeof contentHash !== "string") return null;
-  const lastStudent = lastStudentMessageOf(db, taskId);
-  if (lastStudent !== undefined && fact.serverTs < lastStudent.createdAt) {
-    return null; // 追问已发生：旧回执不再代表当前对话状态，不做重放判定
-  }
-  return { contentHash };
-}
-
-/**
  * 迟到回执落账：拒绝写任务正文，但 late_reply 事实（回信内容随 detailJson
  * 入库为审计事实——取消/过期后回信仍保留，不交付不覆盖）必须**独立提交**——
  * 主事务因 409 回滚不能连带回滚审计事实。
@@ -1274,7 +1176,7 @@ type SubmitOutcome =
 
 /** 页内写回事务的结果形态（delivered=false = 回信入库为事实但暂不交付） */
 type CompleteOutcome =
-  | { kind: "duplicate" }
+  | { kind: "duplicate"; delivered: boolean }
   | { kind: "late"; task: AiTaskRow; detail: FactDetail; message: string }
   | { kind: "delivered"; delivered: boolean };
 
@@ -1361,29 +1263,37 @@ export function submitMcpReply(
         task.leaseToken === input.leaseToken &&
         task.leaseUntil !== null &&
         task.leaseUntil > now.iso;
-      if (!leaseValid) {
+      if (!leaseValid || studentAiDomainOf(asDb(tx), task.studentId) === null) {
         return {
           kind: "late",
           task,
           detail: {
-            reason: "stale_lease",
+            reason: leaseValid ? "account_revoked" : "stale_lease",
             contentHash,
             contentMd: input.replyMarkdown,
           },
-          message: "租约已失效或任务状态已变化，回信已记录为迟到事实",
+          message: "租约、状态或授权已变化，回信已记录为迟到事实",
         };
       }
       const { content, truncated, formatWarnings } = checkedReplyOf(
         input.replyMarkdown,
       );
-      insertAssistantReply(tx, task.id, content, now.iso);
-      const replied = applyTransition(tx, task, "replied", now);
-      insertFact(tx, task, "reply_received", now, {
+      const receivedAt = nowSpecOf(
+        nextMessageAtOf(now.iso, latestMessageAtOf(tx, task.id)),
+      );
+      insertAssistantReply(tx, task.id, content, receivedAt.iso);
+      const replied = applyTransition(tx, task, "replied", receivedAt);
+      insertFact(tx, task, "reply_received", receivedAt, {
         via: "mcp",
         contentHash,
         truncated,
       });
-      input.onReplied?.(tx, replied);
+      if (
+        input.onReplied &&
+        policyUsable(tx, task, sqliteAiPolicyConfigSource, "deliver_reply")
+      ) {
+        input.onReplied(tx, replied);
+      }
       return { kind: "ok", truncated, formatWarnings };
     },
     { behavior: "immediate" },
@@ -1478,6 +1388,7 @@ export function completeInappDispatch(
     replyMd: string;
     /** begin 时拿到的运行代际（可选核对：恢复数据库后旧代回执只落事实） */
     expectedRuntimeEpoch?: string;
+    connectionIsCurrent?: boolean;
     /**
      * 回信交付（dispatching / uncertain → replied）同事务的附加写入（模块 3
      * 页内量表意见落 responses 行；审查 #99-02 / #99-04）；重放 / 迟到 /
@@ -1494,8 +1405,12 @@ export function completeInappDispatch(
     (tx): CompleteOutcome => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
       const receipt = lastReplyReceipt(tx, task.id);
-      if (receipt?.contentHash === contentHash) {
-        return { kind: "duplicate" };
+      if (
+        receipt?.contentHash === contentHash &&
+        (receipt.generation === undefined ||
+          receipt.generation === input.generation)
+      ) {
+        return { kind: "duplicate", delivered: receipt.delivered };
       }
       // 运行代际核对（SAI-15 步骤 7）：同 generation 也不放行（代次可能随
       // 备份一起回滚到出站前），迟到内容只记事实
@@ -1528,48 +1443,56 @@ export function completeInappDispatch(
           message: "回执对应的发送代次已过期，已记录为迟到事实",
         };
       }
-      const { content, truncated } = truncateReply(input.replyMd);
-      if (
-        task.status === "dispatching" ||
-        task.status === "uncertain" ||
-        task.status === "paused" ||
-        task.status === "cancelled"
-      ) {
-        // 回信入库一次，再按当前状态转换/记事实（三分支仅事实口径不同）
-        insertAssistantReply(tx, task.id, content, now.iso);
+      const active =
+        task.status === "dispatching" || task.status === "uncertain";
+      if (active || task.status === "paused" || task.status === "cancelled") {
+        const { content, truncated } = truncateReply(input.replyMd);
+        const receivedAt = nowSpecOf(
+          nextMessageAtOf(now.iso, latestMessageAtOf(tx, task.id)),
+        );
         if (task.status === "dispatching") {
-          const replied = applyTransition(tx, task, "replied", now);
           insertFact(tx, task, "dispatched", now, {
             via: "inapp",
             generation: input.generation,
             modeAtSend: task.modeAtSend,
           });
-          insertFact(tx, replied, "reply_received", now, {
-            via: "inapp",
-            contentHash,
-            truncated,
-          });
-          input.onDelivered?.(tx, replied);
-          return { kind: "delivered", delivered: true };
         }
-        if (task.status === "uncertain") {
-          const replied = applyTransition(tx, task, "replied", now);
-          insertFact(tx, task, "reply_received", now, {
-            via: "inapp_late",
+        if (
+          !active ||
+          input.connectionIsCurrent === false ||
+          studentAiDomainOf(asDb(tx), task.studentId) === null
+        ) {
+          if (active) {
+            const paused = applyTransition(tx, task, "paused", now);
+            insertFact(tx, paused, "paused", now, { via: "reply_check" });
+          }
+          insertFact(tx, task, "late_reply", now, {
+            reason: active ? "authorization_changed" : task.status,
             contentHash,
-            truncated,
+            contentMd: content,
           });
-          input.onDelivered?.(tx, replied);
-          return { kind: "delivered", delivered: true };
+          insertFact(tx, task, "reply_received", receivedAt, {
+            contentHash,
+            delivered: false,
+            generation: input.generation,
+          });
+          return { kind: "delivered", delivered: false };
         }
-        // paused/cancelled：回信入库为事实（审计保留），不交付（replyDeliveredAt 保持 null）
-        insertFact(tx, task, "reply_received", now, {
-          via: "inapp",
+        insertAssistantReply(tx, task.id, content, receivedAt.iso);
+        const replied = applyTransition(tx, task, "replied", receivedAt);
+        insertFact(tx, task, "reply_received", receivedAt, {
+          via: task.status === "dispatching" ? "inapp" : "inapp_late",
           contentHash,
           truncated,
-          delivered: false,
+          generation: input.generation,
         });
-        return { kind: "delivered", delivered: false };
+        if (
+          input.onDelivered &&
+          policyUsable(tx, task, sqliteAiPolicyConfigSource, "deliver_reply")
+        ) {
+          input.onDelivered(tx, replied);
+        }
+        return { kind: "delivered", delivered: true };
       }
       return {
         kind: "late",
@@ -1586,7 +1509,7 @@ export function completeInappDispatch(
     { behavior: "immediate" },
   );
   if (outcome.kind === "duplicate") {
-    return { duplicate: true, delivered: true };
+    return { duplicate: true, delivered: outcome.delivered };
   }
   if (outcome.kind === "late") {
     recordLateReplyCommitted(db, outcome.task, now, outcome.detail);
@@ -1872,7 +1795,19 @@ export function followupStudentAiTask(
   const now = nowSpecOf(options.now);
   const task = requireOwnTask(db, input.studentId, input.taskId);
   // 幂等重放：末条学生消息同文且任务仍在处理（未回到 replied）→ 现状返回
-  const last = lastStudentMessageOf(db, task.id);
+  const policy = currentTaskPolicy(db, task, configSource);
+  if (
+    !policy?.usable ||
+    (!taskPolicyAllowsReply(task, policy) && !currentReplyWasOpened(db, task))
+  ) {
+    throw new HttpError(
+      403,
+      "AI_POLICY_DISABLED",
+      "当前教学模式下暂不能追问，本题完成后可继续提问",
+    );
+  }
+  const studentMessages = studentMessagesOf(db, task.id);
+  const last = studentMessages.at(-1);
   if (
     last !== undefined &&
     last.contentMd === input.question &&
@@ -1887,14 +1822,7 @@ export function followupStudentAiTask(
         : "只有已收到回信的任务可以追问",
     );
   }
-  if (!policyUsable(db, task, configSource)) {
-    throw new HttpError(
-      403,
-      "AI_POLICY_DISABLED",
-      "当前教学模式下暂不能追问，本题完成后可继续提问",
-    );
-  }
-  if (studentTurnCountOf(db, task.id) >= AI_TURNS_MAX) {
+  if (studentMessages.length >= AI_TURNS_MAX) {
     throw new HttpError(
       409,
       "AI_TURNS_LIMIT",
@@ -1906,14 +1834,15 @@ export function followupStudentAiTask(
       // 追问时刻取「当前时刻」与「末条消息 +1ms」的较大者：排序键
       // (createdAt, id) 下追问必须落在对话末尾（时钟回拨/同毫秒也不例外）
       const existing = messageRowsOf(asDb(tx), task.id);
-      const lastAt =
+      const lastMessageAt =
         existing.length > 0
           ? (existing[existing.length - 1]?.createdAt ?? "")
           : "";
-      const followupAt =
-        now.iso > lastAt
-          ? now.iso
-          : new Date(Date.parse(lastAt) + 1).toISOString();
+      const lastAt =
+        lastMessageAt > (task.replyDeliveredAt ?? "")
+          ? lastMessageAt
+          : (task.replyDeliveredAt ?? "");
+      const followupAt = nextMessageAtOf(now.iso, lastAt);
       tx.insert(aiMessages)
         .values({
           id: randomUUID(),
@@ -1924,7 +1853,9 @@ export function followupStudentAiTask(
         })
         .run();
       // replied → created：重新排队待发（转换表唯一合法出口见 TASK_TRANSITIONS）
-      const requed = applyTransition(tx, task, "created", now);
+      const requed = applyTransition(tx, task, "created", now, {
+        replyDeliveredAt: null,
+      });
       return {
         task: requed,
         messages: messageRowsOf(asDb(tx), task.id),
@@ -2062,19 +1993,24 @@ export function markReplyDelivered(
       if (task.status !== "replied") {
         throw conflict("任务尚未收到回信，无可查看内容");
       }
-      if (task.replyDeliveredAt !== null) {
+      if (currentReplyWasOpened(tx, task)) {
         return task; // 幂等：已打开过
       }
+      const latestMessageAt = latestMessageAtOf(tx, task.id);
+      const openedAt =
+        latestMessageAt && latestMessageAt > now.iso
+          ? nowSpecOf(latestMessageAt)
+          : now;
       const changed = tx
         .update(aiTasks)
-        .set({ replyDeliveredAt: now.iso })
+        .set({ replyDeliveredAt: openedAt.iso })
         .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, "replied")))
         .run();
       if (changed.changes !== 1) {
         throw conflict("任务状态已被其他操作更新，请刷新后重试");
       }
-      insertFact(tx, task, "reply_delivered", now, {});
-      return { ...task, replyDeliveredAt: now.iso };
+      insertFact(tx, task, "reply_delivered", openedAt, {});
+      return { ...task, replyDeliveredAt: openedAt.iso };
     },
     { behavior: "immediate" },
   );
@@ -2097,8 +2033,7 @@ export interface StudentAiTaskDetail {
  *
  * 回信内容交付门禁（需求 §3.3「尚未展示的旧模式回信收存但在本题完成前不向
  * 学生继续交付；已展示的内容不假装被撤回」）：assistant 消息只在
- * ① replyDeliveredAt 已置（打开过，内容保持可见）或 ② 当前策略可用
- * （policyUsable——教师刚改设置立即生效）时进入响应；否则只保留 hasReply
+ * ① 该轮回信已读或 ② 当前策略允许该回答尺度时进入响应；否则只保留 hasReply
  * 事实（「已收到回信未读」），正文不下发。学生本人问题（student 消息）恒可见。
  */
 export function getStudentAiTaskDetail(
@@ -2108,17 +2043,13 @@ export function getStudentAiTaskDetail(
 ): StudentAiTaskDetail {
   const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
   const task = requireOwnTask(db, input.studentId, input.taskId);
-  const usable = policyUsable(db, task, configSource);
+  const policy = currentTaskPolicy(db, task, configSource);
   const view = aiTaskPublicViewCore(task, {
     materials: loadAiTaskMaterialRows(db, task.id),
     firstQuestion: firstQuestionOf(db, task.id),
     hasReply: hasAssistantReply(db, task.id),
-    usable,
+    usable: policy?.usable === true,
   });
-  const messages = messageRowsOf(db, task.id).filter(
-    (message) =>
-      message.role === "student" || usable || task.replyDeliveredAt !== null,
-  );
   const facts = db
     .select()
     .from(aiFacts)
@@ -2132,7 +2063,26 @@ export function getStudentAiTaskDetail(
       beforeSubmit: row.beforeSubmit,
       serverTs: row.serverTs,
     }));
+  const lastOpenedAt =
+    task.replyDeliveredAt ??
+    facts.filter((fact) => fact.type === "reply_delivered").at(-1)?.serverTs;
+  const mayReadReply = taskPolicyAllowsReply(task, policy);
+  const messages = messageRowsOf(db, task.id).filter(
+    (message) =>
+      message.role === "student" ||
+      mayReadReply ||
+      (lastOpenedAt !== undefined && message.createdAt <= lastOpenedAt),
+  );
   return { task: view, messages, facts };
+}
+
+/** 兼容追问时还未清理已读标记的旧任务。 */
+function currentReplyWasOpened(db: Db | QueueTx, task: AiTaskRow): boolean {
+  return (
+    task.replyDeliveredAt !== null &&
+    task.replyDeliveredAt >=
+      (studentMessagesOf(db, task.id).at(-1)?.createdAt ?? "")
+  );
 }
 
 /**
@@ -2148,7 +2098,7 @@ export function openStudentAiReply(
   options: { now?: Date | string; configSource?: AiPolicyConfigSource } = {},
 ): AiTaskRow {
   const task = requireOwnTask(db, input.studentId, input.taskId);
-  if (task.replyDeliveredAt === null) {
+  if (!currentReplyWasOpened(db, task)) {
     const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
     const { resolution } = resolveAttemptQuestionAiPolicy(
       db,
@@ -2157,7 +2107,7 @@ export function openStudentAiReply(
       task.questionId,
       configSource,
     );
-    if (!resolution.usable || resolution.mode === undefined) {
+    if (!taskPolicyAllowsReply(task, resolution)) {
       throw new HttpError(
         403,
         "AI_POLICY_DISABLED",

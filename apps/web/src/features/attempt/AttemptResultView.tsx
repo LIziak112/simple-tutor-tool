@@ -61,7 +61,7 @@ import { QuestionActivityBadge, ResultActivityLine } from "./QuestionActivity";
 // 把本重模块拖进作答页）；此处对外再导出，既有调用方不受影响。
 export { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 
-import { PendingReleaseBanner } from "./PendingReleaseBanner";
+import { PendingAttemptRelease } from "./PendingReleaseBanner";
 import { ResultAiActions, useResultAiCompanion } from "./ResultAiActions";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
@@ -488,7 +488,7 @@ export function AttemptResultView({
   redo,
   onRefresh,
 }: {
-  data: AttemptResultData;
+  data: AttemptResultData & { clockAnchor?: number };
   onBackHome: () => void;
   backLabel?: string | undefined;
   /**
@@ -767,12 +767,7 @@ export function AttemptResultView({
                 )}
               </div>
             ) : (
-              <PendingReleaseBanner
-                dueAt={data.dueAt}
-                submittedAt={attempt.submittedAt}
-                summary={summary}
-                onRefresh={onRefresh}
-              />
+              <PendingAttemptRelease data={data} onRefresh={onRefresh} />
             )}
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">

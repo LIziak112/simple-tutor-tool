@@ -13,6 +13,7 @@ import pino from "pino";
 import { afterEach, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createStudentSession, createTeacherSession } from "../auth/session.ts";
+import { loadOrCreateSecretKey } from "../config.ts";
 import {
   aiConnections,
   aiFacts,
@@ -32,6 +33,7 @@ import {
   beginInappDispatch,
   claimMcpTask,
   completeInappDispatch,
+  createAiTask,
   failInappDispatch,
   listInappDispatchCandidates,
 } from "../services/ai-companion/student-ai-queue.ts";
@@ -62,7 +64,7 @@ import { makeNotePng } from "../test/note-fixtures.ts";
 const SECRET_SENTINEL = "queue-test-secret-0001";
 
 const active: ReturnType<typeof createTestDb>[] = [];
-function world() {
+function world(logger = pino({ enabled: false })) {
   const db = createTestDb();
   active.push(db);
   db.update(teachers)
@@ -118,7 +120,7 @@ function world() {
     dataDir,
     publicUrl: "http://localhost",
     isProduction: false,
-    logger: pino({ enabled: false }),
+    logger,
   });
   const cookie = (id: string) =>
     `tutor_student_session=${createStudentSession(db, id).token}`;
@@ -321,8 +323,49 @@ it("参数错误：create/list/update-pending 各 400 VALIDATION_ERROR，不落�
 
 // ---------- ② create：参考在上下文 / 禁用拒绝无副作用 / 幂等 ----------
 
+it("任务事务回滚后只记录请求失败，不记录未提交的 AI 事实", async () => {
+  const logs: string[] = [];
+  const w = world(
+    pino({ level: "info" }, { write: (line: string) => logs.push(line) }),
+  );
+  let beforeRollback = 0;
+  w.app.post("/api/public/__rollback-ai", () => {
+    return w.db.transaction(() => {
+      // 用真实服务入口写事实，再让外层事务撤销。
+      createAiTask(
+        w.db,
+        {
+          studentId: "s-a",
+          attemptId: w.attemptId,
+          questionId: w.questionId,
+          question: "请讲解",
+          channel: "inapp",
+          mutationId: randomUUID(),
+        },
+        { hmacSecret: loadOrCreateSecretKey(w.dataDir) },
+      );
+      beforeRollback = w.db.select().from(aiFacts).all().length;
+      throw new Error("回滚哨兵");
+    });
+  });
+  const response = await req(
+    w.app,
+    "POST",
+    "/api/public/__rollback-ai",
+    undefined,
+  );
+  expect(response.status).toBe(500);
+  expect(beforeRollback).toBe(1);
+  expect(w.db.select().from(aiFacts).all()).toHaveLength(0);
+  expect(logs.join("")).not.toContain("ai_request_decision");
+  expect(logs.join("")).not.toContain("回滚哨兵");
+});
+
 it("正常 schema：create 201 + 契约解析 + 泄露断言；库内快照确实含答案解析（双断言）", async () => {
-  const w = world();
+  const logs: string[] = [];
+  const w = world(
+    pino({ level: "info" }, { write: (line: string) => logs.push(line) }),
+  );
   const mutationId = randomUUID();
   const res = await req(
     w.app,
@@ -336,6 +379,18 @@ it("正常 schema：create 201 + 契约解析 + 泄露断言；库内快照确�
   const body = aiTaskOkSchema.parse(raw);
   assertNoLeak(body);
   const task = body.data;
+  expect(logs.map((line) => JSON.parse(line))).toContainEqual(
+    expect.objectContaining({
+      event: "ai_request_decision",
+      taskId: task.id,
+      reason: "task_created",
+      requestId: res.headers.get("x-request-id"),
+      durationMs: expect.any(Number),
+    }),
+  );
+  expect(logs.join("")).not.toMatch(
+    /这道题的思路是什么|教师私注哨兵TC|其他题干哨兵BETA/u,
+  );
   expect(task.status).toBe("created");
   expect(task.beforeSubmit).toBe(true); // draft 卷未交卷 → 服务端判定提交前
   expect(task.allowedActions).toContain("cancel");

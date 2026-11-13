@@ -548,7 +548,7 @@ describe("note-store：IDB 失败与订阅", () => {
 describe("note-store：交卷 clearDraft 不删 notes（T6R.8 验证项）", () => {
   it("clearDraft 只清 tutor-drafts；tutor-notes 记录原样保留", async () => {
     installDraftBackend(memoryBackend());
-    draftStore.saveAnswer(SCOPE.attemptId, SCOPE.questionId, {
+    await draftStore.markAnswerSynced(SCOPE.attemptId, SCOPE.questionId, {
       kind: "choice",
       index: 0,
     });

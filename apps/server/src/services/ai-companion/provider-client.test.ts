@@ -20,7 +20,7 @@ import {
  * - 请求装配：URL 拼接、Authorization/UA（对账标识）、JSON 体；
  * - 错误脱敏：任何失败只回中文短句与错误码，不透传供应商响应头、
  *   原始报文或堆栈（攻击用例表 secret 行 + §7「异常响应不透传」）；
- * - 日志屏蔽：Authorization 只留 scheme，正文（含题目）不进日志；
+ * - 日志屏蔽：供应商 URL、Authorization 和正文不进日志；
  * - 重定向不自动跟随：3xx 即失败，绝不取 Location 再连；
  * - 测试连接探针：固定短文案，绝不携带题面/答案（capability 行）。
  */
@@ -117,7 +117,7 @@ describe("callChatCompletions", () => {
     expect(body.messages).toEqual([{ role: "user", content: "题目求助" }]);
   });
 
-  it("日志屏蔽：Authorization 只留 scheme，正文与 Key 不进日志", async () => {
+  it("日志屏蔽：供应商 URL、授权头和正文不进日志", async () => {
     const { logger, lines } = capturingLogger();
     const { transport } = fakeTransport(() => ({
       status: 401,
@@ -125,7 +125,7 @@ describe("callChatCompletions", () => {
       bodyText: "unauthorized",
     }));
     await callChatCompletions({
-      baseUrl: "https://api.example.com/v1",
+      baseUrl: "https://api.example.com/v1/private-deployment",
       apiKey: "sk-live-key-123456",
       model: "glm-test",
       messages: [{ role: "user", content: "这道题答案是 B 吗" }],
@@ -136,7 +136,8 @@ describe("callChatCompletions", () => {
     });
     const all = lines.join("\n");
     expect(all).not.toContain("sk-live-key-123456");
-    expect(all).toContain("Bearer ***");
+    expect(all).not.toMatch(/private-deployment|authorization|Bearer/u);
+    expect(all).toContain('"status":401');
     // 正文（学生问题）不进日志
     expect(all).not.toContain("这道题答案是 B 吗");
   });

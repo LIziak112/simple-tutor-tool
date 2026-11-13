@@ -10,9 +10,10 @@ import type {
 import {
   dispatchBehavior,
   emptyPublicStructure,
+  finalCorrectOf,
   NEW_QUESTION_TYPES,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -23,12 +24,15 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
-  answerOf,
   attemptFinalOutcomeOf,
+  hasUsableQuestionSnapshotSql,
+} from "./attempt-final-outcome.ts";
+import {
+  answerOf,
   materialSlotOrderOf,
   structuresOfSnapshot,
 } from "./attempt-service";
-import { notSelfReviewPendingRow, pendingMarkCount } from "./pending-mark";
+import { pendingMarkCount, submittedTeacherPendingSql } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
@@ -46,7 +50,7 @@ import {
  *   **允许对任何已交卷的题批注/改判**（含自动判过的题，入口在详情页）。
  *   事务内：写 teacherMark/teacherComment → 本题 finalCorrect =
  *   teacherMark ?? autoCorrect（D3 持久化口径）→ 已离开 draft 的卷用
- *   attempt-service 的 finalScoreOf 重算整卷 scoreFinal/status 写回（D2 状态机，
+ *   attemptFinalOutcomeOf 重算整卷 scoreFinal/status 写回（D2 状态机，
  *   与交卷链路同一实现，不复制公式；lesson 进行中卷不重算——收尾链路驱动，
  *   课中批改不提前收卷）；
  * - listPendingMarks：待批队列（D4 共享谓词口径——已交卷 attempt 中
@@ -168,116 +172,90 @@ export function markResponse(
   responseId: string,
   req: MarkRequest,
 ): MarkResponseData {
-  // 归属链 response → attempt → student → teacherId；不存在或非本人 → 404
-  const row = db
-    .select({
-      response: responses,
-      attempt: attempts,
-      ownerTeacherId: students.teacherId,
-    })
-    .from(responses)
-    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(eq(responses.id, responseId))
-    .get();
-  if (row === undefined || row.ownerTeacherId !== teacherId) {
-    throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
-  }
-  if (row.attempt.status === "draft" && row.response.submittedAt === null) {
-    // draft 卷的行未单题提交（与待批谓词同口径的镜像守卫）；lesson 进行中卷
-    // 已单题提交的行（responses.submittedAt 非空）允许课中批改——非 lesson 的
-    // draft 行恒不满足 submittedAt 条件，409 行为零变化
-    throw new HttpError(409, "NOT_SUBMITTED", "未交卷的作答不能批注");
-  }
+  return db.transaction(
+    (tx) => {
+      const row = tx
+        .select({
+          response: responses,
+          attempt: attempts,
+          ownerTeacherId: students.teacherId,
+        })
+        .from(responses)
+        .innerJoin(attempts, eq(responses.attemptId, attempts.id))
+        .innerJoin(students, eq(attempts.studentId, students.id))
+        .where(eq(responses.id, responseId))
+        .get();
+      if (row === undefined || row.ownerTeacherId !== teacherId) {
+        throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
+      }
+      if (row.attempt.abandonedAt !== null) {
+        throw new HttpError(
+          409,
+          "ATTEMPT_ABANDONED",
+          "这份作答已作废，不能批改",
+        );
+      }
+      if (row.attempt.status === "draft" && row.response.submittedAt === null) {
+        throw new HttpError(409, "NOT_SUBMITTED", "未交卷的作答不能批注");
+      }
+      if (snapshotOfRow(row.response) === null) {
+        throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答题目快照不可用");
+      }
 
-  const attemptId = row.attempt.id;
-  // D3 持久化口径：finalCorrect = teacherMark ?? autoCorrect（枚举转布尔；
-  // mark=null 时回落 autoCorrect，手写题为 null 即重新待批）
-  const finalCorrect =
-    req.mark === null ? row.response.autoCorrect : req.mark === "correct";
-  db.transaction((tx) => {
-    // 1. 写教师判定与评语；本题 finalCorrect 按上述口径同步写回
-    tx.update(responses)
-      .set({
+      const attemptId = row.attempt.id;
+      const finalCorrect = finalCorrectOf(req.mark, row.response.autoCorrect);
+      tx.update(responses)
+        .set({
+          teacherMark: req.mark,
+          teacherComment: req.comment,
+          finalCorrect,
+        })
+        .where(eq(responses.id, responseId))
+        .run();
+
+      let attempt = row.attempt;
+      if (attempt.status !== "draft") {
+        const outcomeRows = tx
+          .select({
+            gradingPolicy: responses.gradingPolicy,
+            submittedAt: responses.submittedAt,
+            finalCorrect: responses.finalCorrect,
+          })
+          .from(responses)
+          .where(
+            and(
+              eq(responses.attemptId, attemptId),
+              hasUsableQuestionSnapshotSql,
+            ),
+          )
+          .all();
+        const outcome = attemptFinalOutcomeOf(outcomeRows, { finalized: true });
+        tx.update(attempts)
+          .set(outcome)
+          .where(eq(attempts.id, attemptId))
+          .run();
+        attempt = { ...attempt, ...outcome };
+      }
+      return {
+        responseId,
+        questionId: row.response.questionId,
+        attemptId,
         teacherMark: req.mark,
         teacherComment: req.comment,
         finalCorrect,
-      })
-      .where(eq(responses.id, responseId))
-      .run();
-    // 已离开 draft 的卷才重算整卷状态（lesson 进行中卷的 D2 状态机由收尾
-    // 链路驱动——课中批改只落本题判定，不提前收卷）
-    if (row.attempt.status === "draft") return;
-    // 2. 整卷重算（attemptFinalOutcomeOf 与交卷链路同一实现，D2 状态机不复制
-    //    公式；QM-10 细项7：§5.5.5 新行口径——reference_self 行不阻塞 graded，
-    //    manual_only 未判行阻塞）。与待批谓词同口径过滤幽灵行（快照空的历史
-    //    题目缺失行不进重算——它们永远 null finalCorrect，计入会让 attempt
-    //    永卡 submitted）
-    const outcomeRows = tx
-      .select({
-        gradingPolicy: responses.gradingPolicy,
-        submittedAt: responses.submittedAt,
-        teacherMark: responses.teacherMark,
-        finalCorrect: responses.finalCorrect,
-      })
-      .from(responses)
-      .where(
-        and(
-          eq(responses.attemptId, attemptId),
-          isNotNull(responses.questionSnapshotJson),
-        ),
-      )
-      .all();
-    const { status, scoreFinal } = attemptFinalOutcomeOf(outcomeRows, {
-      // 到达重算的卷恒已收尾（上方 draft 早退）——legacy 协议行不写行级
-      // submittedAt，按收尾事实归一（审查 P1，口径对齐四态 gate）
-      finalized: true,
-    });
-    // 3. 写回 attempt（scoreAuto/submittedAt 等其余列不动）
-    tx.update(attempts)
-      .set({ status, scoreFinal })
-      .where(eq(attempts.id, attemptId))
-      .run();
-  });
-
-  // 事务后回读最新状态（response 与 attempt）
-  const updated = db
-    .select()
-    .from(responses)
-    .where(eq(responses.id, responseId))
-    .get();
-  const attempt = db
-    .select()
-    .from(attempts)
-    .where(eq(attempts.id, attemptId))
-    .get();
-  if (updated === undefined || attempt === undefined) {
-    // 理论不可达（事务刚写完）；防御性兜底不让接口 500 无信息
-    throw new HttpError(500, "INTERNAL", "批注写回失败，请重试");
-  }
-  return {
-    responseId,
-    questionId: updated.questionId,
-    attemptId,
-    teacherMark:
-      updated.teacherMark === "correct" || updated.teacherMark === "wrong"
-        ? updated.teacherMark
-        : null,
-    teacherComment: updated.teacherComment,
-    finalCorrect: updated.finalCorrect,
-    // 批注只发生在「题已交」的 attempt；lesson 进行中卷（attempt 仍 draft）课中
-    // 批改时契约枚举无 draft，按 D2 语义映射 submitted（仍有未判定/未提交行，
-    // 收尾链路稍后写终态）
-    attemptStatus: attempt.status === "graded" ? "graded" : "submitted",
-    scoreFinal: attempt.scoreFinal,
-    pendingCount: pendingMarkCount(db, attempt),
-  };
+        attemptStatus: attempt.status === "graded" ? "graded" : "submitted",
+        scoreFinal: attempt.scoreFinal,
+        pendingCount: pendingMarkCount(db, attempt),
+      };
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------- GET /api/teacher/pending-marks ----------
 
 /**
- * 待批队列（D4）：共享谓词口径（finalCorrect IS NULL 且快照非空，且题已「交」
+ * 待批队列（D4）：共享谓词口径（教师待批、快照可用、且题已「交」
  * ——attempt 非 draft 或该行已单题提交，lesson 进行中卷已提交的手写/无答案题
  * 即时进队供课中批改）+ 教师域过滤（students.teacherId）+ 可选 courseId/
  * assignmentId/studentId 筛选。排序 submittedAt 升序（先交先批；lesson 进行中
@@ -293,19 +271,7 @@ export function listPendingMarks(
 ): PendingMarkListData {
   const where = and(
     eq(students.teacherId, teacherId),
-    // 作废卷（2026-10 讲练随时重开）的行退出待批队列
-    isNull(attempts.abandonedAt),
-    // 共享谓词（pending-mark.ts 同口径，D4 2026-10 扩展）：题已「交」
-    // （attempt 非 draft **或该行已单题提交**——lesson 进行中卷已提交的
-    // 手写/无答案题即时进队课堂当场批改，M2 起 v1 新协议逐题提交的行同样
-    // 即时进队；写 responses.submittedAt 的就这两处）+ finalCorrect IS NULL
-    // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
-    or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
-    isNull(responses.finalCorrect),
-    isNotNull(responses.questionSnapshotJson),
-    // QM-10 / §5.5.3 D9：reference_self 行走学生自评，不进教师必批队列
-    //（与 pending-mark.ts D4 谓词同一实现，不复制口径）
-    notSelfReviewPendingRow(),
+    submittedTeacherPendingSql,
     query.studentId !== undefined
       ? eq(attempts.studentId, query.studentId)
       : undefined,

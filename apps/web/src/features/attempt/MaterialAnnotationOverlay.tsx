@@ -35,6 +35,7 @@ import {
   draftStore,
   getDraftSessionEpoch,
   type MaterialInkBaseMeta,
+  subscribeLocalDraftChoice,
 } from "./draft-store";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 
@@ -306,6 +307,24 @@ export function MaterialAnnotationOverlay({
       active = false;
     };
   }, [attemptId, storeKey, setStrokesBoth]);
+
+  useEffect(
+    () =>
+      subscribeLocalDraftChoice((scope, conflict) => {
+        if (
+          scope !== attemptId ||
+          conflict.kind !== "material" ||
+          conflict.key !== storeKey
+        )
+          return;
+        const doc = draftStore.getMaterialInk(attemptId, storeKey);
+        setStrokesBoth(doc?.engine === "atrament" ? doc.data.strokes : []);
+        const base = draftStore.getMaterialInkBase(attemptId, storeKey);
+        frozenRef.current = base;
+        setFrozen(base);
+      }),
+    [attemptId, storeKey, setStrokesBoth],
+  );
 
   // 同材料的其他实例已存基准时采用原基准；缺基准旧稿不可凭当前排版补造。
   useEffect(() => {

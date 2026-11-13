@@ -13,6 +13,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { attempts, loginFailures, responses, sessions } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { snapshotJsonOf } from "../test/evidence-fixtures.ts";
 
 /**
  * 学生账号与两种登录集成测试（T2.1 验收项，app.request() 直调路由 + 内存库）：
@@ -962,8 +963,8 @@ describe("T-PR4 Web-4：学生列表活动三列与排序", () => {
           questionId: qid,
           unitId: null,
           questionVersion: 1,
-          questionSnapshotJson: JSON.stringify({
-            type: "choice",
+          questionSnapshotJson: snapshotJsonOf({
+            id: qid,
             difficulty: 2,
             stemMd: "待批题",
             knowledge: [],

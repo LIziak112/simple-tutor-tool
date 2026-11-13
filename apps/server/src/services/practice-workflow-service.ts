@@ -1,6 +1,7 @@
 import {
   type AssignmentAnswerRelease,
   type AttemptSource,
+  canonicalAssignmentDueAt,
   type PracticeFeedbackMode,
   type PracticeRecommendation,
   type PracticeRestrictionReason,
@@ -9,6 +10,12 @@ import {
   practiceWorkflowSchema,
   type TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
+
+export {
+  answerReleaseProjection,
+  answersReleased,
+  attemptAnswersPublished,
+} from "./answer-publication.ts";
 
 /**
  * 学生端做题反馈节奏纯裁决器（M1a，2026-10-22 计划 §5/§6.1）：
@@ -145,64 +152,6 @@ function perQuestionAllowed(input: ResolvePracticeWorkflowInput): boolean {
   return (input.teacherPolicy ?? "student_choice") === "student_choice";
 }
 
-// ---------- 答案公布 gate（T2A.8 判定纯函数，2026-10-22 起随工作流裁决同居） ----------
-
-/**
- * 答案是否已公布（T2A.8，D11 的判定纯函数，服务测试单测覆盖）：
- * - on_submit（默认）恒已公布；course 来源不适用本函数（D11 恒交卷即公布）；
- * - after_due：now ≥ dueAt 才公布（**读时比较，无定时任务**——截止后下一次
- *   请求自然恢复完整结果视图）；
- * - after_due 而 dueAt 缺失：按未公布处理（fail closed）。该状态被
- *   assignment-service 的 create/PATCH 组合校验 400 拦截，正常不可达，
- *   防御性口径取不泄露的一侧。
- * 原定义在 attempt-service，M2 起题级反馈四态裁决（下方）与 wiring 的题级
- * 进度可读性都要消费它，移到纯裁决器层避免反向依赖；attempt-service
- * re-export 保持既有导入路径不变。
- */
-export function answersReleased(
-  assignment: {
-    answerRelease: AssignmentAnswerRelease;
-    dueAt: string | null;
-  },
-  now: Date | string = new Date(),
-): boolean {
-  if (assignment.answerRelease !== "after_due") return true;
-  if (assignment.dueAt === null) return false;
-  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
-  return Date.parse(assignment.dueAt) <= nowMs;
-}
-
-/**
- * 已收尾卷的答案公布 gate 单一公式（M2 收敛：题级反馈四态的 published 与
- * wiring 题级进度 feedbackReadable 共用——此前两处 status/submittedAt 双判别
- * 键、requireAssignmentRow 整行/授权投影双取数源，异常行上同一端点会给出
- * 矛盾结论）：
- * - 进行中卷（未收尾）无公布 gate——题级状态由 workflow 裁决
- *   （canSubmitQuestion ⟹ per_question），恒 true；
- * - 非作业来源已收尾：交卷即公布（D11，与结果视图同口径）；
- * - 作业来源已收尾：answersReleased 读时比较（after_due 截止后下一次读取
- *   自动恢复）；
- * - 作业公布事实缺失（授权行悬挂等异常数据，FK 正常不可达）：fail closed
- *   未公布（题目笔记本同口径取严）——不把读取打成 404/500。
- * now 由调用方穿透（同一请求内 feedback 状态与题级进度可读性必须同一时钟）。
- */
-export function attemptAnswersPublished(
-  input: {
-    /** 已收尾（attempts.status !== "draft"，单一判别键——勿再用 submittedAt 代理） */
-    attemptSubmitted: boolean;
-    sourceType: AttemptSource;
-    /** 作业公布事实；非作业来源传 null（已收尾缺失才 fail closed） */
-    release: {
-      answerRelease: AssignmentAnswerRelease;
-      dueAt: string | null;
-    } | null;
-  },
-  now: Date | string = new Date(),
-): boolean {
-  if (!input.attemptSubmitted || input.sourceType !== "assignment") return true;
-  return input.release !== null && answersReleased(input.release, now);
-}
-
 // ---------- M2 题级反馈四态纯裁决（2026-10-22 计划 §10.1/§10.4） ----------
 
 /** 题级反馈授权四态（判别键与契约 practiceQuestionFeedbackSchema 同构；
@@ -305,7 +254,7 @@ export function resolvePracticeWorkflow(
       allowedFeedbackModes: ["after_attempt"],
       canSubmitQuestion: false,
       restrictionReason: "legacy_attempt",
-      releaseAt: input.dueAt ?? null,
+      releaseAt: canonicalAssignmentDueAt(input.dueAt ?? null),
     });
   }
 
@@ -352,6 +301,6 @@ export function resolvePracticeWorkflow(
       effectiveMode === "per_question" &&
       !stored?.attemptSubmitted,
     restrictionReason,
-    releaseAt: input.dueAt ?? null,
+    releaseAt: canonicalAssignmentDueAt(input.dueAt ?? null),
   });
 }

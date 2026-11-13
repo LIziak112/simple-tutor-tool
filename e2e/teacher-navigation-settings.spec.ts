@@ -200,6 +200,15 @@ test(
   { tag: ["@teacher"] },
   async ({ page }, testInfo) => {
     page.on("dialog", (dialog) => dialog.accept());
+    // 本用例验证操作员的分类交互。真实权限由备份路由集成测试验证。
+    await page.route("**/api/teacher/me", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.text()).replace(
+        '"canManageInstanceBackup":false',
+        '"canManageInstanceBackup":true',
+      );
+      await route.fulfill({ response, body });
+    });
     await page.route("**/api/teacher/backup/snapshots", (route) =>
       route.fulfill({
         json: {
@@ -363,6 +372,9 @@ test("长登录名和两倍文本大小保持完整内容与操作可达", {
   );
   await page.addStyleTag({ content: "html { font-size: 200%; }" });
   await expect(page.getByRole("checkbox", { name: "逐步揭晓" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "备份与恢复", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(
@@ -370,10 +382,8 @@ test("长登录名和两倍文本大小保持完整内容与操作可达", {
       ),
     )
     .toBe(true);
-  await page.getByRole("link", { name: "备份与恢复", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "下载完整备份" }),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "账号与会话", exact: true }).click();
+  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
 });
 
 test(

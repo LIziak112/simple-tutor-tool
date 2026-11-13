@@ -6,7 +6,6 @@ import {
   aiConnectionModelsDataSchema,
 } from "@tutor/contract";
 import type { Logger } from "pino";
-import { redactHeaderValue } from "../../lib/log-redact.ts";
 import {
   type GuardedResponse,
   normalizeSocketError,
@@ -20,8 +19,7 @@ import {
  * stream:false 首发，node http 直调零新依赖；出站目标防护见 outbound-target）。
  *
  * 安全口径（攻击用例表 secret/capability 行）：
- * - Authorization 只出现在请求头；日志经 redactHeaderValue 只留 scheme，
- *   请求正文（含学生问题）绝不写日志；
+ * - 日志只保留对账标识、HTTP 状态和受控原因，不写供应商 URL、授权头或正文；
  * - 一切失败收敛为中文短句 + 错误码，不透传供应商响应头、原始报文或
  *   堆栈（上层 HttpError 直接面向学生）；
  * - 3xx 即失败不跟随（守卫层也不复核 Location——从不发第二次连接）；
@@ -499,7 +497,7 @@ export async function executeChatCompletions(
       {
         event: "ai_outbound_failed",
         code: result.code,
-        message: result.message,
+        reason: result.reason,
         ref: input.requestRef,
       },
       "AI 出站请求失败",
@@ -509,11 +507,8 @@ export async function executeChatCompletions(
   input.logger?.info(
     {
       event: "ai_outbound",
-      url,
       method: "POST",
       status: response.status,
-      // 授权头只留 scheme；正文（学生问题）不进日志
-      authorization: redactHeaderValue(headers.authorization ?? ""),
       ref: input.requestRef,
     },
     "AI 出站请求",

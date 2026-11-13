@@ -539,8 +539,8 @@ it("提交时名单变更回到对象步骤，刷新后保留单元和标题并�
         studentIds: [STUDENT_A_ID],
         unitIds: [UNIT_A_ID],
         title: "周末复习",
+        operationId: expect.any(String),
       }),
-      expect.anything(),
     );
   });
 });
@@ -683,6 +683,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     );
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
     expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
+      operationId: expect.any(String),
       unitIds: [UNIT_A_ID, UNIT_B_ID],
       studentIds: [STUDENT_A_ID, STUDENT_C_ID],
       courseId: COURSE_ID,
@@ -731,6 +732,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
 
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
     expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
+      operationId: expect.any(String),
       unitIds: [UNIT_B_ID, UNIT_A_ID],
       studentIds: [STUDENT_A_ID, STUDENT_C_ID],
       courseId: COURSE_ID,
@@ -891,6 +893,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     );
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
     expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
+      operationId: expect.any(String),
       unitIds: [UNIT_A_ID],
       studentIds: [STUDENT_B_ID],
       allowPerQuestionFeedback: true,

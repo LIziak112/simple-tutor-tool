@@ -46,9 +46,10 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { hasUsableQuestionSnapshotSql } from "./attempt-final-outcome.ts";
 import {
   answerOf,
-  assertMcpDraftAnswerShape,
+  assertFrozenAnswerShape,
   attemptQuestionRows,
   attemptResponseRows,
   attemptUnitIds,
@@ -64,8 +65,10 @@ import {
 import {
   pendingMarkCount,
   pendingMarkCountsByStudent,
+  pendingSelfReviewCounts,
   practiceSubmittedCounts,
 } from "./pending-mark";
+import { countsAsWrong } from "./response-verdict.ts";
 import { attemptResultCounts } from "./result-counts";
 import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
@@ -569,7 +572,7 @@ export function editTeacherDraftResponse(
         );
       }
     } else {
-      assertMcpDraftAnswerShape(db, row, original, edit.answer);
+      assertFrozenAnswerShape(db, row, original, edit.answer);
     }
 
     const auditId = randomUUID();
@@ -836,15 +839,13 @@ export function getTeacherAttemptDetail(
   // 行取——questionsOut 投影不含 selfCorrect，且 draft 投影会把判定置 null；
   // 待批数走 D4 共享谓词 pendingMarkCount（不含待自评行——两队列分开）
   const judgedRows =
-    attempt.status === "draft" && attempt.abandonedAt !== null
+    attempt.abandonedAt !== null
       ? []
       : db
           .select({
-            finalCorrect: responses.finalCorrect,
             autoCorrect: responses.autoCorrect,
             answered: responses.answered,
             teacherMark: responses.teacherMark,
-            selfCorrect: responses.selfCorrect,
             gradingPolicy: responses.gradingPolicy,
             selfReviewVerdict: responses.selfReviewVerdict,
             selfReviewAt: responses.selfReviewAt,
@@ -852,51 +853,33 @@ export function getTeacherAttemptDetail(
           })
           .from(responses)
           .where(
-            attempt.status === "draft"
-              ? and(
-                  eq(responses.attemptId, attempt.id),
-                  isNotNull(responses.submittedAt),
-                )
-              : eq(responses.attemptId, attempt.id),
+            and(
+              eq(responses.attemptId, attempt.id),
+              hasUsableQuestionSnapshotSql,
+              attempt.status === "draft"
+                ? isNotNull(responses.submittedAt)
+                : undefined,
+            ),
           )
           .all()
           .map((row) => ({
             // QM-12 有效判定：教师判 > 自评 > 自动（effectiveVerdictOfRow
             // 单源——与列表卡片/错题本/学情同一出处）
-            verdict: effectiveVerdictOfRow(row)?.value ?? null,
+            verdict: effectiveVerdictOfRow(row),
             answered: row.answered,
-            marked: row.teacherMark !== null || row.selfCorrect !== null,
-            gradingPolicy: row.gradingPolicy,
-            selfReviewVerdict: row.selfReviewVerdict,
-            teacherMark: row.teacherMark,
           }));
-  const correctCount = judgedRows.filter((row) => row.verdict === true).length;
+  const correctCount = judgedRows.filter(
+    (row) => row.verdict?.value === true,
+  ).length;
   // v2 #6980-3 口径：判错且（有实际作答或人工显式判定：教师批 / 自评标记
   // 任一非空，或学生自评已出 verdict）才计错次
-  const wrongCount = judgedRows.filter(
-    (row) =>
-      row.verdict === false &&
-      (row.answered || row.marked || row.selfReviewVerdict !== null),
+  const wrongCount = judgedRows.filter((row) =>
+    countsAsWrong(row.verdict, row.answered),
   ).length;
   // 未做判错单列（与 wrongCount 互斥）：详情灰显「未做」
-  const notDoneCount = judgedRows.filter(
-    (row) =>
-      row.verdict === false &&
-      !row.answered &&
-      !row.marked &&
-      row.selfReviewVerdict === null,
-  ).length;
-  // QM-12：待自评 = reference_self 行且教师未判、学生未自评、自动也未判
-  // （读侧现算，自评后即归零）——与 pending-mark.pendingSelfReviewCounts
-  // （学生记录行徽章的批量 SQL 谓词）同一语义，注释互指、口径不漂移
-  //（路由投影锁见 routes/student-records.test.ts QM-12 节）；不进教师待批队列
-  const selfReviewPendingCount = judgedRows.filter(
-    (row) =>
-      row.verdict === null &&
-      row.gradingPolicy === "reference_self" &&
-      row.teacherMark === null &&
-      row.selfReviewVerdict === null,
-  ).length;
+  const notDoneCount =
+    judgedRows.filter((row) => row.verdict?.value === false).length -
+    wrongCount;
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -914,7 +897,8 @@ export function getTeacherAttemptDetail(
     // 待批队列/学情矩阵同一实现——不再用 effectiveCorrect=null 计数，避免把
     // 待自评行算进教师待批）
     pendingCount: pendingMarkCount(db, attempt),
-    selfReviewPendingCount,
+    selfReviewPendingCount:
+      pendingSelfReviewCounts(db, [attempt]).get(attempt.id) ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,

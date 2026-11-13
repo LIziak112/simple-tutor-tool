@@ -8,9 +8,11 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { startAttemptApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
+import { useReplayableCreate } from "@/lib/use-replayable-create";
 import { AttemptResultView } from "./AttemptResultView";
 import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
+import { LocalDraftConflicts } from "./LocalDraftConflicts";
 
 /**
  * 结果视图外壳（T2.9）：普通交卷进入结果时清除本地草稿，含从别的设备交卷后
@@ -49,8 +51,10 @@ export default function AttemptResultWithDraftCleanup({
     ) === "locked";
   const navigate = useNavigate();
   useEffect(() => {
-    if (preserveDraft) draftStore.markLockedSubmission(attemptId);
-    else void draftStore.clearDraft(attemptId);
+    if (preserveDraft) {
+      draftStore.markLockedSubmission(attemptId);
+      void draftStore.refreshShared(attemptId).catch(() => {});
+    } else void draftStore.clearDraft(attemptId);
   }, [attemptId, preserveDraft]);
   const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
   useEffect(() => {
@@ -77,6 +81,13 @@ export default function AttemptResultWithDraftCleanup({
     },
   ).current;
   // 练习本卷错题（2026-10）：组新重练卷 → 跳作答；失败留告警可重试
+  const createPractice = useReplayableCreate();
+  const practiceInput = useRef<{
+    selection: string;
+    questionIds: string[];
+    options: ReturnType<typeof workflowStartOptions>;
+    scope: WrongPracticeScope;
+  } | null>(null);
   const practice = useMutation({
     // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
     mutationFn: ({
@@ -85,16 +96,45 @@ export default function AttemptResultWithDraftCleanup({
     }: {
       questionIds: string[];
       moduleTitle?: string | undefined;
-    }) =>
+    }) => {
       // #6980-2：结果页重练范围 = 来源卷标题（data.title），随卷落库供记录
       // 标题说明「练的是什么」；模块 7 专项重练再带「· 模块名」
-      startWrongPracticeApi(questionIds, workflowStartOptions(), {
-        kind: "result",
-        sourceTitle: (moduleTitle === undefined
-          ? data.title
-          : `${data.title} · ${moduleTitle}`
-        ).slice(0, 200),
-      } satisfies WrongPracticeScope),
+      const selection = JSON.stringify([attemptId, questionIds, moduleTitle]);
+      const previous = practiceInput.current;
+      // 回执未知时只由学生换题/换模块开启新意图；后台标题与偏好变化不改首次请求。
+      const options =
+        previous?.selection === selection
+          ? previous.options
+          : workflowStartOptions();
+      const scope =
+        previous?.selection === selection
+          ? previous.scope
+          : ({
+              kind: "result",
+              sourceTitle: (moduleTitle === undefined
+                ? data.title
+                : `${data.title} · ${moduleTitle}`
+              ).slice(0, 200),
+            } satisfies WrongPracticeScope);
+      const input =
+        previous?.selection === selection
+          ? previous
+          : {
+              selection,
+              questionIds: [...questionIds],
+              options,
+              scope,
+            };
+      practiceInput.current = input;
+      return createPractice(input, (operationId) =>
+        startWrongPracticeApi(
+          input.questionIds,
+          input.options,
+          input.scope,
+          operationId,
+        ),
+      );
+    },
     onSuccess: (attempt) => {
       void navigate(`/s/attempts/${attempt.id}`);
     },
@@ -124,26 +164,34 @@ export default function AttemptResultWithDraftCleanup({
       : "网络异常，请稍后重试"
     : null;
   return (
-    <AttemptResultView
-      data={data}
-      onBackHome={onBackHome}
-      backLabel={backLabel}
-      onSolutionToggle={onSolutionToggle}
-      annotationSealWarning={annotationSealWarning}
-      onRefresh={onRefresh}
-      wrongPractice={{
-        loading: practice.isPending,
-        error: practiceErrorText,
-        onStart: (questionIds, moduleTitle) => {
-          if (questionIds.length === 0) return; // 判错 0 题按钮本就不渲染（防御）
-          practice.mutate({ questionIds, moduleTitle });
-        },
-      }}
-      redo={{
-        loading: redo.isPending,
-        error: redoErrorText,
-        onStart: redo.mutate,
-      }}
-    />
+    <>
+      <LocalDraftConflicts
+        attemptId={attemptId}
+        questionIds={data.units.flatMap((unit) =>
+          unit.questions.map((question) => question.questionId),
+        )}
+      />
+      <AttemptResultView
+        data={data}
+        onBackHome={onBackHome}
+        backLabel={backLabel}
+        onSolutionToggle={onSolutionToggle}
+        annotationSealWarning={annotationSealWarning}
+        onRefresh={onRefresh}
+        wrongPractice={{
+          loading: practice.isPending,
+          error: practiceErrorText,
+          onStart: (questionIds, moduleTitle) => {
+            if (questionIds.length === 0) return; // 判错 0 题按钮本就不渲染（防御）
+            practice.mutate({ questionIds, moduleTitle });
+          },
+        }}
+        redo={{
+          loading: redo.isPending,
+          error: redoErrorText,
+          onStart: redo.mutate,
+        }}
+      />
+    </>
   );
 }

@@ -4,6 +4,7 @@ import {
   type AttemptResultData,
   learningEventBatchDataSchema,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -237,6 +238,37 @@ function ev(
 }
 
 describe("POST /api/student/attempts/:id/events：批量上报", () => {
+  it("相同事件只落库一次，回执丢失重放仍确认；其他账号 Cookie 不能接收这批事件", async () => {
+    const { app, db, aCookie, aStudentId, bCookie, assignmentId, lectureId } =
+      await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    const eventIds = ["aeaf2993-25f6-4bdd-83eb-017f45fe4153"];
+    const send = (cookie: string, path: string) =>
+      app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          events: [ev("net_online", 0)],
+          delivery: {
+            ownerId: aStudentId,
+            eventIds,
+            ...(path.endsWith("/student/events/deliver") && { lectureId }),
+          },
+        }),
+      });
+    const path = `/api/student/attempts/${attemptId}/events/deliver`;
+    expect(await (await send(aCookie, path)).json()).toMatchObject({
+      data: { accepted: 1, acknowledgedIds: eventIds },
+    });
+    expect(await (await send(aCookie, path)).json()).toMatchObject({
+      data: { accepted: 0, acknowledgedIds: eventIds },
+    });
+    const before = db.select().from(events).all();
+    expect((await send(bCookie, "/api/student/events/deliver")).status).toBe(
+      403,
+    );
+    expect(db.select().from(events).all()).toEqual(before);
+  });
   it("正常批量：accepted 计数、events 表逐行落库（元信息形态）", async () => {
     const { app, db, aCookie, assignmentId } = await makeEventsApp();
     const attemptId = await startAttempt(app, aCookie, assignmentId);
@@ -436,6 +468,76 @@ describe("POST /api/student/events：讲义展开事件", () => {
 });
 
 describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库（验收核心）", () => {
+  it("作答遥测中的交卷意图不截断事件，只有成功交卷才写权威边界", async () => {
+    const { app, db, aCookie, assignmentId } = await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    await postEvents(app, aCookie, attemptId, [
+      ev("question_focus", 0, { questionId: Q.judge }),
+      ev("submit", 10, { confirmed: true }),
+      ev("answer_change", 20, { questionId: Q.judge }),
+      ev("question_blur", 30, { questionId: Q.judge }),
+    ]);
+    const markers = () =>
+      db
+        .select()
+        .from(events)
+        .all()
+        .filter(
+          (row) =>
+            row.type === "submit" &&
+            (JSON.parse(row.payloadJson) as { confirmed?: boolean }).confirmed,
+        );
+    expect(markers()).toHaveLength(0);
+    const rejected = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie },
+        body: JSON.stringify({ revisions: [] }),
+      },
+    );
+    expect(rejected.status).toBe(409);
+    expect(markers()).toHaveLength(0);
+    expect((await submitAttemptRequest(app, aCookie, attemptId)).status).toBe(
+      200,
+    );
+    const row = db
+      .select()
+      .from(responses)
+      .all()
+      .find((response) => response.questionId === Q.judge);
+    expect(row).toMatchObject({ activeSec: 30, changeCount: 1 });
+    expect(markers()).toHaveLength(1);
+    expect(markers()[0]?.serverTs).toBe(
+      db.select().from(attempts).get()?.submittedAt,
+    );
+    expect((await submitAttemptRequest(app, aCookie, attemptId)).status).toBe(
+      409,
+    );
+    expect(markers()).toHaveLength(1);
+    await postEvents(app, aCookie, attemptId, [
+      ev("question_focus", 50, { questionId: Q.fill }),
+    ]);
+    const submittedAt = markers()[0]?.serverTs;
+    if (!submittedAt) throw new Error("缺少交卷边界");
+    db.update(events)
+      .set({ serverTs: submittedAt })
+      .where(eq(events.questionId, Q.fill))
+      .run();
+    const result = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    const { data } = (await result.json()) as { data: AttemptResultData };
+    expect(data.activity?.byQuestion[Q.judge]?.activeSec).toBe(30);
+    expect(data.activity?.byQuestion[Q.fill]).toBeUndefined();
+    expect(
+      db
+        .select()
+        .from(events)
+        .all()
+        .some((event) => event.questionId === Q.fill),
+    ).toBe(true);
+  });
   it("构造完整事件序列 → submit → 每题 activeSec/changeCount 与总用时正确", async () => {
     const { app, db, aCookie, assignmentId } = await makeEventsApp();
     const attemptId = await startAttempt(app, aCookie, assignmentId);
@@ -461,7 +563,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
         questionId: Q.choice,
         to: { kind: "choice", index: 1 },
       }),
-      ev("submit", 75), // q2：45→75 共 30s
+      ev("question_blur", 75, { questionId: Q.choice }), // q2：45→75 共 30s
     ]);
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
@@ -618,7 +720,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
     await postEvents(app, aCookie, attemptId, [
       ev("question_focus", 0, { questionId: Q.fill }),
       ev("answer_change", 3, { questionId: Q.fill }),
-      ev("submit", 8),
+      ev("question_blur", 8, { questionId: Q.fill }),
     ]);
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);

@@ -206,6 +206,21 @@ describe("QuestionGroupAnchor", () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(2);
   });
 
+  it("查看材料先定位组头，材料晚到时把焦点移到材料列", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const props = { group: groupOf(), revealSignal: 1 };
+    const { rerender } = render(
+      <QuestionGroupAnchor {...props} materials={[]} />,
+    );
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    rerender(<QuestionGroupAnchor {...props} materials={[material("m1")]} />);
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(
+      document.querySelector('[data-slot="group-materials"]'),
+    ).toHaveFocus();
+  });
+
   it("memo 默认比较：相同属性不重渲染，信号/hidden 变化照常更新", () => {
     const group = groupOf();
     const { rerender } = render(

@@ -1,9 +1,4 @@
-import {
-  type QuestionReviewKind,
-  type QuestionReviewRow,
-  type QuestionType,
-  questionTypeSchema,
-} from "@tutor/contract";
+import type { QuestionType } from "@tutor/contract";
 import {
   and,
   asc,
@@ -11,7 +6,6 @@ import {
   gt,
   gte,
   inArray,
-  isNotNull,
   isNull,
   lte,
   or,
@@ -30,6 +24,12 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import {
+  currentSelfReviewWhere,
+  effectiveVerdictOfRow,
+  effectiveVerdictValueSql,
+  selfReviewRecordOf,
+} from "../services/response-verdict.ts";
 import { teacherVisibleResponsesWhere } from "../services/teacher-attempt-service";
 
 /**
@@ -112,7 +112,7 @@ export function decodeCursorOffset(cursor?: string): number {
 }
 
 /** summary 题干截断 */
-function stemSummaryOf(stemMd: string | null): string | null {
+export function stemSummaryOf(stemMd: string | null): string | null {
   if (stemMd === null) return null;
   return stemMd.length <= SUMMARY_STEM_MAX
     ? stemMd
@@ -130,7 +130,7 @@ function parseJsonObject(raw: string | null): unknown {
 }
 
 /** 快照 knowledge 列（JSON 数组文本）→ 字符串数组（坏数据不炸聚合） */
-function parseKnowledgeArray(raw: string | null): string[] {
+export function parseKnowledgeArray(raw: string | null): string[] {
   if (raw === null) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -260,9 +260,9 @@ interface ResponseRefs {
 
 /** 存在性筛选用 EXISTS 片段（笔记阶段 / 笔迹 / 标注 / AI 任务） */
 const NOTES_SCRATCH_EXISTS = sql`exists (select 1 from notes n where n.attempt_id = ${responses.attemptId} and n.question_id = ${responses.questionId} and n.phase = 'scratch')`;
-const NOTES_CORRECTION_EXISTS = sql`exists (select 1 from notes n where n.attempt_id = ${responses.attemptId} and n.question_id = ${responses.questionId} and n.phase = 'correction')`;
+export const NOTES_CORRECTION_EXISTS = sql`exists (select 1 from notes n where n.attempt_id = ${responses.attemptId} and n.question_id = ${responses.questionId} and n.phase = 'correction')`;
 const INK_EXISTS = sql`exists (select 1 from ink i where i.attempt_id = ${responses.attemptId} and i.question_id = ${responses.questionId})`;
-const AI_TASK_EXISTS = sql`exists (select 1 from ai_tasks t where t.attempt_id = ${responses.attemptId} and t.question_id = ${responses.questionId})`;
+export const AI_TASK_EXISTS = sql`exists (select 1 from ai_tasks t where t.attempt_id = ${responses.attemptId} and t.question_id = ${responses.questionId})`;
 
 /** 行键（attemptId + questionId；同一键多行——同题多次作答——共享引用 id） */
 function refKeyOf(attemptId: string, questionId: string): string {
@@ -416,9 +416,9 @@ export function queryStudentResponses(
           sql`json_extract(${responses.questionSnapshotJson}, '$.type') = ${args.type}`,
         ]
       : []),
-    ...(args.correct === "true" ? [eq(responses.finalCorrect, true)] : []),
-    ...(args.correct === "false" ? [eq(responses.finalCorrect, false)] : []),
-    ...(args.correct === "pending" ? [isNull(responses.finalCorrect)] : []),
+    ...(args.correct === "true" ? [eq(effectiveVerdictValueSql, 1)] : []),
+    ...(args.correct === "false" ? [eq(effectiveVerdictValueSql, 0)] : []),
+    ...(args.correct === "pending" ? [isNull(effectiveVerdictValueSql)] : []),
     ...(args.flaggedUnsure ? [eq(responses.studentFlag, "unsure")] : []),
     ...(args.answered !== undefined
       ? [eq(responses.answered, args.answered)]
@@ -433,7 +433,7 @@ export function queryStudentResponses(
     ...(args.hasScratchOrInk ? [or(NOTES_SCRATCH_EXISTS, INK_EXISTS)] : []),
     ...(args.hasCorrection ? [NOTES_CORRECTION_EXISTS] : []),
     ...(args.hasAiHelp ? [AI_TASK_EXISTS] : []),
-    ...(args.selfReview ? [isNotNull(responses.selfCorrect)] : []),
+    ...(args.selfReview ? [currentSelfReviewWhere] : []),
   ];
   const where = and(...conditions);
 
@@ -464,7 +464,9 @@ export function queryStudentResponses(
       finalCorrect: responses.finalCorrect,
       teacherMark: responses.teacherMark,
       studentFlag: responses.studentFlag,
-      selfCorrect: responses.selfCorrect,
+      selfReviewVerdict: responses.selfReviewVerdict,
+      selfReviewAt: responses.selfReviewAt,
+      selfReviewRevision: responses.selfReviewRevision,
       activeSec: responses.activeSec,
       hintsUsed: responses.hintsUsed,
       changeCount: responses.changeCount,
@@ -510,6 +512,8 @@ export function queryStudentResponses(
 
   const items = rows.map((row) => {
     const refs = refMap.get(refKeyOf(row.attemptId, row.questionId));
+    const selfReview = selfReviewRecordOf(row);
+    const effectiveVerdict = effectiveVerdictOfRow(row);
     return {
       revisionId: row.revisionId,
       answerRevision: row.answerRevision,
@@ -526,13 +530,16 @@ export function queryStudentResponses(
       difficulty: row.difficulty,
       knowledge: parseKnowledgeArray(row.knowledge),
       stemMd: full ? row.stemMd : stemSummaryOf(row.stemMd),
-      pending: row.finalCorrect === null,
+      pending: effectiveVerdict === null,
       autoCorrect: row.autoCorrect,
       finalCorrect: row.finalCorrect,
       teacherMark: row.teacherMark,
       answered: row.answered,
       flaggedUnsure: row.studentFlag === "unsure",
-      selfCorrect: row.selfCorrect,
+      effectiveVerdict,
+      selfReview,
+      selfCorrect:
+        selfReview === null ? null : selfReview.verdict === "correct",
       activeSec: row.activeSec,
       hintsUsed: row.hintsUsed,
       changeCount: row.changeCount,
@@ -650,199 +657,5 @@ export function searchQuestions(
 
   const nextCursor =
     offset + rows.length < total ? String(offset + rows.length) : null;
-  return { total, nextCursor, questions: items };
-}
-
-// ---------- question-review（学生主页「错题与存疑」聚合，T-PR4 Web-2②） ----------
-
-/** question-review 入参（teacher-students 路由的 questionReviewQuerySchema 与之对齐；
- * studentId 由调用方单独传，域校验走 resolveToolStudent） */
-export interface QuestionReviewArgs {
-  kind: QuestionReviewKind;
-  courseId?: string | undefined;
-  /** 单题提交时间下界 / 上界（UTC ISO；与 MCP-A from/to 同轴：responses.submittedAt） */
-  from?: string | undefined;
-  to?: string | undefined;
-  limit: number;
-  cursor?: string | undefined;
-}
-
-/**
- * 错题口径（#6980-3，与错题本 wrongCount 同一判据）：判错且「答了或有人工
- * 判定」——answered 非真但 teacherMark / selfCorrect 显式判错的行仍算错题；
- * 纯未做判错行不算（详情页灰显「未做」的那批）。
- */
-const questionReviewWrongWhere = and(
-  eq(responses.finalCorrect, false),
-  or(
-    eq(responses.answered, true),
-    isNotNull(responses.teacherMark),
-    isNotNull(responses.selfCorrect),
-  ),
-);
-
-/** kind → 行级筛选（三档口径见契约 question-review-api.ts 头注释） */
-function questionReviewKindWhere(kind: QuestionReviewKind) {
-  if (kind === "wrong") return questionReviewWrongWhere;
-  if (kind === "unsure") return eq(responses.studentFlag, "unsure");
-  return NOTES_CORRECTION_EXISTS;
-}
-
-/** 坏快照行按缺失计：题干 / 题型 / 难度任一取不出合法值即整行跳过（同作答详情口径） */
-function usableReviewRowOf(
-  row: {
-    stemMd: string | null;
-    type: string | null;
-    difficulty: number | null;
-  } & Record<string, unknown>,
-): { stemMd: string; type: QuestionType; difficulty: number } | null {
-  const stem = row.stemMd;
-  if (stem === null || stem.length === 0) return null;
-  const parsedType = questionTypeSchema.safeParse(row.type);
-  if (!parsedType.success) return null;
-  const difficulty = row.difficulty;
-  if (
-    typeof difficulty !== "number" ||
-    !Number.isInteger(difficulty) ||
-    difficulty < 1 ||
-    difficulty > 5
-  ) {
-    return null;
-  }
-  return { stemMd: stem, type: parsedType.data, difficulty };
-}
-
-/**
- * 学生主页「错题与存疑」聚合：与 queryStudentResponses 共用查询构造器（共享
- * 谓词 + EXISTS 片段 + 截断 / 游标 helper），Web 端固定筛选形状（方案 §Web-2②）。
- * - 一条 SQL 取 kind 口径下全部可见行；细列不含答案 / 解析 / 选项（本面只有
- *   判定与计数，看全文走作答详情）；
- * - JS 侧按 questionId 聚合：代表作答 =（attempt 最近活动时间, responses.id）
- *   最新一行；redoCount = 该 kind 口径下可见行数 − 1；lastAt = 代表行 attempt
- *   最近活动时间（与作答列表排序同一时间轴）；
- * - 输出按 lastAt 倒序（同刻按 questionId 稳定）；offset 游标分页
- *   （total = 聚合后题目数）。
- */
-export function questionReviewOf(
-  db: Db,
-  teacherId: string,
-  studentId: string,
-  args: QuestionReviewArgs,
-): {
-  total: number;
-  nextCursor: string | null;
-  questions: QuestionReviewRow[];
-} {
-  // 域校验：不存在或非本教师学生 → 404 STUDENT_NOT_FOUND（不暴露存在性）
-  resolveToolStudent(db, teacherId, studentId);
-  const offset = decodeCursorOffset(args.cursor);
-  const rows = db
-    .select({
-      revisionId: responses.id,
-      attemptId: responses.attemptId,
-      questionId: responses.questionId,
-      finalCorrect: responses.finalCorrect,
-      studentFlag: responses.studentFlag,
-      type: sql<
-        string | null
-      >`json_extract(${responses.questionSnapshotJson}, '$.type')`,
-      difficulty: sql<
-        number | null
-      >`json_extract(${responses.questionSnapshotJson}, '$.difficulty')`,
-      stemMd: sql<
-        string | null
-      >`json_extract(${responses.questionSnapshotJson}, '$.stemMd')`,
-      knowledge: sql<
-        string | null
-      >`json_extract(${responses.questionSnapshotJson}, '$.knowledge')`,
-      lastActivity: sql<string>`coalesce(${attempts.submittedAt}, ${attempts.startedAt})`,
-      hasCorrection: NOTES_CORRECTION_EXISTS,
-      hasAiHelp: AI_TASK_EXISTS,
-    })
-    .from(responses)
-    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(
-      and(
-        eq(students.teacherId, teacherId),
-        eq(attempts.studentId, studentId),
-        // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
-        ...teacherVisibleResponsesWhere(),
-        questionReviewKindWhere(args.kind),
-        ...(args.courseId !== undefined
-          ? [eq(attempts.courseId, args.courseId)]
-          : []),
-        ...(args.from !== undefined
-          ? [gte(responses.submittedAt, args.from)]
-          : []),
-        ...(args.to !== undefined ? [lte(responses.submittedAt, args.to)] : []),
-      ),
-    )
-    .all();
-
-  // 坏快照行先剔除（校验通过的行才参与聚合），随后细列排序：题间按
-  // questionId 稳定、题内按（最近活动, 行 id）倒序，分组后每组首行即代表行
-  const usable: ((typeof rows)[number] & {
-    snapshot: { stemMd: string; type: QuestionType; difficulty: number };
-  })[] = [];
-  for (const row of rows) {
-    const snapshot = usableReviewRowOf(row);
-    if (snapshot !== null) usable.push({ ...row, snapshot });
-  }
-  const sorted = [...usable].sort((a, b) => {
-    if (a.questionId !== b.questionId) {
-      return a.questionId < b.questionId ? -1 : 1;
-    }
-    return (
-      b.lastActivity.localeCompare(a.lastActivity) ||
-      (a.revisionId < b.revisionId ? 1 : -1)
-    );
-  });
-
-  /** 聚合中间态：代表行 + 该 kind 口径下可见行数 */
-  interface ReviewGroup {
-    rep: (typeof sorted)[number];
-    count: number;
-  }
-  const grouped = new Map<string, ReviewGroup>();
-  for (const row of sorted) {
-    const entry = grouped.get(row.questionId);
-    if (entry !== undefined) {
-      entry.count += 1;
-      continue;
-    }
-    grouped.set(row.questionId, { rep: row, count: 1 });
-  }
-
-  const entries = [...grouped.values()].sort(
-    (a, b) =>
-      b.rep.lastActivity.localeCompare(a.rep.lastActivity) ||
-      (a.rep.questionId < b.rep.questionId ? -1 : 1),
-  );
-  const total = entries.length;
-  const page = entries.slice(offset, offset + args.limit);
-
-  const items: QuestionReviewRow[] = page.map(({ rep, count }) => {
-    // stem 非空串已在校验收窄；stemSummaryOf 的可空签名是给共享路径的，
-    // 这里兜底原串仅作类型收口（运行时不可达）
-    const stem = rep.snapshot.stemMd;
-    return {
-      questionId: rep.questionId,
-      attemptId: rep.attemptId,
-      type: rep.snapshot.type,
-      difficulty: rep.snapshot.difficulty,
-      knowledge: parseKnowledgeArray(rep.knowledge),
-      stemMd: stemSummaryOf(stem) ?? stem,
-      finalCorrect: rep.finalCorrect,
-      studentFlag: rep.studentFlag === "unsure" ? "unsure" : null,
-      hasCorrection: Boolean(rep.hasCorrection),
-      hasAiHelp: Boolean(rep.hasAiHelp),
-      redoCount: count - 1,
-      lastAt: rep.lastActivity,
-    };
-  });
-
-  const nextCursor =
-    offset + page.length < total ? String(offset + page.length) : null;
   return { total, nextCursor, questions: items };
 }

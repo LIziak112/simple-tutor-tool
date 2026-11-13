@@ -65,6 +65,10 @@ export const learningRecordAiViewSchema = z
       ],
       [view.record.grading.teacherMark, ["record", "grading", "teacherMark"]],
       [view.record.grading.reviewSource, ["record", "grading", "reviewSource"]],
+      [
+        view.record.grading.effectiveVerdict,
+        ["record", "grading", "effectiveVerdict"],
+      ],
     ];
     for (const [value, path] of banned) {
       if (value !== undefined && value !== null) {

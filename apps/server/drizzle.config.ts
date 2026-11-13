@@ -12,7 +12,7 @@ import { defineConfig } from "drizzle-kit";
  */
 export default defineConfig({
   dialect: "sqlite",
-  schema: "./src/db/schema.ts",
+  schema: ["./src/db/schema.ts", "./src/db/create-receipt-schema.ts"],
   out: "./src/db/migrations",
   dbCredentials: {
     url: join(process.env.DATA_DIR?.trim() || "./data", "tutor.db"),

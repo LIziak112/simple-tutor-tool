@@ -1,12 +1,28 @@
-import type { AttemptSubmitRevision } from "@tutor/contract";
-import { type RefObject, useCallback, useRef, useState } from "react";
+import {
+  type AttemptSubmitRequest,
+  type AttemptSubmitRevision,
+  attemptSubmissionConflictSchema,
+} from "@tutor/contract";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
-import { sealAttemptAnnotationsApi } from "@/lib/api";
+import { ApiError, sealAttemptAnnotationsApi } from "@/lib/api";
+import { requestErrorMessage } from "@/lib/api-response";
+import { withRequestDeadline } from "@/lib/request-deadline";
 import { useSubmitAttempt } from "./attempt-queries";
-import { draftStore, getDraftPersistenceState } from "./draft-store";
+import {
+  draftStore,
+  getDraftPersistenceState,
+  getDraftSessionEpoch,
+} from "./draft-store";
 import type { InkUploadController } from "./use-ink-upload";
 import type {
   EvidenceConfirmContext,
@@ -16,33 +32,81 @@ import type {
 export function useAttemptSubmitFlow({
   attemptId,
   savedOnly,
-  timed,
   recoveryReady,
   syncDraft,
   flushAnswers,
   inkControllers,
   questionIds,
   revisions,
-  finalizeEvents,
+  events,
   onAnnotationSealFailed,
 }: {
   attemptId: string;
   savedOnly: boolean;
-  timed: boolean;
   recoveryReady: boolean;
   syncDraft: () => Promise<void>;
   flushAnswers: () => Promise<void>;
   inkControllers: RefObject<Map<string, InkUploadController>>;
   questionIds: string[];
   revisions: AttemptSubmitRevision[];
-  finalizeEvents: () => Promise<void>;
+  events: { finalizeSubmit: () => Promise<void>; confirmSubmit: () => void };
   onAnnotationSealFailed: () => void;
 }) {
   const [inkFlushError, setInkFlushError] = useState(false);
   const submitAbortedRef = useRef(false);
+  const flowGeneration = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 切换题卷时废止上一卷的异步流程。
+  useEffect(
+    () => () => {
+      flowGeneration.current += 1;
+    },
+    [attemptId],
+  );
   const lockedRef = useRef(savedOnly);
   lockedRef.current = savedOnly;
-  const submit = useSubmitAttempt(attemptId);
+  const submit = useSubmitAttempt(attemptId, events.confirmSubmit);
+  const finalizeEvents = events.finalizeSubmit;
+  const send = useCallback(
+    async (
+      ctx: EvidenceConfirmContext,
+      input: AttemptSubmitRequest,
+      aborted: () => boolean,
+    ): Promise<EvidenceConfirmOutcome> => {
+      ctx.enterSubmitting();
+      try {
+        await submit.mutateAsync(input);
+      } catch (error) {
+        if (aborted()) return { kind: "aborted" };
+        if (
+          error instanceof ApiError &&
+          error.code === "ANSWER_REVISION_CONFLICT"
+        ) {
+          const conflict = attemptSubmissionConflictSchema.safeParse(
+            error.extra,
+          );
+          if (
+            conflict.success &&
+            questionIds.includes(conflict.data._questionId)
+          ) {
+            draftStore.setAnswerConflict(
+              attemptId,
+              conflict.data._questionId,
+              conflict.data._current,
+            );
+          }
+        }
+        return {
+          kind: "error",
+          message: error instanceof Error ? error.message : "交卷失败，请重试",
+        };
+      }
+      if (aborted()) return { kind: "aborted" };
+      // 标注封存可在确认交卷之后补做，失败留给结果页显示。
+      void sealAttemptAnnotationsApi(attemptId).catch(onAnnotationSealFailed);
+      return { kind: "submitted" };
+    },
+    [attemptId, onAnnotationSealFailed, questionIds, submit],
+  );
 
   /**
    * 交卷编排（共享确认状态机 use-submit-evidence-confirm；T2.8 + T6R.10 证据固定 §6.4）：
@@ -56,6 +120,14 @@ export function useAttemptSubmitFlow({
   const runSubmit = useCallback(
     async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
       setInkFlushError(false);
+      const generation = flowGeneration.current;
+      const epoch = getDraftSessionEpoch();
+      const aborted = () =>
+        submitAbortedRef.current ||
+        generation !== flowGeneration.current ||
+        epoch !== getDraftSessionEpoch();
+      if (aborted()) return { kind: "aborted" };
+      if (submit.verificationRequired) return send(ctx, { revisions }, aborted);
       if (!recoveryReady)
         return { kind: "error", message: "请先完成作答材料恢复后再交卷" };
       // 两条独立网络链并行（模态弹层已冻结编辑，无用户输入竞态）：
@@ -71,27 +143,53 @@ export function useAttemptSubmitFlow({
             ),
           );
       let prep: SubmitEvidencePrep;
+      let inkResults: boolean[];
+      let submittedRevisions = revisions;
       try {
-        if (savedOnly) {
-          await draftStore.loadDraft(attemptId, { strictRead: true });
-          await draftStore.flush(attemptId);
-          if (getDraftPersistenceState(attemptId) === "failed")
-            throw new Error("本机作答保存失败，请重试后再交卷");
-        } else {
-          await syncDraft();
-          await flushAnswers();
-        }
-        if (submitAbortedRef.current) return { kind: "aborted" };
-        prep = await prepareSubmitEvidence({
-          attemptId,
-          questionIds,
-          ...(ctx.missingConfirmed !== null
-            ? { allowMissing: ctx.missingConfirmed }
-            : {}),
-        });
+        [prep, inkResults] = await withRequestDeadline((signal) => {
+          const prepare = async () => {
+            if (savedOnly) {
+              await draftStore.loadDraft(attemptId, { strictRead: true });
+              await draftStore.flush(attemptId);
+              if (getDraftPersistenceState(attemptId) === "failed")
+                throw new Error("本机作答保存失败，请重试后再交卷");
+            } else {
+              await syncDraft();
+              signal.throwIfAborted();
+              if (aborted()) throw new Error("作答已切换");
+              await flushAnswers();
+            }
+            signal.throwIfAborted();
+            if (aborted()) throw new Error("作答已切换");
+            const record = await draftStore.loadDraft(attemptId, {
+              strictRead: true,
+            });
+            signal.throwIfAborted();
+            if (aborted()) throw new Error("作答已切换");
+            submittedRevisions = revisions.map((revision) => ({
+              ...revision,
+              expectedAnswerRevision:
+                record?.answerRevisions?.[revision.questionId] ??
+                revision.expectedAnswerRevision ??
+                0,
+            }));
+            return prepareSubmitEvidence({
+              attemptId,
+              questionIds,
+              signal,
+              assertActive: () => {
+                if (aborted()) throw new Error("作答已切换");
+              },
+              ...(ctx.missingConfirmed !== null
+                ? { allowMissing: ctx.missingConfirmed }
+                : {}),
+            });
+          };
+          return Promise.all([prepare(), inkPromise]);
+        }, "同步作答和草稿");
       } catch (err) {
         // 弹层已关（中止）：错误相也不落地（cancel 已复位 idle）
-        if (submitAbortedRef.current) return { kind: "aborted" };
+        if (aborted()) return { kind: "aborted" };
         // 阻止性失败（head 拉取失败等）：如实提示，并清空缺稿确认集——
         // 下轮普通确认重新权威判定，缺稿题重新显式确认
         ctx.clearMissingConfirmed();
@@ -103,13 +201,12 @@ export function useAttemptSubmitFlow({
               : "草稿状态获取失败，请检查网络后重试",
         };
       }
-      if (submitAbortedRef.current) return { kind: "aborted" }; // 弹层已关：状态已由 cancel 复位
-      const inkResults = await inkPromise;
-      if (submitAbortedRef.current) return { kind: "aborted" };
+      if (aborted()) return { kind: "aborted" };
+      if (!savedOnly) await draftStore.flush(attemptId);
+      if (aborted()) return { kind: "aborted" };
       // ink 失败早退阻止交卷（prep 结果弃用——副作用无害）：收起弹层
       // 走底栏提示（状态迁移与 submitted 同——关弹层回 idle）
       const hasPendingInk =
-        timed &&
         !savedOnly &&
         draftStore
           .peekUnsyncedInkIds(attemptId)
@@ -123,54 +220,39 @@ export function useAttemptSubmitFlow({
         // problems 必非空——declarations=null 由 problems.length>0 推导（不变量）
         return { kind: "problems", problems: prep.problems };
       }
-      // T2.10：submit 前收尾事件（尽力 flush；失败不阻塞交卷，宽松口径兜底迟到事件）
-      await finalizeEvents();
-      if (submitAbortedRef.current) return { kind: "aborted" };
       if (!savedOnly && lockedRef.current)
         return {
           kind: "error",
           message: "宽限已过，请重新确认按已保存作答交卷",
         };
-      // 两阶段 busy 分离：准备完毕、进入提交——不再显示「正在同步草稿」
-      ctx.enterSubmitting();
-      const declarations = prep.declarations;
-      await new Promise<void>((settle) => {
-        submit.mutate(
-          {
-            revisions,
-            evidence: declarations,
-            ...(savedOnly ? { confirmedSavedAnswers: true } : {}),
-          },
-          {
-            onSuccess: () => {
-              // T6R.20 审查修复 2：标注 seal 在**交卷不可逆点之后**补调——失败
-              // 非阻断（交卷已成事实不回滚），警示置位由结果视图横幅呈现；
-              // 服务端读路径懒补封兜底最终一致（getAnnotationView/
-              // assembleAnnotationPairs 入口）。seal 幂等（409 重交安全）。
-              void sealAttemptAnnotationsApi(attemptId).catch(() => {
-                onAnnotationSealFailed();
-              });
-            },
-            onSettled: () => settle(),
-          },
-        );
-      });
-      return { kind: "submitted" };
+      // 学情队列自行落盘和补传，作答证据完成后直接提交。
+      void finalizeEvents().catch(() => {});
+      return send(
+        ctx,
+        {
+          revisions: submittedRevisions,
+          evidence: prep.declarations,
+          ...(savedOnly ? { confirmedSavedAnswers: true } : {}),
+        },
+        aborted,
+      );
     },
     [
       attemptId,
       finalizeEvents,
       flushAnswers,
       inkControllers,
-      onAnnotationSealFailed,
       questionIds,
       recoveryReady,
       revisions,
       savedOnly,
-      submit,
+      send,
+      submit.verificationRequired,
       syncDraft,
-      timed,
     ],
   );
-  return { inkFlushError, runSubmit, submit, submitAbortedRef };
+  const submitError = submit.isError
+    ? requestErrorMessage(submit.error, "交卷失败，请稍后重试")
+    : null;
+  return { inkFlushError, runSubmit, submit, submitAbortedRef, submitError };
 }

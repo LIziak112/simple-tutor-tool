@@ -3,21 +3,23 @@ import type {
   AiPolicyResolution,
   AiTeachingMode,
 } from "@tutor/contract";
-import { DEFAULT_AI_TEACHER_MODE } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
+import { studentAiDomainOf } from "../../auth/student-ai-domain.ts";
 import type { Db } from "../../db/client.ts";
 import type { Attempt, ResponseRow } from "../../db/schema.ts";
 import { responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import {
-  attemptTeacherId,
   lessonQuestionSubmitted,
+  requireOwnAttempt,
   requireUsableAttempt,
 } from "../attempt-service.ts";
 import {
+  assertDraftCourseVisible,
   isPerQuestionV1Attempt,
   practiceProtocolOf,
 } from "../practice-workflow-wiring.ts";
+import { snapshotOfRow } from "../snapshot.ts";
 
 /**
  * SAI-04 统一教学策略裁决（B02）：唯一 AI 权限口径，创建、领取、回信交付、
@@ -218,6 +220,20 @@ export interface AttemptQuestionAiPolicy {
   responseId: string;
 }
 
+/** 作答可用性与账号有效性由逐题及整体复盘共用。 */
+export function requireStudentAiAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+) {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  const domain = studentAiDomainOf(db, studentId);
+  if (domain === null) {
+    throw new HttpError(403, "AI_POLICY_DISABLED", "当前无法使用 AI 伴学");
+  }
+  return { attempt, teacherId: domain.teacherId };
+}
+
 /**
  * 学生侧 AI 权限统一裁决：归属/可用性（requireUsableAttempt，含作废/课程失权/
  * 懒冻结）→ 冻结题绑定与完成态（questionPhaseOf）→ 三层配置合并
@@ -227,8 +243,6 @@ export interface AttemptQuestionAiPolicy {
  * 配置来源由 configSource 注入（SAI-05 前以夹具实现）；assignmentMode 仅
  * assignment 来源读作业覆盖（attempt.assignmentId，不接受客户端指定），
  * course / wrong / lesson 恒按 inherit（无作业配置，需求 §3.1）。
- * 无教师域异常学生行：教师默认回落 DEFAULT_AI_TEACHER_MODE（无配置=开放伴学，
- * 与 D9 防御口径同精神——该形态回填后不应存在，不按关闭侧处理）。
  */
 export function resolveAttemptQuestionAiPolicy(
   db: Db,
@@ -236,15 +250,17 @@ export function resolveAttemptQuestionAiPolicy(
   attemptId: string,
   questionId: string,
   configSource: AiPolicyConfigSource,
+  options: { readonly frozenOnly?: boolean } = {},
 ): AttemptQuestionAiPolicy {
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  const { attempt, teacherId } = options.frozenOnly
+    ? requireFrozenStudentAiAttempt(db, studentId, attemptId)
+    : requireStudentAiAttempt(db, studentId, attemptId);
   const response = requireAttemptResponse(db, attempt.id, questionId);
+  if (options.frozenOnly && snapshotOfRow(response) === null) {
+    throw new HttpError(404, "QUESTION_NOT_FOUND", "题目快照不可用");
+  }
   const completed = phaseOfRows(attempt, response) === "completed";
-  const teacherId = attemptTeacherId(db, attempt);
-  const teacherDefault =
-    teacherId === null
-      ? DEFAULT_AI_TEACHER_MODE
-      : configSource.teacherDefaultMode(db, teacherId);
+  const teacherDefault = configSource.teacherDefaultMode(db, teacherId);
   const studentMode = configSource.studentOverrideMode(db, attempt.studentId);
   const assignmentMode =
     attempt.sourceType === "assignment" && attempt.assignmentId !== null
@@ -257,4 +273,22 @@ export function resolveAttemptQuestionAiPolicy(
     completed,
   });
   return { resolution, completed, attempt, responseId: response.id };
+}
+
+function requireFrozenStudentAiAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+) {
+  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const domain = studentAiDomainOf(db, studentId);
+  if (
+    domain === null ||
+    attempt.frozenAt === null ||
+    attempt.abandonedAt !== null
+  ) {
+    throw new HttpError(403, "AI_POLICY_DISABLED", "当前无法使用 AI 伴学");
+  }
+  assertDraftCourseVisible(db, studentId, attempt);
+  return { attempt, teacherId: domain.teacherId };
 }

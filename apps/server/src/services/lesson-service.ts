@@ -5,6 +5,7 @@ import type {
   HintOpenedEntry,
   LessonBlock,
   LessonLandingData,
+  LessonRestartRequest,
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
@@ -12,6 +13,7 @@ import type {
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
 import { and, desc, eq, isNull } from "drizzle-orm";
+import { z } from "zod";
 import type { Db } from "../db/client";
 import { type Attempt, attempts, questions } from "../db/schema";
 import { HttpError } from "../lib/http-error";
@@ -24,16 +26,18 @@ import {
   attemptEnabledCapabilities,
   attemptResponseRows,
   attemptSummaryOf,
-  freezeInputsOfAttempt,
+  freezeInputsOfNewAttempt,
   insertFrozenResponses,
   lessonLiveSummaryOf,
   lessonQuestionSubmitted,
   materialSlotOrderOf,
   newDraftAttempt,
   publicOfSnapshot,
+  requireUsableAttempt,
   resultQuestionOf,
   studentFacingResultOf,
 } from "./attempt-service";
+import { createOnce } from "./create-receipt";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
 import { pickEmbeddedUnits } from "./lesson-embedded";
@@ -140,7 +144,7 @@ function embeddedUnitOf(
 
 /**
  * 新建讲练卷（事务内调用）：行字面量复用 newDraftAttempt（四来源唯一处），
- * 题目 = 嵌入单元 live 题（freezeInputsOfAttempt 域内取题）逐行冻结
+ * 题目 = 嵌入单元 live 题（freezeInputsOfNewAttempt 域内取题）逐行冻结
  * （insertFrozenResponses）。unitId = 嵌入单元 id；零题讲练页无嵌入单元时
  * 落讲义 id 非空占位——契约 lesson 不变式要求 unitId 非空，该卷无题目行、
  * unitId 无功能消费方（域内题按 unitId 查询自然为空）。
@@ -169,7 +173,7 @@ function createLessonAttempt(
   });
   // 冻结输入的读走外层 db（better-sqlite3 同连接同步执行，事务内读取与写入
   // 口径一致，startCourseAttempt 同款）；写走 tx 与 attempt 行同事务落库
-  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
     db,
     attempt,
   );
@@ -221,9 +225,11 @@ function buildLessonStartData(
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   const released: Record<string, AttemptResultQuestion> = {};
   const rows = attemptResponseRows(db, attempt.id);
+  const validQuestionIds = new Set<string>();
   for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
+    validQuestionIds.add(row.questionId);
     questions.push(
       publicOfSnapshot(snapshot, row.id, {
         materialSlots,
@@ -267,7 +273,7 @@ function buildLessonStartData(
       // 布尔形态（ScoreSummaryRow，不重复搬运快照列语义；QM-12 起补自评
       // 三列——汇总核心的有效判定需要）
       rows.map((row) => ({
-        hasSnapshot: row.questionSnapshotJson !== null,
+        hasSnapshot: validQuestionIds.has(row.questionId),
         answerJson: row.answerJson,
         submittedAt: row.submittedAt,
         autoCorrect: row.autoCorrect,
@@ -381,6 +387,7 @@ export function restartLessonAttempt(
   db: Db,
   studentId: string,
   lectureId: string,
+  request?: LessonRestartRequest,
 ): LessonStartData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -388,26 +395,46 @@ export function restartLessonAttempt(
     lectureId,
   );
 
-  const attempt = db.transaction((tx) => {
-    const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
-    if (latest === undefined) {
-      throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
-    }
-    if (latest.status === "draft") {
-      tx.update(attempts)
-        .set({ abandonedAt: new Date().toISOString() })
-        .where(eq(attempts.id, latest.id))
-        .run();
-    }
-    return createLessonAttempt(tx, db, {
-      studentId,
-      courseId: course.id,
-      lectureId: lecture.id,
-      unitId,
-      attemptNo: latest.attemptNo + 1,
+  const create = (store: Db) =>
+    store.transaction((tx) => {
+      const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
+      if (latest === undefined) {
+        throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
+      }
+      if (request && latest.id !== request.expectedAttemptId)
+        throw new HttpError(
+          409,
+          "LESSON_RESTART_STALE",
+          "讲练已在其他页面重新开始，请刷新后确认",
+        );
+      if (latest.status === "draft") {
+        tx.update(attempts)
+          .set({ abandonedAt: new Date().toISOString() })
+          .where(eq(attempts.id, latest.id))
+          .run();
+      }
+      const attempt = createLessonAttempt(tx, store, {
+        studentId,
+        courseId: course.id,
+        lectureId: lecture.id,
+        unitId,
+        attemptNo: latest.attemptNo + 1,
+      });
+      recordAttemptStartEvent(store, studentId, attempt.id);
+      return attempt.id;
     });
-  });
-  recordAttemptStartEvent(db, studentId, attempt.id);
+  const id = request
+    ? createOnce(
+        db,
+        "lesson-restart",
+        studentId,
+        request.operationId,
+        [lectureId, request.expectedAttemptId],
+        z.uuid(),
+        create,
+      )
+    : create(db);
+  const attempt = requireUsableAttempt(db, studentId, id);
   return buildLessonStartData(db, lecture, course, topic, attempt);
 }
 

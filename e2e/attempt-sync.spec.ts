@@ -13,6 +13,72 @@ import {
   uniqueSuffix,
 } from "./helpers";
 
+test("同一浏览器两个标签页的离线答案都从 IndexedDB 恢复", {
+  tag: ["@student"],
+}, async ({ request, browser }) => {
+  await teacherApiLogin(request);
+  const name = `多标签保稿${uniqueSuffix()}`;
+  const courseId = await createCourseViaApi(request, name);
+  const imported = await request.post("/api/teacher/import/commit", {
+    data: {
+      markdown: choiceJudgePracticeMarkdown(name),
+      filename: `${name}.md`,
+      courseId,
+    },
+  });
+  expect(imported.ok()).toBe(true);
+  await setCourseItemVisible(request, courseId, name, true);
+  await createStudentViaApi(request, name, name);
+  const student = await getStudentViaApi(request, name);
+  await addCourseMemberViaApi(request, courseId, student.id);
+  const context = await browser.newContext();
+  try {
+    const a = await context.newPage();
+    await a.goto(`/s/${student.linkToken}`);
+    await a.waitForURL("**/s/home");
+    const attemptId = await openChoicePractice(a, courseId, name, name);
+    const b = await context.newPage();
+    await b.goto(`/s/attempts/${attemptId}`);
+    await expect(a.getByTestId("draft-status")).toHaveText("全部已保存");
+    await expect(b.getByTestId("draft-status")).toHaveText("全部已保存");
+    // 保持详情读取可用，阻断答案上行，让两个标签页只能写本机。
+    await context.route("**/answers/**", (route) => route.abort());
+    const didAbortA = a.waitForEvent("requestfailed", (req) =>
+      req.url().includes("/answers/"),
+    );
+    await a
+      .locator('article[aria-label="第 1 题"]')
+      .getByText("对", { exact: true })
+      .click();
+    await didAbortA;
+    const didAbortB = b.waitForEvent("requestfailed", (req) =>
+      req.url().includes("/answers/"),
+    );
+    await b
+      .locator('article[aria-label="第 2 题"]')
+      .getByRole("radio", { name: "选项 B" })
+      .locator("xpath=ancestor::label[1]")
+      .click();
+    await didAbortB;
+    await a.close();
+    await b.close();
+    const reopened = await context.newPage();
+    await reopened.goto(`/s/attempts/${attemptId}`);
+    await expect(
+      reopened
+        .locator('article[aria-label="第 1 题"]')
+        .getByRole("radio", { name: "对", exact: true }),
+    ).toBeChecked();
+    await expect(
+      reopened
+        .locator('article[aria-label="第 2 题"]')
+        .getByRole("radio", { name: "选项 B" }),
+    ).toBeChecked();
+  } finally {
+    await context.close();
+  }
+});
+
 test(
   "两设备按题合并、同题裁决、离开设置后从云端恢复草稿与标画",
   { tag: ["@student"] },

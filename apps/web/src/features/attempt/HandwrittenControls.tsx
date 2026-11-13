@@ -50,6 +50,7 @@ import {
   draftStore,
   getDraftPersistenceState,
   getDraftSessionEpoch,
+  subscribeLocalDraftChoice,
 } from "./draft-store";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { useDraftSyncActions } from "./use-draft-sync";
@@ -234,6 +235,20 @@ export function HandwrittenControls({
   /** 上传 controller 存 ref（controller 对象每次渲染都是新引用） */
   const controllerRef = useRef(uploadController);
   controllerRef.current = uploadController;
+  useEffect(
+    () =>
+      subscribeLocalDraftChoice((scope, conflict) => {
+        if (
+          scope === attemptId &&
+          conflict.kind === "ink" &&
+          conflict.key === questionId
+        ) {
+          controllerRef.current.pause?.();
+          setRestoreRetry((value) => value + 1);
+        }
+      }),
+    [attemptId, questionId],
+  );
   usePwaUpdateGuard(
     () =>
       prepareDraftForPwaUpdate(attemptId, async () => {
@@ -304,10 +319,7 @@ export function HandwrittenControls({
     void (async () => {
       // 本地草稿与（可能失败的）服务端拉取并行；失败不阻塞答题
       const [initialLocalInk, fetched] = await Promise.all([
-        draftStore
-          .loadDraft(attemptId)
-          .then((record) => record?.inks[questionId] ?? null)
-          .catch(() => null),
+        draftStore.loadInkForEditor(attemptId, questionId).catch(() => null),
         fetchAttemptInkApi(attemptId, questionId).then(
           (doc: InkDoc | null) => doc,
           (): undefined => undefined,

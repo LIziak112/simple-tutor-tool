@@ -12,7 +12,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "seed:demo": "tsx scripts/seed-demo.ts"
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "storage:reclaim": "tsx scripts/reclaim-storage.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

@@ -1108,7 +1108,7 @@ describe("attemptAnswerSaveRequestSchema / attemptAnswerSaveDataSchema", () => {
     ).toBe(false);
   });
 
-  it("保存回执：questionId + changeCount（≥1）", () => {
+  it("保存回执允许零次学生改答，拒绝负数", () => {
     expect(
       attemptAnswerSaveDataSchema.parse({
         questionId: "练习四-1",
@@ -1119,6 +1119,12 @@ describe("attemptAnswerSaveRequestSchema / attemptAnswerSaveDataSchema", () => {
       attemptAnswerSaveDataSchema.safeParse({
         questionId: "练习四-1",
         changeCount: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      attemptAnswerSaveDataSchema.safeParse({
+        questionId: "练习四-1",
+        changeCount: -1,
       }).success,
     ).toBe(false);
   });

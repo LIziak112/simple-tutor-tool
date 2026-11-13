@@ -250,6 +250,7 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
       getAttemptDetail(db, studentId, attemptId, BEFORE_DUE),
     );
     expect(detail.answersReleased).toBe(false);
+    expect(detail.releaseCheckedAt).toBe(BEFORE_DUE);
     expect(detail.dueAt).toBe(DUE_AT);
     // scoreAuto 置 null 投影（库里保留 100，见上方前置断言）
     expect(detail.attempt.scoreAuto).toBeNull();
