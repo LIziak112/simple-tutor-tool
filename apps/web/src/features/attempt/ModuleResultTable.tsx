@@ -1,6 +1,6 @@
 import type { AttemptActivity, AttemptResultUnit } from "@tutor/contract";
 import { cn } from "cn";
-import { RotateCcw } from "lucide-react";
+import { ChevronDown, RotateCcw } from "lucide-react";
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { formatTimeLimit } from "./attempt-clock";
@@ -60,48 +60,58 @@ export function ModuleResultTable({
     <section
       data-testid="module-results"
       aria-label="按模块看结果"
-      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
+      className="min-w-0 rounded-xl border border-border bg-card text-card-foreground"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold">按模块看</h2>
-        <p className="text-xs text-muted-foreground">
-          用时为题内活动用时（口径 v1）；参考配额来自单元推荐时长，不是时钟
-        </p>
-      </div>
-      <div className="relative hidden w-0 min-w-full overflow-x-auto sm:block">
-        <table className="w-full min-w-[560px] text-sm tabular-nums">
-          <thead className="text-left text-xs text-muted-foreground">
-            <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium">
-              <th scope="col">模块</th>
-              <th scope="col">
-                {released ? "答对 / 作答 / 题数" : "作答 / 题数"}
-              </th>
-              <th scope="col">跳过</th>
-              {released && <th scope="col">不确定但答对</th>}
-              <th scope="col">活动用时</th>
-              {showQuota && <th scope="col">参考配额</th>}
-              {showActions && (
-                <th scope="col">
-                  <span className="sr-only">操作</span>
-                </th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
+      <details open className="group/module-results">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center rounded-xl px-4 py-3 focus-visible:outline-2 focus-visible:outline-ring sm:px-5 [&::-webkit-details-marker]:hidden">
+          <h2 className="flex w-full items-center justify-between gap-2 text-base font-semibold">
+            按模块看
+            <ChevronDown
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground group-open/module-results:rotate-180"
+            />
+          </h2>
+        </summary>
+        <div className="flex min-w-0 flex-col gap-3 px-4 pb-4 sm:px-5 sm:pb-5">
+          <p className="text-xs text-muted-foreground">
+            用时为题内活动用时（口径 v1）；参考配额来自单元推荐时长，不是时钟
+          </p>
+          <div className="relative hidden w-0 min-w-full overflow-x-auto sm:block">
+            <table className="w-full min-w-[560px] text-sm tabular-nums">
+              <thead className="text-left text-xs text-muted-foreground">
+                <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium">
+                  <th scope="col">模块</th>
+                  <th scope="col">
+                    {released ? "答对 / 作答 / 题数" : "作答 / 题数"}
+                  </th>
+                  <th scope="col">跳过</th>
+                  {released && <th scope="col">不确定但答对</th>}
+                  <th scope="col">活动用时</th>
+                  {showQuota && <th scope="col">参考配额</th>}
+                  {showActions && (
+                    <th scope="col">
+                      <span className="sr-only">操作</span>
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <ModuleRow key={row.unitId} row={row} {...shared} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul
+            data-testid="module-results-cards"
+            className="flex flex-col gap-2 sm:hidden"
+          >
             {rows.map((row) => (
-              <ModuleRow key={row.unitId} row={row} {...shared} />
+              <ModuleCard key={row.unitId} row={row} {...shared} />
             ))}
-          </tbody>
-        </table>
-      </div>
-      <ul
-        data-testid="module-results-cards"
-        className="flex flex-col gap-2 sm:hidden"
-      >
-        {rows.map((row) => (
-          <ModuleCard key={row.unitId} row={row} {...shared} />
-        ))}
-      </ul>
+          </ul>
+        </div>
+      </details>
     </section>
   );
 }
