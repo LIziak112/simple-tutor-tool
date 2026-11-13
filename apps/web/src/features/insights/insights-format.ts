@@ -57,14 +57,3 @@ export function formatPercent(rate: number | null): string {
   if (rate === null) return "—";
   return `${Math.round(rate * 100)}%`;
 }
-
-/** 秒 → 分钟粒度文本（"约 5 分钟"；不足 1 分钟按 1 分钟计，0 → "0 分钟"） */
-export function formatMinutes(sec: number): string {
-  if (sec <= 0) return "0 分钟";
-  return `约 ${Math.max(1, Math.round(sec / 60))} 分钟`;
-}
-
-/** 首次得分（0–100）→ 展示文本（"86 分"；null → "—"） */
-export function formatScore(score: number | null): string {
-  return score === null ? "—" : `${score} 分`;
-}

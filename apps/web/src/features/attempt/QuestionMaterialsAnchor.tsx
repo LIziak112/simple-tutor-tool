@@ -1,5 +1,5 @@
 import type { AttemptContextMaterial } from "@tutor/contract";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import type { GroupMaterialLayout } from "./group-material-layout-store";
 import { MaterialLayoutToggle } from "./MaterialLayoutToggle";
 import {
@@ -9,8 +9,8 @@ import {
 } from "./MaterialPanel";
 import { MaterialSplitHandle } from "./MaterialSplitHandle";
 import {
-  materialReadingOffsetOf,
-  useMaterialReadingPosition,
+  type MaterialJumpSignal,
+  useMaterialNavigation,
 } from "./material-reading-position";
 
 /**
@@ -69,7 +69,7 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   /** 显式跳题信号（AttemptSession jumpToQuestion 发出）：seq 变化且目标为
    * 本题时材料列平滑回顶——滚动侦测改写的当前题不回顶，跳到其他题本列
    * 不动（C 口径） */
-  jumpSignal?: { questionId: string; seq: number } | null | undefined;
+  jumpSignal?: MaterialJumpSignal | null | undefined;
 }) {
   const materialsRef = useRef<HTMLElement>(null);
   // 同材料多版本才逐版标注（QM-15 细项 4；单版本零徽标零视觉噪音）
@@ -79,37 +79,15 @@ export const QuestionMaterialsAnchor = memo(function QuestionMaterialsAnchor({
   );
   // 关联题列表稳定引用：MaterialPanel memo 浅比较不因每次渲染的新数组失效
   const associatedQuestionIds = useMemo(() => [questionId], [questionId]);
-  useMaterialReadingPosition(materialsRef, readingKey);
-
-  // reveal：滚入 + 恢复已读偏移 + 焦点落材料区（键盘可达；无组头回落目标）
-  useEffect(() => {
-    if (revealSignal === 0) return;
-    const element = materialsRef.current;
-    if (element === null) return;
-    element.scrollIntoView({ block: "start", behavior: "auto" });
-    const offset =
-      readingKey === undefined ? 0 : materialReadingOffsetOf(readingKey);
-    if (offset > 0) {
-      if (element.scrollHeight > element.clientHeight)
-        element.scrollTop = offset;
-      else window.scrollBy({ top: -offset, behavior: "auto" });
-    }
-    element.focus();
-  }, [revealSignal, readingKey]);
-
-  // 切题联动（2026-10-27 需求，C 口径修正）：只有显式跳题信号且目标为本题
-  // 时材料列平滑回顶——纯滚动切题不回顶，跳到其他题本列不动；不可滚动
-  // （stack 流式/材料短于视口）时为无害空操作
-  const lastJumpSeqRef = useRef(0);
-  useEffect(() => {
-    if (jumpSignal === null || jumpSignal === undefined) return;
-    if (jumpSignal.seq === lastJumpSeqRef.current) return;
-    lastJumpSeqRef.current = jumpSignal.seq;
-    if (jumpSignal.questionId !== questionId) return;
-    const node = materialsRef.current;
-    if (node !== null && node.scrollHeight > node.clientHeight)
-      node.scrollTo({ top: 0, behavior: "smooth" });
-  }, [jumpSignal, questionId]);
+  useMaterialNavigation({
+    elementRef: materialsRef,
+    hasMaterials: true,
+    hidden,
+    questionIds: associatedQuestionIds,
+    readingKey,
+    revealSignal,
+    jumpSignal,
+  });
 
   return (
     <li
