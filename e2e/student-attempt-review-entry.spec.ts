@@ -10,9 +10,9 @@ import {
 /**
  * 整卷复盘入口 / 报告阅读 / 求助记录分组（手机窄屏 390×844）全链路：
  * 交卷 → 结果页顶栏「整卷复盘」→ 确认（只建 1 条整卷任务、0 条逐题任务）→
- * 顶栏「整卷复盘 · 等待领取」→ 另行批量复盘两道错题 → 外部客户端经 MCP
- * 领取并写回报告 → 顶栏「查看整卷复盘报告」（未读）→ 全屏阅读器打开才记已读
- * → 系统返回 / 后退先关报告、留在结果页原位置 → 读过后顶栏入口收起成小按钮
+ * 下方卡片显示「等待领取」→ 另行批量复盘两道错题 → 外部客户端经 MCP
+ * 领取并写回报告 → 下方卡片提示报告未读→ 全屏阅读器打开才记已读
+ * → 系统返回 / 后退先关报告、留在结果页原位置 → 读过后顶栏入口仍在首行
  * → 从首页「求助记录」分清整卷复盘与批量复盘错题，并打开同一份报告（跨页
  * 落地：关闭留在结果页，后退回来源页）。
  */
@@ -208,7 +208,7 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
 
-      // —— ① 首次发起：顶栏主按钮带文字「整卷复盘」，窄屏独占一行 ——
+      // —— ① 首次发起：顶栏首行固定显示「整卷复盘」 ——
       const entry = page.locator("[data-attempt-review-entry]");
       await expect(entry).toHaveAttribute(
         "data-attempt-review-entry",
@@ -216,9 +216,49 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         { timeout: 15_000 },
       );
       await expect(entry).toHaveText("整卷复盘");
-      const entryBox = await entry.boundingBox();
-      expect(entryBox?.width ?? 0).toBeGreaterThan(300);
-      expect(entryBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+      const header = page.locator('[data-slot="attempt-header"]');
+      const more = header.getByRole("button", { name: "更多操作" });
+      const hint = page.getByTestId("attempt-review-hint");
+      const assertFirstRow = async () => {
+        const entryBox = await entry.boundingBox();
+        const backBox = await header
+          .getByRole("button", { name: /^返回/u })
+          .boundingBox();
+        if (entryBox === null || backBox === null)
+          throw new Error("顶栏入口不可见");
+        expect(Math.abs(entryBox.y - backBox.y)).toBeLessThan(2);
+        expect(entryBox.height).toBeGreaterThanOrEqual(44);
+        await expect(entry).toHaveText("整卷复盘");
+      };
+      await assertFirstRow();
+      const firstHeaderHeight = (await headerHeights()).actual;
+      await more.press("ArrowDown");
+      await expect(
+        page.getByRole("menuitem", { name: "批量复盘" }),
+      ).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(more).toBeFocused();
+      for (const [name, dialogName] of [
+        ["批量复盘", /批量|复盘队列/u],
+        ["求助记录", "求助记录"],
+        ["随手记", "随手记"],
+      ] as const) {
+        await more.click();
+        await page.getByRole("menuitem", { name }).click();
+        const secondaryDialog = page.getByRole("dialog", { name: dialogName });
+        await expect(secondaryDialog).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(secondaryDialog).toBeHidden();
+        await expect(more).toBeFocused();
+      }
+      for (const width of [320, 390, 768, 1280]) {
+        await page.setViewportSize({ width, height: PHONE.viewport.height });
+        await assertFirstRow();
+        expect(
+          await header.evaluate((node) => node.scrollWidth <= node.clientWidth),
+        ).toBe(true);
+      }
+      await page.setViewportSize(PHONE.viewport);
       await shot("1-顶栏-首次发起");
 
       await entry.click();
@@ -240,11 +280,12 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       ).json()) as { data: { tasks: unknown[] } };
       expect(perQuestion.data.tasks).toHaveLength(0);
 
-      // —— ② 等待领取：关面板后顶栏写明状态 ——
+      // —— ② 等待领取：关面板后下方卡片写明状态 ——
       await page.keyboard.press("Escape");
       await expect(panel).toBeHidden();
       await expect(page).not.toHaveURL(/aiReview=/u);
-      await expect(entry).toHaveText("整卷复盘 · 等待领取");
+      await expect(hint).toContainText("等待领取（覆盖 3 题）");
+      await expect(entry).toHaveText("整卷复盘");
       await shot("3-顶栏-等待领取");
 
       // —— 另行批量复盘两道错题（学生单独确认的另一件事）——
@@ -270,8 +311,10 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         { taskId },
       );
       expect(claim.claimed).toBe(true);
-      await expect(entry).toHaveText("整卷复盘 · 处理中", { timeout: 20_000 });
-      await entry.click();
+      await expect(hint).toContainText("处理中（覆盖 3 题）", {
+        timeout: 20_000,
+      });
+      await hint.getByRole("button", { name: "查看进度" }).click();
       const progress = page.getByRole("dialog", {
         name: "整卷复盘",
         exact: true,
@@ -334,19 +377,16 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         "report",
         { timeout: 20_000 },
       );
-      await expect(entry).toContainText("查看整卷复盘报告");
-      await expect(entry).toContainText("新");
+      await assertFirstRow();
+      await expect(hint).toContainText("整卷复盘报告已生成，还没看过");
       expect((await reviewTasksOf(attemptId))[0]?.openedAt).toBeNull();
-      // 未读：仍是第二行的整行主按钮；定位偏移变量与顶栏实际高度一致
-      await expect(entry).not.toHaveAttribute("data-attempt-header-compact");
-      expect((await entry.boundingBox())?.width ?? 0).toBeGreaterThan(300);
       await expect
         .poll(async () => {
           const heights = await headerHeights();
           return heights.variable - heights.actual;
         })
         .toBe(0);
-      const expandedHeaderHeight = (await headerHeights()).actual;
+      expect((await headerHeights()).actual).toBe(firstHeaderHeight);
       await shot("4-顶栏-报告已出未读");
 
       // 往下滚一段再打开（顶栏吸顶，入口一直够得着）：关闭后要回到这个位置
@@ -398,78 +438,13 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
         page.locator(`[data-review-question="${questionIds[1]}"]`),
       ).toBeInViewport();
 
-      // —— ④ 已读后：入口还在，但收起成图标组下方的小按钮，不再占一整行 ——
-      const assertCollapsed = async () => {
-        await expect(entry).toHaveAttribute(
-          "data-attempt-review-entry",
-          "report",
-          { timeout: 15_000 },
-        );
-        await expect(entry).toHaveAttribute("data-attempt-header-compact", "");
-        // 仍叫得出名字：可访问名称完整，手机上有可见文字「复盘报告」
-        await expect(entry).toHaveAccessibleName("查看整卷复盘报告");
-        await expect(
-          entry.getByText("复盘报告", { exact: true }),
-        ).toBeVisible();
-        const box = await entry.boundingBox();
-        const memoBox = await page
-          .locator('[data-slot="attempt-header"]')
-          .getByRole("button", { name: /^随手记/u })
-          .boundingBox();
-        if (box === null || memoBox === null)
-          throw new Error("顶栏入口或随手记按钮不可见");
-        // 小按钮：不占整行；在图标组下方、与它右对齐
-        expect(box.width).toBeLessThan(140);
-        expect(box.y).toBeGreaterThanOrEqual(memoBox.y + memoBox.height);
-        expect(
-          Math.abs(box.x + box.width - (memoBox.x + memoBox.width)),
-        ).toBeLessThan(2);
-        // 点击区域上下外扩到 44px：按钮上沿、下沿外 5px 处点到的仍是它
-        const hitsEntry = (y: number) =>
-          page.evaluate(
-            ([x, pointY]) =>
-              document
-                .elementFromPoint(x ?? 0, pointY ?? 0)
-                ?.closest("[data-attempt-review-entry]") !== null,
-            [box.x + box.width / 2, y],
-          );
-        expect(box.height).toBeGreaterThanOrEqual(32);
-        expect(await hitsEntry(box.y - 5)).toBe(true);
-        expect(await hitsEntry(box.y + box.height + 5)).toBe(true);
-        // 顶栏变矮，定位偏移变量跟着变
-        await expect
-          .poll(async () => {
-            const heights = await headerHeights();
-            return heights.variable - heights.actual;
-          })
-          .toBe(0);
-        expect((await headerHeights()).actual).toBeLessThan(
-          expandedHeaderHeight,
-        );
-      };
-      // 不刷新：读完关掉报告，顶栏当场收起
-      await assertCollapsed();
-      await shot("6-顶栏-已读后收起");
-      // 刷新后再回来：还是收起的入口，点开仍是这份报告
+      // —— ④ 已读与刷新后：入口位置和顶栏高度稳定，仍可打开报告 ——
+      await expect(hint).toContainText("整卷复盘报告已看过");
+      await assertFirstRow();
+      expect((await headerHeights()).actual).toBe(firstHeaderHeight);
+      await shot("6-顶栏-报告已读");
       await page.reload();
-      await assertCollapsed();
-      // 宽屏（≥ 1024px）不受收起影响：仍是第一行里带完整文字的 44px 按钮
-      await page.setViewportSize({ width: 1280, height: 800 });
-      await expect(
-        entry.getByText("查看整卷复盘报告", { exact: true }),
-      ).toBeVisible();
-      await expect(entry.getByText("复盘报告", { exact: true })).toBeHidden();
-      const wideBox = await entry.boundingBox();
-      const wideMemoBox = await page
-        .locator('[data-slot="attempt-header"]')
-        .getByRole("button", { name: /^随手记/u })
-        .boundingBox();
-      expect(wideBox?.height).toBe(44);
-      expect(
-        Math.abs((wideBox?.y ?? 999) - (wideMemoBox?.y ?? 0)),
-      ).toBeLessThan(2);
-      await page.setViewportSize(PHONE.viewport);
-      await assertCollapsed();
+      await assertFirstRow();
       await entry.click();
       await expect(reader).toContainText("三题里错了两题");
       await page.keyboard.press("Escape");
@@ -484,7 +459,7 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       await page.goForward();
       await expect(page).toHaveURL(new RegExp(`/s/attempts/${attemptId}`, "u"));
       await expect(page).not.toHaveURL(/aiReview=/u);
-      await expect(entry).toHaveAttribute("data-attempt-header-compact", "");
+      await assertFirstRow();
       await expect(reader).toBeHidden();
 
       // —— 求助记录（从首页进）：分清整卷复盘 / 批量复盘错题，同批两题一张卡 ——

@@ -142,18 +142,11 @@ export function attemptReviewEntryStateOf(
   }
 }
 
-/** 入口按钮呈现：文字、主次、点击目标（面板或某份报告）、未读与警示标记 */
+/** 讲练入口文案与共用的点击目标。 */
 export interface AttemptReviewEntryView {
   readonly label: string;
-  readonly tone: "primary" | "outline";
   readonly target: string;
   readonly unread: boolean;
-  readonly attention: boolean;
-  /**
-   * 结果页顶栏在窄屏是否收起为紧凑形态：只有已读的报告收起（入口仍在，不再
-   * 占一整行）。再发起一轮、或新报告未读时状态变了，自然重新展开。
-   */
-  readonly compact: boolean;
 }
 
 export function attemptReviewEntryViewOf(
@@ -162,36 +155,28 @@ export function attemptReviewEntryViewOf(
   const panel = {
     target: ATTEMPT_REVIEW_PANEL_TARGET,
     unread: false,
-    compact: false,
   };
   switch (state.kind) {
     case "unavailable":
       return null;
     case "launch":
-      return { ...panel, label: "整卷复盘", tone: "primary", attention: false };
+      return { ...panel, label: "整卷复盘" };
     case "waiting":
     case "processing":
       return {
         ...panel,
         label: `整卷复盘 · ${ATTEMPT_REVIEW_STATUS_LABEL[state.task.status]}`,
-        tone: "outline",
-        attention: false,
       };
     case "attention":
       return {
         ...panel,
         label: "整卷复盘 · 需处理",
-        tone: "outline",
-        attention: true,
       };
     case "report":
       return {
         label: "查看整卷复盘报告",
-        tone: state.unread ? "primary" : "outline",
         target: state.task.id,
         unread: state.unread,
-        attention: false,
-        compact: !state.unread,
       };
   }
 }

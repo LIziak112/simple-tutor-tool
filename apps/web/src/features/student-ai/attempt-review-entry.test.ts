@@ -59,42 +59,34 @@ describe("整卷复盘入口状态", () => {
     expect(viewOf(undefined)).toBeNull();
   });
 
-  it("首次发起：实心主按钮「整卷复盘」，打开发起面板", () => {
+  it("首次发起：打开发起面板", () => {
     expect(viewOf(undefined, COUNTS)).toEqual({
       label: "整卷复盘",
-      tone: "primary",
       target: ATTEMPT_REVIEW_PANEL_TARGET,
       unread: false,
-      attention: false,
-      compact: false,
     });
   });
 
   it("等待领取 / 处理中：按钮文字直接报进度，点开只看进度面板", () => {
     expect(viewOf(taskOf({ status: "created" }))).toMatchObject({
       label: "整卷复盘 · 等待领取",
-      tone: "outline",
       target: ATTEMPT_REVIEW_PANEL_TARGET,
     });
     expect(viewOf(taskOf({ status: "claimed" }))).toMatchObject({
       label: "整卷复盘 · 处理中",
-      tone: "outline",
       target: ATTEMPT_REVIEW_PANEL_TARGET,
     });
   });
 
-  it("报告已出未读：实心「查看整卷复盘报告」带未读标记，直达这份报告", () => {
+  it("报告已出未读：直达报告并标记未读", () => {
     expect(viewOf(taskOf({ status: "replied", hasResult: true }))).toEqual({
       label: "查看整卷复盘报告",
-      tone: "primary",
       target: TASK_ID,
       unread: true,
-      attention: false,
-      compact: false,
     });
   });
 
-  it("已读后再回来：入口仍在、名称不变、降为描边，仍打开同一份报告；窄屏顶栏收起为紧凑形态", () => {
+  it("已读后仍打开同一份报告", () => {
     expect(
       viewOf(
         taskOf({
@@ -105,23 +97,19 @@ describe("整卷复盘入口状态", () => {
       ),
     ).toEqual({
       label: "查看整卷复盘报告",
-      tone: "outline",
       target: TASK_ID,
       unread: false,
-      attention: false,
-      compact: true,
     });
   });
 
-  it("只有已读报告收起：再发起一轮、或新报告未读时重新展开成整行", () => {
+  it("存在旧报告时，入口优先打开最新任务", () => {
     const read = taskOf({
       status: "replied",
       hasResult: true,
       openedAt: "2026-11-12T18:00:00.000Z",
       updatedAt: "2026-11-12T17:30:00.000Z",
     });
-    expect(viewOf(pickAttemptReviewTask([read]))?.compact).toBe(true);
-    // 再发起一轮：新任务在途（等待领取 → 处理中）→ 展开
+    // 再发起一轮：新任务在途（等待领取 → 处理中）
     for (const status of ["created", "claimed"] as const) {
       const next = taskOf({
         id: "33333333-3333-4333-8333-333333333333",
@@ -130,10 +118,9 @@ describe("整卷复盘入口状态", () => {
       });
       expect(viewOf(pickAttemptReviewTask([read, next]))).toMatchObject({
         target: ATTEMPT_REVIEW_PANEL_TARGET,
-        compact: false,
       });
     }
-    // 新报告出来（未读）→ 展开，并指向新报告
+    // 新报告出来（未读），并指向新报告
     const fresh = taskOf({
       id: "33333333-3333-4333-8333-333333333333",
       status: "replied",
@@ -144,7 +131,6 @@ describe("整卷复盘入口状态", () => {
     expect(viewOf(pickAttemptReviewTask([read, fresh]))).toMatchObject({
       target: fresh.id,
       unread: true,
-      compact: false,
     });
   });
 
@@ -152,11 +138,8 @@ describe("整卷复盘入口状态", () => {
     for (const status of ["paused", "failed"] as const) {
       expect(viewOf(taskOf({ status }))).toEqual({
         label: "整卷复盘 · 需处理",
-        tone: "outline",
         target: ATTEMPT_REVIEW_PANEL_TARGET,
         unread: false,
-        attention: true,
-        compact: false,
       });
     }
   });
