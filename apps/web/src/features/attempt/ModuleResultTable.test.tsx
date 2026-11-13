@@ -207,6 +207,24 @@ describe("isRetrainable：与服务端错题本「已判定轮」谓词同口径
 });
 
 describe("按模块看结果：表格与窄屏卡片", () => {
+  it("默认展开，点击标题可收起并再次展开模块结果", () => {
+    render(<ModuleResultTable units={[UNIT_A]} released activity={ACTIVITY} />);
+    const section = screen.getByTestId("module-results");
+    const toggle = within(section).getByText("按模块看", { exact: true });
+    const disclosure = toggle.closest("details");
+    expect(disclosure).toHaveAttribute("open");
+
+    fireEvent.click(toggle);
+    expect(disclosure).not.toHaveAttribute("open");
+
+    fireEvent.click(toggle);
+    expect(disclosure).toHaveAttribute("open");
+    expect(within(section).getByRole("table")).toBeInTheDocument();
+    expect(
+      within(section).getByTestId("module-results-cards"),
+    ).toBeInTheDocument();
+  });
+
   it("多模块：表格每模块一行，点模块名跳到该节；专项重练带模块名；卡片同口径", () => {
     const onStart = vi.fn();
     const scrollIntoView = vi.fn();

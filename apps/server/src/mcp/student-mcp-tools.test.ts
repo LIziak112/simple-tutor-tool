@@ -7,13 +7,16 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import {
   aiAttemptReviewCreateOkSchema,
+  aiAttemptReviewDetailOkSchema,
   aiAttemptReviewMcpClaimViewSchema,
   aiAttemptReviewPreviewOkSchema,
+  aiAttemptReviewReportSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createApp } from "../app.ts";
 import { createStudentSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
@@ -357,6 +360,39 @@ it("学生 MCP 原子逐题提交，失败保稿、幂等且不泄露参考答�
   }
 });
 
+/** 创建已交卷且允许领取的整卷复盘任务。 */
+async function createReviewTask(env: ToolsEnv) {
+  env.db
+    .update(attempts)
+    .set({ status: "submitted", submittedAt: NOW })
+    .where(eq(attempts.id, env.world.attemptId))
+    .run();
+  const previewRes = await env.app.request(
+    `/api/student/ai/attempt-reviews/preview?attemptId=${env.world.attemptId}`,
+    { headers: { cookie: env.studentCookie } },
+  );
+  expect(previewRes.status).toBe(200);
+  const preview = aiAttemptReviewPreviewOkSchema.parse(
+    await previewRes.json(),
+  ).data;
+  const createdRes = await env.app.request("/api/student/ai/attempt-reviews", {
+    method: "POST",
+    headers: {
+      cookie: env.studentCookie,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      attemptId: env.world.attemptId,
+      mutationId: randomUUID(),
+      expectedPreviewVersion: preview.opaquePreviewVersion,
+      purpose: "复盘",
+      channel: "mcp",
+    }),
+  });
+  expect(createdRes.status).toBe(201);
+  return aiAttemptReviewCreateOkSchema.parse(await createdRes.json()).data.task;
+}
+
 /** callTool + 取第一段 text 解析 JSON；isError 时返回解析后的错误对象 */
 async function callJson(
   client: Client,
@@ -445,39 +481,7 @@ describe("SAI-26 领取与写回竞争", () => {
   });
   it("整体复盘真实 MCP 领取含全部选项，作答作废后拒绝报告交付", async () => {
     const env = await makeEnv();
-    env.db
-      .update(attempts)
-      .set({ status: "submitted", submittedAt: NOW })
-      .where(eq(attempts.id, env.world.attemptId))
-      .run();
-    const previewRes = await env.app.request(
-      `/api/student/ai/attempt-reviews/preview?attemptId=${env.world.attemptId}`,
-      { headers: { cookie: env.studentCookie } },
-    );
-    expect(previewRes.status).toBe(200);
-    const preview = aiAttemptReviewPreviewOkSchema.parse(
-      await previewRes.json(),
-    ).data;
-    const createdRes = await env.app.request(
-      "/api/student/ai/attempt-reviews",
-      {
-        method: "POST",
-        headers: {
-          cookie: env.studentCookie,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          attemptId: env.world.attemptId,
-          mutationId: randomUUID(),
-          expectedPreviewVersion: preview.opaquePreviewVersion,
-          purpose: "复盘",
-          channel: "mcp",
-        }),
-      },
-    );
-    expect(createdRes.status).toBe(201);
-    const task = aiAttemptReviewCreateOkSchema.parse(await createdRes.json())
-      .data.task;
+    const task = await createReviewTask(env);
     const client = await connectClient(env);
     try {
       const result = await callToolJson(client, "claim_attempt_review", {
@@ -524,6 +528,105 @@ describe("SAI-26 领取与写回竞争", () => {
       env.db.$client.close();
     }
   });
+
+  it("整体复盘共享报告契约，补齐版本后可用同一租约写回完整首稿", async () => {
+    const env = await makeEnv();
+    const task = await createReviewTask(env);
+    const client = await connectClient(env);
+    try {
+      const toolName = "submit_attempt_review_result";
+      const { tools } = await client.listTools();
+      const schema = z.toJSONSchema(aiAttemptReviewReportSchema, {
+        target: "draft-7",
+        io: "input",
+      });
+      const { $schema: _draft, ...reportInput } = schema;
+      expect(
+        tools.find((tool) => tool.name === toolName)?.inputSchema.properties
+          ?.report,
+      ).toEqual(reportInput);
+
+      const claim = await callToolJson(client, "claim_attempt_review", {
+        taskId: task.id,
+      });
+      expect(claim.isError).toBe(false);
+      const { claimed, ...payload } = claim.data;
+      expect(claimed).toBe(true);
+      const view = aiAttemptReviewMcpClaimViewSchema.parse(payload);
+      expect(view.promptMd).toContain(JSON.stringify(schema, null, 2));
+
+      const args = {
+        taskId: task.id,
+        leaseToken: view.lease.leaseToken,
+        generation: view.generation,
+        snapshotVersion: view.snapshotVersion,
+      };
+      const trainingItem = {
+        knowledgePoint: "成语辨析",
+        relatedQuestionNos: [1],
+        action: "圈出决定答案的题干线索",
+        priority: "high",
+        caveat: null,
+      };
+      const draft = {
+        overview: "题干里的贷款措施强调减轻企业负担。",
+        knowledgeFindings: [
+          {
+            statement:
+              "破茧成蝶强调蜕变；游刃有余强调熟练应对；脱颖而出强调优势显现；轻装上阵强调减轻负担后行动。优惠利率与无还本续贷都指向减负，故选轻装上阵。",
+            evidenceQuestionNos: [1],
+            basis: "ai_hypothesis",
+            confidence: "medium",
+          },
+        ],
+        errorPatterns: [],
+        performanceNotes: [],
+        trainingPlan: [trainingItem],
+        limitations: ["无法从最终答案还原选项取舍过程。"],
+      };
+      const submit = (report: unknown) =>
+        client.callTool({ name: toolName, arguments: { ...args, report } });
+
+      const missingVersion = await submit(draft);
+      expect(missingVersion.isError).toBe(true);
+      expect(missingVersion.content).toEqual([
+        expect.objectContaining({
+          text: expect.stringMatching(/expected 1 at report\.schemaVersion/),
+        }),
+      ]);
+      const report = { schemaVersion: 1, ...draft };
+      const badPriority = await submit({
+        ...report,
+        trainingPlan: [{ ...trainingItem, priority: 1 }],
+      });
+      expect(badPriority.isError).toBe(true);
+      expect(badPriority.content).toEqual([
+        expect.objectContaining({
+          text: expect.stringMatching(
+            /"high"\|"medium"\|"low" at report\.trainingPlan\[0\]\.priority/,
+          ),
+        }),
+      ]);
+
+      const reply = await callToolJson(client, toolName, { ...args, report });
+      expect(reply).toEqual({
+        isError: false,
+        data: { submitted: true, taskId: task.id, duplicate: false },
+      });
+      const detail = await env.app.request(
+        `/api/student/ai/attempt-reviews/${task.id}`,
+        { headers: { cookie: env.studentCookie } },
+      );
+      expect(detail.status).toBe(200);
+      expect(
+        aiAttemptReviewDetailOkSchema.parse(await detail.json()).data.result,
+      ).toEqual(report);
+    } finally {
+      await client.close();
+      env.db.$client.close();
+    }
+  });
+
   it("FIFO 两客户端各领一题；指定已领 taskId 重放 409；非持有者不能写回", async () => {
     const env = await makeEnv();
     const t1 = mkTask(env);

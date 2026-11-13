@@ -4,7 +4,6 @@ import {
   type AiBatchCreateItemResult,
   type AiChannel,
 } from "@tutor/contract";
-import { ListChecks } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,7 +39,7 @@ import { writeToClipboard } from "./use-ai-send-controller";
  *    项带服务端原因；重试只发失败项且换新幂等键（成功项不重复创建）。
  *
  * 「换页重进重新核对不凭旧筛选」由挂载方式保证：父组件以 {open && 面板}
- * 条件渲染（见 AiBatchReviewEntry），重开即按最新结果数据重建勾选。
+ * 条件渲染（见 ResultAiActions），重开即按最新结果数据重建勾选。
  */
 
 /** 面板可选题引用：判分由服务端结果投影携带，不在客户端判分 */
@@ -460,41 +459,5 @@ export function AiBatchReviewPanel(props: {
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-/**
- * 结果页入口（自持开合）：关闭即卸载面板内容，重开按最新结果数据重建
- * 勾选与通道（不凭旧筛选）；打开只展示与选择，不创建任务。
- */
-export function AiBatchReviewEntry(props: {
-  readonly attemptId: string;
-  readonly questions: readonly AiBatchReviewQuestion[];
-  readonly released: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button
-        type="button"
-        variant="ghost"
-        className="relative flex h-11 min-w-11 shrink-0 items-center gap-1.5 px-2"
-        aria-label="批量复盘"
-        title="批量复盘"
-        onClick={() => setOpen(true)}
-      >
-        <ListChecks aria-hidden className="size-5" />
-        <span className="hidden text-sm sm:inline">批量复盘</span>
-      </Button>
-      {open && (
-        <AiBatchReviewPanel
-          attemptId={props.attemptId}
-          questions={props.questions}
-          released={props.released}
-          open
-          onOpenChange={setOpen}
-        />
-      )}
-    </>
   );
 }

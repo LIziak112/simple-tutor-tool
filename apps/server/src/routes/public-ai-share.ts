@@ -12,10 +12,8 @@ import {
   loadAiTaskMaterialRows,
   readMaterialBytes,
 } from "../services/ai-companion/student-ai-materials.ts";
-import {
-  firstQuestionOf,
-  questionNoByQuestionOf,
-} from "../services/ai-companion/student-ai-queue.ts";
+import { questionNoByQuestionOf } from "../services/ai-companion/student-ai-origin-summary.ts";
+import { firstQuestionOf } from "../services/ai-companion/student-ai-queue.ts";
 import {
   type ResolvedShareTicket,
   recordShareTicketViewed,

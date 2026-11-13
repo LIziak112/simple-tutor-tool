@@ -31,6 +31,32 @@ export function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+/**
+ * 批量复盘逐题幂等键：`${批次键}:${attemptId}:${questionId}`。同批重放命中
+ * 既有任务；「求助记录」也按这条规则把逐题任务归回它的批次（批次不落列）。
+ */
+export function batchItemMutationIdOf(
+  batchMutationId: string,
+  item: { attemptId: string; questionId: string },
+): string {
+  return `${batchMutationId}:${item.attemptId}:${item.questionId}`;
+}
+
+/**
+ * 反解批次键：任务幂等键符合批量派生规则时返回批次键，否则 null（单题
+ * 求助）。批次键只在服务端内部使用，对外只给它的哈希。
+ */
+export function batchKeyOfTask(task: {
+  mutationId: string;
+  attemptId: string;
+  questionId: string;
+}): string | null {
+  const suffix = batchItemMutationIdOf("", task);
+  if (!task.mutationId.endsWith(suffix)) return null;
+  const batchKey = task.mutationId.slice(0, -suffix.length);
+  return batchKey.length > 0 ? batchKey : null;
+}
+
 /** 409 AI_STATE_CONFLICT（状态 CAS 不符等共享资源冲突） */
 export function conflict(message: string): HttpError {
   return new HttpError(409, "AI_STATE_CONFLICT", message);

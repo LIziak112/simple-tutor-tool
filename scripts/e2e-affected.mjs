@@ -84,6 +84,7 @@ export const SPEC_TAGS = {
   "student-ai-errors.spec.ts": ["@ai"],
   "student-ai-perf.spec.ts": ["@ai"],
   "student-ai-contexts.spec.ts": ["@ai"],
+  "student-attempt-review-entry.spec.ts": ["@ai"],
   // MCP
   "mcp-smoke.spec.ts": ["@mcp"],
   "student-mcp-loop.spec.ts": ["@mcp"],

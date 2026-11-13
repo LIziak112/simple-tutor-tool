@@ -11,10 +11,8 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import {
-  AiQueuePanel,
-  aiQueueTargetOf,
-} from "@/features/student-ai/AiQueuePanel";
+import { aiQueueTargetOf } from "@/features/student-ai/AiQueueItem";
+import { AiQueuePanel } from "@/features/student-ai/AiQueuePanel";
 import {
   studentAiQueueKey,
   studentAiQueueSummaryKey,
@@ -49,6 +47,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
     studentAiTaskActionApi: vi.fn(),
   };
 });
+
+// 整卷复盘段不是本文件的关注点：恒返回空列表（分组呈现见 ai-queue-groups.test）
+vi.mock("@/features/student-ai/attempt-review-api", () => ({
+  listStudentAiAttemptReviewQueueApi: vi.fn(async () => ({
+    tasks: [],
+    nextCursor: null,
+  })),
+}));
 
 const mockedSummary = vi.mocked(fetchStudentAiQueueSummaryApi);
 const mockedList = vi.mocked(listStudentAiQueueApi);
@@ -97,11 +103,13 @@ function originOf(
     attemptNo: 1,
     questionNo: 3,
     title: "有理数小练",
+    unitTitle: null,
     assignmentId: null,
     courseId: "12121212-1212-4121-8121-121212121212",
     unitId: "有理数小练",
     lectureId: null,
     attemptStatus: "draft",
+    batch: null,
     ...over,
   };
 }

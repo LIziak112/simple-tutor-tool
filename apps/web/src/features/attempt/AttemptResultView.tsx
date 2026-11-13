@@ -31,10 +31,9 @@ import {
   useQuestionProcess,
 } from "@/features/question-process/session";
 import { AiAttemptReviewHint } from "@/features/student-ai/AiAttemptReviewHint";
-import { AiAttemptReviewEntry } from "@/features/student-ai/AiAttemptReviewPanel";
-import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
-import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
-import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { AttemptReviewHost } from "@/features/student-ai/AttemptReviewHost";
+import { AttemptReviewTopBarEntry } from "@/features/student-ai/AttemptReviewTopBarEntry";
+import { useAttemptReviewOverlay } from "@/features/student-ai/attempt-review-overlay";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import { AssignmentRedoDialog } from "./AssignmentRedoDialog";
@@ -56,6 +55,7 @@ import { QuestionActivityBadge, ResultActivityLine } from "./QuestionActivity";
 export { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 
 import { PendingAttemptRelease } from "./PendingReleaseBanner";
+import { ResultAiActions, useResultAiCompanion } from "./ResultAiActions";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionList } from "./ResultQuestionList";
 import { ResultQuestionTools } from "./ResultQuestionTools";
@@ -593,36 +593,16 @@ export function AttemptResultView({
     resultMounts.beforeJump,
   );
   const indexOfQuestion = useMemo(
-    () => new Map(questionIds.map((id, i) => [id, i + 1] as const)),
+    () => new Map(questionIds.map((id, index) => [id, index + 1] as const)),
     [questionIds],
   );
-  const aiCompanion = useAiCompanionDock({
+  const attemptReview = useAttemptReviewOverlay();
+  const aiCompanion = useResultAiCompanion({
     attemptId: attempt.id,
-    questions: questionIds.map((id) => ({ id })),
-    isHandwritten: (questionId) => {
-      const question = flatQuestions.find(
-        (item) => item.questionId === questionId,
-      );
-      return question !== undefined
-        ? HANDWRITTEN_TYPES.has(question.snapshot.type)
-        : false;
-    },
-    surfaceOf: () => null,
-    flush: () => Promise.resolve(),
-    titleOf: (questionId) =>
-      `第 ${indexOfQuestion.get(questionId) ?? "？"} 题 · ${data.title}`,
-    labelOf: (questionId) =>
-      indexOfQuestion.has(questionId)
-        ? `第 ${indexOfQuestion.get(questionId)} 题`
-        : null,
+    title: data.title,
+    questions: flatQuestions,
     currentQuestionId: reviewLocation.currentId,
-    goToQuestion: async (id) => {
-      resultMounts.beforeJump(id);
-      return true;
-    },
-    editor: null,
-    materials: { annotation: false, paper: false },
-    triggerLabel: "AI 复盘",
+    beforeJump: resultMounts.beforeJump,
   });
   return (
     <ResultWorkspace
@@ -642,42 +622,28 @@ export function AttemptResultView({
               ? "返回讲练页"
               : "返回首页")
       }
+      primaryAction={
+        <AttemptReviewTopBarEntry
+          attemptId={attempt.id}
+          released={released}
+          onOpen={attemptReview.open}
+        />
+      }
       actions={
-        <>
-          <QuestionProcessControls process={questionProcess} />
-          {/* SAI-31 批量复盘入口：勾选只进面板，创建走一次确认（B16） */}
-          <AiBatchReviewEntry
-            attemptId={attempt.id}
-            questions={flatQuestions.map((question) => ({
-              questionId: question.questionId,
-              label: indexOfQuestion.has(question.questionId)
-                ? `第 ${indexOfQuestion.get(question.questionId)} 题`
-                : question.questionId,
-              // QM-12：喂有效判定（教师判 > 自评 > 自动，verdictBadgeDisplayOf
-              // 同口径）——自评「错」进错题组（与服务端批量过滤同口径）；
-              // 未公布时服务端已置 null，这里再按 released 收口（双保险，
-              // 与上方错题重练同款显隐判据）
-              finalCorrect: released
-                ? verdictBadgeDisplayOf(question).verdict
-                : null,
-            }))}
-            released={released}
-          />
-          {/* 整体复盘入口（任务 1ef854c7）：预览确认后创建一个 MCP 整体任务，
-              与逐题批量复盘互不混装 */}
-          <AiAttemptReviewEntry attemptId={attempt.id} released={released} />
-          <AiQueueButton
-            currentAttemptId={aiCompanion.send.attemptId}
-            onOpenTask={aiCompanion.openTask}
-            onOpenQuestion={aiCompanion.openQuestion}
-          />
-        </>
+        <ResultAiActions
+          attemptId={attempt.id}
+          questions={flatQuestions}
+          released={released}
+          companion={aiCompanion}
+          onOpenAttemptReview={attemptReview.open}
+        />
       }
       rootRef={rootRef}
       reviewLocation={reviewLocation}
     >
       {aiCompanion.rail(
         <div className="flex flex-col gap-5">
+          <QuestionProcessControls process={questionProcess} />
           {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
           <section
             aria-labelledby="result-summary"
@@ -877,8 +843,20 @@ export function AttemptResultView({
             </div>
           </section>
 
-          {/* 模块 1：交卷后「可复盘」提示条（可用门在服务端；只提示，确认后才建任务） */}
-          <AiAttemptReviewHint attemptId={attempt.id} released={released} />
+          {/* 模块 1：交卷后「可复盘」提示条（可用门在服务端；只提示，确认后才建任务）。
+              与顶栏主按钮同一状态、同一打开目标；面板与报告由 AttemptReviewHost 按地址承载 */}
+          <AiAttemptReviewHint
+            attemptId={attempt.id}
+            released={released}
+            onOpen={attemptReview.open}
+          />
+          <AttemptReviewHost
+            attemptId={attempt.id}
+            released={released}
+            attemptLabel={`${data.title} · 第 ${attempt.attemptNo} 次${attempt.submittedAt ? ` · ${formatCnTime(attempt.submittedAt)} 交卷` : ""}`}
+            overlay={attemptReview}
+            onJumpToQuestion={reviewLocation.jump}
+          />
 
           {/* 模块 7：按模块（单元）看答对 / 作答 / 跳过 / 不确定但对 / 用时 / 配额 */}
           <ModuleResultTable

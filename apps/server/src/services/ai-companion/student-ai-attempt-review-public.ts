@@ -1,10 +1,15 @@
 import {
   AI_ATTEMPT_REVIEW_ALLOWED_ACTIONS,
   type AiAttemptReviewCounts,
+  type AiAttemptReviewDetailData,
+  type AiAttemptReviewReport,
+  type AiAttemptReviewSnapshot,
   type AiAttemptReviewTaskPublic,
   aiAttemptReviewCountsSchema,
+  aiAttemptReviewReportSchema,
+  aiAttemptReviewSnapshotSchema,
 } from "@tutor/contract";
-import { eq, max } from "drizzle-orm";
+import { desc, eq, max } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
   type AiAttemptReviewTaskRow,
@@ -34,7 +39,7 @@ export function attemptReviewPublicViewOf(
   resultAtOverride?: string | null,
 ): AiAttemptReviewTaskPublic {
   // counts 是创建时冻结的反规范化投影（counts_json），公开视图不解整体
-  // 快照——列表/详情/动作的响应面不为此解析 256KiB 内部视图
+  // 快照——列表和动作不必为计数解析 256KiB 内部视图
   const counts = countsOfTask(task);
   const resultAt =
     resultAtOverride === undefined
@@ -62,5 +67,59 @@ export function attemptReviewPublicViewOf(
     createdAt: task.createdAt,
     updatedAt:
       task.status === "replied" ? (resultAt ?? task.updatedAt) : task.updatedAt,
+  };
+}
+
+/** 领取与报告定位共用存储快照的校验。 */
+export function parseAttemptReviewSnapshot(
+  task: AiAttemptReviewTaskRow,
+): AiAttemptReviewSnapshot {
+  const parsed = aiAttemptReviewSnapshotSchema.safeParse(
+    jsonOf(task.contextSnapshotJson),
+  );
+  if (!parsed.success) {
+    throw new HttpError(
+      500,
+      "AI_ATTEMPT_REVIEW_BROKEN",
+      "整体复盘快照已损坏，无法读取",
+    );
+  }
+  return parsed.data;
+}
+
+/** 调用方先校验作答归属和当前授权；这里只投影报告和证据定位所需的题目 ID。 */
+export function projectAttemptReviewDetail(
+  db: Db,
+  task: AiAttemptReviewTaskRow,
+): AiAttemptReviewDetailData {
+  const resultRow = db
+    .select()
+    .from(aiAttemptReviewResults)
+    .where(eq(aiAttemptReviewResults.taskId, task.id))
+    .orderBy(desc(aiAttemptReviewResults.generation))
+    .get();
+  let result: AiAttemptReviewReport | null = null;
+  if (resultRow !== undefined) {
+    const parsed = aiAttemptReviewReportSchema.safeParse(
+      jsonOf(resultRow.reportJson),
+    );
+    if (!parsed.success) {
+      throw new HttpError(
+        500,
+        "AI_ATTEMPT_REVIEW_BROKEN",
+        "整体复盘报告数据已损坏，无法读取",
+      );
+    }
+    result = parsed.data;
+  }
+  return {
+    task: attemptReviewPublicViewOf(db, task),
+    result,
+    questionIds:
+      result === null
+        ? []
+        : parseAttemptReviewSnapshot(task).questions.map(
+            (question) => question.questionId,
+          ),
   };
 }

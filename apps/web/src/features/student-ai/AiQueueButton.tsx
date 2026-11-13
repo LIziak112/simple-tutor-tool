@@ -54,58 +54,76 @@ function QueueBadge({
 /** 队列入口按钮 + 抽屉（顶栏/作答页头部动作位共用） */
 export function AiQueueButton(props: AiQueueNavigationProps) {
   const [open, setOpen] = useState(false);
+  return (
+    <>
+      <AiQueueTrigger onClick={() => setOpen(true)} />
+      <AiQueueSheet {...props} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+export function AiQueueTrigger({ onClick }: { onClick: () => void }) {
   const summaryQuery = useStudentAiQueueSummary();
   const summary = summaryQuery.data;
   const badge = summary !== undefined ? aiQueueBadgeOf(summary) : null;
   return (
-    <>
-      <Button
-        type="button"
-        variant="ghost"
-        className="relative flex h-11 min-w-11 shrink-0 items-center gap-1.5 px-2"
-        aria-label={
-          badge !== null
-            ? `助教队列：待处理 ${badge.pendingCount}，新回复 ${badge.unreadReplyCount}`
-            : "助教队列"
-        }
-        title="助教队列"
-        onClick={() => setOpen(true)}
+    <Button
+      type="button"
+      variant="ghost"
+      className="relative flex h-11 min-w-11 shrink-0 items-center gap-1.5 px-2"
+      aria-label={
+        badge !== null
+          ? `助教队列：待处理 ${badge.pendingCount}，新回复 ${badge.unreadReplyCount}`
+          : "助教队列"
+      }
+      title="助教队列"
+      onClick={onClick}
+    >
+      {summaryQuery.isFetching && summary === undefined ? (
+        <Loader2 aria-hidden className="size-5 animate-spin" />
+      ) : (
+        <ListTodo aria-hidden className="size-5" />
+      )}
+      <span className="hidden text-sm sm:inline">求助记录</span>
+      {(badge?.pendingCount ?? 0) > 0 || (badge?.unreadReplyCount ?? 0) > 0 ? (
+        <span className="flex items-center gap-1" aria-hidden>
+          <QueueBadge
+            label="待处理"
+            count={badge?.pendingCount ?? null}
+            tone="pending"
+          />
+          <QueueBadge
+            label="新回复"
+            count={badge?.unreadReplyCount ?? null}
+            tone="unread"
+          />
+        </span>
+      ) : null}
+    </Button>
+  );
+}
+
+export function AiQueueSheet({
+  open,
+  onOpenChange,
+  ...props
+}: AiQueueNavigationProps & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 sm:max-w-md"
       >
-        {summaryQuery.isFetching && summary === undefined ? (
-          <Loader2 aria-hidden className="size-5 animate-spin" />
-        ) : (
-          <ListTodo aria-hidden className="size-5" />
-        )}
-        <span className="hidden text-sm sm:inline">求助记录</span>
-        {(badge?.pendingCount ?? 0) > 0 ||
-        (badge?.unreadReplyCount ?? 0) > 0 ? (
-          <span className="flex items-center gap-1" aria-hidden>
-            <QueueBadge
-              label="待处理"
-              count={badge?.pendingCount ?? null}
-              tone="pending"
-            />
-            <QueueBadge
-              label="新回复"
-              count={badge?.unreadReplyCount ?? null}
-              tone="unread"
-            />
-          </span>
-        ) : null}
-      </Button>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent
-          side="right"
-          className="flex w-full flex-col gap-0 sm:max-w-md"
-        >
-          <SheetHeader className="border-b border-border">
-            <SheetTitle className="text-left">求助记录</SheetTitle>
-          </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <AiQueuePanel {...props} onNavigated={() => setOpen(false)} />
-          </div>
-        </SheetContent>
-      </Sheet>
-    </>
+        <SheetHeader className="border-b border-border">
+          <SheetTitle className="text-left">求助记录</SheetTitle>
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <AiQueuePanel {...props} onNavigated={() => onOpenChange(false)} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

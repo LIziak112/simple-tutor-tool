@@ -6,6 +6,7 @@ import {
   AI_QUESTION_MAX_CHARS,
   AI_REPLY_MAX_CHARS,
 } from "./student-ai.ts";
+import { aiAttemptOriginSummarySchema } from "./student-ai-origin.ts";
 
 /**
  * 学生端 AI 伴学：本次练习整体复盘（MCP）契约（任务 1ef854c7；实施依据
@@ -35,7 +36,7 @@ export const AI_ATTEMPT_REVIEW_RESULT_MAX_CHARS = AI_REPLY_MAX_CHARS;
 /** 整体任务初始租约（分钟；过期回 created 可再领取） */
 export const AI_ATTEMPT_REVIEW_LEASE_MINUTES = AI_MCP_LEASE_MINUTES;
 /** 整体分析提示词版本（参与预览版本 HMAC 输入；提示词变更即换版本锚） */
-export const AI_ATTEMPT_REVIEW_PROMPT_VERSION = "attempt-review-prompt-v1";
+export const AI_ATTEMPT_REVIEW_PROMPT_VERSION = "attempt-review-prompt-v2";
 
 // ---------- 作答态与判分态（§3.3：两态分离，互斥四桶） ----------
 
@@ -452,6 +453,10 @@ export const aiAttemptReviewListQuerySchema = z
   .object({
     attemptId: z.uuid().optional(),
     status: aiAttemptReviewStatusSchema.optional(),
+    /** 归档过滤（与逐题任务列表同义）：exclude = 未归档、only = 已归档；缺省 = 全部 */
+    archived: z.enum(["exclude", "only"]).optional(),
+    /** 按作答过滤时，求助记录可显式请求来源摘要。 */
+    includeOrigins: z.literal("1").optional(),
     limit: z.number().int().min(1).max(50).default(20),
     /** 不透明游标（base64url JSON，与单题任务列表同款） */
     cursor: z
@@ -465,6 +470,8 @@ export const aiAttemptReviewListDataSchema = z
   .object({
     tasks: z.array(aiAttemptReviewTaskPublicSchema),
     nextCursor: z.string().nullable(),
+    /** 作答级来源摘要按任务 id 索引（账号范围默认附带） */
+    origins: z.record(z.string(), aiAttemptOriginSummarySchema).optional(),
   })
   .strict();
 export type AiAttemptReviewListData = z.infer<
@@ -484,6 +491,10 @@ export const aiAttemptReviewDetailDataSchema = z
   .object({
     task: aiAttemptReviewTaskPublicSchema,
     result: aiAttemptReviewReportSchema.nullable(),
+    /** 报告快照的题序；下标 0 对应第 1 题。无报告时为空。 */
+    questionIds: z
+      .array(z.string().min(1))
+      .max(AI_ATTEMPT_REVIEW_MAX_QUESTIONS),
   })
   .strict();
 export type AiAttemptReviewDetailData = z.infer<

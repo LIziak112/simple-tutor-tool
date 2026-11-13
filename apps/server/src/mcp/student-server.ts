@@ -3,6 +3,7 @@ import {
   AI_REPLY_CHECK_VERSION,
   AI_REPLY_FORMAT_INSTRUCTIONS,
   AI_REPLY_MAX_CHARS,
+  aiAttemptReviewReportSchema,
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
   createOperationIdSchema,
@@ -14,10 +15,10 @@ import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
 import {
   claimAttemptReviewTask,
-  listAttemptReviewTasks,
   renewAttemptReviewLease,
   submitAttemptReviewResult,
 } from "../services/ai-companion/student-ai-attempt-review.ts";
+import { listAttemptReviewTasks } from "../services/ai-companion/student-ai-attempt-review-list.ts";
 import {
   collectAiTaskMaterialBytes,
   taskOf,
@@ -563,7 +564,7 @@ export function registerStudentTools(
     }),
   );
 
-  // 8. submit_attempt_review_result：整体复盘报告写回（strict 校验+证据复核在服务层）
+  // 8. submit_attempt_review_result：报告结构与服务层共享契约，证据和授权在服务层复核
   server.registerTool(
     "submit_attempt_review_result",
     {
@@ -587,9 +588,7 @@ export function registerStudentTools(
           .string()
           .min(1)
           .describe("claim_attempt_review 返回的快照版本"),
-        report: z
-          .record(z.string(), z.unknown())
-          .describe("结构化报告对象（结构见领取提示词；服务端 strict 校验）"),
+        report: aiAttemptReviewReportSchema,
       },
       annotations: { destructiveHint: false, idempotentHint: true },
     },

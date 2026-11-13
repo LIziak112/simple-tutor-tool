@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   AiAttemptReviewPreviewData,
   AiAttemptReviewTaskPublic,
@@ -10,12 +16,12 @@ import {
   fetchStudentAiAttemptReviewPreviewApi,
   listStudentAiAttemptReviewsApi,
 } from "@/lib/api";
+import { AiAttemptReviewHint } from "./AiAttemptReviewHint";
 import {
-  AiAttemptReviewHint,
   ATTEMPT_REVIEW_POLL_INTERVAL_MS,
   attemptReviewPreviewKey,
   pickAttemptReviewTask,
-} from "./AiAttemptReviewHint";
+} from "./attempt-review-entry";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -76,10 +82,16 @@ const PREVIEW: AiAttemptReviewPreviewData = {
 const newClient = () =>
   new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
+const onOpen = vi.fn();
+
 function renderHint(released = true, client = newClient()) {
   return render(
     <QueryClientProvider client={client}>
-      <AiAttemptReviewHint attemptId={ATTEMPT_ID} released={released} />
+      <AiAttemptReviewHint
+        attemptId={ATTEMPT_ID}
+        released={released}
+        onOpen={onOpen}
+      />
     </QueryClientProvider>,
   );
 }
@@ -87,18 +99,20 @@ function renderHint(released = true, client = newClient()) {
 beforeEach(() => {
   mockedList.mockReset();
   mockedPreview.mockReset();
+  onOpen.mockReset();
 });
 
 describe("结果页「可复盘」提示条", () => {
-  it("无任务且预览可用 → 「本卷可复盘」+ 预览并确认", async () => {
+  it("无任务且预览可用 → 「本卷可以做整卷复盘」+ 预览并确认（打开发起面板）", async () => {
     mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
     mockedPreview.mockResolvedValue(PREVIEW);
     renderHint();
     const hint = await screen.findByTestId("attempt-review-hint");
-    expect(hint.textContent).toContain("本卷可复盘：共 12 题、已判 11 题");
-    expect(
-      screen.getByRole("button", { name: "预览并确认" }),
-    ).toBeInTheDocument();
+    expect(hint.textContent).toContain(
+      "本卷可以做整卷复盘：共 12 题、已判 11 题",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "预览并确认" }));
+    expect(onOpen).toHaveBeenCalledWith("panel");
   });
 
   it("预览被服务端拒绝（未满足可用门）→ 不渲染，不猜", async () => {
@@ -111,14 +125,14 @@ describe("结果页「可复盘」提示条", () => {
     expect(screen.queryByTestId("attempt-review-hint")).toBeNull();
   });
 
-  it("#102-02 预览重取被拒绝：缓存里虽留有上次数据，也不再提示「本卷可复盘」", async () => {
+  it("#102-02 预览重取被拒绝：缓存里虽留有上次数据，也不再提示可复盘", async () => {
     const client = newClient();
     mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
     mockedPreview.mockResolvedValue(PREVIEW);
     renderHint(true, client);
     expect(
       (await screen.findByTestId("attempt-review-hint")).textContent,
-    ).toContain("本卷可复盘");
+    ).toContain("本卷可以做整卷复盘");
     // 教师收紧策略：后台重取被服务端拒绝
     mockedPreview.mockRejectedValue(
       new ApiError("AI_ATTEMPT_REVIEW_NOT_AVAILABLE", "当前不可复盘", 403),
@@ -145,16 +159,13 @@ describe("结果页「可复盘」提示条", () => {
     });
     renderHint();
     const hint = await screen.findByTestId("attempt-review-hint");
-    expect(hint.textContent).toContain(
-      "整体复盘进行中：外部 AI 处理中（覆盖 12 题）",
-    );
-    expect(
-      screen.getByRole("button", { name: "查看进度" }),
-    ).toBeInTheDocument();
+    expect(hint.textContent).toContain("整卷复盘进行中：处理中（覆盖 12 题）");
+    fireEvent.click(screen.getByRole("button", { name: "查看进度" }));
+    expect(onOpen).toHaveBeenCalledWith("panel");
     expect(mockedPreview).not.toHaveBeenCalled();
   });
 
-  it("报告已到未读 → 高亮「还没看过」；已读 → 「可再看一次」", async () => {
+  it("报告已到未读 → 高亮「还没看过」；已读 → 仍可再打开；按钮直达这份报告", async () => {
     mockedList.mockResolvedValue({
       tasks: [taskOf({ status: "replied", hasResult: true })],
       nextCursor: null,
@@ -162,7 +173,9 @@ describe("结果页「可复盘」提示条", () => {
     const view = renderHint();
     expect(
       (await screen.findByTestId("attempt-review-hint")).textContent,
-    ).toContain("整体复盘报告已到，还没看过");
+    ).toContain("整卷复盘报告已生成，还没看过");
+    fireEvent.click(screen.getByRole("button", { name: "打开报告" }));
+    expect(onOpen).toHaveBeenCalledWith(taskOf({}).id);
     view.unmount();
     mockedList.mockResolvedValue({
       tasks: [
@@ -177,7 +190,10 @@ describe("结果页「可复盘」提示条", () => {
     renderHint();
     expect(
       (await screen.findByTestId("attempt-review-hint")).textContent,
-    ).toContain("整体复盘已完成，可再看一次报告");
+    ).toContain("整卷复盘报告已看过，可以随时再打开");
+    expect(
+      screen.getByRole("button", { name: "打开报告" }),
+    ).toBeInTheDocument();
   });
 
   it("未公布 → 不请求、不渲染", () => {
@@ -202,7 +218,7 @@ describe("结果页「可复盘」提示条", () => {
         await vi.advanceTimersByTimeAsync(20);
       });
       expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
-        "外部 AI 处理中",
+        "整卷复盘进行中：处理中",
       );
       expect(mockedList).toHaveBeenCalledTimes(1);
       mockedList.mockResolvedValue({
@@ -214,7 +230,7 @@ describe("结果页「可复盘」提示条", () => {
       });
       expect(mockedList).toHaveBeenCalledTimes(2);
       expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
-        "整体复盘报告已到，还没看过",
+        "整卷复盘报告已生成，还没看过",
       );
       // 有结局后不再轮询
       await act(async () => {
@@ -232,7 +248,7 @@ describe("结果页「可复盘」提示条", () => {
         await vi.advanceTimersByTimeAsync(20);
       });
       expect(screen.getByTestId("attempt-review-hint").textContent).toContain(
-        "本卷可复盘",
+        "本卷可以做整卷复盘",
       );
       await act(async () => {
         await vi.advanceTimersByTimeAsync(ATTEMPT_REVIEW_POLL_INTERVAL_MS * 3);

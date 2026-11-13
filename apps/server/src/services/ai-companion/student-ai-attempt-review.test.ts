@@ -23,9 +23,9 @@ import {
   attemptReviewPreviewOf,
   claimAttemptReviewTask,
   createAttemptReviewTask,
-  listAttemptReviewTasks,
   submitAttemptReviewResult,
 } from "./student-ai-attempt-review.ts";
+import { listAttemptReviewTasks } from "./student-ai-attempt-review-list.ts";
 import { aiQueueSummaryOf, createAiTask } from "./student-ai-queue.ts";
 
 /**

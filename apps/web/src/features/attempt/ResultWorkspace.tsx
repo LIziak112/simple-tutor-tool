@@ -31,6 +31,7 @@ export function ResultWorkspace({
   backLabel,
   children,
   actions,
+  primaryAction,
   rootRef,
   reviewLocation,
 }: {
@@ -42,8 +43,8 @@ export function ResultWorkspace({
   onBack(): void;
   backLabel: string;
   children: ReactNode;
-  /** 标题右侧扩展动作位（SAI-22 AI 复盘入口；不传不占位） */
   actions?: ReactNode;
+  primaryAction?: ReactNode;
   /** 主区根 ref（调用方持有回看定位时一并传入；缺省内部自建） */
   rootRef?: RefObject<HTMLDivElement | null>;
   /** 调用方持有的回看定位（AI 面板绑定回看当前题需要 currentId；
@@ -73,7 +74,7 @@ export function ResultWorkspace({
     <AttemptWorkspace>
       <header
         data-slot="attempt-header"
-        className="sticky top-0 z-30 -mx-3 flex items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"
+        className="@container/result-header sticky top-0 z-30 -mx-3 flex items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"
       >
         <Button
           variant="ghost"
@@ -82,7 +83,7 @@ export function ResultWorkspace({
           title={backLabel}
           onClick={onBack}
         >
-          <ArrowLeft aria-hidden className="size-5" />
+          <ArrowLeft aria-hidden className="size-5 rtl:rotate-180" />
         </Button>
         <div className="min-w-0 flex-1">
           <h1 className="break-words text-xl leading-snug font-semibold [overflow-wrap:anywhere]">
@@ -96,9 +97,9 @@ export function ResultWorkspace({
                 : "已交卷 · 待批改"}
           </p>
         </div>
-        <div className="flex shrink-0 items-center">
-          {actions}
-          <MemoQuickCaptureButton />
+        <div className="flex min-w-0 max-w-[60%] items-center gap-1 @min-[40rem]/result-header:max-w-none">
+          {primaryAction}
+          {actions ?? <MemoQuickCaptureButton />}
         </div>
       </header>
       <div ref={root} className="min-w-0">

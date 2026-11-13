@@ -37,7 +37,6 @@ import {
   lt,
   lte,
   or,
-  sql,
 } from "drizzle-orm";
 import { studentAiDomainOf } from "../../auth/student-ai-domain.ts";
 import type { Db } from "../../db/client.ts";
@@ -48,11 +47,6 @@ import {
   aiMessages,
   aiTaskMaterials,
   aiTasks,
-  assignments,
-  attempts,
-  courses,
-  lectures,
-  responses,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { resolveNowDate } from "../export-service.ts";
@@ -69,6 +63,7 @@ import {
   loadAiTaskMaterialRows,
   taskOf,
 } from "./student-ai-materials.ts";
+import { aiTaskOriginSummariesOf } from "./student-ai-origin-summary.ts";
 import {
   checkedReplyOf,
   insertAssistantReply,
@@ -919,148 +914,6 @@ export function listStudentAiTasks(
     return { tasks, nextCursor, origins: aiTaskOriginSummariesOf(db, page) };
   }
   return { tasks, nextCursor };
-}
-
-// ---------- 来源摘要（SAI-23 全局队列展示与导航定位） ----------
-
-/**
- * 全卷题号（1 起连续）：建卷冻结序——unitId 首现序分组 + rowid 组内序
- * （attempt-service.frozenRowsInDisplayOrder 冻结路径同规则；null unitId 行
- * 归末尾兜底组）。wrong 卷行全 null → 纯 rowid 序。返回 questionId → 题号；
- * 卷内无该题（软删/缺失）不在 Map 中，调用方置 null 不伪造题号。
- */
-export function questionNoByQuestionOf(
-  rows: readonly { questionId: string; unitId: string | null }[],
-): Map<string, number> {
-  const unitRank = new Map<string, number>();
-  for (const row of rows) {
-    if (row.unitId !== null && !unitRank.has(row.unitId)) {
-      unitRank.set(row.unitId, unitRank.size);
-    }
-  }
-  const rankOf = (unitId: string | null): number =>
-    unitId === null
-      ? Number.MAX_SAFE_INTEGER
-      : (unitRank.get(unitId) ?? Number.MAX_SAFE_INTEGER);
-  // sort 稳定：组内保持 rowid 序（查询已按 rowid 排序）
-  const sorted = [...rows].sort((a, b) => rankOf(a.unitId) - rankOf(b.unitId));
-  const numbers = new Map<string, number>();
-  sorted.forEach((row, index) => {
-    if (!numbers.has(row.questionId)) numbers.set(row.questionId, index + 1);
-  });
-  return numbers;
-}
-
-/**
- * 整页来源摘要（批量预取，不逐行 N+1）：attempts 一批、卷行一批、三类标题
- * 各一批。只放展示与导航定位字段——题号按冻结序，题不在卷行中如实 null。
- */
-function aiTaskOriginSummariesOf(
-  db: Db,
-  page: readonly AiTaskRow[],
-): Record<string, AiTaskOriginSummary> {
-  const attemptIds = [...new Set(page.map((row) => row.attemptId))];
-  const attemptsById = new Map(
-    db
-      .select()
-      .from(attempts)
-      .where(inArray(attempts.id, attemptIds))
-      .all()
-      .map((row) => [row.id, row] as const),
-  );
-  const rowsByAttempt = new Map<
-    string,
-    { questionId: string; unitId: string | null }[]
-  >();
-  for (const row of db
-    .select({
-      attemptId: responses.attemptId,
-      questionId: responses.questionId,
-      unitId: responses.unitId,
-    })
-    .from(responses)
-    .where(inArray(responses.attemptId, attemptIds))
-    .orderBy(asc(responses.attemptId), sql`rowid`)
-    .all()) {
-    const list = rowsByAttempt.get(row.attemptId);
-    if (list === undefined) rowsByAttempt.set(row.attemptId, [row]);
-    else list.push(row);
-  }
-  const questionNoByAttempt = new Map(
-    [...rowsByAttempt].map(
-      ([attemptId, rows]) => [attemptId, questionNoByQuestionOf(rows)] as const,
-    ),
-  );
-  const ids = <T extends string>(values: readonly (T | null)[]): T[] =>
-    values.filter((value): value is T => value !== null);
-  const attemptRows = [...attemptsById.values()];
-  // 空 id 集不进 inArray（既省查询也免去空数组 SQL 形态的版本差异）
-  const assignmentIds = ids(attemptRows.map((row) => row.assignmentId));
-  const courseIds = ids(attemptRows.map((row) => row.courseId));
-  const lectureIds = ids(attemptRows.map((row) => row.lectureId));
-  const assignmentTitles = new Map(
-    assignmentIds.length === 0
-      ? []
-      : db
-          .select({ id: assignments.id, title: assignments.title })
-          .from(assignments)
-          .where(inArray(assignments.id, assignmentIds))
-          .all()
-          .map((row) => [row.id, row.title] as const),
-  );
-  const courseTitles = new Map(
-    courseIds.length === 0
-      ? []
-      : db
-          .select({ id: courses.id, title: courses.title })
-          .from(courses)
-          .where(inArray(courses.id, courseIds))
-          .all()
-          .map((row) => [row.id, row.title] as const),
-  );
-  const lectureTitles = new Map(
-    lectureIds.length === 0
-      ? []
-      : db
-          .select({ id: lectures.id, title: lectures.title })
-          .from(lectures)
-          .where(inArray(lectures.id, lectureIds))
-          .all()
-          .map((row) => [row.id, row.title] as const),
-  );
-  const origins: Record<string, AiTaskOriginSummary> = {};
-  for (const row of page) {
-    const attempt = attemptsById.get(row.attemptId);
-    if (attempt === undefined) continue; // 行已不在（理论不可达，FK 保证）
-    // 三个标题 Map 的键均为卷 id（值即标题字符串），wrong 无卷标题恒 null
-    const title =
-      attempt.sourceType === "assignment"
-        ? attempt.assignmentId !== null
-          ? (assignmentTitles.get(attempt.assignmentId) ?? null)
-          : null
-        : attempt.sourceType === "course"
-          ? attempt.courseId !== null
-            ? (courseTitles.get(attempt.courseId) ?? null)
-            : null
-          : attempt.sourceType === "lesson"
-            ? attempt.lectureId !== null
-              ? (lectureTitles.get(attempt.lectureId) ?? null)
-              : null
-            : null; // wrong 无卷标题
-    origins[row.id] = {
-      sourceType: attempt.sourceType,
-      attemptNo: attempt.attemptNo,
-      questionNo:
-        questionNoByAttempt.get(row.attemptId)?.get(row.questionId) ?? null,
-      title,
-      assignmentId: attempt.assignmentId,
-      courseId: attempt.courseId,
-      unitId: attempt.unitId,
-      lectureId: attempt.lectureId,
-      attemptStatus: attempt.status,
-    };
-  }
-  return origins;
 }
 
 /** 队列摘要（顶栏三计数；分桶单源 AI_TASK_QUEUE_BUCKETS，未读为交付态推导） */
