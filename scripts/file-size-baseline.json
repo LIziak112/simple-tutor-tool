@@ -1,5 +1,4 @@
 {
-  "apps/server/src/db/backfill.ts": 1022,
   "apps/server/src/db/schema.ts": 2796,
   "apps/server/src/mcp/server.ts": 1274,
   "apps/server/src/routes/student.ts": 1262,
@@ -8,7 +7,7 @@
   "apps/server/src/services/analytics-service.ts": 1693,
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1390,
-  "apps/server/src/services/attempt-service.ts": 4219,
+  "apps/server/src/services/attempt-service.ts": 4129,
   "apps/server/src/services/content-service.ts": 2246,
   "apps/server/src/services/course-service.ts": 1498,
   "apps/server/src/services/export-service.ts": 2783,

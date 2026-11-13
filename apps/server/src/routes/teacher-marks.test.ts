@@ -9,6 +9,7 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
 import { attempts, responses, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { pendingMarkCount } from "../services/pending-mark.ts";
 import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
@@ -695,6 +696,81 @@ describe("T3.2b 待批队列（D4 口径）：8 题卷交卷后恰含 2 题待�
 });
 
 describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
+  it("已作废卷的已提交行不可批改，且不计待批", async () => {
+    const { app, db, cookieA, courseDraftId } = await makeEnv();
+    const responseId = responseIdOf(db, courseDraftId, Q.solve);
+    db.update(responses)
+      .set({ submittedAt: "2026-10-02T00:00:00.000Z" })
+      .where(eq(responses.id, responseId))
+      .run();
+    db.update(attempts)
+      .set({ abandonedAt: "2026-10-03T00:00:00.000Z" })
+      .where(eq(attempts.id, courseDraftId))
+      .run();
+    const rejected = await mark(app, cookieA, responseId, {
+      mark: "correct",
+      comment: null,
+    });
+    expect(rejected.status).toBe(409);
+    expect(rejected.err?.error).toBe("ATTEMPT_ABANDONED");
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, courseDraftId))
+      .get();
+    if (!attempt) throw new Error("缺少作废卷");
+    expect(pendingMarkCount(db, attempt)).toBe(0);
+    expect(
+      db.select().from(responses).where(eq(responses.id, responseId)).get()
+        ?.teacherMark,
+    ).toBeNull();
+  });
+
+  it("混合策略卷批完教师待批即收尾，待自评保留；坏快照不能批改", async () => {
+    const { app, db, cookieA, courseSubmittedId } = await makeEnv();
+    const selfId = responseIdOf(db, courseSubmittedId, Q.solve);
+    const manualId = responseIdOf(db, courseSubmittedId, Q.open);
+    const badId = responseIdOf(db, courseSubmittedId, Q.judge1);
+    db.update(responses)
+      .set({ gradingPolicy: "reference_self" })
+      .where(eq(responses.id, selfId))
+      .run();
+    db.update(responses)
+      .set({ gradingPolicy: "manual_only", reviewEligible: true })
+      .where(eq(responses.id, manualId))
+      .run();
+    db.update(responses)
+      .set({ questionSnapshotJson: "失效快照" })
+      .where(eq(responses.id, badId))
+      .run();
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, courseSubmittedId))
+      .get();
+    if (!attempt) throw new Error("缺少混合策略卷");
+    expect(pendingMarkCount(db, attempt)).toBe(1);
+    const bad = await mark(app, cookieA, badId, {
+      mark: "wrong",
+      comment: null,
+    });
+    expect(bad.status).toBe(404);
+    const done = await mark(app, cookieA, manualId, {
+      mark: "correct",
+      comment: null,
+    });
+    expect(done.status).toBe(200);
+    expect(done.data).toMatchObject({
+      attemptStatus: "graded",
+      scoreFinal: 71,
+      pendingCount: 0,
+    });
+    expect(
+      db.select().from(responses).where(eq(responses.id, selfId)).get()
+        ?.finalCorrect,
+    ).toBeNull();
+  });
+
   it("两题都批对 → scoreFinal=88（7÷8）、status=graded、队列清空", async () => {
     const env = await makeEnv();
     const { app, db, cookieA, courseSubmittedId } = env;

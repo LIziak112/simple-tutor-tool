@@ -221,9 +221,11 @@ function buildLessonStartData(
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   const released: Record<string, AttemptResultQuestion> = {};
   const rows = attemptResponseRows(db, attempt.id);
+  const validQuestionIds = new Set<string>();
   for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
+    validQuestionIds.add(row.questionId);
     questions.push(
       publicOfSnapshot(snapshot, row.id, {
         materialSlots,
@@ -267,7 +269,7 @@ function buildLessonStartData(
       // 布尔形态（ScoreSummaryRow，不重复搬运快照列语义；QM-12 起补自评
       // 三列——汇总核心的有效判定需要）
       rows.map((row) => ({
-        hasSnapshot: row.questionSnapshotJson !== null,
+        hasSnapshot: validQuestionIds.has(row.questionId),
         answerJson: row.answerJson,
         submittedAt: row.submittedAt,
         autoCorrect: row.autoCorrect,
