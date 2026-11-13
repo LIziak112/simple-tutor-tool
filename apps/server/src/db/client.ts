@@ -4,6 +4,7 @@ import {
   type BetterSQLite3Database,
   drizzle,
 } from "drizzle-orm/better-sqlite3";
+import { answersReleased } from "../services/answer-publication.ts";
 // 带 .ts 扩展名：本文件被 reparse CLI（Node 24 原生类型剥离运行）导入，
 // 无扩展名的相对导入在原生 ESM 解析下会失败（见 tsconfig.base.json 注释）
 import * as schema from "./schema.ts";
@@ -43,6 +44,22 @@ function wrapWithPragmas(sqlite: Database): Db {
   try {
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("foreign_keys = ON");
+    sqlite.function(
+      "ownclass_assignment_answers_released",
+      { deterministic: true },
+      (answerRelease, dueAt, now) =>
+        Number(
+          typeof answerRelease === "string" &&
+            typeof now === "string" &&
+            answersReleased(
+              {
+                answerRelease,
+                dueAt: typeof dueAt === "string" ? dueAt : null,
+              },
+              now,
+            ),
+        ),
+    );
   } catch (err) {
     // pragma 失败（如文件不是数据库）：关掉句柄再抛，不泄漏 Windows 文件锁
     sqlite.close();

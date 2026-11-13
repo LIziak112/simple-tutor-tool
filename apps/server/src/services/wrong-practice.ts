@@ -135,6 +135,7 @@ export function startWrongPractice(
       studentId,
       sourceType: "wrong",
       assignmentId: null,
+      lectureId: null,
       courseId: null,
       unitId: null,
       attemptNo,

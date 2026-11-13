@@ -5,7 +5,6 @@ import type {
 import {
   annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
-  attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
   attemptFlagRequestSchema,
   attemptStartOptionsRequestSchema,
@@ -74,13 +73,9 @@ import {
   getStudentAssignmentPaper,
   listStudentAssignments,
 } from "../services/assignment-service";
-import { studentAttemptContext } from "../services/attempt-context";
 import {
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
-  getStudentAttemptPaper,
-  requireUsableAttempt,
-  saveDraftAnswer,
   setStudentFlag,
   startAttempt,
   startCourseAttempt,
@@ -132,7 +127,7 @@ import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
-import { respondAttemptDetail } from "./student-attempt-detail";
+import { createStudentAttemptRoutes } from "./student-attempt-routes.ts";
 import { createStudentBatchSubmissionRoutes } from "./student-batch-submission.ts";
 import { createStudentMemoRoutes } from "./student-memos";
 import { createStudentRubricRoutes } from "./student-rubric";
@@ -283,6 +278,7 @@ export function createStudentRoutes(
       .route("/", createStudentAttachmentRoutes(db, dataDir))
       .route("/", createStudentMemoRoutes(db, dataDir))
       .route("/", createStudentBatchSubmissionRoutes(db))
+      .route("/", createStudentAttemptRoutes(db))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })
@@ -320,20 +316,6 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: startAttempt(db, c.var.student.id, c.req.param("id"), options),
-        });
-      })
-      .put("/attempts/:id/answers/:questionId", async (c) => {
-        const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
-        return c.json({
-          ok: true,
-          data: saveDraftAnswer(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            c.req.param("questionId"),
-            body.answer,
-            body,
-          ),
         });
       })
       // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
@@ -465,21 +447,6 @@ export function createStudentRoutes(
           ),
         });
       })
-      .get("/attempts/:id", (c) =>
-        respondAttemptDetail(c, db, c.var.student.id, c.req.param("id")),
-      )
-      // tt-07a（QM-06）：冻结上下文公开投影（材料/组快照）读取——作答期渲染与
-      // 结果回看共用，只读快照不查 live 库（教师改材料/软删不影响已开卷）；坏
-      // 快照 409 ATTEMPT_CONTEXT_BROKEN 显式报错。归属校验复用
-      // requireUsableAttempt（TT-05b 审查 P2-2 记账：快照读取按 attemptId 直查
-      // 不过滤 teacherId，归属防线在路由层——跨域同 attempt id 不可见）
-      .get("/attempts/:id/context", (c) => {
-        requireUsableAttempt(db, c.var.student.id, c.req.param("id"));
-        return c.json({
-          ok: true,
-          data: studentAttemptContext(db, c.req.param("id")),
-        });
-      })
       // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
       // 响应 no-store（不落 PWA/浏览器缓存）；拒绝 legacy/lesson/已交/首题已交/
       // 失权/不允许模式（详见 practice-workflow-wiring.updateAttemptWorkflow）
@@ -503,15 +470,6 @@ export function createStudentRoutes(
           200,
           { "Cache-Control": "private, no-store" },
         );
-      })
-      // T2A.6：通用取卷（两种来源共用；T5 鉴权口径——assignment 来源归属即
-      // 权限，被移出/作业软删后已建作答仍可取卷；course 来源每次校验可见性与
-      // 成员资格，D22——course draft 失去访问权 403/404，前端据此按终态停发）
-      .get("/attempts/:id/paper", (c) => {
-        return c.json({
-          ok: true,
-          data: getStudentAttemptPaper(db, c.var.student.id, c.req.param("id")),
-        });
       })
       // T2.10：学习痕迹事件批量上报（attempt 上下文，≤200 条/次由契约拦截）
       .post("/attempts/:id/events", async (c) => {

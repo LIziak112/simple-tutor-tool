@@ -20,7 +20,8 @@ import {
   assignments,
   attempts,
 } from "../db/schema";
-import { answersReleased, assignmentReleaseByIds } from "./attempt-service";
+import { attemptAnswersPublished } from "./answer-publication.ts";
+import { assignmentReleaseByIds } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import {
   pendingMarkCounts,
@@ -244,8 +245,14 @@ export function listStudentRecords(
       attempt.sourceType === "assignment" && attempt.status !== "draft"
         ? assignmentById.get(attempt.assignmentId ?? "")
         : undefined;
-    const released =
-      assignmentRow === undefined || answersReleased(assignmentRow, now);
+    const released = attemptAnswersPublished(
+      {
+        attemptSubmitted: attempt.status !== "draft",
+        sourceType: attempt.sourceType,
+        release: assignmentRow ?? null,
+      },
+      now,
+    );
     const progress = progressByAttempt.get(attempt.id);
     return {
       ...sourceOf(db, attempt, teacherId ?? ""),

@@ -16,6 +16,13 @@ export const questionRevisionIdSchema = z
   .max(512)
   .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
 
+/** 内部边界区分作答 ID 与题目冻结行引用，既有 wire 字符串保持兼容。 */
+export const frozenQuestionRevisionIdSchema =
+  questionRevisionIdSchema.brand<"FrozenQuestionRevisionId">();
+export type FrozenQuestionRevisionId = z.infer<
+  typeof frozenQuestionRevisionIdSchema
+>;
+
 /** 学生答案每次保存后的服务端版本，0 表示尚无版本化保存。 */
 export const answerRevisionSchema = z.number().int().nonnegative();
 

@@ -42,7 +42,7 @@ export function freezeAttemptContextSnapshots(
   now: string,
 ): number {
   return db.transaction((tx) =>
-    freezeAttemptContextSnapshotsWithin(tx, attemptId, entries, now),
+    insertAttemptContextSnapshots(tx, attemptId, entries, now),
   );
 }
 
@@ -52,6 +52,20 @@ export function freezeAttemptContextSnapshots(
  * 任一环节失败全回滚，不留半冻结状态（saveMaterialWithin 同款形态）。
  */
 export function freezeAttemptContextSnapshotsWithin(
+  tx: RepositoryTx,
+  attemptId: string,
+  entries: readonly AttemptContextSnapshotEntry[],
+  now: string,
+): number {
+  const inserted = insertAttemptContextSnapshots(tx, attemptId, entries, now);
+  tx.insert(attemptContextFreezes)
+    .values({ attemptId, frozenAt: now })
+    .onConflictDoNothing()
+    .run();
+  return inserted;
+}
+
+function insertAttemptContextSnapshots(
   tx: RepositoryTx,
   attemptId: string,
   entries: readonly AttemptContextSnapshotEntry[],
@@ -81,10 +95,6 @@ export function freezeAttemptContextSnapshotsWithin(
       .run();
     inserted += result.changes;
   }
-  tx.insert(attemptContextFreezes)
-    .values({ attemptId, frozenAt: now })
-    .onConflictDoNothing()
-    .run();
   return inserted;
 }
 

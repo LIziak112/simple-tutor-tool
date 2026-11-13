@@ -224,6 +224,8 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
       attempt: {
         ...COURSE_DRAFT.attempt,
         sourceType: "lesson",
+        assignmentId: null,
+        allowRedo: undefined,
         lectureId: LECTURE_ID,
         unitId: "随堂讲练",
       },
@@ -247,6 +249,8 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
       attempt: {
         ...COURSE_DRAFT.attempt,
         sourceType: "lesson",
+        assignmentId: null,
+        allowRedo: undefined,
         lectureId: LECTURE_ID,
         courseId: COURSE_ID2,
         unitId: "随堂讲练",
@@ -517,6 +521,11 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
       ...RESULT_WITH_WRONG.attempt,
       id: NEW_ATTEMPT_ID,
       sourceType: "wrong",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      lectureId: null,
+      allowRedo: undefined,
     });
     renderPage();
     fireEvent.click(
@@ -591,6 +600,11 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
       ...RESULT_WITH_WRONG.attempt,
       id: NEW_ATTEMPT_ID,
       sourceType: "wrong",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      lectureId: null,
+      allowRedo: undefined,
     });
     renderPage();
     const table = within(await screen.findByTestId("module-results")).getByRole(

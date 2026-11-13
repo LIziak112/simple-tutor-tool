@@ -84,7 +84,7 @@ async function makeWorld(
       title: "存量超限作业",
       createdAt: "2026-10-01T00:00:00.000Z",
       answerRelease,
-      dueAt: answerRelease === "after_due" ? "2099-01-01T00:00:00.000Z" : null,
+      dueAt: answerRelease === "after_due" ? "2099-01-01T01:00:00+01:00" : null,
     })
     .run();
   db.insert(assignmentStudents)
@@ -210,6 +210,7 @@ describe("存量超限卷分批提交", () => {
     assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
     expect(JSON.stringify(body)).not.toContain("只在公布后显示的解析");
     const result = attemptResultOkSchema.parse(body).data;
+    expect(result.dueAt).toBe("2099-01-01T00:00:00.000Z");
     expect(result.answersReleased).toBe(false);
     expect(result.attempt.scoreAuto).toBeNull();
     expect(result.summary).toMatchObject({
