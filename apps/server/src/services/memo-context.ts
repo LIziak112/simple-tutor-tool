@@ -2,14 +2,7 @@ import type { LearningContext, MemoAnchor } from "@tutor/contract";
 import { learningContextSchema, MEMO_ANCHOR_LABEL_MAX } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import {
-  attempts,
-  courses,
-  lectures,
-  questions,
-  students,
-  units,
-} from "../db/schema";
+import { attempts, courses, questions, students, units } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { frozenRowsInDisplayOrder } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
@@ -151,23 +144,28 @@ export function contextFromMemoAnchor(
             ),
           )
           .get();
-  const lectureId = attempt.lectureId ?? unit?.lectureId ?? null;
-  const lecture =
-    lectureId === null
-      ? undefined
-      : db
-          .select()
-          .from(lectures)
-          .where(
-            and(eq(lectures.id, lectureId), eq(lectures.teacherId, teacherId)),
-          )
-          .get();
+  const inferredLectureId = attempt.lectureId ?? unit?.lectureId ?? null;
+  let lecture: { id: string; title: string } | null = null;
+  if (inferredLectureId !== null) {
+    try {
+      lecture = requireVisibleStudentLecture(
+        db,
+        studentId,
+        inferredLectureId,
+        undefined,
+        now,
+      ).lecture;
+    } catch (error) {
+      // 推断来源不可见时不暴露其存在，也不阻断本人随笔保存。
+      if (!(error instanceof HttpError)) throw error;
+    }
+  }
   return learningContextSchema.parse({
     schemaVersion: 1,
     content: {
       courseId: attempt.courseId,
       unitId,
-      lectureId,
+      lectureId: lecture?.id ?? null,
       sectionId: null,
       questionId: anchor.questionId,
       titles: {

@@ -3,8 +3,6 @@ import {
   DEVICE_INFO_HEADER,
   type DeviceRegister,
 } from "@tutor/contract";
-import { hc } from "hono/client";
-import type { AppType } from "server";
 import { randomUuid } from "./uuid";
 
 const DEVICE_STORAGE_KEY = "tutor:device-id:v1";
@@ -71,44 +69,17 @@ export function currentDevice(): DeviceRegister {
   };
 }
 
-type Role = "student" | "teacher";
 const nativeFetch: typeof fetch = (input, init) =>
   globalThis.fetch(input, init);
 
-/** 公共 RPC fetch：登记先于业务请求，登录/退出后按新账号重登，失败不阻断旧部署。 */
+/** 同源业务请求携带设备元信息，由鉴权守卫登记；不增加阻断或改变取消期限。 */
 export function createDeviceFetch(
   rawFetch: typeof fetch = nativeFetch,
 ): typeof fetch {
-  const registered = new Set<Role>();
-  const pending = new Map<Role, Promise<void>>();
-  const client = hc<AppType>("/", { fetch: rawFetch });
-  let epoch = 0;
-  const reset = () => {
-    epoch += 1;
-    registered.clear();
-    pending.clear();
-  };
-  const register = (role: Role): Promise<void> => {
-    if (registered.has(role)) return Promise.resolve();
-    const running = pending.get(role);
-    if (running !== undefined) return running;
-    const generation = epoch;
-    const args = { json: currentDevice() };
-    const promise = client.api[role].devices.register
-      .$post(args)
-      .then((response) => {
-        if (response.ok && generation === epoch) registered.add(role);
-      })
-      .catch(() => {
-        /* 网络错误交给原业务请求处理，下次重新登记。 */
-      })
-      .finally(() => {
-        if (generation === epoch) pending.delete(role);
-      });
-    pending.set(role, promise);
-    return promise;
-  };
   return async (input, init) => {
+    const signal =
+      init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    signal?.throwIfAborted();
     const origin =
       typeof location === "undefined" ? "http://localhost" : location.origin;
     const url = new URL(
@@ -117,14 +88,6 @@ export function createDeviceFetch(
     );
     if (url.origin !== origin || !url.pathname.startsWith("/api/"))
       return rawFetch(input, init);
-    const role: Role | undefined = url.pathname.startsWith("/api/student/")
-      ? "student"
-      : url.pathname.startsWith("/api/teacher/") ||
-          url.pathname.startsWith("/api/admin/")
-        ? "teacher"
-        : undefined;
-    if (role !== undefined && !url.pathname.includes("/devices/"))
-      await register(role);
     const headers = new Headers(
       init?.headers ?? (input instanceof Request ? input.headers : undefined),
     );
@@ -132,13 +95,7 @@ export function createDeviceFetch(
     headers.set(DEVICE_ID_HEADER, device.deviceId);
     headers.set(DEVICE_INFO_HEADER, JSON.stringify(device));
     const response = await rawFetch(input, { ...init, headers });
-    if (
-      (response.ok &&
-        (/\/(login|register|setup|logout)$/.test(url.pathname) ||
-          /\/api\/public\/s\//.test(url.pathname))) ||
-      response.status === 401
-    )
-      reset();
+    signal?.throwIfAborted();
     return response;
   };
 }

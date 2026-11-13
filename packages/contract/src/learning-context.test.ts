@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deviceRegisterSchema } from "./device-api.ts";
 import { learningContextSchema } from "./learning-context.ts";
-import { memoCreateTextSchema } from "./memo-api.ts";
+import { memoAnchorSchema, memoCreateTextSchema } from "./memo-api.ts";
 
 const context = {
   schemaVersion: 1,
@@ -67,4 +67,46 @@ describe("学习上下文与设备契约", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it.each([80, 81, 160, 161])(
+  "新旧内容坐标沿用合法DSL id，不截断长度 %i",
+  (length) => {
+    const id = "q".repeat(length);
+    expect(
+      learningContextSchema.parse({
+        ...context,
+        content: { ...context.content, questionId: id, sectionId: id },
+      }).content.questionId,
+    ).toBe(id);
+    expect(
+      memoAnchorSchema.parse({
+        kind: "question",
+        attemptId: context.session.attemptId,
+        questionId: id,
+        label: "题",
+      }),
+    ).toMatchObject({ questionId: id });
+    expect(
+      memoAnchorSchema.parse({
+        kind: "lecture",
+        lectureId: "l-1",
+        sectionId: id,
+        label: "讲义",
+      }),
+    ).toMatchObject({ sectionId: id });
+  },
+);
+
+it("源内容允许501字符标题，上下文快照保留完整标题", () => {
+  const title = "长".repeat(501);
+  expect(
+    learningContextSchema.parse({
+      ...context,
+      content: {
+        ...context.content,
+        titles: { course: title, unit: title, lecture: title },
+      },
+    }).content.titles,
+  ).toEqual({ course: title, unit: title, lecture: title });
 });

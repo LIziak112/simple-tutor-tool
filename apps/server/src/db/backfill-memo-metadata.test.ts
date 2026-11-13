@@ -8,8 +8,20 @@ import {
 } from "../test/evidence-fixtures.ts";
 import { makeStudent } from "../test/note-fixtures.ts";
 import { backfillMemoMetadata } from "./backfill-memo-metadata.ts";
-import { dataMigrations, memos } from "./schema.ts";
-import { createTestDb } from "./test-utils.ts";
+import {
+  attempts,
+  courseItems,
+  courseStudents,
+  courses,
+  dataMigrations,
+  memos,
+  units,
+} from "./schema.ts";
+import {
+  createTestDb,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "./test-utils.ts";
 
 describe("随笔元数据历史回填", () => {
   it("本人按创建时间与id编号，包含软删；无可靠设备不猜；重跑不改变编号", () => {
@@ -83,6 +95,7 @@ describe("随笔元数据历史回填", () => {
     const context = memo.context;
     if (context == null || context.session === null)
       throw new Error("缺少上下文");
+    const session = context.session;
     const explicit = createTextMemo(db, {
       studentId,
       clientId: randomUUID(),
@@ -101,7 +114,7 @@ describe("随笔元数据历史回填", () => {
         text: "错版",
         context: {
           ...context,
-          session: { ...context.session, questionRevisionId: randomUUID() },
+          session: { ...session, questionRevisionId: randomUUID() },
         },
       }),
     ).toThrow();
@@ -128,4 +141,95 @@ describe("随笔元数据历史回填", () => {
       ).session.questionRevisionId,
     ).toBe(rowIds[1]);
   });
+});
+
+it("新保存按当前草稿权限补元数据，历史回填保留本人既有冻结坐标且不重新冻结", () => {
+  const db = createTestDb();
+  const studentId = makeStudent(db);
+  const { unitId } = seedLessonWithEmbeddedUnit(db);
+  db.update(units).set({ lectureId: null }).where(eq(units.id, unitId)).run();
+  const courseId = randomUUID();
+  const now = "2026-11-01T00:00:00.000Z";
+  db.insert(courses)
+    .values({
+      id: courseId,
+      teacherId: TEST_TEACHER_ID,
+      title: "旧课程",
+      order: 0,
+      createdAt: now,
+    })
+    .run();
+  db.insert(courseStudents)
+    .values({ courseId, studentId, joinedAt: now })
+    .run();
+  db.insert(courseItems)
+    .values({
+      id: randomUUID(),
+      courseId,
+      kind: "unit",
+      refId: unitId,
+      order: 0,
+      visible: true,
+      createdAt: now,
+    })
+    .run();
+  const { attemptId, rowIds } = frozenDraftAttempt(
+    db,
+    studentId,
+    [{ questionId: "q1", snapshotJson: snapshotJsonOf({ id: "q1" }), unitId }],
+    { attemptUnitId: unitId },
+  );
+  db.update(attempts)
+    .set({ sourceType: "course", courseId })
+    .where(eq(attempts.id, attemptId))
+    .run();
+  const anchor = {
+    kind: "question" as const,
+    attemptId,
+    questionId: "q1",
+    label: "旧题目锚",
+  };
+  const prior = createTextMemo(db, {
+    studentId,
+    clientId: randomUUID(),
+    text: "已保存的旧条目",
+    anchor,
+  }).memo;
+  const before = db
+    .select()
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .get();
+  db.delete(courseStudents).where(eq(courseStudents.courseId, courseId)).run();
+  const current = createTextMemo(db, {
+    studentId,
+    clientId: randomUUID(),
+    text: "失权后的旧格式条目",
+    anchor,
+  }).memo;
+  expect(current.context).toBeNull();
+  db.update(memos)
+    .set({ contextJson: null })
+    .where(eq(memos.id, prior.id))
+    .run();
+  db.delete(dataMigrations)
+    .where(eq(dataMigrations.key, "session_context_memo_metadata_v1"))
+    .run();
+  backfillMemoMetadata(db);
+  const historical = JSON.parse(
+    db.select().from(memos).where(eq(memos.id, prior.id)).get()?.contextJson ??
+      "null",
+  );
+  expect(historical.session).toMatchObject({
+    attemptId,
+    questionRevisionId: rowIds[0],
+  });
+  expect(historical.content).toMatchObject({
+    courseId,
+    unitId,
+    lectureId: null,
+  });
+  expect(
+    db.select().from(attempts).where(eq(attempts.id, attemptId)).get(),
+  ).toEqual(before);
 });

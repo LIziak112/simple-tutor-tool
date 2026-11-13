@@ -25,6 +25,7 @@ import { writeFileAtomic } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { requireDevice } from "./device-service";
 import { resolveAgentMemoAnchor } from "./memo-anchor";
+import { assertMemoMetadataBudget } from "./memo-budget";
 import { memoAnchorFromContext, resolveMemoContext } from "./memo-context";
 import { detectMemoMediaFormat } from "./memo-format";
 import { MEMO_BLOB_DIR, type MemoRow, toMemo } from "./memo-read";
@@ -86,8 +87,13 @@ export interface MemoCreateResult {
   readonly created: boolean;
 }
 
-function insertMemo(db: Db, input: InsertInput, now: Date): MemoCreateResult {
-  return db.transaction(() => insertMemoRow(db, input, now), {
+function insertMemo(
+  db: Db,
+  input: InsertInput,
+  now: Date,
+  beforeInsert?: () => void,
+): MemoCreateResult {
+  return db.transaction(() => insertMemoRow(db, input, now, beforeInsert), {
     behavior: "immediate",
   });
 }
@@ -96,7 +102,9 @@ function insertMemoRow(
   db: Db,
   input: InsertInput,
   now: Date,
+  beforeInsert?: () => void,
 ): MemoCreateResult {
+  assertMemoMetadataBudget(input);
   const existing = existingByClientId(db, input.studentId, input.clientId);
   if (existing !== undefined) {
     return { memo: toMemo(existing), created: false };
@@ -125,6 +133,15 @@ function insertMemoRow(
       ? null
       : requireDevice(db, { type: "student", id: input.studentId }, rawDeviceId)
           .deviceId;
+  const tags = normalizeMemoTags(input.tags);
+  assertMemoMetadataBudget({
+    anchor,
+    context: context === null ? null : { ...context, deviceId },
+    tags,
+    device: input.device,
+    deviceId,
+    recordedAt: input.recordedAt,
+  });
   const seq =
     (db
       .select({ seq: max(memos.seq) })
@@ -153,7 +170,7 @@ function insertMemoRow(
     anchorJson: JSON.stringify(anchor),
     anchorAttemptId: anchor.kind === "question" ? anchor.attemptId : null,
     anchorLectureId: anchor.kind === "lecture" ? anchor.lectureId : null,
-    tagsJson: JSON.stringify(normalizeMemoTags(input.tags)),
+    tagsJson: JSON.stringify(tags),
     source: input.source,
     device: input.device,
     createdAt: nowIso,
@@ -161,6 +178,7 @@ function insertMemoRow(
     recordedAt: recordedAt > nowIso ? nowIso : recordedAt,
     deletedAt: null,
   };
+  beforeInsert?.();
   try {
     db.insert(memos).values(row).run();
   } catch (err) {
@@ -216,6 +234,7 @@ export function createMediaMemo(
   input: CreateMediaMemoInput,
   now: Date = new Date(),
 ): MemoCreateResult {
+  assertMemoMetadataBudget(input);
   const existing = existingByClientId(db, input.studentId, input.clientId);
   if (existing !== undefined) {
     return { memo: toMemo(existing), created: false };
@@ -250,10 +269,6 @@ export function createMediaMemo(
       ),
     )
     .digest("hex");
-  const filePath = join(memoDir(dataDir), `${sha256}.${format}`);
-  if (!existsSync(filePath)) {
-    writeFileAtomic({ finalPath: filePath, bytes: input.bytes });
-  }
   return insertMemo(
     db,
     {
@@ -277,6 +292,11 @@ export function createMediaMemo(
       ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
     },
     now,
+    () => {
+      const filePath = join(memoDir(dataDir), `${sha256}.${format}`);
+      if (!existsSync(filePath))
+        writeFileAtomic({ finalPath: filePath, bytes: input.bytes });
+    },
   );
 }
 
@@ -289,6 +309,7 @@ export function createAgentMemo(
   input: MemoAgentCreate,
   now: Date = new Date(),
 ): Memo {
+  assertMemoMetadataBudget(input);
   const anchor =
     input.anchor === undefined
       ? MEMO_ANCHOR_NONE

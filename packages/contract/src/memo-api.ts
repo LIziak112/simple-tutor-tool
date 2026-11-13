@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { learningContextSchema } from "./learning-context.ts";
+import {
+  learningContentIdSchema,
+  learningContextSchema,
+} from "./learning-context.ts";
 
 /** 在本文件内把成功响应壳的 data 具体化（不从 index.ts 导入，避免循环依赖） */
 function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
@@ -25,12 +28,21 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
  * 错误码（统一 ApiErr 壳）：
  * - MEMO_NOT_FOUND（404）：不存在 / 已删 / 不是本人（不暴露存在性）；
  * - MEMO_TOO_LARGE（413）：语音超 20 MB 或图片 / 手写超 10 MB；
+ * - MEMO_METADATA_TOO_LARGE（413）：请求信封或来源等元数据总字节超限，整条拒绝；
  * - MEMO_UNSUPPORTED_TYPE（415）：按内容识别不是支持的音频 / 图片格式；
  * - MEMO_MEDIA_TOO_LARGE_FOR_MCP（413）：MCP 取件超过内联字节预算。
  */
 
 /** 文字随笔 / 媒体随笔说明文字的长度上限（字符） */
 export const MEMO_TEXT_MAX = 5000;
+/** 来源、标签、设备和设备时间等元数据按序列化 JSON 的 UTF-8 总字节计，保留完整合法值。 */
+export const MEMO_METADATA_MAX_BYTES = 64 * 1024;
+/** JSON 信封额外容纳正文最坏的 JSON 转义（每 UTF-16 单元最多 6 字节）和固定字段。 */
+export const MEMO_JSON_BODY_MAX_BYTES =
+  MEMO_METADATA_MAX_BYTES + MEMO_TEXT_MAX * 6 + 1024;
+export const MEMO_METADATA_TOO_LARGE = "MEMO_METADATA_TOO_LARGE";
+export const MEMO_METADATA_LIMIT_MESSAGE =
+  "随笔请求或来源元数据过大，请精简后重试";
 /** 单个标签长度上限（字符）与每条标签个数上限 */
 export const MEMO_TAG_MAX = 20;
 export const MEMO_TAGS_MAX = 5;
@@ -106,14 +118,14 @@ export const memoAnchorSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("question"),
     attemptId: z.string().min(1).max(80),
-    questionId: z.string().min(1).max(80),
+    questionId: learningContentIdSchema,
     label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX),
   }),
   z.object({
     kind: z.literal("lecture"),
-    lectureId: z.string().min(1).max(80),
+    lectureId: learningContentIdSchema,
     /** 讲义小节 id（有则锚到节；无则锚到整篇） */
-    sectionId: z.string().min(1).max(80).nullable(),
+    sectionId: learningContentIdSchema.nullable(),
     label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX),
   }),
   z.object({ kind: z.literal("none") }),
@@ -122,6 +134,15 @@ export type MemoAnchor = z.infer<typeof memoAnchorSchema>;
 
 export const MEMO_ANCHOR_NONE: MemoAnchor = { kind: "none" };
 
+/** 写入口与来源展开后的元数据共用计量；读侧不截断历史记录。 */
+export interface MemoMetadataInput {
+  readonly anchor?: unknown;
+  readonly context?: unknown;
+  readonly tags?: unknown;
+  readonly device?: unknown;
+  readonly deviceId?: unknown;
+  readonly recordedAt?: unknown;
+}
 /** 标签：去首尾空白、非空、≤ 20 字、≤ 5 个、去重（服务端再去重一次） */
 export const memoTagsSchema = z
   .array(z.string().trim().min(1).max(MEMO_TAG_MAX))
@@ -205,7 +226,7 @@ export const memoListQuerySchema = z.object({
   tag: z.string().trim().min(1).max(MEMO_TAG_MAX).optional(),
   /** 只看锚在某次作答 / 某篇讲义上的 */
   attemptId: z.string().min(1).max(80).optional(),
-  lectureId: z.string().min(1).max(80).optional(),
+  lectureId: learningContentIdSchema.optional(),
   /** 只看这个时刻之后记的（recordedAt ≥ since；Agent 增量读） */
   since: z.iso.datetime({ offset: true }).optional(),
 });
@@ -231,13 +252,13 @@ export const memoAgentCreateSchema = z.object({
       z.object({
         kind: z.literal("question"),
         attemptId: z.string().min(1).max(80),
-        questionId: z.string().min(1).max(80),
+        questionId: learningContentIdSchema,
         label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX).optional(),
       }),
       z.object({
         kind: z.literal("lecture"),
-        lectureId: z.string().min(1).max(80),
-        sectionId: z.string().min(1).max(80).nullable().optional(),
+        lectureId: learningContentIdSchema,
+        sectionId: learningContentIdSchema.nullable().optional(),
         label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX).optional(),
       }),
     ])

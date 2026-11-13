@@ -146,6 +146,7 @@ describe("本人设备接口", () => {
     const body = (await response.json()) as { data: unknown };
     assertNoLeak(body);
     expect(deviceSchema.parse(body.data).automaticName).toBe("iPad · Safari");
+    expect(deviceSchema.parse(body.data).activeSessionCount).toBe(1);
     const list = await app.request("/api/student/devices", {
       headers: json("POST", {}).headers,
     });

@@ -13,8 +13,7 @@
           "anyOf": [
             {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 160
+              "minLength": 1
             },
             {
               "type": "null"
@@ -25,8 +24,7 @@
           "anyOf": [
             {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 160
+              "minLength": 1
             },
             {
               "type": "null"
@@ -37,8 +35,7 @@
           "anyOf": [
             {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 160
+              "minLength": 1
             },
             {
               "type": "null"
@@ -49,8 +46,7 @@
           "anyOf": [
             {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 160
+              "minLength": 1
             },
             {
               "type": "null"
@@ -61,8 +57,7 @@
           "anyOf": [
             {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 160
+              "minLength": 1
             },
             {
               "type": "null"
@@ -73,36 +68,21 @@
           "type": "object",
           "properties": {
             "course": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 500
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "unit": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 500
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             },
             "lecture": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 500
-                },
-                {
-                  "type": "null"
-                }
+              "type": [
+                "string",
+                "null"
               ]
             }
           },

@@ -1,5 +1,8 @@
 import {
   DEVICE_ID_HEADER,
+  MEMO_JSON_BODY_MAX_BYTES,
+  MEMO_METADATA_LIMIT_MESSAGE,
+  MEMO_METADATA_TOO_LARGE,
   MEMO_OUTBOX_ACCOUNT_CHANGED,
   MEMO_OUTBOX_ACCOUNT_HEADER,
   MEMO_VOICE_MAX_BYTES,
@@ -17,6 +20,8 @@ import {
   type MultipartCap,
   parseMultipartCapped,
 } from "../lib/multipart-capped";
+import { guardBodyLimit } from "../lib/request-body-limit";
+import { assertMemoMultipartEnvelope } from "../services/memo-budget";
 import {
   deleteMemo,
   listMemos,
@@ -65,6 +70,15 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
     }
   };
   return new Hono<StudentEnv>()
+    .use(
+      "/memos",
+      guardBodyLimit({
+        method: "POST",
+        limit: MEMO_JSON_BODY_MAX_BYTES,
+        code: MEMO_METADATA_TOO_LARGE,
+        message: MEMO_METADATA_LIMIT_MESSAGE,
+      }),
+    )
     .post("/memos", async (c) => {
       requireQueueAccount(
         c.req.header(MEMO_OUTBOX_ACCOUNT_HEADER),
@@ -86,9 +100,9 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
         c.req.header(MEMO_OUTBOX_ACCOUNT_HEADER),
         c.var.student.id,
       );
-      const body = formDataToRecord(
-        await parseMultipartCapped(c, MEMO_MEDIA_UPLOAD_CAP),
-      );
+      const form = await parseMultipartCapped(c, MEMO_MEDIA_UPLOAD_CAP);
+      assertMemoMultipartEnvelope(form);
+      const body = formDataToRecord(form);
       const file = body.file;
       if (!(file instanceof File)) {
         throw new HttpError(

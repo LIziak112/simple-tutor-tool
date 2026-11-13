@@ -1,7 +1,11 @@
 import { z } from "zod";
+import { questionSchema } from "./content.ts";
 
-const contentId = z.string().min(1).max(160).nullable();
-const title = z.string().max(500).nullable();
+/** 内容 id 沿用源 DSL 契约，旧锚与新坐标共用，不截断合法来源。 */
+export const learningContentIdSchema = questionSchema.shape.id;
+const contentId = learningContentIdSchema.nullable();
+/** 名称快照沿用源内容无长度上限的语义。 */
+const title = z.string().nullable();
 
 /** 稳定内容坐标与名称快照，不依赖某次作答的存续。 */
 export const learningContentSchema = z.object({

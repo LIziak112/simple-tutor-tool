@@ -13,7 +13,7 @@ import {
 } from "@tutor/contract";
 import { api, callApi } from "@/lib/api";
 import { parseUploadResponse } from "@/lib/api-response";
-import { currentDevice, deviceFetch } from "./device-registration";
+import { currentDevice } from "./device-registration";
 
 /**
  * 随笔（模块 5 第一步）前端 API：
@@ -72,7 +72,7 @@ export async function uploadMemoMediaApi(
   account: string,
   options: UploadMemoMediaOptions = {},
 ): Promise<Memo> {
-  await deviceFetch("/api/student/me");
+  options.signal?.throwIfAborted();
   return new Promise<Memo>((resolve, reject) => {
     const form = new FormData();
     form.append("file", blob, `${fields.kind}.bin`);
@@ -108,7 +108,19 @@ export async function uploadMemoMediaApi(
         options.onProgress?.(Math.min(1, event.loaded / event.total));
       }
     };
+    const abortReason = () =>
+      options.signal?.reason ?? new DOMException("已取消上传", "AbortError");
+    const cancel = () => {
+      xhr.abort();
+      fail(abortReason());
+    };
+    const cleanup = () => options.signal?.removeEventListener("abort", cancel);
+    const fail = (error: unknown) => {
+      cleanup();
+      reject(error);
+    };
     xhr.onload = () => {
+      cleanup();
       try {
         resolve(
           parseUploadResponse(
@@ -119,24 +131,18 @@ export async function uploadMemoMediaApi(
           ),
         );
       } catch (err) {
-        reject(err);
+        fail(err);
       }
     };
-    xhr.onerror = () => reject(new MemoNetworkError());
-    xhr.ontimeout = () => reject(new MemoNetworkError());
-    xhr.onabort = () => {
-      const err = new Error("已取消上传");
-      err.name = "AbortError";
-      reject(err);
-    };
+    xhr.onerror = () => fail(new MemoNetworkError());
+    xhr.ontimeout = () => fail(new MemoNetworkError());
+    xhr.onabort = () => fail(abortReason());
     if (options.signal !== undefined) {
       if (options.signal.aborted) {
-        xhr.abort();
+        cancel();
         return;
       }
-      options.signal.addEventListener("abort", () => xhr.abort(), {
-        once: true,
-      });
+      options.signal.addEventListener("abort", cancel, { once: true });
     }
     xhr.send(form);
   });
