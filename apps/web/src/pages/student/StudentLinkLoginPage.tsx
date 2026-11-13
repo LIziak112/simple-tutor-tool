@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { Link, Navigate, useParams } from "react-router";
+import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
+import { LoginShell } from "@/features/auth/LoginShell";
 import { useStudentLinkLogin } from "@/features/auth/student-auth";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
-import { ScreenError, ScreenLoading } from "./StudentScreen";
 
 /**
  * /s/:token 学生专属链接登录页（T2.3，§5.7 专属链接）。
@@ -27,7 +28,11 @@ export default function StudentLinkLoginPage() {
   // 尚未提交（isIdle，挂载第一帧）与提交后等待中都显示加载——
   // 避免把「还没开始」误判成「已成功」而提前跳转
   if (linkLogin.isPending || linkLogin.isIdle) {
-    return <ScreenLoading text="正在通过专属链接登录…" />;
+    return (
+      <LoginShell portal="student">
+        <AuthScreenLoading text="正在通过专属链接登录…" />
+      </LoginShell>
+    );
   }
 
   if (linkLogin.isError) {
@@ -37,7 +42,7 @@ export default function StudentLinkLoginPage() {
       (err.code === "LINK_INVALID" || err.code === "UNAUTHORIZED");
     if (isLinkInvalid) {
       return (
-        <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center text-foreground">
+        <LoginShell portal="student">
           <h1 className="text-lg font-semibold">链接已失效</h1>
           <p className="max-w-sm text-sm text-muted-foreground">
             这条专属链接不存在或已被重置。请联系老师重新发送链接，
@@ -49,14 +54,16 @@ export default function StudentLinkLoginPage() {
           >
             去密码登录
           </Link>
-        </main>
+        </LoginShell>
       );
     }
     return (
-      <ScreenError
-        message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
-        onRetry={() => linkLogin.mutate(token)}
-      />
+      <LoginShell portal="student">
+        <AuthScreenError
+          message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
+          onRetry={() => linkLogin.mutate(token)}
+        />
+      </LoginShell>
     );
   }
 

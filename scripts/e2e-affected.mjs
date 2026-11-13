@@ -102,6 +102,8 @@ export const SPEC_TAGS = {
   "teacher-register-admin.spec.ts": ["@admin"],
   // 个人账号（模块 0：邀请码注册 / 双视角 / /mcp/personal）
   "personal-account.spec.ts": ["@admin", "@student"],
+  // 多门户登录、回跳与身份切换（含管理入口）
+  "portal-navigation.spec.ts": ["@student", "@admin"],
   // 教师端
   "teacher-mark-flow.spec.ts": ["@teacher"],
   "teacher-navigation-settings.spec.ts": ["@teacher"],

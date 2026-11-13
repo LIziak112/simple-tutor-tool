@@ -17,10 +17,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { PortalGuard } from "@/features/auth/PortalGuard";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
-import { ApiError } from "@/lib/api";
 import { BRAND_NAME } from "@/lib/brand";
-import { AuthScreenError, AuthScreenLoading } from "../teacher/SetupPage";
 
 /** 管理端复用教师视觉主题，导航与权限守卫保持独立。 */
 const ADMIN_NAV_ITEMS = [
@@ -86,100 +85,104 @@ export function AdminLayout() {
     isNavActive(pathname, item.to),
   );
 
-  if (meQuery.isPending) return <AuthScreenLoading text="正在确认管理权限…" />;
-  if (meQuery.isError) {
-    const err = meQuery.error;
-    if (err instanceof ApiError && err.code === "UNAUTHORIZED")
-      return <Navigate to="/t/login" replace />;
-    return (
-      <AuthScreenError
-        message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
-        onRetry={() => void meQuery.refetch()}
-      />
-    );
-  }
-  if (!meQuery.data.isAdmin) return <Navigate to="/t" replace />;
-
   return (
-    <div className="teacher-theme flex min-h-dvh bg-background text-foreground">
-      <a
-        href="#admin-content"
-        className="sr-only z-[60] rounded-lg bg-card p-3 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
-      >
-        跳到主要内容
-      </a>
-      <aside className="sticky top-0 hidden h-dvh w-[224px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
-        <div className="px-6 pt-5 pb-3">
-          <Brand compact compactLabel="系统管理工作台" />
-        </div>
-        <AdminNavigation />
-        <Link
-          to="/t/settings?section=account"
-          aria-label="查看管理员账号"
-          className="flex min-h-16 items-center gap-3 border-t border-sidebar-border px-6 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent"
-        >
-          <ShieldCheck aria-hidden className="size-4 shrink-0" />
-          <span className="min-w-0">
-            <span
-              data-testid="admin-login-name"
-              className="block break-all font-medium text-foreground"
+    <PortalGuard portal="admin" query={meQuery}>
+      {(me) =>
+        me.isAdmin ? (
+          <div className="teacher-theme flex min-h-dvh bg-background text-foreground">
+            <a
+              href="#admin-content"
+              className="sr-only z-[60] rounded-lg bg-card p-3 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
             >
-              {meQuery.data.loginName}
-            </span>
-            <span className="text-xs">管理员账号</span>
-          </span>
-        </Link>
-      </aside>
-      <div className="min-w-0 flex-1">
-        <header className="flex min-h-14 flex-wrap items-center gap-3 px-5 py-1.5 lg:px-10">
-          <Sheet open={navOpen} onOpenChange={setNavOpen}>
-            <SheetTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-11 lg:hidden"
-                aria-label="打开导航"
-              >
-                <Menu aria-hidden />
-              </Button>
-            </SheetTrigger>
-            <SheetContent
-              side="left"
-              className="teacher-theme w-[min(20rem,100%)] max-w-full sm:max-w-80"
-            >
-              <SheetHeader>
-                <SheetTitle>{BRAND_NAME} 系统管理</SheetTitle>
-              </SheetHeader>
-              <AdminNavigation onNavigate={() => setNavOpen(false)} />
+              跳到主要内容
+            </a>
+            <aside className="sticky top-0 hidden h-dvh w-[224px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+              <div className="px-6 pt-5 pb-3">
+                <Brand compact compactLabel="系统管理工作台" />
+              </div>
+              <AdminNavigation />
               <Link
                 to="/t/settings?section=account"
-                onClick={() => setNavOpen(false)}
-                className="mx-4 mb-4 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground hover:bg-sidebar-accent"
+                aria-label="查看管理员账号"
+                className="flex min-h-16 items-center gap-3 border-t border-sidebar-border px-6 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent"
               >
                 <ShieldCheck aria-hidden className="size-4 shrink-0" />
-                <span className="min-w-0 break-all">
-                  {meQuery.data.loginName} · 管理员账号
+                <span className="min-w-0">
+                  <span
+                    data-testid="admin-login-name"
+                    className="block break-all font-medium text-foreground"
+                  >
+                    {me.loginName}
+                  </span>
+                  <span className="text-xs">管理员账号</span>
                 </span>
               </Link>
-            </SheetContent>
-          </Sheet>
-          <p className="text-sm">
-            <span className="hidden text-muted-foreground sm:inline">
-              系统管理
-              <span aria-hidden className="px-2">
-                /
-              </span>
-            </span>
-            <span className="font-medium">
-              {currentItem?.label ?? "管理工作台"}
-            </span>
-          </p>
-        </header>
-        <main id="admin-content" tabIndex={-1} className="min-w-0 outline-none">
-          <Outlet />
-        </main>
-      </div>
-    </div>
+            </aside>
+            <div className="min-w-0 flex-1">
+              <header className="flex min-h-14 flex-wrap items-center gap-3 px-5 py-1.5 lg:px-10">
+                <Sheet open={navOpen} onOpenChange={setNavOpen}>
+                  <SheetTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="size-11 lg:hidden"
+                      aria-label="打开导航"
+                    >
+                      <Menu aria-hidden />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent
+                    side="left"
+                    className="teacher-theme w-[min(20rem,100%)] max-w-full sm:max-w-80"
+                  >
+                    <SheetHeader>
+                      <SheetTitle>{BRAND_NAME} 系统管理</SheetTitle>
+                    </SheetHeader>
+                    <AdminNavigation onNavigate={() => setNavOpen(false)} />
+                    <Link
+                      to="/t/settings?section=account"
+                      onClick={() => setNavOpen(false)}
+                      className="mx-4 mb-4 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground hover:bg-sidebar-accent"
+                    >
+                      <ShieldCheck aria-hidden className="size-4 shrink-0" />
+                      <span className="min-w-0 break-all">
+                        {me.loginName} · 管理员账号
+                      </span>
+                    </Link>
+                  </SheetContent>
+                </Sheet>
+                <Link
+                  to="/"
+                  className="ml-auto flex min-h-11 items-center rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent"
+                >
+                  切换身份
+                </Link>
+                <p className="text-sm">
+                  <span className="hidden text-muted-foreground sm:inline">
+                    系统管理
+                    <span aria-hidden className="px-2">
+                      /
+                    </span>
+                  </span>
+                  <span className="font-medium">
+                    {currentItem?.label ?? "管理工作台"}
+                  </span>
+                </p>
+              </header>
+              <main
+                id="admin-content"
+                tabIndex={-1}
+                className="min-w-0 outline-none"
+              >
+                <Outlet />
+              </main>
+            </div>
+          </div>
+        ) : (
+          <Navigate to="/t" replace />
+        )
+      }
+    </PortalGuard>
   );
 }
 

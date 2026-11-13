@@ -23,6 +23,7 @@ import {
   logoutStudentApi,
 } from "@/lib/api";
 import { clearAccountQueries } from "./account-query-cache";
+import { portalCapabilitiesOf } from "./portals";
 
 /**
  * 学生登录状态（T2.3 学生端外壳）：与 teacher-auth 同构的模式——
@@ -47,7 +48,7 @@ export function useStudentMe() {
 }
 
 /**
- * 登录成功后写入 me 缓存并预取我的作业/课程/讲义（首页立即可用，T2A.5 加课程）。
+ * 登录成功后写入 me 缓存，按门户能力预取作业，并预取课程/讲义。
  * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
  */
 export function useApplyStudentAuthed() {
@@ -73,10 +74,12 @@ export function useApplyStudentAuthed() {
     bindGroupMaterialLayoutAccount(student.id);
     bindDraftSession({ origin: window.location.origin, studentId: student.id });
     queryClient.setQueryData(studentMeKey, student);
-    void queryClient.prefetchQuery({
-      queryKey: ["student", "assignments"],
-      queryFn: fetchStudentAssignmentsApi,
-    });
+    if (portalCapabilitiesOf("student", student.accountKind).assignments) {
+      void queryClient.prefetchQuery({
+        queryKey: ["student", "assignments"],
+        queryFn: fetchStudentAssignmentsApi,
+      });
+    }
     void queryClient.prefetchQuery({
       queryKey: ["student", "courses"],
       queryFn: fetchStudentCoursesApi,
@@ -111,14 +114,17 @@ export function useLoginStudent() {
  * resetNoteSession（T6R.9）——停旧草稿同步队列、中止在途上传、隔离回执；
  * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
  */
-export function useLogoutStudent() {
+export function useLogoutStudent(onLoggedOut?: () => void) {
   const clearSession = useClearStudentSession();
-  return useMutation({ mutationFn: logoutStudentApi, onSuccess: clearSession });
+  return useMutation({
+    mutationFn: logoutStudentApi,
+    onSuccess: () => clearSession(onLoggedOut),
+  });
 }
 
 export function useClearStudentSession() {
   const queryClient = useQueryClient();
-  return async () => {
+  return async (onCleared?: () => void) => {
     bindDraftSession(null);
     bindAiDisplayAccount(null);
     bindPracticePreferenceAccount(null);
@@ -127,6 +133,12 @@ export function useClearStudentSession() {
     resetNoteSession();
     resetAnnotationSession();
     await clearAccountQueries(queryClient, "student");
-    await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
+    const reset = queryClient.resetQueries({
+      queryKey: studentMeKey,
+      exact: true,
+    });
+    // 身份已清空、页面尚未卸载时完成主动退出导航，再等待身份重取。
+    onCleared?.();
+    await reset;
   };
 }
