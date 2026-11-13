@@ -9,7 +9,6 @@ import {
   attemptEventBatchRequestSchema,
   attemptFlagRequestSchema,
   attemptStartOptionsRequestSchema,
-  attemptSubmitRequestSchema,
   attemptWorkflowUpdateDataSchema,
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
@@ -85,7 +84,6 @@ import {
   setStudentFlag,
   startAttempt,
   startCourseAttempt,
-  submitAttempt,
   submitLessonQuestion,
   submitPracticeQuestion,
 } from "../services/attempt-service";
@@ -135,6 +133,7 @@ import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
 import { respondAttemptDetail } from "./student-attempt-detail";
+import { createStudentBatchSubmissionRoutes } from "./student-batch-submission.ts";
 import { createStudentMemoRoutes } from "./student-memos";
 import { createStudentRubricRoutes } from "./student-rubric";
 
@@ -283,6 +282,7 @@ export function createStudentRoutes(
       .route("/", createStudentRubricRoutes(db))
       .route("/", createStudentAttachmentRoutes(db, dataDir))
       .route("/", createStudentMemoRoutes(db, dataDir))
+      .route("/", createStudentBatchSubmissionRoutes(db))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })
@@ -360,25 +360,6 @@ export function createStudentRoutes(
           ),
         }),
       )
-      .post("/attempts/:id/submit", async (c) => {
-        // T2A.8：now 显式注入（服务层按 answerRelease+dueAt 决定交卷瞬间的形态）
-        // T6R.3：交卷回传每题 questionRevisionId 验证题目版本（与冻结集合精确
-        // 比对）；不带请求体按空集合传入——非空卷自然 409 QUESTION_REVISION_STALE
-        // （旧标签页/陈旧页面可诊断提示刷新，不静默接受）
-        // T6R.10：body.evidence 为笔记证据声明（可选——缺省=旧客户端，服务层
-        // 据此走兼容分支：有草稿拒绝要求刷新、无草稿按未采集交卷）
-        const body = await parseJsonBodyOrEmpty(c, attemptSubmitRequestSchema);
-        return c.json({
-          ok: true,
-          data: submitAttempt(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            new Date(),
-            body ?? { revisions: [] },
-          ),
-        });
-      })
       // 2026-10 讲练一体 + M2 新协议分流（2026-10-22 计划 §5.3/§10.1）：
       // 同一 URL 按请求形态分流——携带 workflowVersion 字段走新协议路径
       //（practiceQuestionSubmitRequest strict 契约；仅普通来源新协议卷，
