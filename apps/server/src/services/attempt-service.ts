@@ -982,7 +982,7 @@ export function assertFrozenAnswerShape(
     multi: { options },
   });
   if (issues.length > 0) {
-    throw new HttpError(400, "VALIDATION_ERROR", "答案结构与题目不符");
+    throw new HttpError(400, "VALIDATION_ERROR", "答案结构不合法");
   }
 }
 

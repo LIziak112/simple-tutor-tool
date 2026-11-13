@@ -14,7 +14,11 @@ import {
   attempts,
   teachers,
 } from "../db/schema.ts";
-import { createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDir,
+  seedLessonWithEmbeddedUnit,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { submitLessonQuestion } from "../services/attempt-service.ts";
 import { insertResponse } from "./ai-companion-fixtures.ts";
 import { connectMcpClientViaApp } from "./mcp-test-utils.ts";
@@ -451,6 +455,7 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     w.setTeacherDefault(w.teacherA, "guided_only");
     // 讲练卷（sourceType=lesson）+ 本题/邻题两行
     const lessonAttempt = randomUUID();
+    const lesson = seedLessonWithEmbeddedUnit(w.db, { teacherId: w.teacherA });
     w.db
       .insert(attempts)
       .values({
@@ -459,8 +464,7 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
         sourceType: "lesson",
         assignmentId: null,
         courseId: null,
-        unitId: null,
-        lectureId: null,
+        ...lesson,
         attemptNo: 1,
         status: "draft",
         startedAt: "2026-06-01T00:00:00.000Z",
@@ -510,8 +514,7 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
         sourceType: "lesson",
         assignmentId: null,
         courseId: null,
-        unitId: null,
-        lectureId: null,
+        ...lesson,
         attemptNo: 2,
         status: "draft",
         startedAt: "2026-06-01T00:00:00.000Z",

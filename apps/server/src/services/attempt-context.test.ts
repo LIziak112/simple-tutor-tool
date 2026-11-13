@@ -35,7 +35,7 @@ import { startWrongPractice } from "./wrong-practice.ts";
 const NOW = "2026-10-24T10:00:00.000Z";
 const STUDENT_ID = "student-qm06-1";
 const STUDENT_ID_2 = "student-qm06-2";
-const COURSE_ID = "course-qm06-1";
+const COURSE_ID = randomUUID();
 
 /** QM 语料：两材料（其一含媒体与槽位）+ 一组（引用材料 1、choice/judge 两
  * 子题）+ 独立 fill（无参考）+ 题级 ::ref 的 solve（有 :::answer）+ response
