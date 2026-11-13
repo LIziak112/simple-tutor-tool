@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AttemptStartData, WrongPracticeScope } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
@@ -13,8 +14,10 @@ import {
   attemptSummaryOf,
   insertFrozenResponse,
   newDraftAttempt,
+  requireOwnAttempt,
   workflowStartColumns,
 } from "./attempt-service";
+import { createOnce } from "./create-receipt";
 import { newContentEnabledFromEnv } from "./import-qm.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { snapshotOfRow } from "./snapshot";
@@ -65,7 +68,33 @@ export function startWrongPractice(
   newContentEnabled?: boolean,
   /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
   scope?: WrongPracticeScope | undefined,
+  operationId?: string,
 ): { attempt: AttemptStartData; includedCount: number } {
+  if (operationId) {
+    const saved = createOnce(
+      db,
+      "wrong-practice",
+      studentId,
+      operationId,
+      [questionIds, options, scope],
+      z.object({ id: z.uuid(), includedCount: z.number().int().positive() }),
+      (store) => {
+        const { attempt, includedCount } = startWrongPractice(
+          store,
+          studentId,
+          questionIds,
+          options,
+          newContentEnabled,
+          scope,
+        );
+        return { id: attempt.id, includedCount };
+      },
+    );
+    return {
+      attempt: attemptSummaryOf(requireOwnAttempt(db, studentId, saved.id)),
+      includedCount: saved.includedCount,
+    };
+  }
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
 

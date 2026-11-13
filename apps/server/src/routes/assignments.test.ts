@@ -622,6 +622,34 @@ describe("组合方式 unitGrouping（每个单元一份 / 合并一份）", () 
     return { app, db, teacherCookie, unitA, unitB, aId, bId, courseId };
   }
 
+  it.each(["separate", "merged"] as const)(
+    "重复到达的 %s 布置只创建首批",
+    async (unitGrouping) => {
+      const env = await makeSeparateEnv();
+      const input = {
+        unitIds: [env.unitA, env.unitB],
+        studentIds: [env.aId],
+        unitGrouping,
+        operationId: crypto.randomUUID(),
+      };
+      const send = () => createAssignments(env.app, env.teacherCookie, input);
+      const [first, replay] = await Promise.all([send(), send()]);
+      expect(replay.assignments.map((row) => row.id)).toEqual(
+        first.assignments.map((row) => row.id),
+      );
+      expect(first.assignments).toHaveLength(
+        unitGrouping === "separate" ? 2 : 1,
+      );
+      const conflict = await request(
+        env.app,
+        "/api/teacher/assignments",
+        { ...input, title: "另一个请求" },
+        env.teacherCookie,
+      );
+      expect(conflict.status).toBe(409);
+    },
+  );
+
   it("separate：按 unitIds 顺序创建 N 份；每份单单元、缺省标题 = 各自单元标题；courseId/studentIds/dueAt/answerRelease 共用", async () => {
     const env = await makeSeparateEnv();
     const data = await createAssignments(env.app, env.teacherCookie, {

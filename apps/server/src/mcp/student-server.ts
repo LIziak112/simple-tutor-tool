@@ -5,6 +5,7 @@ import {
   AI_REPLY_MAX_CHARS,
   aiAttemptReviewStatusSchema,
   aiTaskStatusSchema,
+  createOperationIdSchema,
   studentMcpPracticeQuestionSubmitSchema,
 } from "@tutor/contract";
 import { checkAiReply } from "@tutor/md-dsl";
@@ -719,14 +720,14 @@ export function registerStudentTools(
   // 10. create_wrong_practice：AI 组卷（2026-10）——走 wrong-practice 服务层
   //     （与页面 POST /wrong-practice 同一校验与快照冻结：∉ 本人错题本聚合的题
   //     静默剔除、剔完为空 400 WRONG_PRACTICE_EMPTY；建卷只复制题目快照，响应
-  //     不携带任何题目内容）。**非幂等**：每次调用新建一份独立练习卷，MCP 层
-  //     不做去重——由 AI 侧在调用前与学生确认
+  //     不携带任何题目内容）。确认后分配操作标识，响应丢失时复用。
   server.registerTool(
     "create_wrong_practice",
     {
       description:
-        "把选定的错题组成一份新的错题重练卷（AI 组卷），学生可在「我的记录」或返回的链接开始作答。题目必须属于当前学生的错题本：不在聚合内的题会被静默剔除并在 excludedCount 说明，全部无效返回 400 WRONG_PRACTICE_EMPTY。注意：非幂等——每次调用都会新建一份独立练习卷，请先与学生确认选题再调用。label 是随卷快照的组卷说明（如「最近一周 · 错 2 次以上 · 10 题」），会展示在卷标题「错题重练 · 第 n 次 · label」中；缺省为「AI 组卷」。",
+        "把选定的错题组成一份新的错题重练卷（AI 组卷），学生可在「我的记录」或返回的链接开始作答。不属于当前学生错题本的题会被剔除，全部无效返回 WRONG_PRACTICE_EMPTY。请先与学生确认，再生成 operationId；同一操作重试沿用它。label 随卷保存，缺省为「AI 组卷」。",
       inputSchema: {
+        operationId: createOperationIdSchema.optional(),
         questionIds: z
           .array(z.string().min(1))
           .min(1, "至少选择一道错题")
@@ -743,7 +744,7 @@ export function registerStudentTools(
       },
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    guard(({ questionIds, label }) => {
+    guard(({ questionIds, label, operationId }) => {
       const scopeLabel = label ?? "AI 组卷";
       const { attempt, includedCount } = startWrongPractice(
         db,
@@ -759,6 +760,7 @@ export function registerStudentTools(
           kind: "ai",
           label: scopeLabel,
         },
+        operationId,
       );
       // 剔除计数：服务层返回实际冻结题数 vs 去重后的入参数（已静默剔除）
       return jsonContent({

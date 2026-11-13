@@ -749,6 +749,31 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
 });
 
 describe("POST /api/student/lectures/:id/lesson/restart（再做一次/重新开始，显式独立动作）", () => {
+  it("相同重开请求重放返回同一新卷，过期源卷的另一次操作被拒绝", async () => {
+    const env = await makeEnv();
+    const { data } = await startOk(env);
+    const send = (operationId: string, expectedAttemptId = data.attempt.id) =>
+      env.app.request(`/api/student/lectures/${env.lectureId}/lesson/restart`, {
+        method: "POST",
+        headers: {
+          cookie: env.memberCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ operationId, expectedAttemptId }),
+      });
+    const id = crypto.randomUUID();
+    const responses = await Promise.all([send(id), send(id)]);
+    expect(responses.map((response) => response.status)).toEqual([201, 201]);
+    const bodies = await Promise.all(
+      responses.map(async (response) => (await response.json()) as StartBody),
+    );
+    const first = bodies[0]?.data.attempt.id;
+    expect(first).toBeDefined();
+    expect(bodies[1]?.data.attempt.id).toBe(first);
+    expect((await send(crypto.randomUUID())).status).toBe(409);
+    expect((await startOk(env)).data.attempt.id).toBe(first);
+    for (const body of bodies) assertNoLeak(body);
+  });
   it("无作答 409；随时重开——进行中 draft restart 也 201（旧卷作废，2026-10 教师演示口径；详测见 landing describe）", async () => {
     const env = await makeEnv();
 

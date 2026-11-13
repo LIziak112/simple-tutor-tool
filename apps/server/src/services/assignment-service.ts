@@ -34,6 +34,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { courseNamesOf, studentNamesById } from "./assignment-display-names";
 import {
   requireCurrentCourseMembers,
   requireStudentsExist,
@@ -354,29 +355,6 @@ function hasAttempt(db: Db, assignmentId: string): boolean {
   );
 }
 
-/** 学生 id → 姓名（CONFIRM_REQUIRED 附带名单、check 提示行共用；id 全局唯一） */
-function studentNamesById(db: Db): Map<string, string> {
-  return new Map(
-    db
-      .select({ id: students.id, displayName: students.displayName })
-      .from(students)
-      .all()
-      .map((row) => [row.id, row.displayName] as const),
-  );
-}
-
-/** 课程 id → 标题（T2B.4 域内读：列表/详情/check 的课程名展示只用本人课程） */
-function courseNamesOf(db: Db, teacherId: string): Map<string, string> {
-  return new Map(
-    db
-      .select({ id: courses.id, title: courses.title })
-      .from(courses)
-      .where(eq(courses.teacherId, teacherId))
-      .all()
-      .map((r) => [r.id, r.title] as const),
-  );
-}
-
 /** 作业行 → 教师端列表行（聚合数据由调用方预取传入；courseName 取当前值） */
 function toTeacherAssignment(
   row: Assignment,
@@ -437,7 +415,7 @@ function toTeacherAssignment(
 }
 
 /** 组装单条作业的教师列表行（详情在其上 extend；T2B.4 域内聚合） */
-function teacherAssignmentOf(
+export function teacherAssignmentOf(
   db: Db,
   teacherId: string,
   id: string,
@@ -497,6 +475,18 @@ export function createAssignment(
   teacherId: string,
   request: AssignmentCreateRequest,
 ): AssignmentCreateData {
+  return {
+    assignments: createAssignmentIds(db, teacherId, request).map((id) =>
+      teacherAssignmentOf(db, teacherId, id),
+    ),
+  };
+}
+
+export function createAssignmentIds(
+  db: Db,
+  teacherId: string,
+  request: AssignmentCreateRequest,
+): string[] {
   const unitList = requireUnitsUniqueExist(db, teacherId, request.unitIds);
   if (request.courseId !== null && request.courseId !== undefined) {
     const course = db
@@ -597,9 +587,7 @@ export function createAssignment(
     },
     { behavior: request.requireCourseMembership ? "immediate" : "deferred" },
   );
-  return {
-    assignments: createdIds.map((id) => teacherAssignmentOf(db, teacherId, id)),
-  };
+  return createdIds;
 }
 
 /**
