@@ -366,8 +366,8 @@ export const markRequestSchema = z.object({
 
 /**
  * POST /api/teacher/responses/:id/mark 响应 data：批注写回后的最新状态
- * （事务内落库后回读）。整卷字段按 D2 状态机重算：全部 finalCorrect 非 null →
- * graded + scoreFinal；任一待批 → submitted + null。pendingCount 为该 attempt
+ * （事务内落库后回读）。已收尾且无教师待批则返回 graded 和 scoreFinal；
+ * 尚有教师待批则返回 submitted 和 null。pendingCount 为该 attempt
  * 剩余待批数（D4 共享谓词口径），前端据此更新批改进度 x/y。
  */
 export const markResponseDataSchema = z.object({
@@ -451,20 +451,6 @@ export const pendingMarkCardSchema = teacherAttemptSourceSchema.extend({
 export const pendingMarkListDataSchema = z.object({
   marks: z.array(pendingMarkCardSchema),
 });
-
-/**
- * 批注与待批队列错误码：
- * - RESPONSE_NOT_FOUND：response 不存在或非本教师学生的作答（404，不暴露存在性，
- *   与 ATTEMPT_NOT_FOUND 同口径）；
- * - NOT_SUBMITTED：对 draft attempt 批注（409——未交卷的题没有可批改的冻结行）；
- * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
- */
-export const teacherMarkErrorCodeSchema = z.enum([
-  "RESPONSE_NOT_FOUND",
-  "NOT_SUBMITTED",
-  "UNAUTHORIZED",
-  "VALIDATION_ERROR",
-]);
 
 // ---------- T3.4 CSV 导出（D13） ----------
 
@@ -605,3 +591,5 @@ export type PendingMarkListQuery = z.infer<typeof pendingMarkListQuerySchema>;
 export type PendingMarkCard = z.infer<typeof pendingMarkCardSchema>;
 export type PendingMarkListData = z.infer<typeof pendingMarkListDataSchema>;
 export type ExportCsvQuery = z.infer<typeof exportCsvQuerySchema>;
+
+export { teacherMarkErrorCodeSchema } from "./teacher-mark-errors.ts";

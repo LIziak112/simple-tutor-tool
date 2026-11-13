@@ -104,6 +104,13 @@ import {
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import {
+  attemptFinalOutcomeOf,
+  type FinalOutcomeRow,
+  hasUsableQuestionSnapshotSql,
+  needsTeacherMark,
+  scoreAutoOf,
+} from "./attempt-final-outcome.ts";
 import { attemptAllowRedo, withAllowRedo } from "./attempt-redo-policy";
 import { restrictedResultQuestionOf } from "./attempt-result-release";
 import {
@@ -144,6 +151,10 @@ import {
   resolveNewAttemptWorkflow,
 } from "./practice-workflow-wiring";
 
+export {
+  attemptFinalOutcomeOf,
+  finalScoreOf,
+} from "./attempt-final-outcome.ts";
 // answersReleased 原定义在本文件（T2A.8），M2 迁入纯裁决器层（题级反馈
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
 export { answersReleased } from "./practice-workflow-service";
@@ -2310,102 +2321,6 @@ interface GradedResponse {
 }
 
 /**
- * scoreAuto 口径：答对数 / 可自动判分数（autoCorrect 非 null），四舍五入百分比；
- * 无可判分为 null。入参结构化（只需 autoCorrect）：交卷链路传判分中间结果，
- * lesson 单题提交自动收尾传事务内重读的冻结行（同口径复用，不复制公式）。
- */
-function scoreAutoOf(
-  graded: readonly { autoCorrect: boolean | null }[],
-): number | null {
-  const autoGradable = graded.filter((g) => g.autoCorrect !== null).length;
-  if (autoGradable === 0) return null;
-  const correct = graded.filter((g) => g.autoCorrect === true).length;
-  return Math.round((correct / autoGradable) * 100);
-}
-
-/**
- * D2/D3 口径的 attempt 级最终得分与状态（T3.2a）：
- * - status=graded 当且仅当全部 finalCorrect 均非 null（此时必写 scoreFinal）；
- * - scoreFinal = round（finalCorrect 为 true 的题数 ÷ 全部题数 × 100）；
- *   任一待批（null）则 status=submitted、scoreFinal=null（批改完成后由 T3.2b 重算）；
- * - 空卷（无题）防御性保持 submitted / null。
- * 交卷链路调用时 finalCorrect=autoCorrect（teacherMark 必空）；backfill 与批改
- * 链路以 teacherMark ?? autoCorrect 为输入复用同一口径。
- */
-export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
-  status: "submitted" | "graded";
-  scoreFinal: number | null;
-} {
-  if (finalCorrects.length === 0 || finalCorrects.some((v) => v === null)) {
-    return { status: "submitted", scoreFinal: null };
-  }
-  const correct = finalCorrects.filter((v) => v === true).length;
-  return {
-    status: "graded",
-    scoreFinal: Math.round((correct / finalCorrects.length) * 100),
-  };
-}
-
-/**
- * 收尾判定的行级输入（attemptFinalOutcomeOf 消费；finalCorrect 为该口径下
- * 的写入后事实值——交卷链路 = autoCorrect，批改链路 = teacherMark ?? autoCorrect）
- */
-export interface FinalOutcomeRow {
-  readonly gradingPolicy: GradingPolicy | null;
-  readonly submittedAt: string | null;
-  /** 教师批改标记（teacher_pending 判定只消费 null 与否，形态由列类型把关） */
-  readonly teacherMark: string | null;
-  readonly finalCorrect: boolean | null;
-}
-
-/**
- * QM-10 细项7（§5.5.5 graded 触发放宽，新行口径单一出处——交卷/自动收尾/
- * 教师批改重算三链路共用）：
- * - **旧行旧口径（历史不重释）**：任一行 gradingPolicy=NULL（升级前开的卷、
- *   开关关闭部署）→ 整卷按 finalScoreOf（D2/D3：全部 finalCorrect 非 null 才
- *   graded）。正常数据新旧不混卷（行策略在开卷时整卷冻结），混卷防御性取
- *   旧口径——与「禁止重释历史」同一保守侧；
- * - **新行口径**：graded ⟺ 全部行已提交 且 无「教师待处理」行
- *   （manual_only 且 teacherMark=null——判定来源枯竭，唯一出口是教师；
- *   reference_self 行自评与否不阻塞，「完成作答不以自评为前提」）；
- * - opts.finalized（整卷已收尾）时全部行按已提交语义参与 allSubmitted（与四态
- *   gate 同口径；legacy 协议行不写行级 submittedAt）；scoreFinal 公式沿用 D3
- *   （round(finalCorrect=true ÷ 全部题数 × 100)，reference_self 行计分母不计分子）；
- * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
- */
-export function attemptFinalOutcomeOf(
-  rows: readonly FinalOutcomeRow[],
-  opts: { finalized?: boolean } = {},
-): {
-  status: "submitted" | "graded";
-  scoreFinal: number | null;
-} {
-  if (rows.length === 0) return finalScoreOf([]);
-  if (rows.some((row) => row.gradingPolicy === null)) {
-    return finalScoreOf(rows.map((row) => row.finalCorrect));
-  }
-  // P1 修复（审查 TT-09a）：整卷收尾即全部判分行已提交——与四态 gate
-  // （practiceQuestionFeedbackStateOf 的 `row.submittedAt !== null || finalized`）
-  // 同一口径。legacy 协议行不写行级 submittedAt（responses.submittedAt 是逐题
-  // 提交列，协议分野保持），不归一则 legacy+开关开启卷整卷交卷恒 submitted/
-  // scoreFinal=null，教师批改重算同病。finalized 由调用方声明收尾事实：
-  // 交卷链路交卷即收尾、自动收尾正在收尾、markResponse 只对已收尾卷重算
-  const allSubmitted =
-    opts.finalized === true || rows.every((row) => row.submittedAt !== null);
-  const teacherPending = rows.some(
-    (row) => row.gradingPolicy === "manual_only" && row.teacherMark === null,
-  );
-  if (!allSubmitted || teacherPending) {
-    return { status: "submitted", scoreFinal: null };
-  }
-  const correct = rows.filter((row) => row.finalCorrect === true).length;
-  return {
-    status: "graded",
-    scoreFinal: Math.round((correct / rows.length) * 100),
-  };
-}
-
-/**
  * 交卷（服务端权威判分；T6R.3 起三来源统一读冻结快照）：
  * - attempt 不存在 → 404；非本人 → 403；已交卷 → 409 ALREADY_SUBMITTED（验收项）；
  * - 判分输入 = 该 attempt 自有 responses 行的 questionSnapshotJson（建卷/懒冻结
@@ -2513,7 +2428,6 @@ function finalizeWholeAttempt(
       outcomeRows.push({
         gradingPolicy: ownRow.gradingPolicy,
         submittedAt: ownRow.submittedAt,
-        teacherMark: ownRow.teacherMark,
         finalCorrect: ownRow.finalCorrect,
       });
       continue;
@@ -2533,7 +2447,6 @@ function finalizeWholeAttempt(
       // 逐题语义卷的本次判分行提交时刻 = 交卷时刻（rowSubmittedAtPatch 同款
       // 内存镜像口径；历史卷行保持 null——旧行旧口径不消费该键）
       submittedAt: perQuestionAttempt ? nowIso : null,
-      teacherMark: ownRow.teacherMark,
       finalCorrect: entry.autoCorrect,
     });
   }
@@ -2702,10 +2615,7 @@ export function attemptScoreSummaryOf(
   // 漂移（草稿答案也计入 answered、未提交行计入 pending）。
   const rows = db
     .select({
-      hasSnapshot:
-        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
-          Boolean,
-        ),
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -2793,9 +2703,7 @@ export function scoreSummaryCoreOf(
     }
     // D4 教师待批：finalCorrect IS NULL 且非 reference_self 行（pending-mark.ts
     // 谓词同口径；null 策略旧行不受影响）
-    if (row.finalCorrect === null && row.gradingPolicy !== "reference_self") {
-      pendingCount += 1;
-    }
+    if (needsTeacherMark(row)) pendingCount += 1;
   }
   return {
     total,
@@ -2845,7 +2753,7 @@ export function questionNotFound(): HttpError {
  * 实现，从 submitLessonQuestion 收尾块抽取——计划 §10.2 第 6 步「最后一题
  * 调用共同收尾函数，避免重复公式与双写统计」）：事务内重读全部冻结行（瘦列
  * 投影，不含每题数 KB 的快照原文），全部已提交才收尾——scoreAuto/scoreFinal/
- * status 与整卷交卷同口径复用 scoreAutoOf / finalScoreOf；收尾 UPDATE 带
+ * status 与整卷交卷同口径复用 scoreAutoOf / attemptFinalOutcomeOf；收尾 UPDATE 带
  * WHERE status='draft' 真实 CAS，逐题与整卷并发收尾只成功一次（后到者 no-op，
  * 行集照常返回）。返回瘦行集供 lesson 现算 summary / 题级进度消费，并带回
  * 收尾后的 attempt 新行（no-op 时 null——调用方回落事务内已读行，同步单
@@ -2858,13 +2766,10 @@ function autoFinishPerQuestionAttempt(
 ): { rows: ScoreSummaryRow[]; attempt: Attempt | null } {
   const rowsAfter = tx
     .select({
-      // 快照原文不搬运（每题数 KB，收尾判定只需要存在性）
+      // 在数据库连接内核对快照，仅返回是否可用
       // mapWith(Boolean)：better-sqlite3 对该表达式返回 0/1 整数，归一为真
       // 布尔——严格比较（仓库布尔列惯例）与真值判断都安全
-      hasSnapshot:
-        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
-          Boolean,
-        ),
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
