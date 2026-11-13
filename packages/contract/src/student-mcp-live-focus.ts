@@ -26,3 +26,10 @@ export const aiMcpCurrentContextSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("authorized_task"), taskId: z.uuid() }),
 ]);
 export type AiMcpCurrentContext = z.infer<typeof aiMcpCurrentContextSchema>;
+
+/** 求助通知仅携带显式领取所需的任务标识和创建时间。 */
+export const aiMcpWaitTaskSchema = z.strictObject({
+  kind: z.literal("task"),
+  id: z.uuid(),
+  createdAt: z.iso.datetime(),
+});
