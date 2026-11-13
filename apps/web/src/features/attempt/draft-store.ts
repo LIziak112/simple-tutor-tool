@@ -8,7 +8,7 @@ import { randomUuid } from "@/lib/uuid";
 import {
   digestOf,
   inkDigestOf,
-  mergeAnswers,
+  mergeServerDrafts,
   unsyncedAnswerIds,
   unsyncedInkIds,
 } from "./draft-merge";
@@ -554,67 +554,18 @@ export const draftStore = {
     const generation = backendGeneration;
     await draftStore.recoverLegacyDraft(attemptId);
     if (generation !== backendGeneration) return serverAnswers;
-    const local = cache.get(attemptId);
-    const effectiveServer = { ...serverAnswers };
-    const staleIds = new Set(
-      Object.entries(serverRevisions ?? {})
-        .filter(
-          ([id, revision]) => revision < (local?.answerRevisions?.[id] ?? 0),
-        )
-        .map(([id]) => id),
-    );
-    for (const id of staleIds) {
-      const answer = local?.answers[id];
-      if (answer === undefined) delete effectiveServer[id];
-      else effectiveServer[id] = answer;
-    }
-    const { merged } = mergeAnswers(
-      local?.answers ?? null,
-      effectiveServer,
-      local?.answerDigests ?? {},
-    );
     if (
-      local === undefined &&
-      Object.keys(merged).length === 0 &&
+      !cache.has(attemptId) &&
+      Object.keys(serverAnswers).length === 0 &&
       serverRevisions === undefined
     ) {
       // 两边都空：不建记录（首次进入且未作答）
-      return merged;
+      return {};
     }
     mutate(attemptId, (record) => {
-      record.answers = merged;
-      for (const [id, revision] of Object.entries(serverRevisions ?? {})) {
-        if (staleIds.has(id)) continue;
-        const old = local?.answerDigests[id];
-        const serverDigest = digestOf(serverAnswers[id]);
-        const localAnswer = merged[id];
-        const dirty =
-          localAnswer !== undefined && digestOf(localAnswer) !== serverDigest;
-        const changedRemotely =
-          old !== undefined
-            ? old !== serverDigest
-            : serverAnswers[id] !== undefined;
-        if (
-          dirty &&
-          (changedRemotely || record.answerConflicts?.[id] !== undefined)
-        ) {
-          record.answerConflicts ??= {};
-          record.answerConflicts[id] = {
-            revision,
-            draft: serverAnswers[id] ?? null,
-          };
-        } else {
-          record.answerRevisions ??= {};
-          record.answerRevisions[id] = revision;
-          if (record.answerConflicts) delete record.answerConflicts[id];
-        }
-      }
-      for (const [questionId, answer] of Object.entries(serverAnswers)) {
-        if (staleIds.has(questionId)) continue;
-        record.answerDigests[questionId] = digestOf(answer);
-      }
+      mergeServerDrafts(record, serverAnswers, serverRevisions);
     });
-    return merged;
+    return draftStore.peekAnswers(attemptId) ?? {};
   },
 
   setAnswerConflict(
@@ -623,6 +574,11 @@ export const draftStore = {
     cloud: AttemptAnswerConflictCurrent,
   ): void {
     mutate(attemptId, (record) => {
+      if (
+        cloud.revision < (record.answerRevisions?.[questionId] ?? 0) ||
+        cloud.revision < (record.answerConflicts?.[questionId]?.revision ?? 0)
+      )
+        return;
       record.answerConflicts ??= {};
       record.answerConflicts[questionId] = cloud;
     });

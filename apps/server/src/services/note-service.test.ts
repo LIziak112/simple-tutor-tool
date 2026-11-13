@@ -91,16 +91,23 @@ function makeFrozenAttempt(
     questionVersion?: number;
   } = {},
 ): { attemptId: string; revisionIds: Map<string, string> } {
-  const base = newDraftAttempt({
-    id: randomUUID(),
-    studentId,
+  const base: Attempt = {
+    ...newDraftAttempt({
+      id: randomUUID(),
+      studentId,
+      sourceType: "wrong",
+      assignmentId: null,
+      lectureId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: overrides.attemptNo ?? 1,
+      startedAt: "2026-10-01T00:00:00.000Z",
+    }),
     sourceType: overrides.sourceType ?? "assignment",
     assignmentId: overrides.assignmentId ?? null,
     courseId: overrides.courseId ?? null,
     unitId: overrides.unitId ?? null,
-    attemptNo: overrides.attemptNo ?? 1,
-    startedAt: "2026-10-01T00:00:00.000Z",
-  });
+  };
   const attempt: Attempt =
     status === "submitted"
       ? {
@@ -2778,16 +2785,20 @@ describe("QM-15 笔记本来源材料/组投影（round.context，快照不可�
   ): string {
     const questionId = opts.questionId ?? "q1";
     const attemptId = opts.attemptId ?? randomUUID();
-    const base = newDraftAttempt({
-      id: attemptId,
-      studentId,
+    const base: Attempt = {
+      ...newDraftAttempt({
+        id: attemptId,
+        studentId,
+        sourceType: "wrong",
+        assignmentId: null,
+        lectureId: null,
+        courseId: null,
+        unitId: null,
+        attemptNo: 1,
+        startedAt: "2026-10-01T00:00:00.000Z",
+      }),
       sourceType: "assignment",
-      assignmentId: null,
-      courseId: null,
-      unitId: null,
-      attemptNo: 1,
-      startedAt: "2026-10-01T00:00:00.000Z",
-    });
+    };
     db.transaction((tx) => {
       tx.insert(attemptsTable)
         .values({

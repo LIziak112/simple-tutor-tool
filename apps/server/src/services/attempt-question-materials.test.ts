@@ -110,7 +110,7 @@ function makeEnv(): Env {
       .all()
       .map((row) => [row.type, row.id]),
   );
-  const courseId = "course-qm16-1";
+  const courseId = randomUUID();
   const studentId = "student-qm16-1";
   const now = "2026-10-25T10:00:00.000Z";
   db.insert(students)

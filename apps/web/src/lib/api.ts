@@ -80,7 +80,6 @@ import {
   type AttemptSource,
   type AttemptStartData,
   type AttemptStatus,
-  type AttemptSubmitRequest,
   type AttemptWorkflowUpdateData,
   annotationBaseImageUrl,
   attemptContextDataSchema,
@@ -947,23 +946,7 @@ export function saveAttemptAnswerApi(
   );
 }
 
-/**
- * 交卷：服务端判分、按建卷冻结快照判分，返回结果视图（含参考答案与详解）。
- * T6R.3：请求体回传每题 questionRevisionId（建卷时下发的题目版本引用），
- * 服务端与冻结集合精确比对——旧标签页/陈旧页面的提交抛 409
- * QUESTION_REVISION_STALE（提示刷新页面后重交）；重复交卷抛 409
- * ALREADY_SUBMITTED。
- * T6R.10：evidence 为每题笔记证据声明（none/frozen/missing + 预期 revision），
- * 服务端同一事务固定原稿（submission_evidence）；**缺省 = 旧客户端**——
- * 有草稿的卷会被 409 NOTE_EVIDENCE_MISMATCH 拒绝并要求刷新。
- */
-export function submitAttemptApi(
-  attemptId: string,
-  input: AttemptSubmitRequest,
-): Promise<AttemptDetailData> {
-  const args = { param: { id: attemptId }, json: input };
-  return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
-}
+export { submitAttemptApi } from "./api-attempt-submit";
 
 /**
  * 做题时标注/取消「不会」（#6980-4）：仅 draft 可改（交卷后 409）；

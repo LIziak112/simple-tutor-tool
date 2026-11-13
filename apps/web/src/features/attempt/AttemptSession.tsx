@@ -1145,15 +1145,15 @@ function AnswerView({
       setKeyboardHelpOpen(true);
     }
   };
-  // T6R.3：交卷原样回传建卷冻结时下发的 questionRevisionId，
-  // 服务端与冻结集合比对，确保判分题目与学生看到的试卷一致。
+  // 冻结题与当前草稿视图的版本基线，提交前叠加本机已收到的保存回执。
   const submitRevisions = useMemo(
     () =>
       flatQuestions.map((question) => ({
         questionId: question.id,
         questionRevisionId: question.questionRevisionId,
+        expectedAnswerRevision: data.draftRevisions?.[question.id] ?? 0,
       })),
-    [flatQuestions],
+    [data.draftRevisions, flatQuestions],
   );
 
   const { inkFlushError, runSubmit, submit, submitAbortedRef } =

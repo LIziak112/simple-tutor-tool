@@ -16,6 +16,10 @@ import type {
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/attempt/draft-store";
+import {
   ApiError,
   fetchAttemptContextApi,
   fetchStudentNoteHeadsApi,
@@ -268,6 +272,7 @@ it("讲练展开草稿后正文仍可收起顶栏并反向展开", async () => {
 });
 
 beforeEach(() => {
+  installDraftBackend(memoryBackend());
   localStorage.clear();
   mockedStart.mockReset();
   mockedRestart.mockReset();
@@ -564,6 +569,26 @@ it("重新进入讲练页：按作答卷恢复上次阅读位置", async () => {
 });
 
 describe("StudentLessonPage：显示答案（单题）", () => {
+  it("答案版本冲突时显示裁决入口并保留题卡", async () => {
+    mockedStart.mockResolvedValue(lessonStart());
+    mockedSubmitQuestion.mockRejectedValue(
+      new ApiError("ANSWER_REVISION_CONFLICT", "本题答案已更新", 409, {
+        _questionId: "lesson-q1",
+        _current: { revision: 1, draft: { kind: "choice", index: 0 } },
+      }),
+    );
+    renderPage();
+    await screen.findByText("第 1 题");
+    fireEvent.click(firstSubmitButton());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    const conflict = await screen.findByRole("region", { name: "同步冲突" });
+    expect(
+      within(conflict).getByRole("button", { name: "采用云端版本" }),
+    ).toBeInTheDocument();
+    expect(firstSubmitButton()).toBeInTheDocument();
+  });
+
   it("点击显示答案：一键直达，请求带 questionRevisionId 与 none 证据", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     mockedSubmitQuestion.mockResolvedValue({
@@ -580,6 +605,7 @@ describe("StudentLessonPage：显示答案（单题）", () => {
         "lesson-q1",
         {
           questionRevisionId: "rev-q1",
+          expectedAnswerRevision: 0,
           evidence: { questionId: "lesson-q1", state: "none" },
         },
       ),

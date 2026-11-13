@@ -17,12 +17,24 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, questions, responses, units } from "../db/schema.ts";
+import {
+  assignments,
+  attempts,
+  questions,
+  responses,
+  students,
+  submissionEvidence,
+  units,
+} from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import * as snapshot from "../services/snapshot.ts";
+import { editTeacherDraftResponse } from "../services/teacher-attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 作答生命周期集成测试（T2.6 全部验收项，app.request() 直调路由 + 内存库）：
@@ -832,6 +844,114 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
       ).status,
     ).toBe(409);
   });
+  it("草稿答案类型必须与冻结题型相符，错误请求不写稿", async () => {
+    const { app, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    const res = await putAnswer(app, aCookie, attemptId, Q.judge, {
+      kind: "choice",
+      index: 0,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "VALIDATION_ERROR" });
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    expect(
+      (body as { data: AttemptDraftData }).data.drafts[Q.judge],
+    ).toBeUndefined();
+    assertNoLeak(body);
+  });
+
+  it("教师首次补答后学生确认同稿，版本保持且学生改答次数为零", async () => {
+    const { app, db, aId, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    const teacherId = db
+      .select({ id: students.teacherId })
+      .from(students)
+      .where(eq(students.id, aId))
+      .get()?.id;
+    if (!teacherId) throw new Error("夹具缺少教师归属");
+    const answer = { kind: "judge", value: true } as const;
+    editTeacherDraftResponse(db, teacherId, {
+      attemptId,
+      questionId: Q.judge,
+      expectedAnswerRevision: 0,
+      reason: "核对草稿",
+      answer,
+    });
+    const res = await app.request(
+      `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(Q.judge)}`,
+      {
+        method: "PUT",
+        headers: { Cookie: aCookie, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          answer,
+          baseRevision: 1,
+          mutationId: "11111111-1111-4111-8111-111111111111",
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      data: { revision: 1, changeCount: 0 },
+    });
+  });
+  it("整卷拒绝陈旧的可见答案版本，保留新草稿和未封存状态", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.judge, {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    expect(
+      revisions.find((entry) => entry.questionId === Q.judge)
+        ?.expectedAnswerRevision,
+    ).toBe(1);
+    const latest = { kind: "judge", value: false };
+    expect(
+      (await putAnswer(app, aCookie, attemptId, Q.judge, latest)).status,
+    ).toBe(200);
+    const stale = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          revisions,
+          evidence: revisions.map(({ questionId }) => ({
+            questionId,
+            state: "none",
+          })),
+        }),
+      },
+    );
+    expect(stale.status).toBe(409);
+    const error = await stale.json();
+    expect(error).toMatchObject({
+      error: "ANSWER_REVISION_CONFLICT",
+      _current: { revision: 2, draft: latest },
+    });
+    assertNoLeak(error);
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    const draft = (body as { data: AttemptDraftData }).data;
+    expect(draft.attempt.status).toBe("draft");
+    expect(draft.drafts[Q.judge]).toEqual(latest);
+    expect(
+      db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.attemptId, attemptId))
+        .all(),
+    ).toEqual([]);
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
+  });
+
   it("保存后 GET 详情可读回（往返）；重复保存 changeCount 递增", async () => {
     const { app, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
@@ -978,6 +1098,30 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
 });
 
 describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
+  it("历史作业的偏移截止时间可交卷并重读，未公布的答案保持隐藏", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    db.update(assignments)
+      .set({ answerRelease: "after_due", dueAt: "2099-01-01T01:00:00+01:00" })
+      .where(eq(assignments.id, assignmentId))
+      .run();
+    const submission = await postSubmit(app, aCookie, attemptId);
+    expect(submission.status).toBe(200);
+    const { data } = attemptResultOkSchema.parse(await submission.json());
+    expect(data).toMatchObject({
+      dueAt: "2099-01-01T00:00:00.000Z",
+      answersReleased: false,
+    });
+    expect(
+      data.units
+        .flatMap((unit) => unit.questions)
+        .every((question) => question.answers === null),
+    ).toBe(true);
+    const { res, body } = await getAttempt(app, aCookie, attemptId);
+    expect(res.status).toBe(200);
+    expect(attemptResultOkSchema.parse(body).data.answersReleased).toBe(false);
+  });
   it("全对组合：逐题 autoCorrect=true，scoreAuto=100，summary 齐全；全客观题卷交卷即 graded（D2/D3）", async () => {
     // 2026-10-02 fill 全人工批改起换 NO_FILL_MD 卷（两道 fill → judge/choice）：
     // 「全对 → 交卷即 graded」的断言语义需要整卷可自动判分（含 fill 的卷恒进待批，

@@ -371,9 +371,21 @@ it.each(["list", "single"] as const)(
       ATTEMPT_ID,
       {
         revisions: [
-          { questionId: "q1", questionRevisionId: "rev-q1" },
-          { questionId: "q2", questionRevisionId: "rev-q2" },
-          { questionId: "q3", questionRevisionId: "rev-q3" },
+          {
+            questionId: "q1",
+            questionRevisionId: "rev-q1",
+            expectedAnswerRevision: 0,
+          },
+          {
+            questionId: "q2",
+            questionRevisionId: "rev-q2",
+            expectedAnswerRevision: 0,
+          },
+          {
+            questionId: "q3",
+            questionRevisionId: "rev-q3",
+            expectedAnswerRevision: 0,
+          },
         ],
         evidence: [
           { questionId: "q2", state: "none" },

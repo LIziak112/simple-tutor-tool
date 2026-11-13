@@ -4,10 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import {
-  frozenGradingPolicyOf,
-  wrongAttemptContextPlan,
-} from "./attempt-context.ts";
+import { frozenGradingPolicyOf } from "./attempt-context.ts";
 import {
   type AttemptWorkflowStartOptions,
   attemptSummaryOf,
@@ -18,6 +15,7 @@ import {
 import { newContentEnabledFromEnv } from "./import-qm.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { snapshotOfRow } from "./snapshot";
+import { wrongAttemptContextPlan } from "./wrong-attempt-context.ts";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
 
 /**
@@ -49,7 +47,7 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
  *   交卷后自动成为错题本新一轮（聚合按 (学生, 题目) 自然纳入）。
  *
  * 返回 { attempt, includedCount }：includedCount = 实际冻结进卷的题数（去重后
- * 剔除无效 id 的 picked.length）——MCP 组卷工具用它算 excludedCount 反馈给 AI；
+ * 剔除无效 id 与依赖缺失的题）——MCP 组卷工具用它算 excludedCount 反馈给 AI；
  * 页面路由只取 attempt。
  *
  * 安全口径（AGENTS 第 3 条）：新卷只携带题目快照（服务端行内数据），响应本体是
@@ -84,7 +82,7 @@ export function startWrongPractice(
 
   // tt-07a（QM-06）：错题重练的依赖冻结走本单统一路径（设计方案 §5.3「错题
   // 重练复制来源作答的该子题及必要材料/说明」）——依赖条目**来源卷快照优先**
-  // （错题时学生所见的版本），来源卷无快照回退 live 当前版本；依赖在两边都
+  // （错题时学生所见的版本），来源未知且无快照的旧卷回退当前版本；依赖在两边都
   // 不可得（教师软删且来源卷未冻结）→ 该题剔除（学生自助重练不整卷失败）
   const teacherId =
     db
@@ -94,7 +92,8 @@ export function startWrongPractice(
       .get()?.teacherId ?? null;
   const plan = wrongAttemptContextPlan(db, teacherId, picked);
 
-  if (picked.length === 0 || plan.usable.length === 0) {
+  const includedCount = plan.usable.length;
+  if (includedCount === 0) {
     throw new HttpError(
       400,
       "WRONG_PRACTICE_EMPTY",
@@ -106,14 +105,14 @@ export function startWrongPractice(
   // P2（2026-10-28 #38）：selection 范围快照的 questionCount 以服务端实际冻结
   // 题数覆写——契约只校验 questionCount = 去重入参 id 数，服务层静默剔除不在
   // 聚合/快照损坏的题后，客户端的 N 与实际不符，原样落库会把「手选 5 题」和
-  // 4 道题一起永久冻结进卷标题（页面勾选状态过期时即可复现）。picked.length
+  // 4 道题一起永久冻结进卷标题（页面勾选状态过期时即可复现）。includedCount
   // ≥ 1（上方空卷已抛 WRONG_PRACTICE_EMPTY），覆写不破契约 min(1)；
   // kind=ai 的 label 是自由文本无计数，不涉及。
   const effectiveScope =
     scope === undefined
       ? undefined
-      : scope.kind === "selection" && scope.questionCount !== picked.length
-        ? { ...scope, questionCount: picked.length }
+      : scope.kind === "selection" && scope.questionCount !== includedCount
+        ? { ...scope, questionCount: includedCount }
         : scope;
 
   return db.transaction((tx) => {
@@ -136,6 +135,7 @@ export function startWrongPractice(
       studentId,
       sourceType: "wrong",
       assignmentId: null,
+      lectureId: null,
       courseId: null,
       unitId: null,
       attemptNo,
@@ -181,6 +181,6 @@ export function startWrongPractice(
     if (row === undefined) {
       throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");
     }
-    return { attempt: attemptSummaryOf(row), includedCount: picked.length };
+    return { attempt: attemptSummaryOf(row), includedCount };
   });
 }

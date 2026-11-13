@@ -52,16 +52,21 @@ export function frozenDraftAttempt(
   }>,
   options: { attemptUnitId?: string } = {},
 ): { attemptId: string; rowIds: string[] } {
-  const attempt = newDraftAttempt({
-    id: randomUUID(),
-    studentId,
-    sourceType: "assignment",
-    assignmentId: null,
-    courseId: null,
+  const attempt = {
+    ...newDraftAttempt({
+      id: randomUUID(),
+      studentId,
+      sourceType: "wrong",
+      assignmentId: null,
+      lectureId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+      startedAt: "2026-10-01T00:00:00.000Z",
+    }),
+    sourceType: "assignment" as const,
     unitId: options.attemptUnitId ?? null,
-    attemptNo: 1,
-    startedAt: "2026-10-01T00:00:00.000Z",
-  });
+  };
   const rowIds: string[] = [];
   db.insert(attemptsTable).values(attempt).run();
   for (const question of questions) {

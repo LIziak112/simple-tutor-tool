@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AttemptDetailData } from "@tutor/contract";
+import type { AttemptDetailData, AttemptId } from "@tutor/contract";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, responses, units } from "../db/schema";
@@ -89,7 +89,7 @@ function draftEtag(db: Db, attempt: Attempt, now: Date): string | null {
 export function readConditionalAttemptDetail(
   db: Db,
   studentId: string,
-  attemptId: string,
+  attemptId: AttemptId,
   ifNoneMatch: string | undefined,
 ): { etag: string | null; detail: AttemptDetailData | null } {
   return db.$client.transaction(() => {

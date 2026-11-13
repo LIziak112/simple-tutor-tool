@@ -35,7 +35,7 @@ import { startWrongPractice } from "./wrong-practice.ts";
 const NOW = "2026-10-24T10:00:00.000Z";
 const STUDENT_ID = "student-qm06-1";
 const STUDENT_ID_2 = "student-qm06-2";
-const COURSE_ID = "course-qm06-1";
+const COURSE_ID = randomUUID();
 
 /** QM 语料：两材料（其一含媒体与槽位）+ 一组（引用材料 1、choice/judge 两
  * 子题）+ 独立 fill（无参考）+ 题级 ::ref 的 solve（有 :::answer）+ response
@@ -724,8 +724,49 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
     );
     // 回退 live：冻结 v2 且正文为 live 内容
     expect(materialSnapshot?.sourceVersion).toBe(2);
+    expect(studentAttemptContext(db, "attempt-wrong-src-2").freezeState).toBe(
+      "legacy_unknown",
+    );
     expect(JSON.parse(materialSnapshot?.snapshotJson ?? "{}")).toMatchObject({
       contentMd: expect.stringContaining("给定资料正文"),
+    });
+  });
+
+  it("已冻结为空的来源卷再次重练不使用当前题组和材料", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-wrong-empty",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [],
+    });
+    const memberships = db.$client
+      .prepare("SELECT * FROM question_group_members WHERE question_id = ?")
+      .all("资料分析-1");
+    db.$client
+      .prepare("DELETE FROM question_group_members WHERE question_id = ?")
+      .run("资料分析-1");
+    const first = startWrongPractice(db, STUDENT_ID, ["资料分析-1"]).attempt;
+    expect(contextRows(db, first.id)).toEqual([]);
+    expect(studentAttemptContext(db, first.id).freezeState).toBe("frozen");
+    db.$client
+      .prepare(
+        'INSERT INTO question_group_members (teacher_id, group_id, question_id, "order") VALUES (@teacher_id, @group_id, @question_id, @order)',
+      )
+      .run(memberships[0]);
+    db.update(attempts)
+      .set({ status: "graded", submittedAt: NOW })
+      .where(eq(attempts.id, first.id))
+      .run();
+    db.update(responses)
+      .set({ autoCorrect: false, finalCorrect: false, answered: true })
+      .where(eq(responses.attemptId, first.id))
+      .run();
+    const second = startWrongPractice(db, STUDENT_ID, ["资料分析-1"]).attempt;
+    expect(studentAttemptContext(db, second.id)).toMatchObject({
+      freezeState: "frozen",
+      materials: [],
+      groups: [],
     });
   });
 
@@ -751,12 +792,13 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE materials SET deleted_at = ? WHERE teacher_id = ? AND id = ?",
       )
       .run(NOW, TEST_TEACHER_ID, "mat-资料分析-1");
-    const { attempt: started } = startWrongPractice(
+    const { attempt: started, includedCount } = startWrongPractice(
       db,
       STUDENT_ID,
       ["资料分析-1", "资料分析-5"],
       {},
       true,
+      { kind: "selection", questionCount: 2 },
     );
     const rows = db
       .select()
@@ -764,6 +806,14 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       .where(eq(responses.attemptId, started.id))
       .all();
     expect(rows.map((row) => row.questionId)).toEqual(["资料分析-5"]);
+    expect(includedCount).toBe(1);
+    expect(
+      db
+        .select({ scope: attempts.practiceScopeJson })
+        .from(attempts)
+        .where(eq(attempts.id, started.id))
+        .get()?.scope,
+    ).toBe(JSON.stringify({ kind: "selection", questionCount: 1 }));
     expect(contextRows(db, started.id).map((row) => row.sourceId)).toEqual([
       "mat-资料分析-2",
     ]);
@@ -807,6 +857,65 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       .map((row) => row.sourceVersion)
       .sort();
     expect(versions).toEqual([1, 2]);
+    db.update(attempts)
+      .set({ status: "graded", submittedAt: NOW })
+      .where(eq(attempts.id, started.id))
+      .run();
+    db.update(responses)
+      .set({ autoCorrect: false, finalCorrect: false, answered: true })
+      .where(eq(responses.attemptId, started.id))
+      .run();
+    const second = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+      "资料分析-5",
+    ]).attempt;
+    const replay = studentAttemptContext(db, second.id);
+    expect(replay.materials.map(({ sourceVersion }) => sourceVersion)).toEqual([
+      1, 2,
+    ]);
+    assertNoLeak(replay);
+  });
+
+  it("来源卷有损坏材料时仅剔除依赖该材料的题", () => {
+    const { db } = makeEnv();
+    seedJudgedSource(db, {
+      attemptId: "attempt-damaged-material",
+      questionId: "资料分析-1",
+      finalCorrect: false,
+      materialSnapshots: [{ id: "mat-资料分析-1", version: 1 }],
+      groupSnapshot: {
+        id: "grp-资料分析-1",
+        version: 1,
+        materialRefs: [{ material: "mat-资料分析-1" }],
+        questionIds: ["资料分析-1"],
+      },
+    });
+    seedJudgedSource(db, {
+      attemptId: "attempt-intact-material",
+      questionId: "资料分析-5",
+      finalCorrect: false,
+      snapshotType: "solve",
+      snapshotMaterialRefs: [{ material: "mat-资料分析-2" }],
+      materialSnapshots: [{ id: "mat-资料分析-2", version: 1 }],
+    });
+    db.$client
+      .prepare(
+        "UPDATE attempt_context_snapshots SET snapshot_json = '{}' WHERE attempt_id = ? AND kind = 'material'",
+      )
+      .run("attempt-damaged-material");
+    expect(() =>
+      studentAttemptContext(db, "attempt-damaged-material"),
+    ).toThrow();
+    const { attempt, includedCount } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+      "资料分析-5",
+    ]);
+    expect(includedCount).toBe(1);
+    expect(
+      studentAttemptContext(db, attempt.id).materials.map(
+        (material) => material.id,
+      ),
+    ).toEqual(["mat-资料分析-2"]);
   });
 
   it("QM-07 C6：来源卷有快照时依赖图与快照内容同源——教师事后改组引用不带入新卷", () => {

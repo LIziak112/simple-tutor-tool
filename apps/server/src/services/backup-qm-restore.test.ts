@@ -275,6 +275,7 @@ function makeQmWorld(tag: string): QmWorld {
         questionId: Q.judge,
         snapshotJson: snapshotJsonOf({
           id: Q.judge,
+          type: "judge",
           stemMd: "备份恢复判断题",
           answers: { kind: "judge", value: true },
         }),
@@ -372,6 +373,7 @@ function makeQmWorld(tag: string): QmWorld {
         questionId: Q.judge,
         snapshotJson: snapshotJsonOf({
           id: Q.judge,
+          type: "judge",
           stemMd: "备份恢复判断题",
           answers: { kind: "judge", value: true },
         }),

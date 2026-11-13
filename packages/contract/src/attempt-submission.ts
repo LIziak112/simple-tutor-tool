@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { studentAnswerSchema } from "./grading.ts";
 
 /**
  * 题目版本引用（T6R.3 冻结，方案 §5.1）：定位「本次作答时被冻结的那道题」，
@@ -15,6 +16,30 @@ export const questionRevisionIdSchema = z
   .max(512)
   .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
 
+/** 内部边界区分作答 ID 与题目冻结行引用，既有 wire 字符串保持兼容。 */
+export const frozenQuestionRevisionIdSchema =
+  questionRevisionIdSchema.brand<"FrozenQuestionRevisionId">();
+export type FrozenQuestionRevisionId = z.infer<
+  typeof frozenQuestionRevisionIdSchema
+>;
+
+/** 学生答案每次保存后的服务端版本，0 表示尚无版本化保存。 */
+export const answerRevisionSchema = z.number().int().nonnegative();
+
+/** 答案冲突仅包含学生自己的云端稿。 */
+export const attemptAnswerConflictCurrentSchema = z.object({
+  revision: answerRevisionSchema,
+  draft: studentAnswerSchema.nullable(),
+});
+export type AttemptAnswerConflictCurrent = z.infer<
+  typeof attemptAnswerConflictCurrentSchema
+>;
+
+export const attemptSubmissionConflictSchema = z.object({
+  _questionId: z.string().min(1),
+  _current: attemptAnswerConflictCurrentSchema,
+});
+
 /**
  * POST /api/student/attempts/:id/submit 请求体（T6R.3 全来源题目版本冻结）：
  * 交卷回传建卷时下发的每题 questionRevisionId（responses 行 id，对学生不透明），
@@ -27,6 +52,8 @@ export const questionRevisionIdSchema = z
 export const attemptSubmitRevisionSchema = z.object({
   questionId: z.string().min(1),
   questionRevisionId: questionRevisionIdSchema,
+  /** 交卷时学生实际看到的已保存答案版本；旧请求缺字段由服务端安全裁决。 */
+  expectedAnswerRevision: answerRevisionSchema.optional(),
 });
 
 /**
@@ -123,6 +150,11 @@ export const attemptSubmitRequestSchema = z.object({
     .optional(),
 });
 
+/** 讲练单题提交沿用整卷的冻结题版本、可见答案版本与笔记证据。 */
+export const lessonQuestionSubmitRequestSchema = attemptSubmitRevisionSchema
+  .omit({ questionId: true })
+  .extend({ evidence: submitEvidenceDeclarationSchema.optional() });
+
 /** 交卷回传的单题版本对（T6R.3；questionRevisionId = responses 行 id，不透明） */
 export type AttemptSubmitRevision = z.infer<typeof attemptSubmitRevisionSchema>;
 /** 交卷请求的单题笔记证据声明（T6R.10） */
@@ -131,3 +163,6 @@ export type SubmitEvidenceDeclaration = z.infer<
 >;
 /** 交卷请求体（T6R.3；T6R.10 增可选 evidence——缺省=旧客户端） */
 export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
+export type LessonQuestionSubmitRequest = z.infer<
+  typeof lessonQuestionSubmitRequestSchema
+>;

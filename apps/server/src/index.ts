@@ -9,6 +9,7 @@ import { createDbHandle } from "./db/client";
 import { runMigrations } from "./db/migrate";
 import { handleServerError, installCrashHandlers } from "./lib/startup-errors";
 import { startStudentAiWorker } from "./services/ai-companion/student-ai-worker";
+import { purgeExpiredAttemptBatchSubmissions } from "./services/attempt-batch-submission";
 import { startBackupScheduler } from "./services/backup-service";
 import { purgeExpiredQuestionProcesses } from "./services/question-process";
 
@@ -64,15 +65,24 @@ const stopStudentAiWorker = startStudentAiWorker({
   logger,
 });
 
-purgeExpiredQuestionProcesses(db);
-const questionProcessCleanup = setInterval(
-  () => {
+function purgeExpiredStudentData(): void {
+  for (const purge of [
+    purgeExpiredQuestionProcesses,
+    purgeExpiredAttemptBatchSubmissions,
+  ]) {
     try {
-      purgeExpiredQuestionProcesses(db);
+      purge(db);
     } catch (error) {
-      logger.error({ err: error }, "清理到期过程记录失败");
+      logger.error(
+        { err: error, operation: purge.name },
+        "清理到期学生临时数据失败",
+      );
     }
-  },
+  }
+}
+purgeExpiredStudentData();
+const studentDataCleanup = setInterval(
+  purgeExpiredStudentData,
   60 * 60 * 1000,
 ).unref();
 
@@ -114,7 +124,7 @@ function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, "收到退出信号，正在关闭服务");
   stopStudentAiWorker.stop();
   stopBackupScheduler();
-  clearInterval(questionProcessCleanup);
+  clearInterval(studentDataCleanup);
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

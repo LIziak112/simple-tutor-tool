@@ -111,8 +111,9 @@ async function makeWorld(tag: string): Promise<World> {
   const attempt = newDraftAttempt({
     id: randomUUID(),
     studentId,
-    sourceType: "assignment",
+    sourceType: "wrong",
     assignmentId: null,
+    lectureId: null,
     courseId: null,
     unitId: null,
     attemptNo: 1,
