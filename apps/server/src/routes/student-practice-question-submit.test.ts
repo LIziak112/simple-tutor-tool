@@ -745,6 +745,21 @@ describe("M2 端到端闭环：新协议卷逐题提交（per_question 出 relea
     });
     await expectErr(late, 409, "QUESTION_ALREADY_SUBMITTED");
 
+    const history = env.db
+      .select()
+      .from(events)
+      .where(eq(events.attemptId, attemptId))
+      .all();
+    const boundaries = history.filter((event) => event.type === "submit");
+    expect(boundaries).toHaveLength(1);
+    expect(boundaries[0]?.serverTs).toBe(last.data.attempt.submittedAt);
+    expect(
+      history.find(
+        (event) =>
+          event.type === "question_submit" && event.questionId === Q.fill,
+      )?.serverTs,
+    ).toBe(last.data.attempt.submittedAt);
+
     // feedback GET 三题全部 released
     for (const questionId of [Q.choice, Q.judge, Q.fill]) {
       const body = (await getFeedbackOk(env, attemptId, questionId)) as {

@@ -86,6 +86,8 @@ export function useDueCountdown(
   dueAt: string | null,
   options?: {
     onExpire?: (() => void) | undefined;
+    serverNow?: number | undefined;
+    receivedAt?: number | undefined;
   },
 ): DueCountdown {
   const targetMs = useMemo(() => {
@@ -94,46 +96,56 @@ export function useDueCountdown(
     return Number.isNaN(parsed) ? null : parsed;
   }, [dueAt]);
 
+  const serverNow = options?.serverNow;
+  const receivedAt = options?.receivedAt;
+  const readNow = useMemo(() => {
+    if (serverNow === undefined || !Number.isFinite(serverNow)) return Date.now;
+    const anchor = receivedAt ?? performance.now();
+    return () => serverNow + performance.now() - anchor;
+  }, [serverNow, receivedAt]);
   const [countdown, setCountdown] = useState<DueCountdown>(() =>
-    calculateCountdown(targetMs, Date.now()),
+    calculateCountdown(targetMs, readNow()),
   );
 
   const onExpireRef = useRef(options?.onExpire);
   onExpireRef.current = options?.onExpire;
 
   // 是否已对当前 targetMs 触发过到期回调（targetMs 变化时随 effect 一并重置）
-  const hasTriggeredRef = useRef(false);
+  const expiredTargetRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (targetMs === null) {
-      setCountdown(calculateCountdown(null, Date.now()));
+      expiredTargetRef.current = null;
+      setCountdown(calculateCountdown(null, readNow()));
       return;
     }
 
-    const initial = calculateCountdown(targetMs, Date.now());
+    const initial = calculateCountdown(targetMs, readNow());
     setCountdown(initial);
-    // 进入时（或 targetMs 变化后重挂）就已过期：不触发到期事件
-    hasTriggeredRef.current = initial.isExpired;
+    const notifyExpiration = () => {
+      if (expiredTargetRef.current === targetMs) return;
+      expiredTargetRef.current = targetMs;
+      onExpireRef.current?.();
+    };
 
     if (initial.isExpired) {
+      if (serverNow !== undefined && Number.isFinite(serverNow))
+        notifyExpiration();
       return;
     }
 
     const timer = setInterval(() => {
-      const next = calculateCountdown(targetMs, Date.now());
+      const next = calculateCountdown(targetMs, readNow());
       setCountdown(next);
 
       if (next.isExpired) {
         clearInterval(timer);
-        if (!hasTriggeredRef.current) {
-          hasTriggeredRef.current = true;
-          onExpireRef.current?.();
-        }
+        notifyExpiration();
       }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [targetMs]);
+  }, [targetMs, readNow, serverNow]);
 
   return countdown;
 }

@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttemptAnswerSaveData,
   AttemptDetailData,
-  AttemptSubmitRequest,
   CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
   StudentAnswer,
@@ -23,11 +22,12 @@ import {
   saveAttemptAnswerApi,
   startAttemptApi,
   startCourseAttemptApi,
-  submitAttemptApi,
   updateAttemptWorkflowApi,
 } from "@/lib/api";
 import { shareAttemptDetail } from "@/lib/attempt-detail-read";
 import { randomUuid } from "@/lib/uuid";
+import { useAttemptSubmitReceipt } from "./attempt-submit-receipt";
+import { digestOf } from "./draft-merge";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import { getPracticePreference } from "./practice-preference-store";
 
@@ -135,6 +135,10 @@ export function useAttemptDetail(attemptId: string | undefined) {
           : fetchAttemptApi(attemptId ?? "", signal, previous));
         if (previous && detailPollingPaused.has(attemptId ?? ""))
           return previous;
+        if ("answersReleased" in next && next.releaseCheckedAt !== undefined)
+          return next === previous
+            ? next
+            : { ...next, clockAnchor: performance.now() };
         if (!("timing" in next) || !next.timing) return next;
         const receivedAt = performance.now();
         const priorTiming =
@@ -325,15 +329,25 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
  * ALREADY_SUBMITTED——同样失效 attempt 详情（详情重取即切结果视图，
  * 不把用户困在答题页），错误文案由服务端中文 message 承载。
  */
-export function useSubmitAttempt(attemptId: string) {
+export function useSubmitAttempt(attemptId: string, onConfirmed?: () => void) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: AttemptSubmitRequest) =>
-      submitAttemptApi(attemptId, input),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: studentAttemptKey(attemptId),
-      });
+  const epoch = getDraftSessionEpoch();
+  const { sendOrVerify, verificationRequired } =
+    useAttemptSubmitReceipt(attemptId);
+  const mutation = useMutation({
+    networkMode: "always",
+    mutationFn: sendOrVerify,
+    onSuccess: async (detail) => {
+      if (epoch !== getDraftSessionEpoch()) return;
+      const key = studentAttemptKey(attemptId);
+      await queryClient.cancelQueries({ queryKey: key, exact: true });
+      if (epoch !== getDraftSessionEpoch()) return;
+      try {
+        onConfirmed?.();
+      } catch (error) {
+        console.warn("追加交卷过程标记失败", error);
+      }
+      queryClient.setQueryData(key, detail);
       void queryClient.invalidateQueries({ queryKey: studentAssignmentsKey });
       void queryClient.invalidateQueries({ queryKey: studentCoursesKey });
       void queryClient.invalidateQueries({ queryKey: ["student", "course"] });
@@ -356,6 +370,7 @@ export function useSubmitAttempt(attemptId: string) {
       }
     },
   });
+  return { ...mutation, verificationRequired };
 }
 
 /**
@@ -377,11 +392,24 @@ export function saveDraftAnswer(
   const task = prior.then(async () => {
     if (epoch !== getDraftSessionEpoch())
       throw new Error("作答会话已切换，旧答案未上传");
+    await draftStore.flush(attemptId);
     const record = await draftStore.loadDraft(attemptId, { strictRead: true });
     if (epoch !== getDraftSessionEpoch())
       throw new Error("作答会话已切换，旧答案未上传");
-    if (record?.answerConflicts?.[questionId])
+    if (
+      record?.answerConflicts?.[questionId] ||
+      record?.localConflicts?.some(
+        (entry) => entry.kind === "answer" && entry.key === questionId,
+      )
+    )
       throw new Error("本题答案有同步冲突，请先选择保留哪一份");
+    const latest = record?.answers[questionId];
+    if (
+      (latest !== undefined ||
+        record?.answerMutationIds?.[questionId] !== undefined) &&
+      digestOf(latest) !== digestOf(answer)
+    )
+      throw new Error("本题已有较新的本机答案，旧答案未上传");
     const baseRevision = record?.answerRevisions?.[questionId];
     try {
       const receipt = await (baseRevision === undefined

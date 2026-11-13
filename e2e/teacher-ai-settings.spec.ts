@@ -63,7 +63,7 @@ test(
     await summary.click();
     await expect(input).toBeHidden();
     await expect(summary).toContainText("1 项未保存");
-    await page.getByRole("link", { name: "备份与恢复", exact: true }).click();
+    await page.getByRole("link", { name: "账号与会话", exact: true }).click();
     await page.getByRole("link", { name: "AI 设置", exact: true }).click();
     await summary.click();
     await expect(input).toHaveValue(`${original}\n请使用简洁中文。`);

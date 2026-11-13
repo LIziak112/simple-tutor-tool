@@ -13,6 +13,7 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import { appSettings, loginFailures, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { nodePeerBindings } from "../test/node-peer.ts";
 
 /**
  * 教师自助注册接口集成测试（T2B.6 验收项）：app.request() 直调路由 + 内存库。
@@ -41,17 +42,21 @@ function makeApp(): { app: ReturnType<typeof createApp>; db: Db } {
   return { app, db };
 }
 
-/** 发 JSON POST（可带额外请求头：X-Forwarded-For 模拟不同 IP） */
+/** 发 JSON POST，模拟不同连接对端。 */
 async function register(
   app: ReturnType<typeof createApp>,
   body: unknown,
   ip = "10.0.0.1",
 ): Promise<Response> {
-  return app.request("/api/public/teacher/register", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-forwarded-for": ip },
-    body: JSON.stringify(body),
-  });
+  return app.request(
+    "/api/public/teacher/register",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    nodePeerBindings(ip),
+  );
 }
 
 /** 首启 setup 建首位教师（必然管理员），返回其 id */

@@ -35,7 +35,10 @@ import {
   snapshotJsonOf,
 } from "../test/evidence-fixtures.ts";
 import { putNoteReceipt } from "../test/note-fixtures.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 讲练一体（2026-10）开卷与学生安全投影集成测试（app.request() 直调路由 +
@@ -1150,6 +1153,17 @@ async function submitQuestion(
       },
       body: JSON.stringify({
         questionRevisionId,
+        expectedAnswerRevision:
+          env.db
+            .select({ revision: responses.answerRevision })
+            .from(responses)
+            .where(
+              and(
+                eq(responses.attemptId, attemptId),
+                eq(responses.questionId, questionId),
+              ),
+            )
+            .get()?.revision ?? 0,
         ...(evidence === undefined ? {} : { evidence }),
       }),
     },
@@ -1219,6 +1233,61 @@ function responseRowOf(
 }
 
 describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题提交，当题即时反馈）", () => {
+  it("讲练拒绝陈旧的可见答案版本，保留新草稿和原稿声明", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    const visibleRevision = async () =>
+      (await fetchSubmitRevisions(env.app, env.memberCookie, attemptId)).find(
+        (revision) => revision.questionId === S.choice,
+      )?.expectedAnswerRevision;
+    const expectedRevision = await visibleRevision();
+    if (expectedRevision === undefined) throw new Error("未取得答案版本");
+    const latest = { kind: "choice", index: 0 };
+    await saveDraftAnswer(env, attemptId, S.choice, latest);
+    const send = (expectedAnswerRevision: number) =>
+      env.app.request(
+        `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(S.choice)}/submit`,
+        {
+          method: "POST",
+          headers: {
+            cookie: env.memberCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            questionRevisionId: revisions.get(S.choice),
+            expectedAnswerRevision,
+            evidence: { questionId: S.choice, state: "none" },
+          }),
+        },
+      );
+    const stale = await send(expectedRevision);
+    expect(stale.status).toBe(409);
+    const error = await stale.json();
+    expect(error).toMatchObject({
+      error: "ANSWER_REVISION_CONFLICT",
+      _current: { revision: expectedRevision + 1, draft: latest },
+    });
+    assertNoLeak(error);
+    expect(responseRowOf(env.db, attemptId, S.choice)).toMatchObject({
+      submittedAt: null,
+    });
+    expect(await visibleRevision()).toBe(expectedRevision + 1);
+    expect(env.db.select().from(submissionEvidence).all()).toEqual([]);
+    const questionEvents = () =>
+      env.db
+        .select()
+        .from(events)
+        .where(eq(events.attemptId, attemptId))
+        .all()
+        .filter((row) => row.type === "question_submit");
+    expect(questionEvents()).toEqual([]);
+    expect((await send(expectedRevision + 1)).status).toBe(200);
+    expect(questionEvents()).toHaveLength(1);
+  });
+
   it("choice 答：判对（autoCorrect=finalCorrect=true）、当题释放参考答案、summary 现算、泄露矩阵三层断言、question_submit 事件恰一条", async () => {
     const { env, attemptId, revisions } = await makeSubmitEnv();
     await saveDraftAnswer(env, attemptId, S.choice, {
@@ -2034,10 +2103,11 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
 
     // 新客户端：evidence 只覆盖未提交题（judge frozen / choice2 none——fill
     // 已单题提交，其证据不重做也不再声明）
-    const revisionsList = [...revisions.entries()].map(([questionId, id]) => ({
-      questionId,
-      questionRevisionId: id,
-    }));
+    const revisionsList = await fetchSubmitRevisions(
+      env.app,
+      env.memberCookie,
+      attemptId,
+    );
     const res = await env.app.request(
       `/api/student/attempts/${attemptId}/submit`,
       {
@@ -2152,10 +2222,11 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
           cookie: env.memberCookie,
         },
         body: JSON.stringify({
-          revisions: [...revisions.entries()].map(([questionId, id]) => ({
-            questionId,
-            questionRevisionId: id,
-          })),
+          revisions: await fetchSubmitRevisions(
+            env.app,
+            env.memberCookie,
+            attemptId,
+          ),
           evidence: [
             { questionId: S.judge, state: "none" },
             { questionId: S.fill, state: "none" },
@@ -2221,6 +2292,7 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
         headers: { "content-type": "application/json", cookie: second.cookie },
         body: JSON.stringify({
           questionRevisionId: revisionsB.get(S.choice) ?? "",
+          expectedAnswerRevision: 1,
         }),
       },
     );

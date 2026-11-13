@@ -5,6 +5,7 @@ import {
   questionRevisionIdSchema,
   submitEvidenceDeclarationSchema,
 } from "./attempt.ts";
+import { answerRevisionSchema } from "./attempt-submission.ts";
 import { studentAnswerSchema } from "./grading.ts";
 import {
   practiceQuestionProgressSchema,
@@ -91,7 +92,7 @@ export const practiceQuestionSubmitRequestSchema = z
     workflowVersion: z.literal(1),
     workflowRevision: z.number().int().nonnegative(),
     questionRevisionId: questionRevisionIdSchema,
-    expectedAnswerRevision: z.number().int().nonnegative(),
+    expectedAnswerRevision: answerRevisionSchema,
     submissionMutationId: z.uuid(),
     evidence: submitEvidenceDeclarationSchema,
   })

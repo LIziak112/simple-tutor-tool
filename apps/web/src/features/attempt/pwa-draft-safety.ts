@@ -103,6 +103,8 @@ export async function prepareDraftForPwaUpdate(
   assertSession();
   if (getDraftPersistenceState(attemptId) !== "saved")
     throw new Error("作答或手写本机保存未完成，请保持页面打开并重试");
+  if (record?.localConflicts?.length)
+    throw new Error("有本机稿件待裁决，请先选择保留版本");
   if (Object.keys(record?.answerConflicts ?? {}).length > 0)
     throw new Error("答案存在同步冲突，请先选择保留版本再更新");
   if (requireSyncedAnswers && record && unsyncedAnswerIds(record).length > 0)

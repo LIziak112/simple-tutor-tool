@@ -53,7 +53,6 @@ import {
   answerOf,
   frozenRowsInDisplayOrder,
   materialSlotOrderOf,
-  requireUsableAttempt,
   structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
@@ -73,6 +72,7 @@ import {
 } from "./student-ai-shared.ts";
 import {
   type AiPolicyConfigSource,
+  requireStudentAiAttempt,
   resolveAttemptQuestionAiPolicy,
 } from "./teaching-policy-service.ts";
 
@@ -271,7 +271,7 @@ const FIELD_NOTES: readonly string[] = [
 
 /**
  * 整体任务的实时授权门：创建、领取、报告写回、详情和打开共用。
- * 归属/作废/失权复用 requireUsableAttempt，交卷、公布及逐题策略任一不满足即拒绝。
+ * 账号及作答可用性复用逐题授权，交卷、公布及逐题策略任一不满足即拒绝。
  */
 function requireAttemptReviewAccess(
   db: Db | QueueTx,
@@ -279,7 +279,7 @@ function requireAttemptReviewAccess(
   options: Pick<AttemptReviewServiceOptions, "configSource"> = {},
 ) {
   const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
-  const attempt = requireUsableAttempt(
+  const { attempt } = requireStudentAiAttempt(
     asDb(db),
     input.studentId,
     input.attemptId,

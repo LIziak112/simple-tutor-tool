@@ -43,6 +43,9 @@ export function unsyncedAnswerIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.answers).filter(
     (questionId) =>
       record.answerConflicts?.[questionId] === undefined &&
+      !record.localConflicts?.some(
+        (entry) => entry.kind === "answer" && entry.key === questionId,
+      ) &&
       record.answerDigests[questionId] !== digestOf(record.answers[questionId]),
   );
 }
@@ -83,6 +86,64 @@ export function mergeAnswers(
       digestOf(local[questionId]) !== digestOf(server[questionId]),
   );
   return { merged, needsSync };
+}
+
+/** 合并答案及其版本和指纹，保留仍需学生裁决的逐题分歧。 */
+export function mergeServerDrafts(
+  record: AttemptDraftRecord,
+  serverAnswers: Record<string, StudentAnswer>,
+  serverRevisions?: Record<string, number>,
+): void {
+  const effectiveServer = { ...serverAnswers };
+  const revisions = Object.entries(serverRevisions ?? {});
+  const staleIds = new Set(
+    revisions
+      .filter(
+        ([id, revision]) => revision < (record.answerRevisions?.[id] ?? 0),
+      )
+      .map(([id]) => id),
+  );
+  for (const id of staleIds) {
+    const answer = record.answers[id];
+    if (answer === undefined) delete effectiveServer[id];
+    else effectiveServer[id] = answer;
+  }
+  const { merged } = mergeAnswers(
+    record.answers,
+    effectiveServer,
+    record.answerDigests,
+  );
+  record.answers = merged;
+  for (const [id, revision] of revisions) {
+    if (staleIds.has(id)) continue;
+    const old = record.answerDigests[id];
+    const serverDigest = digestOf(serverAnswers[id]);
+    const localAnswer = merged[id];
+    const dirty =
+      localAnswer !== undefined && digestOf(localAnswer) !== serverDigest;
+    const changedRemotely =
+      old !== undefined
+        ? old !== serverDigest
+        : serverAnswers[id] !== undefined;
+    if (
+      dirty &&
+      (changedRemotely || record.answerConflicts?.[id] !== undefined)
+    ) {
+      record.answerConflicts ??= {};
+      record.answerConflicts[id] = {
+        revision,
+        draft: serverAnswers[id] ?? null,
+      };
+    } else {
+      record.answerRevisions ??= {};
+      record.answerRevisions[id] = revision;
+      if (record.answerConflicts) delete record.answerConflicts[id];
+    }
+  }
+  for (const [id, answer] of Object.entries(serverAnswers)) {
+    if (staleIds.has(id)) continue;
+    record.answerDigests[id] = digestOf(answer);
+  }
 }
 
 /** 笔迹的笔画数（atrament=strokes.length；excalidraw=elements.length） */

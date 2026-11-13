@@ -38,7 +38,12 @@ import {
   listInappDispatchCandidates,
   markInappDispatchUncertain,
   recoverAiQueue,
+  runtimeEpochOf,
 } from "./student-ai-queue.ts";
+import {
+  dispatchConnectionIsCurrent,
+  outboundRulesAreCurrent,
+} from "./student-ai-task-policy.ts";
 
 /**
  * SAI-17 页内 AI 异步执行 worker（B09；技术方案 §6「页内派发」、§9 并发限额）。
@@ -245,11 +250,12 @@ function completeReply(
   generation: number,
   runtimeEpoch: string,
   replyMd: string,
+  connectionIsCurrent: boolean,
 ): DispatchOutcome {
   try {
     const now = ctx.now();
     const plan = inappReplyPlanFor(ctx, taskId, replyMd, now);
-    completeInappDispatch(
+    const result = completeInappDispatch(
       ctx.db,
       {
         studentId,
@@ -257,13 +263,14 @@ function completeReply(
         generation,
         replyMd: plan.replyMd,
         expectedRuntimeEpoch: runtimeEpoch,
+        connectionIsCurrent,
         ...(plan.onDelivered !== undefined
           ? { onDelivered: plan.onDelivered }
           : {}),
       },
       { now },
     );
-    return "replied";
+    return result.delivered ? "replied" : "paused";
   } catch (error) {
     if (isConflict(error)) return "late";
     ctx.logger?.error(
@@ -421,6 +428,8 @@ async function dispatchOne(
       NEEDS_REKEY_MESSAGE,
     );
   }
+  const connectionIsCurrent = () =>
+    dispatchConnectionIsCurrent(db, studentId, ctx.rootSecret, connection);
 
   // 装配与材料（事务外；读取失败按可重试失败落库，不虚报已附图）
   let assembly: OutboundAssembly;
@@ -490,6 +499,7 @@ async function dispatchOne(
         generation,
         runtimeEpoch,
         outcome.content,
+        connectionIsCurrent(),
       );
     }
     if (outcome.kind === "rate_limited" || outcome.kind === "server_error") {
@@ -516,6 +526,25 @@ async function dispatchOne(
       } catch (error) {
         if (error instanceof WorkerStoppedError) return "skipped";
         throw error;
+      }
+      const task = taskOf(db, taskId);
+      if (
+        runtimeEpochOf(db) !== runtimeEpoch ||
+        task?.generation !== generation ||
+        task.status !== "dispatching"
+      ) {
+        return "skipped";
+      }
+      if (!connectionIsCurrent() || !outboundRulesAreCurrent(db, task)) {
+        return failDispatch(
+          ctx,
+          studentId,
+          taskId,
+          generation,
+          runtimeEpoch,
+          "policy",
+          "AI 连接或教学授权已变化，请确认后继续",
+        );
       }
       continue;
     }

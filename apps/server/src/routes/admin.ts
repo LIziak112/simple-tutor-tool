@@ -53,7 +53,12 @@ import { parseSharedFilenameParam } from "./shared.ts";
  * 业务逻辑在 admin-service。返回类型不显式标注 Hono：链式注册把路由签名累积进
  * 推断类型（AppType / hc 端到端类型前提）。
  */
-export function createAdminRoutes(db: Db, publicUrl: string, dataDir: string) {
+export function createAdminRoutes(
+  db: Db,
+  publicUrl: string,
+  dataDir: string,
+  backupOperatorId?: string,
+) {
   const requireAdmin = createRequireAdmin(db, publicUrl);
   return (
     new Hono<TeacherEnv>()
@@ -105,13 +110,21 @@ export function createAdminRoutes(db: Db, publicUrl: string, dataDir: string) {
         });
       })
       .post("/teachers/:id/reset-password", async (c) => {
+        const teacherId = c.req.param("id");
+        if (teacherId === backupOperatorId) {
+          throw new HttpError(
+            403,
+            "BACKUP_OPERATOR_PASSWORD_PROTECTED",
+            "整站备份操作员的密码受主机配置保护，不能在管理端重置",
+          );
+        }
         const body: AdminTeacherResetPasswordRequest = await parseJsonBody(
           c,
           adminTeacherResetPasswordRequestSchema,
         );
         return c.json({
           ok: true,
-          data: await resetTeacherPassword(db, c.req.param("id"), body),
+          data: await resetTeacherPassword(db, teacherId, body),
         });
       })
       .get("/settings", (c) => {

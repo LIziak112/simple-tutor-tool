@@ -43,9 +43,41 @@ import {
  * 校验见 personal-auth-service。setup / register 创建的恒为班级账号。
  */
 
-/** 教师行（单教师等价阶段取第一行，用于 hasTeacher 与 setup 占位判断；不存在返回 null） */
-function getTeacherRow(db: Db) {
-  return db.select().from(teachers).get();
+function hasConfiguredTeacher(db: Pick<Db, "select">): boolean {
+  return (
+    db
+      .select({ id: teachers.id })
+      .from(teachers)
+      .where(isNotNull(teachers.passwordHash))
+      .get() !== undefined
+  );
+}
+
+/** 仅无已配置教师时可首设；保留占位行旁的登录名冲突提示。 */
+function setupPlaceholderOf(db: Pick<Db, "select">, loginName: string) {
+  const first = db
+    .select()
+    .from(teachers)
+    .orderBy(teachers.createdAt, teachers.id)
+    .get();
+  if (!first?.passwordHash) {
+    const owner = db
+      .select({ id: teachers.id })
+      .from(teachers)
+      .where(eq(teachers.loginName, loginName))
+      .get();
+    if (owner && owner.id !== first?.id) {
+      throw new HttpError(
+        409,
+        "TEACHER_LOGIN_EXISTS",
+        "登录名已被使用，请换一个",
+      );
+    }
+  }
+  if (hasConfiguredTeacher(db)) {
+    throw new HttpError(409, "TEACHER_EXISTS", "教师已设置，请直接登录");
+  }
+  return first;
 }
 
 /**
@@ -54,12 +86,7 @@ function getTeacherRow(db: Db) {
  * 无教师时恒为 false（此时注册接口也不可用，首位教师只能走首启 setup）。
  */
 export function teacherStatus(db: Db): TeacherStatusData {
-  const hasTeacher =
-    db
-      .select({ id: teachers.id })
-      .from(teachers)
-      .where(isNotNull(teachers.passwordHash))
-      .get() !== undefined;
+  const hasTeacher = hasConfiguredTeacher(db);
   return {
     hasTeacher,
     registrationOpen: hasTeacher && isRegistrationOpen(db),
@@ -89,59 +116,47 @@ export async function setupTeacher(
   db: Db,
   request: TeacherSetupRequest,
 ): Promise<AuthResult> {
-  const existing = getTeacherRow(db);
-  if (existing?.passwordHash) {
-    throw new HttpError(409, "TEACHER_EXISTS", "教师已设置，请直接登录");
-  }
-  // 写库前校验登录名唯一；排除自身（无密码占位行的 loginName 允许被本次 setup 覆写）
-  const conflict = db
-    .select()
-    .from(teachers)
-    .where(eq(teachers.loginName, request.loginName))
-    .get();
-  if (conflict && conflict.id !== existing?.id) {
-    throw new HttpError(
-      409,
-      "TEACHER_LOGIN_EXISTS",
-      "登录名已被使用，请换一个",
-    );
-  }
-
+  setupPlaceholderOf(db, request.loginName);
   const passwordHash = await hashPassword(request.password);
-  // 复用可能存在的无密码占位行，否则新建（id/createdAt 一经确定不再变）。
-  const id = existing?.id ?? randomUUID();
-  const createdAt = existing?.createdAt ?? new Date().toISOString();
-  if (existing) {
-    db.update(teachers)
-      .set({ passwordHash, loginName: request.loginName, isAdmin: true })
-      .where(eq(teachers.id, id))
-      .run();
-  } else {
-    db.insert(teachers)
-      .values({
-        id,
-        loginName: request.loginName,
-        isAdmin: true,
-        disabledAt: null,
-        passwordHash,
-        apiToken: null,
-        createdAt,
-      })
-      .run();
-  }
-
-  pruneExpiredSessions(db);
-  const { token } = createTeacherSession(db, id);
-  return {
-    teacher: {
-      id,
-      loginName: request.loginName,
-      isAdmin: true,
-      accountKind: "class",
-      createdAt,
+  return db.transaction(
+    (tx) => {
+      // 哈希在事务外计算。取得写锁后重读，管理员和会话一并提交。
+      const placeholder = setupPlaceholderOf(tx, request.loginName);
+      const id = placeholder?.id ?? randomUUID();
+      const createdAt = placeholder?.createdAt ?? new Date().toISOString();
+      if (placeholder) {
+        tx.update(teachers)
+          .set({ passwordHash, loginName: request.loginName, isAdmin: true })
+          .where(eq(teachers.id, id))
+          .run();
+      } else {
+        tx.insert(teachers)
+          .values({
+            id,
+            loginName: request.loginName,
+            isAdmin: true,
+            disabledAt: null,
+            passwordHash,
+            apiToken: null,
+            createdAt,
+          })
+          .run();
+      }
+      pruneExpiredSessions(tx);
+      const { token } = createTeacherSession(tx, id);
+      return {
+        teacher: {
+          id,
+          loginName: request.loginName,
+          isAdmin: true,
+          accountKind: "class",
+          createdAt,
+        },
+        token,
+      };
     },
-    token,
-  };
+    { behavior: "immediate" },
+  );
 }
 
 /**

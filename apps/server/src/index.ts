@@ -83,7 +83,9 @@ const app = createApp({
   db,
   dataDir: config.dataDir,
   publicUrl: config.publicUrl,
+  trustedProxies: config.trustedProxies,
   dbHandle,
+  backupOperatorId: config.backupOperatorId,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

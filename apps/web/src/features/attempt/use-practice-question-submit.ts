@@ -240,6 +240,9 @@ export function usePracticeQuestionSubmit(input: {
         if (!(await flushQuestionRef.current(questionId))) {
           return failWith("本题答案尚未保存完成，请检查网络后重试");
         }
+        if (draftStore.peekUnsyncedInkIds(attemptId).includes(questionId)) {
+          return failWith("手写内容还没有上传完成，请刷新核对后重试");
+        }
         const prep = await prepareSubmitEvidence({
           attemptId,
           questionIds: [questionId],

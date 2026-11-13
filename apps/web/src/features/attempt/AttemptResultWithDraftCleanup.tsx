@@ -11,6 +11,7 @@ import { createEventQueue } from "@/lib/event-queue";
 import { AttemptResultView } from "./AttemptResultView";
 import { workflowStartOptions } from "./attempt-queries";
 import { draftStore } from "./draft-store";
+import { LocalDraftConflicts } from "./LocalDraftConflicts";
 
 /**
  * 结果视图外壳（T2.9）：普通交卷进入结果时清除本地草稿，含从别的设备交卷后
@@ -49,8 +50,10 @@ export default function AttemptResultWithDraftCleanup({
     ) === "locked";
   const navigate = useNavigate();
   useEffect(() => {
-    if (preserveDraft) draftStore.markLockedSubmission(attemptId);
-    else void draftStore.clearDraft(attemptId);
+    if (preserveDraft) {
+      draftStore.markLockedSubmission(attemptId);
+      void draftStore.refreshShared(attemptId).catch(() => {});
+    } else void draftStore.clearDraft(attemptId);
   }, [attemptId, preserveDraft]);
   const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
   useEffect(() => {
@@ -124,26 +127,34 @@ export default function AttemptResultWithDraftCleanup({
       : "网络异常，请稍后重试"
     : null;
   return (
-    <AttemptResultView
-      data={data}
-      onBackHome={onBackHome}
-      backLabel={backLabel}
-      onSolutionToggle={onSolutionToggle}
-      annotationSealWarning={annotationSealWarning}
-      onRefresh={onRefresh}
-      wrongPractice={{
-        loading: practice.isPending,
-        error: practiceErrorText,
-        onStart: (questionIds, moduleTitle) => {
-          if (questionIds.length === 0) return; // 判错 0 题按钮本就不渲染（防御）
-          practice.mutate({ questionIds, moduleTitle });
-        },
-      }}
-      redo={{
-        loading: redo.isPending,
-        error: redoErrorText,
-        onStart: redo.mutate,
-      }}
-    />
+    <>
+      <LocalDraftConflicts
+        attemptId={attemptId}
+        questionIds={data.units.flatMap((unit) =>
+          unit.questions.map((question) => question.questionId),
+        )}
+      />
+      <AttemptResultView
+        data={data}
+        onBackHome={onBackHome}
+        backLabel={backLabel}
+        onSolutionToggle={onSolutionToggle}
+        annotationSealWarning={annotationSealWarning}
+        onRefresh={onRefresh}
+        wrongPractice={{
+          loading: practice.isPending,
+          error: practiceErrorText,
+          onStart: (questionIds, moduleTitle) => {
+            if (questionIds.length === 0) return; // 判错 0 题按钮本就不渲染（防御）
+            practice.mutate({ questionIds, moduleTitle });
+          },
+        }}
+        redo={{
+          loading: redo.isPending,
+          error: redoErrorText,
+          onStart: redo.mutate,
+        }}
+      />
+    </>
   );
 }

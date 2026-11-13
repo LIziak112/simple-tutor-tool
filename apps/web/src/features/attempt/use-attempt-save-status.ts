@@ -179,6 +179,7 @@ export function useAttemptSaveStatus(
   recovery?: AttemptRecoveryState,
 ): string {
   const getSnapshot = useCallback(() => {
+    if (draftStore.localConflicts(attemptId).length) return "本机稿件待裁决";
     const noteSession = currentNoteSession();
     const annotationSession = currentAnnotationSession();
     const notes: SaveView[] = [];

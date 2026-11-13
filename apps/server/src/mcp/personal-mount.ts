@@ -7,6 +7,7 @@ import {
 } from "./personal-auth";
 import { createPersonalMcpServer } from "./personal-server";
 import { serveStatelessMcpRequest } from "./stateless-transport";
+import { studentMcpToolAuthorization } from "./student-auth";
 import { createRejectForeignOrigin } from "./student-mount";
 
 /**
@@ -45,6 +46,11 @@ export function createPersonalMcpRoutes(options: PersonalMcpMountOptions) {
         teacherId: c.var.mcpPersonal.teacherId,
         studentId: c.var.mcpPersonal.studentId,
         hmacSecret,
+        isAuthorized: studentMcpToolAuthorization(
+          options.db,
+          c.req.header("authorization"),
+          c.var.mcpPersonal,
+        ),
       });
       return serveStatelessMcpRequest(server, c.req.raw);
     });

@@ -576,7 +576,11 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     mockedFetch
       .mockResolvedValueOnce(DRAFT_DATA)
       .mockResolvedValue(RESULT_DATA);
-    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    mockedSave.mockResolvedValue({
+      questionId: "练习四-1",
+      changeCount: 1,
+      revision: 1,
+    });
     mockedSubmit.mockResolvedValue(RESULT_DATA);
     renderPage();
 
@@ -595,8 +599,16 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
       // T6R.10：携带每题笔记证据声明（本文件无笔记 → 全 none）
       expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID, {
         revisions: [
-          { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
-          { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
+          {
+            questionId: "练习四-1",
+            questionRevisionId: "rev-练习四-1",
+            expectedAnswerRevision: 1,
+          },
+          {
+            questionId: "练习四-4",
+            questionRevisionId: "rev-练习四-4",
+            expectedAnswerRevision: 0,
+          },
         ],
         evidence: [
           { questionId: "练习四-1", state: "none" },
@@ -893,6 +905,43 @@ function localInkDoc(strokes: number): InkDoc {
 }
 
 describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () => {
+  it("交卷使用本机已见版本，另一设备改答时保留当前作答", async () => {
+    const questionId = "练习四-1";
+    const current = { kind: "judge", value: true } as const;
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue({
+      ...DRAFT_DATA,
+      drafts: { [questionId]: current },
+      draftRevisions: { [questionId]: 2 },
+    });
+    mockedSubmit.mockRejectedValue(
+      new ApiError("ANSWER_REVISION_CONFLICT", "请查看其他设备的新答案", 409, {
+        _questionId: questionId,
+        _current: { revision: 3, draft: { kind: "judge", value: false } },
+      }),
+    );
+    renderPage();
+    await screen.findByText("第 1 题");
+    await clickSubmitAndConfirm();
+    await screen.findByText("请查看其他设备的新答案");
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      ATTEMPT_ID,
+      expect.objectContaining({
+        revisions: expect.arrayContaining([
+          expect.objectContaining({ questionId, expectedAnswerRevision: 2 }),
+        ]),
+      }),
+    );
+    expect(
+      (await draftStore.loadDraft(ATTEMPT_ID))?.answers[questionId],
+    ).toEqual(current);
+    expect(draftStore.peekAnswerConflicts(ATTEMPT_ID)[questionId]).toEqual({
+      revision: 3,
+      draft: { kind: "judge", value: false },
+    });
+    expect(mockedSeal).not.toHaveBeenCalled();
+  });
+
   it("宽限后明确确认按已保存作答交卷，结果页保留本机未同步稿", async () => {
     const backend = memoryBackend();
     const write = vi.fn(backend.set);
@@ -1195,18 +1244,13 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
 
     await clickSubmitAndConfirm();
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
-    // 事件 flush 先于 submit（finalizeSubmit 在 mutate 前 await flush）
-    const eventsOrder = mockedPostEvents.mock.invocationCallOrder[0] ?? 0;
-    const submitOrder = mockedSubmit.mock.invocationCallOrder[0] ?? 0;
-    expect(eventsOrder).toBeLessThan(submitOrder);
-
     const events = await allReportedEvents();
     const types = events.map((e) => e.type);
     expect(types).toContain("attempt_start");
     expect(types).toContain("question_focus");
     expect(types).toContain("question_blur");
     expect(types).toContain("answer_change");
-    expect(types).toContain("submit");
+    expect(types).not.toContain("submit");
     // focus 归属：题 1 → 题 2（切换顺序）
     const focusQuestionIds = events
       .filter((e) => e.type === "question_focus")
@@ -1223,8 +1267,6 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
     expect(judgeChanges[0]?.from).toBeUndefined();
     expect(judgeChanges[1]?.from).toEqual({ kind: "judge", value: true });
     expect(judgeChanges[1]?.to).toEqual({ kind: "judge", value: false });
-    // submit 是最后一条
-    expect(types[types.length - 1]).toBe("submit");
   });
 
   it("手写题写一笔：ink_stroke_batch 事件带笔画数与题号", async () => {

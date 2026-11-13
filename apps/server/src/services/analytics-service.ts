@@ -51,6 +51,7 @@ import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { latestAttemptOf } from "./assignment-service";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
+import { attemptTraceRowsByAttempt } from "./attempt-trace-rows";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
@@ -1067,37 +1068,7 @@ function buildOffline(
   let offlineSecTotal = 0;
   for (const ids of chunk(scoped.map((attempt) => attempt.id))) {
     // 事件行按 attemptId 装载（clientTs 升序与纯函数内部排序无关，安全）
-    const rawRowsByAttempt = new Map<
-      string,
-      Array<{
-        type: string;
-        clientTs: number;
-        serverTs: string;
-        payloadJson: string;
-      }>
-    >();
-    for (const row of db
-      .select({
-        attemptId: events.attemptId,
-        type: events.type,
-        clientTs: events.clientTs,
-        serverTs: events.serverTs,
-        payloadJson: events.payloadJson,
-      })
-      .from(events)
-      .where(inArray(events.attemptId, ids))
-      .all()) {
-      if (row.attemptId === null) continue; // 按 attemptId 过滤的行恒非空，防御
-      const projected = {
-        type: row.type,
-        clientTs: row.clientTs,
-        serverTs: row.serverTs,
-        payloadJson: row.payloadJson,
-      };
-      const list = rawRowsByAttempt.get(row.attemptId);
-      if (list === undefined) rawRowsByAttempt.set(row.attemptId, [projected]);
-      else list.push(projected);
-    }
+    const rawRowsByAttempt = attemptTraceRowsByAttempt(db, ids);
     for (const attemptId of ids) {
       // 每题 activeSec（responses 权威口径）作分母；metrics 只对有事件证据的题立户
       const activeSecByQuestion: Record<string, number> = {};

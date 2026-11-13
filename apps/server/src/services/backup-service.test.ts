@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import {
   existsSync,
   mkdirSync,
@@ -8,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +43,7 @@ import {
  *   secret.key）→ 恢复 → 全部回到备份时点；恢复前自动快照存在；
  * - 错误密码拒绝且零副作用（连接仍可用）；
  * - 损坏 zip / 缺 db / 未知顶层内容 → 400 且原数据无损；
- * - 替换中途失败（zip 内 db 是坏文件，重启连接抛错）→ 回滚复原；
+ * - 坏库在暂存时拒绝，替换中途失败后回滚复原；
  * - 保留 14 份轮转（造 16 份只剩最新 14）；
  * - 恢复后数据连接重启可用（同一 db 引用读到恢复数据）；
  * - 下载 zip 结构（快照原名 + blobs + shared + secret.key，无 backups/）；
@@ -51,6 +52,11 @@ import {
  */
 
 const PASSWORD = BACKUP_TEST_PASSWORD;
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, renameSync: vi.fn(fs.renameSync) };
+});
 
 interface Fixture {
   dataDir: string;
@@ -116,6 +122,95 @@ afterEach(() => {
   for (const fixture of fixtures.splice(0)) {
     fixture.cleanup();
   }
+});
+
+describe("文件替换失败的回滚", () => {
+  it.each(["搬出首项", "搬出中途", "新文件就位"])(
+    "%s失败时旧库、密钥和文件仍完好",
+    async (stage) => {
+      const fixture = await makeFixture();
+      fixtures.push(fixture);
+      const { dataDir, handle } = fixture;
+      const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+      const sharedFile = join(dataDir, "shared", "共享练习.md");
+      const inkFile = join(dataDir, "blobs", "ink", "att-1", "手写.png");
+      writeFileSync(sharedFile, "备份之后的旧文件");
+      writeFileSync(inkFile, "备份之后的笔迹");
+      writeFileSync(join(dataDir, "secret.key"), "cd".repeat(32));
+      handle.db.update(students).set({ displayName: "备份之后的学生名" }).run();
+      const actualFs =
+        await vi.importActual<typeof import("node:fs")>("node:fs");
+      let movedOut = 0;
+      let movedIn = 0;
+      let injected = false;
+      vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+        const out = dirname(String(from)) === dataDir;
+        const intoData = dirname(String(to)) === dataDir;
+        const shouldFail =
+          (out && stage === "搬出首项" && movedOut === 0) ||
+          (out && stage === "搬出中途" && movedOut === 1) ||
+          (intoData && stage === "新文件就位" && movedIn === 1);
+        if (!injected && shouldFail) {
+          injected = true;
+          throw new Error("模拟文件移动失败");
+        }
+        actualFs.renameSync(from, to);
+        if (out) movedOut += 1;
+        if (intoData) movedIn += 1;
+      });
+      await expect(
+        restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip),
+      ).rejects.toMatchObject({ code: "BACKUP_RESTORE_FAILED" });
+      expect(injected).toBe(true);
+      expect(readFileSync(sharedFile, "utf8")).toBe("备份之后的旧文件");
+      expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe(
+        "cd".repeat(32),
+      );
+      expect(readFileSync(inkFile, "utf8")).toBe("备份之后的笔迹");
+      expect(handle.db.select().from(students).get()?.displayName).toBe(
+        "备份之后的学生名",
+      );
+    },
+  );
+
+  it("回滚搬回失败时保留旧文件暂存目录", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let retainedPath: string | undefined;
+    vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+      const source = String(from);
+      if (dirname(String(to)) === dataDir) {
+        const rollback = basename(dirname(source)).startsWith(
+          "tutor-restore-old-",
+        );
+        if (!rollback || basename(source) === "shared") {
+          if (rollback) retainedPath = source;
+          throw new Error("模拟替换或回滚失败");
+        }
+      }
+      actualFs.renameSync(from, to);
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(
+        restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip),
+      ).rejects.toMatchObject({ status: 500, code: "BACKUP_ROLLBACK_FAILED" });
+      expect(log).toHaveBeenCalledWith(
+        "备份恢复未能完成回滚",
+        expect.objectContaining({ oldDir: dirname(retainedPath ?? "") }),
+      );
+    } finally {
+      log.mockRestore();
+    }
+    expect(retainedPath).toBeDefined();
+    expect(handle.db.$client.open).toBe(false);
+    expect(readFileSync(join(retainedPath ?? "", "共享练习.md"), "utf8")).toBe(
+      "共享内容 v1",
+    );
+  });
 });
 
 describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
@@ -308,6 +403,29 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
 });
 
 describe("恢复的拒绝路径（原数据无损）", () => {
+  it("暂存期间失去恢复权限时保留原连接与快照", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const originalConnection = handle.db.$client;
+    const snapshots = listSnapshots(dataDir);
+    let checks = 0;
+    await expect(
+      restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip, () => {
+        checks += 1;
+        if (checks === 2)
+          throw new HttpError(
+            403,
+            "BACKUP_OPERATOR_REQUIRED",
+            "恢复权限已撤销",
+          );
+      }),
+    ).rejects.toMatchObject({ status: 403, code: "BACKUP_OPERATOR_REQUIRED" });
+    expect(handle.db.$client).toBe(originalConnection);
+    expect(listSnapshots(dataDir)).toEqual(snapshots);
+  });
+
   it("错误密码 → 403；数据未动、连接仍可用", async () => {
     const fixture = await makeFixture();
     fixtures.push(fixture);
@@ -408,7 +526,7 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
   });
 
-  it("zip 内 db 是坏文件（重启连接失败）→ 500 已回滚，原数据无损", async () => {
+  it("zip 内数据库不可读时在新建保险快照和切换连接前拒绝", async () => {
     const fixture = await makeFixture();
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
@@ -437,6 +555,8 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     await archive.finalize();
     await done;
     const poisoned = Buffer.concat(chunks);
+    const originalConnection = handle.db.$client;
+    const snapshots = listSnapshots(dataDir);
 
     const err = await restoreFromBackup(
       dataDir,
@@ -445,8 +565,10 @@ describe("恢复的拒绝路径（原数据无损）", () => {
       PASSWORD,
       poisoned,
     ).catch((e: unknown) => e);
-    expect((err as HttpError).status).toBe(500);
-    expect((err as HttpError).code).toBe("BACKUP_RESTORE_FAILED");
+    expect((err as HttpError).status).toBe(400);
+    expect((err as HttpError).code).toBe("BACKUP_ZIP_INVALID");
+    expect(listSnapshots(dataDir)).toEqual(snapshots);
+    expect(handle.db.$client).toBe(originalConnection);
 
     // 回滚复原：库行、secret.key、shared 都在原位且连接可用
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
@@ -456,6 +578,69 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
       "共享内容 v1",
     );
+  });
+
+  it("移出原目录中途失败时，已经移出的和仍在原位的数据均保留", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const { renameSync: move } = await vi.importActual<typeof fs>("node:fs");
+    const rename = vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+      if (
+        from === join(dataDir, "shared") &&
+        typeof to === "string" &&
+        basename(dirname(to)).startsWith("tutor-restore-old-")
+      ) {
+        throw new Error("模拟移动原数据时的文件系统错误");
+      }
+      move(from, to);
+    });
+    try {
+      await expect(
+        restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip),
+      ).rejects.toMatchObject({ code: "BACKUP_RESTORE_FAILED" });
+    } finally {
+      rename.mockReset();
+    }
+    expect(hasStudent(handle, "stu-backup-1")).toBe(true);
+    expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe(
+      "ab".repeat(32),
+    );
+    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
+      "共享内容 v1",
+    );
+  });
+
+  it("DATA_DIR 是单独挂载点时，恢复的移动全部留在挂载点内", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
+    const { renameSync: move } = await vi.importActual<typeof fs>("node:fs");
+    const root = `${dataDir}${sep}`;
+    const rename = vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+      if (
+        typeof from === "string" &&
+        typeof to === "string" &&
+        (!from.startsWith(root) || !to.startsWith(root))
+      ) {
+        throw new Error("模拟禁止跨挂载点移动");
+      }
+      move(from, to);
+    });
+    try {
+      await expect(
+        restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, zip),
+      ).resolves.toMatchObject({ sessionWarning: true });
+      expect(rename).toHaveBeenCalled();
+    } finally {
+      rename.mockReset();
+    }
+    expect(readdirSync(join(dataDir, BACKUP_DIR_NAME))).not.toContainEqual(
+      expect.stringMatching(/^tutor-restore-/),
+    );
+    expect(hasStudent(handle, "stu-backup-1")).toBe(true);
   });
 });
 

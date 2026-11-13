@@ -3,15 +3,23 @@ import type {
   InkDoc,
   StudentAnswer,
 } from "@tutor/contract";
-import { createStore, del, get, set } from "idb-keyval";
+import { createStore, del, get, set, update } from "idb-keyval";
 import { randomUuid } from "@/lib/uuid";
 import {
   digestOf,
   inkDigestOf,
-  mergeAnswers,
+  mergeServerDrafts,
   unsyncedAnswerIds,
   unsyncedInkIds,
 } from "./draft-merge";
+import {
+  chooseLocalDraft,
+  clearConfirmedDraft,
+  type LocalDraftConflict,
+  mergePersistedDraft,
+  readDraftRecord,
+  storedVersionOf,
+} from "./draft-persistence";
 
 /**
  * 草稿防丢本地仓（T2.9，架构 §5.4.1 数据层第 3 条）：
@@ -67,6 +75,7 @@ export interface AttemptDraftRecord {
   answerRevisions?: Record<string, number>;
   answerMutationIds?: Record<string, string>;
   answerConflicts?: Record<string, AttemptAnswerConflictCurrent>;
+  localConflicts?: LocalDraftConflict[];
 }
 
 /** 底层键值存取的最小面（idb-keyval 的 get/set/del 子集；注入内存版便于单测） */
@@ -74,6 +83,7 @@ export interface KVBackend {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
+  update?(key: string, change: (current: unknown) => unknown): Promise<void>;
 }
 
 /** 本地写盘防抖窗（毫秒）：高频键击/连续笔画合并为一次 IndexedDB 事务 */
@@ -92,6 +102,10 @@ export function getDraftSessionEpoch(): number {
   return backendGeneration;
 }
 
+export function currentDraftSession(): Readonly<DraftSession> | null {
+  return draftSession;
+}
+
 /** 切账号前启动旧稿落盘；迟到读写回执不能进入新账号的内存仓。 */
 export function bindDraftSession(session: DraftSession | null): void {
   if (
@@ -104,6 +118,8 @@ export function bindDraftSession(session: DraftSession | null): void {
   for (const timer of writeTimers.values()) clearTimeout(timer);
   writeTimers.clear();
   cache.clear();
+  baselines.clear();
+  persistedHeads.clear();
   lockedSubmissions.clear();
   persistenceStates.clear();
   writeVersions.clear();
@@ -133,6 +149,12 @@ export function memoryBackend(): KVBackend {
     del: async (key) => {
       map.delete(key);
     },
+    async update(key, change) {
+      await this.set(
+        key,
+        structuredClone(change(structuredClone(map.get(key)))),
+      );
+    },
   };
 }
 
@@ -143,6 +165,7 @@ function idbBackend(): KVBackend {
     get: (key) => get(key, store),
     set: (key, value) => set(key, value, store),
     del: (key) => del(key, store),
+    update: (key, change) => update(key, change, store),
   };
 }
 
@@ -155,6 +178,16 @@ const writeVersions = new Map<string, number>();
 /** 仅服务端结果确认宽限后交卷的记录可以归档为本机稿。 */
 const lockedSubmissions = new Set<string>();
 const persistenceListeners = new Set<() => void>();
+const noLocalConflicts: readonly LocalDraftConflict[] = [];
+const choiceListeners = new Set<
+  (attemptId: string, conflict: LocalDraftConflict) => void
+>();
+export function subscribeLocalDraftChoice(
+  listener: (attemptId: string, conflict: LocalDraftConflict) => void,
+): () => void {
+  choiceListeners.add(listener);
+  return () => choiceListeners.delete(listener);
+}
 export function subscribeDraftPersistence(listener: () => void): () => void {
   persistenceListeners.add(listener);
   return () => {
@@ -187,6 +220,8 @@ export function installDraftBackend(backend: KVBackend): void {
   for (const timer of writeTimers.values()) clearTimeout(timer);
   writeTimers.clear();
   cache.clear();
+  baselines.clear();
+  persistedHeads.clear();
   lockedSubmissions.clear();
   activeBackend = backend;
 }
@@ -208,21 +243,7 @@ async function safeGet(
   try {
     const value = await backend().get(storageKey);
     if (value === undefined || value === null) return null;
-    // 记录由本模块独占写入，形态可信；防御性补齐缺省字段（前向兼容旧记录）
-    const raw = value as Partial<AttemptDraftRecord>;
-    return {
-      answers: raw.answers ?? {},
-      inks: raw.inks ?? {},
-      materialInks: raw.materialInks ?? {},
-      materialInkBases: raw.materialInkBases ?? {},
-      savedAt: raw.savedAt ?? 0,
-      syncedAt: raw.syncedAt ?? 0,
-      answerDigests: raw.answerDigests ?? {},
-      inkDigests: raw.inkDigests ?? {},
-      answerRevisions: raw.answerRevisions ?? {},
-      answerMutationIds: raw.answerMutationIds ?? {},
-      answerConflicts: raw.answerConflicts ?? {},
-    };
+    return readDraftRecord(value);
   } catch (err) {
     if (strictRead) throw err;
     console.warn("草稿本地读取失败（不影响作答）", err);
@@ -234,8 +255,48 @@ async function safeGet(
 
 /** attemptId → 最新记录（内存为准；IndexedDB 是持久层） */
 const cache = new Map<string, AttemptDraftRecord>();
+const baselines = new Map<string, { record: AttemptDraftRecord }>();
+const persistedHeads = new Map<string, AttemptDraftRecord>();
+const writeTails = new Map<string, Promise<void>>();
+const inFlightWrites = new Map<
+  string,
+  {
+    generation: number;
+    version: number;
+    task: Promise<void>;
+  }
+>();
 /** attemptId → 待落盘定时器 */
 const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** 画布持有本页已打开的文档，普通落盘不替换它的编辑基线。 */
+function editingView(
+  local: AttemptDraftRecord,
+  stored: AttemptDraftRecord,
+  chosen?: LocalDraftConflict,
+): AttemptDraftRecord {
+  const view = {
+    ...stored,
+    inks: { ...local.inks },
+    inkDigests: { ...local.inkDigests },
+    materialInks: { ...local.materialInks },
+    materialInkBases: { ...local.materialInkBases },
+  };
+  if (chosen?.kind === "ink") {
+    const doc = stored.inks[chosen.key];
+    if (doc) view.inks[chosen.key] = doc;
+    else delete view.inks[chosen.key];
+  }
+  if (chosen?.kind === "material") {
+    const doc = stored.materialInks?.[chosen.key];
+    const base = stored.materialInkBases?.[chosen.key];
+    if (doc) view.materialInks[chosen.key] = doc;
+    else delete view.materialInks[chosen.key];
+    if (base) view.materialInkBases[chosen.key] = base;
+    else delete view.materialInkBases[chosen.key];
+  }
+  return view;
+}
 
 /** 变更后统一走这里：更新内存 + 防抖落盘 */
 function mutate(
@@ -263,32 +324,86 @@ function scheduleWrite(attemptId: string): void {
 }
 
 /** 立即落盘（清掉防抖定时器）；visibilitychange/pagehide/卸载前调用 */
-async function writeNow(attemptId: string): Promise<void> {
+function clearWriteTimer(attemptId: string): void {
   const timer = writeTimers.get(attemptId);
   if (timer !== undefined) {
     clearTimeout(timer);
     writeTimers.delete(attemptId);
   }
-  const record = cache.get(attemptId);
-  if (record === undefined) return;
-  const generation = backendGeneration;
-  const version = writeVersions.get(attemptId);
-  setPersistenceState(attemptId, "saving");
-  try {
-    await backend().set(keyOf(attemptId), record);
-    if (
-      generation === backendGeneration &&
-      version === writeVersions.get(attemptId)
-    )
-      setPersistenceState(attemptId, "saved");
-  } catch (err) {
-    if (
-      generation === backendGeneration &&
-      version === writeVersions.get(attemptId)
-    )
-      setPersistenceState(attemptId, "failed");
-    console.warn("草稿本地写入失败（不影响作答）", err);
+}
+
+function queueWrite(key: string, task: () => Promise<void>): Promise<void> {
+  const tail = (writeTails.get(key) ?? Promise.resolve()).then(task, task);
+  writeTails.set(key, tail);
+  const remove = () => {
+    if (writeTails.get(key) === tail) writeTails.delete(key);
+  };
+  void tail.then(remove, remove);
+  return tail;
+}
+
+async function updateRecord(
+  storage: KVBackend,
+  key: string,
+  change: (current: AttemptDraftRecord) => AttemptDraftRecord | undefined,
+): Promise<AttemptDraftRecord | undefined> {
+  let saved: AttemptDraftRecord | undefined;
+  const apply = (value: unknown) => {
+    saved = change(readDraftRecord(value));
+    return saved;
+  };
+  if (storage.update) await storage.update(key, apply);
+  else {
+    // 测试注入的旧后端可只提供三个键值操作。
+    const next = apply(await storage.get(key));
+    if (next === undefined) await storage.del(key);
+    else await storage.set(key, next);
   }
+  return saved;
+}
+
+async function writeNow(attemptId: string): Promise<void> {
+  clearWriteTimer(attemptId);
+  const record = cache.get(attemptId);
+  const key = keyOf(attemptId);
+  const version = writeVersions.get(attemptId);
+  if (record === undefined || version === undefined) return writeTails.get(key);
+  const generation = backendGeneration;
+  const inFlight = inFlightWrites.get(key);
+  if (inFlight?.generation === generation && inFlight.version === version)
+    return inFlight.task;
+  const storage = backend();
+  const snapshot = structuredClone(record);
+  const baseline = baselines.get(attemptId) ?? { record: emptyRecord() };
+  baselines.set(attemptId, baseline);
+  setPersistenceState(attemptId, "saving");
+  const current = () =>
+    generation === backendGeneration &&
+    version === writeVersions.get(attemptId);
+  const task = queueWrite(key, async () => {
+    try {
+      const merged = await updateRecord(storage, key, (stored) =>
+        mergePersistedDraft(baseline.record, snapshot, stored),
+      );
+      baseline.record = snapshot;
+      if (current() && merged) {
+        const local = editingView(snapshot, merged);
+        baseline.record = structuredClone(local);
+        persistedHeads.set(attemptId, merged);
+        cache.set(attemptId, local);
+        setPersistenceState(attemptId, "saved");
+      }
+    } catch (err) {
+      if (current()) setPersistenceState(attemptId, "failed");
+      console.warn("草稿本地写入失败（不影响作答）", err);
+    }
+  });
+  inFlightWrites.set(key, { generation, version, task });
+  const complete = () => {
+    if (inFlightWrites.get(key)?.task === task) inFlightWrites.delete(key);
+  };
+  void task.then(complete, complete);
+  return task;
 }
 
 // ---------- 对外 API（standalone 函数 + 导出对象，避免 this 推断） ----------
@@ -309,7 +424,11 @@ async function loadDraft(
   if (generation !== backendGeneration) return null;
   const written = cache.get(attemptId);
   if (written !== undefined) return written;
-  if (stored !== null) cache.set(attemptId, stored);
+  if (stored !== null) {
+    cache.set(attemptId, stored);
+    persistedHeads.set(attemptId, structuredClone(stored));
+    baselines.set(attemptId, { record: structuredClone(stored) });
+  }
   return stored;
 }
 
@@ -335,6 +454,8 @@ export async function assertLoadedDraftsForPwaUpdate(): Promise<void> {
       if (getDraftPersistenceState(attemptId) !== "saved")
         throw new Error("仍有作答或手写未存入本机，请保持页面打开并重试更新");
       if (lockedSubmissions.has(attemptId)) continue;
+      if (record.localConflicts?.length)
+        throw new Error("仍有本机稿件冲突，请先选择要保留的版本");
       if (Object.keys(record.answerConflicts ?? {}).length > 0)
         throw new Error("仍有作答同步冲突，请先处理后更新");
       if (
@@ -384,6 +505,25 @@ export const draftStore = {
     };
   },
   loadDraft,
+  async refreshShared(attemptId: string): Promise<AttemptDraftRecord | null> {
+    const generation = backendGeneration;
+    const version = writeVersions.get(attemptId);
+    const key = keyOf(attemptId);
+    await writeNow(attemptId);
+    if (generation !== backendGeneration) return null;
+    if (getDraftPersistenceState(attemptId) === "failed")
+      throw new Error("本机作答保存失败，请重试");
+    const stored = await safeGet(attemptId, key, true);
+    if (generation !== backendGeneration) return null;
+    if (stored && version === writeVersions.get(attemptId)) {
+      const local = editingView(cache.get(attemptId) ?? stored, stored);
+      persistedHeads.set(attemptId, stored);
+      cache.set(attemptId, local);
+      baselines.set(attemptId, { record: structuredClone(local) });
+      for (const listener of persistenceListeners) listener();
+    }
+    return cache.get(attemptId) ?? stored;
+  },
   /** 仅查询当前会话已载入的内存稿，供 UI 同步刷新，不触发读取或写入。 */
   peekAnswers(attemptId: string): Record<string, StudentAnswer> | null {
     const record = cache.get(attemptId);
@@ -393,6 +533,59 @@ export const draftStore = {
     attemptId: string,
   ): Record<string, AttemptAnswerConflictCurrent> {
     return cache.get(attemptId)?.answerConflicts ?? {};
+  },
+  localConflicts(attemptId: string): readonly LocalDraftConflict[] {
+    return cache.get(attemptId)?.localConflicts ?? noLocalConflicts;
+  },
+  storedVersion(
+    attemptId: string,
+    conflict: LocalDraftConflict,
+  ): LocalDraftConflict {
+    return storedVersionOf(
+      persistedHeads.get(attemptId) ?? emptyRecord(),
+      conflict,
+    );
+  },
+  async resolveLocalConflict(
+    attemptId: string,
+    conflict: LocalDraftConflict,
+    expected: LocalDraftConflict,
+    takeAlternative: boolean,
+  ): Promise<void> {
+    const generation = backendGeneration;
+    const version = writeVersions.get(attemptId);
+    const key = keyOf(attemptId);
+    const storage = backend();
+    await writeNow(attemptId);
+    if (getDraftPersistenceState(attemptId) === "failed")
+      throw new Error("本机保存失败，请重试");
+    await queueWrite(key, async () => {
+      if (
+        generation !== backendGeneration ||
+        version !== writeVersions.get(attemptId)
+      )
+        throw new Error("作答已变化，请重新选择本机稿件");
+      const resolved = await updateRecord(storage, key, (stored) => {
+        chooseLocalDraft(stored, conflict, expected, takeAlternative);
+        return stored;
+      });
+      if (
+        generation === backendGeneration &&
+        version === writeVersions.get(attemptId) &&
+        resolved
+      ) {
+        const local = editingView(
+          cache.get(attemptId) ?? emptyRecord(),
+          resolved,
+          conflict,
+        );
+        cache.set(attemptId, local);
+        persistedHeads.set(attemptId, resolved);
+        baselines.set(attemptId, { record: structuredClone(local) });
+        for (const listener of persistenceListeners) listener();
+        for (const listener of choiceListeners) listener(attemptId, conflict);
+      }
+    });
   },
   answerMutationId(attemptId: string, questionId: string): string | undefined {
     return cache.get(attemptId)?.answerMutationIds?.[questionId];
@@ -416,11 +609,60 @@ export const draftStore = {
   peekInk(attemptId: string, questionId: string): InkDoc | null {
     return cache.get(attemptId)?.inks[questionId] ?? null;
   },
+  async loadInkForEditor(
+    attemptId: string,
+    questionId: string,
+  ): Promise<InkDoc | null> {
+    const generation = backendGeneration;
+    await draftStore.refreshShared(attemptId);
+    if (generation !== backendGeneration) return null;
+    const local = cache.get(attemptId);
+    const shared = persistedHeads.get(attemptId);
+    if (
+      local &&
+      shared?.inks[questionId] &&
+      !shared.localConflicts?.some(
+        (entry) => entry.kind === "ink" && entry.key === questionId,
+      )
+    ) {
+      const chosen = {
+        kind: "ink",
+        key: questionId,
+        value: shared.inks[questionId],
+      } as const;
+      const adopted = editingView(local, shared, chosen);
+      if (shared.inkDigests[questionId] !== undefined)
+        adopted.inkDigests[questionId] = shared.inkDigests[questionId];
+      cache.set(attemptId, adopted);
+      baselines.set(attemptId, { record: structuredClone(adopted) });
+      return adopted.inks[questionId] ?? null;
+    }
+    return local?.inks[questionId] ?? null;
+  },
+  allowsInkUpload(attemptId: string, questionId: string, doc: InkDoc): boolean {
+    const shared = persistedHeads.get(attemptId);
+    if (
+      shared?.localConflicts?.some(
+        (entry) => entry.kind === "ink" && entry.key === questionId,
+      )
+    )
+      return false;
+    const persisted = shared?.inks[questionId];
+    return (
+      persisted === undefined || inkDigestOf(persisted) === inkDigestOf(doc)
+    );
+  },
 
   /** 题卡可能尚未挂载，待传正式笔迹以本机稿记录为准。 */
   peekUnsyncedInkIds(attemptId: string): string[] {
-    const record = cache.get(attemptId);
-    return record ? unsyncedInkIds(record) : [];
+    const local = cache.get(attemptId);
+    const shared = persistedHeads.get(attemptId);
+    return [
+      ...new Set([
+        ...(local ? unsyncedInkIds(local) : []),
+        ...(shared ? unsyncedInkIds(shared) : []),
+      ]),
+    ];
   },
 
   /** 每笔结束写本地（InkPad onDocChange 链路） */
@@ -554,67 +796,18 @@ export const draftStore = {
     const generation = backendGeneration;
     await draftStore.recoverLegacyDraft(attemptId);
     if (generation !== backendGeneration) return serverAnswers;
-    const local = cache.get(attemptId);
-    const effectiveServer = { ...serverAnswers };
-    const staleIds = new Set(
-      Object.entries(serverRevisions ?? {})
-        .filter(
-          ([id, revision]) => revision < (local?.answerRevisions?.[id] ?? 0),
-        )
-        .map(([id]) => id),
-    );
-    for (const id of staleIds) {
-      const answer = local?.answers[id];
-      if (answer === undefined) delete effectiveServer[id];
-      else effectiveServer[id] = answer;
-    }
-    const { merged } = mergeAnswers(
-      local?.answers ?? null,
-      effectiveServer,
-      local?.answerDigests ?? {},
-    );
     if (
-      local === undefined &&
-      Object.keys(merged).length === 0 &&
+      !cache.has(attemptId) &&
+      Object.keys(serverAnswers).length === 0 &&
       serverRevisions === undefined
     ) {
       // 两边都空：不建记录（首次进入且未作答）
-      return merged;
+      return {};
     }
     mutate(attemptId, (record) => {
-      record.answers = merged;
-      for (const [id, revision] of Object.entries(serverRevisions ?? {})) {
-        if (staleIds.has(id)) continue;
-        const old = local?.answerDigests[id];
-        const serverDigest = digestOf(serverAnswers[id]);
-        const localAnswer = merged[id];
-        const dirty =
-          localAnswer !== undefined && digestOf(localAnswer) !== serverDigest;
-        const changedRemotely =
-          old !== undefined
-            ? old !== serverDigest
-            : serverAnswers[id] !== undefined;
-        if (
-          dirty &&
-          (changedRemotely || record.answerConflicts?.[id] !== undefined)
-        ) {
-          record.answerConflicts ??= {};
-          record.answerConflicts[id] = {
-            revision,
-            draft: serverAnswers[id] ?? null,
-          };
-        } else {
-          record.answerRevisions ??= {};
-          record.answerRevisions[id] = revision;
-          if (record.answerConflicts) delete record.answerConflicts[id];
-        }
-      }
-      for (const [questionId, answer] of Object.entries(serverAnswers)) {
-        if (staleIds.has(questionId)) continue;
-        record.answerDigests[questionId] = digestOf(answer);
-      }
+      mergeServerDrafts(record, serverAnswers, serverRevisions);
     });
-    return merged;
+    return draftStore.peekAnswers(attemptId) ?? {};
   },
 
   setAnswerConflict(
@@ -623,6 +816,11 @@ export const draftStore = {
     cloud: AttemptAnswerConflictCurrent,
   ): void {
     mutate(attemptId, (record) => {
+      if (
+        cloud.revision < (record.answerRevisions?.[questionId] ?? 0) ||
+        cloud.revision < (record.answerConflicts?.[questionId]?.revision ?? 0)
+      )
+        return;
       record.answerConflicts ??= {};
       record.answerConflicts[questionId] = cloud;
     });
@@ -652,43 +850,55 @@ export const draftStore = {
     await writeNow(attemptId);
   },
 
-  /** 交卷成功后清除本地草稿（含防抖未落盘的部分） */
+  /** 交卷后仅清除已确认同步的正文，保留其他页面的未同步内容。 */
   async clearDraft(attemptId: string): Promise<void> {
     lockedSubmissions.delete(attemptId);
-    const timer = writeTimers.get(attemptId);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      writeTimers.delete(attemptId);
-    }
-    // 材料圈画笔迹目前仅有本机稿（无服务端同步链路）：交卷清稿时保留，
-    // 供结果页只读回看——「清缓存不得删除未同步材料」的保稿纪律；
-    // 冻结底宽元数据随笔迹一并保留（结果页按冻结宽重挂对齐回看）
-    const keepSource = cache.get(attemptId);
-    const materialInks = keepSource?.materialInks;
-    const materialInkBases = keepSource?.materialInkBases;
-    const keepMaterialInks =
-      materialInks !== undefined && Object.keys(materialInks).length > 0;
-    cache.delete(attemptId);
-    writeVersions.delete(attemptId);
-    setPersistenceState(attemptId, "saved");
+    const generation = backendGeneration;
+    const version = writeVersions.get(attemptId);
+    const key = keyOf(attemptId);
+    const storage = backend();
+    await writeNow(attemptId);
+    if (
+      generation !== backendGeneration ||
+      getDraftPersistenceState(attemptId) === "failed"
+    )
+      return;
     try {
-      if (keepMaterialInks && materialInks) {
-        const record = emptyRecord();
-        record.materialInks = materialInks;
-        if (materialInkBases) record.materialInkBases = materialInkBases;
-        record.savedAt = Date.now();
-        cache.set(attemptId, record);
-        await writeNow(attemptId);
-      } else {
-        await backend().del(keyOf(attemptId));
-      }
+      await queueWrite(key, async () => {
+        const remaining = await updateRecord(storage, key, clearConfirmedDraft);
+        if (
+          generation !== backendGeneration ||
+          version !== writeVersions.get(attemptId)
+        )
+          return;
+        if (remaining) {
+          cache.set(attemptId, remaining);
+          persistedHeads.set(attemptId, structuredClone(remaining));
+          baselines.set(attemptId, { record: structuredClone(remaining) });
+        } else {
+          cache.delete(attemptId);
+          persistedHeads.delete(attemptId);
+          baselines.delete(attemptId);
+        }
+        writeVersions.delete(attemptId);
+        setPersistenceState(attemptId, "saved");
+        for (const listener of persistenceListeners) listener();
+      });
     } catch (err) {
       console.warn("草稿清除失败（不影响交卷）", err);
     }
   },
 
   /** 立即落盘当前 attempt（切后台/页面卸载/组件卸载前调用） */
-  flush(attemptId: string): Promise<void> {
-    return writeNow(attemptId);
+  async flush(attemptId: string): Promise<void> {
+    const generation = backendGeneration;
+    let version: number | undefined;
+    do {
+      version = writeVersions.get(attemptId);
+      await writeNow(attemptId);
+    } while (
+      generation === backendGeneration &&
+      version !== writeVersions.get(attemptId)
+    );
   },
 };

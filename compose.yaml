@@ -15,10 +15,14 @@ services:
     image: simple-tutor-tool:latest
     restart: unless-stopped
     environment:
+      # 只填部署中受信任的代理 IP 或网段，逗号分隔。
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # 对外访问地址，HTTP + 公网 IP 模式保持默认即可；
       # 切换域名 + HTTPS 时改成 https://你的域名 —— 服务端据此开启 Secure Cookie、
       # Service Worker（PWA）等（决策与备案流程见 docs/技术架构与实施方案.md §5.10）
       PUBLIC_URL: http://localhost:8787
+      # 网页整站备份默认关闭。由主机运维人员显式指定管理员账号 ID。
+      INSTANCE_BACKUP_OPERATOR_ID: ${INSTANCE_BACKUP_OPERATOR_ID:-}
       # 其余环境变量（NODE_ENV / PORT=8787 / DATA_DIR=/app/data）已固化在 Dockerfile
     volumes:
       # 数据目录：tutor.db / blobs/ / backups/ / secret.key 都在这里，备份 = 备份 ./data

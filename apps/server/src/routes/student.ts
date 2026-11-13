@@ -6,7 +6,6 @@ import {
   annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
   attemptAnswerSaveRequestSchema,
-  attemptEventBatchRequestSchema,
   attemptFlagRequestSchema,
   attemptStartOptionsRequestSchema,
   attemptSubmitRequestSchema,
@@ -16,7 +15,6 @@ import {
   courseAttemptStartOptionsRequestSchema,
   hintOpenRequestSchema,
   inkWriteMetaSchema,
-  lectureEventBatchRequestSchema,
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
   noteUploadMetaSchema,
@@ -89,10 +87,6 @@ import {
   submitLessonQuestion,
   submitPracticeQuestion,
 } from "../services/attempt-service";
-import {
-  appendAttemptEvents,
-  appendLectureEvents,
-} from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { getStudentLearningRecord } from "../services/learning-record-service";
@@ -135,6 +129,7 @@ import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
 import { respondAttemptDetail } from "./student-attempt-detail";
+import { createStudentEventRoutes } from "./student-event-routes";
 import { createStudentMemoRoutes } from "./student-memos";
 import { createStudentRubricRoutes } from "./student-rubric";
 
@@ -532,28 +527,7 @@ export function createStudentRoutes(
           data: getStudentAttemptPaper(db, c.var.student.id, c.req.param("id")),
         });
       })
-      // T2.10：学习痕迹事件批量上报（attempt 上下文，≤200 条/次由契约拦截）
-      .post("/attempts/:id/events", async (c) => {
-        const body = await parseJsonBody(c, attemptEventBatchRequestSchema);
-        return c.json({
-          ok: true,
-          data: appendAttemptEvents(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            body.events,
-            body.viewId,
-          ),
-        });
-      })
-      // T2.10：无 attempt 上下文的事件批量（讲义 lecture_expand 等）
-      .post("/events", async (c) => {
-        const body = await parseJsonBody(c, lectureEventBatchRequestSchema);
-        return c.json({
-          ok: true,
-          data: appendLectureEvents(db, c.var.student.id, body.events),
-        });
-      })
+      .route("/", createStudentEventRoutes(db))
       // T2.8：上传/覆盖一道手写题的笔迹（multipart：strokes + snapshot）
       .put("/attempts/:id/ink/:questionId", async (c) => {
         const body = await c.req.parseBody();

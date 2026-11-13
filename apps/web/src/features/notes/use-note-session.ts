@@ -7,14 +7,17 @@
  * 失效、回执隔离）。紧邻 note-sync 会话三件套（bind/current/reset）。
  */
 import type { StudentMeData } from "@tutor/contract";
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import { bindDraftSession } from "@/features/attempt/draft-store";
 import { bindNoteSession } from "@/features/notes/note-sync";
 
 export function useBindNoteSession(me: StudentMeData | undefined): void {
+  useLayoutEffect(() => {
+    if (me !== undefined)
+      bindDraftSession({ origin: window.location.origin, studentId: me.id });
+  }, [me]);
   useEffect(() => {
     if (me === undefined) return;
-    bindDraftSession({ origin: window.location.origin, studentId: me.id });
     bindNoteSession({
       origin: window.location.origin,
       studentId: me.id,

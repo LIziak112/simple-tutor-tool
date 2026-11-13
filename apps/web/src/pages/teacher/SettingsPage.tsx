@@ -30,19 +30,24 @@ const SECTIONS = [
 
 /** 分类写入 URL；配置控制器持续挂载，切换时保留未保存状态。 */
 export function SettingsPage() {
-  const meQuery = useTeacherMe();
+  // 登录回执会预填身份，整站备份权限由 /me 单独读取。
+  const meQuery = useTeacherMe({ freshOnMount: true });
   const logoutTeacherMutation = useLogoutTeacher();
   const logoutPersonalMutation = useLogoutPersonal("teacher");
   const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/t/login");
   const navigate = useNavigate();
   const settingsNavigation = useSettingsNavigation();
   const [searchParams] = useSearchParams();
-  const activeSection =
-    SECTIONS.find((section) => section.id === searchParams.get("section"))
-      ?.id ?? "teaching";
   if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
   if (meQuery.isError || !meQuery.data)
     return <Navigate to={loginPath} replace />;
+  const canManageBackup = meQuery.data.canManageInstanceBackup === true;
+  const sections = canManageBackup
+    ? SECTIONS
+    : SECTIONS.filter((section) => section.id !== "backup");
+  const activeSection =
+    sections.find((section) => section.id === searchParams.get("section"))
+      ?.id ?? "teaching";
   const personal = meQuery.data.accountKind === "personal";
   const logoutMutation = personal
     ? logoutPersonalMutation
@@ -67,7 +72,7 @@ export function SettingsPage() {
         aria-label="设置分类"
         className="mb-7 flex flex-wrap gap-x-7 border-b border-border"
       >
-        {SECTIONS.map(({ id, label, shortLabel }) => (
+        {sections.map(({ id, label, shortLabel }) => (
           <Link
             key={id}
             to={`/t/settings?section=${id}`}
@@ -108,9 +113,11 @@ export function SettingsPage() {
           </Link>
         </div>
       </div>
-      <div hidden={activeSection !== "backup"}>
-        <BackupSection />
-      </div>
+      {canManageBackup && (
+        <div hidden={activeSection !== "backup"}>
+          <BackupSection />
+        </div>
+      )}
       <div hidden={activeSection !== "account"} className="space-y-7">
         <section>
           <h2 className="text-lg font-semibold">教师账号</h2>

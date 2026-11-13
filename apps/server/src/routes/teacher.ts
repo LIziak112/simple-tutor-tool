@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
+import { canManageInstanceBackup } from "../auth/instance-backup-access";
 import type { TeacherEnv } from "../auth/require-teacher";
 import { createRequireTeacher } from "../auth/require-teacher";
 import {
@@ -105,6 +106,7 @@ export function createTeacherRoutes(
   dbHandle?: DbHandle,
   /** 规范目录覆盖（T7.8 教学包快照经 library 路由透传，与 /api/public/spec 同源） */
   specDir?: string | undefined,
+  backupOperatorId?: string,
 ) {
   const requireTeacher = createRequireTeacher(db, publicUrl);
   return (
@@ -112,7 +114,16 @@ export function createTeacherRoutes(
       .use("*", requireTeacher)
       .route("/", createTeacherInkProfileRoutes(db))
       .get("/me", (c) => {
-        return c.json({ ok: true, data: c.var.teacher });
+        return c.json({
+          ok: true,
+          data: {
+            ...c.var.teacher,
+            canManageInstanceBackup: canManageInstanceBackup(
+              c.var.teacher,
+              backupOperatorId,
+            ),
+          },
+        });
       })
       .post("/logout", (c) => {
         const token = getCookie(c, TEACHER_SESSION_COOKIE);
@@ -231,7 +242,12 @@ export function createTeacherRoutes(
       // 用静态句柄兜底（恢复会干净失败——见 client.ts staticDbHandle 注释）
       .route(
         "/",
-        createTeacherBackupRoutes(db, dataDir, dbHandle ?? staticDbHandle(db)),
+        createTeacherBackupRoutes(
+          db,
+          dataDir,
+          dbHandle ?? staticDbHandle(db),
+          backupOperatorId,
+        ),
       )
       // T4.6（D22）：API Token 查看 / 生成重置（设置页数据源；MCP 鉴权凭证）
       .route("/", createTeacherApiTokenRoutes(db))

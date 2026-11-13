@@ -5,7 +5,9 @@ import { useDueCountdown } from "./use-due-countdown";
 
 describe("useDueCountdown", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({
+      toFake: ["Date", "performance", "setInterval", "clearInterval"],
+    });
   });
 
   afterEach(() => {
@@ -94,6 +96,38 @@ describe("useDueCountdown", () => {
     act(() => {
       vi.advanceTimersByTime(3000);
     });
+    expect(onExpire).toHaveBeenCalledTimes(1);
+  });
+
+  it("客户端时钟偏快且中途回拨，仍按服务端时间到期", () => {
+    const serverNow = Date.parse("2026-10-21T10:00:00Z");
+    vi.setSystemTime(serverNow + 24 * 60 * 60 * 1000);
+    const onExpire = vi.fn();
+    const receivedAt = performance.now();
+    const options = { onExpire, serverNow, receivedAt };
+    const { result } = renderHook(() =>
+      useDueCountdown(new Date(serverNow + 2000).toISOString(), options),
+    );
+    expect(result.current.remainingMs).toBe(2000);
+    vi.setSystemTime(serverNow - 24 * 60 * 60 * 1000);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(result.current.isExpired).toBe(true);
+    expect(onExpire).toHaveBeenCalledTimes(1);
+  });
+
+  it("挂载时服务端推算已过截止，刷新一次且新时间样本不重复刷新", () => {
+    const serverNow = Date.parse("2026-10-21T10:00:00Z");
+    const dueAt = new Date(serverNow + 2000).toISOString();
+    const onExpire = vi.fn();
+    const receivedAt = performance.now();
+    vi.advanceTimersByTime(3000);
+    const { result, rerender } = renderHook(
+      (sample: number) =>
+        useDueCountdown(dueAt, { serverNow: sample, receivedAt, onExpire }),
+      { initialProps: serverNow },
+    );
+    expect(result.current.isExpired).toBe(true);
+    rerender(serverNow + 100);
     expect(onExpire).toHaveBeenCalledTimes(1);
   });
 });

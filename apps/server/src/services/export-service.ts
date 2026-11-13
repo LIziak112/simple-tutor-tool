@@ -80,6 +80,7 @@ import {
   frozenRowsInDisplayOrder,
   selfReviewRecordOf,
 } from "./attempt-service";
+import { attemptTraceRowsByAttempt } from "./attempt-trace-rows";
 import {
   beijingDateTimeOf,
   beijingExportStampOf,
@@ -686,47 +687,11 @@ export function assembleLearningPack(
   if (needTraces || needSummary) {
     // 装载事件流并计算每 attempt 的派生指标（原始 events 不出库，D13）
     for (const ids of chunk(orderedAttempts.map((attempt) => attempt.id))) {
-      const rawRowsByAttempt = new Map<
-        string,
-        Array<{
-          type: string;
-          clientTs: number;
-          serverTs: string;
-          payloadJson: string;
-        }>
-      >();
-      for (const row of db
-        .select({
-          attemptId: events.attemptId,
-          type: events.type,
-          clientTs: events.clientTs,
-          serverTs: events.serverTs,
-          payloadJson: events.payloadJson,
-        })
-        .from(events)
-        .where(
-          // 闸门 F13：asOf 钉定贯穿事件流（该查询同时喂 traces.questions 与
-          // summary 的 offlineShare——一致钉定；缺省不过滤零漂移）
-          and(
-            inArray(events.attemptId, ids),
-            request.asOf !== undefined
-              ? lte(events.serverTs, asOfIso)
-              : undefined,
-          ),
-        )
-        .all()) {
-        if (row.attemptId === null) continue;
-        const projected = {
-          type: row.type,
-          clientTs: row.clientTs,
-          serverTs: row.serverTs,
-          payloadJson: row.payloadJson,
-        };
-        const list = rawRowsByAttempt.get(row.attemptId);
-        if (list === undefined)
-          rawRowsByAttempt.set(row.attemptId, [projected]);
-        else list.push(projected);
-      }
+      const rawRowsByAttempt = attemptTraceRowsByAttempt(
+        db,
+        ids,
+        request.asOf !== undefined ? asOfIso : undefined,
+      );
       for (const attemptId of ids) {
         const rawRows = rawRowsByAttempt.get(attemptId) ?? [];
         if (rawRows.length > 0) attemptHasEvents.add(attemptId);

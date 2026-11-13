@@ -7,10 +7,15 @@ import type {
   AnySchema,
   ZodRawShapeCompat,
 } from "@modelcontextprotocol/sdk/server/zod-compat.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolResult,
+  ToolAnnotations,
+} from "@modelcontextprotocol/sdk/types.js";
+import { revokedMcpTokenError } from "./student-auth.ts";
+import { errorContent } from "./tool-result.ts";
 
 /**
- * 白名单 MCP 服务器（个人账号 /mcp/personal 用，模块 0）。
+ * 学生及个人账号的 MCP 工具白名单与执行前授权。
  *
  * 复用教师 / 学生两份工具注册函数（registerTeacherTools / registerStudentTools，
  * 工具定义单源），但只保留白名单内的工具：registerTool 被拦截——名字不在白名单
@@ -24,13 +29,16 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
  */
 export class AllowListMcpServer extends McpServer {
   readonly #allowed: ReadonlySet<string>;
+  readonly #isAuthorized: () => boolean;
 
   constructor(
     serverInfo: ConstructorParameters<typeof McpServer>[0],
     allowedToolNames: Iterable<string>,
+    isAuthorized: () => boolean,
   ) {
     super(serverInfo);
     this.#allowed = new Set(allowedToolNames);
+    this.#isAuthorized = isAuthorized;
   }
 
   /** 白名单外的工具：注册即移除（见文件头说明）；签名与 SDK 1.31 基类一致 */
@@ -49,7 +57,16 @@ export class AllowListMcpServer extends McpServer {
     },
     cb: ToolCallback<InputArgs>,
   ): RegisteredTool {
-    const tool = super.registerTool(name, config, cb);
+    type Args = Parameters<ToolCallback<InputArgs>>;
+    // SDK 回调按 schema 有无决定参数形状，包装只原样传递参数。
+    const run = cb as unknown as (
+      ...args: Args
+    ) => CallToolResult | Promise<CallToolResult>;
+    const authorized = ((...args: Args) =>
+      this.#isAuthorized()
+        ? run(...args)
+        : errorContent(revokedMcpTokenError())) as ToolCallback<InputArgs>;
+    const tool = super.registerTool(name, config, authorized);
     if (!this.#allowed.has(name)) {
       tool.remove();
     }

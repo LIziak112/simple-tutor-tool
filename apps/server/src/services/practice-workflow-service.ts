@@ -172,6 +172,16 @@ export function answersReleased(
   return Date.parse(assignment.dueAt) <= nowMs;
 }
 
+export function answerReleaseProjection(
+  assignment: Parameters<typeof answersReleased>[0] | null,
+  now: Date | string,
+) {
+  const released = assignment === null || answersReleased(assignment, now);
+  return released
+    ? { answersReleased: true }
+    : { answersReleased: false, releaseCheckedAt: new Date(now).toISOString() };
+}
+
 /**
  * 已收尾卷的答案公布 gate 单一公式（M2 收敛：题级反馈四态的 published 与
  * wiring 题级进度 feedbackReadable 共用——此前两处 status/submittedAt 双判别
