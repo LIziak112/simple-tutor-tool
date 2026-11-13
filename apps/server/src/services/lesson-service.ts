@@ -24,7 +24,7 @@ import {
   attemptEnabledCapabilities,
   attemptResponseRows,
   attemptSummaryOf,
-  freezeInputsOfAttempt,
+  freezeInputsOfNewAttempt,
   insertFrozenResponses,
   lessonLiveSummaryOf,
   lessonQuestionSubmitted,
@@ -140,7 +140,7 @@ function embeddedUnitOf(
 
 /**
  * 新建讲练卷（事务内调用）：行字面量复用 newDraftAttempt（四来源唯一处），
- * 题目 = 嵌入单元 live 题（freezeInputsOfAttempt 域内取题）逐行冻结
+ * 题目 = 嵌入单元 live 题（freezeInputsOfNewAttempt 域内取题）逐行冻结
  * （insertFrozenResponses）。unitId = 嵌入单元 id；零题讲练页无嵌入单元时
  * 落讲义 id 非空占位——契约 lesson 不变式要求 unitId 非空，该卷无题目行、
  * unitId 无功能消费方（域内题按 unitId 查询自然为空）。
@@ -169,7 +169,7 @@ function createLessonAttempt(
   });
   // 冻结输入的读走外层 db（better-sqlite3 同连接同步执行，事务内读取与写入
   // 口径一致，startCourseAttempt 同款）；写走 tx 与 attempt 行同事务落库
-  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfAttempt(
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
     db,
     attempt,
   );

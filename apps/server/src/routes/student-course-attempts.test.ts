@@ -1,20 +1,24 @@
 import { gzipSync } from "node:zlib";
 import type { ApiErr, InkDoc } from "@tutor/contract";
 import {
+  ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
   attemptDraftOkSchema,
   attemptStartOkSchema,
   studentPaperDataSchema,
   studentUnitLandingOkSchema,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, responses } from "../db/schema.ts";
+import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { addLimitFixtureQuestions } from "../test/question-limit-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -278,6 +282,60 @@ async function postEvents(
 }
 
 describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", () => {
+  it("题量上限：500 题正常开卷，501 题重开拒绝并保留原卷", async () => {
+    const env = await makeEnv();
+    addLimitFixtureQuestions(
+      env.db,
+      env.unitId,
+      ATTEMPT_SUBMIT_MAX_QUESTIONS - 2,
+    );
+    const extraId = `${env.unitId}-限额测试-${ATTEMPT_SUBMIT_MAX_QUESTIONS - 3}`;
+    env.db
+      .update(questions)
+      .set({ deletedAt: "2026-10-02T00:00:00.000Z" })
+      .where(eq(questions.id, extraId))
+      .run();
+    const opened = await startAttempt(env);
+    expect(opened.status).toBe(201);
+    const body = await opened.json();
+    assertNoLeak(body);
+    const previous = attemptStartOkSchema.parse(body).data;
+    expect(
+      env.db
+        .select()
+        .from(responses)
+        .where(eq(responses.attemptId, previous.id))
+        .all(),
+    ).toHaveLength(ATTEMPT_SUBMIT_MAX_QUESTIONS);
+    env.db
+      .update(questions)
+      .set({ deletedAt: null })
+      .where(eq(questions.id, extraId))
+      .run();
+    const restarted = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${env.unitId}/attempts`,
+      {
+        method: "POST",
+        headers: {
+          cookie: env.memberCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ restartAttemptId: previous.id }),
+      },
+    );
+    expect(restarted.status).toBe(400);
+    expect(await restarted.json()).toMatchObject({
+      error: ATTEMPT_QUESTION_LIMIT_EXCEEDED,
+    });
+    expect(env.db.select().from(attempts).all()).toMatchObject([
+      { id: previous.id, abandonedAt: null },
+    ]);
+    const continued = attemptStartOkSchema.parse(
+      await (await startAttempt(env)).json(),
+    ).data;
+    expect(continued.id).toBe(previous.id);
+  });
+
   it("落地页：题数、题型分布、汇总为 null（从未做）；assertNoLeak", async () => {
     const env = await makeEnv();
     const res = await env.app.request(

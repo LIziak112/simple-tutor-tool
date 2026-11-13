@@ -38,6 +38,10 @@ import {
   requireCurrentCourseMembers,
   requireStudentsExist,
 } from "./assignment-recipients";
+import {
+  assertAssignmentBatchQuestionLimits,
+  liveQuestionCounts,
+} from "./attempt-question-set.ts";
 import { practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 
@@ -191,22 +195,6 @@ function requireUnitsUniqueExist(
     ordered.push(row);
   }
   return ordered;
-}
-
-/**
- * 每个单元的有效题目数（软删题目不计；只 COUNT，不读内容列，学生端同样安全；
- * T2B.4 域内统计——复合主键后同 id 单元分属不同教师，计数不可混）。
- */
-function liveQuestionCounts(db: Db, teacherId: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const row of db
-    .select({ unitId: questions.unitId })
-    .from(questions)
-    .where(and(eq(questions.teacherId, teacherId), isNull(questions.deletedAt)))
-    .all()) {
-    counts.set(row.unitId, (counts.get(row.unitId) ?? 0) + 1);
-  }
-  return counts;
 }
 
 /**
@@ -555,6 +543,7 @@ export function createAssignment(
       if (request.requireCourseMembership && request.courseId != null) {
         requireCurrentCourseMembers(tx, request.courseId, studentIds);
       }
+      assertAssignmentBatchQuestionLimits(tx, teacherId, batches);
       batches.forEach((batch, index) => {
         const id = randomUUID();
         createdIds.push(id);
@@ -761,6 +750,9 @@ export function updateAssignment(
 
   const now = new Date().toISOString();
   db.transaction((tx) => {
+    if (unitList !== undefined) {
+      assertAssignmentBatchQuestionLimits(tx, teacherId, [{ units: unitList }]);
+    }
     const patch: Partial<typeof assignments.$inferInsert> = {};
     if (request.title !== undefined) patch.title = request.title;
     if (request.dueAt !== undefined) patch.dueAt = request.dueAt;
