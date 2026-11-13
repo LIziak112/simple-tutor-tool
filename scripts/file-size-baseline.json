@@ -4,7 +4,7 @@
   "apps/server/src/routes/student.ts": 1201,
   "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1337,
   "apps/server/src/services/ai-companion/student-ai-queue.ts": 2314,
-  "apps/server/src/services/analytics-service.ts": 1693,
+  "apps/server/src/services/analytics-service.ts": 1378,
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1382,
   "apps/server/src/services/attempt-service.ts": 3690,
