@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -12,6 +13,7 @@ import {
   teachers,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { queryStudentResponses } from "../mcp/teacher-queries.ts";
 
 /**
  * 学生主页「错题与存疑」聚合端点集成测试（T-PR4 Web-2②，app.request() 直调
@@ -144,7 +146,10 @@ function insertResponse(db: Db, seed: ResponseSeed): void {
       questionSnapshotJson: SNAP,
       answerJson: null,
       submittedAt: seed.submittedAt ?? null,
-      autoCorrect: seed.autoCorrect ?? null,
+      autoCorrect:
+        seed.autoCorrect === undefined
+          ? (seed.finalCorrect ?? null)
+          : seed.autoCorrect,
       finalCorrect: seed.finalCorrect ?? null,
       answered: seed.answered ?? false,
       studentFlag: seed.studentFlag ?? null,
@@ -196,6 +201,86 @@ function getTeacherId(db: Db): string {
 }
 
 describe("question-review 三 kind 行级口径", () => {
+  it("教师错题与 MCP 共同追踪自评改选、撤回及教师清除", async () => {
+    const { app, db, cookie } = await makeApp();
+    const teacherId = getTeacherId(db);
+    insertStudent(db, STU_A, teacherId);
+    insertAttempt(db, {
+      id: "self-review",
+      studentId: STU_A,
+      status: "submitted",
+      startedAt: T1,
+      submittedAt: T1,
+    });
+    insertResponse(db, {
+      attemptId: "self-review",
+      questionId: "q-self",
+      submittedAt: T1,
+    });
+    const set = (values: Partial<typeof responses.$inferInsert>) =>
+      db
+        .update(responses)
+        .set(values)
+        .where(eq(responses.attemptId, "self-review"))
+        .run();
+    const page = async () => {
+      const { status, body } = await getReview(app, cookie, STU_A);
+      expect(status).toBe(200);
+      return body.data;
+    };
+    const mcp = (args: {
+      correct?: "false" | "true" | "pending";
+      selfReview?: boolean;
+    }) =>
+      queryStudentResponses(db, teacherId, {
+        studentId: STU_A,
+        limit: 1,
+        ...args,
+      });
+    set({
+      gradingPolicy: "reference_self",
+      selfReviewVerdict: "wrong",
+      selfReviewAt: T2,
+      selfReviewRevision: 1,
+    });
+    expect(await page()).toMatchObject({
+      total: 1,
+      questions: [
+        {
+          questionId: "q-self",
+          finalCorrect: null,
+          effectiveVerdict: { source: "self", value: false },
+        },
+      ],
+    });
+    expect(mcp({ correct: "false", selfReview: true })).toMatchObject({
+      total: 1,
+      responses: [
+        {
+          selfCorrect: false,
+          pending: false,
+          finalCorrect: null,
+          effectiveVerdict: { source: "self", value: false },
+        },
+      ],
+    });
+    set({ teacherMark: "correct", finalCorrect: true });
+    expect(await page()).toMatchObject({ total: 0 });
+    expect(mcp({ correct: "true" }).total).toBe(1);
+    set({ teacherMark: null, finalCorrect: null });
+    expect(await page()).toMatchObject({ total: 1 });
+    set({
+      selfReviewVerdict: "correct",
+      selfReviewAt: T3,
+      selfReviewRevision: 2,
+    });
+    expect(await page()).toMatchObject({ total: 0 });
+    expect(mcp({ correct: "true", selfReview: true }).total).toBe(1);
+    set({ selfReviewVerdict: null, selfReviewAt: null, selfReviewRevision: 3 });
+    expect(mcp({ selfReview: true }).total).toBe(0);
+    expect(mcp({ correct: "pending" }).total).toBe(1);
+  });
+
   it("kind=wrong：判错且已答的行入列；未做判错、draft 未提交行、作废卷排除；同题两轮取最近代表作答（redoCount/lastAt）", async () => {
     const { app, db, cookie } = await makeApp();
     const teacherId = getTeacherId(db);

@@ -1120,7 +1120,7 @@ export function registerTeacherTools(
         correct: z
           .enum(["true", "false", "pending"])
           .optional()
-          .describe("判定结果：true 判对 / false 判错 / pending 待批"),
+          .describe("有效判定：true 对、false 错、pending 未判断"),
         flaggedUnsure: z.boolean().optional().describe("仅自标「不会」的行"),
         answered: z.boolean().optional().describe("是否有实际作答内容"),
         minActiveSec: z
@@ -1142,7 +1142,7 @@ export function registerTeacherTools(
           .describe("仅有草稿笔记或正式笔迹的行"),
         hasCorrection: z.boolean().optional().describe("仅有订正记录的行"),
         hasAiHelp: z.boolean().optional().describe("仅有 AI 求助记录的行"),
-        selfReview: z.boolean().optional().describe("仅做过自评的行"),
+        selfReview: z.boolean().optional().describe("仅有当前自评记录的行"),
         fields: z
           .enum(["summary", "full"])
           .optional()

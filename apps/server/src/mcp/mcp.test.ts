@@ -2641,7 +2641,7 @@ describe("query_student_responses（T-PR2 MCP-A ②）", () => {
     // r1：判错 + 改答 3 次
     env.db
       .update(responses)
-      .set({ finalCorrect: false, changeCount: 3 })
+      .set({ autoCorrect: false, finalCorrect: false, changeCount: 3 })
       .where(eq(responses.id, r1.id))
       .run();
     // r2：自标「不会」+ 订正笔记行（phase=correction）
