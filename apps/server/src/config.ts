@@ -17,6 +17,8 @@ export interface AppConfig {
   dataDir: string;
   /** 对外访问的基础 URL（环境变量 PUBLIC_URL，默认 http://localhost:8787，统一去掉尾部斜杠） */
   publicUrl: string;
+  /** 逗号分隔的代理 IP 或 CIDR，空列表时只用实际连接地址。 */
+  trustedProxies: readonly string[];
   /** 生产模式（NODE_ENV=production）：托管 apps/web/dist 静态资源 */
   isProduction: boolean;
   /** 未配置时关闭网页整站备份。 */
@@ -51,6 +53,10 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port,
     dataDir,
     publicUrl,
+    trustedProxies: (env.TRUSTED_PROXIES ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
     isProduction: env.NODE_ENV === "production",
     backupOperatorId: env.INSTANCE_BACKUP_OPERATOR_ID?.trim() || undefined,
   };

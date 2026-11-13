@@ -15,6 +15,8 @@ services:
     image: simple-tutor-tool:latest
     restart: unless-stopped
     environment:
+      # 只填部署中受信任的代理 IP 或网段，逗号分隔。
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # 对外访问地址，HTTP + 公网 IP 模式保持默认即可；
       # 切换域名 + HTTPS 时改成 https://你的域名 —— 服务端据此开启 Secure Cookie、
       # Service Worker（PWA）等（决策与备案流程见 docs/技术架构与实施方案.md §5.10）

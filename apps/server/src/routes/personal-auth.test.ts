@@ -19,6 +19,7 @@ import type { Db } from "../db/client.ts";
 import { sessions, students, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { nodePeerBindings } from "../test/node-peer.ts";
 
 /**
  * 个人账号（模块 0）集成测试：app.request() 直调路由 + 内存库。
@@ -58,6 +59,7 @@ async function req(
   path: string,
   body?: unknown,
   headers: Record<string, string> = {},
+  peer?: string,
 ): Promise<Response> {
   const init: RequestInit = {
     method,
@@ -69,7 +71,7 @@ async function req(
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
-  return app.request(path, init);
+  return app.request(path, init, nodePeerBindings(peer));
 }
 
 /** 响应里的全部 Set-Cookie → 「name=value」拼成一枚可回传的 Cookie 头 */
@@ -110,9 +112,7 @@ async function registerPersonal(
   body: unknown,
   ip = "10.9.0.1",
 ): Promise<Response> {
-  return req(app, "POST", "/api/public/personal/register", body, {
-    "x-forwarded-for": ip,
-  });
+  return req(app, "POST", "/api/public/personal/register", body, {}, ip);
 }
 
 const VALID_REGISTER = {

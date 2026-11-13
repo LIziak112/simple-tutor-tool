@@ -60,6 +60,8 @@ export interface CreateAppOptions {
   dataDir: string;
   /** 对外基础 URL（会话 Cookie 在 https 下加 Secure，见 auth/session.ts） */
   publicUrl: string;
+  /** 允许提供转发地址的代理 IP 和 CIDR。 */
+  trustedProxies?: readonly string[];
   /** 日志器；缺省用 pino 默认实例（info 级别、stdout）。测试可注入捕获实例 */
   logger?: Logger | undefined;
   /** 静态资源目录覆盖；缺省解析到仓库内 apps/web/dist（见 static.ts）。测试注入临时目录用 */
@@ -220,6 +222,7 @@ export function createApp(options: CreateAppOptions) {
         options.publicUrl,
         options.dataDir,
         options.specDir,
+        options.trustedProxies,
       ),
     )
     // 声明长度预检和实际流限额共用各路由预算；业务服务继续校验文件自身字节数。

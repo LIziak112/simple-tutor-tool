@@ -83,6 +83,7 @@ const app = createApp({
   db,
   dataDir: config.dataDir,
   publicUrl: config.publicUrl,
+  trustedProxies: config.trustedProxies,
   dbHandle,
   backupOperatorId: config.backupOperatorId,
 });
