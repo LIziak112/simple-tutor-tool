@@ -78,7 +78,7 @@ describe("selfReviewRecordOf：P3-2 脏行防御", () => {
       );
       expect(record).toBeNull();
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0]?.[0])).toContain("自评脏行");
+      expect(String(warn.mock.calls[0]?.[0])).toContain("自评判定或时间无效");
     } finally {
       warn.mockRestore();
     }

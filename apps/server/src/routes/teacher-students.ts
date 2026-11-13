@@ -12,7 +12,7 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
-import { questionReviewOf } from "../mcp/teacher-queries";
+import { questionReviewOf } from "../mcp/teacher-question-review.ts";
 import {
   createStudent,
   listStudents,

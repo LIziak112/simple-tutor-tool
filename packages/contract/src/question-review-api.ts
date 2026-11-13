@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { studentFlagSchema } from "./attempt.ts";
 import { questionTypeSchema } from "./content.ts";
+import { effectiveVerdictSchema } from "./self-review.ts";
 
 /**
  * 学生主页「错题与存疑」聚合端点契约（T-PR4 Web-2②，教师端迭代方案 §3；
@@ -16,7 +17,7 @@ import { questionTypeSchema } from "./content.ts";
  *   startedAt，与作答列表排序同一时间轴）；
  * - kind 三档（先行级筛选、再按题聚合；Web 端固定筛选形状，MCP 端自由组合）：
  *   - wrong：判错且「答了或有人工判定」（#6980-3 错题口径：未做判错不算错题；
- *     answered 非真但 teacherMark / selfCorrect 显式判错的行仍算）；
+ *     已生效的教师判错或学生自评错误同样计入）；
  *   - unsure：studentFlag = 'unsure'（学生做题时自标「不会」）；
  *   - corrected：该行存在 correction 阶段订正笔记（与 MCP-A hasCorrection
  *     筛选同一 EXISTS 口径）；
@@ -85,8 +86,9 @@ export const questionReviewRowSchema = z.object({
   knowledge: z.array(z.string().min(1)),
   /** 题干快照摘要（120 字截断、不追加省略号；不含答案解析） */
   stemMd: z.string(),
-  /** 代表行最终判定（unsure / corrected 档的待批行为 null） */
+  /** 教师权威判定，历史客户端使用。自评保存在 effectiveVerdict。 */
   finalCorrect: z.boolean().nullable(),
+  effectiveVerdict: effectiveVerdictSchema.nullable().optional(),
   /** 学生自标「不会」（unsure / null） */
   studentFlag: studentFlagSchema.nullable(),
   /** 代表行是否存在 correction 订正笔记 */

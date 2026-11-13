@@ -22,12 +22,7 @@ import {
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import {
-  type Attempt,
-  assignments,
-  ink as inkTable,
-  type ResponseRow,
-} from "../db/schema";
+import { type Attempt, ink as inkTable, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
 import { promptOverrideBodyOf } from "./ai-companion/ai-prompt-settings-service";
@@ -36,11 +31,11 @@ import { assembleAnnotationPairs } from "./annotation-service";
 import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
 import {
   answerOf,
-  answersReleased,
   attemptTeacherId,
   effectiveVerdictOfRow,
   frozenRowsInDisplayOrder,
   requireUsableAttempt,
+  selfReviewRecordOf,
 } from "./attempt-service";
 import {
   materialSlotOrderOf,
@@ -60,6 +55,7 @@ import {
   evidenceMissingRowsOf,
   readyEvidenceImagesOf,
 } from "./question-evidence";
+import { questionReviewReadable } from "./review-access.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
 
@@ -242,28 +238,6 @@ function requireReviewScope(
   return { attempt, row, no, teacherId };
 }
 
-/** 学生视角答案公布态（教师恒 true；course/wrong 恒公布；assignment 按作业行） */
-function releasedOf(
-  db: Db,
-  principal: ReviewPackPrincipal,
-  attempt: Attempt,
-  now: Date,
-): boolean {
-  if (principal.kind === "teacher") return true;
-  if (attempt.sourceType !== "assignment" || attempt.assignmentId === null) {
-    return true;
-  }
-  const assignment = db
-    .select()
-    .from(assignments)
-    .where(eq(assignments.id, attempt.assignmentId))
-    .get();
-  // 作业行缺失（数据异常）按已公布处理：学生包本就无答案，无泄露面
-  return assignment === undefined ? true : answersReleased(assignment, now);
-}
-
-// ---------- 教师侧文本辅助（题面附加节） ----------
-
 // ---------- 装配 ----------
 
 /**
@@ -299,7 +273,8 @@ export function assembleReviewPack(
     principal.id,
     reviewPackPromptSlotKeyOf(principal.kind),
   );
-  const released = releasedOf(db, principal, attempt, nowDate);
+  const released =
+    teacherRole || questionReviewReadable(db, attempt, row, nowDate);
 
   // —— 共享证据装配（单行 scope；教师取 solution 层全量、学生恒学生端投影） ——
   const asm = assembleQuestionEvidence(
@@ -345,7 +320,7 @@ export function assembleReviewPack(
     rowSnapshot,
   );
   // 判定来源（教师域键；两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
-  const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
+  const effectiveVerdict = teacherRole ? effectiveVerdictOfRow(row) : null;
 
   // —— 题目文字（questions/q001/stem.md）：静态素材单一实现（md-dsl） ——
   const staticMaterial = buildStaticQuestionMaterial({
@@ -413,7 +388,7 @@ ${frozenMaterial.contentMd}`,
     // P2-1：旧 finalCorrect ?? autoCorrect 对 reference_self 已自评行恒 null
     // → 误显「待批」，且与上方 reviewSource 推导不同源）。draft 未交卷无判定
     // （与教师详情页 D5 口径一致——不显示「待批」误导）
-    const judged = effectiveVerdictOfRow(row)?.value ?? null;
+    const judged = effectiveVerdict?.value ?? null;
     const verdictText =
       attempt.status === "draft"
         ? "未交卷"
@@ -789,9 +764,11 @@ ${frozenMaterial.contentMd}`,
             autoCorrect: row.autoCorrect,
             finalCorrect: row.finalCorrect,
             // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
-            ...(effectiveSourceOfRow !== undefined
-              ? { reviewSource: effectiveSourceOfRow }
+            ...(effectiveVerdict !== null
+              ? { reviewSource: effectiveVerdict.source }
               : {}),
+            effectiveVerdict,
+            selfReview: selfReviewRecordOf(row),
             teacherMark:
               row.teacherMark === "correct" || row.teacherMark === "wrong"
                 ? row.teacherMark
