@@ -142,6 +142,7 @@ export * from "./student-ai-display.ts";
 export * from "./student-ai-policy.ts";
 /** 学生端课程契约（T2A.5 起为权威定义）：我的课程、课程可见目录（D5）、D22 错误码 */
 export * from "./student-course-api.ts";
+export * from "./student-mcp-live-focus.ts";
 /** 学生端题目笔记本契约（T6R.15 起为权威定义，方案 §5.2/D7）：跨 attempt 聚合的
  *  同题历次轮次（仅已交卷；零答案零解析零题干正文，题目侧只有版本号数字） */
 export * from "./student-notebook-api.ts";

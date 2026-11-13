@@ -45,6 +45,7 @@ export function createPersonalMcpRoutes(options: PersonalMcpMountOptions) {
         specDir: options.specDir,
         teacherId: c.var.mcpPersonal.teacherId,
         studentId: c.var.mcpPersonal.studentId,
+        connectionId: c.var.mcpPersonal.connectionId,
         hmacSecret,
         isAuthorized: studentMcpToolAuthorization(
           options.db,

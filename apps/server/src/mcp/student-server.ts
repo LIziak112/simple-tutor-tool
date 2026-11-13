@@ -33,6 +33,7 @@ import { learningRecordAiViewForTask } from "../services/learning-record-ai.ts";
 import { submitRubricOpinion } from "../services/rubric-review-service.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
+import { registerStudentLiveFocusTool } from "./student-live-focus-tool.ts";
 import { registerStudentMemoTools } from "./student-memo-tools";
 import { AllowListMcpServer } from "./tool-allow-list";
 import { guard, jsonContent } from "./tool-result";
@@ -78,6 +79,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "claim_ai_task",
   "claim_attempt_review",
   "create_wrong_practice",
+  "get_current_context",
   "list_my_ai_tasks",
   "list_my_attempt_reviews",
   "list_my_wrong_questions",
@@ -131,6 +133,7 @@ export interface StudentMcpServerDeps {
   readonly publicUrl: string;
   /** token 绑定的学生（全部工具以此域隔离；唯一身份来源是鉴权中间件） */
   readonly studentId: string;
+  readonly connectionId?: string | undefined;
   /** 快照装配 HMAC 密钥（DATA_DIR/secret.key；整体复盘范围锚核对用） */
   readonly hmacSecret: string;
 }
@@ -161,6 +164,7 @@ export function registerStudentTools(
 ): void {
   const { db, dataDir, studentId, hmacSecret } = deps;
   registerStudentMemoTools(server, { db, dataDir, studentId });
+  registerStudentLiveFocusTool(server, db, studentId, deps.connectionId);
 
   server.registerTool(
     "check_ai_reply",

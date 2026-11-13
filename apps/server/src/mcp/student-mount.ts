@@ -110,6 +110,7 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
         dataDir: options.dataDir,
         publicUrl: options.publicUrl,
         studentId: c.var.mcpStudent.studentId,
+        connectionId: c.var.mcpStudent.connectionId,
         hmacSecret,
         isAuthorized: studentMcpToolAuthorization(
           options.db,
