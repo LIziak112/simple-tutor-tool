@@ -19,7 +19,7 @@
   "apps/server/src/services/seed-demo.ts": 1101,
   "apps/web/src/features/annotation/annotation-store.ts": 1453,
   "apps/web/src/features/assignments/AssignmentComposeWizard.tsx": 1235,
-  "apps/web/src/features/attempt/AttemptSession.tsx": 2101,
+  "apps/web/src/features/attempt/AttemptSession.tsx": 1470,
   "apps/web/src/features/export/ExportWizard.tsx": 1823,
   "apps/web/src/features/notes/note-store.ts": 1317,
   "apps/web/src/features/student/wrong-questions-ui.tsx": 1278,
