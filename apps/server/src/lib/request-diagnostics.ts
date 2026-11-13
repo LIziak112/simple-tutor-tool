@@ -16,6 +16,7 @@ import { HttpError } from "./http-error.ts";
 type RequestContext = {
   startedAt: number;
   logger: Logger;
+  failure?: { status: number; code: string; message: string };
   aiFacts: Array<{
     taskId: string;
     reason: AiFactType | AiAttemptReviewFactType;
@@ -40,6 +41,14 @@ export function observeRequestAiFact(
   committed: () => boolean,
 ): void {
   context.getStore()?.aiFacts.push({ taskId, reason, committed });
+}
+
+/** 入口可记录最终拒绝原因，不读取响应正文。 */
+export function observeRequestBodyLimit(code: string): void {
+  const request = context.getStore();
+  if (request) {
+    request.failure = { status: 413, code, message: "请求体超限" };
+  }
 }
 
 function logCommittedAiFacts(request: RequestContext): void {
@@ -100,19 +109,25 @@ export function requestDiagnostics(
       logCommittedAiFacts(request);
       const fields = requestLogFields(c);
       const status = c.res.status;
+      const failure =
+        request.failure?.status === status ? request.failure : undefined;
       const isApi =
         c.req.path === "/api" ||
         c.req.path.startsWith("/api/") ||
         c.req.path.startsWith("/mcp");
       const isWrite = c.req.method !== "GET" && c.req.method !== "HEAD";
       if (
-        !c.error &&
-        ((isApi && status >= 400) ||
-          (isWrite && diagnosticWrite.test(fields.route)))
+        failure ||
+        (isApi && status >= 400) ||
+        (isWrite && diagnosticWrite.test(fields.route))
       ) {
-        request.logger.info(
-          { ...fields, status, code: status >= 400 ? `HTTP_${status}` : "OK" },
-          "HTTP 请求完成",
+        request.logger[status >= 500 && failure ? "error" : "info"](
+          {
+            ...fields,
+            status,
+            code: failure?.code ?? (status >= 400 ? `HTTP_${status}` : "OK"),
+          },
+          failure?.message ?? "HTTP 请求完成",
         );
       }
     });
@@ -121,12 +136,23 @@ export function requestDiagnostics(
 
 export function requestErrorHandler(logger: Logger): ErrorHandler {
   return (err, c) => {
-    const log = context.getStore()?.logger ?? logger;
+    const request = context.getStore();
     if (err instanceof HttpError) {
-      log.info(
-        { ...requestLogFields(c), code: err.code, status: err.status },
-        "业务错误",
-      );
+      const failure = {
+        status: err.status,
+        code: err.code,
+        message: "业务错误",
+      };
+      if (request) request.failure = failure;
+      else
+        logger.info(
+          {
+            ...requestLogFields(c),
+            status: failure.status,
+            code: failure.code,
+          },
+          failure.message,
+        );
       const body: ApiErr & Record<string, unknown> = {
         ok: false,
         error: err.code,
@@ -135,10 +161,17 @@ export function requestErrorHandler(logger: Logger): ErrorHandler {
       };
       return c.json(body, err.status);
     }
-    log.error(
-      { ...requestLogFields(c), code: "INTERNAL", status: 500 },
-      "未处理的服务器异常",
-    );
+    const failure = {
+      status: 500,
+      code: "INTERNAL",
+      message: "未处理的服务器异常",
+    };
+    if (request) request.failure = failure;
+    else
+      logger.error(
+        { ...requestLogFields(c), status: failure.status, code: failure.code },
+        failure.message,
+      );
     return c.json(
       {
         ok: false,

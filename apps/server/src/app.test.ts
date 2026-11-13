@@ -8,6 +8,8 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { createTestDb, createTestDir } from "./db/test-utils";
+import { HttpError } from "./lib/http-error.ts";
+import { guardBodyLimit } from "./lib/request-body-limit.ts";
 
 /** 静音日志器：默认测试不向 stdout 刷日志 */
 const silentLogger: Logger = pino({ enabled: false });
@@ -177,6 +179,51 @@ describe("统一错误格式（§0.3）", () => {
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     expect(await response.text()).toBe("data: test\n\n");
   });
+
+  it.each([false, true])(
+    "上传超限按最终 413 和请求编号记录一次（预检 %s）",
+    async (preflight) => {
+      const { logger, lines } = captureLogger();
+      const app = makeApp({ isProduction: false, logger });
+      const path = "/api/public/__diagnostic-upload";
+      app.post(
+        path,
+        guardBodyLimit({
+          method: "POST",
+          limit: 8,
+          code: "UPLOAD_TOO_LARGE",
+          message: "上传超限",
+        }),
+        async (c) => {
+          try {
+            await c.req.json();
+          } catch {
+            throw new HttpError(400, "VALIDATION_ERROR", "正文不合法");
+          }
+          return c.json({ ok: true });
+        },
+      );
+      const response = await app.request(path, {
+        method: "POST",
+        headers: preflight ? { "content-length": "100" } : {},
+        body: "不应写进日志的正文",
+      });
+      expect(response.status).toBe(413);
+      expect(await response.json()).toMatchObject({
+        error: "UPLOAD_TOO_LARGE",
+      });
+      const requestId = response.headers.get("x-request-id");
+      expect(lines.map((line) => JSON.parse(line))).toEqual([
+        expect.objectContaining({
+          requestId,
+          route: path,
+          status: 413,
+          code: "UPLOAD_TOO_LARGE",
+        }),
+      ]);
+      expect(lines.join("")).not.toContain("不应写进日志的正文");
+    },
+  );
   it("未知 /api 路径返回 404 { ok:false, error:'NOT_FOUND', message:'接口不存在' }", async () => {
     const app = makeApp({ isProduction: false, logger: silentLogger });
     const res = await app.request("/api/does-not-exist");

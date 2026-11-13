@@ -7,7 +7,7 @@ import {
   wrongAttemptTitleOf,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
-import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   assignments,

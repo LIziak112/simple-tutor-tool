@@ -1,6 +1,7 @@
 import type { ApiErr } from "@tutor/contract";
 import type { Context, Next } from "hono";
 import { HttpError } from "./http-error.ts";
+import { observeRequestBodyLimit } from "./request-diagnostics.ts";
 
 /** 保留背压，累计字节过限后停止读取，上游连接由 HTTP 适配器收尾。 */
 export function capBodyStream(
@@ -36,8 +37,10 @@ export function guardBodyLimit(config: {
       message: config.message,
     };
     const length = Number(c.req.header("content-length") ?? "0");
-    if (Number.isFinite(length) && length > config.limit)
+    if (Number.isFinite(length) && length > config.limit) {
+      observeRequestBodyLimit(config.code);
       return c.json(error, 413);
+    }
     const source = c.req.raw.body;
     if (source === null) return next();
     let exceeded = false;
@@ -49,7 +52,10 @@ export function guardBodyLimit(config: {
     c.req.raw = new Request(c.req.raw, init);
     await next();
     // multipart 等解析器可能包装流错误，仍按入口的超限口径返回。
-    if (exceeded && c.res.status !== 413) c.res = c.json(error, 413);
+    if (exceeded) {
+      observeRequestBodyLimit(config.code);
+      if (c.res.status !== 413) c.res = c.json(error, 413);
+    }
     return;
   };
 }
