@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   AI_REPLY_MAX_CHARS,
   aiAttemptReviewStatusSchema,
+  aiMcpCurrentContextSchema,
   aiTaskStatusSchema,
 } from "@tutor/contract";
 import { z } from "zod";
@@ -13,6 +14,7 @@ import {
   renewAttemptReviewLease,
   submitAttemptReviewResult,
 } from "../services/ai-companion/student-ai-attempt-review.ts";
+import { getStudentMcpCurrentContext } from "../services/ai-companion/student-ai-live-context.ts";
 import {
   collectAiTaskMaterialBytes,
   taskOf,
@@ -70,6 +72,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "claim_ai_task",
   "claim_attempt_review",
   "create_wrong_practice",
+  "get_current_context",
   "list_my_ai_tasks",
   "list_my_attempt_reviews",
   "list_my_wrong_questions",
@@ -115,6 +118,7 @@ export interface StudentMcpServerDeps {
   readonly dataDir: string;
   /** token 绑定的学生（全部工具以此域隔离；唯一身份来源是鉴权中间件） */
   readonly studentId: string;
+  readonly connectionId: string;
   /** 快照装配 HMAC 密钥（DATA_DIR/secret.key；整体复盘范围锚核对用） */
   readonly hmacSecret: string;
 }
@@ -124,11 +128,27 @@ export interface StudentMcpServerDeps {
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
-  const { db, dataDir, studentId, hmacSecret } = deps;
+  const { db, dataDir, studentId, connectionId, hmacSecret } = deps;
   const server = new McpServer({
     name: STUDENT_MCP_SERVER_NAME,
     version: STUDENT_MCP_SERVER_VERSION,
   });
+
+  server.registerTool(
+    "get_current_context",
+    {
+      description:
+        "定位当前题已由学生主动发起的待领取求助。仅返回状态与可选任务 ID；题目内容须通过 claim_ai_task 领取。若学生尚未发起，请引导学生在题卡加入求助队列。",
+      annotations: { readOnlyHint: true },
+    },
+    guard(() =>
+      jsonContent(
+        aiMcpCurrentContextSchema.parse(
+          getStudentMcpCurrentContext(db, studentId, connectionId),
+        ),
+      ),
+    ),
+  );
 
   // 1. list_my_ai_tasks：只读列表（无领取/已读副作用）
   server.registerTool(

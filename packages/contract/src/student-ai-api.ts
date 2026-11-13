@@ -342,12 +342,32 @@ export const aiConnectionPatchRequestSchema = z.discriminatedUnion("channel", [
   aiConnectionMcpMemberSchema.extend({
     /** 重置 token：旧 token 立即失效，新明文只在 PATCH 响应出现一次 */
     resetToken: z.boolean().optional(),
+    /** 允许已连接的 Agent 读取实时做题过程 */
+    liveContextEnabled: z.boolean().optional(),
   }),
   aiConnectionLinkMemberSchema,
 ]);
 export type AiConnectionPatchRequest = z.infer<
   typeof aiConnectionPatchRequestSchema
 >;
+
+/** 外部客户端等待学生主动发起的 MCP 求助。 */
+export const aiMcpWaitTaskSchema = z
+  .object({
+    kind: z.literal("task"),
+    id: z.uuid(),
+    createdAt: z.string().min(1),
+  })
+  .strict();
+
+/** 实时当前题只定位学生已主动发起的待领取任务。 */
+export const aiMcpCurrentContextSchema = z.union([
+  z.strictObject({ status: z.literal("disabled") }),
+  z.strictObject({ status: z.literal("no_current_question") }),
+  z.strictObject({ status: z.literal("student_action_required") }),
+  z.strictObject({ status: z.literal("authorized_task"), taskId: z.uuid() }),
+]);
+export type AiMcpCurrentContext = z.infer<typeof aiMcpCurrentContextSchema>;
 
 export const aiConnectionListDataSchema = z
   .object({

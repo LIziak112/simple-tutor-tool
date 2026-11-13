@@ -77,6 +77,9 @@ const clientTsSchema = z
 /** 题目 id（DSL 字符串，可能含中文/点/连字符） */
 const questionIdSchema = z.string().min(1, "questionId 不能为空");
 
+/** 页面实例标识：每次加载生成的随机串，用于区分多标签页或多设备。 */
+const viewIdSchema = z.string().min(1, "viewId 不能为空").max(64);
+
 /** 进入答题页/开始一次作答会话（每次进入答题页一条） */
 export const attemptStartEventSchema = z.object({
   type: z.literal("attempt_start"),
@@ -95,6 +98,7 @@ export const questionFocusEventSchema = z.object({
   type: z.literal("question_focus"),
   clientTs: clientTsSchema,
   questionId: questionIdSchema,
+  viewId: viewIdSchema.optional(),
 });
 
 /** 题目失去焦点（跨题切换时由前端显式补发，服务端也按隐式切换处理） */
@@ -102,6 +106,7 @@ export const questionBlurEventSchema = z.object({
   type: z.literal("question_blur"),
   clientTs: clientTsSchema,
   questionId: questionIdSchema,
+  viewId: viewIdSchema.optional(),
 });
 
 /**
@@ -139,12 +144,14 @@ export const inkStrokeBatchEventSchema = z.object({
 export const pageHiddenEventSchema = z.object({
   type: z.literal("page_hidden"),
   clientTs: clientTsSchema,
+  viewId: viewIdSchema.optional(),
 });
 
 /** 页面重新可见（visibilitychange → visible） */
 export const pageVisibleEventSchema = z.object({
   type: z.literal("page_visible"),
   clientTs: clientTsSchema,
+  viewId: viewIdSchema.optional(),
 });
 
 /** 交卷（前端在 POST submit 之前上报；服务端计算用时的截止事件） */
@@ -201,18 +208,12 @@ const lectureIdSchema = z.string().min(1, "lectureId 不能为空");
 const lectureUpdatedAtSchema = z.string().min(1).optional();
 
 /**
- * 阅读会话标识：每次讲义页加载生成的随机串（不含任何内容）。解决双标签页
- * 同开、iPad Safari 被系统回收重开导致的区间交错——聚合按 viewId 配对、
- * 再对同一学生 × 讲义的区间求并集（方案 §4.3.1）。
- */
-const viewIdSchema = z.string().min(1, "viewId 不能为空").max(64);
-
-/**
  * 讲义页可见 / 隐藏（lecture scope 的 page_visible/page_hidden 讲义版，
  * 队列层注入）：进入讲义页（初始可见）报 lecture_visible，切后台/离开报
  * lecture_hidden。visibilitychange 与 pagehide 双兜底**允许双发 hidden**
  * （先到的先入队），服务端聚合按「重复 hidden 忽略」容错（与 active-time
  * 规则 3 同构），前端不做防重锁（§5.0-A4）。
+ * 聚合按 viewId 配对，再对同一学生 × 讲义的区间求并集（方案 §4.3.1）。
  */
 export const lectureVisibleEventSchema = z.object({
   type: z.literal("lecture_visible"),

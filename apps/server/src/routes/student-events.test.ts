@@ -239,13 +239,13 @@ describe("POST /api/student/attempts/:id/events：批量上报", () => {
     const batch = [
       ev("attempt_start", 0),
       ev("question_view", 1, { questionId: Q.judge }),
-      ev("question_focus", 1, { questionId: Q.judge }),
+      ev("question_focus", 1, { questionId: Q.judge, viewId: "tab-a" }),
       ev("answer_change", 3, {
         questionId: Q.judge,
         to: { kind: "judge", value: true },
       }),
       ev("ink_stroke_batch", 5, { questionId: Q.judge, strokes: 2 }),
-      ev("page_hidden", 6),
+      ev("page_hidden", 6, { viewId: "tab-b" }),
       ev("page_visible", 66),
       ev("question_blur", 70, { questionId: Q.judge }),
     ];
@@ -265,8 +265,18 @@ describe("POST /api/student/attempts/:id/events：批量上报", () => {
     // 带题目语义的事件 questionId 落列；page_*/attempt_start 为 NULL
     const focusRow = rows.find((row) => row.type === "question_focus");
     expect(focusRow?.questionId).toBe(Q.judge);
+    expect(JSON.parse(focusRow?.payloadJson ?? "{}")).toMatchObject({
+      viewId: "tab-a",
+    });
     const hiddenRow = rows.find((row) => row.type === "page_hidden");
     expect(hiddenRow?.questionId).toBeNull();
+    expect(JSON.parse(hiddenRow?.payloadJson ?? "{}")).toMatchObject({
+      viewId: "tab-b",
+    });
+    const legacyBlur = rows.find((row) => row.type === "question_blur");
+    expect(JSON.parse(legacyBlur?.payloadJson ?? "{}")).not.toHaveProperty(
+      "viewId",
+    );
     // payloadJson 只含元信息（answer_change 的 to 是学生自己的答案值，不含 answer 键）
     const changeRow = rows.find((row) => row.type === "answer_change");
     const payload = JSON.parse(changeRow?.payloadJson ?? "{}") as Record<
@@ -309,6 +319,7 @@ describe("POST /api/student/attempts/:id/events：批量上报", () => {
     for (const bad of [
       [ev("hacked_type", 0)],
       [{ type: "question_focus", clientTs: BASE_TS }], // 缺 questionId
+      [ev("page_hidden", 0, { viewId: "x".repeat(65) })], // 非法 viewId
       [{ type: "page_hidden" }], // 缺 clientTs
       [{ events: "not-array" }], // 请求体形状错误 → schema message
     ] as unknown[][]) {

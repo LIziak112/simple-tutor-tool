@@ -71,6 +71,7 @@ interface McpConnectionConfig {
   readonly tokenFingerprint: string;
   /** 可选以兼容只保存哈希的历史连接；不影响现有认证。 */
   readonly tokenSealed?: SealedApiKey;
+  readonly liveContextEnabled?: boolean;
 }
 
 interface LinkConnectionConfig {
@@ -152,6 +153,7 @@ function connectionViewOf(
       ...base,
       channel: "mcp",
       tokenFingerprint: config.tokenFingerprint,
+      liveContextEnabled: config.liveContextEnabled === true,
       token:
         opened?.ok === true && hashMcpToken(opened.key) === config.tokenHash
           ? opened.key
@@ -450,7 +452,13 @@ export function patchStudentAiConnection(
       tokenSealed = sealApiKey(rootSecret, token);
       credential = { token };
     }
-    configJson = JSON.stringify({ tokenHash, tokenFingerprint, tokenSealed });
+    configJson = JSON.stringify({
+      tokenHash,
+      tokenFingerprint,
+      tokenSealed,
+      liveContextEnabled:
+        request.liveContextEnabled ?? config.liveContextEnabled === true,
+    });
   } else {
     const config = JSON.parse(row.configJson) as LinkConnectionConfig;
     configJson = JSON.stringify({
@@ -740,4 +748,36 @@ export function findActiveMcpConnectionByToken(
     }
   }
   return null;
+}
+
+/** 实时授权按连接读取；缺失、损坏和历史配置均按关闭处理。 */
+export function isMcpLiveContextEnabled(
+  db: Db,
+  studentId: string,
+  connectionId: string,
+): boolean {
+  const row = db
+    .select({ configJson: aiConnections.configJson })
+    .from(aiConnections)
+    .where(
+      and(
+        eq(aiConnections.id, connectionId),
+        eq(aiConnections.studentId, studentId),
+        eq(aiConnections.channel, "mcp"),
+        isNull(aiConnections.archivedAt),
+      ),
+    )
+    .get();
+  if (row === undefined) return false;
+  try {
+    const config: unknown = JSON.parse(row.configJson);
+    return (
+      typeof config === "object" &&
+      config !== null &&
+      "liveContextEnabled" in config &&
+      config.liveContextEnabled === true
+    );
+  } catch {
+    return false;
+  }
 }

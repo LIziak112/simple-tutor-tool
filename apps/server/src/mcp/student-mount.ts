@@ -1,11 +1,21 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { aiMcpWaitTaskSchema } from "@tutor/contract";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { loadOrCreateSecretKey } from "../config";
 import type { Db } from "../db/client";
+import { aiTasks } from "../db/schema";
+import { HttpError } from "../lib/http-error";
+import { sqliteAiPolicyConfigSource } from "../services/ai-companion/ai-policy-config-source";
+import { isMcpLiveContextEnabled } from "../services/ai-companion/connection-service";
+import { resolveAttemptQuestionAiPolicy } from "../services/ai-companion/teaching-policy-service";
 import {
+  authenticateStudentMcp,
   createRequireStudentMcpToken,
   type StudentMcpEnv,
+  studentMcpUnauthorized,
 } from "./student-auth";
 import { createStudentMcpServer } from "./student-server";
 
@@ -87,6 +97,74 @@ function createRejectForeignOrigin(publicUrl: string) {
   };
 }
 
+function readLiveAccess(db: Db, c: Context<StudentMcpEnv>) {
+  const student = c.var.mcpStudent;
+  const current = authenticateStudentMcp(db, c.req.header("authorization"));
+  if (
+    current?.id !== student.id ||
+    current.connectionId !== student.connectionId
+  ) {
+    return "unauthorized";
+  }
+  return isMcpLiveContextEnabled(db, student.id, student.connectionId)
+    ? "ready"
+    : "disabled";
+}
+
+function liveAccessError(
+  c: Context<StudentMcpEnv>,
+  access: "unauthorized" | "disabled",
+) {
+  if (access === "unauthorized") return studentMcpUnauthorized(c);
+  return c.json(
+    { error: "AI_LIVE_DISABLED", message: "学生未开启实时过程授权" },
+    403,
+  );
+}
+
+function readWaitTask(db: Db, studentId: string) {
+  const tasks = db
+    .select({
+      id: aiTasks.id,
+      createdAt: aiTasks.createdAt,
+      attemptId: aiTasks.attemptId,
+      questionId: aiTasks.questionId,
+    })
+    .from(aiTasks)
+    .where(
+      and(
+        eq(aiTasks.studentId, studentId),
+        eq(aiTasks.channel, "mcp"),
+        eq(aiTasks.status, "created"),
+        isNull(aiTasks.cancelRequestedAt),
+      ),
+    )
+    .orderBy(asc(aiTasks.createdAt), asc(aiTasks.id))
+    .all();
+  for (const task of tasks) {
+    try {
+      const policy = resolveAttemptQuestionAiPolicy(
+        db,
+        studentId,
+        task.attemptId,
+        task.questionId,
+        sqliteAiPolicyConfigSource,
+      );
+      if (policy.resolution.usable) {
+        return aiMcpWaitTaskSchema.parse({
+          kind: "task",
+          id: task.id,
+          createdAt: task.createdAt,
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      // 作废或失权任务不会阻止后续可领取任务。
+    }
+  }
+  return null;
+}
+
 /**
  * 创建 /mcp/student 子应用（app.route("/mcp/student", …) 挂载）。
  * 全方法接听（app.all）：POST 走 SDK；GET/DELETE 交由 SDK stateless 语义
@@ -101,12 +179,80 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
   return new Hono<StudentMcpEnv>()
     .use("*", rejectForeignOrigin)
     .use("*", requireToken)
+    .get("/wait", async (c) => {
+      const rawTimeout = c.req.query("timeout") ?? "30";
+      if (
+        !/^\d+$/.test(rawTimeout) ||
+        Number(rawTimeout) < 1 ||
+        Number(rawTimeout) > 30
+      ) {
+        return c.json(
+          { error: "VALIDATION_ERROR", message: "等待时间须为 1 至 30 秒" },
+          400,
+        );
+      }
+      const student = c.var.mcpStudent;
+      const deadline = Date.now() + Number(rawTimeout) * 1000;
+      while (true) {
+        const access = readLiveAccess(options.db, c);
+        if (access !== "ready") return liveAccessError(c, access);
+        const task = readWaitTask(options.db, student.id);
+        if (task !== null) return c.json(task);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0 || c.req.raw.signal.aborted)
+          return c.body(null, 204);
+        await new Promise<void>((resolve) => {
+          const signal = c.req.raw.signal;
+          const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+          };
+          const timer = setTimeout(done, Math.min(250, remaining));
+          signal.addEventListener("abort", done, { once: true });
+          if (signal.aborted) done();
+        });
+      }
+    })
+    .get("/events", (c) => {
+      const access = readLiveAccess(options.db, c);
+      if (access !== "ready") return liveAccessError(c, access);
+      c.header("X-Accel-Buffering", "no");
+      const response = streamSSE(c, async (stream) => {
+        const signal = c.req.raw.signal;
+        const deadline = Date.now() + 60_000;
+        const sent = new Set<string>();
+        let nextHeartbeat = Date.now() + 15_000;
+        await stream.write(": keepalive\n\n");
+        while (!stream.aborted && !signal.aborted && Date.now() < deadline) {
+          if (readLiveAccess(options.db, c) !== "ready") return;
+          const task = readWaitTask(options.db, c.var.mcpStudent.id);
+          if (task !== null && !sent.has(task.id)) {
+            // 事件只唤醒领取；每次重连从数据库重新对账。
+            sent.add(task.id);
+            await stream.writeSSE({
+              event: "task",
+              id: task.id,
+              data: JSON.stringify(task),
+            });
+          }
+          if (!stream.aborted && Date.now() >= nextHeartbeat) {
+            await stream.write(": keepalive\n\n");
+            nextHeartbeat = Date.now() + 15_000;
+          }
+          if (!stream.aborted && !signal.aborted) await stream.sleep(1000);
+        }
+      });
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    })
     .all("/", async (c) => {
       // 鉴权通过：token 绑定的学生（c.var.mcpStudent）成为本请求全部工具的域
       const server = createStudentMcpServer({
         db: options.db,
         dataDir: options.dataDir,
         studentId: c.var.mcpStudent.id,
+        connectionId: c.var.mcpStudent.connectionId,
         hmacSecret,
       });
       // stateless 模式：不传 sessionIdGenerator（缺省即 undefined = 无会话；

@@ -537,6 +537,53 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
     expect(screen.getAllByText(/mcp-token-current/u)).toHaveLength(2);
   });
 
+  it("实时过程授权默认关闭，学生修改并保存后才发送", async () => {
+    const connection = mcp();
+    mockedFetch.mockResolvedValue(listData([connection]));
+    mockedPatch.mockResolvedValue({
+      connection: { ...connection, liveContextEnabled: true },
+      credential: null,
+    });
+    renderManager();
+    fireEvent.click(await screen.findByRole("button", { name: "修改配置" }));
+    const permission = screen.getByRole("checkbox", {
+      name: "允许 Agent 读取我的实时做题过程",
+    });
+    expect(permission).not.toBeChecked();
+    fireEvent.click(permission);
+    expect(mockedPatch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+    await waitFor(() =>
+      expect(mockedPatch).toHaveBeenCalledWith(
+        connection.id,
+        expect.objectContaining({ channel: "mcp", liveContextEnabled: true }),
+      ),
+    );
+  });
+
+  it("编辑其他字段期间授权被另一设备修改时，不用旧草稿覆盖授权", async () => {
+    const connection = mcp();
+    mockedFetch.mockResolvedValue(listData([connection]));
+    mockedPatch.mockResolvedValue({
+      connection: { ...connection, liveContextEnabled: true },
+      credential: null,
+    });
+    const { client } = renderManager();
+    fireEvent.click(await screen.findByRole("button", { name: "修改配置" }));
+    client.setQueryData(
+      ["student", "ai-connections"],
+      listData([{ ...connection, liveContextEnabled: true }]),
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "设为默认连接" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+    await waitFor(() =>
+      expect(mockedPatch).toHaveBeenCalledWith(connection.id, {
+        channel: "mcp",
+        isDefault: true,
+      }),
+    );
+  });
+
   it("创建 MCP 保存后回总览，凭据集中在详情", async () => {
     renderManager();
     await createView();

@@ -285,7 +285,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   const keyPrefix = keyPrefixOf(scope);
   const key = `${keyPrefix}${randomId()}`;
   const legacyKey = legacyKeyOf(scope);
-  /** 阅读会话标识：每次页面加载一个随机串（双标签页区间配对用，不含内容） */
+  /** 页面实例标识：区分同一讲义或作答的多个标签页，不含账号和内容。 */
   const viewId = randomId();
 
   /** 内存待发队列 */
@@ -299,10 +299,22 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
    */
   let denied = false;
 
-  /** 注入环境事件（终态停止不注入）；不触发立即发送（搭周期/可见性触发的车） */
+  /** 入队时记录来源，离线重放时沿用原页面的标识。 */
   function inject(event: LearningEvent): void {
     if (denied) return;
-    queue.push(event);
+    if (
+      scope.kind === "attempt" &&
+      ((event.type === "question_focus" &&
+        (typeof document === "undefined" ||
+          document.visibilityState === "visible")) ||
+        event.type === "question_blur" ||
+        event.type === "page_hidden" ||
+        event.type === "page_visible")
+    ) {
+      queue.push({ ...event, viewId });
+    } else {
+      queue.push(event);
+    }
   }
 
   // ---------- 环境事件：网络状态（两 scope，§5.0-A3） ----------
@@ -635,8 +647,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
 
   return {
     track(event: LearningEvent): void {
-      if (denied) return; // 终态停止：静默丢弃（不再上传）
-      queue.push(event);
+      inject(event);
       // 队列攒到单批上限立即触发（防下一次越过 200 被契约拒绝）
       if (queue.length >= BATCH_MAX) void flushNow();
     },

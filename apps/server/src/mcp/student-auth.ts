@@ -57,7 +57,7 @@ function bearerTokenOf(header: string | undefined): string | null {
 }
 
 /** 401 响应（统一文案 + WWW-Authenticate，防探测） */
-function unauthorized(c: Context): Response {
+export function studentMcpUnauthorized(c: Context): Response {
   return c.json(UNAUTHORIZED_BODY, 401, {
     "WWW-Authenticate": 'Bearer realm="simple-tutor-tool student MCP"',
   });
@@ -84,6 +84,26 @@ function teacherDomainUsable(db: Db, studentId: string): boolean {
   return teacher !== undefined && teacher.disabledAt === null;
 }
 
+/** 长连接须在每次交付前重新检查凭证和账号。 */
+export function authenticateStudentMcp(
+  db: Db,
+  authorization: string | undefined,
+): { id: string; connectionId: string } | null {
+  const token = bearerTokenOf(authorization);
+  const connection =
+    token === null ? null : findActiveMcpConnectionByToken(db, token);
+  const account =
+    connection === null ? null : getStudentAccount(db, connection.studentId);
+  if (
+    connection === null ||
+    account === null ||
+    !teacherDomainUsable(db, connection.studentId)
+  ) {
+    return null;
+  }
+  return { id: account.id, connectionId: connection.id };
+}
+
 /**
  * /mcp/student 鉴权中间件工厂：逐请求实时核对，通过后把 token 绑定的学生
  * 放进 c.var.mcpStudent。所有路径显式 return（noImplicitReturns）。
@@ -93,19 +113,11 @@ export function createRequireStudentMcpToken(db: Db) {
     c: Context<StudentMcpEnv>,
     next: Next,
   ): Promise<Response | undefined> => {
-    const token = bearerTokenOf(c.req.header("authorization"));
-    const connection =
-      token === null ? null : findActiveMcpConnectionByToken(db, token);
-    const account =
-      connection === null ? null : getStudentAccount(db, connection.studentId);
-    if (
-      connection === null ||
-      account === null ||
-      !teacherDomainUsable(db, connection.studentId)
-    ) {
-      return unauthorized(c);
+    const student = authenticateStudentMcp(db, c.req.header("authorization"));
+    if (student === null) {
+      return studentMcpUnauthorized(c);
     }
-    c.set("mcpStudent", { id: account.id, connectionId: connection.id });
+    c.set("mcpStudent", student);
     await next();
     return;
   };

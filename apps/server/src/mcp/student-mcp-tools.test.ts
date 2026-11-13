@@ -23,15 +23,20 @@ import {
   annotationBases,
   annotations,
   attempts,
+  events,
   responses,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { attachAiTaskMaterials } from "../services/ai-companion/student-ai-materials.ts";
-import { createAiTask } from "../services/ai-companion/student-ai-queue.ts";
+import {
+  claimMcpTask,
+  createAiTask,
+} from "../services/ai-companion/student-ai-queue.ts";
 import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   callToolJson,
   connectMcpClientViaApp,
@@ -142,6 +147,347 @@ function mkTask(
   );
   return task.id;
 }
+
+describe("学生 MCP 实时当前题", () => {
+  it("只定位本人仍在当前题主动发起的任务，跨设备冲突和教师撤权关闭读取", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env);
+    const current = async () =>
+      (await callJson(client, "get_current_context", {})).data;
+    expect(await current()).toEqual({ status: "disabled" });
+
+    const list = await env.app.request("/api/student/ai/connections", {
+      headers: { cookie: env.studentCookie },
+    });
+    const { data } = (await list.json()) as {
+      data: { connections: { id: string }[] };
+    };
+    const patch = (liveContextEnabled: boolean) =>
+      env.app.request(
+        `/api/student/ai/connections/${data.connections[0]?.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            cookie: env.studentCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ channel: "mcp", liveContextEnabled }),
+        },
+      );
+    expect((await patch(true)).status).toBe(200);
+
+    const now = Date.now();
+    const focus = (
+      viewId: string | undefined,
+      questionId: string,
+      clientTs: number,
+      serverTs = clientTs,
+      studentId = env.studentId,
+    ) => {
+      env.db
+        .insert(events)
+        .values({
+          id: randomUUID(),
+          studentId,
+          attemptId: env.world.attemptId,
+          type: "question_focus",
+          questionId,
+          clientTs,
+          serverTs: new Date(serverTs).toISOString(),
+          payloadJson: JSON.stringify({
+            type: "question_focus",
+            viewId,
+            questionId,
+            clientTs,
+          }),
+        })
+        .run();
+    };
+    focus("过期页面", env.world.q1, now - 70_000);
+    focus("迟到页面", env.world.q1, now - 30_000, now);
+    focus(undefined, env.world.q1, now);
+    focus("其他学生", env.world.q1, now, now, makeStudent(env.db));
+    expect(await current()).toEqual({ status: "no_current_question" });
+
+    focus("tab-a", env.world.q1, now);
+    expect(await current()).toEqual({ status: "student_action_required" });
+    const taskId = mkTask(env);
+    mkTask(env, { questionId: env.world.q2 });
+    expect(await current()).toEqual({ status: "authorized_task", taskId });
+    expect(
+      env.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()?.status,
+    ).toBe("created");
+
+    focus("tab-b", env.world.q2, now);
+    expect(await current()).toEqual({ status: "no_current_question" });
+    const hidden = {
+      type: "page_hidden" as const,
+      viewId: "tab-b",
+      clientTs: now,
+    };
+    env.db
+      .insert(events)
+      .values({
+        id: randomUUID(),
+        studentId: env.studentId,
+        attemptId: env.world.attemptId,
+        type: hidden.type,
+        clientTs: now,
+        serverTs: new Date(now).toISOString(),
+        payloadJson: JSON.stringify(hidden),
+      })
+      .run();
+    expect(await current()).toEqual({ status: "authorized_task", taskId });
+
+    env.db
+      .insert(aiPolicyOverrides)
+      .values({
+        subjectType: "student",
+        subjectId: env.studentId,
+        mode: "post_submit_only",
+        updatedAt: NOW,
+      })
+      .run();
+    expect(await current()).toEqual({ status: "no_current_question" });
+    expect((await patch(false)).status).toBe(200);
+    expect(await current()).toEqual({ status: "disabled" });
+    await client.close();
+    env.db.$client.close();
+  });
+});
+
+describe("学生 MCP 等待已发起的求助", () => {
+  it("默认关闭，开启后只返回本人可领取任务，关闭或重置令牌立即停止等待", async () => {
+    const env = await makeEnv();
+    const headers = { authorization: `Bearer ${env.token}` };
+    expect(
+      (await env.app.request("/mcp/student/wait?timeout=1", { headers }))
+        .status,
+    ).toBe(403);
+    expect((await env.app.request("/mcp/student/wait?timeout=1")).status).toBe(
+      401,
+    );
+
+    const list = await env.app.request("/api/student/ai/connections", {
+      headers: { cookie: env.studentCookie },
+    });
+    const { data } = (await list.json()) as {
+      data: { connections: { id: string }[] };
+    };
+    const connectionId = data.connections[0]?.id;
+    if (connectionId === undefined) throw new Error("缺少测试连接");
+    const patch = (request: object) =>
+      env.app.request(`/api/student/ai/connections/${connectionId}`, {
+        method: "PATCH",
+        headers: {
+          cookie: env.studentCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ channel: "mcp", ...request }),
+      });
+    expect((await patch({ liveContextEnabled: true })).status).toBe(200);
+
+    const waiting = env.app.request("/mcp/student/wait?timeout=2", { headers });
+    const taskId = mkTask(env);
+    const response = await waiting;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ kind: "task", id: taskId });
+
+    const claimed = claimMcpTask(env.db, { studentId: env.studentId, taskId });
+    expect(claimed).not.toBeNull();
+    const untilDisabled = env.app.request("/mcp/student/wait?timeout=2", {
+      headers,
+    });
+    expect((await patch({ liveContextEnabled: false })).status).toBe(200);
+    expect((await untilDisabled).status).toBe(403);
+
+    expect((await patch({ liveContextEnabled: true })).status).toBe(200);
+    const untilRevoked = env.app.request("/mcp/student/wait?timeout=2", {
+      headers,
+    });
+    expect((await patch({ resetToken: true })).status).toBe(200);
+    expect((await untilRevoked).status).toBe(401);
+    env.db.$client.close();
+  });
+
+  it("等待端点不泄露其他学生的任务，教学策略关闭时不交付，提交后重新允许", async () => {
+    const env = await makeEnv();
+    const connectionResponse = await env.app.request(
+      "/api/student/ai/connections",
+      {
+        headers: { cookie: env.studentCookie },
+      },
+    );
+    const { data } = (await connectionResponse.json()) as {
+      data: { connections: { id: string }[] };
+    };
+    const connectionId = data.connections[0]?.id;
+    if (connectionId === undefined) throw new Error("缺少测试连接");
+    await env.app.request(`/api/student/ai/connections/${connectionId}`, {
+      method: "PATCH",
+      headers: {
+        cookie: env.studentCookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ channel: "mcp", liveContextEnabled: true }),
+    });
+    const otherStudent = makeStudent(env.db);
+    const otherAttempt = insertAttempt(env.db, { studentId: otherStudent });
+    insertResponse(env.db, otherAttempt, "other-question");
+    createAiTask(
+      env.db,
+      {
+        studentId: otherStudent,
+        attemptId: otherAttempt,
+        questionId: "other-question",
+        question: "其他学生的题",
+        channel: "mcp",
+        mutationId: randomUUID(),
+      },
+      { hmacSecret: SECRET, now: new Date(NOW) },
+    );
+
+    const headers = { authorization: `Bearer ${env.token}` };
+    expect(
+      (await env.app.request("/mcp/student/wait?timeout=1", { headers }))
+        .status,
+    ).toBe(204);
+    const ownTask = mkTask(env);
+    env.db
+      .insert(aiPolicyOverrides)
+      .values({
+        subjectType: "student",
+        subjectId: env.studentId,
+        mode: "post_submit_only",
+        updatedAt: NOW,
+      })
+      .run();
+    expect(
+      (await env.app.request("/mcp/student/wait?timeout=1", { headers }))
+        .status,
+    ).toBe(204);
+    env.db
+      .update(attempts)
+      .set({ status: "submitted", submittedAt: NOW })
+      .where(eq(attempts.id, env.world.attemptId))
+      .run();
+    const response = await env.app.request("/mcp/student/wait?timeout=1", {
+      headers,
+    });
+    expect(response.status).toBe(200);
+    const result: unknown = await response.json();
+    expect(result).toMatchObject({ kind: "task", id: ownTask });
+    assertNoLeak(result);
+    expect(JSON.stringify(result)).not.toContain("其他学生的题");
+    expect(JSON.stringify(result)).not.toContain("solutionMd");
+    expect(
+      (
+        await env.app.request("/mcp/student/wait?timeout=1", {
+          headers: { ...headers, origin: "https://evil.example" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await env.app.request("/mcp/student/wait?timeout=31", { headers }))
+        .status,
+    ).toBe(400);
+    env.db.$client.close();
+  });
+});
+
+describe("学生 MCP 求助事件流", () => {
+  it("仅向授权连接发送本人可领取任务的元数据，重连后可重新对账", async () => {
+    const env = await makeEnv();
+    const path = "/mcp/student/events";
+    const headers = { authorization: `Bearer ${env.token}` };
+    const open = () => env.app.request(path, { headers });
+    const list = await env.app.request("/api/student/ai/connections", {
+      headers: { cookie: env.studentCookie },
+    });
+    const { data } = (await list.json()) as {
+      data: { connections: { id: string }[] };
+    };
+    const connectionId = data.connections[0]?.id;
+    if (connectionId === undefined) throw new Error("缺少测试连接");
+    const patch = (request: object) =>
+      env.app.request(`/api/student/ai/connections/${connectionId}`, {
+        method: "PATCH",
+        headers: {
+          cookie: env.studentCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ channel: "mcp", ...request }),
+      });
+    try {
+      expect((await env.app.request(path)).status).toBe(401);
+      expect(
+        (
+          await env.app.request(path, {
+            headers: { ...headers, origin: "https://evil.example" },
+          })
+        ).status,
+      ).toBe(403);
+      expect((await open()).status).toBe(403);
+      expect((await patch({ liveContextEnabled: true })).status).toBe(200);
+      const ownTask = mkTask(env, { question: "学生主动求助正文" });
+      const expected = { kind: "task", id: ownTask, createdAt: NOW };
+      const decoder = new TextDecoder();
+      for (const reconnect of [false, true]) {
+        const response = reconnect
+          ? await env.app.request(path, {
+              headers: { ...headers, "last-event-id": ownTask },
+            })
+          : await open();
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain(
+          "text/event-stream",
+        );
+        expect(response.headers.get("x-accel-buffering")).toBe("no");
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        const reader = response.body?.getReader();
+        if (reader === undefined) throw new Error("缺少求助事件流");
+        try {
+          expect(decoder.decode((await reader.read()).value)).toBe(
+            ": keepalive\n\n",
+          );
+          const frame = decoder.decode((await reader.read()).value);
+          expect(frame).toContain("event: task\n");
+          expect(frame).toContain(`id: ${ownTask}\n`);
+          const payload = frame.match(/^data: (.+)$/m)?.[1];
+          if (payload === undefined) throw new Error("缺少事件载荷");
+          expect(JSON.parse(payload)).toEqual(expected);
+          if (reconnect) {
+            expect((await patch({ liveContextEnabled: false })).status).toBe(
+              200,
+            );
+            expect((await reader.read()).done).toBe(true);
+          }
+        } finally {
+          await reader.cancel();
+        }
+      }
+      expect((await open()).status).toBe(403);
+      expect(
+        claimMcpTask(env.db, { studentId: env.studentId, taskId: ownTask }),
+      ).not.toBeNull();
+      expect((await patch({ liveContextEnabled: true })).status).toBe(200);
+      const reader = (await open()).body?.getReader();
+      if (reader === undefined) throw new Error("缺少求助事件流");
+      try {
+        expect(decoder.decode((await reader.read()).value)).toBe(
+          ": keepalive\n\n",
+        );
+        expect((await patch({ resetToken: true })).status).toBe(200);
+        expect((await reader.read()).done).toBe(true);
+      } finally {
+        await reader.cancel();
+      }
+      expect((await open()).status).toBe(401);
+    } finally {
+      env.db.$client.close();
+    }
+  });
+});
 
 // ---------- 必测①：重放同 claim / 两客户端竞争唯一写回 ----------
 

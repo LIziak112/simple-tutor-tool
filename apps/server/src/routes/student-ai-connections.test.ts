@@ -169,6 +169,86 @@ async function createInapp(
   return body.data.connection.id;
 }
 
+it("实时过程授权默认关闭，仅本人可修改，重置令牌和其他设置保留授权", async () => {
+  const { app, a, b } = world();
+  const created = await req(
+    app,
+    "POST",
+    BASE,
+    { cookie: a },
+    { channel: "mcp" },
+  );
+  expect(created.status).toBe(201);
+  const initial = aiConnectionCreateOkSchema.parse(await created.json()).data;
+  expect(initial.connection.channel).toBe("mcp");
+  if (initial.connection.channel !== "mcp") throw new Error("连接通道错误");
+  expect(initial.connection.liveContextEnabled).toBe(false);
+  const path = `${BASE}/${initial.connection.id}`;
+
+  const other = await req(
+    app,
+    "PATCH",
+    path,
+    { cookie: b },
+    {
+      channel: "mcp",
+      liveContextEnabled: true,
+    },
+  );
+  expect(other.status).toBe(404);
+  const enabled = await req(
+    app,
+    "PATCH",
+    path,
+    { cookie: a },
+    {
+      channel: "mcp",
+      liveContextEnabled: true,
+    },
+  );
+  expect(enabled.status).toBe(200);
+  const enabledView = aiConnectionPatchOkSchema.parse(await enabled.json()).data
+    .connection;
+  expect(enabledView.channel === "mcp" && enabledView.liveContextEnabled).toBe(
+    true,
+  );
+
+  const rotated = await req(
+    app,
+    "PATCH",
+    path,
+    { cookie: a },
+    {
+      channel: "mcp",
+      resetToken: true,
+      isDefault: true,
+    },
+  );
+  expect(rotated.status).toBe(200);
+  const rotatedView = aiConnectionPatchOkSchema.parse(await rotated.json()).data
+    .connection;
+  expect(rotatedView.channel === "mcp" && rotatedView.liveContextEnabled).toBe(
+    true,
+  );
+
+  const disabled = await req(
+    app,
+    "PATCH",
+    path,
+    { cookie: a },
+    {
+      channel: "mcp",
+      liveContextEnabled: false,
+    },
+  );
+  expect(disabled.status).toBe(200);
+  const list = aiConnectionListOkSchema.parse(JSON.parse(await listAs(app, a)));
+  const connection = list.data.connections.find(
+    (item) => item.channel === "mcp",
+  );
+  expect(connection?.liveContextEnabled).toBe(false);
+});
+
 it("鉴权四态：未登录/教师 Cookie/教师 API token 全 401；跨学生 404 同文案防枚举", async () => {
   const { app, a, b, teacher } = world();
   const connectionId = await createInapp(app, a);

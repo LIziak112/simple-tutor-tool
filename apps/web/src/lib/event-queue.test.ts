@@ -125,6 +125,42 @@ afterEach(() => {
 });
 
 describe("定时批量", () => {
+  it("离线补报保留原页面的焦点标识，新页面使用自己的标识", async () => {
+    const store = memoryStore();
+    installEventStore(store);
+    mockNavigator(false);
+    const first = makeQueue({ send: vi.fn().mockResolvedValue(undefined) });
+    first.track(ev("question_focus", { questionId: "q1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    const savedFocus = store
+      .dumpAll()
+      .find((event) => event.type === "question_focus");
+    first.dispose();
+
+    mockNavigator(true);
+    const send = vi.fn().mockResolvedValue(undefined);
+    const second = makeQueue({ send });
+    second.track(ev("question_focus", { questionId: "q2" }));
+    second.track(ev("question_blur", { questionId: "q2" }));
+    await second.flush();
+
+    const batch = send.mock.calls.flatMap((call) => call[0] as LearningEvent[]);
+    const focusEvents = batch.filter(
+      (event) => event.type === "question_focus",
+    );
+    const firstFocus = focusEvents.find((event) => event.questionId === "q1");
+    const secondFocus = focusEvents.find((event) => event.questionId === "q2");
+    expect(firstFocus).toMatchObject({ viewId: expect.any(String) });
+    expect(firstFocus).toEqual(savedFocus);
+    expect(secondFocus).toMatchObject({ viewId: expect.any(String) });
+    expect(secondFocus?.viewId).not.toBe(firstFocus?.viewId);
+    expect(batch.find((event) => event.type === "question_blur")).toMatchObject(
+      {
+        viewId: secondFocus?.viewId,
+      },
+    );
+  });
+
   it("5 秒触发一轮批量 POST；不足 5 秒不发包", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const q = makeQueue({ send });
@@ -157,6 +193,19 @@ describe("定时批量", () => {
 });
 
 describe("sendBeacon 兜底（页面隐藏）", () => {
+  it("后台题卡焦点仍上报作答统计，但不作为实时题目证据", async () => {
+    setVisibility("hidden");
+    const beacon = vi.fn((_events: readonly LearningEvent[]) => true);
+    const q = makeQueue({ beacon });
+    q.track(ev("question_focus", { questionId: "q1" }));
+    await q.flush();
+    const focus = beacon.mock.calls[0]?.[0].find(
+      (event) => event.type === "question_focus",
+    );
+    expect(focus).toMatchObject({ questionId: "q1" });
+    expect(focus).not.toHaveProperty("viewId");
+  });
+
   it("visibilitychange → hidden：自动注入 page_hidden 并改走 sendBeacon", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const beacon = vi.fn((_events: readonly LearningEvent[]) => true);
@@ -170,6 +219,9 @@ describe("sendBeacon 兜底（页面隐藏）", () => {
     const batch = beacon.mock.calls[0]?.[0] as LearningEvent[];
     // 自动注入的 page_hidden 排在最后（track 在前）
     expect(batch.map((e) => e.type)).toEqual(["question_focus", "page_hidden"]);
+    const focus = batch.find((event) => event.type === "question_focus");
+    expect(focus).toMatchObject({ viewId: expect.any(String) });
+    expect(batch[1]).toMatchObject({ viewId: focus?.viewId });
     // 恢复可见：注入 page_visible，等下一轮批量走 fetch
     setVisibility("visible");
     document.dispatchEvent(new Event("visibilitychange"));
@@ -177,6 +229,7 @@ describe("sendBeacon 兜底（页面隐藏）", () => {
     expect(send).toHaveBeenCalledTimes(1);
     const sentBatch = send.mock.calls[0]?.[0] as LearningEvent[] | undefined;
     expect((sentBatch ?? []).map((e) => e.type)).toEqual(["page_visible"]);
+    expect(sentBatch?.[0]).toMatchObject({ viewId: focus?.viewId });
   });
 
   it("beacon 返回 false（浏览器队列满）→ 事件写入 IndexedDB", async () => {

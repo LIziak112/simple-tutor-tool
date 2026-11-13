@@ -45,6 +45,8 @@ interface ConnectionDraft {
   readonly imageCapability?: AiImageCapability | undefined;
   readonly defaultValidHours: number;
   readonly isDefault: boolean;
+  readonly liveContextEnabled?: boolean;
+  readonly liveContextTouched?: boolean;
   /** 首次知情确认(本会话记忆;已有连接时由 hasConnection 接管门槛) */
   readonly consentAcknowledged: boolean;
   /** 用户是否动过表单(dirty 口径:导航/刷新拦截与放弃确认依据) */
@@ -233,7 +235,13 @@ export function AiConnectionManager() {
           isDefault: draft.isDefault,
         };
       case "mcp":
-        return { channel: "mcp", isDefault: draft.isDefault };
+        return {
+          channel: "mcp",
+          isDefault: draft.isDefault,
+          ...(draft.liveContextTouched === true && {
+            liveContextEnabled: draft.liveContextEnabled === true,
+          }),
+        };
       default:
         return {
           channel: target.channel,
@@ -331,6 +339,8 @@ export function AiConnectionManager() {
       defaultValidHours:
         connection.channel === "link" ? connection.defaultValidHours : 24,
       isDefault: connection.isDefault,
+      liveContextEnabled:
+        connection.channel === "mcp" && connection.liveContextEnabled === true,
       consentAcknowledged: true,
       touched: false,
     });
@@ -734,6 +744,28 @@ export function AiConnectionManager() {
                   保存后复制完整配置并粘贴到 AI 客户端。客户端需要支持 Bearer
                   Token 认证与 Streamable HTTP 传输。
                 </p>
+                {draft.editingId !== null && (
+                  <label className="mt-3 flex min-h-11 cursor-pointer items-start gap-2 text-foreground">
+                    <input
+                      type="checkbox"
+                      aria-label="允许 Agent 读取我的实时做题过程"
+                      className="mt-1 size-4 accent-primary"
+                      checked={draft.liveContextEnabled === true}
+                      onChange={(event) =>
+                        updateDraft({
+                          liveContextEnabled: event.target.checked,
+                          liveContextTouched: true,
+                        })
+                      }
+                    />
+                    <span>
+                      允许 Agent 读取我的实时做题过程
+                      <span className="block text-xs text-muted-foreground">
+                        开启后，客户端可等待你主动发起的求助。实时做题过程读取尚未开放。
+                      </span>
+                    </span>
+                  </label>
+                )}
               </div>
             )}
 
