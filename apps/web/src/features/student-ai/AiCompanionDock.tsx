@@ -48,6 +48,7 @@ import {
 } from "./AiReadingWorkspace";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useAiDisplayPreference } from "./ai-display-preference-store";
+import { useMcpLiveFocus } from "./mcp-live-focus";
 
 /**
  * SAI-22 伴学栏共享装配（B12 执行步骤 1）：布局控制器 + 发送控制器 + 会话
@@ -122,6 +123,11 @@ const ensureAtQuestion = async (
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const { attemptId, questions, currentQuestionId, editor, labelOf } = host;
+  useMcpLiveFocus(
+    attemptId,
+    currentQuestionId,
+    host.triggerLabel === undefined,
+  );
   // 随笔上下文锚（模块 5 第一步）：当前题随宿主变化发布到 learning-focus-store
   usePublishLearningFocus(
     currentQuestionId === null

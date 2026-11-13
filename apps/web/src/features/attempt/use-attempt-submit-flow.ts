@@ -15,6 +15,7 @@ import {
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
 import { ApiError, sealAttemptAnnotationsApi } from "@/lib/api";
+import { requestErrorMessage } from "@/lib/api-response";
 import { withRequestDeadline } from "@/lib/request-deadline";
 import { useSubmitAttempt } from "./attempt-queries";
 import {
@@ -250,5 +251,8 @@ export function useAttemptSubmitFlow({
       syncDraft,
     ],
   );
-  return { inkFlushError, runSubmit, submit, submitAbortedRef };
+  const submitError = submit.isError
+    ? requestErrorMessage(submit.error, "交卷失败，请稍后重试")
+    : null;
+  return { inkFlushError, runSubmit, submit, submitAbortedRef, submitError };
 }

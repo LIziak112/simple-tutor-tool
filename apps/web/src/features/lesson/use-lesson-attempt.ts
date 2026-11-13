@@ -24,6 +24,7 @@ import {
   type SubmitEvidenceProblem,
 } from "@/features/notes/submit-evidence";
 import { ApiError, submitLessonQuestionApi } from "@/lib/api";
+import { requestErrorMessage } from "@/lib/api-response";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useOnlineStatus } from "@/lib/use-online-status";
 
@@ -83,11 +84,6 @@ interface LessonOverlay {
   released: Record<string, AttemptResultQuestion>;
   summary: AttemptScoreSummary;
   attempt: AttemptSummary;
-}
-
-/** 通用错误 → 中文文案 */
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error ? err.message : fallback;
 }
 
 /** 覆盖错误码 → stale 口径（页面内容过期，提示刷新） */
@@ -243,7 +239,10 @@ export function useLessonAttempt(
       } catch (err) {
         return {
           kind: "error",
-          message: messageOf(err, "草稿状态获取失败，请检查网络后重试"),
+          message: requestErrorMessage(
+            err,
+            "草稿状态获取失败，请检查网络后重试",
+          ),
         };
       }
     },
@@ -283,7 +282,7 @@ export function useLessonAttempt(
         if (!sameSession()) return sessionChanged;
         return {
           kind: "error",
-          message: messageOf(err, "答案尚未保存，请检查网络后重试"),
+          message: requestErrorMessage(err, "答案尚未保存，请检查网络后重试"),
         };
       }
       if (!sameSession()) return sessionChanged;
@@ -353,7 +352,7 @@ export function useLessonAttempt(
         }
         return {
           kind: "error",
-          message: messageOf(err, "提交失败，请稍后重试"),
+          message: requestErrorMessage(err, "提交失败，请稍后重试"),
         };
       }
     },

@@ -430,6 +430,7 @@ export const aiConnectionPublicSchema = z.discriminatedUnion("channel", [
       tokenFingerprint: z.string().min(1),
       /** 本人可复制的完整 Token；旧哈希或无法解密时为 null，旧响应可缺省。 */
       token: z.string().min(1).nullable().optional(),
+      liveContextEnabled: z.boolean().optional(),
       isDefault: z.boolean(),
       verifyStatus: aiConnectionVerifyStatusSchema,
       verifiedAt: z.string().nullable(),

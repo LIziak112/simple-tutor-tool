@@ -19,6 +19,7 @@ import {
   fetchPracticeQuestionFeedbackApi,
   submitPracticeQuestionApi,
 } from "@/lib/api";
+import { requestErrorMessage } from "@/lib/api-response";
 import { randomUuid } from "@/lib/uuid";
 import {
   pauseAttemptDetailPolling,
@@ -70,10 +71,6 @@ interface PracticeOverlay {
 }
 
 /** 通用错误 → 中文文案 */
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error ? err.message : fallback;
-}
-
 /** 页面内容过期（题目/工作流/协议版本不一致）的统一提示 */
 const STALE_MESSAGE = "页面内容已过期，请刷新后重试";
 
@@ -362,7 +359,7 @@ export function usePracticeQuestionSubmit(input: {
           refetchDetail();
           return { kind: "restricted" };
         }
-        return failWith(messageOf(err, "提交失败，请稍后重试"));
+        return failWith(requestErrorMessage(err, "提交失败，请稍后重试"));
       } finally {
         if (pausedForSubmission && !keepPaused) {
           resumeAttemptDetailPolling(attemptId);

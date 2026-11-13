@@ -266,7 +266,8 @@ it("失败的缓存底图再次打开时重写原记录，成功前不放行也�
   const backend = memoryAnnotationBackend();
   let failed = true;
   installAnnotationBackend({
-    ...backend,
+    get: backend.get,
+    getAll: backend.getAll,
     set: async (key, value) => {
       if (failed) throw null;
       await backend.set(key, value);
@@ -309,7 +310,8 @@ it("另一题写盘挂起不阻塞已保存底图打开或本题底图保存", a
   });
   const started = Promise.withResolvers<void>();
   installAnnotationBackend({
-    ...backend,
+    get: backend.get,
+    getAll: backend.getAll,
     set: async (key, value) => {
       if (key.includes("blocked-question")) {
         started.resolve();
@@ -386,7 +388,8 @@ it("题面投影损坏不是普通网络离线，必须拒绝生成", async () =
 it("失败的本机记录不能被缓存快路径冒称ready", async () => {
   const backend = memoryAnnotationBackend();
   installAnnotationBackend({
-    ...backend,
+    get: backend.get,
+    getAll: backend.getAll,
     set: async () => {
       throw new Error("本机存储不可用");
     },

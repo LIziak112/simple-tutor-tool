@@ -63,7 +63,7 @@ jobs:
             type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
       # 构建上下文就是仓库根的 Dockerfile（多阶段，pnpm workspace 全量构建），
-      # 不需要额外 build-args。缓存走 GitHub Actions cache 服务（type=gha，
+      # 构建标识固定为产物对应提交。缓存走 GitHub Actions cache 服务（type=gha，
       # mode=max 缓存全部中间层）：依赖安装与构建层在两次 tag 之间可复用，双平台下提速明显。
       - name: 构建并推送镜像
         uses: docker/build-push-action@v7
@@ -73,5 +73,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: OWNCLASS_BUILD_VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -25,8 +25,12 @@ const RECEIPT: NoteVersionReceipt = {
   savedAt: "2026-10-06T00:00:00.000Z",
 };
 
-function shellResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
+function shellResponse(
+  body: unknown,
+  status = 200,
+  headers?: HeadersInit,
+): Response {
+  return new Response(JSON.stringify(body), { status, headers: headers ?? {} });
 }
 
 interface CapturedCall {
@@ -100,6 +104,7 @@ describe("putNoteDocumentApi（T6R.8）", () => {
           _current: current,
         },
         409,
+        { "x-request-id": ATTEMPT_ID, "x-build-version": "test-build" },
       ),
     );
     const err = await putNoteDocumentApi(
@@ -113,6 +118,34 @@ describe("putNoteDocumentApi（T6R.8）", () => {
     expect(apiErr.status).toBe(409);
     expect(apiErr.code).toBe("NOTE_REVISION_CONFLICT");
     expect(apiErr.extra?._current).toEqual(current);
+    expect(apiErr.diagnostics).toEqual({
+      requestId: ATTEMPT_ID,
+      buildVersion: "test-build",
+    });
+  });
+
+  it("代理的非契约 403 保留诊断，但不会被同步层当成业务撤权", async () => {
+    stubCapture(
+      () =>
+        new Response("proxy error", {
+          status: 403,
+          headers: {
+            "x-request-id": ATTEMPT_ID,
+            "x-build-version": "test-build",
+          },
+        }),
+    );
+    const err = await putNoteDocumentApi(
+      ATTEMPT_ID,
+      QUESTION_ID,
+      new Blob(["{}"]),
+      { baseRevision: 1, mutationId: "44444444-4444-4444-8444-444444444444" },
+    ).catch((error: unknown) => error);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({
+      diagnostics: { requestId: ATTEMPT_ID, buildVersion: "test-build" },
+    });
   });
 
   it("AbortSignal 透传给 fetch（账号切换中止旧会话在途）", async () => {

@@ -12,10 +12,8 @@ import type {
   AnalyticsQuery,
   AnalyticsQuestionRow,
   AnalyticsQuestionsData,
-  AnalyticsRange,
   AnalyticsRedoRow,
   AnalyticsStudentData,
-  AnalyticsStudentRow,
   AnalyticsTrendPoint,
   AnalyticsUnitCell,
   AnalyticsUnitColumn,
@@ -27,28 +25,29 @@ import {
   ANALYTICS_WRONG_ANSWER_TOP_N,
   analyticsQuerySchema,
 } from "@tutor/contract";
-import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
   assignmentStudents,
   assignments,
-  attempts,
   courseItems,
   courseStudents,
   courses,
   events,
-  knowledgePoints,
   lectures,
-  questionKnowledge,
-  questions,
   type ResponseRow,
-  responses,
   students,
-  units,
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
+import {
+  type AnalyticsContext,
+  buildContext,
+  DAY_MS,
+  loadAnalyticsResponses,
+  medianOf,
+} from "./analytics-context";
 import { latestAttemptOf } from "./assignment-service";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { attemptTraceRowsByAttempt } from "./attempt-trace-rows";
@@ -57,7 +56,6 @@ import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
-import { attemptResultCounts } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
@@ -90,8 +88,6 @@ import { computeAttemptTraceMetrics } from "./trace-metrics";
  * now 可注入（趋势分桶与窗口判定的确定性测试；默认当前时刻）。
  */
 
-/** 一天（趋势窗口与周桶推进的步长） */
-const DAY_MS = 86_400_000;
 /** 北京时间相对 UTC 的固定偏移（无夏令时，D5） */
 const BEIJING_OFFSET_MS = 8 * 3_600_000;
 /** 周桶数量防御上限（10 年；days="all" 且库里有远古数据时不撑爆响应） */
@@ -115,18 +111,6 @@ function weekKeyOfMs(weekStartMs: number): string {
 /** submittedAt（UTC ISO）→ 该作答所在自然周的周一北京日期键（YYYY-MM-DD） */
 function beijingWeekKeyOf(iso: string): string {
   return weekKeyOfMs(beijingWeekStartMs(Date.parse(iso)));
-}
-
-/** 数值中位数（空数组为 null；偶数个取中间两数平均） */
-function medianOf(values: readonly number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  const lower = sorted[mid - 1];
-  const upper = sorted[mid];
-  if (sorted.length % 2 === 1) return upper ?? null;
-  if (lower === undefined || upper === undefined) return null;
-  return (lower + upper) / 2;
 }
 
 /** 保留 2 位小数（异常倍数展示用） */
@@ -172,293 +156,6 @@ function lastSubmittedOf(group: readonly Attempt[]): Attempt | undefined {
   return found;
 }
 
-// ---------- 作用域装配（三个接口共用的数据装载） ----------
-
-/** 学情作用域：一次请求内装载的域内数据（教师域 + D3/D5 筛选后） */
-interface AnalyticsContext {
-  readonly resultCounts: ReturnType<typeof attemptResultCounts>;
-  readonly teacherId: string;
-  readonly query: AnalyticsQuery;
-  readonly range: AnalyticsRange;
-  readonly nowMs: number;
-  /** 矩阵学生行（courseId 筛选后=该课程成员；含已归档——教师侧统计视角） */
-  readonly studentRows: readonly AnalyticsStudentRow[];
-  /** courseId → 课程名（域内；作业列/重做行展示用） */
-  readonly courseNames: Map<string, string>;
-  /** unitId → 单元标题（域内，含软删——历史作答统计不消失） */
-  readonly unitTitles: Map<string, string>;
-  /** D5 窗口内参与统计的作答（D1：作业全部 + 课程练习 attemptNo=1） */
-  readonly qualifying: readonly Attempt[];
-  /** qualifying 各 attempt 的 responses（(attemptId, questionId) 唯一索引定位） */
-  readonly responsesByAttempt: Map<string, ResponseRow[]>;
-  /** D3 筛选后的全部作答（含 draft 与重做；矩阵/待批/重点/重做用，不受 days 限制） */
-  readonly allAttempts: readonly Attempt[];
-  /** D6 中位数：questionId → 该题域内全部已交作答 activeSec 的中位数 */
-  readonly domainMedianByQuestion: Map<string, number | null>;
-  /** 当前库题目元信息（题目视角排序与快照兜底；软删题保留——统计不消失） */
-  readonly questionMeta: Map<
-    string,
-    {
-      unitId: string;
-      order: number;
-      type: string;
-      difficulty: number;
-      stemMd: string;
-    }
-  >;
-  /** 快照考点兜底：questionId → 当前库考点名（question_knowledge 域内读） */
-  readonly knowledgeFallback: Map<string, string[]>;
-}
-
-/**
- * 装载作用域（三接口共用）：
- * - attempts 经 students.teacherId 域过滤（attempts_student_assignment_idx /
- *   attempts_student_course_unit_idx 供 join 下推）；
- * - D3 筛选：courseId 须属本教师域（否则整域空集，不泄露他域计数）；assignment
- *   来源 attempt.courseId 以作业行兜底（T2A.7 起交卷链路恒写，旧数据可缺）；
- * - qualifying：D5 窗口（submittedAt ∈ [from, now]）+ D1（course 来源仅首次）；
- * - D6 中位数独立装载：域内全部已交 attempt 的逐题 activeSec（不做 D3/D5/D1
- *   筛选——口径是「本教师域内该题全部已交作答」）。
- */
-function buildContext(
-  db: Db,
-  teacherId: string,
-  query: AnalyticsQuery,
-  now: Date | string,
-): AnalyticsContext {
-  const nowMs = typeof now === "string" ? Date.parse(now) : now.getTime();
-  const nowIso = new Date(nowMs).toISOString();
-  const fromIso =
-    query.days === "all"
-      ? null
-      : new Date(nowMs - query.days * DAY_MS).toISOString();
-
-  // D3：课程筛选的域校验（乙拿甲的 courseId → 整域空集，不暴露存在性）
-  const scopeCourse =
-    query.courseId === undefined
-      ? undefined
-      : db
-          .select({ id: courses.id })
-          .from(courses)
-          .where(
-            and(
-              eq(courses.id, query.courseId),
-              eq(courses.teacherId, teacherId),
-            ),
-          )
-          .get();
-  const courseScopeValid =
-    query.courseId === undefined || scopeCourse !== undefined;
-
-  // 矩阵学生行（courseId 筛选=该课程成员；不筛选=全部学生；均含已归档）
-  const studentSelect = {
-    id: students.id,
-    displayName: students.displayName,
-    archivedAt: students.archivedAt,
-  };
-  const studentRows: AnalyticsStudentRow[] = courseScopeValid
-    ? (query.courseId === undefined
-        ? db
-            .select(studentSelect)
-            .from(students)
-            .where(eq(students.teacherId, teacherId))
-            .orderBy(asc(students.displayName), asc(students.id))
-            .all()
-        : db
-            .select(studentSelect)
-            .from(courseStudents)
-            .innerJoin(students, eq(courseStudents.studentId, students.id))
-            .where(eq(courseStudents.courseId, query.courseId))
-            .orderBy(asc(students.displayName), asc(students.id))
-            .all()
-      ).map((row) => ({
-        studentId: row.id,
-        displayName: row.displayName,
-        archived: row.archivedAt !== null,
-      }))
-    : [];
-
-  const courseNames = new Map(
-    db
-      .select({ id: courses.id, title: courses.title })
-      .from(courses)
-      .where(eq(courses.teacherId, teacherId))
-      .all()
-      .map((row) => [row.id, row.title] as const),
-  );
-  const unitTitles = new Map(
-    db
-      .select({ id: units.id, title: units.title })
-      .from(units)
-      .where(eq(units.teacherId, teacherId))
-      .all()
-      .map((row) => [row.id, row.title] as const),
-  );
-
-  // 域内 attempt（含 draft：矩阵进行中/做过次数要用），D3 筛选在 TS 侧
-  const assignmentCourseById = new Map(
-    db
-      .select({ id: assignments.id, courseId: assignments.courseId })
-      .from(assignments)
-      .where(eq(assignments.teacherId, teacherId))
-      .all()
-      .map((row) => [row.id, row.courseId] as const),
-  );
-  const inCourseScope = (attempt: Attempt): boolean => {
-    if (query.courseId === undefined) return true;
-    const courseId =
-      attempt.courseId ??
-      (attempt.assignmentId !== null
-        ? (assignmentCourseById.get(attempt.assignmentId) ?? null)
-        : null);
-    return courseId === query.courseId;
-  };
-  const allAttempts = courseScopeValid
-    ? db
-        .select({ attempt: attempts })
-        .from(attempts)
-        .innerJoin(students, eq(attempts.studentId, students.id))
-        .where(eq(students.teacherId, teacherId))
-        .orderBy(asc(attempts.submittedAt), asc(attempts.id))
-        .all()
-        .map((row) => row.attempt)
-        .filter(inCourseScope)
-    : [];
-
-  // D5 窗口 + D1（统计作答）——wrong 来源（2026-10 错题重练）不计入：重练是
-  // 对已做过题目的再作答，不属于「首次见到这批题」的统计口径（作业全部 +
-  // 课程首次；其作答在错题本/记录/数据页照常可见）
-  const qualifying = allAttempts.filter(
-    (attempt) =>
-      attempt.status !== "draft" &&
-      attempt.submittedAt !== null &&
-      (fromIso === null || attempt.submittedAt >= fromIso) &&
-      attempt.submittedAt <= nowIso &&
-      attempt.sourceType !== "wrong" &&
-      (attempt.sourceType === "assignment" || attempt.attemptNo === 1),
-  );
-
-  // qualifying 的 responses
-  const responsesByAttempt = new Map<string, ResponseRow[]>();
-  for (const ids of chunk(qualifying.map((attempt) => attempt.id))) {
-    for (const row of db
-      .select()
-      .from(responses)
-      .where(inArray(responses.attemptId, ids))
-      .all()) {
-      const list = responsesByAttempt.get(row.attemptId);
-      if (list === undefined) responsesByAttempt.set(row.attemptId, [row]);
-      else list.push(row);
-    }
-  }
-
-  // D6 中位数：域内全部已交作答（不筛课程——题目用时是该题在域内的固有属性）
-  const domainSubmittedIds = db
-    .select({ id: attempts.id })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(and(eq(students.teacherId, teacherId), ne(attempts.status, "draft")))
-    .all()
-    .map((row) => row.id);
-  const secByQuestion = new Map<string, number[]>();
-  for (const ids of chunk(domainSubmittedIds)) {
-    for (const row of db
-      .select({
-        questionId: responses.questionId,
-        activeSec: responses.activeSec,
-      })
-      .from(responses)
-      .where(inArray(responses.attemptId, ids))
-      .all()) {
-      if (row.activeSec === null) continue;
-      const list = secByQuestion.get(row.questionId);
-      if (list === undefined)
-        secByQuestion.set(row.questionId, [row.activeSec]);
-      else list.push(row.activeSec);
-    }
-  }
-  const domainMedianByQuestion = new Map<string, number | null>();
-  for (const [questionId, values] of secByQuestion) {
-    domainMedianByQuestion.set(questionId, medianOf(values));
-  }
-
-  // 当前库题目元信息（题目视角排序与快照兜底；软删题保留——历史统计不消失）
-  const questionMeta = new Map<
-    string,
-    {
-      unitId: string;
-      order: number;
-      type: string;
-      difficulty: number;
-      stemMd: string;
-    }
-  >();
-  for (const row of db
-    .select({
-      id: questions.id,
-      unitId: questions.unitId,
-      order: questions.order,
-      type: questions.type,
-      difficulty: questions.difficulty,
-      stemMd: questions.stemMd,
-    })
-    .from(questions)
-    .where(eq(questions.teacherId, teacherId))
-    .all()) {
-    questionMeta.set(row.id, {
-      unitId: row.unitId,
-      order: row.order,
-      type: row.type,
-      difficulty: row.difficulty,
-      stemMd: row.stemMd,
-    });
-  }
-
-  // 快照考点兜底（question_knowledge × knowledge_points 域内读）
-  const knowledgeFallback = new Map<string, string[]>();
-  for (const row of db
-    .select({
-      questionId: questionKnowledge.questionId,
-      name: knowledgePoints.name,
-    })
-    .from(questionKnowledge)
-    .innerJoin(
-      knowledgePoints,
-      eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
-    )
-    .where(eq(questionKnowledge.teacherId, teacherId))
-    .all()) {
-    const list = knowledgeFallback.get(row.questionId);
-    if (list === undefined) knowledgeFallback.set(row.questionId, [row.name]);
-    else list.push(row.name);
-  }
-
-  return {
-    teacherId,
-    query,
-    resultCounts: attemptResultCounts(db, allAttempts),
-    range: { days: query.days, from: fromIso, to: nowIso },
-    nowMs,
-    studentRows,
-    courseNames,
-    unitTitles,
-    qualifying,
-    responsesByAttempt,
-    allAttempts,
-    domainMedianByQuestion,
-    questionMeta,
-    knowledgeFallback,
-  };
-}
-
-/** qualifying 中属于指定学生的作答（画像页复用全域上下文后过滤） */
-function qualifyingOfStudent(
-  ctx: AnalyticsContext,
-  studentId: string,
-): Attempt[] {
-  return ctx.qualifying.filter((attempt) => attempt.studentId === studentId);
-}
-
 /** 统计聚合的工作单元：响应行 + 所属 attempt（qualifying，submittedAt 必非空） */
 interface ScopedResponse {
   readonly response: ResponseRow;
@@ -497,7 +194,11 @@ function effectiveScore(attempt: Attempt): number | null {
  *   ——draft → in-progress，已交 → submitted/graded。
  * 矩阵不受 days 影响（D5：当下状态一览——「谁没做」不受时间范围筛选）。
  */
-function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
+function buildMatrix(
+  db: Db,
+  ctx: AnalyticsContext,
+  pendingByAttempt: ReadonlyMap<string, number>,
+): AnalyticsMatrix {
   const { query } = ctx;
 
   // —— 作业列 ——
@@ -514,13 +215,13 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
       and(
         eq(assignments.teacherId, ctx.teacherId),
         isNull(assignments.deletedAt),
+        query.courseId === undefined
+          ? undefined
+          : eq(assignments.courseId, query.courseId),
       ),
     )
     .orderBy(asc(assignments.createdAt), asc(assignments.id))
     .all()
-    .filter(
-      (row) => query.courseId === undefined || row.courseId === query.courseId,
-    )
     .map((row) => ({
       assignmentId: row.id,
       title: row.title,
@@ -555,71 +256,58 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
   }
 
   // —— 单元列（可见性判定复用 T2A.6 的资源上下文） ——
-  const scopedCourses =
-    query.courseId === undefined
-      ? db
-          .select({ id: courses.id, title: courses.title })
-          .from(courses)
-          .where(
-            and(
-              eq(courses.teacherId, ctx.teacherId),
-              isNull(courses.archivedAt),
-            ),
-          )
-          .orderBy(asc(courses.order), asc(courses.id))
-          .all()
-      : db
-          .select({ id: courses.id, title: courses.title })
-          .from(courses)
-          .where(
-            and(
-              eq(courses.id, query.courseId),
-              eq(courses.teacherId, ctx.teacherId),
-              isNull(courses.archivedAt),
-            ),
-          )
-          .all();
   const { unitById, liveQuestionCountByUnit, embeddedUnitIds } =
     loadResourceContext(db, ctx.teacherId);
   const unitColumns: AnalyticsUnitColumn[] = [];
-  for (const course of scopedCourses) {
-    const items = db
-      .select({
-        refId: courseItems.refId,
-        order: courseItems.order,
-        visible: courseItems.visible,
-        publishAt: courseItems.publishAt,
-      })
-      .from(courseItems)
-      .where(
-        and(eq(courseItems.courseId, course.id), eq(courseItems.kind, "unit")),
-      )
-      .orderBy(asc(courseItems.order), asc(courseItems.id))
-      .all();
-    for (const item of items) {
-      if (item.refId === null) continue;
-      // 讲练页嵌入单元不单列（讲练页一件事）
-      if (embeddedUnitIds.has(item.refId)) continue;
-      const unit = unitById.get(item.refId);
-      if (unit === undefined || unit.deletedAt !== null) continue;
-      if (!item.visible) continue;
-      if (item.publishAt !== null && Date.parse(item.publishAt) > ctx.nowMs) {
-        continue;
-      }
-      if ((liveQuestionCountByUnit.get(item.refId) ?? 0) < 1) continue;
-      unitColumns.push({
-        courseId: course.id,
-        courseName: course.title,
-        unitId: item.refId,
-        unitTitle: unit.title,
-        order: item.order,
-      });
-    }
+  const items = db
+    .select({
+      courseId: courses.id,
+      courseName: courses.title,
+      refId: courseItems.refId,
+      order: courseItems.order,
+      publishAt: courseItems.publishAt,
+    })
+    .from(courseItems)
+    .innerJoin(courses, eq(courseItems.courseId, courses.id))
+    .where(
+      and(
+        eq(courses.teacherId, ctx.teacherId),
+        isNull(courses.archivedAt),
+        query.courseId === undefined
+          ? undefined
+          : eq(courses.id, query.courseId),
+        eq(courseItems.kind, "unit"),
+        eq(courseItems.visible, true),
+      ),
+    )
+    .orderBy(
+      asc(courses.order),
+      asc(courses.id),
+      asc(courseItems.order),
+      asc(courseItems.id),
+    )
+    .all();
+  for (const item of items) {
+    if (item.refId === null || embeddedUnitIds.has(item.refId)) continue;
+    const unit = unitById.get(item.refId);
+    if (unit === undefined || unit.deletedAt !== null) continue;
+    if (item.publishAt !== null && Date.parse(item.publishAt) > ctx.nowMs)
+      continue;
+    if ((liveQuestionCountByUnit.get(item.refId) ?? 0) < 1) continue;
+    unitColumns.push({
+      courseId: item.courseId,
+      courseName: item.courseName,
+      unitId: item.refId,
+      unitTitle: unit.title,
+      order: item.order,
+    });
   }
 
   // —— 课程成员（单元列 not-assigned 判定） ——
   const members = new Set<string>();
-  for (const ids of chunk(scopedCourses.map((course) => course.id))) {
+  for (const ids of chunk([
+    ...new Set(unitColumns.map((column) => column.courseId)),
+  ])) {
     for (const row of db
       .select({
         courseId: courseStudents.courseId,
@@ -669,10 +357,6 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
     return latest.status === "graded" ? "graded" : "submitted";
   };
 
-  // 待批数（D4 共享谓词，2026-10 扩展：行级提交事实——lesson 单题提交与 v1
-  // 新协议逐题提交——所在的进行中卷已提交待批行也计数，与教师待批队列同一
-  // 口径；无行级提交事实的 legacy draft 恒 0）
-  const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
   // M4-D3 进行中进度（§13）：只对 v1 新协议 draft 卷批量聚合行级已提交 n/N
   // （协议判定走 practiceProtocolOf 单一谓词；一次分组查询，与待批数同款模式）
   const progressByAttempt = practiceSubmittedCounts(
@@ -915,23 +599,19 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
       attempt.sourceType !== "wrong" &&
       (attempt.sourceType === "assignment" || attempt.attemptNo === 1),
   );
-  // focus 窗口与 days 窗口独立：其作答的 responses 单独装载
-  // （ctx.responsesByAttempt 只覆盖 qualifying = days 窗口）
-  const responsesByAttempt = new Map<string, ResponseRow[]>();
-  for (const ids of chunk(focusAttempts.map((attempt) => attempt.id))) {
-    for (const row of db
-      .select()
-      .from(responses)
-      .where(inArray(responses.attemptId, ids))
-      .all()) {
-      const list = responsesByAttempt.get(row.attemptId);
-      if (list === undefined) responsesByAttempt.set(row.attemptId, [row]);
-      else list.push(row);
-    }
-  }
+  // 重点窗口可能更宽，只补取统计窗口尚未装载的作答。
+  const qualifyingIds = new Set(ctx.qualifying.map(({ id }) => id));
+  const extra = loadAnalyticsResponses(
+    db,
+    focusAttempts
+      .filter(({ id }) => !qualifyingIds.has(id))
+      .map(({ id }) => id),
+  );
   const scopedResponses: ScopedResponse[] = [];
   for (const attempt of focusAttempts) {
-    for (const response of responsesByAttempt.get(attempt.id) ?? []) {
+    for (const response of ctx.responsesByAttempt.get(attempt.id) ??
+      extra.get(attempt.id) ??
+      []) {
       scopedResponses.push({ response, attempt });
     }
   }
@@ -1520,15 +1200,16 @@ export function getAnalyticsOverview(
     teacherId,
     analyticsQuerySchema.parse(query),
     now,
+    { kind: "overview" },
   );
-  const matrix = buildMatrix(db, ctx);
+  const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
+  const matrix = buildMatrix(db, ctx, pendingByAttempt);
   const trend = buildTrend(ctx, ctx.qualifying);
   const focus = buildFocusCard(db, ctx);
   const offline = buildOffline(db, ctx, ctx.qualifying);
 
   // 待批数（D4 共享谓词（2026-10 扩展同待批队列）；D3 域+课程筛选、不受
   // days——旧作业的待批同样要批）
-  const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
   let pendingMarkCount = 0;
   for (const count of pendingByAttempt.values()) pendingMarkCount += count;
 
@@ -1604,8 +1285,11 @@ export function getAnalyticsStudent(
     throw new HttpError(404, "STUDENT_NOT_FOUND", "学生不存在");
   }
 
-  const ctx = buildContext(db, teacherId, query, now);
-  const scoped = qualifyingOfStudent(ctx, studentId);
+  const ctx = buildContext(db, teacherId, query, now, {
+    kind: "student",
+    studentId,
+  });
+  const scoped = ctx.qualifying;
   const responses = scopedResponsesOf(ctx, scoped);
   let judged = 0;
   let correct = 0;
@@ -1659,6 +1343,7 @@ export function getAnalyticsQuestions(
     teacherId,
     analyticsQuerySchema.parse(query),
     now,
+    { kind: "questions" },
   );
   return { range: ctx.range, questions: buildQuestionRows(ctx) };
 }
