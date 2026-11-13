@@ -100,7 +100,8 @@ it("题级等待覆盖连续写入，整卷等待仍等待未完成的题", asyn
   const second = Promise.withResolvers<void>();
   const writes = vi.fn();
   installAnnotationBackend({
-    ...backend,
+    get: backend.get,
+    getAll: backend.getAll,
     set: async (key, value) => {
       writes();
       await (writes.mock.calls.length === 1 ? first.promise : second.promise);
@@ -134,7 +135,8 @@ it("PNG、布局、矢量、同步状态分键落地，重启恢复且不伪造b
   const backend = memoryAnnotationBackend();
   const writes: Array<{ key: string; value: unknown }> = [];
   installAnnotationBackend({
-    ...backend,
+    get: backend.get,
+    getAll: backend.getAll,
     set: async (key, value) => {
       writes.push({ key, value });
       await backend.set(key, value);
@@ -166,7 +168,8 @@ it("PNG、布局、矢量、同步状态分键落地，重启恢复且不伪造b
 it("本地写失败不得冒称已保存，失败仍保留内存稿可重试", async () => {
   const backend = memoryAnnotationBackend();
   installAnnotationBackend({
-    ...backend,
+    get: backend.get,
+    getAll: backend.getAll,
     set: async () => {
       throw new Error("磁盘写入失败");
     },
@@ -240,9 +243,9 @@ it("重试原子落盘保留同一底图、文档版本和待传标识", async (
   let failed = true;
   installAnnotationBackend({
     ...backend,
-    set: async (key, value) => {
+    update: async (keys, apply) => {
       if (failed) throw new Error("空间不足");
-      await backend.set(key, value);
+      await backend.update(keys, apply);
     },
   });
   await expect(
@@ -272,9 +275,9 @@ it("空错误不会显示为 null；再次写入成功前持续保留原稿和�
   let failed = true;
   installAnnotationBackend({
     ...backend,
-    set: async (key, value) => {
+    update: async (keys, apply) => {
       if (failed) throw null;
-      await backend.set(key, value);
+      await backend.update(keys, apply);
     },
   });
   await expect(
@@ -321,10 +324,19 @@ function countingStorage(): {
   const setCalls: string[] = [];
   const wrapped = {
     ...storage,
-    set: async (key: string, value: unknown) => {
-      setCalls.push(key);
-      await storage.set(key, value);
-    },
+    update: ((keys, apply, presenceOnly) =>
+      storage.update(
+        keys,
+        (values, write) =>
+          apply(values, {
+            ...write,
+            set: (key, value) => {
+              setCalls.push(key);
+              write.set(key, value);
+            },
+          }),
+        presenceOnly,
+      )) satisfies typeof storage.update,
   };
   installAnnotationBackend(wrapped);
   return {
@@ -338,6 +350,181 @@ function countingStorage(): {
 }
 
 describe("分键持久化（批次五 P1-1）", () => {
+  it("已确认云端的空白底图复用独立槽位，编辑后原稿提升为不可回收", async () => {
+    const storage = memoryAnnotationBackend();
+    installAnnotationBackend(storage);
+    const baseId = "22222222-2222-4222-8222-222222222222";
+    await applyAnnotationView(session, scope, {
+      base: {
+        baseId,
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        layout,
+      },
+      maxWidthPx: 600,
+      doc: null,
+      annotation: null,
+    });
+    await writeLocalAnnotationBase(session, scope, { png, layout }, doc, {
+      boundBaseId: baseId,
+    });
+    const other = { ...scope, questionId: "local-only" };
+    await writeLocalAnnotationBase(session, other, { png, layout }, doc);
+    await writeLocalAnnotationBase(
+      session,
+      scope,
+      { png: new Blob([PNG2_BYTES], { type: "image/png" }), layout },
+      doc,
+      { boundBaseId: baseId },
+    );
+    expect(await storage.getAll(BASE_KEY_PREFIX)).toHaveLength(1);
+    expect(await storage.getAll('["annotation-cloud-cache",')).toHaveLength(1);
+    expect(await storage.get(annotationKeyOf(session, scope))).toMatchObject({
+      localBase: null,
+    });
+    resetAnnotationStoreForTest();
+    expect(
+      (await getAnnotationRecord(session, other, { strictRead: true }))
+        ?.localBase?.png.size,
+    ).toBe(png.size);
+    expect(
+      (await getAnnotationRecord(session, scope, { strictRead: true }))
+        ?.localBase?.png.size,
+    ).toBe(PNG2_BYTES.length);
+    writeAnnotationDoc(session, scope, { ...doc, strokes: [strokeAt(2)] });
+    await settleAnnotationPersistence();
+    expect(await storage.getAll('["annotation-cloud-cache",')).toHaveLength(0);
+    expect(await storage.getAll(BASE_KEY_PREFIX)).toHaveLength(2);
+    resetAnnotationStoreForTest();
+    const restored = await getAnnotationRecord(session, scope, {
+      strictRead: true,
+    });
+    expect(restored?.pending?.doc.strokes).toHaveLength(1);
+    expect(restored?.localBase?.png.size).toBe(PNG2_BYTES.length);
+  });
+
+  it("另一标签页先保存的待传稿不会被本页缓存提升覆盖", async () => {
+    const storage = memoryAnnotationBackend();
+    installAnnotationBackend(storage);
+    const baseId = "22222222-2222-4222-8222-222222222222";
+    await applyAnnotationView(session, scope, {
+      base: {
+        baseId,
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        layout,
+      },
+      maxWidthPx: 600,
+      doc: null,
+      annotation: null,
+    });
+    await writeLocalAnnotationBase(session, scope, { png, layout }, doc, {
+      boundBaseId: baseId,
+    });
+    const key = annotationKeyOf(session, scope);
+    const otherDoc = { ...doc, strokes: [strokeAt(9)] };
+    await storage.set(key, {
+      ...((await storage.get(key)) as object),
+      doc: otherDoc,
+      pending: { doc: otherDoc, mutationId: "peer" },
+    });
+    const ours = { ...doc, strokes: [strokeAt(2)] };
+    writeAnnotationDoc(session, scope, ours);
+    await settleAnnotationPersistence();
+    expect(await storage.get(key)).toMatchObject({
+      pending: { mutationId: "peer", doc: otherDoc },
+    });
+    expect(await getAnnotationRecord(session, scope)).toMatchObject({
+      local: "failed",
+      doc: ours,
+    });
+  });
+
+  it("云端空白缓存重置时按旧身份核对，重启后保留服务端重置", async () => {
+    const storage = memoryAnnotationBackend();
+    installAnnotationBackend(storage);
+    const baseId = "22222222-2222-4222-8222-222222222222";
+    await applyAnnotationView(session, scope, {
+      base: {
+        baseId,
+        state: "ready",
+        stale: false,
+        pixelWidth: 600,
+        pixelHeight: 400,
+        layout,
+      },
+      maxWidthPx: 600,
+      doc: null,
+      annotation: null,
+    });
+    await writeLocalAnnotationBase(session, scope, { png, layout }, doc, {
+      boundBaseId: baseId,
+    });
+    resetAnnotationStoreForTest();
+    expect(
+      (await getAnnotationRecord(session, scope))?.localBase?.png.size,
+    ).toBe(png.size);
+    await applyAnnotationView(session, scope, {
+      base: null,
+      doc: null,
+      annotation: null,
+      maxWidthPx: 600,
+      resetVersion: 1,
+    });
+    await settleAnnotationPersistence();
+    expect((await getAnnotationRecord(session, scope))?.local).toBe("saved");
+    resetAnnotationStoreForTest();
+    expect(
+      await getAnnotationRecord(session, scope, { strictRead: true }),
+    ).toMatchObject({ resetVersion: 1, localBase: null, base: null });
+  });
+
+  it("空白云端缓存超出条数预算时仅淘汰可下载的底图", async () => {
+    const storage = memoryAnnotationBackend();
+    installAnnotationBackend(storage);
+    const baseId = "22222222-2222-4222-8222-222222222222";
+    for (let i = 0; i < 25; i++) {
+      const target = { ...scope, questionId: `cached-${i}` };
+      await applyAnnotationView(session, target, {
+        base: {
+          baseId,
+          state: "ready",
+          stale: false,
+          pixelWidth: 600,
+          pixelHeight: 400,
+          layout,
+        },
+        maxWidthPx: 600,
+        doc: null,
+        annotation: null,
+      });
+      await writeLocalAnnotationBase(session, target, { png, layout }, doc, {
+        boundBaseId: baseId,
+      });
+    }
+    expect(await storage.getAll('["annotation-cloud-cache",')).toHaveLength(24);
+    resetAnnotationStoreForTest();
+    const first = await getAnnotationRecord(
+      session,
+      { ...scope, questionId: "cached-0" },
+      { strictRead: true },
+    );
+    expect(first).toMatchObject({
+      localBase: null,
+      base: { baseId, state: "ready" },
+      pending: null,
+    });
+    const last = await getAnnotationRecord(
+      session,
+      { ...scope, questionId: "cached-24" },
+      { strictRead: true },
+    );
+    expect(last?.localBase?.png.size).toBe(png.size);
+  });
   it("每笔 writeAnnotationDoc 只写正文小记录；底图键只在首次落盘时写一次", async () => {
     const { storage, basePuts, bodyPuts } = countingStorage();
     await writeLocalAnnotationBase(session, scope, { png, layout }, doc);

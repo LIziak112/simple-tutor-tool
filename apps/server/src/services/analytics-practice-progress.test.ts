@@ -83,6 +83,14 @@ describe("完成矩阵进行中进度计数（M4-D3）", () => {
       )
       .get();
     expect(firstRow).toBeDefined();
+    // 排在 UUID 顺序最前的旧作废草稿，不得抢走最新卷的进度。
+    db.insert(attempts)
+      .values({
+        ...draft,
+        id: "00000000-0000-4000-8000-000000000000",
+        abandonedAt: SEED_NOW,
+      })
+      .run();
     db.update(responses)
       .set({ submittedAt: SEED_NOW })
       .where(eq(responses.id, firstRow?.id ?? ""))
