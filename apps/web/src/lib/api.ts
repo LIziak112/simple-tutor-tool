@@ -214,10 +214,15 @@ import {
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
-import { ApiError, invalidApiResponse, parseApiResponse } from "./api-response";
+import {
+  ApiError,
+  callApi,
+  invalidApiResponse,
+  throwShellError,
+} from "./api-response";
 import { readAttemptDetail } from "./attempt-detail-read";
 
-export { ApiError } from "./api-response";
+export { ApiError, callApi } from "./api-response";
 
 /**
  * Hono RPC 类型客户端：路由类型来自 apps/server 的 AppType，端到端类型安全。
@@ -249,85 +254,6 @@ export async function fetchHealth(): Promise<HealthData> {
   }
   const body = await res.json();
   return body.data;
-}
-
-/**
- * 调用 hc 接口并解包响应壳（T1.9 起）：
- * - 成功 → 返回 data 部分；
- * - { ok:false } → 抛 ApiError（code + 服务端中文 message + 壳外附加字段）；
- * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
- * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
- */
-export async function callApi<T>(
-  fn: () => Promise<Response>,
-  reuse?: (response: Response) => T | undefined,
-): Promise<T> {
-  let res: Response;
-  try {
-    res = await fn();
-  } catch (err) {
-    // 中止身份保留（T6R.8 复审⑬）：AbortError 原样上抛——调用方（note-sync）
-    // 据此区分「会话切换主动中止（丢弃）」与网络错误（退避）；其余失败
-    // 归并中文网络文案
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    throw new Error(
-      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
-    );
-  }
-  const reused = reuse?.(res);
-  if (reused !== undefined) return reused;
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    throw invalidApiResponse(res.status);
-  }
-  const response = parseApiResponse(body, res.status);
-  if (!response.ok) {
-    throw new ApiError(
-      response.error,
-      response.message,
-      res.status,
-      pickExtraFields(body),
-    );
-  }
-  return response.data as T;
-}
-
-/** 取统一壳（ok/error/message）之外的附加字段（如 LINT_ERROR 的 _issues） */
-function pickExtraFields(body: unknown): Record<string, unknown> | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const extra: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (key !== "ok" && key !== "error" && key !== "message") {
-      extra[key] = value;
-    }
-  }
-  return Object.keys(extra).length > 0 ? extra : undefined;
-}
-
-/**
- * 非 2xx 响应 → 抛错（口径同 callApi 的错误路径，供文件直出接口复用）：
- * { ok:false } 统一壳 → ApiError（code + 服务端中文 message + 壳外附加字段），
- * 调用方按 code 分支（如 404 INK_NOT_FOUND 降级）；壳解析失败/非壳 → 通用中文 Error。
- */
-async function throwShellError(res: Response): Promise<never> {
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    throw invalidApiResponse(res.status);
-  }
-  const response = parseApiResponse(body, res.status);
-  if (!response.ok) {
-    throw new ApiError(
-      response.error,
-      response.message,
-      res.status,
-      pickExtraFields(body),
-    );
-  }
-  throw invalidApiResponse(res.status);
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
+import { requestErrorMessage } from "@/lib/api-response";
 import { useSubmitAttempt } from "./attempt-queries";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
 import type { InkUploadController } from "./use-ink-upload";
@@ -172,5 +173,8 @@ export function useAttemptSubmitFlow({
       timed,
     ],
   );
-  return { inkFlushError, runSubmit, submit, submitAbortedRef };
+  const submitError = submit.isError
+    ? requestErrorMessage(submit.error, "交卷失败，请稍后重试")
+    : null;
+  return { inkFlushError, runSubmit, submit, submitAbortedRef, submitError };
 }

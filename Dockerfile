@@ -82,11 +82,13 @@ RUN pnpm install --frozen-lockfile --prod --filter "server..." \
 # 阶段三：运行镜像
 # ----------------------------------------------------------------------------
 FROM node:24-slim AS runner
+ARG OWNCLASS_BUILD_VERSION=local
 
 # §0.3 环境变量：PORT 默认 8787；DATA_DIR 指向挂载卷（compose 里 ./data:/app/data）；
 # PUBLIC_URL 属部署环境差异，不在此写死，由 compose 的 environment 提供
 # （默认 http://localhost:8787，域名 + HTTPS 时改成 https://你的域名）。
 ENV NODE_ENV=production \
+    OWNCLASS_BUILD_VERSION=${OWNCLASS_BUILD_VERSION} \
     PORT=8787 \
     DATA_DIR=/app/data
 

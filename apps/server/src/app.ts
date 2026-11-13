@@ -12,7 +12,10 @@ import type { Logger } from "pino";
 import pino from "pino";
 import { createRequireAnySession } from "./auth/require-any-session";
 import type { Db, DbHandle } from "./db/client";
-import { HttpError } from "./lib/http-error";
+import {
+  requestDiagnostics,
+  requestErrorHandler,
+} from "./lib/request-diagnostics.ts";
 import { createMcpRoutes } from "./mcp/mount";
 import { createPersonalMcpRoutes } from "./mcp/personal-mount";
 import { createStudentMcpRoutes } from "./mcp/student-mount";
@@ -61,6 +64,7 @@ export interface CreateAppOptions {
   publicUrl: string;
   /** 日志器；缺省用 pino 默认实例（info 级别、stdout）。测试可注入捕获实例 */
   logger?: Logger | undefined;
+  buildVersion?: string | undefined;
   /** 静态资源目录覆盖；缺省解析到仓库内 apps/web/dist（见 static.ts）。测试注入临时目录用 */
   webDistDir?: string | undefined;
   /** DSL 规范文档目录覆盖（T1.13 /spec 接口数据源）；缺省按候选顺序解析（见 spec-files.ts）。测试注入临时目录用 */
@@ -159,18 +163,6 @@ const AI_TASK_JSON_GUARD = {
  */
 const AI_MATERIAL_UPLOAD_BODY_LIMIT = 10 * 1024 * 1024;
 
-/**
- * 日志 path 脱敏（SAI-29）：分享票据 token 在 path 里（不在查询参数），
- * 错误日志不能回显明文——/api/public/ai/share/&lt;token&gt;（含附件子路径）
- * 的 token 段整体替换为 [token]，其余路径原样。反代侧同样不得记录原始
- * URI（部署文档：Caddy/Nginx 关闭或脱敏 $uri/request_uri 再落 access log）。
- */
-const SHARE_TOKEN_PATH_PATTERN = /^\/api\/public\/ai\/share\/[^/?#]+/;
-
-function sanitizePathForLog(path: string): string {
-  return path.replace(SHARE_TOKEN_PATH_PATTERN, "/api/public/ai/share/[token]");
-}
-
 export function createApp(options: CreateAppOptions) {
   const logger = options.logger ?? pino({ level: "info" });
   const requireAnySession = createRequireAnySession(options.db);
@@ -179,48 +171,8 @@ export function createApp(options: CreateAppOptions) {
   // —— 统一错误处理（响应格式见 §0.3：{ ok:false, error:"UPPER_SNAKE_CODE", message:"中文说明" }）——
 
   let app = new Hono()
-    // 业务错误（HttpError）：按自带状态码返回统一壳；info 级记录（不含请求体，密码绝不进日志）
-    .onError((err, c) => {
-      if (err instanceof HttpError) {
-        logger.info(
-          {
-            code: err.code,
-            status: err.status,
-            method: c.req.method,
-            path: sanitizePathForLog(c.req.path),
-            // 圈画审查 P0-1/P2-3：HttpError 携带的校验明细（如 NOTE/ANNOTATION
-            // _VALIDATION_FAILED 的 _issues 路径清单）随日志落盘——仍不含请求体
-            ...(Array.isArray(err.extra?._issues)
-              ? { issues: err.extra._issues }
-              : {}),
-          },
-          "业务错误",
-        );
-        // 统一壳 + 可选附加字段（如 LINT_ERROR 的 _issues，见 lib/http-error.ts）
-        const body: ApiErr & Record<string, unknown> = {
-          ok: false,
-          error: err.code,
-          message: err.message,
-          ...(err.extra ?? {}),
-        };
-        return c.json(body, err.status);
-      }
-      // 应用内抛出的异常：pino 记录完整异常，对外只返回统一 500 壳，不泄漏堆栈
-      logger.error(
-        {
-          err,
-          method: c.req.method,
-          path: sanitizePathForLog(c.req.path),
-        },
-        "未处理的服务器异常",
-      );
-      const body: ApiErr = {
-        ok: false,
-        error: "INTERNAL",
-        message: "服务器内部错误",
-      };
-      return c.json(body, 500);
-    })
+    .use("*", requestDiagnostics(logger, options.buildVersion))
+    .onError(requestErrorHandler(logger))
     // 未匹配路由：/api/* 一律返回统一 404 壳；非 /api 路径在生产模式下由 SPA 回退接管，这里兜底纯文本
     .notFound((c) => {
       if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {

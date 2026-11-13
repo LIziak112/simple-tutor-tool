@@ -7,6 +7,7 @@ import { loadOrCreateSecretKey, readConfig } from "./config";
 import { runBackfills } from "./db/backfill";
 import { createDbHandle } from "./db/client";
 import { runMigrations } from "./db/migrate";
+import { normalizeBuildVersion } from "./lib/request-diagnostics";
 import { handleServerError, installCrashHandlers } from "./lib/startup-errors";
 import { startStudentAiWorker } from "./services/ai-companion/student-ai-worker";
 import { startBackupScheduler } from "./services/backup-service";
@@ -30,6 +31,7 @@ const config = readConfig(process.env);
 
 // 开发时开 debug 日志方便排查，生产保持 info
 const logger = pino({ level: config.isProduction ? "info" : "debug" });
+const buildVersion = normalizeBuildVersion(process.env.OWNCLASS_BUILD_VERSION);
 
 // 会话密钥（§0.3：首次启动自动生成到 DATA_DIR/secret.key）。
 // 只记录长度不记录内容——密钥不进日志（后续任务用于 API Key 加密等场景）。
@@ -61,7 +63,7 @@ const stopBackupScheduler = startBackupScheduler(config.dataDir, db, logger);
 const stopStudentAiWorker = startStudentAiWorker({
   db,
   dataDir: config.dataDir,
-  logger,
+  logger: logger.child({ buildVersion }),
 });
 
 purgeExpiredQuestionProcesses(db);
@@ -77,6 +79,7 @@ const questionProcessCleanup = setInterval(
 ).unref();
 
 const app = createApp({
+  buildVersion,
   questionProcessEnabled: process.env.QUESTION_PROCESS_ENABLED === "1",
   isProduction: config.isProduction,
   logger,

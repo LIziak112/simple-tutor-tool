@@ -20,6 +20,7 @@ function makeApp(options: {
   isProduction: boolean;
   logger: Logger;
   webDistDir?: string;
+  buildVersion?: string;
 }) {
   return createApp({
     db: createTestDb(),
@@ -64,6 +65,118 @@ describe("GET /api/public/health", () => {
 });
 
 describe("统一错误格式（§0.3）", () => {
+  it("请求诊断按模板记录耗时与构建，客户端不能注入关联 ID 或敏感字段", async () => {
+    const { logger, lines } = captureLogger();
+    const app = makeApp({
+      isProduction: false,
+      logger,
+      buildVersion: "test-build",
+    });
+    app.post("/api/public/__diagnostics/:secret", async (c) => {
+      const payload = await c.req.text();
+      throw new Error(payload);
+    });
+    const response = await app.request(
+      "/api/public/__diagnostics/路径哨兵?token=查询哨兵",
+      {
+        method: "POST",
+        headers: { "x-request-id": "forged-sentinel" },
+        body: "正文哨兵",
+      },
+    );
+    expect(response.status).toBe(500);
+    const requestId = response.headers.get("x-request-id");
+    expect(requestId ?? "").toMatch(/^[a-f0-9-]{36}$/);
+    expect(response.headers.get("x-build-version")).toBe("test-build");
+    const events = lines.map(
+      (line) => JSON.parse(line) as Record<string, unknown>,
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        requestId,
+        route: "/api/public/__diagnostics/:secret",
+        status: 500,
+        code: "INTERNAL",
+        durationMs: expect.any(Number),
+        buildVersion: response.headers.get("x-build-version"),
+      }),
+    );
+    expect(lines.join("")).not.toMatch(
+      /路径哨兵|查询哨兵|forged-sentinel|正文哨兵/u,
+    );
+  });
+
+  it("同步和提交请求可按各自编号定位，认证拒绝保留状态与路由模板", async () => {
+    const { logger, lines } = captureLogger();
+    const app = makeApp({ isProduction: false, logger });
+    const routes = [
+      [
+        "/api/student/attempts/attempt-sentinel/answers/question-sentinel",
+        "PUT",
+        "/api/student/attempts/:id/answers/:questionId",
+      ],
+      [
+        "/api/student/attempts/attempt-sentinel/submit",
+        "POST",
+        "/api/student/attempts/:id/submit",
+      ],
+    ] as const;
+    const responses = await Promise.all(
+      routes.map(([path, method]) => app.request(path, { method })),
+    );
+    expect(responses.map((response) => response.status)).toEqual([401, 401]);
+    const ids = responses.map((response) =>
+      response.headers.get("x-request-id"),
+    );
+    expect(new Set(ids).size).toBe(2);
+    const events = lines.map((line) => JSON.parse(line));
+    for (const [index, [, method, route]] of routes.entries()) {
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          requestId: ids[index],
+          method,
+          route,
+          status: 401,
+          durationMs: expect.any(Number),
+        }),
+      );
+    }
+    expect(lines.join("")).not.toMatch(/attempt-sentinel|question-sentinel/u);
+  });
+
+  it("原生流响应保留内容、响应头与请求编号", async () => {
+    const app = makeApp({
+      isProduction: false,
+      logger: silentLogger,
+      buildVersion: "test-build",
+    });
+    app.all(
+      "/api/public/__diagnostic-stream",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("data: test\n\n"));
+              controller.close();
+            },
+          }),
+          {
+            headers: {
+              "content-type": "text/event-stream",
+              "x-sdk-header": "present",
+            },
+          },
+        ),
+    );
+    const response = await app.request("/api/public/__diagnostic-stream");
+    expect(response.headers.get("x-request-id") ?? "").toMatch(
+      /^[a-f0-9-]{36}$/,
+    );
+    expect(response.headers.get("x-build-version")).toBe("test-build");
+    expect(response.headers.get("x-sdk-header")).toBe("present");
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(await response.text()).toBe("data: test\n\n");
+  });
   it("未知 /api 路径返回 404 { ok:false, error:'NOT_FOUND', message:'接口不存在' }", async () => {
     const app = makeApp({ isProduction: false, logger: silentLogger });
     const res = await app.request("/api/does-not-exist");
@@ -95,7 +208,7 @@ describe("统一错误格式（§0.3）", () => {
       message: "服务器内部错误",
     });
 
-    // 客户端拿不到堆栈，但日志里要有：error 级别（50）+ 异常对象
+    // 错误日志用关联 ID 和路由模板定位，异常原文保持在进程内。
     const entries = lines.map(
       (line) =>
         JSON.parse(line) as {
@@ -107,7 +220,7 @@ describe("统一错误格式（§0.3）", () => {
     expect(
       entries.some((e) => e.level === 50 && e.msg === "未处理的服务器异常"),
     ).toBe(true);
-    expect(entries.some((e) => e.err?.message === "boom-测试异常")).toBe(true);
+    expect(entries.some((e) => e.err?.message === "boom-测试异常")).toBe(false);
   });
 
   it("开发模式下未知非 /api 路径返回纯文本 404（不托管静态资源）", async () => {

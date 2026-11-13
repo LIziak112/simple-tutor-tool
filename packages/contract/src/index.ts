@@ -104,7 +104,7 @@ export * from "./question-node.ts";
  *  方案 §3）：GET /api/teacher/students/:id/question-review 查询参数与聚合行
  *  （一行 = questionId × 该 kind 口径下最新代表作答；口径与 MCP-A 同一构造器） */
 export * from "./question-review-api.ts";
-
+export * from "./request-diagnostics.ts";
 /** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
  *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
 export * from "./review-pack.ts";
