@@ -10,7 +10,10 @@ import type {
   CourseUpdateRequest,
 } from "@tutor/contract";
 import { contentTreeKey } from "@/features/content/content-queries";
-import { studentCoursesKey } from "@/features/student/student-queries";
+import {
+  studentCoursesKey,
+  studentLecturesKey,
+} from "@/features/student/student-queries";
 import {
   addCourseItemsApi,
   addCourseMembersApi,
@@ -79,8 +82,9 @@ function useInvalidateCourses(courseId?: string) {
   return () => {
     void queryClient.invalidateQueries({ queryKey: ["teacher", "courses"] });
     void queryClient.invalidateQueries({ queryKey: contentTreeKey });
-    // 个人账号管理视角改课程后，学习视角即刻读取新目录和成员关系。
+    // 管理视角改课程后，学习视角的课程与讲义投影一并重取。
     void queryClient.invalidateQueries({ queryKey: studentCoursesKey });
+    void queryClient.invalidateQueries({ queryKey: studentLecturesKey });
     if (courseId !== undefined) {
       void queryClient.invalidateQueries({
         queryKey: courseDetailKey(courseId),

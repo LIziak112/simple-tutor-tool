@@ -7,7 +7,11 @@ import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
-import { useLogoutStudent, useStudentLinkLogin } from "./student-auth";
+import {
+  useApplyStudentAuthed,
+  useLogoutStudent,
+  useStudentLinkLogin,
+} from "./student-auth";
 
 /**
  * 学生登录/登出的草稿会话接线（T6R.9 增补）：
@@ -25,7 +29,12 @@ vi.mock("@/lib/api", () => ({
   fetchStudentLecturesApi: vi.fn(async () => ({ lectures: [] })),
 }));
 
-import { loginStudentByLinkApi } from "@/lib/api";
+import {
+  fetchStudentAssignmentsApi,
+  fetchStudentCoursesApi,
+  fetchStudentLecturesApi,
+  loginStudentByLinkApi,
+} from "@/lib/api";
 
 const linkMock = vi.mocked(loginStudentByLinkApi);
 
@@ -56,6 +65,7 @@ function renderAuthHooks() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   resetNoteSession();
   linkMock.mockReset();
 });
@@ -99,4 +109,30 @@ describe("登录成功路径的草稿会话接线（T6R.9 复审①）", () => {
     await waitFor(() => expect(hooks.logout.current.isSuccess).toBe(true));
     expect(currentNoteSession()).toBeNull();
   });
+});
+
+describe("登录预取遵循门户能力", () => {
+  it.each(["personal", "class"] as const)(
+    "%s 账号只预取已开放的功能",
+    async (accountKind) => {
+      const client = new QueryClient();
+      const wrapper = ({ children }: { children: React.ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      const { result } = renderHook(() => useApplyStudentAuthed(), { wrapper });
+      await act(async () => {
+        await result.current({ ...ME_A, accountKind });
+      });
+      await waitFor(() => {
+        expect(fetchStudentCoursesApi).toHaveBeenCalledTimes(1);
+        expect(fetchStudentLecturesApi).toHaveBeenCalledTimes(1);
+      });
+      if (accountKind === "personal") {
+        expect(fetchStudentAssignmentsApi).not.toHaveBeenCalled();
+      } else {
+        expect(fetchStudentAssignmentsApi).toHaveBeenCalledTimes(1);
+      }
+      client.clear();
+    },
+  );
 });
