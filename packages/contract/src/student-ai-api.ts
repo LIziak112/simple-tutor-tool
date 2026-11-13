@@ -343,6 +343,8 @@ export const aiConnectionPatchRequestSchema = z.discriminatedUnion("channel", [
     })
     .strict(),
   aiConnectionMcpMemberSchema.extend({
+    /** 学生可按连接开启定位已主动发起的当前题求助。 */
+    liveContextEnabled: z.boolean().optional(),
     /** 重置 token：旧 token 立即失效，新明文只在 PATCH 响应出现一次 */
     resetToken: z.boolean().optional(),
   }),

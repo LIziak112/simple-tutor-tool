@@ -24,6 +24,10 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import {
+  createStudentAiConnection,
+  deleteStudentAiConnection,
+} from "../services/ai-companion/connection-service.ts";
 import { attachAiTaskMaterials } from "../services/ai-companion/student-ai-materials.ts";
 import { createAiTask } from "../services/ai-companion/student-ai-queue.ts";
 import {
@@ -169,7 +173,10 @@ interface PreparedLink {
 }
 
 /** 建一个带两页材料的 link 任务 + 有效票据（真实服务链路，无行直插） */
-async function prepareLinkTask(withMaterials = true): Promise<PreparedLink> {
+async function prepareLinkTask(
+  withMaterials = true,
+  channel: "link" | "inapp" = "link",
+): Promise<PreparedLink> {
   const w = world();
   const { task } = createAiTask(
     w.db,
@@ -178,7 +185,7 @@ async function prepareLinkTask(withMaterials = true): Promise<PreparedLink> {
       attemptId: w.attemptId,
       questionId: "q-alpha",
       question: "这道题第二问的思路是什么？SENTINEL_QUESTION",
-      channel: "link",
+      channel,
       mutationId: randomUUID(),
     },
     { hmacSecret: SECRET },
@@ -219,6 +226,70 @@ async function prepareLinkTask(withMaterials = true): Promise<PreparedLink> {
 
 describe("SAI-29 分享正文及附件（公开读端点）", () => {
   describe("先测①：失效形态下正文与附件直连一致拒绝", () => {
+    it.each(["link", "inapp"] as const)(
+      "撤销链接连接后 %s 任务旧票据保持失效",
+      async (channel) => {
+        const w = await prepareLinkTask(true, channel);
+        const connect = () =>
+          createStudentAiConnection(w.db, {
+            studentId: w.studentId,
+            rootSecret: SECRET,
+            request: { channel: "link" },
+          }).connection.id;
+        const connectionId = connect();
+        expect(
+          (await w.app.request(`/api/public/ai/share/${w.token}`)).status,
+        ).toBe(200);
+        deleteStudentAiConnection(w.db, {
+          studentId: w.studentId,
+          connectionId,
+        });
+        connect();
+        for (const suffix of ["", "/materials/0.png"]) {
+          const res = await w.app.request(
+            `/api/public/ai/share/${w.token}${suffix}`,
+          );
+          expect(res.status).toBe(403);
+        }
+      },
+    );
+
+    it.each(["归档学生", "停用教师"] as const)(
+      "%s 后已有分享不再交付正文或附件",
+      async (reason) => {
+        const w = await prepareLinkTask();
+        const now = new Date().toISOString();
+        if (reason === "归档学生") {
+          w.db
+            .update(students)
+            .set({ archivedAt: now })
+            .where(eq(students.id, w.studentId))
+            .run();
+        } else {
+          w.db
+            .update(teachers)
+            .set({ disabledAt: now })
+            .where(eq(teachers.id, TEST_TEACHER_ID))
+            .run();
+        }
+        for (const suffix of ["", "/materials/0.png"]) {
+          const res = await w.app.request(
+            `/api/public/ai/share/${w.token}${suffix}`,
+          );
+          expect(res.status).toBe(403);
+          expect(await res.json()).toMatchObject({
+            error: "AI_POLICY_DISABLED",
+          });
+        }
+        const ticket = w.db
+          .select()
+          .from(aiShareTickets)
+          .where(eq(aiShareTickets.taskId, w.taskId))
+          .get();
+        expect(ticket?.viewCount).toBe(0);
+      },
+    );
+
     it("猜 token：正文与附件都 404，错误壳不回显 token", async () => {
       const w = await prepareLinkTask();
       const guess = "A".repeat(43);
@@ -465,8 +536,14 @@ describe("SAI-29 分享正文及附件（公开读端点）", () => {
       expect(res.status).toBe(403);
       const joined = w.logs.join("\n");
       expect(joined).not.toContain(w.token);
-      // 脱敏形态：路径段替换为占位符（不能只清查询参数——token 在 path 里）
-      expect(joined).toContain("/api/public/ai/share/[token]");
+      // 仅记录注册的路由模板，且可与实际响应对账。
+      expect(w.logs.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          route: "/api/public/ai/share/:token",
+          requestId: res.headers.get("x-request-id"),
+          status: 403,
+        }),
+      );
       expect(joined).not.toContain(w.dataDir.replaceAll("\\", "/"));
       expect((await res.text()).includes(w.token)).toBe(false);
     });

@@ -20,6 +20,7 @@ import {
   recordShareTicketGenerated,
 } from "./student-ai-audit.ts";
 import { taskOf } from "./student-ai-materials.ts";
+import { revokeTaskShareTickets } from "./student-ai-share-revocation.ts";
 import {
   type AiPolicyConfigSource,
   resolveAttemptQuestionAiPolicy,
@@ -286,30 +287,15 @@ export function revokeAiShareTickets(
   input: { readonly studentId: string; readonly taskId: string },
   options: { now?: Date | string } = {},
 ): { revokedCount: number } {
-  const now = resolveNowDate(options.now);
-  const task = requireOwnTask(db, input.studentId, input.taskId);
-  const nowIso = now.toISOString();
-  const active = db
-    .select()
-    .from(aiShareTickets)
-    .where(
-      and(eq(aiShareTickets.taskId, task.id), isNull(aiShareTickets.revokedAt)),
-    )
-    .all()
-    .filter((row) => row.expiresAt > nowIso);
-  if (active.length === 0) return { revokedCount: 0 };
-  db.transaction(
+  const now = resolveNowDate(options.now).toISOString();
+  const revokedCount = db.transaction(
     (tx) => {
-      for (const row of active) {
-        tx.update(aiShareTickets)
-          .set({ revokedAt: nowIso })
-          .where(eq(aiShareTickets.id, row.id))
-          .run();
-      }
+      const task = requireOwnTask(asDb(tx), input.studentId, input.taskId);
+      return revokeTaskShareTickets(tx, task.id, now);
     },
     { behavior: "immediate" },
   );
-  return { revokedCount: active.length };
+  return { revokedCount };
 }
 
 // ---------- 读取授权（正文/附件共用；每次实时核对——步骤 5） ----------

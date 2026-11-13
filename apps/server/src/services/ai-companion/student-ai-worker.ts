@@ -5,6 +5,7 @@ import { loadOrCreateSecretKey } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
 import type { AiTaskRow } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { elapsedMs } from "../../lib/request-diagnostics.ts";
 import {
   learningRecordAiViewForTask,
   learningRecordSectionMd,
@@ -38,7 +39,12 @@ import {
   listInappDispatchCandidates,
   markInappDispatchUncertain,
   recoverAiQueue,
+  runtimeEpochOf,
 } from "./student-ai-queue.ts";
+import {
+  dispatchConnectionIsCurrent,
+  outboundRulesAreCurrent,
+} from "./student-ai-task-policy.ts";
 
 /**
  * SAI-17 页内 AI 异步执行 worker（B09；技术方案 §6「页内派发」、§9 并发限额）。
@@ -228,9 +234,9 @@ function inappReplyPlanFor(
     return task === undefined
       ? { replyMd }
       : inappReplyPlanOf(ctx.db, task, replyMd, now);
-  } catch (error) {
+  } catch {
     ctx.logger?.error(
-      { event: "ai_rubric_plan_failed", taskId, err: error },
+      { event: "ai_rubric_plan_failed", taskId },
       "量表意见落账规划失败，回信原文照发",
     );
     return inappReplyFallbackOf(replyMd);
@@ -245,11 +251,12 @@ function completeReply(
   generation: number,
   runtimeEpoch: string,
   replyMd: string,
+  connectionIsCurrent: boolean,
 ): DispatchOutcome {
   try {
     const now = ctx.now();
     const plan = inappReplyPlanFor(ctx, taskId, replyMd, now);
-    completeInappDispatch(
+    const result = completeInappDispatch(
       ctx.db,
       {
         studentId,
@@ -257,13 +264,14 @@ function completeReply(
         generation,
         replyMd: plan.replyMd,
         expectedRuntimeEpoch: runtimeEpoch,
+        connectionIsCurrent,
         ...(plan.onDelivered !== undefined
           ? { onDelivered: plan.onDelivered }
           : {}),
       },
       { now },
     );
-    return "replied";
+    return result.delivered ? "replied" : "paused";
   } catch (error) {
     if (isConflict(error)) return "late";
     ctx.logger?.error(
@@ -421,6 +429,8 @@ async function dispatchOne(
       NEEDS_REKEY_MESSAGE,
     );
   }
+  const connectionIsCurrent = () =>
+    dispatchConnectionIsCurrent(db, studentId, ctx.rootSecret, connection);
 
   // 装配与材料（事务外；读取失败按可重试失败落库，不虚报已附图）
   let assembly: OutboundAssembly;
@@ -490,6 +500,7 @@ async function dispatchOne(
         generation,
         runtimeEpoch,
         outcome.content,
+        connectionIsCurrent(),
       );
     }
     if (outcome.kind === "rate_limited" || outcome.kind === "server_error") {
@@ -516,6 +527,25 @@ async function dispatchOne(
       } catch (error) {
         if (error instanceof WorkerStoppedError) return "skipped";
         throw error;
+      }
+      const task = taskOf(db, taskId);
+      if (
+        runtimeEpochOf(db) !== runtimeEpoch ||
+        task?.generation !== generation ||
+        task.status !== "dispatching"
+      ) {
+        return "skipped";
+      }
+      if (!connectionIsCurrent() || !outboundRulesAreCurrent(db, task)) {
+        return failDispatch(
+          ctx,
+          studentId,
+          taskId,
+          generation,
+          runtimeEpoch,
+          "policy",
+          "AI 连接或教学授权已变化，请确认后继续",
+        );
       }
       continue;
     }
@@ -601,7 +631,20 @@ async function dispatchPass(
   }
 
   const outcomes = await Promise.all(
-    selected.map((candidate) => dispatchOne(ctx, candidate)),
+    selected.map(async (candidate) => {
+      const startedAt = performance.now();
+      const reason = await dispatchOne(ctx, candidate);
+      ctx.logger?.info(
+        {
+          event: "ai_dispatch_decision",
+          taskId: candidate.id,
+          reason,
+          durationMs: elapsedMs(startedAt),
+        },
+        "页内 AI 派发裁决",
+      );
+      return reason;
+    }),
   );
   const summary: StudentAiDispatchRunSummary = {
     // dispatched = 真正进入出站流程（含最终 late/写回竞态的派发）

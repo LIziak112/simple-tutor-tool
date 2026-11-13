@@ -6,6 +6,7 @@ import { serveStatelessMcpRequest } from "./stateless-transport";
 import {
   createRequireStudentMcpToken,
   type StudentMcpEnv,
+  studentMcpToolAuthorization,
 } from "./student-auth";
 import { createStudentMcpServer } from "./student-server";
 
@@ -108,8 +109,14 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
         db: options.db,
         dataDir: options.dataDir,
         publicUrl: options.publicUrl,
-        studentId: c.var.mcpStudent.id,
+        studentId: c.var.mcpStudent.studentId,
+        connectionId: c.var.mcpStudent.connectionId,
         hmacSecret,
+        isAuthorized: studentMcpToolAuthorization(
+          options.db,
+          c.req.header("authorization"),
+          c.var.mcpStudent,
+        ),
       });
       return serveStatelessMcpRequest(server, c.req.raw);
     });

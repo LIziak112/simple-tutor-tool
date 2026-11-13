@@ -49,6 +49,7 @@ interface ConnectionDraft {
   readonly consentAcknowledged: boolean;
   /** 用户是否动过表单(dirty 口径:导航/刷新拦截与放弃确认依据) */
   readonly touched: boolean;
+  readonly liveContextEnabled?: boolean;
 }
 
 const EMPTY_DRAFT: ConnectionDraft = {
@@ -233,7 +234,14 @@ export function AiConnectionManager() {
           isDefault: draft.isDefault,
         };
       case "mcp":
-        return { channel: "mcp", isDefault: draft.isDefault };
+        return {
+          channel: "mcp",
+          isDefault: draft.isDefault,
+          ...(draft.liveContextEnabled !==
+            (target.liveContextEnabled === true) && {
+            liveContextEnabled: draft.liveContextEnabled === true,
+          }),
+        };
       default:
         return {
           channel: target.channel,
@@ -331,6 +339,9 @@ export function AiConnectionManager() {
       defaultValidHours:
         connection.channel === "link" ? connection.defaultValidHours : 24,
       isDefault: connection.isDefault,
+      ...(connection.channel === "mcp" && {
+        liveContextEnabled: connection.liveContextEnabled === true,
+      }),
       consentAcknowledged: true,
       touched: false,
     });
@@ -734,6 +745,26 @@ export function AiConnectionManager() {
                   保存后复制完整配置并粘贴到 AI 客户端。客户端需要支持 Bearer
                   Token 认证与 Streamable HTTP 传输。
                 </p>
+                {draft.editingId !== null && (
+                  <label className="flex min-h-11 items-start gap-2 text-foreground">
+                    <input
+                      type="checkbox"
+                      className="mt-1 size-4 accent-primary"
+                      checked={draft.liveContextEnabled === true}
+                      onChange={(event) =>
+                        updateDraft({
+                          liveContextEnabled: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>
+                      允许客户端定位当前题的求助
+                      <span className="block text-xs text-muted-foreground">
+                        只定位你主动加入队列的任务。客户端仍需领取才能读取求助内容。
+                      </span>
+                    </span>
+                  </label>
+                )}
               </div>
             )}
 

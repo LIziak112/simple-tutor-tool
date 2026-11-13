@@ -42,6 +42,7 @@ import {
   completeInappDispatch,
   createAiTask,
   failInappDispatch,
+  followupStudentAiTask,
   getStudentAiTaskDetail,
   listStudentAiTasks,
   openStudentAiReply,
@@ -347,6 +348,66 @@ describe("SAI-15 ① enqueue→submit→claim（双阶段装配 + 保留原请�
 // ---------- ② claim→teacher-disable→feedback ----------
 
 describe("SAI-15 ② 教师关闭：在途回信收存但不向未完成题交付", () => {
+  it.each([5000, 3000])(
+    "已读第一轮后关闭，第二轮在 %i 收存但保持未交付",
+    (replyTime) => {
+      const db = createTestDb();
+      const world = setupWorld(db);
+      const task = createTask(db, world);
+      const claim = (offset: number) => {
+        const claimed = claimMcpTask(
+          db,
+          { studentId: world.studentId, taskId: task.id },
+          { now: at(offset) },
+        );
+        if (claimed === null) throw new Error("MCP 领取应成功");
+        return claimed;
+      };
+      const ownTask = { studentId: world.studentId, taskId: task.id };
+      submitMcpReply(
+        db,
+        {
+          ...ownTask,
+          leaseToken: claim(1000).leaseToken,
+          replyMarkdown: "已读第一轮",
+        },
+        { now: at(2000) },
+      );
+      openStudentAiReply(db, ownTask, { now: at(3000) });
+      followupStudentAiTask(
+        db,
+        { ...ownTask, question: "再解释一步" },
+        { now: at(4000) },
+      );
+      const nextClaim = claim(4500);
+      setStudentPostSubmitOnly(db, world.studentId);
+      let delivered = false;
+      submitMcpReply(
+        db,
+        {
+          ...ownTask,
+          leaseToken: nextClaim.leaseToken,
+          replyMarkdown: "未读第二轮",
+          onReplied: () => {
+            delivered = true;
+          },
+        },
+        { now: at(replyTime) },
+      );
+      expect(delivered).toBe(false);
+      expect(
+        getStudentAiTaskDetail(db, ownTask)
+          .messages.filter((m) => m.role === "assistant")
+          .map((m) => m.contentMd),
+      ).toEqual(["已读第一轮"]);
+      expectHttpError(
+        () => openStudentAiReply(db, ownTask, { now: at(6000) }),
+        403,
+        "AI_POLICY_DISABLED",
+      );
+    },
+  );
+
   it("领取后关闭→回信：存旧事实（提交前回信），未完成题不新增交付，完成后恢复可见", () => {
     const db = createTestDb();
     const world = setupWorld(db);
