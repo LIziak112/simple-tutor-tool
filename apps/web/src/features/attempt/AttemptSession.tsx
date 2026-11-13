@@ -168,13 +168,6 @@ const ATTEMPT_LAZY_MOUNT_THRESHOLD = 20;
 import { Button } from "@/components/ui/button";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
-/** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
-export function isDraftDetail(
-  data: AttemptDetailData,
-): data is AttemptDraftData {
-  return data.attempt.status === "draft";
-}
-
 /** 详情 data 是否结果视图（submitted/graded） */
 export function isResultDetail(
   data: AttemptDetailData,

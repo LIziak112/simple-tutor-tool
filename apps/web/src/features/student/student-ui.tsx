@@ -4,13 +4,7 @@ import type {
   StudentCourseSummary,
 } from "@tutor/contract";
 import { cn } from "cn";
-import {
-  ArrowRight,
-  CalendarClock,
-  ChevronRight,
-  ClipboardList,
-  School,
-} from "lucide-react";
+import { ArrowRight, CalendarClock, ChevronRight, School } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import {
@@ -458,15 +452,5 @@ export function StudentSectionTitle({
       </h2>
       {action}
     </div>
-  );
-}
-
-/** 作业分组小标题（待完成 / 已完成） */
-export function AssignmentGroupLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground">
-      <ClipboardList aria-hidden className="size-3.5" />
-      {children}
-    </p>
   );
 }
