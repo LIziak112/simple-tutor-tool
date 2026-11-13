@@ -122,6 +122,7 @@ export const SPEC_TAGS = {
   "student-workspace.spec.ts": ["@student"],
   "student-records.spec.ts": ["@student"],
   "student-memos.spec.ts": ["@student"],
+  "learning-context-memos.spec.ts": ["@student"],
   "student-review-workspace.spec.ts": ["@student"],
   "student-self-review.spec.ts": ["@student"],
   "timed-test.spec.ts": ["@student"],

@@ -384,3 +384,52 @@ API 实证覆盖：未认证、跨人/不存在同 404、真实 expected revisio
 `pnpm --filter server run typecheck` exit0；3 个相关源文件 Biome 与 `git diff --check` exit0。无契约变更，完整 gen 的有效证据复用，不重开生成。
 
 此补修只触 shared projector、memo 适配、API测试与本记录。前端 dirty 暂留工作区，不纳本后端修复 commit；无契约/生成/数据库结构变化。
+
+## 11. 前端实施与最终验证
+
+本节为当前实现记录；§10/10.1 是当时仅冻结 canonical 的阶段事实，前端 dirty 描述不泛化到最终冻结状态。独立审核和完整 PR CI 仍由主会话安排，本包不代写独审通过，不宣称二期/上线完成。
+
+### 实际状态与来源流转
+
+- `learning-context-store.ts` 是唯一当前来源仓：principal epoch、route epoch、opaque host lease、viewId 与 selected source；旧 host cleanup、旧 principal 与迟到 canonical 无发布权。同值新 lease 也独立。隐藏页保留本机来源但撤回实时上报，恢复从当前仓派生；不加 TTL 或第二份 current。
+- `LearningContextEnvironment` 在原学生学习布局绑定已有 me.id；`LearningPrincipalContext` 仅透传调用者的已认证主体输入，不存焦点或新授权。旧主体还挂载时不能在新主体 epoch 重新注册旧卷，也不能捕获新人的来源。原 PortalGuard/个人视角/教师学生身份处理不改。
+- 四类 publisher 的 reference 来自实际授权页面 DTO。attempt 用真实 flatQuestions/revision；result 的可选 revision 缺失时不补造；lesson 用同一公共题序 helper；lecture 用详情返回的真实 lectureId/courseId，sectionId:null。仅对实际观察或显式选择的题请求 canonical，缓存按 principal/reference/真实展示序区分；晚回执必须仍属同 host/reference。
+- 显式题卡交互/输入/显式切题优先于已有阅读观察。仍可见、实际输入聚焦/编辑、打开弹层时保持显式源；零尺寸或离屏且失去资格后允许阅读接管，blur 后在事件焦点稳定的 microtask 重新核对，不加任意延时。单题/列表、结果恢复、讲练节/题阅读继续使用原观察器；纯标题不造 question/session/section。
+- 原 learning-focus 文件只保留兼容选择器/发布租约适配，没有独立 current；MCP reporter 只存传输序号/发布状态，每次派生当前题，继续受原 capability generation 与 opt-in/AI 门控制；离线、后台、卸载撤回旧 view。Dock 只消费仓，已绑定会话、输入、材料和任务 lease 不随滚动重绑。讲练未被 Dock 消费的旧 AI currentQuestionId state/包裹 onAnswer 已清掉，宿主兼容字段只传原阅读观察值。
+- 题卡记录端每学习布局一份。卡片按自身 route/qid 捕获 source 快照，原真实 revision/No/count/reference/view 固定到本条完成或取消；整卷菜单显式 none，讲义工具栏保留真实讲义源。Radix portal 与触控/键盘复用；`onOpenAutoFocus` 同步落到 textarea，Escape 归还实际触发器。每次打开有独立记录身份/key，旧记录迟到入队回执不能关闭新记录或解除其保护。
+- outbox 不升级存储结构；旧条目缺新字段继续上传。新条目保存真实 context 或可验证 reference、source display/view/principal 与现有真实 deviceId。入队先落本机，canonical 请求不阻塞本机保存；缺版本时省略完整 context，404 兼容退回旧 anchor，409 expected revision/展示序不符保稿拒绝静默重绑。文本与 multipart 同一信封；队列与回执沿原账号保护，服务端仍重新 canonical，旧 clientId 原快照优先。
+
+### 规模与职责
+
+| 文件（产品基点→本包） | 实际处理与剩余共同变化职责 |
+| --- | --- |
+| AttemptQuestionCard 795→535 | 题头/更多菜单抽为独立 QuestionMeta 280；本体保留题面、书写/圈画与回答装配。response kind 收窄仍在原路径，真实 I16 无需迁移白名单 |
+| AttemptResultView 913→537 | 结果题卡/材料块为 ResultQuestionCard 357，解答折叠为 ResultSolutionFold 62；视图保留卷级结果导航/总结/动作装配，公共旧导出兼容 |
+| AttemptSession 1470→1465 | 答题卡与提交遗漏统计的真实完成度派生抽为 attempt-navigation-items 54；继续保留原答题/同步/提交装配历史基线，不做机械 JSX 切片。后续可按编辑/材料装配真正共同变化进一步分包 |
+| StudentLessonPage 1102→910 | 讲练序、组锚点请求、页头分别抽为实际共享职责模块，低于硬线移除基线；保留讲练生命周期/答题与完成视图装配 |
+| AiCompanionDock 858→847 | 删旧发布/心跳宿主副作用，保留已绑定发送/CAS/租约与布局编排；新增源选择在共享仓，未塞入另一份 current |
+| StudentLectureViewPage 438→440 | 发布规则提到共享 publisher，页面只传实际详情 descriptor；现有正文/目录/阅读痕迹是同一阅读页共同变化边界，后续可按阅读痕迹职责拆，未为2行增长机械切片 |
+| MemoComposer 397→416 | 先把来源信封组装提为 memo-source-fields；记录端保留四形态输入、失败媒体/原键重试等同一保稿表单职责。软线保留并解释，不为400凑行；队列上传另已按真实职责拆分 |
+
+新模块均低于400，历史硬线只降不升（29→28基线项）；未动 InkPad/纸面工具条、submit 主路径、计时/激活/分批/模板/标签列表 UI/MCP工具注册，没有本包新增迁移。文档约定只更新真实来源、入口和消费规则。
+
+### 最终验证证据与首失败
+
+完整日志/范围工件位于 `/workspace/channels/f76423cc/work/session-focus/`，命令详细清单与 SHA 在树外冻结卡；不能把下列局部结果说成全量。
+
+| 范围 | 结果与边界 |
+| --- | --- |
+| 前端最终定点单 worker | `ui-final-targeted-unit.log`：20文件272项 exit0，含 store/publisher/composer/outbox/MCP/Dock/题卡/讲练/结果/身份布局、真实 I16 全扫、SPEC_TAGS选择器。其后仅清掉讲练未消费的旧 state/包装及测试非空断言，`ui-dead-focus-unit.log` 3文件31项 exit0；其他有效结果复用 |
+| TDD红绿 | composer打开后变锚红1fail/5pass→绿；旧principal publisher/未知section契约红2fail/2pass→绿；关闭纸面显式优先红1fail/1pass→绿；隐藏零尺寸/blur红2fail/5pass→绿7/7；旧记录迟到入队回执红1fail/3pass→绿4/4。初始store红为模块尚不存在，未冒充状态行为失败 |
+| 新浏览器首轮 | Chromium1 worker/0 retry，8项中1pass/7fail exit1，完整trace/screenshot保留。真实产品缺陷为带锚Dialog未聚焦textarea；通过控件生命周期同步修复。夹具问题为页面尚未稳定即断网、材料缺新内容专用环境、课程文本节点精确匹配错误、用draft禁键monitor误判受限result契约的null字段；原monitor不改，受限结果严格所有参考/解析/判分null与canonical原始白名单均保留 |
+| 新浏览器修后 | 第二轮聚焦/就绪相关5项4pass/1fail，剩余是讲义文本span的尾空格locator错误；最终同一生产代码的有效绿为该轮4项加下一轮4个新场景。第三轮新剩余4项+既有AI三布局1+随笔2，7/7 exit0（1.1m），共覆盖8个新case与3个既有case，不合并计为一次11项运行 |
+| 最终讲练死状态清理后 | `e2e-lesson-final-hash.log`：只重跑受影响讲练一项，Chromium1 worker/0 retry，1/1 exit0，15.2s；清理后端口0 listener，无本树应用残留 |
+| 浏览器配置/资源 | `CI=1` + 缓存 Chromium headless shell1243 + 实测 LD_LIBRARY_PATH；仅iPad模拟，非真机。workers1/retries0，未触发 student-workspace PERF_GATE。材料使用既有qm隔离对，Chromium18891/15191、WebKit18892/15192，finally teardown；实际两浏览器并发留给CI。首次8、实际@student grep清单90项含新8、最终窄选7均有非零 --list日志；不是dry-run冒充测试 |
+| 类型 | 五子包串行排根曾 exit0；canonical补修 server tsc exit0；最终仅web与e2e分别串行 exit0，其余无变源有效复用。首轮server测试unknown/nullable、前端exact optional/import类型错误及修复日志保留；新增fixture一轮browserName未用 TS6133 exit1，按project隔离端口接线后重跑exit0 |
+| 生成/后端复用 | canonical最终3文件44项、CLI2文件6项既有有效证据；完整gen第2/3轮exit0且24生成文件0漂移；本UI/后端补修未再改公契约/生成源，不重跑后端/生成来凑验证 |
+| lint/规模/治理 | 43个变动代码/JSON文件Biome exit0无warning；全仓1036代码规模 exit0，staged33代码（7软线，1历史硬线）exit0；基线28条。治理与diff/check exit0。I16原片段/次数/路径表未增加豁免 |
+| 全量选择 | origin/main=89fab4c43772d4588f74b4ddf5ef32dd5faf8ef4；origin/v2=d02f90ab3bf9aec2af9fe011fe7e5d9376ee87a0。本地无v2分支，使用明确origin/v2。test:affected 与 e2e:affected dry-run 都实际选全量（上游迁移兜底），日志保留；未执行本机全量/双浏览器，交主会话最终CI，不以小集冒充 |
+
+覆盖矩阵：真实题卡qid/版本/题序、列表/单题/材料、结果可选revision/未公布、讲练草稿/当题释放/完成/正文孤儿序、讲义B课、whole none、主体变化/旧host/StrictMode/隐藏/blur/旧回执、离线图片/旧outbox/已知版本冲突/真实deviceId、AI已绑定不随滚动与MCP前后台传输均有定点证据。语音真实麦克风、Pencil手感/原生缩放、真机Safari、最终双浏览器与全量CI仍未本机覆盖，不由iPad模拟替代。
+
+本 UI 冻结时，主会话提供的新公开 canonical c70 全量 CI 有一项上游原 settlement-race harness 超时（8319/8320通过并有Unhandled Rejection），正在独立诊断；该文件与已审1.3 blob相同，未因 canonical 或 UI 修改。不能据此称本PR完整CI通过，也不先归因为产品竞争或资源抖动。若确认测试启动/清理缺陷，将另独立提交测试修复及证据，不混入本UI提交。

@@ -34,6 +34,7 @@ export function useAttemptQuestionNavigation({
   practiceSubmit,
   flushQuestionLocal,
   collapseForNavigation,
+  onNavigate,
 }: {
   editor: ReturnType<typeof useAttemptEditor>;
   cardElements: RefObject<Map<string, HTMLLIElement>>;
@@ -50,6 +51,7 @@ export function useAttemptQuestionNavigation({
   >;
   flushQuestionLocal: (id: string) => Promise<boolean>;
   collapseForNavigation: () => Promise<boolean>;
+  onNavigate?: ((id: string) => void) | undefined;
 }) {
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [navigatorFilter, setNavigatorFilter] =
@@ -85,6 +87,7 @@ export function useAttemptQuestionNavigation({
     if (navigatorOpen) navigatorJumping.current = true;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
+    onNavigate?.(id);
     // 显式跳题信号（C 口径）：只有这条入口发材料回顶信号；seq 单调递增
     // 供锚点去重
     jumpSeqRef.current += 1;

@@ -24,8 +24,10 @@ import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
+import { LearningContextEnvironment } from "@/features/learning-context/LearningContextEnvironment";
 import { MemoQuickCapture } from "@/features/memos/MemoQuickCapture";
 import { bindMemoOutboxAccount } from "@/features/memos/memo-outbox";
+import { QuestionMemoCaptureProvider } from "@/features/memos/QuestionMemoCapture";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
@@ -181,101 +183,109 @@ export function StudentLayout() {
         ) : null;
 
         return (
-          <StudentWorkspaceContext.Provider value={setWorkspace}>
-            <div className="flex min-h-dvh flex-col bg-background text-foreground">
-              {/* 键盘/读屏跳过链：越过顶栏直达主内容（获得焦点前视觉隐藏） */}
-              <a
-                href="#student-main"
-                className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground focus:shadow-sm"
-              >
-                跳到主内容
-              </a>
-              {!workspace && (
-                <header className="sticky top-0 z-10 border-b border-border/70 bg-card/90 backdrop-blur">
-                  <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-2 lg:max-w-5xl lg:flex-row lg:items-center lg:gap-3">
-                    <div className="flex w-full items-center justify-between gap-3 lg:hidden">
-                      {identity}
-                      <div className="flex shrink-0 items-center gap-1">
-                        <AiQueueButton />
-                        {manageView}
-                        {switchIdentity}
-                        {logout}
-                      </div>
-                    </div>
-                    <div className="hidden shrink-0 lg:block">{identity}</div>
-                    <nav
-                      aria-label="学生端导航"
-                      className="w-full min-w-0 lg:flex-1"
-                    >
-                      <div
-                        className={`grid min-w-0 gap-1 rounded-xl bg-muted p-1 ${
-                          navItems.length === 5 ? "grid-cols-5" : "grid-cols-6"
-                        }`}
-                      >
-                        {navItems.map((item) => (
-                          <NavLink
-                            key={item.to}
-                            to={item.to}
-                            aria-label={item.label}
-                            className={({ isActive }) =>
-                              `flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-2 ${
-                                isActive
-                                  ? "bg-card text-primary shadow-sm"
-                                  : "text-muted-foreground hover:text-foreground"
-                              }`
-                            }
+          <LearningContextEnvironment principal={me.id}>
+            <QuestionMemoCaptureProvider>
+              <StudentWorkspaceContext.Provider value={setWorkspace}>
+                <div className="flex min-h-dvh flex-col bg-background text-foreground">
+                  {/* 键盘/读屏跳过链：越过顶栏直达主内容（获得焦点前视觉隐藏） */}
+                  <a
+                    href="#student-main"
+                    className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground focus:shadow-sm"
+                  >
+                    跳到主内容
+                  </a>
+                  {!workspace && (
+                    <header className="sticky top-0 z-10 border-b border-border/70 bg-card/90 backdrop-blur">
+                      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-2 lg:max-w-5xl lg:flex-row lg:items-center lg:gap-3">
+                        <div className="flex w-full items-center justify-between gap-3 lg:hidden">
+                          {identity}
+                          <div className="flex shrink-0 items-center gap-1">
+                            <AiQueueButton />
+                            {manageView}
+                            {switchIdentity}
+                            {logout}
+                          </div>
+                        </div>
+                        <div className="hidden shrink-0 lg:block">
+                          {identity}
+                        </div>
+                        <nav
+                          aria-label="学生端导航"
+                          className="w-full min-w-0 lg:flex-1"
+                        >
+                          <div
+                            className={`grid min-w-0 gap-1 rounded-xl bg-muted p-1 ${
+                              navItems.length === 5
+                                ? "grid-cols-5"
+                                : "grid-cols-6"
+                            }`}
                           >
-                            <item.icon
-                              aria-hidden
-                              className="hidden size-4 shrink-0 sm:block"
-                            />
-                            <span className="text-xs sm:text-sm">
-                              {"shortLabel" in item ? (
-                                <>
-                                  <span className="sm:hidden">
-                                    {item.shortLabel}
-                                  </span>
-                                  <span className="hidden sm:inline">
-                                    {item.label}
-                                  </span>
-                                </>
-                              ) : (
-                                item.label
-                              )}
-                            </span>
-                          </NavLink>
-                        ))}
+                            {navItems.map((item) => (
+                              <NavLink
+                                key={item.to}
+                                to={item.to}
+                                aria-label={item.label}
+                                className={({ isActive }) =>
+                                  `flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-2 ${
+                                    isActive
+                                      ? "bg-card text-primary shadow-sm"
+                                      : "text-muted-foreground hover:text-foreground"
+                                  }`
+                                }
+                              >
+                                <item.icon
+                                  aria-hidden
+                                  className="hidden size-4 shrink-0 sm:block"
+                                />
+                                <span className="text-xs sm:text-sm">
+                                  {"shortLabel" in item ? (
+                                    <>
+                                      <span className="sm:hidden">
+                                        {item.shortLabel}
+                                      </span>
+                                      <span className="hidden sm:inline">
+                                        {item.label}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    item.label
+                                  )}
+                                </span>
+                              </NavLink>
+                            ))}
+                          </div>
+                        </nav>
+                        <div className="hidden shrink-0 items-center gap-1 lg:flex">
+                          <AiQueueButton />
+                          {manageView}
+                          {switchIdentity}
+                          {logout}
+                        </div>
                       </div>
-                    </nav>
-                    <div className="hidden shrink-0 items-center gap-1 lg:flex">
-                      <AiQueueButton />
-                      {manageView}
-                      {switchIdentity}
-                      {logout}
-                    </div>
-                  </div>
-                </header>
-              )}
+                    </header>
+                  )}
 
-              <main
-                id="student-main"
-                tabIndex={-1}
-                className={
-                  workspace
-                    ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6"
-                    : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 pb-[env(safe-area-inset-bottom)] lg:max-w-5xl lg:py-8"
-                }
-              >
-                {logoutMutation.isError && (
-                  <p role="alert" className="text-sm text-destructive">
-                    {logoutMutation.error.message}
-                  </p>
-                )}
-                <Outlet key={me.id} />
-              </main>
-              {!workspace && <MemoQuickCapture />}
-            </div>
-          </StudentWorkspaceContext.Provider>
+                  <main
+                    id="student-main"
+                    tabIndex={-1}
+                    className={
+                      workspace
+                        ? "mx-auto w-full max-w-[1120px] flex-1 px-3 pb-[env(safe-area-inset-bottom)] sm:px-6"
+                        : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 pb-[env(safe-area-inset-bottom)] lg:max-w-5xl lg:py-8"
+                    }
+                  >
+                    {logoutMutation.isError && (
+                      <p role="alert" className="text-sm text-destructive">
+                        {logoutMutation.error.message}
+                      </p>
+                    )}
+                    <Outlet key={me.id} />
+                  </main>
+                  {!workspace && <MemoQuickCapture />}
+                </div>
+              </StudentWorkspaceContext.Provider>
+            </QuestionMemoCaptureProvider>
+          </LearningContextEnvironment>
         );
       }}
     </PortalGuard>

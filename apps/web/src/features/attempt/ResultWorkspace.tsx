@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import type { HostLease } from "@/features/learning-context/learning-context-store";
 import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { AttemptFooter, AttemptNavigatorButton } from "./AttemptBottomBar";
 import { AttemptNavigationDialog } from "./AttemptNavigationDialog";
@@ -23,6 +24,7 @@ import { useResultReviewLocation } from "./use-result-review-location";
 
 export function ResultWorkspace({
   title,
+  learningLease = null,
   attemptId,
   questions,
   released,
@@ -36,6 +38,7 @@ export function ResultWorkspace({
   reviewLocation,
 }: {
   title: string;
+  learningLease?: HostLease | null;
   attemptId: string;
   questions: readonly AttemptResultQuestion[];
   released: boolean;
@@ -71,7 +74,7 @@ export function ResultWorkspace({
   const previous = cursor > 0 ? range[cursor - 1] : undefined;
   const next = cursor >= 0 ? range[cursor + 1] : range[0];
   return (
-    <AttemptWorkspace>
+    <AttemptWorkspace learningLease={learningLease}>
       <header
         data-slot="attempt-header"
         className="@container/result-header sticky top-0 z-30 -mx-3 flex items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"

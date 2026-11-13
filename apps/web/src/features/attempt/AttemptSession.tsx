@@ -52,6 +52,7 @@ import {
 } from "@/features/capability/enabled-capabilities";
 import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
 import { useKeyboardDevice } from "@/features/keyboard/keyboard-device";
+import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
@@ -80,6 +81,7 @@ import {
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
+import { attemptNavigationItemsOf } from "./attempt-navigation-items";
 import {
   type TimedAttemptDetail,
   useAttemptContext,
@@ -98,7 +100,6 @@ import { countSubmittedQuestions } from "./practice-protocol";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
-import { getQuestionCompletion } from "./question-completion";
 import { useAttemptPracticeSubmission } from "./use-attempt-practice-submission";
 import { useAttemptQuestionLocation } from "./use-attempt-question-location";
 import {
@@ -597,6 +598,18 @@ function AnswerView({
     singleIndex,
     singleWorkspaceRef,
   } = location;
+  const publisher = useLearningContextPublisher({
+    route: attemptId,
+    isEditing: (id) =>
+      editor?.getActive()?.questionId === id ||
+      editor?.getPaper()?.questionId === id,
+    surface: "attempt",
+    questions: flatQuestions,
+    title: data.title,
+    attemptStatus: data.attempt.status,
+    layout: singleMode ? "single" : "list",
+    observedId: singleMode ? resolvedSingleQuestionId : currentQuestionId,
+  });
   const keyBindings = useKeyboardBindings();
   const keyboardDevice = useKeyboardDevice();
 
@@ -693,34 +706,15 @@ function AnswerView({
     canAutoSubmitChoice &&
     singleQuestion !== undefined &&
     questionBindings[singleQuestion.type].placement === "options-radio";
-  const navigationItems = flatQuestions.map((question, index) => ({
-    id: question.id,
-    index,
-    completion: getQuestionCompletion(
-      question,
-      answers?.[question.id],
-      formalInkPresence.get(question.id),
-    ),
-    flagged: flaggedQuestions.has(question.id),
-    unsure: studentFlags.has(question.id),
-    // v1 卷四态口径（§9.1）：progress 缺行按未提交处理；统一公布模式下
-    // feedbackReadable=false 的已提交行在导航里只报提交事实，不显示对错。
-    // 用回执 overlay 后的进度（practiceProgress）——提交即时反映，不等服务端重取
-    ...(practiceProtocol === "v1"
-      ? {
-          practice: {
-            submitted:
-              (progressById.get(question.id)?.submittedAt ?? null) !== null,
-            feedbackReadable:
-              progressById.get(question.id)?.feedbackReadable ?? false,
-          },
-        }
-      : {}),
-  }));
-  const answered = navigationItems.filter(
-    (item) => item.completion.state === "filled",
-  ).length;
-  const unanswered = total - answered;
+  const { navigationItems, answered, unanswered } = attemptNavigationItemsOf({
+    flatQuestions,
+    answers,
+    formalInkPresence,
+    flaggedQuestions,
+    studentFlags,
+    practiceProtocol,
+    progressById,
+  });
   const navigation = useAttemptQuestionNavigation({
     editor,
     cardElements,
@@ -734,6 +728,7 @@ function AnswerView({
     practiceSubmit,
     flushQuestionLocal,
     collapseForNavigation: aiCompanion.collapseForNavigation,
+    onNavigate: publisher.explicit,
   });
   const {
     jumpSignal,
@@ -797,7 +792,7 @@ function AnswerView({
         };
   return (
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
-      <AttemptWorkspace process={recorder}>
+      <AttemptWorkspace process={recorder} learningLease={publisher.lease}>
         <QuestionProcessSyncNotice process={questionProcess} />
         <Dialog open={processOpen} onOpenChange={setProcessOpen}>
           <DialogContent
